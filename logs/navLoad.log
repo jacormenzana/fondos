@@ -1,0 +1,97 @@
+  Checkpoint: 37 fondos ya cargados -> se saltan.
+             Usa --force para recargar todo.
+Descargando NAV para 3147 fondos | desde=2000-01-01 | dry_run=False
+
+  [   1/3147] DE0008474263 -> sin NAV (endpoint de pago/restringido)
+  [   2/3147] DE0008490962 -> sin NAV (endpoint de pago/restringido)
+  [   3/3147] DE0009769869 -> sin NAV (endpoint de pago/restringido)
+  [   4/3147] DE0009769976 -> sin NAV (endpoint de pago/restringido)
+  [   5/3147] DE0009848077 -> sin NAV (endpoint de pago/restringido)
+  [   6/3147] DE0009848119 -> sin NAV (endpoint de pago/restringido)
+  [   7/3147] DE000DWS17J0 -> sin NAV (endpoint de pago/restringido)
+  [   8/3147] DE000DWS18N0 -> sin NAV (endpoint de pago/restringido)
+  [   9/3147] DE000DWS18Q3 Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "c:\desarrollo\fondos\proyecto2\src\loaders\nav_discovery.py", line 604, in <module>
+    main()
+    ~~~~^^
+  File "c:\desarrollo\fondos\proyecto2\src\loaders\nav_discovery.py", line 591, in main
+    run_load(conn,
+    ~~~~~~~~^^^^^^
+             isins   = isins_load,
+             ^^^^^^^^^^^^^^^^^^^^^
+    ...<2 lines>...
+             verbose = args.verbose,
+             ^^^^^^^^^^^^^^^^^^^^^^^
+             force   = args.force)
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "c:\desarrollo\fondos\proyecto2\src\loaders\nav_discovery.py", line 373, in run_load
+    fund = mstarpy.Funds(term=term, language=MS_LANGUAGE, pageSize=1)
+  File "C:\Users\Administrador\anaconda3\envs\des\Lib\site-packages\mstarpy\funds.py", line 54, in __init__
+    super().__init__(
+    ~~~~~~~~~~~~~~~~^
+        term=term,
+        ^^^^^^^^^^
+    ...<8 lines>...
+        proxies=proxies,
+        ^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\Administrador\anaconda3\envs\des\Lib\site-packages\mstarpy\security.py", line 112, in __init__
+    code_list = screener_universe(
+            term,
+    ...<6 lines>...
+            ascending=ascending,
+            proxies=self.proxies,)
+  File "C:\Users\Administrador\anaconda3\envs\des\Lib\site-packages\mstarpy\search.py", line 212, in screener_universe
+    result = general_search(params,
+                            language=language,
+                            proxies=proxies)
+  File "C:\Users\Administrador\anaconda3\envs\des\Lib\site-packages\mstarpy\search.py", line 54, in general_search
+    response = requests.get(url, params=params, headers=headers, proxies=proxies)
+  File "C:\Users\Administrador\anaconda3\envs\des\Lib\site-packages\requests\api.py", line 73, in get
+    return request("get", url, params=params, **kwargs)
+  File "C:\Users\Administrador\anaconda3\envs\des\Lib\site-packages\requests\api.py", line 59, in request
+    return session.request(method=method, url=url, **kwargs)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrador\anaconda3\envs\des\Lib\site-packages\requests\sessions.py", line 589, in request
+    resp = self.send(prep, **send_kwargs)
+  File "C:\Users\Administrador\anaconda3\envs\des\Lib\site-packages\requests\sessions.py", line 703, in send
+    r = adapter.send(request, **kwargs)
+  File "C:\Users\Administrador\anaconda3\envs\des\Lib\site-packages\requests\adapters.py", line 644, in send
+    resp = conn.urlopen(
+        method=request.method,
+    ...<9 lines>...
+        chunked=chunked,
+    )
+  File "C:\Users\Administrador\anaconda3\envs\des\Lib\site-packages\urllib3\connectionpool.py", line 787, in urlopen
+    response = self._make_request(
+        conn,
+    ...<10 lines>...
+        **response_kw,
+    )
+  File "C:\Users\Administrador\anaconda3\envs\des\Lib\site-packages\urllib3\connectionpool.py", line 534, in _make_request
+    response = conn.getresponse()
+  File "C:\Users\Administrador\anaconda3\envs\des\Lib\site-packages\urllib3\connection.py", line 571, in getresponse
+    httplib_response = super().getresponse()
+  File "C:\Users\Administrador\anaconda3\envs\des\Lib\http\client.py", line 1450, in getresponse
+    response.begin()
+    ~~~~~~~~~~~~~~^^
+  File "C:\Users\Administrador\anaconda3\envs\des\Lib\http\client.py", line 336, in begin
+    version, status, reason = self._read_status()
+                              ~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\Administrador\anaconda3\envs\des\Lib\http\client.py", line 297, in _read_status
+    line = str(self.fp.readline(_MAXLINE + 1), "iso-8859-1")
+               ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "C:\Users\Administrador\anaconda3\envs\des\Lib\socket.py", line 719, in readinto
+    return self._sock.recv_into(b)
+           ~~~~~~~~~~~~~~~~~~~~^^^
+  File "C:\Users\Administrador\anaconda3\envs\des\Lib\ssl.py", line 1304, in recv_into
+    return self.read(nbytes, buffer)
+           ~~~~~~~~~^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrador\anaconda3\envs\des\Lib\ssl.py", line 1138, in read
+    return self._sslobj.read(len, buffer)
+           ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+KeyboardInterrupt
+^C

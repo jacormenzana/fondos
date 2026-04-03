@@ -1,0 +1,115 @@
+ARBOL DE DIRECTORIOS — PROYECTOS UPLOAD
+Generado: 2026-04-02 07:48:19
+Raiz: C:\desarrollo\fondos\upload
+
+proyecto1upload/
+├── blocks
+│   ├── __init___upload.py
+│   ├── alternativos_upload.py
+│   ├── desclasificados_upload.py
+│   ├── mixtos_upload.py
+│   ├── monetarios_upload.py
+│   ├── renta_variable_upload.py
+│   ├── restantes_pendientes_upload.py
+│   ├── restantes_upload.py
+│   ├── rf_corto_upload.py
+│   └── rf_flexible_upload.py
+├── core
+│   ├── benchmark_normalizer_upload.py
+│   ├── classify_utils_upload.py
+│   ├── fund_characterizer_upload.py
+│   ├── fund_family_builder_upload.py
+│   ├── io_upload.py
+│   ├── kiid_parser_upload.py
+│   ├── mark_stale_upload.py
+│   ├── pipeline_upload.py
+│   ├── sqlite_writer_upload.py
+│   ├── srri_text_upload.py
+│   ├── srri_v4_geometric_upload.py
+│   └── srri_v5_geometric_upload.py
+├── db
+│   └── __init___upload.py
+├── src
+│   ├── analysis
+│   │   ├── __init___upload.py
+│   │   └── export_p1_upload.py
+│   ├── loaders
+│   │   ├── __init___upload.py
+│   │   └── benchmark_loader_upload.py
+│   └── __init___upload.py
+├── run_block_upload.py
+└── run_blockv1_upload.py
+
+proyecto2upload/
+├── db
+│   └── __init___upload.py
+├── logs
+│   ├── funds_upload.py
+│   └── security_upload.py
+├── src
+│   ├── analysis
+│   │   └── export_metrics_upload.py
+│   ├── calculations
+│   │   ├── __init___upload.py
+│   │   ├── capture_ratios_upload.py
+│   │   ├── consistency_upload.py
+│   │   ├── currency_factor_upload.py
+│   │   ├── deflation_upload.py
+│   │   ├── drawdown_upload.py
+│   │   ├── m2_global_builder_upload.py
+│   │   ├── macro_sensitivity_upload.py
+│   │   ├── momentum_upload.py
+│   │   ├── persistence_upload.py
+│   │   ├── regime_returns_upload.py
+│   │   ├── returns_upload.py
+│   │   ├── risk_metrics_upload.py
+│   │   ├── srri_20260315_upload.py
+│   │   └── srri_upload.py
+│   ├── loaders
+│   │   ├── __init___upload.py
+│   │   ├── inflation_loaders_upload.py
+│   │   ├── m2_global_builder_upload.py
+│   │   ├── macro_loader_upload.py
+│   │   ├── nav_discovery_upload.py
+│   │   ├── nav_loader_upload.py
+│   │   ├── test_eurostat_upload.py
+│   │   ├── test_fred_es2_upload.py
+│   │   ├── test_fred_es_upload.py
+│   │   └── test_historia_upload.py
+│   ├── pipeline
+│   │   ├── __init___upload.py
+│   │   └── run_pipeline_upload.py
+│   ├── utils
+│   │   ├── __init___upload.py
+│   │   ├── logger_upload.py
+│   │   ├── time_windows_upload.py
+│   │   └── validators_upload.py
+│   ├── writers
+│   │   ├── __init___upload.py
+│   │   └── metrics_writer_upload.py
+│   └── __init___upload.py
+└── tests
+    ├── test_consistency_upload.py
+    └── test_drawdown_upload.py
+
+proyecto3upload/
+└── src
+    ├── __init___upload.py
+    ├── backtesting_prod_upload.py
+    ├── backtesting_upload.py
+    ├── fund_scorer_20260326_upload.py
+    ├── fund_scorer_prod_upload.py
+    ├── fund_scorer_upload.py
+    ├── m2_global_builder_upload.py
+    ├── monthly_report_prod_upload.py
+    ├── monthly_report_upload.py
+    ├── portfolio_builder_upload.py
+    ├── regime_classifier_upload.py
+    └── regime_returns_upload.py
+
+sharedupload/
+├── config_upload.py
+├── db_upload.py
+├── export_tables_upload.py
+├── init_db_upload.py
+└── schema_checks_upload.py

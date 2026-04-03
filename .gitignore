@@ -1,0 +1,3 @@
+*.sqlite
+proyecto1/p1_output.sqlite
+db/fondos.sqlite

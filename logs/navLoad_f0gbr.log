@@ -1,0 +1,86 @@
+Filtro --ms-prefix F0GBR: 644 ISINs
+  Checkpoint: 25 fondos ya cargados -> se saltan.
+             Usa --force para recargar todo.
+Descargando NAV para 619 fondos | desde=2000-01-01 | dry_run=False
+
+  [   1/619] DE0009848077 -> 310 NAV  (2000-06-30 -> 2026-03-10)
+  [   2/619] DE0009848119 -> sin NAV (endpoint de pago/restringido)
+  [   3/619] ES0125776031 -> sin NAV (endpoint de pago/restringido)
+  [   4/619] ES0126547035 -> sin NAV (endpoint de pago/restringido)
+  [   5/619] ES0132214034 -> sin NAV (endpoint de pago/restringido)
+  [   6/619] ES0139012035 -> sin NAV (endpoint de pago/restringido)
+  [   7/619] ES0155598032 -> sin NAV (endpoint de pago/restringido)
+  [   8/619] FR0000447823 -> sin NAV (endpoint de pago/restringido)
+  [   9/619] FR0000989626 -> sin NAV (endpoint de pago/restringido)
+  [  10/619] FR0007008750 -> sin NAV (endpoint de pago/restringido)
+  [  11/619] FR0007435920 -> sin NAV (endpoint de pago/restringido)
+  [  12/619] FR0007457890 -> sin NAV (endpoint de pago/restringido)
+  [  13/619] FR0010027623 -> sin NAV (endpoint de pago/restringido)
+  [  14/619] FR0010135103 -> sin NAV (endpoint de pago/restringido)
+  [  15/619] FR0010148981 -> sin NAV (endpoint de pago/restringido)
+  [  16/619] FR0010149120 -> sin NAV (endpoint de pago/restringido)
+  [  17/619] FR0010149161 -> sin NAV (endpoint de pago/restringido)
+  [  18/619] FR0010149179 -> sin NAV (endpoint de pago/restringido)
+  [  19/619] FR0010149203 -> sin NAV (endpoint de pago/restringido)
+  [  20/619] FR0010149302 -> sin NAV (endpoint de pago/restringido)
+  [  21/619] FR0010251660 -> sin NAV (endpoint de pago/restringido)
+  [  22/619] FR0010288316 -> sin NAV (endpoint de pago/restringido)
+  [  23/619] IE0001257090 -> sin NAV (endpoint de pago/restringido)
+  [  24/619] IE0002122038 -> sin NAV (endpoint de pago/restringido)
+  [  25/619] IE0002175093 -> sin NAV (endpoint de pago/restringido)
+  [  26/619] IE0002458671 -> sin NAV (endpoint de pago/restringido)
+  [  27/619] IE0002459539 -> sin NAV (endpoint de pago/restringido)
+  [  28/619] IE0002460198 -> sin NAV (endpoint de pago/restringido)
+  [  29/619] IE0002461055 -> sin NAV (endpoint de pago/restringido)
+  [  30/619] IE0002639551 -> sin NAV (endpoint de pago/restringido)
+  [  31/619] IE0002639668 -> sin NAV (endpoint de pago/restringido)
+  [  32/619] IE0002639775 -> sin NAV (endpoint de pago/restringido)
+  [  33/619] IE0003323494 -> sin NAV (endpoint de pago/restringido)
+  [  34/619] IE0004445015 -> sin NAV (endpoint de pago/restringido)
+  [  35/619] IE0005023910 -> sin NAV (endpoint de pago/restringido)
+  [  36/619] IE0005300136 -> sin NAV (endpoint de pago/restringido)
+  [  37/619] IE0005300243 -> sin NAV (endpoint de pago/restringido)
+  [  38/619] IE0005300912 -> sin NAV (endpoint de pago/restringido)
+  [  39/619] IE0005302959 -> sin NAV (endpoint de pago/restringido)
+  [  40/619] IE0005304773 -> sin NAV (endpoint de pago/restringido)
+  [  41/619] IE0007286036 -> sin NAV (endpoint de pago/restringido)
+  [  42/619] IE0007471471 -> sin NAV (endpoint de pago/restringido)
+  [  43/619] IE0007471927 -> sin NAV (endpoint de pago/restringido)
+  [  44/619] IE0007472990 -> sin NAV (endpoint de pago/restringido)
+  [  45/619] IE0007987690 -> sin NAV (endpoint de pago/restringido)
+  [  46/619] IE0007987708 -> sin NAV (endpoint de pago/restringido)
+  [  47/619] IE0008365516 -> sin NAV (endpoint de pago/restringido)
+  [  48/619] IE0009355771 -> sin NAV (endpoint de pago/restringido)
+  [  49/619] IE0009356076 -> sin NAV (endpoint de pago/restringido)
+  [  50/619] IE0009514989 -> sin NAV (endpoint de pago/restringido)
+  [  51/619] IE0009531827 -> sin NAV (endpoint de pago/restringido)
+  [  52/619] IE0031069275 -> sin NAV (endpoint de pago/restringido)
+  [  53/619] IE0031069499 -> sin NAV (endpoint de pago/restringido)
+  [  54/619] IE0031296019 -> sin NAV (endpoint de pago/restringido)
+  [  55/619] IE0032126645 -> sin NAV (endpoint de pago/restringido)
+  [  56/619] IE0032568887 -> sin NAV (endpoint de pago/restringido)
+  [  57/619] IE0032593158 -> sin NAV (endpoint de pago/restringido)
+  [  58/619] IE0032620787 -> sin NAV (endpoint de pago/restringido)
+  [  59/619] IE0032875985 -> sin NAV (endpoint de pago/restringido)
+  [  60/619] IE0032876397 -> sin NAV (endpoint de pago/restringido)
+  [  61/619] IE0033386453 Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "c:\desarrollo\fondos\proyecto2\src\loaders\nav_discovery.py", line 604, in <module>
+    main()
+    ~~~~^^
+  File "c:\desarrollo\fondos\proyecto2\src\loaders\nav_discovery.py", line 591, in main
+    run_load(conn,
+    ~~~~~~~~^^^^^^
+             isins   = isins_load,
+             ^^^^^^^^^^^^^^^^^^^^^
+    ...<2 lines>...
+             verbose = args.verbose,
+             ^^^^^^^^^^^^^^^^^^^^^^^
+             force   = args.force)
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "c:\desarrollo\fondos\proyecto2\src\loaders\nav_discovery.py", line 374, in run_load
+    time.sleep(random.uniform(*MS_DELAY_RESOLVE))
+    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+KeyboardInterrupt
+^C

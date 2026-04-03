@@ -1,0 +1,125 @@
+ARBOL DE DIRECTORIOS — PROYECTOS ORIGINALES
+Generado: 2026-04-02 07:48:19
+Raiz: C:\desarrollo\fondos
+
+proyecto1/
+├── blocks
+│   ├── __init__.py
+│   ├── alternativos.py
+│   ├── desclasificados.py
+│   ├── mixtos.py
+│   ├── monetarios.py
+│   ├── renta_variable.py
+│   ├── restantes.py
+│   ├── restantes_pendientes.py
+│   ├── rf_corto.py
+│   └── rf_flexible.py
+├── core
+│   ├── benchmark_normalizer.py
+│   ├── classify_utils.py
+│   ├── fund_characterizer.py
+│   ├── fund_family_builder.py
+│   ├── io.py
+│   ├── kiid_parser.py
+│   ├── mark_stale.py
+│   ├── pipeline.py
+│   ├── sqlite_writer.py
+│   ├── srri_text.py
+│   ├── srri_v4_geometric.py
+│   └── srri_v5_geometric.py
+├── db
+│   └── __init__.py
+├── doc
+│   ├── arquitectura
+│   ├── especificacion
+│   └── informes
+├── log
+├── sql
+├── src
+│   ├── analysis
+│   │   ├── __init__.py
+│   │   └── export_p1.py
+│   ├── loaders
+│   │   ├── __init__.py
+│   │   └── benchmark_loader.py
+│   └── __init__.py
+├── run_block.py
+└── run_blockv1.py
+
+proyecto2/
+├── bat
+├── db
+│   └── __init__.py
+├── doc
+├── logs
+│   ├── funds.py
+│   └── security.py
+├── sql
+├── src
+│   ├── analysis
+│   │   └── export_metrics.py
+│   ├── calculations
+│   │   ├── __init__.py
+│   │   ├── capture_ratios.py
+│   │   ├── consistency.py
+│   │   ├── currency_factor.py
+│   │   ├── deflation.py
+│   │   ├── drawdown.py
+│   │   ├── m2_global_builder.py
+│   │   ├── macro_sensitivity.py
+│   │   ├── momentum.py
+│   │   ├── persistence.py
+│   │   ├── regime_returns.py
+│   │   ├── returns.py
+│   │   ├── risk_metrics.py
+│   │   ├── srri.py
+│   │   └── srri_20260315.py
+│   ├── loaders
+│   │   ├── __init__.py
+│   │   ├── inflation_loaders.py
+│   │   ├── m2_global_builder.py
+│   │   ├── macro_loader.py
+│   │   ├── nav_discovery.py
+│   │   ├── nav_loader.py
+│   │   ├── test_eurostat.py
+│   │   ├── test_fred_es.py
+│   │   ├── test_fred_es2.py
+│   │   └── test_historia.py
+│   ├── pipeline
+│   │   ├── __init__.py
+│   │   └── run_pipeline.py
+│   ├── utils
+│   │   ├── __init__.py
+│   │   ├── logger.py
+│   │   ├── time_windows.py
+│   │   └── validators.py
+│   ├── writers
+│   │   ├── __init__.py
+│   │   └── metrics_writer.py
+│   └── __init__.py
+└── tests
+    ├── test_consistency.py
+    └── test_drawdown.py
+
+proyecto3/
+├── sql
+└── src
+    ├── __init__.py
+    ├── backtesting.py
+    ├── backtesting_prod.py
+    ├── fund_scorer.py
+    ├── fund_scorer_20260326.py
+    ├── fund_scorer_prod.py
+    ├── m2_global_builder.py
+    ├── monthly_report.py
+    ├── monthly_report_prod.py
+    ├── portfolio_builder.py
+    ├── regime_classifier.py
+    └── regime_returns.py
+
+shared/
+├── config.py
+├── db.py
+├── export_tables.py
+├── init_db.py
+└── schema_checks.py

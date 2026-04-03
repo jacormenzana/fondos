@@ -1,0 +1,33 @@
+El excel que te paso contiene un listado que caracteriza 3204 fondos de inversión. Cada fila de la hoja caracteriza un fondo concreto, mediante 36 atributos. Cada atributo catrcatriza al fondo en base a la aplicación de un criterio de segmentación concreto, que da respuesta a una pregunta concreta, que es respondida con una pobación determinada de potenciales valores. 
+
+Aunque cada atributo objetiva una característica concreta de un fondo, el valor que registra debe se consistente con el del resto de de atributos. Y para evaluar la consistencia del modelo de caracterizción vigente, basado en los 36 atributos que te comentaba, te pido que realices las tareas  qeu te indico a conrtinuación, en base a tu análisis de los datos contenidos en la hoja que te paso, y a tu conocimento profesional, experto, riguroso y honesto, fruto de una experiencia dilatada en la adminsitración y gestión de los fondos de inversiones, y las buenas prácticas que aplicas en la caracterización de sus atributos. 
+
+Primera: Que generes una hoja  o tabla que registre los distintos grupos de atributos que existen en base a la naturaleza de los datos que registra cada atributo.
+ 	Denominación: Denominación del grupo
+	Objeto: El objeto u objetivo del grupo de atributos
+
+Segunda: Que generes una primera tabla u hoja excel en la que describa el ámbito u objeto de cada atributo, y unos datos adicionales .
+	Nombre: Nombre del atributo
+	Grupo: Nombre del grupo del que consideras que forma parte el atributo.
+	Pregunta: La pregunta a la que responde la población de atributos informados en el campo
+	Criterio: El criterio empleado para determinar la población de valores registrados por el atributo
+	Objeto: El objeto u objetivo del atributo 
+	Población: Población de valores que registra el aftriuto. 
+	Mantener: Campo en el que se informa si consideras que este atributo debe mantenerse en el modelo de caracterización. 
+	ModificarCriterio: Campo en el que se informa si consideras que este atributo debe registrar valores conforme a un criterio distinto al existente actualmente, en cuyo caso describe el nuevo criterio, y las razone por las que crees que debe sustituir al previo.
+	ModificarValores: Campo en el que se informa si consideras debe informarse una población de valores distinta a las registradas actualmente, y de ser así que especifiques los motivos.
+	NuevaPoblación: Campo que se informa en el caso de que consideres que se debe sustituir la población de valores registrados actualmente, por una nueva población de valores que registrarás en este campo, separados por comas.
+	
+	
+Tercera: En el caso de que de tu análsis determines la necesidad de incluir nuevos atributos, te solicito que generes una tabla tercera tabla, con la misma estructura de la anterior, en la que se registren las características de nuevos atributos que consideras que deben caracterizar un fondo.
+
+	Nombre: Nombre del atributo
+	Grupo: Nombre del grupo del que consideras que forma parte el atributo.
+	Pregunta: La pregunta a la que responde la población de atributos informados en el campo
+	Criterio: El criterio empleado para determinar la población de valores registrados por el atributo
+	Objeto: El objeto u objetivo del atributo 
+	Población: Población de valores que registra el aftriuto. 
+
+Cuarta: Generera una nueva tabla con dos campos, para todos aquellos atributos del fondo que consideras que deben ser informados con una población de valores predeterminada.
+	Atributo:Nombre del atributo.
+	Valor: Lista de completa de valores que puede asignarse al campo. Los valores de la lista se separan con una coma.

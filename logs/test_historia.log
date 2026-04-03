@@ -1,0 +1,56 @@
+============================================================
+Fondo: F0GBR04DPK | ISIN: LU0070214613
+============================================================
+  version=2: 123 registros | API startDate=2016-01-01 | datos: 2016-01-31 -> 2026-03-12
+  version=3: 123 registros | API startDate=2016-01-01 | datos: 2016-01-31 -> 2026-03-12
+  version=4: 123 registros | API startDate=2016-01-01 | datos: 2016-01-31 -> 2026-03-12
+
+  performanceTable keys: ['userType', 'baseCurrency', 'domicileCountryId', 'asOfDate', 'startDate', 'categoryName', 'indexName', 'table']
+  trailingReturn keys: ['columnDefs', 'hasDailyData', 'investorRankApplicable', 'adjustedTaxReturnApplicable', 'duration', 'totalReturnNAV']
+
+============================================================
+Fondo: F000000C19 | ISIN: IE00B19Z6G02
+============================================================
+  version=2: 123 registros | API startDate=2016-01-01 | datos: 2016-01-31 -> 2026-03-12
+  version=3: 123 registros | API startDate=2016-01-01 | datos: 2016-01-31 -> 2026-03-12
+  version=4: 123 registros | API startDate=2016-01-01 | datos: 2016-01-31 -> 2026-03-12
+
+  performanceTable keys: ['userType', 'baseCurrency', 'domicileCountryId', 'asOfDate', 'startDate', 'categoryName', 'indexName', 'table']
+  trailingReturn keys: ['columnDefs', 'hasDailyData', 'investorRankApplicable', 'adjustedTaxReturnApplicable', 'duration', 'totalReturnNAV']
+
+============================================================
+Fondo: 0P0000OMTB | ISIN: IE00B42NVC37
+============================================================
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "c:\desarrollo\fondos\proyecto2\src\loaders\test_historia.py", line 15, in <module>
+    fund = mstarpy.Funds(term=ms_id, language='en-gb', pageSize=1)
+  File "C:\Users\Administrador\anaconda3\envs\des\Lib\site-packages\mstarpy\funds.py", line 54, in __init__
+    super().__init__(
+    ~~~~~~~~~~~~~~~~^
+        term=term,
+        ^^^^^^^^^^
+    ...<8 lines>...
+        proxies=proxies,
+        ^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\Administrador\anaconda3\envs\des\Lib\site-packages\mstarpy\security.py", line 112, in __init__
+    code_list = screener_universe(
+            term,
+    ...<6 lines>...
+            ascending=ascending,
+            proxies=self.proxies,)
+  File "C:\Users\Administrador\anaconda3\envs\des\Lib\site-packages\mstarpy\search.py", line 140, in screener_universe
+    all_fields = search_field(display_print=False)
+  File "C:\Users\Administrador\anaconda3\envs\des\Lib\site-packages\mstarpy\search.py", line 247, in search_field
+    not_200_response(url, response)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^
+  File "C:\Users\Administrador\anaconda3\envs\des\Lib\site-packages\mstarpy\error.py", line 11, in not_200_response
+    raise ConnectionError(
+    ...<2 lines>...
+    )
+ConnectionError: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+

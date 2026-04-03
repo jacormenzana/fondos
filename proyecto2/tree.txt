@@ -1,0 +1,44 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Fri Jan  2 22:00:13 2026
+
+@author: Administrador
+"""
+
+project2/
+│
+├── data/
+│   ├── raw/
+│   └── processed/
+│
+├── db/
+│   └── schema.sql              # DDL canónico
+│
+├── src/
+│   ├── config.py
+│   ├── db.py
+│
+│   ├── loaders/
+│   │   ├── nav_loader.py       # SOLO carga NAV desde BD
+│   │   └── inflation_loader.py # SOLO carga IPC
+│   │
+│   ├── calculations/
+│   │   ├── deflation.py        # deflate_nav
+│   │   ├── drawdown.py         # compute_drawdown, max_drawdown,
+│   │   │                        # drawdown_duration, time_to_recovery
+│   │   ├── risk_metrics.py     # compute_risk_metrics (orquestador por ISIN)
+│   │   └── returns.py          # rentabilidades (cuando toque)
+│   │
+│   ├── writers/
+│   │   └── metrics_writer.py   # write_metrics
+│   │
+│   ├── pipeline/
+│   │   └── run_pipeline.py     # SOLO orquesta
+│   │
+│   └── utils/
+│       ├── validators.py
+│       └── logger.py
+│
+├── logs/
+├── requirements.txt
+└── README.md

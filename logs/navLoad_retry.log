@@ -1,0 +1,162 @@
+  Checkpoint: 3107 fondos ya cargados -> se saltan.
+             Usa --force para recargar todo.
+Descargando NAV para 77 fondos | desde=2016-01-01 | dry_run=False
+
+  [   1/77] DE0008474263 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [   2/77] DE0008490962 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [   3/77] DE0009769869 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [   4/77] DE0009769976 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [   5/77] IE0004445239 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [   6/77] LU0011846440 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [   7/77] LU0011850392 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [   8/77] LU0048578792 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [   9/77] LU0061474960 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  10/77] LU0064675639 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  11/77] LU0070212591 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  12/77] LU0086914362 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  13/77] LU0090830810 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  14/77] LU0107086646 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  15/77] LU0111548326 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  16/77] LU0111549134 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  17/77] LU0112467450 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  18/77] LU0129373261 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  19/77] LU0141799501 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  20/77] LU0173770602 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  21/77] LU0177332573 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  22/77] LU0213453771 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  23/77] LU0213962813 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  24/77] LU0227384020 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  25/77] LU0232524495 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  26/77] LU0232525203 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  27/77] LU0232526433 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  28/77] LU0232560531 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  29/77] LU0232564798 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  30/77] LU0232575059 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  31/77] LU0232575133 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  32/77] LU0232575489 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  33/77] LU0247699415 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  34/77] LU0249548461 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  35/77] LU0251853072 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  36/77] LU0251854476 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  37/77] LU0252218267 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  38/77] LU0252218937 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  39/77] LU0264597617 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  40/77] LU0278527428 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  41/77] LU0338483075 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  42/77] LU0347711466 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  43/77] LU0347712191 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  44/77] LU0348926287 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  45/77] LU0406802339 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  46/77] LU0408222247 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  47/77] LU0451950314 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  48/77] LU0602539602 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  49/77] LU0628613803 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  50/77] LU0689472784 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  51/77] LU0757431142 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  52/77] LU0772964689 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  53/77] LU0787776565 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  54/77] LU0820561818 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  55/77] LU0823414635 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  56/77] LU0823415012 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  57/77] LU0823415285 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  58/77] LU0823418388 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  59/77] LU0882574055 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  60/77] LU0915585052 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  61/77] LU1165135440 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  62/77] LU1165135796 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  63/77] LU1165137578 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  64/77] LU1291091905 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  65/77] LU1291103171 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  66/77] LU1291108485 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  67/77] LU1698898050 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  68/77] LU1832969650 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  69/77] LU1873128687 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  70/77] LU1883306067 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  71/77] LU1883848977 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  72/77] LU1953145197 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  73/77] LU1997245508 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  74/77] LU2001241384 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  75/77] LU2095450479 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  76/77] LU2257586540 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+  [  77/77] LU2286300806 -> ERROR resolviendo fondo: Error 202
+            for the api https://global.morningstar.com/api/v1/fr/stores/data-points/fields. Message : Accepted.
+
+--------------------------------------------------
+  Total NAV escritos : 0
+  Fondos sin datos   : 77

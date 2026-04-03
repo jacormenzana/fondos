@@ -1,0 +1,252 @@
+
+--==========================================================
+-- Activación de entorno de desarrollo con  anaconda prompt
+--==========================================================
+
+(base) C:\Users\Administrador>activate des
+
+--==========================================================
+-- Fin Activación de entorno de desarrollo
+--==========================================================
+
+
+--==========================================================
+-- Ubicación de BBDD
+--==========================================================
+
+(des) c:\desarrollo\fondos\proyecto2>dir /s /b funds.db
+c:\desarrollo\fondos\proyecto2\funds.db
+
+--==========================================================
+-- Fin Ubicación de BBDD
+--==========================================================
+
+
+--==========================================================
+-- Arranque de BBDD
+--==========================================================
+
+(des) c:\desarrollo\fondos\proyecto2>python -m src.init_db
+Base de datos SQLite inicializada correctamente.
+
+(des) c:\desarrollo\fondos\proyecto2>sqlite3 funds.db
+SQLite version 3.51.0 2025-11-04 19:38:17
+Enter ".help" for usage hints.
+sqlite> .tables
+fund_master       fund_nav_series   pipeline_runs
+fund_metrics      inflation_series
+sqlite>
+
+--==========================================================
+-- Fin Arranque de BBDD
+--==========================================================
+
+
+--==========================================================
+-- Esquema de tabla de BBDD
+--==========================================================
+
+PRAGMA table_info(fund_kiid_metadata);
+
+--==========================================================
+-- Fin Esquema de tabla de BBDD
+--==========================================================
+
+
+
+
+
+
+--==========================================================
+-- Consulta de busqueda de patrones en SQLITE
+--==========================================================
+
+WITH RECURSIVE
+-- 1. LIMPIEZA PREVIA
+-- Añadimos un espacio al final para asegurar que la recursión funcione en la última palabra
+-- Reemplazamos puntuación común por espacios para aislar palabras
+clean_data AS (
+    SELECT 
+        ISIN as id, -- Asumiendo que usas rowid o tienes una PK. Si tienes una col 'id', úsala.
+        REPLACE(REPLACE(REPLACE(REPLACE(Raw_KIID_Text, '.', ' '), ',', ' '), ';', ' '), '  ', ' ') || ' ' AS text
+    FROM fund_kiid_metadata -- <--- CAMBIA ESTO POR EL NOMBRE DE TU TABLA
+),
+
+-- 2. TOKENIZACIÓN (Dividir texto en filas: id, palabra, posición)
+tokens(id, word, rest, pos) AS (
+    -- Caso base: primera palabra
+    SELECT 
+        id, 
+        substr(text, 1, instr(text, ' ') - 1),
+        substr(text, instr(text, ' ') + 1),
+        1
+    FROM clean_data
+    WHERE instr(text, ' ') > 0
+    
+    UNION ALL
+    
+    -- Caso recursivo: siguientes palabras
+    SELECT 
+        id, 
+        substr(rest, 1, instr(rest, ' ') - 1),
+        substr(rest, instr(rest, ' ') + 1),
+        pos + 1
+    FROM tokens
+    WHERE instr(rest, ' ') > 0
+),
+
+-- 3. IDENTIFICAR COINCIDENCIAS
+matches AS (
+    SELECT id, pos as target_pos
+    FROM tokens
+    --WHERE lower(word) IN ('derivados', 'derivatives')
+    WHERE lower(word) IN ('benchmark', 'ndice', 'index', 'referenci', 'msci', 'nasdaq','stoxx','blommberg')
+),
+
+-- 4. RECUPERAR EL CONTEXTO (-3 antes, +2 después)
+context_words AS (
+    SELECT 
+        m.id,
+        m.target_pos,   -- Identificador de esta ocurrencia específica
+        t.pos as word_pos,
+        t.word
+    FROM matches m
+    JOIN tokens t ON m.id = t.id
+    WHERE t.pos BETWEEN m.target_pos - 3 AND m.target_pos + 2
+),
+
+-- 5. RECONSTRUIR FRASES INDIVIDUALES
+phrases AS (
+    SELECT 
+        id,
+        target_pos,
+        GROUP_CONCAT(word, ' ') as fragment
+    FROM (
+        -- Ordenamos para asegurar que GROUP_CONCAT pegue las palabras en orden correcto
+        SELECT * FROM context_words ORDER BY id, target_pos, word_pos
+    )
+    GROUP BY id, target_pos
+)
+
+-- 6. RESULTADO FINAL (Unir frases con #)
+SELECT 
+    id,
+    GROUP_CONCAT(fragment, ' # ') as coincidencias_detectadas
+FROM phrases
+GROUP BY id;
+
+
+
+WITH RECURSIVE
+-- 1. LIMPIEZA PREVIA
+-- Añadimos un espacio al final para asegurar que la recursión funcione en la última palabra
+-- Reemplazamos puntuación común por espacios para aislar palabras
+clean_data AS (
+    SELECT 
+        ISIN as id, -- Asumiendo que usas rowid o tienes una PK. Si tienes una col 'id', úsala.
+        REPLACE(REPLACE(REPLACE(REPLACE(Raw_KIID_Text, '.', ' '), ',', ' '), ';', ' '), '  ', ' ') || ' ' AS text
+    FROM fund_kiid_metadata -- <--- CAMBIA ESTO POR EL NOMBRE DE TU TABLA
+),
+
+-- 2. TOKENIZACIÓN (Dividir texto en filas: id, palabra, posición)
+tokens(id, word, rest, pos) AS (
+    -- Caso base: primera palabra
+    SELECT 
+        id, 
+        substr(text, 1, instr(text, ' ') - 1),
+        substr(text, instr(text, ' ') + 1),
+        1
+    FROM clean_data
+    WHERE instr(text, ' ') > 0
+    
+    UNION ALL
+    
+    -- Caso recursivo: siguientes palabras
+    SELECT 
+        id, 
+        substr(rest, 1, instr(rest, ' ') - 1),
+        substr(rest, instr(rest, ' ') + 1),
+        pos + 1
+    FROM tokens
+    WHERE instr(rest, ' ') > 0
+),
+
+-- 3. IDENTIFICAR COINCIDENCIAS
+matches AS (
+    SELECT id, pos as target_pos
+    FROM tokens
+    WHERE lower(word) IN ('derivados', 'derivatives')
+),
+
+-- 4. RECUPERAR EL CONTEXTO (-3 antes, +2 después)
+context_words AS (
+    SELECT 
+        m.id,
+        m.target_pos,   -- Identificador de esta ocurrencia específica
+        t.pos as word_pos,
+        t.word
+    FROM matches m
+    JOIN tokens t ON m.id = t.id
+    WHERE t.pos BETWEEN m.target_pos - 3 AND m.target_pos + 2
+),
+
+-- 5. RECONSTRUIR FRASES INDIVIDUALES
+phrases AS (
+    SELECT 
+        id,
+        target_pos,
+        GROUP_CONCAT(word, ' ') as fragment
+    FROM (
+        -- Ordenamos para asegurar que GROUP_CONCAT pegue las palabras en orden correcto
+        SELECT * FROM context_words ORDER BY id, target_pos, word_pos
+    )
+    GROUP BY id, target_pos
+)
+
+-- 6. RESULTADO FINAL (Unir frases con #)
+SELECT 
+    id,
+    GROUP_CONCAT(fragment, ' # ') as coincidencias_detectadas
+FROM phrases
+GROUP BY id;
+
+
+--==========================================================
+-- Fin Consulta de busqueda de patrones en SQLITE
+--==========================================================
+
+
+6️⃣ Qué métricas se obtienen por crisis (importante)
+
+Sin añadir nada nuevo, ya obtienes:
+
+max_drawdown (nominal y real)
+
+drawdown_duration
+
+time_to_recovery
+
+👉 exactamente lo que importa en crisis.
+
+No rentabilidad anualizada (no tiene sentido en ventanas cortas).
+
+7️⃣ Reglas explícitas (para evitar errores conceptuales)
+
+❌ No se extrapola fuera de la ventana
+
+❌ No se comparan fondos que no existían
+
+❌ No se “normaliza” duración
+
+✔️ Si no hay recuperación → NaN
+
+✔️ El fondo simplemente “no tiene datos” en esa crisis
+
+8️⃣ Verificación rápida en BD
+
+Tras ejecutar el pipeline:
+
+SELECT isin, metric, horizon, value, real_flag
+FROM fund_metrics
+WHERE horizon LIKE 'crisis_%'
+ORDER BY isin, horizon, metric;

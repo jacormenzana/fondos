@@ -1,0 +1,21 @@
+Arquitectura única de proyecto
+
+project_1/
+│
+├── core/
+│   ├── io.py                 # Excel maestro, KIID, OCR
+│   ├── kiid_parser.py        # parser genérico + 3 nuevos atributos
+│   ├── sqlite_writer.py      # publicación a SQLite
+│   └── pipeline.py           # process_isins genérico
+│
+├── blocks/
+│   ├── monetarios.py
+│   ├── rf_corto.py
+│   ├── rf_flexible.py
+│   ├── renta_variable.py
+│   ├── mixtos.py
+│   ├── alternativos.py
+│   └── pendientes.py
+│
+├── run_block.py              # ejecutor por bloque
+└── schema.sql                # contrato SQLite P1→P2

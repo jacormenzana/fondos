@@ -1,0 +1,2369 @@
+  Checkpoint: 5 fondos ya cargados -> se saltan.
+             Usa --force para recargar todo.
+Descargando NAV para 3179 fondos | desde=2000-01-01 | dry_run=False
+
+  [   1/3179] DE0008474263 -> sin datos (rate limit agotado o clase restringida)
+  [   2/3179] DE0008476532 -> 220 NAV  (2007-12-28 -> 2026-03-10)
+  [   3/3179] DE0008490897 -> 220 NAV  (2007-12-28 -> 2026-03-10)
+  [   4/3179] DE0008490962 -> sin datos (rate limit agotado o clase restringida)
+  [   5/3179] DE0009769703 -> 220 NAV  (2007-12-28 -> 2026-03-10)
+  [   6/3179] DE0009769729 -> 220 NAV  (2007-12-28 -> 2026-03-10)
+  [   7/3179] DE0009769851     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [   8/3179] DE0009769869     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [   9/3179] DE0009769976     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  10/3179] DE0009773010     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  11/3179] DE0009848077     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  12/3179] DE0009848119     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  13/3179] DE000DWS17J0     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  14/3179] DE000DWS18N0     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  15/3179] DE000DWS18Q3     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  16/3179] DE000DWS1U90     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  17/3179] DE000DWS1UL0     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  18/3179] DE000DWS1UN6     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  19/3179] DE000DWS1VB9     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  20/3179] DE000DWS22P7     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  21/3179] DE000DWS22Q5     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  22/3179] DE000DWS24G2     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  23/3179] DE000DWS29E6     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  24/3179] DE000DWS29F3     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  25/3179] DE000DWS29J5     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  26/3179] DE000DWS2EA5     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  27/3179] DE000DWS2MA8     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  28/3179] DE000DWS2NP4     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  29/3179] DE000DWS2R94     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  30/3179] DE000DWS2SA5     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  31/3179] DE000DWS2SH0     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  32/3179] DE000DWS2SJ6     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  33/3179] DE000DWS2SL2     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  34/3179] DE000DWS2SM0     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  35/3179] DE000DWS2XX7     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  36/3179] DE000DWS2XY5     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  37/3179] DE000DWS3LN1 -> 24 NAV  (2024-04-30 -> 2026-03-10)
+  [  38/3179] ES0122762000     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  39/3179] ES0125756009     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  40/3179] ES0125756017     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  41/3179] ES0125757007     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  42/3179] ES0125757015     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  43/3179] ES0125757023     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  44/3179] ES0125776007     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  45/3179] ES0125776015     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  46/3179] ES0125776031     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  47/3179] ES0126547035     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  48/3179] ES0132214034     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  49/3179] ES0139012001     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  50/3179] ES0139012035     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  51/3179] ES0145553006     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  52/3179] ES0145553014     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  53/3179] ES0155598008     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  54/3179] ES0155598032     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  55/3179] FR0000447823     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  56/3179] FR0000989626     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  57/3179] FR0007008750     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  58/3179] FR0007435920     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  59/3179] FR0007457890     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  60/3179] FR0010016477     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  61/3179] FR0010027623     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  62/3179] FR0010135103     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  63/3179] FR0010148981     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  64/3179] FR0010149120     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  65/3179] FR0010149161     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  66/3179] FR0010149179     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  67/3179] FR0010149203     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  68/3179] FR0010149302     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  69/3179] FR0010251660     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  70/3179] FR0010288316     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  71/3179] FR0010306142     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  72/3179] FR0010312660     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  73/3179] FR0010664052     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  74/3179] FR0010664078     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  75/3179] FR0010664086     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  76/3179] FR0010760694     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  77/3179] FR0010807123     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  78/3179] FR0010820332     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  79/3179] FR0010830844     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  80/3179] FR0010830885     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  81/3179] FR0010836163     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  82/3179] FR0010909531     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  83/3179] FR0010917658     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  84/3179] FR0011034495     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  85/3179] FR0011088657     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  86/3179] FR0011147446     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  87/3179] FR0011176635     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  88/3179] FR0011253624     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  89/3179] FR0011261197     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  90/3179] FR0011269067     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  91/3179] FR0011269588     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  92/3179] FR0011311414     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  93/3179] FR0011365212     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  94/3179] FR0011399633     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  95/3179] FR0011408764     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  96/3179] FR0011847409     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  97/3179] FR0011885797 -> 142 NAV  (2014-06-30 -> 2026-03-10)
+  [  98/3179] FR0012088771     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [  99/3179] FR0012903276     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 100/3179] FR0012927184     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+
+  -- Cooldown tras 100 fondos: esperando 82s --
+
+  [ 101/3179] FR0013278702     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 102/3179] FR0013289386     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 103/3179] FR0013296332     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 104/3179] FR0013297561     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 105/3179] FR0013346079     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 106/3179] FR0013367265     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 107/3179] FR0013367281     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 108/3179] FR0013393188     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 109/3179] FR0013439478     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 110/3179] FR0013460920     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 111/3179] FR0013460961     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 112/3179] FR0013534898     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 113/3179] FR0013535077     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 114/3179] FR00140081Y1     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 115/3179] FR0014008W22     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 116/3179] FR0014008W55     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 117/3179] FR0014008WH6     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 118/3179] FR001400BU49     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 119/3179] FR001400BU56 -> 43 NAV  (2022-09-30 -> 2026-03-10)
+  [ 120/3179] FR001400BU98     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 121/3179] FR001400CJ01     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 122/3179] FR001400I0X7     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 123/3179] FR001400JGB5     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 124/3179] FR001400JGE9     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 125/3179] FR001400JGG4     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 126/3179] FR001400JGI0     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 127/3179] FR001400RZ04     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 128/3179] FR001400S680     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 129/3179] FR001400U4S3     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 130/3179] FR0050000860     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 131/3179] GB00B0WGY707     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 132/3179] GB00B60SM090     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 133/3179] GB00BMW6N332     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 134/3179] IE0000J01ZR0     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 135/3179] IE0001257090     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 136/3179] IE0002122038     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 137/3179] IE0002175093     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 138/3179] IE0002458671     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 139/3179] IE0002459539     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 140/3179] IE0002460198     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 141/3179] IE0002461055     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 142/3179] IE0002639551     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 143/3179] IE0002639668     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 144/3179] IE0002639775     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 145/3179] IE0003323494     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 146/3179] IE0003NS1VX6     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 147/3179] IE0004445015     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 148/3179] IE0004445239     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 149/3179] IE0005023803 -> 223 NAV  (2007-06-29 -> 2026-03-11)
+  [ 150/3179] IE0005023910     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 151/3179] IE0005300136     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 152/3179] IE0005300243     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 153/3179] IE0005300912     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 154/3179] IE0005302959     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 155/3179] IE0005304773     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 156/3179] IE0006ZM35T5     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 157/3179] IE0007201266     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 158/3179] IE0007286036     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 159/3179] IE0007471471     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 160/3179] IE0007471927     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 161/3179] IE0007472990     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 162/3179] IE0007987690     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 163/3179] IE0007987708     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 164/3179] IE0007SUF6S0     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 165/3179] IE0008365516     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 166/3179] IE0009355771     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 167/3179] IE0009356076     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 168/3179] IE0009514989     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 169/3179] IE0009531827     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 170/3179] IE0009WDW8C2     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 171/3179] IE0009X9LOF1     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 172/3179] IE000AGOTQL9     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 173/3179] IE000FFGBBP7     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 174/3179] IE000J986523     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 175/3179] IE000JDQ7U74     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 176/3179] IE000JXUTJG7     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 177/3179] IE000NGCG706     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 178/3179] IE000T1U29K2     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 179/3179] IE000VOGDDG7     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 180/3179] IE000XOK9474 -> 58 NAV  (2021-06-30 -> 2026-03-10)
+  [ 181/3179] IE0031069275     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 182/3179] IE0031069499     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 183/3179] IE0031080868     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 184/3179] IE0031296019     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 185/3179] IE0031786696     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 186/3179] IE0031787223     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 187/3179] IE0032125126     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 188/3179] IE0032126645     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 189/3179] IE0032568887     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 190/3179] IE0032593158     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 191/3179] IE0032620787     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 192/3179] IE0032875985     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 193/3179] IE0032876397     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 194/3179] IE0033386453     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 195/3179] IE0033609722     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 196/3179] IE0034085260     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 197/3179] IE0034277479     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 198/3179] IE00B0105X63     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 199/3179] IE00B0122Y20     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 200/3179] IE00B01FHV31     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+
+  -- Cooldown tras 200 fondos: esperando 81s --
+
+  [ 201/3179] IE00B03HCZ61     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 202/3179] IE00B03HD191 -> 280 NAV  (2002-12-31 -> 2026-03-10)
+  [ 203/3179] IE00B03HD209     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 204/3179] IE00B03HD316     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 205/3179] IE00B04GQR24     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 206/3179] IE00B04GQT48     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 207/3179] IE00B04GQX83     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 208/3179] IE00B05K1Q71     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 209/3179] IE00B05QM511     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 210/3179] IE00B063CF11     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 211/3179] IE00B073NJ12     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 212/3179] IE00B0D44176     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 213/3179] IE00B0M2Y900     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 214/3179] IE00B0MD9M11     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 215/3179] IE00B0V9SY54     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 216/3179] IE00B11XYY66     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 217/3179] IE00B11XZ103     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 218/3179] IE00B11XZ210     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 219/3179] IE00B11XZ327     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 220/3179] IE00B11XZ434     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 221/3179] IE00B11XZ764     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 222/3179] IE00B11XZ988     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 223/3179] IE00B11XZB05     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 224/3179] IE00B120J296     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 225/3179] IE00B138GV00     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 226/3179] IE00B18GC888     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 227/3179] IE00B18GCB14     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 228/3179] IE00B193MK07     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 229/3179] IE00B19Z3920     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 230/3179] IE00B19Z4B17     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 231/3179] IE00B19Z4C24     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 232/3179] IE00B19Z6F94     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 233/3179] IE00B19Z6G02 -> 210 NAV  (2008-10-31 -> 2026-03-10)
+  [ 234/3179] IE00B19Z9612     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 235/3179] IE00B1B82251     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 236/3179] IE00B1G3DH73     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 237/3179] IE00B1W3WK72     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 238/3179] IE00B1W3X261     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 239/3179] IE00B1W56J03     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 240/3179] IE00B1Z6D669     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 241/3179] IE00B23Z7J34     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 242/3179] IE00B2478W85     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 243/3179] IE00B283G405     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 244/3179] IE00B28D5Z40     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 245/3179] IE00B29LM454     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 246/3179] IE00B2Q1FK59     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 247/3179] IE00B2Q1FL66     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 248/3179] IE00B2R34T20     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 249/3179] IE00B3D1YW09     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 250/3179] IE00B3FNF870     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 251/3179] IE00B3K7XK29     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 252/3179] IE00B3KQH184     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 253/3179] IE00B3KQH291     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 254/3179] IE00B3KYRN47     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 255/3179] IE00B3L10570     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 256/3179] IE00B3Q8M574     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 257/3179] IE00B3QDMK77     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 258/3179] IE00B3QDZQ43     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 259/3179] IE00B3V8Y234     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 260/3179] IE00B3VXGD32     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 261/3179] IE00B3VYV533     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 262/3179] IE00B3ZJFC95     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 263/3179] IE00B41N0724     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 264/3179] IE00B42N9S52 -> 199 NAV  (2009-09-30 -> 2026-03-10)
+  [ 265/3179] IE00B42NVC37     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 266/3179] IE00B42W4L06     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 267/3179] IE00B433M743     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 268/3179] IE00B4468526     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 269/3179] IE00B455LS29     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 270/3179] IE00B45H7020     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 271/3179] IE00B46MFP70     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 272/3179] IE00B4KZ8V93     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 273/3179] IE00B4R5BP74     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 274/3179] IE00B4TG9K96     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 275/3179] IE00B4TJVF73     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 276/3179] IE00B4WX2D18     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 277/3179] IE00B4YYY703     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 278/3179] IE00B52VLZ70     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 279/3179] IE00B52VP557     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 280/3179] IE00B530N462     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 281/3179] IE00B53VBZ63     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 282/3179] IE00B55MWC15     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 283/3179] IE00B566G866     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 284/3179] IE00B567SW70     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 285/3179] IE00B59GC072     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 286/3179] IE00B5B5L056     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 287/3179] IE00B5KMD450     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 288/3179] IE00B66BK865     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 289/3179] IE00B67T5G21     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 290/3179] IE00B6RVWW34     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 291/3179] IE00B78FDY06     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 292/3179] IE00B7F9FM77     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 293/3179] IE00B7KFL990     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 294/3179] IE00B7KXQ091     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 295/3179] IE00B7MC4336     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 296/3179] IE00B7VSFQ23 -> 116 NAV  (2016-08-31 -> 2026-03-10)
+  [ 297/3179] IE00B7Z25N71     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 298/3179] IE00B80G9288     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 299/3179] IE00B83BYG91     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 300/3179] IE00B84J9L26     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+
+  -- Cooldown tras 300 fondos: esperando 89s --
+
+  [ 301/3179] IE00B86Y3465     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 302/3179] IE00B873BF95     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 303/3179] IE00B87KCF77     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 304/3179] IE00B896JM91     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 305/3179] IE00B8BS6228     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 306/3179] IE00B8D0PH41     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 307/3179] IE00B8DTNZ55     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 308/3179] IE00B8JDQ960     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 309/3179] IE00B8K7V925     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 310/3179] IE00B8N0MW85     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 311/3179] IE00B8VVSZ88     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 312/3179] IE00B905SX62     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 313/3179] IE00B957J671     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 314/3179] IE00B98CPZ00     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 315/3179] IE00B9CCRM71     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 316/3179] IE00B9DCSJ09     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 317/3179] IE00BD008T51     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 318/3179] IE00BD0NC037 -> 107 NAV  (2017-05-31 -> 2026-03-10)
+  [ 319/3179] IE00BD0NCM55     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 320/3179] IE00BD0NCQ93     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 321/3179] IE00BD0NCS18     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 322/3179] IE00BD0NCT25     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 323/3179] IE00BD87Q831     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 324/3179] IE00BDBVWJ56     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 325/3179] IE00BDCRG239     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 326/3179] IE00BDFB7290     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 327/3179] IE00BDFB7308     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 328/3179] IE00BDFVDR63     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 329/3179] IE00BDGV0290     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 330/3179] IE00BDRK7J14     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 331/3179] IE00BDRK7P73     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 332/3179] IE00BDRK7T12     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 333/3179] IE00BDT57Y96     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 334/3179] IE00BDTM8703     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 335/3179] IE00BDZS0987     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 336/3179] IE00BF0GL212     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 337/3179] IE00BF0GL436     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 338/3179] IE00BF2MW353     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 339/3179] IE00BF2MW460     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 340/3179] IE00BF2MW684     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 341/3179] IE00BF6T7P95     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 342/3179] IE00BFRSV973     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 343/3179] IE00BFRSYJ83     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 344/3179] IE00BFRSYK98     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 345/3179] IE00BFRSYS74     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 346/3179] IE00BFX1VK15     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 347/3179] IE00BFZ89957     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 348/3179] IE00BFZ89B79     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 349/3179] IE00BG800X66 -> 148 NAV  (2013-12-31 -> 2026-03-10)
+  [ 350/3179] IE00BG800Y73     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 351/3179] IE00BH65QN23     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 352/3179] IE00BH65QP47     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 353/3179] IE00BHR40R02     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 354/3179] IE00BHTFVZ61     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 355/3179] IE00BJ023R69     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 356/3179] IE00BJGT6Q17     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 357/3179] IE00BJV3R547     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 358/3179] IE00BJVNH654     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 359/3179] IE00BJVNH761     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 360/3179] IE00BK26DX94     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 361/3179] IE00BK74P760     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 362/3179] IE00BKRCMM42     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 363/3179] IE00BKT1DL55     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 364/3179] IE00BKT1DM62     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 365/3179] IE00BKTH5L76     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 366/3179] IE00BKTH5S46     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 367/3179] IE00BKV0W243     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 368/3179] IE00BKV0W359     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 369/3179] IE00BL0BLB70     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 370/3179] IE00BL0BLF19     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 371/3179] IE00BL6KD459     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 372/3179] IE00BLF7P290     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 373/3179] IE00BLF7P308     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 374/3179] IE00BLF9YH30     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 375/3179] IE00BLG2W007     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 376/3179] IE00BLH0Z375     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 377/3179] IE00BLH0ZN77     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 378/3179] IE00BLP58K20     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 379/3179] IE00BLP5S460     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 380/3179] IE00BLZH2R37 -> 139 NAV  (2014-09-30 -> 2026-03-10)
+  [ 381/3179] IE00BM95B514     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 382/3179] IE00BM95B621     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 383/3179] IE00BMW4NG08     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 384/3179] IE00BMW4NH15     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 385/3179] IE00BMW4NJ39     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 386/3179] IE00BMW4SW11     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 387/3179] IE00BMZ3NN11     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 388/3179] IE00BN6QDF87     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 389/3179] IE00BN6QDH02     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 390/3179] IE00BN71SS04     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 391/3179] IE00BN783L91     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 392/3179] IE00BNC17W29     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 393/3179] IE00BRGCKS69     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 394/3179] IE00BTN23623     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 395/3179] IE00BV1VS594     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 396/3179] IE00BWGCDT37     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 397/3179] IE00BWY53M78     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 398/3179] IE00BYM81J55     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 399/3179] IE00BYQQ1F19     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 400/3179] IE00BYVJRF70     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+
+  -- Cooldown tras 400 fondos: esperando 117s --
+
+  [ 401/3179] IE00BYW5Q247 -> 110 NAV  (2017-02-28 -> 2026-03-10)
+  [ 402/3179] IE00BYX5N771     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 403/3179] IE00BYX5NK04     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 404/3179] IE00BYX5NX33     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 405/3179] IE00BYX5P602     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 406/3179] IE00BYZNBK89     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 407/3179] IE00BZ4D7085     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 408/3179] IE00BZ4D7648     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 409/3179] IE00BZ60KT75     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 410/3179] IE00BZ60KV97     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 411/3179] IE00BZ6SDZ85     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 412/3179] LU0003549028     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 413/3179] LU0006277684     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 414/3179] LU0006344922     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 415/3179] LU0006391097     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 416/3179] LU0011815304     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 417/3179] LU0011846440     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 418/3179] LU0011850392     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 419/3179] LU0011889846     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 420/3179] LU0012119607     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 421/3179] LU0028118809     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 422/3179] LU0028119013     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 423/3179] LU0029761532     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 424/3179] LU0029873410     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 425/3179] LU0033034892     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 426/3179] LU0033036590     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 427/3179] LU0033040782     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 428/3179] LU0033043885     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 429/3179] LU0033050237     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 430/3179] LU0033502740     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 431/3179] LU0034353002 -> 221 NAV  (2006-08-21 -> 2026-03-10)
+  [ 432/3179] LU0035765741     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 433/3179] LU0042381250     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 434/3179] LU0046217351     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 435/3179] LU0046676465     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 436/3179] LU0048573561     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 437/3179] LU0048578792     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 438/3179] LU0048579097     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 439/3179] LU0048580004     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 440/3179] LU0048584766 -> ERROR resolviendo fondo: Error 500
+            for the api https://global.morningstar.com/api/v1/en-gb/tools/screener/_data. Message : Internal Server Error.
+  [ 441/3179] LU0049785446     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 442/3179] LU0049785792     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 443/3179] LU0049842262     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 444/3179] LU0050372472     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 445/3179] LU0052474979     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 446/3179] LU0052588471     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 447/3179] LU0052620894     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 448/3179] LU0055631609     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 449/3179] LU0056508442     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 450/3179] LU0056886558     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 451/3179] LU0058720904     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 452/3179] LU0058908533     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 453/3179] LU0061474960     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 454/3179] LU0062756647     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 455/3179] LU0063729296 -> ERROR resolviendo fondo: Error 502
+            for the api https://global.morningstar.com/api/v1/fr/stores/filters. Message : Bad Gateway.
+  [ 456/3179] LU0064675639     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 457/3179] LU0066341099     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 458/3179] LU0067412154     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 459/3179] LU0068578508     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 460/3179] LU0068770873     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 461/3179] LU0069152568     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 462/3179] LU0070177588     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 463/3179] LU0070212591     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 464/3179] LU0070214290     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 465/3179] LU0070214613 -> 316 NAV  (1999-12-31 -> 2026-03-10)
+  [ 466/3179] LU0070992663     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 467/3179] LU0072462186     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 468/3179] LU0072462343     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 469/3179] LU0072462426     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 470/3179] LU0072913022     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 471/3179] LU0073229253     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 472/3179] LU0073229840     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 473/3179] LU0073230004     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 474/3179] LU0073230426     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 475/3179] LU0073232471     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 476/3179] LU0073234253     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 477/3179] LU0073235904     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 478/3179] LU0073254285     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 479/3179] LU0073255761     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 480/3179] LU0075056555     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 481/3179] LU0075938133     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 482/3179] LU0076315455     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 483/3179] LU0076532638     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 484/3179] LU0078277505     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 485/3179] LU0079556006     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 486/3179] LU0080237943     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 487/3179] LU0082616367     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 488/3179] LU0083138064     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 489/3179] LU0083344555     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 490/3179] LU0084617165     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 491/3179] LU0085136942     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 492/3179] LU0086177085     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 493/3179] LU0086913042     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 494/3179] LU0086914362     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 495/3179] LU0087133087     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 496/3179] LU0087412390 -> 221 NAV  (2006-08-21 -> 2026-03-10)
+  [ 497/3179] LU0087657150     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 498/3179] LU0088814487     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 499/3179] LU0088927925     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 500/3179] LU0090689299     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+
+  -- Cooldown tras 500 fondos: esperando 92s --
+
+  [ 501/3179] LU0090830497     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 502/3179] LU0090830810     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 503/3179] LU0090830901     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 504/3179] LU0090841262     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 505/3179] LU0090845842     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 506/3179] LU0093502762     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 507/3179] LU0093503141     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 508/3179] LU0093503497     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 509/3179] LU0093503737     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 510/3179] LU0093503810     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 511/3179] LU0093504115     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 512/3179] LU0093504206     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 513/3179] LU0093505864     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 514/3179] LU0093666013     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 515/3179] LU0094159042     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 516/3179] LU0094557526     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 517/3179] LU0094560744 -> 316 NAV  (1999-12-31 -> 2026-03-10)
+  [ 518/3179] LU0095024591     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 519/3179] LU0095030564     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 520/3179] LU0095938881     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 521/3179] LU0096362180     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 522/3179] LU0099161993     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 523/3179] LU0099574567     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 524/3179] LU0099575291     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 525/3179] LU0099730524     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 526/3179] LU0101689882     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 527/3179] LU0101692670     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 528/3179] LU0102737144     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 529/3179] LU0102737730     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 530/3179] LU0102827648     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 531/3179] LU0104884605     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 532/3179] LU0104884860     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 533/3179] LU0104885248     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 534/3179] LU0106234643     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 535/3179] LU0106234726     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 536/3179] LU0106235293     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 537/3179] LU0106235376     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 538/3179] LU0106235533     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 539/3179] LU0106235707     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 540/3179] LU0106235962     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 541/3179] LU0106236002     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 542/3179] LU0106237406     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 543/3179] LU0106238040     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 544/3179] LU0106238719     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 545/3179] LU0106239360     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 546/3179] LU0106259558     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 547/3179] LU0106259632     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 548/3179] LU0106259988     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 549/3179] LU0106261612     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 550/3179] LU0106261885     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 551/3179] LU0106817157     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 552/3179] LU0106819104     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 553/3179] LU0106831901     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 554/3179] LU0106959298     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 555/3179] LU0107072935     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 556/3179] LU0107086646     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 557/3179] LU0107087537     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 558/3179] LU0108066076     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 559/3179] LU0108415935     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 560/3179] LU0108416313     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 561/3179] LU0108459040     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 562/3179] LU0109391861     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 563/3179] LU0109392836     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 564/3179] LU0109394709     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 565/3179] LU0109395268     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 566/3179] LU0110060430     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 567/3179] LU0111493325     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 568/3179] LU0111548326     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 569/3179] LU0111549134     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 570/3179] LU0112467450     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 571/3179] LU0112497440     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 572/3179] LU0113257694     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 573/3179] LU0113257934     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 574/3179] LU0113258742     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 575/3179] LU0113993801     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 576/3179] LU0114720955     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 577/3179] LU0114721177     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 578/3179] LU0114721508     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 579/3179] LU0114722498 -> 307 NAV  (2000-09-29 -> 2026-03-10)
+  [ 580/3179] LU0114722738     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 581/3179] LU0114722902     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 582/3179] LU0114723033     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 583/3179] LU0114760746     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 584/3179] LU0115096736     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 585/3179] LU0115097544     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 586/3179] LU0115098948     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 587/3179] LU0115099839     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 588/3179] LU0115103029     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 589/3179] LU0115139569     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 590/3179] LU0115141201     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 591/3179] LU0115141466     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 592/3179] LU0115142274     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 593/3179] LU0115143082     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 594/3179] LU0115143165     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 595/3179] LU0115143595     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 596/3179] LU0115143918     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 597/3179] LU0115144304     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 598/3179] LU0115144486     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 599/3179] LU0115759606     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 600/3179] LU0115760109     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+
+  -- Cooldown tras 600 fondos: esperando 119s --
+
+  [ 601/3179] LU0115763970 -> 307 NAV  (2000-09-29 -> 2026-03-10)
+  [ 602/3179] LU0115764192     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 603/3179] LU0115764275     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 604/3179] LU0115764358     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 605/3179] LU0115765595     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 606/3179] LU0115765678     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 607/3179] LU0115766213     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 608/3179] LU0115767021     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 609/3179] LU0115768185     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 610/3179] LU0115769746     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 611/3179] LU0115773425     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 612/3179] LU0115774233     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 613/3179] LU0117838564     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 614/3179] LU0117841949     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 615/3179] LU0117858166     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 616/3179] LU0117858596     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 617/3179] LU0117858679     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 618/3179] LU0117858752     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 619/3179] LU0117859560     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 620/3179] LU0117881226     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 621/3179] LU0117884675     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 622/3179] LU0117885052     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 623/3179] LU0117895366     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 624/3179] LU0117897578     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 625/3179] LU0117898204     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 626/3179] LU0118140002     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 627/3179] LU0119063039     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 628/3179] LU0119066727     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 629/3179] LU0119124435     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 630/3179] LU0119124781     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 631/3179] LU0119124864     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 632/3179] LU0119195450 -> 316 NAV  (1999-12-31 -> 2026-03-10)
+  [ 633/3179] LU0119195963     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 634/3179] LU0119196938     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 635/3179] LU0119197159     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 636/3179] LU0119620176     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 637/3179] LU0119620416     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 638/3179] LU0119750205     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 639/3179] LU0119753308     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 640/3179] LU0120689640     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 641/3179] LU0121216955     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 642/3179] LU0121217334     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 643/3179] LU0121217920     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 644/3179] LU0122376428     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 645/3179] LU0122377152     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 646/3179] LU0122379950     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 647/3179] LU0122380701     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 648/3179] LU0122613499     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 649/3179] LU0122613572     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 650/3179] LU0122613655     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 651/3179] LU0122613903     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 652/3179] LU0122614380     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 653/3179] LU0123358656     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 654/3179] LU0124384867     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 655/3179] LU0124386052     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 656/3179] LU0124675678     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 657/3179] LU0125750504     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 658/3179] LU0125944966     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 659/3179] LU0125948108     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 660/3179] LU0125948280     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 661/3179] LU0125951151     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 662/3179] LU0125979160     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 663/3179] LU0127786431     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 664/3179] LU0127786860 -> 316 NAV  (1999-12-31 -> 2026-03-10)
+  [ 665/3179] LU0128467544     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 666/3179] LU0128469839     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 667/3179] LU0128470845     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 668/3179] LU0128472205     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 669/3179] LU0128473435     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 670/3179] LU0128488383     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 671/3179] LU0128489514     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 672/3179] LU0128490280     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 673/3179] LU0128492732     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 674/3179] LU0128494191     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 675/3179] LU0128494514     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 676/3179] LU0128494944     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 677/3179] LU0128495834     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 678/3179] LU0128496485     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 679/3179] LU0128497707     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 680/3179] LU0128497889     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 681/3179] LU0128498267     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 682/3179] LU0128499588     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 683/3179] LU0128520375     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 684/3179] LU0128521001     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 685/3179] LU0128522157     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 686/3179] LU0128640439     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 687/3179] LU0129373261     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 688/3179] LU0129412937     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 689/3179] LU0129441100     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 690/3179] LU0129445192     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 691/3179] LU0129488242     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 692/3179] LU0130103400     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 693/3179] LU0130731390     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 694/3179] LU0130731713     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 695/3179] LU0130732877     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 696/3179] LU0130733172 -> 297 NAV  (2001-07-31 -> 2026-03-10)
+  [ 697/3179] LU0131126574     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 698/3179] LU0131211418     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 699/3179] LU0132601682     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 700/3179] LU0132635235     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+
+  -- Cooldown tras 700 fondos: esperando 102s --
+
+  [ 701/3179] LU0132668087     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 702/3179] LU0133085943     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 703/3179] LU0133096635     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 704/3179] LU0133264795     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 705/3179] LU0133265339     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 706/3179] LU0133265412     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 707/3179] LU0133266147     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 708/3179] LU0133266659     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 709/3179] LU0133706050     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 710/3179] LU0133706308     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 711/3179] LU0133706993     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 712/3179] LU0133710243     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 713/3179] LU0133712025     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 714/3179] LU0133713346     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 715/3179] LU0133716109     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 716/3179] LU0133717503 -> 310 NAV  (2000-06-30 -> 2026-03-11)
+  [ 717/3179] LU0135487659     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 718/3179] LU0135487733     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 719/3179] LU0135928025     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 720/3179] LU0135928298     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 721/3179] LU0135928611     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 722/3179] LU0135992385     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 723/3179] LU0136043394     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 724/3179] LU0136043550     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 725/3179] LU0137005913     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 726/3179] LU0140362707     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 727/3179] LU0140362889     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 728/3179] LU0140363002     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 729/3179] LU0140363267     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 730/3179] LU0140363697     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 731/3179] LU0140420323     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 732/3179] LU0141799501     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 733/3179] LU0143551892     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 734/3179] LU0144751095     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 735/3179] LU0145634076     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 736/3179] LU0145635123     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 737/3179] LU0145644893     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 738/3179] LU0145647052     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 739/3179] LU0145647300     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 740/3179] LU0145647722     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 741/3179] LU0145648290     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 742/3179] LU0145648886     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 743/3179] LU0145652052     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 744/3179] LU0145652649     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 745/3179] LU0145655824     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 746/3179] LU0145656475     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 747/3179] LU0145656715     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 748/3179] LU0145657366 -> 225 NAV  (2002-10-03 -> 2026-03-10)
+  [ 749/3179] LU0146257711     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 750/3179] LU0146259923     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 751/3179] LU0147389919     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 752/3179] LU0147394679     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 753/3179] LU0147396450     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 754/3179] LU0147401631     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 755/3179] LU0147401714     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 756/3179] LU0147408487     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 757/3179] LU0147944259     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 758/3179] LU0148742835     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 759/3179] LU0151324422     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 760/3179] LU0151324935     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 761/3179] LU0151774626     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 762/3179] LU0152638903     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 763/3179] LU0152639208     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 764/3179] LU0152928064     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 765/3179] LU0152980495     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 766/3179] LU0152981543     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 767/3179] LU0152984307     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 768/3179] LU0153585137     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 769/3179] LU0153585210     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 770/3179] LU0153585723     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 771/3179] LU0153585996     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 772/3179] LU0154234636     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 773/3179] LU0154235443     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 774/3179] LU0154236417     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 775/3179] LU0154236920     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 776/3179] LU0154237225     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 777/3179] LU0154237738     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 778/3179] LU0156671413     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 779/3179] LU0157178582     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 780/3179] LU0157179127 -> 59 NAV  (2021-05-28 -> 2026-03-11)
+  [ 781/3179] LU0157182857     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 782/3179] LU0157183665     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 783/3179] LU0157217158     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 784/3179] LU0157929810     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 785/3179] LU0158187608     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 786/3179] LU0159042083     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 787/3179] LU0159050771     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 788/3179] LU0159050938     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 789/3179] LU0159052710     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 790/3179] LU0159053015     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 791/3179] LU0159059210     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 792/3179] LU0159405223     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 793/3179] LU0161304786     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 794/3179] LU0161305163     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 795/3179] LU0161305593     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 796/3179] LU0161687693     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 797/3179] LU0161942635     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 798/3179] LU0162626096     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 799/3179] LU0162658883     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 800/3179] LU0162659931     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+
+  -- Cooldown tras 800 fondos: esperando 106s --
+
+  [ 801/3179] LU0164100710 -> 316 NAV  (1999-12-31 -> 2026-03-10)
+  [ 802/3179] LU0164852419     [error/intento 1] Error 401
+            for the api https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries. Message : Unauthorized.
+-> sin datos (rate limit agotado o clase restringida)
+  [ 803/3179] LU0164858028 

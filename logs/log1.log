@@ -1,0 +1,72 @@
+(des) c:\desarrollo\fondos>python migrate_to_fondos.py --dry-run
+[19:59:37] Origen : proyecto1\p1_output.sqlite
+[19:59:37] Destino: db\fondos.sqlite
+[19:59:37] Schema : db\schema_fondos.sql
+[19:59:37]
+Modo DRY-RUN: solo se analiza el origen.
+[19:59:37]   fund_master: 3204 registros
+[19:59:37]   fund_kiid_metadata: 3204 registros
+[19:59:37]   ingestion_log: 8400 registros
+[19:59:37]   fund_nav_monthly: 0 registros
+[19:59:37]   fund_metrics: 0 registros
+
+(des) c:\desarrollo\fondos>python migrate_to_fondos.py
+[20:00:34] Origen : proyecto1\p1_output.sqlite
+[20:00:34] Destino: db\fondos.sqlite
+[20:00:34] Schema : db\schema_fondos.sql
+[20:00:34]
+── Creando schema ──────────────────────────────────────
+[20:00:35]   Schema creado correctamente
+[20:00:35]
+── Copiando tablas P1 ──────────────────────────────────
+[20:00:35]   'fund_master': 3204 registros copiados
+[20:00:39]   'fund_kiid_metadata': 3204 registros copiados
+[20:00:40]   'ingestion_log': 8400 registros copiados
+[20:00:40]   'fund_nav_monthly': vacía en origen — nada que copiar
+[20:00:40]
+── Migrando fund_metrics ───────────────────────────────
+[20:00:40]   'fund_metrics': placeholder vacío en origen — nada que migrar
+[20:00:40]
+── Validación ──────────────────────────────────────────
+[20:00:40]   ✓  fund_master                     origen=  3204  destino=  3204
+[20:00:40]   ✓  fund_kiid_metadata              origen=  3204  destino=  3204
+[20:00:40]   ✓  ingestion_log                   origen=  8400  destino=  8400
+[20:00:40]   ✓  fund_nav_monthly                origen=     0  destino=     0
+[20:00:40]   ✓  fund_metrics (canónico P2)      migrados_origen=0  total_destino=0
+[20:00:40]   ✓  series_macro                    (tabla nueva P2)
+[20:00:40]   ✓  series_benchmark                (tabla nueva P2)
+[20:00:40]   ✓  series_inflation                (tabla nueva P2)
+[20:00:40]   ✓  p2_pipeline_log                 (tabla nueva P2)
+[20:00:40]   ✓  fund_scores                     (tabla nueva P3)
+[20:00:40]   ✓  portfolio_scenarios             (tabla nueva P3)
+[20:00:40]   ✓  portfolio_weights               (tabla nueva P3)
+[20:00:40]   ✓  NAV sin fondo en fund_master: 0
+[20:00:40] ────────────────────────────────────────────────────────
+[20:00:40]
+✓ Migración completada con éxito → db\fondos.sqlite
+[20:00:40]   El fichero original queda intacto en: proyecto1\p1_output.sqlite
+[20:00:40]   Actualiza los config.py de P1 y P2 para apuntar a: db\fondos.sqlite
+
+(des) c:\desarrollo\fondos>python init_db.py --check-only
+Traceback (most recent call last):
+  File "c:\desarrollo\fondos\init_db.py", line 40, in <module>
+    from core.schema_checks import assert_schema_alignment
+ModuleNotFoundError: No module named 'core'
+
+(des) c:\desarrollo\fondos>tiem
+"tiem" no se reconoce como un comando interno o externo,
+programa o archivo por lotes ejecutable.
+
+(des) c:\desarrollo\fondos>time
+La hora actual es: 20:12:59,63
+Escriba una nueva hora:
+
+(des) c:\desarrollo\fondos>python init_db.py --check-only
+Traceback (most recent call last):
+  File "c:\desarrollo\fondos\init_db.py", line 40, in <module>
+    from core.schema_checks import assert_schema_alignment
+ModuleNotFoundError: No module named 'core'
+
+(des) c:\desarrollo\fondos>
+
+
