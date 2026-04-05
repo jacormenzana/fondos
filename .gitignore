@@ -1,3 +1,8 @@
 *.sqlite
 proyecto1/p1_output.sqlite
+proyecto1/log
 db/fondos.sqlite
+upload/proyecto1upload
+upload/proyecto2upload
+upload/proyecto3upload
+upload/sharedupload
