@@ -54,4 +54,10 @@ def get_connection(db_path: Optional[Path] = None) -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys = ON;")
     conn.execute("PRAGMA journal_mode = WAL;")
     conn.row_factory = sqlite3.Row
+    # isolation_level=None: delega control de transacciones a SQLite y al
+    # código explícito (with conn:). Evita que Python abra transacciones
+    # implícitas que interfieren con ON CONFLICT DO UPDATE (SQLite 3.24+).
+    # Sin esto, executescript() en create_schema resetea isolation_level a ''
+    # y el upsert falla con "ON CONFLICT clause does not match any PK".
+    conn.isolation_level = None
     return conn

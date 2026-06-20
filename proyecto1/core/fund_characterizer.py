@@ -1,6 +1,52 @@
 # -*- coding: utf-8 -*-
 """
-proyecto1/core/fund_characterizer.py  — v17
+proyecto1/core/fund_characterizer.py  — v21
+
+Cambios v21 (2026-04-29):
+  BL-49/DRY  Consolidación DRY de detect_currency_hedged() (Principio #2).
+             Causa raíz: la fase 2 de detección desde texto KIID estaba
+             implementada dos veces de forma independiente:
+               - fund_characterizer.detect_currency_hedged() líneas 557-590
+                 (10 patrones de substring sobre lower())
+               - classify_utils.detect_currency_hedged_from_kiid()
+                 (18 patrones pre-compilados con re.compile, H01-H10 / U01-U08)
+             Fix: la fase 2 (KIID) de detect_currency_hedged() se sustituye
+             por delegación en detect_currency_hedged_from_kiid() de
+             classify_utils. Un único punto de verdad para patrones KIID.
+             La fase 1 (detección por nombre, patrones _HEDGED/_UNHEDGED)
+             permanece intacta — no tiene equivalente en classify_utils.
+             Import classify_utils ampliado: detect_currency_hedged_from_kiid.
+
+Cambios v20 (2026-04-25):
+  BL-53  detect_sector_focus(): eliminado hardcode 'Real Assets' (inglés).
+         El mapa completo de themes→sectores ahora reside en
+         classify_utils.THEME_TO_SECTOR_FOCUS_MAP (BL-54). Esta función
+         delega en map_theme_to_sector_focus() importada desde classify_utils.
+         Efecto: todos los valores de Sector_Focus emitidos desde este módulo
+         están ahora en español canónico — cumple Principio #8.
+  BL-54  detect_sector_focus() refactorizada para usar el mapa canónico
+         único (Principio #2 DRY). La lógica if/elif previa con 14 entradas
+         queda reemplazada por una delegación a map_theme_to_sector_focus().
+         La firma permanece igual: (name_l, kiid_text=None, theme=None).
+
+Cambios v19 (2026-04-19):
+  BL-49  detect_currency_hedged(): fallback al texto KIID cuando el nombre
+         del fondo no aporta señal de cobertura. Solo activa si kiid_text
+         disponible y name_l da None. Prioridad: Unhedged > Hedged para
+         evitar falsos positivos con "hedged" en frases negativas del KIID.
+         Nuevo parámetro opcional kiid_text=None — backward compatible.
+         characterize_fund() propaga kiid_text al llamar detect_currency_hedged().
+
+Cambios v18 (2026-04-13):
+  BL-26  detect_currency_hedged(): "Yes"→"Hedged", "No"→"Unhedged" (Principio #8).
+         +variantes OCR hedge (hgd, eurhdg, usdhdg, gbphdg).
+         +detección explícita "not hedged" / "no hedged".
+  BL-27  detect_market_cap_focus(): +Mid/SMID desde KIID texto, +inferencia
+         desde benchmark_declared. Nuevo parámetro propagado en characterize_fund().
+  BL-28  detect_credit_quality(): "No aplica"→"Not Applicable" (Principio #8).
+         _THEMATIC_THEMES: "Inflación"→"Inflation".
+         THEMATIC_MAP_EXTENDED: "Inflación"→"Inflation".
+  BL-29  _char_rv(): segunda capa detect_style_from_kiid(text_l).
 
 Módulo genérico de caracterización secundaria de fondos.
 
@@ -44,6 +90,8 @@ try:
         detect_geography_from_kiid, detect_esg_from_kiid,
         detect_style_from_kiid, detect_type_from_kiid,
         _get_obj_bounds, _extract_window,
+        map_theme_to_sector_focus,   # BL-54: mapa canónico Theme→Sector_Focus
+        detect_currency_hedged_from_kiid,  # BL-49/DRY: patrones KIID centralizados
     )
 except ImportError:
     from core.classify_utils import (
@@ -54,6 +102,8 @@ except ImportError:
         detect_geography_from_kiid, detect_esg_from_kiid,
         detect_style_from_kiid, detect_type_from_kiid,
         _get_obj_bounds, _extract_window,
+        map_theme_to_sector_focus,   # BL-54: mapa canónico Theme→Sector_Focus
+        detect_currency_hedged_from_kiid,  # BL-49/DRY: patrones KIID centralizados
     )
 
 
@@ -72,7 +122,7 @@ _SECTOR_THEMES: frozenset = frozenset({
 
 # Temas transversales (no sectoriales — cruzan sectores y geografías)
 _THEMATIC_THEMES: frozenset = frozenset({
-    "Infrastructure", "Real Estate", "Inflación", "Healthcare",
+    "Infrastructure", "Real Estate", "Inflation", "Healthcare",  # BL-28: "Inflación" → "Inflation"
 })
 
 # Geografías de un solo país
@@ -166,8 +216,8 @@ THEMATIC_MAP_EXTENDED: Dict[str, str] = {
     # Mobility
     "mobility": "Mobility", "movilidad": "Mobility",
     "autonomous": "Mobility", "electric vehicle": "Mobility",
-    # Inflation
-    "inflación": "Inflación", "inflation": "Inflación",
+    # Inflation  # BL-28: valor en inglés, coherente con ALLOWED_VALUES_BY_COLUMN
+    "inflación": "Inflation", "inflation": "Inflation",
 }
 
 
@@ -283,7 +333,7 @@ def detect_investment_focus(
 
 
 # =============================================================
-# DETECT_SECTOR_FOCUS  (v17 — fix P14 + nomenclatura GICS-ES)
+# DETECT_SECTOR_FOCUS  (v20 — BL-53/BL-54: refactor DRY)
 # =============================================================
 
 def detect_sector_focus(
@@ -294,15 +344,20 @@ def detect_sector_focus(
     """
     Detecta foco sectorial bajo nomenclatura GICS-ES.
 
+    v20 BL-54: delega en map_theme_to_sector_focus() (classify_utils),
+    que contiene el mapa canónico ÚNICO Theme→Sector_Focus (Principio #2 DRY).
+    Todos los valores emitidos están en español (Principio #8 BL-53).
+    La firma permanece compatible con v17 (name_l, kiid_text, theme).
+
     v17 fix P14: recibe `theme` ya calculado por el llamador, evitando
     re-ejecutar detect_theme_extended() sobre el nombre cuando el tema
     fue detectado desde el KIID (no desde el nombre).
 
-    Valores (GICS-ES):
+    Valores (GICS-ES, idioma español):
         Tecnología e Innovación
         Salud y Ciencias de la Vida
         Energía y Recursos
-        Real Assets
+        Activos Reales
         Servicios Financieros
         Consumo
         Materiales y Minería
@@ -310,25 +365,8 @@ def detect_sector_focus(
     """
     # Usar tema provisto o detectar desde nombre como fallback
     resolved_theme = theme or detect_theme_extended(name_l)
-
-    if resolved_theme in ("Technology", "Artificial Intelligence", "Digital",
-                          "Robotics", "Cybersecurity"):
-        return "Tecnología e Innovación"
-    if resolved_theme in ("Healthcare / MedTech", "Biotechnology", "Healthcare"):
-        return "Salud y Ciencias de la Vida"
-    if resolved_theme in ("Climate / Clean Energy", "Energy"):
-        return "Energía y Recursos"
-    if resolved_theme in ("Infrastructure", "Real Estate"):
-        return "Real Assets"
-    if resolved_theme == "Financials":
-        return "Servicios Financieros"
-    if resolved_theme in ("Consumer Brands", "Consumer / Food & Beverage"):
-        return "Consumo"
-    if resolved_theme in ("Gold", "Mining"):
-        return "Materiales y Minería"
-    if resolved_theme == "Water":
-        return "Utilities y Medio Ambiente"
-    return None
+    # Delegar en el mapa canónico único (BL-54)
+    return map_theme_to_sector_focus(resolved_theme)
 
 
 # =============================================================
@@ -372,7 +410,7 @@ def detect_credit_quality(
         No aplica         — Renta Variable, no extraíble
     """
     if fund_nature == "Renta Variable":
-        return "No aplica"
+        return "Not Applicable"   # BL-28: era "No aplica" (Principio #8 — inglés)
     if fund_nature not in _RF_NATURES:
         return None   # Restantes, Estructurado → indeterminado
 
@@ -413,8 +451,13 @@ def detect_credit_quality(
 def detect_market_cap_focus(
     name_l: str,
     kiid_text: Optional[str] = None,
+    benchmark_declared: Optional[str] = None,  # BL-27: nuevo parámetro
 ) -> Optional[str]:
-    """Detecta enfoque de capitalización de mercado."""
+    """Detecta enfoque de capitalización de mercado.
+
+    BL-27: ampliado con detección KIID para Mid/SMID Cap y con inferencia
+    por benchmark declarado (p.ej. MSCI World Small Cap → Small Cap).
+    """
     if any(k in name_l for k in [
         "small cap", "small-cap", "smallcap", "small co",
         "micro cap", "micro-cap", "small companies",
@@ -436,19 +479,50 @@ def detect_market_cap_focus(
         "blue chip", "grande capitalización", "grandes compañías",
     ]):
         return "Large Cap"
+
     if kiid_text:
         s, e = _get_obj_bounds(kiid_text)
         w = _extract_window(kiid_text.lower(), s, e)
         if any(k in w for k in [
             "pequeña capitalización", "small capitalisation",
             "small-cap companies", "small cap companies",
+            "pequeñas empresas", "small companies",
         ]):
             return "Small Cap"
         if any(k in w for k in [
             "gran capitalización", "large capitalisation",
-            "large-cap companies",
+            "large-cap companies", "grandes empresas",
+            "blue chip companies", "blue-chip",
         ]):
             return "Large Cap"
+        # BL-27: detección Mid y SMID desde texto KIID
+        if any(k in w for k in [
+            "mediana capitalización", "mid capitalisation",
+            "mid-cap companies", "medianas empresas",
+        ]):
+            return "Mid Cap"
+        if any(k in w for k in [
+            "pequeñas y medianas", "small and mid", "small- and mid-",
+            "small to mid-cap",
+        ]):
+            return "SMID Cap"
+
+    # BL-27: inferencia desde benchmark declarado
+    if benchmark_declared:
+        b = benchmark_declared.lower()
+        if any(k in b for k in ["small cap", "small-cap", "smallcap", "sc index"]):
+            return "Small Cap"
+        if any(k in b for k in ["mid cap", "mid-cap", "midcap"]):
+            return "Mid Cap"
+        if any(k in b for k in ["smid", "small & mid", "small and mid"]):
+            return "SMID Cap"
+        if any(k in b for k in ["large cap", "blue chip"]):
+            return "Large Cap"
+        # Si el benchmark es un índice global de gran capitalización → Large Cap por defecto
+        if any(k in b for k in ["msci world", "msci acwi", "s&p 500", "euro stoxx 50",
+                                  "stoxx europe 600", "ftse 100", "dax"]):
+            return "Large Cap"
+
     return None
 
 
@@ -456,20 +530,56 @@ def detect_market_cap_focus(
 # DETECT_CURRENCY_HEDGED
 # =============================================================
 
-def detect_currency_hedged(name_l: str) -> Optional[str]:
-    """Detecta política de cobertura de divisa desde el nombre de la clase."""
+def detect_currency_hedged(name_l: str, kiid_text: Optional[str] = None) -> Optional[str]:
+    """Detecta política de cobertura de divisa desde el nombre de la clase.
+
+    BL-26: corregidos valores a "Hedged"/"Unhedged" (Principio #8).
+    BL-26: añadida detección explícita de "Unhedged" (antes solo detectaba Hedged).
+    BL-49: fallback al texto KIID cuando el nombre no aporta señal. Solo se activa
+           cuando kiid_text está disponible y name_l no detectó nada. Prioridad:
+           UNHEDGED antes que HEDGED (evitar falsos positivos de "hedged" en contextos
+           negativos del texto KIID, ej: "no está cubierta").
+    BL-49/2 (2026-04-25): añadidas variantes EURH/USDH/GBPH/CHFH (truncamiento del
+           sufijo HDG común en iShares, Candriam, GAM, Goldman Sachs). Estas
+           variantes tienen una "H" pegada al código de divisa sin "DG" final
+           (ej: "EM MK GV INDX A2 EURH ACC"). Patrón previo solo capturaba
+           "EURHDG", causando 4 fondos en regresión Hedged→Unhedged.
+    """
     _HEDGED = [
         "hedged", "(h)", "- h)", " h eur", "eur hedged", "usd hedged",
         "gbp hedged", "chf hedged", "hdg", "currency hedged",
         "cubierto", "cubierta divisa", "cubierto divisa",
+        "hgd", "eurhdg", "usdhdg", "gbphdg",  # BL-26: variantes OCR de hedge
+        # BL-49/2: variantes truncadas (EURH, USDH, GBPH, CHFH) — el sufijo
+        # H solo (sin DG) aparece en iShares/Candriam/GAM/GS. Solo se acepta
+        # si va seguido de espacio + clase (ACC/INC/DIST) o final del nombre,
+        # para evitar falsos positivos como "EURHIGH" (alta calificación).
+        " eurh ", " eurh\t", " usdh ", " usdh\t",
+        " gbph ", " gbph\t", " chfh ", " chfh\t",
+        " eurh acc", " eurh inc", " eurh dist",
+        " usdh acc", " usdh inc", " usdh dist",
+        " gbph acc", " gbph inc", " gbph dist",
+        " chfh acc", " chfh inc", " chfh dist",
     ]
     _UNHEDGED = [
         "unhedged", "sin cobertura", "no cubierto",
+        "no hedged", "not hedged",               # BL-26: variantes EN explícitas
     ]
-    if any(s in name_l for s in _HEDGED):
-        return "Yes"
+    # BL-26: Unhedged ANTES que Hedged — "unhedged" contiene "hedged" como substring
     if any(s in name_l for s in _UNHEDGED):
-        return "No"
+        return "Unhedged"
+    if any(s in name_l for s in _HEDGED):
+        return "Hedged"
+
+    # BL-49/DRY: fallback al texto KIID delegado en classify_utils (Principio #2).
+    # detect_currency_hedged_from_kiid() es el único punto de verdad para
+    # patrones KIID — 18 patrones pre-compilados (H01-H10 / U01-U08).
+    # Los patrones inline previos (v19) quedan eliminados aquí.
+    if kiid_text:
+        _ch_kiid, _ = detect_currency_hedged_from_kiid(kiid_text)
+        if _ch_kiid:
+            return _ch_kiid
+
     return None
 
 
@@ -587,7 +697,10 @@ def _char_rf_flexible(name_l: str, text_l: str, srri: Optional[int]) -> Dict[str
 
 def _char_rv(name_l: str, text_l: str, srri: Optional[int]) -> Dict[str, Any]:
     profile = derive_profile_from_srri(srri) or "Dinámico"
-    style = detect_style_profile(name_l) or None
+    # BL-29: detect_style_profile solo usa nombre; añadir KIID como segunda capa
+    style = detect_style_profile(name_l)
+    if style is None and text_l:
+        style = detect_style_from_kiid(text_l)
     bias  = detect_exposure_bias(name_l) or "Long Only"
     t = "Index" if any(k in name_l for k in [
         "index fund", "fondo índice", "passive", "tracker",
@@ -681,6 +794,7 @@ def characterize_fund(
     fund_nature: str,
     srri: Optional[int] = None,
     pre_assigned: Optional[Dict[str, Any]] = None,
+    benchmark_declared: Optional[str] = None,   # BL-27: para inferir Market_Cap_Focus
 ) -> Dict[str, Any]:
     """
     Caracterización secundaria completa de un fondo.
@@ -769,7 +883,7 @@ def characterize_fund(
     if fund_nature == "Renta Variable":
         result["Market_Cap_Focus"] = (
             pre.get("Market_Cap_Focus")
-            or detect_market_cap_focus(name_l, kiid_text)
+            or detect_market_cap_focus(name_l, kiid_text, benchmark_declared)  # BL-27
         )
 
     # ── 7. Credit_Quality (v17 NUEVO) ────────────────────────────
@@ -785,7 +899,7 @@ def characterize_fund(
         int(detect_esg_from_kiid(kiid_text) or 0),
     )
     result["Currency_Hedged"] = (
-        pre.get("Currency_Hedged") or detect_currency_hedged(name_l)
+        pre.get("Currency_Hedged") or detect_currency_hedged(name_l, kiid_text)
     )
     result["Accumulation_Policy"] = (
         pre.get("Accumulation_Policy")

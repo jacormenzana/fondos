@@ -41,6 +41,7 @@ Metricas generadas por fondo (horizon=since_inception, real_flag=0):
     beta_gold            sensibilidad a variacion interanual oro (PPICMM)
     beta_m2_global       sensibilidad a M2 Global YoY
     beta_spread_hy       sensibilidad al diferencial HY (nivel, %)
+    beta_spread_ig       sensibilidad al diferencial IG (nivel, %)
     beta_vix             sensibilidad a variacion interanual VIX
     beta_term_spread     sensibilidad a pendiente curva EEUU 10Y-2Y (nivel, %)
     beta_eur_jpy         sensibilidad a variacion interanual EUR/JPY
@@ -88,6 +89,7 @@ def load_macro_factors(conn: sqlite3.Connection) -> pd.DataFrame:
            OR (indicator = 'gold'         AND geography = 'GLOBAL')
            OR (indicator = 'm2_global_yoy' AND geography = 'GLOBAL')
            OR (indicator = 'spread_hy'   AND geography = 'GLOBAL')
+           OR (indicator = 'spread_ig'   AND geography = 'GLOBAL')
            OR (indicator = 'vix'         AND geography = 'GLOBAL')
            OR (indicator = 'term_spread' AND geography = 'US')
            OR (indicator IN ('fx_usd_eur','fx_jpy_usd','fx_usd_gbp','fx_cny_usd')
@@ -164,6 +166,11 @@ def load_macro_factors(conn: sqlite3.Connection) -> pd.DataFrame:
     if "spread_hy_GLOBAL" in wide.columns:
         wide["spread_hy"] = wide["spread_hy_GLOBAL"]
 
+    # Spread IG: se usa como nivel (ya es diferencial en %, media mensual)
+    # Complemento al HY: permite distinguir estres IG vs HY puro
+    if "spread_ig_GLOBAL" in wide.columns:
+        wide["spread_ig"] = wide["spread_ig_GLOBAL"]
+
     # VIX: variacion interanual (el nivel en puntos no es estacionario)
     if "vix_GLOBAL" in wide.columns:
         wide["vix_yoy"] = wide["vix_GLOBAL"].pct_change(12, fill_method=None) * 100
@@ -206,7 +213,7 @@ def load_macro_factors(conn: sqlite3.Connection) -> pd.DataFrame:
         "oil_yoy",    "copper_yoy",
         "cli_yoy_eu", "cli_yoy_us",
         "dxy_yoy",    "gold_yoy",   "m2_global_yoy",
-        "spread_hy",  "vix_yoy",    "term_spread",
+        "spread_hy",  "spread_ig",  "vix_yoy",    "term_spread",
         "eur_jpy_yoy", "eur_gbp_yoy", "eur_cny_yoy",
     ]
     available = [f for f in factors if f in wide.columns]
@@ -254,6 +261,7 @@ _FACTOR_TO_METRIC = {
     "gold_yoy":      "beta_gold",
     "m2_global_yoy": "beta_m2_global",
     "spread_hy":     "beta_spread_hy",
+    "spread_ig":     "beta_spread_ig",
     "vix_yoy":       "beta_vix",
     "term_spread":   "beta_term_spread",
     "eur_jpy_yoy":   "beta_eur_jpy",

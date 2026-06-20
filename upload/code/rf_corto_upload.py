@@ -1,6 +1,10 @@
 from typing import Optional, Dict, List
 from core.classify_utils import (
     NAME_SIGNALS_RF_CORTO,
+    FAMILY_SHORT_TERM_FI,
+    TYPE_SHORT_TERM_FI,
+    TYPE_SHORT_TERM_GOVT,
+    TYPE_SHORT_TERM_CREDIT,
     detect_geography       as _detect_geography,
     detect_theme           as _detect_theme,
     detect_is_esg          as _detect_is_esg,
@@ -10,6 +14,7 @@ from core.classify_utils import (
     detect_benchmark_type  as _detect_benchmark_type,
     detect_profile_from_srri as _detect_profile_from_srri,
     detect_kiid_attributes,
+    apply_semantic_validation,
 )
 import re
 
@@ -69,13 +74,13 @@ def classify_fund(
     result = {
         "Fund_Nature": FUND_NATURE_VALUE,
         "Profile": "Conservador",
-        "Type": None,
-        "Family": "Renta Fija Corto Plazo",
+        "_signal_type": None,
+        "Family": FAMILY_SHORT_TERM_FI,
         "Style_Profile": "Defensivo",
         "Geography": None,
         "Theme": None,
         "Exposure_Bias": "Duration Bias",
-        "Subtype": None,
+        "_signal_subtype": None,
     }
 
     name_l = fund_name.lower() if isinstance(fund_name, str) else ""
@@ -99,22 +104,21 @@ def classify_fund(
     if any(k in name_l for k in [
         "floating rate", "floating", "floater", " frn ",
     ]):
-        result["Type"] = "Floating Rate CP"
-        result["Subtype"] = "Floating Rate Notes"
-        result["Exposure_Bias"] = "Rate Reset Bias"
+        result["_signal_type"] = "Floating Rate CP"
+        result["_signal_subtype"] = "Floating Rate Notes"
 
     elif any(k in name_l for k in [
         "government", "treasury", "sovereign", "gov bd", "gov bond",
     ]):
-        result["Type"] = "Deuda Pública CP"
+        result["_signal_type"] = TYPE_SHORT_TERM_GOVT
 
     elif any(k in name_l for k in [
         "corporate", "credit", "corp", "crd", "crdt", "covered", "pfandbrief",
     ]):
-        result["Type"] = "Crédito CP"
+        result["_signal_type"] = TYPE_SHORT_TERM_CREDIT
 
     else:
-        result["Type"] = "Renta Fija Corto Plazo"
+        result["_signal_type"] = TYPE_SHORT_TERM_FI
 
     # -------------------------------------------------
     # Subtype low duration — v2: añadidos "ult sh","ul sh","0-1","0-2","0-3"
@@ -124,26 +128,15 @@ def classify_fund(
         "ultra short", "ult sh", "ul sh", "low dur", "low duration",
         "0-1", "0-2", "0-3",
     ]):
-        result["Subtype"] = "Low Duration"
-        result["Exposure_Bias"] = "Duration Bias"
-        result["Style_Profile"] = "Defensivo"
+        result["_signal_subtype"] = "Low Duration"
 
     # Guardrail: High Yield no permitido en RF Corto
     if "high yield" in name_l or "high-yield" in name_l:
-        result["Type"] = None
-        result["Subtype"] = None
-        result["Exposure_Bias"] = None
+        result["_signal_type"] = None
+        result["_signal_subtype"] = None
 
-    # -------------------------------------------------
-    # Style_Profile / Exposure_Bias
-    # -------------------------------------------------
-    if any(k in name_l for k in ["income", "enhanced cash", "money plus"]):
-        result["Style_Profile"] = "Income"
-        if result["Exposure_Bias"] is None:
-            result["Exposure_Bias"] = "Income Bias"
-    elif not result["Exposure_Bias"]:
-        result["Style_Profile"] = "Defensivo"
-        result["Exposure_Bias"] = "Duration Bias"
+    # Style_Profile / Exposure_Bias se derivan de forma centralizada en
+    # classify_utils.derive_v20_attributes (engine = fuente única, AUDIT v20).
 
     # -------------------------------------------------
     # Geography
@@ -170,22 +163,30 @@ def classify_fund(
     _srri_m = re.search(r"\b([1-7])\s*/\s*7\b", _text_l)
     _srri   = int(_srri_m.group(1)) if _srri_m else None
 
+    # BL-44: validar coherencia SRRI ↔ Fund_Nature=Renta Fija Corto Plazo.
+    # RFC auténtico tiene SRRI 1-3 (máximo 4 en casos excepcionales de crédito).
+    # SRRI ≥ 4 indica un fondo mal capturado por el universo del bloque.
+    # Reclasificar a Restantes para asignación correcta por bloque especializado.
+    if _srri is not None and _srri >= 4:
+        result["Fund_Nature"] = "Restantes"
+        result["Profile"] = _detect_profile_from_srri(_srri) or "Moderado"
+        result["Family"] = None
+        result["_signal_type"] = None
+        result["_signal_subtype"] = None
+        return apply_semantic_validation(result, fund_name)
+
     if result.get("Profile") is None:
         result["Profile"] = _detect_profile_from_srri(_srri)
     result["Geography"]    = result.get("Geography") or _detect_geography(_name_l)
     result["Theme"]        = result.get("Theme")     or _detect_theme(_name_l)
     result["Is_ESG"]       = _detect_is_esg(fund_name)
-    if result.get("Style_Profile") == "Defensivo":
-        result["Style_Profile"] = None   # Defensivo → Profile, no Style_Profile
-    if result.get("Style_Profile") is None:
-        result["Style_Profile"] = _detect_style_profile(_name_l)
-    if result.get("Exposure_Bias") is None:
-        result["Exposure_Bias"] = _detect_exposure_bias(_name_l, "Renta Fija Corto Plazo")
     result["Strategy"] = _detect_strategy(
-        None, result.get("Subtype"), _name_l
+        None, result.get("_signal_subtype"), _name_l
     )
     result["Benchmark_Type"] = _detect_benchmark_type(
         None, None
     )
 
-    return result
+
+    return apply_semantic_validation(result, fund_name)
+

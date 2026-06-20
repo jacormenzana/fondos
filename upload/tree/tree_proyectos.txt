@@ -1,38 +1,56 @@
 ARBOL DE DIRECTORIOS — PROYECTOS ORIGINALES
-Generado: 2026-04-02 07:48:19
+Generado: 2026-06-20 07:32:07
 Raiz: C:\desarrollo\fondos
 
 proyecto1/
 ├── blocks
 │   ├── __init__.py
 │   ├── alternativos.py
-│   ├── desclasificados.py
 │   ├── mixtos.py
 │   ├── monetarios.py
 │   ├── renta_variable.py
 │   ├── restantes.py
-│   ├── restantes_pendientes.py
 │   ├── rf_corto.py
 │   └── rf_flexible.py
 ├── core
+│   ├── PATCHES_pipeline.py
+│   ├── _db_utils.py
 │   ├── benchmark_normalizer.py
 │   ├── classify_utils.py
+│   ├── cost_arbitration.py
+│   ├── cost_cross_validator.py
+│   ├── cost_format_router.py
+│   ├── cost_format_signals.py
+│   ├── cost_pct_anchored.py
+│   ├── cost_table_parser.py
+│   ├── dla_extractor.py
+│   ├── dla_table_serializer.py
+│   ├── dla_table_serializer_last.py
 │   ├── fund_characterizer.py
 │   ├── fund_family_builder.py
 │   ├── io.py
 │   ├── kiid_parser.py
 │   ├── mark_stale.py
+│   ├── normalize_db_casing_v20.py
 │   ├── pipeline.py
+│   ├── priips_cost_extractor.py
 │   ├── sqlite_writer.py
 │   ├── srri_text.py
 │   ├── srri_v4_geometric.py
-│   └── srri_v5_geometric.py
+│   ├── srri_v5_geometric.py
+│   ├── test_cost_cross_validator.py
+│   ├── test_cost_format_router.py
+│   ├── test_cost_table_parser.py
+│   └── ucits_cost_extractor.py
 ├── db
 │   └── __init__.py
 ├── doc
 │   ├── arquitectura
 │   ├── especificacion
-│   └── informes
+│   ├── informes
+│   └── parser
+│       ├── parrafo
+│       └── tabla
 ├── log
 ├── sql
 ├── src
@@ -43,14 +61,21 @@ proyecto1/
 │   │   ├── __init__.py
 │   │   └── benchmark_loader.py
 │   └── __init__.py
+├── tests
+│   ├── test_cost_oc_mismatch.py
+│   ├── test_dla_extractor.py
+│   ├── test_priips_cost_extractor.py
+│   └── test_ucits_cost_extractor.py
 ├── run_block.py
-└── run_blockv1.py
+├── run_blockv1.py
+└── smoke_sprint2_costs.py
 
 proyecto2/
 ├── bat
 ├── db
 │   └── __init__.py
 ├── doc
+├── log
 ├── logs
 │   ├── funds.py
 │   └── security.py
@@ -108,11 +133,9 @@ proyecto3/
     ├── backtesting.py
     ├── backtesting_prod.py
     ├── fund_scorer.py
-    ├── fund_scorer_20260326.py
     ├── fund_scorer_prod.py
     ├── m2_global_builder.py
     ├── monthly_report.py
-    ├── monthly_report_prod.py
     ├── portfolio_builder.py
     ├── regime_classifier.py
     └── regime_returns.py
@@ -123,3 +146,71 @@ shared/
 ├── export_tables.py
 ├── init_db.py
 └── schema_checks.py
+
+scripts/
+├── debug
+│   ├── db_fondos_scraper.py
+│   └── debug_mstarpy.py
+├── diag
+│   ├── prev
+│   │   ├── dla1
+│   │   │   ├── Q-DLA-03.py
+│   │   │   └── dla_layout_inventory_20260504_02.py
+│   │   ├── dla2
+│   │   │   ├── BL-DLA-2-DIAG.py
+│   │   │   ├── dla_check_exit_fee_cat.py
+│   │   │   ├── dla_diag_queries.py
+│   │   │   ├── dla_diag_queries_20260506_00.py
+│   │   │   ├── dla_table_inventory.py
+│   │   │   ├── dla_table_inventory_20260504_00.py
+│   │   │   ├── dla_table_inventory_20260504_01.py
+│   │   │   ├── dla_table_inventory_20260504_03.py
+│   │   │   └── dla_table_inventory_20260506_00.py
+│   │   ├── dla2_serializer_audit.py
+│   │   └── dla2_serializer_diag.py
+│   ├── both_fail_triage.py
+│   ├── cost_format_signals.py
+│   ├── count_dla2_tables.py
+│   ├── diag_cost_extraction.py
+│   ├── diag_fm.py
+│   ├── diag_upsert.py
+│   ├── dla1_decision_diag.py
+│   ├── dla2_decision_diag.py
+│   ├── dla2_dual_strategy_compare.py
+│   ├── dla2_ocr_fallback.py
+│   ├── dla2_serializer_audit.py
+│   ├── dla2_serializer_diag.py
+│   ├── dla2_xband_prototype.py
+│   ├── dla_check_exit_fee_cat.py
+│   ├── dla_layout_inventory.py
+│   └── dump_multi_grids.py
+├── launch
+│   └── mark_stale.py
+├── mig
+│   ├── migrate_processing_time.py
+│   ├── migrate_schema_v16.py
+│   ├── migrate_schema_v17.py
+│   ├── migrate_to_fondos.py
+│   ├── migrate_v18_to_v19.py
+│   ├── migrate_v19_to_v20.py
+│   ├── migrate_v3_columns.py
+│   ├── normalize_column_languages_v17.py
+│   └── restore_kiid_text.py
+├── oper
+├── test
+│   ├── gemini_LDA.py
+│   ├── smoke_v19_deployment.py
+│   ├── test_backtesting.py
+│   ├── test_cost_format_signals.py
+│   ├── test_dla_extractor.py
+│   ├── test_hd.py
+│   ├── test_historia2.py
+│   ├── test_import.py
+│   ├── test_nav_directo.py
+│   ├── test_portfolio.py
+│   ├── test_regime.py
+│   ├── test_report.py
+│   ├── test_schema.py
+│   ├── test_scorer.py
+│   └── test_srri.py
+└── integracionModulos.py

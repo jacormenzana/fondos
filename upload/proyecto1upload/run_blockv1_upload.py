@@ -7,10 +7,10 @@ Uso:
     Ubicarse en directorio c:\\desarrollo\\fondos\\proyecto1 
     activar entorno des 
     lanzar run_block desde entono des 
-    python run_block.py --block mixtos --db p1_output.sqlite --master "c:\\data\\fondos\\in\\GestoresDeFondosv1.xlsx" --sample 5 
-    python run_block.py --block mixtos --db p1_output.sqlite --master "c:\\data\\fondos\\in\\GestoresDeFondosv1.xlsx" --list-isin LU0348784041,LU0232465467
-    python run_block.py --block mixtos --db p1_output.sqlite --master "c:\\data\\fondos\\in\\GestoresDeFondosv1.xlsx" --list-isin LU0232465467,LU1873127366,FR0000989626,LU0135992385,LU1133289592,LU0210536867,LU0213962813,LU1502282632,IE0032875985,LU0073230426,LU0006277684,LU0236146428,LU0607519195,LU0726357873
-    python run_block.py --block restantes --db p1_output.sqlite --master "c:\\data\\fondos\\in\\GestoresDeFondosv1.xlsx" --list-isin ES0145553014,ES0145553022,ES0155598008,ES0155598032,FR0000447823,FR0007008750,FR0007435920,FR0007457890,FR0010027623,FR0010135103    
+    python run_block.py --block mixtos --db ../db/fondos.sqlite --master "c:\\data\\fondos\\in\\GestoresDeFondosv1.xlsx" --sample 5 
+    python run_block.py --block mixtos --db ../db/fondos.sqlite --master "c:\\data\\fondos\\in\\GestoresDeFondosv1.xlsx" --list-isin LU0348784041,LU0232465467
+    python run_block.py --block mixtos --db ../db/fondos.sqlite --master "c:\\data\\fondos\\in\\GestoresDeFondosv1.xlsx" --list-isin LU0232465467,LU1873127366,FR0000989626,LU0135992385,LU1133289592,LU0210536867,LU0213962813,LU1502282632,IE0032875985,LU0073230426,LU0006277684,LU0236146428,LU0607519195,LU0726357873
+    python run_block.py --block restantes --db ../db/fondos.sqlite --master "c:\\data\\fondos\\in\\GestoresDeFondosv1.xlsx" --list-isin ES0145553014,ES0145553022,ES0155598008,ES0155598032,FR0000447823,FR0007008750,FR0007435920,FR0007457890,FR0010027623,FR0010135103    
 
 
 

@@ -4,6 +4,83 @@
 	---=====================================================================================
 
 
+		---=====================================================================================
+		--- CATEGORIZACION SRRI 1 y 2
+		---=====================================================================================
+
+	SELECT fund_name, Heuristic_block, fund_Nature, SRRI,
+	    
+	    -- Primer booleano: 1 si CONTIENE ALGUNO de los include_patterns, 0 si no
+	    CASE 
+	        WHEN LOWER(fund_name) LIKE '%money market%'
+	          OR LOWER(fund_name) LIKE '%monetary%'
+	          OR LOWER(fund_name) LIKE '%cash fund%'
+	          OR LOWER(fund_name) LIKE '%cash management%'
+	          OR LOWER(fund_name) LIKE '%treasury%'
+	          OR LOWER(fund_name) LIKE '%tresorerie%'
+	          OR LOWER(fund_name) LIKE '%ucits mmf%'
+	          OR LOWER(fund_name) LIKE '%mmf%'
+	        THEN 1 
+	        ELSE 0 
+	    END AS contiene_include_pattern,
+
+	    -- Segundo booleano: 1 si NO CONTIENE NINGUNO de los exclude_patterns, 0 si contiene alguno
+	    CASE 
+	        WHEN LOWER(fund_name) LIKE '%short duration%'
+	          OR LOWER(fund_name) LIKE '%ultra short%'
+	          OR LOWER(fund_name) LIKE '%short term%'
+	          OR LOWER(fund_name) LIKE '%bond%'
+	          OR LOWER(fund_name) LIKE '%income%'
+	          OR LOWER(fund_name) LIKE '%enhanced%'
+	          OR LOWER(fund_name) LIKE '%plus%'
+	        THEN 0 -- Si encuentra alguna palabra prohibida, devuelve Falso (0)
+	        ELSE 1 -- Si pasa limpio sin coincidir con ninguna, devuelve Verdadero (1)
+	    END AS no_contiene_exclude_pattern
+
+	FROM  fund_master where SRRI<=2;
+
+
+	SELECT 
+		management_company,
+	    fund_name,
+	    Heuristic_block,
+	    fund_Nature,
+	    benchmark_type,
+	    benchmark_declared,
+	    ma.SRRI,
+	        -- Primer booleano: 1 si CONTIENE ALGUNO de los include_patterns, 0 si no
+	    CASE 
+	        WHEN LOWER(fund_name) LIKE '%money market%'
+	          OR LOWER(fund_name) LIKE '%monetary%'
+	          OR LOWER(fund_name) LIKE '%cash fund%'
+	          OR LOWER(fund_name) LIKE '%cash management%'
+	          OR LOWER(fund_name) LIKE '%treasury%'
+	          OR LOWER(fund_name) LIKE '%tresorerie%'
+	          OR LOWER(fund_name) LIKE '%ucits mmf%'
+	          OR LOWER(fund_name) LIKE '%mmf%'
+	        THEN 1 
+	        ELSE 0 
+	    END AS contiene_include_pattern,
+
+	    -- Segundo booleano: 1 si NO CONTIENE NINGUNO de los exclude_patterns, 0 si contiene alguno
+	    CASE 
+	        WHEN LOWER(fund_name) LIKE '%short duration%'
+	          OR LOWER(fund_name) LIKE '%ultra short%'
+	          OR LOWER(fund_name) LIKE '%short term%'
+	          OR LOWER(fund_name) LIKE '%bond%'
+	          OR LOWER(fund_name) LIKE '%income%'
+	          OR LOWER(fund_name) LIKE '%enhanced%'
+	          OR LOWER(fund_name) LIKE '%plus%'
+	        THEN 0 -- Si encuentra alguna palabra prohibida, devuelve Falso (0)
+	        ELSE 1 -- Si pasa limpio sin coincidir con ninguna, devuelve Verdadero (1)
+	    END AS no_contiene_exclude_pattern,
+	    SUBSTR(Raw_KIID_Text, 1, 600) AS kiid_text_resumen
+
+	FROM  fund_master ma
+	inner join fund_kiid_metadata md on ma.isin=md.isin
+	where ma.SRRI<=2
+	and (lower(fund_name) like '%liq%');
+
 
 		---=====================================================================================
 		---	GENERAL
@@ -235,27 +312,99 @@
 		-- Cobertura completa de atributos
 		
 		(*)
+
 		SELECT
 		    COUNT(*) total,
 		    SUM(CASE WHEN SRRI IS NOT NULL THEN 1 ELSE 0 END) srri,
 		    SUM(CASE WHEN Profile IS NOT NULL THEN 1 ELSE 0 END) profile,
-		    SUM(CASE WHEN Geography IS NOT NULL THEN 1 ELSE 0 END) geo,
+		    SUM(CASE WHEN Strategy  IS NOT NULL THEN 1 ELSE 0 END) strategy,		    
+		    SUM(CASE WHEN Family IS NOT NULL THEN 1 ELSE 0 END) family,
+		    SUM(CASE WHEN Geography IS NOT NULL THEN 1 ELSE 0 END) geoGRAPHY,
+   		    SUM(CASE WHEN Investment_Universe  IS NOT NULL THEN 1 ELSE 0 END) investment_universe,
+   		    SUM(CASE WHEN Investment_Focus  IS NOT NULL THEN 1 ELSE 0 END) investment_focus,   		    
+		    SUM(CASE WHEN Type IS NOT NULL THEN 1 ELSE 0 END) type,
+		    SUM(CASE WHEN Subtype  IS NOT NULL THEN 1 ELSE 0 END) subtype,		    
 		    SUM(CASE WHEN Theme IS NOT NULL THEN 1 ELSE 0 END) theme,
-		    SUM(CASE WHEN Style_Profile IS NOT NULL THEN 1 ELSE 0 END) style,
+		    SUM(CASE WHEN Style_Profile IS NOT NULL THEN 1 ELSE 0 END) style_profile,
+		    SUM(CASE WHEN Sector_Focus IS NOT NULL THEN 1 ELSE 0 END) sector_focus,
+		    SUM(CASE WHEN Fund_Currency  IS NOT NULL THEN 1 ELSE 0 END) fund_currency,
+		    SUM(CASE WHEN Hedging_Policy   IS NOT NULL THEN 1 ELSE 0 END) hedging_policy,		    
+		    SUM(CASE WHEN Currency_Hedged      IS NOT NULL THEN 1 ELSE 0 END) AS currency_hedged,		    
 		    SUM(CASE WHEN Benchmark_Declared IS NOT NULL 
 		        AND Benchmark_Declared != 'NO_BENCHMARK' THEN 1 ELSE 0 END) bench,
-		    SUM(CASE WHEN Investment_Universe IS NOT NULL THEN 1 ELSE 0 END) inv_univ,
-		    SUM(CASE WHEN Accumulation_Policy IS NOT NULL THEN 1 ELSE 0 END) acc_pol,
-		    SUM(CASE WHEN Sfdr_Article IS NOT NULL THEN 1 ELSE 0 END) sfdr,
-		    SUM(CASE WHEN Ongoing_Charge IS NOT NULL THEN 1 ELSE 0 END) ter,
-		    SUM(CASE WHEN Leverage_Used IS NOT NULL THEN 1 ELSE 0 END) leverage,
+		    SUM(CASE WHEN Accumulation_Policy IS NOT NULL THEN 1 ELSE 0 END) accumulation_policy,
+		    SUM(CASE WHEN Sfdr_Article IS NOT NULL THEN 1 ELSE 0 END) sfdr_article,
+		    SUM(CASE WHEN Entry_Fee_Pct IS NOT NULL THEN 1 ELSE 0 END) entry_fee_pct,		    
+		    SUM(CASE WHEN Ongoing_Charge IS NOT NULL THEN 1 ELSE 0 END) ongoing_charge,
 		    SUM(CASE WHEN Exit_Fee_Pct IS NOT NULL THEN 1 ELSE 0 END) exit_fee,
-		    SUM(CASE WHEN Market_Cap_Focus     IS NOT NULL THEN 1 ELSE 0 END) AS mkt_cap,
-		    SUM(CASE WHEN Sector_Focus         IS NOT NULL THEN 1 ELSE 0 END) AS sector,
-		    SUM(CASE WHEN Currency_Hedged      IS NOT NULL THEN 1 ELSE 0 END) AS hedged
+		    SUM(CASE WHEN Leverage_Used IS NOT NULL THEN 1 ELSE 0 END) leverage,		    
+		    SUM(CASE WHEN Market_Cap_Focus     IS NOT NULL THEN 1 ELSE 0 END) AS mkt_cap 
 		FROM fund_master;
 
 
+		WITH totals AS (
+		    SELECT
+		        COUNT(*) AS total,
+		        -- Filled counts
+		        SUM(CASE WHEN SRRI                IS NOT NULL THEN 1 ELSE 0 END) AS srri,
+		        SUM(CASE WHEN Profile             IS NOT NULL THEN 1 ELSE 0 END) AS profile,
+		        SUM(CASE WHEN Strategy            IS NOT NULL THEN 1 ELSE 0 END) AS strategy,
+		        SUM(CASE WHEN Family              IS NOT NULL THEN 1 ELSE 0 END) AS family,
+		        SUM(CASE WHEN Geography           IS NOT NULL THEN 1 ELSE 0 END) AS geography,
+		        SUM(CASE WHEN Investment_Universe IS NOT NULL THEN 1 ELSE 0 END) AS investment_universe,
+		        SUM(CASE WHEN Investment_Focus    IS NOT NULL THEN 1 ELSE 0 END) AS investment_focus,
+		        SUM(CASE WHEN Type                IS NOT NULL THEN 1 ELSE 0 END) AS type,
+		        SUM(CASE WHEN Subtype             IS NOT NULL THEN 1 ELSE 0 END) AS subtype,
+		        SUM(CASE WHEN Theme               IS NOT NULL THEN 1 ELSE 0 END) AS theme,
+		        SUM(CASE WHEN Style_Profile       IS NOT NULL THEN 1 ELSE 0 END) AS style_profile,
+		        SUM(CASE WHEN Sector_Focus        IS NOT NULL THEN 1 ELSE 0 END) AS sector_focus,
+		        SUM(CASE WHEN Fund_Currency       IS NOT NULL THEN 1 ELSE 0 END) AS fund_currency,
+		        SUM(CASE WHEN Hedging_Policy      IS NOT NULL THEN 1 ELSE 0 END) AS hedging_policy,
+		        SUM(CASE WHEN Currency_Hedged     IS NOT NULL THEN 1 ELSE 0 END) AS currency_hedged,
+		        SUM(CASE WHEN Benchmark_Declared  IS NOT NULL
+		                 AND Benchmark_Declared  != 'NO_BENCHMARK' THEN 1 ELSE 0 END) AS bench,
+		        SUM(CASE WHEN Accumulation_Policy IS NOT NULL THEN 1 ELSE 0 END) AS accumulation_policy,
+		        SUM(CASE WHEN Sfdr_Article        IS NOT NULL THEN 1 ELSE 0 END) AS sfdr_article,
+		        SUM(CASE WHEN Entry_Fee_Pct       IS NOT NULL THEN 1 ELSE 0 END) AS entry_fee_pct,
+		        SUM(CASE WHEN Ongoing_Charge      IS NOT NULL THEN 1 ELSE 0 END) AS ongoing_charge,
+		        SUM(CASE WHEN Exit_Fee_Pct        IS NOT NULL THEN 1 ELSE 0 END) AS exit_fee_pct,
+		        SUM(CASE WHEN Leverage_Used       IS NOT NULL THEN 1 ELSE 0 END) AS leverage_used,
+		        SUM(CASE WHEN Market_Cap_Focus    IS NOT NULL THEN 1 ELSE 0 END) AS market_cap_focus
+		    FROM fund_master
+		),
+		unpivoted AS (
+		    SELECT 'srri'                AS attribute, srri                AS filled, total FROM totals UNION ALL
+		    SELECT 'profile',               profile,                                  total FROM totals UNION ALL
+		    SELECT 'strategy',              strategy,                                 total FROM totals UNION ALL
+		    SELECT 'family',                family,                                   total FROM totals UNION ALL
+		    SELECT 'geography',             geography,                                total FROM totals UNION ALL
+		    SELECT 'investment_universe',   investment_universe,                      total FROM totals UNION ALL
+		    SELECT 'investment_focus',      investment_focus,                         total FROM totals UNION ALL
+		    SELECT 'type',                  type,                                     total FROM totals UNION ALL
+		    SELECT 'subtype',               subtype,                                  total FROM totals UNION ALL
+		    SELECT 'theme',                 theme,                                    total FROM totals UNION ALL
+		    SELECT 'style_profile',         style_profile,                            total FROM totals UNION ALL
+		    SELECT 'sector_focus',          sector_focus,                             total FROM totals UNION ALL
+		    SELECT 'fund_currency',         fund_currency,                            total FROM totals UNION ALL
+		    SELECT 'hedging_policy',        hedging_policy,                           total FROM totals UNION ALL
+		    SELECT 'currency_hedged',       currency_hedged,                          total FROM totals UNION ALL
+		    SELECT 'bench',                 bench,                                    total FROM totals UNION ALL
+		    SELECT 'accumulation_policy',   accumulation_policy,                      total FROM totals UNION ALL
+		    SELECT 'sfdr_article',          sfdr_article,                             total FROM totals UNION ALL
+		    SELECT 'entry_fee_pct',         entry_fee_pct,                            total FROM totals UNION ALL
+		    SELECT 'ongoing_charge',        ongoing_charge,                           total FROM totals UNION ALL
+		    SELECT 'exit_fee_pct',          exit_fee_pct,                             total FROM totals UNION ALL
+		    SELECT 'leverage_used',         leverage_used,                            total FROM totals UNION ALL
+		    SELECT 'market_cap_focus',      market_cap_focus,                         total FROM totals
+		)
+		SELECT
+		    attribute,
+		    total,
+		    filled,
+		    (total - filled)                                       AS null_count,
+		    ROUND((total - filled) * 100.0 / NULLIF(total, 0), 2) AS null_ratio_pct
+		FROM unpivoted
+		ORDER BY null_ratio_pct DESC;
 
 
 		-- Cobertura completa atributos clave
@@ -394,6 +543,42 @@
 
 
 
+		--==================================================================================================
+		-- Style_Profile
+		--==================================================================================================
+
+		-- Investment_Universe: Distribución por Investment_Universe
+		SELECT Style_Profile, COUNT(*) AS n, ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 2) AS porcentaje
+		FROM fund_master
+		GROUP BY Style_Profile ORDER BY 2 DESC;
+
+
+			SELECT 
+			    Style_Profile, 
+			    Fund_Nature , 
+			    COUNT(*) AS n, 
+			    -- Porcentaje respecto al total global de la tabla
+			    ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 2) AS porcentaje_global,
+			    -- Porcentaje relativo de Fund_Nature dentro de su respectivo Style_Profile
+			    ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(PARTITION BY Style_Profile), 2) AS porcentaje_por_Style_Profile
+			FROM fund_master
+			-- WHERE Style_Profile IS NOT NULL
+			GROUP BY Style_Profile, Fund_Nature   
+			ORDER BY Style_Profile, porcentaje_por_Style_Profile DESC;
+
+
+			SELECT 
+			    Fund_Nature, 			
+			    Style_Profile, 
+			    COUNT(*) AS n, 
+			    -- Porcentaje respecto al total global de la tabla
+			    ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 2) AS porcentaje_global,
+			    -- Porcentaje relativo de Fund_Nature dentro de su respectivo Style_Profile
+			    ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(PARTITION BY Fund_Nature), 2) AS porcentaje_por_Fund_Nature
+			FROM fund_master
+			-- WHERE Style_Profile IS NOT NULL
+			GROUP BY Fund_Nature, Style_Profile   
+			ORDER BY Fund_Nature, porcentaje_por_Fund_Nature DESC;	
 		--==================================================================================================
 		-- Investment_Universe
 		--==================================================================================================

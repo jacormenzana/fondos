@@ -1,9 +1,326 @@
 # -*- coding: utf-8 -*-
 """
 core/kiid_parser.py
-Parser KIID determinista  — v17
+Parser KIID determinista  — v28
 
-Cambios v17 (2026-04-XX):
+Cambios v28 (2026-05-08) -- BL-DLA-2: fix causa raiz exit_fee_null (3 bugs)
+
+  BL-DLA-2  _EXIT_FEE_ZERO_RE ampliado con 3 nuevas ramas (diagnostico sobre
+            534 textos reales de fondos exit_fee_null):
+
+            Bug 1 (355 fondos FR): patron buscaba 'no cobr[amos|a] comision de
+            salida' pero texto real es 'No cobramos UNA comision de salida por
+            este producto'. Articulo 'una' entre cobramos y comision rompia
+            el match. Fix: (?:una\s+)? entre cobr* y comision.
+
+            Bug 2 (65 fondos IE/AXA): 'Nosotros no facturamos el coste de
+            salida de este producto.' El equivalente para entry fee existia
+            (_EF_AXA_NO_FACTURA) pero no para exit fee.
+            Fix: nueva rama 'nosotros no facturamos el coste de salida'.
+
+            Bug 3 (4 fondos FR): 'Coste de salida' (singular) no matcheaba
+            el trigger (costes? cubre plural pero el singular sin 's' al
+            final necesitaba la adicion del trigger al patron).
+            Fix: costes? ya cubre 'coste' y 'costes' (la 's' es opcional).
+            En realidad el trigger ya era correcto -- estos 4 se resuelven
+            por la rama 'no cobramos coste de salida' del Bug 1.
+
+            Impacto esperado: exit_fee_null baja de 534 a ~80-100.
+            Control SQL post-ejecucion:
+              SELECT COUNT(*) FROM fund_master WHERE Exit_Fee_Pct IS NULL;
+              -- Objetivo: < 100
+              SELECT Fee_Known_Flag, COUNT(*) FROM fund_master
+              GROUP BY Fee_Known_Flag ORDER BY 2 DESC;
+
+Cambios v27 (2026-05-06) -- BL-DLA-2: patron tabular PRIIPs con salto de linea
+
+  BL-DLA-2  _XF_TABLA_PRIIPS_RE: nuevo patron (prioridad 13 en _detect_exit_fee).
+            Causa raiz de 510 fondos LU con Exit_Fee_Pct NULL: _EXIT_FEE_RE usa
+            separador no-newline que no puede cruzar el salto de linea entre
+            trigger y valor en layout PRIIPs tabulado estandar.
+            Separador acotado a 80 chars con lookahead negativo (Ninguna/no cobr),
+            restriccion de cruce de filas, y prefijos opcionales (Hasta/EUR).
+            Impacto esperado: Exit_Fee_Pct NULL baja de ~530 a ~20-30.
+            Control SQL post-ejecucion:
+              SELECT COUNT(*) FROM fund_master WHERE Exit_Fee_Pct IS NULL;
+              -- Objetivo: < 30 (desde ~530 actual)
+
+Cambios v26.1 (2026-04-25) — BL-55/2: endurecimiento ventana acotada
+
+  BL-55/2  _infer_exit_fee_from_structure() reescrita: la versión inicial v26
+           verificaba ausencia de exit keywords en TODO el texto del KIID;
+           cualquier mención incidental (índice, glosario, ejemplo, FAQ) bloqueaba
+           la inferencia. Resultado real ciclo 25/04/2026: solo 3 fondos
+           inferidos sobre 676 candidatos (impacto neto Exit_Fee NULL: -3).
+
+           Solución: la verificación de ausencia se acota a una VENTANA de
+           ±1500 chars alrededor del primer match de cost section. Esto evita
+           falsos negativos por menciones incidentales fuera del contexto
+           estructural relevante. _COST_SECTION_KEYWORDS ampliado con variantes
+           adicionales (estructura de costes, fund charges, ongoing charges, etc).
+           Eliminada la regla '\\.{3,}' (puntos suspensivos) que era demasiado
+           agresiva: KIIDs reales contienen "..." en encabezados, "etc.",
+           listas truncadas en HTML→texto sin que esto implique OCR degradado.
+
+           Impacto esperado: cobertura de inferencia estructural ~50–70% sobre
+           los 670 candidatos restantes (Exit_Fee_Pct NULL bajaría a ~250–340).
+
+Cambios v26 (2026-04-25) — BL-55: Exit_Fee_Pct=0.00 para declaraciones implícitas
+
+  BL-55  Nuevo helper _infer_exit_fee_from_structure(text) → Optional[float]:
+         Formaliza Exit_Fee_Pct=0.0 cuando el KIID contiene la sección de costes
+         estructurada claramente identificada (presencia de keyword "Composición
+         de costes" / "Composition of charges") pero NO menciona ninguna
+         palabra-clave de salida (salida, reembolso, exit, redemption).
+         Principio: ausencia de mención en sección estructurada ≡ no aplica.
+         Restricciones de seguridad:
+           - Texto < 500 chars → OCR degradado → no inferir.
+           - Texto contiene marcadores de truncado ('[truncado]', '...') → no inferir.
+           - Raw_KIID_Text=NULL → no inferir.
+         Nuevo valor Fee_Known_Flag: 'EXIT_INFERRED_ZERO' distingue el cero
+         inferido estructuralmente del cero explícito ('ZERO_CONFIRMED') y del
+         genuinamente ausente ('NOT_FOUND'). No es breaking change (columna TEXT).
+
+         Nuevos patrones explícitos añadidos a _detect_exit_fee() (v26):
+           Prioridad 9:  ES declaración negativa directa:
+             "sin comisión/gastos de salida/reembolso"
+             "no hay/inexistentes gastos de salida"
+             "comisión de salida: 0 / cero / ninguna / nil / n/a / — / –"
+           Prioridad 10: EN declaración negativa directa:
+             "no/nil/none exit/redemption charge/fee/load"
+             "exit/redemption charge: 0.00% / none / nil / n/a / —"
+           Prioridad 11: tabular fusionado adicional:
+             "costesdesalida: ninguno/ninguna"
+             "exitcharges: 0.00%"
+           Prioridad 12: cero estructural (_infer_exit_fee_from_structure)
+
+         Paso 10d del parser principal actualizado:
+           - Si _detect_exit_fee() devuelve 0.0 por prioridades 1-11 →
+             Fee_Known_Flag marcado como 'EXIT_EXPLICIT_ZERO'
+             (distingue del ZERO_CONFIRMED de entry fee).
+           - Si _infer_exit_fee_from_structure() devuelve 0.0 →
+             Exit_Fee_Pct=0.0 + Fee_Known_Flag='EXIT_INFERRED_ZERO'.
+           - Sin detección → Exit_Fee_Pct=NULL (sin cambio en Flag existente).
+
+Cambios v25 (2026-04-19) — BL-51A ciclo 2: fix root cause del resultado insuficiente de v24
+
+  BL-51A/2  Root cause: separador [^\r\n]{0,300} GREEDY en _ENTRY_FEE_RE y _EXIT_FEE_RE
+            consumía los dígitos antes del %, dejando que el grupo capturador solo
+            atrapara el último "0" de "3,00%". Fix:
+            (1) [^\r\n]{0,300}? no-greedy en ambos patrones base.
+            (2) ([\d]+(?:[,.][\d]+)?) decimal opcional — cubre "5%" y "5,00%".
+            (3) Nuevos triggers _ENTRY_FEE_RE (ES): "comisión de entrada",
+                "comisión inicial", "gastos de entrada", "cargo inicial",
+                "cargo máximo de entrada", "derecho de suscripción".
+            (4) Nuevos triggers _ENTRY_FEE_RE (EN): "purchase fee",
+                "upfront charge/fee", "sales load".
+            (5) Nuevos triggers _EXIT_FEE_RE: "derecho de reembolso",
+                "redemption load", "back-end load", "deferred sales charge".
+            (6) _ENTRY_FEE_ZERO_RE: triggers "comisión inicial" y "cargo inicial".
+            Test: 35/35 OK.
+
+Cambios v24 (2026-04-19) — BL-51 Problema A: extensión de patrones de comisiones
+
+  BL-51A  _detect_entry_fee(): 6 nuevos patrones de extracción para fondos
+          con comisión de entrada no capturada por patrones v23.
+
+          Nuevos patrones de ZERO (prioridad alta):
+          - _EF_NO_HAY_GASTOS_RE: "no hay gastos de entrada" — Fidelity/BNP.
+          - _EF_SIN_CARGO_RE: "sin cargo de entrada" / "sin cargo inicial"
+            — Vanguard, Robeco y similares.
+          - _EF_NO_FRONT_LOAD_RE: "no front-end load" / "no sales charge"
+            / "no initial charge" — fondos con KIID en inglés (Language=EN).
+
+          Nuevos patrones de PORCENTAJE (completitud):
+          - _EF_FRONT_LOAD_EN_RE: "front-end load [of] X%" / "sales charge X%"
+            / "initial charge [of up to] X%" — formatos EN no cubiertos.
+          - _EF_GASTOS_ENTRADA_RE: "gastos de entrada [del] X%" — formulación
+            alternativa en ES (la actual solo cubre "comisión de suscripción"
+            y "costes de entrada", no "gastos de entrada" como sinónimo).
+          - _EF_CARGO_INICIAL_RE: "cargo inicial [máximo del] X%" — Robeco ES
+            y algunas gestoras alemanas con KIIDs traducidos.
+          Impacto estimado: reducción de los 134 nulos actuales en ~40-60 fondos
+          (depende de análisis completo de los 134 KIIDs).
+
+          Nuevos patrones de ZERO para EXIT FEE:
+          - _XF_NO_EXIT_CHARGE_EN_RE: "no exit charge" / "no redemption charge"
+            / "no exit fee" — fondos EN sin comisión de salida.
+          - _XF_NO_COBRAREMOS_RE: "no cobraremos comisión de reembolso" /
+            "no se cobra comisión de reembolso" — ES alternativo al patrón
+            actual "no cobramos".
+
+          Nuevos patrones de PORCENTAJE para EXIT FEE (completitud):
+          - _XF_FRONT_EXIT_EN_RE: "exit charge [of] X%" / "redemption fee X%"
+            — complementa _EXIT_FEE_RE que ya cubre "exit charge|exit fee"
+            pero falla en formatos sin "Costes de salida" como trigger.
+          - _XF_JPM_FUSED_ZERO: JPMorgan OCR fusionado para salida:
+            "costesdesalida0,00%nocobramoscomisión" — equivalente al
+            _EF_JPM_FUSED_ZERO ya existente para entrada.
+          - _XF_JPM_FUSED_PCT: JPMorgan OCR fusionado: "costesdesalidaX,XX%"
+            — equivalente al _EF_JPM_FUSED_PCT para entrada.
+
+          Control SQL de validación post-ejecución:
+          SELECT COUNT(*) FROM fund_master WHERE Entry_Fee_Pct IS NULL
+            AND Fee_Known_Flag = 'NOT_FOUND';
+          -- Objetivo: reducción desde 134 a ~75-90
+
+          SELECT COUNT(*) FROM fund_master WHERE Exit_Fee_Pct IS NULL;
+          -- Objetivo: reducción desde 735 a ~680-710
+
+  NOTA BL-51B: La extensión de schema para comisiones con estructura mixta
+          (porcentaje + tope fijo en EUR) se trata en documento separado
+          BL51_SCHEMA_DECISION.md. No se implementa en esta versión hasta
+          completar el análisis de impacto en P3.
+
+Cambios v23 (2026-04-19) — BL-41 + BL-43 (media prioridad) + nuevo ítem Subtype:
+
+  BL-41   _detect_style_profile(): detecta Growth/Value/Income desde texto KIID.
+          Señales estrictas (solo cuando el KIID declara explícitamente el estilo):
+          - Growth ES/EN: "estilo growth", "growth-oriented companies", "above-average
+            growth prospects", "empresas de crecimiento"
+          - Value ES/EN:  "estilo value", "empresas infravaloradas", "undervalued",
+            "value-oriented approach"
+          - Income ES/EN: "orientado a ingresos", "generación de rentas", "alta
+            rentabilidad por dividendo", "dividend-paying companies", "high income"
+          Aplicación: PASO 10j, solo sobre fondos RV (fund_nature='Renta Variable').
+          Impacto estimado: ~72 fondos RV con Style_Profile NULL → valor asignado.
+
+  BL-43a  _detect_subtype_monetario(): detecta LVNAV / VNAV / CNAV.
+          Señal primaria: texto KIID (patrones regulatorios EU de MMF).
+          Señal secundaria: nombre del fondo (LVNAV/VNAV/CNAV en el nombre es
+          100% fiable — usado por JPMorgan sistemáticamente).
+          Resuelve el solapamiento semántico Family/Subtype en Monetarios:
+          Family mantiene su valor actual (Monetario/LVNAV/VNAV/CNAV) sin
+          modificación; Subtype captura la especificidad estructural regulatoria
+          de forma explícita e independiente.
+          Impacto estimado: 18 fondos JPMorgan + otros potenciales con texto KIID.
+
+  BL-43b  _detect_subtype_mixtos(): detecta Fixed Band / Volatility Target.
+          - Fixed Band: banda fija de RV explícita en nombre del fondo.
+            Patrón: DMAS SRI 15/50/75 y STRATEGY 15/50/75 (Allianz).
+            El número de la banda se preserva en el Subtype (ej: "Fixed Band 15").
+          - Volatility Target: señal desde texto KIID ("volatilidad objetivo",
+            "target volatility", "risk control", "nivel de riesgo objetivo").
+          Impacto estimado: 10 fondos Fixed Band + 1 Volatility Target.
+          Nuevos valores Subtype permitidos:
+            Monetario → LVNAV | VNAV | CNAV
+            Mixtos    → Fixed Band {N} | Volatility Target
+
+Cambios v22 (2026-04-19) — BL-37b + BL-35b + BL-40 (tres items alta prioridad backlog):
+
+  BL-37b  _OC_FUSED_PATTERNS: nuevo patrón JPMorgan texto OCR 100% fusionado.
+          Layout: "comisionesdegestiónyotros1,90%delvalordesuinversiónalaño"
+          Los fondos JPMorgan con Language=None no matcheaban ningún patrón OC
+          existente porque _OC_DEL_VALOR_RE requiere espacios en "comisiones de
+          gestión y otros". La nueva entrada en _OC_FUSED_PATTERNS busca en
+          t_fused (text.lower().replace(" ","")) y captura el porcentaje.
+          Impacto: Ongoing_Charge NULL baja de 270 a ~93 (177 JPMorgan resueltos).
+
+  BL-35b  _EF_AXA_NO_FACTURA (prioridad 7 ZERO) + _EF_THREAD_DISTRIB (prioridad 15):
+          - AXA: "Nosotros no facturamos el coste de entrada" → 0.0 / ZERO_CONFIRMED
+            (24 fondos AXA con €0 de entrada correctamente marcados como NOT_FOUND).
+          - Thread: "Costes de entrada Se incluyen costes de distribución del X%"
+            El porcentaje de distribución es la comisión de entrada real en este
+            layout. Grupo 1 puede tener espacio interno ("X , XX") → se elimina
+            antes de parsear.
+          Impacto: Fee_Known_Flag NOT_FOUND baja de 223 a ~144 (79 resueltos).
+
+  BL-40   _ACCUM_PATTERNS_ES: 3 nuevos patrones Deutsche/DWS + BlackRock.
+          - Deutsche/DWS: "acciones del fondo son de acumulación" (103 fondos)
+          - Deutsche/DWS: "rendimientos y ganancias no se reparten sino que se reinvierten"
+            (alternativa textual validada en mismos KIIDs)
+          - BlackRock: "acciones serán no distributivas" (95 fondos)
+          Impacto: Accumulation_Policy NULL baja de 594 a ~396 (198 resueltos).
+
+Cambios v21 (2026-04-18) — análisis de 591 fondos NOT_FOUND de 5 gestoras:
+
+  EF-JPM-1   _EF_JPM_FUSED_ZERO / _EF_JPM_FUSED_PCT: JPMorgan produce texto
+             OCR 100% fusionado sin espacios (Language=None). Los patrones
+             estándar no matchean. Los nuevos buscan en t_fused (text.replace(" ","")):
+             - ZERO: "costesdeentrada 0,00%" → 0.0 (54 fondos)
+             - PCT:  "costesdeentrada X,XX%delimporte" → float (125 fondos)
+             Cobertura: 179/181 = 99%.
+
+  EF-SCH-1   _EF_SCH_BRACKET / _EF_SCH_NO_COBRAR: Schroeder (SISF).
+             - BRACKET: "Costes de entrada ... Hasta EUR NNN ... [X.XX%]"
+               El porcentaje real está entre corchetes (162 fondos).
+             - NO_COBRAR: "Costes de entrada No cobramos comisión de entrada.
+               EUR 0" — no matchea _ENTRY_FEE_ZERO_RE por usar "EUR 0"
+               en lugar de "0 EUR" o "0%" (47 fondos → ZERO_CONFIRMED).
+             Cobertura: 162/163 = 99%.
+
+  EF-UBS-1   _EF_UBS_PCT_BEFORE / _EF_UBS_CIFRAS / _EF_UBS_NO_INICIAL: UBS.
+             - PCT_BEFORE: "X.X% del importe que usted paga ... Costes de
+               entrada Hasta EUR NNN". El porcentaje precede al label (102 fondos).
+             - CIFRAS: "cifras incluyen la comisión de suscripción máxima ...
+               hasta el X.XX%" (4 fondos).
+             - NO_INICIAL: "No aplicamos una comisión inicial" → 0.0 (6 fondos).
+             Cobertura: 112/112 = 100%.
+
+  EF-MG-1    _EF_MG_PCT_BEFORE / _EF_MG_ZERO: M&G.
+             - PCT_BEFORE: "X,XX% del valor de su inversión. Se trata del
+               coste de entrada máximo que Costes de entrada €NNN,NN cobrará
+               M&G." El porcentaje precede al label (59 fondos).
+             - ZERO: "Costes de entrada €0,00" / "$0,00" → 0.0 (7 fondos).
+             Cobertura: 66/66 = 100%.
+
+  EF-AM-1    _EF_AMUNDI_DISTRIB / _EF_AMUNDI_PUEDE: Amundi.
+             - DISTRIB: "costes de distribución del X,XX% del importe
+               invertido ... Costes de entrada Hasta NNN EUR" (66 fondos).
+             - PUEDE: "Puede cobrarse hasta el X,XX% de su inversión antes
+               de que se le pague" — layout alternativo Amundi/IE (5 fondos).
+             Cobertura: 66/69 = 96%.
+
+  TOTAL BL-35: 585/591 NOT_FOUND resueltos (99%). Los 6 restantes son
+             estructuralmente irrecuperables: KIIDs incompletos o estatutos
+             societarios en francés (no son DDF estándar).
+
+Cambios v20 (2026-04-18) — (incluidos en este fichero, encabezado corregido):
+
+  BL-38-v20  _BENCH_TERMINATORS ampliado con terminadores validados en
+             datos reales post-v19: además, través, último, canal(es),
+             management, limited, bank, centre, business, route, avenida,
+             calle, street, road. Nuevo patrón "\\),?\\s+[a-z]{3,}" para
+             cortar tras cierre de paréntesis seguido de texto contaminante.
+
+  ACC-v20    _ACCUM_PATTERNS_ES ampliado con 3 patrones validados (>=97%).
+  DIST-v20   _DIST_PATTERNS_ES ampliado con 2 patrones validados (>=98%).
+  SFDR-v20   _detect_sfdr_article reestructurado con prioridad máxima para
+             patrones categóricos explícitos. Corrige 30 fondos Franklin
+             clasificados incorrectamente como Art.9.
+
+Cambios v19 (2026-04-16) — análisis de 3.204 KIIDs reales:
+
+  OC-DWS-1   _OC_DEL_VALOR_RE: nuevo patrón para DWS/Deutsche/Natixis.
+              Layout: "Comisiones de gestión y otros [...] X,XX% del valor
+              de su inversión al año." El patrón PRIIPs anterior fallaba
+              porque no hay trigger "incidencia de costes" y el número va
+              seguido de "del valor de su inversión", no de "%" inline.
+              Recupera ~410 fondos Deutsche/Natixis/Amundi con OC NULL.
+
+  OC-ALLIANZ-1 _OC_CADA_ANNO_RE: nuevo patrón para Allianz.
+              Layout: "Incidencia anual de los costes (*)\n\nEn caso de salida\n
+              N EUR\nX,X % cada afio". El separador largo con importe EUR
+              superaba el límite [^0-9]{0,60} del patrón PRIIPS.
+              El nuevo patrón usa [\\s\\S]{0,500}? + "cada año/afio/aio/aho".
+              Recupera ~45 fondos Allianz con OC NULL.
+
+  EF-COBRARLE-1 _ENTRY_FEE_COBRARLE_RE: nuevo patrón para AXA/Pictet/Waystone.
+              Layout: "cobrarle hasta (un máximo del) X.XX%".
+              El patrón anterior buscaba el porcentaje directamente después
+              del trigger, fallando cuando hay texto intermedio largo.
+              Recupera ~165 fondos con entry fee NOT_FOUND.
+
+  EF-NINGUNA-1 _ENTRY_FEE_NINGUNA_RE: detecta "Ninguna" tras trigger de entrada.
+              Recupera ~203 fondos con ZERO_CONFIRMED (antes NOT_FOUND).
+
+  XF-NINGUNA-1 _EXIT_FEE_NINGUNA_RE: detecta "Ninguna" tras trigger de salida.
+              Layout dominante: "Costes de salida Ninguna" (354 fondos).
+              Recupera ~535 fondos con exit fee ZERO confirmado.
+
+  XF-COBRARLE-1 _EXIT_FEE_COBRARLE_RE: "cobrarle hasta X%" para salida.
+              Recupera ~456 fondos con exit fee valor positivo.
+
 
   FEE-FLAG-1   Nueva lógica Fee_Known_Flag en PASO 10c:
                Tras extraer Entry_Fee_Pct, se asigna:
@@ -97,6 +414,49 @@ Cambios v4 (2026-03-08):  Optimización post-análisis de 3204 KIIDs resueltos.
   FIX-HEDGE-3  Language=None fused: añadida verificación de "coberturadc" /
                "coberturadc" / "cubiertafrente" para detectar fondos cubiertos en
                texto plenamente fusionado.
+
+Cambios v20 (2026-04-18):
+
+  BL-38-v20   _BENCH_TERMINATORS ampliado con terminadores validados en
+              datos reales post-v19: además, través, último, canal(es),
+              management, limited, bank, centre, business, route, avenida,
+              calle, street, road. Nuevo patrón "\\),?\\s+[a-z]{3,}" para
+              cortar tras cierre de paréntesis seguido de texto
+              contaminante. Resuelve los 18 benchmarks residuales.
+
+  ACC-v20     _ACCUM_PATTERNS_ES ampliado con 3 patrones validados (>=97%
+              precisión contra fondos ya clasificados):
+                - "(clase|acciones|participaciones|subfondo) de acumulación"
+                - "(acumula|acumulan|capitaliza) (ingresos|rentas|...)"
+                - "(ingresos|rentas|...) ... se reinvierten" (forma general)
+              Recupera ~199 fondos con Accumulation_Policy NULL.
+
+  DIST-v20    _DIST_PATTERNS_ES ampliado con 2 patrones validados (>=98%
+              precisión) usando separador [ \\t]+ en lugar de \\s+ para
+              evitar cruzar saltos de línea del OCR:
+                - "(distribuyen|paga|reparte) dividendos (anual|trimestral|...)"
+                - "(se distribuirán|pagarán|repartirán) (ingresos|rentas|dividendos)"
+
+  DIST-FIX    Corrección del patrón "política de distribución[^.]{0,80}distribuye"
+              que capturaba "política de distribución ... no distribuye" como
+              señal de DISTRIBUTION (en realidad ACCUMULATION). Añadido
+              grupo no-capturante "(?:(?!no\\s+distribuye)[^.]){0,80}" en la
+              ventana para excluir la frase negativa.
+              Resuelve falsos positivos DIST del parser v19.
+
+  SFDR-v20    _detect_sfdr_article reestructurado con prioridad máxima
+              para patrones categóricos explícitos (validados 100% en
+              119 fondos de datos reales):
+                Prioridad 0: "Categoría según SFDR Artículo N" (Franklin)
+                Prioridad 1: "Artículo N del SFDR"
+                Prioridad 2-4: patrones heurísticos anteriores (Art.9/8/6)
+              Corrige bug histórico: 30 fondos Franklin clasificados como
+              Art.9 eran realmente Art.6 según el KIID. El parser anterior
+              tomaba "artículo 9" de cualquier sección del texto (incluso
+              en secciones informativas/referenciales) como señal Art.9.
+              La captura con grupo "(\\d)" toma el número del patrón
+              categórico y lo devuelve directamente, evitando la heurística
+              de búsqueda por subcadenas.
 
 Cambios v3 (2026-03-07): ver historial en backup kiid_parser_v3.py.
 """
@@ -606,7 +966,14 @@ def parse_kiid_generic(
     # PASO 10c — Entry_Fee_Pct + Fee_Known_Flag (v17)
     # -------------------------------------------------
     entry_fee = _detect_entry_fee(kiid_text)
-    if entry_fee is not None:
+    if entry_fee is not None and entry_fee > 0 and _fee_is_ceiling(kiid_text, "entry"):
+        # Part 1 regla A: comision condicional/techo -> punto NULL (techo vive en *_Max)
+        result["Fee_Known_Flag"] = "ENTRY_CONDITIONAL"
+        result["Inference_Trace"] = _append_trace(
+            result["Inference_Trace"],
+            "ENTRY_FEE[CONDITIONAL->NULL]"
+        )
+    elif entry_fee is not None:
         result["Entry_Fee_Pct"] = entry_fee
         result["Fee_Known_Flag"] = "ZERO_CONFIRMED" if entry_fee == 0.0 else "EXTRACTED"
         result["Inference_Trace"] = _append_trace(
@@ -617,15 +984,44 @@ def parse_kiid_generic(
         result["Fee_Known_Flag"] = "NOT_FOUND"
 
     # -------------------------------------------------
-    # PASO 10d — Exit_Fee_Pct (comisión de salida)
+    # PASO 10d — Exit_Fee_Pct (comisión de salida) — v26 BL-55
+    # Tres casos:
+    #   A. _detect_exit_fee() devuelve float no-None → EXIT_EXPLICIT_ZERO
+    #      (0.0) o valor positivo. El Flag de entry_fee no cambia.
+    #   B. _detect_exit_fee() devuelve None pero _infer_exit_fee_from_structure()
+    #      devuelve 0.0 → EXIT_INFERRED_ZERO (cero estructural).
+    #   C. Ambas devuelven None → Exit_Fee_Pct=NULL (sin cambio de flag).
     # -------------------------------------------------
     exit_fee = _detect_exit_fee(kiid_text)
-    if exit_fee is not None:
-        result["Exit_Fee_Pct"] = exit_fee
+    _exit_conditional = (
+        exit_fee is not None and exit_fee > 0
+        and _fee_is_ceiling(kiid_text, "exit")
+    )
+    if _exit_conditional:
+        # Part 1 regla A: comision de salida condicional/techo -> punto NULL.
+        # NO inferir cero estructural (no es cero, es indeterminado).
         result["Inference_Trace"] = _append_trace(
             result["Inference_Trace"],
-            f"EXIT_FEE[{exit_fee:.4f}]"
+            "EXIT_FEE[CONDITIONAL->NULL]"
         )
+    elif exit_fee is not None:
+        result["Exit_Fee_Pct"] = exit_fee
+        # Distinguir cero explícito de valor positivo
+        _exit_flag = "EXIT_EXPLICIT_ZERO" if exit_fee == 0.0 else "EXIT_EXTRACTED"
+        result["Inference_Trace"] = _append_trace(
+            result["Inference_Trace"],
+            f"EXIT_FEE[{exit_fee:.4f}][{_exit_flag}]"
+        )
+    else:
+        # Intentar inferencia estructural (BL-55)
+        exit_fee_inferred = _infer_exit_fee_from_structure(kiid_text)
+        if exit_fee_inferred is not None:
+            result["Exit_Fee_Pct"] = exit_fee_inferred
+            result["Fee_Known_Flag"] = "EXIT_INFERRED_ZERO"
+            result["Inference_Trace"] = _append_trace(
+                result["Inference_Trace"],
+                "EXIT_FEE[0.0000][EXIT_INFERRED_ZERO]"
+            )
 
     # -------------------------------------------------
     # PASO 10e — SFDR Article
@@ -690,6 +1086,41 @@ def parse_kiid_generic(
             result["Inference_Trace"], f"DIST_FREQ[{dist_freq}]"
         )
 
+    # -------------------------------------------------
+    # PASO 10j — Style_Profile (BL-41 v23)
+    # Solo Renta Variable. Señales estrictas desde texto KIID.
+    # fund_nature no está disponible aquí (viene del bloque de clasificación),
+    # por lo que se pasa None → detección sin restricción de Nature.
+    # El pipeline aplica el resultado solo si classification["Style_Profile"]
+    # ya es None (no sobreescribe lo que el bloque especializado determinó).
+    # -------------------------------------------------
+    sp = _detect_style_profile(kiid_text, fund_nature=None)
+    if sp:
+        result["Style_Profile"] = sp
+        result["Inference_Trace"] = _append_trace(
+            result["Inference_Trace"], f"STYLE_PROFILE[{sp}]"
+        )
+
+    # -------------------------------------------------
+    # PASO 10k — Subtype Monetario + Mixtos (BL-43 v23)
+    # fund_nature desconocido aquí → se detectan señales para ambas familias.
+    # El pipeline decide qué valor usar en función de Fund_Nature del bloque.
+    # Orden: intentar Monetario primero (más específico), luego Mixtos.
+    # -------------------------------------------------
+    _sub_mon = _detect_subtype_monetario(kiid_text, fund_name)
+    _sub_mix = _detect_subtype_mixtos(kiid_text, fund_name)
+    # Empaquetar ambos en campos auxiliares; el pipeline resuelve cuál aplicar
+    if _sub_mon:
+        result["_Subtype_Monetario"] = _sub_mon
+        result["Inference_Trace"] = _append_trace(
+            result["Inference_Trace"], f"SUBTYPE_MON[{_sub_mon}]"
+        )
+    if _sub_mix:
+        result["_Subtype_Mixtos"] = _sub_mix
+        result["Inference_Trace"] = _append_trace(
+            result["Inference_Trace"], f"SUBTYPE_MIX[{_sub_mix}]"
+        )
+
     return result
 
 
@@ -722,6 +1153,8 @@ def _empty_result() -> Dict[str, Optional[str]]:
         "Distribution_Frequency": None,   # MONTHLY | QUARTERLY | ANNUAL | VARIABLE
         "Accumulation_Policy":    None,   # ACCUMULATION / DISTRIBUTION
         "Fee_Known_Flag":         None,   # v17: EXTRACTED | ZERO_CONFIRMED | NOT_FOUND
+        "Style_Profile":          None,   # v23 BL-41: Growth | Value | Income (solo RV)
+        "Subtype":                None,   # v23 BL-43: LVNAV/VNAV/CNAV | Fixed Band N | Volatility Target
         "Inference_Trace":        None,
     }
     return {
@@ -972,6 +1405,21 @@ def _safe_date(year, month, day) -> Optional[str]:
 #   Si hay swaps/futuros/opciones nombrados, es YES.
 # -------------------------------------------------
 
+# P12: Patrones LIMITED (uso acotado/limitado de derivados)
+ES_DERIVATIVES_LIMITED = [
+    r"\b(?:puede|podr[aá])\s+(?:utilizar|emplear|usar)\s+(?:instrumentos\s+)?derivados\s+"
+    r"(?:con\s+fines\s+de\s+cobertura|de\s+manera\s+limitada|de\s+forma\s+accesoria)",
+    r"\buso\s+(?:limitado|moderado|accesorio)\s+de\s+(?:instrumentos\s+)?derivados\b",
+    r"\bderivados\s+(?:únicamente|solo|exclusivamente)\s+con\s+fines\s+de\s+cobertura\b",
+    r"\bderivados\s+(?:con\s+fines\s+de\s+)?cobertura\b(?!.{0,40}inversi[oó]n)",
+]
+
+EN_DERIVATIVES_LIMITED = [
+    r"\bmay\s+use\s+(?:financial\s+)?derivatives\s+for\s+(?:hedging|efficient\s+portfolio\s+management)\b",
+    r"\blimited\s+use\s+of\s+(?:financial\s+)?derivatives\b",
+    r"\bderivatives\s+(?:only|solely|exclusively)\s+for\s+hedging\b",
+]
+
 ES_DERIVATIVES_NO = [
     r"\bno\s+utiliza[r]?\s+(?:instrumentos\s+)?derivados\b",
     r"\bno\s+se\s+utilizar[aá]n?\s+(?:instrumentos\s+)?derivados\b",
@@ -1015,17 +1463,18 @@ EN_DERIVATIVES_YES = [
     r"\b(?:swaps?|options?|futures?|forwards?|warrants?)\b",
 ]
 
-
 def _detect_derivatives_usage(text: str, language: Optional[str]) -> Optional[str]:
+    """
+    Detecta uso de derivados: YES, LIMITED, NO.
+    P12: añadido LIMITED y default NO cuando no hay mención.
+    """
     if not text:
         return None
 
     t = text.lower()
     t_nospace = t.replace(" ", "")
 
-    # ── Texto OCR fusionado: "derivadosuso:" ─────────────────────────────────
-    # 103 fondos con Language=None tienen "derivadosuso:gestión eficaz..." o
-    # "derivadosuso:cobertura..." en su texto fusionado.
+    # ── Texto OCR fusionado ──────────────────────────────────────────
     if language is None:
         if any(p in t_nospace for p in ["noderivados", "noderivado"]):
             return "NO"
@@ -1034,21 +1483,31 @@ def _detect_derivatives_usage(text: str, language: Optional[str]) -> Optional[st
             return "YES"
         return None
 
+    # ── Español ──────────────────────────────────────────────────────
     if language in ("ES", None):
         # NO tiene prioridad
         for rx in ES_DERIVATIVES_NO:
             if re.search(rx, t):
                 return "NO"
+        # LIMITED antes de YES (P12)
+        for rx in ES_DERIVATIVES_LIMITED:
+            if re.search(rx, t):
+                return "LIMITED"
         for rx in ES_DERIVATIVES_YES:
             if re.search(rx, t):
                 return "YES"
         if "instrumentosderivados" in t_nospace or "usodederivados" in t_nospace:
             return "YES"
 
-    if language == "EN":
+    # ── Inglés ───────────────────────────────────────────────────────
+    if language in ("EN", None):
         for rx in EN_DERIVATIVES_NO:
             if re.search(rx, t):
                 return "NO"
+        # LIMITED antes de YES (P12)
+        for rx in EN_DERIVATIVES_LIMITED:
+            if re.search(rx, t):
+                return "LIMITED"
         for rx in EN_DERIVATIVES_YES:
             if re.search(rx, t):
                 return "YES"
@@ -1114,6 +1573,17 @@ _BENCH_TERMINATORS = re.compile(
     r"flamenco|franc[eé]s|alem[aá]n|italiano|español|ingresos|inversor|"
     r"acumula|ofrezcan|remuner|distribuc|asesoramiento|canjear|partici|folleto|"
     r"anual|trimestral|semestral|por\s+lo|informaci|consult|precio|clase\b|"
+    # BL-38: contaminaciones detectadas en datos reales (texto de sección objetivo)
+    r"riesgo[s]?|corro|obten|rentabilidad|producto[s]?|inversi[oó]n|p[aá]gina|"
+    r"documento|agosto|julio|septiembre|octubre|noviembre|diciembre|"
+    r"enero|febrero|marzo|abril|mayo|junio|"
+    # v20: nuevas contaminaciones detectadas en validación real post-v19
+    #   "sofr), además" → además
+    #   "msci european último informe" → último
+    #   "msci europe través de todos los canales" → través, canales
+    #   "...management (ireland) limited, european bank and business centre..."
+    r"adem[aá]s|trav[eé]s|[uú]ltimo|canal(?:es)?|management|limited|"
+    r"bank\b|centre|business|route|avenida|calle|street|road|"
     r"[a-z]{15,})|"
     r"[\.;\n]|"
     r"\s{2,}|"
@@ -1121,7 +1591,9 @@ _BENCH_TERMINATORS = re.compile(
     r"\s+\(www|"                        # URLs con paréntesis
     r",\s+un\s+(?:índice|index)|"       # ", un índice que no..." al final
     r"\s+\([^)]{0,6}\)\s+(?:el|la|se|un|una|para)\b|"  # parenthesis + article = adjacent text
-    r"\s+\(el\s|\s+\(la\s|\s+\(un\s"  # "(el ...) texto adjunto"
+    r"\s+\(el\s|\s+\(la\s|\s+\(un\s|"  # "(el ...) texto adjunto"
+    r"[¿?]|"                            # BL-38: signo de interrogación (contaminación OCR)
+    r"\),?\s+[a-z]{3,}"                 # v20: ")," o ")" seguido de texto (contaminación post-paréntesis)
 )
 
 # Frases que indican "sin benchmark" → devolver NO_BENCHMARK sentinel
@@ -1192,6 +1664,14 @@ def _trim_benchmark(raw: str) -> Optional[str]:
     # "msci europe index (total método de cálculo" → "msci europe index"
     raw = re.sub(r'\s*\(total(?!\s+(?:return|net|gross|tr))(?![a-z])[^)]{0,60}$', '', raw, flags=re.IGNORECASE).strip()
 
+    # BL-38-v21: índices de tipo overnight válidos (SOFR, €STR, SONIA, ESTR, TONA,
+    # SARON, ESTER) son benchmarks legítimos de 4-5 chars que de otro modo caen por
+    # el umbral len<6 / "sin sufijo". Ya pasaron el match de proveedor (prov_m), así
+    # que devolver el token canónico es seguro. Recupera p.ej. "sofr), además" -> "sofr".
+    _m_short = re.match(r'(?:€?str|sofr|sonia|saron|tona|ester|estr)\b', raw, re.IGNORECASE)
+    if _m_short:
+        return _m_short.group(0)
+
     if len(raw) < 6:
         return None
     # Rechazar resultado de una sola palabra sin sufijo (p.ej. 'jpmorgan' solo)
@@ -1206,6 +1686,22 @@ def _trim_benchmark(raw: str) -> Optional[str]:
     )
     if _FALSE_POSITIVE_TERMS.search(raw):
         return None
+
+    # BL-38: Rechazar si contiene palabras funcionales españolas → contaminación de sección
+    # Patrón: artículos/preposiciones/verbos que no aparecen en nombres de índices reales
+    _CONTAMINATION_WORDS = re.compile(
+        r"\b(?:riesgo|corro|podría|obtener|cambio|hemos|clasificado|producto|"
+        r"página|documento|inversor|agosto|julio|septiembre|octubre)\b",
+        re.IGNORECASE
+    )
+    if _CONTAMINATION_WORDS.search(raw):
+        return None
+
+    # BL-38: Rechazar si supera 80 caracteres Y contiene más de 6 tokens (indica frase completa)
+    if len(raw) > 80:
+        token_count = len(raw.split())
+        if token_count > 7:
+            return None
 
     # Verificar que contiene un sufijo de índice válido O termina con el proveedor
     has_suffix = bool(re.search(_BENCH_SUFFIXES, raw))
@@ -1964,78 +2460,193 @@ _OC_MAX = 0.1000   # 10.0%  (PRIIPs incluye todos los costes)
 # La suma (0,69%) es el TER real, no la "Incidencia anual" que incluye entrada.
 
 # Comisiones de gestión (primera línea de costes corrientes)
+# BL-37: ampliado para cubrir variantes sin artículo "El" y casing distinto
 _OC_DDF_MGMT_RE = re.compile(
     r"comisiones?\s+de\s+gesti[oó]n\s+y\s+otros\s+costes[^\.]{0,150}"
-    r"El\s+([\d]+[,.][\d]+)\s*%",
+    r"(?:El\s+|el\s+)?([\d]+[,.][\d]+)\s*%",
     re.IGNORECASE | re.DOTALL
 )
 
 # Costes de operación (transacción)
+# BL-37: ampliado para cubrir variantes sin artículo "El"
 _OC_DDF_TRANS_RE = re.compile(
     r"costes?\s+de\s+operaci[oó]n[^\.]{0,150}"
-    r"El\s+([\d]+[,.][\d]+)\s*%",
+    r"(?:El\s+|el\s+)?([\d]+[,.][\d]+)\s*%",
     re.IGNORECASE | re.DOTALL
 )
 
 # Comisión de entrada = 0 explícito — DDF declara "sin comisión de entrada" (v17)
-# Equivalente a _EXIT_FEE_ZERO_RE ya existente para la comisión de salida.
+# BL-51A/2: añadidos triggers "comisión inicial" y "cargo inicial".
 _ENTRY_FEE_ZERO_RE = re.compile(
-    r"costes?\s+de\s+entrada[^\r\n]{0,200}"
+    r"(?:costes?\s+de\s+entrada"
+    r"|comisi[oó]n\s+de\s+(?:suscripci[oó]n|entrada|inicial)"
+    r"|gastos?\s+de\s+(?:suscripci[oó]n|entrada)"
+    r"|cargo\s+(?:de\s+entrada|inicial))"
+    # BL-COST-ZERO-FIX (R-6): la ventana NO puede cruzar a la siguiente fila
+    # de coste (salida/gestion/operacion/rendimiento). Causa raiz del falso
+    # ZERO_CONFIRMED: el "0 EUR" de la fila de salida caia dentro de los 200
+    # chars y la rama "\\b0...(eur|%)" lo tomaba como cero de ENTRADA, anulando
+    # una comision real (ej. FR0010664052 "Hasta el 3,00%").
+    r"(?:(?!costes?\s+de\s+salida|comisiones?\s+de\s+gesti"
+    r"|costes?\s+de\s+operaci"
+    r"|comisiones?\s+(?:de\s+(?:[eé]xito|rendimiento)|en\s+funci[oó]n))[\s\S]){0,200}"
     r"(?:no\s+se\s+cobr(?:an|a)\s+(?:gastos|comisi[oó]n)\s+de\s+entrada"
     r"|no\s+entry\s+(?:charge|fee)"
     r"|entry\s+(?:charge|fee)\s*:\s*(?:none|nil|0)"
-    r"|comisi[oó]n\s+de\s+entrada\s*:\s*0"
-    r"|gastos\s+de\s+entrada\s*:\s*0"
-    r"|sin\s+comisi[oó]n\s+de\s+entrada"
+    r"|comisi[oó]n\s+de\s+(?:suscripci[oó]n|entrada|inicial)\s*:\s*0"
+    r"|gastos\s+de\s+(?:suscripci[oó]n|entrada)\s*:\s*0"
+    r"|sin\s+comisi[oó]n\s+de\s+(?:suscripci[oó]n|entrada|inicial)"
     r"|\b0(?:[,.]00)?\s*(?:eur|usd|gbp|%)\b)",
-    re.IGNORECASE | re.DOTALL
+    re.IGNORECASE
 )
 
 # Comisión de entrada (Entry_Fee_Pct)
+# BL-35: formatos UCITS clásicos.
+# BL-51A/2: nuevos triggers ES/EN; separador no-greedy (fix bug greedy);
+#           decimal opcional para cubrir "5%" además de "5,00%".
 _ENTRY_FEE_RE = re.compile(
-    r"costes?\s+de\s+entrada[^\r\n]{0,300}"
-    r"(?:hasta\s+)?([\d]+[,.][\d]+)\s*%",
+    r"(?:costes?\s+de\s+entrada"
+    r"|comisi[oó]n\s+(?:m[aá]xima\s+)?(?:de\s+suscripci[oó]n|de\s+entrada|inicial)"
+    r"|gastos?\s+de\s+(?:suscripci[oó]n|entrada)"
+    r"|cargo\s+(?:de\s+entrada|m[aá]ximo\s+de\s+entrada|inicial)"
+    r"|derecho\s+de\s+suscripci[oó]n"
+    r"|entry\s+(?:charge|fee|load)"
+    r"|subscription\s+(?:charge|fee)"
+    r"|purchase\s+(?:charge|fee)"
+    r"|upfront\s+(?:charge|fee)"
+    r"|sales\s+load)"
+    r"[^\r\n]{0,300}?"
+    r"(?:hasta\s+)?([\d]+(?:[,.][\d]+)?)\s*%",
     re.IGNORECASE | re.DOTALL
 )
 
+# ---------------------------------------------------------------------------
+# BL-COST-CEILING (Part 1, regla A): deteccion de comision CONDICIONAL / techo.
+# Cuando la comision de entrada/salida se expresa como techo ("Hasta el 3,00%",
+# "1,00% maximo", "cobrarle hasta un 5%", "comision maxima de entrada del 3%",
+# "up to X%"), el valor PUNTUAL es indeterminado -> Entry/Exit_Fee_Pct = NULL.
+# El techo se conserva en *_Max (priips_cost_extractor), NO aqui.
+# El marcador puede ir ANTES o DESPUES del numero, por eso la ventana cubre el
+# % y ~35 chars posteriores. R-6: ventana acotada, sin cruzar a la fila siguiente.
+# ---------------------------------------------------------------------------
+_FEE_CEILING_MARKER_RE = re.compile(
+    r"(?:hasta|m[aá]xim[oa]|up\s+to|a\s+maximum\s+of|as\s+much\s+as)",
+    re.IGNORECASE,
+)
+_CEILING_BOUND = (
+    r"(?:(?!costes?\s+de\s+salida|comisiones?\s+de\s+gesti"
+    r"|costes?\s+de\s+operaci"
+    r"|comisiones?\s+(?:de\s+(?:[eé]xito|rendimiento)|en\s+funci[oó]n))[\s\S]){0,200}"
+)
+_ENTRY_CEILING_PROBE = re.compile(
+    r"(?:costes?\s+de\s+entrada"
+    r"|comisi[oó]n\s+(?:m[aá]xima\s+)?de\s+(?:suscripci[oó]n|entrada|inicial)"
+    r"|gastos?\s+de\s+(?:suscripci[oó]n|entrada)"
+    r"|cargo\s+(?:de\s+entrada|m[aá]ximo\s+de\s+entrada|inicial)"
+    r"|derecho\s+de\s+suscripci[oó]n"
+    r"|entry\s+(?:charge|fee|load)|subscription\s+(?:charge|fee)"
+    r"|purchase\s+(?:charge|fee)|upfront\s+(?:charge|fee)|sales\s+load)"
+    + _CEILING_BOUND +
+    r"\d+(?:[,.]\d+)?\s*%[\s\S]{0,35}",
+    re.IGNORECASE,
+)
+_EXIT_CEILING_PROBE = re.compile(
+    r"(?:costes?\s+de\s+salida"
+    r"|comisi[oó]n\s+(?:m[aá]xima\s+)?de\s+reembolso"
+    r"|gastos?\s+de\s+reembolso|cargo\s+de\s+salida"
+    r"|derecho\s+de\s+reembolso|exit\s+(?:charge|fee)"
+    r"|redemption\s+(?:charge|fee|load)|back[\s\-]?end\s+(?:load|charge)"
+    r"|deferred\s+sales\s+charge)"
+    + _CEILING_BOUND +
+    r"\d+(?:[,.]\d+)?\s*%[\s\S]{0,35}",
+    re.IGNORECASE,
+)
+
+
+def _fee_is_ceiling(text: str, side: str) -> bool:
+    """True si la comision (side='entry'|'exit') se expresa como techo/condicional."""
+    if not text:
+        return False
+    probe = _ENTRY_CEILING_PROBE if side == "entry" else _EXIT_CEILING_PROBE
+    m = probe.search(text)
+    return bool(m and _FEE_CEILING_MARKER_RE.search(m.group(0)))
+
+
 # Comisión de salida (Exit_Fee_Pct) — valor no cero
+# BL-36: formatos UCITS clásicos.
+# BL-51A/2: nuevos triggers; separador no-greedy; decimal opcional.
 _EXIT_FEE_RE = re.compile(
-    r"costes?\s+de\s+salida[^\r\n]{0,300}"
-    r"([\d]+[,.][\d]+)\s*%",
+    r"(?:costes?\s+de\s+salida"
+    r"|comisi[oó]n\s+(?:m[aá]xima\s+)?de\s+reembolso"
+    r"|gastos?\s+de\s+reembolso"
+    r"|cargo\s+de\s+salida"
+    r"|derecho\s+de\s+reembolso"
+    r"|exit\s+(?:charge|fee)"
+    r"|redemption\s+(?:charge|fee|load)"
+    r"|back[\s\-]?end\s+(?:load|charge)"
+    r"|deferred\s+sales\s+charge)"
+    r"[^\r\n]{0,300}?"
+    r"([\d]+(?:[,.][\d]+)?)\s*%",
     re.IGNORECASE | re.DOTALL
 )
 
 # Comisión de salida = 0 explícito — DDF declara "0 EUR" o "no cobramos"
+# BL-36: añadidos formatos UCITS clásicos
 _EXIT_FEE_ZERO_RE = re.compile(
-    r"costes?\s+de\s+salida[^\r\n]{0,200}"
-    r"(?:no\s+cobr(?:amos|a)\s+comisi[oó]n\s+de\s+salida"
+    r"(?:costes?\s+de\s+salida"          # plural Y singular (coste de salida)
+    r"|comisi[oó]n\s+(?:m[aá]xima\s+)?de\s+reembolso"
+    r"|gastos?\s+de\s+reembolso"
+    r"|exit\s+(?:charge|fee)"
+    r"|redemption\s+(?:charge|fee))"
+    r"[\s\S]{0,200}"
+    r"(?:no\s+cobr(?:amos|a)\s+(?:una\s+)?(?:comisi[oó]n|coste)\s+de\s+(?:salida|reembolso)"
+    r"|nosotros\s+no\s+facturamos\s+el\s+coste\s+de\s+salida"  # v28 BL-DLA-2: AXA Ireland
     r"|\b0(?:[,.]00)?\s*(?:eur|usd|gbp|%)"
-    r"|sin\s+comisi[oó]n\s+de\s+salida"
-    r"|no\s+se\s+aplica\s+comisi[oó]n\s+de\s+salida)",
-    re.IGNORECASE | re.DOTALL
+    r"|sin\s+comisi[oó]n\s+de\s+(?:salida|reembolso)"
+    r"|no\s+se\s+aplica\s+comisi[oó]n\s+de\s+(?:salida|reembolso)"
+    r"|no\s+(?:exit|redemption)\s+(?:charge|fee)"
+    r"|no\s+hay\s+costes?\s+de\s+salida)",               # v28 BL-DLA-2: 'no hay costes de salida'
+    re.IGNORECASE
 )
 
 # Patrón principal PRIIPs: captura uno o dos valores porcentuales
+# BL-37: ampliado con variantes adicionales observadas en datos reales
 _OC_PRIIPS_RE = re.compile(
     r'(?:incidencia\s+(?:anual\s+)?de\s+los\s+costes'
     r'|impacto\s+(?:anual\s+)?en\s+los\s+costes'
-    r'|gastos\s+en\s+curso)'
-    r'[^0-9]{0,50}'           # separador (asterisco, espacios, etc.)
+    r'|gastos\s+en\s+curso'
+    r'|coste\s+total\s+anual'           # BL-37: variante tabular Amundi
+    r'|total\s+(?:ongoing\s+)?charges?'  # BL-37: EN format
+    r'|ongoing\s+charges?'               # BL-37: EN UCITS
+    r'|total\s+expense\s+ratio'          # BL-37: TER explícito
+    r'|\bter\b)'
+    r'[^0-9]{0,60}'           # BL-37: ampliado de 50 a 60 chars (tablas con más espacio)
     r'([\d]+[,.][\d]+)\s*%'   # primer valor (siempre presente)
     r'(?:\s+([\d]+[,.][\d]+)\s*%)?',  # segundo valor (opcional)
     re.IGNORECASE
 )
 
 # Patrón UCITS antiguo: "Gastos corrientes X,XX%"
+# BL-37: ampliado con "gastos totales" y formato sin espacio
 _OC_UCITS_RE = re.compile(
-    r'gastos\s+corrientes\s*[:\|]?\s*([\d]+[,.][\d]+)\s*%',
+    r'(?:gastos\s+corrientes|gastos\s+totales\s+anuales?|total\s+de\s+gastos)'
+    r'\s*[:\|]?\s*([\d]+[,.][\d]+)\s*%',
     re.IGNORECASE
 )
 
 # Patrón fusionado (OCR sin espacios)
+# BL-37: añadido patrón para "ongoingcharges" fusionado EN
 _OC_FUSED_PATTERNS = [
     re.compile(r'incidenciadeloscoste[s]?[^0-9]{0,15}([\d]+[,.][\d]+)%([\d]+[,.][\d]+)?%?'),
     re.compile(r'gastoscorrientes([\d]+[,.][\d]+)%'),
+    re.compile(r'ongoingcharges?([\d]+[,.][\d]+)%'),   # BL-37: EN fused
+    re.compile(r'totalexpense(?:ratio)?([\d]+[,.][\d]+)%'),  # BL-37: TER fused
+    # BL-37b: JPMorgan OCR 100% fusionado sin espacios
+    # Layout: "comisionesdegestiónyotros1,90%delvalordesuinversiónalaño"
+    re.compile(
+        r'comisionesdegesti[oó]nyotros([\d]+[,\.][\d]+)%delvalordesuinversi[oó]n',
+        re.IGNORECASE
+    ),
 ]
 
 
@@ -2050,34 +2661,605 @@ def _parse_oc_pct(raw: str) -> Optional[float]:
         return None
 
 
+# v19 ── Entry fee "Ninguna" explícita
+# Layout: "Costes de entrada Ninguna" (Amundi, algunos fondos DDF)
+_ENTRY_FEE_NINGUNA_RE = re.compile(
+    r'(?:costes?\s+de\s+entrada|comisi[oó]n\s+de\s+suscripci[oó]n)'
+    r'[^\r\n]{0,80}\bninguna?\b',
+    re.IGNORECASE
+)
+
+# v19 ── Entry fee "cobrarle hasta (un máximo del) X.XX%" — AXA, Pictet, Waystone
+# Layouts observados:
+#   AXA:     "cobrarle hasta un máximo del 5.00%"
+#   Pictet:  "cobrarle hasta un máximo del 3.00%."
+#   Waystone:"cobrarle hasta el 4,00% del monto"
+_ENTRY_FEE_COBRARLE_RE = re.compile(
+    r'(?:costes?\s+de\s+entrada|comisi[oó]n\s+de\s+suscripci[oó]n)'
+    r'[\s\S]{0,500}?'
+    r'cobrarle\s+hasta\s+(?:un\s+m[aá]ximo\s+del\s+|el\s+)?([\d]+[,.][\d]+)\s*%',
+    re.IGNORECASE
+)
+
+# v21 ── JPMorgan (texto OCR 100% fusionado sin espacios)
+# Layout ZERO: "Costesdeentrada 0,00%,nocobramoscomisióndeentrada."
+# Layout PCT:  "Costesdeentrada 5,00%delimportequepagaráusted"
+# El texto JPMorgan no tiene ningún espacio entre palabras (Language=None).
+# Los patrones buscan en texto con espacios eliminados (t_fused).
+_EF_JPM_FUSED_ZERO = re.compile(
+    r'costesdeentrada\s*0[,\.]00%',
+    re.IGNORECASE
+)
+_EF_JPM_FUSED_PCT = re.compile(
+    r'costesdeentrada\s*([\d]+[,\.][\d]+)%del(?:importe|valor)',
+    re.IGNORECASE
+)
+
+# v21 ── Schroeder (SISF): porcentaje entre corchetes tras importe absoluto
+# Layout: "Costes de entrada la cantidad máxima ... Hasta EUR 300 ... [3.00%]"
+# El valor real está en corchetes; el importe EUR es base calculada sobre 10.000.
+_EF_SCH_BRACKET = re.compile(
+    r'Costes\s+de\s+entrada[^[]{0,400}\[([\d]+[,\.][\d]+)%\]',
+    re.IGNORECASE | re.DOTALL
+)
+# Schroeder ZERO: "Costes de entrada No cobramos comisión de entrada. EUR 0"
+# No matchea _ENTRY_FEE_ZERO_RE porque usa "EUR 0" (no "0 EUR" ni "0%").
+_EF_SCH_NO_COBRAR = re.compile(
+    r'Costes\s+de\s+entrada\s+No\s+cobramos\s+comisi[oó]n\s+de\s+entrada',
+    re.IGNORECASE
+)
+
+# v21 ── UBS: porcentaje declarado ANTES del label "Costes de entrada"
+# Layout A: "X.X% del importe que usted paga al realizar esta inversión.
+#            Este es el importe máximo Costes de entrada Hasta EUR NNN..."
+_EF_UBS_PCT_BEFORE = re.compile(
+    r'([\d]+[,\.][\d]+)%\s+del\s+importe\s+que\s+usted\s+paga'
+    r'[\s\S]{0,200}?Costes\s+de\s+entrada',
+    re.IGNORECASE
+)
+# Layout B: "cifras incluyen la comisión de suscripción máxima ... hasta el X.XX%"
+_EF_UBS_CIFRAS = re.compile(
+    r'cifras\s+incluyen\s+la\s+comisi[oó]n\s+de\s+suscripci[oó]n\s+m[aá]xima'
+    r'[\s\S]{0,200}?hasta\s+el\s*([\d]+[,\.][\d]+)\s*%',
+    re.IGNORECASE
+)
+# Layout ZERO: "No aplicamos una comisión inicial"
+_EF_UBS_NO_INICIAL = re.compile(
+    r'No\s+aplicamos\s+una\s+comisi[oó]n\s+inicial',
+    re.IGNORECASE
+)
+
+# v21 ── M&G: porcentaje declarado ANTES del label, seguido de importe absoluto
+# Layout: "4,00% del valor de su inversión. Se trata del coste de entrada
+#          máximo que Costes de entrada €400,00 cobrará M&G."
+_EF_MG_PCT_BEFORE = re.compile(
+    r'([\d]+[,\.][\d]+)%\s+del\s+valor\s+de\s+su\s+inversi[oó]n'
+    r'[\s\S]{0,150}?Se\s+trata\s+del\s+coste\s+de\s+entrada\s+m[aá]ximo',
+    re.IGNORECASE
+)
+# M&G ZERO: "Costes de entrada €0,00" / "$0,00"
+_EF_MG_ZERO = re.compile(
+    r'Costes\s+de\s+entrada\s+[€\$]0[,\.]00',
+    re.IGNORECASE
+)
+
+# v21 ── Amundi: porcentaje en frase "costes de distribución del X,XX%"
+# que precede al label "Costes de entrada"
+# Layout: "costes de distribución del 5,00% del importe invertido.
+#          Se trata de la cantidad máxima ... Costes de entrada Hasta 500 EUR"
+_EF_AMUNDI_DISTRIB = re.compile(
+    r'costes?\s+de\s+distribuci[oó]n\s+del\s+([\d]+[,\.][\d]+)\s*%'
+    r'[\s\S]{0,400}?Costes\s+de\s+entrada',
+    re.IGNORECASE
+)
+# Amundi variante: "Puede cobrarse hasta el X,XX% de su inversión antes"
+_EF_AMUNDI_PUEDE = re.compile(
+    r'[Pp]uede\s+cobrarse\s+hasta\s+el\s+([\d]+[,\.][\d]+)\s*%\s+de\s+su\s+inversi[oó]n\s+antes',
+    re.IGNORECASE
+)
+
+# v22 BL-35b ── Thread: "costes de distribución del X% del importe"
+# Layout: "Costes de entrada Se incluyen costes de distribución del X % del importe"
+# El porcentaje puede tener un espacio entre dígitos y separador decimal.
+_EF_THREAD_DISTRIB = re.compile(
+    r'Costes\s+de\s+entrada\s+Se\s+incluyen\s+costes?\s+de\s+distribuci[oó]n\s+del\s+'
+    r'([\d]+[,\.]?\s*[\d]*)\s*%',
+    re.IGNORECASE
+)
+
+# v22 BL-35b ── AXA: "Nosotros no facturamos el coste de entrada" → ZERO_CONFIRMED
+# Layout: "Costes de entrada Nosotros no facturamos el coste de entrada. €0"
+_EF_AXA_NO_FACTURA = re.compile(
+    r'nosotros\s+no\s+facturamos\s+el\s+coste\s+de\s+entrada',
+    re.IGNORECASE
+)
+
+# v24 BL-51A ── Nuevos patrones ZERO entrada
+# ─────────────────────────────────────────────────────────────────────────────
+
+# "no hay gastos de entrada" — Fidelity, BNP Paribas
+# Layout: "No hay gastos de entrada en este fondo."
+# Layout: "No hay gastos de entrada."
+_EF_NO_HAY_GASTOS_RE = re.compile(
+    r'no\s+hay\s+gastos?\s+de\s+entrada',
+    re.IGNORECASE
+)
+
+# "sin cargo de entrada" / "sin cargo inicial" — Vanguard, Robeco
+# Layout: "sin cargo de entrada aplicable"
+# Layout: "sin cargo inicial"
+_EF_SIN_CARGO_RE = re.compile(
+    r'sin\s+cargo\s+(?:de\s+entrada|inicial)',
+    re.IGNORECASE
+)
+
+# Formatos EN sin comisión de entrada
+# Layout: "no front-end load"
+# Layout: "no sales charge"
+# Layout: "no initial charge"
+# Layout: "entry charge: nil" / "entry charge: none"
+_EF_NO_FRONT_LOAD_RE = re.compile(
+    r'(?:no\s+front[\s\-]?end\s+(?:load|charge|fee)'
+    r'|no\s+sales\s+charge'
+    r'|no\s+initial\s+charge'
+    r'|entry\s+(?:charge|fee)\s*[:\-]\s*(?:nil|none|n/a|0(?:[,\.]00)?)'
+    r'|initial\s+(?:charge|fee)\s*[:\-]\s*(?:nil|none|n/a|0(?:[,\.]00)?)'
+    r'|no\s+(?:entry|subscription)\s+(?:charge|fee))',
+    re.IGNORECASE
+)
+
+# v24 BL-51A ── Nuevos patrones PORCENTAJE entrada
+# ─────────────────────────────────────────────────────────────────────────────
+
+# "gastos de entrada [del/de hasta] X%" — sinónimo de "costes de entrada" no cubierto
+# Layout: "Gastos de entrada del 3,00%"
+# Layout: "gastos de entrada: hasta el 5%"
+# Nota: separador decimal OPCIONAL — "5%" y "3,00%" son ambos válidos.
+# Separador [\s\S]{0,200}? no-greedy para cruzar texto intermedio sin consumir el valor.
+_EF_GASTOS_ENTRADA_RE = re.compile(
+    r'gastos?\s+de\s+entrada'
+    r'[\s\S]{0,200}?'
+    r'(?::\s*hasta\s+el\s+'
+    r'|hasta\s+(?:el\s+)?(?:un\s+m[aá]ximo\s+del?\s+)?'
+    r'|del?\s+'
+    r'|:\s*)'
+    r'([\d]+(?:[,.][\d]+)?)\s*%',
+    re.IGNORECASE)
+
+# "cargo inicial [máximo del] X%" — Robeco ES, gestoras alemanas traducidas
+# Layout: "cargo inicial máximo del 3,00%"
+# Layout: "cargo inicial: 5,00%"
+_EF_CARGO_INICIAL_RE = re.compile(
+    r'cargo\s+inicial'
+    r'[\s\S]{0,200}?'
+    r'(?:m[aá]ximo\s+del?\s+|del?\s+|:\s*(?:hasta\s+(?:el\s+)?)?)'
+    r'([\d]+(?:[,.][\d]+)?)\s*%',
+    re.IGNORECASE)
+
+# "front-end load [of] X%" / "sales charge [of up to] X%" / "initial charge [of up to] X%"
+# Formatos EN con porcentaje
+# Layout: "front-end load of 3.00%"
+# Layout: "sales charge of up to 5%"
+# Layout: "initial charge: 3.00%"
+# Nota: separador [\s\S]{0,200}? no-greedy para que "of up to" no sea consumido
+# por el separador antes de llegar a la alternativa de prefijo.
+_EF_FRONT_LOAD_EN_RE = re.compile(
+    r'(?:front[\s\-]?end\s+(?:load|charge|fee)'
+    r'|sales\s+(?:charge|load)'
+    r'|initial\s+(?:charge|fee)'
+    r'|subscription\s+(?:charge|fee))'
+    r'[\s\S]{0,200}?'
+    r'(?:of\s+up\s+to\s+|of\s+|up\s+to\s+|:\s*(?:up\s+to\s+)?)?'
+    r'([\d]+(?:[,.][\d]+)?)\s*%',
+    re.IGNORECASE)
+
+
 def _detect_entry_fee(text: str) -> Optional[float]:
     """
     Extrae la comisión de entrada (Entry_Fee_Pct) desde la sección
     "Composición de costes" del DDF/PRIIPs.
 
-    Prioridad (v17):
-    1. Declaración explícita de sin comisión → retorna 0.0 (ZERO_CONFIRMED)
-    2. Valor porcentual no cero             → retorna float decimal (EXTRACTED)
-    3. Sin detección                        → retorna None (NOT_FOUND)
+    Prioridad (v24 BL-51A):
+    1.  Declaración explícita de sin comisión → 0.0 (ZERO_CONFIRMED)
+    2.  "Ninguna" explícita después de trigger → 0.0
+    3.  JPMorgan fused ZERO: "Costesdeentrada 0,00%,nocobramoscomisión" → 0.0
+    4.  Schroeder ZERO: "Costes de entrada No cobramos comisión de entrada" → 0.0
+    5.  UBS ZERO: "No aplicamos una comisión inicial" → 0.0
+    6.  M&G ZERO: "Costes de entrada €0,00 / $0,00" → 0.0
+    7.  AXA ZERO: "Nosotros no facturamos el coste de entrada" → 0.0  (v22 BL-35b)
+    8.  "no hay gastos de entrada" → 0.0  (v24 BL-51A)
+    9.  "sin cargo de entrada / inicial" → 0.0  (v24 BL-51A)
+    10. EN ZERO: "no front-end load / no sales charge / no initial charge" → 0.0  (v24 BL-51A)
+    11. "cobrarle hasta (un máximo del) X.XX%" — AXA/Pictet/Waystone → float
+    12. JPMorgan fused PCT: "Costesdeentrada X,XX%delimporte" → float
+    13. Schroeder bracket: "[X.XX%]" tras bloque entrada → float
+    14. UBS PCT_BEFORE: "X.X% del importe que usted paga ... Costes de entrada" → float
+    15. UBS CIFRAS: "cifras incluyen ... hasta el X.XX%" → float
+    16. M&G PCT_BEFORE: "X,XX% del valor ... Se trata del coste de entrada máximo" → float
+    17. Amundi DISTRIB: "costes de distribución del X,XX% ... Costes de entrada" → float
+    18. Amundi PUEDE: "Puede cobrarse hasta el X,XX% de su inversión antes" → float
+    19. Thread DISTRIB: "Se incluyen costes de distribución del X%" → float (v22 BL-35b)
+    20. "gastos de entrada [del] X%" — sinónimo ES → float  (v24 BL-51A)
+    21. "cargo inicial [máximo del] X%" — Robeco/DE → float  (v24 BL-51A)
+    22. EN: "front-end load/sales charge/initial charge X%" → float  (v24 BL-51A)
+    23. Valor porcentual estándar después de trigger → float
+    24. Sin detección → None (NOT_FOUND)
 
-    La distinción 0.0 vs None es crítica para Fee_Known_Flag en P3:
-    un fondo con Entry_Fee_Pct=NULL puede cobrar hasta un 6% de entrada.
+    La distinción 0.0 vs None es crítica para Fee_Known_Flag en P3.
     """
     if not text:
         return None
 
-    # Prioridad 1: declaración explícita de sin comisión de entrada
+    # Texto fusionado para patrones JPMorgan
+    t_fused = text.replace(" ", "")
+
+    # ── Prioridad 1: declaración explícita de sin comisión ───────────────────
     m_zero = _ENTRY_FEE_ZERO_RE.search(text) or _ENTRY_FEE_ZERO_RE.search(text.lower())
     if m_zero:
         return 0.0
 
-    # Prioridad 2: valor porcentual no cero
+    # ── Prioridad 2: "Ninguna" explícita (v19) ───────────────────────────────
+    m_ninguna = _ENTRY_FEE_NINGUNA_RE.search(text) or _ENTRY_FEE_NINGUNA_RE.search(text.lower())
+    if m_ninguna:
+        return 0.0
+
+    # ── Prioridad 3: JPMorgan fused ZERO ────────────────────────────────────
+    if _EF_JPM_FUSED_ZERO.search(t_fused):
+        return 0.0
+
+    # ── Prioridad 4: Schroeder "No cobramos comisión de entrada" ────────────
+    if _EF_SCH_NO_COBRAR.search(text):
+        return 0.0
+
+    # ── Prioridad 5: UBS "No aplicamos una comisión inicial" ────────────────
+    if _EF_UBS_NO_INICIAL.search(text):
+        return 0.0
+
+    # ── Prioridad 6: M&G "Costes de entrada €0,00 / $0,00" ──────────────────
+    if _EF_MG_ZERO.search(text):
+        return 0.0
+
+    # ── Prioridad 7: AXA "Nosotros no facturamos el coste de entrada" ────────
+    # (v22 BL-35b) — 24 fondos AXA → ZERO_CONFIRMED
+    if _EF_AXA_NO_FACTURA.search(text) or _EF_AXA_NO_FACTURA.search(text.lower()):
+        return 0.0
+
+    # ── Prioridad 8: "no hay gastos de entrada" (v24 BL-51A) ─────────────────
+    if _EF_NO_HAY_GASTOS_RE.search(text) or _EF_NO_HAY_GASTOS_RE.search(text.lower()):
+        return 0.0
+
+    # ── Prioridad 9: "sin cargo de entrada / inicial" (v24 BL-51A) ───────────
+    if _EF_SIN_CARGO_RE.search(text) or _EF_SIN_CARGO_RE.search(text.lower()):
+        return 0.0
+
+    # ── Prioridad 10: EN ZERO "no front-end load / no sales charge" (v24 BL-51A)
+    if _EF_NO_FRONT_LOAD_RE.search(text) or _EF_NO_FRONT_LOAD_RE.search(text.lower()):
+        return 0.0
+
+    # ── Prioridad 11: "cobrarle hasta..." — AXA/Pictet/Waystone (v19) ────────
+    m_cobr = _ENTRY_FEE_COBRARLE_RE.search(text) or _ENTRY_FEE_COBRARLE_RE.search(text.lower())
+    if m_cobr:
+        val = _parse_oc_pct(m_cobr.group(1))
+        if val is not None and 0 < val <= 0.10:
+            return val
+
+    # ── Prioridad 12: JPMorgan fused PCT ─────────────────────────────────────
+    m_jpm = _EF_JPM_FUSED_PCT.search(t_fused)
+    if m_jpm:
+        val = _parse_oc_pct(m_jpm.group(1))
+        if val is not None and val <= 0.10:
+            return val
+
+    # ── Prioridad 13: Schroeder bracket [X.XX%] ──────────────────────────────
+    m_sch = _EF_SCH_BRACKET.search(text)
+    if m_sch:
+        val = _parse_oc_pct(m_sch.group(1))
+        if val is not None and val <= 0.10:
+            return val
+
+    # ── Prioridad 14: UBS "X.X% del importe que usted paga ... Costes de entrada"
+    m_ubs_b = _EF_UBS_PCT_BEFORE.search(text)
+    if m_ubs_b:
+        val = _parse_oc_pct(m_ubs_b.group(1))
+        if val is not None and val <= 0.10:
+            return val
+
+    # ── Prioridad 15: UBS "cifras incluyen ... hasta el X.XX%" ──────────────
+    m_ubs_c = _EF_UBS_CIFRAS.search(text)
+    if m_ubs_c:
+        val = _parse_oc_pct(m_ubs_c.group(1))
+        if val is not None and val <= 0.10:
+            return val
+
+    # ── Prioridad 16: M&G "X,XX% del valor ... Se trata del coste de entrada"
+    m_mg = _EF_MG_PCT_BEFORE.search(text)
+    if m_mg:
+        val = _parse_oc_pct(m_mg.group(1))
+        if val is not None and val <= 0.10:
+            return val
+
+    # ── Prioridad 17: Amundi "costes de distribución del X,XX% ... Costes de entrada"
+    m_am_d = _EF_AMUNDI_DISTRIB.search(text)
+    if m_am_d:
+        val = _parse_oc_pct(m_am_d.group(1))
+        if val is not None and val <= 0.10:
+            return val
+
+    # ── Prioridad 18: Amundi "Puede cobrarse hasta el X,XX%" ────────────────
+    m_am_p = _EF_AMUNDI_PUEDE.search(text)
+    if m_am_p:
+        val = _parse_oc_pct(m_am_p.group(1))
+        if val is not None and val <= 0.10:
+            return val
+
+    # ── Prioridad 19: Thread "Se incluyen costes de distribución del X%" ──────
+    # (v22 BL-35b) — 55 fondos Thread con layout "Costes de entrada Se incluyen costes de distribución del X %"
+    m_thr = _EF_THREAD_DISTRIB.search(text) or _EF_THREAD_DISTRIB.search(text.lower())
+    if m_thr:
+        raw_thr = m_thr.group(1).replace(" ", "")  # eliminar posible espacio en "X , XX"
+        val = _parse_oc_pct(raw_thr)
+        if val is not None and val <= 0.10:
+            return val
+
+    # ── Prioridad 20: "gastos de entrada [del] X%" (v24 BL-51A) ─────────────
+    m_gas = _EF_GASTOS_ENTRADA_RE.search(text) or _EF_GASTOS_ENTRADA_RE.search(text.lower())
+    if m_gas:
+        val = _parse_oc_pct(m_gas.group(1))
+        if val is not None and 0 < val <= 0.10:
+            return val
+
+    # ── Prioridad 21: "cargo inicial [máximo del] X%" (v24 BL-51A) ───────────
+    m_car = _EF_CARGO_INICIAL_RE.search(text) or _EF_CARGO_INICIAL_RE.search(text.lower())
+    if m_car:
+        val = _parse_oc_pct(m_car.group(1))
+        if val is not None and 0 < val <= 0.10:
+            return val
+
+    # ── Prioridad 22: EN "front-end load/sales charge/initial charge X%" (v24 BL-51A)
+    # IMPORTANTE: aplicar SOLO si no matcheó _EF_NO_FRONT_LOAD_RE (prioridad 10).
+    # Esta función ya no alcanza este punto si la prioridad 10 devolvió 0.0.
+    m_fl = _EF_FRONT_LOAD_EN_RE.search(text) or _EF_FRONT_LOAD_EN_RE.search(text.lower())
+    if m_fl:
+        val = _parse_oc_pct(m_fl.group(1))
+        if val is not None and 0 < val <= 0.10:
+            return val
+
+    # ── Prioridad 23: valor porcentual estándar después de trigger ───────────
     m = _ENTRY_FEE_RE.search(text) or _ENTRY_FEE_RE.search(text.lower())
     if m:
         val = _parse_oc_pct(m.group(1))
         if val is not None and val <= 0.10:
             return val
+
     return None
+
+
+# v19 ── Exit fee "Ninguna" explícita (354 fondos en análisis)
+# Layout: "Costes de salida Ninguna" / "Costes de salida No cobramos ... Ninguna"
+_EXIT_FEE_NINGUNA_RE = re.compile(
+    r'(?:costes?\s+de\s+salida|comisi[oó]n\s+de\s+reembolso)'
+    r'[^\r\n]{0,150}\bninguna?\b',
+    re.IGNORECASE
+)
+
+# v19 ── Exit fee "cobrarle hasta X%" con separador largo (Pictet, algunos fondos)
+_EXIT_FEE_COBRARLE_RE = re.compile(
+    r'(?:costes?\s+de\s+salida|comisi[oó]n\s+de\s+reembolso)'
+    r'[\s\S]{0,400}?'
+    r'cobrarle\s+hasta\s+(?:un\s+m[aá]ximo\s+del\s+|el\s+)?([\d]+[,.][\d]+)\s*%',
+    re.IGNORECASE
+)
+
+# v24 BL-51A ── Nuevos patrones ZERO salida
+# ─────────────────────────────────────────────────────────────────────────────
+
+# EN: "no exit charge" / "no redemption charge" / "no exit fee"
+# Layout: "no exit charge applies"
+# Layout: "exit charge: nil" / "redemption fee: none"
+_XF_NO_EXIT_CHARGE_EN_RE = re.compile(
+    r'(?:no\s+exit\s+(?:charge|fee)'
+    r'|no\s+redemption\s+(?:charge|fee)'
+    r'|exit\s+(?:charge|fee)\s*[:\-]\s*(?:nil|none|n/a|0(?:[,\.]00)?)'
+    r'|redemption\s+(?:charge|fee)\s*[:\-]\s*(?:nil|none|n/a|0(?:[,\.]00)?))',
+    re.IGNORECASE
+)
+
+# ES alternativo: "no cobraremos comisión de reembolso" / "no se cobra comisión de reembolso"
+# El patrón existente _EXIT_FEE_ZERO_RE cubre "no cobramos" pero no "no cobraremos" ni
+# "no se cobra". Estos formatos aparecen en KIIDs Fidelity ES y BNP.
+_XF_NO_COBRAREMOS_RE = re.compile(
+    r'(?:costes?\s+de\s+salida|comisi[oó]n\s+de\s+reembolso)'
+    r'[\s\S]{0,300}'
+    r'(?:no\s+cobraremos\s+(?:comisi[oó]n|gastos?)\s+de\s+(?:salida|reembolso)'
+    r'|no\s+se\s+cobra\s+(?:comisi[oó]n|gastos?)\s+de\s+(?:salida|reembolso)'
+    r'|no\s+se\s+aplica\s+(?:comisi[oó]n|gastos?)\s+de\s+(?:salida|reembolso)'
+    r'|no\s+hay\s+gastos?\s+de\s+salida)',
+    re.IGNORECASE
+)
+
+# v24 BL-51A ── JPMorgan OCR fusionado para salida
+# Equivalente directo a _EF_JPM_FUSED_ZERO / _EF_JPM_FUSED_PCT para entry fee.
+# Layout ZERO: "Costesdesalida 0,00%nocobramoscomisióndesalida."
+# Layout PCT:  "Costesdesalida 1,00%delimportedeventa"
+_XF_JPM_FUSED_ZERO = re.compile(
+    r'costesdesalida\s*0[,\.]00%',
+    re.IGNORECASE
+)
+_XF_JPM_FUSED_PCT = re.compile(
+    r'costesdesalida\s*([\d]+[,\.][\d]+)%del(?:importe|valor)',
+    re.IGNORECASE
+)
+
+# v26 BL-55 ── Nuevos patrones ZERO explícitos para salida
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ES declaración negativa directa:
+# "sin comisión de salida", "sin gastos de reembolso", "sin cargos de cancelación"
+# "no hay gastos de salida", "inexistentes gastos de salida"
+_XF_SIN_COMISION_ES_RE = re.compile(
+    r'(?:sin\s+(?:comisi[oó]n|gastos?|cargos?)\s+(?:de\s+)?(?:salida|reembolso|cancelaci[oó]n)'
+    r'|(?:no\s+(?:hay|existen?)|inexistentes?)\s+(?:comisi[oó]n|gastos?|cargos?)\s+'
+    r'(?:de\s+)?(?:salida|reembolso|cancelaci[oó]n))',
+    re.IGNORECASE
+)
+
+# ES comisión de salida seguida de valor cero explícito:
+# "comisión de salida: 0", "comisión de salida cero", "comisión de reembolso: ninguna"
+# "comisión de salida: nil", "comisión de salida: n/a", "comisión de reembolso —"
+_XF_ZERO_VALOR_ES_RE = re.compile(
+    r'comisi[oó]n\s+de\s+(?:salida|reembolso|cancelaci[oó]n)'
+    r'[\s:.\-]*'
+    r'(?:0\b|0[,\.]00\s*%?|cero|ninguna?|nil|n\.?\s*a\.?|n/a|—|–|-\s*$)',
+    re.IGNORECASE | re.MULTILINE
+)
+
+# EN declaración negativa directa:
+# "no exit charge", "nil redemption fee", "none back-end load"
+# "exit charge: none", "redemption fee: nil", "exit load: 0.00%"
+_XF_NO_EN_DIRECT_RE = re.compile(
+    r'(?:(?:no|nil|none|n\.?\s*a\.?)\s+(?:exit|redemption|back[\s\-]?end)\s+'
+    r'(?:charge|fee|load)'
+    r'|(?:exit|redemption)\s+(?:charge|fee|load)\s*[:\-]\s*'
+    r'(?:0(?:\.00)?\s*%?|none|nil|n\.?a\.?|—|-\s*$))',
+    re.IGNORECASE | re.MULTILINE
+)
+
+# Tabular fusionado adicional: "costesdesalida:ninguno" / "exitcharges:0.00%"
+_XF_TABULAR_FUSED_RE = re.compile(
+    r'(?:costesdesalida\s*[:=]\s*ninguna?s?'
+    r'|exitcharges?\s*[:=]\s*0(?:\.00)?\s*%?)',
+    re.IGNORECASE
+)
+
+# BL-DLA-2 (v27) -- Patron tabular PRIIPs con salto de linea
+# Causa raiz de 510 fondos exit_fee_null (96% LU, formato PRIIPs estandar):
+# _EXIT_FEE_RE usa separador no-newline que no cruza saltos de linea.
+# En el layout PRIIPs tabulado, trigger y valor estan en lineas distintas.
+# Este patron usa separador acotado 80 chars con:
+#   1. Lookahead negativo: no arrancar si sigue Ninguna/no cobr/no exit.
+#   2. No cruzar otra keyword de coste (evita capturar fila adyacente).
+#   3. Prefijos opcionales: Hasta, Up to, importe EUR intermedio.
+#   4. Limite: 0 < val <= 5%.
+_XF_TABLA_PRIIPS_RE = re.compile(
+    r'(?:costes?\s+de\s+salida'
+    r'|comisi[oó]n\s+(?:m[aá]xima\s+)?de\s+reembolso'
+    r'|gastos?\s+de\s+reembolso'
+    r'|cargo\s+de\s+salida'
+    r'|derecho\s+de\s+reembolso'
+    r'|exit\s+(?:charge|fee)'
+    r'|redemption\s+(?:charge|fee|load)'
+    r'|back[\s\-]?end\s+(?:load|charge)'
+    r'|deferred\s+sales\s+charge)'
+    r'(?!\s*(?:ninguna?|no\s+cobr|no\s+exit|no\s+redemption|sin\s+comisi))'
+    r'((?:(?!costes?\s+de\s+(?:entrada|corrientes?)|comisi[oó]n\s+de\s+gesti|ongoing\s+charge)[\s\S]){0,80}?)'
+    r'(?:hasta\s+|up\s+to\s+)?'
+    r'(?:eur\s+[\d,.]+\s+)?'
+    r'([\d]+(?:[,.[\d]+)?)\s*%',
+    re.IGNORECASE
+)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# v26 BL-55 ── Helper de inferencia estructural
+# v26.1 BL-55/2 (2026-04-25) — Endurecimiento ventana acotada:
+#   La versión inicial v26 verificaba ausencia de exit keywords en TODO el texto;
+#   cualquier mención incidental (índice, glosario, ejemplo) bloqueaba la
+#   inferencia. Resultado real ciclo 25/04: solo 3 fondos inferidos sobre 676
+#   candidatos. v26.1 restringe la verificación a la VENTANA de la sección de
+#   costes (±1500 chars), y elimina la regla '...' que era demasiado agresiva
+#   (KIIDs reales contienen puntos suspensivos legítimos en muchas partes).
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Keywords que confirman que la sección de costes está presente.
+# Ampliada en v26.1 con variantes adicionales detectadas en muestreo manual.
+_COST_SECTION_KEYWORDS = [
+    "composición de costes",
+    "composicion de costes",
+    "composition of charges",
+    "costes y gastos",
+    "charges and expenses",
+    "gastos y comisiones",
+    "tabla de costes",
+    "desglose de costes",
+    "cuadro de costes",
+    "estructura de costes",
+    "costes del fondo",
+    # Variantes EN adicionales
+    "fund charges",
+    "ongoing charges",
+    "one-off charges",
+    "this table shows the charges",
+    "esta tabla muestra los gastos",
+]
+
+# Keywords de comisión de salida cuya presencia en la VENTANA de costes
+# hace que NO se infiera cero estructural.
+_EXIT_KEYWORDS_PRESENCE = [
+    "salida", "reembolso", "cancelaci",
+    "exit", "redemption", "back-end", "backend",
+    "back end",
+]
+
+# Tamaño de ventana alrededor del match de cost section para verificar ausencia
+# de exit keywords. Justificación: la sección de costes en KIIDs PRIIPs ocupa
+# típicamente 800–1200 chars; ±1500 cubre con margen.
+_COST_WINDOW_HALF = 1500
+
+
+def _infer_exit_fee_from_structure(text: str) -> Optional[float]:
+    """
+    BL-55: Infiere Exit_Fee_Pct=0.0 cuando el KIID contiene la sección de
+    costes claramente identificada y la VENTANA de esa sección NO menciona
+    ninguna palabra-clave de comisión de salida.
+
+    Principio: ausencia en sección estructurada ≡ no aplica.
+
+    v26.1 (2026-04-25): la verificación de ausencia se acota a una ventana
+    de ±1500 chars alrededor del primer match de cost section (en vez de al
+    texto completo). Esto evita falsos negativos por menciones incidentales
+    de "salida"/"exit" en otras partes del KIID (índice, glosario, FAQ).
+
+    Restricciones de seguridad (no inferir si):
+      - Texto < 500 chars (OCR degradado o documento truncado).
+      - Texto contiene marcadores de truncado ('[truncado]', '[truncated]').
+      - No se localiza ninguna sección de costes identificable.
+      - text es None o vacío.
+
+    Returns:
+        0.0 si puede inferirse cero estructural.
+        None en cualquier otro caso.
+    """
+    if not text or len(text) < 500:
+        return None
+
+    t_lower = text.lower()
+
+    # Restricción de seguridad: marcadores explícitos de truncado
+    if "[truncado]" in t_lower or "[truncated]" in t_lower:
+        return None
+
+    # Condición 1: localizar la sección de costes (primer match gana).
+    cost_section_pos = -1
+    for kw in _COST_SECTION_KEYWORDS:
+        pos = t_lower.find(kw)
+        if pos != -1:
+            if cost_section_pos == -1 or pos < cost_section_pos:
+                cost_section_pos = pos
+    if cost_section_pos == -1:
+        return None
+
+    # Condición 2: en la VENTANA acotada (±_COST_WINDOW_HALF chars alrededor
+    # del primer match), no debe aparecer ninguna keyword de comisión de salida.
+    window_start = max(0, cost_section_pos - _COST_WINDOW_HALF)
+    window_end = min(len(t_lower), cost_section_pos + _COST_WINDOW_HALF)
+    window = t_lower[window_start:window_end]
+
+    has_exit_mention = any(kw in window for kw in _EXIT_KEYWORDS_PRESENCE)
+    if has_exit_mention:
+        return None
+
+    # Ambas condiciones satisfechas: sección estructurada de costes sin mención
+    # de comisión de salida en su ventana.
+    return 0.0
 
 
 def _detect_exit_fee(text: str) -> Optional[float]:
@@ -2085,31 +3267,131 @@ def _detect_exit_fee(text: str) -> Optional[float]:
     Extrae la comisión de salida (Exit_Fee_Pct) desde la sección
     "Composición de costes" del DDF/PRIIPs.
 
-    Prioridad:
-    1. Detectar declaración explícita de 0 ("no cobramos", "0 EUR") → 0.0
-    2. Detectar porcentaje no cero → float decimal
-    3. Sin detección → None (desconocido)
+    Prioridad (v26 BL-55):
+    1.  Declaración explícita de cero ("no cobramos", "0 EUR") → 0.0
+    2.  "Ninguna" explícita después del trigger → 0.0  (v19)
+    3.  JPMorgan fused ZERO: "Costesdesalida 0,00%" → 0.0  (v24 BL-51A)
+    4.  EN ZERO: "no exit charge / no redemption charge" → 0.0  (v24 BL-51A)
+    5.  ES alt ZERO: "no cobraremos / no se cobra" → 0.0  (v24 BL-51A)
+    6.  Porcentaje no cero — patrón estándar → float  (v19)
+    7.  "cobrarle hasta X%" con separador largo → float  (v19)
+    8.  JPMorgan fused PCT: "Costesdesalida X,XX%delimporte" → float  (v24)
+    9.  ES negativa directa: "sin comisión de salida" / "no hay gastos" → 0.0  (v26 BL-55)
+    10. ES valor cero explícito: "comisión de salida: cero/nil/0/—" → 0.0  (v26 BL-55)
+    11. EN negativa directa: "no/nil/none exit charge" / "exit charge: nil" → 0.0  (v26 BL-55)
+    12. Tabular fusionado adicional: "costesdesalida:ninguno" / "exitcharges:0.00%" → 0.0 (v26)
+    13. Tabular PRIIPs salto de linea: "Costes de salida\n2,00%" → float  (v27 BL-DLA-2)
+    14. Sin detección → None
 
-    La distinción 0.0 vs None es crítica para P3:
-    0.0 = confirmado sin comisión | None = no determinado (KIID clásico)
+    Nota: La distinción 0.0 vs None es crítica para P3.
+    La inferencia estructural (_infer_exit_fee_from_structure) se aplica
+    en el paso 10d del parser principal, DESPUÉS de esta función.
     """
     if not text:
         return None
+
+    # Texto fusionado para patrones JPMorgan
+    t_fused = text.replace(" ", "")
 
     # Prioridad 1: declaración explícita de cero
     m_zero = _EXIT_FEE_ZERO_RE.search(text) or _EXIT_FEE_ZERO_RE.search(text.lower())
     if m_zero:
         return 0.0
 
-    # Prioridad 2: valor porcentual no cero
+    # Prioridad 2: "Ninguna" explícita (v19)
+    m_ning = _EXIT_FEE_NINGUNA_RE.search(text) or _EXIT_FEE_NINGUNA_RE.search(text.lower())
+    if m_ning:
+        return 0.0
+
+    # Prioridad 3: JPMorgan fused ZERO (v24 BL-51A)
+    if _XF_JPM_FUSED_ZERO.search(t_fused):
+        return 0.0
+
+    # Prioridad 4: EN ZERO "no exit charge / no redemption charge" (v24 BL-51A)
+    if _XF_NO_EXIT_CHARGE_EN_RE.search(text) or _XF_NO_EXIT_CHARGE_EN_RE.search(text.lower()):
+        return 0.0
+
+    # Prioridad 5: ES alt ZERO "no cobraremos / no se cobra" (v24 BL-51A)
+    if _XF_NO_COBRAREMOS_RE.search(text) or _XF_NO_COBRAREMOS_RE.search(text.lower()):
+        return 0.0
+
+    # Prioridad 6: porcentaje no cero — primero patrón estándar
     m = _EXIT_FEE_RE.search(text) or _EXIT_FEE_RE.search(text.lower())
     if m:
         val = _parse_oc_pct(m.group(1))
         if val is not None and 0 < val <= 0.05:
             return val
 
+    # Prioridad 7: porcentaje con separador largo — "cobrarle hasta X%" (v19)
+    m_cobr = _EXIT_FEE_COBRARLE_RE.search(text) or _EXIT_FEE_COBRARLE_RE.search(text.lower())
+    if m_cobr:
+        val = _parse_oc_pct(m_cobr.group(1))
+        if val is not None and 0 < val <= 0.05:
+            return val
+
+    # Prioridad 8: JPMorgan fused PCT (v24 BL-51A)
+    m_jpm_xf = _XF_JPM_FUSED_PCT.search(t_fused)
+    if m_jpm_xf:
+        val = _parse_oc_pct(m_jpm_xf.group(1))
+        if val is not None and 0 < val <= 0.05:
+            return val
+
+    # Prioridad 9: ES negativa directa (v26 BL-55)
+    if (_XF_SIN_COMISION_ES_RE.search(text)
+            or _XF_SIN_COMISION_ES_RE.search(text.lower())):
+        return 0.0
+
+    # Prioridad 10: ES valor cero explícito (v26 BL-55)
+    if (_XF_ZERO_VALOR_ES_RE.search(text)
+            or _XF_ZERO_VALOR_ES_RE.search(text.lower())):
+        return 0.0
+
+    # Prioridad 11: EN negativa directa (v26 BL-55)
+    if (_XF_NO_EN_DIRECT_RE.search(text)
+            or _XF_NO_EN_DIRECT_RE.search(text.lower())):
+        return 0.0
+
+    # Prioridad 12: tabular fusionado adicional (v26 BL-55)
+    if _XF_TABULAR_FUSED_RE.search(t_fused):
+        return 0.0
+
+    # Prioridad 13: tabular PRIIPs con salto de linea (v27 BL-DLA-2)
+    # Cubre el caso mayoritario: trigger y valor en lineas distintas.
+    # Debe ir despues de todos los patrones de cero para no capturar
+    # un porcentaje positivo cuando la fila declara Ninguna o 0%.
+    m_tabla = _XF_TABLA_PRIIPS_RE.search(text) or _XF_TABLA_PRIIPS_RE.search(text.lower())
+    if m_tabla:
+        val = _parse_oc_pct(m_tabla.group(2))
+        if val is not None and 0 < val <= 0.05:
+            return val
+
     return None
 
+
+# v19 ── Patrón DWS/Deutsche/Natixis: "X,XX% del valor de su inversión al año"
+# Layout: "Costes corrientes detraídos cada año\nComisiones de X,XX% del valor
+#          de su inversión al año. Se trata de una estimación basada en..."
+# El patrón PRIIPs falla porque no hay trigger "incidencia de costes" y el
+# número está seguido de "del valor de su inversión" en vez de estar inline.
+_OC_DEL_VALOR_RE = re.compile(
+    r'(?:comisiones?\s+de\s+gesti[oó]n\s+y\s+otros[\s\S]{0,100}?|'
+    r'costes?\s+corrientes\s+detra[ií]dos[\s\S]{0,200}?)'
+    r'([\d]+[,.][\d]+)\s*%\s*del\s+valor\s+de\s+su\s+inversi[oó]n',
+    re.IGNORECASE
+)
+
+# v19 ── Patrón Allianz: "X,X % cada año/afio/aio/aho" (separador largo)
+# Layout: "Incidencia anual de los costes (*)\n\nEn caso de salida\ndespués de N años\n
+#          M.MMM EUR\nX,X % cada afio"
+# El patrón PRIIPs falla porque hay un importe en EUR entre trigger y porcentaje,
+# superando el separador [^0-9]{0,60} del patrón existente.
+_OC_CADA_ANNO_RE = re.compile(
+    r'(?:incidencia\s+(?:anual\s+)?de\s+los\s+costes|'
+    r'costes?\s+corrientes\s+detra[ií]dos)'
+    r'[\s\S]{0,500}?'
+    r'([\d]+[,.][\d]+)\s*%\s*cada\s+a(?:[ñn]|fi|h)o',
+    re.IGNORECASE
+)
 
 def _detect_ongoing_charge(text: str, language: Optional[str]) -> Optional[float]:
     """
@@ -2122,6 +3404,8 @@ def _detect_ongoing_charge(text: str, language: Optional[str]) -> Optional[float
     2. Patrón PRIIPs con un valor → usar ese
     3. Patrón UCITS antiguo ("Gastos corrientes X%")
     4. Patrón fusionado OCR (sin espacios)
+    5. DWS/Deutsche/Natixis: "X,XX% del valor de su inversión al año" (v19)
+    6. Allianz: "X,X % cada año/afio" con separador largo con importe EUR (v19)
 
     Devuelve float decimal (ej. 0.0075 para 0.75%) o None.
     """
@@ -2177,6 +3461,30 @@ def _detect_ongoing_charge(text: str, language: Optional[str]) -> Optional[float
             if val is not None:
                 return val
 
+    # ── 5: DWS/Deutsche/Natixis — "X,XX% del valor de su inversión al año" ────
+    # Formato: "Costes corrientes detraídos cada año\nComisiones de X,XX% del valor..."
+    # El patrón actual falla porque hay texto entre trigger y valor.
+    # v19: buscar el porcentaje seguido de "del valor de su inversión".
+    m_dws = _OC_DEL_VALOR_RE.search(text)
+    if not m_dws:
+        m_dws = _OC_DEL_VALOR_RE.search(text.lower())
+    if m_dws:
+        val = _parse_oc_pct(m_dws.group(1))
+        if val is not None:
+            return val
+
+    # ── 6: Allianz — "X,X % cada año/afio/aio" (separador largo con importe EUR) ─
+    # Formato: "Incidencia anual de los costes (*)\n\nEn caso de salida\nN EUR\nX,X % cada afio"
+    # El patrón actual [^0-9]{0,60} no cruza el importe EUR intermedio.
+    # v19: buscar "X% cada año" en ventana amplia tras trigger.
+    m_ann = _OC_CADA_ANNO_RE.search(text)
+    if not m_ann:
+        m_ann = _OC_CADA_ANNO_RE.search(text.lower())
+    if m_ann:
+        val = _parse_oc_pct(m_ann.group(1))
+        if val is not None:
+            return val
+
     return None
 
 
@@ -2195,6 +3503,22 @@ _ACCUM_PATTERNS_ES = [
     r"acumulaci[oó]n.{0,30}no\s+distribuye",
     r"no\s+reparte\s+dividendos",
     r"no\s+distribuye\s+(?:dividendos|rentas|ingresos)",
+    # v20 — patrones validados en 786 NULL (precisión >=97%):
+    # "(clase|acciones|participaciones|subfondo) de acumulación"
+    r"(?:clase|clases|acciones|participaciones?|subfondo)\s+de\s+acumulaci[oó]n",
+    # "acumulan/capitaliza los ingresos/rentas"
+    r"(?:acumula|acumulan|capitaliza(?:n)?)\s+(?:los\s+)?(?:ingresos|rentas|rendimientos)",
+    # "los ingresos/rentas/... se reinvierten" (forma general)
+    r"(?:los\s+)?(?:ingresos|dividendos|rentas|rendimientos|beneficios)"
+    r"\s+(?:de\s+(?:las?\s+)?inversi(?:o?nes?))?[^\.]{0,30}?se\s+reinvierten",
+    # v22 BL-40 — Deutsche/DWS (103 fondos recuperables):
+    # "Las acciones del fondo son de acumulación, es decir, los rendimientos y
+    #  ganancias no se reparten sino que se reinvierten"
+    r"acciones?\s+del\s+fondo\s+son\s+de\s+acumulaci[oó]n",
+    r"rendimientos\s+y\s+ganancias\s+no\s+se\s+reparten\s+sino\s+que\s+se\s+reinvierten",
+    # v22 BL-40 — BlackRock (95 fondos recuperables):
+    # "las acciones serán no distributivas (los ingresos por dividendo se incorporarán a su valor)"
+    r"acciones?\s+ser[aá]n\s+no\s+distributivas?",
 ]
 
 _DIST_PATTERNS_ES = [
@@ -2203,7 +3527,15 @@ _DIST_PATTERNS_ES = [
     r"distribuye\s+(?:dividendos|rentas|ingresos)",
     r"reparte\s+(?:dividendos|rentas)",
     r"participaciones?\s+de\s+distribuci[oó]n",
-    r"pol[íi]tica\s+de\s+distribuci[oó]n[^\.]{0,80}distribuye",
+    r"pol[íi]tica\s+de\s+distribuci[oó]n(?:(?!no\s+distribuye)[^\.]){0,80}distribuye",
+    # v20 — patrones validados en 786 NULL (precisión >=98%):
+    # "distribuyen/paga/reparte dividendos periódicamente"
+    # Separadores sin \n para evitar cruzar frases disjuntas del OCR
+    r"(?:distribuy|reparte|paga)[aeiou]*[nr]?[ \t]+(?:los[ \t]+)?dividendos[ \t]+"
+    r"(?:anual|trimestral|mensual|semestral|peri[oó]dic)",
+    # "se distribuirán/pagarán/repartirán ingresos/rentas/dividendos"
+    r"(?:se[ \t]+)?(?:distribuir[aá]n?|pagar[aá]n?|repartir[aá]n?)[ \t]+"
+    r"(?:los[ \t]+)?(?:ingresos|rentas|dividendos)",
 ]
 
 _ACCUM_PATTERNS_EN = [
@@ -2256,12 +3588,41 @@ def _detect_accumulation_policy(text: str, language: Optional[str]) -> Optional[
 def _detect_sfdr_article(text: str) -> Optional[int]:
     """
     Detecta el artículo SFDR del fondo desde el texto KIID/DDF.
-    Art. 9 > Art. 8 > Art. 6 (por especificidad).
+
+    Prioridad (v20):
+      0. Patrón categórico explícito "Categoría según SFDR Artículo N" (100%)
+      1. Patrón formal "Artículo N del SFDR" (100%)
+      2. Art. 9 — objetivo de inversión sostenible
+      3. Art. 8 — promueve características medioambientales/sociales
+      4. Art. 6 — declara explícitamente que no es Art.8/9
+
     Devuelve 9, 8 o 6. NULL si no se puede determinar.
     """
     if not text:
         return None
     t = text.lower()
+
+    # ── Prioridad 0: "Categoría según SFDR Artículo N" (patrón Franklin) ──
+    # Validado 100% precisión en 119 fondos de los datos reales.
+    # Corrige el bug por el cual fondos Art.6 se clasifican como Art.9 si
+    # el KIID menciona "artículo 9" en otra sección informativa.
+    m_cat = re.search(
+        r'categor[ií]a\s+seg[uú]n\s+(?:el\s+)?sfdr\s+(?:art[ií]culo|article)\s+(\d)',
+        t, re.IGNORECASE)
+    if m_cat:
+        art = int(m_cat.group(1))
+        if art in (6, 8, 9):
+            return art
+
+    # ── Prioridad 1: "Artículo N del SFDR" / "Article N of SFDR" ────────
+    # Validado 100% precisión para Art.8 y Art.9.
+    m_art_sfdr = re.search(
+        r'(?:art[ií]culo|article)\s+(\d)\s+del?\s+sfdr',
+        t, re.IGNORECASE)
+    if m_art_sfdr:
+        art = int(m_art_sfdr.group(1))
+        if art in (6, 8, 9):
+            return art
 
     # ── Art. 9 — objetivo de inversión sostenible ───────────────────────
     if any(k in t for k in [
@@ -2384,6 +3745,203 @@ def _detect_recommended_holding_period(text: str) -> Optional[str]:
     for pattern, code in _RHP_NORMALIZER:
         if pattern.search(raw):
             return code
+
+    return None
+
+
+# =================================================
+# STYLE_PROFILE — Growth / Value / Income  (BL-41 v23)
+# Solo se aplica a fondos de Renta Variable.
+# Señales estrictas: el KIID debe declarar explícitamente el estilo.
+# =================================================
+
+# Growth ── ES
+_STYLE_GROWTH_ES = re.compile(
+    r'estilo\s+(?:de\s+inversi[oó]n\s+)?(?:de\s+tipo\s+)?growth'
+    r'|empresas?\s+(?:con\s+)?(?:alto\s+)?potencial\s+de\s+crecimiento'
+    r'|orientad[ao]s?\s+al?\s+crecimiento\s+(?:de\s+(?:los\s+)?beneficios|del\s+valor|del\s+capital)',
+    re.IGNORECASE
+)
+# Growth ── EN
+_STYLE_GROWTH_EN = re.compile(
+    r'growth\s+(?:investment\s+)?(?:style|approach|strategy)'
+    r'|growth[\-\s]oriented\s+(?:companies|securities|stocks|equities)'
+    r'|companies?\s+(?:with\s+)?(?:above[\-\s]average\s+)?growth\s+(?:prospects?|potential|characteristics)'
+    r'|focus(?:es|ing)?\s+on\s+(?:high[\-\s])?growth\s+companies?',
+    re.IGNORECASE
+)
+# Value ── ES
+_STYLE_VALUE_ES = re.compile(
+    r'estilo\s+(?:de\s+inversi[oó]n\s+)?(?:de\s+tipo\s+)?value'
+    r'|empresas?\s+infravaloradas?'
+    r'|inversi[oó]n\s+(?:en\s+)?(?:estilo\s+)?valor'
+    r'|cotizaci[oó]n\s+(?:por\s+)?(?:debajo|inferior)\s+(?:de\s+)?su\s+valor',
+    re.IGNORECASE
+)
+# Value ── EN
+_STYLE_VALUE_EN = re.compile(
+    r'value\s+(?:investment\s+)?(?:style|approach|strategy)'
+    r'|undervalued\s+(?:companies?|securities|stocks|equities)'
+    r'|value[\-\s]oriented\s+(?:approach|strategy|companies?)'
+    r'|trading\s+(?:at\s+a\s+)?(?:discount|below)\s+(?:to\s+)?(?:their\s+)?(?:intrinsic\s+|fair\s+)?value',
+    re.IGNORECASE
+)
+# Income ── ES
+_STYLE_INCOME_ES = re.compile(
+    r'orientad[ao]s?\s+(?:a\s+(?:la\s+)?generaci[oó]n\s+de\s+)?(?:rentas?|ingresos?)'
+    r'|generaci[oó]n\s+(?:regular\s+)?(?:de\s+)?rentas?'
+    r'|alta\s+rentabilidad\s+por\s+dividendo'
+    r'|acciones?\s+(?:que\s+)?pagan?\s+dividendos?',
+    re.IGNORECASE
+)
+# Income ── EN
+_STYLE_INCOME_EN = re.compile(
+    r'income[\-\s](?:oriented|focused|generating)\s+(?:approach|strategy|companies?)'
+    r'|high\s+(?:dividend[\-\s])?(?:yield|income)'
+    r'|dividend[\-\s]paying\s+(?:companies?|stocks?|equities)'
+    r'|focus(?:es|ing)?\s+on\s+(?:generating\s+)?(?:regular\s+)?income',
+    re.IGNORECASE
+)
+
+
+def _detect_style_profile(text: str, fund_nature: Optional[str] = None) -> Optional[str]:
+    """
+    Detecta el estilo de inversión desde texto KIID (BL-41 v23).
+
+    Solo aplica a Renta Variable. Señales estrictas: el KIID debe declarar
+    explícitamente el estilo de inversión — no se infiere de contexto genérico.
+
+    Prioridad: Growth > Value > Income
+    Devuelve 'Growth', 'Value', 'Income' o None.
+    """
+    if not text:
+        return None
+    # Aplicar solo a RV si se pasa fund_nature; si no se pasa, detección liberal
+    if fund_nature is not None and fund_nature != "Renta Variable":
+        return None
+
+    if _STYLE_GROWTH_ES.search(text) or _STYLE_GROWTH_EN.search(text):
+        return "Growth"
+    if _STYLE_VALUE_ES.search(text) or _STYLE_VALUE_EN.search(text):
+        return "Value"
+    if _STYLE_INCOME_ES.search(text) or _STYLE_INCOME_EN.search(text):
+        return "Income"
+    return None
+
+
+# =================================================
+# SUBTYPE — Monetario: LVNAV / VNAV / CNAV  (BL-43a v23)
+# Resuelve solapamiento semántico Family/Subtype en monetarios:
+# Family mantiene su valor; Subtype captura la especificidad regulatoria.
+# =================================================
+
+# Texto KIID — regulatorio EU MMF (Reglamento 2017/1131)
+_MON_LVNAV_TEXT = re.compile(
+    r'\bLVNAV\b'
+    r'|Low\s+Volatility\s+(?:Net\s+Asset\s+Value|NAV)'
+    r'|valor\s+liquidativo\s+de\s+baja\s+volatilidad',
+    re.IGNORECASE
+)
+_MON_CNAV_TEXT = re.compile(
+    r'\bCNAV\b'
+    r'|Constant\s+(?:Net\s+Asset\s+Value|NAV)'
+    r'|valor\s+liquidativo\s+constante',
+    re.IGNORECASE
+)
+_MON_VNAV_TEXT = re.compile(
+    r'\bVNAV\b'
+    r'|Variable\s+(?:Net\s+Asset\s+Value|NAV)'
+    r'|valor\s+liquidativo\s+variable',
+    re.IGNORECASE
+)
+# Nombre del fondo — JPMorgan incluye la sigla sistemáticamente
+_MON_LVNAV_NAME = re.compile(r'\bLVNAV\b', re.IGNORECASE)
+_MON_CNAV_NAME  = re.compile(r'\bCNAV\b',  re.IGNORECASE)
+_MON_VNAV_NAME  = re.compile(r'\bVNAV\b',  re.IGNORECASE)
+
+
+def _detect_subtype_monetario(
+    text: str,
+    fund_name: Optional[str] = None,
+) -> Optional[str]:
+    """
+    Detecta el subtipo estructural regulatorio de un fondo monetario (BL-43a v23).
+
+    Prioridad: texto KIID > nombre del fondo.
+    Orden LVNAV > CNAV > VNAV (de menor a mayor variabilidad de NAV, CNAV
+    antes de VNAV porque es más restrictivo y específico).
+
+    Devuelve 'LVNAV', 'CNAV', 'VNAV' o None.
+    """
+    if text:
+        if _MON_LVNAV_TEXT.search(text):
+            return "LVNAV"
+        if _MON_CNAV_TEXT.search(text):
+            return "CNAV"
+        if _MON_VNAV_TEXT.search(text):
+            return "VNAV"
+
+    if fund_name:
+        n = fund_name.upper()
+        if _MON_LVNAV_NAME.search(n):
+            return "LVNAV"
+        if _MON_CNAV_NAME.search(n):
+            return "CNAV"
+        if _MON_VNAV_NAME.search(n):
+            return "VNAV"
+
+    return None
+
+
+# =================================================
+# SUBTYPE — Mixtos: Fixed Band / Volatility Target  (BL-43b v23)
+# =================================================
+
+# Fixed Band — señal desde nombre del fondo.
+# Patrón Allianz: "DMAS SRI 15", "DMAS SRI 50", "STRATEGY 15", "STRATEGY 75".
+# El número (15, 20, 25, 30, 50, 75) es la banda máxima de RV en pct.
+_MIX_BANDA_NAME = re.compile(
+    r'(?:DMAS\s+(?:SRI\s+)?|STRATEGY\s+|STRATEG(?:IE|Y)\s+)(\d{1,3})\b',
+    re.IGNORECASE
+)
+
+# Volatility Target — señal desde texto KIID.
+_MIX_VOL_TARGET = re.compile(
+    r'volatilidad\s+(?:anual\s+)?objetivo'
+    r'|objetivo\s+de\s+(?:volatilidad|riesgo)'
+    r'|nivel\s+de\s+(?:volatilidad|riesgo)\s+objetivo'
+    r'|volatility\s+target'
+    r'|target\s+(?:volatility|risk(?:\s+level)?)'
+    r'|risk\s+control\s+(?:fund|strategy|approach)'
+    r'|managed\s+volatility',
+    re.IGNORECASE
+)
+
+
+def _detect_subtype_mixtos(
+    text: str,
+    fund_name: Optional[str] = None,
+) -> Optional[str]:
+    """
+    Detecta el subtipo estructural de un fondo mixto (BL-43b v23).
+
+    Prioridad: Volatility Target (KIID) > Fixed Band (nombre).
+    - Fixed Band N: banda fija de RV máxima. El número de la banda se preserva
+      en el valor (ej: 'Fixed Band 15') para utilidad directa en P3.
+    - Volatility Target: gestión orientada a volatilidad/riesgo objetivo.
+
+    Devuelve 'Fixed Band N', 'Volatility Target' o None.
+    """
+    if text and _MIX_VOL_TARGET.search(text):
+        return "Volatility Target"
+
+    if fund_name:
+        m = _MIX_BANDA_NAME.search(fund_name)
+        if m:
+            pct = int(m.group(1))
+            # Validar que el número es una banda de RV coherente (5-95%)
+            if 5 <= pct <= 95:
+                return f"Fixed Band {pct}"
 
     return None
 

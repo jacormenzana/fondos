@@ -1,6 +1,10 @@
 from typing import Optional, Dict, List
 from core.classify_utils import (
     NAME_SIGNALS_MONETARIO,
+    FAMILY_MONEY_MARKET,
+    TYPE_MONEY_MARKET,
+    TYPE_GOVT_MONEY_MARKET,
+    TYPE_PRIME_MONEY_MARKET,
     detect_geography       as _detect_geography,
     detect_theme           as _detect_theme,
     detect_is_esg          as _detect_is_esg,
@@ -10,6 +14,7 @@ from core.classify_utils import (
     detect_benchmark_type  as _detect_benchmark_type,
     detect_profile_from_srri as _detect_profile_from_srri,
     detect_kiid_attributes,
+    apply_semantic_validation,
 )
 import re
 
@@ -24,7 +29,23 @@ FUND_NATURE_VALUE = "Monetario"
 
 def get_universe_isins(df_master) -> List[str]:
     include_patterns = [
-        "money market", "monetary", "liquidity", "liquid",
+        "money market", "monetary", 
+        # DDF — añadido personal detectado en pictet
+        "money mkt",  "money mket", 
+        # DDF — añadido personal incluido en classify_utils        
+        "euro m mkt",                    # JPM EURO M MKT VNAV (evita EM MKT)
+        "standard mm vnav",              # JPM STANDARD MM VNAV
+        "lqudty lvnav",                  # JPM USD LQUDTY LVNAV (OCR)
+        "inscash",                       # BNP PARIBS INSCASH EUR 3M
+        "gbp liq lvnav",                 # JPM GBP LIQ LVNAV
+        "gbp liq cnav",                  # variante CNAV
+        "usd treasur cnav",              # JPM USD TREASURY CNAV
+        "usd liq cnav",                  # JPM USD LIQ CNAV
+        "fidelity euro cash",            # FIDELITY EURO CASH
+        "fidelity fund us cash",         # FIDELITY FUND US CASH
+        "fidelity us cash",              # variante
+        # DDF — excluido personal
+        ##"liquidity", "liquid",
         "cash fund", "cash management", "treasury",
         "tresorerie", "ucits mmf", "mmf",
     ]
@@ -70,13 +91,13 @@ def classify_fund(
     result = {
         "Fund_Nature": FUND_NATURE_VALUE,
         "Profile": "Conservador",
-        "Type": None,
+        "_signal_type": None,
         "Family": None,
         "Style_Profile": "Defensivo",
         "Geography": None,
         "Theme": None,
         "Exposure_Bias": "Liquidity Bias",
-        "Subtype": None,
+        "_signal_subtype": None,
     }
 
     name_l = fund_name.lower() if isinstance(fund_name, str) else ""
@@ -88,27 +109,30 @@ def classify_fund(
     if any(k in name_l for k in [
         "government", "treasury", "sovereign", "gov liq", "gov prim", "public",
     ]):
-        result["Type"] = "Monetario Público"
+        result["_signal_type"] = TYPE_GOVT_MONEY_MARKET
     elif any(k in name_l for k in [
         "prime", "corporate", "credit", "crd", "corp",
     ]):
-        result["Type"] = "Monetario Privado"
+        result["_signal_type"] = TYPE_PRIME_MONEY_MARKET
     else:
-        result["Type"] = "Monetario"
+        result["_signal_type"] = TYPE_MONEY_MARKET
 
     # -------------------------------------------------
-    # Family — v2: añadidos vnav (JPM VNAV), plus / rend (Amundi Rendement+)
+    # Family — BL-48: siempre Money Market.
+    # La tipología regulatoria (CNAV/LVNAV/VNAV) va a Subtype, que es
+    # el atributo correcto tras BL-43a. Family no debe duplicar esa info.
+    # -------------------------------------------------
+    result["Family"] = FAMILY_MONEY_MARKET
+
+    # -------------------------------------------------
+    # Subtype — BL-48: tipología regulatoria MMF 2017/1131 desde nombre
     # -------------------------------------------------
     if "cnav" in name_l:
-        result["Family"] = "CNAV"
+        result["_signal_subtype"] = "CNAV"
     elif "lvnav" in name_l:
-        result["Family"] = "LVNAV"
+        result["_signal_subtype"] = "LVNAV"
     elif "vnav" in name_l:
-        result["Family"] = "VNAV"
-    elif any(k in name_l for k in ["enhanced", "plus", "rend"]):
-        result["Family"] = "Enhanced Cash"
-    else:
-        result["Family"] = "Monetario"
+        result["_signal_subtype"] = "VNAV"
 
     # -------------------------------------------------
     # Geography
@@ -127,13 +151,8 @@ def classify_fund(
         if not result.get(_k):
             result[_k] = _v
 
-    # Fix C: si Family es "Monetario" (default por nombre), intentar
-    # derivarlo del Type detectado desde el texto KIID
-    # Type CNAV/LVNAV/VNAV → Family igual (son equivalentes en monetarios)
-    if result.get("Family") == "Monetario":
-        _type_from_kiid = result.get("Type")
-        if _type_from_kiid in ("CNAV", "LVNAV", "VNAV", "Enhanced Cash"):
-            result["Family"] = _type_from_kiid
+    # Fix C eliminado (BL-48): Family ya es siempre "Monetario".
+    # La propagación CNAV/LVNAV/VNAV a Family era el bug — Subtype es el lugar correcto.
 
     # ── Atributos universales canonico v2 ──────────────────────────
     # Se aplican tras la logica especifica del bloque.
@@ -143,22 +162,29 @@ def classify_fund(
     _srri_m = re.search(r"\b([1-7])\s*/\s*7\b", _text_l)
     _srri   = int(_srri_m.group(1)) if _srri_m else None
 
+    # BL-44: validar coherencia SRRI ↔ Fund_Nature=Monetario.
+    # Fondos monetarios auténticos tienen SRRI 1-2 (excepcionalmente 3 en Enhanced Cash).
+    # SRRI ≥ 3 indica un fondo mal capturado por el universo (nombre con "liquidity",
+    # "treasury", etc. pero perfil de riesgo no monetario). Reclasificar a Restantes
+    # para que el bloque RESTANTES asigne la naturaleza correcta.
+    if _srri is not None and _srri >= 3:
+        result["Fund_Nature"] = "Restantes"
+        result["Profile"] = _detect_profile_from_srri(_srri) or "Moderado"
+        result["Family"] = None
+        result["_signal_type"] = None
+        result["_signal_subtype"] = None
+        return apply_semantic_validation(result, fund_name)
+
     if result.get("Profile") is None:
         result["Profile"] = _detect_profile_from_srri(_srri)
     result["Geography"]    = result.get("Geography") or _detect_geography(_name_l)
     result["Theme"]        = result.get("Theme")     or _detect_theme(_name_l)
     result["Is_ESG"]       = _detect_is_esg(fund_name)
-    if result.get("Style_Profile") == "Defensivo":
-        result["Style_Profile"] = None   # Defensivo → Profile, no Style_Profile
-    if result.get("Style_Profile") is None:
-        result["Style_Profile"] = _detect_style_profile(_name_l)
-    if result.get("Exposure_Bias") is None:
-        result["Exposure_Bias"] = _detect_exposure_bias(_name_l, "Monetario")
     result["Strategy"] = _detect_strategy(
-        None, result.get("Subtype"), _name_l
+        None, result.get("_signal_subtype"), _name_l
     )
     result["Benchmark_Type"] = _detect_benchmark_type(
         None, None
     )
 
-    return result
+    return apply_semantic_validation(result, fund_name)

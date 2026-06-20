@@ -1,36 +1,41 @@
-# proyecto3/src/fund_scorer.py
+# proyecto3/src/fund_scorer.py  — v17
 # -*- coding: utf-8 -*-
 """
 Motor de scoring de fondos para P3.
 
 Calcula el score compuesto de cada fondo combinando:
-  - Capa 1: Filtros duros (exclusion automatica)
-  - Capa 2: Scoring base (metricas intrinsecas P2)
-  - Capa 3: Multiplicadores de regimen macro
+  - Capa 1: Filtros duros (exclusión automática)
+  - Capa 2: Scoring base (métricas intrínsecas P2)
+  - Capa 3: Multiplicadores de régimen macro
 
 El score final determina la elegibilidad y ranking de cada fondo
-dentro de su sub-cartera (Defensiva, Equilibrada, Dinamica).
+dentro de su sub-cartera (Defensiva, Equilibrada, Dinámica).
 
 Pesos del scoring base (horizon=since_inception):
-    return_ann real      25%   Rentabilidad real anualizada
-    sharpe               20%   Eficiencia del retorno
-    max_drawdown         20%   Control del dano (invertido)
-    alpha_persistence    15%   Consistencia de la gestion
-    capture_ratio        10%   Asimetria subidas/bajadas
-    momentum_rank        10%   Dinamica reciente
+    return_ann real      Defensiva 20% / Equilibrada 25% / Dinámica 30%
+    sharpe               Defensiva 25% / Equilibrada 20% / Dinámica 15%
+    max_drawdown         Defensiva 30% / Equilibrada 20% / Dinámica 15%
+    alpha_persistence    15% en todas
+    capture_ratio        Defensiva  5% / Equilibrada 10% / Dinámica 15%
+    momentum_rank        Defensiva  5% / Equilibrada 10% / Dinámica 10%
 
-Multiplicadores de regimen (por perfil de sensibilidad):
-    beta_oil > 0.01              x1.20  cobertura energetica
+Multiplicadores de régimen (por perfil de sensibilidad):
+    beta_oil > 0.01              x1.20  cobertura energética
     beta_rate_eu < -0.10         x0.70  muy sensible a BCE
     fx_contribution_pct > 0.60   x0.80  retorno mayormente divisa
     alpha_persistence > 0.60     x1.15  gestor consistente
     macro_r2 > 0.50              x0.85  muy determinado por macro
 
 Filtros duros:
-    max_drawdown < -0.25         excluir (riesgo de ruina)
-    return_ann real < 0          excluir (destruye patrimonio real)
-    macro_n_obs < 36             excluir betas (modelo poco fiable)
-    srri_nav >= 7                excluir en Defensiva
+    max_drawdown < límite_sub    excluir (riesgo de ruina)
+    return_ann real < límite_sub excluir (destruye patrimonio real)
+    srri_nav > 5 en Defensiva    excluir
+    Credit_Quality=High Yield en Defensiva  excluir (v17)
+
+Cambios v17:
+  - load_fund_metrics_for_scoring: SELECT fund_master ampliado con
+    Investment_Focus, Credit_Quality, Ongoing_Charge, SRRI_Quality_Flag
+  - check_hard_filters: filtro Credit_Quality='High Yield' en Defensiva
 """
 
 import sqlite3
@@ -51,7 +56,7 @@ from proyecto3.src.regime_classifier import RegimeResult
 # Constantes
 # ============================================================
 
-# Pesos scoring base
+# Pesos scoring base globales (fallback)
 BASE_WEIGHTS = {
     "return_ann_real":   0.25,
     "sharpe":            0.20,
@@ -89,7 +94,7 @@ SUBPORTFOLIO_WEIGHTS = {
     },
 }
 
-# Bonus por naturaleza del fondo segun sub-cartera
+# Bonus por naturaleza del fondo según sub-cartera
 NATURE_PROFILE_BONUS = {
     "Defensiva": {
         "Monetario":              1.25,
@@ -115,48 +120,44 @@ MAX_DRAWDOWN_BY_SUB = {
     "Dinamica":    -0.40,
 }
 
-# Retorno real minimo por sub-cartera
-# Defensiva acepta retorno real negativo (monetarios en entorno inflacionario)
-# El objetivo real se penaliza via scoring, no se excluye
+# Retorno real mínimo por sub-cartera
 MIN_REAL_RETURN_BY_SUB = {
-    "Defensiva":   -0.05,   # tolerar hasta -5% real (monetarios en alta inflacion)
-    "Equilibrada": -0.02,   # tolerar hasta -2% real
-    "Dinamica":     0.00,   # exigir retorno real positivo
+    "Defensiva":   -0.05,   # tolerar hasta -5% real (monetarios en alta inflación)
+    "Equilibrada": -0.02,
+    "Dinamica":     0.00,
 }
 
 # Filtros duros globales
-MAX_DRAWDOWN_LIMIT   = -0.25   # fallback si sub no definido
-MIN_REAL_RETURN      = 0.00    # fallback si sub no definido
-MIN_MACRO_OBS        = 36      # minimo observaciones para betas fiables
-MAX_SRRI_DEFENSIVE   = 5       # SRRI maximo en cartera defensiva
+MAX_DRAWDOWN_LIMIT = -0.25
+MIN_REAL_RETURN    =  0.00
+MIN_MACRO_OBS      = 36
+MAX_SRRI_DEFENSIVE = 5
 
-# Umbrales multiplicadores de regimen
-BETA_OIL_THRESHOLD      =  0.01   # beta_oil > umbral -> bonus energetico
-BETA_RATE_EU_THRESHOLD  = -0.10   # beta_rate_eu < umbral -> penalizacion
-FX_CONTRIBUTION_LIMIT   =  0.60   # fx_pct > limite -> penalizacion divisa
-ALPHA_PERS_THRESHOLD    =  0.60   # alpha_persistence > umbral -> bonus
-MACRO_R2_LIMIT          =  0.50   # macro_r2 > limite -> penalizacion
-
-# Umbrales Crisis_Financiera (pipeline v10)
-SPREAD_HY_CRISIS_THRESHOLD = 0.01    # beta_spread_hy > umbral -> penalizacion
-VIX_CRISIS_THRESHOLD       = 0.05    # beta_vix > umbral -> penalizacion
-SPREAD_HY_HEDGE_THRESHOLD  = -0.005  # beta_spread_hy < umbral -> bonus cobertura
-
-# Umbrales regime_returns
-REGIME_RETURN_TOP_Q    = 0.75   # percentil >= 75% -> bonus por buen historial en regimen
-REGIME_RETURN_BOT_Q    = 0.25   # percentil <= 25% -> malus por mal historial en regimen
-MIN_OBS_REGIME_SCORING = 12     # min meses en regimen para aplicar bonus/malus
+# Umbrales multiplicadores de régimen
+BETA_OIL_THRESHOLD      =  0.01
+BETA_RATE_EU_THRESHOLD  = -0.10
+FX_CONTRIBUTION_LIMIT   =  0.60
+ALPHA_PERS_THRESHOLD    =  0.60
+MACRO_R2_LIMIT          =  0.50
 
 # Multiplicadores
-MULT_OIL_BONUS               = 1.20
-MULT_RATE_EU_MALUS           = 0.70
-MULT_FX_MALUS                = 0.80
-MULT_ALPHA_BONUS             = 1.15
-MULT_MACRO_MALUS             = 0.85
-MULT_CRISIS_SPREAD_MALUS     = 0.75   # fondo amplifica crisis crediticia
-MULT_CRISIS_SPREAD_BONUS     = 1.20   # fondo cubre crisis crediticia
-MULT_REGIME_RETURN_BONUS     = 1.15   # buen historial en regimen activo
-MULT_REGIME_RETURN_MALUS     = 0.85   # mal historial en regimen activo
+MULT_OIL_BONUS     = 1.20
+MULT_RATE_EU_MALUS = 0.70
+MULT_FX_MALUS      = 0.80
+MULT_ALPHA_BONUS   = 1.15
+MULT_MACRO_MALUS   = 0.85
+
+# Crisis Financiera (v10)
+SPREAD_HY_CRISIS_THRESHOLD =  0.02
+SPREAD_HY_HEDGE_THRESHOLD  = -0.01
+VIX_CRISIS_THRESHOLD       =  0.02
+MULT_CRISIS_SPREAD_MALUS   =  0.60
+MULT_CRISIS_SPREAD_BONUS   =  1.30
+
+# Bonus/malus empírico por régimen
+MULT_REGIME_RETURN_BONUS = 1.20
+MULT_REGIME_RETURN_MALUS = 0.80
+MIN_OBS_REGIME_SCORING   = 12
 
 # Sub-carteras por naturaleza de fondo
 SUBPORTFOLIO_MAPPING = {
@@ -178,7 +179,7 @@ class FundScore:
     score_base:        float
     score_final:       float
     eligible:          bool
-    subportfolio:      str        # Defensiva / Equilibrada / Dinamica
+    subportfolio:      str
     exclusion_reason:  str | None
     score_detail:      dict = field(default_factory=dict)
 
@@ -199,7 +200,7 @@ class FundScore:
 
 
 # ============================================================
-# Carga de metricas P2
+# Carga de métricas P2  (v17 — SELECT ampliado)
 # ============================================================
 
 def load_fund_metrics_for_scoring(
@@ -207,14 +208,17 @@ def load_fund_metrics_for_scoring(
     regime: str | None = None,
 ) -> pd.DataFrame:
     """
-    Carga todas las metricas necesarias para el scoring desde fund_metrics.
-    Devuelve DataFrame indexado por ISIN con una columna por metrica.
+    Carga todas las métricas necesarias para el scoring desde fund_metrics.
+    Devuelve DataFrame indexado por ISIN con una columna por métrica.
 
-    regime: si se proporciona, carga tambien las metricas de rendimiento
-            historico en ese regimen (return_ann_{regime}, sharpe_{regime},
-            n_obs_{regime}) para usar como multiplicadores empiricos.
+    regime: si se proporciona, carga también las métricas históricas
+            del régimen activo (return_ann_{suffix}, sharpe_{suffix},
+            n_obs_{suffix}) para usar como multiplicadores empíricos.
+
+    v17: SELECT fund_master ampliado con Investment_Focus, Credit_Quality,
+         Ongoing_Charge y SRRI_Quality_Flag.
     """
-    # Metricas estaticas (independientes del regimen)
+    # Métricas estáticas (independientes del régimen)
     metrics_needed = [
         ("return_ann",          "since_inception", 1),  # real
         ("sharpe",              "since_inception", 0),
@@ -224,8 +228,8 @@ def load_fund_metrics_for_scoring(
         ("momentum_rank",       "since_inception", 0),
         ("beta_oil",            "since_inception", 0),
         ("beta_rate_eu",        "since_inception", 0),
-        ("beta_spread_hy",      "since_inception", 0),  # v10: Crisis_Financiera
-        ("beta_vix",            "since_inception", 0),  # v10: Crisis_Financiera
+        ("beta_spread_hy",      "since_inception", 0),  # Crisis_Financiera
+        ("beta_vix",            "since_inception", 0),  # Crisis_Financiera
         ("fx_contribution_pct", "since_inception", 0),
         ("macro_r2",            "since_inception", 0),
         ("macro_n_obs",         "since_inception", 0),
@@ -233,7 +237,7 @@ def load_fund_metrics_for_scoring(
         ("volatility_ann",      "since_inception", 0),
     ]
 
-    # Metricas dinamicas por regimen (si se conoce el regimen activo)
+    # Métricas dinámicas por régimen
     if regime:
         from proyecto3.src.regime_classifier import _REGIME_SUFFIX
         suffix = _REGIME_SUFFIX.get(regime)
@@ -267,9 +271,12 @@ def load_fund_metrics_for_scoring(
     if "return_ann" in wide.columns:
         wide = wide.rename(columns={"return_ann": "return_ann_real"})
 
-    # Añadir info de fund_master
+    # Añadir atributos de fund_master (v17: +Investment_Focus, +Credit_Quality, +Ongoing_Charge, +SRRI_Quality_Flag)
     fm = pd.read_sql("""
-        SELECT ISIN, Fund_Name, Fund_Nature, SRRI as srri_kiid
+        SELECT ISIN, Fund_Name, Fund_Nature, SRRI as srri_kiid,
+               Investment_Focus, Credit_Quality,
+               Ongoing_Charge, SRRI_Quality_Flag,
+               fund_family_id
         FROM fund_master
     """, conn).set_index("ISIN")
 
@@ -277,7 +284,7 @@ def load_fund_metrics_for_scoring(
 
 
 # ============================================================
-# Normalizacion de metricas
+# Normalización de métricas
 # ============================================================
 
 def _normalize_metric(series: pd.Series, invert: bool = False) -> pd.Series:
@@ -299,12 +306,14 @@ def compute_base_scores(
 ) -> pd.Series:
     """
     Calcula el score base [0,1] para cada fondo usando pesos diferenciados
-    por sub-cartera, con bonus por adecuacion al perfil.
+    por sub-cartera, con bonus por adecuación al perfil.
+
+    Normalización por naturaleza: cada tipo de fondo compite contra sus iguales
+    antes de recibir el bonus de naturaleza para escalar entre tipos.
     """
-    weights = SUBPORTFOLIO_WEIGHTS.get(subportfolio, BASE_WEIGHTS)
+    weights      = SUBPORTFOLIO_WEIGHTS.get(subportfolio, BASE_WEIGHTS)
     nature_bonus = NATURE_PROFILE_BONUS.get(subportfolio, {})
 
-    # Paso 1: normalizar por naturaleza de fondo (cada tipo compite contra sus iguales)
     scores_by_nature = pd.Series(0.0, index=df.index)
 
     if "Fund_Nature" in df.columns:
@@ -336,7 +345,7 @@ def compute_base_scores(
             normalized = _normalize_metric(col, invert=invert)
             scores_by_nature = scores_by_nature.add(normalized * weight, fill_value=0)
 
-    # Paso 2: aplicar bonus de naturaleza para escalar entre tipos
+    # Bonus por naturaleza
     if nature_bonus and "Fund_Nature" in df.columns:
         bonus_series     = df["Fund_Nature"].map(nature_bonus).fillna(1.0)
         scores_by_nature = scores_by_nature * bonus_series
@@ -345,7 +354,7 @@ def compute_base_scores(
 
 
 # ============================================================
-# Multiplicadores de regimen
+# Multiplicadores de régimen
 # ============================================================
 
 def compute_regime_multiplier(
@@ -355,18 +364,13 @@ def compute_regime_multiplier(
     regime_return_p75: float | None = None,
 ) -> tuple[float, dict]:
     """
-    Calcula el multiplicador de regimen para un fondo.
+    Calcula el multiplicador de régimen para un fondo.
     Devuelve (multiplicador, detalle_dict).
-
-    regime_return_p25 / p75: percentiles del universo para el return
-    en el regimen activo. Si se proveen, se aplica bonus/malus empirico.
     """
     multiplier = 1.0
-    detail = {}
+    detail: dict = {}
 
-    # ── Crisis_Financiera (regimen nuevo v10) ─────────────────────────────────
-    # Prioridad maxima: penalizar fondos que amplifican el estres crediticio
-    # y premiar los que lo cubren (beta_spread_hy negativa).
+    # ── Crisis_Financiera ─────────────────────────────────────────────────────
     if regime == "Crisis_Financiera":
         beta_spread = row.get("beta_spread_hy", np.nan)
         if not np.isnan(beta_spread):
@@ -381,21 +385,21 @@ def compute_regime_multiplier(
             multiplier *= MULT_CRISIS_SPREAD_MALUS
             detail["crisis_vix_malus"] = MULT_CRISIS_SPREAD_MALUS
 
-    # ── Bonus cobertura energetica ────────────────────────────────────────────
+    # ── Bonus cobertura energética ────────────────────────────────────────────
     if regime in ("Shock_Energetico", "Estanflacion", "Recalentamiento"):
         beta_oil = row.get("beta_oil", np.nan)
         if not np.isnan(beta_oil) and beta_oil > BETA_OIL_THRESHOLD:
             multiplier *= MULT_OIL_BONUS
             detail["beta_oil_bonus"] = MULT_OIL_BONUS
 
-    # ── Penalizacion sensibilidad tipos BCE ───────────────────────────────────
+    # ── Penalización sensibilidad tipos BCE ───────────────────────────────────
     if regime in ("Recalentamiento_Tardio", "Shock_Energetico", "Estanflacion"):
         beta_rate = row.get("beta_rate_eu", np.nan)
         if not np.isnan(beta_rate) and beta_rate < BETA_RATE_EU_THRESHOLD:
             multiplier *= MULT_RATE_EU_MALUS
             detail["beta_rate_eu_malus"] = MULT_RATE_EU_MALUS
 
-    # ── Penalizacion exceso divisa ────────────────────────────────────────────
+    # ── Penalización exceso divisa ────────────────────────────────────────────
     fx_pct = row.get("fx_contribution_pct", np.nan)
     if not np.isnan(fx_pct) and abs(fx_pct) > FX_CONTRIBUTION_LIMIT:
         multiplier *= MULT_FX_MALUS
@@ -407,17 +411,13 @@ def compute_regime_multiplier(
         multiplier *= MULT_ALPHA_BONUS
         detail["alpha_persistence_bonus"] = MULT_ALPHA_BONUS
 
-    # ── Penalizacion alta dependencia macro ───────────────────────────────────
+    # ── Penalización alta dependencia macro ───────────────────────────────────
     macro_r2 = row.get("macro_r2", np.nan)
     if not np.isnan(macro_r2) and macro_r2 > MACRO_R2_LIMIT:
         multiplier *= MULT_MACRO_MALUS
         detail["macro_r2_malus"] = MULT_MACRO_MALUS
 
-    # ── Bonus/malus empirico por historial en regimen activo ──────────────────
-    # Sustituye paulatinamente los parches P01-P03.
-    # Solo aplica si: (a) tenemos los percentiles del universo,
-    # (b) el fondo tiene suficientes observaciones en este regimen,
-    # (c) el return historico en el regimen esta disponible.
+    # ── Bonus/malus empírico por historial en régimen activo ──────────────────
     if regime_return_p25 is not None and regime_return_p75 is not None:
         from proyecto3.src.regime_classifier import _REGIME_SUFFIX
         suffix = _REGIME_SUFFIX.get(regime)
@@ -437,7 +437,7 @@ def compute_regime_multiplier(
 
 
 # ============================================================
-# Filtros duros
+# Filtros duros  (v17 — añade Credit_Quality para Defensiva)
 # ============================================================
 
 def check_hard_filters(
@@ -446,7 +446,9 @@ def check_hard_filters(
 ) -> str | None:
     """
     Verifica los filtros duros.
-    Devuelve None si pasa todos, o el motivo de exclusion.
+    Devuelve None si pasa todos, o el motivo de exclusión.
+
+    v17: Credit_Quality='High Yield' excluido de Defensiva.
     """
     dd = row.get("max_drawdown", np.nan)
     dd_limit = MAX_DRAWDOWN_BY_SUB.get(subportfolio, MAX_DRAWDOWN_LIMIT)
@@ -463,29 +465,24 @@ def check_hard_filters(
         if not np.isnan(srri) and srri > MAX_SRRI_DEFENSIVE:
             return f"srri={int(srri)} > {MAX_SRRI_DEFENSIVE} para Defensiva"
 
+        # v17: High Yield incompatible con Defensiva por riesgo crediticio
+        cq = row.get("Credit_Quality")
+        if cq == "High Yield":
+            return "Credit_Quality=High Yield excluido de Defensiva"
+
     return None
 
 
 # ============================================================
-# Motor principal de scoring
+# Deduplicación por familia
 # ============================================================
-
 
 def deduplicate_by_family(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Cuando un fondo tiene multiples clases en el universo de scoring,
-    conserva solo la clase con mejor score_base por familia.
+    Cuando un fondo tiene múltiples clases en el universo de scoring,
+    conserva solo la clase con mejor score_final por familia.
 
-    Logica:
-    - Fondos con fund_family_id: agrupar por (family_id, Fund_Nature, subportfolio)
-      y conservar la clase con mayor NAV_count (más histórico) como representante.
-    - Fondos sin fund_family_id (singletons): no se tocan.
-
-    Se aplica DESPUES de compute_base_scores y ANTES de _persist_scores,
-    de forma que el score final sea el de la mejor clase pero solo aparece
-    una vez por familia en fund_scores.
-
-    Devuelve DataFrame deduplicado con columna 'family_representative' (bool).
+    Aplica DESPUÉS de compute_base_scores y ANTES de _persist_scores.
     """
     if "fund_family_id" not in df.columns or df["fund_family_id"].isna().all():
         df["family_representative"] = True
@@ -494,12 +491,9 @@ def deduplicate_by_family(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df["family_representative"] = False
 
-    # Fondos sin family_id: siempre representantes
     mask_no_fam = df["fund_family_id"].isna() | (df["fund_family_id"].astype(str) == "")
     df.loc[mask_no_fam, "family_representative"] = True
 
-    # Fondos con family_id: el representante es el de mayor score_final
-    # (o mayor nav_count si scores iguales — más histórico = más fiable)
     fam_groups = df[~mask_no_fam].groupby(
         ["fund_family_id", "subportfolio"],
         group_keys=False,
@@ -509,8 +503,9 @@ def deduplicate_by_family(df: pd.DataFrame) -> pd.DataFrame:
             df.loc[group.index, "family_representative"] = True
             continue
 
-        # Criterio: mayor score_final, desempate por nav_count
-        sort_cols = ["score_final", "nav_count"] if "nav_count" in group.columns                     else ["score_final"]
+        sort_cols = (["score_final", "nav_count"]
+                     if "nav_count" in group.columns
+                     else ["score_final"])
         best_idx = group.sort_values(sort_cols, ascending=False).index[0]
         df.loc[best_idx, "family_representative"] = True
 
@@ -518,12 +513,16 @@ def deduplicate_by_family(df: pd.DataFrame) -> pd.DataFrame:
     n_repr  = df["family_representative"].sum()
     n_dedup = n_total - n_repr
     if n_dedup > 0:
-        print(f"  [Scorer] Deduplicacion por familia: "
+        print(f"  [Scorer] Deduplicación por familia: "
               f"{n_repr}/{n_total} clases representantes "
-              f"({n_dedup} clases secundarias excluidas de scoring final)")
+              f"({n_dedup} clases secundarias excluidas)")
 
     return df[df["family_representative"]].drop(columns=["family_representative"])
 
+
+# ============================================================
+# Motor principal de scoring
+# ============================================================
 
 def score_funds(
     conn: sqlite3.Connection,
@@ -532,7 +531,7 @@ def score_funds(
     dry_run: bool = False,
 ) -> pd.DataFrame:
     """
-    Calcula el score de todos los fondos para el regimen dado.
+    Calcula el score de todos los fondos para el régimen dado.
 
     Devuelve DataFrame con una fila por (fondo, sub-cartera) con columnas:
         isin, fund_nature, subportfolio, score_base, score_final,
@@ -541,98 +540,65 @@ def score_funds(
     Si dry_run=False, persiste en fund_scores.
     """
     regime = regime_result.regime
-    print(f"Scoring | Regimen: {regime} | version: {score_version}")
+    print(f"Scoring | Régimen: {regime} | versión: {score_version}")
 
-    # Cargar metricas (incluyendo las del regimen activo si existen)
     df = load_fund_metrics_for_scoring(conn, regime=regime)
     if df.empty:
-        print("ERROR: No hay metricas disponibles en fund_metrics.")
+        print("ERROR: No hay métricas disponibles en fund_metrics.")
         return pd.DataFrame()
 
-    print(f"Fondos con metricas: {len(df)}")
+    print(f"Fondos con métricas: {len(df)}")
 
-    # Pre-calcular percentiles del return en regimen activo para bonus/malus empirico
-    # Solo si tenemos suficientes datos del regimen (min 20 fondos con observaciones)
-    regime_p25 = None
-    regime_p75 = None
-    try:
-        from proyecto3.src.regime_classifier import _REGIME_SUFFIX
-        suffix = _REGIME_SUFFIX.get(regime)
-        if suffix:
-            ret_col  = f"return_ann_{suffix}"
-            nobs_col = f"n_obs_{suffix}"
-            if ret_col in df.columns and nobs_col in df.columns:
-                valid = df[
-                    (df[nobs_col] >= MIN_OBS_REGIME_SCORING) &
-                    df[ret_col].notna()
-                ][ret_col]
-                if len(valid) >= 20:
-                    regime_p25 = float(valid.quantile(REGIME_RETURN_BOT_Q))
-                    regime_p75 = float(valid.quantile(REGIME_RETURN_TOP_Q))
-                    print(f"  Regime returns [{regime}]: "
-                          f"p25={regime_p25:.2%} p75={regime_p75:.2%} "
-                          f"(n={len(valid)} fondos)")
-    except Exception:
-        pass
+    # Percentiles del régimen activo (para bonus/malus empírico)
+    from proyecto3.src.regime_classifier import _REGIME_SUFFIX
+    suffix = _REGIME_SUFFIX.get(regime)
+    regime_p25 = regime_p75 = None
+    if suffix:
+        ret_col = f"return_ann_{suffix}"
+        if ret_col in df.columns:
+            regime_p25 = df[ret_col].quantile(0.25)
+            regime_p75 = df[ret_col].quantile(0.75)
 
-    # Calcular scores base normalizados por naturaleza de fondo
-    base_scores = {}
-    for nature in df["Fund_Nature"].dropna().unique():
-        subset = df[df["Fund_Nature"] == nature]
-        base_scores_nature = compute_base_scores(subset)
-        base_scores.update(base_scores_nature.to_dict())
-
-    # Construir resultados
     results = []
 
     for nature, sub_list in SUBPORTFOLIO_MAPPING.items():
-        # Fondos elegibles para esta sub-cartera
-        mask = df["Fund_Nature"].isin(sub_list)
+        mask   = df["Fund_Nature"].isin(sub_list)
         subset = df[mask]
 
-        # Scores con pesos especificos de esta sub-cartera
         sub_scores = compute_base_scores(subset, subportfolio=nature)
 
         for isin, row in subset.iterrows():
             score_base = float(sub_scores.get(isin, 0.0))
 
-            # Filtros duros
             excl = check_hard_filters(row, nature)
 
-            # Multiplicador de regimen (incluye bonus/malus empirico si hay datos)
             mult, mult_detail = compute_regime_multiplier(
                 row, regime,
                 regime_return_p25=regime_p25,
                 regime_return_p75=regime_p75,
             )
 
-            # Score final
             score_final = score_base * mult if excl is None else 0.0
 
             detail = {
-                "score_base":   round(score_base, 4),
-                "multiplier":   mult,
-                "mult_detail":  mult_detail,
+                "score_base":  round(score_base, 4),
+                "multiplier":  mult,
+                "mult_detail": mult_detail,
                 "metrics": {
-                    "return_ann_real":   round(float(row.get("return_ann_real", np.nan)), 4)
-                                         if not np.isnan(row.get("return_ann_real", np.nan)) else None,
-                    "sharpe":            round(float(row.get("sharpe", np.nan)), 4)
-                                         if not np.isnan(row.get("sharpe", np.nan)) else None,
-                    "max_drawdown":      round(float(row.get("max_drawdown", np.nan)), 4)
-                                         if not np.isnan(row.get("max_drawdown", np.nan)) else None,
-                    "alpha_persistence": round(float(row.get("alpha_persistence", np.nan)), 4)
-                                         if not np.isnan(row.get("alpha_persistence", np.nan)) else None,
-                    "capture_ratio":     round(float(row.get("capture_ratio", np.nan)), 4)
-                                         if not np.isnan(row.get("capture_ratio", np.nan)) else None,
-                    "srri":              int(row.get("srri_nav", 0))
-                                         if not np.isnan(row.get("srri_nav", np.nan)) else None,
-                }
+                    "return_ann_real":   _safe_round(row.get("return_ann_real")),
+                    "sharpe":            _safe_round(row.get("sharpe")),
+                    "max_drawdown":      _safe_round(row.get("max_drawdown")),
+                    "alpha_persistence": _safe_round(row.get("alpha_persistence")),
+                    "capture_ratio":     _safe_round(row.get("capture_ratio")),
+                    "srri":              _safe_int(row.get("srri_nav")),
+                },
             }
 
             results.append({
                 "isin":             isin,
                 "fund_name":        row.get("Fund_Name", ""),
                 "fund_nature":      row.get("Fund_Nature", ""),
+                "fund_family_id":   row.get("fund_family_id"),
                 "subportfolio":     nature,
                 "score_base":       round(score_base, 4),
                 "multiplier":       mult,
@@ -644,19 +610,39 @@ def score_funds(
 
     df_results = pd.DataFrame(results)
 
-    # Deduplicar por familia — conservar mejor clase por fondo real
     if not df_results.empty:
         df_results = deduplicate_by_family(df_results)
 
     if not dry_run and not df_results.empty:
         _persist_scores(conn, df_results, regime, score_version)
 
-    eligible = df_results[df_results["eligible"]].shape[0]
-    n_families = df_results["fund_family_id"].nunique()                  if "fund_family_id" in df_results.columns else "n/a"
+    eligible   = df_results[df_results["eligible"]].shape[0]
+    n_families = (df_results["fund_family_id"].nunique()
+                  if "fund_family_id" in df_results.columns else "n/a")
     print(f"Fondos scored: {len(df_results)} | "
           f"Elegibles: {eligible} | "
-          f"Familias unicas: {n_families}")
+          f"Familias únicas: {n_families}")
     return df_results
+
+
+# ============================================================
+# Helpers
+# ============================================================
+
+def _safe_round(val, decimals: int = 4):
+    try:
+        v = float(val)
+        return round(v, decimals) if not np.isnan(v) else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_int(val):
+    try:
+        v = float(val)
+        return int(v) if not np.isnan(v) else None
+    except (TypeError, ValueError):
+        return None
 
 
 # ============================================================

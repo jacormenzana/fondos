@@ -1,7 +1,24 @@
 # proyecto1/core/fund_family_builder.py
 # -*- coding: utf-8 -*-
 """
-Asignacion de fund_family_id en fund_master.
+Asignacion de fund_family_id en fund_master.  — post-BL-59
+
+Cambios post-BL-59 (2026-04-29):
+  BL-59  Caso límite: Restantes mayoritario + única Nature concreta.
+         Causa raíz: en _resolve_family_nature, cuando Restantes tiene
+         mayoría simple (ej. 3/5 = 60% < 66.7%), la Regla 2 no aplica.
+         En Regla 3, srri_without_restantes contiene solo la Nature
+         concreta (ej. 'Renta Fija Corto Plazo'). others_srri y others_dq
+         resultan vacíos, srri_diff=0, dq_diff=0 → el if final nunca
+         se cumple → return None, [] (no corrige).
+         Fix: tras los pasos SRRI/DQ de la Regla 3, si
+         len(srri_without_restantes)==1, esa Nature concreta gana
+         incondicionalmente. Restantes es por definición el clasificador
+         fallback; no puede prevalecer sobre una clasificación positiva.
+         Test: FAM_000261 (BGF China Bond: 3 Restantes + 2 RFCP) → Nature
+         debe resolverse a 'Renta Fija Corto Plazo', 3 ISINs corregidos.
+         Condición de guarda añadida: solo se activa si nature_set contiene
+         'Restantes' (evita falsos positivos en familias sin Restantes).
 
 Agrupa clases de acciones del mismo fondo bajo un identificador comun
 normalizando el nombre del fondo y eliminando sufijos de clase.
@@ -64,7 +81,16 @@ _CLASS_SUFFIXES = re.compile(
         # -- Tipo de participacion / distribucion --
         | acc(?:umulation)?       # Acc, Accumulation
         | dist(?:ribution)?       # Dist, Distribution
-        | inc(?:ome)?             # Inc, Income
+        | inc                     # Inc abreviado únicamente.
+                                  # "Income" (palabra completa) NO se trata
+                                  # como sufijo de clase — es ambiguo: puede
+                                  # ser parte del nombre del fondo (Templeton
+                                  # Global Income, GS Eq Income). Trade-off:
+                                  # clases hermanas que solo difieran en el
+                                  # sufijo "Income" quedan en familias
+                                  # separadas. Falso negativo aceptable;
+                                  # falso positivo destruye granularidad
+                                  # (BL-FAM-FIX D4, 26-abr-2026).
         | cap(?:ital(?:isation)?)?# Cap, Capital, Capitalisation
         | thes(?:aurisation)?     # Thes (FR)
         | dis(?:trib)?            # Dis
@@ -142,11 +168,30 @@ _STRUCTURAL_HETEROGENEITY_SIGNALS = [
 _ADJACENT_NATURE_PAIRS = {
     frozenset({"Mixtos", "Renta Variable"}),
     frozenset({"Mixtos", "Renta Fija Flexible"}),
+    frozenset({"Mixtos", "Renta Fija Corto Plazo"}),        # BL-FAM-FIX D1
     frozenset({"Renta Fija Flexible", "Renta Fija Corto Plazo"}),
     frozenset({"Monetario", "Renta Fija Corto Plazo"}),
     frozenset({"Alternativo", "Renta Variable"}),
     frozenset({"Monetario", "Renta Variable"}),
 }
+
+# Naturalezas que son adyacentes a CUALQUIER otra Nature (BL-FAM-FIX D1).
+# Restantes es el fallback del clasificador: si una familia tiene miembros
+# en Restantes junto a cualquier Nature concreta, la inconsistencia es
+# error del bloque clasificador, no heterogeneidad real del fondo.
+_UNIVERSAL_ADJACENT: frozenset = frozenset({"Restantes"})
+
+
+def _is_adjacent_pair(nature_set: set) -> bool:
+    """
+    Devuelve True si el conjunto de naturalezas es 'adyacente'.
+
+    Una naturaleza en _UNIVERSAL_ADJACENT (Restantes) es adyacente
+    a cualquier otra. Para el resto, consulta _ADJACENT_NATURE_PAIRS.
+    """
+    if nature_set & _UNIVERSAL_ADJACENT:
+        return True
+    return any(frozenset(nature_set) == p for p in _ADJACENT_NATURE_PAIRS)
 
 # Jerarquía de confianza para SRRI_Quality_Flag
 _SRRI_QUALITY_RANK = {
@@ -179,8 +224,9 @@ def _resolve_family_nature(
 
     Reglas (por orden de precedencia):
     1. Heterogeneidad estructural → no corregir
-    2. Mayoría ≥ 2/3 + discordantes con Data_Quality=MISSING → aplicar mayoría
-    3. Naturalezas adyacentes → usar la de mayor SRRI_Quality_Flag agregado
+    2. Mayoría ≥ 2/3 + discordantes con Data_Quality=MISSING/WARN → aplicar mayoría
+    2-bis. Familias bipartitas: jerarquía Restantes > DQ > SRRI_Quality (BL-FAM-FIX D2)
+    3. Naturalezas adyacentes: SRRI_Quality primario + DQ desempate (BL-FAM-FIX D3)
     """
     names = [m["Fund_Name"] for m in members]
     natures = [m["Fund_Nature"] for m in members]
@@ -215,27 +261,106 @@ def _resolve_family_nature(
             # Todos los discordantes tienen calidad baja → aplicar mayoría
             return majority_nature, [m["ISIN"] for m in discordant]
 
-    # Regla 3: naturalezas adyacentes → usar la de mayor calidad SRRI agregada
-    if nature_set in _ADJACENT_NATURE_PAIRS or \
-       any(frozenset(nature_set) == p for p in _ADJACENT_NATURE_PAIRS):
-        # Calcular calidad agregada por naturaleza
-        quality_by_nature: dict[str, int] = {}
+    # === REGLA 2-bis: Familias bipartitas (BL-FAM-FIX D2) ===
+    # Con total=2, mayoría=1, ratio=0.5 < 0.667 → la Regla 2 clásica
+    # nunca aplica. Esta regla resuelve familias de exactamente 2 miembros
+    # con naturalezas distintas mediante jerarquía de calidad.
+    if len(members) == 2 and len(nature_set) == 2:
+        m_a, m_b = members[0], members[1]
+
+        # 2-bis-A: uno es Restantes → el otro gana siempre
+        if m_a["Fund_Nature"] == "Restantes" and m_b["Fund_Nature"] != "Restantes":
+            return m_b["Fund_Nature"], [m_a["ISIN"]]
+        if m_b["Fund_Nature"] == "Restantes" and m_a["Fund_Nature"] != "Restantes":
+            return m_a["Fund_Nature"], [m_b["ISIN"]]
+
+        # 2-bis-B: asimetría en Data_Quality_Flag
+        dq_a = m_a.get("Data_Quality_Flag")
+        dq_b = m_b.get("Data_Quality_Flag")
+        if dq_a == "OK" and dq_b in ("MISSING", "WARN"):
+            return m_a["Fund_Nature"], [m_b["ISIN"]]
+        if dq_b == "OK" and dq_a in ("MISSING", "WARN"):
+            return m_b["Fund_Nature"], [m_a["ISIN"]]
+
+        # 2-bis-C: asimetría clara en SRRI_Quality_Flag
+        sq_a = _SRRI_QUALITY_RANK.get(m_a.get("SRRI_Quality_Flag"), 0)
+        sq_b = _SRRI_QUALITY_RANK.get(m_b.get("SRRI_Quality_Flag"), 0)
+        if sq_a >= 2 and sq_b == 0:
+            return m_a["Fund_Nature"], [m_b["ISIN"]]
+        if sq_b >= 2 and sq_a == 0:
+            return m_b["Fund_Nature"], [m_a["ISIN"]]
+
+        # 2-bis-D: calidades equivalentes → cae a Regla 3 (adyacencia)
+
+    # Regla 3: naturalezas adyacentes → calidad SRRI primaria + DQ desempate
+    # (BL-FAM-FIX D3: umbral anterior >2 era demasiado restrictivo y no
+    # contemplaba desempate por Data_Quality_Flag)
+    if _is_adjacent_pair(nature_set):
+        srri_by_nature: dict = {}
+        dq_by_nature: dict = {}
         for m in members:
             nat = m["Fund_Nature"]
-            q = _SRRI_QUALITY_RANK.get(m.get("SRRI_Quality_Flag"), 0)
-            quality_by_nature[nat] = quality_by_nature.get(nat, 0) + q
+            srri_by_nature[nat] = srri_by_nature.get(nat, 0) + \
+                _SRRI_QUALITY_RANK.get(m.get("SRRI_Quality_Flag"), 0)
+            dq_rank = {"OK": 2, "WARN": 1, "MISSING": 0}.get(
+                m.get("Data_Quality_Flag"), 0
+            )
+            dq_by_nature[nat] = dq_by_nature.get(nat, 0) + dq_rank
 
-        if quality_by_nature:
-            best_nature = max(quality_by_nature, key=quality_by_nature.get)
-            best_q = quality_by_nature[best_nature]
-            others_q = {k: v for k, v in quality_by_nature.items() if k != best_nature}
-            # Solo corregir si la diferencia de calidad es clara (>2 puntos)
-            if others_q and best_q - max(others_q.values()) > 2:
+        if srri_by_nature:
+            # Restantes no puede ganar como Nature destino — es fallback del
+            # clasificador. Si resulta ser el mejor por SRRI agregado (porque
+            # tiene más miembros), excluirlo y elegir el siguiente.
+            srri_without_restantes = {k: v for k, v in srri_by_nature.items()
+                                      if k != "Restantes"}
+            if not srri_without_restantes:
+                return None, []  # todos son Restantes — consistente
+
+            best_nature = max(srri_without_restantes, key=srri_without_restantes.get)
+            best_srri = srri_without_restantes[best_nature]
+            others_srri = {k: v for k, v in srri_by_nature.items()
+                           if k != best_nature}
+            srri_diff = best_srri - max(others_srri.values()) if others_srri else 0
+
+            if srri_diff > 2:
+                # SRRI claramente superior → aplicar directamente
                 to_correct = [m["ISIN"] for m in members
                               if m["Fund_Nature"] != best_nature]
                 return best_nature, to_correct
 
-    return None, []  # No se puede determinar de forma segura
+            if srri_diff >= 0:
+                # SRRI igual o ligeramente superior → desempatar por DQ
+                best_dq_nature = max(dq_by_nature, key=dq_by_nature.get)
+                best_dq = dq_by_nature[best_dq_nature]
+                others_dq = {k: v for k, v in dq_by_nature.items()
+                             if k != best_dq_nature}
+                dq_diff = best_dq - max(others_dq.values()) if others_dq else 0
+
+                # DQ diferencia ≥ 1 y coincide con el ganador SRRI
+                if dq_diff >= 1 and best_dq_nature == best_nature:
+                    to_correct = [m["ISIN"] for m in members
+                                  if m["Fund_Nature"] != best_nature]
+                    return best_nature, to_correct
+
+            # BL-59: caso límite — Restantes mayoritario pero existe exactamente
+            # UNA Nature concreta no-Restantes. others_srri/others_dq quedan
+            # vacíos porque best_nature es la única Nature no-Restantes y
+            # others_srri = {Restantes: N} → best_nature se excluye de others_srri
+            # → el máximo de others_srri es el SRRI de Restantes, pero al calcular
+            # dq_diff, others_dq = {Restantes: M} y best_dq_nature puede ser
+            # Restantes → el if (best_dq_nature == best_nature) nunca se cumple.
+            # Fix: si después de los pasos anteriores hay exactamente una Nature
+            # concreta (srri_without_restantes tiene 1 entrada), esa Nature gana
+            # incondicionalmente — Restantes es por definición el clasificador
+            # fallback y no puede prevalecer sobre una clasificación concreta.
+            # Guarda: solo cuando Restantes está presente en nature_set (evita
+            # activarse en familias con dos Natures concretas distintas).
+            if len(srri_without_restantes) == 1 and "Restantes" in nature_set:
+                to_correct = [m["ISIN"] for m in members
+                              if m["Fund_Nature"] != best_nature]
+                return best_nature, to_correct
+
+    return None, []  # No determinable de forma segura
 
 
 def correct_family_inconsistencies(

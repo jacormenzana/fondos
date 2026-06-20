@@ -1,6 +1,12 @@
 from typing import Optional, Dict, List
 from core.classify_utils import (
     NAME_SIGNALS_RF_FLEXIBLE,
+    FAMILY_FLEXIBLE_FI,
+    FAMILY_HIGH_YIELD,
+    FAMILY_EMERGING_DEBT,
+    FAMILY_INFLATION_LINKED,
+    FAMILY_STRATEGIC_ALLOCATION,
+    TYPE_FLEXIBLE_FI,
     detect_geography       as _detect_geography,
     detect_theme           as _detect_theme,
     detect_is_esg          as _detect_is_esg,
@@ -10,6 +16,7 @@ from core.classify_utils import (
     detect_benchmark_type  as _detect_benchmark_type,
     detect_profile_from_srri as _detect_profile_from_srri,
     detect_kiid_attributes,
+    apply_semantic_validation,
 )
 import re
 
@@ -74,13 +81,13 @@ def classify_fund(
     result = {
         "Fund_Nature": FUND_NATURE_VALUE,
         "Profile": None,
-        "Type": None,
+        "_signal_type": None,
         "Family": None,
         "Style_Profile": None,
         "Geography": None,
         "Theme": None,
         "Exposure_Bias": None,
-        "Subtype": None,
+        "_signal_subtype": None,
     }
 
     name_l = fund_name.lower() if isinstance(fund_name, str) else ""
@@ -105,71 +112,53 @@ def classify_fund(
     #   millesima / millesim / buy&watch / target 20 / credit 20 → Target Maturity
     # -------------------------------------------------
     if "unconstrained" in name_l:
-        result["Type"] = "Unconstrained"
-        result["Subtype"] = "Flexible Bond"
+        result["_signal_type"] = "Unconstrained"
+        result["_signal_subtype"] = "Flexible Bond"
     elif any(k in name_l for k in ["absolute return", "abs ret", "absret"]):
-        result["Type"] = "Absolute Return"
+        result["_signal_type"] = "Absolute Return"
     elif any(k in name_l for k in ["total return", "tot ret"]):
-        result["Type"] = "Total Return"
+        result["_signal_type"] = "Total Return"
     elif any(k in name_l for k in [
         "millesima", "millesim", "milles select",
         "buy&watch", "buy & watch", "buywat",
         "target 20", "credit 20", "cred 20",
     ]):
-        result["Type"] = "Target Maturity"
+        result["_signal_type"] = "Target Maturity"
     else:
-        result["Type"] = "Renta Fija Flexible"
+        result["_signal_type"] = TYPE_FLEXIBLE_FI
 
     # -------------------------------------------------
-    # Style_Profile / Exposure_Bias — v2: añadidos de restantes
-    #   Credit Bias: + "hy", "opportunist", "credit opport"
-    #   Income Bias: + "rend", "rendement" (FR fondos)
-    #   Low Volatility: + "securite"
-    # -------------------------------------------------
+    # Style_Profile / Exposure_Bias se derivan de forma centralizada en
+    # classify_utils.derive_v20_attributes (engine = fuente única, AUDIT v20).
+    # Se conserva solo la señal de subtipo 'Opportunistic'.
     if any(k in name_l for k in [
         "high yield", "hy", "opportunistic", "opportunist",
         "credit opport", "yield enhancement",
     ]):
-        result["Style_Profile"] = "Income"
-        result["Exposure_Bias"] = "Credit Bias"
-        result["Subtype"] = "Opportunistic"
-
-    elif any(k in name_l for k in ["income", "rend", "rendement"]):
-        result["Style_Profile"] = "Income"
-        result["Exposure_Bias"] = "Income Bias"
-
-    elif any(k in name_l for k in [
-        "low volatility", "low vol", "capital preservation", "defensiv", "securite",
-    ]):
-        result["Style_Profile"] = "Low Volatility"
-        result["Exposure_Bias"] = "Low Volatility Bias"
-
-    else:
-        result["Style_Profile"] = "Defensivo"
-        result["Exposure_Bias"] = "Duration Bias"
+        result["_signal_subtype"] = "Opportunistic"
 
     # -------------------------------------------------
     # Family — v2: familias granulares de restantes
     #   RF High Yield / RF Emergentes / RF Inflación (con Theme)
     # -------------------------------------------------
     if any(k in name_l for k in ["strategic", "tactical", "opportunist", "millesima"]):
-        result["Family"] = "Flexible Estratégico"
+        result["Family"] = FAMILY_STRATEGIC_ALLOCATION
     elif any(k in name_l for k in ["high yield", " hy ", " hy bd"]):
-        result["Family"] = "RF High Yield"
+        result["Family"] = FAMILY_HIGH_YIELD
     elif any(k in name_l for k in ["emerging", "em debt", "em mkt", "emerg mkt", "emergentes", "em bond"]):
-        result["Family"] = "RF Emergentes"
+        result["Family"] = FAMILY_EMERGING_DEBT
     elif any(k in name_l for k in ["inflation", "inflat", "infl link"]):
-        result["Family"] = "RF Inflación"
-        result["Theme"] = "Inflación"
+        result["Family"] = FAMILY_INFLATION_LINKED
+        result["Theme"] = "Inflation"   # v3: idioma objetivo inglés (Principio #8)
     else:
-        result["Family"] = "Renta Fija Flexible"
+        result["Family"] = FAMILY_FLEXIBLE_FI
 
     # -------------------------------------------------
     # Subtype adicional (divisa)
     # -------------------------------------------------
     if any(k in name_l for k in ["multicurrency", "multi-currency", "multidivisa"]):
-        result["Subtype"] = (
-            f"{result['Subtype']} | Multi-Currency" if result["Subtype"]
+        result["_signal_subtype"] = (
+            f"{result['Subtype']} | Multi-Currency" if result["_signal_subtype"]
             else "Multi-Currency"
         )
 
@@ -203,17 +192,12 @@ def classify_fund(
     result["Geography"]    = result.get("Geography") or _detect_geography(_name_l)
     result["Theme"]        = result.get("Theme")     or _detect_theme(_name_l)
     result["Is_ESG"]       = _detect_is_esg(fund_name)
-    if result.get("Style_Profile") == "Defensivo":
-        result["Style_Profile"] = None   # Defensivo → Profile, no Style_Profile
-    if result.get("Style_Profile") is None:
-        result["Style_Profile"] = _detect_style_profile(_name_l)
-    if result.get("Exposure_Bias") is None:
-        result["Exposure_Bias"] = _detect_exposure_bias(_name_l, "Renta Fija Flexible")
     result["Strategy"] = _detect_strategy(
-        None, result.get("Subtype"), _name_l
+        None, result.get("_signal_subtype"), _name_l
     )
     result["Benchmark_Type"] = _detect_benchmark_type(
         None, None
     )
 
-    return result
+    return apply_semantic_validation(result, fund_name)
+

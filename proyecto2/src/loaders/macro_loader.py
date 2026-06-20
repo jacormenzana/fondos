@@ -639,6 +639,19 @@ _FRED_SERIES = {
         "unit":       "pct",
         "write_inflation": False,
     },
+
+    # ICE BofA Investment Grade Option-Adjusted Spread (%) -- diaria
+    # Diferencial de credito IG vs soberanos EEUU.
+    # Complemento al spread_hy: permite distinguir estres IG vs HY puro.
+    # Se resamplea a mensual con media (condicion media del mes).
+    "BAMLC0A0CM": {
+        "indicator":        "spread_ig",
+        "geography":        "GLOBAL",
+        "unit":             "pct",
+        "write_inflation":  False,
+        "resample_monthly": True,
+        "resample_func":    "mean",
+    },
 }
 
 FRED_BASE_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv"

@@ -31,7 +31,7 @@ from datetime import datetime
 
 ROOT        = Path(__file__).resolve().parents[1]   # c:/desarrollo/fondos
 UPLOAD_DIR  = ROOT / "upload"
-PROJECTS    = ["proyecto1", "proyecto2", "proyecto3","shared"]
+PROJECTS    = ["proyecto1", "proyecto2", "proyecto3","shared","scripts"]
 
 
 # ============================================================

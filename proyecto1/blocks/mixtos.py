@@ -1,6 +1,9 @@
+# mixtos.py — v6 (2026-05-09): BL-LANG-EN — FAMILY_MULTI_ASSET importada, literal "Mixtos" eliminado
 from typing import Optional, Dict, List
 from core.classify_utils import (
     NAME_SIGNALS_MIXTO,
+    FAMILY_INCOME_ORIENTED,   # BL-65b: constante EN canónica
+    FAMILY_MULTI_ASSET,       # BL-LANG-EN
     detect_geography       as _detect_geography,
     detect_theme           as _detect_theme,
     detect_is_esg          as _detect_is_esg,
@@ -10,6 +13,7 @@ from core.classify_utils import (
     detect_benchmark_type  as _detect_benchmark_type,
     detect_profile_from_srri as _detect_profile_from_srri,
     detect_kiid_attributes,
+    apply_semantic_validation,            
 )
 import re
 
@@ -69,13 +73,13 @@ def classify_fund(
     result = {
         "Fund_Nature": FUND_NATURE_VALUE,
         "Profile": None,
-        "Type": None,
+        "_signal_type": None,
         "Family": None,
         "Style_Profile": None,
         "Geography": None,
         "Theme": None,
         "Exposure_Bias": None,
-        "Subtype": None,
+        "_signal_subtype": None,
     }
 
     name_l = fund_name.lower() if isinstance(fund_name, str) else ""
@@ -110,13 +114,13 @@ def classify_fund(
     if any(k in name_l for k in [
         "target volatility", "risk controlled", "risk control", "volatility control",
     ]):
-        result["Type"] = "Target Volatility"
+        result["_signal_type"] = "Target Volatility"
     elif any(k in name_l for k in ["target outcome", "outcome"]):
-        result["Type"] = "Target Outcome"
+        result["_signal_type"] = "Target Outcome"
     elif any(k in name_l for k in ["tactical", "macro", "strategy"]):
-        result["Type"] = "Tactical Allocation"
+        result["_signal_type"] = "Tactical Allocation"
     else:
-        result["Type"] = "Allocation"
+        result["_signal_type"] = "Allocation"
 
     # -------------------------------------------------
     # Family
@@ -126,19 +130,12 @@ def classify_fund(
     elif "retirement" in name_l:
         result["Family"] = "Retirement"
     elif "income" in name_l:
-        result["Family"] = "Income Oriented"
+        result["Family"] = FAMILY_INCOME_ORIENTED   # BL-65b: constante EN
     else:
-        result["Family"] = "Mixtos"
+        result["Family"] = FAMILY_MULTI_ASSET
 
-    # -------------------------------------------------
-    # Style_Profile
-    # -------------------------------------------------
-    if result["Type"] == "Target Volatility":
-        result["Style_Profile"] = "Risk Control"
-    elif result["Type"] == "Tactical Allocation":
-        result["Style_Profile"] = "Tactical"
-    else:
-        result["Style_Profile"] = "Strategic Allocation"
+    # Style_Profile se deriva de forma centralizada en
+    # classify_utils.derive_v20_attributes (Mixtos → 'Strategic Allocation').
 
     # -------------------------------------------------
     # Geography
@@ -170,17 +167,11 @@ def classify_fund(
     result["Geography"]    = result.get("Geography") or _detect_geography(_name_l)
     result["Theme"]        = result.get("Theme")     or _detect_theme(_name_l)
     result["Is_ESG"]       = _detect_is_esg(fund_name)
-    if result.get("Style_Profile") == "Defensivo":
-        result["Style_Profile"] = None   # Defensivo → Profile, no Style_Profile
-    if result.get("Style_Profile") is None:
-        result["Style_Profile"] = _detect_style_profile(_name_l)
-    if result.get("Exposure_Bias") is None:
-        result["Exposure_Bias"] = _detect_exposure_bias(_name_l, "Mixto")
     result["Strategy"] = _detect_strategy(
-        None, result.get("Subtype"), _name_l
+        None, result.get("_signal_subtype"), _name_l
     )
     result["Benchmark_Type"] = _detect_benchmark_type(
         None, None
     )
 
-    return result
+    return apply_semantic_validation(result, fund_name)

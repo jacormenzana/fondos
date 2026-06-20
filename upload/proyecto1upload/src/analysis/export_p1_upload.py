@@ -12,13 +12,15 @@ Notas de diseño:
     Usar --include-kiid-text para incluirlo (util para analisis de parsing).
   - Inference_Trace se excluye por defecto (cadena de trazabilidad interna).
   - NAV mensual NO se exporta aqui — es dominio de P2.
-  - Nomenclatura: p1_export_YYYYMMDD.xlsx
+  - Nomenclatura: p1_export_YYYYMMDD.xlsx  /  p1_export_<block>_YYYYMMDD.xlsx
 
 Uso:
     cd c:/desarrollo/fondos
     python -m proyecto1.src.analysis.export_p1
     python -m proyecto1.src.analysis.export_p1 --output c:/ruta/personalizada
     python -m proyecto1.src.analysis.export_p1 --include-kiid-text
+    python -m proyecto1.src.analysis.export_p1 --block renta_variable
+    python -m proyecto1.src.analysis.export_p1 --block monetarios --include-kiid-text
 """
 
 import argparse
@@ -43,15 +45,38 @@ EXPORT_DIR: Path = _OUT_DIR / "export"
 # Configuracion de tablas P1
 # ============================================================
 
-def get_tables(include_kiid_text: bool = False) -> list[TableExportConfig]:
+# Valores canonicos de heuristic_block (mirror de blocks/*.py + bat)
+VALID_BLOCKS: frozenset = frozenset({
+    "MONETARIOS", "RF_CORTO", "RF_FLEXIBLE",
+    "RENTA_VARIABLE", "MIXTOS", "ALTERNATIVOS", "RESTANTES",
+})
+
+
+def get_tables(
+    include_kiid_text: bool = False,
+    block_filter=None,
+) -> list:
     """
     Devuelve la configuracion de exportacion de P1.
 
     include_kiid_text: si True, incluye Raw_KIID_Text en fund_kiid_metadata.
                        Util para analisis del parser OCR pero genera ficheros
                        mucho mas grandes (~500 MB vs ~10 MB).
+    block_filter:      si se indica, restringe ambas hojas al subconjunto de
+                       ISINs cuyo heuristic_block coincide con ese valor.
+                       Debe ser uno de VALID_BLOCKS; se valida antes de llamar.
     """
     kiid_exclude = [] if include_kiid_text else ["Raw_KIID_Text"]
+
+    # Clausulas WHERE para filtrado por bloque
+    fm_where   = None
+    kiid_where = None
+    if block_filter:
+        # Interpolacion segura: block_filter ya validado contra VALID_BLOCKS en export_p1()
+        fm_where   = f"heuristic_block = '{block_filter}'"
+        kiid_where = (
+            f"ISIN IN (SELECT ISIN FROM fund_master WHERE heuristic_block = '{block_filter}')"
+        )
 
     return [
         TableExportConfig(
@@ -59,14 +84,15 @@ def get_tables(include_kiid_text: bool = False) -> list[TableExportConfig]:
             sheet_name="1_FundMaster",
             exclude_cols=["Inference_Trace"],
             order_by="Fund_Nature, Management_Company, Fund_Name",
+            where=fm_where,
         ),
         TableExportConfig(
             table="fund_kiid_metadata",
             sheet_name="2_KIIDMetadata",
             exclude_cols=kiid_exclude,
             order_by="ISIN",
+            where=kiid_where,
         ),
-
     ]
 
 
@@ -75,10 +101,11 @@ def get_tables(include_kiid_text: bool = False) -> list[TableExportConfig]:
 # ============================================================
 
 def export_p1(
-    output_dir:       Path | None = None,
-    db_path:          Path | None = None,
+    output_dir=None,
+    db_path=None,
     include_kiid_text: bool = False,
-) -> Path:
+    block=None,
+):
     """
     Exporta las tablas de P1 a un fichero Excel con fecha en el nombre.
 
@@ -86,20 +113,30 @@ def export_p1(
         output_dir:        directorio de salida (default: out/export/)
         db_path:           ruta a la BD (default: DB_PATH de shared/config)
         include_kiid_text: incluir columna Raw_KIID_Text (default: False)
+        block:             si se indica, filtra por heuristic_block.
+                           Debe ser uno de VALID_BLOCKS; abort con ValueError si no.
 
     Devuelve la ruta del fichero generado.
     """
-    
     print(f"DEBUG _ROOT     = {_ROOT}")
     print(f"DEBUG DB_PATH   = {DB_PATH}")
     print(f"DEBUG EXPORT_DIR= {EXPORT_DIR}")
-    
-    
+
+    # Validar block contra whitelist (safe interpolation guard)
+    if block is not None:
+        if block.upper() not in VALID_BLOCKS:
+            raise ValueError(
+                f"--block '{block}' no valido. "
+                f"Valores permitidos: {sorted(VALID_BLOCKS)}"
+            )
+        print(f"Filtro activo: heuristic_block = '{block}'")
+
     output_dir = Path(output_dir) if output_dir else EXPORT_DIR
     db_path    = Path(db_path)    if db_path    else DB_PATH
 
-    out_path = output_dir / dated_filename("p1_export")
-    tables   = get_tables(include_kiid_text=include_kiid_text)
+    prefix   = f"p1_export_{block.lower()}" if block else "p1_export"
+    out_path = output_dir / dated_filename(prefix)
+    tables   = get_tables(include_kiid_text=include_kiid_text, block_filter=block)
 
     return export_tables(
         tables=tables,
@@ -129,10 +166,19 @@ if __name__ == "__main__":
         "--include-kiid-text", action="store_true",
         help="Incluir columna Raw_KIID_Text (fichero mas grande)"
     )
+    parser.add_argument(
+        "--block", default=None,
+        metavar="BLOCK",
+        help=(
+            "Filtrar export por heuristic_block. "
+            f"Valores: {sorted(VALID_BLOCKS)}"
+        ),
+    )
     args = parser.parse_args()
 
     export_p1(
         output_dir=args.output,
         db_path=args.db,
         include_kiid_text=args.include_kiid_text,
+        block=args.block,
     )

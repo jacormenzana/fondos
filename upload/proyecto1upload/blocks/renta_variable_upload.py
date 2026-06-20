@@ -1,6 +1,12 @@
 from typing import Optional, Dict, List
 from core.classify_utils import (
     NAME_SIGNALS_RV,
+    FAMILY_EQUITY_CORE,
+    FAMILY_THEMATIC_EQUITY,
+    TYPE_ACTIVE_MANAGEMENT,
+    TYPE_INDEX_FUND,
+    SUBTYPE_INDEX_FUND,
+    SUBTYPE_ETF,
     detect_geography       as _detect_geography,
     detect_theme           as _detect_theme,
     detect_is_esg          as _detect_is_esg,
@@ -10,6 +16,7 @@ from core.classify_utils import (
     detect_benchmark_type  as _detect_benchmark_type,
     detect_profile_from_srri as _detect_profile_from_srri,
     detect_kiid_attributes,
+    apply_semantic_validation,
 )
 import re
 
@@ -76,13 +83,13 @@ def classify_fund(
     result = {
         "Fund_Nature": FUND_NATURE_VALUE,
         "Profile": None,
-        "Type": None,
+        "_signal_type": None,
         "Family": None,
         "Style_Profile": None,
         "Geography": None,
         "Theme": None,
         "Exposure_Bias": None,
-        "Subtype": None,
+        "_signal_subtype": None,
     }
 
     name_l = fund_name.lower() if isinstance(fund_name, str) else ""
@@ -116,38 +123,19 @@ def classify_fund(
         "passive management",
     ]
     if any(k in text_l for k in _passive_kws):
-        result["Type"] = "Indexado"
-        result["Subtype"] = "Fondo Indexado"
+        result["_signal_type"] = TYPE_INDEX_FUND
+        result["_signal_subtype"] = SUBTYPE_INDEX_FUND
 
     if "etf" in text_l or "fondo cotizado" in text_l:
-        result["Type"] = "Indexado"
-        result["Subtype"] = "ETF"
+        result["_signal_type"] = TYPE_INDEX_FUND
+        result["_signal_subtype"] = SUBTYPE_ETF
 
-    if result["Type"] is None:
-        result["Type"] = "Gestión Activa"
+    if result["_signal_type"] is None:
+        result["_signal_type"] = TYPE_ACTIVE_MANAGEMENT
 
     # -------------------------------------------------
-    # Style_Profile / Exposure_Bias — v2: añadidos de restantes
-    #   min vol / min volatil, dividende, wachstum (DE), crecim (ES)
-    # -------------------------------------------------
-    if any(k in name_l for k in [
-        "low vol", "minimum volatility", "minimum vol", "min vol", "min volatil",
-    ]):
-        result["Style_Profile"] = "Low Volatility"
-        result["Exposure_Bias"] = "Low Volatility Bias"
-    elif any(k in name_l for k in ["income", "dividend", "dividende", "dividends"]):
-        result["Style_Profile"] = "Income"
-        result["Exposure_Bias"] = "Income Bias"
-    elif "quality" in name_l:
-        result["Style_Profile"] = "Quality"
-    elif any(k in name_l for k in ["growth", "wachstum", "crecim"]):
-        result["Style_Profile"] = "Growth"
-    elif "value" in name_l:
-        result["Style_Profile"] = "Value"
-    elif any(k in name_l for k in [
-        "defensive", "risk control", "risk managed", "capital preservation",
-    ]):
-        result["Style_Profile"] = "Defensivo"
+    # Style_Profile / Exposure_Bias se derivan de forma centralizada en
+    # classify_utils.derive_v20_attributes (engine = fuente única, AUDIT v20).
 
     # -------------------------------------------------
     # Family / Theme — v2: thematic_map ampliado con restantes
@@ -156,11 +144,11 @@ def classify_fund(
     # -------------------------------------------------
     _theme = _detect_theme(name_l)
     if _theme:
-        result["Family"] = "RV Temática"
+        result["Family"] = FAMILY_THEMATIC_EQUITY
         result["Theme"] = _theme
 
     if result["Family"] is None:
-        result["Family"] = "RV Core"
+        result["Family"] = FAMILY_EQUITY_CORE
 
     # -------------------------------------------------
     # Geography — FIX-RV-2: temáticos sin geo → Global
@@ -194,17 +182,12 @@ def classify_fund(
     result["Geography"]    = result.get("Geography") or _detect_geography(_name_l)
     result["Theme"]        = result.get("Theme")     or _detect_theme(_name_l)
     result["Is_ESG"]       = _detect_is_esg(fund_name)
-    if result.get("Style_Profile") == "Defensivo":
-        result["Style_Profile"] = None   # Defensivo → Profile, no Style_Profile
-    if result.get("Style_Profile") is None:
-        result["Style_Profile"] = _detect_style_profile(_name_l)
-    if result.get("Exposure_Bias") is None:
-        result["Exposure_Bias"] = _detect_exposure_bias(_name_l, "Renta Variable")
     result["Strategy"] = _detect_strategy(
-        None, result.get("Subtype"), _name_l
+        None, result.get("_signal_subtype"), _name_l
     )
     result["Benchmark_Type"] = _detect_benchmark_type(
         None, None
     )
 
-    return result
+    return apply_semantic_validation(result, fund_name)
+

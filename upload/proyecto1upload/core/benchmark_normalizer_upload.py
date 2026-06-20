@@ -13,6 +13,18 @@ Problema observado (3.204 fondos, analisis marzo 2026):
   - ~35 entradas con texto narrativo capturado (falsos positivos del parser)
   - ~19 entradas truncadas sin datos suficientes para normalizar
 
+BL-39 (2026-04-13):
+  - _FALSE_POSITIVE_FRAGMENTS: +9 fragmentos detectados en datos reales
+    ("además", "uno o más tipos", "página 1 de", "canal", "último informe"...)
+  - _CANONICAL_DATA: +20 aliases nuevos:
+      MSCI: acwi-nr, ac worl (OCR), north america, usa high dividend,
+            value index, india imi, india index-nr, emu index, frontier emerging
+      Bloomberg: barclays euroagg corporate, barclays euro agg,
+                 global aggregate 1-3, us high yield blend
+      FTSE: all-share, ftse 100
+      ICE BofA: euro high yield, bofaml 0-1y euro, bofaml euro corporate
+      SOFR con paréntesis truncado "sofr)"
+
 Uso:
     from core.benchmark_normalizer import normalize_benchmark, clean_benchmark
 
@@ -69,6 +81,18 @@ _FALSE_POSITIVE_FRAGMENTS = [
     "un organismo i",
     "fondos - global research",    # "jpmorgan funds - global research"
     "fondos de inversion",
+    # BL-39: nuevos falsos positivos detectados en datos reales
+    "además",                      # "sofr), además de..."
+    "uno o más tipos",             # "msci acwi-nr y 40% jp morgan global uno o más tipos..."
+    "page 1 de",                   # benchmark contaminado con número de página
+    "página 1 de",
+    "14 agosto",                   # "bloomberg euro-aggregate: página 1... 14 agosto de 2025"
+    "canal",                       # "msci europe través de todos los canales"
+    "último informe",              # "msci european último informe"
+    "net de la",                   # texto narrativo con "net"
+    # NOTE: "con dividendos netos" RETIRADO de falsos positivos — es un sufijo
+    # Net-Return válido (p.ej. "S&P 500 Index (con dividendos netos)"). El
+    # startswith() del matcher ignora el sufijo tras el prefijo canónico.
 ]
 
 _FALSE_POSITIVE_RE = re.compile(
@@ -336,6 +360,18 @@ _CANONICAL_DATA: list[tuple[str, BenchmarkResult]] = [
     ("jp morgan asia credit",                 BenchmarkResult("JPM_ASIA_CREDIT","JP Morgan Asia Credit","JP Morgan","Fixed Income","HIGH")),
 
     # ── MSCI — variantes adicionales ─────────────────────────────────────────
+    # BL-39: aliases detectados en análisis de datos reales (p1_export_20260413)
+    ("msci acwi-nr",                    BenchmarkResult("MSCI_ACWI_NR","MSCI ACWI (Net Return)","MSCI","Equity","HIGH")),
+    ("msci ac worl",                    BenchmarkResult("MSCI_ACWI_NR","MSCI ACWI (Net Return)","MSCI","Equity","MEDIUM")),  # OCR truncado
+    ("msci north america",              BenchmarkResult("MSCI_NORTH_AMERICA","MSCI North America","MSCI","Equity","HIGH")),
+    ("msci usa high dividend yield",    BenchmarkResult("MSCI_USA_HIGH_DIV","MSCI USA High Dividend Yield","MSCI","Equity","HIGH")),
+    ("msci usa high dividend",          BenchmarkResult("MSCI_USA_HIGH_DIV","MSCI USA High Dividend Yield","MSCI","Equity","MEDIUM")),
+    ("msci value index",                BenchmarkResult("MSCI_WORLD_VALUE","MSCI World Value","MSCI","Equity","MEDIUM")),
+    ("msci india imi",                  BenchmarkResult("MSCI_INDIA_IMI","MSCI India IMI","MSCI","Equity","HIGH")),
+    ("msci india index",                BenchmarkResult("MSCI_INDIA","MSCI India","MSCI","Equity","HIGH")),
+    ("msci india index-nr",             BenchmarkResult("MSCI_INDIA","MSCI India","MSCI","Equity","HIGH")),
+    ("msci emu index",                  BenchmarkResult("MSCI_EMU_NR","MSCI EMU (Net Return)","MSCI","Equity","HIGH")),
+    ("msci frontier emerging",          BenchmarkResult("MSCI_FRONTIER_EM","MSCI Frontier Emerging Markets","MSCI","Equity","HIGH")),
     ("msci ac world (usd",             BenchmarkResult("MSCI_ACWI_NR","MSCI ACWI (Net Return)","MSCI","Equity","HIGH")),
     ("msci ac world (eur",             BenchmarkResult("MSCI_ACWI_NR","MSCI ACWI (Net Return)","MSCI","Equity","HIGH")),
     ("msci ac world (nr",              BenchmarkResult("MSCI_ACWI_NR","MSCI ACWI (Net Return)","MSCI","Equity","HIGH")),
@@ -391,6 +427,11 @@ _CANONICAL_DATA: list[tuple[str, BenchmarkResult]] = [
     ("russell 2000",                    BenchmarkResult("RUSSELL_2000","Russell 2000","Russell","Equity","HIGH")),
 
     # ── Bloomberg variantes adicionales ───────────────────────────────────────
+    # BL-39: aliases detectados en datos reales
+    ("barclays euroagg corporate",      BenchmarkResult("BBG_EURO_AGG_CORP","Bloomberg Euro Aggregate Corporate","Bloomberg","Fixed Income","HIGH")),
+    ("barclays euro agg",               BenchmarkResult("BBG_EURO_AGG","Bloomberg Euro Aggregate","Bloomberg","Fixed Income","MEDIUM")),
+    ("bloomberg global aggregate 1-3",  BenchmarkResult("BBG_GLOBAL_AGG_1_3","Bloomberg Global Aggregate 1-3Y","Bloomberg","Fixed Income","HIGH")),
+    ("bloomberg us high yield, 30",     BenchmarkResult("BBG_US_HY_30_EUR_HY","Bloomberg US HY / Pan-European HY blend","Bloomberg","Fixed Income","MEDIUM")),
     ("bloomberg global",                BenchmarkResult("BBG_GLOBAL_AGG","Bloomberg Global Aggregate","Bloomberg","Fixed Income","MEDIUM")),
     ("bloomberg u",                     BenchmarkResult("BBG_US_AGG","Bloomberg US Aggregate","Bloomberg","Fixed Income","MEDIUM")),
 
@@ -404,7 +445,21 @@ _CANONICAL_DATA: list[tuple[str, BenchmarkResult]] = [
     ("jp morgan us government bond",    BenchmarkResult("JPM_US_GOVT","JP Morgan US Government Bond","JP Morgan","Fixed Income","HIGH")),
     ("jp morgan government bond index", BenchmarkResult("JPM_GLOBAL_GOVT","JP Morgan Global Government Bond","JP Morgan","Fixed Income","HIGH")),
 
+    # ── FTSE adicionales ─────────────────────────────────────────────────────
+    # BL-39: detectados en datos reales
+    ("ftse all-share",                  BenchmarkResult("FTSE_ALL_SHARE","FTSE All-Share","FTSE","Equity","HIGH")),
+    ("ftse all share",                  BenchmarkResult("FTSE_ALL_SHARE","FTSE All-Share","FTSE","Equity","HIGH")),
+    ("ftse 100",                        BenchmarkResult("FTSE_100","FTSE 100","FTSE","Equity","HIGH")),
+
+    # ── ICE BofA adicionales ──────────────────────────────────────────────────
+    # BL-39: detectados en datos reales
+    ("ice bofa euro high yield",        BenchmarkResult("ICE_EUR_HY","ICE BofA Euro High Yield","ICE BofA","Fixed Income","HIGH")),
+    ("ice bofaml 0-1 years euro",       BenchmarkResult("ICE_EUR_GOVT_0_1","ICE BofAML 0-1Y Euro Government","ICE BofA","Fixed Income","HIGH")),
+    ("ice bofaml euro corporate",       BenchmarkResult("ICE_EUR_CORP","ICE BofAML Euro Corporate","ICE BofA","Fixed Income","HIGH")),
+
     # ── Tipos de interés adicionales ──────────────────────────────────────────
+    # BL-39: "sofr)" con paréntesis truncado aparece en datos contaminados
+    ("sofr)",                           BenchmarkResult("RATE_SOFR","Secured Overnight Financing Rate (SOFR)","FRB","Rate","MEDIUM")),
     ("€str",                            BenchmarkResult("RATE_ESTR","Euro Short-Term Rate (€STR)","ECB","Rate","HIGH")),
     ("sofr",                            BenchmarkResult("RATE_SOFR","Secured Overnight Financing Rate (SOFR)","FRB","Rate","HIGH")),
 
@@ -668,6 +723,50 @@ _MS_CANONICAL_DATA: list[tuple[str, BenchmarkResult]] = [
     ("cat 50%jpm embi plus tr&50%msci em nr", BenchmarkResult("CAT_50_EMBI_50_MSCI_EM","50% JPM EMBI / 50% MSCI EM","Custom","Mixed","MEDIUM")),
     ("cat 75%citi swissgbi&25%msci wld free nr", BenchmarkResult("CAT_75_SWISS_25_WORLD","75% Citi Swiss GBI / 25% MSCI World","Custom","Mixed","MEDIUM")),
     ("cat 40%citi swissgbi&60%msci wld free nr", BenchmarkResult("CAT_40_SWISS_60_WORLD","40% Citi Swiss GBI / 60% MSCI World","Custom","Mixed","MEDIUM")),
+
+    # ── BL-BENCH-NORM v4.1: cola no normalizada (236 filas) ───────────────────
+    # Orden: específico ANTES que base (el matcher usa startswith, primer match gana).
+    # MSCI Europe (estilos específicos antes de la base)
+    ("msci europe value",   BenchmarkResult("MSCI_EUROPE_VALUE","MSCI Europe Value","MSCI","Equity","MEDIUM")),
+    ("msci europe growth",  BenchmarkResult("MSCI_EUROPE_GROWTH","MSCI Europe Growth","MSCI","Equity","MEDIUM")),
+    ("msci europe small",   BenchmarkResult("MSCI_EUROPE_SMALL","MSCI Europe Small/Mid Cap","MSCI","Equity","MEDIUM")),
+    ("msci europe",         BenchmarkResult("MSCI_EUROPE","MSCI Europe","MSCI","Equity","MEDIUM")),
+    # MSCI otras regiones
+    ("msci usa value",      BenchmarkResult("MSCI_USA_VALUE","MSCI USA Value","MSCI","Equity","MEDIUM")),
+    ("msci usa",            BenchmarkResult("MSCI_USA","MSCI USA","MSCI","Equity","MEDIUM")),
+    ("msci united kingdom", BenchmarkResult("MSCI_UK","MSCI United Kingdom","MSCI","Equity","MEDIUM")),
+    ("msci nordic",         BenchmarkResult("MSCI_NORDIC","MSCI Nordic","MSCI","Equity","MEDIUM")),
+    ("msci ac as",          BenchmarkResult("MSCI_AC_ASIA","MSCI AC Asia","MSCI","Equity","LOW")),  # truncado en origen
+    # ICE BofA (HY y subfamilias antes de la base)
+    ("ice bofa us high yield",                BenchmarkResult("ICE_BOFA_HY","ICE BofA US High Yield","ICE BofA","Fixed Income","MEDIUM")),
+    ("ice bofa european currency high yield", BenchmarkResult("ICE_BOFA_HY","ICE BofA European Currency High Yield","ICE BofA","Fixed Income","MEDIUM")),
+    ("ice bofa asian dollar high yield",      BenchmarkResult("ICE_BOFA_HY","ICE BofA Asian Dollar High Yield","ICE BofA","Fixed Income","MEDIUM")),
+    ("ice bofa estr",                         BenchmarkResult("ESTR","ICE BofA ESTR Overnight","ICE BofA","Money Market","MEDIUM")),
+    ("ice bofa green bond",                   BenchmarkResult("ICE_BOFA_GREEN","ICE BofA Green Bond","ICE BofA","Fixed Income","MEDIUM")),
+    ("ice bofa global",                       BenchmarkResult("ICE_BOFA_GLOBAL","ICE BofA Global","ICE BofA","Fixed Income","LOW")),
+    ("ice bofa euro",                         BenchmarkResult("ICE_BOFA_EUR","ICE BofA Euro","ICE BofA","Fixed Income","MEDIUM")),
+    ("ice bofa",                              BenchmarkResult("ICE_BOFA","ICE BofA","ICE BofA","Fixed Income","LOW")),
+    # JP Morgan
+    ("jp morgan emerging markets bond", BenchmarkResult("JPM_EMBI","JP Morgan EMBI","JP Morgan","Fixed Income","MEDIUM")),
+    ("jpmorgan jaci",                   BenchmarkResult("JPM_JACI","JP Morgan Asia Credit (JACI)","JP Morgan","Fixed Income","MEDIUM")),
+    ("jp morgan",                       BenchmarkResult("JPM_BOND","JP Morgan Bond","JP Morgan","Fixed Income","LOW")),
+    ("jpmorgan",                        BenchmarkResult("JPM_BOND","JP Morgan Bond","JP Morgan","Fixed Income","LOW")),
+    # Russell
+    ("russell",  BenchmarkResult("RUSSELL","Russell","Russell","Equity","LOW")),
+    # Bloomberg Euro Aggregate
+    ("bloomberg euro-aggregate corporate", BenchmarkResult("BBG_EUR_AGG_CORP","Bloomberg Euro Aggregate Corporate","Bloomberg","Fixed Income","MEDIUM")),
+    ("bloomberg euro ag",                  BenchmarkResult("BBG_EUR_AGG","Bloomberg Euro Aggregate","Bloomberg","Fixed Income","MEDIUM")),
+    ("bloomberg euro",                     BenchmarkResult("BBG_EUR_AGG","Bloomberg Euro Aggregate","Bloomberg","Fixed Income","LOW")),
+    # S&P regionales
+    ("s&p global mining",        BenchmarkResult("SP_GLOBAL_MINING","S&P Global Mining","S&P","Equity","MEDIUM")),
+    ("s&p pan arab",             BenchmarkResult("SP_PAN_ARAB","S&P Pan Arab Composite","S&P","Equity","MEDIUM")),
+    ("s&p japan mid small cap",  BenchmarkResult("SP_JAPAN_SMID","S&P Japan Mid/Small Cap","S&P","Equity","MEDIUM")),
+    ("s&p eurozone",             BenchmarkResult("SP_EUROZONE","S&P Eurozone","S&P","Equity","MEDIUM")),
+    # Tipos overnight cortos (pairs con kiid_parser BL-38-v21: SOFR/€STR/ESTR ya cubiertos)
+    ("sonia",  BenchmarkResult("RATE_SONIA","SONIA Overnight","Bank of England","Money Market","HIGH")),
+    ("tona",   BenchmarkResult("RATE_TONA","TONA Overnight","Bank of Japan","Money Market","HIGH")),
+    ("saron",  BenchmarkResult("RATE_SARON","SARON Overnight","SIX","Money Market","HIGH")),
+    ("ester",  BenchmarkResult("RATE_ESTR","€STR (ESTER) Overnight","ECB","Money Market","HIGH")),
 ]
 
 

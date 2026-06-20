@@ -39,6 +39,7 @@ Ejemplos:
 """
 
 import argparse
+import requests
 import sqlite3
 import sys
 import time
@@ -46,6 +47,27 @@ import random
 from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
+
+# ============================================================
+# Constantes API Morningstar (acceso directo, sin mstarpy constructor)
+# ============================================================
+# Screener: resuelve ISIN -> securityID (code interno)
+_MS_SCREENER_URL  = "https://global.morningstar.com/api/v1/{lang}/tools/screener/_data"
+# Performance: descarga historicalData con el code interno
+_MS_PERF_URL      = "https://api-global.morningstar.com/sal-service/v1/fund/performance/v4/{code}"
+_MS_APIKEY        = "lstzFDEOhfFNMLikKa0am9mgEKLBl49T"
+_MS_PERF_PARAMS   = {"clientId": "MDC", "version": "4.71.0"}
+
+_USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0",
+]
+
+def _random_ua() -> str:
+    return random.choice(_USER_AGENTS)
 
 # Path setup
 _P2_SRC = Path(__file__).resolve().parent.parent
@@ -57,9 +79,9 @@ from shared.db import get_connection
 
 try:
     import mstarpy
-    _MSTARPY_OK = True
 except ImportError:
-    _MSTARPY_OK = False
+    print("\n[ERROR] mstarpy no esta instalado. Ejecuta: pip install mstarpy\n")
+    sys.exit(1)
 
 # ============================================================
 # Configuracion
@@ -81,167 +103,87 @@ MS_BACKOFF_FACTOR = 3            # multiplicador entre intentos
 MS_COOLDOWN_EVERY = 200          # cada N fondos OK (no total)
 MS_COOLDOWN_SECS  = (30, 60)     # reducido - 401 no necesita cooldown
 
-# ============================================================
-# Acceso directo a la API de Morningstar (sin mstarpy)
-# ============================================================
-# Desde marzo 2026 el endpoint data-points/fields devuelve 202
-# en lugar de 200, rompiendo el constructor de mstarpy.
-# Las funciones directas usan:
-#   - Bearer token scrapeado de una página pública (requests puro)
-#   - chartservice timeseries endpoint (sin autenticación especial)
-# Rendimiento: ~0.5s por fondo vs ~20s con mstarpy 9.x (Selenium)
-
-_CHARTSERVICE_URL = "https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries"
-_TOKEN_URL        = "https://www.morningstar.com/funds/xnas/afozx/chart"
-
-_USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0",
-]
-
-def _random_ua() -> str:
-    return random.choice(_USER_AGENTS)
-
-
-def _get_bearer_token() -> Optional[str]:
-    """
-    Obtiene el Bearer token scrapeando una página pública de Morningstar.
-    El token es un JWT válido durante varias horas.
-    No requiere autenticación ni Selenium.
-    """
-    try:
-        r = requests.get(_TOKEN_URL, headers={"user-agent": _random_ua()}, timeout=15)
-        txt = r.text
-        if "token" not in txt:
-            return None
-        idx   = txt.find("token")
-        token = txt[idx + 7 : txt.find("}", idx) - 1]
-        return token if len(token) > 20 else None
-    except Exception:
-        return None
-
-
-def _download_nav_direct(
-    ms_id:    str,
-    desde:    str,
-    currency: str = "EUR",
-    hasta:    Optional[str] = None,
-) -> tuple[list[dict], str]:
-    """
-    Descarga NAV mensual usando chartservice directamente (sin mstarpy).
-
-    Parametros:
-        ms_id:    ID interno Morningstar (ej. 'F0GBR04EFH')
-        desde:    fecha inicio YYYY-MM-DD
-        currency: divisa del fondo (para el campo NAV_Currency)
-        hasta:    fecha fin YYYY-MM-DD (default: hoy)
-
-    Devuelve (rows, err_type):
-        rows:     lista de dict {Date, NAV, NAV_Currency, NAV_Type, Is_Estimated, Data_Source}
-        err_type: '' si OK | 'empty' si sin datos | 'transient' si error de red
-    """
-    token = _get_bearer_token()
-    if not token:
-        return [], "transient"
-
-    headers = {
-        "user-agent":    _random_ua(),
-        "authorization": f"Bearer {token}",
-    }
-    params = {
-        "query":           f"{ms_id}:nav,totalReturn",
-        "frequency":       "m",
-        "startDate":       desde,
-        "endDate":         hasta or date.today().isoformat(),
-        "trackMarketData": "3.6.3",
-        "instid":          "DOTCOM",
-    }
-    try:
-        r = requests.get(
-            _CHARTSERVICE_URL,
-            headers=headers,
-            params=params,
-            timeout=20,
-        )
-        if r.status_code != 200:
-            return [], "transient"
-
-        data = r.json()
-        if not data or not isinstance(data, list) or "series" not in data[0]:
-            return [], "empty"
-
-        series = data[0]["series"]
-        if not series:
-            return [], "empty"
-
-        rows = []
-        for item in series:
-            nav_val = item.get("nav") or item.get("totalReturn")
-            if nav_val is None:
-                continue
-            rows.append({
-                "ISIN":          None,          # rellenado por el caller
-                "Date":          str(item["date"])[:10],
-                "NAV":           float(nav_val),
-                "NAV_Currency":  currency,
-                "NAV_Type":      "total_return",
-                "Is_Estimated":  0,
-                "Data_Source":   "MORNINGSTAR",
-            })
-
-        return rows, ""
-
-    except Exception:
-        return [], "transient"
-
-
-
-
 
 # ============================================================
 # Resolucion de ISIN -> objeto Funds
 # ============================================================
 
-def _resolve_fund(isin: str) -> Optional[mstarpy.Funds]:
-    """
-    Intenta instanciar mstarpy.Funds con el ISIN como termino de busqueda.
-    Morningstar v8 resuelve el ISIN directamente a traves del constructor.
+# Endpoints SecuritySearch.ashx por region -- se prueban en orden hasta obtener resultado.
+# Formato respuesta: nombre|{json}|tipo|... (una linea por resultado, sep |)
+# El campo "i" del JSON es el securityID (code interno para sal-service).
+_SEARCH_ENDPOINTS = [
+    ("https://www.morningstar.es/es/util/SecuritySearch.ashx",
+     {"languageId": "es-ES", "locale": "es-ES", "clientId": "MDC_intl",
+      "referer": "https://www.morningstar.es/"}),
+    ("https://www.morningstar.co.uk/uk/util/SecuritySearch.ashx",
+     {"languageId": "en-GB", "locale": "en-GB", "clientId": "MDC_intl",
+      "referer": "https://www.morningstar.co.uk/"}),
+    ("https://www.morningstar.fr/fr/util/SecuritySearch.ashx",
+     {"languageId": "fr-FR", "locale": "fr-FR", "clientId": "MDC_intl",
+      "referer": "https://www.morningstar.fr/"}),
+    ("https://www.morningstar.de/de/util/SecuritySearch.ashx",
+     {"languageId": "de-DE", "locale": "de-DE", "clientId": "MDC_intl",
+      "referer": "https://www.morningstar.de/"}),
+]
 
-    Devuelve el objeto Funds si se encuentra, None si no hay resultados.
-    Propaga excepciones para que el llamador las registre como ERROR.
+
+def _resolve_isin(isin: str) -> Optional[dict]:
     """
-    fund = mstarpy.Funds(
-        term     = isin,
-        language = MS_LANGUAGE,
-        pageSize = 1,
-    )
-    # Si Morningstar no encuentra el ISIN, fund.name lanzara excepcion
-    # o devolvera cadena vacia segun la version. Verificamos accediendo a name.
-    name = getattr(fund, "name", None)
-    if name is None:
-        # Intentar acceso alternativo
+    Resuelve un ISIN al securityID (code) interno de Morningstar usando
+    el endpoint SecuritySearch.ashx (autocomplete de la web publica).
+
+    No usa mstarpy.Funds() ni search_field() -- evita el endpoint
+    /data-points/fields que devuelve 202 desde marzo 2026.
+
+    Prueba los endpoints regionales en orden (.es, .co.uk, .fr, .de)
+    hasta obtener resultado. Devuelve dict {code, name} o None.
+
+    Formato de respuesta del endpoint (texto plano, una linea por resultado):
+        nombre|{"i":"F0GBR04K6R","pi":"0P00000JYE","n":"...","t":2,...}|FUND|...
+    El campo "i" es el securityID usado por sal-service/performance/v4.
+    """
+    import json as _json
+
+    for url, extra in _SEARCH_ENDPOINTS:
+        params = {
+            "q":     isin,
+            "limit": 3,
+            "type":  "fund",
+            **{k: v for k, v in extra.items() if k != "referer"},
+        }
+        headers = {
+            "user-agent": _random_ua(),
+            "referer":    extra["referer"],
+        }
         try:
-            name = fund.name
-        except Exception:
-            return None
-    return fund
+            r = requests.get(url, params=params, headers=headers, timeout=15)
+            if r.status_code != 200 or not r.text.strip():
+                continue
 
+            for line in r.text.strip().splitlines():
+                parts = line.split("|")
+                if len(parts) < 2:
+                    continue
+                try:
+                    meta = _json.loads(parts[1])
+                except Exception:
+                    continue
+                code = meta.get("i", "")
+                name = meta.get("n", "")
+                if code:
+                    return {"code": code, "name": name}
 
-def _get_ms_id(fund: mstarpy.Funds) -> str:
-    """Extrae el ID interno de Morningstar del objeto Funds.
-    En mstarpy 8.x el ID esta en fund.code (ej. 'F000011KV2').
-    """
-    return str(getattr(fund, "code", "") or "")
+        except requests.RequestException:
+            continue
+
+    return None
 
 
 # ============================================================
 # Descarga de rango de fechas
 # ============================================================
 
-def _get_nav_range(fund: mstarpy.Funds) -> Optional[dict]:
+def _get_nav_range(fund) -> Optional[dict]:
     """
     Descarga la serie NAV completa desde 1990 para determinar
     el rango de fechas disponible.
@@ -285,17 +227,92 @@ def _resample_to_monthly(rows: list[dict]) -> list[dict]:
 # Descarga NAV historico
 # ============================================================
 
-def _download_nav(fund, isin, currency, desde):
+def _download_nav(code: str, isin: str, currency: str, desde: str):
     """
-    Descarga NAV mensual. Desde marzo 2026 usa _download_nav_direct
-    (requests puro, sin mstarpy) para evitar el error 202 del constructor.
-    El parametro fund se mantiene por compatibilidad pero se ignora.
+    Descarga la serie de retorno total mensual via el endpoint
+    sal-service/v1/fund/performance/v4/{code} (acceso directo HTTP,
+    sin mstarpy.Funds constructor, sin bearer token de scraping).
+
+    Parametros:
+        code:     securityID interno de Morningstar (ej. 'F000011KV2')
+        isin:     ISIN del fondo (para rellenar el campo en las filas)
+        currency: divisa del fondo
+        desde:    no usado (el endpoint devuelve historico completo ~10 anos)
+
+    Devuelve (rows, err_type):
+        rows:     lista de dicts para fund_nav_monthly
+        err_type: '' OK | 'empty' sin datos | 'transient' error de red
     """
-    # Obtener ms_id: preferir fund.code si disponible, sino ISIN
-    ms_id = getattr(fund, "code", None) or isin
-    return _download_nav_direct(ms_id, desde, currency)
+    url     = _MS_PERF_URL.format(code=code)
+    headers = {
+        "apikey":     _MS_APIKEY,
+        "user-agent": _random_ua(),
+    }
+    for attempt in range(1, MS_RETRY_MAX + 1):
+        try:
+            r = requests.get(url, params=_MS_PERF_PARAMS,
+                             headers=headers, timeout=20)
+            if r.status_code == 206:
+                # 206 = code no reconocido por sal-service
+                return [], "empty"
+            if r.status_code != 200:
+                err_str = str(r.status_code)
+                is_transient = err_str in ("429", "500", "502", "503")
+                if is_transient and attempt < MS_RETRY_MAX:
+                    wait = MS_BACKOFF_BASE * (MS_BACKOFF_FACTOR ** (attempt - 1))
+                    wait += random.uniform(0, wait * 0.2)
+                    print(f"\n    [red transitoria {r.status_code}] intento "
+                          f"{attempt}/{MS_RETRY_MAX} -- esperando {wait:.0f}s...",
+                          flush=True)
+                    time.sleep(wait)
+                    continue
+                return [], "transient"
+
+            hd    = r.json()
+            serie = hd.get("graphData", {}).get("fund", [])
+            if not serie:
+                return [], "empty"
+
+            base_currency = hd.get("baseCurrency") or currency or "EUR"
+            rows = []
+            for entry in serie:
+                val      = entry.get("value")
+                nav_date = entry.get("date")
+                if val is None or nav_date is None:
+                    continue
+                rows.append({
+                    "ISIN":         isin,
+                    "Date":         str(nav_date)[:10],
+                    "NAV":          float(val),
+                    "NAV_Currency": base_currency,
+                    "NAV_Type":     "TOTAL_RETURN_IDX",
+                    "Is_Estimated": 0,
+                    "Data_Source":  "MORNINGSTAR",
+                })
+            return _resample_to_monthly(rows), ""
+
+        except requests.RequestException as e:
+            err_str = str(e).lower()
+            is_transient = any(x in err_str for x in [
+                "timed out", "timeout", "connection", "dns", "name or service"
+            ])
+            if is_transient and attempt < MS_RETRY_MAX:
+                wait = MS_BACKOFF_BASE * (MS_BACKOFF_FACTOR ** (attempt - 1))
+                wait += random.uniform(0, wait * 0.2)
+                print(f"\n    [red transitoria] intento {attempt}/{MS_RETRY_MAX}"
+                      f" -- esperando {wait:.0f}s...", flush=True)
+                time.sleep(wait)
+            else:
+                return [], "transient"
+
+    return [], "transient"
 
 
+
+
+# ============================================================
+# Escritura en DB
+# ============================================================
 
 def _write_nav_source(
     conn, isin, source, source_id,
@@ -340,45 +357,40 @@ def _write_nav_rows(conn, rows, dry_run) -> int:
 # ============================================================
 
 def run_discover(conn, isins, dry_run, verbose):
+    """
+    Verifica existencia del ISIN en Morningstar y registra el code interno
+    en nav_sources. Usa _resolve_isin() (general_search directo) para evitar
+    mstarpy.Funds() y el endpoint /data-points/fields que devuelve 202.
+    """
     total     = len(isins)
     found     = 0
     not_found = 0
     errors    = 0
-
-    if not _MSTARPY_OK:
-        print("[ERROR] mstarpy no está instalado. Discover requiere mstarpy.")
-        print("        Ejecuta: pip install mstarpy==8.0.1")
-        print("        Nota: los modos load/update ya NO requieren mstarpy.")
-        return
 
     print(f"Descubrimiento de {total} ISINs | dry_run={dry_run}\n")
 
     for idx, isin in enumerate(isins, 1):
         print(f"  [{idx:>4}/{total}] {isin}", end=" ", flush=True)
 
-        try:
-            fund = _resolve_fund(isin)
-            time.sleep(random.uniform(*MS_DELAY_DISCOVER))
-        except Exception as e:
-            print(f"-> ERROR: {e}")
-            _write_nav_source(conn, isin, "MORNINGSTAR", "",
-                              None, None, None, "ERROR", dry_run)
-            errors += 1
-            continue
+        resolved = _resolve_isin(isin)
+        time.sleep(random.uniform(*MS_DELAY_DISCOVER))
 
-        if fund is None:
+        if resolved is None:
+            # None puede ser NOT_FOUND o error de red -- intentar una vez mas
+            resolved = _resolve_isin(isin)
+            time.sleep(random.uniform(*MS_DELAY_DISCOVER))
+
+        if resolved is None:
             print("-> NOT_FOUND")
             _write_nav_source(conn, isin, "MORNINGSTAR", "",
                               None, None, None, "NOT_FOUND", dry_run)
             not_found += 1
             continue
 
-        ms_id = _get_ms_id(fund)
-        name  = getattr(fund, "name", "") or ""
-
-        # Solo registrar existencia -- NAV se descarga en --mode load
-        print(f"-> OK  [{name[:45]}]  ms_id={ms_id or 'n/a'}")
-        _write_nav_source(conn, isin, "MORNINGSTAR", ms_id,
+        code = resolved["code"]
+        name = resolved["name"]
+        print(f"-> OK  [{name[:45]}]  code={code}")
+        _write_nav_source(conn, isin, "MORNINGSTAR", code,
                           None, None, None, "OK", dry_run)
         found += 1
 
@@ -435,16 +447,28 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False):
 
         print(f"  [{idx:>4}/{total}] {isin}", end=" ", flush=True)
 
+        # Si no hay code en nav_sources, intentar resolverlo ahora
+        if not ms_id:
+            resolved = _resolve_isin(isin)
+            if resolved:
+                ms_id = resolved["code"]
+                conn.execute(
+                    "UPDATE nav_sources SET source_id=? WHERE isin=?",
+                    (ms_id, isin)
+                )
+                conn.commit()
+
+        if not ms_id:
+            print("-> ERROR: no se pudo obtener code Morningstar")
+            errors_load += 1
+            continue
+
         r        = conn.execute(
             "SELECT Fund_Currency FROM fund_master WHERE ISIN=?", (isin,)
         ).fetchone()
         currency = r[0] if r and r[0] else "EUR"
 
-        nav_rows, err_type = _download_nav_direct(
-            ms_id    = ms_id or isin,
-            desde    = desde,
-            currency = currency,
-        )
+        nav_rows, err_type = _download_nav(ms_id, isin, currency, desde)
 
         if not nav_rows:
             if err_type == "empty":
@@ -534,15 +558,9 @@ def run_update(conn, dry_run):
         ).fetchone()
         currency = r[0] if r and r[0] else "EUR"
 
-        nav_rows, err_type = _download_nav_direct(
-            ms_id    = ms_id or isin,
-            desde    = desde,
-            currency = currency,
-        )
-        if err_type == "transient":
-            time.sleep(random.uniform(*MS_DELAY_LOAD_ERR))
-        else:
-            time.sleep(random.uniform(*MS_DELAY_LOAD_OK))
+        code = ms_id or isin
+        nav_rows, _err = _download_nav(code, isin, currency, desde)
+        time.sleep(random.uniform(*MS_DELAY_LOAD_OK))
 
         if not nav_rows:
             print("-> sin datos nuevos")

@@ -1,6 +1,8 @@
 from typing import Optional, Dict, List
 from core.classify_utils import (
     NAME_SIGNALS_ALTERNATIVO,
+    FAMILY_ABSOLUTE_RETURN,
+    FAMILY_REAL_ASSETS,
     detect_geography       as _detect_geography,
     detect_theme           as _detect_theme,
     detect_is_esg          as _detect_is_esg,
@@ -10,6 +12,7 @@ from core.classify_utils import (
     detect_benchmark_type  as _detect_benchmark_type,
     detect_profile_from_srri as _detect_profile_from_srri,
     detect_kiid_attributes,
+    apply_semantic_validation,
 )
 import re
 
@@ -74,111 +77,88 @@ def classify_fund(
     result = {
         "Fund_Nature": FUND_NATURE_VALUE,
         "Profile": None,
-        "Type": None,
+        "_signal_type": None,
         "Family": None,
         "Style_Profile": None,
         "Geography": None,
         "Theme": None,
         "Exposure_Bias": None,
-        "Subtype": None,
+        "_signal_subtype": None,
     }
 
     name_l = fund_name.lower() if isinstance(fund_name, str) else ""
     text_l = kiid_text.lower() if isinstance(kiid_text, str) else ""
 
     # -------------------------------------------------
-    # Type / Subtype / Style_Profile — v2: alineado con restantes
-    #   Arbitrage: + "arbit", "arb strat", "arb str" (Lyxor ARB STRAT, Candriam ARBI)
-    #   Long/Short: + "long-short" (guión)
-    #   Nuevos subtipos de restantes:
-    #     "global rates" / "gl rates" → Global Rates (GAM Star)
-    #     "adagio" → Global Macro (H2O Adagio)
-    #     "abs ret" / "absret" / "st absret" → Total Return Bond (Jupiter)
+    # Type / Subtype (_signal_*) — Style_Profile y Exposure_Bias se derivan de
+    # forma centralizada en classify_utils.derive_v20_attributes (engine, AUDIT v20).
     # -------------------------------------------------
     if any(k in name_l for k in [
         "relative value", "arbitrage", "arbit", "arb strat", "arb str",
     ]):
-        result["Type"] = "Absolute Return"
-        result["Subtype"] = "Relative Value / Arbitrage"
-        result["Style_Profile"] = "Defensivo"
+        result["_signal_type"] = "Absolute Return"
+        result["_signal_subtype"] = "Relative Value / Arbitrage"
 
     elif "market neutral" in name_l:
-        result["Type"] = "Absolute Return"
-        result["Subtype"] = "Market Neutral"
-        result["Style_Profile"] = "Defensivo"
+        result["_signal_type"] = "Absolute Return"
+        result["_signal_subtype"] = "Market Neutral"
 
     elif any(k in name_l for k in ["long short", "long/short", "long-short"]):
-        result["Type"] = "Absolute Return"
-        result["Subtype"] = "Long/Short"
-        result["Style_Profile"] = "Defensivo"
+        result["_signal_type"] = "Absolute Return"
+        result["_signal_subtype"] = "Long/Short"
 
     elif any(k in name_l for k in ["global rates", "gl rates"]):
-        result["Type"] = "Absolute Return"
-        result["Subtype"] = "Global Rates"
-        result["Style_Profile"] = "Defensivo"
+        result["_signal_type"] = "Absolute Return"
+        result["_signal_subtype"] = "Global Rates"
 
     elif any(k in name_l for k in ["multi strategy", "multi-strategy", "multiassut"]):
-        result["Type"] = "Absolute Return"
-        result["Subtype"] = "Multi-Asset"
-        result["Style_Profile"] = "Defensivo"
+        result["_signal_type"] = "Absolute Return"
+        result["_signal_subtype"] = "Multi-Asset"
 
     elif "global macro" in name_l or "adagio" in name_l:
-        result["Type"] = "Absolute Return"
-        result["Subtype"] = "Global Macro"
-        result["Style_Profile"] = "Momentum"
+        result["_signal_type"] = "Absolute Return"
+        result["_signal_subtype"] = "Global Macro"
 
     elif any(k in name_l for k in [
         "managed futures", "cta", "systematic",
     ]):
-        result["Type"] = "Systematic"
-        result["Subtype"] = "Managed Futures"
-        result["Style_Profile"] = "Momentum"
+        result["_signal_type"] = "Systematic"
+        result["_signal_subtype"] = "Managed Futures"
 
     elif any(k in name_l for k in ["real estate", "property"]):
-        result["Type"] = "Real Assets"
-        result["Subtype"] = "Real Estate"
-        result["Style_Profile"] = "Defensivo"
-        result["Exposure_Bias"] = "Real Estate Bias"
+        result["_signal_type"] = "Real Assets"
+        result["_signal_subtype"] = "Real Estate"
 
     elif "infrastructure" in name_l:
-        result["Type"] = "Real Assets"
-        result["Subtype"] = "Infrastructure"
-        result["Style_Profile"] = "Defensivo"
-        result["Exposure_Bias"] = "Infrastructure Bias"
+        result["_signal_type"] = "Real Assets"
+        result["_signal_subtype"] = "Infrastructure"
 
     elif any(k in name_l for k in [
         "commodities", "commodity", "gold", "precious metals",
     ]):
-        result["Type"] = "Commodities"
-        result["Subtype"] = "Physical / Derivatives"
-        result["Exposure_Bias"] = "Commodity Bias"
+        result["_signal_type"] = "Commodities"
+        result["_signal_subtype"] = "Physical / Derivatives"
 
     elif any(k in name_l for k in ["abs ret", "absret", "st absret", "absolute return"]):
-        result["Type"] = "Absolute Return"
-        result["Subtype"] = "Total Return Bond"
-        result["Style_Profile"] = "Defensivo"
+        result["_signal_type"] = "Absolute Return"
+        result["_signal_subtype"] = "Total Return Bond"
 
     else:
-        result["Type"] = "Absolute Return"
-        result["Style_Profile"] = "Defensivo"
+        result["_signal_type"] = "Absolute Return"
 
     # -------------------------------------------------
     # Family — v2: "Retorno Absoluto" para todos los AR (alineado
     # con restantes). Se mantienen familias especiales del original
     # para Real Assets y Commodities.
     # -------------------------------------------------
-    if result["Type"] == "Systematic":
+    if result["_signal_type"] == "Systematic":
         result["Family"] = "Systematic"
-    elif result["Type"] == "Real Assets":
-        result["Family"] = "Activos Reales"
-    elif result["Type"] == "Commodities":
-        result["Family"] = "Activos Reales"
+    elif result["_signal_type"] == "Real Assets":
+        result["Family"] = FAMILY_REAL_ASSETS
+    elif result["_signal_type"] == "Commodities":
+        result["Family"] = FAMILY_REAL_ASSETS
     else:
-        result["Family"] = "Retorno Absoluto"
-
-    # Exposure_Bias default para AR
-    if result["Exposure_Bias"] is None and result["Type"] == "Absolute Return":
-        result["Exposure_Bias"] = "Absolute Return Bias"
+        result["Family"] = FAMILY_ABSOLUTE_RETURN
 
     # -------------------------------------------------
     # Theme (explícito)
@@ -203,8 +183,8 @@ def classify_fund(
         _m = re.search(r'\b([1-7])\s*/\s*7\b', text_l)
         _srri = int(_m.group(1)) if _m else None
 
-    _t = result.get("Type", "") or ""
-    _s = result.get("Subtype", "") or ""
+    _t = result.get("_signal_type", "") or ""
+    _s = result.get("_signal_subtype", "") or ""
 
     if _t == "Commodities" or _s.startswith("Physical"):
         result["Profile"] = "Dinámico"
@@ -249,17 +229,12 @@ def classify_fund(
     result["Geography"]    = result.get("Geography") or _detect_geography(_name_l)
     result["Theme"]        = result.get("Theme")     or _detect_theme(_name_l)
     result["Is_ESG"]       = _detect_is_esg(fund_name)
-    if result.get("Style_Profile") == "Defensivo":
-        result["Style_Profile"] = None   # Defensivo → Profile, no Style_Profile
-    if result.get("Style_Profile") is None:
-        result["Style_Profile"] = _detect_style_profile(_name_l)
-    if result.get("Exposure_Bias") is None:
-        result["Exposure_Bias"] = _detect_exposure_bias(_name_l, "Alternativo")
     result["Strategy"] = _detect_strategy(
-        None, result.get("Subtype"), _name_l
+        None, result.get("_signal_subtype"), _name_l
     )
     result["Benchmark_Type"] = _detect_benchmark_type(
         None, None
     )
 
-    return result
+    return apply_semantic_validation(result, fund_name)
+

@@ -24,6 +24,17 @@ Cuando añadir una migración:
     existe SQLite lanza OperationalError y se ignora silenciosamente.
     NUNCA eliminar entradas — son el historial de la BD.
 
+Cambios v19:
+  - create_schema_v19(): función canónica para crear schema v19 desde schema_fondos.sql.
+  - init_db() actualizado para llamar a create_schema_v19() en BD nueva.
+  - NO hay migraciones ALTER TABLE v19 (la migración se gestiona con
+    migrate_v18_to_v19.py que usa export→drop→recreate→import).
+
+Cambios v18:
+  - Añadida migración v18: DLA2_Table_Text en fund_kiid_metadata.
+    Resultado cacheado de dla_table_serializer (BL-DLA-2 Sub-fase 2B).
+    Mismo ciclo de vida que Raw_KIID_Text.
+
 Cambios v17:
   - Añadidas migraciones v16 que faltaban en la lista original:
     Market_Cap_Focus, Sector_Focus, Currency_Hedged, Investment_Universe,
@@ -46,6 +57,35 @@ sys.path.insert(0, str(_ROOT))
 
 from shared.config import DB_PATH
 from shared.schema_checks import assert_schema_alignment
+
+
+
+# =====================================================================
+# create_schema_v19
+# =====================================================================
+
+def create_schema_v19(conn: sqlite3.Connection, drop_existing: bool = False) -> None:
+    """
+    Crea (o re-crea) el schema v19 desde schema_fondos.sql.
+
+    Args:
+        conn: conexión SQLite activa.
+        drop_existing: si True, DROP TABLE antes de CREATE. Usado al crear BD
+                       nueva. NUNCA usar drop_existing=True en migración v18→v19
+                       (la migración usa RENAME TO _tmp para preservar datos).
+    """
+    if drop_existing:
+        conn.execute("DROP TABLE IF EXISTS fund_cost_schedule")
+        conn.execute("DROP TABLE IF EXISTS fund_master")
+    schema_path = _ROOT / "db" / "schema_fondos.sql"
+    if not schema_path.exists():
+        raise FileNotFoundError(
+            f"Schema canónico no encontrado: {schema_path}\n"
+            "Asegúrate de que db/schema_fondos.sql existe en la raíz del proyecto."
+        )
+    with open(schema_path, encoding="utf-8") as f:
+        sql = f.read()
+    conn.executescript(sql)
 
 
 # =====================================================================
@@ -175,6 +215,18 @@ _MIGRATIONS: list[tuple[str, str, str]] = [
         "CREATE INDEX IF NOT EXISTS idx_fm_credit_quality "
         "ON fund_master (Credit_Quality)",
     ),
+
+    # ------------------------------------------------------------------
+    # P1 v18 — DLA Fase 2: caché de tablas Cat.1+2 (BL-DLA-2 Sub-fase 2B)
+    # ------------------------------------------------------------------
+    (
+        "fund_kiid_metadata", "DLA2_Table_Text",
+        "ALTER TABLE fund_kiid_metadata ADD COLUMN DLA2_Table_Text TEXT",
+        # Resultado de dla_table_serializer.serialize_tables().
+        # Formato: texto plano "Etiqueta: valor" por línea.
+        # Ciclo de vida idéntico a Raw_KIID_Text: calculado en descarga
+        # real, reutilizado en CACHED, invalidado al cambiar el hash PDF.
+    ),
 ]
 
 
@@ -191,13 +243,6 @@ def init_db(dry_run: bool = False, skip_validation: bool = False) -> None:
     skip_validation:  si True, omite assert_schema_alignment.
                       Útil cuando los writers aún no están actualizados.
     """
-    schema_path = _ROOT / "db" / "schema_fondos.sql"
-    if not schema_path.exists():
-        raise FileNotFoundError(
-            f"Schema canónico no encontrado: {schema_path}\n"
-            "Asegúrate de que db/schema_fondos.sql existe en la raíz del proyecto."
-        )
-
     db_path = Path(DB_PATH)
     print(f"\n{'='*60}")
     print(f"  init_db  |  BD: {db_path}")
@@ -218,11 +263,10 @@ def init_db(dry_run: bool = False, skip_validation: bool = False) -> None:
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
 
-    # -- 1. Aplicar schema (IF NOT EXISTS — completamente idempotente) ---
-    ddl = schema_path.read_text(encoding="utf-8")
-    conn.executescript(ddl)
+    # -- 1. Aplicar schema v19 (IF NOT EXISTS — completamente idempotente) ---
+    create_schema_v19(conn, drop_existing=False)
     conn.commit()
-    print(f"  Schema aplicado: {schema_path}")
+    print(f"  Schema v19 aplicado: {schema_path}")
 
     # -- 2. Migraciones incrementales ------------------------------------
     n_applied = 0

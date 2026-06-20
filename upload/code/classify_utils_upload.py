@@ -2,7 +2,161 @@
 # -*- coding: utf-8 -*-
 """
 Utilidades de clasificacion compartidas por todos los bloques de P1.
-Version 3 — canonico v2 + ventana KIID correcta
+Version 12 — BL-LANG-EN (2026-05-09)
+
+Cambios v12:
+  BL-LANG-EN  Family, Type y Subtype: idioma objetivo cambiado a inglés
+              (alineado con Sector_Focus — nomenclatura estándar internacional).
+              Cambios:
+                Constantes canónicas: sección reescrita con FAMILY_*, TYPE_*,
+                  SUBTYPE_* en EN. Todos los bloques deben importar estas
+                  constantes en lugar de literales inline.
+                TYPE_TRANSLATION_MAP: invertido a pass-through EN + corrección
+                  inversa ES→EN (stale BD). Fusión Gobierno CP + Deuda Pública CP
+                  → Short-Term Government (misma naturaleza, duplicidad por
+                  emisores distintos sin centralización DRY).
+                FAMILY_TRANSLATION_MAP: ídem, ES→EN.
+                ALLOWED_TYPE_BY_NATURE: valores EN.
+                ALLOWED_FAMILY_BY_NATURE: valores EN.
+                LEXICAL_FAMILY_INFERENCE_BL62: catálogo actualizado a EN.
+
+Version 11 — BL-62-LEXICAL-EXT (2026-05-09)
+
+Cambios v11:
+  BL-62-LEXICAL-EXT  LEXICAL_FAMILY_INFERENCE_BL62: 4 nuevos grupos de
+                     patrones para los 11 fondos sin cobertura detectados
+                     en ciclo 2026-05-09:
+                       - US SH DURAT/SHRT DUR/DOLLAR SH → RFC/RFC
+                         (BGF US SHORT DURATION BOND, 4 ISINs)
+                       - DOLLAR LIQUID / USD LIQUID → Monetario/Monetario
+                         (SISF US DOLLAR LIQUIDITY, 2 ISINs)
+                       - MR DEB TOT / E MR DEB → RFF/Total Return
+                         (SISF E MR DEB TOT RE, 1 ISIN)
+                       - LUXURY BR → RV Temática/Gestión Activa
+                         (GAM LUXURY BRAND/BRANDS, 4 ISINs)
+                     Orden de inserción: ANTES del grupo Income Oriented
+                     (específicos antes que genéricos — primer match gana).
+
+Version 10 — Sprint A.1.b correctivo (2026-04-30)
+
+Cambios v10:
+  Revert BL-65  Restituir 'Restantes' como Fund_Nature canónico válido.
+                Cambios:
+                  _NATURE_CANONICAL: restituida entrada "Restantes": "Restantes".
+                  ALLOWED_VALUES_BY_COLUMN["Fund_Nature"]: restituido "Restantes".
+                  ALLOWED_TYPE_BY_NATURE: restituida entrada "Restantes": [] (catch-all).
+                  ALLOWED_FAMILY_BY_NATURE: restituida entrada "Restantes": [] (catch-all).
+
+  Theme fix     detect_type_from_kiid línea ~1402: "Inflación" → "Inflation"
+                (Principio #8 — Theme idioma objetivo: inglés).
+
+  Logging fix   validate_all_semantic_consistency: convertida a función PURA
+                (eliminados logger.info/warning internos). El logging vive
+                exclusivamente en apply_semantic_validation (punto único).
+                Soluciona duplicación [???] + [NOMBRE] en log del ciclo.
+
+  Tags          [BL62] → [BL-62] en propagate_nature_to_restantes_type_family.
+
+  NORM logging  apply_post_characterize_normalization: añadido logger.warning
+                cuando una traducción modifica el valor (señal de emisor con
+                idioma incorrecto). Normativa sección 7.2c.
+
+Cambios v9:
+  BL-65  [REVERTIDO en v10] Corrección semántica: "Restantes" no es una Fund_Nature válida.
+
+Cambios v8:
+  BL-62  LEXICAL_FAMILY_INFERENCE_BL62: catálogo léxico canónico con 11
+         grupos de patrones (HY, inflación, emergentes, retorno absoluto,
+         activos reales, RV temática, orientado a renta, total return,
+         RF flexible, mixtos). Pre-compilado en _BL62_COMPILED.
+         _infer_family_type_from_name_bl62(fund_name) → (family, type) | (None, None):
+         función pública para inferencia léxica Family/Type desde nombre.
+         Procesamiento en orden: específicos antes que genéricos (primer match gana).
+         propagate_nature_to_restantes_type_family(fund_record, isin, log_fn):
+         función pública invocada por pipeline tras BL-44. Re-infiere Family/Type
+         para fondos reclasificados a Restantes (valores heredados son falsos por
+         construcción). Estrategia: Fase 2 léxica + Fase 3 residual (DQ=WARN).
+         Marca flags _bl62_force_overwrite_* para que BL-64 (sqlite_writer) fuerce
+         sobrescritura sin COALESCE. Principio #2 DRY: catálogo centralizado aquí,
+         invocado desde pipeline; bloques no duplican lógica de inferencia.
+
+Version 7 — BL-49 (2026-04-29)
+
+Cambios v7:
+  BL-49  detect_currency_hedged_from_kiid(kiid_text) → (value, pattern_id):
+         Función pública de segunda fase para detección de Currency_Hedged
+         desde texto completo del KIID/DDF. Implementa catálogo de 10+8
+         patrones de alta confianza (H01-H10 Hedged, U01-U08 Unhedged) en
+         inglés y español, pre-compilados en _CH_HEDGED_RE/_CH_UNHEDGED_RE.
+         Se invoca desde fund_characterizer.detect_currency_hedged() cuando
+         la fase 1 (nombre del fondo) no aporta señal.
+         Centralizada en classify_utils (Principio #2 DRY) para que también
+         pueda invocarse desde pipeline si necesita cobertura adicional.
+         La prevalencia Hedging_Policy→Currency_Hedged (BL-31/INTER-12)
+         sigue aplicándose en pipeline DESPUÉS de este extractor.
+         Logging: cada detección emite 'CH-KIID-<pattern_id>' para trazabilidad.
+
+  BL-54  THEME_TO_SECTOR_FOCUS_MAP: mapa canónico Theme→Sector_Focus.
+         Punto único de verdad (Principio #2 DRY). Idioma objetivo: español.
+         map_theme_to_sector_focus(theme) → función pública sobre el mapa.
+         Reemplaza los dos mapas paralelos (pipeline inline + fund_characterizer).
+         Contiene 20 entradas cubriendo todos los themes del catálogo.
+         SECTOR_FOCUS_TRANSLATION_MAP: marcado "legacy normalization" — solo
+         para sanear valores históricos en inglés que pudieran quedar en BD.
+         normalize_sector_focus(): actualizada para consultar primero
+         SECTOR_FOCUS_TRANSLATION_MAP y luego actuar como pass-through.
+
+  BL-56  apply_post_characterize_normalization(classification) → dict:
+         Función agregadora de normalización lingüística post-characterize.
+         Punto único de invocación desde pipeline (Principio #2 DRY).
+         Aplica: Sector_Focus (normalize_sector_focus),
+                 Type (TYPE_TRANSLATION_MAP),
+                 Family (FAMILY_TRANSLATION_MAP),
+                 Theme (no traduce — ya está en inglés canónico).
+         Solo actúa sobre campos no-None; no sobreescribe NULL deliberado.
+
+  BL-57  FAMILY_TRANSLATION_MAP: entrada 'Income Oriented' → 'Orientado a Renta'.
+         Decisión Opción B: traducir a español (Principio #8).
+  BL-57v3 FAMILY_INCOME_ORIENTED: constante canónica exportable.
+  BL-65b  FAMILY_INCOME_ORIENTED: "Income Oriented" (EN canónico, Principio #8).
+          BL-57 v2 había asignado "Orientado a Renta" (ES). Corregido en:
+          constante, FAMILY_TRANSLATION_MAP (pass-through + normalizador BD),
+          ALLOWED_FAMILY_BY_NATURE (Mixtos, RF Flexible),
+          propagate_nature_to_restantes_type_family.
+         Elimina emisión inline en bloques. Norma BL-57 v3 (26-abr-2026):
+         todo literal Family debe definirse aquí e importarse desde los bloques.
+         Antipatrón documentado: BL-57 v2 actualizó validador+SQL sin tocar
+         el emisor primario → 104 fondos perdidos silenciosamente.
+
+  TYPE_TRANSLATION_MAP: añadido con excepciones inglesas documentadas.
+         Cubre traducciones ES y mapas de paso-through para términos sectoriales
+         sin equivalente compacto en español.
+
+Cambios v5:
+  BL-52  validate_geography_universe(): auto-corrección Investment_Universe
+         'Country'→'Regional' cuando Geography contiene una región geográfica
+         amplia (Latinoamérica, Europa del Este, Asia Pacífico, etc.).
+         Causa raíz: el clasificador asignaba 'Country' pero la inferencia de
+         Geography devolvía valores de región, que son semánticamente incompatibles.
+         Firma ampliada a 3-tupla: ('OK'|'WARNING'|'CORRECTED', msg, corrected_val).
+         Backward compatible: callers que desempaquetan 2 valores siguen funcionando.
+         _REGION_GEOGRAPHIES: catálogo canónico de valores-región (9 entradas).
+         _COUNTRY_GEOGRAPHIES: ampliado con Rusia, Italia, Alemania, Francia,
+         España, Reino Unido, Suiza (coherencia con catálogo de pipeline.py).
+         validate_all_semantic_consistency(): INTER-10 actualizado para aplicar
+         la auto-corrección como error crítico (no solo warning).
+
+Cambios v4:
+  BL-19  FUND_NATURES y TYPE_BY_NATURE: "Mixto" → "Mixtos" (unificación canónica)
+  BL-22  SECTOR_FOCUS_TRANSLATION_MAP + normalize_sector_focus(): idioma objetivo ES
+  BL-23  THEMATIC_MAP: añadidos Inflation, Cybersecurity, Megatrends
+  BL-24  ALLOWED_VALUES_BY_COLUMN: Credit_Quality en inglés + "Not Applicable";
+         Theme con lista completa de valores permitidos
+  BL-30  validate_all_semantic_consistency(): INTER-11 — Broad+Sector_Focus→Sector
+  BL-31  validate_all_semantic_consistency(): INTER-12 — Currency_Hedged vs Hedging_Policy
+  BL-32  validate_accumulation_distribution(): firma 3-tupla + inferencia DISTRIBUTION
+  BL-33  validate_all_semantic_consistency(): INTER-13 — Universe fallback por Nature
+
 
 FUNCIONES:
   Señales de nombre (constantes):
@@ -35,7 +189,99 @@ FUNCIONES:
 """
 
 import re
+import math
+import logging
 from typing import Optional
+
+
+# ============================================================
+# Comparador de valores de coste — fuente única (R-1, Principio #2 DRY)
+# ------------------------------------------------------------
+# INTEGRATED_SPEC_v20_v2 §4.4: sustituye al _TOL=0.011 fijo del prototipo
+# de diagnóstico. Tolerancia híbrida ATOL+RTOL vía math.isclose. Usado por:
+#   - la arbitración dual bands-X / ruled (core/cost_arbitration.py),
+#   - la cross-validation %↔EUR de los extractores de coste.
+# Las constantes viven en config (catálogo / dependency leaf); aquí solo la
+# función. Import defensivo (el módulo puede ejecutarse con sys.path variable).
+try:
+    from config import COST_CMP_ABS_TOL, COST_CMP_REL_TOL
+except ImportError:  # pragma: no cover
+    try:
+        from shared.config import COST_CMP_ABS_TOL, COST_CMP_REL_TOL
+    except ImportError:
+        # Fallback inocuo: mismos valores semilla que config v20. Si esto se
+        # dispara, config no está en sys.path; el llamador debe corregirlo.
+        COST_CMP_ABS_TOL, COST_CMP_REL_TOL = 0.0002, 0.01
+
+
+def cost_values_agree(a: Optional[float], b: Optional[float]) -> bool:
+    """¿Concuerdan dos valores de coste (en puntos %)?
+
+    Devuelve False si alguno es None (no comparable). En otro caso aplica
+    tolerancia híbrida: |a-b| <= max(REL_TOL*max(|a|,|b|), ABS_TOL).
+    """
+    if a is None or b is None:
+        return False
+    return math.isclose(a, b, rel_tol=COST_CMP_REL_TOL, abs_tol=COST_CMP_ABS_TOL)
+
+
+# ============================================================
+# Canonical literals — Family, Type, Subtype  (idioma: EN)
+# ------------------------------------------------------------
+# BL-LANG-EN (2026-05-09): idioma objetivo de Family, Type y Subtype
+# cambiado a inglés (alineado con Sector_Focus — nomenclatura estándar).
+# Todos los emisores deben importar estas constantes; nunca literales inline.
+#
+# Norma BL-57 v3 (26-abr-2026): todo literal Family/Type/Subtype
+# añadido al catálogo debe registrarse aquí Y aparecer en
+# ALLOWED_FAMILY_BY_NATURE / ALLOWED_TYPE_BY_NATURE antes de ser
+# emitido por cualquier bloque.
+# ============================================================
+
+# --- Family ---
+FAMILY_EQUITY_CORE          = "Equity Core"
+FAMILY_THEMATIC_EQUITY      = "Thematic Equity"
+FAMILY_SHORT_TERM_FI        = "Short-Term Fixed Income"
+FAMILY_FLEXIBLE_FI          = "Flexible Fixed Income"
+FAMILY_MULTI_ASSET          = "Multi-Asset"
+FAMILY_ABSOLUTE_RETURN      = "Absolute Return"
+FAMILY_HIGH_YIELD           = "High Yield"
+FAMILY_EMERGING_DEBT        = "Emerging Market Debt"
+FAMILY_INFLATION_LINKED     = "Inflation-Linked"
+FAMILY_MONEY_MARKET         = "Money Market"
+FAMILY_REAL_ASSETS          = "Real Assets"
+FAMILY_STRUCTURED           = "Structured"
+FAMILY_STRATEGIC_ALLOCATION = "Strategic Allocation"
+FAMILY_INCOME_ORIENTED      = "Income Oriented"          # BL-65b
+
+# --- Type ---
+TYPE_ACTIVE_MANAGEMENT      = "Active Management"
+TYPE_INDEX_FUND             = "Index Fund"
+TYPE_FLEXIBLE_FI            = "Flexible Fixed Income"
+TYPE_SHORT_TERM_FI          = "Short-Term Fixed Income"
+TYPE_SHORT_TERM_GOVT        = "Short-Term Government"    # fusión Gobierno CP + Deuda Pública CP
+TYPE_SHORT_TERM_CREDIT      = "Short-Term Credit"
+TYPE_MONEY_MARKET           = "Money Market"
+TYPE_GOVT_MONEY_MARKET      = "Government Money Market"
+TYPE_PRIME_MONEY_MARKET     = "Prime Money Market"
+TYPE_COMMODITIES            = "Commodities"
+TYPE_STRUCTURED             = "Structured"
+TYPE_REAL_ASSETS            = "Real Assets"
+TYPE_VOLATILITY_TARGET      = "Volatility Target"
+
+# --- Subtype ---
+SUBTYPE_INDEX_FUND          = "Index Fund"
+SUBTYPE_ETF                 = "ETF"
+SUBTYPE_OPPORTUNISTIC       = "Opportunistic"
+SUBTYPE_LOW_DURATION        = "Low Duration"
+SUBTYPE_FLOATING_RATE_NOTES = "Floating Rate Notes"
+SUBTYPE_FIXED_BAND_15       = "Fixed Band 15"
+SUBTYPE_FIXED_BAND_50       = "Fixed Band 50"
+SUBTYPE_FIXED_BAND_75       = "Fixed Band 75"
+SUBTYPE_VOLATILITY_TARGET   = "Volatility Target"
+SUBTYPE_REAL_ESTATE         = "Real Estate"
+SUBTYPE_REL_VALUE_ARB       = "Relative Value / Arbitrage"
+SUBTYPE_PHYSICAL_DERIV      = "Physical / Derivatives"
 
 
 # ============================================================
@@ -44,12 +290,12 @@ from typing import Optional
 
 FUND_NATURES: frozenset = frozenset({
     "Monetario", "Renta Fija Corto Plazo", "Renta Fija Flexible",
-    "Renta Variable", "Mixto", "Alternativo", "Restantes",
+    "Renta Variable", "Mixtos", "Alternativo",  # BL-19: "Mixtos" (no "Mixto")
 })
 
 BIAS_ALLOWED_NATURES: frozenset = frozenset({
     "Renta Fija Corto Plazo", "Renta Fija Flexible",
-    "Renta Variable", "Alternativo", "Restantes",
+    "Renta Variable", "Alternativo",
 })
 
 TYPE_BY_NATURE: dict = {
@@ -59,14 +305,12 @@ TYPE_BY_NATURE: dict = {
     "Renta Fija Flexible":    frozenset({"Corporativo","Gobierno","High Yield","Emergentes",
                                           "Inflación","Convertible","Multisector",
                                           "Unconstrained","Target Maturity"}),
-    "Renta Variable":         frozenset({"Gestión Activa","Indexado","ETF","Smart Beta"}),
-    "Mixto":                  frozenset({"Allocation","Target Volatility","Target Outcome",
-                                          "Tactical","Lifecycle"}),
+    "Renta Variable":         frozenset({"Active Management","Index Fund","ETF","Smart Beta"}),
+    "Mixtos":                 frozenset({"Allocation","Target Volatility","Target Outcome",
+                                          "Tactical","Lifecycle"}),  # BL-19: "Mixtos"
     "Alternativo":            frozenset({"Absolute Return","Long/Short","Market Neutral",
                                           "Sistemático/CTA","Commodities","Real Assets",
                                           "Estructurado"}),
-    "Restantes":              frozenset({"Estructurado","Capital Protegido",
-                                          "Fondo de Fondos"}),
 }
 
 # Mapeo interno → canónico para _detect_nature
@@ -77,7 +321,10 @@ _NATURE_CANONICAL: dict = {
     "Renta Variable":"Renta Variable",
     "Mixtos":        "Mixtos",
     "Alternativo":   "Alternativo",
-    "Estructurado":  "Restantes",
+    "Estructurado":  "Estructurado",
+    "Restantes":     "Restantes",  # v10: restituido (eliminado erróneamente por BL-65)
+                                   # Valor canónico para fondos sin Nature determinable.
+                                   # Es valor válido en schema (backlog v3.4: 33 fondos).
 }
 
 
@@ -105,6 +352,8 @@ NAME_SIGNALS_MONETARIO: list = [
     "st mm vnav", "liqud usd st mm",
     "st money mket", "short-term mm",
     "s-t money mkt", "s-t money mk",
+     # DDF — añadido personal detectado en pictet
+     "money mkt",  "money mket", 
     # Français
     "tresor court", "court terme",
     "entreprises n ", "entreprises r ",
@@ -403,6 +652,17 @@ NAME_SIGNALS_RF_FLEXIBLE: list = [
     "templeton glob.total ret",      # variante
     "bnp paribas e jpm segdctp",     # BNP JPM SECURITIZED
     "axa wf e mk s d b",             # AXA WF EM SHORT DURATION BOND
+    # ── Fase 1C: patrones para residuales + corrección typo ──────────────
+    "r-co conv credi",                   # R-CO CONV CREDI EURO (fix typo: era "crdi")
+    "us aggregate",                      # JPM US AGGREGATE BND
+    "euro aggre",                        # JPMORGAN EURO AGGRE
+    "srt dr bnd",                        # JPM GBL SRT DR BND (short duration bond)
+    "glb bnd opp",                       # JPM GLB BND OPP (global bond opportunities)
+    "meridi eur cred",                   # MFS MERIDI EUR CRED
+    "em eu m ea",                        # FIDELITY EM EU M EA AF (EMEA multi-asset)    
+    # ── Fondo de Rente Fija con SRRI=4  
+    "jpm gl bond opp",
+
 ]
 
 NAME_SIGNALS_MIXTO: list = [
@@ -446,7 +706,7 @@ NAME_SIGNALS_MIXTO: list = [
     "gs patrim bal", "gs em debt",
     "gs glob hy ocs", "gs glob hy",
     # JPM Global Bond / Corp Bond
-    "jpm gl bond opp", "jpm glob corp bond",
+    "jpm glob corp bond",
     "jpm global corpo", "jpmorgan gl.corp",
     # Otros
     "bsf em cies", "m&g dyn alloc",
@@ -710,6 +970,33 @@ NAME_SIGNALS_RV: list = [
     "franklin u.s. opp",             # Franklin US Opportunities
     "index msci world",              # Index MSCI World
     "medtch", "medtech",           # Vontobel MedTech equity
+    # ── Fase 1C: patrones para 25 residuales ────────────────────────────
+    "stk",                               # Vanguard: VANG PAC EXJAP STK
+    "stk indx",                          # Vanguard: VGD US 500 STK INDX
+    "us 500 st index",                   # Vanguard: VGD US 500 ST INDEX
+    "pac exjap",                         # Vanguard: VANG PAC EXJAP
+    "ashare",                            # JPM CHINA ASHARE OPP
+    "china a-share",                     # variante
+    "genetic therap",                    # JPM GENETIC THERAP
+    "eur strat grow",                    # JPMORGAN EUR STRAT GROWT
+    "strat grow",                        # variante corta
+    "gbl div a",                         # FIDELITY GBL DIV A (equity dividend)
+    "gl dividend",                       # FIDELITY GL DIVIDEND
+    "glo divdnd",                        # FIDELITY GLO DIVDND
+    "divdnd",                            # abreviación genérica dividendo
+    "glbl infrastr",                     # DWS GLBL INFRASTR
+    "glob infrastr",                     # variante
+    "emergng mkts opp",                  # JPM EMERGNG MKTS OPP
+    "emerg.mark.opport",                 # JPM EMERG.MARK.OPPORT (OCR con puntos)
+    "por tc sol",                        # CARMIGNAC POR TC SOL    
+    # P08: fondos con nombre inequívoco de RV
+    "us forty",
+    "euroland eq",
+    "smart food",
+    "global technology",
+    "gbl tech",
+    "gbl tch",
+    
 ]
 
 
@@ -769,6 +1056,10 @@ NAME_SIGNALS_ALTERNATIVO: list = [
     "thread.glob dynam real",        # variante
     # ── Nuevas señales P1 ──────────────────────────────────────────────────────
     "bsf europ opp ext",             # BSF EUROP OPP EXTENSION (equity extension strategy)
+    # P08: fondos de volatilidad (AMUNDI VOLATILITY)
+    "volatility",
+    "volatilidad",
+    "volatilit",  # nombre truncado en AMUNDI VOLATILIT WLD    
 ]
 
 NAME_SIGNALS_ESTRUCTURADO: list = [
@@ -777,40 +1068,9 @@ NAME_SIGNALS_ESTRUCTURADO: list = [
 ]
 
 
-# ============================================================
-# detect_nature_from_name — fuente única para todos los bloques
-# ============================================================
-
 def _name_match(name_l: str, signals: list) -> bool:
     return any(s in name_l for s in signals)
 
-
-def detect_nature_from_name(name_l: str) -> Optional[str]:
-    """
-    Detecta la naturaleza del fondo solo desde el nombre (en minúsculas).
-    Devuelve el valor interno ('Monetario', 'RF_Corto', 'RF_Flexible',
-    'Renta Variable', 'Mixtos', 'Alternativo', 'Estructurado') o None.
-
-    Orden: Estructurado > Alternativo > Monetario > RF_Corto >
-           Mixtos > RF_Flexible > Renta Variable
-    (RF_Flexible antes de RV para evitar que 'bond' en nombres temáticos
-     bloquee la detección de equity)
-    """
-    if _name_match(name_l, NAME_SIGNALS_ESTRUCTURADO):
-        return "Estructurado"
-    if _name_match(name_l, NAME_SIGNALS_ALTERNATIVO):
-        return "Alternativo"
-    if _name_match(name_l, NAME_SIGNALS_MONETARIO):
-        return "Monetario"
-    if _name_match(name_l, NAME_SIGNALS_RF_CORTO):
-        return "RF_Corto"
-    if _name_match(name_l, NAME_SIGNALS_MIXTO):
-        return "Mixtos"
-    if _name_match(name_l, NAME_SIGNALS_RF_FLEXIBLE):
-        return "RF_Flexible"
-    if _name_match(name_l, NAME_SIGNALS_RV):
-        return "Renta Variable"
-    return None
 
 
 # ============================================================
@@ -833,51 +1093,10 @@ _WINDOWS_BY_FORMAT: dict = {
 }
 
 
-def _detect_kiid_format(text: str) -> str:
-    """
-    Detecta el formato del documento KIID.
 
-    Devuelve:
-        'DDF'     — formato PRIIPs/DDF (post-2023), sección objetivo en 500-4500
-        'KIID'    — formato KIID clásico UCITS, sección objetivo en 1200-4500
-        'UNKNOWN' — formato no reconocido, ventana amplia 200-4500
-    """
-    if not text:
-        return "UNKNOWN"
-    header = text[:600].lower()
-
-    # DDF/PRIIPs — varias variantes de detección:
-    # 1. Cadena continua (caso normal)
-    # 2. OCR fusionado sin espacios (JPMorgan/Amundi)
-    if ("documento de datos fundamentales" in header
-            or "documentodedatosfundamentales" in header):
-        return "DDF"
-    # DDF partido: "Finalidad" + "Producto" al inicio (JPMorgan OCR por lineas)
-    if "finalidad" in header[:150] and "producto" in header[:400]:
-        return "DDF"
-
-    # KIID clásico UCITS
-    if any(sig in header for sig in [
-        "datos fundamentales para el inversor",
-        "key investor information document",
-        "informações fundamentais destinadas",
-        "informações fundamentais ao investidor",
-    ]):
-        return "KIID"
-
-    return "UNKNOWN"
-
-
-def _get_obj_bounds(text: str) -> tuple[int, int]:
-    """Devuelve (start, end) de la ventana objetivo según el formato del documento."""
-    fmt = _detect_kiid_format(text)
-    return _WINDOWS_BY_FORMAT[fmt]
-
-
-def _extract_window(text: str, start: int, end: int) -> str:
-    """Extrae ventana segura del texto."""
-    return text[start:end] if len(text) > start else ""
-
+# ============================================================
+# detect_nature_from_name — fuente única para todos los bloques
+# ============================================================
 
 def detect_nature_from_name(name_l: str) -> Optional[str]:
     """
@@ -1029,11 +1248,16 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
         return "Estructurado"
 
     # ── Monetario ────────────────────────────────────────────────────────────
+    '''
     if any(k in t[:2000] for k in [
         "money market fund", "fondo del mercado monetario", "fondo monetario",
         "monetary fund", "ucits mmf", "standard money market",
         "short term money market", "low volatility money market",
         "fondsmonétaire", "geldmarktfonds",
+        # DDF — añadido personal detectado en pictet
+        "instrumentos del mercado monetario",
+        "short-term money market",        
+        "ftse eur 1-month eurodeposit",
         # DDF — señales de mercado monetario en formato PRIIPs
         "instrumentos del mercado monetario",
         "vencimiento medio ponderado",
@@ -1042,6 +1266,34 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
         "money market instruments",
         "weighted average maturity",
     ]):
+        return "Monetario"
+    '''
+
+    include_patterns = [
+        "money market fund", "fondo del mercado monetario", "fondo monetario",
+        "monetary fund", "ucits mmf", "standard money market",
+        "short term money market", "low volatility money market",
+        "fondsmonétaire", "geldmarktfonds",
+        "instrumentos del mercado monetario",
+        "short-term money market",        
+        "ftse eur 1-month eurodeposit",
+        "vencimiento medio ponderado",
+        "activos en instrumentos del mercado",
+        "mercados monetarios",
+        "money market instruments",
+        "weighted average maturity",
+    ]
+
+    exclude_patterns = [
+        "renta variable", "renta fija", "acciones", "equity", "fixed income", "instrumentos financieros derivados", "instrumentos de crédito", "ucits","ocivm","colectiva en valores mobiliarios"
+    ]
+
+    # Definimos la ventana de texto (primeros 2000 caracteres) en minúsculas una sola vez
+    # para mejorar el rendimiento y asegurar que no haya fallos por mayúsculas
+    ventana_texto = t[:4000].lower()
+
+    # Evaluación de la lógica
+    if any(k in ventana_texto for k in include_patterns) and not any(e in ventana_texto for e in exclude_patterns):
         return "Monetario"
 
     # ── A partir de aquí usar ventana objetivo ───────────────────────────────
@@ -1306,7 +1558,7 @@ def detect_type_from_kiid(kiid_text: str, fund_nature: str) -> Optional[str]:
         ]):
             return "Emergentes"
         if any(k in w for k in ["inflación","inflation-linked","vinculado a la inflación","tips"]):
-            return "Inflación"
+            return "Inflation"  # v10: idioma objetivo inglés (Principio #8); era "Inflación"
         if any(k in w for k in [
             "invierte principalmente en covered bond",
             "primarily in covered bond",
@@ -1374,7 +1626,7 @@ def detect_type_from_kiid(kiid_text: str, fund_nature: str) -> Optional[str]:
         if any(k in w for k in ["smart beta","factor investing","quality factor","value factor"]):
             return "Smart Beta"
 
-    elif fund_nature == "Mixto":
+    elif fund_nature == "Mixtos":  # BL-19: "Mixtos"
         if any(k in w for k in ["target volatility","volatilidad objetivo"]):
             return "Target Volatility"
         if any(k in w for k in ["tactical","táctica","gestión táctica"]):
@@ -1558,7 +1810,7 @@ def detect_esg_from_kiid(kiid_text: str) -> int:
 
 def detect_ongoing_charge_from_kiid(kiid_text: str) -> Optional[float]:
     """
-    Extrae Ongoing_Charge desde la ventana de costes del KIID (9000-14000).
+    Extrae Ongoing_Charge (v19: Ongoing_Charge_Recurrent) desde la ventana de costes del KIID (9000-14000).
 
     NOTA: La posición de la sección de costes varía según la gestora y el
     formato del KIID (UCITS vs PRIIPs). Validación con datos reales muestra
@@ -1595,11 +1847,11 @@ def detect_kiid_attributes(
     cur = current_attrs or {}
     result = {}
 
-    # Type
-    if not cur.get("Type") or cur.get("Type") == fund_nature:
+    # Type (signal transitorio → derive_v20_attributes lo finaliza en Vehicle_Structure)
+    if not cur.get("_signal_type") or cur.get("_signal_type") == fund_nature:
         t = detect_type_from_kiid(kiid_text, fund_nature)
         if t:
-            result["Type"] = t
+            result["_signal_type"] = t
 
     # Style_Profile
     if not cur.get("Style_Profile") or cur.get("Style_Profile") == "Defensivo":
@@ -1618,7 +1870,11 @@ def detect_kiid_attributes(
     if esg_kiid:
         result["Is_ESG"] = 1
 
-    # Nota: Ongoing_Charge NO se incluye aqui.
+    # BL-53/54: Normalizar Sector_Focus al idioma objetivo (inglés, GICS-EN)
+    if "Sector_Focus" in result:
+        result["Sector_Focus"] = normalize_sector_focus(result["Sector_Focus"])
+
+    # Nota: Ongoing_Charge_Recurrent (v19) NO se incluye aqui.
     # Se extrae en pipeline.py directamente via detect_ongoing_charge_from_kiid()
     # porque es un campo del parser (Grupo 4), no de clasificacion (Grupo 2).
 
@@ -1699,6 +1955,206 @@ THEMATIC_MAP: dict = {
     "financial": "Financials", "financials": "Financials",
     "mining": "Mining", "gold": "Gold",
     "infrastructure": "Infrastructure", "infraestructura": "Infrastructure",
+    # BL-23: Inflation — prevenir Theme en español "Inflación"
+    "inflation": "Inflation", "inflacion": "Inflation", "inflación": "Inflation",
+    "inflat": "Inflation",
+    # BL-23: Cybersecurity — cubrir tema detectado en datos
+    "cyber": "Cybersecurity", "cybersecurity": "Cybersecurity",
+    # BL-23: Megatrends
+    "megatrend": "Megatrends",
+}
+
+
+# ============================================================
+# BL-54: THEME_TO_SECTOR_FOCUS_MAP — mapa canónico Theme → Sector_Focus
+# Punto ÚNICO de verdad (Principio #2 DRY).
+# BL-53/54 (idioma objetivo: INGLÉS, GICS-EN — v20 §2A.1 #6). El emisor único
+# produce ya las 8 etiquetas canónicas en inglés; las conversiones ES→EN aguas
+# abajo (pipeline._SF_ES_TO_EN, sqlite_writer CASE) quedan obsoletas (Principio #1/#2).
+# Invocado desde fund_characterizer.detect_sector_focus() y pipeline.py.
+# Cualquier nuevo Theme se añade SOLO aquí — no en otros módulos.
+# ============================================================
+THEME_TO_SECTOR_FOCUS_MAP: dict = {
+    # Technology
+    "Technology":              "Technology & Innovation",
+    "Artificial Intelligence": "Technology & Innovation",
+    "Digital":                 "Technology & Innovation",
+    "Robotics":                "Technology & Innovation",
+    "Cybersecurity":           "Technology & Innovation",
+    # Healthcare
+    "Healthcare":              "Healthcare & Life Sciences",
+    "Healthcare / MedTech":    "Healthcare & Life Sciences",
+    "Biotechnology":           "Healthcare & Life Sciences",
+    "Silver Economy":          "Healthcare & Life Sciences",
+    # Energy / climate
+    "Energy":                  "Energy & Resources",
+    "Climate / Clean Energy":  "Energy & Resources",
+    # Utilities / water
+    "Water":                   "Utilities & Environment",
+    # Materials
+    "Gold":                    "Materials & Mining",
+    "Mining":                  "Materials & Mining",
+    # Real assets
+    "Real Estate":             "Real Assets",
+    "Infrastructure":          "Real Assets",
+    # Financial services (v20: 'Financials & Insurance' colapsado en 'Financial Services')
+    "Insurance":               "Financial Services",
+    "Financials":              "Financial Services",
+    # Consumer
+    "Consumer Brands":              "Consumer",
+    "Consumer / Food & Beverage":   "Consumer",
+}
+
+
+def map_theme_to_sector_focus(theme: Optional[str]) -> Optional[str]:
+    """
+    Mapeo canónico Theme → Sector_Focus. Punto único de verdad (BL-54).
+
+    Devuelve el Sector_Focus en INGLÉS (GICS-EN canónico) correspondiente al
+    Theme, o None si el Theme no tiene mapeo (p.ej. Core/General, Megatrends,
+    Inflation — que son Thematic sin foco sectorial concreto).
+    """
+    if not theme:
+        return None
+    return THEME_TO_SECTOR_FOCUS_MAP.get(theme)
+
+
+# ============================================================
+# BL-53/54: SECTOR_FOCUS_TRANSLATION_MAP — idioma objetivo: INGLÉS (GICS-EN).
+# Saneo legacy: cualquier etiqueta ES (o variante EN antigua) → canónico v20
+# (§2A.1 #6, 8 valores). Sustituye al antiguo mapa EN→ES (BL-22).
+# ============================================================
+SECTOR_FOCUS_TRANSLATION_MAP: dict = {
+    # ES legacy → EN canónico v20
+    "Tecnología e Innovación":      "Technology & Innovation",
+    "Salud y Ciencias de la Vida":  "Healthcare & Life Sciences",
+    "Energía y Recursos":           "Energy & Resources",
+    "Materiales y Minería":         "Materials & Mining",
+    "Utilities y Medio Ambiente":   "Utilities & Environment",
+    "Servicios Financieros":        "Financial Services",
+    "Consumo":                      "Consumer",
+    "Consumo y Retail":             "Consumer",
+    "Activos Reales":               "Real Assets",
+    "Infraestructura":              "Real Assets",
+    "Inmobiliario":                 "Real Assets",
+    # Variantes EN antiguas → canónico v20
+    "Financials & Insurance":       "Financial Services",
+    "Consumer Discretionary":       "Consumer",
+    "Real Estate & Infrastructure": "Real Assets",
+    "Real Estate":                  "Real Assets",
+    "Infrastructure":               "Real Assets",
+    # Identidad EN canónica v20 (pass-through)
+    "Technology & Innovation":      "Technology & Innovation",
+    "Healthcare & Life Sciences":   "Healthcare & Life Sciences",
+    "Energy & Resources":           "Energy & Resources",
+    "Materials & Mining":           "Materials & Mining",
+    "Utilities & Environment":      "Utilities & Environment",
+    "Financial Services":           "Financial Services",
+    "Consumer":                     "Consumer",
+    "Real Assets":                  "Real Assets",
+}
+
+
+def normalize_sector_focus(value: Optional[str]) -> Optional[str]:
+    """Normaliza Sector_Focus al idioma objetivo (INGLÉS, GICS-EN). BL-53/54.
+
+    Cualquier etiqueta ES o variante EN antigua se sanea al canónico v20.
+    Valor desconocido → pass-through.
+    """
+    if value is None:
+        return None
+    translated = SECTOR_FOCUS_TRANSLATION_MAP.get(value)
+    if translated:
+        return translated
+    return value
+
+
+# ============================================================
+# BL-56/BL-57: TYPE_TRANSLATION_MAP — idioma objetivo: español
+# Las excepciones inglesas (Allocation, Absolute Return, etc.) se mantienen
+# porque carecen de equivalente compacto en español y son terminología
+# sectorial consolidada (decisión BL-53).
+# ============================================================
+TYPE_TRANSLATION_MAP: dict = {
+    # BL-LANG-EN (2026-05-09): idioma objetivo EN. Pass-through valores EN canónicos.
+    # Corrección inversa: stale ES → EN para sanear BD de ciclos anteriores.
+    # --- Pass-through EN canónicos (identidad) ---
+    "Active Management":        "Active Management",
+    "Index Fund":               "Index Fund",
+    "Money Market":             "Money Market",
+    "Government Money Market":  "Government Money Market",
+    "Prime Money Market":       "Prime Money Market",
+    "Short-Term Fixed Income":  "Short-Term Fixed Income",
+    "Flexible Fixed Income":    "Flexible Fixed Income",
+    "Short-Term Government":    "Short-Term Government",
+    "Short-Term Credit":        "Short-Term Credit",
+    "Commodities":              "Commodities",
+    "Real Assets":              "Real Assets",
+    "Volatility Target":        "Volatility Target",
+    "Structured":               "Structured",
+    "Allocation":               "Allocation",
+    "Absolute Return":          "Absolute Return",
+    "Total Return":             "Total Return",
+    "Tactical Allocation":      "Tactical Allocation",
+    "Target Maturity":          "Target Maturity",
+    "Floating Rate CP":         "Floating Rate CP",
+    "Unconstrained":            "Unconstrained",
+    # --- Corrección inversa: stale ES → EN canónico ---
+    "Gestión Activa":           "Active Management",
+    "Indexado":                 "Index Fund",
+    "Monetario":                "Money Market",
+    "Monetario Público":        "Government Money Market",
+    "Monetario Privado":        "Prime Money Market",
+    "Renta Fija Corto Plazo":   "Short-Term Fixed Income",
+    "Renta Fija Flexible":      "Flexible Fixed Income",
+    "Gobierno CP":              "Short-Term Government",
+    "Deuda Pública CP":         "Short-Term Government",   # fusión
+    "Crédito CP":               "Short-Term Credit",
+    "Materias Primas":          "Commodities",
+    "Activos Reales":           "Real Assets",
+    "Objetivo de Volatilidad":  "Volatility Target",
+    "Estructurado":             "Structured",
+}
+
+
+# ============================================================
+# BL-LANG-EN (2026-05-09): FAMILY_TRANSLATION_MAP — idioma objetivo EN.
+# Pass-through valores EN canónicos. Corrección inversa ES→EN para BD.
+# ============================================================
+FAMILY_TRANSLATION_MAP: dict = {
+    # --- Pass-through EN canónicos (identidad) ---
+    "Equity Core":              "Equity Core",
+    "Thematic Equity":          "Thematic Equity",
+    "Multi-Asset":              "Multi-Asset",
+    "Short-Term Fixed Income":  "Short-Term Fixed Income",
+    "Flexible Fixed Income":    "Flexible Fixed Income",
+    "Money Market":             "Money Market",
+    "Absolute Return":          "Absolute Return",
+    "Real Assets":              "Real Assets",
+    "High Yield":               "High Yield",
+    "Emerging Market Debt":     "Emerging Market Debt",
+    "Inflation-Linked":         "Inflation-Linked",
+    "Strategic Allocation":     "Strategic Allocation",
+    "Income Oriented":          "Income Oriented",
+    "Structured":               "Structured",
+    "LVNAV":                    "LVNAV",
+    "VNAV":                     "VNAV",
+    "CNAV":                     "CNAV",
+    # --- Corrección inversa: stale ES → EN canónico ---
+    "RV Core":                  "Equity Core",
+    "RV Temática":              "Thematic Equity",
+    "Mixtos":                   "Multi-Asset",
+    "Renta Fija Corto Plazo":   "Short-Term Fixed Income",
+    "Renta Fija Flexible":      "Flexible Fixed Income",
+    "Monetario":                "Money Market",
+    "Retorno Absoluto":         "Absolute Return",
+    "Activos Reales":           "Real Assets",
+    "RF High Yield":            "High Yield",
+    "RF Emergentes":            "Emerging Market Debt",
+    "RF Inflación":             "Inflation-Linked",
+    "Flexible Estratégico":     "Strategic Allocation",
+    "Estructurado":             "Structured",
+    "Orientado a Renta":        "Income Oriented",
 }
 
 
@@ -1750,7 +2206,7 @@ def detect_style_profile(name_l: str) -> Optional[str]:
 
 def detect_exposure_bias(name_l: str, fund_nature: Optional[str] = None) -> Optional[str]:
     """Detecta sesgo estructural de cartera. NULL obligatorio en Monetario y Mixto."""
-    if fund_nature in ("Monetario","Mixto"):
+    if fund_nature in ("Monetario","Mixtos"):  # BL-19: "Mixtos"
         return None
     if any(k in name_l for k in ["barrier","autocall","knock-in"]):
         return "Barrier Risk"
@@ -1791,12 +2247,12 @@ def detect_strategy(
     if any(k in name_l for k in ["etf","index fund","tracker"]):
         return "Indexado"
     if any(k in sub_l for k in ["systematic","cta","quant"]):
-        return "Sistemático"
+        return "Activo"          # v20: sistemático/quant = gestión activa
     if any(k in name_l for k in ["systematic","quant ","cta ","managed future"]):
-        return "Sistemático"
+        return "Activo"
     if any(k in name_l for k in ["smart beta","factor","multi-factor","multifactor",
                                    "quality factor","value factor"]):
-        return "Factor"
+        return "Indexado"        # v20: factor/smart-beta = réplica basada en reglas
     if rep_l == "passive":
         return "Pasivo"
     if any(k in name_l for k in ["passive","passiv","replica"]):
@@ -1826,6 +2282,13 @@ def detect_benchmark_type(
 
 def detect_profile_from_srri(srri: Optional[int]) -> Optional[str]:
     """Deriva Profile desde SRRI con precedencia absoluta."""
+    # BL-SRRI-GUARD: extract_srri (srri_text.py) puede devolver dict en algunos
+    # formatos DDF; otros callers pasan str. Coercer a int antes de comparar
+    # evita "'<=' not supported between 'dict' and 'int'" (crash RESTANTES).
+    if isinstance(srri, dict):
+        srri = srri.get("SRRI")
+    if isinstance(srri, str):
+        srri = int(srri) if srri.strip().isdigit() else None
     if srri is None:
         return None
     if srri <= 2:
@@ -1833,3 +2296,1498 @@ def detect_profile_from_srri(srri: Optional[int]) -> Optional[str]:
     if srri <= 4:
         return "Moderado"
     return "Dinámico"
+
+
+# ============================================================
+# BL-49 — Detección Currency_Hedged desde texto KIID
+# ============================================================
+#
+# Causa raíz: detect_currency_hedged() en fund_characterizer.py admite
+# kiid_text en su firma desde v18, pero el cuerpo no implementa extracción
+# sobre ese texto. Solo examina el nombre del fondo (fase 1). Los 535 NULLs
+# residuales de Currency_Hedged corresponden en su mayoría a fondos
+# denominados en USD/GBP/CHF/JPY/CNH (divisa ≠ EUR) donde la señal de
+# cobertura no aparece en el nombre sino en la sección de "Share class
+# characteristics" o "Objetivos y política de inversión" del KIID.
+#
+# Solución DRY: implementar _detect_ch_from_kiid_text() aquí (classify_utils)
+# para que fund_characterizer la importe como segunda fase, en lugar de
+# duplicar patrones en fund_characterizer. Principio #2.
+#
+# Restricción de aplicación: solo actúa cuando la fase basada en nombre
+# (fund_characterizer) no aportó señal. La prevalencia de Hedging_Policy
+# sobre Currency_Hedged (BL-31/INTER-12) sigue aplicándose en pipeline
+# DESPUÉS de este extractor.
+
+# Patrones de alta confianza. Orden: primero específicos, luego genéricos.
+# CH_ID se usa en logging: "CH-KIID-<CH_ID>".
+_CH_HEDGED_PATTERNS: list[tuple[str, str]] = [
+    # Inglés — share class explícita
+    ("H01", r"\bcurrency[- ]hedged\s+share\s+class\b"),
+    ("H02", r"\bhedged\s+share\s+class\b"),
+    ("H03", r"\bcurrency\s+risk\s+is\s+hedged\b"),
+    ("H04", r"\bfully\s+hedged\b"),
+    ("H05", r"\bhedge[d]?\s+against\s+(?:eur|usd|gbp|chf|jpy|cnh)\b"),
+    ("H06", r"\bthis\s+share\s+class\s+is\s+hedged\b"),
+    # Español — clase cubierta
+    ("H07", r"\bclase\s+(?:de\s+)?(?:acciones|participaciones)\s+(?:con\s+)?cobertura\s+(?:de\s+divisa|cambiaria)\b"),
+    ("H08", r"\bcobertura\s+(?:total|íntegra)\s+del?\s+(?:riesgo|tipo)\s+de\s+cambio\b"),
+    ("H09", r"\briesgo\s+de\s+(?:cambio|divisa)\s+est[áa]\s+cubierto\b"),
+    ("H10", r"\besta\s+clase\s+est[áa]\s+cubierta\s+(?:contra|frente\s+a)\b"),
+]
+
+_CH_UNHEDGED_PATTERNS: list[tuple[str, str]] = [
+    # Inglés — sin cobertura explícita
+    ("U01", r"\b(?:unhedged|not\s+hedged|without\s+(?:currency\s+)?hedging)\s+share\s+class\b"),
+    ("U02", r"\bno\s+currency\s+hedging\b"),
+    ("U03", r"\bcurrency\s+risk\s+is\s+not\s+hedged\b"),
+    ("U04", r"\bno\s+hedging\s+of\s+currency\s+risk\b"),
+    # Español — sin cobertura explícita
+    ("U05", r"\bsin\s+cobertura\s+(?:de\s+divisa|cambiaria|del?\s+riesgo\s+de\s+cambio)\b"),
+    ("U06", r"\bno\s+(?:se\s+)?cubre\s+el\s+(?:riesgo\s+de\s+)?(?:cambio|divisa)\b"),
+    ("U07", r"\bno\s+aplica\s+cobertura\s+de\s+divisa\b"),
+    ("U08", r"\besta\s+clase\s+no\s+est[áa]\s+cubierta\b"),
+]
+
+# Pre-compilar (se importa una vez en arranque del pipeline)
+_CH_HEDGED_RE: list[tuple[str, re.Pattern]] = [
+    (pid, re.compile(pat, re.IGNORECASE)) for pid, pat in _CH_HEDGED_PATTERNS
+]
+_CH_UNHEDGED_RE: list[tuple[str, re.Pattern]] = [
+    (pid, re.compile(pat, re.IGNORECASE)) for pid, pat in _CH_UNHEDGED_PATTERNS
+]
+
+
+def detect_currency_hedged_from_kiid(
+    kiid_text: str,
+) -> tuple[Optional[str], Optional[str]]:
+    """Detecta Currency_Hedged desde el texto completo del KIID.
+
+    Segunda fase de detección (se invoca cuando la detección por nombre
+    no aportó señal). Solo patrones de alta confianza — declaración
+    explícita de share class hedged/unhedged.
+
+    Args:
+        kiid_text: texto completo extraído del KIID/DDF.
+
+    Returns:
+        (value, pattern_id) donde value ∈ {'Hedged', 'Unhedged', None}.
+        pattern_id identifica el patrón que disparó la detección
+        (para logging en pipeline: 'CH-KIID-<pattern_id>').
+        Si no hay señal, retorna (None, None).
+    """
+    if not kiid_text:
+        return None, None
+
+    t = kiid_text  # patrones usan re.IGNORECASE, no hace falta lower()
+
+    for pid, compiled in _CH_HEDGED_RE:
+        if compiled.search(t):
+            return "Hedged", pid
+
+    for pid, compiled in _CH_UNHEDGED_RE:
+        if compiled.search(t):
+            return "Unhedged", pid
+
+    return None, None
+
+
+# Validadores inter/intra-atributo + función maestra
+# Añadir al final de classify_utils.py
+# ============================================================
+
+logger = logging.getLogger(__name__)
+
+
+# ============================================================
+# 12. ALLOWED_VALUES_BY_COLUMN
+# ============================================================
+
+ALLOWED_VALUES_BY_COLUMN: dict = {}
+# §Y-1 (DRY root-cause): NO duplicar vocabularios. Se DERIVAN de
+# config.DOMAIN_VALUES (capa de intención de diseño = fuente única). Se filtran
+# a las columnas categóricas (casing TITLE/UPPER_SNAKE); las numéricas (SRRI,
+# Sfdr_Article, RHP) y códigos ISO (Fund_Currency) no entran en el chequeo de
+# allowed-values. Import defensivo (sys.path variable en distintos entrypoints).
+try:
+    import config as _cfg_catalog  # type: ignore
+except ImportError:  # pragma: no cover
+    try:
+        from shared import config as _cfg_catalog  # type: ignore
+    except ImportError:
+        # Entry-points como run_block.py importan core.pipeline -> classify_utils
+        # ANTES de insertar el project-root (parents[1]) en sys.path, por lo que
+        # `shared` aún no es importable en module-load. Inyectar el project-root
+        # (core -> proyecto1 -> root = parents[2]) y reintentar. Sin esto,
+        # ALLOWED_VALUES_BY_COLUMN y _CASING_LOOKUP quedan vacíos y el
+        # normalizador de casing se vuelve un no-op silencioso.
+        try:
+            import sys as _sys
+            from pathlib import Path as _P
+            _root = str(_P(__file__).resolve().parents[2])
+            if _root not in _sys.path:
+                _sys.path.insert(0, _root)
+            from shared import config as _cfg_catalog  # type: ignore
+        except Exception:
+            _cfg_catalog = None
+
+if _cfg_catalog is not None:
+    _dv = getattr(_cfg_catalog, "DOMAIN_VALUES", {})
+    _casing = getattr(_cfg_catalog, "ATTRIBUTE_CASING", {})
+    ALLOWED_VALUES_BY_COLUMN = {
+        col: list(vals)
+        for col, vals in _dv.items()
+        if _casing.get(col) in ("TITLE", "UPPER_SNAKE")
+    }
+else:  # config no importable: degradar sin corromper (warnings-only consumer)
+    logging.getLogger(__name__).warning(
+        "config no importable: ALLOWED_VALUES_BY_COLUMN vacío "
+        "(el chequeo allowed-values quedará inactivo)."
+    )
+
+
+# ============================================================
+# Casing normalizer — UNA función (§Y-2, R-1, Principio #2 DRY)
+# ------------------------------------------------------------
+# Canonicaliza el CASING de un valor categórico al canónico de
+# config.DOMAIN_VALUES, vía lookup insensible a mayúsculas/separadores.
+# NO inventa remaps de valor (eso es el reprocess); solo arregla casing/drift
+# tipográfico (ACCUMULATION→Accumulation, HEDGED→Hedged). Preserva acrónimos
+# (CNAV, ETF, VNAV) porque copia la forma canónica del catálogo, nunca .title().
+# Si el valor no casa con ningún canónico, se devuelve intacto (el chequeo de
+# allowed-values lo señalará como WARNING). Aplicar pre-persist en
+# sqlite_writer._normalize_record (los valores no mutan a mitad de flujo).
+# ============================================================
+def _casefold_key(s: str) -> str:
+    """Clave de comparación: minúsculas, espacios/guiones-bajos colapsados."""
+    return re.sub(r"[\s_]+", " ", s.strip().casefold())
+
+
+# Cache de lookups canónicos por columna {col: {casefold_key: canonical}}.
+_CASING_LOOKUP: dict = {
+    col: {_casefold_key(v): v for v in vals}
+    for col, vals in ALLOWED_VALUES_BY_COLUMN.items()
+}
+
+
+def normalize_casing(column: str, value):
+    """Devuelve `value` con el casing canónico de `column` (o intacto si no
+    aplica / no casa). None y no-str pasan tal cual."""
+    if value is None or not isinstance(value, str):
+        return value
+    lookup = _CASING_LOOKUP.get(column)
+    if not lookup:
+        return value
+    return lookup.get(_casefold_key(value), value)
+
+
+# ============================================================
+# 13. ALLOWED_TYPE_BY_NATURE
+# ============================================================
+
+ALLOWED_TYPE_BY_NATURE: dict = {
+    "Renta Variable": [
+        # BL-LANG-EN-FIX (2026-05-18): "Gestión Activa"→"Active Management",
+        # "Indexado"→"Index Fund". Los stale ES se mantenían para no romper
+        # validaciones, pero ahora _DEFAULT_TYPE_BY_NATURE emite EN → coherencia.
+        "Active Management", "Index Fund", "Total Return",
+        "Absolute Return", "Tactical Allocation",
+    ],
+    "Renta Fija Flexible": [
+        "Flexible Fixed Income", "Active Management", "Total Return",
+        "Absolute Return", "Index Fund",
+        "Target Maturity",
+    ],
+    "Renta Fija Corto Plazo": [
+        "Short-Term Fixed Income", "Short-Term Credit", "Short-Term Government",
+        "Floating Rate CP", "Target Maturity",
+    ],
+    "Monetario": [
+        "Money Market", "Government Money Market", "Prime Money Market",
+    ],
+    "Mixtos": [
+        "Allocation", "Tactical Allocation", "Active Management",
+        "Volatility Target",
+    ],
+    "Alternativo": [
+        "Absolute Return", "Commodities", "Total Return",
+        "Active Management", "Index Fund",
+        "Real Assets",
+    ],
+    "Estructurado": [
+        "Structured",
+    ],
+    "Restantes": [],  # catch-all: Type puede ser None o cualquier valor válido
+                      # v10: restituido (eliminado erróneamente por BL-65)
+}
+
+
+# ============================================================
+# 14. ALLOWED_FAMILY_BY_NATURE
+# ============================================================
+
+ALLOWED_FAMILY_BY_NATURE: dict = {
+    "Renta Variable": [
+        "Equity Core", "Thematic Equity", "Real Assets",
+    ],
+    "Renta Fija Flexible": [
+        "Flexible Fixed Income", "High Yield", "Emerging Market Debt",
+        "Inflation-Linked", "Income Oriented",
+        "Strategic Allocation",
+    ],
+    "Renta Fija Corto Plazo": [
+        "Short-Term Fixed Income",
+    ],
+    "Monetario": [
+        "Money Market", "LVNAV", "VNAV", "CNAV",
+    ],
+    "Mixtos": [
+        "Multi-Asset", "Income Oriented", "Strategic Allocation",
+    ],
+    "Alternativo": [
+        "Absolute Return", "Real Assets",
+    ],
+    "Estructurado": [
+        "Structured",
+    ],
+    "Restantes": [],  # catch-all: Family puede ser None o cualquier valor válido
+                      # v10: restituido (eliminado erróneamente por BL-65)
+}
+
+
+# ============================================================
+# 15. THEME_SECTOR_MAPPING
+# ============================================================
+
+THEME_SECTOR_MAPPING: dict = {
+    "Technology": "Technology & Innovation",
+    "Artificial Intelligence": "Technology & Innovation",
+    "Digital": "Technology & Innovation",
+    "Robotics": "Technology & Innovation",
+    "Healthcare": "Healthcare & Life Sciences",
+    "Healthcare / MedTech": "Healthcare & Life Sciences",
+    "Biotechnology": "Healthcare & Life Sciences",
+    "Energy": "Energy & Resources",
+    "Climate / Clean Energy": "Energy & Resources",
+    "Water": "Utilities & Environment",
+    "Gold": "Materials & Mining",
+    "Mining": "Materials & Mining",
+    "Real Estate": "Real Estate & Infrastructure",
+    "Infrastructure": "Real Estate & Infrastructure",
+    "Insurance": "Financials & Insurance",
+    "Financials": "Financials & Insurance",
+    "Consumer Brands": "Consumer Discretionary",
+    "Silver Economy": "Healthcare & Life Sciences",
+}
+
+# ============================================================
+# 14b. DEFAULT TYPE/FAMILY BY NATURE (P07 — auto-corrección)
+# ============================================================
+
+_DEFAULT_TYPE_BY_NATURE: dict = {
+    # BL-LANG-EN-FIX (2026-05-18): valores EN canónicos.
+    # Los 4 valores ES stale ("Gestión Activa", "Renta Fija Flexible",
+    # "Renta Fija Corto Plazo", "Monetario", "Estructurado") no se actualizaron
+    # en BL-LANG-EN (v12) — causa raíz del [NORM-Type] WARNING masivo en ciclo.
+    "Renta Variable":         TYPE_ACTIVE_MANAGEMENT,       # "Active Management"
+    "Renta Fija Flexible":    TYPE_FLEXIBLE_FI,             # "Flexible Fixed Income"
+    "Renta Fija Corto Plazo": TYPE_SHORT_TERM_FI,           # "Short-Term Fixed Income"
+    "Monetario":              TYPE_MONEY_MARKET,             # "Money Market"
+    "Mixtos":                 "Allocation",                  # sin constante (término sectorial)
+    "Alternativo":            "Absolute Return",             # sin constante (término sectorial)
+    "Estructurado":           TYPE_STRUCTURED,               # "Structured"
+}
+
+_DEFAULT_FAMILY_BY_NATURE: dict = {
+    # BL-LANG-EN-FIX (2026-05-18): valores EN canónicos.
+    # Los 6 valores ES stale no se actualizaron en BL-LANG-EN (v12).
+    "Renta Variable":         FAMILY_EQUITY_CORE,           # "Equity Core"
+    "Renta Fija Flexible":    FAMILY_FLEXIBLE_FI,           # "Flexible Fixed Income"
+    "Renta Fija Corto Plazo": FAMILY_SHORT_TERM_FI,         # "Short-Term Fixed Income"
+    "Monetario":              FAMILY_MONEY_MARKET,           # "Money Market"
+    "Mixtos":                 FAMILY_MULTI_ASSET,            # "Multi-Asset"
+    "Alternativo":            FAMILY_ABSOLUTE_RETURN,        # "Absolute Return"
+    "Estructurado":           FAMILY_STRUCTURED,             # "Structured"
+}
+
+# ============================================================
+# 1. INTER-1: Strategy ↔ Replication_Method
+# ============================================================
+
+def validate_strategy_replication(
+    strategy: Optional[str],
+    replication: Optional[str],
+) -> tuple:
+    """v20: Replication_Method = TÉCNICA de réplica (Physical/Synthetic/Sampling)
+    para gestión pasiva; 'Not Applicable' para gestión activa. El eje activo/pasivo
+    vive ahora en Strategy (§2A.1 #9). Auto-corrige incoherencias.
+
+    Returns:
+        (corrected_replication, error_msg_or_None)
+    """
+    _TECH = ("Physical", "Synthetic", "Sampling")
+    if strategy in ("Indexado", "Pasivo"):
+        if replication in _TECH:
+            return replication, None
+        return "Physical", (
+            f"Replication_Method→'Physical' (técnica por defecto; "
+            f"Strategy='{strategy}' es pasiva)"
+        )
+    if strategy == "Activo":
+        if replication != "Not Applicable":
+            return "Not Applicable", (
+                "Replication_Method→'Not Applicable' (Strategy='Activo')"
+            )
+        return replication, None
+    return replication, None
+
+
+# ============================================================
+# 2. INTER-2: Accumulation_Policy ↔ Distribution_Frequency
+# ============================================================
+
+def validate_accumulation_distribution(
+    acc_policy: Optional[str],
+    dist_freq: Optional[str],
+) -> tuple:
+    """Auto-corrige Distribution_Frequency/Accumulation_Policy por coherencia.
+
+    Reglas:
+      ACCUMULATION + dist_freq poblado  → eliminar dist_freq (crítico)
+      DISTRIBUTION + dist_freq NULL     → warning
+      NULL + dist_freq poblado          → inferir ACCUMULATION_POLICY=DISTRIBUTION (BL-32)
+
+    Returns:
+        (corrected_acc_policy, corrected_dist_freq, error_msg_or_None)
+
+    NOTA: La firma retorna ahora 3 valores. validate_all_semantic_consistency
+    actualiza ambos campos.
+    """
+    if acc_policy == "ACCUMULATION" and dist_freq is not None:
+        return acc_policy, None, (
+            "Eliminado Distribution_Frequency "
+            "(coherencia con ACCUMULATION)"
+        )
+    if acc_policy == "DISTRIBUTION" and dist_freq is None:
+        return acc_policy, dist_freq, (
+            "WARNING: DISTRIBUTION sin Distribution_Frequency poblado"
+        )
+    # BL-32: Distribution_Frequency presente implica política distribución
+    if acc_policy is None and dist_freq is not None:
+        return "DISTRIBUTION", dist_freq, (
+            f"Inferido Accumulation_Policy='DISTRIBUTION' "
+            f"desde Distribution_Frequency='{dist_freq}'"
+        )
+    return acc_policy, dist_freq, None
+
+
+# ============================================================
+# 3. INTER-3: Profile ↔ SRRI
+# ============================================================
+
+def _assign_profile_from_srri(srri: int) -> Optional[str]:
+    """Mapeo estricto SRRI → Profile (incluye Agresivo para SRRI=7)."""
+    if srri <= 2:
+        return "Conservador"
+    if srri <= 4:
+        return "Moderado"
+    if srri <= 6:
+        return "Dinámico"
+    if srri == 7:
+        return "Agresivo"
+    return None
+
+
+def validate_profile_srri(
+    profile: Optional[str],
+    srri: Optional[int],
+) -> tuple:
+    """Valida coherencia Profile-SRRI. BL-INTER3-WARN: WARNINGS-ONLY.
+
+    INTER-3 ya NO auto-corrige Profile desde SRRI: Profile es co-determinado por
+    Fund_Nature (Profile = f(SRRI, Fund_Nature)); el remap por bandas estrictas era
+    empíricamente erróneo. Devuelve siempre el profile original y, en las colas
+    genuinas, un mensaje 'WARNING:' (el caller lo enruta a warnings, nunca a
+    critical/auto-correct).
+
+    Returns:
+        (profile_unchanged, warning_msg_or_None)
+    """
+    if profile is None or srri is None:
+        return profile, None
+
+    if profile == "Conservador" and srri >= 6:
+        return profile, f"WARNING: Conservador con SRRI={srri} es anómalo (máx. observado 5)"
+    if profile == "Moderado" and srri in (1, 7):
+        return profile, f"WARNING: Moderado con SRRI={srri} en extremo"
+    if profile == "Dinámico" and srri <= 2:
+        return profile, f"WARNING: Dinámico con SRRI={srri} es inusual"
+    if profile == "Agresivo" and srri <= 4:
+        return profile, f"WARNING: Agresivo con SRRI={srri} es bajo (revisar)"
+
+    return profile, None
+
+
+# ============================================================
+# 4. INTER-4: Nature → Type  —  RETIRADO en v20 (§8-bis Q3 / §6-bis #1)
+# ------------------------------------------------------------
+# Con Type → Vehicle_Structure (eje ortogonal jurídico-estructural del vehículo),
+# la restricción Fund_Nature→Type (vocabulario de clase de activo) pierde sentido.
+# Se retira: el stub devuelve siempre (True, None) para no romper llamadores.
+# ALLOWED_TYPE_BY_NATURE/_DEFAULT_TYPE_BY_NATURE quedan como referencia histórica
+# (útiles para el reprocess que remapea los Type antiguos), pero NO se cablean.
+# INTER-5 (Nature→Family) SÍ se mantiene: Family sigue siendo taxonomía de activo.
+# ============================================================
+
+def validate_nature_type_coherence(
+    nature: Optional[str],
+    type_val: Optional[str],
+) -> tuple:
+    """RETIRADO (v20). No-op: siempre (True, None). Ver cabecera de sección."""
+    return True, None
+
+
+# ============================================================
+# 5. INTER-5: Nature → Family
+# ============================================================
+
+def validate_nature_family_coherence(
+    nature: Optional[str],
+    family: Optional[str],
+) -> tuple:
+    """Valida que Family sea permitida para la Nature dada.
+
+    Returns:
+        (is_valid: bool, error_msg_or_None)
+    """
+    if nature is None or family is None:
+        return True, None
+    allowed = ALLOWED_FAMILY_BY_NATURE.get(nature)
+    if allowed is None:
+        return True, None
+    if family not in allowed:
+        return False, (
+            f"Family '{family}' no es válida para Nature '{nature}'. "
+            f"Permitidos: {allowed}"
+        )
+    return True, None
+
+
+# ============================================================
+# 6. INTER-6: Investment_Universe → Sector_Focus / Geography
+# ============================================================
+
+def validate_universe_completeness(
+    universe: Optional[str],
+    sector_focus: Optional[str],
+    geography: Optional[str],
+) -> tuple:
+    """Valida completitud de Sector_Focus/Geography según Universe.
+
+    Returns:
+        (is_valid: bool, issues: list[str])
+    """
+    issues: list = []
+    if universe is None:
+        return True, issues
+
+    if universe == "Sector" and sector_focus is None:
+        issues.append(
+            "Investment_Universe='Sector' requiere Sector_Focus poblado"
+        )
+    if universe in ("Regional", "Country") and geography is None:
+        issues.append(
+            f"Investment_Universe='{universe}' requiere Geography poblado"
+        )
+    return len(issues) == 0, issues
+
+
+# ============================================================
+# 7. INTER-7: Leverage_Used ↔ Profile (WARNING)
+# ============================================================
+
+def validate_leverage_profile(
+    profile: Optional[str],
+    leverage: Optional[str],
+) -> tuple:
+    """Returns ('OK'|'WARNING', message_or_None)."""
+    if profile == "Conservador" and leverage == "YES":
+        return "WARNING", "Perfil Conservador con Leverage=YES es inusual"
+    return "OK", None
+
+
+# ============================================================
+# 8. INTER-8: Is_ESG ↔ Sfdr_Article (WARNING)
+# ============================================================
+
+def validate_esg_sfdr(
+    is_esg: Optional[int],
+    sfdr_article: Optional[int],
+) -> tuple:
+    """Returns ('OK'|'WARNING', message_or_None)."""
+    if is_esg == 1 and sfdr_article not in (8, 9, None):
+        return "WARNING", (
+            f"Is_ESG=1 con Sfdr_Article={sfdr_article} (esperado 8 o 9)"
+        )
+    return "OK", None
+
+
+# ============================================================
+# 9. INTER-9: Theme ↔ Sector_Focus (WARNING)
+# ============================================================
+
+def validate_theme_sector_coherence(
+    theme: Optional[str],
+    sector_focus: Optional[str],
+) -> tuple:
+    """Returns ('OK'|'WARNING', message_or_None)."""
+    if theme and sector_focus:
+        expected = THEME_SECTOR_MAPPING.get(theme)
+        if expected and sector_focus != expected:
+            return "WARNING", (
+                f"Theme '{theme}' normalmente mapea a '{expected}', "
+                f"no '{sector_focus}'"
+            )
+    return "OK", None
+
+
+# ============================================================
+# 10. INTER-10: Geography ↔ Investment_Universe (WARNING + BL-52 auto-corrección)
+# ============================================================
+
+_COUNTRY_GEOGRAPHIES = frozenset({
+    # v20: vocabulario EN del catálogo (config.DOMAIN_VALUES['Geography']).
+    # Valores "país" del set v20: Japan, China, India.
+    "Japan", "China", "India",
+})
+
+# BL-52: valores de Geography que representan regiones (no países individuales).
+# Universe='Country' con estos valores es semánticamente incorrecto → auto-corregir a 'Regional'.
+_REGION_GEOGRAPHIES = frozenset({
+    # v20: regiones del set EN (excluye 'Global', que no es región ni país).
+    "Europe", "North America", "Asia-Pacific",
+    "Latin America", "Eastern Europe", "Middle East & Africa",
+})
+
+
+def validate_geography_universe(
+    geography: Optional[str],
+    universe: Optional[str],
+) -> tuple:
+    """Returns ('OK'|'WARNING'|'CORRECTED', message_or_None, corrected_universe_or_None).
+
+    BL-52: si Universe='Country' y Geography es una región → auto-corrección a 'Regional'.
+    Firma ampliada a 3-tupla para transportar el valor corregido; los callers que
+    esperan 2-tupla siguen funcionando si solo desempaquetan los dos primeros elementos.
+    """
+    # BL-52: AUTO-CORRECCIÓN — Country + región es imposible semánticamente
+    if universe == "Country" and geography in _REGION_GEOGRAPHIES:
+        msg = (
+            f"Investment_Universe corregido 'Country'→'Regional' "
+            f"porque Geography='{geography}' es una región, no un país"
+        )
+        return "CORRECTED", msg, "Regional"
+
+    # Warnings existentes (sin cambio)
+    if geography in _COUNTRY_GEOGRAPHIES and universe == "Global":
+        return "WARNING", (
+            f"Geography específica '{geography}' con "
+            f"Universe='Global' es inusual"
+        ), None
+    if geography == "Global" and universe in ("Country", "Regional"):
+        return "WARNING", (
+            f"Geography='Global' con Universe='{universe}' es inusual"
+        ), None
+    return "OK", None, None
+
+
+# ============================================================
+# 11. validate_all_semantic_consistency() — FUNCIÓN MAESTRA
+# ============================================================
+
+def validate_all_semantic_consistency(fund_record: dict) -> dict:
+    """Valida TODAS las reglas de consistencia semántica.
+
+    PURA — no emite logging. El logging es responsabilidad exclusiva del wrapper
+    apply_semantic_validation. Ver SPRINT_A1.b sección 5.2 (logging duplicado).
+
+    Args:
+        fund_record: dict con todos los atributos del fondo.
+
+    Returns:
+        {
+            'is_valid': bool,
+            'critical_errors': list[dict],
+            'warnings': list[dict],
+            'corrected_record': dict,
+        }
+    """
+    critical_errors: list = []
+    warnings: list = []
+    cr = fund_record.copy()
+
+    # PURA: isin no se usa para logging interno (ver docstring)
+
+    # --- CRÍTICAS (auto-corrección) ---
+
+    # INTER-1: Strategy ↔ Replication_Method
+    val, msg = validate_strategy_replication(
+        cr.get("Strategy"), cr.get("Replication_Method")
+    )
+    if msg:
+        critical_errors.append({"rule": "Strategy-Replication", "message": msg})
+        cr["Replication_Method"] = val
+
+    # INTER-2: Accumulation ↔ Distribution (BL-32: nueva firma 3-tupla)
+    val_ap, val_df, msg = validate_accumulation_distribution(
+        cr.get("Accumulation_Policy"), cr.get("Distribution_Frequency")
+    )
+    if msg:
+        if msg.startswith("WARNING"):
+            warnings.append({"rule": "Accumulation-Distribution", "message": msg})
+        else:
+            critical_errors.append({"rule": "Accumulation-Distribution", "message": msg})
+            cr["Accumulation_Policy"] = val_ap
+            cr["Distribution_Frequency"] = val_df
+
+    # INTER-3: Profile ↔ SRRI
+    val, msg = validate_profile_srri(
+        cr.get("Profile"), cr.get("SRRI")
+    )
+    if msg:
+        if "WARNING" in msg:
+            warnings.append({"rule": "Profile-SRRI", "message": msg})
+        else:
+            critical_errors.append({"rule": "Profile-SRRI", "message": msg})
+            cr["Profile"] = val
+
+    # INTER-4 (Nature → Type): RETIRADO en v20 (§8-bis Q3). Type se repropuso a
+    # Vehicle_Structure (eje ortogonal); la restricción ya no aplica.
+
+    # INTER-5: Nature → Family (con auto-corrección P07)
+    ok, msg = validate_nature_family_coherence(
+        cr.get("Fund_Nature"), cr.get("Family")
+    )
+    if not ok:
+        critical_errors.append({"rule": "Nature-Family", "message": msg})
+        # P07: Auto-corrección — asignar Family por defecto de la Nature
+        _default_family = _DEFAULT_FAMILY_BY_NATURE.get(cr.get("Fund_Nature"))
+        if _default_family:
+            cr["Family"] = _default_family
+            critical_errors[-1]["message"] += f" -> corregido a '{_default_family}'"
+
+    # INTER-6: Universe → Sector/Geography
+    ok, issues = validate_universe_completeness(
+        cr.get("Investment_Universe"),
+        cr.get("Sector_Focus"),
+        cr.get("Geography"),
+    )
+    if not ok:
+        for issue in issues:
+            warnings.append({"rule": "Universe-Completeness", "message": issue})
+
+    # --- WARNINGS (no auto-corrección) ---
+
+    # INTER-7
+    status, msg = validate_leverage_profile(
+        cr.get("Profile"), cr.get("Leverage_Used")
+    )
+    if status == "WARNING":
+        warnings.append({"rule": "Leverage-Profile", "message": msg})
+
+    # INTER-8
+    status, msg = validate_esg_sfdr(
+        cr.get("Is_ESG"), cr.get("Sfdr_Article")
+    )
+    if status == "WARNING":
+        warnings.append({"rule": "ESG-SFDR", "message": msg})
+
+    # INTER-9
+    status, msg = validate_theme_sector_coherence(
+        cr.get("Theme"), cr.get("Sector_Focus")
+    )
+    if status == "WARNING":
+        warnings.append({"rule": "Theme-Sector", "message": msg})
+
+    # INTER-10 (BL-52: auto-corrección Country→Regional cuando Geography es región)
+    status, msg, corrected_univ = validate_geography_universe(
+        cr.get("Geography"), cr.get("Investment_Universe")
+    )
+    if status == "CORRECTED":
+        cr["Investment_Universe"] = corrected_univ
+        critical_errors.append({"rule": "Geography-Universe", "message": msg})
+    elif status == "WARNING":
+        warnings.append({"rule": "Geography-Universe", "message": msg})
+
+    # ----------------------------------------------------------------
+    # BL-30: INTER-11 — Investment_Focus vs Sector_Focus (auto-corrección)
+    # Si Sector_Focus está poblado, Investment_Focus no puede ser 'Broad'.
+    # Root cause: ambas columnas asignadas en rutas independientes sin cruce.
+    # Acción: si Sector_Focus presente → Investment_Focus='Sector'.
+    # ----------------------------------------------------------------
+    _sf = cr.get("Sector_Focus")
+    _if = cr.get("Investment_Focus")
+    if _sf is not None and _if == "Broad":
+        cr["Investment_Focus"] = "Sector"
+        critical_errors.append({
+            "rule": "InvestmentFocus-SectorFocus",
+            "message": (
+                f"Investment_Focus corregido 'Broad'→'Sector' "
+                f"porque Sector_Focus='{_sf}' está poblado"
+            ),
+        })
+
+    # ----------------------------------------------------------------
+    # BL-31: INTER-12 — Currency_Hedged vs Hedging_Policy (auto-corrección)
+    # Si ambos están poblados y son contradictorios, Hedging_Policy prevalece
+    # (extraída del texto KIID, más fiable que el nombre).
+    # ----------------------------------------------------------------
+    _ch = cr.get("Currency_Hedged")
+    _hp = cr.get("Hedging_Policy")
+    if _ch is not None and _hp is not None:
+        _hp_as_ch = "Hedged" if _hp == "HEDGED" else "Unhedged"
+        if _ch != _hp_as_ch:
+            cr["Currency_Hedged"] = _hp_as_ch
+            critical_errors.append({
+                "rule": "CurrencyHedged-HedgingPolicy",
+                "message": (
+                    f"Currency_Hedged corregido '{_ch}'→'{_hp_as_ch}' "
+                    f"por coherencia con Hedging_Policy='{_hp}'"
+                ),
+            })
+
+    # ----------------------------------------------------------------
+    # BL-33: INTER-13 — Investment_Universe NULL por naturaleza (fallback)
+    # Para naturalezas con universo inequívoco cuando no hay señal de nombre/KIID.
+    # Solo se aplica si Investment_Universe es NULL después de todas las capas.
+    # ----------------------------------------------------------------
+    _DEFAULT_UNIVERSE_BY_NATURE: dict = {
+        # v20 (§2A.1 #5): 'Liquidity' eliminado. Monetario/RF Corto sin señal
+        # geográfica → 'Global' (liquidez indiferenciada). La clase MMF vive en
+        # MMF_Structure y la duración en Duration_Profile.
+        "Monetario":              "Global",
+        "Renta Fija Corto Plazo": "Global",
+    }
+    if cr.get("Investment_Universe") is None:
+        _nature = cr.get("Fund_Nature")
+        _default_universe = _DEFAULT_UNIVERSE_BY_NATURE.get(_nature)
+        if _default_universe:
+            cr["Investment_Universe"] = _default_universe
+            critical_errors.append({
+                "rule": "InvestmentUniverse-NatureFallback",
+                "message": (
+                    f"Investment_Universe='{_default_universe}' inferido "
+                    f"por defecto desde Fund_Nature='{_nature}'"
+                ),
+            })
+        # Para RV, Mixtos y RF Flexible sin señal → 'Global' como fallback
+        elif _nature in ("Renta Variable", "Mixtos", "Renta Fija Flexible",
+                         "Alternativo"):
+            # Solo aplicar si Geography es NULL también (sin info de ningún tipo)
+            if cr.get("Geography") is None and cr.get("Sector_Focus") is None:
+                # BL-LANG-EN-FIX (2026-05-18): antes de asumir Global, intentar
+                # inferir desde el nombre del fondo (cubre OCR con puntos como
+                # "EMERG.MARKETS" que detect_geography() no captura por el punto).
+                _fname_inter13 = (cr.get("Fund_Name") or "").lower()
+                _emerg_signals = [
+                    "emerg", "emerging", "emergentes", "emergent",
+                    "frontier", "em mkt", "em mark", "em eq",
+                ]
+                if any(sig in _fname_inter13 for sig in _emerg_signals):
+                    # v20: 'Emergentes' no es geografía espacial → Global espacial
+                    # + eje desarrollo Emerging. Universe Global (coherente con
+                    # Geography=Global por INTER-10).
+                    cr["Investment_Universe"] = "Global"
+                    cr["Geography"] = "Global"
+                    cr["Development_Status"] = "Emerging"
+                    warnings.append({
+                        "rule": "InvestmentUniverse-NatureFallback",
+                        "message": (
+                            f"Geography='Global' / Development_Status='Emerging' "
+                            f"inferidos desde nombre del fondo (señal emergentes)"
+                        ),
+                    })
+                else:
+                    cr["Investment_Universe"] = "Global"
+                    warnings.append({
+                        "rule": "InvestmentUniverse-NatureFallback",
+                        "message": (
+                            f"Investment_Universe='Global' inferido por defecto "
+                            f"(sin Geography ni Sector_Focus) para Nature='{_nature}'"
+                        ),
+                    })
+
+
+    for col, value in fund_record.items():
+        if col in ALLOWED_VALUES_BY_COLUMN and value is not None:
+            if value not in ALLOWED_VALUES_BY_COLUMN[col]:
+                warnings.append({
+                    "rule": "Allowed-Values",
+                    "message": f"{col}='{value}' no está en valores permitidos",
+                })
+
+    # FUNCIÓN PURA — sin logging interno (Sprint A.1.b sección 5.2).
+    # El logging es responsabilidad exclusiva del wrapper apply_semantic_validation.
+    # Eliminar las líneas de logger.info/warning que causaban duplicación ([???] + [NOMBRE]).
+
+    return {
+        "is_valid": len(critical_errors) == 0,
+        "critical_errors": critical_errors,
+        "warnings": warnings,
+        "corrected_record": cr,
+    }
+
+
+# =====================================================
+# BL-56: Normalización post-characterize (Principio #2 DRY)
+# =====================================================
+
+def apply_post_characterize_normalization(classification: dict) -> dict:
+    """
+    Aplica TODAS las normalizaciones lingüísticas centralizadas
+    post-characterize. Punto único de invocación desde pipeline (BL-56).
+
+    Cumple con Principio #2 (DRY): un único punto donde se ejecutan
+    todas las traducciones a idioma objetivo (Principio #8).
+    Solo actúa sobre campos no-None; no sobreescribe NULL deliberado.
+
+    Normaliza:
+      - Sector_Focus  → normalize_sector_focus()  (LEGACY + pass-through ES)
+      - Type          → TYPE_TRANSLATION_MAP       (EN→ES + excepciones)
+      - Family        → FAMILY_TRANSLATION_MAP     (EN→ES + excepciones)
+      - Theme         → no se traduce (ya en inglés canónico por diseño)
+      - Subtype       → no se traduce (multi-idioma por diseño, BL-53)
+
+    Logging (Sprint A.1.b sección 7.2c): emite WARNING cuando una traducción
+    modifica el valor — señal de que un emisor anterior dejó valor en idioma
+    incorrecto (bug latente).
+    """
+    isin = classification.get("ISIN", "???")
+
+    if classification.get("Sector_Focus"):
+        original = classification["Sector_Focus"]
+        normalized = normalize_sector_focus(original)
+        if normalized != original:
+            logger.warning(
+                "[%s] [NORM-Sector_Focus] Traducción aplicada: '%s' → '%s' "
+                "(emisor anterior dejó valor en idioma incorrecto)",
+                isin, original, normalized,
+            )
+        classification["Sector_Focus"] = normalized
+
+    if classification.get("Type"):
+        original = classification["Type"]
+        translated_type = TYPE_TRANSLATION_MAP.get(original)
+        if translated_type is not None and translated_type != original:
+            logger.warning(
+                "[%s] [NORM-Type] Traducción aplicada: '%s' → '%s' "
+                "(emisor anterior dejó valor en idioma incorrecto)",
+                isin, original, translated_type,
+            )
+        if translated_type is not None:
+            classification["Type"] = translated_type
+
+    if classification.get("Family"):
+        original = classification["Family"]
+        translated_family = FAMILY_TRANSLATION_MAP.get(original)
+        if translated_family is not None and translated_family != original:
+            logger.warning(
+                "[%s] [NORM-Family] Traducción aplicada: '%s' → '%s' "
+                "(emisor anterior dejó valor en idioma incorrecto)",
+                isin, original, translated_family,
+            )
+        if translated_family is not None:
+            classification["Family"] = translated_family
+
+    return classification
+
+
+# =====================================================
+# Validación semántica obligatoria (Principio #9)
+# =====================================================
+
+# ============================================================
+# v20 — DERIVACIÓN CENTRALIZADA DE ATRIBUTOS DE DOMINIO
+# (root-cause #1 + DRY #2 + R-1). Punto ÚNICO: se invoca al inicio de
+# apply_semantic_validation, que TODOS los bloques (incluida la delegación de
+# restantes y sus paths de fallback) ejecutan al final. Lee las señales legacy
+# que los bloques ya emiten (Type, Subtype, Geography-ES, Family, Profile) + el
+# nombre, y deriva las columnas v20:
+#   Geography(EN) · Development_Status · Vehicle_Structure · MMF_Structure ·
+#   Alt_Strategy · Payoff_Profile · Duration_Profile · Credit_Quality ·
+#   Liquidity_Profile · Profile (refinado por eje Fund_Nature).
+# Idempotente (re-ejecutar produce el mismo resultado → seguro en re-runs, §C-3).
+# NO inventa: aplica estándares de gestión de activos (UCITS KIID / PRIIPs KID).
+# ============================================================
+
+# --- Geografía espacial ES→EN (el eje desarrollo va a Development_Status) ---
+_GEO_ES_TO_EN: dict = {
+    "Europa": "Europe", "Global": "Global", "EEUU": "North America",
+    "Asia": "Asia-Pacific", "China": "China", "Japón": "Japan",
+    "India": "India", "Latinoamérica": "Latin America",
+    "Europa del Este": "Eastern Europe",
+    # "Emergentes" NO es geografía espacial → Global (o MEA si el nombre lo indica)
+}
+_EN_GEOGRAPHIES = frozenset({
+    "Global", "Europe", "North America", "Asia-Pacific", "Japan", "China",
+    "India", "Latin America", "Eastern Europe", "Middle East & Africa",
+})
+_GEO_EMERGING = frozenset({"China", "India", "Latin America",
+                           "Eastern Europe", "Middle East & Africa"})
+_GEO_DEVELOPED = frozenset({"Europe", "North America", "Japan"})
+
+_PROFILE_ORDINAL = {"Conservador": 0, "Moderado": 1, "Dinámico": 2, "Agresivo": 3}
+_ORDINAL_PROFILE = {0: "Conservador", 1: "Moderado", 2: "Dinámico", 3: "Agresivo"}
+# Eje Fund_Nature: (floor, cap) ordinal del perfil de riesgo (institutional baseline)
+_PROFILE_BOUNDS_BY_NATURE = {
+    "Monetario":              (0, 0),   # capital preservation puro
+    "Renta Fija Corto Plazo": (0, 1),
+    "Renta Fija Flexible":    (1, 2),
+    "Mixtos":                 (0, 2),
+    "Renta Variable":         (1, 3),   # min-vol → Moderado; SRRI7 → Agresivo
+    "Alternativo":            (1, 2),
+    "Estructurado":           (1, 2),
+    "Restantes":              (0, 3),   # sin restricción
+}
+
+_ALT_STRATEGY_MAP = {
+    "Long/Short":                 "Long/Short",
+    "Market Neutral":             "Market Neutral",
+    "Global Macro":               "Global Macro",
+    "Relative Value / Arbitrage": "Relative Value/Arbitrage",
+    "Volatility Target":          "Volatility Target",
+}
+
+# §2A.1 #11: Exposure_Bias v20 = eje DIRECCIONAL puro. Los factores de RF
+# (Duration/Credit/Income/Liquidity/Rate Reset Bias) ya viven en
+# Duration_Profile/Credit_Quality → colapsan a 'Long Only'.
+# Style_Profile (KEEP): 'Risk Control'/'Tactical' no están en el set v20 →
+# remap a 'Strategic Allocation'.
+_STYLE_LEGACY_REMAP = {
+    "Risk Control": "Strategic Allocation",
+    "Tactical":     "Strategic Allocation",
+    "Defensivo":    None,   # 'Defensivo' es perfil de riesgo, no estilo → None
+}
+
+# AUDIT v20: Family ahora gobernada. Remap de literales legacy emitidos inline
+# por los bloques hacia el set estándar (single source = classify_utils).
+_FAMILY_LEGACY_REMAP = {
+    "Systematic":  "Absolute Return",   # estrategia sistemática = familia AR
+    "Lifecycle":   "Target Date",
+    "Retirement":  "Target Date",
+}
+
+
+def _derive_geography_en(geo_es, name_l):
+    """ES→EN espacial. 'Emergentes' → MEA si el nombre lo indica, si no Global."""
+    if geo_es in _EN_GEOGRAPHIES:          # ya EN (idempotencia)
+        return geo_es
+    if geo_es == "Emergentes":
+        if any(k in name_l for k in ["mena", "middle east", "africa", "gcc", "gulf"]):
+            return "Middle East & Africa"
+        return "Global"
+    return _GEO_ES_TO_EN.get(geo_es)       # None si geo_es es None
+
+
+def derive_development_status(geo_es, geo_en, name_l):
+    """Eje de desarrollo (Developed/Emerging/Frontier/Global/Mixed)."""
+    if any(k in name_l for k in ["frontier", "frontera"]):
+        return "Frontier"
+    if geo_es == "Emergentes" or any(k in name_l for k in [
+        "emerging", "emergentes", "emergent", "em mkt", "emerg mkt",
+        "emrg", "emer mkt", "mercados emergentes",
+    ]):
+        return "Emerging"
+    if geo_en in _GEO_EMERGING:
+        return "Emerging"
+    if geo_en in _GEO_DEVELOPED:
+        return "Developed"
+    return "Global/Mixed"                  # Global, Asia-Pacific (mixto) o desconocido
+
+
+def derive_vehicle_structure(nature, legacy_type, legacy_subtype, name_l):
+    """Forma legal/estructural del vehículo (no clase de activo)."""
+    st = legacy_subtype or ""
+    ty = legacy_type or ""
+    if st == "ETF" or "etf" in name_l:
+        return "ETF"
+    if nature == "Monetario":
+        return "Money Market Fund"
+    if nature == "Estructurado" or ty in ("Structured", "Capital Protegido"):
+        return "Structured Product"
+    if ty == "Fondo de Fondos" or any(k in name_l for k in [
+        "fund of funds", "fof", "fondo de fondos",
+    ]):
+        return "Fund of Funds"
+    return "Open-End UCITS"
+
+
+def derive_mmf_structure(nature, legacy_subtype):
+    """Clase regulatoria MMF 2017/1131. Solo aplica a Monetario."""
+    if nature != "Monetario":
+        return "Not Applicable"
+    st = legacy_subtype or ""
+    if st in ("CNAV", "LVNAV", "VNAV"):
+        return st
+    return "Standard MMF"
+
+
+def derive_alt_strategy(nature, family, legacy_subtype):
+    """Estrategia alternativa. Solo aplica a Alternativo."""
+    if nature != "Alternativo":
+        return "Not Applicable"
+    st = legacy_subtype or ""
+    if st in _ALT_STRATEGY_MAP:
+        return _ALT_STRATEGY_MAP[st]
+    if (family or "") in ("Real Assets",):  # Real Assets/Commodities no son estrategia
+        return "Not Applicable"
+    return "Opportunistic"                  # AR sin estrategia específica
+
+
+def derive_payoff_profile(nature, legacy_type, legacy_subtype, name_l):
+    """Perfil de payoff estructurado."""
+    if "autocall" in name_l or legacy_subtype == "Autocallable":
+        return "Autocallable"
+    if (legacy_type == "Capital Protegido"
+            or any(k in name_l for k in ["capital protec", "guaranteed",
+                                         "capital guarant", "protected"])):
+        return "Capital Protected"
+    if any(k in name_l for k in ["fixed coupon", "fixed cpn", "fixed band", "cpn band"]):
+        return "Fixed Coupon Band"
+    return "Not Applicable"
+
+
+def derive_duration_profile(nature, name_l):
+    """Banda de duración de renta fija (años, baseline Morningstar/sector).
+    Ultra-Short<1 · Short 1–3.5 · Intermediate 3.5–6 · Long>6 · Flexible(unconstrained).
+    Solo FI/Monetario; el resto Not Applicable."""
+    if nature == "Monetario":
+        return "Ultra-Short"               # WAM < 1 año
+    if nature == "Renta Fija Corto Plazo":
+        if any(k in name_l for k in ["ultra short", "ult sh", "ul sh", "0-1",
+                                     "enhanced cash", "money plus"]):
+            return "Ultra-Short"
+        return "Short"
+    if nature == "Renta Fija Flexible":
+        if any(k in name_l for k in ["unconstrained", "flexible", "dynamic", "dinamic",
+                                     "strategic", "total return", "absolute return",
+                                     "opportunistic", "tactical"]):
+            return "Flexible"
+        if any(k in name_l for k in ["long dur", "long-term", "long term"]):
+            return "Long"
+        if any(k in name_l for k in ["short", "low dur", "ultra"]):
+            return "Short"
+        if any(k in name_l for k in ["intermediate", "aggregate", "core"]):
+            return "Intermediate"
+        return "Flexible"                  # mandato flexible por defecto
+    return "Not Applicable"
+
+
+def derive_credit_quality(nature, name_l):
+    """Calidad crediticia (baseline institucional por rating medio de cartera):
+    IG = media ≥ BBB-/Baa3 · HY = media ≤ BB+/Ba1 ·
+    Mixed = mandato cruza el umbral (crossover/flexible, sin sleeve ≥ ~80%).
+    Aproximada por señales de nombre/mandato. Devuelve None para Restantes."""
+    if nature in ("Renta Variable", "Mixtos", "Estructurado", "Alternativo"):
+        return "Not Applicable"
+    if nature == "Monetario":
+        return "Investment Grade"          # MMF: alta calidad por regulación
+    if nature == "Renta Fija Corto Plazo":
+        if any(k in name_l for k in ["high yield", "high-yield", " hy "]):
+            return "High Yield"
+        return "Investment Grade"          # crédito corto predominante IG
+    if nature == "Renta Fija Flexible":
+        if any(k in name_l for k in ["high yield", "high-yield", " hy "]):
+            return "High Yield"
+        if any(k in name_l for k in ["crossover", "flexible", "strategic",
+                                     "unconstrained", "total return", "opportunistic",
+                                     "multi sector", "multi-sector"]):
+            return "Mixed"
+        if any(k in name_l for k in ["investment grade", " ig ", "government",
+                                     "sovereign", "govt", "aggregate", "core bond"]):
+            return "Investment Grade"
+        return "Mixed"                     # crédito flexible por defecto cruza el umbral
+    return None                            # Restantes / no determinable → NULL
+
+
+def derive_liquidity_profile(name_l):
+    """Frecuencia de contratación (dealing). UCITS retail (KIID) → Daily por norma
+    (liquidez mínima reglamentaria; >95% diaria). Degradar solo con señal explícita."""
+    if any(k in name_l for k in ["weekly", "semanal"]):
+        return "Weekly"
+    if any(k in name_l for k in ["fortnight", "bi-weekly", "biweekly", "quincenal"]):
+        return "Bi-Weekly"
+    if any(k in name_l for k in ["monthly dealing", "monthly liquidity", "mensual"]):
+        return "Monthly"
+    return "Daily"
+
+
+def _rv_style_cascade(name_l):
+    if any(k in name_l for k in ["low vol", "minimum volatility", "minimum vol",
+                                 "min vol", "min volatil"]):
+        return "Low Volatility"
+    if any(k in name_l for k in ["income", "dividend", "dividende", "dividends"]):
+        return "Income"
+    if "quality" in name_l:
+        return "Quality"
+    if any(k in name_l for k in ["growth", "wachstum", "crecim"]):
+        return "Growth"
+    if "value" in name_l:
+        return "Value"
+    if any(k in name_l for k in ["defensive", "risk control", "risk managed",
+                                 "capital preservation"]):
+        return "Defensivo"
+    return None
+
+
+def _rff_style_cascade(name_l):
+    if any(k in name_l for k in ["high yield", "hy", "opportunistic", "opportunist",
+                                 "credit opport", "yield enhancement"]):
+        return "Income"
+    if any(k in name_l for k in ["income", "rend", "rendement"]):
+        return "Income"
+    if any(k in name_l for k in ["low volatility", "low vol", "capital preservation",
+                                 "defensiv", "securite"]):
+        return "Low Volatility"
+    return "Defensivo"
+
+
+def _alt_style_cascade(name_l):
+    if any(k in name_l for k in ["relative value", "arbitrage", "arbit",
+                                 "arb strat", "arb str"]):
+        return "Defensivo"
+    if "market neutral" in name_l:
+        return "Defensivo"
+    if any(k in name_l for k in ["long short", "long/short", "long-short"]):
+        return "Defensivo"
+    if any(k in name_l for k in ["global rates", "gl rates"]):
+        return "Defensivo"
+    if any(k in name_l for k in ["multi strategy", "multi-strategy", "multiassut"]):
+        return "Defensivo"
+    if "global macro" in name_l or "adagio" in name_l:
+        return "Momentum"
+    if any(k in name_l for k in ["managed futures", "cta", "systematic"]):
+        return "Momentum"
+    if any(k in name_l for k in ["real estate", "property"]):
+        return "Defensivo"
+    if "infrastructure" in name_l:
+        return "Defensivo"
+    if any(k in name_l for k in ["commodities", "commodity", "gold", "precious metals"]):
+        return None
+    if any(k in name_l for k in ["abs ret", "absret", "st absret", "absolute return"]):
+        return "Defensivo"
+    return "Defensivo"
+
+
+def derive_style_profile(nature, name_l, kiid_style=None):
+    """Style_Profile centralizado (AUDIT v20). Réplica exacta de las cascadas que
+    antes vivían inline en los bloques, con precedencia:
+        cascada-por-naturaleza(nombre) > estilo-KIID > detect_style_profile(nombre).
+    El remap final (Defensivo→None, Risk Control/Tactical→Strategic Allocation) se
+    aplica aquí (single source). Mixtos → siempre 'Strategic Allocation' tras remap."""
+    if nature == "Mixtos":
+        return "Strategic Allocation"
+    if nature == "Renta Variable":
+        s = _rv_style_cascade(name_l)
+    elif nature == "Renta Fija Flexible":
+        s = _rff_style_cascade(name_l)
+    elif nature == "Renta Fija Corto Plazo":
+        s = "Income" if any(k in name_l for k in
+                            ["income", "enhanced cash", "money plus"]) else None
+    elif nature == "Alternativo":
+        s = _alt_style_cascade(name_l)
+    else:
+        s = None   # Monetario / Estructurado / Restantes → fallback
+    if s is None or s == "Defensivo":
+        if kiid_style and kiid_style != "Defensivo":
+            s = kiid_style
+        else:
+            s = detect_style_profile(name_l)
+    return _STYLE_LEGACY_REMAP.get(s, s)
+
+
+def derive_exposure_bias(nature, alt_strategy, legacy_exposure, name_l):
+    """Eje direccional v20 (Long Only/Long-Short/Market Neutral/Net Short/N-A).
+    Los sesgos de RF/liquidez legacy colapsan a 'Long Only' (su info ya está en
+    Duration_Profile/Credit_Quality)."""
+    le = legacy_exposure or ""
+    if any(k in name_l for k in ["bear ", "net short", "short bias"]):
+        return "Net Short"
+    if (alt_strategy == "Long/Short" or le == "Long/Short"
+            or any(k in name_l for k in ["long short", "long/short", "long-short"])):
+        return "Long/Short"
+    if alt_strategy == "Market Neutral" or "market neutral" in name_l:
+        return "Market Neutral"
+    if nature == "Estructurado":
+        return "Not Applicable"
+    if nature == "Alternativo" and alt_strategy == "Global Macro":
+        return "Long/Short"
+    return "Long Only"
+
+
+def _refine_profile(profile, nature):
+    """Profile = clamp(profile_del_bloque, floor_nature, cap_nature). Dos ejes
+    (SRRI ya codificado por el bloque en `profile`; Nature aporta floor/cap)."""
+    bounds = _PROFILE_BOUNDS_BY_NATURE.get(nature)
+    if bounds is None:
+        return profile
+    floor, cap = bounds
+    base = _PROFILE_ORDINAL.get(profile, floor)   # None/desconocido → floor
+    base = max(floor, min(cap, base))
+    return _ORDINAL_PROFILE[base]
+
+
+def derive_v20_attributes(record: dict, fund_name: str) -> dict:
+    """Deriva las columnas de dominio v20 desde las señales legacy de los
+    bloques + el nombre. Idempotente. Único punto de verdad (R-1, #2)."""
+    name_l = (fund_name or "").lower()
+    nature = record.get("Fund_Nature")
+    # Señales transitorias de bloque (namespace _signal_*); fallback a las columnas
+    # legacy Type/Subtype para rutas externas que aún las usan (p.ej. BL-62).
+    legacy_type = record.get("_signal_type") or record.get("Type")
+    legacy_subtype = record.get("_signal_subtype") or record.get("Subtype")
+    family = record.get("Family")
+
+    # Geografía ES→EN + eje de desarrollo (split de la antigua Geography)
+    geo_es = record.get("Geography")
+    geo_en = _derive_geography_en(geo_es, name_l)
+    record["Geography"] = geo_en
+    record["Development_Status"] = derive_development_status(geo_es, geo_en, name_l)
+
+    # Estructura de vehículo + columnas estructurales especializadas
+    record["Vehicle_Structure"] = derive_vehicle_structure(
+        nature, legacy_type, legacy_subtype, name_l)
+    record["MMF_Structure"] = derive_mmf_structure(nature, legacy_subtype)
+    record["Alt_Strategy"] = derive_alt_strategy(nature, family, legacy_subtype)
+    record["Payoff_Profile"] = derive_payoff_profile(
+        nature, legacy_type, legacy_subtype, name_l)
+
+    # Renta fija: duración + calidad crediticia
+    record["Duration_Profile"] = derive_duration_profile(nature, name_l)
+    _cq = derive_credit_quality(nature, name_l)
+    if _cq is not None:
+        record["Credit_Quality"] = _cq
+
+    # Liquidez de contratación (UCITS → Daily por defecto)
+    record["Liquidity_Profile"] = derive_liquidity_profile(name_l)
+
+    # Exposure_Bias direccional (§2A.1 #11) + remap legacy de Style_Profile
+    record["Exposure_Bias"] = derive_exposure_bias(
+        nature, record.get("Alt_Strategy"), record.get("Exposure_Bias"), name_l)
+    _sp = record.get("Style_Profile")
+    if _sp in _STYLE_LEGACY_REMAP:
+        record["Style_Profile"] = _STYLE_LEGACY_REMAP[_sp]
+    # Style_Profile centralizado (AUDIT v20): el engine es la fuente única; la
+    # cascada por naturaleza vive aquí, no en los bloques.
+    record["Style_Profile"] = derive_style_profile(nature, name_l, _sp)
+    # Family finalizada centralmente (AUDIT v20): remap de literales legacy.
+    _fam = record.get("Family")
+    if _fam in _FAMILY_LEGACY_REMAP:
+        record["Family"] = _FAMILY_LEGACY_REMAP[_fam]
+
+    # Profile refinado por eje Nature (floor/cap institucional)
+    record["Profile"] = _refine_profile(record.get("Profile"), nature)
+
+    return record
+
+
+def apply_semantic_validation(
+    record: dict[str, str | None],
+    fund_name: str,
+) -> dict[str, str | None]:
+    """Aplica validate_all_semantic_consistency con logging exhaustivo.
+
+    Punto único de logging para validación semántica (post-fix Sprint A.1.b).
+    La función master validate_all_semantic_consistency es pura (sin logging).
+    """
+    isin = record.get("ISIN", fund_name)  # fallback al fund_name si falta ISIN
+    # v20: derivación centralizada de atributos de dominio ANTES de validar,
+    # para que el validador vea Geography(EN) + las columnas nuevas (R-1, #2).
+    record = derive_v20_attributes(record, fund_name)
+    validation = validate_all_semantic_consistency(record)
+
+    if not validation["is_valid"]:
+        for err in validation["critical_errors"]:
+            logger.info(
+                "[%s] AUTO-CORRECCIÓN %s: %s",
+                isin, err["rule"], err["message"],
+            )
+        record = validation["corrected_record"]
+
+    for warn in validation["warnings"]:
+        logger.warning("[%s] %s: %s", isin, warn["rule"], warn["message"])
+
+    return record
+
+# =====================================================
+# BL-62: Inferencia léxica Family/Type post-BL-44
+# Cuando BL-44 reclasifica Nature → 'Restantes', los
+# valores heredados de Type/Family son falsos por
+# construcción (reflejan la naturaleza errónea original).
+# Estas funciones re-infieren Family/Type desde cero
+# usando el nombre del fondo.
+#
+# Restricciones aplicadas:
+#   R-1: catálogo centralizado aquí (DRY — un único punto de verdad)
+#   R-4: actúa sobre fund_record post-corrección, no sobre BD
+#   R-7: tests en tests/test_bl44_bl62_bl64_sprint_a1.py
+# =====================================================
+
+# Catálogo léxico canónico (orden importa: específicos ANTES que genéricos)
+# Cada entrada: (regex_str, target_family, target_type)
+# BL-LANG-EN (2026-05-09): Family/Type en inglés (idioma objetivo).
+LEXICAL_FAMILY_INFERENCE_BL62: list[tuple[str, str, str]] = [
+    # === High Yield ===
+    (r'HIGH\s*YI|\bHY\b|GBL?\s*HY',
+     'High Yield', 'Flexible Fixed Income'),
+    # === Inflation-Linked ===
+    (r'INFL',
+     'Inflation-Linked', 'Flexible Fixed Income'),
+    # === Emerging Market Debt: China, EM genérico, Asia ===
+    (r'CHINA\s+(BOND|FIX)|CHINA\.?\s*BON',
+     'Emerging Market Debt', 'Flexible Fixed Income'),
+    (r'\bEM\s+(BOND|DEBT|MARK|CURR|MK|G\s+BON|MKT|DURAT)|EME\s+MK|EMERG\s+M|'
+     r'EMERGING\s+M|EMERG\s+DBT|EMRG|EMER\.?\s*M|EMER\.MKT|\bBN\s+EM\b',
+     'Emerging Market Debt', 'Flexible Fixed Income'),
+    (r'ASIA[NS]?\s+(BOND|BON|LOC|FLEX|OPPO|TIGER)|ASIAN?\s+LOC|ASIA\s+LOC|'
+     r'GBL?.*EM\b|TEMPLETON.*BON\b|TEMPLETON\s+ASIA|TEMPLETON\s+EMER|'
+     r'GAM\s+STR\s+EM|GL?\s+RATES',
+     'Emerging Market Debt', 'Flexible Fixed Income'),
+    # === Absolute Return ===
+    (r'ABS\s+R|ABSOLUTE\s+R|EVENT\s+DRIV|GLOBAL\s+MACRO|\bALPHA\b|'
+     r'GS\s+AB\s+RTRN|AB\s+RTRN|RTRN\s+TRCK',
+     'Absolute Return', 'Absolute Return'),
+    # === Real Assets ===
+    (r'COMMOD|VONTOBEL\s+COMMOD',
+     'Real Assets', 'Commodities'),
+    # === Thematic Equity ===
+    (r'MEDTCH|MEDTECH|SMART\s+FOOD',
+     'Thematic Equity', 'Active Management'),
+    # === BL-62-LEXICAL-EXT (2026-05-09) ===
+    # BGF US SHORT DURATION BOND (LU0171/LU0172/LU2624/LU2812)
+    # LU0172420597: "BGF USD SHRT DUR BND" — USD pegado, no US+espacio
+    (r'USD?\s+(SH\s+DURAT|SH\s+DUR|SHRT?\s+DUR|DOLLAR\s+SH)',
+     'Short-Term Fixed Income', 'Short-Term Fixed Income'),
+    # SISF US DOLLAR LIQUIDITY (LU1133x2)
+    (r'DOLLAR\s+LIQUID|USD\s+LIQUID',
+     'Money Market', 'Money Market'),
+    # SISF E MR DEB TOT RE (LU0177)
+    (r'MR\s+DEB\s+TOT|E\s+MR\s+DEB',
+     'Flexible Fixed Income', 'Total Return'),
+    # GAM LUXURY BRAND/BRANDS (LU0329x4)
+    (r'LUXURY\s+BR',
+     'Thematic Equity', 'Active Management'),
+    # === Income Oriented: ANTES que Multi-Asset genérico ===
+    (r'AMERIC.{0,6}INC|AMER\s+INC|INC\s+P\.|INCM\s+P\.|DYN\s+HIGH\s+INC|'
+     r'INC.*GROW|GLOBAL\s+OPP\s+BOND|MFS\s+GL.*OPP|US\s+SH\s+TERM\s+BOND|'
+     r'DFNSIV.*INC|DEFENSIVE.*INC|MULTI.*INC|MULTIINC|'
+     r'BALANCED\s+INC|GL.*INC\s+PORT|GLOBAL.*INC\s+PORT',
+     'Income Oriented', 'Allocation'),
+    # === Total Return (RF Flexible) ===
+    (r'TOT\s+RET|TOTAL\s+RET|TOTAL\s+RETURN',
+     'Flexible Fixed Income', 'Total Return'),
+    # === Flexible Fixed Income genérico ===
+    (r'EURO\s+BOND|EUROBOND|GLOBAL\s+BOND|GL\s+BOND|'
+     r'AGGREGATE|AGGR\b|CORE\s+BOND|CORE\+|INVEST.*GRADE\s+BOND',
+     'Flexible Fixed Income', 'Flexible Fixed Income'),
+    # === Multi-Asset ===
+    (r'PRDNT\s+WLTH|PRUDENT\s+WEALTH|MULTASST\s+INC|MULT\s+ASST|MULTI\s+ASS|'
+     r'MULTIOPP|MULTI\s+OPP|MULTIOPPORT|GLO\s+RESILI|RESILIENT|EQUILIB|'
+     r'GLO?\.?\s*PERSPECTIVES|GLOBAL\s+PERSPECTIVES|GLO\s+MA|GLOBAL\s+MA|'
+     r'FLEX\s+OPP|FLEX\s+PROP|PIONEER\s+FLEX|'
+     r'BAL.*N\s+EUR|BLCED|BALANC|STRATEGY\s+\d|'
+     r'STIFTUNG|STIFT|PATR(IM)?|GL\s+OPTIM|GLOBAL\s+OPTIM',
+     'Multi-Asset', 'Allocation'),
+]
+
+# Pre-compilar para rendimiento
+_BL62_COMPILED: list[tuple[re.Pattern, str, str]] = [
+    (re.compile(pat, re.IGNORECASE), fam, typ)
+    for pat, fam, typ in LEXICAL_FAMILY_INFERENCE_BL62
+]
+
+
+def _infer_family_type_from_name_bl62(
+    fund_name: str,
+) -> tuple[str | None, str | None]:
+    """
+    Infiere (Family, Type) desde el nombre del fondo usando el catálogo
+    LEXICAL_FAMILY_INFERENCE_BL62. Procesa los patrones en orden: el primer
+    match gana (específicos antes que genéricos).
+
+    Args:
+        fund_name: nombre del fondo (mayúsculas o minúsculas — regex es IGNORECASE)
+
+    Returns:
+        (family, type_val) si hay match; (None, None) si no hay patrón identificable.
+    """
+    if not fund_name:
+        return None, None
+    name_u = fund_name.upper()
+    for pattern, family, type_val in _BL62_COMPILED:
+        if pattern.search(name_u):
+            return family, type_val
+    return None, None
+
+
+def propagate_nature_to_restantes_type_family(
+    fund_record: dict,
+    isin: str,
+    log_fn=None,
+) -> dict:
+    """
+    BL-62: re-infiere la Fund_Nature real (y Family/Type) para fondos que
+    BL-44 detectó como incompatibles con su Nature original. El objetivo ya
+    no es asignar Fund_Nature='Restantes' (que no es una naturaleza válida)
+    sino determinar la naturaleza financiera correcta, o dejarla NULL con
+    DQ=WARN si no es determinable.
+
+    Estrategia (según decisión usuario 29-abr-2026, opción A):
+      Fase 2: inferencia léxica desde nombre (LEXICAL_FAMILY_INFERENCE_BL62).
+      Fase 3: residual sin patrón → Family=None, Type=None, DQ_Flag=WARN.
+
+    Marca flags de sobrescritura forzada (_bl62_force_overwrite_*) para que
+    BL-64 en sqlite_writer los aplique sin COALESCE.
+
+    Restricciones:
+      R-2: triple acción documentada (Fase 1 placeholder / Fase 2 léxica / Fase 3 residual).
+      R-4: opera sobre fund_record post-corrección Nature.
+      R-7: tests en tests/test_bl44_bl62_bl64_sprint_a1.py.
+    """
+    fund_name = fund_record.get('Fund_Name', '')
+
+    # Fase 1: re-invocación de bloque (placeholder — requiere refactorización futura)
+    # La arquitectura actual no permite re-invocar el clasificador de bloque
+    # con garantía de idempotencia desde aquí. Se deja como TODO para un sprint
+    # posterior de refactorización que desacople el clasificador del contexto de pipeline.
+    # Para este sprint: comenzar con Fase 2 + Fase 3.
+
+    # Fase 2: inferencia léxica
+    inferred_family, inferred_type = _infer_family_type_from_name_bl62(fund_name)
+
+    if inferred_family is not None:
+        fund_record['Family'] = inferred_family
+        fund_record['Type'] = inferred_type
+        # BL-64: forzar sobrescritura en sqlite_writer (sin COALESCE)
+        fund_record['_bl62_force_overwrite_family'] = True
+        fund_record['_bl62_force_overwrite_type'] = True
+        if log_fn:
+            log_fn(
+                f"  [BL-62] {isin} Family={inferred_family} Type={inferred_type} "
+                f"inferidos léxicamente tras BL-44 → Restantes"
+            )
+        return fund_record
+
+    # Fase 3: residual sin patrón léxico identificable
+    fund_record['Family'] = None
+    fund_record['Type'] = None
+    fund_record['_bl62_force_overwrite_family'] = True
+    fund_record['_bl62_force_overwrite_type'] = True
+    if fund_record.get('Data_Quality_Flag') != 'WARN':
+        fund_record['Data_Quality_Flag'] = 'WARN'
+    if log_fn:
+        log_fn(
+            f"  [BL-62] {isin} sin patrón léxico identificable; "
+            f"Family/Type=NULL; Data_Quality_Flag=WARN"
+        )
+    return fund_record

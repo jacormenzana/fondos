@@ -1,33 +1,81 @@
 # -*- coding: utf-8 -*-
 """
-proyecto1/core/fund_characterizer.py
-=====================================
-Módulo genérico de caracterización secundaria de fondos. v1.0
+proyecto1/core/fund_characterizer.py  — v21
 
-Responsabilidad única: dado (fund_name, kiid_text, fund_nature, srri),
-devolver el dict completo de atributos cualitativos:
-    Profile, Type, Family, Subtype, Style_Profile, Exposure_Bias,
-    Geography, Theme, Is_ESG, Strategy, Benchmark_Type,
-    Market_Cap_Focus, Sector_Focus, Currency_Hedged
+Cambios v21 (2026-04-29):
+  BL-49/DRY  Consolidación DRY de detect_currency_hedged() (Principio #2).
+             Causa raíz: la fase 2 de detección desde texto KIID estaba
+             implementada dos veces de forma independiente:
+               - fund_characterizer.detect_currency_hedged() líneas 557-590
+                 (10 patrones de substring sobre lower())
+               - classify_utils.detect_currency_hedged_from_kiid()
+                 (18 patrones pre-compilados con re.compile, H01-H10 / U01-U08)
+             Fix: la fase 2 (KIID) de detect_currency_hedged() se sustituye
+             por delegación en detect_currency_hedged_from_kiid() de
+             classify_utils. Un único punto de verdad para patrones KIID.
+             La fase 1 (detección por nombre, patrones _HEDGED/_UNHEDGED)
+             permanece intacta — no tiene equivalente en classify_utils.
+             Import classify_utils ampliado: detect_currency_hedged_from_kiid.
 
-Principios de diseño:
-  1. Independiente del bloque de entrada — mismo resultado para el mismo
-     fondo independientemente de si entró por RV, RESTANTES u otro bloque.
-  2. Dispatch por Fund_Nature para atributos dependientes de la naturaleza
-     (Profile, Type, Family) — la lógica específica se concentra aquí.
-  3. Los bloques primarios conservan SOLO la heurística de clasificación
-     de naturaleza (Fund_Nature). Toda caracterización secundaria se
-     delega a este módulo.
-  4. Nunca sobreescribe un valor ya asignado si no es None — el bloque
-     puede pasar pre-asignaciones que tienen precedencia.
+Cambios v20 (2026-04-25):
+  BL-53  detect_sector_focus(): eliminado hardcode 'Real Assets' (inglés).
+         El mapa completo de themes→sectores ahora reside en
+         classify_utils.THEME_TO_SECTOR_FOCUS_MAP (BL-54). Esta función
+         delega en map_theme_to_sector_focus() importada desde classify_utils.
+         Efecto: todos los valores de Sector_Focus emitidos desde este módulo
+         están ahora en español canónico — cumple Principio #8.
+  BL-54  detect_sector_focus() refactorizada para usar el mapa canónico
+         único (Principio #2 DRY). La lógica if/elif previa con 14 entradas
+         queda reemplazada por una delegación a map_theme_to_sector_focus().
+         La firma permanece igual: (name_l, kiid_text=None, theme=None).
 
-Cambios respecto a arquitectura anterior:
-  - Elimina la sección "atributos universales" duplicada de los 6 bloques
-  - Añade Market_Cap_Focus, Sector_Focus, Currency_Hedged como atributos nuevos
-  - Amplía THEMATIC_MAP con variantes en español y nuevos temas (MedTech,
-    Cybersecurity, Megatrends, Sustainability)
-  - Añade detect_theme_from_kiid para cobertura via texto (objetivo: >20%)
-  - Override universal de Fund_Nature='Estructurado' previo a todo bloque
+Cambios v19 (2026-04-19):
+  BL-49  detect_currency_hedged(): fallback al texto KIID cuando el nombre
+         del fondo no aporta señal de cobertura. Solo activa si kiid_text
+         disponible y name_l da None. Prioridad: Unhedged > Hedged para
+         evitar falsos positivos con "hedged" en frases negativas del KIID.
+         Nuevo parámetro opcional kiid_text=None — backward compatible.
+         characterize_fund() propaga kiid_text al llamar detect_currency_hedged().
+
+Cambios v18 (2026-04-13):
+  BL-26  detect_currency_hedged(): "Yes"→"Hedged", "No"→"Unhedged" (Principio #8).
+         +variantes OCR hedge (hgd, eurhdg, usdhdg, gbphdg).
+         +detección explícita "not hedged" / "no hedged".
+  BL-27  detect_market_cap_focus(): +Mid/SMID desde KIID texto, +inferencia
+         desde benchmark_declared. Nuevo parámetro propagado en characterize_fund().
+  BL-28  detect_credit_quality(): "No aplica"→"Not Applicable" (Principio #8).
+         _THEMATIC_THEMES: "Inflación"→"Inflation".
+         THEMATIC_MAP_EXTENDED: "Inflación"→"Inflation".
+  BL-29  _char_rv(): segunda capa detect_style_from_kiid(text_l).
+
+Módulo genérico de caracterización secundaria de fondos.
+
+Cambios v17 respecto a v16:
+  INV-FOCUS-1  Nueva función detect_investment_focus(): dimensión de exposición
+               ortogonal a Investment_Universe (Broad | Sector | Thematic).
+               Investment_Universe pasa a ser puramente geográfico.
+
+  INV-UNI-1    detect_investment_universe() refactorizada: elimina la lógica
+               basada en Theme (Sector/Thematic). Solo deriva de Geography
+               y Fund_Nature.
+
+  SECTOR-P14   detect_sector_focus() recibe `theme` ya calculado como parámetro
+               opcional. Fix al bug P14 donde fondos con tema detectado solo
+               en KIID (no en nombre) obtenían Sector_Focus=NULL.
+
+  SECTOR-GICS  Valores de Sector_Focus renombrados a nomenclatura GICS-ES:
+               "Technology & Innovation" → "Tecnología e Innovación", etc.
+
+  CREDIT-1     Nueva función detect_credit_quality(): detecta calidad crediticia
+               solo para fondos de RF y Mixtos.
+
+  THEME-CG     Theme=NULL semántico reemplazado por "Core/General" para fondos
+               no temáticos procesados. NULL queda reservado para "no procesado".
+
+  PROFILE-4    Profile añade valor "Agresivo" para SRRI=7.
+
+  CHAR-V17     characterize_fund() actualizado: nuevo orden de operaciones,
+               Investment_Focus y Credit_Quality añadidos al dict de resultado.
 """
 
 import re
@@ -42,6 +90,8 @@ try:
         detect_geography_from_kiid, detect_esg_from_kiid,
         detect_style_from_kiid, detect_type_from_kiid,
         _get_obj_bounds, _extract_window,
+        map_theme_to_sector_focus,   # BL-54: mapa canónico Theme→Sector_Focus
+        detect_currency_hedged_from_kiid,  # BL-49/DRY: patrones KIID centralizados
     )
 except ImportError:
     from core.classify_utils import (
@@ -52,99 +102,91 @@ except ImportError:
         detect_geography_from_kiid, detect_esg_from_kiid,
         detect_style_from_kiid, detect_type_from_kiid,
         _get_obj_bounds, _extract_window,
+        map_theme_to_sector_focus,   # BL-54: mapa canónico Theme→Sector_Focus
+        detect_currency_hedged_from_kiid,  # BL-49/DRY: patrones KIID centralizados
     )
 
 
 # =============================================================
-# OVERRIDE UNIVERSAL — ESTRUCTURADO
-# Debe ejecutarse ANTES de cualquier lógica de bloque.
-# Si el texto KIID indica un producto estructurado, la naturaleza
-# es Estructurado independientemente del bloque de entrada.
+# CONSTANTES DE DOMINIO
 # =============================================================
 
-_STRUCTURED_SIGNALS = [
-    "autocallable", "autocall", "auto-callable",
-    "barrier", "knock-in", "knock in",
-    "nota estructurada", "structured note",
-    "capital protected", "capital garantizado",
-    "producto estructurado", "structured product",
-    "certificado de inversión",
-]
+# Temas que implican foco sectorial (inversión en un sector concreto)
+_SECTOR_THEMES: frozenset = frozenset({
+    "Technology", "Artificial Intelligence", "Digital", "Robotics",
+    "Cybersecurity", "Climate / Clean Energy", "Energy", "Water",
+    "Financials", "Mining", "Gold", "Insurance", "Silver Economy",
+    "Mobility", "Consumer Brands", "Consumer / Food & Beverage",
+    "Megatrends", "Healthcare / MedTech", "Biotechnology",
+})
 
+# Temas transversales (no sectoriales — cruzan sectores y geografías)
+_THEMATIC_THEMES: frozenset = frozenset({
+    "Infrastructure", "Real Estate", "Inflation", "Healthcare",  # BL-28: "Inflación" → "Inflation"
+})
 
-def is_structured_product(fund_name: str, kiid_text: Optional[str]) -> bool:
-    """
-    Detecta si el fondo es un producto estructurado.
-    Override universal: precede a cualquier clasificación de bloque.
-    """
-    name_l = (fund_name or "").lower()
-    text_l = (kiid_text or "")[:2000].lower()   # solo cabecera del KIID
-    for sig in _STRUCTURED_SIGNALS:
-        if sig in name_l or sig in text_l:
-            return True
-    return False
+# Geografías de un solo país
+_COUNTRY_GEOS: frozenset = frozenset({
+    "China", "Japón", "India", "Latinoamérica", "Europa del Este", "Rusia",
+    "Italia", "Alemania", "España",
+})
+
+# Geografías regionales
+_REGIONAL_GEOS: frozenset = frozenset({
+    "Europa", "Asia", "Emergentes", "EEUU", "Asia-Pacífico", "Norteamérica",
+})
+
+# Naturalezas de corto plazo / liquidez
+_LIQUIDITY_NATURES: frozenset = frozenset({
+    "Monetario", "Renta Fija Corto Plazo",
+})
+
+# Naturalezas de renta fija donde Credit_Quality es relevante
+_RF_NATURES: frozenset = frozenset({
+    "Renta Fija Flexible", "Renta Fija Corto Plazo", "Monetario", "Mixtos", "Alternativo",
+})
 
 
 # =============================================================
-# THEMATIC_MAP AMPLIADO
-# Extiende el original de classify_utils con:
-#   - Variantes en español
-#   - MedTech / Medical Technology
-#   - Cybersecurity / Ciberseguridad
-#   - Megatrends / Megatendencias
-#   - Sustainability (genérico)
-#   - Consumer Staples / Food & Beverage
-#   - Mobility / Transportation
+# THEMATIC MAP EXTENDIDO
+# (igual que v16 — mantenido aquí para independencia del módulo)
 # =============================================================
 
 THEMATIC_MAP_EXTENDED: Dict[str, str] = {
     # Technology
-    "technology": "Technology", "tech": "Technology",
-    "tecnología": "Technology", "tecnologia": "Technology",
-    "smart ind tec": "Technology", "information tech": "Technology",
-    # Artificial Intelligence
+    "technology": "Technology", "tecnología": "Technology", "tech": "Technology",
+    "tecnologia": "Technology",
+    # AI
     "artificial intelligence": "Artificial Intelligence",
-    "artificial intelligenc": "Artificial Intelligence",
     "inteligencia artificial": "Artificial Intelligence",
-    " ai ": "Artificial Intelligence",
-    # Digital / Robotics
-    "digital": "Digital",
-    "robotics": "Robotics", "robotech": "Robotics",
-    "robótica": "Robotics", "robotica": "Robotics",
-    # MedTech / Healthcare
-    "medtech": "Healthcare / MedTech",
-    "medical tech": "Healthcare / MedTech",
-    "medical technology": "Healthcare / MedTech",
-    "healthcare": "Healthcare / MedTech",
-    "health": "Healthcare / MedTech",
-    "wellcare": "Healthcare / MedTech",
-    "salud": "Healthcare / MedTech",
+    "ai fund": "Artificial Intelligence", "a.i.": "Artificial Intelligence",
+    # Digital
+    "digital": "Digital", "digitalization": "Digital",
+    "digitalización": "Digital",
+    # Robotics
+    "robotics": "Robotics", "robótica": "Robotics", "automation": "Robotics",
+    "automatización": "Robotics",
+    # Healthcare / MedTech
+    "medtech": "Healthcare / MedTech", "medical technology": "Healthcare / MedTech",
+    "healthcare": "Healthcare / MedTech", "health": "Healthcare / MedTech",
+    "wellcare": "Healthcare / MedTech", "salud": "Healthcare / MedTech",
     "ciencias de la salud": "Healthcare / MedTech",
     # Biotechnology
     "biotec": "Biotechnology", "biotech": "Biotechnology",
-    "biotecnología": "Biotechnology",
+    "biotecnología": "Biotechnology", "genetic": "Biotechnology",
+    "genomic": "Biotechnology",
     # Cybersecurity
-    "cybersecurity": "Cybersecurity",
-    "ciberseguridad": "Cybersecurity",
-    "cyber security": "Cybersecurity",
-    "digital security": "Cybersecurity",
-    "safety": "Cybersecurity",      # Thematics Safety
+    "cybersecurity": "Cybersecurity", "ciberseguridad": "Cybersecurity",
+    "cyber security": "Cybersecurity", "digital security": "Cybersecurity",
+    "safety": "Cybersecurity",
     # Climate / Clean Energy
-    "climate": "Climate / Clean Energy",
-    "clean energy": "Climate / Clean Energy",
-    "renewable": "Climate / Clean Energy",
-    "energía limpia": "Climate / Clean Energy",
+    "climate": "Climate / Clean Energy", "clean energy": "Climate / Clean Energy",
+    "renewable": "Climate / Clean Energy", "energía limpia": "Climate / Clean Energy",
     "transición energética": "Climate / Clean Energy",
-    "net zero": "Climate / Clean Energy",
-    "low carbon": "Climate / Clean Energy",
+    "net zero": "Climate / Clean Energy", "low carbon": "Climate / Clean Energy",
     # Water
-    # "water" solo válido en nombre — señal demasiado genérica en texto KIID
-    "pictet water": "Water",
-    " water ": "Water",     # con espacios en nombre (evita "waterfall", "underwater")
-    "water fund": "Water",
-    "water eq": "Water",    # water equity
-    "global water": "Water",
-    "clean water": "Water",
+    "pictet water": "Water", " water ": "Water", "water fund": "Water",
+    "water eq": "Water", "global water": "Water", "clean water": "Water",
     # Energy
     "energy": "Energy", "energía": "Energy", "energia": "Energy",
     # Real Estate
@@ -155,105 +197,68 @@ THEMATIC_MAP_EXTENDED: Dict[str, str] = {
     "silver economy": "Silver Economy",
     # Insurance
     "insurance": "Insurance", "seguros": "Insurance",
-    # Consumer / Brands
+    # Consumer
     "global brands": "Consumer Brands", "glob brands": "Consumer Brands",
     "consumer brand": "Consumer Brands",
     "food": "Consumer / Food & Beverage",
     "food & beverage": "Consumer / Food & Beverage",
     "alimentación": "Consumer / Food & Beverage",
     # Financials
-    "financial": "Financials", "financials": "Financials",
-    "finanzas": "Financials",
+    "financial": "Financials", "financials": "Financials", "finanzas": "Financials",
     # Mining / Gold
     "mining": "Mining", "gold": "Gold", "oro": "Gold",
     "precious metals": "Gold", "metales preciosos": "Gold",
     # Infrastructure
-    "infrastructure": "Infrastructure",
-    "infraestructura": "Infrastructure",
+    "infrastructure": "Infrastructure", "infraestructura": "Infrastructure",
     # Megatrends
     "megatrend": "Megatrends", "megatendencia": "Megatrends",
     "disruptive": "Megatrends",
-    # Genetic / Biomedical
-    "genetic": "Biotechnology", "genomic": "Biotechnology",
-    # Subscription Economy
-    "subscription": "Digital", "subscr": "Digital",
     # Mobility
     "mobility": "Mobility", "movilidad": "Mobility",
     "autonomous": "Mobility", "electric vehicle": "Mobility",
+    # Inflation  # BL-28: valor en inglés, coherente con ALLOWED_VALUES_BY_COLUMN
+    "inflación": "Inflation", "inflation": "Inflation",
 }
 
 
 def detect_theme_extended(name_l: str) -> Optional[str]:
-    """Detecta tema usando THEMATIC_MAP_EXTENDED (más amplio que el original)."""
-    for keyword, theme in THEMATIC_MAP_EXTENDED.items():
-        if keyword in name_l:
+    """Detecta tema usando THEMATIC_MAP_EXTENDED (sobre nombre del fondo)."""
+    for signal, theme in THEMATIC_MAP_EXTENDED.items():
+        if signal in name_l:
             return theme
     return None
 
 
 def detect_theme_from_kiid(kiid_text: Optional[str]) -> Optional[str]:
-    """
-    Detecta tema desde el texto KIID (ventana de objetivos).
-    Complementa detect_theme_extended cuando el nombre no es suficiente.
-    """
+    """Detecta tema desde texto objetivo del KIID. Segunda capa tras nombre."""
     if not kiid_text:
         return None
-    s, e = _get_obj_bounds(kiid_text)
-    w = _extract_window(kiid_text.lower(), s, e)
+    _obj_start, _obj_end = _get_obj_bounds(kiid_text)
+    w = _extract_window(kiid_text.lower(), _obj_start, _obj_end)
 
-    # PRINCIPIO: solo frases compuestas inequívocas.
-    # Señales de una sola palabra (tecnología, salud, oro, agua) son demasiado
-    # genéricas — aparecen en contextos no temáticos.
     theme_text_signals = [
-        # Technology — frases compuestas que implican temática tecnológica
-        (["sector tecnológico", "empresas tecnológicas", "compañías tecnológicas",
-          "technology companies", "tech sector", "technology sector",
-          "tecnología de la información", "information technology",
-          "empresas de tecnología"], "Technology"),
-        # Healthcare — frases que implican inversión en salud como temática
-        (["sector sanitario", "sector salud", "empresas del sector salud",
-          "healthcare companies", "medical companies", "health sector",
-          "compañías sanitarias", "empresas de salud",
-          "sector de la salud"], "Healthcare / MedTech"),
-        # MedTech
-        (["tecnología médica", "medical technology", "medtech",
-          "ciencias de la salud", "health sciences", "dispositivos médicos",
-          "medical devices"], "Healthcare / MedTech"),
-        # Cybersecurity — señales específicas y poco ambiguas
-        (["ciberseguridad", "cybersecurity", "seguridad digital",
-          "digital security", "cyber security"], "Cybersecurity"),
-        # AI
         (["inteligencia artificial", "artificial intelligence",
           "machine learning", "aprendizaje automático",
           "deep learning"], "Artificial Intelligence"),
-        # Climate / Clean Energy — frases compuestas
-        (["energías renovables", "energía limpia", "clean energy", "energía verde",
-          "transición energética", "energy transition",
-          "energía sostenible", "sustainable energy"], "Climate / Clean Energy"),
-        # Infrastructure — compuesta en español puede ser incidental; exigir contexto
+        (["energías renovables", "energía limpia", "clean energy",
+          "energía verde", "transición energética",
+          "energy transition", "energía sostenible"], "Climate / Clean Energy"),
         (["activos de infraestructura", "infrastructure assets",
           "infraestructuras cotizadas", "listed infrastructure",
           "inversión en infraestructura"], "Infrastructure"),
-        # Gold — "metales preciosos" y "precious metals" son suficientemente específicos
-        (["metales preciosos", "precious metals",
-          "fondos de oro", "gold fund",
-          "lingotes de oro", "gold bullion",
+        (["metales preciosos", "precious metals", "fondos de oro",
+          "gold fund", "lingotes de oro", "gold bullion",
           "physical gold", "oro físico"], "Gold"),
-        # Real Estate — frases compuestas
         (["sector inmobiliario", "real estate sector", "bienes raíces",
           "empresas inmobiliarias", "real estate companies",
-          "mercado inmobiliario", "real estate market"], "Real Estate"),
-        # Biotechnology
+          "mercado inmobiliario"], "Real Estate"),
         (["biotecnología", "biotechnology", "ciencias de la vida",
           "life sciences", "empresas biotecnológicas"], "Biotechnology"),
-        # Water — frases compuestas específicas (agua sola es demasiado genérica)
         (["recursos hídricos", "water resources", "water companies",
-          "sector del agua", "water sector", "servicios de agua",
-          "gestión del agua", "water management", "water utilities",
-          "acceso al agua", "agua potable", "water fund",
-          "tecnología del agua", "water technology",
-          "tratamiento del agua", "water treatment",
-          "infraestructura del agua", "water infrastructure"], "Water"),
+          "sector del agua", "water sector", "gestión del agua",
+          "water management", "water utilities", "water fund",
+          "tecnología del agua", "tratamiento del agua",
+          "infraestructura del agua"], "Water"),
     ]
     for signals, theme in theme_text_signals:
         if any(sig in w for sig in signals):
@@ -262,11 +267,197 @@ def detect_theme_from_kiid(kiid_text: Optional[str]) -> Optional[str]:
 
 
 # =============================================================
-# NUEVOS ATRIBUTOS
+# DETECT_INVESTMENT_UNIVERSE  (v17 — solo dimensión geográfica)
 # =============================================================
 
-def detect_market_cap_focus(name_l: str, kiid_text: Optional[str] = None) -> Optional[str]:
-    """Detecta enfoque de capitalización de mercado."""
+def detect_investment_universe(
+    fund_nature: str,
+    geography: Optional[str],
+    theme: Optional[str] = None,    # mantenido para compatibilidad, ignorado
+    fund_type: Optional[str] = None,
+) -> Optional[str]:
+    """
+    Deriva el ámbito geográfico del mandato de inversión.
+
+    v17: puramente geográfico. Los valores 'Sector' y 'Thematic' se han
+    trasladado al nuevo atributo Investment_Focus.
+
+    Valores:
+        Liquidity  — monetarios y RF corto plazo
+        Global     — cobertura mundial
+        Regional   — región geográfica (Europa, Asia, Emergentes, EEUU)
+        Country    — un único país o mercado (China, Japón, India...)
+    """
+    if fund_nature in _LIQUIDITY_NATURES:
+        return "Liquidity"
+    if geography in _COUNTRY_GEOS:
+        return "Country"
+    if geography in _REGIONAL_GEOS:
+        return "Regional"
+    if geography == "Global":
+        return "Global"
+    return None
+
+
+# =============================================================
+# DETECT_INVESTMENT_FOCUS  (v17 — NUEVO)
+# =============================================================
+
+def detect_investment_focus(
+    fund_nature: str,
+    theme: Optional[str],
+) -> Optional[str]:
+    """
+    Detecta el tipo de exposición del fondo: mercado amplio, sector o temática.
+
+    Dimensión ortogonal a Investment_Universe. Permite cruzar ámbito geográfico
+    con tipo de exposición sin colapsarlos en un único campo.
+
+    Valores:
+        Broad     — mercado amplio sin restricción sectorial/temática
+        Sector    — foco en un sector económico específico
+        Thematic  — exposición temática transversal (cruza sectores)
+        None      — Liquidity (no aplica para monetarios/RF corto)
+    """
+    if fund_nature in _LIQUIDITY_NATURES:
+        return None   # Liquidez no tiene "tipo de exposición"
+
+    if theme is None or theme == "Core/General":
+        return "Broad"
+    if theme in _SECTOR_THEMES:
+        return "Sector"
+    if theme in _THEMATIC_THEMES:
+        return "Thematic"
+    # Tema detectado pero no clasificado → Thematic genérico
+    return "Thematic"
+
+
+# =============================================================
+# DETECT_SECTOR_FOCUS  (v20 — BL-53/BL-54: refactor DRY)
+# =============================================================
+
+def detect_sector_focus(
+    name_l: str,
+    kiid_text: Optional[str] = None,
+    theme: Optional[str] = None,    # v17: recibe tema ya calculado
+) -> Optional[str]:
+    """
+    Detecta foco sectorial bajo nomenclatura GICS-ES.
+
+    v20 BL-54: delega en map_theme_to_sector_focus() (classify_utils),
+    que contiene el mapa canónico ÚNICO Theme→Sector_Focus (Principio #2 DRY).
+    Todos los valores emitidos están en español (Principio #8 BL-53).
+    La firma permanece compatible con v17 (name_l, kiid_text, theme).
+
+    v17 fix P14: recibe `theme` ya calculado por el llamador, evitando
+    re-ejecutar detect_theme_extended() sobre el nombre cuando el tema
+    fue detectado desde el KIID (no desde el nombre).
+
+    Valores (GICS-ES, idioma español):
+        Tecnología e Innovación
+        Salud y Ciencias de la Vida
+        Energía y Recursos
+        Activos Reales
+        Servicios Financieros
+        Consumo
+        Materiales y Minería
+        Utilities y Medio Ambiente
+    """
+    # Usar tema provisto o detectar desde nombre como fallback
+    resolved_theme = theme or detect_theme_extended(name_l)
+    # Delegar en el mapa canónico único (BL-54)
+    return map_theme_to_sector_focus(resolved_theme)
+
+
+# =============================================================
+# DETECT_CREDIT_QUALITY  (v17 — NUEVO)
+# =============================================================
+
+_HY_NAME_SIGNALS = [
+    "high yield", "high-yield", "hy ", " hy ", "alto rendimiento",
+    "bonos hy", "high yield bond",
+]
+_IG_NAME_SIGNALS = [
+    "investment grade", "investment-grade", "ig bond",
+    "grado de inversión",
+]
+_HY_TEXT_SIGNALS = [
+    "high yield", "alto rendimiento", "high-yield",
+    "sub-investment grade", "non-investment grade",
+    "speculative grade", "junk bond", "bonos de alto rendimiento",
+]
+_IG_TEXT_SIGNALS = [
+    "investment grade", "grado de inversión", "investment-grade",
+    "bonos con grado de inversión", "emisores con grado de inversión",
+    "calificación crediticia mínima de", "rated at least",
+]
+
+
+def detect_credit_quality(
+    fund_nature: str,
+    name_l: str,
+    kiid_text: Optional[str] = None,
+) -> Optional[str]:
+    """
+    Detecta la calidad crediticia de la cartera del fondo.
+
+    Solo relevante para fondos de RF y Mixtos. Renta Variable → 'No aplica'.
+
+    Valores:
+        Investment Grade  — cartera con calificación ≥ BBB-
+        High Yield        — cartera con calificación < BBB- / sin grado
+        Mixed             — mezcla explícita de IG y HY
+        No aplica         — Renta Variable, no extraíble
+    """
+    if fund_nature == "Renta Variable":
+        return "Not Applicable"   # BL-28: era "No aplica" (Principio #8 — inglés)
+    if fund_nature not in _RF_NATURES:
+        return None   # Restantes, Estructurado → indeterminado
+
+    # Señales en nombre
+    hy_name = any(s in name_l for s in _HY_NAME_SIGNALS)
+    ig_name = any(s in name_l for s in _IG_NAME_SIGNALS)
+    if hy_name and not ig_name:
+        return "High Yield"
+    if ig_name and not hy_name:
+        return "Investment Grade"
+
+    # Señales en texto KIID (ventana objetivo)
+    if kiid_text:
+        s, e = _get_obj_bounds(kiid_text)
+        w = _extract_window(kiid_text.lower(), s, e)
+        hy_count = sum(1 for sig in _HY_TEXT_SIGNALS if sig in w)
+        ig_count = sum(1 for sig in _IG_TEXT_SIGNALS if sig in w)
+        if hy_count > 0 and ig_count == 0:
+            return "High Yield"
+        if ig_count > 0 and hy_count == 0:
+            return "Investment Grade"
+        if hy_count > 0 and ig_count > 0:
+            return "Mixed"
+
+    # Reglas de dominio por naturaleza
+    if fund_nature == "Monetario":
+        return "Investment Grade"   # regulatoriamente obligatorio
+    if fund_nature == "Renta Fija Corto Plazo":
+        return "Investment Grade"   # por definición del bloque
+
+    return None   # RF Flexible, Mixtos, Alternativo sin señal clara
+
+
+# =============================================================
+# DETECT_MARKET_CAP_FOCUS
+# =============================================================
+
+def detect_market_cap_focus(
+    name_l: str,
+    kiid_text: Optional[str] = None,
+    benchmark_declared: Optional[str] = None,  # BL-27: nuevo parámetro
+) -> Optional[str]:
+    """Detecta enfoque de capitalización de mercado.
+
+    BL-27: ampliado con detección KIID para Mid/SMID Cap y con inferencia
+    por benchmark declarado (p.ej. MSCI World Small Cap → Small Cap).
+    """
     if any(k in name_l for k in [
         "small cap", "small-cap", "smallcap", "small co",
         "micro cap", "micro-cap", "small companies",
@@ -285,522 +476,316 @@ def detect_market_cap_focus(name_l: str, kiid_text: Optional[str] = None) -> Opt
         return "SMID Cap"
     if any(k in name_l for k in [
         "large cap", "large-cap", "largecap",
-        "blue chip", "grande capitalización",
-        "grandes compañías",
+        "blue chip", "grande capitalización", "grandes compañías",
     ]):
         return "Large Cap"
-    # Detección por texto KIID
+
     if kiid_text:
         s, e = _get_obj_bounds(kiid_text)
         w = _extract_window(kiid_text.lower(), s, e)
         if any(k in w for k in [
             "pequeña capitalización", "small capitalisation",
             "small-cap companies", "small cap companies",
+            "pequeñas empresas", "small companies",
         ]):
             return "Small Cap"
         if any(k in w for k in [
             "gran capitalización", "large capitalisation",
-            "large-cap companies",
+            "large-cap companies", "grandes empresas",
+            "blue chip companies", "blue-chip",
         ]):
             return "Large Cap"
+        # BL-27: detección Mid y SMID desde texto KIID
+        if any(k in w for k in [
+            "mediana capitalización", "mid capitalisation",
+            "mid-cap companies", "medianas empresas",
+        ]):
+            return "Mid Cap"
+        if any(k in w for k in [
+            "pequeñas y medianas", "small and mid", "small- and mid-",
+            "small to mid-cap",
+        ]):
+            return "SMID Cap"
+
+    # BL-27: inferencia desde benchmark declarado
+    if benchmark_declared:
+        b = benchmark_declared.lower()
+        if any(k in b for k in ["small cap", "small-cap", "smallcap", "sc index"]):
+            return "Small Cap"
+        if any(k in b for k in ["mid cap", "mid-cap", "midcap"]):
+            return "Mid Cap"
+        if any(k in b for k in ["smid", "small & mid", "small and mid"]):
+            return "SMID Cap"
+        if any(k in b for k in ["large cap", "blue chip"]):
+            return "Large Cap"
+        # Si el benchmark es un índice global de gran capitalización → Large Cap por defecto
+        if any(k in b for k in ["msci world", "msci acwi", "s&p 500", "euro stoxx 50",
+                                  "stoxx europe 600", "ftse 100", "dax"]):
+            return "Large Cap"
+
     return None
 
 
-def detect_sector_focus(name_l: str, kiid_text: Optional[str] = None) -> Optional[str]:
-    """
-    Detecta foco sectorial (más granular que Theme, sin excluirlo).
-    Aplica principalmente a fondos temáticos de RV.
-    """
-    # Usar tema detectado como punto de partida
-    theme = detect_theme_extended(name_l)
-    if theme in ("Technology", "Artificial Intelligence", "Digital",
-                 "Robotics", "Cybersecurity"):
-        return "Technology & Innovation"
-    if theme in ("Healthcare / MedTech", "Biotechnology"):
-        return "Healthcare & Life Sciences"
-    if theme in ("Climate / Clean Energy", "Energy"):
-        return "Energy & Resources"
-    if theme in ("Infrastructure", "Real Estate"):
-        return "Real Assets"
-    if theme == "Financials":
-        return "Financial Services"
-    if theme in ("Consumer Brands", "Consumer / Food & Beverage"):
-        return "Consumer"
-    if theme in ("Gold", "Mining"):
-        return "Materials & Mining"
-    if theme == "Water":
-        return "Utilities & Environment"
-    return None
-
-
-def detect_currency_hedged(name_l: str) -> Optional[str]:
-    """Detecta política de cobertura de divisa."""
-    # Cobertura explícita
-    if any(k in name_l for k in [
-        "eurhdg", "eurh", "usdhdg", "usdh", "chfhdg",
-        "hedged", "hedg", "hdg", "currency hedged",
-        "divisa cubierta", "cobertura divisa",
-        "(h)", "h acc", "h inc", "h eur", "h usd",
-    ]):
-        return "Hedged"
-    # Sin cobertura explícita — señal negativa
-    if any(k in name_l for k in [
-        "unhedged", "no hedge", "sin cobertura",
-    ]):
-        return "Unhedged"
-    return None   # No determinable desde el nombre
-
-
 # =============================================================
-# LÓGICA ESPECÍFICA POR NATURALEZA (dispatch)
-# Extraída literalmente de los bloques primarios, sin modificar
-# la semántica — solo consolidada en un módulo único.
+# DETECT_CURRENCY_HEDGED
 # =============================================================
 
-def _char_renta_variable(name_l: str, text_l: str, srri: Optional[int]) -> Dict:
-    r = {}
-    # Profile
-    if any(k in name_l for k in [
-        "defensive", "low vol", "minimum volatility", "minimum vol", "min vol",
-    ]):
-        r["Profile"] = "Conservador"
-    elif any(k in name_l for k in ["income", "dividend", "dividende", "dividends"]):
-        r["Profile"] = "Moderado"
-    else:
-        r["Profile"] = "Dinámico"
+def detect_currency_hedged(name_l: str, kiid_text: Optional[str] = None) -> Optional[str]:
+    """Detecta política de cobertura de divisa desde el nombre de la clase.
 
-    # Type / Subtype
-    _passive_kws = [
-        "gestión pasiva", "gestiona de forma pasiva", "gestiona de manera pasiva",
-        "inversión pasiva", "replica el índice", "replicar el índice",
-        "replicar la rentabilidad del índice", "replicación del índice",
-        "seguimiento del índice", "index fund", "track the index",
-        "replicate the index", "index tracking", "passively managed",
-        "passive management",
-        # Vanguard / pasivos con OCR
-        "replicación de la rentabilidad", "replicar la rentabilidad del",
+    BL-26: corregidos valores a "Hedged"/"Unhedged" (Principio #8).
+    BL-26: añadida detección explícita de "Unhedged" (antes solo detectaba Hedged).
+    BL-49: fallback al texto KIID cuando el nombre no aporta señal. Solo se activa
+           cuando kiid_text está disponible y name_l no detectó nada. Prioridad:
+           UNHEDGED antes que HEDGED (evitar falsos positivos de "hedged" en contextos
+           negativos del texto KIID, ej: "no está cubierta").
+    BL-49/2 (2026-04-25): añadidas variantes EURH/USDH/GBPH/CHFH (truncamiento del
+           sufijo HDG común en iShares, Candriam, GAM, Goldman Sachs). Estas
+           variantes tienen una "H" pegada al código de divisa sin "DG" final
+           (ej: "EM MK GV INDX A2 EURH ACC"). Patrón previo solo capturaba
+           "EURHDG", causando 4 fondos en regresión Hedged→Unhedged.
+    """
+    _HEDGED = [
+        "hedged", "(h)", "- h)", " h eur", "eur hedged", "usd hedged",
+        "gbp hedged", "chf hedged", "hdg", "currency hedged",
+        "cubierto", "cubierta divisa", "cubierto divisa",
+        "hgd", "eurhdg", "usdhdg", "gbphdg",  # BL-26: variantes OCR de hedge
+        # BL-49/2: variantes truncadas (EURH, USDH, GBPH, CHFH) — el sufijo
+        # H solo (sin DG) aparece en iShares/Candriam/GAM/GS. Solo se acepta
+        # si va seguido de espacio + clase (ACC/INC/DIST) o final del nombre,
+        # para evitar falsos positivos como "EURHIGH" (alta calificación).
+        " eurh ", " eurh\t", " usdh ", " usdh\t",
+        " gbph ", " gbph\t", " chfh ", " chfh\t",
+        " eurh acc", " eurh inc", " eurh dist",
+        " usdh acc", " usdh inc", " usdh dist",
+        " gbph acc", " gbph inc", " gbph dist",
+        " chfh acc", " chfh inc", " chfh dist",
     ]
-    if any(k in text_l for k in _passive_kws):
-        r["Type"] = "Indexado"
-        r["Subtype"] = "Fondo Indexado"
-    if "etf" in text_l or "fondo cotizado" in text_l:
-        r["Type"] = "Indexado"
-        r["Subtype"] = "ETF"
-    if not r.get("Type"):
-        r["Type"] = "Gestión Activa"
+    _UNHEDGED = [
+        "unhedged", "sin cobertura", "no cubierto",
+        "no hedged", "not hedged",               # BL-26: variantes EN explícitas
+    ]
+    # BL-26: Unhedged ANTES que Hedged — "unhedged" contiene "hedged" como substring
+    if any(s in name_l for s in _UNHEDGED):
+        return "Unhedged"
+    if any(s in name_l for s in _HEDGED):
+        return "Hedged"
 
-    # Style_Profile / Exposure_Bias
-    if any(k in name_l for k in ["low vol", "minimum volatility", "minimum vol", "min vol", "min volatil"]):
-        r["Style_Profile"] = "Low Volatility"
-        r["Exposure_Bias"] = "Low Volatility Bias"
-    elif any(k in name_l for k in ["income", "dividend", "dividende", "dividends"]):
-        r["Style_Profile"] = "Income"
-        r["Exposure_Bias"] = "Income Bias"
-    elif "quality" in name_l:
-        r["Style_Profile"] = "Quality"
-    elif any(k in name_l for k in ["growth", "wachstum", "crecim"]):
-        r["Style_Profile"] = "Growth"
-    elif "value" in name_l:
-        r["Style_Profile"] = "Value"
+    # BL-49/DRY: fallback al texto KIID delegado en classify_utils (Principio #2).
+    # detect_currency_hedged_from_kiid() es el único punto de verdad para
+    # patrones KIID — 18 patrones pre-compilados (H01-H10 / U01-U08).
+    # Los patrones inline previos (v19) quedan eliminados aquí.
+    if kiid_text:
+        _ch_kiid, _ = detect_currency_hedged_from_kiid(kiid_text)
+        if _ch_kiid:
+            return _ch_kiid
 
-    # Family
-    theme = detect_theme_extended(name_l)
-    r["Family"] = "RV Temática" if theme else "RV Core"
-    return r
-
-
-def _char_mixtos(name_l: str, text_l: str, srri: Optional[int]) -> Dict:
-    r = {}
-    # Profile
-    if any(k in name_l for k in [
-        "conservative", "defensive", "defensiv", "conservador", "def ",
-    ]):
-        r["Profile"] = "Conservador"
-    elif any(k in name_l for k in [
-        "balanced", "moderate", "moderado", "blced", "equilib", "yield p",
-    ]):
-        r["Profile"] = "Moderado"
-    elif any(k in name_l for k in ["growth", "dynamic", "dinamic", "agresiv", "crecimiento"]):
-        r["Profile"] = "Dinámico"
-    else:
-        r["Profile"] = "Moderado"
-
-    # Type
-    if any(k in name_l for k in [
-        "target volatility", "risk controlled", "risk control", "volatility control",
-    ]):
-        r["Type"] = "Target Volatility"
-    elif any(k in name_l for k in ["target outcome", "outcome"]):
-        r["Type"] = "Target Outcome"
-    elif any(k in name_l for k in ["tactical", "macro", "strategy"]):
-        r["Type"] = "Tactical Allocation"
-    else:
-        r["Type"] = "Allocation"
-
-    # Family
-    if any(k in name_l for k in ["lifecycle", "life cycle", "target date"]):
-        r["Family"] = "Lifecycle"
-    elif "retirement" in name_l:
-        r["Family"] = "Retirement"
-    elif "income" in name_l:
-        r["Family"] = "Income Oriented"
-    else:
-        r["Family"] = "Mixtos"
-
-    # Style_Profile
-    if r["Type"] == "Target Volatility":
-        r["Style_Profile"] = "Risk Control"
-    elif r["Type"] == "Tactical Allocation":
-        r["Style_Profile"] = "Tactical"
-    else:
-        r["Style_Profile"] = "Strategic Allocation"
-    return r
-
-
-def _char_alternativo(name_l: str, text_l: str, srri: Optional[int]) -> Dict:
-    r = {}
-    # Type / Subtype / Style_Profile
-    if any(k in name_l for k in ["relative value", "arbitrage", "arbit", "arb strat", "arb str"]):
-        r.update({"Type": "Absolute Return", "Subtype": "Relative Value / Arbitrage", "Style_Profile": "Defensivo"})
-    elif "market neutral" in name_l:
-        r.update({"Type": "Absolute Return", "Subtype": "Market Neutral", "Style_Profile": "Defensivo"})
-    elif any(k in name_l for k in ["long short", "long/short", "long-short"]):
-        r.update({"Type": "Absolute Return", "Subtype": "Long/Short", "Style_Profile": "Defensivo"})
-    elif any(k in name_l for k in ["global rates", "gl rates"]):
-        r.update({"Type": "Absolute Return", "Subtype": "Global Rates", "Style_Profile": "Defensivo"})
-    elif any(k in name_l for k in ["multi strategy", "multi-strategy", "multiassut"]):
-        r.update({"Type": "Absolute Return", "Subtype": "Multi-Asset", "Style_Profile": "Defensivo"})
-    elif "global macro" in name_l or "adagio" in name_l:
-        r.update({"Type": "Absolute Return", "Subtype": "Global Macro", "Style_Profile": "Momentum"})
-    elif any(k in name_l for k in ["managed futures", "cta", "systematic"]):
-        r.update({"Type": "Systematic", "Subtype": "Managed Futures", "Style_Profile": "Momentum"})
-    elif any(k in name_l for k in ["real estate", "property"]):
-        r.update({"Type": "Real Assets", "Subtype": "Real Estate",
-                  "Style_Profile": "Defensivo", "Exposure_Bias": "Real Estate Bias"})
-    elif "infrastructure" in name_l:
-        r.update({"Type": "Real Assets", "Subtype": "Infrastructure",
-                  "Style_Profile": "Defensivo", "Exposure_Bias": "Infrastructure Bias"})
-    elif any(k in name_l for k in ["commodities", "commodity", "gold", "precious metals"]):
-        r.update({"Type": "Commodities", "Subtype": "Physical / Derivatives",
-                  "Exposure_Bias": "Commodity Bias"})
-    elif any(k in name_l for k in ["abs ret", "absret", "st absret", "absolute return"]):
-        r.update({"Type": "Absolute Return", "Subtype": "Total Return Bond", "Style_Profile": "Defensivo"})
-    else:
-        r.update({"Type": "Absolute Return", "Style_Profile": "Defensivo"})
-
-    # Family
-    t = r.get("Type", "")
-    r["Family"] = "Systematic" if t == "Systematic" else \
-                  "Activos Reales" if t in ("Real Assets", "Commodities") else \
-                  "Retorno Absoluto"
-
-    # Exposure_Bias default
-    if not r.get("Exposure_Bias") and t == "Absolute Return":
-        r["Exposure_Bias"] = "Absolute Return Bias"
-
-    # Profile — basado en SRRI + Type
-    s = r.get("Subtype", "") or ""
-    if t == "Commodities" or s.startswith("Physical"):
-        r["Profile"] = "Dinámico"
-    elif srri and srri >= 5:
-        r["Profile"] = "Dinámico"
-    elif t == "Real Assets":
-        r["Profile"] = "Moderado"
-    elif srri and srri in (3, 4):
-        r["Profile"] = "Moderado"
-    elif srri and srri <= 2:
-        r["Profile"] = "Conservador"
-    else:
-        r["Profile"] = "Moderado"
-    return r
-
-
-def _char_monetario(name_l: str, text_l: str, srri: Optional[int]) -> Dict:
-    r = {"Profile": "Conservador", "Style_Profile": "Defensivo", "Exposure_Bias": "Liquidity Bias"}
-    # Type
-    if any(k in name_l for k in ["government", "treasury", "sovereign", "gov liq", "gov prim", "public"]):
-        r["Type"] = "Monetario Público"
-    elif any(k in name_l for k in ["prime", "corporate", "credit", "crd", "corp"]):
-        r["Type"] = "Monetario Privado"
-    else:
-        r["Type"] = "Monetario"
-    # Family
-    if "cnav" in name_l:
-        r["Family"] = "CNAV"
-    elif "lvnav" in name_l:
-        r["Family"] = "LVNAV"
-    elif "vnav" in name_l:
-        r["Family"] = "VNAV"
-    elif any(k in name_l for k in ["enhanced", "plus", "rend"]):
-        r["Family"] = "Enhanced Cash"
-    else:
-        r["Family"] = "Monetario"
-    # Fix: si Family=Monetario y Type=CNAV/LVNAV/VNAV, sincronizar
-    if r.get("Family") == "Monetario" and r.get("Type") in ("CNAV", "LVNAV", "VNAV", "Enhanced Cash"):
-        r["Family"] = r["Type"]
-    return r
-
-
-def _char_rf_flexible(name_l: str, text_l: str, srri: Optional[int]) -> Dict:
-    r = {}
-    # Profile
-    if any(k in name_l for k in ["high yield", "opportunistic", "dynamic", "dinamic"]):
-        r["Profile"] = "Dinámico"
-    elif any(k in name_l for k in ["defensiv", "conserv", "securite", "sécurité"]):
-        r["Profile"] = "Conservador"
-    else:
-        r["Profile"] = "Moderado"
-
-    # Type / Subtype
-    if "unconstrained" in name_l:
-        r["Type"] = "Unconstrained"; r["Subtype"] = "Flexible Bond"
-    elif any(k in name_l for k in ["absolute return", "abs ret", "absret"]):
-        r["Type"] = "Absolute Return"
-    elif any(k in name_l for k in ["total return", "tot ret"]):
-        r["Type"] = "Total Return"
-    elif any(k in name_l for k in ["millesima", "millesim", "milles select",
-                                    "buy&watch", "buy & watch", "buywat",
-                                    "target 20", "credit 20", "cred 20"]):
-        r["Type"] = "Target Maturity"
-    else:
-        r["Type"] = "Renta Fija Flexible"
-
-    # Style_Profile / Exposure_Bias
-    if any(k in name_l for k in ["high yield", "hy", "opportunistic", "opportunist",
-                                   "credit opport", "yield enhancement"]):
-        r["Style_Profile"] = "Income"; r["Exposure_Bias"] = "Credit Bias"; r["Subtype"] = "Opportunistic"
-    elif any(k in name_l for k in ["income", "rend", "rendement"]):
-        r["Style_Profile"] = "Income"; r["Exposure_Bias"] = "Income Bias"
-    elif any(k in name_l for k in ["low volatility", "low vol", "capital preservation",
-                                    "defensiv", "securite"]):
-        r["Style_Profile"] = "Low Volatility"; r["Exposure_Bias"] = "Low Volatility Bias"
-    else:
-        r["Style_Profile"] = "Defensivo"; r["Exposure_Bias"] = "Duration Bias"
-
-    # Family
-    if any(k in name_l for k in ["strategic", "tactical", "opportunist", "millesima"]):
-        r["Family"] = "Flexible Estratégico"
-    elif any(k in name_l for k in ["high yield", " hy ", " hy bd"]):
-        r["Family"] = "RF High Yield"
-    elif any(k in name_l for k in ["emerging", "em debt", "em mkt", "emerg mkt",
-                                    "emergentes", "em bond"]):
-        r["Family"] = "RF Emergentes"
-    elif any(k in name_l for k in ["inflation", "inflat", "infl link"]):
-        r["Family"] = "RF Inflación"; r["Theme"] = "Inflación"
-    else:
-        r["Family"] = "Renta Fija Flexible"
-
-    # Subtype divisa
-    if any(k in name_l for k in ["multicurrency", "multi-currency", "multidivisa"]):
-        r["Subtype"] = f"{r.get('Subtype')} | Multi-Currency" if r.get("Subtype") else "Multi-Currency"
-    return r
-
-
-def _char_rf_corto(name_l: str, text_l: str, srri: Optional[int]) -> Dict:
-    r = {"Profile": "Conservador", "Family": "Renta Fija Corto Plazo",
-         "Style_Profile": "Defensivo", "Exposure_Bias": "Duration Bias"}
-    # Profile
-    if any(k in name_l for k in ["enhanced cash", "money plus", "income"]):
-        r["Profile"] = "Moderado"
-
-    # Type / Subtype
-    if any(k in name_l for k in ["floating rate", "floating", "floater", " frn "]):
-        r["Type"] = "Floating Rate CP"; r["Subtype"] = "Floating Rate Notes"
-        r["Exposure_Bias"] = "Rate Reset Bias"
-    elif any(k in name_l for k in ["government", "treasury", "sovereign", "gov bd", "gov bond"]):
-        r["Type"] = "Deuda Pública CP"
-    elif any(k in name_l for k in ["corporate", "credit", "corp", "crd", "crdt",
-                                    "covered", "pfandbrief"]):
-        r["Type"] = "Crédito CP"
-    else:
-        r["Type"] = "Renta Fija Corto Plazo"
-
-    # Subtype low duration
-    if any(k in name_l for k in ["ultra short", "ult sh", "ul sh", "low dur",
-                                   "low duration", "0-1", "0-2", "0-3"]):
-        r["Subtype"] = "Low Duration"; r["Exposure_Bias"] = "Duration Bias"
-
-    # Guardrail: High Yield no en RF_Corto
-    if "high yield" in name_l or "high-yield" in name_l:
-        r["Type"] = None; r["Subtype"] = None; r["Exposure_Bias"] = None
-
-    # Style_Profile
-    if any(k in name_l for k in ["income", "enhanced cash", "money plus"]):
-        r["Style_Profile"] = "Income"
-        if not r.get("Exposure_Bias"):
-            r["Exposure_Bias"] = "Income Bias"
-    return r
-
-
-def _char_estructurado(name_l: str, text_l: str, srri: Optional[int]) -> Dict:
-    r = {"Profile": "Moderado"}
-    if any(k in name_l + text_l for k in ["autocallable", "autocall", "auto-callable"]):
-        r["Type"] = "Autocallable"
-        r["Subtype"] = "Barrier / Digital"
-        r["Exposure_Bias"] = "Barrier Risk"
-    elif any(k in name_l + text_l for k in [
-        "capital protected", "capital garantizado", "capital protegido"
-    ]):
-        r["Type"] = "Capital Protegido"
-        r["Exposure_Bias"] = "Capital Protection"
-    else:
-        r["Type"] = "Estructurado"
-    r["Family"] = "Estructurados"
-    r["Style_Profile"] = "Defensivo"
-    return r
-
-
-def _char_default(name_l: str, text_l: str, srri: Optional[int]) -> Dict:
-    """Fallback: sin lógica específica por naturaleza."""
-    return {"Profile": detect_profile_from_srri(srri)}
-
-
-_NATURE_DISPATCH = {
-    "Renta Variable":         _char_renta_variable,
-    "Mixtos":                 _char_mixtos,
-    "Alternativo":            _char_alternativo,
-    "Monetario":              _char_monetario,
-    "Renta Fija Flexible":    _char_rf_flexible,
-    "Renta Fija Corto Plazo": _char_rf_corto,
-    "Estructurado":           _char_estructurado,
-}
-
+    return None
 
 
 # =============================================================
-# INVESTMENT_UNIVERSE
-# Consolida la dimensión de amplitud del universo de inversión,
-# hoy fragmentada entre Geography y Theme.
-# Derivado de atributos ya calculados — no requiere texto KIID.
-# =============================================================
-
-def detect_investment_universe(
-    fund_nature: str,
-    geography: Optional[str],
-    theme: Optional[str],
-    fund_type: Optional[str] = None,
-) -> Optional[str]:
-    """
-    Deriva el universo de inversión a partir de la combinación de
-    Fund_Nature, Geography y Theme ya establecidos.
-
-    Valores:
-        Global      — universo amplio sin restricción geográfica ni sectorial
-        Regional    — región geográfica específica (Europa, Asia, EM...)
-        Country     — un único país o mercado (China, Japón, EEUU)
-        Sector      — sector específico con cobertura geográfica amplia
-        Thematic    — temático transversal (Water, Climate, Megatrends)
-        Liquidity   — instrumentos de mercado monetario / muy corto plazo
-    """
-    # Liquidez: fondos de muy corto plazo no tienen "universo" de inversión
-    if fund_nature in ("Monetario", "Renta Fija Corto Plazo"):
-        return "Liquidity"
-
-    # Temático: universo definido por un tema, no por geografía
-    _SECTOR_THEMES = {
-        "Technology", "Artificial Intelligence", "Digital", "Robotics",
-        "Healthcare / MedTech", "Biotechnology", "Cybersecurity",
-        "Climate / Clean Energy", "Energy", "Water",
-        "Consumer Brands", "Consumer / Food & Beverage",
-        "Financials", "Mining", "Gold", "Insurance",
-        "Silver Economy", "Mobility", "Megatrends",
-    }
-    _CROSS_THEMATIC = {
-        "Infrastructure", "Real Estate",
-    }
-    if theme and theme in _SECTOR_THEMES:
-        return "Sector"
-    if theme and theme in _CROSS_THEMATIC:
-        return "Thematic"
-    if theme:
-        return "Thematic"   # tema no clasificado → Thematic genérico
-
-    # Country: geografías de un solo país
-    _COUNTRY_GEOS = {
-        "China", "Japón", "India", "Latinoamérica",
-        "Europa del Este", "Rusia",
-    }
-    if geography in _COUNTRY_GEOS:
-        return "Country"
-
-    # Regional: regiones sin restricción sectorial
-    _REGIONAL_GEOS = {
-        "Europa", "Asia", "Emergentes", "EEUU",
-    }
-    if geography in _REGIONAL_GEOS:
-        return "Regional"
-
-    # Global: cobertura mundial
-    if geography == "Global":
-        return "Global"
-
-    return None   # No determinable
-
-
-# =============================================================
-# ACCUMULATION_POLICY — AMPLIACIÓN DE COBERTURA
-# Detecta política de distribución desde el nombre del fondo.
-# Complementa lo ya extraído por kiid_parser desde el texto KIID.
-# Cobertura actual: 15.9% (510/3204). Estimado tras mejora: ~78%.
+# DETECT_ACCUMULATION_POLICY
 # =============================================================
 
 def detect_accumulation_policy(
     fund_name: str,
     kiid_text: Optional[str] = None,
 ) -> Optional[str]:
-    """
-    Detecta si el fondo acumula o distribuye rentas.
-    Opera principalmente sobre el nombre del fondo (sufijos de clase).
-
-    Valores:
-        ACCUMULATION  — fondo de acumulación (reinvierte rentas)
-        DISTRIBUTION  — fondo de distribución (reparte rentas)
-    """
+    """Detecta política de distribución de rentas."""
     name_l = (fund_name or "").lower()
 
-    # Señales de distribución — precedencia sobre acumulación
-    # "inc" ambiguo (también en "income equity") → solo cuando es sufijo de clase
-    _DIST_SIGNALS = [
-        " inc",        # clase Inc (al final del nombre o antes del acc)
-        " dist",       # clase Dist
-        " distribution",
-        " distribut",
-        "rend",        # fondos FR de distribución (rendement)
-        "ausschütt",   # alemán: ausschüttend
-        " in ",        # clase " In " como sufijo de clase (no en "income")
-        " in$",        # termina en " in"
-        "distribu",
-        "pay out",     # EN payout
-        " yd ",        # yield distribution
-        " id ",        # income distribution
-    ]
-    import re
-    for sig in _DIST_SIGNALS:
-        if sig.startswith(" ") and sig.endswith("$"):
-            if re.search(sig, name_l):
-                return "DISTRIBUTION"
-        elif sig in name_l:
-            return "DISTRIBUTION"
-
-    # Señales de acumulación
     _ACC_SIGNALS = [
-        " acc",        # clase Acc
-        " ac ",        # variante
-        "acum",        # español/portugués
-        "capitaliz",   # "capitalización"
-        "thesaur",     # FR: thésaurisation
-        "kapital",     # DE
-        "reinvest",    # reinversión explícita
+        "acc", "accumulation", "acumulación", "acumulacion",
+        "capitalización", "capitalizacion", "cap ", "(c)",
+        "thesaurisant", "thesaurisierung", "re-invest",
     ]
-    for sig in _ACC_SIGNALS:
-        if sig in name_l:
-            return "ACCUMULATION"
+    _DIST_SIGNALS = [
+        "dist", "distribution", "distribución", "distribucion",
+        "income", "dividend", "rte", "reparto",
+        "ausschüttend", "distributing",
+    ]
 
-    return None   # No determinable desde el nombre
+    for s in _ACC_SIGNALS:
+        if s in name_l:
+            return "Accumulation"
+    for s in _DIST_SIGNALS:
+        if s in name_l:
+            return "Distribution"
+
+    if kiid_text:
+        kl = kiid_text.lower()
+        if any(s in kl for s in [
+            "acumula los rendimientos", "reinvierte los rendimientos",
+            "accumulates income", "reinvests income",
+        ]):
+            return "Accumulation"
+        if any(s in kl for s in [
+            "distribuye los rendimientos", "reparte los rendimientos",
+            "distributes income", "pays dividends",
+        ]):
+            return "Distribution"
+
+    return None
 
 
 # =============================================================
-# FUNCIÓN PRINCIPAL
+# PROFILE DERIVADO DEL SRRI  (v17 — añade Agresivo para SRRI=7)
+# =============================================================
+
+def derive_profile_from_srri(srri: Optional[int]) -> Optional[str]:
+    """
+    Mapeo SRRI → Profile.
+
+    v17: SRRI=7 → Agresivo (diferenciado de SRRI 5-6 → Dinámico).
+    El salto cualitativo de riesgo en SRRI=7 justifica categoría propia.
+    """
+    if srri is None:
+        return None
+    if srri <= 2:
+        return "Conservador"
+    if srri <= 4:
+        return "Moderado"
+    if srri <= 6:
+        return "Dinámico"
+    return "Agresivo"   # SRRI=7
+
+
+# =============================================================
+# DISPATCH POR NATURALEZA
+# =============================================================
+
+def _char_monetario(name_l: str, text_l: str, srri: Optional[int]) -> Dict[str, Any]:
+    return {
+        "Profile": derive_profile_from_srri(srri) or "Conservador",
+        "Type": "Money Market",
+        "Family": "Monetario",
+        "Subtype": None,
+        "Style_Profile": None,
+        "Exposure_Bias": "Long Only",
+    }
+
+
+def _char_rf_corto(name_l: str, text_l: str, srri: Optional[int]) -> Dict[str, Any]:
+    return {
+        "Profile": derive_profile_from_srri(srri) or "Conservador",
+        "Type": "Fixed Income",
+        "Family": "Renta Fija Corto",
+        "Subtype": None,
+        "Style_Profile": None,
+        "Exposure_Bias": "Long Only",
+    }
+
+
+def _char_rf_flexible(name_l: str, text_l: str, srri: Optional[int]) -> Dict[str, Any]:
+    profile = derive_profile_from_srri(srri) or "Moderado"
+    subtype = None
+    if any(k in name_l for k in ["absolute return", "retorno absoluto", "total return"]):
+        subtype = "Absolute Return"
+    elif any(k in name_l for k in ["high yield", "hy "]):
+        subtype = "High Yield"
+    elif any(k in name_l for k in ["convertible", "convertibles"]):
+        subtype = "Convertibles"
+    return {
+        "Profile": profile,
+        "Type": "Fixed Income",
+        "Family": None,
+        "Subtype": subtype,
+        "Style_Profile": None,
+        "Exposure_Bias": None,
+    }
+
+
+def _char_rv(name_l: str, text_l: str, srri: Optional[int]) -> Dict[str, Any]:
+    profile = derive_profile_from_srri(srri) or "Dinámico"
+    # BL-29: detect_style_profile solo usa nombre; añadir KIID como segunda capa
+    style = detect_style_profile(name_l)
+    if style is None and text_l:
+        style = detect_style_from_kiid(text_l)
+    bias  = detect_exposure_bias(name_l) or "Long Only"
+    t = "Index" if any(k in name_l for k in [
+        "index fund", "fondo índice", "passive", "tracker",
+        "etf", "ucits etf",
+    ]) else "Equity"
+    return {
+        "Profile": profile,
+        "Type": t,
+        "Family": None,
+        "Subtype": None,
+        "Style_Profile": style,
+        "Exposure_Bias": bias,
+    }
+
+
+def _char_mixtos(name_l: str, text_l: str, srri: Optional[int]) -> Dict[str, Any]:
+    profile = derive_profile_from_srri(srri) or "Moderado"
+    return {
+        "Profile": profile,
+        "Type": "Balanced",
+        "Family": None,
+        "Subtype": None,
+        "Style_Profile": None,
+        "Exposure_Bias": None,
+    }
+
+
+def _char_alternativo(name_l: str, text_l: str, srri: Optional[int]) -> Dict[str, Any]:
+    profile = derive_profile_from_srri(srri) or "Dinámico"
+    subtype = None
+    bias    = None
+    if any(k in name_l for k in ["long short", "long/short", "long-short"]):
+        subtype = "Long/Short"
+        bias    = "Long/Short"
+    elif any(k in name_l for k in ["market neutral", "market-neutral"]):
+        subtype = "Market Neutral"
+        bias    = "Market Neutral"
+    elif any(k in name_l for k in ["global macro", "macro"]):
+        subtype = "Global Macro"
+        bias    = "Macro"
+    elif any(k in name_l for k in [
+        "real estate", "real asset", "infrastructure", "commodity", "commodities",
+    ]):
+        subtype = "Real Assets"
+    elif any(k in name_l for k in ["absolute return", "retorno absoluto", "total return"]):
+        subtype = "Absolute Return"
+    return {
+        "Profile": profile,
+        "Type": "Absolute Return",
+        "Family": None,
+        "Subtype": subtype,
+        "Style_Profile": None,
+        "Exposure_Bias": bias or "Directional",
+    }
+
+
+def _char_restantes(name_l: str, text_l: str, srri: Optional[int]) -> Dict[str, Any]:
+    return {
+        "Profile": derive_profile_from_srri(srri),
+        "Type": None,
+        "Family": None,
+        "Subtype": None,
+        "Style_Profile": None,
+        "Exposure_Bias": None,
+    }
+
+
+def _char_default(name_l: str, text_l: str, srri: Optional[int]) -> Dict[str, Any]:
+    return _char_restantes(name_l, text_l, srri)
+
+
+_NATURE_DISPATCH = {
+    "Monetario":              _char_monetario,
+    "Renta Fija Corto Plazo": _char_rf_corto,
+    "Renta Fija Flexible":    _char_rf_flexible,
+    "Renta Variable":         _char_rv,
+    "Mixtos":                 _char_mixtos,
+    "Alternativo":            _char_alternativo,
+    "Restantes":              _char_restantes,
+    "Estructurado":           _char_restantes,
+}
+
+
+# =============================================================
+# FUNCIÓN PRINCIPAL: characterize_fund()
 # =============================================================
 
 def characterize_fund(
@@ -808,124 +793,133 @@ def characterize_fund(
     kiid_text: Optional[str],
     fund_nature: str,
     srri: Optional[int] = None,
-    pre_assigned: Optional[Dict] = None,
+    pre_assigned: Optional[Dict[str, Any]] = None,
+    benchmark_declared: Optional[str] = None,   # BL-27: para inferir Market_Cap_Focus
 ) -> Dict[str, Any]:
     """
     Caracterización secundaria completa de un fondo.
 
-    Parámetros:
-        fund_name:    nombre del fondo (tal como aparece en fund_master)
-        kiid_text:    texto completo del KIID/DDF (Raw_KIID_Text)
-        fund_nature:  naturaleza ya clasificada (Fund_Nature)
-        srri:         valor SRRI ya extraído (opcional — para árbitro de Profile)
-        pre_assigned: dict con valores ya asignados que tienen precedencia
-                      (el módulo solo rellena los None)
+    v17: añade Investment_Focus y Credit_Quality al dict de resultado.
+         Orden de operaciones revisado para que Sector_Focus reciba
+         el Theme ya calculado (fix P14).
 
-    Devuelve dict con todos los atributos cualitativos. Los valores None
-    indican que no fue posible determinar el atributo.
+    Parámetros:
+        fund_name:    nombre del fondo (fund_master.Fund_Name)
+        kiid_text:    texto Raw_KIID_Text completo
+        fund_nature:  Fund_Nature ya clasificada por el bloque
+        srri:         SRRI extraído (opcional)
+        pre_assigned: atributos ya asignados con precedencia
+
+    Devuelve dict con todos los atributos cualitativos de v17.
+    None indica que no fue posible determinar el atributo.
     """
     pre = pre_assigned or {}
     name_l = (fund_name or "").lower()
     text_l = (kiid_text or "").lower()
 
     result: Dict[str, Any] = {
+        # ── identificación ────────────────────────────────────────
         "Profile":              None,
         "Type":                 None,
         "Family":               None,
         "Subtype":              None,
         "Style_Profile":        None,
         "Exposure_Bias":        None,
+        # ── exposición ───────────────────────────────────────────
         "Geography":            None,
         "Theme":                None,
+        "Investment_Universe":  None,
+        "Investment_Focus":     None,   # v17 NUEVO
+        "Market_Cap_Focus":     None,
+        "Sector_Focus":         None,
+        "Credit_Quality":       None,   # v17 NUEVO
+        # ── estrategia ───────────────────────────────────────────
         "Is_ESG":               0,
         "Strategy":             None,
         "Benchmark_Type":       None,
-        "Market_Cap_Focus":     None,
-        "Sector_Focus":         None,
+        # ── estructura ───────────────────────────────────────────
         "Currency_Hedged":      None,
-        "Investment_Universe":  None,
         "Accumulation_Policy":  None,
     }
 
-    # ── 1. Atributos independientes de la naturaleza ─────────────────
-    result["Geography"]       = (pre.get("Geography") or
-                                  detect_geography(name_l) or
-                                  detect_geography_from_kiid(kiid_text))
-
-    result["Theme"]           = (pre.get("Theme") or
-                                  detect_theme_extended(name_l) or
-                                  detect_theme_from_kiid(kiid_text))
-
-    result["Is_ESG"]          = max(
-                                    int(pre.get("Is_ESG") or 0),
-                                    detect_is_esg(fund_name),
-                                    int(detect_esg_from_kiid(kiid_text) or 0),
-                                )
-
-    result["Currency_Hedged"] = pre.get("Currency_Hedged") or detect_currency_hedged(name_l)
-
-    result["Market_Cap_Focus"]= pre.get("Market_Cap_Focus") or detect_market_cap_focus(name_l, kiid_text)
-
-    result["Sector_Focus"]    = pre.get("Sector_Focus") or detect_sector_focus(name_l, kiid_text)
-
-    # Accumulation_Policy: ampliar cobertura desde nombre
-    result["Accumulation_Policy"] = (
-        pre.get("Accumulation_Policy") or
-        detect_accumulation_policy(fund_name, kiid_text)
+    # ── 1. Geography (base para IU) ──────────────────────────────
+    result["Geography"] = (
+        pre.get("Geography")
+        or detect_geography(name_l)
+        or detect_geography_from_kiid(kiid_text)
     )
 
-    # ── 2. Atributos dependientes de la naturaleza (dispatch) ────────
+    # ── 2. Theme (base para IF y Sector_Focus) ───────────────────
+    #    v17: si no hay tema → "Core/General" (no temático confirmado)
+    #         NULL queda para "no procesado"
+    detected_theme = (
+        pre.get("Theme")
+        or detect_theme_extended(name_l)
+        or detect_theme_from_kiid(kiid_text)
+    )
+    if detected_theme is None and fund_nature not in _LIQUIDITY_NATURES:
+        detected_theme = "Core/General"
+    result["Theme"] = detected_theme
+
+    # ── 3. Investment_Universe (v17 — solo geográfico) ───────────
+    result["Investment_Universe"] = (
+        pre.get("Investment_Universe")
+        or detect_investment_universe(fund_nature, result["Geography"])
+    )
+
+    # ── 4. Investment_Focus (v17 NUEVO) ──────────────────────────
+    result["Investment_Focus"] = (
+        pre.get("Investment_Focus")
+        or detect_investment_focus(fund_nature, result["Theme"])
+    )
+
+    # ── 5. Sector_Focus — recibe Theme ya calculado (fix P14) ────
+    result["Sector_Focus"] = (
+        pre.get("Sector_Focus")
+        or detect_sector_focus(name_l, kiid_text, theme=result["Theme"])
+    )
+
+    # ── 6. Market_Cap_Focus (solo RV) ────────────────────────────
+    if fund_nature == "Renta Variable":
+        result["Market_Cap_Focus"] = (
+            pre.get("Market_Cap_Focus")
+            or detect_market_cap_focus(name_l, kiid_text, benchmark_declared)  # BL-27
+        )
+
+    # ── 7. Credit_Quality (v17 NUEVO) ────────────────────────────
+    result["Credit_Quality"] = (
+        pre.get("Credit_Quality")
+        or detect_credit_quality(fund_nature, name_l, kiid_text)
+    )
+
+    # ── 8. Atributos independientes de la naturaleza ─────────────
+    result["Is_ESG"] = max(
+        int(pre.get("Is_ESG") or 0),
+        detect_is_esg(fund_name),
+        int(detect_esg_from_kiid(kiid_text) or 0),
+    )
+    result["Currency_Hedged"] = (
+        pre.get("Currency_Hedged") or detect_currency_hedged(name_l, kiid_text)
+    )
+    result["Accumulation_Policy"] = (
+        pre.get("Accumulation_Policy")
+        or detect_accumulation_policy(fund_name, kiid_text)
+    )
+
+    # ── 9. Dispatch por naturaleza (Profile, Type, Subtype...) ───
     fn = _NATURE_DISPATCH.get(fund_nature, _char_default)
     nat_attrs = fn(name_l, text_l, srri)
-
     for k, v in nat_attrs.items():
         if result.get(k) is None and v is not None:
             result[k] = v
 
-    # Aplicar pre_assigned con precedencia
+    # ── 10. pre_assigned con precedencia máxima ──────────────────
     for k, v in pre.items():
         if v is not None:
             result[k] = v
 
-    # ── 3. Enriquecimiento desde texto KIID (fallback) ───────────────
-    kiid_attrs = detect_kiid_attributes(kiid_text or "", fund_nature, result)
-    for k, v in kiid_attrs.items():
-        if not result.get(k) and v:
-            result[k] = v
-
-    # ── 4. Árbitros finales ──────────────────────────────────────────
-    if result.get("Profile") is None:
-        result["Profile"] = detect_profile_from_srri(srri)
-
-    # Style_Profile: "Defensivo" solo aplica a Profile, no se almacena en Style_Profile
-    if result.get("Style_Profile") == "Defensivo":
-        result["Style_Profile"] = None
-    if result.get("Style_Profile") is None:
-        sp = detect_style_profile(name_l) or detect_style_from_kiid(kiid_text)
-        if sp and sp != "Defensivo":
-            result["Style_Profile"] = sp
-
-    if result.get("Exposure_Bias") is None:
-        result["Exposure_Bias"] = detect_exposure_bias(name_l, fund_nature)
-
-    # Strategy y Benchmark_Type
-    result["Strategy"]        = detect_strategy(
-        None, result.get("Subtype"), name_l
-    )
-    result["Benchmark_Type"]  = detect_benchmark_type(None, None)
-
-    # Geography fallback: fondos temáticos sin geo → Global
-    if result.get("Geography") is None and result.get("Theme") is not None:
-        result["Geography"] = "Global"
-
-    # Investment_Universe: derivado de Geography + Theme + Fund_Nature
-    # Se calcula al final cuando Geography y Theme ya están resueltos
-    if not result.get("Investment_Universe"):
-        result["Investment_Universe"] = detect_investment_universe(
-            fund_nature=fund_nature,
-            geography=result.get("Geography"),
-            theme=result.get("Theme"),
-            fund_type=result.get("Type"),
-        )
+    # ── 11. Style_Profile: solo para RV ──────────────────────────
+    if fund_nature != "Renta Variable" and result.get("Style_Profile") is None:
+        result["Style_Profile"] = None   # explícito: NULL por diseño
 
     return result
