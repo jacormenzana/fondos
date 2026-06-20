@@ -1,0 +1,593 @@
+-- ============================================================
+-- schema_fondos.sql  — v19  (2026-05-19)
+-- Base de datos: db/fondos.sqlite
+-- Ruta esperada: <raiz_proyecto>/db/schema_fondos.sql
+-- Cargado por: core/sqlite_writer.py → create_schema()
+-- ============================================================
+-- Historial de versiones:
+--   v10  Esquema base: fund_master, fund_kiid_metadata, ingestion_log
+--   v12  fund_family_id; SRRI_Visual/Textual/Validation_Status
+--   v14  Benchmark_Declared, Leverage_Used, Distribution_Frequency
+--   v15  SRRI_Quality_Flag, Data_Quality_Flag, Inference_Trace
+--   v16  Atributos v3 characterizer (5 cols) + telemetría proceso (2 cols)
+--   v17  Investment_Focus, Credit_Quality, Fee_Known_Flag (fund_master)
+--   v18  DLA2_Table_Text (fund_kiid_metadata) — BL-DLA-2 Sub-fase 2B
+--   v19  BL-COST-2: Ongoing_Charge→Ongoing_Charge_Recurrent,
+--        +11 columnas coste PRIIPs/KID-aware, tabla fund_cost_schedule
+--        Resultado cacheado de dla_table_serializer.serialize_tables().
+--        Misma semántica de ciclo de vida que Raw_KIID_Text: se calcula
+--        en descarga real, se reutiliza desde BD en ciclos CACHED,
+--        se invalida cuando KIID_PDF_Hash cambia (FORCE_REFRESH).
+-- ============================================================
+
+-- ============================================================
+-- TABLA 1: fund_master
+-- Registro maestro de cada clase de fondo (1 fila = 1 ISIN)
+-- DDL alineado con schema real de producción (PRAGMA table_info v19)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS fund_master (
+    ISIN                    TEXT PRIMARY KEY,
+    Fund_Name               TEXT NOT NULL,
+    Management_Company      TEXT,
+    -- Clasificación canónica
+    Fund_Nature             TEXT NOT NULL,
+    Profile                 TEXT,
+    Type                    TEXT,
+    Family                  TEXT,
+    Style_Profile           TEXT,
+    Geography               TEXT,
+    Theme                   TEXT,
+    Exposure_Bias           TEXT,
+    Subtype                 TEXT,
+    -- Control heurístico
+    Heuristic_Block         TEXT NOT NULL,
+    Heuristic_Core          INTEGER NOT NULL CHECK (Heuristic_Core IN (0, 1)),
+    -- Parsing documental (derivado de KIID)
+    SRRI                    INTEGER,
+    Fund_Currency           TEXT,
+    Portfolio_Currency      TEXT,
+    Hedging_Policy          TEXT,
+    Replication_Method      TEXT,
+    Derivatives_Usage       TEXT,
+    Benchmark_Declared      TEXT,
+    -- Trazabilidad y QA
+    Inference_Trace         TEXT,
+    SRRI_Quality_Flag       TEXT
+        CHECK (SRRI_Quality_Flag IN ('HIGH','MEDIUM_VISUAL','MEDIUM_TEXT','LOW_CONFLICT','NONE')),
+    Data_Quality_Flag       TEXT,
+    Created_At              TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    Updated_At              TIMESTAMP,
+    -- Columnas añadidas via ALTER TABLE (v12-v17)
+    -- v19: renombrado Ongoing_Charge → Ongoing_Charge_Recurrent
+    --      (TER recurrente puro, no incluye amortización one-offs)
+    Ongoing_Charge_Recurrent  REAL,
+    fund_family_id          TEXT,
+    Strategy                TEXT,
+    Is_ESG                  INTEGER DEFAULT 0,
+    Benchmark_Type          TEXT,
+    Accumulation_Policy     TEXT,
+    Entry_Fee_Pct           REAL,
+    Exit_Fee_Pct            REAL,
+    Sfdr_Article            INTEGER,
+    Recommended_Holding_Period TEXT,
+    Leverage_Used           TEXT,
+    Liquidity_Profile       TEXT,
+    Distribution_Frequency  TEXT,
+    Market_Cap_Focus        TEXT,
+    Sector_Focus            TEXT,
+    Currency_Hedged         TEXT,
+    Investment_Universe     TEXT,
+    Investment_Focus        TEXT,
+    Credit_Quality          TEXT,
+    Fee_Known_Flag          TEXT,
+    -- ============================================================
+    -- v19 (BL-COST-2): bloque coste PRIIPs/KID-aware (11 nuevas)
+    -- Todas NULL tras migración v18→v19. Sprint 2 las puebla.
+    -- ============================================================
+    KID_Format              TEXT
+        CHECK (KID_Format IN ('UCITS_KIID','PRIIPS_KID','UNKNOWN')),
+    KID_Currency            TEXT,
+    Cost_Extraction_Quality TEXT
+        CHECK (Cost_Extraction_Quality IN (
+               'HIGH','MEDIUM_CROSS','MEDIUM_EUR','MEDIUM_PCT','LOW','NONE')),
+    Cost_RHP_Years          REAL
+        CHECK (Cost_RHP_Years IS NULL OR (Cost_RHP_Years > 0 AND Cost_RHP_Years <= 50)),
+    Entry_Fee_Pct_Max       REAL
+        CHECK (Entry_Fee_Pct_Max IS NULL OR (Entry_Fee_Pct_Max >= 0 AND Entry_Fee_Pct_Max <= 25)),
+    Exit_Fee_Pct_Max        REAL
+        CHECK (Exit_Fee_Pct_Max IS NULL OR (Exit_Fee_Pct_Max >= 0 AND Exit_Fee_Pct_Max <= 25)),
+    Management_Fee_Pct      REAL
+        CHECK (Management_Fee_Pct IS NULL OR (Management_Fee_Pct >= 0 AND Management_Fee_Pct <= 10)),
+    Transaction_Cost_Pct    REAL
+        CHECK (Transaction_Cost_Pct IS NULL OR (Transaction_Cost_Pct >= 0 AND Transaction_Cost_Pct <= 5)),
+    Performance_Fee_Pct     REAL
+        CHECK (Performance_Fee_Pct IS NULL OR (Performance_Fee_Pct >= 0 AND Performance_Fee_Pct <= 30)),
+    ACI_1Y                  REAL
+        CHECK (ACI_1Y IS NULL OR (ACI_1Y >= 0 AND ACI_1Y <= 50)),
+    ACI_RHP                 REAL
+        CHECK (ACI_RHP IS NULL OR (ACI_RHP >= 0 AND ACI_RHP <= 25)),
+
+    FOREIGN KEY (fund_family_id) REFERENCES fund_families (family_id)
+);
+
+-- ============================================================
+-- TABLA: fund_cost_schedule  (v19 — BL-COST-2)
+-- Función de coste por horizonte (PRIIPs).
+-- 1:N respecto a fund_master. Para cada fondo, una fila por
+-- punto del escenario "salida después de X años" en el KID.
+-- Para fondos UCITS (1 valor único de OC) se sintetiza 1 fila
+-- con Source='UCITS_DERIVED' (Sprint 2).
+-- ============================================================
+CREATE TABLE IF NOT EXISTS fund_cost_schedule (
+    ISIN              TEXT NOT NULL,
+    Horizon_Years     REAL NOT NULL,
+    Is_RHP            INTEGER NOT NULL DEFAULT 0,
+    Total_Costs_EUR   REAL,
+    Total_Costs_Pct   REAL,
+    Annual_Impact_Pct REAL,
+    Source            TEXT NOT NULL,
+    Created_At        TEXT NOT NULL DEFAULT (datetime('now')),
+    Updated_At        TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (ISIN, Horizon_Years),
+    CHECK (Horizon_Years > 0 AND Horizon_Years <= 50),
+    CHECK (Is_RHP IN (0, 1)),
+    CHECK (Source IN ('PRIIPS_COSTS_OVER_TIME', 'UCITS_DERIVED', 'MANUAL'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_cost_schedule_isin ON fund_cost_schedule(ISIN);
+CREATE INDEX IF NOT EXISTS idx_cost_schedule_rhp  ON fund_cost_schedule(ISIN) WHERE Is_RHP = 1;
+
+
+-- Índices de búsqueda frecuente
+CREATE INDEX IF NOT EXISTS idx_fm_nature    ON fund_master (Fund_Nature);
+CREATE INDEX IF NOT EXISTS idx_fm_block     ON fund_master (Heuristic_Block, Heuristic_Core);
+CREATE INDEX IF NOT EXISTS idx_fm_mgmt      ON fund_master (Management_Company);
+CREATE INDEX IF NOT EXISTS idx_fm_family    ON fund_master (fund_family_id);
+CREATE INDEX IF NOT EXISTS idx_fm_strategy  ON fund_master (Strategy);
+CREATE INDEX IF NOT EXISTS idx_fm_esg       ON fund_master (Is_ESG);
+CREATE INDEX IF NOT EXISTS idx_fm_company   ON fund_master (Management_Company);
+CREATE INDEX IF NOT EXISTS idx_fm_credit_quality ON fund_master (Credit_Quality);
+
+
+-- ============================================================
+-- TABLA 2: fund_kiid_metadata
+-- Metadatos del documento KIID/DDF de cada fondo
+-- Una fila por (ISIN, KIID_Class): Class=1 documento principal
+-- ============================================================
+CREATE TABLE IF NOT EXISTS fund_kiid_metadata (
+
+    -- ── Clave ─────────────────────────────────────────────────
+    ISIN                        TEXT    NOT NULL,
+    KIID_Class                  INTEGER NOT NULL DEFAULT 1,
+
+    -- ── Localización del documento ───────────────────────────
+    KIID_URL                    TEXT,
+    KIID_PDF_Hash               TEXT,
+
+    -- ── Estado del ciclo de descarga ─────────────────────────
+    -- CACHED         → texto en BD, no se re-descarga
+    -- OK             → descarga correcta anterior (igual que CACHED para el pipeline)
+    -- FORCE_REFRESH  → re-descarga obligatoria en el próximo ciclo
+    -- WRONG_DOC      → PDF descargado no corresponde al ISIN
+    -- NOT_FOUND      → URL no responde
+    KIID_Status                 TEXT    DEFAULT 'CACHED',
+
+    -- ── Contenido extraído ───────────────────────────────────
+    Language                    TEXT,
+    Raw_KIID_Text               TEXT,
+    KIID_Published_Date         TEXT,
+    KIID_Downloaded_At          TEXT,
+
+    -- ── SRRI ─────────────────────────────────────────────────
+    SRRI                        INTEGER,
+    SRRI_Visual                 INTEGER,
+    SRRI_Textual                INTEGER,
+    -- MATCH | TEXT_ONLY | VISUAL_ONLY | CONFLICT | NOT_AVAILABLE
+    SRRI_Validation_Status      TEXT,
+
+    -- ── Telemetría de proceso (v16) ───────────────────────────
+    Processing_Time_Ms          INTEGER,
+    Processing_Breakdown        TEXT,
+
+    -- ── DLA Fase 2 — tablas Cat.1+2 (v18) ───────────────────
+    -- Resultado de dla_table_serializer.serialize_tables().
+    -- Formato: texto plano "Etiqueta: valor" por línea, concatenable
+    -- a Raw_KIID_Text para que kiid_parser.py lo procese sin cambios.
+    -- Ciclo de vida idéntico a Raw_KIID_Text:
+    --   calculado en descarga real (FORCE_REFRESH / nuevo PDF),
+    --   reutilizado desde BD en ciclos CACHED,
+    --   invalidado cuando KIID_PDF_Hash cambia.
+    -- NULL = pendiente de extracción (DLA_TABLE_SERIALIZATION_ENABLED=False
+    --        o fondo no procesado aún con DLA-2 activo).
+    DLA2_Table_Text             TEXT,
+
+    -- ── v20 (INTEGRATED_SPEC_v20_v2 §2B) — arbitración de coste DLA2 ────────
+    -- Paridad con SRRI: por componente, 2 valores crudos por estrategia + 1
+    -- veredicto. Cost_*_BandsX/Ruled ↔ SRRI_Visual/Textual; Cost_*_Arbitration
+    -- ↔ SRRI_Validation_Status. NULL = nunca arbitrado (CACHED / sin PDF local
+    -- / kill-switch off). BOTH_FAIL (intentado y fallido) se distingue de NULL.
+    Cost_Mgmt_BandsX            REAL,
+    Cost_Mgmt_Ruled             REAL,
+    Cost_Mgmt_Arbitration       TEXT
+        CHECK (Cost_Mgmt_Arbitration IS NULL OR Cost_Mgmt_Arbitration IN
+            ('AGREE','OCR_RECOVERED','BOTH_FAIL','ONLY_BANDS_X','ONLY_RULED','CONFLICT')),
+    Cost_Oper_BandsX            REAL,
+    Cost_Oper_Ruled             REAL,
+    Cost_Oper_Arbitration       TEXT
+        CHECK (Cost_Oper_Arbitration IS NULL OR Cost_Oper_Arbitration IN
+            ('AGREE','OCR_RECOVERED','BOTH_FAIL','ONLY_BANDS_X','ONLY_RULED','CONFLICT')),
+
+    PRIMARY KEY (ISIN, KIID_Class)
+);
+
+-- Índices de búsqueda frecuente
+CREATE INDEX IF NOT EXISTS idx_km_status    ON fund_kiid_metadata (KIID_Status);
+CREATE INDEX IF NOT EXISTS idx_km_srri_val  ON fund_kiid_metadata (SRRI_Validation_Status);
+CREATE INDEX IF NOT EXISTS idx_km_visual    ON fund_kiid_metadata (SRRI_Visual);
+
+-- ============================================================
+-- VISTA v20: veredicto overall de arbitración de coste (worst-of)
+-- No se almacena columna; se deriva de los dos veredictos por componente.
+-- Severidad: CONFLICT > BOTH_FAIL > OCR_RECOVERED > ONLY_BANDS_X
+--            > ONLY_RULED > AGREE. NULL si algún componente nunca se arbitró.
+-- ============================================================
+DROP VIEW IF EXISTS v_cost_arbitration_overall;
+CREATE VIEW v_cost_arbitration_overall AS
+SELECT ISIN,
+  CASE
+    WHEN Cost_Mgmt_Arbitration IS NULL OR Cost_Oper_Arbitration IS NULL THEN NULL
+    WHEN 'CONFLICT'      IN (Cost_Mgmt_Arbitration, Cost_Oper_Arbitration) THEN 'CONFLICT'
+    WHEN 'BOTH_FAIL'     IN (Cost_Mgmt_Arbitration, Cost_Oper_Arbitration) THEN 'BOTH_FAIL'
+    WHEN 'OCR_RECOVERED' IN (Cost_Mgmt_Arbitration, Cost_Oper_Arbitration) THEN 'OCR_RECOVERED'
+    WHEN 'ONLY_BANDS_X'  IN (Cost_Mgmt_Arbitration, Cost_Oper_Arbitration) THEN 'ONLY_BANDS_X'
+    WHEN 'ONLY_RULED'    IN (Cost_Mgmt_Arbitration, Cost_Oper_Arbitration) THEN 'ONLY_RULED'
+    ELSE 'AGREE'
+  END AS Cost_Arbitration_Overall
+FROM fund_kiid_metadata WHERE KIID_Class = 1;
+
+
+-- ============================================================
+-- TABLA 3: ingestion_log
+-- Registro de eventos del pipeline (errores, avisos, trazas)
+-- COLUMNAS CANÓNICAS: step, status (no block/level — nombres históricos)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS ingestion_log (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ISIN        TEXT,
+    step        TEXT,
+    status      TEXT,
+    message     TEXT,
+    created_at  TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_log_isin   ON ingestion_log (ISIN);
+CREATE INDEX IF NOT EXISTS idx_log_status ON ingestion_log (status);
+
+
+-- ============================================================
+-- TABLA 4: fund_families  (fund_family_builder.py)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS fund_families (
+    family_id       TEXT PRIMARY KEY,
+    family_name     TEXT,
+    Fund_Nature     TEXT,
+    n_funds         INTEGER,
+    Updated_At      TEXT
+);
+
+
+-- ============================================================
+-- PROYECTO 2 — ENRIQUECIMIENTO CUANTITATIVO
+-- ============================================================
+
+-- ------------------------------------------------------------
+-- SERIES MACRO
+-- Indicadores macroeconómicos de contexto
+-- Fuentes: BCE (SDW), Eurostat, INE, Fed FRED
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS series_macro (
+    date            DATE    NOT NULL,
+    indicator       TEXT    NOT NULL,   -- código normalizado (ver catálogo abajo)
+    geography       TEXT    NOT NULL,   -- ES / EU / US / JP / CN / GLOBAL
+    value           REAL,
+    unit            TEXT,               -- ratio / index / pct / usd_bn
+    source          TEXT,               -- BCE / EUROSTAT / INE / FRED / IMF
+    load_ts         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (date, indicator, geography)
+);
+
+CREATE INDEX IF NOT EXISTS idx_macro_indicator ON series_macro (indicator, geography);
+CREATE INDEX IF NOT EXISTS idx_macro_date       ON series_macro (date);
+
+-- Catálogo de indicadores (referencia, no constraint):
+--   ipc_index         Índice IPC base 100 (ES/EU/US/JP/CN)
+--   ipc_yoy           IPC variación interanual calculada desde ipc_index
+--   m2_yoy            M2 variación interanual
+--                       EU: serie BCE observada
+--                       US: calculado desde m2_level (source=CALC)
+--                       CN/JP: calculado con extensiones estimadas (source=CALC_EST post-2019/2017)
+--   m2_level          M2 nivel absoluto en moneda local (US=usd_bn, EU=eur_mn, CN=cny_mn, JP=jpy_mn)
+--   m2_global_yoy     M2 Global YoY calculado (US+EU+CN+JP en USD) — source=CALC
+--   m3_yoy            M3 variación interanual (EU, serie BCE observada)
+--   m3_level          M3 nivel absoluto en EUR millones (EU, serie BCE) — P2 v2
+--   gdp_nom_eur       PIB nominal Eurozona en EUR (millones, trimestral) — Eurostat
+--   deficit_gdp_pct   Déficit público / PIB (%) — Eurostat
+--   debt_gdp_pct      Deuda pública acumulada / PIB (%) — Eurostat
+--   rate_policy       Tipo de referencia banco central (EU/US/JP/CN)
+--   rate_deposit      Tipo de depósito BCE (EU)
+--   oil_wti           Precio petróleo WTI (USD/barril, mensual medio)
+--   copper            Precio cobre LME (USD/tonelada, mensual)
+--   gold              PPI Metales PPICMM — proxy precio oro (FRED)
+--   cli               Índice Adelantado Compuesto OCDE (EU=Alemania proxy/US/JP/CN/ES)
+--   unemployment      Tasa desempleo (US)
+--   dxy               Dollar Index DXY — índice fortaleza USD (base ene-1997=100)
+--   fx_usd_eur        USD por EUR (ej. 1.10)
+--   fx_jpy_usd        JPY por USD (ej. 150)
+--   fx_usd_gbp        USD por GBP (ej. 1.27)
+--   fx_cny_usd        CNY por USD (ej. 7.1)
+--   spread_hy         ICE BofA HY Option-Adjusted Spread % (GLOBAL, media mensual) — P2 v10
+--   vix               CBOE VIX — volatilidad implícita S&P500 (GLOBAL, media mensual) — P2 v10
+--   term_spread       Pendiente curva EEUU 10Y-2Y % (US, mensual) — P2 v10
+
+-- ------------------------------------------------------------
+-- SERIES BENCHMARK
+-- NAV de índices y ETF proxy usados como benchmark
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS series_benchmark (
+    benchmark_id    TEXT    NOT NULL,   -- código normalizado del índice/ETF
+    date            DATE    NOT NULL,
+    value           REAL    NOT NULL,   -- precio / nivel de índice
+    value_type      TEXT    DEFAULT 'CLOSE',  -- CLOSE / TR (total return)
+    currency        TEXT,
+    source          TEXT,
+    load_ts         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (benchmark_id, date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_bench_id   ON series_benchmark (benchmark_id);
+CREATE INDEX IF NOT EXISTS idx_bench_date ON series_benchmark (date);
+
+-- ------------------------------------------------------------
+-- SERIES INFLATION
+-- IPC mensual para deflactación de NAV (contrato P1↔P2)
+-- Subconjunto de series_macro extraído para acceso directo
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS series_inflation (
+    date        DATE    PRIMARY KEY,
+    geography   TEXT    NOT NULL DEFAULT 'ES',
+    ipc_index   REAL    NOT NULL,   -- índice base 100
+    source      TEXT,
+    load_ts     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ------------------------------------------------------------
+-- FUND METRICS  (versión canónica P2 — sustituye al placeholder P1)
+-- Una fila por (ISIN, métrica, horizonte, real_flag, versión)
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS fund_metrics (
+    isin                TEXT    NOT NULL,
+    metric              TEXT    NOT NULL,   -- nombre canónico (ver catálogo)
+    horizon             TEXT    NOT NULL,   -- ventana temporal (ver valores)
+    value               REAL,
+    real_flag           INTEGER NOT NULL    -- 0=nominal  1=deflactado por IPC
+        CHECK (real_flag IN (0, 1)),
+    calculation_date    DATE    NOT NULL,
+    metric_version      TEXT    NOT NULL    DEFAULT 'v1',
+    benchmark_id        TEXT,               -- NULL si métrica absoluta
+    source_rows         INTEGER,            -- nº de NAV usados en el cálculo
+    load_ts             TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (isin, metric, horizon, real_flag, metric_version),
+    FOREIGN KEY (isin) REFERENCES fund_master (ISIN) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_metrics_isin    ON fund_metrics (isin);
+CREATE INDEX IF NOT EXISTS idx_metrics_metric  ON fund_metrics (metric, horizon);
+CREATE INDEX IF NOT EXISTS idx_metrics_date    ON fund_metrics (calculation_date);
+
+-- Catálogo de métricas (referencia):
+--   === Daño ===
+--   max_drawdown          Máxima pérdida pico-valle           ratio ≤ 0
+--   worst_month           Peor retorno mensual                ratio
+--   === Consistencia ===
+--   pct_positive_months   % meses con retorno positivo        ratio [0,1]
+--   pct_severe_loss_months % meses con pérdida ≤ -2%          ratio [0,1]
+--   pct_positive_years    % años con retorno positivo         ratio [0,1]
+--   === Recuperación ===
+--   drawdown_duration     Duración máxima de drawdown         meses
+--   time_to_recovery      Tiempo hasta recuperar máximo       meses / NULL
+--   === Retorno ===
+--   return_ann            Rentabilidad anualizada nominal      ratio
+--   return_real_ann       Rentabilidad anualizada real         ratio
+--   volatility_ann        Volatilidad anualizada               ratio
+--   === Eficiencia ===
+--   sharpe                Ratio Sharpe                        ratio
+--   sortino               Ratio Sortino                       ratio
+--   ret_vol_simple        Rentabilidad / Volatilidad simple   ratio
+--   === Benchmark (requiere benchmark_id) ===
+--   alpha_jensen          Alfa de Jensen                      ratio
+--   beta                  Beta vs benchmark                   ratio
+--   tracking_error        Tracking Error anualizado           ratio
+--   information_ratio     Ratio de Información                ratio
+--   upside_capture        Ratio de Captura al alza            ratio
+--   downside_capture      Ratio de Captura a la baja          ratio
+--   === Sensibilidad macro OLS (23 factores — pipeline v10) ===
+--   macro_r2              R² del modelo OLS
+--   macro_alpha           Alpha anualizado no explicado por macro
+--   macro_n_obs           Observaciones usadas en la regresión
+--   beta_rate_eu          Sensibilidad variación tipo BCE
+--   beta_m3_yoy           Sensibilidad M3 Eurozona YoY
+--   beta_ipc_es/eu/us/jp/cn  Sensibilidad inflación por geografía
+--   beta_rate_us/jp/cn    Sensibilidad variación tipo Fed/BoJ/PBoC
+--   beta_oil              Sensibilidad petróleo WTI YoY
+--   beta_copper           Sensibilidad cobre YoY
+--   beta_cli_eu/us        Sensibilidad CLI OCDE EU/US
+--   beta_dxy              Sensibilidad Dollar Index YoY
+--   beta_gold             Sensibilidad oro (PPICMM) YoY
+--   beta_m2_global        Sensibilidad M2 Global YoY
+--   beta_spread_hy        Sensibilidad spread HY nivel (P2 v10)
+--   beta_vix              Sensibilidad VIX YoY (P2 v10)
+--   beta_term_spread      Sensibilidad pendiente curva 10Y-2Y (P2 v10)
+--   beta_eur_jpy          Sensibilidad EUR/JPY YoY (P2 v10)
+--   beta_eur_gbp          Sensibilidad EUR/GBP YoY (P2 v10)
+--   beta_eur_cny          Sensibilidad EUR/CNY YoY (P2 v10)
+--   === Retornos por régimen macro (7 regímenes — pipeline v10) ===
+--   Sufijos: expansion / recalentamiento / recalentamiento_tardio /
+--            estanflacion / contraccion / shock_energetico / crisis_financiera
+--   n_obs_{sufijo}        Meses del fondo en ese régimen (siempre presente)
+--   return_ann_{sufijo}   Retorno anualizado en ese régimen (%) — si n_obs ≥ 12
+--   vol_ann_{sufijo}      Volatilidad anualizada en ese régimen (%) — si n_obs ≥ 12
+--   sharpe_{sufijo}       Sharpe en ese régimen — si n_obs ≥ 12
+
+-- Valores de horizonte (cerrados):
+--   since_inception / rolling_10y / rolling_5y / rolling_3y / rolling_1y / ytd
+--   crisis_2008 / crisis_2011 / crisis_2020 / crisis_2022
+
+-- ------------------------------------------------------------
+-- P2 PIPELINE LOG
+-- Trazabilidad operativa del pipeline de cálculo P2
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS p2_pipeline_log (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    isin            TEXT,
+    step            TEXT,       -- NAV_LOAD / DEFLATE / CALC_METRICS / WRITE
+    status          TEXT,       -- OK / WARN / ERROR / SKIP
+    horizon         TEXT,
+    metric_version  TEXT,
+    message         TEXT,
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_p2log_isin ON p2_pipeline_log (isin);
+
+
+-- ============================================================
+-- PROYECTO 3 — SELECCIÓN Y CONSTRUCCIÓN DE CARTERA
+-- ============================================================
+
+-- ------------------------------------------------------------
+-- FUND SCORES
+-- Scoring compuesto pre-selección por bloque
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS fund_scores (
+    isin            TEXT    NOT NULL,
+    block           TEXT    NOT NULL,   -- Monetario / RF_Corto / etc.
+    score_version   TEXT    NOT NULL    DEFAULT 'v1',
+    score_total     REAL,
+    score_detail    TEXT,               -- JSON con desglose por componente
+    eligible        INTEGER NOT NULL    DEFAULT 0
+        CHECK (eligible IN (0, 1)),     -- 1 = supera hard filters
+    calculated_at   DATE    NOT NULL,
+    notes           TEXT,
+
+    PRIMARY KEY (isin, block, score_version),
+    FOREIGN KEY (isin) REFERENCES fund_master (ISIN) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_scores_block ON fund_scores (block, eligible);
+
+-- ------------------------------------------------------------
+-- PORTFOLIO SCENARIOS
+-- Escenarios de cartera construidos en P3
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS portfolio_scenarios (
+    scenario_id     TEXT    PRIMARY KEY,  -- ej. 'defensiva_2026Q1'
+    profile         TEXT    NOT NULL,     -- Defensiva / Equilibrada / Crecimiento
+    macro_regime    TEXT,                 -- régimen macro activo al crear el escenario
+                                          -- valores: Expansion / Recalentamiento /
+                                          -- Recalentamiento_Tardio / Estanflacion /
+                                          -- Contraccion / Shock_Energetico /
+                                          -- Crisis_Financiera  (pipeline v10)
+    created_at      DATE    NOT NULL,
+    notes           TEXT
+);
+
+-- ------------------------------------------------------------
+-- PORTFOLIO WEIGHTS
+-- Asignación de pesos por fondo y escenario
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS portfolio_weights (
+    scenario_id     TEXT    NOT NULL,
+    isin            TEXT    NOT NULL,
+    block           TEXT    NOT NULL,
+    weight          REAL    NOT NULL CHECK (weight >= 0 AND weight <= 1),
+    role            TEXT,               -- descripción del rol en cartera
+    notes           TEXT,
+
+    PRIMARY KEY (scenario_id, isin),
+    FOREIGN KEY (scenario_id) REFERENCES portfolio_scenarios (scenario_id),
+    FOREIGN KEY (isin)        REFERENCES fund_master (ISIN) ON DELETE CASCADE
+);
+
+
+CREATE INDEX IF NOT EXISTS idx_pw_scenario ON portfolio_weights (scenario_id);
+CREATE INDEX IF NOT EXISTS idx_pw_block     ON portfolio_weights (block);
+
+-- ------------------------------------------------------------
+-- ROTATION COSTS
+-- Costes de rotacion por tipo de fondo (parche hasta P1 v2)
+-- En P1 v2 se extraeran del KIID y se actualizaran automaticamente
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS rotation_costs (
+    fund_nature      TEXT    PRIMARY KEY,
+    redemption_days  INTEGER NOT NULL DEFAULT 3,   -- dias hasta recibir el dinero
+    exit_fee_pct     REAL    NOT NULL DEFAULT 0.0, -- comision de reembolso (%)
+    entry_fee_pct    REAL    NOT NULL DEFAULT 0.0, -- comision de suscripcion (%)
+    min_holding_days INTEGER NOT NULL DEFAULT 0,   -- permanencia minima en dias
+    notes            TEXT
+);
+
+-- ------------------------------------------------------------
+-- NAV SOURCES
+-- Registro de fuentes de datos NAV por ISIN.
+-- Resultado del proceso de descubrimiento previo a la descarga.
+-- Una fila por ISIN — se actualiza en cada ejecución del
+-- descubrimiento o de la carga incremental.
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS nav_sources (
+    isin            TEXT    PRIMARY KEY,
+    source          TEXT,               -- MORNINGSTAR / CNMV / NOT_FOUND
+    source_id       TEXT,               -- ID interno de la fuente
+                                        --   Morningstar: ej. 'F0GBR04S23'
+                                        --   CNMV: código registro CNMV
+    first_nav_date  DATE,               -- fecha más antigua disponible en la fuente
+    last_nav_date   DATE,               -- fecha más reciente disponible
+    nav_count       INTEGER,            -- nº de NAV disponibles en la fuente
+    discovered_at   DATE,               -- fecha de primer descubrimiento
+    last_checked    DATE,               -- fecha de última verificación
+    status          TEXT                -- OK / NOT_FOUND / ERROR
+        CHECK (status IN ('OK', 'NOT_FOUND', 'ERROR')),
+
+    FOREIGN KEY (isin) REFERENCES fund_master (ISIN) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_nav_sources_status ON nav_sources (status);
+CREATE INDEX IF NOT EXISTS idx_nav_sources_source ON nav_sources (source);
+
+-- ============================================================
+-- fund_benchmarks: benchmarks normalizados por fondo y fuente
+-- ============================================================
+-- Separado de fund_master para soportar múltiples fuentes
+-- (KIID, Morningstar, manual) sin contaminar la tabla principal.
+-- P1 v2: poblada por benchmark_normalizer.py post-ingesta.
+-- Futura integración Morningstar: source = 'MORNINGSTAR'.
+CREATE TABLE IF NOT EXISTS fund_benchmarks (
+    ISIN                TEXT    NOT NULL,
+    source              TEXT    NOT NULL,          -- KIID / MORNINGSTAR / MANUAL
+    benchmark_raw       TEXT,                      -- texto original extraido
+    benchmark_id        TEXT,                      -- ID canónico: MSCI_ACWI_NR...
+    benchmark_name      TEXT,                      -- nombre limpio para mostrar
+    provider            TEXT,                      -- MSCI / Bloomberg / ICE BofA...
+    asset_class         TEXT,                      -- Equity / Fixed Income / Rate...
+    confidence          TEXT,                      -- HIGH / MEDIUM / LOW
+    extracted_at        TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%S','now')),
+    PRIMARY KEY (ISIN, source)
+);
+
+CREATE INDEX IF NOT EXISTS idx_fb_isin        ON fund_benchmarks (ISIN);
+CREATE INDEX IF NOT EXISTS idx_fb_id          ON fund_benchmarks (benchmark_id);
+CREATE INDEX IF NOT EXISTS idx_fb_provider    ON fund_benchmarks (provider);
+
+

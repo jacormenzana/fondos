@@ -1,0 +1,18 @@
+FATAL: modules not importable: ['dla_table_serializer', 'cost_table_parser']
+   dla_table_serializer: No module named 'dla_table_serializer'
+   core.dla_table_serializer: No module named 'core'
+   cost_table_parser: No module named 'cost_table_parser'
+   core.cost_table_parser: No module named 'core'
+Set PYTHONPATH=proyecto1;proyecto1\core;shared
+FATAL: modules not importable: ['dla_table_serializer', 'cost_table_parser']
+   dla_table_serializer: No module named 'dla_table_serializer'
+   core.dla_table_serializer: No module named 'core'
+   cost_table_parser: No module named 'cost_table_parser'
+   core.cost_table_parser: No module named 'core'
+Set PYTHONPATH=proyecto1;proyecto1\core;shared
+FATAL: modules not importable: ['dla_table_serializer', 'cost_table_parser']
+   dla_table_serializer: No module named 'dla_table_serializer'
+   core.dla_table_serializer: No module named 'core'
+   cost_table_parser: No module named 'cost_table_parser'
+   core.cost_table_parser: No module named 'core'
+Set PYTHONPATH=proyecto1;proyecto1\core;shared

@@ -1,0 +1,108 @@
+
+-- Q-DLA2-01 cuantifica qué volumen de atributos objetivo tiene cobertura insuficiente y constituiría el beneficio potencial de BL-DLA-2.
+
+null_entry_fee	null_exit_fee	null_ongoing_charge	null_acc_policy	null_dist_freq_distribution	null_hedging_policy	null_currency_hedged	null_fund_currency	fondos_con_algun_null_objetivo	total_fondos
+48	534	26	360	301	512	512	37	1.229	3.204
+
+
+
+
+
+(des) C:\desarrollo\fondos\scripts\diag>python dla_table_inventory.py
+[DLA-TABLE-DIAG] project_root = C:\desarrollo\fondos
+[DLA-TABLE-DIAG] output      = C:\desarrollo\fondos\proyecto1\db\dla_table_inventory.csv
+[DLA-TABLE-DIAG] Universo completo : 3200 fondos
+   100/3200  ( 3.1%)  cat0=0  cat1=0  cat2=4  cat3=96  err=0
+   200/3200  ( 6.2%)  cat0=1  cat1=0  cat2=16  cat3=183  err=0
+   300/3200  ( 9.4%)  cat0=1  cat1=0  cat2=19  cat3=280  err=0
+   400/3200  (12.5%)  cat0=1  cat1=0  cat2=23  cat3=376  err=0
+   500/3200  (15.6%)  cat0=1  cat1=0  cat2=26  cat3=473  err=0
+   600/3200  (18.8%)  cat0=1  cat1=0  cat2=30  cat3=569  err=0
+   700/3200  (21.9%)  cat0=1  cat1=0  cat2=40  cat3=659  err=0
+   800/3200  (25.0%)  cat0=1  cat1=0  cat2=40  cat3=759  err=0
+   900/3200  (28.1%)  cat0=1  cat1=0  cat2=44  cat3=855  err=0
+  1000/3200  (31.2%)  cat0=1  cat1=0  cat2=48  cat3=951  err=0
+  1100/3200  (34.4%)  cat0=1  cat1=0  cat2=48  cat3=1051  err=0
+  1200/3200  (37.5%)  cat0=1  cat1=0  cat2=55  cat3=1144  err=0
+  1300/3200  (40.6%)  cat0=1  cat1=0  cat2=61  cat3=1238  err=0
+  1400/3200  (43.8%)  cat0=1  cat1=0  cat2=61  cat3=1338  err=0
+  1500/3200  (46.9%)  cat0=2  cat1=0  cat2=66  cat3=1432  err=0
+  1600/3200  (50.0%)  cat0=2  cat1=0  cat2=74  cat3=1524  err=0
+  1700/3200  (53.1%)  cat0=2  cat1=0  cat2=77  cat3=1621  err=0
+  1800/3200  (56.2%)  cat0=2  cat1=0  cat2=80  cat3=1718  err=0
+  1900/3200  (59.4%)  cat0=2  cat1=1  cat2=84  cat3=1813  err=0
+  2000/3200  (62.5%)  cat0=2  cat1=1  cat2=90  cat3=1907  err=0
+  2100/3200  (65.6%)  cat0=2  cat1=1  cat2=93  cat3=2004  err=0
+  2200/3200  (68.8%)  cat0=3  cat1=1  cat2=99  cat3=2097  err=0
+  2300/3200  (71.9%)  cat0=4  cat1=1  cat2=106  cat3=2189  err=0
+  2400/3200  (75.0%)  cat0=4  cat1=1  cat2=110  cat3=2285  err=0
+  2500/3200  (78.1%)  cat0=4  cat1=1  cat2=113  cat3=2382  err=0
+  2600/3200  (81.2%)  cat0=6  cat1=1  cat2=116  cat3=2477  err=0
+  2700/3200  (84.4%)  cat0=6  cat1=1  cat2=119  cat3=2574  err=0
+  2800/3200  (87.5%)  cat0=6  cat1=1  cat2=119  cat3=2674  err=0
+  2900/3200  (90.6%)  cat0=6  cat1=2  cat2=121  cat3=2771  err=0
+  3000/3200  (93.8%)  cat0=7  cat1=2  cat2=121  cat3=2870  err=0
+  3100/3200  (96.9%)  cat0=9  cat1=2  cat2=124  cat3=2965  err=0
+  3200/3200  (100.0%)  cat0=9  cat1=2  cat2=126  cat3=3063  err=0
+
+--- RESUMEN DLA-TABLE-DIAG ---
+Fondos analizados   : 3200 (universo=3200)
+Errores             : 0
+Cat. 0 (sin senal)  : 9  (0.3%)
+Cat. 1 (lista 1D)   : 2  (0.1%)
+Cat. 2 (tabla 2D)   : 126  (3.9%)
+Cat. 3 (escenarios) : 3063  (95.7%)
+CSV guardado en     : C:\desarrollo\fondos\proyecto1\db\dla_table_inventory.csv
+
+Siguiente paso: ejecutar Q-DLA2-04 sobre el CSV (ver comentarios al final).
+--- FIN ---
+
+(des) C:\desarrollo\fondos\scripts\diag>python dla_diag_queries.py
+[DLA-DIAG-QUERIES] project_root = C:\desarrollo\fondos
+[DLA-DIAG-QUERIES] CSV      = C:\desarrollo\fondos\proyecto1\db\dla_table_inventory.csv
+[DLA-DIAG-QUERIES] 3200 filas importadas en dla_inv (tabla temporal)
+
+============================================================
+  Q-DLA2-04a: ROI global
+============================================================
+  roi_costes_accionable  total_cat2_costes  roi_politica_accionable  scope_dla3  sin_senal  total_analizados
+  ----------------------------------------------------------------------------------------------------------
+  539                    3181               576                      3063        9          3200
+
+============================================================
+  Q-DLA2-04b: ROI desglosado por atributo de coste
+============================================================
+  entry_accionable  exit_accionable  oc_accionable
+  ------------------------------------------------
+  29                512              7
+
+============================================================
+  Q-DLA2-04c: distribucion de categorias
+============================================================
+  cat_max  n_fondos  pct
+  -----------------------
+  0        9         0.3
+  1        2         0.1
+  2        126       3.9
+  3        3063      95.7
+
+============================================================
+  Q-DLA2-04d: errores de procesamiento
+============================================================
+  (sin resultados)
+
+============================================================
+  DECISION Go/No-Go (BL-DLA-2-DIAG)
+============================================================
+  Muestra analizada         : 3200 fondos
+  roi_costes_accionable     : 539  (extrap. universo: ~540)
+  total_cat2_costes         : 3181  (99.4% de la muestra)
+
+  >>> DECISION: GO COMPLETO
+      ROI alto. Implementar BL-DLA-2 Cat.1+2 completo.
+
+  NOTA: estos resultados son sobre texto pre-DLA-1 en su mayoria.
+  Repetir el diagnostico tras procesar >=300 fondos con DLA-1 activo
+  para obtener la cifra definitiva.
+
+(des) C:\desarrollo\fondos\scripts\diag>

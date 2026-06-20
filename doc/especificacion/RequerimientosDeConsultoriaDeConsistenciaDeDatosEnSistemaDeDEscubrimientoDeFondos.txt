@@ -1,0 +1,10 @@
+El excel que te paso contiene dos hojas. 
+1_Fund_Master: Hoja que contiene un  listado con el valor que toman 41 atributos que caracteriza 3204 fondos de inversión. Cada fila de la hoja caracteriza un fondo
+2_Carterización: Hoja que describe la caracterización de cada atributo mediante cuatro características del mismo
+	Nombre: Nombre del atributo
+	Grupo: Nombre del grupo del que consideras que forma parte el atributo.
+	Pregunta: La pregunta a la que responde la población de atributos informados en el campo
+	Criterio: El criterio empleado para determinar la población de valores registrados por el atributo
+	Objeto: El objeto u objetivo del atributo 
+
+Te pido que realices una auditoría de la caracterización de los fondos realizada por el sistema, en base analices de los valores registrados en los distintos atributos y determines las carencias e inconsistencias que detectas en los mismos, tanto en los atributos analizados de forma individualizada, como en su relación con el resto de atributos. Y qeu cuantifiques y objetives las inconsistencias que detallas en cada uno de ellos 

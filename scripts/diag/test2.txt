@@ -1,0 +1,77 @@
+[DLA2v2] META: {'n_pages_scanned': 3, 'tables_detected': {'composition': 1, 'over_time': 1}, 'strategy': 'grid', 'rows_extracted': 72, 'fallback': False, 'errors': []}
+[DLA2v2] OUTPUT (8651 chars):
+|||Composición de los costes|||
+|||Costes de entrada||||||0,50 % del importe que pagará usted al realizar esta inversión. Se trata del porcentaje máximo que se le podrá cobrar al inversor.|||50 €|||||||||
+|||Costes de salida||||||No cobramos una comisión de salida por este producto, pero es posible que la persona que se lo venda sí lo haga.|||0 €|||||||||
+|||Comisiones de gestión y otros costes administrativos o de funcionamiento||||||0,11 % del valor de su inversión al año.|||3 €|||||||||
+|||Costes de operación en la cartera||||||0,04 % del valor de su inversión al año. Se trata de una estimación basada en los costes reales del año anterior.|||1 €|||||||||
+|||Costes a lo largo del tiempo|||
+|||Inversión: 10 000 €||||||En caso de salida después de||||||
+|||||||||3 meses||||||
+|||Costes totales|||54 €|||||||||
+|||Incidencia de los costes*|||0,54 %|||||||||
+|||¿QUÉ RIESG|||OS CORR|||O Y QUÉ PO|||DR|||ÍA OBTENER|||A CAMBIO|||?|||||||||||||||||||||
+|||INDICADOR RE|||SUMIDO D|||E RIESGO (I|||RR)||||||||||||||||||||||||||||||
+|||||||||||||||Riesgo más|||bajo|||R|||iesgo más alt|||o|||||||||||||||
+|||El|||indicador de r|||iesgo presupo|||ne qu|||e usted mantendr|||á el producto|||durante|||un período d|||e 3 meses.|||||||||||||||
+|||! El|||indicador re|||sumido de rie|||sgo|||es una guía del|||nivel de rie|||sgo de|||este produc|||to en compa|||ración con otr|||os productos.|||Muestra la|||s|||
+|||pr|||obabilidades d|||e que el produ|||cto p|||ierda dinero debid|||o a la evoluci|||ón de lo|||s mercados.|||La evaluació|||n califica la posi|||bilidad de sufri|||r pérdidas e|||n|||
+|||re|||ntabilidades c|||omo muy baja.|||||||||||||||||||||||||||||||||
+|||Hemos clasificado|||este product|||o en la clase d|||e rie|||sgo 1 en una esc|||ala de 7, en l|||a que 1|||significa el ri|||esgo más ba|||jo. Esta evalua|||ción califica la|||posibilidad|||de|||
+|||sufrir pérdidas en|||rentabilidade|||s futuras como|||muy|||baja y la probabili|||dad de que u|||na mala|||coyuntura d|||e mercado in|||fluya en nuestra|||capacidad de|||pagarle co|||mo|||
+|||muy improbable.|||||||||||||||||||||||||||||||||||||||
+|||Además de los rie|||sgos incluido|||s en el indicado|||r de|||riesgo, existen otr|||os riesgos qu|||e puede|||n afectar a la|||rentabilidad|||del producto:||||||||||||
+|||— Riesgo de cont|||raparte: Exist|||e el riesgo de q|||ue e|||l incumplimiento d|||e una contrap|||arte pro|||voque un imp|||ago.|||||||||||||||
+|||— Riesgo de uso|||de instrument|||os derivados: P|||ued|||e aumentar o dism|||inuir la volatil|||idad del|||producto.||||||||||||||||||
+|||Consulte el folleto|||para obtener|||más informaci|||ón so|||bre los riesgos a l|||os que se ex|||pone el|||producto.||||||||||||||||||
+|||ESCENARIOS|||DE RENTAB|||ILIDAD|||||||||||||||||||||||||||||||||
+|||Las cifras present|||adas incluyen|||todos los cost|||es d|||el producto propia|||mente dicho,|||pero es|||posible que|||no incluyan t|||odos los coste|||s que usted de|||ba pagar a|||su|||
+|||asesor o distribuid|||or. Las cifras|||no tienen en c|||uenta|||su situación fisca|||l personal, qu|||e tambi|||én puede infl|||uir en la canti|||dad que reciba.||||||||||||
+|||Lo que obtenga d|||e este product|||o dependerá d|||e la|||evolución futura de|||l mercado, la|||cual es|||incierta y no|||puede prede|||cirse con exacti|||tud.|||||||||
+|||Los escenarios de|||sfavorable, m|||oderado y favo|||rabl|||e que se muestran|||son ilustraci|||ones ba|||sadas en la r|||entabilidad m|||ás baja, media|||y más alta del|||producto o|||de|||
+|||un valor de refere|||ncia adecuad|||o durante los úl|||timo|||s 10 años.|||||||||||||||||||||||||||
+|||El escenario de te|||nsión muestr|||a lo que usted p|||odrí|||a recibir en circuns|||tancias extre|||mas de|||los mercados|||.|||||||||||||||
+|||Período de man|||tenimiento r|||ecomendado:|||3 m|||eses|||||||||||||||En|||caso de salid|||a después||||||
+|||Para una invers|||ión de: 10 00|||0 €|||||||||||||||||||||de|||3 meses|||||||||
+|||Escenarios|||||||||||||||||||||||||||||||||||||||
+|||Mínimo|||N|||o hay un rendi|||mient|||o mínimo garantiz|||ado. Podría p|||erder p|||arte o la totali|||dad de su inv|||ersión.||||||||||||
+||||||L|||o que podría r|||ecib|||ir tras deducir los|||costes||||||||||||||||||9900 €||||||
+|||Tensión|||||||||||||||||||||||||||||||||||||||
+||||||R|||endimiento me|||dio||||||||||||||||||||||||-1,03 %||||||
+||||||L|||o que podría r|||ecib|||ir tras deducir los|||costes||||||||||||||||||9930 €||||||
+|||Desfavorable*|||||||||||||||||||||||||||||||||||||||
+||||||R|||endimiento me|||dio||||||||||||||||||||||||-0,69 %||||||
+||||||L|||o que podría r|||ecib|||ir tras deducir los|||costes||||||||||||||||||9950 €||||||
+|||Moderado*|||||||||||||||||||||||||||||||||||||||
+||||||R|||endimiento me|||dio||||||||||||||||||||||||-0,53 %||||||
+||||||L|||o que podría r|||ecib|||ir tras deducir los|||costes||||||||||||||||||10040 €||||||
+|||Favorable*|||||||||||||||||||||||||||||||||||||||
+||||||R|||endimiento me|||dio||||||||||||||||||||||||0,45 %||||||
+|||Los escenarios pr|||esentados ilu|||stran la rentab|||ilidad|||que podría tener|||su inversión.|||Puede|||compararlos|||con los de o|||tros productos.|||Los escenario|||s presentad|||os|||
+|||son una estimació|||n de la rentab|||ilidad futura ba|||sada|||en los datos disp|||onibles de pr|||oductos|||comparables|||y no constitu|||yen un indicad|||or exacto.|||||||||
+|||(*) El escenario d|||esfavorable s|||e produjo para|||una|||inversión entre di|||ciembre de 2|||019 y|||marzo de 202|||0. El escena|||rio favorable s|||e produjo para|||una inversi|||ón|||
+|||entre junio de 202|||3 y septiembr|||e de 2023. El e|||scen|||ario moderado se|||produjo para|||una inv|||ersión entre|||mayo de 2019|||y agosto de 20|||19.|||||||||
+|||¿QUÉ PASA|||SI GROUP|||AMA AM NO|||P|||UEDE PAGAR|||?||||||||||||||||||||||||
+|||El producto es un|||a copropiedad|||de instrument|||os fin|||ancieros y depósit|||os independi|||entes de|||la sociedad|||de gestión d|||e la cartera. En|||caso de incum|||plimiento po|||r|||
+|||parte de esta últim|||a, los activos|||del producto b|||ajo l|||a custodia del dep|||ositario no se|||verán a|||fectados. En|||caso de incu|||mplimiento del|||depositario, el r|||iesgo de||||||
+|||pérdida financiera|||del producto|||se mitiga medi|||ante|||la segregación leg|||al de los activ|||os del d|||epositario co|||n respecto a|||los del product|||o.|||||||||
+|||¿CUÁLES SO|||N LOS CO|||STES?|||||||||||||||||||||||||||||||||
+|||La persona que l|||e asesore sob|||re este produc|||to o|||se lo venda pued|||e cobrarle otr|||os cost|||es. En tal ca|||so, esa perso|||na le facilitará|||información ac|||erca de est|||os|||
+|||costes y de la inci|||dencia que tie|||nen en su inve|||rsión|||a lo largo del tiem|||po.||||||||||||||||||||||||
+|||COSTES A LO|||LARGO DE|||L TIEMPO|||||||||||||||||||||||||||||||||
+|||Los cuadros mue|||stran los imp|||ortes que se d|||etrae|||n de su inversión|||para cubrir|||diferente|||s tipos de c|||ostes. Estos|||importes depen|||den de cuánto|||invierte y|||de|||
+|||cuánto tiempo ma|||ntiene el pro|||ducto. Los imp|||ortes|||indicados aquí ilu|||stran un ejem|||plo de|||inversión de|||una determin|||ada cuantía du|||rante diferente|||s períodos|||de|||
+|||inversión posibles|||.||||||||||||||||||||||||||||||||||||
+|||Hemos partido de|||los siguientes|||supuestos:|||||||||||||||||||||||||||||||||
+|||— El primer año r|||ecuperaría us|||ted el importe i|||nver|||tido (rendimiento a|||nual del 0 %)|||. En rel|||ación con los|||demás perío|||dos de manteni|||miento, hemos|||supuesto q|||ue|||
+|||el producto evoluc|||iona tal como|||muestra el esc|||ena|||rio moderado.|||||||||||||||||||||||||||
+|||— Se invierten 10|||000 €.||||||||||||||||||||||||||||||||||||
+|||Inversión: 10 0|||00 €||||||||||||||||||||||||En ca|||so de salida de|||spués de||||||
+||||||||||||||||||||||||||||||3 mes|||es|||||||||
+|||Costes totales|||||||||||||||||||||||||||||||||54 €||||||
+|||Incidencia de lo|||s costes*||||||||||||||||||||||||||||||0,54 %||||||
+|||* Refleja la medid|||a en que los c|||ostes reducen|||su re|||ndimiento cada añ|||o a lo largo d|||el perío|||do de mante|||nimiento. Por|||ejemplo, muest|||ra que, en cas|||o de salida|||al|||
+|||término del períod|||o de manteni|||miento recome|||ndad|||o, el rendimiento m|||edio que se|||prevé q|||ue obtendrá c|||ada año será|||del 0,04 % ant|||es de deducir l|||os costes y||||||
+|||del -0,50 % despu|||és de deducir|||los costes.|||||||||||||||||||||||||||||||||
+|||Public|||ado por GRO|||UPAMA ASSET|||MA|||NAGEMENT - Do|||micilio social:|||25 rue d|||e la Ville-l’Év|||êque, 75008|||PARÍS – Sitio|||web: www.grou|||pama-am.c|||om|||
+META: {'n_pages_scanned': 3, 'tables_detected': {'composition': 1, 'over_time': 1}, 'strategy': 'grid', 'rows_extracted': 72, 'fallback': False, 'errors': []}

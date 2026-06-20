@@ -1,0 +1,288 @@
+BL-DLA-2-DIAG — Orquestador de toma de decisión
+Ejecutado: 2026-05-20 20:01:05
+project_root: C:\desarrollo\fondos
+CSV:          C:\desarrollo\fondos\proyecto1\db\dla2_table_inventory.csv
+Log:          C:\desarrollo\fondos\proyecto1\db\dla2_decision_diag.log
+
+======================================================================
+  FASE 1 — Cobertura actual de atributos objetivo  (Q-DLA2-01)
+======================================================================
+
+  -- Atributos de costes (Cat. 2 — impacto BL-51A / BL-55) --
+  Entry_Fee_Pct NULL                    :    49  (1.5%)
+  Exit_Fee_Pct NULL                     :   111  (3.5%)
+  Ongoing_Charge NULL                   :    27  (0.8%)
+
+  -- Atributos de política (Cat. 2 — impacto BL-49) --
+  Accumulation_Policy NULL              :   361  (11.3%)
+  Distribution_Frequency NULL (DIST.)   :   306  (9.5%)
+  Hedging_Policy NULL                   :   476  (14.9%)
+  Currency_Hedged NULL                  :   476  (14.9%)
+
+  -- Atributos de lista (Cat. 1) --
+  Fund_Currency NULL                    :    38  (1.2%)
+
+  FONDOS CON ≥1 ATRIBUTO NULL           :   864  (27.0%)
+  Total fondos                          :  3205
+
+======================================================================
+  FASE 2 — Patología de tabla serializada en texto  (Q-DLA2-02 / Q-DLA2-05a)
+======================================================================
+
+  -- Q-DLA2-02: fondos con firmas léxicas de cruce 2-col (texto pre-DLA) --
+  Fondos sospechosos                    :    19  (0.6%)
+  Total con Raw_KIID_Text               :  3204
+
+  -- Q-DLA2-05a: Entry_Fee=NULL + Fee_Known_Flag=NOT_FOUND con % en texto --
+  Con % flotante en texto               :    28  (58.3% de NOT_FOUND)
+  Total NOT_FOUND sin entry             :    48
+
+  Interpretación                        : Fondos donde existe un % en el KIID pero el detector no lo extrajo.
+                                        : Son candidatos directos a mejora por BL-DLA-2 (estructura de tabla).
+
+======================================================================
+  FASE 3 — Inventario textual Cat. 1/2/3  (Q-DLA2-03)
+======================================================================
+  Universo completo                     : 3201 fondos
+
+  CSV generado                          : C:\desarrollo\fondos\proyecto1\db\dla2_table_inventory.csv
+  Filas cargadas en dla_inv             : 3201
+
+
+  -- Distribución de señal textual por categoría --
+  cat_max  n_fondos  pct_%
+  ------------------------
+  0        9         0.3  
+  1        2         0.1  
+  2        126       3.9  
+  3        3064      95.7 
+
+  Fondos sin error                      : 3201
+  Fondos con error                      : 0
+
+======================================================================
+  FASE 4 — ROI real: cruce atributos NULL × categoría  (Q-DLA2-04)
+======================================================================
+
+  -- Q-DLA2-04a: ROI global --
+  métrica                                                  valor
+  --------------------------------------------------------------
+  roi_costes_accionable  (Cat2 costes ∩ NULL coste)        118  
+  total_con_cat2_costes  (señal Cat2 costes presente)      3182 
+  roi_politica_accionable (Cat2 política ∩ NULL política)  544  
+  scope_dla3             (Cat3 escenarios detectados)      3064 
+  sin_senal              (Cat0, sin ninguna señal)         9    
+  total_analizados                                         3201 
+
+  -- Q-DLA2-04b: ROI desglosado por atributo de coste --
+  atributo        fondos_accionables
+  ----------------------------------
+  Entry_Fee_Pct   29                
+  Exit_Fee_Pct    89                
+  Ongoing_Charge  7                 
+
+  -- Q-DLA2-04c: distribución de categorías (confirmación) --
+  cat_max  n_fondos  pct_%
+  ------------------------
+  0        9         0.3  
+  1        2         0.1  
+  2        126       3.9  
+  3        3064      95.7 
+
+  -- Q-DLA2-04d: errores de procesamiento --
+  Errores                               : 0  ✓
+
+======================================================================
+  FASE 5 — Fee_Known_Flag × tabla detectada  (Q-DLA2-05b)
+======================================================================
+  Fee_Known_Flag  n_fondos  con_cat2_costes  null_entry_fee
+  ---------------------------------------------------------
+  EXTRACTED       1411      1409             0             
+  ZERO_CONFIRMED  944       943              0             
+  NOT_FOUND       849       830              48            
+  NULL            1         0                1             
+
+  Interpretación                        : NOT_FOUND con cat2_costes presente → candidatos directos a BL-DLA-2.
+
+======================================================================
+  FASE 6 — Categoría real por atributo NULL  [v1.1 — BL-DLA-2-LOGIC-FIX]
+======================================================================
+
+  -- Exit_Fee_Pct NULL  (total: 107) --
+  estado                              n   pct_%  interpretación                 
+  ------------------------------------------------------------------------------
+  Con Cat. 2 (Costes)                 89  83.2%  ACCIONABLE por BL-DLA-2        
+  Sin Cat. 2 (Costes) (sólo Cat.1/0)  18  16.8%  No accionable (sin tabla Cat.2)
+  Sólo Cat. 3 (sin Cat.2)             0   0.0%   Scope BL-DLA-3, no BL-DLA-2    
+
+  -- Entry_Fee_Pct NULL  (total: 45) --
+  estado                              n   pct_%  interpretación                 
+  ------------------------------------------------------------------------------
+  Con Cat. 2 (Costes)                 29  64.4%  ACCIONABLE por BL-DLA-2        
+  Sin Cat. 2 (Costes) (sólo Cat.1/0)  16  35.6%  No accionable (sin tabla Cat.2)
+  Sólo Cat. 3 (sin Cat.2)             0   0.0%   Scope BL-DLA-3, no BL-DLA-2    
+
+  -- Ongoing_Charge NULL  (total: 23) --
+  estado                              n   pct_%  interpretación                 
+  ------------------------------------------------------------------------------
+  Con Cat. 2 (Costes)                 7   30.4%  ACCIONABLE por BL-DLA-2        
+  Sin Cat. 2 (Costes) (sólo Cat.1/0)  16  69.6%  No accionable (sin tabla Cat.2)
+  Sólo Cat. 3 (sin Cat.2)             0   0.0%   Scope BL-DLA-3, no BL-DLA-2    
+
+  -- Accumulation_Policy NULL  (total: 359) --
+  estado                                n    pct_%  interpretación                 
+  ---------------------------------------------------------------------------------
+  Con Cat. 2 (Política)                 243  67.7%  ACCIONABLE por BL-DLA-2        
+  Sin Cat. 2 (Política) (sólo Cat.1/0)  13   3.6%   No accionable (sin tabla Cat.2)
+  Sólo Cat. 3 (sin Cat.2)               103  28.7%  Scope BL-DLA-3, no BL-DLA-2    
+
+  -- Hedging_Policy NULL  (total: 472) --
+  estado                                n    pct_%  interpretación                 
+  ---------------------------------------------------------------------------------
+  Con Cat. 2 (Política)                 349  73.9%  ACCIONABLE por BL-DLA-2        
+  Sin Cat. 2 (Política) (sólo Cat.1/0)  7    1.5%   No accionable (sin tabla Cat.2)
+  Sólo Cat. 3 (sin Cat.2)               116  24.6%  Scope BL-DLA-3, no BL-DLA-2    
+
+  -- Currency_Hedged NULL  (total: 472) --
+  estado                                n    pct_%  interpretación                 
+  ---------------------------------------------------------------------------------
+  Con Cat. 2 (Política)                 349  73.9%  ACCIONABLE por BL-DLA-2        
+  Sin Cat. 2 (Política) (sólo Cat.1/0)  7    1.5%   No accionable (sin tabla Cat.2)
+  Sólo Cat. 3 (sin Cat.2)               116  24.6%  Scope BL-DLA-3, no BL-DLA-2    
+
+  ⚠  v1.0 agrupaba por cat_max: fondos con {Cat.2+Cat.3} (cat_max=3) aparecían como 'Cat.3', sobreestimando NULLs en Cat.3 para comisiones. v1.1 consulta la flag de categoría real de cada atributo — corrección BL-DLA-2-LOGIC-FIX.
+
+======================================================================
+  FASE 7 — DECISIÓN GO/NO-GO  (umbrales backlog v3.7 / v1.1 BL-DLA-2-LOGIC-FIX)
+======================================================================
+
+  -- Indicadores clave para la decisión  [v1.1 — BL-DLA-2-LOGIC-FIX] --
+  indicador                               valor         umbral_backlog                                  
+  ------------------------------------------------------------------------------------------------------
+  Cat. 2 prevalencia REAL (has_cat2_*=1)  3190 (99.7%)  ≥40% → GO  |  20-40% → PILOTO  |  <20% → DIFERIR
+  Cat. 2 pura (cat_max=2, legacy v1.0)    126 (3.9%)    Referencia histórica — subestima Cat.2          
+  roi_costes_accionable                   118           —  (complementario, no determinante)            
+  Cat. 3 prevalencia (cat_max=3)          3064 (95.7%)  Scope BL-DLA-3                                  
+  Fondos con ≥1 atributo NULL             864 (27.0%)   Beneficio potencial total                       
+
+  -- Exit_Fee_Pct NULL — accionabilidad real por BL-DLA-2 --
+    Accionables (tiene Cat.2 Costes)    : 89  (83.2%)
+    Sólo Cat. 3 (no accionable BL-DLA-2): 0  (0.0%)
+    Sin Cat.2 ni Cat.3                  : 18  (16.8%)
+
+
+
+======================================================================
+  >>> DECISIÓN: GO COMPLETO
+      Cat. 2 ≥40% del corpus. ROI alto. Implementar BL-DLA-2 Cat.1+2 completo.
+      Acción: Iniciar Sub-fase 2A (dla_table_serializer.py v1.0).
+======================================================================
+
+  ⚠  Estos resultados son mayoritariamente sobre texto pre-DLA-1. Repetir el diagnóstico tras ≥300 fondos procesados con DLA-1 activo para obtener la cifra definitiva (backlog v3.8, BL-DLA-2-DIAG).
+
+======================================================================
+  FASE 8 — Distribución KID_Format inferred  [BL-COST-1 v1.3]
+======================================================================
+  kid_format  n_fondos  pct_%
+  ---------------------------
+  PRIIPS_KID  1998      62.4 
+  UNKNOWN     1198      37.4 
+  UCITS_KIID  5         0.2  
+
+  ⚠  BL-COST-1-FORMAT: 62.4% PRIIPS_KID — router recomendado en Sprint 2.
+
+  Señales PRIIPs (mediana fondos PRIIPS): 5.6
+  Valores EUR cerca costes (avg PRIIPS) : 1.7
+
+======================================================================
+  FASE 9 — Falsos positivos Entry_Fee_Pct=0  [BL-COST-1 v1.3]
+======================================================================
+  Fondos con Entry_Fee_Pct=0 en BD      : 1424
+  Sospechosos (evidencia textual fee≠0) : 682  (47.9% de los zeros)
+
+
+  -- Top ISINs sospechosos (Entry) --
+  ISIN          n_señales  Fee_Known_Flag
+  ---------------------------------------
+  DE0005152482  2          NOT_FOUND     
+  DE0005318406  2          NOT_FOUND     
+  DE0008474263  2          NOT_FOUND     
+  DE0009848119  2          NOT_FOUND     
+  DE000DWS17J0  2          NOT_FOUND     
+  DE000DWS18N0  2          NOT_FOUND     
+  DE000DWS1U90  2          NOT_FOUND     
+  DE000DWS22Q5  2          NOT_FOUND     
+  DE000DWS29E6  2          NOT_FOUND     
+  DE000DWS29J5  2          NOT_FOUND     
+
+  % sobre corpus analizado              : 21.31%
+  ⚠  [BL-COST-1-FP-ENTRY] 21.3% ≥ 3% umbral BLOQUEANTE Sprint 2 (CRITERIO B). Router obligatorio.
+
+======================================================================
+  FASE 10 — Falsos positivos Exit_Fee_Pct=0  [BL-COST-1 v1.3]
+======================================================================
+  Fondos con Exit_Fee_Pct=0 en BD       : 2825
+  Sospechosos (evidencia textual fee≠0) : 589  (20.8% de los zeros)
+
+
+  -- Top ISINs sospechosos (Exit) --
+  ISIN          n_señales  Fee_Known_Flag
+  ---------------------------------------
+  LU0075938133  2          ZERO_CONFIRMED
+  LU0083138064  2          ZERO_CONFIRMED
+  LU0086913042  2          ZERO_CONFIRMED
+  LU0086914362  2          ZERO_CONFIRMED
+  LU0111548326  2          ZERO_CONFIRMED
+  LU0177332227  2          ZERO_CONFIRMED
+  LU0194438841  2          ZERO_CONFIRMED
+  LU0210533500  2          EXTRACTED     
+  LU0347711466  2          ZERO_CONFIRMED
+  LU0347712357  2          ZERO_CONFIRMED
+
+  % sobre corpus analizado              : 18.40%
+  ⚠  [BL-COST-1-FP-EXIT] 18.4% ≥ 3% umbral BLOQUEANTE Sprint 2.
+
+======================================================================
+  FASE 11 — Sospecha OC = ACI mal etiquetado  [BL-COST-1 v1.3]
+======================================================================
+  Fondos con OC/OC_Recurrent no NULL procesados: 3178
+  Sospechosos (OC coincide con ACI en texto): 328
+
+
+  -- Top ISINs con sospecha OC=ACI (Ongoing_Charge col v18) --
+  ISIN          OC_en_BD
+  ----------------------
+  IE00B2478W85  0.064   
+  IE00B283G405  0.064   
+  IE00B0122Y20  0.058   
+  LU1740661167  0.054   
+  LU1859410604  0.053   
+  LU0073235904  0.051   
+  LU0568620560  0.045   
+  LU0568621618  0.045   
+  LU0244354824  0.034   
+  LU2032053410  0.034   
+
+  Interpretación                        : Estos fondos tienen un OC que coincide numericamente con el ACI@RHP.
+                                        : El OC podría ser ACI mal etiquetado (incluye amortizacion one-offs).
+                                        : Sprint 2 desambiguara con priips_cost_extractor.py.
+
+======================================================================
+  RESUMEN BL-COST-1 DIAGNOSTIC v1.3
+======================================================================
+--- RESUMEN BL-COST-1 DIAGNOSTIC v1.3 ---
+[INFO] BL-COST-1-FORMAT PRIIPS_KID: 1998 fondos (62.4%)
+[INFO] BL-COST-1-FORMAT UCITS_KIID:  5 fondos (0.2%)
+[INFO] BL-COST-1-FORMAT UNKNOWN:     1198 fondos (37.4%)
+[WARN] BL-COST-1-FP-ENTRY: 682 fondos sospechosos (21.31%)
+[WARN] BL-COST-1-FP-EXIT:  589 fondos sospechosos (18.40%)
+[WARN] BL-COST-1-OC-GAP:   328 fondos sospechosos
+---
+
+
+  -- CRITERIOS GO/NO-GO SPRINT 2 (actualización post-v1.3) --
+  criterio                  valor       resultado                      
+  ---------------------------------------------------------------------
+  A: Cat2 prevalencia ≥40%  ver Fase 7  evaluado en Fase 7             
+  B: FP entry ≥3% corpus    21.31%      BLOQUEANTE — router obligatorio
+  C: PRIIPS_KID ≥80%        62.4%       router recomendado             

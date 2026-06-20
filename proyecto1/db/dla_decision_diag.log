@@ -1,0 +1,188 @@
+BL-DLA-2-DIAG — Orquestador de toma de decisión
+Ejecutado: 2026-05-10 11:22:47
+project_root: C:\desarrollo\fondos
+CSV:          C:\desarrollo\fondos\proyecto1\db\dla_table_inventory.csv
+Log:          C:\desarrollo\fondos\proyecto1\db\dla_decision_diag.log
+
+======================================================================
+  FASE 1 — Cobertura actual de atributos objetivo  (Q-DLA2-01)
+======================================================================
+
+  -- Atributos de costes (Cat. 2 — impacto BL-51A / BL-55) --
+  Entry_Fee_Pct NULL                    :    48  (1.5%)
+  Exit_Fee_Pct NULL                     :   110  (3.4%)
+  Ongoing_Charge NULL                   :    26  (0.8%)
+
+  -- Atributos de política (Cat. 2 — impacto BL-49) --
+  Accumulation_Policy NULL              :   360  (11.2%)
+  Distribution_Frequency NULL (DIST.)   :   306  (9.6%)
+  Hedging_Policy NULL                   :   475  (14.8%)
+  Currency_Hedged NULL                  :   475  (14.8%)
+
+  -- Atributos de lista (Cat. 1) --
+  Fund_Currency NULL                    :    37  (1.2%)
+
+  FONDOS CON ≥1 ATRIBUTO NULL           :   863  (26.9%)
+  Total fondos                          :  3204
+
+======================================================================
+  FASE 2 — Patología de tabla serializada en texto  (Q-DLA2-02 / Q-DLA2-05a)
+======================================================================
+
+  -- Q-DLA2-02: fondos con firmas léxicas de cruce 2-col (texto pre-DLA) --
+  Fondos sospechosos                    :    19  (0.6%)
+  Total con Raw_KIID_Text               :  3204
+
+  -- Q-DLA2-05a: Entry_Fee=NULL + Fee_Known_Flag=NOT_FOUND con % en texto --
+  Con % flotante en texto               :    28  (58.3% de NOT_FOUND)
+  Total NOT_FOUND sin entry             :    48
+
+  Interpretación                        : Fondos donde existe un % en el KIID pero el detector no lo extrajo.
+                                        : Son candidatos directos a mejora por BL-DLA-2 (estructura de tabla).
+
+======================================================================
+  FASE 3 — Inventario textual Cat. 1/2/3  (Q-DLA2-03)
+======================================================================
+  Universo completo                     : 3201 fondos
+
+  CSV generado                          : C:\desarrollo\fondos\proyecto1\db\dla_table_inventory.csv
+  Filas cargadas en dla_inv             : 3201
+
+
+  -- Distribución de señal textual por categoría --
+  cat_max  n_fondos  pct_%
+  ------------------------
+  0        9         0.3  
+  1        2         0.1  
+  2        126       3.9  
+  3        3064      95.7 
+
+  Fondos sin error                      : 3201
+  Fondos con error                      : 0
+
+======================================================================
+  FASE 4 — ROI real: cruce atributos NULL × categoría  (Q-DLA2-04)
+======================================================================
+
+  -- Q-DLA2-04a: ROI global --
+  métrica                                                  valor
+  --------------------------------------------------------------
+  roi_costes_accionable  (Cat2 costes ∩ NULL coste)        118  
+  total_con_cat2_costes  (señal Cat2 costes presente)      3182 
+  roi_politica_accionable (Cat2 política ∩ NULL política)  544  
+  scope_dla3             (Cat3 escenarios detectados)      3064 
+  sin_senal              (Cat0, sin ninguna señal)         9    
+  total_analizados                                         3201 
+
+  -- Q-DLA2-04b: ROI desglosado por atributo de coste --
+  atributo        fondos_accionables
+  ----------------------------------
+  Entry_Fee_Pct   29                
+  Exit_Fee_Pct    89                
+  Ongoing_Charge  7                 
+
+  -- Q-DLA2-04c: distribución de categorías (confirmación) --
+  cat_max  n_fondos  pct_%
+  ------------------------
+  0        9         0.3  
+  1        2         0.1  
+  2        126       3.9  
+  3        3064      95.7 
+
+  -- Q-DLA2-04d: errores de procesamiento --
+  Errores                               : 0  ✓
+
+======================================================================
+  FASE 5 — Fee_Known_Flag × tabla detectada  (Q-DLA2-05b)
+======================================================================
+  Fee_Known_Flag  n_fondos  con_cat2_costes  null_entry_fee
+  ---------------------------------------------------------
+  EXTRACTED       1411      1409             0             
+  ZERO_CONFIRMED  944       943              0             
+  NOT_FOUND       849       830              48            
+
+  Interpretación                        : NOT_FOUND con cat2_costes presente → candidatos directos a BL-DLA-2.
+
+======================================================================
+  FASE 6 — Distribución cat_max para fondos con atributo NULL
+======================================================================
+
+  -- Exit_Fee_Pct NULL  (total: 107) --
+  cat_max  n   pct_%
+  ------------------
+  0        9   8.4  
+  1        2   1.9  
+  2        16  15.0 
+  3        80  74.8 
+
+  -- Entry_Fee_Pct NULL  (total: 45) --
+  cat_max  n   pct_%
+  ------------------
+  0        9   20.0 
+  1        2   4.4  
+  2        6   13.3 
+  3        28  62.2 
+
+  -- Ongoing_Charge NULL  (total: 23) --
+  cat_max  n  pct_%
+  -----------------
+  0        9  39.1 
+  1        2  8.7  
+  2        7  30.4 
+  3        5  21.7 
+
+  -- Accumulation_Policy NULL  (total: 359) --
+  cat_max  n    pct_%
+  -------------------
+  0        6    1.7  
+  2        33   9.2  
+  3        320  89.1 
+
+  -- Hedging_Policy NULL  (total: 472) --
+  cat_max  n    pct_%
+  -------------------
+  0        5    1.1  
+  2        20   4.2  
+  3        447  94.7 
+
+  -- Currency_Hedged NULL  (total: 472) --
+  cat_max  n    pct_%
+  -------------------
+  0        5    1.1  
+  2        20   4.2  
+  3        447  94.7 
+
+======================================================================
+  FASE 7 — DECISIÓN GO/NO-GO  (umbrales backlog v3.7)
+======================================================================
+
+  -- Indicadores clave para la decisión --
+  indicador                       valor         umbral_backlog                                  
+  ----------------------------------------------------------------------------------------------
+  Cat. 2 prevalencia (cat_max=2)  126 (3.9%)    ≥40% → GO  |  20-40% → PILOTO  |  <20% → DIFERIR
+  roi_costes_accionable           118           —  (complementario, no determinante)            
+  Cat. 3 prevalencia (cat_max=3)  3064 (95.7%)  Scope BL-DLA-3                                  
+  Fondos con ≥1 atributo NULL     863 (26.9%)   Beneficio potencial total                       
+
+  -- Distribución cat_max para Exit_Fee_Pct NULL (atributo crítico) --
+    Cat. 0                              : 9  (8.4%)
+    Cat. 1                              : 2  (1.9%)
+    Cat. 2                              : 16  (15.0%)
+    Cat. 3                              : 80  (74.8%)
+
+  ⚠  La mayoría de los Exit_Fee NULL (75%) están en Cat.3 → BL-DLA-2 (Cat.1+2) no los resolverá. Scope real de BL-DLA-3.
+
+
+======================================================================
+  >>> DECISIÓN: DIFERIR BL-DLA-2
+      Cat. 2 solo en 3.9% del corpus (<20%). Los atributos NULL residen principalmente en Cat.3 (95.7%).
+      Acción: Priorizar BL-DLA-3-DIAG (Q-DLA-06 sobre el CSV ya generado). Revisar BL-55 y BL-51A residual para cobertura de Exit_Fee sin tablas.
+======================================================================
+
+
+  -- Implicación para BL-DLA-3-DIAG --
+  Nota                                  : BL-DLA-3-DIAG puede ejecutarse inmediatamente: el CSV
+dla_table_inventory.csv contiene has_cat3_escenarios. Q-DLA-06 =
+filtrar CSV donde cat_max=3 y cruzar con atributos NULL.
+
+  ⚠  Estos resultados son mayoritariamente sobre texto pre-DLA-1. Repetir el diagnóstico tras ≥300 fondos procesados con DLA-1 activo para obtener la cifra definitiva (backlog v3.7, BL-DLA-2-DIAG).

@@ -1,0 +1,77 @@
+BL-DLA-2-AUDIT — Auditoría de éxito del serializador DLA-2
+Ejecutado: 2026-05-24 09:39:34
+project_root: /home/claude
+CSV:          /home/claude/audit.csv
+Log:          /home/claude/audit.log
+
+======================================================================
+  MODO --from-pdf-dir (offline)
+======================================================================
+  PDFs en carpeta                         : 23  (muestra_pdfs)
+  DE0005152441                            : WARN_EUR_ONLY  strat=pdfplumber fmt=EUR
+  DE0005152482                            : WARN_EUR_ONLY  strat=pdfplumber fmt=EUR
+  DE0005318406                            : WARN_EUR_ONLY  strat=pdfplumber fmt=EUR
+  FR0000989626                            : OK_HEURISTIC   strat=heuristic_lines fmt=PCT
+  IE0032875985                            : OK_HEURISTIC   strat=heuristic_lines fmt=PCT
+  IE00B45H7020                            : FAIL_NONE      strat=pdfplumber fmt=NONE
+  IE00BZ4D7085                            : OK_HEURISTIC   strat=heuristic_lines fmt=PCT
+  LU0006277684                            : OK_HEURISTIC   strat=heuristic_lines fmt=PCT
+  LU0070177588                            : FAIL_NONE      strat=none fmt=NONE
+  LU0073230426                            : WARN_EUR_ONLY  strat=pdfplumber fmt=EUR
+  LU0128640439                            : FAIL_NONE      strat=none fmt=NONE
+  LU0135992385                            : WARN_NO_OC     strat=heuristic_lines fmt=PCT
+  LU0210536867                            : FAIL_NONE      strat=none fmt=NONE
+  LU0213962813                            : FAIL_NONE      strat=none fmt=NONE
+  LU0232465467                            : OK_HEURISTIC   strat=heuristic_lines fmt=PCT
+  LU0236146428                            : WARN_EUR_ONLY  strat=pdfplumber fmt=EUR
+  LU0256839274                            : FAIL_NONE      strat=none fmt=NONE
+  LU0607519195                            : OK_HEURISTIC   strat=heuristic_lines fmt=PCT
+  LU0726357873                            : OK_HEURISTIC   strat=heuristic_lines fmt=PCT
+  LU1133289592                            : WARN_NO_OC     strat=heuristic_lines fmt=PCT
+  LU1502282632                            : FAIL_NONE      strat=pdfplumber fmt=NONE
+  LU1873127366                            : FAIL_NONE      strat=none fmt=NONE
+  LU1959429272                            : WARN_EUR_ONLY  strat=pdfplumber fmt=EUR
+
+======================================================================
+  RESUMEN AGREGADO DE AUDITORÍA
+======================================================================
+  Total ISINs auditados                   : 23
+
+  -- Tasa de éxito global --
+  OK (tabla de costes útil)               :     7  (30.4%)
+  WARN (extrae, pero incompleto)          :     8  (34.8%)
+  FAIL/ERROR (no usable)                  :     8  (34.8%)
+
+  -- Distribución de veredictos --
+  verdict        n  pct_%
+  -----------------------
+  FAIL_NONE      8  34.8 
+  OK_HEURISTIC   7  30.4 
+  WARN_EUR_ONLY  6  26.1 
+  WARN_NO_OC     2  8.7  
+
+  -- Distribución de estrategia --
+  strategy         n  pct_%
+  -------------------------
+  heuristic_lines  9  39.1 
+  pdfplumber       8  34.8 
+  none             6  26.1 
+
+  -- Distribución de formato de valor --
+  value_format  n  pct_%
+  ----------------------
+  PCT           9  39.1 
+  NONE          8  34.8 
+  EUR           6  26.1 
+
+  -- ISINs con veredicto FAIL_NONE  (n=8) --
+    IE00B45H7020  LU0070177588  LU0128640439  LU0210536867  LU0213962813  LU0256839274
+    LU1502282632  LU1873127366
+
+  -- ISINs con veredicto WARN_EUR_ONLY  (n=6) --
+    DE0005152441  DE0005152482  DE0005318406  LU0073230426  LU0236146428  LU1959429272
+
+  -- ISINs con veredicto WARN_NO_OC  (n=2) --
+    LU0135992385  LU1133289592
+
+  /!\ Candidatos a muestra dirigida: filtra el CSV por verdict IN (FAIL_NONE, ERROR, WARN_EUR_ONLY, WARN_NO_OC).

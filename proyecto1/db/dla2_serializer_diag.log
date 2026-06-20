@@ -1,0 +1,132 @@
+BL-DLA-2-DIAG-SERIALIZER — Recálculo sobre auditoría del serializador
+Ejecutado: 2026-05-24 16:12:16
+project_root: C:\desarrollo\fondos
+Audit CSV:    C:\desarrollo\fondos\proyecto1\db\dla2_serializer_audit.csv
+Log:          C:\desarrollo\fondos\proyecto1\db\dla2_serializer_diag.log
+  ISINs auditados                             : 3204
+  ISINs encontrados en fund_master            : 3204
+
+======================================================================
+  F1 — Tasa de éxito del serializador (corpus auditado)
+======================================================================
+  Total ISINs auditados                       : 3204
+
+  -- Resumen --
+  OK (tabla útil)                             :   958  (29.9%)
+  WARN (incompleto)                           :  1021  (31.9%)
+  FAIL/ERROR (no usable)                      :  1225  (38.2%)
+
+  -- Veredictos --
+  verdict        n     pct_%
+  --------------------------
+  FAIL_NONE      1225  38.2 
+  OK_HEURISTIC   958   29.9 
+  WARN_EUR_ONLY  647   20.2 
+  WARN_NO_OC     374   11.7 
+
+  -- Subcausa de los no-resueltos (failure_reason) --
+  failure_reason         n  
+  --------------------------
+  cat2a_sin_valor        792
+  valores_solo_EUR       647
+  serializer_no_cat2a    433
+  sin_costes_corrientes  374
+
+======================================================================
+  F2 — Veredicto serializador x Cost_Extraction_Quality actual
+======================================================================
+
+  -- OK_HEURISTIC --
+  quality_actual  n  
+  -------------------
+  LOW             691
+  MEDIUM_EUR      127
+  HIGH            112
+  NONE            24 
+  NULL            3  
+  MEDIUM_CROSS    1  
+
+  -- WARN_EUR_ONLY --
+  quality_actual  n  
+  -------------------
+  LOW             433
+  MEDIUM_EUR      85 
+  NONE            59 
+  HIGH            54 
+  NULL            9  
+  MEDIUM_CROSS    7  
+
+  -- WARN_NO_OC --
+  quality_actual  n  
+  -------------------
+  LOW             169
+  NONE            161
+  HIGH            24 
+  MEDIUM_EUR      18 
+  MEDIUM_CROSS    2  
+
+  -- FAIL_NONE --
+  quality_actual  n  
+  -------------------
+  HIGH            397
+  MEDIUM_EUR      367
+  LOW             312
+  NONE            103
+  NULL            25 
+  MEDIUM_CROSS    18 
+  MEDIUM_PCT      3  
+
+  /!\ Lectura: FAIL/WARN del serializador que YA son HIGH/MEDIUM en BD = casos que el texto plano resolvió y DLA-2 no -> patrón faltante (ver F3). NO implica complementariedad: es trabajo pendiente de DLA-2.
+
+======================================================================
+  F3 — BACKLOG DE PATRONES FALTANTES EN DLA-2
+======================================================================
+  Filas de backlog (componente recuperable con valor en BD): 5273
+  Fondos distintos afectados                  : 2224
+  CSV backlog                                 : C:\desarrollo\fondos\proyecto1\db\dla2_serializer_backlog.csv
+
+  -- Backlog por (veredicto, componente) — prioriza por volumen --
+  verdict        component  n_fondos
+  ----------------------------------
+  FAIL_NONE      oc         1204    
+  FAIL_NONE      entry      1203    
+  FAIL_NONE      exit       1133    
+  WARN_EUR_ONLY  oc         645     
+  WARN_NO_OC     oc         374     
+  FAIL_NONE      perf       347     
+  WARN_NO_OC     exit       199     
+  WARN_NO_OC     entry      86      
+  WARN_EUR_ONLY  exit       65      
+  WARN_EUR_ONLY  perf       14      
+  WARN_EUR_ONLY  entry      3       
+
+  -- Costes corrientes (OC) recuperables: 2223 fondos --
+  /!\ Estos fondos tienen OC en BD (texto plano) pero el serializador no lo capturó. Son el objetivo prioritario: OC define la quality. Valor esperado en columna db_reference_value del CSV de backlog.
+
+======================================================================
+  F4 — CASOS DE CONFLICTO (serializador vs texto plano)
+======================================================================
+  Conflictos detectados (valor serializador != valor BD): 958
+  Fondos distintos en conflicto               : 899
+  CSV conflictos                              : C:\desarrollo\fondos\proyecto1\db\dla2_serializer_conflicts.csv
+
+  -- Muestra de conflictos (primeros 15, ordenados por diff) --
+  ISIN          comp   serializer  BD    diff_bp  quality   
+  ----------------------------------------------------------
+  LU0687943661  perf   0,39%       0.15  1461.0   LOW       
+  LU0687944396  perf   0,45%       0.15  1455.0   LOW       
+  LU0048573561  entry  5.3%        0.0   530.0    MEDIUM_EUR
+  LU0048580004  entry  5.3%        0.0   530.0    LOW       
+  LU0052588471  entry  5.3%        0.0   530.0    LOW       
+  LU0056886558  entry  5.3%        0.0   530.0    MEDIUM_EUR
+  LU0114721508  entry  5.3%        0.0   530.0    LOW       
+  LU0202403266  entry  5.3%        0.0   530.0    LOW       
+  LU0215158840  entry  5.3%        0.0   530.0    LOW       
+  LU0215159145  entry  5.3%        0.0   530.0    LOW       
+  LU0238202427  entry  5.3%        0.0   530.0    LOW       
+  LU0251127410  entry  5.3%        0.0   530.0    LOW       
+  LU0251131958  entry  5.3%        0.0   530.0    MEDIUM_EUR
+  LU0261946445  entry  5.3%        0.0   530.0    LOW       
+  LU0261947096  entry  5.3%        0.0   530.0    MEDIUM_EUR
+
+  /!\ El diagnóstico NO decide cuál es correcto. Recuerda el caso Deutsche: texto plano Entry=0 era FALSO; la tabla tenía el valor real. Requiere verificación sobre el PDF.

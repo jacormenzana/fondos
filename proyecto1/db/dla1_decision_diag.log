@@ -1,0 +1,186 @@
+======================================================================
+  BL-DLA-1-DIAG -- Orquestador de toma de decision  v1.2
+  Ejecutado:      2026-05-18 21:56:26
+  project_root:   C:\desarrollo\fondos
+  CSV inventario: C:\desarrollo\fondos\proyecto1\db\dla_layout_inventory.csv
+  Log salida:     C:\desarrollo\fondos\proyecto1\db\dla1_decision_diag.log
+======================================================================
+  INFO  BD: C:\desarrollo\fondos\db\fondos.sqlite
+
+======================================================================
+  FASE 4 -- Inventario fisico de layout multi-columna  (Q-DLA-03)
+======================================================================
+  INFO  Modo BD: leyendo inventario desde: C:\desarrollo\fondos\proyecto1\db\dla_layout_inventory.csv
+
+  -- Resumen del inventario leido --
+  Fondos en el CSV                          : 3201
+  Con >=1 pagina en 2-col                   : 2828  (88.3%)
+  Con >=2 paginas en 2-col                  : 1662  (51.9%)
+  Errores de procesamiento                  : 0
+  Fuente CSV                                : C:\desarrollo\fondos\proyecto1\db\dla_layout_inventory.csv
+  WARNING  El inventario cubre 3201 fondos de 3204 en BD (99.9%). Los indicadores de Fases 1-3 se calcularan sobre el corpus completo BD, mientras que Fases 5-6 operan sobre la muestra del CSV. Para alinear todas las fases sobre la misma poblacion, ejecutar con --reload-pdf-sample 3204.
+
+======================================================================
+  FASE 1 -- Distribucion de lenguas y longitudes del corpus  (Q-DLA-01)
+======================================================================
+  INFO  Ambito  (corpus completo BD)
+
+  -- Corpus total fund_kiid_metadata --
+  Total registros                           : 3204
+  Con Raw_KIID_Text valido                  : 3204  (100.0%)
+  Sin texto / muy corto                     : 0  (0.0%)  <- candidatos BL-DLA-4 OCR
+
+  -- Distribucion por Language --
+  Language  n_funds  avg_len  min_len  max_len
+  --------------------------------------------
+  ES        3184     15922    2948     23533  
+  NULL      17       5644     922      8338   
+  EN        3        11177    8717     12496  
+
+======================================================================
+  FASE 2 -- Deteccion heuristica patologia 2-col en texto  (Q-DLA-02)
+======================================================================
+  INFO  SQLite sin REGEXP: patrones evaluados en Python sobre Raw_KIID_Text.
+
+  -- Resultados por patron de patologia --
+  Patron                                                          n_hits  pct_corpus
+  ----------------------------------------------------------------------------------
+  Tipo_Nanos -- heading concatenado con cuerpo columna contraria  0       0.00%     
+  subfondos_mide -- fragmento col izquierda + col derecha         0       0.00%     
+  durante_periodo_El -- oracion cruzada entre columnas            0       0.00%     
+  producto_Este -- encabezado + frase de otra columna             19      0.59%     
+
+  Total evaluados                           : 3204
+  Total sospechosos                         : 19  (0.59%)
+
+  -- ISINs sospechosos (hasta 5 ejemplos) --
+    ISIN    : IE00B42NVC37
+    ISIN    : IE00B42N9S52
+    ISIN    : IE00B433M743
+    ISIN    : IE00B4468526
+    ISIN    : IE00BM95B514
+
+  INFO  Patologia solo en 0.59% -- senal debil; inventario fisico es determinante.
+
+======================================================================
+  FASE 3 -- Baseline de cobertura de atributos pre-DLA  (Q-B1 / Q-B2)
+======================================================================
+  INFO  Guardar estos valores: son referencia para C-1 (sin regresion) y C-2 (>=3 mejoras).
+
+  -- Q-B1: NULL ratio en atributos clave de fund_master --
+  Atributo            NULL_count  NULL_pct  Poblado_pct
+  -----------------------------------------------------
+  Type                1           0.0%      100.0%     
+  Family              1           0.0%      100.0%     
+  Entry_Fee_Pct       49          1.5%      98.5%      
+  Exit_Fee_Pct        111         3.5%      96.5%      
+  Ongoing_Charge      27          0.8%      99.2%      
+  Benchmark_Declared  1049        32.7%     67.3%      
+  SRRI                18          0.6%      99.4%      
+  Total fondos en fund_master               : 3205
+
+  -- Q-B2: SRRI_Quality_Flag distribution (fund_master) --
+  SRRI_Quality_Flag  n     pct  
+  ------------------------------
+  HIGH               3040  94.9%
+  MEDIUM_VISUAL      78    2.4% 
+  LOW_CONFLICT       67    2.1% 
+  NONE               17    0.5% 
+  MEDIUM_TEXT        2     0.1% 
+  NULL               1     0.0% 
+
+  INFO  Beneficio esperado BL-DLA-1: Type, Family, SRRI, Benchmark_Declared. Fees (Entry/Exit/OC) solo si aparecen en parrafos -- si estan en tablas, eso es BL-DLA-2.
+
+======================================================================
+  FASE 5 -- Analisis del inventario de layout  (Q-DLA-06 / Q-DLA-07)
+======================================================================
+
+  -- Q-DLA-06: distribucion de layout_signature (top 20) --
+  INFO  T=Two_col S=Single_col M=Mixed N=No_text. Ej: 'T,T,T' = 3 pags en 2-col.
+  layout_signature  n_fondos  pct_inventario
+  ------------------------------------------
+  T,T,T             923       28.8%         
+  S,S,T             473       14.8%         
+  S,S,S             371       11.6%         
+  T,S,S             363       11.3%         
+  S,T,S             330       10.3%         
+  T,T,S             287       9.0%          
+  T,S,T             249       7.8%          
+  S,T,T             192       6.0%          
+  T,T               7         0.2%          
+  T,N,T             4         0.1%          
+  N,N,N             2         0.1%          
+
+  INFO  1894 fondos mezclan S y T -- DLA clasifica pagina a pagina.
+
+  -- Q-DLA-07: fondos con >=2 paginas en 2-col (candidatos prioritarios) --
+  Fondos con >=2 paginas en 2-col           : 1662  (51.9%)
+
+  -- Muestra de 25 ISINs candidatos para piloto Sub-fase 1C --
+  ISIN          prioridad 
+  ------------------------
+  LU0049842692  >=2p 2-col
+  LU2330520359  >=2p 2-col
+  LU0108066076  >=2p 2-col
+  IE00BZ4D7085  >=2p 2-col
+  LU2330519427  >=2p 2-col
+  IE00BFRSYK98  >=2p 2-col
+  LU0683601024  >=2p 2-col
+  LU0177592218  >=2p 2-col
+  LU1084165304  >=2p 2-col
+  LU1458464713  >=2p 2-col
+  LU0162626096  >=2p 2-col
+  LU2132883344  >=2p 2-col
+  LU2066957221  >=2p 2-col
+  LU0671501129  >=2p 2-col
+  LU0180781477  >=2p 2-col
+  LU1663875406  >=2p 2-col
+  LU0256331488  >=2p 2-col
+  LU0119753308  >=2p 2-col
+  LU0687944396  >=2p 2-col
+  LU0352312853  >=2p 2-col
+  LU0256065821  >=2p 2-col
+  LU0117885052  >=2p 2-col
+  LU2598446149  >=2p 2-col
+  IE00BYZNBK89  >=2p 2-col
+  IE00BKV0W243  >=2p 2-col
+
+
+  -- Resumen del inventario --
+  Total fondos en inventario                : 3201
+  Con >=1 pagina en 2-col                   : 2828  (88.3%)
+  Con >=2 paginas en 2-col                  : 1662  (51.9%)
+  Con paginas NO_TEXT (OCR)                 : 6  (0.2%)  <- BL-DLA-4
+  Errores de procesamiento                  : 0
+
+======================================================================
+  FASE 6 -- DECISION GO/NO-GO para BL-DLA-1
+======================================================================
+
+  -- Indicadores clave --
+  Indicador                             Valor              Umbral BL_DLA_DESIGN_DECISION 4.2                    
+  --------------------------------------------------------------------------------------------------------------
+  Fondos >=1 pag 2-col (fisico)         2828/3201 (88.3%)  >=30% GO | 15-30% PILOTO | 5-15% DIFERIR | <5% CERRAR
+  Fondos >=2 pags 2-col (impacto alto)  1662 (51.9%)       Candidatos prioritarios Sub-fase 1C                  
+  Patologia textual Q-DLA-02            19 (0.59%)         Indicador complementario                             
+  Paginas NO_TEXT (OCR-needed)          6 (0.2%)           Candidatos BL-DLA-4 (diferido)                       
+  Corpus total con texto                3204               --                                                   
+
+
+======================================================================
+  >>> DECISION: GO COMPLETO
+      Inventario fisico confirma 2-col en 88.3% del corpus muestral. ROI alto. Implementar BL-DLA-1 Sub-fases 1A->1B->1C->1D.
+      Accion: Sub-fases 1A/1B ya implementadas (dla_extractor v1.2, io.py v2 en produccion). Ejecutar piloto sobre 25 ISINs candidatos (Sub-fase 1C). Validar C-1/C-2/C-3/C-4 (BL_DLA_DESIGN_DECISION 7.1). Luego activar DLA_ENABLED=True progresivamente (Sub-fase 1D).
+======================================================================
+
+  OK  Inventario sobre 3201 fondos -- muestra representativa.
+
+
+  -- Baseline pre-DLA (Fase 3) -- referencia post-despliegue --
+  INFO  Comparar con valores post-DLA_ENABLED=True para verificar C-1 y C-2.
+  Entry_Fee_Pct NULL                        : 49  <- baseline pre-DLA
+  Exit_Fee_Pct NULL                         : 111  <- baseline pre-DLA
+  Ongoing_Charge NULL                       : 27  <- baseline pre-DLA
+  SRRI NULL                                 : 18  <- baseline pre-DLA
+  Type NULL                                 : 1  <- baseline pre-DLA
+  Family NULL                               : 1  <- baseline pre-DLA

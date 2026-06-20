@@ -1,0 +1,1152 @@
+C:\desarrollo\fondos\proyecto1\core\benchmark_normalizer.py:19:  - _CANONICAL_DATA: +20 aliases nuevos:
+C:\desarrollo\fondos\proyecto1\core\benchmark_normalizer.py:111:_CONTAMINATION_RE = re.compile(
+C:\desarrollo\fondos\proyecto1\core\benchmark_normalizer.py:124:_OPTIONAL_SUFFIX_RE = re.compile(
+C:\desarrollo\fondos\proyecto1\core\benchmark_normalizer.py:155:    text = _CONTAMINATION_RE.sub('', text).strip()
+C:\desarrollo\fondos\proyecto1\core\benchmark_normalizer.py:175:_CANONICAL_DATA: list[tuple[str, BenchmarkResult]] = [
+C:\desarrollo\fondos\proyecto1\core\benchmark_normalizer.py:288:    ("ice bofa sofr overnight",               BenchmarkResult("ICE_SOFR_ON","ICE BofA SOFR Overnight Rate","ICE BofA","Rate","HIGH")),
+C:\desarrollo\fondos\proyecto1\core\benchmark_normalizer.py:296:    ("ice bofa euro high yield bb-b constrained", BenchmarkResult("ICE_EURO_HY_BB_B_CONST","ICE BofA Euro HY BB-B Constrained","ICE BofA","Fixed Income","HIGH")),
+C:\desarrollo\fondos\proyecto1\core\benchmark_normalizer.py:297:    ("ice bofa bb-b euro non-financial high yield constrained", BenchmarkResult("ICE_EURO_HY_BB_B_CONST","ICE BofA Euro HY BB-B Constrained","ICE BofA","Fixed Income","HIGH")),
+C:\desarrollo\fondos\proyecto1\core\benchmark_normalizer.py:298:    ("ice bofa european currency non-financial high yield constrained", BenchmarkResult("ICE_EUR_NONFIN_HY_CONST","ICE BofA Euro Non-Fin HY Constrained","ICE BofA","Fixed Income","HIGH")),
+C:\desarrollo\fondos\proyecto1\core\benchmark_normalizer.py:299:    ("ice bofa euro high yield constrained",  BenchmarkResult("ICE_EURO_HY_CONST","ICE BofA Euro HY Constrained","ICE BofA","Fixed Income","HIGH")),
+C:\desarrollo\fondos\proyecto1\core\benchmark_normalizer.py:310:    ("ice bank of america merrill lynch us high yield constrained", BenchmarkResult("ICE_US_HY_CONST","ICE BofA US HY Constrained","ICE BofA","Fixed Income","HIGH")),
+C:\desarrollo\fondos\proyecto1\core\benchmark_normalizer.py:312:    ("ice bofaml global high yield constrained usd hedged", BenchmarkResult("ICE_GLOBAL_HY_CONST_USDH","ICE BofA Global HY Constrained (USD Hedged)","ICE BofA","Fixed Income","HIGH")),
+C:\desarrollo\fondos\proyecto1\core\benchmark_normalizer.py:314:    ("ice bofa global high yield european issuers constrained", BenchmarkResult("ICE_GLOBAL_HY_EUR_CONST","ICE BofA Global HY European Issuers Const.","ICE BofA","Fixed Income","HIGH")),
+C:\desarrollo\fondos\proyecto1\core\benchmark_normalizer.py:316:    ("ice bofa ml global hybrid non-financial corporate", BenchmarkResult("ICE_GLOBAL_HYBRID_NONFIN","ICE BofA Global Hybrid Non-Financial Corp","ICE BofA","Fixed Income","HIGH")),
+C:\desarrollo\fondos\proyecto1\core\benchmark_normalizer.py:338:    ("ftse global focus convertible",         BenchmarkResult("FTSE_GLOBAL_CONV","FTSE Global Focus Convertible","FTSE","Mixed","HIGH")),
+C:\desarrollo\fondos\proyecto1\core\benchmark_normalizer.py:339:    ("ftse global convertible",               BenchmarkResult("FTSE_GLOBAL_CONV","FTSE Global Convertible","FTSE","Mixed","HIGH")),
+C:\desarrollo\fondos\proyecto1\core\benchmark_normalizer.py:340:    ("ftse eurozone convertible",             BenchmarkResult("FTSE_EU_CONV","FTSE Eurozone Convertible Bond","FTSE","Mixed","HIGH")),
+C:\desarrollo\fondos\proyecto1\core\benchmark_normalizer.py:372:    ("msci frontier emerging",          BenchmarkResult("MSCI_FRONTIER_EM","MSCI Frontier Emerging Markets","MSCI","Equity","HIGH")),
+C:\desarrollo\fondos\proyecto1\core\benchmark_normalizer.py:395:    ("msci frontier emerging markets",  BenchmarkResult("MSCI_FRONTIER_EM","MSCI Frontier Emerging Markets","MSCI","Equity","HIGH")),
+C:\desarrollo\fondos\proyecto1\core\benchmark_normalizer.py:396:    ("msci frontier",                   BenchmarkResult("MSCI_FRONTIER","MSCI Frontier Markets","MSCI","Equity","HIGH")),
+C:\desarrollo\fondos\proyecto1\core\benchmark_normalizer.py:496:    ("eonia",                                 BenchmarkResult("RATE_EONIA","EONIA","ECB","Rate","HIGH")),
+C:\desarrollo\fondos\proyecto1\core\benchmark_normalizer.py:529:        for alias, result in _CANONICAL_DATA:
+C:\desarrollo\fondos\proyecto1\core\benchmark_normalizer.py:532:        stripped = _OPTIONAL_SUFFIX_RE.sub('', candidate).strip()
+C:\desarrollo\fondos\proyecto1\core\benchmark_normalizer.py:552:    return sorted({r.canonical_id for _, r in _CANONICAL_DATA})
+C:\desarrollo\fondos\proyecto1\core\benchmark_normalizer.py:562:_MS_CANONICAL_DATA: list[tuple[str, BenchmarkResult]] = [
+C:\desarrollo\fondos\proyecto1\core\benchmark_normalizer.py:626:    ("morningstar us con tgt alloc nr usd",      BenchmarkResult("MS_US_CON_ALLOC","Morningstar US Conservative Allocation","Morningstar","Mixed","HIGH")),
+C:\desarrollo\fondos\proyecto1\core\benchmark_normalizer.py:649:    ("morningstar gbl cons cyc tme gr usd", BenchmarkResult("MS_GBL_CONS_CYC","Morningstar Global Consumer Cyclical","Morningstar","Equity","HIGH")),
+C:\desarrollo\fondos\proyecto1\core\benchmark_normalizer.py:698:    ("morningstar hong kong tme gr usd",    BenchmarkResult("MS_HONG_KONG","Morningstar Hong Kong Equity","Morningstar","Equity","HIGH")),
+C:\desarrollo\fondos\proyecto1\core\benchmark_normalizer.py:715:    ("markit iboxx albi china onshore tr cny", BenchmarkResult("IBOXX_ALBI_CN_ON","iBoxx ALBI China Onshore","iBoxx","Fixed Income","HIGH")),
+C:\desarrollo\fondos\proyecto1\core\benchmark_normalizer.py:742:    for alias, result in _MS_CANONICAL_DATA:
+C:\desarrollo\fondos\proyecto1\core\benchmark_normalizer.py:752:        for alias, result in _MS_CANONICAL_DATA:
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:14:                TYPE_TRANSLATION_MAP: invertido a pass-through EN + corrección
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:18:                FAMILY_TRANSLATION_MAP: ídem, ES→EN.
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:30:                         (BGF US SHORT DURATION BOND, 4 ISINs)
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:45:                  _NATURE_CANONICAL: restituida entrada "Restantes": "Restantes".
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:104:         SECTOR_FOCUS_TRANSLATION_MAP: marcado "legacy normalization" — solo
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:107:         SECTOR_FOCUS_TRANSLATION_MAP y luego actuar como pass-through.
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:113:                 Type (TYPE_TRANSLATION_MAP),
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:114:                 Family (FAMILY_TRANSLATION_MAP),
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:118:  BL-57  FAMILY_TRANSLATION_MAP: entrada 'Income Oriented' → 'Orientado a Renta'.
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:123:          constante, FAMILY_TRANSLATION_MAP (pass-through + normalizador BD),
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:131:  TYPE_TRANSLATION_MAP: añadido con excepciones inglesas documentadas.
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:143:         _REGION_GEOGRAPHIES: catálogo canónico de valores-región (9 entradas).
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:151:  BL-22  SECTOR_FOCUS_TRANSLATION_MAP + normalize_sector_focus(): idioma objetivo ES
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:157:  BL-32  validate_accumulation_distribution(): firma 3-tupla + inferencia DISTRIBUTION
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:161:FUNCIONES:
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:163:    NAME_SIGNALS_MONETARIO, NAME_SIGNALS_RF_CORTO, NAME_SIGNALS_RF_FLEXIBLE,
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:218:FAMILY_INFLATION_LINKED     = "Inflation-Linked"
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:219:FAMILY_MONEY_MARKET         = "Money Market"
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:222:FAMILY_STRATEGIC_ALLOCATION = "Strategic Allocation"
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:232:TYPE_MONEY_MARKET           = "Money Market"
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:233:TYPE_GOVT_MONEY_MARKET      = "Government Money Market"
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:234:TYPE_PRIME_MONEY_MARKET     = "Prime Money Market"
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:244:SUBTYPE_LOW_DURATION        = "Low Duration"
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:285:_NATURE_CANONICAL: dict = {
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:310:NAME_SIGNALS_MONETARIO: list = [
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:382:    "dur bond",                                  # BGF EURO SHORT DUR BOND
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:398:    "jpm euro gvrmnt short dur",     # JPM EURO GOVERNMENT SHORT DURATION
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:400:    "gl.short.dur.in",               # FIDELITY GL.SHORT.DURATION INCOME (OCR puntos)
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:546:    " bond ",                                    # genérico: "FIDELITY EURO BOND FUND"
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:547:    " bonds ",                                   # genérico: "AXA WF EUR STRAT BONDS"
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:548:    " bd ",                                      # abrev: "BGF CHINA BOND D2"
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:565:    "inflat.bond", "inflat bond",    # AXA WF GLOBAL INFLAT.BONDS (inflation-linked)
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:566:    "global inflat",                 # AXA WF GLOBAL INFLATIO.BONDS
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:572:    "allianz green bond",            # ALLIANZ GREEN BOND
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:575:    "us high yie.bond",              # AXA WF US HIGH YIE.BOND (OCR con punto)
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:580:    "dws inv corp gr bon",           # DWS INVEST CORPORATE GROWTH BONDS
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:586:    "axa sd hy low carbon",          # AXA SHORT DURATION HY LOW CARBON
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:589:    "amundi core eur gov bnd",       # AMUNDI CORE EUR GOVERNMENT BOND
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:590:    "jpm euro gov st dur",           # JPM EURO GOVERNMENT SHORT DURATION → ya en RF_Corto
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:601:    "axa wf gib",                    # AXA WF GLOBAL INFLATION BOND REDEX
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:603:    "candriam sus bn em m",          # CANDRIAM SUSTAINABLE BOND EM
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:604:    "candriam sustain bnd eur",      # CANDRIAM SUSTAINABLE BOND EUR
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:605:    "dws inv eurogov bnd",           # DWS INVEST EURO GOVERNMENT BOND
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:606:    "dws inv nzt eur c b",           # DWS NET ZERO TARGET CORP BOND
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:611:    "ftgf west asian oppo",          # FTGF WESTERN ASSET ASIAN BOND
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:614:    "gs em mks corp bnd",            # GS EM CORPORATE BOND
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:617:    "templeton gl.t.ret",            # TEMPLETON GLOBAL TOTAL RETURN
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:622:    "axa wf e mk s d b",             # AXA WF EM SHORT DURATION BOND
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:624:    "r-co conv credi",                   # R-CO CONV CREDI EURO (fix typo: era "crdi")
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:704:    "db sia consvtv",                # DB SIA CONSVTV (conservative)
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:705:    "dje gestion patrimon",          # DJE GESTION PATRIMONIAL
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:710:    "dws esg stftngsfds",            # DWS STIFTUNGSFONDS (balanced foundation)
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:835:    "glob environment",              # BNP GLOB ENVIRONMENT (clean energy equity)
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:843:    "candriam eq l",                 # CANDRIAM EQ L ONCO / EURP INN (equity long)
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:999:    "bsf europ opp ext",             # BSF EUROP OPP EXTENSION (absolute return)
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:1004:    "janus h glob ls",               # JANUS HENDERSON GLOBAL LONG/SHORT
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:1005:    "janus h hf",                    # JANUS HENDERSON HEDGE FUND long/short
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:1013:    "invesco balan.risk",            # INVESCO BALANCED RISK ALLOCATION
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:1026:    "bsf europ opp ext",             # BSF EUROP OPP EXTENSION (equity extension strategy)
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:1084:    if _name_match(name_l, NAME_SIGNALS_MONETARIO):
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:1449:    _NATURE_CANONICAL pueda mapearlas correctamente.
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:1990:# BL-22: SECTOR_FOCUS_TRANSLATION_MAP — idioma objetivo: español
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:1991:# LEGACY NORMALIZATION: solo para sanear valores históricos en inglés
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:1996:SECTOR_FOCUS_TRANSLATION_MAP: dict = {
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:2023:    # Primero: traducción legacy EN→ES (SECTOR_FOCUS_TRANSLATION_MAP)
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:2024:    translated = SECTOR_FOCUS_TRANSLATION_MAP.get(value)
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:2032:# BL-56/BL-57: TYPE_TRANSLATION_MAP — idioma objetivo: español
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:2037:TYPE_TRANSLATION_MAP: dict = {
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:2080:# BL-LANG-EN (2026-05-09): FAMILY_TRANSLATION_MAP — idioma objetivo EN.
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:2083:FAMILY_TRANSLATION_MAP: dict = {
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:2370:    "Accumulation_Policy": ["ACCUMULATION", "DISTRIBUTION"],
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:2371:    "Distribution_Frequency": ["ANNUAL", "QUARTERLY", "MONTHLY", "BIANNUAL"],
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:2380:        "HIGH", "MEDIUM_VISUAL", "MEDIUM_TEXT", "LOW_CONFLICT", "NONE",
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:2569:      ACCUMULATION + dist_freq poblado  → eliminar dist_freq (crítico)
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:2570:      DISTRIBUTION + dist_freq NULL     → warning
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:2571:      NULL + dist_freq poblado          → inferir ACCUMULATION_POLICY=DISTRIBUTION (BL-32)
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:2579:    if acc_policy == "ACCUMULATION" and dist_freq is not None:
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:2582:            "(coherencia con ACCUMULATION)"
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:2584:    if acc_policy == "DISTRIBUTION" and dist_freq is None:
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:2586:            "WARNING: DISTRIBUTION sin Distribution_Frequency poblado"
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:2590:        return "DISTRIBUTION", dist_freq, (
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:2591:            f"Inferido Accumulation_Policy='DISTRIBUTION' "
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:2783:_REGION_GEOGRAPHIES = frozenset({
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:2802:    if universe == "Country" and geography in _REGION_GEOGRAPHIES:
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:3057:      - Type          → TYPE_TRANSLATION_MAP       (EN→ES + excepciones)
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:3058:      - Family        → FAMILY_TRANSLATION_MAP     (EN→ES + excepciones)
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:3081:        translated_type = TYPE_TRANSLATION_MAP.get(original)
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:3093:        translated_family = FAMILY_TRANSLATION_MAP.get(original)
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:3160:    (r'CHINA\s+(BOND|FIX)|CHINA\.?\s*BON',
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:3162:    (r'\bEM\s+(BOND|DEBT|MARK|CURR|MK|G\s+BON|MKT|DURAT)|EME\s+MK|EMERG\s+M|'
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:3165:    (r'ASIA[NS]?\s+(BOND|BON|LOC|FLEX|OPPO|TIGER)|ASIAN?\s+LOC|ASIA\s+LOC|'
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:3166:     r'GBL?.*EM\b|TEMPLETON.*BON\b|TEMPLETON\s+ASIA|TEMPLETON\s+EMER|'
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:3174:    (r'COMMOD|VONTOBEL\s+COMMOD',
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:3180:    # BGF US SHORT DURATION BOND (LU0171/LU0172/LU2624/LU2812)
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:3195:     r'INC.*GROW|GLOBAL\s+OPP\s+BOND|MFS\s+GL.*OPP|US\s+SH\s+TERM\s+BOND|'
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:3203:    (r'EURO\s+BOND|EUROBOND|GLOBAL\s+BOND|GL\s+BOND|'
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:3204:     r'AGGREGATE|AGGR\b|CORE\s+BOND|CORE\+|INVEST.*GRADE\s+BOND',
+C:\desarrollo\fondos\proyecto1\core\classify_utils.py:3210:     r'FLEX\s+OPP|FLEX\s+PROP|PIONEER\s+FLEX|'
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:10:                  _NATURE_CANONICAL: restituida entrada "Restantes": "Restantes".
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:69:         SECTOR_FOCUS_TRANSLATION_MAP: marcado "legacy normalization" — solo
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:72:         SECTOR_FOCUS_TRANSLATION_MAP y luego actuar como pass-through.
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:78:                 Type (TYPE_TRANSLATION_MAP),
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:79:                 Family (FAMILY_TRANSLATION_MAP),
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:83:  BL-57  FAMILY_TRANSLATION_MAP: entrada 'Income Oriented' → 'Orientado a Renta'.
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:91:  TYPE_TRANSLATION_MAP: añadido con excepciones inglesas documentadas.
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:103:         _REGION_GEOGRAPHIES: catálogo canónico de valores-región (9 entradas).
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:111:  BL-22  SECTOR_FOCUS_TRANSLATION_MAP + normalize_sector_focus(): idioma objetivo ES
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:117:  BL-32  validate_accumulation_distribution(): firma 3-tupla + inferencia DISTRIBUTION
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:121:FUNCIONES:
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:123:    NAME_SIGNALS_MONETARIO, NAME_SIGNALS_RF_CORTO, NAME_SIGNALS_RF_FLEXIBLE,
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:207:_NATURE_CANONICAL: dict = {
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:232:NAME_SIGNALS_MONETARIO: list = [
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:304:    "dur bond",                                  # BGF EURO SHORT DUR BOND
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:320:    "jpm euro gvrmnt short dur",     # JPM EURO GOVERNMENT SHORT DURATION
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:322:    "gl.short.dur.in",               # FIDELITY GL.SHORT.DURATION INCOME (OCR puntos)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:468:    " bond ",                                    # genérico: "FIDELITY EURO BOND FUND"
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:469:    " bonds ",                                   # genérico: "AXA WF EUR STRAT BONDS"
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:470:    " bd ",                                      # abrev: "BGF CHINA BOND D2"
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:487:    "inflat.bond", "inflat bond",    # AXA WF GLOBAL INFLAT.BONDS (inflation-linked)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:488:    "global inflat",                 # AXA WF GLOBAL INFLATIO.BONDS
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:494:    "allianz green bond",            # ALLIANZ GREEN BOND
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:497:    "us high yie.bond",              # AXA WF US HIGH YIE.BOND (OCR con punto)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:502:    "dws inv corp gr bon",           # DWS INVEST CORPORATE GROWTH BONDS
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:508:    "axa sd hy low carbon",          # AXA SHORT DURATION HY LOW CARBON
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:511:    "amundi core eur gov bnd",       # AMUNDI CORE EUR GOVERNMENT BOND
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:512:    "jpm euro gov st dur",           # JPM EURO GOVERNMENT SHORT DURATION → ya en RF_Corto
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:523:    "axa wf gib",                    # AXA WF GLOBAL INFLATION BOND REDEX
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:525:    "candriam sus bn em m",          # CANDRIAM SUSTAINABLE BOND EM
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:526:    "candriam sustain bnd eur",      # CANDRIAM SUSTAINABLE BOND EUR
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:527:    "dws inv eurogov bnd",           # DWS INVEST EURO GOVERNMENT BOND
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:528:    "dws inv nzt eur c b",           # DWS NET ZERO TARGET CORP BOND
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:533:    "ftgf west asian oppo",          # FTGF WESTERN ASSET ASIAN BOND
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:536:    "gs em mks corp bnd",            # GS EM CORPORATE BOND
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:539:    "templeton gl.t.ret",            # TEMPLETON GLOBAL TOTAL RETURN
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:544:    "axa wf e mk s d b",             # AXA WF EM SHORT DURATION BOND
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:546:    "r-co conv credi",                   # R-CO CONV CREDI EURO (fix typo: era "crdi")
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:626:    "db sia consvtv",                # DB SIA CONSVTV (conservative)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:627:    "dje gestion patrimon",          # DJE GESTION PATRIMONIAL
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:632:    "dws esg stftngsfds",            # DWS STIFTUNGSFONDS (balanced foundation)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:757:    "glob environment",              # BNP GLOB ENVIRONMENT (clean energy equity)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:765:    "candriam eq l",                 # CANDRIAM EQ L ONCO / EURP INN (equity long)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:921:    "bsf europ opp ext",             # BSF EUROP OPP EXTENSION (absolute return)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:926:    "janus h glob ls",               # JANUS HENDERSON GLOBAL LONG/SHORT
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:927:    "janus h hf",                    # JANUS HENDERSON HEDGE FUND long/short
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:935:    "invesco balan.risk",            # INVESCO BALANCED RISK ALLOCATION
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:948:    "bsf europ opp ext",             # BSF EUROP OPP EXTENSION (equity extension strategy)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:1006:    if _name_match(name_l, NAME_SIGNALS_MONETARIO):
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:1371:    _NATURE_CANONICAL pueda mapearlas correctamente.
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:1912:# BL-22: SECTOR_FOCUS_TRANSLATION_MAP — idioma objetivo: español
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:1913:# LEGACY NORMALIZATION: solo para sanear valores históricos en inglés
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:1918:SECTOR_FOCUS_TRANSLATION_MAP: dict = {
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:1945:    # Primero: traducción legacy EN→ES (SECTOR_FOCUS_TRANSLATION_MAP)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:1946:    translated = SECTOR_FOCUS_TRANSLATION_MAP.get(value)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:1954:# BL-56/BL-57: TYPE_TRANSLATION_MAP — idioma objetivo: español
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:1959:TYPE_TRANSLATION_MAP: dict = {
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:1988:# BL-57: FAMILY_TRANSLATION_MAP — idioma objetivo: español
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:1993:FAMILY_TRANSLATION_MAP: dict = {
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:2278:    "Accumulation_Policy": ["ACCUMULATION", "DISTRIBUTION"],
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:2279:    "Distribution_Frequency": ["ANNUAL", "QUARTERLY", "MONTHLY", "BIANNUAL"],
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:2288:        "HIGH", "MEDIUM_VISUAL", "MEDIUM_TEXT", "LOW_CONFLICT", "NONE",
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:2479:      ACCUMULATION + dist_freq poblado  → eliminar dist_freq (crítico)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:2480:      DISTRIBUTION + dist_freq NULL     → warning
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:2481:      NULL + dist_freq poblado          → inferir ACCUMULATION_POLICY=DISTRIBUTION (BL-32)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:2489:    if acc_policy == "ACCUMULATION" and dist_freq is not None:
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:2492:            "(coherencia con ACCUMULATION)"
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:2494:    if acc_policy == "DISTRIBUTION" and dist_freq is None:
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:2496:            "WARNING: DISTRIBUTION sin Distribution_Frequency poblado"
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:2500:        return "DISTRIBUTION", dist_freq, (
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:2501:            f"Inferido Accumulation_Policy='DISTRIBUTION' "
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:2693:_REGION_GEOGRAPHIES = frozenset({
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:2712:    if universe == "Country" and geography in _REGION_GEOGRAPHIES:
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:2967:      - Type          → TYPE_TRANSLATION_MAP       (EN→ES + excepciones)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:2968:      - Family        → FAMILY_TRANSLATION_MAP     (EN→ES + excepciones)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:2991:        translated_type = TYPE_TRANSLATION_MAP.get(original)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:3003:        translated_family = FAMILY_TRANSLATION_MAP.get(original)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:3070:    (r'CHINA\s+(BOND|FIX)|CHINA\.?\s*BON',
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:3072:    (r'\bEM\s+(BOND|DEBT|MARK|CURR|MK|G\s+BON|MKT|DURAT)|EME\s+MK|EMERG\s+M|'
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:3075:    (r'ASIA[NS]?\s+(BOND|BON|LOC|FLEX|OPPO|TIGER)|ASIAN?\s+LOC|ASIA\s+LOC|'
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:3076:     r'GBL?.*EM\b|TEMPLETON.*BON\b|TEMPLETON\s+ASIA|TEMPLETON\s+EMER|'
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:3084:    (r'COMMOD|VONTOBEL\s+COMMOD',
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:3091:     r'INC.*GROW|GLOBAL\s+OPP\s+BOND|MFS\s+GL.*OPP|US\s+SH\s+TERM\s+BOND|'
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:3099:    (r'EURO\s+BOND|EUROBOND|GLOBAL\s+BOND|GL\s+BOND|'
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:3100:     r'AGGREGATE|AGGR\b|CORE\s+BOND|CORE\+|INVEST.*GRADE\s+BOND',
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_00.py:3106:     r'FLEX\s+OPP|FLEX\s+PROP|PIONEER\s+FLEX|'
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:10:                  _NATURE_CANONICAL: restituida entrada "Restantes": "Restantes".
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:69:         SECTOR_FOCUS_TRANSLATION_MAP: marcado "legacy normalization" — solo
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:72:         SECTOR_FOCUS_TRANSLATION_MAP y luego actuar como pass-through.
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:78:                 Type (TYPE_TRANSLATION_MAP),
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:79:                 Family (FAMILY_TRANSLATION_MAP),
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:83:  BL-57  FAMILY_TRANSLATION_MAP: entrada 'Income Oriented' → 'Orientado a Renta'.
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:88:          constante, FAMILY_TRANSLATION_MAP (pass-through + normalizador BD),
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:96:  TYPE_TRANSLATION_MAP: añadido con excepciones inglesas documentadas.
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:108:         _REGION_GEOGRAPHIES: catálogo canónico de valores-región (9 entradas).
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:116:  BL-22  SECTOR_FOCUS_TRANSLATION_MAP + normalize_sector_focus(): idioma objetivo ES
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:122:  BL-32  validate_accumulation_distribution(): firma 3-tupla + inferencia DISTRIBUTION
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:126:FUNCIONES:
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:128:    NAME_SIGNALS_MONETARIO, NAME_SIGNALS_RF_CORTO, NAME_SIGNALS_RF_FLEXIBLE,
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:212:_NATURE_CANONICAL: dict = {
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:237:NAME_SIGNALS_MONETARIO: list = [
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:309:    "dur bond",                                  # BGF EURO SHORT DUR BOND
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:325:    "jpm euro gvrmnt short dur",     # JPM EURO GOVERNMENT SHORT DURATION
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:327:    "gl.short.dur.in",               # FIDELITY GL.SHORT.DURATION INCOME (OCR puntos)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:473:    " bond ",                                    # genérico: "FIDELITY EURO BOND FUND"
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:474:    " bonds ",                                   # genérico: "AXA WF EUR STRAT BONDS"
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:475:    " bd ",                                      # abrev: "BGF CHINA BOND D2"
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:492:    "inflat.bond", "inflat bond",    # AXA WF GLOBAL INFLAT.BONDS (inflation-linked)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:493:    "global inflat",                 # AXA WF GLOBAL INFLATIO.BONDS
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:499:    "allianz green bond",            # ALLIANZ GREEN BOND
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:502:    "us high yie.bond",              # AXA WF US HIGH YIE.BOND (OCR con punto)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:507:    "dws inv corp gr bon",           # DWS INVEST CORPORATE GROWTH BONDS
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:513:    "axa sd hy low carbon",          # AXA SHORT DURATION HY LOW CARBON
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:516:    "amundi core eur gov bnd",       # AMUNDI CORE EUR GOVERNMENT BOND
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:517:    "jpm euro gov st dur",           # JPM EURO GOVERNMENT SHORT DURATION → ya en RF_Corto
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:528:    "axa wf gib",                    # AXA WF GLOBAL INFLATION BOND REDEX
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:530:    "candriam sus bn em m",          # CANDRIAM SUSTAINABLE BOND EM
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:531:    "candriam sustain bnd eur",      # CANDRIAM SUSTAINABLE BOND EUR
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:532:    "dws inv eurogov bnd",           # DWS INVEST EURO GOVERNMENT BOND
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:533:    "dws inv nzt eur c b",           # DWS NET ZERO TARGET CORP BOND
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:538:    "ftgf west asian oppo",          # FTGF WESTERN ASSET ASIAN BOND
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:541:    "gs em mks corp bnd",            # GS EM CORPORATE BOND
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:544:    "templeton gl.t.ret",            # TEMPLETON GLOBAL TOTAL RETURN
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:549:    "axa wf e mk s d b",             # AXA WF EM SHORT DURATION BOND
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:551:    "r-co conv credi",                   # R-CO CONV CREDI EURO (fix typo: era "crdi")
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:631:    "db sia consvtv",                # DB SIA CONSVTV (conservative)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:632:    "dje gestion patrimon",          # DJE GESTION PATRIMONIAL
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:637:    "dws esg stftngsfds",            # DWS STIFTUNGSFONDS (balanced foundation)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:762:    "glob environment",              # BNP GLOB ENVIRONMENT (clean energy equity)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:770:    "candriam eq l",                 # CANDRIAM EQ L ONCO / EURP INN (equity long)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:926:    "bsf europ opp ext",             # BSF EUROP OPP EXTENSION (absolute return)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:931:    "janus h glob ls",               # JANUS HENDERSON GLOBAL LONG/SHORT
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:932:    "janus h hf",                    # JANUS HENDERSON HEDGE FUND long/short
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:940:    "invesco balan.risk",            # INVESCO BALANCED RISK ALLOCATION
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:953:    "bsf europ opp ext",             # BSF EUROP OPP EXTENSION (equity extension strategy)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:1011:    if _name_match(name_l, NAME_SIGNALS_MONETARIO):
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:1376:    _NATURE_CANONICAL pueda mapearlas correctamente.
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:1917:# BL-22: SECTOR_FOCUS_TRANSLATION_MAP — idioma objetivo: español
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:1918:# LEGACY NORMALIZATION: solo para sanear valores históricos en inglés
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:1923:SECTOR_FOCUS_TRANSLATION_MAP: dict = {
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:1950:    # Primero: traducción legacy EN→ES (SECTOR_FOCUS_TRANSLATION_MAP)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:1951:    translated = SECTOR_FOCUS_TRANSLATION_MAP.get(value)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:1959:# BL-56/BL-57: TYPE_TRANSLATION_MAP — idioma objetivo: español
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:1964:TYPE_TRANSLATION_MAP: dict = {
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:1993:# BL-57: FAMILY_TRANSLATION_MAP — idioma objetivo: español
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:1998:FAMILY_TRANSLATION_MAP: dict = {
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:2283:    "Accumulation_Policy": ["ACCUMULATION", "DISTRIBUTION"],
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:2284:    "Distribution_Frequency": ["ANNUAL", "QUARTERLY", "MONTHLY", "BIANNUAL"],
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:2293:        "HIGH", "MEDIUM_VISUAL", "MEDIUM_TEXT", "LOW_CONFLICT", "NONE",
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:2484:      ACCUMULATION + dist_freq poblado  → eliminar dist_freq (crítico)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:2485:      DISTRIBUTION + dist_freq NULL     → warning
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:2486:      NULL + dist_freq poblado          → inferir ACCUMULATION_POLICY=DISTRIBUTION (BL-32)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:2494:    if acc_policy == "ACCUMULATION" and dist_freq is not None:
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:2497:            "(coherencia con ACCUMULATION)"
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:2499:    if acc_policy == "DISTRIBUTION" and dist_freq is None:
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:2501:            "WARNING: DISTRIBUTION sin Distribution_Frequency poblado"
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:2505:        return "DISTRIBUTION", dist_freq, (
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:2506:            f"Inferido Accumulation_Policy='DISTRIBUTION' "
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:2698:_REGION_GEOGRAPHIES = frozenset({
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:2717:    if universe == "Country" and geography in _REGION_GEOGRAPHIES:
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:2972:      - Type          → TYPE_TRANSLATION_MAP       (EN→ES + excepciones)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:2973:      - Family        → FAMILY_TRANSLATION_MAP     (EN→ES + excepciones)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:2996:        translated_type = TYPE_TRANSLATION_MAP.get(original)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:3008:        translated_family = FAMILY_TRANSLATION_MAP.get(original)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:3075:    (r'CHINA\s+(BOND|FIX)|CHINA\.?\s*BON',
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:3077:    (r'\bEM\s+(BOND|DEBT|MARK|CURR|MK|G\s+BON|MKT|DURAT)|EME\s+MK|EMERG\s+M|'
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:3080:    (r'ASIA[NS]?\s+(BOND|BON|LOC|FLEX|OPPO|TIGER)|ASIAN?\s+LOC|ASIA\s+LOC|'
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:3081:     r'GBL?.*EM\b|TEMPLETON.*BON\b|TEMPLETON\s+ASIA|TEMPLETON\s+EMER|'
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:3089:    (r'COMMOD|VONTOBEL\s+COMMOD',
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:3096:     r'INC.*GROW|GLOBAL\s+OPP\s+BOND|MFS\s+GL.*OPP|US\s+SH\s+TERM\s+BOND|'
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:3104:    (r'EURO\s+BOND|EUROBOND|GLOBAL\s+BOND|GL\s+BOND|'
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:3105:     r'AGGREGATE|AGGR\b|CORE\s+BOND|CORE\+|INVEST.*GRADE\s+BOND',
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_01.py:3111:     r'FLEX\s+OPP|FLEX\s+PROP|PIONEER\s+FLEX|'
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:14:                TYPE_TRANSLATION_MAP: invertido a pass-through EN + corrección
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:18:                FAMILY_TRANSLATION_MAP: ídem, ES→EN.
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:30:                         (BGF US SHORT DURATION BOND, 4 ISINs)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:45:                  _NATURE_CANONICAL: restituida entrada "Restantes": "Restantes".
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:104:         SECTOR_FOCUS_TRANSLATION_MAP: marcado "legacy normalization" — solo
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:107:         SECTOR_FOCUS_TRANSLATION_MAP y luego actuar como pass-through.
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:113:                 Type (TYPE_TRANSLATION_MAP),
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:114:                 Family (FAMILY_TRANSLATION_MAP),
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:118:  BL-57  FAMILY_TRANSLATION_MAP: entrada 'Income Oriented' → 'Orientado a Renta'.
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:123:          constante, FAMILY_TRANSLATION_MAP (pass-through + normalizador BD),
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:131:  TYPE_TRANSLATION_MAP: añadido con excepciones inglesas documentadas.
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:143:         _REGION_GEOGRAPHIES: catálogo canónico de valores-región (9 entradas).
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:151:  BL-22  SECTOR_FOCUS_TRANSLATION_MAP + normalize_sector_focus(): idioma objetivo ES
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:157:  BL-32  validate_accumulation_distribution(): firma 3-tupla + inferencia DISTRIBUTION
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:161:FUNCIONES:
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:163:    NAME_SIGNALS_MONETARIO, NAME_SIGNALS_RF_CORTO, NAME_SIGNALS_RF_FLEXIBLE,
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:218:FAMILY_INFLATION_LINKED     = "Inflation-Linked"
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:219:FAMILY_MONEY_MARKET         = "Money Market"
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:222:FAMILY_STRATEGIC_ALLOCATION = "Strategic Allocation"
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:232:TYPE_MONEY_MARKET           = "Money Market"
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:233:TYPE_GOVT_MONEY_MARKET      = "Government Money Market"
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:234:TYPE_PRIME_MONEY_MARKET     = "Prime Money Market"
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:244:SUBTYPE_LOW_DURATION        = "Low Duration"
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:285:_NATURE_CANONICAL: dict = {
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:310:NAME_SIGNALS_MONETARIO: list = [
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:382:    "dur bond",                                  # BGF EURO SHORT DUR BOND
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:398:    "jpm euro gvrmnt short dur",     # JPM EURO GOVERNMENT SHORT DURATION
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:400:    "gl.short.dur.in",               # FIDELITY GL.SHORT.DURATION INCOME (OCR puntos)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:546:    " bond ",                                    # genérico: "FIDELITY EURO BOND FUND"
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:547:    " bonds ",                                   # genérico: "AXA WF EUR STRAT BONDS"
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:548:    " bd ",                                      # abrev: "BGF CHINA BOND D2"
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:565:    "inflat.bond", "inflat bond",    # AXA WF GLOBAL INFLAT.BONDS (inflation-linked)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:566:    "global inflat",                 # AXA WF GLOBAL INFLATIO.BONDS
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:572:    "allianz green bond",            # ALLIANZ GREEN BOND
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:575:    "us high yie.bond",              # AXA WF US HIGH YIE.BOND (OCR con punto)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:580:    "dws inv corp gr bon",           # DWS INVEST CORPORATE GROWTH BONDS
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:586:    "axa sd hy low carbon",          # AXA SHORT DURATION HY LOW CARBON
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:589:    "amundi core eur gov bnd",       # AMUNDI CORE EUR GOVERNMENT BOND
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:590:    "jpm euro gov st dur",           # JPM EURO GOVERNMENT SHORT DURATION → ya en RF_Corto
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:601:    "axa wf gib",                    # AXA WF GLOBAL INFLATION BOND REDEX
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:603:    "candriam sus bn em m",          # CANDRIAM SUSTAINABLE BOND EM
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:604:    "candriam sustain bnd eur",      # CANDRIAM SUSTAINABLE BOND EUR
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:605:    "dws inv eurogov bnd",           # DWS INVEST EURO GOVERNMENT BOND
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:606:    "dws inv nzt eur c b",           # DWS NET ZERO TARGET CORP BOND
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:611:    "ftgf west asian oppo",          # FTGF WESTERN ASSET ASIAN BOND
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:614:    "gs em mks corp bnd",            # GS EM CORPORATE BOND
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:617:    "templeton gl.t.ret",            # TEMPLETON GLOBAL TOTAL RETURN
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:622:    "axa wf e mk s d b",             # AXA WF EM SHORT DURATION BOND
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:624:    "r-co conv credi",                   # R-CO CONV CREDI EURO (fix typo: era "crdi")
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:704:    "db sia consvtv",                # DB SIA CONSVTV (conservative)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:705:    "dje gestion patrimon",          # DJE GESTION PATRIMONIAL
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:710:    "dws esg stftngsfds",            # DWS STIFTUNGSFONDS (balanced foundation)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:835:    "glob environment",              # BNP GLOB ENVIRONMENT (clean energy equity)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:843:    "candriam eq l",                 # CANDRIAM EQ L ONCO / EURP INN (equity long)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:999:    "bsf europ opp ext",             # BSF EUROP OPP EXTENSION (absolute return)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:1004:    "janus h glob ls",               # JANUS HENDERSON GLOBAL LONG/SHORT
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:1005:    "janus h hf",                    # JANUS HENDERSON HEDGE FUND long/short
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:1013:    "invesco balan.risk",            # INVESCO BALANCED RISK ALLOCATION
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:1026:    "bsf europ opp ext",             # BSF EUROP OPP EXTENSION (equity extension strategy)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:1084:    if _name_match(name_l, NAME_SIGNALS_MONETARIO):
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:1449:    _NATURE_CANONICAL pueda mapearlas correctamente.
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:1990:# BL-22: SECTOR_FOCUS_TRANSLATION_MAP — idioma objetivo: español
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:1991:# LEGACY NORMALIZATION: solo para sanear valores históricos en inglés
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:1996:SECTOR_FOCUS_TRANSLATION_MAP: dict = {
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:2023:    # Primero: traducción legacy EN→ES (SECTOR_FOCUS_TRANSLATION_MAP)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:2024:    translated = SECTOR_FOCUS_TRANSLATION_MAP.get(value)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:2032:# BL-56/BL-57: TYPE_TRANSLATION_MAP — idioma objetivo: español
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:2037:TYPE_TRANSLATION_MAP: dict = {
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:2080:# BL-LANG-EN (2026-05-09): FAMILY_TRANSLATION_MAP — idioma objetivo EN.
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:2083:FAMILY_TRANSLATION_MAP: dict = {
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:2370:    "Accumulation_Policy": ["ACCUMULATION", "DISTRIBUTION"],
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:2371:    "Distribution_Frequency": ["ANNUAL", "QUARTERLY", "MONTHLY", "BIANNUAL"],
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:2380:        "HIGH", "MEDIUM_VISUAL", "MEDIUM_TEXT", "LOW_CONFLICT", "NONE",
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:2569:      ACCUMULATION + dist_freq poblado  → eliminar dist_freq (crítico)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:2570:      DISTRIBUTION + dist_freq NULL     → warning
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:2571:      NULL + dist_freq poblado          → inferir ACCUMULATION_POLICY=DISTRIBUTION (BL-32)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:2579:    if acc_policy == "ACCUMULATION" and dist_freq is not None:
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:2582:            "(coherencia con ACCUMULATION)"
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:2584:    if acc_policy == "DISTRIBUTION" and dist_freq is None:
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:2586:            "WARNING: DISTRIBUTION sin Distribution_Frequency poblado"
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:2590:        return "DISTRIBUTION", dist_freq, (
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:2591:            f"Inferido Accumulation_Policy='DISTRIBUTION' "
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:2783:_REGION_GEOGRAPHIES = frozenset({
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:2802:    if universe == "Country" and geography in _REGION_GEOGRAPHIES:
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:3057:      - Type          → TYPE_TRANSLATION_MAP       (EN→ES + excepciones)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:3058:      - Family        → FAMILY_TRANSLATION_MAP     (EN→ES + excepciones)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:3081:        translated_type = TYPE_TRANSLATION_MAP.get(original)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:3093:        translated_family = FAMILY_TRANSLATION_MAP.get(original)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:3160:    (r'CHINA\s+(BOND|FIX)|CHINA\.?\s*BON',
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:3162:    (r'\bEM\s+(BOND|DEBT|MARK|CURR|MK|G\s+BON|MKT|DURAT)|EME\s+MK|EMERG\s+M|'
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:3165:    (r'ASIA[NS]?\s+(BOND|BON|LOC|FLEX|OPPO|TIGER)|ASIAN?\s+LOC|ASIA\s+LOC|'
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:3166:     r'GBL?.*EM\b|TEMPLETON.*BON\b|TEMPLETON\s+ASIA|TEMPLETON\s+EMER|'
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:3174:    (r'COMMOD|VONTOBEL\s+COMMOD',
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:3180:    # BGF US SHORT DURATION BOND (LU0171/LU0172/LU2624/LU2812)
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:3194:     r'INC.*GROW|GLOBAL\s+OPP\s+BOND|MFS\s+GL.*OPP|US\s+SH\s+TERM\s+BOND|'
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:3202:    (r'EURO\s+BOND|EUROBOND|GLOBAL\s+BOND|GL\s+BOND|'
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:3203:     r'AGGREGATE|AGGR\b|CORE\s+BOND|CORE\+|INVEST.*GRADE\s+BOND',
+C:\desarrollo\fondos\proyecto1\core\classify_utils_20260509_02.py:3209:     r'FLEX\s+OPP|FLEX\s+PROP|PIONEER\s+FLEX|'
+C:\desarrollo\fondos\proyecto1\core\dla_extractor.py:10:CONTRATO EXTERNO:
+C:\desarrollo\fondos\proyecto1\core\dla_extractor.py:61:RIESGOS DOCUMENTADOS (BL_DLA_DESIGN_DECISION.md, sección 6):
+C:\desarrollo\fondos\proyecto1\core\dla_extractor.py:185:        #   (b) línea corta CON punct final + siguiente también corta → fragmentación
+C:\desarrollo\fondos\proyecto1\core\dla_extractor.py:187:        #   (c) línea corta CON punct final + siguiente larga → fin de frase real
+C:\desarrollo\fondos\proyecto1\core\dla_extractor.py:566:    especificado en BL_DLA_DESIGN_DECISION.md sección 5.5:
+C:\desarrollo\fondos\proyecto1\core\dla_extractor.py:607:    BL_DLA_DESIGN_DECISION.md sección 5.5.
+C:\desarrollo\fondos\proyecto1\core\dla_extractor_20260503_00.py:10:CONTRATO EXTERNO:
+C:\desarrollo\fondos\proyecto1\core\dla_extractor_20260503_00.py:61:RIESGOS DOCUMENTADOS (BL_DLA_DESIGN_DECISION.md, sección 6):
+C:\desarrollo\fondos\proyecto1\core\dla_extractor_20260503_00.py:426:    especificado en BL_DLA_DESIGN_DECISION.md sección 5.5:
+C:\desarrollo\fondos\proyecto1\core\dla_extractor_20260503_00.py:467:    BL_DLA_DESIGN_DECISION.md sección 5.5.
+C:\desarrollo\fondos\proyecto1\core\dla_extractor_20260503_01.py:10:CONTRATO EXTERNO:
+C:\desarrollo\fondos\proyecto1\core\dla_extractor_20260503_01.py:61:RIESGOS DOCUMENTADOS (BL_DLA_DESIGN_DECISION.md, sección 6):
+C:\desarrollo\fondos\proyecto1\core\dla_extractor_20260503_01.py:522:    especificado en BL_DLA_DESIGN_DECISION.md sección 5.5:
+C:\desarrollo\fondos\proyecto1\core\dla_extractor_20260503_01.py:563:    BL_DLA_DESIGN_DECISION.md sección 5.5.
+C:\desarrollo\fondos\proyecto1\core\dla_table_serializer.py:7:RESPONSABILIDAD (separación estricta de responsabilidades):
+C:\desarrollo\fondos\proyecto1\core\dla_table_serializer.py:20:CONTRATO EXTERNO:
+C:\desarrollo\fondos\proyecto1\core\dla_table_serializer.py:41:    io.py llamará a serialize_tables() cuando DLA_TABLE_SERIALIZATION_ENABLED=True
+C:\desarrollo\fondos\proyecto1\core\dla_table_serializer.py:43:    En Sub-fase 2A este módulo es STANDALONE — no importado desde io.py.
+C:\desarrollo\fondos\proyecto1\core\dla_table_serializer.py:46:    DLA_TABLE_SERIALIZATION_ENABLED = True/False  en io.py,
+C:\desarrollo\fondos\proyecto1\core\dla_table_serializer.py:70:RIESGOS DOCUMENTADOS (BL_DLA_DESIGN_DECISION.md § 6):
+C:\desarrollo\fondos\proyecto1\core\dla_table_serializer.py:186:_PAT_ACCUM_VAL = re.compile(r'\bACCUMULATION\b|\bacumulaci[oó]n\b', re.IGNORECASE)
+C:\desarrollo\fondos\proyecto1\core\dla_table_serializer.py:187:_PAT_DIST_VAL  = re.compile(r'\bDISTRIBUTION\b|\bdistribuci[oó]n\b', re.IGNORECASE)
+C:\desarrollo\fondos\proyecto1\core\dla_table_serializer.py:202:_PAT_SECTION_BREAK = re.compile(
+C:\desarrollo\fondos\proyecto1\core\dla_table_serializer.py:398:    Detecta ACCUMULATION/DISTRIBUTION y HEDGED/UNHEDGED.
+C:\desarrollo\fondos\proyecto1\core\dla_table_serializer.py:419:        if i > 0 and _PAT_SECTION_BREAK.search(stripped) and \
+C:\desarrollo\fondos\proyecto1\core\dla_table_serializer.py:424:        # Detectar ACCUMULATION / DISTRIBUTION
+C:\desarrollo\fondos\proyecto1\core\dla_table_serializer.py:429:                    pairs.append(("Política de distribución", "ACCUMULATION"))
+C:\desarrollo\fondos\proyecto1\core\dla_table_serializer.py:432:                    pairs.append(("Política de distribución", "DISTRIBUTION"))
+C:\desarrollo\fondos\proyecto1\core\dla_table_serializer.py:438:                        pairs.append(("Política de distribución", "ACCUMULATION"))
+C:\desarrollo\fondos\proyecto1\core\dla_table_serializer.py:440:                        pairs.append(("Política de distribución", "DISTRIBUTION"))
+C:\desarrollo\fondos\proyecto1\core\dla_table_serializer.py:727:                 "Este compartimento es de acumulación (ACCUMULATION).")
+C:\desarrollo\fondos\proyecto1\core\dla_table_serializer.py:755:        "Este fondo sigue una política de acumulación (ACCUMULATION).",
+C:\desarrollo\fondos\proyecto1\core\dla_table_serializer.py:846:    """_extract_policy_lines_from_text detecta ACCUMULATION y HEDGED."""
+C:\desarrollo\fondos\proyecto1\core\dla_table_serializer.py:851:    assert any("ACCUMULATION" in v for v in values) or \
+C:\desarrollo\fondos\proyecto1\core\dla_table_serializer.py:853:        f"Sin ACCUMULATION en pares: {pol_pairs}"
+C:\desarrollo\fondos\proyecto1\core\fund_characterizer.py:111:# CONSTANTES DE DOMINIO
+C:\desarrollo\fondos\proyecto1\core\fund_characterizer.py:135:_REGIONAL_GEOS: frozenset = frozenset({
+C:\desarrollo\fondos\proyecto1\core\fund_characterizer.py:295:    if geography in _REGIONAL_GEOS:
+C:\desarrollo\fondos\proyecto1\core\fund_characterizer.py:587:# DETECT_ACCUMULATION_POLICY
+C:\desarrollo\fondos\proyecto1\core\fund_family_builder.py:157:# CORRECCIÓN ESCALABLE DE INCONSISTENCIAS DE NATURALEZA
+C:\desarrollo\fondos\proyecto1\core\fund_family_builder.py:160:# Señales que indican heterogeneidad INTENCIONAL — no son errores de clasificación
+C:\desarrollo\fondos\proyecto1\core\fund_family_builder.py:199:    "LOW_CONFLICT": 1, "NONE": 0, None: 0,
+C:\desarrollo\fondos\proyecto1\core\fund_family_builder.py:258:            or m.get("SRRI_Quality_Flag") in ("NONE", None)
+C:\desarrollo\fondos\proyecto1\core\fund_family_builder.py:444:                   VALUES (?, 'FAMILY_NATURE_CORRECTION', 'INFO', ?, datetime('now'))""",
+C:\desarrollo\fondos\proyecto1\core\io.py:49:# DLA_TABLE_SERIALIZATION_ENABLED = True  activa extracción de tablas Cat.1+2
+C:\desarrollo\fondos\proyecto1\core\io.py:51:# DLA_TABLE_SERIALIZATION_ENABLED = False no altera el comportamiento actual.
+C:\desarrollo\fondos\proyecto1\core\io.py:54:DLA_TABLE_SERIALIZATION_ENABLED = True  # Sub-fase 2B: desactivado hasta piloto 2C.
+C:\desarrollo\fondos\proyecto1\core\io.py:345:                # Si DLA_TABLE_SERIALIZATION_ENABLED y ya hay texto de tablas en BD,
+C:\desarrollo\fondos\proyecto1\core\io.py:349:                if (DLA_TABLE_SERIALIZATION_ENABLED
+C:\desarrollo\fondos\proyecto1\core\io.py:436:            if DLA_TABLE_SERIALIZATION_ENABLED:
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:59:           estructural relevante. _COST_SECTION_KEYWORDS ampliado con variantes
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:81:         inferido estructuralmente del cero explícito ('ZERO_CONFIRMED') y del
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:100:             (distingue del ZERO_CONFIRMED de entry fee).
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:131:          - _EF_NO_FRONT_LOAD_RE: "no front-end load" / "no sales charge"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:135:          - _EF_FRONT_LOAD_EN_RE: "front-end load [of] X%" / "sales charge X%"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:153:          - _XF_FRONT_EXIT_EN_RE: "exit charge [of] X%" / "redemption fee X%"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:172:          BL51_SCHEMA_DECISION.md. No se implementa en esta versión hasta
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:220:          - AXA: "Nosotros no facturamos el coste de entrada" → 0.0 / ZERO_CONFIRMED
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:249:               en lugar de "0 EUR" o "0%" (47 fondos → ZERO_CONFIRMED).
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:315:              Recupera ~203 fondos con ZERO_CONFIRMED (antes NOT_FOUND).
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:327:               - "ZERO_CONFIRMED" si entry_fee == 0.0 (KIID declara sin comisión)
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:336:               (en lugar de None) para que Fee_Known_Flag = ZERO_CONFIRMED.
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:356:  REPLICATION METHOD (Replication_Method):
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:367:  FIX-REPL-4  ES_REPLICATION_ACTIVE: añadido \"gestiona activamente\" (tercera
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:442:              señal de DISTRIBUTION (en realidad ACCUMULATION). Añadido
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:718:            srri_info["SRRI_Validation_Status"] = "TEXT_ONLY"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:723:            srri_info["SRRI_Validation_Status"] = "TEXT_ONLY"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:731:            srri_info["SRRI_Validation_Status"] = "CONFLICT"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:732:            srri_info["SRRI_Quality_Flag"] = "LOW_CONFLICT"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:735:            srri_info["SRRI_Validation_Status"] = "VISUAL_ONLY"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:740:            srri_info["SRRI_Quality_Flag"] = "NONE"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:770:                    result["SRRI_Validation_Status"] = "CONFLICT"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:771:                    result["SRRI_Quality_Flag"]      = "LOW_CONFLICT"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:773:                        f"SRRI_TEXT_CONFLICT_VISUAL[text={srri_text},vis={srri_visual_prev}]"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:776:                # Sin visual previo — TEXT_ONLY
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:778:                result["SRRI_Validation_Status"] = "TEXT_ONLY"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:780:                result["Inference_Trace"]        = "SRRI_TEXT_ONLY"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:786:            # Esto evita la inconsistencia VISUAL_ONLY + SRRI_Textual_poblado
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:800:                        result["SRRI_Validation_Status"] = "CONFLICT"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:801:                        result["SRRI_Quality_Flag"]      = "LOW_CONFLICT"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:803:                            f"SRRI_TEXT_CONFLICT_VISUAL[text={_t_recovered},vis={srri_visual_prev}]"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:808:                    result["SRRI_Validation_Status"] = "TEXT_ONLY"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:810:                    result["Inference_Trace"]        = "SRRI_TEXT_ONLY|TEXTUAL_RECOVERED"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:815:                result["SRRI_Quality_Flag"]       = "NONE" if srri_visual_prev is None else "MEDIUM_VISUAL"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:816:                result["SRRI_Validation_Status"]  = "NOT_AVAILABLE" if srri_visual_prev is None else "VISUAL_ONLY"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:881:            f"REPLICATION_TEXT[{result.get('Language')}]"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:962:            f"ONGOING_CHARGE_TEXT[{result.get('Language')}]"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:971:        result["Fee_Known_Flag"] = "ZERO_CONFIRMED" if entry_fee == 0.0 else "EXTRACTED"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:1098:            result["Inference_Trace"], f"SUBTYPE_MON[{_sub_mon}]"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:1135:        "Distribution_Frequency": None,   # MONTHLY | QUARTERLY | ANNUAL | VARIABLE
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:1136:        "Accumulation_Policy":    None,   # ACCUMULATION / DISTRIBUTION
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:1137:        "Fee_Known_Flag":         None,   # v17: EXTRACTED | ZERO_CONFIRMED | NOT_FOUND
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:1273:_ES_MONTHS = {
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:1280:_EN_MONTHS = {
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:1323:        if m and m.group(3) in _ES_MONTHS:
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:1325:            month = _ES_MONTHS[m.group(3)]
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:1355:        if m and m.group(2) in _EN_MONTHS:
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:1358:                _EN_MONTHS[m.group(2)],
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:1666:    _CONTAMINATION_WORDS = re.compile(
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:1671:    if _CONTAMINATION_WORDS.search(raw):
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:1692:    # "Índice(s) de referencia [de la clase de acciones]: <benchmark>" — CON separador
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:1760:    # ── Capa M: benchmarks de tipos monetarios (€STR, SOFR, EONIA, EURIBOR) ──
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:1769:    _MONEY_BENCH_RE = re.compile(
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:1781:    m_money = _MONEY_BENCH_RE.search(t)
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:1885:# REPLICATION METHOD  (v2 — añade gestión activa)
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:1893:ES_REPLICATION_PHYSICAL = [
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:1899:ES_REPLICATION_SYNTHETIC = [
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:1905:ES_REPLICATION_PASSIVE = [
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:1918:ES_REPLICATION_ACTIVE = [
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:1929:EN_REPLICATION_PHYSICAL = [
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:1936:EN_REPLICATION_SYNTHETIC = [
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:1941:EN_REPLICATION_PASSIVE = [
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:1950:EN_REPLICATION_ACTIVE = [
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:1986:        for rx in ES_REPLICATION_PHYSICAL:
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:1989:        for rx in ES_REPLICATION_SYNTHETIC:
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:1997:        for rx in ES_REPLICATION_PASSIVE:
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:2000:        for rx in ES_REPLICATION_ACTIVE:
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:2005:        for rx in EN_REPLICATION_PHYSICAL:
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:2008:        for rx in EN_REPLICATION_SYNTHETIC:
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:2012:        for rx in EN_REPLICATION_PASSIVE:
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:2015:        for rx in EN_REPLICATION_ACTIVE:
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:2685:# v22 BL-35b ── AXA: "Nosotros no facturamos el coste de entrada" → ZERO_CONFIRMED
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:2716:_EF_NO_FRONT_LOAD_RE = re.compile(
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:2732:# Nota: separador decimal OPCIONAL — "5%" y "3,00%" son ambos válidos.
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:2761:_EF_FRONT_LOAD_EN_RE = re.compile(
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:2778:    1.  Declaración explícita de sin comisión → 0.0 (ZERO_CONFIRMED)
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:2838:    # (v22 BL-35b) — 24 fondos AXA → ZERO_CONFIRMED
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:2851:    if _EF_NO_FRONT_LOAD_RE.search(text) or _EF_NO_FRONT_LOAD_RE.search(text.lower()):
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:2934:    # IMPORTANTE: aplicar SOLO si no matcheó _EF_NO_FRONT_LOAD_RE (prioridad 10).
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:2936:    m_fl = _EF_FRONT_LOAD_EN_RE.search(text) or _EF_FRONT_LOAD_EN_RE.search(text.lower())
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:3014:_XF_SIN_COMISION_ES_RE = re.compile(
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:3089:_COST_SECTION_KEYWORDS = [
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:3157:    for kw in _COST_SECTION_KEYWORDS:
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:3255:    if (_XF_SIN_COMISION_ES_RE.search(text)
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:3256:            or _XF_SIN_COMISION_ES_RE.search(text.lower())):
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:3407:# ACCUMULATION_POLICY — acumulación vs distribución
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:3474:    Devuelve 'ACCUMULATION', 'DISTRIBUTION' o None.
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:3483:                return "ACCUMULATION"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:3486:                return "DISTRIBUTION"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:3491:                return "ACCUMULATION"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:3494:                return "DISTRIBUTION"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:3754:_MON_LVNAV_TEXT = re.compile(
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:3760:_MON_CNAV_TEXT = re.compile(
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:3766:_MON_VNAV_TEXT = re.compile(
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:3773:_MON_LVNAV_NAME = re.compile(r'\bLVNAV\b', re.IGNORECASE)
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:3774:_MON_CNAV_NAME  = re.compile(r'\bCNAV\b',  re.IGNORECASE)
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:3775:_MON_VNAV_NAME  = re.compile(r'\bVNAV\b',  re.IGNORECASE)
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:3792:        if _MON_LVNAV_TEXT.search(text):
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:3794:        if _MON_CNAV_TEXT.search(text):
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:3796:        if _MON_VNAV_TEXT.search(text):
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:3801:        if _MON_LVNAV_NAME.search(n):
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:3803:        if _MON_CNAV_NAME.search(n):
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:3805:        if _MON_VNAV_NAME.search(n):
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:3954:# DISTRIBUTION_FREQUENCY
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:3963:     {"mensual":"MONTHLY","trimestral":"QUARTERLY","semestral":"BIANNUAL",
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:3968:     {"mensual":"MONTHLY","mensuales":"MONTHLY","trimestral":"QUARTERLY",
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:3972:     {"mensual":"MONTHLY","trimestral":"QUARTERLY","semestral":"BIANNUAL","anual":"ANNUAL"}),
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:3975:     {"monthly":"MONTHLY","quarterly":"QUARTERLY","semi-annually":"BIANNUAL",
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:3979:     {"monthly":"MONTHLY","quarterly":"QUARTERLY","semi-annual":"BIANNUAL","annual":"ANNUAL"}),
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:3982:     {"mensual":"MONTHLY","trimestral":"QUARTERLY","semestral":"BIANNUAL","anual":"ANNUAL"}),
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:3992:    2. Y la política de acumulación NO es ACCUMULATION
+C:\desarrollo\fondos\proyecto1\core\kiid_parser.py:3999:    if accumulation_policy == "ACCUMULATION":
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:17:           estructural relevante. _COST_SECTION_KEYWORDS ampliado con variantes
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:39:         inferido estructuralmente del cero explícito ('ZERO_CONFIRMED') y del
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:58:             (distingue del ZERO_CONFIRMED de entry fee).
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:89:          - _EF_NO_FRONT_LOAD_RE: "no front-end load" / "no sales charge"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:93:          - _EF_FRONT_LOAD_EN_RE: "front-end load [of] X%" / "sales charge X%"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:111:          - _XF_FRONT_EXIT_EN_RE: "exit charge [of] X%" / "redemption fee X%"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:130:          BL51_SCHEMA_DECISION.md. No se implementa en esta versión hasta
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:178:          - AXA: "Nosotros no facturamos el coste de entrada" → 0.0 / ZERO_CONFIRMED
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:207:               en lugar de "0 EUR" o "0%" (47 fondos → ZERO_CONFIRMED).
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:273:              Recupera ~203 fondos con ZERO_CONFIRMED (antes NOT_FOUND).
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:285:               - "ZERO_CONFIRMED" si entry_fee == 0.0 (KIID declara sin comisión)
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:294:               (en lugar de None) para que Fee_Known_Flag = ZERO_CONFIRMED.
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:314:  REPLICATION METHOD (Replication_Method):
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:325:  FIX-REPL-4  ES_REPLICATION_ACTIVE: añadido \"gestiona activamente\" (tercera
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:400:              señal de DISTRIBUTION (en realidad ACCUMULATION). Añadido
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:676:            srri_info["SRRI_Validation_Status"] = "TEXT_ONLY"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:681:            srri_info["SRRI_Validation_Status"] = "TEXT_ONLY"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:689:            srri_info["SRRI_Validation_Status"] = "CONFLICT"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:690:            srri_info["SRRI_Quality_Flag"] = "LOW_CONFLICT"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:693:            srri_info["SRRI_Validation_Status"] = "VISUAL_ONLY"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:698:            srri_info["SRRI_Quality_Flag"] = "NONE"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:728:                    result["SRRI_Validation_Status"] = "CONFLICT"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:729:                    result["SRRI_Quality_Flag"]      = "LOW_CONFLICT"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:731:                        f"SRRI_TEXT_CONFLICT_VISUAL[text={srri_text},vis={srri_visual_prev}]"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:734:                # Sin visual previo — TEXT_ONLY
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:736:                result["SRRI_Validation_Status"] = "TEXT_ONLY"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:738:                result["Inference_Trace"]        = "SRRI_TEXT_ONLY"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:744:            # Esto evita la inconsistencia VISUAL_ONLY + SRRI_Textual_poblado
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:758:                        result["SRRI_Validation_Status"] = "CONFLICT"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:759:                        result["SRRI_Quality_Flag"]      = "LOW_CONFLICT"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:761:                            f"SRRI_TEXT_CONFLICT_VISUAL[text={_t_recovered},vis={srri_visual_prev}]"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:766:                    result["SRRI_Validation_Status"] = "TEXT_ONLY"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:768:                    result["Inference_Trace"]        = "SRRI_TEXT_ONLY|TEXTUAL_RECOVERED"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:773:                result["SRRI_Quality_Flag"]       = "NONE" if srri_visual_prev is None else "MEDIUM_VISUAL"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:774:                result["SRRI_Validation_Status"]  = "NOT_AVAILABLE" if srri_visual_prev is None else "VISUAL_ONLY"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:839:            f"REPLICATION_TEXT[{result.get('Language')}]"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:920:            f"ONGOING_CHARGE_TEXT[{result.get('Language')}]"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:929:        result["Fee_Known_Flag"] = "ZERO_CONFIRMED" if entry_fee == 0.0 else "EXTRACTED"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:1056:            result["Inference_Trace"], f"SUBTYPE_MON[{_sub_mon}]"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:1093:        "Distribution_Frequency": None,   # MONTHLY | QUARTERLY | ANNUAL | VARIABLE
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:1094:        "Accumulation_Policy":    None,   # ACCUMULATION / DISTRIBUTION
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:1095:        "Fee_Known_Flag":         None,   # v17: EXTRACTED | ZERO_CONFIRMED | NOT_FOUND
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:1231:_ES_MONTHS = {
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:1238:_EN_MONTHS = {
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:1281:        if m and m.group(3) in _ES_MONTHS:
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:1283:            month = _ES_MONTHS[m.group(3)]
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:1313:        if m and m.group(2) in _EN_MONTHS:
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:1316:                _EN_MONTHS[m.group(2)],
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:1624:    _CONTAMINATION_WORDS = re.compile(
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:1629:    if _CONTAMINATION_WORDS.search(raw):
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:1650:    # "Índice(s) de referencia [de la clase de acciones]: <benchmark>" — CON separador
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:1718:    # ── Capa M: benchmarks de tipos monetarios (€STR, SOFR, EONIA, EURIBOR) ──
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:1727:    _MONEY_BENCH_RE = re.compile(
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:1739:    m_money = _MONEY_BENCH_RE.search(t)
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:1843:# REPLICATION METHOD  (v2 — añade gestión activa)
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:1851:ES_REPLICATION_PHYSICAL = [
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:1857:ES_REPLICATION_SYNTHETIC = [
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:1863:ES_REPLICATION_PASSIVE = [
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:1876:ES_REPLICATION_ACTIVE = [
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:1887:EN_REPLICATION_PHYSICAL = [
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:1894:EN_REPLICATION_SYNTHETIC = [
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:1899:EN_REPLICATION_PASSIVE = [
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:1908:EN_REPLICATION_ACTIVE = [
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:1944:        for rx in ES_REPLICATION_PHYSICAL:
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:1947:        for rx in ES_REPLICATION_SYNTHETIC:
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:1955:        for rx in ES_REPLICATION_PASSIVE:
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:1958:        for rx in ES_REPLICATION_ACTIVE:
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:1963:        for rx in EN_REPLICATION_PHYSICAL:
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:1966:        for rx in EN_REPLICATION_SYNTHETIC:
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:1970:        for rx in EN_REPLICATION_PASSIVE:
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:1973:        for rx in EN_REPLICATION_ACTIVE:
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:2641:# v22 BL-35b ── AXA: "Nosotros no facturamos el coste de entrada" → ZERO_CONFIRMED
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:2672:_EF_NO_FRONT_LOAD_RE = re.compile(
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:2688:# Nota: separador decimal OPCIONAL — "5%" y "3,00%" son ambos válidos.
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:2717:_EF_FRONT_LOAD_EN_RE = re.compile(
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:2734:    1.  Declaración explícita de sin comisión → 0.0 (ZERO_CONFIRMED)
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:2794:    # (v22 BL-35b) — 24 fondos AXA → ZERO_CONFIRMED
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:2807:    if _EF_NO_FRONT_LOAD_RE.search(text) or _EF_NO_FRONT_LOAD_RE.search(text.lower()):
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:2890:    # IMPORTANTE: aplicar SOLO si no matcheó _EF_NO_FRONT_LOAD_RE (prioridad 10).
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:2892:    m_fl = _EF_FRONT_LOAD_EN_RE.search(text) or _EF_FRONT_LOAD_EN_RE.search(text.lower())
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:2970:_XF_SIN_COMISION_ES_RE = re.compile(
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:3018:_COST_SECTION_KEYWORDS = [
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:3086:    for kw in _COST_SECTION_KEYWORDS:
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:3183:    if (_XF_SIN_COMISION_ES_RE.search(text)
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:3184:            or _XF_SIN_COMISION_ES_RE.search(text.lower())):
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:3325:# ACCUMULATION_POLICY — acumulación vs distribución
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:3392:    Devuelve 'ACCUMULATION', 'DISTRIBUTION' o None.
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:3401:                return "ACCUMULATION"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:3404:                return "DISTRIBUTION"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:3409:                return "ACCUMULATION"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:3412:                return "DISTRIBUTION"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:3672:_MON_LVNAV_TEXT = re.compile(
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:3678:_MON_CNAV_TEXT = re.compile(
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:3684:_MON_VNAV_TEXT = re.compile(
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:3691:_MON_LVNAV_NAME = re.compile(r'\bLVNAV\b', re.IGNORECASE)
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:3692:_MON_CNAV_NAME  = re.compile(r'\bCNAV\b',  re.IGNORECASE)
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:3693:_MON_VNAV_NAME  = re.compile(r'\bVNAV\b',  re.IGNORECASE)
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:3710:        if _MON_LVNAV_TEXT.search(text):
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:3712:        if _MON_CNAV_TEXT.search(text):
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:3714:        if _MON_VNAV_TEXT.search(text):
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:3719:        if _MON_LVNAV_NAME.search(n):
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:3721:        if _MON_CNAV_NAME.search(n):
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:3723:        if _MON_VNAV_NAME.search(n):
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:3872:# DISTRIBUTION_FREQUENCY
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:3881:     {"mensual":"MONTHLY","trimestral":"QUARTERLY","semestral":"BIANNUAL",
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:3886:     {"mensual":"MONTHLY","mensuales":"MONTHLY","trimestral":"QUARTERLY",
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:3890:     {"mensual":"MONTHLY","trimestral":"QUARTERLY","semestral":"BIANNUAL","anual":"ANNUAL"}),
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:3893:     {"monthly":"MONTHLY","quarterly":"QUARTERLY","semi-annually":"BIANNUAL",
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:3897:     {"monthly":"MONTHLY","quarterly":"QUARTERLY","semi-annual":"BIANNUAL","annual":"ANNUAL"}),
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:3900:     {"mensual":"MONTHLY","trimestral":"QUARTERLY","semestral":"BIANNUAL","anual":"ANNUAL"}),
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:3910:    2. Y la política de acumulación NO es ACCUMULATION
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_00.py:3917:    if accumulation_policy == "ACCUMULATION":
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:30:           estructural relevante. _COST_SECTION_KEYWORDS ampliado con variantes
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:52:         inferido estructuralmente del cero explícito ('ZERO_CONFIRMED') y del
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:71:             (distingue del ZERO_CONFIRMED de entry fee).
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:102:          - _EF_NO_FRONT_LOAD_RE: "no front-end load" / "no sales charge"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:106:          - _EF_FRONT_LOAD_EN_RE: "front-end load [of] X%" / "sales charge X%"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:124:          - _XF_FRONT_EXIT_EN_RE: "exit charge [of] X%" / "redemption fee X%"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:143:          BL51_SCHEMA_DECISION.md. No se implementa en esta versión hasta
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:191:          - AXA: "Nosotros no facturamos el coste de entrada" → 0.0 / ZERO_CONFIRMED
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:220:               en lugar de "0 EUR" o "0%" (47 fondos → ZERO_CONFIRMED).
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:286:              Recupera ~203 fondos con ZERO_CONFIRMED (antes NOT_FOUND).
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:298:               - "ZERO_CONFIRMED" si entry_fee == 0.0 (KIID declara sin comisión)
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:307:               (en lugar de None) para que Fee_Known_Flag = ZERO_CONFIRMED.
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:327:  REPLICATION METHOD (Replication_Method):
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:338:  FIX-REPL-4  ES_REPLICATION_ACTIVE: añadido \"gestiona activamente\" (tercera
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:413:              señal de DISTRIBUTION (en realidad ACCUMULATION). Añadido
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:689:            srri_info["SRRI_Validation_Status"] = "TEXT_ONLY"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:694:            srri_info["SRRI_Validation_Status"] = "TEXT_ONLY"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:702:            srri_info["SRRI_Validation_Status"] = "CONFLICT"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:703:            srri_info["SRRI_Quality_Flag"] = "LOW_CONFLICT"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:706:            srri_info["SRRI_Validation_Status"] = "VISUAL_ONLY"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:711:            srri_info["SRRI_Quality_Flag"] = "NONE"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:741:                    result["SRRI_Validation_Status"] = "CONFLICT"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:742:                    result["SRRI_Quality_Flag"]      = "LOW_CONFLICT"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:744:                        f"SRRI_TEXT_CONFLICT_VISUAL[text={srri_text},vis={srri_visual_prev}]"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:747:                # Sin visual previo — TEXT_ONLY
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:749:                result["SRRI_Validation_Status"] = "TEXT_ONLY"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:751:                result["Inference_Trace"]        = "SRRI_TEXT_ONLY"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:757:            # Esto evita la inconsistencia VISUAL_ONLY + SRRI_Textual_poblado
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:771:                        result["SRRI_Validation_Status"] = "CONFLICT"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:772:                        result["SRRI_Quality_Flag"]      = "LOW_CONFLICT"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:774:                            f"SRRI_TEXT_CONFLICT_VISUAL[text={_t_recovered},vis={srri_visual_prev}]"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:779:                    result["SRRI_Validation_Status"] = "TEXT_ONLY"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:781:                    result["Inference_Trace"]        = "SRRI_TEXT_ONLY|TEXTUAL_RECOVERED"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:786:                result["SRRI_Quality_Flag"]       = "NONE" if srri_visual_prev is None else "MEDIUM_VISUAL"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:787:                result["SRRI_Validation_Status"]  = "NOT_AVAILABLE" if srri_visual_prev is None else "VISUAL_ONLY"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:852:            f"REPLICATION_TEXT[{result.get('Language')}]"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:933:            f"ONGOING_CHARGE_TEXT[{result.get('Language')}]"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:942:        result["Fee_Known_Flag"] = "ZERO_CONFIRMED" if entry_fee == 0.0 else "EXTRACTED"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:1069:            result["Inference_Trace"], f"SUBTYPE_MON[{_sub_mon}]"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:1106:        "Distribution_Frequency": None,   # MONTHLY | QUARTERLY | ANNUAL | VARIABLE
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:1107:        "Accumulation_Policy":    None,   # ACCUMULATION / DISTRIBUTION
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:1108:        "Fee_Known_Flag":         None,   # v17: EXTRACTED | ZERO_CONFIRMED | NOT_FOUND
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:1244:_ES_MONTHS = {
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:1251:_EN_MONTHS = {
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:1294:        if m and m.group(3) in _ES_MONTHS:
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:1296:            month = _ES_MONTHS[m.group(3)]
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:1326:        if m and m.group(2) in _EN_MONTHS:
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:1329:                _EN_MONTHS[m.group(2)],
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:1637:    _CONTAMINATION_WORDS = re.compile(
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:1642:    if _CONTAMINATION_WORDS.search(raw):
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:1663:    # "Índice(s) de referencia [de la clase de acciones]: <benchmark>" — CON separador
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:1731:    # ── Capa M: benchmarks de tipos monetarios (€STR, SOFR, EONIA, EURIBOR) ──
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:1740:    _MONEY_BENCH_RE = re.compile(
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:1752:    m_money = _MONEY_BENCH_RE.search(t)
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:1856:# REPLICATION METHOD  (v2 — añade gestión activa)
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:1864:ES_REPLICATION_PHYSICAL = [
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:1870:ES_REPLICATION_SYNTHETIC = [
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:1876:ES_REPLICATION_PASSIVE = [
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:1889:ES_REPLICATION_ACTIVE = [
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:1900:EN_REPLICATION_PHYSICAL = [
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:1907:EN_REPLICATION_SYNTHETIC = [
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:1912:EN_REPLICATION_PASSIVE = [
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:1921:EN_REPLICATION_ACTIVE = [
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:1957:        for rx in ES_REPLICATION_PHYSICAL:
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:1960:        for rx in ES_REPLICATION_SYNTHETIC:
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:1968:        for rx in ES_REPLICATION_PASSIVE:
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:1971:        for rx in ES_REPLICATION_ACTIVE:
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:1976:        for rx in EN_REPLICATION_PHYSICAL:
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:1979:        for rx in EN_REPLICATION_SYNTHETIC:
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:1983:        for rx in EN_REPLICATION_PASSIVE:
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:1986:        for rx in EN_REPLICATION_ACTIVE:
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:2654:# v22 BL-35b ── AXA: "Nosotros no facturamos el coste de entrada" → ZERO_CONFIRMED
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:2685:_EF_NO_FRONT_LOAD_RE = re.compile(
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:2701:# Nota: separador decimal OPCIONAL — "5%" y "3,00%" son ambos válidos.
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:2730:_EF_FRONT_LOAD_EN_RE = re.compile(
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:2747:    1.  Declaración explícita de sin comisión → 0.0 (ZERO_CONFIRMED)
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:2807:    # (v22 BL-35b) — 24 fondos AXA → ZERO_CONFIRMED
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:2820:    if _EF_NO_FRONT_LOAD_RE.search(text) or _EF_NO_FRONT_LOAD_RE.search(text.lower()):
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:2903:    # IMPORTANTE: aplicar SOLO si no matcheó _EF_NO_FRONT_LOAD_RE (prioridad 10).
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:2905:    m_fl = _EF_FRONT_LOAD_EN_RE.search(text) or _EF_FRONT_LOAD_EN_RE.search(text.lower())
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:2983:_XF_SIN_COMISION_ES_RE = re.compile(
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:3058:_COST_SECTION_KEYWORDS = [
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:3126:    for kw in _COST_SECTION_KEYWORDS:
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:3224:    if (_XF_SIN_COMISION_ES_RE.search(text)
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:3225:            or _XF_SIN_COMISION_ES_RE.search(text.lower())):
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:3376:# ACCUMULATION_POLICY — acumulación vs distribución
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:3443:    Devuelve 'ACCUMULATION', 'DISTRIBUTION' o None.
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:3452:                return "ACCUMULATION"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:3455:                return "DISTRIBUTION"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:3460:                return "ACCUMULATION"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:3463:                return "DISTRIBUTION"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:3723:_MON_LVNAV_TEXT = re.compile(
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:3729:_MON_CNAV_TEXT = re.compile(
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:3735:_MON_VNAV_TEXT = re.compile(
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:3742:_MON_LVNAV_NAME = re.compile(r'\bLVNAV\b', re.IGNORECASE)
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:3743:_MON_CNAV_NAME  = re.compile(r'\bCNAV\b',  re.IGNORECASE)
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:3744:_MON_VNAV_NAME  = re.compile(r'\bVNAV\b',  re.IGNORECASE)
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:3761:        if _MON_LVNAV_TEXT.search(text):
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:3763:        if _MON_CNAV_TEXT.search(text):
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:3765:        if _MON_VNAV_TEXT.search(text):
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:3770:        if _MON_LVNAV_NAME.search(n):
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:3772:        if _MON_CNAV_NAME.search(n):
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:3774:        if _MON_VNAV_NAME.search(n):
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:3923:# DISTRIBUTION_FREQUENCY
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:3932:     {"mensual":"MONTHLY","trimestral":"QUARTERLY","semestral":"BIANNUAL",
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:3937:     {"mensual":"MONTHLY","mensuales":"MONTHLY","trimestral":"QUARTERLY",
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:3941:     {"mensual":"MONTHLY","trimestral":"QUARTERLY","semestral":"BIANNUAL","anual":"ANNUAL"}),
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:3944:     {"monthly":"MONTHLY","quarterly":"QUARTERLY","semi-annually":"BIANNUAL",
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:3948:     {"monthly":"MONTHLY","quarterly":"QUARTERLY","semi-annual":"BIANNUAL","annual":"ANNUAL"}),
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:3951:     {"mensual":"MONTHLY","trimestral":"QUARTERLY","semestral":"BIANNUAL","anual":"ANNUAL"}),
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:3961:    2. Y la política de acumulación NO es ACCUMULATION
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260508_01.py:3968:    if accumulation_policy == "ACCUMULATION":
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:59:           estructural relevante. _COST_SECTION_KEYWORDS ampliado con variantes
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:81:         inferido estructuralmente del cero explícito ('ZERO_CONFIRMED') y del
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:100:             (distingue del ZERO_CONFIRMED de entry fee).
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:131:          - _EF_NO_FRONT_LOAD_RE: "no front-end load" / "no sales charge"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:135:          - _EF_FRONT_LOAD_EN_RE: "front-end load [of] X%" / "sales charge X%"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:153:          - _XF_FRONT_EXIT_EN_RE: "exit charge [of] X%" / "redemption fee X%"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:172:          BL51_SCHEMA_DECISION.md. No se implementa en esta versión hasta
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:220:          - AXA: "Nosotros no facturamos el coste de entrada" → 0.0 / ZERO_CONFIRMED
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:249:               en lugar de "0 EUR" o "0%" (47 fondos → ZERO_CONFIRMED).
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:315:              Recupera ~203 fondos con ZERO_CONFIRMED (antes NOT_FOUND).
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:327:               - "ZERO_CONFIRMED" si entry_fee == 0.0 (KIID declara sin comisión)
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:336:               (en lugar de None) para que Fee_Known_Flag = ZERO_CONFIRMED.
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:356:  REPLICATION METHOD (Replication_Method):
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:367:  FIX-REPL-4  ES_REPLICATION_ACTIVE: añadido \"gestiona activamente\" (tercera
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:442:              señal de DISTRIBUTION (en realidad ACCUMULATION). Añadido
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:718:            srri_info["SRRI_Validation_Status"] = "TEXT_ONLY"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:723:            srri_info["SRRI_Validation_Status"] = "TEXT_ONLY"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:731:            srri_info["SRRI_Validation_Status"] = "CONFLICT"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:732:            srri_info["SRRI_Quality_Flag"] = "LOW_CONFLICT"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:735:            srri_info["SRRI_Validation_Status"] = "VISUAL_ONLY"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:740:            srri_info["SRRI_Quality_Flag"] = "NONE"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:770:                    result["SRRI_Validation_Status"] = "CONFLICT"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:771:                    result["SRRI_Quality_Flag"]      = "LOW_CONFLICT"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:773:                        f"SRRI_TEXT_CONFLICT_VISUAL[text={srri_text},vis={srri_visual_prev}]"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:776:                # Sin visual previo — TEXT_ONLY
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:778:                result["SRRI_Validation_Status"] = "TEXT_ONLY"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:780:                result["Inference_Trace"]        = "SRRI_TEXT_ONLY"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:786:            # Esto evita la inconsistencia VISUAL_ONLY + SRRI_Textual_poblado
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:800:                        result["SRRI_Validation_Status"] = "CONFLICT"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:801:                        result["SRRI_Quality_Flag"]      = "LOW_CONFLICT"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:803:                            f"SRRI_TEXT_CONFLICT_VISUAL[text={_t_recovered},vis={srri_visual_prev}]"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:808:                    result["SRRI_Validation_Status"] = "TEXT_ONLY"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:810:                    result["Inference_Trace"]        = "SRRI_TEXT_ONLY|TEXTUAL_RECOVERED"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:815:                result["SRRI_Quality_Flag"]       = "NONE" if srri_visual_prev is None else "MEDIUM_VISUAL"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:816:                result["SRRI_Validation_Status"]  = "NOT_AVAILABLE" if srri_visual_prev is None else "VISUAL_ONLY"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:881:            f"REPLICATION_TEXT[{result.get('Language')}]"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:962:            f"ONGOING_CHARGE_TEXT[{result.get('Language')}]"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:971:        result["Fee_Known_Flag"] = "ZERO_CONFIRMED" if entry_fee == 0.0 else "EXTRACTED"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:1098:            result["Inference_Trace"], f"SUBTYPE_MON[{_sub_mon}]"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:1135:        "Distribution_Frequency": None,   # MONTHLY | QUARTERLY | ANNUAL | VARIABLE
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:1136:        "Accumulation_Policy":    None,   # ACCUMULATION / DISTRIBUTION
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:1137:        "Fee_Known_Flag":         None,   # v17: EXTRACTED | ZERO_CONFIRMED | NOT_FOUND
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:1273:_ES_MONTHS = {
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:1280:_EN_MONTHS = {
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:1323:        if m and m.group(3) in _ES_MONTHS:
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:1325:            month = _ES_MONTHS[m.group(3)]
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:1355:        if m and m.group(2) in _EN_MONTHS:
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:1358:                _EN_MONTHS[m.group(2)],
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:1666:    _CONTAMINATION_WORDS = re.compile(
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:1671:    if _CONTAMINATION_WORDS.search(raw):
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:1692:    # "Índice(s) de referencia [de la clase de acciones]: <benchmark>" — CON separador
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:1760:    # ── Capa M: benchmarks de tipos monetarios (€STR, SOFR, EONIA, EURIBOR) ──
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:1769:    _MONEY_BENCH_RE = re.compile(
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:1781:    m_money = _MONEY_BENCH_RE.search(t)
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:1885:# REPLICATION METHOD  (v2 — añade gestión activa)
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:1893:ES_REPLICATION_PHYSICAL = [
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:1899:ES_REPLICATION_SYNTHETIC = [
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:1905:ES_REPLICATION_PASSIVE = [
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:1918:ES_REPLICATION_ACTIVE = [
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:1929:EN_REPLICATION_PHYSICAL = [
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:1936:EN_REPLICATION_SYNTHETIC = [
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:1941:EN_REPLICATION_PASSIVE = [
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:1950:EN_REPLICATION_ACTIVE = [
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:1986:        for rx in ES_REPLICATION_PHYSICAL:
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:1989:        for rx in ES_REPLICATION_SYNTHETIC:
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:1997:        for rx in ES_REPLICATION_PASSIVE:
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:2000:        for rx in ES_REPLICATION_ACTIVE:
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:2005:        for rx in EN_REPLICATION_PHYSICAL:
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:2008:        for rx in EN_REPLICATION_SYNTHETIC:
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:2012:        for rx in EN_REPLICATION_PASSIVE:
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:2015:        for rx in EN_REPLICATION_ACTIVE:
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:2685:# v22 BL-35b ── AXA: "Nosotros no facturamos el coste de entrada" → ZERO_CONFIRMED
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:2716:_EF_NO_FRONT_LOAD_RE = re.compile(
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:2732:# Nota: separador decimal OPCIONAL — "5%" y "3,00%" son ambos válidos.
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:2761:_EF_FRONT_LOAD_EN_RE = re.compile(
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:2778:    1.  Declaración explícita de sin comisión → 0.0 (ZERO_CONFIRMED)
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:2838:    # (v22 BL-35b) — 24 fondos AXA → ZERO_CONFIRMED
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:2851:    if _EF_NO_FRONT_LOAD_RE.search(text) or _EF_NO_FRONT_LOAD_RE.search(text.lower()):
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:2934:    # IMPORTANTE: aplicar SOLO si no matcheó _EF_NO_FRONT_LOAD_RE (prioridad 10).
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:2936:    m_fl = _EF_FRONT_LOAD_EN_RE.search(text) or _EF_FRONT_LOAD_EN_RE.search(text.lower())
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:3014:_XF_SIN_COMISION_ES_RE = re.compile(
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:3089:_COST_SECTION_KEYWORDS = [
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:3157:    for kw in _COST_SECTION_KEYWORDS:
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:3255:    if (_XF_SIN_COMISION_ES_RE.search(text)
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:3256:            or _XF_SIN_COMISION_ES_RE.search(text.lower())):
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:3407:# ACCUMULATION_POLICY — acumulación vs distribución
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:3474:    Devuelve 'ACCUMULATION', 'DISTRIBUTION' o None.
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:3483:                return "ACCUMULATION"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:3486:                return "DISTRIBUTION"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:3491:                return "ACCUMULATION"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:3494:                return "DISTRIBUTION"
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:3754:_MON_LVNAV_TEXT = re.compile(
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:3760:_MON_CNAV_TEXT = re.compile(
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:3766:_MON_VNAV_TEXT = re.compile(
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:3773:_MON_LVNAV_NAME = re.compile(r'\bLVNAV\b', re.IGNORECASE)
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:3774:_MON_CNAV_NAME  = re.compile(r'\bCNAV\b',  re.IGNORECASE)
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:3775:_MON_VNAV_NAME  = re.compile(r'\bVNAV\b',  re.IGNORECASE)
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:3792:        if _MON_LVNAV_TEXT.search(text):
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:3794:        if _MON_CNAV_TEXT.search(text):
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:3796:        if _MON_VNAV_TEXT.search(text):
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:3801:        if _MON_LVNAV_NAME.search(n):
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:3803:        if _MON_CNAV_NAME.search(n):
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:3805:        if _MON_VNAV_NAME.search(n):
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:3954:# DISTRIBUTION_FREQUENCY
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:3963:     {"mensual":"MONTHLY","trimestral":"QUARTERLY","semestral":"BIANNUAL",
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:3968:     {"mensual":"MONTHLY","mensuales":"MONTHLY","trimestral":"QUARTERLY",
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:3972:     {"mensual":"MONTHLY","trimestral":"QUARTERLY","semestral":"BIANNUAL","anual":"ANNUAL"}),
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:3975:     {"monthly":"MONTHLY","quarterly":"QUARTERLY","semi-annually":"BIANNUAL",
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:3979:     {"monthly":"MONTHLY","quarterly":"QUARTERLY","semi-annual":"BIANNUAL","annual":"ANNUAL"}),
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:3982:     {"mensual":"MONTHLY","trimestral":"QUARTERLY","semestral":"BIANNUAL","anual":"ANNUAL"}),
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:3992:    2. Y la política de acumulación NO es ACCUMULATION
+C:\desarrollo\fondos\proyecto1\core\kiid_parser_20260509_00.py:3999:    if accumulation_policy == "ACCUMULATION":
+C:\desarrollo\fondos\proyecto1\core\PATCHES_pipeline.py:176:#   (KIID_Status=WRONG_DOC, sin bloque que los recoja, errores) conservan
+C:\desarrollo\fondos\proyecto1\core\pipeline.py:34:         y MONETARIOS nunca asignaron Investment_Focus. El valor Broad previo
+C:\desarrollo\fondos\proyecto1\core\pipeline.py:301:    if srri_q in (None, "NONE"):
+C:\desarrollo\fondos\proyecto1\core\pipeline.py:304:    if srri_q == "LOW_CONFLICT":
+C:\desarrollo\fondos\proyecto1\core\pipeline.py:337:    CANONICAL_KEYS = {
+C:\desarrollo\fondos\proyecto1\core\pipeline.py:365:    extra_keys = set(classification) - CANONICAL_KEYS
+C:\desarrollo\fondos\proyecto1\core\pipeline.py:437:            "SELECT ISIN FROM fund_kiid_metadata WHERE KIID_Status = 'WRONG_DOC'"
+C:\desarrollo\fondos\proyecto1\core\pipeline.py:445:            print(f"[{block_name}] {excluded} ISINs excluidos por KIID_Status=WRONG_DOC")
+C:\desarrollo\fondos\proyecto1\core\pipeline.py:636:                    f"{block_name}_CLASSIFICATION",
+C:\desarrollo\fondos\proyecto1\core\pipeline.py:776:                fund_master_record["Accumulation_Policy"] = "ACCUMULATION"
+C:\desarrollo\fondos\proyecto1\core\pipeline.py:778:                fund_master_record["Accumulation_Policy"] = "DISTRIBUTION"
+C:\desarrollo\fondos\proyecto1\core\pipeline.py:785:            # Origen: bloque MONETARIOS asignaba tipología regulatoria en Family (bug).
+C:\desarrollo\fondos\proyecto1\core\pipeline.py:920:            _REGION_VALUES = {
+C:\desarrollo\fondos\proyecto1\core\pipeline.py:927:            if _univ_eff == "Country" and _geo_eff in _REGION_VALUES:
+C:\desarrollo\fondos\proyecto1\core\pipeline.py:1024:                    fund_master_record["Accumulation_Policy"] = "ACCUMULATION"
+C:\desarrollo\fondos\proyecto1\core\pipeline.py:1026:                    fund_master_record["Accumulation_Policy"] = "DISTRIBUTION"
+C:\desarrollo\fondos\proyecto1\core\pipeline.py:1047:            # RF_CORTO y MONETARIOS no asignan IF; BL-44 redirige estos fondos a
+C:\desarrollo\fondos\proyecto1\core\pipeline.py:1247:                    conn, isin, "BL61_STRATEGY_REPLICATION", "INFO",
+C:\desarrollo\fondos\proyecto1\core\pipeline.py:1337:            _BENCH_CONTAMINATION_MARKERS = [
+C:\desarrollo\fondos\proyecto1\core\pipeline.py:1351:                    or any(m in v_lower for m in _BENCH_CONTAMINATION_MARKERS)
+C:\desarrollo\fondos\proyecto1\core\pipeline.py:1579:#   (KIID_Status=WRONG_DOC, sin bloque que los recoja, errores) conservan
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260508_00.py:256:    if srri_q in (None, "NONE"):
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260508_00.py:259:    if srri_q == "LOW_CONFLICT":
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260508_00.py:292:    CANONICAL_KEYS = {
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260508_00.py:320:    extra_keys = set(classification) - CANONICAL_KEYS
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260508_00.py:392:            "SELECT ISIN FROM fund_kiid_metadata WHERE KIID_Status = 'WRONG_DOC'"
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260508_00.py:400:            print(f"[{block_name}] {excluded} ISINs excluidos por KIID_Status=WRONG_DOC")
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260508_00.py:583:                    f"{block_name}_CLASSIFICATION",
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260508_00.py:723:                fund_master_record["Accumulation_Policy"] = "ACCUMULATION"
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260508_00.py:725:                fund_master_record["Accumulation_Policy"] = "DISTRIBUTION"
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260508_00.py:732:            # Origen: bloque MONETARIOS asignaba tipología regulatoria en Family (bug).
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260508_00.py:860:            _REGION_VALUES = {
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260508_00.py:867:            if _univ_eff == "Country" and _geo_eff in _REGION_VALUES:
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260508_00.py:964:                    fund_master_record["Accumulation_Policy"] = "ACCUMULATION"
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260508_00.py:966:                    fund_master_record["Accumulation_Policy"] = "DISTRIBUTION"
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260508_00.py:1128:                    conn, isin, "BL61_STRATEGY_REPLICATION", "INFO",
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260508_00.py:1218:            _BENCH_CONTAMINATION_MARKERS = [
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260508_00.py:1232:                    or any(m in v_lower for m in _BENCH_CONTAMINATION_MARKERS)
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260508_00.py:1459:#   (KIID_Status=WRONG_DOC, sin bloque que los recoja, errores) conservan
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_00.py:8:         y MONETARIOS nunca asignaron Investment_Focus. El valor Broad previo
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_00.py:275:    if srri_q in (None, "NONE"):
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_00.py:278:    if srri_q == "LOW_CONFLICT":
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_00.py:311:    CANONICAL_KEYS = {
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_00.py:339:    extra_keys = set(classification) - CANONICAL_KEYS
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_00.py:411:            "SELECT ISIN FROM fund_kiid_metadata WHERE KIID_Status = 'WRONG_DOC'"
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_00.py:419:            print(f"[{block_name}] {excluded} ISINs excluidos por KIID_Status=WRONG_DOC")
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_00.py:602:                    f"{block_name}_CLASSIFICATION",
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_00.py:742:                fund_master_record["Accumulation_Policy"] = "ACCUMULATION"
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_00.py:744:                fund_master_record["Accumulation_Policy"] = "DISTRIBUTION"
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_00.py:751:            # Origen: bloque MONETARIOS asignaba tipología regulatoria en Family (bug).
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_00.py:879:            _REGION_VALUES = {
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_00.py:886:            if _univ_eff == "Country" and _geo_eff in _REGION_VALUES:
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_00.py:983:                    fund_master_record["Accumulation_Policy"] = "ACCUMULATION"
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_00.py:985:                    fund_master_record["Accumulation_Policy"] = "DISTRIBUTION"
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_00.py:1006:            # RF_CORTO y MONETARIOS no asignan IF; BL-44 redirige estos fondos a
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_00.py:1169:                    conn, isin, "BL61_STRATEGY_REPLICATION", "INFO",
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_00.py:1259:            _BENCH_CONTAMINATION_MARKERS = [
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_00.py:1273:                    or any(m in v_lower for m in _BENCH_CONTAMINATION_MARKERS)
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_00.py:1500:#   (KIID_Status=WRONG_DOC, sin bloque que los recoja, errores) conservan
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_01.py:22:         y MONETARIOS nunca asignaron Investment_Focus. El valor Broad previo
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_01.py:289:    if srri_q in (None, "NONE"):
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_01.py:292:    if srri_q == "LOW_CONFLICT":
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_01.py:325:    CANONICAL_KEYS = {
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_01.py:353:    extra_keys = set(classification) - CANONICAL_KEYS
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_01.py:425:            "SELECT ISIN FROM fund_kiid_metadata WHERE KIID_Status = 'WRONG_DOC'"
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_01.py:433:            print(f"[{block_name}] {excluded} ISINs excluidos por KIID_Status=WRONG_DOC")
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_01.py:620:                    f"{block_name}_CLASSIFICATION",
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_01.py:760:                fund_master_record["Accumulation_Policy"] = "ACCUMULATION"
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_01.py:762:                fund_master_record["Accumulation_Policy"] = "DISTRIBUTION"
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_01.py:769:            # Origen: bloque MONETARIOS asignaba tipología regulatoria en Family (bug).
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_01.py:904:            _REGION_VALUES = {
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_01.py:911:            if _univ_eff == "Country" and _geo_eff in _REGION_VALUES:
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_01.py:1008:                    fund_master_record["Accumulation_Policy"] = "ACCUMULATION"
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_01.py:1010:                    fund_master_record["Accumulation_Policy"] = "DISTRIBUTION"
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_01.py:1031:            # RF_CORTO y MONETARIOS no asignan IF; BL-44 redirige estos fondos a
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_01.py:1231:                    conn, isin, "BL61_STRATEGY_REPLICATION", "INFO",
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_01.py:1321:            _BENCH_CONTAMINATION_MARKERS = [
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_01.py:1335:                    or any(m in v_lower for m in _BENCH_CONTAMINATION_MARKERS)
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_01.py:1562:#   (KIID_Status=WRONG_DOC, sin bloque que los recoja, errores) conservan
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_02.py:26:         y MONETARIOS nunca asignaron Investment_Focus. El valor Broad previo
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_02.py:293:    if srri_q in (None, "NONE"):
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_02.py:296:    if srri_q == "LOW_CONFLICT":
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_02.py:329:    CANONICAL_KEYS = {
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_02.py:357:    extra_keys = set(classification) - CANONICAL_KEYS
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_02.py:429:            "SELECT ISIN FROM fund_kiid_metadata WHERE KIID_Status = 'WRONG_DOC'"
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_02.py:437:            print(f"[{block_name}] {excluded} ISINs excluidos por KIID_Status=WRONG_DOC")
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_02.py:624:                    f"{block_name}_CLASSIFICATION",
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_02.py:764:                fund_master_record["Accumulation_Policy"] = "ACCUMULATION"
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_02.py:766:                fund_master_record["Accumulation_Policy"] = "DISTRIBUTION"
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_02.py:773:            # Origen: bloque MONETARIOS asignaba tipología regulatoria en Family (bug).
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_02.py:908:            _REGION_VALUES = {
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_02.py:915:            if _univ_eff == "Country" and _geo_eff in _REGION_VALUES:
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_02.py:1012:                    fund_master_record["Accumulation_Policy"] = "ACCUMULATION"
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_02.py:1014:                    fund_master_record["Accumulation_Policy"] = "DISTRIBUTION"
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_02.py:1035:            # RF_CORTO y MONETARIOS no asignan IF; BL-44 redirige estos fondos a
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_02.py:1235:                    conn, isin, "BL61_STRATEGY_REPLICATION", "INFO",
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_02.py:1325:            _BENCH_CONTAMINATION_MARKERS = [
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_02.py:1339:                    or any(m in v_lower for m in _BENCH_CONTAMINATION_MARKERS)
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_02.py:1566:#   (KIID_Status=WRONG_DOC, sin bloque que los recoja, errores) conservan
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_03.py:34:         y MONETARIOS nunca asignaron Investment_Focus. El valor Broad previo
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_03.py:301:    if srri_q in (None, "NONE"):
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_03.py:304:    if srri_q == "LOW_CONFLICT":
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_03.py:337:    CANONICAL_KEYS = {
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_03.py:365:    extra_keys = set(classification) - CANONICAL_KEYS
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_03.py:437:            "SELECT ISIN FROM fund_kiid_metadata WHERE KIID_Status = 'WRONG_DOC'"
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_03.py:445:            print(f"[{block_name}] {excluded} ISINs excluidos por KIID_Status=WRONG_DOC")
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_03.py:632:                    f"{block_name}_CLASSIFICATION",
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_03.py:772:                fund_master_record["Accumulation_Policy"] = "ACCUMULATION"
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_03.py:774:                fund_master_record["Accumulation_Policy"] = "DISTRIBUTION"
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_03.py:781:            # Origen: bloque MONETARIOS asignaba tipología regulatoria en Family (bug).
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_03.py:916:            _REGION_VALUES = {
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_03.py:923:            if _univ_eff == "Country" and _geo_eff in _REGION_VALUES:
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_03.py:1020:                    fund_master_record["Accumulation_Policy"] = "ACCUMULATION"
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_03.py:1022:                    fund_master_record["Accumulation_Policy"] = "DISTRIBUTION"
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_03.py:1043:            # RF_CORTO y MONETARIOS no asignan IF; BL-44 redirige estos fondos a
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_03.py:1243:                    conn, isin, "BL61_STRATEGY_REPLICATION", "INFO",
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_03.py:1333:            _BENCH_CONTAMINATION_MARKERS = [
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_03.py:1347:                    or any(m in v_lower for m in _BENCH_CONTAMINATION_MARKERS)
+C:\desarrollo\fondos\proyecto1\core\pipeline_20260509_03.py:1574:#   (KIID_Status=WRONG_DOC, sin bloque que los recoja, errores) conservan
+C:\desarrollo\fondos\proyecto1\core\sqlite_writer.py:93:  - fund_master INSERT/ON CONFLICT: añadidos Investment_Focus,
+C:\desarrollo\fondos\proyecto1\core\sqlite_writer.py:94:    Credit_Quality, Fee_Known_Flag con COALESCE en ON CONFLICT
+C:\desarrollo\fondos\proyecto1\core\sqlite_writer.py:130:# CONEXIÓN
+C:\desarrollo\fondos\proyecto1\core\sqlite_writer.py:135:    conn.execute("PRAGMA foreign_keys = ON;")
+C:\desarrollo\fondos\proyecto1\core\sqlite_writer.py:234:        if ap_upper in ("ACCUMULATION", "DISTRIBUTION"):
+C:\desarrollo\fondos\proyecto1\core\sqlite_writer.py:399:    - SRRI: CASE especial — solo actualizar si SRRI_Quality_Flag no es NONE.
+C:\desarrollo\fondos\proyecto1\core\sqlite_writer.py:485:    ON CONFLICT(ISIN) DO UPDATE SET
+C:\desarrollo\fondos\proyecto1\core\sqlite_writer.py:514:                    AND excluded.SRRI_Quality_Flag != 'NONE'
+C:\desarrollo\fondos\proyecto1\core\sqlite_writer.py:536:                    AND excluded.SRRI_Quality_Flag != 'NONE'
+C:\desarrollo\fondos\proyecto1\core\sqlite_writer.py:625:    Usa INSERT ... ON CONFLICT DO UPDATE en lugar de INSERT OR REPLACE para
+C:\desarrollo\fondos\proyecto1\core\sqlite_writer.py:651:    ON CONFLICT(ISIN, KIID_Class) DO UPDATE SET
+C:\desarrollo\fondos\proyecto1\core\sqlite_writer_20260509_00.py:43:  - fund_master INSERT/ON CONFLICT: añadidos Investment_Focus,
+C:\desarrollo\fondos\proyecto1\core\sqlite_writer_20260509_00.py:44:    Credit_Quality, Fee_Known_Flag con COALESCE en ON CONFLICT
+C:\desarrollo\fondos\proyecto1\core\sqlite_writer_20260509_00.py:80:# CONEXIÓN
+C:\desarrollo\fondos\proyecto1\core\sqlite_writer_20260509_00.py:85:    conn.execute("PRAGMA foreign_keys = ON;")
+C:\desarrollo\fondos\proyecto1\core\sqlite_writer_20260509_00.py:178:        if ap_upper in ("ACCUMULATION", "DISTRIBUTION"):
+C:\desarrollo\fondos\proyecto1\core\sqlite_writer_20260509_00.py:319:    - SRRI: CASE especial — solo actualizar si SRRI_Quality_Flag no es NONE.
+C:\desarrollo\fondos\proyecto1\core\sqlite_writer_20260509_00.py:405:    ON CONFLICT(ISIN) DO UPDATE SET
+C:\desarrollo\fondos\proyecto1\core\sqlite_writer_20260509_00.py:434:                    AND excluded.SRRI_Quality_Flag != 'NONE'
+C:\desarrollo\fondos\proyecto1\core\sqlite_writer_20260509_00.py:456:                    AND excluded.SRRI_Quality_Flag != 'NONE'
+C:\desarrollo\fondos\proyecto1\core\sqlite_writer_20260509_00.py:541:    Usa INSERT ... ON CONFLICT DO UPDATE en lugar de INSERT OR REPLACE para
+C:\desarrollo\fondos\proyecto1\core\sqlite_writer_20260509_00.py:566:    ON CONFLICT(ISIN, KIID_Class) DO UPDATE SET
+C:\desarrollo\fondos\proyecto1\core\sqlite_writer_20260509_00.py:728:#   WRONG_DOC, sin bloque que los recoja, con error de proceso) conservan
+C:\desarrollo\fondos\proyecto1\core\sqlite_writer_20260510_00.py:93:  - fund_master INSERT/ON CONFLICT: añadidos Investment_Focus,
+C:\desarrollo\fondos\proyecto1\core\sqlite_writer_20260510_00.py:94:    Credit_Quality, Fee_Known_Flag con COALESCE en ON CONFLICT
+C:\desarrollo\fondos\proyecto1\core\sqlite_writer_20260510_00.py:130:# CONEXIÓN
+C:\desarrollo\fondos\proyecto1\core\sqlite_writer_20260510_00.py:135:    conn.execute("PRAGMA foreign_keys = ON;")
+C:\desarrollo\fondos\proyecto1\core\sqlite_writer_20260510_00.py:234:        if ap_upper in ("ACCUMULATION", "DISTRIBUTION"):
+C:\desarrollo\fondos\proyecto1\core\sqlite_writer_20260510_00.py:399:    - SRRI: CASE especial — solo actualizar si SRRI_Quality_Flag no es NONE.
+C:\desarrollo\fondos\proyecto1\core\sqlite_writer_20260510_00.py:485:    ON CONFLICT(ISIN) DO UPDATE SET
+C:\desarrollo\fondos\proyecto1\core\sqlite_writer_20260510_00.py:514:                    AND excluded.SRRI_Quality_Flag != 'NONE'
+C:\desarrollo\fondos\proyecto1\core\sqlite_writer_20260510_00.py:536:                    AND excluded.SRRI_Quality_Flag != 'NONE'
+C:\desarrollo\fondos\proyecto1\core\sqlite_writer_20260510_00.py:621:    Usa INSERT ... ON CONFLICT DO UPDATE en lugar de INSERT OR REPLACE para
+C:\desarrollo\fondos\proyecto1\core\sqlite_writer_20260510_00.py:646:    ON CONFLICT(ISIN, KIID_Class) DO UPDATE SET
+C:\desarrollo\fondos\proyecto1\core\sqlite_writer_20260510_01.py:93:  - fund_master INSERT/ON CONFLICT: añadidos Investment_Focus,
+C:\desarrollo\fondos\proyecto1\core\sqlite_writer_20260510_01.py:94:    Credit_Quality, Fee_Known_Flag con COALESCE en ON CONFLICT
+C:\desarrollo\fondos\proyecto1\core\sqlite_writer_20260510_01.py:130:# CONEXIÓN
+C:\desarrollo\fondos\proyecto1\core\sqlite_writer_20260510_01.py:135:    conn.execute("PRAGMA foreign_keys = ON;")
+C:\desarrollo\fondos\proyecto1\core\sqlite_writer_20260510_01.py:234:        if ap_upper in ("ACCUMULATION", "DISTRIBUTION"):
+C:\desarrollo\fondos\proyecto1\core\sqlite_writer_20260510_01.py:399:    - SRRI: CASE especial — solo actualizar si SRRI_Quality_Flag no es NONE.
+C:\desarrollo\fondos\proyecto1\core\sqlite_writer_20260510_01.py:485:    ON CONFLICT(ISIN) DO UPDATE SET
+C:\desarrollo\fondos\proyecto1\core\sqlite_writer_20260510_01.py:514:                    AND excluded.SRRI_Quality_Flag != 'NONE'
+C:\desarrollo\fondos\proyecto1\core\sqlite_writer_20260510_01.py:536:                    AND excluded.SRRI_Quality_Flag != 'NONE'
+C:\desarrollo\fondos\proyecto1\core\sqlite_writer_20260510_01.py:624:    Usa INSERT ... ON CONFLICT DO UPDATE en lugar de INSERT OR REPLACE para
+C:\desarrollo\fondos\proyecto1\core\sqlite_writer_20260510_01.py:650:    ON CONFLICT(ISIN, KIID_Class) DO UPDATE SET
+C:\desarrollo\fondos\proyecto1\core\srri_text.py:38:  FIX-CONF-1    Resolución de CONFLICT mejorada en resolve_srri_validation:
+C:\desarrollo\fondos\proyecto1\core\srri_text.py:40:                    con confirmación L0: la gran mayoría de vis=1 CONFLICTs son falsos
+C:\desarrollo\fondos\proyecto1\core\srri_text.py:42:                  - La calidad pasa a LOW_CONFLICT → MEDIUM_TEXT en ese caso.
+C:\desarrollo\fondos\proyecto1\core\srri_text.py:55:TEXT_CONTEXT_WINDOW = 300
+C:\desarrollo\fondos\proyecto1\core\srri_text.py:59:# FUNCIONES CANÓNICAS DE RESOLUCIÓN
+C:\desarrollo\fondos\proyecto1\core\srri_text.py:73:    En ese caso se devuelve VISUAL_SUSPICIOUS en lugar de CONFLICT,
+C:\desarrollo\fondos\proyecto1\core\srri_text.py:77:        return "NOT_AVAILABLE", "NONE"
+C:\desarrollo\fondos\proyecto1\core\srri_text.py:82:        # FIX-CONF-1: vis=1 casi siempre es ruido del encabezado de página
+C:\desarrollo\fondos\proyecto1\core\srri_text.py:86:        return "CONFLICT", "LOW_CONFLICT"
+C:\desarrollo\fondos\proyecto1\core\srri_text.py:89:        return "VISUAL_ONLY", "MEDIUM_VISUAL"
+C:\desarrollo\fondos\proyecto1\core\srri_text.py:91:    return "TEXT_ONLY", "MEDIUM_TEXT"
+C:\desarrollo\fondos\proyecto1\core\srri_text.py:100:        return "BOTH_MATCH" if srri_visual == srri_textual else "BOTH_CONFLICT"
+C:\desarrollo\fondos\proyecto1\core\srri_text.py:108:    return "NONE"
+C:\desarrollo\fondos\proyecto1\core\srri_text.py:295:            return None, "L0_CONFLICT"
+C:\desarrollo\fondos\proyecto1\core\srri_text.py:329:            return None, "L1_CONFLICT"
+C:\desarrollo\fondos\proyecto1\core\srri_text.py:350:            snippet = text[idx: idx + TEXT_CONTEXT_WINDOW]
+C:\desarrollo\fondos\proyecto1\core\srri_v4_geometric.py:81:# OPTIMIZACIONES DE RENDIMIENTO SOBRE V11
+C:\desarrollo\fondos\proyecto1\core\srri_v4_geometric.py:198:TESS_CONFIG = "--psm 6 -c tessedit_char_whitelist=1234567"
+C:\desarrollo\fondos\proyecto1\core\srri_v4_geometric.py:451:            # [V16-FIX-1] MAX_BAND_ITERATIONS: limitar el band-scan para PDFs
+C:\desarrollo\fondos\proyecto1\core\srri_v4_geometric.py:572:        data = pytesseract.image_to_data(gray, config=TESS_CONFIG,
+C:\desarrollo\fondos\proyecto1\core\srri_v4_geometric.py:1130:    # SCORING DIRECTO CON GRID OCR (cuando no se detectan celdas)
+C:\desarrollo\fondos\proyecto1\core\srri_v4_geometric.py:1442:            data = pytesseract.image_to_data(gray_variant, config=TESS_CONFIG,
+C:\desarrollo\fondos\proyecto1\core\srri_v4_geometric.py:1467:    # [V9] EXTRACCIÓN DE POSICIONES DESDE CAPA DE TEXTO PDF
+C:\desarrollo\fondos\proyecto1\core\srri_v4_geometric.py:1917:                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+C:\desarrollo\fondos\proyecto1\core\srri_v5_geometric.py:2:# VERSION 5 - HARDENED GEOMETRIC VALIDATION
+C:\desarrollo\fondos\shared\config.py:15:  - SCHEMA_VERSION: "v17" → "v18".
+C:\desarrollo\fondos\shared\config.py:17:    DLA_TABLE_SERIALIZATION_ENABLED controla la extracción de tablas Cat.1+2.
+C:\desarrollo\fondos\shared\config.py:20:  - SCHEMA_VERSION: constante canónica de versión de schema.
+C:\desarrollo\fondos\shared\config.py:40:SCHEMA_VERSION: str = "v18"
+C:\desarrollo\fondos\shared\config.py:87:METRIC_VERSION: str = "v1"
+C:\desarrollo\fondos\shared\config.py:93:HORIZONS: list[str] = [
+C:\desarrollo\fondos\shared\config.py:107:REGION_IPC: str = "ES"
+C:\desarrollo\fondos\shared\config.py:137:SCORE_VERSION: str = "v1"
+C:\desarrollo\fondos\shared\config.py:334:        "ZERO_CONFIRMED",
+C:\desarrollo\fondos\shared\config.py:354:        "NONE",
+C:\desarrollo\fondos\shared\config.py:361:        "TEXT_ONLY",
+C:\desarrollo\fondos\shared\config.py:362:        "VISUAL_ONLY",
+C:\desarrollo\fondos\shared\config.py:363:        "CONFLICT",
+C:\desarrollo\fondos\shared\config_20260510_00.py:15:  - SCHEMA_VERSION: constante canónica de versión de schema.
+C:\desarrollo\fondos\shared\config_20260510_00.py:35:SCHEMA_VERSION: str = "v17"
+C:\desarrollo\fondos\shared\config_20260510_00.py:82:METRIC_VERSION: str = "v1"
+C:\desarrollo\fondos\shared\config_20260510_00.py:88:HORIZONS: list[str] = [
+C:\desarrollo\fondos\shared\config_20260510_00.py:102:REGION_IPC: str = "ES"
+C:\desarrollo\fondos\shared\config_20260510_00.py:132:SCORE_VERSION: str = "v1"
+C:\desarrollo\fondos\shared\config_20260510_00.py:329:        "ZERO_CONFIRMED",
+C:\desarrollo\fondos\shared\config_20260510_00.py:349:        "NONE",
+C:\desarrollo\fondos\shared\config_20260510_00.py:356:        "TEXT_ONLY",
+C:\desarrollo\fondos\shared\config_20260510_00.py:357:        "VISUAL_ONLY",
+C:\desarrollo\fondos\shared\config_20260510_00.py:358:        "CONFLICT",
+C:\desarrollo\fondos\shared\db.py:54:    conn.execute("PRAGMA foreign_keys = ON;")
+C:\desarrollo\fondos\shared\init_db.py:22:    añadir una entrada a _MIGRATIONS con el ALTER TABLE correspondiente.
+C:\desarrollo\fondos\shared\init_db.py:66:_MIGRATIONS: list[tuple[str, str, str]] = [
+C:\desarrollo\fondos\shared\init_db.py:83:        "CREATE INDEX IF NOT EXISTS idx_fm_family ON fund_master (fund_family_id)",
+C:\desarrollo\fondos\shared\init_db.py:103:        "CREATE INDEX IF NOT EXISTS idx_fm_strategy ON fund_master (Strategy)",
+C:\desarrollo\fondos\shared\init_db.py:107:        "CREATE INDEX IF NOT EXISTS idx_fm_esg ON fund_master (Is_ESG)",
+C:\desarrollo\fondos\shared\init_db.py:146:        # JSON con desglose por fase: kiid_fetch, kiid_parse, classify
+C:\desarrollo\fondos\shared\init_db.py:166:        # EXTRACTED | ZERO_CONFIRMED | NOT_FOUND
+C:\desarrollo\fondos\shared\init_db.py:171:        "CREATE INDEX IF NOT EXISTS idx_fm_nature ON fund_master (Fund_Nature)",
+C:\desarrollo\fondos\shared\init_db.py:176:        "ON fund_master (Investment_Focus)",
+C:\desarrollo\fondos\shared\init_db.py:181:        "ON fund_master (Credit_Quality)",
+C:\desarrollo\fondos\shared\init_db.py:227:        for entry in _MIGRATIONS:
+C:\desarrollo\fondos\shared\init_db.py:230:        print(f"\n  Total: {len(_MIGRATIONS)} migraciones")
+C:\desarrollo\fondos\shared\init_db.py:235:    conn.execute("PRAGMA foreign_keys = ON")
+C:\desarrollo\fondos\shared\init_db.py:247:    for entry in _MIGRATIONS:
+C:\desarrollo\fondos\shared\init_db_20260510_00.py:22:    añadir una entrada a _MIGRATIONS con el ALTER TABLE correspondiente.
+C:\desarrollo\fondos\shared\init_db_20260510_00.py:61:_MIGRATIONS: list[tuple[str, str, str]] = [
+C:\desarrollo\fondos\shared\init_db_20260510_00.py:78:        "CREATE INDEX IF NOT EXISTS idx_fm_family ON fund_master (fund_family_id)",
+C:\desarrollo\fondos\shared\init_db_20260510_00.py:98:        "CREATE INDEX IF NOT EXISTS idx_fm_strategy ON fund_master (Strategy)",
+C:\desarrollo\fondos\shared\init_db_20260510_00.py:102:        "CREATE INDEX IF NOT EXISTS idx_fm_esg ON fund_master (Is_ESG)",
+C:\desarrollo\fondos\shared\init_db_20260510_00.py:141:        # JSON con desglose por fase: kiid_fetch, kiid_parse, classify
+C:\desarrollo\fondos\shared\init_db_20260510_00.py:161:        # EXTRACTED | ZERO_CONFIRMED | NOT_FOUND
+C:\desarrollo\fondos\shared\init_db_20260510_00.py:166:        "CREATE INDEX IF NOT EXISTS idx_fm_nature ON fund_master (Fund_Nature)",
+C:\desarrollo\fondos\shared\init_db_20260510_00.py:171:        "ON fund_master (Investment_Focus)",
+C:\desarrollo\fondos\shared\init_db_20260510_00.py:176:        "ON fund_master (Credit_Quality)",
+C:\desarrollo\fondos\shared\init_db_20260510_00.py:210:        for entry in _MIGRATIONS:
+C:\desarrollo\fondos\shared\init_db_20260510_00.py:213:        print(f"\n  Total: {len(_MIGRATIONS)} migraciones")
+C:\desarrollo\fondos\shared\init_db_20260510_00.py:218:    conn.execute("PRAGMA foreign_keys = ON")
+C:\desarrollo\fondos\shared\init_db_20260510_00.py:230:    for entry in _MIGRATIONS:
+C:\desarrollo\fondos\shared\schema_checks.py:134:INGESTION_LOG_COLUMNS: list[str] = [
+C:\desarrollo\fondos\shared\schema_checks.py:148:INGESTION_LOG_COLUMNS_SET      = frozenset(INGESTION_LOG_COLUMNS)
+C:\desarrollo\fondos\shared\schema_checks.py:197:        ("ingestion_log",      INGESTION_LOG_COLUMNS_SET),
+C:\desarrollo\fondos\shared\schema_checks.py:245:        from shared.config import SCHEMA_VERSION
+C:\desarrollo\fondos\shared\schema_checks.py:246:        return SCHEMA_VERSION
+C:\desarrollo\fondos\shared\schema_checks_20260402_00.py:108:INGESTION_LOG_COLUMNS: list[str] = [
+C:\desarrollo\fondos\shared\schema_checks_20260402_00.py:122:INGESTION_LOG_COLUMNS_SET       = frozenset(INGESTION_LOG_COLUMNS)
+C:\desarrollo\fondos\shared\schema_checks_20260510_00.py:126:INGESTION_LOG_COLUMNS: list[str] = [
+C:\desarrollo\fondos\shared\schema_checks_20260510_00.py:140:INGESTION_LOG_COLUMNS_SET      = frozenset(INGESTION_LOG_COLUMNS)
+C:\desarrollo\fondos\shared\schema_checks_20260510_00.py:185:        ("ingestion_log",      INGESTION_LOG_COLUMNS_SET),
+C:\desarrollo\fondos\shared\schema_checks_20260510_00.py:233:        from shared.config import SCHEMA_VERSION
+C:\desarrollo\fondos\shared\schema_checks_20260510_00.py:234:        return SCHEMA_VERSION

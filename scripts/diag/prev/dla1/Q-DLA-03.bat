@@ -1,0 +1,1 @@
+python -X utf8 scripts\diag\dla_layout_inventory.py --mode db_redownload --excel_master c:\data\fondos\in\GestoresDeFondosv1.xlsx --random_sample 50
