@@ -128,12 +128,14 @@ TOTAL_COSTS_ROW = re.compile(
 # Fila de ACI (Incidencia Anual de los Costes)
 # \s* cubre texto pegado sin espacios (BL-COST-3-FIX)
 ACI_ROW = re.compile(
-    # FIX-P1-H: "anual" made optional. Some single-horizon PRIIPS KIDs label
-    # this row "Incidencia de los costes*" (no "anual") -- confirmed in
-    # FR0000989626 raw extraction. The original mandatory-anual pattern never
-    # matched, so aci_row stayed None and the % was lost regardless of column
-    # alignment fixes (P1-F/P1-G), since there was nothing to extract from.
-    r'incidencia\s*(?:anual\s*)?de\s*los\s*costes?|annual\s*cost\s*impact',
+    # FIX-P1-H: "anual" made optional.
+    # FIX-P1-R: add "Impacto anual/en los costes" — IE/Irish PRIIPS KIDs use
+    # "Impacto" instead of "Incidencia" (confirmed IE000VOGDDG7, IE0000J01ZR0,
+    # IE0005023803, ~218 corpus funds). Also adds bare "Impacto en los costes"
+    # without "anual". Pattern anchored to avoid matching generic "impacto".
+    r'incidencia\s*(?:anual\s*)?de\s*los\s*costes?'
+    r'|impacto\s*(?:anual\s*)?en\s*los\s*costes?'
+    r'|annual\s*cost\s*impact',
     re.IGNORECASE,
 )
 
@@ -528,6 +530,28 @@ def _parse_costs_over_time_dla2(text: str) -> List[dict]:
                 aci_row = _norm
                 continue
 
+    # FIX-P1-W: mega-cell ACI extraction fallback.
+    # When no structured aci_row was found (len < 150 guard rejected all), check
+    # if any section line is a mega-cell (cells[0] >= 100 chars) that contains
+    # the ACI label embedded in a single prose block. Extract the ACI % from the
+    # 200 chars after the label position. This handles FR0007435920-type layouts
+    # where pdfplumber collapses the OT table into one cell: the structured
+    # total_row IS present (len < 150) but the ACI row is only in the mega-cell.
+    if aci_row is None:
+        for _wln in section_lines[max(0, header_row_idx):]:
+            _wc = _split_dla2_row(_wln)
+            if not _wc or len(_wc[0]) < 100:
+                continue
+            _wm = ACI_ROW.search(_wc[0])
+            if _wm:
+                _wfrag = _wc[0][_wm.end(): _wm.end() + 200]
+                _wpct_m = re.search(r'(\d+[,.]?\d*)\s*%', _wfrag)
+                if _wpct_m:
+                    _wval = float(_wpct_m.group(1).replace(',', '.'))
+                    if 0.0 <= _wval <= 25.0:
+                        aci_row = [_wc[0][:60], f'{_wval}%']
+                break
+
     # FIX-P1-G: compacted non-empty pairing.
     # pdfplumber's per-row column banding can insert a phantom blank cell in
     # the header row that is NOT mirrored at the same index in the data rows,
@@ -544,7 +568,21 @@ def _parse_costs_over_time_dla2(text: str) -> List[dict]:
     # when the extracted-value count matches the surviving-label count exactly,
     # so a genuinely missing data point (real horizon, no disclosed value)
     # still resolves to None rather than absorbing a neighbour's value.
-    _label_idx = [i for i, lbl in enumerate(horizon_labels) if lbl.strip()]
+    # FIX-P1-G: drop blank horizon labels (original logic).
+    # FIX-P1-U: also drop investment-base cells ('Inversión: 10 000 €' etc.).
+    # Certain DLA2 formats serialize the example-investment header as an
+    # extra non-empty cell BETWEEN the label column and the actual time-horizon
+    # columns. Without this guard FIX-P1-G keeps it, inflating n_cols from 2
+    # to 3 and causing _aci_paired=False → wrong positional assignment.
+    _BASE_CELL_RE = re.compile(
+        r'(?:inversi[oó]n|invest(?:ment)?|ejemplo|example)\b'
+        r'.*?(?:\d{4,}|\d{1,3}(?:[\s.,]\d{3})+)',
+        re.I | re.DOTALL,
+    )
+    _label_idx = [
+        i for i, lbl in enumerate(horizon_labels)
+        if lbl.strip() and not _BASE_CELL_RE.search(lbl)
+    ]
     horizon_labels = [horizon_labels[i] for i in _label_idx]
     n_cols = len(horizon_labels)
 
@@ -621,6 +659,15 @@ def _parse_costs_over_time_dla2(text: str) -> List[dict]:
         # explicit RHP keyword (RHP_PATTERN, now including PMR/RHP abbreviations)
         # marks a column as is_rhp.
         is_rhp = _is_rhp_label(horizon_label) or (horizon_years == -1.0 and n_cols == 1)
+        # FIX-P1-T: date-based RHP (e.g. 'Si sale después de 31/12/2028').
+        # Some PRIIPS KIDs replace the N-year RHP column header with the fund's
+        # maturity/redemption date (DD/MM/YYYY). _parse_horizon_years returns
+        # -1.0 for unrecognised labels; the column is NOT is_rhp by FIX-P1-D
+        # (n_cols>=2). Detect: hy=-1.0 AND label contains a date AND it is the
+        # LAST column (the second OT column is always RHP by PRIIPS regulation).
+        if not is_rhp and horizon_years == -1.0 and col_idx == n_cols - 1:
+            if re.search(r'\d{1,2}/\d{1,2}/\d{4}', horizon_label):
+                is_rhp = True
         if is_rhp:
             horizon_years = -1.0
 
@@ -685,9 +732,13 @@ def _parse_costs_over_time_plain(text: str) -> List[dict]:
     if not m_hdr:
         return []
 
-    # Ventana de búsqueda: desde el encabezado hasta 800 chars después
+    # Ventana de búsqueda: desde el encabezado hasta 1500 chars después.
+    # FIX-P1-Q: extended from 800 to 1500. Measurement on 118 measurable
+    # has_pct_no_aci_label funds (2026-06-27) showed median ACI-label offset
+    # = 762 chars, p90 = 801 chars — just above the old 800-char limit.
+    # 1500 covers all measured offsets with safety margin.
     window_start = m_hdr.start()
-    window_end   = min(len(text), window_start + 800)
+    window_end   = min(len(text), window_start + 1500)
     window       = text[window_start:window_end]
 
     results = []
@@ -707,17 +758,21 @@ def _parse_costs_over_time_plain(text: str) -> List[dict]:
         re.IGNORECASE,
     )
 
-    seen_labels: set = set()
+    seen_horizons: set = set()
     for m in HORIZON_CONTEXT.finditer(window):
         label = m.group(0).strip()
-        # Deduplicar (el mismo horizonte puede aparecer varias veces)
-        norm_label = re.sub(r'\s+', ' ', label.lower())
-        if norm_label in seen_labels:
-            continue
-        seen_labels.add(norm_label)
 
         horizon_years = _parse_horizon_years(label)
         is_rhp = _is_rhp_label(label) or (horizon_years == -1.0)
+
+        # Deduplicar por (horizon_years, is_rhp) — not by raw label string.
+        # FIX-P1-Q's larger window can find both '5 años' and '5 año' (singular)
+        # from the same table printed twice; both parse to hy=5.0, so only the
+        # FIRST occurrence (which usually has the richer fragment) is kept.
+        _hy_key = (round(horizon_years, 2), is_rhp)
+        if _hy_key in seen_horizons:
+            continue
+        seen_horizons.add(_hy_key)
 
         # Buscar importe EUR y ACI en un fragmento de ~200 chars tras esta mención
         frag_start = m.end()
@@ -744,16 +799,28 @@ def _parse_costs_over_time_plain(text: str) -> List[dict]:
     # even though the OT header and ACI % are present in the window.
     # Fix: search the FULL text globally for holding-period year references,
     # then extract the ACI % from near "incidencia anual" inside the OT window.
-    if not results:
+    # FIX-P1-E extension: fire when results exist but all aci_pct are None.
+    # FIX-P1-Q extended the window from 800→1500, so HORIZON_CONTEXT now finds
+    # year markers that were previously out of range. For funds where the ACI
+    # value appears BEFORE the year marker in the text flow (not after), the
+    # 200-char post-match fragment misses the value. FIX-P1-E recovers it by
+    # anchoring on the ACI label instead. Extend to fire whenever no ACI was
+    # found; REPLACE any all-None results if global fallback yields aci.
+    if not results or all(e.get('aci_pct') is None for e in results):
         _global_years = sorted({
             int(y)
             for y in re.findall(r'despu[eé]s\s+de\s+(\d+)\s+a[ñn]os?', text, re.I)
         })[:2]
         if _global_years:
-            _anc = re.search(r'incidencia\s+anual', window, re.I)
+            _anc = re.search(
+                r'incidencia\s+anual|impacto\s+(?:anual\s+)?en\s+los\s+costes?',
+                window, re.I
+            )
             _zone = window[_anc.start():_anc.start() + 250] if _anc else window
             _aci = _extract_pct_from_cell(_zone)
             _eur = _extract_eur_from_cell(window)
+            if _aci is not None:
+                results = []  # replace all-None results; harmless when results was []
             for _y in _global_years:
                 results.append({
                     'horizon_label':  f'despues de {_y} anos',
@@ -1043,8 +1110,17 @@ def parse_costs_over_time(text: str) -> List[dict]:
             # ACI_RHP-missing es la NO-detección de la columna RHP en tablas
             # multi-columna (is_rhp queda False cuando la cabecera de columna no
             # repite "período de mantenimiento recomendado"), un fix aparte.
-            if not results:
-                results = _parse_costs_over_time_plain(text)
+            # FIX-P1-V: also fall back when DLA2 parsed a header but extracted
+            # no ACI values at all (e.g. risk-section content follows the OT
+            # header in the DLA2 serialization, yielding a false-positive header
+            # hit with aci_pct=None for all entries). In that case, try plain
+            # text which may find ACI in the raw prose. Only replace if plain
+            # text yields at least one entry with a non-None aci_pct — prevents
+            # regressing funds where plain text also extracts nothing.
+            if not results or all(e.get('aci_pct') is None for e in results):
+                _plain = _parse_costs_over_time_plain(text)
+                if _plain and any(e.get('aci_pct') is not None for e in _plain):
+                    results = _plain
             return results
         else:
             return _parse_costs_over_time_plain(text)

@@ -1,11 +1,28 @@
+
+# directorio upload
+upload/
+
+# Caché de Python
+__pycache__/
+*.pyc
+
+# Archivos SQLite
 *.sqlite
-proyecto1/p1_output.sqlite
-proyecto1/log
-db/fondos.sqlite
-upload/proyecto1upload
-upload/proyecto2upload
-upload/proyecto3upload
-upload/sharedupload
-upload/scriptsupload
-upload/sharedupload
-upload/code
+
+# Archivos temporales de SQLite
+*.sqlite-shm
+*.sqlite-wal
+
+# Logs de sistema y pruebas
+log/
+logs/
+*.log
+
+# Archivos de salida de datos (Excel / ODS)
+out/
+*.xlsx
+*.ods
+.~lock.*
+
+# Archivos de configuración locales duplicados con fecha
+*_2026[0-9]*
