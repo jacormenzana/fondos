@@ -445,20 +445,32 @@ def extract_priips_costs(
             # RHP != 1Y → tomar el aci_pct crudo (no pasar por validated_pct)
             aci_rhp_final = aci_rhp_ratio
 
-        if aci_1y_final is not None:
+        # P0-ACI-GUARD: ACI values > 25% are parser bleed (scenario section
+        # percentages captured instead of cost ACI). Confirmed root cause:
+        # LU0256846568 (79.8%), LU1575199994 (71.4%) — CHECK constraint
+        # ACI_RHP <= 25 was violated, blocking publish_fund entirely.
+        # Reject at ratio level (0.25 == 25%) — better NULL than wrong value.
+        _MAX_ACI_RATIO = 0.25
+        if aci_1y_final is not None and aci_1y_final <= _MAX_ACI_RATIO:
             out['ACI_1Y'] = _ratio_to_pct(aci_1y_final)
-        if aci_rhp_final is not None:
+        if aci_rhp_final is not None and aci_rhp_final <= _MAX_ACI_RATIO:
             out['ACI_RHP'] = _ratio_to_pct(aci_rhp_final)
 
         # --- D. Tabla "composición de los costes" ---
         comp = parse_costs_composition(text)
 
         # Entry/Exit MAX: preferir *_max_pct; fallback a *_fee_pct
+        # P0-FEE-GUARD: Entry/Exit > 25% is a parser error (mis-assigned value).
+        # Confirmed: LU0823416762 produced Entry_Fee_Pct_Max > 25, blocking
+        # publish_fund. _guarded_pct in the composition parser caps at 25% but
+        # the ratio threshold is tight — add a final boundary here as backstop.
+        # Schema CHECK: Entry_Fee_Pct_Max <= 25 (percent form).
+        _MAX_FEE_RATIO = 0.25
         entry_max = comp.get('entry_fee_max_pct', comp.get('entry_fee_pct'))
         exit_max  = comp.get('exit_fee_max_pct',  comp.get('exit_fee_pct'))
-        if entry_max is not None:
+        if entry_max is not None and entry_max <= _MAX_FEE_RATIO:
             out['Entry_Fee_Pct_Max'] = _ratio_to_pct(entry_max)
-        if exit_max is not None:
+        if exit_max is not None and exit_max <= _MAX_FEE_RATIO:
             out['Exit_Fee_Pct_Max']  = _ratio_to_pct(exit_max)
 
         mgmt = comp.get('management_fee_pct')

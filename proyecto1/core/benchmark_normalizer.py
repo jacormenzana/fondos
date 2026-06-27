@@ -806,11 +806,204 @@ def _normalize_benchmark_extended(raw: str) -> Optional[BenchmarkResult]:
     return None
 
 
-# Monkey-patch: extender normalize_benchmark para incluir mapa Morningstar
+# ============================================================
+# Phase 1 — Descomposición de benchmarks compuestos + fallback de cobertura
+# (BL-BENCH-DECOMP). Gated por config.BENCHMARK_DECOMP_ENABLED.
+# ============================================================
+# Problema (SG1/SG5, auditoría 2026-06-20):
+#   - El matcher (startswith, primer match gana) bloquea el sleeve de un
+#     benchmark compuesto: "s&p 500 + 40% bloomberg us aggregate bond" → Equity,
+#     ignorando el tramo de renta fija. El fondo es allocation → debería ser Mixed.
+#   - Benchmarks sin alias quedan con asset_class NULL aunque el string es
+#     inequívocamente de una familia (p.ej. "korea composite stock price index").
+#
+# Diseño CONSERVADOR: solo declara 'Mixed' ante señal multi-activo real
+# (≥2 familias INVERTIBLES Equity+Fixed Income, o un sleeve con peso explícito
+# <85%). El cash/overnight (Rate) NO convierte un fondo en Mixed: es overlay/
+# hurdle y se trata en Phase 2 (eje benchmark_role). Tokens de equity son
+# nombres de índice ESPECÍFICOS, no la marca suelta ("msci"), para no marcar
+# como compuesto un "bloomberg msci euro green bond" (RF pura).
+
+# Índices de RENTA VARIABLE (nombres específicos, no marca suelta).
+_FAM_EQUITY_RE = re.compile(
+    r's&p\s*500|msci\s+world|msci\s+ac\s+world|msci\s+acwi|msci\s+all[\s-]?countr|'
+    r'msci\s+europe|msci\s+usa|msci\s+uk|msci\s+japan|msci\s+pacific|'
+    r'msci\s+emerging|msci\s+em\b|msci\s+taiwan|msci\s+brazil|msci\s+china|'
+    r'msci\s+india|euro\s*stoxx|stoxx\s*600|stoxx\s+europe|ftse\s*100|'
+    r'ftse\s+all[\s-]?share|ftse\s*mib|russell\s*\d{3,4}|nasdaq|nikkei|topix|'
+    r'\bdax\b|cac\s*40|ibex|swiss\s+market|stock\s+price\s+index|'
+    r'\bequity\s+index|small\s+cap|mid\s+cap|10/40',
+    re.IGNORECASE
+)
+# Índices de RENTA FIJA.
+_FAM_FI_RE = re.compile(
+    r'aggregate|\bagg\b|\bgovt\b|government\s+bond|treasury|corporate\s+bond|'
+    r'\bcredit\b|high\s+yield|iboxx|euro[\s-]?aggregate|global\s+aggregate|'
+    r'bond\s+index|investment[\s-]?grade|inflation[\s-]?linked|\bgilt|'
+    r'govt/credit|green\s+bond|\bbond\b',
+    re.IGNORECASE
+)
+# Tipos overnight / cash (overlay o hurdle — NO fuerza Mixed).
+_FAM_RATE_RE = re.compile(
+    r'\bsofr\b|\bestr\b|\bester\b|€str|\bsonia\b|\btona\b|\bsaron\b|overnight|'
+    r'\beonia\b|euribor|1[\s-]?month|1m\s+cash|eurodeposit|\bcash\b',
+    re.IGNORECASE
+)
+_WEIGHT_RE = re.compile(r'(\d{1,3})\s*%')
+
+
+def _scan_asset_families(text: str) -> set:
+    """Familias de activo detectadas en el string (Equity / Fixed Income / Rate)."""
+    fams = set()
+    if _FAM_EQUITY_RE.search(text): fams.add('Equity')
+    if _FAM_FI_RE.search(text):     fams.add('Fixed Income')
+    if _FAM_RATE_RE.search(text):   fams.add('Rate')
+    return fams
+
+
+def _has_partial_weight(text: str) -> bool:
+    """True si hay un peso explícito 0<w<85 (señal de sleeve de un blend mayor)."""
+    for m in _WEIGHT_RE.finditer(text):
+        try:
+            w = int(m.group(1))
+        except ValueError:
+            continue
+        if 0 < w < 85:
+            return True
+    return False
+
+
+def _decompose_asset_class(cleaned: str) -> Optional[str]:
+    """
+    Resuelve la clase de activo de un benchmark a partir del string limpio.
+    Devuelve 'Mixed' | 'Equity' | 'Fixed Income' | 'Rate' | None.
+    Conservador: 'Mixed' solo ante señal multi-activo invertible real.
+    """
+    fams = _scan_asset_families(cleaned)
+    invest = fams & {'Equity', 'Fixed Income'}
+    # Blend multi-activo explícito: equity Y renta fija ambos NOMBRADOS → Mixed.
+    # (Único criterio fiable: el '%' en strings de benchmark suele ser retención
+    #  fiscal / cap de emisor / restricción, NO un peso de asignación — usarlo
+    #  como señal de sleeve genera falsos Mixed. Verificado: 26 regresiones.)
+    if len(invest) >= 2:
+        return 'Mixed'
+    if len(invest) == 1:
+        return next(iter(invest))
+    # Solo cash/overnight: clase Rate (overlay/hurdle; el rol se decide en Phase 2).
+    if fams == {'Rate'}:
+        return 'Rate'
+    return None
+
+
+# ============================================================
+# Phase 2 — Eje benchmark_role (hurdle_rate vs asset_proxy) (BL-BENCH-ROLE)
+# ============================================================
+# Un benchmark de tipo cash/overnight (con o sin spread "+ X%") es una TASA
+# DE REFERENCIA / hurdle, no un proxy de clase de activo. No debe inferir la
+# naturaleza del fondo. Reglas intrínsecas al string (no depende del fondo):
+#   hurdle_rate  ⟺  hay patrón de tasa overnight/cash Y NO hay índice invertible
+#                   (equity o renta fija) nombrado en el string.
+# Caso límite respetado: un bono govierno corto ("euro treasury 0-1y") NO es
+# hurdle (matchea _FAM_FI_RE) → asset_proxy.
+_HURDLE_RE = re.compile(
+    r'\bsofr\b|\bestr\b|\bester\b|€str|\bsonia\b|\btona\b|\bsaron\b|\beonia\b|'
+    r'euribor|overnight|1[\s-]?month|1m\s+cash|eurodeposit|fed\s+funds|'
+    r'secured\s+overnight|\bcash\b',
+    re.IGNORECASE
+)
+
+
+def _role_enabled() -> bool:
+    """Lee el kill-switch config.BENCHMARK_ROLE_ENABLED de forma defensiva."""
+    try:
+        import config as _cfg
+        return bool(getattr(_cfg, 'BENCHMARK_ROLE_ENABLED', False))
+    except Exception:
+        try:
+            from .. import config as _cfg  # type: ignore
+            return bool(getattr(_cfg, 'BENCHMARK_ROLE_ENABLED', False))
+        except Exception:
+            return False
+
+
+def benchmark_role(raw: str) -> str:
+    """
+    Clasifica el ROL de un benchmark: 'hurdle_rate' | 'asset_proxy'.
+
+    - Flag OFF  → siempre 'asset_proxy' (feature inactiva, sin cambio de
+      comportamiento; la columna recién creada queda en su default neutro).
+    - Flag ON   → 'hurdle_rate' si el string es una tasa cash/overnight sin
+      índice invertible (equity/renta fija) nombrado; si no, 'asset_proxy'.
+
+    Intrínseco al benchmark (no usa Fund_Nature). El consumidor (QA / Phase 3)
+    decide la relevancia: un fondo Monetario con €STR mantiene asset_class='Rate'
+    y su rol hurdle_rate es inocuo; un Alternativo con "€STR + 2%" es hurdle puro.
+    """
+    if not _role_enabled():
+        return 'asset_proxy'
+    cleaned = clean_benchmark(raw)
+    if cleaned is None:
+        return 'asset_proxy'
+    if _HURDLE_RE.search(cleaned):
+        invest = _scan_asset_families(cleaned) & {'Equity', 'Fixed Income'}
+        if not invest:
+            return 'hurdle_rate'
+    return 'asset_proxy'
+
+
+def _decomp_enabled() -> bool:
+    """Lee el kill-switch config.BENCHMARK_DECOMP_ENABLED de forma defensiva."""
+    try:
+        import config as _cfg
+        return bool(getattr(_cfg, 'BENCHMARK_DECOMP_ENABLED', False))
+    except Exception:
+        try:
+            from .. import config as _cfg  # type: ignore
+            return bool(getattr(_cfg, 'BENCHMARK_DECOMP_ENABLED', False))
+        except Exception:
+            return False
+
+
+# Monkey-patch: extender normalize_benchmark (Morningstar + descomposición Phase 1)
 _orig_normalize = normalize_benchmark
 
 def normalize_benchmark(raw: str) -> Optional[BenchmarkResult]:
+    # 1. Match exacto/alias legacy (startswith, primer match gana).
     result = _orig_normalize(raw)
-    if result is not None:
+    # 2. Fallback mapa Morningstar / proveedores extendidos.
+    if result is None:
+        result = _normalize_benchmark_extended(raw)
+
+    # 3. Phase 1 — descomposición (gated). OFF ⇒ comportamiento legacy intacto.
+    if not _decomp_enabled():
         return result
-    return _normalize_benchmark_extended(raw)
+
+    cleaned = clean_benchmark(raw)
+    if cleaned is None:
+        return result
+    decomp = _decompose_asset_class(cleaned)
+
+    if result is not None:
+        # Override de compuesto: el matcher bloqueó un único sleeve pero el
+        # string es multi-activo invertible ⇒ corregir asset_class a 'Mixed'.
+        if decomp == 'Mixed' and result.asset_class != 'Mixed':
+            return BenchmarkResult(
+                'COMPOSITE_MULTI_ASSET', 'Composite Multi-Asset Benchmark',
+                result.provider, 'Mixed',
+                'MEDIUM' if result.confidence == 'HIGH' else 'LOW',
+            )
+        return result
+
+    # 4. Fallback de cobertura: sin alias. Asignar asset_class por familia (SG5).
+    if decomp == 'Mixed':
+        return BenchmarkResult(
+            'COMPOSITE_MULTI_ASSET', 'Composite Multi-Asset Benchmark',
+            None, 'Mixed', 'LOW',
+        )
+    if decomp is not None:
+        _idmap = {'Equity': 'UNMAPPED_EQUITY',
+                  'Fixed Income': 'UNMAPPED_FI',
+                  'Rate': 'UNMAPPED_RATE'}
+        return BenchmarkResult(_idmap[decomp], cleaned, None, decomp, 'LOW')
+
+    return None

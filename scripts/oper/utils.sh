@@ -64,4 +64,20 @@ findstr /N "DLA_TABLE_SERIALIZATION_ENABLED" C:\desarrollo\fondos\shared\config.
 python -X utf8 -c "import sqlite3; conn=sqlite3.connect(r'C:\desarrollo\fondos\db\fondos.sqlite'); r=conn.execute(\"SELECT KIID_Status, KIID_PDF_Hash, length(DLA2_Table_Text) FROM fund_kiid_metadata WHERE ISIN='ES0126547035'\").fetchone(); print(r)"
 python -X utf8 -c "import sys; sys.path.insert(0,r'C:\desarrollo\fondos\proyecto1\core'); from dla_table_serializer import serialize_tables; pdf=open(r'c:\data\fondos\kiid\ES0126547035.pdf','rb').read(); t,m=serialize_tables(pdf,text='',debug=True)" 2>&1 | findstr "META"
 
+python -X utf8 -c "import sys,sqlite3,re; sys.path.insert(0,r'C:\desarrollo\fondos\proyecto1'); sys.path.insert(0,r'C:\desarrollo\fondos\proyecto1\core'); sys.path.insert(0,r'C:\desarrollo\fondos\shared'); from core.cost_table_parser import TOTAL_COSTS_ROW, ACI_ROW; conn=sqlite3.connect(r'C:\desarrollo\fondos\db\fondos.sqlite'); rows=conn.execute(\"SELECT ISIN, DLA2_Table_Text FROM fund_kiid_metadata WHERE DLA2_Table_Text IS NOT NULL AND length(DLA2_Table_Text)>200\").fetchall(); conn.close(); [print(r[0], 'total_rows=', sum(1 for l in r[1].split(chr(10)) if TOTAL_COSTS_ROW.match(l.replace(chr(124)*3,'|').strip('|').split('|')[0].strip())), 'aci_rows=', sum(1 for l in r[1].split(chr(10)) if ACI_ROW.search(l))) for r in rows]"
 
+
+
+cd C:\desarrollo\fondos\scripts\diag
+set PYTHONPATH=C:\desarrollo\fondos\proyecto1;C:\desarrollo\fondos\proyecto1\core;C:\desarrollo\fondos\shared
+python -X utf8 -c "import sqlite3; conn=sqlite3.connect(r'C:\desarrollo\fondos\db\fondos.sqlite'); isins=['LU0261952922','LU0781229069','DE000DWS0DZ7']; [(_:=print('='*50), print(i), [print(repr(l)) for l in (conn.execute('SELECT DLA2_Table_Text FROM fund_kiid_metadata WHERE ISIN=?',(i,)).fetchone() or [''])[0].split(chr(10)) if 'gesti' in l.lower() or 'composici' in l.lower() or 'operaci' in l.lower()]) for i in isins]; conn.close()"
+
+
+cd C:\desarrollo\fondos\scripts\diag
+python -X utf8 -c "import sqlite3; conn=sqlite3.connect(r'C:\desarrollo\fondos\db\fondos.sqlite'); t=(conn.execute(\"SELECT Raw_KIID_Text FROM fund_kiid_metadata WHERE ISIN='DE000DWS17J0'\").fetchone() or [''])[0] or ''; conn.close(); i=t.lower().find('composici'); print(repr(t[i:i+700]))"
+
+
+python -X utf8 -c "import sys; sys.path.insert(0,r'C:\desarrollo\fondos\proyecto1'); sys.path.insert(0,r'C:\desarrollo\fondos\proyecto1\core'); sys.path.insert(0,r'C:\desarrollo\fondos\shared'); import core.cost_pct_anchored as c; import inspect; src=inspect.getsource(c); print('soport deployed:', 'soport' in src); print('BUYSELL_PAIR deployed:', '_BUYSELL_PAIR' in src)"
+
+
+python -X utf8 -c "import sys; sys.path.insert(0,r'C:\desarrollo\fondos\proyecto1'); sys.path.insert(0,r'C:\desarrollo\fondos\proyecto1\core'); sys.path.insert(0,r'C:\desarrollo\fondos\shared'); import core.pipeline as p, config; import inspect; print('FIX-ARB-FALLBACK:', 'FIX-ARB-FALLBACK' in inspect.getsource(p)); print('DLA2_ARBITRATION_ENABLED:', getattr(config,'DLA2_ARBITRATION_ENABLED','MISSING'))"

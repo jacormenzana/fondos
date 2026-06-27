@@ -227,6 +227,16 @@ CREATE TABLE IF NOT EXISTS fund_kiid_metadata (
     Cost_Oper_Arbitration       TEXT
         CHECK (Cost_Oper_Arbitration IS NULL OR Cost_Oper_Arbitration IN
             ('AGREE','OCR_RECOVERED','BOTH_FAIL','ONLY_BANDS_X','ONLY_RULED','CONFLICT')),
+    Cost_ACI_RHP_BandsX         REAL,
+    Cost_ACI_RHP_Ruled          REAL,
+    Cost_ACI_RHP_Arbitration    TEXT
+        CHECK (Cost_ACI_RHP_Arbitration IS NULL OR Cost_ACI_RHP_Arbitration IN
+            ('AGREE','OCR_RECOVERED','BOTH_FAIL','ONLY_BANDS_X','ONLY_RULED','CONFLICT')),
+    Cost_ACI_1Y_BandsX          REAL,
+    Cost_ACI_1Y_Ruled           REAL,
+    Cost_ACI_1Y_Arbitration     TEXT
+        CHECK (Cost_ACI_1Y_Arbitration IS NULL OR Cost_ACI_1Y_Arbitration IN
+            ('AGREE','OCR_RECOVERED','BOTH_FAIL','ONLY_BANDS_X','ONLY_RULED','CONFLICT')),
 
     PRIMARY KEY (ISIN, KIID_Class)
 );
@@ -593,6 +603,7 @@ CREATE TABLE IF NOT EXISTS fund_benchmarks (
     provider            TEXT,                      -- MSCI / Bloomberg / ICE BofA...
     asset_class         TEXT,                      -- Equity / Fixed Income / Rate...
     confidence          TEXT,                      -- HIGH / MEDIUM / LOW
+    benchmark_role      TEXT DEFAULT 'asset_proxy',-- Phase 2 BL-BENCH-ROLE: hurdle_rate / asset_proxy
     extracted_at        TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%S','now')),
     PRIMARY KEY (ISIN, source)
 );

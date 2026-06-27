@@ -45,6 +45,7 @@ Reglas de robustez:
 """
 
 import re
+import math
 from typing import List, Optional
 
 
@@ -394,6 +395,32 @@ def _parse_costs_over_time_dla2(text: str) -> List[dict]:
     # Tomar un bloque razonable de líneas tras el encabezado (máx. 15)
     section_lines = dla2_lines[section_start: section_start + 15]
 
+    # FIX-P1-J: label-split fragmentation. pdfplumber can insert a stray |||
+    # INSIDE the label cell, e.g. "Incidencia anual de|||los costes (*)|||...".
+    # Then cells[0] == "Incidencia anual de" — a truncated fragment that neither
+    # ACI_ROW nor TOTAL_COSTS_ROW can match, so the row is never identified and
+    # the ACI/total values are lost. Fix: match the label against a rejoined prefix
+    # of up to 3 leading cells; when the match only succeeds AFTER joining, collapse
+    # the consumed label fragments into a single cell 0 so downstream extractors
+    # still see the value cells at the right offsets. Clean rows (cells[0] already
+    # matches) are untouched. Defined early (before header scan) so FIX-P1-O can
+    # also use it.
+    def _match_with_join(cells, pattern):
+        """Return (matched: bool, normalized_cells). Tries cells[0], then
+        cells[0..1], then cells[0..2] joined. On a join-match, fragments are
+        merged into cell 0 and the remaining (value) cells preserved.
+        FIX-P1-N: also tries no-separator concatenation to handle mid-word
+        |||splits (e.g. 'cos' + 'tes*' must join to 'costes*', not 'cos tes*')."""
+        if pattern.search(cells[0]):
+            return True, cells
+        for _k in (2, 3):
+            if len(cells) >= _k:
+                for _sep in (' ', ''):
+                    _joined = _sep.join(cells[:_k]).strip()
+                    if pattern.search(_joined):
+                        return True, [_joined] + cells[_k:]
+        return False, cells
+
     # Identificar fila de horizonte: la que tiene >= 1 etiqueta de año/mes/RHP
     # en alguna celda que NO sea la primera (primera celda = etiqueta de fila)
     header_row_idx = None
@@ -414,7 +441,35 @@ def _parse_costs_over_time_dla2(text: str) -> List[dict]:
             header_cells = cells
             break
 
-    if header_row_idx is None or len(header_cells) < 2:
+    # FIX-P1-O: "mega-cell" header — all table content crammed into a single DLA2
+    # cell. Confirmed pattern (423 sampled corpus funds, 2026-06-27): pdfplumber
+    # serializes the entire page into one |||cell||| so the mega-cell ends up as
+    # cells[0] (after _split_dla2_row strips leading empty). The year keyword is
+    # in cells[0] — NOT in cells[1:] which the header detector checks — so
+    # horizon_count=0, header_row_idx stays None, and the parser exits even though
+    # structured data rows (Costes totales / Incidencia anual) ARE present later.
+    # Fix: scan section_lines for the FIRST data row (ACI or total). Place the
+    # synthetic header at the preceding index so the data scan (which starts at
+    # header_row_idx+1) picks up BOTH the total and ACI rows. FIX-P1-M then
+    # infers the RHP column from compact-value count.
+    if header_row_idx is None:
+        _first_data_idx = None
+        for _i, _ln in enumerate(section_lines):
+            _c = _split_dla2_row(_ln)
+            _m1, _ = _match_with_join(_c, ACI_ROW)
+            _m2, _ = _match_with_join(_c, TOTAL_COSTS_ROW)
+            if _m1 or _m2:
+                _first_data_idx = _i
+                break
+        if _first_data_idx is None:
+            return []
+        # Synthetic header: put it just before the first data row.
+        # data scan below runs from (header_row_idx + 1), so all data rows
+        # starting at _first_data_idx are covered.
+        header_row_idx = max(0, _first_data_idx - 1)
+        header_cells   = ['', '1 año']
+
+    if len(header_cells) < 2:
         return []
 
     # FIX-P1-C: merge split OT header rows.
@@ -458,11 +513,20 @@ def _parse_costs_over_time_dla2(text: str) -> List[dict]:
         cells = _split_dla2_row(ln)
         if not cells:
             continue
-        label = cells[0]
-        if total_row is None and TOTAL_COSTS_ROW.search(label):
-            total_row = cells
-        elif aci_row is None and ACI_ROW.search(label):
-            aci_row = cells
+        if total_row is None:
+            _m, _norm = _match_with_join(cells, TOTAL_COSTS_ROW)
+            # Skip mega-cells: a legitimate label cell is short (<150 chars).
+            # Mega-cells cram the entire page into cells[0] (500+ chars) and
+            # contain no structured value cells — they produce empty compact
+            # lists and corrupt column inference.
+            if _m and len(_norm[0]) < 150:
+                total_row = _norm
+                continue
+        if aci_row is None:
+            _m, _norm = _match_with_join(cells, ACI_ROW)
+            if _m and len(_norm[0]) < 150:
+                aci_row = _norm
+                continue
 
     # FIX-P1-G: compacted non-empty pairing.
     # pdfplumber's per-row column banding can insert a phantom blank cell in
@@ -488,16 +552,61 @@ def _parse_costs_over_time_dla2(text: str) -> List[dict]:
         if not row:
             return []
         out = []
-        for c in row[1:]:
-            v = extractor(c)
+        cells = row[1:]
+        i = 0
+        while i < len(cells):
+            v = extractor(cells[i])
             if v is not None:
                 out.append(v)
+                i += 1
+            else:
+                # FIX-P1-P: mid-value |||split (e.g. '1,3' + '%' in separate
+                # cells). pdfplumber can break "1,3%" at the decimal-sign boundary
+                # → cells carry bare number and bare "%" individually, neither of
+                # which passes _extract_pct_from_cell. Try joining consecutive
+                # non-empty cells (up to 3) before giving up.
+                joined = cells[i]
+                merged = False
+                for _j in range(i + 1, min(i + 3, len(cells))):
+                    joined = joined + cells[_j]
+                    v2 = extractor(joined.strip())
+                    if v2 is not None:
+                        out.append(v2)
+                        i = _j + 1
+                        merged = True
+                        break
+                if not merged:
+                    i += 1
         return out
 
     _total_compact = _compact_values(total_row, _extract_eur_from_cell)
     _aci_compact    = _compact_values(aci_row, _extract_pct_from_cell)
     _total_paired = len(_total_compact) == n_cols
     _aci_paired   = len(_aci_compact) == n_cols
+
+    # FIX-P1-M: infer additional RHP columns from compact-value count.
+    # Root cause (345/500 sampled corpus funds, dominant ACI_RHP-missing driver,
+    # confirmed 2026-06-27): many PRIIPs OT tables embed the 1Y label inside a
+    # description row ("en caso de salida después de 1 año"), which the parser
+    # correctly takes as a 1-column header. But the actual serialized table has 2
+    # value columns (1Y + RHP) — confirmed by _compact_values finding 2 non-empty
+    # values in the ACI / total rows while n_cols == 1. By PRIIPS regulation
+    # (PRIIPs KID RTS Annex VI), a 2-column OT table always shows:
+    #   col 0: "if you exit after 1 year"
+    #   col 1: "if you exit at the recommended holding period (RHP)"
+    # When compact count exceeds the detected header count, the extra columns
+    # are inferred as RHP. The 'RHP' string literal triggers _is_rhp_label()
+    # downstream (matched by RHP_PATTERN's \bRHP\b branch).
+    # Safety cap: PRIIPS OT tables have at most 2 columns; cap extension at 1
+    # extra column to avoid runaway inference on malformed serializations.
+    _n_compact = max(len(_aci_compact), len(_total_compact))
+    if _n_compact > n_cols:
+        _extra = min(_n_compact - n_cols, 1)
+        for _ in range(_extra):
+            horizon_labels.append('RHP')
+        n_cols = len(horizon_labels)
+        _total_paired = len(_total_compact) == n_cols
+        _aci_paired   = len(_aci_compact) == n_cols
 
     # Construir resultados por columna
     for col_idx, horizon_label in enumerate(horizon_labels):
@@ -662,6 +771,43 @@ def _parse_costs_over_time_plain(text: str) -> List[dict]:
 # Parser DLA2: Composición de los costes
 # ======================================================================
 
+# FIX-P2-SWAP (2026-06-20): investment-base parser, shared single source.
+# Used by the EUR-cross-check that corrects the mgmt%<->oper% column collision
+# (pdfplumber bleeds the operación % into the gestión row's % cell on certain
+# DWS/ES layouts; the EUR value in that row stays correct, so mgmt_eur/base*100
+# reconstructs the true mgmt%). Corpus audit (2026-06-20): base parseable on
+# 2996/3204 funds, 2991 == 10000, all 53 affected swap funds recover base=10000.
+# Patterns validated against DWS/UBS/Groupama real KIDs. scripts\diag\
+# audit_investment_base.py imports THIS function (DRY, §Y.1).
+_BASE_NUM = r'(\d{1,3}(?:[ .,]\d{3})+|\d{4,6})'
+_BASE_CUR = r'(?:EUR|USD|GBP|CHF|€|\$|£)'
+_BASE_PATTERNS = [
+    re.compile(r'se\s+invierten\s+' + _BASE_NUM + r'\s*(' + _BASE_CUR + r')?', re.I),
+    re.compile(r'(?:ejemplo\s+de\s+)?inversi[oó]n(?:\s+de)?\s*:?\s*(?:' + _BASE_CUR + r'\s*)?' + _BASE_NUM, re.I),
+    re.compile(r'para\s+una\s+inversi[oó]n\s+de\s*:?\s*' + _BASE_NUM, re.I),
+    re.compile(r'invest(?:ment)?\s+(?:of\s+)?(?:' + _BASE_CUR + r'\s*)?' + _BASE_NUM, re.I),
+]
+
+
+def parse_investment_base(text: str) -> Optional[int]:
+    """Return the PRIIPS example-investment base (e.g. 10000) or None.
+    Bounded, pure. None when no base statement is found — callers must NOT
+    fall back to a hardcoded base (5 corpus funds use 100000/1000000)."""
+    if not text:
+        return None
+    for pat in _BASE_PATTERNS:
+        m = pat.search(text)
+        if m:
+            digits = re.sub(r'[ .,]', '', m.group(1))
+            try:
+                val = int(digits)
+                if 1000 <= val <= 1000000:
+                    return val
+            except ValueError:
+                pass
+    return None
+
+
 def _parse_composition_dla2(text: str) -> dict:
     """
     Parser para formato DLA2 de la tabla "Composición de los costes".
@@ -722,6 +868,37 @@ def _parse_composition_dla2(text: str) -> dict:
             if eur is not None:
                 result[f"{cost_type}_{_COST_TYPE_SUFFIX.get(cost_type, 'fee')}_eur"] = eur
                 break
+
+    # FIX-P2-SWAP (2026-06-20): correct the mgmt%<->oper% column collision.
+    # On certain DWS/ES layouts pdfplumber bleeds the operación % into the
+    # gestión row's % cell, so management_fee_pct == transaction_cost_pct (both
+    # show the oper value) while the gestión EUR amount stays correct.
+    # Signature (ALL must hold, so clean rows are never touched):
+    #   - both mgmt% and oper% present AND ~equal (the bleed tell), and
+    #   - mgmt EUR present, and investment base parseable, and
+    #   - EUR-implied mgmt% disagrees with the (collided) grid mgmt%.
+    # Then trust the EUR-derived value: mgmt% = mgmt_eur / base * 100.
+    # Never fires without a parsed base (5 corpus funds use 100k/1M bases;
+    # dividing by a hardcoded 10000 would corrupt them).
+    _mgmt_pct = result.get('management_fee_pct')
+    _oper_pct = result.get('transaction_cost_pct')
+    _mgmt_eur = result.get('management_fee_eur')
+    if (_mgmt_pct is not None and _oper_pct is not None and _mgmt_eur is not None
+            and math.isclose(_mgmt_pct, _oper_pct, abs_tol=0.001, rel_tol=0.01)):
+        _base = parse_investment_base(text)
+        if _base:
+            # Parser canonical scale is RATIO (0.011 == 1.1%), confirmed:
+            # _extract_pct_from_cell("0,15%") -> 0.0015. So the EUR-implied
+            # value is eur/base (NOT eur/base*100).
+            _implied = round(_mgmt_eur / _base, 6)
+            # only override if the implied value genuinely differs from the
+            # collided grid value (tolerant of rounding)
+            if (_implied is not None
+                    and not math.isclose(_implied, _mgmt_pct, abs_tol=0.0001, rel_tol=0.02)):
+                _guarded = _guarded_pct(_implied, 'management')
+                if _guarded is not None:
+                    result['management_fee_pct'] = _guarded
+                    result['management_fee_pct_source'] = 'EUR_DERIVED'
 
     return result
 
@@ -858,7 +1035,14 @@ def parse_costs_over_time(text: str) -> List[dict]:
     try:
         if DLA2_SEPARATOR in text:
             results = _parse_costs_over_time_dla2(text)
-            # Si DLA2 no produce resultados, intentar con texto plano como fallback
+            # Si DLA2 no produce resultados, intentar con texto plano como fallback.
+            # NOTA (2026-06-25): FIX-P1-L (restringir el fallback a líneas de
+            # rejilla) se revirtió: arreglaba funds con tabla en grid (p.ej.
+            # LU0083138064) pero regresaba ~230 funds cuya tabla real está en la
+            # prosa de Raw_KIID_Text (p.ej. LU0289472085). El driver dominante de
+            # ACI_RHP-missing es la NO-detección de la columna RHP en tablas
+            # multi-columna (is_rhp queda False cuando la cabecera de columna no
+            # repite "período de mantenimiento recomendado"), un fix aparte.
             if not results:
                 results = _parse_costs_over_time_plain(text)
             return results

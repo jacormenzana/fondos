@@ -545,6 +545,154 @@ def _extract_value_from_block(txt: str) -> tuple:
     return ("", None)
 
 
+def _cluster_x_positions(xs, gap: float = 80.0) -> list[tuple[float, float]]:
+    if not xs:
+        return []
+    xs = sorted(xs)
+    bands = [[xs[0], xs[0]]]
+    for x in xs[1:]:
+        if x - bands[-1][1] <= gap:
+            bands[-1][1] = x
+        else:
+            bands.append([x, x])
+    return [(b[0], b[1]) for b in bands]
+
+
+def _horizon_year_from_text(text: str) -> Optional[float]:
+    m = re.search(r'\b(\d+)\s*(?:a[ñn]o|años|year|years)\b', text, re.IGNORECASE)
+    if not m:
+        return None
+    try:
+        return float(m.group(1))
+    except ValueError:
+        return None
+
+
+def extract_aci_xband(page, debug: bool = False) -> dict:
+    """Extrae ACI 1Y / RHP desde la tabla OT usando el mismo banding robusto."""
+    try:
+        from cost_table_parser import ACI_ROW, COSTS_OVER_TIME_HEADER, RHP_PATTERN
+        from priips_cost_extractor import _extract_rhp_years
+    except Exception:
+        return {"aci_1y": None, "aci_rhp": None}
+
+    words = page.extract_words(use_text_flow=False, keep_blank_chars=False)
+    if not words:
+        return {"aci_1y": None, "aci_rhp": None}
+
+    for w in words:
+        w["text"] = unicodedata.normalize("NFC", w["text"])
+
+    lines = defaultdict(list)
+    for w in words:
+        lines[round(w["top"])].append(w)
+    ordered_tops = sorted(lines)
+    if not ordered_tops:
+        return {"aci_1y": None, "aci_rhp": None}
+
+    line_texts = [
+        (top, " ".join(w["text"] for w in sorted(lines[top], key=lambda x: x["x0"])))
+        for top in ordered_tops
+    ]
+
+    start = None
+    for idx, (_, txt) in enumerate(line_texts):
+        if COSTS_OVER_TIME_HEADER.search(txt):
+            start = idx
+            break
+    if start is None:
+        return {"aci_1y": None, "aci_rhp": None}
+
+    end = len(line_texts)
+    for idx in range(start + 1, len(line_texts)):
+        txt = line_texts[idx][1]
+        if re.search(r'composici[oó]n\s*de\s*los\s*costes?|composition\s*of\s*costs?', txt, re.IGNORECASE):
+            end = idx
+            break
+    section_tops = ordered_tops[start:end]
+    if not section_tops:
+        return {"aci_1y": None, "aci_rhp": None}
+
+    section_words = [w for top in section_tops for w in lines[top]]
+    bands = _cluster_x_positions([w["x0"] for w in section_words if w["x0"] > 138.0])
+    if not bands:
+        return {"aci_1y": None, "aci_rhp": None}
+
+    def _words_in_band(words_list, band):
+        left, right = band
+        return [w for w in words_list if left - 1 <= w["x0"] <= right + 1]
+
+    page_text = "\n".join(txt for _, txt in line_texts)
+    target_rhp_years = _extract_rhp_years(page_text)
+
+    band_meta = []
+    for band in bands:
+        band_words = _words_in_band(section_words, band)
+        band_text = " ".join(w["text"] for w in band_words)
+        band_year = _horizon_year_from_text(band_text)
+        is_rhp = bool(RHP_PATTERN.search(band_text))
+        band_meta.append({
+            "band": band,
+            "text": band_text,
+            "year": band_year,
+            "is_rhp": is_rhp,
+            "value": None,
+        })
+
+    if target_rhp_years is not None:
+        for meta in band_meta:
+            if meta["year"] is not None and abs(meta["year"] - target_rhp_years) <= 0.01:
+                meta["is_rhp"] = True
+
+    row_idx = None
+    for idx in range(start, end):
+        txt = line_texts[idx][1]
+        if ACI_ROW.search(txt):
+            row_idx = idx
+            break
+        if idx + 1 < end and ACI_ROW.search(txt + " " + line_texts[idx + 1][1]):
+            row_idx = idx
+            break
+    if row_idx is None:
+        return {"aci_1y": None, "aci_rhp": None}
+
+    aci_words = []
+    line_top = ordered_tops[row_idx]
+    aci_words.extend(lines[line_top])
+    if row_idx + 1 < len(ordered_tops):
+        next_txt = line_texts[row_idx + 1][1]
+        if ACI_ROW.search(line_texts[row_idx][1] + " " + next_txt):
+            aci_words.extend(lines[ordered_tops[row_idx + 1]])
+
+    for meta in band_meta:
+        band_words = _words_in_band(aci_words, meta["band"])
+        value_text = " ".join(w["text"] for w in band_words)
+        _, pct = _extract_value_from_block(value_text)
+        meta["value"] = pct
+
+    aci_1y = None
+    aci_rhp = None
+    for meta in band_meta:
+        if meta["is_rhp"]:
+            aci_rhp = meta["value"]
+        if meta["year"] == 1.0:
+            aci_1y = meta["value"]
+
+    if aci_rhp is None and len(band_meta) == 1:
+        aci_rhp = band_meta[0]["value"]
+
+    if aci_1y is None and len(band_meta) >= 2:
+        for idx, meta in enumerate(band_meta):
+            if idx == 0 and meta["year"] is None:
+                aci_1y = meta["value"]
+                break
+
+    if debug:
+        log.w(f"    ACI bands: {[m['band'] for m in band_meta]}")
+        log.w(f"    ACI meta: {band_meta}")
+
+    return {"aci_1y": aci_1y, "aci_rhp": aci_rhp}
+
 
 def extract_from_open_pdf(pdf, debug: bool = False) -> dict:
     """

@@ -146,13 +146,19 @@ FUND_KIID_METADATA_COLUMNS: list[str] = [
     # DLA Fase 2 — tablas Cat.1+2 cacheadas (v18)
     "DLA2_Table_Text",
 
-    # v20 (INTEGRATED_SPEC_v20_v2 §2B) — arbitración de coste DLA2 (6 nuevas)
+    # v20 (INTEGRATED_SPEC_v20_v2 §2B) — arbitración de coste DLA2 (12 nuevas)
     "Cost_Mgmt_BandsX",
     "Cost_Mgmt_Ruled",
     "Cost_Mgmt_Arbitration",
     "Cost_Oper_BandsX",
     "Cost_Oper_Ruled",
     "Cost_Oper_Arbitration",
+    "Cost_ACI_RHP_BandsX",
+    "Cost_ACI_RHP_Ruled",
+    "Cost_ACI_RHP_Arbitration",
+    "Cost_ACI_1Y_BandsX",
+    "Cost_ACI_1Y_Ruled",
+    "Cost_ACI_1Y_Arbitration",
 ]
 
 # ============================================================
@@ -168,11 +174,32 @@ INGESTION_LOG_COLUMNS: list[str] = [
 ]
 
 # ============================================================
+# fund_benchmarks — columnas canónicas (P1 v2; Phase 2 +benchmark_role)
+# ============================================================
+# Tabla secundaria poblada por benchmark_normalizer.py post-ingesta
+# (sqlite_writer._upsert_kiid_benchmark). Hasta v20 no estaba cubierta por
+# verify_db_schema → la adición de benchmark_role era invisible (R2). Ahora
+# se valida para detectar drift (p.ej. migración no aplicada).
+FUND_BENCHMARKS_COLUMNS: list[str] = [
+    "ISIN",
+    "source",
+    "benchmark_raw",
+    "benchmark_id",
+    "benchmark_name",
+    "provider",
+    "asset_class",
+    "confidence",
+    "benchmark_role",     # Phase 2 BL-BENCH-ROLE: hurdle_rate / asset_proxy
+    "extracted_at",
+]
+
+# ============================================================
 # Conjuntos para lookup O(1)
 # ============================================================
 FUND_MASTER_COLUMNS_SET        = frozenset(FUND_MASTER_COLUMNS)
 FUND_KIID_METADATA_COLUMNS_SET = frozenset(FUND_KIID_METADATA_COLUMNS)
 INGESTION_LOG_COLUMNS_SET      = frozenset(INGESTION_LOG_COLUMNS)
+FUND_BENCHMARKS_COLUMNS_SET    = frozenset(FUND_BENCHMARKS_COLUMNS)
 
 # ============================================================
 # Columnas nuevas por versión de schema
@@ -230,8 +257,8 @@ assert len(EXPECTED_COLUMNS_V19) == 57, f"v19 debe tener 57 columnas en fund_mas
 # ============================================================
 # v20 (INTEGRATED_SPEC_v20_v2) — deltas de schema
 # ------------------------------------------------------------
-# Job B (DESPLEGABLE YA): 6 columnas de arbitración de coste en
-#   fund_kiid_metadata (16 → 22). Migración aditiva (sin rebuild).
+# Job B (DESPLEGABLE YA): 12 columnas de arbitración de coste en
+#   fund_kiid_metadata (16 → 28). Migración aditiva (sin rebuild).
 # Job A (PENDIENTE de "approved inventory"): rebuild de fund_master
 #   (57 → 58): −4 DELETE, +5 CREATE, 14 MODIFY (remaps de valor a nivel de
 #   dato). Los NOMBRES de columna están determinados (abajo); los value-sets
@@ -246,6 +273,12 @@ V20_KIID_META_NEW: list[str] = [
     "Cost_Oper_BandsX",
     "Cost_Oper_Ruled",
     "Cost_Oper_Arbitration",
+    "Cost_ACI_RHP_BandsX",
+    "Cost_ACI_RHP_Ruled",
+    "Cost_ACI_RHP_Arbitration",
+    "Cost_ACI_1Y_BandsX",
+    "Cost_ACI_1Y_Ruled",
+    "Cost_ACI_1Y_Arbitration",
 ]
 
 # Job A — fund_master v20 (nombres determinados; población pendiente)
@@ -283,8 +316,8 @@ assert len(EXPECTED_COLUMNS_V20) == 58, (
     f"v20 debe tener 58 columnas en fund_master, tiene {len(EXPECTED_COLUMNS_V20)}"
 )
 # Metadata v20 = 22 columnas.
-assert len(FUND_KIID_METADATA_COLUMNS) == 22, (
-    f"v20 metadata debe tener 22 columnas, tiene {len(FUND_KIID_METADATA_COLUMNS)}"
+assert len(FUND_KIID_METADATA_COLUMNS) == 28, (
+    f"v20 metadata debe tener 28 columnas, tiene {len(FUND_KIID_METADATA_COLUMNS)}"
 )
 
 
@@ -406,6 +439,7 @@ def verify_db_schema(conn) -> dict[str, list[str]]:
         ("fund_master",        FUND_MASTER_COLUMNS_V20_SET),
         ("fund_kiid_metadata", FUND_KIID_METADATA_COLUMNS_SET),
         ("ingestion_log",      INGESTION_LOG_COLUMNS_SET),
+        ("fund_benchmarks",    FUND_BENCHMARKS_COLUMNS_SET),
     ]
 
     for table, expected in checks:

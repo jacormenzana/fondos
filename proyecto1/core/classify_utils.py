@@ -2902,10 +2902,89 @@ def validate_geography_universe(
 
 
 # ============================================================
+# 18. INTER-18: Benchmark-Composition ↔ Fund_Nature (WARNING)
+# ============================================================
+# Phase 3 (BL-BENCH-NATURE). Reconciliación CORROBORATIVA contra una fuente
+# externa de clase de activo (Morningstar). NO es un validador in-pipeline:
+# classify_utils no ve Morningstar al clasificar. Se alimenta desde el driver
+# de reconciliación (scripts/diag/inter18_reconciliation.py) que aporta
+# ext_asset_class (asset_class Morningstar) y ext_role (benchmark_role).
+#
+# Detecta los SG1b (índice equity/RF "puro" declarado en KIID sobre un fondo
+# que Morningstar categoriza como allocation) — invisibles al benchmark propio
+# del fondo porque benchmark y Fund_Nature coinciden internamente; solo la
+# fuente externa revela el desajuste.
+#
+# WARNING-ONLY (Principio: Morningstar es corroborante, NO ground-truth; sus
+# buckets de allocation son gruesos). Nunca auto-corrige Fund_Nature.
+
+# Clase de activo externa esperada por naturaleza (None = no restringir).
+EXPECTED_EXT_ASSET_CLASS_BY_NATURE: dict = {
+    "Renta Variable":          "Equity",
+    "Renta Fija Flexible":     "Fixed Income",
+    "Renta Fija Corto Plazo":  "Fixed Income",
+    "Monetario":               "Rate",
+}
+# Naturalezas que admiten allocation/Mixed sin warning.
+_INTER18_ALLOC_NATURES = frozenset({"Mixtos", "Alternativo"})
+# Naturalezas demasiado flexibles para corroborar (no warn).
+_INTER18_SKIP_NATURES = frozenset({"Alternativo", "Estructurado", "Restantes"})
+
+
+def validate_benchmark_nature(
+    nature: Optional[str],
+    ext_asset_class: Optional[str],
+    ext_role: Optional[str] = None,
+) -> tuple:
+    """INTER-18: corrobora Fund_Nature contra la clase de activo externa.
+
+    Args:
+        nature:          Fund_Nature interno.
+        ext_asset_class: clase de activo de la fuente externa (Morningstar):
+                         'Equity' | 'Fixed Income' | 'Rate' | 'Money Market' | 'Mixed'.
+        ext_role:        benchmark_role de la fuente externa; 'hurdle_rate' se omite.
+
+    Returns:
+        ('WARNING', msg) | ('OK', None). NUNCA corrige.
+    """
+    if nature is None or ext_asset_class is None:
+        return "OK", None
+    if ext_role == "hurdle_rate":
+        return "OK", None  # una tasa hurdle no es proxy de clase de activo
+    if nature in _INTER18_SKIP_NATURES:
+        return "OK", None
+
+    # Caso allocation: la fuente externa dice Mixed pero la naturaleza es mono-activo.
+    if ext_asset_class == "Mixed" and nature not in _INTER18_ALLOC_NATURES:
+        return "WARNING", (
+            f"WARNING: fuente externa clasifica como allocation/Mixed pero "
+            f"Fund_Nature='{nature}' es mono-activo "
+            f"(posible sleeve equity/RF declarado en KIID). Revisar."
+        )
+
+    # Contradicción dura equity↔renta fija (no se penaliza el límite RF↔Rate,
+    # que es granularidad ultra-corto plazo, ni Money Market).
+    expected = EXPECTED_EXT_ASSET_CLASS_BY_NATURE.get(nature)
+    if (expected and ext_asset_class in ("Equity", "Fixed Income")
+            and ext_asset_class != expected
+            and expected in ("Equity", "Fixed Income")):
+        return "WARNING", (
+            f"WARNING: fuente externa clase '{ext_asset_class}' contradice "
+            f"Fund_Nature='{nature}' (esperado '{expected}'). Revisar."
+        )
+
+    return "OK", None
+
+
+# ============================================================
 # 11. validate_all_semantic_consistency() — FUNCIÓN MAESTRA
 # ============================================================
 
-def validate_all_semantic_consistency(fund_record: dict) -> dict:
+def validate_all_semantic_consistency(
+    fund_record: dict,
+    ext_asset_class: Optional[str] = None,
+    ext_role: Optional[str] = None,
+) -> dict:
     """Valida TODAS las reglas de consistencia semántica.
 
     PURA — no emite logging. El logging es responsabilidad exclusiva del wrapper
@@ -3117,6 +3196,17 @@ def validate_all_semantic_consistency(fund_record: dict) -> dict:
                         ),
                     })
 
+
+    # ----------------------------------------------------------------
+    # INTER-18: Benchmark-Composition ↔ Fund_Nature (WARNING, corroborativa)
+    # Solo dispara si el driver de reconciliación aporta clase externa
+    # (Morningstar). En el flujo in-pipeline ext_asset_class es None → no-op.
+    # ----------------------------------------------------------------
+    status, msg = validate_benchmark_nature(
+        cr.get("Fund_Nature"), ext_asset_class, ext_role
+    )
+    if status == "WARNING":
+        warnings.append({"rule": "Benchmark-Nature", "message": msg})
 
     for col, value in fund_record.items():
         if col in ALLOWED_VALUES_BY_COLUMN and value is not None:

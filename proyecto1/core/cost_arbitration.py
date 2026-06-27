@@ -77,10 +77,10 @@ def _load_primitives() -> Dict[str, Any]:
                 last = e
         raise ImportError(f"No se pudo importar {attrs} desde {modnames}: {last}")
 
-    (extract_from_open_pdf,) = _imp(
+    (extract_from_open_pdf, extract_aci_xband) = _imp(
         ("dla2_xband_prototype", "core.dla2_xband_prototype",
          "scripts.diag.dla2_xband_prototype"),
-        ("extract_from_open_pdf",))
+        ("extract_from_open_pdf", "extract_aci_xband"))
     (extract_ruled_from_pdf, _recover_oc_text) = _imp(
         ("dla2_dual_strategy_compare", "core.dla2_dual_strategy_compare",
          "scripts.diag.dla2_dual_strategy_compare"),
@@ -96,6 +96,7 @@ def _load_primitives() -> Dict[str, Any]:
 
     _PRIMS.update(
         extract_from_open_pdf=extract_from_open_pdf,
+        extract_aci_xband=extract_aci_xband,
         extract_ruled_from_pdf=extract_ruled_from_pdf,
         _recover_oc_text=_recover_oc_text,
         extract_ocr_from_pdf=extract_ocr_from_pdf,
@@ -185,6 +186,10 @@ def arbitrate_costs_from_pdf(pdf_bytes: bytes) -> dict:
         "oc": None,
         "mgmt": {"bandsx": None, "ruled": None, "verdict": None},
         "oper": {"bandsx": None, "ruled": None, "verdict": None},
+        "aci": {
+            "rhp_bandsx": None, "rhp_ruled": None, "rhp_verdict": None,
+            "1y_bandsx": None, "1y_ruled": None, "1y_verdict": None,
+        },
         "table_text": None,
     }
     if not pdf_bytes or pdfplumber is None:
@@ -216,6 +221,10 @@ def arbitrate_costs_from_pdf(pdf_bytes: bytes) -> dict:
             except Exception:
                 rl_res = {}
             try:
+                aci_res = extract_aci_xband(pdf_obj, debug=False) or {}
+            except Exception:
+                aci_res = {}
+            try:
                 ocr_needed = bool(pdf_needs_ocr(pdf_obj)) if pdf_needs_ocr else False
             except Exception:
                 ocr_needed = False
@@ -223,6 +232,8 @@ def arbitrate_costs_from_pdf(pdf_bytes: bytes) -> dict:
             # Per-componente (mientras el PDF sigue abierto)
             bx_g, bx_o = _bandsx_components(bx_res)
             rl_g, rl_o = _ruled_components(rl_res, pdf_obj)
+            aci_1y_bx = aci_res.get("aci_1y")
+            aci_rhp_bx = aci_res.get("aci_rhp")
     except Exception:
         return empty
 
@@ -262,8 +273,12 @@ def arbitrate_costs_from_pdf(pdf_bytes: bytes) -> dict:
         "oper": {
             "bandsx": bx_o, "ruled": rl_o,
             "verdict": _verdict(bx_o, rl_o, ocr_recovered, agree),
-        },
-        # table_text de mayor fidelidad: pendiente de integrar dla_table_serializer
+        },        "aci": {
+            "rhp_bandsx": aci_rhp_bx, "rhp_ruled": None,
+            "rhp_verdict": _verdict(aci_rhp_bx, None, ocr_recovered, agree),
+            "1y_bandsx": aci_1y_bx, "1y_ruled": None,
+            "1y_verdict": _verdict(aci_1y_bx, None, ocr_recovered, agree),
+        },        # table_text de mayor fidelidad: pendiente de integrar dla_table_serializer
         # en la vía de arbitración (no regresa nada -> el writer no sobrescribe el
         # DLA2_Table_Text ya producido por io.py). Follow-up documentado en handoff.
         "table_text": None,

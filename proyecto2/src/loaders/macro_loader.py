@@ -54,6 +54,60 @@ REQUEST_TIMEOUT = 30        # segundos por peticion HTTP
 RETRY_WAIT      = 5         # segundos entre reintentos
 MAX_RETRIES     = 3
 
+# Directorio de logs: proyecto2/log/  (__file__ = proyecto2/src/loaders/macro_loader.py)
+_LOG_DIR = _P2_SRC.parent / "log"
+
+
+# ============================================================
+# Captura de consola -> fichero log
+# ============================================================
+
+class _Tee:
+    """Reescribe stdout/stderr a la consola y a un fichero simultaneamente."""
+
+    def __init__(self, stream, fh):
+        self._stream = stream      # consola original (stdout o stderr)
+        self._fh     = fh          # handle del fichero log
+
+    def write(self, data):
+        self._stream.write(data)
+        self._fh.write(data)
+        self._fh.flush()
+        return len(data)
+
+    def flush(self):
+        self._stream.flush()
+        self._fh.flush()
+
+    def isatty(self):
+        return getattr(self._stream, "isatty", lambda: False)()
+
+
+def _setup_run_logger(font: str):
+    """
+    Crea proyecto2/log/log_P2_macro_loader_{font}_{YYYYMMDD_HHMM}.log
+    y redirige stdout/stderr a consola + fichero.
+
+    Devuelve (file_handle, stdout_original, stderr_original) para restaurar.
+    """
+    _LOG_DIR.mkdir(parents=True, exist_ok=True)
+    stamp    = datetime.now().strftime("%Y%m%d_%H%M")
+    log_path = _LOG_DIR / f"log_P2_macro_loader_{font}_{stamp}.log"
+
+    fh = open(log_path, "w", encoding="utf-8")
+    orig_out, orig_err = sys.stdout, sys.stderr
+    sys.stdout = _Tee(orig_out, fh)
+    sys.stderr = _Tee(orig_err, fh)
+
+    print(f"  [LOG] Volcando salida a: {log_path}")
+    return fh, orig_out, orig_err
+
+
+def _teardown_run_logger(fh, orig_out, orig_err) -> None:
+    """Restaura stdout/stderr y cierra el fichero log."""
+    sys.stdout, sys.stderr = orig_out, orig_err
+    fh.close()
+
 
 # ============================================================
 # Helpers HTTP
@@ -971,10 +1025,17 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
+    # {font} = valor de --source (default "all" si no se especifica)
+    font = args.source
+    _log_fh, _orig_out, _orig_err = _setup_run_logger(font)
+
     sources = None if args.source == "all" else [args.source]
-    run(
-        sources=sources,
-        desde=args.desde,
-        dry_run=args.dry_run,
-        verbose=args.verbose,
-    )
+    try:
+        run(
+            sources=sources,
+            desde=args.desde,
+            dry_run=args.dry_run,
+            verbose=args.verbose,
+        )
+    finally:
+        _teardown_run_logger(_log_fh, _orig_out, _orig_err)

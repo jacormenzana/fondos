@@ -265,25 +265,6 @@ except ImportError:
         print(f"[DLA2-ARB] ImportError: {_e_arb_import}")
 
 
-def _safe_scalar(v):
-    """BL-SRRI-GUARD-FULL: coerce a possibly-dict SRRI payload to an int scalar.
-
-    The anomalous CACHED path can yield ``{'SRRI': n, ...}`` instead of an int.
-    Root-cause guard (single source): extract the scalar if dict, int-coerce
-    (tolerating float/str/NaN like BL-64b), else None. Prevents the
-    ``'>=' not supported between instances of 'dict' and 'int'`` crash at every
-    downstream SRRI consumer (classify, characterize, fund_master, kiid_record).
-    """
-    if isinstance(v, dict):
-        v = v.get("SRRI")
-    if v is None:
-        return None
-    try:
-        return int(float(str(v)))
-    except (ValueError, TypeError):
-        return None
-
-
 def _dla2_arbitration_enabled() -> bool:
     """Lee DLA2_ARBITRATION_ENABLED en runtime (config = dependency leaf)."""
     try:
@@ -623,12 +604,15 @@ def run_block(
             if classifier:
                 # restantes.py acepta benchmark_declared y srri_parsed
                 _bench = parsed.get("Benchmark_Declared")
-                # BL-SRRI-GUARD-FULL: escalar saneado vía _safe_scalar (single source).
-                _srri_for_classify = _safe_scalar(parsed.get("SRRI"))
+                _srri_for_classify = parsed.get("SRRI")
+                # BL-SRRI-GUARD: si parsed["SRRI"] es dict (path CACHED anómalo),
+                # extraer el escalar antes de int(). Previene '>= dict int'.
+                if isinstance(_srri_for_classify, dict):
+                    _srri_for_classify = _srri_for_classify.get("SRRI")
                 try:
                     classification = classifier(fund_name, kiid_text,
                                                 benchmark_declared=_bench,
-                                                srri_parsed=_srri_for_classify)
+                                                srri_parsed=int(_srri_for_classify) if _srri_for_classify else None)
                 except TypeError:
                     classification = classifier(fund_name, kiid_text)
 
@@ -684,7 +668,7 @@ def run_block(
                         _needs_char = True
 
             if _needs_char:
-                _srri_for_char = _safe_scalar(parsed.get("SRRI")) or classification.get("SRRI")
+                _srri_for_char = parsed.get("SRRI") or classification.get("SRRI")
                 _char_result = characterize_fund(
                     fund_name=fund_name,
                     kiid_text=kiid_text,
@@ -830,7 +814,7 @@ def run_block(
                 # -------------------------
                 # Parsing documental (KIID)
                 # -------------------------
-                "SRRI": _safe_scalar(parsed.get("SRRI")),
+                "SRRI": parsed.get("SRRI"),
                 "Fund_Currency": parsed.get("Fund_Currency"),
                 "Portfolio_Currency": parsed.get("Portfolio_Currency"),
                 "Hedging_Policy": parsed.get("Hedging_Policy"),
@@ -918,10 +902,15 @@ def run_block(
                     fund_master_record["Subtype"] = _fam48
                 fund_master_record["Family"] = "Money Market"
 
-            # BL-INTER3-WARN: Profile NO se auto-corrige desde SRRI.
-            # INTER-3 es warnings-only y vive en classify_utils.validate_profile_srri
-            # (R-1, single source). Profile = f(SRRI, Fund_Nature); el remap inline
-            # previo (Conservador & SRRI>=5 -> Dinámico) queda retirado.
+            # Profile-SRRI coherencia: corregir Conservador con SRRI≥5
+            _profile = fund_master_record.get("Profile")
+            _srri_val = fund_master_record.get("SRRI")
+            if _profile == "Conservador" and _srri_val is not None and _srri_val >= 5:
+                fund_master_record["Profile"] = "Dinámico"
+                print(
+                    f"  [NORM-Profile-SRRI] {isin} Profile recalculado: "
+                    f"Conservador->Dinamico (SRRI={_srri_val})"
+                )
 
             # BL-44 v3: net defensivo — Nature incompatible con SRRI (cobertura universal).
             # CAMBIO RESPECTO A v30: revertir BL-65. Cuando BL-44 dispara, Fund_Nature
@@ -1305,10 +1294,22 @@ def run_block(
                 fund_master_record["Family"] = "Short-Term Fixed Income"
                 fund_master_record["Type"]   = fund_master_record.get("Type") or "Short-Term Fixed Income"
 
-            # BL-53/54: Sector_Focus ya se emite en inglés (GICS-EN) desde el
-            # emisor único THEME_TO_SECTOR_FOCUS_MAP (classify_utils). El antiguo
-            # remap inline _SF_ES_TO_EN (BL-64c) queda retirado (Principio #1/#2).
-            # La normalización de saneo vive en classify_utils.normalize_sector_focus.
+            # BL-64c: Sector_Focus ES->EN (Principio #8). 266 fondos afectados.
+            _SF_ES_TO_EN = {
+                "Tecnología e Innovación":      "Technology & Innovation",
+                "Salud y Ciencias de la Vida":  "Healthcare & Life Sciences",
+                "Energía y Recursos":           "Energy & Resources",
+                "Materiales y Minería":         "Materials & Mining",
+                "Utilities y Medio Ambiente":   "Utilities & Environment",
+                "Servicios Financieros":        "Financial Services",
+                "Consumo y Retail":             "Consumer & Retail",
+                "Infraestructura":              "Infrastructure",
+                "Inmobiliario":                 "Real Estate",
+                "Activos Reales":               "Real Assets",
+            }
+            _sf_curr = fund_master_record.get("Sector_Focus")
+            if _sf_curr and _sf_curr in _SF_ES_TO_EN:
+                fund_master_record["Sector_Focus"] = _SF_ES_TO_EN[_sf_curr]
 
             # BL-64d: Family ES->EN. 'Orientado a Renta' -> 'Income Oriented' (104 fondos).
             # Aplica al residual en BD; los nuevos fondos ya son corregidos en mixtos.py.
@@ -1734,12 +1735,67 @@ def run_block(
                         "Cost_Oper_BandsX":      _arb["oper"]["bandsx"],
                         "Cost_Oper_Ruled":       _arb["oper"]["ruled"],
                         "Cost_Oper_Arbitration": _arb["oper"]["verdict"],
+                        "Cost_ACI_RHP_BandsX":   _arb["aci"]["rhp_bandsx"],
+                        "Cost_ACI_RHP_Ruled":    _arb["aci"]["rhp_ruled"],
+                        "Cost_ACI_RHP_Arbitration": _arb["aci"]["rhp_verdict"],
+                        "Cost_ACI_1Y_BandsX":    _arb["aci"]["1y_bandsx"],
+                        "Cost_ACI_1Y_Ruled":     _arb["aci"]["1y_ruled"],
+                        "Cost_ACI_1Y_Arbitration": _arb["aci"]["1y_verdict"],
                     }
                     # tabla de mayor fidelidad (si la hubiera) → extractor existente
                     if _arb.get("table_text"):
                         _arb_fields["DLA2_Table_Text"] = _arb["table_text"]
                 except Exception as _arb_e:
                     log_ingestion(conn, isin, "DLA2_ARBITRATION", "WARN", str(_arb_e))
+
+            # ── FIX-ARB-FALLBACK (2026-06-20): arbitration-by-result-quality ──────
+            # pdfplumber's borderless/multi-line table extraction COLLAPSES the
+            # cost grid on certain issuer layouts (BNP/DWS/Amundi families): the
+            # whole composition section lands in one run-on cell, so the values
+            # path (extract_priips_costs) yields NULL Management_Fee_Pct /
+            # Transaction_Cost_Pct. The arbitration extractor (xBand, different
+            # cell-detection) succeeds on exactly these layouts. Audit 2026-06-20:
+            # 357 funds (223 oper + 150 mgmt, overlap) had values-path NULL AND
+            # Arbitration='AGREE' with a stored value — 100% recoverable.
+            # Rule (gated, fill-only, never override a successful extraction):
+            #   values-path Pct is None  AND  component Arbitration == 'AGREE'
+            #   AND BandsX value present  →  write BandsX into fund_master.
+            # Scale: Cost_*_BandsX is stored in the SAME percent scale as
+            # fund_master.*_Pct (confirmed empirically: BandsX==Pct on funds where
+            # both succeeded), so NO _ratio_to_pct conversion is applied here.
+            # 'AGREE' only: CONFLICT/ONLY_*/BOTH_FAIL are NOT trusted (BL-COST-5).
+            if _arb_fields:
+                _arb_map = [
+                    ('Management_Fee_Pct',  'Cost_Mgmt_Arbitration', 'Cost_Mgmt_BandsX'),
+                    ('Transaction_Cost_Pct', 'Cost_Oper_Arbitration', 'Cost_Oper_BandsX'),
+                    ('ACI_RHP',            'Cost_ACI_RHP_Arbitration', 'Cost_ACI_RHP_BandsX'),
+                    ('ACI_1Y',             'Cost_ACI_1Y_Arbitration',  'Cost_ACI_1Y_BandsX'),
+                ]
+                # P0-ARB-GUARD: BandsX ACI values > 25% are xband extraction
+                # errors (scenario section bleed). Confirmed: LU0503631987
+                # had Cost_ACI_RHP_BandsX > 25, written here without a guard,
+                # causing CHECK constraint failure and blocking publish_fund.
+                # ACI is stored in percent form in fund_master (schema CHECK <= 25).
+                _ACI_COLS = ('ACI_RHP', 'ACI_1Y')
+                _MAX_ACI_PCT = 25.0
+                for _fm_col, _verdict_col, _bandsx_col in _arb_map:
+                    _verdict = _arb_fields.get(_verdict_col)
+                    _bandsx  = _arb_fields.get(_bandsx_col)
+                    _accept = (_verdict == 'AGREE'
+                               or (_fm_col in ('ACI_RHP', 'ACI_1Y')
+                                   and _verdict == 'ONLY_BANDS_X'))
+                    if _fm_col in _ACI_COLS and _bandsx is not None and _bandsx > _MAX_ACI_PCT:
+                        log_ingestion(conn, isin, "FIX_ARB_FALLBACK", "WARN",
+                                      f"{_fm_col}={_bandsx} from {_bandsx_col} rejected "
+                                      f"(>{_MAX_ACI_PCT}% — parser bleed, not written)")
+                        continue
+                    if (fund_master_record.get(_fm_col) is None
+                            and _accept
+                            and _bandsx is not None):
+                        fund_master_record[_fm_col] = _bandsx
+                        log_ingestion(conn, isin, "FIX_ARB_FALLBACK", "INFO",
+                                      f"{_fm_col}={_bandsx} from {_bandsx_col} "
+                                      f"(values-path NULL, arbitration {_verdict})")
 
             # PDF ya consumido por parse + coste + arbitración: liberar (memoria).
             pdf_bytes = None
@@ -1748,7 +1804,7 @@ def run_block(
                 "ISIN": isin,
                 "KIID_URL": kiid_meta.get("KIID_URL"),                
                 "KIID_Class": 1,
-                "SRRI": _safe_scalar(parsed.get("SRRI")),
+                "SRRI": parsed.get("SRRI"),
                 "SRRI_Visual": parsed.get("SRRI_Visual"),
                 "SRRI_Textual": parsed.get("SRRI_Textual"),
                 "SRRI_Validation_Status": parsed.get("SRRI_Validation_Status"),

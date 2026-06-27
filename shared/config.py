@@ -85,6 +85,45 @@ COST_CROSS_VALIDATION_TOLERANCE_PCT: float = 0.0005  # 5 basis points (0.05%)
 PRIIPS_COST_EXTRACTION_ENABLED: bool = True
 
 # ============================================================
+# Phase 1 — Benchmark asset-class derivation engine (BL-BENCH-DECOMP)
+# ============================================================
+# Kill-switch de la descomposición de benchmarks compuestos + fallback de
+# cobertura en core.benchmark_normalizer.normalize_benchmark (dark-launch).
+#   - Default False: normalize_benchmark conserva el comportamiento legacy
+#     (primer match startswith gana; asset_class NULL si no hay alias).
+#   - True: detecta benchmarks multi-activo (Equity+Fixed Income) → 'Mixed',
+#     y asigna asset_class por familia de tokens cuando el alias falta (SG5).
+# Resuelve SG1-compuesto (~36) + SG5-recuperable (~14). NO toca benchmarks de
+# tipo cash/hurdle (SG3, Phase 2) ni el mislabel a nivel Fund_Nature
+# (SG1-pure equity sobre fondo allocation, Phase 3 / INTER-18).
+BENCHMARK_DECOMP_ENABLED: bool = False
+
+# ============================================================
+# Phase 2 — Benchmark role axis (hurdle vs asset proxy) (BL-BENCH-ROLE)
+# ============================================================
+# Kill-switch del eje benchmark_role en fund_benchmarks (dark-launch).
+#   - Default False: el writer escribe benchmark_role='asset_proxy' (neutro);
+#     la columna existe tras la migración pero la feature está inactiva.
+#   - True: benchmark_role()=hurdle_rate para benchmarks de tipo cash/overnight
+#     (SOFR, €STR, SONIA, TONA, SARON, EURIBOR, overnight, 1-month, eurodeposit)
+#     sin componente invertible. Un benchmark hurdle_rate NO debe usarse como
+#     proxy de clase de activo (excluir del alineamiento QA; Phase 3/INTER-18
+#     lo salta al corroborar Fund_Nature).
+# Resuelve SG3 (~67) + SG2 (~6) etiquetando hurdles en lugar de forzar Rate/FI.
+BENCHMARK_ROLE_ENABLED: bool = True
+
+# ============================================================
+# Phase 3 — INTER-18 Benchmark-Composition ↔ Fund_Nature (BL-BENCH-NATURE)
+# ============================================================
+# Kill-switch del pase de reconciliación corroborativa contra Morningstar
+# (dark-launch). WARNING-ONLY: nunca corrige Fund_Nature.
+#   - Default False: el driver no escribe warnings en ingestion_log.
+#   - True: scripts/diag/inter18_reconciliation.py compara asset_class
+#     Morningstar (asset_proxy, no hurdle) vs Fund_Nature y registra los
+#     desajustes (paso 'INTER-18') para revisión manual.
+INTER18_RECONCILIATION_ENABLED: bool = False
+
+# ============================================================
 # v20 (INTEGRATED_SPEC_v20_v2 — Job B: arbitración de coste DLA2)
 # ============================================================
 

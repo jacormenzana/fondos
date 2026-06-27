@@ -52,7 +52,7 @@ import math
 import os
 import sqlite3
 import sys
-from datetime import date
+from datetime import date, datetime
 from io import BytesIO
 from pathlib import Path
 from typing import Optional
@@ -250,6 +250,16 @@ ORDER BY m.ISIN
 """
 
 
+def _write_summary_log(summary_text: str, out_path: Optional[str]) -> Path:
+    """Write the summary block to a timestamped sibling log file."""
+    target_dir = Path(out_path).parent if out_path else Path("out/diag")
+    target_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M")
+    summary_log_path = target_dir / f"cost_diag_summary_{stamp}.log"
+    summary_log_path.write_text(summary_text, encoding="utf-8")
+    return summary_log_path
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Cost-extraction corpus diagnostic")
     ap.add_argument("--db", required=True)
@@ -306,11 +316,15 @@ def main() -> int:
     swaps    = sum(1 for x in results if x["swap_mgmt_oper"] == "Y")
     bleeds   = sum(1 for x in results if x["oper_bleed"] == "Y")
     rhp_miss = sum(1 for x in results if "RHP_STILL_MISSING" in (x["aci_recovered"] or ""))
-    print("\n==== SUMMARY ====")
-    print("verdicts:", dict(verdicts))
-    print(f"swap_mgmt_oper (stored wrong vs truth): {swaps}")
-    print(f"oper_bleed (R3, regrid oper wrong):     {bleeds}")
-    print(f"ACI_RHP still missing after regrid (R1/R2): {rhp_miss}")
+    summary_lines = [
+        "==== SUMMARY ====",
+        f"verdicts: {dict(verdicts)}",
+        f"swap_mgmt_oper (stored wrong vs truth): {swaps}",
+        f"oper_bleed (R3, regrid oper wrong):     {bleeds}",
+        f"ACI_RHP still missing after regrid (R1/R2): {rhp_miss}",
+    ]
+    summary_text = "\n".join(summary_lines) + "\n"
+    print("\n" + summary_text, end="")
 
     out_path = args.out or str(
         Path("out/diag") / f"cost_diag_{date.today():%Y%m%d}.csv")
@@ -320,7 +334,9 @@ def main() -> int:
         w = csv.DictWriter(f, fieldnames=cols)
         w.writeheader()
         w.writerows(results)
+    summary_log_path = _write_summary_log(summary_text, out_path)
     print(f"\nCSV: {out_path}  ({len(results)} rows)")
+    print(f"SUMMARY_LOG: {summary_log_path}")
     return 0
 
 

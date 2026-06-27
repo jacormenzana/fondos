@@ -49,6 +49,7 @@ from src.calculations.macro_sensitivity import (
 from src.calculations.regime_returns import (
     load_regime_history, compute_regime_returns
 )
+from src.calculations.m2_global_builder import build_m2_global
 from src.calculations.momentum import compute_momentum
 from src.calculations.capture_ratios import compute_capture_ratios
 from src.calculations.persistence import compute_persistence
@@ -192,6 +193,16 @@ def run(
         print("AVISO: No hay factores macro. Ejecuta macro_loader antes de P2.")
     else:
         print(f"Factores macro: {list(macro_df.columns)} ({len(macro_df)} meses)")
+        
+        # -- Auto-build M2 Global si no existe aún ----------------------
+        if "m2_global_yoy" not in macro_df.columns:
+            print("  [M2_Global] No detectado en factores. Construyendo...")
+            rows_built = build_m2_global(conn, dry_run=dry_run)
+            if rows_built > 0:
+                print(f"  [M2_Global] {rows_built} registros construidos. Recargando factores...")
+                macro_df = load_macro_factors(conn)
+            else:
+                print("  [M2_Global] No se pudo construir (datos insuficientes)")
 
     # -- Cargar historico de regimenes (una vez para todos los fondos) --
     regime_df = load_regime_history(conn)

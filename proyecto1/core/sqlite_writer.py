@@ -592,9 +592,15 @@ def upsert_kiid_metadata(conn: sqlite3.Connection,
         Cost_Mgmt_Arbitration,
         Cost_Oper_BandsX,
         Cost_Oper_Ruled,
-        Cost_Oper_Arbitration
+        Cost_Oper_Arbitration,
+        Cost_ACI_RHP_BandsX,
+        Cost_ACI_RHP_Ruled,
+        Cost_ACI_RHP_Arbitration,
+        Cost_ACI_1Y_BandsX,
+        Cost_ACI_1Y_Ruled,
+        Cost_ACI_1Y_Arbitration
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(ISIN, KIID_Class) DO UPDATE SET
         KIID_Class    = excluded.KIID_Class,
         KIID_URL      = COALESCE(excluded.KIID_URL,      fund_kiid_metadata.KIID_URL),
@@ -632,7 +638,13 @@ def upsert_kiid_metadata(conn: sqlite3.Connection,
         Cost_Mgmt_Arbitration  = COALESCE(excluded.Cost_Mgmt_Arbitration,  fund_kiid_metadata.Cost_Mgmt_Arbitration),
         Cost_Oper_BandsX       = COALESCE(excluded.Cost_Oper_BandsX,       fund_kiid_metadata.Cost_Oper_BandsX),
         Cost_Oper_Ruled        = COALESCE(excluded.Cost_Oper_Ruled,        fund_kiid_metadata.Cost_Oper_Ruled),
-        Cost_Oper_Arbitration  = COALESCE(excluded.Cost_Oper_Arbitration,  fund_kiid_metadata.Cost_Oper_Arbitration)
+        Cost_Oper_Arbitration  = COALESCE(excluded.Cost_Oper_Arbitration,  fund_kiid_metadata.Cost_Oper_Arbitration),
+        Cost_ACI_RHP_BandsX    = COALESCE(excluded.Cost_ACI_RHP_BandsX,    fund_kiid_metadata.Cost_ACI_RHP_BandsX),
+        Cost_ACI_RHP_Ruled     = COALESCE(excluded.Cost_ACI_RHP_Ruled,     fund_kiid_metadata.Cost_ACI_RHP_Ruled),
+        Cost_ACI_RHP_Arbitration = COALESCE(excluded.Cost_ACI_RHP_Arbitration, fund_kiid_metadata.Cost_ACI_RHP_Arbitration),
+        Cost_ACI_1Y_BandsX     = COALESCE(excluded.Cost_ACI_1Y_BandsX,     fund_kiid_metadata.Cost_ACI_1Y_BandsX),
+        Cost_ACI_1Y_Ruled      = COALESCE(excluded.Cost_ACI_1Y_Ruled,      fund_kiid_metadata.Cost_ACI_1Y_Ruled),
+        Cost_ACI_1Y_Arbitration = COALESCE(excluded.Cost_ACI_1Y_Arbitration, fund_kiid_metadata.Cost_ACI_1Y_Arbitration)
     ;
     """
 
@@ -660,6 +672,12 @@ def upsert_kiid_metadata(conn: sqlite3.Connection,
         kiid_record.get("Cost_Oper_BandsX"),
         kiid_record.get("Cost_Oper_Ruled"),
         kiid_record.get("Cost_Oper_Arbitration"),
+        kiid_record.get("Cost_ACI_RHP_BandsX"),
+        kiid_record.get("Cost_ACI_RHP_Ruled"),
+        kiid_record.get("Cost_ACI_RHP_Arbitration"),
+        kiid_record.get("Cost_ACI_1Y_BandsX"),
+        kiid_record.get("Cost_ACI_1Y_Ruled"),
+        kiid_record.get("Cost_ACI_1Y_Arbitration"),
     )
 
     conn.execute(sql, params)
@@ -705,11 +723,18 @@ def _upsert_kiid_benchmark(conn: sqlite3.Connection,
         norm = normalize_benchmark(benchmark_declared)
         now  = datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S')
 
+        # Phase 2 (BL-BENCH-ROLE): rol del benchmark. Flag OFF → 'asset_proxy'.
+        try:
+            from core.benchmark_normalizer import benchmark_role as _bench_role
+            _role = _bench_role(benchmark_declared)
+        except Exception:
+            _role = 'asset_proxy'
+
         conn.execute("""
             INSERT OR REPLACE INTO fund_benchmarks
                 (ISIN, source, benchmark_raw, benchmark_id, benchmark_name,
-                 provider, asset_class, confidence, extracted_at)
-            VALUES (?, 'KIID', ?, ?, ?, ?, ?, ?, ?)
+                 provider, asset_class, confidence, benchmark_role, extracted_at)
+            VALUES (?, 'KIID', ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             isin,
             benchmark_declared,
@@ -718,10 +743,18 @@ def _upsert_kiid_benchmark(conn: sqlite3.Connection,
             norm.provider       if norm else None,
             norm.asset_class    if norm else None,
             norm.confidence     if norm else 'LOW',
+            _role,
             now,
         ))
-    except Exception:
-        pass  # No interrumpir el pipeline por un fallo de benchmark
+    except Exception as exc:
+        # No interrumpir el pipeline por un fallo de benchmark, pero NO
+        # silenciar: un 'no such column: benchmark_role' indica que falta la
+        # migración (R1/R4) y antes se perdía en silencio. Se registra con
+        # ISIN para diagnóstico; el pipeline continúa.
+        import logging as _log
+        _log.getLogger(__name__).warning(
+            "fund_benchmarks upsert falló para ISIN=%s: %s", isin, exc
+        )
 
 
 # ============================================================
