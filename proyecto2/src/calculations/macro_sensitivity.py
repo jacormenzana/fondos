@@ -217,7 +217,15 @@ def load_macro_factors(conn: sqlite3.Connection) -> pd.DataFrame:
         "eur_jpy_yoy", "eur_gbp_yoy", "eur_cny_yoy",
     ]
     available = [f for f in factors if f in wide.columns]
-    return wide[available].dropna()
+    result = wide[available]
+    # Excluir factores con cobertura insuficiente (<50% de filas no nulas)
+    # para evitar que un factor esparso elimine todas las filas en dropna()
+    min_coverage = 0.5
+    dense = [c for c in result.columns if result[c].notna().mean() >= min_coverage]
+    sparse = [c for c in result.columns if c not in dense]
+    if sparse:
+        print(f"  [MacroFactors] Factores excluidos por cobertura insuficiente: {sparse}")
+    return result[dense].dropna()
 
 
 # ============================================================

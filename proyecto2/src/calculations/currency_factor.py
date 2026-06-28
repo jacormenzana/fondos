@@ -80,6 +80,7 @@ def load_fx_eur_divisa(
     df_usdeur = pd.DataFrame(rows_usdeur, columns=["date", "usd_eur"])
     df_usdeur["date"] = pd.to_datetime(df_usdeur["date"]) + pd.offsets.MonthEnd(0)
     df_usdeur = df_usdeur.set_index("date")["usd_eur"].astype(float)
+    df_usdeur = df_usdeur[~df_usdeur.index.duplicated(keep="last")]
 
     if currency == "USD":
         # USD/EUR = EUR/USD directamente
@@ -99,6 +100,7 @@ def load_fx_eur_divisa(
     df_fx = pd.DataFrame(rows_fx, columns=["date", "fx_usd"])
     df_fx["date"] = pd.to_datetime(df_fx["date"]) + pd.offsets.MonthEnd(0)
     df_fx = df_fx.set_index("date")["fx_usd"].astype(float)
+    df_fx = df_fx[~df_fx.index.duplicated(keep="last")]
 
     # Alinear series
     merged = pd.concat([df_usdeur, df_fx], axis=1, join="inner").dropna()
@@ -163,6 +165,7 @@ def compute_currency_factor(
     # Retornos logaritmicos del fondo
     nav = nav_df.set_index("date")["nav"].sort_index()
     nav.index = nav.index + pd.offsets.MonthEnd(0)
+    nav = nav[~nav.index.duplicated(keep="last")]
     r_total = np.log(nav / nav.shift(1)).dropna()
 
     # Retornos logaritmicos del tipo de cambio EUR/divisa

@@ -90,6 +90,7 @@ def load_regime_history(conn: sqlite3.Connection) -> pd.DataFrame:
 
         # Normalizar indice a fin de mes
         hist.index = pd.to_datetime(hist.index) + pd.offsets.MonthEnd(0)
+        hist = hist[~hist.index.duplicated(keep="last")]
 
         n_regimes = hist["regime"].nunique()
         print(f"  [RegimeReturns] Historico cargado: {len(hist)} meses | "
@@ -155,6 +156,9 @@ def compute_regime_returns(
     # Calcular retornos logaritmicos mensuales
     nav = nav_df.set_index("date")["nav"].sort_index()
     nav.index = pd.to_datetime(nav.index) + pd.offsets.MonthEnd(0)
+    # MonthEnd snap puede crear duplicados si hay dos registros en el mismo mes;
+    # conservar el último (cierre de mes más reciente)
+    nav = nav[~nav.index.duplicated(keep="last")]
     r_log = np.log(nav / nav.shift(1)).dropna()
 
     # Cruzar con regimenes

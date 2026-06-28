@@ -415,7 +415,9 @@ def _parse_costs_over_time_dla2(text: str) -> List[dict]:
         |||splits (e.g. 'cos' + 'tes*' must join to 'costes*', not 'cos tes*')."""
         if pattern.search(cells[0]):
             return True, cells
-        for _k in (2, 3):
+        # FIX-P1-Z: extend to k=4; some labels split across 4 cells
+        # (e.g. 'Incidencia anual de lo'+'s co'+'st'+'es**').
+        for _k in (2, 3, 4):
             if len(cells) >= _k:
                 for _sep in (' ', ''):
                     _joined = _sep.join(cells[:_k]).strip()
@@ -496,11 +498,24 @@ def _parse_costs_over_time_dla2(text: str) -> List[dict]:
             _any_ext = False
             for _ci in range(1, min(len(header_cells), len(_cont_cells))):
                 _nc = _cont_cells[_ci].strip()
-                if _nc and (HORIZON_YEARS_PATTERN.search(_nc) or
-                            HORIZON_MONTHS_PATTERN.search(_nc) or
-                            _is_rhp_label(_nc)):
+                if not _nc:
+                    continue
+                if (HORIZON_YEARS_PATTERN.search(_nc) or
+                        HORIZON_MONTHS_PATTERN.search(_nc) or
+                        _is_rhp_label(_nc)):
                     _merged[_ci] = (_merged[_ci] + " " + _nc).strip()
                     _any_ext = True
+                else:
+                    # FIX-P1-Z: year keyword may be split across adjacent
+                    # continuation cells (e.g. '1' + 'año' in separate cells).
+                    for _xj in range(_ci + 1, min(_ci + 3, len(_cont_cells))):
+                        _nc_j = (_nc + ' ' + _cont_cells[_xj]).strip()
+                        if (HORIZON_YEARS_PATTERN.search(_nc_j) or
+                                HORIZON_MONTHS_PATTERN.search(_nc_j) or
+                                _is_rhp_label(_nc_j)):
+                            _merged[_ci] = (_merged[_ci] + " " + _nc_j).strip()
+                            _any_ext = True
+                            break
             if _any_ext:
                 header_cells = _merged
 
@@ -579,9 +594,23 @@ def _parse_costs_over_time_dla2(text: str) -> List[dict]:
         r'.*?(?:\d{4,}|\d{1,3}(?:[\s.,]\d{3})+)',
         re.I | re.DOTALL,
     )
+    # FIX-P1-Z: also drop short word-fragments with no year/digit/RHP content.
+    # pdfplumber splits column-header sentences across cells; fragments like
+    # 'En', 'caso', 'de', 'salida' (from "En caso de salida después de 1 año")
+    # inflate n_cols and break compact-value pairing. Keep a cell only if it
+    # has a year/month/RHP signal, contains a digit, or is ≥7 chars (long
+    # enough to be a meaningful phrase rather than a word fragment).
     _label_idx = [
         i for i, lbl in enumerate(horizon_labels)
-        if lbl.strip() and not _BASE_CELL_RE.search(lbl)
+        if lbl.strip()
+        and not _BASE_CELL_RE.search(lbl)
+        and (
+            HORIZON_YEARS_PATTERN.search(lbl)
+            or HORIZON_MONTHS_PATTERN.search(lbl)
+            or _is_rhp_label(lbl)
+            or re.search(r'\d', lbl)
+            or len(lbl) >= 7
+        )
     ]
     horizon_labels = [horizon_labels[i] for i in _label_idx]
     n_cols = len(horizon_labels)
@@ -760,6 +789,15 @@ def _parse_costs_over_time_plain(text: str) -> List[dict]:
 
     seen_horizons: set = set()
     for m in HORIZON_CONTEXT.finditer(window):
+        # FIX-P1-AA: reject year labels that come from historical-data phrases,
+        # not from OT column headers. "últimos 12 años" / "last N years" appear
+        # in boilerplate about the data window used for cost estimation; they are
+        # NOT holding-period column labels and produce spurious hy=12.0 entries
+        # that displace the real RHP column (confirmed: LU2066956926, LU2066957221).
+        _pre_ctx = window[max(0, m.start() - 25): m.start()]
+        if re.search(r'(?:[úu]ltimos?|last|the\s+last)\s*$', _pre_ctx, re.I):
+            continue
+
         label = m.group(0).strip()
 
         horizon_years = _parse_horizon_years(label)
@@ -781,6 +819,15 @@ def _parse_costs_over_time_plain(text: str) -> List[dict]:
 
         total_cost_eur = _extract_eur_from_cell(fragment)
         aci_pct        = _extract_pct_from_cell(fragment)
+        # FIX-P1-AA: some layouts print ACI% BEFORE the year label
+        # (e.g. "Incidencia anual de los costes 3,7%  Período recomendado (7 años)").
+        # The 200-char forward fragment misses it; look backward up to 300 chars,
+        # but only accept a % that is near an ACI label (guards against picking up
+        # random percentages from scenarios or risk sections).
+        if aci_pct is None:
+            _pre_frag = window[max(0, m.start() - 300): m.start()]
+            if ACI_ROW.search(_pre_frag):
+                aci_pct = _extract_pct_from_cell(_pre_frag)
 
         results.append({
             'horizon_label': label,
@@ -806,30 +853,52 @@ def _parse_costs_over_time_plain(text: str) -> List[dict]:
     # 200-char post-match fragment misses the value. FIX-P1-E recovers it by
     # anchoring on the ACI label instead. Extend to fire whenever no ACI was
     # found; REPLACE any all-None results if global fallback yields aci.
-    if not results or all(e.get('aci_pct') is None for e in results):
+    # FIX-P1-AB: also fire when existing RHP entries have aci_pct=None
+    # (e.g. funds whose "incidencia anual" table lies beyond the 1500-char window —
+    # HORIZON_CONTEXT finds the year label in the scenarios section but the ACI%
+    # appears later; one scenario-return entry incorrectly has aci set, blocking
+    # the all-None condition). Patch RHP entries in-place rather than replacing.
+    _rhp_no_aci = [e for e in results if e.get('is_rhp') and e.get('aci_pct') is None]
+    if not results or all(e.get('aci_pct') is None for e in results) or _rhp_no_aci:
         _global_years = sorted({
             int(y)
             for y in re.findall(r'despu[eé]s\s+de\s+(\d+)\s+a[ñn]os?', text, re.I)
         })[:2]
         if _global_years:
-            _anc = re.search(
-                r'incidencia\s+anual|impacto\s+(?:anual\s+)?en\s+los\s+costes?',
-                window, re.I
-            )
-            _zone = window[_anc.start():_anc.start() + 250] if _anc else window
+            _ACI_ANCHOR = r'incidencia\s+anual|impacto\s+(?:anual\s+)?en\s+los\s+costes?'
+            _anc = re.search(_ACI_ANCHOR, window, re.I)
+            if _anc is None:
+                # FIX-P1-AB: ACI anchor may lie beyond the 1500-char OT window;
+                # fall back to a global search over the full document text.
+                _anc_full = re.search(_ACI_ANCHOR, text, re.I)
+                _zone = text[_anc_full.start():_anc_full.start() + 250] if _anc_full else window
+            else:
+                _zone = window[_anc.start():_anc.start() + 250]
             _aci = _extract_pct_from_cell(_zone)
             _eur = _extract_eur_from_cell(window)
-            if _aci is not None:
-                results = []  # replace all-None results; harmless when results was []
-            for _y in _global_years:
-                results.append({
-                    'horizon_label':  f'despues de {_y} anos',
-                    'horizon_years':  float(_y),
-                    'is_rhp':         False,
-                    'total_cost_eur': _eur,
-                    'aci_pct':        _aci,
-                    'source':         'PLAIN_GLOBAL_FALLBACK',
-                })
+            if _aci is not None and _rhp_no_aci and results:
+                # Patch RHP entries in-place; keep non-RHP entries as-is.
+                for _e in _rhp_no_aci:
+                    _e['aci_pct'] = _aci
+                    if _eur is not None:
+                        _e['total_cost_eur'] = _eur
+            else:
+                if _aci is not None:
+                    results = []  # replace all-None results; harmless when results was []
+                # FIX-P1-AA: if there is exactly ONE year in the global fallback,
+                # PRIIPs regulation guarantees that column IS the RHP (the 1Y column
+                # is optional; the RHP column is mandatory). Mark is_rhp=True so
+                # cost_arbitration stores the value in acirhp, not aci1.
+                _single_col_is_rhp = len(_global_years) == 1
+                for _y in _global_years:
+                    results.append({
+                        'horizon_label':  f'despues de {_y} anos',
+                        'horizon_years':  float(_y),
+                        'is_rhp':         _single_col_is_rhp,
+                        'total_cost_eur': _eur,
+                        'aci_pct':        _aci,
+                        'source':         'PLAIN_GLOBAL_FALLBACK',
+                    })
 
     return results
 
@@ -850,7 +919,11 @@ _BASE_NUM = r'(\d{1,3}(?:[ .,]\d{3})+|\d{4,6})'
 _BASE_CUR = r'(?:EUR|USD|GBP|CHF|€|\$|£)'
 _BASE_PATTERNS = [
     re.compile(r'se\s+invierten\s+' + _BASE_NUM + r'\s*(' + _BASE_CUR + r')?', re.I),
-    re.compile(r'(?:ejemplo\s+de\s+)?inversi[oó]n(?:\s+de)?\s*:?\s*(?:' + _BASE_CUR + r'\s*)?' + _BASE_NUM, re.I),
+    # FIX-P1-Y: some KIDs write "Ejemplo de inversión:  3 años 10 000 EUR" where
+    # the RHP duration ("3 años") sits between the label and the base number.
+    re.compile(r'(?:ejemplo\s+de\s+)?inversi[oó]n(?:\s+de)?\s*:?\s*'
+               r'(?:\d+\s*a[ñn]os?\s+)?'
+               r'(?:' + _BASE_CUR + r'\s*)?' + _BASE_NUM, re.I),
     re.compile(r'para\s+una\s+inversi[oó]n\s+de\s*:?\s*' + _BASE_NUM, re.I),
     re.compile(r'invest(?:ment)?\s+(?:of\s+)?(?:' + _BASE_CUR + r'\s*)?' + _BASE_NUM, re.I),
 ]
@@ -950,8 +1023,13 @@ def _parse_composition_dla2(text: str) -> dict:
     _mgmt_pct = result.get('management_fee_pct')
     _oper_pct = result.get('transaction_cost_pct')
     _mgmt_eur = result.get('management_fee_eur')
+    # FIX-P1-X: abs_tol 0.001→0.00005. Real bleed: both cells show the SAME
+    # parsed string → diff=0 exactly. abs_tol=0.00005 (0.005pp) covers float
+    # noise while blocking legitimate near-fee pairs (e.g. 1.38% vs 1.39%,
+    # diff=0.0001 ratio = 0.01pp) that triggered the EUR-derived override and
+    # stored near-zero mgmt% for 5 LU* funds (LU0095938881, LU1861218995 etc).
     if (_mgmt_pct is not None and _oper_pct is not None and _mgmt_eur is not None
-            and math.isclose(_mgmt_pct, _oper_pct, abs_tol=0.001, rel_tol=0.01)):
+            and math.isclose(_mgmt_pct, _oper_pct, abs_tol=0.00005, rel_tol=0.001)):
         _base = parse_investment_base(text)
         if _base:
             # Parser canonical scale is RATIO (0.011 == 1.1%), confirmed:
@@ -966,6 +1044,29 @@ def _parse_composition_dla2(text: str) -> dict:
                 if _guarded is not None:
                     result['management_fee_pct'] = _guarded
                     result['management_fee_pct_source'] = 'EUR_DERIVED'
+
+    # FIX-P1-Y: EUR-derived transaction_cost_pct override.
+    # Root cause (5 BNP/Amundi funds, 2026-06-28): "Costes de operacion" DLA2
+    # cell holds a near-zero or wrong grid% while the EUR amount is correct.
+    # EUR-implied oper% (eur/base) matches truth%; grid% is off by >20% relative
+    # (e.g. 0.10% grid vs 0.74% truth = 640% relative error).
+    # Override when ALL hold: both pct + eur present, EUR-implied > grid%
+    # (underestimation signature), discrepancy > 20% relative, and value
+    # passes _guarded_pct range check.
+    _oper_pct_val = result.get('transaction_cost_pct')
+    _oper_eur_val = result.get('transaction_cost_eur')
+    if (_oper_pct_val is not None and _oper_eur_val is not None
+            and _oper_pct_val > 0):
+        _base2 = parse_investment_base(text)
+        if _base2:
+            _eur_impl = round(_oper_eur_val / _base2, 6)
+            if (_eur_impl > _oper_pct_val
+                    and not math.isclose(_eur_impl, _oper_pct_val,
+                                         rel_tol=0.20, abs_tol=0.0002)):
+                _guarded2 = _guarded_pct(_eur_impl, 'transaction')
+                if _guarded2 is not None:
+                    result['transaction_cost_pct'] = _guarded2
+                    result['transaction_cost_pct_source'] = 'EUR_DERIVED'
 
     return result
 

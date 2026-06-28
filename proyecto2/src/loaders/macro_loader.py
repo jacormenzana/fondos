@@ -708,43 +708,88 @@ _FRED_SERIES = {
     },
 }
 
-FRED_BASE_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv"
+FRED_BASE_URL    = "https://fred.stlouisfed.org/graph/fredgraph.csv"
+FRED_API_BASE    = "https://api.stlouisfed.org/fred/series/observations"
 
 
-def load_fred_series(desde: str = "2000-01", verbose: bool = False) -> tuple[list[dict], list[dict]]:
+def _fred_fetch(series_id: str, desde: str, api_key: str | None) -> pd.DataFrame | None:
     """
-    Descarga series de la Fed FRED (API publica sin clave).
-    Frecuencia mensual.
+    Descarga una serie FRED como DataFrame con columnas [date, value].
+
+    Si hay api_key usa la API oficial (historial completo para todas las series,
+    incluidas las ICE BofA con licencia restringida en el endpoint publico).
+    Sin api_key usa fredgraph.csv, que para algunas series solo devuelve ~3 años.
+    """
+    from io import StringIO
+    if api_key:
+        params = {
+            "series_id":         series_id,
+            "api_key":           api_key,
+            "observation_start": desde + "-01",
+            "file_type":         "json",
+        }
+        try:
+            r = requests.get(FRED_API_BASE, params=params, timeout=REQUEST_TIMEOUT)
+            r.raise_for_status()
+            obs = r.json().get("observations", [])
+            rows = [(o["date"], o["value"]) for o in obs if o["value"] != "."]
+            if not rows:
+                return None
+            df = pd.DataFrame(rows, columns=["date", "value"])
+            df["value"] = pd.to_numeric(df["value"], errors="coerce")
+            df["date"]  = pd.to_datetime(df["date"])
+            return df.dropna(subset=["value"])
+        except requests.RequestException as e:
+            raise e
+    else:
+        params = {"id": series_id}
+        r = requests.get(FRED_BASE_URL, params=params, timeout=REQUEST_TIMEOUT)
+        r.raise_for_status()
+        df = pd.read_csv(StringIO(r.text), na_values=".")
+        df.columns = ["date", "value"]
+        df["date"] = pd.to_datetime(df["date"])
+        return df.dropna(subset=["value"])
+
+
+def load_fred_series(
+    desde:   str = "2000-01",
+    verbose: bool = False,
+    api_key: str | None = None,
+) -> tuple[list[dict], list[dict]]:
+    """
+    Descarga series de la Fed FRED.
+
+    api_key: clave FRED (gratis en https://fred.stlouisfed.org/docs/api/api_key.html).
+             Sin clave usa el endpoint publico, que restringe series ICE BofA a ~3 años.
+             Con clave usa la API oficial con historial completo.
 
     Devuelve: (inflation_rows, macro_rows)
     """
-    print("  [FRED] Descargando series...")
+    import os
+    if api_key is None:
+        api_key = os.environ.get("FRED_API_KEY") or None
+
+    if api_key:
+        print(f"  [FRED] Descargando series (API key: {api_key[:6]}...)...")
+    else:
+        print("  [FRED] Descargando series (sin API key -- series ICE BofA limitadas a ~3 años)...")
 
     inflation_rows: list[dict] = []
     macro_rows:     list[dict] = []
 
     for series_id, cfg in _FRED_SERIES.items():
-        params = {
-            "id":             series_id,
-            "vintage_date":   date.today().strftime("%Y-%m-%d"),
-        }
         try:
-            r = requests.get(FRED_BASE_URL, params=params, timeout=REQUEST_TIMEOUT)
-            r.raise_for_status()
+            df = _fred_fetch(series_id, desde, api_key)
         except requests.RequestException as e:
             print(f"  [FRED] ERROR en {series_id}: {e}")
             continue
 
-        from io import StringIO
-        try:
-            df = pd.read_csv(StringIO(r.text), na_values=".")
-            df.columns = ["date", "value"]   # normalizar: col0=fecha, col1=valor
-        except Exception as e:
-            print(f"  [FRED] Error parseando {series_id}: {e}")
+        if df is None or df.empty:
+            print(f"  [FRED] {series_id}: sin datos")
             continue
 
+        from io import StringIO
         df = df.dropna(subset=["value"])
-        df["date"] = pd.to_datetime(df["date"])
 
         # Resampleo a mensual para series de frecuencia diaria (ej. WTI, VIX)
         # resample_func: "last" (default) para precios de cierre,
@@ -923,12 +968,14 @@ def run(
     desde:   str = "2000-01",
     dry_run: bool = False,
     verbose: bool = False,
+    fred_api_key: str | None = None,
 ) -> None:
     """
     Descarga y persiste todos los indicadores macro.
 
-    sources: lista de fuentes a ejecutar ['ine','bce','fred','eurostat']
-             None = todas
+    sources:      lista de fuentes ['ine','bce','fred','eurostat'] o None (todas)
+    fred_api_key: clave FRED para historial completo de series ICE BofA.
+                  Si None, se lee de la variable de entorno FRED_API_KEY.
     """
     if sources is None:
         sources = ["ine", "bce", "fred", "eurostat"]
@@ -972,7 +1019,8 @@ def run(
 
     # -- FRED --------------------------------------------------
     if "fred" in sources:
-        inf_rows, mac_rows = load_fred_series(desde=desde, verbose=verbose)
+        inf_rows, mac_rows = load_fred_series(desde=desde, verbose=verbose,
+                                               api_key=fred_api_key)
         n  = _write_inflation(conn, inf_rows, dry_run)
         n2 = _write_macro(conn, mac_rows, dry_run)
         total_inflation += n
@@ -1023,6 +1071,13 @@ if __name__ == "__main__":
         action="store_true",
         help="Muestra cada registro descargado",
     )
+    parser.add_argument(
+        "--fred-api-key",
+        default=None,
+        help="Clave API de FRED (gratis en https://fred.stlouisfed.org/docs/api/api_key.html). "
+             "Sin clave, las series ICE BofA (spread_hy, spread_ig) quedan limitadas a ~3 años. "
+             "Alternativa: exportar variable de entorno FRED_API_KEY antes de ejecutar.",
+    )
     args = parser.parse_args()
 
     # {font} = valor de --source (default "all" si no se especifica)
@@ -1036,6 +1091,7 @@ if __name__ == "__main__":
             desde=args.desde,
             dry_run=args.dry_run,
             verbose=args.verbose,
+            fred_api_key=args.fred_api_key,
         )
     finally:
         _teardown_run_logger(_log_fh, _orig_out, _orig_err)
