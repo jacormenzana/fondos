@@ -453,8 +453,95 @@ def extract_priips_costs(
         _MAX_ACI_RATIO = 0.25
         if aci_1y_final is not None and aci_1y_final <= _MAX_ACI_RATIO:
             out['ACI_1Y'] = _ratio_to_pct(aci_1y_final)
-        if aci_rhp_final is not None and aci_rhp_final <= _MAX_ACI_RATIO:
+
+        # P0-ACI-RHP-GUARD: for multi-year RHP, tighten the scenario-bleed
+        # threshold from 25% to 15%.  Audit 2026-06-28: 153 funds stored
+        # ACI_RHP 10–24% while the KID cost-table ACI was 1–6%.  Root cause:
+        # parser captures performance-scenario return (tech funds show 15–25%
+        # favorable scenarios) as ACI_RHP when the cost page is not found.
+        # Secondary plausibility check: ACI_RHP / ACI_1Y > 5 is implausible
+        # (annual cost drag does not vary 5× between year-1 and RHP for the
+        # same fund). Both guards log and set ACI_RHP = NULL instead of bleed.
+        _MAX_ACI_RHP_RATIO = 0.15 if (rhp_years is not None and rhp_years > 1.0) else _MAX_ACI_RATIO
+        _aci_rhp_ratio_ok = (
+            aci_rhp_final is not None
+            and aci_rhp_final <= _MAX_ACI_RHP_RATIO
+            and not (
+                rhp_years is not None and rhp_years > 1.0
+                and aci_1y_final is not None and aci_1y_final > 0
+                and aci_rhp_final / aci_1y_final > 5.0
+            )
+        )
+        if _aci_rhp_ratio_ok:
             out['ACI_RHP'] = _ratio_to_pct(aci_rhp_final)
+        elif aci_rhp_final is not None:
+            _reason = (
+                f"ratio {aci_rhp_final:.4f} > {_MAX_ACI_RHP_RATIO:.2f}"
+                if aci_rhp_final > _MAX_ACI_RHP_RATIO
+                else f"ACI_RHP/ACI_1Y={aci_rhp_final/aci_1y_final:.1f}>5"
+            )
+            _log.info(
+                "[P0-ACI-RHP-GUARD] %s: ACI_RHP=%.4f rejected (%s); scenario-bleed suspected",
+                isin, aci_rhp_final, _reason,
+            )
+
+        # FIX-ACI-RHP-SINGLE: single-column OT fallback (mirrors harness
+        # FIX-HARNESS / FIX-HARNESS-2). Audit 2026-06-30: 244 funds have
+        # acirhp_regrid recovered by harness but not stored in production.
+        # Root cause: when rhp_years=None, _pick_aci_for_horizon finds no
+        # is_rhp entry and no target_years match → aci_rhp_ratio=None.
+        # By PRIIPS regulation a single-column OT table IS the RHP column.
+        # Two sub-cases:
+        #   (a) aci_1y_final valid → ACI_RHP = ACI_1Y (236 funds)
+        #   (b) len(over_time)==1 with non-1Y hy (e.g. 3-month) → take raw
+        #       aci_pct directly (8 funds, mirrors FIX-HARNESS-2)
+        if 'ACI_RHP' not in out and over_time:
+            _has_longer = any(
+                e.get('is_rhp') or (e.get('horizon_years') or 0) > 1.0
+                for e in over_time
+            )
+            if not _has_longer:
+                _fb_aci = aci_1y_final
+                if _fb_aci is None and len(over_time) == 1:
+                    _fb_aci = over_time[0].get('aci_pct')
+                if _fb_aci is not None and _fb_aci <= _MAX_ACI_RATIO:
+                    out['ACI_RHP'] = _ratio_to_pct(_fb_aci)
+                    _log.info(
+                        "[FIX-ACI-RHP-SINGLE] %s: ACI_RHP=%.4f%% from "
+                        "single-column OT fallback",
+                        isin, _ratio_to_pct(_fb_aci),
+                    )
+
+        # FIX-ACI-RHP-LONGEST: multi-column OT where the RHP column has
+        # is_rhp=False (not labelled) and rhp_years=None (not in text).
+        # Audit 2026-06-30: 9 funds with hy>1.0 entry whose ACI_RHP harness
+        # recovers via loop but production _pick_aci_for_horizon misses because
+        # neither want_rhp=True match nor target_years match succeed.
+        # Strategy: take the longest-horizon entry as the RHP approximation.
+        # Guards identical to P0-ACI-RHP-GUARD (15% cap, ACI_RHP/ACI_1Y ≤5).
+        if 'ACI_RHP' not in out and over_time and rhp_years is None:
+            _no_is_rhp = not any(e.get('is_rhp') for e in over_time)
+            if _no_is_rhp:
+                _candidates = [
+                    e for e in over_time
+                    if (e.get('horizon_years') or 0) > 1.0
+                    and e.get('aci_pct') is not None
+                ]
+                if _candidates:
+                    _best = max(_candidates, key=lambda e: e.get('horizon_years', 0))
+                    _fb_aci2 = _best['aci_pct']
+                    _ratio_ok = not (
+                        aci_1y_final is not None and aci_1y_final > 0
+                        and _fb_aci2 / aci_1y_final > 5.0
+                    )
+                    if _fb_aci2 <= 0.15 and _ratio_ok:
+                        out['ACI_RHP'] = _ratio_to_pct(_fb_aci2)
+                        _log.info(
+                            "[FIX-ACI-RHP-LONGEST] %s: ACI_RHP=%.4f%% from "
+                            "longest OT entry (hy=%.1f, no is_rhp label)",
+                            isin, _ratio_to_pct(_fb_aci2),
+                            _best.get('horizon_years', 0),
+                        )
 
         # --- D. Tabla "composición de los costes" ---
         comp = parse_costs_composition(text)
@@ -496,10 +583,11 @@ def extract_priips_costs(
                 oc_norm = _norm_existing_oc(existing_oc)
                 if _detect_oc_aci_mismatch(existing_oc, oc_norm, ter_recon_ratio, aci_rhp_final):
                     out['_oc_aci_mismatch'] = True
+                    out['_oc_aci_mismatch_ter_pct'] = _ratio_to_pct(ter_recon_ratio)
                     _log.info(
                         "[BL-COST-4a][OC-ACI] %s: BD OC parece ACI (%.4f) != TER recon (%.4f); "
-                        "diferido a BL-COST-5",
-                        isin, oc_norm or -1.0, ter_recon_ratio,
+                        "ter_pct=%.4f%% listo para BL-COST-5",
+                        isin, oc_norm or -1.0, ter_recon_ratio, _ratio_to_pct(ter_recon_ratio),
                     )
                 # Si no hay mismatch y existing_oc no es None → no se toca (COALESCE)
 

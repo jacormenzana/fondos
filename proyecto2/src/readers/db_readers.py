@@ -1,4 +1,4 @@
-# proyecto2/src/loaders/db_readers.py
+# proyecto2/src/readers/db_readers.py
 # -*- coding: utf-8 -*-
 """
 Lectores de BD para el pipeline P2.

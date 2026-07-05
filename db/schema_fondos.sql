@@ -18,6 +18,12 @@
 --        Misma semántica de ciclo de vida que Raw_KIID_Text: se calcula
 --        en descarga real, se reutiliza desde BD en ciclos CACHED,
 --        se invalida cuando KIID_PDF_Hash cambia (FORCE_REFRESH).
+--   v21  Asset_Currency (fund_master) — BL-44-FX.
+--   v22  fund_data_quality_issues (tabla nueva) — FIX-DQ-1: estado actual
+--        de issues de calidad de datos por fondo, complementa a
+--        ingestion_log. Data_Quality_Flag ahora se calcula como rollup
+--        determinista (máximo de severidad) en vez de mutaciones
+--        secuenciales dispersas por pipeline.py.
 -- ============================================================
 
 -- ============================================================
@@ -47,6 +53,12 @@ CREATE TABLE IF NOT EXISTS fund_master (
     SRRI                    INTEGER,
     Fund_Currency           TEXT,
     -- v20: Portfolio_Currency ELIMINADA (98.7% NULL, no consumida en P3)
+    -- v21 (2026-07-05): Asset_Currency AÑADIDA -- divisa de los activos/
+    -- estrategia del fondo (vs. Fund_Currency = divisa de la clase de
+    -- participación), inferida del nombre del fondo (no del texto KIID,
+    -- que fue la causa de la tasa de NULL de Portfolio_Currency). Consumida
+    -- por BL-44-FX (pipeline.py) y disponible para P2 (currency_factor.py).
+    Asset_Currency          TEXT,
     Hedging_Policy          TEXT,
     Replication_Method      TEXT,
     Derivatives_Usage       TEXT,
@@ -283,6 +295,33 @@ CREATE TABLE IF NOT EXISTS ingestion_log (
 
 CREATE INDEX IF NOT EXISTS idx_log_isin   ON ingestion_log (ISIN);
 CREATE INDEX IF NOT EXISTS idx_log_status ON ingestion_log (status);
+
+
+-- ============================================================
+-- TABLA 4: fund_data_quality_issues  (v22, FIX-DQ-1, 2026-07-05)
+-- Estado ACTUAL de issues de calidad de datos por fondo, uno por
+-- (ISIN, check_code), reconstruida en cada ciclo de pipeline.py
+-- (DELETE+INSERT por ISIN antes de publish_fund). Complementa a
+-- ingestion_log (histórico append-only de TODOS los eventos de TODOS
+-- los ciclos): da una vista consultable de "qué está mal con el fondo
+-- X ahora mismo" sin filtrar el histórico completo. `level` usa el
+-- mismo vocabulario que fund_master.Data_Quality_Flag (OK/INFERRED/
+-- WARN/MISSING), NO el de ingestion_log.status (ERROR/WARNING/INFO/
+-- DEBUG) -- son dos vocabularios distintos, ver DATA_QUALITY_SEVERITY
+-- en shared/config.py.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS fund_data_quality_issues (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ISIN        TEXT NOT NULL,
+    check_code  TEXT NOT NULL,
+    level       TEXT NOT NULL,
+    message     TEXT,
+    detected_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_dqissues_isin ON fund_data_quality_issues (ISIN);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_dqissues_isin_code
+    ON fund_data_quality_issues (ISIN, check_code);
 
 
 -- ============================================================

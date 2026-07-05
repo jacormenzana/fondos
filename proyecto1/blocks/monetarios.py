@@ -34,6 +34,13 @@ def get_universe_isins(df_master) -> List[str]:
         "money mkt",  "money mket", 
         # DDF — añadido personal incluido en classify_utils        
         "euro m mkt",                    # JPM EURO M MKT VNAV (evita EM MKT)
+        # BL-MON-IN1 (2026-07-05): "EU M MKT" = European Money Market
+        # (abbreviated without the "ro" of "euro"). DWS ESG EU M MKT IC100
+        # EUR ACC is a genuine money market fund; without this it falls into
+        # renta_variable/restantes with SRRI=5 (wrong KIID stored). Safe: "eu
+        # m mkt" requires the literal "m" between "eu" and "mkt" so it cannot
+        # false-match "EM MKT" (emerging market) abbreviations.
+        "eu m mkt",                      # DWS ESG EU M MKT IC100
         "standard mm vnav",              # JPM STANDARD MM VNAV
         "lqudty lvnav",                  # JPM USD LQUDTY LVNAV (OCR)
         "inscash",                       # BNP PARIBS INSCASH EUR 3M
@@ -98,6 +105,13 @@ def classify_fund(
         "Theme": None,
         "Exposure_Bias": "Liquidity Bias",
         "_signal_subtype": None,
+        # BL-MON-U1 (2026-07-05): money market funds are always Liquidity
+        # universe by definition. Explicitly setting it here overrides any
+        # stale 'Global' value persisted from an earlier cycle (COALESCE
+        # takes the new non-NULL value). This also eliminates GEOGRAPHY_UNIVERSE
+        # _WARNING for country-focused MMFs (e.g. PICTET S-T MONEY MKT JPY:
+        # Japan+Liquidity is correct, Japan+Global is not).
+        "Investment_Universe": "Liquidity",
     }
 
     name_l = fund_name.lower() if isinstance(fund_name, str) else ""

@@ -197,6 +197,7 @@ Pipeline canónico de Proyecto 1:
 import datetime
 import time
 import gc
+import importlib
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
@@ -214,6 +215,20 @@ from core.classify_utils import (
     validate_strategy_replication,                          # BL-61
     detect_currency_hedged_from_kiid,                       # BL-49
     propagate_nature_to_restantes_type_family,              # BL-62
+    detect_explicit_equity_majority,                        # INTER-DBLCLAIM
+    detect_nature_from_benchmark,                           # INTER-DBLCLAIM (voto 3/3)
+    detect_nature_from_kiid,                                # INTER-VOTE3
+    resolve_rf_subtype,                                     # INTER-VOTE3
+    _NATURE_CANONICAL,                                      # INTER-VOTE3
+    detect_fx_share_class_mismatch,                         # BL-44-FX
+    detect_asset_currency_from_name,                        # BL-44-FX / Asset_Currency
+    detect_asset_currency_from_kiid_text,                   # Asset_Currency (fallback)
+    detect_fund_currency_from_name,                         # FIX-FUNDCCY-2 (cross-check)
+    detect_geography           as detect_geography_from_name,   # FIX-GEO-1 (cross-check)
+    detect_geography_from_kiid,                             # FIX-GEO-1 (cross-check)
+    _derive_geography_en,                                   # FIX-GEO-1 (traducción ES→EN)
+    derive_development_status,                               # FIX-GEO-1 (recalculado, no heredado del bloque)
+    validate_geography_universe,                             # FIX-GEO-4 (BL-52, única fuente de verdad)
 )
 try:
     from proyecto1.core.fund_characterizer import characterize_fund
@@ -222,6 +237,7 @@ except ImportError:
 from core.sqlite_writer import (
     publish_fund,
     log_ingestion,
+    correct_oc_aci_mismatch,             # BL-COST-5: OC/ACI mismatch correction
     global_post_pipeline_normalize_db,   # BL-53/56/57: barrido global
 )
 from core._db_utils import EffectiveReader   # BL-49/50: lectura efectiva
@@ -283,6 +299,21 @@ def _dla2_arbitration_enabled() -> bool:
 # Carga de maestro (USADO POR run_block.py)
 # -------------------------------------------------
 
+# FIX-MASTER-LOAD-2 (2026-07-05): guardián de formato ISIN.
+# Causa raíz: la hoja "Franklin" del maestro contiene una fila de
+# cabecera repetida con el texto literal "Código ISIN" en la columna
+# ISIN. El filtro .notna() previo no la elimina (es un string no-nulo).
+# Un ISIN real tiene siempre exactamente 12 caracteres: 2 letras de
+# país + 9 alfanuméricos + 1 dígito de control. Validado contra las
+# 22,407 celdas no-nulas del maestro real: solo 1 fallo (el falso ISIN).
+_ISIN_RE = re.compile(r"^[A-Za-z]{2}[A-Za-z0-9]{9}[0-9]$")
+
+
+def _is_valid_isin(value) -> bool:
+    """Devuelve True si 'value' tiene formato de ISIN (2 letras + 9 alfanum + 1 dígito)."""
+    return isinstance(value, str) and bool(_ISIN_RE.match(value.strip()))
+
+
 def load_master_excel(path: Path) -> pd.DataFrame:
     xls = pd.ExcelFile(path)
 
@@ -301,6 +332,18 @@ def load_master_excel(path: Path) -> pd.DataFrame:
         name_col = next((norm_cols[c] for c in name_candidates if c in norm_cols), None)
 
         if not isin_col or not name_col:
+            # FIX-MASTER-LOAD-1 (2026-07-05): antes este `continue` era
+            # silencioso -- causa raíz de que la hoja "Wellington" (sin fila
+            # de cabecera, datos empezando en la fila 0) desapareciera del
+            # universo del maestro sin ningún aviso: 23 ISIN nunca llegaron
+            # a fund_master (nunca se descargó KIID, nunca se clasificaron).
+            # Ahora se avisa explícitamente para que este tipo de hueco no
+            # vuelva a pasar inadvertido si otra hoja tiene el mismo problema.
+            print(
+                f"[MASTER-LOAD-WARNING] Hoja '{sheet}' omitida del maestro: "
+                f"no se encontró columna ISIN/Nombre reconocible "
+                f"(columnas detectadas: {list(df.columns)})"
+            )
             continue
 
         df = df.rename(columns={
@@ -309,6 +352,17 @@ def load_master_excel(path: Path) -> pd.DataFrame:
         })
 
         df = df[df["ISIN"].notna()].copy()
+
+        # FIX-MASTER-LOAD-2: eliminar celdas ISIN con formato inválido
+        # (e.g. filas de cabecera repetidas como "Código ISIN" en Franklin).
+        _valid = df["ISIN"].astype(str).map(_is_valid_isin)
+        if not _valid.all():
+            _dropped = df.loc[~_valid, "ISIN"].astype(str).tolist()
+            print(
+                f"[MASTER-LOAD-WARNING] Hoja '{sheet}': {len(_dropped)} valor(es) "
+                f"ISIN con formato no válido descartados: {_dropped}"
+            )
+        df = df[_valid].copy()
 
         # la gestora viene del nombre de la hoja
         df["Management_Company"] = sheet.strip()
@@ -376,6 +430,50 @@ def _derive_data_quality_flag(parsed: dict) -> str:
         return "WARN"
 
     return "OK"
+
+
+# FIX-DQ-1 (2026-07-05): rollup determinista de Data_Quality_Flag a partir
+# de múltiples issues concurrentes -- ver comentario junto a `_dq_issues`
+# en el bucle principal para el porqué (antes: mutaciones secuenciales con
+# guards inconsistentes, y al menos un caso -- INTER_NTC_CONTRADICTION --
+# donde el propio log_ingestion quedaba condicionado al guard y se perdía
+# por completo cuando otro chequeo ya había tocado el flag).
+def _finalize_data_quality_issues(
+    conn, isin: str, base_level: str,
+    issues: list[tuple[str, str, str, str]],
+) -> str:
+    """
+    Vuelca TODOS los issues acumulados para este ISIN a ingestion_log
+    (incondicionalmente, uno por uno) y a fund_data_quality_issues
+    (reemplazando cualquier fila de un ciclo anterior para este ISIN),
+    y devuelve el Data_Quality_Flag final como el máximo de severidad
+    entre `base_level` (derivado de SRRI_Quality_Flag) y el `dq_level`
+    de cada issue.
+
+    issues: lista de (check_code, dq_level, log_status, message).
+    """
+    from shared.config import DATA_QUALITY_SEVERITY
+
+    for check_code, dq_level, log_status, message in issues:
+        log_ingestion(conn, isin, check_code, log_status, message)
+
+    conn.execute(
+        "DELETE FROM fund_data_quality_issues WHERE ISIN = ?", (isin,)
+    )
+    if issues:
+        now = datetime.datetime.utcnow().isoformat(timespec="seconds")
+        conn.executemany(
+            "INSERT INTO fund_data_quality_issues "
+            "(ISIN, check_code, level, message, detected_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            [
+                (isin, check_code, dq_level, message, now)
+                for check_code, dq_level, _log_status, message in issues
+            ],
+        )
+
+    levels = [base_level] + [dq_level for _, dq_level, _, _ in issues]
+    return max(levels, key=lambda lvl: DATA_QUALITY_SEVERITY.get(lvl, 0))
 
 
 
@@ -623,6 +721,164 @@ def run_block(
             if _is_structured:
                 classification["Fund_Nature"] = "Estructurado"
 
+            # INTER-DBLCLAIM (2026-07-04): tiebreaker para fondos reclamados
+            # por nombre tanto por renta_variable como por mixtos. Causa raíz:
+            # mixtos.get_universe_isins() usa patrones de nombre muy genéricos
+            # ("growth"/"income"/"dynamic"/"moderate"/"conservative") que son
+            # también descriptores de ESTILO comunes en renta variable pura
+            # (Growth investing, Income/dividend equity). mixtos se ejecuta
+            # DESPUÉS de renta_variable en el pipeline, así que sobrescribe
+            # silenciosamente vía COALESCE la clasificación correcta. Auditoría
+            # de 149 fondos con doble-reclamo: AB American Growth Portfolio
+            # ("mínimo 80%...en valores de renta variable"), Allianz EU EQ
+            # Growth ("mínimo 70%..."), Fidelity European/American Growth,
+            # JPM Europe Dynamic -- todos renta variable pura mal clasificada
+            # como Mixtos. Cuando el bloque MIXTOS clasifica Fund_Nature=
+            # 'Mixtos' pero BD ya tiene 'Renta Variable' (de un pase anterior
+            # de renta_variable en este mismo ciclo, o de un ciclo previo) Y el
+            # KIID declara explícitamente un umbral mayoritario de renta
+            # variable (≥60%), se re-clasifica con renta_variable.classify_fund()
+            # en lugar de aceptar la sobrescritura de mixtos -- corrección
+            # completa (Family/Type/etc.), no solo un parche de Fund_Nature.
+            if classification.get("Fund_Nature") == "Mixtos" and block_name == "MIXTOS":
+                _bd_nature_dblclaim = conn.execute(
+                    "SELECT Fund_Nature FROM fund_master WHERE ISIN=?", (isin,)
+                ).fetchone()
+                _bd_nature_dblclaim = _bd_nature_dblclaim[0] if _bd_nature_dblclaim else None
+                if _bd_nature_dblclaim == "Renta Variable":
+                    _eq_pct = detect_explicit_equity_majority(kiid_text)
+                    # FIX-P1-BENCH-VOTE (2026-07-04): cuando el KIID no declara
+                    # un umbral % explícito (ni numérico ni en palabras), se
+                    # consulta el índice de referencia como tercer voto
+                    # independiente antes de aceptar la sobrescritura de mixtos.
+                    _bench_vote = None
+                    if _eq_pct is None or _eq_pct < 60:
+                        _bench_vote = detect_nature_from_benchmark(_bench)
+                    if (_eq_pct is not None and _eq_pct >= 60) or _bench_vote == "Renta Variable":
+                        try:
+                            _rv_mod = importlib.import_module("blocks.renta_variable")
+                        except ImportError:
+                            _rv_mod = importlib.import_module("proyecto1.blocks.renta_variable")
+                        try:
+                            classification = _rv_mod.classify_fund(
+                                fund_name, kiid_text,
+                                benchmark_declared=_bench,
+                                srri_parsed=int(_srri_for_classify) if _srri_for_classify else None,
+                            )
+                        except TypeError:
+                            classification = _rv_mod.classify_fund(fund_name, kiid_text)
+                        if _eq_pct is not None and _eq_pct >= 60:
+                            log_ingestion(
+                                conn, isin, "INTER_DBLCLAIM_RV_WINS", "INFO",
+                                f"Doble-reclamo renta_variable+mixtos: KIID declara "
+                                f"{_eq_pct}% mínimo en renta variable → se preserva "
+                                f"Fund_Nature='Renta Variable' (mixtos no sobrescribe)"
+                            )
+                        else:
+                            log_ingestion(
+                                conn, isin, "INTER_DBLCLAIM_RV_WINS_BENCHMARK", "INFO",
+                                f"Doble-reclamo renta_variable+mixtos: KIID sin umbral "
+                                f"% explícito, pero Benchmark_Declared='{_bench}' es "
+                                f"índice de renta variable → se preserva "
+                                f"Fund_Nature='Renta Variable' (mixtos no sobrescribe)"
+                            )
+
+            # INTER-VOTE3 (2026-07-04): control de doble-verificación universal,
+            # extendido a TODOS los bloques y todo Fund_Nature (no solo el
+            # doble-reclamo mixtos+renta_variable de INTER-DBLCLAIM arriba).
+            # Tres señales independientes: Nombre (bloque ya asignado vía
+            # get_universe_isins), Texto-KIID (detect_nature_from_kiid +
+            # resolve_rf_subtype) y Benchmark_Declared (detect_nature_from_
+            # benchmark). Cuando Texto-KIID y Benchmark COINCIDEN entre sí en
+            # un valor distinto del ya asignado, se re-clasifica con el
+            # classify_fund() del bloque correspondiente al valor acordado.
+            # Auditoría full-corpus (2026-07-04): 62 fondos con este doble
+            # acuerdo independiente frente al valor ya asignado, en 5 bloques
+            # de origen distintos (MIXTOS, RESTANTES, MONETARIOS, ALTERNATIVOS,
+            # RENTA_VARIABLE) -- confirma que el gap no es exclusivo de un
+            # bloque (caso JPMorgan Europe High Yield Bond mal clasificado
+            # como Renta Variable pese a nombre truncado "H.YIEL.B.D" que los
+            # excludes de texto no capturan; DWS ESG Euro Money Market Fund
+            # mal clasificado como Renta Variable en RESTANTES).
+            # Excepción Monetario: detect_nature_from_kiid() solo llega a
+            # "Monetario" por dos vías -- patrones MMF explícitos (fiables) o
+            # el árbitro de último recurso "SRRI==1" (línea ~1730), que puede
+            # coincidir por casualidad con fondos absolute-return/macro que
+            # declaran su benchmark en términos de tipo de interés monetario
+            # como OBJETIVO DE RENTABILIDAD relativo, no como descripción de
+            # sus tenencias (confirmado: JPM Global Macro Opportunities
+            # LU0095938881/LU0115098948, SRRI bajo + benchmark ESTR overnight
+            # usado como "revalorización superior a su índice de referencia
+            # monetario" -- no es un fondo monetario). Por eso, para Monetario
+            # se exige además una frase MMF explícita en el propio texto KIID.
+            _v3_current_nature = classification.get("Fund_Nature")
+            if _v3_current_nature and kiid_text:
+                _v3_raw = detect_nature_from_kiid(kiid_text)
+                if _v3_raw == "_RF_pending":
+                    _v3_raw = resolve_rf_subtype(_name_l, kiid_text)
+                _v3_kiid_nature = _NATURE_CANONICAL.get(_v3_raw) if _v3_raw else None
+                _v3_bench_nature = detect_nature_from_benchmark(_bench)
+
+                def _v3_coarse(_n):
+                    return "Renta Fija" if _n in (
+                        "Renta Fija Corto Plazo", "Renta Fija Flexible"
+                    ) else _n
+
+                if (_v3_kiid_nature and _v3_bench_nature
+                        and _v3_coarse(_v3_kiid_nature) == _v3_bench_nature
+                        and _v3_coarse(_v3_current_nature) != _v3_bench_nature):
+                    # Monetario queda fuera de la reclasificación automática:
+                    # detect_nature_from_kiid() solo llega a "Monetario" vía
+                    # patrones MMF explícitos (evaluados con múltiples guards
+                    # ya afinados dentro de la propia función) o el árbitro de
+                    # último recurso SRRI==1 -- replicar aquí esos mismos
+                    # guards duplicaría lógica (viola R-1). Confirmado con
+                    # falso positivo real: JPM Global Macro Opportunities
+                    # menciona "mercado monetario" solo para una asignación
+                    # SECUNDARIA de liquidez (hasta 10%), no como estrategia
+                    # primaria -- una regex simple aquí no distingue eso.
+                    # Se registra como aviso (Data_Quality_Flag) igual que
+                    # INTER-NTC, sin reclasificar.
+                    if _v3_bench_nature == "Monetario":
+                        log_ingestion(
+                            conn, isin, "INTER_VOTE3_MONETARIO_FLAG_ONLY", "WARNING",
+                            f"KIID-text+Benchmark ('{_bench}') sugieren Monetario "
+                            f"frente a '{_v3_current_nature}' asignado por bloque "
+                            f"{block_name}, pero no se reclasifica automáticamente "
+                            f"(riesgo de falso positivo por asignación secundaria de "
+                            f"liquidez o benchmark usado como objetivo relativo) -- "
+                            f"revisar manualmente"
+                        )
+                        _v3_target_block = None
+                    else:
+                        _v3_target_block = {
+                            "Renta Variable":        "renta_variable",
+                            "Renta Fija Corto Plazo":"rf_corto",
+                            "Renta Fija Flexible":   "rf_flexible",
+                        }.get(_v3_kiid_nature)
+                    if _v3_target_block:
+                        try:
+                            _v3_mod = importlib.import_module(f"blocks.{_v3_target_block}")
+                        except ImportError:
+                            _v3_mod = importlib.import_module(f"proyecto1.blocks.{_v3_target_block}")
+                        _v3_classifier = dynamic_getattr(_v3_mod, ["classify_fund"])
+                        if _v3_classifier:
+                            try:
+                                classification = _v3_classifier(
+                                    fund_name, kiid_text,
+                                    benchmark_declared=_bench,
+                                    srri_parsed=int(_srri_for_classify) if _srri_for_classify else None,
+                                )
+                            except TypeError:
+                                classification = _v3_classifier(fund_name, kiid_text)
+                            log_ingestion(
+                                conn, isin, "INTER_VOTE3_RECLASSIFIED", "INFO",
+                                f"Doble señal independiente KIID-text+Benchmark "
+                                f"('{_bench}') acuerdan '{_v3_kiid_nature}' frente a "
+                                f"'{_v3_current_nature}' asignado por bloque "
+                                f"{block_name} → reclasificado"
+                            )
+
             _t_phases["classify"] = round((time.perf_counter() - _t0) * 1000)
 
             # ── Enriquecer con fund_characterizer ────────────────────────
@@ -730,15 +986,99 @@ def run_block(
                     "Clasificación mínima (solo Fund_Nature)",
                 )
 
+            # FIX-DQ-1 (2026-07-05): acumulador de issues de calidad de datos
+            # para este ISIN. Antes, cada chequeo (BL-65, FUNDCCY/ASSETCCY,
+            # HEDGCCY, INTER-NTC...) mutaba Data_Quality_Flag directamente,
+            # cada uno con su propio guard ('== OK', '!= WARN', sin guard) --
+            # inconsistente, y en el caso de INTER-NTC el propio log_ingestion
+            # quedaba condicionado al guard, perdiendo el registro por completo
+            # cuando un chequeo anterior ya había tocado el flag. Ahora cada
+            # chequeo solo hace .append(...) aquí; el rollup final (máximo de
+            # severidad) y el volcado a ingestion_log + fund_data_quality_issues
+            # se hacen una sola vez, de forma incondicional, justo antes de
+            # publish_fund (ver _finalize_data_quality_issues más abajo).
+            #
+            # Cada entrada es (code, dq_level, log_status, message):
+            #   - dq_level:  vocabulario de Data_Quality_Flag (OK/INFERRED/
+            #     WARN/MISSING/ERROR) -- alimenta el rollup por severidad y
+            #     la columna `level` de fund_data_quality_issues.
+            #   - log_status: vocabulario de ingestion_log.status (ERROR/
+            #     WARNING/WARN/INFO/DEBUG, ver convención en CLAUDE.md) --
+            #     son dos vocabularios distintos que coincidían por accidente
+            #     en varios casos existentes (p.ej. "WARN"/"WARN") pero no en
+            #     todos (RC-08 ya usaba log_status='INFO' con dq_level=
+            #     'INFERRED' -- una inferencia de fallback no es un evento de
+            #     severidad WARNING, pero sí debe degradar el flag agregado).
+            _dq_issues: list[tuple[str, str, str, str]] = []
+
             # BL-65: RESTANTES puede emitir Fund_Nature=None cuando no puede
             # determinar la naturaleza financiera real. En ese caso forzar DQ=WARN
             # para trazabilidad y auditoría manual posterior.
             if block_name == "RESTANTES" and classification.get("Fund_Nature") is None:
-                log_ingestion(
-                    conn, isin, "BL65_NATURE_UNKNOWN", "WARN",
+                _dq_issues.append((
+                    "BL65_NATURE_UNKNOWN", "WARN", "WARN",
                     "Fund_Nature no determinable por RESTANTES → Data_Quality_Flag=WARN"
-                )
+                ))
 
+            # FIX-FUNDCCY-3 / FIX-ASSETCCY-3 (2026-07-05): precedencia unificada
+            # COALESCE(texto KIID, nombre) para AMBAS divisas -- antes,
+            # Fund_Currency solo usaba el texto KIID (sin fallback a nombre) y
+            # Asset_Currency usaba el nombre COMO PRIMARIO (orden inverso). Se
+            # unifica el criterio: el texto KIID es la fuente regulatoria
+            # (documento oficial), el nombre es un fallback/cross-check de
+            # convención de mercado. Verificado corpus-wide antes de aplicar:
+            # para Asset_Currency, invertir el orden no cambia NINGÚN valor
+            # (0 desacuerdos de 186 fondos con ambas señales presentes) -- es
+            # una unificación de criterio sin coste, no una corrección.
+            _fundccy_kiid = parsed.get("Fund_Currency")
+            _fundccy_name = detect_fund_currency_from_name(fund_name)
+            _assetccy_kiid = detect_asset_currency_from_kiid_text(kiid_text)
+            _assetccy_name = detect_asset_currency_from_name(fund_name)
+
+            # FIX-GEO-1 (2026-07-05): mismo backbone COALESCE(texto KIID,
+            # nombre) que las divisas -- antes, Geography se resolvía
+            # exclusivamente desde el nombre dentro de cada bloque
+            # (detect_geography), y detect_kiid_attributes() solo consultaba
+            # el texto KIID cuando el nombre no daba señal (fallback, no
+            # cross-check). Auditoría de corpus (crossValidateFundAttribute)
+            # encontró bugs de raíz en AMBOS extractores antes de llegar a
+            # cablear este COALESCE -- ver FIX-GEO-NAME-1 / FIX-GEO-KIID-1 en
+            # classify_utils.py. Se recalculan ambas señales de forma
+            # independiente aquí (no se reutiliza classification.get(
+            # "Geography"), que ya viene mezclada nombre-primero desde el
+            # bloque) para poder comparar y registrar el desacuerdo.
+            _geo_name_l = (fund_name or "").lower()
+            _geo_kiid = detect_geography_from_kiid(kiid_text)
+            _geo_name = detect_geography_from_name(_geo_name_l)
+            # El valor elegido (ES, vocabulario interno) debe pasar por la
+            # MISMA traducción ES→EN que aplica derive_v20_attributes al
+            # valor del bloque -- si no, un desacuerdo resuelto aquí a favor
+            # del texto KIID dejaría "Geography" en español sin traducir
+            # (bug detectado en el propio dry-run de backfill: classification
+            # .get("Geography") ya viene traducido por el bloque, pero un
+            # valor recalculado de nuevo en pipeline.py no pasaba por
+            # _derive_geography_en). Development_Status se recalcula igual,
+            # en vez de heredar classification.get("Development_Status")
+            # (que reflejaría la Geography ANTIGUA decidida por el bloque,
+            # no la de este COALESCE).
+            # FIX-GEO-7 (2026-07-06): when KIID says 'Global' but the fund name
+            # carries a specific country/region signal, the name is more
+            # authoritative. KIID boilerplate ("invests in global bond/equity
+            # markets") is generic and often attached to country-focused funds
+            # (e.g. BGF CHINA BOND → KIID says "global bond markets"; 69 funds
+            # affected in the corpus). The opposite is not done: when KIID says
+            # a specific country, it may be right even if the name says 'Global'
+            # (e.g. ROBECO GLOBL PREM invests in China), so KIID keeps priority
+            # in all cases except the clear KIID=Global/name=specific mismatch.
+            _GEO_GLOBAL = "Global"
+            _geo_name_wins = bool(
+                _geo_kiid == _GEO_GLOBAL
+                and _geo_name
+                and _geo_name != _GEO_GLOBAL
+            )
+            _geo_es_final = _geo_name if _geo_name_wins else (_geo_kiid or _geo_name)
+            _geo_en_final = _derive_geography_en(_geo_es_final, _geo_name_l)
+            _devstat_final = derive_development_status(_geo_es_final, _geo_en_final, _geo_name_l)
 
             fund_master_record = {
                 # -------------------------
@@ -762,7 +1102,7 @@ def run_block(
                 "Style_Profile": classification.get("Style_Profile")
                     # BL-41 v23: fallback desde parser si el bloque no asignó valor
                     or parsed.get("Style_Profile"),
-                "Geography": classification.get("Geography"),
+                "Geography": _geo_en_final,
                 "Theme": classification.get("Theme"),
                 "Exposure_Bias":   classification.get("Exposure_Bias"),
                 "Subtype":         classification.get("Subtype")
@@ -799,7 +1139,7 @@ def run_block(
                 # Canonico v20 — derive_v20_attributes (engine). ROOT-CAUSE
                 # (Issue-1): sin estas claves el dict cherry-pick descartaba los
                 # 5 atributos nuevos antes de publish_fund → 100% NULL en BD.
-                "Development_Status": classification.get("Development_Status"),
+                "Development_Status": _devstat_final,
                 "Duration_Profile":   classification.get("Duration_Profile"),
                 "MMF_Structure":      classification.get("MMF_Structure"),
                 "Alt_Strategy":       classification.get("Alt_Strategy"),
@@ -815,7 +1155,14 @@ def run_block(
                 # Parsing documental (KIID)
                 # -------------------------
                 "SRRI": parsed.get("SRRI"),
-                "Fund_Currency": parsed.get("Fund_Currency"),
+                # FIX-FUNDCCY-NAME (2026-07-06): name suffix (share-class
+                # denomination) is definitionally the Fund_Currency for that
+                # specific share class. KIID text describes the BASE FUND
+                # currency, which differs for currency-hedged or multi-currency
+                # share classes (e.g. EUR INC class of a USD base fund).
+                # Name signal is authoritative when present; KIID as fallback.
+                "Fund_Currency": _fundccy_name or _fundccy_kiid,
+                "Asset_Currency": _assetccy_kiid or _assetccy_name,
                 "Portfolio_Currency": parsed.get("Portfolio_Currency"),
                 "Hedging_Policy": parsed.get("Hedging_Policy"),
                 "Replication_Method": parsed.get("Replication_Method"),
@@ -852,11 +1199,138 @@ def run_block(
                 "Data_Quality_Flag": _derive_data_quality_flag(parsed),
             }
 
-            # BL-65: si Fund_Nature=None (naturaleza no determinable), forzar DQ=WARN
-            # independientemente de la calidad SRRI.
-            if fund_master_record.get("Fund_Nature") is None:
-                fund_master_record["Data_Quality_Flag"] = "WARN"
+            # FIX-FUNDCCY-2 / FIX-ASSETCCY-2 (2026-07-05): cross-validación de
+            # AMBAS divisas -- comparar la señal de texto KIID (autoritativa,
+            # ver FIX-FUNDCCY-3 arriba) contra la señal de nombre. NO se
+            # sobrescribe el valor ya asignado (COALESCE ya decidió cuál usar);
+            # esto solo registra la discrepancia para revisión manual, igual
+            # que INTER-NTC para Benchmark_Declared -- la auditoría que motivó
+            # este chequeo encontró errores en AMBAS direcciones (118 fondos
+            # JPM donde el texto KIID caía a un fallback de nivel de subfondo;
+            # 2 fondos donde el nombre inducía a error y el texto KIID era
+            # correcto), así que ninguna señal se trata como autoritativa por
+            # sí sola a la hora de DECIDIR si hay un problema -- solo a la
+            # hora de elegir qué valor persistir.
+            _fundccy_mismatch = bool(
+                _fundccy_name and _fundccy_kiid and _fundccy_name != _fundccy_kiid
+            )
+            if _fundccy_mismatch:
+                # FIX-FUNDCCY-NAME: name (share-class suffix) is now the stored
+                # value. Log as INFO — the disagreement is expected and resolved.
+                _dq_issues.append((
+                    "FUNDCCY_NAME_WINS", "INFO", "INFO",
+                    f"Fund_Currency fijada por sufijo de nombre ({_fundccy_name}); "
+                    f"texto KIID indicaba {_fundccy_kiid} (divisa de subfondo base)."
+                ))
 
+            _assetccy_mismatch = bool(
+                _assetccy_name and _assetccy_kiid and _assetccy_name != _assetccy_kiid
+            )
+            if _assetccy_mismatch:
+                _dq_issues.append((
+                    "ASSETCCY_NAME_KIID_MISMATCH", "WARN", "WARN",
+                    f"Asset_Currency (texto KIID)={_assetccy_kiid} pero el nombre "
+                    f"del fondo indica {_assetccy_name} -- revisar manualmente, "
+                    f"ninguna señal es autoritativa por sí sola."
+                ))
+
+            # FIX-GEO-1 (2026-07-05): cross-validación Geography, mismo
+            # patrón que FUNDCCY/ASSETCCY -- no sobrescribe el valor ya
+            # asignado (COALESCE ya decidió), solo registra el desacuerdo
+            # para revisión manual. Verificado corpus-wide tras arreglar los
+            # dos extractores (FIX-GEO-NAME-1, FIX-GEO-KIID-1): de 619 fondos
+            # con ambas señales, 594 concuerdan (96%) y quedan 25 casos
+            # residuales -- genuinamente ambiguos (p.ej. 'ROBECO INDIAN EQ':
+            # nombre=India vs KIID=Asia, ambos correctos a distinto nivel de
+            # especificidad), no bugs de extracción adicionales.
+            if _geo_name_wins:
+                # FIX-GEO-7: name overrode KIID=Global → log as INFO, not WARN.
+                _dq_issues.append((
+                    "GEOGRAPHY_NAME_WINS", "INFO", "INFO",
+                    f"Geography corregida: nombre indica {_geo_name}, "
+                    f"texto KIID decía 'Global' (genérico); se usa señal de nombre."
+                ))
+            elif _geo_name and _geo_kiid and _geo_name != _geo_kiid:
+                # Both signals are specific but disagree → genuinely ambiguous.
+                _dq_issues.append((
+                    "GEOGRAPHY_NAME_KIID_MISMATCH", "WARN", "WARN",
+                    f"Geography (texto KIID)={_geo_kiid} pero el nombre del "
+                    f"fondo indica {_geo_name} -- revisar manualmente, "
+                    f"ninguna señal es autoritativa por sí sola."
+                ))
+
+            # FIX-HEDGCCY-1 (2026-07-05): cross-validación Hedging_Policy
+            # reutilizando la comparación de divisas ya existente en
+            # detect_fx_share_class_mismatch -- NO como detector independiente
+            # nuevo, sino como señal de plausibilidad sobre el propio
+            # Hedging_Policy almacenado: si el fondo se declara "Hedged" pero
+            # Asset_Currency == Fund_Currency (no hay descalce de divisa que
+            # cubrir), la combinación es lógicamente inconsistente.
+            #
+            # IMPORTANTE: detect_fx_share_class_mismatch() devuelve False
+            # tanto para "sin descalce confirmado" como para "Asset_Currency
+            # desconocida" (None) -- una conflación segura para su uso
+            # original en BL-44 (donde "sin datos" debe tratarse como "no
+            # eximir"), pero incorrecta aquí si se usa sin más: Asset_Currency
+            # es None en ~70% del corpus por diseño conservador (ver
+            # detect_asset_currency_from_name/_kiid_text), así que tratar
+            # "desconocida" como "confirmada igual" habría marcado 628 fondos
+            # como inconsistentes (verificado corpus-wide antes de aplicar) --
+            # casi todos simplemente sin dato de Asset_Currency, no con un
+            # descalce genuinamente ausente. Se sigue invocando la función
+            # (fuente única de la comparación de divisas), pero se exige
+            # ADEMÁS que ambas divisas estén REALMENTE pobladas antes de
+            # interpretar su `False` como "confirmada igual" -- solo esa
+            # combinación es evidencia positiva de que no hay descalce que
+            # justifique la cobertura declarada. La dirección inversa
+            # (descalce confirmado pero Hedging_Policy no dice "Hedged") NO
+            # se marca -- una clase sin cobertura con divisas distintas es
+            # una estructura legítima y común, no un error.
+            _asset_ccy_eff = fund_master_record.get("Asset_Currency")
+            _fund_ccy_eff = fund_master_record.get("Fund_Currency")
+            _hedging_eff = fund_master_record.get("Hedging_Policy")
+            _hedging_claims_hedged = bool(_hedging_eff) and _hedging_eff.strip().lower() in (
+                "hedged", "partially hedged"
+            )
+            _both_currencies_known = bool(_asset_ccy_eff) and bool(_fund_ccy_eff)
+            _raw_currency_mismatch = detect_fx_share_class_mismatch(
+                _asset_ccy_eff, _fund_ccy_eff, hedging_policy=None, srri=None
+            )
+            _confirmed_no_mismatch = _both_currencies_known and not _raw_currency_mismatch
+            if _hedging_claims_hedged and _confirmed_no_mismatch:
+                _dq_issues.append((
+                    "HEDGCCY_NO_MISMATCH_INCONSISTENCY", "WARN", "WARN",
+                    f"Hedging_Policy={_hedging_eff!r} pero Asset_Currency == "
+                    f"Fund_Currency (={_fund_ccy_eff!r}, ambas confirmadas) -- "
+                    f"no hay descalce de divisa que justifique la cobertura "
+                    f"declarada; revisar manualmente."
+                ))
+
+            # BL-65: si Fund_Nature=None (naturaleza no determinable), DQ=WARN
+            # independientemente de la calidad SRRI (acumulado, no mutación
+            # incondicional directa -- ver FIX-DQ-1).
+            if fund_master_record.get("Fund_Nature") is None:
+                _dq_issues.append((
+                    "BL65_NATURE_NULL", "WARN", "WARN",
+                    "Fund_Nature no determinable → Data_Quality_Flag=WARN"
+                ))
+
+            # RC-08: Restantes con Strategy inferido desde nombre (sin texto KIID)
+            # → issue de nivel INFERRED. Causa raíz: restantes.py llama
+            # _detect_strategy(None, subtype, name_l) — el primer argumento
+            # (texto KIID) es None. Se acumula siempre (FIX-DQ-1): el rollup
+            # final por severidad ya garantiza que un WARN/MISSING más grave
+            # en otro chequeo no se vea "tapado" por este, sin necesidad de
+            # condicionar el propio log_ingestion a que el flag siga en 'OK'
+            # (ese gate perdía el registro por completo cuando ya había otro
+            # problema — el mismo bug de fondo que INTER-NTC).
+            if (fund_master_record.get("Fund_Nature") == "Restantes"
+                    and fund_master_record.get("Strategy")):
+                _dq_issues.append((
+                    "RC08_STRATEGY_INFERRED", "INFERRED", "INFO",
+                    f"Strategy='{fund_master_record['Strategy']}' inferido desde nombre"
+                    " (sin texto KIID) → Data_Quality_Flag='INFERRED'"
+                ))
 
             # Is_ESG override: SFDR Art.8/9 es más fiable que keywords en nombre
             if parsed.get("Sfdr_Article") in (8, 9):
@@ -949,7 +1423,36 @@ def run_block(
                     (_nat44 == "Monetario" and _srri44_int >= 3)
                     or (_nat44 == "Renta Fija Corto Plazo" and _srri44_int >= 4)
                 )
-                if _reclasify44:
+                # BL-44-FX (2026-07-05, extiende la decisión de usuario del
+                # 29-abr-2026): antes de forzar 'Restantes' incondicionalmente,
+                # comprobar si el conflicto Nature/SRRI tiene una explicación
+                # cambiaria legítima -- el nombre declara una divisa distinta
+                # de la clase de participación (Fund_Currency), lo que añade
+                # una capa de riesgo cambiario al SRRI sin alterar la Nature
+                # real del fondo. Confirmado: SISF US Dollar Liquidity (SRRI=3,
+                # Fund_Currency=EUR, genuino MMF) y BGF US Dollar Short
+                # Duration Bond (SRRI=4, Fund_Currency=EUR, genuino RF Corto).
+                # Deliberadamente NO exime JPM Global Macro Opportunities
+                # (mismo SRRI=3, pero sin descalce divisa-nombre -- su voto
+                # Monetario es un falso positivo genuino de benchmark de tasa
+                # de referencia, no una cuestión cambiaria) -- verificado
+                # corpus-wide contra los 83 ISIN marcados históricamente por
+                # BL-44 antes de activar esta excepción.
+                _bl44_fx_exempt = _reclasify44 and detect_fx_share_class_mismatch(
+                    fund_master_record.get("Asset_Currency"),
+                    fund_master_record.get("Fund_Currency"),
+                    fund_master_record.get("Hedging_Policy"),
+                    _srri44_int,
+                )
+                if _reclasify44 and _bl44_fx_exempt:
+                    log_ingestion(
+                        conn, isin, "BL44_FX_RISK_EXEMPTION", "INFO",
+                        f"Fund_Nature={_nat44} SRRI={_srri44} incompatibilidad detectada "
+                        f"pero exenta -- nombre declara divisa distinta de "
+                        f"Fund_Currency={fund_master_record.get('Fund_Currency')!r} "
+                        f"(riesgo cambiario explica el SRRI elevado); Nature preservada."
+                    )
+                elif _reclasify44:
                     # SIEMPRE asignar 'Restantes', nunca None ni la inferida.
                     fund_master_record["Fund_Nature"] = "Restantes"
                     fund_master_record["_bl44_force_overwrite"] = True
@@ -970,11 +1473,25 @@ def run_block(
             # La función actúa SOLO sobre Family/Type. Fund_Nature ya está en 'Restantes'
             # y no debe alterarse.
             if _bl44_triggered:
+                _dq_before_bl62 = fund_master_record.get("Data_Quality_Flag")
                 fund_master_record = propagate_nature_to_restantes_type_family(
                     fund_master_record,
                     isin,
                     log_fn=print,
                 )
+                # FIX-DQ-1: la función interna (classify_utils.py) puede fijar
+                # Data_Quality_Flag='WARN' en su Fase 3 residual (sin patrón
+                # léxico identificable) -- antes solo visible por `print`
+                # (log_fn), nunca en ingestion_log. Se detecta el cambio aquí
+                # y se acumula como issue explícito para que quede auditado
+                # igual que el resto.
+                if (fund_master_record.get("Data_Quality_Flag") != _dq_before_bl62
+                        and fund_master_record.get("Data_Quality_Flag") is not None):
+                    _dq_issues.append((
+                        "BL62_RESIDUAL_NO_PATTERN", fund_master_record["Data_Quality_Flag"], "INFO",
+                        "Family/Type=NULL tras BL-44→Restantes: sin patrón léxico "
+                        "identificable en el nombre del fondo"
+                    ))
 
             # Theme: rellenar para bloques que no lo asignan
             if not fund_master_record.get("Theme"):
@@ -1008,15 +1525,25 @@ def run_block(
                 _nat = fund_master_record.get("Fund_Nature")
                 if _nat in ("Monetario", "Renta Fija Corto Plazo"):
                     fund_master_record["Investment_Universe"] = "Liquidity"
-                elif _geo in ("EEUU", "China", "Japón", "India", "Brasil",
-                              "Corea del Sur", "Australia", "Canadá",
-                              "México", "Rusia", "Italia", "Alemania",
-                              "Francia", "España", "Reino Unido", "Suiza"):
+                # FIX-GEO-2 (2026-07-05): estas listas comparaban _geo (que
+                # Geography almacena EN-canónico desde hace tiempo, ver
+                # DOMAIN_VALUES['Geography'] en shared/config.py) contra
+                # literales ES ("EEUU", "Japón", "Europa", "América del
+                # Norte"...) -- nunca coincidían salvo "China" (idéntico en
+                # ambos idiomas), dejando esta rama efectivamente muerta.
+                # Confirmado sin impacto en el corpus actual (0 fondos con
+                # Geography poblado e Investment_Universe NULL a la vez),
+                # pero se corrige la comparación al vocabulario real para no
+                # dejar una trampa latente. Solo China/Japan/India son
+                # "país" en el catálogo v20 (el resto de geografías son
+                # regiones/continentes, incl. North America -- ver BL-52
+                # más abajo, con el mismo bug, para el caso "país único
+                # dentro de una región" como EEUU).
+                elif _geo in ("China", "Japan", "India"):
                     fund_master_record["Investment_Universe"] = "Country"
-                elif _geo in ("Europa", "Asia", "Emergentes",
-                              "Latinoamérica", "Europa del Este",
-                              "Asia Pacífico", "Oriente Medio", "África",
-                              "Europa Central", "América del Norte"):
+                elif _geo in ("Europe", "North America", "Asia-Pacific",
+                              "Latin America", "Eastern Europe",
+                              "Middle East & Africa"):
                     fund_master_record["Investment_Universe"] = "Regional"
                 elif _geo == "Global":
                     fund_master_record["Investment_Universe"] = "Global"
@@ -1026,15 +1553,65 @@ def run_block(
             # Causa raíz: el clasificador asigna Country pero luego la inferencia
             # de Geography devuelve un valor de región amplia (Latinoamérica,
             # Europa del Este, etc.) que es semánticamente incompatible con Country.
-            _REGION_VALUES = {
-                "Latinoamérica", "Europa del Este", "Asia Pacífico",
-                "Emergentes", "América Latina", "Europa Central",
-                "África", "Oriente Medio", "América del Norte",
-            }
-            _univ_eff = fund_master_record.get("Investment_Universe")
-            _geo_eff  = fund_master_record.get("Geography")
-            if _univ_eff == "Country" and _geo_eff in _REGION_VALUES:
-                fund_master_record["Investment_Universe"] = "Regional"
+            # FIX-GEO-2 (2026-07-05): _REGION_VALUES comparaba contra literales
+            # ES (Geography es EN-canónico desde hace tiempo) -- esta regla
+            # llevaba tiempo sin dispararse nunca. Confirmado corpus-wide: 34
+            # fondos con Investment_Universe='Country' + Geography='North
+            # America' (p.ej. 'JPM US Growth', familia 'JPM Income') que esta
+            # regla debía corregir a 'Regional'. Revivida con el vocabulario
+            # EN correcto, tras confirmar con el usuario que 'North America'
+            # (única traducción disponible de 'EEUU' en DOMAIN_VALUES, sin
+            # valor 'United States' propio) debe tratarse como región aquí,
+            # igual que la intención original (su lista ES ya incluía
+            # "América del Norte").
+            # FIX-GEO-4 (2026-07-05): dos bugs adicionales encontrados al
+            # auditar el run de producción del usuario tras FIX-GEO-2 -- 8
+            # fondos (p.ej. FIDELITY ITALY, FTGF PUT LG CAP VAL) seguían
+            # mostrando la incoherencia en BD pese al fix anterior:
+            #   1. Reimplementaba aquí, en local, el mismo catálogo de
+            #      regiones que ya vive en classify_utils.py
+            #      (_REGION_GEOGRAPHIES, usado por validate_geography_universe
+            #      / INTER-10) -- violación DRY (Principio R-1: los mapas de
+            #      normalización/caracterización viven solo en classify_utils,
+            #      la responsabilidad de esta validación es suya, no de
+            #      pipeline.py). Sustituido por una llamada directa a la
+            #      función canónica.
+            #   2. Leía Geography/Investment_Universe directamente de
+            #      fund_master_record (valor recalculado ESTE ciclo, que
+            #      puede ser None si el fondo está CACHED y ninguna señal
+            #      nueva de nombre/KIID aporta geografía) en vez del valor
+            #      EFECTIVO vía EffectiveReader (como ya hace BL-50, arriba).
+            #      Cuando fund_master_record["Geography"] es None este ciclo,
+            #      la condición nunca se cumplía y la regla no se disparaba
+            #      -- el COALESCE de sqlite_writer conservaba entonces el
+            #      Geography/Investment_Universe de BD, potencialmente
+            #      incoherentes entre sí desde un ciclo anterior, sin que
+            #      esta regla llegara nunca a re-certificarlos.
+            _geo_eff  = eff.get("Geography", fund_master_record)
+            _univ_eff = eff.get("Investment_Universe", fund_master_record)
+            _geouniv_status, _geouniv_msg, _geouniv_corrected = validate_geography_universe(
+                _geo_eff, _univ_eff
+            )
+            if _geouniv_status == "CORRECTED":
+                fund_master_record["Investment_Universe"] = _geouniv_corrected
+                _dq_issues.append((
+                    "GEOGRAPHY_UNIVERSE_CORRECTED", "INFO", "INFO", _geouniv_msg
+                ))
+            elif _geouniv_status == "WARNING" and _geo_name_wins:
+                # FIX-GEO-7: name drove Geography to a specific country AND
+                # Universe is still 'Global' (stale from a prior cycle).
+                # Safe to auto-correct because the name signal is the
+                # authority for both Geography AND Universe in this case.
+                fund_master_record["Investment_Universe"] = "Country"
+                _dq_issues.append((
+                    "GEOGRAPHY_UNIVERSE_CORRECTED", "INFO", "INFO",
+                    f"Universe corregido a 'Country' ({_geo_eff} confirmado "
+                    f"por señal de nombre; KIID decía 'Global')."
+                ))
+            elif _geouniv_status == "WARNING":
+                _dq_issues.append((
+                    "GEOGRAPHY_UNIVERSE_WARNING", "WARN", "WARN", _geouniv_msg
+                ))
 
             # ── BL-50: Inferencia inversa Universe → Geography ─────────────
             # Para los casos unívocos (Global, Liquidity) donde Universe está
@@ -1051,9 +1628,9 @@ def run_block(
                     # (solo EUR/USD tienen valor canónico inequívoco)
                     _curr_liq = fund_master_record.get("Fund_Currency")
                     if _curr_liq == "EUR":
-                        fund_master_record["Geography"] = "Europa"
+                        fund_master_record["Geography"] = "Europe"
                     elif _curr_liq == "USD":
-                        fund_master_record["Geography"] = "EEUU"
+                        fund_master_record["Geography"] = "North America"
                     # GBP, JPY, CHF — sin señal canónica fiable → dejar NULL
 
             # Investment_Universe + Geography: inferir desde Benchmark_Declared
@@ -1123,7 +1700,13 @@ def run_block(
                     if not fund_master_record.get("Investment_Universe"):
                         fund_master_record["Investment_Universe"] = _inferred_univ_b
                     if _inferred_geo_b and not fund_master_record.get("Geography"):
-                        fund_master_record["Geography"] = _inferred_geo_b
+                        # FIX-GEO-1 (2026-07-05): _inferred_geo_b llega en
+                        # vocabulario ES ("Europa", "Emergentes", "Italia")
+                        # -- traducir antes de persistir, igual que el valor
+                        # COALESCE principal más arriba (ver _geo_en_final).
+                        fund_master_record["Geography"] = _derive_geography_en(
+                            _inferred_geo_b, _geo_name_l
+                        )
 
             # Accumulation_Policy: inferir desde nombre si NULL (P05)
             if not fund_master_record.get("Accumulation_Policy"):
@@ -1235,6 +1818,25 @@ def run_block(
                 elif _strat_sp == "Activo":
                     fund_master_record["Style_Profile"] = "Blend"
                 # Strategy=NULL → no hay información suficiente, dejar NULL
+
+            # INTER-SP: Style_Profile (Value/Growth/Blend) solo aplica a Renta Variable.
+            # Monetario, RFCP y RFF son fondos de renta fija pura donde el concepto de
+            # estilo de gestión de acciones no tiene significado semántico.
+            # Mixtos y Alternativo se preservan: pueden tener exposición equity significativa
+            # con sesgo de estilo declarado en el KID.
+            # _style_profile_cleared=True → sqlite_writer usa OW en lugar de COALESCE,
+            # limpiando valores stale en BD incluso en ciclos CACHED (R-4 defensivo).
+            _sp_inter_nature = fund_master_record.get("Fund_Nature")
+            if _sp_inter_nature in ("Monetario", "Renta Fija Corto Plazo", "Renta Fija Flexible"):
+                _sp_val = fund_master_record.get("Style_Profile")
+                if _sp_val:
+                    log_ingestion(
+                        conn, isin, "INTER_SP_NULL", "INFO",
+                        f"Style_Profile='{_sp_val}' → NULL "
+                        f"(no aplica para Fund_Nature='{_sp_inter_nature}')"
+                    )
+                fund_master_record["Style_Profile"] = None
+                fund_master_record["_style_profile_cleared"] = True
 
             # BL-27-ext: Market_Cap_Focus en RV sin restricción de cap → "All Cap"
             # Si RV sin MCF y sin Sector_Focus (fondos sectoriales no tienen eje
@@ -1449,6 +2051,22 @@ def run_block(
                     and not fund_master_record.get("Market_Cap_Focus")):
                 fund_master_record["Market_Cap_Focus"] = "All Cap"
 
+            # INTER-MCF: Market_Cap_Focus (Large/Mid/Small/All Cap) solo aplica a
+            # Renta Variable. Para Monetario y RFCP no existe el concepto de
+            # capitalización bursátil de las posiciones.
+            # _market_cap_focus_cleared=True → sqlite_writer OW para limpiar stale en BD.
+            _mcf_inter_nature = fund_master_record.get("Fund_Nature")
+            if _mcf_inter_nature in ("Monetario", "Renta Fija Corto Plazo"):
+                _mcf_val = fund_master_record.get("Market_Cap_Focus")
+                if _mcf_val:
+                    log_ingestion(
+                        conn, isin, "INTER_MCF_NULL", "INFO",
+                        f"Market_Cap_Focus='{_mcf_val}' → NULL "
+                        f"(no aplica para Fund_Nature='{_mcf_inter_nature}')"
+                    )
+                fund_master_record["Market_Cap_Focus"] = None
+                fund_master_record["_market_cap_focus_cleared"] = True
+
             # ── Limpieza defensiva Benchmark_Declared (BL-38 v22) ──────────
             # Causa raíz: el parser puede devolver None para el benchmark,
             # pero BD preserva vía COALESCE el valor antiguo contaminado.
@@ -1497,6 +2115,72 @@ def run_block(
                         conn, isin, "BENCHMARK_CLEANUP", "INFO",
                         f"BD contaminado limpiado: {_bench_bd[:60]!r}"
                     )
+
+            # INTER-NTC: Name-vs-KIID-Text Contradiction check (genérico, todos
+            # los bloques). Causa raíz (sesión 2026-06-30): get_universe_isins()
+            # selecciona el universo de cada bloque por patrones del NOMBRE
+            # (heurística), y classify_fund() no siempre contrasta esa selección
+            # con señales fuertes del TEXTO del KIID. Esto permitió que 14 fondos
+            # de bonos (iShares/PIMCO/Vanguard) entraran al universo RV por falsos
+            # positivos de substring ("shares" en "ishares", "climate" en "pimco
+            # climate bnd", "global" en "vgd global bd indx" — ver BL-RV-EX1/EX2
+            # en renta_variable.py). Esos 14 casos ya se corrigieron en el origen
+            # (universo + patrones), pero esta regla añade una red de seguridad
+            # genérica para futuros casos similares en cualquier bloque, usando
+            # Benchmark_Declared (ya extraído y depurado arriba) como señal de
+            # texto independiente del nombre.
+            # No re-enruta el fondo entre bloques (son mutuamente excluyentes y
+            # el cambio de Heuristic_Block fuera de su bloque de origen podría
+            # crear bucles) — solo degrada Data_Quality_Flag para visibilidad,
+            # dejando la corrección de fondo a una investigación dirigida (mismo
+            # patrón que el caso de los 14 fondos de bonos).
+            _ntc_nature   = fund_master_record.get("Fund_Nature")
+            _ntc_bench_l  = (fund_master_record.get("Benchmark_Declared") or "").lower()
+            _NTC_BOND_KW = [
+                "bond", "aggregate", "treasury", "gilt", "bund", "obligaciones",
+                "corporate bond", "government bond", "credit index",
+            ]
+            _NTC_EQUITY_KW = [
+                "msci world", "msci acwi", "msci europe", "msci emerging",
+                "s&p 500", "stoxx europe", "euro stoxx", "ftse 100", "dax",
+                "nasdaq 100", "russell 2000", "nikkei 225",
+            ]
+            _ntc_contradiction = None
+            if _ntc_nature == "Renta Variable" and any(
+                    k in _ntc_bench_l for k in _NTC_BOND_KW):
+                _ntc_contradiction = (
+                    f"Fund_Nature='Renta Variable' pero Benchmark_Declared "
+                    f"sugiere renta fija: '{fund_master_record.get('Benchmark_Declared')}'"
+                )
+            elif _ntc_nature in (
+                    "Monetario", "Renta Fija Corto Plazo", "Renta Fija Flexible"
+            ) and any(k in _ntc_bench_l for k in _NTC_EQUITY_KW):
+                # BL-NTC-SRRI (2026-07-05): Renta Fija Flexible con SRRI≤2
+                # no puede tener mandato de renta variable (vol <5% es
+                # incompatible con renta variable pura). El benchmark de equity
+                # en estos fondos es aspiracional/comparativo, no el mandato
+                # (ej. DWS Invest Conservative Opportunities: bonos
+                # convertibles y preservación de capital con MSCI World como
+                # referencia relativa). Confirmed: only affects RF_Flexible;
+                # Monetario/RF_Corto nunca tienen SRRI≤2 con equity benchmark
+                # en el corpus (0 casos verificado).
+                _ntc_srri_raw = fund_master_record.get("SRRI")
+                _ntc_srri_guard = (
+                    _ntc_nature == "Renta Fija Flexible"
+                    and _ntc_srri_raw is not None
+                    and int(float(str(_ntc_srri_raw))) <= 2
+                )
+                if not _ntc_srri_guard:
+                    _ntc_contradiction = (
+                        f"Fund_Nature='{_ntc_nature}' pero Benchmark_Declared "
+                        f"sugiere renta variable: '{fund_master_record.get('Benchmark_Declared')}'"
+                    )
+            if _ntc_contradiction:
+                _dq_issues.append((
+                    "INTER_NTC_CONTRADICTION", "WARN", "WARNING",
+                    _ntc_contradiction
+                ))
+
             # Causa raíz: el parser solo detecta Hedged con señales positivas.
             # La ausencia de "hedged" en nombre/KIID no implica que el fondo
             # esté cubierto, pero tampoco implica que NO lo esté — salvo cuando
@@ -1618,7 +2302,12 @@ def run_block(
                             _inferred_geo = "Asia"
 
                     if _inferred_geo:
-                        fund_master_record["Geography"] = _inferred_geo
+                        # FIX-GEO-1 (2026-07-05): _inferred_geo llega en
+                        # vocabulario ES ("EEUU", "Europa", "Asia") -- mismo
+                        # gap de traducción que el fallback BL-50 de arriba.
+                        fund_master_record["Geography"] = _derive_geography_en(
+                            _inferred_geo, _name_geo.lower()
+                        )
 
 
 
@@ -1698,8 +2387,9 @@ def run_block(
 
                     if _cost_dict:
                         # Extraer claves privadas antes de mezclar en fund_master_record
-                        _schedule_rows = _cost_dict.pop('_cost_schedule_rows', []) or []
-                        _oc_mismatch   = _cost_dict.pop('_oc_aci_mismatch', False)
+                        _schedule_rows    = _cost_dict.pop('_cost_schedule_rows', []) or []
+                        _oc_mismatch      = _cost_dict.pop('_oc_aci_mismatch', False)
+                        _oc_mismatch_ter  = _cost_dict.pop('_oc_aci_mismatch_ter_pct', None)
 
                         # Campos que van a fund_master (11 columnas Sprint 2)
                         _COST_FIELDS = {
@@ -1713,10 +2403,18 @@ def run_block(
                             if _cf in _cost_dict:
                                 fund_master_record[_cf] = _cost_dict[_cf]
 
-                        # Señalizar mismatch OC/ACI para BL-COST-5
-                        if _oc_mismatch:
+                        # BL-COST-5: corregir OC cuando el extractor detectó mismatch.
+                        # correct_oc_aci_mismatch hace una escritura directa (no-COALESCE)
+                        # para sobrescribir un OC que contiene ACI_RHP en ratio form.
+                        # Solo se aplica si ter_pct está disponible (extractor reconstruyó TER).
+                        if _oc_mismatch and _oc_mismatch_ter is not None:
+                            correct_oc_aci_mismatch(conn, isin, _oc_mismatch_ter,
+                                                    source_note="BL-COST-5")
                             log_ingestion(conn, isin, "BL_COST_4C_OC_ACI_MISMATCH",
-                                          "WARN", "OC en BD parece ACI; diferido a BL-COST-5")
+                                          "FIX", f"OC corregido: {_oc_mismatch_ter:.4f}% (TER recon)")
+                        elif _oc_mismatch:
+                            log_ingestion(conn, isin, "BL_COST_4C_OC_ACI_MISMATCH",
+                                          "WARN", "OC parece ACI pero TER no reconstruible; sin cambio")
             # ── Fin BL-COST-4c ────────────────────────────────────────────────────
 
             # ── v20 (§4.2/§4.4): arbitración dual de coste (Job B) ─────────────────
@@ -1771,13 +2469,15 @@ def run_block(
                     ('ACI_RHP',            'Cost_ACI_RHP_Arbitration', 'Cost_ACI_RHP_BandsX'),
                     ('ACI_1Y',             'Cost_ACI_1Y_Arbitration',  'Cost_ACI_1Y_BandsX'),
                 ]
-                # P0-ARB-GUARD: BandsX ACI values > 25% are xband extraction
-                # errors (scenario section bleed). Confirmed: LU0503631987
-                # had Cost_ACI_RHP_BandsX > 25, written here without a guard,
-                # causing CHECK constraint failure and blocking publish_fund.
+                # P0-ARB-GUARD: BandsX ACI values above threshold are xband
+                # extraction errors (scenario section bleed). Confirmed:
+                # LU0503631987 had Cost_ACI_RHP_BandsX > 25, blocking publish.
+                # Tightened 2026-06-28 (audit RC-01): multi-year RHP guard
+                # lowered to 15% to match P0-ACI-RHP-GUARD in priips_cost_extractor.
                 # ACI is stored in percent form in fund_master (schema CHECK <= 25).
                 _ACI_COLS = ('ACI_RHP', 'ACI_1Y')
-                _MAX_ACI_PCT = 25.0
+                _rhp_yrs = fund_master_record.get('Cost_RHP_Years') or 1.0
+                _MAX_ACI_PCT = 15.0 if _rhp_yrs > 1.0 else 25.0
                 for _fm_col, _verdict_col, _bandsx_col in _arb_map:
                     _verdict = _arb_fields.get(_verdict_col)
                     _bandsx  = _arb_fields.get(_bandsx_col)
@@ -1799,6 +2499,13 @@ def run_block(
 
             # PDF ya consumido por parse + coste + arbitración: liberar (memoria).
             pdf_bytes = None
+
+            # FIX-DQ-1: rollup final de Data_Quality_Flag -- único punto de
+            # escritura, tras acumular todos los issues detectados durante
+            # el procesamiento de este ISIN (ver _dq_issues arriba).
+            fund_master_record["Data_Quality_Flag"] = _finalize_data_quality_issues(
+                conn, isin, _derive_data_quality_flag(parsed), _dq_issues,
+            )
 
             kiid_record = {
                 "ISIN": isin,

@@ -37,13 +37,90 @@ def get_universe_isins(df_master) -> List[str]:
         "climate", "clean energy", "renewable",
         "value", "growth", "quality", "income",
         "emerging", "europe", "usa", "global",
+        # BL-RV-IN2 (2026-07-04): "ishares" as unconditional include. The
+        # BL-RV-EX2 word-boundary fix on "shares" (correctly blocking iShares
+        # BOND funds from entering via the "ishares" substring) also orphaned
+        # genuine iShares EQUITY index funds ("ISHARES WLD EQ INDX", "ISHARES
+        # JAP INDX", "ISHARES US/UK INDEX") whose abbreviated country/asset
+        # tags ("EQ", "JAP", "US", "UK") match none of the other include
+        # patterns -- confirmed via full-corpus orphan check (16 funds).
+        # Safe because exclude_patterns run FIRST: any iShares BOND fund is
+        # already excluded upstream via "bnd"/"bd indx"/"corp indx"/
+        # "govt indx"/"gvt indx"/"1-5 ind"/"1-5 idx" before this is reached.
+        "ishares",
+        # BL-RV-IN3 (2026-07-04): "dws esg dynamic opp"/"dws esg dyn
+        # opport" (naming variants, same fund family) explicit include.
+        # Confirmed equity-primary via KIID text ("invierte especialmente
+        # en acciones...Como complemento a las acciones, el fondo invierte
+        # en valores de renta fija") -- doesn't match any other RV include
+        # pattern by name alone ("Dynamic Opportunities" is generic).
+        "dws esg dynamic opp", "dws esg dyn opport",
+        # BL-RV-IN4 (2026-07-05): "Thematics" is the Natixis equity-only thematic
+        # sub-advisor brand (AI & Robotics, Subscription Economy, Safety, Climate,
+        # Health, Water). All sub-funds are pure equity; bare token catches all
+        # naming variants. KIID text is unusable for these (stored doc is the
+        # Natixis SICAV annual report — SRRI=NULL for all 3 affected ISINs).
+        "thematics",
     ]
     exclude_patterns = [
         "money", "monetary", "liquidity", "cash",
         "bond", "fixed income", "renta fija",
         "balanced", "allocation", "multi asset",
         "absolute return", "hedge", "alternative",
+        # BL-RV-EX1: bond-index abbreviations used by iShares/Vanguard/PIMCO
+        # ("bnd"=bond, "bd indx"=bond index, "corp indx"/"govt indx"=credit/govt index).
+        # Without these, "climate" matches PIMCO CLIMATE BND and "global" matches
+        # VGD GLOBAL BD INDX — both are bond funds, not equity.
+        "bnd", "bd indx", "corp indx", "govt indx",
+        # BL-RV-EX3 (2026-07-04): additional iShares short-duration/govt bond
+        # abbreviation variants missed by BL-RV-EX1, confirmed orphaned after
+        # real pipeline run (excluded here but not caught by rf_flexible's
+        # matching patterns, since it used the same narrow set -- see
+        # rf_flexible.py BL-RFF-IN2 for the paired include-side fix).
+        # "1-5 ind" catches "1-5 indx"/"1-5 index"; "1-5 idx" catches the
+        # "idx" spelling (ISHARES GBL 1-5 IDX); "gvt indx" catches the
+        # abbreviated "gvt" spelling missed by "govt indx" (ISHARES EUR GVT
+        # INDX, no "o").
+        "1-5 ind", "1-5 idx", "gvt indx",
+        # BL-RV-EX4 (2026-07-04): "high yield" (spelled out). Without this,
+        # "global" matches "AB GLOBAL HIGH YIELD PORTFOLIO" -- a genuine
+        # high-yield BOND fund ("invertirá principalmente en valores de
+        # renta fija con calificación inferior a grado de inversión"), not
+        # equity. Confirmed via KIID-text audit of the RENTA_VARIABLE block.
+        "high yield", "high yiel",
+        # BL-RV-EX6 (2026-07-04): "income"/"divers"-style bare includes also
+        # match genuine bond-fund families whose name doesn't contain a
+        # literal bond keyword. Confirmed via KIID text: PIMCO Diversified
+        # Income ("invierte...principalmente en renta fija"), AB Mortgage
+        # Income Portfolio (MBS/ABS specialist), Amundi Strategic Income
+        # (Bloomberg US Universal Index, bond-income fund) -- all genuine
+        # fixed-income funds that only match RV via bare "income"/"global".
+        # "pimco diver" (no trailing "s") catches naming variants
+        # "DIVERS"/"DIVER."/"DIVERSF" all seen in the master Excel.
+        "pimco diver", "pimco esg income", "ab mort income", "amundi str income",
+        # BL-RV-EX7 (2026-07-06): JPM Income funds are multi-asset income
+        # funds — not equity. They are claimed by renta_variable via the bare
+        # "income" and "global" include patterns, AND simultaneously by
+        # rf_flexible and mixtos, firing INTER-13 with 3 different Nature
+        # values every cycle. Two patterns needed: "jpm income" catches
+        # "JPM INCOME x EUR ACC" (income immediately after jpm); "jpm global
+        # income" catches "JPM GLOBAL INCOME x EUR ACC" (global+income, where
+        # "global" alone would keep it in the universe). Excluding both reduces
+        # triple-claim to dual-claim handled by INTER_DBLCLAIM. Safe: no JPM
+        # equity fund uses "income" as its primary name token without a clearer
+        # equity signal (they use "equity", "growth", "value" etc.).
+        "jpm income", "jpm global income",
     ]
+    # BL-RV-EX5 (2026-07-04): "convertible"/"allocation" truncations. Bare
+    # "convertible"/"allocation" already generic but the master Excel often
+    # truncates fund names ("JPM GLOBAL CONVER.(EUR)", "BGF GLOBAL
+    # ALLOCA.F.HED.", "BGF GLOBAL ALLOCAT D2") — none contain the full word,
+    # so a plain substring exclude misses them. Confirmed genuine non-equity
+    # funds via KIID text: JPM Global Convertibles ("cartera diversificada
+    # de valores convertibles"), BGF Global Allocation ("valores de renta
+    # variable...Y valores de renta fija"). Prefix regex catches any
+    # truncation depth.
+    _exclude_prefix_patterns = [r'\bconver', r'\balloc']
 
     def is_candidate(name: str) -> bool:
         if not isinstance(name, str):
@@ -51,7 +128,23 @@ def get_universe_isins(df_master) -> List[str]:
         n = name.lower()
         if any(p in n for p in exclude_patterns):
             return False
-        return any(p in n for p in include_patterns)
+        # BL-RV-EX4b: abbreviated "HY" (e.g. "GS GLOBAL HY E ACC") needs a
+        # word boundary -- bare "hy" would false-match unrelated words.
+        if re.search(r'\bhy\b', n):
+            return False
+        if any(re.search(p, n) for p in _exclude_prefix_patterns):
+            return False
+        for p in include_patterns:
+            if p == "shares":
+                # BL-RV-EX2: "shares" is a substring of "ishares" (brand name).
+                # Use word boundary so iShares bond index ETFs do not enter the
+                # equity universe via this pattern.
+                if re.search(r'\bshares\b', n):
+                    return True
+            else:
+                if p in n:
+                    return True
+        return False
 
     mask = df_master["Fund_Name"].apply(is_candidate)
     return (

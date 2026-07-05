@@ -899,7 +899,7 @@ NAME_SIGNALS_RV: list = [
     # Fix inconsistencias fund_family_builder
     "amundi euroland eq",            # FAM_000121: RV no Monetario
     "jpm us value",                  # FAM_001697: RV Value no Alternativo
-    "thematics safety",              # FAM_001897: RV temática (seguridad)
+    "thematics",                     # BL-RV-IN4: Natixis Thematics equity brand (all sub-funds: AI & Robotics, Safety, Subscription Economy, etc.)
     "gs us equity",                  # FAM_001385/386: RV con/sin hedge
     "templeton global income",       # FAM_001293: RV Income no Mixtos
     "gs gbl eq income",              # FAM_001343: RV Income no Mixtos
@@ -1210,6 +1210,16 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
     t = kiid_text.lower()
     _obj_start, _obj_end = _get_obj_bounds(kiid_text)
     w = _extract_window(t, _obj_start, _obj_end)
+    # FIX-P1-NTC (2026-07-04): normaliza espacios en blanco DENTRO de la
+    # ventana ya extraída (no toca _obj_start/_obj_end, que siguen calculados
+    # sobre el texto original — evita desplazar ventanas ya calibradas).
+    # Causa raíz: el wrapping de línea del PDF puede partir una frase clave
+    # a mitad ("valores de renta \nvariable"), haciendo que el substring
+    # exacto "renta variable" nunca aparezca aunque la frase esté presente.
+    # Confirmado en LU0337786437 (MFS Prudent Wealth): "en valores de renta
+    # \nvariable procedentes de emisores..." — texto real, "renta variable"
+    # nunca detectado por búsqueda de substring literal.
+    w = re.sub(r'\s+', ' ', w)
 
     # ── Señales en encabezado (nombre del producto) ─────────────────────────
     # El nombre del producto aparece en los primeros 600 chars y puede contener
@@ -1248,27 +1258,6 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
         return "Estructurado"
 
     # ── Monetario ────────────────────────────────────────────────────────────
-    '''
-    if any(k in t[:2000] for k in [
-        "money market fund", "fondo del mercado monetario", "fondo monetario",
-        "monetary fund", "ucits mmf", "standard money market",
-        "short term money market", "low volatility money market",
-        "fondsmonétaire", "geldmarktfonds",
-        # DDF — añadido personal detectado en pictet
-        "instrumentos del mercado monetario",
-        "short-term money market",        
-        "ftse eur 1-month eurodeposit",
-        # DDF — señales de mercado monetario en formato PRIIPs
-        "instrumentos del mercado monetario",
-        "vencimiento medio ponderado",
-        "activos en instrumentos del mercado",
-        "mercados monetarios",
-        "money market instruments",
-        "weighted average maturity",
-    ]):
-        return "Monetario"
-    '''
-
     include_patterns = [
         "money market fund", "fondo del mercado monetario", "fondo monetario",
         "monetary fund", "ucits mmf", "standard money market",
@@ -1279,21 +1268,170 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
         "ftse eur 1-month eurodeposit",
         "vencimiento medio ponderado",
         "activos en instrumentos del mercado",
-        "mercados monetarios",
+        "mercados monetarios", "mercado monetario",
         "money market instruments",
         "weighted average maturity",
     ]
 
+    # FIX-P1-MMF (2026-07-04): "renta fija", "acciones", "ucits", "ocivm" y
+    # "colectiva en valores mobiliarios" eliminados de esta lista. Causa raíz:
+    # hacían la detección de Monetario autoexcluyente para prácticamente TODO
+    # el universo (0% de acuerdo confirmado en auditoría de 30 fondos
+    # MONETARIOS). "ucits"/"ocivm"/"colectiva en valores mobiliarios" son
+    # texto legal estándar (casi todo fondo europeo regulado ES un UCITS/OICVM,
+    # incluidos los monetarios). "acciones" es ambiguo -- en textos DDF/KIID
+    # aparece a menudo como "esta clase de ACCIONES" (= share class del
+    # fondo), no como valores de renta variable (confirmado: UBS Money Market,
+    # "los ingresos de esta clase de acciones se reinvierten"). "renta fija"
+    # es demasiado genérico -- un MMF genuino describe sus propias
+    # participaciones a corto plazo como "renta fija" (p.ej. "el vencimiento
+    # final de una inversión de renta fija no podrá ser superior a 1 año"),
+    # lo cual es coherente CON ser monetario, no evidencia en contra.
+    # FIX-P1-MMF7 (2026-07-05): "equities"/"debt securities" añadidos junto a
+    # "equity"/"fixed income". Causa raíz: "equity" no es substring de
+    # "equities" (sufijos distintos: equit-y vs equit-ies), por lo que un KID
+    # en inglés que enumera "equities"/"debt securities" (plural) en vez de
+    # "equity"/"fixed income" (singular) no disparaba la exclusión, dejando
+    # pasar el include "money market instruments" aunque el fondo declarase
+    # también renta variable/deuda como asignaciones principales. Confirmado:
+    # LU2178498619 Fidelity Global Multi Asset Income ("invests in a range of
+    # asset classes Including debt securities, equities, real estate,
+    # infrastructure"..."money market instruments: up to 25%") clasificaba
+    # Monetario en vez de Mixtos.
     exclude_patterns = [
-        "renta variable", "renta fija", "acciones", "equity", "fixed income", "instrumentos financieros derivados", "instrumentos de crédito", "ucits","ocivm","colectiva en valores mobiliarios"
+        "renta variable", "equity", "equities", "fixed income",
+        "debt securities",
+        "instrumentos financieros derivados", "instrumentos de crédito",
     ]
 
     # Definimos la ventana de texto (primeros 2000 caracteres) en minúsculas una sola vez
     # para mejorar el rendimiento y asegurar que no haya fallos por mayúsculas
     ventana_texto = t[:4000].lower()
 
+    # FIX-P1-MMF3 (2026-07-04): dos patrones adicionales de falso positivo
+    # confirmados vía auditoría full-corpus tras FIX-P1-MMF/MMF2. (a)
+    # "mercado monetario" mencionado como colateral/margen derivado de
+    # posiciones en derivados ("mantendrá una proporción significativa...
+    # en efectivo e instrumentos del mercado monetario COMO RESULTADO DE LA
+    # TENENCIA DE DERIVADOS") -- fondos long/short o absolute-return con
+    # exposición vía derivados, no fondos monetarios (confirmado: Janus
+    # Henderson HF PEur Alpha, Janus Henderson UK Absolute Return). (b)
+    # "mercado monetario" describiendo el BENCHMARK/valor de referencia del
+    # fondo ("tipo de interés del mercado monetario" como sustituto del
+    # euríbor a 3 meses), no las posiciones del fondo (confirmado: Invesco
+    # Sustainable Allocation).
+    # NOTA: patrón bare "interés del mercado monetario" (sin "sustitutivo")
+    # es DEMASIADO amplio -- también aparece en advertencias de riesgo
+    # legítimas de fondos monetarios genuinos ("si los tipos de interés del
+    # mercado monetario son muy bajos, el rendimiento...podría no ser
+    # suficiente" -- Groupama Trésorerie), coherente CON ser monetario, no
+    # evidencia en contra. Se exige "sustitutivo de un tipo de interés" para
+    # distinguir la descripción de BENCHMARK (Invesco Sustainable Allocation)
+    # de la advertencia de riesgo genuina.
+    _derivative_collateral = bool(re.search(
+        r'result[ao]d[oa]\s+de\s+la\s+tenencia\s+de\s+derivados', ventana_texto
+    ))
+    _benchmark_rate_mention = bool(re.search(
+        r'sustitutivo\s+de\s+un\s+tipo\s+de\s+inter[ée]s\s+del\s+mercado\s+monetario',
+        ventana_texto
+    ))
+    # FIX-P1-MMF4 (2026-07-04): "mercado monetario" dentro de una definición
+    # parentética de "equivalentes de efectivo" ("así como equivalentes de
+    # efectivo (definidos como depósitos bancarios, instrumentos del
+    # mercado monetario...)") describe la porción de LIQUIDEZ/gestión de
+    # tesorería de un fondo con otra estrategia primaria (grado de
+    # inversión, titulizados, etc. mencionados antes de "así como"), no un
+    # fondo puramente monetario. Confirmado: MFS Prudent Wealth (3 ISINs)
+    # pasó a clasificar Monetario incorrectamente tras FIX-P1-MMF (BL-44
+    # los reclasificó a Restantes como red de seguridad, pero la Nature
+    # correcta es Renta Variable, no Restantes).
+    _cash_equivalent_definition = bool(re.search(
+        r'equivalentes?\s+de\s+efectivo[^.]{0,150}mercado\s+monetario',
+        ventana_texto
+    ))
+    # FIX-P1-MMF5 (2026-07-04): "podrá invertir...en instrumentos/
+    # inversiones del mercado monetario" (modo permisivo/condicional) señala
+    # una asignación SECUNDARIA/opcional a monetario dentro de un fondo con
+    # otra estrategia primaria -- distinto del modo declarativo genuino de
+    # un MMF ("el fondo invierte en instrumentos del mercado monetario" /
+    # "es un fondo del mercado monetario"). Confirmado en auditoría de 64
+    # fondos marcados BL44_NATURE_SRRI_R4 Nature=Monetario: 35/56 falsos
+    # positivos restantes son fondos de bonos/macro (Fidelity Euro Bond,
+    # Schroder ISF Euro Bond, Pictet Government Bonds, JPM Global Macro)
+    # cuya única mención de "mercado monetario" usa "podrá invertir" como
+    # asignación auxiliar/limitada ("con carácter auxiliar", "hasta un
+    # tercio de sus activos"), nunca como declaración de estrategia. Los 6
+    # MMF genuinos confirmados usan modo declarativo ("es un fondo del
+    # mercado monetario", "el fondo invierte en...instrumentos del mercado
+    # monetario") sin "podrá" en la misma cláusula.
+    # FIX-P1-MMF6 (2026-07-04): "puede invertir" -- misma señal permisiva
+    # que "podrá invertir" (FIX-P1-MMF5), verbo distinto. Confirmado:
+    # Invesco Euro Short Term Bond (2 ISINs) -- "el fondo invertirá
+    # principalmente en instrumentos de deuda a corto plazo de alta
+    # calidad...el fondo PUEDE invertir en instrumentos del mercado
+    # monetario e instrumentos de deuda de todo el mundo" -- mandato
+    # primario de renta fija corto plazo, MMF como asignación secundaria
+    # explícitamente opcional. Verificado que "puede...mercado monetario"
+    # está ausente en los 6 MMF genuinos confirmados esta sesión.
+    _permissive_secondary_mmf = bool(re.search(
+        r'(?:podr[aá]|puede)[^.]{0,250}mercados?\s+monetari[oa]s?',
+        ventana_texto, re.DOTALL
+    ))
+
+    # FIX-P1-MMF7b (2026-07-05): "hasta un tercio...mercado monetario" --
+    # cuantificador de fracción explícita (1/3) sin verbo podrá/puede, misma
+    # familia de señal que FIX-P1-MMF5/6 (asignación limitada/minoritaria,
+    # no mandato monetario primario). Confirmado: AXA WF Global Inflation
+    # Bonds (2 ISINs) -- "hasta un tercio de su patrimonio total en títulos
+    # de deuda no ligados a la inflación y en instrumentos del mercado
+    # monetario" seguido de "el subfondo invertirá como mínimo el 90%..." en
+    # bonos vinculados a la inflación -- mandato primario de renta fija
+    # flexible, MMF como límite residual de un tercio.
+    _minority_fraction_mmf = bool(re.search(
+        r'hasta\s+un\s+tercio[^.]{0,200}mercados?\s+monetari[oa]s?',
+        ventana_texto, re.DOTALL
+    ))
+
+    # FIX-P1-MMF7c (2026-07-05): "invierte principalmente en bonos...
+    # instrumentos del mercado monetario," -- el fondo declara un mandato
+    # PRIMARIO de bonos, y "mercado monetario" aparece como uno más de varios
+    # instrumentos de deuda enumerados (bonos, MMF, MBS, ABS), no como
+    # estrategia monetaria pura. Confirmado: AF US Short Term Bond --
+    # "invierte principalmente en bonos y obligaciones del estado y de
+    # empresas, instrumentos del mercado monetario, valores respaldados por
+    # hipotecas (mbs) y valores respaldados por activos (abs)".
+    _bond_primary_enumerated_mmf = bool(re.search(
+        r'invierte\s+principalmente\s+en\s+bonos[^.]{0,250}mercados?\s+monetari[oa]s?',
+        ventana_texto, re.DOTALL
+    ))
+
+    # FIX-P1-MMF2 (2026-07-04): "renta fija"/"acciones" enumerados junto a
+    # OTROS tipos de instrumento ("valores de renta fija, certificados,
+    # fondos, derivados e instrumentos del mercado monetario") indican un
+    # fondo FLEXIBLE/MULTI-ACTIVO que también invierte en monetario, no un
+    # fondo PURAMENTE monetario -- distinto de "renta fija"/"acciones"
+    # aisladas (que tras FIX-P1-MMF ya no excluyen, ver arriba). Confirmado:
+    # DWS ESG Dyn Opport ("renta fija, certificados, fondos, derivados e
+    # instrumentos del mercado monetario") pasó a clasificar Monetario
+    # incorrectamente tras eliminar "renta fija" de exclude_patterns sin
+    # este matiz. La coma inmediatamente después distingue enumeración
+    # (excluir) de descripción del propio vencimiento del fondo monetario
+    # (p.ej. "una inversión de renta fija no podrá ser superior a 1 año" —
+    # sin coma tras "renta fija", no excluye).
+    _enumerated_other_asset = bool(re.search(
+        r'(?:renta fija|acciones)\s*,', ventana_texto
+    ))
+
     # Evaluación de la lógica
-    if any(k in ventana_texto for k in include_patterns) and not any(e in ventana_texto for e in exclude_patterns):
+    if (any(k in ventana_texto for k in include_patterns)
+            and not any(e in ventana_texto for e in exclude_patterns)
+            and not _enumerated_other_asset
+            and not _derivative_collateral
+            and not _benchmark_rate_mention
+            and not _cash_equivalent_definition
+            and not _permissive_secondary_mmf
+            and not _minority_fraction_mmf
+            and not _bond_primary_enumerated_mmf):
         return "Monetario"
 
     # ── A partir de aquí usar ventana objetivo ───────────────────────────────
@@ -1310,6 +1448,105 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
     ])
     if has_ar and has_cash_bench:
         return "Alternativo"
+
+    # FIX-P1-NTC2 (2026-07-04): enumeración explícita de 3+ clases de activos
+    # (renta fija + renta variable + alternativas/monetario) es señal
+    # inequívoca de fondo multi-activo -- más fuerte que cualquier mención
+    # aislada de una sola clase, y debe ganar ANTES que eq_dominant/
+    # bond_dominant más abajo (si no, "cartera de renta variable" clasifica
+    # como RV-dominante un fondo que en realidad reparte entre 3 carteras).
+    # Confirmado: FAM_000608/612 DB CNSRVATIV SAA -- "el fondo intentará
+    # conseguir exposición a tres carteras principales de clases de activos
+    # (renta fija, renta variable e inversiones alternativas)" -- mismo texto
+    # en ambas clases de acción, pero antes resolvía RV en una y _RF_pending
+    # en la otra según qué otra frase incidental apareciera en cada PDF.
+    # Solo el ORDEN "renta fija, ... renta variable" (RF primero) faltaba en
+    # la lista "Mixto explícito" más abajo (que sí cubre "renta variable, X
+    # renta fija"); se añade aquí como chequeo temprano en vez de reordenar
+    # los chequeos existentes (menor riesgo de regresión).
+    # FIX-P1-DBLCLAIM2 (2026-07-04): "renta variable y de renta fija" --
+    # variante con "de" insertado entre la conjunción y la segunda clase de
+    # activo, que no coincidía con "renta variable y renta fija" (sin "de").
+    # Confirmado: AXA WF Global Optimal Income ("invirtiendo en una
+    # combinación de títulos de renta variable y de renta fija emitidos por
+    # estados y empresas") -- fondo genuinamente mixto, capturado
+    # incorrectamente como Renta Variable en la auditoría de doble-reclamo
+    # renta_variable+mixtos.
+    # FIX-P1-DBLCLAIM4 (2026-07-04): "renta variable y bonos"/"acciones y
+    # bonos" ya existían en la lista "Mixto explícito" más abajo, pero esa
+    # lista se evalúa DESPUÉS de eq_dominant/bond_dominant -- si
+    # "valores de renta variable" (frase deliberadamente conservada en
+    # eq_dominant pese a ser débil, ver nota junto a esa lista: retirarla
+    # causó una regresión mayor con Carmignac Patrimoine) dispara
+    # eq_dominant=True primero, la función retorna "Renta Variable" sin
+    # llegar nunca a evaluar "Mixto explícito". Se promueven aquí como
+    # chequeo temprano en vez de tocar eq_dominant de nuevo. Confirmado:
+    # UBS Strategic Fund Growth ("invierte con una proporción variable en
+    # valores de renta variable y bonos, incluidos instrumentos del
+    # mercado monetario").
+    if any(k in w for k in [
+        "renta fija, renta variable", "renta fija y renta variable",
+        "renta variable y de renta fija",
+        "renta variable y bonos", "renta variable y de bonos",
+        "acciones y bonos",
+    ]):
+        return "Mixtos"
+
+    # FIX-P1-NTC7 (2026-07-05): "invests in a range of asset classes" (KID
+    # en inglés, formato Fidelity/PRIIPs con lista de porcentajes por clase
+    # de activo) -- misma familia que FIX-P1-NTC2/NTC3 (enumeración
+    # multi-activo explícita que debe ganar ANTES que eq_dominant/
+    # bond_dominant, si no la mención aislada de "debt securities" dispara
+    # bond_dominant y retorna _RF_pending sin llegar nunca a evaluar el
+    # Mixto explícito de más abajo). Confirmado: Fidelity Global Multi Asset
+    # Income -- "The fund invests in a range of asset classes Including
+    # debt securities, equities, real estate, infrastructure".
+    if "range of asset classes" in w:
+        return "Mixtos"
+
+    # FIX-P1-DBLCLAIM3 (2026-07-04): "instrumentos de deuda...y en acciones"
+    # co-ocurrencia -- mandato dual deuda+equity explícito. NO se añade
+    # "instrumentos de deuda" a has_bonds/bond_dominant (ver comentarios
+    # existentes más abajo: esa frase también aparece en fondos de renta
+    # variable pura describiendo warrants/pagarés vinculados a RV, y ya fue
+    # retirada de esas listas por esa razón). Este chequeo es más estrecho
+    # -- exige la mención EXPLÍCITA de "en acciones" cerca, señal de mandato
+    # mixto genuino en vez de mención incidental de instrumentos de deuda.
+    # Confirmado: Invesco Global Income ("invertir principalmente en
+    # instrumentos de deuda...y en acciones de sociedades en todo el
+    # mundo") -- fondo mixto capturado incorrectamente como Renta Variable
+    # (vía "en acciones de" en eq_dominant) en la auditoría de doble-reclamo.
+    if re.search(r'instrumentos de deuda[^.]{0,150}en acciones', w):
+        return "Mixtos"
+
+    # FIX-P1-NTC3 (2026-07-04): benchmark compuesto/blended con pesos
+    # explícitos por clase de activo ("compuesto de 40% MSCI ... 40% ICE
+    # BofA Government ... 20% €STR") es señal inequívoca de fondo
+    # multi-activo -- un fondo de renta variable pura o de renta fija pura
+    # no se referencia contra un índice mixto ponderado. Debe ganar ANTES
+    # que eq_dominant/bond_dominant (si no, frases como "valores de renta
+    # variable" en la descripción de la porción equity del blend clasifican
+    # como RV-dominante un fondo genuinamente balanceado). Confirmado:
+    # FR0010135103/LU0306142/etc. Carmignac Patrimoine -- benchmark
+    # "40% MSCI AC World NR Index, 40% ICE BofA Global Government Index,
+    # 20% €STR Capitalized Index".
+    _composite_bench_m = re.search(
+        r'(?:indicador|[ií]ndice)\s+de\s+referencia[^.]{0,80}'
+        r'compuest[ao]\s+(?:de|por)([^.]{0,250})',
+        w
+    )
+    if _composite_bench_m:
+        _bench_zone = _composite_bench_m.group(1)
+        _has_eq_idx = bool(re.search(
+            r'msci|ftse|s&p|stoxx|russell|nikkei|dax\b|cac\s*40', _bench_zone
+        ))
+        _has_bond_idx = bool(re.search(
+            r'bofa|bloomberg|govern?ment|credit|aggregate'
+            r'|€str|\bestr\b|eonia|sofr|sonia|euribor',
+            _bench_zone
+        ))
+        if _has_eq_idx and _has_bond_idx:
+            return "Mixtos"
 
     # ── Señales de presencia (no dominantes) — declaradas antes de usarlas ──
     has_equity = any(k in w for k in [
@@ -1340,13 +1577,57 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
         "renta variable global",          # "global equity"
         "acciones de compañías",
         "acciones de sociedades",
+        # FIX-P1-NTC (2026-07-04): "en renta variable, bonos" — mandato
+        # explícito con RV enumerada PRIMERO junto a otras clases de activo
+        # (LU0907915168 Amundi Global Perspectives: "invierte al menos el
+        # 67% de sus activos en renta variable, bonos..."). Distinto de la
+        # nota anterior: aquí "renta variable" va seguida de una coma y otra
+        # clase de activo, no de un calificador de bonos que la subordine.
+        "en renta variable, bonos",
+        "renta variable, bonos",
     ])
+    # FIX-P1-NTC4 (2026-07-05): "instrumentos relacionados con la renta
+    # variable" -- fraseo genérico usado por fondos multi-activo para la
+    # porción de exposición a renta variable (vía derivados/depositary
+    # receipts, no solo acciones directas) que ninguno de los patrones
+    # anteriores captura. Confirmado: Amundi Multiasset Income 11/27 (2
+    # ISINs) -- "el compartimento podrá invertir hasta el 47,5% de su
+    # patrimonio neto en renta variable e instrumentos relacionados con la
+    # renta variable" -- ausencia de esta señal hacía que el fondo
+    # (bono-primario + hasta 47,5% RV) se clasificase _RF_pending en vez de
+    # Mixtos (has_equity+has_bonds).
+    # Guard: EXCLUYE asignaciones menores expresadas como fracción pequeña
+    # ("hasta una décima parte"/"hasta un décimo" = 10%) inmediatamente
+    # antes de la frase -- señal de asignación SECUNDARIA/residual, no de
+    # presencia de renta variable digna de nota. Confirmado: AXA WF Euro
+    # Credit Plus (2 ISINs, RESTANTES) -- "hasta una décima parte de su
+    # patrimonio total en renta variable e instrumentos relacionados con la
+    # renta variable" en un fondo genuinamente bond-dominante (RF Corto
+    # Plazo) -- sin este guard, has_equity=True desviaba el fondo de la
+    # resolución _RF_pending->resolve_rf_subtype (correcta, RF_Corto) hacia
+    # el camino "mención incidental->None", que Capa 2 no resolvía igual.
+    _minor_equity_fraction = bool(re.search(
+        r'hasta\s+una?\s+d[eé]cim[ao]\s+parte[^.]{0,80}'
+        r'(?:renta\s+variable\s+e\s+instrumentos\s+relacionados|'
+        r'instrumentos\s+relacionados\s+con\s+la\s+renta\s+variable)',
+        w
+    ))
+    if not _minor_equity_fraction and any(k in w for k in [
+        "instrumentos relacionados con la renta variable",
+        "renta variable e instrumentos relacionados",
+    ]):
+        has_equity = True
     has_bonds = any(k in w for k in [
         "valores de renta fija", "fixed income securities",
         "invierte en bonos", "inverts in bonds",
         "renta fija", "invierte principalmente en bonos",
         "primarily in bonds", "debt securities",
-        "invierte al menos", "invierte en valores de deuda",
+        "invierte en valores de deuda",
+        # FIX-P1-NTC (2026-07-04): "invierte al menos" eliminado de aquí —
+        # es un cuantificador agnóstico de clase de activo ("invierte al
+        # menos el 67% en renta variable, bonos..."); disparaba has_bonds=True
+        # en fondos donde ese "al menos X%" se refería a RENTA VARIABLE, no a
+        # bonos (confirmado: LU0907915168 Amundi Global Perspectives, 67% RV).
         # Señales DDF genéricas adicionales
         "títulos de deuda",
         # "instrumentos de deuda" eliminado — aparece en equity funds en contexto
@@ -1354,7 +1635,18 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
         "deuda soberana", "deuda corporativa",
         "bonos corporativos", "bonos soberanos",
         "bonos y otros", "bonos (incluidos",
-        "valores de deuda", "obligaciones",
+        "valores de deuda",
+        # FIX-P1-RV1 (2026-07-04): "obligaciones" (bare) eliminada. Causa
+        # raíz: es boilerplate de riesgo de depositario/contraparte
+        # ("¿qué ocurre si [depositario] no puede pagar?" -- "incumplan sus
+        # obligaciones", "obligaciones contractuales", "obligaciones de
+        # custodia"), presente en prácticamente TODO KIID sin relación con
+        # bonos. Confirmado corpus-wide: 25/26 ocurrencias en fondos RF
+        # genuinos eran esta boilerplate, solo 1/26 usaba "obligaciones"
+        # como sinónimo real de bonos ("bonos u obligaciones del estado").
+        # Causaba 13 fondos de renta variable pura (Franklin Technology,
+        # DWS Critical Technology, MS Global Brands/Opportunity/Insight)
+        # mal clasificados como Mixtos vía has_equity+has_bonds.
         "renta fija y", "en bonos y",
         "bond securities", "fixed rate", "floating rate notes",
         "high yield bonds", "investment grade",
@@ -1362,11 +1654,23 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
     ])
 
     # RF dominante (declaración explícita de objetivo)
+    # FIX-P1-NTC (2026-07-04): "renta fija", "fixed income" y "grado de
+    # inversión" (bare, sin calificador "principalmente"/"mayormente")
+    # eliminados de esta lista. Auditoría 12 fondos RESTANTES mal
+    # clasificados (LU1244893696 EDR Big Data: mandato 75-110% renta
+    # variable, pero "renta fija" aparece en una cláusula de gestión de
+    # efectivo aparte — "hasta el 25%... para gestión de efectivo" — y
+    # bastaba para forzar bond_dominant=True, anulando el mandato real de
+    # RV). "grado de inversión" (investment grade) es una calificación
+    # crediticia que aparece también en fondos RV/mixtos que mencionan
+    # bonos complementarios; no indica objetivo dominante por sí sola.
+    # Ambos términos permanecen en has_bonds (señal de presencia, no de
+    # dominancia) para el camino has_equity+has_bonds→Mixtos.
     bond_dominant = any(k in w for k in [
         "primarily in bonds", "mainly in bonds", "principally in bonds",
         "invierte principalmente en bonos", "invierte en bonos",
         "fixed income securities", "fixed income fund",
-        "renta fija", "fixed income", "bond fund", "fondo de bonos",
+        "bond fund", "fondo de bonos",
         "invierte en valores de renta fija",
         "invierte principalmente en instrumentos de renta fija",
         "debt securities", "debt fund", "inverts in debt securities",
@@ -1378,13 +1682,25 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
         "deuda soberana", "deuda corporativa",
         "bonos corporativos", "bonos y otros títulos",
         "principalment en bonos", "principalement en obligat",
-        "grado de inversión", "investment grade bonds",
+        "investment grade bonds",
         "bonos de alto rendimiento",
         "activos principales: bonos", "principales activos: bonos",
         "principales activos negociados: bonos",
     ])
 
     # RV dominante (declaración explícita de objetivo)
+    # NOTA (2026-07-04): se evaluó demover "valores de renta variable" y
+    # "en acciones de" de esta lista (ambas pueden aparecer en fondos
+    # mixtos con tope de exposición, p.ej. FR0010135103 Carmignac
+    # Patrimoine: "expondrá como máximo el 50%... a valores de renta
+    # variable"). Revertido: la eliminación causó una regresión mucho
+    # mayor (82 fondos Mixtos->None y 33 Renta Variable->None, incl.
+    # fondos de renta variable genuinos como DWS Osteuropa/DWS India que
+    # dependen de estas frases como única señal). Sin una comprobación de
+    # proximidad más quirúrgica (detectar "máximo X%"/"hasta un" cerca de
+    # la frase para distinguir tope de dominancia), mantener ambas frases
+    # es la opción de menor daño neto — deja el caso Carmignac como falso
+    # positivo conocido y documentado en vez de introducir uno mayor.
     eq_dominant = any(k in w for k in [
         "primarily in equities", "mainly in equities", "principally in equities",
         "invierte principalmente en acciones", "invest in shares",
@@ -1403,10 +1719,100 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
         "reproduce (con un error", "réplica del índice",
         "seguimiento del índice de renta variable",
         "inversión pasiva en acciones",
-    ]) or _has_equity_in_header or _ocr_equity
+        # FIX-P1-NTC (2026-07-04): declaraciones explícitas de mandato RV
+        # confirmadas en fondos RESTANTES mal clasificados. "cartera de
+        # renta variable" (FR0010836163 CPR Silver Age: "invierte en una
+        # cartera de renta variable europea" — sin bonos en la misma
+        # cláusula). "mercados...de renta variable" (LU1244893696 EDR Big
+        # Data: "entre el 75% y el 110%...expuesto...a los mercados
+        # internacionales de renta variable y otros valores similares").
+        "cartera de renta variable",
+        "mercados internacionales de renta variable",
+        "mercados de renta variable",
+        # FIX-P1-NTC5 (2026-07-05): "invierte fundamentalmente en acciones"
+        # -- sinónimo de "principalmente" no cubierto por los patrones
+        # existentes ("invierte principalmente en acciones"/"invirtiendo en
+        # acciones"). Confirmado: DWS ESG Europe Small-Mid Cap (2 ISINs) --
+        # "el fondo invierte fundamentalmente en acciones de emisores
+        # europeos de pequeño y mediano tamaño" -- ausencia de esta señal
+        # dejaba bond_dominant (vía "valores de renta fija" en la cláusula
+        # secundaria) como único voto, resolviendo _RF_pending en vez de RV.
+        "invierte fundamentalmente en acciones",
+        "fundamentalmente en acciones de",
+    ]) or _has_equity_in_header or _ocr_equity or bool(re.search(
+        # FIX-P1-NTC6 (2026-07-05): "al menos el X% en acciones
+        # internacionales/globales" -- declaración de mandato mayoritario de
+        # RV que no usa ninguna de las frases "renta variable" ya cubiertas.
+        # Confirmado: EDR SICAV Global Resilience -- "el producto invertirá
+        # en todo momento al menos el 75% en acciones internacionales" (sin
+        # mención de bonos en la cláusula de objetivo).
+        r'al\s+menos\s+el\s+\d+\s*%\s+en\s+acciones', w
+    ))
+
+    # FIX-P1-RV2 (2026-07-04): "en menor medida... podrá invertir en
+    # bonos/deuda/renta fija" -- declaración explícita de asignación
+    # SECUNDARIA/menor a renta fija, que no debe contar como bond_dominant
+    # cuando eq_dominant ya ganó por una declaración PRIMARIA explícita
+    # ("invierte principalmente en valores de renta variable"). Mismo
+    # patrón que el fix "podrá invertir" de Monetario (FIX-P1-MMF5), pero
+    # aplicado aquí al conflicto eq_dominant/bond_dominant. Confirmado:
+    # Franklin Technology (6 ISINs restantes) -- "en menor medida, el
+    # fondo podrá invertir en bonos corporativos" tras el mandato primario
+    # "invierte principalmente en valores de renta variable de empresas...
+    # sectores tecnológicos". Verificado que "en menor medida" NO aparece
+    # en ningún fondo genuinamente mixto confirmado esta sesión (BGF Global
+    # Allocation, JPM Global Balanced/Income, Invesco Global Income, UBS
+    # Strategic Fund Growth, AXA Global Optimal Income, JPM Global
+    # Convertibles) -- señal segura y específica.
+    _minor_secondary_bond = bool(re.search(
+        r'en\s+menor\s+medida[^.]{0,100}podr[aá][^.]{0,80}'
+        r'(?:bonos|deuda|renta\s+fija)',
+        w
+    ))
+    # FIX-P1-RV3 (2026-07-04): "como complemento a las acciones" -- misma
+    # clase de señal que "en menor medida...podrá" (secundaria/no primaria),
+    # redacción distinta. Confirmado: DWS ESG Dynamic Opportunities (4
+    # ISINs, 3 clasificados Mixtos + 1 Renta Fija Flexible según share
+    # class -- inconsistencia entre clases del mismo fondo) -- "el fondo
+    # invierte especialmente en acciones...Como COMPLEMENTO a las acciones,
+    # el fondo invierte en valores de renta fija" -- mandato equity-primario
+    # explícito, bonos declarados como complemento, no como parte dominante.
+    _minor_secondary_bond = _minor_secondary_bond or bool(re.search(
+        r'como\s+complemento\s+a\s+las\s+acciones', w
+    ))
+    # FIX-P1-RV4 (2026-07-05): "Además, el patrimonio del fondo puede
+    # invertirse en renta fija/bonos/deuda" -- misma familia de señal
+    # secundaria/no-dominante que "en menor medida...podrá" (FIX-P1-RV2) y
+    # "como complemento a las acciones" (FIX-P1-RV3), redacción distinta
+    # ("además" en vez de "en menor medida"/"como complemento"). Confirmado:
+    # DWS ESG Europe Small-Mid Cap (2 ISINs) -- "el fondo invierte
+    # fundamentalmente en acciones de emisores europeos...Además, el
+    # patrimonio del fondo puede invertirse en valores de renta fija e
+    # instrumentos del mercado monetario" -- mandato equity-primario
+    # explícito (ver FIX-P1-NTC5), bonos declarados como asignación
+    # adicional opcional, no como parte dominante.
+    _minor_secondary_bond = _minor_secondary_bond or bool(re.search(
+        r'además[^.]{0,60}(?:puede|podr[aá])\s+invertirse[^.]{0,120}'
+        r'(?:renta\s+fija|bonos|deuda)',
+        w
+    ))
+    # FIX-P1-RV5 (2026-07-05): "podrá invertir...en títulos de deuda...con
+    # fines de gestión de tesorería" -- asignación a deuda explícitamente
+    # enmarcada como gestión de TESORERÍA/liquidez operativa, no como
+    # estrategia de inversión. Señal distinta pero de la misma familia que
+    # las anteriores (secundaria/no-dominante). Confirmado: EDR SICAV Global
+    # Resilience -- "el producto podrá invertir hasta el 25% de su
+    # patrimonio neto en títulos de deuda (investment grade) con fines de
+    # gestión de tesorería" tras el mandato primario "invertirá en todo
+    # momento al menos el 75% en acciones internacionales" (ver FIX-P1-NTC6).
+    _minor_secondary_bond = _minor_secondary_bond or bool(re.search(
+        r'podr[aá]\s+invertir[^.]{0,100}(?:t[ií]tulos\s+de\s+deuda|bonos|deuda)'
+        r'[^.]{0,60}gesti[oó]n\s+de\s+tesorer[ií]a',
+        w
+    ))
 
     # RV dominante sin RF → Renta Variable
-    if eq_dominant and not bond_dominant:
+    if eq_dominant and (not bond_dominant or _minor_secondary_bond):
         return "Renta Variable"
 
     # RF dominante sin equity en absoluto → pendiente corto/flexible
@@ -1484,6 +1890,10 @@ def resolve_rf_subtype(name_l: str, kiid_text: str) -> str:
     t = kiid_text.lower() if kiid_text else ""
     _obj_start, _obj_end = _get_obj_bounds(kiid_text or "")
     w = _extract_window(t, _obj_start, _obj_end)
+    # FIX-P1-NTC (2026-07-04): ver detect_nature_from_kiid — normaliza
+    # espacios en blanco dentro de la ventana para que el wrapping de línea
+    # del PDF no rompa frases clave a mitad.
+    w = re.sub(r'\s+', ' ', w)
 
     # Inflation-linked bonds: siempre RF_Flexible (indexados a inflación no son corto plazo)
     if any(k in w for k in [
@@ -1496,16 +1906,96 @@ def resolve_rf_subtype(name_l: str, kiid_text: str) -> str:
     ]):
         return "RF_Flexible"
 
+    # FIX-P1-RFF1 (2026-07-04): "corto plazo" (bare) es demasiado genérico
+    # cuando aparece en dos contextos boilerplate confirmados vía auditoría
+    # del bloque RF_FLEXIBLE (68 fondos con disagreement RFC/RFF): (a)
+    # definición de "instrumentos del mercado monetario" ("...instrumentos
+    # del mercado monetario (es decir, títulos de deuda con vencimientos
+    # a corto plazo)" -- describe QUÉ ES un instrumento monetario, no la
+    # duración del fondo); (b) definición de un tipo de interés de
+    # referencia ("el €str representa el tipo de interés a corto plazo en
+    # euros" -- describe el BENCHMARK, no el fondo). Ambos son boilerplate
+    # presente en muchos fondos RFF genuinos independientemente de su
+    # propia duración. Otras señales de esta lista (p.ej. "short duration"
+    # en inglés, "duración inferior") no se tocan -- se mantienen como
+    # señales fiables.
+    _corto_plazo_mmf_definition = bool(re.search(
+        r'instrumentos del mercado monetario[^.]{0,100}corto plazo'
+        r'|corto plazo[^.]{0,100}instrumentos del mercado monetario',
+        w
+    ))
+    _corto_plazo_benchmark_definition = bool(re.search(
+        r'(?:representa|refleja)[^.]{0,50}tipo de inter[eé]s a corto plazo',
+        w
+    ))
+    _corto_plazo_reliable = (
+        "corto plazo" in w
+        and not _corto_plazo_mmf_definition
+        and not _corto_plazo_benchmark_definition
+    )
+
+    # FIX-P1-RFC1 (2026-07-05): "duración...no (será) superior a 12 meses"
+    # -- límite de duración explícito en meses (≤12), inequívocamente corto
+    # plazo bajo cualquier umbral razonable (distinto de la cuestión de
+    # política diferida RFC-vs-RFF a nivel de años, ver Pending). Confirmado:
+    # AF US Short Term Bond -- "la duración media de los tipos de interés
+    # del subfondo no será superior a 12 meses".
+    _duracion_meses_corta = bool(re.search(
+        r'duraci[oó]n[^.]{0,60}no\s+(?:ser[aá]\s+)?superior\s+a\s+(?:6|9|12)\s+meses',
+        w
+    ))
+
+    # FIX-P1-RFC2 (2026-07-05): "fecha de vencimient" (bare) falsely matches
+    # the extremely common open-ended-fund legal boilerplate "el fondo NO
+    # tiene fecha de vencimiento" ("the fund has NO maturity date") --
+    # exactly the OPPOSITE of a target-maturity/short-duration signal.
+    # Confirmed corpus-wide (46 funds where this was the *only* corto-plazo
+    # signal, all generic Corporate/Horizon/Emerging-Debt bond funds with no
+    # actual short-duration language -- e.g. GAMCO Merger Arbitrage I,
+    # Invesco Euro Corporate Bond, Janus Henderson Horizon Bond). Requires
+    # the phrase NOT be preceded by a negation ("no tiene"/"sin"/"no
+    # tendrá") within the same clause; "target maturity"/"vencimiento
+    # fijo"/"fixed maturity" (genuine target-maturity fund descriptors, not
+    # boilerplate) are unaffected.
+    _vencimiento_negated = bool(re.search(
+        r'(?:no\s+tiene|sin|no\s+tendr[aá])\s+fecha\s+de\s+vencimient', w
+    ))
+    _has_vencimiento_signal = (
+        ("fecha de vencimient" in w and not _vencimiento_negated)
+        or "target maturity" in w
+        or "vencimiento fijo" in w
+        or "fixed maturity" in w
+    )
+
+    # FIX-P1-RFC3 (2026-07-05): "short term"/"short-term" bare is too
+    # generic to add as a general signal (corpus-wide check found it also
+    # appears in benchmark references -- "€str (euro short term rate)" --
+    # and umbrella-prospectus sibling-fund-name lists, neither describing
+    # THIS fund's own duration). Narrowed to the specific pattern where the
+    # document is declaring the fund's OWN legal name right before the
+    # "(el «fondo»)" marker -- e.g. "Pictet - Short Term Emerging Corporate
+    # Bonds (el «fondo»))", "CT (Lux) Global Emerging Market Short-Term
+    # Bonds (el "fondo")". Needed as a companion to FIX-P1-RFC2: without
+    # it, removing the false "no tiene fecha de vencimiento" signal would
+    # have flipped these genuinely short-term-named funds (whose only
+    # other corto-plazo signal was that same false trigger) from
+    # `Renta Fija Corto Plazo` to `Renta Fija Flexible`. Confirmed 6 corpus
+    # matches, all correct (4 preserve already-correct RFC, 2 fix a
+    # separate pre-existing RFF misclassification -- Vanguard Global
+    # Short-Term Bond Index Fund).
+    _short_term_own_name = bool(re.search(
+        r'short[\s-]term[^()]{0,60}\(el\s*[«"]fondo[»"]', w
+    ))
+
     # Señales explícitas de corto plazo en el objetivo
-    if any(k in w for k in [
+    if _corto_plazo_reliable or _duracion_meses_corta or _has_vencimiento_signal or _short_term_own_name or any(k in w for k in [
         "duración inferior", "duration below", "duration less than",
         "duration of less", "short duration", "ultra short", "ultrashort",
-        "baja duración", "low duration", "corto plazo", "court terme",
+        "baja duración", "low duration", "court terme",
         "0 a 2 año", "0 a 3 año", "0 to 2 year", "0 to 3 year",
         "1 a 3 año", "1 to 3 year", "menos de 3 años", "below 3 year",
         "menos de 2 años", "below 2 year", "short-term bond",
-        "target maturity", "vencimiento fijo", "fixed maturity",
-        "fecha de vencimient", "horizon 202", "credit 202", "bond 202",
+        "horizon 202", "credit 202", "bond 202",
     ]):
         return "RF_Corto"
 
@@ -1519,6 +2009,512 @@ def resolve_rf_subtype(name_l: str, kiid_text: str) -> str:
         return "RF_Corto"
 
     return "RF_Flexible"
+
+
+# FIX-P1-DBLCLAIM (2026-07-04): tiebreaker para fondos reclamados por
+# nombre a la vez por renta_variable y mixtos (u otro bloque posterior en
+# el orden de ejecución). Causa raíz: mixtos.get_universe_isins() usa
+# patrones de nombre muy genéricos ("growth", "income", "dynamic",
+# "moderate", "conservative") que son también descriptores de ESTILO muy
+# comunes en fondos de renta variable pura (p.ej. "Growth investing",
+# "Income/dividend equity"). Como mixtos se ejecuta DESPUÉS de
+# renta_variable en el pipeline, sobrescribe silenciosamente la
+# clasificación correcta vía COALESCE. Confirmado en auditoría de 149
+# fondos con doble-reclamo renta_variable+mixtos: AB American Growth
+# Portfolio ("invierte...mínimo un 80%...en valores de renta variable"),
+# Allianz EU EQ Growth ("mínimo del 70%...en valores de renta variable")
+# -- ambos fondos de renta variable pura, mal clasificados como Mixtos.
+_EQUITY_MAJORITY_PATTERN = re.compile(
+    r'm[ií]nimo,?\s*(?:de|del)?\s*(?:un|el)?\s*(\d{2,3})\s*%[^.]{0,150}?'
+    r'(?:renta\s*variable|acciones)',
+    re.IGNORECASE,
+)
+
+# FIX-P1-EQMAJ-FRAC: algunos KIID expresan el umbral mayoritario como
+# fracción en palabras ("dos terceras partes", "dos tercios") en vez de
+# un porcentaje numérico. El patrón numérico de arriba no las detecta,
+# lo que deja al fondo sin protección del desempate INTER-DBLCLAIM y
+# permite que un bloque posterior (p.ej. mixtos) lo reclame de nuevo en
+# cada ciclo (caso detectado: LU2382957772, "invierte...mínimo dos
+# terceras partes de sus activos en valores de renta variable").
+_EQUITY_MAJORITY_FRACTIONS = [
+    (re.compile(r'dos\s+tercer[ao]s?\s+partes|dos\s+tercios', re.IGNORECASE), 66.67),
+    (re.compile(r'tres\s+cuart[ao]s?\s+partes|tres\s+cuartos', re.IGNORECASE), 75.0),
+    (re.compile(r'tres\s+quint[ao]s?\s+partes|tres\s+quintos', re.IGNORECASE), 60.0),
+    (re.compile(r'cuatro\s+quint[ao]s?\s+partes|cuatro\s+quintos', re.IGNORECASE), 80.0),
+]
+
+
+# FIX-P1-EQMAJ-COMBINED (2026-07-04): "mínimo del 70%...en valores de
+# renta variable O BONOS" declara un umbral para un CUBO COMBINADO
+# (equity+bonos indistintamente), no una mayoría exclusiva de renta
+# variable -- una frase distinta e inmediatamente posterior ("un máximo
+# del 70%...puede invertirse en valores de renta variable") es la que
+# realmente acota la asignación a renta variable. Confirmado: familia
+# Allianz Inc&Growth / Capital Plus (11 ISINs) -- el 70% "mínimo"
+# aplica a renta variable+bonos combinados (el fondo puede tener 0-70%
+# en RV y 0-100% en bonos), un mandato flexible/Mixtos genuino, no
+# equity-mayoritario. Causó una reclasificación incorrecta a Renta
+# Variable vía INTER-DBLCLAIM anteriormente esta sesión. Se exige que
+# "renta variable"/"acciones" NO esté seguido inmediatamente de "o/y
+# bonos/deuda/renta fija" (cubo combinado).
+_combined_bucket_tail = re.compile(
+    r'^\s*(?:o|y)\s*(?:bonos|deuda|renta\s*fija)', re.IGNORECASE
+)
+
+
+def detect_explicit_equity_majority(kiid_text: str) -> Optional[float]:
+    """
+    Busca una declaración explícita de asignación MAYORITARIA a renta
+    variable ("invierte...mínimo un 80%...en valores de renta variable"),
+    incluyendo fracciones expresadas en palabras ("dos terceras partes").
+
+    Devuelve el porcentaje (0-100) si se encuentra, o None. Usado como
+    señal de desempate cuando un fondo es reclamado por nombre tanto por
+    renta_variable como por otro bloque (mixtos/alternativos) — una
+    declaración explícita de umbral mayoritario de renta variable en el
+    KIID pesa más que un patrón de nombre genérico.
+    """
+    if not kiid_text:
+        return None
+    t = kiid_text.lower()
+    _obj_start, _obj_end = _get_obj_bounds(kiid_text)
+    w = re.sub(r'\s+', ' ', _extract_window(t, _obj_start, _obj_end))
+    m = _EQUITY_MAJORITY_PATTERN.search(w)
+    if m and not _combined_bucket_tail.match(w[m.end():m.end() + 40]):
+        try:
+            pct = float(m.group(1))
+        except (ValueError, TypeError):
+            pct = None
+        if pct is not None and 0 < pct <= 100:
+            return pct
+    for _frac_re, _frac_pct in _EQUITY_MAJORITY_FRACTIONS:
+        fm = _frac_re.search(w)
+        if fm:
+            _tail_start = fm.end()
+            _renta_m = re.search(r'(?:renta\s*variable|acciones)', w[_tail_start:_tail_start + 180], re.IGNORECASE)
+            if _renta_m and not _combined_bucket_tail.match(
+                    w[_tail_start + _renta_m.end():_tail_start + _renta_m.end() + 40]):
+                return _frac_pct
+    return None
+
+
+# FIX-P1-BENCH-VOTE (2026-07-04): tercera señal independiente para el
+# desempate INTER-DBLCLAIM, junto a Nombre (patrón del bloque) y
+# Texto-KIID (detect_explicit_equity_majority). El índice de referencia
+# declarado no depende del nombre del fondo ni de cómo el KIID redacta
+# el objetivo de inversión -- un fondo benchmarked contra un índice de
+# renta variable puro (MSCI World, S&P 500...) es evidencia fuerte de
+# Renta Variable incluso cuando el KIID no declara un umbral % explícito
+# (ni numérico ni en palabras). Único uso actual: desempate en
+# INTER-DBLCLAIM cuando detect_explicit_equity_majority() devuelve None.
+_BENCHMARK_EQUITY_KW = [
+    "msci world", "msci acwi", "msci europe", "msci emerging",
+    "s&p 500", "stoxx europe", "euro stoxx", "ftse 100", "dax",
+    "nasdaq 100", "russell 2000", "nikkei 225", "topix",
+    "ftse all-world", "msci usa", "msci japan", "cac 40",
+]
+_BENCHMARK_BOND_KW = [
+    "bond", "aggregate", "treasury", "gilt", "bund", "obligaciones",
+    "corporate bond", "government bond", "credit index",
+    "convertible bond", "high yield",
+]
+_BENCHMARK_MONEY_KW = [
+    "estr", "€str", "eonia", "euribor", "sofr", "libor", "t-bill",
+    "money market",
+    # FIX-P1-BENCH-TBILL: "treasury bill" (con o sin guion, cualquier
+    # vencimiento corto tipo "3-month"/"3 month") es un benchmark típico de
+    # fondos monetarios VNAV/LVNAV bajo EU MMFR, no un índice de bonos --
+    # distinto de "treasury" a secas (sin "bill"), que sí indica un índice
+    # de bonos soberanos de duración larga (Bloomberg Aggregate Treasury
+    # 1-10y, etc.). Confirmado: JPM Standard MM VNAV (3 ISINs), benchmark
+    # "ICE BofA 3-month German Treasury Bill Index" -- fondo monetario
+    # genuino, mal reclasificado a Renta Fija Corto Plazo antes de este fix.
+    "treasury bill",
+]
+
+
+def detect_nature_from_benchmark(benchmark_declared: Optional[str]) -> Optional[str]:
+    """
+    Infiere una Fund_Nature aproximada a partir del índice de referencia
+    declarado (Benchmark_Declared). Señal independiente del nombre del
+    fondo y del texto del objetivo de inversión del KIID.
+
+    No distingue subtipos de renta fija (RFC/RFF/genérica) -- devuelve
+    "Renta Fija" sin más precisión; para subtipo se usan otras señales.
+    Devuelve None si el benchmark no está declarado o no es reconocible.
+    """
+    if not benchmark_declared:
+        return None
+    b = benchmark_declared.lower()
+    if any(k in b for k in _BENCHMARK_MONEY_KW):
+        return "Monetario"
+    if any(k in b for k in _BENCHMARK_EQUITY_KW):
+        return "Renta Variable"
+    if any(k in b for k in _BENCHMARK_BOND_KW):
+        return "Renta Fija"
+    return None
+
+
+# BL-44-FX / Asset_Currency (2026-07-05): mapa nombre->divisa. Cubre las 6
+# divisas realmente presentes en Fund_Currency en este corpus (EUR 2343,
+# USD 771, GBP 22, JPY 12, CHF 11, CNH 8). Generalizado a CUALQUIER par de
+# divisas (no solo "divisa extranjera declarada vs. EUR implícito"): el
+# mismo riesgo cambiario aplica igual a un fondo "Euro Bonds" con clase de
+# participación USD que a un fondo "US Dollar" con clase de participación
+# EUR.
+_ASSET_CURRENCY_NAME_MAP = [
+    (re.compile(r'\bus\s*dollar\b|\busd\b', re.IGNORECASE), 'USD'),
+    (re.compile(r'\beuro\b|\beur\b', re.IGNORECASE), 'EUR'),
+    (re.compile(r'\blibra\b|\bsterling\b|\bgbp\b', re.IGNORECASE), 'GBP'),
+    (re.compile(r'\byen\b|\bjpy\b', re.IGNORECASE), 'JPY'),
+    (re.compile(r'franco\s+suizo|swiss\s+franc|\bchf\b', re.IGNORECASE), 'CHF'),
+    (re.compile(r'\byuan\b|renminbi|\bcny\b|\bcnh\b', re.IGNORECASE), 'CNH'),
+]
+
+# El sufijo final "<código de clase> <divisa> ACC/INC/DIS/CAP" es una
+# etiqueta de CLASE DE PARTICIPACIÓN (casi siempre coincide con
+# Fund_Currency por construcción), no una declaración de la divisa de los
+# ACTIVOS del fondo. Sin enmascararlo, un nombre como "PICTET USD GOV BDS I
+# EUR ACC" (activos en USD, clase en EUR -- Fund_Currency=EUR, descalce
+# genuino) resolvía la coincidencia de "EUR ACC" al final ANTES que "USD"
+# al principio, ocultando el descalce real. Se enmascara antes de buscar.
+_TRAILING_SHARE_CLASS_SUFFIX = re.compile(
+    r'\b(?:eur|usd|gbp|chf|jpy|cnh|cny)\s*(?:acc|inc|dis|cap)\.?\s*$',
+    re.IGNORECASE,
+)
+
+# FIX-ASSET-CCY-1 (2026-07-05): una divisa adyacente a "HDG"/"HEDGE(D)" (en
+# cualquier orden, en cualquier posición del nombre, no solo al final) es
+# el DESTINO de cobertura de la clase de participación, no la divisa de los
+# activos -- p.ej. "JPM US VALUE A EUR HDG ACC" (fondo de renta variable de
+# EE.UU., clase cubierta a EUR) o "BGF EURO BOND D2 (USD HDG) ACC" (fondo
+# de bonos en EUR, clase cubierta a USD). Confirmado corpus-wide: sin este
+# enmascarado, "EUR HDG" en un fondo "US Value"/"Emerging"/"Global Macro"
+# devolvía 'EUR' (activo genuino desconocido o multi-divisa, no EUR), y
+# "(USD HDG)" en "BGF EURO BOND" ganaba sobre "EURO" (la señal real) solo
+# por el orden de comprobación de patrones -- ver también el cambio a
+# "coincidencia más a la izquierda gana" más abajo.
+# FIX-ASSET-CCY-2 (2026-07-06): extend with abbreviated hedge suffixes seen
+# in fund names. Previously only "HDG"/"HEDGE"/"HEDGED" were stripped; funds
+# using truncated forms returned wrong Asset_Currency from the name extractor:
+#   "EUR HED"  → FIDELITY F.INT.BOND A EUR HED  (truncated "hedged")
+#   "EUR HGD"  → JPM GLOBAL MACRO (EUR HGD) A   (transposed H-G-D vs H-D-G)
+#   "EUR HE"   → SISF STRATEGIC BO.EUR HE.B ACC  (two-char truncation)
+#   "EURH"     → GS PATRIM BAL SUST EURH ACC      (fused, no space)
+#   "EUR H"    → PIMCO INCOME "INV" EUR H ACC     (bare H, standalone word)
+# All these are share-class hedge designators, not asset currencies. After
+# stripping, the name extractor returns None → KIID text determines the actual
+# asset currency (which is None or USD for global/multi-currency funds).
+# Safe: \b guards prevent matching currency prefixes inside longer words;
+# the standalone-H pattern \s+h\b only matches "H" as a word by itself.
+_HEDGE_TARGET_CURRENCY = re.compile(
+    r'\b(?:eur|usd|gbp|chf|jpy|cnh|cny)\s*(?:h(?:dg|gd|edg(?:e|ed)?|ed|e))\b'
+    r'|\b(?:h(?:dg|gd|edg(?:e|ed)?|ed|e))\s*(?:eur|usd|gbp|chf|jpy|cnh|cny)\b'
+    # fused form: EURH, USDH etc. (currency immediately followed by bare H)
+    r'|\b(?:eur|usd|gbp|chf|jpy|cnh|cny)h\b'
+    # space-separated bare H: "EUR H ACC" (H as standalone word after currency)
+    r'|\b(?:eur|usd|gbp|chf|jpy|cnh|cny)\s+h\b',
+    re.IGNORECASE,
+)
+
+# Techo de plausibilidad para detect_fx_share_class_mismatch -- el riesgo
+# puramente cambiario entre divisas mayores (EUR/USD/GBP/JPY/CHF/CNH)
+# explica una volatilidad adicional moderada (típicamente SRRI 3-4 sobre
+# una base casi nula), no una volatilidad extrema. Un SRRI por encima de
+# este techo indica que algo más (no solo la divisa) está impulsando el
+# riesgo, y NO debe eximirse. En la práctica BL-44 nunca observa SRRI>=5 en
+# sus dos condiciones de disparo (Monetario/RF Corto) porque una guarda
+# previa -- P08 en restantes.py -- ya fuerza esos casos a Renta Variable
+# antes de llegar aquí (confirmado: 0 fondos con Nature Monetario/RF Corto
+# y SRRI>=5 en todo el corpus) -- este techo es una defensa explícita
+# adicional, no un cambio de comportamiento actual.
+_FX_PLAUSIBLE_SRRI_CEILING = 4
+
+
+def detect_asset_currency_from_name(fund_name: Optional[str]) -> Optional[str]:
+    """
+    Infiere la divisa de los ACTIVOS/estrategia del fondo (distinta de
+    Fund_Currency, la divisa de la CLASE DE PARTICIPACIÓN) a partir de su
+    nombre -- p.ej. "SISF US DOLLAR LIQUIDITY" -> 'USD', "PICTET EUR BONDS"
+    -> 'EUR'. Enmascara el sufijo final "<divisa> ACC/INC/DIS/CAP" antes de
+    buscar, ya que ese sufijo es la etiqueta de la clase de participación
+    (coincide con Fund_Currency por construcción), no la divisa de los
+    activos -- p.ej. "PICTET USD GOV BDS I EUR ACC" declara activos en USD
+    con una clase de participación EUR; sin el enmascarado, la búsqueda
+    encontraría "EUR" (del sufijo) antes que "USD" (la señal real).
+
+    Solo es un concepto bien definido para fondos con mandato de divisa
+    ÚNICA dominante (monetarios, bonos gubernamentales de una sola divisa);
+    fondos diversificados/globales no declaran una única divisa en el
+    nombre y correctamente devuelven None -- NULL en Asset_Currency para
+    esos fondos es semánticamente correcto (múltiples divisas), no un dato
+    faltante. Ver Portfolio_Currency (eliminado en schema v20, 98.7% NULL)
+    para el precedente de un extractor de texto KIID demasiado literal que
+    intentaba resolver este mismo concepto sin éxito -- esta función usa el
+    nombre del fondo en su lugar, señal de mucha mayor cobertura para
+    exactamente esta población de fondos.
+
+    También enmascara menciones de divisa-destino-de-cobertura ("EUR HDG",
+    "(USD HDG)") en cualquier posición (ver FIX-ASSET-CCY-1) y, de entre
+    las menciones de divisa restantes, toma la que aparece MÁS A LA
+    IZQUIERDA en el nombre (no la primera del orden arbitrario del mapa) --
+    la divisa que define la estrategia del fondo casi siempre se menciona
+    antes que cualquier artefacto de clase de participación.
+    """
+    if not fund_name:
+        return None
+    _name_for_search = _TRAILING_SHARE_CLASS_SUFFIX.sub('', fund_name)
+    _name_for_search = _HEDGE_TARGET_CURRENCY.sub('', _name_for_search)
+    best_match = None
+    best_pos = None
+    for pattern, currency_code in _ASSET_CURRENCY_NAME_MAP:
+        m = pattern.search(_name_for_search)
+        if m and (best_pos is None or m.start() < best_pos):
+            best_pos = m.start()
+            best_match = currency_code
+    return best_match
+
+
+# FIX-FUNDCCY-2 (2026-07-05): extractor de Fund_Currency desde el sufijo de
+# clase de participación en el propio nombre del fondo ("...A EUR ACC" ->
+# 'EUR') -- la MISMA señal que _TRAILING_SHARE_CLASS_SUFFIX enmascara para
+# Asset_Currency (porque ahí es ruido de clase de participación), pero aquí
+# es precisamente la señal que se busca (Fund_Currency = divisa de la clase
+# de participación). Usado como CROSS-VALIDACIÓN de la extracción basada en
+# texto KIID (kiid_parser._detect_fund_currency), no como sustituto: tras
+# encontrar y corregir FIX-FUNDCCY-1 (bug real en el extractor KIID, familia
+# JPM, 118 fondos), una comprobación de los restantes casos encontró
+# igualmente 2 falsos positivos de ESTA señal (el nombre sugería una divisa
+# pero la propia tabla de costes del KIID confirmaba otra) -- ninguna de las
+# dos señales es fuente de verdad absoluta, así que un desacuerdo debe
+# marcarse para revisión, no resolverse automáticamente a favor de una u
+# otra.
+_FUND_CURRENCY_NAME_SUFFIX = re.compile(
+    r'\b(EUR|USD|GBP|CHF|JPY|CNH|CNY)\s*(?:ACC|INC|DIS|CAP)\.?\s*\Z',
+    re.IGNORECASE,
+)
+
+
+def detect_fund_currency_from_name(fund_name: Optional[str]) -> Optional[str]:
+    """
+    Extrae la divisa de la clase de participación desde el sufijo final del
+    nombre del fondo ("...A EUR ACC" -> 'EUR', "...D USD INC" -> 'USD').
+    Devuelve None si el nombre no termina en ese patrón (fondos con nombre
+    truncado, sufijo distinto, o sin sufijo de divisa reconocible).
+
+    Pensado para CROSS-VALIDAR el resultado de kiid_parser.
+    _detect_fund_currency() (extraído del texto KIID), no para sustituirlo
+    automáticamente -- ver FIX-FUNDCCY-2.
+    """
+    if not fund_name:
+        return None
+    m = _FUND_CURRENCY_NAME_SUFFIX.search(fund_name)
+    if not m:
+        return None
+    code = m.group(1).upper()
+    return "CNH" if code == "CNY" else code
+
+
+# FIX-ASSET-CCY-2 (2026-07-05): fallback a texto KIID cuando el nombre del
+# fondo no declara divisa. A diferencia de la Portfolio_Currency eliminada
+# en v20 (frases literales tipo "the reference currency of the portfolio
+# is EUR" que casi nunca aparecen), este extractor busca el verbo
+# "denominado(s)/denominada(s)/expresado(s)/expresada(s) en <divisa
+# concreta>" (ambos géneros -- "bonos denominados"/"deuda denominada") y
+# clasifica cada coincidencia según la palabra-sujeto MÁS CERCANA al verbo
+# dentro de la ventana previa: si es un sujeto de ACTIVO ("activos",
+# "bonos", "valores", "títulos", "deuda", "renta fija", "instrumentos del
+# mercado monetario") se acepta; si es un sujeto de CLASE DE PARTICIPACIÓN
+# u OBJETIVO/RENTABILIDAD ("acciones", "participaciones", "clase",
+# "capital", "apreciación", "rentabilidad", "cuota de inversión") se
+# descarta. Usar el sujeto MÁS CERCANO (no "aparece en algún punto de la
+# ventana") es necesario -- p.ej. "el índice mide la RENTABILIDAD de los
+# VALORES denominados en euros" tiene ambas palabras en la ventana, pero
+# "valores" (más cercana) es el sujeto gramatical real, no "rentabilidad".
+# Confirmado corpus-wide contra los ~2.372 fondos sin señal de nombre (147
+# coincidencias limpias tras excluir falsos positivos).
+_KIID_CURRENCY_NAME_MAP = [
+    (r'd[oó]lares?\s+estadounidenses', 'USD'),
+    (r'euros', 'EUR'),
+    (r'libras?\s+esterlinas', 'GBP'),
+    (r'yenes?(?:\s+japoneses)?', 'JPY'),
+    (r'francos?\s+suizos', 'CHF'),
+    (r'yuanes|renminbi', 'CNH'),
+]
+_KIID_CURRENCY_VERB = re.compile(
+    r'(?:denominad[oa]s?|expresad[oa]s?)\s+en\s+('
+    + '|'.join(cur_re for cur_re, _ in _KIID_CURRENCY_NAME_MAP) + r')',
+    re.IGNORECASE,
+)
+_KIID_ASSET_SUBJECT = re.compile(
+    r'\b(?:activos?|bonos?|valores|t[ií]tulos'
+    r'|instrumentos?\s+del\s+mercado\s+monetario|deuda|renta\s+fija)\b',
+    re.IGNORECASE,
+)
+# "acciones"/"participaciones"/"clase" = clase de participación, no activos.
+# "capital"/"apreciación"/"rentabilidad" = objetivo/rendimiento medido en
+# esa divisa (marco de referencia del retorno, no divisa de los activos).
+# "cuota de inversión" = mecanismo de acceso específico (p.ej. QFII/RQFII),
+# demasiado estrecho para representar la divisa global del fondo.
+_KIID_EXCLUDE_SUBJECT = re.compile(
+    r'\b(?:acciones|participaci[oó]n(?:es)?|clase|capital|apreciaci[oó]n'
+    r'|rentabilidad|cuota\s+de\s+inversi[oó]n)\b',
+    re.IGNORECASE,
+)
+_KIID_NEGATION = re.compile(r'\bno\s*$')
+# Descalifica una coincidencia si, tras la divisa encontrada, el texto
+# continúa con una segunda divisa/enumeración ("...euros u otras divisas",
+# "...dólares estadounidenses, otras monedas del g7", "...o divisas
+# locales") -- señal de mandato MULTI-divisa, no de una única divisa
+# dominante. Sin este guard: CARMIGNAC ("euros u otras divisas"), PICTET
+# GL SUS CRED HI ("euros (eur) o dólares estadounidenses"), UBS ASIA
+# FLEXIBLE ("dólares estadounidenses o divisas locales") y varios fondos
+# DWS/Deutsche Invest Asian Bonds ("dólares estadounidenses, otras
+# monedas del g7 y diversas monedas de la región asia-pacífico") habrían
+# quedado incorrectamente etiquetados con una sola divisa de una cartera
+# explícitamente multi-divisa.
+# FIX-ASSET-CCY-3 (2026-07-06): two bugs fixed:
+# Bug 1 — `^\s*` consumed leading space, then `\s+[ouy]` required another
+#   space that no longer existed → "o en otras monedas" never matched.
+#   Fix: changed `\s+[ouy]` to `\s*[ouy]` (zero-or-more spaces before conjunction).
+# Bug 2 — Spanish "o en otras monedas" ("or in other currencies") has preposition
+#   "en" between the conjunction and the currency phrase, which the original
+#   pattern didn't account for. `(?:en\s+)?` added after the conjunction group
+#   handles both "o otras monedas" and "o en otras monedas".
+# Confirmed fix on M&G (LU) OPTIMAL INCOME AH (LU1670724373): tail
+# " o en otras monedas con cobertura en eur" now recognized as multi-currency
+# → detect_asset_currency_from_kiid_text returns None instead of wrong EUR.
+_KIID_MULTI_CCY_CONTINUATION = re.compile(
+    r'^\s*(?:\([a-z]{3}\)\s*)?(?:,|\s*[ouy]\s+)(?:en\s+)?\s*(?:otr[ao]s?\s+)?'
+    r'(?:divisas?|monedas?'
+    r'|d[oó]lares?(?:\s+estadounidenses)?|euros|libras?(?:\s+esterlinas)?'
+    r'|yenes?(?:\s+japoneses)?|francos?(?:\s+suizos)?|yuanes|renminbi)',
+    re.IGNORECASE,
+)
+# Descalifica una coincidencia introducida por lenguaje permisivo/opcional
+# ("los activos denominados en renminbis PODRÁN ser invertidos") -- misma
+# familia de señal que las guardas "podrá"/"puede" ya usadas en
+# detect_nature_from_kiid (asignación secundaria/opcional, no mandato
+# primario). Confirmado: DWS China Bonds (RMB mencionado como asignación
+# opcional tras un mandato primario en USD/dólares).
+_KIID_PERMISSIVE_CONTINUATION = re.compile(
+    r'\b(?:podr[aá]n?|puede[n]?)\s+ser\s+invertid', re.IGNORECASE
+)
+
+
+def _kiid_closest_currency_subject(before_text: str) -> Optional[str]:
+    """Devuelve 'asset'/'exclude' según cuál de los dos vocabularios
+    (sujeto de activo vs. sujeto de clase/objetivo) aparece MÁS CERCA
+    (más a la derecha) del verbo "denominado(s) en"/"expresado(s) en"
+    dentro de la ventana previa. None si ninguno aparece."""
+    last_pos, last_kind = -1, None
+    for m in _KIID_ASSET_SUBJECT.finditer(before_text):
+        if m.end() > last_pos:
+            last_pos, last_kind = m.end(), 'asset'
+    for m in _KIID_EXCLUDE_SUBJECT.finditer(before_text):
+        if m.end() > last_pos:
+            last_pos, last_kind = m.end(), 'exclude'
+    return last_kind
+
+
+def detect_asset_currency_from_kiid_text(kiid_text: Optional[str]) -> Optional[str]:
+    """
+    Fallback de detect_asset_currency_from_name(): cuando el nombre del
+    fondo no declara una divisa dominante, busca en el texto KIID (ventana
+    objetivo) una declaración explícita de divisa de los ACTIVOS (no de la
+    clase de participación, ni del objetivo/rendimiento) -- p.ej. "estos
+    activos siempre estarán denominados en dólares estadounidenses",
+    "instrumentos del mercado monetario denominados en euros" o "el 50%
+    en renta fija denominada en euros".
+
+    Deliberadamente estricto: exige que el sujeto gramatical MÁS CERCANO al
+    verbo sea de tipo activo (no "acciones"/"participaciones"/"clase" →
+    clase de participación; no "capital"/"apreciación"/"rentabilidad" →
+    objetivo medido en esa divisa; no "cuota de inversión" → mecanismo de
+    acceso específico) y descarta negaciones ("deuda NO denominada en
+    euros"), continuaciones multi-divisa ("...u otras divisas", "...otras
+    monedas del g7") y lenguaje permisivo/opcional ("podrán ser
+    invertidos"). Si ninguna coincidencia limpia se encuentra, devuelve
+    None -- consistente con la filosofía conservadora de Asset_Currency
+    (None = sin mandato de divisa única clara, no dato faltante).
+
+    Devuelve la divisa que aparece MÁS A LA IZQUIERDA en la ventana entre
+    las coincidencias válidas (misma lógica que la versión basada en
+    nombre).
+    """
+    if not kiid_text:
+        return None
+    t = kiid_text.lower()
+    _obj_start, _obj_end = _get_obj_bounds(kiid_text)
+    w = _extract_window(t, _obj_start, _obj_end)
+    w = re.sub(r'\s+', ' ', w)
+
+    best_match = None
+    best_pos = None
+    for m in _KIID_CURRENCY_VERB.finditer(w):
+        before = w[max(0, m.start() - 80):m.start()]
+        if _KIID_NEGATION.search(before):
+            continue
+        if _kiid_closest_currency_subject(before) != 'asset':
+            continue
+        tail = w[m.end():m.end() + 50]
+        if _KIID_MULTI_CCY_CONTINUATION.search(tail):
+            continue
+        after = w[m.end():m.end() + 30]
+        if _KIID_PERMISSIVE_CONTINUATION.search(after):
+            continue
+        if best_pos is None or m.start() < best_pos:
+            best_pos = m.start()
+            for cur_re, code in _KIID_CURRENCY_NAME_MAP:
+                if re.fullmatch(cur_re, m.group(1), re.IGNORECASE):
+                    best_match = code
+                    break
+    return best_match
+
+
+def detect_fx_share_class_mismatch(
+    asset_currency: Optional[str],
+    fund_currency: Optional[str],
+    hedging_policy: Optional[str] = None,
+    srri: Optional[int] = None,
+) -> bool:
+    """
+    Detecta si la divisa de los activos del fondo (Asset_Currency, ver
+    detect_asset_currency_from_name) difiere de la divisa de la clase de
+    participación (Fund_Currency) -- en cualquier combinación
+    (EUR/USD/GBP/JPY/CHF/CNH). Esta capa de descalce divisa-clase-de-
+    participación explica de forma legítima un SRRI elevado (riesgo
+    cambiario) sin que la naturaleza real del fondo (p.ej. Monetario/RF
+    Corto genuino) cambie.
+
+    Si la clase de participación está declarada como cubierta
+    (hedging_policy='Hedged'), el descalce de divisa NO explica un SRRI
+    elevado -- la cobertura neutraliza precisamente ese riesgo cambiario --
+    así que se devuelve False en ese caso.
+
+    Si se proporciona `srri` y supera `_FX_PLAUSIBLE_SRRI_CEILING`, tampoco
+    se exime: el riesgo cambiario por sí solo no explica una volatilidad
+    tan alta, así que el conflicto Nature/SRRI probablemente tiene otra
+    causa (activo genuinamente más arriesgado, Nature mal asignada, etc.)
+    que BL-44 debe seguir marcando para revisión.
+
+    Usado por BL-44 (pipeline.py) como excepción al forzado a 'Restantes':
+    si Asset_Currency está poblada Y difiere de Fund_Currency (y no está
+    cubierta, y el SRRI está dentro del rango plausible), el conflicto
+    Nature/SRRI puede tener una explicación cambiaria legítima en vez de
+    indicar una Nature mal asignada. Si Asset_Currency es None (fondo
+    diversificado/sin mandato de divisa única, o Fund_Currency ausente),
+    devuelve False -- el conflicto permanece sin explicar y BL-44 sigue
+    aplicando su comportamiento defensivo habitual.
+    """
+    if not asset_currency or not fund_currency:
+        return False
+    if hedging_policy and hedging_policy.strip().lower() == "hedged":
+        return False
+    if srri is not None and srri > _FX_PLAUSIBLE_SRRI_CEILING:
+        return False
+    return asset_currency.upper() != fund_currency.upper()
 
 
 # ============================================================
@@ -1712,6 +2708,180 @@ def detect_style_from_kiid(kiid_text: str) -> Optional[str]:
     return None
 
 
+# FIX-GEO-KIID-1 (2026-07-05): guardas para las dos únicas señales EEUU sin
+# verbo de objetivo ("estados unidos", "norteamerica") -- las demás frases del
+# grupo EEUU ya declaran explícitamente el objetivo ("invierte principalmente
+# en...") y no las necesitan. Tres trampas confirmadas leyendo texto KIID real:
+#   NEGATED:        "...empresas... fuera de los estados unidos" (WCM Select
+#                    Global) -- negación, es lo contrario de un objetivo EEUU.
+#   ISSUER_DETAIL:  "...MBS...emitidos por agencias (organismos cuasi-
+#                    gubernamentales de estados unidos)..." (JPM Global Bond
+#                    Opportunities) -- detalle del emisor de un instrumento,
+#                    no la geografía declarada del fondo.
+#   MULTI_VALUE:    "...empresas norteamericanas y europeas..." (GS Global
+#                    High Yield) -- enumeración de 2+ regiones: el fondo es
+#                    Global, no EEUU.
+_GEO_NEGATION_MARKERS = ["fuera de","excluyendo","distintos de","distintas de",
+                          "distinta de","salvo","excepto","no incluye","sin incluir"]
+_GEO_ISSUER_DETAIL_MARKERS = ["emitidos por","organismos","instituciones privadas","emisores"]
+_GEO_OTHER_REGION_MARKERS = ["europ","asia","china","japón","japon","india",
+                             "latinoam","mercados emergentes","emergent"]
+
+
+def _geo_bare_match_guard(w: str, idx: int) -> str:
+    """Clasifica el contexto de un match bare 'estados unidos'/'norteamerica'."""
+    _pre = w[max(0, idx - 60):idx]
+    if any(neg in _pre for neg in _GEO_NEGATION_MARKERS):
+        return "NEGATED"
+    if any(det in _pre for det in _GEO_ISSUER_DETAIL_MARKERS):
+        return "ISSUER_DETAIL"
+    _post = w[idx:idx + 100]
+    if any(r in _post for r in _GEO_OTHER_REGION_MARKERS):
+        return "MULTI_VALUE"
+    return "OK"
+
+
+# FIX-GEO-5 (2026-07-05): hallado auditando la población de origen
+# 'restantes' (fondos con nombre/KIID más opacos, ver
+# project_fix_master_load_1 / sesión 2026-07-05) -- "de todo el mundo"/
+# "de cualquier parte del mundo" declaran el mandato del PROPIO fondo en
+# la inmensa mayoría de casos reales del corpus ("títulos... emitidos por
+# empresas o gobiernos de todo el mundo"), pero la misma frase puede
+# describir en cambio el ALCANCE DE LA GESTORA (oficinas/clientes/
+# presencia mundial) -- no el mandato de inversión. A diferencia de
+# _geo_bare_match_guard, "emitidos por" aquí NO es ISSUER_DETAIL a
+# excluir: para un fondo de renta fija, describir el mandato como
+# "emitido por emisores de todo el mundo" ES precisamente la forma
+# correcta de declarar Global (los bonos siempre se describen por su
+# emisor). El único riesgo real es el contexto de OFICINAS/CLIENTES de
+# la gestora, no el de instrumento/emisor.
+_GEO_MANAGER_SCOPE_MARKERS = ["oficinas","sucursales","clientes","presencia",
+                              "red de","empleados","profesionales"]
+
+
+def _geo_worldwide_guard(w: str, idx: int) -> str:
+    """Clasifica el contexto de un match bare 'de todo el mundo'/'de
+    cualquier parte del mundo': distingue el mandato de inversión del
+    fondo del alcance geográfico de la GESTORA (oficinas/clientes)."""
+    _pre = w[max(0, idx - 60):idx]
+    if any(m in _pre for m in _GEO_MANAGER_SCOPE_MARKERS):
+        return "MANAGER_SCOPE"
+    if any(neg in _pre for neg in _GEO_NEGATION_MARKERS):
+        return "NEGATED"
+    return "OK"
+
+
+# ============================================================
+# FIX-GEO-3 (2026-07-05): fallback -- nombre oficial del subfondo
+# declarado en la línea "Producto:"/"PRODUCTO" del propio KIID.
+# ============================================================
+# Hallazgo: ni detect_geography (Fund_Name abreviado del maestro, p.ej.
+# "EURP", "EM MK") ni detect_geography_from_kiid (vocabulario ES dentro de
+# la ventana objetivo) leían nunca esta línea -- que declara el nombre
+# COMPLETO del subfondo, a menudo en inglés aunque el resto del KIID esté
+# en español (p.ej. "PRODUCTO AXA IM FIIS Europe Short Duration High
+# Yield", "Producto AXA World Funds - Emerging Markets Short Duration
+# Bonds"). Auditoría de corpus (1.618 fondos con Geography='Global'):
+# 37 recuperan una región concreta (9 Japón, 17 Europa, 11 EEUU) y 78 más
+# recuperan Development_Status='Emerging' vía Geography='Emergentes' que
+# antes se perdía por la misma razón (nombre abreviado sin "Emerging").
+# Solo se invoca como ÚLTIMO fallback, tras agotar la ventana objetivo
+# (ver wiring al final de detect_geography_from_kiid) -- nunca sustituye
+# una señal ya encontrada.
+_PRODUCT_LINE_PATTERN = re.compile(
+    r'(?m)(?<![A-Za-zÁÉÍÓÚÑáéíóúñ])(?:PRODUCTO|Producto)\s*:?\s+'
+    r'([A-ZÁÉÍÓÚÑ0-9][^\n]{3,160})'
+)
+# Continuaciones de prosa que indican que "Producto"/"PRODUCTO" no era una
+# etiqueta de campo seguida del nombre del fondo, sino parte de una frase
+# ("...este producto de inversión.", "Producto está autorizado en...").
+_PRODUCT_LINE_STOP_STARTS = re.compile(
+    r'^(?:de\b|del\b|est[aá]\b|es\b|se\b|y\b|PRIIP|que\b|para\b|no\b|Ha\b)',
+    re.IGNORECASE
+)
+# Sufijo de entidad legal pegado a la palabra-región (p.ej. "...Europe
+# SAS", "UBS Europe SE") -> domicilio de la GESTORA, no la geografía de
+# inversión del fondo. Mismo error de "detalle de emisor" que
+# _geo_bare_match_guard ya filtra para el vocabulario ES.
+_PRODUCT_LINE_ENTITY_SUFFIX_GUARD = re.compile(
+    r'^\s*(?:SAS|SA|SE|S\.A\.|GmbH|Ltd|plc|S\.à\s?r\.l\.|N\.V\.)\b'
+)
+# "US Dollar"/"U.S. Dollar" en el nombre del subfondo es una convención de
+# DENOMINACIÓN DE DIVISA BASE (frecuente en BlackRock/BGF: "US Dollar High
+# Yield Bond Fund", "US Dollar Short Duration Bond Fund"), no un mandato
+# geográfico -- confirmado leyendo el KIID real de LU0046676465 (BGF USD
+# HIGH YIELD BOND): invierte explícitamente en emisores estadounidenses Y
+# NO estadounidenses. Mismo error de raíz que el ya corregido en
+# detect_geography (nombre): confundir divisa con geografía.
+_PRODUCT_LINE_US_CURRENCY_GUARD = re.compile(r'^\s*Dollar\b', re.IGNORECASE)
+_PRODUCT_LINE_NEGATION_PREFIX = re.compile(r'ex[-\s]?$|excl(?:uding)?\s*$', re.IGNORECASE)
+
+# Vocabulario de salida ES, igual que _GEO_OBJ_PATTERNS -- señales en
+# INGLÉS porque el nombre propio del subfondo suele declararse en inglés.
+_PRODUCT_LINE_CONCRETE_REGION_PATTERNS = [
+    (re.compile(r'\bJapan(?:ese)?\b'), "Japón"),
+    (re.compile(r'\bChin(?:a|ese)\b'), "China"),
+    (re.compile(r'\bIndia[n]?\b'), "India"),
+    (re.compile(r'\bLatin\s+America[n]?\b'), "Latinoamérica"),
+    (re.compile(r'\bEurope(?:an)?\b'), "Europa"),
+    (re.compile(r'\bAsia(?:n|-Pacific)?\b'), "Asia"),
+    (re.compile(r'\b(?:US|U\.S\.|North\s+America[n]?|United\s+States)\b'), "EEUU"),
+]
+_PRODUCT_LINE_EMERGING_MARKETS_PATTERN = re.compile(r'\bEmerging\s+Markets?\b')
+_PRODUCT_LINE_GLOBAL_PATTERN = re.compile(r'\bGlobal\b|\bWorld\b')
+
+
+def _extract_kiid_product_name(kiid_text: str) -> Optional[str]:
+    """Extrae la línea "Producto:"/"PRODUCTO" del KIID (nombre oficial del
+    subfondo, anterior a la sección de objetivo de inversión). Devuelve
+    None si no hay un ancla plausible (rechaza continuaciones de prosa)."""
+    if not kiid_text:
+        return None
+    for m in _PRODUCT_LINE_PATTERN.finditer(kiid_text[:3000]):
+        candidate = m.group(1).strip()
+        if _PRODUCT_LINE_STOP_STARTS.match(candidate):
+            continue
+        return candidate
+    return None
+
+
+def detect_geography_from_kiid_product_name(kiid_text: str) -> Optional[str]:
+    """FIX-GEO-3: geografía inferida desde el nombre oficial del subfondo
+    declarado en la línea "Producto:" del propio KIID. Fallback de última
+    instancia -- ver wiring en detect_geography_from_kiid."""
+    candidate = _extract_kiid_product_name(kiid_text)
+    if not candidate:
+        return None
+
+    concrete_hits = []
+    for pat, geo in _PRODUCT_LINE_CONCRETE_REGION_PATTERNS:
+        m = pat.search(candidate)
+        if not m:
+            continue
+        before = candidate[max(0, m.start() - 8):m.start()]
+        after = candidate[m.end():m.end() + 12].strip()
+        if _PRODUCT_LINE_NEGATION_PREFIX.search(before):
+            continue
+        if _PRODUCT_LINE_ENTITY_SUFFIX_GUARD.match(after):
+            continue
+        if geo == "EEUU" and _PRODUCT_LINE_US_CURRENCY_GUARD.match(after):
+            continue
+        concrete_hits.append(geo)
+
+    # Enumeración multi-región (2+ regiones concretas nombradas) -> Global,
+    # mismo criterio que _geo_bare_match_guard MULTI_VALUE.
+    if len(concrete_hits) >= 2:
+        return "Global"
+    if len(concrete_hits) == 1:
+        return concrete_hits[0]
+
+    if _PRODUCT_LINE_EMERGING_MARKETS_PATTERN.search(candidate):
+        return "Emergentes"
+    if _PRODUCT_LINE_GLOBAL_PATTERN.search(candidate):
+        return "Global"
+    return None
+
+
 def detect_geography_from_kiid(kiid_text: str) -> Optional[str]:
     """
     Detecta Geography desde la ventana objetivo del KIID.
@@ -1719,6 +2889,16 @@ def detect_geography_from_kiid(kiid_text: str) -> Optional[str]:
 
     Usa señales EXPLÍCITAS de objetivo de inversión (no menciones incidentales).
     Orden: específicas primero, globales al final.
+
+    FIX-GEO-KIID-1 (2026-07-05): se retiraron los fragmentos de índice de
+    referencia ("s&p 500", "russell 1000/2000", "dow jones", "nasdaq",
+    "bloomberg us aggregate") de las señales EEUU -- verificado en corpus
+    (244 fondos) que aparecen como UN componente de un índice compuesto
+    multi-región en fondos Global (p.ej. 36% S&P 500 + 24% FTSE World ex-US +
+    24% US Treasury + ... como referencia compuesta de un fondo de asignación
+    global), nunca como declaración de objetivo del propio fondo. Las dos
+    señales EEUU sin verbo de objetivo restantes ("estados unidos",
+    "norteamerica") pasan por `_geo_bare_match_guard` antes de aceptarse.
     """
     if not kiid_text:
         return None
@@ -1748,16 +2928,18 @@ def detect_geography_from_kiid(kiid_text: str) -> Optional[str]:
           "renta variable estadounidense","mercado estadounidense",
           "bonos gubernamentales y corporativos de estados unidos",
           "valores de estados unidos","norteamerica",
-          # Señales indirectas fiables (benchmark, índice)
-          "bloomberg us aggregate","s&p 500","russell 1000",
-          "russell 2000","dow jones","nasdaq",
-          # Mención directa sin prefijo
+          # Mención directa sin prefijo -- pasa por _geo_bare_match_guard
           "estados unidos"], "EEUU"),
         # Europa — ANTES que Emergentes
         (["invierte principalmente en europa","invierte en europa",
           "zona euro","eurozona","valores europeos",
           "renta variable europea","mercado europeo",
-          "european equities","european bonds"], "Europa"),
+          "european equities","european bonds",
+          # FIX-GEO-5: país nórdico sin nivel propio en DOMAIN_VALUES
+          # (mismo criterio que "Italia"→Europe en _GEO_ES_TO_EN) --
+          # adjetivo explícito sobre el instrumento, no solo el código de
+          # divisa (evita la trampa divisa-vs-geografía de "US Dollar Fund").
+          "bonos suecos"], "Europa"),
         # Global — ANTES que Emergentes: fondos globales mencionan EM incidentalmente
         (["invierte a nivel mundial","invierte en todo el mundo",
           "mercados de todo el mundo","globally diversified",
@@ -1766,20 +2948,51 @@ def detect_geography_from_kiid(kiid_text: str) -> Optional[str]:
           "jp morgan global government bond","global government bond index",
           "world government bond","bloomberg global aggregate",
           "msci world","msci acwi","ftse world",
-          "global bond fund","global equity fund"], "Global"),
+          "global bond fund","global equity fund",
+          # FIX-GEO-5 (2026-07-05): variantes adicionales encontradas
+          # auditando la población 'restantes' -- "mundial(es)" como
+          # adjetivo pospuesto, no solo la locución "a nivel mundial".
+          "a escala mundial","mercados de renta variable mundiales",
+          "renta variable mundial","mercados mundiales",
+          # Mención directa sin prefijo -- pasa por _geo_worldwide_guard
+          "de cualquier parte del mundo","de todo el mundo"], "Global"),
         # Emergentes — señal dominante requerida
         (["invierte principalmente en mercados emergentes",
           "mercados emergentes como objetivo principal",
           "emerging market debt","emerging market equities",
           "deuda de mercados emergentes",
-          "renta variable de mercados emergentes"], "Emergentes"),
+          "renta variable de mercados emergentes",
+          # FIX-GEO-5: "países emergentes" (vs "mercados emergentes") --
+          # variante frecuente en fondos de deuda EM ("emisor de países
+          # emergentes"), no cubierta por los patrones anteriores.
+          # Mención directa sin prefijo -- pasa por chequeo de negación.
+          "países emergentes"], "Emergentes"),
     ]
 
     for signals, geo in _GEO_OBJ_PATTERNS:
-        if any(s in w for s in signals):
+        for s in signals:
+            idx = w.find(s)
+            if idx == -1:
+                continue
+            if s in ("estados unidos", "norteamerica"):
+                verdict = _geo_bare_match_guard(w, idx)
+                if verdict == "MULTI_VALUE":
+                    return "Global"
+                if verdict in ("NEGATED", "ISSUER_DETAIL"):
+                    continue
+            elif s in ("de todo el mundo", "de cualquier parte del mundo"):
+                verdict = _geo_worldwide_guard(w, idx)
+                if verdict in ("NEGATED", "MANAGER_SCOPE"):
+                    continue
+            elif s == "países emergentes":
+                _pre = w[max(0, idx - 60):idx]
+                if any(neg in _pre for neg in _GEO_NEGATION_MARKERS):
+                    continue
             return geo
 
-    return None
+    # FIX-GEO-3 (2026-07-05): la ventana objetivo no dio señal -- último
+    # fallback, el nombre oficial del subfondo en la línea "Producto:".
+    return detect_geography_from_kiid_product_name(kiid_text)
 
 
 def detect_esg_from_kiid(kiid_text: str) -> int:
@@ -1885,8 +3098,28 @@ def detect_kiid_attributes(
 # Resto de funciones universales (sin cambios respecto a v2)
 # ============================================================
 
+# FIX-GEO-NAME-1 (2026-07-05): "us" requiere límite de palabra real (no basta
+# con `\b`, que no distingue letra-espacio de letra-letra en todos los casos
+# de interés aquí -- el problema real es la ausencia de comprobación de borde
+# IZQUIERDO). Sin esto, "us " como substring cazaba JAN**US** (Janus Henderson)
+# y **PLUS** (Amundi "Rend Plus") como señal EEUU. Verificado en corpus: sube
+# la concordancia nombre/KIID de 657/981 a 594/619 tras esta + la fix de abajo.
+_US_STANDALONE_WORD = re.compile(r"\bus\b")
+
+
 def detect_geography(name_l: str) -> Optional[str]:
-    """Detecta geografía desde el nombre del fondo (en minúsculas)."""
+    """Detecta geografía desde el nombre del fondo (en minúsculas).
+
+    FIX-GEO-NAME-1 (2026-07-05): se retiraron 3 reglas de fallback que
+    usaban la DENOMINACIÓN DE DIVISA de la clase de participación (" usd ",
+    "usdh", " eur ") como si fuera señal de geografía de inversión -- la
+    misma confusión share-class-vs-asset ya corregida para Asset_Currency/
+    Fund_Currency. Confirmado en corpus: 'MFS EUROPE RESEARCH A1 USD ACC'
+    (nombre dice explícitamente Europa) se clasificaba como EEUU solo por
+    tener clase USD. Retirar estas 3 reglas + fijar "us " con borde de
+    palabra bajó el desacuerdo nombre/KIID de 324 a 79 casos (de 981 fondos
+    con ambas señales); ver SESSION_SUMMARY para el detalle del corpus check.
+    """
     if any(k in name_l for k in ["japan","japanese","japon"]):
         return "Japón"
     if "jpy" in name_l:
@@ -1906,11 +3139,10 @@ def detect_geography(name_l: str) -> Optional[str]:
     if any(k in name_l for k in ["emerging","emergentes","emergent","em mkt","emerg mkt",
                                    "emerg ","emrg","emer mkt","emer ","frontier"]):
         return "Emergentes"
-    if any(k in name_l for k in ["us ","usa","u.s.","united states","america","american",
+    if _US_STANDALONE_WORD.search(name_l) or any(k in name_l for k in [
+                                   "usa","u.s.","united states","america","american",
                                    "us eq","us sm","us sel","treasury","t-bill","us govt",
                                    "us dollar","us money"]):
-        return "EEUU"
-    if " usd " in name_l:
         return "EEUU"
     if any(k in name_l for k in [" uk ","uk eq","uk inc","uk sit","uk sc","uk ag",
                                    "united kingdom","british","britain"," gbp ","gbp ac",
@@ -1922,16 +3154,17 @@ def detect_geography(name_l: str) -> Optional[str]:
         return "Europa del Este"
     if any(k in name_l for k in ["europe","european","euro "," euro","euroland","eurozone",
                                    "europ","europa","euroz","emu","deutsch","germany",
-                                   "italia","italian","iberia","nordic","france","french"]):
+                                   "italia","italian","iberia","nordic","france","french",
+                                   # FIX-GEO-6 (2026-07-05): países nórdicos individuales en el
+                                   # propio nombre del fondo ("nordic" ya cubría el bloque
+                                   # regional, pero no los gentilicios/abreviaturas de país
+                                   # sueco/noruego -- ver NORDEA 1 SWED./NORW. SHORT-T. BOND).
+                                   "swed","swdish","norw"]):
         return "Europa"
     if any(k in name_l for k in ["global","glob ","globl"," glb "," gbl ","glbl","glbal",
                                    " gl ","world","wrld","wld ","international","intl",
                                    "worldwide","multi-region","multiregion"]):
         return "Global"
-    if "usdh" in name_l:
-        return "Global"
-    if " eur " in name_l:
-        return "Europa"
     return None
 
 
@@ -3188,11 +4421,25 @@ def validate_all_semantic_consistency(
                     })
                 else:
                     cr["Investment_Universe"] = "Global"
+                    # FIX-INTER13-MSG (2026-07-05): este chequeo corre a nivel de
+                    # bloque (sin acceso a BD/EffectiveReader por diseño, R-7:
+                    # los bloques deben ser testables sin pipeline.py/core.io) y
+                    # solo ve el `record` de ESTE ciclo. Para fondos CACHED sin
+                    # KIID nuevo, "sin Geography ni Sector_Focus" no significa
+                    # ausencia permanente -- significa "sin señal fresca en este
+                    # ciclo"; pipeline.py reconcilia Investment_Universe contra el
+                    # valor efectivo (BD si no hay fresco) vía BL-52 antes de
+                    # persistir. El mensaje anterior sugería una ausencia
+                    # definitiva de dato incluso cuando el valor final en BD es
+                    # correcto -- confirmado 0 desacuerdos finales en auditoría de
+                    # 135 fondos (ver memoria FIX-GEO-6 / INTER-13 2026-07-05).
                     warnings.append({
                         "rule": "InvestmentUniverse-NatureFallback",
                         "message": (
-                            f"Investment_Universe='Global' inferido por defecto "
-                            f"(sin Geography ni Sector_Focus) para Nature='{_nature}'"
+                            f"Investment_Universe='Global' asignado provisionalmente "
+                            f"en el bloque (sin señal Geography/Sector_Focus en este "
+                            f"ciclo) para Nature='{_nature}' -- pipeline.py "
+                            f"reconciliará con el valor efectivo si difiere"
                         ),
                     })
 
@@ -3316,6 +4563,13 @@ _GEO_ES_TO_EN: dict = {
     "Asia": "Asia-Pacific", "China": "China", "Japón": "Japan",
     "India": "India", "Latinoamérica": "Latin America",
     "Europa del Este": "Eastern Europe",
+    # FIX-GEO-1 (2026-07-05): "Italia" no tenía entrada aquí -- el fallback
+    # de inferencia por benchmark (FTSE Italia) en pipeline.py lo persistía
+    # tal cual, un valor ES sin traducir que además NO es un valor válido de
+    # DOMAIN_VALUES['Geography'] (shared/config.py) en ningún idioma (no hay
+    # nivel de país en ese catálogo, solo continente/región). Italia es
+    # inequívocamente Europa -- se traduce ahí en vez de perder el dato.
+    "Italia": "Europe",
     # "Emergentes" NO es geografía espacial → Global (o MEA si el nombre lo indica)
 }
 _EN_GEOGRAPHIES = frozenset({

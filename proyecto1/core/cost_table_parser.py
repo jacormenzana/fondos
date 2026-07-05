@@ -310,6 +310,28 @@ def _extract_pct_from_cell(cell: str) -> Optional[float]:
     return round(val / 100.0, 6)
 
 
+def _extract_pct_list_from_cell(cell: str) -> List[float]:
+    """
+    Extrae TODOS los porcentajes de una celda como ratios decimales, en orden
+    de aparición (misma conversión que _extract_pct_from_cell, pero sin
+    detenerse en el primer match). FIX-P1-AC: algunos KIDs (p.ej. BNPP AM
+    Luxembourg) imprimen 1Y% y RHP% consecutivos en la misma línea, ANTES de
+    la etiqueta "Incidencia anual de los costes" (orden invertido respecto al
+    layout habitual valor-tras-etiqueta).
+    """
+    out: List[float] = []
+    for m in PCT_PATTERN.finditer(cell):
+        g = m.group(1).replace(',', '.')
+        if g.count('.') > 1:
+            g = g.replace('.', '', g.count('.') - 1)
+        try:
+            val = float(g)
+        except (ValueError, TypeError):
+            continue
+        out.append(round(val / 100.0, 6))
+    return out
+
+
 def _extract_max_pct_from_cell(cell: str) -> Optional[float]:
     """
     Extrae "hasta X%" / "up to X%" de una celda como ratio decimal.
@@ -338,9 +360,15 @@ def _extract_eur_from_cell(cell: str) -> Optional[float]:
     if m:
         return _normalize_amount(m.group(1))
 
-    # Fallback: primer número >= 1 en la celda (evita 0 como false positive)
+    # Fallback: primer número >= 1 en la celda (evita 0 como false positive).
+    # BL-COST-EUR-FIX: skip match when immediately followed by '%' — that is a
+    # percentage, not an EUR amount. Without this guard, "0.007%" → AMOUNT_PATTERN
+    # matches "0.007" → _normalize_amount("0.007")→7.0 (3 digits after dot treated
+    # as thousands) → val=7.0 >= 1.0 → returned as EUR 7.0.
+    # Confirmed: LU0083138064 transaction_cost_pct stored 10× too high (0.07%
+    # instead of 0.007%) because FIX-P1-Y then derived pct from the wrong 7.0 EUR.
     m = AMOUNT_PATTERN.search(cell)
-    if m:
+    if m and cell[m.end():m.end() + 1] != '%':
         val = _normalize_amount(m.group(1))
         if val is not None and val >= 1.0:
             return val
@@ -867,16 +895,64 @@ def _parse_costs_over_time_plain(text: str) -> List[dict]:
         if _global_years:
             _ACI_ANCHOR = r'incidencia\s+anual|impacto\s+(?:anual\s+)?en\s+los\s+costes?'
             _anc = re.search(_ACI_ANCHOR, window, re.I)
+            _anc_buf = window
             if _anc is None:
                 # FIX-P1-AB: ACI anchor may lie beyond the 1500-char OT window;
                 # fall back to a global search over the full document text.
-                _anc_full = re.search(_ACI_ANCHOR, text, re.I)
-                _zone = text[_anc_full.start():_anc_full.start() + 250] if _anc_full else window
+                _anc = re.search(_ACI_ANCHOR, text, re.I)
+                _anc_buf = text
+            if _anc is not None:
+                _zone_fwd = _anc_buf[_anc.start():_anc.start() + 250]
+                # FIX-P1-AC: some KIDs print the ACI %s BEFORE the label on the
+                # same line ("5,04% 2,84% cada año Incidencia anual de los
+                # costes (*)") — the forward zone is empty in that layout;
+                # look backward from the anchor as well.
+                _zone_bwd = _anc_buf[max(0, _anc.start() - 120):_anc.start()]
             else:
-                _zone = window[_anc.start():_anc.start() + 250]
-            _aci = _extract_pct_from_cell(_zone)
+                _zone_fwd = window
+                _zone_bwd = ""
+            _pct_list = _extract_pct_list_from_cell(_zone_fwd)
+            if not _pct_list and _zone_bwd:
+                _pct_list = _extract_pct_list_from_cell(_zone_bwd)
+            _aci = _pct_list[0] if _pct_list else None
             _eur = _extract_eur_from_cell(window)
-            if _aci is not None and _rhp_no_aci and results:
+            if len(_pct_list) == len(_global_years) and len(_global_years) > 1:
+                # FIX-P1-AC: both 1Y and RHP % recovered together on one line —
+                # assign positionally (years ascending <-> %s in text order;
+                # PRIIPs always prints the 1Y column before the RHP column).
+                _aci_by_year = dict(zip(_global_years, _pct_list))
+                _max_year = max(_global_years)
+                if results:
+                    # Patch in place. RHP-labeled entries take the longest-
+                    # horizon % regardless of their own horizon_years (often
+                    # the -1.0 "unspecified RHP" sentinel, not a real year —
+                    # looking that up in _aci_by_year would silently return
+                    # the wrong/1Y value). Non-RHP entries with a real
+                    # horizon_years take their own matching %.
+                    for _e in results:
+                        if _e.get('aci_pct') is not None:
+                            continue
+                        if _e.get('is_rhp'):
+                            _e['aci_pct'] = _aci_by_year[_max_year]
+                        else:
+                            _y_e = _e.get('horizon_years')
+                            if _y_e is not None and _y_e in _aci_by_year:
+                                _e['aci_pct'] = _aci_by_year[_y_e]
+                        if (_e.get('aci_pct') is not None and _eur is not None
+                                and _e.get('total_cost_eur') is None):
+                            _e['total_cost_eur'] = _eur
+                else:
+                    results = []
+                    for _y in _global_years:
+                        results.append({
+                            'horizon_label':  f'despues de {_y} anos',
+                            'horizon_years':  float(_y),
+                            'is_rhp':         (_y == _max_year),
+                            'total_cost_eur': _eur,
+                            'aci_pct':        _aci_by_year.get(_y),
+                            'source':         'PLAIN_GLOBAL_FALLBACK',
+                        })
+            elif _aci is not None and _rhp_no_aci and results:
                 # Patch RHP entries in-place; keep non-RHP entries as-is.
                 for _e in _rhp_no_aci:
                     _e['aci_pct'] = _aci

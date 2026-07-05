@@ -194,12 +194,29 @@ FUND_BENCHMARKS_COLUMNS: list[str] = [
 ]
 
 # ============================================================
+# fund_data_quality_issues — columnas canónicas (v22, FIX-DQ-1)
+# ============================================================
+# Estado ACTUAL de issues de calidad de datos por fondo (uno por ISIN +
+# check_code), reconstruida en cada ciclo de pipeline.py. `level` usa el
+# vocabulario de Data_Quality_Flag (OK/INFERRED/WARN/MISSING), no el de
+# ingestion_log.status -- ver DATA_QUALITY_SEVERITY en shared/config.py.
+FUND_DATA_QUALITY_ISSUES_COLUMNS: list[str] = [
+    "id",
+    "ISIN",
+    "check_code",
+    "level",
+    "message",
+    "detected_at",
+]
+
+# ============================================================
 # Conjuntos para lookup O(1)
 # ============================================================
 FUND_MASTER_COLUMNS_SET        = frozenset(FUND_MASTER_COLUMNS)
 FUND_KIID_METADATA_COLUMNS_SET = frozenset(FUND_KIID_METADATA_COLUMNS)
 INGESTION_LOG_COLUMNS_SET      = frozenset(INGESTION_LOG_COLUMNS)
 FUND_BENCHMARKS_COLUMNS_SET    = frozenset(FUND_BENCHMARKS_COLUMNS)
+FUND_DATA_QUALITY_ISSUES_COLUMNS_SET = frozenset(FUND_DATA_QUALITY_ISSUES_COLUMNS)
 
 # ============================================================
 # Columnas nuevas por versión de schema
@@ -320,6 +337,22 @@ assert len(FUND_KIID_METADATA_COLUMNS) == 28, (
     f"v20 metadata debe tener 28 columnas, tiene {len(FUND_KIID_METADATA_COLUMNS)}"
 )
 
+# v21 (2026-07-05): Asset_Currency añadida -- divisa de los activos/
+# estrategia del fondo (distinta de Fund_Currency = divisa de la clase de
+# participación), inferida del nombre vía classify_utils.
+# detect_asset_currency_from_name(). Consumida por BL-44-FX
+# (pipeline.py) y disponible para P2. NO es un revival de la
+# Portfolio_Currency eliminada en v20 (nombre distinto, fuente distinta --
+# nombre del fondo, no texto KIID -- y Portfolio_Currency permanece
+# correctamente bloqueada en V20_DELETED_ATTRIBUTES).
+V21_FUND_MASTER_NEW: list[str] = ["Asset_Currency"]
+FUND_MASTER_COLUMNS_V21: list[str] = FUND_MASTER_COLUMNS_V20 + V21_FUND_MASTER_NEW
+EXPECTED_COLUMNS_V21: frozenset = frozenset(FUND_MASTER_COLUMNS_V21)
+FUND_MASTER_COLUMNS_V21_SET = EXPECTED_COLUMNS_V21
+assert len(EXPECTED_COLUMNS_V21) == 59, (
+    f"v21 debe tener 59 columnas en fund_master, tiene {len(EXPECTED_COLUMNS_V21)}"
+)
+
 
 def check_schema_v20_job_b(conn) -> dict:
     """Valida la parte DESPLEGABLE de v20 (Job B): 6 columnas de coste en
@@ -345,10 +378,14 @@ def check_schema_v20_job_b(conn) -> dict:
     return {'ok': len(issues) == 0, 'issues': issues}
 
 
-def check_schema_v20(conn) -> dict:
+def check_schema_v20(conn, strict_count: bool = True) -> dict:
     """Valida v20 COMPLETO (Job A + Job B): fund_master 58 (4 drops ausentes,
     5 nuevas presentes) + metadata 22 + vista. Usar SOLO tras desplegar el
     rebuild de fund_master (Job A). Antes de eso usar check_schema_v20_job_b.
+
+    `strict_count=False` omite el chequeo de "exactamente 58 columnas" --
+    usado por check_schema_v21, que añade Asset_Currency (59) y valida el
+    conteo exacto por su cuenta.
     """
     issues: list[str] = []
 
@@ -366,11 +403,62 @@ def check_schema_v20(conn) -> dict:
             issues.append(f"fund_master: columna '{old}' debería renombrarse a '{new}'")
         if new not in fm_actual:
             issues.append(f"fund_master: falta columna renombrada '{new}'")
-    if len(fm_actual) != 58:
+    if strict_count and len(fm_actual) != 58:
         issues.append(f"fund_master: esperadas 58 columnas, hay {len(fm_actual)}")
 
     jb = check_schema_v20_job_b(conn)
     issues += jb['issues']
+
+    return {'ok': len(issues) == 0, 'issues': issues}
+
+
+def check_schema_v21(conn) -> dict:
+    """
+    Valida v21: v20 completo + Asset_Currency presente en fund_master
+    (59 columnas).
+
+    Returns: {'ok': bool, 'issues': list[str]}
+    """
+    issues: list[str] = []
+    v20 = check_schema_v20(conn, strict_count=False)
+    issues += v20['issues']
+
+    cur = conn.execute("PRAGMA table_info(fund_master)")
+    fm_actual = {row[1] for row in cur.fetchall()}
+    new_missing = [c for c in V21_FUND_MASTER_NEW if c not in fm_actual]
+    if new_missing:
+        issues.append(f"fund_master: faltan columnas v21 nuevas: {new_missing}")
+    if len(fm_actual) != 59:
+        issues.append(f"fund_master: esperadas 59 columnas (v21), hay {len(fm_actual)}")
+
+    return {'ok': len(issues) == 0, 'issues': issues}
+
+
+def check_schema_v22(conn) -> dict:
+    """
+    Valida v22: v21 completo + tabla fund_data_quality_issues presente
+    con sus columnas canónicas.
+
+    Returns: {'ok': bool, 'issues': list[str]}
+    """
+    issues: list[str] = []
+    v21 = check_schema_v21(conn)
+    issues += v21['issues']
+
+    cur = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' "
+        "AND name='fund_data_quality_issues'"
+    )
+    if not cur.fetchone():
+        issues.append("Tabla fund_data_quality_issues no existe (v22)")
+    else:
+        cur = conn.execute("PRAGMA table_info(fund_data_quality_issues)")
+        actual = {row[1] for row in cur.fetchall()}
+        missing = FUND_DATA_QUALITY_ISSUES_COLUMNS_SET - actual
+        if missing:
+            issues.append(
+                f"fund_data_quality_issues: faltan columnas {sorted(missing)}"
+            )
 
     return {'ok': len(issues) == 0, 'issues': issues}
 
@@ -436,10 +524,11 @@ def verify_db_schema(conn) -> dict[str, list[str]]:
     missing: dict[str, list[str]] = {}
 
     checks = [
-        ("fund_master",        FUND_MASTER_COLUMNS_V20_SET),
-        ("fund_kiid_metadata", FUND_KIID_METADATA_COLUMNS_SET),
-        ("ingestion_log",      INGESTION_LOG_COLUMNS_SET),
-        ("fund_benchmarks",    FUND_BENCHMARKS_COLUMNS_SET),
+        ("fund_master",              FUND_MASTER_COLUMNS_V21_SET),
+        ("fund_kiid_metadata",       FUND_KIID_METADATA_COLUMNS_SET),
+        ("ingestion_log",            INGESTION_LOG_COLUMNS_SET),
+        ("fund_benchmarks",          FUND_BENCHMARKS_COLUMNS_SET),
+        ("fund_data_quality_issues", FUND_DATA_QUALITY_ISSUES_COLUMNS_SET),
     ]
 
     for table, expected in checks:
@@ -462,10 +551,12 @@ def verify_db_schema(conn) -> dict[str, list[str]]:
 # ============================================================
 def assert_schema_alignment(conn) -> None:
     """
-    Comprueba que fund_master, fund_kiid_metadata e ingestion_log
-    contienen todas las columnas definidas en este módulo (v20:
-    fund_master = 58 cols con Vehicle_Structure; sin Type/Subtype/
-    Currency_Hedged/Is_ESG/Portfolio_Currency; metadata = 22).
+    Comprueba que fund_master, fund_kiid_metadata, ingestion_log,
+    fund_benchmarks y fund_data_quality_issues contienen todas las
+    columnas definidas en este módulo (v22: fund_master = 59 cols con
+    Vehicle_Structure + Asset_Currency; sin Type/Subtype/Currency_Hedged/
+    Is_ESG/Portfolio_Currency; metadata = 22; fund_data_quality_issues
+    nueva en v22, ver FIX-DQ-1).
 
     Lanza AssertionError con detalle si falta alguna columna.
 

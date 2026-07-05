@@ -11,6 +11,36 @@ Sustituye a proyecto1/src/config.py y proyecto2/src/config.py.
 Uso desde cualquier modulo:
     from shared.config import DB_PATH, RISK_FREE_RATE_ANN
 
+Cambios v22 (2026-07-05, FIX-DQ-1):
+  - SCHEMA_VERSION: "v21" → "v22".
+  - fund_data_quality_issues (tabla nueva): estado "actual" de issues de
+    calidad de datos por fondo, uno por (ISIN, check_code), reconstruida
+    en cada ciclo de pipeline.py (DELETE+INSERT por ISIN). Complementa a
+    ingestion_log (histórico append-only de todos los eventos de todos
+    los ciclos): da una vista consultable de "qué está mal con el fondo
+    X ahora mismo" sin tener que filtrar el histórico completo.
+  - DATA_QUALITY_SEVERITY: ranking de severidad usado para calcular
+    Data_Quality_Flag de forma determinista como el máximo entre el
+    nivel base (derivado de SRRI_Quality_Flag) y el de cada issue
+    acumulado durante el procesamiento del ISIN -- sustituye a las
+    mutaciones secuenciales dispersas ("solo si Data_Quality_Flag=='OK'",
+    "solo si != 'WARN'", o sin guard alguno) que existían en pipeline.py
+    antes de este fix, y que en al menos un caso (INTER_NTC_CONTRADICTION)
+    llegaban a suprimir el propio registro en ingestion_log cuando un
+    chequeo anterior ya había tocado el flag.
+
+Cambios v21 (2026-07-05, BL-44-FX):
+  - SCHEMA_VERSION: "v20" → "v21".
+  - fund_master: Asset_Currency (TEXT) añadida -- divisa de los activos/
+    estrategia del fondo (vs. Fund_Currency = divisa de la clase de
+    participación), inferida del nombre del fondo vía classify_utils.
+    detect_asset_currency_from_name(). No es un revival de Portfolio_Currency
+    (eliminada en v20, 98.7% NULL vía extracción de texto KIID demasiado
+    literal) -- nombre y fuente de datos distintos; Portfolio_Currency
+    permanece en V20_DELETED_ATTRIBUTES.
+  - ATTRIBUTE_CASING: Asset_Currency añadida como "CODE" (mismo tratamiento
+    que Fund_Currency).
+
 Cambios v19.2 (BL-COST Sprint 2 S2-D):
   - PRIIPS_COST_EXTRACTION_ENABLED: False → True.
     Activado tras smoke test y despliegue de S2-C (pipeline.py v37,
@@ -54,7 +84,25 @@ _ROOT = Path(__file__).resolve().parent.parent   # c:/desarrollo/fondos
 # ============================================================
 # Versión canónica del schema de BD
 # ============================================================
-SCHEMA_VERSION: str = "v20"
+SCHEMA_VERSION: str = "v22"
+
+# ============================================================
+# v22 (FIX-DQ-1): severidad de Data_Quality_Flag / fund_data_quality_issues
+# ============================================================
+# Ranking usado para calcular Data_Quality_Flag como el máximo de severidad
+# entre el nivel base (derivado de SRRI_Quality_Flag) y el de cada issue
+# acumulado durante el procesamiento de un ISIN (ver _finalize_data_quality_
+# issues en proyecto1/core/pipeline.py). Mayor valor = más severo.
+# WARN y MISSING comparten nivel: ambos representan un problema real y
+# accionable (una discrepancia sin resolver o un dato base ausente),
+# mientras que INFERRED es deliberadamente más leve -- indica un valor
+# presente pero de menor confianza (inferido, no observado directamente).
+DATA_QUALITY_SEVERITY: dict = {
+    "OK": 0,
+    "INFERRED": 1,
+    "WARN": 2,
+    "MISSING": 2,
+}
 
 # ============================================================
 # v19 (BL-COST-2): constantes de coste PRIIPs/KID-aware
@@ -438,7 +486,7 @@ ATTRIBUTE_CASING: dict[str, str] = {
     "SRRI_Validation_Status": "UPPER_SNAKE",
     "Cost_Mgmt_Arbitration": "UPPER_SNAKE", "Cost_Oper_Arbitration": "UPPER_SNAKE",
     # CODE / NUM
-    "Fund_Currency": "CODE",
+    "Fund_Currency": "CODE", "Asset_Currency": "CODE",
     "SRRI": "NUM", "Sfdr_Article": "NUM", "Recommended_Holding_Period": "NUM",
 }
 

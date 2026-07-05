@@ -31,7 +31,8 @@ def get_universe_isins(df_master) -> List[str]:
         r"""
         balanced|
         multi[\s-]?asset|
-        allocation|
+        alloc\w*|
+        conver\w*|
         diversified|
         total\s+return|
         conservative|
@@ -45,7 +46,61 @@ def get_universe_isins(df_master) -> List[str]:
         """,
         re.IGNORECASE | re.VERBOSE,
     )
+    # BL-MX-IN1 (2026-07-04): paired with renta_variable's BL-RV-EX5.
+    # "allocation"->"alloc\w*" and new "conver\w*" (convertibles) catch
+    # truncated master-Excel naming ("BGF GLOBAL ALLOCA.F.HED.", "JPM
+    # GLOBAL CONVER.(EUR)") that the exact-word "allocation" pattern
+    # missed -- those funds were excluded from renta_variable via BL-RV-EX5
+    # (genuine multi-asset/convertible-bond strategies, confirmed via KIID
+    # text) but became orphaned since this regex also required the full
+    # word. "bal\w*" intentionally NOT added -- too generic a prefix,
+    # risks false-matching unrelated fund names.
+    # BL-MX-EX1 (2026-07-04): exclusiones específicas y verificadas contra
+    # texto KIID real. Causa raíz: el patrón de arriba usa palabras de
+    # estilo genéricas ("growth"/"income"/"dynamic"/"total return") que
+    # también aparecen en fondos puros de renta variable o renta fija --
+    # y como MIXTOS se ejecuta DESPUÉS de renta_variable/rf_flexible/
+    # rf_corto/alternativos en el pipeline, sobrescribe silenciosamente
+    # vía COALESCE la clasificación correcta cada vez que classify_fund()
+    # se re-ejecuta (confirmado: 44 de ~64 correcciones puntuales de esta
+    # sesión revirtieron a 'Mixtos' tras un pipeline run real, porque
+    # mixtos.classify_fund() asigna 'Mixtos' por defecto salvo que
+    # INTER-DBLCLAIM/INTER-VOTE3 intervenga, y esas reglas exigen una
+    # señal de benchmark que muchos de estos fondos no tienen). Cada
+    # fragmento verificado individualmente contra el objetivo de inversión
+    # real antes de excluirlo -- no una eliminación genérica de las
+    # palabras de estilo (que orfanaría fondos Mixtos genuinos como
+    # Invesco Global Income, JPM Global Balanced/Income).
+    _exclude_confirmed_non_mixtos = re.compile(
+        r"""
+        templeton\s+(?:asian\s+)?growth|
+        templeton\s+growth|
+        ms\s+sicav\s+us\s+growth|
+        ms\s+invf\s+us\s+growth|
+        mss\s+us\s+growth|
+        dws\s+esg\s+eq(?:uity)?\s+income|
+        dws\s+us\s+growth|
+        ubs\s+usa\s+growth|
+        dws\s+esg\s+dynamic\s+opp|
+        pimco\s+dynamic\s+bond|
+        pimco\s+diver|
+        pimco\s+esg\s+income|
+        candriam\s+bonds\s+total\s+return|
+        jupiter\s+dynamic|
+        ubs\s+glob\s+dynamic|
+        db\s+fixed\s+income|
+        ab\s+mort\s+income|
+        amundi\s+str\s+income|
+        bsf\s+em\s+flex\s+dynamic|
+        edr\s+bond\s+alloc|
+        pictet\s+fixed\s+income
+        """,
+        re.IGNORECASE | re.VERBOSE,
+    )
     mask = df_master["Fund_Name"].astype(str).str.contains(pattern, regex=True)
+    mask &= ~df_master["Fund_Name"].astype(str).str.contains(
+        _exclude_confirmed_non_mixtos, regex=True
+    )
     return (
         df_master.loc[mask, "ISIN"]
         .dropna()

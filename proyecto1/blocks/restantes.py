@@ -75,6 +75,9 @@ Universo
 --------
 Escenario A (primera ejecucion): fondos en Excel sin presencia en fund_master
 Escenario B (re-ejecucion): fondos con Heuristic_Block='RESTANTES' en fund_master
+Escenario C (FIX-RESTANTES-UNIVERSE, 2026-07-05): fondos con Heuristic_Block
+  de OTRO bloque que ya no coincide con la heuristica de nombre VIGENTE de
+  ese bloque ("huerfanos" — ver _claimed_by_active_blocks en este modulo).
 """
 
 from __future__ import annotations
@@ -177,9 +180,46 @@ def _detect_rf_emergentes_oicvm(kiid_text: str) -> bool:
 # Universo del bloque
 # =====================================================
 
+# =====================================================
+# FIX-RESTANTES-UNIVERSE (2026-07-05)
+# =====================================================
+_PRIMARY_BLOCKS = [
+    "monetarios", "rf_corto", "rf_flexible",
+    "renta_variable", "mixtos", "alternativos",
+]
+
+
+def _claimed_by_active_blocks(df_master) -> set:
+    """
+    Universo de ISINs que algun bloque primario reclamaria HOY segun su
+    heuristica de nombre VIGENTE (no el Heuristic_Block historico ya
+    persistido en BD).
+
+    Causa raiz (2026-07-05): las heuristicas de nombre de cada bloque se
+    han ido ESTRECHANDO con el tiempo (ver comentarios BL-RV-EX* en
+    renta_variable.py y equivalentes en otros bloques) para eliminar
+    falsos positivos. Un fondo que coincidia con un bloque en un ciclo
+    antiguo y ya NO coincide con NINGUN bloque hoy queda huerfano: su
+    bloque original ya no lo reclama, y el universo A/B de este modulo
+    tampoco lo recogia (su Heuristic_Block no es 'RESTANTES', y ya esta
+    en BD, asi que Escenario A tampoco aplicaba). Confirmado en corpus:
+    882 fondos en esa situacion (ver memoria FIX-RESTANTES-UNIVERSE
+    2026-07-05).
+    """
+    claimed: set = set()
+    for _mod_name in _PRIMARY_BLOCKS:
+        try:
+            _mod = importlib.import_module(f"blocks.{_mod_name}")
+        except ImportError:
+            _mod = importlib.import_module(f"proyecto1.blocks.{_mod_name}")
+        claimed |= set(_mod.get_universe_isins(df_master))
+    return claimed
+
+
 def get_universe_isins(df_master, conn=None) -> List[str]:
     """
-    Universo = fondos en Excel aun sin clasificar.
+    Universo = fondos en Excel aun sin clasificar POR NINGUN BLOQUE
+    ACTIVO HOY.
 
     Escenario A (primera ejecucion):
         ISINs del Excel que NO estan en fund_master (nunca procesados).
@@ -188,7 +228,20 @@ def get_universe_isins(df_master, conn=None) -> List[str]:
         ISINs con Heuristic_Block='RESTANTES' en fund_master
         (procesados por restantes en una iteracion previa).
 
-    Universo final = union de ambos.
+    Escenario C — FIX-RESTANTES-UNIVERSE (2026-07-05):
+        ISINs ya en fund_master con Heuristic_Block de OTRO bloque
+        (p.ej. 'RENTA_VARIABLE'), pero que ese bloque YA NO reclama hoy
+        segun su heuristica de nombre vigente ("huerfanos" — ver
+        _claimed_by_active_blocks). Sin este escenario, estos fondos
+        nunca vuelven a ser revisados por ningun bloque una vez que las
+        heuristicas de nombre cambian: quedan congelados indefinidamente
+        con clasificacion potencialmente desactualizada.
+
+    Universo final = union de los tres escenarios. Los escenarios A/B se
+    mantienen explicitos (no solo el complemento C) como red de
+    seguridad: si _claimed_by_active_blocks() fallara o quedara
+    incompleta por cualquier motivo, el comportamiento previo (A ∪ B)
+    sigue garantizado — este fix es estrictamente aditivo.
     """
     all_isins = set(df_master["ISIN"].dropna().astype(str).unique())
 
@@ -208,10 +261,15 @@ def get_universe_isins(df_master, conn=None) -> List[str]:
         ).fetchall() if r[0]
     }
 
-    not_in_db            = all_isins - in_db - wrong_doc           # Escenario A
+    not_in_db            = all_isins - in_db - wrong_doc                  # Escenario A
     previously_restantes = (all_isins & heuristica_restantes) - wrong_doc  # Escenario B
 
-    return sorted(not_in_db | previously_restantes)
+    claimed_today = _claimed_by_active_blocks(df_master)
+    orphaned = (
+        (all_isins & in_db) - heuristica_restantes - claimed_today - wrong_doc
+    )  # Escenario C
+
+    return sorted(not_in_db | previously_restantes | orphaned)
 
 
 # =====================================================

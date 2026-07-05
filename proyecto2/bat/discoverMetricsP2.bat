@@ -1,20 +1,20 @@
 c:\desarrollo\fondos
 
 REM PASO 1: CARGA DE FUENTES BCE FRED Y EUROESTAT
-python -m proyecto2.src.loaders.macro_loader --source bce
-python -m proyecto2.src.loaders.macro_loader --source fred
-python -m proyecto2.src.loaders.macro_loader --source eurostat
+python -m proyecto2.src.discovery.macro_discovery --source bce
+python -m proyecto2.src.discovery.macro_discovery --source fred
+python -m proyecto2.src.discovery.macro_discovery --source eurostat
 
 REM PASO 2: CARGA FUENTES MORNINGSTAR
-REM python -m proyecto2.src.loaders.nav_discovery --mode discover --isin LU1873127366 --dry-run --verbose
-REM python -m proyecto2.src.loaders.nav_discovery --mode discover --sample 10
-REM python -m proyecto2.src.loaders.nav_discovery --mode load --isin LU1873127366 --dry-run --verbose
-python -m proyecto2.src.loaders.nav_discovery --mode discover
-python -m proyecto2.src.loaders.nav_discovery --mode load --desde 2016-01-01 > logs\navLoad_hd.log 2>&1
+REM python -m proyecto2.src.discovery.nav_discovery --mode discover --isin LU1873127366 --dry-run --verbose
+REM python -m proyecto2.src.discovery.nav_discovery --mode discover --sample 10
+REM python -m proyecto2.src.discovery.nav_discovery --mode load --isin LU1873127366 --dry-run --verbose
+python -m proyecto2.src.discovery.nav_discovery --mode discover
+python -m proyecto2.src.discovery.nav_discovery --mode load --desde 2016-01-01 > logs\navLoad_hd.log 2>&1
 REM En otra ventana CMD:
 powershell -command "Get-Content logs\navLoad_hd.log -Wait -Tail 20"
 
-REM python -m proyecto2.src.loaders.test_historia
+REM python -m proyecto2.src.discovery.test_historia
 
 
 

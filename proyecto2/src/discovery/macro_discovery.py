@@ -1,4 +1,4 @@
-# proyecto2/src/loaders/macro_loader.py
+# proyecto2/src/discovery/macro_discovery.py
 # -*- coding: utf-8 -*-
 """
 Carga de datos macroeconomicos desde APIs publicas gratuitas.
@@ -16,7 +16,7 @@ Fuentes implementadas:
 
 Uso:
     cd c:/desarrollo/fondos
-    python -m proyecto2.src.loaders.macro_loader
+    python -m proyecto2.src.discovery.macro_discovery
 
     Opciones:
     --source ine|bce|fred|eurostat|all   (default: all)
@@ -54,7 +54,7 @@ REQUEST_TIMEOUT = 30        # segundos por peticion HTTP
 RETRY_WAIT      = 5         # segundos entre reintentos
 MAX_RETRIES     = 3
 
-# Directorio de logs: proyecto2/log/  (__file__ = proyecto2/src/loaders/macro_loader.py)
+# Directorio de logs: proyecto2/log/  (__file__ = proyecto2/src/discovery/macro_discovery.py)
 _LOG_DIR = _P2_SRC.parent / "log"
 
 
@@ -85,14 +85,14 @@ class _Tee:
 
 def _setup_run_logger(font: str):
     """
-    Crea proyecto2/log/log_P2_macro_loader_{font}_{YYYYMMDD_HHMM}.log
+    Crea proyecto2/log/log_P2_macro_discovery_{font}_{YYYYMMDD_HHMM}.log
     y redirige stdout/stderr a consola + fichero.
 
     Devuelve (file_handle, stdout_original, stderr_original) para restaurar.
     """
     _LOG_DIR.mkdir(parents=True, exist_ok=True)
     stamp    = datetime.now().strftime("%Y%m%d_%H%M")
-    log_path = _LOG_DIR / f"log_P2_macro_loader_{font}_{stamp}.log"
+    log_path = _LOG_DIR / f"log_P2_macro_discovery_{font}_{stamp}.log"
 
     fh = open(log_path, "w", encoding="utf-8")
     orig_out, orig_err = sys.stdout, sys.stderr

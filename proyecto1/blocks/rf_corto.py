@@ -31,6 +31,12 @@ def get_universe_isins(df_master) -> List[str]:
     include_patterns = [
         "short duration", "ultra short", "short term bond", "short term",
         "low duration", "floating rate", "floating", "money plus", "enhanced cash",
+        # BL-RFC-IN1 (2026-07-04): paired with mixtos's BL-MX-EX1 / renta_
+        # variable's BL-RV-EX6. Confirmed genuine MBS/ABS specialist bond
+        # fund via KIID text ("invierte principalmente en valores
+        # respaldados por hipotecas y otros valores respaldados por
+        # activos"), doesn't match any bond-duration keyword above by name.
+        "ab mort income",
     ]
     exclude_patterns = [
         "money market", "monetary", "liquidity", "cash ",

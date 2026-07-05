@@ -36,6 +36,36 @@ def get_universe_isins(df_master) -> List[str]:
         "absolute return bond", "multi sector bond", "multisector bond",
         "opportunistic bond", "global bond", "income bond",
         "tactical bond", "active bond",
+        # BL-RFF-IN1: bond-index abbreviations (iShares/Vanguard/PIMCO naming).
+        # "bnd" and "bd indx" are bond abbreviations; "corp indx"/"govt indx"
+        # are corporate/government bond index trackers.
+        # These were previously captured by renta_variable due to "shares"→"ishares",
+        # "climate"→PIMCO BND, and "global"→VGD BD INDX false positives (BL-RV-EX1/EX2).
+        "bnd", "bd indx", "corp indx", "govt indx",
+        # BL-RFF-IN2 (2026-07-04): paired with renta_variable's BL-RV-EX3.
+        # Without these, funds excluded from RV by BL-RV-EX3 become orphaned
+        # (claimed by no block, stale Fund_Nature persists) -- confirmed via
+        # real pipeline run for 7 iShares "1-5 INDX/IDX"/"GVT INDX" funds.
+        "1-5 ind", "1-5 idx", "gvt indx",
+        # BL-RFF-IN3 (2026-07-04): paired with renta_variable's BL-RV-EX4.
+        # Without "high yield" here, funds excluded from RV via BL-RV-EX4
+        # become orphaned (e.g. "AB GLOBAL HIGH YIELD PORTFOLIO", "GS
+        # GLOBAL HY") -- confirmed genuine high-yield BOND funds via
+        # KIID-text audit, previously claimed by RV only via the generic
+        # "global" name-pattern collision. "high yiel" (no "d") matches
+        # truncated naming ("AB GLOBAL HIGH YIEL.PORTF.C2 H").
+        "high yield", "high yiel",
+        # BL-RFF-IN4 (2026-07-04): paired with mixtos's BL-MX-EX1. These
+        # fund-family fragments were confirmed genuine bond funds via KIID
+        # text this session but don't match any include pattern above by
+        # name alone (generic "Dynamic"/"Fixed Income"/"Flex Dynamic"/
+        # "Bond Alloc" naming without a bond-specific keyword this list
+        # already covers).
+        "ubs glob dynamic", "db fixed income", "bsf em flex dynamic",
+        "amundi str income", "jupiter dynamic",
+        # "pimco diver" (no trailing "s") catches "DIVERS"/"DIVER."/"DIVERSF"
+        # naming variants, paired with renta_variable's exclude of the same.
+        "pimco diver", "pimco esg income",
     ]
     exclude_patterns = [
         "money", "monetary", "liquidity", "cash",
@@ -48,8 +78,18 @@ def get_universe_isins(df_master) -> List[str]:
         if not isinstance(name, str):
             return False
         n = name.lower()
+        # BL-RFF-IN4b (2026-07-04): "edr bond alloc" checked BEFORE the
+        # generic "allocation" exclude -- EDR Bond Allocation is a genuine
+        # bond fund (>=90% en valores de deuda) despite the "Allocation"
+        # naming that would otherwise route it away (that exclude exists
+        # to keep genuine multi-asset "Allocation" funds out, which this
+        # isn't).
+        if "edr bond alloc" in n:
+            return True
         if any(p in n for p in exclude_patterns):
             return False
+        if re.search(r'\bhy\b', n):
+            return True
         return any(p in n for p in include_patterns)
 
     mask = df_master["Fund_Name"].apply(is_candidate)

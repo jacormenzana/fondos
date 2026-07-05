@@ -161,13 +161,23 @@ def evaluate_fund(row: dict, kiid_dir: Path, mods: dict) -> dict:
     out["mgmt_regrid"] = _r2p(comp.get("management_fee_pct"))
     out["oper_regrid"] = _r2p(comp.get("transaction_cost_pct"))
     out["perf_regrid"] = _r2p(comp.get("performance_fee_pct"))
-    # ACI: pick 1Y and RHP rows
+    # ACI: pick 1Y and RHP rows.
+    # Priority for ACI_RHP: is_rhp=True label > longest hy>1.0 entry.
+    # Set-once for ACI_1Y (take first hy≈1.0 match).
+    # BUG-FIX: original sequential assignment overwrote acirhp_regrid with
+    # None when a later hy>1.0 entry had aci_pct=None (e.g. IE00B0M2Y900).
     for e in ot:
         hy = e.get("horizon_years")
-        if hy is not None and abs(hy - 1.0) <= 0.01:
+        if hy is not None and abs(hy - 1.0) <= 0.01 and out["aci1_regrid"] is None:
             out["aci1_regrid"] = _r2p(e.get("aci_pct"))
-        if e.get("is_rhp") or (hy is not None and hy > 1.0):
-            out["acirhp_regrid"] = _r2p(e.get("aci_pct"))
+    _rhp_from_label = next((e for e in ot if e.get("is_rhp") and e.get("aci_pct") is not None), None)
+    if _rhp_from_label is not None:
+        out["acirhp_regrid"] = _r2p(_rhp_from_label["aci_pct"])
+    else:
+        _longer = [e for e in ot if (e.get("horizon_years") or 0) > 1.0 and e.get("aci_pct") is not None]
+        if _longer:
+            _best = max(_longer, key=lambda e: e.get("horizon_years", 0))
+            out["acirhp_regrid"] = _r2p(_best["aci_pct"])
     # FIX-HARNESS-2: any single-column OT table is, by PRIIPS construction,
     # reporting the RHP horizon -- regardless of its specific value (1Y, 3M,
     # whatever the fund's recommended holding period is). Production already

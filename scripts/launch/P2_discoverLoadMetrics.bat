@@ -36,13 +36,13 @@ echo [%time%] Paso 1: Carga de fuentes macro (BCE, FRED, EUROSTAT)
 echo. >> "%LOG%"
 echo --- PASO 1: CARGA DE FUENTES MACRO ------------------------ >> "%LOG%"
 
-python -X utf8 -m proyecto2.src.loaders.macro_loader --source bce >> "%LOG%" 2>&1
-python -X utf8 -m proyecto2.src.loaders.macro_loader --source fred >> "%LOG%" 2>&1
-python -X utf8 -m proyecto2.src.loaders.macro_loader --source eurostat >> "%LOG%" 2>&1
+python -X utf8 -m proyecto2.src.discovery.macro_discovery --source bce >> "%LOG%" 2>&1
+python -X utf8 -m proyecto2.src.discovery.macro_discovery --source fred >> "%LOG%" 2>&1
+python -X utf8 -m proyecto2.src.discovery.macro_discovery --source eurostat >> "%LOG%" 2>&1
 
-REM python -X utf8 -m proyecto2.src.loaders.macro_loader --source bce 2>&1 | powershell -noprofile -command "Tee-Object -FilePath '%LOG%' -Append"
-REM python -X utf8 -m proyecto2.src.loaders.macro_loader --source fred 2>&1 | powershell -noprofile -command "Tee-Object -FilePath '%LOG%' -Append"
-REM python -X utf8 -m proyecto2.src.loaders.macro_loader --source eurostat 2>&1 | powershell -noprofile -command "Tee-Object -FilePath '%LOG%' -Append"
+REM python -X utf8 -m proyecto2.src.discovery.macro_discovery --source bce 2>&1 | powershell -noprofile -command "Tee-Object -FilePath '%LOG%' -Append"
+REM python -X utf8 -m proyecto2.src.discovery.macro_discovery --source fred 2>&1 | powershell -noprofile -command "Tee-Object -FilePath '%LOG%' -Append"
+REM python -X utf8 -m proyecto2.src.discovery.macro_discovery --source eurostat 2>&1 | powershell -noprofile -command "Tee-Object -FilePath '%LOG%' -Append"
 
 :: -- PASO 2: CARGA FUENTES MORNINGSTAR ---------------------------------------
 echo [%time%] Paso 2: Carga de fuentes Morningstar (NAV)
@@ -50,19 +50,19 @@ echo. >> "%LOG%"
 echo --- PASO 2: CARGA FUENTES MORNINGSTAR --------------------- >> "%LOG%"
 
 :: Ejecuciones de prueba (Comentadas)
-:: python -X utf8 -m proyecto2.src.loaders.nav_discovery --mode discover --isin LU1873127366 --dry-run --verbose >> "%LOG%" 2>&1
-:: python -X utf8 -m proyecto2.src.loaders.nav_discovery --mode discover --sample 10 >> "%LOG%" 2>&1
-:: python -X utf8 -m proyecto2.src.loaders.nav_discovery --mode load --isin LU1873127366 --dry-run --verbose >> "%LOG%" 2>&1
+:: python -X utf8 -m proyecto2.src.discovery.nav_discovery --mode discover --isin LU1873127366 --dry-run --verbose >> "%LOG%" 2>&1
+:: python -X utf8 -m proyecto2.src.discovery.nav_discovery --mode discover --sample 10 >> "%LOG%" 2>&1
+:: python -X utf8 -m proyecto2.src.discovery.nav_discovery --mode load --isin LU1873127366 --dry-run --verbose >> "%LOG%" 2>&1
 
-python -X utf8 -m proyecto2.src.loaders.nav_discovery --mode discover >> "%LOG%" 2>&1
-python -X utf8 -m proyecto2.src.loaders.nav_discovery --mode load --desde 2016-01-01 >> "%LOG%" 2>&1
+python -X utf8 -m proyecto2.src.discovery.nav_discovery --mode discover >> "%LOG%" 2>&1
+python -X utf8 -m proyecto2.src.discovery.nav_discovery --mode load --desde 2016-01-01 >> "%LOG%" 2>&1
 
-REM python -X utf8 -m proyecto2.src.loaders.nav_discovery --mode discover  2>&1  | powershell -noprofile -command "Tee-Object -FilePath '%LOG%' -Append"
-REM python -X utf8 -m proyecto2.src.loaders.nav_discovery --mode load --desde 2016-01-01  2>&1  | powershell -noprofile -command "Tee-Object -FilePath '%LOG%' -Append" 
+REM python -X utf8 -m proyecto2.src.discovery.nav_discovery --mode discover  2>&1  | powershell -noprofile -command "Tee-Object -FilePath '%LOG%' -Append"
+REM python -X utf8 -m proyecto2.src.discovery.nav_discovery --mode load --desde 2016-01-01  2>&1  | powershell -noprofile -command "Tee-Object -FilePath '%LOG%' -Append" 
 
 
 :: Test historia (Comentado)
-:: python -X utf8 -m proyecto2.src.loaders.test_historia >> "%LOG%" 2>&1
+:: python -X utf8 -m proyecto2.src.discovery.test_historia >> "%LOG%" 2>&1
 
 popd
 

@@ -24,17 +24,35 @@ from typing import Any, Dict, Optional
 # Conjunto canónico de campos cuya lectura efectiva es requerida por reglas
 # INTER del pipeline. Cualquier campo nuevo persistido vía COALESCE que
 # participe en inferencias INTER debe añadirse aquí.
+# FIX-EFF-CH (2026-07-04): "Currency_Hedged", "Type" y "Subtype" corregidas
+# en esta whitelist. Causa raíz CRÍTICA: las 3 referencian columnas que ya
+# no existen tal cual en el schema v20 ("Currency_Hedged" eliminada, 100%
+# redundante con Hedging_Policy; "Type" renombrada a "Vehicle_Structure";
+# "Subtype" descompuesta en MMF_Structure/Alt_Strategy/Payoff_Profile).
+# _load_all_from_bd() construye UN SOLO SELECT con TODAS las columnas de
+# esta whitelist — al incluir una columna inexistente, sqlite3 lanza
+# OperationalError en la query COMPLETA, capturado silenciosamente por el
+# except, degradando TODOS los campos (no solo el/los inexistente/s) a None.
+# Efecto: eff.get() ha estado devolviendo None para TODO campo, en TODO
+# fondo, en cada ciclo del pipeline desde v20 — invalidando silenciosamente
+# el propósito íntegro de EffectiveReader (recuperar valores de BD para
+# fondos CACHED). Confirmado como causa raíz de la recurrencia de
+# LU0637308312 (NORDEA) Investment_Universe='Liquidity': P04 no podía leer
+# Geography='Global' de BD porque eff.get() devolvía None para TODOS los
+# campos. "Subtype" se elimina sin reemplazo (descompuesta en 3 columnas,
+# ninguna regla INTER actual las necesita); "Type" se renombra a
+# "Vehicle_Structure".
 _EFF_FIELDS_WHITELIST = frozenset({
     # Geográficos / Universo
     "Geography", "Investment_Universe", "Investment_Focus",
     # Cobertura de divisa
-    "Currency_Hedged", "Hedging_Policy", "Fund_Currency",
+    "Hedging_Policy", "Fund_Currency",
     # Sectorial / temático
     "Sector_Focus", "Theme",
     # Benchmark
     "Benchmark_Declared", "Benchmark_Type",
     # Clasificación principal
-    "Fund_Nature", "Type", "Family", "Subtype",
+    "Fund_Nature", "Vehicle_Structure", "Family",
     "Strategy", "Replication_Method",
     # Otros v17
     "Market_Cap_Focus", "Accumulation_Policy",

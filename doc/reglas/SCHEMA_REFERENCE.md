@@ -1,8 +1,8 @@
-# SCHEMA REFERENCE — Base de Datos v16
+# SCHEMA REFERENCE — Base de Datos v22
 
 **Base de datos:** `db/fondos.sqlite`  
 **Schema SQL:** `db/schema_fondos.sql`  
-**Versión:** v16 (31-mar-2026)  
+**Versión:** v22 (2026-07-05)  
 **Propósito:** Referencia rápida de tablas y columnas (sin descripciones largas)
 
 ---
@@ -51,14 +51,15 @@
 |---------|------|---------|
 | SRRI | INTEGER | 1-7 |
 | SRRI_Quality_Flag | TEXT | HIGH \| MEDIUM_VISUAL \| LOW |
-| Data_Quality_Flag | TEXT | - |
+| Data_Quality_Flag | TEXT | OK \| INFERRED \| WARN \| MISSING (v22, FIX-DQ-1, 2026-07-05) — rollup determinista: el máximo de severidad (`shared.config.DATA_QUALITY_SEVERITY`) entre el nivel base derivado de SRRI_Quality_Flag y todos los issues acumulados durante el ciclo para ese ISIN. El detalle por issue vive en `fund_data_quality_issues` (tabla 5), no en esta columna. |
 
 ### Divisa y cobertura (3 columnas)
 
 | Columna | Tipo | Nota |
 |---------|------|------|
 | Fund_Currency | TEXT | EUR \| USD \| GBP \| CHF \| ... |
-| Portfolio_Currency | TEXT | (Obsoleto, no usar) |
+| Portfolio_Currency | TEXT | (Obsoleto, no usar -- eliminada en v20) |
+| Asset_Currency | TEXT | EUR \| USD \| GBP \| JPY \| CHF \| CNH \| ... (v21, 2026-07-05) — divisa de los activos/estrategia del fondo, inferida del nombre; NULL = fondo diversificado sin mandato de divisa única |
 | Hedging_Policy | TEXT | HEDGED \| UNHEDGED \| PARTIALLY_HEDGED |
 
 ### Política de inversión (3 columnas)
@@ -242,12 +243,41 @@ idx_log_status   ON (status)
 
 ---
 
+## TABLA 5: fund_data_quality_issues (v22, FIX-DQ-1, 2026-07-05)
+
+**Propósito:** Estado ACTUAL de issues de calidad de datos por fondo — complementa a `ingestion_log`
+**Clave primaria:** `id` (AUTOINCREMENT); unicidad lógica por `(ISIN, check_code)`
+**Total columnas:** 6
+
+| Columna | Tipo | Constraint | Nota |
+|---------|------|------------|------|
+| id | INTEGER | PRIMARY KEY AUTOINCREMENT | - |
+| ISIN | TEXT | NOT NULL | ISIN del fondo afectado |
+| check_code | TEXT | NOT NULL | Código del chequeo (ej. `FUNDCCY_NAME_KIID_MISMATCH`, `HEDGCCY_NO_MISMATCH_INCONSISTENCY`) |
+| level | TEXT | NOT NULL | OK \| INFERRED \| WARN \| MISSING — **mismo vocabulario que `fund_master.Data_Quality_Flag`**, NO el de `ingestion_log.status` (son dos vocabularios distintos, ver `shared.config.DATA_QUALITY_SEVERITY`) |
+| message | TEXT | - | Descripción del issue |
+| detected_at | TEXT | - | ISO 8601 timestamp del ciclo que lo detectó |
+
+**Diferencia clave con `ingestion_log`:** `ingestion_log` es un histórico append-only de TODOS los eventos de TODOS los ciclos (nunca se borra). `fund_data_quality_issues` se **reconstruye por completo en cada ciclo** (`DELETE FROM ... WHERE ISIN=?` seguido de un INSERT por issue activo) — consultar esta tabla responde "¿qué está mal con el fondo X ahora mismo?" sin tener que filtrar el histórico completo ni deducir cuál es el evento más reciente por `(ISIN, step)`.
+
+`fund_master.Data_Quality_Flag` es el rollup rápido para `WHERE Data_Quality_Flag != 'OK'`; esta tabla es el detalle consultable por issue. Ambos se calculan juntos, una sola vez por ISIN, en `_finalize_data_quality_issues()` (`proyecto1/core/pipeline.py`), justo antes de `publish_fund`.
+
+### Índices en fund_data_quality_issues
+
+```sql
+idx_dqissues_isin       ON (ISIN)
+idx_dqissues_isin_code  ON (ISIN, check_code)  -- UNIQUE
+```
+
+---
+
 ## RELACIONES ENTRE TABLAS
 
 ```
 fund_master (ISIN)
     ├─→ fund_kiid_metadata (ISIN, KIID_Class)
     ├─→ ingestion_log (ISIN)
+    ├─→ fund_data_quality_issues (ISIN)
     └─→ fund_families (fund_family_id)
 
 fund_kiid_metadata

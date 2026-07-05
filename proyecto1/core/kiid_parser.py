@@ -1078,7 +1078,7 @@ def parse_kiid_generic(
     # PASO 10i — Distribution_Frequency
     # -------------------------------------------------
     dist_freq = _detect_distribution_frequency(
-        kiid_text, result.get("Accumulation_Policy")
+        kiid_text, result.get("Accumulation_Policy"), fund_name
     )
     if dist_freq:
         result["Distribution_Frequency"] = dist_freq
@@ -2069,9 +2069,30 @@ ES_HEDGED = [
     r"\bcobertura\s+(?:cambiaria|de\s+tipo\s+de\s+cambio)\b",
     # NUEVO: "clase con cobertura"
     r"\bclase\s+con\s+cobertura\b",
-    # NUEVO: "(eur hedged)" o "(usd hedged)" en nombre de clase en ES
-    r"\b(?:eur|usd|gbp|chf|jpy)\s+\(?\s*hedged\s*\)?",
+    # NUEVO: "(EUR hedged)" o "(USD hedged)" en nombre de clase en ES.
+    # FIX-HEDGCCY-1 (2026-07-06): parens son REQUERIDOS (no opcionales).
+    # La forma sin paréntesis "EUR Hedged" aparece en nombres de índices de
+    # referencia (p.ej. "Bloomberg Pan European HY 3% Constrained Index EUR
+    # Hedged") y causaba falsos positivos en ~26 fondos donde Hedging='Hedged'
+    # se guardaba por el nombre del benchmark, no de la clase. Las clases con
+    # cobertura de divisa usan "(EUR Hedged)" con paréntesis en sus KIID o
+    # disparan otros patrones ES_HEDGED (líneas "clase cubierta", "cubierto
+    # frente a", "cobertura de la clase"). Confirmado: EN_HEDGED línea 2112
+    # ya requería paréntesis — se iguala el criterio en ES_HEDGED.
+    r"\b(?:eur|usd|gbp|chf|jpy)\s*\(\s*hedged\s*\)",
     r"\(hedged\)",
+    # FIX-HEDGE-4 (2026-07-05): "cobertura de la clase de acciones/
+    # participaciones" -- variante de orden de palabras distinta de
+    # "clase [de acciones] cubierta" (línea 1) ya cubierta arriba. Ata
+    # explícitamente "cobertura" a la CLASE como objeto, a diferencia del
+    # boilerplate genérico "el fondo puede usar derivados con fines de
+    # cobertura" (gestión de riesgo del fondo en general, no política de
+    # cobertura de ESTA clase) -- deliberadamente NO se añade un patrón
+    # bare "cobertura"/"cubrir" por ese riesgo de falso positivo, muy
+    # frecuente en el corpus (ver auditoría de la población 'restantes',
+    # sesión 2026-07-05: 69/249 fondos con Hedging_Policy=NULL mencionan
+    # cobertura solo en ese contexto genérico).
+    r"\bcobertura\s+de\s+la\s+clase\s+de\s+(?:acciones|participaciones)\b",
 ]
 
 ES_UNHEDGED = [
@@ -2296,6 +2317,33 @@ def _detect_fund_currency(text: str, language: Optional[str]) -> Optional[str]:
         _SYM = {"€": "EUR", "$": "USD", "£": "GBP", "¥": "JPY"}
         raw = _SYM.get(raw, raw.upper())
         result = _normalize_currency(raw)
+        if result:
+            return result
+
+    # FIX-FUNDCCY-1 (2026-07-05): variante de tabla de costes con celdas
+    # separadas por dos puntos y comillas tipográficas -- p.ej.
+    # "Costes totales:\n:"En caso de salida después de"1 año:: 252: USD:"
+    # (observado en KIIDs de JPMorgan). `_COSTS_CURR_RE` exige que la
+    # divisa aparezca INMEDIATAMENTE tras "costes totales" (con solo
+    # espacios en blanco de por medio); este formato intercala toda la
+    # etiqueta de la fila entre "costes totales:" y la celda real
+    # "<importe>: <divisa>:", haciendo fallar la detección de alta
+    # prioridad y cayendo al fallback de "moneda base del Subfondo" --
+    # que describe la divisa del SUBFONDO, no de esta CLASE DE
+    # PARTICIPACIÓN específica. Confirmado corpus-wide: 118 fondos
+    # (exclusivamente familia JPM) donde el fallback devolvía una divisa
+    # distinta de la que declara la propia tabla de costes de esta clase
+    # -- verificado en cada caso contra el sufijo de divisa del nombre de
+    # la propia clase de participación (p.ej. "JPM US VALUE A EUR HDG ACC"
+    # -- EUR, no la divisa base USD del subfondo).
+    _COSTS_CURR_TABLE_RE = re.compile(
+        r'costes\s+totales\s*:.*?:\s*[\d.,]+\s*:\s*'
+        r'(EUR|USD|GBP|JPY|CHF|SEK|NOK|DKK|AUD|CAD|PLN|CZK|HUF)\s*:',
+        re.IGNORECASE | re.DOTALL
+    )
+    m_cost_table = _COSTS_CURR_TABLE_RE.search(text)
+    if m_cost_table:
+        result = _normalize_currency(m_cost_table.group(1).upper())
         if result:
             return result
 
@@ -4063,24 +4111,116 @@ _DIST_FREQ_PATTERNS = [
     (re.compile(r"distribution\s+frequency\s*[:\-]\s*(monthly|quarterly|semi.annual|annual)", re.I),
      {"monthly":"MONTHLY","quarterly":"QUARTERLY","semi-annual":"BIANNUAL","annual":"ANNUAL"}),
     # DDF: "El fondo reparte dividendos anual."
-    (re.compile(r"reparte\s+dividendos\s+(mensual|trimestral|semestral|anual)", re.I),
+    (re.compile(r"reparte\s+dividendos\s+(mensual|trimestral|semestral|anual)", re.I),
      {"mensual":"MONTHLY","trimestral":"QUARTERLY","semestral":"BIANNUAL","anual":"ANNUAL"}),
+    # ES extra: "paga/abona dividendos mensual/trimestral/..."
+    (re.compile(r"(?:paga|abona)\s+dividendos?\s+(mensual|trimestral|semestral|anual)(?:es|mente)?", re.I),
+     {"mensual":"MONTHLY","trimestral":"QUARTERLY","semestral":"BIANNUAL","anual":"ANNUAL"}),
+    # ES extra: "distribuciones mensuales/trimestrales/semestrales/anuales"
+    (re.compile(r"distribuciones?\s+(mensuales?|trimestrales?|semestrales?|anuales?)", re.I),
+     {"mensual":"MONTHLY","mensuales":"MONTHLY","trimestral":"QUARTERLY","trimestrales":"QUARTERLY",
+      "semestral":"BIANNUAL","semestrales":"BIANNUAL","anual":"ANNUAL","anuales":"ANNUAL"}),
+    # ES extra: "pago mensual/trimestral/... de rentas/dividendos"
+    (re.compile(r"pago\s+(mensual|trimestral|semestral|anual)\s+de\s+(?:rentas?|dividendos?|ingresos?)", re.I),
+     {"mensual":"MONTHLY","trimestral":"QUARTERLY","semestral":"BIANNUAL","anual":"ANNUAL"}),
+    # EN extra: "income is distributed / distributions are paid/made monthly/quarterly/..."
+    (re.compile(r"(?:income\s+is\s+distributed|distributions?\s+(?:are\s+)?(?:paid|made|declared))"
+                r"\s+(monthly|quarterly|semi.?annual(?:ly)?|annual(?:ly)?)", re.I),
+     {"monthly":"MONTHLY","quarterly":"QUARTERLY","semi-annually":"BIANNUAL","semiannually":"BIANNUAL",
+      "semi-annual":"BIANNUAL","semiannual":"BIANNUAL","annually":"ANNUAL","annual":"ANNUAL"}),
+    # EN extra: "pays income/distributions monthly/quarterly/annually"
+    (re.compile(r"pays?\s+(?:income|distributions?)\s+(monthly|quarterly|semi.?annual(?:ly)?|annual(?:ly)?)", re.I),
+     {"monthly":"MONTHLY","quarterly":"QUARTERLY","semi-annually":"BIANNUAL","semiannually":"BIANNUAL",
+      "semi-annual":"BIANNUAL","semiannual":"BIANNUAL","annually":"ANNUAL","annual":"ANNUAL"}),
+    # EN extra: "monthly/quarterly/annual income distributions"
+    # EN extra: "monthly/quarterly/annual income distributions"
+    (re.compile(r"\b(monthly|quarterly|semi.?annual|annual(?:ly)?)\s+(?:income\s+)?distributions?\b", re.I),
+     {"monthly":"MONTHLY","quarterly":"QUARTERLY","semi-annual":"BIANNUAL","semiannual":"BIANNUAL",
+      "annual":"ANNUAL","annually":"ANNUAL"}),
+    # EN extra: "distributes income on a monthly/... basis"
+    (re.compile(r"distributes?\s+(?:income|dividends?)\s+on\s+a\s+(monthly|quarterly|semi.?annual|annual)\s+basis", re.I),
+     {"monthly":"MONTHLY","quarterly":"QUARTERLY","semi-annual":"BIANNUAL","semiannual":"BIANNUAL","annual":"ANNUAL"}),
+    # EN extra: "income payments are made monthly/..."
+    (re.compile(r"income\s+payments?\s+(?:are\s+)?(?:made\s+)?(monthly|quarterly|semi.?annual(?:ly)?|annual(?:ly)?)", re.I),
+     {"monthly":"MONTHLY","quarterly":"QUARTERLY","semi-annually":"BIANNUAL","semiannually":"BIANNUAL",
+      "semi-annual":"BIANNUAL","annually":"ANNUAL","annual":"ANNUAL"}),
+    # EN extra: "monthly/quarterly/annual dividend"
+    # EN extra: "monthly/quarterly/annual dividend"
+    (re.compile(r"\b(monthly|quarterly|semi.?annual|annual)\s+dividend\b", re.I),
+     {"monthly":"MONTHLY","quarterly":"QUARTERLY","semi-annual":"BIANNUAL","semiannual":"BIANNUAL","annual":"ANNUAL"}),
+    # EN extra: "this share class / the fund pays out / distributes income monthly/..."
+    (re.compile(r"(?:this\s+(?:share\s+class|fund)|the\s+fund)\s+(?:pays\s+out|distributes?)\s+"
+                r"(?:income\s+)?(monthly|quarterly|semi.?annual(?:ly)?|annual(?:ly)?)", re.I),
+     {"monthly":"MONTHLY","quarterly":"QUARTERLY","semi-annually":"BIANNUAL","semiannually":"BIANNUAL",
+      "semi-annual":"BIANNUAL","annually":"ANNUAL","annual":"ANNUAL"}),
+]
+
+# "12 distributions per year" -> MONTHLY, etc.
+_DIST_COUNT_PATTERN = re.compile(
+    r"(\d+)\s+(?:income\s+)?distributions?\s+per\s+(?:year|annum|p\.a\.?)", re.I
+)
+_COUNT_TO_FREQ = {1: "ANNUAL", 2: "BIANNUAL", 4: "QUARTERLY", 6: "BIANNUAL", 12: "MONTHLY"}
+
+# Name-token signals (share-class naming conventions)
+# BGF/BlackRock: A4/D4=Quarterly, A6/D6=BIANNUAL, A8/D8=MONTHLY, A10/D10=ANNUAL
+# MDis/QDis/ADis: JPM, Fidelity, Allianz and others
+_NAME_FREQ_PATTERNS = [
+    (re.compile(r"\bMDIS\b|\bM[-\s]DIS\b", re.I),  "MONTHLY"),
+    (re.compile(r"\bQDIS\b|\bQ[-\s]DIS\b", re.I),  "QUARTERLY"),
+    (re.compile(r"\bADIS\b|\bA[-\s]DIS\b", re.I),  "ANNUAL"),
+    (re.compile(r"\b[AD]8\b"),                       "MONTHLY"),
+    (re.compile(r"\b[AD]4\b"),                       "QUARTERLY"),
+    (re.compile(r"\b[AD]6\b"),                       "BIANNUAL"),
+    (re.compile(r"\b[AD]10\b"),                      "ANNUAL"),
 ]
 
 
-def _detect_distribution_frequency(text: str, accumulation_policy: Optional[str]) -> Optional[str]:
-    """
-    Detecta la frecuencia de distribución usando patrones contextuales.
-
-    Solo devuelve valor cuando:
-    1. El texto contiene una frase explícita de reparto de dividendos/rentas
-    2. Y la política de acumulación NO es ACCUMULATION
-
-    Evita falsos positivos con keywords sueltos como "anual" o "semestral"
-    que aparecen en secciones de costes o escenarios de rentabilidad.
-    """
-    if not text:
+def _name_signal_dist_freq(fund_name):
+    """Returns Distribution_Frequency from share-class name tokens, or None."""
+    if not fund_name:
         return None
+    for pat, freq in _NAME_FREQ_PATTERNS:
+        if pat.search(fund_name):
+            return freq
+    return None
+
+
+def _detect_distribution_frequency(
+    text: str,
+    accumulation_policy,
+    fund_name=None,
+):
+    """
+    Detecta la frecuencia de distribucion.
+
+    Orden de precedencia:
+    1. Patrones de texto KID (frases explicitas de reparto)
+    2. Patron numerico ("12 distributions per year")
+    3. Senal de nombre de fondo (tokens MDis/QDis/ADis/BGF-Ax)
+
+    Solo devuelve valor cuando Accumulation_Policy != 'Accumulation'.
+    Evita falsos positivos: los patrones exigen contexto lexico de reparto.
+    """
+    if accumulation_policy == "Accumulation":
+        return None
+
+    if text:
+        for pattern, freq_map in _DIST_FREQ_PATTERNS:
+            m = pattern.search(text)
+            if m:
+                keyword = m.group(1).lower().rstrip(".")
+                freq = freq_map.get(keyword)
+                if freq:
+                    return freq
+
+        m = _DIST_COUNT_PATTERN.search(text)
+        if m:
+            count = int(m.group(1))
+            freq = _COUNT_TO_FREQ.get(count)
+            if freq:
+                return freq
+
+    return _name_signal_dist_freq(fund_name)
     if accumulation_policy == "ACCUMULATION":
         return None
 

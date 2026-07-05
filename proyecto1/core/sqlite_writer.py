@@ -419,15 +419,21 @@ def upsert_fund_master(conn: sqlite3.Connection,
       añadidas Development_Status/Duration_Profile/MMF_Structure/Alt_Strategy/
       Payoff_Profile (COALESCE, NULL hasta el reprocess). El SQL (INSERT/VALUES/
       SET/params) se DERIVA de una lista ordenada explícita `spec` (R-2, §B-5).
+    - v21: añadida Asset_Currency (COALESCE) -- divisa de los activos del
+      fondo inferida del nombre (classify_utils.detect_asset_currency_from_name),
+      distinta de Portfolio_Currency (no es un revival; fuente y nombre
+      distintos).
 
     Documentación: SPRINT_A1_BL44_BL62_BL64.md sección 2.3,
     SPRINT_A1.b sección 4. Restricciones R-2, R-4.
     """
 
     # ── Detectar y extraer flags antes de normalizar el record ──
-    force_nature = record.pop('_bl44_force_overwrite', False)
-    force_family = record.pop('_bl62_force_overwrite_family', False)
-    force_type   = record.pop('_bl62_force_overwrite_type', False)
+    force_nature      = record.pop('_bl44_force_overwrite', False)
+    force_family      = record.pop('_bl62_force_overwrite_family', False)
+    force_type        = record.pop('_bl62_force_overwrite_type', False)
+    force_style_null  = record.pop('_style_profile_cleared', False)
+    force_mcf_null    = record.pop('_market_cap_focus_cleared', False)
 
     # ── Normalización pre-escritura (Principio #8) ──
     record = _normalize_record(record)
@@ -440,9 +446,11 @@ def upsert_fund_master(conn: sqlite3.Connection,
     #   v20: −Is_ESG/−Subtype/−Currency_Hedged/−Portfolio_Currency;
     #        Type→Vehicle_Structure; +5 nuevas (NULL hasta reprocess, COALESCE).
     now = datetime.datetime.utcnow().isoformat(timespec="seconds")
-    nature_pol  = 'ow' if force_nature else 'co'
-    family_pol  = 'ow' if force_family else 'co'
-    vehicle_pol = 'ow' if force_type   else 'co'   # _bl62_force_overwrite_type → Vehicle_Structure
+    nature_pol  = 'ow' if force_nature     else 'co'
+    family_pol  = 'ow' if force_family     else 'co'
+    vehicle_pol = 'ow' if force_type       else 'co'  # _bl62_force_overwrite_type → Vehicle_Structure
+    style_pol   = 'ow' if force_style_null else 'co'  # INTER-SP: NULL para fondos no-RV
+    mcf_pol     = 'ow' if force_mcf_null   else 'co'  # INTER-MCF: NULL para fondos no-RV
 
     spec = [
         ("ISIN",                        record["ISIN"],                          'ins'),
@@ -453,12 +461,12 @@ def upsert_fund_master(conn: sqlite3.Connection,
         ("Vehicle_Structure",          record.get("Vehicle_Structure"),         vehicle_pol),
         ("Strategy",                    record.get("Strategy"),                  'co'),
         ("Family",                      record.get("Family"),                    family_pol),
-        ("Style_Profile",               record.get("Style_Profile"),             'co'),
+        ("Style_Profile",               record.get("Style_Profile"),             style_pol),
         ("Geography",                   record.get("Geography"),                 'co'),
         ("Theme",                       record.get("Theme"),                     'co'),
         ("Exposure_Bias",               record.get("Exposure_Bias"),             'ow'),
         ("Benchmark_Type",              record.get("Benchmark_Type"),            'ow'),
-        ("Market_Cap_Focus",            record.get("Market_Cap_Focus"),          'co'),
+        ("Market_Cap_Focus",            record.get("Market_Cap_Focus"),          mcf_pol),
         ("Sector_Focus",                record.get("Sector_Focus"),              'co'),
         ("Investment_Universe",         record.get("Investment_Universe"),       'co'),
         ("Investment_Focus",            record.get("Investment_Focus"),          'co'),
@@ -468,6 +476,7 @@ def upsert_fund_master(conn: sqlite3.Connection,
         ("Heuristic_Core",              int(record.get("Heuristic_Core", 0)),    'ow'),
         ("SRRI",                        _safe_int(record.get("SRRI")),           'srri'),
         ("Fund_Currency",               record.get("Fund_Currency"),             'co'),
+        ("Asset_Currency",              record.get("Asset_Currency"),            'co'),
         ("Hedging_Policy",              record.get("Hedging_Policy"),            'co'),
         ("Replication_Method",          record.get("Replication_Method"),        'co'),
         ("Derivatives_Usage",           record.get("Derivatives_Usage"),         'co'),

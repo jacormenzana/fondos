@@ -1,4 +1,4 @@
-# proyecto2/src/loaders/nav_discovery.py
+# proyecto2/src/discovery/nav_discovery.py
 # -*- coding: utf-8 -*-
 """
 Descubrimiento y descarga de series NAV historicas via Morningstar (mstarpy 8.x).
@@ -23,19 +23,19 @@ Ejemplos:
     cd c:/desarrollo/fondos
 
     # Validar con 1 ISIN (sin escribir nada)
-    python -m proyecto2.src.loaders.nav_discovery --mode discover --isin LU1873127366 --dry-run
+    python -m proyecto2.src.discovery.nav_discovery --mode discover --isin LU1873127366 --dry-run
 
     # Validar con 5 ISINs aleatorios
-    python -m proyecto2.src.loaders.nav_discovery --mode discover --sample 5 --dry-run
+    python -m proyecto2.src.discovery.nav_discovery --mode discover --sample 5 --dry-run
 
     # Descubrimiento completo (~30-90 min)
-    python -m proyecto2.src.loaders.nav_discovery --mode discover
+    python -m proyecto2.src.discovery.nav_discovery --mode discover
 
     # Descarga historica desde 2000 (una sola vez)
-    python -m proyecto2.src.loaders.nav_discovery --mode load --desde 2000-01-01
+    python -m proyecto2.src.discovery.nav_discovery --mode load --desde 2000-01-01
 
     # Actualizacion mensual
-    python -m proyecto2.src.loaders.nav_discovery --mode update
+    python -m proyecto2.src.discovery.nav_discovery --mode update
 """
 
 import argparse

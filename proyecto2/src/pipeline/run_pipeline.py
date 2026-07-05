@@ -25,6 +25,7 @@ Uso:
 import argparse
 import sqlite3
 import sys
+import time
 from datetime import date, datetime
 from pathlib import Path
 
@@ -39,8 +40,7 @@ sys.path.insert(0, str(_P2_DIR))
 from shared.config import RISK_FREE_RATE_ANN, METRIC_VERSION
 from shared.config import CRISIS_WINDOWS, ROLLING_WINDOWS, REGION_IPC, MIN_NAV_ROWS
 from shared.db import get_connection
-from src.loaders.nav_loader import load_nav, get_isins_with_nav
-from src.loaders.inflation_loaders import load_ipc, ipc_available
+from src.readers.db_readers import load_nav, get_isins_with_nav, load_ipc, ipc_available
 from src.calculations.risk_metrics import compute_risk_metrics
 from src.calculations.consistency import consistency_metrics
 from src.calculations.macro_sensitivity import (
@@ -94,9 +94,21 @@ def _write_metrics(
         )
         for m in metrics
     ]
-    conn.executemany(sql, rows)
-    conn.commit()
-    return len(rows)
+    for attempt in range(5):
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                conn.executemany(sql, rows)
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+            return len(rows)
+        except sqlite3.OperationalError as exc:
+            if "database is locked" in str(exc) and attempt < 4:
+                time.sleep(2 ** attempt)
+            else:
+                raise
 
 
 def _log(
@@ -110,13 +122,26 @@ def _log(
 ) -> None:
     if dry_run:
         return
-    conn.execute(
-        """INSERT INTO p2_pipeline_log
-               (isin, step, status, horizon, metric_version, message)
-           VALUES (?, ?, ?, ?, ?, ?)""",
-        (isin, step, status, horizon, METRIC_VERSION, message),
-    )
-    conn.commit()
+    for attempt in range(5):
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                conn.execute(
+                    """INSERT INTO p2_pipeline_log
+                           (isin, step, status, horizon, metric_version, message)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (isin, step, status, horizon, METRIC_VERSION, message),
+                )
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+            return
+        except sqlite3.OperationalError as exc:
+            if "database is locked" in str(exc) and attempt < 4:
+                time.sleep(2 ** attempt)
+            else:
+                raise
 
 
 # ============================================================
@@ -168,6 +193,7 @@ def run(
     isins: list[str] | None = None,
     horizons_filter: list[str] | None = None,
     dry_run: bool = False,
+    resume: bool = False,
 ) -> None:
 
     conn = get_connection()
@@ -190,7 +216,7 @@ def run(
     # -- Cargar factores macro (una vez para todos los fondos) --
     macro_df = load_macro_factors(conn)
     if macro_df.empty:
-        print("AVISO: No hay factores macro. Ejecuta macro_loader antes de P2.")
+        print("AVISO: No hay factores macro. Ejecuta macro_discovery antes de P2.")
     else:
         print(f"Factores macro: {list(macro_df.columns)} ({len(macro_df)} meses)")
         
@@ -208,7 +234,7 @@ def run(
     regime_df = load_regime_history(conn)
     if regime_df.empty:
         print("AVISO: Sin historico de regimenes. "
-              "Ejecuta macro_loader y m2_global_builder antes de P2.")
+              "Ejecuta macro_discovery y m2_global_builder antes de P2.")
 
     # -- Universo de ISINs -------------------------------------
     if isins is None:
@@ -218,6 +244,21 @@ def run(
         print("No hay ISINs con datos NAV en fund_nav_monthly. Pipeline finalizado.")
         conn.close()
         return
+
+    if resume and not dry_run:
+        today = date.today().isoformat()
+        done = {r[0] for r in conn.execute(
+            "SELECT DISTINCT isin FROM fund_metrics "
+            "WHERE calculation_date = ? AND metric_version = ?",
+            (today, METRIC_VERSION)
+        ).fetchall()}
+        isins = [i for i in isins if i not in done]
+        print(f"  [Resume] {len(done)} fondos ya procesados hoy -> saltados. "
+              f"{len(isins)} pendientes.")
+        if not isins:
+            print("Pipeline completado (todos los fondos ya procesados).")
+            conn.close()
+            return
 
     print(f"Procesando {len(isins)} fondos | dry_run={dry_run} | "
           f"IPC={'SI' if ipc_df is not None else 'NO'}")
@@ -351,10 +392,13 @@ if __name__ == "__main__":
     parser.add_argument("--horizon", default=None, help="Solo este horizonte")
     parser.add_argument("--dry-run", action="store_true",
                         help="Calcula pero no escribe en DB")
+    parser.add_argument("--resume", action="store_true",
+                        help="Salta ISINs ya procesados hoy (para reanudar tras crash)")
     args = parser.parse_args()
 
     run(
         isins=[args.isin] if args.isin else None,
         horizons_filter=[args.horizon] if args.horizon else None,
         dry_run=args.dry_run,
+        resume=args.resume,
     )
