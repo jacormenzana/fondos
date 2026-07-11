@@ -23,6 +23,7 @@ from classify_utils import (
     detect_asset_currency_from_name,
     detect_asset_currency_from_kiid_text,
     detect_fx_share_class_mismatch,
+    ASSET_CURRENCY_MULTI,
 )
 
 
@@ -187,23 +188,56 @@ def test_kiid_text_negation_excluded():
     )) is None
 
 
-def test_kiid_text_multi_currency_continuation_excluded():
-    """Continuación explícita con una segunda divisa/enumeración --
-    mandato multi-divisa, no una única divisa dominante."""
+def test_kiid_text_multi_currency_continuation_returns_mcy():
+    """BL-ASSET-CCY-MULTI: una continuación explícita con una segunda
+    divisa/enumeración es un mandato multi-divisa (indeterminado por
+    naturaleza) -> centinela MCY, NO None (que se reserva para 'sin señal')."""
     assert detect_asset_currency_from_kiid_text(_kiid(
         "el subfondo invertirá hasta un 100% de su patrimonio neto en "
         "títulos de deuda denominados en euros u otras divisas."
-    )) is None
+    )) == ASSET_CURRENCY_MULTI
     assert detect_asset_currency_from_kiid_text(_kiid(
         "estos valores de renta fija y bonos convertibles pueden estar "
         "denominados en dólares estadounidenses, otras monedas del g7 "
         "y diversas monedas de la región asia-pacífico."
-    )) is None
+    )) == ASSET_CURRENCY_MULTI
     assert detect_asset_currency_from_kiid_text(_kiid(
         "invierte principalmente en deuda pública y corporativa "
         "denominada en dólares estadounidenses o divisas locales de "
         "emisores de asia emergente."
-    )) is None
+    )) == ASSET_CURRENCY_MULTI
+    # El caso M&G Optimal Income ("euros o en otras monedas con cobertura
+    # en euros") -- la familia entera debe quedar identificada como MCY.
+    assert detect_asset_currency_from_kiid_text(_kiid(
+        "un mínimo del 80% del fondo se invertirá en activos expresados en "
+        "euros o en otras monedas con cobertura en euros."
+    )) == ASSET_CURRENCY_MULTI
+
+
+def test_mcy_sentinel_shape():
+    """El centinela es un código de 3 letras en mayúsculas, no un ISO real."""
+    assert ASSET_CURRENCY_MULTI == "MCY"
+    assert ASSET_CURRENCY_MULTI not in {"EUR", "USD", "GBP", "CHF", "JPY", "CNH"}
+
+
+@pytest.mark.parametrize("name", [
+    "PIMCO GIS MULTICURRENCY BOND E EUR ACC",
+    "SOME MULTI-CURRENCY BOND FUND",
+    "FONDO MULTIDIVISA A ACC",
+])
+def test_name_explicit_multicurrency_returns_mcy(name):
+    """BL-ASSET-CCY-MULTI: un token multi-divisa EXPLÍCITO en el nombre
+    (multicurrency/multidivisa) -> MCY, aunque el sufijo de clase mencione
+    una divisa concreta."""
+    assert detect_asset_currency_from_name(name) == ASSET_CURRENCY_MULTI
+
+
+def test_mcy_not_a_fx_mismatch():
+    """BL-ASSET-CCY-MULTI: MCY no es una divisa única -> detect_fx_share_class
+    _mismatch debe devolver False (no puede haber descalce divisa-clase limpio
+    contra un mandato multi-divisa)."""
+    assert detect_fx_share_class_mismatch(ASSET_CURRENCY_MULTI, "EUR") is False
+    assert detect_fx_share_class_mismatch(ASSET_CURRENCY_MULTI, "USD") is False
 
 
 def test_kiid_text_permissive_secondary_excluded():
