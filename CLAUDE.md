@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ~3,200 European investment funds. Goal: capital preservation relative to IPC+M3 (~6–7% annual, max drawdown 15%, 3–5 year horizon).  
 Stack: Python 3.13, SQLite, Windows 10, Conda env `des`.  
-DB: `db/fondos.sqlite` (schema v20). Master list: `c:\data\fondos\in\GestoresDeFondosv1.xlsx`.
+DB: `db/fondos.sqlite` (schema v22). Master list: `c:\data\fondos\in\GestoresDeFondosv1.xlsx`.
 
 ---
 
@@ -312,7 +312,8 @@ Full reference: `doc/reglas/SCHEMA_REFERENCE.md` · DDL: `db/schema_fondos.sql`
 | `fund_master` | `ISIN` | 42 cols: identity, classification, SRRI, costs, family FK |
 | `fund_kiid_metadata` | `(ISIN, KIID_Class)` | KIID URL/text/status, SRRI_Visual/Textual/Validation_Status |
 | `fund_families` | `family_id` | family_name, Fund_Nature, n_funds |
-| `ingestion_log` | `id` | step, status (ERROR/WARNING/INFO), message |
+| `ingestion_log` | `id` | step, status (ERROR/WARNING/INFO), message — append-only history, every cycle |
+| `fund_data_quality_issues` | `(ISIN, check_code)` | level (OK/INFERRED/WARN/MISSING), message, detected_at — **current** issues only, rebuilt each cycle |
 
 Key `Fund_Nature` values: `Renta Variable` · `Mixtos` · `Renta Fija Flexible` · `Renta Fija Corto Plazo` · `Monetario` · `Alternativo` · `Restantes` · `Estructurado`
 
