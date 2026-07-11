@@ -205,7 +205,7 @@ import pandas as pd
 import re
 
 from core.io import get_kiid_for_isin
-from core.kiid_parser import parse_kiid_generic
+from core.kiid_parser import parse_kiid_generic, detect_wrong_kiid_document
 from core.classify_utils import (
     detect_strategy        as _detect_strategy,
     detect_benchmark_type  as _detect_benchmark_type,
@@ -229,6 +229,8 @@ from core.classify_utils import (
     _derive_geography_en,                                   # FIX-GEO-1 (traducción ES→EN)
     derive_development_status,                               # FIX-GEO-1 (recalculado, no heredado del bloque)
     validate_geography_universe,                             # FIX-GEO-4 (BL-52, única fuente de verdad)
+    validate_all_semantic_consistency,                       # Fase 4: validación universal
+    semantic_validation_to_dq_tuples,                       # Fase 4: DQ persistence
 )
 try:
     from proyecto1.core.fund_characterizer import characterize_fund
@@ -688,6 +690,40 @@ def run_block(
             # arbitración dual (hook más abajo) reutilizan el MISMO binario,
             # abierto una sola vez por fondo (DRY). Se libera tras el hook.
 
+            # ── B1/B2 (2026-07-11): Detector de documento erróneo ────────
+            # Detecta textos que son estatutos SICAV coordinados o informes
+            # anuales en lugar de KIIDs de fondo único. Estos documentos
+            # contaminan los atributos extraídos (SRRI, Family, Geography)
+            # con valores de sub-fondos hermanos. KIID_Status='OK' no protege.
+            # Política: CACHE → FORCE_REFRESH (1 reintento limpio);
+            #           REMOTE/LOCAL → ya re-descargado, sigue mal → WRONG_DOC.
+            # En ambos casos se hace `continue` para no clasificar con texto
+            # contaminado. El estado WRONG_DOC excluye el fondo de todos los
+            # bloques en ciclos posteriores (ver KIID_Status state machine).
+            _wrong_doc_reason = detect_wrong_kiid_document(
+                kiid_text, srri=parsed.get("SRRI")
+            )
+            if _wrong_doc_reason:
+                _kiid_src = (kiid_meta or {}).get("KIID_Source", "CACHE")
+                if _kiid_src == "CACHE":
+                    with conn:
+                        conn.execute(
+                            "UPDATE fund_kiid_metadata SET KIID_Status='FORCE_REFRESH' "
+                            "WHERE ISIN=? AND KIID_Class=1", (isin,)
+                        )
+                    log_ingestion(conn, isin, "KIID_WRONG_DOC_RETRY", "INFO",
+                                  f"FORCE_REFRESH marcado (1er intento): {_wrong_doc_reason}")
+                else:
+                    with conn:
+                        conn.execute(
+                            "UPDATE fund_kiid_metadata SET KIID_Status='WRONG_DOC' "
+                            "WHERE ISIN=? AND KIID_Class=1", (isin,)
+                        )
+                    log_ingestion(conn, isin, "KIID_WRONG_DOC", "WARNING",
+                                  f"WRONG_DOC (fuente incorrecta, re-descarga confirmó): "
+                                  f"{_wrong_doc_reason}")
+                continue  # No clasificar con texto contaminado
+
             # ── Override universal: Estructurado ─────────────────────────
             # Antes de llamar al bloque, verificar si el fondo es un producto
             # estructurado. Si lo es, la naturaleza es Estructurado
@@ -1018,6 +1054,19 @@ def run_block(
                 _dq_issues.append((
                     "BL65_NATURE_UNKNOWN", "WARN", "WARN",
                     "Fund_Nature no determinable por RESTANTES → Data_Quality_Flag=WARN"
+                ))
+
+            # C3 (BL-44 hardening 2026-07-11): fondo MMF confirmado por nombre
+            # (VNAV/LVNAV/CNAV) con SRRI anómalo en el KIID almacenado. El bloque
+            # monetarios.py preserva Fund_Nature='Monetario' pero pone el flag
+            # _bl44_srri_anomaly para que aquí se emita un DQ WARN visible en
+            # fund_data_quality_issues → auditadle sin pipeline re-run.
+            _bl44_anomaly = classification.get("_bl44_srri_anomaly")
+            if _bl44_anomaly is not None:
+                _dq_issues.append((
+                    "BL44_SRRI_ANOMALY", "WARN", "WARNING",
+                    f"MMF confirmado por nombre (VNAV/LVNAV/CNAV) con SRRI={_bl44_anomaly} "
+                    f"anómalo en KIID — posible KIID de subfondo incorrecto (revisar manualmente)"
                 ))
 
             # FIX-FUNDCCY-3 / FIX-ASSETCCY-3 (2026-07-05): precedencia unificada
@@ -2052,11 +2101,18 @@ def run_block(
                 fund_master_record["Market_Cap_Focus"] = "All Cap"
 
             # INTER-MCF: Market_Cap_Focus (Large/Mid/Small/All Cap) solo aplica a
-            # Renta Variable. Para Monetario y RFCP no existe el concepto de
-            # capitalización bursátil de las posiciones.
+            # Renta Variable. Para natures no-equity (Monetario, RFCP, RF Flexible,
+            # Alternativo, Restantes, Estructurado) Market_Cap_Focus es semántica-
+            # mente incoherente y debe anularse. Extendido (2026-07-11) para cubrir
+            # RF Flexible (73 fondos con 'All Cap' stale de ciclos anteriores) y
+            # otras natures no-equity además de Monetario/RFCP.
             # _market_cap_focus_cleared=True → sqlite_writer OW para limpiar stale en BD.
+            _MCF_NON_EQUITY_NATURES_INTER = (
+                "Monetario", "Renta Fija Corto Plazo", "Renta Fija Flexible",
+                "Alternativo", "Restantes", "Estructurado",
+            )
             _mcf_inter_nature = fund_master_record.get("Fund_Nature")
-            if _mcf_inter_nature in ("Monetario", "Renta Fija Corto Plazo"):
+            if _mcf_inter_nature in _MCF_NON_EQUITY_NATURES_INTER:
                 _mcf_val = fund_master_record.get("Market_Cap_Focus")
                 if _mcf_val:
                     log_ingestion(
@@ -2499,6 +2555,40 @@ def run_block(
 
             # PDF ya consumido por parse + coste + arbitración: liberar (memoria).
             pdf_bytes = None
+
+            # ── INTER-FASE4 (2026-07-11): Validación semántica universal ─────────
+            # Hasta este punto, validate_all_semantic_consistency solo se invocaba
+            # desde restantes.py. Este bloque garantiza cobertura universal: TODOS
+            # los fondos (de cualquier bloque) pasan por la función maestra TRAS
+            # la consolidación completa de atributos (R-4: effective values ya
+            # presentes en fund_master_record desde los bloques INTER anteriores).
+            #
+            # A1: llamada directa (no apply_semantic_validation — derive_v20_attributes
+            #     ya fue invocada en la fase de characterize, no debe re-ejecutarse aquí).
+            # A2: merge campo a campo (no blanket replace). La función es idempotente;
+            #     si el inline ya corrigió un campo, corrected_record tiene el mismo
+            #     valor → merge es no-op. Si el inline no lo corrigió, corrected_record
+            #     aporta la corrección faltante.
+            # A3: extender _dq_issues con inconsistencias residuales (persistidas en
+            #     fund_data_quality_issues vía _finalize_data_quality_issues abajo).
+            _sem_val_result = validate_all_semantic_consistency(fund_master_record)
+            _sem_corrected_rec = _sem_val_result.get("corrected_record", {})
+
+            # A2: merge field-by-field; omitir claves privadas (p.ej. _signal_*)
+            for _sk, _sv in _sem_corrected_rec.items():
+                if not _sk.startswith("_"):
+                    fund_master_record[_sk] = _sv
+
+            # INTER-MCF universal: si el master-validator anuló Market_Cap_Focus
+            # para una naturaleza no-equity, marcar para overwrite (bypass COALESCE).
+            if (_sem_corrected_rec.get("Market_Cap_Focus") is None
+                    and fund_master_record.get("Fund_Nature") in _MCF_NON_EQUITY_NATURES_INTER
+                    and not fund_master_record.get("_market_cap_focus_cleared")):
+                fund_master_record["Market_Cap_Focus"] = None
+                fund_master_record["_market_cap_focus_cleared"] = True
+
+            # A3: persistir errores y warnings al DQ table (flush abajo en _finalize)
+            _dq_issues.extend(semantic_validation_to_dq_tuples(_sem_val_result))
 
             # FIX-DQ-1: rollup final de Data_Quality_Flag -- único punto de
             # escritura, tras acumular todos los issues detectados durante

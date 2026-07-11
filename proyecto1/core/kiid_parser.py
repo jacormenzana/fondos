@@ -4233,3 +4233,113 @@ def _detect_distribution_frequency(
                 return freq
 
     return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# B1 (2026-07-11): Detector de documento erróneo (estatutos SICAV / informe anual)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def detect_wrong_kiid_document(
+    kiid_text: Optional[str],
+    srri=None,
+) -> Optional[str]:
+    """Detecta si el texto almacenado NO es un KIID/KID de fondo único sino un
+    documento multi-fondo/legal (estatutos SICAV coordinados, informe anual, etc.).
+
+    Señales POSITIVAS — marcadores de documento multi-fondo / legal:
+      - Estatutos: 'statuts coordonnés', 'coordinated articles', etc.
+      - Informe anual: 'annual report', 'audited financial statements', etc.
+
+    Señales NEGATIVAS — vetan la detección (un KIID real siempre las tiene):
+      - Cabecera KIID/KID estándar (ES/EN/FR)
+      - Tabla de riesgo SRRI (X/7 o texto 'indicador de riesgo')
+      - Sección 'objetivos y política de inversión'
+
+    Regla conservadora (bajo false-positive): dispara SOLO si hay marcador
+    positivo Y ausencia de estructura KIID. Un KIID real que mencione
+    'annual report' de pasada seguirá teniendo su cabecera estándar.
+
+    Args:
+        kiid_text: texto extraído del PDF (ya en BD o recién descargado).
+        srri: SRRI extraído por parse_kiid_generic (corroborante, no suficiente).
+
+    Returns:
+        str (razón) si se detecta documento erróneo; None si KIID parece válido.
+    """
+    if not kiid_text or len(kiid_text) < 100:
+        return None
+
+    text_l = kiid_text.lower()
+
+    # ── Señales positivas: estatutos coordinados ─────────────────────────────
+    # NOTA: incluir variantes sin diacríticos (encoding degradado en PDFs OCR).
+    _STATUTE_MARKERS = [
+        "statuts coordonnés",
+        "statuts coordonnes",            # variante sin diacrítico (encoding OCR)
+        "coordinated articles",
+        "articles of incorporation",
+        "estatutos coordinados",
+        "estatutos coordinados",
+        "estatutos coordinados",
+        "artículos de constitución",
+        "articulos de constitucion",     # variante sin diacríticos
+        "memorandum of association",
+        "instrument of incorporation",
+    ]
+    # ── Señales positivas: estados financieros auditados (structural-only) ────
+    # IMPORTANTE: 'annual report', 'rapport annuel', 'informe anual' EXCLUIDOS
+    # deliberadamente — aparecen en la sección "puede obtener de forma gratuita"
+    # de KIIDs y KIDs reales (PRIIPs/UCITS), causando falsos positivos al ~40%.
+    # Solo se usan frases estructurales que NO aparecen en KIIDs reales.
+    _ANNUAL_REPORT_MARKERS = [
+        "audited financial statements",
+        "schedule of investments",
+        "combined statement of net assets",
+        "notes to the financial statements",
+        "independent auditor",
+        "report of the board of directors",
+        "board of directors report",
+    ]
+
+    _found_statute = next((m for m in _STATUTE_MARKERS if m in text_l), None)
+    _found_report = next((m for m in _ANNUAL_REPORT_MARKERS if m in text_l), None)
+
+    if not _found_statute and not _found_report:
+        return None  # Sin marcador positivo → documento no erróneo
+
+    # ── Señales negativas: vetan la detección (un KIID/KID real las tiene) ───
+    # Se usan marcadores sin diacríticos o con variantes cortas para mayor
+    # robustez frente a textos con encoding degradado (CP1252/Latin-1 parcial).
+    _KIID_HEADERS = [
+        "datos fundamentales para el inversor",
+        "datos fundamentales",           # PRIIPs KID (versión corta, encoding-safe)
+        "informaci",                     # "información clave" — acortado, sin tildes
+        "key investor information",
+        "key information",               # PRIIPs KID (versión corta)
+        "informations cl",               # "informations clés" — acortado, encoding-safe
+        "informaciones fundamentales",
+    ]
+    _SRRI_TEXT_MARKERS = [
+        "indicador de riesgo",           # sin tildes, encoding-safe
+        "risk and reward",               # without accents, always ASCII
+        "indicateur de risque",          # sin tildes, encoding-safe
+    ]
+
+    _has_kiid_header = any(m in text_l for m in _KIID_HEADERS)
+    _has_srri_text = any(m in text_l for m in _SRRI_TEXT_MARKERS)
+    _has_srri_num = bool(re.search(r'\b[1-7]\s*/\s*7\b', kiid_text))
+
+    # Un KIID/KID real tiene su cabecera O al menos su sección de riesgo SRRI.
+    # Los informes anuales y estatutos nunca tienen ni la cabecera KIID ni la
+    # tabla SRRI X/7 ni el texto 'indicador de riesgo' / 'risk and reward'.
+    _has_kiid_structure = _has_kiid_header or _has_srri_text or _has_srri_num
+
+    if _has_kiid_structure:
+        return None  # Estructura KIID/KID real detectada → no es documento erróneo
+
+    # ── Documento erróneo confirmado ─────────────────────────────────────────
+    marker = _found_statute or _found_report
+    return (
+        f"Documento no-KIID detectado (marcador='{marker}'; "
+        f"sin cabecera KIID ni sección objetivos)"
+    )

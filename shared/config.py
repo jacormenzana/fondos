@@ -428,6 +428,13 @@ DOMAIN_VALUES: dict[str, list[str]] = {
 
     # ── Divisa (CODE, ISO) ───────────────────────────────────────
     "Fund_Currency": ["EUR", "USD", "GBP", "CHF", "JPY", "CNH"],
+    # Asset_Currency admite además el centinela categórico "MCY" (multi-divisa
+    # por naturaleza, BL-ASSET-CCY-MULTI 2026-07-11): distingue "indeterminado
+    # por diseño" de NULL="no descubierto". "MCY" no es un código ISO-4217
+    # asignado (sin colisión). Nota: las columnas CODE se excluyen del chequeo
+    # allowed-values (ver ALLOWED_VALUES_BY_COLUMN en classify_utils), así que
+    # esta lista documenta el contrato de intención, no una validación dura.
+    "Asset_Currency": ["EUR", "USD", "GBP", "CHF", "JPY", "CNH", "MCY"],
 
     # ── Flags de control / provenance (UPPER_SNAKE) ──────────────
     "Benchmark_Type": [                # §3-bis: flag de control

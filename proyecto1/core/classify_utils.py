@@ -379,6 +379,28 @@ NAME_SIGNALS_MONETARIO: list = [
     "fidelity us cash",              # variante
 ]
 
+# C1 (BL-44 hardening 2026-07-11): subconjunto de NAME_SIGNALS_MONETARIO que
+# codifica estructura regulatoria de tipo de NAV (VNAV/LVNAV/CNAV) o clasifi-
+# cación MMF regulatoria explícita. Son señales FUERTES: si el nombre contiene
+# alguno de estos tokens, la denominación del fondo (una declaración comercial
+# formal) es más fiable que un SRRI extraído de un KIID potencialmente conta-
+# minado. Se excluyen deliberadamente los tokens DÉBILES / AMBIGUOS del
+# universo de monetarios (treasury, cash, tresorerie, liquidity, enhanced) que
+# pueden aparecer en fondos de otro tipo.
+STRONG_MMF_STRUCTURE_MARKERS: tuple = (
+    "vnav", "lvnav", "cnav",
+    "mmf",
+    "standard mm",
+    "m mkt", "m mket",
+    "money market", "money mkt", "money mket",
+    "inscash",
+    "euro m mkt",          # JPM EURO M MKT VNAV
+    "eu m mkt",            # DWS ESG EU M MKT IC100
+    "lqudty lvnav",        # JPM USD LQUDTY LVNAV (OCR)
+    "standard mm vnav",    # JPM STANDARD MM VNAV
+    "ucits mmf",
+)
+
 NAME_SIGNALS_RF_CORTO: list = [
     # Español explícito
     "corto plazo", "cs corto", "cs duracion 0",
@@ -2231,6 +2253,31 @@ _HEDGE_TARGET_CURRENCY = re.compile(
 # adicional, no un cambio de comportamiento actual.
 _FX_PLAUSIBLE_SRRI_CEILING = 4
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Valor centinela "indeterminado por naturaleza" para Asset_Currency
+# (BL-ASSET-CCY-MULTI, 2026-07-11)
+# ------------------------------------------------------------------------------
+# Distingue dos poblaciones que ANTES colapsaban ambas en NULL:
+#   MCY  = el fondo declara EXPLÍCITAMENTE un mandato multi-divisa ("euros u
+#          otras divisas", "dólares estadounidenses o divisas locales", o un
+#          nombre "MULTICURRENCY"/"MULTIDIVISA") -> indeterminación REAL, no
+#          un dato faltante. Población identificable y aislable.
+#   None = no hay señal de divisa alguna -> desconocido/no descubierto.
+# Código de 3 letras (misma forma que EUR/USD/...); NO es un código ISO-4217
+# asignado, por lo que no colisiona con ninguna divisa real. Ver el principio
+# de diseño "Indeterminado categórico vs NULL" en PRINCIPIOS_DISENO.md.
+# Consumidores (p.ej. detect_fx_share_class_mismatch) deben tratarlo como
+# "no es una divisa única", NUNCA compararlo como si fuera EUR/USD.
+ASSET_CURRENCY_MULTI = "MCY"
+
+# Señal EXPLÍCITA de multi-divisa en el propio nombre del fondo -> MCY
+# (analogía en nombre de la continuación multi-divisa que detecta el extractor
+# de texto KIID). Solo tokens inequívocos; no infiere multi por ausencia.
+_NAME_MULTI_CURRENCY = re.compile(
+    r'\b(?:multi[\s\-]?currency|multi[\s\-]?divisa|multidivisa)\b',
+    re.IGNORECASE,
+)
+
 
 def detect_asset_currency_from_name(fund_name: Optional[str]) -> Optional[str]:
     """
@@ -2266,6 +2313,12 @@ def detect_asset_currency_from_name(fund_name: Optional[str]) -> Optional[str]:
         return None
     _name_for_search = _TRAILING_SHARE_CLASS_SUFFIX.sub('', fund_name)
     _name_for_search = _HEDGE_TARGET_CURRENCY.sub('', _name_for_search)
+    # Señal EXPLÍCITA de multi-divisa en el nombre -> MCY (indeterminado por
+    # naturaleza, no dato faltante). Ver ASSET_CURRENCY_MULTI. Se comprueba
+    # antes del barrido de divisas únicas: un nombre "MULTICURRENCY EUR ACC"
+    # es multi-divisa, aunque el sufijo de clase mencione una divisa.
+    if _NAME_MULTI_CURRENCY.search(_name_for_search):
+        return ASSET_CURRENCY_MULTI
     best_match = None
     best_pos = None
     for pattern, currency_code in _ASSET_CURRENCY_NAME_MAP:
@@ -2435,13 +2488,18 @@ def detect_asset_currency_from_kiid_text(kiid_text: Optional[str]) -> Optional[s
     acceso específico) y descarta negaciones ("deuda NO denominada en
     euros"), continuaciones multi-divisa ("...u otras divisas", "...otras
     monedas del g7") y lenguaje permisivo/opcional ("podrán ser
-    invertidos"). Si ninguna coincidencia limpia se encuentra, devuelve
-    None -- consistente con la filosofía conservadora de Asset_Currency
-    (None = sin mandato de divisa única clara, no dato faltante).
+    invertidos"). Devuelve (BL-ASSET-CCY-MULTI):
+      - la divisa única (EUR/USD/...) si hay una coincidencia limpia;
+      - el centinela MCY (ASSET_CURRENCY_MULTI) si el único hallazgo válido
+        fue descalificado por la continuación multi-divisa -- el fondo
+        declara EXPLÍCITAMENTE un mandato multi-divisa (indeterminado por
+        naturaleza, población identificable/aislable, NO dato faltante);
+      - None si no hay señal de divisa alguna (desconocido/no descubierto),
+        o si el hallazgo fue una negación o una asignación permisiva/opcional.
 
-    Devuelve la divisa que aparece MÁS A LA IZQUIERDA en la ventana entre
-    las coincidencias válidas (misma lógica que la versión basada en
-    nombre).
+    Cuando hay divisa única, devuelve la que aparece MÁS A LA IZQUIERDA en la
+    ventana entre las coincidencias válidas (misma lógica que la versión
+    basada en nombre).
     """
     if not kiid_text:
         return None
@@ -2452,6 +2510,13 @@ def detect_asset_currency_from_kiid_text(kiid_text: Optional[str]) -> Optional[s
 
     best_match = None
     best_pos = None
+    # BL-ASSET-CCY-MULTI (2026-07-11): rastrea si un verbo de divisa VÁLIDO
+    # (sujeto=activo, no negado) fue descalificado SOLO por la continuación
+    # multi-divisa. En ese caso el fondo declara explícitamente un mandato
+    # multi-divisa -> devolver el centinela MCY (indeterminado por
+    # naturaleza), NO None (que se reserva para "sin señal alguna"). Una
+    # coincidencia limpia de divisa única, si existe, tiene prioridad.
+    multi_ccy_seen = False
     for m in _KIID_CURRENCY_VERB.finditer(w):
         before = w[max(0, m.start() - 80):m.start()]
         if _KIID_NEGATION.search(before):
@@ -2460,6 +2525,7 @@ def detect_asset_currency_from_kiid_text(kiid_text: Optional[str]) -> Optional[s
             continue
         tail = w[m.end():m.end() + 50]
         if _KIID_MULTI_CCY_CONTINUATION.search(tail):
+            multi_ccy_seen = True
             continue
         after = w[m.end():m.end() + 30]
         if _KIID_PERMISSIVE_CONTINUATION.search(after):
@@ -2470,7 +2536,9 @@ def detect_asset_currency_from_kiid_text(kiid_text: Optional[str]) -> Optional[s
                 if re.fullmatch(cur_re, m.group(1), re.IGNORECASE):
                     best_match = code
                     break
-    return best_match
+    if best_match is not None:
+        return best_match
+    return ASSET_CURRENCY_MULTI if multi_ccy_seen else None
 
 
 def detect_fx_share_class_mismatch(
@@ -2509,6 +2577,12 @@ def detect_fx_share_class_mismatch(
     aplicando su comportamiento defensivo habitual.
     """
     if not asset_currency or not fund_currency:
+        return False
+    # BL-ASSET-CCY-MULTI: el centinela MCY NO es una divisa única -- un fondo
+    # multi-divisa no tiene un descalce divisa-clase limpio que explique un
+    # SRRI elevado, así que se trata como Asset_Currency indeterminada (misma
+    # semántica que None aquí): el conflicto Nature/SRRI permanece sin explicar.
+    if asset_currency.upper() == ASSET_CURRENCY_MULTI:
         return False
     if hedging_policy and hedging_policy.strip().lower() == "hedged":
         return False
@@ -4455,6 +4529,29 @@ def validate_all_semantic_consistency(
     if status == "WARNING":
         warnings.append({"rule": "Benchmark-Nature", "message": msg})
 
+    # ----------------------------------------------------------------
+    # INTER-14 (2026-07-11): Market_Cap_Focus solo aplica a Renta Variable.
+    # Para naturalezas no-equity (RF Flexible, Monetario, Alternativo, etc.)
+    # Market_Cap_Focus es semánticamente incoherente y debe anularse. Detecta
+    # y corrige valores espurios (p.ej. 'All Cap' stale en fondos RF Flexible
+    # heredado de un ciclo donde la función no guardaba Fund_Nature correcta).
+    # ----------------------------------------------------------------
+    _mcf_14 = cr.get("Market_Cap_Focus")
+    _nature_14 = cr.get("Fund_Nature")
+    _MCF_NON_EQUITY_NATURES = {
+        "Monetario", "Renta Fija Corto Plazo", "Renta Fija Flexible",
+        "Alternativo", "Restantes", "Estructurado",
+    }
+    if _mcf_14 is not None and _nature_14 in _MCF_NON_EQUITY_NATURES:
+        cr["Market_Cap_Focus"] = None
+        warnings.append({
+            "rule": "MarketCapFocus-Nature",
+            "message": (
+                f"Market_Cap_Focus='{_mcf_14}' → NULL "
+                f"(no aplica para Fund_Nature='{_nature_14}')"
+            ),
+        })
+
     for col, value in fund_record.items():
         if col in ALLOWED_VALUES_BY_COLUMN and value is not None:
             if value not in ALLOWED_VALUES_BY_COLUMN[col]:
@@ -4473,6 +4570,50 @@ def validate_all_semantic_consistency(
         "warnings": warnings,
         "corrected_record": cr,
     }
+
+
+# ============================================================
+# A3 (2026-07-11): semantic_validation_to_dq_tuples — helper DQ persistence
+# ============================================================
+
+def semantic_validation_to_dq_tuples(val_result: dict) -> list:
+    """Convierte el resultado de validate_all_semantic_consistency en una lista
+    de 4-tuplas (check_code, dq_level, log_status, message) compatibles con
+    la interfaz _dq_issues de pipeline.py (flush vía _finalize_data_quality_issues).
+
+    Hace posible que TODO fondo (no solo los clasificados por restantes.py) tenga
+    sus inconsistencias semánticas persistidas en fund_data_quality_issues cada ciclo.
+
+    Formato de salida: ("SEM_RULE", "WARN"|"INFO", "WARNING"|"INFO", msg)
+      - critical_errors → dq_level="WARN", log_status="WARNING"
+      - warnings        → dq_level="INFO", log_status="INFO"
+
+    Args:
+        val_result: dict devuelto por validate_all_semantic_consistency.
+
+    Returns:
+        list de 4-tuplas; vacía si no hay errores ni warnings.
+    """
+    def _rule_to_code(rule: str) -> str:
+        raw = rule.upper().replace("-", "_").replace(" ", "_")
+        return ("SEM_" + raw)[:50]
+
+    tuples: list = []
+    for item in val_result.get("critical_errors", []):
+        tuples.append((
+            _rule_to_code(item.get("rule", "UNKNOWN")),
+            "WARN",
+            "WARNING",
+            item.get("message", ""),
+        ))
+    for item in val_result.get("warnings", []):
+        tuples.append((
+            _rule_to_code(item.get("rule", "UNKNOWN")),
+            "INFO",
+            "INFO",
+            item.get("message", ""),
+        ))
+    return tuples
 
 
 # =====================================================
