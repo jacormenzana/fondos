@@ -1628,7 +1628,8 @@ def run_block(
                 _geo = eff.get("Geography", fund_master_record)
                 _nat = fund_master_record.get("Fund_Nature")
                 if _nat in ("Monetario", "Renta Fija Corto Plazo"):
-                    fund_master_record["Investment_Universe"] = "Liquidity"
+                    # v20 §2A.1 #5: 'Liquidity' eliminated; 'Global' is correct.
+                    fund_master_record["Investment_Universe"] = "Global"
                 # FIX-GEO-2 (2026-07-05): estas listas comparaban _geo (que
                 # Geography almacena EN-canónico desde hace tiempo, ver
                 # DOMAIN_VALUES['Geography'] en shared/config.py) contra

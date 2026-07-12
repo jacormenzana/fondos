@@ -106,13 +106,11 @@ def classify_fund(
         "Theme": None,
         "Exposure_Bias": "Liquidity Bias",
         "_signal_subtype": None,
-        # BL-MON-U1 (2026-07-05): money market funds are always Liquidity
-        # universe by definition. Explicitly setting it here overrides any
-        # stale 'Global' value persisted from an earlier cycle (COALESCE
-        # takes the new non-NULL value). This also eliminates GEOGRAPHY_UNIVERSE
-        # _WARNING for country-focused MMFs (e.g. PICTET S-T MONEY MKT JPY:
-        # Japan+Liquidity is correct, Japan+Global is not).
-        "Investment_Universe": "Liquidity",
+        # BL-MON-U1 (2026-07-05): money market funds always use Investment_Universe
+        # = 'Global' (v20 §2A.1 #5 eliminated 'Liquidity'). Explicitly setting
+        # it here overrides any stale value persisted from an earlier cycle
+        # (COALESCE takes the new non-NULL value).
+        "Investment_Universe": "Global",
     }
 
     name_l = fund_name.lower() if isinstance(fund_name, str) else ""
