@@ -310,6 +310,32 @@ def _dla2_arbitration_enabled() -> bool:
 # 22,407 celdas no-nulas del maestro real: solo 1 fallo (el falso ISIN).
 _ISIN_RE = re.compile(r"^[A-Za-z]{2}[A-Za-z0-9]{9}[0-9]$")
 
+# FIX-HEDGCCY-2 (2026-07-12): patrón genérico de clase cubierta por sufijo
+# de clase [A-Z]{1,2}H inmediatamente antes de ACC/INC/DIS[T].
+# Convención estándar UCITS: AH, BH, CH, DH, EH, ZH… = "X hedged".
+# Límite {1,2} excluye "HIGH" (4 chars) y otros falsos positivos de palabras
+# comunes. Se evalúa JUNTO con _explicit_hedge_suffixes (OR-lógico).
+# FIX-HEDGCCY-3 (2026-07-12): extended to allow optional parenthetical currency
+# "(CCY)" between the class-code H and the distribution type, covering conventions
+# like "BH (EUR) INC" (Robeco HY Bonds BH EUR class).
+_GENERIC_HEDGE_CLASS_PAT = re.compile(
+    r"\b[A-Z]{1,2}H\s+(?:\([A-Z]{2,3}\)\s+)?(?:ACC|INC|DIS[T]?)\b"
+)
+
+# Sufijos de cobertura con divisa explícita (ej. EURH, USDHDG, GBPHDG).
+# Clave = Fund_Currency; valor = regex para el sufijo en el nombre del fondo.
+_EXPLICIT_HEDGE_SUFFIXES: dict[str, re.Pattern] = {
+    # FIX-HEDGCCY-3 (2026-07-12): added "EUR HD" for "Euro Hedged" abbreviated
+    # suffix used by Nordea (e.g. "NORDEA GL STBL EQ EUR HD BC AC").
+    "EUR": re.compile(r"EUR\s*H(?:DG|G)?(?!\w)|EUR\s+HD\b|EURHEDGE"),
+    "USD": re.compile(r"USD\s*H(?:DG|G)?(?!\w)|USDHEDGE"),
+    "GBP": re.compile(r"GBP\s*H(?:DG|G)?(?!\w)|GBPHEDGE"),
+    "CHF": re.compile(r"CHF\s*H(?:DG|G)?(?!\w)|CHFHEDGE"),
+    "SEK": re.compile(r"SEK\s*H(?:DG|G)?(?!\w)"),
+    "NOK": re.compile(r"NOK\s*H(?:DG|G)?(?!\w)"),
+    "JPY": re.compile(r"JPY\s*H(?:DG|G)?(?!\w)"),
+}
+
 
 def _is_valid_isin(value) -> bool:
     """Devuelve True si 'value' tiene formato de ISIN (2 letras + 9 alfanum + 1 dígito)."""
@@ -1300,13 +1326,26 @@ def run_block(
                     f"texto KIID decía 'Global' (genérico); se usa señal de nombre."
                 ))
             elif _geo_name and _geo_kiid and _geo_name != _geo_kiid:
-                # Both signals are specific but disagree → genuinely ambiguous.
-                _dq_issues.append((
-                    "GEOGRAPHY_NAME_KIID_MISMATCH", "WARN", "WARN",
-                    f"Geography (texto KIID)={_geo_kiid} pero el nombre del "
-                    f"fondo indica {_geo_name} -- revisar manualmente, "
-                    f"ninguna señal es autoritativa por sí sola."
-                ))
+                # FIX-GEO-MISMATCH-3 (2026-07-12): para fondos WRONG_DOC el texto
+                # KIID es de un PDF incorrecto; la geografía KIID no es fiable.
+                # No registrar mismatch -- el valor en fund_master viene de ciclos
+                # anteriores con KIID correcto (COALESCE) y es más fiable que el
+                # texto WRONG_DOC actual.
+                # Suprimir mismatch cuando el KIID dice 'Emergentes' y el nombre
+                # indica una sub-región EM: Asia, China, Latinoamérica, India.
+                # La discrepancia es de especificidad, no de contradicción.
+                # p.ej. PIMCO ASIA HY: KIID="Emergentes", nombre="Asia" → compatible.
+                _EM_SUBREGIONS = {"Asia", "China", "India", "Latinoamérica"}
+                _is_em_subregion_match = (
+                    _geo_kiid == "Emergentes" and _geo_name in _EM_SUBREGIONS
+                )
+                if not _is_em_subregion_match and _kiid_status_c != "WRONG_DOC":
+                    _dq_issues.append((
+                        "GEOGRAPHY_NAME_KIID_MISMATCH", "WARN", "WARN",
+                        f"Geography (texto KIID)={_geo_kiid} pero el nombre del "
+                        f"fondo indica {_geo_name} -- revisar manualmente, "
+                        f"ninguna señal es autoritativa por sí sola."
+                    ))
 
             # FIX-HEDGCCY-1 (2026-07-05): cross-validación Hedging_Policy
             # reutilizando la comparación de divisas ya existente en
@@ -1346,7 +1385,23 @@ def run_block(
                 _asset_ccy_eff, _fund_ccy_eff, hedging_policy=None, srri=None
             )
             _confirmed_no_mismatch = _both_currencies_known and not _raw_currency_mismatch
-            if _hedging_claims_hedged and _confirmed_no_mismatch:
+            # Suprimir false positive para share classes con sufijo de cobertura
+            # en el nombre. Dos guards complementarios (OR):
+            # 1. Sufijo con divisa explícita: EURH, USDHDG, GBPHDG…
+            # 2. FIX-HEDGCCY-2 (2026-07-12): patrón genérico [A-Z]{1,2}H ACC/INC
+            #    captura clases M&G "AH ACC", "CH INC", y similares (Jupiter AH,
+            #    MS AH, Robeco DH, T.Rowe AH…) donde H = hedged sin prefijo de
+            #    divisa explícito. El KIID de la clase EUR presenta activos en EUR
+            #    aunque la divisa base sea GBP; la señal del nombre es autoritativa.
+            _fund_name_hccy = (fund_master_record.get("Fund_Name") or "").upper()
+            _is_explicit_hedge_class = (
+                _fund_ccy_eff in _EXPLICIT_HEDGE_SUFFIXES
+                and bool(_EXPLICIT_HEDGE_SUFFIXES[_fund_ccy_eff].search(_fund_name_hccy))
+            )
+            _is_generic_hedge_class = bool(_GENERIC_HEDGE_CLASS_PAT.search(_fund_name_hccy))
+            if _hedging_claims_hedged and _confirmed_no_mismatch and not (
+                _is_explicit_hedge_class or _is_generic_hedge_class
+            ):
                 _dq_issues.append((
                     "HEDGCCY_NO_MISMATCH_INCONSISTENCY", "WARN", "WARN",
                     f"Hedging_Policy={_hedging_eff!r} pero Asset_Currency == "

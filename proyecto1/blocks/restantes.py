@@ -419,7 +419,11 @@ def classify_fund(
             if not result.get("Theme"):
                 result["Theme"] = _detect_theme(name_l) or "Core/General"
 
-            return apply_semantic_validation(result, fund_name)
+            # El bloque delegado ya aplicó apply_semantic_validation en su
+            # classify_fund. Llamarlo de nuevo sobre el mismo record produce
+            # doble logging de las mismas reglas (p.ej. InvestmentUniverse-
+            # NatureFallback) sin corregir datos adicionales.
+            return result
         except Exception as exc:
             logger.error(
                 "[%s] Delegación a bloque '%s' fallida: %s: %s",

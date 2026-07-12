@@ -1,20 +1,20 @@
 # -*- coding: utf-8 -*-
-"""
+r"""
 run_block.py
 
 Ejecutor simple para lanzar procesamiento de bloques.
 Uso:
-    Ubicarse en directorio c:\\desarrollo\\fondos\\proyecto1 
-    activar entorno des 
-    lanzar run_block desde entono des 
-    
-    
+    Ubicarse en directorio c:\\desarrollo\\fondos\\proyecto1
+    activar entorno des
+    lanzar run_block desde entono des
+
+
     python run_block.py --block mixtos --db ..\db\fondos.sqlite --master "c:\\data\\fondos\\in\\GestoresDeFondosv1.xlsx" --sample 5
-    python run_block.py --block mixtos --db ..\db\fondos.sqlite --master "c:\\data\\fondos\\in\\GestoresDeFondosv1.xlsx" --sample 5 
+    python run_block.py --block mixtos --db ..\db\fondos.sqlite --master "c:\\data\\fondos\\in\\GestoresDeFondosv1.xlsx" --sample 5
     python run_block.py --block mixtos --db ..\db\fondos.sqlite --master "c:\\data\\fondos\\in\\GestoresDeFondosv1.xlsx" --list-isin LU0348784041,LU0232465467
     python run_block.py --block mixtos --db ..\db\fondos.sqlite --master "c:\\data\\fondos\\in\\GestoresDeFondosv1.xlsx" --list-isin LU0232465467,LU1873127366,FR0000989626,LU0135992385,LU1133289592,LU0210536867,LU0213962813,LU1502282632,IE0032875985,LU0073230426,
     python run_block.py --block mixtos --db ..\db\fondos.sqlite --master "c:\\data\\fondos\\in\\GestoresDeFondosv1.xlsx" --list-isin LU0232465467,LU1873127366,FR0000989626,LU0135992385,LU1133289592,LU0210536867,LU0213962813,LU1502282632,IE0032875985,LU0073230426,LU0006277684,LU0236146428,LU0607519195,LU1959429272,LU0070177588,IE00B45H7020,LU0726357873
-    python run_block.py --block mixtos --db ..\db\fondos.sqlite --master "c:\\data\\fondos\\in\\GestoresDeFondosv1.xlsx" --list-isin IE0031296019,LU0070212591,LU0171275786,LU0213962813,LU0348784041,LU1883314327   
+    python run_block.py --block mixtos --db ..\db\fondos.sqlite --master "c:\\data\\fondos\\in\\GestoresDeFondosv1.xlsx" --list-isin IE0031296019,LU0070212591,LU0171275786,LU0213962813,LU0348784041,LU1883314327
 
 """
 

@@ -3059,8 +3059,20 @@ def detect_geography_from_kiid(kiid_text: str) -> Optional[str]:
                 if verdict in ("NEGATED", "MANAGER_SCOPE"):
                     continue
             elif s == "países emergentes":
-                _pre = w[max(0, idx - 60):idx]
+                _pre = w[max(0, idx - 100):idx]
                 if any(neg in _pre for neg in _GEO_NEGATION_MARKERS):
+                    continue
+                # Contexto de riesgo / exposición incidental ≠ objetivo principal.
+                # "exposición a países emergentes", "puede estar expuesto a ...",
+                # "incluyendo países emergentes" aparecen en secciones de riesgo
+                # de fondos Europa/Global y no declaran el objetivo del fondo.
+                _RISK_CONTEXT_MARKERS = [
+                    "exposición a ", "puede estar expuesto", "puede tener exposición",
+                    "puede invertir hasta", "incluyendo ", "incluido ", "incluida ",
+                    "entre los que se incluyen", "como pueden ser ", "tales como ",
+                    "acceso a ", "así como ", "también ",
+                ]
+                if any(m in _pre for m in _RISK_CONTEXT_MARKERS):
                     continue
             return geo
 
@@ -3213,10 +3225,14 @@ def detect_geography(name_l: str) -> Optional[str]:
     if any(k in name_l for k in ["emerging","emergentes","emergent","em mkt","emerg mkt",
                                    "emerg ","emrg","emer mkt","emer ","frontier"]):
         return "Emergentes"
-    if _US_STANDALONE_WORD.search(name_l) or any(k in name_l for k in [
-                                   "usa","u.s.","united states","america","american",
-                                   "us eq","us sm","us sel","treasury","t-bill","us govt",
-                                   "us dollar","us money"]):
+    # Señales US fuertes (términos geográficos explícitos) -- antes de Europa.
+    # FIX-GEO-NAME-2 (2026-07-12): "\bus\b" (señal débil -- también aparece en
+    # códigos de clase tipo "W1 US AC") se desplaza a DESPUÉS de los checks
+    # europeos para que "MFS EUROPEAN RESEARCH W1 US AC" → Europa, no EEUU.
+    if any(k in name_l for k in [
+            "usa","u.s.","united states","america","american",
+            "us eq","us sm","us sel","treasury","t-bill","us govt",
+            "us dollar","us money"]):
         return "EEUU"
     if any(k in name_l for k in [" uk ","uk eq","uk inc","uk sit","uk sc","uk ag",
                                    "united kingdom","british","britain"," gbp ","gbp ac",
@@ -3235,6 +3251,10 @@ def detect_geography(name_l: str) -> Optional[str]:
                                    # sueco/noruego -- ver NORDEA 1 SWED./NORW. SHORT-T. BOND).
                                    "swed","swdish","norw"]):
         return "Europa"
+    # Señal US débil: "\bus\b" solo -- puede ser código de clase (p.ej. "W1 US AC").
+    # Se evalúa después de Europa para no sobreescribir señales europeas fuertes.
+    if _US_STANDALONE_WORD.search(name_l):
+        return "EEUU"
     if any(k in name_l for k in ["global","glob ","globl"," glb "," gbl ","glbl","glbal",
                                    " gl ","world","wrld","wld ","international","intl",
                                    "worldwide","multi-region","multiregion"]):
@@ -4660,14 +4680,37 @@ def validate_all_semantic_consistency(
             ),
         })
     elif _du_mig == "YES":
-        warnings.append({
-            "rule": "Allowed-Values:Derivatives_Usage",
-            "message": (
-                "Derivatives_Usage='YES' es valor legado MODIFY #12 — "
-                "requiere revisión: puede ser 'Investment', 'Both' o 'Hedging Only' "
-                "según el prospecto del fondo"
-            ),
-        })
+        # Heurística por Fund_Nature: mapeo best-effort del legado 'YES' al
+        # propósito más probable. No es inequívoco — confirmar en prospecto.
+        _DU_NATURE_HEURISTIC: dict[str, str] = {
+            "Monetario":              "Hedging Only",   # MMF: derivados sólo para cobertura
+            "Renta Fija Corto Plazo": "Hedging Only",   # ídem RF corto
+            "Renta Variable":         "Investment",     # RV: derivados para gestión de cartera
+            "Renta Fija Flexible":    "Both",           # RF flexible: cobertura + inversión
+            "Mixtos":                 "Both",           # multi-activo: ambos propósitos
+            "Alternativo":            "Investment",     # alt: derivados como estrategia core
+            "Estructurado":           "Both",           # estructurados: derivados esenciales
+        }
+        _du_heuristic = _DU_NATURE_HEURISTIC.get(cr.get("Fund_Nature"))
+        if _du_heuristic:
+            cr["Derivatives_Usage"] = _du_heuristic
+            warnings.append({
+                "rule": "Allowed-Values:Derivatives_Usage",
+                "message": (
+                    f"Derivatives_Usage='YES' → '{_du_heuristic}' "
+                    f"(heurística Fund_Nature='{cr.get('Fund_Nature')}'; "
+                    f"confirmar en prospecto)"
+                ),
+            })
+        else:
+            warnings.append({
+                "rule": "Allowed-Values:Derivatives_Usage",
+                "message": (
+                    "Derivatives_Usage='YES' es valor legado MODIFY #12 — "
+                    "Fund_Nature no permite inferencia segura; "
+                    "revisar: puede ser 'Investment', 'Both' o 'Hedging Only'"
+                ),
+            })
 
     # ----------------------------------------------------------------
     # MIG-4 (2026-07-11): Liquidity_Profile legado (T1/T5) → v20
@@ -4689,6 +4732,23 @@ def validate_all_semantic_consistency(
             "message": (
                 "Liquidity_Profile='T5' es valor legado — "
                 "requiere revisión: posiblemente 'Weekly' o 'Bi-Weekly'"
+            ),
+        })
+
+    # ----------------------------------------------------------------
+    # MIG-5 (2026-07-12): Investment_Universe='Liquidity' → 'Global'
+    # 'Liquidity' fue valor pre-v20 (schema v19) para fondos monetarios.
+    # En v20 (§2A.1 #5) fue eliminado; la liquidez se codifica en
+    # MMF_Structure / Liquidity_Profile. Para cualquier naturaleza,
+    # el universo geográfico correcto es 'Global' como mínimo.
+    # ----------------------------------------------------------------
+    if cr.get("Investment_Universe") == "Liquidity":
+        cr["Investment_Universe"] = "Global"
+        warnings.append({
+            "rule": "Allowed-Values:Investment_Universe",
+            "message": (
+                "Investment_Universe='Liquidity' migrado→'Global' "
+                "(valor pre-v20; eliminado en schema v20 §2A.1 #5)"
             ),
         })
 
@@ -4849,6 +4909,24 @@ def validate_all_semantic_consistency(
             ),
         })
 
+    # ── Normalización de casing (silenciosa) — antes del loop ALLOWED_VALUES ──
+    # Los bloques emiten Leverage_Used/Accumulation_Policy/Hedging_Policy en
+    # MAYÚSCULAS (convención heredada del extractor KIID). sqlite_writer ya
+    # normaliza el casing al escribir en BD, pero validate_all_semantic_consistency
+    # corre ANTES de esa escritura. Las INTER rules superiores (INTER-2/INTER-7/
+    # INTER-12) ya evaluaron los valores originales correctamente; esta paso sólo
+    # limpia corrected_record para que el loop ALLOWED_VALUES no emita 6 700+
+    # INFO espurios por ciclo. No se genera warning: el dato en BD ya es correcto.
+    _CASING_NORM: dict[str, dict[str, str]] = {
+        "Leverage_Used":       {"YES": "Yes", "NO": "No", "LIMITED": "Limited"},
+        "Accumulation_Policy": {"ACCUMULATION": "Accumulation", "DISTRIBUTION": "Distribution"},
+        "Hedging_Policy":      {"HEDGED": "Hedged", "UNHEDGED": "Unhedged"},
+    }
+    for _cn_col, _cn_map in _CASING_NORM.items():
+        _cn_val = cr.get(_cn_col)
+        if _cn_val in _cn_map:
+            cr[_cn_col] = _cn_map[_cn_val]
+
     # Comprobación de valores fuera de catálogo. IMPORTANTE: iterar sobre cr
     # (corrected_record) en lugar de fund_record para que las correcciones de
     # los INTER rules anteriores sean visibles aquí y no generen falsos warnings.
@@ -4856,7 +4934,19 @@ def validate_all_semantic_consistency(
     # check_code único (SEM_ALLOWED_VALUES_<COL>) — necesario porque
     # fund_data_quality_issues tiene UNIQUE constraint en (ISIN, check_code)
     # y una misma regla genérica "Allowed-Values" duplicada causa IntegrityError.
+    #
+    # MIG-3/MIG-4 emiten "Allowed-Values:{col}" para valores ambiguos (p.ej.
+    # Derivatives_Usage='YES', Liquidity_Profile='T5') SIN corregir cr[col].
+    # Para evitar duplicar el check_code cuando el loop inferiría el mismo aviso,
+    # se excluyen las columnas ya flaggeadas por cualquier regla "Allowed-Values:".
+    _av_already_flagged = {
+        item["rule"][len("Allowed-Values:"):]
+        for item in warnings + critical_errors
+        if item.get("rule", "").startswith("Allowed-Values:")
+    }
     for col, value in cr.items():
+        if col in _av_already_flagged:
+            continue
         if col in ALLOWED_VALUES_BY_COLUMN and value is not None:
             if value not in ALLOWED_VALUES_BY_COLUMN[col]:
                 warnings.append({

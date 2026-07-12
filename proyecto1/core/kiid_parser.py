@@ -2063,8 +2063,15 @@ ES_HEDGED = [
     r"\bcubierta\s+frente\s+al\s+riesgo\s+de\s+divisa\b",
     r"\bcobertura\s+de\s+divisa\b",
     r"\bcubierta\s+frente\s+al\s+riesgo\s+de\s+tipo\s+de\s+cambio\b",
-    # NUEVO: "cubierto frente a / cubierto en" — 30 casos
-    r"\bcubierto\s+(?:en|frente\s+a)\b",
+    # NOTA: "cubierto en / cubierto frente a" (masculino) se evalúa fuera de
+    # esta lista con contexto — ver _cubierto_en_genuine() + _detect_hedging_policy().
+    # Se eliminó de la lista simple para evitar falsos positivos en:
+    # 1. "expresado o cubierto en EUR" (composición de activos, no cobertura de clase)
+    # 2. "valor/índice de referencia ... cubierto en EUR" (benchmark hedged)
+    # 3. "100% cubierto en EUR" en descripción de rentabilidad de benchmark
+    # FIX-HEDGE-5 (2026-07-12): contexto requerido para suprimir 9 falsos positivos
+    # en M&G EUR CORP BOND A/C, M&G EURO STRAT VALUE, M&G OPT INC J/JI EUR ×4,
+    # NORDEA EUROP HY BOND BC EUR, NORDEA GL STBL EQ EUR HD BC.
     # NUEVO: "cobertura cambiaria / de tipo de cambio"
     r"\bcobertura\s+(?:cambiaria|de\s+tipo\s+de\s+cambio)\b",
     # NUEVO: "clase con cobertura"
@@ -2101,6 +2108,13 @@ ES_UNHEDGED = [
     r"\bsin\s+cobertura\s+de\s+divisa\b",
     # NUEVO: "sin cobertura" genérico — 7 casos
     r"\bsin\s+cobertura\b",
+    # FIX-HEDGE-5 (2026-07-12): "no se aplica (una/la) cobertura cambiaria".
+    # Patrón para "El fondo puede realizar cobertura de divisas. Por lo general,
+    # no se aplica una cobertura cambiaria." — afirmación genérica de capacidad
+    # seguida de negación de aplicación real. Cubre ROBECO GLB CONS TRNDS D/M USD
+    # donde "cobertura cambiaria" (ES_HEDGED) disparaba HEDGED aunque la siguiente
+    # frase niega su aplicación real.
+    r"\bno\s+se\s+aplica\s+(?:(?:una|la)\s+)?cobertura\s+cambiaria\b",
     # NUEVO: "no existe cobertura"
     r"\bno\s+existe\s+cobertura\b",
     # NUEVO: "riesgo de divisa no cubierto"
@@ -2135,6 +2149,31 @@ EN_UNHEDGED = [
 EN_PARTIAL = [
     r"\bpartially\s+hedged\b",
 ]
+
+# FIX-HEDGE-5 (2026-07-12): Detección con contexto para "cubierto en / cubierto frente a"
+# (masculino). El patrón amplio fue eliminado de ES_HEDGED porque disparaba falsos
+# positivos en tres contextos de boilerplate frecuentes:
+#   1. "expresado o cubierto en [moneda]"         → composición de activos (70% del fondo)
+#   2. "valor/índice de referencia ... cubierto en [moneda]" → benchmark hedged, no la clase
+#   3. "[benchmark] 100% cubierto en [moneda]"    → rentabilidad del índice de referencia
+# Se aceptan solo los hits donde NINGUNO de estos contextos precede al match.
+_CUBIERTO_EN_RE = re.compile(r"\bcubierto\s+(?:en|frente\s+a)\b")
+_CUBIERTO_EN_FP_CTX = re.compile(
+    r"expresado\s+o\s*$"                                         # "expresado o [cubierto]"
+    r"|(?:valor|[ií]ndice|[ií]ndices)\s+de\s+referencia\b[^.]*$"  # benchmark section
+    r"|\d+\s*%\s*$",                                             # "100% [cubierto en]" — total return
+)
+
+
+def _cubierto_en_genuine(t: str) -> bool:
+    """True only when 'cubierto en/frente a' (masculine) is NOT in a false-positive context.
+    Operates on already-lowercased text."""
+    for m in _CUBIERTO_EN_RE.finditer(t):
+        before = t[max(0, m.start() - 150): m.start()]
+        if _CUBIERTO_EN_FP_CTX.search(before):
+            continue
+        return True
+    return False
 
 
 def _detect_hedging_policy(text: str, language: Optional[str]) -> Optional[str]:
@@ -2172,6 +2211,10 @@ def _detect_hedging_policy(text: str, language: Optional[str]) -> Optional[str]:
         for rx in ES_HEDGED:
             if re.search(rx, t):
                 return "HEDGED"
+        # FIX-HEDGE-5: context-aware "cubierto en" — evaluated after simple ES_HEDGED
+        # patterns so it only triggers if no other positive signal already matched.
+        if _cubierto_en_genuine(t):
+            return "HEDGED"
 
     if language == "EN":
         for rx in EN_PARTIAL:
