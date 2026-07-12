@@ -127,6 +127,38 @@ def test_us_word_boundary_still_matches_genuine_us_funds(name, expected):
 
 
 # ---------------------------------------------------------------------------
+# FIX-GEO-NAME-2 (2026-07-12): "\bus\b" (señal débil) se evalúa DESPUÉS
+# de los checks europeos para que fondos con "EUROPEAN" + "US AC" en el
+# nombre retornen Europa, no EEUU.
+# Caso real: MFS EUROPEAN RESEARCH W1 US AC (LU1123736750) -- generaba
+# GEOGRAPHY_NAME_KIID_MISMATCH (EEUU vs Europa) por el código de clase
+# "W1 US AC", aunque el fondo invierte en renta variable europea.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("name,expected,desc", [
+    ("MFS EUROPEAN RESEARCH W1 US AC", "Europa",
+     "EUROPEAN + 'US AC' share class code → Europa"),
+    ("INVESCO PAN EUROPEAN HIGH INC E US ACC", "Europa",
+     "PAN EUROPEAN + 'US ACC' class code → Europa"),
+    ("ALLIANZ EUROPEAN EQUITY A US ACC", "Europa",
+     "'EUROPEAN' + 'US ACC' class code → Europa"),
+    ("NORDEA EUROPEAN HIGH YIELD E USDH ACC", "Europa",
+     "'EUROPEAN' + USDH class suffix → Europa"),
+    ("JPM US EQUITY A EUR ACC", "EEUU",
+     "strong 'US EQ' → EEUU (no false positive)"),
+    ("PIMCO TOTAL RETURN E US ACC", "EEUU",
+     "no European signal, standalone 'US' → EEUU via weak path"),
+])
+def test_european_signal_beats_weak_us_share_class_code(name, expected, desc):
+    """FIX-GEO-NAME-2: señal europea explícita en nombre tiene prioridad sobre
+    el código de clase 'US' (equivalente USD) que aparece como sufijo."""
+    result = detect_geography(name.lower())
+    assert result == expected, (
+        f"Expected {expected!r} for '{desc}', got {result!r}. Name: {name!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # detect_geography_from_kiid — señales explícitas de objetivo
 # ---------------------------------------------------------------------------
 
@@ -371,6 +403,29 @@ def test_kiid_paises_emergentes_negation_excluded():
         "el fondo invierte en renta fija global, excepto países emergentes, "
         "aplicando criterios de calidad crediticia."
     )) is None
+
+
+@pytest.mark.parametrize("phrase,desc", [
+    ("el subfondo puede estar expuesto a países emergentes como riesgo accesorio",
+     "exposición incidental ('puede estar expuesto a')"),
+    ("la cartera puede tener exposición a países emergentes en mercados secundarios",
+     "exposición incidental ('puede tener exposición a')"),
+    ("incluyendo países emergentes, como parte del universo ampliado de inversión",
+     "enumeración incidental ('incluyendo')"),
+    ("el fondo invierte en renta fija global, así como en países emergentes de forma limitada",
+     "conjunción subordinada ('así como')"),
+    ("el fondo invierte en bonos investment grade, también puede invertir hasta el 20% en países emergentes",
+     "exposición limitada ('también')"),
+])
+def test_kiid_paises_emergentes_risk_context_not_emergentes(phrase, desc):
+    """FIX-GEO-MISMATCH (2026-07-12): 'países emergentes' en contexto de riesgo
+    incidental (EDR INCOME EUROPE, DWS EURORENTA, R-CO CREDI EURO) NO debe
+    activar Geography='Emergentes'. Estos fondos mencionan EM en secciones de
+    riesgo o como exposición secundaria, no como objetivo principal."""
+    result = detect_geography_from_kiid(_kiid(phrase))
+    assert result != "Emergentes", (
+        f"Se esperaba ≠'Emergentes' para contexto '{desc}', obtenido: {result!r}"
+    )
 
 
 def test_kiid_bonos_suecos_maps_to_europa():
