@@ -461,6 +461,42 @@ para cobertura (sin incrementar el riesgo neto).
 
 ---
 
+## §7. Cluster G — Consistencia geográfica
+
+Los atributos `Geography` e `Investment_Universe` describen el ámbito geográfico del fondo
+desde dos perspectivas complementarias. La semántica de su combinación debe ser coherente.
+
+### §7.1 `Geography` ↔ `Investment_Universe` (SC-G1)
+
+**Regla de consistencia:**
+
+| Geography | Investment_Universe requerido | Razón |
+|-----------|------------------------------|-------|
+| `Europe`, `North America`, `Asia-Pacific`, `Latin America`, `Eastern Europe`, `Middle East & Africa` | `Regional` | Región multi-país sub-global |
+| `China`, `Japan`, `India` | `Country` | Foco en un único país |
+| `Global` | `Global` | Mandato global sin restricción geográfica |
+
+**Precedencia:** `Geography` gana. Es derivada de señales positivas explícitas en el nombre y
+texto KIID del fondo; `Investment_Universe` puede ser una inferencia por defecto (BL-33).
+
+**Auto-corrección:** SC-G1 es auto-correctable. Implementado en INTER-20.
+
+**Severidad:** WARN→auto (igual que SC-D1/SC-D2): el valor corregido se persiste en BD
+vía la A2-merge de pipeline.py + COALESCE de sqlite_writer.
+
+**Causa raíz histórica:** BL-33 (INTER-13) asigna `Investment_Universe='Global'` a fondos
+Monetario y Renta Fija Corto Plazo por defecto (inferencia por naturaleza del fondo), sin
+considerar si Geography ya tiene un valor específico. Esto generaba ~137 fondos con
+`IU='Global'` + Geography específica en la BD (Europe=93, North America=32, Asia-Pacific=6,
+China=4, Japan=2). INTER-20 (SC-G1) se ejecuta después de INTER-13 para interceptar y
+corregir esta inconsistencia.
+
+**Regla SC-G1** — `Geography ∈ REGION_GEOS → Investment_Universe = 'Regional'`;
+`Geography ∈ COUNTRY_GEOS → Investment_Universe = 'Country'`.
+Implementado en INTER-20 de `validate_all_semantic_consistency`.
+
+---
+
 ## §8. Transversal: Homogeneidad lingüística (Principio #8)
 
 **Principio:** `PRINCIPIOS_DISENO.md` P#8. Esta sección documenta la tabla de asignación por columna.
@@ -541,6 +577,12 @@ obsoleto de un ciclo anterior, mientras que `None` sería preservado por COALESC
 |----|-------|----------|-------------------|-------------|
 | SC-E1 | `Fund_Nature ≠ 'Monetario'` + `MMF_Structure ≠ 'Not Applicable'` → corregir a `'Not Applicable'` | WARN→auto | Sí | INTER-18 |
 | SC-E2 | `Fund_Nature='Monetario'` + `MMF_Structure='Not Applicable'` → WARN (debería tener estructura MMFR explícita) | WARN | No — necesita prospecto | INTER-18 |
+
+### Cluster G — Consistencia geográfica
+
+| ID | Regla | Severidad | ¿Auto-corregible? | Regla INTER |
+|----|-------|----------|-------------------|-------------|
+| SC-G1 | `Geography` ∈ región → `Investment_Universe='Regional'`; `Geography` ∈ país → `Investment_Universe='Country'` (cuando IU='Global' e IU≠requerido) | WARN→auto | Sí — Geography tiene precedencia | INTER-20 |
 
 ### Cluster E — Atributos de estilo / exposición
 

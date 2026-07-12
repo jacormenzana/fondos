@@ -3206,7 +3206,8 @@ def detect_geography(name_l: str) -> Optional[str]:
     palabra bajó el desacuerdo nombre/KIID de 324 a 79 casos (de 981 fondos
     con ambas señales); ver SESSION_SUMMARY para el detalle del corpus check.
     """
-    if any(k in name_l for k in ["japan","japanese","japon"]):
+    # FIX-GEO-7 (2026-07-12): added "nippon" (EN demonym used in fund names).
+    if any(k in name_l for k in ["japan","japanese","japon","nippon"]):
         return "Japón"
     if "jpy" in name_l:
         return "Japón"
@@ -3218,12 +3219,24 @@ def detect_geography(name_l: str) -> Optional[str]:
         return "Asia"
     if any(k in name_l for k in ["india","indian"]):
         return "India"
+    # FIX-GEO-7: Korea maps to Asia (Development_Status handles developed/emerging axis).
+    if any(k in name_l for k in ["korea","korean"]):
+        return "Asia"
     if any(k in name_l for k in ["brazil","brasil","latin","latam"]):
         return "Latinoamérica"
-    if any(k in name_l for k in ["mena","middle east"]):
+    # FIX-GEO-7: added "mideast" (compact OCR form of "Middle East"; safe:
+    # "mideast" in a fund name always means MENA / Emerging region).
+    if any(k in name_l for k in ["mena","middle east","mideast"]):
         return "Emergentes"
+    # FIX-GEO-7: added truncated/abbreviated emerging variants found in real fund names:
+    # "emerg." (CARMIGNAC EMERG.PATRIMOINE), "emergng"/"emergg" (JPM EMERGNG, VONTOBEL
+    # EMERGG), "emergi"/"emergin" (typos), "emrgng", "emer." (punctuated abbrev),
+    # plus safe multi-token EM abbreviations ("em cies", "em debt", "em mkts", "em local").
+    # NOT added: bare "em eq" → false-matches "pr​em eq​uilib" (CS PREM EQUILIB, confirmed FP).
     if any(k in name_l for k in ["emerging","emergentes","emergent","em mkt","emerg mkt",
-                                   "emerg ","emrg","emer mkt","emer ","frontier"]):
+                                   "emerg ","emrg","emer mkt","emer ","frontier",
+                                   "emerg.","emergi","emergin","emergng","emergg",
+                                   "emer.","emrgng","em cies","em debt","em mkts","em local"]):
         return "Emergentes"
     # Señales US fuertes (términos geográficos explícitos) -- antes de Europa.
     # FIX-GEO-NAME-2 (2026-07-12): "\bus\b" (señal débil -- también aparece en
@@ -3249,7 +3262,17 @@ def detect_geography(name_l: str) -> Optional[str]:
                                    # propio nombre del fondo ("nordic" ya cubría el bloque
                                    # regional, pero no los gentilicios/abreviaturas de país
                                    # sueco/noruego -- ver NORDEA 1 SWED./NORW. SHORT-T. BOND).
-                                   "swed","swdish","norw"]):
+                                   "swed","swdish","norw",
+                                   # FIX-GEO-7 (2026-07-12): variants found in real fund names
+                                   # that the prior list missed:
+                                   # "german" (no trailing y) → DWS INVEST GERMAN EQUITS
+                                   # "italy" (EN) → FIDELITY ITALY
+                                   # "spain"/"spanish" → EDM SPAIN EQ, etc.
+                                   # "eurp"/"eurpe" → MS EM EURP MIDEAST (NOTE: Emerging check
+                                   #   runs first so EM-EURP funds already exit as Emergentes)
+                                   # "switzerlan" → truncated "switzerland" (OCR artifact)
+                                   "german","italy","spain","spanish",
+                                   "eurp","eurpe","switzerlan"]):
         return "Europa"
     # Señal US débil: "\bus\b" solo -- puede ser código de clase (p.ej. "W1 US AC").
     # Se evalúa después de Europa para no sobreescribir señales europeas fuertes.
@@ -4526,6 +4549,19 @@ def validate_all_semantic_consistency(
                 # BL-LANG-EN-FIX (2026-05-18): antes de asumir Global, intentar
                 # inferir desde el nombre del fondo (cubre OCR con puntos como
                 # "EMERG.MARKETS" que detect_geography() no captura por el punto).
+                #
+                # FIX-GEO-7 (2026-07-12): NOTA DE ALCANZABILIDAD — esta sub-rama
+                # lee cr.get("Fund_Name"), que los bloques clasificadores NUNCA
+                # incluyen en su dict de resultado (solo lo recibe como argumento
+                # separado de classify_fund, no se copia al dict). Por tanto
+                # _fname_inter13 es siempre "" a nivel de bloque → la rama
+                # `if any(sig ...)` nunca se cumple. A nivel de pipeline.py,
+                # BL-33 tampoco se alcanza porque Investment_Universe ya es no-NULL
+                # (el bloque lo habrá fijado en Global). Esta sub-rama es código
+                # efectivamente muerto; se conserva por si un futuro caller pasa
+                # Fund_Name en el dict. FIX-GEO-7 resuelve el caso emergentes
+                # directamente en detect_geography() (ver arriba), que sí recibe
+                # el nombre real del fondo vía el caller del bloque.
                 _fname_inter13 = (cr.get("Fund_Name") or "").lower()
                 _emerg_signals = [
                     "emerg", "emerging", "emergentes", "emergent",
@@ -4559,13 +4595,19 @@ def validate_all_semantic_consistency(
                     # definitiva de dato incluso cuando el valor final en BD es
                     # correcto -- confirmado 0 desacuerdos finales en auditoría de
                     # 135 fondos (ver memoria FIX-GEO-6 / INTER-13 2026-07-05).
+                    # FIX-GEO-7 (2026-07-12): corregido mensaje falso que afirmaba que
+                    # "pipeline.py reconciliará con el valor efectivo si difiere". Eso
+                    # es incorrecto: BL-50 (pipeline.py:~1627) solo actúa cuando
+                    # Investment_Universe IS NULL; como esta rama ya lo fijó en 'Global'
+                    # (truthy), BL-50 se salta y 'Global' es el valor definitivo.
                     warnings.append({
                         "rule": "InvestmentUniverse-NatureFallback",
                         "message": (
-                            f"Investment_Universe='Global' asignado provisionalmente "
-                            f"en el bloque (sin señal Geography/Sector_Focus en este "
-                            f"ciclo) para Nature='{_nature}' -- pipeline.py "
-                            f"reconciliará con el valor efectivo si difiere"
+                            f"Investment_Universe='Global' asignado como centinela "
+                            f"P#10 (sin señal positiva de Geography ni Sector_Focus "
+                            f"en nombre ni KIID para Nature='{_nature}') -- valor "
+                            f"definitivo; BL-50 de pipeline.py no reconcilia porque "
+                            f"ya es no-NULL"
                         ),
                     })
 
@@ -4821,6 +4863,48 @@ def validate_all_semantic_consistency(
             })
         # Otras naturalezas: el ALLOWED_VALUES loop (sobre cr) lo detectará
         # con código único SEM_ALLOWED_VALUES_INVESTMENT_UNIVERSE.
+
+    # ----------------------------------------------------------------
+    # INTER-20 (2026-07-12): SC-G1 — Geography → Investment_Universe
+    # El ámbito geográfico declarado en Geography debe reflejarse en
+    # Investment_Universe:
+    #   Geography ∈ _REGION_GEOGRAPHIES  → IU debe ser 'Regional'
+    #   Geography ∈ _COUNTRY_GEOGRAPHIES → IU debe ser 'Country'
+    #
+    # Se ejecuta DESPUÉS de INTER-13 (BL-33) y MIG-5 para interceptar el
+    # IU='Global' que BL-33 asigna por defecto a fondos Monetario/RF Corto
+    # independientemente de la Geography conocida. Esta sobreescritura es la
+    # raíz de los ~137 fondos con IU='Global' + Geography específica en la BD.
+    #
+    # Precedencia: Geography gana sobre el fallback de natura de BL-33.
+    # Geography es derivada de nombre + texto KIID (señal positiva explícita);
+    # BL-33 es una inferencia por defecto que no debe prevalecer cuando hay
+    # señal geográfica concreta. La corrección se propaga a fund_master_record
+    # via A2-merge en pipeline.py y se persiste via COALESCE en la BD.
+    # ----------------------------------------------------------------
+    _geo_20 = cr.get("Geography")
+    _iu_20  = cr.get("Investment_Universe")
+    if _geo_20 is not None and _iu_20 == "Global":
+        if _geo_20 in _REGION_GEOGRAPHIES:
+            cr["Investment_Universe"] = "Regional"
+            critical_errors.append({
+                "rule": "Geography-Universe-SC-G1",
+                "message": (
+                    f"Investment_Universe corregido 'Global'→'Regional' "
+                    f"por coherencia con Geography='{_geo_20}' "
+                    f"(geografía de región, no global) (SC-G1)"
+                ),
+            })
+        elif _geo_20 in _COUNTRY_GEOGRAPHIES:
+            cr["Investment_Universe"] = "Country"
+            critical_errors.append({
+                "rule": "Geography-Universe-SC-G1",
+                "message": (
+                    f"Investment_Universe corregido 'Global'→'Country' "
+                    f"por coherencia con Geography='{_geo_20}' "
+                    f"(geografía de país individual, no global) (SC-G1)"
+                ),
+            })
 
     # ----------------------------------------------------------------
     # INTER-15 (2026-07-11): SC-B1/B2 — Themes macroeconómicos cross-sector

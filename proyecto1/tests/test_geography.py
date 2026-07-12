@@ -372,6 +372,63 @@ def test_kiid_worldwide_bare_signal_excludes_manager_scope():
     )) is None
 
 
+# ---------------------------------------------------------------------------
+# FIX-GEO-7 (2026-07-12): detect_geography() — variantes de nombre que
+# antes no se detectaban y caían al fallback Investment_Universe='Global'
+# (InvestmentUniverse-NatureFallback WARN). Root cause: keywords truncados,
+# gentilicios EN, y abreviaturas OCR ausentes en la lista.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("name,expected", [
+    # -- Japón --
+    ("INVESCO NIPPON EQ B USD ACC",      "Japón"),  # "nippon" (EN demonym)
+    # -- Asia: Korea --
+    ("JPM KOREA EQUITY A USD ACC",       "Asia"),   # "korea" → Asia
+    ("INVESCO KOREAN EQ B EUR ACC",      "Asia"),   # "korean" → Asia
+    # -- Emergentes: variantes truncadas/OCR --
+    ("CARMIGNAC EMERG.PATRIMOINE F EUR", "Emergentes"),  # "emerg." con punto
+    ("JPM EMERGNG MKTS EQ A EUR ACC",   "Emergentes"),  # "emergng"
+    ("VONTOBEL EMERGG MKT DEBT A EUR",  "Emergentes"),  # "emergg"
+    ("ALLIANZ GI EMERGI MKT DEX A EUR", "Emergentes"),  # "emergi"
+    ("GS EMRGNG MKTS EQUITY R USD ACC", "Emergentes"),  # "emrgng"
+    ("PIMCO EM DEBT A USD ACC",         "Emergentes"),  # "em debt"
+    ("AB EM MKTS CREDIT A USD ACC",     "Emergentes"),  # "em mkts"
+    ("FIDELITY EM LOCAL CY A EUR ACC",  "Emergentes"),  # "em local"
+    # -- Europa: variantes que antes faltaban --
+    ("DWS INVEST GERMAN EQUITS A EUR",  "Europa"),  # "german" (sin 'y')
+    ("FIDELITY FUNDS ITALY A ACC EUR",  "Europa"),  # "italy" (EN)
+    ("EDM SPAIN EQ A EUR ACC",          "Europa"),  # "spain"
+    ("BESTINVER SPANISH EQUITY A EUR",  "Europa"),  # "spanish"
+    # -- eurp/eurpe: Emergentes gana si hay señal EM (orden garantizado) --
+    ("MS EM EURP MIDEAST AFR A USD",    "Emergentes"),  # EM antes que Europa
+    ("AXA IM FIIS EURP SHOR DUR A EUR", "Europa"),      # solo "eurp", sin EM
+    ("THREADNEEDLE EURPE SMLR COS A",   "Europa"),      # "eurpe"
+    ("BELGRAVIA SWITZERLAN EQUITY A",   "Europa"),      # "switzerlan"
+])
+def test_fix_geo7_new_keyword_variants(name, expected):
+    """FIX-GEO-7: variantes de keyword añadidas a detect_geography() que
+    antes dejaban los fondos sin señal → fallback Global (WARN)."""
+    result = detect_geography(name.lower())
+    assert result == expected, (
+        f"Expected {expected!r} for {name!r}, got {result!r}"
+    )
+
+
+@pytest.mark.parametrize("name", [
+    # "em eq" explícitamente EXCLUIDO: false-match "prem equilib"
+    "CS PREM EQUILIB FI B EUR ACC",
+    "AMUNDI PREMIUM EQUILIBRIO A EUR",
+])
+def test_fix_geo7_em_eq_fp_guard(name):
+    """FIX-GEO-7 NEGATIVO: 'em eq' NO debe añadirse porque coincide en
+    'prem equilib' (sustrato 'premequilib' → 'em eq' presente).
+    Verificado que la lista final NO incluye 'em eq'."""
+    result = detect_geography(name.lower())
+    assert result != "Emergentes", (
+        f"FALSE POSITIVE: {name!r} detected as Emergentes (em eq leak)"
+    )
+
+
 def test_kiid_mundial_adjective_variants_map_to_global():
     """FIX-GEO-5: "mundial(es)" como adjetivo pospuesto ("mercados de renta
     variable mundiales", "a escala mundial"), no solo la locución "a nivel
