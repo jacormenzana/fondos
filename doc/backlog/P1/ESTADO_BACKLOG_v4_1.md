@@ -44,6 +44,16 @@
 
 ---
 
+#### BL-COST-REGRESS — `[PENDING]` · MEDIA · `cost_table_parser.py` *(new — v4.1)*
+- **Gap:** Round 2 shipped 7 interacting fixes. "0/50 regressions" was a spot-check, not a corpus guard.
+- **Risk:** future cost fixes risk silent regression across 3,205-fund corpus.
+- **Next step:** implement golden-ISIN test set (expected ACI_RHP values per ISIN); execute on every `cost_table_parser.py` change. Min set: 50 ISINs covering all fix categories (DLA2, plain text, mega-cell, IE/Irish, date-RHP).
+- **DoD:** automated harness; 0 regressions on golden set on each PR touching cost parsing.
+- **Estimate:** 2-3h.
+
+
+---
+
 ## 3. [PENDING] — enriched with current code constraints
 
 ### P0 — Live production bug
@@ -103,13 +113,6 @@
 - **Next step:** run full pipeline; re-count NULL corpus; classify 24 residuals — attempt FIX-P1-X iteration or declare hard-unextractable with root cause documented per ISIN.
 - **DoD:** ≤50 residuals corpus-wide OR all remaining classified as hard-unextractable with root cause logged.
 - **Estimate:** TBD (depends on residual pattern). No architectural conflict.
-
-#### BL-COST-REGRESS — `[PENDING]` · MEDIA · `cost_table_parser.py` *(new — v4.1)*
-- **Gap:** Round 2 shipped 7 interacting fixes. "0/50 regressions" was a spot-check, not a corpus guard.
-- **Risk:** future cost fixes risk silent regression across 3,205-fund corpus.
-- **Next step:** implement golden-ISIN test set (expected ACI_RHP values per ISIN); execute on every `cost_table_parser.py` change. Min set: 50 ISINs covering all fix categories (DLA2, plain text, mega-cell, IE/Irish, date-RHP).
-- **DoD:** automated harness; 0 regressions on golden set on each PR touching cost parsing.
-- **Estimate:** 2-3h.
 
 #### BL-BENCH-NORM — `[PENDING]` · MEDIA · `classify_utils.py` (+ `kiid_parser.py`)
 - **Done (different approach):** parser-side de-contamination — `_trim_benchmark` (`kiid_parser.py:1633`, cap `[:120]` at `:1704`) + `_BENCH_TERMINATORS` (BL-38-v20).

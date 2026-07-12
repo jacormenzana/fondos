@@ -312,132 +312,151 @@ SQL directo es aceptable **solo** para:
 
 ---
 
-## 7. GESTIÓN DE ERRORES Y LOGGING (v2 — VIGENTE DESDE 30-ABR-2026)
+## PRINCIPIO #8: Homogeneidad lingüística por columna
 
-Esta sección sustituye a la versión esquelética anterior. La normativa surge del
-ciclo del 30-abr-2026, donde los warnings añadidos visibilizaron tres bugs
-ocultos (Theme='Inflación', logging duplicado, regresión Fund_Nature=NULL) que
-hubieran contaminado P3 silenciosamente.
+**Regla:**  
+Cada columna categórica del schema usa **un único idioma** para todos sus valores.
+No mezclar español e inglés en la misma columna.
 
-### 7.1 Principio fundamental
+| Idioma | Columnas |
+|--------|---------|
+| **Español** | `Fund_Nature`, `Profile`, `Geography` |
+| **Inglés** | `Family`, `Investment_Focus`, `Theme`, `Sector_Focus`, `Style_Profile`, `Market_Cap_Focus`, `Exposure_Bias`, `Development_Status`, `Credit_Quality`, `Duration_Profile`, `MMF_Structure`, `Alt_Strategy`, `Hedging_Policy`, `Replication_Method`, `Derivatives_Usage`, `Liquidity_Profile`, `Distribution_Frequency` |
+| **Código / neutro** | `ISIN`, `Fund_Currency`, `Asset_Currency`, `SRRI`, costes numéricos |
 
-Todo evento que cumpla CUALQUIERA de los siguientes criterios DEBE emitir log:
+Ver tabla completa y nota de evolución histórica en `MODELO_SEMANTICO.md` §8.
 
-a) Una regla INTER detecta inconsistencia y aplica autocorrección.  
-b) Una regla INTER detecta inconsistencia y NO puede corregir (residual con DQ=WARN).  
-c) Un valor cae en autocorrección por defecto (fallback heurístico).  
-d) Una decisión de clasificación se toma con confianza < umbral (≤3 atributos).  
-e) Una validación de catálogo (ALLOWED_VALUES_BY_COLUMN) falla.  
-f) Un atributo NOT NULL del schema recibe valor None tras procesamiento.  
-g) Una operación de extracción (parser) devuelve None donde se esperaba valor.  
-h) Un bloque clasificador retorna sin asignar Fund_Nature, Profile, Type, Strategy o Family.  
-i) El UPSERT usa COALESCE preservando valor BD distinto al record entrante (cambio silente).
+**Razón:**  
+Mezclar idiomas en una columna fragmenta poblaciones en `GROUP BY` / `WHERE` queries,
+multiplica los paths de normalización, y genera falsos negativos en tests de regresión.
 
-### 7.2 Niveles de severidad — convención obligatoria
+**Consecuencia histórica:**  
+Antes de v20 (2026), `Family` estaba en español ('RV Núcleo', 'Renta Fija Flexible', etc.).
+La migración a inglés ('Equity Core', 'Flexible Fixed Income') fue necesaria para alinear con
+Morningstar Category naming. Los valores legacy en español deben ser migrados por
+`sqlite_writer._normalize_record` (defensa en profundidad).
 
-| Nivel   | Cuándo se emite                                       | Acción del pipeline                                  |
-|---------|-------------------------------------------------------|------------------------------------------------------|
-| ERROR   | Datos críticos faltantes; el fondo no se persiste     | Logear; el fondo queda con su estado anterior en BD  |
-| WARNING | Inconsistencia detectada Y autocorregida; o residual  | Logear; persistir con valor corregido o flag DQ=WARN |
-| INFO    | Inferencia exitosa por fallback; trazabilidad         | Logear; persistir con valor inferido                 |
-| DEBUG   | Diagnóstico interno, no visible en log de producción  | Configurable por nivel                               |
+**Aplicación:**  
+Los mapas de normalización ES→EN viven exclusivamente en `classify_utils.py` (R-1 en
+`RESTRICCIONES_ARQUITECTURA.md`; instancia enforced de **P#11**). La copia en
+`sqlite_writer._normalize_record` es la **única excepción autorizada** al DRY estricto (P#11) y
+debe documentarse en cada definición.
 
-**Criterio de decisión rápida:**
-- ¿El fondo se persiste con datos coherentes? → WARNING (más DQ=WARN si aplica).
-- ¿El fondo NO puede persistirse o tiene datos críticos perdidos? → ERROR.
-- ¿La incidencia es informativa (decisión por fallback)? → INFO.
-
-### 7.3 Convención de tags
-
-**Formato obligatorio** para reglas INTER documentadas en backlog:
-
-```
-[BL-XX] [ISIN] mensaje
-```
-
-donde XX es el número del BL en backlog (BL-01 a BL-99).
-
-**Ejemplos válidos:**
-```
-[BL-44] LU1133289592 Nature_efectivo=Monetario incompatible con SRRI_efectivo=3 → Restantes
-[BL-62] LU0907915168 Family=Mixtos Type=Allocation inferidos léxicamente tras BL-44 → Restantes
-[BL-44] LU0907915598 sin patrón léxico identificable; Family/Type=NULL; Data_Quality_Flag=WARN
-```
-
-**Para fallbacks no asociados a BL específico:** prefijo descriptivo entre corchetes.
-```
-[NORM-Profile-SRRI] LU0907915168 Profile=Conservador SRRI=5 → Dinámico
-[NORM-Theme-Default] LU0123456789 Theme no detectado en KIID → Core/General
-```
-
-**Para errores estructurales:** prefijo ERROR-CATEGORÍA.
-```
-[ERROR-NotNull] LU0171298564 Fund_Nature=None tras BL-62 fallback → INSERT rechazado
-[ERROR-Persistence] LU2267099674 UPSERT failed: foreign key constraint
-```
-
-**Tags antiguos sin guion** (`[BL44]`, `[BL62]`) **están desestimados**.
-
-### 7.4 Reglas anti-duplicación
-
-**a)** Las funciones de validación master DEBEN ser puras (sin logging interno).
-   El logging vive exclusivamente en el wrapper que las invoca.
-
-**b)** Si una regla puede dispararse desde múltiples puntos del pipeline, DEBE
-   invocarse desde un único punto canónico (consistente con R-1).
-
-**c)** Cualquier evento debe loguearse exactamente una vez por incidencia
-   (un fondo, un evento, una línea de log).
-
-**d)** Si una función puede invocarse desde múltiples wrappers que también logueen,
-   ELLA debe ser pura. Los wrappers son los responsables.
-
-### 7.5 Resumen de ciclo obligatorio
-
-El pipeline DEBE emitir al final de cada ciclo un resumen agregado por tag:
-
-```
---- RESUMEN DE INCIDENCIAS DEL CICLO ---
-[WARN] BL44_NATURE_SRRI_R4: N fondos
-[INFO] BL47_SFDR_DEFAULT: N fondos
-...
 ---
+
+## PRINCIPIO #9: Consistencia semántica entre atributos
+
+**Regla:**  
+Los atributos clasificatorios tienen restricciones cruzadas (pares, clusters). Las
+inconsistencias detectadas deben corregirse, registrarse con DQ flag, o señalarse con
+WARN — **nunca silenciarse**.
+
+**Implementación:**  
+Reglas INTER en `validate_all_semantic_consistency()` (`classify_utils.py`).
+Ver catálogo completo SC-A1 → SC-F4 en `MODELO_SEMANTICO.md` §10.
+
+**Razón:**  
+Atributos inconsistentes producen señales contradictorias en P2/P3 y degradan el scoring
+sin que el sistema lo registre. Una inconsistencia no registrada es deuda de datos invisible.
+
+**Consecuencia:**  
+Toda inconsistencia DEBE persistirse en `fund_data_quality_issues` con `check_code`
+canónico (formato `SEM_<REGLA_UPPER>` — ver `NORMAS_IMPLEMENTACION.md` §5). Las funciones
+de validación deben ser puras; el logging vive en el wrapper (`NORMAS_IMPLEMENTACION.md` §4.4).
+
+---
+
+## PRINCIPIO #10: Valor categórico "indeterminado por naturaleza" ≠ NULL
+
+**Regla:**  
+Un atributo extraído tiene **dos causas distintas** para no contener una categoría única,
+y no deben confundirse:
+
+1. **Indeterminado por naturaleza** — el KIID/nombre declara explícitamente que el fondo
+   NO tiene un valor único (ej. mandato multi-divisa: *"euros u otras divisas"*). Es una
+   propiedad **positiva y conocida**. → **valor categórico centinela** (no NULL).
+2. **No descubierto** — no hay señal suficiente para determinar el valor. Es **ausencia de
+   conocimiento**. → **`NULL`**.
+
+Colapsar ambos en `NULL` destruye información e impide aislar las dos poblaciones aguas abajo.
+
+**Implementación de referencia — `Asset_Currency` → centinela `MCY`:**
+
+```python
+# classify_utils.py — único punto de definición (R-1)
+ASSET_CURRENCY_MULTI = "MCY"   # "Multi-CurrencY"; no colisiona con ISO-4217
 ```
 
-Esto facilita validación posterior sin revisar log línea a línea.
+También declarado en `DOMAIN_VALUES["Asset_Currency"]` (documentación de dominio).
+Dos señales de emisión: token multi-divisa explícito en nombre, o continuación multi-divisa
+en texto KIID sin divisa dominante limpia.
 
-### 7.6 Métricas de monitorización (control SQL)
+**Centinelas activos:**
 
-**Cada regla INTER documentada en backlog DEBE tener:**
+| Atributo | Centinela | Significado |
+|----------|-----------|-------------|
+| `Asset_Currency` | `MCY` | Mandato explícitamente multi-divisa |
+| `Geography` | `Global` | Universo explícitamente global |
+| `Investment_Focus` | `Broad` | Sin concentración sector/temática |
 
-a) **Control SQL "antes del fix"** — qué retorna en estado defectuoso.  
-b) **Control SQL "después del fix esperado"** — qué retorna tras corrección.  
-c) **Tag de log distintivo** para cuantificar disparos por ciclo.
+**Razón:**  
+- **Compatibilidad con COALESCE (P#1):** `None` no puede sobrescribir un valor previo
+  (COALESCE lo preserva). Un centinela sí es no-nulo y sobrescribe correctamente un valor
+  heredado ya no vigente.  
+- **Aislamiento de poblaciones:** `WHERE Asset_Currency = 'MCY'` devuelve exactamente los
+  fondos multi-divisa por diseño, no los "sin dato".  
+- **Root cause (P#2):** emitir el centinela desde el clasificador es la corrección
+  estructural; parchear con SQL o listas de ISINs es un parche de síntoma prohibido.
 
-Sin estos tres elementos, no se debe abrir un BL en backlog.
+**Regla de extensión:**  
+Al añadir cualquier atributo categórico, decidir si admite *"diverso/indeterminado por
+naturaleza"*. Si lo admite y no existe ya un valor que lo capture, definir un centinela,
+declararlo en `DOMAIN_VALUES`, emitirlo desde el clasificador (nunca por SQL), y proteger
+los consumidores que asumen valor único.
 
-### 7.7 Cobertura mínima por módulo
+---
 
-| Módulo                    | Log mínimo obligatorio                                              |
-|---------------------------|---------------------------------------------------------------------|
-| `pipeline.py`             | Inicio/fin de bloque, BL disparos universales, resumen de ciclo     |
-| `classify_utils.py`       | apply_semantic_validation (warnings), inferencias por fallback      |
-| `sqlite_writer.py`        | UPSERT con flags forzados, normalizaciones EN→ES aplicadas          |
-| `kiid_parser.py`          | Atributos NO detectados con patrones esperados (señal de regresión) |
-| `fund_characterizer.py`   | Atributos enriquecidos por fallback (no por extracción directa)     |
-| `benchmark_normalizer.py` | Benchmarks no reconocidos (señal de catálogo obsoleto)              |
-| `fund_family_builder.py`  | Familias inconsistentes (Nature mixta), correcciones aplicadas      |
-| `srri_v4_geometric.py`    | Detecciones VISUAL_ONLY donde el textual también está poblado       |
-| `blocks/*.py`             | Clasificaciones con SRRI=None (Capa 3 fallback no funcional)        |
-| `blocks/restantes.py`     | Detección por capa (cuál de las 3 disparó); confianza baja          |
+## PRINCIPIO #11: Escalabilidad y Principio DRY (Don't Repeat Yourself)
 
-### 7.8 Implementación incremental — orden de despliegue
+**Regla:**  
+Maximiza la reusabilidad aplicando siempre una arquitectura modular. Está **estrictamente
+prohibido duplicar lógica de negocio o crear lógicas similares en distintos módulos**. Cuando
+detectes requerimientos iguales o parecidos en múltiples áreas, tu deber es diseñar e implementar
+un módulo o pieza de software genérica que **centralice** esa funcionalidad, e importarla desde
+todos los puntos de uso.
 
-**Ola 1 (Sprint A.1.b — completado):** `pipeline.py`, `classify_utils.py`, `sqlite_writer.py`, `restantes.py`.
+**Razón:**  
+La duplicación de lógica es la causa estructural de una gran parte de los defectos históricos: dos
+copias de un mapa/regla divergen con el tiempo, se corrige una y no la otra, y el bug reaparece.
+La normalización lingüística es el caso paradigmático — la duplicación de mapas EN→ES en varios
+módulos causó ~50 % de los defectos lingüísticos (BL-22, BL-53, BL-54). DRY generaliza esa
+lección a **toda** lógica de negocio, no solo a los mapas de normalización.
 
-**Ola 2 (Sprint A.2):** `monetarios.py`, `rf_corto.py`, `rf_flexible.py`, `renta_variable.py`, `mixtos.py`, `alternativos.py`.
+**Emparejamiento con P#2:**  
+En las instrucciones fundacionales del proyecto, DRY y *Root cause analysis* (P#2) eran los dos
+principios rectores. Se mantienen como pareja: P#2 exige eliminar la causa, no el síntoma; P#11
+exige eliminarla **en un único lugar**, no replicar el fix.
 
-**Ola 3 (Sprint A.3):** `kiid_parser.py`, `benchmark_normalizer.py`, `srri_v4_geometric.py`, `fund_characterizer.py`.
+**Instancia canónica enforced — R-1:**  
+`RESTRICCIONES_ARQUITECTURA.md` **R-1** («punto único de normalización lingüística») es la
+instancia concreta y verificable de este principio: los mapas categóricos viven exclusivamente en
+`classify_utils.py`. La copia en `sqlite_writer._normalize_record` es la **única excepción
+autorizada** al DRY estricto (defensa en profundidad) y debe documentarse en cada definición
+(ver P#8).
+
+**Regla de extensión:**  
+Antes de escribir una función/constante/mapa, verificar (`grep`) si ya existe una equivalente. Si
+existe, importarla; si existe *parcialmente* en varios sitios, consolidarla en el módulo genérico
+correspondiente antes de añadir el nuevo caso. Nunca resolver un requisito nuevo copiando y
+adaptando lógica existente en otro módulo.
+
+---
+
+## Normativa de logging → `NORMAS_IMPLEMENTACION.md` §4
+
+La normativa de logging (criterios obligatorios, niveles de severidad, convención de tags,
+reglas anti-duplicación, cobertura mínima por módulo, despliegue incremental) vive en
+`NORMAS_IMPLEMENTACION.md` §4 (versión vigente: v2, 30-abr-2026).
 
 ---
 
@@ -445,14 +464,17 @@ Sin estos tres elementos, no se debe abrir un BL en backlog.
 
 | Principio | Se aplica en | Validación |
 |-----------|--------------|------------|
-| #1 COALESCE | sqlite_writer.py, cualquier INSERT/UPDATE | Verificar ON CONFLICT con COALESCE |
+| #1 COALESCE | `sqlite_writer.py`, cualquier INSERT/UPDATE | ¿ON CONFLICT usa COALESCE? |
 | #2 Root cause | Todo debugging, fix de bug | ¿Se eliminó la causa o solo el síntoma? |
-| #3 Verificar ficheros | Modificación de código | ¿Leíste el archivo con view tool? |
-| #4 Regime-aware | P3 scoring (futuro) | ¿Métricas condicionadas a régimen? |
-| #5 Señales genéricas | classify_utils.py, kiid_parser.py | ¿Hay hardcoded de nombres de fondo? |
-| #6 SRRI no fallback | classify_utils.py, bloques P1 | ¿SRRI usado para Nature/Type? |
-| #7 Fix en módulo | fund_family_builder, clasificación | ¿SQL ad-hoc o código Python? |
-| **#7-Logging** | Todos los módulos | ¿Logging según normativa sección 7 v2? |
+| #3 Verificar ficheros | Modificación de código | ¿Leíste el archivo antes de modificar? |
+| #4 Regime-aware | P3 scoring | ¿Métricas condicionadas al régimen macro? |
+| #5 Señales genéricas | `classify_utils.py`, `kiid_parser.py` | ¿Hay nombres de fondo hardcodeados? |
+| #6 SRRI no fallback | `classify_utils.py`, bloques P1 | ¿SRRI usado para inferir Nature/Type? |
+| #7 Fix en módulo | `fund_family_builder`, clasificadores | ¿SQL ad-hoc o código Python? |
+| #8 Homogeneidad lingüística | Todos los módulos que emiten atributos | ¿Valores en idioma correcto por columna? |
+| #9 Consistencia semántica | `classify_utils.py`, `pipeline.py` | ¿Inconsistencias en `fund_data_quality_issues`? |
+| #10 Centinela vs NULL | Clasificadores, `fund_characterizer.py` | ¿Diversidad explícita usa centinela, no NULL? |
+| #11 Escalabilidad y DRY | Todos los módulos; `classify_utils.py` (R-1) | ¿Se duplicó lógica en vez de centralizarla e importarla? |
 
 ---
 
@@ -469,4 +491,4 @@ Si una propuesta de solución viola alguno de estos principios:
 
 **FIN PRINCIPIOS DE DISEÑO**
 
-*Última actualización: 30 abril 2026 — Sección 7 reemplazada por v2 (normativa logging completa, Sprint A.1.b)*  
+*Última actualización: 2026-07-12 — Añadidos P#8 (Homogeneidad lingüística), P#9 (Consistencia semántica), P#10 (Centinela vs NULL), P#11 (Escalabilidad y DRY — elevado desde R-1 / instrucciones fundacionales). Normativa logging movida a `NORMAS_IMPLEMENTACION.md` §4.*  

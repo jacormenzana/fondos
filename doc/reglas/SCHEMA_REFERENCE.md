@@ -2,7 +2,7 @@
 
 **Base de datos:** `db/fondos.sqlite`  
 **Schema SQL:** `db/schema_fondos.sql`  
-**Versión:** v22 (2026-07-05)  
+**Versión:** v22 (2026-07-05); última revisión de valores: 2026-07-12  
 **Propósito:** Referencia rápida de tablas y columnas (sin descripciones largas)
 
 ---
@@ -25,18 +25,18 @@
 
 | Columna | Tipo | Valores típicos |
 |---------|------|-----------------|
-| Fund_Nature | TEXT | Renta Variable \| Mixtos \| Renta Fija Flexible \| Renta Fija Corto Plazo \| Monetario \| Alternativo \| Restantes \| Estructurado |
-| Profile | TEXT | Agresivo \| Moderado \| Conservador \| Muy Conservador |
-| Type | TEXT | Depende de Nature (ej: Bolsa Global, Renta Fija Europea) |
-| Strategy | TEXT | - |
-| Family | TEXT | - |
-| Style_Profile | TEXT | Growth \| Value \| Blend \| - |
-| Geography | TEXT | Global \| Europa \| EE.UU. \| Eurozona \| Asia \| Japón \| ... |
-| Theme | TEXT | Tecnología \| Salud \| Sostenibilidad \| ... |
-| Is_ESG | INTEGER | 0 \| 1 |
-| Exposure_Bias | TEXT | Large Cap \| Mid Cap \| Small Cap \| Multi Cap |
-| Benchmark_Type | TEXT | - |
-| Subtype | TEXT | - |
+| Fund_Nature | TEXT | `Renta Variable` \| `Mixtos` \| `Renta Fija Flexible` \| `Renta Fija Corto Plazo` \| `Monetario` \| `Alternativo` \| `Restantes` \| `Estructurado` |
+| Profile | TEXT | `Conservador` \| `Moderado` \| `Agresivo` (SRRI 1-4 / 3-5 / 5-7; ver INTER-3) |
+| Type | TEXT | Clasificación interna por naturaleza (ej: `Bolsa Global`, `Renta Fija Europea`) |
+| Strategy | TEXT | `Activo` \| `Indexado` \| `Pasivo` |
+| Family | TEXT | `Equity Core` \| `Thematic Equity` \| `Fixed Income Flexible` \| `Mixed` \| `Money Market Fund` \| `Absolute Return` \| `Real Assets` \| ... (**EN**, migrado de ES en v20) |
+| Style_Profile | TEXT | `Growth` \| `Value` \| `Blend` \| `Income` \| `Low Volatility` \| `Quality` \| `Momentum` \| `Strategic Allocation` \| `Not Applicable` |
+| Geography | TEXT | `Global` \| `Europa` \| `EE.UU.` \| `Eurozona` \| `Asia` \| `Japón` \| `China` \| `Emergentes` \| `Norte de África` \| ... (**ES**) |
+| Theme | TEXT | `Technology` \| `Healthcare` \| `Climate / Clean Energy` \| `Artificial Intelligence` \| `Gold` \| `Inflation` \| `Megatrends` \| ... (**EN**) |
+| Is_ESG | INTEGER | `0` \| `1` |
+| Exposure_Bias | TEXT | `Long Only` \| `Long/Short` \| `Market Neutral` \| `Net Short` \| `Not Applicable` |
+| Benchmark_Type | TEXT | `Reference Index` \| `Target Index` \| `No Benchmark` |
+| Subtype | TEXT | `ETF` \| `Index Fund` \| `Autocallable` \| `Global Macro` \| `Long/Short` \| ... |
 
 ### Bloques heurísticos (2 columnas)
 
@@ -66,8 +66,8 @@
 
 | Columna | Tipo | Valores |
 |---------|------|---------|
-| Replication_Method | TEXT | PHYSICAL \| SYNTHETIC \| PASSIVE \| ACTIVE |
-| Derivatives_Usage | TEXT | YES \| NO \| LIMITED |
+| Replication_Method | TEXT | `Physical` \| `Synthetic` \| `Sampling` \| `Active` \| `Not Applicable` |
+| Derivatives_Usage | TEXT | `None` \| `Hedging Only` \| `Investment` \| `Both` (MODIFY #12; legacy: `NO`→`None`, `LIMITED`→`Hedging Only`) |
 | Benchmark_Declared | TEXT | Nombre del índice/benchmark declarado |
 
 ### Costes y condiciones (9 columnas)
@@ -75,14 +75,14 @@
 | Columna | Tipo | Nota |
 |---------|------|------|
 | Ongoing_Charge | REAL | TER (Total Expense Ratio) en % anual |
-| Accumulation_Policy | TEXT | ACCUMULATION \| DISTRIBUTION \| MIXED |
+| Accumulation_Policy | TEXT | `Accumulation` \| `Distribution` \| `Mixed` |
 | Entry_Fee_Pct | REAL | Comisión entrada en % |
 | Exit_Fee_Pct | REAL | Comisión salida en % |
-| Sfdr_Article | INTEGER | 6 \| 8 \| 9 \| NULL |
-| Recommended_Holding_Period | TEXT | - |
-| Leverage_Used | TEXT | YES \| NO \| MODERATE \| HIGH |
-| Liquidity_Profile | TEXT | DAILY \| WEEKLY \| MONTHLY \| ... |
-| Distribution_Frequency | TEXT | ANNUAL \| QUARTERLY \| MONTHLY \| ... |
+| SFDR_Article | INTEGER | `6` \| `8` \| `9` \| NULL |
+| Recommended_Holding_Period | TEXT | Período de tenencia recomendado (texto libre) |
+| Leverage_Used | TEXT | `Yes` \| `No` |
+| Liquidity_Profile | TEXT | `Daily` \| `Weekly` \| `Bi-Weekly` \| `Monthly` \| `Not Applicable` (legacy: `T1`→`Daily`) |
+| Distribution_Frequency | TEXT | `Annual` \| `Semi-Annual` \| `Quarterly` \| `Monthly` (legacy: `BIANNUAL`→`Semi-Annual`) |
 
 ### Fund family (1 columna)
 
@@ -97,14 +97,20 @@
 | Inference_Trace | TEXT | JSON con decisiones de clasificación |
 | Updated_At | TEXT | ISO 8601 timestamp última actualización |
 
-### Atributos v3 — fund_characterizer (4 columnas, v16)
+### Atributos v3 — fund_characterizer (columnas v16+)
 
 | Columna | Tipo | Valores |
 |---------|------|---------|
-| Market_Cap_Focus | TEXT | Large Cap \| Mid Cap \| Small Cap \| Multi Cap |
-| Sector_Focus | TEXT | Technology \| Healthcare \| Financials \| ... |
-| Currency_Hedged | TEXT | YES \| NO \| PARTIAL |
-| Investment_Universe | TEXT | Global \| Regional \| Country-specific |
+| Market_Cap_Focus | TEXT | `Large Cap` \| `Mid Cap` \| `Small Cap` \| `All Cap` \| `Not Applicable` |
+| Sector_Focus | TEXT | `Technology & Innovation` \| `Healthcare & Life Sciences` \| `Energy & Resources` \| `Utilities & Environment` \| `Materials & Mining` \| `Financial Services` \| `Consumer` \| `Real Assets` (8 buckets GICS-aligned) |
+| Investment_Universe | TEXT | `Global` \| `Regional` \| `Country` \| `Thematic` \| `Sector` \| `Liquidity` (legacy: `Liquidity`→`Global` para Monetario via INTER-13-LIQ) |
+| Investment_Focus | TEXT | `Broad` \| `Sector` \| `Thematic` |
+| Credit_Quality | TEXT | `Investment Grade` \| `High Yield` \| `Mixed` \| `Not Applicable` |
+| Duration_Profile | TEXT | `Ultra-Short` \| `Short` \| `Intermediate` \| `Long` \| `Flexible` \| `Not Applicable` |
+| MMF_Structure | TEXT | `CNAV` \| `LVNAV` \| `VNAV` \| `Standard MMF` \| `Not Applicable` (MMFR EU 2017/1131) |
+| Hedging_Policy | TEXT | `Hedged` \| `Unhedged` \| `Partially Hedged` (legacy: `PARTIAL`→`Partially Hedged`) |
+| Asset_Currency | TEXT | ISO-4217 (`EUR`/`USD`/…) \| `MCY` (multi-currency sentinel, PRINCIPIO_10) \| NULL |
+| Development_Status | TEXT | `Developed` \| `Emerging` \| `Frontier` \| `Global/Mixed` (MSCI classification) |
 
 ### Índices en fund_master
 
@@ -333,6 +339,139 @@ ORDER BY n DESC;
 
 ---
 
+---
+
+## TABLAS P2 — Métricas cuantitativas
+
+### TABLA P2-1: fund_nav_monthly
+
+**Propósito:** Series mensuales de NAV por ISIN (fuente: Morningstar vía mstarpy)  
+**Clave primaria:** `(ISIN, Date)`  
+**Nota:** creada dinámicamente por `proyecto2/src/discovery/nav_discovery.py`; no está en `schema_fondos.sql`.
+
+| Columna | Tipo | Nota |
+|---------|------|------|
+| ISIN | TEXT | FK → fund_master |
+| Date | DATE | Fecha NAV (primer día del mes) |
+| NAV | REAL | Valor liquidativo |
+
+### TABLA P2-2: nav_sources
+
+**Propósito:** Resultado del proceso de descubrimiento de fuentes NAV por ISIN  
+**Clave primaria:** `ISIN`  
+**Módulo:** `proyecto2/src/discovery/nav_discovery.py`
+
+| Columna | Tipo | Valores / Nota |
+|---------|------|----------------|
+| isin | TEXT | PRIMARY KEY; FK → fund_master |
+| source | TEXT | `MORNINGSTAR` \| `CNMV` \| `NOT_FOUND` |
+| source_id | TEXT | ID interno: Morningstar ej. 'F0GBR04S23'; CNMV: código registro |
+| first_nav_date | DATE | Fecha más antigua disponible en la fuente |
+| last_nav_date | DATE | Fecha más reciente disponible |
+| nav_count | INTEGER | Nº de NAV disponibles en la fuente |
+| discovered_at | DATE | Fecha de primer descubrimiento |
+| last_checked | DATE | Fecha de última verificación |
+| status | TEXT | `OK` \| `NOT_FOUND` \| `ERROR` |
+
+### TABLA P2-3: series_macro
+
+**Propósito:** Indicadores macroeconómicos de contexto (BCE SDW, Eurostat, INE, Fed FRED)  
+**Clave primaria:** `(date, indicator, geography)`
+
+| Columna | Tipo | Valores / Nota |
+|---------|------|----------------|
+| date | DATE | Fecha del dato (mensual) |
+| indicator | TEXT | Código normalizado — ver catálogo en `schema_fondos.sql` (`ipc_index`, `rate_policy`, `oil_wti`, `dxy`, `spread_hy`, `vix`, `term_spread`, `m2_yoy`, etc.) |
+| geography | TEXT | `ES` \| `EU` \| `US` \| `JP` \| `CN` \| `GLOBAL` |
+| value | REAL | Valor del indicador |
+| unit | TEXT | `ratio` \| `index` \| `pct` \| `usd_bn` |
+| source | TEXT | `BCE` \| `EUROSTAT` \| `INE` \| `FRED` \| `IMF` \| `CALC` |
+| load_ts | TIMESTAMP | Timestamp de carga |
+
+**Índices:** `idx_macro_indicator ON (indicator, geography)`, `idx_macro_date ON (date)`
+
+### TABLA P2-4: fund_metrics
+
+**Propósito:** Todas las métricas calculadas por fondo (una fila por combinación métrica/horizonte)  
+**Clave primaria:** `(isin, metric, horizon, real_flag, metric_version)`
+
+| Columna | Tipo | Valores / Nota |
+|---------|------|----------------|
+| isin | TEXT | FK → fund_master |
+| metric | TEXT | Nombre canónico — ver catálogo completo en `schema_fondos.sql` (`return_ann`, `sharpe`, `max_drawdown`, `beta_rate_eu`, `macro_r2`, `return_ann_expansion`, etc.) |
+| horizon | TEXT | `since_inception` \| `rolling_10y` \| `rolling_5y` \| `rolling_3y` \| `rolling_1y` \| `ytd` \| `crisis_2008` \| `crisis_2011` \| `crisis_2020` \| `crisis_2022` |
+| value | REAL | Valor de la métrica |
+| real_flag | INTEGER | `0` = nominal; `1` = deflactado por IPC |
+| calculation_date | DATE | Fecha del cálculo |
+| metric_version | TEXT | Versión del algoritmo (default `v1`) |
+| benchmark_id | TEXT | NULL si métrica absoluta |
+| source_rows | INTEGER | Nº de NAV usados en el cálculo |
+
+### TABLA P2-5: p2_pipeline_log
+
+**Propósito:** Trazabilidad operativa por ejecución del pipeline de cálculo P2  
+**Clave primaria:** `id` (AUTOINCREMENT)
+
+| Columna | Tipo | Valores |
+|---------|------|---------|
+| id | INTEGER | PRIMARY KEY AUTOINCREMENT |
+| isin | TEXT | ISIN procesado |
+| step | TEXT | `NAV_LOAD` \| `DEFLATE` \| `CALC_METRICS` \| `WRITE` |
+| status | TEXT | `OK` \| `WARN` \| `ERROR` \| `SKIP` |
+| horizon | TEXT | Horizonte de cálculo |
+| metric_version | TEXT | Versión de la métrica |
+| message | TEXT | Descripción del evento |
+| created_at | TIMESTAMP | Timestamp |
+
+---
+
+## TABLAS P3 — Scoring y cartera
+
+### TABLA P3-1: fund_scores
+
+**Propósito:** Scoring compuesto pre-selección por bloque de cartera  
+**Clave primaria:** `(isin, block, score_version)`
+
+| Columna | Tipo | Valores / Nota |
+|---------|------|----------------|
+| isin | TEXT | FK → fund_master |
+| block | TEXT | Sub-cartera: `Defensiva` \| `Equilibrada` \| `Dinámica` (o equivalente por naturaleza) |
+| score_version | TEXT | Versión del algoritmo de scoring (default `v1`) |
+| score_total | REAL | Score compuesto final |
+| score_detail | TEXT | JSON con desglose por componente |
+| eligible | INTEGER | `0` = no supera hard filters; `1` = supera hard filters |
+| calculated_at | DATE | Fecha del cálculo |
+| notes | TEXT | Observaciones opcionales |
+
+### TABLA P3-2: portfolio_scenarios
+
+**Propósito:** Escenarios de cartera construidos en P3  
+**Clave primaria:** `scenario_id`
+
+| Columna | Tipo | Valores / Nota |
+|---------|------|----------------|
+| scenario_id | TEXT | Ej. `'defensiva_2026Q1'` |
+| profile | TEXT | `Defensiva` \| `Equilibrada` \| `Crecimiento` |
+| macro_regime | TEXT | Régimen macro activo: `Expansion` \| `Recalentamiento` \| `Recalentamiento_Tardio` \| `Estanflacion` \| `Contraccion` \| `Shock_Energetico` \| `Crisis_Financiera` |
+| created_at | DATE | Fecha de creación del escenario |
+| notes | TEXT | Observaciones opcionales |
+
+### TABLA P3-3: portfolio_weights
+
+**Propósito:** Pesos por fondo en cada escenario de cartera  
+**Clave primaria:** `(scenario_id, isin)`
+
+| Columna | Tipo | Valores / Nota |
+|---------|------|----------------|
+| scenario_id | TEXT | FK → portfolio_scenarios |
+| isin | TEXT | FK → fund_master |
+| block | TEXT | Sub-cartera a la que pertenece el fondo en este escenario |
+| weight | REAL | Peso en cartera [0, 1]; constraints: max 20% por fondo, max 30% por gestora, min 3% |
+| role | TEXT | Descripción del rol en cartera (opcional) |
+| notes | TEXT | Observaciones opcionales |
+
+---
+
 ## NOTAS CRÍTICAS
 
 ### COALESCE en sqlite_writer.py
@@ -357,8 +496,21 @@ Columnas SIN COALESCE (sobreescriben siempre):
 
 ---
 
+---
+
+## NOTAS DE EVOLUCIÓN DE SCHEMA
+
+| Versión | Fecha | Cambio principal |
+|---------|-------|-----------------|
+| v16 | 2026-03-31 | Añade columnas v3: Market_Cap_Focus, Sector_Focus, Currency_Hedged, Investment_Universe |
+| v17 | ~2026-04 | Adds telemetría (Processing_Time_Ms, Processing_Breakdown) |
+| v20 | ~2026-05 | Family migrada a inglés (RV Núcleo→Equity Core, etc.); Schema MODIFY #12: Derivatives_Usage binary→purpose-based |
+| v21 | 2026-07-05 | Añade Asset_Currency; elimina Portfolio_Currency |
+| v22 | 2026-07-05 | Añade fund_data_quality_issues; Data_Quality_Flag rollup determinista |
+
+---
+
 **FIN SCHEMA REFERENCE**
 
-*Última actualización: 5 abril 2026*  
-*Schema version: v16 (31-mar-2026)*  
-*Tokens estimados: ~2.800*
+*Última actualización: 2026-07-12*  
+*Schema version: v22 (2026-07-05)*

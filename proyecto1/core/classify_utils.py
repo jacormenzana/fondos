@@ -3867,25 +3867,45 @@ ALLOWED_FAMILY_BY_NATURE: dict = {
 # ============================================================
 
 THEME_SECTOR_MAPPING: dict = {
-    "Technology": "Technology & Innovation",
+    # Cluster Technology & Innovation
+    "Technology":            "Technology & Innovation",
     "Artificial Intelligence": "Technology & Innovation",
-    "Digital": "Technology & Innovation",
-    "Robotics": "Technology & Innovation",
-    "Healthcare": "Healthcare & Life Sciences",
-    "Healthcare / MedTech": "Healthcare & Life Sciences",
-    "Biotechnology": "Healthcare & Life Sciences",
-    "Energy": "Energy & Resources",
+    "Digital":               "Technology & Innovation",
+    "Robotics":              "Technology & Innovation",
+    "Cybersecurity":         "Technology & Innovation",
+    # Cluster Healthcare & Life Sciences
+    "Healthcare":            "Healthcare & Life Sciences",
+    "Healthcare / MedTech":  "Healthcare & Life Sciences",
+    "Biotechnology":         "Healthcare & Life Sciences",
+    "Silver Economy":        "Healthcare & Life Sciences",
+    # Cluster Energy & Resources
+    "Energy":                "Energy & Resources",
     "Climate / Clean Energy": "Energy & Resources",
-    "Water": "Utilities & Environment",
-    "Gold": "Materials & Mining",
-    "Mining": "Materials & Mining",
-    "Real Estate": "Real Estate & Infrastructure",
-    "Infrastructure": "Real Estate & Infrastructure",
-    "Insurance": "Financials & Insurance",
-    "Financials": "Financials & Insurance",
-    "Consumer Brands": "Consumer Discretionary",
-    "Silver Economy": "Healthcare & Life Sciences",
+    # Cluster Utilities & Environment
+    "Water":                 "Utilities & Environment",
+    # Cluster Materials & Mining
+    "Gold":                  "Materials & Mining",
+    "Mining":                "Materials & Mining",
+    # Cluster Real Assets (v20: 'Real Assets' en lugar de 'Real Estate & Infrastructure')
+    "Real Estate":           "Real Assets",
+    "Infrastructure":        "Real Assets",
+    # Cluster Financial Services (v20: 'Financial Services' en lugar de 'Financials & Insurance')
+    "Financials":            "Financial Services",
+    "Insurance":             "Financial Services",
+    # Cluster Consumer (v20: 'Consumer' en lugar de 'Consumer Discretionary')
+    "Consumer Brands":       "Consumer",
+    # Temas cross-sector (Thematic ONLY) — sin Sector_Focus canónico.
+    # No se incluyen aquí para que validate_theme_sector_coherence no genere
+    # un falso WARN cuando Sector_Focus=NULL (el caso correcto).
+    # Gestionados por INTER-15 en validate_all_semantic_consistency.
+    # "Megatrends": None,
+    # "Inflation": None,
 }
+
+# Temas que por definición son cross-sector y NUNCA pueden corresponder a
+# un único sector industria. Investment_Focus debe ser siempre 'Thematic' y
+# Sector_Focus debe ser NULL. Referencia: SEMANTIC_MODEL_CLASSIFICATION.md SC-B1/B2.
+_THEMATIC_ONLY_THEMES: frozenset = frozenset({"Megatrends", "Inflation"})
 
 # ============================================================
 # 14b. DEFAULT TYPE/FAMILY BY NATURE (P07 — auto-corrección)
@@ -4388,12 +4408,24 @@ def validate_all_semantic_consistency(
     if status == "WARNING":
         warnings.append({"rule": "ESG-SFDR", "message": msg})
 
-    # INTER-9
+    # INTER-9 (SC-B6): Theme → Sector_Focus coherence.
+    # Upgraded to auto-correct: si el mapa canónico define un Sector_Focus esperado
+    # para el Theme actual y el valor en el registro difiere, se corrige Sector_Focus.
+    # Solo aplica cuando Investment_Focus='Sector' (los temas Thematic-Only son
+    # gestionados por INTER-15 más adelante).
     status, msg = validate_theme_sector_coherence(
         cr.get("Theme"), cr.get("Sector_Focus")
     )
     if status == "WARNING":
-        warnings.append({"rule": "Theme-Sector", "message": msg})
+        _expected_sf = THEME_SECTOR_MAPPING.get(cr.get("Theme"))
+        if _expected_sf is not None and cr.get("Sector_Focus") is not None:
+            cr["Sector_Focus"] = _expected_sf
+            critical_errors.append({
+                "rule": "Theme-Sector",
+                "message": msg + f" → Sector_Focus corregido a '{_expected_sf}' (SC-B6)",
+            })
+        else:
+            warnings.append({"rule": "Theme-Sector", "message": msg})
 
     # INTER-10 (BL-52: auto-corrección Country→Regional cuando Geography es región)
     status, msg, corrected_univ = validate_geography_universe(
@@ -4552,11 +4584,283 @@ def validate_all_semantic_consistency(
             ),
         })
 
-    for col, value in fund_record.items():
+    # ----------------------------------------------------------------
+    # INTER-17 (2026-07-11): SC-D1/D2 — Credit_Quality y Duration_Profile
+    # solo aplican a fondos de renta fija. Para natures puramente equity
+    # (Renta Variable) o productos estructurados/alternativos, cualquier valor
+    # distinto de 'Not Applicable' es una contaminación del clasificador
+    # (p.ej. KIID erróneo que aportó atributos de un sub-fondo de RF).
+    # Mixtos EXCLUIDOS: pueden tener componente FI, 'Not Applicable' ya es correcto.
+    # ----------------------------------------------------------------
+    _CQ_DP_EQUITY_NATURES = {"Renta Variable", "Alternativo", "Estructurado"}
+    _nature_17 = cr.get("Fund_Nature")
+    if _nature_17 in _CQ_DP_EQUITY_NATURES:
+        _cq_17 = cr.get("Credit_Quality")
+        if _cq_17 is not None and _cq_17 != "Not Applicable":
+            cr["Credit_Quality"] = "Not Applicable"
+            warnings.append({
+                "rule": "CreditQuality-Nature",
+                "message": (
+                    f"Credit_Quality='{_cq_17}' → 'Not Applicable' "
+                    f"(atributo RF no aplica a Fund_Nature='{_nature_17}') (SC-D1)"
+                ),
+            })
+        _dp_17 = cr.get("Duration_Profile")
+        if _dp_17 is not None and _dp_17 != "Not Applicable":
+            cr["Duration_Profile"] = "Not Applicable"
+            warnings.append({
+                "rule": "DurationProfile-Nature",
+                "message": (
+                    f"Duration_Profile='{_dp_17}' → 'Not Applicable' "
+                    f"(atributo RF no aplica a Fund_Nature='{_nature_17}') (SC-D2)"
+                ),
+            })
+
+    # ----------------------------------------------------------------
+    # MIG-1 (2026-07-11): Distribution_Frequency='BIANNUAL' → 'Semi-Annual'
+    # Valor legado pre-MODIFY. BIANNUAL = dos veces al año = Semi-Annual.
+    # Mapeo inequívoco, auto-corrección segura.
+    # ----------------------------------------------------------------
+    if cr.get("Distribution_Frequency") == "BIANNUAL":
+        cr["Distribution_Frequency"] = "Semi-Annual"
+        warnings.append({
+            "rule": "Allowed-Values:Distribution_Frequency",
+            "message": "Distribution_Frequency='BIANNUAL' → 'Semi-Annual' (valor legado; auto-migrado)",
+        })
+
+    # ----------------------------------------------------------------
+    # MIG-2 (2026-07-11): Hedging_Policy='PARTIAL' → 'Partially Hedged'
+    # Valor legado pre-MODIFY (nombre abreviado vs nombre completo v20).
+    # ----------------------------------------------------------------
+    if cr.get("Hedging_Policy") == "PARTIAL":
+        cr["Hedging_Policy"] = "Partially Hedged"
+        warnings.append({
+            "rule": "Allowed-Values:Hedging_Policy",
+            "message": "Hedging_Policy='PARTIAL' → 'Partially Hedged' (valor legado; auto-migrado)",
+        })
+
+    # ----------------------------------------------------------------
+    # MIG-3 (2026-07-11): Derivatives_Usage legado (YES/NO/LIMITED) → v20
+    # MODIFY #12 cambió la semántica de binario (¿usa derivados?) a propósito
+    # (¿para qué usa derivados?). Mapeos seguros:
+    #   'NO'      → 'None'          (no usa derivados; inequívoco)
+    #   'LIMITED' → 'Hedging Only'  (uso limitado = solo cobertura; muy probable)
+    #   'YES'     → WARN            (ambiguo: puede ser Investment, Both o Hedging Only)
+    # ----------------------------------------------------------------
+    _DU_MIGRATION: dict = {"NO": "None", "LIMITED": "Hedging Only"}
+    _du_mig = cr.get("Derivatives_Usage")
+    if _du_mig in _DU_MIGRATION:
+        _du_new = _DU_MIGRATION[_du_mig]
+        cr["Derivatives_Usage"] = _du_new
+        warnings.append({
+            "rule": "Allowed-Values:Derivatives_Usage",
+            "message": (
+                f"Derivatives_Usage='{_du_mig}' → '{_du_new}' "
+                f"(valor legado MODIFY #12; auto-migrado)"
+            ),
+        })
+    elif _du_mig == "YES":
+        warnings.append({
+            "rule": "Allowed-Values:Derivatives_Usage",
+            "message": (
+                "Derivatives_Usage='YES' es valor legado MODIFY #12 — "
+                "requiere revisión: puede ser 'Investment', 'Both' o 'Hedging Only' "
+                "según el prospecto del fondo"
+            ),
+        })
+
+    # ----------------------------------------------------------------
+    # MIG-4 (2026-07-11): Liquidity_Profile legado (T1/T5) → v20
+    # Valores de frecuencia de dealing en formato OLD:
+    #   'T1' → 'Daily'   (liquidez diaria, T+1 settlement; inequívoco)
+    #   'T5' → WARN      (T+5 puede significar 'Weekly' o 'Bi-Weekly';
+    #                      sin confirmación documental, no auto-corregir)
+    # ----------------------------------------------------------------
+    _lp_mig = cr.get("Liquidity_Profile")
+    if _lp_mig == "T1":
+        cr["Liquidity_Profile"] = "Daily"
+        warnings.append({
+            "rule": "Allowed-Values:Liquidity_Profile",
+            "message": "Liquidity_Profile='T1' → 'Daily' (valor legado; auto-migrado)",
+        })
+    elif _lp_mig == "T5":
+        warnings.append({
+            "rule": "Allowed-Values:Liquidity_Profile",
+            "message": (
+                "Liquidity_Profile='T5' es valor legado — "
+                "requiere revisión: posiblemente 'Weekly' o 'Bi-Weekly'"
+            ),
+        })
+
+    # ----------------------------------------------------------------
+    # INTER-18 (2026-07-11): SC-E1/E2 — MMF_Structure ↔ Fund_Nature
+    # MMF_Structure codifica la estructura regulatoria MMFR (EU 2017/1131):
+    # CNAV/LVNAV/VNAV/Standard MMF. Solo aplica a fondos Monetarios; para
+    # cualquier otra naturaleza el valor correcto es 'Not Applicable'.
+    # SC-E1: no-Monetario con MMF_Structure ≠ 'Not Applicable' → auto-correct.
+    # SC-E2: Monetario con MMF_Structure = 'Not Applicable' → WARN (falta
+    #         clasificación regulatoria). MMF_Structure=NULL no genera WARN porque
+    #         puede ser un fondo recién incorporado sin KIID procesado.
+    # ----------------------------------------------------------------
+    _mmf_18 = cr.get("MMF_Structure")
+    _nature_18 = cr.get("Fund_Nature")
+    if _nature_18 is not None and _nature_18 != "Monetario":
+        if _mmf_18 is not None and _mmf_18 != "Not Applicable":
+            cr["MMF_Structure"] = "Not Applicable"
+            warnings.append({
+                "rule": "MMFStructure-Nature",
+                "message": (
+                    f"MMF_Structure='{_mmf_18}' → 'Not Applicable' "
+                    f"(estructura MMFR no aplica a Fund_Nature='{_nature_18}') (SC-E1)"
+                ),
+            })
+    elif _nature_18 == "Monetario" and _mmf_18 == "Not Applicable":
+        warnings.append({
+            "rule": "MMFStructure-Nature",
+            "message": (
+                "MMF_Structure='Not Applicable' en fondo Monetario — "
+                "debería tener estructura MMFR explícita (CNAV/LVNAV/VNAV/Standard MMF) (SC-E2)"
+            ),
+        })
+
+    # ----------------------------------------------------------------
+    # INTER-19 (2026-07-11): SC-E3 — Style_Profile stale en Restantes
+    # Restantes es categoría residual: no tiene perfil de estilo definido.
+    # Cualquier Style_Profile != NULL/'Not Applicable' es un artefacto COALESCE
+    # de una clasificación anterior (p.ej. fondo que era Renta Variable y se
+    # reclasificó como Restantes conservando el Style_Profile previo).
+    # → WARN sin auto-corrección (requiere confirmar que la reclasificación es
+    #    permanente antes de anular un atributo que podría ser correcto si el fondo
+    #    vuelve a su categoría original en el siguiente ciclo).
+    # ----------------------------------------------------------------
+    _sp_19 = cr.get("Style_Profile")
+    _nature_19 = cr.get("Fund_Nature")
+    if (_nature_19 == "Restantes" and _sp_19 is not None
+            and _sp_19 != "Not Applicable"):
+        warnings.append({
+            "rule": "StyleProfile-Nature",
+            "message": (
+                f"Style_Profile='{_sp_19}' en Fund_Nature='Restantes' — "
+                f"posible artefacto COALESCE de clasificación anterior (SC-E3)"
+            ),
+        })
+
+    # INTER-13-LIQ (2026-07-11): Investment_Universe='Liquidity' es valor legado
+    # (eliminado en schema MODIFY #5, v20). Para fondos Monetarios, migrar
+    # automáticamente a 'Global'. La A2-merge en pipeline propagará la corrección
+    # a fund_master_record y sqlite_writer la persistirá via COALESCE en la BD.
+    if cr.get("Investment_Universe") == "Liquidity":
+        if cr.get("Fund_Nature") == "Monetario":
+            cr["Investment_Universe"] = "Global"
+            warnings.append({
+                "rule": "Allowed-Values:Investment_Universe",
+                "message": (
+                    "Investment_Universe='Liquidity' → 'Global' "
+                    "(valor legado MODIFY #5; auto-migrado)"
+                ),
+            })
+        # Otras naturalezas: el ALLOWED_VALUES loop (sobre cr) lo detectará
+        # con código único SEM_ALLOWED_VALUES_INVESTMENT_UNIVERSE.
+
+    # ----------------------------------------------------------------
+    # INTER-15 (2026-07-11): SC-B1/B2 — Themes macroeconómicos cross-sector
+    # implican Investment_Focus='Thematic' y Sector_Focus=NULL.
+    # Temas en _THEMATIC_ONLY_THEMES (Megatrends, Inflation) no mapean a ningún
+    # sector industria: cualquier asignación de Investment_Focus='Sector' o
+    # Sector_Focus poblado es un error del clasificador.
+    # Ref: SEMANTIC_MODEL_CLASSIFICATION.md §2.3
+    # ----------------------------------------------------------------
+    _theme_15 = cr.get("Theme")
+    if _theme_15 in _THEMATIC_ONLY_THEMES:
+        _if_15 = cr.get("Investment_Focus")
+        if _if_15 is not None and _if_15 != "Thematic":
+            cr["Investment_Focus"] = "Thematic"
+            critical_errors.append({
+                "rule": "InvestmentFocus-ThematicOnlyTheme",
+                "message": (
+                    f"Investment_Focus corregido '{_if_15}'→'Thematic': "
+                    f"Theme='{_theme_15}' es tema macro cross-sector, "
+                    f"no puede ser '{_if_15}' (SC-B1/B2)"
+                ),
+            })
+        _sf_15 = cr.get("Sector_Focus")
+        if _sf_15 is not None:
+            cr["Sector_Focus"] = None
+            critical_errors.append({
+                "rule": "SectorFocus-ThematicOnlyTheme",
+                "message": (
+                    f"Sector_Focus='{_sf_15}' → NULL: "
+                    f"Theme='{_theme_15}' no tiene Sector_Focus canónico (SC-B2/B5)"
+                ),
+            })
+
+    # ----------------------------------------------------------------
+    # INTER-16 (2026-07-11): SC-B5 — Investment_Focus='Thematic' con
+    # Sector_Focus poblado (no cubierto por INTER-15 porque el Theme no es
+    # Thematic-Only). Ejemplo: Investment_Focus='Thematic', Theme='Healthcare',
+    # Sector_Focus='Healthcare & Life Sciences'. Puede indicar que el fondo
+    # debería ser Investment_Focus='Sector' — requiere revisión en el clasificador.
+    # → WARN sin auto-corrección (ambiguo).
+    # ----------------------------------------------------------------
+    _if_16 = cr.get("Investment_Focus")
+    _sf_16 = cr.get("Sector_Focus")
+    if _if_16 == "Thematic" and _sf_16 is not None:
+        warnings.append({
+            "rule": "SectorFocus-Thematic",
+            "message": (
+                f"Investment_Focus='Thematic' con Sector_Focus='{_sf_16}' poblado — "
+                f"si el fondo se concentra en un único sector industria debería "
+                f"ser Investment_Focus='Sector' (SC-B5; requiere revisión clasificador)"
+            ),
+        })
+
+    # ----------------------------------------------------------------
+    # SC-C1 (2026-07-11): Family='Thematic Equity' → Investment_Focus ∈ Sector/Thematic.
+    # Un fondo de renta variable temático no puede tener un mandato Broad.
+    # → WARN sin auto-corrección (determinar Sector vs Thematic requiere el clasificador).
+    # ----------------------------------------------------------------
+    _family_c1 = cr.get("Family")
+    _if_c1 = cr.get("Investment_Focus")
+    if _family_c1 == "Thematic Equity" and _if_c1 == "Broad":
+        warnings.append({
+            "rule": "Family-InvestmentFocus",
+            "message": (
+                f"Family='Thematic Equity' con Investment_Focus='Broad' es inconsistente — "
+                f"debe ser 'Sector' (sector industria) o 'Thematic' (tema cross-sector) "
+                f"(SC-C1)"
+            ),
+        })
+
+    # ----------------------------------------------------------------
+    # SC-C2 (2026-07-11): Family='Equity Core' → Investment_Focus ≠ 'Thematic'.
+    # Un fondo core diversificado no tiene un mandato temático cross-sector.
+    # Si tiene Investment_Focus='Thematic' debería reclasificarse como 'Thematic Equity'.
+    # → WARN sin auto-corrección.
+    # ----------------------------------------------------------------
+    _family_c2 = cr.get("Family")
+    _if_c2 = cr.get("Investment_Focus")
+    if _family_c2 == "Equity Core" and _if_c2 == "Thematic":
+        warnings.append({
+            "rule": "Family-InvestmentFocus",
+            "message": (
+                f"Family='Equity Core' con Investment_Focus='Thematic' es inconsistente — "
+                f"un fondo core no tiene mandato cross-sector; "
+                f"considerar Family='Thematic Equity' (SC-C2)"
+            ),
+        })
+
+    # Comprobación de valores fuera de catálogo. IMPORTANTE: iterar sobre cr
+    # (corrected_record) en lugar de fund_record para que las correcciones de
+    # los INTER rules anteriores sean visibles aquí y no generen falsos warnings.
+    # La regla usa f"Allowed-Values:{col}" para que cada columna produzca un
+    # check_code único (SEM_ALLOWED_VALUES_<COL>) — necesario porque
+    # fund_data_quality_issues tiene UNIQUE constraint en (ISIN, check_code)
+    # y una misma regla genérica "Allowed-Values" duplicada causa IntegrityError.
+    for col, value in cr.items():
         if col in ALLOWED_VALUES_BY_COLUMN and value is not None:
             if value not in ALLOWED_VALUES_BY_COLUMN[col]:
                 warnings.append({
-                    "rule": "Allowed-Values",
+                    "rule": f"Allowed-Values:{col}",
                     "message": f"{col}='{value}' no está en valores permitidos",
                 })
 
@@ -4595,7 +4899,7 @@ def semantic_validation_to_dq_tuples(val_result: dict) -> list:
         list de 4-tuplas; vacía si no hay errores ni warnings.
     """
     def _rule_to_code(rule: str) -> str:
-        raw = rule.upper().replace("-", "_").replace(" ", "_")
+        raw = rule.upper().replace("-", "_").replace(":", "_").replace(" ", "_")
         return ("SEM_" + raw)[:50]
 
     tuples: list = []

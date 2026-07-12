@@ -29,6 +29,9 @@ Cada módulo tiene **una responsabilidad** y debe respetarla.
 
 ### R-1 — Punto único de normalización lingüística
 
+> **Instancia enforced de `PRINCIPIOS_DISENO.md` P#11 (Escalabilidad y DRY).** R-1 es la
+> aplicación concreta y verificable del principio DRY al caso de la normalización lingüística.
+
 La normalización de valores categóricos (mapas EN→ES para Sector_Focus, Type, Family, Subtype, Theme) **vive EXCLUSIVAMENTE en `classify_utils.py`**.
 
 **Prohibido:**
@@ -140,56 +143,15 @@ Antes de declarar la edición completa. Si la AST falla, no se acepta el cambio.
 
 ---
 
-## 3. PRINCIPIOS OPERATIVOS
+## 3. DOCUMENTOS RELACIONADOS
 
-### P-1 — Diagnóstico antes de codificación
-
-Para cualquier BL que implique modificación de un atributo persistido o regla INTER, **antes de escribir código** verificar:
-
-- [ ] ¿Cuál es la distribución actual del atributo en BD? (export Excel + `value_counts`)
-- [ ] ¿Cuántos fondos están afectados por el defecto? (query SQL exacta)
-- [ ] ¿Cuál es la causa raíz, no el síntoma? (Principio #1 ya documentado)
-- [ ] ¿Qué módulos emiten ese atributo? (`grep` en todos los .py)
-- [ ] ¿Hay COALESCE sobre ese atributo en sqlite_writer? (sí, mirar línea ~263 onwards)
-
-Si alguna respuesta es "no sé", se hace el diagnóstico antes de codificar.
-
-### P-2 — Minimización de cambios
-
-Preferir parches quirúrgicos (`str_replace`) sobre regeneración completa de archivos. Cada cambio debe:
-- Modificar mínimas líneas.
-- Comentar la modificación con BL-XX y razón.
-- Preservar el resto del módulo intacto.
-
-**Razón:** la regeneración completa de archivos es la principal causa de:
-- Pérdida de imports y funciones auxiliares no documentadas.
-- Renumeración de líneas que rompe documentación.
-- Reescritura de regex con escape errors.
-- Tokens consumidos innecesariamente.
-
-### P-3 — Coordinación Opus / Sonnet
-
-Si la sesión usa el flujo Opus → Sonnet (planificación + codificación):
-
-**Opus** (planificador) entrega un plan que incluye:
-- BL afectados con prioridad.
-- Para cada BL: causa raíz, especificación de código (no solo descriptiva), módulo y línea aproximada.
-- Lista de tests funcionales a producir.
-- Restricciones aplicables de este documento (citadas por número R-X).
-- Plan de migración SQL si aplica (R-2).
-
-**Sonnet** (codificador) recibe el plan + este documento + módulos relevantes (incluyendo siempre `sqlite_writer.py` y `pipeline.py`) y debe:
-- Antes de tocar código, leer este documento.
-- Reportar tensiones con las restricciones antes de codificar.
-- Validar AST tras cada edit (R-8).
-- Producir tests (R-7).
-- Reportar cuando una restricción aplica al cambio.
-
-### P-4 — Smoke test post-implementación
-
-Antes de declarar un BL completado, ejecutar smoke test sobre 5–10 ISINs canónicos del defecto. Si el ciclo regular no se puede ejecutar, simular el flujo en SQLite memoria con datos sintéticos (como se hizo en BL-53/54 fix arquitectónico).
-
-**El smoke test detecta el defecto COALESCE en menos de 30 segundos**; ejecutarlo evita ciclos completos infructuosos.
+| Documento | Contenido |
+|-----------|-----------|
+| `PRINCIPIOS_DISENO.md` | P#1–P#11: por qué se diseñó así el sistema (R-1 = instancia enforced de P#11 DRY) |
+| `AGENTS.md` (raíz repo) | Single source of truth: orientación de proyecto + índice a los 5 docs |
+| `NORMAS_IMPLEMENTACION.md` | Proceso de diagnóstico, minimización de cambios, logging, DQ check_code, smoke tests, coordinación LLM, catálogo de regresiones |
+| `MODELO_SEMANTICO.md` | Semántica de atributos y catálogo de reglas SC-A1..SC-F4 |
+| `SCHEMA_REFERENCE.md` | Tablas P1/P2/P3: columnas, tipos, índices |
 
 ---
 
@@ -210,18 +172,8 @@ Antes de aprobar un cambio:
 
 ---
 
-## 5. APÉNDICE — REGRESIONES HISTÓRICAS Y SUS LECCIONES
-
-| Ciclo | BL | Síntoma | Causa raíz | Restricción derivada |
-|-------|----|---------| -----------|----------------------|
-| 23/04 | BL-49 v1 | Currency_Hedged NULL persistente (728) | `detect_currency_hedged` no leía KIID | R-3 |
-| 23/04 | BL-50 | Universe poblado, Geography NULL (110) | Sin inferencia direccional Universe→Geography | — |
-| 23/04 | BL-52 | Universe='Country' con Geography=región (12) | Sin auto-corrección Country↔Regional | — |
-| 23/04 | BL-53 | Sector_Focus en inglés (20) | Mapa Theme→Sector duplicado en 2 módulos | R-1 |
-| 25/04 | BL-49 v2 | 7 fondos Hedged → Unhedged | (a) `_HEDGED` sin variantes EURH; (b) regex `\b` falla en EURHDG; (c) default no consideraba `_ch_bd` | R-4, R-5 |
-| 25/04 | BL-53/54 v2 | 20 fondos siguen en inglés tras Sonnet | COALESCE preserva valor stale; Sonnet añadió mapa duplicado en sqlite_writer | R-1, R-2 |
-| 25/04 | BL-55 v1 | Inferencia Exit_Fee=0 captura solo 3/670 | Ventana global, no acotada | R-6 |
-
 ---
 
-**Fin del documento. Versión 1.0 — 25 de abril de 2026.**
+> Regresiones históricas con lecciones → `NORMAS_IMPLEMENTACION.md` §6.3
+
+**Fin del documento. Versión 2.0 — 2026-07-12.** *(v1.0: 25-abr-2026. v2.0: §3 y §5 reorganizados en NORMAS_IMPLEMENTACION.md)*
