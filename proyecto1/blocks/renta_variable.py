@@ -110,6 +110,18 @@ def get_universe_isins(df_master) -> List[str]:
         # equity fund uses "income" as its primary name token without a clearer
         # equity signal (they use "equity", "growth", "value" etc.).
         "jpm income", "jpm global income",
+        # BL-RV-EX8 (2026-07-13): EM-debt and government-index bond patterns
+        # that enter the equity universe via greedy includes ("emerging",
+        # "global", "income", unconditional "ishares") but are genuine FI funds.
+        # "debt" in a fund name is unambiguously fixed income (PICTET GLOB
+        # EMERGING DEBT, PICTET EMERGING LOC.CUR.DEBT ×4, PICTET GLOBAL
+        # EMERG. DEBT).
+        # "gov idx"/"gov index" covers ISHARES EM M GOV IDX (existing excludes
+        # only had "govt indx"/"gvt indx", missing this shorter form).
+        # NOTE: "templeton total" (previous substring token) was REMOVED here —
+        # see _exclude_prefix_patterns below for the corrected regex fix
+        # (BL-RV-EX8b, 2026-07-14).
+        "debt", "gov idx", "gov index",
     ]
     # BL-RV-EX5 (2026-07-04): "convertible"/"allocation" truncations. Bare
     # "convertible"/"allocation" already generic but the master Excel often
@@ -120,7 +132,18 @@ def get_universe_isins(df_master) -> List[str]:
     # de valores convertibles"), BGF Global Allocation ("valores de renta
     # variable...Y valores de renta fija"). Prefix regex catches any
     # truncation depth.
-    _exclude_prefix_patterns = [r'\bconver', r'\balloc']
+    _exclude_prefix_patterns = [
+        r'\bconver', r'\balloc',
+        # BL-RV-EX8b (2026-07-14): Templeton Global Total Return is a confirmed
+        # global bond fund (KIID: "invierte principalmente en valores de renta
+        # fija de todo el mundo"; both benchmark sources: Fixed Income).
+        # The previous substring token "templeton total" never matched because
+        # the real fund name is "TEMPLETON GLOBAL TOTAL RETUR" (word "global"
+        # intervenes between "templeton" and "total"). The regex r"templeton.*total"
+        # matches any spacing/word between the two tokens, scoped tightly to the
+        # Templeton brand so no generic equity "X Total Return" fund is affected.
+        r'\btempleton.*total',
+    ]
 
     def is_candidate(name: str) -> bool:
         if not isinstance(name, str):

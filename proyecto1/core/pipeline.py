@@ -1146,10 +1146,16 @@ def run_block(
             # (e.g. ROBECO GLOBL PREM invests in China), so KIID keeps priority
             # in all cases except the clear KIID=Global/name=specific mismatch.
             _GEO_GLOBAL = "Global"
+            # FIX-GEO-8 (2026-07-13): name is a geographic sub-region of the KIID value.
+            # Example: TEMPLETON EASTERN EURO (name=Europa del Este, KIID=Europa) —
+            # the fund name pinpoints Eastern Europe; the KIID describes the broader
+            # containing region. In these cases the name is more precise and wins.
+            _is_name_subregion = bool(
+                _geo_kiid == "Europa" and _geo_name == "Europa del Este"
+            )
             _geo_name_wins = bool(
-                _geo_kiid == _GEO_GLOBAL
-                and _geo_name
-                and _geo_name != _GEO_GLOBAL
+                (_geo_kiid == _GEO_GLOBAL and _geo_name and _geo_name != _GEO_GLOBAL)
+                or _is_name_subregion
             )
             _geo_es_final = _geo_name if _geo_name_wins else (_geo_kiid or _geo_name)
             _geo_en_final = _derive_geography_en(_geo_es_final, _geo_name_l)
@@ -1319,12 +1325,20 @@ def run_block(
             # nombre=India vs KIID=Asia, ambos correctos a distinto nivel de
             # especificidad), no bugs de extracción adicionales.
             if _geo_name_wins:
-                # FIX-GEO-7: name overrode KIID=Global → log as INFO, not WARN.
-                _dq_issues.append((
-                    "GEOGRAPHY_NAME_WINS", "INFO", "INFO",
-                    f"Geography corregida: nombre indica {_geo_name}, "
-                    f"texto KIID decía 'Global' (genérico); se usa señal de nombre."
-                ))
+                if _is_name_subregion:
+                    # FIX-GEO-8: name is a geographic sub-region of KIID → more specific wins.
+                    _dq_issues.append((
+                        "GEOGRAPHY_NAME_WINS", "INFO", "INFO",
+                        f"Geography corregida: nombre indica {_geo_name} (sub-región de "
+                        f"{_geo_kiid}); señal de nombre más específica prevalece."
+                    ))
+                else:
+                    # FIX-GEO-7: name overrode KIID=Global → log as INFO, not WARN.
+                    _dq_issues.append((
+                        "GEOGRAPHY_NAME_WINS", "INFO", "INFO",
+                        f"Geography corregida: nombre indica {_geo_name}, "
+                        f"texto KIID decía 'Global' (genérico); se usa señal de nombre."
+                    ))
             elif _geo_name and _geo_kiid and _geo_name != _geo_kiid:
                 # FIX-GEO-MISMATCH-3 (2026-07-12): para fondos WRONG_DOC el texto
                 # KIID es de un PDF incorrecto; la geografía KIID no es fiable.
@@ -1339,7 +1353,9 @@ def run_block(
                 _is_em_subregion_match = (
                     _geo_kiid == "Emergentes" and _geo_name in _EM_SUBREGIONS
                 )
-                if not _is_em_subregion_match and _kiid_status_c != "WRONG_DOC":
+                if (not _is_em_subregion_match
+                        and not _is_name_subregion
+                        and _kiid_status_c != "WRONG_DOC"):
                     _dq_issues.append((
                         "GEOGRAPHY_NAME_KIID_MISMATCH", "WARN", "WARN",
                         f"Geography (texto KIID)={_geo_kiid} pero el nombre del "
@@ -1894,6 +1910,44 @@ def run_block(
                         fund_master_record["Credit_Quality"] = "Not Applicable"
                     else:
                         fund_master_record["Credit_Quality"] = "Mixed"
+
+            # BL-B6-HY-KIID (2026-07-13): KIID-mandate High Yield override for
+            # name-silent HY funds. derive_credit_quality() is name-only and
+            # defaults RF_Corto/RF_Flexible to "Investment Grade" when no HY
+            # token appears in the fund name. Some funds invest in sub-IG bonds
+            # without using "High Yield" / "HY" / "h.y." in their name (e.g.
+            # UBS Floating Rate Income — "calificaciones de menor calidad").
+            # Only fires when: (a) current CQ is IG, (b) KIID text is available,
+            # (c) an unambiguous sub-IG / HY phrase appears in the full text.
+            # Deliberately conservative — does NOT include "alto rendimiento"
+            # (too generic; often describes performance target, not credit tier)
+            # or bare "high yield" (appears in risk warnings of IG funds).
+            # Confirmed false-positive-safe: corpus check on all non-HY
+            # RF funds shows none contain "calificaciones de menor calidad" or
+            # "inferior a grado de inversión" as positive mandate descriptors.
+            _cq_cur = fund_master_record.get("Credit_Quality")
+            if _cq_cur == "Investment Grade" and kiid_text:
+                _kt_lower = kiid_text.lower()
+                _hy_kiid_signals = [
+                    "calificaciones de menor calidad",   # UBS Floating Rate Income
+                    "inferior a grado de inversión",     # explicit sub-IG declaration
+                    "inferiores a grado de inversión",   # plural variant
+                    "sub-investment grade",              # EN sub-IG (PRIIPs KIDs)
+                    "calificación inferior a grado de inversión",
+                ]
+                if any(k in _kt_lower for k in _hy_kiid_signals):
+                    fund_master_record["Credit_Quality"] = "High Yield"
+                    # FIX-B6-HY-LOGGER (2026-07-14): pipeline.py has no `logger`
+                    # object (it logs via print + _dq_issues tuples). The previous
+                    # `logger.info(...)` call here was a NameError that crashed the
+                    # per-ISIN loop on every fund reaching this branch, silently
+                    # aborting their persist. Use _dq_issues so the override is
+                    # visible in fund_data_quality_issues.
+                    _dq_issues.append((
+                        "BL_B6_HY_KIID", "INFERRED", "INFO",
+                        f"[{isin}] BL-B6-HY-KIID: Credit_Quality IG→HY "
+                        "(sub-IG mandate in KIID text)",
+                    ))
 
             # ── Defaults semánticos P14-ext (v24) ──────────────────────────
             # Principio: NULL puede significar "no detectado" o "no aplica
