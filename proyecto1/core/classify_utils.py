@@ -164,6 +164,9 @@ FUNCIONES:
     NAME_SIGNALS_MIXTO, NAME_SIGNALS_RV, NAME_SIGNALS_ALTERNATIVO,
     NAME_SIGNALS_ESTRUCTURADO
 
+  Normalización geográfica (ES→EN, fuente única R-1):
+    normalize_geography_en(geo_es, name_l="") → str | None
+
   Deteccion por nombre:
     detect_nature_from_name(name_l)           → str | None
     detect_geography(name_l)                  → str | None
@@ -602,6 +605,7 @@ NAME_SIGNALS_RF_FLEXIBLE: list = [
     " bd ",                                      # abrev: "BGF CHINA BOND D2"
     " bnds ",                                    # abrev: "AXA WF GL INFLAT BNDS"
     " debt ",                                    # "FIDELITY EM MKT DEBT"
+    ".debt",                                     # "PICTET EMERGING LOC.CUR.DEBT" (period-separated abbrev)
     "tot ret bnd",                               # "INVESCO GLOB TOT RET BND"
     " hy bnd ",                                  # "BGF USD HY BND"
     "corp bd",                                   # "JPM EMRG MKT CORP BD"
@@ -682,9 +686,13 @@ NAME_SIGNALS_RF_FLEXIBLE: list = [
     "glb bnd opp",                       # JPM GLB BND OPP (global bond opportunities)
     "meridi eur cred",                   # MFS MERIDI EUR CRED
     "em eu m ea",                        # FIDELITY EM EU M EA AF (EMEA multi-asset)    
-    # ── Fondo de Rente Fija con SRRI=4  
+    # ── Fondo de Rente Fija con SRRI=4
     "jpm gl bond opp",
-
+    # BL-RFF-EX9 (2026-07-13): EM currency / EM sovereign debt patterns whose
+    # name alone does not signal FI (no "bond"/"debt"/etc.) but benchmarks are
+    # unambiguously Fixed Income (JP Morgan EMBI / Morningstar EM Sovereign Bond).
+    # "em mkt currency": GS EM MKT CURRENCY X EURH ACC (EM sovereign + FX carry).
+    "em mkt currency",
 ]
 
 NAME_SIGNALS_MIXTO: list = [
@@ -736,7 +744,9 @@ NAME_SIGNALS_MIXTO: list = [
     "allianz dmas sri", "allianz dy st sri",
     "janus.h. us forty", "janus h us forty",
     "r-co valor", "r-co thematic",
-    "guinness gl eq inc",
+    # "guinness gl eq inc" removed 2026-07-13: Guinness Global Equity Income is
+    # pure equity (KIID-Capa1 → Renta Variable); "guinness gl eq" already in
+    # NAME_SIGNALS_RV as backup for name-only fallback. Stale mixto signal.
     "allianz strategy",
     # Allianz Orient Income / Mixto income-oriented
     "allianz orient inc",
@@ -1471,6 +1481,71 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
     if has_ar and has_cash_bench:
         return "Alternativo"
 
+    # FIX-B1-COMMODITY-ALT (2026-07-13): fund whose PRIMARY mandate is a broad
+    # commodity index → Alternativo. Must be checked BEFORE the bond_dominant/
+    # _RF_pending path because commodity instruments look like FI (no equity
+    # signal). Confirmed: DWS INVEST ENHANCED COMMODITY STRATEGY uses
+    # "bloomberg commodity index total return" in its objective.
+    # Guard (2026-07-13): multi-asset funds (e.g. PIMCO Inflation MA) embed a
+    # commodity index as ONE of several benchmark components. In those cases the
+    # window also contains equity ("renta variable", "acciones") and FI ("renta
+    # fija", "bonos") signals. Only fire Alternativo when the commodity signal
+    # appears WITHOUT accompanying equity/FI signals → pure commodity mandate.
+    # PIMCO DDF window contains "bloomberg commodity total return index" inside
+    # a blended 5-index benchmark list alongside equity and real-estate indices;
+    # the guard lets it fall through to FIX-B1-MIXTO-ENUM below.
+    if any(k in w for k in [
+        "bloomberg commodity index", "bloomberg commodity",
+        "commodity index total return",
+        "índice de materias primas bloomberg",
+    ]):
+        # Guard: fire Alternativo only if no equity MANDATE signal is present.
+        # Pure commodity funds (DWS Enhanced Commodity Strategy) have no "renta
+        # variable"/"equity" in their objective — only incidental "acciones" (=
+        # share class) and "renta fija" (= cash collateral for derivatives).
+        # Multi-asset funds (PIMCO Inflation MA) explicitly mention "renta
+        # variable" as one of several mandated asset classes — fall through to
+        # FIX-B1-MIXTO-ENUM below.
+        _has_eq_mandate = any(k in w for k in [
+            "renta variable", "equity", "equities",
+        ])
+        if not _has_eq_mandate:
+            return "Alternativo"
+
+    # FIX-B1-MIXTO-EARLY (2026-07-13): explicit multi-asset/mixed-mandate
+    # declarations that must fire BEFORE eq_dominant/bond_dominant to prevent
+    # an early "Renta Variable" or "_RF_pending" return from overriding the
+    # genuinely mixed nature.
+    # — "fondo de activos mixto": Spanish explicit label, Invesco Pan European
+    #   High Income KIID text ("el fondo es un fondo de activos mixto
+    #   gestionado activamente con una exposición flexible tanto a acciones...").
+    # — "diferentes clases de activos" / "diversas clases de activos" /
+    #   "varias clases de activos": generic multi-asset mandate phrasing, already
+    #   used in the late Mixtos check but needs to fire first. Confirmed:
+    #   UBS Systematic Allocation Protection Defensive and DWS Conservative Opp
+    #   both have this phrase in their objective windows yet were reaching
+    #   bond_dominant/_RF_pending before the late check was evaluated.
+    # — "materias primas...renta variable": enumeration of commodities + equity
+    #   + FI (PIMCO Inflation MA: "instrumentos relacionados con materias primas,
+    #   divisas...y renta variable y valores relacionados con la renta variable").
+    if any(k in w for k in [
+        "fondo de activos mixto", "activos mixtos",
+        "diferentes clases de activos",
+        "diversas clases de activos",
+        "varias clases de activos",
+    ]):
+        return "Mixtos"
+    # FIX-B1-MIXTO-ENUM (2026-07-13): fund that mentions commodities + equity +
+    # FI in the same objective window → genuinely multi-asset. PIMCO Inflation
+    # Master Fund: "instrumentos de renta fija vinculados a la inflación...
+    # instrumentos relacionados con materias primas... y renta variable y valores
+    # relacionados con la renta variable" — no single explicit Mixtos label but
+    # the enumeration of 3+ asset classes is unambiguous.
+    if ("materias primas" in w
+            and any(k in w for k in ["renta variable", "acciones"])
+            and any(k in w for k in ["renta fija", "bonos", "deuda", "inflación"])):
+        return "Mixtos"
+
     # FIX-P1-NTC2 (2026-07-04): enumeración explícita de 3+ clases de activos
     # (renta fija + renta variable + alternativas/monetario) es señal
     # inequívoca de fondo multi-activo -- más fuerte que cualquier mención
@@ -1830,6 +1905,19 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
     _minor_secondary_bond = _minor_secondary_bond or bool(re.search(
         r'podr[aá]\s+invertir[^.]{0,100}(?:t[ií]tulos\s+de\s+deuda|bonos|deuda)'
         r'[^.]{0,60}gesti[oó]n\s+de\s+tesorer[ií]a',
+        w
+    ))
+    # FIX-B1-RV-LIMITEDBOND (2026-07-13): "de forma limitada" before a bond/
+    # debt/FI mention = limited/secondary bond allocation, same family as
+    # FIX-P1-RV2..RV5 above. Confirmed: Guinness Global Equity Income
+    # ("cartera de renta variable" primary mandate; "el fondo también puede
+    # invertir, de forma limitada, en otros instrumentos como los bonos
+    # soberanos y los valores de renta fija corporativa") — without this fix,
+    # bond_dominant=True (via "valores de renta fija") blocked the eq_dominant
+    # return and the function fell to _RF_pending. Also fixes Threadneedle UK
+    # Select Real Interest which uses the same phrasing.
+    _minor_secondary_bond = _minor_secondary_bond or bool(re.search(
+        r'de\s+forma\s+limitada[^.]{0,200}(?:bonos|deuda|renta\s+fija|valores)',
         w
     ))
 
@@ -2796,7 +2884,11 @@ def detect_style_from_kiid(kiid_text: str) -> Optional[str]:
 #                    High Yield) -- enumeración de 2+ regiones: el fondo es
 #                    Global, no EEUU.
 _GEO_NEGATION_MARKERS = ["fuera de","excluyendo","distintos de","distintas de",
-                          "distinta de","salvo","excepto","no incluye","sin incluir"]
+                          "distinta de","salvo","excepto","no incluye","sin incluir",
+                          # FIX-GEO-10a (2026-07-14): Regulation S disclaimer
+                          # "no abierto a residentes de los estados unidos" is a
+                          # sales-restriction clause, not an investment geography signal.
+                          "residentes de"]
 _GEO_ISSUER_DETAIL_MARKERS = ["emitidos por","organismos","instituciones privadas","emisores"]
 _GEO_OTHER_REGION_MARKERS = ["europ","asia","china","japón","japon","india",
                              "latinoam","mercados emergentes","emergent"]
@@ -3058,6 +3150,16 @@ def detect_geography_from_kiid(kiid_text: str) -> Optional[str]:
                 verdict = _geo_worldwide_guard(w, idx)
                 if verdict in ("NEGATED", "MANAGER_SCOPE"):
                     continue
+            elif geo == "Latinoamérica":
+                # FIX-GEO-10b (2026-07-14): "latinoamérica" appearing in a
+                # conjunction with "estados unidos"/"canadá" (within 150 chars
+                # before the match) describes multi-region coverage, not a
+                # LatAm-focused mandate (e.g. "mercados de estados unidos, canadá
+                # y latinoamérica"). Skip → loop continues; EEUU or Global fires.
+                _pre_latam = w[max(0, idx - 150):idx]
+                if ("estados unidos" in _pre_latam
+                        or "canadá" in _pre_latam or "canada" in _pre_latam):
+                    continue
             elif s == "países emergentes":
                 _pre = w[max(0, idx - 100):idx]
                 if any(neg in _pre for neg in _GEO_NEGATION_MARKERS):
@@ -3207,8 +3309,17 @@ def detect_geography(name_l: str) -> Optional[str]:
     con ambas señales); ver SESSION_SUMMARY para el detalle del corpus check.
     """
     # FIX-GEO-7 (2026-07-12): added "nippon" (EN demonym used in fund names).
-    if any(k in name_l for k in ["japan","japanese","japon","nippon"]):
-        return "Japón"
+    # FIX-GEO-9 (2026-07-14): added "jpn" (standard 3-letter abbrev used in
+    # abbreviated fund names: "FIDELITY F JPN EQ ESG"). Plain substring is safe
+    # ("jpn" does not appear as interior of other common finance words).
+    # FIX-GEO-9: ex-Japan negation guard — "Asia ex Japan" / "MSCI AC Asia ex
+    # Japan" → Asia, not Japan. Without this guard, "japan" fires at line 3298
+    # before "asia" at line 3306, wrongly returning Japón for ex-Japan indices
+    # and funds (affects both detect_geography on fund names AND _bmk_geography
+    # in the benchmark-consistency audit tool which calls the same function).
+    if any(k in name_l for k in ["japan","japanese","japon","nippon","jpn"]):
+        if not any(neg in name_l for neg in ["ex japan","ex-japan","ex jpn"]):
+            return "Japón"
     if "jpy" in name_l:
         return "Japón"
     if any(k in name_l for k in ["china","chinese","a-shares","greater china","gran china","hong kong"]):
@@ -3216,6 +3327,12 @@ def detect_geography(name_l: str) -> Optional[str]:
     if any(k in name_l for k in ["asia pacific","asia-pacific","apac","asean","pacific"]):
         return "Asia"
     if any(k in name_l for k in ["asia","asian","asia ex"]):
+        return "Asia"
+    # FIX-GEO-9 (2026-07-14): "asi" as the standalone 3-letter Asia abbreviation
+    # used in abbreviated fund names ("FIDELITY F ASI EQ ESG", "SISF ASI EQ YIELD").
+    # Requires word boundary (re.search) — plain "asi" substring is unsafe
+    # ("basil"/"casual"/etc. contain "asi" as interior characters).
+    if re.search(r'\basi\b', name_l):
         return "Asia"
     if any(k in name_l for k in ["india","indian"]):
         return "India"
@@ -3228,6 +3345,11 @@ def detect_geography(name_l: str) -> Optional[str]:
     # "mideast" in a fund name always means MENA / Emerging region).
     if any(k in name_l for k in ["mena","middle east","mideast"]):
         return "Emergentes"
+    # FIX-GEO-8 (2026-07-13): "Emerging Europe" (and compact variants) → Eastern Europe,
+    # evaluated BEFORE the generic "emerging" → Emergentes check.
+    # Real case: SISF EMERGING EUROPE (LU0106817157/104) was mis-detected as Emergentes.
+    if any(k in name_l for k in ["emerging europe","emerging euro","emerg europ"]):
+        return "Europa del Este"
     # FIX-GEO-7: added truncated/abbreviated emerging variants found in real fund names:
     # "emerg." (CARMIGNAC EMERG.PATRIMOINE), "emergng"/"emergg" (JPM EMERGNG, VONTOBEL
     # EMERGG), "emergi"/"emergin" (typos), "emrgng", "emer." (punctuated abbrev),
@@ -3242,10 +3364,20 @@ def detect_geography(name_l: str) -> Optional[str]:
     # FIX-GEO-NAME-2 (2026-07-12): "\bus\b" (señal débil -- también aparece en
     # códigos de clase tipo "W1 US AC") se desplaza a DESPUÉS de los checks
     # europeos para que "MFS EUROPEAN RESEARCH W1 US AC" → Europa, no EEUU.
+    # FIX-GEO-8 (2026-07-13): added "us top"/"us div" — fires before "deutsch"/"german"
+    # in the Europa branch (DEUTSCHE II US TOP DIVID: manager name triggers Europa).
+    # FIX-GEO-9 (2026-07-14): removed bare "treasury" from this list.
+    # "treasury" alone is NOT a reliable US signal: "Morningstar Eurozone Treasury
+    # Bond", "Bloomberg Euro Aggregate Treasury 3-5Y" are European government bond
+    # indices whose names include "treasury" as a generic fixed-income term, causing
+    # the audit tool's _bmk_geography() to return North America for European bond
+    # funds. US Treasury funds in the corpus all have "us" or "usd" nearby too, so
+    # replacing "treasury" with the compound "us treasury" loses nothing while
+    # eliminating the false positive.
     if any(k in name_l for k in [
             "usa","u.s.","united states","america","american",
-            "us eq","us sm","us sel","treasury","t-bill","us govt",
-            "us dollar","us money"]):
+            "us eq","us sm","us sel","us treasury","t-bill","us govt",
+            "us dollar","us money","us top","us div"]):
         return "EEUU"
     if any(k in name_l for k in [" uk ","uk eq","uk inc","uk sit","uk sc","uk ag",
                                    "united kingdom","british","britain"," gbp ","gbp ac",
@@ -3255,24 +3387,32 @@ def detect_geography(name_l: str) -> Optional[str]:
         return "Europa"
     if any(k in name_l for k in ["russia","osteuropa","eastern euro","east europ"]):
         return "Europa del Este"
-    if any(k in name_l for k in ["europe","european","euro "," euro","euroland","eurozone",
-                                   "europ","europa","euroz","emu","deutsch","germany",
-                                   "italia","italian","iberia","nordic","france","french",
-                                   # FIX-GEO-6 (2026-07-05): países nórdicos individuales en el
-                                   # propio nombre del fondo ("nordic" ya cubría el bloque
-                                   # regional, pero no los gentilicios/abreviaturas de país
-                                   # sueco/noruego -- ver NORDEA 1 SWED./NORW. SHORT-T. BOND).
-                                   "swed","swdish","norw",
-                                   # FIX-GEO-7 (2026-07-12): variants found in real fund names
-                                   # that the prior list missed:
-                                   # "german" (no trailing y) → DWS INVEST GERMAN EQUITS
-                                   # "italy" (EN) → FIDELITY ITALY
-                                   # "spain"/"spanish" → EDM SPAIN EQ, etc.
-                                   # "eurp"/"eurpe" → MS EM EURP MIDEAST (NOTE: Emerging check
-                                   #   runs first so EM-EURP funds already exit as Emergentes)
-                                   # "switzerlan" → truncated "switzerland" (OCR artifact)
-                                   "german","italy","spain","spanish",
-                                   "eurp","eurpe","switzerlan"]):
+    if (any(k in name_l for k in ["europe","european","euro ","euroland","eurozone",
+                                    "europ","europa","euroz","emu","deutsch","germany",
+                                    "italia","italian","iberia","nordic","france","french",
+                                    # FIX-GEO-6 (2026-07-05): países nórdicos individuales en el
+                                    # propio nombre del fondo ("nordic" ya cubría el bloque
+                                    # regional, pero no los gentilicios/abreviaturas de país
+                                    # sueco/noruego -- ver NORDEA 1 SWED./NORW. SHORT-T. BOND).
+                                    "swed","swdish","norw",
+                                    # FIX-GEO-7 (2026-07-12): variants found in real fund names
+                                    # that the prior list missed:
+                                    # "german" (no trailing y) → DWS INVEST GERMAN EQUITS
+                                    # "italy" (EN) → FIDELITY ITALY
+                                    # "spain"/"spanish" → EDM SPAIN EQ, etc.
+                                    # "eurp"/"eurpe" → MS EM EURP MIDEAST (NOTE: Emerging check
+                                    #   runs first so EM-EURP funds already exit as Emergentes)
+                                    # "switzerlan" → truncated "switzerland" (OCR artifact)
+                                    "german","italy","spain","spanish",
+                                    "eurp","eurpe","switzerlan"])
+            # FIX-GEO-8 (2026-07-13): " euro" is a valid Europa signal (AMUNDI EUROBOND,
+            # XYZ EURO FUND) BUT it is also a substring of the hedge-currency share-class
+            # suffix " euroh"/" eurhdg"/" eurhgd" (e.g. PIMCO US HY BND EUROH).
+            # Count " euro" as Europa only when not explained by hedge-class codes.
+            or (" euro" in name_l
+                and "euroh" not in name_l
+                and "eurhdg" not in name_l
+                and "eurhgd" not in name_l)):
         return "Europa"
     # Señal US débil: "\bus\b" solo -- puede ser código de clase (p.ej. "W1 US AC").
     # Se evalúa después de Europa para no sobreescribir señales europeas fuertes.
@@ -4470,16 +4610,6 @@ def validate_all_semantic_consistency(
         else:
             warnings.append({"rule": "Theme-Sector", "message": msg})
 
-    # INTER-10 (BL-52: auto-corrección Country→Regional cuando Geography es región)
-    status, msg, corrected_univ = validate_geography_universe(
-        cr.get("Geography"), cr.get("Investment_Universe")
-    )
-    if status == "CORRECTED":
-        cr["Investment_Universe"] = corrected_univ
-        critical_errors.append({"rule": "Geography-Universe", "message": msg})
-    elif status == "WARNING":
-        warnings.append({"rule": "Geography-Universe", "message": msg})
-
     # ----------------------------------------------------------------
     # BL-30: INTER-11 — Investment_Focus vs Sector_Focus (auto-corrección)
     # Si Sector_Focus está poblado, Investment_Focus no puede ser 'Broad'.
@@ -4906,6 +5036,23 @@ def validate_all_semantic_consistency(
                 ),
             })
 
+    # INTER-10 (BL-52): movido aquí (2026-07-13) para evaluar el IU ya corregido
+    # por SC-G1/INTER-20. Antes estaba antes de INTER-20 y emitía WARN redundante
+    # "Geography específica 'Japan' con Universe='Global' es inusual" para fondos
+    # como PICTET S-T MONEY MKT JPY, cuyo IU='Global' SC-G1 corrige inmediatamente
+    # a 'Country'. Moverlo aquí hace que INTER-10 vea el IU definitivo → retorna
+    # OK, sin WARN falso. La rama BL-52 (Country→Regional) y la WARN inversa
+    # (Geography='Global' + Universe=Country/Regional) permanecen intactas — SC-G1
+    # nunca los toca; INTER-10 sigue siendo su fallback de defensa.
+    status, msg, corrected_univ = validate_geography_universe(
+        cr.get("Geography"), cr.get("Investment_Universe")
+    )
+    if status == "CORRECTED":
+        cr["Investment_Universe"] = corrected_univ
+        critical_errors.append({"rule": "Geography-Universe", "message": msg})
+    elif status == "WARNING":
+        warnings.append({"rule": "Geography-Universe", "message": msg})
+
     # ----------------------------------------------------------------
     # INTER-15 (2026-07-11): SC-B1/B2 — Themes macroeconómicos cross-sector
     # implican Investment_Focus='Thematic' y Sector_Focus=NULL.
@@ -5252,6 +5399,24 @@ def _derive_geography_en(geo_es, name_l):
     return _GEO_ES_TO_EN.get(geo_es)       # None si geo_es es None
 
 
+def normalize_geography_en(geo_es: Optional[str], name_l: str = "") -> Optional[str]:
+    """Public single-source-of-truth for ES→EN geography normalization (R-1 / P#11).
+
+    Delegates to the internal _derive_geography_en. Use this instead of any
+    local ES→EN map — duplicating _GEO_ES_TO_EN anywhere else is an R-1
+    violation.  The audit tool and any other consumer that previously carried
+    its own copy should import and call this function.
+
+    Rules (inherits from _derive_geography_en):
+      • Already-EN values are returned unchanged (idempotent).
+      • "Emergentes" → "Middle East & Africa" if name signals MENA/Gulf;
+        otherwise → "Global" (Emerging is not a canonical spatial geography).
+      • All other ES labels mapped via _GEO_ES_TO_EN.
+      • Unknown / None input → None.
+    """
+    return _derive_geography_en(geo_es, name_l)
+
+
 def derive_development_status(geo_es, geo_en, name_l):
     """Eje de desarrollo (Developed/Emerging/Frontier/Global/Mixed)."""
     if any(k in name_l for k in ["frontier", "frontera"]):
@@ -5356,11 +5521,20 @@ def derive_credit_quality(nature, name_l):
     if nature == "Monetario":
         return "Investment Grade"          # MMF: alta calidad por regulación
     if nature == "Renta Fija Corto Plazo":
-        if any(k in name_l for k in ["high yield", "high-yield", " hy "]):
+        # BL-B6-HY (2026-07-13): broadened HY name-token set.
+        # Added "h.y." (JPM GLOB.H.Y.BOND FUND A), "hi.yie"/"hig.yie" (AXA WF
+        # GLOB.HIG.YIE.BO., AXA WF US HIGH YIE.BOND. — OCR punctuated abbrevs),
+        # "high yie" (partial match on "high yield" truncations in master Excel),
+        # "hy bond"/"hy bnd" (common HY bond abbreviations).
+        if any(k in name_l for k in ["high yield", "high-yield", " hy ",
+                                      "h.y.", "hi.yie", "hig.yie", "high yie",
+                                      "hy bond", "hy bnd", "alto rendimiento"]):
             return "High Yield"
         return "Investment Grade"          # crédito corto predominante IG
     if nature == "Renta Fija Flexible":
-        if any(k in name_l for k in ["high yield", "high-yield", " hy "]):
+        if any(k in name_l for k in ["high yield", "high-yield", " hy ",
+                                      "h.y.", "hi.yie", "hig.yie", "high yie",
+                                      "hy bond", "hy bnd", "alto rendimiento"]):
             return "High Yield"
         if any(k in name_l for k in ["crossover", "flexible", "strategic",
                                      "unconstrained", "total return", "opportunistic",

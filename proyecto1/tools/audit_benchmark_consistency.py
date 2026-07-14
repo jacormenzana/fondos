@@ -202,6 +202,13 @@ def _tok_currency_in_name(name_l: str) -> Optional[str]:
 # removed).  _bmk_geography() below calls normalize_geography_en() directly.
 
 # Pairs that are BENIGN geographic generalizations (broader proxy, not a contradiction)
+# FIX-BMK-AUDIT-1 (2026-07-14): added four pairs that were generating false B2
+# conflicts — sub-regions whose Morningstar benchmark uses a broader EM or Global
+# proxy while fund_master correctly holds the specific region:
+#   Latin America + Global: LatAm funds whose benchmark is MSCI EM (normalize→Global)
+#   Eastern Europe + Global: Templeton Eastern Europe benchmarked to MSCI EM
+#   China + Asia-Pacific: Chinese funds benchmarked to Asia-Pacific index
+#   Asia-Pacific + India: India-specific funds benchmarked to Asia-Pacific
 _GEO_BENIGN_PAIRS: frozenset[frozenset] = frozenset({
     frozenset({"North America", "Global"}),
     frozenset({"Europe",        "Global"}),
@@ -211,11 +218,15 @@ _GEO_BENIGN_PAIRS: frozenset[frozenset] = frozenset({
     frozenset({"India",         "Global"}),
     frozenset({"Emerging Markets", "Global"}),
     frozenset({"Latin America", "Emerging Markets"}),
+    frozenset({"Latin America", "Global"}),           # LatAm fund benchmarked to MSCI EM proxy
     frozenset({"China",         "Emerging Markets"}),
     frozenset({"India",         "Emerging Markets"}),
     frozenset({"Eastern Europe","Emerging Markets"}),
+    frozenset({"Eastern Europe","Global"}),           # Templeton EE benchmarked to MSCI EM
     frozenset({"Middle East & Africa", "Emerging Markets"}),
-    frozenset({"Japan",         "Asia-Pacific"}),   # Japan is subset of Asia-Pacific proxy
+    frozenset({"Japan",         "Asia-Pacific"}),     # Japan is subset of Asia-Pacific
+    frozenset({"China",         "Asia-Pacific"}),     # China is subset of Asia-Pacific
+    frozenset({"Asia-Pacific",  "India"}),            # India-specific in Asia-Pacific proxy
 })
 
 
@@ -581,18 +592,33 @@ def run_audit(db_path: Path = DB_PATH) -> dict:
                 })
 
         # ─ B4 Market Cap ─────────────────────────────────────────────────
+        # FIX-BMK-AUDIT-2 (2026-07-14): fm_cap="All Cap" is the FALLBACK sentinel
+        # (no specific cap signal detected) — it is NOT a contradiction with a
+        # specific benchmark cap. An "All Cap" fund can benchmark against a Mid Cap
+        # or Small Cap index without being misclassified; the benchmark's cap just
+        # describes the reference universe, not the fund's constraint. Treat All Cap
+        # conflicts as gaps (informational) rather than as real conflicts.
+        # Before this fix: 112 of 179 B4 conflicts were All Cap vs specific.
         bmk_cap = _tok_cap(p_name_l)
         if bmk_cap:
             if fm_cap and fm_cap != bmk_cap:
-                b4_cap.append({
-                    "ISIN": isin, "Fund_Name": fund_name, "Fund_Nature": nature,
-                    "fm_cap": fm_cap, "bmk_cap": bmk_cap, "bmk_name": p_name,
-                    "hypothesis": (
-                        f"fund_master.Market_Cap_Focus='{fm_cap}' but benchmark signals '{bmk_cap}'. "
-                        "Classifier may have inferred cap from name while benchmark reflects the "
-                        "actual investable universe more accurately."
-                    ),
-                })
+                if fm_cap == "All Cap":
+                    # All Cap is a detection fallback → report as gap, not conflict
+                    b4_cap_gap.append({
+                        "ISIN": isin, "Fund_Name": fund_name, "Fund_Nature": nature,
+                        "bmk_cap": bmk_cap, "bmk_name": p_name,
+                        "note": "fm=All Cap (fallback sentinel) — benchmark may reveal actual cap",
+                    })
+                else:
+                    b4_cap.append({
+                        "ISIN": isin, "Fund_Name": fund_name, "Fund_Nature": nature,
+                        "fm_cap": fm_cap, "bmk_cap": bmk_cap, "bmk_name": p_name,
+                        "hypothesis": (
+                            f"fund_master.Market_Cap_Focus='{fm_cap}' but benchmark signals '{bmk_cap}'. "
+                            "Classifier may have inferred cap from name while benchmark reflects the "
+                            "actual investable universe more accurately."
+                        ),
+                    })
             elif not fm_cap and nature == "Renta Variable":
                 b4_cap_gap.append({
                     "ISIN": isin, "Fund_Name": fund_name, "Fund_Nature": nature,
@@ -664,28 +690,49 @@ def run_audit(db_path: Path = DB_PATH) -> dict:
                     })
 
         # ─ B7 Benchmark_Declared vs KIID source ──────────────────────────
+        # FIX-BMK-AUDIT-3 (2026-07-14): improved token comparison.
+        # The original split-and-len>3 approach had two failure modes:
+        #   (a) Very short declared values (e.g. "€str", "€STR", "3m") produce
+        #       zero tokens > 3 chars, so every extraction fires as drift even
+        #       when both values refer to the same index (€STR ≡ Euro Short-Term Rate).
+        #   (b) Composite declared benchmarks ("s&p 500 + 40% bloomberg…") produce
+        #       tokens like "bloomberg","aggregat" that don't appear in the KIID
+        #       extraction of just the primary component ("S&P 500 (Net Return)").
+        # Fix (a): skip when dec_tokens is empty (declared too short/symbolic to compare).
+        # Fix (b): after normalising punctuation, also check if either string is a
+        #          prefix/suffix of the other at the token level (partial match).
         if fm_declared and k_name and kiid_row:
-            # Flag if the declared benchmark is completely different from what was extracted
+            import re as _re
             dec_l = fm_declared.lower()
             k_l   = k_name.lower()
-            # Check if they share at least one significant token
-            dec_tokens = set(t for t in dec_l.split() if len(t) > 3)
-            k_tokens   = set(t for t in k_l.split()   if len(t) > 3)
-            common = dec_tokens & k_tokens
-            if not common:
-                b7_declared.append({
-                    "ISIN":           isin,
-                    "Fund_Name":      fund_name,
-                    "Fund_Nature":    nature,
-                    "Declared":       fm_declared,
-                    "KIID_extracted": k_name,
-                    "hypothesis": (
-                        f"fund_master.Benchmark_Declared='{fm_declared}' shares no tokens with "
-                        f"KIID-extracted benchmark '{k_name}'. Possible extraction error in "
-                        "benchmark_normalizer or the KIID references a different benchmark than "
-                        "the one Morningstar uses as category proxy."
-                    ),
-                })
+            # Strip punctuation before tokenising so "s&p" and "1-3y" become comparable
+            _punct = _re.compile(r'[&()\[\]+%]')
+            dec_clean = _punct.sub(' ', dec_l)
+            k_clean   = _punct.sub(' ', k_l)
+            dec_tokens = set(t for t in dec_clean.split() if len(t) > 3)
+            k_tokens   = set(t for t in k_clean.split()   if len(t) > 3)
+            # Skip: declared is too short/symbolic to tokenise (e.g. "€str", "3m")
+            if not dec_tokens:
+                pass
+            else:
+                common = dec_tokens & k_tokens
+                # Also accept as match when k_tokens is a non-empty subset of dec_tokens
+                # (KIID extracted the primary component of a multi-part declared benchmark).
+                k_subset_of_dec = bool(k_tokens) and k_tokens.issubset(dec_tokens)
+                if not common and not k_subset_of_dec:
+                    b7_declared.append({
+                        "ISIN":           isin,
+                        "Fund_Name":      fund_name,
+                        "Fund_Nature":    nature,
+                        "Declared":       fm_declared,
+                        "KIID_extracted": k_name,
+                        "hypothesis": (
+                            f"fund_master.Benchmark_Declared='{fm_declared}' shares no tokens with "
+                            f"KIID-extracted benchmark '{k_name}'. Possible extraction error in "
+                            "benchmark_normalizer or the KIID references a different benchmark than "
+                            "the one Morningstar uses as category proxy."
+                        ),
+                    })
 
     con.close()
 
@@ -783,6 +830,11 @@ def print_summary(findings: dict) -> None:
 
 if __name__ == "__main__":
     import argparse
+    import sys as _sys
+    # FIX-BMK-AUDIT-4 (2026-07-14): reconfigure stdout to UTF-8 so box-drawing
+    # chars in print_summary don't crash under the default cp1252 console.
+    if hasattr(_sys.stdout, "reconfigure"):
+        _sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
     parser = argparse.ArgumentParser(description="Benchmark consistency audit (read-only)")
     parser.add_argument("--db",  default=str(DB_PATH),
