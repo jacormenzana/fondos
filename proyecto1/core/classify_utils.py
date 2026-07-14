@@ -3334,6 +3334,12 @@ def detect_geography(name_l: str) -> Optional[str]:
     # ("basil"/"casual"/etc. contain "asi" as interior characters).
     if re.search(r'\basi\b', name_l):
         return "Asia"
+    # FIX-GEO-12 (2026-07-14): "f as eq" is the Fidelity abbreviated naming
+    # convention for Asia Equity ("FIDELITY F AS EQ ESG ..."). "as" alone is too
+    # short for safe word-boundary matching (high false-positive risk); the compound
+    # "f as eq" (8 chars, Fidelity-specific) is safe in all fund names tested.
+    if "f as eq" in name_l:
+        return "Asia"
     if any(k in name_l for k in ["india","indian"]):
         return "India"
     # FIX-GEO-7: Korea maps to Asia (Development_Status handles developed/emerging axis).

@@ -253,3 +253,36 @@ class TestDetectGeographyFromKiidLatAmConjunctionGuard:
             f"'Latinoamérica' must not fire when 'canadá' precedes it; "
             f"got {result!r}"
         )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# detect_geography() — FIX-GEO-12
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestDetectGeographyFAsEqCompound:
+    """FIX-GEO-12: 'f as eq' compound fires Asia; no false positives."""
+
+    @pytest.mark.parametrize("name", [
+        "fidelity f as eq esg a eur acc",
+        "fidelity f as eq esg a usd acc",
+        "fidelity f as eq esg y usd acc",
+        "fidelity f as eq esg y eur acc",
+        "fidelity f as eq esg y usd inc",
+        "fidelity f as eq esg y eur inc",
+    ])
+    def test_fidelity_f_as_eq_fires_asia(self, name):
+        assert detect_geography(name) == "Asia", (
+            f"Expected 'Asia' for Fidelity abbreviated name {name!r}"
+        )
+
+    @pytest.mark.parametrize("name", [
+        "was equal weight fund",
+        "has equal split shares",
+        "class a eq growth",
+        "amundi eq growth",
+    ])
+    def test_no_false_positive_on_as_eq_fragment(self, name):
+        result = detect_geography(name)
+        assert result != "Asia", (
+            f"'f as eq' compound must not fire for {name!r} (got {result!r})"
+        )
