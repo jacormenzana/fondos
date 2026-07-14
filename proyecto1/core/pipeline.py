@@ -1146,12 +1146,21 @@ def run_block(
             # (e.g. ROBECO GLOBL PREM invests in China), so KIID keeps priority
             # in all cases except the clear KIID=Global/name=specific mismatch.
             _GEO_GLOBAL = "Global"
-            # FIX-GEO-8 (2026-07-13): name is a geographic sub-region of the KIID value.
-            # Example: TEMPLETON EASTERN EURO (name=Europa del Este, KIID=Europa) —
-            # the fund name pinpoints Eastern Europe; the KIID describes the broader
-            # containing region. In these cases the name is more precise and wins.
+            # FIX-GEO-8 (2026-07-13) / FIX-GEO-11 (2026-07-14):
+            # name is a geographic sub-region of the KIID value → name wins.
+            # FIX-GEO-8 example: TEMPLETON EASTERN EURO (name=Europa del Este,
+            #   KIID=Europa) — name pinpoints sub-region; KIID describes container.
+            # FIX-GEO-11 extension: same logic for EM container regions —
+            #   KIID='Emergentes' + name=concrete EM sub-region (Europa del Este,
+            #   India, China, Latinoamérica, Asia) → name wins.
+            #   KIID='Asia' + name='India' → name wins (India ⊂ Asia-Pacific).
+            _EM_SPECIFIC_SUBREGIONS = frozenset([
+                "Europa del Este", "India", "China", "Latinoamérica", "Asia"
+            ])
             _is_name_subregion = bool(
-                _geo_kiid == "Europa" and _geo_name == "Europa del Este"
+                (_geo_kiid == "Europa" and _geo_name == "Europa del Este")
+                or (_geo_kiid == "Emergentes" and _geo_name in _EM_SPECIFIC_SUBREGIONS)
+                or (_geo_kiid == "Asia" and _geo_name == "India")
             )
             _geo_name_wins = bool(
                 (_geo_kiid == _GEO_GLOBAL and _geo_name and _geo_name != _GEO_GLOBAL)
