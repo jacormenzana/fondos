@@ -233,3 +233,94 @@ class TestSCG1AfterMig5:
         rec = _base(Geography=None, Investment_Universe="Liquidity")
         result = _run(rec)
         assert result["corrected_record"]["Investment_Universe"] == "Global"
+
+
+# ─── INTER-10 / SC-G1 ordering: no redundant 'inusual' WARN (FIX-INTER10-ORDER) ──
+
+class TestInter10OrderAfterSCG1:
+    """After the 2026-07-13 reorder, INTER-10 evaluates the post-SC-G1 IU.
+    Funds that SC-G1 corrects (Global→Country/Regional) must NOT trigger the
+    INTER-10 'es inusual' WARN — SC-G1's Geography-Universe-SC-G1 correction
+    message is the only signal. INTER-10 reverse-WARN and BL-52 must still work.
+
+    Root case: PICTET S-T MONEY MKT JPY (LU0309035441/870) emitted 2×
+    'Geography-Universe: Geography específica Japan con Universe=Global es inusual'
+    in log_pipeline_20260712_234540.log even though IU was corrected to Country."""
+
+    def test_monetario_japan_no_inusual_warn(self):
+        """PICTET JPY pattern: Monetario + Japan + IU=Global → SC-G1 corrects to
+        Country; INTER-10 must NOT emit the 'inusual' WARN afterwards."""
+        rec = {
+            "Fund_Nature": "Monetario",
+            "Family": "Money Market",
+            "Geography": "Japan",
+            "Investment_Universe": "Global",  # BL-MON-U1 / BL-33 set this
+        }
+        result = _run(rec)
+        cr = result["corrected_record"]
+        # SC-G1 corrected it
+        assert cr["Investment_Universe"] == "Country"
+        # INTER-10 must NOT have emitted its old 'inusual' WARNING
+        inusual_warns = [
+            e for e in result["warnings"]
+            if e.get("rule") == "Geography-Universe"
+            and "inusual" in e.get("message", "")
+        ]
+        assert inusual_warns == [], (
+            f"INTER-10 emitted redundant 'inusual' WARN after SC-G1 already "
+            f"corrected IU to 'Country': {inusual_warns}"
+        )
+        # SC-G1 correction is still recorded
+        sg1 = [e for e in result["critical_errors"] if "SC-G1" in e.get("rule", "")]
+        assert len(sg1) >= 1
+
+    def test_europe_global_no_inusual_warn(self):
+        """RF Corto + Europe + IU=Global → SC-G1 corrects to Regional;
+        INTER-10 must NOT emit 'inusual' WARN for a region geography."""
+        rec = {
+            "Fund_Nature": "Renta Fija Corto Plazo",
+            "Family": "Short-Term Fixed Income",
+            "Geography": "Europe",
+            "Investment_Universe": "Global",
+        }
+        result = _run(rec)
+        cr = result["corrected_record"]
+        assert cr["Investment_Universe"] == "Regional"
+        inusual_warns = [
+            e for e in result["warnings"]
+            if e.get("rule") == "Geography-Universe"
+            and "inusual" in e.get("message", "")
+        ]
+        # Europe is in _REGION_GEOGRAPHIES, not _COUNTRY_GEOGRAPHIES, so
+        # INTER-10 only warns on country+Global; this case is clean.
+        assert inusual_warns == []
+
+    def test_bl52_still_fires_after_sc_g1(self):
+        """BL-52 (Country→Regional) in INTER-10 must still work after the reorder.
+        SC-G1 does not touch this case (Country is not 'Global'), so INTER-10
+        remains the sole handler."""
+        rec = _base(Geography="Europe", Investment_Universe="Country")
+        result = _run(rec)
+        cr = result["corrected_record"]
+        assert cr["Investment_Universe"] == "Regional", (
+            "BL-52 (INTER-10) must still auto-correct Country→Regional when "
+            f"Geography is a region; got '{cr['Investment_Universe']}'"
+        )
+        # Correction should appear in critical_errors with rule 'Geography-Universe'
+        bl52 = [e for e in result["critical_errors"]
+                if e.get("rule") == "Geography-Universe"]
+        assert len(bl52) >= 1
+
+    def test_reverse_warn_still_fires(self):
+        """INTER-10 reverse WARN: Geography='Global' + IU='Country' must still
+        emit a 'Geography-Universe' warning (SC-G1 never touches this direction)."""
+        rec = _base(Geography="Global", Investment_Universe="Country")
+        result = _run(rec)
+        reverse_warns = [
+            e for e in result["warnings"]
+            if e.get("rule") == "Geography-Universe"
+        ]
+        assert len(reverse_warns) >= 1, (
+            "INTER-10 reverse WARN (Geography='Global' + IU='Country') must "
+            "still fire after the reorder"
+        )

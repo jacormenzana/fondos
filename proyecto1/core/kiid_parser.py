@@ -4350,6 +4350,35 @@ def detect_wrong_kiid_document(
     if not _found_statute and not _found_report:
         return None  # Sin marcador positivo → documento no erróneo
 
+    # FIX-WRONGDOC-AR (2026-07-13): informes anuales multi-fondo que embeben
+    # los KIIDs de todos sus subfondos contienen SRRI "X/7" y frases de riesgo
+    # dentro de las secciones por subfondo — causando que el check de KIID
+    # structure más abajo devuelva None (falso negativo). Guarda de primera
+    # página: si uno de los marcadores de informe anual ESTRUCTURALES aparece
+    # en los primeros 150 chars, el documento ES un informe anual con certeza
+    # (ningún KIID/KID real empieza así: la primera línea siempre es el nombre
+    # del fondo, "DATOS FUNDAMENTALES" u otro encabezado KIID).
+    # Se usa 150 chars (no 300) para evitar capturar KIIDs que mencionan
+    # "annual report" en una referencia de sus primeras líneas de cuerpo.
+    # Confirmado: THREADNEEDLE UK SLCT RI (GB00BMW6N332) comienza en literal
+    # "ANNUAL REPORT AND AUDITED FINANCIAL STATEMENTS\n" (48 chars).
+    _FIRST_PAGE_REPORT_MARKERS = [
+        "annual report and audited financial statements",
+        "informe anual y cuentas anuales auditadas",
+        "rapport annuel et comptes audités",
+        "audited annual report",
+        "audited financial statements\n",   # primera línea (sólo al inicio)
+    ]
+    _first_page = text_l[:150]
+    _found_first_page = next(
+        (m for m in _FIRST_PAGE_REPORT_MARKERS if m in _first_page), None
+    )
+    if _found_first_page:
+        return (
+            f"Informe anual multi-fondo detectado en página 1 "
+            f"(marcador='{_found_first_page}')"
+        )
+
     # ── Señales negativas: vetan la detección (un KIID/KID real las tiene) ───
     # Se usan marcadores sin diacríticos o con variantes cortas para mayor
     # robustez frente a textos con encoding degradado (CP1252/Latin-1 parcial).

@@ -252,6 +252,45 @@ def test_kiid_multi_region_enumeration_maps_to_global():
     )) == "Global"
 
 
+# ---------------------------------------------------------------------------
+# FIX-GEO-8 (2026-07-13): detect_geography — tres fixes en detect_geography
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("name,expected,desc", [
+    # "emerging europe" → Europa del Este BEFORE generic "emerging" → Emergentes.
+    # Real case: SISF EMERGING EUROPE (LU0106817157/104) was mis-detected as Emergentes.
+    ("SISF EMERGING EUROPE A ACC USD", "Europa del Este",
+     "SISF EMERGING EUROPE → Europa del Este, not Emergentes"),
+    ("AMUNDI EMERG EUROP EQ I EUR ACC", "Europa del Este",
+     "compact 'emerg europ' → Europa del Este"),
+    # Generic "emerging" still routes to Emergentes when no "europe" qualifier.
+    ("PIMCO EMERG MARKETS BOND I EUR", "Emergentes",
+     "generic emerging without europe → Emergentes unchanged"),
+    # "us top" / "us div" in strong EEUU list — fires before "deutsch"/"german" Europa branch.
+    # Real case: DEUTSCHE II US TOP DIVID (LU0781238778/935/743) was mis-detected as Europa.
+    ("DEUTSCHE II US TOP DIVID LC ACC", "EEUU",
+     "DEUTSCHE II US TOP DIVID → EEUU via 'us top', not Europa via 'deutsch'"),
+    ("BGF US DIVID FOCUS A2 EUR ACC", "EEUU",
+     "us div strong signal → EEUU"),
+    # "deutsch" still maps to Europa when there is no US signal.
+    ("DEUTSCHE INVEST EUROP BOND A", "Europa",
+     "deutsch without US signal → Europa unchanged"),
+    # " euro" hedge-suffix fix: EUROH share-class code must NOT trigger Europa.
+    # Real case: PIMCO US HY BND INV EUROH (IE0032593158) was mis-detected as Europa.
+    ("PIMCO US HY BND INV EUROH ACC", "EEUU",
+     "EUROH suffix → NOT Europa; standalone 'us' wins"),
+    ("PIMCO EUROP HY BD EUROH ACC", "Europa",
+     "genuine EUROPEAN + EUROH: European signal from 'europ' still fires"),
+    # " euro" without hedge suffix still signals Europa (no regression on EUROBOND names).
+    ("AMUNDI EURO CORPORATE BOND I", "Europa",
+     "' euro' genuine → Europa via 'euro ' keyword"),
+])
+def test_fix_geo_8_detect_geography(name, expected, desc):
+    """FIX-GEO-8: emerging europe, us top/div, euroh hedge-suffix fixes."""
+    result = detect_geography(name.lower())
+    assert result == expected, f"Expected {expected!r} for '{desc}', got {result!r}"
+
+
 def test_kiid_returns_none_without_match():
     assert detect_geography_from_kiid(_kiid(
         "el fondo invierte en una amplia gama de activos diversificados "

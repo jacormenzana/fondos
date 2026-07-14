@@ -195,6 +195,77 @@ class TestEdgeCases:
         assert reason is None
 
 
+class TestAnnualReportWithEmbeddedSRRI:
+    """FIX-WRONGDOC-AR (2026-07-13): annual reports that embed per-subfund KIID
+    sections (containing SRRI numbers) were NOT flagged because the existing
+    KIID-structure veto fired on the embedded SRRI data. The first-page guard
+    fixes this: if the document STARTS with the annual report header, it is
+    flagged regardless of later KIID-like content."""
+
+    def _annual_report_with_srri(self) -> str:
+        """Simula THREADNEEDLE UK SLCT RI: informe anual multi-fondo que embebe
+        secciones de KIID individuales (con SRRI 'X / 7') para cada subfondo.
+        El documento COMIENZA con la cabecera del informe anual."""
+        return (
+            "ANNUAL REPORT AND AUDITED FINANCIAL STATEMENTS\n"
+            "THREADNEEDLE INVESTMENT FUNDS ICVC\n"
+            "MARCH 2019\n"
+            "Contents\n"
+            "UK Fund.........................................7–15\n"
+            "UK Select Fund.................................16–22\n"
+            "UK Corporate Bond Fund.........................61–69\n"
+            "Sterling Bond Fund.............................70–76\n"
+            # Contenido simulado de la sección por subfondo (con datos SRRI)
+            "UK Select Fund\n"
+            "Investment objective: The fund aims to achieve long-term capital growth "
+            "by investing in UK equities.\n"
+            "Risk and Reward Indicator: 5 / 7\n"
+            "The risk category shown is not guaranteed and may shift over time.\n"
+            "Ongoing charges: 0.84% per year.\n"
+            "UK Corporate Bond Fund\n"
+            "Investment objective: The fund invests primarily in investment-grade bonds.\n"
+            "Risk and Reward Indicator: 3 / 7\n"
+        )
+
+    def test_annual_report_with_embedded_srri_detected(self):
+        """Informe anual multi-fondo con SRRI embebido → detectado vía first-page guard."""
+        reason = detect_wrong_kiid_document(self._annual_report_with_srri())
+        assert reason is not None, (
+            "Informe anual que comienza con 'ANNUAL REPORT AND AUDITED FINANCIAL "
+            "STATEMENTS' debe ser detectado aunque contenga SRRI en secciones posteriores"
+        )
+        assert "annual report and audited financial statements" in reason.lower() or \
+               "informe anual" in reason.lower() or "marcador" in reason.lower()
+
+    def test_genuine_kiid_with_annual_mention_in_body_not_affected(self):
+        """Un KIID real que menciona 'annual report' en el CUERPO (no en los
+        primeros 150 chars) no debe dispararse — la cabecera KIID está al inicio
+        y veta la detección; además la primera-página guard no alcanza el cuerpo."""
+        # The KIID header is in the very first chars; "ANNUAL REPORT AND AUDITED
+        # FINANCIAL STATEMENTS" appears later in the body (well past char 150).
+        # This reflects a real KIID that references the annual report for further info.
+        kiid_header = "DATOS FUNDAMENTALES PARA EL INVERSOR\n"  # 37 chars
+        body = (
+            "OBJETIVOS Y POLÍTICA DE INVERSIÓN\n"
+            "El fondo trata de superar la rentabilidad del MSCI World. "
+            "El fondo puede invertir en acciones de todo el mundo. "
+            "Puede obtenerse gratuitamente el informe anual (annual report) "
+            "y la información sobre audited financial statements en la web "
+            "del gestor.\n"
+            "ANNUAL REPORT AND AUDITED FINANCIAL STATEMENTS are available online.\n"
+            "Indicador de riesgo: 5 / 7\n"
+        )
+        text = kiid_header + body
+        # Verify "ANNUAL REPORT AND..." appears past char 150
+        assert text.lower().index("annual report and audited") > 150, \
+            "Test setup: marker must be beyond the 150-char first-page window"
+        reason = detect_wrong_kiid_document(text)
+        assert reason is None, (
+            "Un KIID real con 'annual report' en el cuerpo no debe ser marcado "
+            "como wrong doc — la cabecera KIID veta la detección"
+        )
+
+
 class TestLanguageVariants:
     @pytest.mark.parametrize("marker,lang", [
         ("articles of incorporation", "EN"),
