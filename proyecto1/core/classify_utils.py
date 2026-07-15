@@ -4555,9 +4555,16 @@ BMK_GEO_BENIGN_PAIRS: frozenset = frozenset({
 })
 
 # Sector pairs that are semantically equivalent or sub/super-set relationships.
+# FIX-B3-2 (2026-07-15): Healthcare ↔ Technology divergence is a taxonomy
+# disagreement (Morningstar classifies Biotech and Medtech under different
+# super-sectors than P1). Energy ↔ Technology divergence covers clean-energy /
+# "Energy Transition" funds (Morningstar=Energy & Resources; P1=Technology &
+# Innovation). Neither direction is a real classification error.
 BMK_SECTOR_BENIGN_PAIRS: frozenset = frozenset({
-    frozenset({"Inflation-Linked", "Inflation"}),
-    frozenset({"Real Assets",      "Real Estate"}),
+    frozenset({"Inflation-Linked",           "Inflation"}),
+    frozenset({"Real Assets",                "Real Estate"}),
+    frozenset({"Healthcare & Life Sciences", "Technology & Innovation"}),
+    frozenset({"Energy & Resources",         "Technology & Innovation"}),
 })
 
 # Extra sector keywords not covered by THEMATIC_MAP (used by bmk_sector).
@@ -5051,10 +5058,14 @@ def validate_all_semantic_consistency(
             _h2_conflict  = (_bmk_is_hy_h2 and _fm_is_ig_h2) or (
                              _bmk_is_ig_h2 and _fm_is_hy_h2)
             if _h2_conflict:
-                # Suppress EM-sovereign false positive (FIX-B6-AUDIT).
+                # Suppress EM-sovereign false positive (FIX-B6-AUDIT / FIX-B6-AUDIT-2).
+                # Many EM sovereign bond indices are correctly rated "High Yield" even
+                # though "Government" appears in the benchmark name. Match both
+                # "sovereign" (iShares EM Sovereign Bond) and "govt"/"gov" (Morningstar
+                # EM Govt Bond, JPM GBI-EM) naming conventions.
                 _is_em_sov_h2 = (
                     _bmk_credit == "Government"
-                    and "sovereign" in _ext_bmk_l
+                    and any(tok in _ext_bmk_l for tok in ("sovereign", "em govt", "em gov"))
                     and any(em in _ext_bmk_l for em in ("em ", "emerg", "mercados em"))
                 )
                 if not _is_em_sov_h2:

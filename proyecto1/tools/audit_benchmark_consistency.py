@@ -483,11 +483,15 @@ def run_audit(db_path: Path = DB_PATH) -> dict:
                     # classified as "High Yield" credit quality (many EM governments are
                     # sub-investment grade). The benchmark token "Government" does not
                     # imply Investment Grade for emerging-market sovereign debt.
-                    # Suppress: benchmark contains "sovereign" + EM indicator.
+                    # FIX-B6-AUDIT / FIX-B6-AUDIT-2 (2026-07-15): match both
+                    # "sovereign" naming (iShares EM Sovereign Bond) and "govt"/"gov"
+                    # naming (Morningstar EM Govt Bond, JPM GBI-EM).
                     _p_l = p_name.lower() if p_name else ""
-                    _is_em_sov = (bmk_credit == "Government"
-                                  and "sovereign" in _p_l
-                                  and any(em in _p_l for em in ("em ", "emerg", "mercados em")))
+                    _is_em_sov = (
+                        bmk_credit == "Government"
+                        and any(tok in _p_l for tok in ("sovereign", "em govt", "em gov"))
+                        and any(em in _p_l for em in ("em ", "emerg", "mercados em"))
+                    )
                     if not _is_em_sov:
                         b6_credit.append({
                             "ISIN": isin, "Fund_Name": fund_name, "Fund_Nature": nature,

@@ -1970,7 +1970,12 @@ def run_block(
             # (too generic; often describes performance target, not credit tier)
             # or bare "high yield" (appears in risk warnings of IG funds).
             _cq_cur = fund_master_record.get("Credit_Quality")
-            if _cq_cur == "Investment Grade" and kiid_text:
+            # FIX-B6-3a (2026-07-15): Monetario funds are money-market instruments
+            # by regulatory definition — they cannot hold HY bonds. Any "inferior a
+            # investment grade" language in their KIID describes a permitted exception
+            # floor, not the primary mandate. Exclude Monetario entirely.
+            if (_cq_cur == "Investment Grade" and kiid_text
+                    and fund_master_record.get("Fund_Nature") != "Monetario"):
                 _kt_lower = kiid_text.lower()
                 # FIX-B6-2 (2026-07-15): government-bond funds can use sub-IG CDS
                 # for hedging; their KIID therefore contains "inferior a grado de
@@ -1978,10 +1983,16 @@ def run_block(
                 # description. Guard: if the fund name identifies it as a government
                 # or sovereign bond fund, skip BL-B6-HY-KIID entirely.
                 # Confirmed false positive: SISF EURO GOVERNMENT BOND (LU0106236002).
+                # FIX-B6-3b (2026-07-15): "aggregate" bond index funds (Bloomberg US
+                # Aggregate, Euro Aggregate) are IG broad-market trackers. They can
+                # hold ~3-5% HY (index composition) and their KIID may describe that
+                # HY floor — this is not a HY mandate. Guard: "aggregate" in name.
+                # Confirmed false positive: JPM US AGGREGATE (LU0679000579).
                 _fund_name_l_b6 = (fund_master_record.get("Fund_Name") or "").lower()
                 _IG_NAME_GUARDS = [
                     "government bond", "sovereign bond", "treasury bond",
                     "euro government", "staatsanleihen", "gilt",
+                    "aggregate",   # FIX-B6-3b: broad IG index trackers
                 ]
                 _is_ig_name = any(g in _fund_name_l_b6 for g in _IG_NAME_GUARDS)
                 if not _is_ig_name:
