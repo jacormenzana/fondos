@@ -44,131 +44,39 @@ from proyecto1.core.classify_utils import (
     detect_geography,
     detect_theme,
     map_theme_to_sector_focus,
-    normalize_geography_en,   # canonical ES→EN (R-1 / P#11): replaces local _GEO_ES_TO_EN
+    normalize_geography_en,       # canonical ES→EN (R-1 / P#11)
+    # SC-H vocabulary — single source of truth (R-1 / 2026-07-15):
+    BMK_CONSISTENT,
+    BMK_TOLERATED,
+    BMK_BENIGN_SOURCE_PAIRS,
+    BMK_GEO_BENIGN_PAIRS,
+    BMK_SECTOR_BENIGN_PAIRS,
+    bmk_tok_credit,
+    bmk_tok_duration,
+    bmk_tok_cap,
+    bmk_geography,
+    bmk_sector,
+    bmk_severity_nature,
 )
 
 # ── DB path ───────────────────────────────────────────────────────────────────
 DB_PATH = _REPO / "db" / "fondos.sqlite"
 
-# ── Industry expectation map ──────────────────────────────────────────────────
-# Maps Fund_Nature → (consistent_ac_set, tolerated_ac_set)
-# Everything outside consistent + tolerated = CRITICAL.
-_CONSISTENT: dict[str, frozenset] = {
-    "Renta Variable":       frozenset({"Equity"}),
-    "Renta Fija Flexible":  frozenset({"Fixed Income"}),
-    "Renta Fija Corto Plazo": frozenset({"Fixed Income", "Rate"}),
-    "Monetario":            frozenset({"Money Market", "Rate"}),
-    "Mixtos":               frozenset({"Mixed", "Equity", "Fixed Income"}),
-    "Alternativo":          frozenset({"Rate", "Commodity", "Mixed", "Fixed Income", "Equity"}),
-    "Estructurado":         frozenset({"Equity", "Fixed Income", "Mixed", "Rate",
-                                       "Commodity", "Money Market"}),
-    "Restantes":            frozenset({"Equity", "Fixed Income", "Mixed", "Rate",
-                                       "Commodity", "Money Market"}),
-}
-_TOLERATED: dict[str, frozenset] = {
-    "Renta Variable":       frozenset({"Commodity", "Mixed"}),
-    "Renta Fija Flexible":  frozenset({"Rate", "Mixed"}),
-    "Renta Fija Corto Plazo": frozenset({"Money Market", "Mixed"}),
-    "Monetario":            frozenset({"Fixed Income"}),
-    "Mixtos":               frozenset(),
-    "Alternativo":          frozenset(),
-    "Estructurado":         frozenset(),
-    "Restantes":            frozenset(),
-}
-# Pairs that are benign category-proxy divergences between two sources
-_BENIGN_SOURCE_PAIRS: frozenset[frozenset] = frozenset({
-    frozenset({"Equity",        "Mixed"}),
-    frozenset({"Fixed Income",  "Mixed"}),
-    frozenset({"Rate",          "Mixed"}),
-    frozenset({"Rate",          "Fixed Income"}),
-    frozenset({"Money Market",  "Rate"}),
-    frozenset({"Money Market",  "Fixed Income"}),
-})
-
-# ── Benchmark-name token extractors ──────────────────────────────────────────
-
-_CAP_TOKENS: list[tuple[str, str]] = [
-    ("small/mid",   "Small/Mid Cap"),
-    ("small cap",   "Small Cap"),
-    ("small",       "Small Cap"),
-    ("mid/small",   "Small/Mid Cap"),
-    ("mid cap",     "Mid Cap"),
-    ("mid-cap",     "Mid Cap"),
-    (" mid ",       "Mid Cap"),
-    ("large/mid",   "Large/Mid Cap"),
-    ("large cap",   "Large Cap"),
-    ("large-cap",   "Large Cap"),
-    (" mega",       "Large Cap"),
-]
-
-_CREDIT_TOKENS: list[tuple[str, str]] = [
-    ("high yield",      "High Yield"),
-    (" hy ",            "High Yield"),
-    (" hy$",            "High Yield"),
-    ("subordinated",    "Subordinated"),
-    ("sub financials",  "Subordinated"),
-    ("investment grade","Investment Grade"),
-    (" ig ",            "Investment Grade"),
-    ("aaa",             "AAA"),
-    ("a-bbb",           "Investment Grade"),
-    ("bbb",             "Investment Grade"),
-    ("corporate",       "Corporate"),
-    ("corp ",           "Corporate"),
-    ("corp$",           "Corporate"),
-    ("government",      "Government"),
-    ("govt",            "Government"),
-    ("treasury",        "Government"),
-    ("sovereign",       "Government"),
-    ("inflation",       "Inflation-Linked"),
-    ("tips",            "Inflation-Linked"),
-    ("convertible",     "Convertible"),
-    ("convert",         "Convertible"),
-    ("securitised",     "Securitised"),
-    ("securitized",     "Securitised"),
-    ("abs ",            "Securitised"),
-    ("mbs ",            "Securitised"),
-    ("aggregate",       "Aggregate"),
-    ("agg ",            "Aggregate"),
-    ("multiverse",      "Aggregate"),
-]
-
-_DURATION_TOKENS: list[tuple[str, str]] = [
-    ("0-1y",   "Ultra-Short"),
-    ("1-3y",   "Short"),
-    ("1-5y",   "Short"),
-    ("3-5y",   "Short"),
-    ("5-7y",   "Medium"),
-    ("7-10y",  "Long"),
-    ("10y+",   "Long"),
-    ("ultrashort", "Ultra-Short"),
-    ("ultra short","Ultra-Short"),
-    ("short dur",  "Short"),
-    ("short term", "Short"),
-    ("short-term", "Short"),
-]
-
-
-def _tok_cap(name_l: str) -> Optional[str]:
-    for kw, val in _CAP_TOKENS:
-        if kw in name_l:
-            return val
-    return None
-
-
-def _tok_credit(name_l: str) -> Optional[str]:
-    import re
-    for kw, val in _CREDIT_TOKENS:
-        pattern = kw.replace("$", "\\b")
-        if re.search(pattern, name_l):
-            return val
-    return None
-
-
-def _tok_duration(name_l: str) -> Optional[str]:
-    for kw, val in _DURATION_TOKENS:
-        if kw in name_l:
-            return val
-    return None
+# ── Local aliases → SC-H canonical vocabulary (R-1 / 2026-07-15) ─────────────
+# All benchmark-comparison constants and helpers have been promoted to
+# classify_utils.py (BMK_CONSISTENT, bmk_tok_credit, etc.) as the single source
+# of truth.  The names below are local aliases so the rest of this file can
+# keep its original identifiers without a rename sweep.
+_CONSISTENT         = BMK_CONSISTENT
+_TOLERATED          = BMK_TOLERATED
+_BENIGN_SOURCE_PAIRS = BMK_BENIGN_SOURCE_PAIRS
+_GEO_BENIGN_PAIRS   = BMK_GEO_BENIGN_PAIRS
+_SECTOR_BENIGN_PAIRS = BMK_SECTOR_BENIGN_PAIRS
+_tok_credit         = bmk_tok_credit
+_tok_duration       = bmk_tok_duration
+_tok_cap            = bmk_tok_cap
+_bmk_geography      = bmk_geography
+_bmk_sector         = bmk_sector
 
 
 def _tok_hedged(name_l: str) -> Optional[str]:
@@ -185,130 +93,22 @@ def _tok_hedged(name_l: str) -> Optional[str]:
 def _tok_currency_in_name(name_l: str) -> Optional[str]:
     """Detect base-currency token from benchmark name (not the hedged suffix)."""
     import re
-    # Remove 'hedged' suffix and trailing currency like 'GR EUR' / 'NR USD'
     cleaned = re.sub(r'\b(gr|nr|tr|net|hedged)\b', ' ', name_l)
-    cleaned = re.sub(r'\b(eur|usd|gbp|chf|jpy|sek|nok|dkk|pln|czk|huf|aud|cad|sgd)\b', ' CURR ', cleaned)
-    # crude: look for explicit currency codes that appear in the index body, not the share-class suffix
+    cleaned = re.sub(r'\b(eur|usd|gbp|chf|jpy|sek|nok|dkk|pln|czk|huf|aud|cad|sgd)\b',
+                     ' CURR ', cleaned)
     for cur in ["eur", "usd", "gbp", "chf", "jpy"]:
         if f" {cur} " in f" {name_l} ":
             return cur.upper()
     return None
 
 
-# ── Geography from benchmark_name ────────────────────────────────────────────
-
-# NOTE: ES→EN normalization is now centralised in classify_utils.normalize_geography_en()
-# (R-1 / P#11 — the previous local _GEO_ES_TO_EN dict was a duplicate and has been
-# removed).  _bmk_geography() below calls normalize_geography_en() directly.
-
-# Pairs that are BENIGN geographic generalizations (broader proxy, not a contradiction)
-# FIX-BMK-AUDIT-1 (2026-07-14): added four pairs that were generating false B2
-# conflicts — sub-regions whose Morningstar benchmark uses a broader EM or Global
-# proxy while fund_master correctly holds the specific region:
-#   Latin America + Global: LatAm funds whose benchmark is MSCI EM (normalize→Global)
-#   Eastern Europe + Global: Templeton Eastern Europe benchmarked to MSCI EM
-#   China + Asia-Pacific: Chinese funds benchmarked to Asia-Pacific index
-#   Asia-Pacific + India: India-specific funds benchmarked to Asia-Pacific
-# B3 sector pairs that are semantically equivalent or represent a legitimate
-# sub/super-set relationship — not real classification conflicts.
-_SECTOR_BENIGN_PAIRS: frozenset[frozenset] = frozenset({
-    # "Inflation-Linked" (fund_master label) == "Inflation" (benchmark token):
-    # same concept, different label normalizations.
-    frozenset({"Inflation-Linked", "Inflation"}),
-    # "Real Assets" (fund_master) ⊃ "Real Estate" (benchmark): a real-assets
-    # fund benchmarked against a real-estate index is not mis-classified.
-    frozenset({"Real Assets", "Real Estate"}),
-})
-
-_GEO_BENIGN_PAIRS: frozenset[frozenset] = frozenset({
-    frozenset({"North America", "Global"}),
-    frozenset({"Europe",        "Global"}),
-    frozenset({"Asia-Pacific",  "Global"}),
-    frozenset({"Japan",         "Global"}),
-    frozenset({"China",         "Global"}),
-    frozenset({"India",         "Global"}),
-    frozenset({"Emerging Markets", "Global"}),
-    frozenset({"Latin America", "Emerging Markets"}),
-    frozenset({"Latin America", "Global"}),           # LatAm fund benchmarked to MSCI EM proxy
-    frozenset({"China",         "Emerging Markets"}),
-    frozenset({"India",         "Emerging Markets"}),
-    frozenset({"Eastern Europe","Emerging Markets"}),
-    frozenset({"Eastern Europe","Global"}),           # Templeton EE benchmarked to MSCI EM
-    frozenset({"Middle East & Africa", "Emerging Markets"}),
-    frozenset({"Japan",         "Asia-Pacific"}),     # Japan is subset of Asia-Pacific
-    frozenset({"China",         "Asia-Pacific"}),     # China is subset of Asia-Pacific
-    frozenset({"Asia-Pacific",  "India"}),            # India-specific in Asia-Pacific proxy
-})
-
-
-def _bmk_geography(benchmark_name: Optional[str]) -> Optional[str]:
-    if not benchmark_name:
-        return None
-    name_l = benchmark_name.lower()
-    raw = detect_geography(name_l)
-    if raw is None:
-        return None
-    # Normalise to EN canonical used by fund_master.Geography.
-    # normalize_geography_en is the single source of truth (R-1); it maps
-    # "Emergentes" → "Global" (or "Middle East & Africa" for MENA names),
-    # matching exactly how fund_master.Geography is stored — more accurate
-    # than the previous local map which mapped "Emergentes"→"Emerging Markets"
-    # (a value that doesn't exist in fund_master.Geography).
-    return normalize_geography_en(raw, name_l)
-
-
-def _bmk_sector(benchmark_name: Optional[str]) -> Optional[str]:
-    """Extract sector/theme token from benchmark name using P1's THEMATIC_MAP."""
-    if not benchmark_name:
-        return None
-    name_l = benchmark_name.lower()
-    theme = detect_theme(name_l)
-    if theme:
-        return map_theme_to_sector_focus(theme) or theme
-    # Direct sector keywords not covered by THEMATIC_MAP
-    _EXTRA_SECTOR: list[tuple[str, str]] = [
-        ("financ",      "Financials"),
-        ("bank",        "Financials"),
-        ("real estate", "Real Estate"),
-        ("reit",        "Real Estate"),
-        ("infrastruc",  "Infrastructure"),
-        ("utilities",   "Utilities"),
-        ("consumer",    "Consumer"),
-        ("industri",    "Industrials"),
-        ("material",    "Materials"),
-        ("energy",      "Energy"),
-        ("telecom",     "Communication"),
-        ("communic",    "Communication"),
-        ("health",      "Healthcare"),
-        ("pharma",      "Healthcare"),
-        ("technolog",   "Technology"),
-        ("info tech",   "Technology"),
-        ("informat",    "Technology"),
-    ]
-    for kw, sec in _EXTRA_SECTOR:
-        if kw in name_l:
-            return sec
-    return None
-
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _severity_b1(fund_nature: str, ac: Optional[str], confidence: str) -> str:
-    """Return CRITICAL / WARN / INFO / BENIGN / OK for B1 check."""
-    if ac is None:
-        return "INFO"
-    consistent = _CONSISTENT.get(fund_nature, frozenset())
-    tolerated  = _TOLERATED.get(fund_nature,  frozenset())
-    if ac in consistent:
-        return "OK"
-    if ac in tolerated:
-        sev = "INFO"
-    else:
-        sev = "CRITICAL"
-    # Down-weight for low/medium confidence
-    if confidence in ("LOW", "MEDIUM") and sev == "CRITICAL":
-        sev = "WARN"
-    return sev
+    """Return CRITICAL / WARN / INFO / OK for B1 check.
+    Thin wrapper over bmk_severity_nature (classify_utils, single source of truth).
+    """
+    return bmk_severity_nature(fund_nature, ac, confidence)
 
 
 def _root_cause_b1(fund_nature: str, ac: str, source: str) -> str:

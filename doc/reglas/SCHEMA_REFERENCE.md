@@ -277,6 +277,39 @@ idx_dqissues_isin_code  ON (ISIN, check_code)  -- UNIQUE
 
 ---
 
+## TABLA 6: fund_benchmarks (v22, añadida 2026-03-28)
+
+**Propósito:** Benchmark de mercado asociado a cada fondo; señal independiente para
+el cluster de consistencia SC-H (`MODELO_SEMANTICO.md` §7 Cluster H).  
+**Clave primaria:** `(ISIN, source)`  
+**Total columnas:** 8
+
+| Columna | Tipo | Descripción |
+|---------|------|-------------|
+| ISIN | TEXT | FK → fund_master.ISIN |
+| source | TEXT | `MORNINGSTAR` o `KIID` — fuente del benchmark |
+| asset_class | TEXT | Asset class canónica del benchmark (`'Equity'`, `'Fixed Income'`, `'Rate'`, `'Mixed'`, `'Money Market'`, `'Commodity'`) |
+| benchmark_role | TEXT | `'asset_proxy'` (benchmark de rentabilidad) o `'hurdle_rate'` (referencia de superación — no implica clase de activo) |
+| benchmark_name | TEXT | Nombre completo del benchmark (p.ej. `'MSCI World Net Return EUR'`) |
+| confidence | TEXT | `HIGH` / `MEDIUM` / `LOW` — calidad de la extracción |
+| updated_at | TEXT | ISO 8601 timestamp de la última actualización |
+| notes | TEXT | Notas libres (método de extracción, variantes) |
+
+**Prioridad de fuente para SC-H:** `MORNINGSTAR` > `KIID`. El pipeline batch-carga ambas filas y
+usa la MORNINGSTAR; si no hay fila MORNINGSTAR para un ISIN, recae en KIID.
+
+**Carga inicial:** `benchmark_loader --mode load` (2026-03-28, fuente: Morningstar SAL API).  
+**Actualización incremental:** `benchmark_loader --mode update` — ejecutado en cada ciclo P1
+como Paso 0b en `P1_discoverAllFunds.bat` (solo ISINs nuevos sin fila MORNINGSTAR, rápido).  
+**Refresh periódico:** `P1_refreshBenchmarks.bat` con argumento `load` — recomendado cada 1-3
+meses para mantener los nombres de benchmark actualizados (afecta la tokenización en SC-H2/H3).
+
+**Nota de diseño:** las filas KIID se generan por el clasificador al parsear el KIID del fondo
+y son semi-redundantes (misma fuente que el clasificador); los errores que SC-H detecta
+típicamente proceden de la fila MORNINGSTAR, que es genuinamente independiente.
+
+---
+
 ## RELACIONES ENTRE TABLAS
 
 ```
@@ -284,6 +317,7 @@ fund_master (ISIN)
     ├─→ fund_kiid_metadata (ISIN, KIID_Class)
     ├─→ ingestion_log (ISIN)
     ├─→ fund_data_quality_issues (ISIN)
+    ├─→ fund_benchmarks (ISIN)          [1:N por source]
     └─→ fund_families (fund_family_id)
 
 fund_kiid_metadata

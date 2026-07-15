@@ -649,6 +649,42 @@ def run_block(
     published = []
     _cycle_start_ts = datetime.datetime.utcnow().isoformat(timespec="seconds")
 
+    # ── SC-H: batch-load fund_benchmarks once per block run ──────────────────
+    # Prefer MORNINGSTAR (independent market signal) over KIID (same source as
+    # classifier). Falls back to KIID when no Morningstar row exists.
+    # Carries: asset_class, benchmark_role, benchmark_name, confidence.
+    # A single SELECT avoids per-ISIN queries in the hot loop.
+    _bmk_by_isin: dict = {}
+    try:
+        _bmk_rows = conn.execute("""
+            SELECT ISIN, source, asset_class, benchmark_role, benchmark_name, confidence
+            FROM fund_benchmarks
+            WHERE source IN ('MORNINGSTAR','KIID')
+        """).fetchall()
+        # Two-pass: MORNINGSTAR takes priority over KIID.
+        _seen_ms: set = set()
+        for _bi in _bmk_rows:
+            _b_isin, _b_src, _b_ac, _b_role, _b_name, _b_conf = _bi
+            if _b_src == 'MORNINGSTAR':
+                _bmk_by_isin[_b_isin] = {
+                    "asset_class":    _b_ac,
+                    "benchmark_role": _b_role or "asset_proxy",
+                    "benchmark_name": _b_name,
+                    "confidence":     _b_conf or "HIGH",
+                }
+                _seen_ms.add(_b_isin)
+        for _bi in _bmk_rows:
+            _b_isin, _b_src, _b_ac, _b_role, _b_name, _b_conf = _bi
+            if _b_src == 'KIID' and _b_isin not in _seen_ms:
+                _bmk_by_isin[_b_isin] = {
+                    "asset_class":    _b_ac,
+                    "benchmark_role": _b_role or "asset_proxy",
+                    "benchmark_name": _b_name,
+                    "confidence":     _b_conf or "MEDIUM",  # KIID = semi-redundant
+                }
+    except Exception as _bmk_err:
+        print(f"[WARN] SC-H: no se pudo cargar fund_benchmarks: {_bmk_err}")
+
     for idx, isin in enumerate(isins, 1):
         _t_fund_start = time.perf_counter()
         _t_phases: dict = {}          # desglose por fase
@@ -2705,7 +2741,15 @@ def run_block(
             #     aporta la corrección faltante.
             # A3: extender _dq_issues con inconsistencias residuales (persistidas en
             #     fund_data_quality_issues vía _finalize_data_quality_issues abajo).
-            _sem_val_result = validate_all_semantic_consistency(fund_master_record)
+            # SC-H: pull benchmark scalars for this ISIN (batch-loaded above).
+            _bmk_scalars = _bmk_by_isin.get(isin, {})
+            _sem_val_result = validate_all_semantic_consistency(
+                fund_master_record,
+                ext_asset_class    = _bmk_scalars.get("asset_class"),
+                ext_role           = _bmk_scalars.get("benchmark_role"),
+                ext_benchmark_name = _bmk_scalars.get("benchmark_name"),
+                ext_confidence     = _bmk_scalars.get("confidence"),
+            )
             _sem_corrected_rec = _sem_val_result.get("corrected_record", {})
 
             # A2: merge field-by-field; omitir claves privadas (p.ej. _signal_*)

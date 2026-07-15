@@ -497,6 +497,72 @@ Implementado en INTER-20 de `validate_all_semantic_consistency`.
 
 ---
 
+## §7. Cluster H — Consistencia con benchmark de mercado
+
+Los atributos del fondo en `fund_master` deben ser coherentes con el benchmark de mercado
+asociado en `fund_benchmarks`. El cluster SC-H es **solo detección** (WARN/INFO): el validador
+no puede reclasificar, por lo que el camino de remediación es siempre
+`FORCE_REFRESH → re-clasificar` (R-2).
+
+**Fuente de datos:** tabla `fund_benchmarks` (schema v22). La fila `source='MORNINGSTAR'`
+es la señal independiente de mayor calidad; `source='KIID'` es semi-redundante (parsea el
+mismo documento que el clasificador). El pipeline prefiere MORNINGSTAR con fallback a KIID.
+
+**Vocabulario centralizado (R-1):** todos los mapas de polos de crédito, geografía y sector
+del benchmark viven en `classify_utils.py` (`BMK_CONSISTENT`, `BMK_TOLERATED`,
+`bmk_tok_credit()`, `bmk_geography()`, etc.) y son importados por el validador y por
+`audit_benchmark_consistency.py`. No duplicar.
+
+**Ponderación por confianza:** cuando `confidence='LOW'` o `'MEDIUM'`, los errores críticos
+se demoran a WARN/INFO en el DQ para evitar falsos positivos de datos de baja calidad.
+
+**Supresión de pares benignos:** `BMK_GEO_BENIGN_PAIRS` (p.ej. Japan ↔ Asia-Pacific) y el
+carve-out EM-soberano (fondos EM HY legítimos con benchmarks de gobierno EM) se suprimen para
+evitar ruido en el DQ.
+
+### §7.1 `Fund_Nature` ↔ benchmark asset class (SC-H1)
+
+**Señal:** `fund_benchmarks.asset_class` (p.ej. `'Equity'`, `'Fixed Income'`, `'Rate'`).
+
+**Regla:** la combinación `(Fund_Nature, asset_class)` debe pertenecer al conjunto
+`BMK_CONSISTENT[Fund_Nature]` (OK) o `BMK_TOLERATED[Fund_Nature]` (INFO). Cualquier otra
+combinación → WARN. `benchmark_role='hurdle_rate'` nunca dispara SC-H.
+
+Implementado en `validate_benchmark_nature` (classify_utils.py, INTER-18 ya existente).
+Antes de SC-H, el pipeline pasaba `None` → era un no-op; SC-H1 alimenta el parámetro.
+
+### §7.2 `Credit_Quality` ↔ polo de crédito del benchmark (SC-H2)
+
+**Aplicación:** solo fondos FI (`Renta Fija Flexible`, `Renta Fija Corto Plazo`, `Monetario`).
+
+**Señal:** nombre del benchmark (`fund_benchmarks.benchmark_name`), tokenizado por
+`bmk_tok_credit()` → polo canónico (`'High Yield'`, `'Investment Grade'`, `'Aggregate'`, ...).
+
+**Regla:** conflicto IG↔HY entre el polo del benchmark y `Credit_Quality` del fondo → WARN.
+
+**Carve-out EM-soberano:** un benchmark con polo `'Government'` + `'sovereign'` + token EM
+(`'em '`, `'emerg'`) no conflicta con `Credit_Quality='High Yield'` (los bonos soberanos EM
+pueden cotizar a spread HY — esta combinación es legítima).
+
+**DQ check\_code:** `SEM_BENCHMARK_CREDIT_SC_H2`. Confianza HIGH → `critical_errors`
+(nivel WARN en DQ); confianza LOW/MEDIUM → `warnings` (nivel INFO).
+
+### §7.3 `Geography` ↔ geografía del benchmark (SC-H3)
+
+**Señal:** nombre del benchmark, tokenizado por `bmk_geography()` → geografía canónica
+(`'Europe'`, `'North America'`, `'Japan'`, `'Asia-Pacific'`, `'Global'`, ...).
+
+**Regla:** si ambas geografías son no-nulas, no-`Global`, no-`Mercados Emergentes`, y no
+pertenecen a `BMK_GEO_BENIGN_PAIRS` → WARN (posible detección geográfica incorrecta en el
+clasificador).
+
+**Severidad:** siempre `warnings` (→ INFO DQ), nunca crítico — el conflicto de geografía
+puede ser legítimo (p.ej. fondo europeo con benchmark global como referencia de rentabilidad).
+
+**DQ check\_code:** `SEM_BENCHMARK_GEOGRAPHY_SC_H3`.
+
+---
+
 ## §8. Transversal: Homogeneidad lingüística (Principio #8)
 
 **Principio:** `PRINCIPIOS_DISENO.md` P#8. Esta sección documenta la tabla de asignación por columna.
@@ -583,6 +649,16 @@ obsoleto de un ciclo anterior, mientras que `None` sería preservado por COALESC
 | ID | Regla | Severidad | ¿Auto-corregible? | Regla INTER |
 |----|-------|----------|-------------------|-------------|
 | SC-G1 | `Geography` ∈ región → `Investment_Universe='Regional'`; `Geography` ∈ país → `Investment_Universe='Country'` (cuando IU='Global' e IU≠requerido) | WARN→auto | Sí — Geography tiene precedencia | INTER-20 |
+
+### Cluster H — Consistencia con benchmark de mercado
+
+Remediación de toda regla SC-H: `FORCE_REFRESH → re-clasificar` (R-2). El validador es de solo detección.
+
+| ID | Regla | Severidad | ¿Auto-corregible? | check_code |
+|----|-------|----------|-------------------|------------|
+| SC-H1 | `Fund_Nature` ↔ `benchmark.asset_class`: combinación fuera de `BMK_CONSISTENT` + `BMK_TOLERATED` → WARN | WARN | No | `SEM_BENCHMARK_NATURE` |
+| SC-H2 | `Credit_Quality` ↔ polo de crédito del benchmark: conflicto IG↔HY en fondos FI → WARN/INFO según confianza; carve-out EM-soberano | WARN (HIGH conf.) / INFO (LOW/MED) | No | `SEM_BENCHMARK_CREDIT_SC_H2` |
+| SC-H3 | `Geography` ↔ geografía del benchmark: conflicto geográfico no-benign, no-Global → INFO | INFO | No | `SEM_BENCHMARK_GEOGRAPHY_SC_H3` |
 
 ### Cluster E — Atributos de estilo / exposición
 

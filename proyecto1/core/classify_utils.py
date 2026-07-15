@@ -4418,6 +4418,265 @@ def validate_geography_universe(
 
 
 # ============================================================
+# SC-H: Benchmark semantic-consistency vocabulary  (R-1 / P#11)
+# ============================================================
+# Single source of truth for all benchmark-comparison constants and helpers,
+# shared between the in-pipeline SC-H validator rules (below, inside
+# validate_all_semantic_consistency) and the read-only audit tool
+# (audit_benchmark_consistency.py). The audit tool imports from here and
+# drops its local copies.  Promoted from audit_benchmark_consistency.py
+# 2026-07-15.
+#
+# Public names (importable by the audit tool and tests):
+#   BMK_CONSISTENT, BMK_TOLERATED, BMK_BENIGN_SOURCE_PAIRS
+#   BMK_GEO_BENIGN_PAIRS, BMK_SECTOR_BENIGN_PAIRS
+#   bmk_tok_credit(), bmk_tok_duration(), bmk_tok_cap()
+#   bmk_geography(), bmk_sector(), bmk_severity_nature()
+
+# Fund_Nature → (consistent_ac_set, tolerated_ac_set)
+# consistent = expected class → OK; tolerated = soft mismatch → INFO;
+# everything else → CRITICAL (down-weighted to WARN at LOW/MEDIUM confidence).
+BMK_CONSISTENT: dict[str, frozenset] = {
+    "Renta Variable":         frozenset({"Equity"}),
+    "Renta Fija Flexible":    frozenset({"Fixed Income"}),
+    "Renta Fija Corto Plazo": frozenset({"Fixed Income", "Rate"}),
+    "Monetario":              frozenset({"Money Market", "Rate"}),
+    "Mixtos":                 frozenset({"Mixed", "Equity", "Fixed Income"}),
+    "Alternativo":            frozenset({"Rate", "Commodity", "Mixed",
+                                         "Fixed Income", "Equity"}),
+    "Estructurado":           frozenset({"Equity", "Fixed Income", "Mixed",
+                                         "Rate", "Commodity", "Money Market"}),
+    "Restantes":              frozenset({"Equity", "Fixed Income", "Mixed",
+                                         "Rate", "Commodity", "Money Market"}),
+}
+BMK_TOLERATED: dict[str, frozenset] = {
+    "Renta Variable":         frozenset({"Commodity", "Mixed"}),
+    "Renta Fija Flexible":    frozenset({"Rate", "Mixed"}),
+    "Renta Fija Corto Plazo": frozenset({"Money Market", "Mixed"}),
+    "Monetario":              frozenset({"Fixed Income"}),
+    "Mixtos":                 frozenset(),
+    "Alternativo":            frozenset(),
+    "Estructurado":           frozenset(),
+    "Restantes":              frozenset(),
+}
+# Benign category-proxy divergences between two data sources (Exercise-A, A1).
+BMK_BENIGN_SOURCE_PAIRS: frozenset = frozenset({
+    frozenset({"Equity",       "Mixed"}),
+    frozenset({"Fixed Income", "Mixed"}),
+    frozenset({"Rate",         "Mixed"}),
+    frozenset({"Rate",         "Fixed Income"}),
+    frozenset({"Money Market", "Rate"}),
+    frozenset({"Money Market", "Fixed Income"}),
+})
+
+# ── Benchmark credit / duration / cap token tables ────────────────────────
+_BMK_CREDIT_TOKENS: list[tuple[str, str]] = [
+    ("high yield",       "High Yield"),
+    (" hy ",             "High Yield"),
+    (" hy$",             "High Yield"),
+    ("subordinated",     "Subordinated"),
+    ("sub financials",   "Subordinated"),
+    ("investment grade", "Investment Grade"),
+    (" ig ",             "Investment Grade"),
+    ("aaa",              "AAA"),
+    ("a-bbb",            "Investment Grade"),
+    ("bbb",              "Investment Grade"),
+    ("corporate",        "Corporate"),
+    ("corp ",            "Corporate"),
+    ("corp$",            "Corporate"),
+    ("government",       "Government"),
+    ("govt",             "Government"),
+    ("treasury",         "Government"),
+    ("sovereign",        "Government"),
+    (" gbi",             "Government"),   # JPM GBI = Government Bond Index
+    ("inflation",        "Inflation-Linked"),
+    ("tips",             "Inflation-Linked"),
+    ("convertible",      "Convertible"),
+    ("convert",          "Convertible"),
+    ("securitised",      "Securitised"),
+    ("securitized",      "Securitised"),
+    ("abs ",             "Securitised"),
+    ("mbs ",             "Securitised"),
+    ("aggregate",        "Aggregate"),
+    ("agg ",             "Aggregate"),
+    ("multiverse",       "Aggregate"),
+]
+
+_BMK_DURATION_TOKENS: list[tuple[str, str]] = [
+    ("0-1y",        "Ultra-Short"),
+    ("1-3y",        "Short"),
+    ("1-5y",        "Short"),
+    ("3-5y",        "Short"),
+    ("5-7y",        "Medium"),
+    ("7-10y",       "Long"),
+    ("10y+",        "Long"),
+    ("ultrashort",  "Ultra-Short"),
+    ("ultra short", "Ultra-Short"),
+    ("short dur",   "Short"),
+    ("short term",  "Short"),
+    ("short-term",  "Short"),
+]
+
+_BMK_CAP_TOKENS: list[tuple[str, str]] = [
+    ("small/mid",  "Small/Mid Cap"),
+    ("small cap",  "Small Cap"),
+    ("small",      "Small Cap"),
+    ("mid/small",  "Small/Mid Cap"),
+    ("mid cap",    "Mid Cap"),
+    ("mid-cap",    "Mid Cap"),
+    (" mid ",      "Mid Cap"),
+    ("large/mid",  "Large/Mid Cap"),
+    ("large cap",  "Large Cap"),
+    ("large-cap",  "Large Cap"),
+    (" mega",      "Large Cap"),
+]
+
+# ── Benign-pair suppression sets (noise reduction) ────────────────────────
+# Benign geographic generalizations: sub-region benchmarked to a broader proxy.
+# (FIX-BMK-AUDIT-1 2026-07-14: LatAm/EastEurope/China/India pairs added.)
+BMK_GEO_BENIGN_PAIRS: frozenset = frozenset({
+    frozenset({"North America",        "Global"}),
+    frozenset({"Europe",               "Global"}),
+    frozenset({"Asia-Pacific",         "Global"}),
+    frozenset({"Japan",                "Global"}),
+    frozenset({"China",                "Global"}),
+    frozenset({"India",                "Global"}),
+    frozenset({"Emerging Markets",     "Global"}),
+    frozenset({"Latin America",        "Emerging Markets"}),
+    frozenset({"Latin America",        "Global"}),
+    frozenset({"China",                "Emerging Markets"}),
+    frozenset({"India",                "Emerging Markets"}),
+    frozenset({"Eastern Europe",       "Emerging Markets"}),
+    frozenset({"Eastern Europe",       "Global"}),
+    frozenset({"Middle East & Africa", "Emerging Markets"}),
+    frozenset({"Japan",                "Asia-Pacific"}),
+    frozenset({"China",                "Asia-Pacific"}),
+    frozenset({"Asia-Pacific",         "India"}),
+})
+
+# Sector pairs that are semantically equivalent or sub/super-set relationships.
+BMK_SECTOR_BENIGN_PAIRS: frozenset = frozenset({
+    frozenset({"Inflation-Linked", "Inflation"}),
+    frozenset({"Real Assets",      "Real Estate"}),
+})
+
+# Extra sector keywords not covered by THEMATIC_MAP (used by bmk_sector).
+_BMK_EXTRA_SECTOR: list[tuple[str, str]] = [
+    ("financ",       "Financials"),
+    ("bank",         "Financials"),
+    ("real estate",  "Real Estate"),
+    ("reit",         "Real Estate"),
+    ("infrastruc",   "Infrastructure"),
+    ("utilities",    "Utilities"),
+    ("consumer",     "Consumer"),
+    ("industri",     "Industrials"),
+    ("material",     "Materials"),
+    ("energy",       "Energy"),
+    ("telecom",      "Communication"),
+    ("communic",     "Communication"),
+    ("health",       "Healthcare"),
+    ("pharma",       "Healthcare"),
+    ("technolog",    "Technology"),
+    ("info tech",    "Technology"),
+    ("informat",     "Technology"),
+]
+
+
+def bmk_tok_credit(name_l: str) -> Optional[str]:
+    """Extract credit-quality pole from lowercased benchmark name.
+    Returns a canonical label: 'High Yield' | 'Investment Grade' | 'Corporate' |
+    'Government' | 'Inflation-Linked' | 'Aggregate' | etc., or None.
+    Single source of truth (R-1): used by SC-H2 and audit_benchmark_consistency.
+    """
+    import re
+    for kw, val in _BMK_CREDIT_TOKENS:
+        pattern = kw.replace("$", "\\b")
+        if re.search(pattern, name_l):
+            return val
+    return None
+
+
+def bmk_tok_duration(name_l: str) -> Optional[str]:
+    """Extract duration bucket from lowercased benchmark name.
+    Returns 'Ultra-Short' | 'Short' | 'Medium' | 'Long' or None.
+    Single source of truth (R-1): used by the audit tool.
+    """
+    for kw, val in _BMK_DURATION_TOKENS:
+        if kw in name_l:
+            return val
+    return None
+
+
+def bmk_tok_cap(name_l: str) -> Optional[str]:
+    """Extract market-cap tier from lowercased benchmark name, or None."""
+    for kw, val in _BMK_CAP_TOKENS:
+        if kw in name_l:
+            return val
+    return None
+
+
+def bmk_geography(benchmark_name: Optional[str]) -> Optional[str]:
+    """Extract EN-canonical geography from a benchmark display name.
+
+    Uses the canonical P1 geography detector + ES→EN normalizer so the result
+    is directly comparable to fund_master.Geography values.
+    Single source of truth (R-1): used by SC-H3 and audit_benchmark_consistency.
+    """
+    if not benchmark_name:
+        return None
+    name_l = benchmark_name.lower()
+    raw = detect_geography(name_l)
+    if raw is None:
+        return None
+    return _derive_geography_en(raw, name_l)
+
+
+def bmk_sector(benchmark_name: Optional[str]) -> Optional[str]:
+    """Extract sector/theme label from a benchmark display name.
+    Delegates to THEMATIC_MAP (single source of truth per P#11) then falls
+    back to _BMK_EXTRA_SECTOR for categories not covered there.
+    Used by audit_benchmark_consistency (B3 check).
+    """
+    if not benchmark_name:
+        return None
+    name_l = benchmark_name.lower()
+    theme = detect_theme(name_l)
+    if theme:
+        return map_theme_to_sector_focus(theme) or theme
+    for kw, sec in _BMK_EXTRA_SECTOR:
+        if kw in name_l:
+            return sec
+    return None
+
+
+def bmk_severity_nature(
+    fund_nature: str,
+    ac: Optional[str],
+    confidence: str,
+) -> str:
+    """Return CRITICAL / WARN / INFO / OK severity for a BMK_CONSISTENT check.
+
+    CRITICAL → asset_class is outside both consistent and tolerated sets.
+    INFO     → asset_class is in the tolerated set (soft mismatch).
+    WARN     → CRITICAL down-weighted because confidence is LOW or MEDIUM.
+    OK       → asset_class is in the consistent set.
+
+    Single source of truth (R-1): used by SC-H1 (validate_all_semantic_consistency)
+    and read-only by audit_benchmark_consistency._severity_b1 / Exercise-B1.
+    """
+    if ac is None:
+        return "INFO"
+    consistent = BMK_CONSISTENT.get(fund_nature, frozenset())
+    tolerated  = BMK_TOLERATED.get(fund_nature,  frozenset())
+    if ac in consistent:
+        return "OK"
+    sev = "INFO" if ac in tolerated else "CRITICAL"
+    if confidence in ("LOW", "MEDIUM") and sev == "CRITICAL":
+        sev = "WARN"
+    return sev
+
+
+# ============================================================
 # 18. INTER-18: Benchmark-Composition ↔ Fund_Nature (WARNING)
 # ============================================================
 # Phase 3 (BL-BENCH-NATURE). Reconciliación CORROBORATIVA contra una fuente
@@ -4500,6 +4759,8 @@ def validate_all_semantic_consistency(
     fund_record: dict,
     ext_asset_class: Optional[str] = None,
     ext_role: Optional[str] = None,
+    ext_benchmark_name: Optional[str] = None,   # SC-H2/H3: benchmark display name
+    ext_confidence: Optional[str] = None,        # SC-H: HIGH / MEDIUM / LOW
 ) -> dict:
     """Valida TODAS las reglas de consistencia semántica.
 
@@ -4758,6 +5019,84 @@ def validate_all_semantic_consistency(
     )
     if status == "WARNING":
         warnings.append({"rule": "Benchmark-Nature", "message": msg})
+
+    # ----------------------------------------------------------------
+    # SC-H2 (2026-07-15): Credit_Quality ↔ benchmark credit pole (WARN/INFO)
+    # Fires only for FI natures where Credit_Quality is semantically meaningful
+    # and the benchmark name signals a clear credit pole.
+    # HIGH confidence benchmark + clear IG↔HY opposition → critical_error (→ WARN DQ).
+    # LOW/MEDIUM confidence → warning (→ INFO DQ).
+    # Never auto-corrects Credit_Quality; triggers the FORCE_REFRESH remediation
+    # path in the next cycle.
+    # EM-sovereign suppression: a "Government" token on an EM sovereign fund
+    # that is correctly classified HY is not a contradiction (FIX-B6-AUDIT).
+    # ----------------------------------------------------------------
+    _ext_bmk_l = ext_benchmark_name.lower() if ext_benchmark_name else None
+    if _ext_bmk_l and ext_role != "hurdle_rate":
+        _bmk_credit = bmk_tok_credit(_ext_bmk_l)
+        _fm_credit  = cr.get("Credit_Quality")
+        _is_fi_h2   = cr.get("Fund_Nature") in (
+            "Renta Fija Flexible", "Renta Fija Corto Plazo", "Monetario"
+        )
+        if _is_fi_h2 and _bmk_credit and _fm_credit:
+            _IG_LABELS_H2 = {"Investment Grade", "High Grade", "IG"}
+            _HY_LABELS_H2 = {"High Yield", "Speculative", "HY"}
+            _bmk_is_hy_h2 = _bmk_credit == "High Yield"
+            _bmk_is_ig_h2 = _bmk_credit in (
+                "Investment Grade", "Corporate", "Aggregate",
+                "AAA", "Government", "Inflation-Linked", "Securitised"
+            )
+            _fm_is_hy_h2  = _fm_credit in _HY_LABELS_H2
+            _fm_is_ig_h2  = _fm_credit in _IG_LABELS_H2
+            _h2_conflict  = (_bmk_is_hy_h2 and _fm_is_ig_h2) or (
+                             _bmk_is_ig_h2 and _fm_is_hy_h2)
+            if _h2_conflict:
+                # Suppress EM-sovereign false positive (FIX-B6-AUDIT).
+                _is_em_sov_h2 = (
+                    _bmk_credit == "Government"
+                    and "sovereign" in _ext_bmk_l
+                    and any(em in _ext_bmk_l for em in ("em ", "emerg", "mercados em"))
+                )
+                if not _is_em_sov_h2:
+                    _h2_msg = (
+                        f"SC-H2: Credit_Quality='{_fm_credit}' contradicts "
+                        f"benchmark credit pole '{_bmk_credit}' "
+                        f"(benchmark: '{ext_benchmark_name}'). "
+                        f"Remediation: FORCE_REFRESH then re-classify."
+                    )
+                    if ext_confidence in ("LOW", "MEDIUM"):
+                        warnings.append({"rule": "Benchmark-Credit-SC-H2",
+                                         "message": _h2_msg})
+                    else:
+                        critical_errors.append({"rule": "Benchmark-Credit-SC-H2",
+                                                "message": _h2_msg})
+
+    # ----------------------------------------------------------------
+    # SC-H3 (2026-07-15): Geography ↔ benchmark geography (INFO/WARN)
+    # Fires when both fund_master.Geography and the benchmark-derived geography
+    # are known, non-global, and conflict outside the benign-pair list.
+    # Always emits into warnings (INFO DQ level) — geography conflicts are
+    # common from Morningstar using a broader regional proxy for sub-regional
+    # funds; benign pairs suppress the most frequent false positives.
+    # ----------------------------------------------------------------
+    if _ext_bmk_l and ext_role != "hurdle_rate":
+        _bmk_geo_h3 = bmk_geography(ext_benchmark_name)
+        _fm_geo_h3  = cr.get("Geography")
+        _GEO_GLOBAL_SENTINELS = {"Global", "Mercados Emergentes", "Global EM", None}
+        if (_bmk_geo_h3 and _fm_geo_h3
+                and _fm_geo_h3 not in _GEO_GLOBAL_SENTINELS
+                and _bmk_geo_h3 not in _GEO_GLOBAL_SENTINELS
+                and _fm_geo_h3 != _bmk_geo_h3
+                and frozenset({_fm_geo_h3, _bmk_geo_h3}) not in BMK_GEO_BENIGN_PAIRS):
+            warnings.append({
+                "rule": "Benchmark-Geography-SC-H3",
+                "message": (
+                    f"SC-H3: Geography='{_fm_geo_h3}' conflicts with benchmark "
+                    f"geography '{_bmk_geo_h3}' "
+                    f"(benchmark: '{ext_benchmark_name}'). "
+                    f"Review: possible mis-detected geography."
+                ),
+            })
 
     # ----------------------------------------------------------------
     # INTER-14 (2026-07-11): Market_Cap_Focus solo aplica a Renta Variable.

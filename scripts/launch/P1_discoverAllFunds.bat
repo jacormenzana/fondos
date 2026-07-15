@@ -41,6 +41,16 @@ echo. >> "%LOG%"
 echo --- PASO 0: mark_stale ------------------------------------ >> "%LOG%"
 python -X utf8 "%ROOT%\scripts\launch\mark_stale.py" --db "%DB%" --max-age 180 --max-funds 50 >> "%LOG%" 2>&1
 
+:: -- PASO 0b: Actualizar benchmarks Morningstar (solo ISINs nuevos/sin fila) --
+:: benchmark_loader --mode update: ~1 min max; solo toca ISINs sin fila MORNINGSTAR.
+:: Garantiza que SC-H disponga de señal independiente para los fondos recién incorporados.
+echo [%time%] Paso 0b: benchmark_loader --mode update (solo ISINs nuevos)
+echo. >> "%LOG%"
+echo --- PASO 0b: benchmark_loader update --------------------- >> "%LOG%"
+pushd %ROOT%
+python -X utf8 -m proyecto1.src.loaders.benchmark_loader --mode update --quiet >> "%LOG%" 2>&1
+popd
+
 :: -- Bloques de clasificacion -------------------------------------------------
 echo [%time%] Bloque: monetarios
 echo. >> "%LOG%"
