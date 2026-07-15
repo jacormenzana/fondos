@@ -54,7 +54,11 @@ def get_universe_isins(df_master) -> List[str]:
         # KIID-text audit, previously claimed by RV only via the generic
         # "global" name-pattern collision. "high yiel" (no "d") matches
         # truncated naming ("AB GLOBAL HIGH YIEL.PORTF.C2 H").
-        "high yield", "high yiel",
+        # FIX-B6-2 (2026-07-15): ".h.y." and "high yie." are Morningstar OCR
+        # artifacts for "High Yield" with dot separators in abbreviated names
+        # (e.g. "JPM GLOB.H.Y.BOND FUND", "AXA WF US HIGH YIE.BOND.").
+        # These do not match "high yiel" because the dot replaces the 'l'.
+        "high yield", "high yiel", ".h.y.", "high yie.",
         # BL-RFF-IN4 (2026-07-04): paired with mixtos's BL-MX-EX1. These
         # fund-family fragments were confirmed genuine bond funds via KIID
         # text this session but don't match any include pattern above by

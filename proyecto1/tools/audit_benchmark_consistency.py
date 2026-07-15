@@ -209,6 +209,17 @@ def _tok_currency_in_name(name_l: str) -> Optional[str]:
 #   Eastern Europe + Global: Templeton Eastern Europe benchmarked to MSCI EM
 #   China + Asia-Pacific: Chinese funds benchmarked to Asia-Pacific index
 #   Asia-Pacific + India: India-specific funds benchmarked to Asia-Pacific
+# B3 sector pairs that are semantically equivalent or represent a legitimate
+# sub/super-set relationship — not real classification conflicts.
+_SECTOR_BENIGN_PAIRS: frozenset[frozenset] = frozenset({
+    # "Inflation-Linked" (fund_master label) == "Inflation" (benchmark token):
+    # same concept, different label normalizations.
+    frozenset({"Inflation-Linked", "Inflation"}),
+    # "Real Assets" (fund_master) ⊃ "Real Estate" (benchmark): a real-assets
+    # fund benchmarked against a real-estate index is not mis-classified.
+    frozenset({"Real Assets", "Real Estate"}),
+})
+
 _GEO_BENIGN_PAIRS: frozenset[frozenset] = frozenset({
     frozenset({"North America", "Global"}),
     frozenset({"Europe",        "Global"}),
@@ -575,7 +586,10 @@ def run_audit(db_path: Path = DB_PATH) -> dict:
         if bmk_sec:
             if fm_sec and fm_sec != bmk_sec:
                 # Check if they are semantically equivalent (e.g. "Healthcare" / "Health Care")
-                if fm_sec.lower().replace(" ","") != bmk_sec.lower().replace(" ",""):
+                # or a known benign sub/super-set pair (e.g. "Inflation-Linked" / "Inflation").
+                _sec_pair = frozenset({fm_sec, bmk_sec})
+                if (fm_sec.lower().replace(" ","") != bmk_sec.lower().replace(" ","")
+                        and _sec_pair not in _SECTOR_BENIGN_PAIRS):
                     b3_sector.append({
                         "ISIN": isin, "Fund_Name": fund_name, "Fund_Nature": nature,
                         "fm_sector": fm_sec, "bmk_sector": bmk_sec, "bmk_name": p_name,
@@ -665,11 +679,21 @@ def run_audit(db_path: Path = DB_PATH) -> dict:
                         "hypothesis": _root_cause_credit(fm_credit, bmk_credit, p_name),
                     })
                 elif bmk_is_ig and fm_is_hy:
-                    b6_credit.append({
-                        "ISIN": isin, "Fund_Name": fund_name, "Fund_Nature": nature,
-                        "fm_credit": fm_credit, "bmk_credit": bmk_credit, "bmk_name": p_name,
-                        "hypothesis": _root_cause_credit(fm_credit, bmk_credit, p_name),
-                    })
+                    # FIX-B6-AUDIT (2026-07-15): EM Sovereign bond funds are correctly
+                    # classified as "High Yield" credit quality (many EM governments are
+                    # sub-investment grade). The benchmark token "Government" does not
+                    # imply Investment Grade for emerging-market sovereign debt.
+                    # Suppress: benchmark contains "sovereign" + EM indicator.
+                    _p_l = p_name.lower() if p_name else ""
+                    _is_em_sov = (bmk_credit == "Government"
+                                  and "sovereign" in _p_l
+                                  and any(em in _p_l for em in ("em ", "emerg", "mercados em")))
+                    if not _is_em_sov:
+                        b6_credit.append({
+                            "ISIN": isin, "Fund_Name": fund_name, "Fund_Nature": nature,
+                            "fm_credit": fm_credit, "bmk_credit": bmk_credit, "bmk_name": p_name,
+                            "hypothesis": _root_cause_credit(fm_credit, bmk_credit, p_name),
+                        })
 
             if bmk_duration and fm_dur:
                 SHORT_DUR = {"Ultra-Short", "Short"}

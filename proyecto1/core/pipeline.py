@@ -1927,36 +1927,51 @@ def run_block(
             # without using "High Yield" / "HY" / "h.y." in their name (e.g.
             # UBS Floating Rate Income — "calificaciones de menor calidad").
             # Only fires when: (a) current CQ is IG, (b) KIID text is available,
-            # (c) an unambiguous sub-IG / HY phrase appears in the full text.
+            # (c) an unambiguous sub-IG / HY phrase appears in the full text,
+            # (d) fund name does not identify it as an IG-primary mandate
+            # (government/sovereign/treasury bonds — FIX-B6-2, 2026-07-15).
             # Deliberately conservative — does NOT include "alto rendimiento"
             # (too generic; often describes performance target, not credit tier)
             # or bare "high yield" (appears in risk warnings of IG funds).
-            # Confirmed false-positive-safe: corpus check on all non-HY
-            # RF funds shows none contain "calificaciones de menor calidad" or
-            # "inferior a grado de inversión" as positive mandate descriptors.
             _cq_cur = fund_master_record.get("Credit_Quality")
             if _cq_cur == "Investment Grade" and kiid_text:
                 _kt_lower = kiid_text.lower()
-                _hy_kiid_signals = [
-                    "calificaciones de menor calidad",   # UBS Floating Rate Income
-                    "inferior a grado de inversión",     # explicit sub-IG declaration
-                    "inferiores a grado de inversión",   # plural variant
-                    "sub-investment grade",              # EN sub-IG (PRIIPs KIDs)
-                    "calificación inferior a grado de inversión",
+                # FIX-B6-2 (2026-07-15): government-bond funds can use sub-IG CDS
+                # for hedging; their KIID therefore contains "inferior a grado de
+                # inversión" in the derivatives section, which is not a mandate
+                # description. Guard: if the fund name identifies it as a government
+                # or sovereign bond fund, skip BL-B6-HY-KIID entirely.
+                # Confirmed false positive: SISF EURO GOVERNMENT BOND (LU0106236002).
+                _fund_name_l_b6 = (fund_master_record.get("Fund_Name") or "").lower()
+                _IG_NAME_GUARDS = [
+                    "government bond", "sovereign bond", "treasury bond",
+                    "euro government", "staatsanleihen", "gilt",
                 ]
-                if any(k in _kt_lower for k in _hy_kiid_signals):
-                    fund_master_record["Credit_Quality"] = "High Yield"
-                    # FIX-B6-HY-LOGGER (2026-07-14): pipeline.py has no `logger`
-                    # object (it logs via print + _dq_issues tuples). The previous
-                    # `logger.info(...)` call here was a NameError that crashed the
-                    # per-ISIN loop on every fund reaching this branch, silently
-                    # aborting their persist. Use _dq_issues so the override is
-                    # visible in fund_data_quality_issues.
-                    _dq_issues.append((
-                        "BL_B6_HY_KIID", "INFERRED", "INFO",
-                        f"[{isin}] BL-B6-HY-KIID: Credit_Quality IG→HY "
-                        "(sub-IG mandate in KIID text)",
-                    ))
+                _is_ig_name = any(g in _fund_name_l_b6 for g in _IG_NAME_GUARDS)
+                if not _is_ig_name:
+                    _hy_kiid_signals = [
+                        "calificaciones de menor calidad",   # UBS Floating Rate Income
+                        "inferior a grado de inversión",     # explicit sub-IG declaration
+                        "inferiores a grado de inversión",   # plural variant
+                        "sub-investment grade",              # EN sub-IG (PRIIPs KIDs)
+                        "calificación inferior a grado de inversión",
+                        # FIX-B6-2 (2026-07-15): EN/mixed PRIIPs KIDs mix Spanish
+                        # "inferior a" with English "investment grade" term.
+                        "inferior a investment grade",
+                    ]
+                    if any(k in _kt_lower for k in _hy_kiid_signals):
+                        fund_master_record["Credit_Quality"] = "High Yield"
+                        # FIX-B6-HY-LOGGER (2026-07-14): pipeline.py has no `logger`
+                        # object (it logs via print + _dq_issues tuples). The previous
+                        # `logger.info(...)` call here was a NameError that crashed the
+                        # per-ISIN loop on every fund reaching this branch, silently
+                        # aborting their persist. Use _dq_issues so the override is
+                        # visible in fund_data_quality_issues.
+                        _dq_issues.append((
+                            "BL_B6_HY_KIID", "INFERRED", "INFO",
+                            f"[{isin}] BL-B6-HY-KIID: Credit_Quality IG→HY "
+                            "(sub-IG mandate in KIID text)",
+                        ))
 
             # ── Defaults semánticos P14-ext (v24) ──────────────────────────
             # Principio: NULL puede significar "no detectado" o "no aplica
