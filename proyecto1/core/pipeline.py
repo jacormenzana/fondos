@@ -2006,7 +2006,44 @@ def run_block(
                         # "inferior a" with English "investment grade" term.
                         "inferior a investment grade",
                     ]
-                    if any(k in _kt_lower for k in _hy_kiid_signals):
+                    # FIX-B6-4 (2026-07-16): IG-primary / allowance context guard (R-6).
+                    # Some IG-primary funds (e.g. SISF Euro Short Term, JPM US Sh Duration)
+                    # describe a *limited* sub-IG allowance in their KIID using the same
+                    # phrases that genuinely identify HY mandates. The name-only guards
+                    # (FIX-B6-2/3) don't catch them. Add a generic context check (no fund
+                    # names — P#5): when a sub-IG signal matches, inspect a bounded window
+                    # (~±180 chars) around the match; if it contains an IG-majority/allowance
+                    # qualifier the fund is IG-primary and the override is suppressed.
+                    # Conservative: genuine HY funds state sub-IG as the primary mandate
+                    # without majority-qualifier qualifications.
+                    _IG_PRIMARY_QUALIFIERS = re.compile(
+                        r"al\s+menos\s+(?:dos\s+tercios|el\s+\d+\s*%|\d+\s*%)?"
+                        r"|como\s+m[ií]nimo\s+(?:el\s+)?\d+\s*%"
+                        r"|(?:el\s+)?\d{2,3}\s*%\s+de\s+(?:los\s+)?t[íi]tulos?\s+con\s+calificaci[oó]n\s+investment\s+grade"
+                        r"|principalmente\s+en\s+t[íi]tulos?\s+de\s+deuda\s+con\s+calificaci[oó]n\s+investment\s+grade"
+                        r"|de\s+manera\s+limitada"
+                        r"|de\s+forma\s+limitada"
+                        r"|hasta\s+un\s+\d+\s*%[^.]{0,30}(?:inferior|sub.investment|menor\s+calidad)"
+                        r"|podr[aá]\s+invertir(?:[^.]{0,60}de\s+manera\s+limitada)"
+                        r"|mayoritariamente\s+en\s+.{0,60}grado\s+de\s+inversi[oó]n",
+                        re.I,
+                    )
+
+                    def _is_ig_allowance_context(kt: str, signal: str) -> bool:
+                        """Return True if 'signal' in 'kt' appears inside an IG-majority/allowance clause."""
+                        pos = kt.find(signal)
+                        if pos == -1:
+                            return False
+                        # Look back 400 chars (covers long IG-mandate sentences where
+                        # the qualifier precedes the sub-IG allowance clause by ~300+ chars,
+                        # as in "al menos dos tercios … grado de inversión … inferior a").
+                        window = kt[max(0, pos - 400): pos + len(signal) + 200]
+                        return bool(_IG_PRIMARY_QUALIFIERS.search(window))
+
+                    _matched_signal = next(
+                        (k for k in _hy_kiid_signals if k in _kt_lower), None
+                    )
+                    if _matched_signal and not _is_ig_allowance_context(_kt_lower, _matched_signal):
                         fund_master_record["Credit_Quality"] = "High Yield"
                         # FIX-B6-HY-LOGGER (2026-07-14): pipeline.py has no `logger`
                         # object (it logs via print + _dq_issues tuples). The previous

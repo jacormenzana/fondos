@@ -3594,6 +3594,14 @@ _ACCUM_PATTERNS_ES = [
     r"acumulaci[oó]n.{0,30}no\s+distribuye",
     r"no\s+reparte\s+dividendos",
     r"no\s+distribuye\s+(?:dividendos|rentas|ingresos)",
+    # FIX-ACCDIST-1 (2026-07-16): future/plural negation forms were missing.
+    # "Esta Clase de Acciones no distribuirá dividendos" was being mis-read as
+    # DISTRIBUTION because the DIST pattern matched 'distribuirá' inside that clause
+    # (DIST has no negation guard). Broadening ACCUM to cover all negated present/
+    # future forms of distribu*/repart*/pag* before DIST is evaluated fixes this.
+    # Both direct negation ("no distribuirá") and reflexive ("no se distribuirán").
+    r"no\s+(?:distribuir[aá]n?|repartir[aá]n?|pagar[aá]n?)\s+(?:dividendos?|rentas?|ingresos?)",
+    r"no\s+se\s+(?:distribuir[aá]n?|repartir[aá]n?|pagar[aá]n?)\s+(?:dividendos?|rentas?|ingresos?)",
     # v20 — patrones validados en 786 NULL (precisión >=97%):
     # "(clase|acciones|participaciones|subfondo) de acumulación"
     r"(?:clase|clases|acciones|participaciones?|subfondo)\s+de\s+acumulaci[oó]n",
@@ -3625,7 +3633,9 @@ _DIST_PATTERNS_ES = [
     r"(?:distribuy|reparte|paga)[aeiou]*[nr]?[ \t]+(?:los[ \t]+)?dividendos[ \t]+"
     r"(?:anual|trimestral|mensual|semestral|peri[oó]dic)",
     # "se distribuirán/pagarán/repartirán ingresos/rentas/dividendos"
-    r"(?:se[ \t]+)?(?:distribuir[aá]n?|pagar[aá]n?|repartir[aá]n?)[ \t]+"
+    # FIX-ACCDIST-1 defense-in-depth: negative lookbehind for "no " so that
+    # "no distribuirá dividendos" cannot match this DIST pattern.
+    r"(?:se[ \t]+)?(?<!no\s)(?:distribuir[aá]n?|pagar[aá]n?|repartir[aá]n?)[ \t]+"
     r"(?:los[ \t]+)?(?:ingresos|rentas|dividendos)",
 ]
 
@@ -4196,6 +4206,24 @@ _DIST_FREQ_PATTERNS = [
                 r"(?:income\s+)?(monthly|quarterly|semi.?annual(?:ly)?|annual(?:ly)?)", re.I),
      {"monthly":"MONTHLY","quarterly":"QUARTERLY","semi-annually":"BIANNUAL","semiannually":"BIANNUAL",
       "semi-annual":"BIANNUAL","annually":"ANNUAL","annual":"ANNUAL"}),
+    # FIX-ACCDIST-2 (2026-07-16): ES phrases present in ~86 flagged DISTRIBUTION funds
+    # whose frequency was known in the KIID but not matched by existing patterns.
+    # Pattern A: "mensualmente/trimestralmente/semestralmente/anualmente se pagarán/
+    #   distribuirán/repartirán … dividendos/rentas/ingresos"
+    #   e.g. "mensualmente se pagarán ingresos por dividendo" (LU0172420597 / Franklin)
+    # Kept bounded with distribution-context suffix (R-6) to avoid "actualizados mensualmente".
+    (re.compile(
+        r"(mensual|trimestral|semestral|anual)mente\s+se\s+"
+        r"(?:pagar[aá]n?|distribuir[aá]n?|repartir[aá]n?)"
+        r"[^.]{0,60}(?:dividendos?|rentas?|ingresos?)",
+        re.I | re.DOTALL,
+    ), {"mensual": "MONTHLY", "trimestral": "QUARTERLY", "semestral": "BIANNUAL", "anual": "ANNUAL"}),
+    # Pattern B: "distribuye un dividendo mensual/trimestral/semestral/anual"
+    #   e.g. "distribuye un dividendo anual en Septiembre" (LU1839125181)
+    (re.compile(
+        r"distribuye\s+(?:un\s+)?dividendo\s+(mensual|trimestral|semestral|anual)",
+        re.I,
+    ), {"mensual": "MONTHLY", "trimestral": "QUARTERLY", "semestral": "BIANNUAL", "anual": "ANNUAL"}),
 ]
 
 # "12 distributions per year" -> MONTHLY, etc.
@@ -4264,18 +4292,6 @@ def _detect_distribution_frequency(
                 return freq
 
     return _name_signal_dist_freq(fund_name)
-    if accumulation_policy == "ACCUMULATION":
-        return None
-
-    for pattern, freq_map in _DIST_FREQ_PATTERNS:
-        m = pattern.search(text) or pattern.search(text.lower())
-        if m:
-            keyword = m.group(1).lower().rstrip(".")
-            freq = freq_map.get(keyword)
-            if freq:
-                return freq
-
-    return None
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -4185,8 +4185,14 @@ def validate_accumulation_distribution(
             "(coherencia con ACCUMULATION)"
         )
     if acc_policy == "DISTRIBUTION" and dist_freq is None:
+        # FIX-ACCDIST-3 (2026-07-16): distribution frequency lives in the full prospectus,
+        # not the 2-page KID. A DISTRIBUTION fund with NULL Distribution_Frequency simply
+        # means "not stated in the KID" — not an unresolved inconsistency. Per P#10
+        # (NULL = "not discovered") downgrade from WARN to INFO by dropping the "WARNING:"
+        # prefix; validate_all_semantic_consistency routes "WARNING:"-prefixed messages to
+        # critical_errors (→ DQ WARN) and all others to warnings (→ DQ INFO).
         return acc_policy, dist_freq, (
-            "WARNING: DISTRIBUTION sin Distribution_Frequency poblado"
+            "DISTRIBUTION sin Distribution_Frequency (frecuencia no consta en KID)"
         )
     # BL-32: Distribution_Frequency presente implica política distribución
     if acc_policy is None and dist_freq is not None:
