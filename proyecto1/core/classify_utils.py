@@ -4807,9 +4807,12 @@ def validate_all_semantic_consistency(
     )
     if msg:
         if msg.startswith("WARNING"):
-            warnings.append({"rule": "Accumulation-Distribution", "message": msg})
-        else:
+            # FIX-SEM-WARN-INFO (2026-07-15): "DISTRIBUTION sin Distribution_Frequency"
+            # is an unresolved inconsistency → WARN (critical_errors bucket).
             critical_errors.append({"rule": "Accumulation-Distribution", "message": msg})
+        else:
+            # Successful auto-correction ("Eliminado..."/"Inferido...") → INFO.
+            warnings.append({"rule": "Accumulation-Distribution", "message": msg})
             cr["Accumulation_Policy"] = val_ap
             cr["Distribution_Frequency"] = val_df
 
@@ -5373,7 +5376,8 @@ def validate_all_semantic_consistency(
     if _geo_20 is not None and _iu_20 == "Global":
         if _geo_20 in _REGION_GEOGRAPHIES:
             cr["Investment_Universe"] = "Regional"
-            critical_errors.append({
+            # FIX-SEM-WARN-INFO (2026-07-15): successful auto-correction → INFO.
+            warnings.append({
                 "rule": "Geography-Universe-SC-G1",
                 "message": (
                     f"Investment_Universe corregido 'Global'→'Regional' "
@@ -5383,7 +5387,8 @@ def validate_all_semantic_consistency(
             })
         elif _geo_20 in _COUNTRY_GEOGRAPHIES:
             cr["Investment_Universe"] = "Country"
-            critical_errors.append({
+            # FIX-SEM-WARN-INFO (2026-07-15): successful auto-correction → INFO.
+            warnings.append({
                 "rule": "Geography-Universe-SC-G1",
                 "message": (
                     f"Investment_Universe corregido 'Global'→'Country' "
@@ -5405,7 +5410,8 @@ def validate_all_semantic_consistency(
     )
     if status == "CORRECTED":
         cr["Investment_Universe"] = corrected_univ
-        critical_errors.append({"rule": "Geography-Universe", "message": msg})
+        # FIX-SEM-WARN-INFO (2026-07-15): auto-correction → INFO.
+        warnings.append({"rule": "Geography-Universe", "message": msg})
     elif status == "WARNING":
         warnings.append({"rule": "Geography-Universe", "message": msg})
 
@@ -5422,7 +5428,8 @@ def validate_all_semantic_consistency(
         _if_15 = cr.get("Investment_Focus")
         if _if_15 is not None and _if_15 != "Thematic":
             cr["Investment_Focus"] = "Thematic"
-            critical_errors.append({
+            # FIX-SEM-WARN-INFO (2026-07-15): successful auto-correction → INFO, not WARN.
+            warnings.append({
                 "rule": "InvestmentFocus-ThematicOnlyTheme",
                 "message": (
                     f"Investment_Focus corregido '{_if_15}'→'Thematic': "
@@ -5433,7 +5440,8 @@ def validate_all_semantic_consistency(
         _sf_15 = cr.get("Sector_Focus")
         if _sf_15 is not None:
             cr["Sector_Focus"] = None
-            critical_errors.append({
+            # FIX-SEM-WARN-INFO (2026-07-15): successful auto-correction → INFO, not WARN.
+            warnings.append({
                 "rule": "SectorFocus-ThematicOnlyTheme",
                 "message": (
                     f"Sector_Focus='{_sf_15}' → NULL: "

@@ -66,14 +66,14 @@ class TestSCG1RegionCorrectedToRegional:
         "Latin America", "Eastern Europe", "Middle East & Africa",
     ])
     def test_correction_recorded_in_critical_errors(self, geo):
-        """SC-G1 correction appears in critical_errors (auto-correctable rule)."""
+        """FIX-SEM-WARN-INFO: SC-G1 correction is a successful auto-fix → warnings (INFO)."""
         rec = _base(Geography=geo, Investment_Universe="Global")
         result = _run(rec)
-        sg1_errors = [e for e in result["critical_errors"]
+        sg1_errors = [e for e in result["warnings"]
                       if "SC-G1" in e.get("rule", "")]
         assert len(sg1_errors) >= 1, (
-            f"Expected SC-G1 in critical_errors for Geography='{geo}', "
-            f"got {result['critical_errors']}"
+            f"Expected SC-G1 in warnings for Geography='{geo}', "
+            f"got {result['warnings']}"
         )
 
     def test_europe_global_iu_canonical_case(self):
@@ -110,9 +110,10 @@ class TestSCG1CountryCorrectedToCountry:
 
     @pytest.mark.parametrize("geo", ["China", "Japan", "India"])
     def test_country_correction_in_critical_errors(self, geo):
+        """FIX-SEM-WARN-INFO: SC-G1 correction → warnings (INFO), not critical_errors."""
         rec = _base(Geography=geo, Investment_Universe="Global")
         result = _run(rec)
-        sg1_errors = [e for e in result["critical_errors"]
+        sg1_errors = [e for e in result["warnings"]
                       if "SC-G1" in e.get("rule", "")]
         assert len(sg1_errors) >= 1
 
@@ -138,7 +139,7 @@ class TestSCG1NoFalsePositives:
         rec = _base(Geography=geo, Investment_Universe=iu)
         result = _run(rec)
         cr = result["corrected_record"]
-        sg1_corrections = [e for e in result["critical_errors"]
+        sg1_corrections = [e for e in result["warnings"]
                            if "SC-G1" in e.get("rule", "")]
         # Verify SC-G1 did not fire
         assert sg1_corrections == [], (
@@ -155,7 +156,7 @@ class TestSCG1NoFalsePositives:
         """SC-G1 must not fire if Geography is None (no signal)."""
         rec = _base(Geography=None, Investment_Universe="Global")
         result = _run(rec)
-        sg1 = [e for e in result["critical_errors"] if "SC-G1" in e.get("rule", "")]
+        sg1 = [e for e in result["warnings"] if "SC-G1" in e.get("rule", "")]
         assert sg1 == []
 
 
@@ -206,7 +207,7 @@ class TestSCG1InteractionWithBL33:
         }
         result = _run(rec)
         cr = result["corrected_record"]
-        sg1 = [e for e in result["critical_errors"] if "SC-G1" in e.get("rule", "")]
+        sg1 = [e for e in result["warnings"] if "SC-G1" in e.get("rule", "")]
         assert cr["Investment_Universe"] == "Global"
         assert sg1 == [], "SC-G1 must not fire when Geography is None"
 
@@ -270,8 +271,8 @@ class TestInter10OrderAfterSCG1:
             f"INTER-10 emitted redundant 'inusual' WARN after SC-G1 already "
             f"corrected IU to 'Country': {inusual_warns}"
         )
-        # SC-G1 correction is still recorded
-        sg1 = [e for e in result["critical_errors"] if "SC-G1" in e.get("rule", "")]
+        # SC-G1 correction is still recorded (FIX-SEM-WARN-INFO: now in warnings/INFO)
+        sg1 = [e for e in result["warnings"] if "SC-G1" in e.get("rule", "")]
         assert len(sg1) >= 1
 
     def test_europe_global_no_inusual_warn(self):
@@ -306,8 +307,8 @@ class TestInter10OrderAfterSCG1:
             "BL-52 (INTER-10) must still auto-correct Country→Regional when "
             f"Geography is a region; got '{cr['Investment_Universe']}'"
         )
-        # Correction should appear in critical_errors with rule 'Geography-Universe'
-        bl52 = [e for e in result["critical_errors"]
+        # Correction appears in warnings/INFO (FIX-SEM-WARN-INFO: CORRECTED → warnings)
+        bl52 = [e for e in result["warnings"]
                 if e.get("rule") == "Geography-Universe"]
         assert len(bl52) >= 1
 

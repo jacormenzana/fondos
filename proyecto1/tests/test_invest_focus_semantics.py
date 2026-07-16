@@ -102,11 +102,12 @@ class TestInter15ThematicOnlyThemes:
 
     @pytest.mark.parametrize("theme", ["Megatrends", "Inflation"])
     def test_critical_error_emitted(self, theme):
-        """A critical_error entry must be present when Investment_Focus is corrected."""
+        """FIX-SEM-WARN-INFO: auto-correction now emits to warnings (INFO), not critical_errors."""
         rec = _record(Theme=theme, Investment_Focus="Sector",
                       Sector_Focus="Technology & Innovation")
         result = _run(rec)
-        rules = [e["rule"] for e in result["critical_errors"]]
+        # Correction is successful → goes to warnings (→ DQ INFO), not critical_errors (→ WARN).
+        rules = [e["rule"] for e in result["warnings"]]
         assert "InvestmentFocus-ThematicOnlyTheme" in rules
 
     def test_megatrends_thematic_no_sector_focus_emits_no_sector_focus_error(self):
