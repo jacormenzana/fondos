@@ -32,8 +32,8 @@ clasifica el fondo y qué atributos son aplicables en los clústeres restantes.
 |-------|------------|-------------------|
 | `Renta Variable` | Predominantemente renta variable (≥ ~60% equity) | renta_variable |
 | `Mixtos` | Mixto (equity + bonos, sin dominancia fuerte de ninguno) | mixtos |
-| `Renta Fija Flexible` | Renta fija sin restricciones / flexible | rf_flexible |
-| `Renta Fija Corto Plazo` | RF a corto plazo o investment-grade restringido | rf_corto |
+| `Renta Fija Flexible` | Renta fija sin restricciones de duración / flexible (Duration_Profile ∈ {Intermediate, Long, Flexible}) | rf_flexible |
+| `Renta Fija Corto Plazo` | RF con mandato de duración máxima ≤ 3 años (Duration_Profile ∈ {Ultra-Short, Short}); alineado con ICE BofA 1-3y / Morningstar Short-Term Bond (RF-RFF-POLICY-2026-07-16) | rf_corto |
 | `Monetario` | Fondo monetario UCITS | monetarios |
 | `Alternativo` | Estrategias alternativas (retorno absoluto, real assets, long/short) | alternativos |
 | `Estructurado` | Productos estructurados con protección de capital | restantes/alternativos |
@@ -286,6 +286,11 @@ mixtos llevan legítimamente un componente de renta fija.
 - Los valores de `Duration_Profile` (`Ultra-Short` < 1y, `Short` 1-3y, `Intermediate` 3-7y,
   `Long` > 7y, `Flexible`, `Not Applicable`) se alinean con los tramos de duración de los índices
   de renta fija ICE BofA y la clasificación de categorías de renta fija de Morningstar.
+  **Derivación de Fund_Nature RF (RF-RFF-POLICY-2026-07-16):** Duration_Profile ∈ {Ultra-Short, Short}
+  → `Renta Fija Corto Plazo`; Duration_Profile ∈ {Intermediate, Long, Flexible} → `Renta Fija
+  Flexible`. Boundary canónico: duración máxima mandatada ≤ 3 años = RF_Corto. Ambos atributos
+  deben ser coherentes entre sí; la función `resolve_rf_subtype()` en `classify_utils.py` implementa
+  esta regla y es la fuente única para la derivación del subtipo RF.
 
 **Reglas de consistencia:**
 - **SC-D1**: `Fund_Nature` ∈ `{Renta Variable, Alternativo, Estructurado}` + `Credit_Quality` ≠ `'Not Applicable'` → auto-corregir a `'Not Applicable'`. Implementado en INTER-17.

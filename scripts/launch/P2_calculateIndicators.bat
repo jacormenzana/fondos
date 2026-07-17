@@ -38,8 +38,8 @@ echo --- EJECUCION DE PIPELINE --------------------------------- >> "%LOG%"
 :: Modo prueba (comentado)
 :: python -X utf8 -m proyecto2.src.pipeline.run_pipeline --isin LU0070214613 --dry-run >> "%LOG%" 2>&1
 
-REM python -X utf8 -m proyecto2.src.pipeline.run_pipeline >> "%LOG%" 2>&1
-python -X utf8 -m proyecto2.src.pipeline.run_pipeline --source eurostat 2>&1 | powershell -noprofile -command "Tee-Object -FilePath '%LOG%' -Append"
+python -X utf8 -m proyecto2.src.pipeline.run_pipeline >> "%LOG%" 2>&1
+REM python -X utf8 -m proyecto2.src.pipeline.run_pipeline --source eurostat 2>&1 | powershell -noprofile -command "$input | Tee-Object -FilePath '%LOG%' -Append"
 
 popd
 

@@ -1,6 +1,7 @@
 from typing import Optional, Dict, List
 from core.classify_utils import (
     NAME_SIGNALS_ALTERNATIVO,
+    _prefilter_match_alternativo,   # OPT-B2 (R-1): universo = predicado compartido
     FAMILY_ABSOLUTE_RETURN,
     FAMILY_REAL_ASSETS,
     detect_geography       as _detect_geography,
@@ -26,71 +27,14 @@ FUND_NATURE_VALUE = "Alternativo"
 # =====================================================
 
 def get_universe_isins(df_master) -> List[str]:
-    # BL-ALT-EX1 (2026-07-04): "hedge" (bare) eliminado. Causa raíz:
-    # capturaba el sufijo de clase con cobertura de divisa ("EUR HEDGE",
-    # "HEDGED", "HDG") -- una convención de nomenclatura de share class
-    # completamente ajena a estrategias de hedge fund -- no la estrategia
-    # de fondo alternativo real. Confirmado: 8 fondos de renta variable
-    # pura (JPM US Value, Pictet Robotics/Security, SISF Japanese Equity,
-    # Fidelity Japan, Thematics Safety) capturados SOLO por "hedge",
-    # ninguno de ellos con estrategia hedge-fund genuina. Sustituido por
-    # "hedge fund" (frase exacta) para seguir capturando un fondo
-    # literalmente llamado así sin el falso positivo de sufijo de divisa.
-    # "gold"/"precious metals" (bare) eliminados. Causa raíz: capturaban
-    # fondos de renta variable SECTORIAL (empresas mineras de oro), no
-    # fondos de materias primas físicas/derivados. Confirmado: BGF World
-    # Gold, DWS Gold Precious Metals, EDR Goldsphere, Franklin Gold
-    # Precious Metals, Jupiter Gold&Silver (14 ISINs) -- todos "invierten
-    # principalmente en ACCIONES/VALORES DE RENTA VARIABLE de empresas
-    # cuya actividad es la extracción de oro", no en oro físico.
-    # "commodity"/"commodities" (ya presentes) siguen cubriendo fondos de
-    # materias primas genuinos (confirmado: DWS Enhanced Commodity,
-    # benchmark Bloomberg Commodity Index).
-    include_patterns = [
-        "absolute return", "hedge fund", "long short", "long/short",
-        "market neutral", "relative value", "arbitrage", "global macro",
-        # BL-ALT-IN2 (2026-07-05): "glob macro" = abbreviated "global macro"
-        # in master Excel. JPM GLOB MACRO OPPORTUNITIES A/D share classes use
-        # this abbreviation; the EUR-HDG classes already match "global macro"
-        # (full word), the unhedged/USD classes do not. Without this, those
-        # ISINs fall into Restantes with a stale Monetario Nature from a prior
-        # cycle, triggering BL44 reclassification every run. Confirmed no
-        # false positives: "glob" alone is too short to add bare.
-        "glob macro",
-        # BL-ALT-IN3 (2026-07-05): Nordea Alpha 10 Multi-Asset — an absolute-
-        # return multi-asset fund targeting alpha of 10%. All five share classes
-        # belong here. The EUR/CHF class names use full "alpha 10 ma"; the
-        # USD-hedged classes abbreviate to "alph 10 ma". Both patterns needed.
-        # Without this, the USD-hedged ISINs get dispatched to Monetario by
-        # restantes (KIID mentions money market for liquidity sleeve) and BL44
-        # reclassifies them to Restantes every cycle.
-        "alpha 10 ma", "alph 10 ma",
-        "managed futures", "cta", "systematic", "multi strategy",
-        "multi-strategy", "alternative", "real assets", "real estate",
-        "property", "infrastructure", "commodities", "commodity",
-    ]
-    exclude_patterns = [
-        "equity", "bond", "fixed income", "renta fija",
-        "balanced", "allocation", "multi asset", "multi-asset",
-    ]
-
-    def is_candidate(name: str) -> bool:
-        if not isinstance(name, str):
-            return False
-        n = name.lower()
-        # BL-ALT-IN1 (2026-07-04): "pictet fixed income" checked BEFORE the
-        # generic "fixed income" exclude. Confirmed genuine Alternativo via
-        # KIID text: "rentabilidad absoluta" objective, SOFR overnight-rate
-        # benchmark used as hurdle, invests in corporate/government bonds
-        # -- an absolute-return bond strategy, not a plain fixed-income
-        # fund (which the "fixed income" exclude exists to keep out).
-        if "pictet fixed income" in n:
-            return True
-        if any(p in n for p in exclude_patterns):
-            return False
-        return any(p in n for p in include_patterns)
-
-    mask = df_master["Fund_Name"].apply(is_candidate)
+    # OPT-B2 (R-1/P#11): los patrones include/exclude (incl. el early-return
+    # "pictet fixed income" antes del exclude "fixed income") viven en
+    # classify_utils (`_prefilter_match_alternativo`), fuente única compartida
+    # con `detect_nature_from_prefilter`. Verificado idéntico al universo previo
+    # (0 mismatches / 3.227 fondos).
+    mask = df_master["Fund_Name"].apply(
+        lambda n: _prefilter_match_alternativo(n.lower()) if isinstance(n, str) else False
+    )
     return (
         df_master.loc[mask, "ISIN"]
         .dropna()

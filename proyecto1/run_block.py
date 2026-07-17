@@ -23,6 +23,7 @@ import importlib
 from pathlib import Path
 
 from core.pipeline import run_block, load_master_excel
+from core.classify_utils import resolve_nature_vote  # noqa: F401 — validates OPT-B import
 from core.sqlite_writer import get_connection, create_schema
 import sys
 from pathlib import Path as _Path
@@ -36,8 +37,12 @@ BLOCKS_PACKAGE = "blocks"
 def main():
 
     p = argparse.ArgumentParser()
-    p.add_argument("--block", required=True,
-                   help="Nombre del bloque (module name en blocks/)")
+    p.add_argument("--block", required=False, default=None,
+                   help="Nombre del bloque (module name en blocks/). "
+                        "Omit when using --nature-first.")
+    p.add_argument("--nature-first", action="store_true", default=False,
+                   help="OPT-B: single-pass nature-vote dispatch over ALL ISINs. "
+                        "Mutually exclusive with --block.")
     p.add_argument("--db", default=None,
                    help=(
                        f"Path a sqlite DB. "
@@ -64,6 +69,11 @@ def main():
                    ))
     args = p.parse_args()
 
+    if not args.nature_first and not args.block:
+        p.error("--block is required unless --nature-first is specified.")
+    if args.nature_first and args.block:
+        p.error("--block and --nature-first are mutually exclusive.")
+
     list_isin = None
     if args.list_isin:
         list_isin = [x.strip() for x in args.list_isin.split(",") if x.strip()]
@@ -78,10 +88,15 @@ def main():
     df_master = load_master_excel(master_path)
     print(f"[DEBUG] Maestro cargado: {df_master.shape}")
 
-    #Cargar bloque
-    print(f"[DEBUG] Carga bloque: {BLOCKS_PACKAGE}.{args.block}")
-    block_mod = importlib.import_module(f"{BLOCKS_PACKAGE}.{args.block}")
-    print(f"[DEBUG] block_mod: {block_mod}")
+    if args.nature_first:
+        # OPT-B: single-pass nature-first dispatch over all master ISINs
+        block_mod = None
+        print("[DEBUG] Modo: NATURE_FIRST (OPT-B) — universo completo del maestro")
+    else:
+        #Cargar bloque
+        print(f"[DEBUG] Carga bloque: {BLOCKS_PACKAGE}.{args.block}")
+        block_mod = importlib.import_module(f"{BLOCKS_PACKAGE}.{args.block}")
+        print(f"[DEBUG] block_mod: {block_mod}")
 
     #Conexión y schema (idempotente)
     conn = get_connection(db_path)
@@ -94,7 +109,7 @@ def main():
     conn.isolation_level = None
     assert_schema_alignment(conn)
 
-    #Ejecutar bloque
+    #Ejecutar bloque / pasada nature-first
     published = run_block(
         block_mod,
         df_master,
@@ -104,9 +119,11 @@ def main():
         stop_on_error=args.stop_on_error,
         list_isin=list_isin,
         kiid_source=args.kiid_source,
+        nature_first=args.nature_first,
     )
 
-    print(f"Bloque {args.block} procesado. Registros publicados: {len(published)}")
+    _mode = "NATURE_FIRST" if args.nature_first else args.block
+    print(f"Bloque/modo {_mode} procesado. Registros publicados: {len(published)}")
 
 
     # BL-53/56/57: Barrido global post-pipeline (Principio #1 + #2)

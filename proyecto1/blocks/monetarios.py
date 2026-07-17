@@ -2,6 +2,7 @@ from typing import Optional, Dict, List
 from core.classify_utils import (
     NAME_SIGNALS_MONETARIO,
     STRONG_MMF_STRUCTURE_MARKERS,
+    _prefilter_match_monetario,   # OPT-B2 (R-1): universo = predicado compartido
     FAMILY_MONEY_MARKET,
     TYPE_MONEY_MARKET,
     TYPE_GOVT_MONEY_MARKET,
@@ -29,48 +30,13 @@ FUND_NATURE_VALUE = "Monetario"
 # =====================================================
 
 def get_universe_isins(df_master) -> List[str]:
-    include_patterns = [
-        "money market", "monetary", 
-        # DDF — añadido personal detectado en pictet
-        "money mkt",  "money mket", 
-        # DDF — añadido personal incluido en classify_utils        
-        "euro m mkt",                    # JPM EURO M MKT VNAV (evita EM MKT)
-        # BL-MON-IN1 (2026-07-05): "EU M MKT" = European Money Market
-        # (abbreviated without the "ro" of "euro"). DWS ESG EU M MKT IC100
-        # EUR ACC is a genuine money market fund; without this it falls into
-        # renta_variable/restantes with SRRI=5 (wrong KIID stored). Safe: "eu
-        # m mkt" requires the literal "m" between "eu" and "mkt" so it cannot
-        # false-match "EM MKT" (emerging market) abbreviations.
-        "eu m mkt",                      # DWS ESG EU M MKT IC100
-        "standard mm vnav",              # JPM STANDARD MM VNAV
-        "lqudty lvnav",                  # JPM USD LQUDTY LVNAV (OCR)
-        "inscash",                       # BNP PARIBS INSCASH EUR 3M
-        "gbp liq lvnav",                 # JPM GBP LIQ LVNAV
-        "gbp liq cnav",                  # variante CNAV
-        "usd treasur cnav",              # JPM USD TREASURY CNAV
-        "usd liq cnav",                  # JPM USD LIQ CNAV
-        "fidelity euro cash",            # FIDELITY EURO CASH
-        "fidelity fund us cash",         # FIDELITY FUND US CASH
-        "fidelity us cash",              # variante
-        # DDF — excluido personal
-        ##"liquidity", "liquid",
-        "cash fund", "cash management", "treasury",
-        "tresorerie", "ucits mmf", "mmf",
-    ]
-    exclude_patterns = [
-        "short duration", "ultra short", "short term",
-        "bond", "income", "enhanced", "plus",
-    ]
-
-    def is_candidate(name: str) -> bool:
-        if not isinstance(name, str):
-            return False
-        n = name.lower()
-        if any(p in n for p in exclude_patterns):
-            return False
-        return any(p in n for p in include_patterns)
-
-    mask = df_master["Fund_Name"].apply(is_candidate)
+    # OPT-B2 (R-1/P#11): los patrones include/exclude viven en classify_utils
+    # (`_prefilter_match_monetario`), fuente única compartida con
+    # `detect_nature_from_prefilter`. Verificado idéntico al universo previo
+    # (0 mismatches / 3.227 fondos).
+    mask = df_master["Fund_Name"].apply(
+        lambda n: _prefilter_match_monetario(n.lower()) if isinstance(n, str) else False
+    )
     return (
         df_master.loc[mask, "ISIN"]
         .dropna()

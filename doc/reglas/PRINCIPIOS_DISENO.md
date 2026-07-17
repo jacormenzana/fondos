@@ -272,6 +272,31 @@ def classify_fund(kiid_text, srri):
 **Relación SRRI ↔ Profile:**  
 El SRRI **domina** la asignación de `Profile` cuando está disponible, pero `Profile` es un atributo **separado** de `Fund_Nature`. La clasificación estructural (Nature → Type → Subtype) debe basarse en contenido semántico del KIID.
 
+### Alcance y excepción acotada (2026-07-17): SRRI *declarado* vs. volatilidad *realizada*
+
+Este principio se refiere al **SRRI declarado** — el indicador de riesgo 1-7 auto-reportado
+en el KIID. Es una etiqueta, puede ser errónea o estar desalineada, y **nunca** deriva `Fund_Nature`.
+
+La **volatilidad realizada** (`fund_metrics.srri_nav`, calculada por P2 a partir del histórico de
+NAV y bandeada 1-7 según las bandas CESR/ESMA) es una señal **distinta e independiente**: comportamiento
+de mercado medido, no auto-declarado. `resolve_nature_evidence` (clasificador ponderado por evidencia,
+`classify_utils.py`) la usa bajo una **excepción acotada y verificada** a este principio:
+
+- **PERMITIDO** — la volatilidad realizada **VETA** una naturaleza incompatible con la banda
+  (p.ej. `Monetario` a SRRI 6-7 es incompatible con MMFR) y **ARBITRA** entre naturalezas que **otras
+  señales documentales ya propusieron** (KIID / nombre / benchmark). En bandas inequívocas {1,6,7}
+  (la volatilidad admite una sola clase de activo) el arbitraje cubre también inconsistencia adyacente.
+- **PROHIBIDO** — **derivar** una `Fund_Nature` que ninguna señal documental propuso. No hay fallback
+  "banda de volatilidad → naturaleza": si todas las señales ex-ante abstienen, el resultado es `None`
+  (→ `Restantes`), nunca una conjetura por volatilidad. Si la primaria es incompatible con la banda
+  pero **ningún** candidato ex-ante encaja, se **mantiene** la primaria con confianza baja
+  (`NATURE_LOW_CONFIDENCE` DQ WARN), no se fabrica una respuesta.
+
+**Regla operativa:** el KIID (evidencia documental) es la fuente **primaria** de `Fund_Nature`; la
+volatilidad realizada sólo **restringe/desempata**, nunca **crea**. Esto preserva la sustancia de P#6
+(volatilidad ≠ naturaleza del activo) permitiendo a la vez vetar clasificaciones físicamente imposibles.
+Ver el feedback P1←P2 acotado en `AGENTS.md` §Architecture.
+
 ---
 
 ## PRINCIPIO #7: Corrección en el módulo correcto (no SQL ad-hoc)

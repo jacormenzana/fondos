@@ -114,6 +114,7 @@ from core.classify_utils import (
     detect_kiid_attributes,
     # Dominio
     _NATURE_CANONICAL,
+    _NATURE_TO_BLOCK,          # OPT-B (R-1): canonical routing, single source of truth
     # Validación semántica (Principio #9)
     validate_all_semantic_consistency,
     apply_semantic_validation,
@@ -270,24 +271,6 @@ def get_universe_isins(df_master, conn=None) -> List[str]:
     )  # Escenario C
 
     return sorted(not_in_db | previously_restantes | orphaned)
-
-
-# =====================================================
-# Mapeo naturaleza detectada → nombre de módulo
-# =====================================================
-
-_NATURE_TO_BLOCK: dict = {
-    # Claves canónicas (de _NATURE_CANONICAL)
-    "Monetario":              "monetarios",
-    "Renta Fija Corto Plazo": "rf_corto",
-    "Renta Fija Flexible":    "rf_flexible",
-    "Renta Variable":         "renta_variable",
-    "Mixtos":                 "mixtos",
-    "Alternativo":            "alternativos",
-    # Claves internas (de detect_nature_from_name / detect_nature_from_kiid)
-    "RF_Corto":               "rf_corto",
-    "RF_Flexible":            "rf_flexible",
-}
 
 
 # =====================================================

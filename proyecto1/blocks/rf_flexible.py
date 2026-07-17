@@ -1,6 +1,7 @@
 from typing import Optional, Dict, List
 from core.classify_utils import (
     NAME_SIGNALS_RF_FLEXIBLE,
+    _prefilter_match_rf_flexible,   # OPT-B2 (R-1): universo = predicado compartido
     FAMILY_FLEXIBLE_FI,
     FAMILY_HIGH_YIELD,
     FAMILY_EMERGING_DEBT,
@@ -30,73 +31,13 @@ FUND_NATURE_VALUE = "Renta Fija Flexible"
 # =====================================================
 
 def get_universe_isins(df_master) -> List[str]:
-    include_patterns = [
-        "flexible bond", "dynamic bond", "strategic bond",
-        "total return bond", "total return", "unconstrained",
-        "absolute return bond", "multi sector bond", "multisector bond",
-        "opportunistic bond", "global bond", "income bond",
-        "tactical bond", "active bond",
-        # BL-RFF-IN1: bond-index abbreviations (iShares/Vanguard/PIMCO naming).
-        # "bnd" and "bd indx" are bond abbreviations; "corp indx"/"govt indx"
-        # are corporate/government bond index trackers.
-        # These were previously captured by renta_variable due to "shares"→"ishares",
-        # "climate"→PIMCO BND, and "global"→VGD BD INDX false positives (BL-RV-EX1/EX2).
-        "bnd", "bd indx", "corp indx", "govt indx",
-        # BL-RFF-IN2 (2026-07-04): paired with renta_variable's BL-RV-EX3.
-        # Without these, funds excluded from RV by BL-RV-EX3 become orphaned
-        # (claimed by no block, stale Fund_Nature persists) -- confirmed via
-        # real pipeline run for 7 iShares "1-5 INDX/IDX"/"GVT INDX" funds.
-        "1-5 ind", "1-5 idx", "gvt indx",
-        # BL-RFF-IN3 (2026-07-04): paired with renta_variable's BL-RV-EX4.
-        # Without "high yield" here, funds excluded from RV via BL-RV-EX4
-        # become orphaned (e.g. "AB GLOBAL HIGH YIELD PORTFOLIO", "GS
-        # GLOBAL HY") -- confirmed genuine high-yield BOND funds via
-        # KIID-text audit, previously claimed by RV only via the generic
-        # "global" name-pattern collision. "high yiel" (no "d") matches
-        # truncated naming ("AB GLOBAL HIGH YIEL.PORTF.C2 H").
-        # FIX-B6-2 (2026-07-15): ".h.y." and "high yie." are Morningstar OCR
-        # artifacts for "High Yield" with dot separators in abbreviated names
-        # (e.g. "JPM GLOB.H.Y.BOND FUND", "AXA WF US HIGH YIE.BOND.").
-        # These do not match "high yiel" because the dot replaces the 'l'.
-        "high yield", "high yiel", ".h.y.", "high yie.",
-        # BL-RFF-IN4 (2026-07-04): paired with mixtos's BL-MX-EX1. These
-        # fund-family fragments were confirmed genuine bond funds via KIID
-        # text this session but don't match any include pattern above by
-        # name alone (generic "Dynamic"/"Fixed Income"/"Flex Dynamic"/
-        # "Bond Alloc" naming without a bond-specific keyword this list
-        # already covers).
-        "ubs glob dynamic", "db fixed income", "bsf em flex dynamic",
-        "amundi str income", "jupiter dynamic",
-        # "pimco diver" (no trailing "s") catches "DIVERS"/"DIVER."/"DIVERSF"
-        # naming variants, paired with renta_variable's exclude of the same.
-        "pimco diver", "pimco esg income",
-    ]
-    exclude_patterns = [
-        "money", "monetary", "liquidity", "cash",
-        "short duration", "ultra short", "short term", "low duration",
-        "floating rate", "equity", "balanced", "allocation",
-        "multi asset", "multi-asset",
-    ]
-
-    def is_candidate(name: str) -> bool:
-        if not isinstance(name, str):
-            return False
-        n = name.lower()
-        # BL-RFF-IN4b (2026-07-04): "edr bond alloc" checked BEFORE the
-        # generic "allocation" exclude -- EDR Bond Allocation is a genuine
-        # bond fund (>=90% en valores de deuda) despite the "Allocation"
-        # naming that would otherwise route it away (that exclude exists
-        # to keep genuine multi-asset "Allocation" funds out, which this
-        # isn't).
-        if "edr bond alloc" in n:
-            return True
-        if any(p in n for p in exclude_patterns):
-            return False
-        if re.search(r'\bhy\b', n):
-            return True
-        return any(p in n for p in include_patterns)
-
-    mask = df_master["Fund_Name"].apply(is_candidate)
+    # OPT-B2 (R-1/P#11): patrones (incl. el early-return "edr bond alloc" y el
+    # `\bhy\b`) viven en classify_utils (`_prefilter_match_rf_flexible`), fuente
+    # única compartida con `detect_nature_from_prefilter`. Verificado idéntico
+    # al universo previo (0 mismatches / 3.227 fondos).
+    mask = df_master["Fund_Name"].apply(
+        lambda n: _prefilter_match_rf_flexible(n.lower()) if isinstance(n, str) else False
+    )
     return (
         df_master.loc[mask, "ISIN"]
         .dropna()

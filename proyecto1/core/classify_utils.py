@@ -194,7 +194,7 @@ FUNCIONES:
 import re
 import math
 import logging
-from typing import Optional
+from typing import Optional, Tuple
 
 
 # ============================================================
@@ -328,6 +328,20 @@ _NATURE_CANONICAL: dict = {
     "Restantes":     "Restantes",  # v10: restituido (eliminado erróneamente por BL-65)
                                    # Valor canónico para fondos sin Nature determinable.
                                    # Es valor válido en schema (backlog v3.4: 33 fondos).
+}
+
+# OPT-B (2026-07-16): canonical routing Fund_Nature/internal-code → block module name.
+# Single source of truth (P#11/R-1): imported by restantes.py and pipeline.py.
+# No entry for 'Estructurado'/'Restantes': these fall to restantes minimum classification.
+_NATURE_TO_BLOCK: dict = {
+    "Monetario":              "monetarios",
+    "Renta Fija Corto Plazo": "rf_corto",
+    "Renta Fija Flexible":    "rf_flexible",
+    "Renta Variable":         "renta_variable",
+    "Mixtos":                 "mixtos",
+    "Alternativo":            "alternativos",
+    "RF_Corto":               "rf_corto",    # internal code alias
+    "RF_Flexible":            "rf_flexible",  # internal code alias
 }
 
 
@@ -1159,6 +1173,246 @@ def detect_nature_from_name(name_l: str) -> Optional[str]:
 
 
 # ============================================================
+# detect_nature_from_prefilter — patrones de PRE-FILTRO de bloque
+# (OPT-B2 2026-07-16, R-1/P#11 DRY)
+# ============================================================
+# Fuente única de los patrones include/exclude que cada bloque usaba en su
+# get_universe_isins() (el "plano heurístico" / Set #1). Estos patrones son
+# la familia de señales de nombre FIABLE y calibrada por grupo de fondos
+# (a diferencia de NAME_SIGNALS_*, que son abreviaturas raras de nombres
+# concretos — Set #2 —, más finas y con menor cobertura de nombres genéricos).
+#
+# Cada predicado replica EXACTAMENTE el is_candidate() del bloque homónimo.
+# Los bloques deben pasar a llamar a estos predicados (paso 1b) para eliminar
+# la duplicación; de momento esto es puramente aditivo (riesgo cero).
+#
+# detect_nature_from_prefilter() recorre los predicados en orden de CLARIDAD
+# (patrones más específicos / con excludes más estrictos primero; Mixtos, el
+# más genérico y conflictivo, el último) y devuelve la PRIMERA coincidencia.
+# Esto implementa la intención de diseño original ("empezar por los grupos de
+# patrones más claros, terminar por los más propensos a conflicto") y corrige
+# el bug legacy last-wins (COALESCE) por el que Mixtos sobrescribía a Renta
+# Variable — el mismo que INTER-DBLCLAIM parcheaba. Es una señal de peso medio
+# en el clasificador ponderado por evidencia; el orden no es determinante y se
+# valida contra el baseline de volatilidad realizada (srri_nav).
+
+# --- Monetarios ---
+_PREFILTER_MON_INCLUDE = [
+    "money market", "monetary",
+    "money mkt", "money mket",
+    "euro m mkt", "eu m mkt", "standard mm vnav", "lqudty lvnav",
+    "inscash", "gbp liq lvnav", "gbp liq cnav", "usd treasur cnav",
+    "usd liq cnav", "fidelity euro cash", "fidelity fund us cash",
+    "fidelity us cash", "cash fund", "cash management", "treasury",
+    "tresorerie", "ucits mmf", "mmf",
+]
+_PREFILTER_MON_EXCLUDE = [
+    "short duration", "ultra short", "short term",
+    "bond", "income", "enhanced", "plus",
+]
+
+def _prefilter_match_monetario(name_l: str) -> bool:
+    if any(p in name_l for p in _PREFILTER_MON_EXCLUDE):
+        return False
+    return any(p in name_l for p in _PREFILTER_MON_INCLUDE)
+
+# --- RF Corto ---
+_PREFILTER_RFC_INCLUDE = [
+    "short duration", "ultra short", "short term bond", "short term",
+    "low duration", "floating rate", "floating", "money plus", "enhanced cash",
+    "ab mort income",
+]
+_PREFILTER_RFC_EXCLUDE = [
+    "money market", "monetary", "liquidity", "cash ",
+    "equity", "balanced", "allocation", "multi asset", "multi-asset",
+    "absolute return",
+]
+
+def _prefilter_match_rf_corto(name_l: str) -> bool:
+    if any(p in name_l for p in _PREFILTER_RFC_EXCLUDE):
+        return False
+    return any(p in name_l for p in _PREFILTER_RFC_INCLUDE)
+
+# --- RF Flexible ---
+_PREFILTER_RFF_INCLUDE = [
+    "flexible bond", "dynamic bond", "strategic bond",
+    "total return bond", "total return", "unconstrained",
+    "absolute return bond", "multi sector bond", "multisector bond",
+    "opportunistic bond", "global bond", "income bond",
+    "tactical bond", "active bond",
+    "bnd", "bd indx", "corp indx", "govt indx",
+    "1-5 ind", "1-5 idx", "gvt indx",
+    "high yield", "high yiel", ".h.y.", "high yie.",
+    "ubs glob dynamic", "db fixed income", "bsf em flex dynamic",
+    "amundi str income", "jupiter dynamic",
+    "pimco diver", "pimco esg income",
+]
+_PREFILTER_RFF_EXCLUDE = [
+    "money", "monetary", "liquidity", "cash",
+    "short duration", "ultra short", "short term", "low duration",
+    "floating rate", "equity", "balanced", "allocation",
+    "multi asset", "multi-asset",
+]
+
+def _prefilter_match_rf_flexible(name_l: str) -> bool:
+    # BL-RFF-IN4b: "edr bond alloc" antes del exclude "allocation".
+    if "edr bond alloc" in name_l:
+        return True
+    if any(p in name_l for p in _PREFILTER_RFF_EXCLUDE):
+        return False
+    if re.search(r'\bhy\b', name_l):
+        return True
+    return any(p in name_l for p in _PREFILTER_RFF_INCLUDE)
+
+# --- Renta Variable ---
+_PREFILTER_RV_INCLUDE = [
+    "equity", "equities", "shares", "stock",
+    "accion", "acciones",
+    "technology", "tech", "health", "healthcare",
+    "climate", "clean energy", "renewable",
+    "value", "growth", "quality", "income",
+    "emerging", "europe", "usa", "global",
+    "ishares",
+    "dws esg dynamic opp", "dws esg dyn opport",
+    "thematics",
+]
+_PREFILTER_RV_EXCLUDE = [
+    "money", "monetary", "liquidity", "cash",
+    "bond", "fixed income", "renta fija",
+    "balanced", "allocation", "multi asset",
+    "absolute return", "hedge", "alternative",
+    "bnd", "bd indx", "corp indx", "govt indx",
+    "1-5 ind", "1-5 idx", "gvt indx",
+    "high yield", "high yiel",
+    "pimco diver", "pimco esg income", "ab mort income", "amundi str income",
+    "jpm income", "jpm global income",
+    "debt", "gov idx", "gov index",
+]
+_PREFILTER_RV_EXCLUDE_PREFIX = [
+    r'\bconver', r'\balloc', r'\btempleton.*total',
+]
+
+def _prefilter_match_renta_variable(name_l: str) -> bool:
+    if any(p in name_l for p in _PREFILTER_RV_EXCLUDE):
+        return False
+    if re.search(r'\bhy\b', name_l):
+        return False
+    if any(re.search(p, name_l) for p in _PREFILTER_RV_EXCLUDE_PREFIX):
+        return False
+    for p in _PREFILTER_RV_INCLUDE:
+        if p == "shares":
+            if re.search(r'\bshares\b', name_l):
+                return True
+        else:
+            if p in name_l:
+                return True
+    return False
+
+# --- Mixtos (regex) ---
+_PREFILTER_MIXTOS_INCLUDE_RE = re.compile(
+    r"""
+    balanced|
+    multi[\s-]?asset|
+    alloc\w*|
+    conver\w*|
+    diversified|
+    total\s+return|
+    conservative|
+    moderate|
+    growth|
+    dynamic|
+    target\s+volatility|
+    target\s+outcome|
+    risk\s+control|
+    income
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+_PREFILTER_MIXTOS_EXCLUDE_RE = re.compile(
+    r"""
+    templeton\s+(?:asian\s+)?growth|
+    templeton\s+growth|
+    ms\s+sicav\s+us\s+growth|
+    ms\s+invf\s+us\s+growth|
+    mss\s+us\s+growth|
+    dws\s+esg\s+eq(?:uity)?\s+income|
+    dws\s+us\s+growth|
+    ubs\s+usa\s+growth|
+    dws\s+esg\s+dynamic\s+opp|
+    pimco\s+dynamic\s+bond|
+    pimco\s+diver|
+    pimco\s+esg\s+income|
+    candriam\s+bonds\s+total\s+return|
+    jupiter\s+dynamic|
+    ubs\s+glob\s+dynamic|
+    db\s+fixed\s+income|
+    ab\s+mort\s+income|
+    amundi\s+str\s+income|
+    bsf\s+em\s+flex\s+dynamic|
+    edr\s+bond\s+alloc|
+    pictet\s+fixed\s+income
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+def _prefilter_match_mixtos(name_l: str) -> bool:
+    if not _PREFILTER_MIXTOS_INCLUDE_RE.search(name_l):
+        return False
+    return not _PREFILTER_MIXTOS_EXCLUDE_RE.search(name_l)
+
+# --- Alternativos ---
+_PREFILTER_ALT_INCLUDE = [
+    "absolute return", "hedge fund", "long short", "long/short",
+    "market neutral", "relative value", "arbitrage", "global macro",
+    "glob macro",
+    "alpha 10 ma", "alph 10 ma",
+    "managed futures", "cta", "systematic", "multi strategy",
+    "multi-strategy", "alternative", "real assets", "real estate",
+    "property", "infrastructure", "commodities", "commodity",
+]
+_PREFILTER_ALT_EXCLUDE = [
+    "equity", "bond", "fixed income", "renta fija",
+    "balanced", "allocation", "multi asset", "multi-asset",
+]
+
+def _prefilter_match_alternativo(name_l: str) -> bool:
+    # BL-ALT-IN1: "pictet fixed income" antes del exclude "fixed income".
+    if "pictet fixed income" in name_l:
+        return True
+    if any(p in name_l for p in _PREFILTER_ALT_EXCLUDE):
+        return False
+    return any(p in name_l for p in _PREFILTER_ALT_INCLUDE)
+
+# Orden de claridad (más específico → más genérico). Primera coincidencia gana.
+_PREFILTER_ORDER = [
+    ("Monetario",              _prefilter_match_monetario),
+    ("Alternativo",            _prefilter_match_alternativo),
+    ("Renta Fija Corto Plazo", _prefilter_match_rf_corto),
+    ("Renta Fija Flexible",    _prefilter_match_rf_flexible),
+    ("Renta Variable",         _prefilter_match_renta_variable),
+    ("Mixtos",                 _prefilter_match_mixtos),
+]
+
+
+def detect_nature_from_prefilter(name_l: str) -> Optional[str]:
+    """
+    Naturaleza según los patrones de pre-filtro de bloque (Set #1), en orden
+    de claridad, primera coincidencia gana. Devuelve el nombre canónico de
+    Fund_Nature ('Monetario', 'Renta Fija Corto Plazo', 'Renta Fija Flexible',
+    'Renta Variable', 'Mixtos', 'Alternativo') o None si ningún bloque reclama
+    el nombre (equivalente al universo 'restantes' residual).
+
+    name_l debe venir en minúsculas.
+    """
+    if not name_l:
+        return None
+    for nature, predicate in _PREFILTER_ORDER:
+        if predicate(name_l):
+            return nature
+    return None
+
+
+# ============================================================
 # detect_nature_from_kiid — ventana correcta 1200-4500
 # ============================================================
 
@@ -1405,9 +1659,27 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
     # primario de renta fija corto plazo, MMF como asignación secundaria
     # explícitamente opcional. Verificado que "puede...mercado monetario"
     # está ausente en los 6 MMF genuinos confirmados esta sesión.
+    # FIX-P1-MMF9 (2026-07-17): patrón anterior usaba [^.]{0,250} que se
+    # interrumpe en las abreviaciones tipo "ee. uu." (EE. UU. = Estados Unidos),
+    # presentes en fondos de renta variable estadounidense (JANUS.H. US FORTY).
+    # Cambiado a [\s\S]{0,300} para ignorar puntos dentro de abreviaciones.
     _permissive_secondary_mmf = bool(re.search(
-        r'(?:podr[aá]|puede)[^.]{0,250}mercados?\s+monetari[oa]s?',
-        ventana_texto, re.DOTALL
+        r'(?:podr[aá]|puede)[\s\S]{0,300}mercados?\s+monetari[oa]s?',
+        ventana_texto
+    ))
+
+    # FIX-P1-MMF8 (2026-07-17): "hasta un 100% del patrimonio se mantendrá
+    # en depósitos en entidades de crédito e instrumentos del mercado
+    # monetario" -- cláusula de gestión de tesorería DEFENSIVA habitual en
+    # fondos macro/retorno absoluto. Distinto de un MMF genuino que DECLARA
+    # esa estrategia como mandato primario. Confirmado: JPM Global Macro
+    # Opportunities (LU0917670407/LU0917670829) -- KIID menciona "se
+    # mantendrá en depósitos... instrumentos del mercado monetario" como
+    # reserva de liquidez, no como estrategia primaria.
+    _defensive_cash_clause = bool(re.search(
+        r'se\s+mantendr[aá]\s+en\s+dep[oó]sitos[\s\S]{0,150}'
+        r'mercados?\s+monetari[oa]s?',
+        ventana_texto
     ))
 
     # FIX-P1-MMF7b (2026-07-05): "hasta un tercio...mercado monetario" --
@@ -1463,7 +1735,8 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
             and not _cash_equivalent_definition
             and not _permissive_secondary_mmf
             and not _minority_fraction_mmf
-            and not _bond_primary_enumerated_mmf):
+            and not _bond_primary_enumerated_mmf
+            and not _defensive_cash_clause):
         return "Monetario"
 
     # ── A partir de aquí usar ventana objetivo ───────────────────────────────
@@ -1996,6 +2269,16 @@ def resolve_rf_subtype(name_l: str, kiid_text: str) -> str:
     Devuelve claves INTERNAS ('RF_Corto', 'RF_Flexible') para que
     _NATURE_CANONICAL pueda mapearlas correctamente.
     Fuente única para restantes.py y detect_nature_from_kiid.
+
+    Regla canónica (RF-RFF-POLICY-2026-07-16, estándar industrial):
+        Duración máxima mandatada ≤ 3 años  →  'RF_Corto'    (Renta Fija Corto Plazo)
+        Sin restricción / duración > 3 años  →  'RF_Flexible'  (Renta Fija Flexible)
+
+    Alineamiento industrial:
+      - ICE BofA Fixed Income: bucket 1-3y ("Short-Term").
+      - Morningstar: categoría "Short-Term Bond" (dur. efectiva ~1-3.5y).
+      - Duration_Profile canónico: 'Ultra-Short' (< 1y) y 'Short' (1-3y) → RF_Corto;
+        'Intermediate' (3-7y), 'Long' (> 7y), 'Flexible' → RF_Flexible.
     """
     t = kiid_text.lower() if kiid_text else ""
     _obj_start, _obj_end = _get_obj_bounds(kiid_text or "")
@@ -2045,13 +2328,32 @@ def resolve_rf_subtype(name_l: str, kiid_text: str) -> str:
     )
 
     # FIX-P1-RFC1 (2026-07-05): "duración...no (será) superior a 12 meses"
-    # -- límite de duración explícito en meses (≤12), inequívocamente corto
-    # plazo bajo cualquier umbral razonable (distinto de la cuestión de
-    # política diferida RFC-vs-RFF a nivel de años, ver Pending). Confirmado:
+    # -- límite de duración explícito en meses. Alineado con la regla canónica
+    # ≤ 3 años (RF-RFF-POLICY-2026-07-16). Confirmado:
     # AF US Short Term Bond -- "la duración media de los tipos de interés
     # del subfondo no será superior a 12 meses".
+    # Extendido a 24 y 36 meses (= 2 y 3 años, ambos ≤ 3 años → RF_Corto).
     _duracion_meses_corta = bool(re.search(
-        r'duraci[oó]n[^.]{0,60}no\s+(?:ser[aá]\s+)?superior\s+a\s+(?:6|9|12)\s+meses',
+        r'duraci[oó]n[^.]{0,60}no\s+(?:(?:ser[aá]|podr[aá]\s+ser|puede\s+ser)\s+)?'
+        r'superior\s+a\s+(?:6|9|12|24|36)\s+meses',
+        w
+    ))
+
+    # RF-RFF-POLICY-2026-07-16: límite de duración explícito en años ≤ 3.
+    # Cubre:
+    #   ES: "no será superior a 3 años" / "no excederá de 2 años" /
+    #       "inferior a 3 años" / "menor de 2 años"
+    #   EN: "not exceed(ing) 3 years" / "no more than 2 years" /
+    #       "up to 3 years" (standalone, broader than keyword above)
+    _duracion_anios_corta = bool(re.search(
+        # ES: no (será/podrá ser) superior/excederá (a/de) N años;
+        #     inferior/menor (a/de) N años
+        r'duraci[oó]n[^.]{0,80}no\s+(?:(?:ser[aá]|podr[aá]\s+ser|puede\s+ser)\s+)?'
+        r'(?:superior|exceder[aá])\s+(?:a\s+|de\s+)?[1-3]\s+a[ñn]'
+        r'|(?:inferior|menor)\s+(?:a|de)\s+[1-3]\s+a[ñn]'
+        # EN: not exceed(ing) / no more than / up to N years
+        r'|duration[^.]{0,80}(?:not\s+exceed(?:ing)?|no\s+more\s+than)'
+        r'\s+[1-3]\s+year',
         w
     ))
 
@@ -2097,8 +2399,11 @@ def resolve_rf_subtype(name_l: str, kiid_text: str) -> str:
         r'short[\s-]term[^()]{0,60}\(el\s*[«"]fondo[»"]', w
     ))
 
-    # Señales explícitas de corto plazo en el objetivo
-    if _corto_plazo_reliable or _duracion_meses_corta or _has_vencimiento_signal or _short_term_own_name or any(k in w for k in [
+    # Señales explícitas de corto plazo / duración ≤ 3 años en el objetivo
+    # (RF-RFF-POLICY-2026-07-16: toda señal en este bloque debe ser coherente
+    # con una duración máxima mandatada ≤ 3 años).
+    if (_corto_plazo_reliable or _duracion_meses_corta or _duracion_anios_corta
+            or _has_vencimiento_signal or _short_term_own_name or any(k in w for k in [
         "duración inferior", "duration below", "duration less than",
         "duration of less", "short duration", "ultra short", "ultrashort",
         "baja duración", "low duration", "court terme",
@@ -2106,14 +2411,24 @@ def resolve_rf_subtype(name_l: str, kiid_text: str) -> str:
         "1 a 3 año", "1 to 3 year", "menos de 3 años", "below 3 year",
         "menos de 2 años", "below 2 year", "short-term bond",
         "horizon 202", "credit 202", "bond 202",
-    ]):
+        # RF-RFF-POLICY-2026-07-16: señales de límite explícito ≤ 3 años
+        "hasta 3 años",                   # ES: "hasta 3 años de duración"
+        "up to 3 year",                   # EN: "up to 3 years" / "up to 3-year"
+        "superior a 3 año",               # ES: "no (será) superior a 3 años"
+        "within 3 year",                  # EN: "within 3 years"
+        "no more than 3 year",            # EN: explicit 3-year cap
+    ])):
         return "RF_Corto"
 
     # Señales en nombre
     if _name_match(name_l, NAME_SIGNALS_RF_CORTO):
         return "RF_Corto"
 
-    # SRRI muy bajo
+    # SRRI muy bajo (1/7) — último recurso cuando ninguna señal textual de
+    # duración ha disparado. Nota P#6: SRRI no debería derivar Fund_Nature
+    # (P#6 "SRRI ≠ classification"); este fallback persiste solo mientras
+    # existan fondos sin señales textuales de duración suficientes. Eliminar
+    # en Phase B (Option B) una vez el pool de señales ≤3y sea completo (R-2).
     m = re.search(r"\b([1-7])\s*/\s*7\b", t)
     if m and int(m.group(1)) == 1:
         return "RF_Corto"
@@ -2264,6 +2579,318 @@ def detect_nature_from_benchmark(benchmark_declared: Optional[str]) -> Optional[
     if any(k in b for k in _BENCHMARK_BOND_KW):
         return "Renta Fija"
     return None
+
+
+def resolve_nature_vote(
+    name_l: str,
+    kiid_text: str,
+    benchmark_declared: Optional[str] = None,
+) -> Tuple[Optional[str], dict]:
+    """
+    OPT-B (2026-07-16): 2-of-3 vote across name / KIID-text / benchmark.
+
+    RF subtypes coarsened to 'Renta Fija' for majority matching; winning
+    subtype restored from KIID (most specific) > name > resolve_rf_subtype.
+
+    Returns:
+        (nature_canonical, vote_detail)
+        nature_canonical: canonical Fund_Nature string, or None if all abstain.
+        vote_detail: {name, kiid, benchmark, winner_coarse, reason}
+    """
+    v_name_raw = detect_nature_from_name(name_l)
+    v_name_can = _NATURE_CANONICAL.get(v_name_raw) if v_name_raw else None
+
+    v_kiid_raw = detect_nature_from_kiid(kiid_text or "")
+    if v_kiid_raw == "_RF_pending":
+        v_kiid_raw = resolve_rf_subtype(name_l, kiid_text or "")
+    v_kiid_can = _NATURE_CANONICAL.get(v_kiid_raw) if v_kiid_raw else None
+
+    # detect_nature_from_benchmark already returns coarse "Renta Fija" (not RFC/RFF)
+    v_bench = detect_nature_from_benchmark(benchmark_declared)
+
+    def _coarse(n: Optional[str]) -> Optional[str]:
+        if n in ("Renta Fija Corto Plazo", "Renta Fija Flexible"):
+            return "Renta Fija"
+        return n
+
+    cn, ck, cb = _coarse(v_name_can), _coarse(v_kiid_can), v_bench
+
+    winner_coarse: Optional[str] = None
+    reason = ""
+    if cn and ck and cn == ck:
+        winner_coarse, reason = cn, "name+kiid"
+    elif cn and cb and cn == cb:
+        winner_coarse, reason = cn, "name+benchmark"
+    elif ck and cb and ck == cb:
+        winner_coarse, reason = ck, "kiid+benchmark"
+    elif cn:
+        winner_coarse, reason = cn, "name-only"
+    elif ck:
+        winner_coarse, reason = ck, "kiid-only"
+    else:
+        reason = "all-abstain"
+
+    detail: dict = {
+        "name": v_name_can, "kiid": v_kiid_can,
+        "benchmark": v_bench, "winner_coarse": winner_coarse, "reason": reason,
+    }
+
+    if not winner_coarse:
+        return None, detail
+
+    if winner_coarse == "Renta Fija":
+        if v_kiid_can in ("Renta Fija Corto Plazo", "Renta Fija Flexible"):
+            return v_kiid_can, detail
+        if v_name_can in ("Renta Fija Corto Plazo", "Renta Fija Flexible"):
+            return v_name_can, detail
+        rf_raw = resolve_rf_subtype(name_l, kiid_text or "")
+        return _NATURE_CANONICAL.get(rf_raw, "Renta Fija Flexible"), detail
+
+    return winner_coarse, detail
+
+
+# ============================================================
+# resolve_nature_evidence — clasificador ponderado por evidencia
+# (OPT-B3 2026-07-16)
+# ============================================================
+# Sustituye la lógica de "voto 2-de-3 con pesos iguales" (resolve_nature_vote)
+# por una combinación de evidencia ponderada por la FIABILIDAD MEDIDA de cada
+# fuente POR NATURALEZA (la fiabilidad no es un escalar: p.ej. para Monetario
+# el nombre acierta 100% pero el KIID sólo 64.8%; para Renta Variable el KIID
+# acierta 97.5% y el nombre ~87%). Los pesos se siembran con los porcentajes
+# de acuerdo medidos contra la volatilidad realizada (srri_nav) el 2026-07-16
+# y se recalibran en el paso 4. La volatilidad realizada actúa como
+# restricción/desempate (veto de bandas imposibles), no como voto puntual.
+#
+# Devuelve (nature_canonical, confidence, evidence_trace). confidence =
+# (top - second)/top del score combinado; baja confianza -> DQ flag (lo decide
+# el pipeline en la integración, paso 5). NO reescribe pipeline todavía.
+
+# Matriz de fiabilidad weight[fuente][naturaleza] = P(cierto=N | fuente dice N),
+# sembrada con el % in-band medido vs srri_nav (2026-07-16).
+_W_KIID_BY_NATURE: dict = {
+    "Monetario":              0.65,
+    "Renta Fija Corto Plazo": 0.93,
+    "Renta Fija Flexible":    0.92,
+    "Mixtos":                 0.83,
+    "Renta Variable":         0.98,
+    "Alternativo":            0.91,
+    "Estructurado":           1.00,
+}
+_W_NAME_BY_NATURE: dict = {
+    "Monetario":              1.00,
+    "Renta Fija Corto Plazo": 1.00,
+    "Renta Fija Flexible":    0.89,
+    "Mixtos":                 0.88,
+    "Renta Variable":         0.87,
+    "Alternativo":            0.87,
+}
+# Benchmark: señal gruesa (asset-class). "Renta Fija" reparte a RFC+RFF (la
+# volatilidad desempata el subtipo). Pesos recalibrados contra srri_nav
+# (2026-07-16): RF 97.9%, RV 91.3%, Monetario SÓLO 22.1% -- los benchmarks de
+# tipo cash/overnight (€STR, EONIA) se usan como hurdle rate por fondos de
+# retorno absoluto y corto plazo, NO son indicador de monetario. Por eso el
+# benchmark=Monetario se trata como NO informativo (ver resolve_nature_evidence).
+_W_BENCH_BY_NATURE: dict = {
+    "Monetario":       0.22,   # no informativo — hurdle rate, no naturaleza
+    "Renta Variable":  0.91,
+    "Renta Fija":      0.98,
+}
+
+# Naturalezas donde el NOMBRE es de ALTA PRECISIÓN y medible-mente más fiable
+# que el KIID (override guardado). Se deriva de las matrices -> se auto-mantiene
+# al recalibrar. Requiere precisión de nombre alta (>=0.95) y margen claro
+# sobre KIID (>0.03) para NO incluir naturalezas donde el nombre sobre-reclama
+# (p.ej. Mixtos 0.88, con "growth/income/dynamic" genéricos). Con los pesos
+# actuales = {'Monetario' (1.00 vs 0.65), 'Renta Fija Corto Plazo' (1.00 vs 0.93)}.
+# Validado ex-ante 92.6% (vs KIID-solo 92.7%) con este conjunto.
+_NAME_DOMINANT_NATURES: set = {
+    n for n, wn in _W_NAME_BY_NATURE.items()
+    if wn >= 0.95 and wn > _W_KIID_BY_NATURE.get(n, 1.0) + 0.03
+}
+
+# Bandas de SRRI realizado (srri_nav) esperadas por naturaleza — bandas de
+# volatilidad CESR/ESMA, confirmadas por la medición del corpus.
+_NATURE_VOL_BANDS: dict = {
+    "Monetario":              {1, 2},
+    "Renta Fija Corto Plazo": {2, 3, 4},
+    "Renta Fija Flexible":    {3, 4},
+    "Mixtos":                 {4, 5},
+    "Renta Variable":         {5, 6, 7},
+    "Alternativo":            {3, 4, 5},
+    "Estructurado":           {3, 4, 5, 6},
+}
+# Bandas de volatilidad INEQUÍVOCAS: el nivel de volatilidad realizada sólo
+# admite una clase de activo, sin solape entre naturalezas.
+#   1  -> vol < 0.5% : sólo Monetario
+#   6  -> vol 15-25% : sólo Renta Variable (territorio equity)
+#   7  -> vol > 25%  : sólo Renta Variable
+# En estas bandas la volatilidad SÍ corrige una primaria inconsistente aunque
+# la distancia de banda sea 1 (no es circular: a SRRI 6-7 un fondo se comporta
+# como equity, es un hecho de mercado, no un solape difuso como en bandas 3-5).
+_VOL_UNAMBIGUOUS_BANDS: set = {1, 6, 7}
+
+# (P#6 scope 2026-07-17): se eliminó `_VOL_BAND_FALLBACK` — derivar Fund_Nature
+# de la banda de volatilidad cuando todas las señales ex-ante abstienen violaba
+# P#6 ("SRRI/volatilidad ≠ clasificación"). Ahora, sin señal documental ->
+# None (Restantes). La volatilidad sólo veta/arbitra entre candidatos propuestos.
+
+
+def _vol_consistency_factor(nature: str, band: Optional[int]) -> float:
+    """
+    Multiplicador de consistencia con la volatilidad realizada.
+    band=None -> 1.0 (sin información, neutro).
+    en-banda -> 1.0 · adyacente (±1) -> 0.6 · lejana (>=2) -> 0.25 (veto de facto).
+    """
+    if band is None:
+        return 1.0
+    bands = _NATURE_VOL_BANDS.get(nature)
+    if not bands:
+        return 1.0
+    if band in bands:
+        return 1.0
+    dist = min(abs(band - b) for b in bands)
+    if dist == 1:
+        return 0.6
+    return 0.25
+
+
+def resolve_nature_evidence(
+    name_l: str,
+    kiid_text: str,
+    benchmark_declared: Optional[str] = None,
+    srri_nav_band: Optional[int] = None,
+) -> Tuple[Optional[str], float, dict]:
+    """
+    Clasificador de Fund_Nature ponderado por evidencia (OPT-B3).
+
+    Fuentes (peso por fiabilidad medida por naturaleza):
+      - KIID raw text  (detect_nature_from_kiid)        — señal ex-ante primaria
+      - Name prefilter (detect_nature_from_prefilter)   — precisa pero de baja cobertura
+      - Benchmark      (detect_nature_from_benchmark)   — gruesa (asset-class)
+      - Volatilidad realizada (srri_nav_band 1-7)       — restricción/desempate
+
+    Args:
+        name_l: nombre en minúsculas.
+        kiid_text: texto KIID crudo.
+        benchmark_declared: benchmark declarado (o None).
+        srri_nav_band: SRRI realizado desde NAV (1-7) o None si no hay histórico.
+
+    Returns:
+        (nature_canonical, confidence, evidence_trace)
+        nature_canonical: nombre canónico de Fund_Nature, o None si no hay
+            ninguna evidencia (ni ex-ante ni volatilidad).
+        confidence: (top-second)/top del score combinado, en [0,1].
+        evidence_trace: dict con votos por fuente, scores por naturaleza,
+            banda de volatilidad, ganador, confianza y motivo.
+    """
+    # ── Votos ex-ante ────────────────────────────────────────────────────────
+    v_name = detect_nature_from_prefilter(name_l or "")            # ya canónico o None
+
+    v_kiid_raw = detect_nature_from_kiid(kiid_text or "")
+    if v_kiid_raw == "_RF_pending":
+        v_kiid_raw = resolve_rf_subtype(name_l or "", kiid_text or "")
+    v_kiid = _NATURE_CANONICAL.get(v_kiid_raw) if v_kiid_raw else None
+
+    v_bench = detect_nature_from_benchmark(benchmark_declared)     # Monetario/RV/"Renta Fija"/None
+    # benchmark=Monetario NO es informativo (22.1% vs vol: cash/overnight es
+    # hurdle rate, no naturaleza) -> se descarta para primary/corroboración.
+    if v_bench == "Monetario":
+        v_bench = None
+    v_bench_rf = "Renta Fija Flexible" if v_bench == "Renta Fija" else v_bench
+
+    trace: dict = {
+        "name": v_name, "kiid": v_kiid, "benchmark": v_bench,
+        "srri_nav_band": srri_nav_band,
+        "primary": None, "primary_source": None,
+        "winner": None, "confidence": 0.0, "reason": "",
+    }
+
+    # ── Selección PRIMARIA — arquitectura KIID-primary con override guardado ──
+    # (calibrada 2026-07-16: la mezcla simétrica (sum 90.6% / argmax 91.6%) es
+    #  INFERIOR a KIID-solo (92.7%); KIID-primary + override de las naturalezas
+    #  donde el nombre es medible-mente más fiable (Monetario/RFC = 100%) iguala
+    #  el techo ex-ante con cobertura completa. Ex-ante medido: 92.6%.)
+    primary: Optional[str] = None
+    primary_source: Optional[str] = None
+    if v_name in _NAME_DOMINANT_NATURES:          # nombre domina para esta naturaleza
+        primary, primary_source = v_name, "name"
+    elif v_kiid:                                  # KIID = fuente primaria
+        primary, primary_source = v_kiid, "kiid"
+    elif v_name:                                  # cobertura: nombre
+        primary, primary_source = v_name, "name"
+    elif v_bench_rf:                              # cobertura: benchmark (RF->RFF)
+        primary, primary_source = v_bench_rf, "benchmark"
+
+    # ── Sin evidencia ex-ante: NO se deriva naturaleza de la volatilidad ─────
+    # P#6 (scope 2026-07-17): la volatilidad realizada NUNCA deriva Fund_Nature;
+    # sólo veta/arbitra entre naturalezas ya propuestas por señales documentales
+    # (KIID/nombre/benchmark). Si todas abstienen -> None (el pipeline lo lleva a
+    # la clasificación mínima 'Restantes'), nunca una conjetura por banda de vol.
+    if primary is None:
+        trace["reason"] = "all-abstain"
+        return None, 0.0, trace
+
+    trace["primary"], trace["primary_source"] = primary, primary_source
+
+    # ── Corroboración entre fuentes (para la confianza) ──────────────────────
+    def _agrees(vote: Optional[str]) -> bool:
+        if not vote:
+            return False
+        if vote == primary:
+            return True
+        # benchmark grueso "Renta Fija" corrobora cualquier subtipo RF
+        return vote == "Renta Fija" and primary in (
+            "Renta Fija Corto Plazo", "Renta Fija Flexible")
+    corroborators = sum(_agrees(v) for v in (
+        v_kiid if primary_source != "kiid" else None,
+        v_name if primary_source != "name" else None,
+        v_bench if primary_source != "benchmark" else None,
+    ))
+
+    # ── Veto/ARBITRAJE por volatilidad realizada (P#6-compliant) ─────────────
+    # La volatilidad realizada VETA una naturaleza primaria incompatible con la
+    # banda y ARBITRA entre las naturalezas YA PROPUESTAS por otras señales
+    # (v_kiid / v_name / v_bench_rf). NUNCA introduce una naturaleza que ninguna
+    # señal documental propuso (eso sería derivar Nature de la volatilidad ->
+    # P#6). Si la primaria es incompatible pero NINGÚN candidato ex-ante es
+    # consistente con la banda, se MANTIENE la primaria con confianza baja (queda
+    # marcada NATURE_LOW_CONFIDENCE para revisión) — no se fabrica una respuesta.
+    #
+    # Umbral: vf<=0.25 (banda IMPOSIBLE) siempre; en bandas INEQUÍVOCAS {1,6,7}
+    # (vol admite una sola clase de activo) también inconsistencia adyacente
+    # (vf<1.0). En bandas 3-5 (solape difuso) sólo lo imposible, para no dejar
+    # que la vol domine la discriminación fina ex-ante (RFC vs RFF, Mixtos vs Alt).
+    winner = primary
+    vf = _vol_consistency_factor(primary, srri_nav_band)
+    reason = primary_source
+    _vol_correct = (
+        vf <= 0.25
+        or (srri_nav_band in _VOL_UNAMBIGUOUS_BANDS and vf < 1.0)
+    )
+    if _vol_correct and srri_nav_band is not None:
+        # Sólo candidatos EX-ANTE (propuestos por señales documentales), nunca
+        # una naturaleza fabricada desde la banda de volatilidad.
+        alts = [v for v in (v_kiid, v_name, v_bench_rf)
+                if v and v != primary
+                and _vol_consistency_factor(v, srri_nav_band) >= 1.0]
+        if alts:
+            winner = alts[0]
+            reason = f"{primary_source}->vol-arbitrated"
+            vf = 1.0
+
+    # ── Confianza ────────────────────────────────────────────────────────────
+    base_w = (_W_NAME_BY_NATURE if primary_source == "name"
+              else _W_KIID_BY_NATURE if primary_source == "kiid"
+              else _W_BENCH_BY_NATURE).get(winner, 0.70)
+    confidence = min(1.0, base_w + 0.10 * corroborators) * vf
+    if corroborators:
+        reason += f"+{corroborators}corrob"
+    if srri_nav_band is not None:
+        reason += f"|vol{srri_nav_band}"
+
+    trace.update(winner=winner, confidence=round(confidence, 3), reason=reason)
+    return winner, round(confidence, 3), trace
 
 
 # BL-44-FX / Asset_Currency (2026-07-05): mapa nombre->divisa. Cubre las 6

@@ -220,6 +220,9 @@ from core.classify_utils import (
     detect_nature_from_kiid,                                # INTER-VOTE3
     resolve_rf_subtype,                                     # INTER-VOTE3
     _NATURE_CANONICAL,                                      # INTER-VOTE3
+    resolve_nature_vote,                                    # OPT-B: nature-first vote (superseded)
+    resolve_nature_evidence,                                # OPT-B3: evidence-weighted classifier
+    _NATURE_TO_BLOCK,                                       # OPT-B: nature → block routing (R-1)
     detect_fx_share_class_mismatch,                         # BL-44-FX
     detect_asset_currency_from_name,                        # BL-44-FX / Asset_Currency
     detect_asset_currency_from_kiid_text,                   # Asset_Currency (fallback)
@@ -597,6 +600,13 @@ def validate_classification_contract(
 # Ejecución de bloque
 # -------------------------------------------------
 
+# OPT-B3: umbral de confianza de resolve_nature_evidence por debajo del cual la
+# clasificación de Fund_Nature se marca con un DQ WARNING para revisión humana.
+# 0.5 marca ~170 fondos del corpus (los casos de conflicto de señales / falsos
+# positivos KIID que antes parcheaban INTER-DBLCLAIM/INTER-VOTE3).
+_NATURE_CONF_THRESHOLD: float = 0.5
+
+
 def run_block(
     block_module,
     df_master: pd.DataFrame,
@@ -604,29 +614,49 @@ def run_block(
     master_excel_path: Path,
     sample_size: Optional[int] = None,
     stop_on_error: bool = False,
-    #list_isin: Optional[List[str]] = None,
     list_isin: Optional[List[str]] = None,
     kiid_source: str = "auto",
+    nature_first: bool = False,
 ) -> List[Dict[str, Any]]:
 
-    block_name = getattr(block_module, "BLOCK_NAME", block_module.__name__).upper()
-    heuristic_core = 0 if block_name == "RESTANTES" else 1
+    # OPT-B: in nature_first mode block_module may be None; skip block-specific setup
+    if nature_first:
+        block_name = "NATURE_FIRST"
+        heuristic_core = 1      # updated per-fund after dispatch
+        get_universe = None
+    else:
+        block_name = getattr(block_module, "BLOCK_NAME", block_module.__name__).upper()
+        heuristic_core = 0 if block_name == "RESTANTES" else 1
+        get_universe = dynamic_getattr(
+            block_module,
+            ["get_universe_isins", "get_heuristic_isins", "get_universe", "get_isins"],
+        )
+        if not get_universe:
+            raise AttributeError(f"{block_module.__name__} no expone función de universo.")
 
     # BL-KIID-LOCAL-FIRST: traza de la modalidad de carga del binario KIID.
     print(f"[{block_name}] kiid_source={kiid_source}")
-
-    get_universe = dynamic_getattr(
-        block_module,
-        ["get_universe_isins", "get_heuristic_isins", "get_universe", "get_isins"],
-    )
-    if not get_universe:
-        raise AttributeError(f"{block_module.__name__} no expone función de universo.")
 
     # -----------------------------
     # Selección de ISINs
     # -----------------------------
     if list_isin:
         isins = list_isin
+    elif nature_first:
+        # OPT-B: all ISINs from master; nature vote decides block per-fund.
+        # FIX (2026-07-17): .unique() — el maestro lista cada ISIN en ~7 hojas
+        # de gestora (22.406 filas / 3.227 ISINs únicos). Sin dedup se procesaba
+        # cada fondo ~7 veces (7× duración + 7× ingestion_log). Los bloques ya
+        # deduplican vía get_universe_isins().unique(); esta rama debe igualarlo.
+        _master_rows = int(df_master["ISIN"].dropna().shape[0])
+        isins = df_master["ISIN"].dropna().astype(str).unique().tolist()
+        # Guard de dedup: hace visible en el log una regresión de duplicados.
+        print(f"[NATURE_FIRST] universo: {len(isins)} ISINs únicos "
+              f"(maestro: {_master_rows} filas, dedup {_master_rows/max(1,len(isins)):.1f}x)")
+        if _master_rows > len(isins) * 1.5:
+            print(f"[NATURE_FIRST] nota: el maestro lista cada ISIN en varias "
+                  f"hojas; se procesa una vez por ISIN único (dedup OK).")
+        isins = isins[:sample_size] if sample_size else isins
     else:
         # RESTANTES es bloque residual: necesita conn para excluir ISINs ya clasificados
         universe = get_universe(df_master, conn) if heuristic_core == 0 else get_universe(df_master)
@@ -684,6 +714,22 @@ def run_block(
                 }
     except Exception as _bmk_err:
         print(f"[WARN] SC-H: no se pudo cargar fund_benchmarks: {_bmk_err}")
+
+    # ── OPT-B3: batch-load realized-volatility band (srri_nav) once ──────────
+    # Ground-truth anchor/veto for resolve_nature_evidence. None for funds
+    # without NAV history (P2 not yet run) → engine falls back to ex-ante only.
+    _srri_nav_by_isin: dict = {}
+    if nature_first:
+        try:
+            for _si, _sv in conn.execute(
+                "SELECT ISIN, CAST(ROUND(value) AS INT) FROM fund_metrics "
+                "WHERE metric='srri_nav' AND horizon='since_inception' "
+                "AND real_flag=0 AND value IS NOT NULL"
+            ).fetchall():
+                if _sv is not None:
+                    _srri_nav_by_isin[_si] = max(1, min(7, int(_sv)))
+        except Exception as _srri_err:
+            print(f"[WARN] OPT-B3: no se pudo cargar srri_nav: {_srri_err}")
 
     for idx, isin in enumerate(isins, 1):
         _t_fund_start = time.perf_counter()
@@ -787,33 +833,96 @@ def run_block(
                 continue  # No clasificar con texto contaminado
 
             # ── Override universal: Estructurado ─────────────────────────
-            # Antes de llamar al bloque, verificar si el fondo es un producto
-            # estructurado. Si lo es, la naturaleza es Estructurado
-            # independientemente del bloque de entrada.
             _t0 = time.perf_counter()
             _name_l = (fund_name or "").lower()
             _structured_kw = ["autocall", "structured", "estructurado",
                               "capital protec", "guaranteed", "barrier"]
             _is_structured = any(k in _name_l for k in _structured_kw)
 
-            classifier = dynamic_getattr(block_module, ["classify_fund"])
-            if classifier:
-                # restantes.py acepta benchmark_declared y srri_parsed
-                _bench = parsed.get("Benchmark_Declared")
-                _srri_for_classify = parsed.get("SRRI")
-                # BL-SRRI-GUARD: si parsed["SRRI"] es dict (path CACHED anómalo),
-                # extraer el escalar antes de int(). Previene '>= dict int'.
-                if isinstance(_srri_for_classify, dict):
-                    _srri_for_classify = _srri_for_classify.get("SRRI")
-                try:
-                    classification = classifier(fund_name, kiid_text,
-                                                benchmark_declared=_bench,
-                                                srri_parsed=int(_srri_for_classify) if _srri_for_classify else None)
-                except TypeError:
-                    classification = classifier(fund_name, kiid_text)
+            _bench = parsed.get("Benchmark_Declared")
+            _srri_for_classify = parsed.get("SRRI")
+            # BL-SRRI-GUARD: si parsed["SRRI"] es dict (path CACHED anómalo),
+            # extraer el escalar antes de int(). Previene '>= dict int'.
+            if isinstance(_srri_for_classify, dict):
+                _srri_for_classify = _srri_for_classify.get("SRRI")
 
+            if nature_first:
+                # OPT-B3 (2026-07-16): evidence-weighted classifier → dispatch.
+                # KIID-primary + guarded name-override (Monetario/RFC) + benchmark
+                # coverage/corroboration + realized-vol veto. Retires INTER-DBLCLAIM
+                # + INTER-VOTE3 (nature resolved once, with a confidence + trace).
+                _srri_band = _srri_nav_by_isin.get(isin)
+                _voted_nature, _nat_conf, _ev_trace = resolve_nature_evidence(
+                    _name_l, kiid_text, benchmark_declared=_bench,
+                    srri_nav_band=_srri_band,
+                )
+                _dispatch_blk = _NATURE_TO_BLOCK.get(_voted_nature) if _voted_nature else None
+                if _dispatch_blk and not _is_structured:
+                    try:
+                        _dispatch_mod = importlib.import_module(f"blocks.{_dispatch_blk}")
+                    except ImportError:
+                        _dispatch_mod = importlib.import_module(f"proyecto1.blocks.{_dispatch_blk}")
+                    _dispatch_clf = dynamic_getattr(_dispatch_mod, ["classify_fund"])
+                    if _dispatch_clf:
+                        try:
+                            classification = _dispatch_clf(
+                                fund_name, kiid_text,
+                                benchmark_declared=_bench,
+                                srri_parsed=int(_srri_for_classify) if _srri_for_classify else None,
+                            )
+                        except TypeError:
+                            classification = _dispatch_clf(fund_name, kiid_text)
+                        classification["Fund_Nature"] = _voted_nature
+                    else:
+                        classification = {"Fund_Nature": _voted_nature}
+                    heuristic_core = 0 if _dispatch_blk == "restantes" else 1
+                    log_ingestion(
+                        conn, isin, "OPT_B3_DISPATCH", "INFO",
+                        f"[OPT-B3] {_ev_trace['reason']} conf={_nat_conf} "
+                        f"name={_ev_trace['name']} kiid={_ev_trace['kiid']} "
+                        f"bench={_ev_trace['benchmark']} vol={_srri_band} "
+                        f"→ {_voted_nature} → dispatch={_dispatch_blk}"
+                    )
+                    # Baja confianza → DQ flag (revisión). Sustituye el parcheo
+                    # INTER-DBLCLAIM/VOTE3 por señalización explícita.
+                    if _nat_conf < _NATURE_CONF_THRESHOLD:
+                        log_ingestion(
+                            conn, isin, "NATURE_LOW_CONFIDENCE", "WARNING",
+                            f"[OPT-B3] Fund_Nature={_voted_nature} con confianza baja "
+                            f"({_nat_conf} < {_NATURE_CONF_THRESHOLD}): "
+                            f"{_ev_trace['reason']} — revisar."
+                        )
+                else:
+                    # Structured override or all-abstain → restantes minimum classification
+                    try:
+                        _rest_mod = importlib.import_module("blocks.restantes")
+                    except ImportError:
+                        _rest_mod = importlib.import_module("proyecto1.blocks.restantes")
+                    _rest_clf = dynamic_getattr(_rest_mod, ["classify_fund"])
+                    if _rest_clf:
+                        try:
+                            classification = _rest_clf(
+                                fund_name, kiid_text,
+                                benchmark_declared=_bench,
+                                srri_parsed=int(_srri_for_classify) if _srri_for_classify else None,
+                            )
+                        except TypeError:
+                            classification = _rest_clf(fund_name, kiid_text)
+                    else:
+                        classification = {"Fund_Nature": _voted_nature or "Restantes"}
+                    heuristic_core = 0
             else:
-                classification = {}
+                # Original block dispatch
+                classifier = dynamic_getattr(block_module, ["classify_fund"])
+                if classifier:
+                    try:
+                        classification = classifier(fund_name, kiid_text,
+                                                    benchmark_declared=_bench,
+                                                    srri_parsed=int(_srri_for_classify) if _srri_for_classify else None)
+                    except TypeError:
+                        classification = classifier(fund_name, kiid_text)
+                else:
+                    classification = {}
 
             # ── Override Fund_Nature si es estructurado ──────────────────
             if _is_structured:
@@ -838,7 +947,8 @@ def run_block(
             # variable (≥60%), se re-clasifica con renta_variable.classify_fund()
             # en lugar de aceptar la sobrescritura de mixtos -- corrección
             # completa (Family/Type/etc.), no solo un parche de Fund_Nature.
-            if classification.get("Fund_Nature") == "Mixtos" and block_name == "MIXTOS":
+            # OPT-B: nature vote resolved this upfront; INTER-DBLCLAIM is a no-op in nature_first mode.
+            if not nature_first and classification.get("Fund_Nature") == "Mixtos" and block_name == "MIXTOS":
                 _bd_nature_dblclaim = conn.execute(
                     "SELECT Fund_Nature FROM fund_master WHERE ISIN=?", (isin,)
                 ).fetchone()
@@ -909,8 +1019,9 @@ def run_block(
             # usado como "revalorización superior a su índice de referencia
             # monetario" -- no es un fondo monetario). Por eso, para Monetario
             # se exige además una frase MMF explícita en el propio texto KIID.
+            # OPT-B: nature vote resolved this upfront; INTER-VOTE3 is a no-op in nature_first mode.
             _v3_current_nature = classification.get("Fund_Nature")
-            if _v3_current_nature and kiid_text:
+            if not nature_first and _v3_current_nature and kiid_text:
                 _v3_raw = detect_nature_from_kiid(kiid_text)
                 if _v3_raw == "_RF_pending":
                     _v3_raw = resolve_rf_subtype(_name_l, kiid_text)
@@ -1584,8 +1695,13 @@ def run_block(
                 except (ValueError, TypeError):
                     _srri44_int = None
             if _nat44 is not None and _srri44_int is not None:
+                # FIX-BL44-OPTB (2026-07-17): si monetarios.classify_fund() detectó
+                # un MMF confirmado por nombre (STRONG_MMF_STRUCTURE_MARKERS) con SRRI
+                # anómalo, pone _bl44_srri_anomaly para señalizar que el conflicto ya
+                # fue evaluado en el bloque y el fondo es un MMF legítimo (no eyectar).
+                _bl44_already_handled = classification.get("_bl44_srri_anomaly") is not None
                 _reclasify44 = (
-                    (_nat44 == "Monetario" and _srri44_int >= 3)
+                    (_nat44 == "Monetario" and _srri44_int >= 3 and not _bl44_already_handled)
                     or (_nat44 == "Renta Fija Corto Plazo" and _srri44_int >= 4)
                 )
                 # BL-44-FX (2026-07-05, extiende la decisión de usuario del

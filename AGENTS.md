@@ -34,8 +34,15 @@ P1  Ingestion + classification     → ACTIVE
 P2  Quantitative metrics           → ACTIVE
 P3  Regime-aware scoring + portfolio → ACTIVE (modules exist, production use evolving)
 
-Flow: P1 → P2 → P3  (unidirectional, no cycles)
+Flow: P1 → P2 → P3  (unidirectional)
 ```
+
+**Bounded exception — P1 ← P2 feedback (2026-07-17, accepted):** P1's evidence classifier
+(`resolve_nature_evidence`) reads `fund_metrics.srri_nav` (a P2 realized-volatility output) to **veto/
+arbitrate** `Fund_Nature` — never to derive it (see `PRINCIPIOS_DISENO.md` §P#6 scope). This is a
+deliberate, bounded feedback, not a cycle to "fix": it **degrades gracefully** (no NAV → `srri_nav`
+NULL → ex-ante-only classification, no error) and **converges** (classification moves toward realized
+behaviour as P2 coverage grows). Ordering: run P2 before the P1 nature-first pass for freshest data.
 
 ---
 
