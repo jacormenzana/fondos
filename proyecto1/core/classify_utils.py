@@ -1854,12 +1854,24 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
     # UBS Strategic Fund Growth ("invierte con una proporción variable en
     # valores de renta variable y bonos, incluidos instrumentos del
     # mercado monetario").
+    # FIX-RV-CONVERTIBLE-1 (2026-07-17): "renta variable y bonos convertibles"
+    # is NOT a mixed mandate — convertible bonds are equity-linked instruments
+    # (not a primary fixed-income allocation). The substring "renta variable y
+    # bonos" matches inside "instrumentos relacionados con la renta variable y
+    # bonos convertibles" (M&G Global Listed Infrastructure: "al menos el 80%
+    # del fondo se invierte en acciones, instrumentos relacionados con la renta
+    # variable y bonos convertibles"). Guard: only fire if the match is NOT
+    # "renta variable y bonos convertibles" (convertibles as secondary hybrid
+    # instrument in an equity fund → eq_dominant path returns RV correctly).
     if any(k in w for k in [
         "renta fija, renta variable", "renta fija y renta variable",
         "renta variable y de renta fija",
-        "renta variable y bonos", "renta variable y de bonos",
+        "renta variable y de bonos",
         "acciones y bonos",
-    ]):
+    ]) or (
+        "renta variable y bonos" in w
+        and "renta variable y bonos convertibles" not in w
+    ):
         return "Mixtos"
 
     # FIX-P1-NTC7 (2026-07-05): "invests in a range of asset classes" (KID

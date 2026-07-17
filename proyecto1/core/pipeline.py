@@ -1695,11 +1695,20 @@ def run_block(
                 except (ValueError, TypeError):
                     _srri44_int = None
             if _nat44 is not None and _srri44_int is not None:
-                # FIX-BL44-OPTB (2026-07-17): si monetarios.classify_fund() detectó
-                # un MMF confirmado por nombre (STRONG_MMF_STRUCTURE_MARKERS) con SRRI
-                # anómalo, pone _bl44_srri_anomaly para señalizar que el conflicto ya
-                # fue evaluado en el bloque y el fondo es un MMF legítimo (no eyectar).
-                _bl44_already_handled = classification.get("_bl44_srri_anomaly") is not None
+                # FIX-BL44-OPTB2 (2026-07-17): bypass BL-44 when either:
+                # (a) monetarios block set _bl44_srri_anomaly — confirmed MMF with
+                #     anomalous SRRI via STRONG_MMF_STRUCTURE_MARKERS in fund name.
+                # (b) block classified fund as Money Market Fund via KIID signals
+                #     (Vehicle_Structure=Money Market Fund / MMF_Structure populated) —
+                #     strong KIID evidence (VNAV, "money market fund" language) overrides
+                #     the SRRI_KIID mismatch. Confirmed: DWS ESG EU M MKT IC100
+                #     (LU2098886703) has "vnav"/"money market fund" in KIID but returns
+                #     via early strong-signal path, never setting _bl44_srri_anomaly.
+                _bl44_already_handled = (
+                    classification.get("_bl44_srri_anomaly") is not None
+                    or classification.get("Vehicle_Structure") == "Money Market Fund"
+                    or classification.get("MMF_Structure") not in (None, "Not Applicable")
+                )
                 _reclasify44 = (
                     (_nat44 == "Monetario" and _srri44_int >= 3 and not _bl44_already_handled)
                     or (_nat44 == "Renta Fija Corto Plazo" and _srri44_int >= 4)
