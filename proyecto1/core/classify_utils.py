@@ -2068,7 +2068,30 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
         "bonos de alto rendimiento",
         "activos principales: bonos", "principales activos: bonos",
         "principales activos negociados: bonos",
+        # FIX-B1-REST-RF-1 (2026-07-17): "el resto en activos de renta fija"
+        # -- mandato explícito de que la fracción NO-equity se invierte en RF.
+        # Confirmado: RFMI MULTIGESTION FI (ES0122762000) -- "máximo del 20%
+        # de la exposición total en Renta Variable y el resto en activos de
+        # Renta Fija". Sin este fix: bond_dominant=False → eq_dominant=True
+        # (falso positivo de "en acciones de baja capitalización" en disclamer
+        # de riesgo) → devuelve RV en vez de Mixtos/RF Flexible.
+        "el resto en activos de renta fija",
+        "el resto en renta fija",
+        "el resto en activos de renta fija y",
     ])
+    # FIX-B1-BOND-PRINCIPALMENTE-2 (2026-07-17): "invierte principalmente,
+    # directa o indirectamente a través de derivados, en bonos" -- la cláusula
+    # instrumental "directa o indirectamente a través de derivados" rompe el
+    # match exacto "invierte principalmente en bonos" de la lista anterior.
+    # Regex con margen de 120 chars entre "principalmente" y "en bonos".
+    # Confirmado: Franklin Euro High Yield Fund -- "El Fondo invierte
+    # principalmente, directa o indirectamente a través de derivados, en
+    # bonos del Estado y corporativos con calificación inferior a investment
+    # grade". Sin este fix: bond_dominant=False → eq_dominant=True (por
+    # "valores de renta variable" en la cláusula secundaria) → devuelve RV.
+    bond_dominant = bond_dominant or bool(re.search(
+        r'invierte\s+principalmente[^.]{0,120}en\s+bonos', w
+    ))
 
     # RV dominante (declaración explícita de objetivo)
     # NOTA (2026-07-04): se evaluó demover "valores de renta variable" y
@@ -2128,7 +2151,13 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
         # Confirmado: EDR SICAV Global Resilience -- "el producto invertirá
         # en todo momento al menos el 75% en acciones internacionales" (sin
         # mención de bonos en la cláusula de objetivo).
-        r'al\s+menos\s+el\s+\d+\s*%\s+en\s+acciones', w
+        # FIX-B1-RV-MINIMO-1 (2026-07-17): "un mínimo del X% en acciones"
+        # -- sinónimo de "al menos el X% en acciones", forma usada por DWS.
+        # Confirmado: DWS Invest Focus Europe -- "el fondo invierte un mínimo
+        # del 75% en acciones de emisores con sede principal en un Estado
+        # miembro de la UE". Patrón existente solo cubría "al menos el".
+        r'(?:al\s+menos\s+el|un?\s+m[ií]nimo\s+del?|como\s+m[ií]nimo(?:\s+el)?)'
+        r'\s+\d+\s*%\s+en\s+acciones', w
     ))
 
     # FIX-P1-RV2 (2026-07-04): "en menor medida... podrá invertir en
@@ -2205,10 +2234,50 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
         r'de\s+forma\s+limitada[^.]{0,200}(?:bonos|deuda|renta\s+fija|valores)',
         w
     ))
+    # FIX-B1-PORDRINVERTIRSE-1 (2026-07-17): "podrá invertirse/invertir hasta
+    # un/el X% en valores de renta fija/renta fija/bonos" -- asignación
+    # secundaria a RF con tope porcentual explícito. El cuantificador "hasta"
+    # (= up to/at most) junto a un % indica claramente que RF es SECUNDARIA
+    # (límite máximo, no mandato primario). Confirmado: DWS Invest Focus Europe
+    # -- "podrá invertirse hasta un 25% en valores de renta fija, instrumentos
+    # del mercado monetario y saldos bancarios" tras el mandato primario "el
+    # fondo invierte un mínimo del 75% en acciones". Sin este fix:
+    # bond_dominant=True (vía "valores de renta fija") → eq_dominant y
+    # _minor_secondary_bond no consiguen devolver RV → _RF_pending incorrecto.
+    _minor_secondary_bond = _minor_secondary_bond or bool(re.search(
+        r'podr[aá]\s+invertirse?\s+hasta\s+(?:un?\s+|el\s+)?\d+\s*%\s+en\s+'
+        r'(?:valores\s+de\s+renta\s+fija|renta\s+fija|bonos)',
+        w
+    ))
+
+    # FIX-B1-MINOREQ-1 (2026-07-17): simétrico a _minor_secondary_bond.
+    # "en menor medida, el Fondo podrá invertir en valores de renta variable/
+    # acciones" -- equity EXPLÍCITAMENTE declarada como asignación SECUNDARIA
+    # en un fondo cuya inversión primaria es en bonos. Cuando bond_dominant=True
+    # (vía FIX-B1-BOND-PRINCIPALMENTE-2 o señales directas) y este flag activa,
+    # el fondo resuelve como _RF_pending (RF Flexible/Corto) en vez de Mixtos.
+    # Confirmado: Franklin Euro High Yield -- "invierte principalmente...en bonos
+    # del Estado y corporativos...con calificación inferior a investment grade.
+    # En menor medida, el Fondo podrá invertir en valores de renta variable".
+    # Sin este fix: after BOND-PRINCIPALMENTE-2 sets bond_dominant=True AND
+    # "valores de renta variable" sets eq_dominant=True → has_equity+has_bonds
+    # → Mixtos (incorrecto: fondo de bonos HY con allowance minoritaria de RV).
+    _minor_secondary_equity = bool(re.search(
+        r'en\s+menor\s+medida[^.]{0,100}podr[aá][^.]{0,100}'
+        r'(?:valores\s+de\s+renta\s+variable|renta\s+variable\b|acciones\b)',
+        w
+    ))
 
     # RV dominante sin RF → Renta Variable
     if eq_dominant and (not bond_dominant or _minor_secondary_bond):
         return "Renta Variable"
+
+    # FIX-B1-MINOREQ-1: RF dominante + equity EXPLÍCITAMENTE secundaria
+    # ("en menor medida podrá invertir en RV/acciones"). Resolver como
+    # _RF_pending (RF Flexible/Corto) en vez de caer en has_equity+has_bonds
+    # → Mixtos que sería incorrecto para un fondo primariamente de bonos.
+    if bond_dominant and _minor_secondary_equity:
+        return "_RF_pending"
 
     # RF dominante sin equity en absoluto → pendiente corto/flexible
     if bond_dominant and not eq_dominant and not has_equity:
