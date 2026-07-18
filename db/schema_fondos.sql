@@ -1,5 +1,5 @@
 -- ============================================================
--- schema_fondos.sql  — v20  (2026-06-07)
+-- schema_fondos.sql  — v23  (2026-07-18)
 -- Base de datos: db/fondos.sqlite
 -- Ruta esperada: <raiz_proyecto>/db/schema_fondos.sql
 -- Cargado por: core/sqlite_writer.py → create_schema()
@@ -24,6 +24,11 @@
 --        ingestion_log. Data_Quality_Flag ahora se calcula como rollup
 --        determinista (máximo de severidad) en vez de mutaciones
 --        secuenciales dispersas por pipeline.py.
+--   v23  In_Current_Universe (fund_master) — FIX-UNIVERSE-RECON-1: soft-
+--        delete flag (1 = en el harvest vigente, 0 = huérfano fuera del
+--        universo actual). Regenerado en cada ciclo por
+--        reconcile_universe_membership() en sqlite_writer.py; no es COALESCE-
+--        protegido (mismo patrón que SRRI_Visual, excepción al P#1).
 -- ============================================================
 
 -- ============================================================
@@ -129,6 +134,10 @@ CREATE TABLE IF NOT EXISTS fund_master (
     MMF_Structure           TEXT,
     Alt_Strategy            TEXT,
     Payoff_Profile          TEXT,
+    -- v23 (2026-07-18): universe-membership flag — FIX-UNIVERSE-RECON-1.
+    -- 1 = fondo en el harvest vigente (universo actual), 0 = huérfano.
+    -- No es COALESCE-protegido: se regenera completamente en cada ciclo.
+    In_Current_Universe     INTEGER NOT NULL DEFAULT 1,
 
     FOREIGN KEY (fund_family_id) REFERENCES fund_families (family_id)
 );

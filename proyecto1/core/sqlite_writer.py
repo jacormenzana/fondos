@@ -1049,3 +1049,69 @@ def correct_oc_aci_mismatch(
             isin, source_note, ter_pct,
         )
     return updated
+
+
+# ============================================================
+# FIX-UNIVERSE-RECON-1: universe membership reconciliation
+# ============================================================
+# Per-cycle soft-delete flag: marks fund_master rows as in/out of the
+# current harvest universe without ever deleting historical rows.
+#
+# Design:
+#   - NOT COALESCE-protected: same exception as SRRI_Visual (P#1). The flag
+#     is fully regenerated every cycle from the loaded universe DataFrame.
+#   - NOT a classification attribute: never enters ATTRIBUTE_CATALOG,
+#     characterize_fund(), or the _v3_row SELECT (R-3 does not apply here).
+#   - Written ONLY by this function; classifiers never touch it.
+#   - Chunked IN(...) to stay under SQLite's 999-variable limit.
+# ============================================================
+
+_SQLITE_IN_CHUNK = 900   # safe margin below the 999 SQLite variable limit
+
+
+def reconcile_universe_membership(
+    conn: sqlite3.Connection,
+    current_isins: list[str],
+) -> tuple[int, int]:
+    """
+    Mark all fund_master rows as in/out of the current harvest universe.
+    Idempotent: running twice with the same list produces the same result.
+    NOT COALESCE-protected (overwritten every cycle).
+
+    Args:
+        conn:          active connection with isolation_level=None (WAL).
+        current_isins: ISINs present in the current pipeline universe
+                       (from df_master after dedup; may include WRONG_DOC
+                       funds — they stay in-universe while in the harvest).
+
+    Returns:
+        (in_universe, orphans) — row counts after reconciliation.
+    """
+    isins = sorted({str(i) for i in current_isins if i})
+
+    # 1. Flag every row as out-of-universe
+    conn.execute("UPDATE fund_master SET In_Current_Universe = 0")
+
+    # 2. Re-flag the current universe in chunks to respect SQLite's
+    #    per-statement variable limit (~999).
+    for start in range(0, len(isins), _SQLITE_IN_CHUNK):
+        chunk = isins[start: start + _SQLITE_IN_CHUNK]
+        placeholders = ",".join("?" * len(chunk))
+        conn.execute(
+            f"UPDATE fund_master SET In_Current_Universe = 1 "
+            f"WHERE ISIN IN ({placeholders})",
+            chunk,
+        )
+
+    in_u = conn.execute(
+        "SELECT COUNT(*) FROM fund_master WHERE In_Current_Universe = 1"
+    ).fetchone()[0]
+    orphans = conn.execute(
+        "SELECT COUNT(*) FROM fund_master WHERE In_Current_Universe = 0"
+    ).fetchone()[0]
+
+    print(
+        f"[UNIVERSE-RECON] {in_u} en universo actual, "
+        f"{orphans} huérfanos (fuera del harvest)"
+    )
+    return in_u, orphans

@@ -353,6 +353,18 @@ assert len(EXPECTED_COLUMNS_V21) == 59, (
     f"v21 debe tener 59 columnas en fund_master, tiene {len(EXPECTED_COLUMNS_V21)}"
 )
 
+# v23 (2026-07-18): In_Current_Universe — universe-membership flag.
+# Not a classification attribute; not COALESCE-protected; regenerated
+# each cycle by reconcile_universe_membership() in sqlite_writer.py.
+# (v22 added fund_data_quality_issues only — no new fund_master column.)
+V23_FUND_MASTER_NEW: list[str] = ["In_Current_Universe"]
+FUND_MASTER_COLUMNS_V23: list[str] = FUND_MASTER_COLUMNS_V21 + V23_FUND_MASTER_NEW
+EXPECTED_COLUMNS_V23: frozenset = frozenset(FUND_MASTER_COLUMNS_V23)
+FUND_MASTER_COLUMNS_V23_SET = EXPECTED_COLUMNS_V23
+assert len(EXPECTED_COLUMNS_V23) == 60, (
+    f"v23 debe tener 60 columnas en fund_master, tiene {len(EXPECTED_COLUMNS_V23)}"
+)
+
 
 def check_schema_v20_job_b(conn) -> dict:
     """Valida la parte DESPLEGABLE de v20 (Job B): 6 columnas de coste en
@@ -463,6 +475,56 @@ def check_schema_v22(conn) -> dict:
     return {'ok': len(issues) == 0, 'issues': issues}
 
 
+def check_schema_v23(conn) -> dict:
+    """
+    Valida v23: v22 completo (sin strict_count) + In_Current_Universe
+    presente en fund_master (60 columnas total).
+
+    Returns: {'ok': bool, 'issues': list[str]}
+    """
+    issues: list[str] = []
+    # check_schema_v22 calls check_schema_v21 which calls check_schema_v20
+    # with strict_count=False; but v21 does its own count == 59 check.
+    # We replicate the cascade with strict_count=False at v21 level to avoid
+    # the spurious "expected 59, have 60" error from the v21 step.
+    v20 = check_schema_v20(conn, strict_count=False)
+    issues += v20['issues']
+
+    cur = conn.execute("PRAGMA table_info(fund_master)")
+    fm_actual = {row[1] for row in cur.fetchall()}
+
+    # V21 column check (Asset_Currency)
+    for c in V21_FUND_MASTER_NEW:
+        if c not in fm_actual:
+            issues.append(f"fund_master: falta columna v21: {c}")
+
+    # V22: fund_data_quality_issues table
+    cur_tbl = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' "
+        "AND name='fund_data_quality_issues'"
+    )
+    if not cur_tbl.fetchone():
+        issues.append("Tabla fund_data_quality_issues no existe (v22)")
+    else:
+        actual_dq = {r[1] for r in conn.execute(
+            "PRAGMA table_info(fund_data_quality_issues)"
+        ).fetchall()}
+        missing_dq = FUND_DATA_QUALITY_ISSUES_COLUMNS_SET - actual_dq
+        if missing_dq:
+            issues.append(
+                f"fund_data_quality_issues: faltan columnas {sorted(missing_dq)}"
+            )
+
+    # V23: In_Current_Universe
+    new_missing = [c for c in V23_FUND_MASTER_NEW if c not in fm_actual]
+    if new_missing:
+        issues.append(f"fund_master: faltan columnas v23 nuevas: {new_missing}")
+    if len(fm_actual) != 60:
+        issues.append(f"fund_master: esperadas 60 columnas (v23), hay {len(fm_actual)}")
+
+    return {'ok': len(issues) == 0, 'issues': issues}
+
+
 def check_schema_v19(conn) -> dict:
     """
     Valida que la BD esté en schema v19.
@@ -524,7 +586,7 @@ def verify_db_schema(conn) -> dict[str, list[str]]:
     missing: dict[str, list[str]] = {}
 
     checks = [
-        ("fund_master",              FUND_MASTER_COLUMNS_V21_SET),
+        ("fund_master",              FUND_MASTER_COLUMNS_V23_SET),
         ("fund_kiid_metadata",       FUND_KIID_METADATA_COLUMNS_SET),
         ("ingestion_log",            INGESTION_LOG_COLUMNS_SET),
         ("fund_benchmarks",          FUND_BENCHMARKS_COLUMNS_SET),
@@ -553,10 +615,11 @@ def assert_schema_alignment(conn) -> None:
     """
     Comprueba que fund_master, fund_kiid_metadata, ingestion_log,
     fund_benchmarks y fund_data_quality_issues contienen todas las
-    columnas definidas en este módulo (v22: fund_master = 59 cols con
-    Vehicle_Structure + Asset_Currency; sin Type/Subtype/Currency_Hedged/
-    Is_ESG/Portfolio_Currency; metadata = 22; fund_data_quality_issues
-    nueva en v22, ver FIX-DQ-1).
+    columnas definidas en este módulo (v23: fund_master = 60 cols con
+    Vehicle_Structure + Asset_Currency + In_Current_Universe; sin
+    Type/Subtype/Currency_Hedged/Is_ESG/Portfolio_Currency; metadata = 22;
+    fund_data_quality_issues nueva en v22, ver FIX-DQ-1;
+    In_Current_Universe nueva en v23, ver FIX-UNIVERSE-RECON-1).
 
     Lanza AssertionError con detalle si falta alguna columna.
 

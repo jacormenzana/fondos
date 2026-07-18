@@ -11,6 +11,14 @@ Sustituye a proyecto1/src/config.py y proyecto2/src/config.py.
 Uso desde cualquier modulo:
     from shared.config import DB_PATH, RISK_FREE_RATE_ANN
 
+Cambios v23 (2026-07-18, FIX-UNIVERSE-RECON-1):
+  - SCHEMA_VERSION: "v22" → "v23".
+  - fund_master: In_Current_Universe (INTEGER NOT NULL DEFAULT 1) añadida.
+    Soft-delete flag regenerado en cada ciclo por reconcile_universe_membership()
+    en sqlite_writer.py. 1 = en el harvest vigente, 0 = huérfano. No COALESCE-
+    protegido (mismo patrón que SRRI_Visual). No clasificación: no entra en
+    ATTRIBUTE_CATALOG.
+
 Cambios v22 (2026-07-05, FIX-DQ-1):
   - SCHEMA_VERSION: "v21" → "v22".
   - fund_data_quality_issues (tabla nueva): estado "actual" de issues de
@@ -84,7 +92,18 @@ _ROOT = Path(__file__).resolve().parent.parent   # c:/desarrollo/fondos
 # ============================================================
 # Versión canónica del schema de BD
 # ============================================================
-SCHEMA_VERSION: str = "v22"
+SCHEMA_VERSION: str = "v23"
+
+# ============================================================
+# v23 (FIX-UNIVERSE-RECON-1, 2026-07-18): In_Current_Universe (fund_master)
+# ============================================================
+# Soft-delete universe-membership flag (INTEGER NOT NULL DEFAULT 1).
+# 1 = fondo pertenece al harvest vigente (db_document_catalogue MAX),
+# 0 = huérfano preservado en fund_master por la política append-only.
+# No es COALESCE-protegido: regenerado completamente cada ciclo por
+# reconcile_universe_membership() (sqlite_writer.py). No entra en
+# ATTRIBUTE_CATALOG ni en characterize_fund() (no es atributo de
+# clasificación — es provenance de pipeline).
 
 # ============================================================
 # v22 (FIX-DQ-1): severidad de Data_Quality_Flag / fund_data_quality_issues

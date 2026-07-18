@@ -136,6 +136,15 @@ def main():
     from core.pipeline import run_global_normalization
     run_global_normalization(conn)
 
+    # FIX-UNIVERSE-RECON-1: universe membership reconciliation (v23).
+    # Marks fund_master rows in/out of the current harvest universe; idempotent.
+    # Not COALESCE-protected: regenerated every cycle from the loaded master.
+    from core.sqlite_writer import reconcile_universe_membership
+    reconcile_universe_membership(
+        conn,
+        df_master["ISIN"].dropna().astype(str).unique().tolist(),
+    )
+
     conn.commit()
     conn.close()
 
