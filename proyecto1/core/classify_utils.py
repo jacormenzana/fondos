@@ -1820,6 +1820,20 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
         "varias clases de activos",
     ]):
         return "Mixtos"
+    # FIX-B1-COMMODITY-PRIMAR-1 (2026-07-18): pure commodity fund with a
+    # "principalmente en materias primas" primary mandate → Alternativo.
+    # Must fire BEFORE FIX-B1-MIXTO-ENUM (below) which catches the same
+    # "materias primas + renta variable + renta fija" triple and returns
+    # Mixtos -- correct for PIMCO-style multi-asset funds but wrong for
+    # pure commodity funds whose "renta variable" and "renta fija" are only
+    # secondary/permitted instruments or derivative collateral.
+    # Confirmed: NEUBERGER BERMAN COMMODITIES (IE0004O7KK00 / IE000MVZ49F4)
+    # -- "invirtiendo principalmente en una amplia gama de materias primas";
+    # "renta variable" appears only as a permitted instrument list entry and
+    # "renta fija" only for derivative collateral management.
+    if re.search(r'principalmente\s+en[^.]{0,80}materias\s+primas', w):
+        return "Alternativo"
+
     # FIX-B1-MIXTO-ENUM (2026-07-13): fund that mentions commodities + equity +
     # FI in the same objective window → genuinely multi-asset. PIMCO Inflation
     # Master Fund: "instrumentos de renta fija vinculados a la inflación...
@@ -2156,6 +2170,17 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
         # secundaria) como único voto, resolviendo _RF_pending en vez de RV.
         "invierte fundamentalmente en acciones",
         "fundamentalmente en acciones de",
+        # FIX-B1-EN-STOCKPICK-1 (2026-07-18): English equity management
+        # signal. "stock picking" is exclusively used for equity selection
+        # strategies -- never appears in bond fund objectives. Without this,
+        # English equity funds using quality-credit language ("investment
+        # grade") set has_bonds=True with no has_equity → _RF_pending.
+        # Confirmed: ECHIQUIER SPACE FUND (LU2466448532/LU2466449001) --
+        # "active and discretionary management based on a rigorous stock
+        # picking process" yet classified RFF due to "investment grade"
+        # (credit quality constraint on equity holdings, not a bond mandate).
+        "stock picking",
+        "stock selection process",
     ]) or _has_equity_in_header or _ocr_equity or bool(re.search(
         # FIX-P1-NTC6 (2026-07-05): "al menos el X% en acciones
         # internacionales/globales" -- declaración de mandato mayoritario de
@@ -2168,8 +2193,23 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
         # Confirmado: DWS Invest Focus Europe -- "el fondo invierte un mínimo
         # del 75% en acciones de emisores con sede principal en un Estado
         # miembro de la UE". Patrón existente solo cubría "al menos el".
+        # FIX-B1-TRUEVAL-1 (2026-07-18): Extend to cover "en renta variable"
+        # (not just "en acciones") and allow text between % and "en" (e.g.
+        # "75%de la exposición total en renta variable"). Without this,
+        # TRUE VALUE COMPOUNDERS (ES0180783013) -- "se invierte como mínimo
+        # el 75%de la exposición total en renta variable" -- was returning
+        # _RF_pending because "renta variable" ≠ "acciones" and %de ≠ % en.
         r'(?:al\s+menos\s+el|un?\s+m[ií]nimo\s+del?|como\s+m[ií]nimo(?:\s+el)?)'
-        r'\s+\d+\s*%\s+en\s+acciones', w
+        r'\s+\d+\s*%[^.]{0,80}en\s+(?:acciones|renta\s+variable)\b', w
+    # FIX-B1-EN-TWOTHIRDS-1 (2026-07-18): English equity fund with explicit
+    # minimum proportion mandate ("invest at least two thirds/X% in equity").
+    # Without this, ASHOKA WO INDIA OPPT (IE00BDR0R792) -- "the fund will
+    # invest at least two thirds of its net assets in equity and equity
+    # related transferable securities" -- was returning _RF_pending because
+    # "equity and equity related" was not in has_equity and "investment grade"
+    # (quality constraint on equity holdings) spuriously set has_bonds=True.
+    )) or bool(re.search(
+        r'invest(?:s|ing)?\s+at\s+least[^.]{0,80}in\s+equit(?:y|ies)\b', w
     ))
 
     # FIX-P1-RV2 (2026-07-04): "en menor medida... podrá invertir en
@@ -2259,6 +2299,23 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
     _minor_secondary_bond = _minor_secondary_bond or bool(re.search(
         r'podr[aá]\s+invertirse?\s+hasta\s+(?:un?\s+|el\s+)?\d+\s*%\s+en\s+'
         r'(?:valores\s+de\s+renta\s+fija|renta\s+fija|bonos)',
+        w
+    ))
+
+    # FIX-B1-EN-UPTO-BONDS-1 (2026-07-18): English secondary bond allocation
+    # with explicit cap ("invest up to X% in debt securities/bonds/fixed income").
+    # Symmetrical to FIX-B1-PORDRINVERTIRSE-1 (Spanish). A capped bond position
+    # cannot be the primary mandate of a fund whose objective declares a large
+    # minimum equity allocation. Without this, English equity funds that mention
+    # a secondary bond allowance trigger bond_dominant (via "debt securities"),
+    # blocking the eq_dominant → "Renta Variable" return.
+    # Confirmed: ASHOKA WO INDIA OPPT (IE00BDR0R792) -- "the fund may also
+    # invest up to 20% in fixed or floating rate government and corporate
+    # investment grade debt securities" triggers bond_dominant but is clearly
+    # a secondary/capped allocation in a primary India equity fund.
+    _minor_secondary_bond = _minor_secondary_bond or bool(re.search(
+        r'invest\s+up\s+to\s+\d+\s*%[^.]{0,100}'
+        r'(?:debt\s+securities|fixed[^.]{0,30}securities|bonds\b|fixed\s+income)',
         w
     ))
 
