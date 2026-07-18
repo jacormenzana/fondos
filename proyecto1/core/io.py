@@ -378,7 +378,7 @@ def mark_stale_for_refresh(
     de media), sin generar avalanchas de requests al servidor.
     """
     cutoff = (
-        datetime.datetime.utcnow() - datetime.timedelta(days=max_age_days)
+        datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=max_age_days)
     ).isoformat(timespec="seconds")
 
     # Seleccionar los más antiguos primero (FIFO de antigüedad)
@@ -475,6 +475,26 @@ def find_kiid_links_from_excel(isin: str, excel_path: str) -> List[str]:
     """
     index = _build_isin_links_index(excel_path)
     return index.get(isin, [])
+
+
+def find_kiid_links_from_db(isin: str, conn) -> List[str]:
+    """
+    Devuelve hrefs KIID para un ISIN desde db_document_catalogue (último harvest).
+    Preferido sobre Excel: hrefs verbatim de la fuente oficial.
+    """
+    try:
+        rows = conn.execute(
+            """
+            SELECT href FROM db_document_catalogue
+            WHERE isin = ?
+              AND cod_sus = 'KIID'
+              AND harvest_ts = (SELECT MAX(harvest_ts) FROM db_document_catalogue)
+            """,
+            (isin,),
+        ).fetchall()
+        return [r[0] for r in rows if r[0]]
+    except Exception:
+        return []
 
 
 def download_pdf(url: str, session: Optional[requests.Session] = None) -> bytes:
@@ -594,7 +614,7 @@ def _process_pdf_bytes(
     meta_updates.update({
         "KIID_URL":            url,
         "KIID_PDF_Hash":       new_hash,
-        "KIID_Downloaded_At":  datetime.datetime.utcnow().isoformat(timespec="seconds"),
+        "KIID_Downloaded_At":  datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
         "KIID_PDF_BYTES":      pdf_bytes,          # temporal (pipeline)
         "KIID_Status":         "OK",
         "KIID_Error":          None,
@@ -792,7 +812,7 @@ def get_kiid_for_isin(
                     meta.update({
                         "KIID_URL":            _cached_url,
                         "KIID_PDF_Hash":       local_hash,
-                        "KIID_Downloaded_At":  datetime.datetime.utcnow().isoformat(timespec="seconds"),
+                        "KIID_Downloaded_At":  datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
                         "KIID_Status":         "OK",
                         "KIID_Error":          None,
                         "KIID_Class":          1,
@@ -825,19 +845,17 @@ def get_kiid_for_isin(
     # a no devolver nada. (El modo 'remote' nunca entra al bloque anterior.)
 
     # -------------------------------------------------
-    # FLUJO B — Descarga remota por URL del Excel maestro (fallback)
+    # FLUJO B — Descarga remota (DB primero, Excel como fallback)
     # -------------------------------------------------
-    if not excel_master_path:
-        meta["KIID_Status"] = "DOWNLOAD_ERROR"
-        meta["KIID_Error"] = "no_excel_master_path"
-        return None, meta
+    links = find_kiid_links_from_db(isin, conn) if conn else []
 
-    try:
-        links = find_kiid_links_from_excel(isin, excel_master_path)
-    except Exception as e:
-        meta["KIID_Status"] = "DOWNLOAD_ERROR"
-        meta["KIID_Error"] = f"excel_index_error: {e}"
-        return None, meta
+    if not links and excel_master_path:
+        try:
+            links = find_kiid_links_from_excel(isin, excel_master_path)
+        except Exception as e:
+            meta["KIID_Status"] = "DOWNLOAD_ERROR"
+            meta["KIID_Error"] = f"excel_index_error: {e}"
+            return None, meta
 
     if not links:
         meta["KIID_Status"] = "NO_KIID"
@@ -862,7 +880,7 @@ def get_kiid_for_isin(
                 meta.update({
                     "KIID_URL":            url,
                     "KIID_PDF_Hash":       new_hash,
-                    "KIID_Downloaded_At":  datetime.datetime.utcnow().isoformat(timespec="seconds"),
+                    "KIID_Downloaded_At":  datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
                     "KIID_Status":         "OK",
                     "KIID_Error":          None,
                     "KIID_Class":          1,

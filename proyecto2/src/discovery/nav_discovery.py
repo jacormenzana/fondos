@@ -39,6 +39,7 @@ Ejemplos:
 """
 
 import argparse
+import re
 import requests
 import sqlite3
 import sys
@@ -57,6 +58,12 @@ _MS_SCREENER_URL  = "https://global.morningstar.com/api/v1/{lang}/tools/screener
 _MS_PERF_URL      = "https://api-global.morningstar.com/sal-service/v1/fund/performance/v4/{code}"
 _MS_APIKEY        = "lstzFDEOhfFNMLikKa0am9mgEKLBl49T"
 _MS_PERF_PARAMS   = {"clientId": "MDC", "version": "4.71.0"}
+
+# Resolver: lt.morningstar.com security_details (componente de datos web)
+# Verificado operativo en julio 2026 cuando SecuritySearch.ashx y el
+# endpoint screener/_data devuelven 202 (bot-challenge de Akamai).
+_LT_RESOLVE_URL    = "https://lt.morningstar.com/api/rest.svc/klr5zyak8x/security_details/{isin}"
+_LT_RESOLVE_PARAMS = {"idtype": "isin", "viewId": "snapshot", "currencyId": "EUR"}
 
 _USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -105,78 +112,55 @@ MS_COOLDOWN_SECS  = (30, 60)     # reducido - 401 no necesita cooldown
 
 
 # ============================================================
-# Resolucion de ISIN -> objeto Funds
+# Resolucion de ISIN -> securityID interno de Morningstar
 # ============================================================
 
-# Endpoints SecuritySearch.ashx por region -- se prueban en orden hasta obtener resultado.
-# Formato respuesta: nombre|{json}|tipo|... (una linea por resultado, sep |)
-# El campo "i" del JSON es el securityID (code interno para sal-service).
-_SEARCH_ENDPOINTS = [
-    ("https://www.morningstar.es/es/util/SecuritySearch.ashx",
-     {"languageId": "es-ES", "locale": "es-ES", "clientId": "MDC_intl",
-      "referer": "https://www.morningstar.es/"}),
-    ("https://www.morningstar.co.uk/uk/util/SecuritySearch.ashx",
-     {"languageId": "en-GB", "locale": "en-GB", "clientId": "MDC_intl",
-      "referer": "https://www.morningstar.co.uk/"}),
-    ("https://www.morningstar.fr/fr/util/SecuritySearch.ashx",
-     {"languageId": "fr-FR", "locale": "fr-FR", "clientId": "MDC_intl",
-      "referer": "https://www.morningstar.fr/"}),
-    ("https://www.morningstar.de/de/util/SecuritySearch.ashx",
-     {"languageId": "de-DE", "locale": "de-DE", "clientId": "MDC_intl",
-      "referer": "https://www.morningstar.de/"}),
-]
-
+# NOTA HISTORICA: el endpoint SecuritySearch.ashx (y el screener/_data
+# de global.morningstar.com) devuelven 202 vacio (bot-challenge Akamai)
+# desde ~julio 2026. El nuevo resolver usa lt.morningstar.com, que no
+# esta afectado y devuelve XML con <Security id="..."> para cualquier
+# ISIN valido en Morningstar.
 
 def _resolve_isin(isin: str) -> Optional[dict]:
     """
     Resuelve un ISIN al securityID (code) interno de Morningstar usando
-    el endpoint SecuritySearch.ashx (autocomplete de la web publica).
+    el endpoint lt.morningstar.com/security_details (componente de datos web).
 
-    No usa mstarpy.Funds() ni search_field() -- evita el endpoint
-    /data-points/fields que devuelve 202 desde marzo 2026.
+    Devuelve uno de tres valores:
+        dict {"code": str, "name": str}   -- ISIN encontrado
+        None                               -- ISIN genuinamente no existe
+        dict {"challenge": True}           -- Endpoint bloqueado o error de red
+                                             transitorio. El llamante NO debe
+                                             escribir NOT_FOUND en la BD.
 
-    Prueba los endpoints regionales en orden (.es, .co.uk, .fr, .de)
-    hasta obtener resultado. Devuelve dict {code, name} o None.
-
-    Formato de respuesta del endpoint (texto plano, una linea por resultado):
-        nombre|{"i":"F0GBR04K6R","pi":"0P00000JYE","n":"...","t":2,...}|FUND|...
-    El campo "i" es el securityID usado por sal-service/performance/v4.
+    El "code" devuelto es el securityID (ej. F0GBR04K6R) compatible con
+    el endpoint sal-service/.../performance/v4/{code} de descarga NAV.
     """
-    import json as _json
+    url = _LT_RESOLVE_URL.format(isin=isin)
+    try:
+        r = requests.get(
+            url,
+            params=_LT_RESOLVE_PARAMS,
+            headers={"user-agent": _random_ua()},
+            timeout=15,
+        )
+    except requests.RequestException:
+        return {"challenge": True}
 
-    for url, extra in _SEARCH_ENDPOINTS:
-        params = {
-            "q":     isin,
-            "limit": 3,
-            "type":  "fund",
-            **{k: v for k, v in extra.items() if k != "referer"},
-        }
-        headers = {
-            "user-agent": _random_ua(),
-            "referer":    extra["referer"],
-        }
-        try:
-            r = requests.get(url, params=params, headers=headers, timeout=15)
-            if r.status_code != 200 or not r.text.strip():
-                continue
+    if r.status_code != 200:
+        # 202 = bot-challenge; 5xx = error transitorio; cualquier no-200
+        return {"challenge": True}
 
-            for line in r.text.strip().splitlines():
-                parts = line.split("|")
-                if len(parts) < 2:
-                    continue
-                try:
-                    meta = _json.loads(parts[1])
-                except Exception:
-                    continue
-                code = meta.get("i", "")
-                name = meta.get("n", "")
-                if code:
-                    return {"code": code, "name": name}
+    text = r.content.decode("utf-8", errors="replace")
+    m_code = re.search(r'<Security\s+id="([^"]+)"', text)
+    if not m_code:
+        # 200 pero sin <Security id="..."> => genuinamente no existe
+        return None
 
-        except requests.RequestException:
-            continue
-
-    return None
+    code = m_code.group(1)
+    m_name = re.search(r"<Name>([^<]+)</Name>", text)
+    name = m_name.group(1) if m_name else ""
+    return {"code": code, "name": name}
 
 
 # ============================================================
@@ -328,12 +312,19 @@ def _write_nav_source(
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(isin) DO UPDATE SET
             source         = excluded.source,
-            source_id      = excluded.source_id,
-            first_nav_date = excluded.first_nav_date,
-            last_nav_date  = excluded.last_nav_date,
-            nav_count      = excluded.nav_count,
+            -- P#1 COALESCE: nunca borrar un code ya resuelto (no regresar OK->NOT_FOUND)
+            source_id      = COALESCE(NULLIF(excluded.source_id, ''), source_id),
+            first_nav_date = COALESCE(excluded.first_nav_date, first_nav_date),
+            last_nav_date  = COALESCE(excluded.last_nav_date,  last_nav_date),
+            nav_count      = COALESCE(excluded.nav_count,      nav_count),
             last_checked   = excluded.last_checked,
-            status         = excluded.status
+            -- Solo degradar a NOT_FOUND si no hay code resuelto previo
+            status         = CASE
+                WHEN excluded.status = 'NOT_FOUND'
+                 AND source_id IS NOT NULL AND source_id != ''
+                THEN status          -- mantener estado actual (OK)
+                ELSE excluded.status -- actualizar normalmente
+            END
     """, (isin, source, source_id, first_date, last_date,
           nav_count, today, today, status))
     conn.commit()
@@ -375,12 +366,20 @@ def run_discover(conn, isins, dry_run, verbose):
         resolved = _resolve_isin(isin)
         time.sleep(random.uniform(*MS_DELAY_DISCOVER))
 
-        if resolved is None:
-            # None puede ser NOT_FOUND o error de red -- intentar una vez mas
+        # Reintentar una vez si el resultado es challenge o none
+        if resolved is None or (isinstance(resolved, dict) and resolved.get("challenge")):
             resolved = _resolve_isin(isin)
             time.sleep(random.uniform(*MS_DELAY_DISCOVER))
 
+        if isinstance(resolved, dict) and resolved.get("challenge"):
+            # Endpoint bloqueado o error de red: NO escribir NOT_FOUND
+            # (evita borrar codes resueltos anteriormente)
+            print("-> SKIP (endpoint challenge — fila en BD sin cambios)")
+            errors += 1
+            continue
+
         if resolved is None:
+            # ISIN genuinamente no existe en Morningstar
             print("-> NOT_FOUND")
             _write_nav_source(conn, isin, "MORNINGSTAR", "",
                               None, None, None, "NOT_FOUND", dry_run)
@@ -591,8 +590,8 @@ def run_update(conn, dry_run):
 def _print_summary(found, not_found, errors, total, dry_run):
     print(f"\n{'-'*50}")
     print(f"  Encontrados    : {found:>4}  ({found*100//total if total else 0}%)")
-    print(f"  No encontrados : {not_found:>4}")
-    print(f"  Errores        : {errors:>4}")
+    print(f"  No encontrados : {not_found:>4}  (ISIN genuinamente ausente)")
+    print(f"  Saltados       : {errors:>4}  (challenge/error de red — BD sin cambios)")
     print(f"  TOTAL          : {total:>4}")
     if dry_run:
         print("  (DRY-RUN: nada escrito en nav_sources)")
@@ -616,6 +615,8 @@ def main():
                         help="Fecha inicio descarga YYYY-MM-DD (default: 2000-01-01)")
     parser.add_argument("--retry-errors", action="store_true",
                         help="En modo discover, reprocesa solo ISINs con status=ERROR en nav_sources")
+    parser.add_argument("--retry-notfound", action="store_true",
+                        help="En modo discover, reprocesa ISINs con status=NOT_FOUND (recuperacion tras fallo masivo)")
     parser.add_argument("--force", action="store_true",
                         help="En modo load, descarga aunque el ISIN ya tenga NAV en la BD (sobreescribe)")
     parser.add_argument("--ms-prefix", default=None,
@@ -647,6 +648,16 @@ def main():
                 return
             print(f"Reintentando {len(error_isins)} ISINs con status=ERROR...")
             isins = error_isins
+        elif getattr(args, 'retry_notfound', False):
+            nf_isins = [r[0] for r in conn.execute(
+                "SELECT isin FROM nav_sources WHERE status='NOT_FOUND' ORDER BY isin"
+            ).fetchall()]
+            if not nf_isins:
+                print("No hay ISINs con status=NOT_FOUND en nav_sources.")
+                conn.close()
+                return
+            print(f"Reintentando {len(nf_isins)} ISINs con status=NOT_FOUND...")
+            isins = nf_isins
         run_discover(conn, isins, dry_run=args.dry_run, verbose=args.verbose)
     elif args.mode == "load":
         ms_prefix = args.ms_prefix.upper() if args.ms_prefix else None

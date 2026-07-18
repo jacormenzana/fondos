@@ -407,6 +407,44 @@ def load_master_excel(path: Path) -> pd.DataFrame:
     return master_df
 
 
+def load_master_db(conn) -> pd.DataFrame:
+    """
+    Load the fund master from db_document_catalogue (latest harvest).
+    Returns DataFrame with ISIN, Fund_Name, Management_Company — same schema as load_master_excel.
+    Raises ValueError if the table has no valid ISINs (run --harvest first).
+    """
+    sql = """
+        SELECT
+            isin                AS ISIN,
+            MIN(fund_name)      AS Fund_Name,
+            MIN(gestora_label)  AS Management_Company
+        FROM db_document_catalogue
+        WHERE isin IS NOT NULL
+          AND isin != ''
+          AND harvest_ts = (SELECT MAX(harvest_ts) FROM db_document_catalogue)
+        GROUP BY isin
+        ORDER BY isin
+    """
+    df = pd.read_sql_query(sql, conn)
+
+    if df.empty:
+        raise ValueError(
+            "db_document_catalogue vacío o sin ISINs. "
+            "Ejecuta: python proyecto1/harvest/p1_db_harvest.py --harvest"
+        )
+
+    _valid = df["ISIN"].map(_is_valid_isin)
+    n_dropped = int((~_valid).sum())
+    if n_dropped:
+        print(
+            f"[MASTER-LOAD-WARNING] DB: {n_dropped} ISIN(s) con formato no válido descartados"
+        )
+        df = df[_valid].copy()
+
+    print(f"[MASTER-LOAD-DB] {len(df)} fondos cargados desde db_document_catalogue (harvest MAX)")
+    return df.reset_index(drop=True)
+
+
 def load_master_excelPrevio(path: Path) -> pd.DataFrame:
     xls = pd.ExcelFile(path)
     isin_candidates = {"isin", "codigo isin", "código isin", "isin code"}
@@ -492,7 +530,7 @@ def _finalize_data_quality_issues(
         "DELETE FROM fund_data_quality_issues WHERE ISIN = ?", (isin,)
     )
     if issues:
-        now = datetime.datetime.utcnow().isoformat(timespec="seconds")
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
         conn.executemany(
             "INSERT INTO fund_data_quality_issues "
             "(ISIN, check_code, level, message, detected_at) "
@@ -611,7 +649,7 @@ def run_block(
     block_module,
     df_master: pd.DataFrame,
     conn,
-    master_excel_path: Path,
+    master_excel_path: Optional[Path] = None,
     sample_size: Optional[int] = None,
     stop_on_error: bool = False,
     list_isin: Optional[List[str]] = None,
@@ -677,7 +715,7 @@ def run_block(
 
     total = len(isins)
     published = []
-    _cycle_start_ts = datetime.datetime.utcnow().isoformat(timespec="seconds")
+    _cycle_start_ts = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
 
     # ── SC-H: batch-load fund_benchmarks once per block run ──────────────────
     # Prefer MORNINGSTAR (independent market signal) over KIID (same source as
@@ -756,7 +794,12 @@ def run_block(
             mgmt = row0.get("Management_Company")
 
             _t0 = time.perf_counter()
-            kiid_text, kiid_meta = get_kiid_for_isin(isin, str(master_excel_path), conn=conn, kiid_source=kiid_source)
+            kiid_text, kiid_meta = get_kiid_for_isin(
+                isin,
+                str(master_excel_path) if master_excel_path else None,
+                conn=conn,
+                kiid_source=kiid_source,
+            )
             _t_phases["kiid_fetch"] = round((time.perf_counter() - _t0) * 1000)
             if not kiid_text:
                 log_ingestion(conn, isin, f"{block_name}_KIID", "WARN", kiid_meta.get("KIID_Error"))
@@ -2798,9 +2841,34 @@ def run_block(
                             'Performance_Fee_Pct', 'ACI_1Y', 'ACI_RHP',
                             'Ongoing_Charge_Recurrent',   # solo presente si existing_oc is None
                         }
+                        # COST-RANGE-GUARD (2026-07-18): guarda de seguridad de
+                        # último recurso — los rangos están en los CHECK constraints
+                        # del schema (db/schema_fondos.sql). Previene que un error
+                        # de parsing fuera-de-rango aborte el UPSERT entero y pierda
+                        # el fondo. La corrección de raíz es FIX-COST-RATIO-SAFE en
+                        # cost_table_parser.py; esta guarda es cinturón + tirantes.
+                        _COST_PCT_LIMITS: dict = {
+                            'Transaction_Cost_Pct': (0.0, 5.0),
+                            'Management_Fee_Pct':   (0.0, 10.0),
+                            'Entry_Fee_Pct_Max':    (0.0, 25.0),
+                            'Exit_Fee_Pct_Max':     (0.0, 25.0),
+                            'Performance_Fee_Pct':  (0.0, 30.0),
+                            'ACI_1Y':               (0.0, 50.0),
+                            'ACI_RHP':              (0.0, 25.0),
+                        }
                         for _cf in _COST_FIELDS:
                             if _cf in _cost_dict:
-                                fund_master_record[_cf] = _cost_dict[_cf]
+                                _cv = _cost_dict[_cf]
+                                if (_cv is not None and _cf in _COST_PCT_LIMITS):
+                                    _lo, _hi = _COST_PCT_LIMITS[_cf]
+                                    if not (_lo <= _cv <= _hi):
+                                        log_ingestion(
+                                            conn, isin, "COST_RANGE_GUARD", "WARN",
+                                            f"{_cf}={_cv} fuera de rango [{_lo},{_hi}]"
+                                            f" → NULL (parse error, fondo preservado)"
+                                        )
+                                        _cv = None
+                                fund_master_record[_cf] = _cv
 
                         # BL-COST-5: corregir OC cuando el extractor detectó mismatch.
                         # correct_oc_aci_mismatch hace una escritura directa (no-COALESCE)

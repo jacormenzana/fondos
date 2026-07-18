@@ -6,23 +6,22 @@ Ejecutor simple para lanzar procesamiento de bloques.
 Uso:
     Ubicarse en directorio c:\\desarrollo\\fondos\\proyecto1
     activar entorno des
-    lanzar run_block desde entono des
+    lanzar run_block desde entorno des
 
+    # Universo desde DB (por defecto tras la implementacion de harvest):
+    python run_block.py --block mixtos --db ..\db\fondos.sqlite --master-db
+    python run_block.py --nature-first --db ..\db\fondos.sqlite --master-db
 
+    # Universo desde Excel maestro (modo legacy / debug):
     python run_block.py --block mixtos --db ..\db\fondos.sqlite --master "c:\\data\\fondos\\in\\GestoresDeFondosv1.xlsx" --sample 5
-    python run_block.py --block mixtos --db ..\db\fondos.sqlite --master "c:\\data\\fondos\\in\\GestoresDeFondosv1.xlsx" --sample 5
-    python run_block.py --block mixtos --db ..\db\fondos.sqlite --master "c:\\data\\fondos\\in\\GestoresDeFondosv1.xlsx" --list-isin LU0348784041,LU0232465467
-    python run_block.py --block mixtos --db ..\db\fondos.sqlite --master "c:\\data\\fondos\\in\\GestoresDeFondosv1.xlsx" --list-isin LU0232465467,LU1873127366,FR0000989626,LU0135992385,LU1133289592,LU0210536867,LU0213962813,LU1502282632,IE0032875985,LU0073230426,
-    python run_block.py --block mixtos --db ..\db\fondos.sqlite --master "c:\\data\\fondos\\in\\GestoresDeFondosv1.xlsx" --list-isin LU0232465467,LU1873127366,FR0000989626,LU0135992385,LU1133289592,LU0210536867,LU0213962813,LU1502282632,IE0032875985,LU0073230426,LU0006277684,LU0236146428,LU0607519195,LU1959429272,LU0070177588,IE00B45H7020,LU0726357873
-    python run_block.py --block mixtos --db ..\db\fondos.sqlite --master "c:\\data\\fondos\\in\\GestoresDeFondosv1.xlsx" --list-isin IE0031296019,LU0070212591,LU0171275786,LU0213962813,LU0348784041,LU1883314327
-
+    python run_block.py --block mixtos --db ..\db\fondos.sqlite --master "c:\\data\\fondos\\in\\GestoresDeFondosv1.xlsx" --list-isin LU0232465467,LU1873127366
 """
 
 import argparse
 import importlib
 from pathlib import Path
 
-from core.pipeline import run_block, load_master_excel
+from core.pipeline import run_block, load_master_excel, load_master_db
 from core.classify_utils import resolve_nature_vote  # noqa: F401 — validates OPT-B import
 from core.sqlite_writer import get_connection, create_schema
 import sys
@@ -49,8 +48,10 @@ def main():
                        f"Si se omite, usa la ruta canónica de shared.config: "
                        f"{_DEFAULT_DB_PATH}"
                    ))
-    p.add_argument("--master", required=True,
-                   help="Excel maestro (GestoresDeFondosv1.xlsx)")
+    p.add_argument("--master", default=None,
+                   help="Excel maestro (GestoresDeFondosv1.xlsx) — modo legacy")
+    p.add_argument("--master-db", action="store_true", default=False,
+                   help="Cargar universo de fondos desde db_document_catalogue (harvest DB)")
     p.add_argument("--sample", type=int, default=None,
                    help="sample size (opcional)")
     p.add_argument("--stop-on-error", action="store_true")
@@ -65,7 +66,7 @@ def main():
                        "con fallback a descarga remota.\n"
                        "  local  : fuerza lectura del repositorio local "
                        "(C:\\data\\fondos\\kiid), con fallback a remoto si no existe.\n"
-                       "  remote : fuerza descarga por URL del Excel maestro."
+                       "  remote : fuerza descarga por URL del maestro."
                    ))
     args = p.parse_args()
 
@@ -73,43 +74,46 @@ def main():
         p.error("--block is required unless --nature-first is specified.")
     if args.nature_first and args.block:
         p.error("--block and --nature-first are mutually exclusive.")
+    if not args.master and not args.master_db:
+        p.error("Se requiere --master-db (recomendado) o --master <ruta_excel>.")
+    if args.master and args.master_db:
+        p.error("--master y --master-db son mutuamente excluyentes.")
 
     list_isin = None
     if args.list_isin:
         list_isin = [x.strip() for x in args.list_isin.split(",") if x.strip()]
 
-    # Ruta de BD: argumento explícito > DB_PATH canónica de shared.config
     db_path = Path(args.db) if args.db else _DEFAULT_DB_PATH
-    master_path = Path(args.master)
+    master_path = Path(args.master) if args.master else None
 
     print(f"[DEBUG] BD: {db_path}")
 
-    #Cargar maestro (memoria)
-    df_master = load_master_excel(master_path)
-    print(f"[DEBUG] Maestro cargado: {df_master.shape}")
-
+    # Cargar bloque (no depende de conn ni de maestro)
     if args.nature_first:
-        # OPT-B: single-pass nature-first dispatch over all master ISINs
         block_mod = None
         print("[DEBUG] Modo: NATURE_FIRST (OPT-B) — universo completo del maestro")
     else:
-        #Cargar bloque
         print(f"[DEBUG] Carga bloque: {BLOCKS_PACKAGE}.{args.block}")
         block_mod = importlib.import_module(f"{BLOCKS_PACKAGE}.{args.block}")
         print(f"[DEBUG] block_mod: {block_mod}")
 
-    #Conexión y schema (idempotente)
+    # Conexión y schema (idempotente) — abierta antes del maestro para --master-db
     conn = get_connection(db_path)
     create_schema(conn)
     # create_schema usa executescript() que resetea isolation_level a ''.
-    # isolation_level='' hace que Python gestione transacciones implícitas,
-    # lo que impide ON CONFLICT DO UPDATE en SQLite 3.24+.
     # isolation_level=None delega el control de transacciones a SQLite/código
     # explícito (with conn:), que es el comportamiento correcto.
     conn.isolation_level = None
     assert_schema_alignment(conn)
 
-    #Ejecutar bloque / pasada nature-first
+    # Cargar maestro (DB o Excel)
+    if args.master_db:
+        df_master = load_master_db(conn)
+    else:
+        df_master = load_master_excel(master_path)
+    print(f"[DEBUG] Maestro cargado: {df_master.shape}")
+
+    # Ejecutar bloque / pasada nature-first
     published = run_block(
         block_mod,
         df_master,
@@ -131,11 +135,10 @@ def main():
     # excluidos del bloque, etc.) que conservan valores stale en BD.
     from core.pipeline import run_global_normalization
     run_global_normalization(conn)
-    
+
     conn.commit()
     conn.close()
 
 
 if __name__ == "__main__":
     main()
-

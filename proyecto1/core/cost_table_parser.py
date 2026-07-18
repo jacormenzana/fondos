@@ -1148,11 +1148,21 @@ def _parse_composition_dla2(text: str) -> dict:
 
 
 def _ratio_to_pct_safe(ratio: float) -> float:
-    """Convierte ratio decimal a porcentaje para comparación de rangos. 0.0085 → 0.85."""
+    """Convierte ratio decimal a porcentaje para comparación de rangos.
+
+    Escala canónica: _extract_pct_from_cell siempre devuelve ratio decimal
+    (0.0045 → 0.45%, 0.5 → 50%, 1.0 → 100%).  Multiplicar siempre × 100.
+
+    FIX-COST-RATIO-SAFE (2026-07-18): la rama anterior '> 0.5 → devolver
+    tal cual' era errónea:  _extract_pct_from_cell divide SIEMPRE entre 100,
+    así que 100% llega como ratio 1.0 y quedaba sin convertir → _guarded_pct
+    comparaba 1.0 > 2.0 → False → la guarda no filtraba el 100% y el valor
+    llegaba a _ratio_to_pct() → 100.0 % → CHECK constraint fallaba.
+    Cualquier coste entre 51 % y 99 % tenía el mismo defecto silencioso.
+    """
     if ratio is None:
         return 0.0
-    # Si ya parece porcentaje entero (> 0.5), devolver tal cual
-    return ratio * 100.0 if ratio <= 0.5 else ratio
+    return ratio * 100.0
 
 
 def _guarded_pct(pct, cost_type: str):
@@ -1338,6 +1348,18 @@ def parse_costs_composition(text: str) -> dict:
             result = _parse_composition_dla2(text)
             if not result:
                 result = _parse_composition_plain(text)
+            else:
+                # FIX-COST-DLA2-SUPPLEMENT (2026-07-18): si la vía DLA2 filtró
+                # un campo (p.ej. transaction_cost_pct = 100 % → guarda lo anuló)
+                # o simplemente no lo extrajo, complementar con el texto plano.
+                # La vía DLA2 tiene prioridad; solo se añaden claves ausentes.
+                # _parse_composition_plain trabaja sobre el bloque de texto plano
+                # que aparece ANTES del bloque DLA2 en Fed_Text_For_Cost, por lo
+                # que localiza la sección "Composición de costes" correctamente.
+                _plain = _parse_composition_plain(text)
+                for _k, _v in _plain.items():
+                    if _k not in result and _v is not None:
+                        result[_k] = _v
             return result
         else:
             return _parse_composition_plain(text)

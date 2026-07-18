@@ -13,7 +13,6 @@ chcp 65001 > nul
 
 set ROOT=C:\desarrollo\fondos
 set DB=%ROOT%\db\fondos.sqlite
-set MASTER=c:\data\fondos\in\GestoresDeFondosv1.xlsx
 set LOG_DIR=%ROOT%\proyecto1\log
 
 :: Timestamp YYYYMMDD_HHMMSS
@@ -56,13 +55,15 @@ python -X utf8 "%ROOT%\scripts\launch\mark_stale.py" --db "%DB%" --max-age 180 -
 ::
 :: Per-block debug (kept for single-block testing):
 ::   pushd %ROOT%\proyecto1
-::   python -X utf8 run_block.py --block monetarios --db "%DB%" --master "%MASTER%"
+::   python -X utf8 run_block.py --block monetarios --db "%DB%" --master-db
 ::   popd
+:: Para usar el Excel maestro legacy en debug puntual:
+::   python -X utf8 run_block.py --block monetarios --db "%DB%" --master "c:\data\fondos\in\GestoresDeFondosv1.xlsx"
 echo [%time%] Clasificacion: NATURE_FIRST (OPT-B3, pasada unica)
 echo. >> "%LOG%"
 echo --- NATURE_FIRST (OPT-B3) --------------------------------- >> "%LOG%"
 pushd %ROOT%\proyecto1
-python -X utf8 run_block.py --nature-first --db "%DB%" --master "%MASTER%" >> "%LOG%" 2>&1
+python -X utf8 run_block.py --nature-first --db "%DB%" --master-db >> "%LOG%" 2>&1
 popd
 
 :: -- fund_family_builder ------------------------------------------------------

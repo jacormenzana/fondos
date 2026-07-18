@@ -611,10 +611,10 @@ def _populate_fund_families(
     en build_fund_families().  Se llama después de correct_family_inconsistencies
     para que Fund_Nature refleje los valores ya corregidos en fund_master.
     """
-    from datetime import datetime as _dt
+    from datetime import datetime as _dt, timezone as _tz
     from collections import Counter as _Counter
 
-    now_str = _dt.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
+    now_str = _dt.now(_tz.utc).strftime("%Y-%m-%dT%H:%M:%S")
 
     # Naturaleza dominante por familia (tras correcciones)
     nat_rows = conn.execute(

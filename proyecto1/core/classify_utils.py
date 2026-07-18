@@ -394,6 +394,14 @@ NAME_SIGNALS_MONETARIO: list = [
     "fidelity euro cash",            # FIDELITY EURO CASH
     "fidelity fund us cash",         # FIDELITY FUND US CASH
     "fidelity us cash",              # variante
+    # FIX-MON-LIQ (2026-07-18): denominaciones genéricas de fondos de liquidez
+    # (Schroder SISF EURO LIQUIDITY / SISF US DOLLAR LIQUIDITY) no capturadas por
+    # tokens específicos anteriores. "euro liquidity" y "dollar liquidity" son
+    # convenciones de nombre MMF; "liquidity" solo (sin prefijo de moneda) se
+    # omite deliberadamente por su alta tasa de falso positivo (STRONG_MMF comment).
+    "euro liquidity",                # SISF EURO LIQUIDITY (Schroders) + variantes
+    "dollar liquidity",              # SISF US DOLLAR LIQUIDITY
+    "usd liquidity",                 # alias USD LIQUIDITY
 ]
 
 # C1 (BL-44 hardening 2026-07-11): subconjunto de NAME_SIGNALS_MONETARIO que
@@ -1205,6 +1213,10 @@ _PREFILTER_MON_INCLUDE = [
     "usd liq cnav", "fidelity euro cash", "fidelity fund us cash",
     "fidelity us cash", "cash fund", "cash management", "treasury",
     "tresorerie", "ucits mmf", "mmf",
+    # FIX-MON-LIQ (2026-07-18): denominaciones genéricas de fondos de liquidez
+    "euro liquidity",                # SISF EURO LIQUIDITY + variantes (vol=1)
+    "dollar liquidity",              # SISF US DOLLAR LIQUIDITY (vol=4 en EUR NAV)
+    "usd liquidity",                 # alias
 ]
 _PREFILTER_MON_EXCLUDE = [
     "short duration", "ultra short", "short term",

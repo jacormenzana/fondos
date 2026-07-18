@@ -48,6 +48,27 @@ class TestMonetario:
     def test_income_excludes(self):
         assert _prefilter_match_monetario("cash income plus") is False
 
+    # FIX-MON-LIQ (2026-07-18): Schroders SISF EURO/DOLLAR LIQUIDITY families
+    def test_euro_liquidity_is_monetario(self):
+        """SISF EURO LIQUIDITY A1/A/B ACC — vol=1, Monetario range."""
+        assert _prefilter_match_monetario("sisf euro liquidity a1 acc") is True
+
+    def test_euro_liquidity_detect_nature(self):
+        assert detect_nature_from_prefilter("sisf euro liquidity a1 acc") == "Monetario"
+
+    def test_dollar_liquidity_is_monetario(self):
+        """SISF US DOLLAR LIQUIDITY A/B ACC."""
+        assert _prefilter_match_monetario("sisf us dollar liquidity a acc") is True
+
+    def test_usd_liquidity_is_monetario(self):
+        assert _prefilter_match_monetario("abcd usd liquidity inst acc") is True
+
+    def test_plain_liquidity_without_currency_not_caught(self):
+        """Bare 'liquidity' without currency prefix is intentionally NOT a Monetario signal."""
+        # A fund named "Global Liquidity Fund" would be ambiguous; we leave it to KIID.
+        # This test ensures we didn't add a too-broad "liquidity" signal.
+        assert _prefilter_match_monetario("global liquidity fund a acc") is False
+
 
 class TestRfCorto:
     def test_short_duration(self):

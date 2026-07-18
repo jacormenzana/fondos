@@ -445,7 +445,7 @@ def upsert_fund_master(conn: sqlite3.Connection,
     #   INSERT/VALUES/params/SET se DERIVAN de ella → imposible descuadrar ?.
     #   v20: −Is_ESG/−Subtype/−Currency_Hedged/−Portfolio_Currency;
     #        Type→Vehicle_Structure; +5 nuevas (NULL hasta reprocess, COALESCE).
-    now = datetime.datetime.utcnow().isoformat(timespec="seconds")
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
     nature_pol  = 'ow' if force_nature     else 'co'
     family_pol  = 'ow' if force_family     else 'co'
     vehicle_pol = 'ow' if force_type       else 'co'  # _bl62_force_overwrite_type → Vehicle_Structure
@@ -703,7 +703,7 @@ def insert_nav_series(conn: sqlite3.Connection, isin: str,
         (ISIN, Date, NAV, NAV_Currency, NAV_Type, Is_Estimated, Data_Source, Ingested_At)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     """
-    now = datetime.datetime.utcnow().isoformat(timespec="seconds")
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
     for row in nav_series:
         conn.execute(sql, (
             isin,
@@ -730,7 +730,7 @@ def _upsert_kiid_benchmark(conn: sqlite3.Connection,
 
     try:
         norm = normalize_benchmark(benchmark_declared)
-        now  = datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S')
+        now  = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S')
 
         # Phase 2 (BL-BENCH-ROLE): rol del benchmark. Flag OFF → 'asset_proxy'.
         try:
@@ -778,7 +778,7 @@ def log_ingestion(conn: sqlite3.Connection, isin: Optional[str],
             "INSERT INTO ingestion_log (ISIN, step, status, message, created_at) "
             "VALUES (?,?,?,?,?)",
             (isin, step, status, message,
-             datetime.datetime.utcnow().isoformat(timespec="seconds")),
+             datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")),
         )
     except Exception:
         pass  # El log nunca debe interrumpir el pipeline
@@ -1038,7 +1038,7 @@ def correct_oc_aci_mismatch(
         "WHERE ISIN = ?",
         (
             ter_pct,
-            datetime.datetime.utcnow().isoformat(timespec="seconds"),
+            datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
             isin,
         ),
     )
