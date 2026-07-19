@@ -112,7 +112,7 @@ def test_multiple_concurrent_issues_all_reach_ingestion_log():
     issues = [
         ("FUNDCCY_NAME_KIID_MISMATCH", "WARN", "WARN", "fundccy mismatch"),
         ("ASSETCCY_NAME_KIID_MISMATCH", "WARN", "WARN", "assetccy mismatch"),
-        ("INTER_NTC_CONTRADICTION", "WARN", "WARNING", "ntc contradiction"),
+        ("INTER_NTC_CONTRADICTION", "WARN", "WARN", "ntc contradiction"),
     ]
     _finalize_data_quality_issues(conn, isin, "OK", issues)
 
@@ -127,11 +127,9 @@ def test_multiple_concurrent_issues_all_reach_ingestion_log():
         "ASSETCCY_NAME_KIID_MISMATCH",
         "INTER_NTC_CONTRADICTION",
     }
-    # log_status se preserva tal cual (vocabulario de ingestion_log, distinto
-    # del dq_level) -- INTER_NTC_CONTRADICTION usaba historicamente "WARNING",
-    # no "WARN".
+    # log_status normalizado a "WARN" (FIX-LOG-WARN-NORM 2026-07-19).
     ntc_row = [r for r in rows if r[0] == "INTER_NTC_CONTRADICTION"][0]
-    assert ntc_row[1] == "WARNING"
+    assert ntc_row[1] == "WARN"
 
 
 def test_issues_persisted_to_fund_data_quality_issues_table():

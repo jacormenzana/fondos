@@ -50,7 +50,7 @@ class TestSemanticValidationToDqTuples:
         assert check_code.startswith("SEM_")
         assert "NATURE_FAMILY" in check_code or "NATURE" in check_code
         assert dq_level == "WARN"
-        assert log_status == "WARNING"
+        assert log_status == "WARN"
         assert "incoherente" in message
 
     def test_warning_becomes_info_tuple(self):

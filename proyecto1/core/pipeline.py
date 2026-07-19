@@ -870,7 +870,7 @@ def run_block(
                             "UPDATE fund_kiid_metadata SET KIID_Status='WRONG_DOC' "
                             "WHERE ISIN=? AND KIID_Class=1", (isin,)
                         )
-                    log_ingestion(conn, isin, "KIID_WRONG_DOC", "WARNING",
+                    log_ingestion(conn, isin, "KIID_WRONG_DOC", "WARN",
                                   f"WRONG_DOC (fuente incorrecta, re-descarga confirmó): "
                                   f"{_wrong_doc_reason}")
                 continue  # No clasificar con texto contaminado
@@ -930,7 +930,7 @@ def run_block(
                     # INTER-DBLCLAIM/VOTE3 por señalización explícita.
                     if _nat_conf < _NATURE_CONF_THRESHOLD:
                         log_ingestion(
-                            conn, isin, "NATURE_LOW_CONFIDENCE", "WARNING",
+                            conn, isin, "NATURE_LOW_CONFIDENCE", "WARN",
                             f"[OPT-B3] Fund_Nature={_voted_nature} con confianza baja "
                             f"({_nat_conf} < {_NATURE_CONF_THRESHOLD}): "
                             f"{_ev_trace['reason']} — revisar."
@@ -1093,7 +1093,7 @@ def run_block(
                     # INTER-NTC, sin reclasificar.
                     if _v3_bench_nature == "Monetario":
                         log_ingestion(
-                            conn, isin, "INTER_VOTE3_MONETARIO_FLAG_ONLY", "WARNING",
+                            conn, isin, "INTER_VOTE3_MONETARIO_FLAG_ONLY", "WARN",
                             f"KIID-text+Benchmark ('{_bench}') sugieren Monetario "
                             f"frente a '{_v3_current_nature}' asignado por bloque "
                             f"{block_name}, pero no se reclasifica automáticamente "
@@ -2619,7 +2619,7 @@ def run_block(
                     )
             if _ntc_contradiction:
                 _dq_issues.append((
-                    "INTER_NTC_CONTRADICTION", "WARN", "WARNING",
+                    "INTER_NTC_CONTRADICTION", "WARN", "WARN",
                     _ntc_contradiction
                 ))
 
