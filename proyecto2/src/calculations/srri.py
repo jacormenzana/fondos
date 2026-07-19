@@ -112,6 +112,21 @@ def compute_srri(nav_series: pd.Series, periods_per_year: int = 12) -> dict:
     # Volatilidad anualizada (desviacion tipica muestral * sqrt(periodos/ano))
     vol_ann = float(returns.std(ddof=1) * np.sqrt(periods_per_year))
 
+    # FIX-P2-NAV-SCALE-1 (2026-07-19): sanity cap sobre vol_ann.
+    # La volatilidad anualizada de cualquier fondo regulado está acotada bien
+    # por debajo de 5.0 (500 %). Un valor superior es firma inequívoca de
+    # corrupción de datos (mezcla de escalas NAV), no de volatilidad real.
+    # Devolver ANOMALOUS_VOL en lugar de srri=7 para que el pipeline pueda
+    # distinguir entre "muy volátil" y "datos corruptos".
+    _VOL_SANITY_CAP = 5.0
+    if vol_ann > _VOL_SANITY_CAP:
+        return {
+            "srri": 0,
+            "volatility_ann": vol_ann,
+            "n_periods": len(returns),
+            "method": "ANOMALOUS_VOL",
+        }
+
     srri = volatility_to_srri(vol_ann)
 
     return {

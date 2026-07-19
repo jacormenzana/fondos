@@ -54,10 +54,12 @@ from typing import Optional
 # ============================================================
 # Screener: resuelve ISIN -> securityID (code interno)
 _MS_SCREENER_URL  = "https://global.morningstar.com/api/v1/{lang}/tools/screener/_data"
-# Performance: descarga historicalData con el code interno
+# Performance mensual (mantenido como fallback; ya no es el camino principal de descarga)
 _MS_PERF_URL      = "https://api-global.morningstar.com/sal-service/v1/fund/performance/v4/{code}"
 _MS_APIKEY        = "lstzFDEOhfFNMLikKa0am9mgEKLBl49T"
 _MS_PERF_PARAMS   = {"clientId": "MDC", "version": "4.71.0"}
+# Chartservice: serie diaria de totalReturn (bearer auth via mstarpy.security.token_chart)
+_MS_CHART_URL     = "https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries"
 
 # Resolver: lt.morningstar.com security_details (componente de datos web)
 # Verificado operativo en julio 2026 cuando SecuritySearch.ashx y el
@@ -86,6 +88,8 @@ from shared.db import get_connection
 
 try:
     import mstarpy
+    from mstarpy.security import token_chart as _ms_token_chart
+    from mstarpy.security import random_user_agent as _ms_random_ua
 except ImportError:
     print("\n[ERROR] mstarpy no esta instalado. Ejecuta: pip install mstarpy\n")
     sys.exit(1)
@@ -102,9 +106,14 @@ MS_DELAY_RESOLVE  = (0.5, 1.5)   # pausa tras instanciar Funds (llamada al scree
 NAV_FREQUENCY     = "daily"      # mstarpy 8 solo garantiza daily; resampleamos a mensual
 
 # Backoff exponencial para errores de red transitorios (429, timeout, DNS)
-MS_RETRY_MAX      = 3            # intentos maximos por fondo
+MS_RETRY_MAX      = 3            # intentos maximos por fondo (sal-service / discover)
 MS_BACKOFF_BASE   = 30           # segundos base (30 -> 90 -> 270)
 MS_BACKOFF_FACTOR = 3            # multiplicador entre intentos
+
+# Backoff para chartservice (API REST rapida — errores transitorios se recuperan pronto)
+_CHART_RETRY_MAX     = 2         # max 2 intentos (falla rapido en bulk)
+_CHART_BACKOFF_429   = 30        # 429 rate-limit: esperar 30s antes de reintentar
+_CHART_BACKOFF_OTHER = 5         # 5xx: esperar 5s (error puntual del servidor)
 
 # Pausa larga periodica - solo activa si hay exitos frecuentes
 MS_COOLDOWN_EVERY = 200          # cada N fondos OK (no total)
@@ -273,7 +282,10 @@ def _download_nav(code: str, isin: str, currency: str, desde: str):
                     "Is_Estimated": 0,
                     "Data_Source":  "MORNINGSTAR",
                 })
-            return _resample_to_monthly(rows), ""
+            # Devuelve filas DIARIAS (sin resamplear). El llamante resamplea a
+            # mensual para fund_nav_monthly y persiste la serie diaria en
+            # fund_nav_daily (v24 — métricas de horizonte corto).
+            return rows, ""
 
         except requests.RequestException as e:
             err_str = str(e).lower()
@@ -292,6 +304,236 @@ def _download_nav(code: str, isin: str, currency: str, desde: str):
     return [], "transient"
 
 
+def _get_bearer_token_browser() -> str | None:
+    """Fallback: obtiene el bearer JWT via Playwright (headless Chrome).
+
+    Estrategia doble:
+    1. Interceptar la primera peticion a chartservice en la carga de pagina
+    2. Si no se intercepta, extraer el token del HTML renderizado (misma
+       logica que mstarpy.token_chart pero despues de ejecutar JS)
+
+    Retorna None si Playwright no esta disponible o no se encontro el token.
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return None
+
+    token_holder: dict = {"token": None}
+
+    def _on_request(request) -> None:
+        if token_holder["token"]:
+            return
+        if "chartservice" in request.url:
+            auth = request.headers.get("authorization", "")
+            if auth.startswith("Bearer "):
+                token_holder["token"] = auth[7:]
+
+    import re as _re
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=["--disable-blink-features=AutomationControlled"],
+            )
+            ctx = browser.new_context(
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36"
+                ),
+                viewport={"width": 1280, "height": 800},
+            )
+            # Ocultar webdriver flag (evitar deteccion headless)
+            ctx.add_init_script(
+                "Object.defineProperty(navigator,'webdriver',{get:()=>undefined})"
+            )
+            page = ctx.new_page()
+            page.on("request", _on_request)
+            # Navegar y esperar JS completo (JWT se inyecta via JS, no SSR)
+            try:
+                page.goto(
+                    "https://www.morningstar.com/funds/xnas/afozx/chart",
+                    wait_until="networkidle",
+                    timeout=75_000,
+                )
+            except Exception:
+                pass  # timeout OK; el HTML parcial puede tener el JWT
+
+            # Scroll + click para forzar carga del chart si aun no se capturo
+            if not token_holder["token"]:
+                try:
+                    page.evaluate("window.scrollTo(0, 500)")
+                    page.wait_for_timeout(5_000)
+                except Exception:
+                    pass
+
+            # Estrategia 2: buscar JWT en el HTML renderizado
+            if not token_holder["token"]:
+                try:
+                    html = page.content()
+                    jwt_match = _re.search(
+                        r'ey[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}',
+                        html,
+                    )
+                    if jwt_match:
+                        token_holder["token"] = jwt_match.group(0)
+                except Exception:
+                    pass
+
+            # Estrategia 3: extraer JWT desde los scripts inline de la pagina
+            if not token_holder["token"]:
+                try:
+                    token_from_js = page.evaluate("""
+                        () => {
+                            const all = Array.from(
+                                document.querySelectorAll('script')
+                            ).map(s => s.textContent || '').join(' ');
+                            const m = all.match(
+                                /ey[A-Za-z0-9_-]{20,}\\.[A-Za-z0-9_-]{20,}\\.[A-Za-z0-9_-]{20,}/
+                            );
+                            return m ? m[0] : null;
+                        }
+                    """)
+                    if token_from_js:
+                        token_holder["token"] = token_from_js
+                except Exception:
+                    pass
+
+            browser.close()
+    except Exception as e:
+        print(f"  [browser] Playwright error: {e}", flush=True)
+        return None
+
+    return token_holder["token"]
+
+
+def _get_bearer_token() -> str:
+    """Obtiene el bearer token para chartservice.
+
+    Estrategia en cascada:
+    1. token_chart() (scraping rapido, ~1s)
+    2. _get_bearer_token_browser() (Playwright headless, ~5-10s) — bypasa bot-detection
+    Si ambos fallan, lanza RuntimeError.
+    """
+    token = _ms_token_chart()
+    if token:
+        return token
+
+    print("  [token] scraping rapido fallo (bot-detection?) -> intentando via browser...")
+    token = _get_bearer_token_browser()
+    if token:
+        print("  [token] Bearer obtenido via Playwright (browser).")
+        return token
+
+    raise RuntimeError(
+        "No se pudo obtener el bearer token para chartservice.\n"
+        "Tanto token_chart() como Playwright fallaron.\n\n"
+        "Fallback manual: pasa el token con --bearer-token <TOKEN>\n"
+        "(Obtenlo desde DevTools -> Network -> Authorization header)"
+    )
+
+
+def _download_nav_daily(
+    code: str,
+    isin: str,
+    currency: str,
+    desde: str,
+    bearer: str,
+) -> tuple[list[dict], str, str | None]:
+    """
+    Descarga la serie de totalReturn DIARIA via chartservice/v2/timeseries.
+
+    Usa el bearer JWT de mstarpy.security.token_chart — no requiere Funds().
+    El code (securityID) se lee de nav_sources.source_id, ya resuelto en discover.
+
+    Parametros:
+        code:     securityID de Morningstar (ej. 'F0GBR069U8')
+        isin:     ISIN del fondo
+        currency: divisa del fondo (para el campo NAV_Currency)
+        desde:    fecha de inicio ISO (ej. '2000-01-01')
+        bearer:   token JWT actual; se pasa para poder renovarlo sin reescribir
+
+    Devuelve (rows, err_type, new_bearer):
+        rows:       lista de dicts diarios — campo NAV = totalReturn index
+        err_type:   '' OK | 'empty' sin datos | 'transient' red | 'auth' 401
+        new_bearer: None si el token sigue valido; str con token nuevo si hubo 401
+    """
+    headers = {
+        "user-agent":    _ms_random_ua(),
+        "authorization": f"Bearer {bearer}",
+    }
+    params = {
+        "query":           f"{code}:totalReturn",
+        "frequency":       "d",
+        "startDate":       desde,
+        "endDate":         date.today().isoformat(),
+        "trackMarketData": "3.6.3",
+        "instid":          "DOTCOM",
+    }
+
+    for attempt in range(1, _CHART_RETRY_MAX + 1):
+        try:
+            r = requests.get(_MS_CHART_URL, params=params,
+                             headers=headers, timeout=20)
+
+            if r.status_code == 401:
+                # No refrescamos aqui: puede ser token caducado O security inaccesible.
+                # El llamante decide segun la edad del token (evita Playwright en masa).
+                return [], "auth", None
+
+            if r.status_code != 200:
+                if r.status_code == 429 and attempt < _CHART_RETRY_MAX:
+                    print(f"\n    [chart 429] rate-limit, esperando {_CHART_BACKOFF_429}s...",
+                          flush=True)
+                    time.sleep(_CHART_BACKOFF_429)
+                    continue
+                if r.status_code in (500, 502, 503) and attempt < _CHART_RETRY_MAX:
+                    print(f"\n    [chart {r.status_code}] error servidor, esperando {_CHART_BACKOFF_OTHER}s...",
+                          flush=True)
+                    time.sleep(_CHART_BACKOFF_OTHER)
+                    continue
+                return [], "transient", None
+
+            data = r.json()
+            if not data or "series" not in data[0]:
+                return [], "empty", None
+
+            series = data[0]["series"]
+            rows = []
+            for entry in series:
+                # totalReturn preferido; nav como fallback
+                val      = entry.get("totalReturn") or entry.get("nav")
+                nav_date = entry.get("date")
+                if val is None or nav_date is None:
+                    continue
+                rows.append({
+                    "ISIN":         isin,
+                    "Date":         str(nav_date)[:10],
+                    "NAV":          float(val),
+                    "NAV_Currency": currency or "EUR",
+                    "NAV_Type":     "TOTAL_RETURN_IDX",
+                    "Is_Estimated": 0,
+                    "Data_Source":  "MORNINGSTAR_CHART",
+                })
+            return rows, "", None
+
+        except requests.RequestException as e:
+            err_str = str(e).lower()
+            is_transient = any(x in err_str for x in [
+                "timed out", "timeout", "connection", "dns", "name or service"
+            ])
+            if is_transient and attempt < MS_RETRY_MAX:
+                wait = MS_BACKOFF_BASE * (MS_BACKOFF_FACTOR ** (attempt - 1))
+                wait += random.uniform(0, wait * 0.2)
+                print(f"\n    [chart red] intento {attempt}/{MS_RETRY_MAX}"
+                      f" -- esperando {wait:.0f}s...", flush=True)
+                time.sleep(wait)
+            else:
+                return [], "transient", None
+
+    return [], "transient", None
 
 
 # ============================================================
@@ -330,16 +572,143 @@ def _write_nav_source(
     conn.commit()
 
 
+def _normalize_nav_scale(rows: list) -> list:
+    """FIX-P2-NAV-SCALE-1 (2026-07-19): detecta y corrige mezcla de escalas NAV.
+
+    Dos patrones de corrupción se han observado en fund_nav_monthly:
+
+    Patrón A — mezcla de fuentes en bloque: MORNINGSTAR (sal-service, todos los
+      rows a escala ~9 000x) + MORNINGSTAR_CHART (chartservice, todos a escala ~9x).
+      La mediana de una fuente difiere de la otra en un factor limpio de 10^n ≥ 100.
+      Corrección: rescalar los rows de la fuente inflada → dividir por 10^n.
+
+    Patrón B — picos aislados dentro de una misma fuente: MORNINGSTAR devuelve
+      en ocasiones el índice de retorno total (acumulado desde el inicio) en lugar
+      del NAV de precio para las fechas de cierre de calendario. Estos rows tienen
+      NAV ~×100 respecto al período adyacente (por ejemplo, NAV 87.92 el día 29
+      de enero frente a NAV 9291.90 el día 31 de enero del mismo mes).
+      Corrección: eliminar los picos aislados (rows cuyo NAV > 8× el anterior Y
+      > 8× el siguiente cuando hay suficiente contexto).
+
+    Ambos pases son idempotentes. La función aplica primero el filtro de picos
+    (Patrón B) y luego el rescalado por fuente (Patrón A).
+
+    Parámetros:
+        rows: lista de dicts con claves "NAV", "Date" y "Data_Source" (al menos)
+
+    Devuelve lista de dicts (subconjunto o con NAVs corregidos).
+    """
+    if len(rows) < 2:
+        return rows
+
+    import math
+    import statistics as _stats
+
+    # ── Patrón B: eliminar picos aislados ──────────────────────────────────────
+    # Un "pico" es un row tal que su NAV > 8× el anterior Y > 8× el siguiente
+    # (contexto interior), o > 8× el único vecino disponible (bordes).
+    if len(rows) >= 3:
+        _sorted = sorted(rows, key=lambda r: r["Date"])
+        _navs   = [r["NAV"] for r in _sorted]
+        _keep   = [True] * len(_navs)
+
+        for i in range(1, len(_navs) - 1):
+            if _navs[i] > 0 and _navs[i-1] > 0 and _navs[i+1] > 0:
+                if _navs[i] > 8 * _navs[i-1] and _navs[i] > 8 * _navs[i+1]:
+                    _keep[i] = False  # pico interior aislado
+
+        # Pico en borde final (e.g. último row del lote es un valor inflado)
+        if _navs[-1] > 0 and _navs[-2] > 0 and _navs[-1] > 8 * _navs[-2]:
+            _keep[-1] = False
+
+        rows = [r for r, k in zip(_sorted, _keep) if k]
+        if len(rows) < 2:
+            return rows
+
+    # ── Patrón A: rescalar fuente inflada frente a MORNINGSTAR_CHART ──────────
+    chart_navs = [r["NAV"] for r in rows
+                  if r.get("Data_Source") == "MORNINGSTAR_CHART" and r["NAV"] > 0]
+    other_navs = [r["NAV"] for r in rows
+                  if r.get("Data_Source") != "MORNINGSTAR_CHART" and r["NAV"] > 0]
+
+    if not chart_navs or not other_navs:
+        return rows
+
+    ref_median   = _stats.median(chart_navs)   # escala de referencia (CHART = limpia)
+    other_median = _stats.median(other_navs)
+
+    if ref_median <= 0 or other_median <= 0:
+        return rows
+
+    ratio = other_median / ref_median
+    if ratio <= 0:
+        return rows
+
+    log10_ratio = math.log10(ratio)
+    n = round(log10_ratio)
+
+    # Solo corregir si la diferencia es un múltiplo limpio de 10^n con n ≥ 2
+    # (es decir, al menos ×100). Tolerancia ±0.2 décadas (≈ ×63 a ×158 para n=2).
+    # Requerimos n ≥ 2 para no tocar diferencias de ×10 (p.ej. divisa o clase).
+    if n < 2 or abs(log10_ratio - n) > 0.2:
+        return rows  # diferencia real o escala mixta no reconocida → no tocar
+
+    scale_factor = 10 ** n  # la fuente no-CHART está inflada en este factor
+
+    corrected = []
+    for r in rows:
+        if r.get("Data_Source") == "MORNINGSTAR_CHART":
+            corrected.append(r)
+        else:
+            r2 = r.copy()
+            r2["NAV"] = round(r["NAV"] / scale_factor, 6)
+            corrected.append(r2)
+    return corrected
+
+
 def _write_nav_rows(conn, rows, dry_run) -> int:
+    """Persiste filas NAV mensuales en fund_nav_monthly (INSERT OR IGNORE)."""
     if not rows or dry_run:
         return 0
+    # FIX-P2-NAV-SCALE-1 (2026-07-19): normalizar escala antes de persistir.
+    # Sin esto, mezclar rows MORNINGSTAR (~9000x) con MORNINGSTAR_CHART (~9x)
+    # produce retornos fantasma que corrompen srri_nav → 7 para fondos defensivos.
+    rows = _normalize_nav_scale(rows)
     conn.executemany("""
         INSERT OR IGNORE INTO fund_nav_monthly
             (ISIN, Date, NAV, NAV_Currency, NAV_Type, Is_Estimated, Data_Source)
         VALUES (?, ?, ?, ?, ?, ?, ?)
     """, [(r["ISIN"], r["Date"], r["NAV"], r["NAV_Currency"],
            r["NAV_Type"], r["Is_Estimated"], r["Data_Source"]) for r in rows])
-    conn.commit()
+    # No commit aqui — el llamante agrupa commits por lote para reducir fsyncs
+    return len(rows)
+
+
+def _write_nav_rows_daily(conn, rows, dry_run) -> int:
+    """Persiste filas NAV diarias en fund_nav_daily.
+
+    v24: fund_nav_daily es la serie pre-resample usada por
+    proyecto2/src/calculations/short_horizon.py para métricas
+    rolling_1m / rolling_3m / rolling_6m (metric_version='d1').
+
+    Limpia primero las filas del endpoint antiguo (sal-service, escala ~9k-30k)
+    que no coinciden en fecha con chartservice (~300) — mezclarlas produce
+    retornos fantasma del -99% que corrompen todas las métricas diarias.
+    """
+    if not rows or dry_run:
+        return 0
+    isin = rows[0]["ISIN"]
+    conn.execute(
+        "DELETE FROM fund_nav_daily WHERE ISIN=? AND Data_Source != 'MORNINGSTAR_CHART'",
+        (isin,),
+    )
+    conn.executemany("""
+        INSERT OR REPLACE INTO fund_nav_daily
+            (ISIN, Date, NAV, NAV_Currency, NAV_Type, Is_Estimated, Data_Source)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, [(r["ISIN"], r["Date"], r["NAV"], r["NAV_Currency"],
+           r["NAV_Type"], r["Is_Estimated"], r["Data_Source"]) for r in rows])
+    # No commit aqui — el llamante agrupa commits por lote para reducir fsyncs
     return len(rows)
 
 
@@ -400,7 +769,7 @@ def run_discover(conn, isins, dry_run, verbose):
 # Modo LOAD
 # ============================================================
 
-def run_load(conn, isins, desde, dry_run, verbose, force=False):
+def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=None):
     if isins:
         ph      = ",".join("?" * len(isins))
         db_rows = {r[0]: r[1] for r in conn.execute(
@@ -418,15 +787,23 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False):
             print("Ejecuta primero: --mode discover")
             return
 
-    # -- Checkpoint: obtener ISINs ya cargados en fund_nav_monthly ----------
+    # -- Checkpoint: solo saltar ISINs ya presentes en AMBAS tablas (v24) ---
+    # Un ISIN con NAV mensual pero sin NAV diario necesita ser descargado de
+    # nuevo para poblar fund_nav_daily (tabla nueva en v24).
     if not force:
-        already = {r[0] for r in conn.execute(
+        already_monthly = {r[0] for r in conn.execute(
             "SELECT DISTINCT isin FROM fund_nav_monthly"
         ).fetchall()}
+        # Solo cuenta como "cargado" si tiene datos REALES diarios de chartservice
+        # (no datos mensuales del endpoint antiguo que fueron escritos en v24 transitorio)
+        already_daily = {r[0] for r in conn.execute(
+            "SELECT DISTINCT isin FROM fund_nav_daily WHERE Data_Source='MORNINGSTAR_CHART'"
+        ).fetchall()}
+        already    = already_monthly & already_daily
         pendientes = [(isin, ms_id) for isin, ms_id in rows if isin not in already]
         skipped    = len(rows) - len(pendientes)
         if skipped:
-            print(f"  Checkpoint: {skipped} fondos ya cargados -> se saltan.")
+            print(f"  Checkpoint: {skipped} fondos ya con datos chartservice -> se saltan.")
             print(f"             Usa --force para recargar todo.")
         rows = pendientes
 
@@ -440,16 +817,37 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False):
     ok_count      = 0
     print(f"Descargando NAV para {total} fondos | desde={desde} | dry_run={dry_run}\n")
 
-    for idx, (isin, ms_id) in enumerate(rows, 1):
-        # Cooldown periodico basado en exitos (no en total procesados)
-        # se gestiona mas abajo tras contabilizar ok
+    # Reducir fsync para bulk load: NORMAL hace un fsync por checkpoint en lugar de
+    # dos por commit (FULL). Seguro: en caso de crash solo perdemos el lote en curso,
+    # que es idempotente (la proxima ejecucion lo reprocesa).
+    _BATCH_COMMIT = 20          # commit cada N ISINs exitosos
+    _batch_pending = 0
+    if not dry_run:
+        conn.execute("PRAGMA synchronous = NORMAL")
+        conn.execute("PRAGMA cache_size = -65536")  # 64 MB page cache
 
+    # -- Bearer token para chartservice (obtenido una sola vez por run) -----
+    if bearer_token:
+        bearer = bearer_token
+        print("  Bearer token chartservice suministrado via --bearer-token.\n")
+    else:
+        try:
+            bearer = _get_bearer_token()
+            print("  Bearer token chartservice obtenido.\n")
+        except RuntimeError as e:
+            print(f"\n  ERROR: {e}")
+            return
+
+    bearer_acquired_at = time.time()          # Para detectar token caducado vs. security inaccesible
+    _TOKEN_MAX_AGE_S   = 45 * 60             # Morningstar JWTs duran ~1h; refrescar a los 45 min
+
+    for idx, (isin, ms_id) in enumerate(rows, 1):
         print(f"  [{idx:>4}/{total}] {isin}", end=" ", flush=True)
 
         # Si no hay code en nav_sources, intentar resolverlo ahora
         if not ms_id:
             resolved = _resolve_isin(isin)
-            if resolved:
+            if resolved and resolved.get("code"):
                 ms_id = resolved["code"]
                 conn.execute(
                     "UPDATE nav_sources SET source_id=? WHERE isin=?",
@@ -467,11 +865,32 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False):
         ).fetchone()
         currency = r[0] if r and r[0] else "EUR"
 
-        nav_rows, err_type = _download_nav(ms_id, isin, currency, desde)
+        # -- Descarga diaria via chartservice --------------------------------
+        nav_rows, err_type, _ = _download_nav_daily(
+            ms_id, isin, currency, desde, bearer)
+
+        if err_type == "auth":
+            token_age = time.time() - bearer_acquired_at
+            if token_age > _TOKEN_MAX_AGE_S:
+                # Token probablemente caducado — refrescar y reintentar una vez
+                print("\n  [token] renovando (>45 min)...", flush=True)
+                try:
+                    bearer = _get_bearer_token()
+                    bearer_acquired_at = time.time()
+                    print("  [token] ok.", flush=True)
+                except RuntimeError:
+                    print("  [token] ERROR: no se pudo renovar.", flush=True)
+                nav_rows, err_type, _ = _download_nav_daily(
+                    ms_id, isin, currency, desde, bearer)
+            else:
+                # Token reciente -> security no disponible en chartservice
+                err_type = "no_access"
 
         if not nav_rows:
             if err_type == "empty":
-                print("-> sin datos (fondo sin historico en Morningstar)")
+                print("-> sin datos (fondo sin historico en chartservice)")
+            elif err_type == "no_access":
+                print("-> sin datos (security no accesible en chartservice)")
             else:
                 print(f"-> sin datos ({err_type})")
             time.sleep(random.uniform(*MS_DELAY_LOAD_ERR))
@@ -480,15 +899,20 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False):
 
         time.sleep(random.uniform(*MS_DELAY_LOAD_OK))
 
-        written = _write_nav_rows(conn, nav_rows, dry_run)
-        total_written += written
-        display = len(nav_rows) if dry_run else written
-        print(f"-> {display} NAV  ({nav_rows[0]['Date']} -> {nav_rows[-1]['Date']})")
+        # -- v24: persistir diario + mensual (INSERT OR IGNORE en ambas) ----
+        daily_written   = _write_nav_rows_daily(conn, nav_rows, dry_run)
+        monthly_rows    = _resample_to_monthly(nav_rows)
+        monthly_written = _write_nav_rows(conn, monthly_rows, dry_run)
+        total_written  += monthly_written
+        display_m = len(monthly_rows) if dry_run else monthly_written
+        display_d = len(nav_rows)     if dry_run else daily_written
+        print(f"-> {display_d} diarios / {display_m} mensuales"
+              f"  ({nav_rows[0]['Date']} -> {nav_rows[-1]['Date']})")
 
         # -- Actualizar nav_sources con rango real descargado --------------
-        if written and not dry_run:
-            first_d = nav_rows[0]["Date"]
-            last_d  = nav_rows[-1]["Date"]
+        if monthly_rows and not dry_run:
+            first_d = monthly_rows[0]["Date"]
+            last_d  = monthly_rows[-1]["Date"]
             conn.execute("""
                 UPDATE nav_sources
                    SET first_nav_date = ?,
@@ -496,10 +920,13 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False):
                        nav_count      = ?,
                        last_checked   = ?
                  WHERE isin = ?
-            """, (first_d, last_d, written, date.today().isoformat(), isin))
-            conn.commit()
+            """, (first_d, last_d, len(monthly_rows), date.today().isoformat(), isin))
 
         ok_count += 1
+        _batch_pending += 1
+        if _batch_pending >= _BATCH_COMMIT and not dry_run:
+            conn.commit()
+            _batch_pending = 0
         if ok_count > 1 and ok_count % MS_COOLDOWN_EVERY == 0:
             cooldown = random.uniform(*MS_COOLDOWN_SECS)
             print(f"\n  -- Cooldown tras {ok_count} exitos: esperando {cooldown:.0f}s --\n",
@@ -510,18 +937,22 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False):
             for r in nav_rows[:3]:
                 print(f"      {r['Date']}  {r['NAV']:.4f} {r['NAV_Currency']}")
 
+    # Commit final para el ultimo lote (puede ser < _BATCH_COMMIT)
+    if _batch_pending > 0 and not dry_run:
+        conn.commit()
+
     print(f"\n{'-'*50}")
     print(f"  Total NAV escritos : {total_written}")
     print(f"  Fondos sin datos   : {errors_load}")
     if dry_run:
-        print("  (DRY-RUN: nada escrito en fund_nav_monthly)")
+        print("  (DRY-RUN: nada escrito en fund_nav_daily / fund_nav_monthly)")
 
 
 # ============================================================
 # Modo UPDATE
 # ============================================================
 
-def run_update(conn, dry_run):
+def run_update(conn, dry_run, bearer_token=None):
     rows = conn.execute(
         "SELECT isin, source_id, last_nav_date FROM nav_sources "
         "WHERE status='OK' ORDER BY isin"
@@ -534,6 +965,21 @@ def run_update(conn, dry_run):
     total         = len(rows)
     total_written = 0
     print(f"Actualizacion mensual para {total} fondos | dry_run={dry_run}\n")
+
+    # -- Bearer token para chartservice ------------------------------------
+    if bearer_token:
+        bearer = bearer_token
+        print("  Bearer token chartservice suministrado via --bearer-token.\n")
+    else:
+        try:
+            bearer = _get_bearer_token()
+            print("  Bearer token chartservice obtenido.\n")
+        except RuntimeError as e:
+            print(f"\n  ERROR: {e}")
+            return
+
+    bearer_acquired_at = time.time()
+    _TOKEN_MAX_AGE_S   = 45 * 60
 
     for idx, (isin, ms_id, last_nav_date) in enumerate(rows, 1):
         print(f"  [{idx:>4}/{total}] {isin}", end=" ", flush=True)
@@ -558,19 +1004,37 @@ def run_update(conn, dry_run):
         currency = r[0] if r and r[0] else "EUR"
 
         code = ms_id or isin
-        nav_rows, _err = _download_nav(code, isin, currency, desde)
+        nav_rows, err_type, _ = _download_nav_daily(
+            code, isin, currency, desde, bearer)
+
+        if err_type == "auth":
+            token_age = time.time() - bearer_acquired_at
+            if token_age > _TOKEN_MAX_AGE_S:
+                try:
+                    bearer = _get_bearer_token()
+                    bearer_acquired_at = time.time()
+                except RuntimeError:
+                    pass
+                nav_rows, err_type, _ = _download_nav_daily(
+                    code, isin, currency, desde, bearer)
+            else:
+                err_type = "no_access"
+
         time.sleep(random.uniform(*MS_DELAY_LOAD_OK))
 
         if not nav_rows:
             print("-> sin datos nuevos")
             continue
 
-        written = _write_nav_rows(conn, nav_rows, dry_run)
+        # -- v24: persistir diario + mensual --------------------------------
+        daily_written = _write_nav_rows_daily(conn, nav_rows, dry_run)
+        monthly_rows  = _resample_to_monthly(nav_rows)
+        written       = _write_nav_rows(conn, monthly_rows, dry_run)
         total_written += written
-        print(f"-> {written} NAV nuevos")
+        print(f"-> {daily_written} diarios nuevos / {written} mensuales nuevos")
 
-        if written and not dry_run:
-            new_last = max(r["Date"] for r in nav_rows)
+        if monthly_rows and not dry_run:
+            new_last = max(r["Date"] for r in monthly_rows)
             conn.execute(
                 "UPDATE nav_sources SET last_nav_date=?, last_checked=? WHERE isin=?",
                 (new_last, date.today().isoformat(), isin)
@@ -625,6 +1089,9 @@ def main():
                         help="Ejecuta sin escribir nada en la DB")
     parser.add_argument("--verbose", action="store_true",
                         help="Muestra los primeros 3 NAV de cada fondo")
+    parser.add_argument("--bearer-token", default=None,
+                        help="Bearer JWT para chartservice (fallback si token_chart() falla). "
+                             "Obtenerlo desde DevTools -> Network -> Authorization header")
     args = parser.parse_args()
 
     conn = get_connection()
@@ -675,13 +1142,14 @@ def main():
         else:
             isins_load = isins if args.isin else None
         run_load(conn,
-                 isins   = isins_load,
-                 desde   = args.desde,
-                 dry_run = args.dry_run,
-                 verbose = args.verbose,
-                 force   = args.force)
+                 isins         = isins_load,
+                 desde         = args.desde,
+                 dry_run       = args.dry_run,
+                 verbose       = args.verbose,
+                 force         = args.force,
+                 bearer_token  = args.bearer_token)
     elif args.mode == "update":
-        run_update(conn, dry_run=args.dry_run)
+        run_update(conn, dry_run=args.dry_run, bearer_token=args.bearer_token)
 
     conn.close()
 
