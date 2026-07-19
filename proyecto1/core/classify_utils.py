@@ -1820,6 +1820,17 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
         "varias clases de activos",
     ]):
         return "Mixtos"
+    # FIX-JANUS-BALANCED-1 (2026-07-19): "balanced fund" in the product name
+    # (first 600 chars of the KIID) is an unambiguous Mixtos signal — it is the
+    # industry-standard label for a fund holding a 60/40 (or similar) mix of
+    # equities and fixed income. Without this check the parenthetical equity
+    # phrasing "en acciones (renta variable) y... valores de renta fija" used by
+    # JANUS H BALANCED does not match any eq_dominant/has_equity pattern, causing
+    # detect_nature_from_kiid() to return "_RF_pending" (→ Renta Fija Flexible)
+    # instead of the correct "Mixtos".
+    # The check also covers "balanced fund" within the objective window.
+    if "balanced fund" in _header or "balanced fund" in w:
+        return "Mixtos"
     # FIX-B1-COMMODITY-PRIMAR-1 (2026-07-18): pure commodity fund with a
     # "principalmente en materias primas" primary mandate → Alternativo.
     # Must fire BEFORE FIX-B1-MIXTO-ENUM (below) which catches the same
@@ -2362,11 +2373,26 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
     # equity=True (from "en menor medida, el fondo podrá invertir en valores de
     # renta variable de fuera de ee. uu.") caused line 2348 to return
     # _RF_pending instead of the correct "Renta Variable".
-    _minor_secondary_bond = _minor_secondary_bond or bool(re.search(
-        r'también\s+podr[aá]\s+invertir[^.]{0,150}'
-        r'(?:bonos|renta\s+fija|deuda)',
-        w
+    # FIX-GS-EM-DEBT-1 (2026-07-19): guard against firing when the primary mandate
+    # is ALREADY bonds ("invertirá principalmente en... renta fija"). In that case
+    # "también podrá invertir en renta fija [de otros emisores]" extends the primary
+    # bond mandate rather than adding a secondary bond allowance to an equity fund.
+    # Confirmed: GS EM DEBT / GS GLOBAL HY portfolios — "La Cartera invertirá
+    # principalmente en valores de renta fija... La Cartera también podrá invertir
+    # en valores de renta fija cuyo emisor tenga su sede en cualquier parte del mundo"
+    # — "también podrá" was incorrectly setting _minor_secondary_bond=True, causing
+    # the fund to resolve as "Renta Variable" via line 2390 instead of "_RF_pending".
+    _bond_primary_declared = bool(re.search(
+        r'invertir[aá]\s+principalmente\s+en\s+(?:valores\s+de\s+)?renta\s+fija', w
     ))
+    _minor_secondary_bond = _minor_secondary_bond or (
+        bool(re.search(
+            r'también\s+podr[aá]\s+invertir[^.]{0,150}'
+            r'(?:bonos|renta\s+fija|deuda)',
+            w
+        ))
+        and not _bond_primary_declared
+    )
 
     # FIX-B1-MINOREQ-1 (2026-07-17): simétrico a _minor_secondary_bond.
     # "en menor medida, el Fondo podrá invertir en valores de renta variable/
