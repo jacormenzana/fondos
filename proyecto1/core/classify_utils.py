@@ -2210,6 +2210,20 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
     # (quality constraint on equity holdings) spuriously set has_bonds=True.
     )) or bool(re.search(
         r'invest(?:s|ing)?\s+at\s+least[^.]{0,80}in\s+equit(?:y|ies)\b', w
+    # FIX-NAT-EN-SHARES-1 (2026-07-19): "invest(s/ing) primarily in … shares" —
+    # English primary-equity declaration with an instrument qualifier between
+    # "primarily in" and "shares" (e.g. "investing primarily in listed or traded
+    # shares"). The existing FIX-B1-EN-TWOTHIRDS-1 requires "at least"; this
+    # pattern covers funds that declare primacy without a minimum percentage.
+    # Confirmed: MAN GLG JAPAN COREALPHA (IE00B5648R31/IE00BYVDZH74) — "the fund
+    # seeks long term gains by investing primarily in listed or traded shares (or
+    # related instruments) of issuers in japan" — none of the eq_dominant keyword
+    # list entries matched ("shares of companies" ≠ "in … shares"), causing
+    # bond_dominant=True (from "debt securities" secondary allowance) with
+    # eq_dominant=False → function returned _RF_pending at line 2352 instead of
+    # "Renta Variable".
+    )) or bool(re.search(
+        r'invest(?:s|ing)?\s+primarily\s+in[^.]{0,50}shares\b', w
     ))
 
     # FIX-P1-RV2 (2026-07-04): "en menor medida... podrá invertir en
@@ -2319,6 +2333,41 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
         w
     ))
 
+    # FIX-NAT-EN-SHARES-1 (2026-07-19): "may also invest … debt securities /
+    # bonds / fixed income" — English secondary bond allowance NOT expressed
+    # as a percentage cap (complements FIX-B1-EN-UPTO-BONDS-1 which requires
+    # a number). "may also invest" signals an ADDITIONAL / OPTIONAL allocation,
+    # not the primary mandate. Confirmed: MAN GLG JAPAN COREALPHA (IE00B5648R31/
+    # IE00BYVDZH74) — "it may also invest in other asset classes, including debt
+    # securities, currencies, deposits and other funds and in other regions" —
+    # "debt securities" set bond_dominant=True while the primary equity mandate
+    # was not matched. Without this fix the function returns _RF_pending at
+    # line 2352 (bond_dominant + not eq_dominant + not has_equity).
+    _minor_secondary_bond = _minor_secondary_bond or bool(re.search(
+        r'may\s+also\s+invest[^.]{0,150}'
+        r'(?:debt\s+securities|bonds?\b|fixed\s+income)',
+        w
+    ))
+
+    # FIX-NAT-ES-SECBOND-1 (2026-07-19): "también podrá invertir en bonos /
+    # renta fija / deuda" — Spanish optional/secondary bond allocation in a
+    # fund whose primary mandate is equity. "también" (= also) signals an
+    # additional/optional allocation. Confirmed: FTGF CLEARBRIDGE US VALUE
+    # (IE00B19Z3920) — "el fondo invierte principalmente en valores de renta
+    # variable de empresas estadounidenses... el fondo también podrá invertir
+    # en bonos corporativos, bonos del estado y valores a corto plazo." —
+    # "bonos corporativos" set bond_dominant=True; eq_dominant=True (from
+    # "valores de renta variable"); but _minor_secondary_bond=False blocked the
+    # eq_dominant → "Renta Variable" return at line 2341, and _minor_secondary_
+    # equity=True (from "en menor medida, el fondo podrá invertir en valores de
+    # renta variable de fuera de ee. uu.") caused line 2348 to return
+    # _RF_pending instead of the correct "Renta Variable".
+    _minor_secondary_bond = _minor_secondary_bond or bool(re.search(
+        r'también\s+podr[aá]\s+invertir[^.]{0,150}'
+        r'(?:bonos|renta\s+fija|deuda)',
+        w
+    ))
+
     # FIX-B1-MINOREQ-1 (2026-07-17): simétrico a _minor_secondary_bond.
     # "en menor medida, el Fondo podrá invertir en valores de renta variable/
     # acciones" -- equity EXPLÍCITAMENTE declarada como asignación SECUNDARIA
@@ -2355,6 +2404,20 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
     # RF dominante + equity presente (mención incidental en fondos RV/Mixtos) →
     # Devolver None: la Capa 2 (nombre del fondo) lo resolverá correctamente
     if bond_dominant and not eq_dominant and has_equity:
+        # FIX-NAT-BLENDED-6040-1 (2026-07-19): CNMV product-type label
+        # "renta variable mixta" in the "Tipo de producto:" field of a DDF/
+        # PRIIPs document is an unambiguous Mixtos declaration — it is the
+        # official Spanish CNMV category for funds that hold 30-75% equity +
+        # rest in fixed income. Without this guard, bond_dominant=True (from
+        # the split-mandate clause "el resto en renta fija") AND has_equity=True
+        # (from incidental "renta variable de" in the risk-disclaimer section)
+        # cause this branch to return None — the name-based Capa 2 resolver then
+        # fails to assign the correct nature. Confirmed: GEST BOUTIQUE VI BAELO
+        # EUR ACC (ES0110407097) — "tipo de producto: fondo de inversión. renta
+        # variable mixta internacional" + policy "30-75% de la exposición total
+        # en renta variable y el resto en renta fija pública/privada".
+        if "renta variable mixta" in w:
+            return "Mixtos"
         return None
 
 
@@ -3855,6 +3918,7 @@ def detect_geography_from_kiid(kiid_text: str) -> Optional[str]:
           "japanese equities","renta variable japonesa",
           "japanese government","mercado japonés"], "Japón"),
         # China
+        # Note: "a-shares" has a permissive-sleeve guard below (FIX-GEO-ASHARES-1)
         (["invierte principalmente en china","chinese equities",
           "renta variable china","mercado chino",
           "a-shares","gran china"], "China"),
@@ -3937,6 +4001,24 @@ def detect_geography_from_kiid(kiid_text: str) -> Optional[str]:
                 if ("estados unidos" in _pre_latam
                         or "canadá" in _pre_latam or "canada" in _pre_latam):
                     continue
+            elif s == "a-shares":
+                # FIX-GEO-ASHARES-1 (2026-07-19): "a-shares" in a permissive
+                # MINORITY-SLEEVE context must NOT assign Geography=China.
+                # "the fund may invest up to 10%/20% of its assets in China
+                # A-Shares via Stock Connect" describes an optional/minor
+                # satellite allocation in a global/multi-region mandate, not
+                # a China-focused fund. Guard: skip if the 80-char pre-window
+                # contains a percentage cap ("up to", "hasta un", "%"), a
+                # "may invest"/"puede invertir" qualifier, or "stock connect"
+                # (the mainland access vehicle used for A-share sleeves).
+                _pre_ash = w[max(0, idx - 80):idx]
+                _ash_permissive = any(m in _pre_ash for m in [
+                    "up to", "hasta un", "hasta el", "may invest",
+                    "puede invertir", "via stock connect", "a través de",
+                    "through stock connect",
+                ]) or "%" in _pre_ash
+                if _ash_permissive:
+                    continue
             elif s == "países emergentes":
                 _pre = w[max(0, idx - 100):idx]
                 if any(neg in _pre for neg in _GEO_NEGATION_MARKERS):
@@ -3945,11 +4027,18 @@ def detect_geography_from_kiid(kiid_text: str) -> Optional[str]:
                 # "exposición a países emergentes", "puede estar expuesto a ...",
                 # "incluyendo países emergentes" aparecen en secciones de riesgo
                 # de fondos Europa/Global y no declaran el objetivo del fondo.
+                # FIX-GEO-EM-2 (2026-07-19): extend with enumeration/permissive
+                # prefixes found in audited FP cases: "podrá invertir en" (pre-
+                # enum list), "incluidos/incluidas" (trailing inclusion clause),
+                # "ocde o" (multi-region enumeration where EM is one alternative).
                 _RISK_CONTEXT_MARKERS = [
                     "exposición a ", "puede estar expuesto", "puede tener exposición",
                     "puede invertir hasta", "incluyendo ", "incluido ", "incluida ",
                     "entre los que se incluyen", "como pueden ser ", "tales como ",
                     "acceso a ", "así como ", "también ",
+                    # FIX-GEO-EM-2 additions
+                    "podrá invertir en ", "puede invertir en ",
+                    "incluidos ", "incluidas ", "ocde o ",
                 ]
                 if any(m in _pre for m in _RISK_CONTEXT_MARKERS):
                     continue
@@ -6356,8 +6445,8 @@ def semantic_validation_to_dq_tuples(val_result: dict) -> list:
     Hace posible que TODO fondo (no solo los clasificados por restantes.py) tenga
     sus inconsistencias semánticas persistidas en fund_data_quality_issues cada ciclo.
 
-    Formato de salida: ("SEM_RULE", "WARN"|"INFO", "WARNING"|"INFO", msg)
-      - critical_errors → dq_level="WARN", log_status="WARNING"
+    Formato de salida: ("SEM_RULE", "WARN"|"INFO", "WARN"|"INFO", msg)
+      - critical_errors → dq_level="WARN", log_status="WARN"
       - warnings        → dq_level="INFO", log_status="INFO"
 
     Args:
@@ -6375,7 +6464,7 @@ def semantic_validation_to_dq_tuples(val_result: dict) -> list:
         tuples.append((
             _rule_to_code(item.get("rule", "UNKNOWN")),
             "WARN",
-            "WARNING",
+            "WARN",      # FIX-LOG-WARN-NORM (2026-07-19): normalized from "WARNING"
             item.get("message", ""),
         ))
     for item in val_result.get("warnings", []):
@@ -6890,13 +6979,16 @@ def apply_semantic_validation(
     record = derive_v20_attributes(record, fund_name)
     validation = validate_all_semantic_consistency(record)
 
-    if not validation["is_valid"]:
-        for err in validation["critical_errors"]:
-            logger.info(
-                "[%s] AUTO-CORRECCIÓN %s: %s",
-                isin, err["rule"], err["message"],
-            )
-        record = validation["corrected_record"]
+    for err in validation["critical_errors"]:
+        logger.info(
+            "[%s] AUTO-CORRECCIÓN %s: %s",
+            isin, err["rule"], err["message"],
+        )
+    # Siempre aplicar corrected_record: contiene correcciones de critical_errors
+    # Y de warnings (e.g., SC-G1 Geography→Investment_Universe).
+    # FIX-APPLY-CORRECTIONS-1 (2026-07-19): antes solo se aplicaba cuando
+    # is_valid=False; warnings como SC-G1 eran logueados pero no propagados.
+    record = validation["corrected_record"]
 
     for warn in validation["warnings"]:
         logger.warning("[%s] %s: %s", isin, warn["rule"], warn["message"])
