@@ -5483,6 +5483,11 @@ BMK_SECTOR_BENIGN_PAIRS: frozenset = frozenset({
     frozenset({"Real Assets",                "Real Estate"}),
     frozenset({"Healthcare & Life Sciences", "Technology & Innovation"}),
     frozenset({"Energy & Resources",         "Technology & Innovation"}),
+    # FIX-B3-CRITICAL-MATERIALS-1 (2026-07-20): "critical materials" funds invest in
+    # mining/production of materials (lithium, rare earths, cobalt) essential for
+    # technology/batteries → Morningstar classifies as Materials, fund self-describes
+    # as Technology & Innovation; both are correct from their perspective.
+    frozenset({"Technology & Innovation",    "Materials"}),
 })
 
 # Extra sector keywords not covered by THEMATIC_MAP (used by bmk_sector).
@@ -5989,14 +5994,39 @@ def validate_all_semantic_consistency(
                     and any(tok in _ext_bmk_l for tok in ("sovereign", "em govt", "em gov"))
                     and any(em in _ext_bmk_l for em in ("em ", "emerg", "mercados em"))
                 )
-                if not _is_em_sov_h2:
+                # FIX-B6-TBILL-1 (2026-07-20): Government cash/rate instruments
+                # (T-Bills, overnight rates) are cash-hurdle performance targets used by
+                # credit funds to express a "return X% above cash" objective.  They carry
+                # no credit-quality signal for the portfolio → SC-H2 does not apply.
+                # Confirmed: NB SHORT DURATION EM DEBT KIID reads
+                # "rentabilidad 3% superior a la del efectivo" and uses ICE BofA 3M
+                # US Treasury Bill as that cash reference.
+                _is_govt_cash_bmk_h2 = (
+                    _bmk_credit == "Government"
+                    and any(tok in _ext_bmk_l for tok in (
+                        "treasury bill", "t-bill", "tbill",
+                        "3-month", "3 month", "3m us", "3m eur",
+                        "overnight", "sofr", "estr", "euribor", "libor",
+                        "cash", "liquidity", "money market",
+                    ))
+                )
+                if not _is_em_sov_h2 and not _is_govt_cash_bmk_h2:
                     _h2_msg = (
                         f"SC-H2: Credit_Quality='{_fm_credit}' contradicts "
                         f"benchmark credit pole '{_bmk_credit}' "
                         f"(benchmark: '{ext_benchmark_name}'). "
                         f"Remediation: FORCE_REFRESH then re-classify."
                     )
-                    if ext_confidence in ("LOW", "MEDIUM"):
+                    # FIX-B6-MS-CAT-1 (2026-07-20): Morningstar category benchmarks
+                    # reflect risk/return-based performance attribution, not portfolio
+                    # holdings. A conservative IG low-vol fund can legitimately appear
+                    # in a Morningstar HY category → downgrade to INFO (warnings) so
+                    # the signal survives but does not trigger FORCE_REFRESH.
+                    _ext_is_ms_cat_hy_vs_ig = (
+                        "morningstar" in _ext_bmk_l
+                        and _bmk_is_hy_h2 and _fm_is_ig_h2
+                    )
+                    if ext_confidence in ("LOW", "MEDIUM") or _ext_is_ms_cat_hy_vs_ig:
                         warnings.append({"rule": "Benchmark-Credit-SC-H2",
                                          "message": _h2_msg})
                     else:
