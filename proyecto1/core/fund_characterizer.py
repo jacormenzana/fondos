@@ -236,6 +236,11 @@ def detect_theme_from_kiid(kiid_text: Optional[str]) -> Optional[str]:
     _obj_start, _obj_end = _get_obj_bounds(kiid_text)
     w = _extract_window(kiid_text.lower(), _obj_start, _obj_end)
 
+    # FIX-SECTOR-FINSERV-1 (2026-07-20): Financial Services missing from KIID
+    # theme detector; "sector de servicios financieros" was not recognized,
+    # so only the secondary "sector inmobiliario" (minor, "en menor medida")
+    # fired → theme=Real Estate → Sector_Focus=Real Assets for ALGEBRIS FINANCIA.
+    # Financial Services placed BEFORE Real Estate in priority order.
     theme_text_signals = [
         (["inteligencia artificial", "artificial intelligence",
           "machine learning", "aprendizaje automático",
@@ -249,6 +254,12 @@ def detect_theme_from_kiid(kiid_text: Optional[str]) -> Optional[str]:
         (["metales preciosos", "precious metals", "fondos de oro",
           "gold fund", "lingotes de oro", "gold bullion",
           "physical gold", "oro físico"], "Gold"),
+        (["sector de servicios financieros", "servicios financieros globales",
+          "financial services sector", "sector financiero global",
+          "financial sector", "sector bancario", "banking sector",
+          "entidades financieras", "financial institutions",
+          "insurance companies", "compañías de seguros",
+          "banks and insurance"], "Financial Services"),
         (["sector inmobiliario", "real estate sector", "bienes raíces",
           "empresas inmobiliarias", "real estate companies",
           "mercado inmobiliario"], "Real Estate"),

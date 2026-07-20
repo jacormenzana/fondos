@@ -2608,14 +2608,24 @@ def resolve_rf_subtype(name_l: str, kiid_text: str) -> str:
     # tendrá") within the same clause; "target maturity"/"vencimiento
     # fijo"/"fixed maturity" (genuine target-maturity fund descriptors, not
     # boilerplate) are unaffected.
+    # FIX-RFC-EN-NEGATION-1 (2026-07-20): extend to English negation patterns.
+    # "The Fund does not have a fixed maturity" is open-ended-fund boilerplate
+    # (same semantic as Spanish "el fondo no tiene fecha de vencimiento"),
+    # but "fixed maturity" alone triggered _has_vencimiento_signal=True and
+    # _vencimiento_negated=False (guard was ES-only) → spurious RF_Corto for
+    # EN-KIID bond funds (e.g. MS INV FD EMERG DEBT, LU0057132697).
     _vencimiento_negated = bool(re.search(
-        r'(?:no\s+tiene|sin|no\s+tendr[aá])\s+fecha\s+de\s+vencimient', w
+        r'(?:no\s+tiene|sin|no\s+tendr[aá])\s+fecha\s+de\s+vencimient'
+        r'|does\s+not\s+have\s+a\s+fixed\s+maturit'
+        r'|has\s+no\s+fixed\s+maturit'
+        r'|no\s+fixed\s+maturit',
+        w
     ))
     _has_vencimiento_signal = (
         ("fecha de vencimient" in w and not _vencimiento_negated)
         or "target maturity" in w
         or "vencimiento fijo" in w
-        or "fixed maturity" in w
+        or ("fixed maturity" in w and not _vencimiento_negated)
     )
 
     # FIX-P1-RFC3 (2026-07-05): "short term"/"short-term" bare is too
@@ -4046,7 +4056,13 @@ def detect_geography_from_kiid(kiid_text: str) -> Optional[str]:
                 if _ash_permissive:
                     continue
             elif s == "países emergentes":
-                _pre = w[max(0, idx - 100):idx]
+                # FIX-GEO-EDR-1 (2026-07-20): umbrella SICAV description uses
+                # "vehículo que tiene por objeto, en particular, la inversión en
+                # empresas registradas predominantemente en países emergentes" to
+                # describe the SICAV's general scope — not the subfund's mandate.
+                # Phrase appears ~103 chars before "países emergentes"; widening
+                # the pre-window to 150 chars captures it.
+                _pre = w[max(0, idx - 150):idx]
                 if any(neg in _pre for neg in _GEO_NEGATION_MARKERS):
                     continue
                 # Contexto de riesgo / exposición incidental ≠ objetivo principal.
@@ -4065,6 +4081,9 @@ def detect_geography_from_kiid(kiid_text: str) -> Optional[str]:
                     # FIX-GEO-EM-2 additions
                     "podrá invertir en ", "puede invertir en ",
                     "incluidos ", "incluidas ", "ocde o ",
+                    # FIX-GEO-EDR-1 additions
+                    "vehículo que tiene por objeto",
+                    "vehiculo que tiene por objeto",
                 ]
                 if any(m in _pre for m in _RISK_CONTEXT_MARKERS):
                     continue
@@ -4388,6 +4407,7 @@ THEME_TO_SECTOR_FOCUS_MAP: dict = {
     # Financial services (v20: 'Financials & Insurance' colapsado en 'Financial Services')
     "Insurance":               "Financial Services",
     "Financials":              "Financial Services",
+    "Financial Services":      "Financial Services",  # FIX-SECTOR-FINSERV-1
     # Consumer
     "Consumer Brands":              "Consumer",
     "Consumer / Food & Beverage":   "Consumer",
