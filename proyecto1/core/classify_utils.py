@@ -1547,13 +1547,38 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
         or _re.search(r'medianteinvirtiendoen', t)
     )
 
-    # ── Estructurado (buscar en todo el texto) ───────────────────────────────
-    if any(k in t for k in [
-        "autocall", "autocallable", "capital protected", "capital protection",
-        "capital guarantee", "capital garantizado", "structured note",
+    # ── Estructurado ────────────────────────────────────────────────────────
+    # FIX-ESTRUCT-NEGATION-1 (2026-07-21): changed from full-text `t` to
+    # objective window `w` (R-6 compliance). Root cause: the standard PRIIPs KID
+    # risk-disclosure boilerplate ("this product does not include … any capital
+    # guarantee" / "investors who do not require a capital guarantee") lives in
+    # the risk section, outside the objective, and was triggering 52 % of
+    # Estructurado false positives (14/27 funds). Two compounding defects:
+    # (1) the old test searched the whole text `t` instead of the bounded
+    # objective window `w` already computed (R-6 violation); (2) no negation
+    # guard for the capital-family. Fix: scope to `w` + add negation guard for
+    # capital-family as defense-in-depth (covers objective text that explicitly
+    # says "does not guarantee capital"). Unconditional signals (autocall, barrier,
+    # etc.) have no benign negated form — they remain unconditional.
+    _STRUCT_NEG_MARKERS = (
+        "does not include", "do not require", "not include any",
+        "without a capital", "no incluye", "sin garantía de capital",
+        "no capital guarantee", "no require",
+    )
+    # Unconditional structured signals — search objective window (R-6)
+    if any(k in w for k in (
+        "autocall", "autocallable", "structured note",
         "nota estructurada", "barrier", "knock-in", "knock in",
-    ]):
+    )):
         return "Estructurado"
+    # Capital-family: objective window + negation guard
+    for _sk in ("capital protected", "capital protection",
+                 "capital guarantee", "capital garantizado"):
+        _idx = w.find(_sk)
+        if _idx >= 0:
+            _pre = w[max(0, _idx - 120): _idx]
+            if not any(m in _pre for m in _STRUCT_NEG_MARKERS):
+                return "Estructurado"
 
     # ── Monetario ────────────────────────────────────────────────────────────
     include_patterns = [
@@ -1830,6 +1855,22 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
     # instead of the correct "Mixtos".
     # The check also covers "balanced fund" within the objective window.
     if "balanced fund" in _header or "balanced fund" in w:
+        return "Mixtos"
+    # FIX-MIXTOS-FOF-1 (2026-07-21): multi-asset fund-of-funds with an objective
+    # explicitly allocating to ≥2 different asset-class fund types → Mixtos.
+    # Root cause: "fondos de renta variable" / "fondos de renta fija" (fund units)
+    # were not counted as equity or mixed signals, so bond mentions dominated and
+    # detect_nature_from_kiid() returned "_RF_pending" (→ RFC) for genuinely
+    # multi-asset FoFs. Confirmed: DWS MULTI OPP (LU1673812605/LU1673813165):
+    # "el fondo invierte un mínimo del 25 % en acciones de fondos de renta
+    # variable, fondos mixtos de valores, fondos de renta fija y fondos
+    # monetarios" — unambiguous multi-asset FoF, should be Mixtos.
+    # Signal: explicit "fondos mixtos" OR ≥2 of {fondos de renta variable,
+    # fondos de renta fija, fondos monetarios} co-present in objective window.
+    _fof_rv  = "fondos de renta variable" in w
+    _fof_rf  = "fondos de renta fija" in w
+    _fof_mon = "fondos monetarios" in w
+    if "fondos mixtos" in w or (_fof_rv + _fof_rf + _fof_mon >= 2):
         return "Mixtos"
     # FIX-B1-COMMODITY-PRIMAR-1 (2026-07-18): pure commodity fund with a
     # "principalmente en materias primas" primary mandate → Alternativo.
@@ -2946,6 +2987,19 @@ _W_BENCH_BY_NATURE: dict = {
     "Renta Fija":      0.98,
 }
 
+# FIX-NLC-MSBENCH-1 (2026-07-21): map Morningstar asset_class values to the
+# coarse nature understood by resolve_nature_evidence. Treated symmetrically
+# with the KIID-benchmark vote (same machinery: corroboration + arbitration
+# candidate). "Rate" → None: cash/overnight = hurdle, not nature (mirrors the
+# existing v_bench=="Monetario" discard). Mixtos stays Mixtos (no RF→RFF
+# mapping needed for this asset class value).
+_MS_ASSET_CLASS_TO_NATURE: dict = {
+    "Equity":        "Renta Variable",
+    "Fixed Income":  "Renta Fija",   # coarse; handled as RF→RFF by v_msbench_rf
+    "Mixed":         "Mixtos",
+    # "Rate" intentionally absent → maps to None
+}
+
 # Naturalezas donde el NOMBRE es de ALTA PRECISIÓN y medible-mente más fiable
 # que el KIID (override guardado). Se deriva de las matrices -> se auto-mantiene
 # al recalibrar. Requiere precisión de nombre alta (>=0.95) y margen claro
@@ -3009,21 +3063,27 @@ def resolve_nature_evidence(
     kiid_text: str,
     benchmark_declared: Optional[str] = None,
     srri_nav_band: Optional[int] = None,
+    ext_asset_class: Optional[str] = None,
 ) -> Tuple[Optional[str], float, dict]:
     """
     Clasificador de Fund_Nature ponderado por evidencia (OPT-B3).
 
     Fuentes (peso por fiabilidad medida por naturaleza):
-      - KIID raw text  (detect_nature_from_kiid)        — señal ex-ante primaria
-      - Name prefilter (detect_nature_from_prefilter)   — precisa pero de baja cobertura
-      - Benchmark      (detect_nature_from_benchmark)   — gruesa (asset-class)
-      - Volatilidad realizada (srri_nav_band 1-7)       — restricción/desempate
+      - KIID raw text    (detect_nature_from_kiid)        — señal ex-ante primaria
+      - Name prefilter   (detect_nature_from_prefilter)   — precisa pero de baja cobertura
+      - Benchmark        (detect_nature_from_benchmark)   — gruesa (asset-class, KIID)
+      - MS asset_class   (_MS_ASSET_CLASS_TO_NATURE)      — Morningstar categorization
+      - Volatilidad realizada (srri_nav_band 1-7)         — restricción/desempate
 
     Args:
         name_l: nombre en minúsculas.
         kiid_text: texto KIID crudo.
         benchmark_declared: benchmark declarado (o None).
         srri_nav_band: SRRI realizado desde NAV (1-7) o None si no hay histórico.
+        ext_asset_class: Morningstar asset_class string (e.g. "Equity", "Mixed",
+            "Fixed Income", "Rate") o None. FIX-NLC-MSBENCH-1 (2026-07-21):
+            tratado simétricamente con el voto del benchmark KIID — añade
+            corroboración y candidato de arbitraje, NUNCA anula el primario KIID.
 
     Returns:
         (nature_canonical, confidence, evidence_trace)
@@ -3048,8 +3108,15 @@ def resolve_nature_evidence(
         v_bench = None
     v_bench_rf = "Renta Fija Flexible" if v_bench == "Renta Fija" else v_bench
 
+    # FIX-NLC-MSBENCH-1 (2026-07-21): Morningstar asset_class → coarse nature.
+    # "Rate" (cash/overnight hurdle) → None, same logic as v_bench=="Monetario".
+    v_msbench = _MS_ASSET_CLASS_TO_NATURE.get(ext_asset_class) if ext_asset_class else None
+    # RF→RFF for arbitration (mirrors v_bench_rf), Mixed stays Mixtos
+    v_msbench_rf = "Renta Fija Flexible" if v_msbench == "Renta Fija" else v_msbench
+
     trace: dict = {
         "name": v_name, "kiid": v_kiid, "benchmark": v_bench,
+        "msbench": v_msbench,
         "srri_nav_band": srri_nav_band,
         "primary": None, "primary_source": None,
         "winner": None, "confidence": 0.0, "reason": "",
@@ -3068,8 +3135,10 @@ def resolve_nature_evidence(
         primary, primary_source = v_kiid, "kiid"
     elif v_name:                                  # cobertura: nombre
         primary, primary_source = v_name, "name"
-    elif v_bench_rf:                              # cobertura: benchmark (RF->RFF)
+    elif v_bench_rf:                              # cobertura: benchmark KIID (RF->RFF)
         primary, primary_source = v_bench_rf, "benchmark"
+    elif v_msbench_rf:                            # cobertura: Morningstar asset_class
+        primary, primary_source = v_msbench_rf, "msbench"
 
     # ── Sin evidencia ex-ante: NO se deriva naturaleza de la volatilidad ─────
     # P#6 (scope 2026-07-17): la volatilidad realizada NUNCA deriva Fund_Nature;
@@ -3092,9 +3161,10 @@ def resolve_nature_evidence(
         return vote == "Renta Fija" and primary in (
             "Renta Fija Corto Plazo", "Renta Fija Flexible")
     corroborators = sum(_agrees(v) for v in (
-        v_kiid if primary_source != "kiid" else None,
-        v_name if primary_source != "name" else None,
-        v_bench if primary_source != "benchmark" else None,
+        v_kiid   if primary_source != "kiid"      else None,
+        v_name   if primary_source != "name"      else None,
+        v_bench  if primary_source != "benchmark" else None,
+        v_msbench if primary_source != "msbench"  else None,  # FIX-NLC-MSBENCH-1
     ))
 
     # ── Veto/ARBITRAJE por volatilidad realizada (P#6-compliant) ─────────────
@@ -3120,7 +3190,7 @@ def resolve_nature_evidence(
     if _vol_correct and srri_nav_band is not None:
         # Sólo candidatos EX-ANTE (propuestos por señales documentales), nunca
         # una naturaleza fabricada desde la banda de volatilidad.
-        alts = [v for v in (v_kiid, v_name, v_bench_rf)
+        alts = [v for v in (v_kiid, v_name, v_bench_rf, v_msbench_rf)  # FIX-NLC-MSBENCH-1
                 if v and v != primary
                 and _vol_consistency_factor(v, srri_nav_band) >= 1.0]
         if alts:

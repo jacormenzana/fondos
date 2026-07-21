@@ -895,9 +895,13 @@ def run_block(
                 # coverage/corroboration + realized-vol veto. Retires INTER-DBLCLAIM
                 # + INTER-VOTE3 (nature resolved once, with a confidence + trace).
                 _srri_band = _srri_nav_by_isin.get(isin)
+                # FIX-NLC-MSBENCH-1 (2026-07-21): pass Morningstar asset_class
+                # from _bmk_by_isin as additional corroboration/arbitration signal.
+                _ms_asset_cls = _bmk_by_isin.get(isin, {}).get("asset_class")
                 _voted_nature, _nat_conf, _ev_trace = resolve_nature_evidence(
                     _name_l, kiid_text, benchmark_declared=_bench,
                     srri_nav_band=_srri_band,
+                    ext_asset_class=_ms_asset_cls,
                 )
                 _dispatch_blk = _NATURE_TO_BLOCK.get(_voted_nature) if _voted_nature else None
                 if _dispatch_blk and not _is_structured:
@@ -923,7 +927,8 @@ def run_block(
                         conn, isin, "OPT_B3_DISPATCH", "INFO",
                         f"[OPT-B3] {_ev_trace['reason']} conf={_nat_conf} "
                         f"name={_ev_trace['name']} kiid={_ev_trace['kiid']} "
-                        f"bench={_ev_trace['benchmark']} vol={_srri_band} "
+                        f"bench={_ev_trace['benchmark']} "
+                        f"msbench={_ev_trace.get('msbench')} vol={_srri_band} "
                         f"→ {_voted_nature} → dispatch={_dispatch_blk}"
                     )
                     # Baja confianza → DQ flag (revisión). Sustituye el parcheo
@@ -3097,6 +3102,31 @@ def run_block(
             print("---")
     except Exception as _e_summary:
         print(f"  [WARN] No se pudo generar resumen de incidencias: {_e_summary}")
+
+    # FIX-DQ-STALE-SWEEP-1 (2026-07-21): purge stale fund_data_quality_issues
+    # rows for funds not processed in this cycle, restoring the table's
+    # "current issues only, rebuilt each cycle" contract (SCHEMA_REFERENCE).
+    # Root cause: the per-ISIN DELETE+INSERT (_finalize_data_quality_issues)
+    # only clears rows for ISINs that PASS through classification this cycle;
+    # ISINs not attempted (not in master, or WRONG_DOC/NOT_FOUND that hit
+    # `continue`) keep their rows from previous cycles indefinitely → inflated
+    # WARN counts in dashboards/P3. Fix: delete all rows whose detected_at
+    # predates this cycle's start timestamp — they were not refreshed here.
+    # Guard: only runs on full-universe runs (nature_first=True, no list_isin,
+    # no sample_size) to avoid wiping valid rows during partial runs.
+    if nature_first and list_isin is None and sample_size is None:
+        try:
+            _dq_deleted = conn.execute(
+                "DELETE FROM fund_data_quality_issues WHERE detected_at < ?",
+                (_cycle_start_ts,)
+            ).rowcount
+            if _dq_deleted:
+                print(f"[DQ-SWEEP] purged {_dq_deleted} stale "
+                      f"fund_data_quality_issues rows "
+                      f"(detected_at < {_cycle_start_ts})")
+            conn.commit()
+        except Exception as _e_sweep:
+            print(f"  [WARN] FIX-DQ-STALE-SWEEP-1: {_e_sweep}")
 
     return published
 
