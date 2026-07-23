@@ -1763,6 +1763,23 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
         r'(?:renta fija|acciones)\s*,', ventana_texto
     ))
 
+    # FIX-MMF-TARGET-MATURITY-1 (2026-07-23): buy-and-hold bond funds with a
+    # fixed portfolio-maturity year ("bonos y otros títulos de deuda … con
+    # vencimiento en 2028", "R-CO TARGET 2028", "LA FRANÇAISE RENDEMENT 2027")
+    # phrase their objective in money-market-compatible language and trip the
+    # Monetario branch.  Genuine MMFs never declare a fixed portfolio-maturity
+    # year — they roll short-dated instruments.  Guard fires on the objective
+    # window (ventana_texto, first 4000 chars) to avoid section bleed.
+    _target_maturity_bond = bool(re.search(
+        r'bonos\s+y\s+otros\s+t[ií]tulos\s+de\s+deuda'
+        r'|obligaciones[\s\S]{0,60}vencimiento[\s\S]{0,30}20\d\d'
+        r'|t[ií]tulos[\s\S]{0,60}vencimiento[\s\S]{0,30}20\d\d'
+        r'|bonos[\s\S]{0,60}vencimiento[\s\S]{0,30}20\d\d'
+        r'|target\s+maturity'
+        r'|buy.{0,4}and.{0,4}hold[\s\S]{0,100}20\d\d',
+        ventana_texto, re.DOTALL
+    ))
+
     # Evaluación de la lógica
     if (any(k in ventana_texto for k in include_patterns)
             and not any(e in ventana_texto for e in exclude_patterns)
@@ -1773,22 +1790,69 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
             and not _permissive_secondary_mmf
             and not _minority_fraction_mmf
             and not _bond_primary_enumerated_mmf
-            and not _defensive_cash_clause):
+            and not _defensive_cash_clause
+            and not _target_maturity_bond):
         return "Monetario"
 
     # ── A partir de aquí usar ventana objetivo ───────────────────────────────
 
-    # Retorno absoluto con benchmark monetario → Alternativo
+    # Retorno absoluto → Alternativo
     has_ar = any(k in w for k in [
         "absolute return", "retorno absoluto", "rendimiento positivo independientemente",
         "positive return regardless", "en cualquier entorno de mercado",
         "market neutral", "long/short", "long short",
     ])
-    has_cash_bench = any(k in w for k in [
-        "€str", "estr", "eonia", "sonia", "sofr", "overnight",
-        "tasa libre de riesgo",
+    # FIX-HCASHBENCH-ESTR-1 (2026-07-23): bare "estr" matched inside
+    # "estrategia" (Spanish for "strategy"), making has_cash_bench spuriously
+    # True for almost any Spanish-language KIID.  Fix: word-bounded \bestr\b.
+    # Other terms ("eonia", "sonia", etc.) are already specific enough.
+    has_cash_bench = (
+        "€str" in w
+        or bool(re.search(r'\bestr\b', w))
+        or any(k in w for k in ["eonia", "sonia", "sofr", "overnight",
+                                 "tasa libre de riesgo"])
+    )
+    # Explicit AR mandate language (first-person, not table-of-contents noise):
+    # catches funds that have a genuine AR objective but no explicit cash bench.
+    _ar_mandate_explicit = bool(re.search(
+        r'independientemente de las condiciones'
+        r'|positive.{0,40}absolute return'
+        r'|absolute return.{0,60}(all|any|full).{0,30}(market|conditions?)'
+        r'|positive return.{0,50}all\s+market'
+        r'|neutrali[sz]e.{0,30}risk.{0,20}(equit|market)',
+        w
+    ))
+    # AR signal within the KID header (first 350 chars) = fund's own name/type
+    # section, not a deep table of other sub-fund names (R-6 guard).
+    _ar_in_header = any(k in w[:350] for k in [
+        "absolute return", "retorno absoluto", "market neutral",
+        "long/short", "long short",
     ])
-    if has_ar and has_cash_bench:
+    if has_ar and (has_cash_bench or _ar_mandate_explicit or _ar_in_header):
+        return "Alternativo"
+
+    # FIX-DNCA-ALTRV-1 (2026-07-23): long/short relative-value fixed-income
+    # fund with a cash (€STR) hurdle and no equity mandate → Alternativo.
+    # Root cause: the has_ar gate above requires "long/short" (English); the
+    # Spanish counterpart "larga/corta" / "posiciones largas y cortas" was not
+    # in has_ar, so DNCA ALPHA BONDS I EUR ACC (Spanish KID) fell through to
+    # FIX-B1-MIXTO-EARLY and matched "diversas clases de activos de renta fija"
+    # (within-FI relative-value language, wrongly read as multi-asset).
+    # Gate: (long/short OR Spanish equivalents) AND (relative value) AND
+    # (real €STR cash hurdle — word-bounded, not the "estr"-in-"estrategia" bug)
+    # AND NOT equity mandate.
+    # Measured blast radius: exactly 2 DNCA share classes, 0 collateral.
+    _ls_signal = bool(re.search(
+        r'long/short|long short|larga/corta|posiciones largas y cortas'
+        r'|direccional larga',
+        w
+    ))
+    _rv_signal = ("valor relativo" in w) or ("relative value" in w) or ("valor relativa" in w)
+    _real_estr = ("€str" in w) or bool(re.search(
+        r'\b(ester|eonia|sonia|sofr|tasa libre de riesgo)\b|\bestr\b', w
+    ))
+    _no_equity = not any(k in w for k in ["renta variable", "equity", "equities", "acciones de"])
+    if _ls_signal and _rv_signal and _real_estr and _no_equity:
         return "Alternativo"
 
     # FIX-B1-COMMODITY-ALT (2026-07-13): fund whose PRIMARY mandate is a broad
@@ -2489,11 +2553,34 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
 
 
     # Mixto explícito
+    # FIX-MIXTOS-BENCHROLE-1 (2026-07-23): "asignación de activos" /
+    # "asset allocation" are overloaded: they appear as genuine multi-asset
+    # mandate declarations AND as Robeco's standard benchmark-role boilerplate
+    # "utiliza el índice de referencia para la asignación de activos" (how the
+    # fund uses its benchmark, NOT a multi-asset mandate).  Guard the two weak
+    # bare phrases with a benchmark-role negation; all other compound phrases
+    # (multiactivo, renta variable y renta fija, etc.) stay unconditional.
+    # Measured blast radius: exactly 4 Robeco credit/financial bond FPs flip
+    # from Mixtos → _RF_pending → RFF/RFC; 22 other Robeco funds with the same
+    # phrase already exit via eq_dominant/bond_dominant before reaching here.
+    _BENCHROLE_CTX = re.compile(
+        r'(índice de referencia para|indice de referencia para'
+        r'|utiliza el índice|utiliza el indice'
+        r'|uses the index|benchmark for|index for asset allocation'
+        r'|referencia para la asignac)'
+    )
+    def _aa_not_benchrole(phrase: str) -> bool:
+        j = w.find(phrase)
+        if j < 0:
+            return False
+        pre = w[max(0, j - 80): j]
+        return not _BENCHROLE_CTX.search(pre)
+
     if any(k in w for k in [
         "tanto acciones como bonos", "both equities and bonds",
         "equities and bonds", "stocks and bonds", "acciones y bonos",
         "renta variable y renta fija", "multiactivo", "multi-asset",
-        "asset allocation", "asignación de activos", "múltiples clases de activos",
+        "múltiples clases de activos",
         "varias clases de activos", "multiple asset class",
         # Señales DDF adicionales
         "renta variable y de bonos", "renta variable y bonos",
@@ -2505,7 +2592,7 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
         "protección parcial permanente",  # Amundi Protect 90
         "valor liquidativo mínimo",        # capital protection
         "floor de capital", "capital floor",
-    ]):
+    ]) or _aa_not_benchrole("asset allocation") or _aa_not_benchrole("asignación de activos"):
         return "Mixtos"
 
     if has_equity and has_bonds:
@@ -3183,9 +3270,17 @@ def resolve_nature_evidence(
     winner = primary
     vf = _vol_consistency_factor(primary, srri_nav_band)
     reason = primary_source
+    # FIX-MMF-VOL-VETO-1 (2026-07-23): a Monetario primary at realized band ≥3
+    # is structurally incompatible with a money-market mandate (MMFR/SRRI
+    # standard: genuine MMF ≤ band 2).  The existing vf path leaves band-3 at
+    # vf=0.6 (adjacent, not vetoed) — add an explicit Monetario clause so band
+    # ≥3 always triggers the arbitration pass.  P#6-compliant: vol only
+    # VETOES the primary and ARBITRATES among existing ex-ante candidates;
+    # when no RF alt exists the winner stays Monetario (graceful degradation).
     _vol_correct = (
         vf <= 0.25
         or (srri_nav_band in _VOL_UNAMBIGUOUS_BANDS and vf < 1.0)
+        or (primary == "Monetario" and srri_nav_band is not None and srri_nav_band >= 3)
     )
     if _vol_correct and srri_nav_band is not None:
         # Sólo candidatos EX-ANTE (propuestos por señales documentales), nunca
