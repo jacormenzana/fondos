@@ -1581,20 +1581,40 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
                 return "Estructurado"
 
     # ── Monetario ────────────────────────────────────────────────────────────
-    include_patterns = [
+    # FIX-MMF-ENUM-NEGATION-1 (2026-07-25): split include_patterns into STRONG
+    # (self-identifying MMF markers, fire unconditionally) and WEAK (list-item-
+    # prone, subject to the new bond-enumeration/comparison negation guards).
+    # Root cause: CARMIGNAC SÉCURITÉ, EDR BOND ALLOCATION, DWS SHORT DURATION
+    # CREDIT mention "instrumentos del mercado monetario" as the trailing item of
+    # a bond-mandate enumeration ("bonos, títulos de deuda e instrumentos del
+    # mercado monetario"), and THREADNEEDLE CREDIT OPPORTUNITIES uses "mercado
+    # monetario" only in a risk comparison ("perfil de riesgo más alto que los
+    # valores del mercado monetario").  All 5 have realized SRRI band ≥3
+    # (structurally incompatible with MMFR MMF mandate) but landed in Monetario
+    # because detect_nature_from_kiid returned 'Monetario' for them — so the
+    # vol-veto had no ex-ante RF alt to arbitrate to.  Guard is WEAK-only so
+    # that genuine MMFs with a STRONG self-identifying marker (BGF ICS TREASURY,
+    # EDR CREDIT VERY SHORT TERM) are never affected even if they happen to also
+    # contain an enumeration or risk-comparison sentence.
+    _STRONG_MMF_INCLUDE = [
         "money market fund", "fondo del mercado monetario", "fondo monetario",
         "monetary fund", "ucits mmf", "standard money market",
         "short term money market", "low volatility money market",
         "fondsmonétaire", "geldmarktfonds",
-        "instrumentos del mercado monetario",
-        "short-term money market",        
+        "short-term money market",
         "ftse eur 1-month eurodeposit",
         "vencimiento medio ponderado",
+        "weighted average maturity",
+    ]
+    _WEAK_MMF_INCLUDE = [
+        "instrumentos del mercado monetario",
         "activos en instrumentos del mercado",
         "mercados monetarios", "mercado monetario",
         "money market instruments",
-        "weighted average maturity",
     ]
+    # Keep the old name for the exclude_patterns reference below; the decision
+    # block at the end of this section uses _strong_mmf / _weak_mmf flags.
+    include_patterns = _STRONG_MMF_INCLUDE + _WEAK_MMF_INCLUDE
 
     # FIX-P1-MMF (2026-07-04): "renta fija", "acciones", "ucits", "ocivm" y
     # "colectiva en valores mobiliarios" eliminados de esta lista. Causa raíz:
@@ -1746,6 +1766,34 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
         ventana_texto, re.DOTALL
     ))
 
+    # FIX-MMF-ENUM-NEGATION-1 (2026-07-25): two new guards that suppress only
+    # the WEAK MMF signals (see _WEAK_MMF_INCLUDE above).
+    #
+    # (a) Bond/debt enumeration: "mercado monetario" appears as the trailing
+    # item of a list of bond/debt instruments — the primary mandate is bonds.
+    # Generalises FIX-P1-MMF7c beyond "invierte principalmente en bonos" to
+    # any intro bond/debt term.  Confirmed on CARMIGNAC SÉCURITÉ ("principales-
+    # mente por bonos, títulos de deuda e instrumentos del mercado monetario"),
+    # EDR BOND ALLOCATION ("valores de deuda y los instrumentos del mercado
+    # monetario"), DWS SHORT DURATION CREDIT ("deuda pública, bonos corporativos
+    # e instrumentos del mercado monetario").
+    _bond_enumerated_mmf = bool(re.search(
+        r'(bonos|obligaciones|t[ií]tulos\s+de\s+deuda|valores\s+de\s+deuda'
+        r'|deuda\s+p[uú]blica|bonos\s+corporativos)'
+        r'[\s\S]{0,70}(?:\by\b|\be\b|,)\s*(?:los\s+)?instrumentos\s+del\s+mercado\s+monetario',
+        ventana_texto, re.DOTALL
+    ))
+    # (b) Risk comparison: "mercado monetario" used to compare the fund's risk
+    # profile to that of a MMF — it is NOT describing the fund's mandate.
+    # Confirmed on THREADNEEDLE CREDIT OPPORTUNITIES ("perfil de riesgo más
+    # alto que los valores del mercado monetario").
+    _mmf_comparison = bool(re.search(
+        r'(m[aá]s\s+(?:alto|elevado|bajo|alta|baja)|comparaci[oó]n\s+con'
+        r'|frente\s+a|que\s+los\s+valores)'
+        r'[\s\S]{0,40}mercado\s+monetario',
+        ventana_texto
+    ))
+
     # FIX-P1-MMF2 (2026-07-04): "renta fija"/"acciones" enumerados junto a
     # OTROS tipos de instrumento ("valores de renta fija, certificados,
     # fondos, derivados e instrumentos del mercado monetario") indican un
@@ -1781,7 +1829,16 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
     ))
 
     # Evaluación de la lógica
-    if (any(k in ventana_texto for k in include_patterns)
+    # FIX-MMF-ENUM-NEGATION-1 (2026-07-25): STRONG markers fire unconditionally;
+    # WEAK markers are suppressed when the bond-enumeration or risk-comparison
+    # guard fires.  This ensures genuine MMFs with a STRONG self-identifier are
+    # never negated, while the 7 bond funds that only trip a WEAK marker
+    # (CARMIGNAC, EDR BOND ALLOC, DWS SHORT DUR CRD, THREADNEEDLE CRED OP,
+    # BARINGS EM LOCAL DBT, FVS BOND OPP) correctly leave the Monetario branch.
+    _strong_mmf = any(k in ventana_texto for k in _STRONG_MMF_INCLUDE)
+    _weak_mmf   = any(k in ventana_texto for k in _WEAK_MMF_INCLUDE)
+    _mmf_hit = _strong_mmf or (_weak_mmf and not _bond_enumerated_mmf and not _mmf_comparison)
+    if (_mmf_hit
             and not any(e in ventana_texto for e in exclude_patterns)
             and not _enumerated_other_asset
             and not _derivative_collateral
@@ -1801,6 +1858,13 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
         "absolute return", "retorno absoluto", "rendimiento positivo independientemente",
         "positive return regardless", "en cualquier entorno de mercado",
         "market neutral", "long/short", "long short",
+        # FIX-ALTRV-LSBOND-1 (2026-07-25): Spanish long/short phrase used by
+        # THREADNEEDLE CREDIT OPPORTUNITIES ("posiciones largas y cortas en
+        # bonos").  Deliberately the exact long-before-short order; the reversed
+        # order ("posiciones cortas y largas", used by SCHRODER Egerton equities)
+        # is NOT included to avoid triggering has_ar on L/S-equity funds that
+        # lack a cash/AR-mandate/header signal.
+        "posiciones largas y cortas",
     ])
     # FIX-HCASHBENCH-ESTR-1 (2026-07-23): bare "estr" matched inside
     # "estrategia" (Spanish for "strategy"), making has_cash_bench spuriously
@@ -1814,12 +1878,19 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
     )
     # Explicit AR mandate language (first-person, not table-of-contents noise):
     # catches funds that have a genuine AR objective but no explicit cash bench.
+    # FIX-ALTRV-LSBOND-1 (2026-07-25): added Spanish "rendimiento positivo …
+    # a pesar de los cambios en las condiciones del mercado" pattern used by
+    # THREADNEEDLE CREDIT OPPORTUNITIES ("obtener un rendimiento positivo para
+    # usted a medio plazo, a pesar de los cambios en las condiciones del mercado").
+    # This is the standard Spanish-language "positive return regardless of market
+    # conditions" absolute-return mandate phrasing.
     _ar_mandate_explicit = bool(re.search(
         r'independientemente de las condiciones'
         r'|positive.{0,40}absolute return'
         r'|absolute return.{0,60}(all|any|full).{0,30}(market|conditions?)'
         r'|positive return.{0,50}all\s+market'
-        r'|neutrali[sz]e.{0,30}risk.{0,20}(equit|market)',
+        r'|neutrali[sz]e.{0,30}risk.{0,20}(equit|market)'
+        r'|rendimiento positivo[\s\S]{0,80}a pesar de los cambios en las condiciones del mercado',
         w
     ))
     # AR signal within the KID header (first 350 chars) = fund's own name/type
