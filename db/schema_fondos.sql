@@ -1,5 +1,5 @@
 -- ============================================================
--- schema_fondos.sql  — v23  (2026-07-18)
+-- schema_fondos.sql  — v25  (2026-07-19)
 -- Base de datos: db/fondos.sqlite
 -- Ruta esperada: <raiz_proyecto>/db/schema_fondos.sql
 -- Cargado por: core/sqlite_writer.py → create_schema()
@@ -29,6 +29,15 @@
 --        universo actual). Regenerado en cada ciclo por
 --        reconcile_universe_membership() en sqlite_writer.py; no es COALESCE-
 --        protegido (mismo patrón que SRRI_Visual, excepción al P#1).
+--   v24  fund_nav_monthly + fund_nav_daily (tablas NAV P2) añadidas al
+--        schema canónico — antes se creaban fuera de schema_fondos.sql.
+--        fund_nav_daily: serie diaria pre-resample usada para métricas de
+--        horizonte corto (rolling_1m / rolling_3m / rolling_6m) con
+--        corrección de iliquidez (AC-adjusted vol). metric_version='d1'.
+--   v25  nav_sources.data_status (TEXT, DEFAULT 'OK') — máquina de
+--        estados para control del ciclo de vida de los datos NAV.
+--        Paralela a KIID_Status en P1; permite invalidar datos y forzar
+--        recálculos sin borrar la fila de nav_sources ni todo el histórico.
 -- ============================================================
 
 -- ============================================================
@@ -628,12 +637,24 @@ CREATE TABLE IF NOT EXISTS nav_sources (
     last_checked    DATE,               -- fecha de última verificación
     status          TEXT                -- OK / NOT_FOUND / ERROR
         CHECK (status IN ('OK', 'NOT_FOUND', 'ERROR')),
+    -- v25 (2026-07-19): estado del ciclo de vida de los datos NAV descargados.
+    -- Permite invalidar datos y forzar recálculos sin borrar filas ni re-descobrir.
+    --   OK                  — datos válidos y actualizados (estado normal)
+    --   FORCE_REFRESH       — re-descargar todo desde Morningstar (anula delta al-día)
+    --   RECALCULATE_MONTHLY — daily OK, solo resamplear diario→mensual (sin red)
+    --   RECALCULATE_METRICS — NAV OK, solo recalcular métricas P2 (sin red ni NAV)
+    --   PENDING             — descubierto pero todavía no cargado
+    data_status     TEXT    DEFAULT 'OK'
+        CHECK (data_status IN (
+            'OK','FORCE_REFRESH','RECALCULATE_MONTHLY','RECALCULATE_METRICS','PENDING'
+        )),
 
     FOREIGN KEY (isin) REFERENCES fund_master (ISIN) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_nav_sources_status ON nav_sources (status);
-CREATE INDEX IF NOT EXISTS idx_nav_sources_source ON nav_sources (source);
+CREATE INDEX IF NOT EXISTS idx_nav_sources_status      ON nav_sources (status);
+CREATE INDEX IF NOT EXISTS idx_nav_sources_source      ON nav_sources (source);
+CREATE INDEX IF NOT EXISTS idx_nav_sources_data_status ON nav_sources (data_status);
 
 -- ============================================================
 -- fund_benchmarks: benchmarks normalizados por fondo y fuente
@@ -659,5 +680,114 @@ CREATE TABLE IF NOT EXISTS fund_benchmarks (
 CREATE INDEX IF NOT EXISTS idx_fb_isin        ON fund_benchmarks (ISIN);
 CREATE INDEX IF NOT EXISTS idx_fb_id          ON fund_benchmarks (benchmark_id);
 CREATE INDEX IF NOT EXISTS idx_fb_provider    ON fund_benchmarks (provider);
+
+-- ============================================================
+-- fund_nav_monthly  (v24: incorporada al schema canónico)
+-- Serie mensual de NAV por ISIN — último NAV de cada mes.
+-- Poblada por proyecto2/src/discovery/nav_discovery.py.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS fund_nav_monthly (
+    ISIN            TEXT    NOT NULL,
+    Date            DATE    NOT NULL,
+    NAV             REAL    NOT NULL,
+    NAV_Currency    TEXT,
+    NAV_Type        TEXT    DEFAULT 'NAV',
+    Is_Estimated    INTEGER DEFAULT 0,
+    Data_Source     TEXT,
+    Ingested_At     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (ISIN, Date),
+    FOREIGN KEY (ISIN) REFERENCES fund_master (ISIN) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_nav_monthly_isin ON fund_nav_monthly (ISIN);
+CREATE INDEX IF NOT EXISTS idx_nav_monthly_date ON fund_nav_monthly (Date);
+
+-- ============================================================
+-- fund_nav_daily  (v24: NUEVA — horizonte corto defensivo)
+-- Serie diaria de NAV por ISIN, antes del resample mensual.
+-- Usada por proyecto2/src/calculations/short_horizon.py para
+-- métricas rolling_1m / rolling_3m / rolling_6m (metric_version='d1').
+-- Corrección de iliquidez (AC-adjusted vol) aplicada sobre esta serie.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS fund_nav_daily (
+    ISIN            TEXT    NOT NULL,
+    Date            DATE    NOT NULL,
+    NAV             REAL    NOT NULL,
+    NAV_Currency    TEXT,
+    NAV_Type        TEXT    DEFAULT 'TOTAL_RETURN_IDX',
+    Is_Estimated    INTEGER DEFAULT 0,
+    Data_Source     TEXT,
+    Ingested_At     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (ISIN, Date),
+    FOREIGN KEY (ISIN) REFERENCES fund_master (ISIN) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_nav_daily_isin ON fund_nav_daily (ISIN);
+CREATE INDEX IF NOT EXISTS idx_nav_daily_date ON fund_nav_daily (Date);
+
+-- ============================================================
+-- fund_metric_timeseries  (v26 — P2 rolling indicators)
+-- Serie temporal de métricas rolling por ISIN.
+-- Modelo Hybrid: serie completa para 3 métricas curadas
+-- (roll_vol_ann, roll_max_dd, roll_return_ann) en todas las
+-- ventanas ROLLING_WINDOWS + SHORT_WINDOWS.
+-- Poblar incrementalmente (upsert por date); NO sobreescribir
+-- toda la historia cada ciclo → columna date en la PK.
+-- ref_type / ref_value: cuando la métrica es vs categoría o
+-- benchmark (ref_type='category' / 'benchmark'), permite guardar
+-- el valor de referencia junto al del fondo.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS fund_metric_timeseries (
+    isin            TEXT    NOT NULL,
+    metric          TEXT    NOT NULL,   -- roll_vol_ann / roll_max_dd / roll_return_ann
+    window          TEXT    NOT NULL,   -- rolling_1y / rolling_2y / rolling_3y / rolling_5y
+                                        -- rolling_10y / rolling_1m / rolling_3m / rolling_6m
+    date            DATE    NOT NULL,   -- fecha de cálculo (último día del período)
+    value           REAL,               -- valor de la métrica (puede ser NULL si min_obs no alcanzado)
+    real_flag       INTEGER NOT NULL    DEFAULT 0
+        CHECK (real_flag IN (0, 1)),    -- 0=nominal  1=deflactado por IPC
+    ref_type        TEXT,               -- NULL=absoluto / 'category' / 'benchmark'
+    ref_value       REAL,               -- valor de referencia (categoría / benchmark)
+    source_rows     INTEGER,            -- nº de NAV usados en el cálculo
+    load_ts         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (isin, metric, window, date, real_flag),
+    FOREIGN KEY (isin) REFERENCES fund_master (ISIN) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_fmts_isin_metric  ON fund_metric_timeseries (isin, metric);
+CREATE INDEX IF NOT EXISTS idx_fmts_metric_window ON fund_metric_timeseries (metric, window);
+CREATE INDEX IF NOT EXISTS idx_fmts_date          ON fund_metric_timeseries (date);
+
+-- ============================================================
+-- fund_metric_alerts  (v26 — P2 WARN/ALARM engine)
+-- Estado actual de alertas de valor de métrica por ISIN.
+-- Tabla de estado ACTUAL (current-state), reconstruida cada ciclo
+-- como fund_data_quality_issues. Una fila por (isin, metric, window).
+-- Compara fondos vs su peer group (Fund_Nature) o vs su benchmark.
+-- rule_code: código de la regla que disparó la alerta (ALERT_RULES).
+-- reference_value: valor del umbral (p90/p97 de categoría, etc.).
+-- ============================================================
+CREATE TABLE IF NOT EXISTS fund_metric_alerts (
+    isin            TEXT    NOT NULL,
+    metric          TEXT    NOT NULL,   -- roll_vol_ann / roll_max_dd / roll_return_ann
+    window          TEXT    NOT NULL,   -- ventana temporal de la métrica
+    level           TEXT    NOT NULL    -- OK / WARN / ALARM
+        CHECK (level IN ('OK', 'WARN', 'ALARM')),
+    rule_code       TEXT    NOT NULL,   -- código de la regla (ej. 'VOL_CAT_P90')
+    value           REAL,               -- valor de la métrica del fondo
+    reference_value REAL,               -- valor de referencia (umbral de la categoría)
+    ref_type        TEXT,               -- 'category' / 'benchmark'
+    detected_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (isin, metric, window),
+    FOREIGN KEY (isin) REFERENCES fund_master (ISIN) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_fma_level      ON fund_metric_alerts (level);
+CREATE INDEX IF NOT EXISTS idx_fma_rule       ON fund_metric_alerts (rule_code);
+CREATE INDEX IF NOT EXISTS idx_fma_isin       ON fund_metric_alerts (isin);
 
 

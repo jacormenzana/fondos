@@ -28,14 +28,20 @@
 
 #### proyecto3
 * **Profile:**
-  * Core System Purpose: deliver fund analysis and reporting.
-  * Current Maturity Level: delivery layer with UI/reporting capabilities.
+  * Core System Purpose: deliver fund analysis, scoring, portfolio construction, and reporting.
+  * Current Maturity Level: scoring engine active; dashboard/alerting layer planned (not deployed).
 * **Current State:**
-  * Deployed functionalities: dashboards, report generation, alerting.
-  * Supporting modules implementing each feature: presentation APIs, report engine, notification module.
+  * Deployed functionalities: regime classification (7 regimes), fund scoring (3-layer: hard filters + base score + regime multipliers), portfolio construction (3 sub-portfolios), static Excel monthly report.
+  * Supporting modules: `regime_classifier.py`, `fund_scorer.py`, `portfolio_builder.py`, `backtesting.py`, `monthly_report.py`.
+  * **NOT deployed (planned):** dashboards, WARN/ALARM alerting. The P2 rolling-indicators workstream (v26, 2026-07-27) is building this layer — see `doc/backlog/P2/EXECUTIVE_SUMMARY_rolling_indicators_20260727.md`.
+* **BI Layer (v26 — in progress):**
+  * `fund_metric_timeseries` + `fund_metric_alerts` tables now exist in SQLite and are auto-synced to PostgreSQL Docker (`fondos`, port 5433) via `shared/load_fondos_to_postgres.py` and the new `scripts/launch/P4_syncToPostgres.bat` launcher.
+  * Static HTML dashboard: `proyecto2/src/reports/rolling_dashboard.py`.
+  * Target: Apache Superset reading the existing Postgres — datasets to register: `fund_metric_timeseries` (long format), `fund_metric_alerts`, `fund_master` (dimension join).
+  * Kill-switch: `ROLLING_STATS_ENABLED=False` (activate after first backfill run).
 * **Optimization Roadmap:**
-  * Refactoring Targets: modify presentation API contract, delete stale report templates, redesign alert threshold management.
-  * Target Features: develop self-service query interface, add role-based data access, implement automated report validation.
+  * Refactoring Targets: incremental ETL for `fund_metric_timeseries` (currently full-replace), walk-forward backtest of rolling-percentile scoring signals.
+  * Target Features: Superset dashboards (rolling-vol charts, alarm heatmap, regime timeline), P3 scoring enriched with rolling percentiles + alarm-fed regime transitions (kill-switched: `SHORT_HORIZON_SCORING_ENABLED` pattern).
 
 ### 3. INTER-LAYER ANALYSIS (Interfaces)
 * **Current State:**

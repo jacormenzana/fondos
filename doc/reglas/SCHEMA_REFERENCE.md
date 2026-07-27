@@ -379,15 +379,45 @@ ORDER BY n DESC;
 
 ### TABLA P2-1: fund_nav_monthly
 
-**Propósito:** Series mensuales de NAV por ISIN (fuente: Morningstar vía mstarpy)  
+**Propósito:** Series mensuales de NAV por ISIN — último NAV de cada mes (fuente: Morningstar)  
 **Clave primaria:** `(ISIN, Date)`  
-**Nota:** creada dinámicamente por `proyecto2/src/discovery/nav_discovery.py`; no está en `schema_fondos.sql`.
+**Módulo productor:** `proyecto2/src/discovery/nav_discovery.py`  
+**Nota v24:** incorporada al schema canónico `schema_fondos.sql` (antes se creaba fuera).
 
 | Columna | Tipo | Nota |
 |---------|------|------|
-| ISIN | TEXT | FK → fund_master |
-| Date | DATE | Fecha NAV (primer día del mes) |
-| NAV | REAL | Valor liquidativo |
+| ISIN | TEXT PK | FK → fund_master |
+| Date | DATE PK | Último día del mes |
+| NAV | REAL | Valor liquidativo (total return index) |
+| NAV_Currency | TEXT | Divisa (ej. EUR) |
+| NAV_Type | TEXT | `NAV` por defecto |
+| Is_Estimated | INTEGER | 0=real, 1=estimado |
+| Data_Source | TEXT | `MORNINGSTAR` |
+| Ingested_At | TIMESTAMP | Timestamp de ingesta |
+
+### TABLA P2-1b: fund_nav_daily  *(NUEVA v24)*
+
+**Propósito:** Serie diaria de NAV por ISIN, antes del resample a mensual. Usada para métricas de
+horizonte corto (`rolling_1m`, `rolling_3m`, `rolling_6m`) con corrección de iliquidez
+(AC-adjusted volatility). Métricas escritas con `metric_version='d1'` en `fund_metrics`.  
+**Clave primaria:** `(ISIN, Date)`  
+**Módulo productor:** `proyecto2/src/discovery/nav_discovery.py`  
+**Módulo calculador:** `proyecto2/src/calculations/short_horizon.py`
+
+| Columna | Tipo | Nota |
+|---------|------|------|
+| ISIN | TEXT PK | FK → fund_master |
+| Date | DATE PK | Fecha de sesión |
+| NAV | REAL | Valor liquidativo diario (total return index) |
+| NAV_Currency | TEXT | Divisa |
+| NAV_Type | TEXT | `TOTAL_RETURN_IDX` |
+| Is_Estimated | INTEGER | 0=real, 1=estimado |
+| Data_Source | TEXT | `MORNINGSTAR` |
+| Ingested_At | TIMESTAMP | Timestamp de ingesta |
+
+**Volumen esperado:** ~6–12M filas (~3,200 fondos × ~10 años × ~252 días/año).  
+**Nota operacional:** backfill mediante `--mode load` en `nav_discovery.py` (proceso largo, ejecutar
+off-peak). SQLite WAL + commit-por-lote evitan bloqueos concurrentes.
 
 ### TABLA P2-2: nav_sources
 
@@ -406,6 +436,7 @@ ORDER BY n DESC;
 | discovered_at | DATE | Fecha de primer descubrimiento |
 | last_checked | DATE | Fecha de última verificación |
 | status | TEXT | `OK` \| `NOT_FOUND` \| `ERROR` |
+| data_status | TEXT | **v25 — máquina de estados NAV** (análoga a `KIID_Status` en P1): `OK` (normal) \| `FORCE_REFRESH` (re-descarga completa desde Morningstar) \| `RECALCULATE_MONTHLY` (resamplear diario→mensual sin red) \| `RECALCULATE_METRICS` (recalcular métricas P2 sin tocar NAV) \| `PENDING` (descubierto, aún no cargado). El pipeline consume y resetea el flag a `OK` tras cada operación. |
 
 ### TABLA P2-3: series_macro
 

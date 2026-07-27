@@ -1,14 +1,17 @@
 @echo off
 setlocal enabledelayedexpansion
 
-:: Forzar UTF-8 en cmd para evitar UnicodeEncodeError con caracteres no-ASCII
-:: en el fichero de log generado por >> redireccion
+:: Forzar UTF-8 en cmd
 chcp 65001 > nul
 
 :: ============================================================
-:: P2_discoverMetrics.bat -- Carga de Fuentes (Macro y NAV)
+:: P2_discoverLoadMetrics.bat
+:: Paso 1 -- Macro (BCE, FRED, Eurostat)
+:: Paso 2 -- NAV discover (Morningstar securityID resolution)
+:: Paso 3 -- NAV load    (chartservice, delta desde 2000-01-01)
 :: ============================================================
 
+set PYTHON=C:\Users\Administrador\anaconda3\envs\des\python.exe
 set ROOT=C:\desarrollo\fondos
 set LOG_DIR=%ROOT%\proyecto2\log
 
@@ -16,66 +19,67 @@ set LOG_DIR=%ROOT%\proyecto2\log
 for /f "tokens=2 delims==" %%a in ('wmic OS Get localdatetime /value') do set DT=%%a
 set STAMP=%DT:~0,8%_%DT:~8,6%
 set LOG=%LOG_DIR%\log_P2_discoverMetrics_%STAMP%.log
+set ERR=%LOG_DIR%\log_P2_discoverMetrics_%STAMP%_err.log
 
 if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
 
 echo ============================================================ >> "%LOG%"
-echo  Pipeline P2 (Discover Metrics) - Inicio: %STAMP%            >> "%LOG%"
+echo  P2 Discover Metrics -- Inicio: %STAMP%                      >> "%LOG%"
 echo  ROOT:   %ROOT%                                              >> "%LOG%"
+echo  PYTHON: %PYTHON%                                            >> "%LOG%"
 echo ============================================================ >> "%LOG%"
 
 echo.
-echo [%STAMP%] Pipeline P2 (Discover Metrics) iniciado
-echo Log: %LOG%
+echo [%STAMP%] P2 Discover Metrics iniciado
+echo   Log stdout : %LOG%
+echo   Log stderr : %ERR%
 echo.
 
-pushd %ROOT%
+pushd "%ROOT%"
 
-:: -- PASO 1: CARGA DE FUENTES BCE FRED Y EUROESTAT ---------------------------
-echo [%time%] Paso 1: Carga de fuentes macro (BCE, FRED, EUROSTAT)
+:: -- PASO 1: MACRO -------------------------------------------------------------
+echo [%time%] Paso 1/3: Macro (BCE, FRED, Eurostat)
 echo. >> "%LOG%"
-echo --- PASO 1: CARGA DE FUENTES MACRO ------------------------ >> "%LOG%"
+echo --- PASO 1: MACRO (BCE) ---------------------------------- >> "%LOG%"
+%PYTHON% -X utf8 -m proyecto2.src.discovery.macro_discovery --source bce      >> "%LOG%" 2>> "%ERR%"
 
-python -X utf8 -m proyecto2.src.discovery.macro_discovery --source bce >> "%LOG%" 2>&1
-python -X utf8 -m proyecto2.src.discovery.macro_discovery --source fred >> "%LOG%" 2>&1
-python -X utf8 -m proyecto2.src.discovery.macro_discovery --source eurostat >> "%LOG%" 2>&1
-
-REM python -X utf8 -m proyecto2.src.discovery.macro_discovery --source bce 2>&1 | powershell -noprofile -command "Tee-Object -FilePath '%LOG%' -Append"
-REM python -X utf8 -m proyecto2.src.discovery.macro_discovery --source fred 2>&1 | powershell -noprofile -command "Tee-Object -FilePath '%LOG%' -Append"
-REM python -X utf8 -m proyecto2.src.discovery.macro_discovery --source eurostat 2>&1 | powershell -noprofile -command "Tee-Object -FilePath '%LOG%' -Append"
-
-:: -- PASO 2: CARGA FUENTES MORNINGSTAR ---------------------------------------
-echo [%time%] Paso 2: Carga de fuentes Morningstar (NAV)
 echo. >> "%LOG%"
-echo --- PASO 2: CARGA FUENTES MORNINGSTAR --------------------- >> "%LOG%"
+echo --- PASO 1: MACRO (FRED) --------------------------------- >> "%LOG%"
+%PYTHON% -X utf8 -m proyecto2.src.discovery.macro_discovery --source fred     >> "%LOG%" 2>> "%ERR%"
 
-:: Ejecuciones de prueba (Comentadas)
-:: python -X utf8 -m proyecto2.src.discovery.nav_discovery --mode discover --isin LU1873127366 --dry-run --verbose >> "%LOG%" 2>&1
-:: python -X utf8 -m proyecto2.src.discovery.nav_discovery --mode discover --sample 10 >> "%LOG%" 2>&1
-:: python -X utf8 -m proyecto2.src.discovery.nav_discovery --mode load --isin LU1873127366 --dry-run --verbose >> "%LOG%" 2>&1
+echo. >> "%LOG%"
+echo --- PASO 1: MACRO (EUROSTAT) ----------------------------- >> "%LOG%"
+%PYTHON% -X utf8 -m proyecto2.src.discovery.macro_discovery --source eurostat >> "%LOG%" 2>> "%ERR%"
 
-python -X utf8 -m proyecto2.src.discovery.nav_discovery --mode discover >> "%LOG%" 2>&1
-python -X utf8 -m proyecto2.src.discovery.nav_discovery --mode load --desde 2016-01-01 >> "%LOG%" 2>&1
+:: -- PASO 2: NAV DISCOVER ------------------------------------------------------
+echo [%time%] Paso 2/3: NAV Discover (resolucion de securityID)
+echo. >> "%LOG%"
+echo --- PASO 2: NAV DISCOVER --------------------------------- >> "%LOG%"
 
-REM python -X utf8 -m proyecto2.src.discovery.nav_discovery --mode discover  2>&1  | powershell -noprofile -command "Tee-Object -FilePath '%LOG%' -Append"
-REM python -X utf8 -m proyecto2.src.discovery.nav_discovery --mode load --desde 2016-01-01  2>&1  | powershell -noprofile -command "Tee-Object -FilePath '%LOG%' -Append" 
+%PYTHON% -X utf8 -m proyecto2.src.discovery.nav_discovery --mode discover >> "%LOG%" 2>> "%ERR%"
 
+:: -- PASO 3: NAV LOAD ----------------------------------------------------------
+echo [%time%] Paso 3/3: NAV Load (chartservice, desde 2000-01-01)
+echo. >> "%LOG%"
+echo --- PASO 3: NAV LOAD (desde 2000-01-01) ------------------ >> "%LOG%"
 
-:: Test historia (Comentado)
-:: python -X utf8 -m proyecto2.src.discovery.test_historia >> "%LOG%" 2>&1
+%PYTHON% -X utf8 -m proyecto2.src.discovery.nav_discovery --mode load --desde 2000-01-01 >> "%LOG%" 2>> "%ERR%"
 
 popd
 
-:: -- Pie del log --------------------------------------------------------------
+:: -- Pie del log ---------------------------------------------------------------
 for /f "tokens=2 delims==" %%a in ('wmic OS Get localdatetime /value') do set DT2=%%a
 set STAMP2=%DT2:~0,8%_%DT2:~8,6%
+
 echo. >> "%LOG%"
 echo ============================================================ >> "%LOG%"
-echo  Pipeline P2 (Discover Metrics) - Fin: %STAMP2%              >> "%LOG%"
+echo  P2 Discover Metrics -- Fin: %STAMP2%                        >> "%LOG%"
 echo ============================================================ >> "%LOG%"
 
 echo.
-echo [%STAMP2%] Pipeline P2 (Discover Metrics) completado
-echo Log: %LOG%
+echo [%STAMP2%] P2 Discover Metrics completado
+echo   Log stdout : %LOG%
+echo   Log stderr : %ERR%
 echo.
+
 endlocal

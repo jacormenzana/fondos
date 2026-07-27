@@ -92,7 +92,7 @@ _ROOT = Path(__file__).resolve().parent.parent   # c:/desarrollo/fondos
 # ============================================================
 # Versión canónica del schema de BD
 # ============================================================
-SCHEMA_VERSION: str = "v23"
+SCHEMA_VERSION: str = "v24"
 
 # ============================================================
 # v23 (FIX-UNIVERSE-RECON-1, 2026-07-18): In_Current_Universe (fund_master)
@@ -150,6 +150,18 @@ COST_CROSS_VALIDATION_TOLERANCE_PCT: float = 0.0005  # 5 basis points (0.05%)
 
 # Kill-switch BL-COST-4c (Sprint 2). Activado en v19.2 tras smoke test S2-D.
 PRIIPS_COST_EXTRACTION_ENABLED: bool = True
+
+# Kill-switch v24: pesos de scoring sobre métricas de horizonte corto (d1).
+# False = solo se aplica el gate duro (check_hard_filters); el score base
+# no recibe aún señales cortas. Activar SOLO después de backtest walk-forward.
+SHORT_HORIZON_SCORING_ENABLED: bool = False
+
+# Kill-switch v26: motor de indicadores rolling + WARN/ALARM.
+# False = la pipeline P2 salta los módulos rolling_stats y alarm_engine;
+#         fund_metric_timeseries y fund_metric_alerts no se escriben.
+# True  = activa el cálculo completo. Activar SOLO después de backfill
+#         inicial y validación de las señales percentil vs P3 scoring.
+ROLLING_STATS_ENABLED: bool = False
 
 # ============================================================
 # Phase 1 — Benchmark asset-class derivation engine (BL-BENCH-DECOMP)
@@ -230,7 +242,8 @@ MASTER_EXCEL: Path = DATA_DIR / "GestoresDeFondosv1.xlsx"
 # ============================================================
 # Directorios de outputs generados (no versionados)
 # ============================================================
-METRICS_DIR: Path = _ROOT / "out" / "metrics"
+METRICS_DIR:  Path = _ROOT / "out" / "metrics"
+REPORTS_DIR:  Path = _ROOT / "out" / "export"
 
 # ============================================================
 # Logging
@@ -272,6 +285,7 @@ HORIZONS: list[str] = [
     "rolling_10y",
     "rolling_5y",
     "rolling_3y",
+    "rolling_2y",   # v26: añadido para cerrar el gap 1y–3y
     "rolling_1y",
     "ytd",
     "crisis_2008",
@@ -285,6 +299,10 @@ REGION_IPC: str = "ES"
 
 # Mínimo de observaciones mensuales para calcular métricas
 MIN_NAV_ROWS: int = 12
+# Mínimo de observaciones para regresión macro OLS (REL-5: centralizado aquí)
+MIN_NAV_MACRO: int = 36
+# Mínimo de observaciones para métricas de persistencia del alpha (≥7 años)
+MIN_NAV_PERSIST: int = 84
 
 # Ventanas de crisis históricas (nombre -> (inicio, fin) inclusive)
 CRISIS_WINDOWS: dict = {
@@ -297,10 +315,126 @@ CRISIS_WINDOWS: dict = {
 # Horizontes rolling en meses (para slice automático)
 ROLLING_WINDOWS: dict = {
     "rolling_1y":   12,
+    "rolling_2y":   24,   # v26: gap genuino entre 1y y 3y — serie completa en fund_metric_timeseries
     "rolling_3y":   36,
     "rolling_5y":   60,
     "rolling_10y": 120,
 }
+
+# ============================================================
+# Parámetros horizonte corto (P2 daily-NAV) — v24
+# ============================================================
+# Ventanas en días bursátiles (~21/día). Separadas de ROLLING_WINDOWS
+# (que son meses) para evitar confusión. El pipeline P2 itera estas
+# sobre fund_nav_daily, NO sobre fund_nav_monthly.
+SHORT_WINDOWS: dict[str, int] = {
+    "rolling_1m":  21,   # ~1 mes bursátil
+    "rolling_3m":  63,   # ~3 meses bursátiles
+    "rolling_6m": 126,   # ~6 meses bursátiles
+}
+
+# Observaciones mínimas por horizonte corto (días NAV).
+# Más permisivos que MIN_NAV_ROWS (12) porque la serie es diaria.
+# rolling_1m: ≥15 días (vacaciones reducen disponibilidad)
+# rolling_3m: ≥45 días; rolling_6m: ≥90 días.
+SHORT_WINDOW_MIN_OBS: dict[str, int] = {
+    "rolling_1m":  15,
+    "rolling_3m":  45,
+    "rolling_6m":  90,
+}
+
+# Versión de métrica para la serie corta diaria — separa 'd1' de 'v1'
+# (mensual) en fund_metrics. Nunca mezclar en queries sin filtrar por esta.
+METRIC_VERSION_SHORT: str = "d1"
+
+# Umbral de iliquidez: fracción de retornos diarios cero/repetidos por
+# encima de la cual la volatilidad diaria no es de confianza.
+LIQUIDITY_FLAG_THRESHOLD: float = 0.20   # >20% días sin movimiento → ilíquido
+
+# ============================================================
+# v26 — Reglas del motor WARN/ALARM (fund_metric_alerts)
+# ============================================================
+# Fuente única de verdad para los umbrales del alarm engine.
+# Cada regla: (metric, window, ref_type, warn_pctile, alarm_pctile, direction)
+#   direction: 'above' → alertar si el valor > umbral (volatilidad, drawdown abs)
+#              'below' → alertar si el valor < umbral (retorno, Sharpe)
+# Los percentiles se calculan sobre el peer group (Fund_Nature) en la fecha
+# más reciente disponible en fund_metric_timeseries.
+# Fail-open: si ref_type='category' y la categoría tiene < 5 fondos con datos,
+#            no se emite alerta (no hay base estadística suficiente).
+ALERT_RULES: list[dict] = [
+    # Volatilidad vs categoría: WARN si > p90, ALARM si > p97
+    {
+        "rule_code":   "VOL_CAT_P90",
+        "metric":      "roll_vol_ann",
+        "window":      "rolling_6m",
+        "ref_type":    "category",
+        "level":       "WARN",
+        "direction":   "above",
+        "threshold_pctile": 0.90,
+    },
+    {
+        "rule_code":   "VOL_CAT_P97",
+        "metric":      "roll_vol_ann",
+        "window":      "rolling_6m",
+        "ref_type":    "category",
+        "level":       "ALARM",
+        "direction":   "above",
+        "threshold_pctile": 0.97,
+    },
+    # Drawdown vs categoría (valores son ≤ 0; "peor" = más negativo = below p10)
+    {
+        "rule_code":   "DD_CAT_P10",
+        "metric":      "roll_max_dd",
+        "window":      "rolling_1y",
+        "ref_type":    "category",
+        "level":       "WARN",
+        "direction":   "below",
+        "threshold_pctile": 0.10,
+    },
+    {
+        "rule_code":   "DD_CAT_P03",
+        "metric":      "roll_max_dd",
+        "window":      "rolling_1y",
+        "ref_type":    "category",
+        "level":       "ALARM",
+        "direction":   "below",
+        "threshold_pctile": 0.03,
+    },
+    # Retorno vs categoría: WARN si < p10 en 3y, ALARM si < p05
+    {
+        "rule_code":   "RET_CAT_P10",
+        "metric":      "roll_return_ann",
+        "window":      "rolling_3y",
+        "ref_type":    "category",
+        "level":       "WARN",
+        "direction":   "below",
+        "threshold_pctile": 0.10,
+    },
+    {
+        "rule_code":   "RET_CAT_P05",
+        "metric":      "roll_return_ann",
+        "window":      "rolling_3y",
+        "ref_type":    "category",
+        "level":       "ALARM",
+        "direction":   "below",
+        "threshold_pctile": 0.05,
+    },
+]
+
+# Valores permitidos para fund_metric_alerts.level
+METRIC_ALERT_LEVELS: list[str] = ["OK", "WARN", "ALARM"]
+
+# Métricas para las que se mantiene serie temporal completa
+# (Hybrid model: fund_metric_timeseries). El resto sólo van a fund_metrics.
+ROLLING_TIMESERIES_METRICS: list[str] = [
+    "roll_vol_ann",
+    "roll_max_dd",
+    "roll_return_ann",
+]
+
+# Ventanas que generan serie temporal (meses de ROLLING_WINDOWS + días SHORT_WINDOWS)
+# Se derivan automáticamente; no duplicar aquí — usar ROLLING_WINDOWS + SHORT_WINDOWS.
 
 # ============================================================
 # Parámetros globales P3 — selección y cartera
