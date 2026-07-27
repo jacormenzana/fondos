@@ -234,6 +234,7 @@ from core.classify_utils import (
     validate_geography_universe,                             # FIX-GEO-4 (BL-52, única fuente de verdad)
     validate_all_semantic_consistency,                       # Fase 4: validación universal
     semantic_validation_to_dq_tuples,                       # Fase 4: DQ persistence
+    RFC_INCOMPATIBLE_FAMILIES,                              # BL-64e / BL-64E-INLINE (P#11 DRY)
 )
 try:
     from proyecto1.core.fund_characterizer import characterize_fund
@@ -1831,6 +1832,24 @@ def run_block(
                         "identificable en el nombre del fondo"
                     ))
 
+            # FIX-BGF-CHINA-BOND-A (BL-64E-INLINE): cuando BL-44 se disparó
+            # porque la naturaleza pre-BL-44 era RFC, BL-62 puede asignar
+            # una Family incompatible con RFC (p.ej. "Emerging Market Debt"
+            # para BGF China Bond). BL-64e estándar (~línea 2334) no puede
+            # corregirlo porque Fund_Nature ya es "Restantes".
+            # Aplicar la misma corrección inline usando _nat44 como guarda.
+            if _bl44_triggered and _nat44 == "Renta Fija Corto Plazo":
+                _fam_after_bl62 = fund_master_record.get("Family")
+                if _fam_after_bl62 in RFC_INCOMPATIBLE_FAMILIES:
+                    fund_master_record["Family"] = "Short-Term Fixed Income"
+                    fund_master_record["_bl62_force_overwrite_family"] = True
+                    _dq_issues.append((
+                        "BL64E_INLINE_POST_BL44", "INFO", "INFO",
+                        f"Family '{_fam_after_bl62}' → 'Short-Term Fixed Income': "
+                        f"pre-BL-44 Nature era RFC; BL-62 infirió Family incompatible "
+                        f"(_nat44='{_nat44}')"
+                    ))
+
             # Theme: rellenar para bloques que no lo asignan
             if not fund_master_record.get("Theme"):
                 fund_master_record["Theme"] = (
@@ -2322,17 +2341,11 @@ def run_block(
             _bench_bd     = _bd_prev[3] if _bd_prev else None
             _benchtype_bd = _bd_prev[4] if _bd_prev else None
 
-            # BL-64e: INTER Nature↔Family — RFC no puede tener Family de RF Flexible
-            # Causa raiz: RESTANTES detecta Nature=RFC por SRRI bajo y delega a
-            # rf_flexible que asigna Family granular (RF Emergentes, RF High Yield...).
-            # Esas families son incompatibles con RFC por definicion del schema.
+            # BL-64e: INTER Nature↔Family — RFC no puede tener Family de RF Flexible.
+            # RFC_INCOMPATIBLE_FAMILIES importado de classify_utils (P#11 DRY).
             # 3 fondos afectados: BGF China Bond (LU2267/LU0719/LU0764).
-            _RFC_INCOMPATIBLE_FAMILIES = {
-                "Emerging Market Debt", "High Yield", "Inflation-Linked",
-                "Strategic Allocation", "Flexible Fixed Income",
-            }
             if (fund_master_record.get("Fund_Nature") == "Renta Fija Corto Plazo"
-                    and fund_master_record.get("Family") in _RFC_INCOMPATIBLE_FAMILIES):
+                    and fund_master_record.get("Family") in RFC_INCOMPATIBLE_FAMILIES):
                 fund_master_record["Family"] = "Short-Term Fixed Income"
                 fund_master_record["Type"]   = fund_master_record.get("Type") or "Short-Term Fixed Income"
 

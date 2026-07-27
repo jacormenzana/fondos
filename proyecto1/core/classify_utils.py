@@ -2021,15 +2021,34 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
     if re.search(r'principalmente\s+en[^.]{0,80}materias\s+primas', w):
         return "Alternativo"
 
+    # FIX-GRANDEURO-DERIV-1 (2026-07-26): equity-dominant funds may have a
+    # derivatives section that lists "renta fija, renta variable...y materias
+    # primas" as derivative UNDERLYINGS, not as a multi-asset mandate.
+    # Guard: don't fire commodity/mixed-phrase checks when the fund declares an
+    # explicit ≥60% minimum equity mandate — genuine multi-asset funds don't do
+    # that. Confirmed: CARMIGNAC PORTFOLIO GRANDE EUROPE (LU0099161993) —
+    # primary mandate "mínimo del 75%...en renta variable del Espacio Económico
+    # Europeo" but KIID also lists "derivados...sobre: divisas, renta fija,
+    # renta variable...y materias primas" triggering MIXTO-ENUM and NTC2.
+    _has_large_equity_mandate = bool(re.search(
+        r'(?:al\s+menos\s+el|un?\s+m[ií]nimo\s+del?|como\s+m[ií]nimo(?:\s+el)?)'
+        r'\s+(?:6[0-9]|[7-9]\d|100)\s*%[^.]{0,80}(?:en\s+)?'
+        r'(?:renta\s+variable|acciones)\b',
+        w
+    ))
+
     # FIX-B1-MIXTO-ENUM (2026-07-13): fund that mentions commodities + equity +
     # FI in the same objective window → genuinely multi-asset. PIMCO Inflation
     # Master Fund: "instrumentos de renta fija vinculados a la inflación...
     # instrumentos relacionados con materias primas... y renta variable y valores
     # relacionados con la renta variable" — no single explicit Mixtos label but
     # the enumeration of 3+ asset classes is unambiguous.
+    # Guard: FIX-GRANDEURO-DERIV-1 — don't fire for equity-primary funds whose
+    # derivatives section merely lists these asset classes as underlyings.
     if ("materias primas" in w
             and any(k in w for k in ["renta variable", "acciones"])
-            and any(k in w for k in ["renta fija", "bonos", "deuda", "inflación"])):
+            and any(k in w for k in ["renta fija", "bonos", "deuda", "inflación"])
+            and not _has_large_equity_mandate):
         return "Mixtos"
 
     # FIX-P1-NTC2 (2026-07-04): enumeración explícita de 3+ clases de activos
@@ -2076,8 +2095,18 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
     # variable y bonos convertibles"). Guard: only fire if the match is NOT
     # "renta variable y bonos convertibles" (convertibles as secondary hybrid
     # instrument in an equity fund → eq_dominant path returns RV correctly).
-    if any(k in w for k in [
-        "renta fija, renta variable", "renta fija y renta variable",
+    # FIX-GRANDEURO-DERIV-2 (2026-07-26): "renta fija, renta variable" in its
+    # COMMA-SEPARATED form is a derivative-underlyings list entry (e.g. "sobre
+    # los siguientes riesgos: divisas, renta fija, renta variable..."), not a
+    # mandate phrase. The CONJUNCTION form "renta fija y renta variable" is a
+    # genuine multi-asset mandate and stays unguarded. When the fund also has a
+    # large equity mandate, the comma form is almost certainly a derivatives list.
+    _rv_fija_csv_fires = (
+        "renta fija, renta variable" in w
+        and not _has_large_equity_mandate
+    )
+    if _rv_fija_csv_fires or any(k in w for k in [
+        "renta fija y renta variable",
         "renta variable y de renta fija",
         "renta variable y de bonos",
         "acciones y bonos",
@@ -5198,6 +5227,14 @@ ALLOWED_FAMILY_BY_NATURE: dict = {
                       # v10: restituido (eliminado erróneamente por BL-65)
 }
 
+# Families that are valid for RFF but NOT for RFC.  Used by BL-64e (pipeline.py),
+# BL-64E-INLINE post-BL-44 (pipeline.py), and fund_family_builder.py to correct
+# RFC funds carrying an incompatible family inherited from a BL-62 inference.
+# Derived from ALLOWED_FAMILY_BY_NATURE to guarantee a single source of truth (P#11).
+RFC_INCOMPATIBLE_FAMILIES: frozenset = frozenset(
+    ALLOWED_FAMILY_BY_NATURE["Renta Fija Flexible"]
+) - frozenset(ALLOWED_FAMILY_BY_NATURE["Renta Fija Corto Plazo"])
+
 
 # ============================================================
 # 15. THEME_SECTOR_MAPPING
@@ -5583,7 +5620,7 @@ def validate_geography_universe(
 #
 # Public names (importable by the audit tool and tests):
 #   BMK_CONSISTENT, BMK_TOLERATED, BMK_BENIGN_SOURCE_PAIRS
-#   BMK_GEO_BENIGN_PAIRS, BMK_SECTOR_BENIGN_PAIRS
+#   BMK_GEO_BENIGN_PAIRS, BMK_SECTOR_BENIGN_PAIRS, BMK_CAP_BENIGN_PAIRS
 #   bmk_tok_credit(), bmk_tok_duration(), bmk_tok_cap()
 #   bmk_geography(), bmk_sector(), bmk_severity_nature()
 
@@ -5672,14 +5709,17 @@ _BMK_DURATION_TOKENS: list[tuple[str, str]] = [
 ]
 
 _BMK_CAP_TOKENS: list[tuple[str, str]] = [
+    # Compound (range) tokens must appear before their constituent single-tier
+    # tokens so "Morningstar US Large/Mid Cap" → "Large/Mid Cap", not "Mid Cap".
     ("small/mid",  "Small/Mid Cap"),
+    ("mid/small",  "Small/Mid Cap"),
+    ("large/mid",  "Large/Mid Cap"),
+    ("mid/large",  "Large/Mid Cap"),
     ("small cap",  "Small Cap"),
     ("small",      "Small Cap"),
-    ("mid/small",  "Small/Mid Cap"),
     ("mid cap",    "Mid Cap"),
     ("mid-cap",    "Mid Cap"),
     (" mid ",      "Mid Cap"),
-    ("large/mid",  "Large/Mid Cap"),
     ("large cap",  "Large Cap"),
     ("large-cap",  "Large Cap"),
     (" mega",      "Large Cap"),
@@ -5724,6 +5764,23 @@ BMK_SECTOR_BENIGN_PAIRS: frozenset = frozenset({
     # technology/batteries → Morningstar classifies as Materials, fund self-describes
     # as Technology & Innovation; both are correct from their perspective.
     frozenset({"Technology & Innovation",    "Materials"}),
+})
+
+# Benign cap-tier generalizations: a composite range benchmark (Large/Mid Cap,
+# Small/Mid Cap) is compatible with either constituent single tier.
+# Used by the B4 check in audit_benchmark_consistency.py (R-1 / 2026-07-26).
+BMK_CAP_BENIGN_PAIRS: frozenset = frozenset({
+    frozenset({"Large Cap", "Large/Mid Cap"}),
+    frozenset({"Mid Cap",   "Large/Mid Cap"}),
+    frozenset({"Small Cap", "Small/Mid Cap"}),
+    frozenset({"Mid Cap",   "Small/Mid Cap"}),
+    # SMID Cap (fund mandate spans small+mid) is routinely benchmarked against
+    # a pure Small Cap or Mid Cap index — both directions are industry-normal.
+    # "SMID Cap" and "Small/Mid Cap" are also the same concept in two notations.
+    frozenset({"SMID Cap",  "Small Cap"}),
+    frozenset({"SMID Cap",  "Mid Cap"}),
+    frozenset({"SMID Cap",  "Small/Mid Cap"}),
+    frozenset({"SMID Cap",  "Large/Mid Cap"}),
 })
 
 # Extra sector keywords not covered by THEMATIC_MAP (used by bmk_sector).
@@ -6520,12 +6577,12 @@ def validate_all_semantic_consistency(
             ),
         })
 
-    # INTER-13-LIQ (2026-07-11): Investment_Universe='Liquidity' es valor legado
-    # (eliminado en schema MODIFY #5, v20). Para fondos Monetarios, migrar
-    # automáticamente a 'Global'. La A2-merge en pipeline propagará la corrección
-    # a fund_master_record y sqlite_writer la persistirá via COALESCE en la BD.
+    # INTER-13-LIQ (2026-07-11, updated FIX-NORDEA-IU-1): Investment_Universe=
+    # 'Liquidity' es valor legado (eliminado en schema MODIFY #5, v20). Para
+    # fondos Monetarios y RFC, migrar automáticamente a 'Global'.
+    # FIX-NORDEA-IU-1: ampliado para incluir RFC (NORDEA fondos).
     if cr.get("Investment_Universe") == "Liquidity":
-        if cr.get("Fund_Nature") == "Monetario":
+        if cr.get("Fund_Nature") in ("Monetario", "Renta Fija Corto Plazo"):
             cr["Investment_Universe"] = "Global"
             warnings.append({
                 "rule": "Allowed-Values:Investment_Universe",
@@ -6534,8 +6591,8 @@ def validate_all_semantic_consistency(
                     "(valor legado MODIFY #5; auto-migrado)"
                 ),
             })
-        # Otras naturalezas: el ALLOWED_VALUES loop (sobre cr) lo detectará
-        # con código único SEM_ALLOWED_VALUES_INVESTMENT_UNIVERSE.
+        # Otras naturalezas: MIG-5 (arriba) ya lo corrige; el ALLOWED_VALUES
+        # loop lo detectará con código SEM_ALLOWED_VALUES_INVESTMENT_UNIVERSE.
 
     # ----------------------------------------------------------------
     # INTER-20 (2026-07-12): SC-G1 — Geography → Investment_Universe

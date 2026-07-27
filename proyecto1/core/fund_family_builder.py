@@ -58,6 +58,8 @@ import sys
 _ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT))
 
+from core.classify_utils import RFC_INCOMPATIBLE_FAMILIES  # BL-64e DRY (P#11)
+
 
 # ============================================================
 # Sufijos de clase a eliminar (orden importa: del mas especifico al general)
@@ -446,12 +448,7 @@ def correct_family_inconsistencies(
     # por diseño) revierte Nature de vuelta a 'Renta Fija Corto Plazo' -- pero
     # nunca vuelve a comprobar Family, dejando la combinación RFC+Family
     # incompatible persistida indefinidamente (confirmado: 3 fondos BGF China
-    # Bond). Mismo conjunto de families incompatibles que BL-64e en
-    # pipeline.py -- DRY (Principio #1).
-    _RFC_INCOMPATIBLE_FAMILIES = {
-        "Emerging Market Debt", "High Yield", "Inflation-Linked",
-        "Strategic Allocation", "Flexible Fixed Income",
-    }
+    # Bond). RFC_INCOMPATIBLE_FAMILIES importado de classify_utils (P#11 DRY).
     _family_fix_isins = [
         isin for nat, isin, _, _ in corrections
         if nat == "Renta Fija Corto Plazo"

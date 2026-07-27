@@ -18,9 +18,12 @@ project2/
 │   ├── config.py
 │   ├── db.py
 │
-│   ├── loaders/
-│   │   ├── nav_loader.py       # SOLO carga NAV desde BD
-│   │   └── inflation_loader.py # SOLO carga IPC
+│   ├── discovery/
+│   │   ├── nav_discovery.py    # Morningstar fetch -> fund_nav_monthly
+│   │   └── macro_discovery.py  # INE/BCE/FRED/Eurostat -> series_macro, series_inflation
+│   │
+│   ├── readers/
+│   │   └── db_readers.py       # load_nav, get_isins_with_nav, load_ipc, ipc_available
 │   │
 │   ├── calculations/
 │   │   ├── deflation.py        # deflate_nav
@@ -38,6 +41,17 @@ project2/
 │   └── utils/
 │       ├── validators.py
 │       └── logger.py
+│
+├── tests/
+│   ├── calculations/
+│   │   ├── test_consistency.py
+│   │   └── test_drawdown.py
+│   │
+│   └── discovery/
+│       ├── test_eurostat.py
+│       ├── test_fred_es.py
+│       ├── test_fred_es2.py
+│       └── test_historia.py
 │
 ├── logs/
 ├── requirements.txt

@@ -365,6 +365,34 @@ assert len(EXPECTED_COLUMNS_V23) == 60, (
     f"v23 debe tener 60 columnas en fund_master, tiene {len(EXPECTED_COLUMNS_V23)}"
 )
 
+# v24 (2026-07-18): fund_nav_monthly + fund_nav_daily incorporadas al schema
+# canónico. fund_nav_daily es nueva: serie diaria para métricas de horizonte
+# corto (rolling_1m / rolling_3m / rolling_6m, metric_version='d1').
+# No hay nuevas columnas en fund_master.
+FUND_NAV_DAILY_COLUMNS: list[str] = [
+    "ISIN",
+    "Date",
+    "NAV",
+    "NAV_Currency",
+    "NAV_Type",
+    "Is_Estimated",
+    "Data_Source",
+    "Ingested_At",
+]
+FUND_NAV_DAILY_COLUMNS_SET: frozenset = frozenset(FUND_NAV_DAILY_COLUMNS)
+
+FUND_NAV_MONTHLY_COLUMNS: list[str] = [
+    "ISIN",
+    "Date",
+    "NAV",
+    "NAV_Currency",
+    "NAV_Type",
+    "Is_Estimated",
+    "Data_Source",
+    "Ingested_At",
+]
+FUND_NAV_MONTHLY_COLUMNS_SET: frozenset = frozenset(FUND_NAV_MONTHLY_COLUMNS)
+
 
 def check_schema_v20_job_b(conn) -> dict:
     """Valida la parte DESPLEGABLE de v20 (Job B): 6 columnas de coste en
@@ -525,6 +553,35 @@ def check_schema_v23(conn) -> dict:
     return {'ok': len(issues) == 0, 'issues': issues}
 
 
+def check_schema_v24(conn) -> dict:
+    """
+    Valida v24: v23 completo + tablas fund_nav_monthly y fund_nav_daily
+    presentes con sus columnas canónicas.
+
+    Returns: {'ok': bool, 'issues': list[str]}
+    """
+    issues: list[str] = []
+    v23 = check_schema_v23(conn)
+    issues += v23['issues']
+
+    for tbl, expected_set in [
+        ("fund_nav_monthly", FUND_NAV_MONTHLY_COLUMNS_SET),
+        ("fund_nav_daily",   FUND_NAV_DAILY_COLUMNS_SET),
+    ]:
+        cur = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (tbl,)
+        )
+        if not cur.fetchone():
+            issues.append(f"Tabla {tbl} no existe (v24)")
+        else:
+            actual = {r[1] for r in conn.execute(f"PRAGMA table_info({tbl})").fetchall()}
+            missing = expected_set - actual
+            if missing:
+                issues.append(f"{tbl}: faltan columnas {sorted(missing)}")
+
+    return {'ok': len(issues) == 0, 'issues': issues}
+
+
 def check_schema_v19(conn) -> dict:
     """
     Valida que la BD esté en schema v19.
@@ -591,6 +648,8 @@ def verify_db_schema(conn) -> dict[str, list[str]]:
         ("ingestion_log",            INGESTION_LOG_COLUMNS_SET),
         ("fund_benchmarks",          FUND_BENCHMARKS_COLUMNS_SET),
         ("fund_data_quality_issues", FUND_DATA_QUALITY_ISSUES_COLUMNS_SET),
+        ("fund_nav_monthly",         FUND_NAV_MONTHLY_COLUMNS_SET),
+        ("fund_nav_daily",           FUND_NAV_DAILY_COLUMNS_SET),
     ]
 
     for table, expected in checks:
@@ -614,12 +673,11 @@ def verify_db_schema(conn) -> dict[str, list[str]]:
 def assert_schema_alignment(conn) -> None:
     """
     Comprueba que fund_master, fund_kiid_metadata, ingestion_log,
-    fund_benchmarks y fund_data_quality_issues contienen todas las
-    columnas definidas en este módulo (v23: fund_master = 60 cols con
-    Vehicle_Structure + Asset_Currency + In_Current_Universe; sin
-    Type/Subtype/Currency_Hedged/Is_ESG/Portfolio_Currency; metadata = 22;
-    fund_data_quality_issues nueva en v22, ver FIX-DQ-1;
-    In_Current_Universe nueva en v23, ver FIX-UNIVERSE-RECON-1).
+    fund_benchmarks, fund_data_quality_issues, fund_nav_monthly y
+    fund_nav_daily contienen todas las columnas definidas en este módulo
+    (v24: fund_master = 60 cols; fund_nav_monthly + fund_nav_daily
+    añadidas al schema canónico; fund_nav_daily NUEVA en v24 para
+    métricas de horizonte corto con corrección de iliquidez).
 
     Lanza AssertionError con detalle si falta alguna columna.
 

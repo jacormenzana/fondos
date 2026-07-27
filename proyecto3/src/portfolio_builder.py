@@ -57,6 +57,12 @@ MAX_SAME_NATURE      = 5      # max fondos de la misma naturaleza por sub-carter
 # "equal":              pesos iguales entre fondos seleccionados
 WEIGHT_METHOD = "score_proportional"
 
+# Histeresis: banda minima que un retador debe superar sobre el score del
+# titular para justificar la rotacion. Impide que senales de horizonte corto
+# provoquen rotaciones excesivas; las senales deben *confirmar* el cambio.
+# Ej.: 0.05 => el retador necesita score >= titular * 1.05 para desplazarlo.
+HYSTERESIS_BAND: float = 0.05
+
 
 # ============================================================
 # Dataclasses
@@ -130,13 +136,17 @@ def _select_funds_for_subportfolio(
     exclude_isins: set | None = None,
     exclude_names: set | None = None,
     mgr_global: dict | None = None,
+    incumbent_isins: frozenset | None = None,
 ) -> pd.DataFrame:
     """
     Selecciona los mejores fondos para una sub-cartera aplicando
     restricciones de diversificacion.
-    exclude_isins: ISINs ya usados globalmente.
-    exclude_names: nombres base ya usados globalmente.
-    mgr_global:    conteo global de fondos por gestora.
+    exclude_isins:   ISINs ya usados globalmente.
+    exclude_names:   nombres base ya usados globalmente.
+    mgr_global:      conteo global de fondos por gestora.
+    incumbent_isins: ISINs que estaban en esta sub-cartera en el periodo
+                     anterior. Reciben un bonus de HYSTERESIS_BAND sobre
+                     su score para evitar rotaciones innecesarias.
     """
     exclude_isins    = exclude_isins or set()
     exclude_families = set(exclude_names or set())   # reutilizamos el param para familias
@@ -154,6 +164,7 @@ def _select_funds_for_subportfolio(
           AND fs.score_version = ?
           AND fs.eligible = 1
           AND fs.score_total > 0
+          AND fm.In_Current_Universe = 1
         ORDER BY fs.score_total DESC
     """, (subportfolio, score_version)).fetchall()
 
@@ -166,6 +177,20 @@ def _select_funds_for_subportfolio(
         "fund_family_id"
     ])
     df["score_total"] = df["score_total"].astype(float)
+
+    # -- Histeresis: los titulares reciben un bonus de score (HYSTERESIS_BAND)
+    # para que los retadores tengan que superarlos por un margen real antes de
+    # provocar una rotacion. Los pesos finales siguen usando score_total (sin bonus).
+    if incumbent_isins:
+        is_inc = df["isin"].isin(incumbent_isins)
+        df["effective_score"] = df["score_total"].where(
+            ~is_inc,
+            df["score_total"] * (1.0 + HYSTERESIS_BAND),
+        )
+    else:
+        df["effective_score"] = df["score_total"]
+
+    df = df.sort_values("effective_score", ascending=False).reset_index(drop=True)
 
     # Aplicar restricciones de diversificacion
     selected     = []
@@ -419,21 +444,28 @@ class PortfolioBuilder:
 
     def build(
         self,
-        regime_result: RegimeResult,
-        scenario_id:   str,
-        score_version: str = "v1",
-        profile:       str = "Equilibrada",
-        dry_run:       bool = False,
+        regime_result:      RegimeResult,
+        scenario_id:        str,
+        score_version:      str = "v1",
+        profile:            str = "Equilibrada",
+        dry_run:            bool = False,
+        previous_portfolio: "Portfolio | None" = None,
     ) -> Portfolio:
         """
         Construye la cartera maestra para el regimen dado.
 
         Parametros:
-            regime_result: resultado del clasificador de regimen
-            scenario_id:   identificador unico del escenario
-            score_version: version de scores a usar
-            profile:       perfil de la cartera maestra
-            dry_run:       si True, no persiste en BD
+            regime_result:      resultado del clasificador de regimen
+            scenario_id:        identificador unico del escenario
+            score_version:      version de scores a usar
+            profile:            perfil de la cartera maestra
+            dry_run:            si True, no persiste en BD
+            previous_portfolio: cartera del periodo anterior (opcional). Cuando
+                                se pasa, los fondos ya seleccionados en cada
+                                sub-cartera reciben el bonus de HYSTERESIS_BAND
+                                sobre su score para evitar rotaciones innecesarias
+                                provocadas por senales de horizonte corto de corta
+                                duracion.
         """
         regime  = regime_result.regime
         weights = regime_result.weights  # {Defensiva: X, Equilibrada: Y, Dinamica: Z}
@@ -447,12 +479,21 @@ class PortfolioBuilder:
             if regime_weight == 0:
                 continue
 
+            # -- Histeresis: extraer titulares de la cartera anterior para este bloque
+            incumbent_isins: frozenset = frozenset()
+            if previous_portfolio is not None:
+                for _sp in previous_portfolio.sub_portfolios:
+                    if _sp.name == sub_name:
+                        incumbent_isins = frozenset(f["isin"] for f in _sp.funds)
+                        break
+
             # Seleccionar fondos (excluyendo los ya usados en sub-carteras anteriores)
             selected = _select_funds_for_subportfolio(
                 self.conn, sub_name, score_version,
                 exclude_isins=isins_used,
                 exclude_names=families_used,
-                mgr_global=mgr_used)
+                mgr_global=mgr_used,
+                incumbent_isins=incumbent_isins)
 
             if selected.empty:
                 print(f"  AVISO: Sin fondos elegibles para {sub_name}")

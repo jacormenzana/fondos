@@ -257,9 +257,11 @@ def _build_cartera(ws, conn, scenario_id="shock_energia_2026Q1"):
                "Obj IPC+M3 %", "Exceso obj %", "Divisa contrib %",
                "Moneda", "Cobertura", "Geografia",
                "Beta Oil", "Beta Rate EU", "Beta Rate US",
-               "Macro R2", "Alpha Persist.", "SRRI KIID", "SRRI Calc"]
+               "Macro R2", "Alpha Persist.", "SRRI KIID", "SRRI Calc",
+               # v24 short-horizon overlay (d1 metrics) ----------------
+               "DD Corto 6M %", "Vol Adj 3M %", "Liq Flag 6M"]
     _apply_header(ws, headers, row=2)
-    ws.merge_cells(f"A1:{get_column_letter(22)}1")
+    ws.merge_cells(f"A1:{get_column_letter(25)}1")
 
     rows = conn.execute("""
         SELECT pw.block, pw.isin, fm.Fund_Name, fm.Fund_Nature,
@@ -278,7 +280,11 @@ def _build_cartera(ws, conn, scenario_id="shock_energia_2026Q1"):
                ROUND(r2.value, 3)           as macro_r2,
                ROUND(per.value, 3)           as alpha_persistence,
                fm.SRRI                         as srri_kiid,
-               CAST(srri.value AS INTEGER)      as srri_calc
+               CAST(srri.value AS INTEGER)      as srri_calc,
+               -- v24 short-horizon overlay (metric_version='d1') ------
+               ROUND(sh_dd.value * 100, 2)     as short_dd_6m,
+               ROUND(sh_va.value * 100, 2)     as short_vol_adj_3m,
+               ROUND(sh_lq.value, 4)           as short_liq_flag
         FROM portfolio_weights pw
         JOIN fund_master fm ON fm.ISIN = pw.isin
         LEFT JOIN fund_scores fs ON fs.isin = pw.isin AND fs.block = pw.block
@@ -319,6 +325,22 @@ def _build_cartera(ws, conn, scenario_id="shock_energia_2026Q1"):
                                    AND srri.metric = 'srri_nav'
                                    AND srri.horizon = 'since_inception'
                                    AND srri.real_flag = 0
+        -- short-horizon (daily, d1 fence) ----------------------------
+        LEFT JOIN fund_metrics sh_dd ON sh_dd.isin = pw.isin
+                                     AND sh_dd.metric = 'short_max_drawdown'
+                                     AND sh_dd.horizon = 'rolling_6m'
+                                     AND sh_dd.metric_version = 'd1'
+                                     AND sh_dd.real_flag = 0
+        LEFT JOIN fund_metrics sh_va ON sh_va.isin = pw.isin
+                                     AND sh_va.metric = 'short_vol_adj'
+                                     AND sh_va.horizon = 'rolling_3m'
+                                     AND sh_va.metric_version = 'd1'
+                                     AND sh_va.real_flag = 0
+        LEFT JOIN fund_metrics sh_lq ON sh_lq.isin = pw.isin
+                                     AND sh_lq.metric = 'short_liquidity_flag'
+                                     AND sh_lq.horizon = 'rolling_6m'
+                                     AND sh_lq.metric_version = 'd1'
+                                     AND sh_lq.real_flag = 0
         WHERE pw.scenario_id = ?
         ORDER BY pw.block, pw.weight DESC
     """, (scenario_id,)).fetchall()
@@ -413,7 +435,47 @@ def _build_cartera(ws, conn, scenario_id="shock_energia_2026Q1"):
                 pass
         _wc(22, srri_calc, srri_bg)
 
-    ws.auto_filter.ref = f"A2:{get_column_letter(22)}{ws.max_row}"
+        # -- Col 23: DD Corto 6M % (r[20]) — rojo si < -5%, ambar -2..-5%
+        sh_dd = r[20]
+        if sh_dd is not None:
+            try:
+                fdd = float(sh_dd)
+                sh_dd_bg = (RED_FILL if fdd < -5.0 else
+                            AMBER_FILL if fdd < -2.0 else
+                            GREEN_FILL)
+            except Exception:
+                sh_dd_bg = None
+            _wc(23, sh_dd, sh_dd_bg)
+        else:
+            _wc(23, "")
+
+        # -- Col 24: Vol Adj 3M % (r[21]) — rojo si > 20%, ambar 10-20%
+        sh_va = r[21]
+        if sh_va is not None:
+            try:
+                fva = float(sh_va)
+                sh_va_bg = (RED_FILL if fva > 20.0 else
+                            AMBER_FILL if fva > 10.0 else
+                            GREEN_FILL)
+            except Exception:
+                sh_va_bg = None
+            _wc(24, sh_va, sh_va_bg)
+        else:
+            _wc(24, "")
+
+        # -- Col 25: Liq Flag 6M (r[22]) — ambar si > 0.20 (datos no fiables)
+        sh_lq = r[22]
+        if sh_lq is not None:
+            try:
+                flq = float(sh_lq)
+                sh_lq_bg = (AMBER_FILL if flq > 0.20 else GREEN_FILL)
+            except Exception:
+                sh_lq_bg = None
+            _wc(25, sh_lq, sh_lq_bg)
+        else:
+            _wc(25, "")
+
+    ws.auto_filter.ref = f"A2:{get_column_letter(25)}{ws.max_row}"
     ws.freeze_panes = "A3"
     _autofit(ws)
 

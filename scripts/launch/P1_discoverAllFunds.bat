@@ -6,9 +6,10 @@ setlocal enabledelayedexpansion
 chcp 65001 > nul
 
 :: ============================================================
-:: discoverAllFunds.bat  -- Pipeline P1 completo
+:: P1_discoverAllFundsPlusExport.bat  -- Pipeline P1 completo + export Excel
 :: Ejecutar desde: C:\desarrollo\fondos\scripts\launch\
 :: Log generado en: C:\desarrollo\fondos\proyecto1\log\
+:: Excel generado en: C:\desarrollo\fondos\out\export\
 :: ============================================================
 
 set ROOT=C:\desarrollo\fondos
@@ -72,6 +73,14 @@ echo. >> "%LOG%"
 echo --- fund_family_builder ----------------------------------- >> "%LOG%"
 pushd %ROOT%
 python -X utf8 -m proyecto1.core.fund_family_builder >> "%LOG%" 2>&1
+popd
+
+:: -- export_p1 (Excel dump de tablas P1, incl. texto KIID bruto) --------------
+echo [%time%] export_p1 (--include-kiid-text)
+echo. >> "%LOG%"
+echo --- export_p1 --------------------------------------------- >> "%LOG%"
+pushd %ROOT%
+python -X utf8 -m proyecto1.src.analysis.export_p1 --include-kiid-text --db "%DB%" >> "%LOG%" 2>&1
 popd
 
 :: -- Pie del log --------------------------------------------------------------

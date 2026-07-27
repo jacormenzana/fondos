@@ -14,17 +14,19 @@ Metodologia:
 
 Donde TC_EUR_divisa es el tipo de cambio EUR/divisa (unidades de divisa por 1 EUR).
 
-Si el fondo esta hedgeado (Hedging_Policy = 'Full') el factor divisa es ~0
-y retorno_activo ~ retorno_total.
+Si el fondo esta completamente hedgeado (Hedging_Policy = 'Hedged') el factor
+divisa es ~0 y retorno_activo ~ retorno_total. Los fondos 'Partially Hedged'
+siguen procesandose porque tienen exposicion FX residual.
 
 Metricas generadas (horizon=since_inception, real_flag=0):
     fx_contribution_ann   contribucion anualizada de la divisa al retorno total
     fx_contribution_pct   porcentaje del retorno total explicado por la divisa
     fx_volatility_ann     volatilidad anualizada del componente divisa
 
-Solo se calcula para fondos cuya Fund_Currency no sea EUR.
-Divisas soportadas: USD, JPY, GBP, CNY.
-Para otras divisas se devuelve lista vacia.
+Divisa efectiva: si Asset_Currency esta disponible y no es EUR/MCY tiene
+preferencia sobre Fund_Currency para identificar la exposicion FX subyacente
+(cubre el caso de clases EUR que invierten en activos USD sin cobertura).
+Divisas soportadas: USD, JPY, GBP, CNY. Otras → lista vacia.
 """
 
 import numpy as np
@@ -128,32 +130,45 @@ def compute_currency_factor(
     hedging_policy: str | None,
     nav_df: pd.DataFrame,
     conn: sqlite3.Connection,
+    asset_currency: str | None = None,
 ) -> list[tuple]:
     """
     Calcula la contribucion de la divisa al retorno del fondo.
 
     Parametros:
         isin:            ISIN del fondo
-        fund_currency:   divisa del fondo (Fund_Currency en fund_master)
-        hedging_policy:  politica de cobertura (Hedging_Policy en fund_master)
+        fund_currency:   divisa de la clase de participacion (Fund_Currency)
+        hedging_policy:  politica de cobertura (Hedging_Policy)
         nav_df:          DataFrame con columnas ['date', 'nav']
         conn:            conexion sqlite3
+        asset_currency:  divisa del activo subyacente (Asset_Currency, opcional).
+                         Si se provee y no es EUR/MCY, tiene preferencia sobre
+                         fund_currency para identificar la exposicion FX.
 
     Devuelve lista de (metric, value, real_flag).
-    Devuelve lista vacia si el fondo es EUR o esta hedgeado.
+    Devuelve lista vacia si no hay exposicion FX (EUR puro) o si el fondo
+    esta completamente hedgeado (Hedging_Policy = 'Hedged').
     """
     if nav_df.empty:
         return []
 
-    # Fondos EUR: no hay factor divisa
-    if not fund_currency or fund_currency.upper() == "EUR":
+    # Fondos completamente hedgeados: factor divisa es despreciable
+    # 'Partially Hedged' sigue procesandose (exposicion FX residual)
+    if hedging_policy and hedging_policy.strip() == "Hedged":
         return []
 
-    # Fondos hedgeados: factor divisa es despreciable
-    if hedging_policy and "full" in str(hedging_policy).lower():
-        return []
+    # Determinar divisa efectiva del riesgo FX.
+    # Asset_Currency (divisa del subyacente) tiene preferencia cuando esta
+    # disponible: cubre clases EUR que invierten en activos USD sin cobertura.
+    _ac = (asset_currency or "").upper().strip()
+    _fc = (fund_currency  or "").upper().strip()
+    if _ac and _ac not in ("EUR", "MCY"):
+        currency = _ac
+    elif _fc and _fc != "EUR":
+        currency = _fc
+    else:
+        return []  # Sin exposicion FX (EUR puro o MCY sin activo identificado)
 
-    currency = fund_currency.upper().strip()
     if currency not in _FX_INDICATORS:
         return []
 

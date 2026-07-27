@@ -50,9 +50,55 @@ def load_nav(conn: sqlite3.Connection, isin: str) -> pd.DataFrame:
 
 
 def get_isins_with_nav(conn: sqlite3.Connection) -> list[str]:
-    """Devuelve la lista de ISINs con al menos una fila en fund_nav_monthly."""
+    """Devuelve la lista de ISINs con al menos una fila en fund_nav_monthly.
+
+    Incluye fondos de oferta antigua (In_Current_Universe=0): las metricas P2
+    se calculan para todos los fondos porque los huerfanos pueden seguir en
+    cartera y necesitan seguimiento de rendimiento.
+    """
     rows = conn.execute(
         "SELECT DISTINCT ISIN FROM fund_nav_monthly ORDER BY ISIN"
+    ).fetchall()
+    return [r[0] for r in rows]
+
+
+def load_nav_daily(conn: sqlite3.Connection, isin: str) -> pd.DataFrame:
+    """
+    Carga la serie NAV diaria de un fondo desde fund_nav_daily (v24).
+
+    Usada por proyecto2/src/calculations/short_horizon.py para métricas
+    de horizonte corto (rolling_1m / rolling_3m / rolling_6m).
+
+    Devuelve DataFrame con columnas:
+        date (datetime64)  nav (float)
+
+    Ordenado por fecha ascendente.
+    Devuelve DataFrame vacío si el fondo no tiene datos diarios.
+    """
+    rows = conn.execute("""
+        SELECT Date AS date, NAV AS nav
+        FROM fund_nav_daily
+        WHERE ISIN = ?
+        ORDER BY Date
+    """, (isin,)).fetchall()
+
+    if not rows:
+        return pd.DataFrame(columns=["date", "nav"])
+
+    df = pd.DataFrame(rows, columns=["date", "nav"])
+    df["date"] = pd.to_datetime(df["date"])
+    df["nav"]  = df["nav"].astype(float)
+    return df
+
+
+def get_isins_with_nav_daily(conn: sqlite3.Connection) -> list[str]:
+    """Devuelve la lista de ISINs con al menos una fila en fund_nav_daily.
+
+    Incluye fondos huerfanos: misma razon que get_isins_with_nav (seguimiento
+    de posiciones existentes).
+    """
+    rows = conn.execute(
+        "SELECT DISTINCT ISIN FROM fund_nav_daily ORDER BY ISIN"
     ).fetchall()
     return [r[0] for r in rows]
 
@@ -97,3 +143,39 @@ def ipc_available(conn: sqlite3.Connection, geography: str = "ES") -> bool:
         (geography,)
     ).fetchone()[0]
     return n > 0
+
+
+# ============================================================
+# P1 Fund Attributes (P1→P2 integration interface)
+# ============================================================
+
+def load_fund_attributes(conn: sqlite3.Connection) -> pd.DataFrame:
+    """
+    Carga los atributos de clasificación P1 relevantes para el pipeline P2.
+
+    Formaliza la dependencia P2→P1: los módulos de cálculo que necesitan
+    atributos del fondo (Fund_Nature para benchmarks de categoría,
+    Hedging_Policy/Asset_Currency para currency_factor, Geography/Credit_Quality
+    para macro_sensitivity) deben obtenerlos de aquí, no inline.
+
+    Incluye fondos de cualquier In_Current_Universe: P2 calcula métricas
+    para todos los fondos con NAV, incluyendo huérfanos en cartera.
+
+    Returns
+    -------
+    DataFrame indexado por ISIN con columnas:
+        Fund_Nature, Strategy, Geography, Development_Status,
+        Credit_Quality, Duration_Profile, Investment_Focus,
+        Hedging_Policy, Asset_Currency, Fund_Currency,
+        Leverage_Used, Sfdr_Article, In_Current_Universe
+    """
+    df = pd.read_sql("""
+        SELECT ISIN,
+               Fund_Nature, Strategy, Geography, Development_Status,
+               Credit_Quality, Duration_Profile, Investment_Focus,
+               Hedging_Policy, Asset_Currency, Fund_Currency,
+               Leverage_Used, Sfdr_Article, In_Current_Universe
+        FROM fund_master
+    """, conn)
+    df = df.set_index("ISIN")
+    return df

@@ -29,6 +29,7 @@ from pathlib import Path as _Path
 sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
 from shared.schema_checks import assert_schema_alignment
 from shared.config import DB_PATH as _DEFAULT_DB_PATH
+from core._db_utils import assert_eff_fields_alignment
 
 BLOCKS_PACKAGE = "blocks"
 
@@ -105,6 +106,7 @@ def main():
     # explícito (with conn:), que es el comportamiento correcto.
     conn.isolation_level = None
     assert_schema_alignment(conn)
+    assert_eff_fields_alignment(conn)
 
     # Cargar maestro (DB o Excel)
     if args.master_db:

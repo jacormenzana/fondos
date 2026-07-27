@@ -50,6 +50,7 @@ _ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT))
 
 from proyecto3.src.regime_classifier import RegimeResult
+from shared.config import METRIC_VERSION_SHORT, SHORT_HORIZON_SCORING_ENABLED
 
 
 # ============================================================
@@ -146,6 +147,29 @@ MULT_RATE_EU_MALUS = 0.70
 MULT_FX_MALUS      = 0.80
 MULT_ALPHA_BONUS   = 1.15
 MULT_MACRO_MALUS   = 0.85
+
+# -- Horizonte corto — gate duro defensivo (v24) -------------------------
+# Umbral de drawdown corto (rolling_6m, metric_version='d1') por sub-cartera.
+# Fondos que superen la pérdida máxima reciente son excluidos del ciclo.
+# None = gate inactivo para esa sub-cartera.
+SHORT_DD_LIMIT_BY_SUB: dict[str, float | None] = {
+    "Defensiva":   -0.08,   # tolerancia 8% en 6 meses
+    "Equilibrada": -0.15,   # tolerancia 15% en 6 meses
+    "Dinamica":    -0.25,   # tolerancia 25% en 6 meses
+}
+
+# Umbral de volatilidad diaria AC-ajustada (rolling_3m) por sub-cartera.
+# Fondos con vol corta superior son excluidos.
+# None = gate inactivo.
+SHORT_VOL_LIMIT_BY_SUB: dict[str, float | None] = {
+    "Defensiva":   0.15,    # 15% vol anualizada en 3 meses
+    "Equilibrada": 0.22,
+    "Dinamica":    None,    # sin tope de vol para Dinamica
+}
+
+# Umbral de iliquidez: si liquidity_flag > este valor, los gates cortos se omiten
+# (datos no confiables — fondos con NAV diario sintético).
+SHORT_LIQUIDITY_TRUST_THRESHOLD: float = 0.20
 
 # Crisis Financiera (v10)
 SPREAD_HY_CRISIS_THRESHOLD =  0.02
@@ -259,6 +283,33 @@ def load_fund_metrics_for_scoring(
         for isin, value in result:
             rows.append({"isin": isin, "metric": metric, "value": float(value)})
 
+    # -- v24: métricas de horizonte corto (metric_version='d1') ---------------
+    # Leemos short_max_drawdown (rolling_6m), short_vol_adj (rolling_3m) y
+    # short_liquidity_flag (rolling_6m) para el gate duro. También
+    # short_return_cum (rolling_3m/6m) si SHORT_HORIZON_SCORING_ENABLED.
+    short_metrics: list[tuple[str, str, int]] = [
+        ("short_max_drawdown",   "rolling_6m", 0),
+        ("short_vol_adj",        "rolling_3m", 0),
+        ("short_liquidity_flag", "rolling_6m", 0),
+    ]
+    if SHORT_HORIZON_SCORING_ENABLED:
+        short_metrics += [
+            ("short_return_cum", "rolling_3m", 0),
+            ("short_return_cum", "rolling_6m", 0),
+        ]
+    for metric, horizon, real_flag in short_metrics:
+        result = conn.execute("""
+            SELECT isin, value
+            FROM fund_metrics
+            WHERE metric=? AND horizon=? AND real_flag=?
+              AND metric_version=?
+              AND value IS NOT NULL
+        """, (metric, horizon, real_flag, METRIC_VERSION_SHORT)).fetchall()
+        # Suffix horizon so rolling_3m / rolling_6m don't collide
+        col = f"{metric}__{horizon}" if "rolling" in horizon else metric
+        for isin, value in result:
+            rows.append({"isin": isin, "metric": col, "value": float(value)})
+
     if not rows:
         return pd.DataFrame()
 
@@ -271,16 +322,18 @@ def load_fund_metrics_for_scoring(
     if "return_ann" in wide.columns:
         wide = wide.rename(columns={"return_ann": "return_ann_real"})
 
-    # Añadir atributos de fund_master (v17: +Investment_Focus, +Credit_Quality, +Ongoing_Charge, +SRRI_Quality_Flag)
+    # Añadir atributos de fund_master — solo universo activo (In_Current_Universe=1)
     fm = pd.read_sql("""
         SELECT ISIN, Fund_Name, Fund_Nature, SRRI as srri_kiid,
                Investment_Focus, Credit_Quality,
-               Ongoing_Charge, SRRI_Quality_Flag,
-               fund_family_id
+               Ongoing_Charge_Recurrent AS Ongoing_Charge,
+               SRRI_Quality_Flag, fund_family_id
         FROM fund_master
+        WHERE In_Current_Universe = 1
     """, conn).set_index("ISIN")
 
-    return wide.join(fm, how="left")
+    # inner join: huerfanos (In_Current_Universe=0) quedan excluidos del scoring
+    return wide.join(fm, how="inner")
 
 
 # ============================================================
@@ -311,8 +364,25 @@ def compute_base_scores(
     Normalización por naturaleza: cada tipo de fondo compite contra sus iguales
     antes de recibir el bonus de naturaleza para escalar entre tipos.
     """
-    weights      = SUBPORTFOLIO_WEIGHTS.get(subportfolio, BASE_WEIGHTS)
+    weights      = dict(SUBPORTFOLIO_WEIGHTS.get(subportfolio, BASE_WEIGHTS))
     nature_bonus = NATURE_PROFILE_BONUS.get(subportfolio, {})
+
+    # -- v24: añadir pesos cortos si el kill-switch está activo --------------
+    # Pesos modestos (3-5%); columnas con sufijo __horizonte (R-1: no dup).
+    # Las métricas de retorno corto son señales de tendencia secundarias.
+    if SHORT_HORIZON_SCORING_ENABLED:
+        short_w = {
+            "Defensiva":   {"short_return_cum__rolling_3m": 0.03,
+                            "short_return_cum__rolling_6m": 0.04},
+            "Equilibrada": {"short_return_cum__rolling_3m": 0.04,
+                            "short_return_cum__rolling_6m": 0.04},
+            "Dinamica":    {"short_return_cum__rolling_3m": 0.05,
+                            "short_return_cum__rolling_6m": 0.05},
+        }
+        weights.update(short_w.get(subportfolio, {}))
+
+    # Métricas que deben invertirse (menor = mejor)
+    _INVERTED_METRICS = {"max_drawdown", "short_max_drawdown__rolling_6m"}
 
     scores_by_nature = pd.Series(0.0, index=df.index)
 
@@ -328,7 +398,7 @@ def compute_base_scores(
                 col = subset_n[metric].dropna()
                 if col.empty:
                     continue
-                invert     = (metric == "max_drawdown")
+                invert     = metric in _INVERTED_METRICS
                 normalized = _normalize_metric(col, invert=invert)
                 scores_n   = scores_n.add(normalized * weight, fill_value=0)
 
@@ -341,7 +411,7 @@ def compute_base_scores(
             col = df[metric].dropna()
             if col.empty:
                 continue
-            invert     = (metric == "max_drawdown")
+            invert     = metric in _INVERTED_METRICS
             normalized = _normalize_metric(col, invert=invert)
             scores_by_nature = scores_by_nature.add(normalized * weight, fill_value=0)
 
@@ -469,6 +539,35 @@ def check_hard_filters(
         cq = row.get("Credit_Quality")
         if cq == "High Yield":
             return "Credit_Quality=High Yield excluido de Defensiva"
+
+    # -- v24: gate corto diario (aplica a las 3 sub-carteras) ---------------
+    # Si liquidity_flag > threshold, los datos diarios no son fiables:
+    # el gate se omite y el fondo pasa (fail-open = no false exclusión).
+    liq_flag = row.get("short_liquidity_flag__rolling_6m", np.nan)
+    daily_trusted = (
+        np.isnan(liq_flag) or float(liq_flag) <= SHORT_LIQUIDITY_TRUST_THRESHOLD
+    )
+
+    if daily_trusted:
+        # -- Drawdown corto (rolling_6m) --
+        dd_limit = SHORT_DD_LIMIT_BY_SUB.get(subportfolio)
+        if dd_limit is not None:
+            short_dd = row.get("short_max_drawdown__rolling_6m", np.nan)
+            if not np.isnan(short_dd) and short_dd < dd_limit:
+                return (
+                    f"short_max_drawdown_6m={short_dd:.2f} < {dd_limit} "
+                    f"({subportfolio})"
+                )
+
+        # -- Volatilidad corta AC-ajustada (rolling_3m) ---
+        vol_limit = SHORT_VOL_LIMIT_BY_SUB.get(subportfolio)
+        if vol_limit is not None:
+            short_vol = row.get("short_vol_adj__rolling_3m", np.nan)
+            if not np.isnan(short_vol) and short_vol > vol_limit:
+                return (
+                    f"short_vol_adj_3m={short_vol:.2f} > {vol_limit} "
+                    f"({subportfolio})"
+                )
 
     return None
 

@@ -51,6 +51,7 @@ from proyecto1.core.classify_utils import (
     BMK_BENIGN_SOURCE_PAIRS,
     BMK_GEO_BENIGN_PAIRS,
     BMK_SECTOR_BENIGN_PAIRS,
+    BMK_CAP_BENIGN_PAIRS,
     bmk_tok_credit,
     bmk_tok_duration,
     bmk_tok_cap,
@@ -72,6 +73,7 @@ _TOLERATED          = BMK_TOLERATED
 _BENIGN_SOURCE_PAIRS = BMK_BENIGN_SOURCE_PAIRS
 _GEO_BENIGN_PAIRS   = BMK_GEO_BENIGN_PAIRS
 _SECTOR_BENIGN_PAIRS = BMK_SECTOR_BENIGN_PAIRS
+_CAP_BENIGN_PAIRS   = BMK_CAP_BENIGN_PAIRS
 _tok_credit         = bmk_tok_credit
 _tok_duration       = bmk_tok_duration
 _tok_cap            = bmk_tok_cap
@@ -416,12 +418,21 @@ def run_audit(db_path: Path = DB_PATH) -> dict:
         bmk_cap = _tok_cap(p_name_l)
         if bmk_cap:
             if fm_cap and fm_cap != bmk_cap:
+                _cap_pair = frozenset({fm_cap, bmk_cap})
                 if fm_cap == "All Cap":
                     # All Cap is a detection fallback → report as gap, not conflict
                     b4_cap_gap.append({
                         "ISIN": isin, "Fund_Name": fund_name, "Fund_Nature": nature,
                         "bmk_cap": bmk_cap, "bmk_name": p_name,
                         "note": "fm=All Cap (fallback sentinel) — benchmark may reveal actual cap",
+                    })
+                elif _cap_pair in _CAP_BENIGN_PAIRS:
+                    # Composite range benchmark (Large/Mid Cap, Small/Mid Cap) is
+                    # compatible with either constituent single tier — not a real conflict.
+                    b4_cap_gap.append({
+                        "ISIN": isin, "Fund_Name": fund_name, "Fund_Nature": nature,
+                        "bmk_cap": bmk_cap, "bmk_name": p_name,
+                        "note": f"fm={fm_cap!r} vs composite bmk={bmk_cap!r} — benign range pair",
                     })
                 else:
                     b4_cap.append({
@@ -531,34 +542,56 @@ def run_audit(db_path: Path = DB_PATH) -> dict:
         #          prefix/suffix of the other at the token level (partial match).
         if fm_declared and k_name and kiid_row:
             import re as _re
-            dec_l = fm_declared.lower()
-            k_l   = k_name.lower()
-            # Strip punctuation before tokenising so "s&p" and "1-3y" become comparable
-            _punct = _re.compile(r'[&()\[\]+%]')
-            dec_clean = _punct.sub(' ', dec_l)
-            k_clean   = _punct.sub(' ', k_l)
-            dec_tokens = set(t for t in dec_clean.split() if len(t) > 3)
-            k_tokens   = set(t for t in k_clean.split()   if len(t) > 3)
-            # Skip: declared is too short/symbolic to tokenise (e.g. "€str", "3m")
-            if not dec_tokens:
+            # Skip sentinel — no declared benchmark in KIID, extractor used fallback
+            if fm_declared == "NO_BENCHMARK":
                 pass
             else:
-                common = dec_tokens & k_tokens
-                # Also accept as match when k_tokens is a non-empty subset of dec_tokens
-                # (KIID extracted the primary component of a multi-part declared benchmark).
-                k_subset_of_dec = bool(k_tokens) and k_tokens.issubset(dec_tokens)
-                if not common and not k_subset_of_dec:
-                    b7_declared.append({
-                        "ISIN":           isin,
-                        "Fund_Name":      fund_name,
-                        "Fund_Nature":    nature,
-                        "Declared":       fm_declared,
-                        "KIID_extracted": k_name,
-                        "hypothesis": (
-                            f"fund_master.Benchmark_Declared='{fm_declared}' shares no tokens with "
-                            f"KIID-extracted benchmark '{k_name}'. Possible extraction error in "
-                            "benchmark_normalizer or the KIID references a different benchmark than "
-                            "the one Morningstar uses as category proxy."
+                # FIX-BMK-B7-NORM (2026-07-26): pre-normalise index-name variants
+                # before tokenising so "S&P 500" / "s&p500" / "BofAML" / "€STR" /
+                # "ESTER" all resolve to canonical tokens that the extractor uses.
+                # Normalisation order matters: apply before punct-stripping.
+                _B7_NORMS = [
+                    (_re.compile(r's&p\s*500\w*'),        'sp500'),
+                    (_re.compile(r'\bbofaml\b'),          'bofa'),
+                    (_re.compile(r'\bester\b|€str'),      'estr'),
+                    (_re.compile(r'ibex\s*35'),           'ibex35'),
+                ]
+
+                def _b7_norm(s: str) -> str:
+                    s = s.lower()
+                    for pat, repl in _B7_NORMS:
+                        s = pat.sub(repl, s)
+                    return s
+
+                dec_l = _b7_norm(fm_declared)
+                k_l   = _b7_norm(k_name)
+                # Strip punctuation before tokenising; include '/' so "large/mid"
+                # and "russell/nomura" split into separate tokens.
+                _punct = _re.compile(r'[&()\[\]+%/]')
+                dec_clean = _punct.sub(' ', dec_l)
+                k_clean   = _punct.sub(' ', k_l)
+                dec_tokens = set(t for t in dec_clean.split() if len(t) > 3)
+                k_tokens   = set(t for t in k_clean.split()   if len(t) > 3)
+                # Skip: declared is too short/symbolic to tokenise (e.g. "3m")
+                if not dec_tokens:
+                    pass
+                else:
+                    common = dec_tokens & k_tokens
+                    # Also accept as match when k_tokens is a non-empty subset of dec_tokens
+                    # (KIID extracted the primary component of a multi-part declared benchmark).
+                    k_subset_of_dec = bool(k_tokens) and k_tokens.issubset(dec_tokens)
+                    if not common and not k_subset_of_dec:
+                        b7_declared.append({
+                            "ISIN":           isin,
+                            "Fund_Name":      fund_name,
+                            "Fund_Nature":    nature,
+                            "Declared":       fm_declared,
+                            "KIID_extracted": k_name,
+                            "hypothesis": (
+                                f"fund_master.Benchmark_Declared='{fm_declared}' shares no tokens with "
+                                f"KIID-extracted benchmark '{k_name}'. Possible extraction error in "
+                                "benchmark_normalizer or the KIID references a different benchmark than "
+                                "the one Morningstar uses as category proxy."
                         ),
                     })
 

@@ -99,14 +99,14 @@ class EffectiveReader:
         if self._bd_loaded:
             return
         cols = ", ".join(sorted(_EFF_FIELDS_WHITELIST))
-        try:
-            row = self._conn.execute(
-                f"SELECT {cols} FROM fund_master WHERE ISIN=?",
-                (self._isin,)
-            ).fetchone()
-        except sqlite3.OperationalError:
-            # Columna ausente en esquema — degradar a None silenciosamente.
-            row = None
+        # Do NOT catch OperationalError here — assert_eff_fields_alignment()
+        # must have run at startup and guaranteed all whitelist fields exist.
+        # A silent swallow here was the root cause of the v20 silent null-out
+        # (see FIX-EFF-CH header above).
+        row = self._conn.execute(
+            f"SELECT {cols} FROM fund_master WHERE ISIN=?",
+            (self._isin,)
+        ).fetchone()
         if row:
             for i, col in enumerate(sorted(_EFF_FIELDS_WHITELIST)):
                 self._cache[col] = row[i]
@@ -162,3 +162,29 @@ def make_eff_reader(
 ) -> EffectiveReader:
     """Constructor convencional. Atajo para uso desde pipeline."""
     return EffectiveReader(conn, isin)
+
+
+def assert_eff_fields_alignment(conn: sqlite3.Connection) -> None:
+    """
+    Verifica que todos los campos de _EFF_FIELDS_WHITELIST existen como columnas
+    en fund_master. Debe llamarse al inicio del pipeline (junto a
+    assert_schema_alignment) para detectar drift entre la whitelist y el
+    schema real antes de que EffectiveReader._load_all_from_bd() lo descubra
+    en caliente con un OperationalError.
+
+    Levanta AssertionError si algún campo de la whitelist no existe en el
+    schema live — fail-fast en startup, antes de procesar cualquier fondo.
+    """
+    live_cols = frozenset(
+        row[1]
+        for row in conn.execute("PRAGMA table_info(fund_master)").fetchall()
+    )
+    missing = _EFF_FIELDS_WHITELIST - live_cols
+    if missing:
+        raise AssertionError(
+            f"_EFF_FIELDS_WHITELIST contiene {len(missing)} campo(s) ausentes "
+            f"en fund_master: {sorted(missing)}. "
+            "Actualiza _EFF_FIELDS_WHITELIST en core/_db_utils.py para "
+            "reflejar el schema actual (quita campos renombrados/eliminados, "
+            "o aplica la migración de schema pendiente)."
+        )

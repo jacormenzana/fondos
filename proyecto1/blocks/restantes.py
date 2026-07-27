@@ -396,7 +396,13 @@ def classify_fund(
                                                   srri_parsed=srri_parsed)
             except TypeError:
                 result = block_mod.classify_fund(fund_name, kiid_text)
-            result["Fund_Nature"] = nature_canonical
+            # FIX-BGF-CHINA-BOND-B: respetar el veto SRRI interno del bloque
+            # delegado. Si rf_corto (o cualquier otro bloque) devolvió
+            # 'Restantes' via su propio guard de SRRI, sobreescribirlo con
+            # nature_canonical reinicia el ciclo BL-44 → BL-62 → poison-Family
+            # que afecta a los fondos BGF China Bond (SRRI=4, Nature=RFC).
+            if result.get("Fund_Nature") != "Restantes":
+                result["Fund_Nature"] = nature_canonical
 
             # ── Enriquecer Theme si el bloque no lo asigna (Fase 1D) ─────
             if not result.get("Theme"):

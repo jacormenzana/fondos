@@ -304,17 +304,45 @@ def _compute_vif(X_cols: np.ndarray) -> np.ndarray:
 
 VIF_THRESHOLD = 10.0  # eliminar factores con VIF > umbral
 
+# Factores a proteger del filtro VIF segun geografia del fondo.
+# Se suman al conjunto base {d_rate_eu, oil_yoy, m3_yoy} para evitar que
+# factores regionales clave sean descartados por correlacion con factores globales.
+_GEO_FORCE_KEEP: dict[str, set[str]] = {
+    "China":          {"ipc_yoy_cn", "d_rate_cn", "eur_cny_yoy"},
+    "Japan":          {"ipc_yoy_jp", "d_rate_jp", "eur_jpy_yoy"},
+    "North America":  {"ipc_yoy_us", "d_rate_us", "term_spread"},
+    "Asia-Pacific":   {"ipc_yoy_jp", "ipc_yoy_cn", "d_rate_jp", "d_rate_cn"},
+    "India":          {"ipc_yoy_us", "dxy_yoy"},
+    "Latin America":  {"ipc_yoy_us", "d_rate_us", "dxy_yoy"},
+    "Eastern Europe": {"ipc_yoy_eu", "d_rate_eu"},
+    "Europe":         {"ipc_yoy_eu", "d_rate_eu", "eur_gbp_yoy"},
+    "Middle East & Africa": {"oil_yoy", "dxy_yoy"},
+}
+
+# Factores a proteger segun estado de desarrollo (se acumulan con los de geografia)
+_DEV_STATUS_FORCE_KEEP: dict[str, set[str]] = {
+    "Emerging": {"spread_hy", "dxy_yoy"},
+    "Frontier": {"spread_hy", "dxy_yoy"},
+}
+
 
 def compute_macro_sensitivity(
     nav_df: pd.DataFrame,
     macro_df: pd.DataFrame,
+    geography: str | None = None,
+    development_status: str | None = None,
 ) -> list[tuple]:
     """
     Calcula las betas macro para un fondo.
 
     Parametros:
-        nav_df:   DataFrame con columnas [date, nav] (fechas fin de mes)
-        macro_df: DataFrame indexado por fecha con factores macro
+        nav_df:            DataFrame con columnas [date, nav] (fechas fin de mes)
+        macro_df:          DataFrame indexado por fecha con factores macro
+        geography:         Geography del fondo (fund_master.Geography). Cuando se
+                           provee, sus factores regionales se protegen del filtro
+                           VIF aunque su colinealidad con factores globales sea alta.
+        development_status: Development_Status del fondo. 'Emerging'/'Frontier'
+                           protege spread_hy y dxy_yoy del filtro VIF.
 
     Devuelve lista de (metric, value, real_flag).
     Devuelve lista vacia si no hay suficientes datos solapados.
@@ -338,8 +366,13 @@ def compute_macro_sensitivity(
     if X_raw.shape[1] > 1:
         vif_vals = _compute_vif(X_raw)
         keep_mask = vif_vals <= VIF_THRESHOLD
-        # Siempre mantener al menos d_rate_eu y oil_yoy si estan presentes
-        priority = {"d_rate_eu", "oil_yoy", "m3_yoy"}
+        # Conjunto base siempre protegido
+        priority: set[str] = {"d_rate_eu", "oil_yoy", "m3_yoy"}
+        # Factores regionales del fondo: proteger aunque tengan VIF alto
+        if geography:
+            priority |= _GEO_FORCE_KEEP.get(geography, set())
+        if development_status:
+            priority |= _DEV_STATUS_FORCE_KEEP.get(development_status, set())
         for i, col in enumerate(factor_cols):
             if col in priority:
                 keep_mask[i] = True

@@ -99,6 +99,13 @@ i) El UPSERT usa COALESCE preservando valor BD distinto al record entrante (camb
 - ¿El fondo NO puede persistirse? → ERROR.
 - ¿Incidencia informativa (fallback exitoso)? → INFO.
 
+**Token canónico en `ingestion_log.status` (2026-07-19):**  
+El valor de la columna `status` en `ingestion_log` para severidad WARNING es **`"WARN"`** (4 letras),
+no `"WARNING"`. El RESUMEN al final de cada ciclo agrupa por `status` — emitir `"WARNING"` en lugar
+de `"WARN"` produce un cubo independiente y rompe la agregación. Los tres sitios en `pipeline.py`
+y `classify_utils.py` que emitían `"WARNING"` fueron normalizados a `"WARN"` en la sesión 19
+(FIX-LOG-WARN-NORM, 2026-07-19). La tabla `fund_data_quality_issues.level` sigue usando `"WARN"` sin cambio.
+
 ### §4.3 Convención de tags
 
 **Formato obligatorio** para reglas INTER documentadas en backlog:
