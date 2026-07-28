@@ -52,7 +52,7 @@ python -X utf8 "%ROOT%\scripts\launch\mark_stale.py" --db "%DB%" --max-age 180 -
 :: DEPENDENCY (deliberate P1<-P2 feedback, degrades gracefully): the vol veto
 :: reads fund_metrics.srri_nav, a P2 output. For it to use FRESH behaviour, run
 :: P2 (P2_calculateIndicators.bat) before this pass. Funds without NAV history
-:: (srri_nav NULL) are classified ex-ante only (name/KIID/benchmark) — no error.
+:: (srri_nav NULL) are classified ex-ante only (name/KIID/benchmark) -- no error.
 ::
 :: Per-block debug (kept for single-block testing):
 ::   pushd %ROOT%\proyecto1

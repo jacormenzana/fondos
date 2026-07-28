@@ -490,6 +490,7 @@ NAME_SIGNALS_RF_FLEXIBLE: list = [
     "aggregate bond",
     "emerging market debt", "em debt",
     "total return bond",
+    "total ret",           # abbreviated "total return" in fund names (MFS, PIMCO-style)
     "flexible bond", "dynamic bond",
     # Alemán
     "renten",
