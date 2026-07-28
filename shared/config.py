@@ -161,7 +161,7 @@ SHORT_HORIZON_SCORING_ENABLED: bool = False
 #         fund_metric_timeseries y fund_metric_alerts no se escriben.
 # True  = activa el cálculo completo. Activar SOLO después de backfill
 #         inicial y validación de las señales percentil vs P3 scoring.
-ROLLING_STATS_ENABLED: bool = False
+ROLLING_STATS_ENABLED: bool = True
 
 # ============================================================
 # Phase 1 — Benchmark asset-class derivation engine (BL-BENCH-DECOMP)

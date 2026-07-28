@@ -23,6 +23,7 @@
 -- the DROP statements and replace with ALTER TABLE ADD COLUMN IF NOT EXISTS.
 DROP TABLE IF EXISTS fund_metric_timeseries;
 DROP TABLE IF EXISTS fund_metric_alerts;
+DROP TABLE IF EXISTS fund_metric_state;
 
 -- ----------------------------------------------------------
 -- fund_metric_timeseries
@@ -83,3 +84,22 @@ COMMENT ON TABLE fund_metric_alerts IS
     'P2 v26 — Current-state WARN/ALARM per (isin, metric, window). '
     'Rebuilt each P2 cycle (like fund_data_quality_issues in P1). '
     'Alarms compare fund value vs Fund_Nature category percentile.';
+
+-- ----------------------------------------------------------
+-- fund_metric_state
+-- Input-hash idempotency cache (v27). One row per (isin, metric_version).
+-- Pipeline skips re-calculation when stored hash == current hash.
+-- ----------------------------------------------------------
+CREATE TABLE fund_metric_state (
+    isin             VARCHAR(12)     NOT NULL,
+    metric_version   VARCHAR(8)      NOT NULL DEFAULT 'v1',
+    input_hash       VARCHAR(40)     NOT NULL,   -- SHA-1 hex (40 chars)
+    calculated_at    DATE            NOT NULL,
+
+    PRIMARY KEY (isin, metric_version)
+);
+
+COMMENT ON TABLE fund_metric_state IS
+    'P2 v27 — Idempotency cache: SHA-1 fingerprint of NAV+IPC+code version '
+    'used in the last successful calculation for each fund. '
+    'Pipeline skips a fund when stored hash == current hash (unless --force).';

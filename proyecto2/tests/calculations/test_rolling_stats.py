@@ -21,6 +21,7 @@ from src.calculations.rolling_stats import (
     compute_category_snapshot,
     compute_alerts,
     compute_timeseries_snapshots,
+    cat_signals_from_snapshot,
 )
 
 
@@ -31,7 +32,7 @@ from src.calculations.rolling_stats import (
 def _make_nav_df(navs: list[float], start: str = "2020-01-31") -> pd.DataFrame:
     """Crea un DataFrame mensual con fechas de fin de mes."""
     dates = pd.date_range(start=start, periods=len(navs), freq="ME")
-    return pd.DataFrame({"date": dates, "NAV": navs})
+    return pd.DataFrame({"date": dates, "nav": navs})
 
 
 # ============================================================
@@ -170,7 +171,7 @@ class TestComputeRollingRows:
         assert all(r["source_rows"] >= 12 for r in rows)
 
     def test_empty_nav(self):
-        nav_df = pd.DataFrame({"date": [], "NAV": []})
+        nav_df = pd.DataFrame({"date": [], "nav": []})
         rows = compute_rolling_rows(
             "TEST0006", nav_df,
             rolling_windows={"rolling_1y": 12},
@@ -205,7 +206,7 @@ class TestComputeRollingRows:
         nav_df = self._simple_nav(24)
         ipc_df = pd.DataFrame({
             "date": nav_df["date"],
-            "value": [100.0 * (1.003 ** i) for i in range(24)],
+            "ipc_index": [100.0 * (1.003 ** i) for i in range(24)],
         })
         rows = compute_rolling_rows(
             "TEST0009", nav_df,
@@ -460,3 +461,128 @@ class TestComputeTimeseriesSnapshots:
         for r in snap:
             assert r["isin"] == "ISIN0001"
             assert r["window"] == "rolling_1y"
+
+    def test_no_cat_signals_when_category_df_is_none(self):
+        """compute_timeseries_snapshots con category_df=None no emite pctile_cat ni zscore_cat."""
+        snap = compute_timeseries_snapshots(
+            self._make_ts_df(24), category_df=None, min_self_obs=12
+        )
+        cat_metrics = [r["metric"] for r in snap if "_cat" in r["metric"]]
+        assert cat_metrics == [], (
+            f"No cat signals expected when category_df=None, got: {cat_metrics}"
+        )
+
+
+# ============================================================
+# Tests para cat_signals_from_snapshot (v28 — RC-2 fix)
+# ============================================================
+
+class TestCatSignalsFromSnapshot:
+    """
+    cat_signals_from_snapshot: extrae pctile_cat y zscore_cat directamente
+    de cat_df (salida de compute_category_snapshot) sin leer fund_metric_timeseries.
+    """
+
+    @staticmethod
+    def _make_cat_df(
+        n_isins: int = 3,
+        metric: str = "roll_vol_ann",
+        window: str = "rolling_1y",
+        include_nan_pctile: bool = False,
+    ) -> pd.DataFrame:
+        """Construye un cat_df mínimo con estructura compatible con compute_category_snapshot."""
+        import math as _math
+        rows = []
+        for i in range(n_isins):
+            pctile = float(i) / max(n_isins - 1, 1)
+            zscore = float(i - n_isins // 2)
+            if include_nan_pctile and i == 0:
+                pctile = _math.nan
+            rows.append({
+                "isin":        f"ISIN{i:04d}",
+                "metric":      metric,
+                "window":      window,
+                "real_flag":   0,
+                "Fund_Nature": "Renta Variable",
+                "pctile_cat":  pctile,
+                "zscore_cat":  zscore,
+                "cat_p10":     0.1,
+                "cat_p50":     0.5,
+                "cat_p90":     0.9,
+                "cat_p97":     0.97,
+                "cat_n":       n_isins,
+            })
+        return pd.DataFrame(rows)
+
+    def test_returns_list(self):
+        result = cat_signals_from_snapshot(self._make_cat_df())
+        assert isinstance(result, list)
+
+    def test_empty_df_returns_empty_list(self):
+        assert cat_signals_from_snapshot(pd.DataFrame()) == []
+
+    def test_none_df_returns_empty_list(self):
+        assert cat_signals_from_snapshot(None) == []
+
+    def test_two_signals_per_isin(self):
+        """Each ISIN → one pctile_cat row + one zscore_cat row."""
+        result = cat_signals_from_snapshot(self._make_cat_df(n_isins=4))
+        metrics = [r["metric"] for r in result]
+        assert metrics.count("roll_vol_ann_pctile_cat") == 4
+        assert metrics.count("roll_vol_ann_zscore_cat") == 4
+
+    def test_required_keys_present(self):
+        result = cat_signals_from_snapshot(self._make_cat_df(n_isins=2))
+        for r in result:
+            assert "isin"        in r
+            assert "metric"      in r
+            assert "window"      in r
+            assert "value"       in r
+            assert "real_flag"   in r
+            assert "source_rows" in r
+
+    def test_metric_names_suffixed(self):
+        """Metric names must end with _pctile_cat or _zscore_cat."""
+        result = cat_signals_from_snapshot(self._make_cat_df())
+        for r in result:
+            assert r["metric"].endswith("_pctile_cat") or r["metric"].endswith("_zscore_cat")
+
+    def test_nan_pctile_skipped(self):
+        """A NaN pctile_cat value must not produce a row (no NaN values written to DB)."""
+        result = cat_signals_from_snapshot(self._make_cat_df(n_isins=3, include_nan_pctile=True))
+        pctile_rows = [r for r in result if r["metric"].endswith("_pctile_cat")]
+        # ISIN0000 had NaN pctile — should be omitted; only 2 of 3 ISINs emit pctile_cat
+        assert len(pctile_rows) == 2
+
+    def test_values_are_floats(self):
+        result = cat_signals_from_snapshot(self._make_cat_df())
+        for r in result:
+            assert isinstance(r["value"], float)
+
+    def test_pctile_range(self):
+        """pctile_cat values must be in [0, 1]."""
+        result = cat_signals_from_snapshot(self._make_cat_df(n_isins=5))
+        pctile_rows = [r for r in result if r["metric"].endswith("_pctile_cat")]
+        for r in pctile_rows:
+            assert 0.0 <= r["value"] <= 1.0
+
+    def test_source_rows_equals_cat_n(self):
+        """source_rows must equal cat_n from the snapshot row."""
+        result = cat_signals_from_snapshot(self._make_cat_df(n_isins=3))
+        for r in result:
+            assert r["source_rows"] == 3
+
+    def test_multiple_metrics_and_windows(self):
+        """Signals from different (metric, window) combos must coexist without mixing."""
+        df1 = self._make_cat_df(n_isins=2, metric="roll_vol_ann",    window="rolling_1y")
+        df2 = self._make_cat_df(n_isins=2, metric="roll_max_dd",     window="rolling_3y")
+        cat_df = pd.concat([df1, df2], ignore_index=True)
+        result = cat_signals_from_snapshot(cat_df)
+        vol_rows = [r for r in result if "roll_vol_ann" in r["metric"]]
+        dd_rows  = [r for r in result if "roll_max_dd"  in r["metric"]]
+        assert len(vol_rows) == 4  # 2 ISINs × 2 signal types
+        assert len(dd_rows)  == 4
+        for r in vol_rows:
+            assert r["window"] == "rolling_1y"
+        for r in dd_rows:
+            assert r["window"] == "rolling_3y"

@@ -757,9 +757,14 @@ CREATE TABLE IF NOT EXISTS fund_metric_timeseries (
     FOREIGN KEY (isin) REFERENCES fund_master (ISIN) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_fmts_isin_metric  ON fund_metric_timeseries (isin, metric);
-CREATE INDEX IF NOT EXISTS idx_fmts_metric_window ON fund_metric_timeseries (metric, window);
-CREATE INDEX IF NOT EXISTS idx_fmts_date          ON fund_metric_timeseries (date);
+CREATE INDEX IF NOT EXISTS idx_fmts_isin_metric        ON fund_metric_timeseries (isin, metric);
+CREATE INDEX IF NOT EXISTS idx_fmts_metric_window      ON fund_metric_timeseries (metric, window);
+CREATE INDEX IF NOT EXISTS idx_fmts_date               ON fund_metric_timeseries (date);
+-- v28: composite index for the latest-date GROUP BY in the cross-sectional read.
+-- Allows MAX(date) per (metric,window,real_flag) to be index-served instead of
+-- doing a full 14 M-row scan; also covers the join back to the timeseries table.
+CREATE INDEX IF NOT EXISTS idx_fmts_metric_window_real_date
+    ON fund_metric_timeseries (metric, window, real_flag, date);
 
 -- ============================================================
 -- fund_metric_alerts  (v26 — P2 WARN/ALARM engine)
@@ -790,4 +795,17 @@ CREATE INDEX IF NOT EXISTS idx_fma_level      ON fund_metric_alerts (level);
 CREATE INDEX IF NOT EXISTS idx_fma_rule       ON fund_metric_alerts (rule_code);
 CREATE INDEX IF NOT EXISTS idx_fma_isin       ON fund_metric_alerts (isin);
 
+
+-- fund_metric_state  (v27 — idempotency / input-hash cache)
+-- One row per (isin, metric_version): records the SHA-1 fingerprint of the
+-- inputs used in the last successful P2 calculation for that fund.
+-- Pipeline skips a fund when stored hash == current hash (unless --force).
+CREATE TABLE IF NOT EXISTS fund_metric_state (
+    isin             TEXT    NOT NULL,
+    metric_version   TEXT    NOT NULL DEFAULT 'v1',
+    input_hash       TEXT    NOT NULL,           -- SHA-1 of NAV+IPC+code version
+    calculated_at    TEXT    NOT NULL,           -- ISO date of last successful run
+    PRIMARY KEY (isin, metric_version),
+    FOREIGN KEY (isin) REFERENCES fund_master (ISIN) ON DELETE CASCADE
+);
 

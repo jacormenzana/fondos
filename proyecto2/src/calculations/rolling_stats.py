@@ -91,13 +91,15 @@ def compute_rolling_rows(
     Parameters
     ----------
     isin            : identificador del fondo
-    nav_df          : DataFrame con columnas 'date' (DATE o str) y 'NAV' (REAL),
+    nav_df          : DataFrame con columnas 'date' (DATE o str) y 'nav' (REAL),
                       ordenado cronológicamente, índice ignorado.
+                      (Mismo contrato que load_nav() en db_readers.py.)
     rolling_windows : dict {nombre_ventana: tamaño_en_unidades}.
                       Unidades = periodos del nav_df (meses si mensual, días si diario).
     min_obs         : mínimo de observaciones para calcular (evita valores espurios).
-    ipc_df          : opcional — DataFrame con columnas 'date' y 'value' (IPC, base 100
+    ipc_df          : opcional — DataFrame con columnas 'date' y 'ipc_index' (IPC, base 100
                       o ratio). Si se proporciona se calculan también las métricas reales.
+                      (Mismo contrato que load_ipc() en db_readers.py.)
     real_flag_default : flag para la serie nominal (0). Real = 1.
     periods_per_year: 12 para serie mensual, 252 para diaria.
 
@@ -113,7 +115,7 @@ def compute_rolling_rows(
     nav_df = nav_df.copy()
     nav_df["date"] = pd.to_datetime(nav_df["date"])
     nav_df = nav_df.sort_values("date").reset_index(drop=True)
-    nav_series = nav_df["NAV"].to_numpy(dtype=float)
+    nav_series = nav_df["nav"].to_numpy(dtype=float)
     dates = nav_df["date"].tolist()
     n = len(nav_series)
 
@@ -123,7 +125,7 @@ def compute_rolling_rows(
         ipc_df = ipc_df.copy()
         ipc_df["date"] = pd.to_datetime(ipc_df["date"])
         merged = nav_df[["date"]].merge(
-            ipc_df[["date", "value"]].rename(columns={"value": "ipc"}),
+            ipc_df[["date", "ipc_index"]].rename(columns={"ipc_index": "ipc"}),
             on="date", how="left"
         )
         ipc_vals = merged["ipc"].to_numpy(dtype=float)
@@ -456,5 +458,72 @@ def compute_timeseries_snapshots(
                     "real_flag":   int(real_flag),
                     "source_rows": int(cat_row.get("cat_n", n_obs)),
                 })
+
+    return records
+
+
+# ============================================================
+# Category signals from snapshot (no full-table read)
+# ============================================================
+
+def cat_signals_from_snapshot(cat_df: pd.DataFrame) -> list[dict]:
+    """
+    Convierte cat_df (salida de compute_category_snapshot) en filas listas para
+    _write_metrics — una fila pctile_cat y una zscore_cat por (isin, metric, window).
+
+    cat_df ya contiene solo la última fecha (compute_category_snapshot filtra
+    internamente); este helper no hace ninguna lectura adicional de la DB ni
+    materializa la tabla fund_metric_timeseries.
+
+    Reemplaza el uso de compute_timeseries_snapshots sobre la tabla completa
+    para extraer las señales de categoría (RC-2 fix, v28).
+
+    Cumplimiento R-7: no importa pipeline.py ni core.io.
+
+    Parameters
+    ----------
+    cat_df : salida de compute_category_snapshot() (o DataFrame vacío).
+
+    Returns
+    -------
+    Lista de dicts con claves:
+        isin, metric, window, value, real_flag, source_rows
+    """
+    if cat_df is None or cat_df.empty:
+        return []
+
+    records: list[dict] = []
+    for _, row in cat_df.iterrows():
+        isin      = row["isin"]
+        metric    = row["metric"]
+        window    = row["window"]
+        real_flag = int(row["real_flag"])
+        cat_n     = int(row.get("cat_n", 0))
+
+        pctile_cat = row.get("pctile_cat")
+        if pctile_cat is not None and not (
+            isinstance(pctile_cat, float) and math.isnan(pctile_cat)
+        ):
+            records.append({
+                "isin":        isin,
+                "metric":      f"{metric}_pctile_cat",
+                "window":      window,
+                "value":       float(pctile_cat),
+                "real_flag":   real_flag,
+                "source_rows": cat_n,
+            })
+
+        zscore_cat = row.get("zscore_cat")
+        if zscore_cat is not None and not (
+            isinstance(zscore_cat, float) and math.isnan(zscore_cat)
+        ):
+            records.append({
+                "isin":        isin,
+                "metric":      f"{metric}_zscore_cat",
+                "window":      window,
+                "value":       float(zscore_cat),
+                "real_flag":   real_flag,
+                "source_rows": cat_n,
+            })
 
     return records
