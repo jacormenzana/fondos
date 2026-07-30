@@ -58,7 +58,10 @@ import sys
 _ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT))
 
-from core.classify_utils import RFC_INCOMPATIBLE_FAMILIES  # BL-64e DRY (P#11)
+try:
+    from proyecto1.core.classify_utils import RFC_INCOMPATIBLE_FAMILIES  # BL-64e DRY (P#11)
+except ImportError:
+    from core.classify_utils import RFC_INCOMPATIBLE_FAMILIES
 
 
 # ============================================================
