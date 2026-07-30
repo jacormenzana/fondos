@@ -654,9 +654,15 @@ def score_funds(
     regime_p25 = regime_p75 = None
     if suffix:
         ret_col = f"return_ann_{suffix}"
-        if ret_col in df.columns:
+        if ret_col in df.columns and not df[ret_col].isna().all():
             regime_p25 = df[ret_col].quantile(0.25)
             regime_p75 = df[ret_col].quantile(0.75)
+        else:
+            print(
+                f"[WARN] Régimen '{regime}' no tiene métricas históricas en fund_metrics "
+                "(nunca observado en la serie macro disponible). "
+                "Scoring aplicado sin multiplicador empírico de régimen — base score vigente."
+            )
 
     results = []
 

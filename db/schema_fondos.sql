@@ -760,11 +760,13 @@ CREATE TABLE IF NOT EXISTS fund_metric_timeseries (
 CREATE INDEX IF NOT EXISTS idx_fmts_isin_metric        ON fund_metric_timeseries (isin, metric);
 CREATE INDEX IF NOT EXISTS idx_fmts_metric_window      ON fund_metric_timeseries (metric, window);
 CREATE INDEX IF NOT EXISTS idx_fmts_date               ON fund_metric_timeseries (date);
--- v28: composite index for the latest-date GROUP BY in the cross-sectional read.
--- Allows MAX(date) per (metric,window,real_flag) to be index-served instead of
--- doing a full 14 M-row scan; also covers the join back to the timeseries table.
+-- v28: composite index for latest-date GROUP BY in cross-sectional reads.
 CREATE INDEX IF NOT EXISTS idx_fmts_metric_window_real_date
     ON fund_metric_timeseries (metric, window, real_flag, date);
+-- BUG-ROLL-LATEST fix: per-fund max-date subquery now groups by (isin, metric, window,
+-- real_flag) — this covering index makes it index-served on the 16M-row table.
+CREATE INDEX IF NOT EXISTS idx_fmts_isin_metric_window_real_date
+    ON fund_metric_timeseries (isin, metric, window, real_flag, date);
 
 -- ============================================================
 -- fund_metric_alerts  (v26 — P2 WARN/ALARM engine)
@@ -796,15 +798,19 @@ CREATE INDEX IF NOT EXISTS idx_fma_rule       ON fund_metric_alerts (rule_code);
 CREATE INDEX IF NOT EXISTS idx_fma_isin       ON fund_metric_alerts (isin);
 
 
--- fund_metric_state  (v27 — idempotency / input-hash cache)
+-- fund_metric_state  (v27 — idempotency / input-hash cache; EFF-1 OLS cadence)
 -- One row per (isin, metric_version): records the SHA-1 fingerprint of the
 -- inputs used in the last successful P2 calculation for that fund.
 -- Pipeline skips a fund when stored hash == current hash (unless --force).
+-- EFF-1 columns: last_ols_quarter / last_ols_nav_count gate the OLS regression
+-- to quarterly cadence; added at runtime via ALTER TABLE if not present.
 CREATE TABLE IF NOT EXISTS fund_metric_state (
-    isin             TEXT    NOT NULL,
-    metric_version   TEXT    NOT NULL DEFAULT 'v1',
-    input_hash       TEXT    NOT NULL,           -- SHA-1 of NAV+IPC+code version
-    calculated_at    TEXT    NOT NULL,           -- ISO date of last successful run
+    isin                TEXT    NOT NULL,
+    metric_version      TEXT    NOT NULL DEFAULT 'v1',
+    input_hash          TEXT    NOT NULL,           -- SHA-1 of NAV+IPC+code version
+    calculated_at       TEXT    NOT NULL,           -- ISO date of last successful run
+    last_ols_quarter    TEXT,                        -- YYYY-Q of last OLS run (EFF-1)
+    last_ols_nav_count  INTEGER,                     -- NAV row count at last OLS (EFF-1)
     PRIMARY KEY (isin, metric_version),
     FOREIGN KEY (isin) REFERENCES fund_master (ISIN) ON DELETE CASCADE
 );

@@ -185,6 +185,44 @@ def _upsert_metric_state(
 
 
 # ============================================================
+# OLS quarterly-cadence helpers (EFF-1)
+# ============================================================
+
+def _ols_is_fresh(
+    conn: sqlite3.Connection,
+    isin: str,
+    nav_count: int,
+    current_quarter: str,
+) -> bool:
+    """True if OLS betas are still fresh: computed this quarter and NAV grew < 3 rows."""
+    row = conn.execute(
+        "SELECT last_ols_quarter, last_ols_nav_count FROM fund_metric_state "
+        "WHERE isin=? AND metric_version=?",
+        (isin, METRIC_VERSION),
+    ).fetchone()
+    if not row or row[0] is None:
+        return False
+    return row[0] == current_quarter and (nav_count - (row[1] or 0)) < 3
+
+
+def _update_ols_state(
+    conn: sqlite3.Connection,
+    isin: str,
+    current_quarter: str,
+    nav_count: int,
+    dry_run: bool,
+) -> None:
+    """Record that OLS was computed for this fund in current_quarter."""
+    if dry_run:
+        return
+    conn.execute(
+        "UPDATE fund_metric_state SET last_ols_quarter=?, last_ols_nav_count=? "
+        "WHERE isin=? AND metric_version=?",
+        (current_quarter, nav_count, isin, METRIC_VERSION),
+    )
+
+
+# ============================================================
 # Helpers de escritura
 # ============================================================
 
@@ -490,6 +528,14 @@ def run(
 
         conn = get_connection()
 
+        # EFF-1: add OLS cadence columns if not yet present (idempotent)
+        for _col, _ctype in [("last_ols_quarter", "TEXT"), ("last_ols_nav_count", "INTEGER")]:
+            try:
+                conn.execute(f"ALTER TABLE fund_metric_state ADD COLUMN {_col} {_ctype}")
+                conn.commit()
+            except sqlite3.OperationalError:
+                pass  # column already exists
+
         # -- Cargar IPC --------------------------------------------
         if not ipc_available(conn, REGION_IPC):
             logger.warning(
@@ -594,8 +640,14 @@ def run(
                 return
 
         total = len(isins)
+        # EFF-1: OLS quarter identifier (YYYY-Q) — stable for the whole run
+        current_quarter = f"{date.today().year}-{(date.today().month - 1) // 3 + 1}"
+        # In-memory collection for cross-sectional rolling snapshot (avoids 2.5h SQL
+        # on 16.6M-row fund_metric_timeseries; fund→{(metric,window,flag):(date,val)}).
+        _latest_roll: dict[str, dict[tuple, tuple]] = {}
         logger.info(
             f"Procesando {total} fondos | dry_run={dry_run} | "
+            f"OLS cadencia trimestral Q{current_quarter} | "
             f"IPC={'SI' if ipc_df is not None else 'NO'}"
         )
 
@@ -756,23 +808,32 @@ def run(
 
                 # ---- Familias que requieren macro data availability --
                 _has_macro = not macro_df.empty and len(nav_df) >= MIN_NAV_MACRO
+                _ols_ran   = False   # EFF-1: tracks whether OLS was computed this fund
 
                 if _has_macro:
-                    # -- Sensibilidad macro --------------------------
+                    # -- Sensibilidad macro (OLS quarterly cadence, EFF-1) --
                     if _want("macro"):
-                        sens_list = compute_macro_sensitivity(
-                            nav_df, macro_df,
-                            geography=geography,
-                            development_status=development_status,
-                        )
-                        sens_rows = [
-                            {"metric": m, "value": v, "real_flag": rf,
-                             "source_rows": len(nav_df)}
-                            for m, v, rf in sens_list
-                        ]
-                        isin_written += _write_metrics(
-                            conn, isin, sens_rows, "since_inception", dry_run
-                        )
+                        _skip_ols = _ols_is_fresh(conn, isin, len(nav_df), current_quarter)
+                        if _skip_ols:
+                            logger.debug(
+                                f"  OLS skip ({isin}): fresh Q{current_quarter}, "
+                                f"nav_count={len(nav_df)}"
+                            )
+                        else:
+                            sens_list = compute_macro_sensitivity(
+                                nav_df, macro_df,
+                                geography=geography,
+                                development_status=development_status,
+                            )
+                            sens_rows = [
+                                {"metric": m, "value": v, "real_flag": rf,
+                                 "source_rows": len(nav_df)}
+                                for m, v, rf in sens_list
+                            ]
+                            isin_written += _write_metrics(
+                                conn, isin, sens_rows, "since_inception", dry_run
+                            )
+                            _ols_ran = True
 
                     # -- Momentum ------------------------------------
                     if _want("momentum") and fund_nature:
@@ -855,6 +916,18 @@ def run(
                         _log(conn, isin, "ROLLING", "OK", "all_windows",
                              f"{ts_written} filas timeseries rolling", dry_run)
 
+                    # Collect latest (date, value) per (metric, window, real_flag) for
+                    # post-loop cross-sectional snapshot — avoids the 2.5h SQL query.
+                    if roll_rows:
+                        fund_latest: dict = {}
+                        for _r in roll_rows:
+                            _k = (_r["metric"], _r["window"], int(_r["real_flag"]))
+                            _ex = fund_latest.get(_k)
+                            if _ex is None or _r["date"] > _ex[0]:
+                                fund_latest[_k] = (_r["date"], _r["value"])
+                        if fund_latest:
+                            _latest_roll[isin] = fund_latest
+
                     # pctile_self: percentil temporal del último valor vs propio
                     # historial. roll_rows ya está en RAM — no se necesita leer la DB.
                     if roll_rows:
@@ -893,6 +966,9 @@ def run(
                 # v27: upsert input-hash para skip en proximas ejecuciones
                 if isin_written > 0:
                     _upsert_metric_state(conn, isin, current_hash, dry_run)
+                    # EFF-1: persist OLS quarter so next run in same quarter skips
+                    if _ols_ran:
+                        _update_ols_state(conn, isin, current_quarter, len(nav_df), dry_run)
 
                 n_processed += 1
 
@@ -917,31 +993,61 @@ def run(
                 "[ROLLING] Calculando snapshot cross-seccional (ultima fecha)..."
             )
             try:
-                # Latest-date-only join — served by idx_fmts_metric_window_real_date.
-                # Returns ~(fondos × 3 metrics × 5 windows × 2 flags) rows ≈ few-MB,
-                # regardless of how large the full timeseries history is.
-                latest_df = pd.read_sql(
-                    """SELECT t.isin, t.metric, t.window, t.date,
-                              t.value, t.real_flag, m.Fund_Nature
-                       FROM fund_metric_timeseries t
-                       JOIN (
-                           SELECT metric, window, real_flag, MAX(date) AS mx
-                           FROM fund_metric_timeseries
-                           WHERE metric IN (
+                # Build latest_df for cross-sectional category snapshot.
+                # PRIMARY PATH: in-memory collection from per-fund loop (_latest_roll).
+                #   Populated for all funds processed in THIS run (not hash-skipped).
+                #   Avoids the 2.5h SQL self-join on 16.6M rows.
+                # FALLBACK PATH: DB query when most funds were hash-skipped (monthly
+                #   incremental runs); DB query is slow but necessary for full coverage.
+                if len(_latest_roll) >= max(50, total // 10):
+                    logger.info(
+                        f"[ROLLING] Usando coleccion en memoria: "
+                        f"{len(_latest_roll)} fondos procesados"
+                    )
+                    _fn_map = {r[0]: r[1] for r in conn.execute(
+                        "SELECT ISIN, Fund_Nature FROM fund_master"
+                    ).fetchall()}
+                    _recs = []
+                    for _isin_k, _mv in _latest_roll.items():
+                        _fn = _fn_map.get(_isin_k)
+                        for (_m, _w, _f), (_dv, _val) in _mv.items():
+                            _recs.append({
+                                "isin": _isin_k, "metric": _m, "window": _w,
+                                "date": _dv, "value": _val, "real_flag": _f,
+                                "Fund_Nature": _fn,
+                            })
+                    latest_df = pd.DataFrame(_recs) if _recs else pd.DataFrame()
+                else:
+                    # Fallback: DB query (slow on large timeseries; correct for
+                    # hash-skip-dominated runs). compute_category_snapshot handles
+                    # per-fund latest internally after BUG-ROLL-LATEST-B fix.
+                    logger.info(
+                        f"[ROLLING] Fallback DB query (solo {len(_latest_roll)} "
+                        "fondos en memoria — mayoría hash-skipped)"
+                    )
+                    latest_df = pd.read_sql(
+                        """SELECT t.isin, t.metric, t.window, t.date,
+                                  t.value, t.real_flag, m.Fund_Nature
+                           FROM fund_metric_timeseries t
+                           JOIN (
+                               SELECT isin, metric, window, real_flag, MAX(date) AS mx
+                               FROM fund_metric_timeseries
+                               WHERE metric IN (
+                                   'roll_vol_ann','roll_max_dd','roll_return_ann'
+                               )
+                               GROUP BY isin, metric, window, real_flag
+                           ) latest
+                             ON  t.isin      = latest.isin
+                             AND t.metric    = latest.metric
+                             AND t.window    = latest.window
+                             AND t.real_flag = latest.real_flag
+                             AND t.date      = latest.mx
+                           LEFT JOIN fund_master m ON t.isin = m.ISIN
+                           WHERE t.metric IN (
                                'roll_vol_ann','roll_max_dd','roll_return_ann'
-                           )
-                           GROUP BY metric, window, real_flag
-                       ) latest
-                         ON  t.metric    = latest.metric
-                         AND t.window    = latest.window
-                         AND t.real_flag = latest.real_flag
-                         AND t.date      = latest.mx
-                       LEFT JOIN fund_master m ON t.isin = m.ISIN
-                       WHERE t.metric IN (
-                           'roll_vol_ann','roll_max_dd','roll_return_ann'
-                       )""",
-                    conn
-                )
+                           )""",
+                        conn
+                    )
                 if not latest_df.empty:
                     # compute_category_snapshot expects 'date' column —
                     # latest_df already has it (the latest date only).

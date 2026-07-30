@@ -60,6 +60,10 @@ REGIMES = [
     "Expansion",
 ]
 
+# Suffix used in fund_metrics column names (e.g. return_ann_expansion).
+# Derived from REGIMES: lowercased regime name (underscores preserved).
+_REGIME_SUFFIX: dict[str, str] = {r: r.lower() for r in REGIMES}
+
 # Pesos de sub-carteras por regimen (Defensiva, Equilibrada, Dinamica)
 REGIME_WEIGHTS = {
     "Crisis_Financiera":     (0.70, 0.25, 0.05),

@@ -221,15 +221,15 @@ def compute_category_snapshot(
     if df.empty:
         return pd.DataFrame()
 
-    # Última fecha disponible por (metric, window, real_flag)
-    latest_date = (
-        df.groupby(["metric", "window", "real_flag"])["date"]
-        .max()
-        .reset_index()
-        .rename(columns={"date": "latest_date"})
+    # Última fila por fondo (isin, metric, window, real_flag) — per-fund latest.
+    # Using global MAX(date) per (metric, window, real_flag) is WRONG: funds have
+    # different last-date stamps; the global peak date matches only a handful of
+    # funds, starving min_peers. Per-fund latest is correct for peer ranking.
+    df = (
+        df.sort_values("date")
+        .groupby(["isin", "metric", "window", "real_flag"], as_index=False)
+        .last()
     )
-    df = df.merge(latest_date, on=["metric", "window", "real_flag"])
-    df = df[df["date"] == df["latest_date"]].drop(columns=["latest_date"])
 
     if df.empty:
         return pd.DataFrame()
