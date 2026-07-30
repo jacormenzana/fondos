@@ -603,7 +603,25 @@ def run(
 
         # -- Universo de ISINs -------------------------------------
         if isins is None:
+            # P2-01 fix: get_isins_with_nav filters to ISINs present in
+            # fund_master (INNER JOIN). Compare against the raw count to
+            # surface any future mismatch early.
+            _nav_all = conn.execute(
+                "SELECT COUNT(DISTINCT ISIN) FROM fund_nav_monthly"
+            ).fetchone()[0]
             isins = get_isins_with_nav(conn)
+            _nav_master = len(isins)
+            if _nav_master < _nav_all:
+                logger.warning(
+                    f"[P2-01] {_nav_all - _nav_master} ISINs en fund_nav_monthly "
+                    f"sin entrada en fund_master (excluidos del universo P2). "
+                    f"Ejecuta P1 para clasificar esos fondos."
+                )
+            else:
+                logger.info(
+                    f"[P2-01] ISIN match OK: {_nav_master}/{_nav_all} ISINs "
+                    f"de fund_nav_monthly presentes en fund_master."
+                )
 
         if not isins:
             logger.info(

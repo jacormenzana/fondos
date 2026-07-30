@@ -50,14 +50,26 @@ def load_nav(conn: sqlite3.Connection, isin: str) -> pd.DataFrame:
 
 
 def get_isins_with_nav(conn: sqlite3.Connection) -> list[str]:
-    """Devuelve la lista de ISINs con al menos una fila en fund_nav_monthly.
+    """Devuelve la lista de ISINs con al menos una fila en fund_nav_monthly
+    Y con entrada en fund_master (P2-01 / BUG-SIGNAL-DIAG).
 
     Incluye fondos de oferta antigua (In_Current_Universe=0): las metricas P2
     se calculan para todos los fondos porque los huerfanos pueden seguir en
     cartera y necesitan seguimiento de rendimiento.
+
+    El INNER JOIN a fund_master es defensivo: ISINs sin registro en fund_master
+    carecen de Fund_Nature y serían silenciosamente descartados por dropna() en
+    compute_category_snapshot(), desinflando los peer groups por debajo del
+    umbral min_peers=5 y produciendo cero señales de categoria.  Los ISINs
+    ausentes de fund_master son invariablemente datos de NAV cargados antes de
+    que el fondo haya pasado por el pipeline P1; la correcta accion es excluir
+    esos ISINs del universo P2 hasta que P1 los clasifique.
     """
     rows = conn.execute(
-        "SELECT DISTINCT ISIN FROM fund_nav_monthly ORDER BY ISIN"
+        """SELECT DISTINCT n.ISIN
+           FROM fund_nav_monthly n
+           INNER JOIN fund_master m USING (ISIN)
+           ORDER BY n.ISIN"""
     ).fetchall()
     return [r[0] for r in rows]
 
@@ -92,13 +104,17 @@ def load_nav_daily(conn: sqlite3.Connection, isin: str) -> pd.DataFrame:
 
 
 def get_isins_with_nav_daily(conn: sqlite3.Connection) -> list[str]:
-    """Devuelve la lista de ISINs con al menos una fila en fund_nav_daily.
+    """Devuelve la lista de ISINs con al menos una fila en fund_nav_daily
+    Y con entrada en fund_master (simetrico con get_isins_with_nav, P2-01).
 
     Incluye fondos huerfanos: misma razon que get_isins_with_nav (seguimiento
     de posiciones existentes).
     """
     rows = conn.execute(
-        "SELECT DISTINCT ISIN FROM fund_nav_daily ORDER BY ISIN"
+        """SELECT DISTINCT n.ISIN
+           FROM fund_nav_daily n
+           INNER JOIN fund_master m USING (ISIN)
+           ORDER BY n.ISIN"""
     ).fetchall()
     return [r[0] for r in rows]
 
