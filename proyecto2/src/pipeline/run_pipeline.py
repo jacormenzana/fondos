@@ -461,7 +461,7 @@ _ALL_METRIC_FAMILIES = frozenset({
 
 # Bump this string whenever the calculation logic changes to force a
 # cache-miss in fund_metric_state even when NAV/IPC inputs are unchanged.
-CALC_VERSION: str = "20260727"
+CALC_VERSION: str = "20260730"
 
 
 def run(
