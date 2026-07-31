@@ -1724,7 +1724,7 @@ def run_block(
             # la trazabilidad del fondo en BD.
             #
             # Lectura BD R-4 (mantenida de v29).
-            # Umbrales: Monetario SRRI≥3, RFC SRRI≥4 (alineados con los bloques).
+            # Umbrales: Monetario SRRI≥3, RFC SRRI≥5 (alineado con _NATURE_VOL_BANDS={2,3,4}).
             _nat44_bd_row = conn.execute(
                 "SELECT Fund_Nature, SRRI FROM fund_master WHERE ISIN=?", (isin,)
             ).fetchone()
@@ -1758,9 +1758,15 @@ def run_block(
                     or classification.get("Vehicle_Structure") == "Money Market Fund"
                     or classification.get("MMF_Structure") not in (None, "Not Applicable")
                 )
+                # FIX-BL44-RFC-SRRI4-1 (2026-07-31): align RFCP threshold with
+                # _NATURE_VOL_BANDS["Renta Fija Corto Plazo"] = {2,3,4} which
+                # explicitly includes band 4 as valid for EM credit / covered bonds.
+                # Old threshold >= 4 reclassified genuinely short-duration EM bond
+                # funds (e.g. BSF EM DURAT BOND SRRI=4) to Restantes. Changed to
+                # >= 5, which catches real SRRI mismatches while allowing SRRI=4.
                 _reclasify44 = (
                     (_nat44 == "Monetario" and _srri44_int >= 3 and not _bl44_already_handled)
-                    or (_nat44 == "Renta Fija Corto Plazo" and _srri44_int >= 4)
+                    or (_nat44 == "Renta Fija Corto Plazo" and _srri44_int >= 5)
                 )
                 # BL-44-FX (2026-07-05, extiende la decisión de usuario del
                 # 29-abr-2026): antes de forzar 'Restantes' incondicionalmente,

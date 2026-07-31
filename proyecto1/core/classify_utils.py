@@ -1886,16 +1886,26 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
         # is NOT included to avoid triggering has_ar on L/S-equity funds that
         # lack a cash/AR-mandate/header signal.
         "posiciones largas y cortas",
+        # FIX-ALTRV-HEDGEFUND-1 (2026-07-31): Spanish regulatory term for
+        # hedge funds / free-investment funds ("fondos de inversión libre").
+        # Fires for hedge-fund tracker funds (GS Absolute Return Tracker) whose
+        # KIID objective describes replicating hedge-fund beta without using the
+        # phrase "absolute return" in the window.
+        "fondos de inversión libre",
     ])
     # FIX-HCASHBENCH-ESTR-1 (2026-07-23): bare "estr" matched inside
     # "estrategia" (Spanish for "strategy"), making has_cash_bench spuriously
     # True for almost any Spanish-language KIID.  Fix: word-bounded \bestr\b.
     # Other terms ("eonia", "sonia", etc.) are already specific enough.
+    # FIX-ALTRV-TBILL-1 (2026-07-31): add "treasury bill" as cash-proxy signal.
+    # Root cause: Franklin Alternative Strategies and similar T-Bill benchmarked
+    # AR funds have the benchmark text in the objective window but not as €STR/
+    # EONIA/SOFR. Only fires when has_ar is also True (safeguard).
     has_cash_bench = (
         "€str" in w
         or bool(re.search(r'\bestr\b', w))
         or any(k in w for k in ["eonia", "sonia", "sofr", "overnight",
-                                 "tasa libre de riesgo"])
+                                 "tasa libre de riesgo", "treasury bill"])
     )
     # Explicit AR mandate language (first-person, not table-of-contents noise):
     # catches funds that have a genuine AR objective but no explicit cash bench.
@@ -1920,7 +1930,20 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
         "absolute return", "retorno absoluto", "market neutral",
         "long/short", "long short",
     ])
-    if has_ar and (has_cash_bench or _ar_mandate_explicit or _ar_in_header):
+    # FIX-ALTRV-HEDGEFUND-1 (2026-07-31): AR signal in the pre-window product-
+    # name section (first 600 chars of raw text, before the objective window).
+    # DDF format puts "Producto [Fund Name]" at ~390-450 chars — just before the
+    # 500-char window start — making it invisible to has_ar and _ar_in_header.
+    # Guard: _has_bond_in_header suppresses "Absolute Return Bond" RF funds so
+    # they don't trigger via the header path.
+    _ar_in_pre_header = not _has_bond_in_header and any(k in _header for k in [
+        "absolute return", "retorno absoluto", "market neutral",
+    ])
+    # Alternativo fires when: AR signal + at least one corroborating signal.
+    # Corroborators: cash bench, explicit mandate phrasing, AR in the objective
+    # window header, or AR in the product-name pre-window (DDF "Producto" line).
+    if has_ar and (has_cash_bench or _ar_mandate_explicit or _ar_in_header
+                   or _ar_in_pre_header):
         return "Alternativo"
 
     # FIX-DNCA-ALTRV-1 (2026-07-23): long/short relative-value fixed-income
