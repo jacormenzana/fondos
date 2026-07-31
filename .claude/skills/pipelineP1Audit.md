@@ -117,21 +117,12 @@ Report at end:
 
 ---
 
-## 5. Known Open Findings (as of 2026-07-15)
 
-Track these — do not re-investigate unless new evidence:
 
-| Fund | Issue | Status |
-|------|-------|--------|
-| THREAD AM SM COMP ×2 | Geography=Europe (stale); English "Tipo:" header not matched by product-line extractor | Stale, no code fix available |
-| CANDRIAM LS CREDIT FR0010760694 | Geography=North America (stale); multi-region mandate | Stale |
-| VONTOBEL EM CORP BN LU1984203957 | Geography=North America (stale); EM bond fund | Stale |
-| BGF USD Short Duration ×2 | B2 Geography: fm=North America, bmk=Europe — hedged EUR share class uses EU rate proxy | Benign |
-| Franklin ALT ST ×2 | B2 Geography: fm=Europe, bmk=North America — EU fund uses US Conservative Allocation proxy | Benign |
-| JPM US ESG EQUITY EURHDG | WRONG_DOC; stale Geography=Asia-Pacific; needs correct KIID URL | Pending KIID fix |
-| FAM_000947 DWS MULTI OPP | Master file name collision; two funds same truncated name → FamilyBuilder WARN | Manual Excel fix |
+### 5. Gap Analysis & Decision-Quality Enhancements
+- Identify missing KPIs/metrics that would raise P2 metrics and indicators precision and reliability or P3 decision precision and reliability.
 
-**Expecting self-heal on next pipeline run (FIX-GEO-11/12 already committed):**
-- BGF Emerging Europe → Geography=Emergentes (was Global)
-- Robeco Indian Equity → Geography=India (was Asia-Pacific)
-- 6× Fidelity F AS EQ ESG → Geography=Asia-Pacific (was Europe/North America)
+### 6. Backlog Artifact Management
+- Update backlog sections: advance existing action items (status changes), add new items, close items whose root causes are resolved.
+- Update other backlog sections if warranted. Preserve existing structure and history — append/annotate, do not rewrite.
+
