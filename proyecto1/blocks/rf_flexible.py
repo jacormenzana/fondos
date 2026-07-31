@@ -18,6 +18,7 @@ from core.classify_utils import (
     detect_profile_from_srri as _detect_profile_from_srri,
     detect_kiid_attributes,
     apply_semantic_validation,
+    resolve_rf_subtype,
 )
 import re
 
@@ -183,6 +184,13 @@ def classify_fund(
     result["Benchmark_Type"] = _detect_benchmark_type(
         None, None
     )
+
+    # RF-RFF-POLICY-2026-07-16 / FIX-P1-RFC-TRES-1: if the KIID declares an
+    # explicit ≤3y duration mandate, override to RFC regardless of block universe.
+    # Prevents the block-ordering issue where rf_flexible claims funds that
+    # resolve_rf_subtype() would correctly send to Renta Fija Corto Plazo.
+    if resolve_rf_subtype(name_l, kiid_text or "") == "Renta Fija Corto Plazo":
+        result["Fund_Nature"] = "Renta Fija Corto Plazo"
 
     return apply_semantic_validation(result, fund_name)
 

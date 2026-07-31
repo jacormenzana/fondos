@@ -2829,16 +2829,19 @@ def resolve_rf_subtype(name_l: str, kiid_text: str) -> str:
 
     # RF-RFF-POLICY-2026-07-16: límite de duración explícito en años ≤ 3.
     # Cubre:
-    #   ES: "no será superior a 3 años" / "no excederá de 2 años" /
-    #       "inferior a 3 años" / "menor de 2 años"
+    #   ES: "no será superior a 3 años" / "no es superior a tres años" /
+    #       "no excederá de 2 años" / "inferior a 3 años" / "menor de dos años"
     #   EN: "not exceed(ing) 3 years" / "no more than 2 years" /
     #       "up to 3 years" (standalone, broader than keyword above)
+    # FIX-P1-RFC-TRES-1 (2026-07-31): added "es" to verb alternation and
+    #   (?:[1-3]|un|dos|tres) to cover word-form Spanish numbers alongside digits.
+    _N_ANIOS = r'(?:[1-3]|un|dos|tres)'
     _duracion_anios_corta = bool(re.search(
-        # ES: no (será/podrá ser) superior/excederá (a/de) N años;
+        # ES: no (es/será/podrá ser) superior/excederá (a/de) N años;
         #     inferior/menor (a/de) N años
-        r'duraci[oó]n[^.]{0,80}no\s+(?:(?:ser[aá]|podr[aá]\s+ser|puede\s+ser)\s+)?'
-        r'(?:superior|exceder[aá])\s+(?:a\s+|de\s+)?[1-3]\s+a[ñn]'
-        r'|(?:inferior|menor)\s+(?:a|de)\s+[1-3]\s+a[ñn]'
+        r'duraci[oó]n[^.]{0,80}no\s+(?:(?:es|ser[aá]|podr[aá]\s+ser|puede\s+ser)\s+)?'
+        r'(?:superior|exceder[aá])\s+(?:a\s+|de\s+)?' + _N_ANIOS + r'\s+a[ñn]'
+        r'|(?:inferior|menor)\s+(?:a|de)\s+' + _N_ANIOS + r'\s+a[ñn]'
         # EN: not exceed(ing) / no more than / up to N years
         r'|duration[^.]{0,80}(?:not\s+exceed(?:ing)?|no\s+more\s+than)'
         r'\s+[1-3]\s+year',
