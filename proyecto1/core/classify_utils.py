@@ -1829,6 +1829,25 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
         ventana_texto, re.DOTALL
     ))
 
+    # FIX-MMF-COMMODITY-OVERLAY-1 (2026-07-31): synthetic commodity funds hold
+    # "short-term money market instruments" as SWAP COLLATERAL while their stated
+    # objective is to track a commodity index (VONTOBEL COMMODITY: "aims to
+    # participate in the growth of the commodity markets ... exposed to indices
+    # from the Bloomberg Commodity Indexes ... swap transactions").  The STRONG
+    # marker "short-term money market" matched INSIDE "short-term money market
+    # instruments" — a holding/collateral phrase, not the MMFR self-identification
+    # "... money market FUND" — so _strong_mmf fired Monetario before control
+    # could reach the commodity->Alternativo branch (~line 1943 below).  Suppress
+    # the Monetario branch when a commodity-index mandate signal is present so the
+    # fund falls through to that branch (which returns Alternativo when no equity
+    # mandate is present).  Signals mirror that branch.  Measured blast radius:
+    # exactly 1 fund (only Monetario member whose KIID mentions commodities).
+    _commodity_overlay = any(k in ventana_texto for k in [
+        "bloomberg commodity", "commodity index total return",
+        "índice de materias primas bloomberg",
+        "growth of the commodity markets", "commodity markets",
+    ])
+
     # Evaluación de la lógica
     # FIX-MMF-ENUM-NEGATION-1 (2026-07-25): STRONG markers fire unconditionally;
     # WEAK markers are suppressed when the bond-enumeration or risk-comparison
@@ -1849,7 +1868,8 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
             and not _minority_fraction_mmf
             and not _bond_primary_enumerated_mmf
             and not _defensive_cash_clause
-            and not _target_maturity_bond):
+            and not _target_maturity_bond
+            and not _commodity_overlay):
         return "Monetario"
 
     # ── A partir de aquí usar ventana objetivo ───────────────────────────────
