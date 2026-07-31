@@ -149,7 +149,9 @@ _SQL_SERIES = """
     ORDER BY t.isin, t.metric, t.window, t.date
 """
 
-# ── SQL: métricas escalares desde fund_metrics ────────────────────────────────
+# ── SQL: métricas escalares desde fund_metrics (solo ISINs seleccionados) ─────
+# Siempre se filtra por ISIN (los auto-seleccionados o los pasados por --isin)
+# para evitar cargar toda la tabla fund_metrics (puede ser > 200 K filas).
 _SQL_METRICS = """
     SELECT fm.isin, fm.metric, fm.horizon, fm.value,
            m.Fund_Name, m.Fund_Nature, m.SRRI
@@ -157,8 +159,8 @@ _SQL_METRICS = """
     LEFT JOIN fund_master m ON fm.isin = m.ISIN
     WHERE fm.real_flag = 0
       AND fm.metric IN ({metric_in})
+      AND fm.isin IN ({isin_in})
       AND fm.value IS NOT NULL
-    {nature_clause}
 """
 
 # ── SQL: alertas (original conservado) ────────────────────────────────────────
@@ -197,9 +199,13 @@ def _load_series(conn: sqlite3.Connection, isins: list[str]) -> list:
     return conn.execute(_SQL_SERIES.format(ph=ph), isins).fetchall()
 
 
-def _load_scalar_metrics(conn: sqlite3.Connection, nature: str | None = None) -> list:
+def _load_scalar_metrics(conn: sqlite3.Connection, isins: list[str]) -> list:
+    """Carga métricas escalares para los ISINs seleccionados (max 8)."""
+    if not isins:
+        return []
+    isin_in = ",".join(f"'{i}'" for i in isins)
     return conn.execute(
-        _SQL_METRICS.format(metric_in=_METRIC_IN, nature_clause=_nclause(nature))
+        _SQL_METRICS.format(metric_in=_METRIC_IN, isin_in=isin_in)
     ).fetchall()
 
 
@@ -801,21 +807,21 @@ def generate_dashboard(
     """
     conn = sqlite3.connect(str(db_path), timeout=60)
     try:
-        print(f"[1/5] Cargando snapshot (tier-1)…")
+        print("[1/5] Cargando snapshot (tier-1, rolling_1y)…", flush=True)
         snap_rows = _load_snapshot(conn, nature)
 
-        print(f"[2/5] Cargando alertas…")
+        print(f"[2/5] Cargando alertas…", flush=True)
         al_rows   = _load_alerts(conn, nature)
 
         # Determinar ISINs a graficar
         auto_isins = isins if isins else _auto_select_isins(al_rows)
         auto_isins = auto_isins[:8]  # hard cap
 
-        print(f"[3/5] Cargando series para {len(auto_isins)} ISINs (tier-2)…")
+        print(f"[3/5] Cargando series para {len(auto_isins)} ISINs (tier-2)…", flush=True)
         series_rows = _load_series(conn, auto_isins)
 
-        print(f"[4/5] Cargando métricas escalares…")
-        metric_rows = _load_scalar_metrics(conn, nature)
+        print(f"[4/5] Cargando métricas escalares para {len(auto_isins)} ISINs…", flush=True)
+        metric_rows = _load_scalar_metrics(conn, auto_isins)
 
         natures = [r[0] for r in conn.execute(_SQL_NATURES).fetchall()]
     finally:
@@ -834,7 +840,7 @@ def generate_dashboard(
         output_path = out_dir / f"rolling_dashboard{suffix}_{generated_at}.html"
 
     Path(output_path).write_text(html, encoding="utf-8")
-    print(f"[5/5] Dashboard generado: {output_path}")
+    print(f"[5/5] Dashboard generado: {output_path}", flush=True)
     print(
         f"      Snapshot: {len(snap_rows)} filas | "
         f"Series: {len(series_rows)} filas | "
