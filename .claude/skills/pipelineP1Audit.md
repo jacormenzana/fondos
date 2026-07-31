@@ -117,12 +117,41 @@ Report at end:
 
 ---
 
+## 5. Cross-Project Gap Analysis (P1 → P2 / P3 data sufficiency)
 
+**Objective:** assess whether the data surface that **P1 owns and persists** (classification
+attributes, data-quality signals, benchmark/family/cost/SRRI metadata) gives the downstream
+projects everything they need, and identify **P1-side KPIs or attributes** — new or hardened —
+whose addition would raise **P2 metric/indicator precision and reliability** or improve **P3
+regime-scoring and portfolio decisions**. This is about what P1 can *supply upstream*, not about
+metrics that are P2/P3's own responsibility.
 
-### 5. Gap Analysis & Decision-Quality Enhancements
-- Identify missing KPIs/metrics that would raise P2 metrics and indicators precision and reliability or P3 decision precision and reliability.
+- **Map the consumed surface.** Enumerate the P1 attributes/columns P2 and P3 actually read
+  (e.g. `Fund_Nature`, `Credit_Quality`, `Geography`, `SRRI`, `Investment_Universe`, benchmark
+  asset class, `In_Current_Universe`). Flag any with high NULL/sentinel rates, low classifier
+  confidence, or granularity too coarse for the downstream use.
+- **Diagnose the downstream impact.** For each weak attribute, name the concrete P2 metric or P3
+  decision it degrades (e.g. missing `Credit_Quality` → weaker P3 Defensiva hard-filter; coarse
+  `Geography` → noisier P2 macro-sensitivity attribution).
+- **Propose the enhancement.** State the fix precisely: the new/refined P1 KPI or attribute, the
+  P1 module that would own it, the expected reliability/precision gain, and the effort/risk.
+  Distinguish "P1 should provide this" from "genuinely a P2/P3 concern — out of scope here".
+- **Respect the architecture.** Flow is unidirectional P1 → P2 → P3; do not propose P1 consuming
+  P2/P3 outputs except the single bounded, accepted `srri_nav` feedback (see `AGENTS.md`).
 
-### 6. Backlog Artifact Management
-- Update backlog sections: advance existing action items (status changes), add new items, close items whose root causes are resolved.
-- Update other backlog sections if warranted. Preserve existing structure and history — append/annotate, do not rewrite.
+## 6. Integrated Backlog Artifact — automated maintenance
+
+**Objective:** keep the shared **integrated incident-backlog artifact** (the cross-P1/P2/P3 action-
+item register) current as an automatic by-product of every audit, so it always reflects the live
+state of open work without manual bookkeeping. Locate the artifact on invocation; if its path is
+ambiguous, ask the user before writing.
+
+- **Reconcile against this session's findings.** Advance in-progress items (status change + the
+  evidence/measurement that moved them); add newly discovered items (root-cause hypothesis, owning
+  module, severity, affected ISIN count); close items whose root cause is resolved, linking the fix
+  commit/tag.
+- **Refresh ancillary sections when warranted** — open-vs-closed rollups, summary counts, next-action
+  recommendations, and dates (convert relative dates to absolute).
+- **Preserve structure and history.** Append or annotate in place; never rewrite, reorder, or drop
+  prior entries. The artifact is an auditable record, not a scratchpad.
 
