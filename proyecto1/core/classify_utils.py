@@ -1528,6 +1528,14 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
         "equity" in _header          # "AsiaPacificEquityFund", "EquityFund"
         or "equities" in _header
         or "renta variable" in _header
+        # FIX-RV-ARTIFICIAL-INTELLIGENCE-1 (2026-08-13): thematic AI/tech funds
+        # declare "artificial intelligence fund" in their KIID product name
+        # (first 600 chars).  The abbreviated fund name ("POLAR CAP ART INT")
+        # carries no recognisable equity keyword; the KIID header is the only
+        # reliable signal.  Guard: only fire when no bond/FI signal is present
+        # in the header (rules out hypothetical "AI bond fund" edge cases).
+        or ("artificial intelligence" in _header
+            and "bond" not in _header and "fixed income" not in _header)
     )
     _has_bond_in_header = (
         "bond" in _header
@@ -2079,6 +2087,18 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
         r'\s+(?:6[0-9]|[7-9]\d|100)\s*%[^.]{0,80}(?:en\s+)?'
         r'(?:renta\s+variable|acciones)\b',
         w
+    # FIX-RV-EN-LARGEEQ-MANDATE-1 (2026-08-13): extend the large-equity-mandate
+    # guard to English ("at least / at a minimum of X% in equities").
+    # Root cause: _has_large_equity_mandate was Spanish-only, so the early
+    # Mixtos checks ("equities, bonds" CSV — FIX-MIXTOS-EN-EQUITIES-BONDS-1)
+    # could override a ≥60% English equity mandate when "equities" appeared
+    # first in a comma-separated list that also mentioned "bonds".
+    # English threshold kept at 60% to match the Spanish guard.
+    )) or bool(re.search(
+        r'(?:at\s+least|at\s+a\s+minimum\s+of)'
+        r'\s+(?:6[0-9]|[7-9]\d|100)\s*%[^.]{0,80}'
+        r'(?:in\s+)?equit(?:y|ies)\b',
+        w
     ))
 
     # FIX-B1-MIXTO-ENUM (2026-07-13): fund that mentions commodities + equity +
@@ -2149,7 +2169,15 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
         "renta fija, renta variable" in w
         and not _has_large_equity_mandate
     )
-    if _rv_fija_csv_fires or any(k in w for k in [
+    # FIX-MIXTOS-ACCIONES-BONOS-CSV-1 (2026-08-13): "acciones, bonos" (comma-
+    # separated Spanish multi-asset enumeration) is the same signal as
+    # "acciones y bonos" but with a comma instead of "y".  Confirmed:
+    # FLOSSBACH VON STORCH MULTIPLE OPPORTUNITIES II (LU1038809395/LU1280372688)
+    # — "entre ellos acciones, bonos e instrumentos del mercado monetario" —
+    # genuine multi-asset fund that fell through to Restantes because the
+    # existing pattern required the conjunction "y".
+    _acciones_bonos_csv = "acciones, bonos" in w
+    if _rv_fija_csv_fires or _acciones_bonos_csv or any(k in w for k in [
         "renta fija y renta variable",
         "renta variable y de renta fija",
         "renta variable y de bonos",
@@ -2170,6 +2198,20 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
     # Income -- "The fund invests in a range of asset classes Including
     # debt securities, equities, real estate, infrastructure".
     if "range of asset classes" in w:
+        return "Mixtos"
+
+    # FIX-MIXTOS-EN-EQUITIES-BONDS-1 (2026-08-13): English comma-separated
+    # enumeration "equities, bonds and money market instruments" (or similar)
+    # is the English equivalent of "acciones, bonos" — an unambiguous multi-
+    # asset declaration in the objective window.  Must fire before
+    # eq_dominant/bond_dominant so neither lone-equity nor lone-bond
+    # dominance overrides the genuinely mixed mandate.
+    # Confirmed: FFG GLB FLXBL CONVICTIONS (LU1697917083) — "investments …
+    # are … made in equities, bonds and money market instruments or in cash."
+    # Guard: only fire when "equities, bonds" appears WITHOUT a large equity
+    # mandate (≥60% minimum equity) which would make it genuinely equity-
+    # dominant despite the enumeration.
+    if "equities, bonds" in w and not _has_large_equity_mandate:
         return "Mixtos"
 
     # FIX-P1-DBLCLAIM3 (2026-07-04): "instrumentos de deuda...y en acciones"
@@ -2484,6 +2526,24 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
     # "Renta Variable".
     )) or bool(re.search(
         r'invest(?:s|ing)?\s+primarily\s+in[^.]{0,50}shares\b', w
+    # FIX-RV-EN-PRIMARILY-EQUITIES-1 (2026-08-13): "primarily/mainly/
+    # principally in [geographic/style modifier] equities" — English equity
+    # mandate where a geographic or style qualifier (or even a parenthetical
+    # percentage) sits between the adverb and "equities", breaking the exact-
+    # substring match "primarily in equities".
+    # The existing patterns cover "primarily in equities" (bare) and
+    # "invest at least X% in equities" but not the gap form.
+    # Confirmed:
+    #   EVLI NORDIC B EUR (FI0008810908) — "invests its assets primarily in
+    #     nordic equities" — Nordic equity fund falling through to Restantes.
+    #   LUX M SIC FIN GL DEF R EUR ACC (LU1822851884) — "mainly (at least
+    #     51%) in listed equities in security/defence sectors" — defence equity
+    #     fund with a parenthetical percentage between "mainly" and "in".
+    # Regex: allows up to 40 non-period chars between the adverb and "in",
+    # then up to 60 non-period chars between "in" and "equities" — tight enough
+    # to stay within a single clause, wide enough to bridge the gap forms above.
+    )) or bool(re.search(
+        r'(?:primarily|mainly|principally)(?:[^.]{0,40})in[^.]{0,60}equities\b', w
     ))
 
     # FIX-P1-RV2 (2026-07-04): "en menor medida... podrá invertir en
