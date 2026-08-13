@@ -200,6 +200,22 @@ def evaluate_fund(row: dict, kiid_dir: Path, mods: dict) -> dict:
         if not _has_longer:
             out["acirhp_regrid"] = out["aci1_regrid"]
 
+    # P1-06: mirror P0-ACI-RHP-GUARD from priips_cost_extractor so the
+    # diagnostic counts only values production would actually accept.
+    # Thresholds are in percent (acirhp_regrid = _r2p(ratio)):
+    #   15% ceiling for multi-year RHP (rhp_years > 1.0)
+    #   25% ceiling for 1-year / unknown RHP
+    # Secondary guard: reject if acirhp_regrid / aci1_regrid > 5 (scenario bleed).
+    _rhp_years = row.get("Cost_RHP_Years")
+    if out["acirhp_regrid"] is not None:
+        _max_pct = 15.0 if (_rhp_years is not None and _rhp_years > 1.0) else 25.0
+        if out["acirhp_regrid"] > _max_pct:
+            out["acirhp_regrid"] = None
+        elif (out["aci1_regrid"] is not None and out["aci1_regrid"] > 0
+              and _rhp_years is not None and _rhp_years > 1.0
+              and out["acirhp_regrid"] / out["aci1_regrid"] > 5.0):
+            out["acirhp_regrid"] = None
+
     # ---- classifications ----
     # swap: stored mgmt/oper disagree with truth, but truth exists
     if out["mgmt_truth"] is not None or out["oper_truth"] is not None:
@@ -249,6 +265,7 @@ SELECT_SQL = """
 SELECT m.ISIN, m.KID_Format, m.Cost_Extraction_Quality,
        m.Management_Fee_Pct, m.Transaction_Cost_Pct, m.Performance_Fee_Pct,
        m.ACI_1Y, m.ACI_RHP,
+       m.Cost_RHP_Years,
        k.Raw_KIID_Text,
        k.Cost_Mgmt_BandsX, k.Cost_Mgmt_Arbitration,
        k.Cost_Oper_BandsX, k.Cost_Oper_Arbitration

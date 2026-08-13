@@ -112,7 +112,7 @@ def classify_fund(
         result["_signal_type"] = "Systematic"
         result["_signal_subtype"] = "Managed Futures"
 
-    elif any(k in name_l for k in ["real estate", "property"]):
+    elif any(k in name_l for k in ["real estate", "property", "flex prop"]):
         result["_signal_type"] = "Real Assets"
         result["_signal_subtype"] = "Real Estate"
 

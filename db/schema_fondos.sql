@@ -405,6 +405,7 @@ CREATE INDEX IF NOT EXISTS idx_macro_date       ON series_macro (date);
 --   fx_usd_gbp        USD por GBP (ej. 1.27)
 --   fx_cny_usd        CNY por USD (ej. 7.1)
 --   spread_hy         ICE BofA HY Option-Adjusted Spread % (GLOBAL, media mensual) — P2 v10
+--   spread_ig         ICE BofA IG Option-Adjusted Spread % (GLOBAL, media mensual) — P2-07
 --   vix               CBOE VIX — volatilidad implícita S&P500 (GLOBAL, media mensual) — P2 v10
 --   term_spread       Pendiente curva EEUU 10Y-2Y % (US, mensual) — P2 v10
 
@@ -491,7 +492,7 @@ CREATE INDEX IF NOT EXISTS idx_metrics_date    ON fund_metrics (calculation_date
 --   information_ratio     Ratio de Información                ratio
 --   upside_capture        Ratio de Captura al alza            ratio
 --   downside_capture      Ratio de Captura a la baja          ratio
---   === Sensibilidad macro OLS (23 factores — pipeline v10) ===
+--   === Sensibilidad macro OLS (24 factores — pipeline v10 + P2-07) ===
 --   macro_r2              R² del modelo OLS
 --   macro_alpha           Alpha anualizado no explicado por macro
 --   macro_n_obs           Observaciones usadas en la regresión
@@ -506,11 +507,14 @@ CREATE INDEX IF NOT EXISTS idx_metrics_date    ON fund_metrics (calculation_date
 --   beta_gold             Sensibilidad oro (PPICMM) YoY
 --   beta_m2_global        Sensibilidad M2 Global YoY
 --   beta_spread_hy        Sensibilidad spread HY nivel (P2 v10)
+--   beta_spread_ig        Sensibilidad spread IG nivel (P2-07)
 --   beta_vix              Sensibilidad VIX YoY (P2 v10)
 --   beta_term_spread      Sensibilidad pendiente curva 10Y-2Y (P2 v10)
 --   beta_eur_jpy          Sensibilidad EUR/JPY YoY (P2 v10)
 --   beta_eur_gbp          Sensibilidad EUR/GBP YoY (P2 v10)
---   beta_eur_cny          Sensibilidad EUR/CNY YoY (P2 v10)
+--   beta_eur_cny              Sensibilidad EUR/CNY YoY (P2 v10)
+--   energy_sensitivity_pct    Escenario +25% WTI: beta_oil × 0.25  (P3-03)
+--   hy_spread_sensitivity_pct Escenario +300bp HY: beta_spread_hy × 3.0  (P3-04)
 --   === Retornos por régimen macro (7 regímenes — pipeline v10) ===
 --   Sufijos: expansion / recalentamiento / recalentamiento_tardio /
 --            estanflacion / contraccion / shock_energetico / crisis_financiera
@@ -518,6 +522,9 @@ CREATE INDEX IF NOT EXISTS idx_metrics_date    ON fund_metrics (calculation_date
 --   return_ann_{sufijo}   Retorno anualizado en ese régimen (%) — si n_obs ≥ 12
 --   vol_ann_{sufijo}      Volatilidad anualizada en ese régimen (%) — si n_obs ≥ 12
 --   sharpe_{sufijo}       Sharpe en ese régimen — si n_obs ≥ 12
+--   regime_coverage_ratio    Fracción de 7 regímenes con n_obs ≥ 12  [0,1]  (P3-01)
+--   crisis_stress_score_mdd  Max drawdown sobre meses de Crisis_Financiera (ratio ≤ 0)  (P3-02)
+--   crisis_stress_score_ttr  Meses de recuperación sobre meses de Crisis_Financiera  (P3-02)
 
 -- Valores de horizonte (cerrados):
 --   since_inception / rolling_10y / rolling_5y / rolling_3y / rolling_1y / ytd

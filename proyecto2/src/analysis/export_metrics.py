@@ -742,13 +742,16 @@ def q_macro_betas(conn):
                ROUND(gld.value, 4)          AS beta_gold,
                ROUND(m2g.value, 4)          AS beta_m2_global,
                ROUND(sph.value, 4)          AS beta_spread_hy,
+               ROUND(spig.value, 4)         AS beta_spread_ig,
                ROUND(vix.value, 4)          AS beta_vix,
                ROUND(tsp.value, 4)          AS beta_term_spread,
                ROUND(ejy.value, 4)          AS beta_eur_jpy,
                ROUND(egb.value, 4)          AS beta_eur_gbp,
                ROUND(ecn.value, 4)          AS beta_eur_cny,
                CAST(srri.value AS INTEGER)  AS srri,
-               CAST(nobs.value AS INTEGER)  AS n_obs
+               CAST(nobs.value AS INTEGER)  AS n_obs,
+               ROUND(esp.value, 4)          AS energy_sensitivity_pct,
+               ROUND(hys.value, 4)          AS hy_spread_sensitivity_pct
         FROM fund_metrics ret
         JOIN fund_master fm    ON fm.ISIN=ret.isin
         LEFT JOIN fund_metrics r2   ON r2.isin=ret.isin   AND r2.metric='macro_r2'
@@ -791,6 +794,8 @@ def q_macro_betas(conn):
                                    AND m2g.horizon='since_inception' AND m2g.real_flag=0
         LEFT JOIN fund_metrics sph  ON sph.isin=ret.isin   AND sph.metric='beta_spread_hy'
                                    AND sph.horizon='since_inception' AND sph.real_flag=0
+        LEFT JOIN fund_metrics spig ON spig.isin=ret.isin  AND spig.metric='beta_spread_ig'
+                                   AND spig.horizon='since_inception' AND spig.real_flag=0
         LEFT JOIN fund_metrics vix  ON vix.isin=ret.isin   AND vix.metric='beta_vix'
                                    AND vix.horizon='since_inception' AND vix.real_flag=0
         LEFT JOIN fund_metrics tsp  ON tsp.isin=ret.isin   AND tsp.metric='beta_term_spread'
@@ -805,6 +810,10 @@ def q_macro_betas(conn):
                                    AND srri.horizon='since_inception' AND srri.real_flag=0
         LEFT JOIN fund_metrics nobs ON nobs.isin=ret.isin AND nobs.metric='macro_n_obs'
                                    AND nobs.horizon='since_inception' AND nobs.real_flag=0
+        LEFT JOIN fund_metrics esp  ON esp.isin=ret.isin  AND esp.metric='energy_sensitivity_pct'
+                                   AND esp.horizon='since_inception' AND esp.real_flag=0
+        LEFT JOIN fund_metrics hys  ON hys.isin=ret.isin  AND hys.metric='hy_spread_sensitivity_pct'
+                                   AND hys.horizon='since_inception' AND hys.real_flag=0
         WHERE ret.metric='return_ann' AND ret.horizon='since_inception'
           AND ret.real_flag=0 AND r2.value IS NOT NULL
         ORDER BY r2.value DESC
@@ -814,9 +823,9 @@ def q_macro_betas(conn):
 def build_macro(ws, conn):
     _no_gridlines(ws)
 
-    N_COLS = 30
+    N_COLS = 33  # 31 + 2 scenario metrics (P3-03, P3-04)
     ws.merge_cells(f"A1:{get_column_letter(N_COLS)}1")
-    ws["A1"] = "SENSIBILIDADES MACRO POR FONDO (betas OLS) — pipeline v10: 23 factores"
+    ws["A1"] = "SENSIBILIDADES MACRO POR FONDO (betas OLS) — pipeline v10: 24 factores"
     ws["A1"].font = TITLE_FONT
     ws["A1"].fill = TITLE_FILL
     ws["A1"].alignment = Alignment(horizontal="center")
@@ -835,11 +844,13 @@ def build_macro(ws, conn):
         # Ciclo / FX
         "β CLI EU", "β CLI US", "β DXY",
         # Riesgo financiero (v10)
-        "β Spread HY", "β VIX", "β Term Spread",
+        "β Spread HY", "β Spread IG", "β VIX", "β Term Spread",
         # Divisas (v10)
         "β EUR/JPY", "β EUR/GBP", "β EUR/CNY",
         # Control
         "SRRI", "N obs",
+        # Escenarios de stress (P3-03/P3-04)
+        "Sc. Oil +25%", "Sc. HY +300bp",
     ]
     _apply_header(ws, headers, row=2)
 
@@ -862,12 +873,36 @@ def build_macro(ws, conn):
             elif float(r2_val) >= 0.10:
                 cell.fill = GREEN_FILL
                 cell.font = GREEN_FONT
-        # SRRI (columna 29)
-        srri_val = r[28]
+        # SRRI (columna 30)
+        srri_val = r[29]
         if srri_val is not None:
             bg, fg = SRRI_COLORS.get(int(srri_val), ("FFFFFF", "000000"))
-            ws.cell(row_idx, 29).fill = _fill(bg)
-            ws.cell(row_idx, 29).font = _font(color=fg)
+            ws.cell(row_idx, 30).fill = _fill(bg)
+            ws.cell(row_idx, 30).font = _font(color=fg)
+        # P3-03: Sc. Oil +25% (col 32) — green if fund benefits (>+0.01), red if harmed (<-0.02)
+        esp_val = r[31]
+        if esp_val is not None:
+            try:
+                v = float(esp_val)
+                cell = ws.cell(row_idx, 32)
+                if v > 0.01:
+                    cell.fill = GREEN_FILL; cell.font = GREEN_FONT
+                elif v < -0.02:
+                    cell.fill = RED_FILL;   cell.font = RED_FONT
+            except (TypeError, ValueError):
+                pass
+        # P3-04: Sc. HY +300bp (col 33) — green if insensitive (>-0.01), red if exposed (<-0.05)
+        hys_val = r[32]
+        if hys_val is not None:
+            try:
+                v = float(hys_val)
+                cell = ws.cell(row_idx, 33)
+                if v > -0.01:
+                    cell.fill = GREEN_FILL; cell.font = GREEN_FONT
+                elif v < -0.05:
+                    cell.fill = RED_FILL;   cell.font = RED_FONT
+            except (TypeError, ValueError):
+                pass
 
     ws.auto_filter.ref = f"A2:{get_column_letter(N_COLS)}{ws.max_row}"
     _freeze(ws, "A3")
@@ -1112,9 +1147,21 @@ def q_regime_returns(conn) -> list:
     )
     sql = f"""
         SELECT fm.ISIN, fm.Fund_Name, fm.Fund_Nature, fm.Management_Company,
-               {", ".join(selects)}
+               ROUND(cov.value, 2)  AS regime_coverage_ratio,
+               {", ".join(selects)},
+               ROUND(cmdd.value, 4) AS crisis_stress_score_mdd,
+               ROUND(cttr.value, 2) AS crisis_stress_score_ttr
         FROM fund_master fm
+        LEFT JOIN fund_metrics cov ON cov.isin=fm.ISIN
+            AND cov.metric='regime_coverage_ratio'
+            AND cov.horizon='since_inception' AND cov.real_flag=0
         {"".join(joins)}
+        LEFT JOIN fund_metrics cmdd ON cmdd.isin=fm.ISIN
+            AND cmdd.metric='crisis_stress_score_mdd'
+            AND cmdd.horizon='since_inception' AND cmdd.real_flag=0
+        LEFT JOIN fund_metrics cttr ON cttr.isin=fm.ISIN
+            AND cttr.metric='crisis_stress_score_ttr'
+            AND cttr.horizon='since_inception' AND cttr.real_flag=0
         WHERE ({or_clause})
         ORDER BY fm.Fund_Nature, fm.Fund_Name
     """
@@ -1124,7 +1171,7 @@ def q_regime_returns(conn) -> list:
 def build_regime_returns(ws, conn):
     _no_gridlines(ws)
     n_regime_cols = len(_REGIMES_ORDER) * 4
-    N_COLS = 4 + n_regime_cols
+    N_COLS = 7 + n_regime_cols  # +1 coverage (P3-01) +2 crisis stress (P3-02)
 
     ws.merge_cells(f"A1:{get_column_letter(N_COLS)}1")
     ws["A1"] = "RENTABILIDAD POR RÉGIMEN MACRO — pipeline v10 (mín. 12 meses en régimen)"
@@ -1132,7 +1179,13 @@ def build_regime_returns(ws, conn):
     ws["A1"].fill = TITLE_FILL
     ws["A1"].alignment = Alignment(horizontal="center")
 
-    col = 5
+    # P3-01: coverage label in row 2, col 5 (single cell, not merged)
+    cov_cell = ws.cell(2, 5, "Cobertura")
+    cov_cell.font = _font(bold=True, color="FFFFFF")
+    cov_cell.fill = TITLE_FILL
+    cov_cell.alignment = Alignment(horizontal="center")
+
+    col = 6  # regime groups now start at col 6
     for _, label in _REGIMES_ORDER:
         ws.merge_cells(start_row=2, start_column=col, end_row=2, end_column=col+3)
         cell = ws.cell(2, col, label)
@@ -1141,12 +1194,21 @@ def build_regime_returns(ws, conn):
         cell.alignment = Alignment(horizontal="center")
         col += 4
 
-    base_hdrs = ["ISIN", "Nombre", "Naturaleza", "Gestora"]
+    # P3-02: crisis stress group header (2 cols after regime cols)
+    crs_start = 6 + n_regime_cols
+    ws.merge_cells(start_row=2, start_column=crs_start, end_row=2, end_column=crs_start+1)
+    crs_cell = ws.cell(2, crs_start, "Crisis Stress")
+    crs_cell.font = _font(bold=True, color="FFFFFF")
+    crs_cell.fill = TITLE_FILL
+    crs_cell.alignment = Alignment(horizontal="center")
+
+    base_hdrs = ["ISIN", "Nombre", "Naturaleza", "Gestora", "Cob. Regímes"]
     regime_hdrs = []
     for suffix, _ in _REGIMES_ORDER:
         regime_hdrs += [f"Ret% {suffix[:6]}", f"Sharpe {suffix[:6]}",
                         f"Vol% {suffix[:6]}", f"N obs {suffix[:6]}"]
-    _apply_header(ws, base_hdrs + regime_hdrs, row=3)
+    crisis_hdrs = ["MDD crisis", "TTR crisis (m)"]
+    _apply_header(ws, base_hdrs + regime_hdrs + crisis_hdrs, row=3)
 
     rows = q_regime_returns(conn)
     for r in rows:
@@ -1154,13 +1216,44 @@ def build_regime_returns(ws, conn):
         for c_idx, val in enumerate(r, 1):
             cell = ws.cell(row_idx, c_idx, val)
             cell.font = _font()
-            offset = c_idx - 5
-            if offset >= 0 and offset % 4 == 0 and val is not None:
+            # Coverage ratio coloring (col 5): green ≥0.7, red ≤0.3
+            if c_idx == 5 and val is not None:
+                try:
+                    v = float(val)
+                    if v >= 0.7:
+                        cell.fill = GREEN_FILL; cell.font = GREEN_FONT
+                    elif v <= 0.3:
+                        cell.fill = RED_FILL;   cell.font = RED_FONT
+                except (TypeError, ValueError):
+                    pass
+            # Regime Ret% coloring (every 4th col starting at col 6, within regime range)
+            offset = c_idx - 6
+            if offset >= 0 and offset % 4 == 0 and c_idx <= 5 + n_regime_cols and val is not None:
                 try:
                     v = float(val)
                     if v >= 5.0:
                         cell.fill = GREEN_FILL; cell.font = GREEN_FONT
                     elif v < 0.0:
+                        cell.fill = RED_FILL;   cell.font = RED_FONT
+                except (TypeError, ValueError):
+                    pass
+            # P3-02: crisis_stress_score_mdd coloring: green if shallow (≥-0.10), red if deep (≤-0.30)
+            if c_idx == 6 + n_regime_cols and val is not None:
+                try:
+                    v = float(val)
+                    if v >= -0.10:
+                        cell.fill = GREEN_FILL; cell.font = GREEN_FONT
+                    elif v <= -0.30:
+                        cell.fill = RED_FILL;   cell.font = RED_FONT
+                except (TypeError, ValueError):
+                    pass
+            # P3-02: crisis_stress_score_ttr coloring: green ≤6 months, red ≥24 months
+            if c_idx == 7 + n_regime_cols and val is not None:
+                try:
+                    v = float(val)
+                    if v <= 6:
+                        cell.fill = GREEN_FILL; cell.font = GREEN_FONT
+                    elif v >= 24:
                         cell.fill = RED_FILL;   cell.font = RED_FONT
                 except (TypeError, ValueError):
                     pass

@@ -1381,7 +1381,8 @@ _PREFILTER_ALT_INCLUDE = [
     "alpha 10 ma", "alph 10 ma",
     "managed futures", "cta", "systematic", "multi strategy",
     "multi-strategy", "alternative", "real assets", "real estate",
-    "property", "infrastructure", "commodities", "commodity",
+    "property", "flex prop",   # "flex prop" = abbreviated "flex property" (P1-07)
+    "infrastructure", "commodities", "commodity",
 ]
 _PREFILTER_ALT_EXCLUDE = [
     "equity", "bond", "fixed income", "renta fija",
@@ -7546,7 +7547,7 @@ LEXICAL_FAMILY_INFERENCE_BL62: list[tuple[str, str, str]] = [
     (r'PRDNT\s+WLTH|PRUDENT\s+WEALTH|MULTASST\s+INC|MULT\s+ASST|MULTI\s+ASS|'
      r'MULTIOPP|MULTI\s+OPP|MULTIOPPORT|GLO\s+RESILI|RESILIENT|EQUILIB|'
      r'GLO?\.?\s*PERSPECTIVES|GLOBAL\s+PERSPECTIVES|GLO\s+MA|GLOBAL\s+MA|'
-     r'FLEX\s+OPP|FLEX\s+PROP|PIONEER\s+FLEX|'
+     r'FLEX\s+OPP|PIONEER\s+FLEX|'
      r'BAL.*N\s+EUR|BLCED|BALANC|STRATEGY\s+\d|'
      r'STIFTUNG|STIFT|PATR(IM)?|GL\s+OPTIM|GLOBAL\s+OPTIM',
      'Multi-Asset', 'Allocation'),

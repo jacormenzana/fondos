@@ -89,7 +89,7 @@ HTTP policy: 3 retries (1s/2s/4s backoff), timeout 15s. 429 does NOT retry.
 ### Key support modules
 
 <!-- AUTO:BEGIN kill-switches-line -->
-- `shared/config.py` — all constants: `DB_PATH`, `SCHEMA_VERSION` (`"v24"`), `DOMAIN_VALUES`, `ATTRIBUTE_CATALOG`, kill-switches (`PRIIPS_COST_EXTRACTION_ENABLED`, `SHORT_HORIZON_SCORING_ENABLED`, `ROLLING_STATS_ENABLED`, `BENCHMARK_DECOMP_ENABLED`, `BENCHMARK_ROLE_ENABLED`, `INTER18_RECONCILIATION_ENABLED`, `DLA2_ARBITRATION_ENABLED`)
+- `shared/config.py` — all constants: `DB_PATH`, `SCHEMA_VERSION` (`"v24"`), `DOMAIN_VALUES`, `ATTRIBUTE_CATALOG`, kill-switches (`PRIIPS_COST_EXTRACTION_ENABLED`, `SHORT_HORIZON_SCORING_ENABLED`, `ROLLING_STATS_ENABLED`, `ROLLING_PCTILE_P3_ENABLED`, `BENCHMARK_DECOMP_ENABLED`, `BENCHMARK_ROLE_ENABLED`, `INTER18_RECONCILIATION_ENABLED`, `DLA2_ARBITRATION_ENABLED`)
 <!-- AUTO:END kill-switches-line -->
 - `shared/schema_checks.py` — `assert_schema_alignment()` validates DB columns at startup
 - `proyecto1/core/classify_utils.py` — **single source of truth** for all categorical normalization maps (EN→ES for Sector_Focus, Type, Family). Import from here; never duplicate elsewhere (P#11 / R-1).

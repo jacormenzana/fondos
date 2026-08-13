@@ -40,13 +40,15 @@ Metricas generadas por fondo (horizon=since_inception, real_flag=0):
     beta_dxy             sensibilidad a variacion interanual DXY
     beta_gold            sensibilidad a variacion interanual oro (PPICMM)
     beta_m2_global       sensibilidad a M2 Global YoY
-    beta_spread_hy       sensibilidad al diferencial HY (nivel, %)
-    beta_spread_ig       sensibilidad al diferencial IG (nivel, %)
-    beta_vix             sensibilidad a variacion interanual VIX
-    beta_term_spread     sensibilidad a pendiente curva EEUU 10Y-2Y (nivel, %)
-    beta_eur_jpy         sensibilidad a variacion interanual EUR/JPY
-    beta_eur_gbp         sensibilidad a variacion interanual EUR/GBP
-    beta_eur_cny         sensibilidad a variacion interanual EUR/CNY
+    beta_spread_hy           sensibilidad al diferencial HY (nivel, %)
+    beta_spread_ig           sensibilidad al diferencial IG (nivel, %)
+    beta_vix                 sensibilidad a variacion interanual VIX
+    beta_term_spread         sensibilidad a pendiente curva EEUU 10Y-2Y (nivel, %)
+    beta_eur_jpy             sensibilidad a variacion interanual EUR/JPY
+    beta_eur_gbp             sensibilidad a variacion interanual EUR/GBP
+    beta_eur_cny             sensibilidad a variacion interanual EUR/CNY
+    energy_sensitivity_pct   escenario +25% WTI: beta_oil × 0.25  (P3-03)
+    hy_spread_sensitivity_pct escenario +300bp HY: beta_spread_hy × 3.0 (P3-04)
 
 Requisito: minimo MIN_OBS meses de datos solapados NAV e indicadores macro.
 Se aplica filtro VIF para eliminar factores con multicolinealidad severa (VIF>10).
@@ -401,5 +403,12 @@ def compute_macro_sensitivity(
         metric_name = _FACTOR_TO_METRIC.get(col)
         if metric_name:
             metrics.append((metric_name, float(beta[i + 1]), 0))
+
+    # P3-03/P3-04: scenario sensitivity metrics derived from OLS betas
+    _betas = {m: v for m, v, _ in metrics if m.startswith("beta_")}
+    if "beta_oil" in _betas:
+        metrics.append(("energy_sensitivity_pct", _betas["beta_oil"] * 0.25, 0))
+    if "beta_spread_hy" in _betas:
+        metrics.append(("hy_spread_sensitivity_pct", _betas["beta_spread_hy"] * 3.0, 0))
 
     return metrics

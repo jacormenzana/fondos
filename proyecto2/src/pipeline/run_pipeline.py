@@ -60,7 +60,8 @@ from shared.config import (
 )
 from shared.db import get_connection
 from src.readers.db_readers import (
-    load_nav, get_isins_with_nav, load_ipc, ipc_available, load_nav_daily
+    load_nav, get_isins_with_nav, load_ipc, ipc_available, load_nav_daily,
+    count_isins_with_new_nav,        # P2-04 preflight
 )
 from src.calculations.short_horizon import compute_short_horizon_metrics
 from src.calculations.risk_metrics import compute_risk_metrics
@@ -473,7 +474,7 @@ def run(
     force: bool = False,                        # v27 — bypass hash cache
     dry_run: bool = False,
     resume: bool = False,
-) -> None:
+) -> int:
     """
     Ejecuta el pipeline P2 completo o parcial.
 
@@ -500,6 +501,7 @@ def run(
     if metrics_filter is not None:
         unknown = set(metrics_filter) - _ALL_METRIC_FAMILIES
         if unknown:
+            n_warnings += 1
             logger.warning(
                 f"[PIPELINE] Familias de metricas desconocidas ignoradas: {unknown}"
             )
@@ -515,6 +517,7 @@ def run(
     n_processed   = 0
     n_skipped     = 0
     n_errors      = 0
+    n_warnings    = 0   # P2-12: logger.warning() call count for RUN_SUMMARY
     total_written = 0
     total         = 0
     conn          = None
@@ -538,6 +541,7 @@ def run(
 
         # -- Cargar IPC --------------------------------------------
         if not ipc_available(conn, REGION_IPC):
+            n_warnings += 1
             logger.warning(
                 f"[IPC] No hay datos para '{REGION_IPC}' en series_inflation. "
                 "Solo metricas nominales. Carga IPC con macro_discovery antes de P2."
@@ -547,12 +551,14 @@ def run(
             ipc_df = load_ipc(conn, REGION_IPC)
             ok, err = validate_ipc(ipc_df)
             if not ok:
+                n_warnings += 1
                 logger.warning(f"[IPC] Invalido ({err}) — solo metricas nominales")
                 ipc_df = None
 
         # -- Cargar factores macro (una vez para todos los fondos) --
         macro_df = load_macro_factors(conn)
         if macro_df.empty:
+            n_warnings += 1
             logger.warning(
                 "[MacroFactors] Sin factores macro. "
                 "Ejecuta macro_discovery antes de P2."
@@ -579,6 +585,7 @@ def run(
                     )
                     macro_df = load_macro_factors(conn)
                 else:
+                    n_warnings += 1
                     logger.warning(
                         "  [M2_Global] No se pudo construir (datos insuficientes)"
                     )
@@ -586,6 +593,7 @@ def run(
         # -- Cargar historico de regimenes --
         regime_df = load_regime_history(conn)
         if regime_df.empty:
+            n_warnings += 1
             logger.warning(
                 "[RegimeReturns] Sin historico de regimenes. "
                 "Ejecuta macro_discovery y m2_global_builder antes de P2."
@@ -602,6 +610,7 @@ def run(
             )
 
         # -- Universo de ISINs -------------------------------------
+        _isins_explicit = isins is not None  # P2-04: bypass preflight on targeted runs
         if isins is None:
             # P2-01 fix: get_isins_with_nav filters to ISINs present in
             # fund_master (INNER JOIN). Compare against the raw count to
@@ -612,6 +621,7 @@ def run(
             isins = get_isins_with_nav(conn)
             _nav_master = len(isins)
             if _nav_master < _nav_all:
+                n_warnings += 1
                 logger.warning(
                     f"[P2-01] {_nav_all - _nav_master} ISINs en fund_nav_monthly "
                     f"sin entrada en fund_master (excluidos del universo P2). "
@@ -636,6 +646,50 @@ def run(
                 "SELECT isin FROM nav_sources WHERE data_status='RECALCULATE_METRICS'"
             ).fetchall()
         }
+
+        # ── P2-04 Preflight: abort early when no new NAV ──────────────────────
+        if not force and not _isins_explicit:
+            _pf_new, _pf_never, _pf_total = count_isins_with_new_nav(
+                conn, METRIC_VERSION
+            )
+            _pf_forced = len(force_recalc_isins)
+
+            # Also gate on IPC freshness: new IPC rows change every fund's
+            # input hash even when NAV is unchanged.  A single global check
+            # suffices because IPC is a shared time series.
+            _pf_last_calc = conn.execute(
+                "SELECT MAX(calculated_at) FROM fund_metric_state "
+                "WHERE metric_version=?",
+                (METRIC_VERSION,),
+            ).fetchone()[0]
+            _pf_ipc_max = conn.execute(
+                "SELECT MAX(date) FROM series_inflation WHERE geography='ES'"
+            ).fetchone()[0]
+            _pf_ipc_newer = bool(
+                _pf_ipc_max and _pf_last_calc and _pf_ipc_max > _pf_last_calc
+            )
+
+            _pf_need = _pf_new + _pf_never + _pf_forced
+            logger.info(
+                f"[P2-04] Preflight: {_pf_total} ISINs universo | "
+                f"{_pf_never} sin calculo previo | "
+                f"{_pf_new} con NAV nuevo | "
+                f"{_pf_forced} forzados (RECALCULATE_METRICS) | "
+                f"IPC {'ACTUALIZADO' if _pf_ipc_newer else 'sin cambios'}"
+            )
+
+            if _pf_need == 0 and not _pf_ipc_newer:
+                logger.info(
+                    "[P2-04] ABORT: Sin datos nuevos desde el ultimo calculo. "
+                    "Usa --force para recalcular igualmente."
+                )
+                _log(
+                    conn, None, "PREFLIGHT", "ABORT_NO_NEW_NAV", None,
+                    f"0/{_pf_total} ISINs con datos nuevos — todos up-to-date",
+                    dry_run,
+                )
+                return 0  # P2-12: clean abort → rc=0
+        # ──────────────────────────────────────────────────────────────────────
 
         # Legacy --resume (today-based skip)
         if resume and not dry_run:
@@ -677,6 +731,7 @@ def run(
             # Graceful-abort (SIGINT / SIGBREAK)
             if _ABORT:
                 status = "ABORTED"
+                n_warnings += 1
                 logger.warning(
                     f"[PIPELINE] Abort solicitado — "
                     f"deteniendo tras {n_processed} fondos procesados."
@@ -697,6 +752,7 @@ def run(
 
                 ok, err = validate_nav(nav_df)
                 if not ok:
+                    n_warnings += 1
                     logger.warning(
                         f"  [{idx}/{total}] {isin} -> NAV invalido ({err}), saltado"
                     )
@@ -1006,7 +1062,10 @@ def run(
         # pctile_self is now computed per-fund in the loop above;
         # this block only needs to produce pctile_cat, zscore_cat, and alerts.
         # Guard: skip on --dry-run (diagnostic runs must not load the cross-fund data).
-        if _want("rolling") and ROLLING_STATS_ENABLED and not dry_run:
+        # P2-05: skip cross-sectional snapshot when nothing was recomputed this run.
+        # _latest_roll is empty → fallback DB query (16.6M-row scan) would fire
+        # for no benefit; the previous run's snapshot is still correct.
+        if _want("rolling") and ROLLING_STATS_ENABLED and not dry_run and n_processed > 0:
             logger.info(
                 "[ROLLING] Calculando snapshot cross-seccional (ultima fecha)..."
             )
@@ -1105,6 +1164,7 @@ def run(
                         "snapshots de categoria y alertas omitidos"
                     )
             except Exception as exc:
+                n_warnings += 1
                 logger.warning(
                     f"[ROLLING] Motor rolling falló (no fatal): {exc}\n"
                     f"{traceback.format_exc()}"
@@ -1116,23 +1176,49 @@ def run(
             f"[PIPELINE] Error fatal no controlado: {exc}\n"
             f"{traceback.format_exc()}"
         )
-        raise
+        # P2-12: swallow here so finally runs and rc=2 is returned to __main__
 
     finally:
         elapsed_total = time.time() - t_run_start
         logger.info(
             f"[RUN END] run_id={run_id} status={status} "
             f"processed={n_processed} skipped={n_skipped} errors={n_errors} "
-            f"total_written={total_written} elapsed={elapsed_total:.0f}s"
+            f"warnings={n_warnings} total_written={total_written} "
+            f"elapsed={elapsed_total:.0f}s"
         )
         sys.stdout.flush()
         sys.stderr.flush()
+        # P2-12: persist RUN_SUMMARY row for operational observability
+        if conn is not None and not dry_run:
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                conn.execute(
+                    """INSERT INTO p2_pipeline_log
+                           (isin, step, status, horizon, metric_version, message)
+                       VALUES (NULL, 'RUN_SUMMARY', ?, NULL, ?, ?)""",
+                    (
+                        status,
+                        METRIC_VERSION,
+                        (
+                            f"run_id={run_id} processed={n_processed} "
+                            f"skipped={n_skipped} errors={n_errors} "
+                            f"warnings={n_warnings} written={total_written} "
+                            f"elapsed={elapsed_total:.0f}s"
+                        ),
+                    ),
+                )
+                conn.execute("COMMIT")
+            except Exception:
+                pass  # never crash in finally
         if conn is not None:
             try:
                 conn.close()
             except Exception:
                 pass
         _allow_sleep()
+
+    # P2-12: deterministic exit codes — 0=OK/ABORT, 1=fund errors, 2=fatal
+    return 2 if status == "ERROR" else (1 if n_errors > 0 else 0)
 
 
 # ============================================================
@@ -1185,7 +1271,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    run(
+    sys.exit(run(  # P2-12: propagate exit code (0=OK, 1=fund errors, 2=fatal)
         isins=[i.strip().upper() for i in args.isin.split(",") if i.strip()]
                if args.isin else None,
         horizons_filter=[args.horizon] if args.horizon else None,
@@ -1196,4 +1282,4 @@ if __name__ == "__main__":
         force=args.force,
         dry_run=args.dry_run,
         resume=args.resume,
-    )
+    ))

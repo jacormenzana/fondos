@@ -50,7 +50,11 @@ _ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT))
 
 from proyecto3.src.regime_classifier import RegimeResult
-from shared.config import METRIC_VERSION_SHORT, SHORT_HORIZON_SCORING_ENABLED
+from shared.config import (
+    METRIC_VERSION_SHORT,
+    SHORT_HORIZON_SCORING_ENABLED,
+    ROLLING_PCTILE_P3_ENABLED,
+)
 
 
 # ============================================================
@@ -272,6 +276,14 @@ def load_fund_metrics_for_scoring(
                 (f"n_obs_{suffix}",      "since_inception", 0),
             ]
 
+    # P2-10: rolling percentile signals (kill-switched; see ROLLING_PCTILE_P3_ENABLED)
+    if ROLLING_PCTILE_P3_ENABLED:
+        metrics_needed += [
+            ("roll_vol_ann_pctile_cat",    "since_inception", 0),
+            ("roll_max_dd_pctile_cat",     "since_inception", 0),
+            ("roll_return_ann_pctile_cat", "since_inception", 0),
+        ]
+
     rows = []
     for metric, horizon, real_flag in metrics_needed:
         result = conn.execute("""
@@ -486,6 +498,30 @@ def compute_regime_multiplier(
     if not np.isnan(macro_r2) and macro_r2 > MACRO_R2_LIMIT:
         multiplier *= MULT_MACRO_MALUS
         detail["macro_r2_malus"] = MULT_MACRO_MALUS
+
+    # ── P2-10: señales rolling-percentil (kill-switched) ─────────────────────
+    # Penaliza fondos en percentiles altos de volatilidad/drawdown recientes;
+    # premia los que muestran retorno reciente en percentiles altos.
+    # Multipliers deliberadamente modestos (feature no validada aún).
+    if ROLLING_PCTILE_P3_ENABLED:
+        vol_pct = row.get("roll_vol_ann_pctile_cat", np.nan)
+        if not np.isnan(vol_pct) and vol_pct >= 80:
+            multiplier *= 0.90
+            detail["roll_vol_high_pctile_malus"] = 0.90
+
+        dd_pct = row.get("roll_max_dd_pctile_cat", np.nan)
+        if not np.isnan(dd_pct) and dd_pct >= 80:
+            multiplier *= 0.90
+            detail["roll_dd_high_pctile_malus"] = 0.90
+
+        ret_pct = row.get("roll_return_ann_pctile_cat", np.nan)
+        if not np.isnan(ret_pct):
+            if ret_pct >= 80:
+                multiplier *= 1.10
+                detail["roll_return_high_pctile_bonus"] = 1.10
+            elif ret_pct <= 20:
+                multiplier *= 0.90
+                detail["roll_return_low_pctile_malus"] = 0.90
 
     # ── Bonus/malus empírico por historial en régimen activo ──────────────────
     if regime_return_p25 is not None and regime_return_p75 is not None:

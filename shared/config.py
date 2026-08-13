@@ -163,6 +163,11 @@ SHORT_HORIZON_SCORING_ENABLED: bool = False
 #         inicial y validación de las señales percentil vs P3 scoring.
 ROLLING_STATS_ENABLED: bool = True
 
+# Kill-switch P2-10: habilita el uso de señales rolling-percentil (pctile_cat)
+# en la Capa 3 del scoring P3. Activar SOLO tras validar correlación predictiva
+# con retorno futuro en el régimen activo (backtest walk-forward pendiente).
+ROLLING_PCTILE_P3_ENABLED: bool = False
+
 # ============================================================
 # Phase 1 — Benchmark asset-class derivation engine (BL-BENCH-DECOMP)
 # ============================================================

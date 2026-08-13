@@ -7,10 +7,13 @@ Para cada fondo, cruza su serie de retornos mensuales con la clasificacion
 historica de regimenes y calcula estadisticas de rendimiento por regimen.
 
 Metricas generadas por fondo (horizon=since_inception, real_flag=0):
-    return_ann_{regimen}   retorno anualizado en ese regimen (%)
-    sharpe_{regimen}       ratio Sharpe en ese regimen (rf anualizado)
-    vol_ann_{regimen}      volatilidad anualizada en ese regimen (%)
-    n_obs_{regimen}        numero de meses en ese regimen con retorno disponible
+    return_ann_{regimen}      retorno anualizado en ese regimen (%)
+    sharpe_{regimen}          ratio Sharpe en ese regimen (rf anualizado)
+    vol_ann_{regimen}         volatilidad anualizada en ese regimen (%)
+    n_obs_{regimen}           numero de meses en ese regimen con retorno disponible
+    regime_coverage_ratio     fraccion de 7 regimenes con n_obs >= MIN_OBS_REGIME [0,1] (P3-01)
+    crisis_stress_score_mdd   max drawdown sobre meses de Crisis_Financiera (P3-02)
+    crisis_stress_score_ttr   meses de recuperacion sobre meses de Crisis_Financiera (P3-02)
 
 Sufijo de regimen (nombre en minusculas con guiones bajos):
     expansion
@@ -43,6 +46,7 @@ _ROOT = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(_ROOT))
 
 from shared.config import RISK_FREE_RATE_ANN
+from src.calculations.drawdown import compute_drawdown, max_drawdown, time_to_recovery
 
 MIN_OBS_REGIME = 12   # minimo de meses en un regimen para calcular estadisticas
 MIN_NAV_TOTAL  = 36   # minimo de meses totales de NAV
@@ -170,7 +174,8 @@ def compute_regime_returns(
     if merged.empty:
         return []
 
-    metrics = []
+    metrics   = []
+    n_covered = 0  # P3-01: count regimes with n_obs >= MIN_OBS_REGIME
 
     for regime_name, suffix in _REGIME_SUFFIX.items():
         mask      = merged["regime"] == regime_name
@@ -184,6 +189,7 @@ def compute_regime_returns(
             # Sin suficientes datos -- no calcular estadisticas
             continue
 
+        n_covered += 1
         ret_ann = _annualized_return(r_regime)
         vol_ann = _annualized_vol(r_regime)
         sharpe  = _sharpe(r_regime)
@@ -191,5 +197,20 @@ def compute_regime_returns(
         metrics.append((f"return_ann_{suffix}", ret_ann,  0))
         metrics.append((f"vol_ann_{suffix}",    vol_ann,  0))
         metrics.append((f"sharpe_{suffix}",     sharpe,   0))
+
+    # P3-01: fraction of regimes with sufficient history [0, 1]
+    metrics.append(("regime_coverage_ratio", n_covered / len(_REGIME_SUFFIX), 0))
+
+    # P3-02: drawdown + recovery during Crisis_Financiera months only
+    crisis_mask  = merged["regime"] == "Crisis_Financiera"
+    crisis_dates = merged[crisis_mask].index
+    if len(crisis_dates) >= MIN_OBS_REGIME:
+        nav_crisis = nav.loc[nav.index.isin(crisis_dates)].reset_index(drop=True)
+        dd_crisis  = compute_drawdown(nav_crisis)
+        mdd        = max_drawdown(dd_crisis)
+        ttr        = time_to_recovery(nav_crisis)
+        metrics.append(("crisis_stress_score_mdd", float(mdd), 0))
+        ttr_val = None if np.isnan(ttr) else float(ttr)
+        metrics.append(("crisis_stress_score_ttr", ttr_val, 0))
 
     return metrics

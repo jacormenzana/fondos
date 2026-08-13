@@ -49,6 +49,53 @@ def load_nav(conn: sqlite3.Connection, isin: str) -> pd.DataFrame:
     return df
 
 
+def count_isins_with_new_nav(
+    conn: sqlite3.Connection,
+    metric_version: str,
+) -> tuple[int, int, int]:
+    """
+    Preflight check (P2-04): count ISINs that would NOT be hash-skipped.
+
+    A fund needs recomputation when:
+      (a) it has never been calculated (no fund_metric_state row), OR
+      (b) nav_sources.last_nav_date > fund_metric_state.calculated_at
+          (new NAV data since the last successful run).
+
+    Note: CALC_VERSION / IPC changes are intentionally NOT detected here —
+    use --force when bumping CALC_VERSION or after macro_discovery runs.
+
+    Returns
+    -------
+    n_new_nav           ISINs with nav_sources.last_nav_date > calculated_at
+    n_never_calculated  ISINs with no fund_metric_state row for metric_version
+    n_universe          total ISINs in the fund_nav_monthly ∩ fund_master universe
+    """
+    row = conn.execute(
+        """
+        SELECT
+            COUNT(*) FILTER (WHERE fms.isin IS NULL)                       AS n_never,
+            COUNT(*) FILTER (
+                WHERE fms.isin IS NOT NULL
+                  AND ns.last_nav_date IS NOT NULL
+                  AND ns.last_nav_date > fms.calculated_at
+            )                                                               AS n_new,
+            COUNT(*)                                                        AS n_total
+        FROM (
+            SELECT DISTINCT n.ISIN
+            FROM fund_nav_monthly n
+            INNER JOIN fund_master m USING (ISIN)
+        ) universe
+        LEFT JOIN fund_metric_state fms
+               ON universe.ISIN = fms.isin
+              AND fms.metric_version = ?
+        LEFT JOIN nav_sources ns ON universe.ISIN = ns.isin
+        """,
+        (metric_version,),
+    ).fetchone()
+    n_never, n_new, n_total = row
+    return int(n_new or 0), int(n_never or 0), int(n_total or 0)
+
+
 def get_isins_with_nav(conn: sqlite3.Connection) -> list[str]:
     """Devuelve la lista de ISINs con al menos una fila en fund_nav_monthly
     Y con entrada en fund_master (P2-01 / BUG-SIGNAL-DIAG).
