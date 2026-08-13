@@ -15,9 +15,7 @@ respective domains; this file must not duplicate their content — it points to 
 
 | Backlog registers (`doc/backlog/`) | Answers | Canonical for |
 |---|---|---|
-| `P1/EXECUTIVE_SUMMARY_pending_actions_20260716.md` | *P1 open items* | P1 classification pending actions (OPT-B, RFC-RFF, benchmark, SC-H2…) |
-| `P2/EXECUTIVE_SUMMARY_rolling_indicators_20260727.md` | *P2/P3/P4 open items* | Rolling-indicators + BI backlog (ROLL-P0..P5) |
-| **Live HTML artifact** | *consolidated master view* | All-domain incident backlog (32 items, always-current): `https://claude.ai/code/artifact/24eb50ad-1274-4149-bae6-6cda184f1a0e` |
+| **Live HTML artifact** | *consolidated master view* | All-domain incident backlog (always-current, v8 2026-08-13): `https://claude.ai/code/artifact/24eb50ad-1274-4149-bae6-6cda184f1a0e` |
 
 **Workflow before touching code:** read this file → read the relevant domain doc(s) above →
 verify your change against `RESTRICCIONES_ARQUITECTURA.md` (R-1..R-8) and the pre-commit checklist.
