@@ -1,9 +1,9 @@
 # AGENTS.md — Single Source of Truth (índice + orientación)
 
 **This is the authoritative entry point for any agent (human or LLM) working in this repository.**
-Read this file first. It carries the full project orientation, and it is the **index** to the five
-canonical specification documents in `doc/reglas/`. Those five documents are canonical for their
-respective domains; this file must not duplicate their content — it points to them.
+Read this file first. It carries the full project orientation, and it is the **index** to the
+canonical specification documents in `doc/reglas/` (see table below). Those documents are canonical
+for their respective domains; this file must not duplicate their content — it points to them.
 
 | Domain doc (`doc/reglas/`) | Answers | Canonical for |
 |---|---|---|
@@ -211,7 +211,7 @@ proyecto2/
 | `nav_sources` | `ISIN` | Morningstar ms_id + date range + status |
 | `series_macro` | `(date, indicator, geography)` | All macro time series |
 | `fund_metrics` | `(ISIN, metric, horizon, real_flag)` | All calculated metrics |
-| `fund_nav_daily` | `(ISIN, Date)` | Daily NAV series — short-horizon source (**new v24**) |
+| `fund_nav_daily` | `(ISIN, Date)` | Daily NAV series — short-horizon source |
 | `fund_metric_timeseries` | `(ISIN, metric, date, ...)` | Long-format rolling metric series (~16.6M rows) |
 | `fund_metric_alerts` | `(ISIN, alert_type, ...)` | Rolling-signal alerts |
 | `fund_metric_state` | `ISIN` | Per-fund calc fingerprint/state (cache control) |
@@ -546,6 +546,14 @@ project imports), so it runs on bare `python3` (CI, developer machines, Linux ru
 maps and the launchers table: dated suffix `_YYYYMMDD`, `_prod` suffix, `_last` suffix,
 `_` prefix (private/init), `BackUp`/`Backup` in name, `test_*` outside a proper `tests/`
 directory. These files are operational noise; their canonical replacements are listed instead.
+
+**Prose consistency rules (enforced by advisory checks — not blocking but reported at every run):**
+- **No hardcoded counts** — never write "five documents" or "24 betas" in prose; counts go stale
+  silently. Let the table or the sentinel be the count; prose just says "see table below".
+- **No version labels in hand-written tables** — never write "new v24" or "added in v22"; schema
+  versions increment and the label becomes misleading. Version history belongs in `git log`.
+- Domain-doc table row count is checked against `doc/reglas/*.md` (non-legacy) at every `--check`
+  and `--write` run; a mismatch emits an advisory.
 
 **Generator modes:**
 ```bash

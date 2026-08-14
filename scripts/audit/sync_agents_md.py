@@ -458,6 +458,26 @@ def _advisory_checks(agents_text: str) -> list[str]:
         if m and m.group(1) not in agents_text:
             warnings.append(f"CALC_VERSION '{m.group(1)}' not mentioned in AGENTS.md")
 
+    # Domain-doc table row count vs non-legacy doc/reglas/*.md file count.
+    # Catches prose/table drift when docs are added without updating AGENTS.md.
+    reglas_dir = ROOT / "doc/reglas"
+    if reglas_dir.exists():
+        canonical_docs = [
+            f for f in reglas_dir.glob("*.md")
+            if not f.name.startswith("legacy_")
+        ]
+        fs_count = len(canonical_docs)
+        # Count rows in the domain-doc table (lines of the form "| `*.md` |")
+        table_rows = re.findall(r"^\|\s*`[^`]+\.md`\s*\|", agents_text, re.MULTILINE)
+        table_count = len(table_rows)
+        if fs_count != table_count:
+            doc_names = ", ".join(sorted(f.name for f in canonical_docs))
+            warnings.append(
+                f"Domain-doc table has {table_count} row(s) but {fs_count} canonical "
+                f"doc/reglas/*.md file(s) exist ({doc_names}). "
+                f"Update the domain-doc table in AGENTS.md."
+            )
+
     return warnings
 
 
