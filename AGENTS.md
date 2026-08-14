@@ -12,6 +12,8 @@ respective domains; this file must not duplicate their content — it points to 
 | `NORMAS_IMPLEMENTACION.md` | *how to build/test/log* | Runtime standards, DQ `check_code`, logging v2, regressions |
 | `MODELO_SEMANTICO.md` | *what values mean* | Attribute semantics + SC-A1..SC-F4 consistency rules |
 | `SCHEMA_REFERENCE.md` | *where data lives* | Full DB table/column reference (P1/P2/P3) |
+| `PROVENANCE_DATOS_MACRO.md` | *where macro data comes from* | Macro-series sourcing, data-source provenance, API keys, refresh cadence |
+| `P4_BI_CHARTER.md` | *how BI sync works* | P4 Postgres/Superset charter (ETL, ports, DDL, datasets) |
 
 | Backlog registers (`doc/backlog/`) | Answers | Canonical for |
 |---|---|---|
@@ -28,7 +30,7 @@ If a request conflicts with a principle or restriction, stop and report.
 ~3,200 European investment funds. Goal: capital preservation relative to IPC+M3 (~6–7% annual, max drawdown 15%, 3–5 year horizon).  
 Stack: Python 3.13, SQLite, Windows 10, Conda env `des`.  
 <!-- AUTO:BEGIN schema-version -->
-DB: `db/fondos.sqlite` (schema v24). Master list: `c:\data\fondos\in\GestoresDeFondosv1.xlsx`.
+DB: `db/fondos.sqlite` (schema v25). Master list: `c:\data\fondos\in\GestoresDeFondosv1.xlsx`.
 <!-- AUTO:END schema-version -->
 
 ---
@@ -89,12 +91,50 @@ HTTP policy: 3 retries (1s/2s/4s backoff), timeout 15s. 429 does NOT retry.
 ### Key support modules
 
 <!-- AUTO:BEGIN kill-switches-line -->
-- `shared/config.py` — all constants: `DB_PATH`, `SCHEMA_VERSION` (`"v24"`), `DOMAIN_VALUES`, `ATTRIBUTE_CATALOG`, kill-switches (`PRIIPS_COST_EXTRACTION_ENABLED`, `SHORT_HORIZON_SCORING_ENABLED`, `ROLLING_STATS_ENABLED`, `ROLLING_PCTILE_P3_ENABLED`, `BENCHMARK_DECOMP_ENABLED`, `BENCHMARK_ROLE_ENABLED`, `INTER18_RECONCILIATION_ENABLED`, `DLA2_ARBITRATION_ENABLED`)
+- `shared/config.py` — all constants: `DB_PATH`, `SCHEMA_VERSION` (`"v25"`), `DOMAIN_VALUES`, `ATTRIBUTE_CATALOG`, kill-switches (`PRIIPS_COST_EXTRACTION_ENABLED`, `SHORT_HORIZON_SCORING_ENABLED`, `ROLLING_STATS_ENABLED`, `ROLLING_PCTILE_P3_ENABLED`, `BENCHMARK_DECOMP_ENABLED`, `BENCHMARK_ROLE_ENABLED`, `INTER18_RECONCILIATION_ENABLED`, `DLA2_ARBITRATION_ENABLED`)
 <!-- AUTO:END kill-switches-line -->
 - `shared/schema_checks.py` — `assert_schema_alignment()` validates DB columns at startup
 - `proyecto1/core/classify_utils.py` — **single source of truth** for all categorical normalization maps (EN→ES for Sector_Focus, Type, Family). Import from here; never duplicate elsewhere (P#11 / R-1).
 - `proyecto1/core/cost_arbitration.py` — dual-path cost arbitration (PRIIPs vs UCITS)
 - `proyecto1/core/priips_cost_extractor.py` + `ucits_cost_extractor.py` — cost extraction
+
+### All P1 modules (machine-verified)
+
+<!-- AUTO:BEGIN p1-module-map -->
+| Module | Folder |
+|--------|--------|
+| `benchmark_normalizer.py` | `proyecto1/core` |
+| `classify_utils.py` | `proyecto1/core` |
+| `cost_arbitration.py` | `proyecto1/core` |
+| `cost_cross_validator.py` | `proyecto1/core` |
+| `cost_format_router.py` | `proyecto1/core` |
+| `cost_format_signals.py` | `proyecto1/core` |
+| `cost_pct_anchored.py` | `proyecto1/core` |
+| `cost_table_parser.py` | `proyecto1/core` |
+| `dla_extractor.py` | `proyecto1/core` |
+| `dla_table_serializer.py` | `proyecto1/core` |
+| `fund_characterizer.py` | `proyecto1/core` |
+| `fund_family_builder.py` | `proyecto1/core` |
+| `io.py` | `proyecto1/core` |
+| `kiid_parser.py` | `proyecto1/core` |
+| `mark_stale.py` | `proyecto1/core` |
+| `normalize_db_casing_v20.py` | `proyecto1/core` |
+| `PATCHES_pipeline.py` | `proyecto1/core` |
+| `pipeline.py` | `proyecto1/core` |
+| `priips_cost_extractor.py` | `proyecto1/core` |
+| `sqlite_writer.py` | `proyecto1/core` |
+| `srri_text.py` | `proyecto1/core` |
+| `srri_v4_geometric.py` | `proyecto1/core` |
+| `srri_v5_geometric.py` | `proyecto1/core` |
+| `ucits_cost_extractor.py` | `proyecto1/core` |
+| `alternativos.py` | `proyecto1/blocks` |
+| `mixtos.py` | `proyecto1/blocks` |
+| `monetarios.py` | `proyecto1/blocks` |
+| `renta_variable.py` | `proyecto1/blocks` |
+| `restantes.py` | `proyecto1/blocks` |
+| `rf_corto.py` | `proyecto1/blocks` |
+| `rf_flexible.py` | `proyecto1/blocks` |
+<!-- AUTO:END p1-module-map -->
 
 ---
 
@@ -102,42 +142,66 @@ HTTP policy: 3 retries (1s/2s/4s backoff), timeout 15s. 429 does NOT retry.
 
 ### Module map
 
+<!-- AUTO:BEGIN p2-module-map -->
 ```
 proyecto2/
   src/
-    pipeline/run_pipeline.py     ← entry point
-    readers/db_readers.py        ← load_nav(), load_ipc(), get_isins_with_nav()
-    discovery/
-      nav_discovery.py           ← Morningstar (mstarpy) NAV download
-      macro_discovery.py         ← public APIs: INE, BCE SDW, Fed FRED, Eurostat
+    analysis/
+      export_metrics.py
     calculations/
-      risk_metrics.py            ← return_ann, vol_ann, sharpe, max_drawdown, SRRI
-      returns.py                 ← log returns, annualized
-      drawdown.py                ← max drawdown, recovery time
-      consistency.py             ← real vs nominal consistency check
-      macro_sensitivity.py       ← OLS regression vs 24 macro factors (min 60 obs)
-      regime_returns.py          ← return/sharpe/vol per macro regime (min 12 obs/regime)
-      momentum.py                ← rolling momentum ranks
-      capture_ratios.py          ← upside/downside capture vs benchmark
-      persistence.py             ← alpha persistence metric
-      currency_factor.py         ← FX contribution to return
-      deflation.py               ← nominal → real return conversion
-      m2_global_builder.py       ← builds M2 Global YoY series
-      rolling_stats.py           ← rolling engine (roll_vol_ann/max_dd/return_ann) → fund_metric_timeseries [ROLLING_STATS_ENABLED]
-      short_horizon.py           ← daily short-horizon metrics on fund_nav_daily (metric_version='d1'; Getmansky AC(1) illiquidity)
-      srri.py                    ← SRRI calculation
-    writers/metrics_writer.py    ← writes to fund_metrics table
-    analysis/export_metrics.py   ← Excel export of P2 metrics (per-block sheets); orchestrated by P2_calculateIndicators.bat after pipeline RC=0, not run standalone
-    reports/rolling_dashboard.py ← self-contained HTML dashboard (Chart.js) from fund_metric_timeseries + fund_metric_alerts
+      capture_ratios.py
+      consistency.py
+      currency_factor.py
+      deflation.py
+      drawdown.py
+      m2_global_builder.py
+      macro_sensitivity.py
+      momentum.py
+      persistence.py
+      regime_returns.py
+      returns.py
+      risk_metrics.py
+      rolling_stats.py
+      short_horizon.py
+      srri.py
+    discovery/
+      macro_discovery.py
+      nav_discovery.py
+    pipeline/
+      run_pipeline.py
+    readers/
+      db_readers.py
+    reports/
+      rolling_dashboard.py
     utils/
-      validators.py              ← validate_nav(), validate_ipc()
-      time_windows.py            ← slice_window()
-      fingerprint.py             ← compute_input_hash() SHA-1 idempotency (keys on CALC_VERSION + METRIC_VERSION)
+      fingerprint.py
       logger.py
+      time_windows.py
+      validators.py
+    writers/
+      metrics_writer.py
   tests/
-    calculations/                ← test_drawdown.py, test_consistency.py
-    discovery/                   ← test_eurostat.py, test_fred_es.py, test_historia.py
+    calculations/
+      test_consistency.py
+      test_drawdown.py
+      test_macro_sensitivity.py
+      test_nav_scale_repair_20260719.py
+      test_regime_returns.py
+      test_rolling_stats.py
+      test_short_horizon.py
+    discovery/
+      test_eurostat.py
+      test_fred_es.py
+      test_fred_es2.py
+      test_historia.py
+    readers/
+      test_preflight.py
+    reports/
+      test_rolling_dashboard.py
+    utils/
+      test_fingerprint.py
 ```
+<!-- AUTO:END p2-module-map -->
 
 ### DB tables used by P2
 
@@ -165,12 +229,54 @@ last-date/rows/value + IPC coverage + `METRIC_VERSION` + `CALC_VERSION`) is stor
 Unchanged inputs → 100% cache-hit, 0 recomputed. **Bump `CALC_VERSION` (`run_pipeline.py`, currently
 `"20260730"`) to force a full recompute** of all ISINs (e.g. after changing calculation logic).
 
-### Macro factors (OLS model, 24 betas)
+### Macro factors (OLS model — machine-verified)
 
-`beta_rate_eu`, `beta_m3_yoy`, `beta_ipc_{es,eu,us,jp,cn}`, `beta_rate_{us,jp,cn}`, `beta_oil`, `beta_copper`, `beta_cli_{eu,us}`, `beta_dxy`, `beta_gold`, `beta_m2_global`, `beta_spread_{hy,ig}`, `beta_vix`, `beta_term_spread`, `beta_eur_{jpy,gbp,cny}`.  
+<!-- AUTO:BEGIN macro-factors -->
+| Factor key | Metric |
+|------------|--------|
+| `d_rate_eu` | `beta_rate_eu` |
+| `m3_yoy` | `beta_m3_yoy` |
+| `ipc_yoy_es` | `beta_ipc_es` |
+| `ipc_yoy_eu` | `beta_ipc_eu` |
+| `ipc_yoy_us` | `beta_ipc_us` |
+| `ipc_yoy_jp` | `beta_ipc_jp` |
+| `ipc_yoy_cn` | `beta_ipc_cn` |
+| `d_rate_us` | `beta_rate_us` |
+| `d_rate_jp` | `beta_rate_jp` |
+| `d_rate_cn` | `beta_rate_cn` |
+| `oil_yoy` | `beta_oil` |
+| `copper_yoy` | `beta_copper` |
+| `cli_yoy_eu` | `beta_cli_eu` |
+| `cli_yoy_us` | `beta_cli_us` |
+| `dxy_yoy` | `beta_dxy` |
+| `gold_yoy` | `beta_gold` |
+| `m2_global_yoy` | `beta_m2_global` |
+| `spread_hy` | `beta_spread_hy` |
+| `spread_ig` | `beta_spread_ig` |
+| `vix_yoy` | `beta_vix` |
+| `term_spread` | `beta_term_spread` |
+| `eur_jpy_yoy` | `beta_eur_jpy` |
+| `eur_gbp_yoy` | `beta_eur_gbp` |
+| `eur_cny_yoy` | `beta_eur_cny` |
+<!-- AUTO:END macro-factors -->
+
+2 additional derived metrics (computed at runtime, not in `_FACTOR_TO_METRIC`): `energy_sensitivity_pct`, `hy_spread_sensitivity_pct`.  
 VIF filter applied; factors with VIF > 10 excluded.
 
 ### Data discovery (run before pipeline)
+
+#### Registered macro data sources (machine-verified)
+
+<!-- AUTO:BEGIN data-sources -->
+| Source | Loader |
+|--------|--------|
+| `ine` | `load_ine_ipc` |
+| `bce` | `load_bce_series` |
+| `fred` | `load_fred_series` |
+| `eurostat` | `load_eurostat_series` |
+<!-- AUTO:END data-sources -->
+
+#### Commands
 
 ```batch
 # NAV discovery (verify fund exists in Morningstar)
@@ -193,14 +299,17 @@ python -m proyecto2.src.discovery.macro_discovery --source all
 
 ### Module map
 
-```
-proyecto3/src/
-  regime_classifier.py    ← RegimeClassifier: classify_current() / classify_historical()
-  fund_scorer.py          ← 3-layer score: hard filters → base score → regime multipliers
-  portfolio_builder.py    ← PortfolioBuilder: combines 3 sub-portfolios
-  backtesting.py          ← Backtester: simplified (look-ahead bias acknowledged)
-  monthly_report.py       ← generate_report() → Excel with 5 sheets
-```
+<!-- AUTO:BEGIN p3-module-map -->
+| Module | Folder |
+|--------|--------|
+| `backtesting.py` | `proyecto3/src` |
+| `fund_scorer.py` | `proyecto3/src` |
+| `m2_global_builder.py` | `proyecto3/src` |
+| `monthly_report.py` | `proyecto3/src` |
+| `portfolio_builder.py` | `proyecto3/src` |
+| `regime_classifier.py` | `proyecto3/src` |
+| `regime_returns.py` | `proyecto3/src` |
+<!-- AUTO:END p3-module-map -->
 
 ### Regime classification (7 regimes, priority order)
 
@@ -284,6 +393,14 @@ Local-only alternative: `proyecto2/src/reports/rolling_dashboard.py` emits a sel
 
 All commands: activate Conda env `des` first.
 
+**Full P1 + P2 cycle (recommended for monthly runs):**
+```batch
+cd C:\desarrollo\fondos\scripts\launch
+P1_P2_Complete.bat
+```
+Runs sequentially: P1_refreshBenchmarks → P1_discoverAllFunds → P2_discoverLoadMetrics → P2_calculateIndicators.
+Aborts on the first step that fails. Log: `proyecto1/log/log_P1_P2_complete_YYYYMMDD_HHMMSS.log`.
+
 **P1 full pipeline:**
 ```batch
 cd C:\desarrollo\fondos\scripts\launch
@@ -302,6 +419,24 @@ python run_block.py --block mixtos --db ..\db\fondos.sqlite --master "c:\data\fo
 python run_block.py --block mixtos --db ..\db\fondos.sqlite --master "..." --list-isin LU0232465467,LU1873127366
 ```
 
+**P2 data discovery (run before pipeline — macro + NAV):**
+```batch
+scripts\launch\P2_discoverLoadMetrics.bat
+```
+Runs macro discovery (BCE, FRED, Eurostat) → NAV discover → NAV load in sequence.
+Log: `proyecto2/log/log_P2_discoverMetrics_YYYYMMDD_HHMMSS.log`.
+
+Individual steps (debug / single-source):
+```batch
+python -X utf8 -m proyecto2.src.discovery.nav_discovery --mode discover
+python -X utf8 -m proyecto2.src.discovery.nav_discovery --mode load --desde 2000-01-01
+python -X utf8 -m proyecto2.src.discovery.nav_discovery --mode update
+python -X utf8 -m proyecto2.src.discovery.macro_discovery --source bce
+python -X utf8 -m proyecto2.src.discovery.macro_discovery --source fred
+python -X utf8 -m proyecto2.src.discovery.macro_discovery --source eurostat
+python -X utf8 -m proyecto2.src.discovery.macro_discovery --source all
+```
+
 **P2 full pipeline (two-phase: pipeline → export_metrics on RC=0):**
 ```batch
 scripts\launch\P2_calculateIndicators.bat
@@ -315,6 +450,11 @@ python -X utf8 -m proyecto2.src.pipeline.run_pipeline
 **P2 single ISIN (debug):**
 ```batch
 python -X utf8 -m proyecto2.src.pipeline.run_pipeline --isin LU1234567890 --dry-run
+```
+
+**P3 monthly report:**
+```batch
+scripts\launch\P3_generateReport.bat
 ```
 
 **P4 sync to Postgres/Superset:**
@@ -345,6 +485,22 @@ python -c "import ast; ast.parse(open('archivo.py').read()); print('AST OK')"
 UPDATE fund_kiid_metadata SET KIID_Status='FORCE_REFRESH' WHERE ISIN='<isin>' AND KIID_Class=1;
 ```
 
+### Canonical launchers (machine-verified)
+
+<!-- AUTO:BEGIN launchers -->
+| Script | Domain |
+|--------|--------|
+| `P1_diagCost.bat` | P1 |
+| `P1_discoverAllFunds.bat` | P1 |
+| `P1_discoverAllFundsPlusCostDiag.bat` | P1 |
+| `P1_P2_Complete.bat` | P1 |
+| `P1_refreshBenchmarks.bat` | P1 |
+| `P2_calculateIndicators.bat` | P2 |
+| `P2_discoverLoadMetrics.bat` | P2 |
+| `P3_generateReport.bat` | P3 |
+| `P4_syncToPostgres.bat` | P4 |
+<!-- AUTO:END launchers -->
+
 ---
 
 ## Operational Tooling — Audit Skills (`.claude/skills/`)
@@ -363,20 +519,48 @@ Repo-scoped skills used for diagnostics and backlog maintenance. Invoke by name.
 
 ---
 
-## Maintenance — Dynamic AGENTS.md Sync (proposed)
+## Maintenance — Dynamic Sync
 
-To prevent this file from drifting from the codebase again (P#11 / generate-from-code, don't hand-maintain):
+Mechanical sections are kept in sync by `scripts/audit/sync_agents_md.py`. Hand-written prose
+(regime tables, scoring weights, principles, rationale) stays outside sentinel markers and is
+never touched by the generator. The generator is **dependency-free** (AST-parses only — no
+project imports), so it runs on bare `python3` (CI, developer machines, Linux runners).
 
-- **Sentinel blocks** — wrap mechanical sections (module maps, kill-switches, DB-table lists, batch launchers,
-  skills list, `SCHEMA_VERSION`) in `<!-- AUTO:BEGIN <section> -->` … `<!-- AUTO:END -->`. Hand-written prose
-  (principles, rationale) stays outside markers and is never touched.
-- **Generator** `scripts/audit/sync_agents_md.py` — read-only introspection: `SCHEMA_VERSION` + kill-switches via
-  `ast` over `shared/config.py`; module trees via `glob`; DB tables via regex over `db/schema_fondos.sql`;
-  launchers via `scripts/launch/*.bat`; skills via `.claude/skills/*.md`. Re-renders only the AUTO blocks.
-  Modes: `--check` (diff, exit 1 on drift) · `--write`.
-- **Enforcement** — a `pre-commit` hook (and mirrored CI job) runs `--check`; drift blocks the commit.
+**Implemented sentinels (11, all enforced at commit):**
 
-*Status: built. Script: `scripts/audit/sync_agents_md.py`. Pre-commit hook installed at `.git/hooks/pre-commit`.*
+| Sentinel | Target file | Source of truth |
+|----------|-------------|----------------|
+| `schema-version` | `AGENTS.md` | `SCHEMA_VERSION` in `shared/config.py` |
+| `kill-switches-line` | `AGENTS.md` | `*_ENABLED` booleans in `shared/config.py` (source order) |
+| `skills-table` | `AGENTS.md` | `.claude/skills/*.md` (alpha order) |
+| `p1-module-map` | `AGENTS.md` | `proyecto1/{core,blocks}/*.py` minus non-canonical |
+| `p2-module-map` | `AGENTS.md` | `proyecto2/src/**/*.py` + `tests/**/*.py` minus non-canonical |
+| `p3-module-map` | `AGENTS.md` | `proyecto3/src/*.py` minus non-canonical |
+| `db-tables` | `AGENTS.md` | All `CREATE TABLE` in `db/schema_fondos.sql`, bucketed P1/P2/P3 |
+| `launchers` | `AGENTS.md` | `scripts/launch/*.bat` minus non-canonical |
+| `macro-factors` | `AGENTS.md` | `_FACTOR_TO_METRIC` dict in `macro_sensitivity.py` |
+| `data-sources` | `AGENTS.md` | `SOURCES` registry in `macro_discovery.py` |
+| `schema-reference-tables` | `doc/reglas/SCHEMA_REFERENCE.md` | Same DDL roster as `db-tables` |
+
+**Non-canonical exclusion rule** — files matching any of these patterns are excluded from module
+maps and the launchers table: dated suffix `_YYYYMMDD`, `_prod` suffix, `_last` suffix,
+`_` prefix (private/init), `BackUp`/`Backup` in name, `test_*` outside a proper `tests/`
+directory. These files are operational noise; their canonical replacements are listed instead.
+
+**Generator modes:**
+```bash
+python scripts/audit/sync_agents_md.py            # report mode — show drift
+python scripts/audit/sync_agents_md.py --check    # exit 1 on drift (used by pre-commit hook + CI)
+python scripts/audit/sync_agents_md.py --write    # update all governed files in-place
+```
+
+**Two-tier enforcement:**
+- **Local** — `.git/hooks/pre-commit` runs `--check`; any sentinel drift blocks the commit.
+  Fix with `--write`, then re-stage the modified file(s).
+- **Hosted CI** — `.github/workflows/agents-sync.yml` mirrors `--check` on every push/PR.
+  Server-side gate is independent of local hook installation state.
+
+**Hook installer:** `scripts/audit/pre-commit.sh` — portable, resolves Python via Conda env `des`.
 
 ---
 
@@ -422,17 +606,36 @@ Levels: `ERROR` = fund not persisted · `WARNING` = inconsistency corrected · `
 
 Full reference: `doc/reglas/SCHEMA_REFERENCE.md` · DDL: `db/schema_fondos.sql`
 
-### P1 tables
-
-| Table | Key | Columns |
-|-------|-----|---------|
-| `fund_master` | `ISIN` | 42 cols: identity, classification, SRRI, costs, family FK |
-| `fund_kiid_metadata` | `(ISIN, KIID_Class)` | KIID URL/text/status, SRRI_Visual/Textual/Validation_Status |
-| `fund_families` | `family_id` | family_name, Fund_Nature, n_funds |
-| `ingestion_log` | `id` | step, status (ERROR/WARNING/INFO), message — append-only history, every cycle |
-| `fund_data_quality_issues` | `(ISIN, check_code)` | level (OK/INFERRED/WARN/MISSING), message, detected_at — **current** issues only, rebuilt each cycle |
-
 Key `Fund_Nature` values: `Renta Variable` · `Mixtos` · `Renta Fija Flexible` · `Renta Fija Corto Plazo` · `Monetario` · `Alternativo` · `Restantes` · `Estructurado`
+
+### All DB tables (machine-verified)
+
+<!-- AUTO:BEGIN db-tables -->
+| Table | Domain |
+|-------|--------|
+| `fund_master` | P1 |
+| `fund_cost_schedule` | P1 |
+| `fund_kiid_metadata` | P1 |
+| `ingestion_log` | P1 |
+| `fund_data_quality_issues` | P1 |
+| `fund_families` | P1 |
+| `series_macro` | P2 |
+| `series_benchmark` | P2 |
+| `series_inflation` | P2 |
+| `fund_metrics` | P2 |
+| `p2_pipeline_log` | P2 |
+| `fund_scores` | P3 |
+| `portfolio_scenarios` | P3 |
+| `portfolio_weights` | P3 |
+| `rotation_costs` | P3 |
+| `nav_sources` | P2 |
+| `fund_benchmarks` | P1 |
+| `fund_nav_monthly` | P2 |
+| `fund_nav_daily` | P2 |
+| `fund_metric_timeseries` | P2 |
+| `fund_metric_alerts` | P2 |
+| `fund_metric_state` | P2 |
+<!-- AUTO:END db-tables -->
 
 ### Known bugs
 

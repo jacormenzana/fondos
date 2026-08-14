@@ -7,6 +7,37 @@
 
 ---
 
+## Índice de tablas (machine-verified)
+
+<!-- AUTO:BEGIN schema-reference-tables -->
+| Table | Domain |
+|-------|--------|
+| `fund_master` | P1 |
+| `fund_cost_schedule` | P1 |
+| `fund_kiid_metadata` | P1 |
+| `ingestion_log` | P1 |
+| `fund_data_quality_issues` | P1 |
+| `fund_families` | P1 |
+| `series_macro` | P2 |
+| `series_benchmark` | P2 |
+| `series_inflation` | P2 |
+| `fund_metrics` | P2 |
+| `p2_pipeline_log` | P2 |
+| `fund_scores` | P3 |
+| `portfolio_scenarios` | P3 |
+| `portfolio_weights` | P3 |
+| `rotation_costs` | P3 |
+| `nav_sources` | P2 |
+| `fund_benchmarks` | P1 |
+| `fund_nav_monthly` | P2 |
+| `fund_nav_daily` | P2 |
+| `fund_metric_timeseries` | P2 |
+| `fund_metric_alerts` | P2 |
+| `fund_metric_state` | P2 |
+<!-- AUTO:END schema-reference-tables -->
+
+---
+
 ## TABLA 1: fund_master
 
 **Propósito:** Registro maestro de cada clase de fondo (1 fila = 1 ISIN)  

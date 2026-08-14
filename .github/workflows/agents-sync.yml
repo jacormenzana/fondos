@@ -1,0 +1,35 @@
+name: AGENTS.md sentinel sync check
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  check-sentinels:
+    name: Verify all AUTO sentinels are in sync
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Run sentinel sync check
+        # No project dependencies needed — sync_agents_md.py is pure stdlib (ast, re, pathlib).
+        # Any drift in AGENTS.md or doc/reglas/SCHEMA_REFERENCE.md sentinels fails this step.
+        run: python scripts/audit/sync_agents_md.py --check
+
+      - name: Show fix command on failure
+        if: failure()
+        run: |
+          echo ""
+          echo "One or more sentinel blocks are out of sync."
+          echo "Fix locally with:"
+          echo "  python scripts/audit/sync_agents_md.py --write"
+          echo "Then stage and commit the updated file(s)."

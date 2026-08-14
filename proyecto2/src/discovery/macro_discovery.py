@@ -958,6 +958,18 @@ def load_eurostat_series(desde: str = "2000-01", verbose: bool = False) -> list[
     return macro_rows
 
 
+# ============================================================
+# Registro canónico de fuentes (SSoT — P#11)
+# Añadir aquí al incorporar una nueva fuente; argparse y run()
+# derivan sus listas desde este dict en lugar de literas duplicadas.
+# ============================================================
+SOURCES: dict = {
+    "ine":      load_ine_ipc,
+    "bce":      load_bce_series,
+    "fred":     load_fred_series,
+    "eurostat": load_eurostat_series,
+}
+
 
 # ============================================================
 # Orquestador principal
@@ -978,7 +990,7 @@ def run(
                   Si None, se lee de la variable de entorno FRED_API_KEY.
     """
     if sources is None:
-        sources = ["ine", "bce", "fred", "eurostat"]
+        sources = list(SOURCES)
 
     conn = get_connection()
     today = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1053,7 +1065,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--source",
         default="all",
-        choices=["ine", "bce", "fred", "eurostat", "all"],
+        choices=list(SOURCES) + ["all"],
         help="Fuente a cargar (default: all)",
     )
     parser.add_argument(

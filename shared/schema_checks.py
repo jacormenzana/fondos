@@ -582,6 +582,34 @@ def check_schema_v24(conn) -> dict:
     return {'ok': len(issues) == 0, 'issues': issues}
 
 
+def check_schema_v25(conn) -> dict:
+    """
+    Valida v25: v24 completo + columna nav_sources.data_status presente.
+
+    v25 (2026-07-19): nav_sources.data_status (TEXT DEFAULT 'OK') — máquina
+    de estados para control del ciclo de vida de los datos NAV (paralela a
+    KIID_Status en P1). Permite invalidar datos y forzar recálculos sin borrar
+    la fila de nav_sources.
+
+    Returns: {'ok': bool, 'issues': list[str]}
+    """
+    issues: list[str] = []
+    v24 = check_schema_v24(conn)
+    issues += v24["issues"]
+
+    cur = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='nav_sources'"
+    )
+    if not cur.fetchone():
+        issues.append("Tabla nav_sources no existe (requerida por v25)")
+    else:
+        actual = {r[1] for r in conn.execute("PRAGMA table_info(nav_sources)").fetchall()}
+        if "data_status" not in actual:
+            issues.append("nav_sources: falta columna data_status (v25)")
+
+    return {"ok": len(issues) == 0, "issues": issues}
+
+
 def check_schema_v19(conn) -> dict:
     """
     Valida que la BD esté en schema v19.
@@ -675,9 +703,9 @@ def assert_schema_alignment(conn) -> None:
     Comprueba que fund_master, fund_kiid_metadata, ingestion_log,
     fund_benchmarks, fund_data_quality_issues, fund_nav_monthly y
     fund_nav_daily contienen todas las columnas definidas en este módulo
-    (v24: fund_master = 60 cols; fund_nav_monthly + fund_nav_daily
-    añadidas al schema canónico; fund_nav_daily NUEVA en v24 para
-    métricas de horizonte corto con corrección de iliquidez).
+    (v25: fund_master = 60 cols; nav_sources.data_status añadida en v25
+    para gestión del ciclo de vida de datos NAV; fund_nav_monthly +
+    fund_nav_daily añadidas al schema canónico en v24).
 
     Lanza AssertionError con detalle si falta alguna columna.
 
