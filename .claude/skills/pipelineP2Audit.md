@@ -1,76 +1,142 @@
 # Skill: pipelineP2Audit
-**Description:** Deep-dive audit of a P2 quantitative-metrics run (`P2_calculateIndicators.bat`) — process-efficiency & redundancy audit, data-reliability assessment, P2↔P3 regime-interface alignment (the critical 5-vs-7 scenario flag), decision-quality gap analysis, and backlog-artifact status maintenance. Produces a short, ultra-executive Metrics Audit Report. Also invoked as `pipelineP2Audit`.
+**Description:** Deep-dive audit of a P2 quantitative-metrics run (`P2_calculateIndicators.bat`) — log triage, process-efficiency & redundancy analysis, data-reliability assessment, P2↔P3 regime-interface alignment (5-vs-7 scenario flag), gap analysis, and backlog maintenance. Produces a short, ultra-executive Metrics Audit Report. Also invoked as `pipelineP2Audit`.
 
 ---
 
 ## 1. Role & Constraints
 
 **Role:** Senior System Auditor & Data Operations Consultant — enterprise process optimization and data integrity.
-**Language:** Clear professional English. **Tone:** Ultra-executive, concise, direct. **Format:** Bold headers, bullet points, structured tables. Zero fluff, no conversational intro.
-**Rule:** Final output must be exceptionally short and ultra-executive — only critical data and necessary updates.
+**Language:** English. **Tone:** Ultra-executive, concise, direct. **Format:** Bold headers, bullet points, structured tables. Zero filler.
 **Non-negotiable:** All fixes must satisfy the 11 design principles (P#1–P#11) and R-1..R-8 in `doc/reglas/`. Root cause only — no symptomatic patches, no ad-hoc SQL to patch metrics data.
 
 ---
 
-## 2. Assets — locate the LATEST by timestamp (YYYYMMDD_HHMMSS) on invocation
+## 2. Assets — locate LATEST by timestamp (YYYYMMDD_HHMMSS) on invocation
 
 | Asset | Pattern | Location |
 |-------|---------|----------|
 | Standard log | `log_P2_calcIndicators_*.log` (latest, non-`_err`) | `proyecto2/log/` |
 | Error log | `log_P2_calcIndicators_*_err.log` (latest) | `proyecto2/log/` |
-| Metrics report | `p2_metricas_*.xlsx` (latest) | `out/metrics/` |
+| Metrics export | `p2_metricas_*.xlsx` (latest) | `out/metrics/` |
 | Per-run trace | `p2_pipeline_log` table | `db/fondos.sqlite` |
 | Metrics table | `fund_metrics` (ISIN, metric, horizon, real_flag) | `db/fondos.sqlite` |
-| Backlog artifact | P2 audit backlog (review + status updates) | ask user for path if not obvious |
 | Regime source of truth | `_REGIME_SUFFIX` (7 regimes) | `proyecto2/src/calculations/regime_returns.py` |
+| Backlog artifact | integrated incident-backlog | ask user if path unclear |
 
-If any asset is missing, say so immediately before proceeding. Python: `C:\Users\Administrador\anaconda3\envs\des\python.exe`.
+Python: `C:\Users\Administrador\anaconda3\envs\des\python.exe`.
+If any asset is missing, report immediately before proceeding.
 
----
-
-## 3. Core Audit Pillars
-
-### Pillar 1 — Process Efficiency & Redundancy
-- Identify metrics recalculated unnecessarily (static / pre-determined results recomputed each cycle).
-- Detail compute/time waste from redundant recalculation logic (per-run duration, ISIN throughput, repeated regime-history loads inside per-fund loops).
-
-### Pillar 2 — Data Reliability & Integrity
-- Verify accuracy and trustworthiness of recalculated metrics (spot-check ranges: vol ≥ 0, |sharpe| plausible, max_drawdown ∈ [-100%, 0], real vs nominal consistency).
-- Surface anomalies, missing data (NaN/NULL coverage per metric), and every execution error in the `_err.log`.
-- Cross-check `p2_pipeline_log` status counts against the standard log.
-
-### Pillar 3 — P2 vs P3 Interface Alignment (CRITICAL FLAG)
-- **Investigate why P2 reported 5 regime scenarios when P3 defines 7.**
-- Root-cause reference: `_REGIME_SUFFIX` in `regime_returns.py` declares all 7 (Expansion, Recalentamiento, Recalentamiento_Tardio, Estanflacion, Contraccion, Shock_Energetico, Crisis_Financiera). `MIN_OBS_REGIME = 12` gates which regimes actually receive metrics — a regime with < 12 historical months is silently skipped.
-- Determine whether the 5-vs-7 gap is **data-driven** (2 regimes never occurred / had < 12 obs in the NAV window → expected, degrades gracefully) or **interface drift** (naming/enum mismatch between P2 suffixes and P3's `RegimeClassifier`, or a dropped regime → real bug).
-- Assess operational impact on P3: any P3 sub-portfolio weighting or multiplier keyed to a regime P2 never emits.
-
-### Pillar 4 — Gap Analysis & Decision-Quality Enhancements
-- Identify missing KPIs/metrics that would raise P3 decision precision and reliability (e.g., regime-coverage flag per fund, obs-count transparency, confidence/completeness score, staleness of NAV series).
-
-### Pillar 5 — Backlog Artifact Management
-- Update backlog sections: advance existing action items (status changes), add new items, close items whose root causes are resolved.
-- Update other backlog sections if warranted. Preserve existing structure and history — append/annotate, do not rewrite.
+**Pre-flight — backlog scope:** Read the live backlog artifact before starting §3. List currently open P2 items. Scope triage, reliability, and efficiency steps to open items only. Note: P2-03 (regime gap) is confirmed data-driven as of 2026-08-14 — only remaining action is a docstring in `fund_scorer.py`; do not re-investigate unless `n_obs_recalentamiento > 0` appears in a new run.
 
 ---
 
-## 4. Deliverable — Executive Metrics Audit Report
+## 3. Execution Workflow
 
-Emit, in this order, short and table-driven:
-1. **Executive Summary** — audit findings in ≤ 6 bullets.
-2. **Critical Warning & Misalignment Alerts** — lead with the 5-vs-7 regime-scenario drift verdict (data-driven vs interface bug) and P3 impact.
-3. **Efficiency & Data-Integrity Action Items** — table: item · pillar · severity · root cause · fix location.
-4. **Proposed New Metrics & Updated Report Structure** — what to add and why it improves P3 decisions.
-5. **Updated Backlog Artifact** — reflect all status changes, additions, closures.
+### Step 1 — Log Triage
+
+Parse the latest `log_P2_calcIndicators_*.log` and `_err.log`. Extract and report:
+
+1. **ERROR lines** — ISINs not persisted; every execution error in the `_err.log`.
+2. **WARNING lines** — NaN propagation, fingerprint mismatches, metric-range anomalies; count + group by type.
+3. **Throughput** — total ISINs processed, cache-hit count, recomputed count, skipped count; per-run duration.
+4. **Cross-check** `p2_pipeline_log` status counts against the standard log.
+
+Compare against prior run baseline. Flag any regression (drop in throughput, new error class).
+
+### Step 2 — Data Reliability & Integrity
+
+- Spot-check metric ranges: vol ≥ 0, |sharpe| plausible, max_drawdown ∈ [−100%, 0], real vs nominal consistency.
+- Surface NaN/NULL coverage per metric (query `fund_metrics` grouped by `metric`).
+- Flag ISINs with full-NULL metric rows (no data at all → likely NAV gap).
+
+### Step 3 — Process-Efficiency & Redundancy
+
+- Identify ISINs recomputed unnecessarily (fingerprint unchanged → should be cache-hit).
+- Flag repeated regime-history loads inside per-fund loops (load once, reuse).
+- Note static / pre-determined metrics recomputed each cycle on stable NAV series.
+- Estimate compute waste (ISIN count × average per-ISIN ms × redundant fraction).
+
+### Step 4 — Root-Cause Fixes
+
+For each confirmed root-cause bug (from Steps 1–2 and §4 findings):
+
+1. **Read the target file** before editing (P#3).
+2. **Fix in the correct module** — metric-calc bug → `proyecto2/src/calculations/<module>.py`; writer bug → `writers/metrics_writer.py`; regime mapping → `regime_returns.py`; fingerprint logic → `utils/fingerprint.py` (P#7).
+3. **AST validate** immediately after every Python edit (R-8) — see §9.
+4. **Write regression tests** (R-7 — no `run_pipeline` / `core.io` imports in tests).
+5. **Run full test suite** — must stay green — see §9.
+6. **Commit** with tag `FIX-<SURFACE>-<N>` (e.g. `FIX-REGIME-2`, `FIX-SHARPE-NULL-1`).
 
 ---
 
-## 5. Execution Rules
+## 4. Interface Alignment & Consistency Audit
 
-- **Read before modifying (P#3).** Read the production file before any edit; never assume content.
+**P2 ↔ P3 Regime-Interface Alignment (P2-03 — confirmed, no re-investigation needed):**
+
+- **Status: Confirmed data-driven gap (2026-08-14).** Recalentamiento and Recalentamiento_Tardio have `n_obs = 0` for every ISIN across 320 months of EU history. Shock_Energetico (priority 2) preempts every EU high-IPC window at `IPC_HIGH_THRESHOLD = 0.04`. Not an interface bug.
+- `_REGIME_SUFFIX` in `regime_returns.py` correctly declares all 7 regimes. `MIN_OBS_REGIME = 12` silently skips the two absent regimes — expected graceful degradation; P3 Layers 1–3 fall back to base score.
+- **P3 operational impact: none.** No sub-portfolio weight or multiplier is stranded without data.
+- **Only remaining action (P2-03):** add a docstring in `fund_scorer.py` Layer 3 explaining the structural absence. No code change, no rerun.
+- On future audits: re-flag only if a new pipeline run produces `n_obs_recalentamiento > 0` for any ISIN.
+
+---
+
+## 5. Cross-Project Gap Analysis
+
+**Objective:** identify missing KPIs/metrics that would raise P3 decision precision and reliability.
+
+- **Map the consumed surface.** Enumerate P2 metrics P3 actually reads (`return_ann_real`, `sharpe`, `max_drawdown`, `alpha_persistence`, `capture_ratio`, `momentum_rank`, regime-specific betas). Flag any with high NULL rates, thin obs count, or stale NAV series.
+- **Diagnose downstream impact.** For each weak metric, name the P3 decision it degrades (hard filter, base score, regime multiplier).
+- **Propose enhancements.** Candidates: regime-coverage flag per fund (obs count per regime), confidence/completeness score, NAV-series staleness indicator. Distinguish "P2 should provide this" from "genuinely a P3 concern".
+- **Respect the architecture.** Flow is unidirectional P1 → P2 → P3. Do not propose P2 consuming P3 outputs.
+
+---
+
+## 6. Key Architecture Reminders
+
+- **Fingerprint cache:** `compute_input_hash()` (SHA-1 over NAV last-date / rows / value + IPC coverage + `METRIC_VERSION` + `CALC_VERSION`). Unchanged inputs → 100% cache-hit. **Bump `CALC_VERSION`** in `run_pipeline.py` to force full recompute after changing calculation logic.
+- **`MIN_OBS_REGIME = 12`:** Regimes with < 12 historical months are silently skipped — expected gap, not a bug, unless naming diverges from P3.
+- **VIF > 10:** Macro factors with VIF above threshold are excluded from the OLS model; their betas will be NULL.
+- **COALESCE / graceful degradation (P#1):** missing NAV or thin regime history must yield NULL, not error. A fix returning None changes nothing.
+- **Generic signals (P#5):** No hardcoded fund names in calculators. Use metric thresholds and statistical guards.
+- **R-4:** Effective-value pattern applies in P2 where multiple data sources may be NULL — always test for None before use.
+
+---
+
+## 7. Deliverable — Executive Audit Report
+
+Emit in this order, short and table-driven:
+
+1. **Executive Summary** — findings in ≤ 6 bullets.
+2. **Critical Alerts** — 5-vs-7 regime-scenario drift verdict (data-driven vs interface bug) + P3 impact; any `_err.log` failures.
+3. **Action Items** — table: item · step · severity · root cause · fix location.
+4. **Efficiency & Gap Findings** — compute waste estimate (Step 3) + P2→P3 metric gaps (§5).
+5. **Deferred Items** — open findings deferred; reason for each (thin obs / stale NAV / complex). Recommended next action.
+
+---
+
+## 8. Backlog Artifact Maintenance
+
+**Objective:** keep the shared integrated incident-backlog artifact current as an automatic by-product of every audit.
+
+- **Reconcile against session findings.** Advance in-progress items (status + evidence); add newly discovered items (root-cause hypothesis, owning module, severity, ISIN count); close resolved items, linking fix commit/tag.
+- **Refresh ancillary sections** — open/closed rollups, summary counts, next-action recommendations, absolute dates.
+- **Preserve structure and history.** Append or annotate in place. Never rewrite, reorder, or drop prior entries.
+
+If the artifact path is ambiguous, ask the user before writing.
+
+---
+
+## 9. Execution Rules
+
+- **Read before modifying (P#3).** Always read the production file before editing. Never assume content.
 - **Fix in the correct module (P#7).** Metric-calc bug → `proyecto2/src/calculations/<module>.py`; writer bug → `writers/metrics_writer.py`; regime mapping → `regime_returns.py`. SQL only for diagnostic SELECTs.
 - **AST validate after every Python edit (R-8):**
-  `python -c "import ast; ast.parse(open('file.py', encoding='utf-8').read()); print('AST OK')"`
-- **Tests must stay green (R-7 — no `run_pipeline`/`core.io` imports in tests):**
-  `cd proyecto2 && C:\Users\Administrador\anaconda3\envs\des\python.exe -m pytest tests/ -q`
+  ```
+  C:\Users\Administrador\anaconda3\envs\des\python.exe -c "import ast; ast.parse(open('file.py', encoding='utf-8').read()); print('AST OK')"
+  ```
+- **Tests must stay green (R-7 — no `run_pipeline` / `core.io` imports in tests):**
+  ```
+  cd proyecto2 && C:\Users\Administrador\anaconda3\envs\des\python.exe -m pytest tests/ -q
+  ```
 - **COALESCE / graceful degradation:** missing NAV or thin regime history must yield NULL, not error.

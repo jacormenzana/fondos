@@ -513,8 +513,9 @@ Repo-scoped skills used for diagnostics and backlog maintenance. Invoke by name.
 | `costP1AuditPipelineAndDiagCost` | Diagnostic and auditing workflow for troubleshooting pipeline cost extraction failures and generating code-level fixes. |
 | `crossValidateFundAttribute` | Add or audit a dual-signal (fund name + KIID text) cross-validated fund_master attribute, following the discipline established for Asset_Currency/Fund |
 | `debugErrorCode` | Four-phase debugging methodology with root cause analysis. Use when investigating bugs, fixing test failures, or troubleshooting unexpected behavior.  |
-| `pipelineP1Audit` | Full diagnostic audit of a P1 classification pipeline run — log triage, DQ issue analysis, benchmark-consistency audit, root-cause fixes, and regressi |
-| `pipelineP2Audit` | Deep-dive audit of a P2 quantitative-metrics run (`P2_calculateIndicators.bat`) — process-efficiency & redundancy audit, data-reliability assessment,  |
+| `pipelineP1Audit` | Full diagnostic audit of a P1 classification pipeline run — log triage, DQ issue analysis, process-efficiency pass, benchmark-consistency audit (B1–B7 |
+| `pipelineP1P2Audit` | Full-cycle diagnostic audit of a P1→P2 pipeline run — classification log triage, DQ analysis, benchmark-consistency (B1–B7), quantitative-metrics reli |
+| `pipelineP2Audit` | Deep-dive audit of a P2 quantitative-metrics run (`P2_calculateIndicators.bat`) — log triage, process-efficiency & redundancy analysis, data-reliabili |
 <!-- AUTO:END skills-table -->
 
 ---
