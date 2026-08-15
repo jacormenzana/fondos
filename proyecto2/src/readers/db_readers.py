@@ -242,3 +242,121 @@ def load_fund_attributes(conn: sqlite3.Connection) -> pd.DataFrame:
     """, conn)
     df = df.set_index("ISIN")
     return df
+
+
+# ============================================================
+# Observability / reliability-signal helpers
+# ============================================================
+
+def load_ts_cohort(
+    conn: sqlite3.Connection,
+    metric_version: str,
+    run_date_iso: str,
+) -> list[tuple[str, int]]:
+    """Groups fund_metrics rows by DATE(load_ts) for ISINs processed today.
+
+    Used by run_pipeline.py to emit the [RUN COHORT] log line and by the
+    pipelineP2Audit / pipelineP1P2Audit skills for the load_ts cohort check.
+
+    Parameters
+    ----------
+    metric_version : e.g. 'v1' — filters fund_metric_state rows.
+    run_date_iso   : 'YYYY-MM-DD' string, typically date.today().isoformat().
+
+    Returns
+    -------
+    List of (ts_date_str, count) tuples ordered by ts_date ascending.
+    Empty list if no rows (nothing processed today, or DB empty).
+
+    Two-timestamp model: load_ts = per-value change stamp (data lineage);
+    calculated_at = per-fund run stamp (orchestration). See run_pipeline
+    module docstring for the full classification rule (EXPECTED vs ANOMALY).
+    """
+    rows = conn.execute(
+        """
+        SELECT DATE(fm.load_ts) AS ts_date, COUNT(*) AS cnt
+        FROM fund_metrics fm
+        WHERE fm.isin IN (
+            SELECT isin FROM fund_metric_state
+            WHERE metric_version = ? AND calculated_at = ?
+        )
+        GROUP BY DATE(fm.load_ts)
+        ORDER BY ts_date
+        """,
+        (metric_version, run_date_iso),
+    ).fetchall()
+    return [(r[0], int(r[1])) for r in rows]
+
+
+def count_stale_nav_funds(
+    conn: sqlite3.Connection,
+    metric_version: str,
+    run_date_iso: str,
+    max_age_days: int = 60,
+) -> int:
+    """Count funds recomputed this run whose newest NAV is older than max_age_days.
+
+    Fresh metrics computed on stale price data are silent accuracy risk.
+    The typical cause is nav_discovery not having run recently enough;
+    cross-reference nav_sources.data_status for the affected ISINs.
+
+    Parameters
+    ----------
+    metric_version : e.g. 'v1'.
+    run_date_iso   : 'YYYY-MM-DD' string (today's date).
+    max_age_days   : threshold in calendar days (default 60 ≈ 2 months).
+
+    Returns
+    -------
+    Integer count of stale-NAV ISINs (0 = all up to date).
+    """
+    row = conn.execute(
+        """
+        SELECT COUNT(DISTINCT fms.isin)
+        FROM fund_metric_state fms
+        JOIN (
+            SELECT ISIN, MAX(Date) AS max_nav_date
+            FROM fund_nav_monthly
+            GROUP BY ISIN
+        ) nav_latest ON fms.isin = nav_latest.ISIN
+        WHERE fms.metric_version = ?
+          AND fms.calculated_at  = ?
+          AND (julianday(?) - julianday(nav_latest.max_nav_date)) > ?
+        """,
+        (metric_version, run_date_iso, run_date_iso, max_age_days),
+    ).fetchone()
+    return int(row[0] or 0)
+
+
+def coverage_snapshot(
+    conn: sqlite3.Connection,
+    metrics: list[str],
+    horizon: str = "since_inception",
+) -> list[tuple[str, int]]:
+    """Return distinct non-NULL ISIN count per metric for the given horizon.
+
+    Provides the run-over-run coverage baseline for P3-consumed metrics.
+    A drop of more than ~2 % versus the prior run signals a possible upstream
+    NAV loss or calc regression and should be triaged immediately.
+
+    Parameters
+    ----------
+    metrics : list of metric names to check (e.g. _P3_CONSUMED_METRICS).
+    horizon : horizon filter (default 'since_inception').
+
+    Returns
+    -------
+    List of (metric, count) in the same order as `metrics`.
+    """
+    result = []
+    for metric in metrics:
+        row = conn.execute(
+            """
+            SELECT COUNT(DISTINCT isin)
+            FROM fund_metrics
+            WHERE metric = ? AND horizon = ? AND value IS NOT NULL
+            """,
+            (metric, horizon),
+        ).fetchone()
+        result.append((metric, int(row[0] or 0)))
+    return result

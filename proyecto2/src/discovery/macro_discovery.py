@@ -222,8 +222,7 @@ def load_ine_ipc(desde: str = "2000-01", verbose: bool = False) -> list[dict]:
     El INE publica valores mensuales con un desfase de ~3 semanas.
     Formato fecha INE: "2024M01" -> almacenamos como "2024-01-01".
     """
-    print("  [INE] Descargando IPC Espana...")
-
+    _t0_ine = time.perf_counter()
     url = "https://servicios.ine.es/wstempus/js/ES/DATOS_TABLA/50902"
     params = {
         "tv":    ["3:74", "762:304092"],   # ?ndice General
@@ -285,7 +284,9 @@ def load_ine_ipc(desde: str = "2000-01", verbose: bool = False) -> list[dict]:
         seen[r["date"]] = r
     rows = sorted(seen.values(), key=lambda x: x["date"])
 
-    print(f"  [INE] {len(rows)} registros descargados (IPC Espana)")
+    _dur_ms = round((time.perf_counter() - _t0_ine) * 1000)
+    _ts     = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[   1/   1] | {_ts} | [INE] | [IPC_ES] | {len(rows)} | {_dur_ms}")
     return rows
 
 
@@ -362,14 +363,14 @@ def load_bce_series(desde: str = "2000-01", verbose: bool = False) -> tuple[list
 
     Devuelve: (inflation_rows, macro_rows)
     """
-    print("  [BCE] Descargando series...")
-
     inflation_rows: list[dict] = []
     macro_rows:     list[dict] = []
 
-    base_url = "https://data-api.ecb.europa.eu/service/data"
+    base_url  = "https://data-api.ecb.europa.eu/service/data"
+    _n_bce    = len(_BCE_SERIES)
 
-    for name, cfg in _BCE_SERIES.items():
+    for _bi, (name, cfg) in enumerate(_BCE_SERIES.items(), 1):
+        _t0_bce = time.perf_counter()
         url = f"{base_url}/{cfg['series_key']}"
         params = {
             "format":     "csvdata",
@@ -379,7 +380,9 @@ def load_bce_series(desde: str = "2000-01", verbose: bool = False) -> tuple[list
             r = requests.get(url, params=params, timeout=REQUEST_TIMEOUT)
             r.raise_for_status()
         except requests.RequestException as e:
-            print(f"  [BCE] ERROR en {name}: {e}")
+            _dur_ms = round((time.perf_counter() - _t0_bce) * 1000)
+            _ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            print(f"[{_bi:4d}/{_n_bce:4d}] | {_ts} | [BCE] | [{name}] | 0 | {_dur_ms}")
             continue
 
         from io import StringIO
@@ -391,7 +394,9 @@ def load_bce_series(desde: str = "2000-01", verbose: bool = False) -> tuple[list
 
         # Columnas esperadas en CSV del BCE: TIME_PERIOD, OBS_VALUE
         if "TIME_PERIOD" not in df.columns or "OBS_VALUE" not in df.columns:
-            print(f"  [BCE] Formato inesperado en {name}: {list(df.columns)}")
+            _dur_ms = round((time.perf_counter() - _t0_bce) * 1000)
+            _ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            print(f"[{_bi:4d}/{_n_bce:4d}] | {_ts} | [BCE] | [{name}] | 0 | {_dur_ms}")
             continue
 
         # Para series de tipo de interes: forward-fill a frecuencia mensual
@@ -463,7 +468,9 @@ def load_bce_series(desde: str = "2000-01", verbose: bool = False) -> tuple[list
                 if verbose:
                     print(f"    {fecha}  {cfg['indicator']}={value}")
 
-        print(f"  [BCE] {name}: {count} registros")
+        _dur_ms = round((time.perf_counter() - _t0_bce) * 1000)
+        _ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(f"[{_bi:4d}/{_n_bce:4d}] | {_ts} | [BCE] | [{name}] | {count} | {_dur_ms}")
 
     return inflation_rows, macro_rows
 
@@ -776,16 +783,22 @@ def load_fred_series(
 
     inflation_rows: list[dict] = []
     macro_rows:     list[dict] = []
+    _n_fred = len(_FRED_SERIES)
 
-    for series_id, cfg in _FRED_SERIES.items():
+    for _fi, (series_id, cfg) in enumerate(_FRED_SERIES.items(), 1):
+        _t0_fred = time.perf_counter()
         try:
             df = _fred_fetch(series_id, desde, api_key)
         except requests.RequestException as e:
-            print(f"  [FRED] ERROR en {series_id}: {e}")
+            _dur_ms = round((time.perf_counter() - _t0_fred) * 1000)
+            _ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            print(f"[{_fi:4d}/{_n_fred:4d}] | {_ts} | [FRED] | [{series_id}] | 0 | {_dur_ms}")
             continue
 
         if df is None or df.empty:
-            print(f"  [FRED] {series_id}: sin datos")
+            _dur_ms = round((time.perf_counter() - _t0_fred) * 1000)
+            _ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            print(f"[{_fi:4d}/{_n_fred:4d}] | {_ts} | [FRED] | [{series_id}] | 0 | {_dur_ms}")
             continue
 
         from io import StringIO
@@ -831,7 +844,9 @@ def load_fred_series(
             if verbose:
                 print(f"    {row['date']}  {series_id}={row['value']}")
 
-        print(f"  [FRED] {series_id}: {count} registros")
+        _dur_ms = round((time.perf_counter() - _t0_fred) * 1000)
+        _ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(f"[{_fi:4d}/{_n_fred:4d}] | {_ts} | [FRED] | [{series_id}] | {count} | {_dur_ms}")
 
     return inflation_rows, macro_rows
 
@@ -850,12 +865,12 @@ def load_eurostat_series(desde: str = "2000-01", verbose: bool = False) -> list[
       - namq_10_gdp: PIB trimestral Eurozona (GDP_MKT_EU)
       - gov_10dd_edpt1: Deficit/deuda anual (por pais)
     """
-    print("  [EUROSTAT] Descargando series...")
-
     macro_rows: list[dict] = []
     base_url = "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data"
+    _n_eurostat = 1 + len(_GOV_QUERIES)   # PIB + one entry per gov query
 
     # -- PIB Eurozona trimestral (en millones EUR) -------------
+    _t0_pib = time.perf_counter()
     try:
         url    = f"{base_url}/namq_10_gdp"
         params = {
@@ -900,10 +915,14 @@ def load_eurostat_series(desde: str = "2000-01", verbose: bool = False) -> list[
             })
             count += 1
 
-        print(f"  [EUROSTAT] PIB Eurozona: {count} registros")
+        _dur_ms = round((time.perf_counter() - _t0_pib) * 1000)
+        _ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(f"[   1/{_n_eurostat:4d}] | {_ts} | [EUROSTAT] | [PIB_EA] | {count} | {_dur_ms}")
 
     except Exception as e:
-        print(f"  [EUROSTAT] ERROR PIB: {e}")
+        _dur_ms = round((time.perf_counter() - _t0_pib) * 1000)
+        _ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(f"[   1/{_n_eurostat:4d}] | {_ts} | [EUROSTAT] | [PIB_EA] | 0 | {_dur_ms}")
 
     # -- Deficit/PIB y Deuda/PIB (anual) -------------------------
     # Eurostat solo acepta una geografia por peticion para este dataset.
@@ -915,7 +934,8 @@ def load_eurostat_series(desde: str = "2000-01", verbose: bool = False) -> list[
     ]
     _GOV_GEOS = [("ES", "ES"), ("EA20", "EU"), ("EA19", "EU")]
 
-    for gov_ind, na_item, label in _GOV_QUERIES:
+    for _gi, (gov_ind, na_item, label) in enumerate(_GOV_QUERIES, 2):
+        _t0_gov = time.perf_counter()
         count  = 0
         seen   = set()
         for geo_code, geo_norm in _GOV_GEOS:
@@ -953,7 +973,9 @@ def load_eurostat_series(desde: str = "2000-01", verbose: bool = False) -> list[
                     count += 1
             except Exception:
                 pass
-        print(f"  [EUROSTAT] {label}: {count} registros")
+        _dur_ms = round((time.perf_counter() - _t0_gov) * 1000)
+        _ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(f"[{_gi:4d}/{_n_eurostat:4d}] | {_ts} | [EUROSTAT] | [{gov_ind}] | {count} | {_dur_ms}")
 
     return macro_rows
 

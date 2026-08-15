@@ -21,6 +21,43 @@ import logging
 import sys
 
 
+class _StructuredFmt(logging.Formatter):
+    """
+    Canonical P2 structured log line.
+
+    Output: [idx/total] | YYYY-MM-DD HH:MM:SS | run_id | ISIN | LEVEL | EventType | Detail | Count | Duration(ms)
+
+    Per-ISIN callers pass structured data via extra=dict(p2_idx, p2_total, p2_isin,
+    p2_evt, p2_detail, p2_count, p2_dur_ms).  Non-ISIN callers omit extra entirely;
+    those fields become empty strings so the column count stays stable.
+    """
+
+    def __init__(self, run_id: str) -> None:
+        super().__init__(datefmt="%Y-%m-%d %H:%M:%S")
+        self._run_id = run_id
+
+    def format(self, record: logging.LogRecord) -> str:
+        ts      = self.formatTime(record, self.datefmt)
+        idx     = getattr(record, "p2_idx",    "")
+        total   = getattr(record, "p2_total",  "")
+        isin    = getattr(record, "p2_isin",   "")
+        ev_type = getattr(record, "p2_evt",    record.getMessage())
+        detail  = getattr(record, "p2_detail", "")
+        count   = getattr(record, "p2_count",  "")
+        dur_ms  = getattr(record, "p2_dur_ms", "")
+
+        if idx != "" and total != "":
+            w = max(len(str(total)), 4)
+            idx_str = f"[{int(idx):{w}d}/{int(total):{w}d}]"
+        else:
+            idx_str = "[    /    ]"
+
+        return (
+            f"{idx_str} | {ts} | {self._run_id} | {isin} | "
+            f"{record.levelname} | {ev_type} | {detail} | {count} | {dur_ms}"
+        )
+
+
 def get_pipeline_logger(run_id: str = "pipeline") -> logging.Logger:
     """
     Devuelve un Logger configurado para el pipeline P2.
@@ -40,12 +77,8 @@ def get_pipeline_logger(run_id: str = "pipeline") -> logging.Logger:
         return logger
 
     logger.setLevel(logging.DEBUG)
-    fmt = logging.Formatter(
-        f"%(asctime)s | %(levelname)-7s | [run={run_id}] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
     sh = logging.StreamHandler(sys.stdout)
-    sh.setFormatter(fmt)
+    sh.setFormatter(_StructuredFmt(run_id))
     sh.setLevel(logging.DEBUG)
     logger.addHandler(sh)
     logger.propagate = False

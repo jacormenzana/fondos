@@ -771,7 +771,7 @@ def run_discover(conn, isins, dry_run, verbose):
     print(f"Descubrimiento de {total} ISINs | dry_run={dry_run}\n")
 
     for idx, isin in enumerate(isins, 1):
-        print(f"  [{idx:>4}/{total}] {isin}", end=" ", flush=True)
+        _t0_disc = time.perf_counter()
 
         resolved = _resolve_isin(isin)
         time.sleep(random.uniform(*MS_DELAY_DISCOVER))
@@ -781,16 +781,18 @@ def run_discover(conn, isins, dry_run, verbose):
             resolved = _resolve_isin(isin)
             time.sleep(random.uniform(*MS_DELAY_DISCOVER))
 
+        _dur_ms = round((time.perf_counter() - _t0_disc) * 1000)
+        _ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
         if isinstance(resolved, dict) and resolved.get("challenge"):
-            # Endpoint bloqueado o error de red: NO escribir NOT_FOUND
-            # (evita borrar codes resueltos anteriormente)
-            print("-> SKIP (endpoint challenge — fila en BD sin cambios)")
+            print(f"[{idx:4d}/{total:4d}] | {_ts} | {isin} | SKIP | [] |  | {_dur_ms}",
+                  flush=True)
             errors += 1
             continue
 
         if resolved is None:
-            # ISIN genuinamente no existe en Morningstar
-            print("-> NOT_FOUND")
+            print(f"[{idx:4d}/{total:4d}] | {_ts} | {isin} | NOT_FOUND | [] |  | {_dur_ms}",
+                  flush=True)
             _write_nav_source(conn, isin, "MORNINGSTAR", "",
                               None, None, None, "NOT_FOUND", dry_run)
             not_found += 1
@@ -798,7 +800,8 @@ def run_discover(conn, isins, dry_run, verbose):
 
         code = resolved["code"]
         name = resolved["name"]
-        print(f"-> OK  [{name[:45]}]  code={code}")
+        print(f"[{idx:4d}/{total:4d}] | {_ts} | {isin} | OK | [{name[:60]}] | {code} | {_dur_ms}",
+              flush=True)
         _write_nav_source(conn, isin, "MORNINGSTAR", code,
                           None, None, None, "OK", dry_run)
         found += 1
@@ -977,8 +980,7 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=Non
             }
             for fut in as_completed(futs):
                 ridx, risin, rnav_rows, rerr, relas, reff_desde = fut.result()
-                print(f"  [{ridx:>4}/{total}] {datetime.now():%H:%M:%S} {risin}",
-                      end=" ", flush=True)
+                _ts_par = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
                 if rerr == "auth":
                     job = futs[fut]
@@ -987,16 +989,25 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=Non
                     continue
 
                 if not rnav_rows:
-                    print(f"-> sin datos ({rerr})", flush=True)
+                    print(
+                        f"[{ridx:4d}/{total:4d}] | {_ts_par} | {risin} | "
+                        f"NO_DATA | [] | {round(relas * 1000)}",
+                        flush=True,
+                    )
                     errors_load += 1
                     continue
 
                 # Escrituras en BD: solo hilo principal (SQLite single-writer)
-                _rl_d_wr  = _write_nav_rows_daily(conn, rnav_rows, dry_run)
+                _rl_d_wr   = _write_nav_rows_daily(conn, rnav_rows, dry_run)
                 _rl_m_rows = _resample_to_monthly(rnav_rows)
                 _rl_m_wr   = _write_nav_rows(conn, _rl_m_rows, dry_run)
                 total_written += _rl_m_wr
-                print(f"-> {_rl_d_wr}d/{_rl_m_wr}m  [{relas:.1f}s]", flush=True)
+                _dr_par = f"{rnav_rows[0]['Date']} -> {rnav_rows[-1]['Date']}"
+                print(
+                    f"[{ridx:4d}/{total:4d}] | {_ts_par} | {risin} | "
+                    f"{_rl_d_wr}d/{_rl_m_wr}m | [{_dr_par}] | {round(relas * 1000)}",
+                    flush=True,
+                )
 
                 last_d_stored_cur = last_daily.get(risin)
                 if _rl_m_rows and not dry_run:
@@ -1079,7 +1090,6 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=Non
     # ================================================================
     for idx, (isin, ms_id) in enumerate(rows, 1):
         _t0 = datetime.now()
-        print(f"  [{idx:>4}/{total}] {_t0:%H:%M:%S} {isin}", end=" ", flush=True)
 
         ds = data_status_map.get(isin, "OK") or "OK"
 
@@ -1182,11 +1192,16 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=Non
         monthly_rows    = _resample_to_monthly(nav_rows)
         monthly_written = _write_nav_rows(conn, monthly_rows, dry_run)
         total_written  += monthly_written
-        display_m = len(monthly_rows) if dry_run else monthly_written
-        display_d = len(nav_rows)     if dry_run else daily_written
-        _elapsed  = (datetime.now() - _t0).total_seconds()
-        print(f"-> {display_d}d/{display_m}m"
-              f"  ({nav_rows[0]['Date']} -> {nav_rows[-1]['Date']})  [{_elapsed:.1f}s]")
+        display_m   = len(monthly_rows) if dry_run else monthly_written
+        display_d   = len(nav_rows)     if dry_run else daily_written
+        _elapsed    = (datetime.now() - _t0).total_seconds()
+        _elapsed_ms = round(_elapsed * 1000)
+        _ts_load    = _t0.strftime("%Y-%m-%d %H:%M:%S")
+        _date_range = f"{nav_rows[0]['Date']} -> {nav_rows[-1]['Date']}"
+        print(
+            f"[{idx:4d}/{total:4d}] | {_ts_load} | {isin} | "
+            f"{display_d}d/{display_m}m | [{_date_range}] | {_elapsed_ms}"
+        )
 
         # -- Actualizar nav_sources con rango real descargado --------------
         if monthly_rows and not dry_run:
@@ -1297,7 +1312,6 @@ def run_update(conn, dry_run, bearer_token=None):
 
     for idx, (isin, ms_id, last_nav_date) in enumerate(rows, 1):
         _t0 = datetime.now()
-        print(f"  [{idx:>4}/{total}] {_t0:%H:%M:%S} {isin}", end=" ", flush=True)
 
         currency = currency_map.get(isin, "EUR")
         ds = data_status_upd.get(isin, "OK") or "OK"
@@ -1386,8 +1400,14 @@ def run_update(conn, dry_run, bearer_token=None):
         monthly_rows  = _resample_to_monthly(nav_rows)
         written       = _write_nav_rows(conn, monthly_rows, dry_run)
         total_written += written
-        _elapsed = (datetime.now() - _t0).total_seconds()
-        print(f"-> {daily_written}d/{written}m nuevos  [{_elapsed:.1f}s]")
+        _elapsed    = (datetime.now() - _t0).total_seconds()
+        _elapsed_ms = round(_elapsed * 1000)
+        _ts_upd     = _t0.strftime("%Y-%m-%d %H:%M:%S")
+        _dr_upd     = f"{nav_rows[0]['Date']} -> {nav_rows[-1]['Date']}"
+        print(
+            f"[{idx:4d}/{total:4d}] | {_ts_upd} | {isin} | "
+            f"{daily_written}d/{written}m | [{_dr_upd}] | {_elapsed_ms}"
+        )
 
         if monthly_rows and not dry_run:
             new_last = max(r["Date"] for r in monthly_rows)

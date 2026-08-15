@@ -29,6 +29,26 @@ Uso:
 
 Familias de metricas (--metrics):
     risk, macro, momentum, capture, persistence, fx, regime, rolling, short
+
+--- Two-timestamp model (architectural invariant) ---
+fund_metrics.load_ts            — Per-VALUE change stamp (data lineage). Advances only when a
+                                  row is physically rewritten by INSERT OR REPLACE. Heterogeneous
+                                  values within a single run are EXPECTED under cadence/hash-skip
+                                  optimisations (e.g. EFF-1 OLS quarterly cadence leaves beta_*
+                                  rows at their last-computed date; hash-skipped funds are not
+                                  rewritten at all). Never touch this column to fake uniformity —
+                                  a timestamp that misrepresents the computation date breaks
+                                  lineage tracing.
+fund_metric_state.calculated_at — Per-FUND run stamp (orchestration). Advances every cycle the
+                                  pipeline touches the fund (isin_written > 0), including runs
+                                  where only risk/rolling metrics were rewritten and OLS was
+                                  cadence-skipped. This is the authoritative "fund processed on
+                                  DATE" signal for downstream audits.
+
+Audit classification rule for stale load_ts:
+  EXPECTED  — metric is in the OLS-cadence set (beta_*, energy_sensitivity_pct,
+               hy_spread_sensitivity_pct) AND fund_metric_state.calculated_at advanced today.
+  ANOMALY   — stale row outside that set, OR calculated_at did NOT advance (silent write failure).
 """
 
 import argparse
@@ -62,6 +82,9 @@ from shared.db import get_connection
 from src.readers.db_readers import (
     load_nav, get_isins_with_nav, load_ipc, ipc_available, load_nav_daily,
     count_isins_with_new_nav,        # P2-04 preflight
+    load_ts_cohort,                  # observability: load_ts cohort (two-timestamp model)
+    count_stale_nav_funds,           # observability: NAV-staleness gate
+    coverage_snapshot,               # observability: P3-consumed metric coverage
 )
 from src.calculations.short_horizon import compute_short_horizon_metrics
 from src.calculations.risk_metrics import compute_risk_metrics
@@ -195,7 +218,13 @@ def _ols_is_fresh(
     nav_count: int,
     current_quarter: str,
 ) -> bool:
-    """True if OLS betas are still fresh: computed this quarter and NAV grew < 3 rows."""
+    """True if OLS betas are still fresh: computed this quarter and NAV grew < 3 rows.
+
+    When this returns True the beta set is NOT rewritten, so its load_ts stays
+    at the date it was last computed.  This is EXPECTED behaviour under the
+    two-timestamp model: load_ts = per-value change stamp, not a run stamp.
+    See module docstring for the full model and audit classification rules.
+    """
     row = conn.execute(
         "SELECT last_ols_quarter, last_ols_nav_count FROM fund_metric_state "
         "WHERE isin=? AND metric_version=?",
@@ -323,6 +352,72 @@ def _write_timeseries(
             except Exception:
                 conn.execute("ROLLBACK")
                 raise
+        except sqlite3.OperationalError as exc:
+            if "database is locked" in str(exc) and attempt < 4:
+                time.sleep(2 ** attempt)
+            else:
+                raise
+    return 0
+
+
+def _replace_beta_set(
+    conn: sqlite3.Connection,
+    isin: str,
+    metrics: list[dict],
+    horizon: str,
+    dry_run: bool,
+    metric_version: str | None = None,
+) -> int:
+    """Atomic delete+insert for OLS macro-sensitivity metrics.
+
+    When OLS actually runs for a fund, this replaces the *full* beta set in a
+    single transaction: first deletes all existing beta_* rows, then inserts
+    the new survivors.  This prevents orphan rows for factors that were
+    present in a previous run but are now excluded by the VIF filter.
+
+    Use this instead of _write_metrics for macro-sensitivity metrics.
+    _write_metrics is still used for all other metric families.
+    """
+    if not metrics or dry_run:
+        return 0
+
+    mv    = metric_version if metric_version is not None else METRIC_VERSION
+    today = date.today().isoformat()
+    sql_del = (
+        "DELETE FROM fund_metrics "
+        "WHERE isin=? AND metric LIKE 'beta_%' AND horizon=? AND metric_version=?"
+    )
+    sql_ins = """
+        INSERT OR REPLACE INTO fund_metrics
+            (isin, metric, horizon, value, real_flag,
+             calculation_date, metric_version, benchmark_id, source_rows)
+        VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?)
+    """
+    rows = [
+        (
+            isin,
+            m["metric"],
+            horizon,
+            m["value"] if not (isinstance(m["value"], float) and
+                                m["value"] != m["value"]) else None,  # NaN -> NULL
+            m["real_flag"],
+            today,
+            mv,
+            m.get("source_rows"),
+        )
+        for m in metrics
+    ]
+    for attempt in range(5):
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                conn.execute(sql_del, (isin, horizon, mv))
+                conn.executemany(sql_ins, rows)
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+            return len(rows)
         except sqlite3.OperationalError as exc:
             if "database is locked" in str(exc) and attempt < 4:
                 time.sleep(2 ** attempt)
@@ -463,6 +558,18 @@ _ALL_METRIC_FAMILIES = frozenset({
 # Bump this string whenever the calculation logic changes to force a
 # cache-miss in fund_metric_state even when NAV/IPC inputs are unchanged.
 CALC_VERSION: str = "20260730"
+
+# P3-consumed metric surface — used by [COVERAGE] observability line to baseline
+# distinct-ISIN coverage across runs. Update this tuple whenever P3's scoring
+# model adds or removes a consumed metric. Source of truth: AGENTS.md §P3 Layer 2.
+_P3_CONSUMED_METRICS: tuple[str, ...] = (
+    "return_ann_real",
+    "sharpe",
+    "max_drawdown",
+    "alpha_persistence",
+    "capture_ratio",
+    "momentum_rank",
+)
 
 
 def run(
@@ -739,13 +846,24 @@ def run(
                 break
 
             t_fund = time.time()
-            logger.info(f"START [{idx}/{total}] {isin}")
+            logger.info(
+                "", extra=dict(
+                    p2_idx=idx, p2_total=total, p2_isin=isin,
+                    p2_evt="START", p2_detail="", p2_count="", p2_dur_ms=0,
+                )
+            )
 
             try:
                 # ---- NAV load + validation ---------------------------
                 nav_df = load_nav(conn, isin)
                 if nav_df.empty:
-                    logger.debug(f"  [{idx}/{total}] {isin} -> sin NAV, saltado")
+                    logger.debug(
+                        "", extra=dict(
+                            p2_idx=idx, p2_total=total, p2_isin=isin,
+                            p2_evt="SKIP", p2_detail="sin NAV",
+                            p2_count="", p2_dur_ms=round((time.time() - t_fund) * 1000),
+                        )
+                    )
                     _log(conn, isin, "NAV_LOAD", "SKIP", None, "Sin datos NAV", dry_run)
                     n_skipped += 1
                     continue
@@ -754,7 +872,11 @@ def run(
                 if not ok:
                     n_warnings += 1
                     logger.warning(
-                        f"  [{idx}/{total}] {isin} -> NAV invalido ({err}), saltado"
+                        "", extra=dict(
+                            p2_idx=idx, p2_total=total, p2_isin=isin,
+                            p2_evt="SKIP", p2_detail=f"NAV invalido: {err}",
+                            p2_count="", p2_dur_ms=round((time.time() - t_fund) * 1000),
+                        )
                     )
                     _log(conn, isin, "NAV_LOAD", "WARN", None, err, dry_run)
                     n_skipped += 1
@@ -769,10 +891,13 @@ def run(
                 if not force and isin not in force_recalc_isins:
                     stored_hash = _get_stored_hash(conn, isin)
                     if stored_hash == current_hash:
-                        elapsed_ms = (time.time() - t_fund) * 1000
+                        elapsed_ms = round((time.time() - t_fund) * 1000)
                         logger.debug(
-                            f"SKIP  [{idx}/{total}] {isin} (cache hit, "
-                            f"hash={current_hash[:8]}…) in {elapsed_ms:.0f}ms"
+                            "", extra=dict(
+                                p2_idx=idx, p2_total=total, p2_isin=isin,
+                                p2_evt="Cache hit", p2_detail=f"hash={current_hash[:8]}",
+                                p2_count="", p2_dur_ms=elapsed_ms,
+                            )
                         )
                         n_skipped += 1
                         continue
@@ -890,8 +1015,13 @@ def run(
                         _skip_ols = _ols_is_fresh(conn, isin, len(nav_df), current_quarter)
                         if _skip_ols:
                             logger.debug(
-                                f"  OLS skip ({isin}): fresh Q{current_quarter}, "
-                                f"nav_count={len(nav_df)}"
+                                "", extra=dict(
+                                    p2_idx=idx, p2_total=total, p2_isin=isin,
+                                    p2_evt="OLS skip",
+                                    p2_detail=f"fresh Q{current_quarter}",
+                                    p2_count=len(nav_df),
+                                    p2_dur_ms=round((time.time() - t_fund) * 1000),
+                                )
                             )
                         else:
                             sens_list = compute_macro_sensitivity(
@@ -904,7 +1034,14 @@ def run(
                                  "source_rows": len(nav_df)}
                                 for m, v, rf in sens_list
                             ]
-                            isin_written += _write_metrics(
+                            # Use _replace_beta_set (delete+insert, one transaction)
+                            # so VIF-dropped factors from prior runs are cleaned up.
+                            # Non-beta derived metrics (energy_sensitivity_pct,
+                            # hy_spread_sensitivity_pct, macro_r2) are also in
+                            # sens_rows and are handled by the INSERT OR REPLACE
+                            # inside the helper — orphan risk there is negligible
+                            # since they are always recomputed when OLS runs.
+                            isin_written += _replace_beta_set(
                                 conn, isin, sens_rows, "since_inception", dry_run
                             )
                             _ols_ran = True
@@ -1023,10 +1160,13 @@ def run(
                             )
 
                 total_written += isin_written
-                elapsed_ms = (time.time() - t_fund) * 1000
+                elapsed_ms = round((time.time() - t_fund) * 1000)
                 logger.info(
-                    f"END   [{idx}/{total}] {isin} -> {isin_written} metricas "
-                    f"in {elapsed_ms:.0f}ms"
+                    "", extra=dict(
+                        p2_idx=idx, p2_total=total, p2_isin=isin,
+                        p2_evt="END", p2_detail="",
+                        p2_count=isin_written, p2_dur_ms=elapsed_ms,
+                    )
                 )
 
                 # v25: consumir flag RECALCULATE_METRICS
@@ -1048,10 +1188,13 @@ def run(
 
             except Exception as exc:
                 n_errors += 1
-                elapsed_ms = (time.time() - t_fund) * 1000
+                elapsed_ms = round((time.time() - t_fund) * 1000)
                 logger.error(
-                    f"[FUND-ERR] [{idx}/{total}] {isin} — {exc} "
-                    f"(in {elapsed_ms:.0f}ms)\n{traceback.format_exc()}"
+                    traceback.format_exc(), extra=dict(
+                        p2_idx=idx, p2_total=total, p2_isin=isin,
+                        p2_evt="FUND-ERR", p2_detail=str(exc),
+                        p2_count="", p2_dur_ms=elapsed_ms,
+                    )
                 )
                 # Never abort the batch for one fund's error
                 continue
@@ -1210,6 +1353,60 @@ def run(
                 conn.execute("COMMIT")
             except Exception:
                 pass  # never crash in finally
+
+        # ── Observability signals ─────────────────────────────────────────────
+        # Three diagnostic lines emitted after every non-dry run that processed
+        # at least one fund. Each is independently try/except-guarded so one
+        # failing query never silences the others or crashes the pipeline.
+        # Canonical documentation for interpretation lives in the two audit
+        # skills (pipelineP2Audit §3 Step 2, pipelineP1P2Audit §3 Step 5).
+        if conn is not None and not dry_run and n_processed > 0:
+            _obs_today = date.today().isoformat()
+
+            # [RUN COHORT] load_ts spread — two-timestamp model (see module docstring).
+            # EXPECTED: stale rows are beta_* / energy_sensitivity_pct /
+            # hy_spread_sensitivity_pct (EFF-1 cadence). Everything else is ANOMALY.
+            try:
+                cohort_rows = load_ts_cohort(conn, METRIC_VERSION, _obs_today)
+                cohort_str = ", ".join(
+                    f"{r[0]}: {r[1]}" for r in cohort_rows
+                ) if cohort_rows else "none"
+                logger.info(
+                    f"[RUN COHORT] load_ts spread for funds processed today "
+                    f"({METRIC_VERSION}, calculated_at={_obs_today}): {cohort_str}"
+                )
+            except Exception:
+                pass  # never crash in finally
+
+            # [NAV STALE] funds recomputed on prices > 60d old.
+            # Stale prices yield inaccurate vol/sharpe/drawdown even though the
+            # fingerprint hash matched NAV row count. Cause: nav_discovery skipped.
+            try:
+                n_stale = count_stale_nav_funds(
+                    conn, METRIC_VERSION, _obs_today, max_age_days=60
+                )
+                if n_stale > 0:
+                    logger.warning(
+                        f"[NAV STALE] {n_stale} fund(s) recomputed on NAV older than 60d "
+                        "— run nav_discovery --mode update, then P2 with --force"
+                    )
+                else:
+                    logger.info(
+                        "[NAV STALE] All recomputed funds have fresh NAV (<= 60d old)"
+                    )
+            except Exception:
+                pass  # never crash in finally
+
+            # [COVERAGE] distinct non-NULL ISIN count per P3-consumed metric.
+            # Diff this line run-over-run from the log. A drop > ~2% is a regression
+            # signal (upstream NAV loss or calc failure) and must be triaged.
+            try:
+                cov = coverage_snapshot(conn, list(_P3_CONSUMED_METRICS))
+                cov_str = "  ".join(f"{m}={n}" for m, n in cov)
+                logger.info(f"[COVERAGE] {cov_str}")
+            except Exception:
+                pass  # never crash in finally
+
         if conn is not None:
             try:
                 conn.close()

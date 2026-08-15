@@ -48,6 +48,62 @@ Compare against prior run baseline. Flag any regression (drop in throughput, new
 - Spot-check metric ranges: vol ≥ 0, |sharpe| plausible, max_drawdown ∈ [−100%, 0], real vs nominal consistency.
 - Surface NaN/NULL coverage per metric (query `fund_metrics` grouped by `metric`).
 - Flag ISINs with full-NULL metric rows (no data at all → likely NAV gap).
+- **`load_ts` cohort check.** Use the `[RUN COHORT]` log line as the primary source. A split is EXPECTED only when every stale row's `metric` is in the OLS-cadence set (`beta_*`, `energy_sensitivity_pct`, `hy_spread_sensitivity_pct`) AND the fund's `calculated_at` advanced. Any stale row **outside** that set, or any fund with stale rows but a non-advanced `calculated_at`, is an **ANOMALY** (silent write failure) — flag with ISIN + metric list using this aggregate query:
+  ```sql
+  -- Identify ANOMALY funds: stale load_ts on a non-cadence metric
+  SELECT fm.isin, fm.metric, DATE(fm.load_ts) AS load_date, fms.calculated_at
+  FROM fund_metrics fm
+  JOIN fund_metric_state fms ON fm.isin = fms.isin AND fms.metric_version = 'v1'
+  WHERE fms.calculated_at = date('now')
+    AND DATE(fm.load_ts) < date('now')
+    AND fm.metric NOT LIKE 'beta_%'
+    AND fm.metric NOT IN ('energy_sensitivity_pct','hy_spread_sensitivity_pct');
+  ```
+- **Run-stamp vs value-stamp reconciliation.** Assert `MAX(fm.load_ts) ≤ fms.calculated_at` per ISIN for all processed funds. A `load_ts` **newer** than `calculated_at` indicates a write/commit ordering bug:
+  ```sql
+  SELECT fms.isin, MAX(DATE(fm.load_ts)) AS max_load_ts, fms.calculated_at
+  FROM fund_metric_state fms
+  JOIN fund_metrics fm ON fms.isin = fm.isin
+  WHERE fms.metric_version = 'v1' AND fms.calculated_at = date('now')
+  GROUP BY fms.isin, fms.calculated_at
+  HAVING max_load_ts > fms.calculated_at;
+  ```
+- **Orphan-beta staleness.** Flag any `beta_*` row whose `load_ts` predates `calculated_at` by more than 91 days — beyond the EFF-1 cadence window it is a stuck/orphan value (VIF-dropped factor never cleaned up):
+  ```sql
+  SELECT fm.isin, fm.metric, DATE(fm.load_ts) AS load_date, fms.calculated_at
+  FROM fund_metrics fm
+  JOIN fund_metric_state fms ON fm.isin = fms.isin AND fms.metric_version = 'v1'
+  WHERE fm.metric LIKE 'beta_%'
+    AND (julianday(fms.calculated_at) - julianday(DATE(fm.load_ts))) > 91;
+  ```
+- **NAV-staleness gate.** Use the `[NAV STALE]` log line as the primary source. Any WARNING means funds were recomputed on prices > 60 days old — fresh-looking metrics on stale data. Verify with:
+  ```sql
+  SELECT fms.isin, MAX(n.Date) AS newest_nav, fms.calculated_at,
+         julianday(fms.calculated_at) - julianday(MAX(n.Date)) AS age_days
+  FROM fund_metric_state fms
+  JOIN fund_nav_monthly n ON fms.isin = n.ISIN
+  WHERE fms.metric_version = 'v1' AND fms.calculated_at = date('now')
+  GROUP BY fms.isin, fms.calculated_at
+  HAVING age_days > 60
+  ORDER BY age_days DESC;
+  ```
+  Cross-reference `nav_sources.data_status`. Fix: `nav_discovery --mode update`, then P2 with `--force`.
+- **Real/nominal pairing integrity.** When IPC is available, every deflatable `real_flag=0` metric must have a `real_flag=1` pair. Orphan singles indicate a silent deflation gap:
+  ```sql
+  SELECT a.isin, a.metric, a.horizon
+  FROM fund_metrics a
+  WHERE a.real_flag = 0
+    AND a.metric IN (
+        'return_ann_real','sharpe','max_drawdown',
+        'alpha_persistence','capture_ratio','momentum_rank'
+    )
+    AND NOT EXISTS (
+        SELECT 1 FROM fund_metrics b
+        WHERE b.isin = a.isin AND b.metric = a.metric
+          AND b.horizon = a.horizon AND b.real_flag = 1
+    );
+  ```
+- **Coverage delta vs baseline.** Use the `[COVERAGE]` log line (diff current run vs previous run in the log). A drop > ~2% on any P3-consumed metric (`return_ann_real`, `sharpe`, `max_drawdown`, `alpha_persistence`, `capture_ratio`, `momentum_rank`) signals an upstream NAV loss or calc regression — triage immediately.
 
 ### Step 3 — Process-Efficiency & Redundancy
 
@@ -58,10 +114,10 @@ Compare against prior run baseline. Flag any regression (drop in throughput, new
 
 ### Step 4 — Root-Cause Fixes
 
-For each confirmed root-cause bug (from Steps 1–2 and §4 findings):
+For each confirmed root-cause bug (from Steps 1–3 and §4 findings):
 
 1. **Read the target file** before editing (P#3).
-2. **Fix in the correct module** — metric-calc bug → `proyecto2/src/calculations/<module>.py`; writer bug → `writers/metrics_writer.py`; regime mapping → `regime_returns.py`; fingerprint logic → `utils/fingerprint.py` (P#7).
+2. **Fix in the correct module** — metric-calc bug → `proyecto2/src/calculations/<module>.py`; write-path bug → `run_pipeline.py` write helpers (`_write_metrics` / `_write_timeseries` / `_write_metric_alerts` / `_replace_beta_set`); `writers/metrics_writer.py` is a **legacy stub — do not edit**; regime mapping → `regime_returns.py`; fingerprint logic → `utils/fingerprint.py` (P#7).
 3. **AST validate** immediately after every Python edit (R-8) — see §9.
 4. **Write regression tests** (R-7 — no `run_pipeline` / `core.io` imports in tests).
 5. **Run full test suite** — must stay green — see §9.
@@ -130,7 +186,7 @@ If the artifact path is ambiguous, ask the user before writing.
 ## 9. Execution Rules
 
 - **Read before modifying (P#3).** Always read the production file before editing. Never assume content.
-- **Fix in the correct module (P#7).** Metric-calc bug → `proyecto2/src/calculations/<module>.py`; writer bug → `writers/metrics_writer.py`; regime mapping → `regime_returns.py`. SQL only for diagnostic SELECTs.
+- **Fix in the correct module (P#7).** Metric-calc bug → `proyecto2/src/calculations/<module>.py`; write-path bug → `run_pipeline.py` write helpers (`_write_metrics` / `_write_timeseries` / `_write_metric_alerts` / `_replace_beta_set`); `writers/metrics_writer.py` is a **legacy stub — do not edit**; regime mapping → `regime_returns.py`. SQL only for diagnostic SELECTs.
 - **AST validate after every Python edit (R-8):**
   ```
   C:\Users\Administrador\anaconda3\envs\des\python.exe -c "import ast; ast.parse(open('file.py', encoding='utf-8').read()); print('AST OK')"
