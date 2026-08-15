@@ -717,6 +717,13 @@ def run_block(
     total = len(isins)
     published = []
     _cycle_start_ts = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+    try:
+        log_ingestion(
+            conn, None, "RUN_START", "INFO",
+            f"nature_first={nature_first} cycle_start={_cycle_start_ts}"
+        )
+    except Exception:
+        pass
 
     # ── SC-H: batch-load fund_benchmarks once per block run ──────────────────
     # Prefer MORNINGSTAR (independent market signal) over KIID (same source as
@@ -2352,8 +2359,13 @@ def run_block(
             # 3 fondos afectados: BGF China Bond (LU2267/LU0719/LU0764).
             if (fund_master_record.get("Fund_Nature") == "Renta Fija Corto Plazo"
                     and fund_master_record.get("Family") in RFC_INCOMPATIBLE_FAMILIES):
+                _bl64e_old_family = fund_master_record.get("Family")
                 fund_master_record["Family"] = "Short-Term Fixed Income"
                 fund_master_record["Type"]   = fund_master_record.get("Type") or "Short-Term Fixed Income"
+                log_ingestion(
+                    conn, isin, "BL64E_FAMILY_RFC_CORRECTION", "INFO",
+                    f"Family '{_bl64e_old_family}'→'Short-Term Fixed Income'"
+                )
 
             # BL-64c: Sector_Focus ES->EN (Principio #8). 266 fondos afectados.
             _SF_ES_TO_EN = {
@@ -2430,6 +2442,10 @@ def run_block(
                 # Asegurar que Sector_Focus queda poblado (si solo venía de BD)
                 if not fund_master_record.get("Sector_Focus"):
                     fund_master_record["Sector_Focus"] = _sf_bd
+                log_ingestion(
+                    conn, isin, "BL30_INVESTMENT_FOCUS_SECTOR", "INFO",
+                    f"Investment_Focus 'Broad'→'Sector' (Sector_Focus='{_sf_p}')"
+                )
 
             # BL-31: Currency_Hedged contradice Hedging_Policy → Hedging_Policy prevalece
             # Usar valores efectivos (actual o BD previa) para detectar el conflicto
@@ -2439,6 +2455,10 @@ def run_block(
                 _hp_as_ch = "Hedged" if _hp_p == "HEDGED" else "Unhedged"
                 if _ch_p != _hp_as_ch:
                     fund_master_record["Currency_Hedged"] = _hp_as_ch
+                    log_ingestion(
+                        conn, isin, "BL31_CH_HP_RECONCILE", "INFO",
+                        f"Currency_Hedged '{_ch_p}'→'{_hp_as_ch}' (Hedging_Policy='{_hp_p}')"
+                    )
 
             # BL-45 v24: Hedging_Policy inferida desde Currency_Hedged cuando HP=NULL
             # Si Currency_Hedged está poblado pero Hedging_Policy es NULL, son
@@ -2449,8 +2469,16 @@ def run_block(
                 _ch_eff = fund_master_record.get("Currency_Hedged") or _ch_bd
                 if _ch_eff == "Hedged":
                     fund_master_record["Hedging_Policy"] = "HEDGED"
+                    log_ingestion(
+                        conn, isin, "BL45_HP_FROM_CH_PROPAGATE", "INFO",
+                        f"Hedging_Policy NULL→'HEDGED' (Currency_Hedged='{_ch_eff}')"
+                    )
                 elif _ch_eff == "Unhedged":
                     fund_master_record["Hedging_Policy"] = "UNHEDGED"
+                    log_ingestion(
+                        conn, isin, "BL45_HP_FROM_CH_PROPAGATE", "INFO",
+                        f"Hedging_Policy NULL→'UNHEDGED' (Currency_Hedged='{_ch_eff}')"
+                    )
 
             # BL-49/3: propagación inversa HP → CH cuando CH=NULL pero HP poblado.
             # Causa raíz previa: BL-31 solo dispara con AMBOS poblados; BL-45
@@ -2460,8 +2488,16 @@ def run_block(
                 _hp_eff_b49 = fund_master_record.get("Hedging_Policy") or _hp_bd
                 if _hp_eff_b49 == "HEDGED":
                     fund_master_record["Currency_Hedged"] = "Hedged"
+                    log_ingestion(
+                        conn, isin, "BL49_CH_FROM_HP_PROPAGATE", "INFO",
+                        f"Currency_Hedged NULL→'Hedged' (Hedging_Policy='{_hp_eff_b49}')"
+                    )
                 elif _hp_eff_b49 == "UNHEDGED":
                     fund_master_record["Currency_Hedged"] = "Unhedged"
+                    log_ingestion(
+                        conn, isin, "BL49_CH_FROM_HP_PROPAGATE", "INFO",
+                        f"Currency_Hedged NULL→'Unhedged' (Hedging_Policy='{_hp_eff_b49}')"
+                    )
 
             # BL-49/4: detección Currency_Hedged desde texto KIID (segunda fase).
             # Solo actúa si Currency_Hedged sigue NULL tras todas las fases anteriores
@@ -3147,6 +3183,13 @@ def run_block(
         except Exception as _e_sweep:
             print(f"  [WARN] FIX-DQ-STALE-SWEEP-1: {_e_sweep}")
 
+    try:
+        log_ingestion(
+            conn, None, "RUN_SUMMARY", "OK",
+            f"published={len(published)} cycle_start={_cycle_start_ts}"
+        )
+    except Exception:
+        pass
     return published
 
 

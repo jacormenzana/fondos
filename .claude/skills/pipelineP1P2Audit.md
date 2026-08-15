@@ -53,26 +53,112 @@ If any asset is missing, report immediately before proceeding.
 
 #### Step 1 — P1 Log Triage
 
-Parse the latest `log_pipeline_*.log`. Extract and report:
+**P1 has no Python `logging`-module log file with structured per-fund events.** The log file
+(`log_pipeline_*.log`) is stdout/stderr redirected by the `.bat` launcher — useful for top-level
+block timings, unhandled-exception `[ERROR]` prints, and the cycle incidencias summary. **The
+authoritative per-fund audit trail is `ingestion_log` (DB).** Query it for INTER fires, WARN
+events, and step counts. The log file is a secondary source for timing and catastrophic failures only.
 
-1. **ERROR lines** — funds not persisted; count per block.
-2. **WARNING lines** — semantic inconsistencies, DQ flags, INTER-rule fires; count + group by tag.
-3. **Block counts** — `monetarios=N, rf_corto=N, rf_flexible=N, renta_variable=N, mixtos=N, alternativos=N, restantes=N`.
-4. **Named signals** — BL_B6_HY_KIID fires, FamilyBuilder inconsistencies, WRONG_DOC hits, FORCE_REFRESH triggers.
+Scan the latest `log_pipeline_*.log` for:
 
-Compare against prior baseline. Flag any count that regressed.
+1. **Unhandled exceptions / crash prints** — lines containing `Traceback`, `Exception`, or `[ERROR]` from unhandled Python errors (not in `ingestion_log`).
+2. **Block timing summary** — per-block elapsed times from launcher output.
+3. **Cycle incidencias summary** — the `--- RESUMEN DE INCIDENCIAS DEL CICLO ---` block at log end.
 
-#### Step 2 — DQ Issue Analysis
+Then query the **canonical DB audit trail**:
 
-Query the DB:
 ```sql
+-- Run boundaries: when did this cycle start and end?
+SELECT step, status, message, created_at
+FROM ingestion_log
+WHERE step IN ('RUN_START', 'RUN_SUMMARY')
+ORDER BY created_at DESC LIMIT 4;
+
+-- High-signal events not surfaced in fund_data_quality_issues
+SELECT step, status, COUNT(DISTINCT ISIN) AS n
+FROM ingestion_log
+WHERE step IN (
+    'NATURE_LOW_CONFIDENCE','COST_RANGE_GUARD','BL_COST_4C_OC_ACI_MISMATCH',
+    'FIX_ARB_FALLBACK','INTER_DBLCLAIM_RV_WINS','INTER_DBLCLAIM_RV_WINS_BENCHMARK',
+    'INTER_VOTE3_RECLASSIFIED','INTER_VOTE3_MONETARIO_FLAG_ONLY',
+    'BL64E_FAMILY_RFC_CORRECTION','BL30_INVESTMENT_FOCUS_SECTOR',
+    'BL31_CH_HP_RECONCILE','BL45_HP_FROM_CH_PROPAGATE','BL49_CH_FROM_HP_PROPAGATE'
+)
+  AND created_at >= (
+      SELECT message FROM ingestion_log
+      WHERE step = 'RUN_START' ORDER BY created_at DESC LIMIT 1
+  )
+GROUP BY step, status ORDER BY n DESC;
+```
+
+Compare event counts against the prior run's `RUN_START`/`RUN_SUMMARY` rows. Flag any regression.
+
+#### Step 2 — DQ Issue Analysis & Reliability Controls
+
+**Note on time scope:** `_finalize_data_quality_issues()` DELETE+INSERTs per ISIN each cycle. On full-universe runs, `FIX-DQ-STALE-SWEEP-1` purges rows with `detected_at` before `_cycle_start_ts`. On partial runs, historical rows may survive. Always scope the query to the current cycle:
+
+```sql
+-- Current-cycle DQ issues only
 SELECT check_code, level, COUNT(*) n FROM fund_data_quality_issues
+WHERE DATE(detected_at) = date('now')
 GROUP BY check_code, level ORDER BY n DESC;
 ```
 
 - Group by `level` (WARN > INFERRED > MISSING).
 - For each WARN group with `n > 5`, classify: **Fixable** / **Stale value** / **Benign**.
 - Surface the top 3 actionable WARNs for fixing.
+
+**Reliability Control 1 — WRONG_DOC stale fund_master.** When WRONG_DOC is detected, `publish_fund` is skipped — old classification and cost data persist and appear valid to P2/P3:
+```sql
+SELECT fm.ISIN, fm.Fund_Nature, fm.Data_Quality_Flag,
+       km.KIID_Status, km.KIID_Downloaded_At
+FROM fund_master fm
+JOIN fund_kiid_metadata km ON fm.ISIN = km.ISIN AND km.KIID_Class = 1
+WHERE km.KIID_Status = 'WRONG_DOC'
+ORDER BY km.KIID_Downloaded_At DESC;
+```
+Any fund here with `Data_Quality_Flag != 'WARN'` is silently stale to P2/P3. Remediation: `UPDATE fund_master SET Data_Quality_Flag='WARN' WHERE ISIN=?` (diagnostic SQL allowed per P#7), then FORCE_REFRESH when a replacement KIID is available.
+
+**Reliability Control 2 — SRRI NULL / Data_Quality_Flag distribution.** `SRRI=NULL` prevents BL-44 from firing and leaves `Profile=NULL` for Restantes funds:
+```sql
+SELECT
+  COUNT(*) FILTER (WHERE SRRI IS NULL)               AS srri_null,
+  COUNT(*) FILTER (WHERE Data_Quality_Flag='WARN')   AS dqf_warn,
+  COUNT(*) FILTER (WHERE Data_Quality_Flag='MISSING') AS dqf_missing,
+  COUNT(*) FILTER (WHERE Profile IS NULL)             AS profile_null
+FROM fund_master;
+-- Drill: NULL Profile per Fund_Nature
+SELECT Fund_Nature, COUNT(*) n FROM fund_master
+WHERE Profile IS NULL GROUP BY Fund_Nature ORDER BY n DESC;
+```
+Verify that no known-valid SRRI was silently cleared (`sqlite_writer.py` COALESCE protection applies only when `SRRI_Quality_Flag IS NOT NULL AND != 'NONE'`).
+
+**Reliability Control 3 — Cost arbitration verdict distribution.** `NULL` vs `'BOTH_FAIL'` are not equivalent:
+```sql
+SELECT
+  COUNT(*) FILTER (WHERE Cost_Mgmt_Arbitration IS NULL)        AS never_attempted,
+  COUNT(*) FILTER (WHERE Cost_Mgmt_Arbitration = 'BOTH_FAIL')  AS attempted_failed,
+  COUNT(*) FILTER (WHERE Cost_Mgmt_Arbitration = 'AGREE')      AS agree,
+  COUNT(*) FILTER (WHERE Cost_Mgmt_Arbitration LIKE 'ONLY_%')  AS partial
+FROM fund_kiid_metadata WHERE KIID_Class = 1;
+-- Verify no fund has all three cost columns NULL
+SELECT COUNT(*) FROM fund_cost_schedule
+WHERE Total_Costs_EUR IS NULL AND Total_Costs_Pct IS NULL AND Annual_Impact_Pct IS NULL;
+```
+High `BOTH_FAIL` → investigate `FIX_ARB_FALLBACK` events in `ingestion_log`. High `NULL` → check `PRIIPS_COST_EXTRACTION_ENABLED` kill-switch.
+
+**Reliability Control 4 — Family consistency residuals.** Post-correction families still with >1 Fund_Nature:
+```sql
+SELECT ff.family_id, ff.family_name, ff.Fund_Nature AS family_nature,
+       GROUP_CONCAT(DISTINCT fm.Fund_Nature) AS member_natures,
+       COUNT(*) AS n
+FROM fund_families ff
+JOIN fund_master fm ON fm.fund_family_id = ff.family_id
+GROUP BY ff.family_id
+HAVING COUNT(DISTINCT fm.Fund_Nature) > 1
+ORDER BY n DESC;
+```
+Investigate with `fund_family_builder.py` logic (structural heterogeneity or bipartite tie).
 
 #### Step 3 — P1 Process-Efficiency Pass
 
@@ -99,6 +185,62 @@ Compare against prior baseline. Flag any regression.
 - Spot-check metric ranges: vol ≥ 0, |sharpe| plausible, max_drawdown ∈ [−100%, 0], real vs nominal consistency.
 - Surface NaN/NULL coverage per metric (query `fund_metrics` grouped by `metric`).
 - Flag ISINs with full-NULL metric rows.
+- **`load_ts` cohort check.** Use the `[RUN COHORT]` log line as the primary source. A split is EXPECTED only when every stale row's `metric` is in the OLS-cadence set (`beta_*`, `energy_sensitivity_pct`, `hy_spread_sensitivity_pct`) AND the fund's `calculated_at` advanced. Any stale row **outside** that set, or any fund with stale rows but a non-advanced `calculated_at`, is an **ANOMALY** (silent write failure) — flag with ISIN + metric list using this aggregate query:
+  ```sql
+  -- Identify ANOMALY funds: stale load_ts on a non-cadence metric
+  SELECT fm.isin, fm.metric, DATE(fm.load_ts) AS load_date, fms.calculated_at
+  FROM fund_metrics fm
+  JOIN fund_metric_state fms ON fm.isin = fms.isin AND fms.metric_version = 'v1'
+  WHERE fms.calculated_at = date('now')
+    AND DATE(fm.load_ts) < date('now')
+    AND fm.metric NOT LIKE 'beta_%'
+    AND fm.metric NOT IN ('energy_sensitivity_pct','hy_spread_sensitivity_pct');
+  ```
+- **Run-stamp vs value-stamp reconciliation.** Assert `MAX(fm.load_ts) ≤ fms.calculated_at` per ISIN. A `load_ts` **newer** than `calculated_at` indicates a write/commit ordering bug:
+  ```sql
+  SELECT fms.isin, MAX(DATE(fm.load_ts)) AS max_load_ts, fms.calculated_at
+  FROM fund_metric_state fms
+  JOIN fund_metrics fm ON fms.isin = fm.isin
+  WHERE fms.metric_version = 'v1' AND fms.calculated_at = date('now')
+  GROUP BY fms.isin, fms.calculated_at
+  HAVING max_load_ts > fms.calculated_at;
+  ```
+- **Orphan-beta staleness.** Flag any `beta_*` row whose `load_ts` predates `calculated_at` by more than 91 days — beyond EFF-1 cadence it is a stuck/orphan value:
+  ```sql
+  SELECT fm.isin, fm.metric, DATE(fm.load_ts) AS load_date, fms.calculated_at
+  FROM fund_metrics fm
+  JOIN fund_metric_state fms ON fm.isin = fms.isin AND fms.metric_version = 'v1'
+  WHERE fm.metric LIKE 'beta_%'
+    AND (julianday(fms.calculated_at) - julianday(DATE(fm.load_ts))) > 91;
+  ```
+- **NAV-staleness gate.** Use the `[NAV STALE]` log line as the primary source. Any WARNING means funds were recomputed on prices > 60 days old. Verify with:
+  ```sql
+  SELECT fms.isin, MAX(n.Date) AS newest_nav, fms.calculated_at,
+         julianday(fms.calculated_at) - julianday(MAX(n.Date)) AS age_days
+  FROM fund_metric_state fms
+  JOIN fund_nav_monthly n ON fms.isin = n.ISIN
+  WHERE fms.metric_version = 'v1' AND fms.calculated_at = date('now')
+  GROUP BY fms.isin, fms.calculated_at
+  HAVING age_days > 60
+  ORDER BY age_days DESC;
+  ```
+  Cross-reference `nav_sources.data_status`. Fix: `nav_discovery --mode update`, then P2 with `--force`.
+- **Real/nominal pairing integrity.** When IPC is available, every deflatable `real_flag=0` metric must have a `real_flag=1` pair. Orphan singles indicate a silent deflation gap:
+  ```sql
+  SELECT a.isin, a.metric, a.horizon
+  FROM fund_metrics a
+  WHERE a.real_flag = 0
+    AND a.metric IN (
+        'return_ann_real','sharpe','max_drawdown',
+        'alpha_persistence','capture_ratio','momentum_rank'
+    )
+    AND NOT EXISTS (
+        SELECT 1 FROM fund_metrics b
+        WHERE b.isin = a.isin AND b.metric = a.metric
+          AND b.horizon = a.horizon AND b.real_flag = 1
+    );
+  ```
+- **Coverage delta vs baseline.** Use the `[COVERAGE]` log line (diff current run vs previous run in the log). A drop > ~2% on any P3-consumed metric (`return_ann_real`, `sharpe`, `max_drawdown`, `alpha_persistence`, `capture_ratio`, `momentum_rank`) signals an upstream NAV loss or calc regression — triage immediately.
 
 #### Step 6 — P2 Process-Efficiency & Redundancy
 
@@ -116,7 +258,7 @@ For each confirmed root-cause bug (from Steps 1–6 and §4 findings):
 1. **Read the target file** before editing (P#3).
 2. **Fix in the correct module:**
    - P1: classifier → `blocks/<block>.py`; normalization map → `classify_utils.py`; INTER rule → `pipeline.py`; KIID parsing → `kiid_parser.py`.
-   - P2: metric-calc → `proyecto2/src/calculations/<module>.py`; writer → `writers/metrics_writer.py`; regime mapping → `regime_returns.py`; fingerprint → `utils/fingerprint.py`.
+   - P2: metric-calc → `proyecto2/src/calculations/<module>.py`; write-path bug → `run_pipeline.py` write helpers (`_write_metrics` / `_write_timeseries` / `_write_metric_alerts` / `_replace_beta_set`); `writers/metrics_writer.py` is a **legacy stub — do not edit**; regime mapping → `regime_returns.py`; fingerprint → `utils/fingerprint.py`.
    - Never duplicate business logic (P#11, R-1).
 3. **AST validate** immediately after every Python edit (R-8) — see §9.
 4. **Write regression tests** — P1: no `pipeline.py` / `core.io` imports; P2: no `run_pipeline` / `core.io` imports (R-7).
@@ -220,7 +362,7 @@ If the artifact path is ambiguous, ask the user before writing.
 ## 9. Execution Rules
 
 - **Read before modifying (P#3).** Always read the production file before editing. Never assume content.
-- **Fix in the correct module (P#7).** See Step 7 module map. SQL only for diagnostic SELECTs and FORCE_REFRESH triggers.
+- **Fix in the correct module (P#7).** See Step 7 module map. P2 write-path bug → `run_pipeline.py` write helpers; `writers/metrics_writer.py` is a **legacy stub — do not edit**. SQL only for diagnostic SELECTs and FORCE_REFRESH triggers.
 - **AST validate after every Python edit (R-8):**
   ```
   C:\Users\Administrador\anaconda3\envs\des\python.exe -c "import ast; ast.parse(open('file.py', encoding='utf-8').read()); print('AST OK')"

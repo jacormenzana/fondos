@@ -196,6 +196,7 @@ proyecto2/
       test_historia.py
     readers/
       test_preflight.py
+      test_reliability_signals.py
     reports/
       test_rolling_dashboard.py
     utils/

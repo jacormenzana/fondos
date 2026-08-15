@@ -32,20 +32,55 @@ If any asset is missing, report immediately before proceeding.
 
 ### Step 1 — Log Triage
 
-Parse the latest `log_pipeline_*.log`. Extract and report:
+**P1 has no Python `logging`-module log file with structured per-fund events.** The log file
+(`log_pipeline_*.log`) is stdout/stderr redirected by the `.bat` launcher — useful for top-level
+block timings, unhandled-exception `[ERROR]` prints, and the cycle incidencias summary printed at
+the end. **The authoritative per-fund audit trail is `ingestion_log` (DB).** Query it for all
+INTER fires, WARN events, and step counts. The log file is a secondary source for timing and
+catastrophic failures only.
 
-1. **ERROR lines** — funds not persisted; count per block.
-2. **WARNING lines** — semantic inconsistencies, DQ flags, INTER-rule fires; count + group by tag.
-3. **Block counts** — `monetarios=N, rf_corto=N, rf_flexible=N, renta_variable=N, mixtos=N, alternativos=N, restantes=N`.
-4. **Named signals** — BL_B6_HY_KIID fires, FamilyBuilder inconsistencies, WRONG_DOC hits, FORCE_REFRESH triggers.
+Scan the latest `log_pipeline_*.log` for:
 
-Compare against prior run baseline. Flag any count that regressed.
+1. **Unhandled exceptions / crash prints** — lines containing `Traceback`, `Exception`, or `[ERROR]` from unhandled Python errors (these are NOT in `ingestion_log`).
+2. **Block timing summary** — extract per-block elapsed times from the launcher output.
+3. **Cycle incidencias summary** — the `--- RESUMEN DE INCIDENCIAS DEL CICLO ---` block at the end of the log, printed by the resumen step.
 
-### Step 2 — DQ Issue Analysis
+Then query the **canonical DB audit trail** for all structured events:
 
-Query the DB:
 ```sql
+-- Run boundaries: when did this cycle start and end?
+SELECT step, status, message, created_at
+FROM ingestion_log
+WHERE step IN ('RUN_START', 'RUN_SUMMARY')
+ORDER BY created_at DESC LIMIT 4;
+
+-- High-signal events not surfaced in fund_data_quality_issues
+SELECT step, status, COUNT(DISTINCT ISIN) AS n
+FROM ingestion_log
+WHERE step IN (
+    'NATURE_LOW_CONFIDENCE','COST_RANGE_GUARD','BL_COST_4C_OC_ACI_MISMATCH',
+    'FIX_ARB_FALLBACK','INTER_DBLCLAIM_RV_WINS','INTER_DBLCLAIM_RV_WINS_BENCHMARK',
+    'INTER_VOTE3_RECLASSIFIED','INTER_VOTE3_MONETARIO_FLAG_ONLY',
+    'BL64E_FAMILY_RFC_CORRECTION','BL30_INVESTMENT_FOCUS_SECTOR',
+    'BL31_CH_HP_RECONCILE','BL45_HP_FROM_CH_PROPAGATE','BL49_CH_FROM_HP_PROPAGATE'
+)
+  AND created_at >= (
+      SELECT message FROM ingestion_log
+      WHERE step = 'RUN_START' ORDER BY created_at DESC LIMIT 1
+  )
+GROUP BY step, status ORDER BY n DESC;
+```
+
+Compare event counts against the prior run's `RUN_START`/`RUN_SUMMARY` rows. Flag any count that regressed.
+
+### Step 2 — DQ Issue Analysis & Reliability Controls
+
+**Note on time scope:** `_finalize_data_quality_issues()` DELETE+INSERTs per ISIN each cycle. On full-universe runs, `FIX-DQ-STALE-SWEEP-1` also purges rows with `detected_at` before `_cycle_start_ts`. On partial runs, historical rows may survive. Always scope the query to the current cycle:
+
+```sql
+-- Current-cycle DQ issues only
 SELECT check_code, level, COUNT(*) n FROM fund_data_quality_issues
+WHERE DATE(detected_at) = date('now')
 GROUP BY check_code, level ORDER BY n DESC;
 ```
 
@@ -56,6 +91,58 @@ GROUP BY check_code, level ORDER BY n DESC;
   - **Benign** — known sentinel or design choice.
 - Surface the top 3 actionable WARNs for fixing.
 
+**Reliability Control 1 — WRONG_DOC stale fund_master.** When WRONG_DOC is detected, `publish_fund` is skipped — the fund's `fund_master` row is never updated. Old classification and cost data persist and appear valid to P2/P3:
+```sql
+SELECT fm.ISIN, fm.Fund_Nature, fm.Data_Quality_Flag,
+       km.KIID_Status, km.KIID_Downloaded_At
+FROM fund_master fm
+JOIN fund_kiid_metadata km ON fm.ISIN = km.ISIN AND km.KIID_Class = 1
+WHERE km.KIID_Status = 'WRONG_DOC'
+ORDER BY km.KIID_Downloaded_At DESC;
+```
+Any fund here with `Data_Quality_Flag != 'WARN'` is silently stale to P2/P3. Remediation: `UPDATE fund_master SET Data_Quality_Flag='WARN' WHERE ISIN=?` (diagnostic SQL allowed per P#7), then FORCE_REFRESH when a replacement KIID is available.
+
+**Reliability Control 2 — SRRI NULL / Data_Quality_Flag distribution.** `SRRI=NULL` prevents BL-44 from firing and leaves `Profile=NULL` for Restantes funds:
+```sql
+SELECT
+  COUNT(*) FILTER (WHERE SRRI IS NULL)               AS srri_null,
+  COUNT(*) FILTER (WHERE Data_Quality_Flag='WARN')   AS dqf_warn,
+  COUNT(*) FILTER (WHERE Data_Quality_Flag='MISSING') AS dqf_missing,
+  COUNT(*) FILTER (WHERE Profile IS NULL)             AS profile_null
+FROM fund_master;
+-- Drill: NULL Profile per Fund_Nature
+SELECT Fund_Nature, COUNT(*) n FROM fund_master
+WHERE Profile IS NULL GROUP BY Fund_Nature ORDER BY n DESC;
+```
+Verify that no known-valid SRRI was silently cleared (`sqlite_writer.py` COALESCE protection applies only when `SRRI_Quality_Flag IS NOT NULL AND != 'NONE'`).
+
+**Reliability Control 3 — Cost arbitration verdict distribution.** `NULL` vs `'BOTH_FAIL'` are not equivalent (`NULL` = never attempted; `'BOTH_FAIL'` = attempted, both paths failed):
+```sql
+SELECT
+  COUNT(*) FILTER (WHERE Cost_Mgmt_Arbitration IS NULL)        AS never_attempted,
+  COUNT(*) FILTER (WHERE Cost_Mgmt_Arbitration = 'BOTH_FAIL')  AS attempted_failed,
+  COUNT(*) FILTER (WHERE Cost_Mgmt_Arbitration = 'AGREE')      AS agree,
+  COUNT(*) FILTER (WHERE Cost_Mgmt_Arbitration LIKE 'ONLY_%')  AS partial
+FROM fund_kiid_metadata WHERE KIID_Class = 1;
+-- Verify no fund has all three cost columns NULL
+SELECT COUNT(*) FROM fund_cost_schedule
+WHERE Total_Costs_EUR IS NULL AND Total_Costs_Pct IS NULL AND Annual_Impact_Pct IS NULL;
+```
+High `BOTH_FAIL` → investigate `FIX_ARB_FALLBACK` events in `ingestion_log`. High `NULL` → check `PRIIPS_COST_EXTRACTION_ENABLED` kill-switch.
+
+**Reliability Control 4 — Family consistency residuals.** Post-correction families still with >1 Fund_Nature indicate a residual `_validate_family_consistency()` couldn't resolve:
+```sql
+SELECT ff.family_id, ff.family_name, ff.Fund_Nature AS family_nature,
+       GROUP_CONCAT(DISTINCT fm.Fund_Nature) AS member_natures,
+       COUNT(*) AS n
+FROM fund_families ff
+JOIN fund_master fm ON fm.fund_family_id = ff.family_id
+GROUP BY ff.family_id
+HAVING COUNT(DISTINCT fm.Fund_Nature) > 1
+ORDER BY n DESC;
+```
+Investigate with `fund_family_builder.py` logic (structural heterogeneity or bipartite tie).
+
 ### Step 3 — Process-Efficiency Pass
 
 - Identify blocks re-running for funds already stable (no KIID change, no FORCE_REFRESH).
@@ -65,7 +152,7 @@ GROUP BY check_code, level ORDER BY n DESC;
 
 ### Step 4 — Root-Cause Fixes
 
-For each confirmed root-cause bug (from Steps 1–2 and §4 findings):
+For each confirmed root-cause bug (from Steps 1–3 and §4 findings):
 
 1. **Read the target file** before editing (P#3).
 2. **Fix in the correct module** — classifier → `blocks/<block>.py`; normalization map → `classify_utils.py`; INTER rule → `pipeline.py`; KIID parsing → `kiid_parser.py` (P#7, R-1).
