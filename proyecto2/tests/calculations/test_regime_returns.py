@@ -24,7 +24,9 @@ from src.calculations.regime_returns import (
     compute_regime_returns,
     MIN_OBS_REGIME,
     MIN_NAV_TOTAL,
+    MIN_OBS_SORTINO_DOWNSIDE,
     _REGIME_SUFFIX,
+    _sortino,
 )
 
 N_REGIMES = len(_REGIME_SUFFIX)  # 7
@@ -341,6 +343,90 @@ class TestCrisisStressScore:
         assert ttr != "MISSING"
         assert ttr is None  # np.nan stored as None in the tuple
 
+# ============================================================
+# Tests — sortino + max_dd per regime (v30 parity)
+# ============================================================
+
+class TestRegimeSortinoMaxDD:
+    """sortino_{suffix} and max_dd_{suffix} must match sharpe/return_ann coverage."""
+
+    def _metrics_dict(self, result: list[tuple]) -> dict:
+        return {name: val for name, val, _ in result}
+
+    def test_sortino_present_for_all_covered_regimes(self):
+        """When a regime qualifies (n_obs >= MIN_OBS_REGIME) sortino_{suffix} is emitted
+        unless all returns in that regime are positive (MIN_OBS_SORTINO_DOWNSIDE guard)."""
+        rng  = np.random.default_rng(0)
+        n    = 120
+        dates = pd.date_range(start="2015-01-31", periods=n, freq="ME")
+        # Mixed returns: ~half negative so downside guard is met
+        nav_vals = 100.0 * np.cumprod(1 + rng.normal(0.002, 0.03, n))
+        nav  = pd.DataFrame({"date": dates, "nav": nav_vals})
+        reg  = _regime_df_all_covered(n=n, start="2015-01-31")
+        m    = self._metrics_dict(compute_regime_returns(nav, reg))
+        for suffix in _REGIME_SUFFIX.values():
+            assert f"sharpe_{suffix}" in m, f"sharpe_{suffix} missing"
+            assert f"sortino_{suffix}" in m, f"sortino_{suffix} missing"
+
+    def test_max_dd_present_for_all_covered_regimes(self):
+        """max_dd_{suffix} emitted for every regime that qualifies."""
+        n    = 120
+        nav  = _nav_df(n=n, start="2015-01-31")
+        reg  = _regime_df_all_covered(n=n, start="2015-01-31")
+        m    = self._metrics_dict(compute_regime_returns(nav, reg))
+        for suffix in _REGIME_SUFFIX.values():
+            assert f"max_dd_{suffix}" in m, f"max_dd_{suffix} missing"
+
+    def test_max_dd_non_positive(self):
+        """Drawdown ratio is always ≤ 0."""
+        n   = 120
+        nav = _nav_df(n=n, start="2015-01-31")
+        reg = _regime_df_all_covered(n=n, start="2015-01-31")
+        for name, val, _ in compute_regime_returns(nav, reg):
+            if name.startswith("max_dd_"):
+                assert val <= 0.0, f"{name}={val} must be ≤ 0"
+
+    def test_sortino_absent_when_regime_not_covered(self):
+        """Regimes below MIN_OBS_REGIME must not emit sortino_{suffix}."""
+        n   = MIN_NAV_TOTAL
+        nav = _nav_df(n=n, start="2020-01-31")
+        reg = _regime_df_none_covered(n=n, start="2020-01-31")
+        m   = self._metrics_dict(compute_regime_returns(nav, reg))
+        for suffix in _REGIME_SUFFIX.values():
+            assert f"sortino_{suffix}" not in m
+            assert f"max_dd_{suffix}" not in m
+
+    def test_sortino_absent_when_all_returns_positive(self):
+        """If every return in a regime is positive, sortino is not emitted (no downside)."""
+        sortino_val = _sortino(np.full(20, 0.01))  # all positive
+        assert sortino_val is None
+
+    def test_sortino_helper_returns_none_below_downside_threshold(self):
+        """_sortino returns None when negative-return count < MIN_OBS_SORTINO_DOWNSIDE."""
+        returns = np.array([0.01] * 18 + [-0.005] * (MIN_OBS_SORTINO_DOWNSIDE - 1))
+        assert _sortino(returns) is None
+
+    def test_sortino_real_flag_zero(self):
+        """sortino_{suffix} and max_dd_{suffix} use real_flag=0."""
+        n   = 120
+        nav = _nav_df(n=n, start="2015-01-31")
+        reg = _regime_df_all_covered(n=n, start="2015-01-31")
+        for name, val, rf in compute_regime_returns(nav, reg):
+            if name.startswith(("sortino_", "max_dd_")):
+                assert rf == 0, f"{name} has real_flag={rf}, expected 0"
+
+    def test_monotone_nav_regime_zero_drawdown(self):
+        """Strictly increasing NAV in a regime → max_dd = 0."""
+        n     = 120
+        dates = pd.date_range(start="2015-01-31", periods=n, freq="ME")
+        nav   = pd.DataFrame({"date": dates, "nav": 100.0 + np.arange(n, dtype=float)})
+        reg   = _regime_df_all_covered(n=n, start="2015-01-31")
+        for name, val, _ in compute_regime_returns(nav, reg):
+            if name.startswith("max_dd_"):
+                assert val == pytest.approx(0.0, abs=1e-9), f"{name}={val}"
+
+
+class TestCrisisStressScoreTTR:
     def test_crisis_ttr_finite_when_recovery_occurs(self):
         """
         NAV that dips then recovers → TTR is a finite positive number.

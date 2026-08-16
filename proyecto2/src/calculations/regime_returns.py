@@ -9,7 +9,9 @@ historica de regimenes y calcula estadisticas de rendimiento por regimen.
 Metricas generadas por fondo (horizon=since_inception, real_flag=0):
     return_ann_{regimen}      retorno anualizado en ese regimen (%)
     sharpe_{regimen}          ratio Sharpe en ese regimen (rf anualizado)
+    sortino_{regimen}         ratio Sortino en ese regimen (downside deviation)
     vol_ann_{regimen}         volatilidad anualizada en ese regimen (%)
+    max_dd_{regimen}          max drawdown sobre NAV en ese regimen
     n_obs_{regimen}           numero de meses en ese regimen con retorno disponible
     regime_coverage_ratio     fraccion de 7 regimenes con n_obs >= MIN_OBS_REGIME [0,1] (P3-01)
     crisis_stress_score_mdd   max drawdown sobre meses de Crisis_Financiera (P3-02)
@@ -48,8 +50,9 @@ sys.path.insert(0, str(_ROOT))
 from shared.config import RISK_FREE_RATE_ANN
 from src.calculations.drawdown import compute_drawdown, max_drawdown, time_to_recovery
 
-MIN_OBS_REGIME = 12   # minimo de meses en un regimen para calcular estadisticas
-MIN_NAV_TOTAL  = 36   # minimo de meses totales de NAV
+MIN_OBS_REGIME          = 12  # minimo de meses en un regimen para calcular estadisticas
+MIN_NAV_TOTAL           = 36  # minimo de meses totales de NAV
+MIN_OBS_SORTINO_DOWNSIDE = 2  # minimo de retornos negativos para calcular downside deviation
 
 # Tasa libre de riesgo mensual (para Sharpe por regimen)
 _RF_MONTHLY = (1 + RISK_FREE_RATE_ANN) ** (1 / 12) - 1
@@ -136,6 +139,23 @@ def _sharpe(monthly_log_returns: np.ndarray) -> float:
     return (mean_exc / std_exc) * np.sqrt(12)
 
 
+def _sortino(monthly_log_returns: np.ndarray) -> float | None:
+    """
+    Sortino ratio anualizado.
+    Downside deviation = std de los excesos negativos (ddof=1).
+    Devuelve None si no hay suficientes retornos negativos (MIN_OBS_SORTINO_DOWNSIDE).
+    """
+    excess   = monthly_log_returns - _RF_MONTHLY
+    downside = excess[excess < 0]
+    if len(downside) < MIN_OBS_SORTINO_DOWNSIDE:
+        return None
+    dd_std = float(np.std(downside, ddof=1))
+    if dd_std < 1e-10:
+        return None
+    mean_exc = float(np.mean(excess))
+    return (mean_exc / dd_std) * np.sqrt(12)
+
+
 def compute_regime_returns(
     nav_df:    pd.DataFrame,
     regime_df: pd.DataFrame,
@@ -193,10 +213,20 @@ def compute_regime_returns(
         ret_ann = _annualized_return(r_regime)
         vol_ann = _annualized_vol(r_regime)
         sharpe  = _sharpe(r_regime)
+        sortino = _sortino(r_regime)
 
         metrics.append((f"return_ann_{suffix}", ret_ann,  0))
         metrics.append((f"vol_ann_{suffix}",    vol_ann,  0))
         metrics.append((f"sharpe_{suffix}",     sharpe,   0))
+        if sortino is not None:
+            metrics.append((f"sortino_{suffix}", sortino, 0))
+
+        # max_dd over the NAV level at regime dates (mirrors crisis_stress_score_mdd)
+        regime_dates = merged[mask].index
+        nav_regime   = nav.loc[nav.index.isin(regime_dates)].reset_index(drop=True)
+        if len(nav_regime) >= 2:
+            mdd = max_drawdown(compute_drawdown(nav_regime))
+            metrics.append((f"max_dd_{suffix}", float(mdd), 0))
 
     # P3-01: fraction of regimes with sufficient history [0, 1]
     metrics.append(("regime_coverage_ratio", n_covered / len(_REGIME_SUFFIX), 0))
