@@ -183,19 +183,27 @@ def _upsert_metric_state(
     input_hash: str,
     dry_run: bool,
 ) -> None:
-    """Persiste o actualiza el input_hash en fund_metric_state."""
+    """Persiste o actualiza el input_hash en fund_metric_state.
+
+    EFF-2: skips own BEGIN/COMMIT when caller already has an open transaction.
+    """
     if dry_run:
+        return
+    sql = (
+        "INSERT OR REPLACE INTO fund_metric_state"
+        " (isin, metric_version, input_hash, calculated_at)"
+        " VALUES (?, ?, ?, ?)"
+    )
+    args = (isin, METRIC_VERSION, input_hash, date.today().isoformat())
+    # EFF-2: skip own transaction when the caller batches for us
+    if conn.in_transaction:
+        conn.execute(sql, args)
         return
     for attempt in range(3):
         try:
             conn.execute("BEGIN IMMEDIATE")
             try:
-                conn.execute(
-                    """INSERT OR REPLACE INTO fund_metric_state
-                           (isin, metric_version, input_hash, calculated_at)
-                       VALUES (?, ?, ?, ?)""",
-                    (isin, METRIC_VERSION, input_hash, date.today().isoformat()),
-                )
+                conn.execute(sql, args)
                 conn.execute("COMMIT")
             except Exception:
                 conn.execute("ROLLBACK")
@@ -269,6 +277,11 @@ def _write_metrics(
     metric_version: si None usa METRIC_VERSION ('v1'). Para métricas de
     horizonte corto pasar METRIC_VERSION_SHORT ('d1') — mantiene las series
     cortas separadas de las mensuales en la clave compuesta.
+
+    Txn batching (EFF-2): if the caller already opened a transaction
+    (conn.in_transaction=True), this function skips its own BEGIN/COMMIT and
+    executes the DML directly inside the caller's transaction.  Otherwise it
+    manages its own retried transaction as before.
     """
     if not metrics or dry_run:
         return 0
@@ -295,6 +308,10 @@ def _write_metrics(
         )
         for m in metrics
     ]
+    # EFF-2: skip own transaction when the caller batches for us
+    if conn.in_transaction:
+        conn.executemany(sql, rows)
+        return len(rows)
     for attempt in range(5):
         try:
             conn.execute("BEGIN IMMEDIATE")
@@ -322,6 +339,8 @@ def _write_timeseries(
 
     Solo inserta fechas que no existen aún → comportamiento append-only.
     Devuelve el nº de filas insertadas (0 si ya existían o dry_run).
+
+    EFF-2: skips own BEGIN/COMMIT when caller already has an open transaction.
     """
     if not rows or dry_run:
         return 0
@@ -342,6 +361,10 @@ def _write_timeseries(
         )
         for r in rows
     ]
+    # EFF-2: skip own transaction when the caller batches for us
+    if conn.in_transaction:
+        cur = conn.executemany(sql, data)
+        return cur.rowcount if cur.rowcount >= 0 else len(data)
     for attempt in range(5):
         try:
             conn.execute("BEGIN IMMEDIATE")
@@ -377,6 +400,10 @@ def _replace_beta_set(
 
     Use this instead of _write_metrics for macro-sensitivity metrics.
     _write_metrics is still used for all other metric families.
+
+    EFF-2: skips own BEGIN/COMMIT when caller already has an open transaction.
+    The delete+insert pair is still atomic because both DML statements run in
+    the same (caller-owned) transaction.
     """
     if not metrics or dry_run:
         return 0
@@ -407,6 +434,11 @@ def _replace_beta_set(
         )
         for m in metrics
     ]
+    # EFF-2: skip own transaction when the caller batches for us
+    if conn.in_transaction:
+        conn.execute(sql_del, (isin, horizon, mv))
+        conn.executemany(sql_ins, rows)
+        return len(rows)
     for attempt in range(5):
         try:
             conn.execute("BEGIN IMMEDIATE")
@@ -479,18 +511,24 @@ def _log(
     message: str | None,
     dry_run: bool,
 ) -> None:
+    """EFF-2: skips own BEGIN/COMMIT when caller already has an open transaction."""
     if dry_run:
+        return
+    sql = (
+        "INSERT INTO p2_pipeline_log"
+        " (isin, step, status, horizon, metric_version, message)"
+        " VALUES (?, ?, ?, ?, ?, ?)"
+    )
+    args = (isin, step, status, horizon, METRIC_VERSION, message)
+    # EFF-2: skip own transaction when the caller batches for us
+    if conn.in_transaction:
+        conn.execute(sql, args)
         return
     for attempt in range(5):
         try:
             conn.execute("BEGIN IMMEDIATE")
             try:
-                conn.execute(
-                    """INSERT INTO p2_pipeline_log
-                           (isin, step, status, horizon, metric_version, message)
-                       VALUES (?, ?, ?, ?, ?, ?)""",
-                    (isin, step, status, horizon, METRIC_VERSION, message),
-                )
+                conn.execute(sql, args)
                 conn.execute("COMMIT")
             except Exception:
                 conn.execute("ROLLBACK")
@@ -557,7 +595,7 @@ _ALL_METRIC_FAMILIES = frozenset({
 
 # Bump this string whenever the calculation logic changes to force a
 # cache-miss in fund_metric_state even when NAV/IPC inputs are unchanged.
-CALC_VERSION: str = "20260730"
+CALC_VERSION: str = "20260815"  # v29: sharpe + sortino added; roll_ prefix dropped from metric names
 
 # P3-consumed metric surface — used by [COVERAGE] observability line to baseline
 # distinct-ISIN coverage across runs. Update this tuple whenever P3's scoring
@@ -565,7 +603,7 @@ CALC_VERSION: str = "20260730"
 _P3_CONSUMED_METRICS: tuple[str, ...] = (
     "return_ann_real",
     "sharpe",
-    "max_drawdown",
+    "max_dd",
     "alpha_persistence",
     "capture_ratio",
     "momentum_rank",
@@ -853,6 +891,7 @@ def run(
                 )
             )
 
+            _fund_txn_open = False   # EFF-2: guard for per-fund txn rollback in except
             try:
                 # ---- NAV load + validation ---------------------------
                 nav_df = load_nav(conn, isin)
@@ -921,6 +960,26 @@ def run(
                     continue
 
                 isin_written = 0
+
+                # EFF-2: single transaction for ALL per-fund writes.
+                # All write helpers (_write_metrics, _write_timeseries,
+                # _replace_beta_set, _log, _upsert_metric_state) check
+                # conn.in_transaction and skip their own BEGIN/COMMIT when True.
+                # This collapses ~40 lock-acquire/WAL-frame cycles per fund into 1.
+                # Reads inside the transaction (load_nav_daily, benchmark lookups,
+                # fund_master SELECT) are safe: WAL gives a consistent snapshot.
+                _fund_txn_open = False
+                if not dry_run:
+                    for _attempt in range(5):
+                        try:
+                            conn.execute("BEGIN IMMEDIATE")
+                            _fund_txn_open = True
+                            break
+                        except sqlite3.OperationalError as _exc:
+                            if "database is locked" in str(_exc) and _attempt < 4:
+                                time.sleep(2 ** _attempt)
+                            else:
+                                raise
 
                 # ---- Since inception ---------------------------------
                 if _want("risk"):
@@ -1121,6 +1180,7 @@ def run(
                         min_obs=MIN_NAV_ROWS,
                         ipc_df=ipc_df,
                         periods_per_year=12,
+                        risk_free_rate=RISK_FREE_RATE_ANN,
                     )
                     ts_written = _write_timeseries(conn, roll_rows, dry_run)
                     if ts_written:
@@ -1159,17 +1219,7 @@ def run(
                                 conn, isin, w_rows, w_name, dry_run
                             )
 
-                total_written += isin_written
-                elapsed_ms = round((time.time() - t_fund) * 1000)
-                logger.info(
-                    "", extra=dict(
-                        p2_idx=idx, p2_total=total, p2_isin=isin,
-                        p2_evt="END", p2_detail="",
-                        p2_count=isin_written, p2_dur_ms=elapsed_ms,
-                    )
-                )
-
-                # v25: consumir flag RECALCULATE_METRICS
+                # v25: consumir flag RECALCULATE_METRICS (inside per-fund txn)
                 if isin_written > 0 and not dry_run:
                     conn.execute(
                         "UPDATE nav_sources SET data_status='OK' "
@@ -1184,9 +1234,31 @@ def run(
                     if _ols_ran:
                         _update_ols_state(conn, isin, current_quarter, len(nav_df), dry_run)
 
+                # EFF-2: commit the single per-fund transaction
+                if _fund_txn_open:
+                    conn.execute("COMMIT")
+                    _fund_txn_open = False
+
+                total_written += isin_written
+                elapsed_ms = round((time.time() - t_fund) * 1000)
+                logger.info(
+                    "", extra=dict(
+                        p2_idx=idx, p2_total=total, p2_isin=isin,
+                        p2_evt="END", p2_detail="",
+                        p2_count=isin_written, p2_dur_ms=elapsed_ms,
+                    )
+                )
+
                 n_processed += 1
 
             except Exception as exc:
+                # EFF-2: rollback the per-fund transaction on any error
+                if _fund_txn_open:
+                    try:
+                        conn.execute("ROLLBACK")
+                    except Exception:
+                        pass
+                    _fund_txn_open = False
                 n_errors += 1
                 elapsed_ms = round((time.time() - t_fund) * 1000)
                 logger.error(
@@ -1253,7 +1325,7 @@ def run(
                                SELECT isin, metric, window, real_flag, MAX(date) AS mx
                                FROM fund_metric_timeseries
                                WHERE metric IN (
-                                   'roll_vol_ann','roll_max_dd','roll_return_ann'
+                                   'vol_ann','max_dd','return_ann'
                                )
                                GROUP BY isin, metric, window, real_flag
                            ) latest
@@ -1264,7 +1336,7 @@ def run(
                              AND t.date      = latest.mx
                            LEFT JOIN fund_master m ON t.isin = m.ISIN
                            WHERE t.metric IN (
-                               'roll_vol_ann','roll_max_dd','roll_return_ann'
+                               'vol_ann','max_dd','return_ann'
                            )""",
                         conn
                     )

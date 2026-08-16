@@ -240,8 +240,8 @@ class TestCoverageSnapshot:
 
     def test_empty_db_returns_zeros(self):
         conn = _make_db()
-        result = coverage_snapshot(conn, ["sharpe", "max_drawdown"])
-        assert result == [("sharpe", 0), ("max_drawdown", 0)]
+        result = coverage_snapshot(conn, ["sharpe", "max_dd"])
+        assert result == [("sharpe", 0), ("max_dd", 0)]
 
     def test_counts_distinct_isins_with_non_null_value(self):
         conn = _make_db()
@@ -249,7 +249,7 @@ class TestCoverageSnapshot:
         for isin, metric, value in [
             ("ISIN_A", "sharpe", 1.2),
             ("ISIN_B", "sharpe", 0.8),
-            ("ISIN_A", "max_drawdown", -0.15),
+            ("ISIN_A", "max_dd", -0.15),
         ]:
             conn.execute(
                 "INSERT INTO fund_metrics VALUES (?,?,?,?,?,?,?,?)",
@@ -257,10 +257,10 @@ class TestCoverageSnapshot:
             )
         conn.commit()
 
-        result = coverage_snapshot(conn, ["sharpe", "max_drawdown"])
+        result = coverage_snapshot(conn, ["sharpe", "max_dd"])
         result_dict = dict(result)
         assert result_dict["sharpe"] == 2
-        assert result_dict["max_drawdown"] == 1
+        assert result_dict["max_dd"] == 1
 
     def test_null_values_not_counted(self):
         conn = _make_db()

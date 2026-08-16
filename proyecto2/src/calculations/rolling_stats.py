@@ -1,12 +1,17 @@
 # proyecto2/src/calculations/rolling_stats.py
 # -*- coding: utf-8 -*-
 """
-Motor de indicadores rolling para fund_metric_timeseries (v26).
+Motor de indicadores rolling para fund_metric_timeseries (v29).
 
-Métricas curadas (Hybrid model):
-  - roll_vol_ann    : volatilidad anualizada sobre la ventana trailing
-  - roll_max_dd     : máximo drawdown dentro de la ventana trailing
-  - roll_return_ann : rentabilidad anualizada geométrica sobre la ventana
+Métricas curadas (Hybrid model — full history in fund_metric_timeseries):
+  - vol_ann    : volatilidad anualizada sobre la ventana trailing
+  - max_dd     : máximo drawdown dentro de la ventana trailing
+  - return_ann : rentabilidad anualizada geométrica sobre la ventana
+  - sharpe     : ratio Sharpe rolling = (return_ann - rfr) / vol_ann
+  - sortino    : ratio Sortino rolling = (return_ann - rfr) / downside_deviation_ann
+
+Tanto la variante nominal (real_flag=0) como la real deflactada (real_flag=1)
+se calculan para todas las métricas cuando se provee ipc_df.
 
 Horizontes: todos los ROLLING_WINDOWS (mensual, v1) y SHORT_WINDOWS (diario, d1).
 
@@ -71,6 +76,53 @@ def _roll_return_ann(nav_window: np.ndarray, periods_per_year: int) -> float:
     return float(total ** (1.0 / years) - 1.0)
 
 
+def _roll_sharpe(
+    nav_window: np.ndarray,
+    periods_per_year: int,
+    risk_free_rate_ann: float,
+) -> float:
+    """Ratio Sharpe rolling = (return_ann - rfr) / vol_ann.
+
+    Returns NaN if vol_ann = 0 or < 3 observations.
+    """
+    if len(nav_window) < 3:
+        return math.nan
+    ret_ann = _roll_return_ann(nav_window, periods_per_year)
+    vol_ann = _roll_vol_ann(nav_window, periods_per_year)
+    if math.isnan(ret_ann) or math.isnan(vol_ann) or vol_ann == 0.0:
+        return math.nan
+    return float((ret_ann - risk_free_rate_ann) / vol_ann)
+
+
+def _roll_sortino(
+    nav_window: np.ndarray,
+    periods_per_year: int,
+    risk_free_rate_ann: float,
+) -> float:
+    """Ratio Sortino rolling = (return_ann - rfr) / downside_deviation_ann.
+
+    Downside deviation uses a MAR of rfr/periods_per_year per period.
+    Only negative-excess periods contribute (semi-variance approach).
+    Returns NaN if downside_dev = 0 or < 3 observations.
+    """
+    if len(nav_window) < 3:
+        return math.nan
+    rets = np.diff(nav_window) / nav_window[:-1]
+    if len(rets) < 2:
+        return math.nan
+    mar_per_period = risk_free_rate_ann / periods_per_year
+    downside = rets - mar_per_period
+    downside_sq = np.where(downside < 0, downside ** 2, 0.0)
+    dd_var = float(downside_sq.mean())
+    if dd_var <= 0:
+        return math.nan
+    downside_dev_ann = math.sqrt(dd_var) * math.sqrt(periods_per_year)
+    ret_ann = _roll_return_ann(nav_window, periods_per_year)
+    if math.isnan(ret_ann):
+        return math.nan
+    return float((ret_ann - risk_free_rate_ann) / downside_dev_ann)
+
+
 # ============================================================
 # Función principal
 # ============================================================
@@ -84,9 +136,10 @@ def compute_rolling_rows(
     ipc_df: pd.DataFrame | None = None,
     real_flag_default: int = 0,
     periods_per_year: int = _PERIODS_YEAR_MONTHLY,
+    risk_free_rate: float = 0.0,
 ) -> list[dict]:
     """
-    Calcula las series rolling de las 3 métricas curadas para un ISIN.
+    Calcula las series rolling de las 5 métricas curadas para un ISIN.
 
     Parameters
     ----------
@@ -102,6 +155,8 @@ def compute_rolling_rows(
                       (Mismo contrato que load_ipc() en db_readers.py.)
     real_flag_default : flag para la serie nominal (0). Real = 1.
     periods_per_year: 12 para serie mensual, 252 para diaria.
+    risk_free_rate  : tasa libre de riesgo anualizada (decimal), usada en Sharpe y Sortino.
+                      Por defecto 0.0. Pasar RISK_FREE_RATE_ANN de shared/config.py.
 
     Returns
     -------
@@ -159,12 +214,17 @@ def compute_rolling_rows(
             for flag, nav_arr in nav_variants:
                 if nav_arr is None or len(nav_arr) < min_obs:
                     continue
-                for metric, fn in (
-                    ("roll_vol_ann",    lambda a: _roll_vol_ann(a, periods_per_year)),
-                    ("roll_max_dd",     _roll_max_dd),
-                    ("roll_return_ann", lambda a: _roll_return_ann(a, periods_per_year)),
-                ):
-                    val = fn(nav_arr)
+
+                # Compute all 5 curated metrics for this window slice.
+                # Base metrics computed once; Sharpe/Sortino reuse them internally.
+                metric_vals = (
+                    ("vol_ann",    _roll_vol_ann(nav_arr, periods_per_year)),
+                    ("max_dd",     _roll_max_dd(nav_arr)),
+                    ("return_ann", _roll_return_ann(nav_arr, periods_per_year)),
+                    ("sharpe",     _roll_sharpe(nav_arr, periods_per_year, risk_free_rate)),
+                    ("sortino",    _roll_sortino(nav_arr, periods_per_year, risk_free_rate)),
+                )
+                for metric, val in metric_vals:
                     rows.append({
                         "isin":        isin,
                         "metric":      metric,
@@ -374,10 +434,41 @@ def compute_alerts(
 # P2 latest-scalar snapshot → fund_metrics
 # ============================================================
 
+# (metric, real_flag) pairs for which a normalized slope is computed.
+# Slope = OLS b / std(y) → dimensionless, sign-meaningful (+ = improving).
+# Add (metric, flag) here to enable; no other code change needed.
+_SLOPE_TARGETS: frozenset[tuple[str, int]] = frozenset([
+    ("sharpe",     0),   # rolling Sharpe trend (nominal)
+    ("return_ann", 1),   # rolling real-return trend (deflated)
+])
+
+
+def _linear_slope_normalized(y: np.ndarray) -> float:
+    """Normalized OLS slope: b / std(y), in std-devs per time-step.
+
+    Returns NaN when n < 3, all values equal, or series has no variance.
+    Sign: positive = improving trend; negative = deteriorating.
+    """
+    n = len(y)
+    if n < 3:
+        return math.nan
+    t = np.arange(n, dtype=float)
+    t_c = t - t.mean()
+    denom = float((t_c ** 2).sum())
+    if denom == 0:
+        return math.nan
+    b = float((t_c * (y - y.mean())).sum()) / denom
+    std_y = float(y.std())
+    if std_y == 0:
+        return math.nan
+    return b / std_y
+
+
 def compute_timeseries_snapshots(
     timeseries_df: pd.DataFrame,
     category_df: pd.DataFrame | None = None,
     min_self_obs: int = 12,
+    slope_n_points: int = 36,
 ) -> list[dict]:
     """
     Extrae señales derivadas de fund_metric_timeseries para escribir en fund_metrics
@@ -385,16 +476,14 @@ def compute_timeseries_snapshots(
 
     Señales por (isin, metric, window):
       <metric>_pctile_self : percentil temporal del último valor dentro del propio historial.
+      <metric>_slope       : tendencia normalizada (solo para _SLOPE_TARGETS).
       <metric>_pctile_cat  : percentil cross-seccional (procedente de category_df).
       <metric>_zscore_cat  : z-score vs media de la categoría (procedente de category_df).
 
-    Devuelve lista de dicts compatibles con _write_metrics:
-        {metric, value, real_flag, source_rows}
-    El caller añade isin y llama _write_metrics(conn, isin, rows, horizon, dry_run).
+    slope_n_points: número máximo de observaciones recientes para el cálculo de pendiente.
+                    Por defecto 36 (3 años de datos mensuales).
 
-    Estructura de retorno alternativa (sin isin agrupado): devuelve dicts con
-        {isin, metric, window, value, real_flag, source_rows}
-    para que el caller pueda agrupar por (isin, window) antes de escribir.
+    Devuelve dicts con {isin, metric, window, value, real_flag, source_rows}.
     """
     if timeseries_df is None or timeseries_df.empty:
         return []
@@ -433,6 +522,20 @@ def compute_timeseries_snapshots(
                 "real_flag":   int(real_flag),
                 "source_rows": n_obs,
             })
+
+        # slope: tendencia normalizada para métricas en _SLOPE_TARGETS
+        if (metric, int(real_flag)) in _SLOPE_TARGETS and n_obs >= 3:
+            y_slope = vals.to_numpy(dtype=float)[-slope_n_points:]
+            slope_val = _linear_slope_normalized(y_slope)
+            if not math.isnan(slope_val):
+                records.append({
+                    "isin":        isin,
+                    "metric":      f"{metric}_slope",
+                    "window":      window,
+                    "value":       slope_val,
+                    "real_flag":   int(real_flag),
+                    "source_rows": len(y_slope),
+                })
 
         # pctile_cat y zscore_cat: de category_df
         cat_row = cat_index.get((isin, metric, window, int(real_flag)))

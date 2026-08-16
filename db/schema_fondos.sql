@@ -462,7 +462,9 @@ CREATE TABLE IF NOT EXISTS fund_metrics (
     FOREIGN KEY (isin) REFERENCES fund_master (ISIN) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_metrics_isin    ON fund_metrics (isin);
+-- v29: dropped idx_metrics_isin — strict prefix of the PK
+--   (isin, metric, horizon, real_flag, metric_version); the PK B-tree already
+--   serves any isin-only lookup via a leading-column scan.
 CREATE INDEX IF NOT EXISTS idx_metrics_metric  ON fund_metrics (metric, horizon);
 CREATE INDEX IF NOT EXISTS idx_metrics_date    ON fund_metrics (calculation_date);
 
@@ -748,7 +750,7 @@ CREATE INDEX IF NOT EXISTS idx_nav_daily_date ON fund_nav_daily (Date);
 -- ============================================================
 CREATE TABLE IF NOT EXISTS fund_metric_timeseries (
     isin            TEXT    NOT NULL,
-    metric          TEXT    NOT NULL,   -- roll_vol_ann / roll_max_dd / roll_return_ann
+    metric          TEXT    NOT NULL,   -- vol_ann / max_dd / return_ann / sharpe / sortino (v29)
     window          TEXT    NOT NULL,   -- rolling_1y / rolling_2y / rolling_3y / rolling_5y
                                         -- rolling_10y / rolling_1m / rolling_3m / rolling_6m
     date            DATE    NOT NULL,   -- fecha de cálculo (último día del período)
@@ -764,16 +766,23 @@ CREATE TABLE IF NOT EXISTS fund_metric_timeseries (
     FOREIGN KEY (isin) REFERENCES fund_master (ISIN) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_fmts_isin_metric        ON fund_metric_timeseries (isin, metric);
-CREATE INDEX IF NOT EXISTS idx_fmts_metric_window      ON fund_metric_timeseries (metric, window);
-CREATE INDEX IF NOT EXISTS idx_fmts_date               ON fund_metric_timeseries (date);
--- v28: composite index for latest-date GROUP BY in cross-sectional reads.
-CREATE INDEX IF NOT EXISTS idx_fmts_metric_window_real_date
-    ON fund_metric_timeseries (metric, window, real_flag, date);
--- BUG-ROLL-LATEST fix: per-fund max-date subquery now groups by (isin, metric, window,
--- real_flag) — this covering index makes it index-served on the 16M-row table.
+-- v29 index rationalization: four indexes dropped (from original five), two remain.
+-- Dropped:
+--   idx_fmts_isin_metric       — strict prefix of idx_fmts_isin_metric_window_real_date.
+--   idx_fmts_date              — global date scan; superseded by composites.
+--   idx_fmts_metric_window     — strict prefix of idx_fmts_mwr_isin_date.
+--   idx_fmts_metric_window_real_date — superseded by idx_fmts_mwr_isin_date which adds
+--                                      isin before date, making it optimal for both the
+--                                      cross-sectional GROUP BY and the per-fund max-date
+--                                      subquery.
+-- Two indexes remain (both hot-path covering indexes):
+-- Per-fund max-date subquery — covering; makes 16M-row table index-served.
 CREATE INDEX IF NOT EXISTS idx_fmts_isin_metric_window_real_date
     ON fund_metric_timeseries (isin, metric, window, real_flag, date);
+-- Cross-sectional GROUP BY (post-loop snapshot, fallback DB query) — isin before date
+-- makes this better than the old idx_fmts_metric_window_real_date for both use cases.
+CREATE INDEX IF NOT EXISTS idx_fmts_mwr_isin_date
+    ON fund_metric_timeseries (metric, window, real_flag, isin, date);
 
 -- ============================================================
 -- fund_metric_alerts  (v26 — P2 WARN/ALARM engine)
@@ -786,7 +795,7 @@ CREATE INDEX IF NOT EXISTS idx_fmts_isin_metric_window_real_date
 -- ============================================================
 CREATE TABLE IF NOT EXISTS fund_metric_alerts (
     isin            TEXT    NOT NULL,
-    metric          TEXT    NOT NULL,   -- roll_vol_ann / roll_max_dd / roll_return_ann
+    metric          TEXT    NOT NULL,   -- vol_ann / max_dd / return_ann (v29 normalized names)
     window          TEXT    NOT NULL,   -- ventana temporal de la métrica
     level           TEXT    NOT NULL    -- OK / WARN / ALARM
         CHECK (level IN ('OK', 'WARN', 'ALARM')),

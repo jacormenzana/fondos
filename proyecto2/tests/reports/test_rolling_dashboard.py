@@ -39,33 +39,33 @@ def _snapshot_rows() -> list:
     """
     return [
         # RFF — 3 fondos, rolling_1y
-        ("LU0001", "roll_return_ann", "rolling_1y", "2026-06-30", 0.10, "Renta Fija Flexible", "FONDO A"),
-        ("LU0001", "roll_vol_ann",    "rolling_1y", "2026-06-30", 0.05, "Renta Fija Flexible", "FONDO A"),
-        ("LU0001", "roll_max_dd",     "rolling_1y", "2026-06-30",-0.04, "Renta Fija Flexible", "FONDO A"),
-        ("LU0002", "roll_return_ann", "rolling_1y", "2026-06-30", 0.04, "Renta Fija Flexible", "FONDO B"),
-        ("LU0002", "roll_vol_ann",    "rolling_1y", "2026-06-30", 0.03, "Renta Fija Flexible", "FONDO B"),
-        ("LU0002", "roll_max_dd",     "rolling_1y", "2026-06-30",-0.02, "Renta Fija Flexible", "FONDO B"),
-        ("LU0003", "roll_return_ann", "rolling_1y", "2026-06-30", 0.07, "Renta Fija Flexible", "FONDO C"),
-        ("LU0003", "roll_vol_ann",    "rolling_1y", "2026-06-30", 0.04, "Renta Fija Flexible", "FONDO C"),
-        ("LU0003", "roll_max_dd",     "rolling_1y", "2026-06-30",-0.03, "Renta Fija Flexible", "FONDO C"),
-        ("LU0004", "roll_return_ann", "rolling_1y", "2026-06-30", 0.08, "Renta Fija Flexible", "FONDO D"),
-        ("LU0004", "roll_vol_ann",    "rolling_1y", "2026-06-30", 0.06, "Renta Fija Flexible", "FONDO D"),
-        ("LU0004", "roll_max_dd",     "rolling_1y", "2026-06-30",-0.05, "Renta Fija Flexible", "FONDO D"),
+        ("LU0001", "return_ann", "rolling_1y", "2026-06-30", 0.10, "Renta Fija Flexible", "FONDO A"),
+        ("LU0001", "vol_ann",    "rolling_1y", "2026-06-30", 0.05, "Renta Fija Flexible", "FONDO A"),
+        ("LU0001", "max_dd",     "rolling_1y", "2026-06-30",-0.04, "Renta Fija Flexible", "FONDO A"),
+        ("LU0002", "return_ann", "rolling_1y", "2026-06-30", 0.04, "Renta Fija Flexible", "FONDO B"),
+        ("LU0002", "vol_ann",    "rolling_1y", "2026-06-30", 0.03, "Renta Fija Flexible", "FONDO B"),
+        ("LU0002", "max_dd",     "rolling_1y", "2026-06-30",-0.02, "Renta Fija Flexible", "FONDO B"),
+        ("LU0003", "return_ann", "rolling_1y", "2026-06-30", 0.07, "Renta Fija Flexible", "FONDO C"),
+        ("LU0003", "vol_ann",    "rolling_1y", "2026-06-30", 0.04, "Renta Fija Flexible", "FONDO C"),
+        ("LU0003", "max_dd",     "rolling_1y", "2026-06-30",-0.03, "Renta Fija Flexible", "FONDO C"),
+        ("LU0004", "return_ann", "rolling_1y", "2026-06-30", 0.08, "Renta Fija Flexible", "FONDO D"),
+        ("LU0004", "vol_ann",    "rolling_1y", "2026-06-30", 0.06, "Renta Fija Flexible", "FONDO D"),
+        ("LU0004", "max_dd",     "rolling_1y", "2026-06-30",-0.05, "Renta Fija Flexible", "FONDO D"),
         # Mixtos — 2 fondos, rolling_1y
-        ("LU0010", "roll_return_ann", "rolling_1y", "2026-06-30", 0.15, "Mixtos", "MIXTO X"),
-        ("LU0010", "roll_vol_ann",    "rolling_1y", "2026-06-30", 0.10, "Mixtos", "MIXTO X"),
-        ("LU0010", "roll_max_dd",     "rolling_1y", "2026-06-30",-0.08, "Mixtos", "MIXTO X"),
-        ("LU0011", "roll_return_ann", "rolling_1y", "2026-06-30", 0.12, "Mixtos", "MIXTO Y"),
-        ("LU0011", "roll_vol_ann",    "rolling_1y", "2026-06-30", 0.09, "Mixtos", "MIXTO Y"),
-        ("LU0011", "roll_max_dd",     "rolling_1y", "2026-06-30",-0.07, "Mixtos", "MIXTO Y"),
-        ("LU0012", "roll_return_ann", "rolling_1y", "2026-06-30", 0.18, "Mixtos", "MIXTO Z"),
-        ("LU0012", "roll_vol_ann",    "rolling_1y", "2026-06-30", 0.11, "Mixtos", "MIXTO Z"),
-        ("LU0012", "roll_max_dd",     "rolling_1y", "2026-06-30",-0.10, "Mixtos", "MIXTO Z"),
-        ("LU0013", "roll_return_ann", "rolling_1y", "2026-06-30", 0.16, "Mixtos", "MIXTO W"),
-        ("LU0013", "roll_vol_ann",    "rolling_1y", "2026-06-30", 0.09, "Mixtos", "MIXTO W"),
-        ("LU0013", "roll_max_dd",     "rolling_1y", "2026-06-30",-0.06, "Mixtos", "MIXTO W"),
+        ("LU0010", "return_ann", "rolling_1y", "2026-06-30", 0.15, "Mixtos", "MIXTO X"),
+        ("LU0010", "vol_ann",    "rolling_1y", "2026-06-30", 0.10, "Mixtos", "MIXTO X"),
+        ("LU0010", "max_dd",     "rolling_1y", "2026-06-30",-0.08, "Mixtos", "MIXTO X"),
+        ("LU0011", "return_ann", "rolling_1y", "2026-06-30", 0.12, "Mixtos", "MIXTO Y"),
+        ("LU0011", "vol_ann",    "rolling_1y", "2026-06-30", 0.09, "Mixtos", "MIXTO Y"),
+        ("LU0011", "max_dd",     "rolling_1y", "2026-06-30",-0.07, "Mixtos", "MIXTO Y"),
+        ("LU0012", "return_ann", "rolling_1y", "2026-06-30", 0.18, "Mixtos", "MIXTO Z"),
+        ("LU0012", "vol_ann",    "rolling_1y", "2026-06-30", 0.11, "Mixtos", "MIXTO Z"),
+        ("LU0012", "max_dd",     "rolling_1y", "2026-06-30",-0.10, "Mixtos", "MIXTO Z"),
+        ("LU0013", "return_ann", "rolling_1y", "2026-06-30", 0.16, "Mixtos", "MIXTO W"),
+        ("LU0013", "vol_ann",    "rolling_1y", "2026-06-30", 0.09, "Mixtos", "MIXTO W"),
+        ("LU0013", "max_dd",     "rolling_1y", "2026-06-30",-0.06, "Mixtos", "MIXTO W"),
         # Otras ventanas (no deben afectar al resumen que usa rolling_1y)
-        ("LU0001", "roll_return_ann", "rolling_3y", "2026-06-30", 0.08, "Renta Fija Flexible", "FONDO A"),
+        ("LU0001", "return_ann", "rolling_3y", "2026-06-30", 0.08, "Renta Fija Flexible", "FONDO A"),
     ]
 
 
@@ -75,11 +75,11 @@ def _alert_rows() -> list:
     (isin, metric, window, level, rule_code, value, reference_value, Fund_Nature, Fund_Name)
     """
     return [
-        ("LU0001", "roll_vol_ann", "rolling_1y", "ALARM", "VOL_CAT_P90", 0.08, 0.07, "RFF", "FONDO A"),
-        ("LU0001", "roll_max_dd",  "rolling_1y", "WARN",  "DD_CAT_P10",  -0.10, -0.05, "RFF", "FONDO A"),
-        ("LU0002", "roll_vol_ann", "rolling_1y", "ALARM", "VOL_CAT_P90", 0.09, 0.07, "RFF", "FONDO B"),
-        ("LU0002", "roll_max_dd",  "rolling_1y", "ALARM", "DD_CAT_P10",  -0.12, -0.05, "RFF", "FONDO B"),
-        ("LU0003", "roll_max_dd",  "rolling_1y", "OK",    "DD_CAT_P10",  -0.02, -0.05, "RFF", "FONDO C"),
+        ("LU0001", "vol_ann", "rolling_1y", "ALARM", "VOL_CAT_P90", 0.08, 0.07, "RFF", "FONDO A"),
+        ("LU0001", "max_dd",  "rolling_1y", "WARN",  "DD_CAT_P10",  -0.10, -0.05, "RFF", "FONDO A"),
+        ("LU0002", "vol_ann", "rolling_1y", "ALARM", "VOL_CAT_P90", 0.09, 0.07, "RFF", "FONDO B"),
+        ("LU0002", "max_dd",  "rolling_1y", "ALARM", "DD_CAT_P10",  -0.12, -0.05, "RFF", "FONDO B"),
+        ("LU0003", "max_dd",  "rolling_1y", "OK",    "DD_CAT_P10",  -0.02, -0.05, "RFF", "FONDO C"),
     ]
 
 
@@ -92,17 +92,17 @@ def _metric_rows() -> list:
         # Horizons múltiples — rolling_1y debe ganar sobre since_inception
         ("LU0001", "return_ann",    "since_inception", 0.09, "FONDO A", "RFF", 3),
         ("LU0001", "return_ann",    "rolling_1y",      0.10, "FONDO A", "RFF", 3),
-        ("LU0001", "volatility_ann","rolling_1y",      0.05, "FONDO A", "RFF", 3),
+        ("LU0001", "vol_ann","rolling_1y",      0.05, "FONDO A", "RFF", 3),
         ("LU0001", "sharpe",        "rolling_1y",      1.20, "FONDO A", "RFF", 3),
-        ("LU0001", "max_drawdown",  "rolling_1y",     -0.04, "FONDO A", "RFF", 3),
+        ("LU0001", "max_dd",  "rolling_1y",     -0.04, "FONDO A", "RFF", 3),
         ("LU0001", "alpha_persistence","since_inception", 0.62, "FONDO A", "RFF", 3),
-        ("LU0001", "roll_return_ann_pctile_self", "rolling_1y", 0.72, "FONDO A", "RFF", 3),
-        ("LU0001", "roll_vol_ann_pctile_self",    "rolling_1y", 0.81, "FONDO A", "RFF", 3),
-        ("LU0001", "roll_max_dd_pctile_self",     "rolling_1y", 0.55, "FONDO A", "RFF", 3),
-        ("LU0001", "roll_return_ann_pctile_cat",  "rolling_1y", 0.68, "FONDO A", "RFF", 3),
+        ("LU0001", "return_ann_pctile_self", "rolling_1y", 0.72, "FONDO A", "RFF", 3),
+        ("LU0001", "vol_ann_pctile_self",    "rolling_1y", 0.81, "FONDO A", "RFF", 3),
+        ("LU0001", "max_dd_pctile_self",     "rolling_1y", 0.55, "FONDO A", "RFF", 3),
+        ("LU0001", "return_ann_pctile_cat",  "rolling_1y", 0.68, "FONDO A", "RFF", 3),
         # Fondo B — solo since_inception para return_ann (no hay rolling_1y)
         ("LU0002", "return_ann",    "since_inception", 0.04, "FONDO B", "RFF", 2),
-        ("LU0002", "volatility_ann","rolling_1y",      0.03, "FONDO B", "RFF", 2),
+        ("LU0002", "vol_ann","rolling_1y",      0.03, "FONDO B", "RFF", 2),
         ("LU0002", "sharpe",        "since_inception", 0.85, "FONDO B", "RFF", 2),
     ]
 
@@ -129,8 +129,8 @@ class TestPivotMetrics:
 
     def test_pctile_captured(self):
         result = pivot_metrics(_metric_rows())
-        assert result["LU0001"]["roll_return_ann_pctile_self"] == pytest.approx(0.72)
-        assert result["LU0001"]["roll_return_ann_pctile_cat"]  == pytest.approx(0.68)
+        assert result["LU0001"]["return_ann_pctile_self"] == pytest.approx(0.72)
+        assert result["LU0001"]["return_ann_pctile_cat"]  == pytest.approx(0.68)
 
     def test_missing_metric_not_present(self):
         """alpha_persistence falta para LU0002 — no debe estar en el dict."""
@@ -180,15 +180,15 @@ class TestPeerRefs:
         result = peer_refs(_snapshot_rows())
         assert "Renta Fija Flexible" in result
         rff = result["Renta Fija Flexible"]
-        assert "roll_return_ann" in rff
-        assert "p25" in rff["roll_return_ann"]
-        assert "p50" in rff["roll_return_ann"]
-        assert "p75" in rff["roll_return_ann"]
+        assert "return_ann" in rff
+        assert "p25" in rff["return_ann"]
+        assert "p50" in rff["return_ann"]
+        assert "p75" in rff["return_ann"]
 
     def test_quartile_ordering(self):
         """p25 ≤ p50 ≤ p75 para roll_return_ann."""
         result = peer_refs(_snapshot_rows())
-        rq = result["Renta Fija Flexible"]["roll_return_ann"]
+        rq = result["Renta Fija Flexible"]["return_ann"]
         assert rq["p25"] <= rq["p50"] <= rq["p75"]
 
     def test_too_few_peers_no_entry(self):
@@ -199,7 +199,7 @@ class TestPeerRefs:
         result = peer_refs(rows)
         # Puede que Mixtos esté ausente o presente con otro métrico; en ningún caso
         # roll_return_ann de Mixtos debe aparecer si son solo 2 fondos.
-        mixto_ret = result.get("Mixtos", {}).get("roll_return_ann")
+        mixto_ret = result.get("Mixtos", {}).get("return_ann")
         assert mixto_ret is None
 
     def test_empty_input(self):

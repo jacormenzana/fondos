@@ -1,11 +1,11 @@
 # proyecto2/tests/calculations/test_rolling_stats.py
 # -*- coding: utf-8 -*-
 """
-Tests para rolling_stats.py (v26).
+Tests para rolling_stats.py (v29).
 
 Cumple R-7: sin importar pipeline.py ni core.io.
 Fixtures: datos sintéticos con valores conocidos para verificar
-  las fórmulas de roll_vol_ann, roll_max_dd, roll_return_ann.
+  las fórmulas de vol_ann, max_dd, return_ann, sharpe, sortino.
 """
 
 import math
@@ -17,6 +17,10 @@ from src.calculations.rolling_stats import (
     _roll_vol_ann,
     _roll_max_dd,
     _roll_return_ann,
+    _roll_sharpe,
+    _roll_sortino,
+    _linear_slope_normalized,
+    _SLOPE_TARGETS,
     compute_rolling_rows,
     compute_category_snapshot,
     compute_alerts,
@@ -105,6 +109,65 @@ class TestRollReturnAnn:
         assert math.isnan(_roll_return_ann(np.array([100.0]), 12))
 
 
+class TestRollSharpe:
+    """Tests para _roll_sharpe (v29)."""
+
+    def test_positive_return_zero_rfr(self):
+        """Serie con retorno positivo y vol > 0 → Sharpe positivo."""
+        nav = np.array([100.0 * (1.005 ** i) for i in range(24)])
+        s = _roll_sharpe(nav, periods_per_year=12, risk_free_rate_ann=0.0)
+        assert not math.isnan(s)
+        assert s > 0.0
+
+    def test_rfr_reduces_sharpe(self):
+        """Sharpe con rfr > 0 debe ser menor que con rfr = 0."""
+        nav = np.array([100.0 * (1.005 ** i) for i in range(24)])
+        s0 = _roll_sharpe(nav, 12, risk_free_rate_ann=0.0)
+        s4 = _roll_sharpe(nav, 12, risk_free_rate_ann=0.04)
+        assert s4 < s0
+
+    def test_flat_nav_vol_zero_returns_nan(self):
+        """Vol = 0 → Sharpe indefinido → NaN."""
+        nav = np.array([100.0] * 12)
+        s = _roll_sharpe(nav, 12, risk_free_rate_ann=0.0)
+        assert math.isnan(s)
+
+    def test_too_short_returns_nan(self):
+        assert math.isnan(_roll_sharpe(np.array([100.0, 102.0]), 12, 0.0))
+
+
+class TestRollSortino:
+    """Tests para _roll_sortino (v29)."""
+
+    def test_monotone_increasing_no_downside(self):
+        """Serie siempre creciente: no hay retornos < MAR → downside_dev = 0 → NaN."""
+        nav = np.array([100.0 * (1.01 ** i) for i in range(24)])
+        s = _roll_sortino(nav, 12, risk_free_rate_ann=0.0)
+        # Strictly monotone up: every period ≥ 0 → downside_sq = 0 → NaN
+        assert math.isnan(s)
+
+    def test_volatile_series_has_finite_sortino(self):
+        """Serie con caídas → downside_dev > 0 → Sortino finito."""
+        rng = np.random.default_rng(42)
+        rets = rng.normal(0.005, 0.03, 48)
+        nav = np.cumprod(1 + rets) * 100.0
+        s = _roll_sortino(nav, 12, risk_free_rate_ann=0.0)
+        assert not math.isnan(s)
+
+    def test_too_short_returns_nan(self):
+        assert math.isnan(_roll_sortino(np.array([100.0, 102.0]), 12, 0.0))
+
+    def test_rfr_penalises_sortino(self):
+        """Sortino con rfr > 0 ≤ sortino con rfr = 0 para the same series."""
+        rng = np.random.default_rng(7)
+        rets = rng.normal(0.003, 0.025, 36)
+        nav = np.cumprod(1 + rets) * 100.0
+        s0 = _roll_sortino(nav, 12, risk_free_rate_ann=0.0)
+        s4 = _roll_sortino(nav, 12, risk_free_rate_ann=0.04)
+        if not (math.isnan(s0) or math.isnan(s4)):
+            assert s4 <= s0
+
+
 # ============================================================
 # Tests de compute_rolling_rows
 # ============================================================
@@ -146,7 +209,11 @@ class TestComputeRollingRows:
             min_obs=5, periods_per_year=12,
         )
         metrics = {r["metric"] for r in rows}
-        assert metrics == {"roll_vol_ann", "roll_max_dd", "roll_return_ann"}
+        # v29: curated set expanded to 5 series (Sharpe + Sortino added); roll_ prefix dropped
+        assert metrics == {
+            "vol_ann", "max_dd", "return_ann",
+            "sharpe", "sortino",
+        }
 
     def test_window_names_in_output(self):
         nav_df = self._simple_nav(36)
@@ -246,7 +313,7 @@ class TestComputeCategorySnapshot:
             nature = "Renta Fija Flexible" if i < 6 else "Monetario"
             rows.append({
                 "isin": f"ISIN{i:04d}",
-                "metric": "roll_vol_ann",
+                "metric": "vol_ann",
                 "window": "rolling_1y",
                 "date": "2026-01-31",
                 "value": 0.05 + i * 0.005,  # valores bien separados
@@ -297,7 +364,7 @@ class TestComputeAlerts:
         return [
             {
                 "rule_code": "VOL_CAT_P90",
-                "metric": "roll_vol_ann",
+                "metric": "vol_ann",
                 "window": "rolling_1y",
                 "ref_type": "category",
                 "level": "WARN",
@@ -306,7 +373,7 @@ class TestComputeAlerts:
             },
             {
                 "rule_code": "VOL_CAT_P97",
-                "metric": "roll_vol_ann",
+                "metric": "vol_ann",
                 "window": "rolling_1y",
                 "ref_type": "category",
                 "level": "ALARM",
@@ -323,7 +390,7 @@ class TestComputeAlerts:
             pctile = i / (n - 1) if n > 1 else 0.5
             rows.append({
                 "isin": f"ISIN{i:04d}",
-                "metric": "roll_vol_ann",
+                "metric": "vol_ann",
                 "window": "rolling_1y",
                 "date": "2026-01-31",
                 "value": vol,
@@ -398,7 +465,7 @@ class TestComputeTimeseriesSnapshots:
         dates = pd.date_range("2024-01-31", periods=n_dates, freq="ME")
         return pd.DataFrame({
             "isin":        ["ISIN0001"] * n_dates,
-            "metric":      ["roll_vol_ann"] * n_dates,
+            "metric":      ["vol_ann"] * n_dates,
             "window":      ["rolling_1y"] * n_dates,
             "date":        dates,
             "value":       [0.03 + i * 0.001 for i in range(n_dates)],
@@ -413,11 +480,11 @@ class TestComputeTimeseriesSnapshots:
     def test_pctile_self_produced(self):
         snap = compute_timeseries_snapshots(self._make_ts_df(24), min_self_obs=12)
         metrics = {r["metric"] for r in snap}
-        assert "roll_vol_ann_pctile_self" in metrics
+        assert "vol_ann_pctile_self" in metrics
 
     def test_pctile_self_range(self):
         snap = compute_timeseries_snapshots(self._make_ts_df(24), min_self_obs=12)
-        pctile_rows = [r for r in snap if r["metric"] == "roll_vol_ann_pctile_self"]
+        pctile_rows = [r for r in snap if r["metric"] == "vol_ann_pctile_self"]
         assert pctile_rows
         for r in pctile_rows:
             assert 0.0 <= r["value"] <= 1.0
@@ -425,7 +492,7 @@ class TestComputeTimeseriesSnapshots:
     def test_increasing_series_has_high_pctile_self(self):
         """Serie estrictamente creciente → último valor está por encima de todos los previos → pctile_self ≈ 1."""
         snap = compute_timeseries_snapshots(self._make_ts_df(24), min_self_obs=12)
-        row = next((r for r in snap if r["metric"] == "roll_vol_ann_pctile_self"), None)
+        row = next((r for r in snap if r["metric"] == "vol_ann_pctile_self"), None)
         assert row is not None
         assert row["value"] > 0.9  # estrictamente creciente → casi 100%
 
@@ -437,7 +504,7 @@ class TestComputeTimeseriesSnapshots:
         # pctile_cat y zscore_cat deben aparecer si category_df tiene datos
         # (con min_peers=1 debería haber snapshot)
         # Al menos pctile_self debe estar siempre presente
-        assert "roll_vol_ann_pctile_self" in metrics
+        assert "vol_ann_pctile_self" in metrics
 
     def test_min_self_obs_respected(self):
         """Con min_self_obs=30 y solo 24 puntos, no debe emitirse pctile_self."""
@@ -472,6 +539,60 @@ class TestComputeTimeseriesSnapshots:
             f"No cat signals expected when category_df=None, got: {cat_metrics}"
         )
 
+    def _make_slope_ts_df(self, metric: str, real_flag: int,
+                          n_dates: int = 36, trend: str = "up") -> pd.DataFrame:
+        """Helper: monotone series for slope tests."""
+        dates = pd.date_range("2023-01-31", periods=n_dates, freq="ME")
+        if trend == "up":
+            values = [0.5 + i * 0.01 for i in range(n_dates)]
+        else:
+            values = [0.5 - i * 0.01 for i in range(n_dates)]
+        return pd.DataFrame({
+            "isin":        ["ISIN_SLOPE"] * n_dates,
+            "metric":      [metric] * n_dates,
+            "window":      ["rolling_3y"] * n_dates,
+            "date":        dates,
+            "value":       values,
+            "real_flag":   [real_flag] * n_dates,
+        })
+
+    def test_slope_emitted_for_sharpe(self):
+        """sharpe (real_flag=0) is a _SLOPE_TARGETS target → slope row emitted."""
+        df = self._make_slope_ts_df("sharpe", real_flag=0, n_dates=24)
+        snap = compute_timeseries_snapshots(df, min_self_obs=3)
+        slope_rows = [r for r in snap if r["metric"] == "sharpe_slope"]
+        assert slope_rows, "Expected sharpe_slope row"
+
+    def test_slope_emitted_for_return_ann_real(self):
+        """return_ann (real_flag=1) is a _SLOPE_TARGETS target → slope row emitted."""
+        df = self._make_slope_ts_df("return_ann", real_flag=1, n_dates=24)
+        snap = compute_timeseries_snapshots(df, min_self_obs=3)
+        slope_rows = [r for r in snap if r["metric"] == "return_ann_slope"]
+        assert slope_rows, "Expected return_ann_slope row"
+
+    def test_slope_not_emitted_for_non_target(self):
+        """vol_ann (real_flag=0) is not a slope target → no slope row emitted."""
+        df = self._make_slope_ts_df("vol_ann", real_flag=0, n_dates=24)
+        snap = compute_timeseries_snapshots(df, min_self_obs=3)
+        slope_rows = [r for r in snap if r["metric"] == "vol_ann_slope"]
+        assert slope_rows == []
+
+    def test_slope_positive_for_increasing_series(self):
+        """Monotone-increasing sharpe → positive slope."""
+        df = self._make_slope_ts_df("sharpe", real_flag=0, n_dates=24, trend="up")
+        snap = compute_timeseries_snapshots(df, min_self_obs=3)
+        row = next((r for r in snap if r["metric"] == "sharpe_slope"), None)
+        assert row is not None
+        assert row["value"] > 0
+
+    def test_slope_negative_for_decreasing_series(self):
+        """Monotone-decreasing sharpe → negative slope."""
+        df = self._make_slope_ts_df("sharpe", real_flag=0, n_dates=24, trend="down")
+        snap = compute_timeseries_snapshots(df, min_self_obs=3)
+        row = next((r for r in snap if r["metric"] == "sharpe_slope"), None)
+        assert row is not None
+        assert row["value"] < 0
+
 
 # ============================================================
 # Tests para cat_signals_from_snapshot (v28 — RC-2 fix)
@@ -486,7 +607,7 @@ class TestCatSignalsFromSnapshot:
     @staticmethod
     def _make_cat_df(
         n_isins: int = 3,
-        metric: str = "roll_vol_ann",
+        metric: str = "vol_ann",
         window: str = "rolling_1y",
         include_nan_pctile: bool = False,
     ) -> pd.DataFrame:
@@ -528,8 +649,8 @@ class TestCatSignalsFromSnapshot:
         """Each ISIN → one pctile_cat row + one zscore_cat row."""
         result = cat_signals_from_snapshot(self._make_cat_df(n_isins=4))
         metrics = [r["metric"] for r in result]
-        assert metrics.count("roll_vol_ann_pctile_cat") == 4
-        assert metrics.count("roll_vol_ann_zscore_cat") == 4
+        assert metrics.count("vol_ann_pctile_cat") == 4
+        assert metrics.count("vol_ann_zscore_cat") == 4
 
     def test_required_keys_present(self):
         result = cat_signals_from_snapshot(self._make_cat_df(n_isins=2))
@@ -574,12 +695,12 @@ class TestCatSignalsFromSnapshot:
 
     def test_multiple_metrics_and_windows(self):
         """Signals from different (metric, window) combos must coexist without mixing."""
-        df1 = self._make_cat_df(n_isins=2, metric="roll_vol_ann",    window="rolling_1y")
-        df2 = self._make_cat_df(n_isins=2, metric="roll_max_dd",     window="rolling_3y")
+        df1 = self._make_cat_df(n_isins=2, metric="vol_ann",    window="rolling_1y")
+        df2 = self._make_cat_df(n_isins=2, metric="max_dd",     window="rolling_3y")
         cat_df = pd.concat([df1, df2], ignore_index=True)
         result = cat_signals_from_snapshot(cat_df)
-        vol_rows = [r for r in result if "roll_vol_ann" in r["metric"]]
-        dd_rows  = [r for r in result if "roll_max_dd"  in r["metric"]]
+        vol_rows = [r for r in result if "vol_ann" in r["metric"]]
+        dd_rows  = [r for r in result if "max_dd"  in r["metric"]]
         assert len(vol_rows) == 4  # 2 ISINs × 2 signal types
         assert len(dd_rows)  == 4
         for r in vol_rows:

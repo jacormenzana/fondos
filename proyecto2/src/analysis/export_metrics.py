@@ -229,13 +229,13 @@ def q_top_rentabilidad(conn):
                ret.source_rows              AS meses_datos
         FROM fund_metrics ret
         JOIN fund_master fm   ON fm.ISIN=ret.isin
-        LEFT JOIN fund_metrics vol  ON vol.isin=ret.isin  AND vol.metric='volatility_ann'
+        LEFT JOIN fund_metrics vol  ON vol.isin=ret.isin  AND vol.metric='vol_ann'
                                    AND vol.horizon='since_inception' AND vol.real_flag=0
         LEFT JOIN fund_metrics sh   ON sh.isin=ret.isin   AND sh.metric='sharpe'
                                    AND sh.horizon='since_inception' AND sh.real_flag=0
         LEFT JOIN fund_metrics srt  ON srt.isin=ret.isin  AND srt.metric='sortino'
                                    AND srt.horizon='since_inception' AND srt.real_flag=0
-        LEFT JOIN fund_metrics dd   ON dd.isin=ret.isin   AND dd.metric='max_drawdown'
+        LEFT JOIN fund_metrics dd   ON dd.isin=ret.isin   AND dd.metric='max_dd'
                                    AND dd.horizon='since_inception' AND dd.real_flag=0
         LEFT JOIN fund_metrics pos  ON pos.isin=ret.isin  AND pos.metric='pct_positive_months'
                                    AND pos.horizon='since_inception' AND pos.real_flag=0
@@ -259,7 +259,7 @@ def q_drawdown_dist(conn):
             END AS tramo,
             COUNT(*) AS fondos
         FROM fund_metrics
-        WHERE metric='max_drawdown' AND horizon='since_inception'
+        WHERE metric='max_dd' AND horizon='since_inception'
           AND real_flag=0 AND value IS NOT NULL
         GROUP BY tramo ORDER BY tramo
     """).fetchall()
@@ -275,7 +275,7 @@ def q_ret_dd_ratio(conn):
                ret.source_rows                     AS meses
         FROM fund_metrics ret
         JOIN fund_master fm   ON fm.ISIN=ret.isin
-        JOIN fund_metrics dd  ON dd.isin=ret.isin  AND dd.metric='max_drawdown'
+        JOIN fund_metrics dd  ON dd.isin=ret.isin  AND dd.metric='max_dd'
                              AND dd.horizon='since_inception' AND dd.real_flag=0
         LEFT JOIN fund_metrics sh   ON sh.isin=ret.isin  AND sh.metric='sharpe'
                                    AND sh.horizon='since_inception' AND sh.real_flag=0
@@ -360,13 +360,13 @@ def q_candidatos(conn):
                ret.source_rows              AS meses_datos
         FROM fund_metrics ret
         JOIN fund_master fm   ON fm.ISIN=ret.isin
-        JOIN fund_metrics vol ON vol.isin=ret.isin  AND vol.metric='volatility_ann'
+        JOIN fund_metrics vol ON vol.isin=ret.isin  AND vol.metric='vol_ann'
                              AND vol.horizon='since_inception' AND vol.real_flag=0
         JOIN fund_metrics sh  ON sh.isin=ret.isin   AND sh.metric='sharpe'
                              AND sh.horizon='since_inception' AND sh.real_flag=0
         JOIN fund_metrics srt ON srt.isin=ret.isin  AND srt.metric='sortino'
                              AND srt.horizon='since_inception' AND srt.real_flag=0
-        JOIN fund_metrics dd  ON dd.isin=ret.isin   AND dd.metric='max_drawdown'
+        JOIN fund_metrics dd  ON dd.isin=ret.isin   AND dd.metric='max_dd'
                              AND dd.horizon='since_inception' AND dd.real_flag=0
         JOIN fund_metrics pos ON pos.isin=ret.isin  AND pos.metric='pct_positive_months'
                              AND pos.horizon='since_inception' AND pos.real_flag=0
@@ -991,7 +991,7 @@ def q_persistencia(conn):
                                    AND ret.horizon='since_inception' AND ret.real_flag=1
         LEFT JOIN fund_metrics sh   ON sh.isin=per.isin   AND sh.metric='sharpe'
                                    AND sh.horizon='since_inception' AND sh.real_flag=0
-        LEFT JOIN fund_metrics dd   ON dd.isin=per.isin   AND dd.metric='max_drawdown'
+        LEFT JOIN fund_metrics dd   ON dd.isin=per.isin   AND dd.metric='max_dd'
                                    AND dd.horizon='since_inception' AND dd.real_flag=0
         LEFT JOIN fund_metrics srri ON srri.isin=per.isin AND srri.metric='srri_nav'
                                    AND srri.horizon='since_inception' AND srri.real_flag=0

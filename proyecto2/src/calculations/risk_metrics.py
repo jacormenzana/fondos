@@ -52,12 +52,12 @@ def compute_risk_metrics(
 
     results.extend([
         # Dano
-        {"metric": "max_drawdown",       "value": max_drawdown(dd_nom),             "real_flag": 0},
+        {"metric": "max_dd",             "value": max_drawdown(dd_nom),             "real_flag": 0},
         {"metric": "drawdown_duration",  "value": drawdown_duration(dd_nom),        "real_flag": 0},
         {"metric": "time_to_recovery",   "value": time_to_recovery(nav_series),     "real_flag": 0},
         # Retorno
         {"metric": "return_ann",         "value": annualized_return(nav_series),    "real_flag": 0},
-        {"metric": "volatility_ann",     "value": annualized_volatility(nav_series),"real_flag": 0},
+        {"metric": "vol_ann",            "value": annualized_volatility(nav_series),"real_flag": 0},
         # Eficiencia
         {"metric": "sharpe",             "value": sharpe_ratio(nav_series, risk_free_rate_ann),  "real_flag": 0},
         {"metric": "sortino",            "value": sortino_ratio(nav_series, risk_free_rate_ann), "real_flag": 0},
@@ -74,12 +74,12 @@ def compute_risk_metrics(
         # (aproximacion conservadora: usamos el mismo rf nominal)
         results.extend([
             # Dano real
-            {"metric": "max_drawdown",       "value": max_drawdown(dd_real),             "real_flag": 1},
+            {"metric": "max_dd",             "value": max_drawdown(dd_real),             "real_flag": 1},
             {"metric": "drawdown_duration",  "value": drawdown_duration(dd_real),        "real_flag": 1},
             {"metric": "time_to_recovery",   "value": time_to_recovery(nav_real),        "real_flag": 1},
             # Retorno real
             {"metric": "return_ann",         "value": annualized_return(nav_real),       "real_flag": 1},
-            {"metric": "volatility_ann",     "value": annualized_volatility(nav_real),   "real_flag": 1},
+            {"metric": "vol_ann",            "value": annualized_volatility(nav_real),   "real_flag": 1},
             # Eficiencia real
             {"metric": "sharpe",             "value": sharpe_ratio(nav_real, risk_free_rate_ann),  "real_flag": 1},
             {"metric": "sortino",            "value": sortino_ratio(nav_real, risk_free_rate_ann), "real_flag": 1},

@@ -52,9 +52,11 @@ _VENDOR_CHARTJS = Path(__file__).parent / "_vendor" / "chartjs_4.4.0.min.js"
 
 # ── Constantes de visualización ────────────────────────────────────────────────
 _METRIC_LABELS = {
-    "roll_vol_ann":    "Volatilidad Anualizada",
-    "roll_max_dd":     "Máximo Drawdown",
-    "roll_return_ann": "Retorno Anualizado",
+    "vol_ann":    "Volatilidad Anualizada",
+    "max_dd":     "Máximo Drawdown",
+    "return_ann": "Retorno Anualizado",
+    "sharpe":     "Sharpe Ratio",
+    "sortino":    "Sortino Ratio",
 }
 _WINDOW_ORDER = [
     "rolling_1m", "rolling_3m", "rolling_6m",
@@ -82,11 +84,12 @@ _SERIES_COLORS = [
 ]
 
 # Métricas escalares a mostrar en la tabla de métricas
-_SCALAR_METRICS = ("return_ann", "volatility_ann", "sharpe", "max_drawdown",
+_SCALAR_METRICS = ("return_ann", "vol_ann", "sharpe", "max_dd",
                    "alpha_persistence", "capture_ratio", "srri_nav")
 _PCTILE_METRICS = (
-    "roll_vol_ann_pctile_self",    "roll_max_dd_pctile_self",    "roll_return_ann_pctile_self",
-    "roll_vol_ann_pctile_cat",     "roll_max_dd_pctile_cat",     "roll_return_ann_pctile_cat",
+    "vol_ann_pctile_self",    "max_dd_pctile_self",    "return_ann_pctile_self",
+    "vol_ann_pctile_cat",     "max_dd_pctile_cat",     "return_ann_pctile_cat",
+    "sharpe_pctile_self",     "sortino_pctile_self",
 )
 _ALL_METRICS = _SCALAR_METRICS + _PCTILE_METRICS
 _METRIC_IN = ",".join(f"'{m}'" for m in _ALL_METRICS)
@@ -95,17 +98,19 @@ _METRIC_IN = ",".join(f"'{m}'" for m in _ALL_METRICS)
 _TABLE_COLS: list[tuple] = [
     ("srri_nav",            "SRRI P2",       False, 1),
     ("return_ann",          "Retorno anu.",   True,  2),
-    ("volatility_ann",      "Volatilidad",    True,  2),
+    ("vol_ann",             "Volatilidad",    True,  2),
     ("sharpe",              "Sharpe",         False, 2),
-    ("max_drawdown",        "Max DD",         True,  2),
+    ("max_dd",              "Max DD",         True,  2),
     ("alpha_persistence",   "Alpha Pers.",    False, 2),
     ("capture_ratio",       "Capture",        False, 2),
 ]
 _PCTILE_TABLE_COLS: list[tuple] = [  # (metric_key, label)
-    ("roll_return_ann_pctile_self", "Pctile Ret."),
-    ("roll_vol_ann_pctile_self",    "Pctile Vol."),
-    ("roll_max_dd_pctile_self",     "Pctile DD"),
-    ("roll_return_ann_pctile_cat",  "Cat Ret."),
+    ("return_ann_pctile_self", "Pctile Ret."),
+    ("vol_ann_pctile_self",    "Pctile Vol."),
+    ("max_dd_pctile_self",     "Pctile DD"),
+    ("return_ann_pctile_cat",  "Cat Ret."),
+    ("sharpe_pctile_self",     "Pctile Sharpe"),
+    ("sortino_pctile_self",    "Pctile Sortino"),
 ]
 
 
@@ -261,11 +266,11 @@ def nature_summary(snapshot_rows: list) -> dict[str, dict]:
             continue
         b = buckets.setdefault(nature, {"isins": set(), "ret": [], "vol": [], "dd": []})
         b["isins"].add(isin)
-        if metric == "roll_return_ann":
+        if metric == "return_ann":
             b["ret"].append(value)
-        elif metric == "roll_vol_ann":
+        elif metric == "vol_ann":
             b["vol"].append(value)
-        elif metric == "roll_max_dd":
+        elif metric == "max_dd":
             b["dd"].append(value)
 
     def avg(lst: list) -> float | None:
@@ -431,7 +436,7 @@ def _build_html(
         natures_sel = [n for n in isin_nature.values() if n]
         peer_nature = max(set(natures_sel), key=natures_sel.count) if natures_sel else None
 
-        for metric in ["roll_vol_ann", "roll_max_dd", "roll_return_ann"]:
+        for metric in ["vol_ann", "max_dd", "return_ann", "sharpe", "sortino"]:
             metric_data = ts_data.get(metric, {})
             for window in _WINDOW_ORDER:
                 if window not in metric_data:

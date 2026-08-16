@@ -371,7 +371,7 @@ ALERT_RULES: list[dict] = [
     # Volatilidad vs categoría: WARN si > p90, ALARM si > p97
     {
         "rule_code":   "VOL_CAT_P90",
-        "metric":      "roll_vol_ann",
+        "metric":      "vol_ann",
         "window":      "rolling_6m",
         "ref_type":    "category",
         "level":       "WARN",
@@ -380,7 +380,7 @@ ALERT_RULES: list[dict] = [
     },
     {
         "rule_code":   "VOL_CAT_P97",
-        "metric":      "roll_vol_ann",
+        "metric":      "vol_ann",
         "window":      "rolling_6m",
         "ref_type":    "category",
         "level":       "ALARM",
@@ -390,7 +390,7 @@ ALERT_RULES: list[dict] = [
     # Drawdown vs categoría (valores son ≤ 0; "peor" = más negativo = below p10)
     {
         "rule_code":   "DD_CAT_P10",
-        "metric":      "roll_max_dd",
+        "metric":      "max_dd",
         "window":      "rolling_1y",
         "ref_type":    "category",
         "level":       "WARN",
@@ -399,7 +399,7 @@ ALERT_RULES: list[dict] = [
     },
     {
         "rule_code":   "DD_CAT_P03",
-        "metric":      "roll_max_dd",
+        "metric":      "max_dd",
         "window":      "rolling_1y",
         "ref_type":    "category",
         "level":       "ALARM",
@@ -409,7 +409,7 @@ ALERT_RULES: list[dict] = [
     # Retorno vs categoría: WARN si < p10 en 3y, ALARM si < p05
     {
         "rule_code":   "RET_CAT_P10",
-        "metric":      "roll_return_ann",
+        "metric":      "return_ann",
         "window":      "rolling_3y",
         "ref_type":    "category",
         "level":       "WARN",
@@ -418,7 +418,7 @@ ALERT_RULES: list[dict] = [
     },
     {
         "rule_code":   "RET_CAT_P05",
-        "metric":      "roll_return_ann",
+        "metric":      "return_ann",
         "window":      "rolling_3y",
         "ref_type":    "category",
         "level":       "ALARM",
@@ -432,10 +432,14 @@ METRIC_ALERT_LEVELS: list[str] = ["OK", "WARN", "ALARM"]
 
 # Métricas para las que se mantiene serie temporal completa
 # (Hybrid model: fund_metric_timeseries). El resto sólo van a fund_metrics.
+# 5 series curadas: vol_ann, max_dd, return_ann, sharpe, sortino (v29).
+# metric = pure indicator name; window column carries the rolling horizon.
 ROLLING_TIMESERIES_METRICS: list[str] = [
-    "roll_vol_ann",
-    "roll_max_dd",
-    "roll_return_ann",
+    "vol_ann",
+    "max_dd",
+    "return_ann",
+    "sharpe",
+    "sortino",
 ]
 
 # Ventanas que generan serie temporal (meses de ROLLING_WINDOWS + días SHORT_WINDOWS)
