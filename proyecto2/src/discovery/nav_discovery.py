@@ -757,12 +757,29 @@ def _overwrite_nav_rows_monthly(conn, isin: str, rows: list[dict], dry_run: bool
 # Modo DISCOVER
 # ============================================================
 
-def run_discover(conn, isins, dry_run, verbose):
+def run_discover(conn, isins, dry_run, verbose, skip_if_recent: bool = False):
     """
     Verifica existencia del ISIN en Morningstar y registra el code interno
     en nav_sources. Usa _resolve_isin() (general_search directo) para evitar
     mstarpy.Funds() y el endpoint /data-points/fields que devuelve 202.
+
+    skip_if_recent: si True y >=90% de los ISINs tienen last_checked=hoy,
+        omite la ejecucion (evita re-lanzar los ~2h de discover tras un
+        corte en mid-load). Sobreescribir con --force.
     """
+    if skip_if_recent and not dry_run:
+        today_s = date.today().isoformat()
+        recent  = conn.execute(
+            "SELECT COUNT(*) FROM nav_sources WHERE last_checked >= ?",
+            (today_s,)
+        ).fetchone()[0]
+        if recent >= len(isins) * 0.90:
+            print(
+                f"[DISCOVER] Omitido — {recent}/{len(isins)} ISINs ya comprobados hoy "
+                f"({today_s}). Usa --force para forzar.", flush=True
+            )
+            return
+
     total     = len(isins)
     found     = 0
     not_found = 0
@@ -813,6 +830,23 @@ def run_discover(conn, isins, dry_run, verbose):
 # Modo LOAD
 # ============================================================
 
+def _effective_cutoff(today: date) -> date:
+    """Cutoff para la comprobacion "al dia", ajustado por fin de semana.
+
+    El proveedor publica el cierre del viernes con 1-2 dias de latencia.
+    Sin ajuste, los fondos con anchor=viernes fallan la comprobacion el
+    lunes (hoy-3=viernes misma fecha) o el martes (hoy-3=sabado) porque
+    el anchor es anterior al cutoff, provocando re-fetch innecesario.
+
+    Lunes -> extender 2 dias extra (ultimo cierre = viernes 3 dias atras)
+    Domingo -> extender 1 dia extra
+    Resto -> ventana estandar de 3 dias
+    """
+    wd    = today.weekday()  # 0=lunes, 6=domingo
+    extra = 2 if wd == 0 else (1 if wd == 6 else 0)
+    return today - timedelta(days=3 + extra)
+
+
 def _fetch_one(idx, isin, ms_id, currency, eff_desde, bearer, delay_secs):
     """Worker puro para ThreadPoolExecutor — NINGUNA escritura en BD.
 
@@ -855,7 +889,7 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=Non
     # -- Preload: tres queries batch reemplazan O(N) queries dentro del loop --
     # newest chartservice date per ISIN (delta anchor)
     _today  = date.today()
-    _cutoff = _today - timedelta(days=3)   # "al dia" si last_stored >= cutoff
+    _cutoff = _effective_cutoff(_today)  # "al dia" si last_stored >= cutoff
     last_daily = {r[0]: r[1] for r in conn.execute(
         "SELECT ISIN, MAX(Date) FROM fund_nav_daily "
         "WHERE Data_Source='MORNINGSTAR_CHART' GROUP BY ISIN"
@@ -1145,7 +1179,13 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=Non
         if last_d_stored and not force_this:
             anchor = datetime.strptime(last_d_stored, "%Y-%m-%d").date()
             if anchor >= _cutoff:
-                print("-> al dia", flush=True)
+                _elapsed_ms = round((datetime.now() - _t0).total_seconds() * 1000)
+                _ts_skip    = _t0.strftime("%Y-%m-%d %H:%M:%S")
+                print(
+                    f"[{idx:4d}/{total:4d}] | {_ts_skip} | {isin} | "
+                    f"0d/0m | [{anchor} -> {anchor}] | {_elapsed_ms} | Al dia",
+                    flush=True,
+                )
                 al_dia_count += 1
                 continue
             # Solapamiento de 3 dias para capturar correcciones tardias
@@ -1270,7 +1310,7 @@ def run_update(conn, dry_run, bearer_token=None):
 
     # -- Preload: currency map + ultimo dia diario + data_status por ISIN -----
     _today  = date.today()
-    _cutoff = _today - timedelta(days=3)
+    _cutoff = _effective_cutoff(_today)
     last_daily_upd = {r[0]: r[1] for r in conn.execute(
         "SELECT ISIN, MAX(Date) FROM fund_nav_daily "
         "WHERE Data_Source='MORNINGSTAR_CHART' GROUP BY ISIN"
@@ -1348,7 +1388,13 @@ def run_update(conn, dry_run, bearer_token=None):
         if last_d_stored and not force_this:
             anchor = datetime.strptime(last_d_stored, "%Y-%m-%d").date()
             if anchor >= _cutoff:
-                print("-> al dia", flush=True)
+                _elapsed_ms = round((datetime.now() - _t0).total_seconds() * 1000)
+                _ts_skip    = _t0.strftime("%Y-%m-%d %H:%M:%S")
+                print(
+                    f"[{idx:4d}/{total:4d}] | {_ts_skip} | {isin} | "
+                    f"0d/0m | [{anchor} -> {anchor}] | {_elapsed_ms} | Al dia",
+                    flush=True,
+                )
                 al_dia_count += 1
                 continue
             desde = (anchor - timedelta(days=3)).isoformat()
@@ -1592,6 +1638,8 @@ def main():
                         help="En modo discover, reprocesa solo ISINs con status=ERROR en nav_sources")
     parser.add_argument("--retry-notfound", action="store_true",
                         help="En modo discover, reprocesa ISINs con status=NOT_FOUND (recuperacion tras fallo masivo)")
+    parser.add_argument("--skip-if-recent", action="store_true",
+                        help="En modo discover, omite si >=90%% ISINs ya comprobados hoy (evita re-lanzar ~2h tras corte en load)")
     parser.add_argument("--force", action="store_true",
                         help="En modo load, descarga aunque el ISIN ya tenga NAV en la BD (sobreescribe)")
     parser.add_argument("--ms-prefix", default=None,
@@ -1654,7 +1702,8 @@ def main():
                 return
             print(f"Reintentando {len(nf_isins)} ISINs con status=NOT_FOUND...")
             isins = nf_isins
-        run_discover(conn, isins, dry_run=args.dry_run, verbose=args.verbose)
+        run_discover(conn, isins, dry_run=args.dry_run, verbose=args.verbose,
+                     skip_if_recent=getattr(args, 'skip_if_recent', False))
     elif args.mode == "load":
         ms_prefix = args.ms_prefix.upper() if args.ms_prefix else None
         if ms_prefix and not args.isin:

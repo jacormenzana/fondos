@@ -56,7 +56,7 @@ echo [%time%] Paso 2/3: NAV Discover (resolucion de securityID)
 echo. >> "%LOG%"
 echo --- PASO 2: NAV DISCOVER --------------------------------- >> "%LOG%"
 
-%PYTHON% -X utf8 -m proyecto2.src.discovery.nav_discovery --mode discover >> "%LOG%" 2>> "%ERR%"
+%PYTHON% -X utf8 -m proyecto2.src.discovery.nav_discovery --mode discover --skip-if-recent >> "%LOG%" 2>> "%ERR%"
 
 :: -- PASO 3: NAV LOAD ----------------------------------------------------------
 echo [%time%] Paso 3/3: NAV Load (chartservice, desde 2000-01-01)
