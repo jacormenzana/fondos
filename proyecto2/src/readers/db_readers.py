@@ -208,6 +208,43 @@ def ipc_available(conn: sqlite3.Connection, geography: str = "ES") -> bool:
     return n > 0
 
 
+def load_rf_rate(
+    conn: sqlite3.Connection,
+    indicator: str = "rate_deposit",
+    geography: str = "EU",
+) -> pd.DataFrame:
+    """
+    Carga la tasa libre de riesgo mensual histórica desde series_macro.
+
+    Usa por defecto rate_deposit/EU (tipo de depósito BCE, proxy del €STR).
+    La serie cubre 2000-presente con resolución mensual y refleja los tipos
+    reales de cada periodo (incluidos tipos negativos 2014-2022).
+
+    Parámetros:
+        indicator : nombre del indicador en series_macro (default: rate_deposit)
+        geography : código de geografía                  (default: EU)
+
+    Devuelve DataFrame con columnas:
+        date  (datetime64, normalizado a fin de mes)
+        rate  (float, decimal — e.g. 0.04 = 4.0%; -0.003 = -0.3%)
+
+    Devuelve DataFrame vacío si no hay datos en la BD.
+    """
+    rows = conn.execute(
+        "SELECT date, value FROM series_macro "
+        "WHERE indicator = ? AND geography = ? ORDER BY date",
+        (indicator, geography),
+    ).fetchall()
+
+    if not rows:
+        return pd.DataFrame(columns=["date", "rate"])
+
+    df = pd.DataFrame(rows, columns=["date", "rate"])
+    df["date"] = pd.to_datetime(df["date"]) + pd.offsets.MonthEnd(0)
+    df["rate"] = df["rate"].astype(float) / 100.0  # % → decimal
+    return df
+
+
 # ============================================================
 # P1 Fund Attributes (P1→P2 integration interface)
 # ============================================================

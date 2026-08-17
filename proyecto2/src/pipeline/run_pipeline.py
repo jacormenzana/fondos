@@ -81,6 +81,7 @@ from shared.config import (
 from shared.db import get_connection
 from src.readers.db_readers import (
     load_nav, get_isins_with_nav, load_ipc, ipc_available, load_nav_daily,
+    load_rf_rate,                    # §4g — historical risk-free rate (€STR proxy)
     count_isins_with_new_nav,        # P2-04 preflight
     load_ts_cohort,                  # observability: load_ts cohort (two-timestamp model)
     count_stale_nav_funds,           # observability: NAV-staleness gate
@@ -619,6 +620,7 @@ def run(
     force: bool = False,                        # v27 — bypass hash cache
     dry_run: bool = False,
     resume: bool = False,
+    max_new_per_run: int = 0,                   # §4d — cap cold-start (0 = unlimited)
 ) -> int:
     """
     Ejecuta el pipeline P2 completo o parcial.
@@ -699,6 +701,21 @@ def run(
                 n_warnings += 1
                 logger.warning(f"[IPC] Invalido ({err}) — solo metricas nominales")
                 ipc_df = None
+
+        # -- Cargar serie RF histórica (§4g — tipo depósito BCE, proxy €STR) ----
+        rf_rate_df = load_rf_rate(conn)
+        if rf_rate_df.empty:
+            n_warnings += 1
+            logger.warning(
+                "[RF] Sin serie rate_deposit/EU en series_macro — "
+                f"Sharpe/Sortino rolling usarán RISK_FREE_RATE_ANN plana ({RISK_FREE_RATE_ANN:.1%}). "
+                "Carga datos BCE con macro_discovery antes de P2."
+            )
+        else:
+            logger.info(
+                f"[RF] Serie rate_deposit/EU cargada: {len(rf_rate_df)} meses "
+                f"({rf_rate_df['date'].min().date()} → {rf_rate_df['date'].max().date()})"
+            )
 
         # -- Cargar factores macro (una vez para todos los fondos) --
         macro_df = load_macro_factors(conn)
@@ -855,6 +872,25 @@ def run(
                     "Pipeline completado (todos los fondos ya procesados hoy)."
                 )
                 return
+
+        # §4d: throttle new-fund cold-starts to avoid runtime spikes on large intakes.
+        # New funds = ISINs with no fund_metric_state row → full OLS + series backfill.
+        # Deferred ISINs are NOT dropped — they have no state row and will be picked up
+        # automatically on the next run.
+        if max_new_per_run > 0 and not force:
+            import random as _random
+            _existing_state = {r[0] for r in conn.execute(
+                "SELECT isin FROM fund_metric_state"
+            ).fetchall()}
+            _new_isins = [i for i in isins if i not in _existing_state]
+            if len(_new_isins) > max_new_per_run:
+                _deferred = set(_random.sample(_new_isins, len(_new_isins) - max_new_per_run))
+                isins = [i for i in isins if i not in _deferred]
+                logger.info(
+                    f"[P2-THROTTLE] §4d — {len(_new_isins)} fondos nuevos sin estado previo; "
+                    f"procesando {max_new_per_run}, diferidos {len(_deferred)} fondos "
+                    f"para la siguiente ejecucion (sin fund_metric_state → reprocesados automaticamente)."
+                )
 
         total = len(isins)
         # EFF-1: OLS quarter identifier (YYYY-Q) — stable for the whole run
@@ -1180,7 +1216,8 @@ def run(
                         min_obs=MIN_NAV_ROWS,
                         ipc_df=ipc_df,
                         periods_per_year=12,
-                        risk_free_rate=RISK_FREE_RATE_ANN,
+                        risk_free_rate=RISK_FREE_RATE_ANN,         # fallback scalar
+                        rf_series=rf_rate_df if not rf_rate_df.empty else None,  # §4g
                     )
                     ts_written = _write_timeseries(conn, roll_rows, dry_run)
                     if ts_written:
@@ -1538,6 +1575,12 @@ if __name__ == "__main__":
         help="Legado: salta ISINs ya procesados hoy. "
              "Preferir el hash-skip automatico sobre este flag."
     )
+    parser.add_argument(
+        "--max-new-per-run", type=int, default=0, dest="max_new_per_run",
+        help="§4d — cap de fondos nuevos (sin fund_metric_state) por ejecucion. "
+             "0 = sin limite (default). Ej: --max-new-per-run 100 distribuye "
+             "un intake masivo en multiples ejecuciones sin comprometer el SLA."
+    )
     args = parser.parse_args()
 
     sys.exit(run(  # P2-12: propagate exit code (0=OK, 1=fund errors, 2=fatal)
@@ -1551,4 +1594,5 @@ if __name__ == "__main__":
         force=args.force,
         dry_run=args.dry_run,
         resume=args.resume,
+        max_new_per_run=args.max_new_per_run,
     ))

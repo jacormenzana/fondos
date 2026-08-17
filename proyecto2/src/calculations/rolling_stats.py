@@ -137,6 +137,7 @@ def compute_rolling_rows(
     real_flag_default: int = 0,
     periods_per_year: int = _PERIODS_YEAR_MONTHLY,
     risk_free_rate: float = 0.0,
+    rf_series: pd.DataFrame | None = None,
 ) -> list[dict]:
     """
     Calcula las series rolling de las 5 métricas curadas para un ISIN.
@@ -155,8 +156,14 @@ def compute_rolling_rows(
                       (Mismo contrato que load_ipc() en db_readers.py.)
     real_flag_default : flag para la serie nominal (0). Real = 1.
     periods_per_year: 12 para serie mensual, 252 para diaria.
-    risk_free_rate  : tasa libre de riesgo anualizada (decimal), usada en Sharpe y Sortino.
+    risk_free_rate  : tasa libre de riesgo anualizada (decimal, fallback estático).
+                      Usado cuando rf_series no cubre la fecha del punto.
                       Por defecto 0.0. Pasar RISK_FREE_RATE_ANN de shared/config.py.
+    rf_series       : opcional — DataFrame con columnas 'date' y 'rate' (decimal, % / 100).
+                      Cargado vía load_rf_rate() en db_readers.py. Cuando se proporciona,
+                      cada punto rolling usa la tasa activa en esa fecha (forward-fill),
+                      eliminando la distorsión histórica del Sharpe/Sortino con tipo plano.
+                      (§4g del plan de re-ingeniería 2026-08.)
 
     Returns
     -------
@@ -173,6 +180,28 @@ def compute_rolling_rows(
     nav_series = nav_df["nav"].to_numpy(dtype=float)
     dates = nav_df["date"].tolist()
     n = len(nav_series)
+
+    # §4g: build date-aligned RF rate vector (one value per NAV row, forward-filled).
+    # When rf_series is provided each window-end date uses its historically correct rate.
+    # Fall back to the static risk_free_rate scalar for dates outside the series range.
+    if rf_series is not None and not rf_series.empty:
+        _rf_s = rf_series.copy()
+        _rf_s["date"] = pd.to_datetime(_rf_s["date"]) + pd.offsets.MonthEnd(0)
+        _rf_s = (
+            _rf_s.sort_values("date")
+            .drop_duplicates("date", keep="last")
+            .set_index("date")["rate"]
+        )
+        _nav_idx = pd.DatetimeIndex(dates).normalize() + pd.offsets.MonthEnd(0)
+        # reindex + ffill ensures every NAV date gets the closest preceding rate
+        _rf_aligned = _rf_s.reindex(_nav_idx).ffill().bfill()
+        _rf_vals: np.ndarray = np.where(
+            _rf_aligned.isna(),
+            risk_free_rate,
+            _rf_aligned.to_numpy(dtype=float),
+        )
+    else:
+        _rf_vals = np.full(n, risk_free_rate, dtype=float)
 
     # Deflactar si hay IPC
     nav_real: np.ndarray | None = None
@@ -211,6 +240,9 @@ def compute_rolling_rows(
             if nav_real is not None:
                 nav_variants.append((1, nav_real[start : i + 1]))
 
+            # Date-appropriate RF rate for this window-end point
+            _rf = _rf_vals[i]
+
             for flag, nav_arr in nav_variants:
                 if nav_arr is None or len(nav_arr) < min_obs:
                     continue
@@ -221,8 +253,8 @@ def compute_rolling_rows(
                     ("vol_ann",    _roll_vol_ann(nav_arr, periods_per_year)),
                     ("max_dd",     _roll_max_dd(nav_arr)),
                     ("return_ann", _roll_return_ann(nav_arr, periods_per_year)),
-                    ("sharpe",     _roll_sharpe(nav_arr, periods_per_year, risk_free_rate)),
-                    ("sortino",    _roll_sortino(nav_arr, periods_per_year, risk_free_rate)),
+                    ("sharpe",     _roll_sharpe(nav_arr, periods_per_year, _rf)),
+                    ("sortino",    _roll_sortino(nav_arr, periods_per_year, _rf)),
                 )
                 for metric, val in metric_vals:
                     rows.append({

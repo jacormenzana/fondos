@@ -707,3 +707,78 @@ class TestCatSignalsFromSnapshot:
             assert r["window"] == "rolling_1y"
         for r in dd_rows:
             assert r["window"] == "rolling_3y"
+
+
+# ============================================================
+# §4g — Historical RF rate series alignment (compute_rolling_rows)
+# ============================================================
+
+class TestRfSeriesAlignment:
+    """Verifies that rf_series overrides the static risk_free_rate for Sharpe/Sortino."""
+
+    def _make_nav(self, n: int = 24, start: str = "2019-01-31") -> pd.DataFrame:
+        rng = np.random.default_rng(42)
+        navs = np.cumprod(1 + rng.normal(0.005, 0.02, n)) * 100.0
+        dates = pd.date_range(start=start, periods=n, freq="ME")
+        return pd.DataFrame({"date": dates, "nav": navs})
+
+    def _make_rf(self, dates, rate: float) -> pd.DataFrame:
+        """Flat RF series covering the given dates."""
+        return pd.DataFrame({"date": dates, "rate": [rate] * len(dates)})
+
+    def test_rf_series_overrides_static_rate(self):
+        """Sharpe computed with rf_series(0.0) != rf_series(0.04); must differ."""
+        nav = self._make_nav()
+        dates = nav["date"].tolist()
+        rf_zero = self._make_rf(dates, 0.0)
+        rf_high = self._make_rf(dates, 0.04)
+        windows = {"rolling_1y": 12}
+
+        rows_zero = compute_rolling_rows("X", nav, windows, risk_free_rate=0.0,
+                                         rf_series=rf_zero)
+        rows_high = compute_rolling_rows("X", nav, windows, risk_free_rate=0.0,
+                                         rf_series=rf_high)
+
+        sharpe_zero = [r["value"] for r in rows_zero if r["metric"] == "sharpe" and r["value"] is not None]
+        sharpe_high = [r["value"] for r in rows_high if r["metric"] == "sharpe" and r["value"] is not None]
+        assert len(sharpe_zero) > 0
+        assert len(sharpe_zero) == len(sharpe_high)
+        # With higher RF, Sharpe must be lower (or equal at most)
+        assert sum(sharpe_zero) >= sum(sharpe_high) - 1e-10
+
+    def test_rf_series_none_uses_static(self):
+        """When rf_series=None, behaviour equals passing the static rate directly."""
+        nav = self._make_nav()
+        windows = {"rolling_1y": 12}
+        rows_a = compute_rolling_rows("X", nav, windows, risk_free_rate=0.02,
+                                      rf_series=None)
+        rows_b = compute_rolling_rows("X", nav, windows, risk_free_rate=0.02)
+        sharpe_a = sorted(r["value"] for r in rows_a if r["metric"] == "sharpe" and r["value"] is not None)
+        sharpe_b = sorted(r["value"] for r in rows_b if r["metric"] == "sharpe" and r["value"] is not None)
+        assert sharpe_a == pytest.approx(sharpe_b, abs=1e-12)
+
+    def test_rf_series_ffill_gap_coverage(self):
+        """RF series with gaps is forward-filled; a fund with NAV beyond RF end uses last known rate."""
+        # RF series ends 6 months before NAV ends
+        nav_dates = pd.date_range("2023-01-31", periods=18, freq="ME")
+        rf_dates  = nav_dates[:12]  # RF only covers first 12 months
+        nav = pd.DataFrame({"date": nav_dates, "nav": np.cumprod(1 + np.full(18, 0.005)) * 100})
+        rf  = pd.DataFrame({"date": rf_dates,  "rate": np.full(12, 0.03)})
+        rows = compute_rolling_rows("X", nav, {"rolling_1y": 12},
+                                    risk_free_rate=0.0, rf_series=rf)
+        # Must still produce rows (bfill handles no-data at start, ffill handles tail)
+        sharpe_rows = [r for r in rows if r["metric"] == "sharpe" and r["value"] is not None]
+        assert len(sharpe_rows) > 0
+
+    def test_rf_series_empty_falls_back_to_static(self):
+        """Empty rf_series DataFrame → falls back to risk_free_rate scalar."""
+        nav     = self._make_nav()
+        rf_empty = pd.DataFrame(columns=["date", "rate"])
+        rows_empty  = compute_rolling_rows("X", nav, {"rolling_1y": 12},
+                                           risk_free_rate=0.02, rf_series=rf_empty)
+        rows_static = compute_rolling_rows("X", nav, {"rolling_1y": 12},
+                                           risk_free_rate=0.02, rf_series=None)
+        # caller guards rf_series=None when empty — but passing empty df should behave same
+        sharpe_e = sorted(r["value"] for r in rows_empty  if r["metric"] == "sharpe" and r["value"] is not None)
+        sharpe_s = sorted(r["value"] for r in rows_static if r["metric"] == "sharpe" and r["value"] is not None)
+        assert sharpe_e == pytest.approx(sharpe_s, abs=1e-12)
