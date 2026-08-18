@@ -36,6 +36,19 @@ Uso en pipeline:
     )
     regime_df = load_regime_history(conn)          # una vez, fuera del bucle
     metrics   = compute_regime_returns(nav_df, regime_df)
+
+Nota sobre cobertura de regimenes (P2-03 / cierre 2026-08-18):
+    En la muestra 2000-03 → 2026-08 (320 meses), solo 5 de los 7 regimenes aparecen.
+    Recalentamiento y Recalentamiento_Tardio registran n_obs=0 en todos los fondos.
+    Causa: Shock_Energetico (WTI interanual > 25%) tiene prioridad en el clasificador
+    y captura todos los periodos de IPC alto del ciclo 2021-2023.  En ningun mes
+    del registro disponible se dan conjuntamente (a) IPC alto, (b) crecimiento fuerte /
+    tasas subiendo, (c) ausencia de shock energetico o crisis financiera.
+    Esto es un resultado empirico del periodo analizado, no un defecto de codigo.
+    Si en el futuro un ciclo de IPC alto ocurre sin shock energetico, los dos
+    regimenes faltantes se activaran automaticamente sin cambios de codigo.
+    regime_coverage_ratio refleja correctamente 5/7 = 0.714 para todos los fondos
+    (metrica P3-01, no un error).
 """
 
 import numpy as np

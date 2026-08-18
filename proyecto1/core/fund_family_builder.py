@@ -64,6 +64,19 @@ except ImportError:
     from core.classify_utils import RFC_INCOMPATIBLE_FAMILIES
 
 
+# Familias con heterogeneidad estructural confirmada (cross-nature por diseno del gestor).
+# El clasificador no puede resolverlas porque el gestor usa la misma denominacion base para
+# clases de accion de nature genuinamente distinta (p.ej. una clase equity + una clase bond).
+# Se suprimen del AVISO de post-correccion para evitar ruido repetitivo en cada ejecucion.
+# Fuente: auditoria pipelineP1P2Audit 2026-08-18.
+_KNOWN_HETEROGENEOUS_FAMILIES: frozenset[str] = frozenset({
+    "FAM_000104",  # ALLIANZ BEST STYLES AT — Mixtos + Renta Variable
+    "FAM_000267",  # ASHMORE SICAV EM SD    — Monetario + Renta Fija Flexible
+    "FAM_000722",  # CAPITAL G.NW PERSP BD  — Renta Fija Flexible + Renta Variable
+    "FAM_001081",  # DWS FLOAT RATE NOTE    — Renta Fija Corto Plazo + Renta Fija Flexible
+})
+
+
 # ============================================================
 # Sufijos de clase a eliminar (orden importa: del mas especifico al general)
 # ============================================================
@@ -587,17 +600,27 @@ def build_fund_families(
 
     # ── Validación post-corrección ────────────────────────────────────────────
     inconsistencias = _validate_family_consistency(conn)
-    if inconsistencias:
-        print(f"  [FamilyBuilder] AVISO: {len(inconsistencias)} familias "
+    # Separar las conocidas (heterogeneidad estructural documentada) del resto
+    known     = [(f, n, nm) for f, n, nm in inconsistencias if f in _KNOWN_HETEROGENEOUS_FAMILIES]
+    unknown   = [(f, n, nm) for f, n, nm in inconsistencias if f not in _KNOWN_HETEROGENEOUS_FAMILIES]
+    n_total   = len(inconsistencias)
+    n_incons  = len(unknown)
+    if unknown:
+        print(f"  [FamilyBuilder] AVISO: {n_incons} familias "
               f"con Fund_Nature inconsistente (ver log):")
-        for fam_id, natures, nombres in inconsistencias[:10]:
+        for fam_id, natures, nombres in unknown[:10]:
             print(f"    {fam_id} — natures={natures}")
             for n in nombres[:3]:
                 print(f"      {n}")
-        if len(inconsistencias) > 10:
-            print(f"    ... y {len(inconsistencias)-10} mas")
+        if n_incons > 10:
+            print(f"    ... y {n_incons-10} mas")
     else:
         print("  [FamilyBuilder] Validacion OK — todas las familias son homogeneas")
+    if known:
+        # No-op para nuevas; solo confirmar recuento de conocidas
+        print(f"  [FamilyBuilder] {len(known)} familias con heterogeneidad estructural "
+              f"conocida (suprimidas del AVISO): "
+              + ", ".join(f for f, _, _ in known))
 
     return len(updates)
 

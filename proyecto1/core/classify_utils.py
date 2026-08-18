@@ -3309,13 +3309,29 @@ _NAME_DOMINANT_NATURES: set = {
 
 # Bandas de SRRI realizado (srri_nav) esperadas por naturaleza — bandas de
 # volatilidad CESR/ESMA, confirmadas por la medición del corpus.
+# FIX-ACT05-VOLBANDS (2026-08-18): tres ampliaciones calibradas contra
+# el corpus de 36 NATURE_LOW_CONFIDENCE del ciclo 2026-08-17:
+#   Alternativo  {3-5} → {3-7}: Alt-UCITS (L/S equity, macro, CTA)
+#     alcanzan habitualmente banda 6-7; la banda mas estrecha producía
+#     vf=0.25 en band-7, bajando la confianza a 0.23 en 2 ISINs.
+#   Renta Fija Flexible {3-4} → {3-5}: HY y EM-bond flexibles alcanzan
+#     banda 5 de forma sistemática; corrige 17 ISINs (10 vol6-adj + 6
+#     msbench|vol5 + 1 benchmark|vol5) — banda 6 sigue siendo adyacente
+#     (vf=0.6, conf≥0.55 con base_w KIID=0.92).
+#   Mixtos {4-5} → {3-5}: mixtos conservadores (bd3, renta fija pesada)
+#     son una categoría UCITS legítima; corrige 3 ISINs adicionales.
+#     Banda 6 NO se añade: los mixtos con vol-6 son genuinamente borderline
+#     (la prueba test_unambiguous_band6_arbitrates_to_proposed_rv verifica que
+#     la señal de nombre RV arbitre correctamente en ese caso).
+# Los ~14 casos restantes (vol incompatible con la naturaleza) permanecen
+# marcados NATURE_LOW_CONFIDENCE — comportamiento correcto.
 _NATURE_VOL_BANDS: dict = {
     "Monetario":              {1, 2},
     "Renta Fija Corto Plazo": {2, 3, 4},
-    "Renta Fija Flexible":    {3, 4},
-    "Mixtos":                 {4, 5},
+    "Renta Fija Flexible":    {3, 4, 5},
+    "Mixtos":                 {3, 4, 5},
     "Renta Variable":         {5, 6, 7},
-    "Alternativo":            {3, 4, 5},
+    "Alternativo":            {3, 4, 5, 6, 7},
     "Estructurado":           {3, 4, 5, 6},
 }
 # Bandas de volatilidad INEQUÍVOCAS: el nivel de volatilidad realizada sólo

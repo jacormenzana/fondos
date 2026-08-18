@@ -313,6 +313,7 @@ CREATE TABLE IF NOT EXISTS ingestion_log (
 
 CREATE INDEX IF NOT EXISTS idx_log_isin   ON ingestion_log (ISIN);
 CREATE INDEX IF NOT EXISTS idx_log_status ON ingestion_log (status);
+CREATE INDEX IF NOT EXISTS idx_log_step   ON ingestion_log (step, created_at);
 
 
 -- ============================================================
