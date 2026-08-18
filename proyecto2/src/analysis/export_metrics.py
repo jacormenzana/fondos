@@ -1106,6 +1106,9 @@ def build_divisa(ws, conn):
 # Hoja 11 — Retornos por régimen macro
 # ============================================================
 
+# FIX-P2-EXPORT-ALIAS-1: suffix[:5] collided for "recalentamiento" and
+# "recalentamiento_tardio" (both → "recal"), producing ambiguous SQL alias.
+# Replaced with an explicit, unique alias map.
 _REGIMES_ORDER = [
     ("expansion",              "Expansión"),
     ("recalentamiento",        "Recalentamiento"),
@@ -1116,12 +1119,23 @@ _REGIMES_ORDER = [
     ("crisis_financiera",      "Crisis Financiera"),
 ]
 
+# Unique SQL table-alias prefix per regime — must be distinct across all entries.
+_REGIME_ALIAS: dict[str, str] = {
+    "expansion":              "expan",
+    "recalentamiento":        "recal",
+    "recalentamiento_tardio": "rtard",   # was "recal" — alias collision fixed
+    "estanflacion":           "estan",
+    "contraccion":            "contr",
+    "shock_energetico":       "shock",
+    "crisis_financiera":      "crisi",
+}
+
 
 def q_regime_returns(conn) -> list:
     selects = []
     joins   = []
     for suffix, _ in _REGIMES_ORDER:
-        a = suffix[:5]
+        a = _REGIME_ALIAS[suffix]
         selects += [
             f"ROUND(r_{a}.value*100,2)    AS ret_{suffix}",
             f"ROUND(s_{a}.value,3)         AS shr_{suffix}",

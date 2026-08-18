@@ -601,8 +601,14 @@ CALC_VERSION: str = "20260815"  # v29: sharpe + sortino added; roll_ prefix drop
 # P3-consumed metric surface — used by [COVERAGE] observability line to baseline
 # distinct-ISIN coverage across runs. Update this tuple whenever P3's scoring
 # model adds or removes a consumed metric. Source of truth: AGENTS.md §P3 Layer 2.
+#
+# NOTE: P3 fund_scorer loads return_ann with real_flag=1 and renames it to
+# return_ann_real internally.  coverage_snapshot() queries by DB metric name;
+# "return_ann" (no suffix) covers both nominal and real rows and gives the
+# correct ISIN count.  Do NOT use "return_ann_real" here — it is a P3-internal
+# alias, not a metric stored in fund_metrics.
 _P3_CONSUMED_METRICS: tuple[str, ...] = (
-    "return_ann_real",
+    "return_ann",          # DB name; P3 reads real_flag=1 and aliases → return_ann_real
     "sharpe",
     "max_dd",
     "alpha_persistence",
