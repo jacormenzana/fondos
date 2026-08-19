@@ -36,6 +36,19 @@ Cambios v17:
   - load_fund_metrics_for_scoring: SELECT fund_master ampliado con
     Investment_Focus, Credit_Quality, Ongoing_Charge, SRRI_Quality_Flag
   - check_hard_filters: filtro Credit_Quality='High Yield' en Defensiva
+
+P2-03 / Option B — Recalentamiento y Recalentamiento_Tardio (cierre 2026-08-19):
+  En la serie macro disponible (2000-03 → 2026-08, 320 meses), los regímenes
+  Recalentamiento y Recalentamiento_Tardio registran n_obs=0 porque Shock_Energetico
+  (WTI YoY > 25%) preempta todos los periodos de IPC alto. Es un resultado
+  estructural del clasificador, no un defecto de código. Confirmado por DB query
+  2026-08-14 sobre 3,600 combinaciones ISIN-métrica.
+  Comportamiento de fallback (Option B aceptado): cuando regime_return_p25/p75 y
+  regime_sharpe_p25/p75 son None (ningún fondo tiene n_obs >= MIN_OBS_REGIME en el
+  régimen activo), compute_regime_multiplier() devuelve multiplicador=1.0 para todos
+  los fondos — el scoring base rige sin ajuste empírico de régimen. No se requiere
+  cambio de umbral ni nueva ejecución del pipeline.
+  Véase también: regime_returns.py (nota sobre cobertura, P2-03 / ACT-08 2026-08-18).
 """
 
 import sqlite3
