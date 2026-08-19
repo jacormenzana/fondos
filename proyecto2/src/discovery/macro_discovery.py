@@ -527,8 +527,13 @@ _FRED_SERIES = {
         "unit":       "index",
         "write_inflation": False,
     },
-    # IPC China -- indice base (OCDE via FRED)
-    "CHNCPALTT01IXNBM": {
+    # IPC China -- indice base 2015=100, NSA (OECD CPALTT01 via FRED).
+    # CHNCPALTT01IXNBM (previous series, OECD MEI) was discontinued at FRED with last
+    # observation 2023-11. CPALTT01CNM657N (OECD, all items, NSA, index 2015=100) extends
+    # through 2024-03 at the time of migration (2026-08-19) and is actively maintained.
+    # Same data concept and units — ipc_yoy_cn is a 12-month pct_change, so the base change
+    # between MEI and CPALTT01 is harmless as long as the series is internally consistent.
+    "CPALTT01CNM657N": {
         "indicator":  "ipc_index",
         "geography":  "CN",
         "unit":       "index",

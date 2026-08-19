@@ -148,4 +148,40 @@ los fondos correspondientes — no es un error fatal, pero reduce la potencia de
 
 ---
 
-*Última revisión: 2026-08-14*
+---
+
+## 8. Series discontinuadas y estado de cobertura (2026-08-19)
+
+### China IPC — serie migrada
+
+| | Old | New |
+|---|---|---|
+| FRED ID | `CHNCPALTT01IXNBM` | `CPALTT01CNM657N` |
+| Última obs | 2023-11 | 2024-03 (at migration) |
+| Concepto | OECD MEI (discontinuado en FRED) | OECD CPALTT01 all items, NSA, idx 2015=100 |
+| Unidades | index | index — compatible; `pct_change(12)` es base-agnostic |
+
+La migración extiende `ipc_yoy_cn` ~4 meses hacia el presente. Actualización posterior:
+re-ejecutar `P2_discoverLoadMetrics.bat` o `macro_discovery --source fred`.
+
+### Japan IPC — sin fuente mantenida en FRED (pendiente)
+
+`JPNCPIALLMINMEI` (OECD MEI) está discontinuada en FRED con último dato **2021-06**. Todas las
+variantes OECD de FRED para Japón (incluidas `CPALTT01JPM657N`, `CPALTT01JPM661S`) también
+terminan en 2021-06 — es una discontinuación en origen, no sólo del identificador.
+
+**Impacto mitigado por Layer 2 (commit d7925c0):** `compute_macro_sensitivity()` aplica
+selección por ventana por fondo — `ipc_yoy_jp` se descarta automáticamente en fondos cuya
+cobertura en ventana propia < 85 %, evitando que trunce el OLS de ningún fondo. Los fondos
+de geografía Japan retienen `d_rate_jp`, `eur_jpy_yoy` y los demás factores regionales.
+
+**Fuentes alternativas a evaluar (requieren nuevo loader):**
+- OECD SDMX REST API (`sdmx.oecd.org`) — actualmente inaccesible desde el entorno de
+  desarrollo (404); revisar en próximo ciclo de mantenimiento.
+- Japan Statistics Bureau e-Stat API — requiere registro; datos mensuales actualizados.
+- IMF IFS API (`PCPI_IX`, frecuencia M) — requiere nuevo `load_imf_series()`.
+
+Hasta que se resuelva, `ipc_yoy_jp` permanece en `series_macro` con datos hasta 2021-06
+como referencia histórica para fondos de geografía JP con ventana anterior a 2021.
+
+*Última revisión: 2026-08-19*
