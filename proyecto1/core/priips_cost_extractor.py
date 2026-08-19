@@ -135,10 +135,14 @@ def _pick_aci_for_horizon(
     """
     if not rows:
         return None
-    # Prioridad: fila RHP si se pide
+    # Prioridad: fila RHP si se pide.
+    # FIX-ACI-RETURN-GUARD (2026-08-19): only honour an is_rhp row that carries a
+    # real aci_pct. Some layouts emit an is_rhp row with aci_pct=None (the RHP
+    # column collapsed, or the RHP reference was a footnote); such a row must NOT
+    # shadow the genuine RHP value reachable by the numeric-horizon match below.
     if want_rhp:
         for r in rows:
-            if r.get('is_rhp'):
+            if r.get('is_rhp') and r.get('aci_pct') is not None:
                 return r.get('aci_pct')
     # Búsqueda por horizonte numérico
     if target_years is not None:
@@ -512,36 +516,67 @@ def extract_priips_costs(
                         isin, _ratio_to_pct(_fb_aci),
                     )
 
-        # FIX-ACI-RHP-LONGEST: multi-column OT where the RHP column has
-        # is_rhp=False (not labelled) and rhp_years=None (not in text).
-        # Audit 2026-06-30: 9 funds with hy>1.0 entry whose ACI_RHP harness
-        # recovers via loop but production _pick_aci_for_horizon misses because
-        # neither want_rhp=True match nor target_years match succeed.
-        # Strategy: take the longest-horizon entry as the RHP approximation.
-        # Guards identical to P0-ACI-RHP-GUARD (15% cap, ACI_RHP/ACI_1Y ≤5).
-        if 'ACI_RHP' not in out and over_time and rhp_years is None:
-            _no_is_rhp = not any(e.get('is_rhp') for e in over_time)
-            if _no_is_rhp:
-                _candidates = [
-                    e for e in over_time
-                    if (e.get('horizon_years') or 0) > 1.0
-                    and e.get('aci_pct') is not None
-                ]
-                if _candidates:
-                    _best = max(_candidates, key=lambda e: e.get('horizon_years', 0))
-                    _fb_aci2 = _best['aci_pct']
-                    _ratio_ok = not (
-                        aci_1y_final is not None and aci_1y_final > 0
-                        and _fb_aci2 / aci_1y_final > 5.0
+        # FIX-ACI-RHP-LONGEST: multi-column OT where the RHP column is not
+        # directly pickable — either it carries is_rhp=False with rhp_years=None
+        # (Audit 2026-06-30: 9 funds), OR the only is_rhp row was a bogus
+        # footnote entry whose return-% value the P0-ACI-RHP-GUARD above just
+        # rejected (FIX-ACI-RETURN-GUARD, 2026-08-19: iShares/BlackRock EN
+        # "recommended holding period ... average return projected to be X%
+        # before costs", and ES siblings — see IE00B3D07F16, LU1983261782).
+        # In both cases ACI_RHP is still unset here; take the longest genuine
+        # (non-is_rhp) horizon entry as the RHP approximation. Fires only when
+        # ACI_RHP is unset (fill-only), so funds already resolved by the primary
+        # pick are never perturbed. Guards mirror P0-ACI-RHP-GUARD (15% cap,
+        # ACI_RHP/ACI_1Y ≤5) — a rejected is_rhp % is thus never re-admitted.
+        if 'ACI_RHP' not in out and over_time:
+            _candidates = [
+                e for e in over_time
+                if (e.get('horizon_years') or 0) > 1.0
+                and not e.get('is_rhp')
+                and e.get('aci_pct') is not None
+            ]
+            if _candidates:
+                _best = max(_candidates, key=lambda e: e.get('horizon_years', 0))
+                _fb_aci2 = _best['aci_pct']
+                _ratio_ok = not (
+                    aci_1y_final is not None and aci_1y_final > 0
+                    and _fb_aci2 / aci_1y_final > 5.0
+                )
+                if _fb_aci2 <= 0.15 and _ratio_ok:
+                    out['ACI_RHP'] = _ratio_to_pct(_fb_aci2)
+                    _log.info(
+                        "[FIX-ACI-RHP-LONGEST] %s: ACI_RHP=%.4f%% from "
+                        "longest non-RHP OT entry (hy=%.1f)",
+                        isin, _ratio_to_pct(_fb_aci2),
+                        _best.get('horizon_years', 0),
                     )
-                    if _fb_aci2 <= 0.15 and _ratio_ok:
-                        out['ACI_RHP'] = _ratio_to_pct(_fb_aci2)
-                        _log.info(
-                            "[FIX-ACI-RHP-LONGEST] %s: ACI_RHP=%.4f%% from "
-                            "longest OT entry (hy=%.1f, no is_rhp label)",
-                            isin, _ratio_to_pct(_fb_aci2),
-                            _best.get('horizon_years', 0),
-                        )
+
+        # FIX-ACI-RHP-COLLAPSED: collapsed single-value OT row. On certain
+        # issuer layouts (Neuberger Berman IE00BLLX*, LU1984*, and siblings)
+        # pdfplumber merges the "Incidencia anual de los costes" row so a single
+        # % survives — bound to the 1Y column — while the RHP / longer-horizon
+        # column parses to aci_pct=None. SINGLE (needs no longer horizon) and
+        # LONGEST (needs the longer entry to carry a %) both miss it, and the
+        # target-year pick returns None. When, across the whole OT table, exactly
+        # ONE horizon carries a real ACI %, that value IS the table's cost impact
+        # → use it as the RHP anchor (mirrors the PRIIPS single-column rule).
+        # Fill-only, capped at the general ACI ceiling; NULL > wrong.
+        if 'ACI_RHP' not in out and over_time:
+            _valid_acis = [
+                e.get('aci_pct') for e in over_time
+                if e.get('aci_pct') is not None
+            ]
+            if len(_valid_acis) == 1:
+                _fb_aci3 = _valid_acis[0]
+                if 0 < _fb_aci3 <= _MAX_ACI_RATIO:
+                    out['ACI_RHP'] = _ratio_to_pct(_fb_aci3)
+                    if 'ACI_1Y' not in out:
+                        out['ACI_1Y'] = _ratio_to_pct(_fb_aci3)
+                    _log.info(
+                        "[FIX-ACI-RHP-COLLAPSED] %s: ACI_RHP=%.4f%% from "
+                        "collapsed single-value OT row",
+                        isin, _ratio_to_pct(_fb_aci3),
+                    )
 
         # --- D. Tabla "composición de los costes" ---
         comp = parse_costs_composition(text)

@@ -653,3 +653,4 @@ Key `Fund_Nature` values: `Renta Variable` · `Mixtos` · `Renta Fija Flexible` 
 |----|--------|-------|
 | P13 | `Processing_Time_Ms` | Stores seconds, not milliseconds |
 | — | `KIID_Downloaded_At` | 478 funds with NULL (legacy bug, self-healing) |
+| — | `ACI_RHP` | Residual NULL on funds whose KID over-time table exposes no bindable RHP horizon (collapsed grid / legacy UCITS "Impact on return (RIY)" layout). Values-path recovery covers the majority; see backlog ACT-06. |

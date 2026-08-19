@@ -579,3 +579,82 @@ def test_lu1502282632_dla2_ideal():
     o = _run('LU1502282632')
     rows = {r['Horizon_Years']: r for r in o['_cost_schedule_rows']}
     assert abs(rows[6.0]['Total_Costs_EUR'] - 3878.0) < 5.0
+
+
+# ---------------------------------------------------------------------------
+# FIX-ACI-RETURN-GUARD + FIX-ACI-RHP-COLLAPSED (ACT-06, 2026-08-19)
+# Recover ACI_RHP on layouts where the values-path parser leaves the genuine
+# cost impact visible-but-unbound. All extractor-side, parser untouched.
+# ---------------------------------------------------------------------------
+from priips_cost_extractor import extract_priips_costs, _pick_aci_for_horizon
+
+_DB_PATH = r'C:\desarrollo\fondos\db\fondos.sqlite'
+_DB_EXISTS = os.path.exists(_DB_PATH)
+
+
+def _fed_from_db(isin: str):
+    """Load Raw_KIID_Text + DLA2_Table_Text for a fund (KIID_Class=1)."""
+    import sqlite3
+    con = sqlite3.connect(_DB_PATH)
+    try:
+        row = con.execute(
+            "SELECT Raw_KIID_Text, DLA2_Table_Text FROM fund_kiid_metadata "
+            "WHERE ISIN=? AND KIID_Class=1", (isin,)).fetchone()
+    finally:
+        con.close()
+    if not row:
+        return None
+    return (row[0] or '') + '\n' + (row[1] or '')
+
+
+def test_pick_aci_skips_none_is_rhp():
+    """A bogus is_rhp row with aci_pct=None must not shadow the numeric-horizon
+    match: _pick_aci_for_horizon(want_rhp=True) falls through to the 5Y column."""
+    rows = [
+        {'horizon_years': 1.0, 'aci_pct': 0.004, 'is_rhp': False},
+        {'horizon_years': 5.0, 'aci_pct': 0.004, 'is_rhp': False},
+        {'horizon_years': -1.0, 'aci_pct': None, 'is_rhp': True},
+    ]
+    assert _pick_aci_for_horizon(rows, 5.0, True) == 0.004
+    # A valid is_rhp row is still honoured first.
+    rows2 = [{'horizon_years': 5.0, 'aci_pct': 0.02, 'is_rhp': True}]
+    assert _pick_aci_for_horizon(rows2, 5.0, True) == 0.02
+
+
+def test_bogus_isrhp_return_footnote_recovers_via_longest():
+    """RC-1: the '(*) ...average return per year is projected to be 4.6% before
+    costs' footnote yields a bogus is_rhp=4.6% entry that the >5 ratio guard
+    rejects; FIX-ACI-RHP-LONGEST then recovers the genuine 0.4% RHP column.
+    Self-contained (synthetic KID text), no disk/DB."""
+    text = (
+        "Periodo de mantenimiento recomendado: 5 anos\n"
+        "Costes a lo largo del tiempo\n"
+        "En caso de salida despues de 1 ano   En caso de salida despues de 5 anos\n"
+        "Costes totales 38 EUR 233 EUR Annual cost Impact (*)\n"
+        "0.4% 0.4% (*) This illustrates how costs reduce your return. If you exit "
+        "at the recommended holding period your average return per year is "
+        "projected to be 4.6% before costs and 4.2% after costs."
+    )
+    out = extract_priips_costs(text, 'TEST_RETURN_GUARD')
+    assert out.get('ACI_RHP') == 0.4, out.get('ACI_RHP')
+
+
+@pytest.mark.skipif(not _DB_EXISTS, reason="fondos.sqlite no disponible")
+def test_ishares_en_annual_cost_impact_recovers():
+    """RC-1 on the real English iShares layout (IE00B3D07F16): bogus is_rhp
+    return figure rejected, real 0.4% RHP recovered via LONGEST."""
+    fed = _fed_from_db('IE00B3D07F16')
+    if fed is None or 'annual cost' not in fed.lower():
+        pytest.skip("KIID text for IE00B3D07F16 not present/changed")
+    assert extract_priips_costs(fed, 'IE00B3D07F16').get('ACI_RHP') == 0.4
+
+
+@pytest.mark.skipif(not _DB_EXISTS, reason="fondos.sqlite no disponible")
+def test_neuberger_collapsed_single_value_recovers():
+    """RC-2 on the real Neuberger Berman full-grid layout (IE00BLLXGV72): the
+    incidencia row collapsed to a single 1.2% value (RHP column None);
+    FIX-ACI-RHP-COLLAPSED anchors ACI_RHP on it."""
+    fed = _fed_from_db('IE00BLLXGV72')
+    if fed is None or 'incidencia' not in fed.lower():
+        pytest.skip("KIID text for IE00BLLXGV72 not present/changed")
+    assert extract_priips_costs(fed, 'IE00BLLXGV72').get('ACI_RHP') == 1.2
