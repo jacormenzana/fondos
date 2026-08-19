@@ -334,3 +334,27 @@ class TestPerFundWindowedSelection:
         mac = _macro_with_oil_and_hy(n=n)
         result = compute_macro_sensitivity(nav, mac)
         assert _extract(result, "macro_n_obs") == pytest.approx(n - 1, abs=1)
+
+    def test_all_factors_pruned_returns_empty_no_lapack_error(self):
+        """
+        When every factor fails the per-fund coverage threshold (e.g. all are
+        stale after the first month of the fund's window), compute_macro_sensitivity
+        must return [] cleanly — no DLASCLS / LAPACK crash from a zero-column matrix.
+        """
+        nav = _nav_df_range("2022-01-31", "2026-06-30")
+        # Both factors have data only up to 2022-02 → 1-2 months → < MIN_OBS → pruned
+        macro = _macro_stale_after(
+            full_start="2022-01-31",
+            full_end="2026-06-30",
+            stale_col="ipc_yoy_jp",
+            stale_after="2022-02-28",
+        )
+        # oil_yoy is fully covered but the second factor is not; here we make oil_yoy
+        # also stale so ALL columns are pruned.
+        macro["oil_yoy"] = np.where(
+            pd.DatetimeIndex(macro.index) > pd.Timestamp("2022-02-28"),
+            np.nan,
+            macro["oil_yoy"],
+        )
+        result = compute_macro_sensitivity(nav, macro)
+        assert result == [], f"Expected [] when all factors pruned, got {result}"

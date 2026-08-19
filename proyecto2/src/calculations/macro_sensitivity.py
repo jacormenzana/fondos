@@ -385,6 +385,9 @@ def compute_macro_sensitivity(
         if merged_raw[col].notna().sum() >= MIN_OBS
         and merged_raw[col].notna().mean() >= _PER_FUND_MIN_COVERAGE
     ]
+    if not factor_cols:
+        return []
+
     merged = merged_raw[["r_fondo"] + factor_cols].dropna()
 
     if len(merged) < MIN_OBS:
