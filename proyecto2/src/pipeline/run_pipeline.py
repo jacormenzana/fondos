@@ -226,14 +226,20 @@ def _ols_is_fresh(
     isin: str,
     nav_count: int,
     current_quarter: str,
+    force: bool = False,
 ) -> bool:
     """True if OLS betas are still fresh: computed this quarter and NAV grew < 3 rows.
+
+    When force=True always returns False so --force guarantees a full OLS recompute
+    (not just a hash-cache bypass) even within the same quarter.
 
     When this returns True the beta set is NOT rewritten, so its load_ts stays
     at the date it was last computed.  This is EXPECTED behaviour under the
     two-timestamp model: load_ts = per-value change stamp, not a run stamp.
     See module docstring for the full model and audit classification rules.
     """
+    if force:
+        return False
     row = conn.execute(
         "SELECT last_ols_quarter, last_ols_nav_count FROM fund_metric_state "
         "WHERE isin=? AND metric_version=?",
@@ -596,7 +602,7 @@ _ALL_METRIC_FAMILIES = frozenset({
 
 # Bump this string whenever the calculation logic changes to force a
 # cache-miss in fund_metric_state even when NAV/IPC inputs are unchanged.
-CALC_VERSION: str = "20260815"  # v29: sharpe + sortino added; roll_ prefix dropped from metric names
+CALC_VERSION: str = "20260819"  # v30: per-fund windowed OLS factor selection (fix global-dropna window truncation)
 
 # P3-consumed metric surface — used by [COVERAGE] observability line to baseline
 # distinct-ISIN coverage across runs. Update this tuple whenever P3's scoring
@@ -1113,7 +1119,7 @@ def run(
                 if _has_macro:
                     # -- Sensibilidad macro (OLS quarterly cadence, EFF-1) --
                     if _want("macro"):
-                        _skip_ols = _ols_is_fresh(conn, isin, len(nav_df), current_quarter)
+                        _skip_ols = _ols_is_fresh(conn, isin, len(nav_df), current_quarter, force=force)
                         if _skip_ols:
                             logger.debug(
                                 "", extra=dict(

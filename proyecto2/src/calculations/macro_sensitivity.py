@@ -65,6 +65,12 @@ sys.path.insert(0, str(_ROOT))
 
 MIN_OBS = 60
 
+# Per-fund factor-coverage threshold: a factor must be non-null for at least
+# this fraction of the fund's own NAV-macro overlap (in addition to >= MIN_OBS
+# months absolute) to enter that fund's OLS. Prevents a globally-dense-but-stale
+# factor from truncating the regression window for all funds.
+_PER_FUND_MIN_COVERAGE = 0.85
+
 
 # ============================================================
 # Carga de factores macro
@@ -227,7 +233,11 @@ def load_macro_factors(conn: sqlite3.Connection) -> pd.DataFrame:
     sparse = [c for c in result.columns if c not in dense]
     if sparse:
         print(f"  [MacroFactors] Factores excluidos por cobertura insuficiente: {sparse}")
-    return result[dense].dropna()
+    # Return with NaNs: each factor spans its own native date range.
+    # The global dropna() is intentionally absent — per-fund windowed selection
+    # in compute_macro_sensitivity() handles NaN-aware factor pruning so no single
+    # stale/short factor silently truncates every fund's regression window.
+    return result[dense]
 
 
 # ============================================================
@@ -352,17 +362,36 @@ def compute_macro_sensitivity(
     if nav_df.empty or macro_df.empty:
         return []
 
-    nav      = nav_df.set_index("date")["nav"].sort_index()
+    nav = nav_df.set_index("date")["nav"].sort_index()
+    # Guard: deduplicate by month-end date (take last value) in case fund_nav_monthly
+    # has two entries for the same month (e.g. estimated + revised).  This was
+    # previously hidden because the old global dropna() capped the window before
+    # the duplicate dates; now that each factor spans its native range the join
+    # must handle a full-span index.
+    if not nav.index.is_unique:
+        nav = nav.groupby(level=0).last()
     r_fondo  = np.log(nav / nav.shift(1)).dropna()
-    merged   = pd.concat([r_fondo.rename("r_fondo"), macro_df],
-                         axis=1, join="inner").dropna()
+    merged_raw = pd.concat([r_fondo.rename("r_fondo"), macro_df],
+                           axis=1, join="inner")
+
+    # Per-fund windowed factor selection: only include factors that are adequately
+    # covered within this fund's own NAV-macro overlap. A factor is retained when
+    # its non-null count >= MIN_OBS AND non-null fraction >= _PER_FUND_MIN_COVERAGE.
+    # Factors that are stale or short relative to this fund's window are dropped here
+    # rather than silently truncating the regression date range for all funds.
+    _factor_cols_raw = [c for c in macro_df.columns if c in merged_raw.columns]
+    factor_cols = [
+        col for col in _factor_cols_raw
+        if merged_raw[col].notna().sum() >= MIN_OBS
+        and merged_raw[col].notna().mean() >= _PER_FUND_MIN_COVERAGE
+    ]
+    merged = merged_raw[["r_fondo"] + factor_cols].dropna()
 
     if len(merged) < MIN_OBS:
         return []
 
-    y           = merged["r_fondo"].values
-    factor_cols = [c for c in macro_df.columns if c in merged.columns]
-    X_raw       = merged[factor_cols].values
+    y     = merged["r_fondo"].values
+    X_raw = merged[factor_cols].values
 
     # Filtrar factores con alta multicolinealidad (VIF > umbral)
     if X_raw.shape[1] > 1:
