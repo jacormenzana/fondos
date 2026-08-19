@@ -125,7 +125,7 @@ _SQL_SNAPSHOT = """
     JOIN (
         SELECT metric, window, real_flag, MAX(date) AS mx
         FROM fund_metric_timeseries
-        WHERE metric IN ('roll_vol_ann','roll_max_dd','roll_return_ann')
+        WHERE metric IN ('vol_ann','max_dd','return_ann')
           AND window = 'rolling_1y'
           AND real_flag = 0
         GROUP BY metric, window, real_flag
@@ -135,7 +135,7 @@ _SQL_SNAPSHOT = """
              AND t.date      = latest.mx
     LEFT JOIN fund_master m ON t.isin = m.ISIN
     WHERE t.real_flag = 0
-      AND t.metric IN ('roll_vol_ann','roll_max_dd','roll_return_ann')
+      AND t.metric IN ('vol_ann','max_dd','return_ann')
       AND t.window = 'rolling_1y'
       AND t.value IS NOT NULL
     {nature_clause}
@@ -149,7 +149,7 @@ _SQL_SERIES = """
     LEFT JOIN fund_master m ON t.isin = m.ISIN
     WHERE t.isin IN ({ph})
       AND t.real_flag = 0
-      AND t.metric IN ('roll_vol_ann','roll_max_dd','roll_return_ann')
+      AND t.metric IN ('vol_ann','max_dd','return_ann')
       AND t.value IS NOT NULL
     ORDER BY t.isin, t.metric, t.window, t.date
 """

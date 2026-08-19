@@ -986,9 +986,17 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=Non
             currency      = currency_map.get(isin, "EUR")
             last_d_stored = last_daily.get(isin)
             force_this    = force or (ds == "FORCE_REFRESH")
+            _t0_fund      = datetime.now()
             if last_d_stored and not force_this:
                 anchor = datetime.strptime(last_d_stored, "%Y-%m-%d").date()
                 if anchor >= _cutoff:
+                    _elapsed_ms = round((datetime.now() - _t0_fund).total_seconds() * 1000)
+                    _ts_skip    = _t0_fund.strftime("%Y-%m-%d %H:%M:%S")
+                    print(
+                        f"[{idx:4d}/{total:4d}] | {_ts_skip} | {isin} | "
+                        f"0d/0m | [{anchor} -> {anchor}] | {_elapsed_ms} | Al dia",
+                        flush=True,
+                    )
                     al_dia_count += 1
                     continue
                 eff_desde = (anchor - timedelta(days=3)).isoformat()

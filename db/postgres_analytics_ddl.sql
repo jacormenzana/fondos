@@ -27,7 +27,7 @@ DROP TABLE IF EXISTS fund_metric_state;
 
 -- ----------------------------------------------------------
 -- fund_metric_timeseries
--- Rolling metric time-series (curated 3 metrics × all windows).
+-- Rolling metric time-series (curated 5 metrics × all windows).
 -- Long format: one row per (isin, metric, window, date, real_flag).
 -- ----------------------------------------------------------
 CREATE TABLE fund_metric_timeseries (
@@ -46,16 +46,17 @@ CREATE TABLE fund_metric_timeseries (
     PRIMARY KEY (isin, metric, window, date, real_flag)
 );
 
-CREATE INDEX IF NOT EXISTS idx_pg_fmts_isin_metric
-    ON fund_metric_timeseries (isin, metric);
-CREATE INDEX IF NOT EXISTS idx_pg_fmts_metric_window
-    ON fund_metric_timeseries (metric, window);
-CREATE INDEX IF NOT EXISTS idx_pg_fmts_date
-    ON fund_metric_timeseries (date);
+-- v30 rationalization: mirrors the two covering composites in SQLite (idx_fmts_*).
+-- Dropped: narrow (isin,metric), (metric,window), and (date) indexes — they were
+-- prefix-subsumed by the composites below or served only global date scans.
+CREATE INDEX IF NOT EXISTS idx_pg_fmts_isin_metric_window_real_date
+    ON fund_metric_timeseries (isin, metric, window, real_flag, date);
+CREATE INDEX IF NOT EXISTS idx_pg_fmts_mwr_isin_date
+    ON fund_metric_timeseries (metric, window, real_flag, isin, date);
 
 COMMENT ON TABLE fund_metric_timeseries IS
-    'P2 v26 — Rolling metric series (roll_vol_ann / roll_max_dd / roll_return_ann). '
-    'Incremental append by date; do not full-replace in production ETL runs.';
+    'P2 v29 — Rolling metric series (vol_ann / max_dd / return_ann / sharpe / sortino). '
+    'Incremental append by date (INSERT OR IGNORE); do not full-replace in production ETL runs.';
 
 -- ----------------------------------------------------------
 -- fund_metric_alerts

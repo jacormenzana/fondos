@@ -166,6 +166,21 @@ MULT_CRISIS_TTR_MALUS  = 0.85
 MULT_REGIME_SHARPE_BONUS = 1.10
 MULT_REGIME_SHARPE_MALUS = 0.90
 
+# §3f — Regime Sortino multipliers (downside-risk lens: complementa Sharpe)
+MULT_REGIME_SORTINO_BONUS = 1.08   # sortino >= p75 del universo en ese régimen
+MULT_REGIME_SORTINO_MALUS = 0.92   # sortino <= p25
+
+# §3f — Regime Max-DD multipliers (capital-destruction lens por régimen)
+# max_dd es negativo: mayor valor absoluto = peor (e.g. -0.40 < -0.10).
+MULT_REGIME_MAXDD_BONUS  = 1.10   # max_dd_reg >= p75 (menos negativo = menor pérdida)
+MULT_REGIME_MAXDD_MALUS  = 0.80   # max_dd_reg <= p25 (más negativo = mayor pérdida)
+
+# Umbral mínimo de regime_coverage_ratio para aplicar multiplicadores empíricos.
+# Por debajo del umbral, los multiplicadores de régimen se ponderan hacia 1.0
+# (fondo con historia insuficiente en regímenes → no castigar/premiar con pocos datos).
+REGIME_COVERAGE_MIN  = 0.43   # ≈ 3 de 7 regímenes con n_obs >= 12
+REGIME_COVERAGE_DAMP = 0.50   # fracción del multiplicador neto que se retiene si < MIN
+
 # §3f — Slope trend thresholds (normalized slope: std-devs per period)
 SLOPE_IMPROVING_THRESHOLD   =  0.05
 SLOPE_DETERIORATING_THRESHOLD = -0.05
@@ -300,7 +315,14 @@ def load_fund_metrics_for_scoring(
                 (f"return_ann_{suffix}", "since_inception", 0),
                 (f"sharpe_{suffix}",     "since_inception", 0),
                 (f"n_obs_{suffix}",      "since_inception", 0),
+                # §3f: downside-risk lenses — computed by regime_returns but unused until now
+                (f"sortino_{suffix}",    "since_inception", 0),
+                (f"max_dd_{suffix}",     "since_inception", 0),
             ]
+        # §3f: coverage guard — how many of the 7 regimes have enough history per fund
+        metrics_needed += [
+            ("regime_coverage_ratio", "since_inception", 0),
+        ]
 
     # P2-10: rolling percentile signals + slope trends (kill-switched)
     if ROLLING_PCTILE_P3_ENABLED:
@@ -475,6 +497,10 @@ def compute_regime_multiplier(
     regime_return_p75: float | None = None,
     regime_sharpe_p25: float | None = None,
     regime_sharpe_p75: float | None = None,
+    regime_sortino_p25: float | None = None,
+    regime_sortino_p75: float | None = None,
+    regime_maxdd_p25: float | None = None,
+    regime_maxdd_p75: float | None = None,
 ) -> tuple[float, dict]:
     """
     Calcula el multiplicador de régimen para un fondo.
@@ -585,6 +611,49 @@ def compute_regime_multiplier(
                 elif sharpe_reg <= regime_sharpe_p25:
                     multiplier *= MULT_REGIME_SHARPE_MALUS
                     detail["regime_sharpe_malus"] = MULT_REGIME_SHARPE_MALUS
+
+    # ── §3f: Sortino por régimen — downside-risk lens ─────────────────────────
+    if regime_sortino_p25 is not None and regime_sortino_p75 is not None:
+        from proyecto3.src.regime_classifier import _REGIME_SUFFIX
+        suffix = _REGIME_SUFFIX.get(regime)
+        if suffix:
+            n_obs        = row.get(f"n_obs_{suffix}", np.nan)
+            sortino_reg  = row.get(f"sortino_{suffix}", np.nan)
+            if (not np.isnan(n_obs) and n_obs >= MIN_OBS_REGIME_SCORING and
+                    not np.isnan(sortino_reg)):
+                if sortino_reg >= regime_sortino_p75:
+                    multiplier *= MULT_REGIME_SORTINO_BONUS
+                    detail["regime_sortino_bonus"] = MULT_REGIME_SORTINO_BONUS
+                elif sortino_reg <= regime_sortino_p25:
+                    multiplier *= MULT_REGIME_SORTINO_MALUS
+                    detail["regime_sortino_malus"] = MULT_REGIME_SORTINO_MALUS
+
+    # ── §3f: Max-DD por régimen — capital-destruction lens ────────────────────
+    if regime_maxdd_p25 is not None and regime_maxdd_p75 is not None:
+        from proyecto3.src.regime_classifier import _REGIME_SUFFIX
+        suffix = _REGIME_SUFFIX.get(regime)
+        if suffix:
+            n_obs       = row.get(f"n_obs_{suffix}", np.nan)
+            maxdd_reg   = row.get(f"max_dd_{suffix}", np.nan)
+            if (not np.isnan(n_obs) and n_obs >= MIN_OBS_REGIME_SCORING and
+                    not np.isnan(maxdd_reg)):
+                # max_dd is negative: higher (less negative) = less loss = better
+                if maxdd_reg >= regime_maxdd_p75:
+                    multiplier *= MULT_REGIME_MAXDD_BONUS
+                    detail["regime_maxdd_bonus"] = MULT_REGIME_MAXDD_BONUS
+                elif maxdd_reg <= regime_maxdd_p25:
+                    multiplier *= MULT_REGIME_MAXDD_MALUS
+                    detail["regime_maxdd_malus"] = MULT_REGIME_MAXDD_MALUS
+
+    # ── §3f: Amortiguación por cobertura insuficiente de régimen ─────────────
+    # Si un fondo tiene pocos regímenes con historia suficiente (coverage_ratio
+    # < REGIME_COVERAGE_MIN), las señales empíricas son poco fiables → reducir
+    # el efecto neto del multiplicador hacia 1.0.
+    coverage = row.get("regime_coverage_ratio", np.nan)
+    if not np.isnan(coverage) and coverage < REGIME_COVERAGE_MIN:
+        net = multiplier - 1.0
+        multiplier = 1.0 + net * REGIME_COVERAGE_DAMP
+        detail["regime_coverage_damp"] = round(coverage, 3)
 
     # ── §3f: Crisis Financiera — stress resilience multipliers ────────────────
     if regime == "Crisis_Financiera":
@@ -774,6 +843,8 @@ def score_funds(
     suffix = _REGIME_SUFFIX.get(regime)
     regime_p25 = regime_p75 = None
     regime_sharpe_p25 = regime_sharpe_p75 = None
+    regime_sortino_p25 = regime_sortino_p75 = None
+    regime_maxdd_p25 = regime_maxdd_p75 = None
     if suffix:
         ret_col = f"return_ann_{suffix}"
         if ret_col in df.columns and not df[ret_col].isna().all():
@@ -789,6 +860,15 @@ def score_funds(
         if sharpe_col and sharpe_col in df.columns and not df[sharpe_col].isna().all():
             regime_sharpe_p25 = df[sharpe_col].quantile(0.25)
             regime_sharpe_p75 = df[sharpe_col].quantile(0.75)
+        # §3f: downside-risk lenses — sortino and max_dd per regime
+        sortino_col = f"sortino_{suffix}"
+        if sortino_col in df.columns and not df[sortino_col].isna().all():
+            regime_sortino_p25 = df[sortino_col].quantile(0.25)
+            regime_sortino_p75 = df[sortino_col].quantile(0.75)
+        maxdd_col = f"max_dd_{suffix}"
+        if maxdd_col in df.columns and not df[maxdd_col].isna().all():
+            regime_maxdd_p25 = df[maxdd_col].quantile(0.25)
+            regime_maxdd_p75 = df[maxdd_col].quantile(0.75)
 
     results = []
 
@@ -809,6 +889,10 @@ def score_funds(
                 regime_return_p75=regime_p75,
                 regime_sharpe_p25=regime_sharpe_p25,
                 regime_sharpe_p75=regime_sharpe_p75,
+                regime_sortino_p25=regime_sortino_p25,
+                regime_sortino_p75=regime_sortino_p75,
+                regime_maxdd_p25=regime_maxdd_p25,
+                regime_maxdd_p75=regime_maxdd_p75,
             )
 
             score_final = score_base * mult if excl is None else 0.0
