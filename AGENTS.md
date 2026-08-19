@@ -228,7 +228,7 @@ proyecto2/
 Runs are idempotent via an input fingerprint: `utils/fingerprint.py::compute_input_hash()` (SHA-1 over NAV
 last-date/rows/value + IPC coverage + `METRIC_VERSION` + `CALC_VERSION`) is stored in `fund_metric_state`.
 Unchanged inputs → 100% cache-hit, 0 recomputed. **Bump `CALC_VERSION` (`run_pipeline.py`, currently
-`"20260815"`) to force a full recompute** of all ISINs (e.g. after changing calculation logic).
+`"20260819"`) to force a full recompute** of all ISINs (e.g. after changing calculation logic).
 
 ### Macro factors (OLS model — machine-verified)
 
