@@ -5,7 +5,7 @@ setlocal enabledelayedexpansion
 chcp 65001 > nul
 
 :: ============================================================
-:: P2_calculateIndicators.bat  (v28 â€” export_metrics post-pipeline)
+:: P2_calculateIndicators.bat  (v28 — export_metrics post-pipeline)
 :: Ejecucion del pipeline de calculo de indicadores cuantitativos
 :: (P2: risk_metrics, macro_sensitivity, regime_returns, rolling, ...)
 ::
@@ -25,6 +25,12 @@ set PYTHON=C:\Users\Administrador\anaconda3\envs\des\python.exe
 set ROOT=C:\desarrollo\fondos
 set LOG_DIR=%ROOT%\proyecto2\log
 
+:: --force flag: bypass hash-cache AND quarterly OLS gate (use after CALC_VERSION bump
+:: or after a macro-window redesign to force full OLS recompute within the same quarter).
+:: Usage: P2_calculateIndicators.bat --force
+set FORCE_FLAG=
+if /i "%~1"=="--force" set FORCE_FLAG=--force
+
 :: Timestamp YYYYMMDD_HHMMSS
 for /f "tokens=2 delims==" %%a in ('wmic OS Get localdatetime /value') do set DT=%%a
 set STAMP=%DT:~0,8%_%DT:~8,6%
@@ -37,6 +43,7 @@ echo ============================================================ >> "%LOG%"
 echo  P2 Calculate Indicators -- Inicio: %STAMP%                  >> "%LOG%"
 echo  ROOT:   %ROOT%                                              >> "%LOG%"
 echo  PYTHON: %PYTHON%                                            >> "%LOG%"
+echo  FORCE:  %FORCE_FLAG% >> "%LOG%"
 echo ============================================================ >> "%LOG%"
 
 echo.
@@ -62,7 +69,7 @@ echo --- PIPELINE: run_pipeline ------------------------------- >> "%LOG%"
 :: Modo prueba (descomentar para debug de un ISIN):
 :: %PYTHON% -u -X utf8 -m proyecto2.src.pipeline.run_pipeline --isin LU0070214613 --dry-run >> "%LOG%" 2>> "%ERR%"
 
-%PYTHON% -u -X utf8 -m proyecto2.src.pipeline.run_pipeline >> "%LOG%" 2>> "%ERR%"
+%PYTHON% -u -X utf8 -m proyecto2.src.pipeline.run_pipeline %FORCE_FLAG% >> "%LOG%" 2>> "%ERR%"
 
 :: Capturar codigo de salida INMEDIATAMENTE (antes de cualquier otro comando)
 set RC=!ERRORLEVEL!
