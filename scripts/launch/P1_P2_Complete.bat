@@ -27,6 +27,12 @@ set ROOT=C:\desarrollo\fondos
 set LAUNCH=%ROOT%\scripts\launch
 set LOG_DIR=%ROOT%\proyecto1\log
 
+:: --force flag: passed through to P2_calculateIndicators.bat to bypass
+:: hash-cache AND quarterly OLS gate (force full OLS recompute).
+:: Usage: P1_P2_Complete.bat --force
+set FORCE_FLAG=
+if /i "%~1"=="--force" set FORCE_FLAG=--force
+
 :: Timestamp YYYYMMDD_HHMMSS
 for /f "tokens=2 delims==" %%a in ('wmic OS Get localdatetime /value') do set DT=%%a
 set STAMP=%DT:~0,8%_%DT:~8,6%
@@ -38,6 +44,7 @@ echo ============================================================ >> "%LOG%"
 echo  P1+P2 Complete -- Inicio: %STAMP%                           >> "%LOG%"
 echo  ROOT:   %ROOT%                                              >> "%LOG%"
 echo  PYTHON: %PYTHON%                                            >> "%LOG%"
+echo  FORCE:  %FORCE_FLAG% >> "%LOG%"
 echo ============================================================ >> "%LOG%"
 
 echo.
@@ -134,7 +141,7 @@ echo [%T4:~0,2%:%T4:~2,2%:%T4:~4,2%] PASO 4/4: P2_calculateIndicators
 echo. >> "%LOG%"
 echo --- PASO 4/4: P2_calculateIndicators -- Inicio: !T4! -------- >> "%LOG%"
 
-call "%LAUNCH%\P2_calculateIndicators.bat"
+call "%LAUNCH%\P2_calculateIndicators.bat" %FORCE_FLAG%
 set RC4=!ERRORLEVEL!
 
 for /f "tokens=2 delims==" %%a in ('wmic OS Get localdatetime /value') do set DT=%%a
