@@ -335,6 +335,28 @@ class TestPerFundWindowedSelection:
         result = compute_macro_sensitivity(nav, mac)
         assert _extract(result, "macro_n_obs") == pytest.approx(n - 1, abs=1)
 
+    def test_zero_variance_factor_dropped_no_lapack_error(self):
+        """
+        A factor that is exactly zero throughout the fund's window (e.g. d_rate_eu
+        during the ECB zero-rate period) must be dropped before VIF/lstsq.
+        Passing a zero-norm column to lstsq causes LAPACK DLASCLS 'parameter 4/5
+        illegal value' warnings — the zero-variance guard prevents that.
+        """
+        nav = _nav_df_range("2016-01-31", "2022-06-30")
+        n   = len(nav)
+        dates = pd.date_range("2016-01-31", periods=n, freq="ME")
+        macro = pd.DataFrame(
+            {
+                "d_rate_eu": np.zeros(n),           # all-zero column → DLASCLS trigger
+                "oil_yoy":   np.random.default_rng(99).normal(0, 0.05, n),
+            },
+            index=dates,
+        )
+        result = compute_macro_sensitivity(nav, macro)
+        # d_rate_eu must be dropped silently; oil_yoy kept; OLS must complete cleanly
+        assert result, "OLS should succeed with zero-variance factor removed"
+        assert _extract(result, "beta_oil") != "MISSING"
+
     def test_all_factors_pruned_returns_empty_no_lapack_error(self):
         """
         When every factor fails the per-fund coverage threshold (e.g. all are

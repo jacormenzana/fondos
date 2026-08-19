@@ -394,6 +394,14 @@ def compute_macro_sensitivity(
         return []
 
     y     = merged["r_fondo"].values
+
+    # Drop zero-variance factors (e.g. d_rate_eu all-zero during ECB flat-rate periods)
+    # before VIF/lstsq. A zero-norm column causes LAPACK DLASCLS "parameter 4/5 illegal
+    # value" warnings printed directly to stderr — the try/except in _ols cannot catch them.
+    _stds = merged[factor_cols].std()
+    factor_cols = [c for c in factor_cols if _stds[c] > 1e-10]
+    if not factor_cols:
+        return []
     X_raw = merged[factor_cols].values
 
     # Filtrar factores con alta multicolinealidad (VIF > umbral)
