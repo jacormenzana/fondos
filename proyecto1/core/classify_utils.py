@@ -1218,6 +1218,13 @@ _PREFILTER_MON_INCLUDE = [
     "euro liquidity",                # SISF EURO LIQUIDITY + variantes (vol=1)
     "dollar liquidity",              # SISF US DOLLAR LIQUIDITY (vol=4 en EUR NAV)
     "usd liquidity",                 # alias
+    # FIX-MON-DINERO-1 (2026-08-20): "dinero" = Spanish for money; used in
+    # money-market fund names (MUTUAFONDO DINERO, GESTION DINERO, etc.).
+    # P#5-compliant generic signal — not fund-name specific.
+    # FIX-MON-FMM-1 (2026-08-20): "fmm" is the Spanish regulatory abbreviation
+    # for Fondo del Mercado Monetario (MMFR label in DDF KIDs).
+    "dinero",
+    "fmm",
 ]
 _PREFILTER_MON_EXCLUDE = [
     "short duration", "ultra short", "short term",
@@ -1259,6 +1266,10 @@ _PREFILTER_RFF_INCLUDE = [
     "ubs glob dynamic", "db fixed income", "bsf em flex dynamic",
     "amundi str income", "jupiter dynamic",
     "pimco diver", "pimco esg income",
+    # FIX-RFF-DYNAMIC-INCOME-1 (2026-08-20): "dynamic income" is a bond-income
+    # fund naming convention (MAN DYNAMIC INCOME, etc.). Must precede the RV
+    # prefilter so "income" in _PREFILTER_RV_INCLUDE does not capture it.
+    "dynamic income",
 ]
 _PREFILTER_RFF_EXCLUDE = [
     "money", "monetary", "liquidity", "cash",
@@ -1288,6 +1299,10 @@ _PREFILTER_RV_INCLUDE = [
     "ishares",
     "dws esg dynamic opp", "dws esg dyn opport",
     "thematics",
+    # FIX-RV-ASHARES-1 (2026-08-20): "a-shr"/"a-shrs"/"a shares" = China A-Shares;
+    # unambiguously equity. Provides name signal when stored KIID is defective.
+    "a-shr",
+    "a shares",
 ]
 _PREFILTER_RV_EXCLUDE = [
     "money", "monetary", "liquidity", "cash",
@@ -2273,6 +2288,10 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
         "acciones y otros valores de renta variable",
         "en acciones y otros", "shares of companies",
         "company shares", "common shares",
+        # FIX-RV-COMMON-STOCKS-1 (2026-08-20): North American English term for
+        # ordinary shares. Confirmed missing: Capital Group New Perspective funds
+        # ("investing in common stocks of companies located around the world").
+        "common stocks", "common stock of",
         "reproduce", "replica la rentabilidad",  # fondos indexados equity
         "seguimiento del índice",
         "fondo de renta variable",               # mención explícita como tipo de fondo
@@ -2332,6 +2351,10 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
         "valores de renta fija", "fixed income securities",
         "invierte en bonos", "inverts in bonds",
         "renta fija", "invierte principalmente en bonos",
+        # FIX-B1-BOND-INVIRTIENDO-1 (2026-08-20): DDF-format Spanish KIDs use the
+        # gerund "invirtiendo" (investing) in the objective clause rather than the
+        # 3rd-person present "invierte". Both forms declare a bond primary mandate.
+        "invirtiendo principalmente en bonos",
         "primarily in bonds", "debt securities",
         "invierte en valores de deuda",
         # FIX-P1-NTC (2026-07-04): "invierte al menos" eliminado de aquí —
@@ -2380,6 +2403,8 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
     bond_dominant = any(k in w for k in [
         "primarily in bonds", "mainly in bonds", "principally in bonds",
         "invierte principalmente en bonos", "invierte en bonos",
+        # FIX-B1-BOND-INVIRTIENDO-1 (2026-08-20): gerund form for DDF Spanish KIDs
+        "invirtiendo principalmente en bonos",
         "fixed income securities", "fixed income fund",
         "bond fund", "fondo de bonos",
         "invierte en valores de renta fija",
@@ -2418,8 +2443,14 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
     # bonos del Estado y corporativos con calificación inferior a investment
     # grade". Sin este fix: bond_dominant=False → eq_dominant=True (por
     # "valores de renta variable" en la cláusula secundaria) → devuelve RV.
+    # FIX-B1-BOND-PRINCIPALMENTE-3 (2026-08-20): extend to gerund form
+    # "invirtiendo principalmente en bonos" used by DDF-format Spanish KIDs
+    # (MAN DYNAMIC INCOME: "invirtiendo principalmente en bonos emitidos por
+    # empresas y Gobiernos de todo el mundo"). The existing regex matches only
+    # the 3rd-person present "invierte"; the gerund "invirtiendo" is the
+    # standard DDF objective phrasing. Root cause: DDF vs KIID verb form mismatch.
     bond_dominant = bond_dominant or bool(re.search(
-        r'invierte\s+principalmente[^.]{0,120}en\s+bonos', w
+        r'inviert(?:e|iendo)\s+principalmente[^.]{0,120}en\s+bonos', w
     ))
 
     # RV dominante (declaración explícita de objetivo)
@@ -2692,8 +2723,16 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
     # en valores de renta fija cuyo emisor tenga su sede en cualquier parte del mundo"
     # — "también podrá" was incorrectly setting _minor_secondary_bond=True, causing
     # the fund to resolve as "Renta Variable" via line 2390 instead of "_RF_pending".
+    # FIX-B1-BOND-PRIMARY-GERUND-1 (2026-08-20): extend to gerund form
+    # "invirtiendo principalmente en bonos" used by DDF-format Spanish KIDs
+    # (MAN DYNAMIC INCOME). Without this, "también podrá invertir en bonos
+    # convertibles" (a secondary convertible-bond allowance within the primary
+    # bond mandate) incorrectly sets _minor_secondary_bond=True, causing line
+    # 2726 to return "Renta Variable" (eq_dominant wins over bond_dominant).
     _bond_primary_declared = bool(re.search(
-        r'invertir[aá]\s+principalmente\s+en\s+(?:valores\s+de\s+)?renta\s+fija', w
+        r'invertir[aá]\s+principalmente\s+en\s+(?:valores\s+de\s+)?renta\s+fija'
+        r'|invirtiendo\s+principalmente[^.]{0,50}en\s+bonos',
+        w
     ))
     _minor_secondary_bond = _minor_secondary_bond or (
         bool(re.search(
@@ -2802,6 +2841,16 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
 
     if has_equity and has_bonds:
         if has_ar:
+            # FIX-ACT02-BOND-AR-1 (2026-08-20): when a primary bond mandate is
+            # explicitly declared (_bond_primary_declared=True), AR language
+            # describes the APPROACH (absolute return ON bonds), not a true
+            # Alternativo multi-asset mandate. Example: MAN DYNAMIC INCOME —
+            # "invirtiendo principalmente en bonos" (bond primary) + "absolute
+            # return" approach. Return _RF_pending so resolve_rf_subtype()
+            # correctly assigns Renta Fija Flexible. Genuine Alternativo funds
+            # don't declare a primary bond mandate alongside their AR mandate.
+            if bond_dominant and _bond_primary_declared:
+                return "_RF_pending"
             return "Alternativo"
         return "Mixtos"
 
