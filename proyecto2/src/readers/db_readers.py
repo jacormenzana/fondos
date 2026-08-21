@@ -111,11 +111,20 @@ def get_isins_with_nav(conn: sqlite3.Connection) -> list[str]:
     ausentes de fund_master son invariablemente datos de NAV cargados antes de
     que el fondo haya pasado por el pipeline P1; la correcta accion es excluir
     esos ISINs del universo P2 hasta que P1 los clasifique.
+
+    Excluye fondos con nav_sources.data_status='INACTIVE': fondos cuyo NAV
+    esta permanentemente congelado (p.ej. liquidados sin fecha de cierre
+    registrada) y cuya recomputacion metrica seria silenciosa perdida de CPU.
+    Sus filas existentes en fund_metrics se conservan para seguimiento de
+    posiciones en cartera. El COALESCE('OK') garantiza que ISINs sin fila en
+    nav_sources (fondos con NAV pero sin descubrimiento previo) siguen incluidos.
     """
     rows = conn.execute(
         """SELECT DISTINCT n.ISIN
            FROM fund_nav_monthly n
            INNER JOIN fund_master m USING (ISIN)
+           LEFT JOIN nav_sources s USING (ISIN)
+           WHERE COALESCE(s.data_status, 'OK') <> 'INACTIVE'
            ORDER BY n.ISIN"""
     ).fetchall()
     return [r[0] for r in rows]

@@ -1056,7 +1056,7 @@ NAME_SIGNALS_RV: list = [
 
 
 NAME_SIGNALS_ALTERNATIVO: list = [
-    "absolute return", "abs ret", "absret",
+    "absolute return", "abs ret", "absret", "ab rtrn",  # "ab rtrn" = standard abbrev (GS ART, etc.)
     "arb strat", "arbit strat",
     "tiede", "tiedm",
     "lyxor t arb", "lyxor t arbit",
@@ -1390,7 +1390,7 @@ def _prefilter_match_mixtos(name_l: str) -> bool:
 
 # --- Alternativos ---
 _PREFILTER_ALT_INCLUDE = [
-    "absolute return", "hedge fund", "long short", "long/short",
+    "absolute return", "abs ret", "ab rtrn", "hedge fund", "long short", "long/short",
     "market neutral", "relative value", "arbitrage", "global macro",
     "glob macro",
     "alpha 10 ma", "alph 10 ma",
