@@ -669,17 +669,38 @@ def extract_priips_costs(
                 _syn_hy = max(_pos_hy) if _pos_hy else 5.0
             _syn_hy = _syn_hy or 5.0
             if 0 < _syn_hy <= 50:
-                _sched.append({
-                    'Horizon_Years': _syn_hy,
-                    'Is_RHP': 1,
-                    'Annual_Impact_Pct': out['ACI_RHP'],
-                    'Source': 'PRIIPS_COSTS_OVER_TIME',
-                })
-                _log.info(
-                    "[FIX-ACI-SCHEDULE-INJECT] %s: synthesized RHP schedule row "
-                    "(Annual_Impact_Pct=%.4f%%, Horizon_Years=%.4f)",
-                    isin, out['ACI_RHP'], _syn_hy,
+                # PRIMARY KEY is (ISIN, Horizon_Years) in fund_cost_schedule.
+                # Appending a new row at the same Horizon_Years as an existing
+                # non-RHP row causes a PK conflict that rolls back the entire
+                # schedule write.  PROMOTE the existing row to Is_RHP=1 instead
+                # of appending a duplicate (FIX-ACI-SCHEDULE-INJECT-PK).
+                _syn_hy_r = round(_syn_hy, 6)
+                _existing = next(
+                    (r for r in _sched
+                     if round(r.get('Horizon_Years', 0), 6) == _syn_hy_r),
+                    None,
                 )
+                if _existing is not None:
+                    _existing['Is_RHP'] = 1
+                    if _existing.get('Annual_Impact_Pct') is None:
+                        _existing['Annual_Impact_Pct'] = out['ACI_RHP']
+                    _log.info(
+                        "[FIX-ACI-SCHEDULE-INJECT] %s: promoted existing schedule row "
+                        "to Is_RHP=1 (Annual_Impact_Pct=%.4f%%, Horizon_Years=%.6f)",
+                        isin, _existing['Annual_Impact_Pct'], _syn_hy_r,
+                    )
+                else:
+                    _sched.append({
+                        'Horizon_Years': _syn_hy_r,
+                        'Is_RHP': 1,
+                        'Annual_Impact_Pct': out['ACI_RHP'],
+                        'Source': 'PRIIPS_COSTS_OVER_TIME',
+                    })
+                    _log.info(
+                        "[FIX-ACI-SCHEDULE-INJECT] %s: synthesized new RHP schedule row "
+                        "(Annual_Impact_Pct=%.4f%%, Horizon_Years=%.6f)",
+                        isin, out['ACI_RHP'], _syn_hy_r,
+                    )
 
         # --- G. Calidad (§3) ---
         out['Cost_Extraction_Quality'] = _assess_quality(
