@@ -30,7 +30,7 @@ If a request conflicts with a principle or restriction, stop and report.
 ~3,200 European investment funds. Goal: capital preservation relative to IPC+M3 (~6–7% annual, max drawdown 15%, 3–5 year horizon).  
 Stack: Python 3.13, SQLite, Windows 10, Conda env `des`.  
 <!-- AUTO:BEGIN schema-version -->
-DB: `db/fondos.sqlite` (schema v25). Master list: `c:\data\fondos\in\GestoresDeFondosv1.xlsx`.
+DB: `db/fondos.sqlite` (schema v26). Master list: `c:\data\fondos\in\GestoresDeFondosv1.xlsx`.
 <!-- AUTO:END schema-version -->
 
 ---
@@ -91,7 +91,7 @@ HTTP policy: 3 retries (1s/2s/4s backoff), timeout 15s. 429 does NOT retry.
 ### Key support modules
 
 <!-- AUTO:BEGIN kill-switches-line -->
-- `shared/config.py` — all constants: `DB_PATH`, `SCHEMA_VERSION` (`"v25"`), `DOMAIN_VALUES`, `ATTRIBUTE_CATALOG`, kill-switches (`PRIIPS_COST_EXTRACTION_ENABLED`, `SHORT_HORIZON_SCORING_ENABLED`, `ROLLING_STATS_ENABLED`, `ROLLING_PCTILE_P3_ENABLED`, `BENCHMARK_DECOMP_ENABLED`, `BENCHMARK_ROLE_ENABLED`, `INTER18_RECONCILIATION_ENABLED`, `DLA2_ARBITRATION_ENABLED`)
+- `shared/config.py` — all constants: `DB_PATH`, `SCHEMA_VERSION` (`"v26"`), `DOMAIN_VALUES`, `ATTRIBUTE_CATALOG`, kill-switches (`PRIIPS_COST_EXTRACTION_ENABLED`, `SHORT_HORIZON_SCORING_ENABLED`, `ROLLING_STATS_ENABLED`, `ROLLING_PCTILE_P3_ENABLED`, `BENCHMARK_DECOMP_ENABLED`, `BENCHMARK_ROLE_ENABLED`, `INTER18_RECONCILIATION_ENABLED`, `DLA2_ARBITRATION_ENABLED`)
 <!-- AUTO:END kill-switches-line -->
 - `shared/schema_checks.py` — `assert_schema_alignment()` validates DB columns at startup
 - `proyecto1/core/classify_utils.py` — **single source of truth** for all categorical normalization maps (EN→ES for Sector_Focus, Type, Family). Import from here; never duplicate elsewhere (P#11 / R-1).
@@ -139,6 +139,8 @@ HTTP policy: 3 retries (1s/2s/4s backoff), timeout 15s. 429 does NOT retry.
 ---
 
 ## P2 — Quantitative Metrics Pipeline
+
+**Medallion layering:** DB tables follow a Bronze (raw) → Silver (normalized) → Gold (indicators) structure. See `doc/reglas/SCHEMA_REFERENCE.md` §Medallion Architecture for the full table mapping. Gold rows carry `algorithm_version` and `batch_id` audit columns (v26) linking each row to the exact `CALC_VERSION` and pipeline run that computed it.
 
 ### Module map
 

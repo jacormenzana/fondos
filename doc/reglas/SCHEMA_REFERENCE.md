@@ -38,6 +38,24 @@
 
 ---
 
+## Medallion Architecture — Bronze / Silver / Gold
+
+The database follows a logical **Medallion Architecture** matching the physical table structure.
+No data migration is required; this section names the layering that already exists.
+
+| Layer | Tables | Description |
+|-------|--------|-------------|
+| **Bronze** (raw, append-only) | `fund_nav_monthly`, `fund_nav_daily`, `series_macro`, `series_benchmark`, `series_inflation`; `fund_kiid_metadata.Raw_KIID_Text` | Immutable source data. Never transformed in place. |
+| **Silver** (validated / normalized) | `fund_master`, `fund_benchmarks`, `fund_cost_schedule`, `fund_families`, `fund_data_quality_issues` | Classified and consistency-checked records; rebuilt each pipeline cycle. |
+| **Gold** (calculated indicators) | `fund_metrics`, `fund_metric_timeseries`, `fund_metric_alerts`, `fund_scores`, `portfolio_scenarios`, `portfolio_weights` | Derived outputs; fully recomputable from Bronze+Silver. Each Gold row carries `algorithm_version` (= `CALC_VERSION`) and `batch_id` (per-run id) for audit traceability (v26). |
+| **State / control** (cross-cutting) | `fund_metric_state`, `p2_pipeline_log`, `ingestion_log`, `nav_sources` | Pipeline orchestration state; not domain data. |
+
+**Key invariant (P#1 + Gold decoupling):** Gold tables can be truncated and rebuilt from Bronze+Silver
+without touching source data. Bump `CALC_VERSION` in `run_pipeline.py` and run with `--force` to
+trigger a full Gold recompute. All Gold rows produced by that run share the new `batch_id`.
+
+---
+
 ## TABLA 1: fund_master
 
 **Propósito:** Registro maestro de cada clase de fondo (1 fila = 1 ISIN)  

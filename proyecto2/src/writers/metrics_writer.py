@@ -7,6 +7,10 @@ Created on Fri Jan  2 21:28:20 2026
 from datetime import date
 
 def write_metrics(engine, isin, metrics_df, horizon='since_inception'):
+    # LEGACY — this function is not called by run_pipeline.py (which uses its own
+    # _write_metrics / _replace_beta_set / _write_timeseries helpers).
+    # It is preserved for historical reference only and is NOT audit-column-aware
+    # (v26: algorithm_version, batch_id). Do not use in new code.
     metrics_df = metrics_df.copy()
     metrics_df['isin'] = isin
     metrics_df['horizon'] = horizon

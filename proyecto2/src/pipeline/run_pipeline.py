@@ -62,6 +62,7 @@ import time
 import traceback
 from datetime import date, datetime
 from pathlib import Path
+from uuid import uuid4
 
 import pandas as pd
 
@@ -298,8 +299,9 @@ def _write_metrics(
     sql = """
         INSERT OR REPLACE INTO fund_metrics
             (isin, metric, horizon, value, real_flag,
-             calculation_date, metric_version, benchmark_id, source_rows)
-        VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?)
+             calculation_date, metric_version, benchmark_id, source_rows,
+             algorithm_version, batch_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
     """
     rows = [
         (
@@ -312,6 +314,8 @@ def _write_metrics(
             today,
             mv,
             m.get("source_rows"),
+            CALC_VERSION,
+            RUN_BATCH_ID,
         )
         for m in metrics
     ]
@@ -354,8 +358,9 @@ def _write_timeseries(
     sql = """
         INSERT OR IGNORE INTO fund_metric_timeseries
             (isin, metric, window, date, value, real_flag,
-             ref_type, ref_value, source_rows)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ref_type, ref_value, source_rows,
+             algorithm_version, batch_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
     data = [
         (
@@ -365,6 +370,8 @@ def _write_timeseries(
             r.get("ref_type"),
             r.get("ref_value"),
             r.get("source_rows"),
+            CALC_VERSION,
+            RUN_BATCH_ID,
         )
         for r in rows
     ]
@@ -424,8 +431,9 @@ def _replace_beta_set(
     sql_ins = """
         INSERT OR REPLACE INTO fund_metrics
             (isin, metric, horizon, value, real_flag,
-             calculation_date, metric_version, benchmark_id, source_rows)
-        VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?)
+             calculation_date, metric_version, benchmark_id, source_rows,
+             algorithm_version, batch_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
     """
     rows = [
         (
@@ -438,6 +446,8 @@ def _replace_beta_set(
             today,
             mv,
             m.get("source_rows"),
+            CALC_VERSION,
+            RUN_BATCH_ID,
         )
         for m in metrics
     ]
@@ -523,10 +533,10 @@ def _log(
         return
     sql = (
         "INSERT INTO p2_pipeline_log"
-        " (isin, step, status, horizon, metric_version, message)"
-        " VALUES (?, ?, ?, ?, ?, ?)"
+        " (isin, step, status, horizon, metric_version, message, batch_id)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?)"
     )
-    args = (isin, step, status, horizon, METRIC_VERSION, message)
+    args = (isin, step, status, horizon, METRIC_VERSION, message, RUN_BATCH_ID)
     # EFF-2: skip own transaction when the caller batches for us
     if conn.in_transaction:
         conn.execute(sql, args)
@@ -602,7 +612,23 @@ _ALL_METRIC_FAMILIES = frozenset({
 
 # Bump this string whenever the calculation logic changes to force a
 # cache-miss in fund_metric_state even when NAV/IPC inputs are unchanged.
-CALC_VERSION: str = "20260819"  # v30: per-fund windowed OLS factor selection (fix global-dropna window truncation)
+CALC_VERSION: str = "20260820"  # v31: spread_ig source BAA10YM (Moody's public) replacing restricted BAMLC0A0CM
+
+# ── v26 audit columns ──────────────────────────────────────────────────────
+# RUN_BATCH_ID is set once at the start of run() and written to every Gold row
+# produced in that invocation. It correlates fund_metrics / fund_metric_timeseries
+# rows and p2_pipeline_log entries back to a single pipeline run.
+# Initialized here as a sentinel; actual value is always set before any write.
+RUN_BATCH_ID: str = ""
+
+
+def _new_batch_id() -> str:
+    """Return a unique, human-readable batch id for the current run.
+
+    Format: ``P2-YYYYMMDD_HHMMSS-<6-hex>``
+    Pure function (no side effects) — easy to unit-test (R-7).
+    """
+    return f"P2-{datetime.now():%Y%m%d_%H%M%S}-{uuid4().hex[:6]}"
 
 # P3-consumed metric surface — used by [COVERAGE] observability line to baseline
 # distinct-ISIN coverage across runs. Update this tuple whenever P3's scoring
@@ -641,8 +667,9 @@ def run(
     Consulta la docstring del módulo para descripción de cada parámetro.
     """
     # ---- Setup ------------------------------------------------
-    global _ABORT
+    global _ABORT, RUN_BATCH_ID
     _ABORT = False
+    RUN_BATCH_ID = _new_batch_id()   # v26: unique id for this run; written to every Gold row
     _install_signal_handlers()
     _prevent_sleep()
 
@@ -669,6 +696,10 @@ def run(
     def _want(family: str) -> bool:
         """True si la familia debe calcularse según metrics_filter."""
         return metrics_filter is None or family in metrics_filter
+
+    # Backfill flag (defined before try so finally can reference it)
+    _is_backfill    = False
+    _backfill_reason = ""
 
     # Counters (defined before try so finally can always reference them)
     t_run_start   = time.time()
@@ -697,6 +728,46 @@ def run(
                 conn.commit()
             except sqlite3.OperationalError:
                 pass  # column already exists
+
+        # ── v26: Backfill detection ──────────────────────────────────────────
+        # A run is a "backfill" when it forces recomputation of previously
+        # calculated rows, either explicitly (--force) or because the algorithm
+        # version changed (CALC_VERSION bump). Backfill runs are logged with
+        # BACKFILL_START / BACKFILL_END markers in p2_pipeline_log for auditability.
+        if force:
+            _is_backfill = True
+            _backfill_reason = f"--force flag | CALC_VERSION={CALC_VERSION}"
+        else:
+            try:
+                _stored_algo = conn.execute(
+                    "SELECT algorithm_version FROM fund_metrics "
+                    "WHERE algorithm_version IS NOT NULL LIMIT 1"
+                ).fetchone()
+                if _stored_algo and _stored_algo[0] and _stored_algo[0] != CALC_VERSION:
+                    _is_backfill = True
+                    _backfill_reason = (
+                        f"CALC_VERSION drift: stored={_stored_algo[0]} "
+                        f"current={CALC_VERSION}"
+                    )
+            except Exception:
+                pass  # column may not exist yet on first run after migration
+
+        if _is_backfill and not dry_run:
+            try:
+                conn.execute(
+                    "INSERT INTO p2_pipeline_log"
+                    " (isin, step, status, horizon, metric_version, message, batch_id)"
+                    " VALUES (NULL, 'BACKFILL_START', 'INFO', NULL, ?, ?, ?)",
+                    (METRIC_VERSION, _backfill_reason, RUN_BATCH_ID),
+                )
+                conn.commit()
+            except Exception:
+                pass  # never block pipeline on audit logging
+            logger.info(
+                f"[BACKFILL] Full recompute initiated | batch_id={RUN_BATCH_ID} | "
+                f"reason: {_backfill_reason}"
+            )
+        # ────────────────────────────────────────────────────────────────────
 
         # -- Cargar IPC --------------------------------------------
         if not ipc_available(conn, REGION_IPC):
@@ -740,7 +811,7 @@ def run(
         else:
             excluded = [c for c in ["spread_ig"] if c not in macro_df.columns]
             if excluded:
-                logger.info(
+                logger.warning(
                     f"  [MacroFactors] Factores excluidos por cobertura "
                     f"insuficiente: {excluded}"
                 )
@@ -1458,8 +1529,8 @@ def run(
                 conn.execute("BEGIN IMMEDIATE")
                 conn.execute(
                     """INSERT INTO p2_pipeline_log
-                           (isin, step, status, horizon, metric_version, message)
-                       VALUES (NULL, 'RUN_SUMMARY', ?, NULL, ?, ?)""",
+                           (isin, step, status, horizon, metric_version, message, batch_id)
+                       VALUES (NULL, 'RUN_SUMMARY', ?, NULL, ?, ?, ?)""",
                     (
                         status,
                         METRIC_VERSION,
@@ -1469,11 +1540,34 @@ def run(
                             f"warnings={n_warnings} written={total_written} "
                             f"elapsed={elapsed_total:.0f}s"
                         ),
+                        RUN_BATCH_ID,
                     ),
                 )
                 conn.execute("COMMIT")
             except Exception:
                 pass  # never crash in finally
+
+            # v26: BACKFILL_END marker (logged after RUN_SUMMARY so it's always last)
+            if _is_backfill:
+                try:
+                    conn.execute("BEGIN IMMEDIATE")
+                    conn.execute(
+                        "INSERT INTO p2_pipeline_log"
+                        " (isin, step, status, horizon, metric_version, message, batch_id)"
+                        " VALUES (NULL, 'BACKFILL_END', ?, NULL, ?, ?, ?)",
+                        (
+                            status,
+                            METRIC_VERSION,
+                            (
+                                f"batch_id={RUN_BATCH_ID} recomputed={n_processed} "
+                                f"errors={n_errors} elapsed={elapsed_total:.0f}s"
+                            ),
+                            RUN_BATCH_ID,
+                        ),
+                    )
+                    conn.execute("COMMIT")
+                except Exception:
+                    pass  # never crash in finally
 
         # ── Observability signals ─────────────────────────────────────────────
         # Three diagnostic lines emitted after every non-dry run that processed

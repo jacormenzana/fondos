@@ -582,6 +582,60 @@ def check_schema_v24(conn) -> dict:
     return {'ok': len(issues) == 0, 'issues': issues}
 
 
+# ============================================================
+# fund_metrics / fund_metric_timeseries / p2_pipeline_log
+# Columnas canónicas de auditoría v26 (Pillar 3 — algorithm_version + batch_id)
+# ============================================================
+FUND_METRICS_AUDIT_COLUMNS: list[str] = [
+    "algorithm_version",
+    "batch_id",
+]
+FUND_METRIC_TIMESERIES_AUDIT_COLUMNS: list[str] = [
+    "algorithm_version",
+    "batch_id",
+]
+P2_PIPELINE_LOG_AUDIT_COLUMNS: list[str] = [
+    "batch_id",
+]
+
+
+def check_schema_v26(conn) -> dict:
+    """
+    Valida v26: v25 completo + columnas de auditoría en Gold tables.
+
+    Columnas nuevas:
+      fund_metrics:            algorithm_version, batch_id
+      fund_metric_timeseries:  algorithm_version, batch_id
+      p2_pipeline_log:         batch_id
+
+    Returns: {'ok': bool, 'issues': list[str]}
+    """
+    issues: list[str] = []
+    v25 = check_schema_v25(conn)
+    issues += v25["issues"]
+
+    checks = [
+        ("fund_metrics",           FUND_METRICS_AUDIT_COLUMNS),
+        ("fund_metric_timeseries", FUND_METRIC_TIMESERIES_AUDIT_COLUMNS),
+        ("p2_pipeline_log",        P2_PIPELINE_LOG_AUDIT_COLUMNS),
+    ]
+    for table, expected_cols in checks:
+        cur = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        )
+        if not cur.fetchone():
+            issues.append(f"Tabla {table} no existe (requerida por v26)")
+            continue
+        actual = {r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        missing = [c for c in expected_cols if c not in actual]
+        if missing:
+            issues.append(
+                f"{table}: faltan columnas v26 {missing} — ejecuta migrate_schema_v26.py"
+            )
+
+    return {"ok": len(issues) == 0, "issues": issues}
+
+
 def check_schema_v25(conn) -> dict:
     """
     Valida v25: v24 completo + columna nav_sources.data_status presente.
@@ -678,6 +732,10 @@ def verify_db_schema(conn) -> dict[str, list[str]]:
         ("fund_data_quality_issues", FUND_DATA_QUALITY_ISSUES_COLUMNS_SET),
         ("fund_nav_monthly",         FUND_NAV_MONTHLY_COLUMNS_SET),
         ("fund_nav_daily",           FUND_NAV_DAILY_COLUMNS_SET),
+        # v26: audit columns on Gold tables (algorithm_version + batch_id)
+        ("fund_metrics",             frozenset(FUND_METRICS_AUDIT_COLUMNS)),
+        ("fund_metric_timeseries",   frozenset(FUND_METRIC_TIMESERIES_AUDIT_COLUMNS)),
+        ("p2_pipeline_log",          frozenset(P2_PIPELINE_LOG_AUDIT_COLUMNS)),
     ]
 
     for table, expected in checks:

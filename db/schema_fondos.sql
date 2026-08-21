@@ -406,7 +406,7 @@ CREATE INDEX IF NOT EXISTS idx_macro_date       ON series_macro (date);
 --   fx_usd_gbp        USD por GBP (ej. 1.27)
 --   fx_cny_usd        CNY por USD (ej. 7.1)
 --   spread_hy         ICE BofA HY Option-Adjusted Spread % (GLOBAL, media mensual) — P2 v10
---   spread_ig         ICE BofA IG Option-Adjusted Spread % (GLOBAL, media mensual) — P2-07
+--   spread_ig         Moody's Baa-Treasury yield spread % proxy IG (GLOBAL, mensual, BAA10YM) — P2-07
 --   vix               CBOE VIX — volatilidad implícita S&P500 (GLOBAL, media mensual) — P2 v10
 --   term_spread       Pendiente curva EEUU 10Y-2Y % (US, mensual) — P2 v10
 
@@ -458,6 +458,8 @@ CREATE TABLE IF NOT EXISTS fund_metrics (
     benchmark_id        TEXT,               -- NULL si métrica absoluta
     source_rows         INTEGER,            -- nº de NAV usados en el cálculo
     load_ts             TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    algorithm_version   TEXT,               -- v26: CALC_VERSION que produjo la fila (p.ej. "20260820")
+    batch_id            TEXT,               -- v26: id del run P2 que escribió la fila (p.ej. "P2-20260821_120000-ab12cd")
 
     PRIMARY KEY (isin, metric, horizon, real_flag, metric_version),
     FOREIGN KEY (isin) REFERENCES fund_master (ISIN) ON DELETE CASCADE
@@ -540,11 +542,12 @@ CREATE INDEX IF NOT EXISTS idx_metrics_date    ON fund_metrics (calculation_date
 CREATE TABLE IF NOT EXISTS p2_pipeline_log (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     isin            TEXT,
-    step            TEXT,       -- NAV_LOAD / DEFLATE / CALC_METRICS / WRITE
-    status          TEXT,       -- OK / WARN / ERROR / SKIP
+    step            TEXT,       -- NAV_LOAD / DEFLATE / CALC_METRICS / WRITE / BACKFILL_START / BACKFILL_END / RUN_SUMMARY
+    status          TEXT,       -- OK / WARN / ERROR / SKIP / INFO / ABORT_NO_NEW_NAV
     horizon         TEXT,
     metric_version  TEXT,
     message         TEXT,
+    batch_id        TEXT,       -- v26: id del run P2 (correlaciona filas Gold con el run que las produjo)
     created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -762,6 +765,8 @@ CREATE TABLE IF NOT EXISTS fund_metric_timeseries (
     ref_value       REAL,               -- valor de referencia (categoría / benchmark)
     source_rows     INTEGER,            -- nº de NAV usados en el cálculo
     load_ts         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    algorithm_version TEXT,             -- v26: CALC_VERSION que produjo la fila (primer INSERT; preservado por INSERT OR IGNORE)
+    batch_id        TEXT,               -- v26: id del run P2 que insertó la fila por primera vez
 
     PRIMARY KEY (isin, metric, window, date, real_flag),
     FOREIGN KEY (isin) REFERENCES fund_master (ISIN) ON DELETE CASCADE

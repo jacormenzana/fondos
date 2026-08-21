@@ -92,7 +92,7 @@ _ROOT = Path(__file__).resolve().parent.parent   # c:/desarrollo/fondos
 # ============================================================
 # Versión canónica del schema de BD
 # ============================================================
-SCHEMA_VERSION: str = "v25"
+SCHEMA_VERSION: str = "v26"
 
 # ============================================================
 # v23 (FIX-UNIVERSE-RECON-1, 2026-07-18): In_Current_Universe (fund_master)

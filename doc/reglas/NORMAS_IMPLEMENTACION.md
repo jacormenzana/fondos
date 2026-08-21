@@ -227,6 +227,38 @@ convierte el resultado de `validate_all_semantic_consistency` a la lista de 4-tu
 
 ---
 
+## §5b. Modelo operativo P2: run rutinario vs. backfill (v26)
+
+El pipeline P2 opera en dos modos distintos que deben mantenerse separados.
+
+### Modo rutinario (mensual)
+
+Condición: ningún `--force` y `CALC_VERSION` sin cambios respecto a las filas ya almacenadas en `fund_metrics`.
+
+- El mecanismo de fingerprint (`fund_metric_state.input_hash`) salta automáticamente los fondos sin cambios en NAV/IPC.
+- Solo se reescriben las filas Gold de fondos con datos nuevos.
+- No se emite marcador especial en `p2_pipeline_log`.
+
+### Modo backfill (recalculo completo)
+
+Condición: se cumple **cualquiera** de los dos criterios siguientes.
+
+| Criterio | Causa habitual |
+|----------|---------------|
+| Flag `--force` en la invocación | Corrección de datos en fuente (NAV, macro), debugging |
+| `CALC_VERSION` en código ≠ `algorithm_version` en la última fila de `fund_metrics` | Cambio de lógica de cálculo (bump de `CALC_VERSION`) |
+
+**Al detectarse un backfill:**
+1. Se escribe una fila `BACKFILL_START` en `p2_pipeline_log` con el motivo y el `batch_id` del run.
+2. El pipeline ejecuta el recalculo completo ignorando la caché de fingerprint.
+3. Al finalizar, se escribe una fila `BACKFILL_END` con el recuento de fondos recomputed.
+
+**Regla de governance:** los backfills deben ser eventos controlados y atribuibles. Nunca lanzar `--force` en producción sin registrar el motivo en el historial de cambios (commit message o backlog). Un `CALC_VERSION` bump sin un commit que lo documente es un error de proceso.
+
+**Trazabilidad:** tras un backfill, todas las filas de `fund_metrics` reescritas llevan el nuevo `algorithm_version` (= `CALC_VERSION` actualizado) y el `batch_id` del run de backfill. Las filas de `fund_metric_timeseries` conservan el `algorithm_version` y `batch_id` del run que las insertó originalmente (`INSERT OR IGNORE`), preservando la procedencia histórica.
+
+---
+
 ## §6. Smoke test y catálogo de regresiones
 
 ### §6.1 Smoke test post-implementación
