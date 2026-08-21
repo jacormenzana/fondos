@@ -629,6 +629,58 @@ def extract_priips_costs(
         # --- F. _cost_schedule_rows (P-1, P-7, P-4) ---
         out['_cost_schedule_rows'] = _build_schedule_rows(over_time, rhp_years, isin)
 
+        # FIX-ACI-SCHEDULE-INJECT: when a fallback (SINGLE/LONGEST/COLLAPSED)
+        # recovered ACI_RHP metadata but _build_schedule_rows produced no Is_RHP=1
+        # row with Annual_Impact_Pct (because rhp_years=None discarded the is_rhp
+        # row), synthesize a minimal RHP row so P2/P3 can read the cost impact.
+        # Guard: only fire when ACI_RHP is set and no usable RHP row exists.
+        _sched = out['_cost_schedule_rows']
+        _has_rhp_pct = any(
+            r.get('Is_RHP') == 1 and r.get('Annual_Impact_Pct') is not None
+            for r in _sched
+        )
+        if not _has_rhp_pct and 'ACI_RHP' in out:
+            # Derive a sensible horizon: prefer rhp_years; else the OT entry
+            # whose aci_pct matches the fallback value; else the longest OT
+            # horizon; else 5.0 (common default RHP).
+            # Guard: exclude is_rhp rows (horizon_years=-1.0) from horizon
+            # candidates — using -1.0 would fail the 0 < hy <= 50 guard
+            # downstream (root cause: ES0176408013, FR0014000EB4).
+            _aci_ratio = out['ACI_RHP'] / 100.0
+            _syn_hy = rhp_years
+            if _syn_hy is None:
+                _match = [
+                    e for e in over_time
+                    if e.get('aci_pct') is not None
+                    and abs(e['aci_pct'] - _aci_ratio) < 1e-6
+                    and (e.get('horizon_years') or 0) > 0   # exclude is_rhp (-1.0)
+                ]
+                if _match:
+                    _syn_hy = max(_match, key=lambda e: e.get('horizon_years', 0)).get(
+                        'horizon_years'
+                    )
+            if _syn_hy is None or _syn_hy <= 0:
+                # Fallback: longest positive horizon in over_time
+                _pos_hy = [
+                    e.get('horizon_years', 0)
+                    for e in over_time
+                    if (e.get('horizon_years') or 0) > 0
+                ]
+                _syn_hy = max(_pos_hy) if _pos_hy else 5.0
+            _syn_hy = _syn_hy or 5.0
+            if 0 < _syn_hy <= 50:
+                _sched.append({
+                    'Horizon_Years': _syn_hy,
+                    'Is_RHP': 1,
+                    'Annual_Impact_Pct': out['ACI_RHP'],
+                    'Source': 'PRIIPS_COSTS_OVER_TIME',
+                })
+                _log.info(
+                    "[FIX-ACI-SCHEDULE-INJECT] %s: synthesized RHP schedule row "
+                    "(Annual_Impact_Pct=%.4f%%, Horizon_Years=%.4f)",
+                    isin, out['ACI_RHP'], _syn_hy,
+                )
+
         # --- G. Calidad (§3) ---
         out['Cost_Extraction_Quality'] = _assess_quality(
             vr_rhp=vr_rhp,

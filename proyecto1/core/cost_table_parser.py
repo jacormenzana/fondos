@@ -73,8 +73,12 @@ MAX_FEE_PATTERN = re.compile(
 )
 
 # Horizonte en años — grupo 1 (ES) o grupo 2 (EN)
+# FIX-COST-DECIMAL-YEAR: handle decimal years like "0,00396825 años" (FR0000447823).
+# Old pattern (\d+) matched "396825" from "0,00396825 años" (only digit-run before años,
+# skipping the "0," prefix) → horizon_years=396825.0 → discarded by 0<hy<=50 guard
+# AND attached aci_pct was lost. New pattern captures the full decimal number.
 HORIZON_YEARS_PATTERN = re.compile(
-    r'(\d+)\s*a[ñn]os?|(\d+)\s*years?',
+    r'(\d+(?:[.,]\d+)?)\s*a[ñn]os?|(\d+(?:[.,]\d+)?)\s*years?',
     re.IGNORECASE,
 )
 
@@ -275,7 +279,8 @@ def _parse_horizon_years(label: str) -> float:
     m = HORIZON_YEARS_PATTERN.search(label)
     if m:
         years_str = m.group(1) or m.group(2)
-        return float(years_str)
+        # FIX-COST-DECIMAL-YEAR: normalise European decimal comma → period
+        return float(years_str.replace(',', '.'))
 
     m = HORIZON_MONTHS_PATTERN.search(label)
     if m:
@@ -802,12 +807,16 @@ def _parse_costs_over_time_plain(text: str) -> List[dict]:
 
     # Buscar patrones de horizonte dentro de la ventana
     # Patrón: "después de N año(s)" / "after N year(s)" / RHP / "N año(s)"
+    # FIX-COST-DECIMAL-YEAR: same decimal extension as HORIZON_YEARS_PATTERN —
+    # handles labels like "0,00396825 años" (FR0000447823, ultra-short horizon).
+    # (\d+) alone would match "00396825" from "0,00396825 años", producing
+    # horizon_years=396825.0 instead of 0.00396825.
     HORIZON_CONTEXT = re.compile(
         r'(?:despu[eé]s\s+de|after|si\s+(?:sale|retira)(?:\s+\w+)?\s+despu[eé]s\s+de)?'
         r'\s*'
         r'(?:'
-        r'(\d+)\s*a[ñn]os?'         # N años
-        r'|(\d+)\s*years?'           # N years
+        r'(\d+(?:[.,]\d+)?)\s*a[ñn]os?'         # N años (incl. fraccionales)
+        r'|(\d+(?:[.,]\d+)?)\s*years?'           # N years (incl. fraccional)
         r'|(\d+)\s*mes(?:es)?'       # N meses
         r'|(\d+)\s*months?'          # N months
         r'|(' + RHP_PATTERN.pattern + r')'  # RHP

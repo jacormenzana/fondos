@@ -658,3 +658,87 @@ def test_neuberger_collapsed_single_value_recovers():
     if fed is None or 'incidencia' not in fed.lower():
         pytest.skip("KIID text for IE00BLLXGV72 not present/changed")
     assert extract_priips_costs(fed, 'IE00BLLXGV72').get('ACI_RHP') == 1.2
+
+
+# ---------------------------------------------------------------------------
+# FIX-COST-DECIMAL-YEAR (FR0000447823 root cause)
+# ---------------------------------------------------------------------------
+
+def test_fix_cost_decimal_year_parse():
+    """FIX-COST-DECIMAL-YEAR: column label '0,00396825 años' must be parsed as
+    ~0.00396825 years, NOT 396825.0.  Old regex '(\\d+)' matched '00396825'
+    (digit-run after the decimal comma); new pattern '(\\d+(?:[.,]\\d+)?)' captures
+    the full decimal number.
+
+    Self-contained synthetic text — no disk/DB needed.
+    The KID has a single ultra-short column ("0,00396825 años") with 1% ACI.
+    After the fix:
+      • horizon_years ≈ 0.00396825 (passes 0 < hy <= 50 → stays in schedule)
+      • FIX-ACI-RHP-SINGLE fires (no horizon > 1Y) → ACI_RHP = 1%
+      • FIX-ACI-SCHEDULE-INJECT fires → synthesized Is_RHP=1 row present
+    """
+    from priips_cost_extractor import extract_priips_costs
+    from cost_table_parser import _parse_horizon_years
+
+    # Unit test on the parser function
+    hy = _parse_horizon_years("Si sale después de 0,00396825 años")
+    assert abs(hy - 0.00396825) < 1e-7, f"Expected ~0.00396825, got {hy}"
+
+    # Integration test: synthetic PRIIPS KID text with fractional-year column.
+    # Three PRIIPS signals (>= 3 needed for PRIIPS_KID format detection):
+    # "período de mantenimiento recomendado" + "costes a lo largo del tiempo"
+    # + "composición de los costes".
+    text = (
+        "Período de mantenimiento recomendado: 1 año\n"
+        "Costes a lo largo del tiempo\n"
+        "Si sale después de 0,00396825 años\n"
+        "Costes totales 100 EUR\n"
+        "Incidencia anual de los costes 1%\n"
+        "Composición de los costes\n"
+        "Costes de entrada 0%\n"
+    )
+    out = extract_priips_costs(text, "FR0000447823_SYNTH")
+    # ACI_RHP must be set (via SINGLE fallback)
+    assert out.get("ACI_RHP") is not None, "ACI_RHP should be recovered by SINGLE fallback"
+    # Schedule must have an Is_RHP=1 row (via INJECT or primary path)
+    rhp_rows = [r for r in out.get("_cost_schedule_rows", []) if r.get("Is_RHP") == 1]
+    assert rhp_rows, "Expected at least one Is_RHP=1 schedule row (FIX-ACI-SCHEDULE-INJECT)"
+    assert rhp_rows[0].get("Annual_Impact_Pct") is not None
+
+
+# ---------------------------------------------------------------------------
+# FIX-ACI-SCHEDULE-INJECT
+# ---------------------------------------------------------------------------
+
+def test_fix_aci_schedule_inject_fires_when_fallback_sets_aci_rhp():
+    """FIX-ACI-SCHEDULE-INJECT: when FIX-ACI-RHP-SINGLE/LONGEST/COLLAPSED
+    recovers ACI_RHP from the OT table but _build_schedule_rows discards the
+    is_rhp row (rhp_years=None), the post-fallback injection must synthesize
+    a minimal Is_RHP=1 row so P2/P3 can access Annual_Impact_Pct.
+
+    Scenario: single-column OT table with no explicit RHP label → SINGLE fires.
+    Self-contained synthetic text — no disk/DB needed.
+    """
+    from priips_cost_extractor import extract_priips_costs
+
+    # No "período de mantenimiento recomendado" line → rhp_years=None.
+    # Single OT column → FIX-ACI-RHP-SINGLE fires → ACI_RHP=2%.
+    # _build_schedule_rows: is_rhp row discarded (rhp_years=None).
+    # Injection: synthesized Is_RHP=1 row with Annual_Impact_Pct=2.0.
+    # Three PRIIPS signals: "costes a lo largo del tiempo" + "composición de
+    # los costes" + "incidencia anual de los costes".
+    text = (
+        "Costes a lo largo del tiempo\n"
+        "En caso de salida después de 1 año\n"
+        "Costes totales 200 EUR\n"
+        "Incidencia anual de los costes 2%\n"
+        "Composición de los costes\n"
+        "Costes de entrada 0%\n"
+    )
+    out = extract_priips_costs(text, "INJECT_SYNTH_TEST")
+    assert out.get("ACI_RHP") == 2.0, f"ACI_RHP={out.get('ACI_RHP')}, expected 2.0"
+    rhp_rows = [r for r in out.get("_cost_schedule_rows", []) if r.get("Is_RHP") == 1]
+    assert rhp_rows, "FIX-ACI-SCHEDULE-INJECT must add an Is_RHP=1 row"
+    assert rhp_rows[0].get("Annual_Impact_Pct") == 2.0, (
+        f"Annual_Impact_Pct={rhp_rows[0].get('Annual_Impact_Pct')}, expected 2.0"
+    )
