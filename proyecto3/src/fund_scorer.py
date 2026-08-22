@@ -518,6 +518,13 @@ def compute_regime_multiplier(
     """
     Calcula el multiplicador de régimen para un fondo.
     Devuelve (multiplicador, detalle_dict).
+
+    Recalentamiento / Recalentamiento_Tardio: n_obs=0 en toda la serie histórica
+    disponible (2000-03 → 2026-08, 320 meses). Shock_Energetico (WTI YoY > 25%)
+    preempta todos los períodos de IPC alto. Cuando todos los percentiles de régimen
+    son None, esta función devuelve multiplicador=1.0 — el score base rige sin ajuste
+    empírico. Resultado estructural del clasificador, no un defecto. (P2-03 / ACT-08)
+    Véase módulo docstring §P2-03 y regime_returns.py.
     """
     multiplier = 1.0
     detail: dict = {}
