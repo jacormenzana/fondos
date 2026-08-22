@@ -1969,6 +1969,15 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
     if has_ar and (has_cash_bench or _ar_mandate_explicit or _ar_in_header
                    or _ar_in_pre_header):
         return "Alternativo"
+    # FIX-ALTRV-ARTRACKER-1 (2026-08-22): AR-tracker funds (e.g. GS Absolute
+    # Return Tracker LU1103308125) whose DDF product-name section has "absolute
+    # return tracker" but whose Spanish objective window uses "rastrear/replica"
+    # language — so has_ar=False and the gate above fails. Pre-header signal
+    # "absolute return" + "tracker" in the fund name is standalone unambiguous
+    # evidence (distinct from "Absolute Return Bond" which is guarded by
+    # _has_bond_in_header suppressing _ar_in_pre_header).
+    if _ar_in_pre_header and "tracker" in _header:
+        return "Alternativo"
 
     # FIX-DNCA-ALTRV-1 (2026-07-23): long/short relative-value fixed-income
     # fund with a cash (€STR) hurdle and no equity mandate → Alternativo.
@@ -2074,6 +2083,21 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
     _fof_rf  = "fondos de renta fija" in w
     _fof_mon = "fondos monetarios" in w
     if "fondos mixtos" in w or (_fof_rv + _fof_rf + _fof_mon >= 2):
+        return "Mixtos"
+    # FIX-MIXTOS-FOF-EN-1 (2026-08-22): English-KIID multi-asset fund-of-funds
+    # → Mixtos. Root cause: FIX-MIXTOS-FOF-1 only covers Spanish FoF signals.
+    # "fund of funds" alone is unambiguous. "investment funds" + tactical /
+    # balanced-risk / multi-asset language is the diluted equivalent for KIDs
+    # that don't use the explicit label.
+    # Confirmed: LU1099740216 (MS INVGLBARIS CON A USDHDG ACC) — English KID has
+    # "fund of funds" in the fund name and "investment funds" + "tactical" in
+    # the investment policy section.
+    _fof_en_direct  = "fund of funds" in w or "fonds de fonds" in w
+    _fof_en_inv_fds = "investment funds" in w or "collective investment scheme" in w
+    _fof_en_multi   = any(k in w for k in ["tactical", "balanced risk",
+                                            "multi-asset", "across asset classes",
+                                            "across different asset"])
+    if _fof_en_direct or (_fof_en_inv_fds and _fof_en_multi):
         return "Mixtos"
     # FIX-B1-COMMODITY-PRIMAR-1 (2026-07-18): pure commodity fund with a
     # "principalmente en materias primas" primary mandate → Alternativo.
@@ -7317,6 +7341,16 @@ def derive_credit_quality(nature, name_l):
         if any(k in name_l for k in ["crossover", "flexible", "strategic",
                                      "unconstrained", "total return", "opportunistic",
                                      "multi sector", "multi-sector"]):
+            return "Mixed"
+        # FIX-CQ-EM-SOVEREIGN-1 (2026-08-22): EM sovereign/government bond funds
+        # hold both IG and sub-IG debt (JPM EMBI+/GBI-EM cover IG+HY tiers).
+        # Check before the generic "sovereign"/"govt" IG assignment so EM funds
+        # default to Mixed unless the name explicitly declares IG.
+        if any(k in name_l for k in ["em bond", "em debt", "embi",
+                                      "emerging bond", "emerging debt",
+                                      "em government", "em sovereign",
+                                      "emerging market bond",
+                                      "emerging market debt"]):
             return "Mixed"
         if any(k in name_l for k in ["investment grade", " ig ", "government",
                                      "sovereign", "govt", "aggregate", "core bond"]):
