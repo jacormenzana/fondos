@@ -297,9 +297,9 @@ def load_fund_attributes(conn: sqlite3.Connection) -> pd.DataFrame:
 def load_ts_cohort(
     conn: sqlite3.Connection,
     metric_version: str,
-    run_date_iso: str,
+    run_start_iso: str,
 ) -> list[tuple[str, int]]:
-    """Groups fund_metrics rows by DATE(load_ts) for ISINs processed today.
+    """Groups fund_metrics rows by DATE(load_ts) for ISINs processed this run.
 
     Used by run_pipeline.py to emit the [RUN COHORT] log line and by the
     pipelineP2Audit / pipelineP1P2Audit skills for the load_ts cohort check.
@@ -307,12 +307,19 @@ def load_ts_cohort(
     Parameters
     ----------
     metric_version : e.g. 'v1' — filters fund_metric_state rows.
-    run_date_iso   : 'YYYY-MM-DD' string, typically date.today().isoformat().
+    run_start_iso  : 'YYYY-MM-DD' of the run-start calendar day (the date at
+                     the moment run() was invoked).  Overnight P2 runs begin
+                     ~21:00 and finish ~02:40, so they stamp ``calculated_at``
+                     on two consecutive calendar days.  Using a lower-bound
+                     (``>=``) instead of equality ensures all funds touched by
+                     the same run are counted regardless of when they finished.
+                     Funds from earlier runs (``calculated_at < run_start_iso``)
+                     are correctly excluded.
 
     Returns
     -------
     List of (ts_date_str, count) tuples ordered by ts_date ascending.
-    Empty list if no rows (nothing processed today, or DB empty).
+    Empty list if no rows (run produced no output, or DB empty).
 
     Two-timestamp model: load_ts = per-value change stamp (data lineage);
     calculated_at = per-fund run stamp (orchestration). See run_pipeline
@@ -324,12 +331,12 @@ def load_ts_cohort(
         FROM fund_metrics fm
         WHERE fm.isin IN (
             SELECT isin FROM fund_metric_state
-            WHERE metric_version = ? AND calculated_at = ?
+            WHERE metric_version = ? AND calculated_at >= ?
         )
         GROUP BY DATE(fm.load_ts)
         ORDER BY ts_date
         """,
-        (metric_version, run_date_iso),
+        (metric_version, run_start_iso),
     ).fetchall()
     return [(r[0], int(r[1])) for r in rows]
 
@@ -337,8 +344,9 @@ def load_ts_cohort(
 def count_stale_nav_funds(
     conn: sqlite3.Connection,
     metric_version: str,
-    run_date_iso: str,
+    run_start_iso: str,
     max_age_days: int = 60,
+    as_of_iso: str | None = None,
 ) -> int:
     """Count funds recomputed this run whose newest NAV is older than max_age_days.
 
@@ -349,13 +357,23 @@ def count_stale_nav_funds(
     Parameters
     ----------
     metric_version : e.g. 'v1'.
-    run_date_iso   : 'YYYY-MM-DD' string (today's date).
+    run_start_iso  : 'YYYY-MM-DD' of the run-start calendar day.  Used as a
+                     lower bound (``>=``) on ``calculated_at`` so that overnight
+                     runs whose stamps span two calendar days are counted in full.
     max_age_days   : threshold in calendar days (default 60 ≈ 2 months).
+    as_of_iso      : 'YYYY-MM-DD' anchor for the NAV-age calculation
+                     (``julianday(as_of_iso) - julianday(newest_nav) > max_age_days``).
+                     Defaults to ``run_start_iso`` when omitted, which preserves
+                     the original single-date behaviour for callers that do not
+                     need the two-date separation.  Pass ``date.today().isoformat()``
+                     from the pipeline so the age is measured against the real
+                     wall-clock end-of-run date, not the run-start date.
 
     Returns
     -------
     Integer count of stale-NAV ISINs (0 = all up to date).
     """
+    _as_of = as_of_iso if as_of_iso is not None else run_start_iso
     row = conn.execute(
         """
         SELECT COUNT(DISTINCT fms.isin)
@@ -366,10 +384,10 @@ def count_stale_nav_funds(
             GROUP BY ISIN
         ) nav_latest ON fms.isin = nav_latest.ISIN
         WHERE fms.metric_version = ?
-          AND fms.calculated_at  = ?
+          AND fms.calculated_at  >= ?
           AND (julianday(?) - julianday(nav_latest.max_nav_date)) > ?
         """,
-        (metric_version, run_date_iso, run_date_iso, max_age_days),
+        (metric_version, run_start_iso, _as_of, max_age_days),
     ).fetchone()
     return int(row[0] or 0)
 

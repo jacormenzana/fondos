@@ -1577,18 +1577,24 @@ def run(
         # skills (pipelineP2Audit §3 Step 2, pipelineP1P2Audit §3 Step 5).
         if conn is not None and not dry_run and n_processed > 0:
             _obs_today = date.today().isoformat()
+            # run_start_iso: calendar day when run() was invoked.  Overnight P2
+            # runs begin ~21:00 and finish ~02:40, crossing midnight.  fund_metric_state
+            # is stamped with date.today() at write time, so two consecutive calendar
+            # days appear.  Using run_start_iso as a lower bound ensures all funds
+            # touched by this run are counted — not just those stamped on _obs_today.
+            _run_start_iso = f"{run_id[:4]}-{run_id[4:6]}-{run_id[6:8]}"
 
             # [RUN COHORT] load_ts spread — two-timestamp model (see module docstring).
             # EXPECTED: stale rows are beta_* / energy_sensitivity_pct /
             # hy_spread_sensitivity_pct (EFF-1 cadence). Everything else is ANOMALY.
             try:
-                cohort_rows = load_ts_cohort(conn, METRIC_VERSION, _obs_today)
+                cohort_rows = load_ts_cohort(conn, METRIC_VERSION, _run_start_iso)
                 cohort_str = ", ".join(
                     f"{r[0]}: {r[1]}" for r in cohort_rows
                 ) if cohort_rows else "none"
                 logger.info(
-                    f"[RUN COHORT] load_ts spread for funds processed today "
-                    f"({METRIC_VERSION}, calculated_at={_obs_today}): {cohort_str}"
+                    f"[RUN COHORT] load_ts spread for funds processed this run "
+                    f"({METRIC_VERSION}, run_start={_run_start_iso}): {cohort_str}"
                 )
             except Exception:
                 pass  # never crash in finally
@@ -1598,7 +1604,8 @@ def run(
             # fingerprint hash matched NAV row count. Cause: nav_discovery skipped.
             try:
                 n_stale = count_stale_nav_funds(
-                    conn, METRIC_VERSION, _obs_today, max_age_days=60
+                    conn, METRIC_VERSION, _run_start_iso,
+                    max_age_days=60, as_of_iso=_obs_today,
                 )
                 if n_stale > 0:
                     logger.warning(

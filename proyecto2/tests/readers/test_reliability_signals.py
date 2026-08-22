@@ -4,9 +4,14 @@
 Tests for the three observability/reliability-signal helpers added in
 FEAT-P2-RELIABILITY-SIGNALS-1:
 
-  db_readers.load_ts_cohort(conn, metric_version, run_date_iso)
-  db_readers.count_stale_nav_funds(conn, metric_version, run_date_iso, max_age_days)
+  db_readers.load_ts_cohort(conn, metric_version, run_start_iso)
+  db_readers.count_stale_nav_funds(conn, metric_version, run_start_iso,
+                                   max_age_days, as_of_iso)
   db_readers.coverage_snapshot(conn, metrics, horizon)
+
+FIX-OBS-COHORT regression tests (TestMidnightBoundary) cover overnight P2
+runs that straddle midnight: fund_metric_state receives two consecutive
+calculated_at dates, so helpers must filter on a lower bound (>=) not equality.
 
 R-7: imports ONLY db_readers — no run_pipeline.py, no core.io, no HTTP.
 All tests use an in-memory SQLite DB built from a minimal schema.
@@ -300,3 +305,125 @@ class TestCoverageSnapshot:
         # Asking for rolling_3y → 1
         result = coverage_snapshot(conn, ["sharpe"], horizon="rolling_3y")
         assert result == [("sharpe", 1)]
+
+
+# ============================================================
+# Midnight-boundary regression tests (FIX-OBS-COHORT)
+# ============================================================
+
+class TestMidnightBoundary:
+    """Overnight P2 runs span two calendar days.
+
+    A run starting at ~21:00 on day N and finishing at ~02:40 on day N+1 stamps
+    fund_metric_state.calculated_at with date.today() at write time, producing
+    two consecutive dates.  The observability helpers must use ``>=`` on the
+    run-start date (not equality on today) so that all funds processed by the
+    same run are counted.
+    """
+
+    def test_load_ts_cohort_includes_pre_midnight_funds(self):
+        """Funds stamped on the run-start day AND the finish day are both counted."""
+        conn = _make_db()
+        # Pre-midnight fund: processed before 00:00 (calculated_at = day N)
+        conn.execute(
+            "INSERT INTO fund_metric_state VALUES (?,?,?,?)",
+            ("PRE", MV, "h1", "2026-08-13"),
+        )
+        conn.execute(
+            "INSERT INTO fund_metrics VALUES (?,?,?,?,?,?,?,?)",
+            ("PRE", "sharpe", "since_inception", 1.0, 0, "2026-08-13", MV,
+             "2026-08-13 23:00:00"),
+        )
+        # Post-midnight fund: processed after 00:00 (calculated_at = day N+1)
+        conn.execute(
+            "INSERT INTO fund_metric_state VALUES (?,?,?,?)",
+            ("POST", MV, "h2", "2026-08-14"),
+        )
+        conn.execute(
+            "INSERT INTO fund_metrics VALUES (?,?,?,?,?,?,?,?)",
+            ("POST", "sharpe", "since_inception", 1.1, 0, "2026-08-14", MV,
+             "2026-08-14 01:00:00"),
+        )
+        # Old fund from a previous run — must NOT appear
+        conn.execute(
+            "INSERT INTO fund_metric_state VALUES (?,?,?,?)",
+            ("OLD", MV, "h3", "2026-07-01"),
+        )
+        conn.execute(
+            "INSERT INTO fund_metrics VALUES (?,?,?,?,?,?,?,?)",
+            ("OLD", "sharpe", "since_inception", 0.5, 0, "2026-07-01", MV,
+             "2026-07-01 12:00:00"),
+        )
+        conn.commit()
+
+        result = load_ts_cohort(conn, MV, "2026-08-13")   # run_start = day N
+        result_dict = dict(result)
+        # PRE load_ts → 2026-08-13; POST load_ts → 2026-08-14; OLD excluded
+        assert "2026-08-13" in result_dict, "Pre-midnight fund missing from cohort"
+        assert "2026-08-14" in result_dict, "Post-midnight fund missing from cohort"
+        assert result_dict["2026-08-13"] == 1
+        assert result_dict["2026-08-14"] == 1
+        assert sum(result_dict.values()) == 2, "OLD fund must not appear"
+
+    def test_count_stale_nav_spans_two_days(self):
+        """Stale-NAV count covers both pre- and post-midnight fund cohorts."""
+        conn = _make_db()
+        # Pre-midnight fund with stale NAV (>60 d)
+        conn.execute(
+            "INSERT INTO fund_metric_state VALUES (?,?,?,?)",
+            ("PRE", MV, "h1", "2026-08-13"),
+        )
+        conn.execute(
+            "INSERT INTO fund_nav_monthly VALUES (?,?,?)",
+            ("PRE", "2026-02-01", 100.0),   # ~193 d before 2026-08-14 as_of
+        )
+        # Post-midnight fund with stale NAV (>60 d)
+        conn.execute(
+            "INSERT INTO fund_metric_state VALUES (?,?,?,?)",
+            ("POST", MV, "h2", "2026-08-14"),
+        )
+        conn.execute(
+            "INSERT INTO fund_nav_monthly VALUES (?,?,?)",
+            ("POST", "2026-01-01", 100.0),  # ~225 d stale
+        )
+        # Old fund from a previous run — must NOT be counted
+        conn.execute(
+            "INSERT INTO fund_metric_state VALUES (?,?,?,?)",
+            ("OLD", MV, "h3", "2026-07-01"),
+        )
+        conn.execute(
+            "INSERT INTO fund_nav_monthly VALUES (?,?,?)",
+            ("OLD", "2025-01-01", 100.0),
+        )
+        conn.commit()
+
+        n = count_stale_nav_funds(
+            conn, MV, "2026-08-13",
+            max_age_days=60, as_of_iso="2026-08-14",
+        )
+        assert n == 2, (
+            f"Expected 2 stale funds (PRE + POST), got {n}. "
+            "Bug: equality on 2026-08-14 would return 1; equality on 2026-08-13 would return 1."
+        )
+
+    def test_count_stale_nav_equality_miss_demonstrated(self):
+        """Shows the pre-fix bug: equality on post-midnight date silently drops PRE fund."""
+        conn = _make_db()
+        conn.execute(
+            "INSERT INTO fund_metric_state VALUES (?,?,?,?)",
+            ("PRE", MV, "h1", "2026-08-13"),
+        )
+        conn.execute(
+            "INSERT INTO fund_nav_monthly VALUES (?,?,?)",
+            ("PRE", "2026-02-01", 100.0),
+        )
+        conn.commit()
+
+        # Correct >= fix: PRE fund (calculated_at=2026-08-13) included when run_start=2026-08-13
+        n_correct = count_stale_nav_funds(
+            conn, MV, "2026-08-13",
+            max_age_days=60, as_of_iso="2026-08-14",
+        )
+        assert n_correct == 1, (
+            "Pre-midnight fund must be counted when run_start matches its calculated_at date"
+        )

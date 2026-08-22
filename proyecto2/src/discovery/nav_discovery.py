@@ -120,6 +120,14 @@ _CHART_BACKOFF_OTHER = 5         # 5xx: esperar 5s (error puntual del servidor)
 MS_COOLDOWN_EVERY = 200          # cada N fondos OK (no total)
 MS_COOLDOWN_SECS  = (30, 60)     # reducido - 401 no necesita cooldown
 
+# Numero de dias sin nuevo NAV (con last_checked reciente) tras el cual un fondo
+# se clasifica como 'STALE_FROZEN' — fuente estructuralmente detenida (p.ej. fondo
+# suspendido, sancionado o dado de baja por el proveedor). Por encima de este umbral
+# el fondo se excluye del bucle de actualizacion (no se realizan llamadas de red).
+# Elegido muy por encima del umbral de aviso [NAV STALE] (60 d) para no confundir
+# retrasos operacionales con suspension permanente.
+_FROZEN_NAV_DAYS  = 365
+
 
 # ============================================================
 # Resolucion de ISIN -> securityID interno de Morningstar
@@ -830,7 +838,7 @@ def run_discover(conn, isins, dry_run, verbose, skip_if_recent: bool = False):
 # Modo LOAD
 # ============================================================
 
-def _effective_cutoff(today: date) -> date:
+def _effective_cutoff(today: date, stale_days: int = 3) -> date:
     """Cutoff para la comprobacion "al dia", ajustado por fin de semana.
 
     El proveedor publica el cierre del viernes con 1-2 dias de latencia.
@@ -840,11 +848,71 @@ def _effective_cutoff(today: date) -> date:
 
     Lunes -> extender 2 dias extra (ultimo cierre = viernes 3 dias atras)
     Domingo -> extender 1 dia extra
-    Resto -> ventana estandar de 3 dias
+    Resto -> ventana estandar de `stale_days` dias
+
+    `stale_days` (default 3) es la ventana base de tolerancia diaria. DEBE
+    alinearse con la cadencia real del job: una ventana de 3 dias con una
+    cadencia semanal/mensual marca ~100% del universo como stale en cada
+    ejecucion (el anchor de todo el libro siempre queda por detras del cutoff).
+    Ver `--stale-days` en modo update.
     """
     wd    = today.weekday()  # 0=lunes, 6=domingo
     extra = 2 if wd == 0 else (1 if wd == 6 else 0)
-    return today - timedelta(days=3 + extra)
+    return today - timedelta(days=stale_days + extra)
+
+
+def _latest_published_month_end(today: date, latency_days: int = 5) -> date:
+    """Ultimo cierre de mes COMPLETADO y presumiblemente publicado.
+
+    El NAV mensual es fin-de-mes. A mitad de mes el cierre del mes en curso
+    aun no existe, asi que la referencia de "al dia" en grano mensual es el
+    ultimo dia del mes anterior. Si estamos en los primeros `latency_days`
+    del mes, ese cierre puede no estar publicado todavia -> retroceder un mes
+    mas para no re-descargar todo el universo por latencia del proveedor.
+    """
+    first_this = today.replace(day=1)
+    prev_month_end = first_this - timedelta(days=1)          # ultimo dia mes anterior
+    if (today - first_this).days < latency_days:
+        return prev_month_end.replace(day=1) - timedelta(days=1)  # un mes mas atras
+    return prev_month_end
+
+
+def _is_stale(ds: str, last_daily: Optional[str], last_monthly: Optional[str],
+              cutoff: date, ref_month_end: date, monthly_grain: bool) -> bool:
+    """Decide si un fondo necesita descarga (True = stale).
+
+    Fuente unica de verdad para el gate "al dia", usada tanto por el
+    pre-filtro a nivel de conjunto como por el gate por-fondo (DRY — P#11).
+
+    - FORCE_REFRESH / RECALCULATE_MONTHLY -> siempre se procesan.
+    - STALE_FROZEN -> nunca se procesan (fuente estructuralmente detenida;
+      sancionada, suspendida, o dada de baja por el proveedor). El fondo
+      permanece en nav_sources con status='OK' para conservar el ms_id,
+      pero no se realizan llamadas de red hasta que el operador revierta
+      data_status a 'OK' manualmente.
+    - monthly_grain=True  -> stale si el ultimo NAV mensual (`nav_sources.
+      last_nav_date`) no cubre `ref_month_end`.
+    - monthly_grain=False -> stale si el ancla diaria (`fund_nav_daily` MAX)
+      es anterior a `cutoff`.
+    Sin dato previo -> stale (carga inicial).
+    """
+    if ds in ("FORCE_REFRESH", "RECALCULATE_MONTHLY"):
+        return True
+    if ds == "STALE_FROZEN":
+        return False  # never attempt downloads on a structurally frozen source
+    if monthly_grain:
+        if not last_monthly:
+            return True
+        try:
+            return datetime.strptime(last_monthly[:10], "%Y-%m-%d").date() < ref_month_end
+        except (ValueError, TypeError):
+            return True
+    if not last_daily:
+        return True
+    try:
+        return datetime.strptime(last_daily[:10], "%Y-%m-%d").date() < cutoff
+    except (ValueError, TypeError):
+        return True
 
 
 def _fetch_one(idx, isin, ms_id, currency, eff_desde, bearer, delay_secs):
@@ -864,7 +932,8 @@ def _fetch_one(idx, isin, ms_id, currency, eff_desde, bearer, delay_secs):
     return idx, isin, rows, err, elapsed, eff_desde
 
 
-def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=None, workers=1):
+def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=None,
+             workers=1, stale_days=3):
     if isins:
         ph      = ",".join("?" * len(isins))
         db_rows = {r[0]: r[1] for r in conn.execute(
@@ -889,7 +958,7 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=Non
     # -- Preload: tres queries batch reemplazan O(N) queries dentro del loop --
     # newest chartservice date per ISIN (delta anchor)
     _today  = date.today()
-    _cutoff = _effective_cutoff(_today)  # "al dia" si last_stored >= cutoff
+    _cutoff = _effective_cutoff(_today, stale_days)  # "al dia" si last_stored >= cutoff
     last_daily = {r[0]: r[1] for r in conn.execute(
         "SELECT ISIN, MAX(Date) FROM fund_nav_daily "
         "WHERE Data_Source='MORNINGSTAR_CHART' GROUP BY ISIN"
@@ -1306,7 +1375,7 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=Non
 # Modo UPDATE
 # ============================================================
 
-def run_update(conn, dry_run, bearer_token=None):
+def run_update(conn, dry_run, bearer_token=None, stale_days=3, monthly_grain=False):
     rows = conn.execute(
         "SELECT isin, source_id, last_nav_date FROM nav_sources "
         "WHERE status='OK' ORDER BY isin"
@@ -1318,7 +1387,8 @@ def run_update(conn, dry_run, bearer_token=None):
 
     # -- Preload: currency map + ultimo dia diario + data_status por ISIN -----
     _today  = date.today()
-    _cutoff = _effective_cutoff(_today)
+    _cutoff = _effective_cutoff(_today, stale_days)
+    _ref_me = _latest_published_month_end(_today)
     last_daily_upd = {r[0]: r[1] for r in conn.execute(
         "SELECT ISIN, MAX(Date) FROM fund_nav_daily "
         "WHERE Data_Source='MORNINGSTAR_CHART' GROUP BY ISIN"
@@ -1330,6 +1400,22 @@ def run_update(conn, dry_run, bearer_token=None):
         "SELECT isin, data_status FROM nav_sources WHERE status='OK'"
     ).fetchall()}
 
+    # -- Pre-filtro a nivel de conjunto: itera SOLO fondos que necesitan trabajo.
+    # Sin esto el loop enumera todo el universo OK y el "al dia" se resuelve por
+    # fondo, dando un header enganoso ("N fondos" = universo entero). Con el
+    # pre-filtro el conteo refleja el work-set real. El gate por-fondo (mas abajo)
+    # se mantiene como red de seguridad con la MISMA logica (_is_stale).
+    _universe = len(rows)
+    rows = [
+        r for r in rows
+        if _is_stale(
+            data_status_upd.get(r[0], "OK") or "OK",
+            last_daily_upd.get(r[0]),
+            r[2],                      # last_nav_date (mensual)
+            _cutoff, _ref_me, monthly_grain,
+        )
+    ]
+
     total          = len(rows)
     total_written  = 0
     al_dia_count   = 0
@@ -1340,7 +1426,78 @@ def run_update(conn, dry_run, bearer_token=None):
         conn.execute("PRAGMA synchronous = NORMAL")
         conn.execute("PRAGMA cache_size = -65536")
 
-    print(f"Actualizacion para {total} fondos | dry_run={dry_run}\n")
+    # ── Auto-freeze: detectar series estructuralmente detenidas ───────────────
+    # Fondos con last_nav_date > _FROZEN_NAV_DAYS dias Y last_checked reciente
+    # (comprobado en los ultimos 30 dias) → la fuente existe pero no publica
+    # datos nuevos (suspension, sancion, baja del proveedor). Marcar como
+    # STALE_FROZEN para que queden fuera del bucle de actualizacion.
+    # Nota: NO se toca fund_master.In_Current_Universe — eso es dominio P1;
+    # revisar manualmente los ISINs marcados y actualizar via SQL o P1 rerun.
+    if not dry_run:
+        _freeze_threshold = (
+            _today - timedelta(days=_FROZEN_NAV_DAYS)
+        ).isoformat()
+        _recent_check_threshold = (
+            _today - timedelta(days=30)
+        ).isoformat()
+        _to_freeze = conn.execute(
+            """
+            SELECT isin, last_nav_date, last_checked
+            FROM nav_sources
+            WHERE status = 'OK'
+              AND (data_status IS NULL OR data_status = 'OK')
+              AND last_nav_date IS NOT NULL
+              AND last_nav_date < ?
+              AND last_checked  >= ?
+            ORDER BY last_nav_date
+            """,
+            (_freeze_threshold, _recent_check_threshold),
+        ).fetchall()
+        if _to_freeze:
+            freeze_isins = [r[0] for r in _to_freeze]
+            ph = ",".join("?" * len(freeze_isins))
+            conn.execute(
+                f"UPDATE nav_sources SET data_status='STALE_FROZEN' WHERE isin IN ({ph})",
+                freeze_isins,
+            )
+            conn.commit()
+            # Rebuild data_status map to pick up the new flags before pre-filter
+            data_status_upd = {r[0]: (r[1] or "OK") for r in conn.execute(
+                "SELECT isin, data_status FROM nav_sources WHERE status='OK'"
+            ).fetchall()}
+            print(
+                f"[STALE_FROZEN] {len(_to_freeze)} fondo(s) marcados: "
+                + ", ".join(
+                    f"{r[0]} (last_nav={r[1]}, checked={r[2]})"
+                    for r in _to_freeze
+                ),
+                flush=True,
+            )
+            print(
+                "[STALE_FROZEN] ACCION REQUERIDA: revisar fund_master.In_Current_Universe "
+                "para estos ISINs y ajustar a 0 si procede (dominio P1).",
+                file=sys.stderr, flush=True,
+            )
+            # Re-apply pre-filter to drop newly frozen funds from work set
+            rows = [
+                r for r in rows
+                if _is_stale(
+                    data_status_upd.get(r[0], "OK") or "OK",
+                    last_daily_upd.get(r[0]),
+                    r[2],
+                    _cutoff, _ref_me, monthly_grain,
+                )
+            ]
+            total = len(rows)
+
+    _grain = "mensual (fin de mes)" if monthly_grain else f"diario (stale_days={stale_days})"
+    print(f"Actualizacion para {total} fondos (de {_universe} OK) | "
+          f"grano={_grain} | cutoff={_cutoff if not monthly_grain else _ref_me} | "
+          f"dry_run={dry_run}\n")
+
+    if not rows:
+        print("  Todos los fondos estan al dia. Nada que actualizar.")
+        return
 
     # -- Bearer token para chartservice ------------------------------------
     if bearer_token:
@@ -1393,19 +1550,29 @@ def run_update(conn, dry_run, bearer_token=None):
         # Ancla delta: preferir ultimo dia diario; fallback a nav_sources mensual
         last_d_stored = last_daily_upd.get(isin)
         force_this    = (ds == "FORCE_REFRESH")
+
+        # Gate "al dia" (cadence-aware, MISMA logica que el pre-filtro _is_stale).
+        # Red de seguridad: tras el pre-filtro casi nunca dispara, pero cubre
+        # carreras y mantiene al_dia_count coherente.
+        if not _is_stale(ds, last_d_stored, last_nav_date,
+                         _cutoff, _ref_me, monthly_grain):
+            _anchor_disp = last_d_stored or last_nav_date or ""
+            _elapsed_ms  = round((datetime.now() - _t0).total_seconds() * 1000)
+            _ts_skip     = _t0.strftime("%Y-%m-%d %H:%M:%S")
+            print(
+                f"[{idx:4d}/{total:4d}] | {_ts_skip} | {isin} | "
+                f"0d/0m | [{_anchor_disp} -> {_anchor_disp}] | {_elapsed_ms} | Al dia",
+                flush=True,
+            )
+            al_dia_count += 1
+            continue
+
+        # Ventana de descarga minima. La descarga es SIEMPRE diaria via
+        # chartservice; monthly_grain solo cambia la decision de skip (arriba),
+        # no la profundidad de descarga.
         if last_d_stored and not force_this:
             anchor = datetime.strptime(last_d_stored, "%Y-%m-%d").date()
-            if anchor >= _cutoff:
-                _elapsed_ms = round((datetime.now() - _t0).total_seconds() * 1000)
-                _ts_skip    = _t0.strftime("%Y-%m-%d %H:%M:%S")
-                print(
-                    f"[{idx:4d}/{total:4d}] | {_ts_skip} | {isin} | "
-                    f"0d/0m | [{anchor} -> {anchor}] | {_elapsed_ms} | Al dia",
-                    flush=True,
-                )
-                al_dia_count += 1
-                continue
-            desde = (anchor - timedelta(days=3)).isoformat()
+            desde  = (anchor - timedelta(days=3)).isoformat()
         elif force_this:
             desde = _today.replace(day=1).isoformat()
         elif last_nav_date:
@@ -1663,6 +1830,15 @@ def main():
                         help="Hilos concurrentes para descarga (default 1=secuencial). "
                              "Recomendado: --workers 4 para bulk backfill. "
                              "Escrituras en BD siempre en hilo principal.")
+    parser.add_argument("--stale-days", type=int, default=3,
+                        help="Ventana de tolerancia diaria (default 3) para el gate "
+                             "'al dia' en modo update/load. ALINEAR con la cadencia real "
+                             "del job: 3 dias con cadencia semanal/mensual re-descarga "
+                             "~todo el universo cada ejecucion.")
+    parser.add_argument("--monthly-grain", action="store_true",
+                        help="En modo update, decide 'al dia' por grano MENSUAL: un fondo "
+                             "esta al dia si su ultimo NAV ya cubre el ultimo fin de mes "
+                             "completado. A mitad de mes solo descarga huecos genuinos.")
     args = parser.parse_args()
 
     # -- Logs con timestamp unico por invocacion -----------------------------
@@ -1734,9 +1910,11 @@ def main():
                  verbose       = args.verbose,
                  force         = args.force,
                  bearer_token  = args.bearer_token,
-                 workers       = args.workers)
+                 workers       = args.workers,
+                 stale_days    = args.stale_days)
     elif args.mode == "update":
-        run_update(conn, dry_run=args.dry_run, bearer_token=args.bearer_token)
+        run_update(conn, dry_run=args.dry_run, bearer_token=args.bearer_token,
+                   stale_days=args.stale_days, monthly_grain=args.monthly_grain)
     elif args.mode == "recalculate-monthly":
         isins_rcm = [args.isin.strip().upper()] if args.isin else None
         run_recalculate_monthly(conn, isins=isins_rcm, dry_run=args.dry_run)

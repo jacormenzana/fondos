@@ -28,6 +28,8 @@ If any asset is missing, report immediately before proceeding.
 
 **Pre-flight — backlog scope:** Read the live backlog artifact before starting §3. List currently open P2 items. Scope triage, reliability, and efficiency steps to open items only. Note: P2-03 (regime gap) is confirmed data-driven as of 2026-08-14 — only remaining action is a docstring in `fund_scorer.py`; do not re-investigate unless `n_obs_recalentamiento > 0` appears in a new run.
 
+**Pre-flight — memory recall:** Before §3, read `MEMORY.md` at `C:\Users\Administrador\.claude\projects\c--desarrollo-fondos\memory\MEMORY.md`. Load every entry whose description hook matches P2 domain keywords (NAV staleness, fingerprint, CALC_VERSION, OLS/VIF, regime attribution, metrics writer, rolling stats, SRRI_nav, fund_metric_state). Treat recalled entries as prior findings — do not re-investigate what is already confirmed on record.
+
 ---
 
 ## 3. Execution Workflow
@@ -88,13 +90,14 @@ Compare against prior run baseline. Flag any regression (drop in throughput, new
   ORDER BY age_days DESC;
   ```
   Cross-reference `nav_sources.data_status`. Fix: `nav_discovery --mode update`, then P2 with `--force`.
-- **Real/nominal pairing integrity.** When IPC is available, every deflatable `real_flag=0` metric must have a `real_flag=1` pair. Orphan singles indicate a silent deflation gap:
+- **Real/nominal pairing integrity.** When IPC is available, every deflatable `real_flag=0` metric must have a `real_flag=1` pair. Orphan singles indicate a silent deflation gap.
+  DB metric names: `return_ann` (not `return_ann_real`; P3 aliases it internally), `max_dd` (not `max_drawdown`).
   ```sql
   SELECT a.isin, a.metric, a.horizon
   FROM fund_metrics a
   WHERE a.real_flag = 0
     AND a.metric IN (
-        'return_ann_real','sharpe','max_drawdown',
+        'return_ann','sharpe','max_dd',
         'alpha_persistence','capture_ratio','momentum_rank'
     )
     AND NOT EXISTS (
@@ -103,7 +106,7 @@ Compare against prior run baseline. Flag any regression (drop in throughput, new
           AND b.horizon = a.horizon AND b.real_flag = 1
     );
   ```
-- **Coverage delta vs baseline.** Use the `[COVERAGE]` log line (diff current run vs previous run in the log). A drop > ~2% on any P3-consumed metric (`return_ann_real`, `sharpe`, `max_drawdown`, `alpha_persistence`, `capture_ratio`, `momentum_rank`) signals an upstream NAV loss or calc regression — triage immediately.
+- **Coverage delta vs baseline.** Use the `[COVERAGE]` log line (diff current run vs previous run in the log). A drop > ~2% on any P3-consumed metric (`return_ann`, `sharpe`, `max_dd`, `alpha_persistence`, `capture_ratio`, `momentum_rank`) signals an upstream NAV loss or calc regression — triage immediately. Note: `[COVERAGE]` queries DB names (`return_ann`, `max_dd`); `return_ann_real` and `max_drawdown` are P3-internal aliases and do not exist as metric names in `fund_metrics`.
 
 ### Step 3 — Process-Efficiency & Redundancy
 
@@ -196,3 +199,17 @@ If the artifact path is ambiguous, ask the user before writing.
   cd proyecto2 && C:\Users\Administrador\anaconda3\envs\des\python.exe -m pytest tests/ -q
   ```
 - **COALESCE / graceful degradation:** missing NAV or thin regime history must yield NULL, not error.
+- **Write-on-correction (verified only):** If the user corrects any finding, factual claim, or reasoning during this audit, verify the correction first (read the code, query the DB, check the canonical doc). If confirmed correct, persist it to memory before the session ends. If wrong, explain and do not write. If unverifiable in context, flag it explicitly — do not persist unverified claims.
+
+---
+
+## 10. End-of-Session Memory Audit
+
+Before ending this session, identify every operational insight corrected or confirmed during this audit that is not yet in memory, and write it now.
+
+For each item:
+1. Create or update the memory file (type `feedback` for agent-behavior corrections, `project` for operational facts).
+2. Add or update the index line in `MEMORY.md`.
+3. Link related entries with `[[name]]`.
+
+Closing the session with uncaptured insight is non-compliant.
