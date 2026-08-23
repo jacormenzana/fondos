@@ -4403,19 +4403,19 @@ def detect_wrong_kiid_document(
         "board of directors report",
     ]
 
-    # FIX-WRONGDOC-AR (2026-07-13) + FIX-WRONGDOC-ANNRPT-DATE (2026-08-24):
+    # FIX-WRONGDOC-AR (2026-07-13) + FIX-WRONGDOC-ANNRPT-DATE (2026-08-24)
+    # + FIX-WRONGDOC-SIMPPROSPECT-FP (2026-08-24):
     # Primera-página guard — DEBE ir ANTES del test de marcadores generales.
-    # Si el documento COMIENZA con un marcador de informe anual en los primeros
-    # 150 chars, ES un informe con certeza — sin necesidad de veto de estructura
+    # Si el documento COMIENZA con un marcador en los primeros 150 chars, ES
+    # un documento no-KIID con certeza — sin necesidad de veto de estructura
     # KIID (ningún KIID/KID real empieza así: la primera línea siempre es el
     # nombre del fondo, "DATOS FUNDAMENTALES" u otro encabezado KIID).
-    # Posición antes del gate de "no marcador positivo" para capturar variantes
-    # como "Annual report as at {date}" que NO tienen otros marcadores financieros
-    # (LU0399027613 Flossbach: "Annual report as at 30 September 2025\n").
-    # Se usa 150 chars (no 300) para evitar capturar KIIDs que mencionan
-    # "annual report" en una referencia de sus primeras líneas de cuerpo.
-    # Confirmado: THREADNEEDLE UK SLCT RI (GB00BMW6N332) comienza en literal
-    # "ANNUAL REPORT AND AUDITED FINANCIAL STATEMENTS\n" (48 chars).
+    # También incluye los marcadores de folleto simplificado (UCITS I/II 2007-2012)
+    # que deben ir aquí porque el veto de estructura KIID dispara FP para ellos:
+    # "informaci" en "e información 27" (tabla de contenidos) activa _KIID_HEADERS
+    # y suprime la detección cuando se usa la ruta de marcadores generales.
+    # Confirmado: LU0193173076 "Folleto de venta simplificado" pos 20 (< 150);
+    # LU0399027613 (Flossbach) comienza "Annual report as at 30 September 2025\n".
     _FIRST_PAGE_REPORT_MARKERS = [
         "annual report and audited financial statements",
         "informe anual y cuentas anuales auditadas",
@@ -4431,6 +4431,11 @@ def detect_wrong_kiid_document(
         "annual report as at ",
         "rapport annuel au ",             # variante FR (rapport annuel au {date})
         "informe anual a ",               # variante ES (informe anual a {fecha})
+        # FIX-WRONGDOC-SIMPPROSPECT-FP (2026-08-24): folleto simplificado en
+        # primeras 150 chars → primera-página guard evita el FP del veto KIID
+        # ("informaci" en tabla de contenidos activa _KIID_HEADERS falsamente).
+        "folleto de venta simplificado",
+        "simplified prospectus",
     ]
     _first_page = text_l[:150]
     _found_first_page = next(
