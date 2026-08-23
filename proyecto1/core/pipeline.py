@@ -656,6 +656,7 @@ def run_block(
     list_isin: Optional[List[str]] = None,
     kiid_source: str = "auto",
     nature_first: bool = False,
+    recompute_costs: bool = False,
 ) -> List[Dict[str, Any]]:
 
     # OPT-B: in nature_first mode block_module may be None; skip block-specific setup
@@ -2852,7 +2853,17 @@ def run_block(
                 # re-ejecutaba en CACHED (skip solo si _ceq_bd=='HIGH'); ahora se
                 # cachea y solo recomputa en refresh (justificado por >96% acuerdo
                 # / >98% exactitud del extractor).
-                if pdf_bytes is not None:
+                #
+                # FIX-COST-RECOMPUTE-CACHED (2026-08-23): `recompute_costs` abre una
+                # excepción EXPLÍCITA y bajo demanda a esa puerta. La puerta es una
+                # decisión de RENDIMIENTO, no una dependencia de datos: el extractor
+                # trabaja sobre `_text_for_cost`, y en CACHED io.py ya construye
+                # `Fed_Text_For_Cost` = Raw_KIID_Text + DLA2_Table_Text (io.py §Caché A),
+                # exactamente el mismo texto que en la ruta de descarga. Sin esta vía,
+                # una corrección del extractor solo llega al corpus re-descargando
+                # todos los PDFs afectados. La arbitración DLA2 de más abajo sigue
+                # exigiendo pdf_bytes: esa sí necesita el binario.
+                if pdf_bytes is not None or recompute_costs:
                     try:
                         from cost_format_router import detect_kid_format as _dkf
                     except ImportError:

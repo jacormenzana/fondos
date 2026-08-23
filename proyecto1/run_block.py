@@ -58,6 +58,17 @@ def main():
     p.add_argument("--stop-on-error", action="store_true")
     p.add_argument("--list-isin", default=None,
                    help="Lista explícita de ISINs separada por comas (modo debug)")
+    p.add_argument("--recompute-costs", action="store_true", default=False,
+                   help=(
+                       "Re-ejecuta el bloque de extracción de costes también en "
+                       "fondos CACHED, sobre el texto ya almacenado en BD "
+                       "(Raw_KIID_Text + DLA2_Table_Text). Sin este flag el bloque "
+                       "solo corre con PDF recién descargado, de modo que una "
+                       "corrección del extractor exigiría re-descargar los PDFs "
+                       "afectados. No descarga nada. Usar tras cambiar "
+                       "priips_cost_extractor / ucits_cost_extractor / "
+                       "cost_table_parser, normalmente junto a --list-isin."
+                   ))
     p.add_argument("--kiid-source", default="auto",
                    choices=["auto", "local", "remote"],
                    help=(
@@ -126,6 +137,7 @@ def main():
         list_isin=list_isin,
         kiid_source=args.kiid_source,
         nature_first=args.nature_first,
+        recompute_costs=args.recompute_costs,
     )
 
     _mode = "NATURE_FIRST" if args.nature_first else args.block
