@@ -7,8 +7,15 @@ BL-COST-4d (Sprint 2 S2-C). Verifica la ruta de escritura no-COALESCE
 que BL-COST-5 usará para corregir fondos con OC=ACI@RHP en BD.
 """
 
+import os
+import sys
 import sqlite3
 import pytest
+
+_TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
+_CORE_DIR  = os.path.normpath(os.path.join(_TESTS_DIR, '..', 'core'))
+if _CORE_DIR not in sys.path:
+    sys.path.insert(0, _CORE_DIR)
 
 
 def _make_conn():

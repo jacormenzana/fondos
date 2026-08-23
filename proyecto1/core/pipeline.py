@@ -3210,6 +3210,33 @@ def run_block(
         )
     except Exception:
         pass
+
+    # FIX-OC-WRITE-ORDER rollout guard (2026-08-23): count active funds that
+    # still have Ongoing_Charge_Recurrent ≈ ACI_RHP (the contamination
+    # signature). These funds need --recompute-costs to be repaired; they
+    # were not reprocessed in this cycle (CACHED or not in universe scope).
+    # Goes to 0 after a full --recompute-costs sweep.
+    try:
+        _oc_contaminated = conn.execute("""
+            SELECT COUNT(*) FROM fund_master
+            WHERE In_Current_Universe = 1
+              AND Ongoing_Charge_Recurrent IS NOT NULL
+              AND ACI_RHP IS NOT NULL
+              AND ABS(Ongoing_Charge_Recurrent * 100.0 - ACI_RHP) < 0.01
+        """).fetchone()[0]
+        if _oc_contaminated > 0:
+            print(
+                f"  [WARN] FIX-OC-WRITE-ORDER: {_oc_contaminated} fondo(s) activos con "
+                f"Ongoing_Charge_Recurrent≈ACI_RHP (valor contaminado). "
+                f"Ejecutar --recompute-costs para reparar."
+            )
+            log_ingestion(
+                conn, None, "OC_ACI_CONTAMINATION", "WARN",
+                f"active_funds_oc_eq_aci={_oc_contaminated}; run --recompute-costs"
+            )
+    except Exception:
+        pass
+
     return published
 
 

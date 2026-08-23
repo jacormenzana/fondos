@@ -11,7 +11,7 @@ Cambios v28 (2026-05-08) -- BL-DLA-2: fix causa raiz exit_fee_null (3 bugs)
             Bug 1 (355 fondos FR): patron buscaba 'no cobr[amos|a] comision de
             salida' pero texto real es 'No cobramos UNA comision de salida por
             este producto'. Articulo 'una' entre cobramos y comision rompia
-            el match. Fix: (?:una\s+)? entre cobr* y comision.
+            el match. Fix: (?:una\\s+)? entre cobr* y comision.
 
             Bug 2 (65 fondos IE/AXA): 'Nosotros no facturamos el coste de
             salida de este producto.' El equivalente para entry fee existia
@@ -108,7 +108,7 @@ Cambios v25 (2026-04-19) — BL-51A ciclo 2: fix root cause del resultado insufi
             consumía los dígitos antes del %, dejando que el grupo capturador solo
             atrapara el último "0" de "3,00%". Fix:
             (1) [^\r\n]{0,300}? no-greedy en ambos patrones base.
-            (2) ([\d]+(?:[,.][\d]+)?) decimal opcional — cubre "5%" y "5,00%".
+            (2) ([\\d]+(?:[,.][\\d]+)?) decimal opcional — cubre "5%" y "5,00%".
             (3) Nuevos triggers _ENTRY_FEE_RE (ES): "comisión de entrada",
                 "comisión inicial", "gastos de entrada", "cargo inicial",
                 "cargo máximo de entrada", "derecho de suscripción".
@@ -3491,15 +3491,16 @@ def _detect_ongoing_charge(text: str, language: Optional[str]) -> Optional[float
     """
     Extrae los gastos corrientes (ongoing charges / incidencia de costes).
 
-    Lógica de prioridad:
-    0. DDF "Composición de costes": suma gestión + operación (TER real)
-       — evita capturar la "Incidencia anual" que incluye entrada amortizada
-    1. Patrón PRIIPs con dos valores → tomar el segundo (periodo recomendado)
-    2. Patrón PRIIPs con un valor → usar ese
-    3. Patrón UCITS antiguo ("Gastos corrientes X%")
-    4. Patrón fusionado OCR (sin espacios)
-    5. DWS/Deutsche/Natixis: "X,XX% del valor de su inversión al año" (v19)
-    6. Allianz: "X,X % cada año/afio" con separador largo con importe EUR (v19)
+    Lógica de prioridad (2026-08-23 — tras FIX-OC-DROP-ACI-PRIORITY):
+    0.   Descripción normativa PRIIPs ("estimación basada en costes reales")
+         — identifica el componente de gestión por DESCRIPCIÓN, no por posición
+    0.5. DDF etiqueta "Comisiones de gestión" — mismo componente, por ETIQUETA
+    [1 y 2 ELIMINADOS — leían "Incidencia anual de los costes" (el ACI, no el OC);
+     ver _OC_PRIIPS_RE tombstone y FIX-OC-DROP-ACI-PRIORITY]
+    3.   Patrón UCITS antiguo ("Gastos corrientes X%")
+    4.   Patrón fusionado OCR (sin espacios)
+    5.   DWS/Deutsche/Natixis: "X,XX% del valor de su inversión al año" (v19)
+    6.   Allianz: "X,X % cada año/afio" con separador largo con importe EUR (v19)
 
     Devuelve float decimal (ej. 0.0075 para 0.75%) o None.
     """
@@ -3513,11 +3514,12 @@ def _detect_ongoing_charge(text: str, language: Optional[str]) -> Optional[float
     text = unicodedata.normalize('NFC', text)
 
     # ── 0: FIX-OC-BY-DESCRIPTION (2026-08-23) — PRIORIDAD MÁXIMA ─────────────────────────────
-    # La prioridad 0 casa por ETIQUETA ("Comisiones de gestión…"). En las
-    # maquetas de columna partida pdfplumber intercala etiquetas y valores, la
-    # etiqueta queda huérfana y la prioridad 0 falla — con lo que se cae a la
-    # prioridad 1/2, que lee la fila "Incidencia anual" y devuelve el ACI, NO el
-    # gasto corriente. Auditoría de distribución 2026-08-23: 801 fondos con
+    # La prioridad 0 casa por DESCRIPCIÓN normativa ("estimación basada en los
+    # costes reales del último año"). En maquetas de columna partida pdfplumber
+    # intercala etiquetas y valores: la etiqueta queda huérfana y la prioridad
+    # 0.5 (por etiqueta) falla. Sin esta prioridad 0, el bloque PRIIPs eliminado
+    # (1/2, FIX-OC-DROP-ACI-PRIORITY) leía "Incidencia anual" y devolvía el ACI.
+    # Auditoría de distribución 2026-08-23: 801 fondos con
     # Ongoing_Charge_Recurrent × 100 == ACI_RHP exacto (IE00BDT57Y96: OC 3,30%
     # frente a un TER real de 1,64%). El ACI incluye la entrada amortizada, así
     # que es estructuralmente mayor que el gasto corriente: nunca deben coincidir.
@@ -4379,6 +4381,12 @@ def detect_wrong_kiid_document(
         "articulos de constitucion",     # variante sin diacríticos
         "memorandum of association",
         "instrument of incorporation",
+        # FIX-WRONGDOC-SIMPPROSPECT (2026-08-24): folletos de venta simplificados
+        # (UCITS I/II, 2007-2012) no son KIIDs — formato anterior a la directiva
+        # UCITS IV que introdujo los KIID en 2012. Detectados via DWS/DB PrivatMandat
+        # (LU0193173076/LU0193173159/LU0193173233 — folleto 2009).
+        "folleto de venta simplificado",
+        "simplified prospectus",
     ]
     # ── Señales positivas: estados financieros auditados (structural-only) ────
     # IMPORTANTE: 'annual report', 'rapport annuel', 'informe anual' EXCLUIDOS
@@ -4395,20 +4403,15 @@ def detect_wrong_kiid_document(
         "board of directors report",
     ]
 
-    _found_statute = next((m for m in _STATUTE_MARKERS if m in text_l), None)
-    _found_report = next((m for m in _ANNUAL_REPORT_MARKERS if m in text_l), None)
-
-    if not _found_statute and not _found_report:
-        return None  # Sin marcador positivo → documento no erróneo
-
-    # FIX-WRONGDOC-AR (2026-07-13): informes anuales multi-fondo que embeben
-    # los KIIDs de todos sus subfondos contienen SRRI "X/7" y frases de riesgo
-    # dentro de las secciones por subfondo — causando que el check de KIID
-    # structure más abajo devuelva None (falso negativo). Guarda de primera
-    # página: si uno de los marcadores de informe anual ESTRUCTURALES aparece
-    # en los primeros 150 chars, el documento ES un informe anual con certeza
-    # (ningún KIID/KID real empieza así: la primera línea siempre es el nombre
-    # del fondo, "DATOS FUNDAMENTALES" u otro encabezado KIID).
+    # FIX-WRONGDOC-AR (2026-07-13) + FIX-WRONGDOC-ANNRPT-DATE (2026-08-24):
+    # Primera-página guard — DEBE ir ANTES del test de marcadores generales.
+    # Si el documento COMIENZA con un marcador de informe anual en los primeros
+    # 150 chars, ES un informe con certeza — sin necesidad de veto de estructura
+    # KIID (ningún KIID/KID real empieza así: la primera línea siempre es el
+    # nombre del fondo, "DATOS FUNDAMENTALES" u otro encabezado KIID).
+    # Posición antes del gate de "no marcador positivo" para capturar variantes
+    # como "Annual report as at {date}" que NO tienen otros marcadores financieros
+    # (LU0399027613 Flossbach: "Annual report as at 30 September 2025\n").
     # Se usa 150 chars (no 300) para evitar capturar KIIDs que mencionan
     # "annual report" en una referencia de sus primeras líneas de cuerpo.
     # Confirmado: THREADNEEDLE UK SLCT RI (GB00BMW6N332) comienza en literal
@@ -4419,6 +4422,15 @@ def detect_wrong_kiid_document(
         "rapport annuel et comptes audités",
         "audited annual report",
         "audited financial statements\n",   # primera línea (sólo al inicio)
+        # FIX-WRONGDOC-ANNRPT-DATE (2026-08-24): "Annual report as at {date}" —
+        # variante sin "audited" que escapa a la guarda anterior. Confirmado:
+        # LU0399027613 (Flossbach von Storch) comienza "Annual report as at
+        # 30 September 2025\n". El patrón "annual report as at" (18 chars) NO
+        # puede aparecer al inicio de un KIID real (primera línea siempre es el
+        # nombre del fondo o "KEY INVESTOR INFORMATION" / "DATOS FUNDAMENTALES").
+        "annual report as at ",
+        "rapport annuel au ",             # variante FR (rapport annuel au {date})
+        "informe anual a ",               # variante ES (informe anual a {fecha})
     ]
     _first_page = text_l[:150]
     _found_first_page = next(
@@ -4429,6 +4441,15 @@ def detect_wrong_kiid_document(
             f"Informe anual multi-fondo detectado en página 1 "
             f"(marcador='{_found_first_page}')"
         )
+
+    # ── Marcadores generales (búsqueda en texto completo) ────────────────────
+    # Solo se evalúan si la primera-página guard no disparó — son más genéricos
+    # y necesitan el veto de estructura KIID (ver abajo) para evitar FP.
+    _found_statute = next((m for m in _STATUTE_MARKERS if m in text_l), None)
+    _found_report = next((m for m in _ANNUAL_REPORT_MARKERS if m in text_l), None)
+
+    if not _found_statute and not _found_report:
+        return None  # Sin marcador positivo → documento no erróneo
 
     # ── Señales negativas: vetan la detección (un KIID/KID real las tiene) ───
     # Se usan marcadores sin diacríticos o con variantes cortas para mayor
