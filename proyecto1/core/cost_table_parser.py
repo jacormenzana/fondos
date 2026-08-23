@@ -278,6 +278,37 @@ COMPOSITION_DESC_MANAGEMENT = re.compile(
     re.IGNORECASE,
 )
 
+# ---------------------------------------------------------------------------
+# FIX-PERF-FEE-NEGATION (2026-08-23) — la fila de comisión de rendimiento suele
+# NEGAR su existencia con texto, no con un 0. Cuando además la línea siguiente
+# menciona una comisión de CANJE (concepto distinto), el parser liga ese % como
+# si fuera la comisión de rendimiento.
+#
+# Verificado con la tabla publicada de LU1873132101: la fila dice "No se aplica
+# ninguna comisión de éxito para este producto" y a continuación "Puede
+# aplicarse una comisión de canje no superior al 1% …"; se publicaba
+# Performance_Fee_Pct = 1,0. El 1,0 es la comisión de canje, y la comisión de
+# rendimiento es CERO. El valor 1.0 es además la moda del corpus (279 fondos).
+# ---------------------------------------------------------------------------
+PERFORMANCE_FEE_NEGATION = re.compile(
+    r'no\s+se\s+aplica\s+ninguna\s+comisi[oó]n\s+de\s+(?:[eé]xito|rendimiento)'
+    r'|no\s+(?:hay|existe)\s+comisi[oó]n\s+de\s+(?:[eé]xito|rendimiento)'
+    r'|este\s+producto\s+no\s+(?:tiene|aplica|cobra)[^.\n]{0,40}'
+    r'comisi[oó]n\s+de\s+(?:[eé]xito|rendimiento)'
+    r'|no\s+performance\s+fee(?:\s+is\s+charged)?'
+    r'|(?:there\s+is\s+)?no\s+performance\s+fee\s+for\s+this\s+product'
+    r'|performance\s+fees?\s*[:\-]?\s*none',
+    re.IGNORECASE,
+)
+
+# Comisión de canje / conversión: NO es comisión de rendimiento.
+SWITCHING_FEE_CONTEXT = re.compile(
+    r'comisi[oó]n\s+de\s+canje'
+    r'|switching\s+fee'
+    r'|conversion\s+fee',
+    re.IGNORECASE,
+)
+
 # Mapeo de etiquetas de filas de composición → clave interna
 # \s* cubre texto pegado sin espacios (BL-COST-3-FIX)
 COMPOSITION_ROW_LABELS = {

@@ -47,6 +47,8 @@ from cost_table_parser    import (
     COMPOSITION_VALUE_LEADIN,
     COMPOSITION_DESC_TRANSACTION,
     COMPOSITION_DESC_MANAGEMENT,
+    PERFORMANCE_FEE_NEGATION,
+    SWITCHING_FEE_CONTEXT,
 )
 from cost_cross_validator import validate_pct_eur, ValidationResult
 
@@ -1040,6 +1042,25 @@ def extract_priips_costs(
             out['Management_Fee_Pct']   = _ratio_to_pct(mgmt)
         if tran is not None:
             out['Transaction_Cost_Pct'] = _ratio_to_pct(tran)
+        # FIX-PERF-FEE-NEGATION (2026-08-23): la fila de comisión de rendimiento
+        # niega su existencia con TEXTO, no con un 0, y la línea contigua suele
+        # anunciar una comisión de CANJE — cuyo % acaba ligado como si fuera la
+        # de rendimiento. Verificado contra la tabla publicada de LU1873132101:
+        # "No se aplica ninguna comisión de éxito para este producto" seguido de
+        # "comisión de canje no superior al 1%" → se publicaba 1,0. El valor 1.0
+        # es la moda del corpus (279 fondos), lo que delata un patrón, no un dato.
+        #
+        # La negación explícita es evidencia más fuerte que cualquier número
+        # ligado por posición: gana siempre y fija la comisión en 0.
+        if perf is not None and PERFORMANCE_FEE_NEGATION.search(text):
+            if perf != 0.0:
+                _log.info(
+                    "[FIX-PERF-FEE-NEGATION] %s: Performance_Fee_Pct %.2f%%→0 "
+                    "(el KID declara que no se aplica comisión de rendimiento)",
+                    isin, _ratio_to_pct(perf),
+                )
+            perf = 0.0
+
         if perf is not None:
             out['Performance_Fee_Pct']  = _ratio_to_pct(perf)
 
