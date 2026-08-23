@@ -742,3 +742,48 @@ def test_fix_aci_schedule_inject_fires_when_fallback_sets_aci_rhp():
     assert rhp_rows[0].get("Annual_Impact_Pct") == 2.0, (
         f"Annual_Impact_Pct={rhp_rows[0].get('Annual_Impact_Pct')}, expected 2.0"
     )
+
+
+# ---------------------------------------------------------------------------
+# FIX-ACI-RHP-LONGEST >= 1Y (Wellington layout, 2026-08-23)
+# ---------------------------------------------------------------------------
+
+def test_fix_aci_rhp_longest_1y_wellington_layout():
+    """Wellington layout: bogus is_rhp row (return projection 13.2%) rejected by
+    >5 ratio guard; 5Y row has aci_pct=None (merged text "1.7% 1.7% cada año");
+    1Y row has aci_pct=0.017. With >= 1.0 fix, LONGEST picks the 1Y row as
+    best available approximation and sets ACI_RHP=1.7.
+
+    Before the fix (> 1.0): 1Y was excluded → LONGEST found no candidates →
+    ACI_RHP=None despite ACI_1Y=1.7 being correctly set.
+    Self-contained (synthetic KID text), no disk/DB."""
+    from priips_cost_extractor import extract_priips_costs
+
+    # Synthetic replication of Wellington ES-language KID layout:
+    # - "período de mantenimiento recomendado" label → bogus is_rhp row aci_pct=0.132
+    # - 5 años column → total_cost_eur=0, aci_pct=None (layout merges the %)
+    # - 1 año column → aci_pct=0.017
+    text = (
+        "Costes a lo largo del tiempo\n"
+        "después de 1 año 5 años período de mantenimiento recomendado\n"
+        "Costes totales 170 EUR 0 EUR\n"
+        "Incidencia anual de los costes 1.7% 1.7% cada año\n"
+        "(*) El rendimiento medio que se prevé del fondo es del 13.2% antes de deducir los costes\n"
+        "período de mantenimiento recomendado\n"
+        "Composición de los costes\n"
+        "Costes de entrada 0%\n"
+    )
+    out = extract_priips_costs(text, "WELLINGTON_SYNTH_TEST")
+    assert out.get("ACI_1Y") == 1.7, f"ACI_1Y={out.get('ACI_1Y')}, expected 1.7"
+    assert out.get("ACI_RHP") == 1.7, (
+        f"ACI_RHP={out.get('ACI_RHP')}: LONGEST should fall back to 1Y row "
+        "when 5Y row has no aci_pct and bogus is_rhp row is rejected"
+    )
+    # FIX-SCHEDULE-IS-RHP-REPAIR: the Is_RHP=1 schedule row must carry the
+    # corrected 1.7%, NOT the bogus 13.2% from the footnote return projection.
+    rhp_rows = [r for r in out.get("_cost_schedule_rows", []) if r.get("Is_RHP") == 1]
+    assert rhp_rows, "Is_RHP=1 schedule row must exist"
+    assert rhp_rows[0].get("Annual_Impact_Pct") == 1.7, (
+        f"Is_RHP=1 Annual_Impact_Pct={rhp_rows[0].get('Annual_Impact_Pct')}: "
+        "schedule repair must overwrite the bogus 13.2 with the recovered 1.7"
+    )

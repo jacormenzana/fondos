@@ -488,6 +488,9 @@ def extract_priips_costs(
                 "[P0-ACI-RHP-GUARD] %s: ACI_RHP=%.4f rejected (%s); scenario-bleed suspected",
                 isin, aci_rhp_final, _reason,
             )
+        # Track guard rejection so the schedule repair below can target the
+        # Is_RHP=1 row that was built from the bogus is_rhp entry.
+        _guard_rejected = aci_rhp_final is not None and not _aci_rhp_ratio_ok
 
         # FIX-ACI-RHP-SINGLE: single-column OT fallback (mirrors harness
         # FIX-HARNESS / FIX-HARNESS-2). Audit 2026-06-30: 244 funds have
@@ -529,9 +532,14 @@ def extract_priips_costs(
         # pick are never perturbed. Guards mirror P0-ACI-RHP-GUARD (15% cap,
         # ACI_RHP/ACI_1Y ≤5) — a rejected is_rhp % is thus never re-admitted.
         if 'ACI_RHP' not in out and over_time:
+            # >= 1.0 (not > 1.0): when the longer-horizon row has aci_pct=None
+            # (e.g. Wellington layout "1.7% 1.7% cada año" merges both percentages
+            # onto the 1Y label), the 1Y row is the best available approximation.
+            # SINGLE already handles the true single-column case (no row > 1.0);
+            # here we fire when a longer row exists but carries no ACI %.
             _candidates = [
                 e for e in over_time
-                if (e.get('horizon_years') or 0) > 1.0
+                if (e.get('horizon_years') or 0) >= 1.0
                 and not e.get('is_rhp')
                 and e.get('aci_pct') is not None
             ]
@@ -701,6 +709,27 @@ def extract_priips_costs(
                         "(Annual_Impact_Pct=%.4f%%, Horizon_Years=%.6f)",
                         isin, out['ACI_RHP'], _syn_hy_r,
                     )
+
+        # FIX-SCHEDULE-IS-RHP-REPAIR: when P0-ACI-RHP-GUARD rejected the is_rhp
+        # row's value AND a fallback (LONGEST/SINGLE/COLLAPSED) recovered the
+        # correct ACI_RHP, the schedule's Is_RHP=1 row still carries the rejected
+        # bogus % (e.g. Wellington ES: return-projection 13.2% written as cost
+        # Annual_Impact_Pct instead of the true 1.7%). FIX-ACI-SCHEDULE-INJECT
+        # skips injection because the row already "has" a value — this repair
+        # overwrites that wrong value with the fallback-recovered ACI_RHP.
+        # Fires only when guard_rejected AND a fallback set ACI_RHP; fills only
+        # Is_RHP=1 rows carrying a value inconsistent with the recovered ACI_RHP.
+        if 'ACI_RHP' in out and _guard_rejected:
+            for _sr in out['_cost_schedule_rows']:
+                if _sr.get('Is_RHP') == 1 and _sr.get('Annual_Impact_Pct') is not None:
+                    _old_pct = _sr['Annual_Impact_Pct']
+                    if abs(_old_pct - out['ACI_RHP']) > 0.01:
+                        _sr['Annual_Impact_Pct'] = out['ACI_RHP']
+                        _log.info(
+                            "[FIX-SCHEDULE-IS-RHP-REPAIR] %s: Is_RHP=1 corrected "
+                            "%.1f%%→%.1f%% (bogus is_rhp entry overwritten by fallback)",
+                            isin, _old_pct, out['ACI_RHP'],
+                        )
 
         # --- G. Calidad (§3) ---
         out['Cost_Extraction_Quality'] = _assess_quality(
