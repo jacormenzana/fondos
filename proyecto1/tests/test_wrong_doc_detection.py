@@ -411,3 +411,25 @@ class TestSimplifiedProspectusDetection:
         )
         reason = detect_wrong_kiid_document(text)
         assert reason is None, "KIID real no debe confundirse con folleto simplificado"
+
+    def test_simplified_prospectus_not_suppressed_by_informaci_fp(self):
+        """FIX-WRONGDOC-SIMPPROSPECT-FP (2026-08-24): folleto con 'información' en tabla
+        de contenidos NO debe disparar el veto de estructura KIID (FP de 'informaci').
+        Caso real: LU0193173076 DB PrivatMandat 2009 — 'e información 27' en índice."""
+        # Texto que reproduce el FP: "informaci" aparece en "e información 27" (índice),
+        # NO como cabecera KIID. Sin la primera-página guard, el veto suprimía la detección.
+        text = (
+            "18 de mayo de 2009\n"
+            "Folleto de venta simplificado\n"
+            "db PrivatMandat Comfort\n"
+            "Sociedad de inversiones de capital variable\n"
+            "con arreglo al derecho luxemburgués\n"
+            "Índice\n"
+            "Oficinas de venta, de caja e información 27\n"
+            "Datos sobre las comisiones\n"
+        ) + "X" * 200
+        reason = detect_wrong_kiid_document(text)
+        assert reason is not None, (
+            "Folleto simplificado con 'información' en tabla de contenidos "
+            "debe detectarse (primer-página guard evita FP del veto KIID)"
+        )
