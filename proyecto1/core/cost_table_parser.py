@@ -324,6 +324,28 @@ SWITCHING_FEE_CONTEXT = re.compile(
     re.IGNORECASE,
 )
 
+# FIX-FEE-NEGATION (2026-08-23): las filas de entrada/salida también NIEGAN con
+# texto en vez de con un 0, y el parser liga entonces el número de la fila
+# siguiente —normalmente la comisión de gestión—. Firma en el corpus:
+# Exit_Fee_Pct_Max == Management_Fee_Pct en 663 fondos, con la fila de salida
+# diciendo "No cobramos comisión de salida". Confirmación cruzada interna: en 509
+# de esos casos la columna Exit_Fee_Pct (ratio) sí vale 0.
+EXIT_FEE_NEGATION = re.compile(
+    r'no\s+cobramos\s+(?:una\s+|ninguna\s+)?comisi[oó]n\s+de\s+salida'
+    r'|no\s+(?:se\s+)?cobra[^\n]{0,25}comisi[oó]n\s+de\s+salida'
+    r'|we\s+do\s+not\s+charge\s+an?\s+exit'
+    r'|no\s+exit\s+(?:fee|charge)',
+    re.IGNORECASE,
+)
+
+ENTRY_FEE_NEGATION = re.compile(
+    r'no\s+cobramos\s+(?:una\s+|ninguna\s+)?comisi[oó]n\s+de\s+entrada'
+    r'|no\s+(?:se\s+)?cobra[^\n]{0,25}comisi[oó]n\s+de\s+entrada'
+    r'|we\s+do\s+not\s+charge\s+an?\s+entry'
+    r'|no\s+entry\s+(?:fee|charge)',
+    re.IGNORECASE,
+)
+
 # FIX-ENTRY-FEE-BY-DESCRIPTION (2026-08-23): la comisión de ENTRADA se expresa
 # como % del IMPORTE QUE SE PAGA / IMPORTE INVERTIDO, mientras que el ACI se
 # expresa como % del VALOR DE LA INVERSIÓN AL AÑO. Cuando el parser liga por

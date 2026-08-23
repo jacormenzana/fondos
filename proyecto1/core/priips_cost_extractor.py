@@ -50,6 +50,8 @@ from cost_table_parser    import (
     PERFORMANCE_FEE_NEGATION,
     SWITCHING_FEE_CONTEXT,
     ENTRY_FEE_VALUE,
+    ENTRY_FEE_NEGATION,
+    EXIT_FEE_NEGATION,
 )
 from cost_cross_validator import validate_pct_eur, ValidationResult
 
@@ -962,6 +964,31 @@ def extract_priips_costs(
                         isin, _ratio_to_pct(_fb_aci3),
                     )
 
+        # FIX-ACI-SINGLE-VS-LABEL (2026-08-23): FIX-ACI-RHP-SINGLE asume que una
+        # tabla OT de una sola columna ES la columna RHP, y copia el valor de 1
+        # año. Pero a veces la tabla NO es de una columna: es que el parse (DLA2)
+        # solo capturó la fila de 1 año, mientras la etiqueta ACI sí expone las
+        # dos. Resultado: ACI_1Y == ACI_RHP con RHP > 1 año y comisión de entrada
+        # > 0 — imposible, porque la entrada se amortiza y el ACI baja con el
+        # horizonte. 213 fondos en la auditoría; LU0210531637 publicaba 7,60 en
+        # ambas cuando su etiqueta dice "7,60 % / 3,70 %".
+        # Cuando la etiqueta expone dos valores distintos, manda sobre el
+        # fallback: es evidencia directa frente a una suposición estructural.
+        if (
+            'ACI_RHP' in out
+            and _anchor_1y is not None and _anchor_rhp is not None
+            and abs(_anchor_1y - _anchor_rhp) >= _ACI_NOOP_TOLERANCE_PP
+            and _anchor_1y >= _anchor_rhp
+            and abs(out['ACI_RHP'] - _anchor_1y) < _ACI_NOOP_TOLERANCE_PP
+            and not (rhp_years is not None and abs(rhp_years - 1.0) <= 0.01)
+        ):
+            _log.info(
+                "[FIX-ACI-SINGLE-VS-LABEL] %s: ACI_RHP %.2f%%→%.2f%% "
+                "(el fallback de columna única había copiado el valor de 1 año)",
+                isin, out['ACI_RHP'], _anchor_rhp,
+            )
+            out['ACI_RHP'] = _anchor_rhp
+
         # FIX-ACI-LABEL-ANCHOR: último recurso de relleno. Cuando la tabla de
         # ESCENARIOS DE RENTABILIDAD se interpone en el flujo de texto entre el
         # titular de costes y la fila de coste real, parse_costs_over_time liga
@@ -1006,6 +1033,28 @@ def extract_priips_costs(
         # LU1883314244 (entrada 4,50 %, se guardaba 6,6 % = su ACI_1Y).
         # Solo corrige ante esa firma (entrada == ACI_1Y) y con evidencia
         # descriptiva explícita; nunca pisa una entrada ya distinta del ACI.
+        # FIX-FEE-NEGATION (2026-08-23): la fila de entrada/salida niega con TEXTO
+        # ("No cobramos comisión de salida") y el parser liga entonces el número
+        # de la fila siguiente, casi siempre la comisión de gestión.
+        # Auditoría: Exit_Fee_Pct_Max == Management_Fee_Pct en 663 fondos; 512 con
+        # negación explícita y, en 509 de ellos, la columna Exit_Fee_Pct (ratio)
+        # ya valía 0 — confirmación cruzada interna de que la comisión es cero.
+        # La negación explícita manda sobre cualquier número ligado por posición.
+        if exit_max is not None and exit_max > 0 and EXIT_FEE_NEGATION.search(text):
+            _log.info(
+                "[FIX-FEE-NEGATION] %s: Exit_Fee_Pct_Max %.2f%%→0 "
+                "(el KID declara que no se cobra comisión de salida)",
+                isin, _ratio_to_pct(exit_max),
+            )
+            exit_max = 0.0
+        if entry_max is not None and entry_max > 0 and ENTRY_FEE_NEGATION.search(text):
+            _log.info(
+                "[FIX-FEE-NEGATION] %s: Entry_Fee_Pct_Max %.2f%%→0 "
+                "(el KID declara que no se cobra comisión de entrada)",
+                isin, _ratio_to_pct(entry_max),
+            )
+            entry_max = 0.0
+
         _entry_pct = _ratio_to_pct(entry_max) if entry_max is not None else None
         if (
             _entry_pct is not None
@@ -1149,10 +1198,17 @@ def extract_priips_costs(
                 # modo que la reparación consistente es igualarlo a mgmt.
                 # El _oc_aci_mismatch existente solo MARCABA el problema desde
                 # 2026-06 sin corregirlo ("listo para BL-COST-5", nunca implementado).
+                # Se compara contra el ACI_RHP FINAL (out), no contra
+                # aci_rhp_final: cuando el valor lo aporta un fallback
+                # (SINGLE/LONGEST/COLLAPSED/ancla) aci_rhp_final sigue a None y la
+                # reparación no llegaba a 48 fondos igualmente contaminados.
+                _aci_final_ratio = (
+                    out['ACI_RHP'] / 100.0 if 'ACI_RHP' in out else aci_rhp_final
+                )
                 if (
                     mgmt is not None and oc_norm is not None
-                    and aci_rhp_final is not None
-                    and abs(oc_norm - aci_rhp_final) < 0.0006
+                    and _aci_final_ratio is not None
+                    and abs(oc_norm - _aci_final_ratio) < 0.0006
                     and abs(oc_norm - mgmt) >= 0.0006
                 ):
                     _log.info(
