@@ -1066,3 +1066,86 @@ def test_evidence_protects_label_vouched_coincidence():
         f"ACI_RHP={out.get('ACI_RHP')}: a label-vouched value must never be "
         "corrected, even though it matches the projection sentence"
     )
+
+
+# ---------------------------------------------------------------------------
+# FIX-ACI-RHP-COLUMN-DUP (2026-08-23)
+#
+# ACI_RHP ended up holding the 1-YEAR value. Two sub-mechanisms, one signature:
+#   (a) PLAIN_TEXT emits two rows sharing the same aci_pct (duplication);
+#   (b) DLA2 emits a single row tagged with the RHP horizon but carrying the
+#       1-year figures.
+# Both are corrected from the label's second column, guarded by the
+# amortisation direction (1Y >= RHP).
+# ---------------------------------------------------------------------------
+
+def test_column_dup_recovers_rhp_from_second_label_value():
+    """Duplication: both over-time rows carry 6.5%; the label reads
+    '6.5% 3.1% cada ano' with RHP=3y, so ACI_RHP must become 3.1.
+    Modelled on LU0152980495.
+    """
+    from priips_cost_extractor import extract_priips_costs
+
+    text = (
+        "Costes a lo largo del tiempo\n"
+        "Periodo de mantenimiento recomendado: 3 anos\n"
+        "En caso de salida despues de 1 ano\n"
+        "En caso de salida despues de 3 anos\n"
+        "Costes totales 647 EUR 647 EUR\n"
+        "Incidencia anual de los costes (*) \n"
+        "6.5% 3.1% cada ano\n"
+        "Composicion de los costes\n"
+        "Costes de entrada 0%\n"
+    )
+    out = extract_priips_costs(text, "COLDUP_PLAIN")
+
+    assert out.get("ACI_RHP") == 3.1, (
+        f"ACI_RHP={out.get('ACI_RHP')}: must take the RHP column (3.1), not the "
+        "duplicated 1-year value (6.5)"
+    )
+    assert out.get("ACI_1Y") == 6.5, "ACI_1Y must remain the 1-year value"
+
+
+def test_column_dup_not_applied_when_direction_is_reversed():
+    """Guard: when the label's first value is SMALLER than the second, the pair
+    is not a 1Y/RHP cost pair -- costs amortise, they do not grow. Such funds
+    must be left untouched. Modelled on LU2455947981 ('3,9% 11,8%').
+    """
+    from priips_cost_extractor import extract_priips_costs
+
+    text = (
+        "Costes a lo largo del tiempo\n"
+        "Periodo de mantenimiento recomendado: 3 anos\n"
+        "En caso de salida despues de 1 ano\n"
+        "En caso de salida despues de 3 anos\n"
+        "Costes totales 390 EUR 390 EUR\n"
+        "Incidencia anual de los costes *\n"
+        "3,9% 11,8%\n"
+        "Composicion de los costes\n"
+        "Costes de entrada 0%\n"
+    )
+    out = extract_priips_costs(text, "COLDUP_REVERSED")
+
+    assert out.get("ACI_RHP") != 11.8, (
+        "an 11.8% annual cost impact is not plausible; the reversed-direction "
+        "guard must prevent this substitution"
+    )
+
+
+def test_column_dup_not_applied_when_rhp_is_one_year():
+    """Guard: with RHP = 1 year, ACI_RHP == ACI_1Y is correct by definition."""
+    from priips_cost_extractor import extract_priips_costs
+
+    text = (
+        "Costes a lo largo del tiempo\n"
+        "Periodo de mantenimiento recomendado: 1 ano\n"
+        "En caso de salida despues de 1 ano\n"
+        "Costes totales 200 EUR\n"
+        "Incidencia anual de los costes 2,0%\n"
+        "Composicion de los costes\n"
+        "Costes de entrada 0%\n"
+    )
+    out = extract_priips_costs(text, "COLDUP_RHP1Y")
+    assert out.get("ACI_RHP") == 2.0, (
+        f"ACI_RHP={out.get('ACI_RHP')}: with RHP=1y the 1-year value is correct"
+    )

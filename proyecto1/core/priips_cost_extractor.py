@@ -682,6 +682,50 @@ def extract_priips_costs(
             )
             aci_1y_final = _anchor_1y / 100.0
 
+        # FIX-ACI-RHP-COLUMN-DUP (2026-08-23): bug de duplicación de columnas.
+        # En numerosas maquetas pdfplumber hace que la 2ª fila herede el aci_pct
+        # de la 1ª (limitación ya documentada en el docstring de este módulo), de
+        # modo que ACI_RHP acaba llevando el valor de 1 AÑO. Verificado contra el
+        # documento: LU0152980495 (cabeceras "después de 1 año"/"después de 3
+        # años", etiqueta "6.5% 3.1% cada año", RHP=3a) publicaba ACI_RHP=6,5
+        # cuando el coste anualizado a RHP es 3,1. Igual en IE00B46MFP70,
+        # IE0002460198, IE0032568887, IE00BDCRG239.
+        #
+        # Dos submecanismos, misma firma observable:
+        #   (a) PLAIN_TEXT con dos filas que comparten aci_pct (duplicación pura) —
+        #       LU0152980495: filas 1a y 3a ambas con 0.065;
+        #   (b) DLA2 con UNA fila etiquetada como el horizonte RHP pero que porta
+        #       los valores de 1 año — IE00B46MFP70: fila "después de 3 años" con
+        #       aci_pct=0.064 y total_cost_eur=643 (el coste de UN año; a 3 años
+        #       con 3,2%/año serían ~960 EUR).
+        # En ambos ACI_RHP acaba conteniendo el valor de 1 AÑO, que es la
+        # condición que se comprueba — no la duplicación, que solo cubre (a).
+        #
+        # Se corrige solo con evidencia convergente:
+        #   - la etiqueta expone DOS valores distintos (hay un RHP que recuperar);
+        #   - ACI_RHP coincide con el 1º de la etiqueta (el valor de 1 año);
+        #   - 1º >= 2º, la dirección normal (los costes se amortizan: la comisión
+        #     de entrada se reparte entre más años, así que el ACI baja con el
+        #     horizonte). El 5% de casos con 1º < 2º NO son esta clase — se dejan
+        #     intactos (LU2455947981: "3,9% 11,8%", donde 11,8 no es un ACI);
+        #   - RHP != 1 año, pues entonces ACI_RHP == ACI_1Y es lo correcto.
+        if (
+            _anchor_1y is not None and _anchor_rhp is not None
+            and aci_rhp_final is not None
+            and abs(_anchor_1y - _anchor_rhp) >= _ACI_NOOP_TOLERANCE_PP
+            and _anchor_1y >= _anchor_rhp                              # amortización
+            and abs(_ratio_to_pct(aci_rhp_final) - _anchor_1y)
+                < _ACI_NOOP_TOLERANCE_PP                               # porta el 1Y
+            and not (rhp_years is not None and abs(rhp_years - 1.0) <= 0.01)
+        ):
+            _log.info(
+                "[FIX-ACI-RHP-COLUMN-DUP] %s: ACI_RHP %.2f%%→%.2f%% "
+                "(2ª columna había heredado el valor de 1 año)",
+                isin, _ratio_to_pct(aci_rhp_final), _anchor_rhp,
+            )
+            aci_rhp_final = _anchor_rhp / 100.0
+            _aci_anchor_corrected = True
+
         # P0-ACI-GUARD: ACI values > 25% are parser bleed (scenario section
         # percentages captured instead of cost ACI). Confirmed root cause:
         # LU0256846568 (79.8%), LU1575199994 (71.4%) — CHECK constraint
