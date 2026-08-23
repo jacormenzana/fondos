@@ -502,6 +502,42 @@ def _build_schedule_rows(
         if eur is not None:
             row['Total_Costs_Pct'] = _ratio_to_pct(eur / PRIIPS_INVESTMENT_BASE)
 
+        # FIX-SCHEDULE-ANNUAL-GT-TOTAL (2026-08-23): invariante estructural — el
+        # impacto ANUAL nunca puede superar el coste TOTAL acumulado del mismo
+        # horizonte; a 1 año son iguales por definición y a horizontes mayores el
+        # total acumula. Cuando se incumple, el % anual es sangrado (escenario o
+        # proyección) mientras el importe en EUR —y por tanto Total_Costs_Pct— es
+        # correcto. Auditoría del schedule (nunca antes revisado): 394 filas,
+        # p. ej. ES0179692001 a 1 año con anual 94,7 % frente a 531 EUR = 5,31 %.
+        # Las reparaciones previas solo tocaban la fila Is_RHP=1; las demás
+        # conservaban el valor falso.
+        # A 1 año se corrige al valor derivado del EUR (equivalencia exacta); en
+        # horizontes mayores no es derivable sin el detalle del KID → se descarta,
+        # que es mejor que publicar un coste falso.
+        # ⚠ Solo se actúa si el TOTAL es creíble. Cuando Total_Costs_EUR es
+        # absurdamente pequeño (1, 3, 6 EUR sobre una base de 10.000) el lado
+        # equivocado es el total, no el anual: aplicar la regla a ciegas
+        # DESCARTARÍA un impacto anual correcto. Umbral: 20 EUR = 0,2 % de la
+        # base, por debajo del cual ningún fondo real declara su coste total.
+        _ann = row.get('Annual_Impact_Pct')
+        _tot = row.get('Total_Costs_Pct')
+        _tot_credible = eur is not None and eur >= 20.0
+        if _ann is not None and _tot is not None and _tot_credible and _ann > _tot + 0.05:
+            if abs(hy - 1.0) <= 0.01:
+                _log.info(
+                    "[FIX-SCHEDULE-ANNUAL-GT-TOTAL] %s: horizonte 1a %.2f%%→%.2f%% "
+                    "(anual > total acumulado; se usa el derivado de EUR)",
+                    isin, _ann, _tot,
+                )
+                row['Annual_Impact_Pct'] = _tot
+            else:
+                _log.info(
+                    "[FIX-SCHEDULE-ANNUAL-GT-TOTAL] %s: horizonte %.2fa anual "
+                    "%.2f%% descartado (> total acumulado %.2f%%)",
+                    isin, hy, _ann, _tot,
+                )
+                row.pop('Annual_Impact_Pct', None)
+
         # Fusión de colisión de PK (P-1): mismo Horizon_Years
         key = row['Horizon_Years']
         if key in by_horizon:
