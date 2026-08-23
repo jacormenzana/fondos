@@ -3563,21 +3563,20 @@ def _detect_ongoing_charge(text: str, language: Optional[str]) -> Optional[float
         if mgmt_val is not None and _OC_MIN <= mgmt_val <= _OC_MAX:
             return round(mgmt_val, 6)
 
-    # ── 1 y 2: Patrón PRIIPs (dominante: 91% de fondos) ─────────────────────
-    m = _OC_PRIIPS_RE.search(text)
-    if not m:
-        m = _OC_PRIIPS_RE.search(text.lower())
-    if m:
-        v2_str = m.group(2)   # segundo valor (periodo recomendado) — puede ser None
-        v1_str = m.group(1)   # primer valor (siempre existe)
-        if v2_str:
-            val = _parse_oc_pct(v2_str)
-            if val is not None:
-                return val
-        # Un solo valor: KIIDs con periodo=1 año
-        val = _parse_oc_pct(v1_str)
-        if val is not None:
-            return val
+    # ── 1 y 2: Patrón PRIIPs — RETIRADO (2026-08-23) ────────────────────────
+    # FIX-OC-DROP-ACI-PRIORITY. _OC_PRIIPS_RE lee la fila "Incidencia anual de
+    # los costes": ES el ACI, no el gasto corriente. Se escribió cuando se creía
+    # que ambos eran lo mismo; bajo PRIIPs el ACI incluye la entrada amortizada y
+    # los costes de operación, así que es estructuralmente mayor.
+    # Consecuencia medida: 217 fondos con Ongoing_Charge_Recurrent × 100 == ACI_RHP
+    # y distinto de la comisión de gestión (LU0106234643: OC 1,80 % = ACI 1,8 con
+    # gestión 0,63 %). Peor aún, el valor viajaba por `parsed["Ongoing_Charge"]` y
+    # PISABA la reparación del extractor en cada reproceso, de modo que la
+    # contaminación reaparecía (37 → 217 tras la pasada NFC).
+    # El gasto corriente sale ahora solo de fuentes que devuelven el componente de
+    # GESTIÓN: prioridad 0 (descripción normativa), 0.5 (etiqueta DDF), 3 (UCITS
+    # "Gastos corrientes") y las variantes de gestora posteriores.
+    # Ningún dato se pierde: el ACI vive en ACI_1Y / ACI_RHP.
 
     # ── 3: UCITS antiguo "Gastos corrientes X,XX%" ───────────────────────────
     m_ucits = _OC_UCITS_RE.search(text)

@@ -263,6 +263,19 @@ _ACI_PCT_TOKEN = re.compile(r'(-)?(\d{1,3}(?:[.,]\d{1,2})?)\s*%')
 # El CHECK del schema es 5.0 para Transaction_Cost_Pct; 25 es el techo general.
 _MAX_COMPOSITION_PCT = 25.0
 
+# Mecánica de comisión de rendimiento: si el KID la describe, la comisión existe
+# aunque su % coincida con otro componente. Si NO la describe y el % duplica otra
+# fila, el número pertenece a esa otra fila (FIX-PERF-FEE-MISBIND).
+_PERF_FEE_MECHANICS = re.compile(
+    r'rentabilidad\s+superior'
+    r'|supera\s+la\s+del\s+(?:indicador|[íi]ndice)'
+    r'|por\s+encima\s+del?\s+(?:activo|[íi]ndice|indicador)\s+de\s+referencia'
+    r'|marca\s+de\s+agua|high\s*water\s*mark|hurdle'
+    r'|outperform|excess\s+return|above\s+the\s+(?:benchmark|reference)'
+    r'|comisi[oó]n\s+de\s+[eé]xito',
+    re.IGNORECASE,
+)
+
 
 def _pct_token_to_float(token: str) -> float:
     """'2,74' | '2.74' → 2.74 (coma decimal europea o punto anglosajón)."""
@@ -1180,6 +1193,27 @@ def extract_priips_costs(
         #
         # La negación explícita es evidencia más fuerte que cualquier número
         # ligado por posición: gana siempre y fija la comisión en 0.
+        # FIX-PERF-FEE-MISBIND (2026-08-23): si el % ligado como comisión de
+        # rendimiento coincide con OTRO componente de coste (entrada, salida,
+        # gestión u operación) y el KID no aporta ninguna mecánica de comisión de
+        # rendimiento, el número pertenece a esa otra fila. Publicarlo es peor que
+        # omitirlo. Se resuelve AQUÍ y no anulando en BD: una anulación en BD la
+        # deshace el siguiente reproceso, porque el extractor vuelve a derivar el
+        # valor en cada pasada (comprobado: los 43 anulados reaparecieron).
+        if perf is not None and perf > 0:
+            _perf_pct = _ratio_to_pct(perf)
+            _dups = [
+                _v for _v in (entry_max, exit_max, mgmt, tran)
+                if _v is not None and abs(_ratio_to_pct(_v) - _perf_pct) < 0.005
+            ]
+            if _dups and not _PERF_FEE_MECHANICS.search(text):
+                _log.info(
+                    "[FIX-PERF-FEE-MISBIND] %s: Performance_Fee_Pct=%.2f%% descartado "
+                    "(coincide con otro componente y el KID no describe mecánica alguna)",
+                    isin, _perf_pct,
+                )
+                perf = None
+
         if perf is not None and PERFORMANCE_FEE_NEGATION.search(text):
             if perf != 0.0:
                 _log.info(

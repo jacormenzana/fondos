@@ -76,6 +76,13 @@ behaviour as P2 coverage grows). Ordering: run P2 before the P1 nature-first pas
 Each block exposes `classify_fund(name, kiid_text, ...)` and `get_universe_isins(df_master)`.  
 `restantes` is residual: takes all unclassified ISINs; exposes `get_universe_isins(df_master, conn)`.
 
+> **Paradigm note (current — `--nature-first --master-db`):** Block execution order is NOT the
+> classification authority. The `--nature-first` dispatch routes each ISIN directly to its block
+> based on Fund_Nature already persisted in the DB (via `resolve_nature_evidence()`). The
+> sequential order above is the fallback dispatch chain for ISINs with no DB record — it does not
+> determine nature for established funds. Single source of classification truth: `classify_utils.py`
+> logic + the block's `classify_fund()` output.
+
 ### KIID_Status state machine
 
 | Status | Meaning |
@@ -87,6 +94,42 @@ Each block exposes `classify_fund(name, kiid_text, ...)` and `get_universe_isins
 
 HTTP policy: 3 retries (1s/2s/4s backoff), timeout 15s. 429 does NOT retry.  
 `scripts/launch/mark_stale.py` marks max 50 funds/cycle as FORCE_REFRESH (age > 180 days).
+
+### Fund discovery & KIID lifecycle (`proyecto1/harvest/`) — new paradigm
+
+> **Paradigm note:** ISIN discovery and lifecycle management is now driven by the **Deutsche Bank
+> live XML catalogue** (`catalogo.xml`), not by `GestoresDeFondosv1.xlsx`. The Excel is still
+> supported via `--master` mode but is no longer authoritative for which funds exist or are retired.
+> `--master-db` loads the pipeline universe from `db_document_catalogue` (latest harvest snapshot).
+
+| Script | Purpose |
+|--------|---------|
+| `p1_db_harvest.py` | Phases 0–3: probe page, fetch `catalogo.xml` → raw JSONL + `db_document_catalogue`, codSus discovery report |
+| `p1_kiid_sync.py` | Phases 4–5: KIID delta vs local PDFs, net-new downloads, retire-orphans, `kiid_lifecycle` |
+
+**5-phase flow (run in order):**
+1. `p1_db_harvest.py --harvest` — fetch XML → upsert into `db_document_catalogue` with `harvest_ts`
+2. `p1_db_harvest.py --report-codsus` — **quality gate**: flags new funds (in harvest, not in `fund_master`) and retirement candidates (in `fund_master`, not in harvest); review before proceeding
+3. `p1_kiid_sync.py` (dry-run) — delta: `missing` = to download; `orphans` = local PDFs not in latest harvest
+4. `p1_kiid_sync.py --sync` — download net-new KIIDs (hrefs captured verbatim, §6.1 — never URL-built)
+5. `p1_kiid_sync.py --retire-orphans` — archive orphan PDFs to `kiid_retired/YYYYMMDD/`; record in `kiid_lifecycle`
+
+**Storage:**
+Active: `C:\data\fondos\kiid\{ISIN}.pdf` · Retired: `C:\data\fondos\kiid_retired\YYYYMMDD\{ISIN}.pdf`
+PDFs and `Raw_KIID_Text` (in `fund_kiid_metadata`) are **never deleted**.
+
+`kiid_lifecycle` table — one row per lifecycle period per ISIN:
+- `status = 'commercializing'` (active) or `'retired'`; `retire_dir` = YYYYMMDD archive subdirectory
+
+**"Orphan" (precise):** a local PDF in `kiid/` absent from the latest harvest's `db_document_catalogue` — fund was removed from the live XML catalogue. Not a fund that was "never registered".
+
+**Retirement cause:** fund disappears from Deutsche Bank's `catalogo.xml` → absent from latest `harvest_ts` in `db_document_catalogue` → Phase 3 report flags it → `--retire-orphans` archives it.
+
+**Pipeline impact of retired ISINs:** `--master-db` / `--nature-first` load universe from `db_document_catalogue` MAX `harvest_ts` — retired ISINs have 0 rows there and **cannot be reached by the classifier**. Direct SQL is the correct mechanism for `fund_master` attribute updates on retired ISINs (NOT a P#7 violation — P#7 covers active, classifier-reachable funds only).
+
+**Diagnosing a fund absent from the pipeline:** query `kiid_lifecycle WHERE isin=?` first.
+- `status='retired'` → retired KIID; `In_Current_Universe=0`; update via SQL.
+- No rows → check `db_document_catalogue`; may never have been in the XML catalogue.
 
 ### Key support modules
 
@@ -515,6 +558,7 @@ Repo-scoped skills used for diagnostics and backlog maintenance. Invoke by name.
 <!-- AUTO:BEGIN skills-table -->
 | Skill | Purpose |
 |-------|---------|
+| `auditStatisticalDataDistributionCostAttributes` | Statistical distribution audit of every cost attribute in `fund_master` and `fund_cost_schedule` — distributions, cross-component equality, shape mome |
 | `costP1AuditPipelineAndDiagCost` | Diagnostic and auditing workflow for troubleshooting pipeline cost extraction failures and generating code-level fixes. |
 | `crossValidateFundAttribute` | Add or audit a dual-signal (fund name + KIID text) cross-validated fund_master attribute, following the discipline established for Asset_Currency/Fund |
 | `debugErrorCode` | Four-phase debugging methodology with root cause analysis. Use when investigating bugs, fixing test failures, or troubleshooting unexpected behavior.  |

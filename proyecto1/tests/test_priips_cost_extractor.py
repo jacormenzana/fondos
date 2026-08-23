@@ -1217,3 +1217,85 @@ def test_projection_english_before_costs_phrase():
     assert out.get("ACI_RHP") == 3.5, (
         f"ACI_RHP={out.get('ACI_RHP')}: must resolve to the RHP column (3.5)"
     )
+
+
+# ─── FIX-OC-DROP-ACI-PRIORITY regressions (2026-08-23) ──────────────────────
+
+def test_oc_does_not_return_aci_row_value():
+    """
+    _detect_ongoing_charge must NOT return the 'Incidencia anual de los costes'
+    row value as the ongoing charge. That row IS the ACI, not the TER.
+
+    FIX-OC-DROP-ACI-PRIORITY: PRIIPs priorities 1&2 (the _OC_PRIIPS_RE block)
+    were removed because they read the ACI row and returned it as OC, causing
+    Ongoing_Charge_Recurrent * 100 == ACI_RHP for ~289 funds after the NFC sweep.
+
+    The text below has a 'Gastos corrientes 0,63%' line (management-component
+    source, UCITS-style) and an ACI row of '1,80%  1,80%'.  The UCITS source
+    must win; the ACI row value must NOT be returned.
+    """
+    from kiid_parser import _detect_ongoing_charge
+
+    text = (
+        "Gastos corrientes 0,63%\n"
+        "Incidencia anual de los costes\n"
+        "1,80%  1,80%\n"
+    )
+    oc = _detect_ongoing_charge(text, language='es')
+    assert oc is not None, "_detect_ongoing_charge should find the 'Gastos corrientes' value"
+    assert abs(oc - 0.0063) < 1e-6, (
+        f"OC={oc}: must return 0.0063 (0.63%) from 'Gastos corrientes', "
+        f"not {round(oc*100,4) if oc else 'None'}% from ACI row"
+    )
+    # The ACI row value (1.80%) must never be returned as the OC
+    assert abs(oc * 100 - 1.80) > 0.001, (
+        f"OC*100={round(oc*100,4)}: returned the ACI row value (1.80%) instead of 'Gastos corrientes'"
+    )
+
+
+def test_perf_fee_mechanics_regex_no_match_on_plain_text():
+    """
+    FIX-PERF-FEE-MISBIND: the _PERF_FEE_MECHANICS guard must NOT match a KID
+    that describes no performance-fee mechanics.
+
+    This tests the guard condition directly: a typical KID section listing
+    management and entry fees but with no outperformance / hurdle / HWM language.
+    The absence of a match is what triggers the misbind guard.
+    """
+    import re
+    from priips_cost_extractor import _PERF_FEE_MECHANICS
+
+    text_no_mechanics = (
+        "Composicion de los costes\n"
+        "Comisiones de gestion 1,87%\n"
+        "Costes de operacion 0,35%\n"
+        "Comisiones de exito 1,87%\n"    # same as mgmt — a classic misbind
+        "Comision de canje no superior al 1%\n"
+    )
+    assert _PERF_FEE_MECHANICS.search(text_no_mechanics) is None, (
+        "No mechanics text present — guard must NOT match, enabling the misbind drop"
+    )
+
+
+def test_perf_fee_mechanics_regex_matches_outperformance():
+    """
+    FIX-PERF-FEE-MISBIND guard must NOT fire when mechanics text is present.
+
+    _PERF_FEE_MECHANICS must match language indicating outperformance,
+    high-water mark, or hurdle so the guard correctly keeps the legitimate fee.
+    """
+    import re
+    from priips_cost_extractor import _PERF_FEE_MECHANICS
+
+    texts_with_mechanics = [
+        "20% de la rentabilidad superior a la del indicador de referencia",
+        "performance fees: 20% of outperformance",
+        "comision de exito: 15% over the benchmark",
+        "se aplica una comision de exito basada en high water mark",
+        "hurdle rate del 5% antes de cobrar comision de exito",
+        "comision de exito por encima del activo de referencia",
+    ]
+    for text in texts_with_mechanics:
+        assert _PERF_FEE_MECHANICS.search(text) is not None, (
+            f"Mechanics text not detected in: '{text[:60]}'"
+        )
