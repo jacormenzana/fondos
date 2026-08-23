@@ -95,11 +95,14 @@ CREATE TABLE IF NOT EXISTS fund_master (
     -- ⚠ NO debe coincidir con ACI_RHP: el ACI incluye la entrada amortizada y es
     --   estructuralmente mayor. Coincidencia exacta = contaminación (FIX-OC-BY-
     --   DESCRIPTION). Valores previos preservados en Ongoing_Charge_Legacy.
+    -- ⚠ DEFINICIÓN: solo el componente de GESTIÓN (comisiones de gestión y otros
+    --   costes administrativos o de funcionamiento). Los costes de operación NO
+    --   forman parte del gasto corriente bajo PRIIPs/UCITS: viven en
+    --   Transaction_Cost_Pct. Ver FIX-OC-MGMT-ONLY (2026-08-23).
+    -- Preservación: los valores anteriores a cualquier corrección viven en la
+    -- tabla fund_cost_corrections (no en columnas *_Legacy, retiradas por no
+    -- escalar a un par de columnas por componente de coste).
     Ongoing_Charge_Recurrent  REAL,
-    -- Preservación de procedencia (migración 20260823_oc_provenance.sql):
-    -- instantánea del valor anterior a cualquier corrección + su origen.
-    Ongoing_Charge_Legacy     REAL,
-    Ongoing_Charge_Source     TEXT,
     fund_family_id          TEXT,
     Strategy                TEXT,
     -- v20: Is_ESG ELIMINADA (derivable de Sfdr_Article; §8-bis Q4 sin vista)
@@ -142,6 +145,17 @@ CREATE TABLE IF NOT EXISTS fund_master (
         CHECK (Transaction_Cost_Pct IS NULL OR (Transaction_Cost_Pct >= 0 AND Transaction_Cost_Pct <= 5)),
     Performance_Fee_Pct     REAL
         CHECK (Performance_Fee_Pct IS NULL OR (Performance_Fee_Pct >= 0 AND Performance_Fee_Pct <= 30)),
+    -- ⚠ Performance_Fee_Pct NO es homogénea por sí sola: unas gestoras publican
+    --   un % SOBRE PATRIMONIO y otras la TASA SOBRE LA RENTABILIDAD SUPERIOR
+    --   (Carmignac: "20 % máx. de la rentabilidad superior"). Promediar o filtrar
+    --   la columna sin mirar la base mezcla dos magnitudes incomparables.
+    --   Performance_Fee_Basis declara cuál es (FIX-PERF-FEE-NEGATION, 2026-08-23):
+    --     'NONE'                   el KID declara que no se aplica → Pct = 0
+    --     'RATE_ON_OUTPERFORMANCE' tasa sobre el exceso de rentabilidad
+    --     'UNDETERMINED'           hay comisión pero el KID no expone la mecánica
+    Performance_Fee_Basis   TEXT
+        CHECK (Performance_Fee_Basis IS NULL OR Performance_Fee_Basis IN
+               ('NONE','RATE_ON_OUTPERFORMANCE','PCT_OF_ASSETS','UNDETERMINED')),
     ACI_1Y                  REAL
         CHECK (ACI_1Y IS NULL OR (ACI_1Y >= 0 AND ACI_1Y <= 50)),
     ACI_RHP                 REAL

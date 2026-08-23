@@ -258,7 +258,10 @@ COMPOSITION_VALUE_LEADIN = re.compile(
 COMPOSITION_DESC_TRANSACTION = re.compile(
     r'costs?\s+incurred\s+when\s+we\s+buy\s+and\s+sell'
     r'|incurrimos\s+al\s+comprar\s+y\s+vender'
-    r'|se\s+incurre\s+al\s+comprar\s+y\s+vender',
+    r'|se\s+incurre\s+al\s+comprar\s+y\s+vender'
+    # Variante Schroders/otras: "gastos sufragados cuando compramos y vendemos"
+    r'|sufragados\s+cuando\s+compramos\s+y\s+vendemos'
+    r'|cuando\s+compramos\s+y\s+vendemos',
     re.IGNORECASE,
 )
 
@@ -272,9 +275,13 @@ COMPOSITION_DESC_TRANSACTION = re.compile(
 COMPOSITION_DESC_MANAGEMENT = re.compile(
     r'estimate\s+based\s+on\s+actual\s+costs'
     r'|based\s+on\s+(?:the\s+)?actual\s+costs\s+over\s+the\s+last\s+year'
-    r'|estimaci[oó]n\s+basada\s+en\s+los\s+costes\s+(?:reales|efectivos)'
-    r'|se\s+basa\s+en\s+los\s+costes\s+(?:reales|efectivos)'
-    r'|basada\s+en\s+los\s+costes\s+(?:reales|efectivos)',
+    r'|estimaci[oó]n\s+basada\s+en\s+los\s+(?:costes|gastos)\s+(?:reales|efectivos)'
+    r'|se\s+basa\s+en\s+los\s+(?:costes|gastos)\s+(?:reales|efectivos)'
+    r'|basada\s+en\s+los\s+(?:costes|gastos)\s+(?:reales|efectivos)'
+    # Variante Schroders: "Este porcentaje se basa en los gastos reales del año
+    # pasado" — usa "gastos" y un verbo distinto; cubría 257 fondos de los que
+    # seguían con el ACI en Ongoing_Charge_Recurrent.
+    r'|(?:este\s+)?porcentaje\s+se\s+basa\s+en\s+los\s+(?:gastos|costes)',
     re.IGNORECASE,
 )
 
