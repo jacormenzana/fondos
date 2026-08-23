@@ -304,6 +304,10 @@ PERFORMANCE_FEE_NEGATION = re.compile(
     # este producto" — niega por la MECÁNICA, no por el nombre de la comisión.
     r'|no\s+existe\s+ninguna\s+comisi[oó]n\s+en\s+funci[oó]n\s+de\s+la\s+rentabilidad'
     r'|no\s+se\s+aplica\s+ninguna\s+comisi[oó]n\s+en\s+funci[oó]n\s+de\s+la\s+rentabilidad'
+    # "Este producto no está sujeto a ninguna comisión de rentabilidad." —
+    # niega por SUJECIÓN. 63 de los 93 fondos que quedaban sin determinar.
+    r'|no\s+est[aá]\s+sujeto\s+a\s+ninguna\s+comisi[oó]n\s+de\s+(?:rentabilidad|rendimiento|[eé]xito)'
+    r'|not\s+subject\s+to\s+any\s+performance\s+fee'
     r'|este\s+producto\s+no\s+(?:tiene|aplica|cobra)[^.\n]{0,40}'
     r'comisi[oó]n\s+de\s+(?:[eé]xito|rendimiento)'
     r'|no\s+performance\s+fee(?:\s+is\s+charged)?'

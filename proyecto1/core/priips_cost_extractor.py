@@ -1093,6 +1093,30 @@ def extract_priips_costs(
         if perf is not None:
             out['Performance_Fee_Pct']  = _ratio_to_pct(perf)
 
+        # FIX-ACI-EQUALS-TRANSACTION (2026-08-23): en algunas maquetas el ACI_RHP
+        # acaba ligado a la fila de COSTES DE OPERACIÓN, con lo que queda idéntico
+        # a Transaction_Cost_Pct y muy por debajo de la propia comisión de gestión
+        # —imposible, porque el ACI es el total y la gestión solo un componente.
+        # Detectado por la auditoría de distribución vía "Management_Fee > ACI_RHP".
+        # Verificado: LU1099740216 guardaba 0,19 (== operación) cuando su etiqueta
+        # ACI dice 8,94 % / 4,83 %; LU0512093542 igual con 0,19 frente a 3,16 %.
+        # Se corrige solo con la firma completa: ACI_RHP == operación, la etiqueta
+        # respalda otro valor y ese valor es mayor (el ACI incluye la operación).
+        if (
+            'ACI_RHP' in out and tran is not None
+            and abs(out['ACI_RHP'] - _ratio_to_pct(tran)) < 0.005
+            and _anchor_rhp is not None
+            and _anchor_rhp > out['ACI_RHP'] + 0.02
+        ):
+            _log.info(
+                "[FIX-ACI-EQUALS-TRANSACTION] %s: ACI_RHP %.2f%%→%.2f%% "
+                "(el valor previo era el coste de operación)",
+                isin, out['ACI_RHP'], _anchor_rhp,
+            )
+            out['ACI_RHP'] = _anchor_rhp
+            if _anchor_1y is not None and _anchor_1y >= _anchor_rhp:
+                out['ACI_1Y'] = _anchor_1y
+
         # --- E. TER reconstruido y gestión de Ongoing_Charge_Recurrent (P-3) ---
         ter_recon_ratio: Optional[float] = None
         if mgmt is not None:
@@ -1114,6 +1138,30 @@ def extract_priips_costs(
                 out['Ongoing_Charge_Recurrent'] = ter_recon_ratio
             else:
                 oc_norm = _norm_existing_oc(existing_oc)
+
+                # FIX-OC-ACI-REPAIR (2026-08-23): el OC heredado es el ACI.
+                # Firma: OC (en ratio) coincide con ACI_RHP y difiere de la
+                # comisión de gestión. En 235 fondos la gestión ya está bien en BD
+                # —arbitración xBand con veredicto AGREE en los 235— pero su valor
+                # solo aparece en el texto como fragmento de celda ("0.29%]"), así
+                # que ninguna regla sobre prosa puede recuperarlo. El gasto
+                # corriente ES el componente de gestión (definición adoptada), de
+                # modo que la reparación consistente es igualarlo a mgmt.
+                # El _oc_aci_mismatch existente solo MARCABA el problema desde
+                # 2026-06 sin corregirlo ("listo para BL-COST-5", nunca implementado).
+                if (
+                    mgmt is not None and oc_norm is not None
+                    and aci_rhp_final is not None
+                    and abs(oc_norm - aci_rhp_final) < 0.0006
+                    and abs(oc_norm - mgmt) >= 0.0006
+                ):
+                    _log.info(
+                        "[FIX-OC-ACI-REPAIR] %s: Ongoing_Charge %.4f→%.4f "
+                        "(el valor heredado era el ACI; se fija al componente de gestión)",
+                        isin, oc_norm, mgmt,
+                    )
+                    out['Ongoing_Charge_Recurrent'] = mgmt
+
                 if _detect_oc_aci_mismatch(existing_oc, oc_norm, ter_recon_ratio, aci_rhp_final):
                     out['_oc_aci_mismatch'] = True
                     out['_oc_aci_mismatch_ter_pct'] = _ratio_to_pct(ter_recon_ratio)

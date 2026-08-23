@@ -3516,25 +3516,7 @@ def _detect_ongoing_charge(text: str, language: Optional[str]) -> Optional[float
     if not text:
         return None
 
-    # ── 0: DDF Composición de costes (Prioridad máxima) ──────────────────────
-    # Suma comisiones de gestión + costes de operación = TER real
-    # Evita el error de capturar "Incidencia anual" que incluye entrada
-    # FIX-OC-MGMT-ONLY (2026-08-23): esta prioridad sumaba gestión + operación.
-    # Bajo PRIIPs/UCITS los "gastos corrientes" son gestión + otros costes
-    # administrativos o de funcionamiento; los COSTES DE OPERACIÓN se declaran
-    # aparte, en su propia fila, y no forman parte del gasto corriente.
-    # La suma dejaba la columna semánticamente partida: 543 fondos con el TER y
-    # 1.034 con solo gestión. Verificado contra la tabla publicada de
-    # LU1873132101 — gestión 0,45%, operación 0,13% — donde se guardaba 0,58%.
-    # Se devuelve solo el componente de gestión; Transaction_Cost_Pct conserva
-    # la operación por separado, así que no se pierde información.
-    m_mgmt  = _OC_DDF_MGMT_RE.search(text) or _OC_DDF_MGMT_RE.search(text.lower())
-    if m_mgmt:
-        mgmt_val = _parse_oc_pct(m_mgmt.group(1))
-        if mgmt_val is not None and _OC_MIN <= mgmt_val <= _OC_MAX:
-            return round(mgmt_val, 6)
-
-    # ── 0.5: FIX-OC-BY-DESCRIPTION (2026-08-23) ─────────────────────────────
+    # ── 0: FIX-OC-BY-DESCRIPTION (2026-08-23) — PRIORIDAD MÁXIMA ─────────────────────────────
     # La prioridad 0 casa por ETIQUETA ("Comisiones de gestión…"). En las
     # maquetas de columna partida pdfplumber intercala etiquetas y valores, la
     # etiqueta queda huérfana y la prioridad 0 falla — con lo que se cae a la
@@ -3555,6 +3537,24 @@ def _detect_ongoing_charge(text: str, language: Optional[str]) -> Optional[float
         _val = _parse_oc_pct(_m.group(1))
         if _val is not None and _OC_MIN <= _val <= _OC_MAX:
             return _val
+
+    # ── 0.5: DDF Composición de costes (por ETIQUETA, menos fiable) ──────────────────────
+    # Suma comisiones de gestión + costes de operación = TER real
+    # Evita el error de capturar "Incidencia anual" que incluye entrada
+    # FIX-OC-MGMT-ONLY (2026-08-23): esta prioridad sumaba gestión + operación.
+    # Bajo PRIIPs/UCITS los "gastos corrientes" son gestión + otros costes
+    # administrativos o de funcionamiento; los COSTES DE OPERACIÓN se declaran
+    # aparte, en su propia fila, y no forman parte del gasto corriente.
+    # La suma dejaba la columna semánticamente partida: 543 fondos con el TER y
+    # 1.034 con solo gestión. Verificado contra la tabla publicada de
+    # LU1873132101 — gestión 0,45%, operación 0,13% — donde se guardaba 0,58%.
+    # Se devuelve solo el componente de gestión; Transaction_Cost_Pct conserva
+    # la operación por separado, así que no se pierde información.
+    m_mgmt  = _OC_DDF_MGMT_RE.search(text) or _OC_DDF_MGMT_RE.search(text.lower())
+    if m_mgmt:
+        mgmt_val = _parse_oc_pct(m_mgmt.group(1))
+        if mgmt_val is not None and _OC_MIN <= mgmt_val <= _OC_MAX:
+            return round(mgmt_val, 6)
 
     # ── 1 y 2: Patrón PRIIPs (dominante: 91% de fondos) ─────────────────────
     m = _OC_PRIIPS_RE.search(text)
