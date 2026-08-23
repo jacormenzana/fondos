@@ -1078,7 +1078,7 @@ def parse_kiid_generic(
     # PASO 10i — Distribution_Frequency
     # -------------------------------------------------
     dist_freq = _detect_distribution_frequency(
-        kiid_text, result.get("Accumulation_Policy")
+        kiid_text, result.get("Accumulation_Policy"), fund_name
     )
     if dist_freq:
         result["Distribution_Frequency"] = dist_freq
@@ -2063,15 +2063,43 @@ ES_HEDGED = [
     r"\bcubierta\s+frente\s+al\s+riesgo\s+de\s+divisa\b",
     r"\bcobertura\s+de\s+divisa\b",
     r"\bcubierta\s+frente\s+al\s+riesgo\s+de\s+tipo\s+de\s+cambio\b",
-    # NUEVO: "cubierto frente a / cubierto en" — 30 casos
-    r"\bcubierto\s+(?:en|frente\s+a)\b",
+    # NOTA: "cubierto en / cubierto frente a" (masculino) se evalúa fuera de
+    # esta lista con contexto — ver _cubierto_en_genuine() + _detect_hedging_policy().
+    # Se eliminó de la lista simple para evitar falsos positivos en:
+    # 1. "expresado o cubierto en EUR" (composición de activos, no cobertura de clase)
+    # 2. "valor/índice de referencia ... cubierto en EUR" (benchmark hedged)
+    # 3. "100% cubierto en EUR" en descripción de rentabilidad de benchmark
+    # FIX-HEDGE-5 (2026-07-12): contexto requerido para suprimir 9 falsos positivos
+    # en M&G EUR CORP BOND A/C, M&G EURO STRAT VALUE, M&G OPT INC J/JI EUR ×4,
+    # NORDEA EUROP HY BOND BC EUR, NORDEA GL STBL EQ EUR HD BC.
     # NUEVO: "cobertura cambiaria / de tipo de cambio"
     r"\bcobertura\s+(?:cambiaria|de\s+tipo\s+de\s+cambio)\b",
     # NUEVO: "clase con cobertura"
     r"\bclase\s+con\s+cobertura\b",
-    # NUEVO: "(eur hedged)" o "(usd hedged)" en nombre de clase en ES
-    r"\b(?:eur|usd|gbp|chf|jpy)\s+\(?\s*hedged\s*\)?",
+    # NUEVO: "(EUR hedged)" o "(USD hedged)" en nombre de clase en ES.
+    # FIX-HEDGCCY-1 (2026-07-06): parens son REQUERIDOS (no opcionales).
+    # La forma sin paréntesis "EUR Hedged" aparece en nombres de índices de
+    # referencia (p.ej. "Bloomberg Pan European HY 3% Constrained Index EUR
+    # Hedged") y causaba falsos positivos en ~26 fondos donde Hedging='Hedged'
+    # se guardaba por el nombre del benchmark, no de la clase. Las clases con
+    # cobertura de divisa usan "(EUR Hedged)" con paréntesis en sus KIID o
+    # disparan otros patrones ES_HEDGED (líneas "clase cubierta", "cubierto
+    # frente a", "cobertura de la clase"). Confirmado: EN_HEDGED línea 2112
+    # ya requería paréntesis — se iguala el criterio en ES_HEDGED.
+    r"\b(?:eur|usd|gbp|chf|jpy)\s*\(\s*hedged\s*\)",
     r"\(hedged\)",
+    # FIX-HEDGE-4 (2026-07-05): "cobertura de la clase de acciones/
+    # participaciones" -- variante de orden de palabras distinta de
+    # "clase [de acciones] cubierta" (línea 1) ya cubierta arriba. Ata
+    # explícitamente "cobertura" a la CLASE como objeto, a diferencia del
+    # boilerplate genérico "el fondo puede usar derivados con fines de
+    # cobertura" (gestión de riesgo del fondo en general, no política de
+    # cobertura de ESTA clase) -- deliberadamente NO se añade un patrón
+    # bare "cobertura"/"cubrir" por ese riesgo de falso positivo, muy
+    # frecuente en el corpus (ver auditoría de la población 'restantes',
+    # sesión 2026-07-05: 69/249 fondos con Hedging_Policy=NULL mencionan
+    # cobertura solo en ese contexto genérico).
+    r"\bcobertura\s+de\s+la\s+clase\s+de\s+(?:acciones|participaciones)\b",
 ]
 
 ES_UNHEDGED = [
@@ -2080,6 +2108,13 @@ ES_UNHEDGED = [
     r"\bsin\s+cobertura\s+de\s+divisa\b",
     # NUEVO: "sin cobertura" genérico — 7 casos
     r"\bsin\s+cobertura\b",
+    # FIX-HEDGE-5 (2026-07-12): "no se aplica (una/la) cobertura cambiaria".
+    # Patrón para "El fondo puede realizar cobertura de divisas. Por lo general,
+    # no se aplica una cobertura cambiaria." — afirmación genérica de capacidad
+    # seguida de negación de aplicación real. Cubre ROBECO GLB CONS TRNDS D/M USD
+    # donde "cobertura cambiaria" (ES_HEDGED) disparaba HEDGED aunque la siguiente
+    # frase niega su aplicación real.
+    r"\bno\s+se\s+aplica\s+(?:(?:una|la)\s+)?cobertura\s+cambiaria\b",
     # NUEVO: "no existe cobertura"
     r"\bno\s+existe\s+cobertura\b",
     # NUEVO: "riesgo de divisa no cubierto"
@@ -2114,6 +2149,31 @@ EN_UNHEDGED = [
 EN_PARTIAL = [
     r"\bpartially\s+hedged\b",
 ]
+
+# FIX-HEDGE-5 (2026-07-12): Detección con contexto para "cubierto en / cubierto frente a"
+# (masculino). El patrón amplio fue eliminado de ES_HEDGED porque disparaba falsos
+# positivos en tres contextos de boilerplate frecuentes:
+#   1. "expresado o cubierto en [moneda]"         → composición de activos (70% del fondo)
+#   2. "valor/índice de referencia ... cubierto en [moneda]" → benchmark hedged, no la clase
+#   3. "[benchmark] 100% cubierto en [moneda]"    → rentabilidad del índice de referencia
+# Se aceptan solo los hits donde NINGUNO de estos contextos precede al match.
+_CUBIERTO_EN_RE = re.compile(r"\bcubierto\s+(?:en|frente\s+a)\b")
+_CUBIERTO_EN_FP_CTX = re.compile(
+    r"expresado\s+o\s*$"                                         # "expresado o [cubierto]"
+    r"|(?:valor|[ií]ndice|[ií]ndices)\s+de\s+referencia\b[^.]*$"  # benchmark section
+    r"|\d+\s*%\s*$",                                             # "100% [cubierto en]" — total return
+)
+
+
+def _cubierto_en_genuine(t: str) -> bool:
+    """True only when 'cubierto en/frente a' (masculine) is NOT in a false-positive context.
+    Operates on already-lowercased text."""
+    for m in _CUBIERTO_EN_RE.finditer(t):
+        before = t[max(0, m.start() - 150): m.start()]
+        if _CUBIERTO_EN_FP_CTX.search(before):
+            continue
+        return True
+    return False
 
 
 def _detect_hedging_policy(text: str, language: Optional[str]) -> Optional[str]:
@@ -2151,6 +2211,10 @@ def _detect_hedging_policy(text: str, language: Optional[str]) -> Optional[str]:
         for rx in ES_HEDGED:
             if re.search(rx, t):
                 return "HEDGED"
+        # FIX-HEDGE-5: context-aware "cubierto en" — evaluated after simple ES_HEDGED
+        # patterns so it only triggers if no other positive signal already matched.
+        if _cubierto_en_genuine(t):
+            return "HEDGED"
 
     if language == "EN":
         for rx in EN_PARTIAL:
@@ -2296,6 +2360,33 @@ def _detect_fund_currency(text: str, language: Optional[str]) -> Optional[str]:
         _SYM = {"€": "EUR", "$": "USD", "£": "GBP", "¥": "JPY"}
         raw = _SYM.get(raw, raw.upper())
         result = _normalize_currency(raw)
+        if result:
+            return result
+
+    # FIX-FUNDCCY-1 (2026-07-05): variante de tabla de costes con celdas
+    # separadas por dos puntos y comillas tipográficas -- p.ej.
+    # "Costes totales:\n:"En caso de salida después de"1 año:: 252: USD:"
+    # (observado en KIIDs de JPMorgan). `_COSTS_CURR_RE` exige que la
+    # divisa aparezca INMEDIATAMENTE tras "costes totales" (con solo
+    # espacios en blanco de por medio); este formato intercala toda la
+    # etiqueta de la fila entre "costes totales:" y la celda real
+    # "<importe>: <divisa>:", haciendo fallar la detección de alta
+    # prioridad y cayendo al fallback de "moneda base del Subfondo" --
+    # que describe la divisa del SUBFONDO, no de esta CLASE DE
+    # PARTICIPACIÓN específica. Confirmado corpus-wide: 118 fondos
+    # (exclusivamente familia JPM) donde el fallback devolvía una divisa
+    # distinta de la que declara la propia tabla de costes de esta clase
+    # -- verificado en cada caso contra el sufijo de divisa del nombre de
+    # la propia clase de participación (p.ej. "JPM US VALUE A EUR HDG ACC"
+    # -- EUR, no la divisa base USD del subfondo).
+    _COSTS_CURR_TABLE_RE = re.compile(
+        r'costes\s+totales\s*:.*?:\s*[\d.,]+\s*:\s*'
+        r'(EUR|USD|GBP|JPY|CHF|SEK|NOK|DKK|AUD|CAD|PLN|CZK|HUF)\s*:',
+        re.IGNORECASE | re.DOTALL
+    )
+    m_cost_table = _COSTS_CURR_TABLE_RE.search(text)
+    if m_cost_table:
+        result = _normalize_currency(m_cost_table.group(1).upper())
         if result:
             return result
 
@@ -3503,6 +3594,14 @@ _ACCUM_PATTERNS_ES = [
     r"acumulaci[oó]n.{0,30}no\s+distribuye",
     r"no\s+reparte\s+dividendos",
     r"no\s+distribuye\s+(?:dividendos|rentas|ingresos)",
+    # FIX-ACCDIST-1 (2026-07-16): future/plural negation forms were missing.
+    # "Esta Clase de Acciones no distribuirá dividendos" was being mis-read as
+    # DISTRIBUTION because the DIST pattern matched 'distribuirá' inside that clause
+    # (DIST has no negation guard). Broadening ACCUM to cover all negated present/
+    # future forms of distribu*/repart*/pag* before DIST is evaluated fixes this.
+    # Both direct negation ("no distribuirá") and reflexive ("no se distribuirán").
+    r"no\s+(?:distribuir[aá]n?|repartir[aá]n?|pagar[aá]n?)\s+(?:dividendos?|rentas?|ingresos?)",
+    r"no\s+se\s+(?:distribuir[aá]n?|repartir[aá]n?|pagar[aá]n?)\s+(?:dividendos?|rentas?|ingresos?)",
     # v20 — patrones validados en 786 NULL (precisión >=97%):
     # "(clase|acciones|participaciones|subfondo) de acumulación"
     r"(?:clase|clases|acciones|participaciones?|subfondo)\s+de\s+acumulaci[oó]n",
@@ -3534,7 +3633,9 @@ _DIST_PATTERNS_ES = [
     r"(?:distribuy|reparte|paga)[aeiou]*[nr]?[ \t]+(?:los[ \t]+)?dividendos[ \t]+"
     r"(?:anual|trimestral|mensual|semestral|peri[oó]dic)",
     # "se distribuirán/pagarán/repartirán ingresos/rentas/dividendos"
-    r"(?:se[ \t]+)?(?:distribuir[aá]n?|pagar[aá]n?|repartir[aá]n?)[ \t]+"
+    # FIX-ACCDIST-1 defense-in-depth: negative lookbehind for "no " so that
+    # "no distribuirá dividendos" cannot match this DIST pattern.
+    r"(?:se[ \t]+)?(?<!no\s)(?:distribuir[aá]n?|pagar[aá]n?|repartir[aá]n?)[ \t]+"
     r"(?:los[ \t]+)?(?:ingresos|rentas|dividendos)",
 ]
 
@@ -4063,33 +4164,270 @@ _DIST_FREQ_PATTERNS = [
     (re.compile(r"distribution\s+frequency\s*[:\-]\s*(monthly|quarterly|semi.annual|annual)", re.I),
      {"monthly":"MONTHLY","quarterly":"QUARTERLY","semi-annual":"BIANNUAL","annual":"ANNUAL"}),
     # DDF: "El fondo reparte dividendos anual."
-    (re.compile(r"reparte\s+dividendos\s+(mensual|trimestral|semestral|anual)", re.I),
+    (re.compile(r"reparte\s+dividendos\s+(mensual|trimestral|semestral|anual)", re.I),
      {"mensual":"MONTHLY","trimestral":"QUARTERLY","semestral":"BIANNUAL","anual":"ANNUAL"}),
+    # ES extra: "paga/abona dividendos mensual/trimestral/..."
+    (re.compile(r"(?:paga|abona)\s+dividendos?\s+(mensual|trimestral|semestral|anual)(?:es|mente)?", re.I),
+     {"mensual":"MONTHLY","trimestral":"QUARTERLY","semestral":"BIANNUAL","anual":"ANNUAL"}),
+    # ES extra: "distribuciones mensuales/trimestrales/semestrales/anuales"
+    (re.compile(r"distribuciones?\s+(mensuales?|trimestrales?|semestrales?|anuales?)", re.I),
+     {"mensual":"MONTHLY","mensuales":"MONTHLY","trimestral":"QUARTERLY","trimestrales":"QUARTERLY",
+      "semestral":"BIANNUAL","semestrales":"BIANNUAL","anual":"ANNUAL","anuales":"ANNUAL"}),
+    # ES extra: "pago mensual/trimestral/... de rentas/dividendos"
+    (re.compile(r"pago\s+(mensual|trimestral|semestral|anual)\s+de\s+(?:rentas?|dividendos?|ingresos?)", re.I),
+     {"mensual":"MONTHLY","trimestral":"QUARTERLY","semestral":"BIANNUAL","anual":"ANNUAL"}),
+    # EN extra: "income is distributed / distributions are paid/made monthly/quarterly/..."
+    (re.compile(r"(?:income\s+is\s+distributed|distributions?\s+(?:are\s+)?(?:paid|made|declared))"
+                r"\s+(monthly|quarterly|semi.?annual(?:ly)?|annual(?:ly)?)", re.I),
+     {"monthly":"MONTHLY","quarterly":"QUARTERLY","semi-annually":"BIANNUAL","semiannually":"BIANNUAL",
+      "semi-annual":"BIANNUAL","semiannual":"BIANNUAL","annually":"ANNUAL","annual":"ANNUAL"}),
+    # EN extra: "pays income/distributions monthly/quarterly/annually"
+    (re.compile(r"pays?\s+(?:income|distributions?)\s+(monthly|quarterly|semi.?annual(?:ly)?|annual(?:ly)?)", re.I),
+     {"monthly":"MONTHLY","quarterly":"QUARTERLY","semi-annually":"BIANNUAL","semiannually":"BIANNUAL",
+      "semi-annual":"BIANNUAL","semiannual":"BIANNUAL","annually":"ANNUAL","annual":"ANNUAL"}),
+    # EN extra: "monthly/quarterly/annual income distributions"
+    # EN extra: "monthly/quarterly/annual income distributions"
+    (re.compile(r"\b(monthly|quarterly|semi.?annual|annual(?:ly)?)\s+(?:income\s+)?distributions?\b", re.I),
+     {"monthly":"MONTHLY","quarterly":"QUARTERLY","semi-annual":"BIANNUAL","semiannual":"BIANNUAL",
+      "annual":"ANNUAL","annually":"ANNUAL"}),
+    # EN extra: "distributes income on a monthly/... basis"
+    (re.compile(r"distributes?\s+(?:income|dividends?)\s+on\s+a\s+(monthly|quarterly|semi.?annual|annual)\s+basis", re.I),
+     {"monthly":"MONTHLY","quarterly":"QUARTERLY","semi-annual":"BIANNUAL","semiannual":"BIANNUAL","annual":"ANNUAL"}),
+    # EN extra: "income payments are made monthly/..."
+    (re.compile(r"income\s+payments?\s+(?:are\s+)?(?:made\s+)?(monthly|quarterly|semi.?annual(?:ly)?|annual(?:ly)?)", re.I),
+     {"monthly":"MONTHLY","quarterly":"QUARTERLY","semi-annually":"BIANNUAL","semiannually":"BIANNUAL",
+      "semi-annual":"BIANNUAL","annually":"ANNUAL","annual":"ANNUAL"}),
+    # EN extra: "monthly/quarterly/annual dividend"
+    # EN extra: "monthly/quarterly/annual dividend"
+    (re.compile(r"\b(monthly|quarterly|semi.?annual|annual)\s+dividend\b", re.I),
+     {"monthly":"MONTHLY","quarterly":"QUARTERLY","semi-annual":"BIANNUAL","semiannual":"BIANNUAL","annual":"ANNUAL"}),
+    # EN extra: "this share class / the fund pays out / distributes income monthly/..."
+    (re.compile(r"(?:this\s+(?:share\s+class|fund)|the\s+fund)\s+(?:pays\s+out|distributes?)\s+"
+                r"(?:income\s+)?(monthly|quarterly|semi.?annual(?:ly)?|annual(?:ly)?)", re.I),
+     {"monthly":"MONTHLY","quarterly":"QUARTERLY","semi-annually":"BIANNUAL","semiannually":"BIANNUAL",
+      "semi-annual":"BIANNUAL","annually":"ANNUAL","annual":"ANNUAL"}),
+    # FIX-ACCDIST-2 (2026-07-16): ES phrases present in ~86 flagged DISTRIBUTION funds
+    # whose frequency was known in the KIID but not matched by existing patterns.
+    # Pattern A: "mensualmente/trimestralmente/semestralmente/anualmente se pagarán/
+    #   distribuirán/repartirán … dividendos/rentas/ingresos"
+    #   e.g. "mensualmente se pagarán ingresos por dividendo" (LU0172420597 / Franklin)
+    # Kept bounded with distribution-context suffix (R-6) to avoid "actualizados mensualmente".
+    (re.compile(
+        r"(mensual|trimestral|semestral|anual)mente\s+se\s+"
+        r"(?:pagar[aá]n?|distribuir[aá]n?|repartir[aá]n?)"
+        r"[^.]{0,60}(?:dividendos?|rentas?|ingresos?)",
+        re.I | re.DOTALL,
+    ), {"mensual": "MONTHLY", "trimestral": "QUARTERLY", "semestral": "BIANNUAL", "anual": "ANNUAL"}),
+    # Pattern B: "distribuye un dividendo mensual/trimestral/semestral/anual"
+    #   e.g. "distribuye un dividendo anual en Septiembre" (LU1839125181)
+    (re.compile(
+        r"distribuye\s+(?:un\s+)?dividendo\s+(mensual|trimestral|semestral|anual)",
+        re.I,
+    ), {"mensual": "MONTHLY", "trimestral": "QUARTERLY", "semestral": "BIANNUAL", "anual": "ANNUAL"}),
+]
+
+# "12 distributions per year" -> MONTHLY, etc.
+_DIST_COUNT_PATTERN = re.compile(
+    r"(\d+)\s+(?:income\s+)?distributions?\s+per\s+(?:year|annum|p\.a\.?)", re.I
+)
+_COUNT_TO_FREQ = {1: "ANNUAL", 2: "BIANNUAL", 4: "QUARTERLY", 6: "BIANNUAL", 12: "MONTHLY"}
+
+# Name-token signals (share-class naming conventions)
+# BGF/BlackRock: A4/D4=Quarterly, A6/D6=BIANNUAL, A8/D8=MONTHLY, A10/D10=ANNUAL
+# MDis/QDis/ADis: JPM, Fidelity, Allianz and others
+_NAME_FREQ_PATTERNS = [
+    (re.compile(r"\bMDIS\b|\bM[-\s]DIS\b", re.I),  "MONTHLY"),
+    (re.compile(r"\bQDIS\b|\bQ[-\s]DIS\b", re.I),  "QUARTERLY"),
+    (re.compile(r"\bADIS\b|\bA[-\s]DIS\b", re.I),  "ANNUAL"),
+    (re.compile(r"\b[AD]8\b"),                       "MONTHLY"),
+    (re.compile(r"\b[AD]4\b"),                       "QUARTERLY"),
+    (re.compile(r"\b[AD]6\b"),                       "BIANNUAL"),
+    (re.compile(r"\b[AD]10\b"),                      "ANNUAL"),
 ]
 
 
-def _detect_distribution_frequency(text: str, accumulation_policy: Optional[str]) -> Optional[str]:
-    """
-    Detecta la frecuencia de distribución usando patrones contextuales.
-
-    Solo devuelve valor cuando:
-    1. El texto contiene una frase explícita de reparto de dividendos/rentas
-    2. Y la política de acumulación NO es ACCUMULATION
-
-    Evita falsos positivos con keywords sueltos como "anual" o "semestral"
-    que aparecen en secciones de costes o escenarios de rentabilidad.
-    """
-    if not text:
+def _name_signal_dist_freq(fund_name):
+    """Returns Distribution_Frequency from share-class name tokens, or None."""
+    if not fund_name:
         return None
-    if accumulation_policy == "ACCUMULATION":
+    for pat, freq in _NAME_FREQ_PATTERNS:
+        if pat.search(fund_name):
+            return freq
+    return None
+
+
+def _detect_distribution_frequency(
+    text: str,
+    accumulation_policy,
+    fund_name=None,
+):
+    """
+    Detecta la frecuencia de distribucion.
+
+    Orden de precedencia:
+    1. Patrones de texto KID (frases explicitas de reparto)
+    2. Patron numerico ("12 distributions per year")
+    3. Senal de nombre de fondo (tokens MDis/QDis/ADis/BGF-Ax)
+
+    Solo devuelve valor cuando Accumulation_Policy != 'Accumulation'.
+    Evita falsos positivos: los patrones exigen contexto lexico de reparto.
+    """
+    if accumulation_policy == "Accumulation":
         return None
 
-    for pattern, freq_map in _DIST_FREQ_PATTERNS:
-        m = pattern.search(text) or pattern.search(text.lower())
+    if text:
+        for pattern, freq_map in _DIST_FREQ_PATTERNS:
+            m = pattern.search(text)
+            if m:
+                keyword = m.group(1).lower().rstrip(".")
+                freq = freq_map.get(keyword)
+                if freq:
+                    return freq
+
+        m = _DIST_COUNT_PATTERN.search(text)
         if m:
-            keyword = m.group(1).lower().rstrip(".")
-            freq = freq_map.get(keyword)
+            count = int(m.group(1))
+            freq = _COUNT_TO_FREQ.get(count)
             if freq:
                 return freq
 
-    return None
+    return _name_signal_dist_freq(fund_name)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# B1 (2026-07-11): Detector de documento erróneo (estatutos SICAV / informe anual)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def detect_wrong_kiid_document(
+    kiid_text: Optional[str],
+    srri=None,
+) -> Optional[str]:
+    """Detecta si el texto almacenado NO es un KIID/KID de fondo único sino un
+    documento multi-fondo/legal (estatutos SICAV coordinados, informe anual, etc.).
+
+    Señales POSITIVAS — marcadores de documento multi-fondo / legal:
+      - Estatutos: 'statuts coordonnés', 'coordinated articles', etc.
+      - Informe anual: 'annual report', 'audited financial statements', etc.
+
+    Señales NEGATIVAS — vetan la detección (un KIID real siempre las tiene):
+      - Cabecera KIID/KID estándar (ES/EN/FR)
+      - Tabla de riesgo SRRI (X/7 o texto 'indicador de riesgo')
+      - Sección 'objetivos y política de inversión'
+
+    Regla conservadora (bajo false-positive): dispara SOLO si hay marcador
+    positivo Y ausencia de estructura KIID. Un KIID real que mencione
+    'annual report' de pasada seguirá teniendo su cabecera estándar.
+
+    Args:
+        kiid_text: texto extraído del PDF (ya en BD o recién descargado).
+        srri: SRRI extraído por parse_kiid_generic (corroborante, no suficiente).
+
+    Returns:
+        str (razón) si se detecta documento erróneo; None si KIID parece válido.
+    """
+    if not kiid_text or len(kiid_text) < 100:
+        return None
+
+    text_l = kiid_text.lower()
+
+    # ── Señales positivas: estatutos coordinados ─────────────────────────────
+    # NOTA: incluir variantes sin diacríticos (encoding degradado en PDFs OCR).
+    _STATUTE_MARKERS = [
+        "statuts coordonnés",
+        "statuts coordonnes",            # variante sin diacrítico (encoding OCR)
+        "coordinated articles",
+        "articles of incorporation",
+        "estatutos coordinados",
+        "estatutos coordinados",
+        "estatutos coordinados",
+        "artículos de constitución",
+        "articulos de constitucion",     # variante sin diacríticos
+        "memorandum of association",
+        "instrument of incorporation",
+    ]
+    # ── Señales positivas: estados financieros auditados (structural-only) ────
+    # IMPORTANTE: 'annual report', 'rapport annuel', 'informe anual' EXCLUIDOS
+    # deliberadamente — aparecen en la sección "puede obtener de forma gratuita"
+    # de KIIDs y KIDs reales (PRIIPs/UCITS), causando falsos positivos al ~40%.
+    # Solo se usan frases estructurales que NO aparecen en KIIDs reales.
+    _ANNUAL_REPORT_MARKERS = [
+        "audited financial statements",
+        "schedule of investments",
+        "combined statement of net assets",
+        "notes to the financial statements",
+        "independent auditor",
+        "report of the board of directors",
+        "board of directors report",
+    ]
+
+    _found_statute = next((m for m in _STATUTE_MARKERS if m in text_l), None)
+    _found_report = next((m for m in _ANNUAL_REPORT_MARKERS if m in text_l), None)
+
+    if not _found_statute and not _found_report:
+        return None  # Sin marcador positivo → documento no erróneo
+
+    # FIX-WRONGDOC-AR (2026-07-13): informes anuales multi-fondo que embeben
+    # los KIIDs de todos sus subfondos contienen SRRI "X/7" y frases de riesgo
+    # dentro de las secciones por subfondo — causando que el check de KIID
+    # structure más abajo devuelva None (falso negativo). Guarda de primera
+    # página: si uno de los marcadores de informe anual ESTRUCTURALES aparece
+    # en los primeros 150 chars, el documento ES un informe anual con certeza
+    # (ningún KIID/KID real empieza así: la primera línea siempre es el nombre
+    # del fondo, "DATOS FUNDAMENTALES" u otro encabezado KIID).
+    # Se usa 150 chars (no 300) para evitar capturar KIIDs que mencionan
+    # "annual report" en una referencia de sus primeras líneas de cuerpo.
+    # Confirmado: THREADNEEDLE UK SLCT RI (GB00BMW6N332) comienza en literal
+    # "ANNUAL REPORT AND AUDITED FINANCIAL STATEMENTS\n" (48 chars).
+    _FIRST_PAGE_REPORT_MARKERS = [
+        "annual report and audited financial statements",
+        "informe anual y cuentas anuales auditadas",
+        "rapport annuel et comptes audités",
+        "audited annual report",
+        "audited financial statements\n",   # primera línea (sólo al inicio)
+    ]
+    _first_page = text_l[:150]
+    _found_first_page = next(
+        (m for m in _FIRST_PAGE_REPORT_MARKERS if m in _first_page), None
+    )
+    if _found_first_page:
+        return (
+            f"Informe anual multi-fondo detectado en página 1 "
+            f"(marcador='{_found_first_page}')"
+        )
+
+    # ── Señales negativas: vetan la detección (un KIID/KID real las tiene) ───
+    # Se usan marcadores sin diacríticos o con variantes cortas para mayor
+    # robustez frente a textos con encoding degradado (CP1252/Latin-1 parcial).
+    _KIID_HEADERS = [
+        "datos fundamentales para el inversor",
+        "datos fundamentales",           # PRIIPs KID (versión corta, encoding-safe)
+        "informaci",                     # "información clave" — acortado, sin tildes
+        "key investor information",
+        "key information",               # PRIIPs KID (versión corta)
+        "informations cl",               # "informations clés" — acortado, encoding-safe
+        "informaciones fundamentales",
+    ]
+    _SRRI_TEXT_MARKERS = [
+        "indicador de riesgo",           # sin tildes, encoding-safe
+        "risk and reward",               # without accents, always ASCII
+        "indicateur de risque",          # sin tildes, encoding-safe
+    ]
+
+    _has_kiid_header = any(m in text_l for m in _KIID_HEADERS)
+    _has_srri_text = any(m in text_l for m in _SRRI_TEXT_MARKERS)
+    _has_srri_num = bool(re.search(r'\b[1-7]\s*/\s*7\b', kiid_text))
+
+    # Un KIID/KID real tiene su cabecera O al menos su sección de riesgo SRRI.
+    # Los informes anuales y estatutos nunca tienen ni la cabecera KIID ni la
+    # tabla SRRI X/7 ni el texto 'indicador de riesgo' / 'risk and reward'.
+    _has_kiid_structure = _has_kiid_header or _has_srri_text or _has_srri_num
+
+    if _has_kiid_structure:
+        return None  # Estructura KIID/KID real detectada → no es documento erróneo
+
+    # ── Documento erróneo confirmado ─────────────────────────────────────────
+    marker = _found_statute or _found_report
+    return (
+        f"Documento no-KIID detectado (marcador='{marker}'; "
+        f"sin cabecera KIID ni sección objetivos)"
+    )

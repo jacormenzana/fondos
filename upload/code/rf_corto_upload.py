@@ -1,6 +1,7 @@
 from typing import Optional, Dict, List
 from core.classify_utils import (
     NAME_SIGNALS_RF_CORTO,
+    _prefilter_match_rf_corto,    # OPT-B2 (R-1): universo = predicado compartido
     FAMILY_SHORT_TERM_FI,
     TYPE_SHORT_TERM_FI,
     TYPE_SHORT_TERM_GOVT,
@@ -28,25 +29,12 @@ FUND_NATURE_VALUE = "Renta Fija Corto Plazo"
 # =====================================================
 
 def get_universe_isins(df_master) -> List[str]:
-    include_patterns = [
-        "short duration", "ultra short", "short term bond", "short term",
-        "low duration", "floating rate", "floating", "money plus", "enhanced cash",
-    ]
-    exclude_patterns = [
-        "money market", "monetary", "liquidity", "cash ",
-        "equity", "balanced", "allocation", "multi asset", "multi-asset",
-        "absolute return",
-    ]
-
-    def is_candidate(name: str) -> bool:
-        if not isinstance(name, str):
-            return False
-        n = name.lower()
-        if any(p in n for p in exclude_patterns):
-            return False
-        return any(p in n for p in include_patterns)
-
-    mask = df_master["Fund_Name"].apply(is_candidate)
+    # OPT-B2 (R-1/P#11): patrones en classify_utils (`_prefilter_match_rf_corto`),
+    # fuente única compartida con `detect_nature_from_prefilter`. Verificado
+    # idéntico al universo previo (0 mismatches / 3.227 fondos).
+    mask = df_master["Fund_Name"].apply(
+        lambda n: _prefilter_match_rf_corto(n.lower()) if isinstance(n, str) else False
+    )
     return (
         df_master.loc[mask, "ISIN"]
         .dropna()

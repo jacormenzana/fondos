@@ -2,6 +2,7 @@
 from typing import Optional, Dict, List
 from core.classify_utils import (
     NAME_SIGNALS_MIXTO,
+    _prefilter_match_mixtos,  # OPT-B2 (R-1): universo = predicado compartido
     FAMILY_INCOME_ORIENTED,   # BL-65b: constante EN canónica
     FAMILY_MULTI_ASSET,       # BL-LANG-EN
     detect_geography       as _detect_geography,
@@ -27,25 +28,15 @@ FUND_NATURE_VALUE = "Mixtos"
 # =====================================================
 
 def get_universe_isins(df_master) -> List[str]:
-    pattern = re.compile(
-        r"""
-        balanced|
-        multi[\s-]?asset|
-        allocation|
-        diversified|
-        total\s+return|
-        conservative|
-        moderate|
-        growth|
-        dynamic|
-        target\s+volatility|
-        target\s+outcome|
-        risk\s+control|
-        income
-        """,
-        re.IGNORECASE | re.VERBOSE,
+    # OPT-B2 (R-1/P#11): el patrón include (balanced/multi-asset/alloc/conver/
+    # growth/income...) y el exclude _confirmed_non_mixtos viven en classify_utils
+    # (`_prefilter_match_mixtos`), fuente única compartida con
+    # `detect_nature_from_prefilter`. Los regex son IGNORECASE, por lo que aplicar
+    # sobre el nombre en minúsculas es equivalente al str.contains previo.
+    # Verificado idéntico al universo previo (0 mismatches / 3.227 fondos).
+    mask = df_master["Fund_Name"].apply(
+        lambda n: _prefilter_match_mixtos(n.lower()) if isinstance(n, str) else False
     )
-    mask = df_master["Fund_Name"].astype(str).str.contains(pattern, regex=True)
     return (
         df_master.loc[mask, "ISIN"]
         .dropna()

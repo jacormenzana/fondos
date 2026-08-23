@@ -40,13 +40,15 @@ Metricas generadas por fondo (horizon=since_inception, real_flag=0):
     beta_dxy             sensibilidad a variacion interanual DXY
     beta_gold            sensibilidad a variacion interanual oro (PPICMM)
     beta_m2_global       sensibilidad a M2 Global YoY
-    beta_spread_hy       sensibilidad al diferencial HY (nivel, %)
-    beta_spread_ig       sensibilidad al diferencial IG (nivel, %)
-    beta_vix             sensibilidad a variacion interanual VIX
-    beta_term_spread     sensibilidad a pendiente curva EEUU 10Y-2Y (nivel, %)
-    beta_eur_jpy         sensibilidad a variacion interanual EUR/JPY
-    beta_eur_gbp         sensibilidad a variacion interanual EUR/GBP
-    beta_eur_cny         sensibilidad a variacion interanual EUR/CNY
+    beta_spread_hy           sensibilidad al diferencial HY (nivel, %)
+    beta_spread_ig           sensibilidad al diferencial IG (nivel, %)
+    beta_vix                 sensibilidad a variacion interanual VIX
+    beta_term_spread         sensibilidad a pendiente curva EEUU 10Y-2Y (nivel, %)
+    beta_eur_jpy             sensibilidad a variacion interanual EUR/JPY
+    beta_eur_gbp             sensibilidad a variacion interanual EUR/GBP
+    beta_eur_cny             sensibilidad a variacion interanual EUR/CNY
+    energy_sensitivity_pct   escenario +25% WTI: beta_oil × 0.25  (P3-03)
+    hy_spread_sensitivity_pct escenario +300bp HY: beta_spread_hy × 3.0 (P3-04)
 
 Requisito: minimo MIN_OBS meses de datos solapados NAV e indicadores macro.
 Se aplica filtro VIF para eliminar factores con multicolinealidad severa (VIF>10).
@@ -62,6 +64,12 @@ _ROOT = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(_ROOT))
 
 MIN_OBS = 60
+
+# Per-fund factor-coverage threshold: a factor must be non-null for at least
+# this fraction of the fund's own NAV-macro overlap (in addition to >= MIN_OBS
+# months absolute) to enter that fund's OLS. Prevents a globally-dense-but-stale
+# factor from truncating the regression window for all funds.
+_PER_FUND_MIN_COVERAGE = 0.85
 
 
 # ============================================================
@@ -217,7 +225,19 @@ def load_macro_factors(conn: sqlite3.Connection) -> pd.DataFrame:
         "eur_jpy_yoy", "eur_gbp_yoy", "eur_cny_yoy",
     ]
     available = [f for f in factors if f in wide.columns]
-    return wide[available].dropna()
+    result = wide[available]
+    # Excluir factores con cobertura insuficiente (<50% de filas no nulas)
+    # para evitar que un factor esparso elimine todas las filas en dropna()
+    min_coverage = 0.5
+    dense = [c for c in result.columns if result[c].notna().mean() >= min_coverage]
+    sparse = [c for c in result.columns if c not in dense]
+    if sparse:
+        print(f"  [MacroFactors] Factores excluidos por cobertura insuficiente: {sparse}")
+    # Return with NaNs: each factor spans its own native date range.
+    # The global dropna() is intentionally absent — per-fund windowed selection
+    # in compute_macro_sensitivity() handles NaN-aware factor pruning so no single
+    # stale/short factor silently truncates every fund's regression window.
+    return result[dense]
 
 
 # ============================================================
@@ -296,17 +316,45 @@ def _compute_vif(X_cols: np.ndarray) -> np.ndarray:
 
 VIF_THRESHOLD = 10.0  # eliminar factores con VIF > umbral
 
+# Factores a proteger del filtro VIF segun geografia del fondo.
+# Se suman al conjunto base {d_rate_eu, oil_yoy, m3_yoy} para evitar que
+# factores regionales clave sean descartados por correlacion con factores globales.
+_GEO_FORCE_KEEP: dict[str, set[str]] = {
+    "China":          {"ipc_yoy_cn", "d_rate_cn", "eur_cny_yoy"},
+    "Japan":          {"ipc_yoy_jp", "d_rate_jp", "eur_jpy_yoy"},
+    "North America":  {"ipc_yoy_us", "d_rate_us", "term_spread"},
+    "Asia-Pacific":   {"ipc_yoy_jp", "ipc_yoy_cn", "d_rate_jp", "d_rate_cn"},
+    "India":          {"ipc_yoy_us", "dxy_yoy"},
+    "Latin America":  {"ipc_yoy_us", "d_rate_us", "dxy_yoy"},
+    "Eastern Europe": {"ipc_yoy_eu", "d_rate_eu"},
+    "Europe":         {"ipc_yoy_eu", "d_rate_eu", "eur_gbp_yoy"},
+    "Middle East & Africa": {"oil_yoy", "dxy_yoy"},
+}
+
+# Factores a proteger segun estado de desarrollo (se acumulan con los de geografia)
+_DEV_STATUS_FORCE_KEEP: dict[str, set[str]] = {
+    "Emerging": {"spread_hy", "dxy_yoy"},
+    "Frontier": {"spread_hy", "dxy_yoy"},
+}
+
 
 def compute_macro_sensitivity(
     nav_df: pd.DataFrame,
     macro_df: pd.DataFrame,
+    geography: str | None = None,
+    development_status: str | None = None,
 ) -> list[tuple]:
     """
     Calcula las betas macro para un fondo.
 
     Parametros:
-        nav_df:   DataFrame con columnas [date, nav] (fechas fin de mes)
-        macro_df: DataFrame indexado por fecha con factores macro
+        nav_df:            DataFrame con columnas [date, nav] (fechas fin de mes)
+        macro_df:          DataFrame indexado por fecha con factores macro
+        geography:         Geography del fondo (fund_master.Geography). Cuando se
+                           provee, sus factores regionales se protegen del filtro
+                           VIF aunque su colinealidad con factores globales sea alta.
+        development_status: Development_Status del fondo. 'Emerging'/'Frontier'
+                           protege spread_hy y dxy_yoy del filtro VIF.
 
     Devuelve lista de (metric, value, real_flag).
     Devuelve lista vacia si no hay suficientes datos solapados.
@@ -314,24 +362,59 @@ def compute_macro_sensitivity(
     if nav_df.empty or macro_df.empty:
         return []
 
-    nav      = nav_df.set_index("date")["nav"].sort_index()
+    nav = nav_df.set_index("date")["nav"].sort_index()
+    # Guard: deduplicate by month-end date (take last value) in case fund_nav_monthly
+    # has two entries for the same month (e.g. estimated + revised).  This was
+    # previously hidden because the old global dropna() capped the window before
+    # the duplicate dates; now that each factor spans its native range the join
+    # must handle a full-span index.
+    if not nav.index.is_unique:
+        nav = nav.groupby(level=0).last()
     r_fondo  = np.log(nav / nav.shift(1)).dropna()
-    merged   = pd.concat([r_fondo.rename("r_fondo"), macro_df],
-                         axis=1, join="inner").dropna()
+    merged_raw = pd.concat([r_fondo.rename("r_fondo"), macro_df],
+                           axis=1, join="inner")
+
+    # Per-fund windowed factor selection: only include factors that are adequately
+    # covered within this fund's own NAV-macro overlap. A factor is retained when
+    # its non-null count >= MIN_OBS AND non-null fraction >= _PER_FUND_MIN_COVERAGE.
+    # Factors that are stale or short relative to this fund's window are dropped here
+    # rather than silently truncating the regression date range for all funds.
+    _factor_cols_raw = [c for c in macro_df.columns if c in merged_raw.columns]
+    factor_cols = [
+        col for col in _factor_cols_raw
+        if merged_raw[col].notna().sum() >= MIN_OBS
+        and merged_raw[col].notna().mean() >= _PER_FUND_MIN_COVERAGE
+    ]
+    if not factor_cols:
+        return []
+
+    merged = merged_raw[["r_fondo"] + factor_cols].dropna()
 
     if len(merged) < MIN_OBS:
         return []
 
-    y           = merged["r_fondo"].values
-    factor_cols = [c for c in macro_df.columns if c in merged.columns]
-    X_raw       = merged[factor_cols].values
+    y     = merged["r_fondo"].values
+
+    # Drop zero-variance factors (e.g. d_rate_eu all-zero during ECB flat-rate periods)
+    # before VIF/lstsq. A zero-norm column causes LAPACK DLASCLS "parameter 4/5 illegal
+    # value" warnings printed directly to stderr — the try/except in _ols cannot catch them.
+    _stds = merged[factor_cols].std()
+    factor_cols = [c for c in factor_cols if _stds[c] > 1e-10]
+    if not factor_cols:
+        return []
+    X_raw = merged[factor_cols].values
 
     # Filtrar factores con alta multicolinealidad (VIF > umbral)
     if X_raw.shape[1] > 1:
         vif_vals = _compute_vif(X_raw)
         keep_mask = vif_vals <= VIF_THRESHOLD
-        # Siempre mantener al menos d_rate_eu y oil_yoy si estan presentes
-        priority = {"d_rate_eu", "oil_yoy", "m3_yoy"}
+        # Conjunto base siempre protegido
+        priority: set[str] = {"d_rate_eu", "oil_yoy", "m3_yoy"}
+        # Factores regionales del fondo: proteger aunque tengan VIF alto
+        if geography:
+            priority |= _GEO_FORCE_KEEP.get(geography, set())
+        if development_status:
+            priority |= _DEV_STATUS_FORCE_KEEP.get(development_status, set())
         for i, col in enumerate(factor_cols):
             if col in priority:
                 keep_mask[i] = True
@@ -360,5 +443,12 @@ def compute_macro_sensitivity(
         metric_name = _FACTOR_TO_METRIC.get(col)
         if metric_name:
             metrics.append((metric_name, float(beta[i + 1]), 0))
+
+    # P3-03/P3-04: scenario sensitivity metrics derived from OLS betas
+    _betas = {m: v for m, v, _ in metrics if m.startswith("beta_")}
+    if "beta_oil" in _betas:
+        metrics.append(("energy_sensitivity_pct", _betas["beta_oil"] * 0.25, 0))
+    if "beta_spread_hy" in _betas:
+        metrics.append(("hy_spread_sensitivity_pct", _betas["beta_spread_hy"] * 3.0, 0))
 
     return metrics

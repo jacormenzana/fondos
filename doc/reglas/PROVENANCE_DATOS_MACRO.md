@@ -57,7 +57,8 @@ Series definidas en `_FRED_SERIES` en `macro_discovery.py` (~25 series). Selecci
 | `M2SL` | `m2_level` | US | bn USD; YoY calculado por builder |
 | `FEDFUNDS` | `rate_policy` | US | — |
 | `DCOILWTICO` | `oil_wti` | GLOBAL | WTI, USD/barril |
-| `ICE BofA series` | `spread_hy`, `spread_ig` | US | **Requiere clave API** — limitadas a ~3 años sin clave |
+| `BAMLH0A0HYM2` (ICE BofA) | `spread_hy` | GLOBAL | **Limitada a ~3 años** — licencia ICE BofA, clave FRED no ayuda |
+| `BAA10YM` (Moody's) | `spread_ig` | GLOBAL | Pública, sin clave, historial desde 1953. Proxy IG (Baa−10Y UST) |
 | `VIXCLS` | `vix` | GLOBAL | — |
 | `T10Y2Y` | `term_spread` | US | 10Y − 2Y UST |
 | `DEXJPUS`, `DEXUSUK`, `DEXCHUS` | `eur_jpy`, `eur_gbp`, `eur_cny` | GLOBAL | Tipos de cambio |
@@ -76,7 +77,8 @@ Series definidas en `_FRED_SERIES` en `macro_discovery.py` (~25 series). Selecci
 - `doc/memoria/fred_santLouis_apikey.txt`
 
 **Impacto sin clave:**
-- Series ICE BofA (`BAMLH0A0HYM2`, `BAMLC0A0CM`) solo devuelven datos de los últimos ~3 años.
+- `spread_hy` (ICE BofA `BAMLH0A0HYM2`) queda limitada a ~3 años. La restricción de licencia aplica incluso con clave API.
+- `spread_ig` usa `BAA10YM` (Moody's) — público, historial completo desde 1953, no afectado.
 - El resto de series FRED son públicas y no se ven afectadas.
 
 **Uso:**

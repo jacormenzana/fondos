@@ -40,8 +40,9 @@ _ROOT   = _P2_SRC.parent                                  # c:/desarrollo/fondos
 sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_P2_SRC))
 
-from shared.config import DB_PATH, METRICS_DIR
+from shared.config import DB_PATH, METRICS_DIR, SCHEMA_VERSION
 from shared.db import get_connection
+from shared.schema_checks import assert_schema_alignment
 
 # ============================================================
 # Estilos
@@ -172,6 +173,37 @@ def q_estado(conn):
         """).fetchall(),
     }
 
+def q_provenance(conn) -> dict:
+    """Devuelve metadata de provenencia del último batch de pipeline.
+
+    Extrae (algorithm_version, batch_id, metric_version, MAX calculation_date)
+    del batch más reciente en fund_metrics, más el conteo de fondos de ese batch.
+    Si las columnas v26 no existen aún, retorna un dict vacío (degradación segura).
+    """
+    try:
+        row = conn.execute("""
+            SELECT algorithm_version, batch_id, metric_version,
+                   MAX(calculation_date) AS ultima_calc,
+                   COUNT(DISTINCT isin)  AS fondos_batch
+            FROM fund_metrics
+            WHERE algorithm_version IS NOT NULL
+            GROUP BY algorithm_version, batch_id, metric_version
+            ORDER BY MAX(calculation_date) DESC
+            LIMIT 1
+        """).fetchone()
+        if row:
+            return {
+                "algorithm_version": row[0],
+                "batch_id":          row[1],
+                "metric_version":    row[2],
+                "ultima_calc":       row[3],
+                "fondos_batch":      row[4],
+            }
+    except Exception:
+        pass
+    return {}
+
+
 def q_srri_distribucion(conn):
     return conn.execute("""
         SELECT CAST(fmet.value AS INTEGER) AS srri_calculado,
@@ -271,6 +303,7 @@ def q_ret_dd_ratio(conn):
                ROUND(dd.value*100,2)               AS max_drawdown_pct,
                ROUND(ret.value/ABS(dd.value),2)    AS ret_dd_ratio,
                ROUND(sh.value,2)                   AS sharpe,
+               ROUND(srt.value,2)                  AS sortino,
                CAST(srri.value AS INTEGER)          AS srri,
                ret.source_rows                     AS meses
         FROM fund_metrics ret
@@ -279,6 +312,8 @@ def q_ret_dd_ratio(conn):
                              AND dd.horizon='since_inception' AND dd.real_flag=0
         LEFT JOIN fund_metrics sh   ON sh.isin=ret.isin  AND sh.metric='sharpe'
                                    AND sh.horizon='since_inception' AND sh.real_flag=0
+        LEFT JOIN fund_metrics srt  ON srt.isin=ret.isin AND srt.metric='sortino'
+                                   AND srt.horizon='since_inception' AND srt.real_flag=0
         LEFT JOIN fund_metrics srri ON srri.isin=ret.isin AND srri.metric='srri_nav'
                                    AND srri.horizon='since_inception' AND srri.real_flag=0
         WHERE ret.metric='return_ann' AND ret.horizon='since_inception'
@@ -290,13 +325,14 @@ def q_ret_dd_ratio(conn):
 def q_consistencia(conn):
     return conn.execute("""
         SELECT pos.isin, fm.Fund_Name, fm.Fund_Nature,
-               ROUND(pos.value*100,1)   AS pct_meses_positivos,
-               ROUND(sev.value*100,1)   AS pct_perdida_severa,
-               ROUND(wm.value*100,2)    AS peor_mes_pct,
-               ROUND(ret.value*100,2)   AS return_real_pct,
-               ROUND(sh.value,2)        AS sharpe,
+               ROUND(pos.value*100,1)      AS pct_meses_positivos,
+               ROUND(sev.value*100,1)      AS pct_perdida_severa,
+               ROUND(wm.value*100,2)       AS peor_mes_pct,
+               ROUND(ret.value*100,2)      AS return_real_pct,
+               ROUND(sh.value,2)           AS sharpe,
+               ROUND(srt.value,2)          AS sortino,
                CAST(srri.value AS INTEGER) AS srri,
-               pos.source_rows          AS meses
+               pos.source_rows             AS meses
         FROM fund_metrics pos
         JOIN fund_master fm   ON fm.ISIN=pos.isin
         JOIN fund_metrics sev ON sev.isin=pos.isin AND sev.metric='pct_severe_loss_months'
@@ -307,6 +343,8 @@ def q_consistencia(conn):
                              AND ret.horizon='since_inception' AND ret.real_flag=1
         LEFT JOIN fund_metrics sh   ON sh.isin=pos.isin  AND sh.metric='sharpe'
                                    AND sh.horizon='since_inception' AND sh.real_flag=0
+        LEFT JOIN fund_metrics srt  ON srt.isin=pos.isin AND srt.metric='sortino'
+                                   AND srt.horizon='since_inception' AND srt.real_flag=0
         LEFT JOIN fund_metrics srri ON srri.isin=pos.isin AND srri.metric='srri_nav'
                                    AND srri.horizon='since_inception' AND srri.real_flag=0
         WHERE pos.metric='pct_positive_months'
@@ -396,9 +434,10 @@ def q_candidatos(conn):
 # ============================================================
 
 def build_portada(ws, conn, ts_str):
+    """Portada del informe con resumen de cobertura y provenencia del batch."""
     _no_gridlines(ws)
-    ws.column_dimensions['A'].width = 30
-    ws.column_dimensions['B'].width = 45
+    ws.column_dimensions['A'].width = 34
+    ws.column_dimensions['B'].width = 50
 
     fondos = conn.execute(
         "SELECT COUNT(DISTINCT isin) FROM fund_metrics").fetchone()[0]
@@ -406,26 +445,44 @@ def build_portada(ws, conn, ts_str):
         "SELECT COUNT(*) FROM fund_metrics").fetchone()[0]
     fondos_total = conn.execute(
         "SELECT COUNT(*) FROM fund_master").fetchone()[0]
+    cobertura = f"{fondos/fondos_total*100:.1f}%" if fondos_total else "N/A"
+
+    prov = q_provenance(conn)
+    alg_ver  = prov.get("algorithm_version", "N/A — columnas v26 ausentes")
+    batch_id = prov.get("batch_id", "N/A")
+    calc_dt  = prov.get("ultima_calc", "N/A")
 
     datos = [
         ("INFORME DE METRICAS P2", "", True),
         ("", "", False),
-        ("Fecha de generacion",  ts_str, False),
-        ("Fondos en universo",   fondos_total, False),
-        ("Fondos con metricas",  fondos, False),
-        ("Cobertura",            f"{fondos/fondos_total*100:.1f}%", False),
-        ("Total metricas",       f"{metricas:,}", False),
-        ("Metricas por fondo",   f"~{metricas//fondos if fondos else 0}", False),
+        ("Fecha de generacion",    ts_str,   False),
+        ("Schema version",         SCHEMA_VERSION, False),
+        ("", "", False),
+        ("COBERTURA", "", True),
+        ("Fondos en universo",     fondos_total,    False),
+        ("Fondos con metricas",    fondos,          False),
+        ("Cobertura",              cobertura,       False),
+        ("Total metricas",         f"{metricas:,}", False),
+        ("Metricas por fondo",     f"~{metricas//fondos if fondos else 0}", False),
+        ("", "", False),
+        ("PROVENENCIA DEL BATCH (v26)", "", True),
+        ("algorithm_version",      alg_ver,  False),
+        ("batch_id",               batch_id, False),
+        ("Ultimo calculo",         calc_dt,  False),
         ("", "", False),
         ("HOJAS DEL INFORME", "", True),
-        ("1_Estado",        "Estado general del pipeline", False),
+        ("1_Estado",        "Estado general del pipeline y provenencia del batch", False),
         ("2_SRRI",          "Distribucion SRRI calculado vs KIID", False),
         ("3_Rentabilidad",  "Top fondos por rentabilidad real anualizada", False),
-        ("4_Riesgo",        "Distribucion drawdown y ratio retorno/drawdown", False),
-        ("5_Consistencia",  "Fondos mas consistentes", False),
+        ("4_Riesgo",        "Distribucion drawdown y ratio Ret/DD (+ Sortino)", False),
+        ("5_Consistencia",  "Fondos mas consistentes (+ Sortino)", False),
         ("6_Crisis",        "Comportamiento en periodos de crisis", False),
         ("7_Candidatos",    "Pre-filtro de candidatos para P3", False),
         ("8_Macro_Betas",   "Sensibilidades macro individuales (betas OLS)", False),
+        ("9_Persistencia",  "Persistencia del alpha vs categoria", False),
+        ("10_Divisa",       "Factor divisa y contribucion al retorno", False),
+        ("11_Regimen_Ret",  "Retorno por regimen macro (7 regimenes)", False),
+        ("12_Tendencia",    "Tendencia Sharpe + percentil vs categoria (rolling 3Y/5Y)", False),
     ]
 
     for r, (col_a, col_b, is_title) in enumerate(datos, 1):
@@ -471,6 +528,29 @@ def build_estado(ws, conn):
         ws.append(list(r))
         for c in range(1, 4):
             ws.cell(ws.max_row, c).font = _font()
+
+    # ── Provenencia del batch (v26) ──────────────────────────────────────────
+    ws.append([])
+    prov_title_row = ws.max_row + 1
+    ws.merge_cells(f"A{prov_title_row}:D{prov_title_row}")
+    ws.cell(prov_title_row, 1).value = "PROVENENCIA DEL BATCH (v26)"
+    ws.cell(prov_title_row, 1).font  = SECTION_FONT
+    ws.cell(prov_title_row, 1).fill  = SECTION_FILL
+    ws.cell(prov_title_row, 1).alignment = Alignment(horizontal="left")
+
+    prov = q_provenance(conn)
+    prov_rows = [
+        ("algorithm_version (CALC_VERSION)", prov.get("algorithm_version", "N/A — columnas v26 ausentes")),
+        ("batch_id",                          prov.get("batch_id",          "N/A")),
+        ("metric_version",                    prov.get("metric_version",    "N/A")),
+        ("Ultimo calculo batch",              prov.get("ultima_calc",       "N/A")),
+        ("Fondos en este batch",              prov.get("fondos_batch",      "N/A")),
+        ("Schema version (SCHEMA_VERSION)",   SCHEMA_VERSION),
+    ]
+    for label, value in prov_rows:
+        r = ws.max_row + 1
+        ws.cell(r, 1, label).font  = _font(bold=True)
+        ws.cell(r, 2, str(value) if value is not None else "N/A").font = _font()
 
     _autofit(ws)
     _freeze(ws, "A3")
@@ -619,7 +699,7 @@ def build_riesgo(ws, conn):
             ws.cell(ws.max_row, c).font = _font()
 
     sep_row = 12
-    ws.merge_cells(f"A{sep_row}:{get_column_letter(9)}{sep_row}")
+    ws.merge_cells(f"A{sep_row}:{get_column_letter(10)}{sep_row}")
     ws.cell(sep_row, 1).value = "RANKING POR RATIO RETORNO / MAX DRAWDOWN"
     ws.cell(sep_row, 1).font  = TITLE_FONT
     ws.cell(sep_row, 1).fill  = TITLE_FILL
@@ -627,7 +707,7 @@ def build_riesgo(ws, conn):
 
     headers = ["ISIN", "Nombre", "Naturaleza",
                "Rent. real %", "Max DD %", "Ratio Ret/DD",
-               "Sharpe", "SRRI", "Meses"]
+               "Sharpe", "Sortino", "SRRI", "Meses"]
     _apply_header(ws, headers, row=sep_row + 1)
     header_row = sep_row + 1
 
@@ -637,13 +717,13 @@ def build_riesgo(ws, conn):
         for c_idx, val in enumerate(r, 1):
             cell = ws.cell(row_idx, c_idx, val)
             cell.font = _font()
-        srri_val = r[7]
+        srri_val = r[8]   # shifted right by Sortino insertion
         if srri_val is not None:
             bg, fg = SRRI_COLORS.get(int(srri_val), ("FFFFFF", "000000"))
-            ws.cell(row_idx, 8).fill = _fill(bg)
-            ws.cell(row_idx, 8).font = _font(color=fg)
+            ws.cell(row_idx, 9).fill = _fill(bg)
+            ws.cell(row_idx, 9).font = _font(color=fg)
 
-    ws.auto_filter.ref = f"A{header_row}:{get_column_letter(9)}{ws.max_row}"
+    ws.auto_filter.ref = f"A{header_row}:{get_column_letter(10)}{ws.max_row}"
     _freeze(ws, f"A{header_row+1}")
     _autofit(ws)
 
@@ -651,7 +731,7 @@ def build_riesgo(ws, conn):
 def build_consistencia(ws, conn):
     _no_gridlines(ws)
 
-    ws.merge_cells(f"A1:{get_column_letter(10)}1")
+    ws.merge_cells(f"A1:{get_column_letter(11)}1")
     ws["A1"] = "CONSISTENCIA — FONDOS MAS ESTABLES"
     ws["A1"].font = TITLE_FONT
     ws["A1"].fill = TITLE_FILL
@@ -659,7 +739,7 @@ def build_consistencia(ws, conn):
 
     headers = ["ISIN", "Nombre", "Naturaleza",
                "% Meses+", "% Perdida severa", "Peor mes %",
-               "Rent. real %", "Sharpe", "SRRI", "Meses"]
+               "Rent. real %", "Sharpe", "Sortino", "SRRI", "Meses"]
     _apply_header(ws, headers, row=2)
 
     rows = q_consistencia(conn)
@@ -668,13 +748,13 @@ def build_consistencia(ws, conn):
         for c_idx, val in enumerate(r, 1):
             cell = ws.cell(row_idx, c_idx, val)
             cell.font = _font()
-        srri_val = r[8]
+        srri_val = r[9]   # shifted right by Sortino insertion
         if srri_val is not None:
             bg, fg = SRRI_COLORS.get(int(srri_val), ("FFFFFF", "000000"))
-            ws.cell(row_idx, 9).fill = _fill(bg)
-            ws.cell(row_idx, 9).font = _font(color=fg)
+            ws.cell(row_idx, 10).fill = _fill(bg)
+            ws.cell(row_idx, 10).font = _font(color=fg)
 
-    ws.auto_filter.ref = f"A2:{get_column_letter(10)}{ws.max_row}"
+    ws.auto_filter.ref = f"A2:{get_column_letter(11)}{ws.max_row}"
     _freeze(ws, "A3")
     _autofit(ws)
 
@@ -1157,7 +1237,7 @@ def q_regime_returns(conn) -> list:
             AND n_{a}.horizon='since_inception' AND n_{a}.real_flag=0""")
 
     or_clause = " OR ".join(
-        f"n_{s[:5]}.value IS NOT NULL" for s, _ in _REGIMES_ORDER
+        f"n_{_REGIME_ALIAS[s]}.value IS NOT NULL" for s, _ in _REGIMES_ORDER
     )
     sql = f"""
         SELECT fm.ISIN, fm.Fund_Name, fm.Fund_Nature, fm.Management_Company,
@@ -1278,23 +1358,189 @@ def build_regime_returns(ws, conn):
 
 
 
+# ============================================================
+# Hoja 12 — Señales de tendencia y percentil (rolling stats)
+# ============================================================
+# Lee métricas escalares que compute_timeseries_snapshots() escribe en
+# fund_metrics (no en fund_metric_timeseries) con horizon=window_name.
+# Ventana primaria: rolling_3y (horizonte P3 natural). Ventana secundaria:
+# rolling_5y para confirmación de tendencia.
+_TENDENCIA_WINDOWS = ["rolling_3y", "rolling_5y"]
+
+def q_tendencia(conn) -> list:
+    parts_sel  = []
+    parts_join = []
+    for w in _TENDENCIA_WINDOWS:
+        safe = w.replace("-", "_")
+        parts_sel += [
+            f"ROUND(ss_{safe}.value, 4)  AS sharpe_slope_{w}",
+            f"ROUND(rs_{safe}.value, 4)  AS ret_slope_{w}",
+            f"ROUND(sp_{safe}.value, 3)  AS sharpe_pctile_self_{w}",
+            f"ROUND(cp_{safe}.value, 3)  AS sharpe_pctile_cat_{w}",
+            f"ROUND(zs_{safe}.value, 3)  AS sharpe_zscore_cat_{w}",
+        ]
+        parts_join.append(f"""
+        LEFT JOIN fund_metrics ss_{safe}  ON ss_{safe}.isin=fm.ISIN
+            AND ss_{safe}.metric='sharpe_slope'  AND ss_{safe}.horizon='{w}'
+            AND ss_{safe}.real_flag=0
+        LEFT JOIN fund_metrics rs_{safe}  ON rs_{safe}.isin=fm.ISIN
+            AND rs_{safe}.metric='return_ann_slope' AND rs_{safe}.horizon='{w}'
+            AND rs_{safe}.real_flag=1
+        LEFT JOIN fund_metrics sp_{safe}  ON sp_{safe}.isin=fm.ISIN
+            AND sp_{safe}.metric='sharpe_pctile_self' AND sp_{safe}.horizon='{w}'
+            AND sp_{safe}.real_flag=0
+        LEFT JOIN fund_metrics cp_{safe}  ON cp_{safe}.isin=fm.ISIN
+            AND cp_{safe}.metric='sharpe_pctile_cat'  AND cp_{safe}.horizon='{w}'
+            AND cp_{safe}.real_flag=0
+        LEFT JOIN fund_metrics zs_{safe}  ON zs_{safe}.isin=fm.ISIN
+            AND zs_{safe}.metric='sharpe_zscore_cat'  AND zs_{safe}.horizon='{w}'
+            AND zs_{safe}.real_flag=0""")
+
+    sql = f"""
+        SELECT fm.ISIN, fm.Fund_Name, fm.Fund_Nature, fm.Management_Company,
+               ROUND(ret.value*100,2)       AS return_real_pct,
+               ROUND(sh.value,2)            AS sharpe_si,
+               ROUND(srt.value,2)           AS sortino_si,
+               CAST(srri.value AS INTEGER)  AS srri,
+               {", ".join(parts_sel)}
+        FROM fund_master fm
+        LEFT JOIN fund_metrics ret  ON ret.isin=fm.ISIN
+            AND ret.metric='return_ann' AND ret.horizon='since_inception'
+            AND ret.real_flag=1
+        LEFT JOIN fund_metrics sh   ON sh.isin=fm.ISIN
+            AND sh.metric='sharpe' AND sh.horizon='since_inception' AND sh.real_flag=0
+        LEFT JOIN fund_metrics srt  ON srt.isin=fm.ISIN
+            AND srt.metric='sortino' AND srt.horizon='since_inception' AND srt.real_flag=0
+        LEFT JOIN fund_metrics srri ON srri.isin=fm.ISIN
+            AND srri.metric='srri_nav' AND srri.horizon='since_inception' AND srri.real_flag=0
+        {"".join(parts_join)}
+        WHERE EXISTS (
+            SELECT 1 FROM fund_metrics x WHERE x.isin=fm.ISIN
+              AND x.metric='sharpe_slope' AND x.horizon IN ({",".join(repr(w) for w in _TENDENCIA_WINDOWS)})
+        )
+        ORDER BY fm.Fund_Nature, fm.Fund_Name
+    """
+    return conn.execute(sql).fetchall()
+
+
+def build_tendencia(ws, conn):
+    _no_gridlines(ws)
+
+    n_window_cols = len(_TENDENCIA_WINDOWS) * 5
+    N_COLS = 8 + n_window_cols
+
+    ws.merge_cells(f"A1:{get_column_letter(N_COLS)}1")
+    ws["A1"] = (
+        "TENDENCIA Y POSICION RELATIVA — Sharpe slope + percentil vs categoria "
+        "(ventanas rolling 3Y/5Y)"
+    )
+    ws["A1"].font = TITLE_FONT
+    ws["A1"].fill = TITLE_FILL
+    ws["A1"].alignment = Alignment(horizontal="center")
+
+    # Cabeceras de grupo (fila 2) + detalle (fila 3)
+    base_hdrs = ["ISIN", "Nombre", "Naturaleza", "Gestora",
+                 "Ret. real SI %", "Sharpe SI", "Sortino SI", "SRRI"]
+    window_hdrs = []
+    for w in _TENDENCIA_WINDOWS:
+        label = w.replace("rolling_", "").upper()
+        ws.merge_cells(start_row=2, start_column=9 + _TENDENCIA_WINDOWS.index(w)*5,
+                       end_row=2,   end_column=9 + _TENDENCIA_WINDOWS.index(w)*5 + 4)
+        group_cell = ws.cell(2, 9 + _TENDENCIA_WINDOWS.index(w)*5, f"Ventana {label}")
+        group_cell.font  = _font(bold=True, color="FFFFFF")
+        group_cell.fill  = TITLE_FILL
+        group_cell.alignment = Alignment(horizontal="center")
+        window_hdrs += [
+            f"Sharpe slope {label}", f"Ret slope {label}",
+            f"Sharpe %ile self {label}", f"Sharpe %ile cat {label}",
+            f"Sharpe Z-score cat {label}",
+        ]
+    _apply_header(ws, base_hdrs + window_hdrs, row=3)
+
+    rows = q_tendencia(conn)
+    for r in rows:
+        row_idx = ws.max_row + 1
+        for c_idx, val in enumerate(r, 1):
+            cell = ws.cell(row_idx, c_idx, val)
+            cell.font = _font()
+        # SRRI coloring (col 8)
+        srri_val = r[7]
+        if srri_val is not None:
+            bg, fg = SRRI_COLORS.get(int(srri_val), ("FFFFFF", "000000"))
+            ws.cell(row_idx, 8).fill = _fill(bg)
+            ws.cell(row_idx, 8).font = _font(color=fg)
+        # Slope signal coloring — green if improving, red if deteriorating
+        # Sharpe slope (cols 9, 14 for 3y / 5y)
+        for slope_col in [9, 14]:
+            if slope_col > N_COLS:
+                break
+            sv = r[slope_col - 1]  # 0-indexed
+            if sv is not None:
+                try:
+                    v = float(sv)
+                    cell = ws.cell(row_idx, slope_col)
+                    if v > 0.05:
+                        cell.fill = GREEN_FILL; cell.font = GREEN_FONT
+                    elif v < -0.05:
+                        cell.fill = RED_FILL;   cell.font = RED_FONT
+                except (TypeError, ValueError):
+                    pass
+        # Sharpe pctile_cat (cols 12, 17 for 3y / 5y) — top/bottom quartile
+        for pctile_col in [12, 17]:
+            if pctile_col > N_COLS:
+                break
+            pv = r[pctile_col - 1]
+            if pv is not None:
+                try:
+                    v = float(pv)
+                    cell = ws.cell(row_idx, pctile_col)
+                    if v >= 0.75:
+                        cell.fill = GREEN_FILL; cell.font = GREEN_FONT
+                    elif v <= 0.25:
+                        cell.fill = RED_FILL;   cell.font = RED_FONT
+                except (TypeError, ValueError):
+                    pass
+
+    ws.auto_filter.ref = f"A3:{get_column_letter(N_COLS)}{ws.max_row}"
+    _freeze(ws, "A4")
+    _autofit(ws)
+
+
 SHEETS = [
-    ("1_Estado",        build_estado,       False),
-    ("2_SRRI",          build_srri,         False),
-    ("3_Rentabilidad",  build_rentabilidad, False),
-    ("4_Riesgo",        build_riesgo,       False),
-    ("5_Consistencia",  build_consistencia, False),
-    ("6_Crisis",        build_crisis,       False),
-    ("7_Candidatos",    build_candidatos,   False),
-    ("8_Macro_Betas",   build_macro,        False),
-    ("9_Persistencia",  build_persistencia, False),
-    ("10_Divisa",       build_divisa,       False),
+    ("0_Portada",       build_portada,        True),   # QW4: wired; True = needs ts_str arg
+    ("1_Estado",        build_estado,         False),
+    ("2_SRRI",          build_srri,           False),
+    ("3_Rentabilidad",  build_rentabilidad,   False),
+    ("4_Riesgo",        build_riesgo,         False),
+    ("5_Consistencia",  build_consistencia,   False),
+    ("6_Crisis",        build_crisis,         False),
+    ("7_Candidatos",    build_candidatos,     False),
+    ("8_Macro_Betas",   build_macro,          False),
+    ("9_Persistencia",  build_persistencia,   False),
+    ("10_Divisa",       build_divisa,         False),
     ("11_Regimen_Ret",  build_regime_returns, False),
+    ("12_Tendencia",    build_tendencia,      False),   # QW3: slope/pctile signals
 ]
 
 
-def export(output_dir: Path, min_fondos: int = 100) -> Path:
+def export(output_dir: Path, min_fondos: int = 100) -> tuple[Path, int]:
+    """Exporta metricas P2 a Excel.
+
+    Returns:
+        (out_path, failed_sheets) — failed_sheets > 0 indica hojas con error.
+    """
     conn = get_connection()
+
+    # C1 — Alineación de schema (P#3/R-8 equivalent para el reporting layer).
+    # Un schema desalineado no aborta el workbook (columnas faltantes producen NULL
+    # silencioso en LEFT JOINs), pero SÍ cuenta como fallo para que RC != 0 alcance
+    # el bat y el log diferencie entre "workbook corrupto" y "workbook limpio".
+    _schema_failures = 0
+    try:
+        assert_schema_alignment(conn)
+    except AssertionError as schema_err:
+        _schema_failures = 1
+        print(f"[export_metrics] ERROR schema (RC propagará): {schema_err}")
 
     fondos = conn.execute(
         "SELECT COUNT(DISTINCT isin) FROM fund_metrics").fetchone()[0]
@@ -1312,6 +1558,8 @@ def export(output_dir: Path, min_fondos: int = 100) -> Path:
     wb = openpyxl.Workbook()
     wb.remove(wb.active)  # quitar hoja por defecto
 
+    failed_sheets = _schema_failures  # C5 — schema failure counts as failure
+
     for sheet_name, builder, _ in SHEETS:
         t0 = time.time()
         ws = wb.create_sheet(sheet_name)
@@ -1323,6 +1571,7 @@ def export(output_dir: Path, min_fondos: int = 100) -> Path:
             elapsed = time.time() - t0
             print(f"  [{sheet_name}] OK ({elapsed:.1f}s)")
         except Exception as e:
+            failed_sheets += 1
             ws["A1"] = f"ERROR al generar esta hoja: {e}"
             ws["A1"].font = _font(bold=True, color="9C0006")
             print(f"  [{sheet_name}] ERROR: {e}")
@@ -1330,7 +1579,9 @@ def export(output_dir: Path, min_fondos: int = 100) -> Path:
     conn.close()
     wb.save(str(out_path))
     print(f"\nExcel generado: {out_path}")
-    return out_path
+    if failed_sheets:
+        print(f"AVISO: {failed_sheets} hoja(s) con error — revisar celdas A1 marcadas.")
+    return out_path, failed_sheets
 
 
 # ============================================================
@@ -1353,7 +1604,11 @@ if __name__ == "__main__":
     print(f"  Salida:  {args.output}\\")
     print()
 
-    export(
+    _, failed = export(
         output_dir=Path(args.output),
         min_fondos=args.min_fondos,
     )
+    # C5 — propaga RC != 0 si alguna hoja fallo para que P2_calculateIndicators.bat
+    # lo detecte y lo informe correctamente (en lugar de salir siempre con RC=0).
+    if failed:
+        sys.exit(1)

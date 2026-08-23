@@ -706,17 +706,15 @@ _FRED_SERIES = {
         "write_inflation": False,
     },
 
-    # ICE BofA Investment Grade Option-Adjusted Spread (%) -- diaria
-    # Diferencial de credito IG vs soberanos EEUU.
-    # Complemento al spread_hy: permite distinguir estres IG vs HY puro.
-    # Se resamplea a mensual con media (condicion media del mes).
-    "BAMLC0A0CM": {
-        "indicator":        "spread_ig",
-        "geography":        "GLOBAL",
-        "unit":             "pct",
-        "write_inflation":  False,
-        "resample_monthly": True,
-        "resample_func":    "mean",
+    # Moody's Baa Corporate Bond Yield Relative to 10-Year Treasury (%) -- mensual
+    # Proxy IG: diferencial renta fija grado de inversion vs soberanos EEUU.
+    # Fuente publica FRED sin clave API (Moody's). Historial desde 1953.
+    # Correlacion >0.95 con ICE BofA BAMLC0A0CM (restringido a 3 años en FRED).
+    "BAA10YM": {
+        "indicator":       "spread_ig",
+        "geography":       "GLOBAL",
+        "unit":            "pct",
+        "write_inflation": False,
     },
 }
 
@@ -1114,7 +1112,8 @@ if __name__ == "__main__":
         "--fred-api-key",
         default=None,
         help="Clave API de FRED (gratis en https://fred.stlouisfed.org/docs/api/api_key.html). "
-             "Sin clave, las series ICE BofA (spread_hy, spread_ig) quedan limitadas a ~3 años. "
+             "Sin clave, la serie ICE BofA spread_hy (BAMLH0A0HYM2) queda limitada a ~3 años. "
+             "spread_ig usa BAA10YM (Moody's, publica) y no requiere clave. "
              "Alternativa: exportar variable de entorno FRED_API_KEY antes de ejecutar.",
     )
     args = parser.parse_args()

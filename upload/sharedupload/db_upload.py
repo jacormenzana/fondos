@@ -53,6 +53,18 @@ def get_connection(db_path: Optional[Path] = None) -> sqlite3.Connection:
     conn = sqlite3.connect(str(target), timeout=30)
     conn.execute("PRAGMA foreign_keys = ON;")
     conn.execute("PRAGMA journal_mode = WAL;")
+    # Performance pragmas (safe with WAL):
+    #   synchronous=NORMAL — skips per-commit WAL fsync; power-safe under WAL
+    #     (a checkpoint sync still protects against corruption on crash).
+    #   cache_size=-65536  — 64 MB page cache (vs ~2 MB default); reduces
+    #     repeated btree traversals on the 16M-row fund_metric_timeseries.
+    #   temp_store=MEMORY  — sorts/indexes for GROUP BY / subqueries stay in RAM.
+    #   mmap_size          — 512 MB memory-mapped read window; speeds sequential
+    #     reads on large tables without extra system calls.
+    conn.execute("PRAGMA synchronous = NORMAL;")
+    conn.execute("PRAGMA cache_size = -65536;")
+    conn.execute("PRAGMA temp_store = MEMORY;")
+    conn.execute("PRAGMA mmap_size = 536870912;")
     conn.row_factory = sqlite3.Row
     # isolation_level=None: delega control de transacciones a SQLite y al
     # código explícito (with conn:). Evita que Python abra transacciones

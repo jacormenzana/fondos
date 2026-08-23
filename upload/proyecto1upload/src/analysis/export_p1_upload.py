@@ -93,6 +93,29 @@ def get_tables(
             order_by="ISIN",
             where=kiid_where,
         ),
+        TableExportConfig(
+            table="fund_benchmarks",
+            sheet_name="3_FundBenchmarks",
+            exclude_cols=[],
+            order_by="ISIN",
+            where=fm_where,
+        ),
+        TableExportConfig(
+            table="fund_families",
+            sheet_name="4_FundFamilies",
+            exclude_cols=[],
+            order_by="family_id",
+            where=fm_where,
+        ),
+        TableExportConfig(
+            table="fund_cost_schedule",
+            sheet_name="5_FundCostSchedule",
+            exclude_cols=[],
+            order_by="ISIN",
+            where=kiid_where,
+        ),
+        
+        
     ]
 
 

@@ -1018,8 +1018,8 @@ def correct_oc_aci_mismatch(
     Sobrescribe Ongoing_Charge_Recurrent directamente (sin COALESCE)
     para corregir un fondo donde el valor en BD es ACI@RHP, no TER.
 
-    Solo debe invocarse desde BL-COST-5 (validación exhaustiva previa).
-    NO usar desde el pipeline normal — viola la política COALESCE estándar.
+    Invocado desde pipeline.py (BL-COST-5 block) AFTER the main publish_fund
+    UPSERT so the no-COALESCE write is not immediately overwritten by COALESCE.
 
     Args:
         conn:        conexión activa con isolation_level=None (WAL).

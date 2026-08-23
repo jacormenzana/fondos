@@ -1,6 +1,7 @@
 from typing import Optional, Dict, List
 from core.classify_utils import (
     NAME_SIGNALS_RF_FLEXIBLE,
+    _prefilter_match_rf_flexible,   # OPT-B2 (R-1): universo = predicado compartido
     FAMILY_FLEXIBLE_FI,
     FAMILY_HIGH_YIELD,
     FAMILY_EMERGING_DEBT,
@@ -17,6 +18,7 @@ from core.classify_utils import (
     detect_profile_from_srri as _detect_profile_from_srri,
     detect_kiid_attributes,
     apply_semantic_validation,
+    resolve_rf_subtype,
 )
 import re
 
@@ -30,29 +32,13 @@ FUND_NATURE_VALUE = "Renta Fija Flexible"
 # =====================================================
 
 def get_universe_isins(df_master) -> List[str]:
-    include_patterns = [
-        "flexible bond", "dynamic bond", "strategic bond",
-        "total return bond", "total return", "unconstrained",
-        "absolute return bond", "multi sector bond", "multisector bond",
-        "opportunistic bond", "global bond", "income bond",
-        "tactical bond", "active bond",
-    ]
-    exclude_patterns = [
-        "money", "monetary", "liquidity", "cash",
-        "short duration", "ultra short", "short term", "low duration",
-        "floating rate", "equity", "balanced", "allocation",
-        "multi asset", "multi-asset",
-    ]
-
-    def is_candidate(name: str) -> bool:
-        if not isinstance(name, str):
-            return False
-        n = name.lower()
-        if any(p in n for p in exclude_patterns):
-            return False
-        return any(p in n for p in include_patterns)
-
-    mask = df_master["Fund_Name"].apply(is_candidate)
+    # OPT-B2 (R-1/P#11): patrones (incl. el early-return "edr bond alloc" y el
+    # `\bhy\b`) viven en classify_utils (`_prefilter_match_rf_flexible`), fuente
+    # única compartida con `detect_nature_from_prefilter`. Verificado idéntico
+    # al universo previo (0 mismatches / 3.227 fondos).
+    mask = df_master["Fund_Name"].apply(
+        lambda n: _prefilter_match_rf_flexible(n.lower()) if isinstance(n, str) else False
+    )
     return (
         df_master.loc[mask, "ISIN"]
         .dropna()
@@ -198,6 +184,13 @@ def classify_fund(
     result["Benchmark_Type"] = _detect_benchmark_type(
         None, None
     )
+
+    # RF-RFF-POLICY-2026-07-16 / FIX-P1-RFC-TRES-1: if the KIID declares an
+    # explicit ≤3y duration mandate, override to RFC regardless of block universe.
+    # Prevents the block-ordering issue where rf_flexible claims funds that
+    # resolve_rf_subtype() would correctly send to Renta Fija Corto Plazo.
+    if resolve_rf_subtype(name_l, kiid_text or "") == "Renta Fija Corto Plazo":
+        result["Fund_Nature"] = "Renta Fija Corto Plazo"
 
     return apply_semantic_validation(result, fund_name)
 

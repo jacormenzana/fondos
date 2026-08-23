@@ -146,13 +146,19 @@ FUND_KIID_METADATA_COLUMNS: list[str] = [
     # DLA Fase 2 — tablas Cat.1+2 cacheadas (v18)
     "DLA2_Table_Text",
 
-    # v20 (INTEGRATED_SPEC_v20_v2 §2B) — arbitración de coste DLA2 (6 nuevas)
+    # v20 (INTEGRATED_SPEC_v20_v2 §2B) — arbitración de coste DLA2 (12 nuevas)
     "Cost_Mgmt_BandsX",
     "Cost_Mgmt_Ruled",
     "Cost_Mgmt_Arbitration",
     "Cost_Oper_BandsX",
     "Cost_Oper_Ruled",
     "Cost_Oper_Arbitration",
+    "Cost_ACI_RHP_BandsX",
+    "Cost_ACI_RHP_Ruled",
+    "Cost_ACI_RHP_Arbitration",
+    "Cost_ACI_1Y_BandsX",
+    "Cost_ACI_1Y_Ruled",
+    "Cost_ACI_1Y_Arbitration",
 ]
 
 # ============================================================
@@ -168,11 +174,49 @@ INGESTION_LOG_COLUMNS: list[str] = [
 ]
 
 # ============================================================
+# fund_benchmarks — columnas canónicas (P1 v2; Phase 2 +benchmark_role)
+# ============================================================
+# Tabla secundaria poblada por benchmark_normalizer.py post-ingesta
+# (sqlite_writer._upsert_kiid_benchmark). Hasta v20 no estaba cubierta por
+# verify_db_schema → la adición de benchmark_role era invisible (R2). Ahora
+# se valida para detectar drift (p.ej. migración no aplicada).
+FUND_BENCHMARKS_COLUMNS: list[str] = [
+    "ISIN",
+    "source",
+    "benchmark_raw",
+    "benchmark_id",
+    "benchmark_name",
+    "provider",
+    "asset_class",
+    "confidence",
+    "benchmark_role",     # Phase 2 BL-BENCH-ROLE: hurdle_rate / asset_proxy
+    "extracted_at",
+]
+
+# ============================================================
+# fund_data_quality_issues — columnas canónicas (v22, FIX-DQ-1)
+# ============================================================
+# Estado ACTUAL de issues de calidad de datos por fondo (uno por ISIN +
+# check_code), reconstruida en cada ciclo de pipeline.py. `level` usa el
+# vocabulario de Data_Quality_Flag (OK/INFERRED/WARN/MISSING), no el de
+# ingestion_log.status -- ver DATA_QUALITY_SEVERITY en shared/config.py.
+FUND_DATA_QUALITY_ISSUES_COLUMNS: list[str] = [
+    "id",
+    "ISIN",
+    "check_code",
+    "level",
+    "message",
+    "detected_at",
+]
+
+# ============================================================
 # Conjuntos para lookup O(1)
 # ============================================================
 FUND_MASTER_COLUMNS_SET        = frozenset(FUND_MASTER_COLUMNS)
 FUND_KIID_METADATA_COLUMNS_SET = frozenset(FUND_KIID_METADATA_COLUMNS)
 INGESTION_LOG_COLUMNS_SET      = frozenset(INGESTION_LOG_COLUMNS)
+FUND_BENCHMARKS_COLUMNS_SET    = frozenset(FUND_BENCHMARKS_COLUMNS)
+FUND_DATA_QUALITY_ISSUES_COLUMNS_SET = frozenset(FUND_DATA_QUALITY_ISSUES_COLUMNS)
 
 # ============================================================
 # Columnas nuevas por versión de schema
@@ -230,8 +274,8 @@ assert len(EXPECTED_COLUMNS_V19) == 57, f"v19 debe tener 57 columnas en fund_mas
 # ============================================================
 # v20 (INTEGRATED_SPEC_v20_v2) — deltas de schema
 # ------------------------------------------------------------
-# Job B (DESPLEGABLE YA): 6 columnas de arbitración de coste en
-#   fund_kiid_metadata (16 → 22). Migración aditiva (sin rebuild).
+# Job B (DESPLEGABLE YA): 12 columnas de arbitración de coste en
+#   fund_kiid_metadata (16 → 28). Migración aditiva (sin rebuild).
 # Job A (PENDIENTE de "approved inventory"): rebuild de fund_master
 #   (57 → 58): −4 DELETE, +5 CREATE, 14 MODIFY (remaps de valor a nivel de
 #   dato). Los NOMBRES de columna están determinados (abajo); los value-sets
@@ -246,6 +290,12 @@ V20_KIID_META_NEW: list[str] = [
     "Cost_Oper_BandsX",
     "Cost_Oper_Ruled",
     "Cost_Oper_Arbitration",
+    "Cost_ACI_RHP_BandsX",
+    "Cost_ACI_RHP_Ruled",
+    "Cost_ACI_RHP_Arbitration",
+    "Cost_ACI_1Y_BandsX",
+    "Cost_ACI_1Y_Ruled",
+    "Cost_ACI_1Y_Arbitration",
 ]
 
 # Job A — fund_master v20 (nombres determinados; población pendiente)
@@ -283,9 +333,65 @@ assert len(EXPECTED_COLUMNS_V20) == 58, (
     f"v20 debe tener 58 columnas en fund_master, tiene {len(EXPECTED_COLUMNS_V20)}"
 )
 # Metadata v20 = 22 columnas.
-assert len(FUND_KIID_METADATA_COLUMNS) == 22, (
-    f"v20 metadata debe tener 22 columnas, tiene {len(FUND_KIID_METADATA_COLUMNS)}"
+assert len(FUND_KIID_METADATA_COLUMNS) == 28, (
+    f"v20 metadata debe tener 28 columnas, tiene {len(FUND_KIID_METADATA_COLUMNS)}"
 )
+
+# v21 (2026-07-05): Asset_Currency añadida -- divisa de los activos/
+# estrategia del fondo (distinta de Fund_Currency = divisa de la clase de
+# participación), inferida del nombre vía classify_utils.
+# detect_asset_currency_from_name(). Consumida por BL-44-FX
+# (pipeline.py) y disponible para P2. NO es un revival de la
+# Portfolio_Currency eliminada en v20 (nombre distinto, fuente distinta --
+# nombre del fondo, no texto KIID -- y Portfolio_Currency permanece
+# correctamente bloqueada en V20_DELETED_ATTRIBUTES).
+V21_FUND_MASTER_NEW: list[str] = ["Asset_Currency"]
+FUND_MASTER_COLUMNS_V21: list[str] = FUND_MASTER_COLUMNS_V20 + V21_FUND_MASTER_NEW
+EXPECTED_COLUMNS_V21: frozenset = frozenset(FUND_MASTER_COLUMNS_V21)
+FUND_MASTER_COLUMNS_V21_SET = EXPECTED_COLUMNS_V21
+assert len(EXPECTED_COLUMNS_V21) == 59, (
+    f"v21 debe tener 59 columnas en fund_master, tiene {len(EXPECTED_COLUMNS_V21)}"
+)
+
+# v23 (2026-07-18): In_Current_Universe — universe-membership flag.
+# Not a classification attribute; not COALESCE-protected; regenerated
+# each cycle by reconcile_universe_membership() in sqlite_writer.py.
+# (v22 added fund_data_quality_issues only — no new fund_master column.)
+V23_FUND_MASTER_NEW: list[str] = ["In_Current_Universe"]
+FUND_MASTER_COLUMNS_V23: list[str] = FUND_MASTER_COLUMNS_V21 + V23_FUND_MASTER_NEW
+EXPECTED_COLUMNS_V23: frozenset = frozenset(FUND_MASTER_COLUMNS_V23)
+FUND_MASTER_COLUMNS_V23_SET = EXPECTED_COLUMNS_V23
+assert len(EXPECTED_COLUMNS_V23) == 60, (
+    f"v23 debe tener 60 columnas en fund_master, tiene {len(EXPECTED_COLUMNS_V23)}"
+)
+
+# v24 (2026-07-18): fund_nav_monthly + fund_nav_daily incorporadas al schema
+# canónico. fund_nav_daily es nueva: serie diaria para métricas de horizonte
+# corto (rolling_1m / rolling_3m / rolling_6m, metric_version='d1').
+# No hay nuevas columnas en fund_master.
+FUND_NAV_DAILY_COLUMNS: list[str] = [
+    "ISIN",
+    "Date",
+    "NAV",
+    "NAV_Currency",
+    "NAV_Type",
+    "Is_Estimated",
+    "Data_Source",
+    "Ingested_At",
+]
+FUND_NAV_DAILY_COLUMNS_SET: frozenset = frozenset(FUND_NAV_DAILY_COLUMNS)
+
+FUND_NAV_MONTHLY_COLUMNS: list[str] = [
+    "ISIN",
+    "Date",
+    "NAV",
+    "NAV_Currency",
+    "NAV_Type",
+    "Is_Estimated",
+    "Data_Source",
+    "Ingested_At",
+]
+FUND_NAV_MONTHLY_COLUMNS_SET: frozenset = frozenset(FUND_NAV_MONTHLY_COLUMNS)
 
 
 def check_schema_v20_job_b(conn) -> dict:
@@ -312,10 +418,14 @@ def check_schema_v20_job_b(conn) -> dict:
     return {'ok': len(issues) == 0, 'issues': issues}
 
 
-def check_schema_v20(conn) -> dict:
+def check_schema_v20(conn, strict_count: bool = True) -> dict:
     """Valida v20 COMPLETO (Job A + Job B): fund_master 58 (4 drops ausentes,
     5 nuevas presentes) + metadata 22 + vista. Usar SOLO tras desplegar el
     rebuild de fund_master (Job A). Antes de eso usar check_schema_v20_job_b.
+
+    `strict_count=False` omite el chequeo de "exactamente 58 columnas" --
+    usado por check_schema_v21, que añade Asset_Currency (59) y valida el
+    conteo exacto por su cuenta.
     """
     issues: list[str] = []
 
@@ -333,13 +443,225 @@ def check_schema_v20(conn) -> dict:
             issues.append(f"fund_master: columna '{old}' debería renombrarse a '{new}'")
         if new not in fm_actual:
             issues.append(f"fund_master: falta columna renombrada '{new}'")
-    if len(fm_actual) != 58:
+    if strict_count and len(fm_actual) != 58:
         issues.append(f"fund_master: esperadas 58 columnas, hay {len(fm_actual)}")
 
     jb = check_schema_v20_job_b(conn)
     issues += jb['issues']
 
     return {'ok': len(issues) == 0, 'issues': issues}
+
+
+def check_schema_v21(conn) -> dict:
+    """
+    Valida v21: v20 completo + Asset_Currency presente en fund_master
+    (59 columnas).
+
+    Returns: {'ok': bool, 'issues': list[str]}
+    """
+    issues: list[str] = []
+    v20 = check_schema_v20(conn, strict_count=False)
+    issues += v20['issues']
+
+    cur = conn.execute("PRAGMA table_info(fund_master)")
+    fm_actual = {row[1] for row in cur.fetchall()}
+    new_missing = [c for c in V21_FUND_MASTER_NEW if c not in fm_actual]
+    if new_missing:
+        issues.append(f"fund_master: faltan columnas v21 nuevas: {new_missing}")
+    if len(fm_actual) != 59:
+        issues.append(f"fund_master: esperadas 59 columnas (v21), hay {len(fm_actual)}")
+
+    return {'ok': len(issues) == 0, 'issues': issues}
+
+
+def check_schema_v22(conn) -> dict:
+    """
+    Valida v22: v21 completo + tabla fund_data_quality_issues presente
+    con sus columnas canónicas.
+
+    Returns: {'ok': bool, 'issues': list[str]}
+    """
+    issues: list[str] = []
+    v21 = check_schema_v21(conn)
+    issues += v21['issues']
+
+    cur = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' "
+        "AND name='fund_data_quality_issues'"
+    )
+    if not cur.fetchone():
+        issues.append("Tabla fund_data_quality_issues no existe (v22)")
+    else:
+        cur = conn.execute("PRAGMA table_info(fund_data_quality_issues)")
+        actual = {row[1] for row in cur.fetchall()}
+        missing = FUND_DATA_QUALITY_ISSUES_COLUMNS_SET - actual
+        if missing:
+            issues.append(
+                f"fund_data_quality_issues: faltan columnas {sorted(missing)}"
+            )
+
+    return {'ok': len(issues) == 0, 'issues': issues}
+
+
+def check_schema_v23(conn) -> dict:
+    """
+    Valida v23: v22 completo (sin strict_count) + In_Current_Universe
+    presente en fund_master (60 columnas total).
+
+    Returns: {'ok': bool, 'issues': list[str]}
+    """
+    issues: list[str] = []
+    # check_schema_v22 calls check_schema_v21 which calls check_schema_v20
+    # with strict_count=False; but v21 does its own count == 59 check.
+    # We replicate the cascade with strict_count=False at v21 level to avoid
+    # the spurious "expected 59, have 60" error from the v21 step.
+    v20 = check_schema_v20(conn, strict_count=False)
+    issues += v20['issues']
+
+    cur = conn.execute("PRAGMA table_info(fund_master)")
+    fm_actual = {row[1] for row in cur.fetchall()}
+
+    # V21 column check (Asset_Currency)
+    for c in V21_FUND_MASTER_NEW:
+        if c not in fm_actual:
+            issues.append(f"fund_master: falta columna v21: {c}")
+
+    # V22: fund_data_quality_issues table
+    cur_tbl = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' "
+        "AND name='fund_data_quality_issues'"
+    )
+    if not cur_tbl.fetchone():
+        issues.append("Tabla fund_data_quality_issues no existe (v22)")
+    else:
+        actual_dq = {r[1] for r in conn.execute(
+            "PRAGMA table_info(fund_data_quality_issues)"
+        ).fetchall()}
+        missing_dq = FUND_DATA_QUALITY_ISSUES_COLUMNS_SET - actual_dq
+        if missing_dq:
+            issues.append(
+                f"fund_data_quality_issues: faltan columnas {sorted(missing_dq)}"
+            )
+
+    # V23: In_Current_Universe
+    new_missing = [c for c in V23_FUND_MASTER_NEW if c not in fm_actual]
+    if new_missing:
+        issues.append(f"fund_master: faltan columnas v23 nuevas: {new_missing}")
+    if len(fm_actual) != 60:
+        issues.append(f"fund_master: esperadas 60 columnas (v23), hay {len(fm_actual)}")
+
+    return {'ok': len(issues) == 0, 'issues': issues}
+
+
+def check_schema_v24(conn) -> dict:
+    """
+    Valida v24: v23 completo + tablas fund_nav_monthly y fund_nav_daily
+    presentes con sus columnas canónicas.
+
+    Returns: {'ok': bool, 'issues': list[str]}
+    """
+    issues: list[str] = []
+    v23 = check_schema_v23(conn)
+    issues += v23['issues']
+
+    for tbl, expected_set in [
+        ("fund_nav_monthly", FUND_NAV_MONTHLY_COLUMNS_SET),
+        ("fund_nav_daily",   FUND_NAV_DAILY_COLUMNS_SET),
+    ]:
+        cur = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (tbl,)
+        )
+        if not cur.fetchone():
+            issues.append(f"Tabla {tbl} no existe (v24)")
+        else:
+            actual = {r[1] for r in conn.execute(f"PRAGMA table_info({tbl})").fetchall()}
+            missing = expected_set - actual
+            if missing:
+                issues.append(f"{tbl}: faltan columnas {sorted(missing)}")
+
+    return {'ok': len(issues) == 0, 'issues': issues}
+
+
+# ============================================================
+# fund_metrics / fund_metric_timeseries / p2_pipeline_log
+# Columnas canónicas de auditoría v26 (Pillar 3 — algorithm_version + batch_id)
+# ============================================================
+FUND_METRICS_AUDIT_COLUMNS: list[str] = [
+    "algorithm_version",
+    "batch_id",
+]
+FUND_METRIC_TIMESERIES_AUDIT_COLUMNS: list[str] = [
+    "algorithm_version",
+    "batch_id",
+]
+P2_PIPELINE_LOG_AUDIT_COLUMNS: list[str] = [
+    "batch_id",
+]
+
+
+def check_schema_v26(conn) -> dict:
+    """
+    Valida v26: v25 completo + columnas de auditoría en Gold tables.
+
+    Columnas nuevas:
+      fund_metrics:            algorithm_version, batch_id
+      fund_metric_timeseries:  algorithm_version, batch_id
+      p2_pipeline_log:         batch_id
+
+    Returns: {'ok': bool, 'issues': list[str]}
+    """
+    issues: list[str] = []
+    v25 = check_schema_v25(conn)
+    issues += v25["issues"]
+
+    checks = [
+        ("fund_metrics",           FUND_METRICS_AUDIT_COLUMNS),
+        ("fund_metric_timeseries", FUND_METRIC_TIMESERIES_AUDIT_COLUMNS),
+        ("p2_pipeline_log",        P2_PIPELINE_LOG_AUDIT_COLUMNS),
+    ]
+    for table, expected_cols in checks:
+        cur = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        )
+        if not cur.fetchone():
+            issues.append(f"Tabla {table} no existe (requerida por v26)")
+            continue
+        actual = {r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        missing = [c for c in expected_cols if c not in actual]
+        if missing:
+            issues.append(
+                f"{table}: faltan columnas v26 {missing} — ejecuta migrate_schema_v26.py"
+            )
+
+    return {"ok": len(issues) == 0, "issues": issues}
+
+
+def check_schema_v25(conn) -> dict:
+    """
+    Valida v25: v24 completo + columna nav_sources.data_status presente.
+
+    v25 (2026-07-19): nav_sources.data_status (TEXT DEFAULT 'OK') — máquina
+    de estados para control del ciclo de vida de los datos NAV (paralela a
+    KIID_Status en P1). Permite invalidar datos y forzar recálculos sin borrar
+    la fila de nav_sources.
+
+    Returns: {'ok': bool, 'issues': list[str]}
+    """
+    issues: list[str] = []
+    v24 = check_schema_v24(conn)
+    issues += v24["issues"]
+
+    cur = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='nav_sources'"
+    )
+    if not cur.fetchone():
+        issues.append("Tabla nav_sources no existe (requerida por v25)")
+    else:
+        actual = {r[1] for r in conn.execute("PRAGMA table_info(nav_sources)").fetchall()}
+        if "data_status" not in actual:
+            issues.append("nav_sources: falta columna data_status (v25)")
+
+    return {"ok": len(issues) == 0, "issues": issues}
 
 
 def check_schema_v19(conn) -> dict:
@@ -403,9 +725,17 @@ def verify_db_schema(conn) -> dict[str, list[str]]:
     missing: dict[str, list[str]] = {}
 
     checks = [
-        ("fund_master",        FUND_MASTER_COLUMNS_V20_SET),
-        ("fund_kiid_metadata", FUND_KIID_METADATA_COLUMNS_SET),
-        ("ingestion_log",      INGESTION_LOG_COLUMNS_SET),
+        ("fund_master",              FUND_MASTER_COLUMNS_V23_SET),
+        ("fund_kiid_metadata",       FUND_KIID_METADATA_COLUMNS_SET),
+        ("ingestion_log",            INGESTION_LOG_COLUMNS_SET),
+        ("fund_benchmarks",          FUND_BENCHMARKS_COLUMNS_SET),
+        ("fund_data_quality_issues", FUND_DATA_QUALITY_ISSUES_COLUMNS_SET),
+        ("fund_nav_monthly",         FUND_NAV_MONTHLY_COLUMNS_SET),
+        ("fund_nav_daily",           FUND_NAV_DAILY_COLUMNS_SET),
+        # v26: audit columns on Gold tables (algorithm_version + batch_id)
+        ("fund_metrics",             frozenset(FUND_METRICS_AUDIT_COLUMNS)),
+        ("fund_metric_timeseries",   frozenset(FUND_METRIC_TIMESERIES_AUDIT_COLUMNS)),
+        ("p2_pipeline_log",          frozenset(P2_PIPELINE_LOG_AUDIT_COLUMNS)),
     ]
 
     for table, expected in checks:
@@ -428,10 +758,12 @@ def verify_db_schema(conn) -> dict[str, list[str]]:
 # ============================================================
 def assert_schema_alignment(conn) -> None:
     """
-    Comprueba que fund_master, fund_kiid_metadata e ingestion_log
-    contienen todas las columnas definidas en este módulo (v20:
-    fund_master = 58 cols con Vehicle_Structure; sin Type/Subtype/
-    Currency_Hedged/Is_ESG/Portfolio_Currency; metadata = 22).
+    Comprueba que fund_master, fund_kiid_metadata, ingestion_log,
+    fund_benchmarks, fund_data_quality_issues, fund_nav_monthly y
+    fund_nav_daily contienen todas las columnas definidas en este módulo
+    (v25: fund_master = 60 cols; nav_sources.data_status añadida en v25
+    para gestión del ciclo de vida de datos NAV; fund_nav_monthly +
+    fund_nav_daily añadidas al schema canónico en v24).
 
     Lanza AssertionError con detalle si falta alguna columna.
 

@@ -1,5 +1,5 @@
 ARBOL DE DIRECTORIOS — PROYECTOS ORIGINALES
-Generado: 2026-06-20 07:32:07
+Generado: 2026-08-22 10:02:19
 Raiz: C:\desarrollo\fondos
 
 proyecto1/
@@ -51,6 +51,9 @@ proyecto1/
 │   └── parser
 │       ├── parrafo
 │       └── tabla
+├── harvest
+│   ├── p1_db_harvest.py
+│   └── p1_kiid_sync.py
 ├── log
 ├── sql
 ├── src
@@ -62,10 +65,61 @@ proyecto1/
 │   │   └── benchmark_loader.py
 │   └── __init__.py
 ├── tests
+│   ├── test_accdist_20260716.py
+│   ├── test_altrv_bl44_fixes_20260731.py
+│   ├── test_asset_currency.py
+│   ├── test_audit_fixes_20260714.py
+│   ├── test_audit_fixes_20260715.py
+│   ├── test_audit_fixes_20260715b.py
+│   ├── test_b1_b6_audit_fixes_20260713.py
+│   ├── test_b1_classif_20260717.py
+│   ├── test_b1_classif_20260718.py
+│   ├── test_b6_ig_allowance_20260716.py
+│   ├── test_bl44_hardening.py
+│   ├── test_cost_check_20260718.py
 │   ├── test_cost_oc_mismatch.py
+│   ├── test_data_quality_rollup.py
 │   ├── test_dla_extractor.py
+│   ├── test_fixes_20260720.py
+│   ├── test_fixes_20260720b.py
+│   ├── test_fixes_20260721.py
+│   ├── test_fixes_20260723.py
+│   ├── test_fixes_20260725.py
+│   ├── test_fixes_20260728.py
+│   ├── test_fixes_20260731.py
+│   ├── test_fixes_20260821.py
+│   ├── test_fund_currency.py
+│   ├── test_fund_family_builder_import.py
+│   ├── test_geo_ashares_em_20260719.py
+│   ├── test_geography.py
+│   ├── test_geography_fixes_20260714.py
+│   ├── test_hedging_policy.py
+│   ├── test_incident_fixes_20260705.py
+│   ├── test_incident_fixes_20260706.py
+│   ├── test_inter17_mig_rules.py
+│   ├── test_inter18_19_mmf_style.py
+│   ├── test_inter20_sc_g1.py
+│   ├── test_invest_focus_semantics.py
+│   ├── test_mmf_false_positive_20260717.py
+│   ├── test_nat_b1_fixes_20260719.py
+│   ├── test_nature_evidence.py
+│   ├── test_nature_kiid_en_restantes_fixes.py
+│   ├── test_nature_restantes_20260719.py
+│   ├── test_option_b_nature_vote.py
+│   ├── test_prefilter_nature.py
 │   ├── test_priips_cost_extractor.py
-│   └── test_ucits_cost_extractor.py
+│   ├── test_restantes_universe.py
+│   ├── test_rfc_rff_boundary_20260716.py
+│   ├── test_rv_convertible_bl44_20260717.py
+│   ├── test_rv_thematics.py
+│   ├── test_sc_h_benchmark_consistency.py
+│   ├── test_semantic_dq_wiring.py
+│   ├── test_ucits_cost_extractor.py
+│   ├── test_universe_reconcile_20260718.py
+│   └── test_wrong_doc_detection.py
+├── tools
+│   └── audit_benchmark_consistency.py
+├── migrate_v20_benchmark_role.py
 ├── run_block.py
 ├── run_blockv1.py
 └── smoke_sprint2_costs.py
@@ -97,24 +151,28 @@ proyecto2/
 │   │   ├── regime_returns.py
 │   │   ├── returns.py
 │   │   ├── risk_metrics.py
+│   │   ├── rolling_stats.py
+│   │   ├── short_horizon.py
 │   │   ├── srri.py
 │   │   └── srri_20260315.py
-│   ├── loaders
+│   ├── discovery
 │   │   ├── __init__.py
-│   │   ├── inflation_loaders.py
-│   │   ├── m2_global_builder.py
-│   │   ├── macro_loader.py
-│   │   ├── nav_discovery.py
-│   │   ├── nav_loader.py
-│   │   ├── test_eurostat.py
-│   │   ├── test_fred_es.py
-│   │   ├── test_fred_es2.py
-│   │   └── test_historia.py
+│   │   ├── macro_discovery.py
+│   │   └── nav_discovery.py
 │   ├── pipeline
 │   │   ├── __init__.py
-│   │   └── run_pipeline.py
+│   │   ├── run_pipeline.py
+│   │   └── run_pipeline_20260605_00.py
+│   ├── readers
+│   │   ├── __init__.py
+│   │   └── db_readers.py
+│   ├── reports
+│   │   ├── _vendor
+│   │   ├── __init__.py
+│   │   └── rolling_dashboard.py
 │   ├── utils
 │   │   ├── __init__.py
+│   │   ├── fingerprint.py
 │   │   ├── logger.py
 │   │   ├── time_windows.py
 │   │   └── validators.py
@@ -123,10 +181,32 @@ proyecto2/
 │   │   └── metrics_writer.py
 │   └── __init__.py
 └── tests
-    ├── test_consistency.py
-    └── test_drawdown.py
+    ├── calculations
+    │   ├── __init__.py
+    │   ├── test_consistency.py
+    │   ├── test_drawdown.py
+    │   ├── test_macro_sensitivity.py
+    │   ├── test_nav_scale_repair_20260719.py
+    │   ├── test_regime_returns.py
+    │   ├── test_rolling_stats.py
+    │   └── test_short_horizon.py
+    ├── discovery
+    │   ├── __init__.py
+    │   ├── test_eurostat.py
+    │   ├── test_fred_es.py
+    │   ├── test_fred_es2.py
+    │   └── test_historia.py
+    ├── readers
+    │   ├── test_preflight.py
+    │   └── test_reliability_signals.py
+    ├── reports
+    │   ├── __init__.py
+    │   └── test_rolling_dashboard.py
+    └── utils
+        └── test_fingerprint.py
 
 proyecto3/
+├── log
 ├── sql
 └── src
     ├── __init__.py
@@ -142,12 +222,19 @@ proyecto3/
 
 shared/
 ├── config.py
+├── config_20260621_00.py
 ├── db.py
 ├── export_tables.py
 ├── init_db.py
-└── schema_checks.py
+├── load_fondos_to_postgres.py
+├── load_fondos_to_postgres_20260621_00.py
+├── migrate_schema_v26.py
+├── schema_checks.py
+└── schema_checks_20260621_01.py
 
 scripts/
+├── audit
+│   └── sync_agents_md.py
 ├── debug
 │   ├── db_fondos_scraper.py
 │   └── debug_mstarpy.py
@@ -168,11 +255,14 @@ scripts/
 │   │   │   └── dla_table_inventory_20260506_00.py
 │   │   ├── dla2_serializer_audit.py
 │   │   └── dla2_serializer_diag.py
+│   ├── audit_investment_base.py
+│   ├── audit_mgmt_labels.py
 │   ├── both_fail_triage.py
 │   ├── cost_format_signals.py
 │   ├── count_dla2_tables.py
 │   ├── diag_cost_extraction.py
 │   ├── diag_fm.py
+│   ├── diag_ols_coverage.py
 │   ├── diag_upsert.py
 │   ├── dla1_decision_diag.py
 │   ├── dla2_decision_diag.py
@@ -183,7 +273,11 @@ scripts/
 │   ├── dla2_xband_prototype.py
 │   ├── dla_check_exit_fee_cat.py
 │   ├── dla_layout_inventory.py
-│   └── dump_multi_grids.py
+│   ├── doctor.py
+│   ├── dump_aci_missing.py
+│   ├── dump_mgmt_missing.py
+│   ├── dump_multi_grids.py
+│   └── inspect_oper_missing.py
 ├── launch
 │   └── mark_stale.py
 ├── mig
@@ -193,24 +287,33 @@ scripts/
 │   ├── migrate_to_fondos.py
 │   ├── migrate_v18_to_v19.py
 │   ├── migrate_v19_to_v20.py
+│   ├── migrate_v20_benchmark_role.py
+│   ├── migrate_v20_to_v20_1.py
+│   ├── migrate_v22_to_v23.py
+│   ├── migrate_v23_to_v24.py
+│   ├── migrate_v29_chunked.py
+│   ├── migrate_v29_finish.py
+│   ├── migrate_v29_rebuild_rename.py
+│   ├── migrate_v29_rename_rolling_metrics.py
+│   ├── migrate_v30_rename_scalars.py
 │   ├── migrate_v3_columns.py
 │   ├── normalize_column_languages_v17.py
+│   ├── repair_nav_scale_20260719.py
 │   └── restore_kiid_text.py
 ├── oper
-├── test
-│   ├── gemini_LDA.py
-│   ├── smoke_v19_deployment.py
-│   ├── test_backtesting.py
-│   ├── test_cost_format_signals.py
-│   ├── test_dla_extractor.py
-│   ├── test_hd.py
-│   ├── test_historia2.py
-│   ├── test_import.py
-│   ├── test_nav_directo.py
-│   ├── test_portfolio.py
-│   ├── test_regime.py
-│   ├── test_report.py
-│   ├── test_schema.py
-│   ├── test_scorer.py
-│   └── test_srri.py
-└── integracionModulos.py
+└── test
+    ├── gemini_LDA.py
+    ├── smoke_v19_deployment.py
+    ├── test_backtesting.py
+    ├── test_cost_format_signals.py
+    ├── test_dla_extractor.py
+    ├── test_hd.py
+    ├── test_historia2.py
+    ├── test_import.py
+    ├── test_nav_directo.py
+    ├── test_portfolio.py
+    ├── test_regime.py
+    ├── test_report.py
+    ├── test_schema.py
+    ├── test_scorer.py
+    └── test_srri.py

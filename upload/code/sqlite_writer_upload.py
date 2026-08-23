@@ -419,15 +419,21 @@ def upsert_fund_master(conn: sqlite3.Connection,
       añadidas Development_Status/Duration_Profile/MMF_Structure/Alt_Strategy/
       Payoff_Profile (COALESCE, NULL hasta el reprocess). El SQL (INSERT/VALUES/
       SET/params) se DERIVA de una lista ordenada explícita `spec` (R-2, §B-5).
+    - v21: añadida Asset_Currency (COALESCE) -- divisa de los activos del
+      fondo inferida del nombre (classify_utils.detect_asset_currency_from_name),
+      distinta de Portfolio_Currency (no es un revival; fuente y nombre
+      distintos).
 
     Documentación: SPRINT_A1_BL44_BL62_BL64.md sección 2.3,
     SPRINT_A1.b sección 4. Restricciones R-2, R-4.
     """
 
     # ── Detectar y extraer flags antes de normalizar el record ──
-    force_nature = record.pop('_bl44_force_overwrite', False)
-    force_family = record.pop('_bl62_force_overwrite_family', False)
-    force_type   = record.pop('_bl62_force_overwrite_type', False)
+    force_nature      = record.pop('_bl44_force_overwrite', False)
+    force_family      = record.pop('_bl62_force_overwrite_family', False)
+    force_type        = record.pop('_bl62_force_overwrite_type', False)
+    force_style_null  = record.pop('_style_profile_cleared', False)
+    force_mcf_null    = record.pop('_market_cap_focus_cleared', False)
 
     # ── Normalización pre-escritura (Principio #8) ──
     record = _normalize_record(record)
@@ -439,10 +445,12 @@ def upsert_fund_master(conn: sqlite3.Connection,
     #   INSERT/VALUES/params/SET se DERIVAN de ella → imposible descuadrar ?.
     #   v20: −Is_ESG/−Subtype/−Currency_Hedged/−Portfolio_Currency;
     #        Type→Vehicle_Structure; +5 nuevas (NULL hasta reprocess, COALESCE).
-    now = datetime.datetime.utcnow().isoformat(timespec="seconds")
-    nature_pol  = 'ow' if force_nature else 'co'
-    family_pol  = 'ow' if force_family else 'co'
-    vehicle_pol = 'ow' if force_type   else 'co'   # _bl62_force_overwrite_type → Vehicle_Structure
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+    nature_pol  = 'ow' if force_nature     else 'co'
+    family_pol  = 'ow' if force_family     else 'co'
+    vehicle_pol = 'ow' if force_type       else 'co'  # _bl62_force_overwrite_type → Vehicle_Structure
+    style_pol   = 'ow' if force_style_null else 'co'  # INTER-SP: NULL para fondos no-RV
+    mcf_pol     = 'ow' if force_mcf_null   else 'co'  # INTER-MCF: NULL para fondos no-RV
 
     spec = [
         ("ISIN",                        record["ISIN"],                          'ins'),
@@ -453,12 +461,12 @@ def upsert_fund_master(conn: sqlite3.Connection,
         ("Vehicle_Structure",          record.get("Vehicle_Structure"),         vehicle_pol),
         ("Strategy",                    record.get("Strategy"),                  'co'),
         ("Family",                      record.get("Family"),                    family_pol),
-        ("Style_Profile",               record.get("Style_Profile"),             'co'),
+        ("Style_Profile",               record.get("Style_Profile"),             style_pol),
         ("Geography",                   record.get("Geography"),                 'co'),
         ("Theme",                       record.get("Theme"),                     'co'),
         ("Exposure_Bias",               record.get("Exposure_Bias"),             'ow'),
         ("Benchmark_Type",              record.get("Benchmark_Type"),            'ow'),
-        ("Market_Cap_Focus",            record.get("Market_Cap_Focus"),          'co'),
+        ("Market_Cap_Focus",            record.get("Market_Cap_Focus"),          mcf_pol),
         ("Sector_Focus",                record.get("Sector_Focus"),              'co'),
         ("Investment_Universe",         record.get("Investment_Universe"),       'co'),
         ("Investment_Focus",            record.get("Investment_Focus"),          'co'),
@@ -468,6 +476,7 @@ def upsert_fund_master(conn: sqlite3.Connection,
         ("Heuristic_Core",              int(record.get("Heuristic_Core", 0)),    'ow'),
         ("SRRI",                        _safe_int(record.get("SRRI")),           'srri'),
         ("Fund_Currency",               record.get("Fund_Currency"),             'co'),
+        ("Asset_Currency",              record.get("Asset_Currency"),            'co'),
         ("Hedging_Policy",              record.get("Hedging_Policy"),            'co'),
         ("Replication_Method",          record.get("Replication_Method"),        'co'),
         ("Derivatives_Usage",           record.get("Derivatives_Usage"),         'co'),
@@ -592,9 +601,15 @@ def upsert_kiid_metadata(conn: sqlite3.Connection,
         Cost_Mgmt_Arbitration,
         Cost_Oper_BandsX,
         Cost_Oper_Ruled,
-        Cost_Oper_Arbitration
+        Cost_Oper_Arbitration,
+        Cost_ACI_RHP_BandsX,
+        Cost_ACI_RHP_Ruled,
+        Cost_ACI_RHP_Arbitration,
+        Cost_ACI_1Y_BandsX,
+        Cost_ACI_1Y_Ruled,
+        Cost_ACI_1Y_Arbitration
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(ISIN, KIID_Class) DO UPDATE SET
         KIID_Class    = excluded.KIID_Class,
         KIID_URL      = COALESCE(excluded.KIID_URL,      fund_kiid_metadata.KIID_URL),
@@ -632,7 +647,13 @@ def upsert_kiid_metadata(conn: sqlite3.Connection,
         Cost_Mgmt_Arbitration  = COALESCE(excluded.Cost_Mgmt_Arbitration,  fund_kiid_metadata.Cost_Mgmt_Arbitration),
         Cost_Oper_BandsX       = COALESCE(excluded.Cost_Oper_BandsX,       fund_kiid_metadata.Cost_Oper_BandsX),
         Cost_Oper_Ruled        = COALESCE(excluded.Cost_Oper_Ruled,        fund_kiid_metadata.Cost_Oper_Ruled),
-        Cost_Oper_Arbitration  = COALESCE(excluded.Cost_Oper_Arbitration,  fund_kiid_metadata.Cost_Oper_Arbitration)
+        Cost_Oper_Arbitration  = COALESCE(excluded.Cost_Oper_Arbitration,  fund_kiid_metadata.Cost_Oper_Arbitration),
+        Cost_ACI_RHP_BandsX    = COALESCE(excluded.Cost_ACI_RHP_BandsX,    fund_kiid_metadata.Cost_ACI_RHP_BandsX),
+        Cost_ACI_RHP_Ruled     = COALESCE(excluded.Cost_ACI_RHP_Ruled,     fund_kiid_metadata.Cost_ACI_RHP_Ruled),
+        Cost_ACI_RHP_Arbitration = COALESCE(excluded.Cost_ACI_RHP_Arbitration, fund_kiid_metadata.Cost_ACI_RHP_Arbitration),
+        Cost_ACI_1Y_BandsX     = COALESCE(excluded.Cost_ACI_1Y_BandsX,     fund_kiid_metadata.Cost_ACI_1Y_BandsX),
+        Cost_ACI_1Y_Ruled      = COALESCE(excluded.Cost_ACI_1Y_Ruled,      fund_kiid_metadata.Cost_ACI_1Y_Ruled),
+        Cost_ACI_1Y_Arbitration = COALESCE(excluded.Cost_ACI_1Y_Arbitration, fund_kiid_metadata.Cost_ACI_1Y_Arbitration)
     ;
     """
 
@@ -660,6 +681,12 @@ def upsert_kiid_metadata(conn: sqlite3.Connection,
         kiid_record.get("Cost_Oper_BandsX"),
         kiid_record.get("Cost_Oper_Ruled"),
         kiid_record.get("Cost_Oper_Arbitration"),
+        kiid_record.get("Cost_ACI_RHP_BandsX"),
+        kiid_record.get("Cost_ACI_RHP_Ruled"),
+        kiid_record.get("Cost_ACI_RHP_Arbitration"),
+        kiid_record.get("Cost_ACI_1Y_BandsX"),
+        kiid_record.get("Cost_ACI_1Y_Ruled"),
+        kiid_record.get("Cost_ACI_1Y_Arbitration"),
     )
 
     conn.execute(sql, params)
@@ -676,7 +703,7 @@ def insert_nav_series(conn: sqlite3.Connection, isin: str,
         (ISIN, Date, NAV, NAV_Currency, NAV_Type, Is_Estimated, Data_Source, Ingested_At)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     """
-    now = datetime.datetime.utcnow().isoformat(timespec="seconds")
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
     for row in nav_series:
         conn.execute(sql, (
             isin,
@@ -703,13 +730,20 @@ def _upsert_kiid_benchmark(conn: sqlite3.Connection,
 
     try:
         norm = normalize_benchmark(benchmark_declared)
-        now  = datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S')
+        now  = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S')
+
+        # Phase 2 (BL-BENCH-ROLE): rol del benchmark. Flag OFF → 'asset_proxy'.
+        try:
+            from core.benchmark_normalizer import benchmark_role as _bench_role
+            _role = _bench_role(benchmark_declared)
+        except Exception:
+            _role = 'asset_proxy'
 
         conn.execute("""
             INSERT OR REPLACE INTO fund_benchmarks
                 (ISIN, source, benchmark_raw, benchmark_id, benchmark_name,
-                 provider, asset_class, confidence, extracted_at)
-            VALUES (?, 'KIID', ?, ?, ?, ?, ?, ?, ?)
+                 provider, asset_class, confidence, benchmark_role, extracted_at)
+            VALUES (?, 'KIID', ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             isin,
             benchmark_declared,
@@ -718,10 +752,18 @@ def _upsert_kiid_benchmark(conn: sqlite3.Connection,
             norm.provider       if norm else None,
             norm.asset_class    if norm else None,
             norm.confidence     if norm else 'LOW',
+            _role,
             now,
         ))
-    except Exception:
-        pass  # No interrumpir el pipeline por un fallo de benchmark
+    except Exception as exc:
+        # No interrumpir el pipeline por un fallo de benchmark, pero NO
+        # silenciar: un 'no such column: benchmark_role' indica que falta la
+        # migración (R1/R4) y antes se perdía en silencio. Se registra con
+        # ISIN para diagnóstico; el pipeline continúa.
+        import logging as _log
+        _log.getLogger(__name__).warning(
+            "fund_benchmarks upsert falló para ISIN=%s: %s", isin, exc
+        )
 
 
 # ============================================================
@@ -736,7 +778,7 @@ def log_ingestion(conn: sqlite3.Connection, isin: Optional[str],
             "INSERT INTO ingestion_log (ISIN, step, status, message, created_at) "
             "VALUES (?,?,?,?,?)",
             (isin, step, status, message,
-             datetime.datetime.utcnow().isoformat(timespec="seconds")),
+             datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")),
         )
     except Exception:
         pass  # El log nunca debe interrumpir el pipeline
@@ -996,7 +1038,7 @@ def correct_oc_aci_mismatch(
         "WHERE ISIN = ?",
         (
             ter_pct,
-            datetime.datetime.utcnow().isoformat(timespec="seconds"),
+            datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
             isin,
         ),
     )
@@ -1007,3 +1049,69 @@ def correct_oc_aci_mismatch(
             isin, source_note, ter_pct,
         )
     return updated
+
+
+# ============================================================
+# FIX-UNIVERSE-RECON-1: universe membership reconciliation
+# ============================================================
+# Per-cycle soft-delete flag: marks fund_master rows as in/out of the
+# current harvest universe without ever deleting historical rows.
+#
+# Design:
+#   - NOT COALESCE-protected: same exception as SRRI_Visual (P#1). The flag
+#     is fully regenerated every cycle from the loaded universe DataFrame.
+#   - NOT a classification attribute: never enters ATTRIBUTE_CATALOG,
+#     characterize_fund(), or the _v3_row SELECT (R-3 does not apply here).
+#   - Written ONLY by this function; classifiers never touch it.
+#   - Chunked IN(...) to stay under SQLite's 999-variable limit.
+# ============================================================
+
+_SQLITE_IN_CHUNK = 900   # safe margin below the 999 SQLite variable limit
+
+
+def reconcile_universe_membership(
+    conn: sqlite3.Connection,
+    current_isins: list[str],
+) -> tuple[int, int]:
+    """
+    Mark all fund_master rows as in/out of the current harvest universe.
+    Idempotent: running twice with the same list produces the same result.
+    NOT COALESCE-protected (overwritten every cycle).
+
+    Args:
+        conn:          active connection with isolation_level=None (WAL).
+        current_isins: ISINs present in the current pipeline universe
+                       (from df_master after dedup; may include WRONG_DOC
+                       funds — they stay in-universe while in the harvest).
+
+    Returns:
+        (in_universe, orphans) — row counts after reconciliation.
+    """
+    isins = sorted({str(i) for i in current_isins if i})
+
+    # 1. Flag every row as out-of-universe
+    conn.execute("UPDATE fund_master SET In_Current_Universe = 0")
+
+    # 2. Re-flag the current universe in chunks to respect SQLite's
+    #    per-statement variable limit (~999).
+    for start in range(0, len(isins), _SQLITE_IN_CHUNK):
+        chunk = isins[start: start + _SQLITE_IN_CHUNK]
+        placeholders = ",".join("?" * len(chunk))
+        conn.execute(
+            f"UPDATE fund_master SET In_Current_Universe = 1 "
+            f"WHERE ISIN IN ({placeholders})",
+            chunk,
+        )
+
+    in_u = conn.execute(
+        "SELECT COUNT(*) FROM fund_master WHERE In_Current_Universe = 1"
+    ).fetchone()[0]
+    orphans = conn.execute(
+        "SELECT COUNT(*) FROM fund_master WHERE In_Current_Universe = 0"
+    ).fetchone()[0]
+
+    print(
+        f"[UNIVERSE-RECON] {in_u} en universo actual, "
+        f"{orphans} huérfanos (fuera del harvest)"
+    )
+    return in_u, orphans

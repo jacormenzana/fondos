@@ -58,6 +58,24 @@ import sys
 _ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT))
 
+try:
+    from proyecto1.core.classify_utils import RFC_INCOMPATIBLE_FAMILIES  # BL-64e DRY (P#11)
+except ImportError:
+    from core.classify_utils import RFC_INCOMPATIBLE_FAMILIES
+
+
+# Familias con heterogeneidad estructural confirmada (cross-nature por diseno del gestor).
+# El clasificador no puede resolverlas porque el gestor usa la misma denominacion base para
+# clases de accion de nature genuinamente distinta (p.ej. una clase equity + una clase bond).
+# Se suprimen del AVISO de post-correccion para evitar ruido repetitivo en cada ejecucion.
+# Fuente: auditoria pipelineP1P2Audit 2026-08-18.
+_KNOWN_HETEROGENEOUS_FAMILIES: frozenset[str] = frozenset({
+    "FAM_000104",  # ALLIANZ BEST STYLES AT — Mixtos + Renta Variable
+    "FAM_000267",  # ASHMORE SICAV EM SD    — Monetario + Renta Fija Flexible
+    "FAM_000722",  # CAPITAL G.NW PERSP BD  — Renta Fija Flexible + Renta Variable
+    "FAM_001081",  # DWS FLOAT RATE NOTE    — Renta Fija Corto Plazo + Renta Fija Flexible
+})
+
 
 # ============================================================
 # Sufijos de clase a eliminar (orden importa: del mas especifico al general)
@@ -435,6 +453,48 @@ def correct_family_inconsistencies(
         [(nat, isin) for nat, isin, _, _ in corrections],
     )
 
+    # FIX-BL64E-FAMCORR (2026-07-04): re-aplicar BL-64e tras revertir Nature a
+    # RFC. Causa raíz: BL-44 (pipeline.py) marca correctamente Fund_Nature=
+    # 'Restantes' para fondos RFC con SRRI incompatible, y BL-64e (misma pasada
+    # por-fondo) corrige Family solo cuando Fund_Nature=='Renta Fija Corto
+    # Plazo' -- pero en ese momento Nature ya es 'Restantes', así que BL-64e
+    # nunca dispara. Family queda en el valor lexicalmente re-inferido por
+    # BL-62 (p.ej. 'Emerging Market Debt'). Más tarde, ESTA función (regla 3
+    # de _resolve_family_nature, que excluye 'Restantes' como Nature destino
+    # por diseño) revierte Nature de vuelta a 'Renta Fija Corto Plazo' -- pero
+    # nunca vuelve a comprobar Family, dejando la combinación RFC+Family
+    # incompatible persistida indefinidamente (confirmado: 3 fondos BGF China
+    # Bond). RFC_INCOMPATIBLE_FAMILIES importado de classify_utils (P#11 DRY).
+    _family_fix_isins = [
+        isin for nat, isin, _, _ in corrections
+        if nat == "Renta Fija Corto Plazo"
+    ]
+    if _family_fix_isins:
+        _placeholders = ",".join("?" for _ in _family_fix_isins)
+        _fam_rows = conn.execute(
+            f"SELECT ISIN, Family FROM fund_master WHERE ISIN IN ({_placeholders})",
+            _family_fix_isins,
+        ).fetchall()
+        _to_fix = [isin for isin, fam in _fam_rows if fam in _RFC_INCOMPATIBLE_FAMILIES]
+        if _to_fix:
+            conn.executemany(
+                "UPDATE fund_master SET Family = 'Short-Term Fixed Income' WHERE ISIN = ?",
+                [(isin,) for isin in _to_fix],
+            )
+            for isin in _to_fix:
+                try:
+                    conn.execute(
+                        """INSERT OR IGNORE INTO ingestion_log
+                           (ISIN, Step, Status, Message, Created_At)
+                           VALUES (?, 'BL64E_FAMCORR_REAPPLIED', 'INFO', ?, datetime('now'))""",
+                        (isin, "Family corregido a 'Short-Term Fixed Income' tras "
+                               "reversión de Nature Restantes→RFC (BL-64e re-aplicado)")
+                    )
+                except Exception:
+                    pass
+            print(f"  [FamilyBuilder] BL-64e re-aplicado tras corrección de familia: "
+                  f"{len(_to_fix)} fondos")
+
     # Registrar en ingestion_log
     for nat, isin, fam_id, old_nature in corrections:
         try:
@@ -491,6 +551,7 @@ def build_fund_families(
     # Los singletons reciben ID propio para que portfolio_builder pueda
     # usar fund_family_id universalmente
     updates: list[tuple[str, str]] = []   # (family_id, isin)
+    family_data: list[tuple] = []         # (family_id, display_name, n_funds)
     family_counter = 1
 
     for (company, norm_name), isins in sorted(groups.items()):
@@ -498,6 +559,8 @@ def build_fund_families(
         family_counter += 1
         for isin in isins:
             updates.append((fam_id, isin))
+        display_name = norm_name.title() if norm_name else (company.title() or fam_id)
+        family_data.append((fam_id, display_name, len(isins)))
 
     if not updates:
         print("  [FamilyBuilder] Sin actualizaciones necesarias")
@@ -531,21 +594,80 @@ def build_fund_families(
     # Aplica reglas basadas en atributos (calidad, mayoría) — sin nombres específicos
     correct_family_inconsistencies(conn, dry_run=dry_run)
 
+    # ── Poblar tabla fund_families ────────────────────────────────────────────
+    # Debe ejecutarse después de las correcciones para reflejar Fund_Nature corregida
+    _populate_fund_families(conn, family_data)
+
     # ── Validación post-corrección ────────────────────────────────────────────
     inconsistencias = _validate_family_consistency(conn)
-    if inconsistencias:
-        print(f"  [FamilyBuilder] AVISO: {len(inconsistencias)} familias "
+    # Separar las conocidas (heterogeneidad estructural documentada) del resto
+    known     = [(f, n, nm) for f, n, nm in inconsistencias if f in _KNOWN_HETEROGENEOUS_FAMILIES]
+    unknown   = [(f, n, nm) for f, n, nm in inconsistencias if f not in _KNOWN_HETEROGENEOUS_FAMILIES]
+    n_total   = len(inconsistencias)
+    n_incons  = len(unknown)
+    if unknown:
+        print(f"  [FamilyBuilder] AVISO: {n_incons} familias "
               f"con Fund_Nature inconsistente (ver log):")
-        for fam_id, natures, nombres in inconsistencias[:10]:
+        for fam_id, natures, nombres in unknown[:10]:
             print(f"    {fam_id} — natures={natures}")
             for n in nombres[:3]:
                 print(f"      {n}")
-        if len(inconsistencias) > 10:
-            print(f"    ... y {len(inconsistencias)-10} mas")
+        if n_incons > 10:
+            print(f"    ... y {n_incons-10} mas")
     else:
         print("  [FamilyBuilder] Validacion OK — todas las familias son homogeneas")
+    if known:
+        # No-op para nuevas; solo confirmar recuento de conocidas
+        print(f"  [FamilyBuilder] {len(known)} familias con heterogeneidad estructural "
+              f"conocida (suprimidas del AVISO): "
+              + ", ".join(f for f, _, _ in known))
 
     return len(updates)
+
+
+def _populate_fund_families(
+    conn: sqlite3.Connection,
+    family_data: list[tuple],
+) -> int:
+    """
+    Inserta/reemplaza filas en fund_families usando los grupos calculados
+    en build_fund_families().  Se llama después de correct_family_inconsistencies
+    para que Fund_Nature refleje los valores ya corregidos en fund_master.
+    """
+    from datetime import datetime as _dt, timezone as _tz
+    from collections import Counter as _Counter
+
+    now_str = _dt.now(_tz.utc).strftime("%Y-%m-%dT%H:%M:%S")
+
+    # Naturaleza dominante por familia (tras correcciones)
+    nat_rows = conn.execute(
+        "SELECT fund_family_id, Fund_Nature, COUNT(*) "
+        "FROM fund_master WHERE fund_family_id IS NOT NULL "
+        "GROUP BY fund_family_id, Fund_Nature"
+    ).fetchall()
+    nat_counts: dict = {}
+    for fam_id, nature, cnt in nat_rows:
+        if nature:
+            nat_counts.setdefault(fam_id, _Counter())[nature] += cnt
+    family_natures = {
+        fid: c.most_common(1)[0][0]
+        for fid, c in nat_counts.items() if c
+    }
+
+    conn.execute("DELETE FROM fund_families")
+    rows = [
+        (fam_id, name, family_natures.get(fam_id), n, now_str)
+        for fam_id, name, n in family_data
+    ]
+    conn.executemany(
+        "INSERT INTO fund_families "
+        "(family_id, family_name, Fund_Nature, n_funds, Updated_At) "
+        "VALUES (?, ?, ?, ?, ?)",
+        rows,
+    )
+    conn.commit()
+    print(f"  [FamilyBuilder] fund_families populated: {len(rows)} familias")
+    return len(rows)
 
 
 def _validate_family_consistency(conn: sqlite3.Connection) -> list:

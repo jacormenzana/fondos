@@ -12,6 +12,18 @@ def validate_nav(nav_df):
         return False, "Fechas no ordenadas"
     if (nav_df["nav"] <= 0).any():
         return False, "NAV no positivo"
+    # FIX-P2-NAV-SCALE-1 (2026-07-19): detectar mezcla de escalas NAV.
+    # Un fondo regulado no puede tener un salto >8x entre observaciones
+    # mensuales adyacentes. Si se detecta, la serie no es fiable para el
+    # cálculo de métricas (srri_volatility, sharpe, max_drawdown, etc.).
+    if len(nav_df) > 1:
+        vals = nav_df["nav"].values
+        ratios = vals[1:] / vals[:-1]
+        if (ratios > 8).any() or (ratios < 0.125).any():
+            return False, (
+                "NAV contiene saltos >8x entre observaciones adyacentes "
+                "(posible mezcla de escalas — ejecutar repair_nav_scale_20260719.py)"
+            )
     return True, None
 
 

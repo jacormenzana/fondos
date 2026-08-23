@@ -1,6 +1,8 @@
 from typing import Optional, Dict, List
 from core.classify_utils import (
     NAME_SIGNALS_MONETARIO,
+    STRONG_MMF_STRUCTURE_MARKERS,
+    _prefilter_match_monetario,   # OPT-B2 (R-1): universo = predicado compartido
     FAMILY_MONEY_MARKET,
     TYPE_MONEY_MARKET,
     TYPE_GOVT_MONEY_MARKET,
@@ -28,41 +30,13 @@ FUND_NATURE_VALUE = "Monetario"
 # =====================================================
 
 def get_universe_isins(df_master) -> List[str]:
-    include_patterns = [
-        "money market", "monetary", 
-        # DDF — añadido personal detectado en pictet
-        "money mkt",  "money mket", 
-        # DDF — añadido personal incluido en classify_utils        
-        "euro m mkt",                    # JPM EURO M MKT VNAV (evita EM MKT)
-        "standard mm vnav",              # JPM STANDARD MM VNAV
-        "lqudty lvnav",                  # JPM USD LQUDTY LVNAV (OCR)
-        "inscash",                       # BNP PARIBS INSCASH EUR 3M
-        "gbp liq lvnav",                 # JPM GBP LIQ LVNAV
-        "gbp liq cnav",                  # variante CNAV
-        "usd treasur cnav",              # JPM USD TREASURY CNAV
-        "usd liq cnav",                  # JPM USD LIQ CNAV
-        "fidelity euro cash",            # FIDELITY EURO CASH
-        "fidelity fund us cash",         # FIDELITY FUND US CASH
-        "fidelity us cash",              # variante
-        # DDF — excluido personal
-        ##"liquidity", "liquid",
-        "cash fund", "cash management", "treasury",
-        "tresorerie", "ucits mmf", "mmf",
-    ]
-    exclude_patterns = [
-        "short duration", "ultra short", "short term",
-        "bond", "income", "enhanced", "plus",
-    ]
-
-    def is_candidate(name: str) -> bool:
-        if not isinstance(name, str):
-            return False
-        n = name.lower()
-        if any(p in n for p in exclude_patterns):
-            return False
-        return any(p in n for p in include_patterns)
-
-    mask = df_master["Fund_Name"].apply(is_candidate)
+    # OPT-B2 (R-1/P#11): los patrones include/exclude viven en classify_utils
+    # (`_prefilter_match_monetario`), fuente única compartida con
+    # `detect_nature_from_prefilter`. Verificado idéntico al universo previo
+    # (0 mismatches / 3.227 fondos).
+    mask = df_master["Fund_Name"].apply(
+        lambda n: _prefilter_match_monetario(n.lower()) if isinstance(n, str) else False
+    )
     return (
         df_master.loc[mask, "ISIN"]
         .dropna()
@@ -98,6 +72,11 @@ def classify_fund(
         "Theme": None,
         "Exposure_Bias": "Liquidity Bias",
         "_signal_subtype": None,
+        # BL-MON-U1 (2026-07-05): money market funds always use Investment_Universe
+        # = 'Global' (v20 §2A.1 #5 eliminated 'Liquidity'). Explicitly setting
+        # it here overrides any stale value persisted from an earlier cycle
+        # (COALESCE takes the new non-NULL value).
+        "Investment_Universe": "Global",
     }
 
     name_l = fund_name.lower() if isinstance(fund_name, str) else ""
@@ -167,13 +146,25 @@ def classify_fund(
     # SRRI ≥ 3 indica un fondo mal capturado por el universo (nombre con "liquidity",
     # "treasury", etc. pero perfil de riesgo no monetario). Reclasificar a Restantes
     # para que el bloque RESTANTES asigne la naturaleza correcta.
+    #
+    # C2 (BL-44 hardening 2026-07-11): excepción para fondos cuyo nombre contiene
+    # tokens de estructura regulatoria MMF (VNAV/LVNAV/CNAV) o denominaciones MMF
+    # explícitas. Para éstos, el nombre es una declaración comercial formal más
+    # fiable que el SRRI de un KIID potencialmente contaminado (sub-fondo incorrecto
+    # almacenado). En lugar de eyectar, se mantiene Fund_Nature='Monetario' y se
+    # pone un flag _bl44_srri_anomaly para que pipeline.py emita un DQ WARN.
     if _srri is not None and _srri >= 3:
-        result["Fund_Nature"] = "Restantes"
-        result["Profile"] = _detect_profile_from_srri(_srri) or "Moderado"
-        result["Family"] = None
-        result["_signal_type"] = None
-        result["_signal_subtype"] = None
-        return apply_semantic_validation(result, fund_name)
+        _has_strong_mmf_marker = any(tok in name_l for tok in STRONG_MMF_STRUCTURE_MARKERS)
+        if _has_strong_mmf_marker:
+            # Mantener clasificación Monetario pero marcar anomalía para DQ WARN
+            result["_bl44_srri_anomaly"] = _srri
+        else:
+            result["Fund_Nature"] = "Restantes"
+            result["Profile"] = _detect_profile_from_srri(_srri) or "Moderado"
+            result["Family"] = None
+            result["_signal_type"] = None
+            result["_signal_subtype"] = None
+            return apply_semantic_validation(result, fund_name)
 
     if result.get("Profile") is None:
         result["Profile"] = _detect_profile_from_srri(_srri)

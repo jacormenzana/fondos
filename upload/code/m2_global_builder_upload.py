@@ -39,7 +39,7 @@ import numpy as np
 from pathlib import Path
 import sys
 
-_ROOT = Path(__file__).resolve().parents[4]
+_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_ROOT))
 
 
@@ -73,11 +73,6 @@ def build_m2_global(conn: sqlite3.Connection,
     wide = df.pivot_table(index="date", columns="key",
                           values="value", aggfunc="last")
     wide.columns.name = None
-
-    # M2 EU: reconstruir nivel desde YoY si no tenemos nivel directo
-    # Usamos m2_yoy_EU para calcular variacion pero necesitamos nivel
-    # Alternativa: usar m3_index_EU como proxy del nivel EU (ya tenemos serie)
-    # En su defecto, usar BCE m2_yoy para aproximar
 
     result = pd.DataFrame(index=wide.index)
 
@@ -191,7 +186,6 @@ def build_m2_global(conn: sqlite3.Connection,
                 yoy = m2_eu_yoy.iloc[i]
                 level.iloc[i] = level.iloc[i-1]*(1+yoy/12) if not np.isnan(yoy) else level.iloc[i-1]
         result["m2_eu_usd"] = level * wide["fx_usd_eur_GLOBAL"].reindex(level.index)
-
 
     # Construir M2 Global como suma de componentes disponibles
     m2_cols = [c for c in ["m2_us","m2_cn_usd","m2_jp_usd","m2_eu_usd"]
@@ -343,7 +337,6 @@ def build_m2_global(conn: sqlite3.Connection,
 
 if __name__ == "__main__":
     import sys
-    # Buscar BD en ubicaciones posibles
     candidates = [
         Path(_ROOT) / "db" / "fondos.sqlite",
         Path("db") / "fondos.sqlite",
@@ -351,7 +344,6 @@ if __name__ == "__main__":
     ]
     db_path = next((p for p in candidates if p.exists()), None)
     if db_path is None:
-        # Intentar desde config
         try:
             from shared.config import DB_PATH
             db_path = Path(DB_PATH)

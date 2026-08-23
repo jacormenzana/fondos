@@ -36,6 +36,19 @@ Cambios v17:
   - load_fund_metrics_for_scoring: SELECT fund_master ampliado con
     Investment_Focus, Credit_Quality, Ongoing_Charge, SRRI_Quality_Flag
   - check_hard_filters: filtro Credit_Quality='High Yield' en Defensiva
+
+P2-03 / Option B — Recalentamiento y Recalentamiento_Tardio (cierre 2026-08-19):
+  En la serie macro disponible (2000-03 → 2026-08, 320 meses), los regímenes
+  Recalentamiento y Recalentamiento_Tardio registran n_obs=0 porque Shock_Energetico
+  (WTI YoY > 25%) preempta todos los periodos de IPC alto. Es un resultado
+  estructural del clasificador, no un defecto de código. Confirmado por DB query
+  2026-08-14 sobre 3,600 combinaciones ISIN-métrica.
+  Comportamiento de fallback (Option B aceptado): cuando regime_return_p25/p75 y
+  regime_sharpe_p25/p75 son None (ningún fondo tiene n_obs >= MIN_OBS_REGIME en el
+  régimen activo), compute_regime_multiplier() devuelve multiplicador=1.0 para todos
+  los fondos — el scoring base rige sin ajuste empírico de régimen. No se requiere
+  cambio de umbral ni nueva ejecución del pipeline.
+  Véase también: regime_returns.py (nota sobre cobertura, P2-03 / ACT-08 2026-08-18).
 """
 
 import sqlite3
@@ -50,6 +63,11 @@ _ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT))
 
 from proyecto3.src.regime_classifier import RegimeResult
+from shared.config import (
+    METRIC_VERSION_SHORT,
+    SHORT_HORIZON_SCORING_ENABLED,
+    ROLLING_PCTILE_P3_ENABLED,
+)
 
 
 # ============================================================
@@ -60,7 +78,7 @@ from proyecto3.src.regime_classifier import RegimeResult
 BASE_WEIGHTS = {
     "return_ann_real":   0.25,
     "sharpe":            0.20,
-    "max_drawdown":      0.20,
+    "max_dd":      0.20,
     "alpha_persistence": 0.15,
     "capture_ratio":     0.10,
     "momentum_rank":     0.10,
@@ -71,7 +89,7 @@ SUBPORTFOLIO_WEIGHTS = {
     "Defensiva": {
         "return_ann_real":   0.20,
         "sharpe":            0.25,
-        "max_drawdown":      0.30,
+        "max_dd":      0.30,
         "alpha_persistence": 0.15,
         "capture_ratio":     0.05,
         "momentum_rank":     0.05,
@@ -79,7 +97,7 @@ SUBPORTFOLIO_WEIGHTS = {
     "Equilibrada": {
         "return_ann_real":   0.25,
         "sharpe":            0.20,
-        "max_drawdown":      0.20,
+        "max_dd":      0.20,
         "alpha_persistence": 0.15,
         "capture_ratio":     0.10,
         "momentum_rank":     0.10,
@@ -87,7 +105,7 @@ SUBPORTFOLIO_WEIGHTS = {
     "Dinamica": {
         "return_ann_real":   0.30,
         "sharpe":            0.15,
-        "max_drawdown":      0.15,
+        "max_dd":      0.15,
         "alpha_persistence": 0.15,
         "capture_ratio":     0.15,
         "momentum_rank":     0.10,
@@ -146,6 +164,64 @@ MULT_RATE_EU_MALUS = 0.70
 MULT_FX_MALUS      = 0.80
 MULT_ALPHA_BONUS   = 1.15
 MULT_MACRO_MALUS   = 0.85
+
+# §3f — Crisis stress thresholds (crisis_stress_score_mdd and _ttr)
+CRISIS_MDD_SHALLOW   = -0.10   # drawdown ≥ -10% in crisis → resilient
+CRISIS_MDD_DEEP      = -0.30   # drawdown ≤ -30% in crisis → vulnerable
+CRISIS_TTR_FAST      =  6.0    # recovery ≤ 6 months → resilient
+CRISIS_TTR_SLOW      = 24.0    # recovery ≥ 24 months → slow
+MULT_CRISIS_MDD_BONUS  = 1.10
+MULT_CRISIS_MDD_MALUS  = 0.80
+MULT_CRISIS_TTR_BONUS  = 1.10
+MULT_CRISIS_TTR_MALUS  = 0.85
+
+# §3f — Regime Sharpe multipliers (modestos: complementan el regime_return)
+MULT_REGIME_SHARPE_BONUS = 1.10
+MULT_REGIME_SHARPE_MALUS = 0.90
+
+# §3f — Regime Sortino multipliers (downside-risk lens: complementa Sharpe)
+MULT_REGIME_SORTINO_BONUS = 1.08   # sortino >= p75 del universo en ese régimen
+MULT_REGIME_SORTINO_MALUS = 0.92   # sortino <= p25
+
+# §3f — Regime Max-DD multipliers (capital-destruction lens por régimen)
+# max_dd es negativo: mayor valor absoluto = peor (e.g. -0.40 < -0.10).
+MULT_REGIME_MAXDD_BONUS  = 1.10   # max_dd_reg >= p75 (menos negativo = menor pérdida)
+MULT_REGIME_MAXDD_MALUS  = 0.80   # max_dd_reg <= p25 (más negativo = mayor pérdida)
+
+# Umbral mínimo de regime_coverage_ratio para aplicar multiplicadores empíricos.
+# Por debajo del umbral, los multiplicadores de régimen se ponderan hacia 1.0
+# (fondo con historia insuficiente en regímenes → no castigar/premiar con pocos datos).
+REGIME_COVERAGE_MIN  = 0.43   # ≈ 3 de 7 regímenes con n_obs >= 12
+REGIME_COVERAGE_DAMP = 0.50   # fracción del multiplicador neto que se retiene si < MIN
+
+# §3f — Slope trend thresholds (normalized slope: std-devs per period)
+SLOPE_IMPROVING_THRESHOLD   =  0.05
+SLOPE_DETERIORATING_THRESHOLD = -0.05
+MULT_SLOPE_BONUS = 1.05
+MULT_SLOPE_MALUS = 0.95
+
+# -- Horizonte corto — gate duro defensivo (v24) -------------------------
+# Umbral de drawdown corto (rolling_6m, metric_version='d1') por sub-cartera.
+# Fondos que superen la pérdida máxima reciente son excluidos del ciclo.
+# None = gate inactivo para esa sub-cartera.
+SHORT_DD_LIMIT_BY_SUB: dict[str, float | None] = {
+    "Defensiva":   -0.08,   # tolerancia 8% en 6 meses
+    "Equilibrada": -0.15,   # tolerancia 15% en 6 meses
+    "Dinamica":    -0.25,   # tolerancia 25% en 6 meses
+}
+
+# Umbral de volatilidad diaria AC-ajustada (rolling_3m) por sub-cartera.
+# Fondos con vol corta superior son excluidos.
+# None = gate inactivo.
+SHORT_VOL_LIMIT_BY_SUB: dict[str, float | None] = {
+    "Defensiva":   0.15,    # 15% vol anualizada en 3 meses
+    "Equilibrada": 0.22,
+    "Dinamica":    None,    # sin tope de vol para Dinamica
+}
+
+# Umbral de iliquidez: si liquidity_flag > este valor, los gates cortos se omiten
+# (datos no confiables — fondos con NAV diario sintético).
+SHORT_LIQUIDITY_TRUST_THRESHOLD: float = 0.20
 
 # Crisis Financiera (v10)
 SPREAD_HY_CRISIS_THRESHOLD =  0.02
@@ -222,7 +298,7 @@ def load_fund_metrics_for_scoring(
     metrics_needed = [
         ("return_ann",          "since_inception", 1),  # real
         ("sharpe",              "since_inception", 0),
-        ("max_drawdown",        "since_inception", 0),
+        ("max_dd",        "since_inception", 0),
         ("alpha_persistence",   "since_inception", 0),
         ("capture_ratio",       "since_inception", 0),
         ("momentum_rank",       "since_inception", 0),
@@ -234,7 +310,13 @@ def load_fund_metrics_for_scoring(
         ("macro_r2",            "since_inception", 0),
         ("macro_n_obs",         "since_inception", 0),
         ("srri_nav",            "since_inception", 0),
-        ("volatility_ann",      "since_inception", 0),
+        ("vol_ann",      "since_inception", 0),
+    ]
+
+    # Crisis stress (always load — used in Crisis_Financiera multiplier)
+    metrics_needed += [
+        ("crisis_stress_score_mdd", "since_inception", 0),
+        ("crisis_stress_score_ttr", "since_inception", 0),
     ]
 
     # Métricas dinámicas por régimen
@@ -246,7 +328,25 @@ def load_fund_metrics_for_scoring(
                 (f"return_ann_{suffix}", "since_inception", 0),
                 (f"sharpe_{suffix}",     "since_inception", 0),
                 (f"n_obs_{suffix}",      "since_inception", 0),
+                # §3f: downside-risk lenses — computed by regime_returns but unused until now
+                (f"sortino_{suffix}",    "since_inception", 0),
+                (f"max_dd_{suffix}",     "since_inception", 0),
             ]
+        # §3f: coverage guard — how many of the 7 regimes have enough history per fund
+        metrics_needed += [
+            ("regime_coverage_ratio", "since_inception", 0),
+        ]
+
+    # P2-10: rolling percentile signals + slope trends (kill-switched)
+    if ROLLING_PCTILE_P3_ENABLED:
+        metrics_needed += [
+            ("vol_ann_pctile_cat",    "since_inception", 0),
+            ("max_dd_pctile_cat",     "since_inception", 0),
+            ("return_ann_pctile_cat", "since_inception", 0),
+            # §3e slope trends (rolling_3y window, same horizon key)
+            ("sharpe_slope",          "rolling_3y",      0),
+            ("return_ann_slope",      "rolling_3y",      1),
+        ]
 
     rows = []
     for metric, horizon, real_flag in metrics_needed:
@@ -258,6 +358,33 @@ def load_fund_metrics_for_scoring(
         """, (metric, horizon, real_flag)).fetchall()
         for isin, value in result:
             rows.append({"isin": isin, "metric": metric, "value": float(value)})
+
+    # -- v24: métricas de horizonte corto (metric_version='d1') ---------------
+    # Leemos short_max_drawdown (rolling_6m), short_vol_adj (rolling_3m) y
+    # short_liquidity_flag (rolling_6m) para el gate duro. También
+    # short_return_cum (rolling_3m/6m) si SHORT_HORIZON_SCORING_ENABLED.
+    short_metrics: list[tuple[str, str, int]] = [
+        ("short_max_drawdown",   "rolling_6m", 0),
+        ("short_vol_adj",        "rolling_3m", 0),
+        ("short_liquidity_flag", "rolling_6m", 0),
+    ]
+    if SHORT_HORIZON_SCORING_ENABLED:
+        short_metrics += [
+            ("short_return_cum", "rolling_3m", 0),
+            ("short_return_cum", "rolling_6m", 0),
+        ]
+    for metric, horizon, real_flag in short_metrics:
+        result = conn.execute("""
+            SELECT isin, value
+            FROM fund_metrics
+            WHERE metric=? AND horizon=? AND real_flag=?
+              AND metric_version=?
+              AND value IS NOT NULL
+        """, (metric, horizon, real_flag, METRIC_VERSION_SHORT)).fetchall()
+        # Suffix horizon so rolling_3m / rolling_6m don't collide
+        col = f"{metric}__{horizon}" if "rolling" in horizon else metric
+        for isin, value in result:
+            rows.append({"isin": isin, "metric": col, "value": float(value)})
 
     if not rows:
         return pd.DataFrame()
@@ -271,16 +398,18 @@ def load_fund_metrics_for_scoring(
     if "return_ann" in wide.columns:
         wide = wide.rename(columns={"return_ann": "return_ann_real"})
 
-    # Añadir atributos de fund_master (v17: +Investment_Focus, +Credit_Quality, +Ongoing_Charge, +SRRI_Quality_Flag)
+    # Añadir atributos de fund_master — solo universo activo (In_Current_Universe=1)
     fm = pd.read_sql("""
         SELECT ISIN, Fund_Name, Fund_Nature, SRRI as srri_kiid,
                Investment_Focus, Credit_Quality,
-               Ongoing_Charge, SRRI_Quality_Flag,
-               fund_family_id
+               Ongoing_Charge_Recurrent AS Ongoing_Charge,
+               SRRI_Quality_Flag, fund_family_id
         FROM fund_master
+        WHERE In_Current_Universe = 1
     """, conn).set_index("ISIN")
 
-    return wide.join(fm, how="left")
+    # inner join: huerfanos (In_Current_Universe=0) quedan excluidos del scoring
+    return wide.join(fm, how="inner")
 
 
 # ============================================================
@@ -311,8 +440,25 @@ def compute_base_scores(
     Normalización por naturaleza: cada tipo de fondo compite contra sus iguales
     antes de recibir el bonus de naturaleza para escalar entre tipos.
     """
-    weights      = SUBPORTFOLIO_WEIGHTS.get(subportfolio, BASE_WEIGHTS)
+    weights      = dict(SUBPORTFOLIO_WEIGHTS.get(subportfolio, BASE_WEIGHTS))
     nature_bonus = NATURE_PROFILE_BONUS.get(subportfolio, {})
+
+    # -- v24: añadir pesos cortos si el kill-switch está activo --------------
+    # Pesos modestos (3-5%); columnas con sufijo __horizonte (R-1: no dup).
+    # Las métricas de retorno corto son señales de tendencia secundarias.
+    if SHORT_HORIZON_SCORING_ENABLED:
+        short_w = {
+            "Defensiva":   {"short_return_cum__rolling_3m": 0.03,
+                            "short_return_cum__rolling_6m": 0.04},
+            "Equilibrada": {"short_return_cum__rolling_3m": 0.04,
+                            "short_return_cum__rolling_6m": 0.04},
+            "Dinamica":    {"short_return_cum__rolling_3m": 0.05,
+                            "short_return_cum__rolling_6m": 0.05},
+        }
+        weights.update(short_w.get(subportfolio, {}))
+
+    # Métricas que deben invertirse (menor = mejor)
+    _INVERTED_METRICS = {"max_dd", "short_max_drawdown__rolling_6m"}
 
     scores_by_nature = pd.Series(0.0, index=df.index)
 
@@ -328,7 +474,7 @@ def compute_base_scores(
                 col = subset_n[metric].dropna()
                 if col.empty:
                     continue
-                invert     = (metric == "max_drawdown")
+                invert     = metric in _INVERTED_METRICS
                 normalized = _normalize_metric(col, invert=invert)
                 scores_n   = scores_n.add(normalized * weight, fill_value=0)
 
@@ -341,7 +487,7 @@ def compute_base_scores(
             col = df[metric].dropna()
             if col.empty:
                 continue
-            invert     = (metric == "max_drawdown")
+            invert     = metric in _INVERTED_METRICS
             normalized = _normalize_metric(col, invert=invert)
             scores_by_nature = scores_by_nature.add(normalized * weight, fill_value=0)
 
@@ -362,6 +508,12 @@ def compute_regime_multiplier(
     regime: str,
     regime_return_p25: float | None = None,
     regime_return_p75: float | None = None,
+    regime_sharpe_p25: float | None = None,
+    regime_sharpe_p75: float | None = None,
+    regime_sortino_p25: float | None = None,
+    regime_sortino_p75: float | None = None,
+    regime_maxdd_p25: float | None = None,
+    regime_maxdd_p75: float | None = None,
 ) -> tuple[float, dict]:
     """
     Calcula el multiplicador de régimen para un fondo.
@@ -417,6 +569,30 @@ def compute_regime_multiplier(
         multiplier *= MULT_MACRO_MALUS
         detail["macro_r2_malus"] = MULT_MACRO_MALUS
 
+    # ── P2-10: señales rolling-percentil (kill-switched) ─────────────────────
+    # Penaliza fondos en percentiles altos de volatilidad/drawdown recientes;
+    # premia los que muestran retorno reciente en percentiles altos.
+    # Multipliers deliberadamente modestos (feature no validada aún).
+    if ROLLING_PCTILE_P3_ENABLED:
+        vol_pct = row.get("vol_ann_pctile_cat", np.nan)
+        if not np.isnan(vol_pct) and vol_pct >= 80:
+            multiplier *= 0.90
+            detail["roll_vol_high_pctile_malus"] = 0.90
+
+        dd_pct = row.get("max_dd_pctile_cat", np.nan)
+        if not np.isnan(dd_pct) and dd_pct >= 80:
+            multiplier *= 0.90
+            detail["roll_dd_high_pctile_malus"] = 0.90
+
+        ret_pct = row.get("return_ann_pctile_cat", np.nan)
+        if not np.isnan(ret_pct):
+            if ret_pct >= 80:
+                multiplier *= 1.10
+                detail["roll_return_high_pctile_bonus"] = 1.10
+            elif ret_pct <= 20:
+                multiplier *= 0.90
+                detail["roll_return_low_pctile_malus"] = 0.90
+
     # ── Bonus/malus empírico por historial en régimen activo ──────────────────
     if regime_return_p25 is not None and regime_return_p75 is not None:
         from proyecto3.src.regime_classifier import _REGIME_SUFFIX
@@ -432,6 +608,103 @@ def compute_regime_multiplier(
                 elif ret_reg <= regime_return_p25:
                     multiplier *= MULT_REGIME_RETURN_MALUS
                     detail["regime_return_malus"] = MULT_REGIME_RETURN_MALUS
+
+    # ── §3f: Bonus/malus por Sharpe histórico en el régimen activo ────────────
+    if regime_sharpe_p25 is not None and regime_sharpe_p75 is not None:
+        from proyecto3.src.regime_classifier import _REGIME_SUFFIX
+        suffix = _REGIME_SUFFIX.get(regime)
+        if suffix:
+            n_obs      = row.get(f"n_obs_{suffix}", np.nan)
+            sharpe_reg = row.get(f"sharpe_{suffix}", np.nan)
+            if (not np.isnan(n_obs) and n_obs >= MIN_OBS_REGIME_SCORING and
+                    not np.isnan(sharpe_reg)):
+                if sharpe_reg >= regime_sharpe_p75:
+                    multiplier *= MULT_REGIME_SHARPE_BONUS
+                    detail["regime_sharpe_bonus"] = MULT_REGIME_SHARPE_BONUS
+                elif sharpe_reg <= regime_sharpe_p25:
+                    multiplier *= MULT_REGIME_SHARPE_MALUS
+                    detail["regime_sharpe_malus"] = MULT_REGIME_SHARPE_MALUS
+
+    # ── §3f: Sortino por régimen — downside-risk lens ─────────────────────────
+    if regime_sortino_p25 is not None and regime_sortino_p75 is not None:
+        from proyecto3.src.regime_classifier import _REGIME_SUFFIX
+        suffix = _REGIME_SUFFIX.get(regime)
+        if suffix:
+            n_obs        = row.get(f"n_obs_{suffix}", np.nan)
+            sortino_reg  = row.get(f"sortino_{suffix}", np.nan)
+            if (not np.isnan(n_obs) and n_obs >= MIN_OBS_REGIME_SCORING and
+                    not np.isnan(sortino_reg)):
+                if sortino_reg >= regime_sortino_p75:
+                    multiplier *= MULT_REGIME_SORTINO_BONUS
+                    detail["regime_sortino_bonus"] = MULT_REGIME_SORTINO_BONUS
+                elif sortino_reg <= regime_sortino_p25:
+                    multiplier *= MULT_REGIME_SORTINO_MALUS
+                    detail["regime_sortino_malus"] = MULT_REGIME_SORTINO_MALUS
+
+    # ── §3f: Max-DD por régimen — capital-destruction lens ────────────────────
+    if regime_maxdd_p25 is not None and regime_maxdd_p75 is not None:
+        from proyecto3.src.regime_classifier import _REGIME_SUFFIX
+        suffix = _REGIME_SUFFIX.get(regime)
+        if suffix:
+            n_obs       = row.get(f"n_obs_{suffix}", np.nan)
+            maxdd_reg   = row.get(f"max_dd_{suffix}", np.nan)
+            if (not np.isnan(n_obs) and n_obs >= MIN_OBS_REGIME_SCORING and
+                    not np.isnan(maxdd_reg)):
+                # max_dd is negative: higher (less negative) = less loss = better
+                if maxdd_reg >= regime_maxdd_p75:
+                    multiplier *= MULT_REGIME_MAXDD_BONUS
+                    detail["regime_maxdd_bonus"] = MULT_REGIME_MAXDD_BONUS
+                elif maxdd_reg <= regime_maxdd_p25:
+                    multiplier *= MULT_REGIME_MAXDD_MALUS
+                    detail["regime_maxdd_malus"] = MULT_REGIME_MAXDD_MALUS
+
+    # ── §3f: Amortiguación por cobertura insuficiente de régimen ─────────────
+    # Si un fondo tiene pocos regímenes con historia suficiente (coverage_ratio
+    # < REGIME_COVERAGE_MIN), las señales empíricas son poco fiables → reducir
+    # el efecto neto del multiplicador hacia 1.0.
+    coverage = row.get("regime_coverage_ratio", np.nan)
+    if not np.isnan(coverage) and coverage < REGIME_COVERAGE_MIN:
+        net = multiplier - 1.0
+        multiplier = 1.0 + net * REGIME_COVERAGE_DAMP
+        detail["regime_coverage_damp"] = round(coverage, 3)
+
+    # ── §3f: Crisis Financiera — stress resilience multipliers ────────────────
+    if regime == "Crisis_Financiera":
+        mdd_crisis = row.get("crisis_stress_score_mdd", np.nan)
+        if not np.isnan(mdd_crisis):
+            if mdd_crisis >= CRISIS_MDD_SHALLOW:
+                multiplier *= MULT_CRISIS_MDD_BONUS
+                detail["crisis_mdd_shallow_bonus"] = MULT_CRISIS_MDD_BONUS
+            elif mdd_crisis <= CRISIS_MDD_DEEP:
+                multiplier *= MULT_CRISIS_MDD_MALUS
+                detail["crisis_mdd_deep_malus"] = MULT_CRISIS_MDD_MALUS
+        ttr_crisis = row.get("crisis_stress_score_ttr", np.nan)
+        if ttr_crisis is not None and not np.isnan(ttr_crisis):
+            if ttr_crisis <= CRISIS_TTR_FAST:
+                multiplier *= MULT_CRISIS_TTR_BONUS
+                detail["crisis_ttr_fast_bonus"] = MULT_CRISIS_TTR_BONUS
+            elif ttr_crisis >= CRISIS_TTR_SLOW:
+                multiplier *= MULT_CRISIS_TTR_MALUS
+                detail["crisis_ttr_slow_malus"] = MULT_CRISIS_TTR_MALUS
+
+    # ── §3f: Slope trend signals (kill-switched — same gate as rolling pctile) ─
+    if ROLLING_PCTILE_P3_ENABLED:
+        sharpe_slope = row.get("sharpe_slope", np.nan)
+        if not np.isnan(sharpe_slope):
+            if sharpe_slope >= SLOPE_IMPROVING_THRESHOLD:
+                multiplier *= MULT_SLOPE_BONUS
+                detail["sharpe_slope_improving_bonus"] = MULT_SLOPE_BONUS
+            elif sharpe_slope <= SLOPE_DETERIORATING_THRESHOLD:
+                multiplier *= MULT_SLOPE_MALUS
+                detail["sharpe_slope_deteriorating_malus"] = MULT_SLOPE_MALUS
+        ret_slope = row.get("return_ann_slope", np.nan)
+        if not np.isnan(ret_slope):
+            if ret_slope >= SLOPE_IMPROVING_THRESHOLD:
+                multiplier *= MULT_SLOPE_BONUS
+                detail["return_slope_improving_bonus"] = MULT_SLOPE_BONUS
+            elif ret_slope <= SLOPE_DETERIORATING_THRESHOLD:
+                multiplier *= MULT_SLOPE_MALUS
+                detail["return_slope_deteriorating_malus"] = MULT_SLOPE_MALUS
 
     return round(multiplier, 4), detail
 
@@ -450,7 +723,7 @@ def check_hard_filters(
 
     v17: Credit_Quality='High Yield' excluido de Defensiva.
     """
-    dd = row.get("max_drawdown", np.nan)
+    dd = row.get("max_dd", np.nan)
     dd_limit = MAX_DRAWDOWN_BY_SUB.get(subportfolio, MAX_DRAWDOWN_LIMIT)
     if not np.isnan(dd) and dd < dd_limit:
         return f"max_drawdown={dd:.2f} < {dd_limit} ({subportfolio})"
@@ -469,6 +742,35 @@ def check_hard_filters(
         cq = row.get("Credit_Quality")
         if cq == "High Yield":
             return "Credit_Quality=High Yield excluido de Defensiva"
+
+    # -- v24: gate corto diario (aplica a las 3 sub-carteras) ---------------
+    # Si liquidity_flag > threshold, los datos diarios no son fiables:
+    # el gate se omite y el fondo pasa (fail-open = no false exclusión).
+    liq_flag = row.get("short_liquidity_flag__rolling_6m", np.nan)
+    daily_trusted = (
+        np.isnan(liq_flag) or float(liq_flag) <= SHORT_LIQUIDITY_TRUST_THRESHOLD
+    )
+
+    if daily_trusted:
+        # -- Drawdown corto (rolling_6m) --
+        dd_limit = SHORT_DD_LIMIT_BY_SUB.get(subportfolio)
+        if dd_limit is not None:
+            short_dd = row.get("short_max_drawdown__rolling_6m", np.nan)
+            if not np.isnan(short_dd) and short_dd < dd_limit:
+                return (
+                    f"short_max_drawdown_6m={short_dd:.2f} < {dd_limit} "
+                    f"({subportfolio})"
+                )
+
+        # -- Volatilidad corta AC-ajustada (rolling_3m) ---
+        vol_limit = SHORT_VOL_LIMIT_BY_SUB.get(subportfolio)
+        if vol_limit is not None:
+            short_vol = row.get("short_vol_adj__rolling_3m", np.nan)
+            if not np.isnan(short_vol) and short_vol > vol_limit:
+                return (
+                    f"short_vol_adj_3m={short_vol:.2f} > {vol_limit} "
+                    f"({subportfolio})"
+                )
 
     return None
 
@@ -553,11 +855,33 @@ def score_funds(
     from proyecto3.src.regime_classifier import _REGIME_SUFFIX
     suffix = _REGIME_SUFFIX.get(regime)
     regime_p25 = regime_p75 = None
+    regime_sharpe_p25 = regime_sharpe_p75 = None
+    regime_sortino_p25 = regime_sortino_p75 = None
+    regime_maxdd_p25 = regime_maxdd_p75 = None
     if suffix:
         ret_col = f"return_ann_{suffix}"
-        if ret_col in df.columns:
+        if ret_col in df.columns and not df[ret_col].isna().all():
             regime_p25 = df[ret_col].quantile(0.25)
             regime_p75 = df[ret_col].quantile(0.75)
+        else:
+            print(
+                f"[WARN] Régimen '{regime}' no tiene métricas históricas en fund_metrics "
+                "(nunca observado en la serie macro disponible). "
+                "Scoring aplicado sin multiplicador empírico de régimen — base score vigente."
+            )
+        sharpe_col = f"sharpe_{suffix}" if suffix else None
+        if sharpe_col and sharpe_col in df.columns and not df[sharpe_col].isna().all():
+            regime_sharpe_p25 = df[sharpe_col].quantile(0.25)
+            regime_sharpe_p75 = df[sharpe_col].quantile(0.75)
+        # §3f: downside-risk lenses — sortino and max_dd per regime
+        sortino_col = f"sortino_{suffix}"
+        if sortino_col in df.columns and not df[sortino_col].isna().all():
+            regime_sortino_p25 = df[sortino_col].quantile(0.25)
+            regime_sortino_p75 = df[sortino_col].quantile(0.75)
+        maxdd_col = f"max_dd_{suffix}"
+        if maxdd_col in df.columns and not df[maxdd_col].isna().all():
+            regime_maxdd_p25 = df[maxdd_col].quantile(0.25)
+            regime_maxdd_p75 = df[maxdd_col].quantile(0.75)
 
     results = []
 
@@ -576,6 +900,12 @@ def score_funds(
                 row, regime,
                 regime_return_p25=regime_p25,
                 regime_return_p75=regime_p75,
+                regime_sharpe_p25=regime_sharpe_p25,
+                regime_sharpe_p75=regime_sharpe_p75,
+                regime_sortino_p25=regime_sortino_p25,
+                regime_sortino_p75=regime_sortino_p75,
+                regime_maxdd_p25=regime_maxdd_p25,
+                regime_maxdd_p75=regime_maxdd_p75,
             )
 
             score_final = score_base * mult if excl is None else 0.0
@@ -587,7 +917,7 @@ def score_funds(
                 "metrics": {
                     "return_ann_real":   _safe_round(row.get("return_ann_real")),
                     "sharpe":            _safe_round(row.get("sharpe")),
-                    "max_drawdown":      _safe_round(row.get("max_drawdown")),
+                    "max_dd":      _safe_round(row.get("max_dd")),
                     "alpha_persistence": _safe_round(row.get("alpha_persistence")),
                     "capture_ratio":     _safe_round(row.get("capture_ratio")),
                     "srri":              _safe_int(row.get("srri_nav")),

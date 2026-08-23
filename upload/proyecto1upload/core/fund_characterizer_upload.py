@@ -236,6 +236,11 @@ def detect_theme_from_kiid(kiid_text: Optional[str]) -> Optional[str]:
     _obj_start, _obj_end = _get_obj_bounds(kiid_text)
     w = _extract_window(kiid_text.lower(), _obj_start, _obj_end)
 
+    # FIX-SECTOR-FINSERV-1 (2026-07-20): Financial Services missing from KIID
+    # theme detector; "sector de servicios financieros" was not recognized,
+    # so only the secondary "sector inmobiliario" (minor, "en menor medida")
+    # fired → theme=Real Estate → Sector_Focus=Real Assets for ALGEBRIS FINANCIA.
+    # Financial Services placed BEFORE Real Estate in priority order.
     theme_text_signals = [
         (["inteligencia artificial", "artificial intelligence",
           "machine learning", "aprendizaje automático",
@@ -249,6 +254,12 @@ def detect_theme_from_kiid(kiid_text: Optional[str]) -> Optional[str]:
         (["metales preciosos", "precious metals", "fondos de oro",
           "gold fund", "lingotes de oro", "gold bullion",
           "physical gold", "oro físico"], "Gold"),
+        (["sector de servicios financieros", "servicios financieros globales",
+          "financial services sector", "sector financiero global",
+          "financial sector", "sector bancario", "banking sector",
+          "entidades financieras", "financial institutions",
+          "insurance companies", "compañías de seguros",
+          "banks and insurance"], "Financial Services"),
         (["sector inmobiliario", "real estate sector", "bienes raíces",
           "empresas inmobiliarias", "real estate companies",
           "mercado inmobiliario"], "Real Estate"),
@@ -283,13 +294,16 @@ def detect_investment_universe(
     trasladado al nuevo atributo Investment_Focus.
 
     Valores:
-        Liquidity  — monetarios y RF corto plazo
-        Global     — cobertura mundial
+        Global     — cobertura mundial (incl. monetarios y RF corto plazo, v20 §2A.1 #5)
         Regional   — región geográfica (Europa, Asia, Emergentes, EEUU)
         Country    — un único país o mercado (China, Japón, India...)
     """
+    # FIX-NORDEA-IU-1: 'Liquidity' fue eliminado en schema v20 §2A.1 #5.
+    # Para fondos Monetario / RF Corto Plazo el universo geográfico correcto
+    # es 'Global'. MIG-5 en classify_utils.py corrige el valor si llegara
+    # a estar en BD, pero la corrección canónica es aquí, en el origen.
     if fund_nature in _LIQUIDITY_NATURES:
-        return "Liquidity"
+        return "Global"
     if geography in _COUNTRY_GEOS:
         return "Country"
     if geography in _REGIONAL_GEOS:
@@ -458,9 +472,18 @@ def detect_market_cap_focus(
     BL-27: ampliado con detección KIID para Mid/SMID Cap y con inferencia
     por benchmark declarado (p.ej. MSCI World Small Cap → Small Cap).
     """
+    # SMID must precede Mid Cap: "small-mid cap" / "smallmid" contain "mid"
+    # and would falsely fire the Mid Cap branch without this guard.
+    if any(k in name_l for k in [
+        "smid", "small & mid", "small and mid",
+        "small to mid", "pequeñas y medianas",
+        "small-mid", "small/mid", "smallmid",
+    ]):
+        return "SMID Cap"
     if any(k in name_l for k in [
         "small cap", "small-cap", "smallcap", "small co",
         "micro cap", "micro-cap", "small companies",
+        "smaller compan",   # "smaller companies" / "smaller company" (common UK/Janus abbrev)
         "pequeña capitalización", "pequeñas compañías",
     ]):
         return "Small Cap"
@@ -470,11 +493,6 @@ def detect_market_cap_focus(
     ]):
         return "Mid Cap"
     if any(k in name_l for k in [
-        "smid", "small & mid", "small and mid",
-        "small to mid", "pequeñas y medianas",
-    ]):
-        return "SMID Cap"
-    if any(k in name_l for k in [
         "large cap", "large-cap", "largecap",
         "blue chip", "grande capitalización", "grandes compañías",
     ]):
@@ -482,11 +500,12 @@ def detect_market_cap_focus(
 
     if kiid_text:
         s, e = _get_obj_bounds(kiid_text)
-        w = _extract_window(kiid_text.lower(), s, e)
+        w = re.sub(r'\s+', ' ', _extract_window(kiid_text.lower(), s, e))
         if any(k in w for k in [
             "pequeña capitalización", "small capitalisation",
             "small-cap companies", "small cap companies",
             "pequeñas empresas", "small companies",
+            "smaller compan",   # "smaller companies" / "smaller company"
         ]):
             return "Small Cap"
         if any(k in w for k in [
@@ -495,17 +514,18 @@ def detect_market_cap_focus(
             "blue chip companies", "blue-chip",
         ]):
             return "Large Cap"
-        # BL-27: detección Mid y SMID desde texto KIID
-        if any(k in w for k in [
-            "mediana capitalización", "mid capitalisation",
-            "mid-cap companies", "medianas empresas",
-        ]):
-            return "Mid Cap"
+        # BL-27: SMID before Mid Cap — "pequeñas y medianas" / "small and mid" must win
+        # over "medianas empresas" which also appears in SMID fund KIIDs.
         if any(k in w for k in [
             "pequeñas y medianas", "small and mid", "small- and mid-",
             "small to mid-cap",
         ]):
             return "SMID Cap"
+        if any(k in w for k in [
+            "mediana capitalización", "mid capitalisation",
+            "mid-cap companies", "medianas empresas",
+        ]):
+            return "Mid Cap"
 
     # BL-27: inferencia desde benchmark declarado
     if benchmark_declared:

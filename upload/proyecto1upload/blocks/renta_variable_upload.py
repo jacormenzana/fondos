@@ -1,6 +1,7 @@
 from typing import Optional, Dict, List
 from core.classify_utils import (
     NAME_SIGNALS_RV,
+    _prefilter_match_renta_variable,   # OPT-B2 (R-1): universo = predicado compartido
     FAMILY_EQUITY_CORE,
     FAMILY_THEMATIC_EQUITY,
     TYPE_ACTIVE_MANAGEMENT,
@@ -30,30 +31,14 @@ FUND_NATURE_VALUE = "Renta Variable"
 # =====================================================
 
 def get_universe_isins(df_master) -> List[str]:
-    include_patterns = [
-        "equity", "equities", "shares", "stock",
-        "accion", "acciones",
-        "technology", "tech", "health", "healthcare",
-        "climate", "clean energy", "renewable",
-        "value", "growth", "quality", "income",
-        "emerging", "europe", "usa", "global",
-    ]
-    exclude_patterns = [
-        "money", "monetary", "liquidity", "cash",
-        "bond", "fixed income", "renta fija",
-        "balanced", "allocation", "multi asset",
-        "absolute return", "hedge", "alternative",
-    ]
-
-    def is_candidate(name: str) -> bool:
-        if not isinstance(name, str):
-            return False
-        n = name.lower()
-        if any(p in n for p in exclude_patterns):
-            return False
-        return any(p in n for p in include_patterns)
-
-    mask = df_master["Fund_Name"].apply(is_candidate)
+    # OPT-B2 (R-1/P#11): todos los patrones (include/exclude, el `\bhy\b` y los
+    # _exclude_prefix regex conver/alloc/templeton, y la frontera de palabra en
+    # "shares") viven en classify_utils (`_prefilter_match_renta_variable`),
+    # fuente única compartida con `detect_nature_from_prefilter`. Verificado
+    # idéntico al universo previo (0 mismatches / 3.227 fondos).
+    mask = df_master["Fund_Name"].apply(
+        lambda n: _prefilter_match_renta_variable(n.lower()) if isinstance(n, str) else False
+    )
     return (
         df_master.loc[mask, "ISIN"]
         .dropna()

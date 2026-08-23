@@ -2826,6 +2826,10 @@ def run_block(
             # Principio #2 DRY: routing PRIIPs/UCITS lo hace detect_kid_format.
             # Atomicidad: _schedule_rows se pasa a publish_fund (A-3 S2-C).
             _schedule_rows: list = []
+            # FIX-OC-WRITE-ORDER: initialized here so the no-COALESCE repair
+            # can fire AFTER publish_fund (see post-publish block below).
+            _oc_mismatch: bool = False
+            _oc_mismatch_ter: "Optional[float]" = None
             _cost_enabled_rt = (
                 _COST_EXTRACTORS_AVAILABLE
                 and _priips_ext_mod is not None
@@ -2941,18 +2945,7 @@ def run_block(
                                         _cv = None
                                 fund_master_record[_cf] = _cv
 
-                        # BL-COST-5: corregir OC cuando el extractor detectó mismatch.
-                        # correct_oc_aci_mismatch hace una escritura directa (no-COALESCE)
-                        # para sobrescribir un OC que contiene ACI_RHP en ratio form.
-                        # Solo se aplica si ter_pct está disponible (extractor reconstruyó TER).
-                        if _oc_mismatch and _oc_mismatch_ter is not None:
-                            correct_oc_aci_mismatch(conn, isin, _oc_mismatch_ter,
-                                                    source_note="BL-COST-5")
-                            log_ingestion(conn, isin, "BL_COST_4C_OC_ACI_MISMATCH",
-                                          "FIX", f"OC corregido: {_oc_mismatch_ter:.4f}% (TER recon)")
-                        elif _oc_mismatch:
-                            log_ingestion(conn, isin, "BL_COST_4C_OC_ACI_MISMATCH",
-                                          "WARN", "OC parece ACI pero TER no reconstruible; sin cambio")
+                        # BL-COST-5 repair moved to AFTER publish_fund — see post-publish block.
             # ── Fin BL-COST-4c ────────────────────────────────────────────────────
 
             # ── v20 (§4.2/§4.4): arbitración dual de coste (Job B) ─────────────────
@@ -3117,6 +3110,22 @@ def run_block(
 
             publish_fund(conn, fund_master_record, None, kiid_record,
                          cost_schedule_rows=_schedule_rows or None)
+
+            # FIX-OC-WRITE-ORDER (2026-08-23): BL-COST-5 no-COALESCE repair fires
+            # HERE — after publish_fund — so the COALESCE UPSERT above cannot
+            # overwrite the correction with a parser-emitted value.
+            # Pre-fix the call was at line ~2949 (before publish_fund); any non-NULL
+            # parsed["Ongoing_Charge"] fed via COALESCE(excluded, col) re-contaminated
+            # the DB value on every reprocess.
+            if _oc_mismatch and _oc_mismatch_ter is not None:
+                correct_oc_aci_mismatch(conn, isin, _oc_mismatch_ter,
+                                        source_note="BL-COST-5")
+                log_ingestion(conn, isin, "BL_COST_4C_OC_ACI_MISMATCH",
+                              "FIX", f"OC corregido: {_oc_mismatch_ter:.4f}% (TER recon)")
+            elif _oc_mismatch:
+                log_ingestion(conn, isin, "BL_COST_4C_OC_ACI_MISMATCH",
+                              "WARN", "OC parece ACI pero TER no reconstruible; sin cambio")
+
             published.append(fund_master_record)
 
         except Exception as e:

@@ -2716,20 +2716,9 @@ _EXIT_FEE_ZERO_RE = re.compile(
 
 # Patrón principal PRIIPs: captura uno o dos valores porcentuales
 # BL-37: ampliado con variantes adicionales observadas en datos reales
-_OC_PRIIPS_RE = re.compile(
-    r'(?:incidencia\s+(?:anual\s+)?de\s+los\s+costes'
-    r'|impacto\s+(?:anual\s+)?en\s+los\s+costes'
-    r'|gastos\s+en\s+curso'
-    r'|coste\s+total\s+anual'           # BL-37: variante tabular Amundi
-    r'|total\s+(?:ongoing\s+)?charges?'  # BL-37: EN format
-    r'|ongoing\s+charges?'               # BL-37: EN UCITS
-    r'|total\s+expense\s+ratio'          # BL-37: TER explícito
-    r'|\bter\b)'
-    r'[^0-9]{0,60}'           # BL-37: ampliado de 50 a 60 chars (tablas con más espacio)
-    r'([\d]+[,.][\d]+)\s*%'   # primer valor (siempre presente)
-    r'(?:\s+([\d]+[,.][\d]+)\s*%)?',  # segundo valor (opcional)
-    re.IGNORECASE
-)
+# _OC_PRIIPS_RE removed (FIX-OC-DROP-ACI-PRIORITY, 2026-08-23): it matched
+# "Incidencia anual de los costes" — the ACI row — not the ongoing charge.
+# No live code references this pattern; retained name in test docstring only.
 
 # Patrón UCITS antiguo: "Gastos corrientes X,XX%"
 # BL-37: ampliado con "gastos totales" y formato sin espacio

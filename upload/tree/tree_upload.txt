@@ -1,5 +1,5 @@
 ARBOL DE DIRECTORIOS — PROYECTOS UPLOAD
-Generado: 2026-06-20 07:32:07
+Generado: 2026-08-22 10:02:19
 Raiz: C:\desarrollo\fondos\upload
 
 proyecto1upload/
@@ -44,6 +44,9 @@ proyecto1upload/
 │   └── ucits_cost_extractor_upload.py
 ├── db
 │   └── __init___upload.py
+├── harvest
+│   ├── p1_db_harvest_upload.py
+│   └── p1_kiid_sync_upload.py
 ├── src
 │   ├── analysis
 │   │   ├── __init___upload.py
@@ -53,10 +56,61 @@ proyecto1upload/
 │   │   └── benchmark_loader_upload.py
 │   └── __init___upload.py
 ├── tests
+│   ├── test_accdist_20260716_upload.py
+│   ├── test_altrv_bl44_fixes_20260731_upload.py
+│   ├── test_asset_currency_upload.py
+│   ├── test_audit_fixes_20260714_upload.py
+│   ├── test_audit_fixes_20260715_upload.py
+│   ├── test_audit_fixes_20260715b_upload.py
+│   ├── test_b1_b6_audit_fixes_20260713_upload.py
+│   ├── test_b1_classif_20260717_upload.py
+│   ├── test_b1_classif_20260718_upload.py
+│   ├── test_b6_ig_allowance_20260716_upload.py
+│   ├── test_bl44_hardening_upload.py
+│   ├── test_cost_check_20260718_upload.py
 │   ├── test_cost_oc_mismatch_upload.py
+│   ├── test_data_quality_rollup_upload.py
 │   ├── test_dla_extractor_upload.py
+│   ├── test_fixes_20260720_upload.py
+│   ├── test_fixes_20260720b_upload.py
+│   ├── test_fixes_20260721_upload.py
+│   ├── test_fixes_20260723_upload.py
+│   ├── test_fixes_20260725_upload.py
+│   ├── test_fixes_20260728_upload.py
+│   ├── test_fixes_20260731_upload.py
+│   ├── test_fixes_20260821_upload.py
+│   ├── test_fund_currency_upload.py
+│   ├── test_fund_family_builder_import_upload.py
+│   ├── test_geo_ashares_em_20260719_upload.py
+│   ├── test_geography_fixes_20260714_upload.py
+│   ├── test_geography_upload.py
+│   ├── test_hedging_policy_upload.py
+│   ├── test_incident_fixes_20260705_upload.py
+│   ├── test_incident_fixes_20260706_upload.py
+│   ├── test_inter17_mig_rules_upload.py
+│   ├── test_inter18_19_mmf_style_upload.py
+│   ├── test_inter20_sc_g1_upload.py
+│   ├── test_invest_focus_semantics_upload.py
+│   ├── test_mmf_false_positive_20260717_upload.py
+│   ├── test_nat_b1_fixes_20260719_upload.py
+│   ├── test_nature_evidence_upload.py
+│   ├── test_nature_kiid_en_restantes_fixes_upload.py
+│   ├── test_nature_restantes_20260719_upload.py
+│   ├── test_option_b_nature_vote_upload.py
+│   ├── test_prefilter_nature_upload.py
 │   ├── test_priips_cost_extractor_upload.py
-│   └── test_ucits_cost_extractor_upload.py
+│   ├── test_restantes_universe_upload.py
+│   ├── test_rfc_rff_boundary_20260716_upload.py
+│   ├── test_rv_convertible_bl44_20260717_upload.py
+│   ├── test_rv_thematics_upload.py
+│   ├── test_sc_h_benchmark_consistency_upload.py
+│   ├── test_semantic_dq_wiring_upload.py
+│   ├── test_ucits_cost_extractor_upload.py
+│   ├── test_universe_reconcile_20260718_upload.py
+│   └── test_wrong_doc_detection_upload.py
+├── tools
+│   └── audit_benchmark_consistency_upload.py
+├── migrate_v20_benchmark_role_upload.py
 ├── run_block_upload.py
 ├── run_blockv1_upload.py
 └── smoke_sprint2_costs_upload.py
@@ -84,24 +138,27 @@ proyecto2upload/
 │   │   ├── regime_returns_upload.py
 │   │   ├── returns_upload.py
 │   │   ├── risk_metrics_upload.py
+│   │   ├── rolling_stats_upload.py
+│   │   ├── short_horizon_upload.py
 │   │   ├── srri_20260315_upload.py
 │   │   └── srri_upload.py
-│   ├── loaders
+│   ├── discovery
 │   │   ├── __init___upload.py
-│   │   ├── inflation_loaders_upload.py
-│   │   ├── m2_global_builder_upload.py
-│   │   ├── macro_loader_upload.py
-│   │   ├── nav_discovery_upload.py
-│   │   ├── nav_loader_upload.py
-│   │   ├── test_eurostat_upload.py
-│   │   ├── test_fred_es2_upload.py
-│   │   ├── test_fred_es_upload.py
-│   │   └── test_historia_upload.py
+│   │   ├── macro_discovery_upload.py
+│   │   └── nav_discovery_upload.py
 │   ├── pipeline
 │   │   ├── __init___upload.py
+│   │   ├── run_pipeline_20260605_00_upload.py
 │   │   └── run_pipeline_upload.py
+│   ├── readers
+│   │   ├── __init___upload.py
+│   │   └── db_readers_upload.py
+│   ├── reports
+│   │   ├── __init___upload.py
+│   │   └── rolling_dashboard_upload.py
 │   ├── utils
 │   │   ├── __init___upload.py
+│   │   ├── fingerprint_upload.py
 │   │   ├── logger_upload.py
 │   │   ├── time_windows_upload.py
 │   │   └── validators_upload.py
@@ -110,8 +167,29 @@ proyecto2upload/
 │   │   └── metrics_writer_upload.py
 │   └── __init___upload.py
 └── tests
-    ├── test_consistency_upload.py
-    └── test_drawdown_upload.py
+    ├── calculations
+    │   ├── __init___upload.py
+    │   ├── test_consistency_upload.py
+    │   ├── test_drawdown_upload.py
+    │   ├── test_macro_sensitivity_upload.py
+    │   ├── test_nav_scale_repair_20260719_upload.py
+    │   ├── test_regime_returns_upload.py
+    │   ├── test_rolling_stats_upload.py
+    │   └── test_short_horizon_upload.py
+    ├── discovery
+    │   ├── __init___upload.py
+    │   ├── test_eurostat_upload.py
+    │   ├── test_fred_es2_upload.py
+    │   ├── test_fred_es_upload.py
+    │   └── test_historia_upload.py
+    ├── readers
+    │   ├── test_preflight_upload.py
+    │   └── test_reliability_signals_upload.py
+    ├── reports
+    │   ├── __init___upload.py
+    │   └── test_rolling_dashboard_upload.py
+    └── utils
+        └── test_fingerprint_upload.py
 
 proyecto3upload/
 └── src
@@ -127,13 +205,20 @@ proyecto3upload/
     └── regime_returns_upload.py
 
 sharedupload/
+├── config_20260621_00_upload.py
 ├── config_upload.py
 ├── db_upload.py
 ├── export_tables_upload.py
 ├── init_db_upload.py
+├── load_fondos_to_postgres_20260621_00_upload.py
+├── load_fondos_to_postgres_upload.py
+├── migrate_schema_v26_upload.py
+├── schema_checks_20260621_01_upload.py
 └── schema_checks_upload.py
 
 scriptsupload/
+├── audit
+│   └── sync_agents_md_upload.py
 ├── debug
 │   ├── db_fondos_scraper_upload.py
 │   └── debug_mstarpy_upload.py
@@ -154,11 +239,14 @@ scriptsupload/
 │   │   │   └── dla_table_inventory_upload.py
 │   │   ├── dla2_serializer_audit_upload.py
 │   │   └── dla2_serializer_diag_upload.py
+│   ├── audit_investment_base_upload.py
+│   ├── audit_mgmt_labels_upload.py
 │   ├── both_fail_triage_upload.py
 │   ├── cost_format_signals_upload.py
 │   ├── count_dla2_tables_upload.py
 │   ├── diag_cost_extraction_upload.py
 │   ├── diag_fm_upload.py
+│   ├── diag_ols_coverage_upload.py
 │   ├── diag_upsert_upload.py
 │   ├── dla1_decision_diag_upload.py
 │   ├── dla2_decision_diag_upload.py
@@ -169,7 +257,11 @@ scriptsupload/
 │   ├── dla2_xband_prototype_upload.py
 │   ├── dla_check_exit_fee_cat_upload.py
 │   ├── dla_layout_inventory_upload.py
-│   └── dump_multi_grids_upload.py
+│   ├── doctor_upload.py
+│   ├── dump_aci_missing_upload.py
+│   ├── dump_mgmt_missing_upload.py
+│   ├── dump_multi_grids_upload.py
+│   └── inspect_oper_missing_upload.py
 ├── launch
 │   └── mark_stale_upload.py
 ├── mig
@@ -179,23 +271,32 @@ scriptsupload/
 │   ├── migrate_to_fondos_upload.py
 │   ├── migrate_v18_to_v19_upload.py
 │   ├── migrate_v19_to_v20_upload.py
+│   ├── migrate_v20_benchmark_role_upload.py
+│   ├── migrate_v20_to_v20_1_upload.py
+│   ├── migrate_v22_to_v23_upload.py
+│   ├── migrate_v23_to_v24_upload.py
+│   ├── migrate_v29_chunked_upload.py
+│   ├── migrate_v29_finish_upload.py
+│   ├── migrate_v29_rebuild_rename_upload.py
+│   ├── migrate_v29_rename_rolling_metrics_upload.py
+│   ├── migrate_v30_rename_scalars_upload.py
 │   ├── migrate_v3_columns_upload.py
 │   ├── normalize_column_languages_v17_upload.py
+│   ├── repair_nav_scale_20260719_upload.py
 │   └── restore_kiid_text_upload.py
-├── test
-│   ├── gemini_LDA_upload.py
-│   ├── smoke_v19_deployment_upload.py
-│   ├── test_backtesting_upload.py
-│   ├── test_cost_format_signals_upload.py
-│   ├── test_dla_extractor_upload.py
-│   ├── test_hd_upload.py
-│   ├── test_historia2_upload.py
-│   ├── test_import_upload.py
-│   ├── test_nav_directo_upload.py
-│   ├── test_portfolio_upload.py
-│   ├── test_regime_upload.py
-│   ├── test_report_upload.py
-│   ├── test_schema_upload.py
-│   ├── test_scorer_upload.py
-│   └── test_srri_upload.py
-└── integracionModulos_upload.py
+└── test
+    ├── gemini_LDA_upload.py
+    ├── smoke_v19_deployment_upload.py
+    ├── test_backtesting_upload.py
+    ├── test_cost_format_signals_upload.py
+    ├── test_dla_extractor_upload.py
+    ├── test_hd_upload.py
+    ├── test_historia2_upload.py
+    ├── test_import_upload.py
+    ├── test_nav_directo_upload.py
+    ├── test_portfolio_upload.py
+    ├── test_regime_upload.py
+    ├── test_report_upload.py
+    ├── test_schema_upload.py
+    ├── test_scorer_upload.py
+    └── test_srri_upload.py

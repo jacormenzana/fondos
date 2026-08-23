@@ -11,6 +11,44 @@ Sustituye a proyecto1/src/config.py y proyecto2/src/config.py.
 Uso desde cualquier modulo:
     from shared.config import DB_PATH, RISK_FREE_RATE_ANN
 
+Cambios v23 (2026-07-18, FIX-UNIVERSE-RECON-1):
+  - SCHEMA_VERSION: "v22" → "v23".
+  - fund_master: In_Current_Universe (INTEGER NOT NULL DEFAULT 1) añadida.
+    Soft-delete flag regenerado en cada ciclo por reconcile_universe_membership()
+    en sqlite_writer.py. 1 = en el harvest vigente, 0 = huérfano. No COALESCE-
+    protegido (mismo patrón que SRRI_Visual). No clasificación: no entra en
+    ATTRIBUTE_CATALOG.
+
+Cambios v22 (2026-07-05, FIX-DQ-1):
+  - SCHEMA_VERSION: "v21" → "v22".
+  - fund_data_quality_issues (tabla nueva): estado "actual" de issues de
+    calidad de datos por fondo, uno por (ISIN, check_code), reconstruida
+    en cada ciclo de pipeline.py (DELETE+INSERT por ISIN). Complementa a
+    ingestion_log (histórico append-only de todos los eventos de todos
+    los ciclos): da una vista consultable de "qué está mal con el fondo
+    X ahora mismo" sin tener que filtrar el histórico completo.
+  - DATA_QUALITY_SEVERITY: ranking de severidad usado para calcular
+    Data_Quality_Flag de forma determinista como el máximo entre el
+    nivel base (derivado de SRRI_Quality_Flag) y el de cada issue
+    acumulado durante el procesamiento del ISIN -- sustituye a las
+    mutaciones secuenciales dispersas ("solo si Data_Quality_Flag=='OK'",
+    "solo si != 'WARN'", o sin guard alguno) que existían en pipeline.py
+    antes de este fix, y que en al menos un caso (INTER_NTC_CONTRADICTION)
+    llegaban a suprimir el propio registro en ingestion_log cuando un
+    chequeo anterior ya había tocado el flag.
+
+Cambios v21 (2026-07-05, BL-44-FX):
+  - SCHEMA_VERSION: "v20" → "v21".
+  - fund_master: Asset_Currency (TEXT) añadida -- divisa de los activos/
+    estrategia del fondo (vs. Fund_Currency = divisa de la clase de
+    participación), inferida del nombre del fondo vía classify_utils.
+    detect_asset_currency_from_name(). No es un revival de Portfolio_Currency
+    (eliminada en v20, 98.7% NULL vía extracción de texto KIID demasiado
+    literal) -- nombre y fuente de datos distintos; Portfolio_Currency
+    permanece en V20_DELETED_ATTRIBUTES.
+  - ATTRIBUTE_CASING: Asset_Currency añadida como "CODE" (mismo tratamiento
+    que Fund_Currency).
+
 Cambios v19.2 (BL-COST Sprint 2 S2-D):
   - PRIIPS_COST_EXTRACTION_ENABLED: False → True.
     Activado tras smoke test y despliegue de S2-C (pipeline.py v37,
@@ -54,7 +92,36 @@ _ROOT = Path(__file__).resolve().parent.parent   # c:/desarrollo/fondos
 # ============================================================
 # Versión canónica del schema de BD
 # ============================================================
-SCHEMA_VERSION: str = "v20"
+SCHEMA_VERSION: str = "v26"
+
+# ============================================================
+# v23 (FIX-UNIVERSE-RECON-1, 2026-07-18): In_Current_Universe (fund_master)
+# ============================================================
+# Soft-delete universe-membership flag (INTEGER NOT NULL DEFAULT 1).
+# 1 = fondo pertenece al harvest vigente (db_document_catalogue MAX),
+# 0 = huérfano preservado en fund_master por la política append-only.
+# No es COALESCE-protegido: regenerado completamente cada ciclo por
+# reconcile_universe_membership() (sqlite_writer.py). No entra en
+# ATTRIBUTE_CATALOG ni en characterize_fund() (no es atributo de
+# clasificación — es provenance de pipeline).
+
+# ============================================================
+# v22 (FIX-DQ-1): severidad de Data_Quality_Flag / fund_data_quality_issues
+# ============================================================
+# Ranking usado para calcular Data_Quality_Flag como el máximo de severidad
+# entre el nivel base (derivado de SRRI_Quality_Flag) y el de cada issue
+# acumulado durante el procesamiento de un ISIN (ver _finalize_data_quality_
+# issues en proyecto1/core/pipeline.py). Mayor valor = más severo.
+# WARN y MISSING comparten nivel: ambos representan un problema real y
+# accionable (una discrepancia sin resolver o un dato base ausente),
+# mientras que INFERRED es deliberadamente más leve -- indica un valor
+# presente pero de menor confianza (inferido, no observado directamente).
+DATA_QUALITY_SEVERITY: dict = {
+    "OK": 0,
+    "INFERRED": 1,
+    "WARN": 2,
+    "MISSING": 2,
+}
 
 # ============================================================
 # v19 (BL-COST-2): constantes de coste PRIIPs/KID-aware
@@ -83,6 +150,62 @@ COST_CROSS_VALIDATION_TOLERANCE_PCT: float = 0.0005  # 5 basis points (0.05%)
 
 # Kill-switch BL-COST-4c (Sprint 2). Activado en v19.2 tras smoke test S2-D.
 PRIIPS_COST_EXTRACTION_ENABLED: bool = True
+
+# Kill-switch v24: pesos de scoring sobre métricas de horizonte corto (d1).
+# False = solo se aplica el gate duro (check_hard_filters); el score base
+# no recibe aún señales cortas. Activar SOLO después de backtest walk-forward.
+SHORT_HORIZON_SCORING_ENABLED: bool = False
+
+# Kill-switch v26: motor de indicadores rolling + WARN/ALARM.
+# False = la pipeline P2 salta los módulos rolling_stats y alarm_engine;
+#         fund_metric_timeseries y fund_metric_alerts no se escriben.
+# True  = activa el cálculo completo. Activar SOLO después de backfill
+#         inicial y validación de las señales percentil vs P3 scoring.
+ROLLING_STATS_ENABLED: bool = True
+
+# Kill-switch P2-10: habilita el uso de señales rolling-percentil (pctile_cat)
+# en la Capa 3 del scoring P3. Activar SOLO tras validar correlación predictiva
+# con retorno futuro en el régimen activo (backtest walk-forward pendiente).
+ROLLING_PCTILE_P3_ENABLED: bool = False
+
+# ============================================================
+# Phase 1 — Benchmark asset-class derivation engine (BL-BENCH-DECOMP)
+# ============================================================
+# Kill-switch de la descomposición de benchmarks compuestos + fallback de
+# cobertura en core.benchmark_normalizer.normalize_benchmark (dark-launch).
+#   - Default False: normalize_benchmark conserva el comportamiento legacy
+#     (primer match startswith gana; asset_class NULL si no hay alias).
+#   - True: detecta benchmarks multi-activo (Equity+Fixed Income) → 'Mixed',
+#     y asigna asset_class por familia de tokens cuando el alias falta (SG5).
+# Resuelve SG1-compuesto (~36) + SG5-recuperable (~14). NO toca benchmarks de
+# tipo cash/hurdle (SG3, Phase 2) ni el mislabel a nivel Fund_Nature
+# (SG1-pure equity sobre fondo allocation, Phase 3 / INTER-18).
+BENCHMARK_DECOMP_ENABLED: bool = False
+
+# ============================================================
+# Phase 2 — Benchmark role axis (hurdle vs asset proxy) (BL-BENCH-ROLE)
+# ============================================================
+# Kill-switch del eje benchmark_role en fund_benchmarks (dark-launch).
+#   - Default False: el writer escribe benchmark_role='asset_proxy' (neutro);
+#     la columna existe tras la migración pero la feature está inactiva.
+#   - True: benchmark_role()=hurdle_rate para benchmarks de tipo cash/overnight
+#     (SOFR, €STR, SONIA, TONA, SARON, EURIBOR, overnight, 1-month, eurodeposit)
+#     sin componente invertible. Un benchmark hurdle_rate NO debe usarse como
+#     proxy de clase de activo (excluir del alineamiento QA; Phase 3/INTER-18
+#     lo salta al corroborar Fund_Nature).
+# Resuelve SG3 (~67) + SG2 (~6) etiquetando hurdles en lugar de forzar Rate/FI.
+BENCHMARK_ROLE_ENABLED: bool = True
+
+# ============================================================
+# Phase 3 — INTER-18 Benchmark-Composition ↔ Fund_Nature (BL-BENCH-NATURE)
+# ============================================================
+# Kill-switch del pase de reconciliación corroborativa contra Morningstar
+# (dark-launch). WARNING-ONLY: nunca corrige Fund_Nature.
+#   - Default False: el driver no escribe warnings en ingestion_log.
+#   - True: scripts/diag/inter18_reconciliation.py compara asset_class
+#     Morningstar (asset_proxy, no hurdle) vs Fund_Nature y registra los
+#     desajustes (paso 'INTER-18') para revisión manual.
+INTER18_RECONCILIATION_ENABLED: bool = False
 
 # ============================================================
 # v20 (INTEGRATED_SPEC_v20_v2 — Job B: arbitración de coste DLA2)
@@ -124,7 +247,8 @@ MASTER_EXCEL: Path = DATA_DIR / "GestoresDeFondosv1.xlsx"
 # ============================================================
 # Directorios de outputs generados (no versionados)
 # ============================================================
-METRICS_DIR: Path = _ROOT / "out" / "metrics"
+METRICS_DIR:  Path = _ROOT / "out" / "metrics"
+REPORTS_DIR:  Path = _ROOT / "out" / "export"
 
 # ============================================================
 # Logging
@@ -166,6 +290,7 @@ HORIZONS: list[str] = [
     "rolling_10y",
     "rolling_5y",
     "rolling_3y",
+    "rolling_2y",   # v26: añadido para cerrar el gap 1y–3y
     "rolling_1y",
     "ytd",
     "crisis_2008",
@@ -179,6 +304,10 @@ REGION_IPC: str = "ES"
 
 # Mínimo de observaciones mensuales para calcular métricas
 MIN_NAV_ROWS: int = 12
+# Mínimo de observaciones para regresión macro OLS (REL-5: centralizado aquí)
+MIN_NAV_MACRO: int = 36
+# Mínimo de observaciones para métricas de persistencia del alpha (≥7 años)
+MIN_NAV_PERSIST: int = 84
 
 # Ventanas de crisis históricas (nombre -> (inicio, fin) inclusive)
 CRISIS_WINDOWS: dict = {
@@ -191,10 +320,130 @@ CRISIS_WINDOWS: dict = {
 # Horizontes rolling en meses (para slice automático)
 ROLLING_WINDOWS: dict = {
     "rolling_1y":   12,
+    "rolling_2y":   24,   # v26: gap genuino entre 1y y 3y — serie completa en fund_metric_timeseries
     "rolling_3y":   36,
     "rolling_5y":   60,
     "rolling_10y": 120,
 }
+
+# ============================================================
+# Parámetros horizonte corto (P2 daily-NAV) — v24
+# ============================================================
+# Ventanas en días bursátiles (~21/día). Separadas de ROLLING_WINDOWS
+# (que son meses) para evitar confusión. El pipeline P2 itera estas
+# sobre fund_nav_daily, NO sobre fund_nav_monthly.
+SHORT_WINDOWS: dict[str, int] = {
+    "rolling_1m":  21,   # ~1 mes bursátil
+    "rolling_3m":  63,   # ~3 meses bursátiles
+    "rolling_6m": 126,   # ~6 meses bursátiles
+}
+
+# Observaciones mínimas por horizonte corto (días NAV).
+# Más permisivos que MIN_NAV_ROWS (12) porque la serie es diaria.
+# rolling_1m: ≥15 días (vacaciones reducen disponibilidad)
+# rolling_3m: ≥45 días; rolling_6m: ≥90 días.
+SHORT_WINDOW_MIN_OBS: dict[str, int] = {
+    "rolling_1m":  15,
+    "rolling_3m":  45,
+    "rolling_6m":  90,
+}
+
+# Versión de métrica para la serie corta diaria — separa 'd1' de 'v1'
+# (mensual) en fund_metrics. Nunca mezclar en queries sin filtrar por esta.
+METRIC_VERSION_SHORT: str = "d1"
+
+# Umbral de iliquidez: fracción de retornos diarios cero/repetidos por
+# encima de la cual la volatilidad diaria no es de confianza.
+LIQUIDITY_FLAG_THRESHOLD: float = 0.20   # >20% días sin movimiento → ilíquido
+
+# ============================================================
+# v26 — Reglas del motor WARN/ALARM (fund_metric_alerts)
+# ============================================================
+# Fuente única de verdad para los umbrales del alarm engine.
+# Cada regla: (metric, window, ref_type, warn_pctile, alarm_pctile, direction)
+#   direction: 'above' → alertar si el valor > umbral (volatilidad, drawdown abs)
+#              'below' → alertar si el valor < umbral (retorno, Sharpe)
+# Los percentiles se calculan sobre el peer group (Fund_Nature) en la fecha
+# más reciente disponible en fund_metric_timeseries.
+# Fail-open: si ref_type='category' y la categoría tiene < 5 fondos con datos,
+#            no se emite alerta (no hay base estadística suficiente).
+ALERT_RULES: list[dict] = [
+    # Volatilidad vs categoría: WARN si > p90, ALARM si > p97
+    {
+        "rule_code":   "VOL_CAT_P90",
+        "metric":      "vol_ann",
+        "window":      "rolling_6m",
+        "ref_type":    "category",
+        "level":       "WARN",
+        "direction":   "above",
+        "threshold_pctile": 0.90,
+    },
+    {
+        "rule_code":   "VOL_CAT_P97",
+        "metric":      "vol_ann",
+        "window":      "rolling_6m",
+        "ref_type":    "category",
+        "level":       "ALARM",
+        "direction":   "above",
+        "threshold_pctile": 0.97,
+    },
+    # Drawdown vs categoría (valores son ≤ 0; "peor" = más negativo = below p10)
+    {
+        "rule_code":   "DD_CAT_P10",
+        "metric":      "max_dd",
+        "window":      "rolling_1y",
+        "ref_type":    "category",
+        "level":       "WARN",
+        "direction":   "below",
+        "threshold_pctile": 0.10,
+    },
+    {
+        "rule_code":   "DD_CAT_P03",
+        "metric":      "max_dd",
+        "window":      "rolling_1y",
+        "ref_type":    "category",
+        "level":       "ALARM",
+        "direction":   "below",
+        "threshold_pctile": 0.03,
+    },
+    # Retorno vs categoría: WARN si < p10 en 3y, ALARM si < p05
+    {
+        "rule_code":   "RET_CAT_P10",
+        "metric":      "return_ann",
+        "window":      "rolling_3y",
+        "ref_type":    "category",
+        "level":       "WARN",
+        "direction":   "below",
+        "threshold_pctile": 0.10,
+    },
+    {
+        "rule_code":   "RET_CAT_P05",
+        "metric":      "return_ann",
+        "window":      "rolling_3y",
+        "ref_type":    "category",
+        "level":       "ALARM",
+        "direction":   "below",
+        "threshold_pctile": 0.05,
+    },
+]
+
+# Valores permitidos para fund_metric_alerts.level
+METRIC_ALERT_LEVELS: list[str] = ["OK", "WARN", "ALARM"]
+
+# Métricas para las que se mantiene serie temporal completa
+# (Hybrid model: fund_metric_timeseries). El resto sólo van a fund_metrics.
+# 5 series curadas: vol_ann, max_dd, return_ann, sharpe, sortino (v29).
+# metric = pure indicator name; window column carries the rolling horizon.
+ROLLING_TIMESERIES_METRICS: list[str] = [
+    "vol_ann",
+    "max_dd",
+    "return_ann",
+    "sharpe",
+    "sortino",
+]
+
+# Ventanas que generan serie temporal (meses de ROLLING_WINDOWS + días SHORT_WINDOWS)
+# Se derivan automáticamente; no duplicar aquí — usar ROLLING_WINDOWS + SHORT_WINDOWS.
 
 # ============================================================
 # Parámetros globales P3 — selección y cartera
@@ -341,6 +590,13 @@ DOMAIN_VALUES: dict[str, list[str]] = {
 
     # ── Divisa (CODE, ISO) ───────────────────────────────────────
     "Fund_Currency": ["EUR", "USD", "GBP", "CHF", "JPY", "CNH"],
+    # Asset_Currency admite además el centinela categórico "MCY" (multi-divisa
+    # por naturaleza, BL-ASSET-CCY-MULTI 2026-07-11): distingue "indeterminado
+    # por diseño" de NULL="no descubierto". "MCY" no es un código ISO-4217
+    # asignado (sin colisión). Nota: las columnas CODE se excluyen del chequeo
+    # allowed-values (ver ALLOWED_VALUES_BY_COLUMN en classify_utils), así que
+    # esta lista documenta el contrato de intención, no una validación dura.
+    "Asset_Currency": ["EUR", "USD", "GBP", "CHF", "JPY", "CNH", "MCY"],
 
     # ── Flags de control / provenance (UPPER_SNAKE) ──────────────
     "Benchmark_Type": [                # §3-bis: flag de control
@@ -399,7 +655,7 @@ ATTRIBUTE_CASING: dict[str, str] = {
     "SRRI_Validation_Status": "UPPER_SNAKE",
     "Cost_Mgmt_Arbitration": "UPPER_SNAKE", "Cost_Oper_Arbitration": "UPPER_SNAKE",
     # CODE / NUM
-    "Fund_Currency": "CODE",
+    "Fund_Currency": "CODE", "Asset_Currency": "CODE",
     "SRRI": "NUM", "Sfdr_Article": "NUM", "Recommended_Holding_Period": "NUM",
 }
 

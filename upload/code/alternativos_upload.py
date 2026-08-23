@@ -1,6 +1,7 @@
 from typing import Optional, Dict, List
 from core.classify_utils import (
     NAME_SIGNALS_ALTERNATIVO,
+    _prefilter_match_alternativo,   # OPT-B2 (R-1): universo = predicado compartido
     FAMILY_ABSOLUTE_RETURN,
     FAMILY_REAL_ASSETS,
     detect_geography       as _detect_geography,
@@ -26,28 +27,14 @@ FUND_NATURE_VALUE = "Alternativo"
 # =====================================================
 
 def get_universe_isins(df_master) -> List[str]:
-    include_patterns = [
-        "absolute return", "hedge", "long short", "long/short",
-        "market neutral", "relative value", "arbitrage", "global macro",
-        "managed futures", "cta", "systematic", "multi strategy",
-        "multi-strategy", "alternative", "real assets", "real estate",
-        "property", "infrastructure", "commodities", "commodity",
-        "gold", "precious metals",
-    ]
-    exclude_patterns = [
-        "equity", "bond", "fixed income", "renta fija",
-        "balanced", "allocation", "multi asset", "multi-asset",
-    ]
-
-    def is_candidate(name: str) -> bool:
-        if not isinstance(name, str):
-            return False
-        n = name.lower()
-        if any(p in n for p in exclude_patterns):
-            return False
-        return any(p in n for p in include_patterns)
-
-    mask = df_master["Fund_Name"].apply(is_candidate)
+    # OPT-B2 (R-1/P#11): los patrones include/exclude (incl. el early-return
+    # "pictet fixed income" antes del exclude "fixed income") viven en
+    # classify_utils (`_prefilter_match_alternativo`), fuente única compartida
+    # con `detect_nature_from_prefilter`. Verificado idéntico al universo previo
+    # (0 mismatches / 3.227 fondos).
+    mask = df_master["Fund_Name"].apply(
+        lambda n: _prefilter_match_alternativo(n.lower()) if isinstance(n, str) else False
+    )
     return (
         df_master.loc[mask, "ISIN"]
         .dropna()
@@ -125,7 +112,7 @@ def classify_fund(
         result["_signal_type"] = "Systematic"
         result["_signal_subtype"] = "Managed Futures"
 
-    elif any(k in name_l for k in ["real estate", "property"]):
+    elif any(k in name_l for k in ["real estate", "property", "flex prop"]):
         result["_signal_type"] = "Real Assets"
         result["_signal_subtype"] = "Real Estate"
 

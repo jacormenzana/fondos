@@ -45,6 +45,7 @@ _ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT))
 
 from proyecto3.src.regime_classifier import RegimeResult
+from shared.config import METRIC_VERSION_SHORT, SHORT_HORIZON_SCORING_ENABLED
 
 
 # ============================================================
@@ -87,6 +88,19 @@ SUBPORTFOLIO_MAPPING = {
     "Equilibrada": ["Renta Fija Flexible", "Mixtos", "Renta Variable"],
     "Dinamica":    ["Renta Variable", "Mixtos", "Alternativo"],
 }
+
+# -- v24: gate duro de horizonte corto -------------------------------------
+SHORT_DD_LIMIT_BY_SUB: dict[str, float | None] = {
+    "Defensiva":   -0.08,
+    "Equilibrada": -0.15,
+    "Dinamica":    -0.25,
+}
+SHORT_VOL_LIMIT_BY_SUB: dict[str, float | None] = {
+    "Defensiva":   0.15,
+    "Equilibrada": 0.22,
+    "Dinamica":    None,
+}
+SHORT_LIQUIDITY_TRUST_THRESHOLD: float = 0.20
 
 
 # ============================================================
@@ -157,6 +171,29 @@ def load_fund_metrics_for_scoring(conn: sqlite3.Connection) -> pd.DataFrame:
         for isin, value in result:
             rows.append({"isin": isin, "metric": metric, "value": float(value)})
 
+    # -- v24: métricas de horizonte corto (metric_version='d1') ---------------
+    short_metrics = [
+        ("short_max_drawdown",   "rolling_6m", 0),
+        ("short_vol_adj",        "rolling_3m", 0),
+        ("short_liquidity_flag", "rolling_6m", 0),
+    ]
+    if SHORT_HORIZON_SCORING_ENABLED:
+        short_metrics += [
+            ("short_return_cum", "rolling_3m", 0),
+            ("short_return_cum", "rolling_6m", 0),
+        ]
+    for metric, horizon, real_flag in short_metrics:
+        result = conn.execute("""
+            SELECT isin, value
+            FROM fund_metrics
+            WHERE metric=? AND horizon=? AND real_flag=?
+              AND metric_version=?
+              AND value IS NOT NULL
+        """, (metric, horizon, real_flag, METRIC_VERSION_SHORT)).fetchall()
+        col = f"{metric}__{horizon}" if "rolling" in horizon else metric
+        for isin, value in result:
+            rows.append({"isin": isin, "metric": col, "value": float(value)})
+
     if not rows:
         return pd.DataFrame()
 
@@ -169,13 +206,15 @@ def load_fund_metrics_for_scoring(conn: sqlite3.Connection) -> pd.DataFrame:
     if "return_ann" in wide.columns:
         wide = wide.rename(columns={"return_ann": "return_ann_real"})
 
-    # Añadir info de fund_master
+    # Añadir info de fund_master — solo universo activo (In_Current_Universe=1)
     fm = pd.read_sql("""
         SELECT ISIN, Fund_Name, Fund_Nature, SRRI as srri_kiid
         FROM fund_master
+        WHERE In_Current_Universe = 1
     """, conn).set_index("ISIN")
 
-    return wide.join(fm, how="left")
+    # inner join: huerfanos (In_Current_Universe=0) quedan excluidos del scoring
+    return wide.join(fm, how="inner")
 
 
 # ============================================================
@@ -285,6 +324,29 @@ def check_hard_filters(
         srri = row.get("srri_nav", np.nan)
         if not np.isnan(srri) and srri > MAX_SRRI_DEFENSIVE:
             return f"srri={int(srri)} > {MAX_SRRI_DEFENSIVE} para Defensiva"
+
+    # -- v24: gate corto diario (aplica a las 3 sub-carteras) ---------------
+    liq_flag = row.get("short_liquidity_flag__rolling_6m", np.nan)
+    daily_trusted = (
+        np.isnan(liq_flag) or float(liq_flag) <= SHORT_LIQUIDITY_TRUST_THRESHOLD
+    )
+    if daily_trusted:
+        dd_limit = SHORT_DD_LIMIT_BY_SUB.get(subportfolio)
+        if dd_limit is not None:
+            short_dd = row.get("short_max_drawdown__rolling_6m", np.nan)
+            if not np.isnan(short_dd) and short_dd < dd_limit:
+                return (
+                    f"short_max_drawdown_6m={short_dd:.2f} < {dd_limit} "
+                    f"({subportfolio})"
+                )
+        vol_limit = SHORT_VOL_LIMIT_BY_SUB.get(subportfolio)
+        if vol_limit is not None:
+            short_vol = row.get("short_vol_adj__rolling_3m", np.nan)
+            if not np.isnan(short_vol) and short_vol > vol_limit:
+                return (
+                    f"short_vol_adj_3m={short_vol:.2f} > {vol_limit} "
+                    f"({subportfolio})"
+                )
 
     return None
 

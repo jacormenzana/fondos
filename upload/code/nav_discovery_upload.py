@@ -1,4 +1,4 @@
-# proyecto2/src/loaders/nav_discovery.py
+# proyecto2/src/discovery/nav_discovery.py
 # -*- coding: utf-8 -*-
 """
 Descubrimiento y descarga de series NAV historicas via Morningstar (mstarpy 8.x).
@@ -23,28 +23,30 @@ Ejemplos:
     cd c:/desarrollo/fondos
 
     # Validar con 1 ISIN (sin escribir nada)
-    python -m proyecto2.src.loaders.nav_discovery --mode discover --isin LU1873127366 --dry-run
+    python -m proyecto2.src.discovery.nav_discovery --mode discover --isin LU1873127366 --dry-run
 
     # Validar con 5 ISINs aleatorios
-    python -m proyecto2.src.loaders.nav_discovery --mode discover --sample 5 --dry-run
+    python -m proyecto2.src.discovery.nav_discovery --mode discover --sample 5 --dry-run
 
     # Descubrimiento completo (~30-90 min)
-    python -m proyecto2.src.loaders.nav_discovery --mode discover
+    python -m proyecto2.src.discovery.nav_discovery --mode discover
 
     # Descarga historica desde 2000 (una sola vez)
-    python -m proyecto2.src.loaders.nav_discovery --mode load --desde 2000-01-01
+    python -m proyecto2.src.discovery.nav_discovery --mode load --desde 2000-01-01
 
     # Actualizacion mensual
-    python -m proyecto2.src.loaders.nav_discovery --mode update
+    python -m proyecto2.src.discovery.nav_discovery --mode update
 """
 
 import argparse
+import re
 import requests
 import sqlite3
 import sys
 import time
 import random
-from datetime import date, datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -53,10 +55,18 @@ from typing import Optional
 # ============================================================
 # Screener: resuelve ISIN -> securityID (code interno)
 _MS_SCREENER_URL  = "https://global.morningstar.com/api/v1/{lang}/tools/screener/_data"
-# Performance: descarga historicalData con el code interno
+# Performance mensual (mantenido como fallback; ya no es el camino principal de descarga)
 _MS_PERF_URL      = "https://api-global.morningstar.com/sal-service/v1/fund/performance/v4/{code}"
 _MS_APIKEY        = "lstzFDEOhfFNMLikKa0am9mgEKLBl49T"
 _MS_PERF_PARAMS   = {"clientId": "MDC", "version": "4.71.0"}
+# Chartservice: serie diaria de totalReturn (bearer auth via mstarpy.security.token_chart)
+_MS_CHART_URL     = "https://www.us-api.morningstar.com/QS-markets/chartservice/v2/timeseries"
+
+# Resolver: lt.morningstar.com security_details (componente de datos web)
+# Verificado operativo en julio 2026 cuando SecuritySearch.ashx y el
+# endpoint screener/_data devuelven 202 (bot-challenge de Akamai).
+_LT_RESOLVE_URL    = "https://lt.morningstar.com/api/rest.svc/klr5zyak8x/security_details/{isin}"
+_LT_RESOLVE_PARAMS = {"idtype": "isin", "viewId": "snapshot", "currencyId": "EUR"}
 
 _USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -79,6 +89,8 @@ from shared.db import get_connection
 
 try:
     import mstarpy
+    from mstarpy.security import token_chart as _ms_token_chart
+    from mstarpy.security import random_user_agent as _ms_random_ua
 except ImportError:
     print("\n[ERROR] mstarpy no esta instalado. Ejecuta: pip install mstarpy\n")
     sys.exit(1)
@@ -89,15 +101,20 @@ except ImportError:
 
 MS_LANGUAGE       = "en-gb"       # idioma para la API Morningstar
 MS_DELAY_DISCOVER = (0.5, 1.0)   # pausa en discover (solo existence check)
-MS_DELAY_LOAD_OK  = (1.5, 3.0)   # pausa tras descarga exitosa (ser educados)
+MS_DELAY_LOAD_OK  = (0.3, 0.8)   # chartservice REST tolera cadencia rapida (era 1.5-3.0)
 MS_DELAY_LOAD_ERR = (0.1, 0.3)   # pausa tras 401/fallo (no es rate limit, ir rapido)
 MS_DELAY_RESOLVE  = (0.5, 1.5)   # pausa tras instanciar Funds (llamada al screener)
 NAV_FREQUENCY     = "daily"      # mstarpy 8 solo garantiza daily; resampleamos a mensual
 
 # Backoff exponencial para errores de red transitorios (429, timeout, DNS)
-MS_RETRY_MAX      = 3            # intentos maximos por fondo
+MS_RETRY_MAX      = 3            # intentos maximos por fondo (sal-service / discover)
 MS_BACKOFF_BASE   = 30           # segundos base (30 -> 90 -> 270)
 MS_BACKOFF_FACTOR = 3            # multiplicador entre intentos
+
+# Backoff para chartservice (API REST rapida — errores transitorios se recuperan pronto)
+_CHART_RETRY_MAX     = 2         # max 2 intentos (falla rapido en bulk)
+_CHART_BACKOFF_429   = 30        # 429 rate-limit: esperar 30s antes de reintentar
+_CHART_BACKOFF_OTHER = 5         # 5xx: esperar 5s (error puntual del servidor)
 
 # Pausa larga periodica - solo activa si hay exitos frecuentes
 MS_COOLDOWN_EVERY = 200          # cada N fondos OK (no total)
@@ -105,78 +122,55 @@ MS_COOLDOWN_SECS  = (30, 60)     # reducido - 401 no necesita cooldown
 
 
 # ============================================================
-# Resolucion de ISIN -> objeto Funds
+# Resolucion de ISIN -> securityID interno de Morningstar
 # ============================================================
 
-# Endpoints SecuritySearch.ashx por region -- se prueban en orden hasta obtener resultado.
-# Formato respuesta: nombre|{json}|tipo|... (una linea por resultado, sep |)
-# El campo "i" del JSON es el securityID (code interno para sal-service).
-_SEARCH_ENDPOINTS = [
-    ("https://www.morningstar.es/es/util/SecuritySearch.ashx",
-     {"languageId": "es-ES", "locale": "es-ES", "clientId": "MDC_intl",
-      "referer": "https://www.morningstar.es/"}),
-    ("https://www.morningstar.co.uk/uk/util/SecuritySearch.ashx",
-     {"languageId": "en-GB", "locale": "en-GB", "clientId": "MDC_intl",
-      "referer": "https://www.morningstar.co.uk/"}),
-    ("https://www.morningstar.fr/fr/util/SecuritySearch.ashx",
-     {"languageId": "fr-FR", "locale": "fr-FR", "clientId": "MDC_intl",
-      "referer": "https://www.morningstar.fr/"}),
-    ("https://www.morningstar.de/de/util/SecuritySearch.ashx",
-     {"languageId": "de-DE", "locale": "de-DE", "clientId": "MDC_intl",
-      "referer": "https://www.morningstar.de/"}),
-]
-
+# NOTA HISTORICA: el endpoint SecuritySearch.ashx (y el screener/_data
+# de global.morningstar.com) devuelven 202 vacio (bot-challenge Akamai)
+# desde ~julio 2026. El nuevo resolver usa lt.morningstar.com, que no
+# esta afectado y devuelve XML con <Security id="..."> para cualquier
+# ISIN valido en Morningstar.
 
 def _resolve_isin(isin: str) -> Optional[dict]:
     """
     Resuelve un ISIN al securityID (code) interno de Morningstar usando
-    el endpoint SecuritySearch.ashx (autocomplete de la web publica).
+    el endpoint lt.morningstar.com/security_details (componente de datos web).
 
-    No usa mstarpy.Funds() ni search_field() -- evita el endpoint
-    /data-points/fields que devuelve 202 desde marzo 2026.
+    Devuelve uno de tres valores:
+        dict {"code": str, "name": str}   -- ISIN encontrado
+        None                               -- ISIN genuinamente no existe
+        dict {"challenge": True}           -- Endpoint bloqueado o error de red
+                                             transitorio. El llamante NO debe
+                                             escribir NOT_FOUND en la BD.
 
-    Prueba los endpoints regionales en orden (.es, .co.uk, .fr, .de)
-    hasta obtener resultado. Devuelve dict {code, name} o None.
-
-    Formato de respuesta del endpoint (texto plano, una linea por resultado):
-        nombre|{"i":"F0GBR04K6R","pi":"0P00000JYE","n":"...","t":2,...}|FUND|...
-    El campo "i" es el securityID usado por sal-service/performance/v4.
+    El "code" devuelto es el securityID (ej. F0GBR04K6R) compatible con
+    el endpoint sal-service/.../performance/v4/{code} de descarga NAV.
     """
-    import json as _json
+    url = _LT_RESOLVE_URL.format(isin=isin)
+    try:
+        r = requests.get(
+            url,
+            params=_LT_RESOLVE_PARAMS,
+            headers={"user-agent": _random_ua()},
+            timeout=15,
+        )
+    except requests.RequestException:
+        return {"challenge": True}
 
-    for url, extra in _SEARCH_ENDPOINTS:
-        params = {
-            "q":     isin,
-            "limit": 3,
-            "type":  "fund",
-            **{k: v for k, v in extra.items() if k != "referer"},
-        }
-        headers = {
-            "user-agent": _random_ua(),
-            "referer":    extra["referer"],
-        }
-        try:
-            r = requests.get(url, params=params, headers=headers, timeout=15)
-            if r.status_code != 200 or not r.text.strip():
-                continue
+    if r.status_code != 200:
+        # 202 = bot-challenge; 5xx = error transitorio; cualquier no-200
+        return {"challenge": True}
 
-            for line in r.text.strip().splitlines():
-                parts = line.split("|")
-                if len(parts) < 2:
-                    continue
-                try:
-                    meta = _json.loads(parts[1])
-                except Exception:
-                    continue
-                code = meta.get("i", "")
-                name = meta.get("n", "")
-                if code:
-                    return {"code": code, "name": name}
+    text = r.content.decode("utf-8", errors="replace")
+    m_code = re.search(r'<Security\s+id="([^"]+)"', text)
+    if not m_code:
+        # 200 pero sin <Security id="..."> => genuinamente no existe
+        return None
 
-        except requests.RequestException:
-            continue
-
-    return None
+    code = m_code.group(1)
+    m_name = re.search(r"<Name>([^<]+)</Name>", text)
+    name = m_name.group(1) if m_name else ""
+    return {"code": code, "name": name}
 
 
 # ============================================================
@@ -289,7 +283,10 @@ def _download_nav(code: str, isin: str, currency: str, desde: str):
                     "Is_Estimated": 0,
                     "Data_Source":  "MORNINGSTAR",
                 })
-            return _resample_to_monthly(rows), ""
+            # Devuelve filas DIARIAS (sin resamplear). El llamante resamplea a
+            # mensual para fund_nav_monthly y persiste la serie diaria en
+            # fund_nav_daily (v24 — métricas de horizonte corto).
+            return rows, ""
 
         except requests.RequestException as e:
             err_str = str(e).lower()
@@ -308,6 +305,236 @@ def _download_nav(code: str, isin: str, currency: str, desde: str):
     return [], "transient"
 
 
+def _get_bearer_token_browser() -> str | None:
+    """Fallback: obtiene el bearer JWT via Playwright (headless Chrome).
+
+    Estrategia doble:
+    1. Interceptar la primera peticion a chartservice en la carga de pagina
+    2. Si no se intercepta, extraer el token del HTML renderizado (misma
+       logica que mstarpy.token_chart pero despues de ejecutar JS)
+
+    Retorna None si Playwright no esta disponible o no se encontro el token.
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return None
+
+    token_holder: dict = {"token": None}
+
+    def _on_request(request) -> None:
+        if token_holder["token"]:
+            return
+        if "chartservice" in request.url:
+            auth = request.headers.get("authorization", "")
+            if auth.startswith("Bearer "):
+                token_holder["token"] = auth[7:]
+
+    import re as _re
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=["--disable-blink-features=AutomationControlled"],
+            )
+            ctx = browser.new_context(
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36"
+                ),
+                viewport={"width": 1280, "height": 800},
+            )
+            # Ocultar webdriver flag (evitar deteccion headless)
+            ctx.add_init_script(
+                "Object.defineProperty(navigator,'webdriver',{get:()=>undefined})"
+            )
+            page = ctx.new_page()
+            page.on("request", _on_request)
+            # Navegar y esperar JS completo (JWT se inyecta via JS, no SSR)
+            try:
+                page.goto(
+                    "https://www.morningstar.com/funds/xnas/afozx/chart",
+                    wait_until="networkidle",
+                    timeout=75_000,
+                )
+            except Exception:
+                pass  # timeout OK; el HTML parcial puede tener el JWT
+
+            # Scroll + click para forzar carga del chart si aun no se capturo
+            if not token_holder["token"]:
+                try:
+                    page.evaluate("window.scrollTo(0, 500)")
+                    page.wait_for_timeout(5_000)
+                except Exception:
+                    pass
+
+            # Estrategia 2: buscar JWT en el HTML renderizado
+            if not token_holder["token"]:
+                try:
+                    html = page.content()
+                    jwt_match = _re.search(
+                        r'ey[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}',
+                        html,
+                    )
+                    if jwt_match:
+                        token_holder["token"] = jwt_match.group(0)
+                except Exception:
+                    pass
+
+            # Estrategia 3: extraer JWT desde los scripts inline de la pagina
+            if not token_holder["token"]:
+                try:
+                    token_from_js = page.evaluate("""
+                        () => {
+                            const all = Array.from(
+                                document.querySelectorAll('script')
+                            ).map(s => s.textContent || '').join(' ');
+                            const m = all.match(
+                                /ey[A-Za-z0-9_-]{20,}\\.[A-Za-z0-9_-]{20,}\\.[A-Za-z0-9_-]{20,}/
+                            );
+                            return m ? m[0] : null;
+                        }
+                    """)
+                    if token_from_js:
+                        token_holder["token"] = token_from_js
+                except Exception:
+                    pass
+
+            browser.close()
+    except Exception as e:
+        print(f"  [browser] Playwright error: {e}", flush=True)
+        return None
+
+    return token_holder["token"]
+
+
+def _get_bearer_token() -> str:
+    """Obtiene el bearer token para chartservice.
+
+    Estrategia en cascada:
+    1. token_chart() (scraping rapido, ~1s)
+    2. _get_bearer_token_browser() (Playwright headless, ~5-10s) — bypasa bot-detection
+    Si ambos fallan, lanza RuntimeError.
+    """
+    token = _ms_token_chart()
+    if token:
+        return token
+
+    print("  [token] scraping rapido fallo (bot-detection?) -> intentando via browser...")
+    token = _get_bearer_token_browser()
+    if token:
+        print("  [token] Bearer obtenido via Playwright (browser).")
+        return token
+
+    raise RuntimeError(
+        "No se pudo obtener el bearer token para chartservice.\n"
+        "Tanto token_chart() como Playwright fallaron.\n\n"
+        "Fallback manual: pasa el token con --bearer-token <TOKEN>\n"
+        "(Obtenlo desde DevTools -> Network -> Authorization header)"
+    )
+
+
+def _download_nav_daily(
+    code: str,
+    isin: str,
+    currency: str,
+    desde: str,
+    bearer: str,
+) -> tuple[list[dict], str, str | None]:
+    """
+    Descarga la serie de totalReturn DIARIA via chartservice/v2/timeseries.
+
+    Usa el bearer JWT de mstarpy.security.token_chart — no requiere Funds().
+    El code (securityID) se lee de nav_sources.source_id, ya resuelto en discover.
+
+    Parametros:
+        code:     securityID de Morningstar (ej. 'F0GBR069U8')
+        isin:     ISIN del fondo
+        currency: divisa del fondo (para el campo NAV_Currency)
+        desde:    fecha de inicio ISO (ej. '2000-01-01')
+        bearer:   token JWT actual; se pasa para poder renovarlo sin reescribir
+
+    Devuelve (rows, err_type, new_bearer):
+        rows:       lista de dicts diarios — campo NAV = totalReturn index
+        err_type:   '' OK | 'empty' sin datos | 'transient' red | 'auth' 401
+        new_bearer: None si el token sigue valido; str con token nuevo si hubo 401
+    """
+    headers = {
+        "user-agent":    _ms_random_ua(),
+        "authorization": f"Bearer {bearer}",
+    }
+    params = {
+        "query":           f"{code}:totalReturn",
+        "frequency":       "d",
+        "startDate":       desde,
+        "endDate":         date.today().isoformat(),
+        "trackMarketData": "3.6.3",
+        "instid":          "DOTCOM",
+    }
+
+    for attempt in range(1, _CHART_RETRY_MAX + 1):
+        try:
+            r = requests.get(_MS_CHART_URL, params=params,
+                             headers=headers, timeout=20)
+
+            if r.status_code == 401:
+                # No refrescamos aqui: puede ser token caducado O security inaccesible.
+                # El llamante decide segun la edad del token (evita Playwright en masa).
+                return [], "auth", None
+
+            if r.status_code != 200:
+                if r.status_code == 429 and attempt < _CHART_RETRY_MAX:
+                    print(f"\n    [chart 429] rate-limit, esperando {_CHART_BACKOFF_429}s...",
+                          flush=True)
+                    time.sleep(_CHART_BACKOFF_429)
+                    continue
+                if r.status_code in (500, 502, 503) and attempt < _CHART_RETRY_MAX:
+                    print(f"\n    [chart {r.status_code}] error servidor, esperando {_CHART_BACKOFF_OTHER}s...",
+                          flush=True)
+                    time.sleep(_CHART_BACKOFF_OTHER)
+                    continue
+                return [], "transient", None
+
+            data = r.json()
+            if not data or "series" not in data[0]:
+                return [], "empty", None
+
+            series = data[0]["series"]
+            rows = []
+            for entry in series:
+                # totalReturn preferido; nav como fallback
+                val      = entry.get("totalReturn") or entry.get("nav")
+                nav_date = entry.get("date")
+                if val is None or nav_date is None:
+                    continue
+                rows.append({
+                    "ISIN":         isin,
+                    "Date":         str(nav_date)[:10],
+                    "NAV":          float(val),
+                    "NAV_Currency": currency or "EUR",
+                    "NAV_Type":     "TOTAL_RETURN_IDX",
+                    "Is_Estimated": 0,
+                    "Data_Source":  "MORNINGSTAR_CHART",
+                })
+            return rows, "", None
+
+        except requests.RequestException as e:
+            err_str = str(e).lower()
+            is_transient = any(x in err_str for x in [
+                "timed out", "timeout", "connection", "dns", "name or service"
+            ])
+            if is_transient and attempt < MS_RETRY_MAX:
+                wait = MS_BACKOFF_BASE * (MS_BACKOFF_FACTOR ** (attempt - 1))
+                wait += random.uniform(0, wait * 0.2)
+                print(f"\n    [chart red] intento {attempt}/{MS_RETRY_MAX}"
+                      f" -- esperando {wait:.0f}s...", flush=True)
+                time.sleep(wait)
+            else:
+                return [], "transient", None
+
+    return [], "transient", None
 
 
 # ============================================================
@@ -328,27 +555,201 @@ def _write_nav_source(
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(isin) DO UPDATE SET
             source         = excluded.source,
-            source_id      = excluded.source_id,
-            first_nav_date = excluded.first_nav_date,
-            last_nav_date  = excluded.last_nav_date,
-            nav_count      = excluded.nav_count,
+            -- P#1 COALESCE: nunca borrar un code ya resuelto (no regresar OK->NOT_FOUND)
+            source_id      = COALESCE(NULLIF(excluded.source_id, ''), source_id),
+            first_nav_date = COALESCE(excluded.first_nav_date, first_nav_date),
+            last_nav_date  = COALESCE(excluded.last_nav_date,  last_nav_date),
+            nav_count      = COALESCE(excluded.nav_count,      nav_count),
             last_checked   = excluded.last_checked,
-            status         = excluded.status
+            -- Solo degradar a NOT_FOUND si no hay code resuelto previo
+            status         = CASE
+                WHEN excluded.status = 'NOT_FOUND'
+                 AND source_id IS NOT NULL AND source_id != ''
+                THEN status          -- mantener estado actual (OK)
+                ELSE excluded.status -- actualizar normalmente
+            END
     """, (isin, source, source_id, first_date, last_date,
           nav_count, today, today, status))
     conn.commit()
 
 
+def _normalize_nav_scale(rows: list) -> list:
+    """FIX-P2-NAV-SCALE-1 (2026-07-19): detecta y corrige mezcla de escalas NAV.
+
+    Dos patrones de corrupción se han observado en fund_nav_monthly:
+
+    Patrón A — mezcla de fuentes en bloque: MORNINGSTAR (sal-service, todos los
+      rows a escala ~9 000x) + MORNINGSTAR_CHART (chartservice, todos a escala ~9x).
+      La mediana de una fuente difiere de la otra en un factor limpio de 10^n ≥ 100.
+      Corrección: rescalar los rows de la fuente inflada → dividir por 10^n.
+
+    Patrón B — picos aislados dentro de una misma fuente: MORNINGSTAR devuelve
+      en ocasiones el índice de retorno total (acumulado desde el inicio) en lugar
+      del NAV de precio para las fechas de cierre de calendario. Estos rows tienen
+      NAV ~×100 respecto al período adyacente (por ejemplo, NAV 87.92 el día 29
+      de enero frente a NAV 9291.90 el día 31 de enero del mismo mes).
+      Corrección: eliminar los picos aislados (rows cuyo NAV > 8× el anterior Y
+      > 8× el siguiente cuando hay suficiente contexto).
+
+    Ambos pases son idempotentes. La función aplica primero el filtro de picos
+    (Patrón B) y luego el rescalado por fuente (Patrón A).
+
+    Parámetros:
+        rows: lista de dicts con claves "NAV", "Date" y "Data_Source" (al menos)
+
+    Devuelve lista de dicts (subconjunto o con NAVs corregidos).
+    """
+    if len(rows) < 2:
+        return rows
+
+    import math
+    import statistics as _stats
+
+    # ── Patrón B: eliminar picos aislados ──────────────────────────────────────
+    # Un "pico" es un row tal que su NAV > 8× el anterior Y > 8× el siguiente
+    # (contexto interior), o > 8× el único vecino disponible (bordes).
+    if len(rows) >= 3:
+        _sorted = sorted(rows, key=lambda r: r["Date"])
+        _navs   = [r["NAV"] for r in _sorted]
+        _keep   = [True] * len(_navs)
+
+        for i in range(1, len(_navs) - 1):
+            if _navs[i] > 0 and _navs[i-1] > 0 and _navs[i+1] > 0:
+                if _navs[i] > 8 * _navs[i-1] and _navs[i] > 8 * _navs[i+1]:
+                    _keep[i] = False  # pico interior aislado
+
+        # Pico en borde final (e.g. último row del lote es un valor inflado)
+        if _navs[-1] > 0 and _navs[-2] > 0 and _navs[-1] > 8 * _navs[-2]:
+            _keep[-1] = False
+
+        rows = [r for r, k in zip(_sorted, _keep) if k]
+        if len(rows) < 2:
+            return rows
+
+    # ── Patrón A: rescalar fuente inflada frente a MORNINGSTAR_CHART ──────────
+    chart_navs = [r["NAV"] for r in rows
+                  if r.get("Data_Source") == "MORNINGSTAR_CHART" and r["NAV"] > 0]
+    other_navs = [r["NAV"] for r in rows
+                  if r.get("Data_Source") != "MORNINGSTAR_CHART" and r["NAV"] > 0]
+
+    if not chart_navs or not other_navs:
+        return rows
+
+    ref_median   = _stats.median(chart_navs)   # escala de referencia (CHART = limpia)
+    other_median = _stats.median(other_navs)
+
+    if ref_median <= 0 or other_median <= 0:
+        return rows
+
+    ratio = other_median / ref_median
+    if ratio <= 0:
+        return rows
+
+    log10_ratio = math.log10(ratio)
+    n = round(log10_ratio)
+
+    # Solo corregir si la diferencia es un múltiplo limpio de 10^n con n ≥ 2
+    # (es decir, al menos ×100). Tolerancia ±0.2 décadas (≈ ×63 a ×158 para n=2).
+    # Requerimos n ≥ 2 para no tocar diferencias de ×10 (p.ej. divisa o clase).
+    if n < 2 or abs(log10_ratio - n) > 0.2:
+        return rows  # diferencia real o escala mixta no reconocida → no tocar
+
+    scale_factor = 10 ** n  # la fuente no-CHART está inflada en este factor
+
+    corrected = []
+    for r in rows:
+        if r.get("Data_Source") == "MORNINGSTAR_CHART":
+            corrected.append(r)
+        else:
+            r2 = r.copy()
+            r2["NAV"] = round(r["NAV"] / scale_factor, 6)
+            corrected.append(r2)
+    return corrected
+
+
 def _write_nav_rows(conn, rows, dry_run) -> int:
+    """Persiste filas NAV mensuales en fund_nav_monthly (INSERT OR IGNORE)."""
     if not rows or dry_run:
         return 0
+    # FIX-P2-NAV-SCALE-1 (2026-07-19): normalizar escala antes de persistir.
+    # Sin esto, mezclar rows MORNINGSTAR (~9000x) con MORNINGSTAR_CHART (~9x)
+    # produce retornos fantasma que corrompen srri_nav → 7 para fondos defensivos.
+    rows = _normalize_nav_scale(rows)
     conn.executemany("""
         INSERT OR IGNORE INTO fund_nav_monthly
             (ISIN, Date, NAV, NAV_Currency, NAV_Type, Is_Estimated, Data_Source)
         VALUES (?, ?, ?, ?, ?, ?, ?)
     """, [(r["ISIN"], r["Date"], r["NAV"], r["NAV_Currency"],
            r["NAV_Type"], r["Is_Estimated"], r["Data_Source"]) for r in rows])
-    conn.commit()
+    # No commit aqui — el llamante agrupa commits por lote para reducir fsyncs
+    return len(rows)
+
+
+def _write_nav_rows_daily(conn, rows, dry_run) -> int:
+    """Persiste filas NAV diarias en fund_nav_daily.
+
+    v24: fund_nav_daily es la serie pre-resample usada por
+    proyecto2/src/calculations/short_horizon.py para métricas
+    rolling_1m / rolling_3m / rolling_6m (metric_version='d1').
+
+    Limpia primero las filas del endpoint antiguo (sal-service, escala ~9k-30k)
+    que no coinciden en fecha con chartservice (~300) — mezclarlas produce
+    retornos fantasma del -99% que corrompen todas las métricas diarias.
+    """
+    if not rows or dry_run:
+        return 0
+    isin = rows[0]["ISIN"]
+    conn.execute(
+        "DELETE FROM fund_nav_daily WHERE ISIN=? AND Data_Source != 'MORNINGSTAR_CHART'",
+        (isin,),
+    )
+    conn.executemany("""
+        INSERT OR REPLACE INTO fund_nav_daily
+            (ISIN, Date, NAV, NAV_Currency, NAV_Type, Is_Estimated, Data_Source)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, [(r["ISIN"], r["Date"], r["NAV"], r["NAV_Currency"],
+           r["NAV_Type"], r["Is_Estimated"], r["Data_Source"]) for r in rows])
+    # No commit aqui — el llamante agrupa commits por lote para reducir fsyncs
+    return len(rows)
+
+
+# ============================================================
+# v25 — Helpers de estado NAV (data_status state machine)
+# ============================================================
+
+def _ensure_data_status_column(conn) -> None:
+    """Migración idempotente v25: añade data_status a nav_sources si no existe."""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(nav_sources)").fetchall()}
+    if "data_status" not in cols:
+        conn.execute("""
+            ALTER TABLE nav_sources
+            ADD COLUMN data_status TEXT DEFAULT 'OK'
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_nav_sources_data_status
+            ON nav_sources (data_status)
+        """)
+        conn.commit()
+        print("  [v25] Migración aplicada: data_status añadido a nav_sources.", flush=True)
+
+
+def _overwrite_nav_rows_monthly(conn, isin: str, rows: list[dict], dry_run: bool) -> int:
+    """DELETE los mensuales existentes del ISIN e INSERT los nuevos.
+
+    Usado en RECALCULATE_MONTHLY: el daily es la fuente de verdad; el mensual
+    se regenera limpiamente desde él. INSERT OR IGNORE no serviría aquí porque
+    los rows ya existen (se quiere sobreescribirlos con la corrección).
+    """
+    if not rows or dry_run:
+        return len(rows) if dry_run else 0
+    rows = _normalize_nav_scale(rows)
+    conn.execute("DELETE FROM fund_nav_monthly WHERE ISIN=?", (isin,))
+    conn.executemany("""
+        INSERT INTO fund_nav_monthly
+            (ISIN, Date, NAV, NAV_Currency, NAV_Type, Is_Estimated, Data_Source)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, [(r["ISIN"], r["Date"], r["NAV"], r["NAV_Currency"],
+           r["NAV_Type"], r["Is_Estimated"], r["Data_Source"]) for r in rows])
     return len(rows)
 
 
@@ -356,12 +757,29 @@ def _write_nav_rows(conn, rows, dry_run) -> int:
 # Modo DISCOVER
 # ============================================================
 
-def run_discover(conn, isins, dry_run, verbose):
+def run_discover(conn, isins, dry_run, verbose, skip_if_recent: bool = False):
     """
     Verifica existencia del ISIN en Morningstar y registra el code interno
     en nav_sources. Usa _resolve_isin() (general_search directo) para evitar
     mstarpy.Funds() y el endpoint /data-points/fields que devuelve 202.
+
+    skip_if_recent: si True y >=90% de los ISINs tienen last_checked=hoy,
+        omite la ejecucion (evita re-lanzar los ~2h de discover tras un
+        corte en mid-load). Sobreescribir con --force.
     """
+    if skip_if_recent and not dry_run:
+        today_s = date.today().isoformat()
+        recent  = conn.execute(
+            "SELECT COUNT(*) FROM nav_sources WHERE last_checked >= ?",
+            (today_s,)
+        ).fetchone()[0]
+        if recent >= len(isins) * 0.90:
+            print(
+                f"[DISCOVER] Omitido — {recent}/{len(isins)} ISINs ya comprobados hoy "
+                f"({today_s}). Usa --force para forzar.", flush=True
+            )
+            return
+
     total     = len(isins)
     found     = 0
     not_found = 0
@@ -370,18 +788,28 @@ def run_discover(conn, isins, dry_run, verbose):
     print(f"Descubrimiento de {total} ISINs | dry_run={dry_run}\n")
 
     for idx, isin in enumerate(isins, 1):
-        print(f"  [{idx:>4}/{total}] {isin}", end=" ", flush=True)
+        _t0_disc = time.perf_counter()
 
         resolved = _resolve_isin(isin)
         time.sleep(random.uniform(*MS_DELAY_DISCOVER))
 
-        if resolved is None:
-            # None puede ser NOT_FOUND o error de red -- intentar una vez mas
+        # Reintentar una vez si el resultado es challenge o none
+        if resolved is None or (isinstance(resolved, dict) and resolved.get("challenge")):
             resolved = _resolve_isin(isin)
             time.sleep(random.uniform(*MS_DELAY_DISCOVER))
 
+        _dur_ms = round((time.perf_counter() - _t0_disc) * 1000)
+        _ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        if isinstance(resolved, dict) and resolved.get("challenge"):
+            print(f"[{idx:4d}/{total:4d}] | {_ts} | {isin} | SKIP | [] |  | {_dur_ms}",
+                  flush=True)
+            errors += 1
+            continue
+
         if resolved is None:
-            print("-> NOT_FOUND")
+            print(f"[{idx:4d}/{total:4d}] | {_ts} | {isin} | NOT_FOUND | [] |  | {_dur_ms}",
+                  flush=True)
             _write_nav_source(conn, isin, "MORNINGSTAR", "",
                               None, None, None, "NOT_FOUND", dry_run)
             not_found += 1
@@ -389,7 +817,8 @@ def run_discover(conn, isins, dry_run, verbose):
 
         code = resolved["code"]
         name = resolved["name"]
-        print(f"-> OK  [{name[:45]}]  code={code}")
+        print(f"[{idx:4d}/{total:4d}] | {_ts} | {isin} | OK | [{name[:60]}] | {code} | {_dur_ms}",
+              flush=True)
         _write_nav_source(conn, isin, "MORNINGSTAR", code,
                           None, None, None, "OK", dry_run)
         found += 1
@@ -401,7 +830,95 @@ def run_discover(conn, isins, dry_run, verbose):
 # Modo LOAD
 # ============================================================
 
-def run_load(conn, isins, desde, dry_run, verbose, force=False):
+def _effective_cutoff(today: date, stale_days: int = 3) -> date:
+    """Cutoff para la comprobacion "al dia", ajustado por fin de semana.
+
+    El proveedor publica el cierre del viernes con 1-2 dias de latencia.
+    Sin ajuste, los fondos con anchor=viernes fallan la comprobacion el
+    lunes (hoy-3=viernes misma fecha) o el martes (hoy-3=sabado) porque
+    el anchor es anterior al cutoff, provocando re-fetch innecesario.
+
+    Lunes -> extender 2 dias extra (ultimo cierre = viernes 3 dias atras)
+    Domingo -> extender 1 dia extra
+    Resto -> ventana estandar de `stale_days` dias
+
+    `stale_days` (default 3) es la ventana base de tolerancia diaria. DEBE
+    alinearse con la cadencia real del job: una ventana de 3 dias con una
+    cadencia semanal/mensual marca ~100% del universo como stale en cada
+    ejecucion (el anchor de todo el libro siempre queda por detras del cutoff).
+    Ver `--stale-days` en modo update.
+    """
+    wd    = today.weekday()  # 0=lunes, 6=domingo
+    extra = 2 if wd == 0 else (1 if wd == 6 else 0)
+    return today - timedelta(days=stale_days + extra)
+
+
+def _latest_published_month_end(today: date, latency_days: int = 5) -> date:
+    """Ultimo cierre de mes COMPLETADO y presumiblemente publicado.
+
+    El NAV mensual es fin-de-mes. A mitad de mes el cierre del mes en curso
+    aun no existe, asi que la referencia de "al dia" en grano mensual es el
+    ultimo dia del mes anterior. Si estamos en los primeros `latency_days`
+    del mes, ese cierre puede no estar publicado todavia -> retroceder un mes
+    mas para no re-descargar todo el universo por latencia del proveedor.
+    """
+    first_this = today.replace(day=1)
+    prev_month_end = first_this - timedelta(days=1)          # ultimo dia mes anterior
+    if (today - first_this).days < latency_days:
+        return prev_month_end.replace(day=1) - timedelta(days=1)  # un mes mas atras
+    return prev_month_end
+
+
+def _is_stale(ds: str, last_daily: Optional[str], last_monthly: Optional[str],
+              cutoff: date, ref_month_end: date, monthly_grain: bool) -> bool:
+    """Decide si un fondo necesita descarga (True = stale).
+
+    Fuente unica de verdad para el gate "al dia", usada tanto por el
+    pre-filtro a nivel de conjunto como por el gate por-fondo (DRY — P#11).
+
+    - FORCE_REFRESH / RECALCULATE_MONTHLY -> siempre se procesan.
+    - monthly_grain=True  -> stale si el ultimo NAV mensual (`nav_sources.
+      last_nav_date`) no cubre `ref_month_end`.
+    - monthly_grain=False -> stale si el ancla diaria (`fund_nav_daily` MAX)
+      es anterior a `cutoff`.
+    Sin dato previo -> stale (carga inicial).
+    """
+    if ds in ("FORCE_REFRESH", "RECALCULATE_MONTHLY"):
+        return True
+    if monthly_grain:
+        if not last_monthly:
+            return True
+        try:
+            return datetime.strptime(last_monthly[:10], "%Y-%m-%d").date() < ref_month_end
+        except (ValueError, TypeError):
+            return True
+    if not last_daily:
+        return True
+    try:
+        return datetime.strptime(last_daily[:10], "%Y-%m-%d").date() < cutoff
+    except (ValueError, TypeError):
+        return True
+
+
+def _fetch_one(idx, isin, ms_id, currency, eff_desde, bearer, delay_secs):
+    """Worker puro para ThreadPoolExecutor — NINGUNA escritura en BD.
+
+    Descarga la serie diaria, aplica el politeness delay, y devuelve
+    el resultado para que el hilo principal lo persista.
+
+    Parametros:
+        delay_secs: tiempo de pausa post-descarga (0 o random.uniform(MS_DELAY_LOAD_OK))
+    """
+    t0 = datetime.now()
+    rows, err, _ = _download_nav_daily(ms_id, isin, currency, eff_desde, bearer)
+    if rows and delay_secs > 0:
+        time.sleep(delay_secs)
+    elapsed = (datetime.now() - t0).total_seconds()
+    return idx, isin, rows, err, elapsed, eff_desde
+
+
+def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=None,
+             workers=1, stale_days=3):
     if isins:
         ph      = ",".join("?" * len(isins))
         db_rows = {r[0]: r[1] for r in conn.execute(
@@ -419,38 +936,291 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False):
             print("Ejecuta primero: --mode discover")
             return
 
-    # -- Checkpoint: obtener ISINs ya cargados en fund_nav_monthly ----------
-    if not force:
-        already = {r[0] for r in conn.execute(
-            "SELECT DISTINCT isin FROM fund_nav_monthly"
-        ).fetchall()}
-        pendientes = [(isin, ms_id) for isin, ms_id in rows if isin not in already]
-        skipped    = len(rows) - len(pendientes)
-        if skipped:
-            print(f"  Checkpoint: {skipped} fondos ya cargados -> se saltan.")
-            print(f"             Usa --force para recargar todo.")
-        rows = pendientes
-
     if not rows:
-        print("Nada que cargar. Todos los fondos ya tienen NAV en la BD.")
+        print("Nada que cargar. No hay ISINs con status=OK.")
         return
+
+    # -- Preload: tres queries batch reemplazan O(N) queries dentro del loop --
+    # newest chartservice date per ISIN (delta anchor)
+    _today  = date.today()
+    _cutoff = _effective_cutoff(_today, stale_days)  # "al dia" si last_stored >= cutoff
+    last_daily = {r[0]: r[1] for r in conn.execute(
+        "SELECT ISIN, MAX(Date) FROM fund_nav_daily "
+        "WHERE Data_Source='MORNINGSTAR_CHART' GROUP BY ISIN"
+    ).fetchall()}
+    # currency map — elimina el SELECT por ISIN dentro del loop
+    currency_map = {r[0]: (r[1] or "EUR") for r in conn.execute(
+        "SELECT ISIN, Fund_Currency FROM fund_master"
+    ).fetchall()}
+    # data_status map — estado del ciclo de vida de los datos (v25)
+    data_status_map = {r[0]: (r[1] or "OK") for r in conn.execute(
+        "SELECT isin, data_status FROM nav_sources WHERE status='OK'"
+    ).fetchall()}
 
     total         = len(rows)
     total_written = 0
     errors_load   = 0
     ok_count      = 0
-    print(f"Descargando NAV para {total} fondos | desde={desde} | dry_run={dry_run}\n")
+    al_dia_count  = 0
+    print(f"Procesando {total} fondos | desde={desde} | dry_run={dry_run}\n")
 
+    # Reducir fsync para bulk load: NORMAL hace un fsync por checkpoint en lugar de
+    # dos por commit (FULL). Seguro: en caso de crash solo perdemos el lote en curso,
+    # que es idempotente (la proxima ejecucion lo reprocesa).
+    _BATCH_COMMIT = 20          # commit cada N ISINs exitosos
+    _batch_pending = 0
+    if not dry_run:
+        conn.execute("PRAGMA synchronous = NORMAL")
+        conn.execute("PRAGMA cache_size = -65536")  # 64 MB page cache
+
+    # -- Bearer token para chartservice (obtenido una sola vez por run) -----
+    if bearer_token:
+        bearer = bearer_token
+        print("  Bearer token chartservice suministrado via --bearer-token.\n")
+    else:
+        try:
+            bearer = _get_bearer_token()
+            print("  Bearer token chartservice obtenido.\n")
+        except RuntimeError as e:
+            print(f"\n  ERROR: {e}")
+            print(f"[ERROR] Bearer token no disponible. Pipeline abortado.", file=sys.stderr, flush=True)
+            return
+
+    bearer_acquired_at = time.time()
+    _TOKEN_MAX_AGE_S   = 45 * 60
+
+    if workers > 1:
+        # ----------------------------------------------------------------
+        # Fase 1: pre-computar jobs (ms_id resolution + delta) en el hilo
+        # principal (unico que puede escribir en la BD).
+        # ----------------------------------------------------------------
+        jobs = []
+        for idx, (isin, ms_id) in enumerate(rows, 1):
+            ds = data_status_map.get(isin, "OK") or "OK"
+
+            # RECALCULATE_MONTHLY: resamplear desde daily existente, sin red
+            if ds == "RECALCULATE_MONTHLY":
+                print(f"  [{idx:>4}/{total}] {isin}", end=" ", flush=True)
+                _daily = conn.execute(
+                    "SELECT ISIN, Date, NAV, NAV_Currency, NAV_Type, "
+                    "Is_Estimated, Data_Source FROM fund_nav_daily "
+                    "WHERE ISIN=? AND Data_Source='MORNINGSTAR_CHART' ORDER BY Date",
+                    (isin,)
+                ).fetchall()
+                if not _daily:
+                    print("-> sin datos diarios para recalcular", flush=True)
+                    continue
+                _monthly = _resample_to_monthly([dict(r) for r in _daily])
+                _written = _overwrite_nav_rows_monthly(conn, isin, _monthly, dry_run)
+                if not dry_run:
+                    conn.execute(
+                        "UPDATE nav_sources SET data_status='OK', last_nav_date=?, "
+                        "nav_count=? WHERE isin=?",
+                        (_monthly[-1]["Date"] if _monthly else None, len(_monthly), isin)
+                    )
+                    _batch_pending += 1
+                    if _batch_pending >= _BATCH_COMMIT:
+                        conn.commit(); _batch_pending = 0
+                print(f"-> {_written}m recalculados (sin red)", flush=True)
+                ok_count += 1
+                continue
+
+            if not ms_id:
+                resolved = _resolve_isin(isin)
+                if resolved and resolved.get("code"):
+                    ms_id = resolved["code"]
+                    conn.execute("UPDATE nav_sources SET source_id=? WHERE isin=?",
+                                 (ms_id, isin))
+                    conn.commit()
+            if not ms_id:
+                print(f"  [ERR ] {isin} -> sin ms_id Morningstar")
+                errors_load += 1
+                continue
+
+            currency      = currency_map.get(isin, "EUR")
+            last_d_stored = last_daily.get(isin)
+            force_this    = force or (ds == "FORCE_REFRESH")
+            _t0_fund      = datetime.now()
+            if last_d_stored and not force_this:
+                anchor = datetime.strptime(last_d_stored, "%Y-%m-%d").date()
+                if anchor >= _cutoff:
+                    _elapsed_ms = round((datetime.now() - _t0_fund).total_seconds() * 1000)
+                    _ts_skip    = _t0_fund.strftime("%Y-%m-%d %H:%M:%S")
+                    print(
+                        f"[{idx:4d}/{total:4d}] | {_ts_skip} | {isin} | "
+                        f"0d/0m | [{anchor} -> {anchor}] | {_elapsed_ms} | Al dia",
+                        flush=True,
+                    )
+                    al_dia_count += 1
+                    continue
+                eff_desde = (anchor - timedelta(days=3)).isoformat()
+            else:
+                eff_desde = desde
+            jobs.append((idx, isin, ms_id, currency, eff_desde))
+
+        print(f"  {al_dia_count} fondos al dia, {len(jobs)} a descargar "
+              f"| workers={workers}\n", flush=True)
+
+        # ----------------------------------------------------------------
+        # Fase 2: descargas paralelas; el politeness delay va dentro del
+        # worker (cada thread duerme independientemente).
+        # ----------------------------------------------------------------
+        auth_retry = []
+        _delay = random.uniform(*MS_DELAY_LOAD_OK)
+
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            futs = {
+                ex.submit(_fetch_one, j[0], j[1], j[2], j[3], j[4],
+                          bearer, random.uniform(*MS_DELAY_LOAD_OK)): j
+                for j in jobs
+            }
+            for fut in as_completed(futs):
+                ridx, risin, rnav_rows, rerr, relas, reff_desde = fut.result()
+                _ts_par = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+                if rerr == "auth":
+                    job = futs[fut]
+                    auth_retry.append((ridx, risin, job[2], job[3], reff_desde))
+                    print("-> [401 — retry pendiente]", flush=True)
+                    continue
+
+                if not rnav_rows:
+                    print(
+                        f"[{ridx:4d}/{total:4d}] | {_ts_par} | {risin} | "
+                        f"NO_DATA | [] | {round(relas * 1000)}",
+                        flush=True,
+                    )
+                    errors_load += 1
+                    continue
+
+                # Escrituras en BD: solo hilo principal (SQLite single-writer)
+                _rl_d_wr   = _write_nav_rows_daily(conn, rnav_rows, dry_run)
+                _rl_m_rows = _resample_to_monthly(rnav_rows)
+                _rl_m_wr   = _write_nav_rows(conn, _rl_m_rows, dry_run)
+                total_written += _rl_m_wr
+                _dr_par = f"{rnav_rows[0]['Date']} -> {rnav_rows[-1]['Date']}"
+                print(
+                    f"[{ridx:4d}/{total:4d}] | {_ts_par} | {risin} | "
+                    f"{_rl_d_wr}d/{_rl_m_wr}m | [{_dr_par}] | {round(relas * 1000)}",
+                    flush=True,
+                )
+
+                last_d_stored_cur = last_daily.get(risin)
+                if _rl_m_rows and not dry_run:
+                    new_last = _rl_m_rows[-1]["Date"]
+                    if last_d_stored_cur:
+                        conn.execute(
+                            "UPDATE nav_sources SET last_nav_date=?, last_checked=?, "
+                            "nav_count=(SELECT COUNT(*) FROM fund_nav_monthly WHERE ISIN=?), "
+                            "data_status='OK' WHERE isin=?",
+                            (new_last, _today.isoformat(), risin, risin))
+                    else:
+                        conn.execute(
+                            "UPDATE nav_sources SET first_nav_date=?, last_nav_date=?, "
+                            "nav_count=?, last_checked=?, data_status='OK' WHERE isin=?",
+                            (_rl_m_rows[0]["Date"], new_last, len(_rl_m_rows),
+                             _today.isoformat(), risin))
+
+                ok_count += 1
+                _batch_pending += 1
+                if _batch_pending >= _BATCH_COMMIT and not dry_run:
+                    conn.commit()
+                    _batch_pending = 0
+
+        # ----------------------------------------------------------------
+        # Fase 3: reintentar ISINs con 401 — refrescar token una sola vez
+        # ----------------------------------------------------------------
+        if auth_retry:
+            print(f"\n  [token] {len(auth_retry)} ISINs con 401 — renovando...",
+                  flush=True)
+            try:
+                bearer = _get_bearer_token()
+                bearer_acquired_at = time.time()
+                print("  [token] ok.\n", flush=True)
+                for ridx, risin, rms_id, rcurr, reff_desde in auth_retry:
+                    print(f"  [RETRY] {risin}", end=" ", flush=True)
+                    rnav_rows, rerr, _ = _download_nav_daily(
+                        rms_id, risin, rcurr, reff_desde, bearer)
+                    if rnav_rows:
+                        time.sleep(random.uniform(*MS_DELAY_LOAD_OK))
+                        _rl_d_wr   = _write_nav_rows_daily(conn, rnav_rows, dry_run)
+                        _rl_m_rows = _resample_to_monthly(rnav_rows)
+                        _rl_m_wr   = _write_nav_rows(conn, _rl_m_rows, dry_run)
+                        total_written += _rl_m_wr
+                        print(f"-> {_rl_d_wr}d/{_rl_m_wr}m", flush=True)
+                        ok_count += 1
+                        _batch_pending += 1
+                        if _batch_pending >= _BATCH_COMMIT and not dry_run:
+                            conn.commit()
+                            _batch_pending = 0
+                    else:
+                        print(f"-> sin datos ({rerr})", flush=True)
+                        errors_load += 1
+            except RuntimeError as e:
+                print(f"  [token] ERROR renovando: {e}", flush=True)
+                print(f"[ERROR] Token chartservice no renovable en mitad del proceso. "
+                      f"{len(auth_retry)} ISINs sin reintentar.", file=sys.stderr, flush=True)
+                for _, risin, *_ in auth_retry:
+                    errors_load += 1
+
+        if _batch_pending > 0 and not dry_run:
+            conn.commit()
+
+        print(f"\n{'-'*50}")
+        print(f"  Total NAV escritos : {total_written}")
+        print(f"  Al dia (sin fetch) : {al_dia_count}")
+        print(f"  Fondos sin datos   : {errors_load}")
+        if dry_run:
+            print("  (DRY-RUN: nada escrito en fund_nav_daily / fund_nav_monthly)")
+        # Routing de severidad → stderr (monitoreado como indicador de salud del proceso)
+        if errors_load > 0 and not dry_run:
+            print(
+                f"[WARN] run_load: {errors_load}/{total} fondos sin datos NAV "
+                f"(no_access/empty/transient). Ver stdout log para detalle.",
+                file=sys.stderr, flush=True,
+            )
+        return
+
+    # ================================================================
+    # Modo secuencial (workers=1, default) — loop original
+    # ================================================================
     for idx, (isin, ms_id) in enumerate(rows, 1):
-        # Cooldown periodico basado en exitos (no en total procesados)
-        # se gestiona mas abajo tras contabilizar ok
+        _t0 = datetime.now()
 
-        print(f"  [{idx:>4}/{total}] {isin}", end=" ", flush=True)
+        ds = data_status_map.get(isin, "OK") or "OK"
+
+        # -- RECALCULATE_MONTHLY: sin red, solo resamplear diario→mensual ----
+        if ds == "RECALCULATE_MONTHLY":
+            _daily = conn.execute(
+                "SELECT ISIN, Date, NAV, NAV_Currency, NAV_Type, "
+                "Is_Estimated, Data_Source FROM fund_nav_daily "
+                "WHERE ISIN=? AND Data_Source='MORNINGSTAR_CHART' ORDER BY Date",
+                (isin,)
+            ).fetchall()
+            if not _daily:
+                print("-> sin datos diarios para recalcular", flush=True)
+                continue
+            _monthly = _resample_to_monthly([dict(r) for r in _daily])
+            _written = _overwrite_nav_rows_monthly(conn, isin, _monthly, dry_run)
+            if not dry_run:
+                conn.execute(
+                    "UPDATE nav_sources SET data_status='OK', last_nav_date=?, "
+                    "nav_count=? WHERE isin=?",
+                    (_monthly[-1]["Date"] if _monthly else None, len(_monthly), isin)
+                )
+                _batch_pending += 1
+                if _batch_pending >= _BATCH_COMMIT:
+                    conn.commit(); _batch_pending = 0
+            _elapsed = (datetime.now() - _t0).total_seconds()
+            print(f"-> {_written}m recalculados (sin red)  [{_elapsed:.1f}s]", flush=True)
+            ok_count += 1
+            total_written += _written
+            continue
 
         # Si no hay code en nav_sources, intentar resolverlo ahora
         if not ms_id:
             resolved = _resolve_isin(isin)
-            if resolved:
+            if resolved and resolved.get("code"):
                 ms_id = resolved["code"]
                 conn.execute(
                     "UPDATE nav_sources SET source_id=? WHERE isin=?",
@@ -463,16 +1233,54 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False):
             errors_load += 1
             continue
 
-        r        = conn.execute(
-            "SELECT Fund_Currency FROM fund_master WHERE ISIN=?", (isin,)
-        ).fetchone()
-        currency = r[0] if r and r[0] else "EUR"
+        currency = currency_map.get(isin, "EUR")
 
-        nav_rows, err_type = _download_nav(ms_id, isin, currency, desde)
+        # -- Delta: calcular ventana de descarga minima ----------------------
+        last_d_stored = last_daily.get(isin)
+        force_this    = force or (ds == "FORCE_REFRESH")
+        if last_d_stored and not force_this:
+            anchor = datetime.strptime(last_d_stored, "%Y-%m-%d").date()
+            if anchor >= _cutoff:
+                _elapsed_ms = round((datetime.now() - _t0).total_seconds() * 1000)
+                _ts_skip    = _t0.strftime("%Y-%m-%d %H:%M:%S")
+                print(
+                    f"[{idx:4d}/{total:4d}] | {_ts_skip} | {isin} | "
+                    f"0d/0m | [{anchor} -> {anchor}] | {_elapsed_ms} | Al dia",
+                    flush=True,
+                )
+                al_dia_count += 1
+                continue
+            # Solapamiento de 3 dias para capturar correcciones tardias
+            eff_desde = (anchor - timedelta(days=3)).isoformat()
+        else:
+            eff_desde = desde   # carga completa desde el inicio
+
+        # -- Descarga diaria via chartservice --------------------------------
+        nav_rows, err_type, _ = _download_nav_daily(
+            ms_id, isin, currency, eff_desde, bearer)
+
+        if err_type == "auth":
+            token_age = time.time() - bearer_acquired_at
+            if token_age > _TOKEN_MAX_AGE_S:
+                # Token probablemente caducado — refrescar y reintentar una vez
+                print("\n  [token] renovando (>45 min)...", flush=True)
+                try:
+                    bearer = _get_bearer_token()
+                    bearer_acquired_at = time.time()
+                    print("  [token] ok.", flush=True)
+                except RuntimeError:
+                    print("  [token] ERROR: no se pudo renovar.", flush=True)
+                nav_rows, err_type, _ = _download_nav_daily(
+                    ms_id, isin, currency, eff_desde, bearer)
+            else:
+                # Token reciente -> security no disponible en chartservice
+                err_type = "no_access"
 
         if not nav_rows:
             if err_type == "empty":
-                print("-> sin datos (fondo sin historico en Morningstar)")
+                print("-> sin datos (fondo sin historico en chartservice)")
+            elif err_type == "no_access":
+                print("-> sin datos (security no accesible en chartservice)")
             else:
                 print(f"-> sin datos ({err_type})")
             time.sleep(random.uniform(*MS_DELAY_LOAD_ERR))
@@ -481,26 +1289,45 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False):
 
         time.sleep(random.uniform(*MS_DELAY_LOAD_OK))
 
-        written = _write_nav_rows(conn, nav_rows, dry_run)
-        total_written += written
-        display = len(nav_rows) if dry_run else written
-        print(f"-> {display} NAV  ({nav_rows[0]['Date']} -> {nav_rows[-1]['Date']})")
+        # -- v24: persistir diario + mensual (INSERT OR IGNORE en ambas) ----
+        daily_written   = _write_nav_rows_daily(conn, nav_rows, dry_run)
+        monthly_rows    = _resample_to_monthly(nav_rows)
+        monthly_written = _write_nav_rows(conn, monthly_rows, dry_run)
+        total_written  += monthly_written
+        display_m   = len(monthly_rows) if dry_run else monthly_written
+        display_d   = len(nav_rows)     if dry_run else daily_written
+        _elapsed    = (datetime.now() - _t0).total_seconds()
+        _elapsed_ms = round(_elapsed * 1000)
+        _ts_load    = _t0.strftime("%Y-%m-%d %H:%M:%S")
+        _date_range = f"{nav_rows[0]['Date']} -> {nav_rows[-1]['Date']}"
+        print(
+            f"[{idx:4d}/{total:4d}] | {_ts_load} | {isin} | "
+            f"{display_d}d/{display_m}m | [{_date_range}] | {_elapsed_ms}"
+        )
 
         # -- Actualizar nav_sources con rango real descargado --------------
-        if written and not dry_run:
-            first_d = nav_rows[0]["Date"]
-            last_d  = nav_rows[-1]["Date"]
-            conn.execute("""
-                UPDATE nav_sources
-                   SET first_nav_date = ?,
-                       last_nav_date  = ?,
-                       nav_count      = ?,
-                       last_checked   = ?
-                 WHERE isin = ?
-            """, (first_d, last_d, written, date.today().isoformat(), isin))
-            conn.commit()
+        if monthly_rows and not dry_run:
+            new_last = monthly_rows[-1]["Date"]
+            today_s  = _today.isoformat()
+            if last_d_stored:
+                # Delta: conservar first_nav_date original; nav_count desde la tabla
+                conn.execute(
+                    "UPDATE nav_sources SET last_nav_date=?, last_checked=?, "
+                    "nav_count=(SELECT COUNT(*) FROM fund_nav_monthly WHERE ISIN=?), "
+                    "data_status='OK' WHERE isin=?",
+                    (new_last, today_s, isin, isin))
+            else:
+                # Carga inicial: escribir rango completo
+                conn.execute(
+                    "UPDATE nav_sources SET first_nav_date=?, last_nav_date=?, "
+                    "nav_count=?, last_checked=?, data_status='OK' WHERE isin=?",
+                    (monthly_rows[0]["Date"], new_last, len(monthly_rows), today_s, isin))
 
         ok_count += 1
+        _batch_pending += 1
+        if _batch_pending >= _BATCH_COMMIT and not dry_run:
+            conn.commit()
+            _batch_pending = 0
         if ok_count > 1 and ok_count % MS_COOLDOWN_EVERY == 0:
             cooldown = random.uniform(*MS_COOLDOWN_SECS)
             print(f"\n  -- Cooldown tras {ok_count} exitos: esperando {cooldown:.0f}s --\n",
@@ -511,18 +1338,29 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False):
             for r in nav_rows[:3]:
                 print(f"      {r['Date']}  {r['NAV']:.4f} {r['NAV_Currency']}")
 
+    # Commit final para el ultimo lote (puede ser < _BATCH_COMMIT)
+    if _batch_pending > 0 and not dry_run:
+        conn.commit()
+
     print(f"\n{'-'*50}")
     print(f"  Total NAV escritos : {total_written}")
+    print(f"  Al dia (sin fetch) : {al_dia_count}")
     print(f"  Fondos sin datos   : {errors_load}")
     if dry_run:
-        print("  (DRY-RUN: nada escrito en fund_nav_monthly)")
+        print("  (DRY-RUN: nada escrito en fund_nav_daily / fund_nav_monthly)")
+    if errors_load > 0 and not dry_run:
+        print(
+            f"[WARN] run_load: {errors_load}/{total} fondos sin datos NAV "
+            f"(no_access/empty/transient). Ver stdout log para detalle.",
+            file=sys.stderr, flush=True,
+        )
 
 
 # ============================================================
 # Modo UPDATE
 # ============================================================
 
-def run_update(conn, dry_run):
+def run_update(conn, dry_run, bearer_token=None, stale_days=3, monthly_grain=False):
     rows = conn.execute(
         "SELECT isin, source_id, last_nav_date FROM nav_sources "
         "WHERE status='OK' ORDER BY isin"
@@ -532,14 +1370,133 @@ def run_update(conn, dry_run):
         print("No hay fondos con status=OK en nav_sources.")
         return
 
-    total         = len(rows)
-    total_written = 0
-    print(f"Actualizacion mensual para {total} fondos | dry_run={dry_run}\n")
+    # -- Preload: currency map + ultimo dia diario + data_status por ISIN -----
+    _today  = date.today()
+    _cutoff = _effective_cutoff(_today, stale_days)
+    _ref_me = _latest_published_month_end(_today)
+    last_daily_upd = {r[0]: r[1] for r in conn.execute(
+        "SELECT ISIN, MAX(Date) FROM fund_nav_daily "
+        "WHERE Data_Source='MORNINGSTAR_CHART' GROUP BY ISIN"
+    ).fetchall()}
+    currency_map = {r[0]: (r[1] or "EUR") for r in conn.execute(
+        "SELECT ISIN, Fund_Currency FROM fund_master"
+    ).fetchall()}
+    data_status_upd = {r[0]: (r[1] or "OK") for r in conn.execute(
+        "SELECT isin, data_status FROM nav_sources WHERE status='OK'"
+    ).fetchall()}
+
+    # -- Pre-filtro a nivel de conjunto: itera SOLO fondos que necesitan trabajo.
+    # Sin esto el loop enumera todo el universo OK y el "al dia" se resuelve por
+    # fondo, dando un header enganoso ("N fondos" = universo entero). Con el
+    # pre-filtro el conteo refleja el work-set real. El gate por-fondo (mas abajo)
+    # se mantiene como red de seguridad con la MISMA logica (_is_stale).
+    _universe = len(rows)
+    rows = [
+        r for r in rows
+        if _is_stale(
+            data_status_upd.get(r[0], "OK") or "OK",
+            last_daily_upd.get(r[0]),
+            r[2],                      # last_nav_date (mensual)
+            _cutoff, _ref_me, monthly_grain,
+        )
+    ]
+
+    total          = len(rows)
+    total_written  = 0
+    al_dia_count   = 0
+    errors_update  = 0
+    _BATCH_COMMIT  = 20
+    _batch_pending = 0
+    if not dry_run:
+        conn.execute("PRAGMA synchronous = NORMAL")
+        conn.execute("PRAGMA cache_size = -65536")
+
+    _grain = "mensual (fin de mes)" if monthly_grain else f"diario (stale_days={stale_days})"
+    print(f"Actualizacion para {total} fondos (de {_universe} OK) | "
+          f"grano={_grain} | cutoff={_cutoff if not monthly_grain else _ref_me} | "
+          f"dry_run={dry_run}\n")
+
+    if not rows:
+        print("  Todos los fondos estan al dia. Nada que actualizar.")
+        return
+
+    # -- Bearer token para chartservice ------------------------------------
+    if bearer_token:
+        bearer = bearer_token
+        print("  Bearer token chartservice suministrado via --bearer-token.\n")
+    else:
+        try:
+            bearer = _get_bearer_token()
+            print("  Bearer token chartservice obtenido.\n")
+        except RuntimeError as e:
+            print(f"\n  ERROR: {e}")
+            print(f"[ERROR] Bearer token no disponible. Pipeline update abortado.", file=sys.stderr, flush=True)
+            return
+
+    bearer_acquired_at = time.time()
+    _TOKEN_MAX_AGE_S   = 45 * 60
 
     for idx, (isin, ms_id, last_nav_date) in enumerate(rows, 1):
-        print(f"  [{idx:>4}/{total}] {isin}", end=" ", flush=True)
+        _t0 = datetime.now()
 
-        if last_nav_date:
+        currency = currency_map.get(isin, "EUR")
+        ds = data_status_upd.get(isin, "OK") or "OK"
+
+        # -- RECALCULATE_MONTHLY: sin red, solo resamplear diario→mensual ----
+        if ds == "RECALCULATE_MONTHLY":
+            _daily = conn.execute(
+                "SELECT ISIN, Date, NAV, NAV_Currency, NAV_Type, "
+                "Is_Estimated, Data_Source FROM fund_nav_daily "
+                "WHERE ISIN=? AND Data_Source='MORNINGSTAR_CHART' ORDER BY Date",
+                (isin,)
+            ).fetchall()
+            if not _daily:
+                print("-> sin datos diarios para recalcular", flush=True)
+                continue
+            _monthly = _resample_to_monthly([dict(r) for r in _daily])
+            _written = _overwrite_nav_rows_monthly(conn, isin, _monthly, dry_run)
+            if not dry_run:
+                conn.execute(
+                    "UPDATE nav_sources SET data_status='OK', last_nav_date=?, "
+                    "nav_count=? WHERE isin=?",
+                    (_monthly[-1]["Date"] if _monthly else None, len(_monthly), isin)
+                )
+                _batch_pending += 1
+                if _batch_pending >= _BATCH_COMMIT:
+                    conn.commit(); _batch_pending = 0
+            _elapsed = (datetime.now() - _t0).total_seconds()
+            print(f"-> {_written}m recalculados (sin red)  [{_elapsed:.1f}s]", flush=True)
+            continue
+
+        # Ancla delta: preferir ultimo dia diario; fallback a nav_sources mensual
+        last_d_stored = last_daily_upd.get(isin)
+        force_this    = (ds == "FORCE_REFRESH")
+
+        # Gate "al dia" (cadence-aware, MISMA logica que el pre-filtro _is_stale).
+        # Red de seguridad: tras el pre-filtro casi nunca dispara, pero cubre
+        # carreras y mantiene al_dia_count coherente.
+        if not _is_stale(ds, last_d_stored, last_nav_date,
+                         _cutoff, _ref_me, monthly_grain):
+            _anchor_disp = last_d_stored or last_nav_date or ""
+            _elapsed_ms  = round((datetime.now() - _t0).total_seconds() * 1000)
+            _ts_skip     = _t0.strftime("%Y-%m-%d %H:%M:%S")
+            print(
+                f"[{idx:4d}/{total:4d}] | {_ts_skip} | {isin} | "
+                f"0d/0m | [{_anchor_disp} -> {_anchor_disp}] | {_elapsed_ms} | Al dia",
+                flush=True,
+            )
+            al_dia_count += 1
+            continue
+
+        # Ventana de descarga minima. La descarga es SIEMPRE diaria via
+        # chartservice; monthly_grain solo cambia la decision de skip (arriba),
+        # no la profundidad de descarga.
+        if last_d_stored and not force_this:
+            anchor = datetime.strptime(last_d_stored, "%Y-%m-%d").date()
+            desde  = (anchor - timedelta(days=3)).isoformat()
+        elif force_this:
+            desde = _today.replace(day=1).isoformat()
+        elif last_nav_date:
             try:
                 d     = datetime.strptime(last_nav_date, "%Y-%m-%d")
                 month = d.month - 2
@@ -549,39 +1506,173 @@ def run_update(conn, dry_run):
                     year  -= 1
                 desde = date(year, month, 1).isoformat()
             except Exception:
-                desde = date.today().replace(day=1).isoformat()
+                desde = _today.replace(day=1).isoformat()
         else:
-            desde = date.today().replace(day=1).isoformat()
-
-        r        = conn.execute(
-            "SELECT Fund_Currency FROM fund_master WHERE ISIN=?", (isin,)
-        ).fetchone()
-        currency = r[0] if r and r[0] else "EUR"
+            desde = _today.replace(day=1).isoformat()
 
         code = ms_id or isin
-        nav_rows, _err = _download_nav(code, isin, currency, desde)
+        nav_rows, err_type, _ = _download_nav_daily(
+            code, isin, currency, desde, bearer)
+
+        if err_type == "auth":
+            token_age = time.time() - bearer_acquired_at
+            if token_age > _TOKEN_MAX_AGE_S:
+                try:
+                    bearer = _get_bearer_token()
+                    bearer_acquired_at = time.time()
+                except RuntimeError:
+                    pass
+                nav_rows, err_type, _ = _download_nav_daily(
+                    code, isin, currency, desde, bearer)
+            else:
+                err_type = "no_access"
+
         time.sleep(random.uniform(*MS_DELAY_LOAD_OK))
 
         if not nav_rows:
-            print("-> sin datos nuevos")
+            if err_type in ("no_access", "transient"):
+                print(f"-> sin datos ({err_type})")
+                errors_update += 1
+            else:
+                print("-> sin datos nuevos")
             continue
 
-        written = _write_nav_rows(conn, nav_rows, dry_run)
+        # -- v24: persistir diario + mensual --------------------------------
+        daily_written = _write_nav_rows_daily(conn, nav_rows, dry_run)
+        monthly_rows  = _resample_to_monthly(nav_rows)
+        written       = _write_nav_rows(conn, monthly_rows, dry_run)
         total_written += written
-        print(f"-> {written} NAV nuevos")
+        _elapsed    = (datetime.now() - _t0).total_seconds()
+        _elapsed_ms = round(_elapsed * 1000)
+        _ts_upd     = _t0.strftime("%Y-%m-%d %H:%M:%S")
+        _dr_upd     = f"{nav_rows[0]['Date']} -> {nav_rows[-1]['Date']}"
+        print(
+            f"[{idx:4d}/{total:4d}] | {_ts_upd} | {isin} | "
+            f"{daily_written}d/{written}m | [{_dr_upd}] | {_elapsed_ms}"
+        )
 
-        if written and not dry_run:
-            new_last = max(r["Date"] for r in nav_rows)
+        if monthly_rows and not dry_run:
+            new_last = max(r["Date"] for r in monthly_rows)
             conn.execute(
-                "UPDATE nav_sources SET last_nav_date=?, last_checked=? WHERE isin=?",
-                (new_last, date.today().isoformat(), isin)
+                "UPDATE nav_sources SET last_nav_date=?, last_checked=?, "
+                "data_status='OK' WHERE isin=?",
+                (new_last, _today.isoformat(), isin)
             )
+        _batch_pending += 1
+        if _batch_pending >= _BATCH_COMMIT and not dry_run:
             conn.commit()
+            _batch_pending = 0
+
+    if _batch_pending > 0 and not dry_run:
+        conn.commit()
 
     print(f"\n{'-'*50}")
-    print(f"  Total NAV escritos: {total_written}")
+    print(f"  Total NAV escritos : {total_written}")
+    print(f"  Al dia (sin fetch) : {al_dia_count}")
+    print(f"  Fondos con error   : {errors_update}")
     if dry_run:
         print("  (DRY-RUN: nada escrito)")
+    if errors_update > 0 and not dry_run:
+        print(
+            f"[WARN] run_update: {errors_update}/{total} fondos con error NAV "
+            f"(no_access/transient). Ver stdout log para detalle.",
+            file=sys.stderr, flush=True,
+        )
+
+
+# ============================================================
+# Modo RECALCULATE-MONTHLY
+# ============================================================
+
+def run_recalculate_monthly(conn, isins=None, dry_run=False):
+    """Resamplea la serie diaria existente a mensual, sin ninguna llamada de red.
+
+    Útil cuando se ha corregido la lógica de resample o se detectaron errores en
+    fund_nav_monthly. La fuente de verdad es fund_nav_daily (chartservice); este
+    modo regenera fund_nav_monthly limpiamente desde ella.
+
+    Opera sobre:
+      - La lista explícita `isins` si se pasa, O
+      - Todos los ISINs con data_status='RECALCULATE_MONTHLY' en nav_sources.
+
+    Tras el recálculo, pone data_status='OK'.
+    """
+    if isins:
+        ph   = ",".join("?" * len(isins))
+        rows = conn.execute(
+            f"SELECT isin FROM nav_sources WHERE isin IN ({ph})", isins
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT isin FROM nav_sources "
+            "WHERE data_status='RECALCULATE_MONTHLY' AND status='OK'"
+        ).fetchall()
+
+    if not rows:
+        print("No hay ISINs con data_status='RECALCULATE_MONTHLY' en nav_sources.")
+        print("Usa:  UPDATE nav_sources SET data_status='RECALCULATE_MONTHLY' WHERE isin='X';")
+        return
+
+    total  = len(rows)
+    done   = 0
+    errors = 0
+    total_written = 0
+    _BATCH_COMMIT  = 50
+    _batch_pending = 0
+    if not dry_run:
+        conn.execute("PRAGMA synchronous = NORMAL")
+        conn.execute("PRAGMA cache_size = -65536")
+
+    print(f"Recalculando {total} ISINs (diario→mensual, sin red) | dry_run={dry_run}\n")
+
+    for idx, row in enumerate(rows, 1):
+        isin = row[0]
+        print(f"  [{idx:>4}/{total}] {isin}", end=" ", flush=True)
+
+        daily = conn.execute(
+            "SELECT ISIN, Date, NAV, NAV_Currency, NAV_Type, Is_Estimated, Data_Source "
+            "FROM fund_nav_daily "
+            "WHERE ISIN=? AND Data_Source='MORNINGSTAR_CHART' ORDER BY Date",
+            (isin,)
+        ).fetchall()
+
+        if not daily:
+            print("-> sin datos diarios (omitido)", flush=True)
+            errors += 1
+            continue
+
+        daily_dicts = [dict(r) for r in daily]
+        monthly     = _resample_to_monthly(daily_dicts)
+        written     = _overwrite_nav_rows_monthly(conn, isin, monthly, dry_run)
+        total_written += written
+
+        if not dry_run:
+            conn.execute(
+                "UPDATE nav_sources SET data_status='OK', last_nav_date=?, "
+                "nav_count=? WHERE isin=?",
+                (monthly[-1]["Date"] if monthly else None, len(monthly), isin)
+            )
+            _batch_pending += 1
+            if _batch_pending >= _BATCH_COMMIT:
+                conn.commit()
+                _batch_pending = 0
+
+        print(f"-> {written}m recalculados  ({daily_dicts[0]['Date']} → {daily_dicts[-1]['Date']})",
+              flush=True)
+        done += 1
+
+    if _batch_pending > 0 and not dry_run:
+        conn.commit()
+
+    print(f"\n{'-'*50}")
+    print(f"  ISINs recalculados : {done}/{total}")
+    print(f"  NAV mensuales ok   : {total_written}")
+    print(f"  ISINs sin daily    : {errors}")
+    if dry_run:
+        print("  (DRY-RUN: nada escrito en fund_nav_monthly)")
+    print(f"\n  Siguiente paso: recalcular métricas P2 para estos ISINs:")
+    print(f"    UPDATE nav_sources SET data_status='RECALCULATE_METRICS'")
+    print(f"    WHERE data_status='OK' AND isin IN (<los ISINs>;")
 
 
 # ============================================================
@@ -591,8 +1682,8 @@ def run_update(conn, dry_run):
 def _print_summary(found, not_found, errors, total, dry_run):
     print(f"\n{'-'*50}")
     print(f"  Encontrados    : {found:>4}  ({found*100//total if total else 0}%)")
-    print(f"  No encontrados : {not_found:>4}")
-    print(f"  Errores        : {errors:>4}")
+    print(f"  No encontrados : {not_found:>4}  (ISIN genuinamente ausente)")
+    print(f"  Saltados       : {errors:>4}  (challenge/error de red — BD sin cambios)")
     print(f"  TOTAL          : {total:>4}")
     if dry_run:
         print("  (DRY-RUN: nada escrito en nav_sources)")
@@ -602,12 +1693,37 @@ def _print_summary(found, not_found, errors, total, dry_run):
 # Entry point
 # ============================================================
 
+class _Tee:
+    """Escribe a la vez en un fichero de log y en el stdout original.
+
+    Permite que cada invocacion genere su propio log con timestamp sin
+    depender de redirecciones del shell (> archivo).
+    """
+    def __init__(self, filepath, original):
+        self._f    = open(filepath, "w", buffering=1, encoding="utf-8")
+        self._orig = original
+
+    def write(self, s):
+        self._f.write(s)
+        self._orig.write(s)
+
+    def flush(self):
+        self._f.flush()
+        self._orig.flush()
+
+    def fileno(self):           # necesario para subprocess / Playwright
+        return self._orig.fileno()
+
+    def close(self):
+        self._f.close()
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Descubrimiento y descarga NAV via Morningstar (mstarpy 8.x)"
     )
     parser.add_argument("--mode",    required=True,
-                        choices=["discover", "load", "update"])
+                        choices=["discover", "load", "update", "recalculate-monthly"])
     parser.add_argument("--isin",    default=None,
                         help="Procesar solo este ISIN")
     parser.add_argument("--sample",  type=int, default=None,
@@ -616,6 +1732,10 @@ def main():
                         help="Fecha inicio descarga YYYY-MM-DD (default: 2000-01-01)")
     parser.add_argument("--retry-errors", action="store_true",
                         help="En modo discover, reprocesa solo ISINs con status=ERROR en nav_sources")
+    parser.add_argument("--retry-notfound", action="store_true",
+                        help="En modo discover, reprocesa ISINs con status=NOT_FOUND (recuperacion tras fallo masivo)")
+    parser.add_argument("--skip-if-recent", action="store_true",
+                        help="En modo discover, omite si >=90%% ISINs ya comprobados hoy (evita re-lanzar ~2h tras corte en load)")
     parser.add_argument("--force", action="store_true",
                         help="En modo load, descarga aunque el ISIN ya tenga NAV en la BD (sobreescribe)")
     parser.add_argument("--ms-prefix", default=None,
@@ -624,12 +1744,42 @@ def main():
                         help="Ejecuta sin escribir nada en la DB")
     parser.add_argument("--verbose", action="store_true",
                         help="Muestra los primeros 3 NAV de cada fondo")
+    parser.add_argument("--bearer-token", default=None,
+                        help="Bearer JWT para chartservice (fallback si token_chart() falla). "
+                             "Obtenerlo desde DevTools -> Network -> Authorization header")
+    parser.add_argument("--workers", type=int, default=1,
+                        help="Hilos concurrentes para descarga (default 1=secuencial). "
+                             "Recomendado: --workers 4 para bulk backfill. "
+                             "Escrituras en BD siempre en hilo principal.")
+    parser.add_argument("--stale-days", type=int, default=3,
+                        help="Ventana de tolerancia diaria (default 3) para el gate "
+                             "'al dia' en modo update/load. ALINEAR con la cadencia real "
+                             "del job: 3 dias con cadencia semanal/mensual re-descarga "
+                             "~todo el universo cada ejecucion.")
+    parser.add_argument("--monthly-grain", action="store_true",
+                        help="En modo update, decide 'al dia' por grano MENSUAL: un fondo "
+                             "esta al dia si su ultimo NAV ya cubre el ultimo fin de mes "
+                             "completado. A mitad de mes solo descarga huecos genuinos.")
     args = parser.parse_args()
+
+    # -- Logs con timestamp unico por invocacion -----------------------------
+    _ts       = datetime.now().strftime("%Y%m%d_%H%M%S")
+    _log_dir  = Path(__file__).resolve().parent.parent.parent.parent / "logs"
+    _log_dir.mkdir(exist_ok=True)
+    _log_path = _log_dir / f"navLoad_{args.mode}_{_ts}.log"
+    _err_path = _log_dir / f"navLoad_{args.mode}_{_ts}_err.log"
+    sys.stdout = _Tee(_log_path, sys.__stdout__)
+    sys.stderr = _Tee(_err_path, sys.__stderr__)
+    print(f"  Log stdout : {_log_path}", flush=True)
+    print(f"  Log stderr : {_err_path}", flush=True)
 
     conn = get_connection()
 
+    # v25: migración idempotente — añade data_status si no existe aún
+    _ensure_data_status_column(conn)
+
     if args.isin:
-        isins = [args.isin.strip().upper()]
+        isins = [i.strip().upper() for i in args.isin.split(",") if i.strip()]
     else:
         all_isins = [r[0] for r in conn.execute(
             "SELECT ISIN FROM fund_master ORDER BY ISIN").fetchall()]
@@ -647,7 +1797,18 @@ def main():
                 return
             print(f"Reintentando {len(error_isins)} ISINs con status=ERROR...")
             isins = error_isins
-        run_discover(conn, isins, dry_run=args.dry_run, verbose=args.verbose)
+        elif getattr(args, 'retry_notfound', False):
+            nf_isins = [r[0] for r in conn.execute(
+                "SELECT isin FROM nav_sources WHERE status='NOT_FOUND' ORDER BY isin"
+            ).fetchall()]
+            if not nf_isins:
+                print("No hay ISINs con status=NOT_FOUND en nav_sources.")
+                conn.close()
+                return
+            print(f"Reintentando {len(nf_isins)} ISINs con status=NOT_FOUND...")
+            isins = nf_isins
+        run_discover(conn, isins, dry_run=args.dry_run, verbose=args.verbose,
+                     skip_if_recent=getattr(args, 'skip_if_recent', False))
     elif args.mode == "load":
         ms_prefix = args.ms_prefix.upper() if args.ms_prefix else None
         if ms_prefix and not args.isin:
@@ -664,13 +1825,20 @@ def main():
         else:
             isins_load = isins if args.isin else None
         run_load(conn,
-                 isins   = isins_load,
-                 desde   = args.desde,
-                 dry_run = args.dry_run,
-                 verbose = args.verbose,
-                 force   = args.force)
+                 isins         = isins_load,
+                 desde         = args.desde,
+                 dry_run       = args.dry_run,
+                 verbose       = args.verbose,
+                 force         = args.force,
+                 bearer_token  = args.bearer_token,
+                 workers       = args.workers,
+                 stale_days    = args.stale_days)
     elif args.mode == "update":
-        run_update(conn, dry_run=args.dry_run)
+        run_update(conn, dry_run=args.dry_run, bearer_token=args.bearer_token,
+                   stale_days=args.stale_days, monthly_grain=args.monthly_grain)
+    elif args.mode == "recalculate-monthly":
+        isins_rcm = [args.isin.strip().upper()] if args.isin else None
+        run_recalculate_monthly(conn, isins=isins_rcm, dry_run=args.dry_run)
 
     conn.close()
 

@@ -47,7 +47,7 @@ Cambios v17:
 
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
 
@@ -128,6 +128,24 @@ class TableExportConfig:
 
 
 # ============================================================
+# Helpers internos
+# ============================================================
+
+def _resolve_writable_path(path: Path) -> Path:
+    """Return path if writable; if locked (open in Excel), return a _HHMMSS variant."""
+    if not path.exists():
+        return path
+    try:
+        path.open("r+b").close()
+        return path
+    except PermissionError:
+        ts = datetime.now().strftime("%H%M%S")
+        alt = path.with_stem(f"{path.stem}_{ts}")
+        print(f"  [AVISO] {path.name} bloqueado (¿abierto en Excel?). Escribiendo en {alt.name}")
+        return alt
+
+
+# ============================================================
 # Motor de exportación
 # ============================================================
 
@@ -154,7 +172,7 @@ def export_tables(
     Los errores por tabla se acumulan y se reportan al final;
     un fallo en una tabla no aborta el export de las restantes.
     """
-    output_path = Path(output_path)
+    output_path = _resolve_writable_path(Path(output_path))
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     if not Path(db_path).exists():

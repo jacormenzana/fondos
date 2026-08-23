@@ -45,6 +45,8 @@ If any asset is missing, report immediately before proceeding.
 
 **Pre-flight — backlog scope:** Read the live backlog artifact before starting §3. Extract all currently open P1 and P2 items. Scope every investigation step to open items only; skip confirmed findings. Known confirmed-closed: P2-03 regime gap is data-driven (Recalentamiento/Recalentamiento_Tardio n_obs=0 confirmed 2026-08-14) — only action remaining is docstring in `fund_scorer.py`. Re-flag only if a new run produces `n_obs_recalentamiento > 0`.
 
+**Pre-flight — memory recall:** Before §3, read `MEMORY.md` at `C:\Users\Administrador\.claude\projects\c--desarrollo-fondos\memory\MEMORY.md`. Load every entry whose description hook matches this audit's domain keywords (P1 classification, FORCE_REFRESH, cost extraction, ACI_RHP, B1–B7 benchmark, DQ issue, regime attribution, OLS/VIF, NAV staleness, fingerprint, CALC_VERSION). Treat recalled entries as prior findings — do not re-investigate what is already confirmed on record.
+
 ---
 
 ## 3. Execution Workflow
@@ -375,3 +377,17 @@ If the artifact path is ambiguous, ask the user before writing.
   cd proyecto2 && C:\Users\Administrador\anaconda3\envs\des\python.exe -m pytest tests/ -q
   ```
 - **COALESCE / graceful degradation:** missing data must yield NULL or a correct sentinel, not an error.
+- **Write-on-correction (verified only):** If the user corrects any finding, factual claim, or reasoning during this audit, verify the correction first (read the code, query the DB, check the canonical doc). If confirmed correct, persist it to memory before the session ends. If wrong, explain and do not write. If unverifiable in context, flag it explicitly — do not persist unverified claims.
+
+---
+
+## 10. End-of-Session Memory Audit
+
+Before ending this session, identify every operational insight corrected or confirmed during this audit that is not yet in memory, and write it now.
+
+For each item:
+1. Create or update the memory file (type `feedback` for agent-behavior corrections, `project` for operational facts).
+2. Add or update the index line in `MEMORY.md`.
+3. Link related entries with `[[name]]`.
+
+Closing the session with uncaptured insight is non-compliant.
