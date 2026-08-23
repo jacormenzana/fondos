@@ -787,3 +787,282 @@ def test_fix_aci_rhp_longest_1y_wellington_layout():
         f"Is_RHP=1 Annual_Impact_Pct={rhp_rows[0].get('Annual_Impact_Pct')}: "
         "schedule repair must overwrite the bogus 13.2 with the recovered 1.7"
     )
+
+
+# ---------------------------------------------------------------------------
+# FIX-ACI-LABEL-ANCHOR (scenario-table bleed, 2026-08-23)
+#
+# Root cause: parse_costs_over_time binds percentages by proximity to the cost
+# heading. When the PERFORMANCE-SCENARIO table is interleaved in the pdfplumber
+# text stream, the bound value is the stress-scenario average annual return
+# (always negative) instead of the cost row. P0-ACI-RHP-GUARD then correctly
+# rejects it -> ACI_RHP NULL although the KID does publish the figure.
+# ---------------------------------------------------------------------------
+
+def test_label_anchor_adjacent_scenario_bleed():
+    """Pattern A (Dunas ES0175404013): the scenario table sits between the cost
+    heading and the real cost row. Parser binds -77,24% (stress scenario); the
+    true ACI 1,0% follows the "Impacto del coste anual" label directly.
+    """
+    from priips_cost_extractor import extract_priips_costs
+
+    text = (
+        "Costes a lo largo del tiempo\n"
+        "- Se invierten 10.000 EUR.\n"
+        "En caso de salida después de 1 año\n"
+        "En caso de salida después de 5 años\n"
+        "€2.280 -77,24%\n"
+        "€7.900 -21,01% €11.240\n"
+        "12,43% €14.950\n"
+        "Costes totales\n"
+        "99 € 925 €\n"
+        "Impacto del coste anual (*)\n"
+        "1,0%\n"
+        "(*)Refleja la medida en que los costes reducen su rendimiento cada año "
+        "a lo largo del período de mantenimiento. Por ejemplo, el rendimiento "
+        "medio que se prevé que obtendrá cada año será del 13,10% antes de "
+        "deducir los costes y del 12,11% después de deducir los costes.\n"
+        "Composición de los costes\n"
+        "Costes de entrada 0%\n"
+        # El documento real repite la etiqueta en la tabla de composición
+        # (ES0175404013 @16112). Se incluye para fidelidad y porque
+        # detect_kid_format exige >= 3 señales PRIIPs.
+        "Incidencia anual de los costes en caso de salida después de 1 año\n"
+        "0,96% del valor de su inversión por año.\n"
+    )
+    out = extract_priips_costs(text, "LABEL_ANCHOR_ADJACENT")
+
+    assert out.get("ACI_RHP") == 1.0, (
+        f"ACI_RHP={out.get('ACI_RHP')}: label anchor must recover 1,0%, "
+        "not the -77,24% stress scenario"
+    )
+    # The footnote's 13,10% / 12,11% return projections must never be picked up.
+    assert out.get("ACI_RHP") != 13.1
+    assert out.get("ACI_1Y") != 12.11
+
+
+def test_label_anchor_split_page_table():
+    """Pattern B (GVC Gaesco ES0179692001): the cost table is split across pages.
+    Header + EUR row close page N; the % row opens page N+1 with page furniture
+    (page number, logo, document title, whole risk section) interleaved.
+    The "cada año" suffix identifies the cost row positively despite the gap.
+    """
+    from priips_cost_extractor import extract_priips_costs
+
+    text = (
+        "Costes a lo largo del tiempo\n"
+        "Inversión 10.000 EUR\n"
+        "Costes totales\n"
+        "DOCUMENTO DATOS FUNDAMENTALES\n"
+        "Tramontana Retorno Absoluto Audaz, FI\n"
+        "El indicador resumido de riesgo es una guía del nivel de riesgo de este "
+        "producto en comparación con otros productos. Hemos clasificado este "
+        "producto en la clase de riesgo 5 en una escala de 7. Este producto no "
+        "incluye protección alguna contra la evolución futura del mercado.\n"
+        "1 año 6 años\n"
+        "531 € -94,7%\n"
+        "1.248 €\n"
+        "-29,3%\n"
+        "-49,3% 5.074 €\n"
+        "En caso de salida después de 6 años\n"
+        "En caso de salida después de 1 año\n"
+        "265 € 1.495 €\n"
+        "2/3\n"
+        "Impacto del coste anual (*)\n"
+        "2,7% 2,5% cada año\n"
+        "(*)Refleja la medida en que los costes reducen su rendimiento cada año.\n"
+        "Composición de los costes\n"
+        "Costes de entrada 0%\n"
+        "Incidencia anual de los costes en caso de salida después de 1 año\n"
+        "1,41% del valor de su inversión por año.\n"
+    )
+    out = extract_priips_costs(text, "LABEL_ANCHOR_SPLITPAGE")
+
+    assert out.get("ACI_RHP") == 2.5, (
+        f"ACI_RHP={out.get('ACI_RHP')}: must recover 2,5% (RHP column) across "
+        "the page split, not the -94,7% stress scenario"
+    )
+    assert out.get("ACI_1Y") == 2.7, (
+        f"ACI_1Y={out.get('ACI_1Y')}: must recover 2,7% (1Y column)"
+    )
+    rhp_rows = [r for r in out.get("_cost_schedule_rows", []) if r.get("Is_RHP") == 1]
+    if rhp_rows:
+        assert rhp_rows[0].get("Annual_Impact_Pct") == 2.5, (
+            "Is_RHP=1 schedule row must carry the recovered 2,5%, not the "
+            "bogus scenario value"
+        )
+
+
+def test_label_anchor_corrects_return_projection_under_guard():
+    """The footnote return-projection can slip UNDER the guard cap and publish as
+    a plausible-looking cost (LU2092974778: 23.28% stored, real ACI 1.42%).
+    The anchor corrects it because the stored value matches the projection
+    sentence verbatim and the delta is material.
+    """
+    from priips_cost_extractor import extract_priips_costs
+
+    text = (
+        "Costs over time\n"
+        "Total costs\n"
+        "if you exit after 1 year 0 EUR\n"
+        "if you exit after 5 years 5 EUR\n"
+        "recommended holding period 23.28%\n"
+        "Annual Cost Impact* 1.17% 1.42%\n"
+        "(*)This illustrates how costs reduce your return each year over the "
+        "holding period. For example, it shows that if you exit at the "
+        "recommended holding period your average return per year is projected "
+        "to be 23.28% before costs and 21.86% after costs.\n"
+        "Composition of costs\n"
+        "Entry costs 0%\n"
+    )
+    out = extract_priips_costs(text, "LABEL_ANCHOR_CORRECT")
+
+    assert out.get("ACI_RHP") != 23.28, (
+        "the 23.28% return projection must never be published as a cost"
+    )
+    assert out.get("ACI_RHP") == 1.42, (
+        f"ACI_RHP={out.get('ACI_RHP')}: anchor must correct to the real 1.42%"
+    )
+
+
+def test_label_anchor_does_not_correct_coincidental_match():
+    """Guard against over-correction: when a correct ACI happens to equal a
+    number in the projection sentence, the delta is tiny and the value must be
+    left alone (LU0546920561: ACI 2.30 vs projection 2.3 -- coincidence).
+    """
+    from priips_cost_extractor import extract_priips_costs
+
+    text = (
+        "Costes a lo largo del tiempo\n"
+        "En caso de salida después de 1 año\n"
+        "Costes totales 230 EUR\n"
+        "Incidencia anual de los costes 2,3%\n"
+        "(*)Refleja la medida en que los costes reducen su rendimiento. El "
+        "rendimiento medio que se prevé que obtendrá cada año será del 2,3% "
+        "antes de deducir los costes.\n"
+        "Composición de los costes\n"
+        "Costes de entrada 0%\n"
+    )
+    out = extract_priips_costs(text, "LABEL_ANCHOR_NO_OVERCORRECT")
+
+    assert out.get("ACI_RHP") == 2.3, (
+        f"ACI_RHP={out.get('ACI_RHP')}: a coincidental match with the "
+        "projection sentence must NOT trigger a correction"
+    )
+
+
+def test_label_anchor_is_fill_only_for_resolved_funds():
+    """A fund whose ACI resolves normally must not be perturbed by the anchor."""
+    from priips_cost_extractor import extract_priips_costs
+
+    text = (
+        "Costes a lo largo del tiempo\n"
+        "En caso de salida después de 1 año\n"
+        "En caso de salida después de 5 años\n"
+        "Costes totales 150 EUR 800 EUR\n"
+        "Incidencia anual de los costes 1,5% 1,6%\n"
+        "Composición de los costes\n"
+        "Costes de entrada 0%\n"
+    )
+    out = extract_priips_costs(text, "LABEL_ANCHOR_FILLONLY")
+    # The parser's own pick (1,5%) stands. The anchor would have offered 1,6%
+    # for the RHP column, so this asserts the fill-only contract: a resolved
+    # ACI_RHP is never overwritten by the anchor.
+    assert out.get("ACI_RHP") == 1.5, (
+        f"ACI_RHP={out.get('ACI_RHP')}: anchor must not override a value the "
+        "parser already resolved"
+    )
+
+
+# ---------------------------------------------------------------------------
+# FIX-ACI-ROW-TAIL-FEELINE + FIX-ACI-ANCHOR-PASSORDER (2026-08-23)
+#
+# The row-tail pass used to run across ALL labels before adjacency was even
+# considered, and its terminator set accepted "al año" / "per year" -- the
+# wording of FEE lines. A distant "10,00% al año" fee line therefore beat the
+# real ACI sitting next to its own label (7 Polar Capital funds returned 10.00).
+# ---------------------------------------------------------------------------
+
+def test_anchor_prefers_adjacent_value_over_distant_fee_line():
+    """Polar Capital layout: real ACI '0,9% 1,0%' is adjacent to the label; a
+    fee line '10,00% al año' sits further down the same window. Adjacency must
+    win, and 'al año' must not be treated as an ACI-row terminator at all.
+    """
+    from priips_cost_extractor import extract_priips_costs
+
+    text = (
+        "Costes a lo largo del tiempo\n"
+        "Costes totales 93 EUR 718 EUR\n"
+        "Incidencia anual de los costes (*) \n"
+        "0,9% 1,0%\n"
+        "(*) Refleja la medida en que los costes reducen su rendimiento cada año.\n"
+        "Composición de los costes\n"
+        "Costes de entrada 10,00% al año\n"
+        "Costes de salida 0,00%\n"
+    )
+    out = extract_priips_costs(text, "ANCHOR_FEELINE_TRAP")
+
+    assert out.get("ACI_RHP") == 1.0, (
+        f"ACI_RHP={out.get('ACI_RHP')}: the adjacent 1,0% must win over the "
+        "distant '10,00% al año' fee line"
+    )
+    assert out.get("ACI_RHP") != 10.0, "fee line must never be read as ACI"
+
+
+def test_evidence_corrects_sub_3pp_bleed():
+    """A real bleed with a delta of only 2.9pp: label says '4.6% 2.0% cada año'
+    (RHP=2.0) but 4.90 -- the return projection -- was stored. The retired 3pp
+    magnitude gate skipped this; the evidence test catches it because the label
+    does not vouch for 4.90. Modelled on LU0119197159.
+    """
+    from priips_cost_extractor import extract_priips_costs
+
+    text = (
+        "Costes a lo largo del tiempo\n"
+        "Costes totales 460 EUR 200 EUR\n"
+        "recomendado 4.9%\n"
+        "Incidencia anual de los costes (*) \n"
+        "4.6% 2.0% cada año\n"
+        "(*) Refleja la medida en que los costes reducen su rendimiento cada año "
+        "a lo largo del período de mantenimiento. Por ejemplo, el rendimiento "
+        "medio que se prevé que obtendrá cada año será del 4.9% antes de deducir "
+        "los costes y del 2.9% después de deducir los costes.\n"
+        "Composición de los costes\n"
+        "Costes de entrada 0%\n"
+    )
+    out = extract_priips_costs(text, "EVIDENCE_SUB3PP_BLEED")
+
+    assert out.get("ACI_RHP") != 4.9, (
+        "4.9% is the return projection, not a cost -- must not be published"
+    )
+    assert out.get("ACI_RHP") == 2.0, (
+        f"ACI_RHP={out.get('ACI_RHP')}: evidence test must recover the RHP "
+        "column value 2.0 despite the delta being under the retired 3pp gate"
+    )
+
+
+def test_evidence_protects_label_vouched_coincidence():
+    """The stored ACI (2,3%) legitimately equals a number in the projection
+    sentence. Because the label vouches for 2,3%, it is a real cost and must
+    survive untouched -- this is what an exact-match-only rule would corrupt.
+    Modelled on LU0546920561.
+    """
+    from priips_cost_extractor import extract_priips_costs
+
+    text = (
+        "Costes a lo largo del tiempo\n"
+        "En caso de salida después de 1 año\n"
+        "Costes totales 230 EUR\n"
+        "Incidencia anual de los costes 2,3%\n"
+        "(*) Refleja la medida en que los costes reducen su rendimiento. El "
+        "rendimiento medio que se prevé que obtendrá cada año será del 2,3% "
+        "antes de deducir los costes.\n"
+        "Composición de los costes\n"
+        "Costes de entrada 0%\n"
+    )
+    out = extract_priips_costs(text, "EVIDENCE_VOUCHED_COINCIDENCE")
+
+    assert out.get("ACI_RHP") == 2.3, (
+        f"ACI_RHP={out.get('ACI_RHP')}: a label-vouched value must never be "
+        "corrected, even though it matches the projection sentence"
+    )

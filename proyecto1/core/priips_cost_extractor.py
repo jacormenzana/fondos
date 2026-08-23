@@ -37,7 +37,14 @@ from typing import Optional, List, Dict, Any
 # Dependencias S2-A
 # ---------------------------------------------------------------------------
 from cost_format_router   import detect_kid_format, detect_kid_currency
-from cost_table_parser    import parse_costs_over_time, parse_costs_composition
+from cost_table_parser    import (
+    parse_costs_over_time,
+    parse_costs_composition,
+    ACI_LABEL_ANCHOR,
+    ACI_ROW_TAIL,
+    ACI_FOOTNOTE_STOP,
+    ACI_RETURN_PROJECTION,
+)
 from cost_cross_validator import validate_pct_eur, ValidationResult
 
 # ---------------------------------------------------------------------------
@@ -209,6 +216,181 @@ def _detect_oc_aci_mismatch(
     near_aci = abs(oc_norm - aci_rhp_ratio) <= _OC_ACI_NEAR_PP   # se parece al ACI
     far_ter  = abs(oc_norm - ter_recon_ratio) >  _OC_TER_FAR_PP  # difiere del TER
     return near_aci and far_ter
+
+
+# Ventana acotada tras la etiqueta ACI (R-6), distinta por pasada:
+#   - Pasada 1 (firma "X% Y% cada año"): 2000 chars. Cubre el peor caso real
+#     medido — tabla partida entre páginas con cabecera, logo, título y la
+#     sección de riesgo completa interpuestos (GVC Gaesco: la fila de % queda a
+#     ~1.400 chars de su etiqueta). El sufijo "cada año" identifica la fila de
+#     forma positiva, así que la distancia no introduce ambigüedad.
+#   - Pasada 2 (porcentajes positivos iniciales): 250 chars. No hay sufijo que
+#     confirme la fila, luego solo es fiable cuando el valor sigue de inmediato a
+#     la etiqueta ("Impacto del coste anual (*)\n1,0%"). Ventanas amplias en esta
+#     pasada capturaban cifras de tablas vecinas ("665 EUR 6.65%").
+_ACI_ANCHOR_WINDOW = 2000
+_ACI_ANCHOR_WINDOW_ADJACENT = 250
+
+# Tolerancia de no-op: por debajo de esto el valor almacenado y el del ancla son
+# el mismo número y no hay nada que reescribir.
+#
+# NOTA (2026-08-23): aquí vivía `_ACI_CORRECTION_MIN_DELTA_PP = 3.0`, un umbral
+# de MAGNITUD que decidía si corregir. Se eliminó: medido sobre el corpus, dejaba
+# sin corregir 74 sangrados reales (p. ej. LU0119197159 — etiqueta "4.6% 2.0%
+# cada año", almacenado 4.90 = proyección) y aun así corrompía 2 fondos. La
+# distancia entre dos números no dice cuál de ellos es el coste; lo dice la
+# EVIDENCIA de si la etiqueta respalda el valor (_label_vouches_for).
+_ACI_NOOP_TOLERANCE_PP = 0.02
+
+# Techo de ACI plausible en % entero. Un impacto de coste anual > 15% no existe
+# en un UCITS; por encima es sangrado de escenario/rentabilidad.
+_ACI_ANCHOR_MAX_PCT = 15.0
+
+# Token de porcentaje con signo capturado por separado: el signo es el
+# discriminante entre coste (positivo) y rendimiento de escenario (negativo).
+_ACI_PCT_TOKEN = re.compile(r'(-)?(\d{1,3}(?:[.,]\d{1,2})?)\s*%')
+
+
+def _pct_token_to_float(token: str) -> float:
+    """'2,74' | '2.74' → 2.74 (coma decimal europea o punto anglosajón)."""
+    return float(token.replace(',', '.'))
+
+
+def _recover_aci_from_label(text: str) -> tuple:
+    """
+    FIX-ACI-LABEL-ANCHOR — recupera (ACI_1Y, ACI_RHP) en % entero anclando en la
+    ETIQUETA PRIIPs del impacto de coste anual, no en la proximidad al titular
+    de la sección de costes.
+
+    Motivo (auditoría 2026-08-23): parse_costs_over_time liga los porcentajes por
+    cercanía al titular "Costes a lo largo del tiempo".  En numerosas maquetas la
+    tabla de ESCENARIOS DE RENTABILIDAD queda interpuesta en el flujo de texto de
+    pdfplumber, de modo que el % ligado es el rendimiento del escenario de tensión
+    (siempre negativo) o la proyección de rentabilidad de la nota al pie.  Ejemplos
+    verificados: ES0175404013 (-77,24% escenario vs 1,0% real), ES0179692001
+    (-94,7% vs 2,5%), LU2092974778 (23,28% proyección vs 1,42% real).
+
+    Dos maquetas cubiertas:
+      A. Sangrado de tabla adyacente — las filas de escenario preceden a la de
+         coste (Dunas, Capital Group, Echiquier, BNY Mellon).
+      B. Tabla partida entre páginas — cabecera y fila en EUR cierran la página N,
+         la fila de % abre la N+1 con mobiliario de página intercalado (GVC Gaesco).
+
+    Orden de resolución — ADYACENCIA PRIMERO, por cada etiqueta en orden de
+    documento (FIX-ACI-ANCHOR-PASSORDER, 2026-08-23):
+      1. Porcentajes POSITIVOS inmediatamente tras la etiqueta (ventana corta),
+         cortando en el primer % negativo (ahí arranca la tabla de escenarios) o
+         en la nota al pie.
+      2. Si la etiqueta no tiene valor adyacente, firma "X% Y% cada año /
+         each year" en la ventana ancha — única vía para la maqueta partida
+         entre páginas, donde el valor queda a ~1.400 chars de su etiqueta.
+
+    ⚠ El orden importa. La versión previa ejecutaba la pasada 1 (firma) sobre
+    TODAS las etiquetas antes de mirar la adyacencia, de modo que una firma
+    lejana podía ganar a un valor pegado a su propia etiqueta. Con el sufijo
+    "al año" entonces admitido, 7 fondos Polar Capital devolvían 10.00 (línea de
+    comisión "10,00% al año") teniendo su ACI real adyacente. Resolver por
+    etiqueta y priorizar la adyacencia elimina la clase de fallo entera.
+
+    Devuelve (None, None) si no hay señal. Nunca lanza. (P-3)
+    """
+    for m in ACI_LABEL_ANCHOR.finditer(text):
+        # --- 1. Valor adyacente a ESTA etiqueta -----------------------------
+        adjacent = text[m.end(): m.end() + _ACI_ANCHOR_WINDOW_ADJACENT]
+        stop = ACI_FOOTNOTE_STOP.search(adjacent)
+        head = adjacent[:stop.start()] if stop else adjacent
+        values: List[float] = []
+        for pct in _ACI_PCT_TOKEN.finditer(head):
+            if pct.group(1) is not None:
+                break                          # % negativo → tabla de escenarios
+            value = _pct_token_to_float(pct.group(2))
+            if not (0 < value <= _ACI_ANCHOR_MAX_PCT):
+                break
+            values.append(value)
+            if len(values) == 2:
+                break
+        if values:
+            return (values[0], values[0]) if len(values) == 1 else (values[0], values[1])
+
+        # --- 2. Firma de fila en la ventana ancha (tabla partida) -----------
+        window = text[m.end(): m.end() + _ACI_ANCHOR_WINDOW]
+        for tail in ACI_ROW_TAIL.finditer(window):
+            if tail.group(1).startswith('-'):
+                continue                       # escenario, no coste
+            first = _pct_token_to_float(tail.group(1))
+            if not (0 < first <= _ACI_ANCHOR_MAX_PCT):
+                continue
+            second = None
+            if tail.group(2) is not None and not tail.group(2).startswith('-'):
+                _cand = _pct_token_to_float(tail.group(2))
+                if 0 < _cand <= _ACI_ANCHOR_MAX_PCT:
+                    second = _cand
+            # Una sola columna → el mismo valor rige 1Y y RHP (regla PRIIPS).
+            return (first, first) if second is None else (first, second)
+
+    return None, None
+
+
+def _label_vouched_values(text: str) -> set:
+    """
+    FIX-ACI-EVIDENCE — conjunto de porcentajes que la ETIQUETA ACI respalda:
+    los positivos adyacentes a cada etiqueta más ambas capturas de cada firma
+    "X% Y% cada año" de la ventana ancha.
+
+    Sirve para decidir si un ACI ya publicado procede de la tabla de costes o de
+    la nota al pie: si el valor almacenado figura aquí, ES un ACI de la tabla y
+    su coincidencia con la proyección es fortuita; si no figura, procede de la
+    nota. Sustituye al umbral de delta, que era un proxy de magnitud y dejaba
+    escapar 74 sangrados reales por debajo de 3pp.
+
+    Nunca lanza. (P-3)
+    """
+    vouched = set()
+    for m in ACI_LABEL_ANCHOR.finditer(text):
+        adjacent = text[m.end(): m.end() + _ACI_ANCHOR_WINDOW_ADJACENT]
+        stop = ACI_FOOTNOTE_STOP.search(adjacent)
+        head = adjacent[:stop.start()] if stop else adjacent
+        for pct in _ACI_PCT_TOKEN.finditer(head):
+            if pct.group(1) is not None:
+                break
+            value = _pct_token_to_float(pct.group(2))
+            if not (0 < value <= _ACI_ANCHOR_MAX_PCT):
+                break
+            vouched.add(round(value, 2))
+
+        window = text[m.end(): m.end() + _ACI_ANCHOR_WINDOW]
+        for tail in ACI_ROW_TAIL.finditer(window):
+            for group in (tail.group(1), tail.group(2)):
+                if group and not group.startswith('-'):
+                    value = _pct_token_to_float(group)
+                    if 0 < value <= _ACI_ANCHOR_MAX_PCT:
+                        vouched.add(round(value, 2))
+    return vouched
+
+
+def _label_vouches_for(text: str, aci_pct: Optional[float]) -> bool:
+    """True si la etiqueta ACI respalda `aci_pct` (% entero). None → False."""
+    if aci_pct is None:
+        return False
+    return any(abs(v - aci_pct) < 0.02 for v in _label_vouched_values(text))
+
+
+def _matches_return_projection(text: str, aci_pct: Optional[float]) -> bool:
+    """
+    True si `aci_pct` (% entero) coincide con la proyección de rentabilidad de la
+    nota al pie ("…será del 13,10% antes de deducir los costes").  Ese número es
+    un RENDIMIENTO, no un coste: la coincidencia prueba que el valor extraído
+    procede de la nota y es espurio (raíz ACT-06 RC-1).  Conservador: None → False.
+    """
+    if aci_pct is None:
+        return False
+    for m in ACI_RETURN_PROJECTION.finditer(text):
+        try:
+            if abs(_pct_token_to_float(m.group(1)) - aci_pct) < 0.02:
+                return True
+        except ValueError:                     # token no numérico → ignorar
+            continue
+    return False
 
 
 def _build_schedule_rows(
@@ -449,6 +631,57 @@ def extract_priips_costs(
             # RHP != 1Y → tomar el aci_pct crudo (no pasar por validated_pct)
             aci_rhp_final = aci_rhp_ratio
 
+        # FIX-ACI-LABEL-ANCHOR-CORRECT: el ancla de etiqueta manda cuando el valor
+        # ligado por proximidad resulta ser la PROYECCIÓN DE RENTABILIDAD de la
+        # nota al pie.  Auditoría 2026-08-23: 197 fondos publicados con ACI_RHP
+        # discrepante > 5pp del ancla; verificados LU2092974778 (23,28% = "average
+        # return per year is projected to be 23.28% before costs"; ACI real 1,42%)
+        # e IE00BDR0R792 (17,63% proyección vs 7,14%/3,34% reales).  Muchos caen
+        # por debajo del techo del guard (10–15%) y por eso se publicaban como
+        # coste plausible pero falso, alimentando el scoring de P3.
+        #
+        # Doble condición, ambas de EVIDENCIA (no de magnitud):
+        #   (a) el valor actual coincide con un número de la frase de proyección
+        #       → prueba de que puede proceder de la nota al pie;
+        #   (b) la etiqueta ACI NO respalda ese valor → prueba de que no procede
+        #       de la tabla de costes.
+        # Si la etiqueta SÍ lo respalda, la coincidencia con la proyección es
+        # fortuita y el valor almacenado es correcto (16 fondos del corpus, p. ej.
+        # LU0546920561 ACI 2,30 real frente a proyección 2,3): no se toca.
+        _anchor_1y, _anchor_rhp = _recover_aci_from_label(text)
+        _aci_anchor_corrected = False
+
+        if (
+            _anchor_rhp is not None
+            and aci_rhp_final is not None
+            and _matches_return_projection(text, _ratio_to_pct(aci_rhp_final))
+            and not _label_vouches_for(text, _ratio_to_pct(aci_rhp_final))
+            and abs(_ratio_to_pct(aci_rhp_final) - _anchor_rhp)
+                > _ACI_NOOP_TOLERANCE_PP
+        ):
+            _log.info(
+                "[FIX-ACI-LABEL-ANCHOR-CORRECT] %s: ACI_RHP %.2f%%→%.2f%% "
+                "(valor previo == proyección de rentabilidad de la nota al pie)",
+                isin, _ratio_to_pct(aci_rhp_final), _anchor_rhp,
+            )
+            aci_rhp_final = _anchor_rhp / 100.0
+            _aci_anchor_corrected = True
+
+        if (
+            _anchor_1y is not None
+            and aci_1y_final is not None
+            and _matches_return_projection(text, _ratio_to_pct(aci_1y_final))
+            and not _label_vouches_for(text, _ratio_to_pct(aci_1y_final))
+            and abs(_ratio_to_pct(aci_1y_final) - _anchor_1y)
+                > _ACI_NOOP_TOLERANCE_PP
+        ):
+            _log.info(
+                "[FIX-ACI-LABEL-ANCHOR-CORRECT] %s: ACI_1Y %.2f%%→%.2f%% "
+                "(valor previo == proyección de rentabilidad de la nota al pie)",
+                isin, _ratio_to_pct(aci_1y_final), _anchor_1y,
+            )
+            aci_1y_final = _anchor_1y / 100.0
+
         # P0-ACI-GUARD: ACI values > 25% are parser bleed (scenario section
         # percentages captured instead of cost ACI). Confirmed root cause:
         # LU0256846568 (79.8%), LU1575199994 (71.4%) — CHECK constraint
@@ -466,7 +699,16 @@ def extract_priips_costs(
         # Secondary plausibility check: ACI_RHP / ACI_1Y > 5 is implausible
         # (annual cost drag does not vary 5× between year-1 and RHP for the
         # same fund). Both guards log and set ACI_RHP = NULL instead of bleed.
-        _MAX_ACI_RHP_RATIO = 0.15 if (rhp_years is not None and rhp_years > 1.0) else _MAX_ACI_RATIO
+        # FIX-ACI-RHP-GUARD-DEFAULT (2026-08-23): la puerta era
+        # `rhp_years > 1.0` → techo 15%, en cualquier otro caso 25%.  Pero las
+        # entradas espurias nacidas de la nota al pie llegan con
+        # horizon_years=-1.0 y rhp_years=None, así que caían justo en la rama
+        # laxa y una proyección de rentabilidad de hasta el 25% se publicaba como
+        # coste (LU2092974778: 23,28%).  Se invierte el defecto: el techo estricto
+        # rige salvo que se sepa POSITIVAMENTE que el RHP es de un año, único caso
+        # en que ACI_RHP == ACI_1Y y la cota laxa de esquema es pertinente.
+        _rhp_is_one_year = rhp_years is not None and abs(rhp_years - 1.0) <= 0.01
+        _MAX_ACI_RHP_RATIO = _MAX_ACI_RATIO if _rhp_is_one_year else 0.15
         _aci_rhp_ratio_ok = (
             aci_rhp_final is not None
             and aci_rhp_final <= _MAX_ACI_RHP_RATIO
@@ -585,6 +827,31 @@ def extract_priips_costs(
                         "collapsed single-value OT row",
                         isin, _ratio_to_pct(_fb_aci3),
                     )
+
+        # FIX-ACI-LABEL-ANCHOR: último recurso de relleno. Cuando la tabla de
+        # ESCENARIOS DE RENTABILIDAD se interpone en el flujo de texto entre el
+        # titular de costes y la fila de coste real, parse_costs_over_time liga
+        # el rendimiento del escenario de tensión (negativo) y el guard lo rechaza
+        # con razón → ACI_RHP queda NULL aunque el KID SÍ publica el dato.
+        # Auditoría 2026-08-23: 18 fondos del universo activo, los 18 recuperables
+        # (ES0175404013 1,0% · ES0179692001 2,5% · LU0157028266 1,8% · …).
+        # Solo rellena (fill-only): jamás perturba un ACI_RHP ya resuelto.
+        _aci_anchor_filled = False
+        if 'ACI_RHP' not in out and _anchor_rhp is not None:
+            out['ACI_RHP'] = _anchor_rhp
+            _aci_anchor_filled = True
+            _log.info(
+                "[FIX-ACI-LABEL-ANCHOR] %s: ACI_RHP=%.2f%% recuperado del ancla "
+                "de etiqueta (tabla de escenarios interpuesta)",
+                isin, _anchor_rhp,
+            )
+        if 'ACI_1Y' not in out and _anchor_1y is not None:
+            out['ACI_1Y'] = _anchor_1y
+            _log.info(
+                "[FIX-ACI-LABEL-ANCHOR] %s: ACI_1Y=%.2f%% recuperado del ancla "
+                "de etiqueta",
+                isin, _anchor_1y,
+            )
 
         # --- D. Tabla "composición de los costes" ---
         comp = parse_costs_composition(text)
@@ -719,7 +986,16 @@ def extract_priips_costs(
         # overwrites that wrong value with the fallback-recovered ACI_RHP.
         # Fires only when guard_rejected AND a fallback set ACI_RHP; fills only
         # Is_RHP=1 rows carrying a value inconsistent with the recovered ACI_RHP.
-        if 'ACI_RHP' in out and _guard_rejected:
+        # FIX-ACI-LABEL-ANCHOR (2026-08-23) amplía el disparador a dos casos más:
+        #   - el ancla CORRIGIÓ un valor que había PASADO el guard (proyección de
+        #     la nota al pie por debajo del techo);
+        #   - el ancla RELLENÓ ACI_RHP sin que el guard llegara a rechazar nada
+        #     (aci_rhp_final era None porque la fila RHP no era ligable, pero
+        #     _build_schedule_rows sí había escrito el % de escenario en la fila).
+        # En ambos la fila Is_RHP=1 conservaría el número falso sin esta reparación.
+        if 'ACI_RHP' in out and (
+            _guard_rejected or _aci_anchor_corrected or _aci_anchor_filled
+        ):
             for _sr in out['_cost_schedule_rows']:
                 if _sr.get('Is_RHP') == 1 and _sr.get('Annual_Impact_Pct') is not None:
                     _old_pct = _sr['Annual_Impact_Pct']

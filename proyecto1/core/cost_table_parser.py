@@ -143,6 +143,71 @@ ACI_ROW = re.compile(
     re.IGNORECASE,
 )
 
+# ---------------------------------------------------------------------------
+# FIX-ACI-LABEL-ANCHOR (2026-08-23) — vocabulario de etiqueta ACI para la
+# recuperación a nivel extractor (priips_cost_extractor._recover_aci_from_label).
+#
+# Superconjunto de ACI_ROW: añade "Impacto del coste anual" (GVC Gaesco, Dunas)
+# e "Impact of annual costs" (Echiquier) — dos variantes reales del corpus que
+# ACI_ROW no cubre.  ACI_ROW se deja INTACTO a propósito: ensancharlo perturba
+# la cascada global de fallback compartida (lección ACT-06: los cambios por vía
+# parser provocaron 30 regresiones).  Ambos viven en este módulo para que el
+# vocabulario de etiquetas ACI tenga un único hogar (P#11 / R-1).
+# ---------------------------------------------------------------------------
+ACI_LABEL_ANCHOR = re.compile(
+    r'incidencia\s*(?:anual\s*)?(?:de\s*los\s*costes?|de\s*costes?)'
+    r'|impacto\s*(?:anual\s*)?en\s*los\s*costes?'
+    r'|impacto\s*del\s*coste\s*anual'
+    r'|annual\s*cost\s*impact'
+    r'|impact\s*of\s*annual\s*costs?',
+    re.IGNORECASE,
+)
+
+# Firma de fila ACI: "2,7% 2,5% cada año" / "5.14% 2.74% each year".
+# El sufijo identifica positivamente la fila de coste; en la nota al pie la
+# locución precede al %, nunca lo sigue → sin colisión.
+#
+# ⚠ FIX-ACI-ROW-TAIL-FEELINE (2026-08-23): "al año" y "per year" estaban
+# incluidos y NO son válidos — son la fórmula de las líneas de comisión
+# ("10,00% al año", "0,03% del valor de su inversión por año"), no de la fila
+# ACI. Combinado con la ventana ancha de la pasada 1, hacían que una línea de
+# comisión lejana ganase a la fila ACI adyacente: 7 fondos Polar Capital
+# devolvían 10.00 teniendo su ACI real (0,9%–2,8%) junto a la etiqueta.
+# Solo "cada año" / "each year" son terminadores genuinos de fila ACI PRIIPs.
+ACI_ROW_TAIL = re.compile(
+    r'(-?\d{1,3}(?:[.,]\d{1,2})?)\s*%(?:\s+(-?\d{1,3}(?:[.,]\d{1,2})?)\s*%)?'
+    r'\s*(?:cada\s*a[nñ]o|each\s*year)',
+    re.IGNORECASE,
+)
+
+# Cierre de ventana: nota al pie o sección siguiente.
+# ⚠ Un "(*)" desnudo NO es cierre: se interpone entre la etiqueta y su propio
+# valor ("Impacto del coste anual (*)\n1,0%").  El marcador real es la frase.
+ACI_FOOTNOTE_STOP = re.compile(
+    r'refleja\s+la\s+medida'
+    r'|reflects?\s+the\s+extent'
+    r'|it\s+shows\s+the\s+extent'
+    r'|this\s+illustrates\s+how'
+    r'|composici[oó]n\s+de\s+los\s+costes'
+    r'|composition\s+of\s+costs'
+    r'|costes?\s+[uú]nicos'
+    r'|one[- ]off\s+costs'
+    r'|¿\s*cu[aá]nto\s+tiempo'
+    r'|how\s+long\s+should',
+    re.IGNORECASE,
+)
+
+# Proyección de rentabilidad de la nota al pie: "…su rendimiento medio … será
+# del 13,10% antes de deducir los costes" / "…projected to be 23.28% before
+# costs".  Es un RENDIMIENTO, no un coste: si el ACI extraído coincide con este
+# número, procede de la nota al pie y es espurio (raíz de ACT-06 RC-1).
+ACI_RETURN_PROJECTION = re.compile(
+    r'(?:projected\s+to\s+be|is\s+projected'
+    r'|se\s+prev[eé]\s+que\s+obtendr[aá][^.]{0,40}?ser[aá]\s+del)'
+    r'[^.%]{0,40}?(-?\d{1,3}[.,]\d{1,2})\s*%',
+    re.IGNORECASE,
+)
+
 # Mapeo de etiquetas de filas de composición → clave interna
 # \s* cubre texto pegado sin espacios (BL-COST-3-FIX)
 COMPOSITION_ROW_LABELS = {
