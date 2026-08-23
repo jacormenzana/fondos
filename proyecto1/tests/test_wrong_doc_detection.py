@@ -282,3 +282,132 @@ class TestLanguageVariants:
         text = "A" * 200 + "\n" + marker + "\n" + "B" * 200
         reason = detect_wrong_kiid_document(text)
         assert reason is not None, f"Marcador '{marker}' ({lang}) debe detectarse"
+
+
+class TestAnnualReportAsAtPattern:
+    """FIX-WRONGDOC-ANNRPT-DATE (2026-08-24): 'Annual report as at {date}' —
+    variante sin 'audited' que escapaba a los guards anteriores.
+    Detectado en LU0399027613 (Flossbach von Storch, Annual report as at 30 September 2025).
+    El patrón aparece en los primeros 150 chars (primera página); los KIIDs reales
+    nunca comienzan así (primera línea es nombre del fondo o cabecera estándar)."""
+
+    def _flossbach_annual_report(self) -> str:
+        """Simula LU0399027613: Annual report sin 'audited' en la primera línea."""
+        return (
+            "Annual report as at 30 September 2025\n"
+            "Flossbach von Storch\n"
+            "R.C.S. Luxembourg K858\n"
+            "Investment fund under Luxembourg law\n"
+            "CONTENTS\n"
+            "REPORT ON BUSINESS OPERATIONS\n"
+            "COMPOSITION OF NET FUND ASSETS\n"
+            "FLOSSBACH VON STORCH - BOND DEFENSIVE\n"
+            "Geographical breakdown\n"
+            "Sector breakdown\n"
+            "Composition of the sub-fund's net assets\n"
+            "Statement of changes in sub-fund's net assets\n"
+            "Statement of income and expenses\n"
+            "Statement of investments as at 30 September 2025\n"
+            # Simula sección de riesgo que podría confundir el guard anterior
+            "Risk and reward indicator: 3 / 7\n"
+            "The fund pursues a fixed income strategy.\n"
+        )
+
+    def test_annual_report_as_at_detected(self):
+        """'Annual report as at {date}' en primera línea → detectado."""
+        reason = detect_wrong_kiid_document(self._flossbach_annual_report())
+        assert reason is not None, (
+            "'Annual report as at {date}' en primera página debe ser detectado "
+            "aunque contenga 'risk and reward' más adelante"
+        )
+
+    def test_annual_report_as_at_fr_detected(self):
+        """'Rapport annuel au {date}' en primera línea → detectado (variante FR)."""
+        text = (
+            "Rapport annuel au 31 décembre 2025\n"
+            "Société de Gestion XYZ\n"
+            "Fonds commun de placement\n"
+            "Composition du portefeuille\n"
+        ) + "X" * 200
+        reason = detect_wrong_kiid_document(text)
+        assert reason is not None, "Variante FR 'rapport annuel au' debe detectarse"
+
+    def test_annual_report_as_at_not_in_body_not_detected(self):
+        """'annual report as at' en el CUERPO del KIID (no en primera página) no dispara
+        si el KIID tiene su cabecera estándar al inicio."""
+        text = (
+            "DATOS FUNDAMENTALES PARA EL INVERSOR\n"  # 37 chars — KIID header first
+            "El fondo invierte en renta fija. " * 5   # > 150 chars total before marker
+            + "Annual report as at 30 September 2025 is available on request.\n"
+            "Indicador de riesgo: 3 / 7\n"
+        )
+        # Verify marker is past char 150
+        assert text.lower().index("annual report as at") > 150
+        reason = detect_wrong_kiid_document(text)
+        assert reason is None, (
+            "KIID con cabecera DFPI y marcador 'annual report as at' en el cuerpo "
+            "no debe disparar — la cabecera veta la detección"
+        )
+
+
+class TestSimplifiedProspectusDetection:
+    """FIX-WRONGDOC-SIMPPROSPECT (2026-08-24): Folletos de venta simplificados
+    (UCITS I/II, 2007–2012) no son KIIDs. Detectados en LU0193173076/LU0193173159/
+    LU0193173233 (DB PrivatMandat Comfort, folleto de mayo 2009).
+    Los KIIPs modernos reemplazaron estos folletos; los simplificados no contienen
+    cabecera KIID ni tabla SRRI pero tampoco tienen los marcadores de informe anual
+    existentes — escapaban a todos los guards anteriores."""
+
+    def _db_simplified_prospectus(self) -> str:
+        """Simula LU0193173076: Folleto de venta simplificado 2009."""
+        return (
+            "18 de mayo de 2009\n"
+            "Folleto de venta simplificado\n"
+            "I db PrivatMandat Comfort\n"
+            "Sociedad de inversiones de capital variable\n"
+            "con arreglo al derecho luxemburgués\n"
+            "Índice\n"
+            "Resumen de db PrivatMandat Comfort 1\n"
+            "db PrivatMandat Comfort – Einkommen (U) 1\n"
+            "db PrivatMandat Comfort – Balance (U) 2\n"
+            "db PrivatMandat Comfort – Wachstum (U) 3\n"
+            "Gestión 27\n"
+            "Oficinas de distribución autorizadas 29\n"
+        )
+
+    def _english_simplified_prospectus(self) -> str:
+        """Variante EN: 'Simplified Prospectus'."""
+        return (
+            "Simplified Prospectus\n"
+            "ACME Investment Fund plc\n"
+            "An open-ended investment company incorporated in Ireland.\n"
+            "This simplified prospectus contains important details about the fund "
+            "in accordance with UCITS II Directive (2001/107/EC).\n"
+            "Investment Objective: The fund aims to achieve long-term capital growth.\n"
+        ) + "X" * 200
+
+    def test_spanish_simplified_prospectus_detected(self):
+        """'Folleto de venta simplificado' → detectado."""
+        reason = detect_wrong_kiid_document(self._db_simplified_prospectus())
+        assert reason is not None, (
+            "'Folleto de venta simplificado' debe ser detectado como documento no-KIID"
+        )
+
+    def test_english_simplified_prospectus_detected(self):
+        """'Simplified Prospectus' (EN) → detectado."""
+        reason = detect_wrong_kiid_document(self._english_simplified_prospectus())
+        assert reason is not None, (
+            "'Simplified Prospectus' (EN) debe ser detectado como documento no-KIID"
+        )
+
+    def test_genuine_kiid_not_confused_with_simplified_prospectus(self):
+        """KIID real con cabecera estándar + SRRI no confundido con folleto simplificado."""
+        text = (
+            "DATOS FUNDAMENTALES PARA EL INVERSOR\n"
+            "OBJETIVOS Y POLÍTICA DE INVERSIÓN\n"
+            "El fondo invierte en renta variable europea.\n"
+            "Indicador de riesgo y remuneración: 4 / 7\n"
+            "GASTOS CORRIENTES: 1,20%\n"
+        )
+        reason = detect_wrong_kiid_document(text)
+        assert reason is None, "KIID real no debe confundirse con folleto simplificado"
