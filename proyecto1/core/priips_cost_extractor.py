@@ -44,6 +44,9 @@ from cost_table_parser    import (
     ACI_ROW_TAIL,
     ACI_FOOTNOTE_STOP,
     ACI_RETURN_PROJECTION,
+    COMPOSITION_VALUE_LEADIN,
+    COMPOSITION_DESC_TRANSACTION,
+    COMPOSITION_DESC_MANAGEMENT,
 )
 from cost_cross_validator import validate_pct_eur, ValidationResult
 
@@ -250,6 +253,10 @@ _ACI_ANCHOR_MAX_PCT = 15.0
 # discriminante entre coste (positivo) y rendimiento de escenario (negativo).
 _ACI_PCT_TOKEN = re.compile(r'(-)?(\d{1,3}(?:[.,]\d{1,2})?)\s*%')
 
+# Techo de plausibilidad para una fila de composición (gestión / operación).
+# El CHECK del schema es 5.0 para Transaction_Cost_Pct; 25 es el techo general.
+_MAX_COMPOSITION_PCT = 25.0
+
 
 def _pct_token_to_float(token: str) -> float:
     """'2,74' | '2.74' → 2.74 (coma decimal europea o punto anglosajón)."""
@@ -376,6 +383,41 @@ def _label_vouched_values(text: str) -> set:
                     if 0 < value <= _ACI_ANCHOR_MAX_PCT:
                         vouched.add(round(value, 2))
     return vouched
+
+
+def _recover_composition_from_description(text: str) -> tuple:
+    """
+    FIX-COMPOSITION-BY-DESCRIPTION — devuelve (gestión %, operación %) ligando
+    cada valor por su DESCRIPCIÓN normativa PRIIPs, no por la etiqueta de fila
+    que lo precede en el flujo de texto.
+
+    En las maquetas de columna partida el % de operación queda bajo la etiqueta
+    de gestión y el valor de gestión aparece huérfano mucho más abajo; ambos
+    comparten la entradilla "X% del valor de su inversión al año", de modo que
+    solo la descripción los distingue:
+      · "…costes en que incurrimos al comprar y vender…"  → operación
+      · "…estimación basada en los costes reales del último año" → gestión
+
+    Ventana acotada de 260 chars tras el valor (R-6). Se queda con la PRIMERA
+    aparición de cada tipo. Devuelve (None, None) si no hay evidencia. No lanza.
+    """
+    mgmt: Optional[float] = None
+    tran: Optional[float] = None
+    for m in COMPOSITION_VALUE_LEADIN.finditer(text):
+        window = text[m.end(): m.end() + 260]
+        try:
+            value = _pct_token_to_float(m.group(1))
+        except ValueError:
+            continue
+        if not (0 < value <= _MAX_COMPOSITION_PCT):
+            continue
+        if COMPOSITION_DESC_TRANSACTION.search(window):
+            if tran is None:
+                tran = value
+        elif COMPOSITION_DESC_MANAGEMENT.search(window):
+            if mgmt is None:
+                mgmt = value
+    return mgmt, tran
 
 
 def _label_vouches_for(text: str, aci_pct: Optional[float]) -> bool:
@@ -939,6 +981,38 @@ def extract_priips_costs(
         mgmt = comp.get('management_fee_pct')
         tran = comp.get('transaction_cost_pct')
         perf = comp.get('performance_fee_pct')
+
+        # FIX-COMPOSITION-BY-DESCRIPTION (2026-08-23): en las maquetas de columna
+        # partida el parser liga a "gestión" el % de OPERACIÓN, con lo que ambas
+        # columnas quedan con el mismo número y la comisión de gestión real (que
+        # sí está en el texto, huérfana tras "Otros datos de interés") se pierde.
+        # Auditoría de distribución: 71 fondos con Management_Fee_Pct ==
+        # Transaction_Cost_Pct, verificados LU0110450813 (gestión real 1,6% frente
+        # a 0,3% publicado; la arbitración xBand ya decía 1,6) y LU1089088741
+        # (0,50% frente a 0,09%). Un fondo con ACI_RHP de 2,6-3,0% no puede tener
+        # una comisión de gestión del 0,09%.
+        #
+        # Solo corrige ante la firma del fallo — ambas columnas iguales, o gestión
+        # ausente — y solo con evidencia descriptiva explícita. Nunca pisa una
+        # extracción en la que gestión y operación ya difieren.
+        _desc_mgmt, _desc_tran = _recover_composition_from_description(text)
+        _collapsed = (
+            mgmt is not None and tran is not None
+            and abs(mgmt - tran) < 1e-9
+        )
+        if _desc_mgmt is not None and (_collapsed or mgmt is None):
+            if mgmt is None or abs(_ratio_to_pct(mgmt) - _desc_mgmt) > 0.01:
+                _log.info(
+                    "[FIX-COMPOSITION-BY-DESCRIPTION] %s: Management_Fee_Pct "
+                    "%s→%.2f%% (ligado por descripción normativa)",
+                    isin,
+                    "NULL" if mgmt is None else f"{_ratio_to_pct(mgmt):.2f}%",
+                    _desc_mgmt,
+                )
+            mgmt = _desc_mgmt / 100.0
+        if _desc_tran is not None and _collapsed:
+            tran = _desc_tran / 100.0
+
         if mgmt is not None:
             out['Management_Fee_Pct']   = _ratio_to_pct(mgmt)
         if tran is not None:
@@ -953,8 +1027,18 @@ def extract_priips_costs(
 
         if ter_recon_ratio is not None:
             if existing_oc is None:
-                # COALESCE-compatible: rellenar hueco con TER puro
-                out['Ongoing_Charge_Recurrent'] = _ratio_to_pct(ter_recon_ratio)
+                # COALESCE-compatible: rellenar hueco con TER puro.
+                #
+                # FIX-OC-SCALE (2026-08-23): antes escribía _ratio_to_pct(...),
+                # es decir PORCENTAJE, en una columna cuya convención es RATIO
+                # decimal — la que documenta kiid_parser._detect_ongoing_charge
+                # ("devuelve float decimal, p. ej. 0.0075 para 0.75%") y la que
+                # asume _norm_existing_oc. Resultado: los fondos rellenados por
+                # esta vía quedaban 100× por encima de los heredados. Auditoría
+                # de distribución 2026-08-23: 81 fondos con OC > 0,5 en los que
+                # OC coincidía EXACTAMENTE con el TER en escala porcentual
+                # (BE0058182792: OC 1.98, TER 1,98%). Se escribe el ratio.
+                out['Ongoing_Charge_Recurrent'] = ter_recon_ratio
             else:
                 oc_norm = _norm_existing_oc(existing_oc)
                 if _detect_oc_aci_mismatch(existing_oc, oc_norm, ter_recon_ratio, aci_rhp_final):

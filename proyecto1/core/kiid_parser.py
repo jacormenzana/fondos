@@ -2543,6 +2543,19 @@ def _detect_portfolio_currency(text: str, language: Optional[str]) -> Optional[s
 _OC_MIN = 0.0001   # 0.01%
 _OC_MAX = 0.1000   # 10.0%  (PRIIPs incluye todos los costes)
 
+# FIX-OC-BY-DESCRIPTION: vocabulario compartido con cost_table_parser (P#11/R-1
+# — el vocabulario de descripciones de composición tiene un único hogar).
+try:
+    from cost_table_parser import (
+        COMPOSITION_VALUE_LEADIN as _COMPOSITION_VALUE_LEADIN,
+        COMPOSITION_DESC_MANAGEMENT as _COMPOSITION_DESC_MANAGEMENT,
+    )
+except ImportError:                     # entornos aislados (tests sin core en path)
+    from core.cost_table_parser import (
+        COMPOSITION_VALUE_LEADIN as _COMPOSITION_VALUE_LEADIN,
+        COMPOSITION_DESC_MANAGEMENT as _COMPOSITION_DESC_MANAGEMENT,
+    )
+
 # ── DDF/PRIIPs "Composición de costes" ────────────────────────────────────────
 # Extrae los costes CORRIENTES (gestión + operación) ignorando entrada/salida.
 # Ejemplo DDF:
@@ -3515,6 +3528,28 @@ def _detect_ongoing_charge(text: str, language: Optional[str]) -> Optional[float
             ter = round(mgmt_val + (trans_val or 0.0), 6)
             if _OC_MIN <= ter <= _OC_MAX:
                 return ter
+
+    # ── 0.5: FIX-OC-BY-DESCRIPTION (2026-08-23) ─────────────────────────────
+    # La prioridad 0 casa por ETIQUETA ("Comisiones de gestión…"). En las
+    # maquetas de columna partida pdfplumber intercala etiquetas y valores, la
+    # etiqueta queda huérfana y la prioridad 0 falla — con lo que se cae a la
+    # prioridad 1/2, que lee la fila "Incidencia anual" y devuelve el ACI, NO el
+    # gasto corriente. Auditoría de distribución 2026-08-23: 801 fondos con
+    # Ongoing_Charge_Recurrent × 100 == ACI_RHP exacto (IE00BDT57Y96: OC 3,30%
+    # frente a un TER real de 1,64%). El ACI incluye la entrada amortizada, así
+    # que es estructuralmente mayor que el gasto corriente: nunca deben coincidir.
+    #
+    # Esta prioridad liga el valor por su DESCRIPCIÓN normativa PRIIPs
+    # ("estimación basada en los costes reales del último año"), que identifica
+    # el componente de gestión con independencia de dónde caiga su etiqueta.
+    # Mismo mecanismo que FIX-COMPOSITION-BY-DESCRIPTION en el extractor.
+    for _m in _COMPOSITION_VALUE_LEADIN.finditer(text):
+        _win = text[_m.end(): _m.end() + 260]
+        if not _COMPOSITION_DESC_MANAGEMENT.search(_win):
+            continue
+        _val = _parse_oc_pct(_m.group(1))
+        if _val is not None and _OC_MIN <= _val <= _OC_MAX:
+            return _val
 
     # ── 1 y 2: Patrón PRIIPs (dominante: 91% de fondos) ─────────────────────
     m = _OC_PRIIPS_RE.search(text)

@@ -224,6 +224,50 @@ ACI_RETURN_PROJECTION = re.compile(
     re.IGNORECASE,
 )
 
+# ---------------------------------------------------------------------------
+# FIX-COMPOSITION-BY-DESCRIPTION (2026-08-23) — vocabulario para ligar los
+# valores de la tabla de composición por su TEXTO DESCRIPTIVO, no por cercanía a
+# la etiqueta de fila.
+#
+# Motivo: en las maquetas de columna partida, pdfplumber intercala etiquetas y
+# valores, de modo que el % de costes de operación queda bajo la etiqueta
+# "Comisiones de gestión…" y el valor real de gestión aparece huérfano páginas
+# más abajo (tras "Otros datos de interés"). Verificado en LU0110450813
+# (gestión real 1,6% publicada como 0,3%) y LU1089088741 (0,50% publicada como
+# 0,09%). Ambos valores comparten la entradilla "X% del valor de su inversión al
+# año", así que la entradilla no discrimina — la descripción sí, y es normativa
+# PRIIPs, idéntica en todas las gestoras.
+# ---------------------------------------------------------------------------
+COMPOSITION_VALUE_LEADIN = re.compile(
+    r'(\d{1,2}[.,]\d{1,2})\s*%\s*(?:of\s+the\s+value|del\s+valor)',
+    re.IGNORECASE,
+)
+
+# "…de los costes en que incurrimos al comprar y vender las inversiones
+# subyacentes" / "…costs incurred when we buy and sell the underlying investments"
+COMPOSITION_DESC_TRANSACTION = re.compile(
+    r'costs?\s+incurred\s+when\s+we\s+buy\s+and\s+sell'
+    r'|incurrimos\s+al\s+comprar\s+y\s+vender'
+    r'|se\s+incurre\s+al\s+comprar\s+y\s+vender',
+    re.IGNORECASE,
+)
+
+# "…estimación basada en los costes reales del último año" /
+# "…estimate based on actual costs over the last year"
+#
+# Variantes de redacción observadas en el corpus (todas significan lo mismo:
+# "esta cifra procede de los costes REALES del ejercicio anterior", que es la
+# definición de gasto corriente). Ampliado 2026-08-23 tras comprobar que la
+# redacción base solo cubría 313 de los 801 fondos contaminados.
+COMPOSITION_DESC_MANAGEMENT = re.compile(
+    r'estimate\s+based\s+on\s+actual\s+costs'
+    r'|based\s+on\s+(?:the\s+)?actual\s+costs\s+over\s+the\s+last\s+year'
+    r'|estimaci[oó]n\s+basada\s+en\s+los\s+costes\s+(?:reales|efectivos)'
+    r'|se\s+basa\s+en\s+los\s+costes\s+(?:reales|efectivos)'
+    r'|basada\s+en\s+los\s+costes\s+(?:reales|efectivos)',
+    re.IGNORECASE,
+)
+
 # Mapeo de etiquetas de filas de composición → clave interna
 # \s* cubre texto pegado sin espacios (BL-COST-3-FIX)
 COMPOSITION_ROW_LABELS = {
