@@ -790,6 +790,29 @@ def extract_priips_costs(
             aci_rhp_final = _anchor_rhp / 100.0
             _aci_anchor_corrected = True
 
+        # FIX-ACI-PROJECTION-REJECT (2026-08-23): cuando el valor coincide con la
+        # proyección de rentabilidad de la nota al pie y la etiqueta ACI NO lo
+        # respalda, es una rentabilidad, no un coste — aunque no haya ancla con la
+        # que sustituirlo. Antes la corrección exigía `_anchor_rhp is not None`, de
+        # modo que los KID SIN fila de etiqueta ACI publicaban la proyección tal
+        # cual: 42 fondos con ACI_RHP entre 7,5% y 11,9% (LU1670710075: 11,89 %
+        # que el propio KID describe como "antes de deducir los costes"), valores
+        # que además pasaban el techo del 15%.
+        # Se rechaza: mejor NULL que un coste falso alimentando el scoring de P3
+        # (mismo criterio que P0-ACI-RHP-GUARD).
+        if (
+            aci_rhp_final is not None
+            and _anchor_rhp is None
+            and _matches_return_projection(text, _ratio_to_pct(aci_rhp_final))
+            and not _label_vouches_for(text, _ratio_to_pct(aci_rhp_final))
+        ):
+            _log.info(
+                "[FIX-ACI-PROJECTION-REJECT] %s: ACI_RHP=%.2f%% rechazado "
+                "(== proyección de rentabilidad; sin etiqueta ACI que lo respalde)",
+                isin, _ratio_to_pct(aci_rhp_final),
+            )
+            aci_rhp_final = None
+
         # P0-ACI-GUARD: ACI values > 25% are parser bleed (scenario section
         # percentages captured instead of cost ACI). Confirmed root cause:
         # LU0256846568 (79.8%), LU1575199994 (71.4%) — CHECK constraint

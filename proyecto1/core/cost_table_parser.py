@@ -159,7 +159,17 @@ ACI_LABEL_ANCHOR = re.compile(
     r'|impacto\s*(?:anual\s*)?en\s*los\s*costes?'
     r'|impacto\s*del\s*coste\s*anual'
     r'|annual\s*cost\s*impact'
-    r'|impact\s*of\s*annual\s*costs?',
+    r'|impact\s*of\s*annual\s*costs?'
+    # FIX-ACI-LABEL-YIELD-REDUCTION (2026-08-23): M&G y siblings rotulan la fila
+    # por su EFECTO ("Incidencia sobre el rendimiento (reducción del rendimiento)
+    # por año") en vez de por el concepto de coste. Sin esta variante el ancla
+    # quedaba muda en todo ese clúster (LU1670*/LU1797*), y la proyección de la
+    # nota se publicaba como ACI: LU1670724373 guardaba 2,08 % —el "antes de
+    # deducir los costes" de la nota— cuando su tabla dice 5,60 % / 2,40 %.
+    r'|incidencia\s*sobre\s*el\s*rendimiento'
+    r'|reducci[oó]n\s*del\s*rendimiento\s*\)?\s*por\s*a[nñ]o'
+    r'|reduction\s*in\s*yield'
+    r'|impact\s*on\s*(?:the\s*)?(?:return|yield)',
     re.IGNORECASE,
 )
 

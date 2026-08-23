@@ -87,7 +87,19 @@ CREATE TABLE IF NOT EXISTS fund_master (
     -- Columnas añadidas via ALTER TABLE (v12-v17)
     -- v19: renombrado Ongoing_Charge → Ongoing_Charge_Recurrent
     --      (TER recurrente puro, no incluye amortización one-offs)
+    -- ⚠ ESCALA: RATIO DECIMAL (0.0075 == 0.75%). Es la convención que produce
+    --   kiid_parser._detect_ongoing_charge y la que asume _norm_existing_oc.
+    --   NO confundir con las columnas *_Pct / ACI_*, que van en PORCENTAJE
+    --   ENTERO. Auditoría 2026-08-23: la vía de relleno del extractor escribía
+    --   porcentaje aquí, dejando 81 fondos 100× por encima (FIX-OC-SCALE).
+    -- ⚠ NO debe coincidir con ACI_RHP: el ACI incluye la entrada amortizada y es
+    --   estructuralmente mayor. Coincidencia exacta = contaminación (FIX-OC-BY-
+    --   DESCRIPTION). Valores previos preservados en Ongoing_Charge_Legacy.
     Ongoing_Charge_Recurrent  REAL,
+    -- Preservación de procedencia (migración 20260823_oc_provenance.sql):
+    -- instantánea del valor anterior a cualquier corrección + su origen.
+    Ongoing_Charge_Legacy     REAL,
+    Ongoing_Charge_Source     TEXT,
     fund_family_id          TEXT,
     Strategy                TEXT,
     -- v20: Is_ESG ELIMINADA (derivable de Sfdr_Article; §8-bis Q4 sin vista)
