@@ -300,6 +300,10 @@ COMPOSITION_DESC_MANAGEMENT = re.compile(
 PERFORMANCE_FEE_NEGATION = re.compile(
     r'no\s+se\s+aplica\s+ninguna\s+comisi[oó]n\s+de\s+(?:[eé]xito|rendimiento)'
     r'|no\s+(?:hay|existe)\s+comisi[oó]n\s+de\s+(?:[eé]xito|rendimiento)'
+    # Candriam: "No existe ninguna comisión en función de la rentabilidad para
+    # este producto" — niega por la MECÁNICA, no por el nombre de la comisión.
+    r'|no\s+existe\s+ninguna\s+comisi[oó]n\s+en\s+funci[oó]n\s+de\s+la\s+rentabilidad'
+    r'|no\s+se\s+aplica\s+ninguna\s+comisi[oó]n\s+en\s+funci[oó]n\s+de\s+la\s+rentabilidad'
     r'|este\s+producto\s+no\s+(?:tiene|aplica|cobra)[^.\n]{0,40}'
     r'comisi[oó]n\s+de\s+(?:[eé]xito|rendimiento)'
     r'|no\s+performance\s+fee(?:\s+is\s+charged)?'
@@ -310,9 +314,22 @@ PERFORMANCE_FEE_NEGATION = re.compile(
 
 # Comisión de canje / conversión: NO es comisión de rendimiento.
 SWITCHING_FEE_CONTEXT = re.compile(
-    r'comisi[oó]n\s+de\s+canje'
+    r'comisi[oó]n(?:es)?\s+de\s+canje'
     r'|switching\s+fee'
     r'|conversion\s+fee',
+    re.IGNORECASE,
+)
+
+# FIX-ENTRY-FEE-BY-DESCRIPTION (2026-08-23): la comisión de ENTRADA se expresa
+# como % del IMPORTE QUE SE PAGA / IMPORTE INVERTIDO, mientras que el ACI se
+# expresa como % del VALOR DE LA INVERSIÓN AL AÑO. Cuando el parser liga por
+# posición acaba guardando el ACI_1Y en Entry_Fee_Pct_Max (85 fondos; verificado
+# con la tabla de LU1883314244: entrada 4,50 %, pero se guardaba 6,6 % = su ACI).
+# La preposición es el discriminante y es normativa.
+ENTRY_FEE_VALUE = re.compile(
+    r'(\d{1,2}[.,]\d{1,2})\s*%\s*(?:m[aá]ximo\s+)?'
+    r'del\s+(?:importe|capital)\s+(?:que\s+(?:paga|pagar[aá])|invertido|de\s+la\s+inversi[oó]n)'
+    r'|(\d{1,2}[.,]\d{1,2})\s*%\s*of\s+the\s+amount\s+you\s+pay',
     re.IGNORECASE,
 )
 

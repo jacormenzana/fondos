@@ -49,6 +49,7 @@ from cost_table_parser    import (
     COMPOSITION_DESC_MANAGEMENT,
     PERFORMANCE_FEE_NEGATION,
     SWITCHING_FEE_CONTEXT,
+    ENTRY_FEE_VALUE,
 )
 from cost_cross_validator import validate_pct_eur, ValidationResult
 
@@ -998,6 +999,34 @@ def extract_priips_costs(
         _MAX_FEE_RATIO = 0.25
         entry_max = comp.get('entry_fee_max_pct', comp.get('entry_fee_pct'))
         exit_max  = comp.get('exit_fee_max_pct',  comp.get('exit_fee_pct'))
+        # FIX-ENTRY-FEE-BY-DESCRIPTION (2026-08-23): la comisión de entrada se
+        # define sobre el IMPORTE QUE SE PAGA; el ACI, sobre el VALOR DE LA
+        # INVERSIÓN AL AÑO. Ligando por posición el parser guarda a veces el
+        # ACI_1Y como comisión de entrada — 85 fondos, verificado con la tabla de
+        # LU1883314244 (entrada 4,50 %, se guardaba 6,6 % = su ACI_1Y).
+        # Solo corrige ante esa firma (entrada == ACI_1Y) y con evidencia
+        # descriptiva explícita; nunca pisa una entrada ya distinta del ACI.
+        _entry_pct = _ratio_to_pct(entry_max) if entry_max is not None else None
+        if (
+            _entry_pct is not None
+            and aci_1y_final is not None
+            and abs(_entry_pct - _ratio_to_pct(aci_1y_final)) < 0.02
+        ):
+            _m = ENTRY_FEE_VALUE.search(text)
+            if _m:
+                _tok = _m.group(1) or _m.group(2)
+                try:
+                    _cand = _pct_token_to_float(_tok)
+                except ValueError:
+                    _cand = None
+                if _cand is not None and 0 <= _cand <= 25.0 and abs(_cand - _entry_pct) > 0.02:
+                    _log.info(
+                        "[FIX-ENTRY-FEE-BY-DESCRIPTION] %s: Entry_Fee_Pct_Max "
+                        "%.2f%%→%.2f%% (el valor previo era el ACI_1Y)",
+                        isin, _entry_pct, _cand,
+                    )
+                    entry_max = _cand / 100.0
+
         if entry_max is not None and entry_max <= _MAX_FEE_RATIO:
             out['Entry_Fee_Pct_Max'] = _ratio_to_pct(entry_max)
         if exit_max is not None and exit_max <= _MAX_FEE_RATIO:
