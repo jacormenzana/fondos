@@ -1149,3 +1149,71 @@ def test_column_dup_not_applied_when_rhp_is_one_year():
     assert out.get("ACI_RHP") == 2.0, (
         f"ACI_RHP={out.get('ACI_RHP')}: with RHP=1y the 1-year value is correct"
     )
+
+
+# ---------------------------------------------------------------------------
+# FIX-PROJECTION-BEFORE-COSTS (2026-08-23)
+#
+# The projection footnote's LEAD-IN wording varies by issuer, so anchoring on it
+# missed ~100 funds whose projection (14.3-14.8%, just under the 15% cap) was
+# published as ACI_RHP. The TRAILING "antes de costes" / "before costs" phrase
+# is invariant and is what the detector now anchors on.
+# ---------------------------------------------------------------------------
+
+def test_projection_detected_via_trailing_before_costs_phrase():
+    """BlackRock ES wording: 'se preve que su rentabilidad media anual sea del
+    14.8% antes de costes' -- the lead-in differs from the older pattern, but
+    the trailing phrase identifies it. Modelled on LU0106831901.
+    """
+    from priips_cost_extractor import extract_priips_costs
+
+    text = (
+        "Costes a lo largo del tiempo\n"
+        "Periodo de mantenimiento recomendado: 5 anos\n"
+        "Si sale despues de 1 ano\n"
+        "Si sale despues de 5 anos\n"
+        "Costes totales 760 EUR\n"
+        "periodo de mantenimiento recomendado 14.8%\n"
+        "Incidencia anual de los costes (*)\n"
+        "7.6% 4.1% cada ano\n"
+        "(*) Esto ilustra como los costes reducen su rendimiento. Por ejemplo, "
+        "muestra que si sale durante el periodo de mantenimiento recomendado, se "
+        "preve que su rentabilidad media anual sea del 14.8% antes de costes y "
+        "del 10.8% despues de aplicar los costes.\n"
+        "Composicion de los costes\n"
+        "Costes de entrada 0%\n"
+    )
+    out = extract_priips_costs(text, "PROJ_BEFORE_COSTS")
+
+    assert out.get("ACI_RHP") != 14.8, (
+        "14.8% is the projected return before costs, not a cost"
+    )
+    assert out.get("ACI_RHP") == 4.1, (
+        f"ACI_RHP={out.get('ACI_RHP')}: must resolve to the RHP column (4.1)"
+    )
+
+
+def test_projection_english_before_costs_phrase():
+    """English equivalent: '... is 9.5% before costs and 6.1% after costs'."""
+    from priips_cost_extractor import extract_priips_costs
+
+    text = (
+        "Costs over time\n"
+        "Recommended holding period: 5 years\n"
+        "If you exit after 1 year\n"
+        "If you exit after 5 years\n"
+        "Total costs 720 EUR\n"
+        "recommended holding period 9.5%\n"
+        "Annual cost impact (*)\n"
+        "7.2% 3.5% each year\n"
+        "(*) This illustrates how costs reduce your return. Your average annual "
+        "return is 9.5% before costs and 6.1% after costs.\n"
+        "Composition of costs\n"
+        "Entry costs 0%\n"
+    )
+    out = extract_priips_costs(text, "PROJ_BEFORE_COSTS_EN")
+
+    assert out.get("ACI_RHP") != 9.5, "9.5% is a return, not a cost"
+    assert out.get("ACI_RHP") == 3.5, (
+        f"ACI_RHP={out.get('ACI_RHP')}: must resolve to the RHP column (3.5)"
+    )

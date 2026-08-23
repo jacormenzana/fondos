@@ -188,6 +188,11 @@ ACI_FOOTNOTE_STOP = re.compile(
     r'|reflects?\s+the\s+extent'
     r'|it\s+shows\s+the\s+extent'
     r'|this\s+illustrates\s+how'
+    # FIX-FOOTNOTE-STOP-ES (2026-08-23): apertura española de BlackRock/T Rowe
+    # ("Esto ilustra cómo los costes reducen…"). Sin ella la ventana adyacente
+    # seguía hasta la proyección de la nota y capturaba su % como si fuera ACI.
+    r'|esto\s+ilustra'
+    r'|ilustra\s+c[oó]mo'
     r'|composici[oó]n\s+de\s+los\s+costes'
     r'|composition\s+of\s+costs'
     r'|costes?\s+[uú]nicos'
@@ -201,10 +206,21 @@ ACI_FOOTNOTE_STOP = re.compile(
 # del 13,10% antes de deducir los costes" / "…projected to be 23.28% before
 # costs".  Es un RENDIMIENTO, no un coste: si el ACI extraído coincide con este
 # número, procede de la nota al pie y es espurio (raíz de ACT-06 RC-1).
+# FIX-PROJECTION-BEFORE-COSTS (2026-08-23): la 2ª rama ancla en la coletilla
+# "antes de costes" / "before costs", que SIGUE al número, en vez de en la
+# fórmula introductoria que lo precede. Las gestoras redactan esa introducción de
+# muchas maneras — "se prevé que su rentabilidad media anual sea del 14.8%…"
+# (BlackRock ES), "la rentabilidad media anual prevista es del 14.8 %…" (T Rowe
+# Price ES) — y ninguna encajaba en la 1ª rama, de modo que ~100 fondos con la
+# proyección publicada como ACI_RHP (14,3–14,8%, justo por debajo del techo del
+# 15%) quedaban sin detectar. La coletilla, en cambio, es invariante.
 ACI_RETURN_PROJECTION = re.compile(
     r'(?:projected\s+to\s+be|is\s+projected'
     r'|se\s+prev[eé]\s+que\s+obtendr[aá][^.]{0,40}?ser[aá]\s+del)'
-    r'[^.%]{0,40}?(-?\d{1,3}[.,]\d{1,2})\s*%',
+    r'[^.%]{0,40}?(-?\d{1,3}[.,]\d{1,2})\s*%'
+    r'|(-?\d{1,3}[.,]\d{1,2})\s*%\s*'
+    r'(?:antes\s+de\s+(?:deducir\s+)?(?:los\s+)?costes'
+    r'|before\s+(?:deducting\s+)?(?:the\s+)?costs)',
     re.IGNORECASE,
 )
 

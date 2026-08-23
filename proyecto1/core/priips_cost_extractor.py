@@ -350,6 +350,13 @@ def _label_vouched_values(text: str) -> set:
         adjacent = text[m.end(): m.end() + _ACI_ANCHOR_WINDOW_ADJACENT]
         stop = ACI_FOOTNOTE_STOP.search(adjacent)
         head = adjacent[:stop.start()] if stop else adjacent
+        # Máximo DOS valores, igual que _recover_aci_from_label: una fila ACI de
+        # PRIIPs tiene a lo sumo dos columnas (1Y y RHP). Sin este tope la
+        # ventana seguía más allá de la fila y avalaba números de la nota al pie
+        # —incluida la propia proyección de rentabilidad—, con lo que el valor
+        # espurio quedaba "respaldado por la etiqueta" y la corrección no se
+        # disparaba (LU0106831901: avalaba 14,8 además de 7,6 y 4,1).
+        _taken = 0
         for pct in _ACI_PCT_TOKEN.finditer(head):
             if pct.group(1) is not None:
                 break
@@ -357,6 +364,9 @@ def _label_vouched_values(text: str) -> set:
             if not (0 < value <= _ACI_ANCHOR_MAX_PCT):
                 break
             vouched.add(round(value, 2))
+            _taken += 1
+            if _taken == 2:
+                break
 
         window = text[m.end(): m.end() + _ACI_ANCHOR_WINDOW]
         for tail in ACI_ROW_TAIL.finditer(window):
@@ -385,11 +395,15 @@ def _matches_return_projection(text: str, aci_pct: Optional[float]) -> bool:
     if aci_pct is None:
         return False
     for m in ACI_RETURN_PROJECTION.finditer(text):
-        try:
-            if abs(_pct_token_to_float(m.group(1)) - aci_pct) < 0.02:
-                return True
-        except ValueError:                     # token no numérico → ignorar
-            continue
+        # El patrón tiene una rama por redacción; solo una captura por match.
+        for token in m.groups():
+            if not token:
+                continue
+            try:
+                if abs(_pct_token_to_float(token) - aci_pct) < 0.02:
+                    return True
+            except ValueError:                 # token no numérico → ignorar
+                continue
     return False
 
 
@@ -667,17 +681,25 @@ def extract_priips_costs(
             aci_rhp_final = _anchor_rhp / 100.0
             _aci_anchor_corrected = True
 
+        # ACI_1Y sufre la misma clase de error, con una segunda fuente además de
+        # la proyección: la COMISIÓN DE ENTRADA. Verificado contra el documento —
+        # LU0200685153 y LU0329593007 publicaban ACI_1Y=5,0 con
+        # Entry_Fee_Pct_Max=5,0 ("Costes de entrada 5.00% del importe que paga")
+        # cuando su fila ACI dice 7,1% y 6,4%; LU0147394679 igual con 3,0.
+        # Basta por tanto la evidencia de procedencia: si la etiqueta ACI expone
+        # valores y el almacenado NO está entre ellos, no salió de la fila de
+        # coste. No se exige además coincidencia con la proyección, que solo
+        # cubre una de las dos fuentes.
         if (
             _anchor_1y is not None
             and aci_1y_final is not None
-            and _matches_return_projection(text, _ratio_to_pct(aci_1y_final))
             and not _label_vouches_for(text, _ratio_to_pct(aci_1y_final))
             and abs(_ratio_to_pct(aci_1y_final) - _anchor_1y)
                 > _ACI_NOOP_TOLERANCE_PP
         ):
             _log.info(
-                "[FIX-ACI-LABEL-ANCHOR-CORRECT] %s: ACI_1Y %.2f%%→%.2f%% "
-                "(valor previo == proyección de rentabilidad de la nota al pie)",
+                "[FIX-ACI-1Y-LABEL-ANCHOR] %s: ACI_1Y %.2f%%→%.2f%% "
+                "(la etiqueta ACI no respalda el valor previo)",
                 isin, _ratio_to_pct(aci_1y_final), _anchor_1y,
             )
             aci_1y_final = _anchor_1y / 100.0
