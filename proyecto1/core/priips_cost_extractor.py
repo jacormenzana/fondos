@@ -30,6 +30,7 @@ Reglas de robustez (Principio #1, DRY #2):
 """
 
 import re
+import unicodedata
 import logging
 from typing import Optional, List, Dict, Any
 
@@ -679,6 +680,19 @@ def extract_priips_costs(
     out: Dict[str, Any] = {}
 
     try:
+        # FIX-UNICODE-NFC (2026-08-23): normalizar a NFC antes de cualquier regex.
+        # 144 KIDs del universo activo mezclan acentos PRECOMPUESTOS (U+00F3 "ó")
+        # con DESCOMPUESTOS (o + U+0301 combinante) en el mismo documento, según
+        # cómo generase el PDF cada gestora. Cualquier patrón que contenga una
+        # vocal acentuada —los de este módulo y los preexistentes— falla en
+        # silencio sobre la forma descompuesta.
+        # Impacto concreto medido: la negación de comisión de salida
+        # ("No cobramos una comisión de salida") solo se encuentra tras normalizar
+        # en 143 fondos; LU0346393613 guardaba la comisión de gestión como
+        # comisión de salida por esta causa.
+        # NFC solo recompone: no altera el contenido ni las longitudes lógicas.
+        text = unicodedata.normalize('NFC', text)
+
         # --- A. Formato y moneda (siempre se intenta) ---
         out['KID_Format'] = detect_kid_format(text)
         currency = detect_kid_currency(text)

@@ -573,9 +573,25 @@ def _extract_eur_from_cell(cell: str) -> Optional[float]:
     Preferencia: importe con símbolo de moneda explícito; si no, primer número >= 1.
     Retorna None si no hay número válido.
     """
+    # FIX-EUR-SPACE-THOUSANDS (2026-08-23): forma con la moneda DELANTE y el
+    # espacio como separador de millares ("€1 990", "EUR 2 255"), habitual en
+    # KIDs ES/FR. Ninguno de los dos patrones previos la cubría: el de moneda
+    # explícita exige el número ANTES de la divisa, y el AMOUNT_PATTERN de
+    # respaldo se detiene en el espacio y devuelve solo "1".
+    # Auditoría del schedule: 173 filas con Total_Costs_EUR < 20 sobre una base
+    # de 10.000 (IE0031069275 guardaba 1,0 donde el KID dice "€1 990").
+    # Se prueba primero por ser la lectura más específica.
+    m = re.search(
+        r'(?:EUR|USD|GBP|CHF|€|\$)\s*'
+        r'(\d{1,3}(?:[\s  ][\d]{3})+(?:[.,]\d{1,2})?)',
+        cell, re.IGNORECASE,
+    )
+    if m:
+        return _normalize_amount(m.group(1))
+
     # Buscar importe con moneda explícita
     m = re.search(
-        r'(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{1,2})?)\s*(?:EUR|USD|GBP|CHF|€|\$)',
+        r'(\d{1,3}(?:[.,\s  ]\d{3})*(?:[.,]\d{1,2})?)\s*(?:EUR|USD|GBP|CHF|€|\$)',
         cell, re.IGNORECASE,
     )
     if m:

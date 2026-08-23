@@ -463,6 +463,7 @@ Cambios v3 (2026-03-07): ver historial en backup kiid_parser_v3.py.
 
 from typing import Dict, Optional
 import re
+import unicodedata
 from datetime import date
 try:
     from proyecto1.core.srri_text import extract_srri
@@ -3515,6 +3516,12 @@ def _detect_ongoing_charge(text: str, language: Optional[str]) -> Optional[float
     """
     if not text:
         return None
+
+    # FIX-UNICODE-NFC (2026-08-23): 144 KIDs mezclan acentos precompuestos y
+    # descompuestos (o + U+0301). Sin normalizar, todo patrón con vocal acentuada
+    # —"gestión", "operación", "comisión"— falla en silencio sobre la forma
+    # descompuesta. NFC solo recompone; no altera el contenido.
+    text = unicodedata.normalize('NFC', text)
 
     # ── 0: FIX-OC-BY-DESCRIPTION (2026-08-23) — PRIORIDAD MÁXIMA ─────────────────────────────
     # La prioridad 0 casa por ETIQUETA ("Comisiones de gestión…"). En las
