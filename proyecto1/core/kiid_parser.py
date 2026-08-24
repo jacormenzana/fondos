@@ -2566,8 +2566,39 @@ except ImportError:                     # entornos aislados (tests sin core en p
 
 # Comisiones de gestión (primera línea de costes corrientes)
 # BL-37: ampliado para cubrir variantes sin artículo "El" y casing distinto
+# ── FIX-OC-DDF-TERMINATOR (2026-08-24) ────────────────────────────────────────
+# Etiquetas de OTRAS filas de coste. Ninguna ventana que busque el valor de la
+# fila de GESTIÓN puede cruzar una de ellas: si lo hace, publica como gasto
+# corriente el porcentaje de la fila siguiente.
+#
+# Causa raíz medida en el ensayo del 2026-08-24 (universo completo, copia
+# desechable). En maquetas de columna partida la etiqueta de gestión queda
+# huérfana —sin su valor— y la ventana atravesaba
+# "administrativos y de funcionamiento\nCostes de operación " para capturar el
+# porcentaje de OPERACIÓN:
+#   LU0423950053  gestión 0,23 %  ->  devolvía 0,01 % (la operación)
+#   IE00BYQQ1F19  gestión 0,01 %  ->  devolvía 0,46 % (la operación)
+# Ambos llegaban a BD por parsed["Ongoing_Charge"] -> pipeline.py:1473 -> UPSERT
+# COALESCE, pisando un valor correcto en CADA ciclo de P1.
+#
+# Mismo remedio y misma redacción que BL-COST-ZERO-FIX en _ENTRY_FEE_ZERO_RE
+# (R-6: ventana acotada por etiqueta rival, no por longitud). P#11: una sola
+# definición, reutilizada por todas las ventanas afectadas — hoy _OC_DDF_MGMT_RE
+# (prioridad 0.5) y _OC_DEL_VALOR_RE (prioridad 5), que compartían el defecto.
+#
+# Cuando la etiqueta no lleva valor propio el resultado correcto es NINGUNO
+# (P#10: NULL = no descubierto), nunca el número de la fila siguiente: el
+# componente de gestión sigue llegando por Management_Fee_Pct.
+_COST_ROW_LABEL_ALT = (
+    r"costes?\s+de\s+(?:operaci[oó]n|transacci[oó]n|entrada|salida)"
+    r"|comisiones?\s+(?:de\s+(?:[eé]xito|rendimiento)|en\s+funci[oó]n)"
+    r"|incidencia\s+(?:anual\s+)?de\s+los\s+costes"
+)
+
 _OC_DDF_MGMT_RE = re.compile(
-    r"comisiones?\s+de\s+gesti[oó]n\s+y\s+otros\s+costes[^\.]{0,150}"
+    r"comisiones?\s+de\s+gesti[oó]n\s+y\s+otros\s+costes"
+    # separador temperado: como el original excluía el punto, se conserva aquí
+    r"(?:(?!" + _COST_ROW_LABEL_ALT + r"|\.)[\s\S]){0,150}"
     r"(?:El\s+|el\s+)?([\d]+[,.][\d]+)\s*%",
     re.IGNORECASE | re.DOTALL
 )
@@ -3467,9 +3498,15 @@ def _detect_exit_fee(text: str) -> Optional[float]:
 #          de su inversión al año. Se trata de una estimación basada en..."
 # El patrón PRIIPs falla porque no hay trigger "incidencia de costes" y el
 # número está seguido de "del valor de su inversión" en vez de estar inline.
+# FIX-OC-DDF-TERMINATOR (2026-08-24): mismo defecto que _OC_DDF_MGMT_RE — los
+# separadores `[\s\S]{0,N}?` cruzaban la etiqueta "Costes de operación" y
+# capturaban su porcentaje, que en estas maquetas va justo seguido de "del valor
+# de su inversión al año". Ambas ramas quedan acotadas por _COST_ROW_LABEL_ALT.
 _OC_DEL_VALOR_RE = re.compile(
-    r'(?:comisiones?\s+de\s+gesti[oó]n\s+y\s+otros[\s\S]{0,100}?|'
-    r'costes?\s+corrientes\s+detra[ií]dos[\s\S]{0,200}?)'
+    r'(?:comisiones?\s+de\s+gesti[oó]n\s+y\s+otros'
+    r'(?:(?!' + _COST_ROW_LABEL_ALT + r')[\s\S]){0,100}?|'
+    r'costes?\s+corrientes\s+detra[ií]dos'
+    r'(?:(?!' + _COST_ROW_LABEL_ALT + r')[\s\S]){0,200}?)'
     r'([\d]+[,.][\d]+)\s*%\s*del\s+valor\s+de\s+su\s+inversi[oó]n',
     re.IGNORECASE
 )
