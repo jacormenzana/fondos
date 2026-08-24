@@ -53,6 +53,7 @@ from cost_table_parser    import (
     ENTRY_FEE_VALUE,
     ENTRY_FEE_NEGATION,
     EXIT_FEE_NEGATION,
+    parse_investment_base,
 )
 from cost_cross_validator import validate_pct_eur, ValidationResult
 
@@ -105,6 +106,33 @@ _SEVERE_DISCREPANCY_THRESHOLD = 0.005   # 50bp en ratio decimal
 _OC_ACI_NEAR_PP = 0.0010   # 0.10pp: el valor en BD "se parece" al ACI_RHP
 _OC_TER_FAR_PP  = 0.0030   # 0.30pp: el valor en BD difiere del TER reconstruido
 
+# FIX-OC-BIND (2026-08-24): tolerancia única de la guarda de ligadura del gasto
+# corriente, en ratio decimal. 0.0006 = 0.06pp, por encima del redondeo que el
+# propio KID publica (2 decimales en porcentaje) y muy por debajo de la menor
+# separación real observada entre gasto corriente y comisión de gestión.
+_OC_BIND_TOL = 0.0006
+
+# FIX-SCHEDULE-PCT-GATE (2026-08-24): techo de impacto ANUAL implícito admisible
+# para un coste total acumulado del schedule, en porcentaje entero. Espejo del
+# techo que el modelo aplica a las columnas ACI_1Y / ACI_RHP.
+_SCHEDULE_ANNUAL_CEILING_PCT = 25.0
+
+# FIX-SCHEDULE-RECONCILE-TOL (2026-08-24): margen, en puntos porcentuales, dentro
+# del cual "Costes totales" (derivado del importe) e "Incidencia anual" (leído de
+# su celda %) se consideran CONCILIABLES y no se toca ninguno de los dos.
+#
+# El KID publica ambas cifras y no son idénticas ni tienen por qué serlo: en
+# FR0010135103 la tabla dice literalmente "Costes totales 612 EUR" (6,12 %) e
+# "Incidencia anual 6,21 %". Esa holgura es del documento, no un defecto.
+#
+# Distribución medida sobre las 2.030 filas de 1 año del universo activo:
+#     <=0,05pp  1.608 | 0,05-0,15  192 | 0,15-0,5  35 | 0,5-1,5  13 | >1,5  182
+# La separación es bimodal y el corte natural cae en 1,5pp: por debajo hay
+# redondeo del KID; por encima, lecturas de otra columna o de otra divisa
+# (proporciones de 0,01x o 100x). El umbral previo de 0,05pp trataba el
+# redondeo ordinario como defecto y sobrescribía 227 impactos anuales correctos.
+_SCHEDULE_RECONCILE_TOL_PP = 1.5
+
 
 # ===========================================================================
 # Funciones privadas
@@ -119,6 +147,24 @@ def _ratio_to_pct(x: Optional[float]) -> Optional[float]:
     if x is None:
         return None
     return round(x * 100.0, 4)
+
+
+def _pct_is_plausible(total_pct: Optional[float], horizon_years: Optional[float]) -> bool:
+    """
+    ¿Es plausible un coste TOTAL acumulado de `total_pct` % a `horizon_years` años?
+
+    Se normaliza a impacto ANUAL implícito (total / años) y se compara contra el
+    mismo techo que acota las columnas ACI del modelo (25 %). Un fondo real no
+    cuesta más de eso al año; por encima, el número procede de otra divisa, de
+    otra base de inversión o de un sangrado de escenario. (FIX-SCHEDULE-PCT-GATE)
+
+    Puro y acotado: sin None → False conservador. (P-5)
+    """
+    if total_pct is None or horizon_years is None:
+        return False
+    if total_pct < 0:
+        return False
+    return (total_pct / max(horizon_years, 1.0)) <= _SCHEDULE_ANNUAL_CEILING_PCT
 
 
 def _extract_rhp_years(text: str) -> Optional[float]:
@@ -204,6 +250,55 @@ def _norm_existing_oc(existing_oc: Optional[float]) -> Optional[float]:
     if existing_oc >= 0.5:
         return existing_oc / 100.0
     return existing_oc
+
+
+def _resolve_oc_binding(
+    oc_norm: Optional[float],
+    mgmt: Optional[float],
+    aci_rhp_ratio: Optional[float],
+    aci_1y_ratio: Optional[float],
+) -> Optional[str]:
+    """
+    ¿A qué fila quedó ligado el gasto corriente heredado? (FIX-OC-BIND)
+
+    Devuelve la señal que delata la mala ligadura, o None si el valor es
+    coherente y no debe tocarse. Todos los argumentos en RATIO decimal.
+
+    Dos señales, una sola guarda (P#11):
+      'ACI'                           el valor heredado es el ACI, no el TER.
+      'componente menor que la gestión'  el valor heredado está por debajo de la
+                                      comisión de gestión que el gasto corriente
+                                      CONTIENE (UCITS OCF) — típicamente la fila
+                                      de operación o la de salida.
+
+    La segunda señal exige que el ACI publicado respalde a la gestión: un
+    incumplimiento del invariante no dice por sí solo qué lado está mal, y sin
+    respaldo se prefiere no tocar nada (control de método #4).
+
+    Puro y acotado; ante cualquier None → None conservador. (P-5)
+    """
+    if oc_norm is None or mgmt is None:
+        return None
+    if abs(oc_norm - mgmt) < _OC_BIND_TOL:
+        return None
+
+    if any(
+        a is not None and abs(oc_norm - a) < _OC_BIND_TOL
+        for a in (aci_rhp_ratio, aci_1y_ratio)
+    ):
+        return 'ACI'
+
+    _corroboration = max(
+        (a for a in (aci_rhp_ratio, aci_1y_ratio) if a is not None),
+        default=None,
+    )
+    if (
+        oc_norm < mgmt - _OC_BIND_TOL
+        and _corroboration is not None
+        and _corroboration >= mgmt - _OC_BIND_TOL
+    ):
+        return 'componente menor que la gestión'
+    return None
 
 
 def _detect_oc_aci_mismatch(
@@ -472,6 +567,8 @@ def _build_schedule_rows(
     rows: List[dict],
     rhp_years: Optional[float],
     isin: str,
+    text: Optional[str] = None,
+    anchor_1y: Optional[float] = None,
 ) -> List[dict]:
     """
     Construye _cost_schedule_rows a partir de parse_costs_over_time, resolviendo:
@@ -479,7 +576,23 @@ def _build_schedule_rows(
       - Fusión de colisiones de PK (mismo Horizon_Years) marcando Is_RHP=1.
       - Conversión de escala: aci_pct ratio → Annual_Impact_Pct % entero (P-4).
       - Validación defensiva de Source (P-7).
+
+    `text` (opcional) permite resolver la base de inversión real del KID en vez
+    de asumir la estándar de 10.000 (FIX-SCHEDULE-PCT-BASE).
+    `anchor_1y` (opcional, % entero) es el ACI de 1 año recuperado del ancla de
+    ETIQUETA; cuando existe, es evidencia y gana al total derivado por posición
+    (FIX-SCHEDULE-ANNUAL-ANCHOR).
     """
+    # FIX-SCHEDULE-PCT-BASE (2026-08-24): la base de ejemplo NO siempre es 10.000.
+    # parse_investment_base() ya resuelve este dato y su propia docstring advierte
+    # que "los llamadores NO deben recurrir a una base fija"; esta función era
+    # justamente ese llamador. Se reutiliza en vez de duplicar lógica (P#11 / R-1).
+    # Cuando el KID no declara base, se conserva la estándar PRIIPs: es el
+    # comportamiento previo y cubre 168 de los 214 fondos auditados.
+    _base = parse_investment_base(text) if text else None
+    if _base is None:
+        _base = PRIIPS_INVESTMENT_BASE
+
     by_horizon: Dict[float, dict] = {}
 
     for r in rows:
@@ -513,8 +626,31 @@ def _build_schedule_rows(
         if aci is not None:
             row['Annual_Impact_Pct'] = _ratio_to_pct(aci)
         # Total_Costs_Pct: EUR acumulado / base en % entero (coherencia con columnas nuevas P-4)
+        #
+        # FIX-SCHEDULE-PCT-GATE (2026-08-24): este valor es DERIVADO, no leído del
+        # KID — siempre es Total_Costs_EUR/base. Por eso la comprobación de
+        # coherencia EUR↔Pct no detecta nada: es una tautología, no una validación.
+        # El lado fiable es Annual_Impact_Pct, que sí está ligado a su etiqueta
+        # ("Incidencia anual de los costes"): en 247 de las 290 filas absurdas
+        # auditadas el anual era plausible y solo el total estaba mal.
+        # Cuando el importe en EUR es de otra divisa o es un número sangrado, el
+        # porcentaje derivado se dispara (LU0115096736: 1.532 % a 1 año, importe en
+        # JPY sobre base 2.000.000). Publicar eso es peor que no publicarlo: se
+        # omite la clave y la columna queda NULL = "no descubierto" (P#10).
+        _derived_pct = None
         if eur is not None:
-            row['Total_Costs_Pct'] = _ratio_to_pct(eur / PRIIPS_INVESTMENT_BASE)
+            _derived_pct = _ratio_to_pct(eur / _base)
+            if _pct_is_plausible(_derived_pct, hy):
+                row['Total_Costs_Pct'] = _derived_pct
+            else:
+                _log.info(
+                    "[FIX-SCHEDULE-PCT-GATE] %s: horizonte %.2fa Total_Costs_Pct "
+                    "%.2f%% omitido (anual implícito %.2f%% supera lo plausible; "
+                    "base=%s, importe=%s)",
+                    isin, hy, _derived_pct,
+                    _derived_pct / max(hy, 1.0), _base, eur,
+                )
+                _derived_pct = None
 
         # FIX-SCHEDULE-ANNUAL-GT-TOTAL (2026-08-23): invariante estructural — el
         # impacto ANUAL nunca puede superar el coste TOTAL acumulado del mismo
@@ -533,10 +669,48 @@ def _build_schedule_rows(
         # equivocado es el total, no el anual: aplicar la regla a ciegas
         # DESCARTARÍA un impacto anual correcto. Umbral: 20 EUR = 0,2 % de la
         # base, por debajo del cual ningún fondo real declara su coste total.
+        #
+        # FIX-SCHEDULE-PCT-GATE (2026-08-24), segunda mitad: el total solo puede
+        # arbitrar sobre el anual si el propio total es creíble. Antes bastaba con
+        # eur >= 20, de modo que un total derivado de una base equivocada seguía
+        # mandando: en LU0247697476 el anual correcto de 1 año (7,80 %, respaldado
+        # por su ancla de etiqueta) fue sobrescrito con 3,40 % derivado de un
+        # importe sangrado, y a horizontes > 1 año el anual correcto se DESCARTA.
+        # Un incumplimiento del invariante no dice qué lado está mal (control de
+        # método #4), así que se exige además que el total haya pasado la guarda
+        # de plausibilidad de arriba.
         _ann = row.get('Annual_Impact_Pct')
         _tot = row.get('Total_Costs_Pct')
-        _tot_credible = eur is not None and eur >= 20.0
-        if _ann is not None and _tot is not None and _tot_credible and _ann > _tot + 0.05:
+        _tot_credible = eur is not None and eur >= 20.0 and _derived_pct is not None
+        # FIX-SCHEDULE-ANNUAL-ANCHOR (2026-08-24): si el anual de esta fila es el
+        # que respalda el ancla de ETIQUETA del KID, no puede cederle la razón a un
+        # total derivado por posición aunque ese total sea plausible en abstracto.
+        # Caso medido (LU0247697476): ancla de etiqueta ACI_1Y = 7,80 %, importe de
+        # 1 año leído como 340 EUR → total 3,40 %, también "plausible". La regla por
+        # magnitud sobrescribía 7,80 → 3,40 y destruía el único valor con respaldo
+        # documental. Se prefiere la evidencia a la magnitud (control de método #6).
+        _ann_is_anchored = (
+            _ann is not None and anchor_1y is not None
+            and abs(hy - 1.0) <= 0.01
+            and abs(_ann - anchor_1y) < 0.05
+        )
+        if (
+            _ann_is_anchored and _tot is not None and _ann is not None
+            and _ann > _tot + _SCHEDULE_RECONCILE_TOL_PP
+        ):
+            _log.info(
+                "[FIX-SCHEDULE-ANNUAL-ANCHOR] %s: horizonte 1a se conserva el anual "
+                "%.2f%% (respaldado por el ancla de etiqueta) y se omite el total "
+                "derivado %.2f%%",
+                isin, _ann, _tot,
+            )
+            row.pop('Total_Costs_Pct', None)
+            _tot = None
+
+        if (
+            _ann is not None and _tot is not None and _tot_credible
+            and _ann > _tot + _SCHEDULE_RECONCILE_TOL_PP
+        ):
             if abs(hy - 1.0) <= 0.01:
                 _log.info(
                     "[FIX-SCHEDULE-ANNUAL-GT-TOTAL] %s: horizonte 1a %.2f%%→%.2f%% "
@@ -1286,19 +1460,42 @@ def extract_priips_costs(
                 # aci_rhp_final: cuando el valor lo aporta un fallback
                 # (SINGLE/LONGEST/COLLAPSED/ancla) aci_rhp_final sigue a None y la
                 # reparación no llegaba a 48 fondos igualmente contaminados.
+                #
+                # FIX-OC-BIND (2026-08-24): generalización de FIX-OC-ACI-REPAIR.
+                # La auditoría de distribución detectó una SEGUNDA mala ligadura del
+                # gasto corriente que la regla anterior no veía: el OC heredado es un
+                # componente MENOR (la fila de operación o la de salida), no el ACI.
+                # Firma medida sobre el universo activo: 373 fondos con
+                # OC == Transaction_Cost_Pct exacto y gestión muy superior
+                # (LU0823401905: OC 0,08 % frente a gestión 2,71 %). Contraste sano:
+                # 2.207 fondos con OC == gestión, la ligadura correcta.
+                #
+                # El invariante es aritmético, no heurístico: el gasto corriente
+                # CONTIENE la comisión de gestión (UCITS OCF), luego no puede quedar
+                # por debajo de ella. Se reparan ambas ligaduras con UNA sola guarda
+                # (P#11 / R-1), no con dos ramas paralelas.
+                #
+                # ⚠ Un incumplimiento del invariante no dice qué lado está mal
+                # (control de método #4): si la gestión fuese la equivocada, fijar el
+                # OC a ella propagaría el error. Por eso la vía (2) exige que el ACI
+                # —el total publicado— respalde a la gestión. Medición: 350 fondos
+                # reparables con respaldo, 6 descartados por gestión no respaldada,
+                # y 0 de los 2.207 correctos alcanzados por la guarda.
                 _aci_final_ratio = (
                     out['ACI_RHP'] / 100.0 if 'ACI_RHP' in out else aci_rhp_final
                 )
-                if (
-                    mgmt is not None and oc_norm is not None
-                    and _aci_final_ratio is not None
-                    and abs(oc_norm - _aci_final_ratio) < 0.0006
-                    and abs(oc_norm - mgmt) >= 0.0006
-                ):
+                _aci_1y_ratio = (
+                    out['ACI_1Y'] / 100.0 if 'ACI_1Y' in out else aci_1y_final
+                )
+                _bind_signal = _resolve_oc_binding(
+                    oc_norm, mgmt, _aci_final_ratio, _aci_1y_ratio
+                )
+
+                if _bind_signal is not None:
                     _log.info(
-                        "[FIX-OC-ACI-REPAIR] %s: Ongoing_Charge %.4f→%.4f "
-                        "(el valor heredado era el ACI; se fija al componente de gestión)",
-                        isin, oc_norm, mgmt,
+                        "[FIX-OC-BIND] %s: Ongoing_Charge %.4f→%.4f "
+                        "(el valor heredado era %s; se fija al componente de gestión)",
+                        isin, oc_norm, mgmt, _bind_signal,
                     )
                     out['Ongoing_Charge_Recurrent'] = mgmt
 
@@ -1313,7 +1510,9 @@ def extract_priips_costs(
                 # Si no hay mismatch y existing_oc no es None → no se toca (COALESCE)
 
         # --- F. _cost_schedule_rows (P-1, P-7, P-4) ---
-        out['_cost_schedule_rows'] = _build_schedule_rows(over_time, rhp_years, isin)
+        out['_cost_schedule_rows'] = _build_schedule_rows(
+            over_time, rhp_years, isin, text, _anchor_1y
+        )
 
         # FIX-ACI-SCHEDULE-INJECT: when a fallback (SINGLE/LONGEST/COLLAPSED)
         # recovered ACI_RHP metadata but _build_schedule_rows produced no Is_RHP=1
@@ -1366,7 +1565,33 @@ def extract_priips_costs(
                      if round(r.get('Horizon_Years', 0), 6) == _syn_hy_r),
                     None,
                 )
-                if _existing is not None:
+                # FIX-SCHEDULE-IS-RHP-1Y (2026-08-24): la promoción no puede
+                # etiquetar como RHP una fila que lleva el impacto de 1 AÑO.
+                # Cuando rhp_years es None, la cadena de respaldo acaba eligiendo
+                # "el horizonte positivo más largo", que en los KID de una sola
+                # columna es 1,0 — justo la fila cuyo Annual_Impact_Pct es el
+                # ACI_1Y. El resultado es una fila Is_RHP=1 que avala el valor
+                # equivocado: medido en 47 de 56 discrepancias grandes
+                # (FR0010174144: schedule 6,17 % = ACI_1Y frente a ACI_RHP 4,72 %).
+                # Si no sabemos el RHP, es preferible no marcar ninguna fila: el
+                # ACI_RHP sigue llegando a P2/P3 por fund_master.
+                _aci_1y_pct = out.get('ACI_1Y')
+                _would_mislabel = (
+                    _existing is not None
+                    and rhp_years is None
+                    and abs(_syn_hy_r - 1.0) <= 0.01
+                    and _existing.get('Annual_Impact_Pct') is not None
+                    and _aci_1y_pct is not None
+                    and abs(_existing['Annual_Impact_Pct'] - _aci_1y_pct) < 0.05
+                    and abs(_aci_1y_pct - out['ACI_RHP']) >= 0.5
+                )
+                if _would_mislabel:
+                    _log.info(
+                        "[FIX-SCHEDULE-IS-RHP-1Y] %s: promoción a Is_RHP=1 rechazada "
+                        "(la fila de 1 año lleva el ACI_1Y %.2f%%, no el ACI_RHP %.2f%%)",
+                        isin, _aci_1y_pct, out['ACI_RHP'],
+                    )
+                elif _existing is not None:
                     _existing['Is_RHP'] = 1
                     if _existing.get('Annual_Impact_Pct') is None:
                         _existing['Annual_Impact_Pct'] = out['ACI_RHP']
