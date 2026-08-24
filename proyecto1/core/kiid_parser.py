@@ -3516,10 +3516,25 @@ _OC_DEL_VALOR_RE = re.compile(
 #          M.MMM EUR\nX,X % cada afio"
 # El patrón PRIIPs falla porque hay un importe en EUR entre trigger y porcentaje,
 # superando el separador [^0-9]{0,60} del patrón existente.
+# FIX-OC-DROP-ACI-PRIORITY-2 (2026-08-24): el disparador "incidencia (anual) de
+# los costes" QUEDA RETIRADO de este patrón — es la fila del ACI, no el gasto
+# corriente, exactamente el mismo motivo por el que se retiró _OC_PRIIPS_RE
+# (prioridades 1 y 2) el 2026-08-23. Aquella limpieza dejó vivo este segundo
+# lector del ACI.
+#
+# Medido en el ensayo 2 del 2026-08-24 (LU0264598342):
+#   "Incidencia anual de los costes (*)\n12,8% 9,2% cada año"  ->  devolvía 9,2
+#   y ACI_RHP de ese fondo es exactamente 9,2.
+# Sólo afloró cuando FIX-OC-DDF-TERMINATOR hizo que las prioridades 0.5 y 5
+# declinasen correctamente: la ejecución caía hasta aquí y cambiaba un defecto
+# (OC = coste de operación) por otro (OC = ACI).
+#
+# Se conserva el disparador legítimo "costes corrientes detraídos", que sí
+# nombra el gasto corriente, y se acota su ventana con _COST_ROW_LABEL_ALT para
+# que tampoco pueda cruzar a la fila del ACI.
 _OC_CADA_ANNO_RE = re.compile(
-    r'(?:incidencia\s+(?:anual\s+)?de\s+los\s+costes|'
-    r'costes?\s+corrientes\s+detra[ií]dos)'
-    r'[\s\S]{0,500}?'
+    r'costes?\s+corrientes\s+detra[ií]dos'
+    r'(?:(?!' + _COST_ROW_LABEL_ALT + r')[\s\S]){0,500}?'
     r'([\d]+[,.][\d]+)\s*%\s*cada\s+a(?:[ñn]|fi|h)o',
     re.IGNORECASE
 )

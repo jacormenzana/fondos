@@ -27,6 +27,8 @@ R-7: sólo se importa kiid_parser; sin pipeline.py, sin core.io, sin BD.
 import os
 import sys
 
+import pytest
+
 _TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
 _P1_DIR = os.path.normpath(os.path.join(_TESTS_DIR, '..'))
 _CORE_DIR = os.path.join(_P1_DIR, 'core')
@@ -35,6 +37,7 @@ for _p in (_P1_DIR, _CORE_DIR):
         sys.path.insert(0, _p)
 
 from core.kiid_parser import (                    # noqa: E402
+    _OC_CADA_ANNO_RE,
     _OC_DDF_MGMT_RE,
     _OC_DEL_VALOR_RE,
     _detect_ongoing_charge,
@@ -115,3 +118,46 @@ def test_detect_still_returns_value_for_healthy_layout():
     assert _detect_ongoing_charge(
         "Comisiones de gestión y otros costes administrativos  El 0,66 %",
         'es') == 0.0066
+
+
+# ---------------------------------------------------------------------------
+# FIX-OC-DROP-ACI-PRIORITY-2 — la prioridad 6 ya no lee la fila del ACI
+#
+# _OC_CADA_ANNO_RE disparaba con "incidencia (anual) de los costes", que ES el
+# ACI. Sobrevivió a la limpieza del 2026-08-23 (que retiró _OC_PRIIPS_RE de las
+# prioridades 1 y 2 por este mismo motivo) y sólo afloró cuando
+# FIX-OC-DDF-TERMINATOR hizo declinar a las prioridades 0.5 y 5: la ejecución
+# caía hasta la 6 y cambiaba un defecto por otro.
+#
+# LU0264598342: "Incidencia anual de los costes (*)\n12,8% 9,2% cada año"
+# devolvía 9,2 — y su ACI_RHP es exactamente 9,2.
+# ---------------------------------------------------------------------------
+
+ACI_ROW_LU0264598342 = (
+    "años\nCostes totales 1.285 EUR 6.007 EUR\n"
+    "Incidencia anual de los costes (*)\n"
+    "12,8% 9,2% cada año (*) Refleja la medida en que los costes reducen su "
+    "rendimiento.\n"
+)
+
+
+def test_aci_row_is_not_read_as_ongoing_charge():
+    assert _OC_CADA_ANNO_RE.search(ACI_ROW_LU0264598342) is None
+
+
+def test_detect_does_not_return_the_aci_for_that_layout():
+    """9,2 es el ACI_RHP publicado del fondo: jamás el gasto corriente."""
+    got = _detect_ongoing_charge(ACI_ROW_LU0264598342, 'es')
+    assert got != 0.092
+    assert got is None
+
+
+@pytest.mark.parametrize('txt,expected', [
+    ("Costes corrientes detraidos cada ano\nComisiones de gestion 1,10 % cada ano", '1,10'),
+    ("Costes corrientes detraídos cada año\nComisiones de gestión 1,10 % cada año", '1,10'),
+    ("Costes corrientes detraidos cada afio\n1,45 % cada afio", '1,45'),
+])
+def test_legitimate_costes_corrientes_trigger_still_matches(txt, expected):
+    """El disparador legítimo — el que sí nombra el gasto corriente — se conserva."""
+    m = _OC_CADA_ANNO_RE.search(txt)
+    assert m is not None and m.group(1) == expected
