@@ -29,6 +29,21 @@ except Exception:
 
 from openpyxl import load_workbook
 
+# ── Global NFC canonicalization (R-1 / FIX-UNICODE-NFC-GLOBAL 2026-08-24) ────
+# Canonical source: classify_utils.normalize_kiid_text().  Defensive import
+# mirrors the project pattern for other classify_utils consumers.
+try:
+    from classify_utils import normalize_kiid_text as _nfc_text
+except ImportError:
+    try:
+        from core.classify_utils import normalize_kiid_text as _nfc_text
+    except ImportError:
+        import unicodedata as _ucd_fallback
+        def _nfc_text(s):  # pragma: no cover
+            """Fallback when classify_utils is not on sys.path (tests, scripts)."""
+            return _ucd_fallback.normalize("NFC", s) if s else s
+# ─────────────────────────────────────────────────────────────────────────────
+
 # Config
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 REQUEST_TIMEOUT  = 15     # timeout por intento en segundos
@@ -717,6 +732,14 @@ def get_kiid_for_isin(
                 _cached_table_text    = cached[4]   # DLA2_Table_Text — puede ser NULL
                 _cached_status        = cached[5]
 
+                # FIX-UNICODE-NFC-GLOBAL: normalize once at the read boundary.
+                # Every return from this function yields NFC text; Raw_KIID_Text
+                # in the DB stays byte-faithful to the PDF (bytes-based hash
+                # pdf_sha256 is unaffected).  Both streams normalized so that
+                # Fed_Text_For_Cost (built below) is also NFC.
+                _cached_text       = _nfc_text(_cached_text)
+                _cached_table_text = _nfc_text(_cached_table_text) if _cached_table_text else None
+
                 # ── BL-DLA-2: enriquecer texto cacheado con tablas Cat.1+2 ──
                 # Si DLA_TABLE_SERIALIZATION_ENABLED y ya hay texto de tablas en BD,
                 # concatenar — idéntico a cómo se hace en la descarga real.
@@ -833,6 +856,10 @@ def get_kiid_for_isin(
                     local_bytes, isin, local_hash, source="LOCAL", url=_cached_url
                 )
                 if kiid_text:
+                    # FIX-UNICODE-NFC-GLOBAL: normalize freshly-extracted text.
+                    kiid_text = _nfc_text(kiid_text)
+                    if _updates.get("DLA2_Table_Text"):
+                        _updates["DLA2_Table_Text"] = _nfc_text(_updates["DLA2_Table_Text"])
                     meta.update(_updates)
                     return kiid_text, meta
                 # Texto vacío / extracción fallida en local → fallback a remoto.
@@ -898,6 +925,10 @@ def get_kiid_for_isin(
                 pdf_bytes, isin, new_hash, source="REMOTE", url=url
             )
             if kiid_text:
+                # FIX-UNICODE-NFC-GLOBAL: normalize freshly-extracted text.
+                kiid_text = _nfc_text(kiid_text)
+                if _updates.get("DLA2_Table_Text"):
+                    _updates["DLA2_Table_Text"] = _nfc_text(_updates["DLA2_Table_Text"])
                 meta.update(_updates)
                 return kiid_text, meta
 

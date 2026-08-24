@@ -194,6 +194,7 @@ FUNCIONES:
 import re
 import math
 import logging
+import unicodedata
 from typing import Optional, Tuple
 
 
@@ -226,6 +227,60 @@ def cost_values_agree(a: Optional[float], b: Optional[float]) -> bool:
     if a is None or b is None:
         return False
     return math.isclose(a, b, rel_tol=COST_CMP_REL_TOL, abs_tol=COST_CMP_ABS_TOL)
+
+
+# ============================================================
+# Canonicalización de texto KIID — fuente única (R-1, P#11 DRY)
+# ------------------------------------------------------------
+# FIX-UNICODE-NFC-GLOBAL (2026-08-24): pdfplumber devuelve ocasionalmente
+# caracteres Unicode descompuestos (p.ej. "o" + U+0301 en lugar de "ó"),
+# lo que provoca fallos silenciosos en todos los patrones que esperan la
+# forma precompuesta (gestión, operación, comisión, rendimiento, etc.).
+#
+# Esta función es EL punto único de normalización NFC para todo texto KIID
+# en la plataforma. Úsala siempre que texto extraído de KIID vaya a ser
+# procesado por regexes de clasificación, extracción de costes, o cualquier
+# otro consumidor de texto.
+#
+# Propiedades garantizadas:
+#   - NFC-only: no altera NBSP (U+00A0), ligaduras, ni caracteres
+#     de compatibilidad → no interfiere con NFKD/NFKC usados internamente.
+#   - Idempotente: normalize_kiid_text(normalize_kiid_text(s)) == normalize_kiid_text(s).
+#   - Segura con None/vacío: retorna la entrada sin modificar si falsy.
+#
+# Los dos sitios que aplican NFC localmente (priips_cost_extractor:920 y
+# kiid_parser:3566) se mantienen como defensa en profundidad (R-1 §defense-
+# in-depth, ver sqlite_writer._normalize_record); son idempotentes.
+# ============================================================
+
+def normalize_kiid_text(s: Optional[str]) -> Optional[str]:
+    """Canonical text-prep for all KIID consumers (NFC + NBSP collapse).
+
+    Applied once at the read boundary (get_kiid_for_isin) so every downstream
+    module — block classifiers, cost extractors, attribute detectors — receives
+    clean, consistent text without each needing to guard independently.
+
+    Steps (in order):
+      1. NFC normalization — recomposes decomposed accents (e.g. o+U+0301 → ó).
+      2. NBSP collapse     — U+00A0 → regular space; eliminates invisible
+                             non-breaking spaces that silently break \\s+ patterns.
+
+    Deliberately NOT done here (structural whitespace preserved):
+      - \\s+ / newline collapse — newlines are structural markers used by section
+        finders; collapsing them is deferred (see backlog item DEFER-WSPC-COLLAPSE).
+      - NFKC / compatibility folding — would alter ligatures, subscripts, and the
+        NFKD path in srri_v4_geometric; keep NFC-only.
+
+    Args:
+        s: Raw text string from pdfplumber / OCR / DB cache.  May be None.
+
+    Returns:
+        Normalized string, or the original falsy value unchanged.
+    """
+    if not s:
+        return s
+    s = unicodedata.normalize("NFC", s)
+    return s.replace("\xa0", " ")
 
 
 # ============================================================
