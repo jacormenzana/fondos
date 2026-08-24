@@ -854,6 +854,7 @@ def extract_priips_costs(
     existing_oc:    Optional[float] = None,    # Ongoing_Charge_Recurrent actual en BD (escala BD)
     existing_entry: Optional[float] = None,    # Entry_Fee_Pct actual en BD
     existing_exit:  Optional[float] = None,    # Exit_Fee_Pct actual en BD
+    existing_mgmt:  Optional[float] = None,    # Management_Fee_Pct actual en BD (% entero) — P1-17
 ) -> Dict[str, Any]:
     """
     Extrae los campos de coste de un KID PRIIPs a partir del texto concatenado
@@ -1467,7 +1468,33 @@ def extract_priips_costs(
         if mgmt is not None:
             ter_recon_ratio = mgmt + (tran or 0.0)
 
-        if ter_recon_ratio is not None:
+        # FIX-OC-BIND-MGMT-FALLBACK (P1-17, 2026-08-24) — se resuelve AQUÍ, antes de
+        # la puerta de abajo. La reparación de ligadura fija el gasto corriente al
+        # componente de GESTIÓN, así que sin gestión no tiene destino; pero además
+        # todo el bloque de reparación colgaba de `ter_recon_ratio`, que solo se
+        # calcula `if mgmt is not None`. Con la gestión no rederivable el bloque
+        # entero se saltaba y el fondo conservaba en silencio un OC contaminado.
+        #
+        # Medido en el ensayo del 2026-08-24: ~35 de los 39 residuales OC == ACI_RHP
+        # son exactamente esto. DE000DWS29E6: BD gestión 1,46, ACI_RHP 2,40, OC 2,40 —
+        # la guarda devuelve 'ACI' sobre los valores de BD y repararía, pero en
+        # ejecución mgmt=None, luego ter_recon_ratio=None y no se entraba siquiera.
+        #
+        # El valor almacenado se usa SOLO como destino de reparación. NUNCA se
+        # publica en Management_Fee_Pct ni alimenta `ter_recon_ratio` (que sostiene
+        # la reconstrucción TER de BL-COST-5): anunciarlo como extracción de esta
+        # pasada sería fabricar procedencia (P#10).
+        _mgmt_for_bind = mgmt
+        _mgmt_from_db = False
+        if _mgmt_for_bind is None and existing_mgmt is not None:
+            _cand = existing_mgmt / 100.0
+            if 0.0 < _cand <= _MAX_FEE_RATIO:
+                _mgmt_for_bind = _cand
+                _mgmt_from_db = True
+
+        if ter_recon_ratio is not None or (
+            _mgmt_for_bind is not None and existing_oc is not None
+        ):
             if existing_oc is None:
                 # COALESCE-compatible: rellenar hueco con TER puro.
                 #
@@ -1526,18 +1553,25 @@ def extract_priips_costs(
                     out['ACI_1Y'] / 100.0 if 'ACI_1Y' in out else aci_1y_final
                 )
                 _bind_signal = _resolve_oc_binding(
-                    oc_norm, mgmt, _aci_final_ratio, _aci_1y_ratio
+                    oc_norm, _mgmt_for_bind, _aci_final_ratio, _aci_1y_ratio
                 )
 
                 if _bind_signal is not None:
                     _log.info(
                         "[FIX-OC-BIND] %s: Ongoing_Charge %.4f→%.4f "
-                        "(el valor heredado era %s; se fija al componente de gestión)",
-                        isin, oc_norm, mgmt, _bind_signal,
+                        "(el valor heredado era %s; se fija al componente de gestión%s)",
+                        isin, oc_norm, _mgmt_for_bind, _bind_signal,
+                        " almacenado en BD" if _mgmt_from_db else "",
                     )
-                    out['Ongoing_Charge_Recurrent'] = mgmt
+                    out['Ongoing_Charge_Recurrent'] = _mgmt_for_bind
 
-                if _detect_oc_aci_mismatch(existing_oc, oc_norm, ter_recon_ratio, aci_rhp_final):
+                # P1-17: la vía BL-COST-5 reconstruye un TER y por tanto EXIGE una
+                # gestión realmente extraída en esta pasada. Con `ter_recon_ratio`
+                # a None (gestión no rederivable) se omite: la reparación de ligadura
+                # de arriba ya ha actuado, y publicar un TER a partir de un valor
+                # almacenado sería inventar procedencia.
+                if ter_recon_ratio is not None and _detect_oc_aci_mismatch(
+                        existing_oc, oc_norm, ter_recon_ratio, aci_rhp_final):
                     out['_oc_aci_mismatch'] = True
                     out['_oc_aci_mismatch_ter_pct'] = _ratio_to_pct(ter_recon_ratio)
                     _log.info(

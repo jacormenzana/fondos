@@ -153,6 +153,7 @@ PDFs and `Raw_KIID_Text` (in `fund_kiid_metadata`) are **never deleted**.
 | `cost_format_router.py` | `proyecto1/core` |
 | `cost_format_signals.py` | `proyecto1/core` |
 | `cost_pct_anchored.py` | `proyecto1/core` |
+| `cost_scale.py` | `proyecto1/core` |
 | `cost_table_parser.py` | `proyecto1/core` |
 | `dla_extractor.py` | `proyecto1/core` |
 | `dla_table_serializer.py` | `proyecto1/core` |

@@ -1048,8 +1048,15 @@ def correct_oc_aci_mismatch(
 
     if ter_pct is None:
         return False
-    # FIX-OC-SCALE: porcentaje entero -> ratio decimal (escala de la columna).
-    _ter_ratio = ter_pct / 100.0
+    # FIX-OC-SCALE / P1-19: porcentaje entero -> ratio decimal (escala de la
+    # columna). La conversión NO se escribe aquí a mano: vive en `cost_scale`,
+    # única definición de la convención, para que los tres escritores de esta
+    # columna no puedan volver a discrepar (P#11 / R-1).
+    try:
+        from core.cost_scale import pct_to_ratio as _pct_to_ratio
+    except ImportError:
+        from cost_scale import pct_to_ratio as _pct_to_ratio
+    _ter_ratio = _pct_to_ratio(ter_pct)
 
     cur = conn.execute(
         "UPDATE fund_master SET Ongoing_Charge_Recurrent = ?, Updated_At = ? "

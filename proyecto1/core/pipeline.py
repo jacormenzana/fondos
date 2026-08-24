@@ -247,6 +247,11 @@ from core.sqlite_writer import (
     global_post_pipeline_normalize_db,   # BL-53/56/57: barrido global
 )
 from core._db_utils import EffectiveReader   # BL-49/50: lectura efectiva
+# P1-19: única definición de la escala de coste (P#11 / R-1)
+try:
+    from core.cost_scale import OC_RATIO_MAX as _OC_RATIO_MAX
+except ImportError:                          # proyecto1/core ya en sys.path
+    from cost_scale import OC_RATIO_MAX as _OC_RATIO_MAX
 
 # BL-COST-4c: extractores Sprint 2 (kill-switch interno en cada módulo)
 # Import condicional: el pipeline no rompe si los módulos no están presentes.
@@ -2839,15 +2844,19 @@ def run_block(
                 # Leer Cost_Extraction_Quality ya en BD para skip logic (A-5 S2-C)
                 # y Ongoing_Charge/Entry/Exit para comparación mismatch (PC-3 S2-C).
                 # SELECT dedicado — no ampliar _v3_row (preserva índice _v3_row[:5]).
+                # P1-17: Management_Fee_Pct se lee también — el extractor lo usa SOLO
+                # como destino de reparación de FIX-OC-BIND cuando no logra rederivar
+                # la gestión del texto (nunca se republica como extracción).
                 _cost_bd_row = conn.execute(
                     "SELECT Cost_Extraction_Quality, Ongoing_Charge_Recurrent, "
-                    "Entry_Fee_Pct_Max, Exit_Fee_Pct_Max "
+                    "Entry_Fee_Pct_Max, Exit_Fee_Pct_Max, Management_Fee_Pct "
                     "FROM fund_master WHERE ISIN=?", (isin,)
                 ).fetchone()
                 _ceq_bd   = _cost_bd_row[0] if _cost_bd_row else None
                 _oc_bd    = _cost_bd_row[1] if _cost_bd_row else None
                 _entry_bd = _cost_bd_row[2] if _cost_bd_row else None
                 _exit_bd  = _cost_bd_row[3] if _cost_bd_row else None
+                _mgmt_bd  = _cost_bd_row[4] if _cost_bd_row else None
 
                 # v20 (§4.2): el bloque de coste se ejecuta SOLO con PDF en mano
                 # (status ∈ refresh/new ⇔ pdf_bytes is not None). En CACHED
@@ -2893,6 +2902,7 @@ def run_block(
                             existing_oc=_oc_bd,
                             existing_entry=_entry_bd,
                             existing_exit=_exit_bd,
+                            existing_mgmt=_mgmt_bd,     # P1-17: destino de reparación
                         )
                     elif _fmt == 'UCITS_KIID':
                         _cost_dict = extract_ucits_costs(
@@ -2922,6 +2932,17 @@ def run_block(
                         # de parsing fuera-de-rango aborte el UPSERT entero y pierda
                         # el fondo. La corrección de raíz es FIX-COST-RATIO-SAFE en
                         # cost_table_parser.py; esta guarda es cinturón + tirantes.
+                        # P1-19 (2026-08-24): esta guarda vigilaba TODAS las columnas
+                        # de coste MENOS `Ongoing_Charge_Recurrent`, que es justo la
+                        # única con tres escritores distintos. Por ese hueco entraron
+                        # sin oposición los 5 fondos con un gasto corriente del 208 %
+                        # (FIX-OC-SCALE): ninguna guarda los miró.
+                        #
+                        # ⚠ TRAMPA DE ESCALA: los límites de abajo están en PORCENTAJE
+                        # ENTERO, pero `Ongoing_Charge_Recurrent` está en RATIO DECIMAL.
+                        # Su techo NO puede escribirse aquí como 25.0; se toma de
+                        # `cost_scale.OC_RATIO_MAX`, la única definición de la
+                        # convención (P#11 / R-1).
                         _COST_PCT_LIMITS: dict = {
                             'Transaction_Cost_Pct': (0.0, 5.0),
                             'Management_Fee_Pct':   (0.0, 10.0),
@@ -2930,6 +2951,8 @@ def run_block(
                             'Performance_Fee_Pct':  (0.0, 30.0),
                             'ACI_1Y':               (0.0, 50.0),
                             'ACI_RHP':              (0.0, 25.0),
+                            # RATIO, no porcentaje — ver nota de arriba.
+                            'Ongoing_Charge_Recurrent': (0.0, _OC_RATIO_MAX),
                         }
                         for _cf in _COST_FIELDS:
                             if _cf in _cost_dict:
