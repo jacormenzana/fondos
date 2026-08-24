@@ -2780,6 +2780,25 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
         w
     ))
 
+    # FIX-B1-EN-NOTEXCEED-BONDS-1 (2026-08-24): English secondary bond cap
+    # expressed as "[debt securities/bonds/fixed income] will not exceed X%"
+    # or "will not exceed X% … [debt/bonds/FI]" — the "will not exceed"
+    # phrasing declares an explicit MAXIMUM allocation, identical in intent to
+    # "invest up to X%" (FIX-B1-EN-UPTO-BONDS-1) but with a different syntax.
+    # Confirmed: ABN AMRO Parnassus US ESG Equities (LU1481505672/LU1670606927/
+    # LU1890796136) — "Investments in debt securities will not exceed 15% of
+    # its net assets" fires bond_dominant (via "debt securities") while the
+    # primary mandate commits ≥75% to equity. Without this fix: eq_dominant=True
+    # but bond_dominant=True and _minor_secondary_bond=False → line 2844 does
+    # NOT return "Renta Variable" → falls to has_equity+has_bonds → "Mixtos".
+    _minor_secondary_bond = _minor_secondary_bond or bool(re.search(
+        r'(?:debt\s+securities|bonds?\b|fixed\s+income)[^.]{0,100}'
+        r'(?:will|shall|may)\s+not\s+exceed\s+\d+\s*%'
+        r'|(?:will|shall)\s+not\s+exceed\s+\d+\s*%[^.]{0,100}'
+        r'(?:debt\s+securities|bonds?\b|fixed\s+income)',
+        w
+    ))
+
     # FIX-NAT-ES-SECBOND-1 (2026-07-19): "también podrá invertir en bonos /
     # renta fija / deuda" — Spanish optional/secondary bond allocation in a
     # fund whose primary mandate is equity. "también" (= also) signals an
