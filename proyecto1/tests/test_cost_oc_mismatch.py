@@ -34,7 +34,15 @@ def _make_conn():
 
 
 def test_correct_oc_updates_value():
-    """El valor se sobrescribe directamente (sin COALESCE)."""
+    """El valor se sobrescribe directamente (sin COALESCE), en escala RATIO.
+
+    FIX-OC-SCALE (2026-08-24): esta prueba afirmaba `ter_pct=0.70 -> 0.70`, es
+    decir un gasto corriente del 70 %. `ter_pct` es porcentaje entero, pero la
+    columna `Ongoing_Charge_Recurrent` está en ratio decimal, así que el valor
+    correcto es 0,007. Evidencia de la escala: 2.233 fondos activos cumplen
+    `Ongoing_Charge_Recurrent*100 == Management_Fee_Pct`, relación que solo se
+    sostiene si OC es ratio y la comisión de gestión porcentaje entero.
+    """
     from sqlite_writer import correct_oc_aci_mismatch
     conn = _make_conn()
     result = correct_oc_aci_mismatch(conn, 'TEST0001', ter_pct=0.70)
@@ -42,7 +50,7 @@ def test_correct_oc_updates_value():
     row = conn.execute(
         "SELECT Ongoing_Charge_Recurrent FROM fund_master WHERE ISIN='TEST0001'"
     ).fetchone()
-    assert abs(row[0] - 0.70) < 0.001
+    assert row[0] == pytest.approx(0.0070)
 
 
 def test_correct_oc_returns_false_for_missing_isin():
@@ -95,17 +103,23 @@ def test_write_order_correction_survives_coalesce_upsert():
     """
     FIX-OC-WRITE-ORDER: correct_oc_aci_mismatch must run AFTER publish_fund.
 
-    Scenario: fund has ACI value (2.4) in DB as OC (the contaminated state).
-    Parser emits a management-component value (0.63) via the COALESCE UPSERT.
-    The extractor then repairs OC to the reconstructed TER (0.70).
-    Correct order: UPSERT → repair. Final DB value must be 0.70.
+    Scenario: fund has the ACI in DB as OC (the contaminated state).
+    Parser emits a management-component value (0,0063 ratio) via the COALESCE UPSERT.
+    The extractor then repairs OC to the reconstructed TER (0,70 % -> 0,007 ratio).
+    Correct order: UPSERT → repair. Final DB value must be the repaired one.
+
+    FIX-OC-SCALE (2026-08-24): el escenario se expresa ahora en las escalas
+    reales de cada frontera — el parser emite RATIO, `ter_pct` entra en
+    PORCENTAJE y se almacena como RATIO. La intención de la prueba (el orden de
+    escritura: la reparación debe ganar al UPSERT) no cambia.
     """
     from sqlite_writer import correct_oc_aci_mismatch
     conn = _make_conn()  # fund starts with OC=2.4 (the ACI, contaminated)
 
     # Step 1 — COALESCE UPSERT (publish_fund equivalent)
-    # Parser found management component = 0.63; non-NULL incoming overwrites via COALESCE.
-    _coalesce_upsert(conn, 'TEST0001', new_oc=0.63)
+    # Parser found management component = 0.0063 (ratio); non-NULL incoming
+    # overwrites via COALESCE.
+    _coalesce_upsert(conn, 'TEST0001', new_oc=0.0063)
 
     # Step 2 — no-COALESCE repair (correct_oc_aci_mismatch, must be AFTER UPSERT)
     correct_oc_aci_mismatch(conn, 'TEST0001', ter_pct=0.70)
@@ -113,9 +127,10 @@ def test_write_order_correction_survives_coalesce_upsert():
     row = conn.execute(
         "SELECT Ongoing_Charge_Recurrent FROM fund_master WHERE ISIN='TEST0001'"
     ).fetchone()
-    assert abs(row[0] - 0.70) < 0.001, (
-        f"Repair must win; got {row[0]} (expected 0.70 from correct_oc_aci_mismatch)"
+    assert row[0] == pytest.approx(0.0070), (
+        f"Repair must win; got {row[0]} (expected 0.0070 ratio from correct_oc_aci_mismatch)"
     )
+    assert row[0] != pytest.approx(0.0063), "El UPSERT no debe sobrevivir a la reparación"
 
 
 def test_wrong_write_order_demonstrates_bug():

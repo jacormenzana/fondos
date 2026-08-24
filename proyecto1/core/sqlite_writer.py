@@ -1021,10 +1021,23 @@ def correct_oc_aci_mismatch(
     Invocado desde pipeline.py (BL-COST-5 block) AFTER the main publish_fund
     UPSERT so the no-COALESCE write is not immediately overwritten by COALESCE.
 
+    FIX-OC-SCALE (2026-08-24) — CONVERSIÓN DE ESCALA OBLIGATORIA.
+    `ter_pct` llega en PORCENTAJE ENTERO (contrato del extractor: el campo
+    privado `_oc_aci_mismatch_ter_pct`), pero la columna
+    `fund_master.Ongoing_Charge_Recurrent` está en RATIO DECIMAL (0,0075 = 0,75 %;
+    media del universo activo 0,0139 frente a Management_Fee_Pct 1,3852).
+    Antes de este fix el valor se escribía SIN convertir, de modo que un TER
+    reconstruido de 2,08 % quedaba almacenado como 2,08 — es decir, 208 %.
+    Detectado en el despliegue del 2026-08-24: 5 fondos corrompidos
+    (LU3085135567 mgmt 1,98 + oper 0,10 -> 2,08), OC máximo 1,4 -> 2,08.
+    El bug era latente EN REPOSO pero se activa en cualquier re-extracción de
+    costes (`--recompute-costs`), que es justo cuando esta función se invoca.
+
     Args:
         conn:        conexión activa con isolation_level=None (WAL).
         isin:        ISIN del fondo a corregir.
-        ter_pct:     TER corregido en porcentaje entero (ej: 0.70 para 0.70%).
+        ter_pct:     TER corregido en PORCENTAJE ENTERO (ej: 0.70 para 0.70%).
+                     Se convierte a ratio aquí; nunca se escribe tal cual.
         source_note: etiqueta para logging.
 
     Returns:
@@ -1033,11 +1046,16 @@ def correct_oc_aci_mismatch(
     import logging as _logging
     _logger = _logging.getLogger(__name__)
 
+    if ter_pct is None:
+        return False
+    # FIX-OC-SCALE: porcentaje entero -> ratio decimal (escala de la columna).
+    _ter_ratio = ter_pct / 100.0
+
     cur = conn.execute(
         "UPDATE fund_master SET Ongoing_Charge_Recurrent = ?, Updated_At = ? "
         "WHERE ISIN = ?",
         (
-            ter_pct,
+            _ter_ratio,
             datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
             isin,
         ),
@@ -1045,8 +1063,8 @@ def correct_oc_aci_mismatch(
     updated = cur.rowcount > 0
     if updated:
         _logger.info(
-            "[%s] [%s] Ongoing_Charge_Recurrent corregido: %.4f%% (no-COALESCE)",
-            isin, source_note, ter_pct,
+            "[%s] [%s] Ongoing_Charge_Recurrent corregido: %.4f%% -> %.6f (ratio, no-COALESCE)",
+            isin, source_note, ter_pct, _ter_ratio,
         )
     return updated
 
