@@ -24,7 +24,7 @@ if _CORE_DIR not in sys.path:
     sys.path.insert(0, _CORE_DIR)
 
 import pytest
-from kiid_parser import detect_wrong_kiid_document
+from kiid_parser import detect_wrong_kiid_document, resolve_stuck_wrong_doc
 
 
 # ─── Textos sintéticos ────────────────────────────────────────────────────────
@@ -433,3 +433,60 @@ class TestSimplifiedProspectusDetection:
             "Folleto simplificado con 'información' en tabla de contenidos "
             "debe detectarse (primer-página guard evita FP del veto KIID)"
         )
+
+
+class TestStuckForceRefreshEscalation:
+    """FIX-WRONGDOC-STUCK-FR (2026-08-24): resolve_stuck_wrong_doc() escalation guard.
+
+    Un fondo FORCE_REFRESH con KIID_Error='no_links_found' y texto cacheado
+    que es un documento erróneo confirmado debe escalar a WRONG_DOC porque
+    no puede auto-sanar (sin URL no puede descargar una copia limpia).
+    """
+
+    _ANNUAL_REPORT_TEXT = (
+        "Annual report as at 30 September 2025\n"
+        "Flossbach von Storch\n"
+        "Investment fund under Luxemburg law\n"
+        "Audited financial statements for the year ended 30 September 2025\n"
+        "Schedule of investments as of 30 September 2025\n"
+    ) + "X" * 300
+
+    _VALID_KIID_TEXT = (
+        "DATOS FUNDAMENTALES PARA EL INVERSOR\n"
+        "OBJETIVOS Y POLÍTICA DE INVERSIÓN\n"
+        "El fondo invierte principalmente en renta fija europea.\n"
+        "Indicador de riesgo y remuneración: 3 / 7\n"
+        "GASTOS CORRIENTES: 0,85%\n"
+    ) + "X" * 300
+
+    def test_no_links_found_with_wrong_doc_escalates(self):
+        """Texto cacheado = informe anual + no_links_found → escalación requerida."""
+        reason = resolve_stuck_wrong_doc(self._ANNUAL_REPORT_TEXT, "no_links_found")
+        assert reason is not None, (
+            "FORCE_REFRESH + no_links_found + texto erróneo debe retornar razón de escalación"
+        )
+
+    def test_no_links_found_with_valid_kiid_no_escalation(self):
+        """Texto cacheado = KIID real + no_links_found → sin escalación (reintento legítimo)."""
+        reason = resolve_stuck_wrong_doc(self._VALID_KIID_TEXT, "no_links_found")
+        assert reason is None, (
+            "FORCE_REFRESH + no_links_found + KIID real NO debe escalar a WRONG_DOC"
+        )
+
+    def test_other_error_never_escalates(self):
+        """Errores distintos de no_links_found (transitorios) → sin escalación aunque texto sea erróneo."""
+        for err in ["download_error", "timeout", "http_429", None, ""]:
+            reason = resolve_stuck_wrong_doc(self._ANNUAL_REPORT_TEXT, err)
+            assert reason is None, (
+                f"Error '{err}' no debe activar la escalación (puede ser transitorio)"
+            )
+
+    def test_none_cached_text_no_escalation(self):
+        """Sin texto en caché → sin escalación (nada que comprobar)."""
+        reason = resolve_stuck_wrong_doc(None, "no_links_found")
+        assert reason is None, "cached_text=None no debe escalar"
+
+    def test_empty_cached_text_no_escalation(self):
+        """Texto cacheado vacío → sin escalación."""
+        reason = resolve_stuck_wrong_doc("", "no_links_found")
+        assert reason is None, "cached_text='' no debe escalar"

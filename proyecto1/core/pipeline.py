@@ -205,7 +205,7 @@ import pandas as pd
 import re
 
 from core.io import get_kiid_for_isin
-from core.kiid_parser import parse_kiid_generic, detect_wrong_kiid_document
+from core.kiid_parser import parse_kiid_generic, detect_wrong_kiid_document, resolve_stuck_wrong_doc
 from core.classify_utils import (
     detect_strategy        as _detect_strategy,
     detect_benchmark_type  as _detect_benchmark_type,
@@ -816,7 +816,32 @@ def run_block(
             )
             _t_phases["kiid_fetch"] = round((time.perf_counter() - _t0) * 1000)
             if not kiid_text:
-                log_ingestion(conn, isin, f"{block_name}_KIID", "WARN", kiid_meta.get("KIID_Error"))
+                _kiid_err = kiid_meta.get("KIID_Error")
+                log_ingestion(conn, isin, f"{block_name}_KIID", "WARN", _kiid_err)
+
+                # FIX-WRONGDOC-STUCK-FR (2026-08-24): si no hay texto descargado
+                # Y la causa es "no_links_found", el fondo jamás podrá auto-sanar
+                # en FORCE_REFRESH (no hay URL de descarga). Si su texto en caché
+                # es un documento erróneo confirmado, escalamos FORCE_REFRESH →
+                # WRONG_DOC ahora — evitamos que cicle indefinidamente consumiendo
+                # un slot de descarga en cada run sin posibilidad de resolución.
+                if _kiid_err == "no_links_found":
+                    _cached_row = conn.execute(
+                        "SELECT Raw_KIID_Text FROM fund_kiid_metadata "
+                        "WHERE ISIN=? AND KIID_Class=1",
+                        (isin,)
+                    ).fetchone()
+                    _cached_text_for_check = (_cached_row[0] if _cached_row else None)
+                    _stuck_reason = resolve_stuck_wrong_doc(_cached_text_for_check, _kiid_err)
+                    if _stuck_reason:
+                        with conn:
+                            conn.execute(
+                                "UPDATE fund_kiid_metadata SET KIID_Status='WRONG_DOC' "
+                                "WHERE ISIN=? AND KIID_Class=1", (isin,)
+                            )
+                        log_ingestion(conn, isin, "KIID_WRONG_DOC", "WARN",
+                                      f"WRONG_DOC (FORCE_REFRESH sin links + texto cacheado erróneo): "
+                                      f"{_stuck_reason}")
 
                 continue
 

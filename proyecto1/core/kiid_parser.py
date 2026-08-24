@@ -4544,3 +4544,27 @@ def detect_wrong_kiid_document(
         f"Documento no-KIID detectado (marcador='{marker}'; "
         f"sin cabecera KIID ni sección objetivos)"
     )
+
+
+def resolve_stuck_wrong_doc(cached_text: str | None, kiid_error: str | None) -> str | None:
+    """FIX-WRONGDOC-STUCK-FR (2026-08-24): FORCE_REFRESH + no_links_found escalation.
+
+    Un fondo en FORCE_REFRESH cuya re-descarga no encuentra PDF links está
+    permanentemente atascado: no hay URL de la que obtener un documento limpio,
+    por lo que reintenta cada ciclo consumiendo un slot de descarga sin resolución.
+    Si el texto cacheado (Raw_KIID_Text) es un documento erróneo confirmado
+    (informe anual, estatutos coordinados, etc.) la única salida es escalar a
+    WRONG_DOC — no tiene sentido mantener el estado FORCE_REFRESH.
+
+    Devuelve la razón del WRONG_DOC (str) si la escalación es necesaria, o None
+    si el fondo debe permanecer en su estado actual.
+
+    Guardas:
+    - Solo actúa en "no_links_found" (otros errores pueden ser problemas de red
+      transitorios que se resolverán en el siguiente ciclo).
+    - Solo actúa si hay texto cacheado (sin texto → nada que comprobar).
+    - Delega en detect_wrong_kiid_document() — sin lógica de detección nueva (DRY).
+    """
+    if kiid_error != "no_links_found" or not cached_text:
+        return None
+    return detect_wrong_kiid_document(cached_text)
