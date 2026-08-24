@@ -1265,6 +1265,38 @@ def extract_priips_costs(
             )
             out['ACI_RHP'] = _anchor_rhp
 
+        # FIX-ACI-RHP-OVER-LABEL (P1-16, 2026-08-24). Extensión de la regla de
+        # arriba a su propio principio declarado: la etiqueta manda sobre el
+        # fallback. FIX-ACI-SINGLE-VS-LABEL solo actuaba cuando el fallback había
+        # COPIADO el valor de 1 año; si el fallback traía un número de otro sitio,
+        # la etiqueta no se consultaba y el valor ajeno se publicaba.
+        #
+        # Evidencia (cohorte de 139 fondos con ACI_1Y < ACI_RHP, clasificada por
+        # procedencia contra la etiqueta): 133 de 139 tienen AMBOS valores
+        # idénticos a los que publica su KID — la inversión está en el documento
+        # de origen, no en la extracción, y ahí no hay nada que corregir. Solo
+        # 6 fondos tienen un ACI_RHP que la etiqueta no respalda:
+        #   ES0175437005  etiqueta "1,1% 1,1%"  ->  ACI_RHP almacenado 12,8
+        #   IE000XHDJXE4  etiqueta "0.1% 0.1%"  ->  ACI_RHP almacenado 3,3
+        #   IE00BDGV0290  etiqueta "1,4% 1,5%"  ->  ACI_RHP almacenado 5,0
+        #
+        # Conservador por dos vías: solo corrige a la BAJA hacia la etiqueta —la
+        # firma de la sobrelectura— y exige que el valor de la etiqueta sea él
+        # mismo plausible. Nunca sube un ACI, y nunca toca a los 133 que ya
+        # concuerdan con su documento.
+        if (
+            'ACI_RHP' in out
+            and _anchor_rhp is not None
+            and _anchor_rhp <= _ACI_ANCHOR_MAX_PCT
+            and out['ACI_RHP'] > _anchor_rhp + 0.05
+        ):
+            _log.info(
+                "[FIX-ACI-RHP-OVER-LABEL] %s: ACI_RHP %.2f%%→%.2f%% "
+                "(el valor almacenado no lo respalda la etiqueta del ACI)",
+                isin, out['ACI_RHP'], _anchor_rhp,
+            )
+            out['ACI_RHP'] = _anchor_rhp
+
         # FIX-ACI-LABEL-ANCHOR: último recurso de relleno. Cuando la tabla de
         # ESCENARIOS DE RENTABILIDAD se interpone en el flujo de texto entre el
         # titular de costes y la fila de coste real, parse_costs_over_time liga
