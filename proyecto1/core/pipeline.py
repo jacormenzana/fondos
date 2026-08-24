@@ -2903,6 +2903,7 @@ def run_block(
                             existing_entry=_entry_bd,
                             existing_exit=_exit_bd,
                             existing_mgmt=_mgmt_bd,     # P1-17: destino de reparación
+                            parser_oc=parsed.get("Ongoing_Charge"),  # FIX-OC-PARSER-BIND
                         )
                     elif _fmt == 'UCITS_KIID':
                         _cost_dict = extract_ucits_costs(

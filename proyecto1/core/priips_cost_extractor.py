@@ -855,6 +855,7 @@ def extract_priips_costs(
     existing_entry: Optional[float] = None,    # Entry_Fee_Pct actual en BD
     existing_exit:  Optional[float] = None,    # Exit_Fee_Pct actual en BD
     existing_mgmt:  Optional[float] = None,    # Management_Fee_Pct actual en BD (% entero) — P1-17
+    parser_oc:      Optional[float] = None,    # Ongoing_Charge del kiid_parser (ratio) — FIX-OC-PARSER-BIND
 ) -> Dict[str, Any]:
     """
     Extrae los campos de coste de un KID PRIIPs a partir del texto concatenado
@@ -1542,6 +1543,22 @@ def extract_priips_costs(
                 out['Ongoing_Charge_Recurrent'] = ter_recon_ratio
             else:
                 oc_norm = _norm_existing_oc(existing_oc)
+
+                # FIX-OC-PARSER-BIND (2026-08-24): el kiid_parser puede escribir un
+                # valor distinto al de BD vía COALESCE UPSERT, DESPUÉS de que el
+                # extractor haya devuelto None. Si el OC almacenado ya es correcto
+                # (≈ gestión) pero el parser emite una mala ligadura (txn / ACI),
+                # _resolve_oc_binding no la ve porque oc_norm == gestión.
+                # Se sustituye oc_norm por el valor del parser como señal de alarma:
+                # si _resolve_oc_binding dispara, el extractor publica el valor de
+                # gestión (overriding the parser before COALESCE can write it).
+                if (parser_oc is not None
+                        and _mgmt_for_bind is not None
+                        and oc_norm is not None
+                        and abs(oc_norm - _mgmt_for_bind) < _OC_BIND_TOL):
+                    _parser_norm = _norm_existing_oc(parser_oc)
+                    if _parser_norm is not None and abs(_parser_norm - _mgmt_for_bind) >= _OC_BIND_TOL:
+                        oc_norm = _parser_norm
 
                 # FIX-OC-ACI-REPAIR (2026-08-23): el OC heredado es el ACI.
                 # Firma: OC (en ratio) coincide con ACI_RHP y difiere de la
