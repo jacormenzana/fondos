@@ -4301,7 +4301,10 @@ _GEO_NEGATION_MARKERS = ["fuera de","excluyendo","distintos de","distintas de",
                           # "no abierto a residentes de los estados unidos" is a
                           # sales-restriction clause, not an investment geography signal.
                           "residentes de"]
-_GEO_ISSUER_DETAIL_MARKERS = ["emitidos por","organismos","instituciones privadas","emisores"]
+_GEO_ISSUER_DETAIL_MARKERS = ["emitidos por","garantizados por","organismos","instituciones privadas","emisores"]
+# "garantizados por" added (FIX-GEO-LAZARD-1 2026-08-24): UCITS boilerplate
+# "títulos garantizados por un estado miembro del EEE o de estados unidos"
+# is a legal guarantee-framework clause, not an investment-geography signal.
 _GEO_OTHER_REGION_MARKERS = ["europ","asia","china","japón","japon","india",
                              "latinoam","mercados emergentes","emergent"]
 
