@@ -21,6 +21,8 @@ core.io. Todos los casos son sintéticos — sin acceso a disco ni a BD.
 import os
 import sys
 
+import pytest
+
 _TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
 _CORE_DIR = os.path.normpath(os.path.join(_TESTS_DIR, '..', 'core'))
 if _CORE_DIR not in sys.path:
@@ -219,3 +221,67 @@ def test_annual_at_long_horizon_not_discarded_by_implausible_total():
     rows = [{'horizon_years': 5.0, 'total_cost_eur': 533462.0, 'aci_pct': 0.038}]
     out = _build_schedule_rows(rows, 5.0, 'TEST_LONG')
     assert out[0]['Annual_Impact_Pct'] == 3.8
+
+
+# ===========================================================================
+# FIX-SCHEDULE-ANNUAL-BLEED — el mismo dato, el mismo techo en TODOS sus destinos
+#
+# La incidencia anual llega a tres sitios: fund_master.ACI_1Y, fund_master.ACI_RHP
+# y fund_cost_schedule.Annual_Impact_Pct. Los dos primeros pasaban por el ancla de
+# etiqueta con techo _ACI_ANCHOR_MAX_PCT; el tercero se escribía con el valor
+# POSICIONAL, sin techo. Resultado: 43 filas activas con la rentabilidad del
+# escenario de tensión (signo comido) publicada como coste — el mismo defecto
+# corregido el 2026-08-23 en fund_master y no en fund_cost_schedule.
+#
+#   LU1006075656  fila 1a = 48,63 %  frente a ACI_1Y publicado 1,9 %
+#   ES0175404013  fila 1a = 77,24 %  frente a ACI_1Y publicado 1,0 %
+# ===========================================================================
+
+def test_scenario_bleed_replaced_by_label_anchored_aci():
+    """LU1006075656: 48,63 % es la rentabilidad del escenario, no un coste."""
+    rows = [{'horizon_years': 1.0, 'total_cost_eur': 5140.0, 'aci_pct': 0.4863}]
+    out = _build_schedule_rows(rows, 5.0, 'TEST_BLEED', None, 1.9)
+    assert out[0]['Annual_Impact_Pct'] == 1.9
+
+
+def test_scenario_bleed_omitted_when_no_anchor_available():
+    """Sin ancla de etiqueta se omite la clave (P#10), nunca el escenario."""
+    rows = [{'horizon_years': 1.0, 'total_cost_eur': 14950.0, 'aci_pct': 0.7724}]
+    out = _build_schedule_rows(rows, 5.0, 'TEST_BLEED_NOANCHOR')
+    assert 'Annual_Impact_Pct' not in out[0]
+
+
+def test_bleed_guard_uses_the_same_ceiling_as_the_master_aci():
+    """El techo es el que gobierna el dato en su otro destino, no uno nuevo.
+
+    El importe en EUR se elige COHERENTE con el anual (1.600 sobre base 10.000 =
+    16 %), para que la comprobación mida sólo la guarda de sangrado y no dispare
+    de rebote FIX-SCHEDULE-ANNUAL-GT-TOTAL.
+    """
+    from priips_cost_extractor import _ACI_ANCHOR_MAX_PCT
+    just_under = (_ACI_ANCHOR_MAX_PCT - 0.5) / 100.0
+    just_over = (_ACI_ANCHOR_MAX_PCT + 0.5) / 100.0
+    kept = _build_schedule_rows(
+        [{'horizon_years': 1.0, 'total_cost_eur': 1600.0, 'aci_pct': just_under}],
+        5.0, 'TEST_UNDER')
+    assert kept[0]['Annual_Impact_Pct'] == pytest.approx(_ACI_ANCHOR_MAX_PCT - 0.5)
+    dropped = _build_schedule_rows(
+        [{'horizon_years': 1.0, 'total_cost_eur': 1600.0, 'aci_pct': just_over}],
+        5.0, 'TEST_OVER')
+    assert 'Annual_Impact_Pct' not in dropped[0]
+
+
+def test_plausible_annual_is_untouched_by_the_bleed_guard():
+    """Control: los costes anuales normales no se tocan."""
+    for aci, expected in ((0.019, 1.9), (0.0514, 5.14), (0.001, 0.1)):
+        out = _build_schedule_rows(
+            [{'horizon_years': 1.0, 'total_cost_eur': 500.0, 'aci_pct': aci}],
+            5.0, 'TEST_OK', None, 99.0)
+        assert out[0]['Annual_Impact_Pct'] == pytest.approx(expected)
+
+
+def test_rhp_row_bleed_without_anchor_is_omitted_not_published():
+    """A horizonte RHP no hay ancla de 1 año: se omite, no se publica el escenario."""
+    rows = [{'horizon_years': 5.0, 'total_cost_eur': 5140.0, 'aci_pct': 0.4863}]
+    out = _build_schedule_rows(rows, 5.0, 'TEST_BLEED_RHP', None, 1.9)
+    assert 'Annual_Impact_Pct' not in out[0]

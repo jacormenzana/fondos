@@ -623,8 +623,46 @@ def _build_schedule_rows(
         }
         if eur is not None:
             row['Total_Costs_EUR'] = eur
+        # FIX-SCHEDULE-ANNUAL-BLEED (2026-08-24): el MISMO dato — la incidencia
+        # anual de los costes — llega a tres destinos y sólo dos estaban
+        # protegidos. `fund_master.ACI_1Y/ACI_RHP` pasan por el ancla de etiqueta
+        # con techo _ACI_ANCHOR_MAX_PCT, y la fila RHP hereda ese valor ya
+        # saneado; pero esta fila se escribía con el `aci_pct` POSICIONAL de
+        # parse_costs_over_time, sin techo alguno.
+        #
+        # Consecuencia medida (auditoría de distribución, 43 filas activas):
+        # todas con Horizon_Years=1 e Is_RHP=0, ninguna coincidente con el ACI
+        # publicado del propio fondo, y ningún fondo con ACI_1Y/ACI_RHP > 25 %.
+        # Son las rentabilidades del escenario de tensión con el signo comido —
+        # el mismo defecto documentado el 2026-08-23, corregido entonces en
+        # `fund_master` y NO en `fund_cost_schedule`:
+        #   LU1006075656  fila 1a = 48,63 %  frente a ACI_1Y publicado 1,9 %
+        #   ES0175404013  fila 1a = 77,24 %  frente a ACI_1Y publicado 1,0 %
+        #
+        # Se aplica el MISMO techo que gobierna el dato en su otro destino. Si el
+        # ancla de etiqueta existe para este horizonte, gana (evidencia sobre
+        # magnitud); si no, se omite la clave — NULL = "no descubierto" (P#10),
+        # nunca una rentabilidad de escenario publicada como coste.
         if aci is not None:
-            row['Annual_Impact_Pct'] = _ratio_to_pct(aci)
+            _ann_pct = _ratio_to_pct(aci)
+            if _ann_pct is not None and _ann_pct > _ACI_ANCHOR_MAX_PCT:
+                _is_1y = abs(hy - 1.0) <= 0.01
+                if _is_1y and anchor_1y is not None and anchor_1y <= _ACI_ANCHOR_MAX_PCT:
+                    _log.info(
+                        "[FIX-SCHEDULE-ANNUAL-BLEED] %s: horizonte %.2fa anual "
+                        "%.2f%% sustituido por el ACI anclado a etiqueta %.2f%%",
+                        isin, hy, _ann_pct, anchor_1y,
+                    )
+                    row['Annual_Impact_Pct'] = anchor_1y
+                else:
+                    _log.info(
+                        "[FIX-SCHEDULE-ANNUAL-BLEED] %s: horizonte %.2fa anual "
+                        "%.2f%% omitido (supera el techo %.1f%% del ACI; sin "
+                        "ancla de etiqueta para este horizonte)",
+                        isin, hy, _ann_pct, _ACI_ANCHOR_MAX_PCT,
+                    )
+            else:
+                row['Annual_Impact_Pct'] = _ann_pct
         # Total_Costs_Pct: EUR acumulado / base en % entero (coherencia con columnas nuevas P-4)
         #
         # FIX-SCHEDULE-PCT-GATE (2026-08-24): este valor es DERIVADO, no leído del
