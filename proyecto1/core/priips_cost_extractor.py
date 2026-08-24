@@ -1619,8 +1619,11 @@ def extract_priips_costs(
                 # a None (gestión no rederivable) se omite: la reparación de ligadura
                 # de arriba ya ha actuado, y publicar un TER a partir de un valor
                 # almacenado sería inventar procedencia.
-                if ter_recon_ratio is not None and _detect_oc_aci_mismatch(
-                        existing_oc, oc_norm, ter_recon_ratio, aci_rhp_final):
+                if (ter_recon_ratio is not None
+                        and (_mgmt_for_bind is None
+                             or abs(oc_norm - _mgmt_for_bind) >= _OC_BIND_TOL)
+                        and _detect_oc_aci_mismatch(
+                            existing_oc, oc_norm, ter_recon_ratio, aci_rhp_final)):
                     out['_oc_aci_mismatch'] = True
                     out['_oc_aci_mismatch_ter_pct'] = _ratio_to_pct(ter_recon_ratio)
                     _log.info(
