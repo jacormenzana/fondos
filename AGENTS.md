@@ -560,6 +560,7 @@ Repo-scoped skills used for diagnostics and backlog maintenance. Invoke by name.
 | Skill | Purpose |
 |-------|---------|
 | `auditStatisticalDataDistributionCostAttributes` | Statistical distribution audit of every cost attribute in `fund_master` and `fund_cost_schedule` — distributions, cross-component equality, shape mome |
+| `auditStatisticalDataDistributionP2Metrics` | Statistical distribution audit of every quantitative metric and indicator in `fund_metrics` and `fund_metric_timeseries` — distributions, cross-series |
 | `costP1AuditPipelineAndDiagCost` | Diagnostic and auditing workflow for troubleshooting pipeline cost extraction failures and generating code-level fixes. |
 | `crossValidateFundAttribute` | Add or audit a dual-signal (fund name + KIID text) cross-validated fund_master attribute, following the discipline established for Asset_Currency/Fund |
 | `debugErrorCode` | Four-phase debugging methodology with root cause analysis. Use when investigating bugs, fixing test failures, or troubleshooting unexpected behavior.  |
