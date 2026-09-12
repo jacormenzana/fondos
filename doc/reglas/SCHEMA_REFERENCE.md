@@ -34,6 +34,9 @@
 | `fund_metric_timeseries` | P2 |
 | `fund_metric_alerts` | P2 |
 | `fund_metric_state` | P2 |
+| `fund_cost_corrections` | P1 |
+| `audit_statistic` | P1/P2 |
+| `audit_finding` | P1/P2 |
 <!-- AUTO:END schema-reference-tables -->
 
 ---

@@ -367,12 +367,22 @@ LIQUIDITY_FLAG_THRESHOLD: float = 0.20   # >20% días sin movimiento → ilíqui
 # más reciente disponible en fund_metric_timeseries.
 # Fail-open: si ref_type='category' y la categoría tiene < 5 fondos con datos,
 #            no se emite alerta (no hay base estadística suficiente).
+# FIX-ALERT-D3 (2026-09-13, AUDITORIA_ESTADISTICA.md §2.5): VOL_CAT_P90/P97
+# targeted window='rolling_6m', which has 0 rows in fund_metric_timeseries —
+# the v29 curated hybrid model only tracks rolling_1y/2y/3y/5y/10y there
+# (ROLLING_WINDOWS); rolling_1m/3m/6m are short-horizon (SHORT_WINDOWS,
+# metric_version='d1') and live in fund_metrics.horizon, a different table
+# and dimension that compute_category_snapshot()/compute_alerts() never
+# read. Both rules silently never fired. Retargeted to rolling_1y, the
+# shortest window this alert engine can actually see — a proper rolling_6m
+# peer-alert would need a separate feature building an analogous
+# category-percentile snapshot over fund_metrics' d1 rows; out of scope here.
 ALERT_RULES: list[dict] = [
     # Volatilidad vs categoría: WARN si > p90, ALARM si > p97
     {
         "rule_code":   "VOL_CAT_P90",
         "metric":      "vol_ann",
-        "window":      "rolling_6m",
+        "window":      "rolling_1y",
         "ref_type":    "category",
         "level":       "WARN",
         "direction":   "above",
@@ -381,7 +391,7 @@ ALERT_RULES: list[dict] = [
     {
         "rule_code":   "VOL_CAT_P97",
         "metric":      "vol_ann",
-        "window":      "rolling_6m",
+        "window":      "rolling_1y",
         "ref_type":    "category",
         "level":       "ALARM",
         "direction":   "above",

@@ -14,6 +14,7 @@ for their respective domains; this file must not duplicate their content — it 
 | `SCHEMA_REFERENCE.md` | *where data lives* | Full DB table/column reference (P1/P2/P3) |
 | `PROVENANCE_DATOS_MACRO.md` | *where macro data comes from* | Macro-series sourcing, data-source provenance, API keys, refresh cadence |
 | `P4_BI_CHARTER.md` | *how BI sync works* | P4 Postgres/Superset charter (ETL, ports, DDL, datasets) |
+| `AUDITORIA_ESTADISTICA.md` | *how statistical distribution audits work* | 7-block model evaluation, indicator catalog, generic function/config catalog for the cost-attribute and P2-metrics statistical audits |
 
 | Backlog registers (`doc/backlog/`) | Answers | Canonical for |
 |---|---|---|
@@ -230,6 +231,7 @@ proyecto2/
     analysis/
       test_export_metrics.py
     calculations/
+      test_alert_engine_fix_20260913.py
       test_consistency.py
       test_drawdown.py
       test_macro_sensitivity.py
@@ -539,6 +541,7 @@ UPDATE fund_kiid_metadata SET KIID_Status='FORCE_REFRESH' WHERE ISIN='<isin>' AN
 <!-- AUTO:BEGIN launchers -->
 | Script | Domain |
 |--------|--------|
+| `AUDIT_statistical.bat` | — |
 | `P1_diagCost.bat` | P1 |
 | `P1_discoverAllFunds.bat` | P1 |
 | `P1_discoverAllFundsPlusCostDiag.bat` | P1 |
@@ -695,6 +698,9 @@ Key `Fund_Nature` values: `Renta Variable` · `Mixtos` · `Renta Fija Flexible` 
 | `fund_metric_timeseries` | P2 |
 | `fund_metric_alerts` | P2 |
 | `fund_metric_state` | P2 |
+| `fund_cost_corrections` | P1 |
+| `audit_statistic` | P1/P2 |
+| `audit_finding` | P1/P2 |
 <!-- AUTO:END db-tables -->
 
 ### Known bugs

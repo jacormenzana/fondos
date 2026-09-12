@@ -863,3 +863,87 @@ CREATE TABLE IF NOT EXISTS fund_metric_state (
     FOREIGN KEY (isin) REFERENCES fund_master (ISIN) ON DELETE CASCADE
 );
 
+-- ============================================================
+-- fund_cost_corrections  (P1 — promoted from db/migrations/20260823_cost_
+-- corrections_audit.sql to canonical schema; doc/reglas/AUDITORIA_ESTADISTICA.md
+-- §7 finding J: the table existed in production with 6,077 rows but no
+-- CREATE TABLE in this file and zero code writers — preserve_and_write()
+-- in shared/statistical_audit/persistence.py is now the single writer.)
+-- One row per correction: preserves the prior value before any cost
+-- component in fund_master/fund_cost_schedule is overwritten. No cost datum
+-- is ever lost (P#1).
+-- ============================================================
+CREATE TABLE IF NOT EXISTS fund_cost_corrections (
+    ISIN         TEXT    NOT NULL,
+    Column_Name  TEXT    NOT NULL,   -- e.g. 'ACI_RHP'
+    Old_Value    REAL,               -- preserved value (NULL if there was none)
+    New_Value    REAL,               -- value after the correction (NULL = nulled out)
+    Reason       TEXT    NOT NULL,   -- fix code, e.g. 'F3-PROJECTION-NO-ANCHOR'
+    Evidence     TEXT,               -- concrete evidence (KID excerpt, etc.)
+    Corrected_At TEXT    NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (ISIN, Column_Name, Corrected_At)
+);
+
+CREATE INDEX IF NOT EXISTS idx_fcc_isin   ON fund_cost_corrections(ISIN);
+CREATE INDEX IF NOT EXISTS idx_fcc_reason ON fund_cost_corrections(Reason);
+CREATE INDEX IF NOT EXISTS idx_fcc_column ON fund_cost_corrections(Column_Name);
+
+-- ============================================================
+-- audit_statistic / audit_finding  (cross-domain — statistical audit engine,
+-- doc/reglas/AUDITORIA_ESTADISTICA.md §6). Append-only, keyed by run_id.
+-- fund_data_quality_issues does not serve this purpose: it is UNIQUE
+-- (ISIN, check_code) — one row per fund per code — and is rebuilt by
+-- DELETE+INSERT every P1 pipeline cycle, while most findings here are
+-- population-level (no ISIN) and must survive across audit runs for
+-- compare_runs() (function #13) to have history to compare against.
+--
+-- audit_statistic = the STATISTICAL FACT (a computed number or status
+-- label): population, group, stat name, value. Never a rule evaluation.
+-- audit_finding    = the RULE EVALUATION over a fact or a row: severity,
+-- threshold, evidence. Separating the two means thresholds can be revised
+-- without recomputing distributions (§2.4/§4 in the doc).
+-- ============================================================
+CREATE TABLE IF NOT EXISTS audit_statistic (
+    run_id          TEXT    NOT NULL,
+    computed_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    domain          TEXT    NOT NULL CHECK (domain IN ('p2_metrics', 'cost_attributes')),
+    population      TEXT    NOT NULL,   -- 'GLOBAL' or a PEER segment label
+    group_key       TEXT    NOT NULL,   -- e.g. 'vol_ann|since_inception|0|v1' or 'Ongoing_Charge_Recurrent'
+    stat_name       TEXT    NOT NULL,   -- 'n_total' / 'p50' / 'skew' / 'zero_pct' / 'cv_status' / ...
+    stat_value      REAL,               -- numeric statistics; NULL = not computed (never NaN)
+    stat_text       TEXT,               -- status labels / non-numeric facts (mass_class, cv_status, ...)
+    n               INTEGER,
+
+    PRIMARY KEY (run_id, domain, population, group_key, stat_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_statistic_group ON audit_statistic (domain, group_key, stat_name);
+CREATE INDEX IF NOT EXISTS idx_audit_statistic_run   ON audit_statistic (run_id);
+
+CREATE TABLE IF NOT EXISTS audit_finding (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id                TEXT    NOT NULL,
+    detected_at           TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    domain                TEXT    NOT NULL CHECK (domain IN ('p2_metrics', 'cost_attributes')),
+    block                 TEXT    NOT NULL,   -- 'BLOCK1' .. 'BLOCK7'
+    rule_id               TEXT    NOT NULL,
+    rule_class            TEXT    NOT NULL
+        CHECK (rule_class IN ('HARD_INVARIANT', 'PLAUSIBILITY', 'STATISTICAL_ANOMALY')),
+    severity              TEXT    NOT NULL CHECK (severity IN ('INFO', 'WARN', 'ALARM')),
+    group_key             TEXT    NOT NULL,
+    isin                  TEXT,               -- NULL for population-level findings (most of Block 1/2/3)
+    value                 REAL,
+    reference_value       REAL,
+    threshold             REAL,
+    distance              REAL,
+    evidence              TEXT,
+    root_cause_candidate  TEXT,
+
+    FOREIGN KEY (isin) REFERENCES fund_master (ISIN) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_finding_run      ON audit_finding (run_id);
+CREATE INDEX IF NOT EXISTS idx_audit_finding_rule     ON audit_finding (domain, rule_id);
+CREATE INDEX IF NOT EXISTS idx_audit_finding_isin     ON audit_finding (isin);
+CREATE INDEX IF NOT EXISTS idx_audit_finding_severity ON audit_finding (severity);
+

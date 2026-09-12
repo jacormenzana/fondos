@@ -294,9 +294,17 @@ def compute_category_snapshot(
     -------
     DataFrame con columnas:
         isin, metric, window, real_flag, Fund_Nature,
+        value         : valor del fondo en esta fila (AUDITORIA_ESTADISTICA.md
+                         §2.5 finding D1 — compute_alerts() lee esta columna
+                         para poblar fund_metric_alerts.value; antes de este
+                         fix no existía y esa columna quedaba NULL al 100%)
         pctile_cat    : posición percentil dentro de la categoría [0, 1]
         zscore_cat    : z-score vs media de la categoría
-        cat_p10, cat_p50, cat_p90, cat_p97  : percentiles de la categoría
+        cat_p03, cat_p05, cat_p10, cat_p50, cat_p90, cat_p97  : percentiles
+                         de la categoría (p03/p05 añadidos por finding D2 —
+                         DD_CAT_P03/RET_CAT_P05 en ALERT_RULES las necesitan
+                         y nunca existían, dejando reference_value NULL en
+                         todas las filas ALARM de esas dos reglas)
         cat_n         : nº fondos con dato
 
     Solo contiene filas para la fecha más reciente por (metric, window, real_flag).
@@ -336,6 +344,8 @@ def compute_category_snapshot(
             continue
         mu    = float(vals.mean())
         sigma = float(vals.std(ddof=1)) if n > 1 else 0.0
+        p03   = float(np.percentile(vals, 3))
+        p05   = float(np.percentile(vals, 5))
         p10   = float(np.percentile(vals, 10))
         p50   = float(np.percentile(vals, 50))
         p90   = float(np.percentile(vals, 90))
@@ -351,8 +361,11 @@ def compute_category_snapshot(
                 "window":      window,
                 "real_flag":   real_flag,
                 "Fund_Nature": fund_nature,
+                "value":       v,
                 "pctile_cat":  pctile,
                 "zscore_cat":  zscore,
+                "cat_p03":     p03,
+                "cat_p05":     p05,
                 "cat_p10":     p10,
                 "cat_p50":     p50,
                 "cat_p90":     p90,

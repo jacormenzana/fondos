@@ -84,6 +84,11 @@ _TABLE_DOMAIN: dict[str, str] = {
     "portfolio_scenarios":     "P3",
     "portfolio_weights":       "P3",
     "rotation_costs":          "P3",
+    # P1
+    "fund_cost_corrections":   "P1",
+    # Cross-domain (statistical audit engine — doc/reglas/AUDITORIA_ESTADISTICA.md)
+    "audit_statistic":         "P1/P2",
+    "audit_finding":           "P1/P2",
 }
 
 
