@@ -15,7 +15,7 @@ HOOK="$REPO_ROOT/.git/hooks/pre-commit"
 
 # Resolve the Python interpreter: prefer the Conda 'des' environment,
 # fall back to whatever 'python' resolves to on PATH.
-CONDA_PYTHON="/Users/Administrador/anaconda3/envs/des/python.exe"
+CONDA_PYTHON="/c/data/envs/des/python.exe"
 if [ -f "$CONDA_PYTHON" ]; then
     PYTHON="$CONDA_PYTHON"
 elif command -v python3 >/dev/null 2>&1; then

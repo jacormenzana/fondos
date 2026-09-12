@@ -5,12 +5,7 @@
 ::  1. Abrimos VisualCode
 ::  2. Abrimos terminal PowerShell
 ::  3. En terminal nos vammos a directrorio c:\Desarrollo\fondos
-::  4. Activamos anaconda3
-c:\users\Administrador\anaconda3\Scripts\activate.bat c:\Users\Administrador\anaconda3
-c:\users\Administrador\anaconda3\Scripts\activate.bat c:\Users\Administrador\anaconda3
-
-
-::  5. activamos entorno des
-activate des
+::  4. Activamos entorno des (env standalone, sin instalacion Anaconda3 completa)
+set PATH=C:\data\envs\des;C:\data\envs\des\Scripts;%PATH%
 
 ::  6. lanzamos claude

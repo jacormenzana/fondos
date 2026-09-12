@@ -1,8 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(\"C:/Users/Administrador/anaconda3/envs/des/python.exe\" -m pytest proyecto1/tests/test_b1_classif_20260718.py -v)",
-      "Bash(C:/Users/Administrador/anaconda3/envs/des/python.exe -X utf8 -c ' *)"
+      "Bash(\"C:/data/envs/des/python.exe\" -m pytest proyecto1/tests/test_b1_classif_20260718.py -v)",
+      "Bash(C:/data/envs/des/python.exe -X utf8 -c ' *)"
     ]
   }
 }

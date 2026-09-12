@@ -24,6 +24,10 @@ set ROOT=C:\desarrollo\fondos
 set DB=%ROOT%\db\fondos.sqlite
 set LOG_DIR=%ROOT%\proyecto1\log
 
+:: Resolve bare 'python' calls below to the 'des' Conda env (bare python on
+:: PATH otherwise hits the WindowsApps shim -> "Permission denied").
+set PATH=C:\data\envs\des;C:\data\envs\des\Scripts;%PATH%
+
 set MODE=update
 if /i "%~1"=="load" set MODE=load
 

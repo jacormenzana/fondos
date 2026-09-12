@@ -13,7 +13,7 @@ lo que ejecutar este script más de una vez es seguro (idempotente).
 
 Uso (una sola vez, contra la BD de producción):
     cd c:/desarrollo/fondos
-    C:\\Users\\Administrador\\anaconda3\\envs\\des\\python.exe -m shared.migrate_schema_v26
+    C:\\data\\envs\\des\\python.exe -m shared.migrate_schema_v26
 
 Precaución:
   - Ejecutar ANTES del siguiente ciclo P1 o P2 (assert_schema_alignment lo exige).

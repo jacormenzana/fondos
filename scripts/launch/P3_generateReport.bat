@@ -11,7 +11,7 @@ chcp 65001 > nul
 :: Output:  C:\desarrollo\fondos\out\export\informe_cartera_YYYYMMDD.xlsx
 :: ============================================================
 
-set PYTHON=C:\Users\Administrador\anaconda3\envs\des\python.exe
+set PYTHON=C:\data\envs\des\python.exe
 set ROOT=C:\desarrollo\fondos
 set OUT_DIR=%ROOT%\out\export
 set LOG_DIR=%ROOT%\proyecto3\log

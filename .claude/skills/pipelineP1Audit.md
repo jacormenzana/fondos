@@ -21,12 +21,12 @@
 | Benchmark audit tool | `audit_benchmark_consistency.py` | `proyecto1/tools/` |
 | DB | `fondos.sqlite` | `db/` |
 
-Python: `C:\Users\Administrador\anaconda3\envs\des\python.exe`.
+Python: `C:\data\envs\des\python.exe`.
 If any asset is missing, report immediately before proceeding.
 
 **Pre-flight — backlog scope:** Read the live backlog artifact before starting §3. List currently open P1 items. Focus all log-triage, DQ-analysis, and benchmark-audit steps on open items only — skip re-investigation of findings already Confirmed with evidence on record.
 
-**Pre-flight — memory recall:** Before §3, read `MEMORY.md` at `C:\Users\Administrador\.claude\projects\c--desarrollo-fondos\memory\MEMORY.md`. Load every entry whose description hook matches P1 domain keywords (P1 classification, FORCE_REFRESH, cost extraction, ACI_RHP, B1–B7 benchmark, DQ issue, KIID parser, INTER rule, block logic). Treat recalled entries as prior findings — do not re-investigate what is already confirmed on record.
+**Pre-flight — memory recall:** Before §3, read `MEMORY.md` at `C:\Users\jacor\.claude\projects\c--desarrollo-fondos\memory\MEMORY.md`. Load every entry whose description hook matches P1 domain keywords (P1 classification, FORCE_REFRESH, cost extraction, ACI_RHP, B1–B7 benchmark, DQ issue, KIID parser, INTER rule, block logic). Treat recalled entries as prior findings — do not re-investigate what is already confirmed on record.
 
 ---
 
@@ -169,7 +169,7 @@ For each confirmed root-cause bug (from Steps 1–3 and §4 findings):
 
 Run the benchmark audit tool (regenerates `benchmark_audit_findings.json`):
 ```batch
-C:\Users\Administrador\anaconda3\envs\des\python.exe -X utf8 proyecto1/tools/audit_benchmark_consistency.py
+C:\data\envs\des\python.exe -X utf8 proyecto1/tools/audit_benchmark_consistency.py
 ```
 
 Report counts for all 7 categories:
@@ -245,11 +245,11 @@ If the artifact path is ambiguous, ask the user before writing.
 - **Fix in the correct module (P#7).** Classifier → `blocks/<block>.py`; normalization map → `classify_utils.py`; INTER rule → `pipeline.py`; KIID parsing → `kiid_parser.py`. SQL only for diagnostic SELECTs and FORCE_REFRESH triggers.
 - **AST validate after every Python edit (R-8):**
   ```
-  C:\Users\Administrador\anaconda3\envs\des\python.exe -c "import ast; ast.parse(open('file.py', encoding='utf-8').read()); print('AST OK')"
+  C:\data\envs\des\python.exe -c "import ast; ast.parse(open('file.py', encoding='utf-8').read()); print('AST OK')"
   ```
 - **Tests must stay green (R-7 — no `pipeline.py` / `core.io` imports in tests):**
   ```
-  C:\Users\Administrador\anaconda3\envs\des\python.exe -m pytest proyecto1/tests/ -q
+  C:\data\envs\des\python.exe -m pytest proyecto1/tests/ -q
   ```
 - **COALESCE / graceful degradation:** a fix returning None changes nothing — return a concrete value or correct sentinel.
 - **Write-on-correction (verified only):** If the user corrects any finding, factual claim, or reasoning during this audit, verify the correction first (read the code, query the DB, check the canonical doc). If confirmed correct, persist it to memory before the session ends. If wrong, explain and do not write. If unverifiable in context, flag it explicitly — do not persist unverified claims.

@@ -5,7 +5,7 @@ setlocal enabledelayedexpansion
 chcp 65001 > nul
 
 :: ============================================================
-:: P2_calculateIndicators.bat  (v28 — export_metrics post-pipeline)
+:: P2_calculateIndicators.bat  (v28 ï¿½ export_metrics post-pipeline)
 :: Ejecucion del pipeline de calculo de indicadores cuantitativos
 :: (P2: risk_metrics, macro_sensitivity, regime_returns, rolling, ...)
 ::
@@ -21,7 +21,7 @@ chcp 65001 > nul
 ::   - RC emitido a ambos logs para trazabilidad post-mortem
 :: ============================================================
 
-set PYTHON=C:\Users\Administrador\anaconda3\envs\des\python.exe
+set PYTHON=C:\data\envs\des\python.exe
 set ROOT=C:\desarrollo\fondos
 set LOG_DIR=%ROOT%\proyecto2\log
 

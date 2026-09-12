@@ -16,6 +16,10 @@ set DB=%ROOT%\db\fondos.sqlite
 set MASTER=c:\data\fondos\in\GestoresDeFondosv1.xlsx
 set LOG_DIR=%ROOT%\proyecto1\log
 
+:: Resolve bare 'python' calls below to the 'des' Conda env (bare python on
+:: PATH otherwise hits the WindowsApps shim -> "Permission denied").
+set PATH=C:\data\envs\des;C:\data\envs\des\Scripts;%PATH%
+
 :: --- LÍNEAS A AÑADIR ---
 set KIID_DIR=c:\data\fondos\kiid
 set LOG_DIAG_OUT_DIR=%ROOT%\out\diag

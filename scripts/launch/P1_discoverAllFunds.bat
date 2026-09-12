@@ -16,6 +16,10 @@ set ROOT=C:\desarrollo\fondos
 set DB=%ROOT%\db\fondos.sqlite
 set LOG_DIR=%ROOT%\proyecto1\log
 
+:: Resolve bare 'python' calls below to the 'des' Conda env (bare python on
+:: PATH otherwise hits the WindowsApps shim -> "Permission denied").
+set PATH=C:\data\envs\des;C:\data\envs\des\Scripts;%PATH%
+
 :: Timestamp YYYYMMDD_HHMMSS
 for /f "tokens=2 delims==" %%a in ('wmic OS Get localdatetime /value') do set DT=%%a
 set STAMP=%DT:~0,8%_%DT:~8,6%

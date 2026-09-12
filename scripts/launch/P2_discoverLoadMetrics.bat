@@ -11,7 +11,7 @@ chcp 65001 > nul
 :: Paso 3 -- NAV load    (chartservice, delta desde 2000-01-01)
 :: ============================================================
 
-set PYTHON=C:\Users\Administrador\anaconda3\envs\des\python.exe
+set PYTHON=C:\data\envs\des\python.exe
 set ROOT=C:\desarrollo\fondos
 set LOG_DIR=%ROOT%\proyecto2\log
 

@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(/c/data/envs/des/python.exe *)",
+      "PowerShell(& \"C:\\\\data\\\\envs\\\\des\\\\python.exe\" *)"
+    ]
+  },
+  "model": "opusplan",
+  "modelOverrides": {
+    "opus": "claude-opus-5-0",
+    "sonnet": "claude-sonnet-4-8"
+  }
+}

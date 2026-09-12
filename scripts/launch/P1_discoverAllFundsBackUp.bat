@@ -14,7 +14,7 @@ chcp 65001 > nul
 set ROOT=C:\desarrollo\fondos
 set DB=%ROOT%\db\fondos.sqlite
 set LOG_DIR=%ROOT%\proyecto1\log
-set PYTHON=C:\Users\Administrador\anaconda3\envs\des\python.exe
+set PYTHON=C:\data\envs\des\python.exe
 
 :: Timestamp YYYYMMDD_HHMMSS
 for /f "tokens=2 delims==" %%a in ('wmic OS Get localdatetime /value') do set DT=%%a

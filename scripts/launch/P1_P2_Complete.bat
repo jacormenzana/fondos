@@ -22,7 +22,7 @@ chcp 65001 > nul
 ::   P1_P2_Complete.bat
 :: ============================================================
 
-set PYTHON=C:\Users\Administrador\anaconda3\envs\des\python.exe
+set PYTHON=C:\data\envs\des\python.exe
 set ROOT=C:\desarrollo\fondos
 set LAUNCH=%ROOT%\scripts\launch
 set LOG_DIR=%ROOT%\proyecto1\log

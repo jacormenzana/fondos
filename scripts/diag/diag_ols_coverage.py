@@ -8,7 +8,7 @@ columnar summary (metric, n_funds, coverage %). Also shows P3-03/P3-04
 scenario metrics and the overall n_obs distribution.
 
 Usage (from repo root):
-    C:\\Users\\Administrador\\anaconda3\\envs\\des\\python.exe scripts/diag/diag_ols_coverage.py
+    C:\\data\\envs\\des\\python.exe scripts/diag/diag_ols_coverage.py
 """
 
 import sqlite3

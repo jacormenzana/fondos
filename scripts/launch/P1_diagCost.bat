@@ -16,6 +16,10 @@ set LOG_DIR=%ROOT%\proyecto1\log
 set KIID_DIR=c:\data\fondos\kiid
 set DIAG_OUT_DIR=%ROOT%\out\diag
 
+:: Resolve bare 'python' calls below to the 'des' Conda env (bare python on
+:: PATH otherwise hits the WindowsApps shim -> "Permission denied").
+set PATH=C:\data\envs\des;C:\data\envs\des\Scripts;%PATH%
+
 :: -- FIX FATAL: PYTHONPATH requerido por diag_cost_extraction._import_modules()
 ::    Sin esto: "No module named 'dla_table_serializer' / 'core'".
 ::    Rutas ABSOLUTAS para ser independientes del CWD.

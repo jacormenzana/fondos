@@ -19,7 +19,7 @@ chcp 65001 > nul
 ::   fund_metric_timeseries y fund_metric_alerts tengan tipos correctos.
 :: ============================================================
 
-set PYTHON=C:\Users\Administrador\anaconda3\envs\des\python.exe
+set PYTHON=C:\data\envs\des\python.exe
 set ROOT=C:\desarrollo\fondos
 set LOG_DIR=%ROOT%\logs
 
