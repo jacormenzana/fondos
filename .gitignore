@@ -26,3 +26,6 @@ out/
 
 # Archivos de configuración locales duplicados con fecha
 *_2026[0-9]*
+
+# IDE local (VSCode workspace state, machine-specific)
+.vscode/
