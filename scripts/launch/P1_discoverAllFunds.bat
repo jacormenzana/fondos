@@ -20,9 +20,9 @@ set LOG_DIR=%ROOT%\proyecto1\log
 :: PATH otherwise hits the WindowsApps shim -> "Permission denied").
 set PATH=C:\data\envs\des;C:\data\envs\des\Scripts;%PATH%
 
-:: Timestamp YYYYMMDD_HHMMSS
-for /f "tokens=2 delims==" %%a in ('wmic OS Get localdatetime /value') do set DT=%%a
-set STAMP=%DT:~0,8%_%DT:~8,6%
+:: Timestamp YYYYMMDD_HHMMSS (wmic removed on newer Windows builds; PowerShell
+:: is the portable replacement)
+for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set STAMP=%%a
 set LOG=%LOG_DIR%\log_pipeline_%STAMP%.log
 
 if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
@@ -40,10 +40,11 @@ echo.
 :: -- PASO 0: Marcar fondos antiguos para re-descarga (anti-avalancha) --------
 :: Marca como FORCE_REFRESH un maximo de 50 fondos con KIID > 180 dias.
 :: Distribuye el refresh en ~64 ciclos en lugar de una avalancha de 3000 requests.
-echo [%time%] Paso 0: mark_stale (max 50 fondos, antiguedad > 180 dias)
+echo [%time%] Paso 0: mark_stale (max 50 fondos, antiguedad ^> 180 dias)
 echo. >> "%LOG%"
 echo --- PASO 0: mark_stale ------------------------------------ >> "%LOG%"
 python -X utf8 "%ROOT%\scripts\launch\mark_stale.py" --db "%DB%" --max-age 180 --max-funds 50 >> "%LOG%" 2>&1
+set RC0=!ERRORLEVEL!
 
 :: -- OPT-B3: single nature-first pass (replaces 7 sequential block runs) -----
 :: Nature is resolved by resolve_nature_evidence() per fund: KIID-primary +
@@ -69,6 +70,7 @@ echo. >> "%LOG%"
 echo --- NATURE_FIRST (OPT-B3) --------------------------------- >> "%LOG%"
 pushd %ROOT%\proyecto1
 python -X utf8 run_block.py --nature-first --db "%DB%" --master-db >> "%LOG%" 2>&1
+set RC1=!ERRORLEVEL!
 popd
 
 :: -- fund_family_builder ------------------------------------------------------
@@ -77,6 +79,7 @@ echo. >> "%LOG%"
 echo --- fund_family_builder ----------------------------------- >> "%LOG%"
 pushd %ROOT%
 python -X utf8 -m proyecto1.core.fund_family_builder >> "%LOG%" 2>&1
+set RC2=!ERRORLEVEL!
 popd
 
 :: -- export_p1 (Excel dump de tablas P1, incl. texto KIID bruto) --------------
@@ -85,18 +88,35 @@ echo. >> "%LOG%"
 echo --- export_p1 --------------------------------------------- >> "%LOG%"
 pushd %ROOT%
 python -X utf8 -m proyecto1.src.analysis.export_p1 --include-kiid-text --db "%DB%" >> "%LOG%" 2>&1
+set RC3=!ERRORLEVEL!
 popd
 
+:: FINAL_RC: primer paso con RC != 0 gana (todos los pasos se ejecutan
+:: siempre, sin abortar entre ellos -- este bloque solo hace que el codigo
+:: de salida del script refleje honestamente si algo fallo).
+set FINAL_RC=0
+if !RC0! NEQ 0 set FINAL_RC=!RC0!
+if !FINAL_RC! EQU 0 if !RC1! NEQ 0 set FINAL_RC=!RC1!
+if !FINAL_RC! EQU 0 if !RC2! NEQ 0 set FINAL_RC=!RC2!
+if !FINAL_RC! EQU 0 if !RC3! NEQ 0 set FINAL_RC=!RC3!
+
 :: -- Pie del log --------------------------------------------------------------
-for /f "tokens=2 delims==" %%a in ('wmic OS Get localdatetime /value') do set DT2=%%a
-set STAMP2=%DT2:~0,8%_%DT2:~8,6%
+for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set STAMP2=%%a
 echo. >> "%LOG%"
 echo ============================================================ >> "%LOG%"
-echo  Pipeline P1 - Fin: %STAMP2%                                >> "%LOG%"
+echo  Pipeline P1 - Fin: %STAMP2% (RC0=!RC0! RC1=!RC1! RC2=!RC2! RC3=!RC3!^) >> "%LOG%"
 echo ============================================================ >> "%LOG%"
 
 echo.
-echo [%STAMP2%] Pipeline P1 completado
+if !FINAL_RC! NEQ 0 (
+    echo [%STAMP2%] Pipeline P1 -- Fin ERROR (RC0=!RC0! RC1=!RC1! RC2=!RC2! RC3=!RC3!^)
+) else (
+    echo [%STAMP2%] Pipeline P1 completado
+)
 echo Log: %LOG%
 echo.
-endlocal
+
+:: endlocal discards delayed expansion before !VAR! on the next line could
+:: expand it (verified empirically) -- chain on one line so %FINAL_RC%
+:: substitutes at parse time, while the scope is still active.
+endlocal & exit /b %FINAL_RC%

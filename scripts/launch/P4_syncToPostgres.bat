@@ -23,9 +23,9 @@ set PYTHON=C:\data\envs\des\python.exe
 set ROOT=C:\desarrollo\fondos
 set LOG_DIR=%ROOT%\logs
 
-:: Timestamp YYYYMMDD_HHMMSS
-for /f "tokens=2 delims==" %%a in ('wmic OS Get localdatetime /value') do set DT=%%a
-set STAMP=%DT:~0,8%_%DT:~8,6%
+:: Timestamp YYYYMMDD_HHMMSS (wmic removed on newer Windows builds; PowerShell
+:: is the portable replacement)
+for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set STAMP=%%a
 set LOG=%LOG_DIR%\log_P4_syncPostgres_%STAMP%.log
 set ERR=%LOG_DIR%\log_P4_syncPostgres_%STAMP%_err.log
 
@@ -52,22 +52,29 @@ echo. >> "%LOG%"
 echo --- SYNC: load_fondos_to_postgres ----------------------- >> "%LOG%"
 
 %PYTHON% -X utf8 shared\load_fondos_to_postgres.py >> "%LOG%" 2>> "%ERR%"
+set RC=!ERRORLEVEL!
 
 popd
 
 :: -- Pie del log ---------------------------------------------------------------
-for /f "tokens=2 delims==" %%a in ('wmic OS Get localdatetime /value') do set DT2=%%a
-set STAMP2=%DT2:~0,8%_%DT2:~8,6%
+for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set STAMP2=%%a
 
 echo. >> "%LOG%"
 echo ============================================================ >> "%LOG%"
-echo  P4 Sync to Postgres -- Fin: %STAMP2%                        >> "%LOG%"
+echo  P4 Sync to Postgres -- Fin: %STAMP2% (RC=!RC!^)              >> "%LOG%"
 echo ============================================================ >> "%LOG%"
 
 echo.
-echo [%STAMP2%] P4 Sync to Postgres completado
+if !RC! NEQ 0 (
+    echo [%STAMP2%] P4 Sync to Postgres -- Fin ERROR (RC=!RC!^)
+) else (
+    echo [%STAMP2%] P4 Sync to Postgres completado
+)
 echo   Log stdout : %LOG%
 echo   Log stderr : %ERR%
 echo.
 
-endlocal
+:: endlocal discards delayed expansion before !VAR! on the next line could
+:: expand it (verified empirically) -- chain on one line so %RC%
+:: substitutes at parse time, while the scope is still active.
+endlocal & exit /b %RC%

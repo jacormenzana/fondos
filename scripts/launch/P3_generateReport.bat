@@ -16,9 +16,9 @@ set ROOT=C:\desarrollo\fondos
 set OUT_DIR=%ROOT%\out\export
 set LOG_DIR=%ROOT%\proyecto3\log
 
-:: Timestamp YYYYMMDD_HHMMSS
-for /f "tokens=2 delims==" %%a in ('wmic OS Get localdatetime /value') do set DT=%%a
-set STAMP=%DT:~0,8%_%DT:~8,6%
+:: Timestamp YYYYMMDD_HHMMSS (wmic removed on newer Windows builds; PowerShell
+:: is the portable replacement)
+for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set STAMP=%%a
 set LOG=%LOG_DIR%\log_P3_report_%STAMP%.log
 set ERR=%LOG_DIR%\log_P3_report_%STAMP%_err.log
 
@@ -42,8 +42,7 @@ set RC=%ERRORLEVEL%
 popd
 
 :: Timestamp de cierre
-for /f "tokens=2 delims==" %%a in ('wmic OS Get localdatetime /value') do set DT2=%%a
-set STAMP2=%DT2:~0,8%_%DT2:~8,6%
+for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set STAMP2=%%a
 
 echo.
 if %RC% NEQ 0 (
@@ -55,4 +54,7 @@ if %RC% NEQ 0 (
 )
 echo.
 
-endlocal
+:: endlocal discards delayed expansion before !VAR! on the next line could
+:: expand it (verified empirically) -- chain on one line so %RC%
+:: substitutes at parse time, while the scope is still active.
+endlocal & exit /b %RC%

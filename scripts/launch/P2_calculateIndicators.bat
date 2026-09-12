@@ -31,9 +31,9 @@ set LOG_DIR=%ROOT%\proyecto2\log
 set FORCE_FLAG=
 if /i "%~1"=="--force" set FORCE_FLAG=--force
 
-:: Timestamp YYYYMMDD_HHMMSS
-for /f "tokens=2 delims==" %%a in ('wmic OS Get localdatetime /value') do set DT=%%a
-set STAMP=%DT:~0,8%_%DT:~8,6%
+:: Timestamp YYYYMMDD_HHMMSS (wmic removed on newer Windows builds; PowerShell
+:: is the portable replacement)
+for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set STAMP=%%a
 set LOG=%LOG_DIR%\log_P2_calcIndicators_%STAMP%.log
 set ERR=%LOG_DIR%\log_P2_calcIndicators_%STAMP%_err.log
 
@@ -94,8 +94,7 @@ echo [%time%] Restaurando suspension AC (powercfg standby 30 min)
 powercfg -change -standby-timeout-ac 30 > nul 2>&1
 
 :: -- Pie del log ---------------------------------------------------------------
-for /f "tokens=2 delims==" %%a in ('wmic OS Get localdatetime /value') do set DT2=%%a
-set STAMP2=%DT2:~0,8%_%DT2:~8,6%
+for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set STAMP2=%%a
 
 :: FINAL_RC: pipeline tiene precedencia; si pipeline OK pero export falla, propaga export RC
 set FINAL_RC=!RC!
@@ -136,5 +135,7 @@ echo   Log stdout : %LOG%
 echo   Log stderr : %ERR%
 echo.
 
-endlocal
-exit /b !FINAL_RC!
+:: endlocal discards delayed expansion before !FINAL_RC! on the next line
+:: could expand it (verified empirically) -- chain on one line so %FINAL_RC%
+:: substitutes at parse time, while the scope is still active.
+endlocal & exit /b %FINAL_RC%

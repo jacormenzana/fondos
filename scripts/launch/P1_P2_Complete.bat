@@ -33,9 +33,9 @@ set LOG_DIR=%ROOT%\proyecto1\log
 set FORCE_FLAG=
 if /i "%~1"=="--force" set FORCE_FLAG=--force
 
-:: Timestamp YYYYMMDD_HHMMSS
-for /f "tokens=2 delims==" %%a in ('wmic OS Get localdatetime /value') do set DT=%%a
-set STAMP=%DT:~0,8%_%DT:~8,6%
+:: Timestamp YYYYMMDD_HHMMSS (wmic removed on newer Windows builds; PowerShell
+:: is the portable replacement)
+for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set STAMP=%%a
 set LOG=%LOG_DIR%\log_P1_P2_complete_%STAMP%.log
 
 if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
@@ -60,8 +60,7 @@ set FINAL_RC=0
 :: ============================================================
 :: PASO 1: P1_refreshBenchmarks.bat
 :: ============================================================
-for /f "tokens=2 delims==" %%a in ('wmic OS Get localdatetime /value') do set DT=%%a
-set T1=%DT:~8,6%
+for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format HHmmss"') do set T1=%%a
 echo [%T1:~0,2%:%T1:~2,2%:%T1:~4,2%] PASO 1/4: P1_refreshBenchmarks
 echo. >> "%LOG%"
 echo --- PASO 1/4: P1_refreshBenchmarks -- Inicio: !T1! ---------- >> "%LOG%"
@@ -69,8 +68,7 @@ echo --- PASO 1/4: P1_refreshBenchmarks -- Inicio: !T1! ---------- >> "%LOG%"
 call "%LAUNCH%\P1_refreshBenchmarks.bat"
 set RC1=!ERRORLEVEL!
 
-for /f "tokens=2 delims==" %%a in ('wmic OS Get localdatetime /value') do set DT=%%a
-set T1E=%DT:~8,6%
+for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format HHmmss"') do set T1E=%%a
 echo [%T1E:~0,2%:%T1E:~2,2%:%T1E:~4,2%] PASO 1/4 fin (RC=!RC1!)
 echo --- PASO 1/4 fin: RC=!RC1!  Fin: !T1E! --------------------- >> "%LOG%"
 
@@ -85,8 +83,7 @@ if !RC1! NEQ 0 (
 :: ============================================================
 :: PASO 2: P1_discoverAllFunds.bat
 :: ============================================================
-for /f "tokens=2 delims==" %%a in ('wmic OS Get localdatetime /value') do set DT=%%a
-set T2=%DT:~8,6%
+for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format HHmmss"') do set T2=%%a
 echo [%T2:~0,2%:%T2:~2,2%:%T2:~4,2%] PASO 2/4: P1_discoverAllFunds
 echo. >> "%LOG%"
 echo --- PASO 2/4: P1_discoverAllFunds -- Inicio: !T2! ----------- >> "%LOG%"
@@ -94,8 +91,7 @@ echo --- PASO 2/4: P1_discoverAllFunds -- Inicio: !T2! ----------- >> "%LOG%"
 call "%LAUNCH%\P1_discoverAllFunds.bat"
 set RC2=!ERRORLEVEL!
 
-for /f "tokens=2 delims==" %%a in ('wmic OS Get localdatetime /value') do set DT=%%a
-set T2E=%DT:~8,6%
+for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format HHmmss"') do set T2E=%%a
 echo [%T2E:~0,2%:%T2E:~2,2%:%T2E:~4,2%] PASO 2/4 fin (RC=!RC2!)
 echo --- PASO 2/4 fin: RC=!RC2!  Fin: !T2E! --------------------- >> "%LOG%"
 
@@ -110,8 +106,7 @@ if !RC2! NEQ 0 (
 :: ============================================================
 :: PASO 3: P2_discoverLoadMetrics.bat
 :: ============================================================
-for /f "tokens=2 delims==" %%a in ('wmic OS Get localdatetime /value') do set DT=%%a
-set T3=%DT:~8,6%
+for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format HHmmss"') do set T3=%%a
 echo [%T3:~0,2%:%T3:~2,2%:%T3:~4,2%] PASO 3/4: P2_discoverLoadMetrics
 echo. >> "%LOG%"
 echo --- PASO 3/4: P2_discoverLoadMetrics -- Inicio: !T3! -------- >> "%LOG%"
@@ -119,8 +114,7 @@ echo --- PASO 3/4: P2_discoverLoadMetrics -- Inicio: !T3! -------- >> "%LOG%"
 call "%LAUNCH%\P2_discoverLoadMetrics.bat"
 set RC3=!ERRORLEVEL!
 
-for /f "tokens=2 delims==" %%a in ('wmic OS Get localdatetime /value') do set DT=%%a
-set T3E=%DT:~8,6%
+for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format HHmmss"') do set T3E=%%a
 echo [%T3E:~0,2%:%T3E:~2,2%:%T3E:~4,2%] PASO 3/4 fin (RC=!RC3!)
 echo --- PASO 3/4 fin: RC=!RC3!  Fin: !T3E! --------------------- >> "%LOG%"
 
@@ -135,8 +129,7 @@ if !RC3! NEQ 0 (
 :: ============================================================
 :: PASO 4: P2_calculateIndicators.bat
 :: ============================================================
-for /f "tokens=2 delims==" %%a in ('wmic OS Get localdatetime /value') do set DT=%%a
-set T4=%DT:~8,6%
+for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format HHmmss"') do set T4=%%a
 echo [%T4:~0,2%:%T4:~2,2%:%T4:~4,2%] PASO 4/4: P2_calculateIndicators
 echo. >> "%LOG%"
 echo --- PASO 4/4: P2_calculateIndicators -- Inicio: !T4! -------- >> "%LOG%"
@@ -144,8 +137,7 @@ echo --- PASO 4/4: P2_calculateIndicators -- Inicio: !T4! -------- >> "%LOG%"
 call "%LAUNCH%\P2_calculateIndicators.bat" %FORCE_FLAG%
 set RC4=!ERRORLEVEL!
 
-for /f "tokens=2 delims==" %%a in ('wmic OS Get localdatetime /value') do set DT=%%a
-set T4E=%DT:~8,6%
+for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format HHmmss"') do set T4E=%%a
 echo [%T4E:~0,2%:%T4E:~2,2%:%T4E:~4,2%] PASO 4/4 fin (RC=!RC4!)
 echo --- PASO 4/4 fin: RC=!RC4!  Fin: !T4E! --------------------- >> "%LOG%"
 
@@ -163,8 +155,7 @@ if !RC4! NEQ 0 (
 powercfg -change -standby-timeout-ac 30 > nul 2>&1
 
 :: Pie del log
-for /f "tokens=2 delims==" %%a in ('wmic OS Get localdatetime /value') do set DT2=%%a
-set STAMP2=%DT2:~0,8%_%DT2:~8,6%
+for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set STAMP2=%%a
 
 echo. >> "%LOG%"
 echo ============================================================ >> "%LOG%"
@@ -186,5 +177,7 @@ if !FINAL_RC! EQU 0 (
 echo   Log orquestacion: %LOG%
 echo.
 
-endlocal
-exit /b !FINAL_RC!
+:: endlocal discards delayed expansion before !FINAL_RC! on the next line
+:: could expand it (verified empirically) -- chain on one line so %FINAL_RC%
+:: substitutes at parse time, while the scope is still active.
+endlocal & exit /b %FINAL_RC%

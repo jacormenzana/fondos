@@ -25,9 +25,9 @@ set PATH=C:\data\envs\des;C:\data\envs\des\Scripts;%PATH%
 ::    Rutas ABSOLUTAS para ser independientes del CWD.
 set PYTHONPATH=%ROOT%\proyecto1;%ROOT%\proyecto1\core;%ROOT%\shared
 
-:: Timestamp YYYYMMDD_HHMMSS
-for /f "tokens=2 delims==" %%a in ('wmic OS Get localdatetime /value') do set DT=%%a
-set STAMP=%DT:~0,8%_%DT:~8,6%
+:: Timestamp YYYYMMDD_HHMMSS (wmic removed on newer Windows builds; PowerShell
+:: is the portable replacement)
+for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set STAMP=%%a
 set LOG=%LOG_DIR%\log_diagcost_%STAMP%.log
 set DIAG_OUT=%DIAG_OUT_DIR%\cost_diag_%STAMP%_p1g.csv
 
@@ -56,8 +56,7 @@ python -X utf8 "%ROOT%\scripts\diag\diag_cost_extraction.py" ^
 set DIAG_RC=!ERRORLEVEL!
 popd
 
-for /f "tokens=2 delims==" %%a in ('wmic OS Get localdatetime /value') do set DT2=%%a
-set STAMP2=%DT2:~0,8%_%DT2:~8,6%
+for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set STAMP2=%%a
 
 echo. >> "%LOG%"
 if !DIAG_RC! NEQ 0 (
@@ -76,4 +75,7 @@ echo.
 echo Log: %LOG%
 echo.
 
-endlocal
+:: endlocal discards delayed expansion before !VAR! on the next line could
+:: expand it (verified empirically) -- chain on one line so %DIAG_RC%
+:: substitutes at parse time, while the scope is still active.
+endlocal & exit /b %DIAG_RC%
