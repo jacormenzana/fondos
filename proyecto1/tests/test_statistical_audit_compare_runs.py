@@ -73,7 +73,7 @@ class TestCompareRuns:
 class TestStatisticsToFrame:
     def test_converts_audit_run_statistics_shape(self):
         statistics = [
-            ("vol_ann|since_inception|0|v1", {"n_valid": 100, "p50": 0.12, "cv_status": "OK"}, 100),
+            ("GLOBAL", "vol_ann|since_inception|0|v1", {"n_valid": 100, "p50": 0.12, "cv_status": "OK"}, 100),
         ]
         frame = statistics_to_frame(statistics)
         assert set(frame["stat_name"]) == {"n_valid", "p50", "cv_status"}
@@ -82,10 +82,17 @@ class TestStatisticsToFrame:
         # as NaN once the column also holds float values from other rows.
         assert pd.isna(cv_row["stat_value"])
 
+    def test_peer_population_preserved_not_forced_to_global(self):
+        statistics = [
+            ("PEER:Renta Variable", "vol_ann|since_inception|0|v1", {"p50": 0.18}, 40),
+        ]
+        frame = statistics_to_frame(statistics)
+        assert frame.iloc[0]["population"] == "PEER:Renta Variable"
+
     def test_output_feeds_compare_runs_directly(self):
         previous = _frame([("GLOBAL", "vol_ann|since_inception|0|v1", "p50", 0.15)])
         current = statistics_to_frame(
-            [("vol_ann|since_inception|0|v1", {"p50": 0.071}, 2900)]
+            [("GLOBAL", "vol_ann|since_inception|0|v1", {"p50": 0.071}, 2900)]
         )
         result = compare_runs(previous, current)
         row = result.deltas.iloc[0]

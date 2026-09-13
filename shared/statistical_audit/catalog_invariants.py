@@ -45,14 +45,24 @@ P2_INVARIANTS: tuple[InvariantRule, ...] = (
                   description="Risk-free or vol denominator defect"),
     InvariantRule("SORTINO_BOUND", "abs(sortino) < 10", bound_type="PLAUSIBILITY",
                   description="Risk-free or vol denominator defect"),
-    InvariantRule("N_OBS_NONNEG", "n_obs >= 0", bound_type="HARD_INVARIANT",
-                  description="Observation count negative"),
     InvariantRule(
         "FROZEN_NAV_ZERO_VOL", "not (vol_ann == 0 and periodic_return_variance > 0.0001)",
         bound_type="HARD_INVARIANT",
         description="Frozen/flat NAV masquerading as zero volatility (corrected per §2.4 — "
                      "the original 'vol_ann>0 when return_ann!=0' rule is not a true invariant)",
     ),
+) + tuple(
+    # N_OBS_NONNEG fix (2026-09-13): the catalog cited a bare `n_obs` column
+    # that never existed — the real metrics are per-regime, verified live:
+    # n_obs_{contraccion,crisis_financiera,estanflacion,expansion,
+    # recalentamiento,recalentamiento_tardio,shock_energetico}. One rule per
+    # regime, generated rather than hand-listed (P#11/DRY).
+    InvariantRule(f"N_OBS_NONNEG_{regime.upper()}", f"n_obs_{regime} >= 0",
+                  bound_type="HARD_INVARIANT", description="Observation count negative")
+    for regime in (
+        "contraccion", "crisis_financiera", "estanflacion", "expansion",
+        "recalentamiento", "recalentamiento_tardio", "shock_energetico",
+    )
 )
 
 COST_INVARIANTS: tuple[InvariantRule, ...] = (
@@ -67,12 +77,21 @@ COST_INVARIANTS: tuple[InvariantRule, ...] = (
                   description="Component exceeds total"),
     InvariantRule("TXN_LE_TOTAL", "Transaction_Cost_Pct <= ACI_RHP", bound_type="HARD_INVARIANT",
                   description="Component exceeds total"),
-    InvariantRule("ANNUAL_LE_ACCUMULATED", "Annual_Impact_Pct <= Total_Costs_Pct",
+    # ROUNDING_TOLERANCE_PP=0.06 (2026-09-13, AUDITORIA_ESTADISTICA.md §2.6): investigated the
+    # live 87%/45% violation rates on these two rules with tolerance 0.0001. KID Annual_Impact_Pct
+    # (Reduction in Yield) is published rounded to 1 decimal place per PRIIPs convention while
+    # Total_Costs_Pct carries 2-decimal computed precision — legitimate rounding alone explains
+    # 1,778/2,042 (87%) of the horizon=1y cases (|diff|<0.06). The residual ~264 rows are a
+    # distinct, genuine defect (Total_Costs_Pct/EUR duplicated identically across a fund's
+    # different Horizon_Years rows in 447 funds — an extraction bug, not a rounding artifact) and
+    # remain correctly flagged. This tolerance is grounded in the KID's own regulatory publication
+    # format, not an arbitrary proximity heuristic.
+    InvariantRule("ANNUAL_LE_ACCUMULATED", "Annual_Impact_Pct <= Total_Costs_Pct + 0.06",
                   bound_type="HARD_INVARIANT", description="Annual exceeds accumulated"),
     InvariantRule(
-        "ANNUAL_EQUALS_TOTAL_AT_1Y", "abs(Annual_Impact_Pct - Total_Costs_Pct) < 0.0001",
+        "ANNUAL_EQUALS_TOTAL_AT_1Y", "abs(Annual_Impact_Pct - Total_Costs_Pct) < 0.06",
         when="Horizon_Years == 1", bound_type="HARD_INVARIANT",
-        description="Equal by definition at horizon 1y",
+        description="Equal by definition at horizon 1y (within KID rounding)",
     ),
     InvariantRule("OC_NOT_CONTAMINATED", "abs(Ongoing_Charge_Recurrent * 100 - ACI_RHP) > 0.0001",
                   bound_type="HARD_INVARIANT", description="OC contaminated with the ACI"),

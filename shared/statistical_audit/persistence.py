@@ -57,8 +57,7 @@ def emit_statistics(
 
 
 def statistics_to_frame(
-    statistics: Sequence[tuple[str, Mapping[str, Any], int | None]],
-    population: str = "GLOBAL",
+    statistics: Sequence[tuple[str, str, Mapping[str, Any], int | None]],
 ) -> pd.DataFrame:
     """The inverse of emit_statistics' row shape, without touching the DB —
     lets compare_runs.compare_runs() diff a freshly-computed AuditRun.statistics
@@ -66,10 +65,13 @@ def statistics_to_frame(
     compare_runs.load_run_statistics) without writing the fresh run first.
     Only numeric values survive (matching what audit_statistic.stat_value
     actually stores); status-label stats are dropped here, same as they'd be
-    dropped from stat_value on a real emit_statistics call.
+    dropped from stat_value on a real emit_statistics call. Entries are
+    (population, group_key, stats, n) — the same 4-tuple shape AuditRun.statistics
+    carries, so PEER-segmented statistics compare correctly against their own
+    peer population, not against GLOBAL.
     """
     rows = []
-    for group_key, stats, _n in statistics:
+    for population, group_key, stats, _n in statistics:
         for stat_name, value in stats.items():
             stat_value, _stat_text = _split_value(value)
             rows.append({

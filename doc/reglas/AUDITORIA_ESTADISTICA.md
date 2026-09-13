@@ -9,15 +9,21 @@ rango?».
 **Lectura obligatoria** antes de modificar cualquiera de los dos skills o el motor de auditoría
 estadística.
 
-**Estado (2026-09-13): Fases A–D completas** (§8). El motor está implementado en
-`shared/statistical_audit/` (11 funciones puras + persistencia + 5 catálogos declarativos),
-ejecutable vía `scripts/audit/run_statistical_audit.py --domain costs|p2`, con persistencia real
-en `audit_statistic`/`audit_finding` y comparación entre ejecuciones (`--compare-to`). Los tres
-defectos de producción D1–D3 del motor de alertas (§2.5) están corregidos en código. Lo que sigue
-abierto: PEER segmentation (solo GLOBAL hoy), 2 de 5 pares del Bloque 2 de P2 sin cablear, varios
-invariantes de Bloque 5 de P2 sin columnas derivables en el modelo actual, y la función #12
-(`reconcile_with_alerts`) especificada pero no implementada — ver el propio runner (`--help` o su
-docstring) para la lista exacta y actualizada de huecos, que se imprime en cada ejecución.
+**Estado (2026-09-13): Fases A–D completas** (§8), más el cierre de los huecos de alcance del
+runner (PEER segmentation, los 2 pares de Bloque 2 sin cablear, `excess_return`/deflación para
+Bloque 5) y la investigación completa de los dos hallazgos pendientes de la primera ejecución real
+(§2.7). El motor está implementado en `shared/statistical_audit/` (11 funciones puras +
+persistencia + 5 catálogos declarativos), ejecutable vía
+`scripts/audit/run_statistical_audit.py --domain costs|p2`, con persistencia real en
+`audit_statistic`/`audit_finding` y comparación entre ejecuciones (`--compare-to`). Los tres
+defectos de producción D1–D3 del motor de alertas (§2.5) están corregidos en código. Al cablear
+`SCALAR_EQUALS_TIMESERIES` surgió un **hallazgo mayor, aún abierto**: un bug real de ingesta NAV
+que corrompe la ventana de recuento-fijo-de-filas de `compute_rolling_rows()` (§2.7) — requiere
+autorización explícita antes de tocar `nav_discovery.py`, no corregido en esta sesión. Lo que sigue
+abierto: función #12 (`reconcile_with_alerts`, bloqueada hasta el próximo ciclo P2 real),
+`periodic_return_variance`/`FROZEN_NAV_ZERO_VOL` (necesitaría releer NAV en bruto dentro del
+motor), y el propio bug de ingesta NAV — ver el runner (`--help` o su docstring) para la lista
+exacta y actualizada de huecos, que se imprime en cada ejecución.
 
 ---
 
@@ -129,9 +135,58 @@ código previo hasta que se ejecute un ciclo P2 real (`P2_calculateIndicators.ba
 Por eso la función #12 (`reconcile_with_alerts`) sigue sin cablearse en el runner: reconciliar
 contra la tabla actual reconciliaría contra datos aún obsoletos.
 
----
+### 2.7 Investigación de los dos hallazgos pendientes (2026-09-13) — ambos resueltos
 
-## §3. Catálogo de indicadores estadísticos
+Los dos resultados marcados "necesitan investigación" en la primera ejecución real (§2.6 original,
+ahora superado) han sido investigados hasta causa raíz. Ninguno de los dos era el defecto que
+parecía a primera vista — cada uno reveló un error distinto en **el propio motor de auditoría**,
+no en los datos:
+
+**`VOL_ANN_EQUALS_SRRI_VOL` (100% de coincidencia) — el par nunca debió existir.**
+`proyecto2/src/calculations/returns.py:annualized_volatility()` y
+`srri.py:compute_srri()` calculan literalmente la misma fórmula
+(`returns.std(ddof=1) * sqrt(12)`) sobre la misma serie NAV para `vol_ann(since_inception,
+nominal)` y `srri_volatility`. Son idénticos **por construcción**, no por un bug compartido — el
+par jamás habría podido detectar un defecto de binding tal como estaba especificado. Eliminado de
+`catalog_pairs.py`; test de regresión
+`test_statistical_audit_catalogs.py::test_vol_ann_srri_vol_formulas_are_identical_by_design` fija
+la identidad para que una futura divergencia real (si algún día lo es) se note.
+
+**`ANNUAL_EQUALS_TOTAL_AT_1Y` (87% de violación) — tolerancia demasiado estricta, mezclaba dos
+fenómenos distintos.** Con datos reales: de 2.042 filas a horizonte 1 año, 1.778 (87%) tenían una
+diferencia `< 0.06` puntos porcentuales entre `Annual_Impact_Pct` (redondeado a 1 decimal en el
+KID, convención PRIIPs de "Reducción en el Rendimiento") y `Total_Costs_Pct` (precisión de 2
+decimales) — ruido de redondeo, no un defecto. Las 264 filas restantes muestran diferencias de
+hasta 20 puntos porcentuales, y corresponden a un subconjunto real y distinto: 447 fondos donde
+`Total_Costs_Pct`/`Total_Costs_EUR` es **idéntico en todos los horizontes** de un mismo fondo
+(matemáticamente imposible para un KID genuino — el coste acumulado a 5 años no puede ser igual al
+coste acumulado a 1 año). Tolerancia corregida a `0.06` (justificada en el formato de publicación
+regulatorio del KID, no una heurística de proximidad arbitraria) en `ANNUAL_EQUALS_TOTAL_AT_1Y` y
+`ANNUAL_LE_ACCUMULATED`; verificado en vivo: 1.784→264 y 1.092→239 violaciones respectivamente.
+**El defecto de 264/447 fondos permanece abierto** — es un hallazgo genuino de extracción de coste
+(P1), no de este motor; requiere su propia investigación con las skills de coste
+(`costP1AuditPipelineAndDiagCost`), fuera de alcance aquí.
+
+**Hallazgo nuevo, mayor, surgido al cablear `SCALAR_EQUALS_TIMESERIES` (item de alcance, no un
+hallazgo pendiente original) — un bug real de ingesta NAV, no un falso positivo del motor.** Al
+cablear esta comprobación (§4 #8, antes sin implementar) contra los 25 pares (metric, window)
+reales, la divergencia entre el escalar de `fund_metrics` y la última fila de
+`fund_metric_timeseries` resultó **casi universal** (p.ej. `sharpe|rolling_5y`: 5.768/5.768 fondos,
+100%). Investigado hasta el código: **ambas rutas de escritura leen la misma tabla
+(`fund_nav_monthly` vía `load_nav()`) pero con ventanas genuinamente distintas** —
+`run_pipeline.py` recorta por fecha de calendario (`nav_df["date"].max() - 12 meses`) con una tasa
+libre de riesgo estática, mientras `compute_rolling_rows()` (`rolling_stats.py`) usa una ventana de
+**recuento fijo de filas** (últimas 12 filas) con una tasa libre de riesgo alineada por fecha —
+inconsistencia de diseño real, pero agravada por un **bug de ingesta**: `nav_discovery.py`
+(`_resample_to_monthly` + `_write_nav_rows`, `INSERT OR IGNORE` sobre `(ISIN, Date)`) nunca
+sustituye la fila provisional de un mes **aún abierto** — cada ejecución sucesiva de ingesta añade
+una fila de fecha nueva en vez de reemplazar la anterior, así que el mes en curso acumula varias
+filas NAV "provisionales" en lugar de una. Eso rompe la ventana de recuento-fijo-de-filas (que
+ahora cubre menos de 12 meses reales) sin afectar igual de mal a la ventana por fecha-de-calendario,
+produciendo la divergencia casi universal observada. **No corregido en esta sesión** — toca
+ingesta NAV en producción (`proyecto2/src/discovery/nav_discovery.py`), un cambio de mayor calado
+y riesgo que requiere autorización explícita antes de tocarlo; documentado aquí y en memoria para
+que la próxima sesión lo retome con el diagnóstico ya hecho.
 
 Cada indicador se describe por: qué mide, para qué sirve, su modo de fallo, y la población sobre
 la que es legítimo calcularlo.

@@ -22,6 +22,7 @@ from shared.statistical_audit.catalog_pairs import COST_PAIRS, P2_PAIRS
 from shared.statistical_audit.invariants import check_invariant
 
 import pandas as pd
+import pytest
 
 
 class TestCostColumnsCatalog:
@@ -73,11 +74,31 @@ class TestMetricsCatalog:
 
 
 class TestPairsCatalog:
-    def test_p2_pairs_cover_the_five_block2_rows(self):
+    def test_p2_pairs_cover_the_four_active_block2_rows(self):
+        # VOL_ANN_EQUALS_SRRI_VOL removed 2026-09-13 — see
+        # test_vol_ann_srri_vol_formulas_are_identical_by_design below.
         assert set(P2_PAIRS) == {
             "REAL_EQUALS_NOMINAL", "SHARPE_EQUALS_SORTINO", "CAPTURE_UP_EQUALS_DOWN",
-            "SCALAR_EQUALS_TIMESERIES", "VOL_ANN_EQUALS_SRRI_VOL",
+            "SCALAR_EQUALS_TIMESERIES",
         }
+
+    def test_vol_ann_srri_vol_formulas_are_identical_by_design(self):
+        """Regression for the investigation in AUDITORIA_ESTADISTICA.md §2.6:
+        vol_ann(since_inception, nominal) and srri_volatility are the SAME
+        formula over the SAME NAV series, so a Block 2 pair comparing them
+        could never surface a binding defect — it would always match. Proves
+        the formulas stay identical rather than re-diverging silently.
+        """
+        import pandas as pd
+
+        from proyecto2.src.calculations.returns import annualized_volatility
+        from proyecto2.src.calculations.srri import compute_srri
+
+        nav = pd.Series([100.0, 101.5, 99.0, 103.0, 105.0, 104.0, 106.5,
+                          108.0, 107.0, 110.0, 111.0, 109.5, 112.0, 113.5])
+        vol_ann = annualized_volatility(nav)
+        srri_result = compute_srri(nav)
+        assert vol_ann == pytest.approx(srri_result["volatility_ann"])
 
     def test_cost_pairs_generates_all_21_unordered_combinations(self):
         # C(7,2) = 21 — every unordered pair of the 7 percent-scale columns.

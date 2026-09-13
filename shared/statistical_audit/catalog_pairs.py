@@ -40,11 +40,17 @@ P2_PAIRS: dict[str, PairRule] = {
         rule_id="SCALAR_EQUALS_TIMESERIES", tolerance=0.0001, min_matches=8,
         diagnosis="Snapshot/timeseries divergence (write-path inconsistency)",
     ),
-    "VOL_ANN_EQUALS_SRRI_VOL": PairRule(
-        rule_id="VOL_ANN_EQUALS_SRRI_VOL", tolerance=0.0001, min_matches=8,
-        diagnosis="SRRI pipeline consumed stale vol",
-    ),
 }
+
+# VOL_ANN_EQUALS_SRRI_VOL removed 2026-09-13 (AUDITORIA_ESTADISTICA.md §2.6):
+# investigated the live 100%-match finding and confirmed it is NOT a binding
+# defect. proyecto2/src/calculations/returns.py:annualized_volatility() and
+# srri.py:compute_srri() both compute `returns.std(ddof=1) * sqrt(12)` over
+# the identical NAV series for vol_ann(since_inception, real_flag=0) and
+# srri_volatility — they are mathematically identical by construction, not
+# by a shared-bug coincidence. The pair could never have surfaced a defect
+# as specified; it is a catalog error, not a P2 bug. See
+# test_statistical_audit_catalogs.py::test_vol_ann_srri_vol_formulas_are_identical_by_design.
 
 _COST_PERCENT_COLUMNS = (
     "Entry_Fee_Pct_Max", "Exit_Fee_Pct_Max", "Management_Fee_Pct",

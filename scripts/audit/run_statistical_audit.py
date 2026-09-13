@@ -11,20 +11,45 @@ this tool needs pandas and a live SQLite connection and is meant to run
 under the `des` Conda env like every other P1/P2 tool. It mirrors
 sync_agents_md.py only in report-vs-check CLI shape and exit codes.
 
-Known scope limits in this first version (reported in the run's own output,
-never silently skipped):
-  - P2 Block 1/3/4/7 profile the GLOBAL population only; PEER segmentation
-    by Fund_Nature (compute_category_snapshot's own segmentation) is a
-    follow-up.
-  - P2 Block 2 implements SHARPE_EQUALS_SORTINO, CAPTURE_UP_EQUALS_DOWN and
-    VOL_ANN_EQUALS_SRRI_VOL (same-group metric pivots). REAL_EQUALS_NOMINAL
-    (needs an IPC join) and SCALAR_EQUALS_TIMESERIES (needs a
-    fund_metric_timeseries join) are cataloged but not yet wired.
-  - P2 Block 5 invariants referencing synthetic columns not present in
-    fund_metrics' long format (excess_return, periodic_return_variance,
-    return_ann_real/nominal, ipc_yoy) are skipped — fund_metrics has no
-    column by those names; deriving them is a follow-up, not a silent gap
-    (this runner reports exactly which rules were skipped and why).
+Fixed 2026-09-13 (AUDITORIA_ESTADISTICA.md §2.6, closing the item-4 scope
+gaps from the prior version of this file):
+  - VOL_ANN_EQUALS_SRRI_VOL removed from the P2 pairs catalog: investigated
+    the live 100%-match finding and confirmed vol_ann(since_inception,
+    nominal) and srri_volatility are mathematically identical by
+    construction (same `std(ddof=1)*sqrt(12)` formula over the same NAV
+    series) — not a binding defect, and the pair could never have detected
+    one as specified.
+  - REAL_EQUALS_NOMINAL and SCALAR_EQUALS_TIMESERIES are now wired.
+    REAL_EQUALS_NOMINAL uses a single coarse ES-CPI YoY scalar as its IPC
+    eligibility gate (not a per-fund/per-horizon calculation).
+    SCALAR_EQUALS_TIMESERIES runs 25 separate per-(metric,window) queries
+    against fund_metric_timeseries (each a clean prefix match on
+    idx_fmts_isin_metric_window_real_date/idx_fmts_mwr_isin_date, ~3s each,
+    ~70-90s total) rather than one combined query, which was measured at
+    120s for the same total row count.
+  - excess_return (return_ann - RISK_FREE_RATE_ANN) and
+    return_ann_nominal/return_ann_real (pivoted from real_flag) are now
+    derived and merged into the Block 5 invariant frame, activating
+    SORTINO_VS_SHARPE_UP/DOWN and DEFLATION_ORDER. N_OBS_NONNEG was
+    corrected to the 7 real per-regime `n_obs_{regime}` columns (the
+    original bare `n_obs` never existed). `periodic_return_variance`
+    (FROZEN_NAV_ZERO_VOL) remains unwired — it would require reading and
+    recomputing from raw NAV series inside this audit, a materially larger
+    change than deriving a column from already-loaded fund_metrics rows.
+  - PEER segmentation (Blocks 1/4) is now wired for the 5 curated metrics
+    at since_inception/nominal, segmented by Fund_Nature (min 5 peers) —
+    the same scope the production category-snapshot alert engine targets,
+    not all 486 groups x ~7 natures.
+  - Two cost Block-5 invariants (ANNUAL_LE_ACCUMULATED,
+    ANNUAL_EQUALS_TOTAL_AT_1Y) had their tolerance widened from 0.0001 to
+    0.06 percentage points, grounded in the KID's own 1-decimal RIY
+    publication rounding — this eliminated ~1,780 of ~2,042 false-positive
+    violations while correctly preserving the genuine ~264-fund defect
+    (Total_Costs_Pct/EUR duplicated identically across a fund's different
+    Horizon_Years rows).
+
+Remaining scope limits (reported in the run's own output, never silently
+skipped):
   - Block 6 (fund_metric_timeseries temporal integrity) is out of scope.
   - Block 4's reconciliation against fund_metric_alerts (function #12,
     reconcile_with_alerts) is not wired into this runner yet. The three
@@ -46,6 +71,7 @@ from __future__ import annotations
 import argparse
 import sqlite3
 import sys
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -55,7 +81,7 @@ if str(_ROOT) not in sys.path:
 
 import pandas as pd
 
-from shared.config import DB_PATH
+from shared.config import DB_PATH, RISK_FREE_RATE_ANN
 from shared.statistical_audit.catalog_cost_columns import COST_COLUMNS
 from shared.statistical_audit.catalog_invariants import COST_INVARIANTS, P2_INVARIANTS
 from shared.statistical_audit.catalog_metric_bounds import get_metric_bound
@@ -79,7 +105,7 @@ from shared.statistical_audit.outliers import detect_outliers
 from shared.statistical_audit.persistence import emit_findings, emit_statistics, statistics_to_frame
 from shared.statistical_audit.snapshot import build_population
 
-_NOT_YET_WIRED_P2_PAIRS = {"REAL_EQUALS_NOMINAL", "SCALAR_EQUALS_TIMESERIES"}
+MIN_PEERS = 5
 
 
 # ============================================================
@@ -155,7 +181,8 @@ def run_cost_audit(conn: sqlite3.Connection) -> "AuditRun":
 # ============================================================
 
 _P2_METRICS_QUERY = """
-    SELECT fm.ISIN, fm.metric, fm.horizon, fm.value, fm.real_flag, fm.metric_version
+    SELECT fm.ISIN, fm.metric, fm.horizon, fm.value, fm.real_flag, fm.metric_version,
+           m.Fund_Nature
     FROM fund_metrics fm
     JOIN fund_master m ON m.ISIN = fm.ISIN
     WHERE m.In_Current_Universe = 1
@@ -166,8 +193,82 @@ _P2_GROUP_KEYS = ("metric", "horizon", "real_flag", "metric_version")
 _P2_SAME_GROUP_PAIRS = {
     "SHARPE_EQUALS_SORTINO": ("sharpe", "sortino"),
     "CAPTURE_UP_EQUALS_DOWN": ("upside_capture", "downside_capture"),
-    "VOL_ANN_EQUALS_SRRI_VOL": ("vol_ann", "srri_volatility"),
 }
+
+# PEER segmentation (2026-09-13, closes an item-4 scope gap): limited to the 5
+# curated metrics at since_inception/nominal — the same scope the production
+# category-snapshot alert engine (compute_category_snapshot) targets — rather
+# than exploding across all 486 groups x ~7 Fund_Nature values, which would
+# multiply runtime and audit_statistic row count for little incremental value
+# beyond this core set.
+_PEER_METRICS = ("vol_ann", "max_dd", "return_ann", "sharpe", "sortino")
+_PEER_HORIZON = "since_inception"
+_PEER_REAL_FLAG = 0
+
+_IPC_QUERY = "SELECT date, ipc_index FROM series_inflation WHERE geography = 'ES' ORDER BY date"
+
+# SCALAR_EQUALS_TIMESERIES (2026-09-13): per-(metric,window) queries, each a
+# clean prefix match on idx_fmts_mwr_isin_date (~3s, ~25 combos ≈ 70-90s
+# total) — verified empirically that combining all 5 metrics x 5 windows into
+# one IN-list query still rides the index but does ~25x the work in one call
+# (120s for 184k rows); per-combo calls are equivalent total work, cleaner to
+# reason about, and let each combo report independently.
+_SCALAR_TIMESERIES_METRICS = ("vol_ann", "max_dd", "return_ann", "sharpe", "sortino")
+_SCALAR_TIMESERIES_WINDOWS = ("rolling_1y", "rolling_2y", "rolling_3y", "rolling_5y", "rolling_10y")
+
+_TS_LATEST_QUERY = """
+    SELECT t.isin, t.real_flag, t.value AS ts_value
+    FROM fund_metric_timeseries t
+    JOIN (
+        SELECT isin, real_flag, MAX(date) AS max_date
+        FROM fund_metric_timeseries
+        WHERE metric = ? AND window = ?
+        GROUP BY isin, real_flag
+    ) latest ON latest.isin = t.isin AND latest.real_flag = t.real_flag AND latest.max_date = t.date
+    WHERE t.metric = ? AND t.window = ?
+"""
+
+
+def _pivot_return_ann_by_real_flag(long_df: pd.DataFrame) -> pd.DataFrame:
+    """return_ann_nominal/return_ann_real as sibling columns of the same row
+    (isin, horizon, metric_version) — needed by REAL_EQUALS_NOMINAL and
+    DEFLATION_ORDER, neither of which can be expressed on _pivot_all_metrics'
+    output (there, real_flag is part of the index, so nominal and real values
+    for the same metric never appear side by side in one row).
+    """
+    join_keys = ["isin", "horizon", "metric_version"]
+    subset = long_df[long_df["metric"] == "return_ann"]
+    nominal = subset[subset["real_flag"] == 0][join_keys + ["value"]].rename(
+        columns={"value": "return_ann_nominal"})
+    real = subset[subset["real_flag"] == 1][join_keys + ["value"]].rename(
+        columns={"value": "return_ann_real"})
+    return nominal.merge(real, on=join_keys, how="inner")
+
+
+def _latest_ipc_yoy(conn: sqlite3.Connection) -> float | None:
+    """Single scalar YoY inflation rate from the latest available ES CPI
+    index vs. ~12 months prior — a coarse eligibility gate for
+    REAL_EQUALS_NOMINAL/DEFLATION_ORDER, not a per-fund/per-horizon
+    calculation. Deliberately approximate: these two checks only need to know
+    whether deflation was possible at all, not the exact rate.
+    """
+    df = build_population(conn, _IPC_QUERY, require_universe_filter=False)
+    if len(df) < 13:
+        return None
+    df["date"] = pd.to_datetime(df["date"])
+    latest = df.iloc[-1]
+    year_ago_cutoff = latest["date"] - pd.DateOffset(years=1)
+    prior = df[df["date"] <= year_ago_cutoff]
+    if prior.empty:
+        return None
+    prior_index = prior.iloc[-1]["ipc_index"]
+    if prior_index == 0:
+        return None
+    return float(latest["ipc_index"] / prior_index - 1.0)
+
+
+def _fetch_latest_timeseries_snapshot(conn: sqlite3.Connection, metric: str, window: str) -> pd.DataFrame:
+    return pd.read_sql_query(_TS_LATEST_QUERY, conn, params=(metric, window, metric, window))
 
 
 def run_p2_audit(conn: sqlite3.Connection) -> "AuditRun":
@@ -193,6 +294,26 @@ def run_p2_audit(conn: sqlite3.Connection) -> "AuditRun":
         if bound is not None:
             _block7(run, group_key, group, "value", bound, horizon_column="horizon")
 
+        if (
+            metric in _PEER_METRICS and horizon == _PEER_HORIZON
+            and real_flag == _PEER_REAL_FLAG and metric_version == "v1"
+        ):
+            for nature, peer_group in group.groupby("Fund_Nature"):
+                if len(peer_group) < MIN_PEERS:
+                    run.skipped.append(
+                        f"BLOCK1/4 PEER:{nature} {group_key}: {len(peer_group)} < MIN_PEERS={MIN_PEERS}"
+                    )
+                    continue
+                peer_key = f"{group_key}|PEER:{nature}"
+                peer_series = peer_group["value"]
+                _block1(run, group_key, peer_series, len(peer_group),
+                        numeric=True, supports_moments=spec.supports_moments,
+                        population=f"PEER:{nature}")
+                if spec.statistical_type in ("continuous_positive", "continuous_signed", "bounded_unit"):
+                    peer_indexed = peer_series.set_axis(peer_group["isin"])
+                    for method in ("IQR", "MAD_Z"):
+                        _block4(run, peer_key, peer_indexed, method)
+
     for rule_id, (metric_a, metric_b) in _P2_SAME_GROUP_PAIRS.items():
         rule = P2_PAIRS[rule_id]
         wide = _pivot_two_metrics(long_df, metric_a, metric_b)
@@ -210,10 +331,67 @@ def run_p2_audit(conn: sqlite3.Connection) -> "AuditRun":
                 "root_cause_candidate": rule.diagnosis,
             })
 
-    for rule_id in _NOT_YET_WIRED_P2_PAIRS:
-        run.skipped.append(f"BLOCK2 {rule_id}: not yet wired (see module docstring)")
+    ipc_yoy = _latest_ipc_yoy(conn)
+    deflation_frame = _pivot_return_ann_by_real_flag(long_df)
+    if deflation_frame.empty:
+        run.skipped.append("BLOCK2 REAL_EQUALS_NOMINAL: no overlapping nominal/real return_ann rows")
+    else:
+        deflation_frame = deflation_frame.assign(ipc_yoy=ipc_yoy if ipc_yoy is not None else float("nan"))
+        rule = P2_PAIRS["REAL_EQUALS_NOMINAL"]
+        result = compare_pairs(deflation_frame, "return_ann_nominal", "return_ann_real", rule)
+        if result.triggered:
+            run.findings.append({
+                "block": "BLOCK2", "rule_id": "REAL_EQUALS_NOMINAL", "rule_class": "STATISTICAL_ANOMALY",
+                "severity": rule.severity, "group_key": "REAL_EQUALS_NOMINAL",
+                "value": None, "reference_value": None, "threshold": rule.tolerance,
+                "distance": float(result.n_matches),
+                "evidence": (
+                    f"{result.n_matches}/{result.n_eligible} eligible rows within tolerance "
+                    f"(ipc_yoy={ipc_yoy:.4f})" if ipc_yoy is not None else
+                    f"{result.n_matches}/{result.n_eligible} eligible rows within tolerance"
+                ),
+                "root_cause_candidate": rule.diagnosis,
+            })
+
+    for metric in _SCALAR_TIMESERIES_METRICS:
+        for window in _SCALAR_TIMESERIES_WINDOWS:
+            ts_snapshot = _fetch_latest_timeseries_snapshot(conn, metric, window)
+            if ts_snapshot.empty:
+                run.skipped.append(f"BLOCK2 SCALAR_EQUALS_TIMESERIES {metric}/{window}: no timeseries rows")
+                continue
+            scalar_slice = long_df[(long_df["metric"] == metric) & (long_df["horizon"] == window)]
+            merged = scalar_slice.merge(ts_snapshot, on=["isin", "real_flag"], how="inner")
+            if merged.empty:
+                run.skipped.append(f"BLOCK2 SCALAR_EQUALS_TIMESERIES {metric}/{window}: no overlapping rows")
+                continue
+            rule_id = f"SCALAR_EQUALS_TIMESERIES_{metric}_{window}"
+            rule = replace(P2_PAIRS["SCALAR_EQUALS_TIMESERIES"], rule_id=rule_id)
+            merged = merged.rename(columns={"value": "scalar_value"})
+            result = compare_pairs(merged, "scalar_value", "ts_value", rule)
+            # Some divergence is expected from ordinary calc-timing lag between
+            # the two write paths (fund_metrics is INSERT OR REPLACE'd fresh
+            # each run; fund_metric_timeseries is INSERT OR IGNORE, append-only
+            # per new date) — gate on the same n>=8 significance convention
+            # used throughout this catalog, not a zero-tolerance count.
+            n_divergent = result.n_eligible - result.n_matches
+            if n_divergent >= rule.min_matches:
+                run.findings.append({
+                    "block": "BLOCK2", "rule_id": rule_id, "rule_class": "STATISTICAL_ANOMALY",
+                    "severity": "WARN", "group_key": f"{metric}|{window}",
+                    "value": None, "reference_value": None, "threshold": rule.tolerance,
+                    "distance": float(n_divergent),
+                    "evidence": f"{n_divergent}/{result.n_eligible} funds diverge between "
+                                f"fund_metrics scalar and latest fund_metric_timeseries snapshot",
+                    "root_cause_candidate": P2_PAIRS["SCALAR_EQUALS_TIMESERIES"].diagnosis,
+                })
 
     wide_for_invariants = _pivot_all_metrics(long_df)
+    if not deflation_frame.empty:
+        wide_for_invariants = wide_for_invariants.merge(
+            deflation_frame, on=["isin", "horizon", "metric_version"], how="left",
+        )
+    if "return_ann" in wide_for_invariants.columns:
+        wide_for_invariants["excess_return"] = wide_for_invariants["return_ann"] - RISK_FREE_RATE_ANN
     _run_invariants(run, P2_INVARIANTS, [wide_for_invariants], block="BLOCK5")
 
     return run
@@ -239,14 +417,14 @@ class AuditRun:
     def __init__(self, domain: str):
         self.domain = domain
         self.universe_size = 0
-        self.statistics: list[tuple] = []  # (group_key, stats_dict, n)
+        self.statistics: list[tuple] = []  # (population, group_key, stats_dict, n)
         self.findings: list[dict] = []
         self.skipped: list[str] = []
 
 
 def _block1(
     run: AuditRun, group_key: str, series: pd.Series, n_expected: int,
-    numeric: bool = True, supports_moments: bool = True,
+    numeric: bool = True, supports_moments: bool = True, population: str = "GLOBAL",
 ) -> None:
     stats: dict = profile_coverage(series, n_expected=n_expected)
     if numeric:
@@ -254,7 +432,13 @@ def _block1(
         if supports_moments:
             stats.update(profile_moments(series))
     stats.update(profile_mass_points(series))
-    run.statistics.append((group_key, stats, stats.get("n_valid")))
+    run.statistics.append((population, group_key, stats, stats.get("n_valid")))
+
+    # PEER findings are additional context for a GLOBAL group already profiled
+    # above; only escalate to a finding once, at GLOBAL, to avoid duplicate
+    # noise for every peer segment of the same underlying group.
+    if population != "GLOBAL":
+        return
 
     if stats.get("mass_class") == "TEMPLATE_OR_DEFAULT":
         run.findings.append({
@@ -351,8 +535,8 @@ def _run_invariants(run: AuditRun, rules, frames: list[pd.DataFrame], block: str
 
 def _persist(conn: sqlite3.Connection, run: "AuditRun", run_id: str) -> tuple[int, int]:
     n_stats = 0
-    for group_key, stats, n in run.statistics:
-        n_stats += emit_statistics(conn, run_id, run.domain, "GLOBAL", group_key, stats, n=n)
+    for population, group_key, stats, n in run.statistics:
+        n_stats += emit_statistics(conn, run_id, run.domain, population, group_key, stats, n=n)
     n_findings = emit_findings(conn, run_id, run.domain, run.findings)
     return n_stats, n_findings
 
