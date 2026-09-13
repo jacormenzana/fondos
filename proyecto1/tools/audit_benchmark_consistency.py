@@ -36,6 +36,10 @@ from typing import Optional
 # ── repo root on sys.path so we can import P1 modules ─────────────────────────
 _REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO))
+# kiid_parser.py resolves its own internal imports (e.g. cost_table_parser) as
+# bare top-level modules — put proyecto1/core on sys.path too, same pattern as
+# proyecto1/tests/test_audit_fixes_20260715.py.
+sys.path.insert(0, str(_REPO / "proyecto1" / "core"))
 
 from proyecto1.core.classify_utils import (
     SECTOR_FOCUS_TRANSLATION_MAP,
@@ -59,6 +63,7 @@ from proyecto1.core.classify_utils import (
     bmk_sector,
     bmk_severity_nature,
 )
+from kiid_parser import detect_wrong_kiid_document
 
 # ── DB path ───────────────────────────────────────────────────────────────────
 DB_PATH = _REPO / "db" / "fondos.sqlite"
@@ -178,6 +183,33 @@ def run_audit(db_path: Path = DB_PATH) -> dict:
 
     fm: dict[str, dict] = {r["ISIN"]: dict(r) for r in fm_rows}
 
+    # WRONG_DOC / stale-classification detection per ISIN — a WRONG_DOC fund's
+    # fund_master row is a KNOWN-stale echo of a prior cycle (publish_fund is
+    # skipped once WRONG_DOC is set; see pipeline.py's KIID_WRONG_DOC handler
+    # and AGENTS.md Reliability Control 1). B1 must not re-report these as
+    # fresh CRITICAL findings — that just re-flags an already-tracked
+    # data-quality gap as if it were a new classifier bug.
+    #
+    # The persisted KIID_Status alone is not enough: a retired/out-of-harvest
+    # ISIN (In_Current_Universe=0) is never dispatched by nature-first, so
+    # detect_wrong_kiid_document() never gets to run on it even when its
+    # cached Raw_KIID_Text has since become a wrong document — it stays stuck
+    # at whatever status it had (e.g. FORCE_REFRESH) indefinitely. Confirmed
+    # 2026-09-13: LU2257586540 (retired) is cached with an umbrella SICAV
+    # annual report ("Audited Annual Report" at position 104) — a live
+    # detect_wrong_kiid_document() call catches it; the stored status
+    # ('FORCE_REFRESH') alone does not. So re-run the same detector here
+    # (DRY / P#11 — no new detection logic) against the cached text directly.
+    kiid_status: dict[str, str] = {}
+    for r in con.execute(
+        "SELECT ISIN, KIID_Status, Raw_KIID_Text FROM fund_kiid_metadata "
+        "WHERE KIID_Class=1"
+    ).fetchall():
+        status = r["KIID_Status"]
+        if status != "WRONG_DOC" and detect_wrong_kiid_document(r["Raw_KIID_Text"]):
+            status = "WRONG_DOC"  # live-detected, regardless of stored status
+        kiid_status[r["ISIN"]] = status
+
     # Group benchmarks by ISIN → list[row]
     bmk_by_isin: dict[str, list] = defaultdict(list)
     for r in bmk_rows:
@@ -285,6 +317,7 @@ def run_audit(db_path: Path = DB_PATH) -> dict:
     b1_critical:  list[dict] = []
     b1_warn:      list[dict] = []
     b1_info:      list[dict] = []
+    b1_known_wrongdoc: list[dict] = []
     b2_geo:       list[dict] = []
     b2_geo_gap:   list[dict] = []  # benchmark has geo, fund_master has None
     b3_sector:    list[dict] = []
@@ -344,7 +377,14 @@ def run_audit(db_path: Path = DB_PATH) -> dict:
                     "severity":   sev,
                     "hypothesis": _root_cause_b1(nature, ac or "?", source),
                 }
-                if sev == "CRITICAL":
+                if kiid_status.get(isin) == "WRONG_DOC":
+                    # Already-known-unreliable classification (publish_fund is
+                    # skipped for WRONG_DOC funds — this Fund_Nature is a stale
+                    # echo, not a live classifier output). Track separately so
+                    # it doesn't drown out genuinely new CRITICAL findings.
+                    record["kiid_status"] = "WRONG_DOC"
+                    b1_known_wrongdoc.append(record)
+                elif sev == "CRITICAL":
                     b1_critical.append(record)
                 else:
                     b1_warn.append(record)
@@ -617,6 +657,7 @@ def run_audit(db_path: Path = DB_PATH) -> dict:
             "B1_critical":       b1_critical,
             "B1_warn":           b1_warn,
             "B1_info":           b1_info,
+            "B1_known_wrongdoc": b1_known_wrongdoc,
             "B2_geo_conflict":   b2_geo,
             "B2_geo_gap":        b2_geo_gap,
             "B3_sector_conflict":b3_sector,
@@ -659,6 +700,7 @@ def print_summary(findings: dict) -> None:
     print(f"  B1  Asset-class vs Fund_Nature CRITICAL      : {len(B['B1_critical']):>5}")
     print(f"  B1  Asset-class vs Fund_Nature WARN          : {len(B['B1_warn']):>5}")
     print(f"  B1  Asset-class vs Fund_Nature INFO          : {len(B['B1_info']):>5}")
+    print(f"  B1  KNOWN WRONG_DOC (stale, not re-flagged)  : {len(B['B1_known_wrongdoc']):>5}")
     print(f"  B2  Geography CONFLICT                       : {len(B['B2_geo_conflict']):>5}")
     print(f"  B2  Geography GAP (bmk has geo, master NULL) : {len(B['B2_geo_gap']):>5}")
     print(f"  B3  Sector CONFLICT                          : {len(B['B3_sector_conflict']):>5}")
