@@ -20,14 +20,19 @@ defectos de producción D1–D3 del motor de alertas (§2.5) están corregidos e
 `SCALAR_EQUALS_TIMESERIES` surgió un hallazgo mayor — un bug real de ingesta NAV que corrompía la
 ventana de recuento-fijo-de-filas de `compute_rolling_rows()` — **corregido en código el mismo día,
 en sesión de seguimiento autorizada explícitamente** (§2.7): `_write_nav_rows()` ya no acumula
-filas por mes abierto. El saneado de los ~13.308 filas ya corrompidas en producción tiene script
-listo (`scripts/mig/fix_nav_monthly_duplicate_months.py`) pero **no aplicado** — pendiente de que
-el usuario ejecute `--apply`. Lo que sigue abierto: función #12 (`reconcile_with_alerts`, bloqueada
-hasta el próximo ciclo P2 real), `periodic_return_variance`/`FROZEN_NAV_ZERO_VOL` (necesitaría
-releer NAV en bruto dentro del motor), la inconsistencia de ventana calendario-vs-recuento-de-filas
-entre `run_pipeline.py` y `rolling_stats.py` (§2.7, deliberadamente no tocada), y la aplicación del
-script de saneado — ver el runner (`--help` o su docstring) para la lista exacta y actualizada de
-huecos del motor, que se imprime en cada ejecución.
+filas por mes abierto. El saneado de las ~13.308 filas ya corrompidas en producción se **aplicó el
+mismo día** (`scripts/mig/fix_nav_monthly_duplicate_months.py --apply`, autorización explícita del
+usuario): 13.308 filas eliminadas, 0 pares `(ISIN, mes)` duplicados restantes (verificado con una
+consulta de solo lectura independiente, no solo el resumen del propio script), `fund_nav_monthly`
+queda en 661.279 filas totales, copia de seguridad previa en `db/fondos_backup_20260913.sqlite`.
+Lo que sigue abierto: función #12 (`reconcile_with_alerts`, bloqueada hasta el próximo ciclo P2
+real), `periodic_return_variance`/`FROZEN_NAV_ZERO_VOL` (necesitaría releer NAV en bruto dentro del
+motor), la inconsistencia de ventana calendario-vs-recuento-de-filas entre `run_pipeline.py` y
+`rolling_stats.py` (§2.7, deliberadamente no tocada), y el recálculo P2 de seguimiento (los ISINs
+afectados por el saneado no recalculan `fund_metrics`/`fund_metric_timeseries` hasta el próximo
+ciclo P2 ordinario — el fingerprint de entrada ya cambió, no hace falta tocar `CALC_VERSION`) — ver
+el runner (`--help` o su docstring) para la lista exacta y actualizada de huecos del motor, que se
+imprime en cada ejecución.
 
 ---
 
@@ -202,12 +207,17 @@ cambios propios. 8 tests de regresión nuevos en
 `proyecto2/tests/discovery/test_nav_monthly_write_20260913.py` (incluye el caso "mes cerrado
 fijado en valor provisional", más grave que el caso simple de mes abierto).
 
-**Saneado de datos ya corrompidos — script construido, NO ejecutado contra producción todavía**
-(decisión explícita del usuario): `scripts/mig/fix_nav_monthly_duplicate_months.py`, dry-run por
-defecto, `--apply` para escribir. Verificado en dry-run contra la BD en vivo: reporta exactamente
-los 6.876/13.308 medidos arriba. Tras un `--apply` futuro, un ciclo P2 normal recalculará solo los
-ISINs afectados (el fingerprint de entrada cambia; no hace falta tocar `CALC_VERSION`) — no
-disparado automáticamente por este fix.
+**Saneado de datos ya corrompidos — construido y APLICADO contra producción el mismo día**
+(decisión explícita del usuario, tras backup): `scripts/mig/fix_nav_monthly_duplicate_months.py`,
+dry-run por defecto, `--apply` para escribir. Secuencia seguida: backup completo de
+`db/fondos.sqlite` a `db/fondos_backup_20260913.sqlite` (12,2GB); dry-run inmediatamente antes de
+aplicar para confirmar que la línea base no había cambiado (seguía en 6.876 pares/13.308 filas);
+`--apply`; verificación independiente con una consulta de solo lectura (no solo el resumen impreso
+por el propio script) de que 0 pares `(ISIN, mes)` quedan duplicados — `fund_nav_monthly` queda en
+661.279 filas totales. Suite completa P1 (1336 tests) + P2 (279 tests) re-ejecutada sin
+regresiones tras el cambio de datos. Un ciclo P2 normal recalculará solo los ISINs afectados (el
+fingerprint de entrada ya cambió; no hace falta tocar `CALC_VERSION`) — ese recálculo no se ha
+disparado todavía, es la única acción de seguimiento pendiente.
 
 Cada indicador se describe por: qué mide, para qué sirve, su modo de fallo, y la población sobre
 la que es legítimo calcularlo.
