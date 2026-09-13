@@ -710,12 +710,8 @@ if __name__ == "__main__":
 
     out_path = args.out
     if out_path is None:
-        # Default: session scratchpad
-        scratchpad = os.environ.get(
-            "CLAUDE_SCRATCHPAD",
-            r"C:\Users\ADMINI~1\AppData\Local\Temp\claude\c--desarrollo-fondos\1fbd0bfd-d2e7-442a-a862-61022382e27f\scratchpad"
-        )
-        out_path = os.path.join(scratchpad, "benchmark_audit_findings.json")
+        # Default: canonical repo location (see AGENTS.md asset table)
+        out_path = str(_REPO / "out" / "audit" / "benchmark_audit_findings.json")
 
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as fh:
