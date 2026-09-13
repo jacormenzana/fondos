@@ -26,6 +26,7 @@ from src.calculations.rolling_stats import (
     compute_alerts,
     compute_timeseries_snapshots,
     cat_signals_from_snapshot,
+    resolve_rf_rate,
 )
 
 
@@ -829,3 +830,66 @@ class TestRfSeriesAlignment:
         sharpe_e = sorted(r["value"] for r in rows_empty  if r["metric"] == "sharpe" and r["value"] is not None)
         sharpe_s = sorted(r["value"] for r in rows_static if r["metric"] == "sharpe" and r["value"] is not None)
         assert sharpe_e == pytest.approx(sharpe_s, abs=1e-12)
+
+
+# ============================================================
+# §2.9 (2026-09-13) — resolve_rf_rate, the single-point counterpart of the
+# vectorized §4g alignment above, added to close the SCALAR_EQUALS_TIMESERIES
+# sharpe/sortino formula asymmetry between run_pipeline.py's scalar path and
+# compute_rolling_rows' timeseries path.
+# ============================================================
+
+class TestResolveRfRate:
+    def test_exact_month_end_match(self):
+        rf = pd.DataFrame({"date": pd.to_datetime(["2024-01-31", "2024-02-29"]),
+                            "rate": [0.02, 0.03]})
+        assert resolve_rf_rate("2024-02-29", rf, fallback=0.0) == pytest.approx(0.03)
+
+    def test_forward_fill_from_latest_prior_rate(self):
+        """A date after the series end forward-fills to the latest known rate."""
+        rf = pd.DataFrame({"date": pd.to_datetime(["2024-01-31", "2024-02-29"]),
+                            "rate": [0.02, 0.03]})
+        assert resolve_rf_rate("2024-06-30", rf, fallback=0.0) == pytest.approx(0.03)
+
+    def test_back_fill_when_date_precedes_series(self):
+        """A date before the series start back-fills to the earliest known
+        rate rather than dropping to the flat fallback."""
+        rf = pd.DataFrame({"date": pd.to_datetime(["2024-06-30"]), "rate": [0.05]})
+        assert resolve_rf_rate("2023-01-31", rf, fallback=0.0) == pytest.approx(0.05)
+
+    def test_none_series_returns_fallback(self):
+        assert resolve_rf_rate("2024-01-31", None, fallback=0.04) == pytest.approx(0.04)
+
+    def test_empty_series_returns_fallback(self):
+        rf = pd.DataFrame(columns=["date", "rate"])
+        assert resolve_rf_rate("2024-01-31", rf, fallback=0.04) == pytest.approx(0.04)
+
+    def test_agrees_with_compute_rolling_rows_vectorized_resolution(self):
+        """Equivalence test (not shared code — see resolve_rf_rate's own
+        docstring for why): resolve_rf_rate's single-point answer for a
+        series' LAST date must equal the rate compute_rolling_rows' own
+        vectorized alignment uses internally for that same point, proven
+        indirectly via the sharpe value each produces (neither function
+        exposes the resolved rate directly).
+        """
+        rng = np.random.default_rng(7)
+        n = 24
+        navs = np.cumprod(1 + rng.normal(0.004, 0.015, n)) * 100.0
+        dates = pd.date_range("2022-01-31", periods=n, freq="ME")
+        nav_df = pd.DataFrame({"date": dates, "nav": navs})
+        rf = pd.DataFrame({"date": dates[:18], "rate": np.linspace(0.01, 0.04, 18)})
+
+        rows = compute_rolling_rows("X", nav_df, {"rolling_1y": 12},
+                                     risk_free_rate=0.0, rf_series=rf)
+        latest_date = dates[-1]
+        latest_sharpe = next(
+            r["value"] for r in rows
+            if r["metric"] == "sharpe" and r["real_flag"] == 0
+            and r["date"] == latest_date.date().isoformat()
+        )
+
+        resolved_rate = resolve_rf_rate(latest_date, rf, fallback=0.0)
+        window_nav = navs[-12:]
+        expected_sharpe = _roll_sharpe(window_nav, 12, resolved_rate)
+
+        assert latest_sharpe == pytest.approx(expected_sharpe, abs=1e-9)

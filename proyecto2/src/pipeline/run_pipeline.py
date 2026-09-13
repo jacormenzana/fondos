@@ -110,6 +110,7 @@ from src.calculations.rolling_stats import (
     compute_alerts,
     compute_timeseries_snapshots,
     cat_signals_from_snapshot,
+    resolve_rf_rate,
 )
 from src.utils.fingerprint import compute_input_hash
 from src.utils.logger import get_pipeline_logger
@@ -569,6 +570,7 @@ def _process_horizon(
     horizon: str,
     conn: sqlite3.Connection,
     dry_run: bool,
+    rf_rate_df: pd.DataFrame | None = None,
 ) -> int:
     """Calcula y persiste todas las metricas para un horizonte dado."""
     if len(nav_df) < MIN_NAV_ROWS:
@@ -576,8 +578,17 @@ def _process_horizon(
              f"Solo {len(nav_df)} filas NAV (minimo {MIN_NAV_ROWS})", dry_run)
         return 0
 
+    # -- Tipo libre de riesgo alineado a la fecha fin de este horizonte -----
+    # AUDITORIA_ESTADISTICA.md §2.9 (2026-09-13): esta llamada usaba antes
+    # RISK_FREE_RATE_ANN plana mientras compute_rolling_rows() (write-path de
+    # fund_metric_timeseries) ya usaba rf_series alineada por fecha (§4g) —
+    # una asimetria de FORMULA real entre los dos write-paths de sharpe/
+    # sortino (SCALAR_EQUALS_TIMESERIES), no solo staleness de datos.
+    # resolve_rf_rate replica el mismo ffill/bfill para un solo punto.
+    rf_for_horizon = resolve_rf_rate(nav_df["date"].max(), rf_rate_df, RISK_FREE_RATE_ANN)
+
     # -- Metricas de riesgo ------------------------------------
-    risk_df = compute_risk_metrics(nav_df, ipc_df, RISK_FREE_RATE_ANN)
+    risk_df = compute_risk_metrics(nav_df, ipc_df, rf_for_horizon)
     risk_metrics = risk_df.to_dict("records")
     for m in risk_metrics:
         m["source_rows"] = len(nav_df)
@@ -612,7 +623,9 @@ _ALL_METRIC_FAMILIES = frozenset({
 
 # Bump this string whenever the calculation logic changes to force a
 # cache-miss in fund_metric_state even when NAV/IPC inputs are unchanged.
-CALC_VERSION: str = "20260820"  # v31: spread_ig source BAA10YM (Moody's public) replacing restricted BAMLC0A0CM
+CALC_VERSION: str = "20260913"  # v32: scalar sharpe/sortino now use the same date-aligned
+# rf_series (§4g) as the timeseries write path, instead of a flat RISK_FREE_RATE_ANN —
+# closes the SCALAR_EQUALS_TIMESERIES formula asymmetry (AUDITORIA_ESTADISTICA.md §2.9)
 
 # ── v26 audit columns ──────────────────────────────────────────────────────
 # RUN_BATCH_ID is set once at the start of run() and written to every Gold row
@@ -1104,7 +1117,8 @@ def run(
                 if _want("risk"):
                     if horizons_filter is None or "since_inception" in horizons_filter:
                         isin_written += _process_horizon(
-                            isin, nav_df, ipc_df, "since_inception", conn, dry_run
+                            isin, nav_df, ipc_df, "since_inception", conn, dry_run,
+                            rf_rate_df=rf_rate_df,
                         )
 
                 # ---- Ventanas de crisis ------------------------------
@@ -1120,7 +1134,8 @@ def run(
                         if len(nav_w) < MIN_NAV_ROWS:
                             continue
                         isin_written += _process_horizon(
-                            isin, nav_w, ipc_w, crisis_name, conn, dry_run
+                            isin, nav_w, ipc_w, crisis_name, conn, dry_run,
+                            rf_rate_df=rf_rate_df,
                         )
 
                 # ---- Horizontes rolling ------------------------------
@@ -1139,7 +1154,8 @@ def run(
                         if len(nav_w) < MIN_NAV_ROWS:
                             continue
                         isin_written += _process_horizon(
-                            isin, nav_w, ipc_w, horizon_name, conn, dry_run
+                            isin, nav_w, ipc_w, horizon_name, conn, dry_run,
+                            rf_rate_df=rf_rate_df,
                         )
 
                 # ---- Horizontes cortos diarios (v24) -----------------

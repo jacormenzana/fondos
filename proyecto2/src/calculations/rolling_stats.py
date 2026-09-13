@@ -56,6 +56,46 @@ def _roll_vol_ann(nav_window: np.ndarray, periods_per_year: int) -> float:
     return float(np.std(rets, ddof=1) * math.sqrt(periods_per_year))
 
 
+def resolve_rf_rate(
+    date: "pd.Timestamp | str",
+    rf_series: pd.DataFrame | None,
+    fallback: float,
+) -> float:
+    """Single-point date-aligned risk-free rate lookup (§4g semantics),
+    for callers that need ONE rate at ONE point (a horizon's end date) rather
+    than the vectorized per-row resolution `compute_rolling_rows` does
+    internally for its whole date index. Same algorithm, expressed for one
+    date: month-end align, forward-fill from the latest rate at-or-before
+    `date`, back-fill if `date` precedes the series (so an unusually early
+    horizon still gets the earliest known rate instead of falling back to
+    the flat default), and only fall back to `fallback` when `rf_series` is
+    None/empty (no historical series available at all).
+
+    Added 2026-09-13 (AUDITORIA_ESTADISTICA.md §2.9) to close a real formula
+    asymmetry: run_pipeline.py's scalar risk_metrics call used a flat
+    RISK_FREE_RATE_ANN for sharpe/sortino while compute_rolling_rows' own
+    vectorized alignment (lines below) already used the date-aligned curve —
+    the two write paths computed genuinely different sharpe/sortino values
+    for the same fund/horizon, not just stale-data divergence. Kept as a
+    separate function rather than refactoring compute_rolling_rows to call
+    this in a per-row loop: that vectorized block runs over the full NAV
+    history for every ISIN and looping a per-point lookup there would be a
+    real performance regression; test_rolling_stats.py pins both
+    implementations to agree on the same inputs instead.
+    """
+    if rf_series is None or rf_series.empty:
+        return fallback
+
+    s = rf_series.copy()
+    s["date"] = pd.to_datetime(s["date"]) + pd.offsets.MonthEnd(0)
+    s = s.sort_values("date").drop_duplicates("date", keep="last").set_index("date")["rate"]
+
+    target = pd.Timestamp(date).normalize() + pd.offsets.MonthEnd(0)
+    aligned = s.reindex(s.index.union([target])).sort_index().ffill().bfill()
+    value = aligned.get(target)
+    return fallback if value is None or pd.isna(value) else float(value)
+
+
 def _roll_max_dd(nav_window: np.ndarray) -> float:
     """Máximo drawdown (≤ 0) dentro de un segmento NAV."""
     if len(nav_window) < 2:

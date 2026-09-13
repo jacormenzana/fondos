@@ -277,6 +277,166 @@ rechaza antes de llegar al cálculo rolling por un defecto de mezcla de escalas 
 relacionado ("saltos >8x") — su remedio es `repair_nav_scale_20260719.py`, una tarea aparte, no
 abordada aquí.
 
+### 2.8 Auditoría de tolerancias y detector de duplicación cross-horizon (2026-09-13)
+
+**Auditoría de las 4 reglas con tolerancia `0.0001` sin auditar** (`OC_NOT_CONTAMINATED`,
+`REAL_EQUALS_NOMINAL`, `SHARPE_EQUALS_SORTINO`, `SCALAR_EQUALS_TIMESERIES`), motivada por el
+precedente de `ANNUAL_EQUALS_TOTAL_AT_1Y` (§2.7): medido un barrido de tolerancia
+(0.0001/0.001/0.01/0.06) contra la BD en vivo antes de tocar ningún valor. Las tolerancias
+auditadas se centralizaron en `shared/statistical_audit/tolerances.py` (constantes nombradas,
+cierra la brecha P#11/R-1 donde `catalog_invariants.py` ya citaba un nombre
+`ROUNDING_TOLERANCE_PP` que no existía como constante real). Tres clases distintas, nunca
+conflacionadas:
+
+- **Publicación regulada** (`KID_ROUNDING_TOLERANCE_PP=0.06`) — sin cambios, ya descrito en §2.7.
+- **Identidad de coma flotante** (`FLOAT_IDENTITY_TOLERANCE=0.0001`) — `OC_NOT_CONTAMINATED`
+  (89→89→93→190 violaciones en el barrido) y `SHARPE_EQUALS_SORTINO` (173→401→2.092→8.575
+  coincidencias de 43.766 elegibles) crecen de forma monótona y sin meseta al ampliar la
+  tolerancia — el patrón opuesto al de `ANNUAL_EQUALS_TOTAL_AT_1Y` (caída-y-meseta, evidencia de
+  una rejilla de redondeo real). Confirma que son pruebas de identidad, no de proximidad:
+  `0.0001` ya era el valor correcto, no un default sin auditar. Mismo tratamiento aplicado, sin
+  cambio de valor, a `SORTINO_VS_SHARPE_UP/DOWN`, `DEFLATION_ORDER` y `MONTH_SHARE_OVERFLOW`
+  (mismo literal `0.0001`/`1.0001`, ahora referenciando la constante nombrada).
+- **Magnitud derivada** (`IPC_ELIGIBILITY_FLOOR=0.001`) — `REAL_EQUALS_NOMINAL` solo tiene sentido
+  cuando el IPC del periodo es lo bastante grande para que la deflación separe visiblemente
+  `return_ann_real` de `return_ann_nominal`; `_ipc_eligibility()` ya usaba un suelo de IPC de
+  `0.001` para la elegibilidad. Atar la tolerancia de comparación al mismo suelo (en vez de un
+  epsilon sin relación) es la opción DRY (P#11): barrido en vivo (ipc_yoy=3,90%) mostró 26→348→
+  3.317→16.121 coincidencias de 22.367 filas elegibles sin meseta natural por encima del propio
+  suelo de elegibilidad, así que ese suelo es el único ancla justificable sin abrir una
+  investigación dedicada aparte.
+
+**`SCALAR_EQUALS_TIMESERIES` — auditada, encontrada sin solución de constante única, y root-caused
+en la sesión de seguimiento (ver §2.9).** Un barrido más fino por métrica (`vol_ann`, `sharpe`,
+`max_dd`, `return_ann`) mostró que la divergencia no converge a un suelo absoluto compartido: a
+tolerancia=0.10, `sharpe/rolling_1y` sigue divergiendo en el 82,3% de las filas (diferencia
+mediana=0,366) mientras `vol_ann/rolling_5y` baja al 0,4%. Un barrido de **tolerancia relativa**
+(estilo `numpy.isclose`, ver §2.9) confirmó que tampoco funciona: incluso al 30% relativo, el
+82,3%/97,7%/93,4% de `sharpe`/`sortino`/`return_ann` seguía divergiendo — la señal no era ruido de
+escala, era un sesgo sistemático real. La investigación de causa raíz (§2.9) encontró dos causas
+genuinas distintas (no una tolerancia mal calibrada): staleness de datos entre las dos tablas, y
+una asimetría real de fórmula en el tipo libre de riesgo de Sharpe/Sortino. La segunda **se
+corrigió en código** (`run_pipeline.py`, `CALC_VERSION` incrementado); la primera requiere el
+recálculo P2 completo ya pendiente. La tolerancia de la regla permanece sin tocar (`0.0001`) —
+corregir la causa raíz, no ensanchar el número, es la resolución correcta aquí.
+
+**Detector de duplicación cross-horizon (`Total_Costs_Pct`/`Total_Costs_EUR`, defecto citado en
+§2.7) — implementado.** `check_invariant` (función #9) es por-fila: no puede expresar "todas las
+filas de este ISIN llevan el mismo valor", que es exactamente el defecto. Nueva función genérica
+#17 `check_group_constancy(frame, rule)` (`shared/statistical_audit/group_checks.py`) — por grupo
+(`group_column`), señala cuando `value_column` es no-nulo en ≥`min_group_size` filas y todos esos
+valores no-nulos son idénticos; un grupo con menos filas no-nulas que `min_group_size` es
+indecidible (excluido, no "aprobado" — misma disciplina P#1/R-4 de `check_invariant`). Catálogo
+`catalog_group_checks.py` declara `TOTAL_COSTS_PCT_CONSTANT_ACROSS_HORIZONS` y
+`TOTAL_COSTS_EUR_CONSTANT_ACROSS_HORIZONS` (agrupando por `ISIN` sobre `fund_cost_schedule`,
+`min_group_size=2`); cableado en el runner (`_run_group_checks`, Bloque 5). **Solo detección** —
+la reparación es una re-extracción acotada sobre texto KIID cacheado
+(`--recompute-costs`, ver `reference_cost_recompute_cached` en memoria), fuera de alcance aquí.
+
+**Reconciliación de la cifra de fondos afectados — RESUELTA en su mayor parte (2026-09-13).**
+Medido en vivo (universo `In_Current_Universe=1`, `min_group_size=2`): **254** ISINs con
+`Total_Costs_Pct` idéntico en todos los horizontes, **328** con `Total_Costs_EUR` idéntico (unión
+de ambos: **328** — el subconjunto marcado por `Total_Costs_Pct` está contenido en el marcado por
+`Total_Costs_EUR`). Esto es menor que la cifra de **447 fondos** citada en §2.7 al describir el
+hallazgo original (ninguna consulta/script respalda esa cifra — confirmado por `grep` sobre todo
+el repo, existe solo en prosa).
+
+Diagnóstico dedicado (`scripts/diag/diag_cost_duplication_reconcile.py`, solo lectura, sin
+escrituras) prueba dos hipótesis por relajación sucesiva de alcance, con diferencia de conjuntos
+(no solo recuento) en cada paso:
+
+| Alcance | ISINs marcados | Nuevos vs. anterior |
+|---|---|---|
+| Universo activo (`In_Current_Universe=1`) — el propio alcance del motor | **328** | — |
+| + sin filtro de universo (activos + inactivos/retirados) | **415** | +87 (100% con `In_Current_Universe=0`; 0 huérfanos reales — cada ISIN de `fund_cost_schedule` tiene fila en `fund_master`) | 
+| + sin join a `fund_master` (`fund_cost_schedule` crudo) | **415** | +0 |
+
+Los **87** ISINs que se suman al retirar el filtro de universo son, sin excepción, fondos
+`In_Current_Universe=0` (inactivos/retirados) — exactamente el tipo de exclusión que
+`build_population()` impone **por diseño** en todo este motor (`UniverseFilterMissingError` si
+falta el filtro; §4 función #1). Cero son huérfanos verdaderos (ausentes de `fund_master`). Esto
+explica el 73% de la brecha original (447−328=119; 87/119). Quedan **32** ISINs sin explicar
+(415 vs. 447) — sin un script/consulta original que reproducir, la hipótesis más plausible es una
+diferencia de definición en la medición ad-hoc original (p.ej. "al menos un par de horizontes
+idéntico" en vez de "todos los horizontes no-nulos idénticos"), no un error de datos; no se
+persigue más allá de esto dado el bajo valor marginal de igualar exactamente una cifra informal no
+reproducible.
+
+**Cifra de referencia a partir de ahora: 328** (universo activo, el mismo alcance que usa el resto
+de este catálogo) es la cifra operativa para dimensionar cualquier reparación futura sobre el
+universo accionable por el clasificador; **415** (activos + inactivos) es la cifra si se decide
+incluir fondos retirados en un informe separado. **264** sigue siendo, sin cambios, el recuento de
+filas residuales de `ANNUAL_EQUALS_TOTAL_AT_1Y` tras la corrección de tolerancia (§2.7) — una cifra
+distinta, no el mismo hallazgo.
+
+### 2.9 Root-cause de SCALAR_EQUALS_TIMESERIES (2026-09-13) — dos causas reales, una corregida
+
+Una tolerancia relativa (`|escalar − serie| ≤ atol + rtol·|serie|`, estilo `numpy.isclose`) fue la
+primera hipótesis para resolver la divergencia casi universal de esta regla (§2.8). Barrido en vivo
+sobre los 25 pares `(metric, window)` reales, `rtol` ∈ {0,05, 0,10, 0,15, 0,20, 0,30}, `atol=0,001`:
+
+| rtol | Filas divergentes / 144.270 totales |
+|---|---|
+| 0,05 | 104.826 (72,7%) |
+| 0,10 | 95.102 (65,9%) |
+| 0,15 | 85.359 (59,2%) |
+| 0,20 | 76.920 (53,3%) |
+| 0,30 | 63.136 (43,8%) |
+
+Sin meseta ni convergencia razonable — `sharpe`/`sortino`/`return_ann` seguían 50-97% divergentes
+incluso al 30% relativo. Una tolerancia (absoluta o relativa) no era la herramienta correcta:
+asignar cualquier ε aquí habría enmascarado el problema real, no resuelto.
+
+**Investigación directa (misma sesión).** Para el ISIN `LU1873132101` (`return_ann`/`rolling_1y`/
+nominal, fecha fin 2026-08-21): se recalculó el mismo slicing de ventana por dos rutas
+independientes (estilo `run_pipeline.py`: `nav_df[nav_df["date"] > cutoff]`; estilo
+`compute_rolling_rows`: puntero deslizante de dos índices) sobre el NAV real en vivo — **ambas
+dieron el mismo resultado exacto** (0,030833...), confirmando que el algoritmo de ventana y la
+fórmula de `_roll_return_ann`/`annualized_return` son matemáticamente idénticos; no hay bug de
+fórmula para `return_ann`. Pero **ni el valor persistido en `fund_metrics`** (0,023494) **ni el de
+`fund_metric_timeseries`** (0,018340) **coincide con ese recálculo fresco** — ni entre sí.
+Conclusión: ambas tablas reflejan NAV de instantes distintos entre sí y distintos del NAV actual —
+**staleness de datos**, no un defecto de fórmula, es la causa dominante para `return_ann`/`vol_ann`/
+`max_dd`. Consistente con lo ya registrado en esta misma sesión: el recálculo P2 completo tras el
+saneado NAV y el fix de windowing (§2.7) seguía pendiente de dispararse.
+
+**Segunda causa, real y de código, específica de `sharpe`/`sortino` — CORREGIDA.**
+`run_pipeline.py:580` (ruta escalar, `_process_horizon` → `compute_risk_metrics`) llamaba con
+`RISK_FREE_RATE_ANN` **plana y estática**. `run_pipeline.py:1296-1303` (ruta timeseries,
+`compute_rolling_rows`) ya pasaba `rf_series=rf_rate_df` — la curva histórica de tipo libre de
+riesgo alineada por fecha (§4g, `load_rf_rate()`, proxy tipo depósito BCE/€STR), cuyo propio
+docstring dice explícitamente que "elimina la distorsión histórica del Sharpe/Sortino con tipo
+plano". Esta asimetría es una **inconsistencia de fórmula real** entre los dos write-paths — no
+staleness — y explica por qué `sharpe`/`sortino` divergían más y de forma más persistente que
+`return_ann`/`vol_ann`/`max_dd` (que no dependen del tipo libre de riesgo).
+
+**Corrección aplicada** (P#7 — fix en el módulo correcto): nueva función genérica
+`resolve_rf_rate(date, rf_series, fallback)` en `proyecto2/src/calculations/rolling_stats.py` —
+homólogo de un solo punto de la resolución vectorizada `§4g` ya existente dentro de
+`compute_rolling_rows` (mismo ffill/bfill, mismo fallback a `RISK_FREE_RATE_ANN` cuando no hay
+serie). `_process_horizon` (`run_pipeline.py`) ahora resuelve el tipo alineado a la fecha fin de
+cada horizonte y lo pasa a `compute_risk_metrics` en vez de la constante plana; los 3 call-sites
+(`since_inception`, ventanas de crisis, ventanas rolling) actualizados. `CALC_VERSION` incrementado
+a `"20260913"` (v32) para forzar recálculo completo — el mecanismo de detección de deriva de
+versión en `run.py` (líneas 748-761) dispara backfill automáticamente sin necesitar `--force`. 6
+tests nuevos en `test_rolling_stats.py` (incluye un test de equivalencia entre `resolve_rf_rate` y
+la resolución vectorizada interna de `compute_rolling_rows`, probado indirectamente vía el valor de
+`sharpe` que cada una produce, ya que ninguna función expone el tipo resuelto directamente). Suite
+completa P2 (287 tests, +6) y P1 (1349 tests) verdes tras el cambio.
+
+**Pendiente de verificación tras el recálculo P2 completo** (fuera de esta sesión — operación de
+producción de larga duración, el usuario la dispara por su cuenta y reporta el resultado):
+re-ejecutar `run_statistical_audit.py --domain p2` y comparar los 25 hallazgos
+`SCALAR_EQUALS_TIMESERIES_*` contra la línea base de esta sesión (5.702/5.766 `vol_ann/rolling_1y`,
+5.763/5.766 `sharpe/rolling_1y`, etc., §2.8). La causa de staleness debería colapsar la divergencia
+de `return_ann`/`vol_ann`/`max_dd` cerca de cero; la de `sharpe`/`sortino` debería colapsar aún más
+al sumarse la corrección de tipo libre de riesgo. **Trampa conocida a vigilar:** `fund_metric_timeseries`
+es append-only (`INSERT OR IGNORE`) — un ISIN cuyo NAV no tenga una fecha nueva este ciclo no
+obtendrá una fila nueva con la fórmula corregida; su fila "más reciente" seguirá siendo la antigua
+hasta que llegue un NAV nuevo o se haga un rebuild dirigido (mismo patrón que el fix de windowing,
+§2.7) — si tras el recálculo persiste divergencia en un subconjunto acotado de ISINs, esa es la
+explicación más probable, a diagnosticar antes de reabrir la pregunta de tolerancia.
+
 Cada indicador se describe por: qué mide, para qué sirve, su modo de fallo, y la población sobre
 la que es legítimo calcularlo.
 
@@ -327,6 +487,7 @@ entre el dominio de coste, P1, y el de métricas, P2).
 | 14 | `assert_recompute_happened(isins, prior_state)` | ISINs + estado previo → booleano | P2 | codifica en función el Method Control #3 de la skill (`fund_metric_state.input_hash` debe cambiar) |
 | 15 | `emit_statistics(facts)` / `emit_findings(evaluations)` | hechos / evaluaciones de regla → filas en BD | todas | separa **hecho estadístico** de **evaluación de regla** — ver §6 |
 | 16 | `preserve_and_write(isin, column, old, new, reason, evidence)` | valores → escritura + preservación | solo coste | **resuelve la brecha J de §7** — hoy `fund_cost_corrections` no tiene ningún escritor en código |
+| 17 | `check_group_constancy(frame, rule)` | frame + `(group_column, value_column, min_group_size)` → grupos donde el valor es idéntico en todas sus filas | cualquiera con una clave de agrupación repetida (hoy: coste por `ISIN`/`Horizon_Years`, §2.8) | extensión de Bloque 5 para defectos **entre filas** que `check_invariant` (función #9, por-fila) no puede expresar; misma disciplina de exclusión de NULL que #9 |
 
 ---
 

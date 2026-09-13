@@ -48,9 +48,27 @@ gaps from the prior version of this file):
     (Total_Costs_Pct/EUR duplicated identically across a fund's different
     Horizon_Years rows).
 
+Tolerance audit + cost-schedule duplication detector (2026-09-13,
+AUDITORIA_ESTADISTICA.md §2.8): OC_NOT_CONTAMINATED and SHARPE_EQUALS_SORTINO
+were swept and confirmed to already be at the correct value (renamed to
+FLOAT_IDENTITY_TOLERANCE, unchanged numerically); REAL_EQUALS_NOMINAL's
+tolerance was tied to the same IPC_ELIGIBILITY_FLOOR constant that already
+gated its eligibility (0.0001 -> 0.001); SCALAR_EQUALS_TIMESERIES was
+audited and found NOT to fit any single-constant fix (per-metric divergence
+never converges to a shared absolute floor) — left unresolved and flagged,
+not silently widened. All tolerances now live in
+shared/statistical_audit/tolerances.py as named, sweep-justified constants.
+Added TOTAL_COSTS_PCT/EUR_CONSTANT_ACROSS_HORIZONS (new function #17,
+check_group_constancy) to detect the cross-horizon duplication defect
+itself, wired into run_cost_audit via _run_group_checks — detection only,
+no repair.
+
 Remaining scope limits (reported in the run's own output, never silently
 skipped):
   - Block 6 (fund_metric_timeseries temporal integrity) is out of scope.
+  - SCALAR_EQUALS_TIMESERIES's absolute tolerance is unresolved (see above);
+    fixing it properly needs a relative-tolerance extension to PairRule or a
+    root-cause look at the divergence itself, deferred pending a decision.
   - Block 4's reconciliation against fund_metric_alerts (function #12,
     reconcile_with_alerts) is not wired into this runner yet. The three
     root-cause defects that blocked it (AUDITORIA_ESTADISTICA.md §2.5:
@@ -83,6 +101,7 @@ import pandas as pd
 
 from shared.config import DB_PATH, RISK_FREE_RATE_ANN
 from shared.statistical_audit.catalog_cost_columns import COST_COLUMNS
+from shared.statistical_audit.catalog_group_checks import COST_GROUP_CHECKS
 from shared.statistical_audit.catalog_invariants import COST_INVARIANTS, P2_INVARIANTS
 from shared.statistical_audit.catalog_metric_bounds import get_metric_bound
 from shared.statistical_audit.catalog_metrics import get_metric_spec
@@ -94,6 +113,7 @@ from shared.statistical_audit.distributions import (
     profile_mass_points,
     profile_moments,
 )
+from shared.statistical_audit.group_checks import check_group_constancy
 from shared.statistical_audit.invariants import (
     BoundRule,
     check_bounds,
@@ -172,6 +192,7 @@ def run_cost_audit(conn: sqlite3.Connection) -> "AuditRun":
             })
 
     _run_invariants(run, COST_INVARIANTS, [master, schedule], block="BLOCK5")
+    _run_group_checks(run, COST_GROUP_CHECKS, schedule)
 
     return run
 
@@ -503,6 +524,33 @@ def _block7(
                     + (f"; {result.n_carved_out} carved out under crisis_ prefix" if result.n_carved_out else ""),
         "root_cause_candidate": None,
     })
+
+
+def _run_group_checks(run: AuditRun, rules, frame: pd.DataFrame, block: str = "BLOCK5") -> None:
+    """Detection only (AUDITORIA_ESTADISTICA.md §2.7) — see group_checks.py
+    for why this can't be expressed via _run_invariants/check_invariant.
+    """
+    for rule in rules:
+        if rule.group_column not in frame.columns or rule.value_column not in frame.columns:
+            run.skipped.append(
+                f"{block} {rule.rule_id}: columns not present in the queried frame "
+                f"({rule.group_column!r}, {rule.value_column!r})"
+            )
+            continue
+
+        result = check_group_constancy(frame, rule)
+        if result.n_violating_groups == 0:
+            continue
+        run.findings.append({
+            "block": block, "rule_id": rule.rule_id, "rule_class": "HARD_INVARIANT",
+            "severity": "ALARM", "group_key": rule.rule_id, "value": None,
+            "reference_value": None, "threshold": None,
+            "distance": float(result.n_violating_groups),
+            "evidence": f"{result.n_violating_groups}/{result.n_groups_checked} ISINs with "
+                        f"{rule.min_group_size}+ Horizon_Years rows have identical "
+                        f"{rule.value_column} across every row",
+            "root_cause_candidate": rule.description,
+        })
 
 
 def _run_invariants(run: AuditRun, rules, frames: list[pd.DataFrame], block: str) -> None:

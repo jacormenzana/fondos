@@ -20,6 +20,11 @@ from shared.statistical_audit.catalog_invariants import COST_INVARIANTS, P2_INVA
 from shared.statistical_audit.catalog_metrics import get_metric_spec
 from shared.statistical_audit.catalog_pairs import COST_PAIRS, P2_PAIRS
 from shared.statistical_audit.invariants import check_invariant
+from shared.statistical_audit.tolerances import (
+    FLOAT_IDENTITY_TOLERANCE,
+    IPC_ELIGIBILITY_FLOOR,
+    KID_ROUNDING_TOLERANCE_PP,
+)
 
 import pandas as pd
 import pytest
@@ -130,3 +135,48 @@ class TestInvariantsCatalogAgainstEngine:
         df = pd.DataFrame({"Ongoing_Charge_Recurrent": [0.0272], "ACI_RHP": [5.10]})
         result = check_invariant(df, rule)
         assert result.n_violations == 0
+
+
+class TestToleranceConstants:
+    """Pins every tolerance-audited rule (2026-09-13, tolerances.py,
+    AUDITORIA_ESTADISTICA.md §2.7) to its named constant, so a future edit
+    that reintroduces a bare literal — or silently re-widens/tightens a
+    class without a fresh sweep — fails a test, not just a code review.
+    """
+
+    def test_kid_rounding_rules_use_the_named_constant(self):
+        for rule_id, expected in [
+            ("ANNUAL_LE_ACCUMULATED",
+             f"Annual_Impact_Pct <= Total_Costs_Pct + {KID_ROUNDING_TOLERANCE_PP}"),
+            ("ANNUAL_EQUALS_TOTAL_AT_1Y",
+             f"abs(Annual_Impact_Pct - Total_Costs_Pct) < {KID_ROUNDING_TOLERANCE_PP}"),
+        ]:
+            rule = next(r for r in COST_INVARIANTS if r.rule_id == rule_id)
+            assert rule.expression == expected
+
+    def test_float_identity_invariants_use_the_named_constant(self):
+        oc = next(r for r in COST_INVARIANTS if r.rule_id == "OC_NOT_CONTAMINATED")
+        assert oc.expression == (
+            f"abs(Ongoing_Charge_Recurrent * 100 - ACI_RHP) > {FLOAT_IDENTITY_TOLERANCE}"
+        )
+        for rule_id, expected in [
+            ("SORTINO_VS_SHARPE_UP", f"sortino >= sharpe - {FLOAT_IDENTITY_TOLERANCE}"),
+            ("SORTINO_VS_SHARPE_DOWN", f"sortino <= sharpe + {FLOAT_IDENTITY_TOLERANCE}"),
+            ("DEFLATION_ORDER",
+             f"return_ann_real <= return_ann_nominal + {FLOAT_IDENTITY_TOLERANCE}"),
+            ("MONTH_SHARE_OVERFLOW",
+             f"pct_positive_months + pct_negative_months <= 1 + {FLOAT_IDENTITY_TOLERANCE}"),
+        ]:
+            rule = next(r for r in P2_INVARIANTS if r.rule_id == rule_id)
+            assert rule.expression == expected
+
+    def test_pair_rules_derive_tolerance_from_named_constants(self):
+        assert P2_PAIRS["REAL_EQUALS_NOMINAL"].tolerance == IPC_ELIGIBILITY_FLOOR
+        assert P2_PAIRS["SHARPE_EQUALS_SORTINO"].tolerance == FLOAT_IDENTITY_TOLERANCE
+
+    def test_audited_constant_values_are_the_2026_09_13_sweep_results(self):
+        # Pinned so a change to any of these is a deliberate re-measurement
+        # (edit tolerances.py + re-run the sweep), never an accidental edit.
+        assert FLOAT_IDENTITY_TOLERANCE == 0.0001
+        assert KID_ROUNDING_TOLERANCE_PP == 0.06
+        assert IPC_ELIGIBILITY_FLOOR == 0.001
