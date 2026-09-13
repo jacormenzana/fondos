@@ -148,8 +148,10 @@ def compute_rolling_rows(
     nav_df          : DataFrame con columnas 'date' (DATE o str) y 'nav' (REAL),
                       ordenado cronológicamente, índice ignorado.
                       (Mismo contrato que load_nav() en db_readers.py.)
-    rolling_windows : dict {nombre_ventana: tamaño_en_unidades}.
-                      Unidades = periodos del nav_df (meses si mensual, días si diario).
+    rolling_windows : dict {nombre_ventana: meses_trailing}.
+                      Ventana = fecha > (fecha_punto - DateOffset(months=meses_trailing)),
+                      el mismo criterio calendario que usa run_pipeline.py para las métricas
+                      escalares en fund_metrics — no un recuento fijo de filas (ver nota abajo).
     min_obs         : mínimo de observaciones para calcular (evita valores espurios).
     ipc_df          : opcional — DataFrame con columnas 'date' y 'ipc_index' (IPC, base 100
                       o ratio). Si se proporciona se calculan también las métricas reales.
@@ -226,8 +228,17 @@ def compute_rolling_rows(
     rows: list[dict] = []
 
     for window_name, w in rolling_windows.items():
+        # Calendar-date window (months trailing), not a fixed row count: matches
+        # run_pipeline.py's `nav_df[nav_df["date"] > cutoff]` slicing for the scalar
+        # metrics in fund_metrics, so "rolling_1y" means the same thing in both
+        # fund_metrics and fund_metric_timeseries. `dates` is sorted ascending, so the
+        # cutoff is monotonic non-decreasing in i and `left` only ever moves forward.
+        left = 0
         for i in range(n):
-            start = max(0, i - w + 1)
+            cutoff = dates[i] - pd.DateOffset(months=w)
+            while left <= i and dates[left] <= cutoff:
+                left += 1
+            start = left
             window_nav = nav_series[start : i + 1]
             n_obs = len(window_nav)
             if n_obs < min_obs:

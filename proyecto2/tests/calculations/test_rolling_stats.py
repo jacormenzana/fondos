@@ -285,6 +285,53 @@ class TestComputeRollingRows:
         assert 1 in flags, "real_flag=1 (deflactado) no encontrado en el output"
         assert 0 in flags, "real_flag=0 (nominal) desapareció"
 
+    def test_gap_month_excluded_from_window_by_calendar_date(self):
+        """
+        Reconciliation fix (2026-09-13, doc/reglas/AUDITORIA_ESTADISTICA.md §2.7):
+        the window must be calendar-date-based ("last 12 months"), matching
+        run_pipeline.py's scalar slicing, NOT a fixed row count. A fund with a
+        missing month must NOT silently reach back an extra month of history to
+        keep 12 rows -- the window at each point is bounded by real elapsed time.
+        """
+        # 24 monthly NAV rows, but the 13th calendar month (index 12) is missing
+        # from the data -- so index 12 in the array is actually month 14.
+        # (2021-01-31 start, not 2020, to avoid a Feb-29 leap-year boundary quirk.)
+        dates = list(pd.date_range("2021-01-31", periods=24, freq="ME"))
+        del dates[12]  # drop one calendar month -> 23 rows spanning 24 months
+        navs = [100.0 * (1.005 ** i) for i in range(len(dates))]
+        nav_df = pd.DataFrame({"date": dates, "nav": navs})
+
+        rows = compute_rolling_rows(
+            "GAP0001", nav_df,
+            rolling_windows={"rolling_1y": 12},
+            min_obs=5, periods_per_year=12,
+        )
+        by_date = {r["date"]: r["source_rows"] for r in rows if r["metric"] == "vol_ann"}
+
+        # The point right after the gap (dates[12], now the 14th calendar month)
+        # would include 12 rows under fixed-row-count windowing (reaching back to
+        # month 2), but under calendar-date windowing only the last 12 *elapsed*
+        # months are eligible -- one row less because of the missing month.
+        post_gap_date = dates[12].date().isoformat()
+        assert by_date[post_gap_date] == 11, (
+            f"Expected 11 source rows (12 calendar months minus 1 missing), "
+            f"got {by_date[post_gap_date]} -- window is not calendar-date-based"
+        )
+
+    def test_contiguous_series_matches_row_count_semantics(self):
+        """Control: with no gaps, calendar-date and fixed-row-count windows must
+        agree exactly -- this is the >99.7% common case (see AUDITORIA_ESTADISTICA
+        §2.7: only 10/3707 production ISINs have any monthly gap)."""
+        nav_df = self._simple_nav(24)
+        rows = compute_rolling_rows(
+            "NOGAP0001", nav_df,
+            rolling_windows={"rolling_1y": 12},
+            min_obs=5, periods_per_year=12,
+        )
+        by_date = {r["date"]: r["source_rows"] for r in rows if r["metric"] == "vol_ann"}
+        last_date = nav_df["date"].iloc[-1].date().isoformat()
+        assert by_date[last_date] == 12
+
     def test_incrementality_simulation(self):
         """La segunda ejecución no genera fechas anteriores duplicadas."""
         nav_full = self._simple_nav(36)

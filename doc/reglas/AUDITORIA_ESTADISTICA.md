@@ -25,13 +25,17 @@ mismo día** (`scripts/mig/fix_nav_monthly_duplicate_months.py --apply`, autoriz
 usuario): 13.308 filas eliminadas, 0 pares `(ISIN, mes)` duplicados restantes (verificado con una
 consulta de solo lectura independiente, no solo el resumen del propio script), `fund_nav_monthly`
 queda en 661.279 filas totales, copia de seguridad previa en `db/fondos_backup_20260913.sqlite`.
-Lo que sigue abierto: función #12 (`reconcile_with_alerts`, bloqueada hasta el próximo ciclo P2
-real), `periodic_return_variance`/`FROZEN_NAV_ZERO_VOL` (necesitaría releer NAV en bruto dentro del
-motor), la inconsistencia de ventana calendario-vs-recuento-de-filas entre `run_pipeline.py` y
-`rolling_stats.py` (§2.7, deliberadamente no tocada), y el recálculo P2 de seguimiento (los ISINs
-afectados por el saneado no recalculan `fund_metrics`/`fund_metric_timeseries` hasta el próximo
-ciclo P2 ordinario — el fingerprint de entrada ya cambió, no hace falta tocar `CALC_VERSION`) — ver
-el runner (`--help` o su docstring) para la lista exacta y actualizada de huecos del motor, que se
+La inconsistencia de ventana calendario-vs-recuento-de-filas entre `run_pipeline.py` y
+`rolling_stats.py`, señalada inicialmente como fuera de alcance, se investigó y **resolvió** en la
+misma sesión (§2.7): afectaba solo a 10/3.707 ISINs (0,27%) con huecos mensuales preexistentes;
+`compute_rolling_rows()` ahora usa la misma semántica de ventana por fecha calendario que
+`run_pipeline.py`. Lo que sigue abierto: función #12 (`reconcile_with_alerts`, bloqueada hasta el
+próximo ciclo P2 real), `periodic_return_variance`/`FROZEN_NAV_ZERO_VOL` (necesitaría releer NAV en
+bruto dentro del motor), y el recálculo P2 de seguimiento (los ISINs afectados por el saneado NAV y
+por la reconciliación de ventana no recalculan `fund_metrics`/`fund_metric_timeseries` hasta el
+próximo ciclo P2 ordinario — el fingerprint de entrada ya cambió, no hace falta tocar
+`CALC_VERSION`) — ver el runner (`--help` o su docstring) para la lista exacta y actualizada de
+huecos del motor, que se
 imprime en cada ejecución.
 
 ---
@@ -218,6 +222,32 @@ por el propio script) de que 0 pares `(ISIN, mes)` quedan duplicados — `fund_n
 regresiones tras el cambio de datos. Un ciclo P2 normal recalculará solo los ISINs afectados (el
 fingerprint de entrada ya cambió; no hace falta tocar `CALC_VERSION`) — ese recálculo no se ha
 disparado todavía, es la única acción de seguimiento pendiente.
+
+**Reconciliación de la ventana calendario-vs-recuento-de-filas (2026-09-13) — RESUELTA.** La
+inconsistencia señalada arriba entre `run_pipeline.py` (ventana por fecha calendario) y
+`rolling_stats.py::compute_rolling_rows()` (ventana por recuento fijo de filas, `w` filas) se
+investigó y cerró en la misma sesión de seguimiento. Antes de tocar código se cuantificó el
+alcance real contra la BD en producción: de 3.707 ISINs con histórico NAV mensual, solo **10
+(0,27%)** tienen algún mes calendario ausente en toda su historia (el resto, 3.697, tiene una fila
+por mes sin huecos) — así que la inconsistencia solo puede producir un valor distinto de "rolling
+1y" en esos 10 fondos, todos con huecos ya conocidos y preexistentes (30-70% de meses ausentes en
+su historia, no un caso nuevo). Con esta población tan acotada, se decidió converger
+`compute_rolling_rows()` a la misma semántica que ya usa `run_pipeline.py` (más correcta: "1 año" =
+últimos 12 meses de calendario, no "últimas 12 filas disponibles" cuando faltan meses) en vez de
+mantener las dos convenciones. **Corrección aplicada:** el bucle de ventanas en
+`compute_rolling_rows()` (`rolling_stats.py`) sustituyó el recorte por índice fijo
+(`start = i - w + 1`) por el mismo predicado que `run_pipeline.py` ya usaba para las métricas
+escalares — `date > (fecha_del_punto - DateOffset(months=w))` — implementado con un puntero
+deslizante de doble índice (`O(n)` por ventana, sin degradar rendimiento). Para el 99,7% de los
+ISINs sin huecos el resultado es matemáticamente idéntico (verificado: los 70 tests preexistentes
+de `test_rolling_stats.py` pasan sin cambios); para los 10 ISINs con huecos, un punto justo después
+de un mes ausente ahora refleja correctamente una observación menos en su ventana de 12 meses, en
+vez de estirarse hacia atrás un mes calendario extra para completar 12 filas. 2 tests de regresión
+nuevos (`test_gap_month_excluded_from_window_by_calendar_date`,
+`test_contiguous_series_matches_row_count_semantics`) fijan ambos comportamientos. Suite completa
+P1 (1336) + P2 (281, incluye los 2 nuevos) verde. **Como cualquier cambio de fórmula de cálculo,
+esto no dispara un recálculo automático** — los ISINs con huecos recalcularán su `rolling_1y` en
+el próximo ciclo P2 normal junto con el recálculo pendiente del saneado NAV de arriba.
 
 Cada indicador se describe por: qué mide, para qué sirve, su modo de fallo, y la población sobre
 la que es legítimo calcularlo.
