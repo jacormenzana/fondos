@@ -2119,6 +2119,34 @@ def run_block(
                 elif re.search(r"\b(?:inc|dis(?:t)?)\b", _fn_l):
                     fund_master_record["Accumulation_Policy"] = "DISTRIBUTION"
 
+            # FIX-IF-R4 (2026-09-13): valores BD previos, adelantados desde su
+            # ubicación original (más abajo, bloque INTER BL-30/BL-31) porque el
+            # default de Investment_Focus por Fund_Nature (unas lineas mas abajo)
+            # los necesita AHORA. Causa raiz previa: ese default comprobaba solo
+            # fund_master_record.get("Investment_Focus") (R-4 violation) — para un
+            # fondo CACHED cuyo record en memoria trae Investment_Focus=None pero
+            # la BD ya tiene 'Sector' (corregido en un ciclo anterior por BL-30),
+            # el default lo pisaba con 'Broad', y BL-30 tenia que volver a
+            # corregirlo en el MISMO ciclo (self-inflicted churn, no daño final
+            # persistido, pero contador BL30_INVESTMENT_FOCUS_SECTOR oscilando
+            # 15<->326 entre ciclos completos en vez de converger). Pura lectura,
+            # sin efectos secundarios — es seguro adelantarla.
+            _bd_prev = conn.execute(
+                "SELECT Sector_Focus, Hedging_Policy, "
+                "Investment_Focus, Benchmark_Declared, Benchmark_Type "
+                "FROM fund_master WHERE ISIN=?",
+                (isin,)
+            ).fetchone()
+            _sf_bd        = _bd_prev[0] if _bd_prev else None
+            # v20: Currency_Hedged eliminado del schema (consolidado en Hedging_Policy).
+            # No hay valor BD previo; el subsistema CH opera solo en memoria y se
+            # propaga a Hedging_Policy (única columna persistida).
+            _ch_bd        = None
+            _hp_bd        = _bd_prev[1] if _bd_prev else None
+            _if_bd        = _bd_prev[2] if _bd_prev else None
+            _bench_bd     = _bd_prev[3] if _bd_prev else None
+            _benchtype_bd = _bd_prev[4] if _bd_prev else None
+
             # Sector_Focus: inferir desde Theme si Investment_Focus=Sector y SF=NULL (P10)
             # BL-54: mapa inline eliminado — se usa map_theme_to_sector_focus()
             # (classify_utils), punto único de verdad (Principio #2 DRY).
@@ -2144,7 +2172,13 @@ def run_block(
             # expansion de BL-44, COALESCE ya no puede recuperarlo porque el fondo
             # entra por primera vez o su texto cambio. Fix: default deterministico
             # por Nature en el unico punto canonico de defaults del pipeline.
-            if not fund_master_record.get("Investment_Focus"):
+            # FIX-IF-R4 (2026-09-13, R-4): usar el valor EFECTIVO (record o BD),
+            # no solo el record en memoria — si no, un fondo CACHED cuya BD ya
+            # tiene 'Sector' (corregido por BL-30 en un ciclo previo) se pisaba
+            # aqui con 'Broad', obligando a BL-30 a corregirlo de nuevo en el
+            # mismo ciclo (churn autoinfligido, ver BL30_INVESTMENT_FOCUS_SECTOR
+            # oscilando 15<->326 fondos entre ciclos completos).
+            if not (fund_master_record.get("Investment_Focus") or _if_bd):
                 _nat_if = fund_master_record.get("Fund_Nature")
                 if _nat_if in ("Renta Fija Corto Plazo", "Monetario"):
                     # RF_CORTO y Monetarios son por definicion fondos de liquidez/corto
@@ -2369,21 +2403,11 @@ def run_block(
             # el valor antiguo — creando inconsistencia con los campos nuevos
             # escritos con valor no-NULL. Fix: leer valores BD previos y usarlos
             # en la comparación INTER.
-            _bd_prev = conn.execute(
-                "SELECT Sector_Focus, Hedging_Policy, "
-                "Investment_Focus, Benchmark_Declared, Benchmark_Type "
-                "FROM fund_master WHERE ISIN=?",
-                (isin,)
-            ).fetchone()
-            _sf_bd        = _bd_prev[0] if _bd_prev else None
-            # v20: Currency_Hedged eliminado del schema (consolidado en Hedging_Policy).
-            # No hay valor BD previo; el subsistema CH opera solo en memoria y se
-            # propaga a Hedging_Policy (única columna persistida).
-            _ch_bd        = None
-            _hp_bd        = _bd_prev[1] if _bd_prev else None
-            _if_bd        = _bd_prev[2] if _bd_prev else None
-            _bench_bd     = _bd_prev[3] if _bd_prev else None
-            _benchtype_bd = _bd_prev[4] if _bd_prev else None
+            # FIX-IF-R4 (2026-09-13): _bd_prev / _sf_bd / _ch_bd / _hp_bd / _if_bd /
+            # _bench_bd / _benchtype_bd ya se cargaron más arriba (antes del
+            # default de Investment_Focus, que también los necesita) — sin
+            # escrituras a fund_master de por medio, así que no hace falta
+            # releerlos aquí (evita una consulta SQL redundante por fondo).
 
             # BL-64e: INTER Nature↔Family — RFC no puede tener Family de RF Flexible.
             # RFC_INCOMPATIBLE_FAMILIES importado de classify_utils (P#11 DRY).
