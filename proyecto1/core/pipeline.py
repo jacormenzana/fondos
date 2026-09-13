@@ -839,6 +839,15 @@ def run_block(
                                 "UPDATE fund_kiid_metadata SET KIID_Status='WRONG_DOC' "
                                 "WHERE ISIN=? AND KIID_Class=1", (isin,)
                             )
+                            # FIX-WRONGDOC-DQF (2026-09-13): publish_fund se salta
+                            # (continue más abajo) — sin esto Data_Quality_Flag se
+                            # queda con el valor previo (a menudo 'MISSING', nunca
+                            # 'WARN'), dejando el fondo silenciosamente obsoleto
+                            # para P2/P3 (Reliability Control 1).
+                            conn.execute(
+                                "UPDATE fund_master SET Data_Quality_Flag='WARN' "
+                                "WHERE ISIN=?", (isin,)
+                            )
                         log_ingestion(conn, isin, "KIID_WRONG_DOC", "WARN",
                                       f"WRONG_DOC (FORCE_REFRESH sin links + texto cacheado erróneo): "
                                       f"{_stuck_reason}")
@@ -908,6 +917,12 @@ def run_block(
                         conn.execute(
                             "UPDATE fund_kiid_metadata SET KIID_Status='WRONG_DOC' "
                             "WHERE ISIN=? AND KIID_Class=1", (isin,)
+                        )
+                        # FIX-WRONGDOC-DQF (2026-09-13): ver comentario gemelo más
+                        # arriba (rama FORCE_REFRESH sin links) — mismo gap.
+                        conn.execute(
+                            "UPDATE fund_master SET Data_Quality_Flag='WARN' "
+                            "WHERE ISIN=?", (isin,)
                         )
                     log_ingestion(conn, isin, "KIID_WRONG_DOC", "WARN",
                                   f"WRONG_DOC (fuente incorrecta, re-descarga confirmó): "
