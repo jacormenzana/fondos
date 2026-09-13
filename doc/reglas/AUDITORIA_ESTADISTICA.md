@@ -26,15 +26,18 @@ usuario): 13.308 filas eliminadas, 0 pares `(ISIN, mes)` duplicados restantes (v
 consulta de solo lectura independiente, no solo el resumen del propio script), `fund_nav_monthly`
 queda en 661.279 filas totales, copia de seguridad previa en `db/fondos_backup_20260913.sqlite`.
 La inconsistencia de ventana calendario-vs-recuento-de-filas entre `run_pipeline.py` y
-`rolling_stats.py`, señalada inicialmente como fuera de alcance, se investigó y **resolvió** en la
-misma sesión (§2.7): afectaba solo a 10/3.707 ISINs (0,27%) con huecos mensuales preexistentes;
-`compute_rolling_rows()` ahora usa la misma semántica de ventana por fecha calendario que
-`run_pipeline.py`. Lo que sigue abierto: función #12 (`reconcile_with_alerts`, bloqueada hasta el
-próximo ciclo P2 real), `periodic_return_variance`/`FROZEN_NAV_ZERO_VOL` (necesitaría releer NAV en
-bruto dentro del motor), y el recálculo P2 de seguimiento (los ISINs afectados por el saneado NAV y
-por la reconciliación de ventana no recalculan `fund_metrics`/`fund_metric_timeseries` hasta el
-próximo ciclo P2 ordinario — el fingerprint de entrada ya cambió, no hace falta tocar
-`CALC_VERSION`) — ver el runner (`--help` o su docstring) para la lista exacta y actualizada de
+`rolling_stats.py`, señalada inicialmente como fuera de alcance, se investigó, corrigió en código,
+y **aplicó a los datos históricos ya persistidos** en la misma sesión (§2.7): afectaba solo a
+10/3.707 ISINs (0,27%) con huecos mensuales preexistentes; `compute_rolling_rows()` ahora usa la
+misma semántica de ventana por fecha calendario que `run_pipeline.py`, y sus ~20.620 filas de
+`fund_metric_timeseries` ya corrompidas por la fórmula antigua fueron eliminadas y recalculadas
+(3 de esos 10 ISINs quedan fuera por un defecto de escala no relacionado, ver §2.7). El saneado NAV
+(13.308 filas) y el saneado de ventana (20.620 filas) están ambos aplicados y verificados — no
+queda ningún recálculo pendiente por estos dos motivos. Lo que sigue abierto: función #12
+(`reconcile_with_alerts`, bloqueada hasta confirmar que las alertas del motor reflejan ya los
+fixes D1-D3), `periodic_return_variance`/`FROZEN_NAV_ZERO_VOL` (necesitaría releer NAV en bruto
+dentro del motor), y el saneado de escala de los 3 ISINs vía `repair_nav_scale_20260719.py`, una
+tarea aparte — ver el runner (`--help` o su docstring) para la lista exacta y actualizada de
 huecos del motor, que se
 imprime en cada ejecución.
 
@@ -245,9 +248,34 @@ de un mes ausente ahora refleja correctamente una observación menos en su venta
 vez de estirarse hacia atrás un mes calendario extra para completar 12 filas. 2 tests de regresión
 nuevos (`test_gap_month_excluded_from_window_by_calendar_date`,
 `test_contiguous_series_matches_row_count_semantics`) fijan ambos comportamientos. Suite completa
-P1 (1336) + P2 (281, incluye los 2 nuevos) verde. **Como cualquier cambio de fórmula de cálculo,
-esto no dispara un recálculo automático** — los ISINs con huecos recalcularán su `rolling_1y` en
-el próximo ciclo P2 normal junto con el recálculo pendiente del saneado NAV de arriba.
+P1 (1336) + P2 (281, incluye los 2 nuevos) verde.
+
+**Aplicación a los datos históricos ya persistidos — también resuelta el mismo día, con una
+lección arquitectónica importante.** El primer intento (`run_pipeline.py --isin <los 10> --force`)
+reportó éxito (`status=OK`, `total_written=1118`) pero **no corrigió ni una sola fila** de
+`fund_metric_timeseries`: verificado por `batch_id`, 0 de las ~20.620 filas existentes de esos 10
+ISINs se reescribieron. Causa: `_write_timeseries()` usa `INSERT OR IGNORE` sobre
+`(isin, metric, window, date, real_flag)` — deliberadamente *append-only* para no re-escribir 16,6M
+filas en cada ciclo P2 incremental. Como el NAV de estos fondos no cambió (solo la fórmula), cada
+fecha ya tenía una fila, así que el valor recalculado correctamente en memoria se descartó
+silenciosamente. **Esto es sistémico, no específico de este bug:** ni un `--force` ni un futuro
+`CALC_VERSION` bump corrigen retroactivamente una fila de `fund_metric_timeseries` ya persistida —
+solo fechas nuevas hacia adelante. Ver
+`feedback_timeseries_insert_or_ignore_blocks_recompute` en memoria para el detalle completo.
+
+Secuencia correcta aplicada (mismo patrón que el saneado NAV): backup
+(`db/fondos_backup_pre_windowfix_20260913.sqlite`) → `DELETE FROM fund_metric_timeseries WHERE
+ISIN IN (<los 10>)` (20.620 filas, verificado 0 restantes) → re-ejecución de `run_pipeline.py
+--isin <los 10> --force`. Verificado después: los 7 ISINs no afectados por el defecto de escala
+(ver abajo) muestran el 100% de sus filas con el `batch_id` de hoy. Caso más extremo verificado
+(`LU1663960000`, 69 meses ausentes de 102): `rolling_1y`/`rolling_2y` ahora producen
+**correctamente cero filas** (este fondo nunca tiene suficientes observaciones dentro de una
+ventana real de 12/24 meses) en vez de fabricar un valor estirándose años hacia atrás bajo la
+lógica antigua; `rolling_3y`/`5y`/`10y` siguen calculando con normalidad. **3 ISINs quedan fuera de
+esta corrección por diseño** (`LU2536454403`, `LU2536453348`, `LU2473381015`): `validate_nav()` los
+rechaza antes de llegar al cálculo rolling por un defecto de mezcla de escalas ya conocido y no
+relacionado ("saltos >8x") — su remedio es `repair_nav_scale_20260719.py`, una tarea aparte, no
+abordada aquí.
 
 Cada indicador se describe por: qué mide, para qué sirve, su modo de fallo, y la población sobre
 la que es legítimo calcularlo.
