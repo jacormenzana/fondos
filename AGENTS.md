@@ -244,6 +244,7 @@ proyecto2/
       test_fred_es.py
       test_fred_es2.py
       test_historia.py
+      test_nav_monthly_write_20260913.py
     readers/
       test_preflight.py
       test_reliability_signals.py

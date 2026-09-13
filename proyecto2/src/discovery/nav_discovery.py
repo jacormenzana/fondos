@@ -676,13 +676,38 @@ def _normalize_nav_scale(rows: list) -> list:
 
 
 def _write_nav_rows(conn, rows, dry_run) -> int:
-    """Persiste filas NAV mensuales en fund_nav_monthly (INSERT OR IGNORE)."""
+    """Persiste filas NAV mensuales en fund_nav_monthly (INSERT OR IGNORE).
+
+    FIX-NAV-OPEN-MONTH-1 (2026-09-13): la clave semantica real de una fila
+    mensual es (ISIN, YYYY-MM), pero la PK de la tabla es (ISIN, Date). Sin
+    este DELETE previo, cada ejecucion de ingesta durante un mes aun abierto
+    inserta una fila con una Date distinta (el ultimo dia disponible en ese
+    momento) en vez de sustituir la fila provisional anterior del mismo mes
+    -> el mes abierto acumula varias filas, y ademas -- por ser OR IGNORE y
+    no OR REPLACE -- la primera fila escrita para un mes queda fija para
+    siempre incluso despues de cerrarse el mes con un valor mas correcto.
+    Verificado en produccion: 6.876 pares (ISIN, mes) con filas duplicadas
+    (13.308 filas sobrantes), 99% concentradas en los 2 meses mas recientes.
+    Ver doc/reglas/AUDITORIA_ESTADISTICA.md §2.7 y
+    scripts/mig/fix_nav_monthly_duplicate_months.py para el saneado de datos
+    ya corrompidos (no ejecutado automaticamente por este fix).
+    """
     if not rows or dry_run:
         return 0
     # FIX-P2-NAV-SCALE-1 (2026-07-19): normalizar escala antes de persistir.
     # Sin esto, mezclar rows MORNINGSTAR (~9000x) con MORNINGSTAR_CHART (~9x)
     # produce retornos fantasma que corrompen srri_nav → 7 para fondos defensivos.
     rows = _normalize_nav_scale(rows)
+
+    # Limpiar cualquier fila previa del mismo (ISIN, YYYY-MM) antes de insertar
+    # la nueva -- misma logica que _overwrite_nav_rows_monthly() pero acotada
+    # a los meses que realmente se estan escribiendo, no todo el historico del ISIN.
+    months = {(r["ISIN"], r["Date"][:7]) for r in rows}
+    conn.executemany(
+        "DELETE FROM fund_nav_monthly WHERE ISIN=? AND substr(Date,1,7)=?",
+        list(months),
+    )
+
     conn.executemany("""
         INSERT OR IGNORE INTO fund_nav_monthly
             (ISIN, Date, NAV, NAV_Currency, NAV_Type, Is_Estimated, Data_Source)

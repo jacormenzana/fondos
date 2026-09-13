@@ -17,13 +17,17 @@ persistencia + 5 catálogos declarativos), ejecutable vía
 `scripts/audit/run_statistical_audit.py --domain costs|p2`, con persistencia real en
 `audit_statistic`/`audit_finding` y comparación entre ejecuciones (`--compare-to`). Los tres
 defectos de producción D1–D3 del motor de alertas (§2.5) están corregidos en código. Al cablear
-`SCALAR_EQUALS_TIMESERIES` surgió un **hallazgo mayor, aún abierto**: un bug real de ingesta NAV
-que corrompe la ventana de recuento-fijo-de-filas de `compute_rolling_rows()` (§2.7) — requiere
-autorización explícita antes de tocar `nav_discovery.py`, no corregido en esta sesión. Lo que sigue
-abierto: función #12 (`reconcile_with_alerts`, bloqueada hasta el próximo ciclo P2 real),
-`periodic_return_variance`/`FROZEN_NAV_ZERO_VOL` (necesitaría releer NAV en bruto dentro del
-motor), y el propio bug de ingesta NAV — ver el runner (`--help` o su docstring) para la lista
-exacta y actualizada de huecos, que se imprime en cada ejecución.
+`SCALAR_EQUALS_TIMESERIES` surgió un hallazgo mayor — un bug real de ingesta NAV que corrompía la
+ventana de recuento-fijo-de-filas de `compute_rolling_rows()` — **corregido en código el mismo día,
+en sesión de seguimiento autorizada explícitamente** (§2.7): `_write_nav_rows()` ya no acumula
+filas por mes abierto. El saneado de los ~13.308 filas ya corrompidas en producción tiene script
+listo (`scripts/mig/fix_nav_monthly_duplicate_months.py`) pero **no aplicado** — pendiente de que
+el usuario ejecute `--apply`. Lo que sigue abierto: función #12 (`reconcile_with_alerts`, bloqueada
+hasta el próximo ciclo P2 real), `periodic_return_variance`/`FROZEN_NAV_ZERO_VOL` (necesitaría
+releer NAV en bruto dentro del motor), la inconsistencia de ventana calendario-vs-recuento-de-filas
+entre `run_pipeline.py` y `rolling_stats.py` (§2.7, deliberadamente no tocada), y la aplicación del
+script de saneado — ver el runner (`--help` o su docstring) para la lista exacta y actualizada de
+huecos del motor, que se imprime en cada ejecución.
 
 ---
 
@@ -167,26 +171,43 @@ regulatorio del KID, no una heurística de proximidad arbitraria) en `ANNUAL_EQU
 (P1), no de este motor; requiere su propia investigación con las skills de coste
 (`costP1AuditPipelineAndDiagCost`), fuera de alcance aquí.
 
-**Hallazgo nuevo, mayor, surgido al cablear `SCALAR_EQUALS_TIMESERIES` (item de alcance, no un
-hallazgo pendiente original) — un bug real de ingesta NAV, no un falso positivo del motor.** Al
-cablear esta comprobación (§4 #8, antes sin implementar) contra los 25 pares (metric, window)
-reales, la divergencia entre el escalar de `fund_metrics` y la última fila de
-`fund_metric_timeseries` resultó **casi universal** (p.ej. `sharpe|rolling_5y`: 5.768/5.768 fondos,
-100%). Investigado hasta el código: **ambas rutas de escritura leen la misma tabla
-(`fund_nav_monthly` vía `load_nav()`) pero con ventanas genuinamente distintas** —
-`run_pipeline.py` recorta por fecha de calendario (`nav_df["date"].max() - 12 meses`) con una tasa
-libre de riesgo estática, mientras `compute_rolling_rows()` (`rolling_stats.py`) usa una ventana de
-**recuento fijo de filas** (últimas 12 filas) con una tasa libre de riesgo alineada por fecha —
-inconsistencia de diseño real, pero agravada por un **bug de ingesta**: `nav_discovery.py`
-(`_resample_to_monthly` + `_write_nav_rows`, `INSERT OR IGNORE` sobre `(ISIN, Date)`) nunca
-sustituye la fila provisional de un mes **aún abierto** — cada ejecución sucesiva de ingesta añade
-una fila de fecha nueva en vez de reemplazar la anterior, así que el mes en curso acumula varias
-filas NAV "provisionales" en lugar de una. Eso rompe la ventana de recuento-fijo-de-filas (que
-ahora cubre menos de 12 meses reales) sin afectar igual de mal a la ventana por fecha-de-calendario,
-produciendo la divergencia casi universal observada. **No corregido en esta sesión** — toca
-ingesta NAV en producción (`proyecto2/src/discovery/nav_discovery.py`), un cambio de mayor calado
-y riesgo que requiere autorización explícita antes de tocarlo; documentado aquí y en memoria para
-que la próxima sesión lo retome con el diagnóstico ya hecho.
+**Hallazgo mayor surgido al cablear `SCALAR_EQUALS_TIMESERIES` — bug real de ingesta NAV,
+CORREGIDO 2026-09-13 (sesión de seguimiento, autorizada explícitamente).** Al cablear esta
+comprobación (§4 #8, antes sin implementar) contra los 25 pares (metric, window) reales, la
+divergencia entre el escalar de `fund_metrics` y la última fila de `fund_metric_timeseries` resultó
+**casi universal** (p.ej. `sharpe|rolling_5y`: 5.768/5.768 fondos, 100%). Investigado hasta el
+código y **re-verificado independientemente en la sesión de corrección** (no se dio por buena la
+memoria de la sesión anterior sin comprobar contra el código actual):
+
+- Ambas rutas de escritura leen la misma tabla (`fund_nav_monthly` vía `load_nav()`) — no es un
+  problema de fuente distinta.
+- `run_pipeline.py` recorta por fecha de calendario con una tasa libre de riesgo estática, mientras
+  `compute_rolling_rows()` (`rolling_stats.py`) usa una ventana de **recuento fijo de filas** (12
+  últimas) con una tasa libre de riesgo alineada por fecha — inconsistencia de diseño real,
+  **deliberadamente fuera de alcance** de este fix (toca cálculo de métricas, no ingesta).
+- **Causa raíz de la divergencia casi universal:** `_write_nav_rows()` (`nav_discovery.py:678-693`)
+  hacía `INSERT OR IGNORE` sobre la PK real `(ISIN, Date)`, pero la clave semántica de una fila
+  mensual es `(ISIN, YYYY-MM)`. Cada ejecución de ingesta durante un mes aún abierto insertaba una
+  fila de fecha nueva en vez de sustituir la provisional anterior del mismo mes — y por ser
+  `OR IGNORE` (no `OR REPLACE`), un mes ya **cerrado** podía quedar fijado para siempre en su
+  primer valor provisional. Cuantificado en producción antes del fix: **6.876 pares (ISIN, mes)**
+  con filas duplicadas, **13.308 filas sobrantes**, 99% concentradas en los 2 meses más recientes.
+
+**Corrección aplicada:** `_write_nav_rows()` ahora hace `DELETE FROM fund_nav_monthly WHERE
+ISIN=? AND substr(Date,1,7)=?` por cada `(ISIN, YYYY-MM)` que va a escribir, antes del INSERT —
+mismo patrón ya usado por `_overwrite_nav_rows_monthly()` (`nav_discovery.py:744-761`, alcance
+ISIN completo, usado en `RECALCULATE_MONTHLY`) pero acotado a los meses realmente escritos. Los 3
+call-sites (`run_update`, `run_load` secuencial y paralelo) se benefician automáticamente sin
+cambios propios. 8 tests de regresión nuevos en
+`proyecto2/tests/discovery/test_nav_monthly_write_20260913.py` (incluye el caso "mes cerrado
+fijado en valor provisional", más grave que el caso simple de mes abierto).
+
+**Saneado de datos ya corrompidos — script construido, NO ejecutado contra producción todavía**
+(decisión explícita del usuario): `scripts/mig/fix_nav_monthly_duplicate_months.py`, dry-run por
+defecto, `--apply` para escribir. Verificado en dry-run contra la BD en vivo: reporta exactamente
+los 6.876/13.308 medidos arriba. Tras un `--apply` futuro, un ciclo P2 normal recalculará solo los
+ISINs afectados (el fingerprint de entrada cambia; no hace falta tocar `CALC_VERSION`) — no
+disparado automáticamente por este fix.
 
 Cada indicador se describe por: qué mide, para qué sirve, su modo de fallo, y la población sobre
 la que es legítimo calcularlo.
