@@ -870,6 +870,10 @@ def load_eurostat_series(desde: str = "2000-01", verbose: bool = False) -> list[
     """
     macro_rows: list[dict] = []
     base_url = "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data"
+    _GOV_QUERIES = [
+        ("deficit_gdp_pct", "B9", "Deficit/PIB"),
+        ("debt_gdp_pct",    "GD", "Deuda/PIB"),
+    ]
     _n_eurostat = 1 + len(_GOV_QUERIES)   # PIB + one entry per gov query
 
     # -- PIB Eurozona trimestral (en millones EUR) -------------
@@ -931,10 +935,6 @@ def load_eurostat_series(desde: str = "2000-01", verbose: bool = False) -> list[
     # Eurostat solo acepta una geografia por peticion para este dataset.
     # EA20 = Eurozona desde 2023, EA19 = Eurozona hasta 2022.
     # Se hacen peticiones individuales y se fusionan bajo "EU".
-    _GOV_QUERIES = [
-        ("deficit_gdp_pct", "B9", "Deficit/PIB"),
-        ("debt_gdp_pct",    "GD", "Deuda/PIB"),
-    ]
     _GOV_GEOS = [("ES", "ES"), ("EA20", "EU"), ("EA19", "EU")]
 
     for _gi, (gov_ind, na_item, label) in enumerate(_GOV_QUERIES, 2):
