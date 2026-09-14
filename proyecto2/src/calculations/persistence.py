@@ -28,9 +28,11 @@ import numpy as np
 import pandas as pd
 import sqlite3
 
-WINDOW_MONTHS = 36   # duracion de cada ventana rolling (3 anos)
-STEP_MONTHS   = 6    # paso entre ventanas (semestral)
-MIN_WINDOWS   = 4    # minimo de ventanas para calcular la metrica
+from shared.config import (
+    PERSISTENCE_WINDOW_MONTHS as WINDOW_MONTHS,
+    PERSISTENCE_STEP_MONTHS as STEP_MONTHS,
+    PERSISTENCE_MIN_WINDOWS as MIN_WINDOWS,
+)
 
 
 # ============================================================

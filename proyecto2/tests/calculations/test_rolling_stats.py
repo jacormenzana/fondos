@@ -28,6 +28,7 @@ from src.calculations.rolling_stats import (
     cat_signals_from_snapshot,
     resolve_rf_rate,
 )
+from src.calculations.returns import sortino_ratio, downside_deviation_ann
 
 
 # ============================================================
@@ -167,6 +168,53 @@ class TestRollSortino:
         s4 = _roll_sortino(nav, 12, risk_free_rate_ann=0.04)
         if not (math.isnan(s0) or math.isnan(s4)):
             assert s4 <= s0
+
+
+class TestSortinoScalarRollingAgree:
+    """Regression pin (2026-09-14): the scalar path (returns.sortino_ratio,
+    feeds fund_metrics) and the rolling path (rolling_stats._roll_sortino,
+    feeds fund_metric_timeseries) must produce IDENTICAL values for the same
+    NAV series — both now call the single canonical
+    returns.downside_deviation_ann(). Before this fix they used structurally
+    different formulas (MAR=0 over the negative subset only, vs.
+    MAR=rfr/period over all periods) and silently diverged under the same
+    metric name 'sortino' (root-caused on ISIN BE0058182792, see
+    doc/reglas history / session memory 2026-09-14)."""
+
+    def _make_nav_df(self, navs, start="2020-01-31"):
+        dates = pd.date_range(start=start, periods=len(navs), freq="ME")
+        return pd.DataFrame({"date": dates, "nav": navs})
+
+    @pytest.mark.parametrize("rfr", [0.0, 0.04])
+    def test_agree_on_volatile_series(self, rfr):
+        rng = np.random.default_rng(42)
+        rets = rng.normal(0.005, 0.03, 48)
+        nav = np.cumprod(1 + rets) * 100.0
+
+        rolling_value = _roll_sortino(nav, 12, risk_free_rate_ann=rfr)
+
+        nav_series = self._make_nav_df(list(nav))["nav"]
+        nav_series.index = pd.date_range("2020-01-31", periods=len(nav), freq="ME")
+        scalar_value = sortino_ratio(nav_series, risk_free_rate_ann=rfr)
+
+        assert rolling_value == pytest.approx(scalar_value, rel=1e-9, abs=1e-12)
+
+    def test_agree_on_monotone_series_both_nan(self):
+        nav = np.array([100.0 * (1.01 ** i) for i in range(24)])
+        rolling_value = _roll_sortino(nav, 12, risk_free_rate_ann=0.0)
+        nav_series = self._make_nav_df(list(nav))["nav"]
+        scalar_value = sortino_ratio(nav_series, risk_free_rate_ann=0.0)
+        assert math.isnan(rolling_value)
+        assert math.isnan(scalar_value)
+
+    def test_downside_deviation_ann_matches_known_value(self):
+        """Semi-variance over ALL periods (not just the negative subset)."""
+        rets = np.array([0.02, -0.03, 0.01, -0.01, 0.00])
+        mar = 0.0
+        result = downside_deviation_ann(rets, mar, periods_per_year=12)
+        downside_sq = np.where(rets < mar, (rets - mar) ** 2, 0.0)
+        expected = math.sqrt(downside_sq.mean()) * math.sqrt(12)
+        assert result == pytest.approx(expected, rel=1e-9)
 
 
 # ============================================================

@@ -32,6 +32,9 @@ from typing import Sequence
 import numpy as np
 import pandas as pd
 
+from .returns import downside_deviation_ann
+from shared.config import MIN_PEERS as _MIN_PEERS_DEFAULT
+
 
 # ============================================================
 # Constantes internas (reflejo de config — sin importar config
@@ -141,9 +144,10 @@ def _roll_sortino(
 ) -> float:
     """Ratio Sortino rolling = (return_ann - rfr) / downside_deviation_ann.
 
-    Downside deviation uses a MAR of rfr/periods_per_year per period.
-    Only negative-excess periods contribute (semi-variance approach).
-    Returns NaN if downside_dev = 0 or < 3 observations.
+    Downside deviation: see returns.downside_deviation_ann() — the single
+    canonical implementation shared with the scalar path (sortino_ratio),
+    so 'sortino' carries the same formula in fund_metrics and
+    fund_metric_timeseries. Returns NaN if downside_dev = 0 or < 3 observations.
     """
     if len(nav_window) < 3:
         return math.nan
@@ -151,12 +155,9 @@ def _roll_sortino(
     if len(rets) < 2:
         return math.nan
     mar_per_period = risk_free_rate_ann / periods_per_year
-    downside = rets - mar_per_period
-    downside_sq = np.where(downside < 0, downside ** 2, 0.0)
-    dd_var = float(downside_sq.mean())
-    if dd_var <= 0:
+    downside_dev_ann = downside_deviation_ann(rets, mar_per_period, periods_per_year)
+    if math.isnan(downside_dev_ann):
         return math.nan
-    downside_dev_ann = math.sqrt(dd_var) * math.sqrt(periods_per_year)
     ret_ann = _roll_return_ann(nav_window, periods_per_year)
     if math.isnan(ret_ann):
         return math.nan
@@ -329,7 +330,7 @@ def compute_rolling_rows(
 
 def compute_category_snapshot(
     timeseries_df: pd.DataFrame,
-    min_peers: int = 5,
+    min_peers: int = _MIN_PEERS_DEFAULT,
 ) -> pd.DataFrame:
     """
     Calcula percentiles cross-seccionales de categoría para la última fecha
@@ -434,7 +435,7 @@ def compute_category_snapshot(
 def compute_alerts(
     category_df: pd.DataFrame,
     alert_rules: list[dict],
-    min_peers: int = 5,
+    min_peers: int = _MIN_PEERS_DEFAULT,
 ) -> list[dict]:
     """
     Genera filas para fund_metric_alerts a partir del snapshot de categoría.

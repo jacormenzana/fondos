@@ -1,7 +1,6 @@
 import numpy as np
 from src.calculations.returns import monthly_returns
-
-SEVERE_LOSS_THRESHOLD = -0.02
+from shared.config import SEVERE_LOSS_THRESHOLD
 
 
 def consistency_metrics(nav_df, ipc_df=None):

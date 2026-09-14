@@ -54,18 +54,14 @@ Nota sobre cobertura de regimenes (P2-03 / cierre 2026-08-18):
 import numpy as np
 import pandas as pd
 import sqlite3
-from pathlib import Path
-import sys
 
-_ROOT = Path(__file__).resolve().parents[4]
-sys.path.insert(0, str(_ROOT))
-
-from shared.config import RISK_FREE_RATE_ANN
+from shared.config import (
+    RISK_FREE_RATE_ANN,
+    REGIME_MIN_OBS as MIN_OBS_REGIME,
+    REGIME_MIN_NAV_TOTAL as MIN_NAV_TOTAL,
+    REGIME_MIN_OBS_SORTINO_DOWNSIDE as MIN_OBS_SORTINO_DOWNSIDE,
+)
 from src.calculations.drawdown import compute_drawdown, max_drawdown, time_to_recovery
-
-MIN_OBS_REGIME          = 12  # minimo de meses en un regimen para calcular estadisticas
-MIN_NAV_TOTAL           = 36  # minimo de meses totales de NAV
-MIN_OBS_SORTINO_DOWNSIDE = 2  # minimo de retornos negativos para calcular downside deviation
 
 # Tasa libre de riesgo mensual (para Sharpe por regimen)
 _RF_MONTHLY = (1 + RISK_FREE_RATE_ANN) ** (1 / 12) - 1
@@ -96,9 +92,9 @@ def load_regime_history(conn: sqlite3.Connection) -> pd.DataFrame:
     Se llama UNA VEZ fuera del bucle de fondos -- es comun a todos.
     """
     try:
-        # Importacion local para evitar dependencia circular en tests
-        _P3 = Path(__file__).resolve().parents[4] / "proyecto3" / "src"
-        sys.path.insert(0, str(_P3.parent.parent))
+        # Importacion local para evitar dependencia circular en tests.
+        # Repo root ya esta en sys.path (production: cwd al invocar via -m;
+        # tests: proyecto2/pytest.ini pythonpath) -- no requiere bootstrap propio.
         from proyecto3.src.regime_classifier import RegimeClassifier
 
         clf    = RegimeClassifier(conn)

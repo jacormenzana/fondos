@@ -31,7 +31,7 @@ import numpy as np
 import pandas as pd
 import sqlite3
 
-MIN_PERIODS = 12  # minimo de periodos positivos/negativos para calcular
+from shared.config import CAPTURE_MIN_PERIODS as MIN_PERIODS  # minimo de periodos positivos/negativos para calcular
 
 
 # ============================================================

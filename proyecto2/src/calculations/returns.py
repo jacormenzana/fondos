@@ -55,6 +55,36 @@ def sharpe_ratio(
     return float((ret - risk_free_rate_ann) / vol)
 
 
+def downside_deviation_ann(
+    rets,
+    mar_per_period: float,
+    periods_per_year: int = 12,
+) -> float:
+    """
+    Semi-desviación anualizada de retornos frente a un MAR (Minimum Acceptable
+    Return), definición estándar de Sortino: semi-varianza poblacional sobre
+    TODOS los periodos (cero para los que igualan o superan el MAR), no la
+    varianza de solo el subconjunto negativo.
+
+    Canonical — única implementación compartida por el path escalar
+    (sortino_ratio, fund_metrics) y el path rolling (rolling_stats._roll_sortino,
+    fund_metric_timeseries). Antes de unificarse aquí, los dos paths usaban
+    fórmulas estructuralmente distintas (MAR=0 sobre solo negativos vs.
+    MAR=rfr/periodo sobre todos los periodos) y escribían valores divergentes
+    bajo el mismo nombre de métrica 'sortino' (root-caused 2026-09-14, ISIN
+    BE0058182792: denominadores 0.133 vs 0.096 para el mismo input).
+    """
+    arr = np.asarray(rets, dtype=float)
+    if len(arr) < 2:
+        return np.nan
+    downside = arr - mar_per_period
+    downside_sq = np.where(downside < 0, downside ** 2, 0.0)
+    var = float(downside_sq.mean())
+    if var <= 0:
+        return np.nan
+    return float(np.sqrt(var) * np.sqrt(periods_per_year))
+
+
 def sortino_ratio(
     series: pd.Series,
     risk_free_rate_ann: float,
@@ -64,21 +94,18 @@ def sortino_ratio(
     Ratio Sortino anualizado.
         (Rentabilidad anualizada - tipo libre de riesgo) / Downside deviation anualizada
 
-    Solo penaliza la volatilidad negativa (retornos por debajo de 0).
+    Downside deviation: ver downside_deviation_ann() — semi-desviación frente a
+    un MAR igual al tipo libre de riesgo por periodo, sobre todos los periodos.
     """
     ret = annualized_return(series, periods_per_year)
     if np.isnan(ret):
         return np.nan
 
     r = monthly_returns(series)
-    negative_r = r[r < 0]
+    mar_per_period = risk_free_rate_ann / periods_per_year
+    downside_std = downside_deviation_ann(r.to_numpy(), mar_per_period, periods_per_year)
 
-    if len(negative_r) < 2:
-        return np.nan
-
-    downside_std = float(negative_r.std(ddof=1) * np.sqrt(periods_per_year))
-
-    if downside_std == 0:
+    if np.isnan(downside_std) or downside_std == 0:
         return np.nan
 
     return float((ret - risk_free_rate_ann) / downside_std)

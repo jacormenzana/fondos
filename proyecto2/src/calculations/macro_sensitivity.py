@@ -57,19 +57,22 @@ Se aplica filtro VIF para eliminar factores con multicolinealidad severa (VIF>10
 import numpy as np
 import pandas as pd
 import sqlite3
-from pathlib import Path
-import sys
 
-_ROOT = Path(__file__).resolve().parents[4]
-sys.path.insert(0, str(_ROOT))
+from shared.config import (
+    MACRO_OLS_MIN_OBS,
+    MACRO_OLS_PER_FUND_MIN_COVERAGE,
+    MACRO_VIF_THRESHOLD,
+    MACRO_GEO_FORCE_KEEP,
+    MACRO_DEV_STATUS_FORCE_KEEP,
+)
 
-MIN_OBS = 60
+MIN_OBS = MACRO_OLS_MIN_OBS
 
 # Per-fund factor-coverage threshold: a factor must be non-null for at least
 # this fraction of the fund's own NAV-macro overlap (in addition to >= MIN_OBS
 # months absolute) to enter that fund's OLS. Prevents a globally-dense-but-stale
 # factor from truncating the regression window for all funds.
-_PER_FUND_MIN_COVERAGE = 0.85
+_PER_FUND_MIN_COVERAGE = MACRO_OLS_PER_FUND_MIN_COVERAGE
 
 
 # ============================================================
@@ -314,28 +317,13 @@ def _compute_vif(X_cols: np.ndarray) -> np.ndarray:
     return vif
 
 
-VIF_THRESHOLD = 10.0  # eliminar factores con VIF > umbral
+VIF_THRESHOLD = MACRO_VIF_THRESHOLD  # eliminar factores con VIF > umbral
 
-# Factores a proteger del filtro VIF segun geografia del fondo.
-# Se suman al conjunto base {d_rate_eu, oil_yoy, m3_yoy} para evitar que
-# factores regionales clave sean descartados por correlacion con factores globales.
-_GEO_FORCE_KEEP: dict[str, set[str]] = {
-    "China":          {"ipc_yoy_cn", "d_rate_cn", "eur_cny_yoy"},
-    "Japan":          {"ipc_yoy_jp", "d_rate_jp", "eur_jpy_yoy"},
-    "North America":  {"ipc_yoy_us", "d_rate_us", "term_spread"},
-    "Asia-Pacific":   {"ipc_yoy_jp", "ipc_yoy_cn", "d_rate_jp", "d_rate_cn"},
-    "India":          {"ipc_yoy_us", "dxy_yoy"},
-    "Latin America":  {"ipc_yoy_us", "d_rate_us", "dxy_yoy"},
-    "Eastern Europe": {"ipc_yoy_eu", "d_rate_eu"},
-    "Europe":         {"ipc_yoy_eu", "d_rate_eu", "eur_gbp_yoy"},
-    "Middle East & Africa": {"oil_yoy", "dxy_yoy"},
-}
-
-# Factores a proteger segun estado de desarrollo (se acumulan con los de geografia)
-_DEV_STATUS_FORCE_KEEP: dict[str, set[str]] = {
-    "Emerging": {"spread_hy", "dxy_yoy"},
-    "Frontier": {"spread_hy", "dxy_yoy"},
-}
+# Factores a proteger del filtro VIF segun geografia / estado de desarrollo
+# del fondo. Catalogo canonico: shared/config.py (MACRO_GEO_FORCE_KEEP,
+# MACRO_DEV_STATUS_FORCE_KEEP).
+_GEO_FORCE_KEEP: dict[str, set[str]] = MACRO_GEO_FORCE_KEEP
+_DEV_STATUS_FORCE_KEEP: dict[str, set[str]] = MACRO_DEV_STATUS_FORCE_KEEP
 
 
 def compute_macro_sensitivity(

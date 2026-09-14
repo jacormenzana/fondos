@@ -29,12 +29,7 @@ import numpy as np
 import pandas as pd
 
 from .drawdown import compute_drawdown, max_drawdown
-
-# ---------------------------------------------------------------------------
-# Thresholds (sobreescriben los defaults de config cuando se importan desde
-# tests sin el módulo completo — se puede llamar directamente aquí)
-# ---------------------------------------------------------------------------
-_LIQUIDITY_THRESHOLD_DEFAULT: float = 0.20   # >20% días sin cambio → ilíquido
+from shared.config import LIQUIDITY_FLAG_THRESHOLD as _LIQUIDITY_THRESHOLD_DEFAULT
 
 
 # ---------------------------------------------------------------------------

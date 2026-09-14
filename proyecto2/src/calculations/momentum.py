@@ -21,7 +21,7 @@ import numpy as np
 import pandas as pd
 import sqlite3
 
-MIN_PEERS = 5   # minimo de fondos en la categoria para calcular percentil
+from shared.config import MIN_PEERS   # minimo de fondos en la categoria para calcular percentil
 
 
 # ============================================================

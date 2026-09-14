@@ -357,6 +357,54 @@ METRIC_VERSION_SHORT: str = "d1"
 LIQUIDITY_FLAG_THRESHOLD: float = 0.20   # >20% días sin movimiento → ilíquido
 
 # ============================================================
+# P2 — Umbrales de negocio centralizados (P0 canonicalización, 2026-09-14)
+# ============================================================
+# Antes vivían como constantes de módulo duplicadas/no auditables en cada
+# fichero de src/calculations/ — sin índice único, mismo patrón de riesgo
+# que causó la divergencia de fórmula de sortino (una copia editada, las
+# demás no). MIN_PEERS en particular estaba triplicado con el mismo valor
+# en momentum.py y dos veces literal en run_pipeline.py — ahora una sola
+# fuente. Numérico/epsilon guards (ej. abs(x) < 1e-6) permanecen inline:
+# no son decisiones de negocio, son estabilidad de punto flotante.
+
+MIN_PEERS: int = 5   # mínimo de fondos en la categoría para percentiles (momentum, alerts)
+
+MACRO_OLS_MIN_OBS: int = 60                    # mínimo meses solapados NAV+macro para el OLS
+MACRO_OLS_PER_FUND_MIN_COVERAGE: float = 0.85  # cobertura mínima por-fondo de cada factor
+MACRO_VIF_THRESHOLD: float = 10.0              # eliminar factores con VIF > umbral
+
+# Factores a proteger del filtro VIF según geografía del fondo — se suman al
+# conjunto base {d_rate_eu, oil_yoy, m3_yoy} para evitar que factores
+# regionales clave sean descartados por correlación con factores globales.
+MACRO_GEO_FORCE_KEEP: dict = {
+    "China":          {"ipc_yoy_cn", "d_rate_cn", "eur_cny_yoy"},
+    "Japan":          {"ipc_yoy_jp", "d_rate_jp", "eur_jpy_yoy"},
+    "North America":  {"ipc_yoy_us", "d_rate_us", "term_spread"},
+    "Asia-Pacific":   {"ipc_yoy_jp", "ipc_yoy_cn", "d_rate_jp", "d_rate_cn"},
+    "India":          {"ipc_yoy_us", "dxy_yoy"},
+    "Latin America":  {"ipc_yoy_us", "d_rate_us", "dxy_yoy"},
+    "Eastern Europe": {"ipc_yoy_eu", "d_rate_eu"},
+    "Europe":         {"ipc_yoy_eu", "d_rate_eu", "eur_gbp_yoy"},
+    "Middle East & Africa": {"oil_yoy", "dxy_yoy"},
+}
+
+# Factores a proteger según estado de desarrollo (se acumulan con los de geografía)
+MACRO_DEV_STATUS_FORCE_KEEP: dict = {
+    "Emerging": {"spread_hy", "dxy_yoy"},
+    "Frontier": {"spread_hy", "dxy_yoy"},
+}
+
+PERSISTENCE_WINDOW_MONTHS: int = 36  # duración ventana rolling (3 años)
+PERSISTENCE_STEP_MONTHS: int = 6     # paso entre ventanas (semestral)
+PERSISTENCE_MIN_WINDOWS: int = 4     # mínimo de ventanas para calcular la métrica
+
+CAPTURE_MIN_PERIODS: int = 12  # mínimo de periodos positivos/negativos vs benchmark
+
+REGIME_MIN_NAV_TOTAL: int = 36            # mínimo meses totales de NAV para stats por régimen
+REGIME_MIN_OBS: int = 12                  # mínimo meses en un régimen para calcular estadísticas
+REGIME_MIN_OBS_SORTINO_DOWNSIDE: int = 2  # mínimo retornos negativos para downside deviation
+
+# ============================================================
 # v26 — Reglas del motor WARN/ALARM (fund_metric_alerts)
 # ============================================================
 # Fuente única de verdad para los umbrales del alarm engine.
