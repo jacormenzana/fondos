@@ -57,6 +57,55 @@ _DB_PATH   = _REPO_ROOT / "db" / "fondos.sqlite"
 
 
 # ---------------------------------------------------------------------------
+# Splice de índices rebasados (MORNINGSTAR_CHART) — Pase 0, 2026-09-13
+# ---------------------------------------------------------------------------
+#
+# Defecto distinto del original 2026-07-19: no son rows-pico aislados dentro
+# de una serie de precio, sino LOTES completos de un total-return index
+# (NAV_Type='TOTAL_RETURN_IDX', Data_Source='MORNINGSTAR_CHART') rebasado a
+# una base arbitraria en cada llamada de ingesta (load/update con ventanas
+# distintas). El resultado es una serie con "costuras" >8x en cada frontera
+# de lote — no un error puntual. Borrar esas rows destruiría historia real
+# o el valor más reciente. La reparación correcta es RE-ESCALAR cada lote
+# posterior para que la costura sea continua (ratio=1), preservando los
+# movimientos relativos reales dentro de cada lote.
+CHART_SOURCE = "MORNINGSTAR_CHART"
+
+
+def _splice_rebased_index_batches(
+    rows: list, jump_threshold: float = 8.0
+) -> List[Tuple[str, str, str, float]]:
+    """Reescala en cadena los lotes de un TOTAL_RETURN_IDX rebasado.
+
+    Cada salto >8x se interpreta como frontera de rebase (nueva llamada de
+    ingesta), no como retorno real. Multiplica cada row posterior a la
+    costura por (último valor del lote previo / primer valor del lote
+    nuevo), acumulando el factor de arrastre a través de costuras
+    sucesivas. Devuelve solo las rows que requieren UPDATE (factor != 1.0):
+    [(ISIN, Date, Data_Source, nuevo_NAV), ...].
+    """
+    if len(rows) < 2:
+        return []
+
+    sorted_rows = sorted(rows, key=lambda r: r["Date"])
+    updates: List[Tuple[str, str, str, float]] = []
+    carry_factor = 1.0
+
+    for i in range(1, len(sorted_rows)):
+        prev_scaled = sorted_rows[i - 1]["NAV"] * carry_factor
+        curr_raw = sorted_rows[i]["NAV"]
+        if prev_scaled > 0 and curr_raw > 0:
+            ratio = (curr_raw * carry_factor) / prev_scaled
+            if ratio > jump_threshold or ratio < 1.0 / jump_threshold:
+                carry_factor = prev_scaled / curr_raw  # re-anchor: new_scaled == prev_scaled
+        r = sorted_rows[i]
+        if carry_factor != 1.0:
+            updates.append((r["ISIN"], r["Date"], r["Data_Source"], r["NAV"] * carry_factor))
+
+    return updates
+
+
+# ---------------------------------------------------------------------------
 # Detección de rows inflados — dos algoritmos complementarios
 # ---------------------------------------------------------------------------
 
@@ -251,8 +300,8 @@ def main() -> None:
 
     # Seleccionar ISINs a procesar
     if args.isin:
-        isins = [args.isin]
-        print(f"Procesando ISIN individual: {args.isin}")
+        isins = [i.strip() for i in args.isin.split(",") if i.strip()]
+        print(f"Procesando {len(isins)} ISIN(s): {', '.join(isins)}")
     else:
         isins = _get_affected_isins(conn)
         print(f"ISINs con srri_volatility > 5 (firma de corrupción): {len(isins)}")
@@ -268,6 +317,31 @@ def main() -> None:
     for isin in isins:
         rows = _load_nav_rows(conn, isin)
         if not rows:
+            continue
+
+        # Pase 0: series de índice rebasado (MORNINGSTAR_CHART) — re-escalar,
+        # nunca borrar. No aplican los pases 1/2 (basados en DELETE) a estas.
+        if rows[0]["Data_Source"] == CHART_SOURCE:
+            splices = _splice_rebased_index_batches(rows)
+            if not splices:
+                continue
+            total_corrected_isins += 1
+            total_deleted_rows    += len(splices)  # reused as "filas afectadas"
+            action = "[DRY-RUN splice]" if args.dry_run else "[SPLICE]"
+            print(f"  {action} {isin}: {len(splices)} rows re-escaladas "
+                  f"(fuente={CHART_SOURCE}, total={len(rows)})")
+            if args.dry_run:
+                for isin_key, date, src, new_nav in splices[:5]:
+                    old_nav = next(r["NAV"] for r in rows if r["Date"] == date and r["Data_Source"] == src)
+                    print(f"            {date}  {src}  NAV {old_nav:.4f} -> {new_nav:.4f}")
+                if len(splices) > 5:
+                    print(f"            ... ({len(splices) - 5} más)")
+            else:
+                for isin_key, date, src, new_nav in splices:
+                    conn.execute(
+                        "UPDATE fund_nav_monthly SET NAV=? WHERE ISIN=? AND Date=? AND Data_Source=?",
+                        (new_nav, isin_key, date, src),
+                    )
             continue
 
         # Pase 1: picos aislados (interior + borde)
