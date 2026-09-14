@@ -60,8 +60,10 @@ import sqlite3
 import sys
 import time
 import traceback
+from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
+from typing import Callable
 from uuid import uuid4
 
 import pandas as pd
@@ -76,6 +78,7 @@ from shared.config import RISK_FREE_RATE_ANN, METRIC_VERSION
 from shared.config import CRISIS_WINDOWS, ROLLING_WINDOWS, REGION_IPC, MIN_NAV_ROWS
 from shared.config import MIN_NAV_MACRO, MIN_NAV_PERSIST
 from shared.config import SHORT_WINDOWS, SHORT_WINDOW_MIN_OBS, METRIC_VERSION_SHORT
+from shared.config import MIN_PEERS, REGIME_MIN_NAV_TOTAL
 from shared.config import (
     ROLLING_STATS_ENABLED, ALERT_RULES, ROLLING_TIMESERIES_METRICS
 )
@@ -272,6 +275,20 @@ def _update_ols_state(
 # ============================================================
 # Helpers de escritura
 # ============================================================
+
+def _rows_from_metric_tuples(
+    metric_tuples: list[tuple],
+    source_rows: int,
+) -> list[dict]:
+    """Convierte la salida estándar list[(metric, value, real_flag)] de los
+    módulos de src.calculations al formato dict que esperan _write_metrics /
+    _replace_beta_set. Única implementación — antes repetida idéntica en 7
+    call sites de este fichero (P0 canonicalización, 2026-09-14)."""
+    return [
+        {"metric": m, "value": v, "real_flag": rf, "source_rows": source_rows}
+        for m, v, rf in metric_tuples
+    ]
+
 
 def _write_metrics(
     conn: sqlite3.Connection,
@@ -474,6 +491,106 @@ def _replace_beta_set(
             else:
                 raise
     return 0
+
+
+@dataclass(frozen=True)
+class _FundMetricCtx:
+    """Per-fund state shared by the metric-family registry below (P2
+    canonicalización, 2026-09-14). Bundles what each compute_xxx() call
+    needs so MetricFamilySpec entries can stay declarative — no per-family
+    argument marshalling scattered through the per-fund loop."""
+    isin: str
+    conn: sqlite3.Connection
+    nav_df: pd.DataFrame
+    fund_nature: str | None
+    fund_currency: str | None
+    hedging_policy: str | None
+    asset_currency: str | None
+    regime_df: pd.DataFrame
+    has_macro: bool
+
+
+@dataclass(frozen=True)
+class MetricFamilySpec:
+    """Declarative per-fund metric family: name (the --metrics/_want() key),
+    fn (ctx -> list[(metric, value, real_flag)]), and the gates deciding
+    whether it runs for a given fund. Gate fields are plain data, in the
+    same spirit as shared/config.py's threshold catalog (ALERT_RULES etc.)
+    — adding a metric family means one list entry in
+    _PER_FUND_METRIC_FAMILIES, not a copy-pasted dispatch block (this
+    exact block was duplicated 7x before the 2026-09-14 refactor).
+
+    Scope note: only families with a uniform "guard + compute + write via
+    _write_metrics/_replace_beta_set" shape are registry-driven (momentum,
+    capture, persistence, fx, regime). risk/consistency/srri (DataFrame
+    return contract), short-horizon (nested per-window loop with its own
+    logging), macro sensitivity (OLS quarterly-cadence gate, EFF-1), and
+    rolling/alerts (cross-sectional, multi-stage) stay as explicit code —
+    forcing genuinely different shapes into one interface would reduce
+    clarity, not improve it.
+    """
+    name: str
+    fn: Callable[["_FundMetricCtx"], list[tuple]]
+    horizon: str = "since_inception"
+    min_obs: int | None = None
+    requires_fund_nature: bool = False
+    requires_has_macro: bool = False
+    requires_nonempty_regime: bool = False
+    writer: Callable[..., int] = _write_metrics
+
+
+_PER_FUND_METRIC_FAMILIES: list[MetricFamilySpec] = [
+    MetricFamilySpec(
+        "momentum",
+        lambda ctx: compute_momentum(ctx.isin, ctx.fund_nature, ctx.nav_df, ctx.conn),
+        requires_fund_nature=True, requires_has_macro=True,
+    ),
+    MetricFamilySpec(
+        "capture",
+        lambda ctx: compute_capture_ratios(ctx.isin, ctx.fund_nature, ctx.nav_df, ctx.conn),
+        requires_fund_nature=True, requires_has_macro=True,
+    ),
+    MetricFamilySpec(
+        "persistence",
+        lambda ctx: compute_persistence(ctx.isin, ctx.fund_nature, ctx.nav_df, ctx.conn),
+        requires_fund_nature=True, min_obs=MIN_NAV_PERSIST,
+    ),
+    MetricFamilySpec(
+        "fx",
+        lambda ctx: compute_currency_factor(
+            ctx.isin, ctx.fund_currency, ctx.hedging_policy, ctx.nav_df, ctx.conn,
+            asset_currency=ctx.asset_currency,
+        ),
+    ),
+    MetricFamilySpec(
+        "regime",
+        lambda ctx: compute_regime_returns(ctx.nav_df, ctx.regime_df),
+        min_obs=REGIME_MIN_NAV_TOTAL, requires_nonempty_regime=True,
+    ),
+]
+
+
+def _run_metric_family(
+    spec: MetricFamilySpec,
+    ctx: _FundMetricCtx,
+    dry_run: bool,
+    want_fn: Callable[[str], bool],
+) -> int:
+    """Evaluate one MetricFamilySpec's gates against ctx; if they pass,
+    compute and write. Returns rows written (0 if gated out or _want()=False)."""
+    if not want_fn(spec.name):
+        return 0
+    if spec.requires_fund_nature and not ctx.fund_nature:
+        return 0
+    if spec.requires_has_macro and not ctx.has_macro:
+        return 0
+    if spec.requires_nonempty_regime and ctx.regime_df.empty:
+        return 0
+    if spec.min_obs is not None and len(ctx.nav_df) < spec.min_obs:
+        return 0
+    result = spec.fn(ctx)
+    rows = _rows_from_metric_tuples(result, len(ctx.nav_df))
+    return spec.writer(ctx.conn, ctx.isin, rows, spec.horizon, dry_run)
 
 
 def _write_metric_alerts(
@@ -1173,11 +1290,7 @@ def run(
                                      f"(min {min_obs})", dry_run)
                                 continue
                             sh_list = compute_short_horizon_metrics(nav_sh, ipc_df)
-                            sh_rows = [
-                                {"metric": m, "value": v, "real_flag": rf,
-                                 "source_rows": len(nav_sh)}
-                                for m, v, rf in sh_list
-                            ]
+                            sh_rows = _rows_from_metric_tuples(sh_list, len(nav_sh))
                             isin_written += _write_metrics(
                                 conn, isin, sh_rows, sh_name, dry_run,
                                 metric_version=METRIC_VERSION_SHORT
@@ -1223,11 +1336,7 @@ def run(
                                 geography=geography,
                                 development_status=development_status,
                             )
-                            sens_rows = [
-                                {"metric": m, "value": v, "real_flag": rf,
-                                 "source_rows": len(nav_df)}
-                                for m, v, rf in sens_list
-                            ]
+                            sens_rows = _rows_from_metric_tuples(sens_list, len(nav_df))
                             # Use _replace_beta_set (delete+insert, one transaction)
                             # so VIF-dropped factors from prior runs are cleaned up.
                             # Non-beta derived metrics (energy_sensitivity_pct,
@@ -1240,70 +1349,21 @@ def run(
                             )
                             _ols_ran = True
 
-                    # -- Momentum ------------------------------------
-                    if _want("momentum") and fund_nature:
-                        mom_list = compute_momentum(isin, fund_nature, nav_df, conn)
-                        mom_rows = [
-                            {"metric": m, "value": v, "real_flag": rf,
-                             "source_rows": len(nav_df)}
-                            for m, v, rf in mom_list
-                        ]
-                        isin_written += _write_metrics(
-                            conn, isin, mom_rows, "since_inception", dry_run
-                        )
-
-                    # -- Capture ratios ------------------------------
-                    if _want("capture") and fund_nature:
-                        cap_list = compute_capture_ratios(
-                            isin, fund_nature, nav_df, conn
-                        )
-                        cap_rows = [
-                            {"metric": m, "value": v, "real_flag": rf,
-                             "source_rows": len(nav_df)}
-                            for m, v, rf in cap_list
-                        ]
-                        isin_written += _write_metrics(
-                            conn, isin, cap_rows, "since_inception", dry_run
-                        )
-
-                # -- Persistencia del alpha --------------------------
-                if _want("persistence") and fund_nature and len(nav_df) >= MIN_NAV_PERSIST:
-                    per_list = compute_persistence(isin, fund_nature, nav_df, conn)
-                    per_rows = [
-                        {"metric": m, "value": v, "real_flag": rf,
-                         "source_rows": len(nav_df)}
-                        for m, v, rf in per_list
-                    ]
-                    isin_written += _write_metrics(
-                        conn, isin, per_rows, "since_inception", dry_run
-                    )
-
-                # -- Factor divisa ----------------------------------
-                if _want("fx"):
-                    fx_list = compute_currency_factor(
-                        isin, fund_currency, hedging_policy, nav_df, conn,
-                        asset_currency=asset_currency,
-                    )
-                    fx_rows = [
-                        {"metric": m, "value": v, "real_flag": rf,
-                         "source_rows": len(nav_df)}
-                        for m, v, rf in fx_list
-                    ]
-                    isin_written += _write_metrics(
-                        conn, isin, fx_rows, "since_inception", dry_run
-                    )
-
-                # -- Retornos por regimen ---------------------------
-                if _want("regime") and not regime_df.empty and len(nav_df) >= 36:
-                    reg_list = compute_regime_returns(nav_df, regime_df)
-                    reg_rows = [
-                        {"metric": m, "value": v, "real_flag": rf,
-                         "source_rows": len(nav_df)}
-                        for m, v, rf in reg_list
-                    ]
-                    isin_written += _write_metrics(
-                        conn, isin, reg_rows, "since_inception", dry_run
-                    )
+                # -- Momentum / Capture / Persistencia / FX / Regimen --
+                # Registry-driven (P2 canonicalización, 2026-09-14): these 5
+                # families share the exact "gate + compute + _write_metrics"
+                # shape (previously a copy-pasted block each). See
+                # MetricFamilySpec / _PER_FUND_METRIC_FAMILIES above for the
+                # gate definitions this loop evaluates, and the docstring
+                # there for which families are deliberately NOT registry-driven.
+                _fund_ctx = _FundMetricCtx(
+                    isin=isin, conn=conn, nav_df=nav_df,
+                    fund_nature=fund_nature, fund_currency=fund_currency,
+                    hedging_policy=hedging_policy, asset_currency=asset_currency,
+                    regime_df=regime_df, has_macro=_has_macro,
+                )
+                for _spec in _PER_FUND_METRIC_FAMILIES:
+                    isin_written += _run_metric_family(_spec, _fund_ctx, dry_run, _want)
 
                 # -- Indicadores rolling (v26 — ROLLING_STATS_ENABLED) --
                 # v28: pctile_self computed here from roll_rows (already in RAM),
@@ -1479,7 +1539,7 @@ def run(
                 if not latest_df.empty:
                     # compute_category_snapshot expects 'date' column —
                     # latest_df already has it (the latest date only).
-                    cat_df = compute_category_snapshot(latest_df, min_peers=5)
+                    cat_df = compute_category_snapshot(latest_df, min_peers=MIN_PEERS)
 
                     # Cat signals (pctile_cat, zscore_cat) extracted directly
                     # from cat_df — no full-history pass needed (RC-2 fix).
@@ -1503,7 +1563,7 @@ def run(
                         f"{n_cat} escritas en fund_metrics"
                     )
 
-                    al_rows  = compute_alerts(cat_df, ALERT_RULES, min_peers=5)
+                    al_rows  = compute_alerts(cat_df, ALERT_RULES, min_peers=MIN_PEERS)
                     n_alerts = _write_metric_alerts(conn, al_rows, dry_run)
                     logger.info(
                         f"[ROLLING] {len(al_rows)} alertas evaluadas, "
