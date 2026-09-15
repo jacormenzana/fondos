@@ -683,9 +683,18 @@ CREATE TABLE IF NOT EXISTS nav_sources (
     --   RECALCULATE_MONTHLY — daily OK, solo resamplear diario→mensual (sin red)
     --   RECALCULATE_METRICS — NAV OK, solo recalcular métricas P2 (sin red ni NAV)
     --   PENDING             — descubierto pero todavía no cargado
+    --   STALE_FROZEN        — fuente estructuralmente detenida (sanción/baja del
+    --                         proveedor); nunca se reintenta (v26, commit 36fa49f).
+    --                         FIX-FROZEN-NAV-SCHEMA-1 (2026-09-15): este valor
+    --                         faltaba en el CHECK -- la tabla viva no tiene el
+    --                         constraint (columna añadida via ALTER TABLE antes
+    --                         de que este CHECK existiera), por eso producción
+    --                         nunca lo notó; una BD nueva construida desde este
+    --                         fichero sí lo habría rechazado.
     data_status     TEXT    DEFAULT 'OK'
         CHECK (data_status IN (
-            'OK','FORCE_REFRESH','RECALCULATE_MONTHLY','RECALCULATE_METRICS','PENDING'
+            'OK','FORCE_REFRESH','RECALCULATE_MONTHLY','RECALCULATE_METRICS',
+            'PENDING','STALE_FROZEN'
         )),
 
     FOREIGN KEY (isin) REFERENCES fund_master (ISIN) ON DELETE CASCADE

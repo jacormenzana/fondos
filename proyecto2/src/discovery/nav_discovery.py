@@ -675,6 +675,97 @@ def _normalize_nav_scale(rows: list) -> list:
     return corrected
 
 
+def _splice_new_chart_batch(conn, isin: str, rows: list, jump_threshold: float = 8.0) -> list:
+    """Re-anchor a freshly-fetched MORNINGSTAR_CHART batch onto existing
+    history before it is ever written, so chartservice's per-fetch arbitrary
+    rebasing can't introduce a new discontinuity.
+
+    Durable ingestion-time counterpart of
+    scripts/mig/repair_nav_scale_20260719.py::_splice_rebased_index_batches()
+    (the retroactive/reference implementation — same carry-factor idea).
+    That script has to walk a whole ISIN's history rescaling every batch
+    boundary it finds after the fact; this only ever needs to handle ONE
+    boundary per call, because each nav_discovery write already corresponds
+    to exactly one fetched batch — so it re-anchors just the incoming rows
+    against whatever's already stored, instead of re-deriving the whole
+    chain.
+
+    Root cause this closes (2026-09-13/14/15, see
+    project_nav_scale_rebasing_fix_20260913 / project_p0_p2_canonicalization
+    session memory): the splice fix had only ever been applied retroactively
+    — a routine NAV Load re-introduced the identical seam on the same 3
+    ISINs hours after being spliced, proving the corruption isn't a rare
+    edge case but recurs on ordinary operational runs. validate_nav()'s >8x
+    guard was catching it and skipping cleanly (no corrupted fund_metrics),
+    but that just meant those funds silently stopped getting recomputed
+    every time the chartservice happened to re-rebase.
+
+    Anchor selection: prefers an EXACT same-date overlap between the new
+    batch and existing fund_nav_daily history (chartservice windows often
+    overlap on re-fetch) — the most reliable comparison, since it's the same
+    real calendar date observed twice. Falls back to the nearest existing
+    date strictly before the new batch's earliest date when there is no
+    overlap. No existing MORNINGSTAR_CHART history at all (first-ever load)
+    -> nothing to splice against, rows returned unchanged.
+
+    Only rescales when the ratio at the anchor exceeds jump_threshold (or
+    its inverse, matching the retroactive script's own threshold) — an
+    ordinary day-to-day price move is left untouched. Applies uniformly to
+    every MORNINGSTAR_CHART row in the batch (the same carry-factor
+    correction the retroactive splice uses), non-chart rows pass through.
+    """
+    if not rows:
+        return rows
+    new_by_date = {
+        r["Date"]: r["NAV"] for r in rows
+        if r.get("Data_Source") == "MORNINGSTAR_CHART" and r.get("NAV") and r["NAV"] > 0
+    }
+    if not new_by_date:
+        return rows
+    new_min_date = min(new_by_date)
+
+    overlap_dates = list(new_by_date.keys())
+    ph = ",".join("?" * len(overlap_dates))
+    overlap = conn.execute(
+        f"SELECT Date, NAV FROM fund_nav_daily WHERE ISIN=? "
+        f"AND Data_Source='MORNINGSTAR_CHART' AND NAV > 0 AND Date IN ({ph}) "
+        f"ORDER BY Date LIMIT 1",
+        (isin, *overlap_dates),
+    ).fetchone()
+
+    if overlap:
+        anchor_date, anchor_existing_nav = overlap
+        anchor_new_nav = new_by_date[anchor_date]
+    else:
+        prior = conn.execute(
+            "SELECT Date, NAV FROM fund_nav_daily WHERE ISIN=? "
+            "AND Data_Source='MORNINGSTAR_CHART' AND NAV > 0 AND Date < ? "
+            "ORDER BY Date DESC LIMIT 1",
+            (isin, new_min_date),
+        ).fetchone()
+        if not prior:
+            return rows  # no history to splice against (first load, or huge gap)
+        anchor_date, anchor_existing_nav = prior
+        anchor_new_nav = new_by_date[new_min_date]
+
+    if anchor_new_nav <= 0 or anchor_existing_nav <= 0:
+        return rows
+    ratio = anchor_new_nav / anchor_existing_nav
+    if not (ratio >= jump_threshold or ratio <= 1.0 / jump_threshold):
+        return rows  # continuous — no seam at this boundary
+
+    carry_factor = anchor_existing_nav / anchor_new_nav
+    spliced = []
+    for r in rows:
+        if r.get("Data_Source") == "MORNINGSTAR_CHART" and r.get("NAV"):
+            r2 = r.copy()
+            r2["NAV"] = round(r["NAV"] * carry_factor, 6)
+            spliced.append(r2)
+        else:
+            spliced.append(r)
+    return spliced
+
+
 def _write_nav_rows(conn, rows, dry_run) -> int:
     """Persiste filas NAV mensuales en fund_nav_monthly (INSERT OR IGNORE).
 
@@ -940,6 +1031,67 @@ def _is_stale(ds: str, last_daily: Optional[str], last_monthly: Optional[str],
         return True
 
 
+def _auto_freeze_stale_navs(conn, dry_run: bool) -> list:
+    """Detect structurally-stopped NAV sources and mark them STALE_FROZEN.
+
+    Extracted 2026-09-15 from run_update() (the only caller until now) so
+    run_load() — the mode the canonical launcher (P2_discoverLoadMetrics.bat)
+    actually runs every cycle — can call it too. Root cause of FIX-FROZEN-NAV
+    being dead code in production for 3+ weeks: this detection lived only
+    inside run_update(), which the launcher never invokes (only --mode
+    discover and --mode load run); _is_stale() already correctly skips
+    STALE_FROZEN sources wherever it's consulted, so the only missing piece
+    was something ever setting the status on a path that actually executes.
+
+    A fund qualifies when its source has gone quiet (no last_checked update
+    in 30 days would mean discover/load themselves stopped trying, which is
+    a different problem) but genuinely has no new NAV in > _FROZEN_NAV_DAYS
+    despite recent checks — i.e. the provider stopped publishing (sanction,
+    suspension, delisting), not that our own pipeline stopped looking.
+
+    Returns the list of (isin, last_nav_date, last_checked) rows just frozen
+    (empty if none). Does nothing on dry_run (no write should happen).
+    """
+    if dry_run:
+        return []
+    _today = date.today()
+    _freeze_threshold = (_today - timedelta(days=_FROZEN_NAV_DAYS)).isoformat()
+    _recent_check_threshold = (_today - timedelta(days=30)).isoformat()
+    _to_freeze = conn.execute(
+        """
+        SELECT isin, last_nav_date, last_checked
+        FROM nav_sources
+        WHERE status = 'OK'
+          AND (data_status IS NULL OR data_status = 'OK')
+          AND last_nav_date IS NOT NULL
+          AND last_nav_date < ?
+          AND last_checked  >= ?
+        ORDER BY last_nav_date
+        """,
+        (_freeze_threshold, _recent_check_threshold),
+    ).fetchall()
+    if not _to_freeze:
+        return []
+    freeze_isins = [r[0] for r in _to_freeze]
+    ph = ",".join("?" * len(freeze_isins))
+    conn.execute(
+        f"UPDATE nav_sources SET data_status='STALE_FROZEN' WHERE isin IN ({ph})",
+        freeze_isins,
+    )
+    conn.commit()
+    print(
+        f"[STALE_FROZEN] {len(_to_freeze)} fondo(s) marcados: "
+        + ", ".join(f"{r[0]} (last_nav={r[1]}, checked={r[2]})" for r in _to_freeze),
+        flush=True,
+    )
+    print(
+        "[STALE_FROZEN] ACCION REQUERIDA: revisar fund_master.In_Current_Universe "
+        "para estos ISINs y ajustar a 0 si procede (dominio P1).",
+        file=sys.stderr, flush=True,
+    )
+    return _to_freeze
+
+
 def _fetch_one(idx, isin, ms_id, currency, eff_desde, bearer, delay_secs):
     """Worker puro para ThreadPoolExecutor — NINGUNA escritura en BD.
 
@@ -992,6 +1144,11 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=Non
     currency_map = {r[0]: (r[1] or "EUR") for r in conn.execute(
         "SELECT ISIN, Fund_Currency FROM fund_master"
     ).fetchall()}
+    # Auto-freeze ANTES de leer data_status_map, para que los recien
+    # congelados ya aparezcan como STALE_FROZEN en este mismo run (2026-09-15:
+    # este era el gap — la deteccion solo vivia en run_update(), que el
+    # lanzador canonico nunca invoca; ver _auto_freeze_stale_navs()).
+    _auto_freeze_stale_navs(conn, dry_run)
     # data_status map — estado del ciclo de vida de los datos (v25)
     data_status_map = {r[0]: (r[1] or "OK") for r in conn.execute(
         "SELECT isin, data_status FROM nav_sources WHERE status='OK'"
@@ -1037,6 +1194,13 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=Non
         jobs = []
         for idx, (isin, ms_id) in enumerate(rows, 1):
             ds = data_status_map.get(isin, "OK") or "OK"
+
+            # STALE_FROZEN: fuente estructuralmente detenida, nunca se procesa
+            # (ver _is_stale() / _auto_freeze_stale_navs()) — sin red, sin escritura.
+            if ds == "STALE_FROZEN":
+                al_dia_count += 1
+                print(f"  [{idx:>4}/{total}] {isin} -> STALE_FROZEN, omitido", flush=True)
+                continue
 
             # RECALCULATE_MONTHLY: resamplear desde daily existente, sin red
             if ds == "RECALCULATE_MONTHLY":
@@ -1134,6 +1298,7 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=Non
                     continue
 
                 # Escrituras en BD: solo hilo principal (SQLite single-writer)
+                rnav_rows  = _splice_new_chart_batch(conn, risin, rnav_rows)
                 _rl_d_wr   = _write_nav_rows_daily(conn, rnav_rows, dry_run)
                 _rl_m_rows = _resample_to_monthly(rnav_rows)
                 _rl_m_wr   = _write_nav_rows(conn, _rl_m_rows, dry_run)
@@ -1183,6 +1348,7 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=Non
                         rms_id, risin, rcurr, reff_desde, bearer)
                     if rnav_rows:
                         time.sleep(random.uniform(*MS_DELAY_LOAD_OK))
+                        rnav_rows  = _splice_new_chart_batch(conn, risin, rnav_rows)
                         _rl_d_wr   = _write_nav_rows_daily(conn, rnav_rows, dry_run)
                         _rl_m_rows = _resample_to_monthly(rnav_rows)
                         _rl_m_wr   = _write_nav_rows(conn, _rl_m_rows, dry_run)
@@ -1228,6 +1394,12 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=Non
         _t0 = datetime.now()
 
         ds = data_status_map.get(isin, "OK") or "OK"
+
+        # -- STALE_FROZEN: fuente estructuralmente detenida, nunca se procesa --
+        if ds == "STALE_FROZEN":
+            ok_count += 1
+            print(f"  [{idx:>4}/{total}] {isin} -> STALE_FROZEN, omitido", flush=True)
+            continue
 
         # -- RECALCULATE_MONTHLY: sin red, solo resamplear diario→mensual ----
         if ds == "RECALCULATE_MONTHLY":
@@ -1330,6 +1502,7 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=Non
         time.sleep(random.uniform(*MS_DELAY_LOAD_OK))
 
         # -- v24: persistir diario + mensual (INSERT OR IGNORE en ambas) ----
+        nav_rows        = _splice_new_chart_batch(conn, isin, nav_rows)
         daily_written   = _write_nav_rows_daily(conn, nav_rows, dry_run)
         monthly_rows    = _resample_to_monthly(nav_rows)
         monthly_written = _write_nav_rows(conn, monthly_rows, dry_run)
@@ -1452,68 +1625,25 @@ def run_update(conn, dry_run, bearer_token=None, stale_days=3, monthly_grain=Fal
         conn.execute("PRAGMA cache_size = -65536")
 
     # ── Auto-freeze: detectar series estructuralmente detenidas ───────────────
-    # Fondos con last_nav_date > _FROZEN_NAV_DAYS dias Y last_checked reciente
-    # (comprobado en los ultimos 30 dias) → la fuente existe pero no publica
-    # datos nuevos (suspension, sancion, baja del proveedor). Marcar como
-    # STALE_FROZEN para que queden fuera del bucle de actualizacion.
     # Nota: NO se toca fund_master.In_Current_Universe — eso es dominio P1;
     # revisar manualmente los ISINs marcados y actualizar via SQL o P1 rerun.
-    if not dry_run:
-        _freeze_threshold = (
-            _today - timedelta(days=_FROZEN_NAV_DAYS)
-        ).isoformat()
-        _recent_check_threshold = (
-            _today - timedelta(days=30)
-        ).isoformat()
-        _to_freeze = conn.execute(
-            """
-            SELECT isin, last_nav_date, last_checked
-            FROM nav_sources
-            WHERE status = 'OK'
-              AND (data_status IS NULL OR data_status = 'OK')
-              AND last_nav_date IS NOT NULL
-              AND last_nav_date < ?
-              AND last_checked  >= ?
-            ORDER BY last_nav_date
-            """,
-            (_freeze_threshold, _recent_check_threshold),
-        ).fetchall()
-        if _to_freeze:
-            freeze_isins = [r[0] for r in _to_freeze]
-            ph = ",".join("?" * len(freeze_isins))
-            conn.execute(
-                f"UPDATE nav_sources SET data_status='STALE_FROZEN' WHERE isin IN ({ph})",
-                freeze_isins,
+    _to_freeze = _auto_freeze_stale_navs(conn, dry_run)
+    if _to_freeze:
+        # Rebuild data_status map to pick up the new flags before pre-filter
+        data_status_upd = {r[0]: (r[1] or "OK") for r in conn.execute(
+            "SELECT isin, data_status FROM nav_sources WHERE status='OK'"
+        ).fetchall()}
+        # Re-apply pre-filter to drop newly frozen funds from work set
+        rows = [
+            r for r in rows
+            if _is_stale(
+                data_status_upd.get(r[0], "OK") or "OK",
+                last_daily_upd.get(r[0]),
+                r[2],
+                _cutoff, _ref_me, monthly_grain,
             )
-            conn.commit()
-            # Rebuild data_status map to pick up the new flags before pre-filter
-            data_status_upd = {r[0]: (r[1] or "OK") for r in conn.execute(
-                "SELECT isin, data_status FROM nav_sources WHERE status='OK'"
-            ).fetchall()}
-            print(
-                f"[STALE_FROZEN] {len(_to_freeze)} fondo(s) marcados: "
-                + ", ".join(
-                    f"{r[0]} (last_nav={r[1]}, checked={r[2]})"
-                    for r in _to_freeze
-                ),
-                flush=True,
-            )
-            print(
-                "[STALE_FROZEN] ACCION REQUERIDA: revisar fund_master.In_Current_Universe "
-                "para estos ISINs y ajustar a 0 si procede (dominio P1).",
-                file=sys.stderr, flush=True,
-            )
-            # Re-apply pre-filter to drop newly frozen funds from work set
-            rows = [
-                r for r in rows
-                if _is_stale(
-                    data_status_upd.get(r[0], "OK") or "OK",
-                    last_daily_upd.get(r[0]),
-                    r[2],
-                    _cutoff, _ref_me, monthly_grain,
-                )
-            ]
-            total = len(rows)
+        ]
+        total = len(rows)
 
     _grain = "mensual (fin de mes)" if monthly_grain else f"diario (stale_days={stale_days})"
     print(f"Actualizacion para {total} fondos (de {_universe} OK) | "
@@ -1642,6 +1772,7 @@ def run_update(conn, dry_run, bearer_token=None, stale_days=3, monthly_grain=Fal
             continue
 
         # -- v24: persistir diario + mensual --------------------------------
+        nav_rows      = _splice_new_chart_batch(conn, isin, nav_rows)
         daily_written = _write_nav_rows_daily(conn, nav_rows, dry_run)
         monthly_rows  = _resample_to_monthly(nav_rows)
         written       = _write_nav_rows(conn, monthly_rows, dry_run)
