@@ -5,10 +5,16 @@ setlocal enabledelayedexpansion
 chcp 65001 > nul
 
 :: ============================================================
-:: P2_calculateIndicators.bat  (v28 � export_metrics post-pipeline)
+:: P2_calculateIndicators.bat  (v29 -- audit gate post-export)
 :: Ejecucion del pipeline de calculo de indicadores cuantitativos
 :: (P2: risk_metrics, macro_sensitivity, regime_returns, rolling, ...)
 ::
+:: v29 changes (P1, 2026-09-15):
+::   - AUDIT task: AUDIT_statistical.bat p2 --mode report ejecutado tras
+::     export OK -- --mode report SIEMPRE devuelve RC=0 (no bloquea el
+::     build); es diagnostico, no gate, hasta que se promueva a --mode
+::     check (ver AGENTS.md / doc/reglas/AUDITORIA_ESTADISTICA.md)
+::   - RC_AUDIT capturado y propagado; FINAL_RC combina las 3 fases
 :: v28 changes:
 ::   - Export task: export_metrics ejecutado tras pipeline OK
 ::   - RC_EXPORT capturado y propagado; FINAL_RC combina ambos
@@ -87,6 +93,29 @@ if !RC! EQU 0 (
     set RC_EXPORT=0
 )
 
+:: -- AUDIT (solo si pipeline y export OK) -- report mode, no bloquea --------
+:: NOTA: "if A if B (...) else (...)" es ambiguo en cmd.exe -- el else solo
+:: liga al if interno (B); si A es falso no se ejecuta NADA y RC_AUDIT queda
+:: sin definir. Por eso aqui cada rama esta anidada con sus propios parentesis,
+:: garantizando que RC_AUDIT se fija en las 3 combinaciones posibles.
+echo. >> "%LOG%"
+echo --- AUDIT: AUDIT_statistical p2 --mode report ------------- >> "%LOG%"
+if !RC! EQU 0 (
+    if !RC_EXPORT! EQU 0 (
+        echo [%time%] Ejecutando auditoria estadistica P2 (modo report^)
+        call "%~dp0AUDIT_statistical.bat" p2 --mode report
+        set RC_AUDIT=!ERRORLEVEL!
+    ) else (
+        echo [%time%] Export con errores -- auditoria omitida
+        echo [OMITIDO] Auditoria omitida por error en export >> "%LOG%"
+        set RC_AUDIT=0
+    )
+) else (
+    echo [%time%] Pipeline con errores -- auditoria omitida
+    echo [OMITIDO] Auditoria omitida por error en pipeline >> "%LOG%"
+    set RC_AUDIT=0
+)
+
 popd
 
 :: -- Restaurar standby AC al valor por defecto de Windows (30 min) -------------
@@ -96,20 +125,25 @@ powercfg -change -standby-timeout-ac 30 > nul 2>&1
 :: -- Pie del log ---------------------------------------------------------------
 for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set STAMP2=%%a
 
-:: FINAL_RC: pipeline tiene precedencia; si pipeline OK pero export falla, propaga export RC
+:: FINAL_RC: pipeline tiene precedencia; export en segundo lugar; audit
+:: (report mode) solo se propaga si las dos fases anteriores fueron OK --
+:: en report mode run_statistical_audit.py siempre devuelve 0, asi que en
+:: la practica RC_AUDIT!=0 hoy solo puede significar un crash del propio
+:: script de auditoria, no un finding bloqueante.
 set FINAL_RC=!RC!
 if !RC! EQU 0 if !RC_EXPORT! NEQ 0 set FINAL_RC=!RC_EXPORT!
+if !RC! EQU 0 if !RC_EXPORT! EQU 0 if !RC_AUDIT! NEQ 0 set FINAL_RC=!RC_AUDIT!
 
 echo. >> "%LOG%"
 echo ============================================================ >> "%LOG%"
 
 if !FINAL_RC! EQU 0 (
     echo  P2 Calculate Indicators -- Fin OK: %STAMP2%               >> "%LOG%"
-    echo  Pipeline RC: 0  /  Export RC: 0                           >> "%LOG%"
+    echo  Pipeline RC: 0  /  Export RC: 0  /  Audit RC: 0            >> "%LOG%"
     echo ============================================================ >> "%LOG%"
 
     echo.
-    echo [%STAMP2%] P2 Calculate Indicators -- Fin OK (pipeline=0, export=0^)
+    echo [%STAMP2%] P2 Calculate Indicators -- Fin OK (pipeline=0, export=0, audit=0^)
 ) else (
     if !RC! NEQ 0 (
         echo  P2 Calculate Indicators -- Fin ERROR (pipeline^): %STAMP2% >> "%LOG%"
@@ -120,13 +154,23 @@ if !FINAL_RC! EQU 0 (
         echo.
         echo [%STAMP2%] P2 Calculate Indicators -- Fin ERROR pipeline (RC=!RC!^)
     ) else (
-        echo  P2 Calculate Indicators -- Fin ERROR (export^): %STAMP2%  >> "%LOG%"
-        echo  Pipeline RC: 0  /  Export RC: !RC_EXPORT!                >> "%LOG%"
-        echo ============================================================ >> "%LOG%"
-        echo  P2 Calculate Indicators -- Fin ERROR (export^): %STAMP2%  >> "%ERR%"
-        echo  Export RC: !RC_EXPORT!                                   >> "%ERR%"
-        echo.
-        echo [%STAMP2%] P2 Calculate Indicators -- Fin ERROR export (RC=!RC_EXPORT!^)
+        if !RC_EXPORT! NEQ 0 (
+            echo  P2 Calculate Indicators -- Fin ERROR (export^): %STAMP2%  >> "%LOG%"
+            echo  Pipeline RC: 0  /  Export RC: !RC_EXPORT!                >> "%LOG%"
+            echo ============================================================ >> "%LOG%"
+            echo  P2 Calculate Indicators -- Fin ERROR (export^): %STAMP2%  >> "%ERR%"
+            echo  Export RC: !RC_EXPORT!                                   >> "%ERR%"
+            echo.
+            echo [%STAMP2%] P2 Calculate Indicators -- Fin ERROR export (RC=!RC_EXPORT!^)
+        ) else (
+            echo  P2 Calculate Indicators -- Fin ERROR (audit^): %STAMP2%   >> "%LOG%"
+            echo  Pipeline RC: 0  /  Export RC: 0  /  Audit RC: !RC_AUDIT!  >> "%LOG%"
+            echo ============================================================ >> "%LOG%"
+            echo  P2 Calculate Indicators -- Fin ERROR (audit^): %STAMP2%   >> "%ERR%"
+            echo  Audit RC: !RC_AUDIT!                                     >> "%ERR%"
+            echo.
+            echo [%STAMP2%] P2 Calculate Indicators -- Fin ERROR audit (RC=!RC_AUDIT!^)
+        )
     )
     echo   Revisar: %ERR%
 )

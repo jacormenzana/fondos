@@ -33,3 +33,47 @@ jobs:
           echo "Fix locally with:"
           echo "  python scripts/audit/sync_agents_md.py --write"
           echo "Then stage and commit the updated file(s)."
+
+  check-catalog-consistency:
+    name: Verify statistical-audit catalog consistency
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install pandas
+        # Needed only because catalog_pairs.py / catalog_invariants.py /
+        # catalog_metric_bounds.py / catalog_group_checks.py transitively
+        # import pandas (via invariants.py / comparisons.py / group_checks.py,
+        # for type hints on dataclass fields) -- this check never calls a
+        # pandas-dependent function, it only inspects the declarative catalog
+        # instances at import time. Deliberately a SEPARATE job from
+        # check-sentinels above, which stays dependency-free by design;
+        # giving this job its own install keeps that guarantee intact rather
+        # than compromising it to fit this check in.
+        run: pip install pandas
+
+      - name: Run catalog-consistency check
+        # Pure structural checks (rule_id uniqueness, bound ordering,
+        # segmentation vocabulary, and drift between this runner's hardcoded
+        # metric lists and the catalogs) -- never touches the database.
+        run: python scripts/audit/check_catalog_consistency.py
+
+      - name: Show context on failure
+        if: failure()
+        run: |
+          echo ""
+          echo "A catalog-consistency check failed. This means either:"
+          echo "  - a hardcoded list in scripts/audit/run_statistical_audit.py"
+          echo "    (_PEER_METRICS, _P2_SAME_GROUP_PAIRS, _SCALAR_TIMESERIES_METRICS)"
+          echo "    has drifted from shared/statistical_audit/catalog_*.py, or"
+          echo "  - a catalog entry itself is malformed (duplicate rule_id,"
+          echo "    inverted bound, unknown segmentation value)."
+          echo "Run locally to see which:"
+          echo "  python scripts/audit/check_catalog_consistency.py"
