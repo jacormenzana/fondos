@@ -28,6 +28,13 @@ from src.calculations.regime_returns import (
     _REGIME_SUFFIX,
     _sortino,
 )
+from src.calculations.returns import (
+    annualized_return_from_returns,
+    annualized_volatility_from_returns,
+    sharpe_ratio_from_returns,
+    sortino_ratio_from_returns,
+)
+from shared.config import RISK_FREE_RATE_ANN
 
 N_REGIMES = len(_REGIME_SUFFIX)  # 7
 
@@ -446,3 +453,72 @@ class TestCrisisStressScoreTTR:
         ttr = _extract_crisis(compute_regime_returns(nav, reg), "crisis_stress_score_ttr")
         assert ttr != "MISSING"
         assert ttr is not None and ttr > 0
+
+
+# ============================================================
+# Tests — canonicalization onto returns.py (P0, 2026-09-15)
+# ============================================================
+
+# 20 known monthly simple returns assigned to "Expansion" (10 negative --
+# clears MIN_OBS_SORTINO_DOWNSIDE=2 so sortino_expansion is emitted).
+_EXPANSION_RETURNS = np.array([
+    0.010, -0.020, 0.015, -0.010, 0.020, -0.005, 0.008, -0.012, 0.030, -0.020,
+    0.005, -0.008, 0.010, -0.010, 0.012, -0.015, 0.020, -0.010, 0.008, -0.005,
+])
+
+
+def _build_known_regime_fixture():
+    """40 NAV points -> 39 monthly simple returns; the first 20 return-periods
+    are assigned to Expansion using the KNOWN array above, the remaining 19
+    to Contraccion (values irrelevant -- only Expansion's emitted stats are
+    asserted). Regime dates are the return dates (dates[1:]), matching how
+    compute_regime_returns aligns nav.pct_change() with regime_df."""
+    rng = np.random.default_rng(99)
+    contraccion_returns = rng.normal(0.0, 0.02, 19)
+    all_returns = np.concatenate([_EXPANSION_RETURNS, contraccion_returns])
+
+    dates = pd.date_range(start="2015-01-31", periods=40, freq="ME")
+    nav_values = 100.0 * np.concatenate([[1.0], np.cumprod(1 + all_returns)])
+    nav_df = pd.DataFrame({"date": dates, "nav": nav_values})
+
+    return_dates = dates[1:]
+    labels = ["Expansion"] * 20 + ["Contraccion"] * 19
+    regime_df = pd.DataFrame({"regime": labels}, index=return_dates)
+    return nav_df, regime_df
+
+
+class TestRegimeValuesMatchCanonical:
+    """Pinned BEFORE the P0 canonicalization edit: emitted
+    return_ann_/vol_ann_/sharpe_/sortino_{suffix} for a regime with a KNOWN
+    returns array must equal the canonical *_from_returns functions
+    (src.calculations.returns) applied to that SAME array. Fails against the
+    pre-canonicalization formulas (log returns x100, geometric monthly MAR,
+    subset-only ddof=1 downside deviation) -- turns green only once
+    compute_regime_returns delegates to returns.py."""
+
+    def _result_dict(self):
+        nav_df, regime_df = _build_known_regime_fixture()
+        return dict((name, val) for name, val, _ in compute_regime_returns(nav_df, regime_df))
+
+    def test_return_ann_matches_canonical(self):
+        expected = annualized_return_from_returns(_EXPANSION_RETURNS, periods_per_year=12)
+        assert self._result_dict()["return_ann_expansion"] == pytest.approx(expected, rel=1e-12)
+
+    def test_vol_ann_matches_canonical(self):
+        expected = annualized_volatility_from_returns(_EXPANSION_RETURNS, periods_per_year=12)
+        assert self._result_dict()["vol_ann_expansion"] == pytest.approx(expected, rel=1e-12)
+
+    def test_sharpe_matches_canonical(self):
+        expected = sharpe_ratio_from_returns(_EXPANSION_RETURNS, RISK_FREE_RATE_ANN, periods_per_year=12)
+        assert self._result_dict()["sharpe_expansion"] == pytest.approx(expected, rel=1e-12)
+
+    def test_sortino_matches_canonical(self):
+        expected = sortino_ratio_from_returns(_EXPANSION_RETURNS, RISK_FREE_RATE_ANN, periods_per_year=12)
+        assert self._result_dict()["sortino_expansion"] == pytest.approx(expected, rel=1e-12)
+
+    def test_return_ann_and_vol_ann_are_decimals_not_percentages(self):
+        """Units guard: catches an accidental reintroduction of the old
+        log-return x100 emit convention."""
+        m = self._result_dict()
+        assert abs(m["return_ann_expansion"]) < 3.0
+        assert abs(m["vol_ann_expansion"]) < 3.0

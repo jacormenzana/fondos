@@ -23,12 +23,13 @@ from src.calculations.returns import (
     ret_vol_simple,
 )
 from src.calculations.srri import srri_metrics
+from shared.config import RISK_FREE_RATE_ANN
 
 
 def compute_risk_metrics(
     nav_df: pd.DataFrame,
     ipc_df: pd.DataFrame | None = None,
-    risk_free_rate_ann: float = 0.04,
+    risk_free_rate_ann: float = RISK_FREE_RATE_ANN,
 ) -> pd.DataFrame:
     """
     Calcula el conjunto completo de metricas de riesgo para una serie NAV.

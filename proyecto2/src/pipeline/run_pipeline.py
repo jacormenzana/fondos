@@ -117,6 +117,12 @@ from src.calculations.rolling_stats import (
 )
 from src.utils.fingerprint import compute_input_hash
 from src.utils.logger import get_pipeline_logger
+from src.writers.metrics_writer import (
+    rows_from_metric_tuples as _rows_from_metric_tuples,
+    write_metrics as _write_metrics,
+    write_timeseries as _write_timeseries,
+    replace_beta_set as _replace_beta_set,
+)
 
 
 # ============================================================
@@ -275,222 +281,10 @@ def _update_ols_state(
 # ============================================================
 # Helpers de escritura
 # ============================================================
-
-def _rows_from_metric_tuples(
-    metric_tuples: list[tuple],
-    source_rows: int,
-) -> list[dict]:
-    """Convierte la salida estándar list[(metric, value, real_flag)] de los
-    módulos de src.calculations al formato dict que esperan _write_metrics /
-    _replace_beta_set. Única implementación — antes repetida idéntica en 7
-    call sites de este fichero (P0 canonicalización, 2026-09-14)."""
-    return [
-        {"metric": m, "value": v, "real_flag": rf, "source_rows": source_rows}
-        for m, v, rf in metric_tuples
-    ]
-
-
-def _write_metrics(
-    conn: sqlite3.Connection,
-    isin: str,
-    metrics: list[dict],
-    horizon: str,
-    dry_run: bool,
-    metric_version: str | None = None,
-) -> int:
-    """Persiste lista de metricas en fund_metrics. Devuelve nº escritas.
-
-    metric_version: si None usa METRIC_VERSION ('v1'). Para métricas de
-    horizonte corto pasar METRIC_VERSION_SHORT ('d1') — mantiene las series
-    cortas separadas de las mensuales en la clave compuesta.
-
-    Txn batching (EFF-2): if the caller already opened a transaction
-    (conn.in_transaction=True), this function skips its own BEGIN/COMMIT and
-    executes the DML directly inside the caller's transaction.  Otherwise it
-    manages its own retried transaction as before.
-    """
-    if not metrics or dry_run:
-        return 0
-
-    mv    = metric_version if metric_version is not None else METRIC_VERSION
-    today = date.today().isoformat()
-    sql = """
-        INSERT OR REPLACE INTO fund_metrics
-            (isin, metric, horizon, value, real_flag,
-             calculation_date, metric_version, benchmark_id, source_rows,
-             algorithm_version, batch_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
-    """
-    rows = [
-        (
-            isin,
-            m["metric"],
-            horizon,
-            m["value"] if not (isinstance(m["value"], float) and
-                                m["value"] != m["value"]) else None,  # NaN -> NULL
-            m["real_flag"],
-            today,
-            mv,
-            m.get("source_rows"),
-            CALC_VERSION,
-            RUN_BATCH_ID,
-        )
-        for m in metrics
-    ]
-    # EFF-2: skip own transaction when the caller batches for us
-    if conn.in_transaction:
-        conn.executemany(sql, rows)
-        return len(rows)
-    for attempt in range(5):
-        try:
-            conn.execute("BEGIN IMMEDIATE")
-            try:
-                conn.executemany(sql, rows)
-                conn.execute("COMMIT")
-            except Exception:
-                conn.execute("ROLLBACK")
-                raise
-            return len(rows)
-        except sqlite3.OperationalError as exc:
-            if "database is locked" in str(exc) and attempt < 4:
-                time.sleep(2 ** attempt)
-            else:
-                raise
-    return 0
-
-
-def _write_timeseries(
-    conn: sqlite3.Connection,
-    rows: list[dict],
-    dry_run: bool,
-) -> int:
-    """Escribe filas en fund_metric_timeseries con INSERT OR IGNORE (incremental).
-
-    Solo inserta fechas que no existen aún → comportamiento append-only.
-    Devuelve el nº de filas insertadas (0 si ya existían o dry_run).
-
-    EFF-2: skips own BEGIN/COMMIT when caller already has an open transaction.
-    """
-    if not rows or dry_run:
-        return 0
-    sql = """
-        INSERT OR IGNORE INTO fund_metric_timeseries
-            (isin, metric, window, date, value, real_flag,
-             ref_type, ref_value, source_rows,
-             algorithm_version, batch_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """
-    data = [
-        (
-            r["isin"], r["metric"], r["window"], r["date"],
-            r["value"],
-            r["real_flag"],
-            r.get("ref_type"),
-            r.get("ref_value"),
-            r.get("source_rows"),
-            CALC_VERSION,
-            RUN_BATCH_ID,
-        )
-        for r in rows
-    ]
-    # EFF-2: skip own transaction when the caller batches for us
-    if conn.in_transaction:
-        cur = conn.executemany(sql, data)
-        return cur.rowcount if cur.rowcount >= 0 else len(data)
-    for attempt in range(5):
-        try:
-            conn.execute("BEGIN IMMEDIATE")
-            try:
-                cur = conn.executemany(sql, data)
-                conn.execute("COMMIT")
-                return cur.rowcount if cur.rowcount >= 0 else len(data)
-            except Exception:
-                conn.execute("ROLLBACK")
-                raise
-        except sqlite3.OperationalError as exc:
-            if "database is locked" in str(exc) and attempt < 4:
-                time.sleep(2 ** attempt)
-            else:
-                raise
-    return 0
-
-
-def _replace_beta_set(
-    conn: sqlite3.Connection,
-    isin: str,
-    metrics: list[dict],
-    horizon: str,
-    dry_run: bool,
-    metric_version: str | None = None,
-) -> int:
-    """Atomic delete+insert for OLS macro-sensitivity metrics.
-
-    When OLS actually runs for a fund, this replaces the *full* beta set in a
-    single transaction: first deletes all existing beta_* rows, then inserts
-    the new survivors.  This prevents orphan rows for factors that were
-    present in a previous run but are now excluded by the VIF filter.
-
-    Use this instead of _write_metrics for macro-sensitivity metrics.
-    _write_metrics is still used for all other metric families.
-
-    EFF-2: skips own BEGIN/COMMIT when caller already has an open transaction.
-    The delete+insert pair is still atomic because both DML statements run in
-    the same (caller-owned) transaction.
-    """
-    if not metrics or dry_run:
-        return 0
-
-    mv    = metric_version if metric_version is not None else METRIC_VERSION
-    today = date.today().isoformat()
-    sql_del = (
-        "DELETE FROM fund_metrics "
-        "WHERE isin=? AND metric LIKE 'beta_%' AND horizon=? AND metric_version=?"
-    )
-    sql_ins = """
-        INSERT OR REPLACE INTO fund_metrics
-            (isin, metric, horizon, value, real_flag,
-             calculation_date, metric_version, benchmark_id, source_rows,
-             algorithm_version, batch_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
-    """
-    rows = [
-        (
-            isin,
-            m["metric"],
-            horizon,
-            m["value"] if not (isinstance(m["value"], float) and
-                                m["value"] != m["value"]) else None,  # NaN -> NULL
-            m["real_flag"],
-            today,
-            mv,
-            m.get("source_rows"),
-            CALC_VERSION,
-            RUN_BATCH_ID,
-        )
-        for m in metrics
-    ]
-    # EFF-2: skip own transaction when the caller batches for us
-    if conn.in_transaction:
-        conn.execute(sql_del, (isin, horizon, mv))
-        conn.executemany(sql_ins, rows)
-        return len(rows)
-    for attempt in range(5):
-        try:
-            conn.execute("BEGIN IMMEDIATE")
-            try:
-                conn.execute(sql_del, (isin, horizon, mv))
-                conn.executemany(sql_ins, rows)
-                conn.execute("COMMIT")
-            except Exception:
-                conn.execute("ROLLBACK")
-                raise
-            return len(rows)
-        except sqlite3.OperationalError as exc:
-            if "database is locked" in str(exc) and attempt < 4:
-                time.sleep(2 ** attempt)
-            else:
-                raise
-    return 0
+# rows_from_metric_tuples / write_metrics / write_timeseries / replace_beta_set
+# viven en src.writers.metrics_writer (P0, 2026-09-15) -- extraidos para ser
+# testables bajo R-7 sin importar este modulo. Importados arriba con sus
+# nombres historicos (_write_metrics etc.) para no tocar cada call site.
 
 
 @dataclass(frozen=True)
@@ -590,7 +384,10 @@ def _run_metric_family(
         return 0
     result = spec.fn(ctx)
     rows = _rows_from_metric_tuples(result, len(ctx.nav_df))
-    return spec.writer(ctx.conn, ctx.isin, rows, spec.horizon, dry_run)
+    return spec.writer(
+        ctx.conn, ctx.isin, rows, spec.horizon, dry_run,
+        algorithm_version=CALC_VERSION, batch_id=RUN_BATCH_ID, metric_version=METRIC_VERSION,
+    )
 
 
 def _write_metric_alerts(
@@ -721,7 +518,10 @@ def _process_horizon(
         })
 
     all_metrics = risk_metrics + cons_metrics
-    written = _write_metrics(conn, isin, all_metrics, horizon, dry_run)
+    written = _write_metrics(
+        conn, isin, all_metrics, horizon, dry_run,
+        algorithm_version=CALC_VERSION, batch_id=RUN_BATCH_ID, metric_version=METRIC_VERSION,
+    )
     _log(conn, isin, "CALC", "OK", horizon,
          f"{written} metricas calculadas", dry_run)
     return written
@@ -740,9 +540,11 @@ _ALL_METRIC_FAMILIES = frozenset({
 
 # Bump this string whenever the calculation logic changes to force a
 # cache-miss in fund_metric_state even when NAV/IPC inputs are unchanged.
-CALC_VERSION: str = "20260913"  # v32: scalar sharpe/sortino now use the same date-aligned
-# rf_series (§4g) as the timeseries write path, instead of a flat RISK_FREE_RATE_ANN —
-# closes the SCALAR_EQUALS_TIMESERIES formula asymmetry (AUDITORIA_ESTADISTICA.md §2.9)
+CALC_VERSION: str = "20260915"  # v33: regime_returns.py canonicalized onto
+# returns.py (simple returns, arithmetic MAR, population semi-variance —
+# see regime_returns.py module docstring); fund_metric_timeseries writer
+# changed from INSERT OR IGNORE to a conditional upsert so a formula fix
+# actually propagates to that table (P0, 2026-09-15)
 
 # ── v26 audit columns ──────────────────────────────────────────────────────
 # RUN_BATCH_ID is set once at the start of run() and written to every Gold row
@@ -1293,7 +1095,8 @@ def run(
                             sh_rows = _rows_from_metric_tuples(sh_list, len(nav_sh))
                             isin_written += _write_metrics(
                                 conn, isin, sh_rows, sh_name, dry_run,
-                                metric_version=METRIC_VERSION_SHORT
+                                algorithm_version=CALC_VERSION, batch_id=RUN_BATCH_ID,
+                                metric_version=METRIC_VERSION_SHORT,
                             )
                             if sh_rows:
                                 _log(conn, isin, "CALC", "OK", sh_name,
@@ -1345,7 +1148,9 @@ def run(
                             # inside the helper — orphan risk there is negligible
                             # since they are always recomputed when OLS runs.
                             isin_written += _replace_beta_set(
-                                conn, isin, sens_rows, "since_inception", dry_run
+                                conn, isin, sens_rows, "since_inception", dry_run,
+                                algorithm_version=CALC_VERSION, batch_id=RUN_BATCH_ID,
+                                metric_version=METRIC_VERSION,
                             )
                             _ols_ran = True
 
@@ -1378,7 +1183,10 @@ def run(
                         risk_free_rate=RISK_FREE_RATE_ANN,         # fallback scalar
                         rf_series=rf_rate_df if not rf_rate_df.empty else None,  # §4g
                     )
-                    ts_written = _write_timeseries(conn, roll_rows, dry_run)
+                    ts_written = _write_timeseries(
+                        conn, roll_rows, dry_run,
+                        algorithm_version=CALC_VERSION, batch_id=RUN_BATCH_ID,
+                    )
                     if ts_written:
                         _log(conn, isin, "ROLLING", "OK", "all_windows",
                              f"{ts_written} filas timeseries rolling", dry_run)
@@ -1412,7 +1220,9 @@ def run(
                             })
                         for w_name, w_rows in self_by.items():
                             isin_written += _write_metrics(
-                                conn, isin, w_rows, w_name, dry_run
+                                conn, isin, w_rows, w_name, dry_run,
+                                algorithm_version=CALC_VERSION, batch_id=RUN_BATCH_ID,
+                                metric_version=METRIC_VERSION,
                             )
 
                 # v25: consumir flag RECALCULATE_METRICS (inside per-fund txn)
@@ -1556,7 +1366,9 @@ def run(
                     n_cat = 0
                     for (s_isin, s_window), s_rows in cat_by.items():
                         n_cat += _write_metrics(
-                            conn, s_isin, s_rows, s_window, dry_run
+                            conn, s_isin, s_rows, s_window, dry_run,
+                            algorithm_version=CALC_VERSION, batch_id=RUN_BATCH_ID,
+                            metric_version=METRIC_VERSION,
                         )
                     logger.info(
                         f"[ROLLING] {len(cat_sig_rows)} señales de categoria → "

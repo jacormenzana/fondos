@@ -7,15 +7,27 @@ Para cada fondo, cruza su serie de retornos mensuales con la clasificacion
 historica de regimenes y calcula estadisticas de rendimiento por regimen.
 
 Metricas generadas por fondo (horizon=since_inception, real_flag=0):
-    return_ann_{regimen}      retorno anualizado en ese regimen (%)
+    return_ann_{regimen}      retorno anualizado en ese regimen (decimal, ej. 0.08 = 8%)
     sharpe_{regimen}          ratio Sharpe en ese regimen (rf anualizado)
     sortino_{regimen}         ratio Sortino en ese regimen (downside deviation)
-    vol_ann_{regimen}         volatilidad anualizada en ese regimen (%)
+    vol_ann_{regimen}         volatilidad anualizada en ese regimen (decimal)
     max_dd_{regimen}          max drawdown sobre NAV en ese regimen
     n_obs_{regimen}           numero de meses en ese regimen con retorno disponible
     regime_coverage_ratio     fraccion de 7 regimenes con n_obs >= MIN_OBS_REGIME [0,1] (P3-01)
     crisis_stress_score_mdd   max drawdown sobre meses de Crisis_Financiera (P3-02)
     crisis_stress_score_ttr   meses de recuperacion sobre meses de Crisis_Financiera (P3-02)
+
+Canonicalizacion (P0, 2026-09-15): return_ann/vol_ann/sharpe/sortino por
+regimen se calculan sobre retornos SIMPLES (no logaritmicos) delegando en
+src.calculations.returns.*_from_returns -- variantes de la capa canonica
+(returns.annualized_return/sharpe_ratio/sortino_ratio) que operan sobre un
+array de retornos periodicos en lugar de una serie NAV de niveles, porque la
+muestra de un regimen es un subconjunto disperso y no contiguo de meses (no
+existe una serie NAV valida que reconstruir). Antes de esta canonicalizacion
+el fichero mantenia 4 formulas locales divergentes de la capa canonica
+(retornos log x100, MAR mensual geometrico, downside deviation solo sobre el
+subconjunto negativo con ddof=1) -- ver returns.py::downside_deviation_ann
+para el historial completo (root-caused 2026-09-14, ISIN BE0058182792).
 
 Sufijo de regimen (nombre en minusculas con guiones bajos):
     expansion
@@ -62,9 +74,12 @@ from shared.config import (
     REGIME_MIN_OBS_SORTINO_DOWNSIDE as MIN_OBS_SORTINO_DOWNSIDE,
 )
 from src.calculations.drawdown import compute_drawdown, max_drawdown, time_to_recovery
-
-# Tasa libre de riesgo mensual (para Sharpe por regimen)
-_RF_MONTHLY = (1 + RISK_FREE_RATE_ANN) ** (1 / 12) - 1
+from src.calculations.returns import (
+    annualized_return_from_returns,
+    annualized_volatility_from_returns,
+    sharpe_ratio_from_returns,
+    sortino_ratio_from_returns,
+)
 
 # Mapa nombre de regimen -> sufijo de metrica (minusculas, guiones bajos)
 _REGIME_SUFFIX = {
@@ -122,47 +137,28 @@ def load_regime_history(conn: sqlite3.Connection) -> pd.DataFrame:
 # Calculo de estadisticas por regimen para un fondo
 # ============================================================
 
-def _annualized_return(monthly_log_returns: np.ndarray) -> float:
-    """Retorno anualizado desde retornos logaritmicos mensuales."""
-    total_log = float(np.sum(monthly_log_returns))
-    n_months   = len(monthly_log_returns)
-    # Convertir de log a geometrico anualizado
-    return (np.exp(total_log * 12 / n_months) - 1) * 100
-
-
-def _annualized_vol(monthly_log_returns: np.ndarray) -> float:
-    """Volatilidad anualizada desde retornos logaritmicos mensuales."""
-    return float(np.std(monthly_log_returns, ddof=1)) * np.sqrt(12) * 100
-
-
-def _sharpe(monthly_log_returns: np.ndarray) -> float:
+def _sortino(monthly_returns: np.ndarray) -> float | None:
     """
-    Sharpe ratio anualizado.
-    Usa exceso de retorno sobre rf mensual, anualizado geometricamente.
-    """
-    excess    = monthly_log_returns - _RF_MONTHLY
-    mean_exc  = float(np.mean(excess))
-    std_exc   = float(np.std(excess, ddof=1))
-    if std_exc < 1e-10:
-        return 0.0
-    return (mean_exc / std_exc) * np.sqrt(12)
+    Sortino ratio anualizado por regimen.
 
+    Guarda de cobertura local (numero de observaciones con exceso negativo
+    frente al MAR) + valor delegado a la capa canonica
+    (returns.sortino_ratio_from_returns, que reutiliza
+    returns.downside_deviation_ann sin duplicar la formula). La guarda es
+    una politica de reporting especifica de este modulo -- "no informar
+    sortino por regimen si hay menos de MIN_OBS_SORTINO_DOWNSIDE meses
+    negativos, la estimacion de semi-desviacion no es fiable" -- no una
+    formula estadistica, por eso permanece local.
 
-def _sortino(monthly_log_returns: np.ndarray) -> float | None:
+    Devuelve None si no hay suficientes retornos con exceso negativo.
     """
-    Sortino ratio anualizado.
-    Downside deviation = std de los excesos negativos (ddof=1).
-    Devuelve None si no hay suficientes retornos negativos (MIN_OBS_SORTINO_DOWNSIDE).
-    """
-    excess   = monthly_log_returns - _RF_MONTHLY
-    downside = excess[excess < 0]
-    if len(downside) < MIN_OBS_SORTINO_DOWNSIDE:
+    mar_per_period = RISK_FREE_RATE_ANN / 12
+    arr = np.asarray(monthly_returns, dtype=float)
+    excess = arr - mar_per_period
+    if int(np.sum(excess < 0)) < MIN_OBS_SORTINO_DOWNSIDE:
         return None
-    dd_std = float(np.std(downside, ddof=1))
-    if dd_std < 1e-10:
-        return None
-    mean_exc = float(np.mean(excess))
-    return (mean_exc / dd_std) * np.sqrt(12)
+    value = sortino_ratio_from_returns(arr, RISK_FREE_RATE_ANN, periods_per_year=12)
+    return None if np.isnan(value) else float(value)
 
 
 def compute_regime_returns(
@@ -186,17 +182,18 @@ def compute_regime_returns(
     if len(nav_df) < MIN_NAV_TOTAL:
         return []
 
-    # Calcular retornos logaritmicos mensuales
+    # Calcular retornos simples mensuales (canonicalizado P0 2026-09-15 --
+    # antes retornos logaritmicos, ver docstring del modulo)
     nav = nav_df.set_index("date")["nav"].sort_index()
     nav.index = pd.to_datetime(nav.index) + pd.offsets.MonthEnd(0)
     # MonthEnd snap puede crear duplicados si hay dos registros en el mismo mes;
     # conservar el último (cierre de mes más reciente)
     nav = nav[~nav.index.duplicated(keep="last")]
-    r_log = np.log(nav / nav.shift(1)).dropna()
+    r_simple = nav.pct_change().dropna()
 
     # Cruzar con regimenes
     merged = pd.concat(
-        [r_log.rename("r_log"), regime_df["regime"]],
+        [r_simple.rename("r_simple"), regime_df["regime"]],
         axis=1, join="inner"
     ).dropna()
 
@@ -208,7 +205,7 @@ def compute_regime_returns(
 
     for regime_name, suffix in _REGIME_SUFFIX.items():
         mask      = merged["regime"] == regime_name
-        r_regime  = merged.loc[mask, "r_log"].values
+        r_regime  = merged.loc[mask, "r_simple"].values
         n_obs     = len(r_regime)
 
         # Siempre persistir n_obs (aunque sea 0 -- util para saber cobertura)
@@ -219,9 +216,9 @@ def compute_regime_returns(
             continue
 
         n_covered += 1
-        ret_ann = _annualized_return(r_regime)
-        vol_ann = _annualized_vol(r_regime)
-        sharpe  = _sharpe(r_regime)
+        ret_ann = annualized_return_from_returns(r_regime, periods_per_year=12)
+        vol_ann = annualized_volatility_from_returns(r_regime, periods_per_year=12)
+        sharpe  = sharpe_ratio_from_returns(r_regime, RISK_FREE_RATE_ANN, periods_per_year=12)
         sortino = _sortino(r_regime)
 
         metrics.append((f"return_ann_{suffix}", ret_ann,  0))

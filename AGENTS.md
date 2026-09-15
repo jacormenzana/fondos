@@ -237,6 +237,8 @@ proyecto2/
       test_macro_sensitivity.py
       test_nav_scale_repair_20260719.py
       test_regime_returns.py
+      test_returns.py
+      test_risk_metrics.py
       test_rolling_stats.py
       test_short_horizon.py
     discovery/
@@ -254,6 +256,8 @@ proyecto2/
       test_rolling_dashboard.py
     utils/
       test_fingerprint.py
+    writers/
+      test_timeseries_writer.py
 ```
 <!-- AUTO:END p2-module-map -->
 
@@ -358,11 +362,9 @@ python -m proyecto2.src.discovery.macro_discovery --source all
 |--------|--------|
 | `backtesting.py` | `proyecto3/src` |
 | `fund_scorer.py` | `proyecto3/src` |
-| `m2_global_builder.py` | `proyecto3/src` |
 | `monthly_report.py` | `proyecto3/src` |
 | `portfolio_builder.py` | `proyecto3/src` |
 | `regime_classifier.py` | `proyecto3/src` |
-| `regime_returns.py` | `proyecto3/src` |
 <!-- AUTO:END p3-module-map -->
 
 ### Regime classification (7 regimes, priority order)

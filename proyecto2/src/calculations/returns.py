@@ -111,6 +111,71 @@ def sortino_ratio(
     return float((ret - risk_free_rate_ann) / downside_std)
 
 
+def annualized_return_from_returns(rets, periods_per_year: int = 12) -> float:
+    """
+    Rentabilidad anualizada geometrica desde un array de retornos periodicos
+    simples, no necesariamente contiguos (p.ej. solo los meses de un
+    regimen macro dado, que no forman una serie NAV valida).
+
+    Mismo criterio de anualizacion geometrica que annualized_return(), pero
+    expresado sobre retornos ya extraidos en lugar de niveles NAV -- unico
+    punto de entrada canonico para consumidores que no disponen de una
+    serie NAV contigua (ver regime_returns.py, P0 2026-09-15).
+    """
+    arr = np.asarray(rets, dtype=float)
+    n = len(arr)
+    if n < 1:
+        return np.nan
+    total = float(np.prod(1.0 + arr))
+    return float(total ** (periods_per_year / n) - 1.0)
+
+
+def annualized_volatility_from_returns(rets, periods_per_year: int = 12) -> float:
+    """Volatilidad anualizada desde un array de retornos periodicos simples."""
+    arr = np.asarray(rets, dtype=float)
+    if len(arr) < 2:
+        return np.nan
+    return float(np.std(arr, ddof=1) * np.sqrt(periods_per_year))
+
+
+def sharpe_ratio_from_returns(
+    rets,
+    risk_free_rate_ann: float,
+    periods_per_year: int = 12,
+) -> float:
+    """Ratio Sharpe anualizado desde un array de retornos periodicos simples.
+    Misma formula que sharpe_ratio() -- ver esa docstring."""
+    ret = annualized_return_from_returns(rets, periods_per_year)
+    vol = annualized_volatility_from_returns(rets, periods_per_year)
+
+    if np.isnan(ret) or np.isnan(vol) or vol == 0:
+        return np.nan
+
+    return float((ret - risk_free_rate_ann) / vol)
+
+
+def sortino_ratio_from_returns(
+    rets,
+    risk_free_rate_ann: float,
+    periods_per_year: int = 12,
+) -> float:
+    """Ratio Sortino anualizado desde un array de retornos periodicos simples.
+    Reutiliza downside_deviation_ann() sin duplicar la formula -- ver esa
+    docstring para la definicion canonica de la semi-desviacion."""
+    ret = annualized_return_from_returns(rets, periods_per_year)
+    if np.isnan(ret):
+        return np.nan
+
+    arr = np.asarray(rets, dtype=float)
+    mar_per_period = risk_free_rate_ann / periods_per_year
+    downside_std = downside_deviation_ann(arr, mar_per_period, periods_per_year)
+
+    if np.isnan(downside_std) or downside_std == 0:
+        return np.nan
+
+    return float((ret - risk_free_rate_ann) / downside_std)
+
+
 def ret_vol_simple(series: pd.Series, periods_per_year: int = 12) -> float:
     """
     Ratio simple Rentabilidad / Volatilidad (sin descontar tipo libre de riesgo).
