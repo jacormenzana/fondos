@@ -32,10 +32,16 @@ gaps from the prior version of this file):
     derived and merged into the Block 5 invariant frame, activating
     SORTINO_VS_SHARPE_UP/DOWN and DEFLATION_ORDER. N_OBS_NONNEG was
     corrected to the 7 real per-regime `n_obs_{regime}` columns (the
-    original bare `n_obs` never existed). `periodic_return_variance`
-    (FROZEN_NAV_ZERO_VOL) remains unwired — it would require reading and
-    recomputing from raw NAV series inside this audit, a materially larger
-    change than deriving a column from already-loaded fund_metrics rows.
+    original bare `n_obs` never existed).
+
+P1.1 (2026-09-15): `periodic_return_variance` (FROZEN_NAV_ZERO_VOL) is now
+wired — derived directly from fund_nav_monthly (per-ISIN sample variance,
+ddof=1, of monthly simple returns; see _periodic_return_variance()) rather
+than from vol_ann, which would make the invariant circular and vacuously
+true. Merged on isin only (broadcasts across all of that isin's
+horizon/metric_version rows — the variance is a property of the NAV series,
+not of any one horizon). Guarded so a run with no vol_ann column degrades to
+the previous skip instead of erroring.
   - PEER segmentation (Blocks 1/4) is now wired for the 5 curated metrics
     at since_inception/nominal, segmented by Fund_Nature (min 5 peers) —
     the same scope the production category-snapshot alert engine targets,
@@ -65,7 +71,15 @@ no repair.
 
 Remaining scope limits (reported in the run's own output, never silently
 skipped):
-  - Block 6 (fund_metric_timeseries temporal integrity) is out of scope.
+  - Block 6 (fund_metric_timeseries temporal integrity): gap #11 wired
+    2026-09-15 -- see _run_timeseries_integrity(). Implemented as an
+    aggregate MIN/MAX/COUNT query per (metric, window), NOT via
+    shared.statistical_audit.timeseries.check_timeseries_integrity(), whose
+    row-level DataFrame approach measured >10 minutes on this 32M-row table
+    (vs. ~25s aggregated). Duplicate-key detection is a paranoia check (the
+    PK should make it structurally impossible); gap detection is per-series
+    (each fund's own [min,max] history), not a universe-wide calendar, so
+    short/new funds are never penalized.
   - SCALAR_EQUALS_TIMESERIES's absolute tolerance is unresolved (see above);
     fixing it properly needs a relative-tolerance extension to PairRule or a
     root-cause look at the divergence itself, deferred pending a decision.
@@ -292,6 +306,117 @@ def _fetch_latest_timeseries_snapshot(conn: sqlite3.Connection, metric: str, win
     return pd.read_sql_query(_TS_LATEST_QUERY, conn, params=(metric, window, metric, window))
 
 
+_TS_SERIES_SUMMARY_QUERY = """
+    SELECT isin, real_flag,
+           MIN(date) AS min_date, MAX(date) AS max_date,
+           COUNT(DISTINCT date) AS n_dates, COUNT(*) AS n_rows
+    FROM fund_metric_timeseries
+    WHERE metric = ? AND window = ?
+    GROUP BY isin, real_flag
+"""
+
+
+def _month_span(min_date: str, max_date: str) -> int:
+    """Inclusive month count between two 'YYYY-MM-DD' dates (e.g. same month
+    -> 1). Cheap string-slice parse -- these are always month-end dates
+    written by the pipeline, never free-text."""
+    y1, m1 = int(min_date[:4]), int(min_date[5:7])
+    y2, m2 = int(max_date[:4]), int(max_date[5:7])
+    return (y2 - y1) * 12 + (m2 - m1) + 1
+
+
+def _run_timeseries_integrity(run: "AuditRun", conn: sqlite3.Connection) -> None:
+    """Function #11 (gap #11, wired 2026-09-15) over each (metric, window)
+    combo already scoped by _SCALAR_TIMESERIES_METRICS/_WINDOWS.
+
+    NOT implemented via shared.statistical_audit.timeseries.
+    check_timeseries_integrity() -- that function needs a full row-level
+    DataFrame (isin, date, ...) per series, which on this table (32M+ rows)
+    measured >10 minutes for a single (metric, window) combo, let alone all
+    25. This instead pulls one aggregate row per (isin, real_flag) --
+    MIN(date), MAX(date), COUNT(DISTINCT date), COUNT(*) -- and derives gap/
+    duplicate counts from those four numbers (measured ~1s per combo,
+    ~25s total). check_timeseries_integrity itself stays correct and tested
+    for smaller-scale or ad-hoc callers; this is a deliberate, size-driven
+    reimplementation of the same two checks for this one high-volume table.
+
+    Gaps are per-series (each fund's own [min_date, max_date] span), never a
+    universe-wide calendar -- a short or recently-launched fund is never
+    penalized for months that simply predate its own history.
+    """
+    for metric in _SCALAR_TIMESERIES_METRICS:
+        for window in _SCALAR_TIMESERIES_WINDOWS:
+            rows = conn.execute(_TS_SERIES_SUMMARY_QUERY, (metric, window)).fetchall()
+            if not rows:
+                run.skipped.append(f"BLOCK5/6 TIMESERIES_INTEGRITY {metric}/{window}: no timeseries rows")
+                continue
+            group_key = f"{metric}|{window}"
+
+            # PK (isin, metric, window, date, real_flag) makes n_rows > n_dates
+            # structurally impossible for a fixed (metric, window) -- this is
+            # a paranoia check for a schema/migration defect, not a data issue.
+            n_dup_series = sum(1 for _, _, _, _, n_dates, n_rows in rows if n_rows > n_dates)
+            if n_dup_series:
+                run.findings.append({
+                    "block": "BLOCK5", "rule_id": "TIMESERIES_DUPLICATE",
+                    "rule_class": "HARD_INVARIANT", "severity": "ALARM",
+                    "group_key": group_key, "value": None, "reference_value": None, "threshold": None,
+                    "distance": float(n_dup_series),
+                    "evidence": f"{n_dup_series} (isin,real_flag) series have n_rows > n_distinct_dates "
+                                f"-- the PK should make this impossible",
+                    "root_cause_candidate": "Schema/migration defect, not a calculation issue",
+                })
+
+            n_series_with_gaps = 0
+            n_gap_months = 0
+            for _isin, _rf, min_d, max_d, n_dates, _n_rows in rows:
+                expected = _month_span(min_d, max_d)
+                gap = expected - n_dates
+                if gap > 0:
+                    n_series_with_gaps += 1
+                    n_gap_months += gap
+            if n_series_with_gaps:
+                run.findings.append({
+                    "block": "BLOCK4", "rule_id": "TIMESERIES_GAP",
+                    "rule_class": "STATISTICAL_ANOMALY", "severity": "WARN",
+                    "group_key": group_key, "value": None, "reference_value": None, "threshold": None,
+                    "distance": float(n_gap_months),
+                    "evidence": f"{n_gap_months} missing months across {n_series_with_gaps}/{len(rows)} "
+                                f"series (within each series' own [min,max] history -- "
+                                f"not vs. a universe calendar)",
+                    "root_cause_candidate": "Skipped month in a fund's own rolling-metric "
+                                             "history (a genuine hole, not a short/new fund)",
+                })
+
+
+def _periodic_return_variance(conn: sqlite3.Connection, isins: list[str]) -> pd.DataFrame:
+    """Per-ISIN sample variance (ddof=1) of monthly simple returns, derived
+    directly from fund_nav_monthly -- NOT from vol_ann, which would make
+    FROZEN_NAV_ZERO_VOL circular and vacuously true (P1.1, 2026-09-15).
+
+    Returns one row per isin; the caller merges on isin only (not
+    horizon/metric_version) since this is a property of the NAV series
+    itself, broadcasting the same value across all of that isin's rows.
+    """
+    if not isins:
+        return pd.DataFrame(columns=["isin", "periodic_return_variance"])
+    placeholders = ",".join("?" for _ in isins)
+    nav_df = pd.read_sql_query(
+        f"""SELECT ISIN AS isin, Date AS date, NAV AS nav FROM fund_nav_monthly
+            WHERE ISIN IN ({placeholders}) ORDER BY ISIN, Date""",
+        conn, params=isins,
+    )
+    if nav_df.empty:
+        return pd.DataFrame(columns=["isin", "periodic_return_variance"])
+    variances = (
+        nav_df.groupby("isin")["nav"]
+        .apply(lambda s: s.pct_change().var(ddof=1))
+        .rename("periodic_return_variance")
+        .reset_index()
+    )
+    return variances
+
+
 def run_p2_audit(conn: sqlite3.Connection) -> "AuditRun":
     long_df = build_population(conn, _P2_METRICS_QUERY)
 
@@ -406,6 +531,8 @@ def run_p2_audit(conn: sqlite3.Connection) -> "AuditRun":
                     "root_cause_candidate": P2_PAIRS["SCALAR_EQUALS_TIMESERIES"].diagnosis,
                 })
 
+    _run_timeseries_integrity(run, conn)
+
     wide_for_invariants = _pivot_all_metrics(long_df)
     if not deflation_frame.empty:
         wide_for_invariants = wide_for_invariants.merge(
@@ -413,6 +540,10 @@ def run_p2_audit(conn: sqlite3.Connection) -> "AuditRun":
         )
     if "return_ann" in wide_for_invariants.columns:
         wide_for_invariants["excess_return"] = wide_for_invariants["return_ann"] - RISK_FREE_RATE_ANN
+    if "vol_ann" in wide_for_invariants.columns:
+        prv = _periodic_return_variance(conn, wide_for_invariants["isin"].unique().tolist())
+        if not prv.empty:
+            wide_for_invariants = wide_for_invariants.merge(prv, on="isin", how="left")
     _run_invariants(run, P2_INVARIANTS, [wide_for_invariants], block="BLOCK5")
 
     return run
