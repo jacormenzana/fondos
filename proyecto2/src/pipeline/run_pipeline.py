@@ -540,11 +540,14 @@ _ALL_METRIC_FAMILIES = frozenset({
 
 # Bump this string whenever the calculation logic changes to force a
 # cache-miss in fund_metric_state even when NAV/IPC inputs are unchanged.
-CALC_VERSION: str = "20260915"  # v33: regime_returns.py canonicalized onto
-# returns.py (simple returns, arithmetic MAR, population semi-variance —
-# see regime_returns.py module docstring); fund_metric_timeseries writer
-# changed from INSERT OR IGNORE to a conditional upsert so a formula fix
-# actually propagates to that table (P0, 2026-09-15)
+CALC_VERSION: str = "20260917"  # v34: deflation.py::deflate_nav() root-cause
+# fix — inner-join-by-exact-date silently dropped any NAV date without a
+# bit-for-bit matching IPC date (the most recent NAV row is often a
+# mid-month snapshot, never matching IPC's month-end normalization),
+# corrupting every real_flag=1 scalar metric on every horizon. Found via
+# the SCALAR_EQUALS_TIMESERIES audit finding staying at ~50% divergence
+# after the P0.5 recompute (2026-09-16) — real_flag=0 matched almost
+# exactly, real_flag=1 didn't, isolating the bug to deflation only.
 
 # ── v26 audit columns ──────────────────────────────────────────────────────
 # RUN_BATCH_ID is set once at the start of run() and written to every Gold row

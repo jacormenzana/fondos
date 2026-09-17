@@ -233,6 +233,7 @@ proyecto2/
     calculations/
       test_alert_engine_fix_20260913.py
       test_consistency.py
+      test_deflation.py
       test_drawdown.py
       test_macro_sensitivity.py
       test_nav_scale_repair_20260719.py
