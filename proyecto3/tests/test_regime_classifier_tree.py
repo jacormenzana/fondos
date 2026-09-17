@@ -22,9 +22,6 @@ Run from repo root:
 import sys
 from pathlib import Path
 
-import numpy as np
-import pytest
-
 _ROOT = Path(__file__).resolve().parents[2]  # c:\desarrollo\fondos
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
@@ -209,13 +206,10 @@ def test_expansion_base_case_when_nothing_else_matches():
 #    that proves the corresponding Phase-1 fix actually landed.
 # ============================================================
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Phase 1f: missing CLI currently falls through to the positive-cycle "
-           "branch (implicit bullish default) instead of failing safe. Today "
-           "this returns Expansion; post-fix it must return Contraccion.",
-)
 def test_missing_cli_should_fail_safe_to_contraccion():
+    # Phase 1f (fixed): missing CLI used to fall through to the
+    # positive-cycle branch (implicit bullish default) instead of failing
+    # safe. Was pinned xfail(strict=True) pre-fix; now asserts directly.
     result = _classify_row(
         oil_yoy=None, ipc_yoy_avg=None, cli_eu=None,
         rate_deposit=None, d_rate_3m=None,
@@ -223,15 +217,12 @@ def test_missing_cli_should_fail_safe_to_contraccion():
     assert result == "Contraccion"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Phase 1c: RATE_LOW_THRESHOLD=0.01 is a unit bug -- rate_deposit is "
-           "stored in percentage points, so 0.01 means '<0.01pp' not '<1%'. "
-           "At rate_deposit=0.5 (0.5pp), today's code reads 0.5 !< 0.01 and "
-           "falls to Expansion; post-fix (threshold=1.0) it must read "
-           "0.5 < 1.0 and return Contraccion.",
-)
 def test_rate_unit_bug_boundary_0_5pp():
+    # Phase 1c (fixed): RATE_LOW_THRESHOLD=0.01 was a unit bug -- rate_deposit
+    # is stored in percentage points, so 0.01 meant "<0.01pp" not "<1%". At
+    # rate_deposit=0.5 (0.5pp), the old code read 0.5 !< 0.01 and fell to
+    # Expansion; fixed (threshold=1.0) it reads 0.5 < 1.0 -> Contraccion.
+    # Was pinned xfail(strict=True) pre-fix; now asserts directly.
     result = _classify_row(
         oil_yoy=0.0, ipc_yoy_avg=0.0, cli_eu=CLI_EXPANSION,
         rate_deposit=0.5, d_rate_3m=None,

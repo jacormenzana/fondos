@@ -9,11 +9,21 @@ return legitimately produces vol_ann==0 without a frozen NAV).
 """
 from __future__ import annotations
 
+from ..regime_taxonomy import REGIME_SUFFIX
 from .invariants import InvariantRule
 from .tolerances import FLOAT_IDENTITY_TOLERANCE, KID_ROUNDING_TOLERANCE_PP
 
 P2_INVARIANTS: tuple[InvariantRule, ...] = (
     InvariantRule("MAX_DD_RANGE", "-1 <= max_dd <= 0", bound_type="HARD_INVARIANT",
+                  description="Drawdown sign or scale error"),
+    # Phase 1b (P3 optimization plan): machine-checks the sign convention
+    # whose violation (fund_scorer.py's _INVERTED_METRICS wrongly inverting
+    # max_dd's percentile rank) corrupted every P3 score. short_max_drawdown
+    # had no invariant anywhere before this — unlike max_dd it is not
+    # "bounded_unit" in catalog_metrics.py, so catalog_metric_bounds.py's
+    # generic [0,1] rule does not (and should not) apply to it either.
+    InvariantRule("SHORT_MAX_DD_RANGE", "-1 <= short_max_drawdown <= 0",
+                  bound_type="HARD_INVARIANT",
                   description="Drawdown sign or scale error"),
     InvariantRule("VOL_ANN_NONNEG", "vol_ann >= 0", bound_type="HARD_INVARIANT",
                   description="Negative dispersion — impossible"),
@@ -60,16 +70,16 @@ P2_INVARIANTS: tuple[InvariantRule, ...] = (
     ),
 ) + tuple(
     # N_OBS_NONNEG fix (2026-09-13): the catalog cited a bare `n_obs` column
-    # that never existed — the real metrics are per-regime, verified live:
-    # n_obs_{contraccion,crisis_financiera,estanflacion,expansion,
-    # recalentamiento,recalentamiento_tardio,shock_energetico}. One rule per
+    # that never existed — the real metrics are per-regime. One rule per
     # regime, generated rather than hand-listed (P#11/DRY).
-    InvariantRule(f"N_OBS_NONNEG_{regime.upper()}", f"n_obs_{regime} >= 0",
+    # Phase 1g: the 7-regime set itself used to be hand-listed here too, a
+    # second independent copy of the same set already duplicated between
+    # regime_classifier.py (P3) and regime_returns.py (P2) — its own comment
+    # above already records one hand-listing mistake. Now generated from
+    # shared/regime_taxonomy.py, the single source of truth.
+    InvariantRule(f"N_OBS_NONNEG_{suffix.upper()}", f"n_obs_{suffix} >= 0",
                   bound_type="HARD_INVARIANT", description="Observation count negative")
-    for regime in (
-        "contraccion", "crisis_financiera", "estanflacion", "expansion",
-        "recalentamiento", "recalentamiento_tardio", "shock_energetico",
-    )
+    for suffix in sorted(REGIME_SUFFIX.values())
 )
 
 COST_INVARIANTS: tuple[InvariantRule, ...] = (

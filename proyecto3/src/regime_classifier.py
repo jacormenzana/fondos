@@ -45,42 +45,42 @@ from dataclasses import dataclass
 _ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT))
 
+# Fase 1g (P#11/R-1): REGIMES/_REGIME_SUFFIX/REGIME_WEIGHTS vivian aqui y se
+# re-declaraban a mano, por separado, en regime_returns.py (P2) y en
+# catalog_invariants.py (shared) -- coincidian por disciplina, no por
+# construccion. Fuente unica ahora en shared/regime_taxonomy.py; se
+# re-exportan con estos mismos nombres para no romper los import sites
+# existentes (fund_scorer.py, backtesting.py) que hacen
+# `from proyecto3.src.regime_classifier import _REGIME_SUFFIX` etc.
+from shared.regime_taxonomy import (
+    REGIMES,
+    REGIME_SUFFIX as _REGIME_SUFFIX,
+    REGIME_WEIGHTS,
+)
+
 
 # ============================================================
 # Constantes
 # ============================================================
 
-REGIMES = [
-    "Crisis_Financiera",
-    "Shock_Energetico",
-    "Estanflacion",
-    "Contraccion",
-    "Recalentamiento_Tardio",
-    "Recalentamiento",
-    "Expansion",
-]
-
-# Suffix used in fund_metrics column names (e.g. return_ann_expansion).
-# Derived from REGIMES: lowercased regime name (underscores preserved).
-_REGIME_SUFFIX: dict[str, str] = {r: r.lower() for r in REGIMES}
-
-# Pesos de sub-carteras por regimen (Defensiva, Equilibrada, Dinamica)
-REGIME_WEIGHTS = {
-    "Crisis_Financiera":     (0.70, 0.25, 0.05),
-    "Shock_Energetico":      (0.55, 0.35, 0.10),
-    "Estanflacion":          (0.50, 0.35, 0.15),
-    "Contraccion":           (0.60, 0.35, 0.05),
-    "Recalentamiento_Tardio":(0.40, 0.40, 0.20),
-    "Recalentamiento":       (0.30, 0.40, 0.30),
-    "Expansion":             (0.20, 0.45, 0.35),
-}
-
 # Umbrales de clasificacion
+#
+# UNITS (P3 optimization plan Phase 1c, 2026-09-17 -- a mixed-unit constant
+# block was the root cause of the RATE_LOW_THRESHOLD bug below; documented
+# here so the bug class cannot silently recur):
+#   oil_yoy, ipc_yoy_avg, ipc_accel      decimal fraction  (0.04 = 4%)
+#   cli_eu, CLI_EXPANSION, cli_drop      index points      (100.0 = CLI 100)
+#   rate_deposit, d_rate_3m, rate_jump   percentage points (1.0 = 1.00%)
+#   spread_hy                            percent           (6.0 = 600bps)
+#   vix_yoy, oil_mom, vix_mom            percent           (30.0 = +30%)
 OIL_SHOCK_THRESHOLD    = 0.25   # variacion interanual WTI > 25% -> shock energetico
 IPC_HIGH_THRESHOLD     = 0.04   # inflacion > 4% -> alta
 IPC_MOD_THRESHOLD      = 0.03   # inflacion > 3% -> moderada-alta
 CLI_EXPANSION          = 100.0  # CLI > 100 -> expansion
-RATE_LOW_THRESHOLD     = 0.01   # tipo deposito < 1% -> tipos bajos
+# Phase 1c fix: rate_deposit se almacena en puntos porcentuales (ver UNITS
+# arriba), no como fraccion decimal. 0.01 comparaba "< 0.01pp" (solo la era
+# de tipos ECB en 0.00%/negativos) cuando el umbral pretendido era "< 1%".
+RATE_LOW_THRESHOLD     = 1.0    # tipo deposito < 1.0pp -> tipos bajos
 
 # Umbrales Crisis_Financiera
 # spread_hy en % (BAMLH0A0HYM2): media historica ~400bps, crisis 2008 >1900bps
@@ -90,7 +90,11 @@ VIX_YOY_CRISIS         = 30.0   # VIX YoY > +30% = miedo sistematico elevado
 
 # Umbrales del semaforo de regimen
 SEMAFORO_OIL_MOM       = 0.08   # petroleo sube >8% mensual -> senal amber
-SEMAFORO_IPC_ACCEL     = 0.003  # IPC acelera >0.3pp/mes -> senal amber
+# Phase 1e fix: la comparacion en semaforo() siempre multiplicaba este valor
+# por 2 (>0.6pp operativo real), dejando el propio nombre de la constante
+# desalineado con el umbral que de verdad aplicaba. Ahora declara el umbral
+# operativo directamente; el call site ya no multiplica.
+SEMAFORO_IPC_ACCEL     = 0.006  # IPC acelera >0.6pp/mes -> senal amber
 SEMAFORO_CLI_DROP      = 2.0    # CLI cae >2 puntos en 1 mes -> senal rojo
 SEMAFORO_CLI_CROSS     = 1.0    # CLI cruza 100 +/- 1 punto -> senal amber
 SEMAFORO_RATE_JUMP     = 0.50   # tipo sube/baja >0.5pp en 1 mes -> senal rojo
@@ -118,6 +122,10 @@ class RegimeResult:
     # Indicadores de estres financiero (nuevos)
     spread_hy:         float | None
     vix_yoy:           float | None
+    # Fase 1k: expuesto para observacion (eje de ciclo, Fase 5) -- no
+    # alimenta _classify_row todavia. Default None: no requiere tocar
+    # el unico call site posicional-por-nombre existente.
+    term_spread:       float | None = None
 
     @property
     def weights(self) -> dict:
@@ -175,6 +183,7 @@ def _load_macro_series(conn: sqlite3.Connection) -> pd.DataFrame:
            OR (indicator = 'm2_global_yoy' AND geography = 'GLOBAL')
            OR (indicator = 'spread_hy'    AND geography = 'GLOBAL')
            OR (indicator = 'vix'          AND geography = 'GLOBAL')
+           OR (indicator = 'term_spread'  AND geography = 'US')
         ORDER BY date
     """
     rows = conn.execute(query).fetchall()
@@ -265,6 +274,27 @@ def _load_macro_series(conn: sqlite3.Connection) -> pd.DataFrame:
     if "vix_GLOBAL" in wide.columns:
         wide["vix_yoy"] = wide["vix_GLOBAL"].pct_change(12, fill_method=None) * 100
 
+    # Fase 1d: variacion mensual (MoM) de petroleo y VIX para semaforo().
+    # Antes semaforo() probaba las columnas crudas "oil_wti_GLOBAL" /
+    # "vix_GLOBAL" directamente sobre este DataFrame, pero solo las
+    # columnas listadas en `cols` (mas abajo) sobreviven al filtro final
+    # -- esas dos nunca estaban, asi que las dos senales de shock mensual
+    # nunca podian dispararse. Derivarlas aqui, junto al resto de series,
+    # y que semaforo() las lea ya calculadas (DRY -- una sola derivacion).
+    if "oil_wti_GLOBAL" in wide.columns:
+        wide["oil_mom"] = wide["oil_wti_GLOBAL"].pct_change(1, fill_method=None)
+    if "vix_GLOBAL" in wide.columns:
+        wide["vix_mom"] = wide["vix_GLOBAL"].pct_change(1, fill_method=None)
+
+    # Fase 1k: term spread (US 10y-2y), usado para exponer la curva de
+    # tipos en el informe/eje de ciclo (Fase 5) -- no se conecta todavia a
+    # _classify_row (ver nota en el plan: exponerlo primero, operarlo
+    # despues, para no mezclar el recalculo de Fase 1 con un cambio de
+    # comportamiento sin medir). Almacenado con geography='US' en
+    # series_macro, no 'GLOBAL'.
+    if "term_spread_US" in wide.columns:
+        wide["term_spread"] = wide["term_spread_US"]
+
     cols = ["oil_yoy", "copper_yoy",
             "ipc_yoy_avg", "ipc_yoy_es", "ipc_yoy_eu", "ipc_yoy_us",
             "ipc_yoy_jp", "ipc_yoy_cn",
@@ -273,7 +303,7 @@ def _load_macro_series(conn: sqlite3.Connection) -> pd.DataFrame:
             "rate_us", "rate_jp", "rate_cn",
             "m3_yoy", "m2_yoy_us", "unemployment_us",
             "dxy_yoy", "gold_yoy", "m2_global_yoy",
-            "spread_hy", "vix_yoy"]
+            "spread_hy", "vix_yoy", "oil_mom", "vix_mom", "term_spread"]
     available = [c for c in cols if c in wide.columns]
     return wide[available]
 
@@ -316,13 +346,20 @@ def _classify_row(
         if oil_yoy > OIL_SHOCK_THRESHOLD:
             return "Shock_Energetico"
 
+    # -- CLI ausente: fail-safe a Contraccion (Fase 1f) --------
+    # Antes, un CLI ausente saltaba este bloque entero y caia en el tramo
+    # de "ciclo positivo" (328+), leyendose implicitamente como bullish.
+    # Un dato ausente no es evidencia de expansion; el lado conservador
+    # del error es tratarlo como ciclo debil.
+    if cli_eu is None or np.isnan(cli_eu):
+        return "Contraccion"
+
     # -- Ciclo debil (CLI < 100) ------------------------------
-    if cli_eu is not None and not np.isnan(cli_eu):
-        if cli_eu < CLI_EXPANSION:
-            if ipc_yoy_avg is not None and not np.isnan(ipc_yoy_avg):
-                if ipc_yoy_avg > IPC_MOD_THRESHOLD:
-                    return "Estanflacion"
-            return "Contraccion"
+    if cli_eu < CLI_EXPANSION:
+        if ipc_yoy_avg is not None and not np.isnan(ipc_yoy_avg):
+            if ipc_yoy_avg > IPC_MOD_THRESHOLD:
+                return "Estanflacion"
+        return "Contraccion"
 
     # -- Ciclo positivo (CLI >= 100) --------------------------
     if ipc_yoy_avg is not None and not np.isnan(ipc_yoy_avg):
@@ -379,6 +416,7 @@ class RegimeClassifier:
         d_rate_3m    = _get("d_rate_3m")
         spread_hy    = _get("spread_hy")
         vix_yoy      = _get("vix_yoy")
+        term_spread  = _get("term_spread")
 
         regime  = _classify_row(oil_yoy, ipc_yoy_avg, cli_eu,
                                  rate_deposit, d_rate_3m, spread_hy, vix_yoy)
@@ -396,6 +434,7 @@ class RegimeClassifier:
             d_rate_3m=d_rate_3m,
             spread_hy=spread_hy,
             vix_yoy=vix_yoy,
+            term_spread=term_spread,
         )
 
     def classify_historical(self) -> pd.DataFrame:
@@ -425,6 +464,7 @@ class RegimeClassifier:
             d_rate_3m    = _get("d_rate_3m")
             spread_hy    = _get("spread_hy")
             vix_yoy      = _get("vix_yoy")
+            term_spread  = _get("term_spread")
 
             # Solo clasificar si tenemos al menos CLI e IPC
             if ipc_yoy_avg is None and cli_eu is None:
@@ -447,6 +487,7 @@ class RegimeClassifier:
                 "d_rate_3m":        d_rate_3m,
                 "spread_hy":        spread_hy,
                 "vix_yoy":          vix_yoy,
+                "term_spread":      term_spread,
             })
 
         return pd.DataFrame(records).set_index("date")
@@ -481,11 +522,14 @@ class RegimeClassifier:
             curr = hist["regime"].iloc[-1] if not hist.empty else "Desconocido"
             prev = None
 
-        # Shock petroleo mensual
-        if "oil_wti_GLOBAL" in filled.columns:
-            oil = filled["oil_wti_GLOBAL"].dropna().iloc[-2:]
-            if len(oil) == 2 and oil.iloc[0] > 0:
-                oil_mom = (oil.iloc[-1] - oil.iloc[0]) / oil.iloc[0]
+        # Shock petroleo mensual (Fase 1d: oil_mom ya derivado en
+        # _load_macro_series; antes se probaba "oil_wti_GLOBAL", una
+        # columna que _load_macro_series nunca deja pasar -- esta senal
+        # jamas podia dispararse)
+        if "oil_mom" in filled.columns:
+            oil_mom_series = filled["oil_mom"].dropna()
+            if not oil_mom_series.empty:
+                oil_mom = oil_mom_series.iloc[-1]
                 if oil_mom > SEMAFORO_OIL_SPIKE:
                     signals.append(f"Shock petroleo: +{oil_mom*100:.1f}% mensual")
                     color = "Rojo"
@@ -539,11 +583,12 @@ class RegimeClassifier:
                     if color == "Verde":
                         color = "Ambar"
 
-        # VIX -- miedo de mercado
-        if "vix_GLOBAL" in filled.columns:
-            vix = filled["vix_GLOBAL"].dropna().iloc[-2:]
-            if len(vix) == 2 and vix.iloc[0] > 0:
-                vix_mom = (vix.iloc[-1] - vix.iloc[0]) / vix.iloc[0]
+        # VIX -- miedo de mercado (Fase 1d: mismo defecto que el shock de
+        # petroleo -- "vix_GLOBAL" nunca sobrevivia al filtro de columnas)
+        if "vix_mom" in filled.columns:
+            vix_mom_series = filled["vix_mom"].dropna()
+            if not vix_mom_series.empty:
+                vix_mom = vix_mom_series.iloc[-1]
                 if vix_mom > SEMAFORO_VIX_SPIKE:
                     signals.append(f"VIX spike: +{vix_mom*100:.1f}% mensual")
                     color = "Rojo"
@@ -576,6 +621,7 @@ class RegimeClassifier:
             f"Indicadores de estres financiero:",
             f"  Spread HY:       {r.spread_hy:.2f}%" if r.spread_hy else "  Spread HY: N/D",
             f"  VIX YoY:         {r.vix_yoy:+.1f}%" if r.vix_yoy else "  VIX YoY: N/D",
+            f"  Term spread US:  {r.term_spread:+.2f}%" if r.term_spread is not None else "  Term spread US: N/D",
             f"",
             f"Pesos de cartera recomendados:",
             f"  Defensiva:       {r.weight_defensive:.0%}",

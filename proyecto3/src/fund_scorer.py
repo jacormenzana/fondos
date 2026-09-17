@@ -148,7 +148,6 @@ MIN_REAL_RETURN_BY_SUB = {
 # Filtros duros globales
 MAX_DRAWDOWN_LIMIT = -0.25
 MIN_REAL_RETURN    =  0.00
-MIN_MACRO_OBS      = 36
 MAX_SRRI_DEFENSIVE = 5
 
 # Umbrales multiplicadores de régimen
@@ -247,6 +246,22 @@ SUBPORTFOLIO_MAPPING = {
 # Dataclasses
 # ============================================================
 
+def _build_score_notes(regime: str, exclusion_reason: str | None) -> str:
+    """Construye el campo `notes` persistido en fund_scores.
+
+    Fase 1i (P#11): esta expresion estaba duplicada verbatim entre
+    FundScore.to_db_row() y _persist_scores() -- la version dict-based
+    (FundScore) nunca llega a instanciarse en score_funds(), que trabaja
+    sobre un DataFrame y persiste via _persist_scores() directamente, pero
+    ambos caminos construian el mismo string de forma independiente.
+    Extraido aqui como el unico punto que lo hace.
+    """
+    notes = f"regime={regime}"
+    if exclusion_reason:
+        notes += f" | excluido: {exclusion_reason}"
+    return notes
+
+
 @dataclass
 class FundScore:
     isin:              str
@@ -268,10 +283,7 @@ class FundScore:
             "score_detail":  json.dumps(self.score_detail, ensure_ascii=False),
             "eligible":      1 if self.eligible else 0,
             "calculated_at": pd.Timestamp.today().strftime("%Y-%m-%d"),
-            "notes":         f"regime={regime}" + (
-                f" | excluido: {self.exclusion_reason}"
-                if self.exclusion_reason else ""
-            ),
+            "notes":         _build_score_notes(regime, self.exclusion_reason),
         }
 
 
@@ -308,9 +320,7 @@ def load_fund_metrics_for_scoring(
         ("beta_vix",            "since_inception", 0),  # Crisis_Financiera
         ("fx_contribution_pct", "since_inception", 0),
         ("macro_r2",            "since_inception", 0),
-        ("macro_n_obs",         "since_inception", 0),
         ("srri_nav",            "since_inception", 0),
-        ("vol_ann",      "since_inception", 0),
     ]
 
     # Crisis stress (always load — used in Crisis_Financiera multiplier)
@@ -457,8 +467,18 @@ def compute_base_scores(
         }
         weights.update(short_w.get(subportfolio, {}))
 
-    # Métricas que deben invertirse (menor = mejor)
-    _INVERTED_METRICS = {"max_dd", "short_max_drawdown__rolling_6m"}
+    # Métricas que deben invertirse (menor RAW = mejor), para
+    # _normalize_metric(invert=True) -- Fase 1a (P3 optimization plan):
+    # esta lista incluia "max_dd", pero max_dd se almacena en fund_metrics
+    # estrictamente <= 0 (verificado en vivo: 57.166 filas, min -0.97, max
+    # 0.0, cero valores positivos), así que un valor MENOS negativo (más
+    # cercano a 0) ya es el mejor resultado bajo el rank ascendente sin
+    # invertir. Invertirlo premiaba el peor drawdown -- sobre la métrica de
+    # mayor peso individual en Defensiva (30%). No añadir una métrica aquí
+    # sin verificar su signo almacenado primero; ver
+    # shared/statistical_audit/catalog_metric_bounds.py para los bounds que
+    # documentan la convención de signo de cada métrica (Fase 1b).
+    _INVERTED_METRICS: set[str] = set()
 
     scores_by_nature = pd.Series(0.0, index=df.index)
 
@@ -665,16 +685,6 @@ def compute_regime_multiplier(
                     multiplier *= MULT_REGIME_MAXDD_MALUS
                     detail["regime_maxdd_malus"] = MULT_REGIME_MAXDD_MALUS
 
-    # ── §3f: Amortiguación por cobertura insuficiente de régimen ─────────────
-    # Si un fondo tiene pocos regímenes con historia suficiente (coverage_ratio
-    # < REGIME_COVERAGE_MIN), las señales empíricas son poco fiables → reducir
-    # el efecto neto del multiplicador hacia 1.0.
-    coverage = row.get("regime_coverage_ratio", np.nan)
-    if not np.isnan(coverage) and coverage < REGIME_COVERAGE_MIN:
-        net = multiplier - 1.0
-        multiplier = 1.0 + net * REGIME_COVERAGE_DAMP
-        detail["regime_coverage_damp"] = round(coverage, 3)
-
     # ── §3f: Crisis Financiera — stress resilience multipliers ────────────────
     if regime == "Crisis_Financiera":
         mdd_crisis = row.get("crisis_stress_score_mdd", np.nan)
@@ -712,6 +722,24 @@ def compute_regime_multiplier(
             elif ret_slope <= SLOPE_DETERIORATING_THRESHOLD:
                 multiplier *= MULT_SLOPE_MALUS
                 detail["return_slope_deteriorating_malus"] = MULT_SLOPE_MALUS
+
+    # ── §3f: Amortiguación por cobertura insuficiente de régimen ─────────────
+    # Si un fondo tiene pocos regímenes con historia suficiente (coverage_ratio
+    # < REGIME_COVERAGE_MIN), las señales empíricas son poco fiables → reducir
+    # el efecto neto del multiplicador hacia 1.0.
+    # Fase 1j (P3 optimization plan): reubicado al FINAL de la función.
+    # Antes estaba a mitad de cadena (tras el bloque de régimen empírico),
+    # lo que dejaba sin amortiguar los multiplicadores de estrés de crisis y
+    # de pendiente que se aplicaban después, y en cambio SÍ amortiguaba los
+    # multiplicadores estructurales (crisis spread/VIX, beta_oil, beta_rate_eu,
+    # fx, alpha, macro_r2) que no dependen del historial por régimen y por
+    # tanto no deberían depender de regime_coverage_ratio. Ahora amortigua el
+    # multiplicador NETO acumulado, tal y como describe el comentario.
+    coverage = row.get("regime_coverage_ratio", np.nan)
+    if not np.isnan(coverage) and coverage < REGIME_COVERAGE_MIN:
+        net = multiplier - 1.0
+        multiplier = 1.0 + net * REGIME_COVERAGE_DAMP
+        detail["regime_coverage_damp"] = round(coverage, 3)
 
     return round(multiplier, 4), detail
 
@@ -1010,10 +1038,7 @@ def _persist_scores(
             json.dumps(r["detail"], ensure_ascii=False),
             1 if r["eligible"] else 0,
             today,
-            f"regime={regime}" + (
-                f" | excluido: {r['exclusion_reason']}"
-                if r["exclusion_reason"] else ""
-            ),
+            _build_score_notes(regime, r["exclusion_reason"]),
         ))
     conn.executemany(sql, rows)
     conn.commit()

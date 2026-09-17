@@ -73,6 +73,12 @@ from shared.config import (
     REGIME_MIN_NAV_TOTAL as MIN_NAV_TOTAL,
     REGIME_MIN_OBS_SORTINO_DOWNSIDE as MIN_OBS_SORTINO_DOWNSIDE,
 )
+# Fase 1g (P#11/R-1): este dict se re-declaraba a mano aqui, por separado de
+# la definicion equivalente en proyecto3/src/regime_classifier.py -- ambas
+# coincidian por disciplina, no por construccion. Fuente unica ahora en
+# shared/regime_taxonomy.py (ver ese modulo para el porque vive en shared/
+# y no en proyecto3/).
+from shared.regime_taxonomy import REGIME_SUFFIX as _REGIME_SUFFIX
 from src.calculations.drawdown import compute_drawdown, max_drawdown, time_to_recovery
 from src.calculations.returns import (
     annualized_return_from_returns,
@@ -80,17 +86,6 @@ from src.calculations.returns import (
     sharpe_ratio_from_returns,
     sortino_ratio_from_returns,
 )
-
-# Mapa nombre de regimen -> sufijo de metrica (minusculas, guiones bajos)
-_REGIME_SUFFIX = {
-    "Expansion":              "expansion",
-    "Recalentamiento":        "recalentamiento",
-    "Recalentamiento_Tardio": "recalentamiento_tardio",
-    "Estanflacion":           "estanflacion",
-    "Contraccion":            "contraccion",
-    "Shock_Energetico":       "shock_energetico",
-    "Crisis_Financiera":      "crisis_financiera",
-}
 
 
 # ============================================================
