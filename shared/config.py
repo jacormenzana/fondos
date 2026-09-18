@@ -168,6 +168,25 @@ ROLLING_STATS_ENABLED: bool = True
 # con retorno futuro en el régimen activo (backtest walk-forward pendiente).
 ROLLING_PCTILE_P3_ENABLED: bool = False
 
+# Kill-switch P3 optimization plan Phase 2c (2026-09-18): activa la carga
+# automática de la cartera del escenario anterior en PortfolioBuilder.build()
+# cuando no se pasa previous_portfolio explícitamente, habilitando el bonus
+# de histéresis (HYSTERESIS_BAND) sobre los titulares. Antes de este
+# kill-switch, previous_portfolio quedaba en None SIEMPRE porque ningún
+# caller del repo lo pasaba -- el código de histéresis era correcto pero
+# nunca se ejecutaba en producción. Default False: comportamiento actual
+# sin cambios hasta activarlo.
+PORTFOLIO_HYSTERESIS_ENABLED: bool = False
+
+# Kill-switch P3 optimization plan Phase 2d (2026-09-18): activa el filtro
+# de coste de rotación en PortfolioBuilder.build() -- revierte al titular
+# las rotaciones cuya mejora de score no supera el coste estimado (spread +
+# comisiones) más el margen mínimo. Antes de este kill-switch,
+# should_rotate/rotation_plan solo los invocaba scripts/test/test_portfolio.py;
+# build()/_persist() nunca los consultaban, así que las carteras persistidas
+# no reflejaban ningún chequeo de coste de rotación. Default False.
+ROTATION_COST_GATE_ENABLED: bool = False
+
 # ============================================================
 # Phase 1 — Benchmark asset-class derivation engine (BL-BENCH-DECOMP)
 # ============================================================
