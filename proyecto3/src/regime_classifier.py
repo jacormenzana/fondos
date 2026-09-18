@@ -394,6 +394,7 @@ class RegimeClassifier:
     def __init__(self, conn: sqlite3.Connection):
         self.conn   = conn
         self._macro = _load_macro_series(conn)
+        self._historical_cache: pd.DataFrame | None = None
 
     def classify_current(self) -> RegimeResult:
         """Clasifica el regimen del ultimo mes disponible."""
@@ -444,7 +445,21 @@ class RegimeClassifier:
         Devuelve DataFrame con columnas:
             date, regime, weight_defensive, weight_balanced, weight_dynamic,
             oil_yoy, ipc_yoy_avg, cli_eu, rate_deposit, d_rate_3m
+
+        Fase 3b (P3 optimization plan, 2026-09-18): memoizado en la
+        instancia -- antes reconstruia las ~321 filas desde cero en CADA
+        llamada, y se invoca >=4 veces por ejecucion de informe
+        (regime_summary(), semaforo(), y llamadas externas desde
+        monthly_report.py y regime_returns.py). self._macro no cambia tras
+        __init__ (se carga una sola vez de series_macro), asi que el
+        resultado es invariante durante la vida de la instancia -- cachear
+        no tiene riesgo de devolver datos obsoletos. Se devuelve una copia
+        para que un caller que mute el DataFrame (p.ej. set_index in-place)
+        no corrompa la cache para el siguiente caller.
         """
+        if self._historical_cache is not None:
+            return self._historical_cache.copy()
+
         if self._macro.empty:
             return pd.DataFrame()
 
@@ -490,7 +505,8 @@ class RegimeClassifier:
                 "term_spread":      term_spread,
             })
 
-        return pd.DataFrame(records).set_index("date")
+        self._historical_cache = pd.DataFrame(records).set_index("date")
+        return self._historical_cache.copy()
 
     def regime_summary(self) -> pd.DataFrame:
         """Distribucion historica de regimenes (% del tiempo en cada uno)."""
