@@ -10,30 +10,33 @@ def deflate_nav(nav_df: pd.DataFrame, ipc_df: pd.DataFrame | None) -> pd.DataFra
     Deflacta una serie NAV por el IPC.
 
     Root-cause fix (2026-09-17): la version anterior usaba un INNER JOIN
-    exacto por fecha (nav_df.merge(ipc_df, on='date', how='inner')), que
-    descartaba SILENCIOSAMENTE cualquier fecha NAV sin una fecha IPC
-    EXACTAMENTE coincidente. En produccion la fecha NAV mas reciente suele
-    ser una foto a mitad de mes (ej. '2026-09-14'), mientras que
-    series_inflation esta normalizado a fin de mes por load_ipc() (ej.
-    '2026-09-30') -- esa fecha nunca cruzaba, asi que el path escalar
-    (_process_horizon -> compute_risk_metrics -> aqui) perdia
-    sistematicamente su punto NAV mas reciente en TODO calculo real_flag=1,
-    en TODOS los horizontes. Root-caused via el motor de auditoria
-    estadistica: SCALAR_EQUALS_TIMESERIES mostraba real_flag=0 coincidiendo
-    casi exacto entre fund_metrics y fund_metric_timeseries, pero
-    real_flag=1 divergiendo ~50% -- el path rolling
-    (rolling_stats.compute_rolling_rows) ya alineaba con
-    reindex+ffill+bfill (nunca descarta una fecha), igual que
-    short_horizon.py::_deflate_nav(). Ahora las tres implementaciones
-    comparten el mismo criterio de alineacion (aunque siguen siendo tres
-    funciones separadas -- consolidarlas en una sola es trabajo de
-    seguimiento, no parte de este fix).
+    exacto por fecha, que descartaba SILENCIOSAMENTE cualquier fecha NAV sin
+    una fecha IPC EXACTAMENTE coincidente. Sustituida por reindex+ffill+bfill
+    en un primer intento -- pero ese intento tenia su propio defecto,
+    root-caused el 2026-09-18: SCALAR_EQUALS_TIMESERIES seguia divergiendo
+    ~50% real_flag=1 especificamente en rolling_3y (no en 1y/2y/5y/10y).
+    Causa: run_pipeline.py pre-recorta ipc_df a la ventana ANTES de llamar
+    aqui (ipc_w = ipc_df[ipc_df['date'] > cutoff]); reindex(nav_df['date'])
+    solo puede rellenar hacia adelante (ffill) usando valores que
+    SOBREVIVIERON al reindex -- si la primera fecha NAV de la ventana no
+    coincide exactamente con una fecha IPC (frecuente: NAV es dia habil,
+    IPC esta normalizado a fin de mes por load_ipc()), no hay ancla anterior
+    DENTRO del conjunto recortado, y bfill() rellena con el valor SIGUIENTE
+    (mas tardio) en vez del ultimo valor real ANTES de esa fecha -- una base
+    de deflacion incorrecta justo en el borde de la ventana.
 
-    Alinea IPC a las fechas NAV por indice (ffill+bfill, nunca descarta una
-    fecha), rebasa al primer valor de la serie alineada (deflator=1.0 en esa
-    fecha). El rebase no afecta ningun metrico downstream: return_ann,
-    vol_ann, sharpe, sortino y max_dd son todos ratios/retornos sobre
-    nav_real, invariantes a escalar toda la serie por una constante.
+    Fix definitivo: pd.merge_asof(direction='backward'), que busca el
+    ULTIMO valor IPC conocido en o antes de cada fecha NAV -- funciona
+    correctamente sea cual sea el rango de ipc_df, sin necesitar que el
+    llamador pase la serie completa (aunque run_pipeline.py TAMBIEN dejo de
+    pre-recortar ipc_df como parte de este mismo fix, por higiene: pasar la
+    serie completa es mas robusto que depender de que cada llamador calcule
+    su propio margen de seguridad).
+
+    Rebasa al primer valor IPC alineado (deflator=1.0 en la primera fecha
+    NAV). El rebase no afecta ningun metrico downstream: return_ann, vol_ann,
+    sharpe, sortino y max_dd son todos ratios/retornos sobre nav_real,
+    invariantes a escalar toda la serie por una constante.
 
     Devuelve DataFrame vacio (columnas date/nav/nav_real) si ipc_df es None,
     vacio, o no hay ningun solapamiento aprovechable.
@@ -44,17 +47,23 @@ def deflate_nav(nav_df: pd.DataFrame, ipc_df: pd.DataFrame | None) -> pd.DataFra
         return empty
 
     nav_df = nav_df.sort_values("date").reset_index(drop=True)
-    ipc = ipc_df.set_index("date")["ipc_index"]
-    ipc_aligned = ipc.reindex(nav_df["date"]).ffill().bfill()
+    ipc_df = ipc_df[["date", "ipc_index"]].sort_values("date").reset_index(drop=True)
 
-    if ipc_aligned.isna().all():
+    merged = pd.merge_asof(nav_df, ipc_df, on="date", direction="backward")
+
+    if merged["ipc_index"].isna().any():
+        # A NAV date precedes ipc_df's earliest available date entirely --
+        # merge_asof(backward) has no earlier anchor for it. Backfill from
+        # the earliest known IPC value instead of leaving it unusable
+        # (never drop a row).
+        merged["ipc_index"] = merged["ipc_index"].bfill()
+
+    if merged["ipc_index"].isna().all():
         return empty
 
-    ipc_base = ipc_aligned.iloc[0]
+    ipc_base = merged["ipc_index"].iloc[0]
     if ipc_base == 0 or pd.isna(ipc_base):
         return empty
 
-    deflator = (ipc_aligned / ipc_base).to_numpy()
-    df = nav_df.copy()
-    df["nav_real"] = df["nav"].to_numpy() / deflator
-    return df[["date", "nav", "nav_real"]]
+    merged["nav_real"] = merged["nav"].to_numpy() / (merged["ipc_index"].to_numpy() / ipc_base)
+    return merged[["date", "nav", "nav_real"]]

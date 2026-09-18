@@ -72,6 +72,62 @@ class TestNeverDropsANavDate:
         assert result["nav_real"].notna().all()
 
 
+class TestWindowBoundaryUsesBackwardFill:
+    """Root-caused 2026-09-18: reindex(nav_df['date']).ffill().bfill() can
+    only fill using values that SURVIVED the reindex -- if the window's
+    FIRST nav date has no exact ipc match and there's no earlier date
+    within the (already window-sliced) reindex target, ffill has nothing to
+    propagate from and bfill silently substitutes a LATER ipc value instead
+    of the correct earlier one. This broke SCALAR_EQUALS_TIMESERIES
+    specifically for rolling_3y (not 1y/2y/5y/10y) in production. The fix
+    is pd.merge_asof(direction='backward'), which finds the correct earlier
+    anchor regardless of what's inside the passed-in ipc_df's own range."""
+
+    def test_leading_date_uses_the_correct_earlier_ipc_value_not_a_later_one(self):
+        nav_df = _df(
+            ["2023-09-29", "2023-10-31", "2023-11-30"],  # window start: no exact Sep match
+            [100.0, 102.0, 101.0],
+            "nav",
+        )
+        ipc_df = _df(
+            ["2023-08-31", "2023-09-30", "2023-10-31", "2023-11-30"],
+            [95.29, 96.09, 96.09, 95.58],  # Aug=95.29 (correct anchor), Sep=96.09 (wrong if picked)
+            "ipc_index",
+        )
+        result = deflate_nav(nav_df, ipc_df)
+        # As of 2023-09-29, September's own month-end IPC (dated 2023-09-30,
+        # published one day LATER) has not yet been "observed" -- the
+        # correct backward-looking anchor is August's 95.29, not
+        # September's 96.09 (which a naive bfill would grab instead).
+        # deflator at t=0 is always 1.0 by construction (rebased), so assert
+        # against the known-correct value computed with the right anchor
+        # (95.29) vs the wrong one (96.09) via the return ratio instead.
+        expected_ipc_at_start = 95.29  # August's value -- the correct backward anchor
+        wrong_ipc_at_start = 96.09     # September's value -- what a leading bfill would grab
+        ret_expected = (nav_df["nav"].iloc[-1] / nav_df["nav"].iloc[0]) * (
+            expected_ipc_at_start / ipc_df.set_index("date")["ipc_index"].loc["2023-11-30"]
+        ) - 1
+        ret_wrong = (nav_df["nav"].iloc[-1] / nav_df["nav"].iloc[0]) * (
+            wrong_ipc_at_start / ipc_df.set_index("date")["ipc_index"].loc["2023-11-30"]
+        ) - 1
+        ret_actual = result["nav_real"].iloc[-1] / result["nav_real"].iloc[0] - 1
+        assert ret_actual == pytest.approx(ret_expected, rel=1e-9)
+        assert ret_actual != pytest.approx(ret_wrong, rel=1e-6)
+
+    def test_pre_sliced_ipc_df_still_resolves_correctly_if_it_has_the_anchor(self):
+        """Even when ipc_df itself is window-sliced (as run_pipeline.py did
+        before this fix), merge_asof still works correctly AS LONG AS the
+        anchor date is present in the slice -- this test isolates the
+        algorithm fix from the caller-side pre-slicing fix (both were
+        needed together; the caller fix is what guarantees the anchor is
+        actually present)."""
+        nav_df = _df(["2023-09-30", "2023-10-31"], [100.0, 102.0], "nav")
+        ipc_df = _df(["2023-09-30", "2023-10-31"], [96.09, 96.09], "ipc_index")
+        result = deflate_nav(nav_df, ipc_df)
+        assert result["nav_real"].notna().all()
+        assert len(result) == 2
+
+
 class TestDeflationCorrectness:
     def test_flat_ipc_leaves_nav_shape_unchanged(self):
         """Constant IPC -> deflator is always 1.0 -> nav_real == nav."""

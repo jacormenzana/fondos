@@ -540,14 +540,20 @@ _ALL_METRIC_FAMILIES = frozenset({
 
 # Bump this string whenever the calculation logic changes to force a
 # cache-miss in fund_metric_state even when NAV/IPC inputs are unchanged.
-CALC_VERSION: str = "20260917"  # v34: deflation.py::deflate_nav() root-cause
-# fix — inner-join-by-exact-date silently dropped any NAV date without a
-# bit-for-bit matching IPC date (the most recent NAV row is often a
-# mid-month snapshot, never matching IPC's month-end normalization),
-# corrupting every real_flag=1 scalar metric on every horizon. Found via
-# the SCALAR_EQUALS_TIMESERIES audit finding staying at ~50% divergence
-# after the P0.5 recompute (2026-09-16) — real_flag=0 matched almost
-# exactly, real_flag=1 didn't, isolating the bug to deflation only.
+CALC_VERSION: str = "20260918"  # v35: deflate_nav() switched from
+# reindex+ffill+bfill to pd.merge_asof(direction='backward'), and
+# run_pipeline.py stopped pre-slicing ipc_df to each window before calling
+# it. v34's reindex-based fix (previous CALC_VERSION) closed the systemic
+# inner-join bug but left a second, narrower one: reindex(nav_df['date'])
+# can only ffill using values that survive the reindex, so a window's own
+# FIRST date (if it doesn't exactly match an IPC date) had no earlier
+# anchor to propagate from and silently bfilled a LATER ipc value instead —
+# this broke SCALAR_EQUALS_TIMESERIES specifically for rolling_3y (not
+# 1y/2y/5y/10y, whose windows more often happened to start on an
+# ipc-aligned date). merge_asof searches ipc_df's actual range regardless
+# of reindex-target overlap, and the caller no longer restricts that range.
+# Also fixed the same inner-join bug in consistency.py::consistency_metrics
+# (it had reimplemented deflation locally instead of calling deflate_nav).
 
 # ── v26 audit columns ──────────────────────────────────────────────────────
 # RUN_BATCH_ID is set once at the start of run() and written to every Gold row
@@ -1049,14 +1055,17 @@ def run(
                         if horizons_filter and crisis_name not in horizons_filter:
                             continue
                         nav_w = slice_window(nav_df, start, end)
-                        ipc_w = (
-                            slice_window(ipc_df, start, end)
-                            if ipc_df is not None else None
-                        )
                         if len(nav_w) < MIN_NAV_ROWS:
                             continue
+                        # ipc_df pasado SIN recortar (root-cause fix 2026-09-18):
+                        # deflate_nav() usa merge_asof(direction='backward'), que
+                        # necesita poder buscar hacia atras del inicio de la
+                        # ventana para resolver correctamente su propio borde --
+                        # recortar ipc_df aqui le quitaba esa capacidad y
+                        # corrompia el real_flag=1 de cada ventana. Ver
+                        # deflation.py::deflate_nav docstring para el detalle.
                         isin_written += _process_horizon(
-                            isin, nav_w, ipc_w, crisis_name, conn, dry_run,
+                            isin, nav_w, ipc_df, crisis_name, conn, dry_run,
                             rf_rate_df=rf_rate_df,
                         )
 
@@ -1069,14 +1078,12 @@ def run(
                             continue
                         _cutoff = nav_df["date"].max() - pd.DateOffset(months=months)
                         nav_w   = nav_df[nav_df["date"] > _cutoff].reset_index(drop=True)
-                        ipc_w   = (
-                            ipc_df[ipc_df["date"] > _cutoff].reset_index(drop=True)
-                            if ipc_df is not None else None
-                        )
                         if len(nav_w) < MIN_NAV_ROWS:
                             continue
+                        # ipc_df pasado SIN recortar -- ver comentario identico
+                        # arriba (ventanas de crisis), misma causa raiz.
                         isin_written += _process_horizon(
-                            isin, nav_w, ipc_w, horizon_name, conn, dry_run,
+                            isin, nav_w, ipc_df, horizon_name, conn, dry_run,
                             rf_rate_df=rf_rate_df,
                         )
 
