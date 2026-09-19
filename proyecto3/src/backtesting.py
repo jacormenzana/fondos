@@ -7,12 +7,20 @@ Metodologia (aproximacion sin corrección de look-ahead bias):
   1. Tomar clasificacion historica mensual del RegimeClassifier
   2. Para cada regimen historico, construir la cartera hipotetica
      usando los scores actuales (metricas calculadas con datos completos)
+     -- Fase 4 (P3 optimization plan, 2026-09-18): con las MISMAS
+     restricciones de diversificacion y ponderacion que PortfolioBuilder.
+     build() realmente aplica (portfolio_engine.select_and_weight()), no
+     una segunda implementacion simplificada de "top-10 proporcional" sin
+     ningun limite. Ver test_backtest_parity.py.
   3. Calcular rentabilidad forward de esa cartera en ventanas de 1, 3 y 12 meses
   4. Comparar contra benchmark (media ponderada del universo)
 
 Limitacion conocida: las metricas usan datos futuros respecto al punto de
 simulacion. Los resultados sobreestiman el rendimiento real del modelo.
 Para backtesting riguroso se requiere recalculo de metricas por ventana.
+Hasta entonces, esta limitacion aplica solo a las cifras de RENTABILIDAD
+ABSOLUTA -- el backtest sigue siendo valido para medir turnover relativo
+entre configuraciones (p.ej. Fase 6, pesos de regimen difusos).
 
 Metricas de evaluacion:
   - Rentabilidad media por regimen (1m, 3m, 12m)
@@ -39,6 +47,7 @@ _ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT))
 
 from proyecto3.src.regime_classifier import RegimeClassifier, REGIME_WEIGHTS
+from proyecto3.src.portfolio_engine import select_and_weight, DEFAULT_CONSTRAINTS
 
 
 # ============================================================
@@ -46,8 +55,11 @@ from proyecto3.src.regime_classifier import RegimeClassifier, REGIME_WEIGHTS
 # ============================================================
 
 FORWARD_WINDOWS = [1, 3, 12]   # meses forward para calcular rentabilidad
-MIN_FUNDS_PER_SUB = 3           # minimo fondos por sub-cartera para simular
 BENCHMARK_METRIC = "return_ann" # metrica base para benchmark
+# Fase 4 (P3 optimization plan, 2026-09-18): MIN_FUNDS_PER_SUB (=3) declarada
+# aqui y nunca referenciada en ningun sitio del archivo -- eliminada
+# (P#2/dead code). Los limites de tamano de sub-cartera reales vienen ahora
+# de PortfolioConstraints (portfolio_engine.py), via select_and_weight().
 
 
 # ============================================================
@@ -87,23 +99,45 @@ def _load_nav_matrix(conn: sqlite3.Connection) -> pd.DataFrame:
     return wide
 
 
-def _load_portfolio_isins(conn: sqlite3.Connection,
-                           score_version: str = "v1") -> dict:
+def _load_candidates(conn: sqlite3.Connection,
+                      score_version: str = "v1") -> dict[str, pd.DataFrame]:
     """
-    Carga los ISINs y pesos de cada sub-cartera desde fund_scores.
-    Devuelve dict {subportfolio: [(isin, score)]}
+    Carga los candidatos elegibles de cada sub-cartera desde fund_scores.
+    Devuelve dict {subportfolio: DataFrame} con columnas isin/score_total/
+    fund_name/fund_nature/management_company/fund_family_id.
+
+    Fase 4 (P3 optimization plan, 2026-09-18): reemplaza a
+    _load_portfolio_isins(), que devolvia solo (isin, score) sin naturaleza/
+    gestora/familia -- datos insuficientes para aplicar diversificacion.
+    Union con fund_master AHORA identica a
+    portfolio_builder.py::_select_funds_for_subportfolio, para que
+    _build_weights_for_regime() pueda aplicar exactamente las mismas
+    restricciones que PortfolioBuilder.build() (ver portfolio_engine.py).
     """
     rows = conn.execute("""
-        SELECT block, isin, score_total
-        FROM fund_scores
-        WHERE score_version = ? AND eligible = 1 AND score_total > 0
-        ORDER BY block, score_total DESC
+        SELECT fs.block, fs.isin, fs.score_total,
+               fm.Fund_Name, fm.Fund_Nature, fm.Management_Company,
+               fm.fund_family_id
+        FROM fund_scores fs
+        JOIN fund_master fm ON fm.ISIN = fs.isin
+        WHERE fs.score_version = ?
+          AND fs.eligible = 1
+          AND fs.score_total > 0
+          AND fm.In_Current_Universe = 1
+        ORDER BY fs.block, fs.score_total DESC
     """, (score_version,)).fetchall()
 
-    result = {}
-    for block, isin, score in rows:
-        result.setdefault(block, []).append((isin, float(score)))
-    return result
+    by_block: dict[str, list] = {}
+    for row in rows:
+        by_block.setdefault(row[0], []).append(row[1:])
+
+    return {
+        block: pd.DataFrame(data, columns=[
+            "isin", "score_total", "fund_name", "fund_nature",
+            "management_company", "fund_family_id",
+        ])
+        for block, data in by_block.items()
+    }
 
 
 # ============================================================
@@ -215,48 +249,80 @@ class BacktestResult:
         }
 
 
+def _blend_to_master(
+    selection: dict[str, pd.DataFrame],
+    sub_w: dict[str, float],
+) -> dict[str, float]:
+    """
+    Combina una seleccion por sub-cartera (peso INTERNO, de
+    _select_for_regime) con un vector de pesos de sub-cartera concreto
+    (peso de regimen de UNA fecha) para obtener {isin: peso_master}.
+
+    Separado de la seleccion (Fase 4 item 2) precisamente para que el
+    blend pueda usar el peso de CADA fecha sin tener que repetir la
+    seleccion -- la seleccion es cara (diversificacion) y cacheable por
+    regimen; el blend es barato y debe ser por fecha.
+    """
+    master: dict[str, float] = {}
+    for sub_name, df in selection.items():
+        weight = sub_w.get(sub_name, 0.0)
+        if not weight or df.empty:
+            continue
+        for _, row in df.iterrows():
+            isin = row["isin"]
+            master[isin] = master.get(isin, 0.0) + float(row["weight"]) * weight
+    # Redondeo a 4 decimales para casar con Portfolio.all_funds
+    # (portfolio_builder.py), que redondea master_weight = weight * regime_weight
+    # con round(..., 4) -- sin este redondeo, el mismo calculo produce un
+    # float sin redondear aqui (p.ej. 0.057585 vs 0.0576), rompiendo la
+    # paridad exacta que test_backtest_parity.py verifica.
+    return {isin: round(w, 4) for isin, w in master.items()}
+
+
 class Backtester:
 
     def __init__(self, conn: sqlite3.Connection, score_version: str = "v1"):
         self.conn          = conn
         self.score_version = score_version
         self._nav          = _load_nav_matrix(conn)
-        self._scores       = _load_portfolio_isins(conn, score_version)
+        self._scores       = _load_candidates(conn, score_version)
         self._clf          = RegimeClassifier(conn)
+        self._selection_cache: dict[str, dict[str, pd.DataFrame]] = {}
 
-    def _build_weights_for_regime(self, regime: str) -> dict:
+    def _select_for_regime(self, regime: str) -> dict[str, pd.DataFrame]:
         """
-        Construye el diccionario {isin: weight_master} para un regimen dado.
-        Usa top 10 fondos por sub-cartera con pesos proporcionales al score.
+        Selecciona y pondera (peso INTERNO por sub-cartera, no master) los
+        fondos para el regimen dado, usando exactamente la misma logica de
+        diversificacion que PortfolioBuilder.build() -- portfolio_engine.
+        select_and_weight() (max fondos por naturaleza/gestora, dedup por
+        familia, tope 20%/suelo 3% via water-filling).
+
+        Fase 4 (P3 optimization plan, 2026-09-18): antes,
+        _build_weights_for_regime() era una segunda implementacion
+        independiente de "construir una cartera" -- top-10 por score, pesos
+        proporcionales, SIN ningun limite (ni tope, ni suelo,
+        ni max_same_nature, ni limite por gestora, ni dedup por familia).
+        El backtest nunca probaba la cartera que PortfolioBuilder realmente
+        construye. Ver test_backtest_parity.py para el invariante que hace
+        esto verificable.
+
+        Cacheado por etiqueta de regimen en run() -- la seleccion depende
+        de que sub-carteras tengan peso de regimen > 0 (una sub-cartera a
+        0% se omite y libera sus fondos para las demas), no del VALOR
+        exacto del peso, asi que dos fechas con la misma etiqueta de
+        regimen producen la misma seleccion. El BLEND a peso master si usa
+        el peso de regimen especifico de cada fecha -- ver _blend_to_master.
         """
+        if regime in self._selection_cache:
+            return self._selection_cache[regime]
+
         regime_weights = REGIME_WEIGHTS.get(regime, (0.33, 0.34, 0.33))
         sub_names      = ["Defensiva", "Equilibrada", "Dinamica"]
         sub_w          = dict(zip(sub_names, regime_weights))
 
-        isins_master = {}
-        used_isins   = set()
-
-        for sub_name, sub_regime_w in sub_w.items():
-            if sub_regime_w == 0:
-                continue
-
-            funds = [(isin, score) for isin, score in self._scores.get(sub_name, [])
-                     if isin not in used_isins][:10]
-
-            if not funds:
-                continue
-
-            total_score = sum(s for _, s in funds)
-            if total_score <= 0:
-                continue
-
-            for isin, score in funds:
-                internal_w = score / total_score
-                master_w   = internal_w * sub_regime_w
-                isins_master[isin] = isins_master.get(isin, 0) + master_w
-                used_isins.add(isin)
-
-        return isins_master
+        selection = select_and_weight(self._scores, sub_w, DEFAULT_CONSTRAINTS)
+        self._selection_cache[regime] = selection
+        return selection
 
     def run(
         self,
@@ -284,15 +350,30 @@ class Backtester:
         print(f"Backtesting | {start_date} -> {end_date or 'hoy'} "
               f"| {len(hist)} meses")
 
-        # Precalcular pesos por regimen
-        regime_weights_cache = {}
+        # Precalcular seleccion por regimen (peso interno, cacheado por
+        # etiqueta -- ver _select_for_regime).
         for regime in hist["regime"].unique():
-            regime_weights_cache[regime] = self._build_weights_for_regime(regime)
+            self._select_for_regime(regime)
 
         records = []
         for i, (date, row) in enumerate(hist.iterrows()):
-            regime  = row["regime"]
-            weights = regime_weights_cache[regime]
+            regime    = row["regime"]
+            selection = self._select_for_regime(regime)
+
+            # Fase 4 item 2 (P3 optimization plan): pesos de sub-cartera
+            # POR FECHA, no por etiqueta de regimen -- classify_historical()
+            # ya emite weight_defensive/balanced/dynamic por fila. Hoy son
+            # identicos a REGIME_WEIGHTS[regime] (no hay transiciones
+            # difusas todavia), pero cablear esto ahora es lo que hace que
+            # la Fase 6 (pesos difusos) llegue al backtest sin ningun
+            # cambio adicional -- con un lookup por etiqueta, la Fase 6
+            # fallaria en silencio contra este backtest.
+            sub_w = {
+                "Defensiva":   row["weight_defensive"],
+                "Equilibrada": row["weight_balanced"],
+                "Dinamica":    row["weight_dynamic"],
+            }
+            weights = _blend_to_master(selection, sub_w)
 
             rec = {
                 "date":   date,

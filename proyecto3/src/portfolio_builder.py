@@ -48,6 +48,12 @@ _ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT))
 
 from proyecto3.src.regime_classifier import RegimeResult
+from proyecto3.src.portfolio_engine import (
+    PortfolioConstraints,
+    clamp_and_renormalize,
+    select_candidates,
+    assign_weights as engine_assign_weights,
+)
 from shared.config import PORTFOLIO_HYSTERESIS_ENABLED, ROTATION_COST_GATE_ENABLED
 
 
@@ -157,15 +163,19 @@ def _select_funds_for_subportfolio(
     incumbent_isins: ISINs que estaban en esta sub-cartera en el periodo
                      anterior. Reciben un bonus de HYSTERESIS_BAND sobre
                      su score para evitar rotaciones innecesarias.
-    """
-    exclude_isins    = exclude_isins or set()
-    exclude_families = set(exclude_names or set())   # reutilizamos el param para familias
-    mgr_global       = dict(mgr_global or {})
 
+    Fase 4 (P3 optimization plan, 2026-09-18): adaptador fino sobre DB --
+    la logica de diversificacion (antes inline aqui) vive ahora en
+    portfolio_engine.select_candidates(), compartida con
+    Backtester._build_weights_for_regime(). Ver ese modulo para el porque
+    (P#11: dos implementaciones independientes de "construir una cartera"
+    significaba que el backtest nunca probaba la cartera que
+    PortfolioBuilder realmente construye).
+    """
     # Cargar scores elegibles para esta sub-cartera
     # fund_family_id puede ser NULL para fondos no procesados por family_builder
     rows = conn.execute("""
-        SELECT fs.isin, fs.score_total, fs.score_detail,
+        SELECT fs.isin, fs.score_total,
                fm.Fund_Name, fm.Fund_Nature, fm.Management_Company,
                fm.fund_family_id
         FROM fund_scores fs
@@ -181,182 +191,40 @@ def _select_funds_for_subportfolio(
     if not rows:
         return pd.DataFrame()
 
-    df = pd.DataFrame(rows, columns=[
-        "isin", "score_total", "score_detail",
+    candidates = pd.DataFrame(rows, columns=[
+        "isin", "score_total",
         "fund_name", "fund_nature", "management_company",
         "fund_family_id"
     ])
-    df["score_total"] = df["score_total"].astype(float)
 
-    # -- Histeresis: los titulares reciben un bonus de score (HYSTERESIS_BAND)
-    # para que los retadores tengan que superarlos por un margen real antes de
-    # provocar una rotacion. Los pesos finales siguen usando score_total (sin bonus).
-    if incumbent_isins:
-        is_inc = df["isin"].isin(incumbent_isins)
-        df["effective_score"] = df["score_total"].where(
-            ~is_inc,
-            df["score_total"] * (1.0 + HYSTERESIS_BAND),
-        )
-    else:
-        df["effective_score"] = df["score_total"]
-
-    df = df.sort_values("effective_score", ascending=False).reset_index(drop=True)
-
-    # Aplicar restricciones de diversificacion
-    selected     = []
-    nature_count = {}
-
-    def _norm_fallback(name: str) -> str:
-        """Fallback cuando fund_family_id es NULL: primeros 3 tokens del nombre."""
-        return " ".join((name or "").strip().split()[:3]).upper()
-
-    for _, row in df.iterrows():
-        if row["isin"] in exclude_isins:
-            continue
-
-        nature = row["fund_nature"]
-        mgr    = row["management_company"] or "Desconocida"
-
-        # Clave de deduplicacion: fund_family_id si existe, 3-token si no
-        fam_id = row["fund_family_id"]
-        dedup_key = fam_id if (fam_id and str(fam_id).strip()) \
-                    else _norm_fallback(row["fund_name"])
-
-        # No repetir familia -- global entre sub-carteras
-        if dedup_key and dedup_key in exclude_families:
-            continue
-
-        # Max fondos por naturaleza en esta sub-cartera
-        if nature_count.get(nature, 0) >= MAX_SAME_NATURE:
-            continue
-
-        # Max fondos por gestora -- global entre sub-carteras
-        if mgr_global.get(mgr, 0) >= MAX_FUNDS_PER_MGR:
-            continue
-
-        selected.append(row)
-        nature_count[nature]    = nature_count.get(nature, 0) + 1
-        mgr_global[mgr]         = mgr_global.get(mgr, 0) + 1
-        if dedup_key:
-            exclude_families.add(dedup_key)
-
-        if len(selected) >= max_funds:
-            break
-
-    return pd.DataFrame(selected) if selected else pd.DataFrame()
+    constraints = PortfolioConstraints(
+        max_funds_per_sub=max_funds,
+        max_weight_per_fund=MAX_WEIGHT_PER_FUND,
+        min_weight_per_fund=MIN_WEIGHT_PER_FUND,
+        max_same_nature=MAX_SAME_NATURE,
+        max_funds_per_mgr=MAX_FUNDS_PER_MGR,
+        hysteresis_band=HYSTERESIS_BAND,
+    )
+    return select_candidates(
+        candidates, constraints,
+        exclude_isins=exclude_isins,
+        exclude_families=exclude_names,   # reutilizamos el param para familias
+        mgr_global=mgr_global,
+        incumbent_isins=incumbent_isins,
+    )
 
 
 # ============================================================
 # Asignacion de pesos internos
 # ============================================================
 
-def _clamp_and_renormalize(
-    weights: pd.Series,
-    lo: float,
-    hi: float,
-    max_iter: int = 50,
-) -> pd.Series:
-    """
-    Water-filling: ajusta `weights` para que cada valor quede en [lo, hi] y
-    la suma se mantenga en 1.0, redistribuyendo el excedente/deficit de
-    forma proporcional entre los miembros aun no fijados en cada iteracion.
-
-    Fase 2b (P3 optimization plan, 2026-09-18): reemplaza el clamp-then-
-    renormalize anterior, que aplicaba el tope del 20% y redistribuia,
-    LUEGO aplicaba el suelo del 3% y volvia a renormalizar sobre TODO el
-    vector -- ese segundo renormalize podia volver a violar el tope que el
-    primer paso ya habia impuesto, y el ajuste final del residuo de
-    redondeo se sumaba siempre a idxmax() sin comprobar si eso lo empujaba
-    por encima del tope.
-
-    Precondicion de factibilidad: n*lo <= 1.0 <= n*hi (n = len(weights)).
-    Con lo=0.03, hi=0.20, eso exige n in [5, 33] -- una sub-cartera de 4
-    fondos es infactible bajo el tope del 20% (4*0.20=0.80 < 1.0) y hoy
-    producia silenciosamente pesos del 25%. Si es infactible, o si el bucle
-    no converge en max_iter (lo que en un problema factible no deberia
-    ocurrir nunca -- la redistribucion proporcional sobre un simplex 1-D
-    converge monotonamente), se registra un ERROR y el residuo final se
-    reparte proporcionalmente sobre el margen disponible (o, si no hay
-    ningun margen, a partes iguales) en vez de volcarse entero sobre un
-    unico fondo.
-    """
-    n = len(weights)
-    if n == 0:
-        return weights
-
-    w = weights.copy().astype(float)
-    total = w.sum()
-    if total <= 0:
-        # Sin señal de score positiva que repartir -- el reparto igualitario
-        # es el unico fallback razonable aqui (situacion distinta de la
-        # no-convergencia: no hay señal alguna que preservar).
-        w[:] = 1.0 / n
-        return w.round(4)
-
-    w = w / total  # normalizar a suma 1.0 de partida
-    original = w.copy()  # pre-clamp, para el fallback infactible mas abajo
-
-    feasible = n * lo <= 1.0 + 1e-9 and 1.0 <= n * hi + 1e-9
-    if not feasible:
-        print(f"  [ERROR] _clamp_and_renormalize: cotas infactibles para "
-              f"n={n} fondos (lo={lo}, hi={hi} -> rango [{n*lo:.2f}, "
-              f"{n*hi:.2f}] no cubre 1.0). El resultado puede violar lo/hi "
-              f"-- tratar esta sub-cartera como invalida.")
-
-    clamped_lo = pd.Series(False, index=w.index)
-    clamped_hi = pd.Series(False, index=w.index)
-
-    for _ in range(max_iter):
-        new_lo = w < lo
-        new_hi = w > hi
-        if not new_lo.any() and not new_hi.any():
-            break  # punto fijo: todos los pesos ya estan en [lo, hi]
-
-        clamped_lo |= new_lo
-        clamped_hi |= new_hi
-        w[clamped_lo] = lo
-        w[clamped_hi] = hi
-
-        free_mask = ~(clamped_lo | clamped_hi)
-        if not free_mask.any():
-            break  # todos fijados -- nada que redistribuir
-
-        fixed_total = w[~free_mask].sum()
-        remaining   = 1.0 - fixed_total
-        free_sum    = w[free_mask].sum()
-        if free_sum > 0:
-            w[free_mask] = w[free_mask] / free_sum * remaining
-        else:
-            w[free_mask] = remaining / free_mask.sum()
-    else:
-        print(f"  [ERROR] _clamp_and_renormalize: no convergio en "
-              f"{max_iter} iteraciones (n={n}, lo={lo}, hi={hi}). Se usa la "
-              f"ultima iteracion -- tratar esta sub-cartera como invalida "
-              f"e investigar (en un problema factible esto no deberia "
-              f"ocurrir nunca).")
-
-    # Residuo de redondeo: repartir proporcionalmente sobre el margen
-    # disponible (headroom), no volcarlo entero sobre idxmax(). Si ademas no
-    # hay margen en ningun sitio (caso infactible con todos ya en el tope,
-    # p.ej. n=2 bajo hi=0.20: ambos exceden el tope desde la primera
-    # iteracion y quedan identicos en hi, sin margen), repartir en
-    # proporcion a los pesos ORIGINALES (pre-clamp) en vez de a partes
-    # iguales -- preserva la señal de score todo lo que matematicamente es
-    # posible, en vez de que la caida en el fallback de infactibilidad
-    # borre por completo la diferenciacion entre fondos.
-    w = w.round(4)
-    diff = round(1.0 - w.sum(), 4)
-    if diff != 0:
-        headroom = (hi - w).clip(lower=0) if diff > 0 else (w - lo).clip(lower=0)
-        if headroom.sum() > 0:
-            w = w + headroom / headroom.sum() * diff
-        elif original.sum() > 0:
-            w = w + original / original.sum() * diff
-        else:
-            w = w + diff / len(w)
-        w = w.round(4)
-
-    return w
+# Fase 4 (P3 optimization plan, 2026-09-18): _clamp_and_renormalize vive
+# ahora en portfolio_engine.py, compartido con Backtester (P#11 -- ambos
+# necesitan la misma logica de ponderacion interna para que sus carteras
+# respeten las mismas cotas). Re-exportado con el nombre historico para no
+# romper proyecto3/tests/test_portfolio_constraints.py, que lo importa
+# directamente desde este modulo.
+_clamp_and_renormalize = clamp_and_renormalize
 
 
 def _assign_weights(
@@ -367,27 +235,15 @@ def _assign_weights(
     Asigna pesos internos a los fondos seleccionados.
     Los pesos suman 1.0 dentro de la sub-cartera, cada uno dentro de
     [MIN_WEIGHT_PER_FUND, MAX_WEIGHT_PER_FUND] siempre que el numero de
-    fondos lo permita (ver _clamp_and_renormalize).
+    fondos lo permita (ver portfolio_engine.clamp_and_renormalize).
+
+    Fase 4: adaptador fino sobre portfolio_engine.assign_weights().
     """
-    if df.empty:
-        return df
-
-    df = df.copy()
-
-    if method == "score_proportional":
-        total_score = df["score_total"].sum()
-        if total_score > 0:
-            df["weight"] = df["score_total"] / total_score
-        else:
-            df["weight"] = 1.0 / len(df)
-    else:
-        df["weight"] = 1.0 / len(df)
-
-    df["weight"] = _clamp_and_renormalize(
-        df["weight"], MIN_WEIGHT_PER_FUND, MAX_WEIGHT_PER_FUND
+    constraints = PortfolioConstraints(
+        max_weight_per_fund=MAX_WEIGHT_PER_FUND,
+        min_weight_per_fund=MIN_WEIGHT_PER_FUND,
     )
-
-    return df
+    return engine_assign_weights(df, constraints, method=method)
 
 
 # ============================================================
