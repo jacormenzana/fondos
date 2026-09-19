@@ -272,18 +272,33 @@ class FundScore:
     eligible:          bool
     subportfolio:      str
     exclusion_reason:  str | None
+    multiplier:        float = 1.0
     score_detail:      dict = field(default_factory=dict)
 
     def to_db_row(self, regime: str, score_version: str = "v1") -> dict:
+        """
+        Fase 3a (P3 optimization plan, migracion SQLite 2026-09-19):
+        fund_scores' PK se extendio a (isin, block, score_version, regime,
+        as_of_date) -- ver shared/migrate_schema_v27.py. regime y
+        as_of_date ahora son columnas reales de las que depende la PK (no
+        solo texto en notes); score_base/multiplier/exclusion_reason
+        tambien se persisten como columnas propias.
+        """
+        today = pd.Timestamp.today().strftime("%Y-%m-%d")
         return {
-            "isin":          self.isin,
-            "block":         self.fund_nature,
-            "score_version": score_version,
-            "score_total":   round(self.score_final, 6),
-            "score_detail":  json.dumps(self.score_detail, ensure_ascii=False),
-            "eligible":      1 if self.eligible else 0,
-            "calculated_at": pd.Timestamp.today().strftime("%Y-%m-%d"),
-            "notes":         _build_score_notes(regime, self.exclusion_reason),
+            "isin":             self.isin,
+            "block":            self.fund_nature,
+            "score_version":    score_version,
+            "regime":           regime,
+            "as_of_date":       today,
+            "score_total":      round(self.score_final, 6),
+            "score_base":       round(self.score_base, 6),
+            "multiplier":       self.multiplier,
+            "score_detail":     json.dumps(self.score_detail, ensure_ascii=False),
+            "eligible":         1 if self.eligible else 0,
+            "exclusion_reason": self.exclusion_reason,
+            "calculated_at":    today,
+            "notes":            _build_score_notes(regime, self.exclusion_reason),
         }
 
 
@@ -1020,13 +1035,26 @@ def _persist_scores(
     regime: str,
     score_version: str,
 ) -> None:
-    """Persiste los scores en fund_scores."""
+    """
+    Persiste los scores en fund_scores.
+
+    Fase 3a (P3 optimization plan, migracion SQLite 2026-09-19): PK
+    extendida a (isin, block, score_version, regime, as_of_date) -- ver
+    shared/migrate_schema_v27.py, que replica en SQLite el diseno ya
+    validado en db/pg/30_gold.sql. regime y as_of_date se escriben ahora
+    como columnas reales (antes solo codificadas en notes); score_base/
+    multiplier/exclusion_reason tambien se persisten como columnas propias
+    en vez de vivir solo dentro del JSON de score_detail. `notes` se
+    mantiene por compatibilidad/comentario libre, pero deja de ser la
+    unica fuente de verdad para regime/exclusion_reason.
+    """
     today = pd.Timestamp.today().strftime("%Y-%m-%d")
     sql = """
         INSERT OR REPLACE INTO fund_scores
-            (isin, block, score_version, score_total,
-             score_detail, eligible, calculated_at, notes)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            (isin, block, score_version, regime, as_of_date, score_total,
+             score_base, multiplier, score_detail, eligible,
+             exclusion_reason, calculated_at, notes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
     rows = []
     for _, r in df.iterrows():
@@ -1034,9 +1062,14 @@ def _persist_scores(
             r["isin"],
             r["subportfolio"],
             score_version,
+            regime,
+            today,
             r["score_final"],
+            r["score_base"],
+            r["multiplier"],
             json.dumps(r["detail"], ensure_ascii=False),
             1 if r["eligible"] else 0,
+            r["exclusion_reason"],
             today,
             _build_score_notes(regime, r["exclusion_reason"]),
         ))

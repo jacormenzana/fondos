@@ -52,10 +52,16 @@ CREATE TABLE fund_master (
     In_Current_Universe INTEGER DEFAULT 1
 );
 CREATE TABLE fund_scores (
-    isin TEXT, block TEXT, score_version TEXT, score_total REAL,
-    score_detail TEXT, eligible INTEGER
+    isin TEXT, block TEXT, score_version TEXT, regime TEXT, as_of_date TEXT,
+    score_total REAL, score_detail TEXT, eligible INTEGER
 );
 """
+# Fase 3a (P3 optimization plan, migracion SQLite 2026-09-19): fund_scores'
+# PK se extendio a (isin, block, score_version, regime, as_of_date) -- ver
+# shared/migrate_schema_v27.py. Ambos caminos de este test ahora filtran
+# por regimen; todas las filas sembradas usan el mismo regimen que
+# _fake_regime_result() para que ambos caminos encuentren los mismos datos.
+_TEST_REGIME = "Shock_Energetico"
 
 
 @pytest.fixture
@@ -96,9 +102,10 @@ def _seed(conn, n_per_sub: int = 12) -> None:
                 (isin, f"Fund {isin}", nature, mgr),
             )
             conn.execute(
-                "INSERT INTO fund_scores (isin, block, score_version, "
-                "score_total, score_detail, eligible) VALUES (?, ?, 'v1', ?, '{}', 1)",
-                (isin, sub, score),
+                "INSERT INTO fund_scores (isin, block, score_version, regime, "
+                "as_of_date, score_total, score_detail, eligible) "
+                "VALUES (?, ?, 'v1', ?, '2026-06-30', ?, '{}', 1)",
+                (isin, sub, _TEST_REGIME, score),
             )
     conn.commit()
 
@@ -132,7 +139,7 @@ def test_builder_and_backtester_produce_identical_master_weights(conn, sub_weigh
     # Camino 2: el camino del backtest -- _load_candidates (misma query que
     # PortfolioBuilder) + select_and_weight() + _blend_to_master(), sin
     # pasar por Portfolio/SubPortfolioAllocation en absoluto.
-    candidates = _load_candidates(conn, score_version="v1")
+    candidates = _load_candidates(conn, score_version="v1", regime=_TEST_REGIME)
     selection  = select_and_weight(candidates, sub_weights, DEFAULT_CONSTRAINTS)
     backtest_weights = _blend_to_master(selection, sub_weights)
 
@@ -173,7 +180,7 @@ def test_parity_holds_with_incumbents_and_hysteresis(conn):
                                previous_portfolio=previous)
     builder_weights = {f["isin"]: f["master_weight"] for f in portfolio.all_funds}
 
-    candidates = _load_candidates(conn, score_version="v1")
+    candidates = _load_candidates(conn, score_version="v1", regime=_TEST_REGIME)
     selection  = select_and_weight(candidates, sub_weights, DEFAULT_CONSTRAINTS,
                                     incumbents=incumbents)
     backtest_weights = _blend_to_master(selection, sub_weights)

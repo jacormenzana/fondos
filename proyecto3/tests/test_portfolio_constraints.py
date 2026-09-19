@@ -155,10 +155,17 @@ CREATE TABLE fund_master (
     In_Current_Universe INTEGER DEFAULT 1
 );
 CREATE TABLE fund_scores (
-    isin TEXT, block TEXT, score_version TEXT, score_total REAL,
-    score_detail TEXT, eligible INTEGER
+    isin TEXT, block TEXT, score_version TEXT, regime TEXT, as_of_date TEXT,
+    score_total REAL, score_detail TEXT, eligible INTEGER, exclusion_reason TEXT
 );
 """
+# Fase 3a (P3 optimization plan, migracion SQLite 2026-09-19): fund_scores'
+# PK se extendio a (isin, block, score_version, regime, as_of_date) -- ver
+# shared/migrate_schema_v27.py. _select_funds_for_subportfolio ahora filtra
+# por regimen; el esquema/fixture de test refleja la forma real de la
+# tabla, y todas las filas sembradas usan el mismo regimen de prueba para
+# que el filtro las encuentre.
+_TEST_REGIME = "Shock_Energetico"
 
 
 @pytest.fixture
@@ -176,9 +183,10 @@ def _insert_fund(conn, isin, score, mgr="MgrA", nature="Renta Variable"):
         (isin, f"Fund {isin}", nature, mgr),
     )
     conn.execute(
-        "INSERT INTO fund_scores (isin, block, score_version, score_total, "
-        "score_detail, eligible) VALUES (?, 'Equilibrada', 'v1', ?, '{}', 1)",
-        (isin, score),
+        "INSERT INTO fund_scores (isin, block, score_version, regime, as_of_date, "
+        "score_total, score_detail, eligible) "
+        "VALUES (?, 'Equilibrada', 'v1', ?, '2026-09-19', ?, '{}', 1)",
+        (isin, _TEST_REGIME, score),
     )
 
 
@@ -190,7 +198,7 @@ def test_manager_cap_stops_at_max_funds_per_mgr(conn):
     _insert_fund(conn, "OTHER1", score=0.5, mgr="OtherManager")
     conn.commit()
 
-    selected = _select_funds_for_subportfolio(conn, "Equilibrada", "v1")
+    selected = _select_funds_for_subportfolio(conn, "Equilibrada", "v1", _TEST_REGIME)
     same_mgr_count = (selected["management_company"] == "SameManager").sum()
     assert same_mgr_count == MAX_FUNDS_PER_MGR
     assert "OTHER1" in selected["isin"].values  # the manager cap made room for it
@@ -204,7 +212,7 @@ def test_hysteresis_band_retains_incumbent_within_band(conn):
     conn.commit()
 
     selected = _select_funds_for_subportfolio(
-        conn, "Equilibrada", "v1", incumbent_isins=frozenset({"INCUMBENT"}))
+        conn, "Equilibrada", "v1", _TEST_REGIME, incumbent_isins=frozenset({"INCUMBENT"}))
     ranked = selected["isin"].tolist()
     assert ranked.index("INCUMBENT") < ranked.index("CHALLENGER")
 
@@ -217,7 +225,7 @@ def test_hysteresis_band_displaced_by_challenger_beyond_band(conn):
     conn.commit()
 
     selected = _select_funds_for_subportfolio(
-        conn, "Equilibrada", "v1", incumbent_isins=frozenset({"INCUMBENT"}))
+        conn, "Equilibrada", "v1", _TEST_REGIME, incumbent_isins=frozenset({"INCUMBENT"}))
     ranked = selected["isin"].tolist()
     assert ranked.index("CHALLENGER") < ranked.index("INCUMBENT")
 
@@ -239,3 +247,45 @@ def test_hysteresis_uses_score_total_not_effective_score_for_weight_input():
     w_a = weighted.loc[weighted["isin"] == "A", "weight"].iloc[0]
     w_b = weighted.loc[weighted["isin"] == "B", "weight"].iloc[0]
     assert w_b > w_a
+
+
+def test_stale_eligible_row_does_not_resurrect_a_now_ineligible_fund(conn):
+    # Regression test for a real bug found in the Phase 3a live smoke test
+    # (2026-09-19): a fund with an OLDER eligible row and a NEWER
+    # ineligible row was still being selected, using the STALE eligible
+    # score -- because the SQL filtered eligible=1 INSIDE the ROW_NUMBER()
+    # CTE, before windowing. That discards the true latest row whenever it
+    # happens to be ineligible, so ROW_NUMBER() promotes an older eligible
+    # row to rn=1 instead of correctly excluding the fund. Fill enough
+    # OTHER eligible funds that DEMOTED wouldn't be selected purely on
+    # count, so this test fails cleanly if the bug regresses.
+    for i in range(9):
+        _insert_fund(conn, f"FILLER{i:02d}", score=0.80 - i * 0.01, mgr=f"FillerMgr{i}")
+
+    conn.execute(
+        "INSERT INTO fund_master (ISIN, Fund_Name, Fund_Nature, Management_Company, "
+        "fund_family_id, In_Current_Universe) VALUES (?, ?, ?, ?, NULL, 1)",
+        ("DEMOTED", "Fund DEMOTED", "Renta Variable", "DemotedMgr"),
+    )
+    # Older row: eligible, high score -- would rank #1 by score alone.
+    conn.execute(
+        "INSERT INTO fund_scores (isin, block, score_version, regime, as_of_date, "
+        "score_total, score_detail, eligible, exclusion_reason) "
+        "VALUES ('DEMOTED', 'Equilibrada', 'v1', ?, '2026-03-21', 0.99, '{}', 1, NULL)",
+        (_TEST_REGIME,),
+    )
+    # Newer row: same fund, now ineligible -- this is the row that should govern.
+    conn.execute(
+        "INSERT INTO fund_scores (isin, block, score_version, regime, as_of_date, "
+        "score_total, score_detail, eligible, exclusion_reason) "
+        "VALUES ('DEMOTED', 'Equilibrada', 'v1', ?, '2026-09-19', 0.0, '{}', 0, "
+        "'Credit_Quality=High Yield excluido de Defensiva')",
+        (_TEST_REGIME,),
+    )
+    conn.commit()
+
+    selected = _select_funds_for_subportfolio(conn, "Equilibrada", "v1", _TEST_REGIME)
+    assert "DEMOTED" not in selected["isin"].values, (
+        "a fund whose LATEST fund_scores row is ineligible must not be "
+        "selected using a stale eligible row from an earlier as_of_date"
+    )

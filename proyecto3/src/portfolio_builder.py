@@ -148,6 +148,7 @@ def _select_funds_for_subportfolio(
     conn: sqlite3.Connection,
     subportfolio: str,
     score_version: str,
+    regime: str,
     max_funds: int = MAX_FUNDS_PER_SUB,
     exclude_isins: set | None = None,
     exclude_names: set | None = None,
@@ -171,22 +172,56 @@ def _select_funds_for_subportfolio(
     (P#11: dos implementaciones independientes de "construir una cartera"
     significaba que el backtest nunca probaba la cartera que
     PortfolioBuilder realmente construye).
+
+    Fase 3a (P3 optimization plan, migracion SQLite 2026-09-19): fund_scores
+    ahora acumula historia (PK extendida a isin/block/score_version/regime/
+    as_of_date -- ver shared/migrate_schema_v27.py), asi que puede haber
+    VARIAS filas por fondo. `regime` filtra a las puntuaciones calculadas
+    especificamente BAJO ese regimen (los multiplicadores de Capa 3 dependen
+    del regimen activo -- una puntuacion de Shock_Energetico no es
+    intercambiable con una de Crisis_Financiera), y se toma la mas reciente
+    por as_of_date via ROW_NUMBER(), replicando exactamente el patron de
+    consulta que idx_scores_latest (misma forma que gold.idx_scores_latest
+    en db/pg/30_gold.sql) esta pensado para servir.
     """
-    # Cargar scores elegibles para esta sub-cartera
-    # fund_family_id puede ser NULL para fondos no procesados por family_builder
+    # Cargar scores elegibles para esta sub-cartera, filtrados al regimen
+    # dado y a la fila mas reciente por fondo (fund_family_id puede ser
+    # NULL para fondos no procesados por family_builder).
+    #
+    # IMPORTANTE: eligible/score_total>0 se filtran DESPUES de resolver
+    # rn=1, no dentro del CTE `latest`. Filtrarlos dentro del CTE (antes de
+    # que ROW_NUMBER() calcule el ranking) descartaria la fila MAS RECIENTE
+    # de un fondo si esa fila resulta ser inelegible -- y ROW_NUMBER()
+    # asignaria entonces rn=1 a una fila ELEGIBLE mas ANTIGUA, resucitando
+    # en silencio una puntuacion obsoleta para un fondo que hoy esta
+    # excluido. Bug real, encontrado en el smoke test en vivo de esta
+    # migracion (2026-09-19): un fondo marcado 'Credit_Quality=High Yield
+    # excluido de Defensiva' HOY seguia siendo seleccionado con su
+    # puntuacion elegible de Marzo, porque el filtro de eligible estaba
+    # dentro del CTE.
     rows = conn.execute("""
-        SELECT fs.isin, fs.score_total,
+        WITH latest AS (
+            SELECT fs.isin, fs.score_total, fs.eligible,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY fs.isin, fs.block, fs.score_version
+                       ORDER BY fs.as_of_date DESC
+                   ) AS rn
+            FROM fund_scores fs
+            WHERE fs.block = ?
+              AND fs.score_version = ?
+              AND fs.regime = ?
+        )
+        SELECT latest.isin, latest.score_total,
                fm.Fund_Name, fm.Fund_Nature, fm.Management_Company,
                fm.fund_family_id
-        FROM fund_scores fs
-        JOIN fund_master fm ON fm.ISIN = fs.isin
-        WHERE fs.block = ?
-          AND fs.score_version = ?
-          AND fs.eligible = 1
-          AND fs.score_total > 0
+        FROM latest
+        JOIN fund_master fm ON fm.ISIN = latest.isin
+        WHERE latest.rn = 1
+          AND latest.eligible = 1
+          AND latest.score_total > 0
           AND fm.In_Current_Universe = 1
-        ORDER BY fs.score_total DESC
-    """, (subportfolio, score_version)).fetchall()
+        ORDER BY latest.score_total DESC
+    """, (subportfolio, score_version, regime)).fetchall()
 
     if not rows:
         return pd.DataFrame()
@@ -603,7 +638,7 @@ class PortfolioBuilder:
 
             # Seleccionar fondos (excluyendo los ya usados en sub-carteras anteriores)
             selected = _select_funds_for_subportfolio(
-                self.conn, sub_name, score_version,
+                self.conn, sub_name, score_version, regime,
                 exclude_isins=isins_used,
                 exclude_names=families_used,
                 mgr_global=mgr_used,

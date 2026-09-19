@@ -100,32 +100,72 @@ def _load_nav_matrix(conn: sqlite3.Connection) -> pd.DataFrame:
 
 
 def _load_candidates(conn: sqlite3.Connection,
-                      score_version: str = "v1") -> dict[str, pd.DataFrame]:
+                      score_version: str,
+                      regime: str) -> dict[str, pd.DataFrame]:
     """
-    Carga los candidatos elegibles de cada sub-cartera desde fund_scores.
-    Devuelve dict {subportfolio: DataFrame} con columnas isin/score_total/
-    fund_name/fund_nature/management_company/fund_family_id.
+    Carga los candidatos elegibles de cada sub-cartera desde fund_scores,
+    para UN regimen dado. Devuelve dict {subportfolio: DataFrame} con
+    columnas isin/score_total/fund_name/fund_nature/management_company/
+    fund_family_id.
 
     Fase 4 (P3 optimization plan, 2026-09-18): reemplaza a
     _load_portfolio_isins(), que devolvia solo (isin, score) sin naturaleza/
     gestora/familia -- datos insuficientes para aplicar diversificacion.
     Union con fund_master AHORA identica a
     portfolio_builder.py::_select_funds_for_subportfolio, para que
-    _build_weights_for_regime() pueda aplicar exactamente las mismas
+    _select_for_regime() pueda aplicar exactamente las mismas
     restricciones que PortfolioBuilder.build() (ver portfolio_engine.py).
+
+    Fase 3a (P3 optimization plan, migracion SQLite 2026-09-19): fund_scores
+    ahora acumula historia por regimen (PK extendida -- ver
+    shared/migrate_schema_v27.py), asi que un fondo puede tener varias
+    filas. `regime` es ahora obligatorio: filtra a las puntuaciones
+    calculadas especificamente bajo ESE regimen (los multiplicadores de
+    Capa 3 son regimen-dependientes -- una puntuacion de Shock_Energetico
+    no es intercambiable con una de Crisis_Financiera) y toma la mas
+    reciente por as_of_date, mismo patron que
+    portfolio_builder.py::_select_funds_for_subportfolio.
+
+    Consecuencia honesta: fund_scores solo tiene historia real para el
+    regimen bajo el que score_funds() se ha ejecutado alguna vez (hoy,
+    solo el regimen activo en cada ejecucion -- verificado en produccion:
+    5.884/5.884 filas existentes son todas 'Shock_Energetico'). Un regimen
+    historico sin puntuaciones propias devuelve candidatos vacios aqui, en
+    vez de reutilizar silenciosamente puntuaciones de OTRO regimen (lo que
+    seria incorrecto -- ver Fase 1 sobre no inventar señal donde no la
+    hay). Esta cobertura crece con cada ejecucion futura de score_funds()
+    bajo un regimen distinto.
     """
+    # IMPORTANTE: mismo cuidado que portfolio_builder.py::
+    # _select_funds_for_subportfolio -- eligible/score_total>0 se filtran
+    # DESPUES de resolver rn=1, no dentro del CTE `latest`. Filtrarlos
+    # dentro del CTE descartaria la fila MAS RECIENTE de un fondo si esa
+    # fila resulta ser inelegible, dejando que ROW_NUMBER() asigne rn=1 a
+    # una fila elegible mas antigua -- resucitando en silencio una
+    # puntuacion obsoleta. Bug real encontrado en el smoke test en vivo de
+    # esta migracion (2026-09-19).
     rows = conn.execute("""
-        SELECT fs.block, fs.isin, fs.score_total,
+        WITH latest AS (
+            SELECT fs.block, fs.isin, fs.score_total, fs.eligible,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY fs.isin, fs.block, fs.score_version
+                       ORDER BY fs.as_of_date DESC
+                   ) AS rn
+            FROM fund_scores fs
+            WHERE fs.score_version = ?
+              AND fs.regime = ?
+        )
+        SELECT latest.block, latest.isin, latest.score_total,
                fm.Fund_Name, fm.Fund_Nature, fm.Management_Company,
                fm.fund_family_id
-        FROM fund_scores fs
-        JOIN fund_master fm ON fm.ISIN = fs.isin
-        WHERE fs.score_version = ?
-          AND fs.eligible = 1
-          AND fs.score_total > 0
+        FROM latest
+        JOIN fund_master fm ON fm.ISIN = latest.isin
+        WHERE latest.rn = 1
+          AND latest.eligible = 1
+          AND latest.score_total > 0
           AND fm.In_Current_Universe = 1
-        ORDER BY fs.block, fs.score_total DESC
-    """, (score_version,)).fetchall()
+        ORDER BY latest.block, latest.score_total DESC
+    """, (score_version, regime)).fetchall()
 
     by_block: dict[str, list] = {}
     for row in rows:
@@ -285,9 +325,13 @@ class Backtester:
         self.conn          = conn
         self.score_version = score_version
         self._nav          = _load_nav_matrix(conn)
-        self._scores       = _load_candidates(conn, score_version)
         self._clf          = RegimeClassifier(conn)
         self._selection_cache: dict[str, dict[str, pd.DataFrame]] = {}
+        # Fase 3a (P3 optimization plan, migracion SQLite 2026-09-19):
+        # _load_candidates ahora requiere `regime` (fund_scores acumula
+        # historia por regimen) -- ya no se puede cargar de una vez en
+        # __init__ de forma regimen-agnostica. Se carga por regimen dentro
+        # de _select_for_regime(), donde ya se cachea por etiqueta.
 
     def _select_for_regime(self, regime: str) -> dict[str, pd.DataFrame]:
         """
@@ -320,7 +364,8 @@ class Backtester:
         sub_names      = ["Defensiva", "Equilibrada", "Dinamica"]
         sub_w          = dict(zip(sub_names, regime_weights))
 
-        selection = select_and_weight(self._scores, sub_w, DEFAULT_CONSTRAINTS)
+        candidates = _load_candidates(self.conn, self.score_version, regime)
+        selection  = select_and_weight(candidates, sub_w, DEFAULT_CONSTRAINTS)
         self._selection_cache[regime] = selection
         return selection
 

@@ -263,7 +263,25 @@ def _build_cartera(ws, conn, scenario_id="shock_energia_2026Q1"):
     _apply_header(ws, headers, row=2)
     ws.merge_cells(f"A1:{get_column_letter(25)}1")
 
+    # Fase 3a (P3 optimization plan, migracion SQLite 2026-09-19):
+    # fund_scores ahora acumula historia por regimen (PK extendida -- ver
+    # shared/migrate_schema_v27.py), asi que un JOIN directo por
+    # isin+block+score_version podria devolver VARIAS filas por fondo
+    # (duplicando lineas del informe). `latest_scores` filtra a la
+    # puntuacion calculada bajo el MISMO regimen que el escenario
+    # persistido (portfolio_scenarios.macro_regime -- los multiplicadores
+    # de Capa 3 son regimen-dependientes, no intercambiables entre
+    # regimenes) y toma la mas reciente por as_of_date, mismo patron que
+    # portfolio_builder.py::_select_funds_for_subportfolio.
     rows = conn.execute("""
+        WITH latest_scores AS (
+            SELECT fs.isin, fs.block, fs.score_version, fs.regime, fs.score_total,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY fs.isin, fs.block, fs.score_version, fs.regime
+                       ORDER BY fs.as_of_date DESC
+                   ) AS rn
+            FROM fund_scores fs
+        )
         SELECT pw.block, pw.isin, fm.Fund_Name, fm.Fund_Nature,
                fm.Management_Company,
                ROUND(pw.weight * 100, 1) as peso_master,
@@ -286,9 +304,12 @@ def _build_cartera(ws, conn, scenario_id="shock_energia_2026Q1"):
                ROUND(sh_va.value * 100, 2)     as short_vol_adj_3m,
                ROUND(sh_lq.value, 4)           as short_liq_flag
         FROM portfolio_weights pw
+        JOIN portfolio_scenarios ps ON ps.scenario_id = pw.scenario_id
         JOIN fund_master fm ON fm.ISIN = pw.isin
-        LEFT JOIN fund_scores fs ON fs.isin = pw.isin AND fs.block = pw.block
+        LEFT JOIN latest_scores fs ON fs.isin = pw.isin AND fs.block = pw.block
                                  AND fs.score_version = 'v1'
+                                 AND fs.regime = ps.macro_regime
+                                 AND fs.rn = 1
         LEFT JOIN fund_metrics ret ON ret.isin = pw.isin
                                    AND ret.metric = 'return_ann'
                                    AND ret.horizon = 'since_inception'
