@@ -78,6 +78,12 @@ dependencies:
       - prompt-toolkit==3.0.52
       - psutil==7.2.1
       - psycopg2-binary==2.9.12
+      # psycopg3 — the Postgres migration's target driver (scripts/mig/pg_seed.py,
+      # scripts/mig/pg_reconcile.py; plan §P3 "binary COPY, psycopg3"). psycopg2-binary above
+      # stays for now, still used by the legacy shared/load_fondos_to_postgres.py BI mirror and
+      # not yet removed — see plan §5c "write-path port" for when psycopg2 is retired.
+      - psycopg==3.3.6
+      - psycopg-binary==3.3.6
       - pure-eval==0.2.3
       - pyarrow==22.0.0
       - pycparser==2.23
@@ -89,6 +95,10 @@ dependencies:
       - pysocks==1.7.1
       - pytesseract==0.3.13
       - pytest==9.0.2
+      # PyYAML was already present in this env (undeclared) before this migration touched it —
+      # now a real, declared dependency: db/pg/rename_map.yaml is read by scripts/mig/pg_seed.py,
+      # scripts/mig/pg_reconcile.py, and shared/testing/pg_fixtures.py's conftest wiring.
+      - pyyaml==6.0.3
       - python-dateutil==2.9.0.post0
       - python-dotenv==1.2.2
       - pytz==2025.2

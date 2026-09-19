@@ -1,0 +1,186 @@
+# Linux-native conda environment spec — companion to environment.yml (Windows), NOT a replacement.
+# Reproduce with: conda env create -f environment-linux.yml
+#
+# Part of the SQLite -> PostgreSQL migration (plan §5d "Linux environment resolution"). Target:
+# Ubuntu 24.04 LTS, the Dell OptiPlex 3070 migration host.
+#
+# Derivation procedure (per the plan, applied here — not improvised fresh):
+#   1. Start from environment.yml's conda + pip lists (conda env export --from-history equivalent
+#      — this repo's environment.yml is already a hand-curated top-level list, not a full
+#      transitive-dependency dump, so no `--from-history` re-derivation was needed).
+#   2. Drop the 4 Windows-build-specific conda packages: ucrt, vc, vc14_runtime, vs2015_runtime.
+#      These are MSVC runtime libraries with no Linux equivalent — Linux gets its C runtime from
+#      glibc via the OS / conda's own linux-64 build chain, not from a conda package. Every other
+#      conda-level package (bzip2, ca-certificates, libexpat, libffi, libmpdec, libzlib, openssl,
+#      sqlite, tk, xz, zlib, plus pip/python/python_abi/setuptools/wheel) is a normal cross-platform
+#      conda package, unchanged.
+#   3. Relax to major.minor-only pins for the packages where NUMERICAL reproducibility matters to
+#      P2/P3 output (numpy, pandas, scipy, statsmodels) — exact patch versions in environment.yml
+#      were encoding a Windows build string as much as an intentional version choice; a linux-64
+#      solve should be free to pick the best compatible patch release within that minor version.
+#      Every other pip package keeps its exact pin from environment.yml — these are pure-Python or
+#      widely-published-manylinux-wheel packages where the exact version is a real, intentional
+#      choice, not a platform artifact.
+#   4. psycopg2-binary AND psycopg[-binary] both carry over unchanged — psycopg2 still serves the
+#      legacy shared/load_fondos_to_postgres.py BI mirror (§P4_BI_CHARTER.md §0), psycopg3 is the
+#      migration's own target driver (scripts/mig/pg_seed.py, pg_reconcile.py; shared/testing/pg_fixtures.py).
+#
+# NOT YET DONE (this file is a reviewed derivation, not a proven one — same honest limitation as
+# every other artifact in this migration that needed a Linux host or a live server to fully verify):
+#   - Never `conda env create`'d on an actual Linux box from this session (Windows dev environment).
+#   - Two dependencies need a Linux-specific runtime check beyond "does pip install succeed" —
+#     see the two `playwright`/`mstarpy` notes at the bottom of this file.
+#   - ACCEPTANCE GATE (per the plan): this environment is considered validated when the existing
+#     test suite (proyecto1/tests/, proyecto2/tests/, proyecto3/tests/ — 1,749 tests as of
+#     2026-09-18) passes against it unmodified, via .github/workflows/pg-tests.yml or an
+#     equivalent full-suite CI job once that's built. Do not trust this file's correctness beyond
+#     "reviewed by inspection" until that gate runs green once.
+
+name: des
+channels:
+  # NOTE: `defaults` is carried over unchanged from environment.yml for channel-consistency with
+  # the Windows env this was derived from. Anaconda's `defaults` channel has commercial-use
+  # licensing terms for organizations above a certain size — if that applies here, switch this
+  # (and environment.yml's) channel to `conda-forge`, a licensing decision, not a technical one,
+  # left for whoever provisions the box to make explicitly rather than changed silently here.
+  - defaults
+dependencies:
+  - bzip2=1.0.8
+  - ca-certificates=2025.12.2
+  - libexpat=2.7.3
+  - libffi=3.4.4
+  - libmpdec=4.0.0
+  - libzlib=1.3.1
+  - openssl=3.0.18
+  - pip=25.3
+  - python=3.13.11
+  - python_abi=3.13
+  - setuptools=80.9.0
+  - sqlite=3.51.0
+  - tk=8.6.15
+  - wheel=0.45.1
+  - xz=5.6.4
+  - zlib=1.3.1
+  - pip:
+      - asttokens==3.0.1
+      - attrs==26.1.0
+      - beautifulsoup4==4.14.3
+      - bottleneck==1.6.0
+      - certifi==2026.2.25
+      - cffi==2.0.0
+      - charset-normalizer==3.4.4
+      - cloudpickle==3.1.2
+      - colorama==0.4.6           # harmless no-op on Linux; some libs import it unconditionally
+      - comm==0.2.3
+      - contourpy==1.3.3
+      - cryptography==46.0.3
+      - cycler==0.12.1
+      - debugpy==1.8.19
+      - decorator==5.2.1
+      - et-xmlfile==2.0.0
+      - executing==2.2.1
+      - fonttools==4.62.0
+      - greenlet==3.3.0
+      - h11==0.16.0
+      - idna==3.11
+      - iniconfig==2.3.0
+      - ipykernel==6.31.0
+      - ipython==9.8.0
+      - ipython-pygments-lexers==1.1.1
+      - jedi==0.19.2
+      - jupyter-client==8.7.0
+      - jupyter-core==5.9.1
+      - kiwisolver==1.5.0
+      - langdetect==1.0.9
+      - matplotlib==3.10.8
+      - matplotlib-inline==0.2.1
+      - mstarpy==8.0.1             # pure Python — see the Linux smoke-check note below
+      - nest-asyncio==1.6.0
+      - numexpr==2.14.1
+      - numpy>=2.2,<2.3            # relaxed from ==2.2.6 — numerical reproducibility, not a build string
+      - opencv-python==4.12.0.88
+      - openpyxl==3.1.5
+      - outcome==1.3.0.post0
+      - packaging==25.0
+      - pandas>=2.3,<2.4           # relaxed from ==2.3.3
+      - parso==0.8.5
+      - patsy==1.0.2
+      - pdf2image==1.17.0
+      - pdfminer-six==20251107
+      - pdfplumber==0.11.8
+      - pillow==12.0.0
+      - platformdirs==4.5.1
+      - playwright==1.58.0         # needs `playwright install --with-deps chromium` post-install — see below
+      - pluggy==1.6.0
+      - prompt-toolkit==3.0.52
+      - psutil==7.2.1
+      - psycopg2-binary==2.9.12
+      - psycopg==3.3.6
+      - psycopg-binary==3.3.6
+      - pure-eval==0.2.3
+      - pyarrow==22.0.0
+      - pycparser==2.23
+      - pyee==13.0.1
+      - pygments==2.19.2
+      - pymupdf==1.26.7
+      - pyparsing==3.3.2
+      - pypdfium2==5.2.0
+      - pysocks==1.7.1
+      - pytesseract==0.3.13
+      - pytest==9.0.2
+      - python-dateutil==2.9.0.post0
+      - python-dotenv==1.2.2
+      - pytz==2025.2
+      - pyyaml==6.0.3               # db/pg/rename_map.yaml consumer (pg_seed.py, pg_reconcile.py)
+      - pyzmq==27.1.0
+      - requests==2.32.5
+      - scipy>=1.17,<1.18           # relaxed from ==1.17.1
+      - selenium==4.41.0
+      - six==1.17.0
+      - sniffio==1.3.1
+      - sortedcontainers==2.4.0
+      - soupsieve==2.8.3
+      - spyder-kernels==3.1.2
+      - sqlalchemy==2.0.45
+      - stack-data==0.6.3
+      - statsmodels>=0.14,<0.15     # relaxed from ==0.14.6
+      - tornado==6.5.4
+      - traitlets==5.14.3
+      - trio==0.33.0
+      - trio-websocket==0.12.2
+      - typing-extensions==4.15.0
+      - tzdata==2025.3
+      - urllib3==2.6.3
+      - wcwidth==0.2.14
+      - webdriver-manager==4.0.2
+      - websocket-client==1.9.0
+      - wsproto==1.3.2
+      - xlsxwriter==3.2.9
+# No `prefix:` line — environment.yml's `prefix: C:\data\envs\des` is a Windows path; conda derives
+# a sensible default location from `name: des` on Linux. Pass -p explicitly if a specific path is
+# wanted (matching the project's existing convention of managing envs by explicit -p path, not
+# -n name — see memory: reference_miniconda_location.md).
+
+# =============================================================================
+# Two Linux-specific runtime checks required beyond "pip install succeeded" (plan §5d):
+# =============================================================================
+#
+# 1. Playwright (nav_discovery.py's bearer-token scraping fallback for Morningstar) needs its
+#    browser binary AND system libraries installed separately from the pip package:
+#      playwright install --with-deps chromium
+#    `--with-deps` pulls the apt packages Chromium needs (libnss3, libatk1.0-0, etc.) — a fresh
+#    Ubuntu 24.04 install will be missing these. This is a ONE-TIME HOST-PROVISIONING step (root,
+#    during initial box setup — see the migration plan §5d "sudo boundary"), not a runtime
+#    privilege the pipeline's own unprivileged user needs. Verify with a smoke test before relying
+#    on it in production:
+#      python -c "from playwright.sync_api import sync_playwright; \
+#                  p = sync_playwright().start(); b = p.chromium.launch(headless=True); \
+#                  print('OK'); b.close(); p.stop()"
+#
+# 2. mstarpy (Morningstar client) is pure Python with no compiled extension — low risk, but its
+#    HTTP behavior (cookies/headers) has not been verified OS-independent. Run the existing NAV
+#    discovery test module once on Linux before relying on it in production
+#    (proyecto2/tests/discovery/, excluding test_historia.py which makes a live network call at
+#    import time regardless of platform — see the 2026-09-18 CI investigation note in
+#    .github/workflows/pg-tests.yml's header comment for why that file is excluded from any
+#    current CI wiring).

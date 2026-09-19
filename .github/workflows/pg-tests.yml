@@ -1,0 +1,114 @@
+name: Postgres test harness
+
+# Part of the SQLite -> PostgreSQL migration (plan §5a "Test harness stand-up").
+#
+# SCOPE, STATED HONESTLY: this job proves shared/testing/pg_fixtures.py actually works against a
+# real Postgres server — the smoke test in tests/test_pg_fixtures_smoke.py — using a minimal,
+# Linux-native pip install (pytest + psycopg[binary]). It does NOT yet run the existing
+# proyecto1/proyecto2/proyecto3 test suites (1,369 + 357 + 23 = 1,749 tests, currently exercised
+# nowhere in CI).
+#
+# UPDATE 2026-09-18: environment-linux.yml (plan §5d) now exists — a reviewed, name-diffed
+# derivation of environment.yml with the 4 Windows-only conda packages dropped and numpy/pandas/
+# scipy/statsmodels relaxed to major.minor. It has NOT been `conda env create`'d on an actual
+# Linux box yet (no such host in the session that produced it either). Wiring the full suite into
+# this CI job is still separate, not-yet-done work: it needs a `conda-incubator/setup-miniconda`
+# step (or a pip-only fallback resolved from environment-linux.yml's pip list, skipping the small
+# conda-level C-library list, which ubuntu-latest's apt/build-essential likely covers anyway) plus
+# the Playwright `--with-deps` install and its own smoke check (see environment-linux.yml's
+# footer). Both are real, scoped additions to this file — not done here to keep this change
+# reviewable on its own, not a silent gap.
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "shared/testing/**"
+      - "conftest.py"
+      - "proyecto2/conftest.py"
+      - "proyecto3/conftest.py"
+      - "tests/test_pg_fixtures_smoke.py"
+      - "db/pg/**"
+      - ".github/workflows/pg-tests.yml"
+  pull_request:
+    branches: ["**"]
+    paths:
+      - "shared/testing/**"
+      - "conftest.py"
+      - "proyecto2/conftest.py"
+      - "proyecto3/conftest.py"
+      - "tests/test_pg_fixtures_smoke.py"
+      - "db/pg/**"
+
+jobs:
+  pg-fixture-smoke:
+    name: PG fixture smoke test
+    runs-on: ubuntu-latest
+
+    # One shared Postgres instance for the whole job (plan §5a "CI execution times" —
+    # NOT testcontainers-per-test; a GH Actions services: container is already running and
+    # health-checked before the test step starts, with zero per-test container overhead).
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: fondos_test
+          POSTGRES_PASSWORD: fondos_test
+          POSTGRES_DB: fondos_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install minimal test dependencies
+        # Deliberately NOT environment.yml (Windows-pinned, won't solve here — see the header
+        # comment). This is the smallest set that makes the smoke test meaningful: pytest to run
+        # it, psycopg[binary] to talk to the service container, pyyaml because
+        # shared/testing/pg_fixtures.py's neighbors (db/pg/rename_map.yaml consumers) are on the
+        # same import path even though this specific smoke test doesn't read the map itself.
+        run: pip install pytest "psycopg[binary]" pyyaml
+
+      - name: Apply the migration DDL
+        # Exercises db/pg/00_roles_schemas.sql .. 40_matviews.sql against a real, empty Postgres
+        # for the first time anywhere (this repo has never run these files against a live
+        # server — see the migration plan's own stated limitation). A DDL syntax error surfaces
+        # here, in CI, on every push — not discovered manually on the target host later.
+        env:
+          PGPASSWORD: fondos_test
+        run: |
+          for f in db/pg/00_roles_schemas.sql db/pg/10_bronze.sql db/pg/20_silver.sql \
+                   db/pg/30_gold.sql db/pg/35_control.sql db/pg/40_matviews.sql; do
+            echo "::group::psql -f $f"
+            psql -h localhost -U fondos_test -d fondos_test -v ON_ERROR_STOP=1 -f "$f"
+            echo "::endgroup::"
+          done
+
+      - name: Run the PG fixture smoke test
+        env:
+          FONDOS_TEST_PG_DSN: "postgresql://fondos_test:fondos_test@localhost:5432/fondos_test"
+        run: python -X utf8 -m pytest tests/test_pg_fixtures_smoke.py -v
+
+      - name: Show context on failure
+        if: failure()
+        run: |
+          echo ""
+          echo "Either the DDL failed to apply (db/pg/*.sql has a real syntax/ordering error —"
+          echo "this is the first time these files have ever run against a live Postgres), or"
+          echo "the fixture itself is broken (shared/testing/pg_fixtures.py). Reproduce locally:"
+          echo "  docker run -d -p 5432:5432 -e POSTGRES_USER=fondos_test \\"
+          echo "    -e POSTGRES_PASSWORD=fondos_test -e POSTGRES_DB=fondos_test postgres:17"
+          echo "  for f in db/pg/*.sql; do psql \"postgresql://fondos_test:fondos_test@localhost:5432/fondos_test\" -f \"\$f\"; done"
+          echo "  FONDOS_TEST_PG_DSN=postgresql://fondos_test:fondos_test@localhost:5432/fondos_test \\"
+          echo "    python -X utf8 -m pytest tests/test_pg_fixtures_smoke.py -v"

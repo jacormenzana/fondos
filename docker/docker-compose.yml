@@ -1,0 +1,115 @@
+# =============================================================================
+# docker-compose.yml — PostgreSQL 17 for the `fondos` operational database
+# =============================================================================
+# Part of the SQLite → PostgreSQL migration (plan: role-you-are-keen-ladybug.md).
+#
+# This file was previously untracked — the Postgres/Superset stack referenced by
+# doc/reglas/P4_BI_CHARTER.md existed only on the old machine with no committed definition. It is
+# now a first-class deliverable (plan §Deliverables).
+#
+# Target: Dell OptiPlex 3070, Ubuntu 24.04 LTS. Single-user analytical workstation, single NVMe.
+#
+# Prerequisites on the host (§P0 — one-time, root, before this file is ever `docker compose up`'d):
+#   - Docker Engine + compose plugin installed; deploying user in the `docker` group (non-root
+#     for day-to-day operation — see plan §5d "sudo boundary" for why the ONE-TIME apt-installs
+#     below are a provisioning step, not a runtime privilege).
+#   - PGDATA host directory created with correct ownership: e.g.
+#       sudo mkdir -p /var/lib/fondos-pgdata && sudo chown 999:999 /var/lib/fondos-pgdata
+#     (999:999 is the postgres user/group inside the official postgres:17 image.)
+#   - The two secret files referenced below exist, mode 0600, OUTSIDE this repo:
+#       /etc/fondos/secrets/postgres_password       (fondos_owner's password)
+#       /etc/fondos/secrets/pgbackrest_b2.conf       (bucket-scoped Backblaze B2 / S3 key — §P1
+#                                                      "Credential handling": bucket-scoped key
+#                                                      only, never the account master key)
+#
+# One-time DDL apply (after `docker compose up -d`):
+#   for f in db/pg/00_roles_schemas.sql db/pg/10_bronze.sql db/pg/20_silver.sql \
+#            db/pg/30_gold.sql db/pg/35_control.sql db/pg/40_matviews.sql; do
+#     psql "postgresql://fondos_owner@localhost:5432/fondos" -f "$f"
+#   done
+# =============================================================================
+
+services:
+  postgres:
+    image: postgres:17
+    container_name: fondos_postgres
+    restart: unless-stopped
+
+    # 64MB default breaks parallel query with "could not resize shared memory segment" — the
+    # single most common "why is parallel query broken in Docker" cause (§P1).
+    shm_size: 2gb
+
+    # Let PG shut down cleanly instead of crash-recovering on every host reboot/restart.
+    stop_grace_period: 2m
+
+    ports:
+      - "5432:5432"   # the new operational DB. Legacy BI mirror stays on 5433 until §P4 closes.
+
+    environment:
+      POSTGRES_DB: fondos
+      POSTGRES_USER: fondos_owner
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      # Load-window vs. production WAL posture (§P3 "WAL strategy") is toggled via
+      # postgresql.conf, NOT here — see the two conf variants alongside this file.
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+
+    volumes:
+      # Bind directly to the NVMe path set up in host provisioning — NOT a named Docker volume,
+      # so its location is explicit and matches the ≥80GB free-space floor checked in §P0.
+      - /var/lib/fondos-pgdata:/var/lib/postgresql/data
+      - ./postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      # Mounted DIRECTLY at /docker-entrypoint-initdb.d/ (not a subdirectory — the official image's
+      # entrypoint only scans the top level) so the 00_/10_/20_/30_/35_/40_ prefixes auto-execute
+      # in the correct order on a FIRST-EVER `docker compose up` against an empty PGDATA. This only
+      # fires once, at initdb time — it does NOT re-apply on every container start, and does NOT
+      # run against an already-initialized PGDATA (e.g. after the §P3 seed load). For any later
+      # re-apply (a DDL change, a fresh non-Docker-managed instance), use the manual `psql -f` loop
+      # documented at the top of this file. rename_map.yaml in the same directory is harmless here
+      # — the entrypoint only processes *.sql/*.sh/*.sql.gz.
+      - ../db/pg:/docker-entrypoint-initdb.d:ro
+    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
+
+    secrets:
+      - postgres_password
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fondos_owner -d fondos"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+    deploy:
+      resources:
+        limits:
+          memory: 12g   # leaves headroom under a 16GB box for the OS + the P2/P3 Python process;
+                          # raise proportionally on a 32GB box (see postgresql.conf's 32GB column)
+
+  # --- pgBackRest sidecar (§P1 "Backup & recovery") ---------------------------------------------
+  # Off-site backup target is cloud object storage (Backblaze B2 / S3-compatible), configured as
+  # a pgBackRest `repo1` — not a NAS or a retired desktop (both rejected as single points of
+  # failure with no SLA and no real geographic separation). This sidecar is a template: fill in
+  # the repo1-s3-* environment values (or a mounted pgbackrest.conf) before first use, and run the
+  # restore drill (§P1) before trusting it.
+  pgbackrest:
+    image: pgbackrest/pgbackrest:latest
+    container_name: fondos_pgbackrest
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - /var/lib/fondos-pgdata:/var/lib/postgresql/data:ro
+      - ./pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro
+    secrets:
+      - pgbackrest_b2_conf
+    # Actual backup/archive-push invocation is scheduled externally (systemd timer calling
+    # `docker compose exec pgbackrest pgbackrest --stanza=fondos backup`), matching the plan's
+    # "no pg_cron, deliberately outside the DB" discipline (§P2) applied to backup scheduling too.
+    entrypoint: ["sleep", "infinity"]
+
+secrets:
+  postgres_password:
+    file: /etc/fondos/secrets/postgres_password
+  pgbackrest_b2_conf:
+    file: /etc/fondos/secrets/pgbackrest_b2.conf

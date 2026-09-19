@@ -34,6 +34,13 @@ Stack: Python 3.13, SQLite, Windows 10, Conda env `des`.
 DB: `db/fondos.sqlite` (schema v26). Master list: `c:\data\fondos\in\GestoresDeFondosv1.xlsx`.
 <!-- AUTO:END schema-version -->
 
+**⚠ Migration in progress (announced 2026-09-17):** the operational store above (SQLite) is being
+migrated to PostgreSQL, target host Ubuntu 24.04 / Docker. P1+P2 infrastructure artifacts
+(`docker/`, `db/pg/*.sql`, `scripts/mig/pg_seed.py`, `scripts/mig/pg_reconcile.py`) are committed
+but **not yet deployed** — SQLite remains the live operational database until the reconciliation
+gate passes and the 3-stage cutover (dual-write → bake → retire) completes. See
+`doc/reglas/P4_BI_CHARTER.md` §0 for current status and the migration plan for the full design.
+
 ---
 
 ## Architecture
@@ -135,7 +142,7 @@ PDFs and `Raw_KIID_Text` (in `fund_kiid_metadata`) are **never deleted**.
 ### Key support modules
 
 <!-- AUTO:BEGIN kill-switches-line -->
-- `shared/config.py` — all constants: `DB_PATH`, `SCHEMA_VERSION` (`"v26"`), `DOMAIN_VALUES`, `ATTRIBUTE_CATALOG`, kill-switches (`PRIIPS_COST_EXTRACTION_ENABLED`, `SHORT_HORIZON_SCORING_ENABLED`, `ROLLING_STATS_ENABLED`, `ROLLING_PCTILE_P3_ENABLED`, `BENCHMARK_DECOMP_ENABLED`, `BENCHMARK_ROLE_ENABLED`, `INTER18_RECONCILIATION_ENABLED`, `DLA2_ARBITRATION_ENABLED`)
+- `shared/config.py` — all constants: `DB_PATH`, `SCHEMA_VERSION` (`"v26"`), `DOMAIN_VALUES`, `ATTRIBUTE_CATALOG`, kill-switches (`PRIIPS_COST_EXTRACTION_ENABLED`, `SHORT_HORIZON_SCORING_ENABLED`, `ROLLING_STATS_ENABLED`, `ROLLING_PCTILE_P3_ENABLED`, `PORTFOLIO_HYSTERESIS_ENABLED`, `ROTATION_COST_GATE_ENABLED`, `BENCHMARK_DECOMP_ENABLED`, `BENCHMARK_ROLE_ENABLED`, `INTER18_RECONCILIATION_ENABLED`, `DLA2_ARBITRATION_ENABLED`)
 <!-- AUTO:END kill-switches-line -->
 - `shared/schema_checks.py` — `assert_schema_alignment()` validates DB columns at startup
 - `proyecto1/core/classify_utils.py` — **single source of truth** for all categorical normalization maps (EN→ES for Sector_Focus, Type, Family). Import from here; never duplicate elsewhere (P#11 / R-1).
@@ -365,6 +372,7 @@ python -m proyecto2.src.discovery.macro_discovery --source all
 | `fund_scorer.py` | `proyecto3/src` |
 | `monthly_report.py` | `proyecto3/src` |
 | `portfolio_builder.py` | `proyecto3/src` |
+| `portfolio_engine.py` | `proyecto3/src` |
 | `regime_classifier.py` | `proyecto3/src` |
 <!-- AUTO:END p3-module-map -->
 
@@ -430,8 +438,20 @@ Weight method: `score_proportional`.
 
 ## P4 — Analytics / BI Sync
 
-Pushes SQLite metric tables to a Docker **Postgres** analytics store and surfaces them in **Superset**
-for rolling-signal visualization.
+**Two things live under "P4" right now — do not conflate them.** See `doc/reglas/P4_BI_CHARTER.md`
+§0 for the full picture; summary here:
+
+1. **The BI mirror (ACTIVE today, described below)** — pushes SQLite metric tables to a Docker
+   Postgres analytics store (port 5433) and surfaces them in Superset for rolling-signal
+   visualization. This is the only P4 pipeline actually in production.
+2. **The full operational migration (artifacts committed, NOT deployed)** — the complete P1+P2+P3
+   database is migrating to PostgreSQL as the operational store (port 5432, target Ubuntu host),
+   superseding #1 in scope once cut over. Artifacts: `docker/docker-compose.yml`,
+   `docker/postgresql.conf`, `db/pg/00_roles_schemas.sql` … `40_matviews.sql`,
+   `db/pg/rename_map.yaml`, `scripts/mig/pg_seed.py`, `scripts/mig/pg_reconcile.py`. Do not treat
+   these as live infrastructure — nothing has run against the target host yet.
+
+### BI mirror (#1 above — current production pipeline)
 
 | Component | Path / Target |
 |-----------|---------------|
@@ -555,6 +575,7 @@ UPDATE fund_kiid_metadata SET KIID_Status='FORCE_REFRESH' WHERE ISIN='<isin>' AN
 | `P1_refreshBenchmarks.bat` | P1 |
 | `P2_calculateIndicators.bat` | P2 |
 | `P2_discoverLoadMetrics.bat` | P2 |
+| `P3_buildPortfolio.bat` | P3 |
 | `P3_generateReport.bat` | P3 |
 | `P4_syncToPostgres.bat` | P4 |
 <!-- AUTO:END launchers -->
