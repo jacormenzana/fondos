@@ -38,6 +38,7 @@ _PROYECTO1_DIR = _HARVEST_DIR.parent                    # proyecto1/
 _ROOT          = _PROYECTO1_DIR.parent                  # repo root
 sys.path.insert(0, str(_ROOT))
 from shared.config import DB_PATH  # noqa: E402
+from shared.db import is_postgres_connection, executemany  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -209,11 +210,15 @@ def cmd_probe(args) -> None:  # noqa: ARG001
 # ---------------------------------------------------------------------------
 # PHASE 1-2 — Harvest + Normalize
 # ---------------------------------------------------------------------------
-def cmd_harvest(args) -> None:
+def cmd_harvest(args, conn=None) -> None:
     """
     Phase 1: Fetch catalogo.xml → emit raw JSONL (before any parsing).
     Phase 2: Parse each href → UPSERT into db_document_catalogue.
     §6.1: href captured verbatim. §6.2: no codSus allowlist.
+
+    conn: injected connection (Postgres or SQLite) — used by tests and any future dialect-aware
+    caller. When None (the CLI's default), behavior is unchanged: opens its own SQLite connection
+    against DB_PATH, exactly as before this port (Postgres migration Phase 5c, 2026-09-20).
     """
     harvest_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     jsonl_path = _HARVEST_DIR / f"harvest_raw_{harvest_ts}.jsonl"
@@ -268,16 +273,37 @@ def cmd_harvest(args) -> None:
 
     # Phase 2: Normalize (parse href) → DB
     log.info("Phase 2 — Normalizing + loading to DB: %s", DB_PATH)
-    conn = sqlite3.connect(DB_PATH)
-    conn.executescript(DDL_CATALOGUE)
-    conn.commit()
+    own_conn = conn is None
+    if own_conn:
+        conn = sqlite3.connect(DB_PATH)
+    pg = is_postgres_connection(conn)
+    ph = "%s" if pg else "?"
+    if pg:
+        # bronze.db_document_catalogue is already provisioned by db/pg/10_bronze.sql (applied
+        # once via psql, see docker-compose.yml) — not by this script's inline DDL, which is
+        # SQLite-only (conn.executescript() doesn't exist on psycopg3 either way). Same
+        # architecture as sqlite_writer.create_schema(): Postgres schema creation is external,
+        # not autotranslated at runtime.
+        pass
+    else:
+        conn.executescript(DDL_CATALOGUE)
+        conn.commit()
 
-    upsert_sql = """
-        INSERT OR IGNORE INTO db_document_catalogue
-            (harvest_ts, gestora_label, gestora_value, cod_db, fund_name,
-             isin, link_label, href, cod_doc, cod_sus, cod_cont, idioma)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-    """
+    if pg:
+        upsert_sql = """
+            INSERT INTO db_document_catalogue
+                (harvest_ts, gestora_label, gestora_value, cod_db, fund_name,
+                 isin, link_label, href, cod_doc, cod_sus, cod_cont, idioma)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            ON CONFLICT (harvest_ts, cod_db, href) DO NOTHING
+        """
+    else:
+        upsert_sql = """
+            INSERT OR IGNORE INTO db_document_catalogue
+                (harvest_ts, gestora_label, gestora_value, cod_db, fund_name,
+                 isin, link_label, href, cod_doc, cod_sus, cod_cont, idioma)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+        """
 
     batch = []
     for row in raw_rows:
@@ -308,13 +334,14 @@ def cmd_harvest(args) -> None:
             parsed["idioma"],
         ))
 
-    conn.executemany(upsert_sql, batch)
+    executemany(conn, upsert_sql, batch)
     conn.commit()
 
     inserted = conn.execute(
-        "SELECT COUNT(*) FROM db_document_catalogue WHERE harvest_ts=?", (harvest_ts,)
+        f"SELECT COUNT(*) FROM db_document_catalogue WHERE harvest_ts={ph}", (harvest_ts,)
     ).fetchone()[0]
-    conn.close()
+    if own_conn:
+        conn.close()
 
     log.info("DB rows inserted: %d  (harvest_ts=%s)", inserted, harvest_ts)
     if n_unknown_codsus > 0:
