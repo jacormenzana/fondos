@@ -148,6 +148,62 @@ def is_postgres_connection(conn) -> bool:
     return psycopg is not None and isinstance(conn, psycopg.Connection)
 
 
+def execute_fail_soft(conn, sql: str, params=()) -> bool:
+    """Execute a statement that must never propagate a failure or poison the enclosing
+    transaction — the recurring `try: conn.execute(...); except: pass` pattern used throughout P1
+    for non-critical writes (ingestion_log entries, etc.). On Postgres this wraps the statement in
+    a nested SAVEPOINT so a failure rolls back only this one statement, not the whole transaction —
+    found live 2026-09-20 (first in sqlite_writer.log_ingestion/_upsert_kiid_benchmark, then again
+    in fund_family_builder.py — three occurrences of the same gap is the P#11/DRY threshold for
+    centralizing rather than re-deriving the SAVEPOINT dance at each call site): Postgres aborts the
+    WHOLE enclosing transaction on any failed statement, unlike SQLite, so a caught-and-swallowed
+    exception there was silently poisoning every later statement in the same transaction. Returns
+    True if the statement succeeded, False if it failed (and was contained).
+
+    Found live 2026-09-20 (fund_family_builder.py's own PG regression test, via
+    pg_conn_module_schema): SAVEPOINT raises `NoActiveSqlTransaction` when the connection is in
+    autocommit mode — there's no enclosing transaction to nest a savepoint inside. That's not a
+    test-only quirk: in autocommit mode every statement already IS its own implicit transaction,
+    so a failure can't poison a "later statement" the way it does inside an explicit transaction —
+    the whole reason this helper exists doesn't apply, and the SAVEPOINT dance is both unnecessary
+    and invalid there. Branch on `conn.autocommit` accordingly."""
+    if is_postgres_connection(conn):
+        if conn.autocommit:
+            try:
+                conn.execute(sql, params)
+                return True
+            except Exception:
+                return False
+        conn.execute("SAVEPOINT fail_soft_sp")
+        try:
+            conn.execute(sql, params)
+        except Exception:
+            conn.execute("ROLLBACK TO SAVEPOINT fail_soft_sp")
+            return False
+        else:
+            conn.execute("RELEASE SAVEPOINT fail_soft_sp")
+            return True
+    else:
+        try:
+            conn.execute(sql, params)
+            return True
+        except Exception:
+            return False
+
+
+def executemany(conn, sql: str, params_seq) -> None:
+    """sqlite3.Connection.executemany() is a convenience method directly on the connection.
+    psycopg3 has no such thing — Connection has no executemany at all, only Cursor does (found
+    live 2026-09-20 porting fund_family_builder.py: AttributeError: 'Connection' object has no
+    attribute 'executemany'). This is a real, likely-recurring gap (bulk per-row writes are common
+    across P1/P2/P3), so it's centralized here once (P#11/DRY) rather than each ported function
+    re-deriving `conn.cursor().executemany(...)` for its own Postgres branch."""
+    if is_postgres_connection(conn):
+        conn.cursor().executemany(sql, params_seq)
+    else:
+        conn.executemany(sql, params_seq)
+
+
 def _pg_dsn() -> str:
     import os
     dsn = os.environ.get(_PG_DSN_ENV_VAR)

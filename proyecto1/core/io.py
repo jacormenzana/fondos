@@ -396,8 +396,22 @@ def mark_stale_for_refresh(
         datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=max_age_days)
     ).isoformat(timespec="seconds")
 
+    # Postgres migration Phase 5c: only the placeholder character is dialect-specific here.
+    # NULLS FIRST is itself Postgres-originated syntax that SQLite later adopted, so the ORDER BY
+    # clause needs no translation.
+    try:
+        from shared.db import is_postgres_connection
+    except ImportError:
+        import sys as _sys
+        from pathlib import Path as _Path
+        _root = _Path(__file__).resolve().parents[2]
+        if str(_root) not in _sys.path:
+            _sys.path.insert(0, str(_root))
+        from shared.db import is_postgres_connection
+    ph = "%s" if is_postgres_connection(conn) else "?"
+
     # Seleccionar los más antiguos primero (FIFO de antigüedad)
-    sql = """
+    sql = f"""
         UPDATE fund_kiid_metadata
         SET    KIID_Status = 'FORCE_REFRESH'
         WHERE  ISIN IN (
@@ -406,9 +420,9 @@ def mark_stale_for_refresh(
             WHERE  KIID_Status   IN ('OK', 'CACHED')
             AND    KIID_Class     = 1
             AND    (KIID_Downloaded_At IS NULL
-                    OR KIID_Downloaded_At < ?)
+                    OR KIID_Downloaded_At < {ph})
             ORDER  BY KIID_Downloaded_At ASC NULLS FIRST
-            LIMIT  ?
+            LIMIT  {ph}
         )
         AND    KIID_Class = 1;
     """

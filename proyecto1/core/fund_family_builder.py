@@ -63,6 +63,8 @@ try:
 except ImportError:
     from core.classify_utils import RFC_INCOMPATIBLE_FAMILIES
 
+from shared.db import is_postgres_connection, executemany, execute_fail_soft
+
 
 # Familias con heterogeneidad estructural confirmada (cross-nature por diseno del gestor).
 # El clasificador no puede resolverlas porque el gestor usa la misma denominacion base para
@@ -448,8 +450,11 @@ def correct_family_inconsistencies(
         return len(corrections)
 
     # Aplicar correcciones
-    conn.executemany(
-        "UPDATE fund_master SET Fund_Nature = ? WHERE ISIN = ?",
+    ph = "%s" if is_postgres_connection(conn) else "?"
+    _now_sql = "now()" if is_postgres_connection(conn) else "datetime('now')"
+    executemany(
+        conn,
+        f"UPDATE fund_master SET Fund_Nature = {ph} WHERE ISIN = {ph}",
         [(nat, isin) for nat, isin, _, _ in corrections],
     )
 
@@ -470,43 +475,40 @@ def correct_family_inconsistencies(
         if nat == "Renta Fija Corto Plazo"
     ]
     if _family_fix_isins:
-        _placeholders = ",".join("?" for _ in _family_fix_isins)
+        _placeholders = ",".join(ph for _ in _family_fix_isins)
         _fam_rows = conn.execute(
             f"SELECT ISIN, Family FROM fund_master WHERE ISIN IN ({_placeholders})",
             _family_fix_isins,
         ).fetchall()
-        _to_fix = [isin for isin, fam in _fam_rows if fam in _RFC_INCOMPATIBLE_FAMILIES]
+        _to_fix = [isin for isin, fam in _fam_rows if fam in RFC_INCOMPATIBLE_FAMILIES]
         if _to_fix:
-            conn.executemany(
-                "UPDATE fund_master SET Family = 'Short-Term Fixed Income' WHERE ISIN = ?",
+            executemany(
+                conn,
+                f"UPDATE fund_master SET Family = 'Short-Term Fixed Income' WHERE ISIN = {ph}",
                 [(isin,) for isin in _to_fix],
             )
             for isin in _to_fix:
-                try:
-                    conn.execute(
-                        """INSERT OR IGNORE INTO ingestion_log
-                           (ISIN, Step, Status, Message, Created_At)
-                           VALUES (?, 'BL64E_FAMCORR_REAPPLIED', 'INFO', ?, datetime('now'))""",
-                        (isin, "Family corregido a 'Short-Term Fixed Income' tras "
-                               "reversión de Nature Restantes→RFC (BL-64e re-aplicado)")
-                    )
-                except Exception:
-                    pass
+                execute_fail_soft(
+                    conn,
+                    f"""INSERT INTO ingestion_log
+                       (ISIN, Step, Status, Message, Created_At)
+                       VALUES ({ph}, 'BL64E_FAMCORR_REAPPLIED', 'INFO', {ph}, {_now_sql})""",
+                    (isin, "Family corregido a 'Short-Term Fixed Income' tras "
+                           "reversión de Nature Restantes→RFC (BL-64e re-aplicado)")
+                )
             print(f"  [FamilyBuilder] BL-64e re-aplicado tras corrección de familia: "
                   f"{len(_to_fix)} fondos")
 
     # Registrar en ingestion_log
     for nat, isin, fam_id, old_nature in corrections:
-        try:
-            conn.execute(
-                """INSERT OR IGNORE INTO ingestion_log
-                   (ISIN, Step, Status, Message, Created_At)
-                   VALUES (?, 'FAMILY_NATURE_CORRECTION', 'INFO', ?, datetime('now'))""",
-                (isin, f"Fund_Nature corregido: {old_nature} → {nat} "
-                       f"(familia {fam_id}, regla escalable)")
-            )
-        except Exception:
-            pass
+        execute_fail_soft(
+            conn,
+            f"""INSERT INTO ingestion_log
+               (ISIN, Step, Status, Message, Created_At)
+               VALUES ({ph}, 'FAMILY_NATURE_CORRECTION', 'INFO', {ph}, {_now_sql})""",
+            (isin, f"Fund_Nature corregido: {old_nature} → {nat} "
+                   f"(familia {fam_id}, regla escalable)")
+        )
 
     conn.commit()
     print(f"  [FamilyBuilder] {len(corrections)} correcciones aplicadas")
@@ -583,8 +585,10 @@ def build_fund_families(
         return len(updates)
 
     # Actualizar en batch
-    conn.executemany(
-        "UPDATE fund_master SET fund_family_id = ? WHERE ISIN = ?",
+    ph = "%s" if is_postgres_connection(conn) else "?"
+    executemany(
+        conn,
+        f"UPDATE fund_master SET fund_family_id = {ph} WHERE ISIN = {ph}",
         updates,
     )
     conn.commit()
@@ -659,10 +663,12 @@ def _populate_fund_families(
         (fam_id, name, family_natures.get(fam_id), n, now_str)
         for fam_id, name, n in family_data
     ]
-    conn.executemany(
+    ph = "%s" if is_postgres_connection(conn) else "?"
+    executemany(
+        conn,
         "INSERT INTO fund_families "
         "(family_id, family_name, Fund_Nature, n_funds, Updated_At) "
-        "VALUES (?, ?, ?, ?, ?)",
+        f"VALUES ({ph}, {ph}, {ph}, {ph}, {ph})",
         rows,
     )
     conn.commit()

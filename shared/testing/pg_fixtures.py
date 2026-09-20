@@ -138,5 +138,15 @@ def pg_conn_module_schema(pg_session_conn: "psycopg.Connection", request: pytest
         conn.execute(f"CREATE SCHEMA {schema}")
         yield schema
     finally:
+        # Found live 2026-09-20 (fund_family_builder.py's PG tests, first module to run
+        # alongside other PG-backed test files in one session): a test typically does
+        # `conn.execute(f"SET search_path = {schema}")` to use this schema unqualified — that
+        # SETs it on `pg_session_conn` itself, which is SESSION-scoped and shared across every
+        # test module. Left unreset, the next module's tests (even ones using the unrelated
+        # `pg_conn` SAVEPOINT fixture) inherit a search_path pointing at a schema this fixture
+        # just dropped, failing with "no schema has been selected to create in". Resetting here
+        # closes the leak at its owning fixture rather than requiring every module-schema test
+        # to remember to reset it.
         conn.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
+        conn.execute("SET search_path = DEFAULT")
         conn.autocommit = False
