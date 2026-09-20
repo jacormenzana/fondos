@@ -242,6 +242,7 @@ proyecto2/
       test_consistency.py
       test_deflation.py
       test_drawdown.py
+      test_m2_global_builder_pg.py
       test_macro_sensitivity.py
       test_nav_scale_repair_20260719.py
       test_regime_returns.py
@@ -254,9 +255,12 @@ proyecto2/
       test_fred_es.py
       test_fred_es2.py
       test_historia.py
+      test_macro_discovery_pg.py
       test_nav_discovery_freeze_20260915.py
       test_nav_discovery_splice_20260915.py
       test_nav_monthly_write_20260913.py
+    pipeline/
+      test_run_pipeline_writes_pg.py
     readers/
       test_preflight.py
       test_reliability_signals.py
@@ -265,6 +269,7 @@ proyecto2/
     utils/
       test_fingerprint.py
     writers/
+      test_metrics_writer_pg.py
       test_timeseries_writer.py
 ```
 <!-- AUTO:END p2-module-map -->

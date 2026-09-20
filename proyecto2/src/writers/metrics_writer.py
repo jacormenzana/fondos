@@ -14,8 +14,29 @@ historial git para el contenido anterior.
 """
 
 import sqlite3
+import sys
 import time
 from datetime import date
+from pathlib import Path
+
+try:
+    from shared.db import is_postgres_connection, in_transaction, begin_immediate
+except ModuleNotFoundError:
+    _shared_root = Path(__file__).resolve().parents[3]
+    if str(_shared_root) not in sys.path:
+        sys.path.insert(0, str(_shared_root))
+    from shared.db import is_postgres_connection, in_transaction, begin_immediate
+
+
+def _executemany(conn, sql: str, data: list) -> "sqlite3.Cursor":
+    """executemany that returns the cursor on both dialects (psycopg3's Connection has no
+    executemany of its own -- see shared/db.py's own executemany() docstring for the same gap;
+    this local variant returns the cursor because write_timeseries needs cur.rowcount)."""
+    if is_postgres_connection(conn):
+        cur = conn.cursor()
+        cur.executemany(sql, data)
+        return cur
+    return conn.executemany(sql, data)
 
 
 def rows_from_metric_tuples(
@@ -57,13 +78,27 @@ def write_metrics(
         return 0
 
     today = date.today().isoformat()
-    sql = """
-        INSERT OR REPLACE INTO fund_metrics
-            (isin, metric, horizon, value, real_flag,
-             calculation_date, metric_version, benchmark_id, source_rows,
-             algorithm_version, batch_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
-    """
+    if is_postgres_connection(conn):
+        sql = """
+            INSERT INTO fund_metrics
+                (isin, metric, horizon, value, real_flag,
+                 calculation_date, metric_version, benchmark_id, source_rows,
+                 algorithm_version, batch_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, NULL, %s, %s, %s)
+            ON CONFLICT (isin, metric, horizon, real_flag, metric_version) DO UPDATE SET
+                value = excluded.value, calculation_date = excluded.calculation_date,
+                benchmark_id = excluded.benchmark_id, source_rows = excluded.source_rows,
+                algorithm_version = excluded.algorithm_version, batch_id = excluded.batch_id,
+                load_ts = DEFAULT
+        """
+    else:
+        sql = """
+            INSERT OR REPLACE INTO fund_metrics
+                (isin, metric, horizon, value, real_flag,
+                 calculation_date, metric_version, benchmark_id, source_rows,
+                 algorithm_version, batch_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
+        """
     rows = [
         (
             isin,
@@ -81,14 +116,14 @@ def write_metrics(
         for m in metrics
     ]
     # EFF-2: skip own transaction when the caller batches for us
-    if conn.in_transaction:
-        conn.executemany(sql, rows)
+    if in_transaction(conn):
+        _executemany(conn, sql, rows)
         return len(rows)
     for attempt in range(5):
         try:
-            conn.execute("BEGIN IMMEDIATE")
+            begin_immediate(conn)
             try:
-                conn.executemany(sql, rows)
+                _executemany(conn, sql, rows)
                 conn.execute("COMMIT")
             except Exception:
                 conn.execute("ROLLBACK")
@@ -130,22 +165,41 @@ def write_timeseries(
     """
     if not rows or dry_run:
         return 0
-    sql = """
-        INSERT INTO fund_metric_timeseries
-            (isin, metric, window, date, value, real_flag,
-             ref_type, ref_value, source_rows,
-             algorithm_version, batch_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(isin, metric, window, date, real_flag) DO UPDATE SET
-            value             = excluded.value,
-            ref_type          = excluded.ref_type,
-            ref_value         = excluded.ref_value,
-            source_rows       = excluded.source_rows,
-            algorithm_version = excluded.algorithm_version,
-            batch_id          = excluded.batch_id
-        WHERE fund_metric_timeseries.value IS NOT excluded.value
-           OR fund_metric_timeseries.algorithm_version IS NOT excluded.algorithm_version
-    """
+    if is_postgres_connection(conn):
+        # window -> window_label: PG reserved word, renamed in the target schema (db/pg/rename_map.yaml)
+        sql = """
+            INSERT INTO fund_metric_timeseries
+                (isin, metric, window_label, date, value, real_flag,
+                 ref_type, ref_value, source_rows,
+                 algorithm_version, batch_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (isin, metric, window_label, date, real_flag) DO UPDATE SET
+                value             = excluded.value,
+                ref_type          = excluded.ref_type,
+                ref_value         = excluded.ref_value,
+                source_rows       = excluded.source_rows,
+                algorithm_version = excluded.algorithm_version,
+                batch_id          = excluded.batch_id
+            WHERE fund_metric_timeseries.value IS DISTINCT FROM excluded.value
+               OR fund_metric_timeseries.algorithm_version IS DISTINCT FROM excluded.algorithm_version
+        """
+    else:
+        sql = """
+            INSERT INTO fund_metric_timeseries
+                (isin, metric, window, date, value, real_flag,
+                 ref_type, ref_value, source_rows,
+                 algorithm_version, batch_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(isin, metric, window, date, real_flag) DO UPDATE SET
+                value             = excluded.value,
+                ref_type          = excluded.ref_type,
+                ref_value         = excluded.ref_value,
+                source_rows       = excluded.source_rows,
+                algorithm_version = excluded.algorithm_version,
+                batch_id          = excluded.batch_id
+            WHERE fund_metric_timeseries.value IS NOT excluded.value
+               OR fund_metric_timeseries.algorithm_version IS NOT excluded.algorithm_version
+        """
     data = [
         (
             r["isin"], r["metric"], r["window"], r["date"],
@@ -160,14 +214,14 @@ def write_timeseries(
         for r in rows
     ]
     # EFF-2: skip own transaction when the caller batches for us
-    if conn.in_transaction:
-        cur = conn.executemany(sql, data)
+    if in_transaction(conn):
+        cur = _executemany(conn, sql, data)
         return cur.rowcount if cur.rowcount >= 0 else len(data)
     for attempt in range(5):
         try:
-            conn.execute("BEGIN IMMEDIATE")
+            begin_immediate(conn)
             try:
-                cur = conn.executemany(sql, data)
+                cur = _executemany(conn, sql, data)
                 conn.execute("COMMIT")
                 return cur.rowcount if cur.rowcount >= 0 else len(data)
             except Exception:
@@ -210,17 +264,35 @@ def replace_beta_set(
         return 0
 
     today = date.today().isoformat()
-    sql_del = (
-        "DELETE FROM fund_metrics "
-        "WHERE isin=? AND metric LIKE 'beta_%' AND horizon=? AND metric_version=?"
-    )
-    sql_ins = """
-        INSERT OR REPLACE INTO fund_metrics
-            (isin, metric, horizon, value, real_flag,
-             calculation_date, metric_version, benchmark_id, source_rows,
-             algorithm_version, batch_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
-    """
+    if is_postgres_connection(conn):
+        sql_del = (
+            "DELETE FROM fund_metrics "
+            "WHERE isin=%s AND metric LIKE 'beta_%%' AND horizon=%s AND metric_version=%s"
+        )
+        sql_ins = """
+            INSERT INTO fund_metrics
+                (isin, metric, horizon, value, real_flag,
+                 calculation_date, metric_version, benchmark_id, source_rows,
+                 algorithm_version, batch_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, NULL, %s, %s, %s)
+            ON CONFLICT (isin, metric, horizon, real_flag, metric_version) DO UPDATE SET
+                value = excluded.value, calculation_date = excluded.calculation_date,
+                benchmark_id = excluded.benchmark_id, source_rows = excluded.source_rows,
+                algorithm_version = excluded.algorithm_version, batch_id = excluded.batch_id,
+                load_ts = DEFAULT
+        """
+    else:
+        sql_del = (
+            "DELETE FROM fund_metrics "
+            "WHERE isin=? AND metric LIKE 'beta_%' AND horizon=? AND metric_version=?"
+        )
+        sql_ins = """
+            INSERT OR REPLACE INTO fund_metrics
+                (isin, metric, horizon, value, real_flag,
+                 calculation_date, metric_version, benchmark_id, source_rows,
+                 algorithm_version, batch_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
+        """
     rows = [
         (
             isin,
@@ -238,16 +310,16 @@ def replace_beta_set(
         for m in metrics
     ]
     # EFF-2: skip own transaction when the caller batches for us
-    if conn.in_transaction:
+    if in_transaction(conn):
         conn.execute(sql_del, (isin, horizon, metric_version))
-        conn.executemany(sql_ins, rows)
+        _executemany(conn, sql_ins, rows)
         return len(rows)
     for attempt in range(5):
         try:
-            conn.execute("BEGIN IMMEDIATE")
+            begin_immediate(conn)
             try:
                 conn.execute(sql_del, (isin, horizon, metric_version))
-                conn.executemany(sql_ins, rows)
+                _executemany(conn, sql_ins, rows)
                 conn.execute("COMMIT")
             except Exception:
                 conn.execute("ROLLBACK")

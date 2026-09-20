@@ -247,6 +247,46 @@ def executemany(conn, sql: str, params_seq) -> None:
         conn.executemany(sql, params_seq)
 
 
+def in_transaction(conn) -> bool:
+    """Dialect-aware equivalent of sqlite3.Connection.in_transaction — True when conn currently has
+    an open transaction a caller should append to rather than starting its own (the EFF-2 "single
+    transaction for all per-fund writes" batching pattern in proyecto2, found live 2026-09-20
+    porting metrics_writer.py/run_pipeline.py: 7 call sites check this before deciding whether to
+    issue their own BEGIN/COMMIT). SQLite: conn.in_transaction directly. Postgres (psycopg3,
+    autocommit=False by default): the server reports IDLE only right after connect or after the
+    last commit/rollback — any statement since then auto-opens an implicit transaction, so a
+    non-IDLE status is the equivalent signal."""
+    if is_postgres_connection(conn):
+        import psycopg.pq
+        return conn.info.transaction_status != psycopg.pq.TransactionStatus.IDLE
+    return conn.in_transaction
+
+
+def begin_immediate(conn, max_attempts: int = 5) -> None:
+    """Dialect-aware equivalent of SQLite's `BEGIN IMMEDIATE` with lock-retry backoff. Only call
+    when `not in_transaction(conn)` — mirrors the SQLite call sites this replaces, which only ever
+    reach their own BEGIN when they've already confirmed no transaction is open.
+
+    SQLite: `BEGIN IMMEDIATE` acquires the write lock up front (vs default deferred BEGIN, which
+    can deadlock under WAL with concurrent writers); retries with exponential backoff on
+    "database is locked". Postgres: plain `BEGIN` — MVCC + row-level locking means there is no
+    whole-database lock to acquire up front, and a lock wait blocks rather than raising, so no
+    retry loop applies there."""
+    if is_postgres_connection(conn):
+        conn.execute("BEGIN")
+        return
+    import time
+    for attempt in range(max_attempts):
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            return
+        except sqlite3.OperationalError as exc:
+            if "database is locked" in str(exc) and attempt < max_attempts - 1:
+                time.sleep(2 ** attempt)
+            else:
+                raise
+
+
 def table_columns(conn, table: str) -> set:
     """Column-name set for `table` — the `PRAGMA table_info(...)` equivalent, dialect-aware.
     SQLite: PRAGMA table_info, returning names in whatever case they were created with (this

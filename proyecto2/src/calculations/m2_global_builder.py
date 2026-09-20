@@ -42,6 +42,21 @@ import sys
 _ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_ROOT))
 
+from shared.db import is_postgres_connection, executemany
+
+_UPSERT_SERIES_MACRO_SQLITE = """
+    INSERT OR REPLACE INTO series_macro
+        (date, indicator, geography, value, unit, source)
+    VALUES (:date, :indicator, :geography, :value, :unit, :source)
+"""
+_UPSERT_SERIES_MACRO_PG = """
+    INSERT INTO series_macro (date, indicator, geography, value, unit, source)
+    VALUES (%(date)s, %(indicator)s, %(geography)s, %(value)s, %(unit)s, %(source)s)
+    ON CONFLICT (date, indicator, geography) DO UPDATE SET
+        value = excluded.value, unit = excluded.unit, source = excluded.source,
+        load_ts = DEFAULT
+"""
+
 
 def build_m2_global(conn: sqlite3.Connection,
                     dry_run: bool = False) -> int:
@@ -240,11 +255,8 @@ def build_m2_global(conn: sqlite3.Connection,
             "source":    "CALC",
         })
 
-    conn.executemany("""
-        INSERT OR REPLACE INTO series_macro
-            (date, indicator, geography, value, unit, source)
-        VALUES (:date, :indicator, :geography, :value, :unit, :source)
-    """, rows_out)
+    sql = _UPSERT_SERIES_MACRO_PG if is_postgres_connection(conn) else _UPSERT_SERIES_MACRO_SQLITE
+    executemany(conn, sql, rows_out)
     conn.commit()
     print(f"  [M2_Global] {len(rows_out)} registros persistidos (m2_global_yoy)")
 
@@ -323,11 +335,8 @@ def build_m2_global(conn: sqlite3.Connection,
               AND geography IN ('US', 'CN', 'JP')
               AND source IN ('CALC', 'CALC_EST')
         """)
-        conn.executemany("""
-            INSERT OR REPLACE INTO series_macro
-                (date, indicator, geography, value, unit, source)
-            VALUES (:date, :indicator, :geography, :value, :unit, :source)
-        """, _INDIVIDUAL_YOY)
+        sql = _UPSERT_SERIES_MACRO_PG if is_postgres_connection(conn) else _UPSERT_SERIES_MACRO_SQLITE
+        executemany(conn, sql, _INDIVIDUAL_YOY)
         conn.commit()
         print(f"  [M2_Global] {len(_INDIVIDUAL_YOY)} registros persistidos "
               f"(m2_yoy US/CN/JP)")

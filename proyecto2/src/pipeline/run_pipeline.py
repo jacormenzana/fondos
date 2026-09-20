@@ -82,7 +82,7 @@ from shared.config import MIN_PEERS, REGIME_MIN_NAV_TOTAL
 from shared.config import (
     ROLLING_STATS_ENABLED, ALERT_RULES, ROLLING_TIMESERIES_METRICS
 )
-from shared.db import get_connection
+from shared.db import get_connection, is_postgres_connection, in_transaction, begin_immediate, executemany
 from src.readers.db_readers import (
     load_nav, get_isins_with_nav, load_ipc, ipc_available, load_nav_daily,
     load_rf_rate,                    # §4g — historical risk-free rate (€STR proxy)
@@ -201,19 +201,27 @@ def _upsert_metric_state(
     """
     if dry_run:
         return
-    sql = (
-        "INSERT OR REPLACE INTO fund_metric_state"
-        " (isin, metric_version, input_hash, calculated_at)"
-        " VALUES (?, ?, ?, ?)"
-    )
+    if is_postgres_connection(conn):
+        sql = (
+            "INSERT INTO fund_metric_state (isin, metric_version, input_hash, calculated_at)"
+            " VALUES (%s, %s, %s, %s)"
+            " ON CONFLICT (isin, metric_version) DO UPDATE SET"
+            " input_hash = excluded.input_hash, calculated_at = excluded.calculated_at"
+        )
+    else:
+        sql = (
+            "INSERT OR REPLACE INTO fund_metric_state"
+            " (isin, metric_version, input_hash, calculated_at)"
+            " VALUES (?, ?, ?, ?)"
+        )
     args = (isin, METRIC_VERSION, input_hash, date.today().isoformat())
     # EFF-2: skip own transaction when the caller batches for us
-    if conn.in_transaction:
+    if in_transaction(conn):
         conn.execute(sql, args)
         return
     for attempt in range(3):
         try:
-            conn.execute("BEGIN IMMEDIATE")
+            begin_immediate(conn)
             try:
                 conn.execute(sql, args)
                 conn.execute("COMMIT")
@@ -271,9 +279,10 @@ def _update_ols_state(
     """Record that OLS was computed for this fund in current_quarter."""
     if dry_run:
         return
+    ph = "%s" if is_postgres_connection(conn) else "?"
     conn.execute(
-        "UPDATE fund_metric_state SET last_ols_quarter=?, last_ols_nav_count=? "
-        "WHERE isin=? AND metric_version=?",
+        f"UPDATE fund_metric_state SET last_ols_quarter={ph}, last_ols_nav_count={ph} "
+        f"WHERE isin={ph} AND metric_version={ph}",
         (current_quarter, nav_count, isin, METRIC_VERSION),
     )
 
@@ -402,12 +411,24 @@ def _write_metric_alerts(
     """
     if not alert_rows or dry_run:
         return 0
-    sql = """
-        INSERT OR REPLACE INTO fund_metric_alerts
-            (isin, metric, window, level, rule_code,
-             value, reference_value, ref_type)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    """
+    if is_postgres_connection(conn):
+        sql = """
+            INSERT INTO fund_metric_alerts
+                (isin, metric, window_label, level, rule_code,
+                 value, reference_value, ref_type)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (isin, metric, window_label) DO UPDATE SET
+                level = excluded.level, rule_code = excluded.rule_code,
+                value = excluded.value, reference_value = excluded.reference_value,
+                ref_type = excluded.ref_type, detected_at = DEFAULT
+        """
+    else:
+        sql = """
+            INSERT OR REPLACE INTO fund_metric_alerts
+                (isin, metric, window, level, rule_code,
+                 value, reference_value, ref_type)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """
     data = [
         (
             r["isin"], r["metric"], r["window"],
@@ -418,9 +439,9 @@ def _write_metric_alerts(
     ]
     for attempt in range(5):
         try:
-            conn.execute("BEGIN IMMEDIATE")
+            begin_immediate(conn)
             try:
-                conn.executemany(sql, data)
+                executemany(conn, sql, data)
                 conn.execute("COMMIT")
                 return len(data)
             except Exception:
@@ -446,19 +467,20 @@ def _log(
     """EFF-2: skips own BEGIN/COMMIT when caller already has an open transaction."""
     if dry_run:
         return
+    ph = "%s" if is_postgres_connection(conn) else "?"
     sql = (
         "INSERT INTO p2_pipeline_log"
         " (isin, step, status, horizon, metric_version, message, batch_id)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?)"
+        f" VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph})"
     )
     args = (isin, step, status, horizon, METRIC_VERSION, message, RUN_BATCH_ID)
     # EFF-2: skip own transaction when the caller batches for us
-    if conn.in_transaction:
+    if in_transaction(conn):
         conn.execute(sql, args)
         return
     for attempt in range(5):
         try:
-            conn.execute("BEGIN IMMEDIATE")
+            begin_immediate(conn)
             try:
                 conn.execute(sql, args)
                 conn.execute("COMMIT")
@@ -663,12 +685,17 @@ def run(
         conn = get_connection()
 
         # EFF-1: add OLS cadence columns if not yet present (idempotent)
-        for _col, _ctype in [("last_ols_quarter", "TEXT"), ("last_ols_nav_count", "INTEGER")]:
-            try:
-                conn.execute(f"ALTER TABLE fund_metric_state ADD COLUMN {_col} {_ctype}")
+        if is_postgres_connection(conn):
+            for _col, _ctype in [("last_ols_quarter", "TEXT"), ("last_ols_nav_count", "INTEGER")]:
+                conn.execute(f"ALTER TABLE fund_metric_state ADD COLUMN IF NOT EXISTS {_col} {_ctype}")
                 conn.commit()
-            except sqlite3.OperationalError:
-                pass  # column already exists
+        else:
+            for _col, _ctype in [("last_ols_quarter", "TEXT"), ("last_ols_nav_count", "INTEGER")]:
+                try:
+                    conn.execute(f"ALTER TABLE fund_metric_state ADD COLUMN {_col} {_ctype}")
+                    conn.commit()
+                except sqlite3.OperationalError:
+                    pass  # column already exists
 
         # ── v26: Backfill detection ──────────────────────────────────────────
         # A run is a "backfill" when it forces recomputation of previously
@@ -695,10 +722,11 @@ def run(
 
         if _is_backfill and not dry_run:
             try:
+                ph = "%s" if is_postgres_connection(conn) else "?"
                 conn.execute(
                     "INSERT INTO p2_pipeline_log"
                     " (isin, step, status, horizon, metric_version, message, batch_id)"
-                    " VALUES (NULL, 'BACKFILL_START', 'INFO', NULL, ?, ?, ?)",
+                    f" VALUES (NULL, 'BACKFILL_START', 'INFO', NULL, {ph}, {ph}, {ph})",
                     (METRIC_VERSION, _backfill_reason, RUN_BATCH_ID),
                 )
                 conn.commit()
@@ -1030,16 +1058,8 @@ def run(
                 # fund_master SELECT) are safe: WAL gives a consistent snapshot.
                 _fund_txn_open = False
                 if not dry_run:
-                    for _attempt in range(5):
-                        try:
-                            conn.execute("BEGIN IMMEDIATE")
-                            _fund_txn_open = True
-                            break
-                        except sqlite3.OperationalError as _exc:
-                            if "database is locked" in str(_exc) and _attempt < 4:
-                                time.sleep(2 ** _attempt)
-                            else:
-                                raise
+                    begin_immediate(conn)
+                    _fund_txn_open = True
 
                 # ---- Since inception ---------------------------------
                 if _want("risk"):
@@ -1237,9 +1257,10 @@ def run(
 
                 # v25: consumir flag RECALCULATE_METRICS (inside per-fund txn)
                 if isin_written > 0 and not dry_run:
+                    ph = "%s" if is_postgres_connection(conn) else "?"
                     conn.execute(
                         "UPDATE nav_sources SET data_status='OK' "
-                        "WHERE isin=? AND data_status='RECALCULATE_METRICS'",
+                        f"WHERE isin={ph} AND data_status='RECALCULATE_METRICS'",
                         (isin,)
                     )
 
@@ -1424,11 +1445,12 @@ def run(
         # P2-12: persist RUN_SUMMARY row for operational observability
         if conn is not None and not dry_run:
             try:
-                conn.execute("BEGIN IMMEDIATE")
+                _ph = "%s" if is_postgres_connection(conn) else "?"
+                begin_immediate(conn)
                 conn.execute(
-                    """INSERT INTO p2_pipeline_log
-                           (isin, step, status, horizon, metric_version, message, batch_id)
-                       VALUES (NULL, 'RUN_SUMMARY', ?, NULL, ?, ?, ?)""",
+                    "INSERT INTO p2_pipeline_log"
+                    " (isin, step, status, horizon, metric_version, message, batch_id)"
+                    f" VALUES (NULL, 'RUN_SUMMARY', {_ph}, NULL, {_ph}, {_ph}, {_ph})",
                     (
                         status,
                         METRIC_VERSION,
@@ -1448,11 +1470,12 @@ def run(
             # v26: BACKFILL_END marker (logged after RUN_SUMMARY so it's always last)
             if _is_backfill:
                 try:
-                    conn.execute("BEGIN IMMEDIATE")
+                    _ph = "%s" if is_postgres_connection(conn) else "?"
+                    begin_immediate(conn)
                     conn.execute(
                         "INSERT INTO p2_pipeline_log"
                         " (isin, step, status, horizon, metric_version, message, batch_id)"
-                        " VALUES (NULL, 'BACKFILL_END', ?, NULL, ?, ?, ?)",
+                        f" VALUES (NULL, 'BACKFILL_END', {_ph}, NULL, {_ph}, {_ph}, {_ph})",
                         (
                             status,
                             METRIC_VERSION,

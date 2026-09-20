@@ -47,7 +47,7 @@ sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_P2_SRC.parent))                   # proyecto2/
 
 from shared.config import DB_PATH
-from shared.db import get_connection
+from shared.db import get_connection, is_postgres_connection, executemany
 
 # -- Constantes -----------------------------------------------
 REQUEST_TIMEOUT = 30        # segundos por peticion HTTP
@@ -159,12 +159,20 @@ def _write_inflation(
     """
     if not rows or dry_run:
         return 0
-    sql = """
-        INSERT OR REPLACE INTO series_inflation
-            (date, geography, ipc_index, source)
-        VALUES (?, ?, ?, ?)
-    """
-    conn.executemany(sql, [
+    if is_postgres_connection(conn):
+        sql = """
+            INSERT INTO series_inflation (date, geography, ipc_index, source)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (date, geography) DO UPDATE SET
+                ipc_index = excluded.ipc_index, source = excluded.source, load_ts = DEFAULT
+        """
+    else:
+        sql = """
+            INSERT OR REPLACE INTO series_inflation
+                (date, geography, ipc_index, source)
+            VALUES (?, ?, ?, ?)
+        """
+    executemany(conn, sql, [
         (r["date"], r["geography"], r["ipc_index"], r["source"])
         for r in rows
     ])
@@ -183,12 +191,21 @@ def _write_macro(
     """
     if not rows or dry_run:
         return 0
-    sql = """
-        INSERT OR REPLACE INTO series_macro
-            (date, indicator, geography, value, unit, source)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """
-    conn.executemany(sql, [
+    if is_postgres_connection(conn):
+        sql = """
+            INSERT INTO series_macro (date, indicator, geography, value, unit, source)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (date, indicator, geography) DO UPDATE SET
+                value = excluded.value, unit = excluded.unit, source = excluded.source,
+                load_ts = DEFAULT
+        """
+    else:
+        sql = """
+            INSERT OR REPLACE INTO series_macro
+                (date, indicator, geography, value, unit, source)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """
+    executemany(conn, sql, [
         (r["date"], r["indicator"], r["geography"],
          r["value"], r["unit"], r["source"])
         for r in rows
