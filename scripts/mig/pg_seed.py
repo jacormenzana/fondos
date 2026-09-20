@@ -325,6 +325,11 @@ TABLE_SPECS: list[TableSpec] = [
     TableSpec("portfolio_scenarios", "gold", "portfolio_scenarios"),
     TableSpec("portfolio_weights", "gold", "portfolio_weights", fk_isin_check=True),
     TableSpec("rotation_costs", "gold", "rotation_costs"),
+    # Added 2026-09-20 — rename_map.yaml's "NEW, no SQLite equivalent exists or ever will" claim
+    # was wrong: the table exists live (P3 Phase 3b), matching column set, PK (date,
+    # classifier_version). Currently 0 rows so this closes the gap before it can lose anything, not
+    # after. No isin column -> no fk_isin_check.
+    TableSpec("regime_history", "gold", "regime_history"),
     TableSpec("fund_metric_state", "control", "fund_metric_state", fk_isin_check=True),
     TableSpec("p2_pipeline_log", "control", "p2_pipeline_log"),
     TableSpec("ingestion_log", "control", "ingestion_log"),

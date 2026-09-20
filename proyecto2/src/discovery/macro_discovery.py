@@ -1023,6 +1023,7 @@ def run(
     dry_run: bool = False,
     verbose: bool = False,
     fred_api_key: str | None = None,
+    backend: str | None = None,   # migration addendum 2026-09-20 — see run_pipeline.py's run()
 ) -> None:
     """
     Descarga y persiste todos los indicadores macro.
@@ -1034,7 +1035,7 @@ def run(
     if sources is None:
         sources = list(SOURCES)
 
-    conn = get_connection()
+    conn = get_connection(backend=backend)
     today = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"\n{'='*60}")
     print(f"  Macro Loader  |  {today}  |  dry_run={dry_run}")
@@ -1133,6 +1134,11 @@ if __name__ == "__main__":
              "spread_ig usa BAA10YM (Moody's, publica) y no requiere clave. "
              "Alternativa: exportar variable de entorno FRED_API_KEY antes de ejecutar.",
     )
+    parser.add_argument(
+        "--backend", choices=["sqlite", "postgres"], default=None,
+        help="Backend de BD para esta ejecucion (migracion, addendum 2026-09-20). "
+             "Si se omite, resuelve FONDOS_DB_BACKEND ('sqlite' si no esta definida).",
+    )
     args = parser.parse_args()
 
     # {font} = valor de --source (default "all" si no se especifica)
@@ -1147,6 +1153,7 @@ if __name__ == "__main__":
             dry_run=args.dry_run,
             verbose=args.verbose,
             fred_api_key=args.fred_api_key,
+            backend=args.backend,
         )
     finally:
         _teardown_run_logger(_log_fh, _orig_out, _orig_err)

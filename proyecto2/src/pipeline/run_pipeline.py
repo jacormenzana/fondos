@@ -622,6 +622,10 @@ def run(
     dry_run: bool = False,
     resume: bool = False,
     max_new_per_run: int = 0,                   # §4d — cap cold-start (0 = unlimited)
+    backend: str | None = None,                 # migration addendum 2026-09-20 — None resolves
+                                                  # FONDOS_DB_BACKEND (default "sqlite"); explicit
+                                                  # "sqlite"/"postgres" overrides it for this run
+                                                  # only, without touching the global switch.
 ) -> int:
     """
     Ejecuta el pipeline P2 completo o parcial.
@@ -682,7 +686,7 @@ def run(
             f"to_date={to_date} force={force}"
         )
 
-        conn = get_connection()
+        conn = get_connection(backend=backend)
 
         # EFF-1: add OLS cadence columns if not yet present (idempotent)
         if is_postgres_connection(conn):
@@ -1615,6 +1619,12 @@ if __name__ == "__main__":
              "0 = sin limite (default). Ej: --max-new-per-run 100 distribuye "
              "un intake masivo en multiples ejecuciones sin comprometer el SLA."
     )
+    parser.add_argument(
+        "--backend", choices=["sqlite", "postgres"], default=None,
+        help="Backend de BD para esta ejecucion (migracion, addendum 2026-09-20). "
+             "Si se omite, resuelve la variable de entorno FONDOS_DB_BACKEND "
+             "('sqlite' si no esta definida)."
+    )
     args = parser.parse_args()
 
     sys.exit(run(  # P2-12: propagate exit code (0=OK, 1=fund errors, 2=fatal)
@@ -1629,4 +1639,5 @@ if __name__ == "__main__":
         dry_run=args.dry_run,
         resume=args.resume,
         max_new_per_run=args.max_new_per_run,
+        backend=args.backend,
     ))

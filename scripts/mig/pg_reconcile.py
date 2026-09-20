@@ -94,6 +94,9 @@ TABLES = [
     ("portfolio_scenarios", "gold", "portfolio_scenarios"),
     ("portfolio_weights", "gold", "portfolio_weights"),
     ("rotation_costs", "gold", "rotation_costs"),
+    # Added 2026-09-20 alongside pg_seed.py's TABLE_SPECS fix — see that file's comment. No isin
+    # column, so no entry needed in ISIN_TABLES/QUARANTINE_TABLES below.
+    ("regime_history", "gold", "regime_history"),
     ("fund_metric_state", "control", "fund_metric_state"),
     ("p2_pipeline_log", "control", "p2_pipeline_log"),
     ("ingestion_log", "control", "ingestion_log"),
@@ -558,6 +561,40 @@ def check_j_fund_scores(sconn: sqlite3.Connection, pconn: psycopg.Connection) ->
 ALL_CHECK_LETTERS = {"a", "b", "c", "d", "e", "f", "g", "h", "i", "j"}
 
 
+def _record_migration_state(pconn: psycopg.Connection, sqlite_path: Path) -> None:
+    """Inserts the gate-passed record into control.migration_state (35_control.sql) — the table was
+    defined from the start of this migration but nothing ever wrote to it; both this script and
+    pg_seed.py only printed a reminder (found 2026-09-20). Only called on a full, unfiltered,
+    all-green run — see caller. Records what SQLite file this Postgres was seeded/verified against,
+    so "which snapshot did this come from" has an answer months later (plan §Verification "On green")."""
+    import json
+
+    sha256 = hashlib.sha256()
+    with open(sqlite_path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            sha256.update(chunk)
+
+    pg_version = pconn.execute("SELECT version()").fetchone()[0]
+    gate_results = [{"name": r.name, "passed": r.passed, "detail": r.detail} for r in RESULTS]
+
+    pconn.execute(
+        "INSERT INTO control.migration_state "
+        "(migrated_at, pg_version, source_sqlite_path, source_sqlite_size_bytes, "
+        " source_sqlite_sha256, gate_results, notes) "
+        "VALUES (now(), %s, %s, %s, %s, %s::jsonb, %s)",
+        (
+            pg_version,
+            str(sqlite_path),
+            sqlite_path.stat().st_size,
+            sha256.hexdigest(),
+            json.dumps(gate_results),
+            "Recorded automatically by pg_reconcile.py on a full all-green run.",
+        ),
+    )
+    pconn.commit()
+    print(f"  control.migration_state row inserted (sha256={sha256.hexdigest()[:12]}...).")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--skip-hash", action="store_true", help="skip check (b) — minutes instead of the full pass")
@@ -614,9 +651,14 @@ def main() -> int:
         return 1
 
     print("ALL CHECKS GREEN.")
-    print("Next: filesystem snapshot of the PG volume, then insert a control.migration_state row")
-    print("recording these results (§Verification 'On green'), then chmod 444 the source SQLite")
-    print("file and retain it 90 days.")
+    if only == ALL_CHECK_LETTERS:
+        with psycopg.connect(pg_dsn) as pconn:
+            _record_migration_state(pconn, sqlite_path)
+    else:
+        print("Partial run (--only/--skip-hash) — NOT recording control.migration_state; "
+              "re-run the full gate (no flags) before trusting this as a cutover record.")
+    print("Next: filesystem snapshot of the PG volume, then chmod 444 the source SQLite file and")
+    print("retain it 90 days.")
     return 0
 
 

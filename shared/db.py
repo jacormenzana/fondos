@@ -31,6 +31,15 @@ before. Nothing in production routes to Postgres until a whole tranche (P1, then
 ported and validated, and even then only via the explicit dual-write wiring at cutover (plan §5e)
 — not by anything in this file changing behavior on its own.
 
+**2026-09-20 addendum — `FONDOS_DB_BACKEND` global switch.** `backend` now defaults to `None`,
+which resolves this env var (falling back to `"sqlite"` when unset). This is the literal "flip
+Postgres to primary" mechanism the migration plan's cutover step (§Addendum Stage 9) needs — it
+does not change today's behavior by itself (the env var is unset everywhere in production right
+now) and it is not the read-path port; it is the switch that becomes meaningful only once the
+read-path tranches (§Addendum Stages 1-7) are complete and verified. Passing `backend=` explicitly
+still overrides it per-call, which is how per-entry-point `--backend` CLI flags rehearse a single
+tranche against Postgres without touching the global default.
+
 **Deliberately NOT built: an automatic `?` → `%s` placeholder translator.** It looks like an
 obvious convenience, and was considered — rejected because `?` is not just SQLite's placeholder
 character, it is also PostgreSQL's own native jsonb containment operator (`?`, `?|`, `?&`,
@@ -139,6 +148,13 @@ def _sqlite_compat_row_factory(cursor):
 # Populated lazily (see _pg_dsn()) rather than at import time, so importing shared.db never
 # requires FONDOS_PG_DSN to be set — only actually requesting backend="postgres" does.
 _PG_DSN_ENV_VAR = "FONDOS_PG_DSN"
+
+# The one global switch (2026-09-20, migration addendum — see plan §Addendum Stage 0). Read lazily,
+# same reasoning as _PG_DSN_ENV_VAR: importing shared.db must never require this to be set. Every
+# call site that doesn't pass backend= explicitly resolves through here, so flipping this one
+# variable is what "make Postgres primary" actually means operationally — today it's unset
+# everywhere, so every caller still gets "sqlite", the same as before this constant existed.
+_DB_BACKEND_ENV_VAR = "FONDOS_DB_BACKEND"
 
 
 def is_postgres_connection(conn) -> bool:
@@ -324,32 +340,42 @@ def _pg_dsn() -> str:
 
 
 def get_connection(
-    db_path: Optional[Path] = None, *, backend: str = "sqlite"
+    db_path: Optional[Path] = None, *, backend: Optional[str] = None
 ) -> Union[sqlite3.Connection, "psycopg.Connection"]:
     """
     Devuelve una conexion a la base de datos configurada.
 
-    Por defecto (backend="sqlite", sin cambios de comportamiento respecto a cualquier llamada
-    existente): conexion sqlite3 a fondos.sqlite con:
+    backend=None (por defecto): resuelve la variable de entorno FONDOS_DB_BACKEND ("sqlite" si no
+    esta definida — sin cambios de comportamiento respecto a cualquier llamada existente mientras
+    esa variable siga sin definirse en el entorno). Pasar backend="sqlite" o backend="postgres"
+    explicitamente ignora la variable de entorno para esa llamada puntual (usado por los flags
+    --backend de los entry points, para poder apuntar una ejecucion a Postgres sin tocar el switch
+    global). Ver plan de migracion, Addendum Stage 0.
+
+    backend="sqlite" (resuelto): conexion sqlite3 a fondos.sqlite con:
       - foreign_keys activadas
       - journal_mode WAL (escrituras concurrentes seguras)
       - timeout=30s (reintenta en caso de bloqueo concurrente)
       - row_factory = sqlite3.Row (acceso por nombre de columna)
 
-    backend="postgres" (nuevo, migracion §5b — ver el docstring del modulo antes de usarlo):
+    backend="postgres" (migracion §5b — ver el docstring del modulo antes de usarlo):
     conexion psycopg3 a la base de datos apuntada por la variable de entorno FONDOS_PG_DSN, con
     row_factory compatible con sqlite3.Row (acceso por indice O por nombre de columna, igual que
     el codigo SQLite existente — ver _SqliteCompatRow). `db_path` se ignora en este modo.
 
     Parámetros:
         db_path: ruta alternativa a la BD SQLite. Si es None, usa DB_PATH de shared.config.
-                 Solo aplica cuando backend="sqlite".
-        backend: "sqlite" (por defecto) o "postgres".
+                 Solo aplica cuando el backend resuelto es "sqlite".
+        backend: None (resuelve FONDOS_DB_BACKEND, "sqlite" por defecto), "sqlite" o "postgres".
 
-    Lanza FileNotFoundError si la BD SQLite no existe (backend="sqlite").
-    Lanza RuntimeError si FONDOS_PG_DSN no esta definida (backend="postgres").
+    Lanza FileNotFoundError si la BD SQLite no existe (backend resuelto "sqlite").
+    Lanza RuntimeError si FONDOS_PG_DSN no esta definida (backend resuelto "postgres").
     Ejecutar primero:  python -m shared.init_db
     """
+    if backend is None:
+        import os
+        backend = os.environ.get(_DB_BACKEND_ENV_VAR, "sqlite")
+
     if backend == "postgres":
         if psycopg is None:
             raise RuntimeError(

@@ -2089,6 +2089,10 @@ def main():
                         help="En modo update, decide 'al dia' por grano MENSUAL: un fondo "
                              "esta al dia si su ultimo NAV ya cubre el ultimo fin de mes "
                              "completado. A mitad de mes solo descarga huecos genuinos.")
+    parser.add_argument("--backend", choices=["sqlite", "postgres"], default=None,
+                        help="Backend de BD para esta ejecucion (migracion, addendum "
+                             "2026-09-20). Si se omite, resuelve FONDOS_DB_BACKEND "
+                             "('sqlite' si no esta definida).")
     args = parser.parse_args()
 
     # -- Logs con timestamp unico por invocacion -----------------------------
@@ -2102,7 +2106,7 @@ def main():
     print(f"  Log stdout : {_log_path}", flush=True)
     print(f"  Log stderr : {_err_path}", flush=True)
 
-    conn = get_connection()
+    conn = get_connection(backend=args.backend)
 
     # v25: migración idempotente — añade data_status si no existe aún
     _ensure_data_status_column(conn)

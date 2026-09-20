@@ -80,6 +80,10 @@ def main():
                        "(C:\\data\\fondos\\kiid), con fallback a remoto si no existe.\n"
                        "  remote : fuerza descarga por URL del maestro."
                    ))
+    p.add_argument("--backend", choices=["sqlite", "postgres"], default=None,
+                   help="Backend de BD para esta ejecucion (migracion, addendum 2026-09-20). "
+                        "Si se omite, resuelve FONDOS_DB_BACKEND ('sqlite' si no esta definida). "
+                        "Con --backend postgres, --db se ignora.")
     args = p.parse_args()
 
     if not args.nature_first and not args.block:
@@ -110,7 +114,7 @@ def main():
         print(f"[DEBUG] block_mod: {block_mod}")
 
     # Conexión y schema (idempotente) — abierta antes del maestro para --master-db
-    conn = get_connection(db_path)
+    conn = get_connection(db_path, backend=args.backend)
     create_schema(conn)
     # create_schema usa executescript() que resetea isolation_level a ''.
     # isolation_level=None delega el control de transacciones a SQLite/código

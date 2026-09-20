@@ -18,12 +18,14 @@ What THIS module provides, independent of any of that porting work:
       rolls back on teardown. Fast (microseconds, not a schema create/drop), and this is the
       DEFAULT fixture — use it for any test whose setup is "create some tables, write some rows,
       assert, forget it happened."
-    - `pg_conn_module_schema` (module-scoped): a real, isolated `CREATE SCHEMA` per test module,
-      dropped at module teardown. Use this ONLY for the small subset of tests that need
-      commit-visible or autocommit-required behavior that cannot run inside a savepoint that
-      always rolls back — `ON CONFLICT` interaction ACROSS separate transactions,
-      `CREATE INDEX CONCURRENTLY`, `REFRESH MATERIALIZED VIEW CONCURRENTLY`. Identify this subset
-      explicitly; expect single-digit modules, not a large fraction of the suite (plan §5a).
+    - `pg_conn_module_schema` (function-scoped, despite the name — see 2026-09-20 note below): a
+      real, isolated `CREATE SCHEMA` per test, dropped at teardown. Use this ONLY for the small
+      subset of tests that need commit-visible or autocommit-required behavior that cannot run
+      inside a savepoint that always rolls back — `ON CONFLICT` interaction ACROSS separate
+      transactions, `CREATE INDEX CONCURRENTLY`, `REFRESH MATERIALIZED VIEW CONCURRENTLY`, or (the
+      common case in this codebase) a production function that calls `conn.commit()` internally.
+      Identify this subset explicitly; expect single-digit modules, not a large fraction of the
+      suite (plan §5a).
 
 Connection target:
     - CI (GitHub Actions): a `services: postgres:` container — see
@@ -114,9 +116,22 @@ def pg_conn(pg_session_conn: "psycopg.Connection") -> Iterator["psycopg.Connecti
 @pytest.fixture()
 def pg_conn_module_schema(pg_session_conn: "psycopg.Connection", request: pytest.FixtureRequest) -> Iterator[str]:
     """For the small subset of tests needing commit-visible/autocommit-required behavior that
-    cannot run inside a savepoint-that-always-rolls-back (§module docstring). Creates one schema
-    per test MODULE (not per test — the cost is paid once per file), named uniquely so parallel
-    test runs (pytest-xdist) never collide, and drops it at module teardown.
+    cannot run inside a savepoint-that-always-rolls-back (§module docstring). Creates one fresh,
+    uniquely-named schema per TEST (named after the module for readability, but the fixture is
+    `@pytest.fixture()` with no `scope=` — function-scoped, i.e. per test, not per file), so
+    parallel test runs (pytest-xdist) never collide, and drops it again at that test's teardown.
+
+    **Corrected 2026-09-20** — an earlier version of this docstring claimed "one schema per test
+    MODULE (not per test — the cost is paid once per file)", implying `scope="module"`. That was
+    never true of the code (no `scope=` kwarg was ever set) and, checked directly against the 17
+    test files that use this fixture before "fixing" it to match: making it genuinely module-scoped
+    would break every multi-test file among them (`test_fund_family_builder_pg.py`,
+    `test_normalize_db_casing_v20_pg.py`, `test_p1_db_harvest_pg.py`, `test_p1_kiid_sync_pg.py`) —
+    each test calls `CREATE TABLE` unconditionally, expecting an empty schema, which a shared
+    module-scoped schema would not provide past the first test. Per-test `CREATE SCHEMA`/
+    `DROP SCHEMA` costs low milliseconds at this suite's size (confirmed: the full smoke suite,
+    including this fixture, runs in well under a second) — not worth the correctness risk of
+    changing it to match a docstring that was wrong, so the docstring was fixed instead.
 
     Returns the schema name (a string) — the test is responsible for `CREATE TABLE <schema>.foo`
     or issuing `SET search_path` itself; this fixture only owns the schema's lifecycle.

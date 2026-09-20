@@ -35,8 +35,8 @@ def _default_scenario_id(regime: str, date) -> str:
     return f"cartera_{regime.lower()}_{date.year}{date.month:02d}"
 
 
-def main(scenario_id: str | None = None, dry_run: bool = False) -> int:
-    conn = get_connection()
+def main(scenario_id: str | None = None, dry_run: bool = False, backend: str | None = None) -> int:
+    conn = get_connection(backend=backend)
     clf  = RegimeClassifier(conn)
     reg  = clf.classify_current()
 
@@ -66,6 +66,14 @@ def main(scenario_id: str | None = None, dry_run: bool = False) -> int:
 if __name__ == "__main__":
     _args = sys.argv[1:]
     _dry_run = "--dry-run" in _args
+    # --backend {sqlite,postgres} — migration addendum 2026-09-20. None resolves
+    # FONDOS_DB_BACKEND ("sqlite" if unset). Manual parsing to match this script's existing
+    # positional-scenario_id style rather than introducing argparse for one new flag.
+    _backend = None
+    if "--backend" in _args:
+        _i = _args.index("--backend")
+        _backend = _args[_i + 1]
+        del _args[_i:_i + 2]
     _positional = [a for a in _args if a != "--dry-run"]
     scenario_arg = _positional[0] if _positional else None
-    sys.exit(main(scenario_arg, dry_run=_dry_run))
+    sys.exit(main(scenario_arg, dry_run=_dry_run, backend=_backend))
