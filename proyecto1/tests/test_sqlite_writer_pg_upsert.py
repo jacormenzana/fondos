@@ -56,6 +56,10 @@ from sqlite_writer import (  # noqa: E402
     _upsert_kiid_benchmark,
     upsert_cost_schedule,
     publish_fund,
+    correct_oc_aci_mismatch,
+    reconcile_universe_membership,
+    global_post_pipeline_normalize_db,
+    log_ingestion,
 )
 
 
@@ -415,3 +419,129 @@ def test_publish_fund_error_path_rolls_back_and_logs(pg_conn):
         (isin,),
     ).fetchone()
     assert err_log is not None and err_log[0] == "ERROR"
+
+
+def test_correct_oc_aci_mismatch_converts_pct_to_ratio_no_coalesce(pg_conn):
+    """Deliberately non-COALESCE overwrite (unlike every other function in this file) — the whole
+    point of this function is to force-correct a bad value regardless of what's currently stored.
+    Also confirms the integer-percent -> decimal-ratio conversion happens via cost_scale.pct_to_ratio
+    (not hand-rolled here), and that a nonexistent ISIN returns False without erroring."""
+    pg_conn.execute("SET search_path = gold, silver, bronze, control, public")
+
+    isin = "LU1873132101"
+    updated = correct_oc_aci_mismatch(pg_conn, isin, 0.70, "test-source")
+    assert updated is True
+
+    new_value = pg_conn.execute(
+        "SELECT ongoing_charge_recurrent FROM fund_master WHERE isin = %s", (isin,)
+    ).fetchone()[0]
+    assert abs(float(new_value) - 0.007) < 1e-9, f"expected ~0.007 (0.70% as ratio), got {new_value}"
+
+    missing = correct_oc_aci_mismatch(pg_conn, "NOSUCHISIN01", 0.70, "test-source")
+    assert missing is False
+
+
+def test_reconcile_universe_membership_flags_correctly(pg_conn):
+    """A subset of ISINs must be flagged In_Current_Universe=1, everything else 0 — and the two
+    counts must always sum to the full table size (nothing left un-flagged either way)."""
+    pg_conn.execute("SET search_path = gold, silver, bronze, control, public")
+
+    all_isins = [r[0] for r in pg_conn.execute("SELECT isin FROM fund_master").fetchall()]
+    total = len(all_isins)
+    subset = all_isins[: max(1, total // 3)]
+
+    in_u, orphans = reconcile_universe_membership(pg_conn, subset)
+
+    assert in_u == len(subset)
+    assert orphans == total - len(subset)
+    assert in_u + orphans == total
+
+    flagged = {
+        r[0] for r in pg_conn.execute(
+            "SELECT isin FROM fund_master WHERE in_current_universe = 1"
+        ).fetchall()
+    }
+    assert flagged == set(subset)
+
+
+def test_global_post_pipeline_normalize_db_es_to_en(pg_session_conn, pg_conn_module_schema):
+    """global_post_pipeline_normalize_db() calls conn.commit() internally (twice) — running it
+    against the live-seeded fund_master via the standard SAVEPOINT-based pg_conn fixture would
+    commit PAST the savepoint into the real database, permanently mutating all ~3,726 rows. This is
+    exactly the scenario shared/testing/pg_fixtures.py's own docstring warns about ('if the code
+    under test itself calls conn.commit()... breaking isolation'). Uses pg_conn_module_schema (an
+    isolated, disposable schema, dropped at module teardown) instead, with a minimal purpose-built
+    fund_master table — matching how the SQLite-only tests in this directory build minimal
+    in-memory schemas rather than touching a real database, for the same class of reason.
+
+    pg_conn_module_schema yields only the schema NAME; the connection to use is pg_session_conn
+    (requested alongside it — the fixture toggles that shared connection's autocommit for the
+    isolated-schema's lifetime, per its own docstring)."""
+    conn = pg_session_conn
+    schema = pg_conn_module_schema
+    conn.execute(f"SET search_path = {schema}")
+    conn.execute("""
+        CREATE TABLE fund_master (
+            isin TEXT PRIMARY KEY,
+            sector_focus TEXT,
+            family TEXT
+        )
+    """)
+    conn.execute("""
+        INSERT INTO fund_master (isin, sector_focus, family) VALUES
+        ('T1', 'Tecnología e Innovación', 'RV Core'),
+        ('T2', 'Servicios Financieros', 'Monetario'),
+        ('T3', 'Technology & Innovation', 'Equity Core')
+    """)
+
+    metrics = global_post_pipeline_normalize_db(conn)
+
+    rows = dict(
+        (r[0], (r[1], r[2]))
+        for r in conn.execute("SELECT isin, sector_focus, family FROM fund_master").fetchall()
+    )
+    assert rows["T1"] == ("Technology & Innovation", "Equity Core")
+    assert rows["T2"] == ("Financial Services", "Money Market")
+    assert rows["T3"] == ("Technology & Innovation", "Equity Core"), "already-EN row must pass through unchanged"
+    assert metrics["sector_focus_es_stale"] == 2
+    assert metrics["family_es_stale"] == 2
+    assert metrics["sf_financials_resolved"] == 1
+
+
+def test_log_ingestion_failure_does_not_poison_enclosing_transaction(pg_conn):
+    """Regression guard for a real bug found live 2026-09-20: Postgres aborts the WHOLE enclosing
+    transaction on any failed statement — a plain caught-and-swallowed exception in log_ingestion
+    (matching its 'El log nunca debe interrumpir el pipeline' design) used to leave the transaction
+    unusable for whatever ran next, and would even make conn.transaction()'s own implicit COMMIT
+    raise on a clean exit — silently rolling back the fund's ENTIRE substantive write over an
+    incidental logging failure. log_ingestion now wraps its own statement in a nested SAVEPOINT on
+    Postgres specifically to contain this. isin='...TOO_LONG' (>12 chars) forces a genuine
+    StringDataRightTruncation through the real code path, not a synthetic error."""
+    pg_conn.execute("SET search_path = gold, silver, bronze, control, public")
+
+    with pg_conn.transaction():
+        pg_conn.execute("UPDATE fund_master SET fund_name = fund_name WHERE isin = 'LU1873132101'")
+        log_ingestion(pg_conn, "THIS_ISIN_IS_WAY_TOO_LONG_FOR_THE_COLUMN", "TEST_STEP", "OK", None)
+        # This statement must succeed — if log_ingestion's failure poisoned the transaction, this
+        # would raise InFailedSqlTransaction instead.
+        row = pg_conn.execute(
+            "UPDATE fund_master SET fund_name = fund_name WHERE isin = 'LU0252218937' RETURNING isin"
+        ).fetchone()
+        assert row is not None
+    # conn.transaction()'s own implicit commit on exit must not raise either.
+    assert not pg_conn.closed
+
+
+def test_upsert_kiid_benchmark_failure_does_not_poison_enclosing_transaction(pg_conn):
+    """Same regression class as the log_ingestion test above, for _upsert_kiid_benchmark's own
+    fail-soft try/except. isin='...TOO_LONG' forces a genuine StringDataRightTruncation."""
+    pg_conn.execute("SET search_path = gold, silver, bronze, control, public")
+
+    with pg_conn.transaction():
+        pg_conn.execute("UPDATE fund_master SET fund_name = fund_name WHERE isin = 'LU1873132101'")
+        _upsert_kiid_benchmark(pg_conn, "ICE BofA US Treasury Bill Index", "THIS_ISIN_IS_TOO_LONG")
+        row = pg_conn.execute(
+            "UPDATE fund_master SET fund_name = fund_name WHERE isin = 'LU0252218937' RETURNING isin"
+        ).fetchone()
+        assert row is not None
+    assert not pg_conn.closed

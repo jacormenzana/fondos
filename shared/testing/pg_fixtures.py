@@ -119,9 +119,20 @@ def pg_conn_module_schema(pg_session_conn: "psycopg.Connection", request: pytest
     test runs (pytest-xdist) never collide, and drops it at module teardown.
 
     Returns the schema name (a string) — the test is responsible for `CREATE TABLE <schema>.foo`
-    or issuing `SET search_path` itself; this fixture only owns the schema's lifecycle."""
+    or issuing `SET search_path` itself; this fixture only owns the schema's lifecycle.
+
+    Found live 2026-09-20 (first real use of this fixture — previously "reviewed but unproven"):
+    psycopg3 refuses to toggle `autocommit` while the connection is mid-transaction
+    (ProgrammingError: "can't change 'autocommit' now: connection in transaction status INTRANS").
+    A `pg_conn`-based test that ran earlier in the same session leaves `pg_session_conn` in exactly
+    that state — `ROLLBACK TO SAVEPOINT` + `RELEASE SAVEPOINT` clears the savepoint but does not
+    end the outer transaction psycopg3 opened implicitly on that connection's first statement. The
+    `conn.rollback()` below closes that (by then necessarily empty) outer transaction cleanly
+    before flipping to autocommit — safe regardless of whether a prior test ran, and root-causing
+    the actual state-precondition this fixture needs rather than relying on test execution order."""
     conn = pg_session_conn
     schema = f"test_{request.module.__name__.rsplit('.', 1)[-1]}_{uuid.uuid4().hex[:8]}"
+    conn.rollback()
     conn.autocommit = True
     try:
         conn.execute(f"CREATE SCHEMA {schema}")

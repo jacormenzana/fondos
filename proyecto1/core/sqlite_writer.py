@@ -777,31 +777,48 @@ def _upsert_kiid_benchmark(conn: sqlite3.Connection,
         # live), not isin alone; 'source' is always 'KIID' here but the PK allows other sources
         # (e.g. a different pipeline) to coexist per ISIN.
         if is_postgres_connection(conn):
-            conn.execute("""
-                INSERT INTO fund_benchmarks
-                    (isin, source, benchmark_raw, benchmark_id, benchmark_name,
-                     provider, asset_class, confidence, benchmark_role, extracted_at)
-                VALUES (%s, 'KIID', %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (isin, source) DO UPDATE SET
-                    benchmark_raw  = excluded.benchmark_raw,
-                    benchmark_id   = excluded.benchmark_id,
-                    benchmark_name = excluded.benchmark_name,
-                    provider       = excluded.provider,
-                    asset_class    = excluded.asset_class,
-                    confidence     = excluded.confidence,
-                    benchmark_role = excluded.benchmark_role,
-                    extracted_at   = excluded.extracted_at
-            """, (
-                isin,
-                benchmark_declared,
-                norm.canonical_id   if norm else None,
-                norm.canonical_name if norm else benchmark_declared,
-                norm.provider       if norm else None,
-                norm.asset_class    if norm else None,
-                norm.confidence     if norm else 'LOW',
-                _role,
-                now,
-            ))
+            # Postgres aborts the WHOLE enclosing transaction on any failed statement, not just
+            # back to the nearest point — confirmed live 2026-09-20 while investigating an
+            # unrelated pg_fixtures.py test failure. This function's own try/except (below) is
+            # deliberately fail-soft (a benchmark-normalization problem must never interrupt the
+            # pipeline), but under Postgres a caught-and-swallowed failure here would silently
+            # poison every LATER statement in publish_fund's SAME transaction (log_ingestion,
+            # upsert_cost_schedule) — defeating the fail-soft intent entirely. A nested SAVEPOINT,
+            # rolled back on failure before re-raising to the existing outer except, contains the
+            # damage to just this statement, matching what the original SQLite code never had to
+            # do because SQLite doesn't abort the whole transaction the same way.
+            conn.execute("SAVEPOINT bench_upsert")
+            try:
+                conn.execute("""
+                    INSERT INTO fund_benchmarks
+                        (isin, source, benchmark_raw, benchmark_id, benchmark_name,
+                         provider, asset_class, confidence, benchmark_role, extracted_at)
+                    VALUES (%s, 'KIID', %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (isin, source) DO UPDATE SET
+                        benchmark_raw  = excluded.benchmark_raw,
+                        benchmark_id   = excluded.benchmark_id,
+                        benchmark_name = excluded.benchmark_name,
+                        provider       = excluded.provider,
+                        asset_class    = excluded.asset_class,
+                        confidence     = excluded.confidence,
+                        benchmark_role = excluded.benchmark_role,
+                        extracted_at   = excluded.extracted_at
+                """, (
+                    isin,
+                    benchmark_declared,
+                    norm.canonical_id   if norm else None,
+                    norm.canonical_name if norm else benchmark_declared,
+                    norm.provider       if norm else None,
+                    norm.asset_class    if norm else None,
+                    norm.confidence     if norm else 'LOW',
+                    _role,
+                    now,
+                ))
+            except Exception:
+                conn.execute("ROLLBACK TO SAVEPOINT bench_upsert")
+                raise
+            else:
+                conn.execute("RELEASE SAVEPOINT bench_upsert")
             return
         conn.execute("""
             INSERT OR REPLACE INTO fund_benchmarks
@@ -839,7 +856,20 @@ def log_ingestion(conn: sqlite3.Connection, isin: Optional[str],
                   message: Optional[str]) -> None:
     # Plain append-only INSERT, no conflict/upsert logic — placeholder character is the only
     # dialect-specific piece (Postgres migration Phase 5c).
-    ph = "%s" if is_postgres_connection(conn) else "?"
+    #
+    # Nested SAVEPOINT on the Postgres branch: found live 2026-09-20 (same investigation as
+    # _upsert_kiid_benchmark's fix, see its comment) that Postgres aborts the WHOLE enclosing
+    # transaction on any failed statement — and worse here, since log_ingestion is typically the
+    # LAST statement in publish_fund's success-path transaction: without recovery, a swallowed
+    # logging failure would make conn.transaction()'s own implicit COMMIT raise on exit (confirmed
+    # live: committing a transaction containing an aborted statement raises InFailedSqlTransaction
+    # even though the Python code never saw the original exception), rolling back the fund's ENTIRE
+    # substantive write (fund_master, KIID, NAV, cost schedule) over an INCIDENTAL log-write
+    # failure — the exact opposite of "El log nunca debe interrumpir el pipeline".
+    pg = is_postgres_connection(conn)
+    ph = "%s" if pg else "?"
+    if pg:
+        conn.execute("SAVEPOINT log_ingestion_sp")
     try:
         conn.execute(
             f"INSERT INTO ingestion_log (ISIN, step, status, message, created_at) "
@@ -848,7 +878,11 @@ def log_ingestion(conn: sqlite3.Connection, isin: Optional[str],
              datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")),
         )
     except Exception:
-        pass  # El log nunca debe interrumpir el pipeline
+        if pg:
+            conn.execute("ROLLBACK TO SAVEPOINT log_ingestion_sp")
+        return  # El log nunca debe interrumpir el pipeline
+    if pg:
+        conn.execute("RELEASE SAVEPOINT log_ingestion_sp")
 
 
 # ============================================================
@@ -1144,9 +1178,12 @@ def correct_oc_aci_mismatch(
         from cost_scale import pct_to_ratio as _pct_to_ratio
     _ter_ratio = _pct_to_ratio(ter_pct)
 
+    # Postgres migration Phase 5c: plain UPDATE, placeholder-only translation. cur.rowcount is a
+    # standard DB-API cursor attribute — verified live to behave identically on psycopg3.
+    ph = "%s" if is_postgres_connection(conn) else "?"
     cur = conn.execute(
-        "UPDATE fund_master SET Ongoing_Charge_Recurrent = ?, Updated_At = ? "
-        "WHERE ISIN = ?",
+        f"UPDATE fund_master SET Ongoing_Charge_Recurrent = {ph}, Updated_At = {ph} "
+        f"WHERE ISIN = {ph}",
         (
             _ter_ratio,
             datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
@@ -1204,10 +1241,12 @@ def reconcile_universe_membership(
     conn.execute("UPDATE fund_master SET In_Current_Universe = 0")
 
     # 2. Re-flag the current universe in chunks to respect SQLite's
-    #    per-statement variable limit (~999).
+    #    per-statement variable limit (~999). Postgres has no such limit, but the chunking is
+    #    harmless there too (Phase 5c) — only the placeholder character needs to change.
+    ph = "%s" if is_postgres_connection(conn) else "?"
     for start in range(0, len(isins), _SQLITE_IN_CHUNK):
         chunk = isins[start: start + _SQLITE_IN_CHUNK]
-        placeholders = ",".join("?" * len(chunk))
+        placeholders = ",".join([ph] * len(chunk))
         conn.execute(
             f"UPDATE fund_master SET In_Current_Universe = 1 "
             f"WHERE ISIN IN ({placeholders})",

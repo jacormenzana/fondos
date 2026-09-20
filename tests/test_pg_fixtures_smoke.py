@@ -58,15 +58,26 @@ def test_pg_conn_rolls_back_between_tests_part2(pg_conn):
 def test_pg_conn_survives_a_failing_statement(pg_conn):
     """A test that fails partway through (e.g. an assertion after a partial write) must still
     tear down cleanly — the fixture's `finally` block must run even when the yielded block raises.
-    This test intentionally does a valid write, then a deliberately-caught error, then verifies
-    the connection is still usable afterward (proving the savepoint/finally logic doesn't leave
-    the transaction in an aborted state for whichever test runs next)."""
+
+    CORRECTED 2026-09-20 (Phase 5c) — the original version of this test asserted that a plain
+    `pg_conn.execute("SELECT 1")` succeeds immediately after a caught, swallowed failure, with no
+    recovery statement in between. That is wrong about real Postgres/psycopg3 semantics, found live
+    while porting sqlite_writer.py: a failed statement aborts the WHOLE enclosing transaction (not
+    just back to the nearest point), and EVERY subsequent statement fails with
+    `InFailedSqlTransaction` until an explicit `ROLLBACK TO SAVEPOINT` (or full rollback) runs — a
+    plain follow-up `execute()` does NOT recover on its own. This test now demonstrates the actual
+    correct recovery pattern (a caller-owned nested SAVEPOINT around the risky statement) — the
+    same pattern applied for real in sqlite_writer.py's log_ingestion() and _upsert_kiid_benchmark()
+    after this exact gap surfaced them as live bugs (a caught exception there was silently
+    poisoning the rest of publish_fund's transaction)."""
     pg_conn.execute("CREATE TABLE IF NOT EXISTS pytest_smoke_partial (n integer)")
+    pg_conn.execute("SAVEPOINT partial_write_recovery")
     with pytest.raises(Exception):
         pg_conn.execute("INSERT INTO pytest_smoke_partial VALUES ('not an integer')")
-    # After a failed statement, psycopg3 aborts the current transaction/savepoint — proving this
-    # fixture handles that (via ROLLBACK TO SAVEPOINT, not a plain rollback that would also discard
-    # the OUTER session transaction) is exactly the scenario this test targets.
+    # Postgres aborts the whole transaction on the failed INSERT above — recovery requires
+    # explicitly rolling back to the savepoint taken before the risky statement, not just catching
+    # the exception and continuing.
+    pg_conn.execute("ROLLBACK TO SAVEPOINT partial_write_recovery")
     row = pg_conn.execute("SELECT 1").fetchone()
     assert row == (1,)
 
