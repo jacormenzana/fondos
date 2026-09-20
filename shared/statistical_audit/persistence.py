@@ -9,10 +9,20 @@ from __future__ import annotations
 
 import math
 import sqlite3
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 import pandas as pd
+
+try:
+    from shared.db import is_postgres_connection, executemany
+except ModuleNotFoundError:
+    _shared_root = Path(__file__).resolve().parents[2]
+    if str(_shared_root) not in sys.path:
+        sys.path.insert(0, str(_shared_root))
+    from shared.db import is_postgres_connection, executemany
 
 
 def _split_value(value: Any) -> tuple[float | None, str | None]:
@@ -46,12 +56,22 @@ def emit_statistics(
         stat_value, stat_text = _split_value(value)
         rows.append((run_id, domain, population, group_key, stat_name, stat_value, stat_text, n))
 
-    conn.executemany(
-        "INSERT OR REPLACE INTO audit_statistic "
-        "(run_id, domain, population, group_key, stat_name, stat_value, stat_text, n) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        rows,
-    )
+    if is_postgres_connection(conn):
+        sql = (
+            "INSERT INTO audit_statistic "
+            "(run_id, domain, population, group_key, stat_name, stat_value, stat_text, n) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) "
+            "ON CONFLICT (run_id, domain, population, group_key, stat_name) DO UPDATE SET "
+            "stat_value = excluded.stat_value, stat_text = excluded.stat_text, "
+            "n = excluded.n, computed_at = DEFAULT"
+        )
+    else:
+        sql = (
+            "INSERT OR REPLACE INTO audit_statistic "
+            "(run_id, domain, population, group_key, stat_name, stat_value, stat_text, n) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+    executemany(conn, sql, rows)
     conn.commit()
     return len(rows)
 
@@ -104,8 +124,10 @@ def emit_findings(
         (run_id, domain, *(f.get(col) for col in _FINDING_COLUMNS))
         for f in findings
     ]
-    placeholders = ", ".join(["?"] * (2 + len(_FINDING_COLUMNS)))
-    conn.executemany(
+    ph = "%s" if is_postgres_connection(conn) else "?"
+    placeholders = ", ".join([ph] * (2 + len(_FINDING_COLUMNS)))
+    executemany(
+        conn,
         f"INSERT INTO audit_finding (run_id, domain, {', '.join(_FINDING_COLUMNS)}) "
         f"VALUES ({placeholders})",
         rows,
@@ -138,13 +160,22 @@ def preserve_and_write(
     row must never exist without the write it documents, or vice versa.
     """
     try:
-        conn.execute(
-            "INSERT INTO fund_cost_corrections "
-            "(ISIN, Column_Name, Old_Value, New_Value, Reason, Evidence) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (record.isin, record.column, record.old_value, record.new_value,
-             record.reason, record.evidence),
-        )
+        if is_postgres_connection(conn):
+            conn.execute(
+                "INSERT INTO fund_cost_corrections "
+                "(isin, column_name, old_value, new_value, reason, evidence) "
+                "VALUES (%s, %s, %s, %s, %s, %s)",
+                (record.isin, record.column, record.old_value, record.new_value,
+                 record.reason, record.evidence),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO fund_cost_corrections "
+                "(ISIN, Column_Name, Old_Value, New_Value, Reason, Evidence) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (record.isin, record.column, record.old_value, record.new_value,
+                 record.reason, record.evidence),
+            )
         apply_write(conn)
     except Exception:
         conn.rollback()
