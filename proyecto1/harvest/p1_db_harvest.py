@@ -38,7 +38,7 @@ _PROYECTO1_DIR = _HARVEST_DIR.parent                    # proyecto1/
 _ROOT          = _PROYECTO1_DIR.parent                  # repo root
 sys.path.insert(0, str(_ROOT))
 from shared.config import DB_PATH  # noqa: E402
-from shared.db import is_postgres_connection, executemany  # noqa: E402
+from shared.db import get_connection, is_postgres_connection, executemany  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -210,15 +210,16 @@ def cmd_probe(args) -> None:  # noqa: ARG001
 # ---------------------------------------------------------------------------
 # PHASE 1-2 — Harvest + Normalize
 # ---------------------------------------------------------------------------
-def cmd_harvest(args, conn=None) -> None:
+def cmd_harvest(args, conn=None, backend=None) -> None:
     """
     Phase 1: Fetch catalogo.xml → emit raw JSONL (before any parsing).
     Phase 2: Parse each href → UPSERT into db_document_catalogue.
     §6.1: href captured verbatim. §6.2: no codSus allowlist.
 
     conn: injected connection (Postgres or SQLite) — used by tests and any future dialect-aware
-    caller. When None (the CLI's default), behavior is unchanged: opens its own SQLite connection
-    against DB_PATH, exactly as before this port (Postgres migration Phase 5c, 2026-09-20).
+    caller. When None (the CLI's default), opens its own connection via get_connection(backend=
+    backend) — resolves FONDOS_DB_BACKEND when backend is also None, defaulting to SQLite exactly
+    as before this function accepted a backend at all (migration addendum, Stage 5, 2026-09-20).
     """
     harvest_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     jsonl_path = _HARVEST_DIR / f"harvest_raw_{harvest_ts}.jsonl"
@@ -275,7 +276,7 @@ def cmd_harvest(args, conn=None) -> None:
     log.info("Phase 2 — Normalizing + loading to DB: %s", DB_PATH)
     own_conn = conn is None
     if own_conn:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection(DB_PATH, backend=backend)
     pg = is_postgres_connection(conn)
     ph = "%s" if pg else "?"
     if pg:
@@ -362,12 +363,18 @@ def cmd_harvest(args, conn=None) -> None:
 # ---------------------------------------------------------------------------
 # PHASE 3 — codSus Discovery Report
 # ---------------------------------------------------------------------------
-def cmd_report_codsus(args) -> None:
+def cmd_report_codsus(args, conn=None, backend=None) -> None:
     """
     Phase 3: Query db_document_catalogue (latest harvest_ts) and emit
     the mandatory codSus discovery report (§7 Phase 3).
+
+    conn: injected connection — same convention as cmd_harvest(). When None, opens one via
+    get_connection(backend=backend) (migration addendum, Stage 5, 2026-09-20).
     """
-    conn = sqlite3.connect(DB_PATH)
+    own_conn = conn is None
+    if own_conn:
+        conn = get_connection(DB_PATH, backend=backend)
+    ph = "%s" if is_postgres_connection(conn) else "?"
 
     # Resolve latest harvest_ts
     row = conn.execute(
@@ -375,26 +382,27 @@ def cmd_report_codsus(args) -> None:
     ).fetchone()
     if not row:
         log.error("[ERROR-001] No harvest data found. Run --harvest first.")
-        conn.close()
+        if own_conn:
+            conn.close()
         return
     harvest_ts = row[0]
     log.info("Reporting on harvest_ts=%s", harvest_ts)
 
     # Total funds and docs in this harvest
     n_docs = conn.execute(
-        "SELECT COUNT(*) FROM db_document_catalogue WHERE harvest_ts=?",
+        f"SELECT COUNT(*) FROM db_document_catalogue WHERE harvest_ts={ph}",
         (harvest_ts,),
     ).fetchone()[0]
     n_funds = conn.execute(
-        "SELECT COUNT(DISTINCT isin) FROM db_document_catalogue WHERE harvest_ts=? AND isin IS NOT NULL",
+        f"SELECT COUNT(DISTINCT isin) FROM db_document_catalogue WHERE harvest_ts={ph} AND isin IS NOT NULL",
         (harvest_ts,),
     ).fetchone()[0]
 
     # codSus / codCont / link_label distribution
-    rows_dist = conn.execute("""
+    rows_dist = conn.execute(f"""
         SELECT cod_sus, cod_cont, link_label, COUNT(*) as cnt
         FROM db_document_catalogue
-        WHERE harvest_ts=?
+        WHERE harvest_ts={ph}
         GROUP BY cod_sus, cod_cont, link_label
         ORDER BY cnt DESC
     """, (harvest_ts,)).fetchall()
@@ -402,7 +410,7 @@ def cmd_report_codsus(args) -> None:
     # codSus-level aggregation
     codsus_counts = Counter()
     for r in conn.execute(
-        "SELECT cod_sus, COUNT(*) FROM db_document_catalogue WHERE harvest_ts=? GROUP BY cod_sus",
+        f"SELECT cod_sus, COUNT(*) FROM db_document_catalogue WHERE harvest_ts={ph} GROUP BY cod_sus",
         (harvest_ts,),
     ).fetchall():
         codsus_counts[r[0]] = r[1]
@@ -410,18 +418,18 @@ def cmd_report_codsus(args) -> None:
     # codDoc semantics per class
     codsus_semantics = {}
     for cod_sus, cnt in codsus_counts.items():
-        eq_isin = conn.execute("""
+        eq_isin = conn.execute(f"""
             SELECT COUNT(*) FROM db_document_catalogue
-            WHERE harvest_ts=? AND cod_sus=? AND isin IS NOT NULL AND cod_doc=isin
+            WHERE harvest_ts={ph} AND cod_sus={ph} AND isin IS NOT NULL AND cod_doc=isin
         """, (harvest_ts, cod_sus)).fetchone()[0]
         # funds-per-codDoc cardinality (max)
-        card = conn.execute("""
+        card = conn.execute(f"""
             SELECT MAX(c) FROM (
                 SELECT cod_doc, COUNT(DISTINCT isin) as c
                 FROM db_document_catalogue
-                WHERE harvest_ts=? AND cod_sus=?
+                WHERE harvest_ts={ph} AND cod_sus={ph}
                 GROUP BY cod_doc
-            )
+            ) sub
         """, (harvest_ts, cod_sus)).fetchone()[0] or 0
         codsus_semantics[cod_sus] = {
             "count":    cnt,
@@ -432,15 +440,13 @@ def cmd_report_codsus(args) -> None:
 
     # Coverage: per-class unique fund count
     codsus_fund_coverage = {}
-    for r in conn.execute("""
+    for r in conn.execute(f"""
         SELECT cod_sus, COUNT(DISTINCT isin) as n_funds
         FROM db_document_catalogue
-        WHERE harvest_ts=? AND isin IS NOT NULL
+        WHERE harvest_ts={ph} AND isin IS NOT NULL
         GROUP BY cod_sus
     """, (harvest_ts,)).fetchall():
         codsus_fund_coverage[r[0]] = r[1]
-
-    conn.close()
 
     # §11 diff vs workbook classes
     present_classes   = set(k for k in codsus_counts if k)
@@ -519,20 +525,24 @@ def cmd_report_codsus(args) -> None:
         print(f"{k:8}  {b:>9,}  {c:>9,}  {c-b:>+9,}{new_flag}")
 
     # 6. fund_master reconciliation (§11 criterion #8 / §6.3)
+    # Reuses the single `conn` opened at the top of this function — the original SQLite code
+    # opened two MORE separate connections here (one via conn2, one anonymous/never explicitly
+    # closed — a real connection leak, harmless on SQLite's file handles but not free on Postgres,
+    # where fondos_app has CONNECTION LIMIT 4 — db/pg/00_roles_schemas.sql). Fixed while porting,
+    # not a speculative refactor: opening extra connections is the literal thing this port must
+    # not do more of.
     print(f"\n§6  fund_master reconciliation (§6.3 / §11-#8)")
     try:
-        conn2 = sqlite3.connect(DB_PATH)
         master_isins = {
-            r[0] for r in conn2.execute(
+            r[0] for r in conn.execute(
                 "SELECT ISIN FROM fund_master WHERE ISIN IS NOT NULL"
             ).fetchall()
         }
-        conn2.close()
 
         harvest_isins = {
-            r[0] for r in sqlite3.connect(DB_PATH).execute(
-                "SELECT DISTINCT isin FROM db_document_catalogue "
-                "WHERE harvest_ts=? AND isin IS NOT NULL",
+            r[0] for r in conn.execute(
+                f"SELECT DISTINCT isin FROM db_document_catalogue "
+                f"WHERE harvest_ts={ph} AND isin IS NOT NULL",
                 (harvest_ts,),
             ).fetchall()
         }
@@ -554,6 +564,9 @@ def cmd_report_codsus(args) -> None:
                 print(f"    {isin}")
     except Exception as exc:
         print(f"  Reconciliation skipped: {exc}")
+
+    if own_conn:
+        conn.close()
 
     print(f"\n{sep}")
     print("WARNING  STOP — review this report before running p1_kiid_sync.py --sync")
@@ -577,14 +590,17 @@ def main():
     ap.add_argument("--harvest",       action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--report-codsus", action="store_true", dest="report_codsus",
                     help=argparse.SUPPRESS)
+    ap.add_argument("--backend", choices=["sqlite", "postgres"], default=None,
+                    help="Backend de BD (migracion, addendum 2026-09-20). Si se omite, resuelve "
+                         "FONDOS_DB_BACKEND ('sqlite' si no esta definida).")
     args = ap.parse_args()
 
     if args.probe:
         cmd_probe(args)
     elif args.harvest:
-        cmd_harvest(args)
+        cmd_harvest(args, backend=args.backend)
     elif args.report_codsus:
-        cmd_report_codsus(args)
+        cmd_report_codsus(args, backend=args.backend)
     else:
         ap.print_help()
 

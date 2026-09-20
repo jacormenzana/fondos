@@ -40,7 +40,7 @@ _PROYECTO1_DIR = _HARVEST_DIR.parent                    # proyecto1/
 _ROOT          = _PROYECTO1_DIR.parent                  # repo root
 sys.path.insert(0, str(_ROOT))
 from shared.config import DB_PATH  # noqa: E402
-from shared.db import is_postgres_connection  # noqa: E402
+from shared.db import get_connection, is_postgres_connection  # noqa: E402
 import sqlite3
 
 # ---------------------------------------------------------------------------
@@ -154,7 +154,7 @@ def _lifecycle_retire(conn, isin: str, end_date: str, retire_dir: str) -> None:
 # ---------------------------------------------------------------------------
 # PHASE 4 — KIID Delta
 # ---------------------------------------------------------------------------
-def compute_delta(conn=None) -> dict:
+def compute_delta(conn=None, backend=None) -> dict:
     """
     Returns:
       target   : {isin: href}  — from db_document_catalogue WHERE codSus='KIID'
@@ -164,13 +164,13 @@ def compute_delta(conn=None) -> dict:
       orphans  : ISINs local but not in target (reported, never deleted here)
 
     conn: injected connection (Postgres or SQLite) — used by tests and any future dialect-aware
-    caller. When None (the CLI's default), behavior is unchanged: opens (and closes) its own
-    short-lived SQLite connection against DB_PATH, exactly as before this port (Postgres
-    migration Phase 5c, 2026-09-20). No placeholder translation needed — this query has none.
+    caller. When None (the CLI's default), opens (and closes) its own short-lived connection via
+    get_connection(backend=backend) (migration addendum, Stage 5, 2026-09-20). No placeholder
+    translation needed — this query has none.
     """
     own_conn = conn is None
     if own_conn:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection(DB_PATH, backend=backend)
     rows = conn.execute("""
         SELECT DISTINCT isin, href
         FROM db_document_catalogue
@@ -195,14 +195,14 @@ def compute_delta(conn=None) -> dict:
     }
 
 
-def cmd_dry_run(args) -> None:  # noqa: ARG001
+def cmd_dry_run(args, backend=None) -> None:  # noqa: ARG001
     """Phase 4 — KIID delta only.  No writes, no downloads."""
     log.info("Phase 4 — KIID delta (dry-run)")
 
     if not KIID_DIR.exists():
         log.warning("KIID_DIR does not exist: %s", KIID_DIR)
 
-    delta   = compute_delta()
+    delta   = compute_delta(backend=backend)
     target  = delta["target"]
     missing = delta["missing"]
     present = delta["present"]
@@ -266,12 +266,12 @@ def _download_with_retry(session: requests.Session, href: str) -> tuple[bool, by
     return False, b"", last_reason
 
 
-def cmd_sync(args, conn=None) -> None:
+def cmd_sync(args, conn=None, backend=None) -> None:
     """Phase 5 — Download net-new KIID PDFs and record each in kiid_lifecycle.
 
     conn: injected connection — used by tests and any future dialect-aware caller. When None
-    (the CLI's default), behavior is unchanged: opens (and closes) its own SQLite connection
-    against DB_PATH, exactly as before this port (Postgres migration Phase 5c, 2026-09-20).
+    (the CLI's default), opens (and closes) its own connection via get_connection(backend=
+    backend) (migration addendum, Stage 5, 2026-09-20).
     """
     limit: int | None = args.limit
     today = date.today().isoformat()   # YYYY-MM-DD
@@ -284,7 +284,7 @@ def cmd_sync(args, conn=None) -> None:
 
     own_conn = conn is None
     if own_conn:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection(DB_PATH, backend=backend)
 
     delta   = compute_delta(conn=conn)
     target  = delta["target"]
@@ -371,15 +371,15 @@ def _write_report(path: Path, downloaded: list, failed: list,
 # ---------------------------------------------------------------------------
 # RETIRE ORPHANS
 # ---------------------------------------------------------------------------
-def cmd_retire_orphans(args, conn=None) -> None:  # noqa: ARG001
+def cmd_retire_orphans(args, conn=None, backend=None) -> None:  # noqa: ARG001
     """
     Move orphan KIIDs to kiid_retired/YYYYMMDD/ and record retirement in kiid_lifecycle.
     Orphans = local PDFs whose ISIN is not in the latest harvest's codSus='KIID' set.
     Files are moved (never deleted) — the archive is permanent and queryable.
 
     conn: injected connection — used by tests and any future dialect-aware caller. When None
-    (the CLI's default), behavior is unchanged: opens (and closes) its own SQLite connection
-    against DB_PATH, exactly as before this port (Postgres migration Phase 5c, 2026-09-20).
+    (the CLI's default), opens (and closes) its own connection via get_connection(backend=
+    backend) (migration addendum, Stage 5, 2026-09-20).
     """
     today    = date.today().isoformat()          # YYYY-MM-DD  e.g. 2026-07-18
     today_d  = datetime.now().strftime("%Y%m%d") # YYYYMMDD    e.g. 20260718  (retire_dir)
@@ -387,7 +387,7 @@ def cmd_retire_orphans(args, conn=None) -> None:  # noqa: ARG001
 
     own_conn = conn is None
     if own_conn:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection(DB_PATH, backend=backend)
 
     delta   = compute_delta(conn=conn)
     orphans = sorted(delta["orphans"])
@@ -448,7 +448,7 @@ def cmd_retire_orphans(args, conn=None) -> None:  # noqa: ARG001
 # ---------------------------------------------------------------------------
 # BACKFILL LIFECYCLE — one-time population from disk state
 # ---------------------------------------------------------------------------
-def cmd_backfill_lifecycle(args, conn=None) -> None:  # noqa: ARG001
+def cmd_backfill_lifecycle(args, conn=None, backend=None) -> None:  # noqa: ARG001
     """
     One-time command: populate kiid_lifecycle from the current disk state.
 
@@ -460,12 +460,12 @@ def cmd_backfill_lifecycle(args, conn=None) -> None:  # noqa: ARG001
     href        : from db_document_catalogue (latest harvest, codSus='KIID') where available
 
     conn: injected connection — used by tests and any future dialect-aware caller. When None
-    (the CLI's default), behavior is unchanged: opens (and closes) its own SQLite connection
-    against DB_PATH, exactly as before this port (Postgres migration Phase 5c, 2026-09-20).
+    (the CLI's default), opens (and closes) its own connection via get_connection(backend=
+    backend) (migration addendum, Stage 5, 2026-09-20).
     """
     own_conn = conn is None
     if own_conn:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection(DB_PATH, backend=backend)
     pg = is_postgres_connection(conn)
     ph = "%s" if pg else "?"
     _ensure_lifecycle_table(conn)
@@ -601,16 +601,19 @@ def main():
     ap.add_argument("--backfill-lifecycle", action="store_true", default=False,
                     dest="backfill_lifecycle",
                     help="One-time: populate kiid_lifecycle from disk state")
+    ap.add_argument("--backend", choices=["sqlite", "postgres"], default=None,
+                    help="Backend de BD (migracion, addendum 2026-09-20). Si se omite, resuelve "
+                         "FONDOS_DB_BACKEND ('sqlite' si no esta definida).")
     args = ap.parse_args()
 
     if args.backfill_lifecycle:
-        cmd_backfill_lifecycle(args)
+        cmd_backfill_lifecycle(args, backend=args.backend)
     elif args.retire_orphans:
-        cmd_retire_orphans(args)
+        cmd_retire_orphans(args, backend=args.backend)
     elif args.sync:
-        cmd_sync(args)
+        cmd_sync(args, backend=args.backend)
     else:
-        cmd_dry_run(args)
+        cmd_dry_run(args, backend=args.backend)
 
 
 if __name__ == "__main__":
