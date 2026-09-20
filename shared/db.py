@@ -263,6 +263,80 @@ def executemany(conn, sql: str, params_seq) -> None:
         conn.executemany(sql, params_seq)
 
 
+def round_sql(expr: str, decimals: int, *, pg: bool) -> str:
+    """ROUND() SQL fragment, dialect-safe. SQLite's ROUND() operates on the raw IEEE754 double and
+    breaks exact .5 ties AWAY FROM ZERO. Postgres has no ROUND(double precision, integer) overload
+    at all (only ROUND(numeric, integer) — found live 2026-09-20, UndefinedFunction), and neither
+    obvious Postgres substitute reproduces SQLite's output:
+      - `ROUND(x::numeric, n)::double precision` — the numeric CAST "snaps" a noisy double like
+        0.2875*100 = 28.749999999999996 to the clean decimal 28.75 before rounding, then rounds
+        that (now-exact) tie up to 28.8. SQLite rounds the noisy double directly and gets 28.7.
+        Real data hit this: ~1% of rows in q_consistencia/q_tendencia diverged between engines.
+      - Postgres's single-arg `round(double precision)` avoids the numeric snap, but breaks exact
+        ties with ROUND HALF TO EVEN (round(2.5)=2, round(-2.5)=-2) — SQLite uses round half AWAY
+        FROM ZERO (round(2.5)=3, round(-2.5)=-3). Different rule, same class of silent divergence.
+    The formula below (scale, round-half-away-from-zero via floor+sign, descale) stays in double
+    precision throughout — no numeric/Decimal ever appears, so the Python-side return type is
+    `float` on both dialects too, matching SQLite exactly rather than approximately. Deliberately a
+    small explicit helper, not a general SQL-string rewriter — same reasoning as this module's
+    rejected `?`->`%s` auto-translator: safe only because every call site is reviewed, not
+    pattern-matched, and because every case above was verified against real, previously-diverging
+    data before being trusted, not assumed correct from the formula alone.
+
+    Known, accepted residual: cross-validated against the full live q_consistencia (3683 rows,
+    100% match) and q_tendencia (3666 rows) datasets — q_tendencia still shows 38 single-cell
+    diffs out of ~66,000 (0.058%), every one exactly +0.001 in Postgres versus SQLite. Root cause:
+    the scale-multiply step above (`(expr) * scale`) is itself one more double-precision
+    multiplication, which can occasionally land a value that is genuinely a hair below a decimal
+    boundary (per the double's full, un-rounded binary value) exactly ON that boundary, tipping the
+    tie the other way — a deeper fix would require arbitrary-precision (Decimal) evaluation of the
+    original expression rather than double arithmetic at any stage, which is disproportionate for a
+    display-rounded reporting value at 3-4 decimal places. Bounded, one-directional, sub-0.1%,
+    last-decimal-digit only — accepted rather than chased further.
+
+    Moved here from export_metrics.py (2026-09-20, migration addendum Stage 3) once pipeline.py
+    needed the identical logic (P#11/DRY) — export_metrics.py now imports it under its original
+    private name so its ~97 call sites needed no changes."""
+    if pg:
+        scale = 10 ** decimals
+        return (
+            f"(sign(({expr})::double precision) * "
+            f"floor(abs(({expr})::double precision) * {scale} + 0.5) / {scale})"
+        )
+    return f"ROUND({expr}, {decimals})"
+
+
+def int_cast_sql(expr: str, *, pg: bool) -> str:
+    """CAST(expr AS INTEGER), dialect-safe. SQLite's CAST-to-INTEGER TRUNCATES toward zero
+    (CAST(4.9999999 AS INTEGER) = 4). Postgres's CAST(double precision AS INTEGER) ROUNDS to
+    nearest instead (round-half-to-even: CAST(4.9999999 AS INTEGER) = 5, CAST(4.5 AS INTEGER) = 4)
+    — found live 2026-09-20, same class of divergence as round_sql(). `trunc(expr)::integer`
+    matches SQLite's truncation exactly (verified against 4.9999999/-4.9999999/4.5/5.5/-4.5).
+    Moved here alongside round_sql() — see its docstring for why."""
+    if pg:
+        return f"trunc(({expr})::double precision)::integer"
+    return f"CAST({expr} AS INTEGER)"
+
+
+def db_transaction(conn):
+    """Dialect-aware equivalent of SQLite's `with conn:` idiom — commit-on-success /
+    rollback-on-exception, connection stays open either way. Use as `with db_transaction(conn):`.
+
+    **Why this exists — a real, previously-undiscovered bug, not a style preference.** Verified
+    live 2026-09-20: a bare `with conn:` on a psycopg3 Connection COMMITS *and then CLOSES* the
+    connection on a clean exit (`conn.closed is True` immediately after, even on success) — a
+    fundamentally different semantic from sqlite3's `with conn:`, which only manages the
+    transaction and never closes. Naively porting `with conn:` unchanged inside a function called
+    repeatedly on one long-lived pipeline connection (the normal shape in this codebase — see
+    `sqlite_writer.py::publish_fund()`, called once per fund) would close the connection after the
+    FIRST call and break every subsequent one in the same run. First found and fixed inline in
+    `publish_fund()` (`txn = conn.transaction() if is_postgres_connection(conn) else conn`);
+    centralized here once further sites needed the identical fix (P#11/DRY) rather than repeating
+    the ternary at each one. `conn.transaction()` is psycopg3's actual `with conn:`-equivalent
+    primitive: commits on success, rolls back on exception, connection stays open."""
+    return conn.transaction() if is_postgres_connection(conn) else conn
+
+
 def in_transaction(conn) -> bool:
     """Dialect-aware equivalent of sqlite3.Connection.in_transaction — True when conn currently has
     an open transaction a caller should append to rather than starting its own (the EFF-2 "single

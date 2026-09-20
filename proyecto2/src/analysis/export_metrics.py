@@ -41,65 +41,12 @@ sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_P2_SRC))
 
 from shared.config import DB_PATH, METRICS_DIR, SCHEMA_VERSION
-from shared.db import get_connection, is_postgres_connection
+from shared.db import get_connection, is_postgres_connection, round_sql as _round_sql, int_cast_sql as _int_cast_sql
 from shared.schema_checks import assert_schema_alignment
 
-# ============================================================
-# Dialect helper (Postgres migration Phase 5b, 2026-09-20)
-# ============================================================
-
-def _round_sql(expr: str, decimals: int, *, pg: bool) -> str:
-    """ROUND() SQL fragment, dialect-safe. SQLite's ROUND() operates on the raw IEEE754 double and
-    breaks exact .5 ties AWAY FROM ZERO. Postgres has no ROUND(double precision, integer) overload
-    at all (only ROUND(numeric, integer) — found live 2026-09-20, UndefinedFunction), and neither
-    obvious Postgres substitute reproduces SQLite's output:
-      - `ROUND(x::numeric, n)::double precision` — the numeric CAST "snaps" a noisy double like
-        0.2875*100 = 28.749999999999996 to the clean decimal 28.75 before rounding, then rounds
-        that (now-exact) tie up to 28.8. SQLite rounds the noisy double directly and gets 28.7.
-        Real data hit this: ~1% of rows in q_consistencia/q_tendencia diverged between engines.
-      - Postgres's single-arg `round(double precision)` avoids the numeric snap, but breaks exact
-        ties with ROUND HALF TO EVEN (round(2.5)=2, round(-2.5)=-2) — SQLite uses round half AWAY
-        FROM ZERO (round(2.5)=3, round(-2.5)=-3). Different rule, same class of silent divergence.
-    The formula below (scale, round-half-away-from-zero via floor+sign, descale) stays in double
-    precision throughout — no numeric/Decimal ever appears, so the Python-side return type is
-    `float` on both dialects too, matching SQLite exactly rather than approximately. Deliberately a
-    small explicit helper, not a general SQL-string rewriter — same reasoning as shared/db.py's
-    rejected `?`->`%s` auto-translator: safe only because every call site is reviewed, not
-    pattern-matched, and because every case above was verified against real, previously-diverging
-    data before being trusted, not assumed correct from the formula alone.
-
-    Known, accepted residual: cross-validated against the full live q_consistencia (3683 rows,
-    100% match) and q_tendencia (3666 rows) datasets — q_tendencia still shows 38 single-cell
-    diffs out of ~66,000 (0.058%), every one exactly +0.001 in Postgres versus SQLite. Root cause:
-    the scale-multiply step above (`(expr) * scale`) is itself one more double-precision
-    multiplication, which can occasionally land a value that is genuinely a hair below a decimal
-    boundary (per the double's full, un-rounded binary value) exactly ON that boundary, tipping the
-    tie the other way — a deeper fix would require arbitrary-precision (Decimal) evaluation of the
-    original expression rather than double arithmetic at any stage, which is disproportionate for a
-    display-rounded reporting value at 3-4 decimal places. Bounded, one-directional, sub-0.1%,
-    last-decimal-digit only — accepted rather than chased further."""
-    if pg:
-        scale = 10 ** decimals
-        return (
-            f"(sign(({expr})::double precision) * "
-            f"floor(abs(({expr})::double precision) * {scale} + 0.5) / {scale})"
-        )
-    return f"ROUND({expr}, {decimals})"
-
-
-def _int_cast_sql(expr: str, *, pg: bool) -> str:
-    """CAST(expr AS INTEGER), dialect-safe. SQLite's CAST-to-INTEGER TRUNCATES toward zero
-    (CAST(4.9999999 AS INTEGER) = 4). Postgres's CAST(double precision AS INTEGER) ROUNDS to
-    nearest instead (round-half-to-even: CAST(4.9999999 AS INTEGER) = 5, CAST(4.5 AS INTEGER) = 4)
-    — found live 2026-09-20, same class of divergence as _round_sql(), and already present
-    (unaddressed until now) in q_consistencia/q_tendencia's `CAST(srri.value AS INTEGER)` — it
-    simply hadn't manifested yet because no srri_nav value in the live data happened to sit near an
-    exact .5/.9999 boundary at the time those two were cross-validated. `trunc(expr)::integer`
-    matches SQLite's truncation exactly (verified against 4.9999999/-4.9999999/4.5/5.5/-4.5)."""
-    if pg:
-        return f"trunc(({expr})::double precision)::integer"
-    return f"CAST({expr} AS INTEGER)"
-
+# _round_sql/_int_cast_sql moved to shared/db.py (2026-09-20, migration addendum Stage 3) — pipeline.py
+# needed the identical CAST(ROUND(x) AS INT) dialect-safety logic (P#11/DRY); re-imported under their
+# original private names here so none of this file's ~97 call sites needed touching.
 
 # ============================================================
 # Estilos

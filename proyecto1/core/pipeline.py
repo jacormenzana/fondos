@@ -542,15 +542,18 @@ def _finalize_data_quality_issues(
     for check_code, dq_level, log_status, message in issues:
         log_ingestion(conn, isin, check_code, log_status, message)
 
+    _ph = "%s" if is_postgres_connection(conn) else "?"
     conn.execute(
-        "DELETE FROM fund_data_quality_issues WHERE ISIN = ?", (isin,)
+        f"DELETE FROM fund_data_quality_issues WHERE ISIN = {_ph}", (isin,)
     )
     if issues:
         now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
-        conn.executemany(
-            "INSERT INTO fund_data_quality_issues "
-            "(ISIN, check_code, level, message, detected_at) "
-            "VALUES (?, ?, ?, ?, ?)",
+        from shared.db import executemany as _executemany
+        _executemany(
+            conn,
+            f"INSERT INTO fund_data_quality_issues "
+            f"(ISIN, check_code, level, message, detected_at) "
+            f"VALUES ({_ph}, {_ph}, {_ph}, {_ph}, {_ph})",
             [
                 (isin, check_code, dq_level, message, now)
                 for check_code, dq_level, _log_status, message in issues
@@ -783,10 +786,16 @@ def run_block(
     _srri_nav_by_isin: dict = {}
     if nature_first:
         try:
+            from shared.db import round_sql as _round_sql, int_cast_sql as _int_cast_sql
+            _pg = is_postgres_connection(conn)
+            # CAST(ROUND(x) AS INT): SQLite ties away-from-zero + truncating CAST; Postgres's
+            # native ROUND()/CAST() break ties/round differently (round_sql/int_cast_sql's own
+            # docstrings — same gap export_metrics.py already found and fixed for its q_* queries).
+            _srri_expr = _int_cast_sql(_round_sql("value", 0, pg=_pg), pg=_pg)
             for _si, _sv in conn.execute(
-                "SELECT ISIN, CAST(ROUND(value) AS INT) FROM fund_metrics "
-                "WHERE metric='srri_nav' AND horizon='since_inception' "
-                "AND real_flag=0 AND value IS NOT NULL"
+                f"SELECT ISIN, {_srri_expr} FROM fund_metrics "
+                f"WHERE metric='srri_nav' AND horizon='since_inception' "
+                f"AND real_flag=0 AND value IS NOT NULL"
             ).fetchall():
                 if _sv is not None:
                     _srri_nav_by_isin[_si] = max(1, min(7, int(_sv)))
@@ -836,18 +845,20 @@ def run_block(
                 # WRONG_DOC ahora — evitamos que cicle indefinidamente consumiendo
                 # un slot de descarga en cada run sin posibilidad de resolución.
                 if _kiid_err == "no_links_found":
+                    _ph = "%s" if is_postgres_connection(conn) else "?"
                     _cached_row = conn.execute(
-                        "SELECT Raw_KIID_Text FROM fund_kiid_metadata "
-                        "WHERE ISIN=? AND KIID_Class=1",
+                        f"SELECT Raw_KIID_Text FROM fund_kiid_metadata "
+                        f"WHERE ISIN={_ph} AND KIID_Class=1",
                         (isin,)
                     ).fetchone()
                     _cached_text_for_check = (_cached_row[0] if _cached_row else None)
                     _stuck_reason = resolve_stuck_wrong_doc(_cached_text_for_check, _kiid_err)
                     if _stuck_reason:
-                        with conn:
+                        from shared.db import db_transaction
+                        with db_transaction(conn):
                             conn.execute(
-                                "UPDATE fund_kiid_metadata SET KIID_Status='WRONG_DOC' "
-                                "WHERE ISIN=? AND KIID_Class=1", (isin,)
+                                f"UPDATE fund_kiid_metadata SET KIID_Status='WRONG_DOC' "
+                                f"WHERE ISIN={_ph} AND KIID_Class=1", (isin,)
                             )
                             # FIX-WRONGDOC-DQF (2026-09-13): publish_fund se salta
                             # (continue más abajo) — sin esto Data_Quality_Flag se
@@ -855,8 +866,8 @@ def run_block(
                             # 'WARN'), dejando el fondo silenciosamente obsoleto
                             # para P2/P3 (Reliability Control 1).
                             conn.execute(
-                                "UPDATE fund_master SET Data_Quality_Flag='WARN' "
-                                "WHERE ISIN=?", (isin,)
+                                f"UPDATE fund_master SET Data_Quality_Flag='WARN' "
+                                f"WHERE ISIN={_ph}", (isin,)
                             )
                         log_ingestion(conn, isin, "KIID_WRONG_DOC", "WARN",
                                       f"WRONG_DOC (FORCE_REFRESH sin links + texto cacheado erróneo): "
@@ -869,9 +880,10 @@ def run_block(
             # Recuperar SRRI_Visual previo de la BD
             _srri_visual_prev  = None
             _srri_textual_prev = None
+            _ph = "%s" if is_postgres_connection(conn) else "?"
             _row = conn.execute(
-                "SELECT SRRI_Visual, SRRI_Textual FROM fund_kiid_metadata "
-                "WHERE ISIN=? AND KIID_Class=1",
+                f"SELECT SRRI_Visual, SRRI_Textual FROM fund_kiid_metadata "
+                f"WHERE ISIN={_ph} AND KIID_Class=1",
                 (isin,)
             ).fetchone()
             if _row:
@@ -913,26 +925,27 @@ def run_block(
                 kiid_text, srri=parsed.get("SRRI")
             )
             if _wrong_doc_reason:
+                from shared.db import db_transaction
                 _kiid_src = (kiid_meta or {}).get("KIID_Source", "CACHE")
                 if _kiid_src == "CACHE":
-                    with conn:
+                    with db_transaction(conn):
                         conn.execute(
-                            "UPDATE fund_kiid_metadata SET KIID_Status='FORCE_REFRESH' "
-                            "WHERE ISIN=? AND KIID_Class=1", (isin,)
+                            f"UPDATE fund_kiid_metadata SET KIID_Status='FORCE_REFRESH' "
+                            f"WHERE ISIN={_ph} AND KIID_Class=1", (isin,)
                         )
                     log_ingestion(conn, isin, "KIID_WRONG_DOC_RETRY", "INFO",
                                   f"FORCE_REFRESH marcado (1er intento): {_wrong_doc_reason}")
                 else:
-                    with conn:
+                    with db_transaction(conn):
                         conn.execute(
-                            "UPDATE fund_kiid_metadata SET KIID_Status='WRONG_DOC' "
-                            "WHERE ISIN=? AND KIID_Class=1", (isin,)
+                            f"UPDATE fund_kiid_metadata SET KIID_Status='WRONG_DOC' "
+                            f"WHERE ISIN={_ph} AND KIID_Class=1", (isin,)
                         )
                         # FIX-WRONGDOC-DQF (2026-09-13): ver comentario gemelo más
                         # arriba (rama FORCE_REFRESH sin links) — mismo gap.
                         conn.execute(
-                            "UPDATE fund_master SET Data_Quality_Flag='WARN' "
-                            "WHERE ISIN=?", (isin,)
+                            f"UPDATE fund_master SET Data_Quality_Flag='WARN' "
+                            f"WHERE ISIN={_ph}", (isin,)
                         )
                     log_ingestion(conn, isin, "KIID_WRONG_DOC", "WARN",
                                   f"WRONG_DOC (fuente incorrecta, re-descarga confirmó): "
@@ -1061,8 +1074,9 @@ def run_block(
             # completa (Family/Type/etc.), no solo un parche de Fund_Nature.
             # OPT-B: nature vote resolved this upfront; INTER-DBLCLAIM is a no-op in nature_first mode.
             if not nature_first and classification.get("Fund_Nature") == "Mixtos" and block_name == "MIXTOS":
+                _ph = "%s" if is_postgres_connection(conn) else "?"
                 _bd_nature_dblclaim = conn.execute(
-                    "SELECT Fund_Nature FROM fund_master WHERE ISIN=?", (isin,)
+                    f"SELECT Fund_Nature FROM fund_master WHERE ISIN={_ph}", (isin,)
                 ).fetchone()
                 _bd_nature_dblclaim = _bd_nature_dblclaim[0] if _bd_nature_dblclaim else None
                 if _bd_nature_dblclaim == "Renta Variable":
@@ -1213,12 +1227,13 @@ def run_block(
                 # Para CACHED: verificar si faltan atributos v3 en BD
                 # P06: ampliado para detectar Geography=NULL y
                 #      inconsistencia Nature/Investment_Universe (P09)
+                _ph = "%s" if is_postgres_connection(conn) else "?"
                 _v3_row = conn.execute(
-                    "SELECT Investment_Universe, Accumulation_Policy, Hedging_Policy, "
-                    "Investment_Focus, Credit_Quality, Geography, Fund_Nature, "
+                    f"SELECT Investment_Universe, Accumulation_Policy, Hedging_Policy, "
+                    f"Investment_Focus, Credit_Quality, Geography, Fund_Nature, "
                     # v19 BL-COST-2: añadir KID_Format y Cost_Extraction_Quality (R-3)
-                    "KID_Format, Cost_Extraction_Quality "
-                    "FROM fund_master WHERE ISIN=?", (isin,)
+                    f"KID_Format, Cost_Extraction_Quality "
+                    f"FROM fund_master WHERE ISIN={_ph}", (isin,)
                 ).fetchone()
                 if _v3_row is None:
                     _needs_char = True
@@ -1788,8 +1803,9 @@ def run_block(
             #
             # Lectura BD R-4 (mantenida de v29).
             # Umbrales: Monetario SRRI≥3, RFC SRRI≥5 (alineado con _NATURE_VOL_BANDS={2,3,4}).
+            _ph = "%s" if is_postgres_connection(conn) else "?"
             _nat44_bd_row = conn.execute(
-                "SELECT Fund_Nature, SRRI FROM fund_master WHERE ISIN=?", (isin,)
+                f"SELECT Fund_Nature, SRRI FROM fund_master WHERE ISIN={_ph}", (isin,)
             ).fetchone()
             _nat44_bd   = _nat44_bd_row[0] if _nat44_bd_row else None
             _srri44_bd  = _nat44_bd_row[1] if _nat44_bd_row else None
@@ -2156,10 +2172,11 @@ def run_block(
             # persistido, pero contador BL30_INVESTMENT_FOCUS_SECTOR oscilando
             # 15<->326 entre ciclos completos en vez de converger). Pura lectura,
             # sin efectos secundarios — es seguro adelantarla.
+            _ph = "%s" if is_postgres_connection(conn) else "?"
             _bd_prev = conn.execute(
-                "SELECT Sector_Focus, Hedging_Policy, "
-                "Investment_Focus, Benchmark_Declared, Benchmark_Type "
-                "FROM fund_master WHERE ISIN=?",
+                f"SELECT Sector_Focus, Hedging_Policy, "
+                f"Investment_Focus, Benchmark_Declared, Benchmark_Type "
+                f"FROM fund_master WHERE ISIN={_ph}",
                 (isin,)
             ).fetchone()
             _sf_bd        = _bd_prev[0] if _bd_prev else None
@@ -2685,8 +2702,9 @@ def run_block(
             # Caso B: el parser devolvió None — verificar si BD tiene un valor
             # contaminado que el COALESCE preservaría
             elif not fund_master_record.get("Benchmark_Declared"):
+                _ph = "%s" if is_postgres_connection(conn) else "?"
                 _bench_bd_row = conn.execute(
-                    "SELECT Benchmark_Declared FROM fund_master WHERE ISIN=?",
+                    f"SELECT Benchmark_Declared FROM fund_master WHERE ISIN={_ph}",
                     (isin,)
                 ).fetchone()
                 _bench_bd = _bench_bd_row[0] if _bench_bd_row else None
@@ -2832,8 +2850,9 @@ def run_block(
                     # v21: fallback a BD para Investment_Universe
                     _universe = fund_master_record.get("Investment_Universe")
                     if not _universe:
+                        _ph = "%s" if is_postgres_connection(conn) else "?"
                         _univ_bd = conn.execute(
-                            "SELECT Investment_Universe FROM fund_master WHERE ISIN=?",
+                            f"SELECT Investment_Universe FROM fund_master WHERE ISIN={_ph}",
                             (isin,)
                         ).fetchone()
                         if _univ_bd and _univ_bd[0]:
@@ -2921,10 +2940,11 @@ def run_block(
                 # P1-17: Management_Fee_Pct se lee también — el extractor lo usa SOLO
                 # como destino de reparación de FIX-OC-BIND cuando no logra rederivar
                 # la gestión del texto (nunca se republica como extracción).
+                _ph = "%s" if is_postgres_connection(conn) else "?"
                 _cost_bd_row = conn.execute(
-                    "SELECT Cost_Extraction_Quality, Ongoing_Charge_Recurrent, "
-                    "Entry_Fee_Pct_Max, Exit_Fee_Pct_Max, Management_Fee_Pct "
-                    "FROM fund_master WHERE ISIN=?", (isin,)
+                    f"SELECT Cost_Extraction_Quality, Ongoing_Charge_Recurrent, "
+                    f"Entry_Fee_Pct_Max, Exit_Fee_Pct_Max, Management_Fee_Pct "
+                    f"FROM fund_master WHERE ISIN={_ph}", (isin,)
                 ).fetchone()
                 _ceq_bd   = _cost_bd_row[0] if _cost_bd_row else None
                 _oc_bd    = _cost_bd_row[1] if _cost_bd_row else None
