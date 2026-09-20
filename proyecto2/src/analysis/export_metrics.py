@@ -87,6 +87,20 @@ def _round_sql(expr: str, decimals: int, *, pg: bool) -> str:
     return f"ROUND({expr}, {decimals})"
 
 
+def _int_cast_sql(expr: str, *, pg: bool) -> str:
+    """CAST(expr AS INTEGER), dialect-safe. SQLite's CAST-to-INTEGER TRUNCATES toward zero
+    (CAST(4.9999999 AS INTEGER) = 4). Postgres's CAST(double precision AS INTEGER) ROUNDS to
+    nearest instead (round-half-to-even: CAST(4.9999999 AS INTEGER) = 5, CAST(4.5 AS INTEGER) = 4)
+    — found live 2026-09-20, same class of divergence as _round_sql(), and already present
+    (unaddressed until now) in q_consistencia/q_tendencia's `CAST(srri.value AS INTEGER)` — it
+    simply hadn't manifested yet because no srri_nav value in the live data happened to sit near an
+    exact .5/.9999 boundary at the time those two were cross-validated. `trunc(expr)::integer`
+    matches SQLite's truncation exactly (verified against 4.9999999/-4.9999999/4.5/5.5/-4.5)."""
+    if pg:
+        return f"trunc(({expr})::double precision)::integer"
+    return f"CAST({expr} AS INTEGER)"
+
+
 # ============================================================
 # Estilos
 # ============================================================
@@ -272,7 +286,17 @@ def q_srri_vs_kiid(conn):
     """).fetchall()
 
 def q_rentabilidad_dist(conn, real_flag):
-    return conn.execute("""
+    # First function in this file needing real parameter binding (real_flag). psycopg3 only scans
+    # a query for %-style placeholders when params ARE bound (confirmed live 2026-09-20:
+    # q_drawdown_dist below, same '%'-in-string-literal shape, has zero params and runs fine
+    # unmodified) — but this one binds real_flag via `?`, and psycopg3's scan doesn't distinguish
+    # a literal '%' inside a quoted string from its own placeholder syntax, raising "only '%s',
+    # '%b', '%t' are allowed as placeholders, got '%''" on the '%' in '1. < -5%' etc. Doubling every
+    # '%' to '%%' (safe here specifically because this query has no LIKE wildcard use of '%',
+    # verified by reading it) plus the `?`->`%s` translation are both applied narrowly to this one
+    # reviewed string, not as a general auto-translator (shared/db.py's docstring explains why that
+    # general form is rejected).
+    sql = """
         SELECT
             CASE
                 WHEN value < -0.05 THEN '1. < -5%'
@@ -289,18 +313,22 @@ def q_rentabilidad_dist(conn, real_flag):
         WHERE metric='return_ann' AND horizon='since_inception'
           AND real_flag=? AND value IS NOT NULL
         GROUP BY tramo ORDER BY tramo
-    """, (real_flag,)).fetchall()
+    """
+    if is_postgres_connection(conn):
+        sql = sql.replace("%", "%%").replace("?", "%s")
+    return conn.execute(sql, (real_flag,)).fetchall()
 
 def q_top_rentabilidad(conn):
-    return conn.execute("""
+    pg = is_postgres_connection(conn)
+    return conn.execute(f"""
         SELECT ret.isin, fm.Fund_Name, fm.Fund_Nature, fm.Management_Company,
-               ROUND(ret.value*100,2)       AS return_real_pct,
-               ROUND(vol.value*100,2)       AS volatilidad_pct,
-               ROUND(sh.value,2)            AS sharpe,
-               ROUND(srt.value,2)           AS sortino,
-               ROUND(dd.value*100,2)        AS max_drawdown_pct,
-               ROUND(pos.value*100,1)       AS pct_meses_positivos,
-               CAST(srri.value AS INTEGER)  AS srri,
+               {_round_sql("ret.value*100", 2, pg=pg)}       AS return_real_pct,
+               {_round_sql("vol.value*100", 2, pg=pg)}       AS volatilidad_pct,
+               {_round_sql("sh.value", 2, pg=pg)}            AS sharpe,
+               {_round_sql("srt.value", 2, pg=pg)}           AS sortino,
+               {_round_sql("dd.value*100", 2, pg=pg)}        AS max_drawdown_pct,
+               {_round_sql("pos.value*100", 1, pg=pg)}       AS pct_meses_positivos,
+               {_int_cast_sql("srri.value", pg=pg)}  AS srri,
                ret.source_rows              AS meses_datos
         FROM fund_metrics ret
         JOIN fund_master fm   ON fm.ISIN=ret.isin
@@ -340,14 +368,15 @@ def q_drawdown_dist(conn):
     """).fetchall()
 
 def q_ret_dd_ratio(conn):
-    return conn.execute("""
+    pg = is_postgres_connection(conn)
+    return conn.execute(f"""
         SELECT ret.isin, fm.Fund_Name, fm.Fund_Nature,
-               ROUND(ret.value*100,2)              AS return_real_pct,
-               ROUND(dd.value*100,2)               AS max_drawdown_pct,
-               ROUND(ret.value/ABS(dd.value),2)    AS ret_dd_ratio,
-               ROUND(sh.value,2)                   AS sharpe,
-               ROUND(srt.value,2)                  AS sortino,
-               CAST(srri.value AS INTEGER)          AS srri,
+               {_round_sql("ret.value*100", 2, pg=pg)}              AS return_real_pct,
+               {_round_sql("dd.value*100", 2, pg=pg)}               AS max_drawdown_pct,
+               {_round_sql("ret.value/ABS(dd.value)", 2, pg=pg)}    AS ret_dd_ratio,
+               {_round_sql("sh.value", 2, pg=pg)}                   AS sharpe,
+               {_round_sql("srt.value", 2, pg=pg)}                  AS sortino,
+               {_int_cast_sql("srri.value", pg=pg)}          AS srri,
                ret.source_rows                     AS meses
         FROM fund_metrics ret
         JOIN fund_master fm   ON fm.ISIN=ret.isin
@@ -375,7 +404,7 @@ def q_consistencia(conn):
                {_round_sql("ret.value*100", 2, pg=pg)}      AS return_real_pct,
                {_round_sql("sh.value", 2, pg=pg)}           AS sharpe,
                {_round_sql("srt.value", 2, pg=pg)}          AS sortino,
-               CAST(srri.value AS INTEGER) AS srri,
+               {_int_cast_sql("srri.value", pg=pg)} AS srri,
                pos.source_rows             AS meses
         FROM fund_metrics pos
         JOIN fund_master fm   ON fm.ISIN=pos.isin
@@ -398,14 +427,15 @@ def q_consistencia(conn):
 
 def q_crisis(conn):
     # Ancla en since_inception -- crisis_2020 es LEFT JOIN porque solo tiene 3 meses
-    return conn.execute("""
+    pg = is_postgres_connection(conn)
+    return conn.execute(f"""
         SELECT si.isin, fm.Fund_Name, fm.Fund_Nature,
-               ROUND(c20.value*100,2)      AS return_crisis2020_pct,
-               ROUND(c22.value*100,2)      AS return_crisis2022_pct,
-               ROUND(c08.value*100,2)      AS return_crisis2008_pct,
-               ROUND(c11.value*100,2)      AS return_crisis2011_pct,
-               ROUND(si.value*100,2)       AS return_real_anual_pct,
-               CAST(srri.value AS INTEGER) AS srri
+               {_round_sql("c20.value*100", 2, pg=pg)}      AS return_crisis2020_pct,
+               {_round_sql("c22.value*100", 2, pg=pg)}      AS return_crisis2022_pct,
+               {_round_sql("c08.value*100", 2, pg=pg)}      AS return_crisis2008_pct,
+               {_round_sql("c11.value*100", 2, pg=pg)}      AS return_crisis2011_pct,
+               {_round_sql("si.value*100", 2, pg=pg)}       AS return_real_anual_pct,
+               {_int_cast_sql("srri.value", pg=pg)} AS srri
         FROM fund_metrics si
         JOIN fund_master fm   ON fm.ISIN=si.isin
         LEFT JOIN fund_metrics c20 ON c20.isin=si.isin AND c20.metric='return_ann'
@@ -425,19 +455,20 @@ def q_crisis(conn):
     """).fetchall()
 
 def q_candidatos(conn):
-    return conn.execute("""
+    pg = is_postgres_connection(conn)
+    return conn.execute(f"""
         SELECT ret.isin, fm.Fund_Name, fm.Fund_Nature, fm.Management_Company,
-               ROUND(ret.value*100,2)       AS return_real_pct,
-               ROUND(vol.value*100,2)       AS volatilidad_pct,
-               ROUND(sh.value,2)            AS sharpe,
-               ROUND(srt.value,2)           AS sortino,
-               ROUND(dd.value*100,2)        AS max_drawdown_pct,
-               ROUND(pos.value*100,1)       AS pct_meses_positivos,
-               ROUND(sev.value*100,1)       AS pct_perdida_severa,
-               ROUND(wm.value*100,2)        AS peor_mes_pct,
-               ROUND(oil.value, 4)          AS beta_oil,
-               ROUND(cop.value, 4)          AS beta_copper,
-               CAST(srri.value AS INTEGER)  AS srri_calculado,
+               {_round_sql("ret.value*100", 2, pg=pg)}       AS return_real_pct,
+               {_round_sql("vol.value*100", 2, pg=pg)}       AS volatilidad_pct,
+               {_round_sql("sh.value", 2, pg=pg)}            AS sharpe,
+               {_round_sql("srt.value", 2, pg=pg)}           AS sortino,
+               {_round_sql("dd.value*100", 2, pg=pg)}        AS max_drawdown_pct,
+               {_round_sql("pos.value*100", 1, pg=pg)}       AS pct_meses_positivos,
+               {_round_sql("sev.value*100", 1, pg=pg)}       AS pct_perdida_severa,
+               {_round_sql("wm.value*100", 2, pg=pg)}        AS peor_mes_pct,
+               {_round_sql("oil.value", 4, pg=pg)}          AS beta_oil,
+               {_round_sql("cop.value", 4, pg=pg)}          AS beta_copper,
+               {_int_cast_sql("srri.value", pg=pg)}  AS srri_calculado,
                fm.SRRI                      AS srri_kiid,
                ret.source_rows              AS meses_datos
         FROM fund_metrics ret
@@ -844,38 +875,39 @@ def build_crisis(ws, conn):
 
 
 def q_macro_betas(conn):
-    return conn.execute("""
+    pg = is_postgres_connection(conn)
+    return conn.execute(f"""
         SELECT ret.isin, fm.Fund_Name, fm.Fund_Nature,
-               ROUND(r2.value, 3)           AS macro_r2,
-               ROUND(alp.value*100, 2)      AS macro_alpha_pct,
-               ROUND(reu.value, 4)          AS beta_rate_eu,
-               ROUND(rus.value, 4)          AS beta_rate_us,
-               ROUND(rjp.value, 4)          AS beta_rate_jp,
-               ROUND(rcn.value, 4)          AS beta_rate_cn,
-               ROUND(m3.value, 4)           AS beta_m3,
-               ROUND(ies.value, 4)          AS beta_ipc_es,
-               ROUND(ieu.value, 4)          AS beta_ipc_eu,
-               ROUND(ius.value, 4)          AS beta_ipc_us,
-               ROUND(ijp.value, 4)          AS beta_ipc_jp,
-               ROUND(icn.value, 4)          AS beta_ipc_cn,
-               ROUND(oil.value, 4)          AS beta_oil,
-               ROUND(cop.value, 4)          AS beta_copper,
-               ROUND(clieu.value, 4)        AS beta_cli_eu,
-               ROUND(clus.value, 4)         AS beta_cli_us,
-               ROUND(dxy.value, 4)          AS beta_dxy,
-               ROUND(gld.value, 4)          AS beta_gold,
-               ROUND(m2g.value, 4)          AS beta_m2_global,
-               ROUND(sph.value, 4)          AS beta_spread_hy,
-               ROUND(spig.value, 4)         AS beta_spread_ig,
-               ROUND(vix.value, 4)          AS beta_vix,
-               ROUND(tsp.value, 4)          AS beta_term_spread,
-               ROUND(ejy.value, 4)          AS beta_eur_jpy,
-               ROUND(egb.value, 4)          AS beta_eur_gbp,
-               ROUND(ecn.value, 4)          AS beta_eur_cny,
-               CAST(srri.value AS INTEGER)  AS srri,
-               CAST(nobs.value AS INTEGER)  AS n_obs,
-               ROUND(esp.value, 4)          AS energy_sensitivity_pct,
-               ROUND(hys.value, 4)          AS hy_spread_sensitivity_pct
+               {_round_sql("r2.value", 3, pg=pg)}           AS macro_r2,
+               {_round_sql("alp.value*100", 2, pg=pg)}      AS macro_alpha_pct,
+               {_round_sql("reu.value", 4, pg=pg)}          AS beta_rate_eu,
+               {_round_sql("rus.value", 4, pg=pg)}          AS beta_rate_us,
+               {_round_sql("rjp.value", 4, pg=pg)}          AS beta_rate_jp,
+               {_round_sql("rcn.value", 4, pg=pg)}          AS beta_rate_cn,
+               {_round_sql("m3.value", 4, pg=pg)}           AS beta_m3,
+               {_round_sql("ies.value", 4, pg=pg)}          AS beta_ipc_es,
+               {_round_sql("ieu.value", 4, pg=pg)}          AS beta_ipc_eu,
+               {_round_sql("ius.value", 4, pg=pg)}          AS beta_ipc_us,
+               {_round_sql("ijp.value", 4, pg=pg)}          AS beta_ipc_jp,
+               {_round_sql("icn.value", 4, pg=pg)}          AS beta_ipc_cn,
+               {_round_sql("oil.value", 4, pg=pg)}          AS beta_oil,
+               {_round_sql("cop.value", 4, pg=pg)}          AS beta_copper,
+               {_round_sql("clieu.value", 4, pg=pg)}        AS beta_cli_eu,
+               {_round_sql("clus.value", 4, pg=pg)}         AS beta_cli_us,
+               {_round_sql("dxy.value", 4, pg=pg)}          AS beta_dxy,
+               {_round_sql("gld.value", 4, pg=pg)}          AS beta_gold,
+               {_round_sql("m2g.value", 4, pg=pg)}          AS beta_m2_global,
+               {_round_sql("sph.value", 4, pg=pg)}          AS beta_spread_hy,
+               {_round_sql("spig.value", 4, pg=pg)}         AS beta_spread_ig,
+               {_round_sql("vix.value", 4, pg=pg)}          AS beta_vix,
+               {_round_sql("tsp.value", 4, pg=pg)}          AS beta_term_spread,
+               {_round_sql("ejy.value", 4, pg=pg)}          AS beta_eur_jpy,
+               {_round_sql("egb.value", 4, pg=pg)}          AS beta_eur_gbp,
+               {_round_sql("ecn.value", 4, pg=pg)}          AS beta_eur_cny,
+               {_int_cast_sql("srri.value", pg=pg)}  AS srri,
+               {_int_cast_sql("nobs.value", pg=pg)}  AS n_obs,
+               {_round_sql("esp.value", 4, pg=pg)}          AS energy_sensitivity_pct,
+               {_round_sql("hys.value", 4, pg=pg)}          AS hy_spread_sensitivity_pct
         FROM fund_metrics ret
         JOIN fund_master fm    ON fm.ISIN=ret.isin
         LEFT JOIN fund_metrics r2   ON r2.isin=ret.isin   AND r2.metric='macro_r2'
@@ -1099,14 +1131,15 @@ def build_candidatos(ws, conn):
 
 
 def q_persistencia(conn):
-    return conn.execute("""
+    pg = is_postgres_connection(conn)
+    return conn.execute(f"""
         SELECT per.isin, fm.Fund_Name, fm.Fund_Nature, fm.Management_Company,
-               ROUND(per.value, 3)              AS alpha_persistence,
-               CAST(nobs.value AS INTEGER)       AS n_ventanas,
-               ROUND(ret.value*100, 2)           AS return_real_pct,
-               ROUND(sh.value, 2)                AS sharpe,
-               ROUND(dd.value*100, 2)            AS max_dd_pct,
-               CAST(srri.value AS INTEGER)        AS srri
+               {_round_sql("per.value", 3, pg=pg)}              AS alpha_persistence,
+               {_int_cast_sql("nobs.value", pg=pg)}       AS n_ventanas,
+               {_round_sql("ret.value*100", 2, pg=pg)}           AS return_real_pct,
+               {_round_sql("sh.value", 2, pg=pg)}                AS sharpe,
+               {_round_sql("dd.value*100", 2, pg=pg)}            AS max_dd_pct,
+               {_int_cast_sql("srri.value", pg=pg)}        AS srri
         FROM fund_metrics per
         JOIN fund_master fm    ON fm.ISIN=per.isin
         LEFT JOIN fund_metrics nobs ON nobs.isin=per.isin AND nobs.metric='alpha_persistence_n'
@@ -1165,14 +1198,15 @@ def build_persistencia(ws, conn):
 
 
 def q_divisa(conn):
-    return conn.execute("""
+    pg = is_postgres_connection(conn)
+    return conn.execute(f"""
         SELECT fx.isin, fm.Fund_Name, fm.Fund_Nature,
                fm.Fund_Currency, fm.Hedging_Policy,
-               ROUND(fx.value*100, 2)        AS fx_contribution_pct,
-               ROUND(fxa.value*100, 2)        AS fx_contribution_ann_pct,
-               ROUND(fxv.value*100, 2)        AS fx_volatility_pct,
-               ROUND(ret.value*100, 2)        AS return_total_pct,
-               CAST(srri.value AS INTEGER)     AS srri
+               {_round_sql("fx.value*100", 2, pg=pg)}        AS fx_contribution_pct,
+               {_round_sql("fxa.value*100", 2, pg=pg)}        AS fx_contribution_ann_pct,
+               {_round_sql("fxv.value*100", 2, pg=pg)}        AS fx_volatility_pct,
+               {_round_sql("ret.value*100", 2, pg=pg)}        AS return_total_pct,
+               {_int_cast_sql("srri.value", pg=pg)}     AS srri
         FROM fund_metrics fx
         JOIN fund_master fm    ON fm.ISIN=fx.isin
         LEFT JOIN fund_metrics fxa  ON fxa.isin=fx.isin  AND fxa.metric='fx_contribution_ann'
@@ -1256,15 +1290,16 @@ _REGIME_ALIAS: dict[str, str] = {
 
 
 def q_regime_returns(conn) -> list:
+    pg = is_postgres_connection(conn)
     selects = []
     joins   = []
     for suffix, _ in _REGIMES_ORDER:
         a = _REGIME_ALIAS[suffix]
         selects += [
-            f"ROUND(r_{a}.value*100,2)    AS ret_{suffix}",
-            f"ROUND(s_{a}.value,3)         AS shr_{suffix}",
-            f"ROUND(v_{a}.value*100,2)     AS vol_{suffix}",
-            f"CAST(n_{a}.value AS INTEGER) AS obs_{suffix}",
+            f'{_round_sql(f"r_{a}.value*100", 2, pg=pg)}    AS ret_{suffix}',
+            f'{_round_sql(f"s_{a}.value", 3, pg=pg)}         AS shr_{suffix}',
+            f'{_round_sql(f"v_{a}.value*100", 2, pg=pg)}     AS vol_{suffix}',
+            f'{_int_cast_sql(f"n_{a}.value", pg=pg)} AS obs_{suffix}',
         ]
         joins.append(f"""
         LEFT JOIN fund_metrics r_{a} ON r_{a}.isin=fm.ISIN
@@ -1285,10 +1320,10 @@ def q_regime_returns(conn) -> list:
     )
     sql = f"""
         SELECT fm.ISIN, fm.Fund_Name, fm.Fund_Nature, fm.Management_Company,
-               ROUND(cov.value, 2)  AS regime_coverage_ratio,
+               {_round_sql("cov.value", 2, pg=pg)}  AS regime_coverage_ratio,
                {", ".join(selects)},
-               ROUND(cmdd.value, 4) AS crisis_stress_score_mdd,
-               ROUND(cttr.value, 2) AS crisis_stress_score_ttr
+               {_round_sql("cmdd.value", 4, pg=pg)} AS crisis_stress_score_mdd,
+               {_round_sql("cttr.value", 2, pg=pg)} AS crisis_stress_score_ttr
         FROM fund_master fm
         LEFT JOIN fund_metrics cov ON cov.isin=fm.ISIN
             AND cov.metric='regime_coverage_ratio'
@@ -1446,7 +1481,7 @@ def q_tendencia(conn) -> list:
                {_round_sql("ret.value*100", 2, pg=pg)}       AS return_real_pct,
                {_round_sql("sh.value", 2, pg=pg)}            AS sharpe_si,
                {_round_sql("srt.value", 2, pg=pg)}           AS sortino_si,
-               CAST(srri.value AS INTEGER)  AS srri,
+               {_int_cast_sql("srri.value", pg=pg)}  AS srri,
                {", ".join(parts_sel)}
         FROM fund_master fm
         LEFT JOIN fund_metrics ret  ON ret.isin=fm.ISIN
