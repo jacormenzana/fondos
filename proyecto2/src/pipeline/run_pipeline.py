@@ -181,9 +181,10 @@ def _allow_sleep() -> None:
 
 def _get_stored_hash(conn: sqlite3.Connection, isin: str) -> str | None:
     """Devuelve el input_hash almacenado para (isin, METRIC_VERSION), o None."""
+    ph = "%s" if is_postgres_connection(conn) else "?"
     row = conn.execute(
-        "SELECT input_hash FROM fund_metric_state "
-        "WHERE isin=? AND metric_version=?",
+        f"SELECT input_hash FROM fund_metric_state "
+        f"WHERE isin={ph} AND metric_version={ph}",
         (isin, METRIC_VERSION),
     ).fetchone()
     return row[0] if row else None
@@ -219,6 +220,15 @@ def _upsert_metric_state(
     if in_transaction(conn):
         conn.execute(sql, args)
         return
+    # Postgres migration addendum (2026-09-20, Stage 4): `except sqlite3.OperationalError` below is
+    # deliberately left SQLite-only, not a gap. Verified live: a genuine Postgres error here
+    # (tested with both a StringDataRightTruncation and a real ForeignKeyViolation) is a
+    # psycopg.errors.* type, which this except clause does not match — it propagates straight
+    # through, past the inner `except Exception: ROLLBACK; raise` (already dialect-generic) and
+    # out of this function, exactly like SQLite's own "else: raise" branch for a non-lock error.
+    # Also verified the connection survives clean and stays usable afterward. No retry-on-lock
+    # loop is needed for Postgres in the first place — begin_immediate()'s own docstring already
+    # explains why (MVCC + row locks block rather than raise), so there is nothing to add here.
     for attempt in range(3):
         try:
             begin_immediate(conn)
@@ -259,9 +269,10 @@ def _ols_is_fresh(
     """
     if force:
         return False
+    ph = "%s" if is_postgres_connection(conn) else "?"
     row = conn.execute(
-        "SELECT last_ols_quarter, last_ols_nav_count FROM fund_metric_state "
-        "WHERE isin=? AND metric_version=?",
+        f"SELECT last_ols_quarter, last_ols_nav_count FROM fund_metric_state "
+        f"WHERE isin={ph} AND metric_version={ph}",
         (isin, METRIC_VERSION),
     ).fetchone()
     if not row or row[0] is None:
@@ -437,6 +448,8 @@ def _write_metric_alerts(
         )
         for r in alert_rows
     ]
+    # `except sqlite3.OperationalError` below: SQLite-only by design, verified safe under Postgres
+    # — see _upsert_metric_state()'s comment above for the full reasoning (same retry-wrapper shape).
     for attempt in range(5):
         try:
             begin_immediate(conn)
@@ -478,6 +491,8 @@ def _log(
     if in_transaction(conn):
         conn.execute(sql, args)
         return
+    # `except sqlite3.OperationalError` below: SQLite-only by design, verified safe under Postgres
+    # — see _upsert_metric_state()'s comment above for the full reasoning (same retry-wrapper shape).
     for attempt in range(5):
         try:
             begin_immediate(conn)
@@ -875,9 +890,10 @@ def run(
             # Also gate on IPC freshness: new IPC rows change every fund's
             # input hash even when NAV is unchanged.  A single global check
             # suffices because IPC is a shared time series.
+            _ph_pf = "%s" if is_postgres_connection(conn) else "?"
             _pf_last_calc = conn.execute(
-                "SELECT MAX(calculated_at) FROM fund_metric_state "
-                "WHERE metric_version=?",
+                f"SELECT MAX(calculated_at) FROM fund_metric_state "
+                f"WHERE metric_version={_ph_pf}",
                 (METRIC_VERSION,),
             ).fetchone()[0]
             _pf_ipc_max = conn.execute(
@@ -912,9 +928,10 @@ def run(
         # Legacy --resume (today-based skip)
         if resume and not dry_run:
             today_str = date.today().isoformat()
+            _ph_resume = "%s" if is_postgres_connection(conn) else "?"
             done = {r[0] for r in conn.execute(
-                "SELECT DISTINCT isin FROM fund_metrics "
-                "WHERE calculation_date = ? AND metric_version = ?",
+                f"SELECT DISTINCT isin FROM fund_metrics "
+                f"WHERE calculation_date = {_ph_resume} AND metric_version = {_ph_resume}",
                 (today_str, METRIC_VERSION)
             ).fetchall()}
             isins = [i for i in isins if i not in done or i in force_recalc_isins]
@@ -1137,10 +1154,11 @@ def run(
                                      f"{len(sh_rows)} metricas cortas (d1)", dry_run)
 
                 # ---- Atributos del fondo ----------------------------
+                _ph_fm = "%s" if is_postgres_connection(conn) else "?"
                 _fm = conn.execute(
-                    """SELECT Fund_Nature, Fund_Currency, Hedging_Policy,
+                    f"""SELECT Fund_Nature, Fund_Currency, Hedging_Policy,
                               Asset_Currency, Geography, Development_Status
-                       FROM fund_master WHERE ISIN=?""", (isin,)
+                       FROM fund_master WHERE ISIN={_ph_fm}""", (isin,)
                 ).fetchone()
                 fund_nature        = _fm[0] if _fm else None
                 fund_currency      = _fm[1] if _fm else None
@@ -1358,29 +1376,42 @@ def run(
                         f"[ROLLING] Fallback DB query (solo {len(_latest_roll)} "
                         "fondos en memoria — mayoría hash-skipped)"
                     )
-                    latest_df = pd.read_sql(
-                        """SELECT t.isin, t.metric, t.window, t.date,
-                                  t.value, t.real_flag, m.Fund_Nature
-                           FROM fund_metric_timeseries t
-                           JOIN (
-                               SELECT isin, metric, window, real_flag, MAX(date) AS mx
-                               FROM fund_metric_timeseries
-                               WHERE metric IN (
-                                   'vol_ann','max_dd','return_ann'
-                               )
-                               GROUP BY isin, metric, window, real_flag
-                           ) latest
-                             ON  t.isin      = latest.isin
-                             AND t.metric    = latest.metric
-                             AND t.window    = latest.window
-                             AND t.real_flag = latest.real_flag
-                             AND t.date      = latest.mx
-                           LEFT JOIN fund_master m ON t.isin = m.ISIN
-                           WHERE t.metric IN (
-                               'vol_ann','max_dd','return_ann'
-                           )""",
-                        conn
-                    )
+                    # window -> window_label: real column rename on Postgres (reserved word,
+                    # db/pg/rename_map.yaml). fetchall()+manual DataFrame instead of pd.read_sql(sql,
+                    # conn) — same reasoning as db_readers.py::load_fund_attributes: works against a
+                    # raw psycopg3 connection but emits a UserWarning every call, avoided elsewhere
+                    # in this migration. This is the exact self-join the migration plan calls out as
+                    # the reason gold.mv_fmts_peer_stats/mv_fmts_latest exist (2.5h against the base
+                    # tables on the full 32M-row table) — left querying the base tables here
+                    # deliberately, since this fallback path only ever runs on a small in-memory
+                    # subset (len(_latest_roll) < max(50, total//10)); redirecting it to the
+                    # matviews is a Stage 9/cutover-time performance decision, not a correctness one.
+                    _window_col = "window_label" if is_postgres_connection(conn) else "window"
+                    _latest_cols = ["isin", "metric", "window", "date", "value", "real_flag",
+                                    "Fund_Nature"]
+                    _latest_rows = conn.execute(f"""
+                        SELECT t.isin, t.metric, t.{_window_col} AS window, t.date,
+                               t.value, t.real_flag, m.Fund_Nature
+                        FROM fund_metric_timeseries t
+                        JOIN (
+                            SELECT isin, metric, {_window_col}, real_flag, MAX(date) AS mx
+                            FROM fund_metric_timeseries
+                            WHERE metric IN (
+                                'vol_ann','max_dd','return_ann'
+                            )
+                            GROUP BY isin, metric, {_window_col}, real_flag
+                        ) latest
+                          ON  t.isin       = latest.isin
+                          AND t.metric     = latest.metric
+                          AND t.{_window_col} = latest.{_window_col}
+                          AND t.real_flag  = latest.real_flag
+                          AND t.date       = latest.mx
+                        LEFT JOIN fund_master m ON t.isin = m.ISIN
+                        WHERE t.metric IN (
+                            'vol_ann','max_dd','return_ann'
+                        )
+                    """).fetchall()
+                    latest_df = pd.DataFrame(_latest_rows, columns=_latest_cols)
                 if not latest_df.empty:
                     # compute_category_snapshot expects 'date' column —
                     # latest_df already has it (the latest date only).

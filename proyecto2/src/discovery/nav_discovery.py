@@ -754,22 +754,29 @@ def _splice_new_chart_batch(conn, isin: str, rows: list, jump_threshold: float =
     new_min_date = min(new_by_date)
 
     overlap_dates = list(new_by_date.keys())
-    ph = ",".join("?" * len(overlap_dates))
+    _pg = is_postgres_connection(conn)
+    _one_ph = "%s" if _pg else "?"
+    in_ph = ",".join([_one_ph] * len(overlap_dates))
     overlap = conn.execute(
-        f"SELECT Date, NAV FROM fund_nav_daily WHERE ISIN=? "
-        f"AND Data_Source='MORNINGSTAR_CHART' AND NAV > 0 AND Date IN ({ph}) "
+        f"SELECT Date, NAV FROM fund_nav_daily WHERE ISIN={_one_ph} "
+        f"AND Data_Source='MORNINGSTAR_CHART' AND NAV > 0 AND Date IN ({in_ph}) "
         f"ORDER BY Date LIMIT 1",
         (isin, *overlap_dates),
     ).fetchone()
 
     if overlap:
         anchor_date, anchor_existing_nav = overlap
-        anchor_new_nav = new_by_date[anchor_date]
+        # Postgres returns Date as a real datetime.date object (genuine `date` column there);
+        # SQLite returns the stored text as-is. new_by_date is keyed by the API response's own
+        # 'YYYY-MM-DD' strings (r["Date"], never touched the DB) — str() normalizes both sides to
+        # the same key shape. A no-op on SQLite (already a matching string); load-bearing on
+        # Postgres, where the raw date object would otherwise silently KeyError against every key.
+        anchor_new_nav = new_by_date[str(anchor_date)]
     else:
         prior = conn.execute(
-            "SELECT Date, NAV FROM fund_nav_daily WHERE ISIN=? "
-            "AND Data_Source='MORNINGSTAR_CHART' AND NAV > 0 AND Date < ? "
-            "ORDER BY Date DESC LIMIT 1",
+            f"SELECT Date, NAV FROM fund_nav_daily WHERE ISIN={_one_ph} "
+            f"AND Data_Source='MORNINGSTAR_CHART' AND NAV > 0 AND Date < {_one_ph} "
+            f"ORDER BY Date DESC LIMIT 1",
             (isin, new_min_date),
         ).fetchone()
         if not prior:
@@ -973,8 +980,9 @@ def run_discover(conn, isins, dry_run, verbose, skip_if_recent: bool = False):
     """
     if skip_if_recent and not dry_run:
         today_s = date.today().isoformat()
+        _ph = "%s" if is_postgres_connection(conn) else "?"
         recent  = conn.execute(
-            "SELECT COUNT(*) FROM nav_sources WHERE last_checked >= ?",
+            f"SELECT COUNT(*) FROM nav_sources WHERE last_checked >= {_ph}",
             (today_s,)
         ).fetchone()[0]
         if recent >= len(isins) * 0.90:
@@ -1096,17 +1104,24 @@ def _is_stale(ds: str, last_daily: Optional[str], last_monthly: Optional[str],
         return True
     if ds == "STALE_FROZEN":
         return False  # never attempt downloads on a structurally frozen source
+    # str(x)[:10]: on Postgres these arrive as real datetime.date objects (genuine `date` columns
+    # there), not text — str(date_obj) is 'YYYY-MM-DD', matching SQLite's stored text exactly, so
+    # this is a no-op on SQLite and load-bearing on Postgres. Found live 2026-09-20: bare
+    # last_daily[:10] on a date object raises TypeError, silently caught by the except clause below
+    # (added for genuinely malformed text, not for this) — which returns True (stale)
+    # UNCONDITIONALLY for every fund, defeating the entire "already up to date" skip logic without
+    # ever raising a visible error. Same class of bug as _splice_new_chart_batch()'s anchor_date fix.
     if monthly_grain:
         if not last_monthly:
             return True
         try:
-            return datetime.strptime(last_monthly[:10], "%Y-%m-%d").date() < ref_month_end
+            return datetime.strptime(str(last_monthly)[:10], "%Y-%m-%d").date() < ref_month_end
         except (ValueError, TypeError):
             return True
     if not last_daily:
         return True
     try:
-        return datetime.strptime(last_daily[:10], "%Y-%m-%d").date() < cutoff
+        return datetime.strptime(str(last_daily)[:10], "%Y-%m-%d").date() < cutoff
     except (ValueError, TypeError):
         return True
 
@@ -1193,7 +1208,8 @@ def _fetch_one(idx, isin, ms_id, currency, eff_desde, bearer, delay_secs):
 def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=None,
              workers=1, stale_days=3):
     if isins:
-        ph      = ",".join("?" * len(isins))
+        _one_ph = "%s" if is_postgres_connection(conn) else "?"
+        ph      = ",".join([_one_ph] * len(isins))
         db_rows = {r[0]: r[1] for r in conn.execute(
             f"SELECT isin, source_id FROM nav_sources "
             f"WHERE isin IN ({ph}) AND status='OK'", isins
@@ -1286,16 +1302,24 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=Non
             # RECALCULATE_MONTHLY: resamplear desde daily existente, sin red
             if ds == "RECALCULATE_MONTHLY":
                 print(f"  [{idx:>4}/{total}] {isin}", end=" ", flush=True)
+                _daily_cols = ["ISIN", "Date", "NAV", "NAV_Currency", "NAV_Type",
+                               "Is_Estimated", "Data_Source"]
+                _ph = "%s" if is_postgres_connection(conn) else "?"
                 _daily = conn.execute(
-                    "SELECT ISIN, Date, NAV, NAV_Currency, NAV_Type, "
-                    "Is_Estimated, Data_Source FROM fund_nav_daily "
-                    "WHERE ISIN=? AND Data_Source='MORNINGSTAR_CHART' ORDER BY Date",
+                    f"SELECT ISIN, Date, NAV, NAV_Currency, NAV_Type, "
+                    f"Is_Estimated, Data_Source FROM fund_nav_daily "
+                    f"WHERE ISIN={_ph} AND Data_Source='MORNINGSTAR_CHART' ORDER BY Date",
                     (isin,)
                 ).fetchall()
                 if not _daily:
                     print("-> sin datos diarios para recalcular", flush=True)
                     continue
-                _monthly = _resample_to_monthly([dict(r) for r in _daily])
+                # dict(zip(_daily_cols, r)), not dict(r): row.keys() reports Postgres's actual
+                # (lowercase-folded) column names regardless of how the SELECT was capitalized —
+                # `dict(r)` would silently produce {"date": ..., "isin": ...} on PG, and
+                # _resample_to_monthly()/_overwrite_nav_rows_monthly() below both require the exact
+                # mixed-case keys ("Date", "ISIN", ...) used throughout this file's NAV row dicts.
+                _monthly = _resample_to_monthly([dict(zip(_daily_cols, r)) for r in _daily])
                 _written = _overwrite_nav_rows_monthly(conn, isin, _monthly, dry_run)
                 if not dry_run:
                     _ph = "%s" if is_postgres_connection(conn) else "?"
@@ -1329,7 +1353,10 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=Non
             force_this    = force or (ds == "FORCE_REFRESH")
             _t0_fund      = datetime.now()
             if last_d_stored and not force_this:
-                anchor = datetime.strptime(last_d_stored, "%Y-%m-%d").date()
+                # str(): last_d_stored can be a real datetime.date on Postgres — see _is_stale()'s
+                # comment above for the full reasoning. This site was uncaught (no try/except) and
+                # would have crashed the per-fund loop outright, not just degraded silently.
+                anchor = datetime.strptime(str(last_d_stored), "%Y-%m-%d").date()
                 if anchor >= _cutoff:
                     _elapsed_ms = round((datetime.now() - _t0_fund).total_seconds() * 1000)
                     _ts_skip    = _t0_fund.strftime("%Y-%m-%d %H:%M:%S")
@@ -1489,16 +1516,22 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=Non
 
         # -- RECALCULATE_MONTHLY: sin red, solo resamplear diario→mensual ----
         if ds == "RECALCULATE_MONTHLY":
+            _daily_cols = ["ISIN", "Date", "NAV", "NAV_Currency", "NAV_Type",
+                           "Is_Estimated", "Data_Source"]
+            _ph = "%s" if is_postgres_connection(conn) else "?"
             _daily = conn.execute(
-                "SELECT ISIN, Date, NAV, NAV_Currency, NAV_Type, "
-                "Is_Estimated, Data_Source FROM fund_nav_daily "
-                "WHERE ISIN=? AND Data_Source='MORNINGSTAR_CHART' ORDER BY Date",
+                f"SELECT ISIN, Date, NAV, NAV_Currency, NAV_Type, "
+                f"Is_Estimated, Data_Source FROM fund_nav_daily "
+                f"WHERE ISIN={_ph} AND Data_Source='MORNINGSTAR_CHART' ORDER BY Date",
                 (isin,)
             ).fetchall()
             if not _daily:
                 print("-> sin datos diarios para recalcular", flush=True)
                 continue
-            _monthly = _resample_to_monthly([dict(r) for r in _daily])
+            # dict(zip(...)), not dict(r) — see run_load()'s identical RECALCULATE_MONTHLY branch
+            # above for why: row.keys() reports Postgres's lowercase-folded names, not the
+            # mixed-case ("Date", "ISIN", ...) keys _resample_to_monthly() etc. require.
+            _monthly = _resample_to_monthly([dict(zip(_daily_cols, r)) for r in _daily])
             _written = _overwrite_nav_rows_monthly(conn, isin, _monthly, dry_run)
             if not dry_run:
                 _ph = "%s" if is_postgres_connection(conn) else "?"
@@ -1539,7 +1572,7 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=Non
         last_d_stored = last_daily.get(isin)
         force_this    = force or (ds == "FORCE_REFRESH")
         if last_d_stored and not force_this:
-            anchor = datetime.strptime(last_d_stored, "%Y-%m-%d").date()
+            anchor = datetime.strptime(str(last_d_stored), "%Y-%m-%d").date()
             if anchor >= _cutoff:
                 _elapsed_ms = round((datetime.now() - _t0).total_seconds() * 1000)
                 _ts_skip    = _t0.strftime("%Y-%m-%d %H:%M:%S")
@@ -1769,16 +1802,22 @@ def run_update(conn, dry_run, bearer_token=None, stale_days=3, monthly_grain=Fal
 
         # -- RECALCULATE_MONTHLY: sin red, solo resamplear diario→mensual ----
         if ds == "RECALCULATE_MONTHLY":
+            _daily_cols = ["ISIN", "Date", "NAV", "NAV_Currency", "NAV_Type",
+                           "Is_Estimated", "Data_Source"]
+            _ph = "%s" if is_postgres_connection(conn) else "?"
             _daily = conn.execute(
-                "SELECT ISIN, Date, NAV, NAV_Currency, NAV_Type, "
-                "Is_Estimated, Data_Source FROM fund_nav_daily "
-                "WHERE ISIN=? AND Data_Source='MORNINGSTAR_CHART' ORDER BY Date",
+                f"SELECT ISIN, Date, NAV, NAV_Currency, NAV_Type, "
+                f"Is_Estimated, Data_Source FROM fund_nav_daily "
+                f"WHERE ISIN={_ph} AND Data_Source='MORNINGSTAR_CHART' ORDER BY Date",
                 (isin,)
             ).fetchall()
             if not _daily:
                 print("-> sin datos diarios para recalcular", flush=True)
                 continue
-            _monthly = _resample_to_monthly([dict(r) for r in _daily])
+            # dict(zip(...)), not dict(r) — see run_load()'s identical RECALCULATE_MONTHLY branch
+            # above for why: row.keys() reports Postgres's lowercase-folded names, not the
+            # mixed-case ("Date", "ISIN", ...) keys _resample_to_monthly() etc. require.
+            _monthly = _resample_to_monthly([dict(zip(_daily_cols, r)) for r in _daily])
             _written = _overwrite_nav_rows_monthly(conn, isin, _monthly, dry_run)
             if not dry_run:
                 _ph = "%s" if is_postgres_connection(conn) else "?"
@@ -1818,13 +1857,13 @@ def run_update(conn, dry_run, bearer_token=None, stale_days=3, monthly_grain=Fal
         # chartservice; monthly_grain solo cambia la decision de skip (arriba),
         # no la profundidad de descarga.
         if last_d_stored and not force_this:
-            anchor = datetime.strptime(last_d_stored, "%Y-%m-%d").date()
+            anchor = datetime.strptime(str(last_d_stored), "%Y-%m-%d").date()
             desde  = (anchor - timedelta(days=3)).isoformat()
         elif force_this:
             desde = _today.replace(day=1).isoformat()
         elif last_nav_date:
             try:
-                d     = datetime.strptime(last_nav_date, "%Y-%m-%d")
+                d     = datetime.strptime(str(last_nav_date), "%Y-%m-%d")
                 month = d.month - 2
                 year  = d.year
                 if month <= 0:
@@ -1926,7 +1965,8 @@ def run_recalculate_monthly(conn, isins=None, dry_run=False):
     Tras el recálculo, pone data_status='OK'.
     """
     if isins:
-        ph   = ",".join("?" * len(isins))
+        _one_ph = "%s" if is_postgres_connection(conn) else "?"
+        ph   = ",".join([_one_ph] * len(isins))
         rows = conn.execute(
             f"SELECT isin FROM nav_sources WHERE isin IN ({ph})", isins
         ).fetchall()
@@ -1957,10 +1997,13 @@ def run_recalculate_monthly(conn, isins=None, dry_run=False):
         isin = row[0]
         print(f"  [{idx:>4}/{total}] {isin}", end=" ", flush=True)
 
+        _daily_cols = ["ISIN", "Date", "NAV", "NAV_Currency", "NAV_Type",
+                       "Is_Estimated", "Data_Source"]
+        _ph = "%s" if is_postgres_connection(conn) else "?"
         daily = conn.execute(
-            "SELECT ISIN, Date, NAV, NAV_Currency, NAV_Type, Is_Estimated, Data_Source "
-            "FROM fund_nav_daily "
-            "WHERE ISIN=? AND Data_Source='MORNINGSTAR_CHART' ORDER BY Date",
+            f"SELECT ISIN, Date, NAV, NAV_Currency, NAV_Type, Is_Estimated, Data_Source "
+            f"FROM fund_nav_daily "
+            f"WHERE ISIN={_ph} AND Data_Source='MORNINGSTAR_CHART' ORDER BY Date",
             (isin,)
         ).fetchall()
 
@@ -1969,7 +2012,9 @@ def run_recalculate_monthly(conn, isins=None, dry_run=False):
             errors += 1
             continue
 
-        daily_dicts = [dict(r) for r in daily]
+        # dict(zip(...)), not dict(r) — see run_load()'s RECALCULATE_MONTHLY branch for why:
+        # row.keys() is lowercase-folded on Postgres, not the mixed-case keys used downstream.
+        daily_dicts = [dict(zip(_daily_cols, r)) for r in daily]
         monthly     = _resample_to_monthly(daily_dicts)
         written     = _overwrite_nav_rows_monthly(conn, isin, monthly, dry_run)
         total_written += written
@@ -2145,8 +2190,9 @@ def main():
     elif args.mode == "load":
         ms_prefix = args.ms_prefix.upper() if args.ms_prefix else None
         if ms_prefix and not args.isin:
+            _ph = "%s" if is_postgres_connection(conn) else "?"
             prefix_isins = [r[0] for r in conn.execute(
-                "SELECT isin FROM nav_sources WHERE status='OK' AND source_id LIKE ? ORDER BY isin",
+                f"SELECT isin FROM nav_sources WHERE status='OK' AND source_id LIKE {_ph} ORDER BY isin",
                 (ms_prefix + "%",)
             ).fetchall()]
             if not prefix_isins:

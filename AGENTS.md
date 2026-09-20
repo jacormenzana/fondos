@@ -256,6 +256,7 @@ proyecto2/
       test_fred_es2.py
       test_historia.py
       test_macro_discovery_pg.py
+      test_nav_discovery_date_types_pg.py
       test_nav_discovery_freeze_20260915.py
       test_nav_discovery_splice_20260915.py
       test_nav_discovery_writers_pg.py
