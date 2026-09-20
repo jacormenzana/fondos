@@ -106,6 +106,19 @@ class _SqliteCompatRow:
     def __repr__(self):
         return f"<Row {dict(zip(self._columns, self._values))}>"
 
+    def __eq__(self, other):
+        # sqlite3.Row supports content equality between two distinct row objects (verified
+        # directly, Phase 5c, 2026-09-20: r1 == r2 is True for two separately-fetched rows with
+        # identical content) — without this, write-path code that compares rows (dedup, diff
+        # checks) would silently always get False under Postgres. Only compares against another
+        # _SqliteCompatRow; NotImplemented lets Python fall back sanely for anything else.
+        if isinstance(other, _SqliteCompatRow):
+            return self._columns == other._columns and self._values == other._values
+        return NotImplemented
+
+    def __hash__(self):
+        return hash((tuple(self._columns), tuple(self._values)))
+
 
 def _sqlite_compat_row_factory(cursor):
     """psycopg3 row-factory protocol: (cursor) -> (values: tuple) -> Row. Column name/index lookup

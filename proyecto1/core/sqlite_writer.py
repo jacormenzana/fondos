@@ -157,7 +157,7 @@ def _load_schema_sql() -> str:
 # run_block.py y otros módulos que la importan desde aquí.
 # ============================================================
 try:
-    from shared.db import get_connection   # noqa: F401  (re-export)
+    from shared.db import get_connection, is_postgres_connection   # noqa: F401  (re-export)
 except ModuleNotFoundError:
     # shared no está aún en sys.path — añadirlo explícitamente.
     # Estructura esperada: <raiz>/proyecto1/core/sqlite_writer.py
@@ -167,7 +167,7 @@ except ModuleNotFoundError:
     _shared_root = _Path(__file__).resolve().parents[2]
     if str(_shared_root) not in _sys.path:
         _sys.path.insert(0, str(_shared_root))
-    from shared.db import get_connection   # noqa: F401  (re-export)
+    from shared.db import get_connection, is_postgres_connection   # noqa: F401  (re-export)
 
 
 def create_schema(conn: sqlite3.Connection) -> None:
@@ -334,14 +334,15 @@ def _post_upsert_normalize_db(conn: sqlite3.Connection, isin: str) -> None:
     """
     import logging as _log
     _logger = _log.getLogger(__name__)
+    ph = "%s" if is_postgres_connection(conn) else "?"
 
     # Capturar valores antes para detectar cambios (logging de stale)
     # v20: Type (→Vehicle_Structure) y Subtype (borrada) ya NO se normalizan aquí.
     before_row = conn.execute(
-        "SELECT Sector_Focus, Family FROM fund_master WHERE ISIN=?", (isin,)
+        f"SELECT Sector_Focus, Family FROM fund_master WHERE ISIN={ph}", (isin,)
     ).fetchone()
 
-    sql = """
+    sql = f"""
     UPDATE fund_master
     SET Sector_Focus = CASE
             -- BL-SF-EN: idioma objetivo EN. Etiquetas alineadas al canónico v20
@@ -374,14 +375,14 @@ def _post_upsert_normalize_db(conn: sqlite3.Connection, isin: str) -> None:
             WHEN TRIM(Family) = 'Orientado a Renta'     THEN 'Income Oriented'
             ELSE TRIM(Family)
         END
-    WHERE ISIN = ?;
+    WHERE ISIN = {ph};
     """
     conn.execute(sql, (isin,))
 
     # Capturar valores después y emitir warning si alguno cambió (stale detectado)
     if before_row:
         after_row = conn.execute(
-            "SELECT Sector_Focus, Family FROM fund_master WHERE ISIN=?", (isin,)
+            f"SELECT Sector_Focus, Family FROM fund_master WHERE ISIN={ph}", (isin,)
         ).fetchone()
         if after_row:
             cols = ["Sector_Focus", "Family"]
@@ -515,7 +516,15 @@ def upsert_fund_master(conn: sqlite3.Connection,
     ]
 
     insert_cols = [c for c, _v, _p in spec]
-    placeholders = ", ".join(["?"] * len(insert_cols))
+    # Postgres migration Phase 5c, 2026-09-20: the only dialect-specific piece of this whole
+    # function. SQLite's UPSERT syntax (ON CONFLICT/DO UPDATE/excluded.col/COALESCE below) was
+    # deliberately modeled after Postgres's, so it is IDENTICAL on both engines — verified live
+    # against the real schema and real partial-record COALESCE scenarios before trusting it (see
+    # proyecto1/tests/test_sqlite_writer_pg_upsert.py). Column names (mixed-case here, e.g. ISIN,
+    # Fund_Name) auto-fold to lower_snake under Postgres's unquoted-identifier rule, matching the
+    # migrated schema — same mechanism the whole read-path port already relied on.
+    ph = "%s" if is_postgres_connection(conn) else "?"
+    placeholders = ", ".join([ph] * len(insert_cols))
     params = tuple(v for _c, v, _p in spec)
 
     _set_parts = []
