@@ -615,6 +615,7 @@ def main(
     restart:      bool          = False,
     db_path:      Optional[str] = None,
     master_excel: Optional[str] = None,
+    backend:      str           = "sqlite",
 ) -> None:
 
     root = _setup_path(project_root)
@@ -677,7 +678,7 @@ def main(
         spec.loader.exec_module(io_mod)
 
     from shared.db import get_connection
-    conn = get_connection(Path(db_path) if db_path else None)
+    conn = get_connection(Path(db_path) if db_path else None, backend=backend)
 
     if master_excel:
         excel_master = master_excel

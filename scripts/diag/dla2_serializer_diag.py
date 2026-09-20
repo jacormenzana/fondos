@@ -306,15 +306,21 @@ def _load_db_costs(conn, isins: list) -> dict:
     Devuelve {ISIN: {Cost_Extraction_Quality, Ongoing_Charge_Recurrent,
     Entry_Fee_Pct, Exit_Fee_Pct, Performance_Fee_Pct}} para los ISINs dados.
     """
+    from shared.db import is_postgres_connection
     out = {}
     cols = ("Cost_Extraction_Quality, Ongoing_Charge_Recurrent, "
             "Entry_Fee_Pct, Exit_Fee_Pct, Performance_Fee_Pct")
-    # Consulta en bloques para no exceder límites de variables SQLite.
+    pg = is_postgres_connection(conn)
+    placeholder = "%s" if pg else "?"
+    # Consulta en bloques — límite real en SQLite (variable count); en Postgres no hace
+    # falta pero el chunking es inofensivo, así que se mantiene igual en ambos casos
+    # (migración Postgres Phase 5b, 2026-09-20: ?->%s es la única traducción necesaria,
+    # esta consulta no tiene literales '%' que colisionen con el escaneo de psycopg3).
     isins = list(isins)
     CHUNK = 400
     for i in range(0, len(isins), CHUNK):
         chunk = isins[i:i + CHUNK]
-        placeholders = ",".join("?" * len(chunk))
+        placeholders = ",".join([placeholder] * len(chunk))
         sql = (f"SELECT ISIN, {cols} FROM fund_master "
                f"WHERE ISIN IN ({placeholders})")
         for r in conn.execute(sql, chunk).fetchall():
@@ -526,6 +532,7 @@ def main(
     log_path:     Optional[str] = None,
     backlog_csv:  Optional[str] = None,
     conflict_csv: Optional[str] = None,
+    backend:      str           = "sqlite",
 ) -> None:
 
     root = _setup_path(project_root)
@@ -546,7 +553,7 @@ def main(
 
     # Cargar costes de BD para los ISINs auditados.
     from shared.db import get_connection
-    conn = get_connection(Path(db_path) if db_path else None)
+    conn = get_connection(Path(db_path) if db_path else None, backend=backend)
     isins = [r["ISIN"] for r in audit_rows if r.get("ISIN")]
     db_costs = _load_db_costs(conn, isins)
     log.row("ISINs auditados", len(isins))
