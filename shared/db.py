@@ -204,6 +204,30 @@ def executemany(conn, sql: str, params_seq) -> None:
         conn.executemany(sql, params_seq)
 
 
+def table_columns(conn, table: str) -> set:
+    """Column-name set for `table` — the `PRAGMA table_info(...)` equivalent, dialect-aware.
+    SQLite: PRAGMA table_info, returning names in whatever case they were created with (this
+    codebase's SQLite tables use mixed Title_Case). Postgres: information_schema.columns,
+    restricted to `current_schemas(false)` (the connection's own search_path) rather than a
+    hardcoded schema name, so it resolves the same unqualified table an unquoted `SELECT ... FROM
+    table` in the caller's own SQL would hit.
+
+    Caller beware: Postgres always folds unquoted-created identifiers to lowercase, so this
+    returns lowercase names there regardless of how the table was originally named in SQLite. A
+    caller comparing against a mixed-case catalog (e.g. shared.config.DOMAIN_VALUES keys, which
+    mirror the original SQLite column names) must fold case itself before comparing — this helper
+    intentionally does not guess a normalization the caller might not want."""
+    if is_postgres_connection(conn):
+        rows = conn.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = %s AND table_schema = ANY(current_schemas(false))",
+            (table,),
+        ).fetchall()
+        return {r[0] for r in rows}
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return {r[1] for r in rows}
+
+
 def _pg_dsn() -> str:
     import os
     dsn = os.environ.get(_PG_DSN_ENV_VAR)

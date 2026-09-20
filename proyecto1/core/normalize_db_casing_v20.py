@@ -32,6 +32,17 @@ try:
 except ImportError:
     import config as _cfg  # type: ignore
 
+try:
+    from shared.db import is_postgres_connection, executemany, table_columns
+except ModuleNotFoundError:
+    # shared no está aún en sys.path — añadirlo explícitamente (mismo patrón que sqlite_writer.py).
+    import sys as _sys
+    from pathlib import Path as _Path
+    _shared_root = _Path(__file__).resolve().parents[2]
+    if str(_shared_root) not in _sys.path:
+        _sys.path.insert(0, str(_shared_root))
+    from shared.db import is_postgres_connection, executemany, table_columns
+
 
 def _casefold_key(s: str) -> str:
     return re.sub(r"[\s_]+", " ", s.strip().casefold())
@@ -60,34 +71,51 @@ def _canonical(col_plan, value):
     return col_plan["casing"].get(_casefold_key(value), value)
 
 
-def run(db_path: str, dry_run: bool = False) -> dict:
+def run(db_path: str, dry_run: bool = False, *, conn=None) -> dict:
+    """conn: injected connection (Postgres or SQLite) — used by tests and any future dialect-
+    aware caller. When None (the CLI entry point's default), behavior is unchanged: opens its own
+    SQLite connection against db_path, exactly as before this port (Postgres migration Phase 5c,
+    2026-09-20)."""
     plan = _build_plan()
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    existing = {r[1] for r in conn.execute("PRAGMA table_info(fund_master)").fetchall()}
+    own_conn = conn is None
+    if own_conn:
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+    pg = is_postgres_connection(conn)
+    ph = "%s" if pg else "?"
+    # Postgres folds unquoted-created column names to lowercase (table_columns() docstring) —
+    # config.DOMAIN_VALUES keys mirror the original SQLite mixed-case names, so the membership
+    # check below must fold case on the Postgres branch only.
+    existing = table_columns(conn, "fund_master")
+    existing_cmp = {e.lower() for e in existing} if pg else existing
     report = {}
     try:
         for col, col_plan in plan.items():
-            if col not in existing:
+            if (col.lower() if pg else col) not in existing_cmp:
                 continue
             rows = conn.execute(
                 f"SELECT ISIN, {col} AS v FROM fund_master "
                 f"WHERE {col} IS NOT NULL"
             ).fetchall()
+            # Positional unpacking, not name-based row["..."] access — this must work against a
+            # bare psycopg3 connection (tuple rows), which is what the pg_conn/pg_conn_module_schema
+            # test fixtures hand back, not only against get_connection(backend="postgres")'s
+            # sqlite-compat row factory.
             updates = [
-                (canon, r["ISIN"])
-                for r in rows
-                if (canon := _canonical(col_plan, r["v"])) != r["v"]
+                (canon, isin)
+                for isin, v in rows
+                if (canon := _canonical(col_plan, v)) != v
             ]
             report[col] = len(updates)
             if updates and not dry_run:
-                conn.executemany(
-                    f"UPDATE fund_master SET {col}=? WHERE ISIN=?", updates
+                executemany(
+                    conn, f"UPDATE fund_master SET {col}={ph} WHERE ISIN={ph}", updates
                 )
         if not dry_run:
             conn.commit()
     finally:
-        conn.close()
+        if own_conn:
+            conn.close()
     return report
 
 
