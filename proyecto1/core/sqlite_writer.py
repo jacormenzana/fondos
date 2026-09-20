@@ -698,6 +698,14 @@ def upsert_kiid_metadata(conn: sqlite3.Connection,
         kiid_record.get("Cost_ACI_1Y_Arbitration"),
     )
 
+    # Postgres migration Phase 5c: this SQL is fully static (no loop-built spec like
+    # upsert_fund_master), and its ON CONFLICT/EXCLUDED/COALESCE syntax is already identical on
+    # both engines (same finding as upsert_fund_master — SQLite's UPSERT was modeled on Postgres's).
+    # The 28 '?' characters here are exactly the 28 VALUES placeholders (verified by count, no
+    # other '?' appears anywhere in the query text, e.g. in a comment), so a plain substitution is
+    # safe — unlike Phase 5b's q_rentabilidad_dist, there is no '%' to collide with here.
+    if is_postgres_connection(conn):
+        sql = sql.replace("?", "%s")
     conn.execute(sql, params)
 
 
@@ -707,11 +715,23 @@ def upsert_kiid_metadata(conn: sqlite3.Connection,
 
 def insert_nav_series(conn: sqlite3.Connection, isin: str,
                       nav_series: Iterable[Dict[str, Any]]) -> None:
-    sql = """
-    INSERT OR IGNORE INTO fund_nav_monthly
-        (ISIN, Date, NAV, NAV_Currency, NAV_Type, Is_Estimated, Data_Source, Ingested_At)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    """
+    # Postgres migration Phase 5c: INSERT OR IGNORE's direct equivalent is
+    # ON CONFLICT DO NOTHING — both silently skip a row whose key already exists rather than
+    # erroring or overwriting. Conflict target (isin, date) matches fund_nav_monthly's real PK
+    # (verified live: PK columns are (date, isin), order doesn't matter for the ON CONFLICT clause).
+    if is_postgres_connection(conn):
+        sql = """
+        INSERT INTO fund_nav_monthly
+            (isin, date, nav, nav_currency, nav_type, is_estimated, data_source, ingested_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (isin, date) DO NOTHING
+        """
+    else:
+        sql = """
+        INSERT OR IGNORE INTO fund_nav_monthly
+            (ISIN, Date, NAV, NAV_Currency, NAV_Type, Is_Estimated, Data_Source, Ingested_At)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """
     now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
     for row in nav_series:
         conn.execute(sql, (
@@ -748,6 +768,41 @@ def _upsert_kiid_benchmark(conn: sqlite3.Connection,
         except Exception:
             _role = 'asset_proxy'
 
+        # Postgres migration Phase 5c: INSERT OR REPLACE here is a full-row replace with every
+        # column freshly computed each call (no partial-update/preservation concern, unlike
+        # upsert_fund_master/upsert_kiid_metadata — this table is fully re-derived from
+        # Benchmark_Declared each cycle) — so the direct Postgres equivalent is a plain overwrite
+        # upsert (excluded.col for every column, no COALESCE needed), not a data-loss risk to guard
+        # against. Conflict target is (isin, source) — the table's real composite PK (verified
+        # live), not isin alone; 'source' is always 'KIID' here but the PK allows other sources
+        # (e.g. a different pipeline) to coexist per ISIN.
+        if is_postgres_connection(conn):
+            conn.execute("""
+                INSERT INTO fund_benchmarks
+                    (isin, source, benchmark_raw, benchmark_id, benchmark_name,
+                     provider, asset_class, confidence, benchmark_role, extracted_at)
+                VALUES (%s, 'KIID', %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (isin, source) DO UPDATE SET
+                    benchmark_raw  = excluded.benchmark_raw,
+                    benchmark_id   = excluded.benchmark_id,
+                    benchmark_name = excluded.benchmark_name,
+                    provider       = excluded.provider,
+                    asset_class    = excluded.asset_class,
+                    confidence     = excluded.confidence,
+                    benchmark_role = excluded.benchmark_role,
+                    extracted_at   = excluded.extracted_at
+            """, (
+                isin,
+                benchmark_declared,
+                norm.canonical_id   if norm else None,
+                norm.canonical_name if norm else benchmark_declared,
+                norm.provider       if norm else None,
+                norm.asset_class    if norm else None,
+                norm.confidence     if norm else 'LOW',
+                _role,
+                now,
+            ))
+            return
         conn.execute("""
             INSERT OR REPLACE INTO fund_benchmarks
                 (ISIN, source, benchmark_raw, benchmark_id, benchmark_name,
@@ -782,10 +837,13 @@ def _upsert_kiid_benchmark(conn: sqlite3.Connection,
 def log_ingestion(conn: sqlite3.Connection, isin: Optional[str],
                   step: str, status: str,
                   message: Optional[str]) -> None:
+    # Plain append-only INSERT, no conflict/upsert logic — placeholder character is the only
+    # dialect-specific piece (Postgres migration Phase 5c).
+    ph = "%s" if is_postgres_connection(conn) else "?"
     try:
         conn.execute(
-            "INSERT INTO ingestion_log (ISIN, step, status, message, created_at) "
-            "VALUES (?,?,?,?,?)",
+            f"INSERT INTO ingestion_log (ISIN, step, status, message, created_at) "
+            f"VALUES ({ph},{ph},{ph},{ph},{ph})",
             (isin, step, status, message,
              datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")),
         )
@@ -804,8 +862,20 @@ def publish_fund(
     kiid_record: Optional[Dict[str, Optional[Any]]] = None,
     cost_schedule_rows: Optional[list] = None,   # BL-COST-4c A-3: atomicidad con schedule
 ) -> None:
+    # Postgres migration Phase 5c — critical finding, not an assumption: bare `with conn:` on a
+    # psycopg3 Connection COMMITS *and then CLOSES the connection* on a clean exit (verified live
+    # 2026-09-20: conn.closed is True immediately after the block, even on success). sqlite3's
+    # `with conn:` only manages the transaction (commit/rollback) and never closes the connection —
+    # publish_fund relies on that (it's called once per fund, thousands of times, on ONE long-lived
+    # connection). Naively porting `with conn:` unchanged would close the connection after the
+    # FIRST fund and break every subsequent call in the same pipeline run — a bug that no
+    # single-function SAVEPOINT test would have caught, only surfaced by testing repeated calls on
+    # one connection, which is what this function's own shape demands. `conn.transaction()`
+    # (verified live: commits on success, rolls back on exception, connection stays open — the
+    # actual sqlite3-`with conn:`-equivalent primitive) is the correct fix.
+    txn = conn.transaction() if is_postgres_connection(conn) else conn
     try:
-        with conn:
+        with txn:
             upsert_fund_master(conn, fund_master_record)
             if kiid_record:
                 upsert_kiid_metadata(conn, kiid_record)
@@ -976,17 +1046,24 @@ def upsert_cost_schedule(
     """
     if not schedule_rows:
         return 0
+    # Postgres migration Phase 5c: plain DELETE-then-INSERT (full replace per ISIN, no upsert/
+    # conflict logic at all), so only two dialect-specific pieces: the placeholder character, and
+    # SQLite's datetime('now') function — Postgres has no such function (it uses now(), which
+    # returns timestamptz directly, matching fund_cost_schedule.updated_at's target type).
+    pg = is_postgres_connection(conn)
+    ph = "%s" if pg else "?"
+    now_fn = "now()" if pg else "datetime('now')"
     cur = conn.cursor()
-    cur.execute("DELETE FROM fund_cost_schedule WHERE ISIN = ?", (isin,))
+    cur.execute(f"DELETE FROM fund_cost_schedule WHERE ISIN = {ph}", (isin,))
     for row in schedule_rows:
         cur.execute(
-            """
+            f"""
             INSERT INTO fund_cost_schedule (
                 ISIN, Horizon_Years, Is_RHP,
                 Total_Costs_EUR, Total_Costs_Pct, Annual_Impact_Pct,
                 Source, Updated_At
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {now_fn})
             """,
             (
                 isin,
