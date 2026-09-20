@@ -68,6 +68,7 @@ from shared.config import (
     SHORT_HORIZON_SCORING_ENABLED,
     ROLLING_PCTILE_P3_ENABLED,
 )
+from shared.db import is_postgres_connection, executemany
 
 
 # ============================================================
@@ -1049,13 +1050,27 @@ def _persist_scores(
     unica fuente de verdad para regime/exclusion_reason.
     """
     today = pd.Timestamp.today().strftime("%Y-%m-%d")
-    sql = """
-        INSERT OR REPLACE INTO fund_scores
-            (isin, block, score_version, regime, as_of_date, score_total,
-             score_base, multiplier, score_detail, eligible,
-             exclusion_reason, calculated_at, notes)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """
+    if is_postgres_connection(conn):
+        sql = """
+            INSERT INTO fund_scores
+                (isin, block, score_version, regime, as_of_date, score_total,
+                 score_base, multiplier, score_detail, eligible,
+                 exclusion_reason, calculated_at, notes)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s)
+            ON CONFLICT (isin, block, score_version, regime, as_of_date) DO UPDATE SET
+                score_total = excluded.score_total, score_base = excluded.score_base,
+                multiplier = excluded.multiplier, score_detail = excluded.score_detail,
+                eligible = excluded.eligible, exclusion_reason = excluded.exclusion_reason,
+                calculated_at = excluded.calculated_at, notes = excluded.notes
+        """
+    else:
+        sql = """
+            INSERT OR REPLACE INTO fund_scores
+                (isin, block, score_version, regime, as_of_date, score_total,
+                 score_base, multiplier, score_detail, eligible,
+                 exclusion_reason, calculated_at, notes)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
     rows = []
     for _, r in df.iterrows():
         rows.append((
@@ -1073,6 +1088,6 @@ def _persist_scores(
             today,
             _build_score_notes(regime, r["exclusion_reason"]),
         ))
-    conn.executemany(sql, rows)
+    executemany(conn, sql, rows)
     conn.commit()
     print(f"Persistidos {len(rows)} scores en fund_scores.")

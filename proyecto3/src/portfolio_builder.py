@@ -55,6 +55,7 @@ from proyecto3.src.portfolio_engine import (
     assign_weights as engine_assign_weights,
 )
 from shared.config import PORTFOLIO_HYSTERESIS_ENABLED, ROTATION_COST_GATE_ENABLED
+from shared.db import is_postgres_connection
 
 
 # ============================================================
@@ -722,31 +723,52 @@ class PortfolioBuilder:
         """Persiste el escenario y los pesos en BD."""
         today = pd.Timestamp.today().strftime("%Y-%m-%d")
 
+        pg = is_postgres_connection(self.conn)
+
         # Insertar escenario
-        self.conn.execute("""
-            INSERT OR REPLACE INTO portfolio_scenarios
-                (scenario_id, profile, macro_regime, created_at, notes)
-            VALUES (?, ?, ?, ?, ?)
-        """, (
-            portfolio.scenario_id,
-            portfolio.profile,
-            portfolio.regime,
-            today,
-            json.dumps(portfolio.macro_context, ensure_ascii=False),
-        ))
+        if pg:
+            self.conn.execute("""
+                INSERT INTO portfolio_scenarios
+                    (scenario_id, profile, macro_regime, created_at, notes)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (scenario_id) DO UPDATE SET
+                    profile = excluded.profile, macro_regime = excluded.macro_regime,
+                    created_at = excluded.created_at, notes = excluded.notes
+            """, (
+                portfolio.scenario_id,
+                portfolio.profile,
+                portfolio.regime,
+                today,
+                json.dumps(portfolio.macro_context, ensure_ascii=False),
+            ))
+        else:
+            self.conn.execute("""
+                INSERT OR REPLACE INTO portfolio_scenarios
+                    (scenario_id, profile, macro_regime, created_at, notes)
+                VALUES (?, ?, ?, ?, ?)
+            """, (
+                portfolio.scenario_id,
+                portfolio.profile,
+                portfolio.regime,
+                today,
+                json.dumps(portfolio.macro_context, ensure_ascii=False),
+            ))
 
         # Eliminar pesos anteriores del escenario
+        ph = "%s" if pg else "?"
         self.conn.execute(
-            "DELETE FROM portfolio_weights WHERE scenario_id=?",
+            f"DELETE FROM portfolio_weights WHERE scenario_id={ph}",
             (portfolio.scenario_id,)
         )
 
-        # Insertar pesos
+        # Insertar pesos. `role` -> `position_role` en Postgres (palabra reservada SQL:2003,
+        # db/pg/rename_map.yaml).
+        role_col = "position_role" if pg else "role"
         for f in portfolio.all_funds:
-            self.conn.execute("""
+            self.conn.execute(f"""
                 INSERT INTO portfolio_weights
-                    (scenario_id, isin, block, weight, role, notes)
-                VALUES (?, ?, ?, ?, ?, ?)
+                    (scenario_id, isin, block, weight, {role_col}, notes)
+                VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph})
             """, (
                 portfolio.scenario_id,
                 f["isin"],
