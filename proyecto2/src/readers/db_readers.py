@@ -13,10 +13,28 @@ desde las tablas internas. No realizan llamadas externas.
   IPC
     load_ipc(conn, geography)     -> DataFrame[date, ipc_index]
     ipc_available(conn, geography) -> bool
+
+Postgres migration (addendum, 2026-09-20, plan §Addendum Stage 1) — read before editing further.
+Ported in place, per is_postgres_connection() branch, same convention as every other ported P#
+module in this codebase (shared/db.py's module docstring explains why: a factory swap alone can't
+work because psycopg3 doesn't accept `?` placeholders at all).
+
+Two things worth knowing before touching this file again:
+  - Unquoted mixed-case identifiers (ISIN, Fund_Nature, ...) need NO rewrite: Postgres folds every
+    unquoted identifier to lowercase at parse time, which is exactly db/pg/rename_map.yaml's target
+    spelling for every renamed column here. Verified empirically 2026-09-20 (`SELECT Fund_Nature
+    FROM t` resolves against a real `fund_nature` column with zero error). So the real dialect
+    differences below are only: `?`->`%s`, and the two SQLite-only date functions this file used
+    (`julianday()`, bare `DATE()`) — see count_stale_nav_funds() and load_ts_cohort().
+  - `fund_nav_monthly.date` / `fund_nav_daily.date` are genuine `date` columns on Postgres (not
+    text) — `db/pg/10_bronze.sql`. `fund_metrics.load_ts` is `timestamptz`. Both let date arithmetic
+    use native operators instead of `julianday()`/`DATE()`.
 """
 
 import sqlite3
 import pandas as pd
+
+from shared.db import is_postgres_connection
 
 
 # ============================================================
@@ -33,10 +51,11 @@ def load_nav(conn: sqlite3.Connection, isin: str) -> pd.DataFrame:
     Ordenado por fecha ascendente.
     Devuelve DataFrame vacío si el fondo no tiene datos.
     """
-    rows = conn.execute("""
+    ph = "%s" if is_postgres_connection(conn) else "?"
+    rows = conn.execute(f"""
         SELECT Date AS date, NAV AS nav
         FROM fund_nav_monthly
-        WHERE ISIN = ?
+        WHERE ISIN = {ph}
         ORDER BY Date
     """, (isin,)).fetchall()
 
@@ -70,8 +89,9 @@ def count_isins_with_new_nav(
     n_never_calculated  ISINs with no fund_metric_state row for metric_version
     n_universe          total ISINs in the fund_nav_monthly ∩ fund_master universe
     """
+    ph = "%s" if is_postgres_connection(conn) else "?"
     row = conn.execute(
-        """
+        f"""
         SELECT
             COUNT(*) FILTER (WHERE fms.isin IS NULL)                       AS n_never,
             COUNT(*) FILTER (
@@ -87,7 +107,7 @@ def count_isins_with_new_nav(
         ) universe
         LEFT JOIN fund_metric_state fms
                ON universe.ISIN = fms.isin
-              AND fms.metric_version = ?
+              AND fms.metric_version = {ph}
         LEFT JOIN nav_sources ns ON universe.ISIN = ns.isin
         """,
         (metric_version,),
@@ -143,10 +163,11 @@ def load_nav_daily(conn: sqlite3.Connection, isin: str) -> pd.DataFrame:
     Ordenado por fecha ascendente.
     Devuelve DataFrame vacío si el fondo no tiene datos diarios.
     """
-    rows = conn.execute("""
+    ph = "%s" if is_postgres_connection(conn) else "?"
+    rows = conn.execute(f"""
         SELECT Date AS date, NAV AS nav
         FROM fund_nav_daily
-        WHERE ISIN = ?
+        WHERE ISIN = {ph}
         ORDER BY Date
     """, (isin,)).fetchall()
 
@@ -192,10 +213,11 @@ def load_ipc(conn: sqlite3.Connection, geography: str = "ES") -> pd.DataFrame:
     Fechas normalizadas a fin de mes para alinear con las fechas NAV.
     Devuelve DataFrame vacío si no hay datos para la geografía solicitada.
     """
-    rows = conn.execute("""
+    ph = "%s" if is_postgres_connection(conn) else "?"
+    rows = conn.execute(f"""
         SELECT date, ipc_index
         FROM series_inflation
-        WHERE geography = ?
+        WHERE geography = {ph}
         ORDER BY date
     """, (geography,)).fetchall()
 
@@ -210,8 +232,9 @@ def load_ipc(conn: sqlite3.Connection, geography: str = "ES") -> pd.DataFrame:
 
 def ipc_available(conn: sqlite3.Connection, geography: str = "ES") -> bool:
     """Devuelve True si hay datos IPC para la geografía indicada."""
+    ph = "%s" if is_postgres_connection(conn) else "?"
     n = conn.execute(
-        "SELECT COUNT(*) FROM series_inflation WHERE geography = ?",
+        f"SELECT COUNT(*) FROM series_inflation WHERE geography = {ph}",
         (geography,)
     ).fetchone()[0]
     return n > 0
@@ -239,9 +262,10 @@ def load_rf_rate(
 
     Devuelve DataFrame vacío si no hay datos en la BD.
     """
+    ph = "%s" if is_postgres_connection(conn) else "?"
     rows = conn.execute(
-        "SELECT date, value FROM series_macro "
-        "WHERE indicator = ? AND geography = ? ORDER BY date",
+        f"SELECT date, value FROM series_macro "
+        f"WHERE indicator = {ph} AND geography = {ph} ORDER BY date",
         (indicator, geography),
     ).fetchall()
 
@@ -278,14 +302,16 @@ def load_fund_attributes(conn: sqlite3.Connection) -> pd.DataFrame:
         Hedging_Policy, Asset_Currency, Fund_Currency,
         Leverage_Used, Sfdr_Article, In_Current_Universe
     """
-    df = pd.read_sql("""
-        SELECT ISIN,
-               Fund_Nature, Strategy, Geography, Development_Status,
-               Credit_Quality, Duration_Profile, Investment_Focus,
-               Hedging_Policy, Asset_Currency, Fund_Currency,
-               Leverage_Used, Sfdr_Article, In_Current_Universe
-        FROM fund_master
-    """, conn)
+    _cols = ["ISIN", "Fund_Nature", "Strategy", "Geography", "Development_Status",
+             "Credit_Quality", "Duration_Profile", "Investment_Focus", "Hedging_Policy",
+             "Asset_Currency", "Fund_Currency", "Leverage_Used", "Sfdr_Article",
+             "In_Current_Universe"]
+    # fetchall() + manual DataFrame, not pd.read_sql(sql, conn): pandas only formally supports a
+    # SQLAlchemy engine/connection or a sqlite3 DBAPI2 connection for the `con` argument — a raw
+    # psycopg3 Connection works (verified live 2026-09-20) but emits a UserWarning on every call.
+    # Matches every other function in this file, which already builds its DataFrame this way.
+    rows = conn.execute(f"SELECT {', '.join(_cols)} FROM fund_master").fetchall()
+    df = pd.DataFrame(rows, columns=_cols)
     df = df.set_index("ISIN")
     return df
 
@@ -325,20 +351,25 @@ def load_ts_cohort(
     calculated_at = per-fund run stamp (orchestration). See run_pipeline
     module docstring for the full classification rule (EXPECTED vs ANOMALY).
     """
+    pg = is_postgres_connection(conn)
+    ph = "%s" if pg else "?"
+    # SQLite's DATE(x) extracts the date part of a text/datetime value; Postgres has no 1-arg
+    # DATE() function — fund_metrics.load_ts is `timestamptz` there, so ::date does the same job.
+    ts_date_expr = "fm.load_ts::date" if pg else "DATE(fm.load_ts)"
     rows = conn.execute(
-        """
-        SELECT DATE(fm.load_ts) AS ts_date, COUNT(*) AS cnt
+        f"""
+        SELECT {ts_date_expr} AS ts_date, COUNT(*) AS cnt
         FROM fund_metrics fm
         WHERE fm.isin IN (
             SELECT isin FROM fund_metric_state
-            WHERE metric_version = ? AND calculated_at >= ?
+            WHERE metric_version = {ph} AND calculated_at >= {ph}
         )
-        GROUP BY DATE(fm.load_ts)
+        GROUP BY {ts_date_expr}
         ORDER BY ts_date
         """,
         (metric_version, run_start_iso),
     ).fetchall()
-    return [(r[0], int(r[1])) for r in rows]
+    return [(str(r[0]), int(r[1])) for r in rows]
 
 
 def count_stale_nav_funds(
@@ -374,8 +405,15 @@ def count_stale_nav_funds(
     Integer count of stale-NAV ISINs (0 = all up to date).
     """
     _as_of = as_of_iso if as_of_iso is not None else run_start_iso
+    pg = is_postgres_connection(conn)
+    ph = "%s" if pg else "?"
+    # SQLite has no native date subtraction; julianday(a) - julianday(b) is its idiom for "days
+    # between". Postgres date - date already yields an integer day count directly — no julianday
+    # equivalent needed, and nav_latest.max_nav_date is a genuine `date` column there (10_bronze.sql).
+    age_expr = (f"({ph}::date - nav_latest.max_nav_date)" if pg
+                else f"(julianday({ph}) - julianday(nav_latest.max_nav_date))")
     row = conn.execute(
-        """
+        f"""
         SELECT COUNT(DISTINCT fms.isin)
         FROM fund_metric_state fms
         JOIN (
@@ -383,9 +421,9 @@ def count_stale_nav_funds(
             FROM fund_nav_monthly
             GROUP BY ISIN
         ) nav_latest ON fms.isin = nav_latest.ISIN
-        WHERE fms.metric_version = ?
-          AND fms.calculated_at  >= ?
-          AND (julianday(?) - julianday(nav_latest.max_nav_date)) > ?
+        WHERE fms.metric_version = {ph}
+          AND fms.calculated_at  >= {ph}
+          AND {age_expr} > {ph}
         """,
         (metric_version, run_start_iso, _as_of, max_age_days),
     ).fetchone()
@@ -412,13 +450,14 @@ def coverage_snapshot(
     -------
     List of (metric, count) in the same order as `metrics`.
     """
+    ph = "%s" if is_postgres_connection(conn) else "?"
     result = []
     for metric in metrics:
         row = conn.execute(
-            """
+            f"""
             SELECT COUNT(DISTINCT isin)
             FROM fund_metrics
-            WHERE metric = ? AND horizon = ? AND value IS NOT NULL
+            WHERE metric = {ph} AND horizon = {ph} AND value IS NOT NULL
             """,
             (metric, horizon),
         ).fetchone()

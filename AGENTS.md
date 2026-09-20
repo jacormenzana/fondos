@@ -263,8 +263,11 @@ proyecto2/
     pipeline/
       test_run_pipeline_writes_pg.py
     readers/
+      test_db_readers_misc_pg.py
       test_preflight.py
+      test_preflight_pg.py
       test_reliability_signals.py
+      test_reliability_signals_pg.py
     reports/
       test_rolling_dashboard.py
     utils/
