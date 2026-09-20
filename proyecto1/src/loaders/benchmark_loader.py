@@ -56,7 +56,7 @@ sys.path.insert(0, str(_ROOT))   # para shared.*
 sys.path.insert(0, str(_P1))     # para core.*
 
 from shared.config import DB_PATH
-from shared.db import get_connection
+from shared.db import get_connection, is_postgres_connection
 from core.benchmark_normalizer import normalize_benchmark, clean_benchmark
 
 try:
@@ -190,21 +190,56 @@ def _write_benchmark(
 
     now = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S')
 
-    conn.execute("""
-        INSERT OR REPLACE INTO fund_benchmarks
-            (ISIN, source, benchmark_raw, benchmark_id, benchmark_name,
-             provider, asset_class, confidence, extracted_at)
-        VALUES (?, 'MORNINGSTAR', ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        isin,
-        raw_name,
-        norm.canonical_id   if norm else None,
-        norm.canonical_name if norm else raw_name,
-        norm.provider       if norm else None,
-        norm.asset_class    if norm else None,
-        norm.confidence     if norm else 'LOW',
-        now,
-    ))
+    # Postgres migration Phase 5c (2026-09-20): INSERT OR REPLACE -> ON CONFLICT DO UPDATE.
+    # Faithful translation, not just placeholder swap: SQLite's REPLACE is DELETE+INSERT, so any
+    # column NOT in the explicit column list (here, benchmark_role) is silently reset to its
+    # DEFAULT ('asset_proxy') on every write that hits an existing (ISIN, source) row — a real,
+    # pre-existing behavior of this function, not something introduced by this port. A plain
+    # ON CONFLICT DO UPDATE that omits benchmark_role from SET would instead PRESERVE its old
+    # value, which is a behavior change from SQLite. Explicit `benchmark_role = DEFAULT` in SET
+    # replicates the existing SQLite behavior exactly (see fund_benchmarks DDL — benchmark_role
+    # has the same DEFAULT 'asset_proxy' on both sides).
+    if is_postgres_connection(conn):
+        conn.execute("""
+            INSERT INTO fund_benchmarks
+                (ISIN, source, benchmark_raw, benchmark_id, benchmark_name,
+                 provider, asset_class, confidence, extracted_at)
+            VALUES (%s, 'MORNINGSTAR', %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (ISIN, source) DO UPDATE SET
+                benchmark_raw  = excluded.benchmark_raw,
+                benchmark_id   = excluded.benchmark_id,
+                benchmark_name = excluded.benchmark_name,
+                provider       = excluded.provider,
+                asset_class    = excluded.asset_class,
+                confidence     = excluded.confidence,
+                extracted_at   = excluded.extracted_at,
+                benchmark_role = DEFAULT
+        """, (
+            isin,
+            raw_name,
+            norm.canonical_id   if norm else None,
+            norm.canonical_name if norm else raw_name,
+            norm.provider       if norm else None,
+            norm.asset_class    if norm else None,
+            norm.confidence     if norm else 'LOW',
+            now,
+        ))
+    else:
+        conn.execute("""
+            INSERT OR REPLACE INTO fund_benchmarks
+                (ISIN, source, benchmark_raw, benchmark_id, benchmark_name,
+                 provider, asset_class, confidence, extracted_at)
+            VALUES (?, 'MORNINGSTAR', ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            isin,
+            raw_name,
+            norm.canonical_id   if norm else None,
+            norm.canonical_name if norm else raw_name,
+            norm.provider       if norm else None,
+            norm.asset_class    if norm else None,
+            norm.confidence     if norm else 'LOW',
+            now,
+        ))
     conn.commit()
 
     return 'NORMALIZADO' if norm else 'RAW_ONLY'
@@ -300,11 +335,13 @@ def _get_isins_for_load(
     sample:       limitar a N ISINs aleatorios
     isin_filter:  procesar solo este ISIN concreto
     """
+    ph = "%s" if is_postgres_connection(conn) else "?"
+
     if isin_filter:
-        rows = conn.execute("""
+        rows = conn.execute(f"""
             SELECT ns.isin, ns.source_id
             FROM nav_sources ns
-            WHERE ns.isin = ? AND ns.status = 'OK'
+            WHERE ns.isin = {ph} AND ns.status = 'OK'
         """, (isin_filter,)).fetchall()
         return [(r[0], r[1]) for r in rows]
 
