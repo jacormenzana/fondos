@@ -62,6 +62,7 @@ loader's reverse-coercion functions kept only for the rollback runbook.
 
 import sqlite3
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional, Union
 
@@ -189,6 +190,48 @@ def execute_fail_soft(conn, sql: str, params=()) -> bool:
             return True
         except Exception:
             return False
+
+
+@contextmanager
+def fail_soft_block(conn):
+    """Block-shaped sibling of execute_fail_soft() (single statement, returns bool) — for a
+    `try: <several statements>; except Exception as e: <log and continue>` block that itself needs
+    SAVEPOINT protection on Postgres, found live 2026-09-20 porting pipeline.py's run_block() tail
+    (post-cycle summary/sweep logic: several independent fail-soft try/except blocks share one
+    transaction, any one of them failing would otherwise poison every later statement — including
+    ones in the CALLER, since run_block.py's main() keeps using the same connection after
+    run_block() returns).
+
+    Unlike execute_fail_soft(), this does NOT swallow the exception — it only protects the
+    transaction (SAVEPOINT before, ROLLBACK TO SAVEPOINT + re-raise on failure) and always pairs
+    with the caller's own try/except, which keeps its existing logging/printing behavior
+    unchanged:
+
+        try:
+            with fail_soft_block(conn):
+                conn.execute(...)
+        except Exception as e:
+            print(f"WARN: {e}")
+
+    Do not call conn.commit() *inside* the `with` block — a commit destroys the SAVEPOINT before
+    the context manager's own RELEASE SAVEPOINT can run (the exact failure mode documented in
+    shared/testing/pg_fixtures.py's pg_conn_module_schema). Commit after the `with` block exits
+    cleanly instead.
+
+    On SQLite, or Postgres in autocommit mode (see execute_fail_soft for why autocommit changes
+    the picture), this is a no-op passthrough — the caller's own try/except already provides
+    identical behavior there."""
+    if is_postgres_connection(conn) and not conn.autocommit:
+        conn.execute("SAVEPOINT fail_soft_block_sp")
+        try:
+            yield
+        except Exception:
+            conn.execute("ROLLBACK TO SAVEPOINT fail_soft_block_sp")
+            raise
+        else:
+            conn.execute("RELEASE SAVEPOINT fail_soft_block_sp")
+    else:
+        yield
 
 
 def executemany(conn, sql: str, params_seq) -> None:

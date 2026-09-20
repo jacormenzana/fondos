@@ -247,6 +247,16 @@ from core.sqlite_writer import (
     global_post_pipeline_normalize_db,   # BL-53/56/57: barrido global
 )
 from core._db_utils import EffectiveReader   # BL-49/50: lectura efectiva
+try:
+    from shared.db import is_postgres_connection, fail_soft_block
+except ModuleNotFoundError:
+    # shared no está aún en sys.path — añadirlo explícitamente (mismo patrón que sqlite_writer.py).
+    import sys as _sys_shared
+    from pathlib import Path as _Path_shared
+    _shared_root = _Path_shared(__file__).resolve().parents[2]
+    if str(_shared_root) not in _sys_shared.path:
+        _sys_shared.path.insert(0, str(_shared_root))
+    from shared.db import is_postgres_connection, fail_soft_block
 # P1-19: única definición de la escala de coste (P#11 / R-1)
 try:
     from core.cost_scale import OC_RATIO_MAX as _OC_RATIO_MAX
@@ -3249,15 +3259,22 @@ def run_block(
     # ── Resumen de incidencias del ciclo (normativa sección 7.5 v2) ──────
     # Schema: ingestion_log (id, ISIN, step, status, message, created_at)
     # Filtramos por created_at >= _cycle_start_ts para acotar al ciclo actual.
+    # Postgres migration Phase 5c (2026-09-20): ?→%s translation. fail_soft_block() protects this
+    # read AND the two fail-soft blocks below it from poisoning the enclosing transaction under
+    # Postgres — this function's connection stays open and keeps being used by the CALLER
+    # (run_block.py's main(): run_global_normalization/reconcile_universe_membership/conn.commit())
+    # after this function returns, so a poisoned transaction here would break code outside it too.
+    _ph = "%s" if is_postgres_connection(conn) else "?"
     try:
-        _incidencias = conn.execute("""
-            SELECT step, status, COUNT(DISTINCT ISIN) as n
-            FROM ingestion_log
-            WHERE created_at >= ?
-              AND status != 'OK'
-            GROUP BY step, status
-            ORDER BY n DESC
-        """, (_cycle_start_ts,)).fetchall()
+        with fail_soft_block(conn):
+            _incidencias = conn.execute(f"""
+                SELECT step, status, COUNT(DISTINCT ISIN) as n
+                FROM ingestion_log
+                WHERE created_at >= {_ph}
+                  AND status != 'OK'
+                GROUP BY step, status
+                ORDER BY n DESC
+            """, (_cycle_start_ts,)).fetchall()
         if _incidencias:
             print("\n--- RESUMEN DE INCIDENCIAS DEL CICLO ---")
             for _step, _status, _n in _incidencias:
@@ -3279,10 +3296,13 @@ def run_block(
     # no sample_size) to avoid wiping valid rows during partial runs.
     if nature_first and list_isin is None and sample_size is None:
         try:
-            _dq_deleted = conn.execute(
-                "DELETE FROM fund_data_quality_issues WHERE detected_at < ?",
-                (_cycle_start_ts,)
-            ).rowcount
+            with fail_soft_block(conn):
+                _dq_deleted = conn.execute(
+                    f"DELETE FROM fund_data_quality_issues WHERE detected_at < {_ph}",
+                    (_cycle_start_ts,)
+                ).rowcount
+            # conn.commit() stays OUTSIDE the fail_soft_block — a commit destroys the SAVEPOINT
+            # before its own RELEASE SAVEPOINT can run (see fail_soft_block's docstring).
             if _dq_deleted:
                 print(f"[DQ-SWEEP] purged {_dq_deleted} stale "
                       f"fund_data_quality_issues rows "
@@ -3305,13 +3325,14 @@ def run_block(
     # were not reprocessed in this cycle (CACHED or not in universe scope).
     # Goes to 0 after a full --recompute-costs sweep.
     try:
-        _oc_contaminated = conn.execute("""
-            SELECT COUNT(*) FROM fund_master
-            WHERE In_Current_Universe = 1
-              AND Ongoing_Charge_Recurrent IS NOT NULL
-              AND ACI_RHP IS NOT NULL
-              AND ABS(Ongoing_Charge_Recurrent * 100.0 - ACI_RHP) < 0.01
-        """).fetchone()[0]
+        with fail_soft_block(conn):
+            _oc_contaminated = conn.execute("""
+                SELECT COUNT(*) FROM fund_master
+                WHERE In_Current_Universe = 1
+                  AND Ongoing_Charge_Recurrent IS NOT NULL
+                  AND ACI_RHP IS NOT NULL
+                  AND ABS(Ongoing_Charge_Recurrent * 100.0 - ACI_RHP) < 0.01
+            """).fetchone()[0]
         if _oc_contaminated > 0:
             print(
                 f"  [WARN] FIX-OC-WRITE-ORDER: {_oc_contaminated} fondo(s) activos con "

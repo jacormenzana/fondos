@@ -171,7 +171,19 @@ except ModuleNotFoundError:
 
 
 def create_schema(conn: sqlite3.Connection) -> None:
-    """Crea todas las tablas del sistema leyendo db/schema_fondos.sql."""
+    """Crea todas las tablas del sistema leyendo db/schema_fondos.sql.
+
+    SQLite-only by design, not merely unported: Postgres schema provisioning is a different
+    architecture entirely (db/pg/00_roles_schemas.sql .. 40_matviews.sql applied once via psql —
+    see docker-compose.yml's header comment), not something this function should attempt to
+    translate at runtime (conn.executescript() doesn't exist on psycopg3 either way, and
+    autotranslating SQLite DDL would duplicate the hand-authored Postgres DDL — a P#11 violation).
+    Guard clearly rather than let a stray call fail on an opaque AttributeError."""
+    if is_postgres_connection(conn):
+        raise RuntimeError(
+            "create_schema() is SQLite-only. For Postgres, apply db/pg/00_roles_schemas.sql .. "
+            "40_matviews.sql via psql (see docker-compose.yml) — not this function."
+        )
     conn.executescript(_load_schema_sql())
     conn.commit()
 
