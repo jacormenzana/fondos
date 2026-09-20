@@ -41,8 +41,51 @@ sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_P2_SRC))
 
 from shared.config import DB_PATH, METRICS_DIR, SCHEMA_VERSION
-from shared.db import get_connection
+from shared.db import get_connection, is_postgres_connection
 from shared.schema_checks import assert_schema_alignment
+
+# ============================================================
+# Dialect helper (Postgres migration Phase 5b, 2026-09-20)
+# ============================================================
+
+def _round_sql(expr: str, decimals: int, *, pg: bool) -> str:
+    """ROUND() SQL fragment, dialect-safe. SQLite's ROUND() operates on the raw IEEE754 double and
+    breaks exact .5 ties AWAY FROM ZERO. Postgres has no ROUND(double precision, integer) overload
+    at all (only ROUND(numeric, integer) — found live 2026-09-20, UndefinedFunction), and neither
+    obvious Postgres substitute reproduces SQLite's output:
+      - `ROUND(x::numeric, n)::double precision` — the numeric CAST "snaps" a noisy double like
+        0.2875*100 = 28.749999999999996 to the clean decimal 28.75 before rounding, then rounds
+        that (now-exact) tie up to 28.8. SQLite rounds the noisy double directly and gets 28.7.
+        Real data hit this: ~1% of rows in q_consistencia/q_tendencia diverged between engines.
+      - Postgres's single-arg `round(double precision)` avoids the numeric snap, but breaks exact
+        ties with ROUND HALF TO EVEN (round(2.5)=2, round(-2.5)=-2) — SQLite uses round half AWAY
+        FROM ZERO (round(2.5)=3, round(-2.5)=-3). Different rule, same class of silent divergence.
+    The formula below (scale, round-half-away-from-zero via floor+sign, descale) stays in double
+    precision throughout — no numeric/Decimal ever appears, so the Python-side return type is
+    `float` on both dialects too, matching SQLite exactly rather than approximately. Deliberately a
+    small explicit helper, not a general SQL-string rewriter — same reasoning as shared/db.py's
+    rejected `?`->`%s` auto-translator: safe only because every call site is reviewed, not
+    pattern-matched, and because every case above was verified against real, previously-diverging
+    data before being trusted, not assumed correct from the formula alone.
+
+    Known, accepted residual: cross-validated against the full live q_consistencia (3683 rows,
+    100% match) and q_tendencia (3666 rows) datasets — q_tendencia still shows 38 single-cell
+    diffs out of ~66,000 (0.058%), every one exactly +0.001 in Postgres versus SQLite. Root cause:
+    the scale-multiply step above (`(expr) * scale`) is itself one more double-precision
+    multiplication, which can occasionally land a value that is genuinely a hair below a decimal
+    boundary (per the double's full, un-rounded binary value) exactly ON that boundary, tipping the
+    tie the other way — a deeper fix would require arbitrary-precision (Decimal) evaluation of the
+    original expression rather than double arithmetic at any stage, which is disproportionate for a
+    display-rounded reporting value at 3-4 decimal places. Bounded, one-directional, sub-0.1%,
+    last-decimal-digit only — accepted rather than chased further."""
+    if pg:
+        scale = 10 ** decimals
+        return (
+            f"(sign(({expr})::double precision) * "
+            f"floor(abs(({expr})::double precision) * {scale} + 0.5) / {scale})"
+        )
+    return f"ROUND({expr}, {decimals})"
+
 
 # ============================================================
 # Estilos
@@ -323,14 +366,15 @@ def q_ret_dd_ratio(conn):
     """).fetchall()
 
 def q_consistencia(conn):
-    return conn.execute("""
+    pg = is_postgres_connection(conn)
+    return conn.execute(f"""
         SELECT pos.isin, fm.Fund_Name, fm.Fund_Nature,
-               ROUND(pos.value*100,1)      AS pct_meses_positivos,
-               ROUND(sev.value*100,1)      AS pct_perdida_severa,
-               ROUND(wm.value*100,2)       AS peor_mes_pct,
-               ROUND(ret.value*100,2)      AS return_real_pct,
-               ROUND(sh.value,2)           AS sharpe,
-               ROUND(srt.value,2)          AS sortino,
+               {_round_sql("pos.value*100", 1, pg=pg)}      AS pct_meses_positivos,
+               {_round_sql("sev.value*100", 1, pg=pg)}      AS pct_perdida_severa,
+               {_round_sql("wm.value*100", 2, pg=pg)}       AS peor_mes_pct,
+               {_round_sql("ret.value*100", 2, pg=pg)}      AS return_real_pct,
+               {_round_sql("sh.value", 2, pg=pg)}           AS sharpe,
+               {_round_sql("srt.value", 2, pg=pg)}          AS sortino,
                CAST(srri.value AS INTEGER) AS srri,
                pos.source_rows             AS meses
         FROM fund_metrics pos
@@ -1368,16 +1412,17 @@ def build_regime_returns(ws, conn):
 _TENDENCIA_WINDOWS = ["rolling_3y", "rolling_5y"]
 
 def q_tendencia(conn) -> list:
+    pg = is_postgres_connection(conn)
     parts_sel  = []
     parts_join = []
     for w in _TENDENCIA_WINDOWS:
         safe = w.replace("-", "_")
         parts_sel += [
-            f"ROUND(ss_{safe}.value, 4)  AS sharpe_slope_{w}",
-            f"ROUND(rs_{safe}.value, 4)  AS ret_slope_{w}",
-            f"ROUND(sp_{safe}.value, 3)  AS sharpe_pctile_self_{w}",
-            f"ROUND(cp_{safe}.value, 3)  AS sharpe_pctile_cat_{w}",
-            f"ROUND(zs_{safe}.value, 3)  AS sharpe_zscore_cat_{w}",
+            f'{_round_sql(f"ss_{safe}.value", 4, pg=pg)}  AS sharpe_slope_{w}',
+            f'{_round_sql(f"rs_{safe}.value", 4, pg=pg)}  AS ret_slope_{w}',
+            f'{_round_sql(f"sp_{safe}.value", 3, pg=pg)}  AS sharpe_pctile_self_{w}',
+            f'{_round_sql(f"cp_{safe}.value", 3, pg=pg)}  AS sharpe_pctile_cat_{w}',
+            f'{_round_sql(f"zs_{safe}.value", 3, pg=pg)}  AS sharpe_zscore_cat_{w}',
         ]
         parts_join.append(f"""
         LEFT JOIN fund_metrics ss_{safe}  ON ss_{safe}.isin=fm.ISIN
@@ -1397,10 +1442,10 @@ def q_tendencia(conn) -> list:
             AND zs_{safe}.real_flag=0""")
 
     sql = f"""
-        SELECT fm.ISIN, fm.Fund_Name, fm.Fund_Nature, fm.Management_Company,
-               ROUND(ret.value*100,2)       AS return_real_pct,
-               ROUND(sh.value,2)            AS sharpe_si,
-               ROUND(srt.value,2)           AS sortino_si,
+        SELECT DISTINCT fm.ISIN, fm.Fund_Name, fm.Fund_Nature, fm.Management_Company,
+               {_round_sql("ret.value*100", 2, pg=pg)}       AS return_real_pct,
+               {_round_sql("sh.value", 2, pg=pg)}            AS sharpe_si,
+               {_round_sql("srt.value", 2, pg=pg)}           AS sortino_si,
                CAST(srri.value AS INTEGER)  AS srri,
                {", ".join(parts_sel)}
         FROM fund_master fm
@@ -1420,6 +1465,16 @@ def q_tendencia(conn) -> list:
         )
         ORDER BY fm.Fund_Nature, fm.Fund_Name
     """
+    # SELECT DISTINCT above is load-bearing, not defensive style: found live 2026-09-20, while
+    # cross-validating this Postgres port against the existing SQLite output — SQLite's planner
+    # duplicates the outer fm row (once per matching horizon) whenever this EXISTS's correlated
+    # subquery matches more than one row via the `horizon IN (...)` list, i.e. for every fund with
+    # sharpe_slope data in BOTH _TENDENCIA_WINDOWS (the common case: was 3666/3666 ISINs in the
+    # live data, exactly doubling the SQLite row count 3666->7332). Postgres never exhibited this —
+    # EXISTS stayed a true boolean semi-join there — which is how the discrepancy surfaced: a
+    # cross-engine row-count mismatch during this port, not a crash or a SQLite-only test failure.
+    # Pre-existing production bug, independent of the Postgres migration; DISTINCT is the safe fix
+    # since the duplicated rows are byte-identical (confirmed), not distinct rows sharing a key.
     return conn.execute(sql).fetchall()
 
 
@@ -1523,13 +1578,21 @@ SHEETS = [
 ]
 
 
-def export(output_dir: Path, min_fondos: int = 100) -> tuple[Path, int]:
+def export(output_dir: Path, min_fondos: int = 100, *, backend: str = "sqlite") -> tuple[Path, int]:
     """Exporta metricas P2 a Excel.
+
+    backend: "sqlite" (default, zero behavior change for any existing caller) or "postgres"
+    (migration Phase 5b). Only 3 of 13 sheets are dialect-ported as of 2026-09-20 (1_Estado,
+    5_Consistencia, 12_Tendencia via q_estado/q_consistencia/q_tendencia) — the rest will show as
+    failed_sheets under backend="postgres" until their own q_* functions are ported in a later
+    tranche. This is intentional, incremental tranche behavior, not a bug: each sheet's builder
+    already runs inside its own try/except (see the loop below), so an unported sheet degrades to
+    an error cell rather than crashing the whole export.
 
     Returns:
         (out_path, failed_sheets) — failed_sheets > 0 indica hojas con error.
     """
-    conn = get_connection()
+    conn = get_connection(backend=backend)
 
     # C1 — Alineación de schema (P#3/R-8 equivalent para el reporting layer).
     # Un schema desalineado no aborta el workbook (columnas faltantes producen NULL
@@ -1575,6 +1638,13 @@ def export(output_dir: Path, min_fondos: int = 100) -> tuple[Path, int]:
             ws["A1"] = f"ERROR al generar esta hoja: {e}"
             ws["A1"].font = _font(bold=True, color="9C0006")
             print(f"  [{sheet_name}] ERROR: {e}")
+            # Postgres (unlike SQLite) aborts the whole transaction on a failed statement — every
+            # later query on this connection would fail with "current transaction is aborted"
+            # otherwise, even a correctly-ported sheet after a still-unported one. Found live
+            # 2026-09-20: 5_Consistencia/12_Tendencia (both ported, both correct in isolation)
+            # showed as failed purely because 3_Rentabilidad ran first and aborted the transaction.
+            # rollback() is a no-op for SQLite's read-only queries here, so unconditional is safe.
+            conn.rollback()
 
     conn.close()
     wb.save(str(out_path))

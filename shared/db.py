@@ -41,10 +41,19 @@ operator into a placeholder. Each ported function writes its own explicit `%s`-p
 string for the Postgres branch — more typing, no footgun.
 
 **What IS built:** `is_postgres_connection(conn)` — the one canonical dialect check, so ported
-functions don't each need their own `isinstance` import juggling. Row access: SQLite connections
-keep `sqlite3.Row` (index AND name access); Postgres connections get `psycopg.rows.dict_row` (name
-access only — `row["col"]`, not `row[0]`). Write name-based row access in anything meant to run
-against both, which is already the codebase's dominant style.
+functions don't each need their own `isinstance` import juggling.
+
+**Row access — corrected 2026-09-20, first Phase 5b port.** The original design here used
+`psycopg.rows.dict_row` and asserted "name-based access is already the codebase's dominant style."
+That assertion was wrong, found by actually porting `proyecto2/src/analysis/export_metrics.py`'s
+`q_estado()`/`export()` against live Postgres: its consumer `build_estado()` does
+`ws.append(list(r))`, relying on `sqlite3.Row`'s iteration-yields-values-in-column-order behavior
+(same as a tuple). `list(a_dict_row_result)` yields the dict's KEYS instead — column names would
+have silently landed in the Excel report as if they were data, with no exception raised anywhere to
+catch it. Root-caused once here rather than patched at each of the ~86 call sites (P#2/P#11):
+`_SqliteCompatRow` (below) supports BOTH `row[0]` and `row["col"]`, matching `sqlite3.Row` exactly,
+including iteration yielding values. This is now the `row_factory` for every `backend="postgres"`
+connection — ported functions can keep whatever access style the original SQLite code used.
 
 This whole `backend="postgres"` branch, and every per-function dialect branch it enables, is
 transitional — deleted once SQLite is retired (plan §5e Stage 3), same category as the seed
@@ -63,10 +72,55 @@ from shared.config import DB_PATH
 
 try:
     import psycopg
-    from psycopg.rows import dict_row as _pg_dict_row
 except ImportError:  # pragma: no cover — psycopg3 optional until a caller actually asks for it
     psycopg = None
-    _pg_dict_row = None
+
+
+class _SqliteCompatRow:
+    """A psycopg3 row that behaves like sqlite3.Row: subscriptable by int OR str, iterates values
+    (not keys) in column order. See the "Row access" note in this module's docstring for why this
+    exists — dict_row alone silently breaks any code relying on sqlite3.Row's positional/iteration
+    behavior (e.g. `list(row)`, `for v in row`), which turned out to be common in this codebase.
+    """
+    __slots__ = ("_columns", "_index", "_values")
+
+    def __init__(self, columns: list, index: dict, values: tuple):
+        self._columns = columns
+        self._index = index
+        self._values = values
+
+    def __getitem__(self, key):
+        if isinstance(key, str):
+            return self._values[self._index[key]]
+        return self._values[key]
+
+    def __iter__(self):
+        return iter(self._values)
+
+    def __len__(self):
+        return len(self._values)
+
+    def keys(self):
+        return list(self._columns)
+
+    def __repr__(self):
+        return f"<Row {dict(zip(self._columns, self._values))}>"
+
+
+def _sqlite_compat_row_factory(cursor):
+    """psycopg3 row-factory protocol: (cursor) -> (values: tuple) -> Row. Column name/index lookup
+    is built once per cursor.description (i.e. once per query, not once per row) and shared by
+    reference across every row in the result set — same amortized cost as sqlite3.Row's own
+    implementation."""
+    # cursor.description is None for statements with no result columns (SET, DDL, etc.) — psycopg3
+    # still asks the row_factory to build a row maker in that case even though it's never called.
+    columns = [d.name for d in cursor.description] if cursor.description else []
+    index = {name: i for i, name in enumerate(columns)}
+
+    def make_row(values):
+        return _SqliteCompatRow(columns, index, values)
+
+    return make_row
 
 # Populated lazily (see _pg_dsn()) rather than at import time, so importing shared.db never
 # requires FONDOS_PG_DSN to be set — only actually requesting backend="postgres" does.
@@ -108,8 +162,8 @@ def get_connection(
 
     backend="postgres" (nuevo, migracion §5b — ver el docstring del modulo antes de usarlo):
     conexion psycopg3 a la base de datos apuntada por la variable de entorno FONDOS_PG_DSN, con
-    row_factory=dict_row (acceso por nombre de columna, NO por indice). `db_path` se ignora en
-    este modo.
+    row_factory compatible con sqlite3.Row (acceso por indice O por nombre de columna, igual que
+    el codigo SQLite existente — ver _SqliteCompatRow). `db_path` se ignora en este modo.
 
     Parámetros:
         db_path: ruta alternativa a la BD SQLite. Si es None, usa DB_PATH de shared.config.
@@ -126,7 +180,22 @@ def get_connection(
                 "backend='postgres' requires psycopg3 (pip install 'psycopg[binary]') — "
                 "not installed in this environment."
             )
-        conn = psycopg.connect(_pg_dsn(), row_factory=_pg_dict_row)
+        conn = psycopg.connect(_pg_dsn(), row_factory=_sqlite_compat_row_factory)
+        # db/pg/00_roles_schemas.sql sets this via ALTER ROLE for fondos_owner/fondos_app so that
+        # unqualified table names (the whole point of the schema design — see the DDL's own
+        # comment) resolve without query rewrites. Set it here too, defensively: found live
+        # 2026-09-20 that the role actually in FONDOS_PG_DSN right now (postgres superuser, not
+        # fondos_app) has the ordinary "$user", public default — an unqualified `fund_metrics`
+        # query failed outright. Redundant once every caller uses fondos_app, harmless meanwhile.
+        conn.execute("SET search_path = gold, silver, bronze, control, public")
+        # Commit immediately: plain SET (no LOCAL) is still transaction-scoped in the sense that a
+        # ROLLBACK of the transaction that issued it undoes it too, unless committed first. Found
+        # live 2026-09-20: a caller that rolls back after a later failed statement (export_metrics
+        # .export()'s per-sheet error recovery) silently lost the search_path along with it, so the
+        # NEXT sheet's otherwise-correct query failed with "relation ... does not exist" — a bug
+        # nothing downstream could plausibly have anticipated, only found by exercising the real
+        # multi-statement, error-recovering call pattern end to end.
+        conn.commit()
         return conn
     if backend != "sqlite":
         raise ValueError(f"Unknown backend {backend!r} — expected 'sqlite' or 'postgres'")

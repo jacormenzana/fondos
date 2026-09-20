@@ -29,6 +29,8 @@ Cambios v17:
   - verify_db_schema: ahora también comprueba ingestion_log
 """
 
+from shared.db import is_postgres_connection
+
 # ============================================================
 # fund_master — columnas canónicas (v17)
 # ============================================================
@@ -710,6 +712,30 @@ def check_schema_v19(conn) -> dict:
 # ============================================================
 # verify_db_schema
 # ============================================================
+def _table_columns(conn, table: str) -> set[str]:
+    """Column names for `table`, dialect-aware (Postgres migration Phase 5b).
+
+    SQLite: PRAGMA table_info — unchanged, mixed-case names as declared.
+    Postgres: information_schema.columns, unqualified by schema — table names
+    are globally unique across bronze/silver/gold/control (migration plan
+    §P2 "Namespaces"), so no schema lookup is needed. PG column names are
+    lower_snake by the migration's rename_map, so callers must compare
+    case-insensitively against this module's mixed-case canonical lists —
+    see verify_db_schema().
+    """
+    if is_postgres_connection(conn):
+        # get_connection(backend="postgres") uses row_factory=dict_row (its own docstring:
+        # "acceso por nombre de columna, NO por indice") — rows are dict-like, so this must
+        # subscript by the SELECT alias, never positionally. Found live 2026-09-20: a first
+        # version used r[0] here and raised KeyError(0) (str() == "0") on every table.
+        cur = conn.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = %s",
+            (table.lower(),),
+        )
+        return {r["column_name"] for r in cur.fetchall()}
+    return {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+
 def verify_db_schema(conn) -> dict[str, list[str]]:
     """
     Verifica que la BD tenga todas las columnas esperadas en las
@@ -723,6 +749,7 @@ def verify_db_schema(conn) -> dict[str, list[str]]:
         assert not any(missing.values()), missing
     """
     missing: dict[str, list[str]] = {}
+    pg = is_postgres_connection(conn)
 
     checks = [
         ("fund_master",              FUND_MASTER_COLUMNS_V23_SET),
@@ -740,11 +767,16 @@ def verify_db_schema(conn) -> dict[str, list[str]]:
 
     for table, expected in checks:
         try:
-            existing = {
-                r[1]
-                for r in conn.execute(f"PRAGMA table_info({table})").fetchall()
-            }
-            absent = sorted(expected - existing)
+            existing = _table_columns(conn, table)
+            # PG column names are lower_snake; compare case-insensitively there only —
+            # SQLite path keeps its original exact-case comparison, unchanged.
+            if pg:
+                existing_cmp = {c.lower() for c in existing}
+                expected_cmp = {c.lower() for c in expected}
+            else:
+                existing_cmp = existing
+                expected_cmp = expected
+            absent = sorted(expected_cmp - existing_cmp)
             if absent:
                 missing[table] = absent
         except Exception as exc:
