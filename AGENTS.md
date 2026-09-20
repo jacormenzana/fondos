@@ -271,6 +271,7 @@ proyecto2/
       test_reliability_signals_pg.py
     reports/
       test_rolling_dashboard.py
+      test_rolling_dashboard_pg.py
     utils/
       test_fingerprint.py
     writers/

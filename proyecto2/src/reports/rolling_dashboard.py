@@ -45,6 +45,7 @@ _ROOT = Path(__file__).resolve().parent.parent.parent.parent   # c:\desarrollo\f
 sys.path.insert(0, str(_ROOT))
 
 from shared.config import DB_PATH
+from shared.db import get_connection, is_postgres_connection
 
 # ── Fichero vendorizado ────────────────────────────────────────────────────────
 _VENDOR_CHARTJS = Path(__file__).parent / "_vendor" / "chartjs_4.4.0.min.js"
@@ -118,32 +119,38 @@ _PCTILE_TABLE_COLS: list[tuple] = [  # (metric_key, label)
 # Solo rolling_1y: es la ventana usada por nature_summary y peer_refs.
 # Filtra por (metric, window='rolling_1y', real_flag) → ~3 200 fondos × 3 métricas
 # = ~9 600 filas; índice idx_fmts_metric_window_real_date sirve el GROUP BY.
+# {wc}: window column name — 'window' on SQLite, 'window_label' on Postgres (reserved word
+# there, db/pg/rename_map.yaml; applies to BOTH fund_metric_timeseries and fund_metric_alerts).
+# Substituted by each loader function via is_postgres_connection(conn), same mechanism already
+# used for {nature_clause}/{ph}/{metric_in}/{isin_in} below. Output column position, not name,
+# is what pivot_metrics()/nature_summary()/etc. rely on (positional tuple unpacking throughout
+# this file), so no AS-aliasing is needed — only the FROM/JOIN/WHERE references matter.
 _SQL_SNAPSHOT = """
-    SELECT t.isin, t.metric, t.window, t.date, t.value,
+    SELECT t.isin, t.metric, t.{wc}, t.date, t.value,
            m.Fund_Nature, m.Fund_Name
     FROM fund_metric_timeseries t
     JOIN (
-        SELECT metric, window, real_flag, MAX(date) AS mx
+        SELECT metric, {wc}, real_flag, MAX(date) AS mx
         FROM fund_metric_timeseries
         WHERE metric IN ('vol_ann','max_dd','return_ann')
-          AND window = 'rolling_1y'
+          AND {wc} = 'rolling_1y'
           AND real_flag = 0
-        GROUP BY metric, window, real_flag
+        GROUP BY metric, {wc}, real_flag
     ) latest ON t.metric    = latest.metric
-             AND t.window    = latest.window
+             AND t.{wc}    = latest.{wc}
              AND t.real_flag = latest.real_flag
              AND t.date      = latest.mx
     LEFT JOIN fund_master m ON t.isin = m.ISIN
     WHERE t.real_flag = 0
       AND t.metric IN ('vol_ann','max_dd','return_ann')
-      AND t.window = 'rolling_1y'
+      AND t.{wc} = 'rolling_1y'
       AND t.value IS NOT NULL
     {nature_clause}
 """
 
 # ── SQL: Tier 2 — series completas para ISINs seleccionados ───────────────────
 _SQL_SERIES = """
-    SELECT t.isin, t.metric, t.window, t.date, t.value,
+    SELECT t.isin, t.metric, t.{wc}, t.date, t.value,
            m.Fund_Nature, m.Fund_Name
     FROM fund_metric_timeseries t
     LEFT JOIN fund_master m ON t.isin = m.ISIN
@@ -151,7 +158,7 @@ _SQL_SERIES = """
       AND t.real_flag = 0
       AND t.metric IN ('vol_ann','max_dd','return_ann')
       AND t.value IS NOT NULL
-    ORDER BY t.isin, t.metric, t.window, t.date
+    ORDER BY t.isin, t.metric, t.{wc}, t.date
 """
 
 # ── SQL: métricas escalares desde fund_metrics (solo ISINs seleccionados) ─────
@@ -170,7 +177,7 @@ _SQL_METRICS = """
 
 # ── SQL: alertas (original conservado) ────────────────────────────────────────
 _SQL_ALERTS = """
-    SELECT a.isin, a.metric, a.window, a.level, a.rule_code,
+    SELECT a.isin, a.metric, a.{wc}, a.level, a.rule_code,
            a.value, a.reference_value, m.Fund_Nature, m.Fund_Name
     FROM fund_metric_alerts a
     LEFT JOIN fund_master m ON a.isin = m.ISIN
@@ -193,15 +200,24 @@ def _nclause(nature: str | None, alias: str = "m") -> str:
     return f"AND {alias}.Fund_Nature = '{nature}'" if nature else ""
 
 
-def _load_snapshot(conn: sqlite3.Connection, nature: str | None = None) -> list:
-    return conn.execute(_SQL_SNAPSHOT.format(nature_clause=_nclause(nature))).fetchall()
+def _window_col(conn) -> str:
+    return "window_label" if is_postgres_connection(conn) else "window"
 
 
-def _load_series(conn: sqlite3.Connection, isins: list[str]) -> list:
+def _load_snapshot(conn, nature: str | None = None) -> list:
+    return conn.execute(
+        _SQL_SNAPSHOT.format(nature_clause=_nclause(nature), wc=_window_col(conn))
+    ).fetchall()
+
+
+def _load_series(conn, isins: list[str]) -> list:
     if not isins:
         return []
-    ph = ",".join("?" * len(isins))
-    return conn.execute(_SQL_SERIES.format(ph=ph), isins).fetchall()
+    one_ph = "%s" if is_postgres_connection(conn) else "?"
+    ph = ",".join([one_ph] * len(isins))
+    return conn.execute(
+        _SQL_SERIES.format(ph=ph, wc=_window_col(conn)), isins
+    ).fetchall()
 
 
 def _load_scalar_metrics(conn: sqlite3.Connection, isins: list[str]) -> list:
@@ -214,9 +230,9 @@ def _load_scalar_metrics(conn: sqlite3.Connection, isins: list[str]) -> list:
     ).fetchall()
 
 
-def _load_alerts(conn: sqlite3.Connection, nature: str | None = None) -> list:
+def _load_alerts(conn, nature: str | None = None) -> list:
     nc = f"AND m.Fund_Nature = '{nature}'" if nature else ""
-    return conn.execute(_SQL_ALERTS.format(nature_clause=nc)).fetchall()
+    return conn.execute(_SQL_ALERTS.format(nature_clause=nc, wc=_window_col(conn))).fetchall()
 
 
 def _auto_select_isins(al_rows: list, n: int = 8) -> list[str]:
@@ -426,8 +442,12 @@ def _build_html(
             continue
         isin_name[isin] = name or isin
         isin_nature[isin] = nature or ""
+        # str(dt): Postgres migration gotcha #6 — dt is a genuine datetime.date object on
+        # Postgres (SQLite returns the stored text as-is). json.dumps(all_dates) below would
+        # raise TypeError on a raw date object; str() normalizes both dialects to 'YYYY-MM-DD'
+        # (a no-op on SQLite, load-bearing on Postgres) before it ever reaches the chart data.
         ts_data.setdefault(metric, {}).setdefault(window, {}).setdefault(isin, []).append(
-            (dt, round(value * 100, 4))
+            (str(dt), round(value * 100, 4))
         )
 
     chart_blocks = ""
@@ -799,18 +819,21 @@ def generate_dashboard(
     output_path: Path | None = None,
     nature: str | None = None,
     isins: list[str] | None = None,
+    backend: str | None = None,
 ) -> Path:
     """
     Genera el dashboard HTML P2.
 
     Args:
-        db_path:     Ruta a fondos.sqlite.
+        db_path:     Ruta a fondos.sqlite. Ignorado si backend="postgres".
         output_path: Ruta de salida del HTML (por defecto out/reports/).
         nature:      Filtrar todo el informe a un Fund_Nature concreto.
         isins:       Lista de ISINs cuyos series rolling se grafican (max 8).
                      Si None, se auto-seleccionan hasta 8 fondos con más ALARMs.
+        backend:     "sqlite" (por defecto, resuelve FONDOS_DB_BACKEND si None) o "postgres"
+                     (migracion, addendum 2026-09-20).
     """
-    conn = sqlite3.connect(str(db_path), timeout=60)
+    conn = get_connection(db_path, backend=backend)
     try:
         print("[1/5] Cargando snapshot (tier-1, rolling_1y)…", flush=True)
         snap_rows = _load_snapshot(conn, nature)
@@ -867,6 +890,9 @@ if __name__ == "__main__":
                              "Si se omite, auto-selecciona los fondos con más ALARMs.")
     parser.add_argument("--db",     default=None,
                         help="Ruta alternativa a fondos.sqlite")
+    parser.add_argument("--backend", choices=["sqlite", "postgres"], default=None,
+                        help="Backend de BD (migracion, addendum 2026-09-20). Si se omite, "
+                             "resuelve FONDOS_DB_BACKEND ('sqlite' si no esta definida).")
     args = parser.parse_args()
 
     db_path    = Path(args.db) if args.db else DB_PATH
@@ -874,4 +900,4 @@ if __name__ == "__main__":
     isin_list  = [i.strip() for i in args.isin.split(",") if i.strip()] if args.isin else None
 
     generate_dashboard(db_path=db_path, output_path=out_path,
-                       nature=args.nature, isins=isin_list)
+                       nature=args.nature, isins=isin_list, backend=args.backend)
