@@ -96,6 +96,19 @@ def _minimal_partial_record(isin: str, fund_nature: str, fund_name: str) -> dict
     }
 
 
+def _ensure_fund_master_row(conn, isin: str, fund_nature: str = "Renta Variable") -> None:
+    """Idempotent: creates a valid fund_master row for `isin` if none exists yet (a freshly-DDL'd
+    Postgres with no seed load — CI, or a from-scratch dry-run), or leaves an existing row's real
+    data untouched if seeded data is already present (upsert_fund_master's own COALESCE semantics —
+    see its docstring). Makes the 5 tests below portable across both environments instead of
+    silently assuming external seed data exists — found live 2026-09-21 when this file's CI run
+    (first ever, against a fresh Postgres 17 service container with no seed load) failed exactly
+    these 5 tests with `TypeError: 'NoneType' object is not subscriptable` / assertion failures on
+    a missing row, a gap the earlier WSL2 dry-run had already surfaced and explained away as
+    'out of scope for local validation' rather than fixed at the source."""
+    upsert_fund_master(conn, _minimal_partial_record(isin, fund_nature, f"TEST SEED {isin}"))
+
+
 def test_coalesce_preserves_existing_nonnull_values_on_partial_upsert(pg_conn):
     """A partial upsert (Style_Profile/Sector_Focus = None) against a fund that already has
     non-null values for those columns must PRESERVE the existing values, not null them out —
@@ -359,6 +372,7 @@ def test_publish_fund_multiple_sequential_calls_keep_connection_open(pg_conn):
 
     isins = ["LU1873132101", "LU0252218937"]
     for isin in isins:
+        _ensure_fund_master_row(pg_conn, isin)
         fund_nature = pg_conn.execute(
             "SELECT fund_nature FROM fund_master WHERE isin = %s", (isin,)
         ).fetchone()[0]
@@ -395,6 +409,7 @@ def test_publish_fund_error_path_rolls_back_and_logs(pg_conn):
     pg_conn.execute("SET search_path = gold, silver, bronze, control, public")
 
     isin = "LU1873132101"
+    _ensure_fund_master_row(pg_conn, isin)
     before_mgmt = pg_conn.execute(
         "SELECT management_company FROM fund_master WHERE isin = %s", (isin,)
     ).fetchone()[0]
@@ -429,6 +444,7 @@ def test_correct_oc_aci_mismatch_converts_pct_to_ratio_no_coalesce(pg_conn):
     pg_conn.execute("SET search_path = gold, silver, bronze, control, public")
 
     isin = "LU1873132101"
+    _ensure_fund_master_row(pg_conn, isin)
     updated = correct_oc_aci_mismatch(pg_conn, isin, 0.70, "test-source")
     assert updated is True
 
@@ -518,6 +534,8 @@ def test_log_ingestion_failure_does_not_poison_enclosing_transaction(pg_conn):
     Postgres specifically to contain this. isin='...TOO_LONG' (>12 chars) forces a genuine
     StringDataRightTruncation through the real code path, not a synthetic error."""
     pg_conn.execute("SET search_path = gold, silver, bronze, control, public")
+    _ensure_fund_master_row(pg_conn, "LU1873132101")
+    _ensure_fund_master_row(pg_conn, "LU0252218937")
 
     with pg_conn.transaction():
         pg_conn.execute("UPDATE fund_master SET fund_name = fund_name WHERE isin = 'LU1873132101'")
@@ -536,6 +554,8 @@ def test_upsert_kiid_benchmark_failure_does_not_poison_enclosing_transaction(pg_
     """Same regression class as the log_ingestion test above, for _upsert_kiid_benchmark's own
     fail-soft try/except. isin='...TOO_LONG' forces a genuine StringDataRightTruncation."""
     pg_conn.execute("SET search_path = gold, silver, bronze, control, public")
+    _ensure_fund_master_row(pg_conn, "LU1873132101")
+    _ensure_fund_master_row(pg_conn, "LU0252218937")
 
     with pg_conn.transaction():
         pg_conn.execute("UPDATE fund_master SET fund_name = fund_name WHERE isin = 'LU1873132101'")
