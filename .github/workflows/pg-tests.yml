@@ -1,44 +1,45 @@
 name: Postgres test harness
 
-# Part of the SQLite -> PostgreSQL migration (plan §5a "Test harness stand-up").
+# Part of the SQLite -> PostgreSQL migration (plan §5a "Test harness stand-up", §Addendum Stage 8
+# "CI wiring").
 #
-# SCOPE, STATED HONESTLY: this job proves shared/testing/pg_fixtures.py actually works against a
-# real Postgres server — the smoke test in tests/test_pg_fixtures_smoke.py — using a minimal,
-# Linux-native pip install (pytest + psycopg[binary]). It does NOT yet run the existing
-# proyecto1/proyecto2/proyecto3 test suites (1,369 + 357 + 23 = 1,749 tests, currently exercised
-# nowhere in CI).
+# SCOPE, STATED HONESTLY: two jobs, deliberately different weight.
+#   - `pg-fixture-smoke`: proves shared/testing/pg_fixtures.py works against a real Postgres
+#     server, via a minimal Linux-native pip install. Fast (~1 min), narrowly path-triggered,
+#     the first signal on any fixture/DDL change.
+#   - `full-suite` (added 2026-09-21, Stage 8): actually runs the existing proyecto1/proyecto2/
+#     proyecto3 test suites (~1900 tests as of Stage 6/7) plus every PG-backed test written during
+#     Stages 0-7, against a real Postgres 17 service container, via the environment-linux.yml
+#     conda env (plan §5d) — this is that spec's own stated acceptance gate ("considered
+#     validated when the existing suite passes against it ... via CI"), exercised here for the
+#     first time. Runs on every push/PR, no path filter — that's the actual safety net Stage 8
+#     exists to build, per the migration plan's own risk register ("86-site connection/dialect
+#     rewrite validated only by the final reconciliation gate" was the exact gap this closes).
 #
-# UPDATE 2026-09-18: environment-linux.yml (plan §5d) now exists — a reviewed, name-diffed
-# derivation of environment.yml with the 4 Windows-only conda packages dropped and numpy/pandas/
-# scipy/statsmodels relaxed to major.minor. It has NOT been `conda env create`'d on an actual
-# Linux box yet (no such host in the session that produced it either). Wiring the full suite into
-# this CI job is still separate, not-yet-done work: it needs a `conda-incubator/setup-miniconda`
-# step (or a pip-only fallback resolved from environment-linux.yml's pip list, skipping the small
-# conda-level C-library list, which ubuntu-latest's apt/build-essential likely covers anyway) plus
-# the Playwright `--with-deps` install and its own smoke check (see environment-linux.yml's
-# footer). Both are real, scoped additions to this file — not done here to keep this change
-# reviewable on its own, not a silent gap.
+# HONEST CAVEAT (2026-09-21): this workflow file itself has never executed on real GitHub Actions
+# as of this edit — the whole migration branch (27+ commits including the original
+# `pg-fixture-smoke` job from 2026-09-18) has not yet been pushed to origin. Every "green in CI"
+# claim in the migration's plan/memory up to this point was validated by running these same
+# commands locally, not by GitHub Actions itself. This comment is not removed until a real run of
+# this file is observed green on GitHub Actions.
+#
+# DELIBERATELY NOT WIRED: a live mstarpy/Morningstar network call as a CI gate. No existing pytest
+# file exercises mstarpy against the real API (the nav_discovery PG tests operate on already-
+# fetched, synthetic data) — the only code that ever called mstarpy/requests against live
+# financial-data endpoints at import time was 4 ad-hoc scratch scripts in
+# proyecto2/tests/discovery/ (test_historia.py, test_eurostat.py, test_fred_es.py,
+# test_fred_es2.py) with zero `def test_` functions between them — not real pytest coverage,
+# confirmed by grep, so excluding them from collection below loses nothing. Making CI depend on a
+# live external financial API's availability/rate limits would make failures ambiguous (is the
+# code broken, or is the API down/rate-limiting the runner) — the environment-linux.yml footer's
+# "verify mstarpy's HTTP behavior on Linux" check stays a manual, one-time step, not a recurring
+# CI gate.
 
 on:
   push:
     branches: ["**"]
-    paths:
-      - "shared/testing/**"
-      - "conftest.py"
-      - "proyecto2/conftest.py"
-      - "proyecto3/conftest.py"
-      - "tests/test_pg_fixtures_smoke.py"
-      - "db/pg/**"
-      - ".github/workflows/pg-tests.yml"
   pull_request:
     branches: ["**"]
-    paths:
-      - "shared/testing/**"
-      - "conftest.py"
-      - "proyecto2/conftest.py"
-      - "proyecto3/conftest.py"
-      - "tests/test_pg_fixtures_smoke.py"
-      - "db/pg/**"
 
 jobs:
   pg-fixture-smoke:
@@ -112,3 +113,118 @@ jobs:
           echo "  for f in db/pg/*.sql; do psql \"postgresql://fondos_test:fondos_test@localhost:5432/fondos_test\" -f \"\$f\"; done"
           echo "  FONDOS_TEST_PG_DSN=postgresql://fondos_test:fondos_test@localhost:5432/fondos_test \\"
           echo "    python -X utf8 -m pytest tests/test_pg_fixtures_smoke.py -v"
+
+  full-suite:
+    name: Full test suite (environment-linux.yml, real Postgres 17)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: fondos_test
+          POSTGRES_PASSWORD: fondos_test
+          POSTGRES_DB: fondos_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # environment-linux.yml (plan §5d) — this IS that spec's acceptance gate, run here for the
+      # first time on a real Linux host (never `conda env create`'d before this).
+      - name: Set up the des conda environment (environment-linux.yml)
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          environment-file: environment-linux.yml
+          activate-environment: des
+          miniforge-version: latest
+          use-mamba: true
+
+      - name: Apply the migration DDL
+        env:
+          PGPASSWORD: fondos_test
+        run: |
+          for f in db/pg/00_roles_schemas.sql db/pg/10_bronze.sql db/pg/20_silver.sql \
+                   db/pg/30_gold.sql db/pg/35_control.sql db/pg/40_matviews.sql; do
+            echo "::group::psql -f $f"
+            psql -h localhost -U fondos_test -d fondos_test -v ON_ERROR_STOP=1 -f "$f"
+            echo "::endgroup::"
+          done
+
+      # environment-linux.yml footer, check 1: Playwright's browser binary + system libraries are
+      # a separate install from the pip package. `--with-deps` needs root; GH-hosted ubuntu-latest
+      # runners carry passwordless sudo for the job's duration by default (plan §5d "sudo
+      # boundary") — no special configuration needed here, unlike the real target host where this
+      # is a one-time P0 provisioning step.
+      - name: Install Playwright's Chromium + system libraries
+        shell: bash -el {0}
+        run: playwright install --with-deps chromium
+
+      - name: Playwright Linux smoke check
+        shell: bash -el {0}
+        run: |
+          python -c "
+          from playwright.sync_api import sync_playwright
+          p = sync_playwright().start()
+          b = p.chromium.launch(headless=True)
+          print('Playwright OK')
+          b.close()
+          p.stop()
+          "
+
+      # proyecto1/tests + the root-level tests/ dir share the repo-root rootdir/conftest.py
+      # (AGENTS.md's own documented invocation: `python -m pytest proyecto1/tests/` from root).
+      - name: Run proyecto1 + root tests
+        shell: bash -el {0}
+        env:
+          FONDOS_TEST_PG_DSN: "postgresql://fondos_test:fondos_test@localhost:5432/fondos_test"
+        run: python -X utf8 -m pytest proyecto1/tests/ tests/ -q
+
+      # proyecto2/pytest.ini sets `pythonpath = . ..` relative to proyecto2/ itself (its test
+      # modules import via `from src....`, not `from proyecto2.src....`) — must run with cwd
+      # inside proyecto2/, per AGENTS.md's documented invocation, not from the repo root.
+      # --ignore: 4 ad-hoc scratch scripts under tests/discovery/ that make live network calls
+      # (mstarpy/requests) at IMPORT time and have zero `def test_` functions between them (see
+      # this file's header) — not real pytest coverage, just flaky collection noise in CI.
+      - name: Run proyecto2 tests
+        shell: bash -el {0}
+        working-directory: proyecto2
+        env:
+          FONDOS_TEST_PG_DSN: "postgresql://fondos_test:fondos_test@localhost:5432/fondos_test"
+        run: |
+          python -X utf8 -m pytest tests/ -q \
+            --ignore=tests/discovery/test_historia.py \
+            --ignore=tests/discovery/test_eurostat.py \
+            --ignore=tests/discovery/test_fred_es.py \
+            --ignore=tests/discovery/test_fred_es2.py
+
+      # proyecto3/pytest.ini mirrors proyecto2's pattern — cwd inside proyecto3/.
+      - name: Run proyecto3 tests
+        shell: bash -el {0}
+        working-directory: proyecto3
+        env:
+          FONDOS_TEST_PG_DSN: "postgresql://fondos_test:fondos_test@localhost:5432/fondos_test"
+        run: python -X utf8 -m pytest tests/ -q
+
+      - name: Show context on failure
+        if: failure()
+        run: |
+          echo ""
+          echo "Failure could be: a real test regression, a Postgres-15-vs-17 dialect difference"
+          echo "not caught by earlier local testing, or an environment-linux.yml gap (this is its"
+          echo "first-ever run on a real Linux host). Reproduce locally on Linux/WSL2:"
+          echo "  conda env create -f environment-linux.yml && conda activate des"
+          echo "  docker run -d -p 5432:5432 -e POSTGRES_USER=fondos_test \\"
+          echo "    -e POSTGRES_PASSWORD=fondos_test -e POSTGRES_DB=fondos_test postgres:17"
+          echo "  for f in db/pg/*.sql; do psql \"postgresql://fondos_test:fondos_test@localhost:5432/fondos_test\" -f \"\$f\"; done"
+          echo "  export FONDOS_TEST_PG_DSN=postgresql://fondos_test:fondos_test@localhost:5432/fondos_test"
+          echo "  python -m pytest proyecto1/tests/ tests/ -q"
+          echo "  (cd proyecto2 && python -m pytest tests/ -q --ignore=tests/discovery/test_historia.py ...)"
+          echo "  (cd proyecto3 && python -m pytest tests/ -q)"
