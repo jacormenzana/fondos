@@ -79,11 +79,12 @@ services:
       retries: 5
       start_period: 30s
 
-    deploy:
-      resources:
-        limits:
-          memory: 12g   # leaves headroom under a 16GB box for the OS + the P2/P3 Python process;
-                          # raise proportionally on a 32GB box (see postgresql.conf's 32GB column)
+    # mem_limit (not deploy.resources.limits): the `deploy:` key is a Swarm-mode directive that
+    # `docker compose up` silently ignores outside Swarm (found live 2026-09-21, Stage 7 dry-run
+    # validation) — the 12g cap this was meant to enforce was never actually applied. mem_limit is
+    # the Compose v2 CLI's own portable equivalent, honored by plain `docker compose up` directly.
+    mem_limit: 12g   # leaves headroom under a 16GB box for the OS + the P2/P3 Python process;
+                      # raise proportionally on a 32GB box (see postgresql.conf's 32GB column)
 
   # --- pgBackRest sidecar (§P1 "Backup & recovery") ---------------------------------------------
   # Off-site backup target is cloud object storage (Backblaze B2 / S3-compatible), configured as
