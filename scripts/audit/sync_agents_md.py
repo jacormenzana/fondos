@@ -192,7 +192,14 @@ def _py_modules_in(
     """Return canonical .py files under directory, non-canonical excluded."""
     pattern = "**/*.py" if recursive else "*.py"
     result = []
-    for f in sorted(directory.glob(pattern)):
+    # key=lambda p: p.name, NOT bare sorted(paths) — pathlib.Path.__lt__ compares
+    # case-INsensitively on Windows (WindowsPath) but case-sensitively on POSIX (PosixPath), so
+    # the same code silently produced a different table order per OS (found live 2026-09-21: this
+    # generator's own p1-module-map sentinel passed locally on Windows but failed for real on its
+    # first-ever Linux CI run, e.g. PATCHES_pipeline.py's uppercase P sorts before all lowercase
+    # names case-sensitively but lands mid-alphabet case-insensitively). An explicit string key
+    # makes the sort — and the generated AGENTS.md content — deterministic across platforms.
+    for f in sorted(directory.glob(pattern), key=lambda p: p.name):
         if "__pycache__" in f.parts:
             continue
         if _is_noncanonical(f.name, is_test=is_test_dir):
@@ -385,9 +392,11 @@ def gen_db_tables() -> str:
 def gen_launchers() -> str:
     """Table of all canonical operational launchers in scripts/launch/."""
     launch_dir = ROOT / "scripts/launch"
+    # key=lambda p: p.name — same cross-platform sort fix as _py_modules_in() above; a bare
+    # sorted(paths) here has the identical Windows-vs-POSIX Path.__lt__ discrepancy.
     bat_files  = sorted(
-        f for f in launch_dir.glob("*.bat")
-        if not _is_noncanonical(f.name)
+        (f for f in launch_dir.glob("*.bat") if not _is_noncanonical(f.name)),
+        key=lambda p: p.name,
     )
 
     def _domain(name: str) -> str:

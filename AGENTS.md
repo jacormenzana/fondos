@@ -214,6 +214,7 @@ PDFs and `Raw_KIID_Text` (in `fund_kiid_metadata`) are **never deleted**.
 <!-- AUTO:BEGIN p1-module-map -->
 | Module | Folder |
 |--------|--------|
+| `PATCHES_pipeline.py` | `proyecto1/core` |
 | `benchmark_normalizer.py` | `proyecto1/core` |
 | `classify_utils.py` | `proyecto1/core` |
 | `cost_arbitration.py` | `proyecto1/core` |
@@ -231,7 +232,6 @@ PDFs and `Raw_KIID_Text` (in `fund_kiid_metadata`) are **never deleted**.
 | `kiid_parser.py` | `proyecto1/core` |
 | `mark_stale.py` | `proyecto1/core` |
 | `normalize_db_casing_v20.py` | `proyecto1/core` |
-| `PATCHES_pipeline.py` | `proyecto1/core` |
 | `pipeline.py` | `proyecto1/core` |
 | `priips_cost_extractor.py` | `proyecto1/core` |
 | `sqlite_writer.py` | `proyecto1/core` |
@@ -639,10 +639,10 @@ UPDATE fund_kiid_metadata SET KIID_Status='FORCE_REFRESH' WHERE ISIN='<isin>' AN
 | Script | Domain |
 |--------|--------|
 | `AUDIT_statistical.bat` | — |
+| `P1_P2_Complete.bat` | P1 |
 | `P1_diagCost.bat` | P1 |
 | `P1_discoverAllFunds.bat` | P1 |
 | `P1_discoverAllFundsPlusCostDiag.bat` | P1 |
-| `P1_P2_Complete.bat` | P1 |
 | `P1_refreshBenchmarks.bat` | P1 |
 | `P2_calculateIndicators.bat` | P2 |
 | `P2_discoverLoadMetrics.bat` | P2 |
