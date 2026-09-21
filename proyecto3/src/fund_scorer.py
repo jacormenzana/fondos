@@ -374,12 +374,13 @@ def load_fund_metrics_for_scoring(
             ("return_ann_slope",      "rolling_3y",      1),
         ]
 
+    ph = "%s" if is_postgres_connection(conn) else "?"
     rows = []
     for metric, horizon, real_flag in metrics_needed:
-        result = conn.execute("""
+        result = conn.execute(f"""
             SELECT isin, value
             FROM fund_metrics
-            WHERE metric=? AND horizon=? AND real_flag=?
+            WHERE metric={ph} AND horizon={ph} AND real_flag={ph}
               AND value IS NOT NULL
         """, (metric, horizon, real_flag)).fetchall()
         for isin, value in result:
@@ -400,11 +401,11 @@ def load_fund_metrics_for_scoring(
             ("short_return_cum", "rolling_6m", 0),
         ]
     for metric, horizon, real_flag in short_metrics:
-        result = conn.execute("""
+        result = conn.execute(f"""
             SELECT isin, value
             FROM fund_metrics
-            WHERE metric=? AND horizon=? AND real_flag=?
-              AND metric_version=?
+            WHERE metric={ph} AND horizon={ph} AND real_flag={ph}
+              AND metric_version={ph}
               AND value IS NOT NULL
         """, (metric, horizon, real_flag, METRIC_VERSION_SHORT)).fetchall()
         # Suffix horizon so rolling_3m / rolling_6m don't collide
@@ -425,14 +426,23 @@ def load_fund_metrics_for_scoring(
         wide = wide.rename(columns={"return_ann": "return_ann_real"})
 
     # Añadir atributos de fund_master — solo universo activo (In_Current_Universe=1)
-    fm = pd.read_sql("""
+    # fetchall()+DataFrame(columns=...) explícitos, NO pd.read_sql(sql, conn): Postgres
+    # folds unquoted column ALIASES to lowercase too (cursor.description reports 'isin',
+    # 'fund_name', ... regardless of the query's own "AS ISIN"/"AS Fund_Name" text — verified
+    # live 2026-09-21), so pd.read_sql would silently build a lowercase-keyed DataFrame here,
+    # breaking .set_index("ISIN") outright. Same root cause as db_readers.py::
+    # load_fund_attributes() and nav_discovery.py's dict(row) fixes earlier this migration.
+    _fm_cols = ["ISIN", "Fund_Name", "Fund_Nature", "srri_kiid", "Investment_Focus",
+                "Credit_Quality", "Ongoing_Charge", "SRRI_Quality_Flag", "fund_family_id"]
+    _fm_rows = conn.execute("""
         SELECT ISIN, Fund_Name, Fund_Nature, SRRI as srri_kiid,
                Investment_Focus, Credit_Quality,
                Ongoing_Charge_Recurrent AS Ongoing_Charge,
                SRRI_Quality_Flag, fund_family_id
         FROM fund_master
         WHERE In_Current_Universe = 1
-    """, conn).set_index("ISIN")
+    """).fetchall()
+    fm = pd.DataFrame(_fm_rows, columns=_fm_cols).set_index("ISIN")
 
     # inner join: huerfanos (In_Current_Universe=0) quedan excluidos del scoring
     return wide.join(fm, how="inner")

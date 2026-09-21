@@ -200,7 +200,8 @@ def _select_funds_for_subportfolio(
     # excluido de Defensiva' HOY seguia siendo seleccionado con su
     # puntuacion elegible de Marzo, porque el filtro de eligible estaba
     # dentro del CTE.
-    rows = conn.execute("""
+    ph = "%s" if is_postgres_connection(conn) else "?"
+    rows = conn.execute(f"""
         WITH latest AS (
             SELECT fs.isin, fs.score_total, fs.eligible,
                    ROW_NUMBER() OVER (
@@ -208,9 +209,9 @@ def _select_funds_for_subportfolio(
                        ORDER BY fs.as_of_date DESC
                    ) AS rn
             FROM fund_scores fs
-            WHERE fs.block = ?
-              AND fs.score_version = ?
-              AND fs.regime = ?
+            WHERE fs.block = {ph}
+              AND fs.score_version = {ph}
+              AND fs.regime = {ph}
         )
         SELECT latest.isin, latest.score_total,
                fm.Fund_Name, fm.Fund_Nature, fm.Management_Company,
@@ -319,21 +320,23 @@ def estimate_rotation_cost(
     DEFAULT_EXIT_FEE_PCT  = 0.5   # % -- sin dato alguno (ni por fondo ni por naturaleza)
     DEFAULT_ENTRY_FEE_PCT = 0.0   # % -- coherente con rotation_costs (toda naturaleza a 0)
 
+    ph = "%s" if is_postgres_connection(conn) else "?"
+
     def _get_exit_fee_pct(isin: str) -> float:
-        row = conn.execute("""
-            SELECT COALESCE(fm.Exit_Fee_Pct, rc.exit_fee_pct, ?)
+        row = conn.execute(f"""
+            SELECT COALESCE(fm.Exit_Fee_Pct, rc.exit_fee_pct, {ph})
             FROM fund_master fm
             LEFT JOIN rotation_costs rc ON rc.fund_nature = fm.Fund_Nature
-            WHERE fm.ISIN = ?
+            WHERE fm.ISIN = {ph}
         """, (DEFAULT_EXIT_FEE_PCT, isin)).fetchone()
         return float(row[0]) if row and row[0] is not None else DEFAULT_EXIT_FEE_PCT
 
     def _get_entry_fee_pct(isin: str) -> float:
-        row = conn.execute("""
-            SELECT COALESCE(fm.Entry_Fee_Pct, rc.entry_fee_pct, ?)
+        row = conn.execute(f"""
+            SELECT COALESCE(fm.Entry_Fee_Pct, rc.entry_fee_pct, {ph})
             FROM fund_master fm
             LEFT JOIN rotation_costs rc ON rc.fund_nature = fm.Fund_Nature
-            WHERE fm.ISIN = ?
+            WHERE fm.ISIN = {ph}
         """, (DEFAULT_ENTRY_FEE_PCT, isin)).fetchone()
         return float(row[0]) if row and row[0] is not None else DEFAULT_ENTRY_FEE_PCT
 
@@ -502,10 +505,11 @@ def _apply_rotation_gate(
         if entrant_idx is None:
             continue
 
-        row = conn.execute("""
+        _ph = "%s" if is_postgres_connection(conn) else "?"
+        row = conn.execute(f"""
             SELECT fs.score_total, fm.Fund_Name, fm.Fund_Nature, fm.Management_Company
             FROM fund_scores fs JOIN fund_master fm ON fm.ISIN = fs.isin
-            WHERE fs.isin = ? AND fs.block = ? AND fs.score_version = ?
+            WHERE fs.isin = {_ph} AND fs.block = {_ph} AND fs.score_version = {_ph}
         """, (isin_out, sub_name, score_version)).fetchone()
         if row is None:
             continue  # titular ya no puntuable (deslistado, etc.) -- se mantiene el entrante
@@ -542,10 +546,11 @@ class PortfolioBuilder:
         build() cargarlo por si mismo cuando PORTFOLIO_HYSTERESIS_ENABLED
         esta activo, sin que cada caller tenga que reconstruirlo a mano.
         """
-        row = self.conn.execute("""
+        _ph = "%s" if is_postgres_connection(self.conn) else "?"
+        row = self.conn.execute(f"""
             SELECT scenario_id, profile, macro_regime, notes
             FROM portfolio_scenarios
-            WHERE scenario_id != COALESCE(?, '')
+            WHERE scenario_id != COALESCE({_ph}, '')
             ORDER BY created_at DESC
             LIMIT 1
         """, (exclude_scenario_id,)).fetchone()
@@ -553,10 +558,14 @@ class PortfolioBuilder:
             return None
 
         scenario_id, profile, regime, notes_json = row
-        weight_rows = self.conn.execute("""
-            SELECT isin, block, weight, role
+        # role -> position_role: reserved word on Postgres (SQL:2003, db/pg/rename_map.yaml).
+        # Positional tuple-unpacking below means the SELECT's column NAME doesn't matter, only
+        # the reference in FROM must resolve to the real physical column.
+        _role_col = "position_role" if is_postgres_connection(self.conn) else "role"
+        weight_rows = self.conn.execute(f"""
+            SELECT isin, block, weight, {_role_col}
             FROM portfolio_weights
-            WHERE scenario_id = ?
+            WHERE scenario_id = {_ph}
         """, (scenario_id,)).fetchall()
         if not weight_rows:
             return None

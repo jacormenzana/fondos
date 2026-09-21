@@ -429,6 +429,13 @@ def load_master_db(conn) -> pd.DataFrame:
     Returns DataFrame with ISIN, Fund_Name, Management_Company — same schema as load_master_excel.
     Raises ValueError if the table has no valid ISINs (run --harvest first).
     """
+    # fetchall()+DataFrame(columns=...) explícitos, NO pd.read_sql_query(sql, conn): Postgres
+    # folds unquoted column ALIASES to lowercase too (cursor.description reports 'isin' not
+    # 'ISIN' regardless of the query's own "AS ISIN" text — verified live, migration addendum
+    # Stage 6) — pd.read_sql_query would silently build a lowercase-keyed DataFrame here,
+    # breaking df["ISIN"] below with a KeyError. Found while porting fund_scorer.py's identical
+    # pattern — this site was missed during the earlier full pipeline.py port (Stage 3).
+    _cols = ["ISIN", "Fund_Name", "Management_Company"]
     sql = """
         SELECT
             isin                AS ISIN,
@@ -441,7 +448,7 @@ def load_master_db(conn) -> pd.DataFrame:
         GROUP BY isin
         ORDER BY isin
     """
-    df = pd.read_sql_query(sql, conn)
+    df = pd.DataFrame(conn.execute(sql).fetchall(), columns=_cols)
 
     if df.empty:
         raise ValueError(

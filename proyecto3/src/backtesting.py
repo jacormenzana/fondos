@@ -46,6 +46,7 @@ import sys
 _ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT))
 
+from shared.db import is_postgres_connection
 from proyecto3.src.regime_classifier import RegimeClassifier, REGIME_WEIGHTS
 from proyecto3.src.portfolio_engine import select_and_weight, DEFAULT_CONSTRAINTS
 
@@ -144,7 +145,8 @@ def _load_candidates(conn: sqlite3.Connection,
     # una fila elegible mas antigua -- resucitando en silencio una
     # puntuacion obsoleta. Bug real encontrado en el smoke test en vivo de
     # esta migracion (2026-09-19).
-    rows = conn.execute("""
+    ph = "%s" if is_postgres_connection(conn) else "?"
+    rows = conn.execute(f"""
         WITH latest AS (
             SELECT fs.block, fs.isin, fs.score_total, fs.eligible,
                    ROW_NUMBER() OVER (
@@ -152,8 +154,8 @@ def _load_candidates(conn: sqlite3.Connection,
                        ORDER BY fs.as_of_date DESC
                    ) AS rn
             FROM fund_scores fs
-            WHERE fs.score_version = ?
-              AND fs.regime = ?
+            WHERE fs.score_version = {ph}
+              AND fs.regime = {ph}
         )
         SELECT latest.block, latest.isin, latest.score_total,
                fm.Fund_Name, fm.Fund_Nature, fm.Management_Company,
