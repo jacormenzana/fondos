@@ -1658,17 +1658,20 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    sys.exit(run(  # P2-12: propagate exit code (0=OK, 1=fund errors, 2=fatal)
-        isins=[i.strip().upper() for i in args.isin.split(",") if i.strip()]
-               if args.isin else None,
-        horizons_filter=[args.horizon] if args.horizon else None,
-        metrics_filter=[m.strip() for m in args.metrics.split(",") if m.strip()]
-                       if args.metrics else None,
-        from_date=args.from_date,
-        to_date=args.to_date,
-        force=args.force,
-        dry_run=args.dry_run,
-        resume=args.resume,
-        max_new_per_run=args.max_new_per_run,
-        backend=args.backend,
-    ))
+    from shared.backlog_client import capture_exceptions
+    with capture_exceptions(object_name="run_pipeline.py", object_type="JOB"):
+        _rc = run(  # P2-12: propagate exit code (0=OK, 1=fund errors, 2=fatal)
+            isins=[i.strip().upper() for i in args.isin.split(",") if i.strip()]
+                   if args.isin else None,
+            horizons_filter=[args.horizon] if args.horizon else None,
+            metrics_filter=[m.strip() for m in args.metrics.split(",") if m.strip()]
+                           if args.metrics else None,
+            from_date=args.from_date,
+            to_date=args.to_date,
+            force=args.force,
+            dry_run=args.dry_run,
+            resume=args.resume,
+            max_new_per_run=args.max_new_per_run,
+            backend=args.backend,
+        )
+    sys.exit(_rc)

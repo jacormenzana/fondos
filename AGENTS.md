@@ -16,13 +16,73 @@ for their respective domains; this file must not duplicate their content — it 
 | `P4_BI_CHARTER.md` | *how BI sync works* | P4 Postgres/Superset charter (ETL, ports, DDL, datasets) |
 | `AUDITORIA_ESTADISTICA.md` | *how statistical distribution audits work* | 7-block model evaluation, indicator catalog, generic function/config catalog for the cost-attribute and P2-metrics statistical audits |
 
-| Backlog registers (`doc/backlog/`) | Answers | Canonical for |
+| Backlog registers | Answers | Canonical for |
 |---|---|---|
-| **Live HTML artifact** | *consolidated master view* | All-domain incident backlog (always-current, v8 2026-08-13): `https://claude.ai/code/artifact/24eb50ad-1274-4149-bae6-6cda184f1a0e` |
+| **Postgres `gestion.backlog`** (§ below) | *consolidated master view* | All-domain action-points backlog — live system of record since 2026-09-21, superseding the HTML artifact below |
+| ~~Live HTML artifact~~ (superseded 2026-09-21) | *historical snapshot only* | Frozen at v26 (2026-09-19); its 54 items were migrated to `gestion.backlog` (`FND-0001`..`FND-0054`) — do not add new items here: `https://claude.ai/code/artifact/24eb50ad-1274-4149-bae6-6cda184f1a0e` |
 
 **Workflow before touching code:** read this file → read the relevant domain doc(s) above →
 verify your change against `RESTRICCIONES_ARQUITECTURA.md` (R-1..R-8) and the pre-commit checklist.
 If a request conflicts with a principle or restriction, stop and report.
+
+---
+
+## Gestión de Puntos de Acción (Action Points Backlog en PostgreSQL)
+
+**System of record since 2026-09-21.** Database `gestion` (schema `backlog`) on the same Postgres
+server used for the P1/P2/P3 operational migration (`db/pg/`, `docker/`) — a **separate**
+database on that server, not a schema inside `fondos`. Connection: `FONDOS_BACKLOG_PG_DSN` (its
+own env var — deliberately distinct from `FONDOS_PG_DSN`, which points at the `fondos` migration
+target). Tables: `backlog.BACKLOG` (one row per action point) and `backlog.BACKLOG_LOGS` (append-only
+history, FK `ON DELETE CASCADE`). Full DDL, categorical domains, and the state machine below are
+defined in the Fase 1 deployment (2026-09-21 session) — this section is the day-to-day operating
+procedure, not the spec.
+
+Every finding, error, or improvement identified during a session must be registered in `BACKLOG`.
+
+### 1. Session naming & general rules
+- Confirm the session ID at the start: `[PROYECTO]_[YYYYMMDD]_[TIPO_SESION]_[TEMA_CORTO]`
+  (`TIPO_SESION` ∈ `WKSH`, `DEV`, `REVB`, `SYNC`, `ANL`).
+- Respect the categorical domains strictly — `nature` (`BUG`/`REQ`/`CHG`/`OPT`/`INV`/`DOC`/`TSK`),
+  `object_type` (`TAB`/`VW`/`SP`/`UDF`/`TVF`/`JOB`/`SCHEMA`/`N/A`), `priority` (`HIGH`/`MEDIUM`/`LOW`),
+  `status` (`OPEN`/`TODO`/`IN_PROGRESS`/`READY_FOR_DEPLOY`/`BLOCKED`/`DEFERRED`/`CLOSED`),
+  `solution_type` (`CODE_FIX`/`DATA_FIX`/`WORKAROUND`/`REJECTED`/`DUPLICATED`/`NULL`). All five are
+  enforced by DB `CHECK` constraints — never invent a value outside these lists.
+- `action_point_id` format `[PRJ]-[NUM]` (Fondos project code: `FND`), minted via
+  `SELECT 'FND-' || LPAD(nextval('backlog.seq_backlog_fnd')::text, 4, '0')` — never hand-assigned.
+
+### 2. Creating a new action point (status: OPEN)
+INSERT into `BACKLOG` with `status='OPEN'`; `schema_name`/`object_name` as real physical names, not
+the conceptual project name; `object_type` restricted to the domain above. Follow with a second
+INSERT into `BACKLOG_LOGS` justifying the creation.
+
+### 3. State transitions & progress logging (UPDATE)
+Normative flow: `OPEN` → `TODO` → `IN_PROGRESS` (↔ `BLOCKED`) → `READY_FOR_DEPLOY` → `CLOSED`.
+Backward steps are allowed on QA/validation failure. Starting work on a ticket (or adding a
+comment) transitions it to `IN_PROGRESS`. **Never overwrite prior progress** — always INSERT a new
+`BACKLOG_LOGS` row; `update_ts` on `BACKLOG` is trigger-maintained automatically.
+
+### 4. Resolutions & closure (status: READY_FOR_DEPLOY / CLOSED)
+Developed-but-not-deployed → `READY_FOR_DEPLOY`. Finished (deployed, rejected, or duplicate) →
+`CLOSED`, with mandatory `closure_ts` and `solution_type`. On an actual production deploy, also set
+`deployment_ts` and `release_version`.
+
+### 5. Automatic incident capture (Fase 3)
+`shared/backlog_client.py` provides `report_incident()` and the `capture_exceptions()` context
+manager, wired into the `if __name__ == "__main__":` blocks of the three canonical pipeline entry
+points (`proyecto1/run_block.py`, `proyecto2/src/pipeline/run_pipeline.py`,
+`scripts/launch/p3_build_portfolio.py`). On an unhandled exception it opens a new `OPEN`/`BUG`/
+`HIGH`/`SYSTEM_AUTODETECT` ticket keyed on `(project_code, object_name)`, or — if a matching
+ticket is already `OPEN`/`TODO`/`IN_PROGRESS`/`BLOCKED` within the last 24h — appends a reincidence
+note to its `BACKLOG_LOGS` instead of opening a duplicate. It is a pure no-op (never raises, never
+masks the original exception) whenever `FONDOS_BACKLOG_PG_DSN` is unset — every existing pipeline
+run is unaffected until an operator opts in.
+
+### 6. Analytics & release closure (Fase 5)
+`backlog.vw_backlog_kpis` — lead time (`closure_ts - creation_ts`), deployment time, breakdowns by
+`nature`/`priority`/`project_code`. `backlog.sp_close_release(p_release_version)` — bulk-transitions
+every `READY_FOR_DEPLOY` ticket on a given `release_version` to `CLOSED`, sets `deployment_ts`, and
+logs the action to `BACKLOG_LOGS`.
 
 ---
 

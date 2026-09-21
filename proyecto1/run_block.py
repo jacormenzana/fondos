@@ -168,4 +168,6 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    from shared.backlog_client import capture_exceptions
+    with capture_exceptions(object_name="run_block.py", object_type="JOB"):
+        main()

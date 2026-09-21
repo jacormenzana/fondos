@@ -76,4 +76,8 @@ if __name__ == "__main__":
         del _args[_i:_i + 2]
     _positional = [a for a in _args if a != "--dry-run"]
     scenario_arg = _positional[0] if _positional else None
-    sys.exit(main(scenario_arg, dry_run=_dry_run, backend=_backend))
+
+    from shared.backlog_client import capture_exceptions
+    with capture_exceptions(object_name="p3_build_portfolio.py", object_type="JOB"):
+        _rc = main(scenario_arg, dry_run=_dry_run, backend=_backend)
+    sys.exit(_rc)
