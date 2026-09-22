@@ -29,6 +29,7 @@ from pathlib import Path as _Path
 sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
 from shared.schema_checks import assert_schema_alignment
 from shared.config import DB_PATH as _DEFAULT_DB_PATH
+from shared.db import is_postgres_connection
 from core._db_utils import assert_eff_fields_alignment
 
 BLOCKS_PACKAGE = "blocks"
@@ -115,11 +116,21 @@ def main():
 
     # Conexión y schema (idempotente) — abierta antes del maestro para --master-db
     conn = get_connection(db_path, backend=args.backend)
-    create_schema(conn)
-    # create_schema usa executescript() que resetea isolation_level a ''.
-    # isolation_level=None delega el control de transacciones a SQLite/código
-    # explícito (with conn:), que es el comportamiento correcto.
-    conn.isolation_level = None
+    if is_postgres_connection(conn):
+        # Postgres schema is provisioned once via db/pg/00_roles_schemas.sql .. 40_matviews.sql
+        # (see docker-compose.yml) — create_schema() is SQLite-only by design (guards itself; see
+        # its own docstring) and psycopg3 Connection has no isolation_level attribute to reset.
+        # Found live 2026-09-22 (migration Stage 9): run_block.py's CLI entry point had never
+        # actually been invoked end-to-end with --backend postgres before — every earlier stage
+        # tested the ported functions directly (pg_conn fixtures), not this main()'s own startup
+        # sequence, so this backend-conditional skip was simply missing until this first real run.
+        pass
+    else:
+        create_schema(conn)
+        # create_schema usa executescript() que resetea isolation_level a ''.
+        # isolation_level=None delega el control de transacciones a SQLite/código
+        # explícito (with conn:), que es el comportamiento correcto.
+        conn.isolation_level = None
     assert_schema_alignment(conn)
     assert_eff_fields_alignment(conn)
 

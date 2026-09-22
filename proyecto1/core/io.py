@@ -512,10 +512,24 @@ def find_kiid_links_from_db(isin: str, conn) -> List[str]:
     Preferido sobre Excel: hrefs verbatim de la fuente oficial.
     """
     try:
+        # Same dialect gap as get_kiid_for_isin() above (Postgres migration Stage 9, 2026-09-22):
+        # a bare `?` placeholder is a hard syntax error on psycopg3, previously masked by this
+        # function's own broad except into a silent "no links found" — would have blocked every
+        # FORCE_REFRESH/new-fund KIID re-download from ever finding its source URL under Postgres.
+        try:
+            from shared.db import is_postgres_connection
+        except ImportError:
+            import sys as _sys
+            from pathlib import Path as _Path
+            _root = _Path(__file__).resolve().parents[2]
+            if str(_root) not in _sys.path:
+                _sys.path.insert(0, str(_root))
+            from shared.db import is_postgres_connection
+        _ph = "%s" if is_postgres_connection(conn) else "?"
         rows = conn.execute(
-            """
+            f"""
             SELECT href FROM db_document_catalogue
-            WHERE isin = ?
+            WHERE isin = {_ph}
               AND cod_sus = 'KIID'
               AND harvest_ts = (SELECT MAX(harvest_ts) FROM db_document_catalogue)
             """,
@@ -730,11 +744,35 @@ def get_kiid_for_isin(
     _fed_text_for_cost = None   # FIX-DATA-INTEGRITY-1: always defined, any branch
     if conn is not None:
         try:
+            # Postgres migration, Stage 9 (found live 2026-09-22): this was the ONE `?`-placeholder
+            # call site in this file never dialect-branched during Stages 0-8's read-path port —
+            # mark_stale_for_refresh() (below, Phase 5c) and this cache lookup look identical at a
+            # glance, but only the former was ever actually ported. Every prior stage tested ported
+            # FUNCTIONS directly (pg_conn fixtures); nothing had ever driven run_block.py's real CLI
+            # entry point against a live Postgres connection before Stage 9's end-to-end rehearsal,
+            # which is exactly what caught it — a `?` placeholder is a hard syntax error on psycopg3,
+            # caught by the broad `except Exception:` two lines below and silently treated as a cache
+            # miss: every fund fell through to a real LOCAL PDF re-read+re-parse (confirmed live: all
+            # 46 rehearsal ISINs showed `[LOCAL] ~1-3s` instead of `[CACHED] ~2-4ms`, despite the
+            # reconciliation gate having already confirmed identical, non-NULL Raw_KIID_Text on both
+            # sides) — silently degraded performance and reclassification-from-scratch, not a crash,
+            # exactly the dangerous "worked, but via the wrong path" class this migration has hit
+            # before (Stage 4's `_is_stale()`).
+            try:
+                from shared.db import is_postgres_connection
+            except ImportError:
+                import sys as _sys
+                from pathlib import Path as _Path
+                _root = _Path(__file__).resolve().parents[2]
+                if str(_root) not in _sys.path:
+                    _sys.path.insert(0, str(_root))
+                from shared.db import is_postgres_connection
+            _ph = "%s" if is_postgres_connection(conn) else "?"
             cached = conn.execute(
-                """SELECT Raw_KIID_Text, KIID_PDF_Hash, KIID_URL,
+                f"""SELECT Raw_KIID_Text, KIID_PDF_Hash, KIID_URL,
                           KIID_Downloaded_At, DLA2_Table_Text, KIID_Status
                    FROM fund_kiid_metadata
-                   WHERE ISIN = ? AND KIID_Class = 1
+                   WHERE ISIN = {_ph} AND KIID_Class = 1
                      AND Raw_KIID_Text IS NOT NULL""",
                 (isin,)
             ).fetchone()
