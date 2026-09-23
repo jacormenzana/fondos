@@ -30,3 +30,6 @@ out/
 # IDE local (VSCode workspace state, machine-specific)
 .vscode/
 scripts/launch/180
+
+# Local environment file (backend switch, DSNs) — loaded by shared/config.py; never commit
+.env

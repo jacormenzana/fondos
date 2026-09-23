@@ -89,6 +89,59 @@ from pathlib import Path
 # Este fichero vive en:  <raiz>/shared/config.py
 _ROOT = Path(__file__).resolve().parent.parent   # c:/desarrollo/fondos
 
+
+# ============================================================
+# Fichero .env (interruptor central del backend de BD)
+# ============================================================
+def load_env_file(path, environ=None) -> dict:
+    """
+    Carga KEY=VALUE de `path` en `environ` (por defecto os.environ) SIN pisar variables ya
+    definidas: el entorno real siempre gana. Devuelve las claves que ha establecido.
+
+    Por qué existe (Postgres migration, FND-0068, 2026-09-23): .env.example llevaba tiempo diciendo
+    "copia a .env", pero NINGÚN código lo leía, y ningún lanzador .bat fija FONDOS_DB_BACKEND /
+    FONDOS_PG_DSN. Sin un punto central, cada paso de cada lanzador habría tenido que recibir el
+    backend por separado — y un solo paso olvidado sigue escribiendo en SQLite (ya retirada) con
+    código de salida 0 mientras el resto escribe en Postgres. Con esto, un único .env (fuera de git)
+    decide el backend de TODOS los entry points Python, incluidos los pasos lanzados desde .bat.
+
+    Formato deliberadamente mínimo: líneas KEY=VALUE, `#` al inicio = comentario, comillas simples o
+    dobles opcionales alrededor del valor. Sin comentarios en línea, sin `export`, sin expansión.
+    Un fichero ausente o ilegible no es un error (comportamiento actual intacto).
+    """
+    import os
+    environ = os.environ if environ is None else environ
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    loaded = {}
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key, val = key.strip(), val.strip()
+        if len(val) >= 2 and val[0] == val[-1] and val[0] in "\"'":
+            val = val[1:-1]
+        if key and key not in environ:
+            environ[key] = val
+            loaded[key] = val
+    return loaded
+
+
+def _autoload_env_file() -> None:
+    import os
+    import sys
+    # Nunca bajo pytest: un .env de desarrollador con FONDOS_DB_BACKEND=postgres redirigiría en
+    # silencio cualquier test que llame a get_connection() sin backend explícito.
+    if "pytest" in sys.modules:
+        return
+    load_env_file(os.environ.get("FONDOS_ENV_FILE") or (_ROOT / ".env"))
+
+
+_autoload_env_file()
+
 # ============================================================
 # Versión canónica del schema de BD
 # ============================================================

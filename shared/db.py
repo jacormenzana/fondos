@@ -413,6 +413,29 @@ def _pg_dsn() -> str:
     return dsn
 
 
+_BACKEND_ANNOUNCED = False
+
+
+def _announce_backend(conn, backend: str, source: str) -> None:
+    """Once per process, say which database this process actually connected to.
+
+    FND-0068 (2026-09-23): after cutover, a single step that misses the backend switch keeps
+    writing to the retired SQLite with exit code 0 while the rest of the run writes to Postgres —
+    silent split-brain. Nothing in a log said which backend a step used, so it could not even be
+    detected after the fact. One line per process fixes that. Never prints the DSN (it may carry a
+    user name; the password lives in PGPASSWORD/.pgpass), only host/port/dbname."""
+    global _BACKEND_ANNOUNCED
+    if _BACKEND_ANNOUNCED:
+        return
+    _BACKEND_ANNOUNCED = True
+    if backend == "postgres":
+        i = conn.info
+        where = f"host={i.host} port={i.port} dbname={i.dbname}"
+    else:
+        where = f"path={conn.execute('PRAGMA database_list').fetchone()[2]}"
+    print(f"[DB] backend={backend} ({source}) {where}", file=sys.stderr, flush=True)
+
+
 def get_connection(
     db_path: Optional[Path] = None, *, backend: Optional[str] = None
 ) -> Union[sqlite3.Connection, "psycopg.Connection"]:
@@ -446,8 +469,11 @@ def get_connection(
     Lanza RuntimeError si FONDOS_PG_DSN no esta definida (backend resuelto "postgres").
     Ejecutar primero:  python -m shared.init_db
     """
-    if backend is None:
+    if backend is not None:
+        _source = "arg"
+    else:
         import os
+        _source = "env" if _DB_BACKEND_ENV_VAR in os.environ else "default"
         backend = os.environ.get(_DB_BACKEND_ENV_VAR, "sqlite")
 
     if backend == "postgres":
@@ -472,6 +498,7 @@ def get_connection(
         # nothing downstream could plausibly have anticipated, only found by exercising the real
         # multi-statement, error-recovering call pattern end to end.
         conn.commit()
+        _announce_backend(conn, "postgres", _source)
         return conn
     if backend != "sqlite":
         raise ValueError(f"Unknown backend {backend!r} — expected 'sqlite' or 'postgres'")
@@ -506,4 +533,5 @@ def get_connection(
     # Sin esto, executescript() en create_schema resetea isolation_level a ''
     # y el upsert falla con "ON CONFLICT clause does not match any PK".
     conn.isolation_level = None
+    _announce_backend(conn, "sqlite", _source)
     return conn
