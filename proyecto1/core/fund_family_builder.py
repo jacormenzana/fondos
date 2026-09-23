@@ -586,6 +586,8 @@ def build_fund_families(
 
     # Actualizar en batch
     ph = "%s" if is_postgres_connection(conn) else "?"
+    if is_postgres_connection(conn):
+        _ensure_family_rows(conn, family_data)
     executemany(
         conn,
         f"UPDATE fund_master SET fund_family_id = {ph} WHERE ISIN = {ph}",
@@ -629,6 +631,19 @@ def build_fund_families(
     return len(updates)
 
 
+def _ensure_family_rows(conn, family_data: list[tuple]) -> None:
+    """Postgres only: family ids are re-issued sequentially on every run, and the FK from
+    fund_master.fund_family_id needs the parent row to exist BEFORE fund_master is repointed."""
+    from datetime import datetime as _dt, timezone as _tz
+    now_str = _dt.now(_tz.utc).strftime("%Y-%m-%dT%H:%M:%S")
+    executemany(
+        conn,
+        "INSERT INTO fund_families (family_id, family_name, fund_nature, n_funds, updated_at) "
+        "VALUES (%s, %s, NULL, %s, %s) ON CONFLICT (family_id) DO NOTHING",
+        [(fam_id, name, n, now_str) for fam_id, name, n in family_data],
+    )
+
+
 def _populate_fund_families(
     conn: sqlite3.Connection,
     family_data: list[tuple],
@@ -658,19 +673,32 @@ def _populate_fund_families(
         for fid, c in nat_counts.items() if c
     }
 
-    conn.execute("DELETE FROM fund_families")
     rows = [
         (fam_id, name, family_natures.get(fam_id), n, now_str)
         for fam_id, name, n in family_data
     ]
-    ph = "%s" if is_postgres_connection(conn) else "?"
-    executemany(
-        conn,
-        "INSERT INTO fund_families "
-        "(family_id, family_name, Fund_Nature, n_funds, Updated_At) "
-        f"VALUES ({ph}, {ph}, {ph}, {ph}, {ph})",
-        rows,
-    )
+    if is_postgres_connection(conn):
+        # fund_master.fund_family_id has a real FK to fund_families on Postgres (SQLite never
+        # enforced it), so DELETE-everything-then-INSERT is rejected: upsert, then drop only the
+        # families that no fund references any more.
+        executemany(
+            conn,
+            "INSERT INTO fund_families (family_id, family_name, fund_nature, n_funds, updated_at) "
+            "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (family_id) DO UPDATE SET "
+            "family_name = EXCLUDED.family_name, fund_nature = EXCLUDED.fund_nature, "
+            "n_funds = EXCLUDED.n_funds, updated_at = EXCLUDED.updated_at",
+            rows,
+        )
+        conn.execute("DELETE FROM fund_families WHERE family_id <> ALL(%s)", ([r[0] for r in rows],))
+    else:
+        conn.execute("DELETE FROM fund_families")
+        executemany(
+            conn,
+            "INSERT INTO fund_families "
+            "(family_id, family_name, Fund_Nature, n_funds, Updated_At) "
+            "VALUES (?, ?, ?, ?, ?)",
+            rows,
+        )
     conn.commit()
     print(f"  [FamilyBuilder] fund_families populated: {len(rows)} familias")
     return len(rows)

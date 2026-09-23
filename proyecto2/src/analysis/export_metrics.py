@@ -1560,16 +1560,14 @@ SHEETS = [
 ]
 
 
-def export(output_dir: Path, min_fondos: int = 100, *, backend: str = "sqlite") -> tuple[Path, int]:
+def export(output_dir: Path, min_fondos: int = 100, *, backend: str | None = None) -> tuple[Path, int]:
     """Exporta metricas P2 a Excel.
 
-    backend: "sqlite" (default, zero behavior change for any existing caller) or "postgres"
-    (migration Phase 5b). Only 3 of 13 sheets are dialect-ported as of 2026-09-20 (1_Estado,
-    5_Consistencia, 12_Tendencia via q_estado/q_consistencia/q_tendencia) — the rest will show as
-    failed_sheets under backend="postgres" until their own q_* functions are ported in a later
-    tranche. This is intentional, incremental tranche behavior, not a bug: each sheet's builder
-    already runs inside its own try/except (see the loop below), so an unported sheet degrades to
-    an error cell rather than crashing the whole export.
+    backend: None (default) resolves FONDOS_DB_BACKEND / .env like every other entry point —
+    it used to default to "sqlite", so P2_calculateIndicators.bat exported from the frozen SQLite
+    file even with the backend set to postgres. "sqlite" / "postgres" force one for this call.
+    Each sheet's builder runs inside its own try/except (see the loop below), so a failing sheet
+    degrades to an error cell and is counted in failed_sheets instead of crashing the export.
 
     Returns:
         (out_path, failed_sheets) — failed_sheets > 0 indica hojas con error.
@@ -1649,16 +1647,19 @@ if __name__ == "__main__":
     parser.add_argument(
         "--min-fondos", type=int, default=2500,
         help="Minimo de fondos procesados para continuar (default: 2500)")
+    parser.add_argument(
+        "--backend", choices=["sqlite", "postgres"], default=None,
+        help="Forzar el backend (default: FONDOS_DB_BACKEND / .env; el backend real se anuncia en la linea [DB])")
     args = parser.parse_args()
 
     print(f"\nExportando metricas P2...")
-    print(f"  BD:      {DB_PATH}")
     print(f"  Salida:  {args.output}\\")
     print()
 
     _, failed = export(
         output_dir=Path(args.output),
         min_fondos=args.min_fondos,
+        backend=args.backend,
     )
     # C5 — propaga RC != 0 si alguna hoja fallo para que P2_calculateIndicators.bat
     # lo detecte y lo informe correctamente (en lugar de salir siempre con RC=0).

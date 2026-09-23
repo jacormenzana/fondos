@@ -229,3 +229,54 @@ def test_build_fund_families_end_to_end_assigns_ids_and_populates(
     }
     assert families[fam_ids["C1"]] == 2
     assert families[fam_ids["C3"]] == 1
+
+
+def _make_fund_master_with_family_fk(conn):
+    """The real Postgres schema: fund_master.fund_family_id REFERENCES fund_families (db/pg/20_silver.sql).
+    The helpers above build both tables WITHOUT that FK, which is why the launcher-level failure
+    (DELETE FROM fund_families -> ForeignKeyViolation) went unseen until a real P1 launcher step ran."""
+    _make_fund_families(conn)
+    conn.execute("""
+        CREATE TABLE fund_master (
+            isin TEXT PRIMARY KEY, fund_name TEXT, management_company TEXT, fund_nature TEXT,
+            fund_family_id TEXT REFERENCES fund_families (family_id),
+            data_quality_flag TEXT, srri_quality_flag TEXT, family TEXT
+        )
+    """)
+
+
+def test_rebuild_respects_the_real_family_foreign_key(pg_session_conn, pg_conn_module_schema):
+    """A re-run on an already-populated database: ids are re-issued sequentially, one family is new
+    (its parent row must exist before fund_master is repointed), one old family is now unreferenced
+    (must be dropped), and nothing may violate fund_master_family_fk."""
+    conn = pg_session_conn
+    conn.execute(f"SET search_path = {pg_conn_module_schema}")
+    _make_fund_master_with_family_fk(conn)
+    _make_ingestion_log(conn)
+    conn.execute("""
+        INSERT INTO fund_families (family_id, family_name, fund_nature, n_funds, updated_at) VALUES
+        ('FAM_000001', 'Old Name One', 'Monetario', 1, '2020-01-01'),
+        ('FAM_000002', 'Old Name Two', 'Monetario', 1, '2020-01-01'),
+        ('FAM_STALE',  'Gone',         'Alternativo', 1, '2020-01-01')
+    """)
+    conn.execute("""
+        INSERT INTO fund_master
+            (isin, fund_name, management_company, fund_nature, fund_family_id, data_quality_flag, srri_quality_flag)
+        VALUES
+            ('C1', 'Global Growth Fund A EUR Acc', 'Acme AM', 'Renta Variable', 'FAM_000001', 'OK', 'HIGH'),
+            ('C2', 'Global Growth Fund A USD Acc', 'Acme AM', 'Renta Variable', 'FAM_000001', 'OK', 'HIGH'),
+            ('C3', 'Standalone Money Market Fund', 'Acme AM', 'Monetario',      'FAM_STALE',  'OK', 'HIGH'),
+            ('D1', 'Zeta Fund',                    'Zed AM',  'Renta Variable', 'FAM_000002', 'OK', 'HIGH')
+    """)
+
+    n = build_fund_families(conn, dry_run=False)
+
+    assert n == 4
+    fam = dict(conn.execute("SELECT isin, fund_family_id FROM fund_master").fetchall())
+    assert fam["C1"] == fam["C2"] and len({fam["C1"], fam["C3"], fam["D1"]}) == 3
+    families = {r[0]: (r[1], r[2]) for r in conn.execute(
+        "SELECT family_id, fund_nature, n_funds FROM fund_families").fetchall()}
+    assert set(families) == set(fam.values()), "exactly the referenced families remain (FAM_STALE dropped)"
+    assert "FAM_STALE" not in families
+    assert families[fam["C1"]] == ("Renta Variable", 2)
+    assert families[fam["D1"]][1] == 1

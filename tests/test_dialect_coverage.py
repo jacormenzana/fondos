@@ -187,3 +187,40 @@ def test_connect_rule_flags_a_real_call_but_not_a_comment_or_docstring():
     prose = 'import sqlite3\n"""Docs: never call sqlite3.connect() directly."""\n# a raw sqlite3.connect() here would ignore --backend\ndef f(conn):\n    return conn\n'
     assert find_raw_sqlite_connects(real) == [3]
     assert find_raw_sqlite_connects(prose) == []
+
+
+def find_hardcoded_backend_defaults(src: str) -> list[str]:
+    """Functions with a `backend` parameter whose default is a literal backend name. Such a default
+    ignores FONDOS_DB_BACKEND / .env: export_metrics.export(backend="sqlite") made
+    P2_calculateIndicators.bat export from the frozen SQLite file after the switch (found by the
+    2026-09-23 launcher test). The default must be None so get_connection() resolves it."""
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return []
+    bad = []
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        a = fn.args
+        pos = [*a.posonlyargs, *a.args]
+        pairs = list(zip(pos[len(pos) - len(a.defaults):], a.defaults)) + list(zip(a.kwonlyargs, a.kw_defaults))
+        for arg, default in pairs:
+            if (arg.arg == "backend" and isinstance(default, ast.Constant)
+                    and default.value in ("sqlite", "postgres")):
+                bad.append(f"{fn.name}(backend={default.value!r}) line {fn.lineno}")
+    return bad
+
+
+def test_no_function_hardcodes_its_backend_default():
+    offenders = [f"{rel}: {b}" for rel, p in _production_sources()
+                 for b in find_hardcoded_backend_defaults(p.read_text(encoding="utf-8", errors="replace"))]
+    assert not offenders, ("A literal backend default bypasses the .env switch; use backend=None:\n  "
+                           + "\n  ".join(offenders))
+
+
+def test_backend_default_rule_flags_a_hardcoded_default_but_not_none():
+    assert find_hardcoded_backend_defaults('def export(o, *, backend: str = "sqlite"): pass')
+    assert find_hardcoded_backend_defaults('def f(a, backend="postgres"): pass')
+    assert not find_hardcoded_backend_defaults("def export(o, *, backend=None): pass")
+    assert not find_hardcoded_backend_defaults('def g(mode="sqlite"): pass')

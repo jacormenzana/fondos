@@ -480,3 +480,39 @@ class TestBuilders:
         except Exception as exc:
             pytest.fail(f"build_regime_returns raised: {exc}")
         conn.close()
+
+
+class TestExportResolvesBackendFromEnvironment:
+    """export() used to default to backend="sqlite" and the CLI passed nothing, so
+    P2_calculateIndicators.bat exported from the frozen SQLite file even with the backend set to
+    postgres (found by the 2026-09-23 launcher test: `[DB] backend=sqlite (arg)`)."""
+
+    def test_default_backend_is_none_so_the_environment_decides(self, monkeypatch, tmp_path):
+        import proyecto2.src.analysis.export_metrics as em
+
+        seen = {}
+
+        def fake_get_connection(*a, **kw):
+            seen.update(kw)
+            raise RuntimeError("stop after recording")
+
+        monkeypatch.setattr(em, "get_connection", fake_get_connection)
+        with pytest.raises(RuntimeError, match="stop after recording"):
+            em.export(tmp_path)
+        assert seen == {"backend": None}
+
+    def test_an_explicit_backend_is_still_passed_through(self, monkeypatch, tmp_path):
+        import proyecto2.src.analysis.export_metrics as em
+
+        seen = {}
+        monkeypatch.setattr(em, "get_connection",
+                            lambda *a, **kw: (seen.update(kw), (_ for _ in ()).throw(RuntimeError("stop")))[1])
+        with pytest.raises(RuntimeError):
+            em.export(tmp_path, backend="postgres")
+        assert seen == {"backend": "postgres"}
+
+    def test_cli_accepts_a_backend_flag(self):
+        import subprocess
+        r = subprocess.run([sys.executable, "-m", "proyecto2.src.analysis.export_metrics", "--help"],
+                           cwd=_REPO_ROOT, capture_output=True, text=True, timeout=120)
+        assert r.returncode == 0 and "--backend" in r.stdout
