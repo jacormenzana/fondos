@@ -299,6 +299,7 @@ proyecto2/
       test_export_metrics.py
     calculations/
       test_alert_engine_fix_20260913.py
+      test_calculations_pg.py
       test_consistency.py
       test_deflation.py
       test_drawdown.py

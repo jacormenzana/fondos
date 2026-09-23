@@ -15,6 +15,7 @@ import os
 import hashlib
 import datetime
 import gc
+import logging
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -28,6 +29,8 @@ except Exception:
     _HAS_TESSERACT = False
 
 from openpyxl import load_workbook
+
+logger = logging.getLogger(__name__)
 
 # ── Global NFC canonicalization (R-1 / FIX-UNICODE-NFC-GLOBAL 2026-08-24) ────
 # Canonical source: classify_utils.normalize_kiid_text().  Defensive import
@@ -536,7 +539,11 @@ def find_kiid_links_from_db(isin: str, conn) -> List[str]:
             (isin,),
         ).fetchall()
         return [r[0] for r in rows if r[0]]
-    except Exception:
+    except Exception as exc:
+        # Degrade to "no links" (callers fall back to the Excel index), but never silently: this
+        # exact swallow is what hid a Postgres-only `?` placeholder failure through Stages 0-8.
+        logger.warning("[KIID-LINKS-DB-FAIL] %s: db_document_catalogue lookup failed, "
+                       "falling back to no links: %s: %s", isin, type(exc).__name__, exc)
         return []
 
 
@@ -840,7 +847,12 @@ def get_kiid_for_isin(
                         "Fed_Text_For_Cost":   _fed_text_for_cost,
                     })
                     return _cached_text, meta
-        except Exception:
+        except Exception as exc:
+            # Degrade to the file/remote fetch path (correct, but far slower and re-parses every
+            # PDF) — never silently: a systematic failure here means EVERY fund misses the cache,
+            # which is exactly how the Postgres `?` placeholder bug went unnoticed until Stage 9.
+            logger.warning("[KIID-CACHE-LOOKUP-FAIL] %s: fund_kiid_metadata cache lookup failed, "
+                           "treating as cache miss: %s: %s", isin, type(exc).__name__, exc)
             _cached_text = _cached_hash = _cached_url = None
             _cached_table_text = None
             _cached_status = None
