@@ -19,6 +19,8 @@ Checks implemented, matching the plan's table exactly:
     (j) gold.fund_scores bespoke checks (P3 Phase 3a, 2026-09-19) — exact; NOT part of the plan's
         original (a)-(i) table since this table's PG schema gained 5 derived columns after the
         plan was written — see check_j_fund_scores()'s own header comment
+    (k) schema coverage: every live SQLite column has a Postgres destination column — catches a
+        column added to SQLite after rename_map.yaml was introspected, which (a)-(j) cannot see
 
 Canonical row rendering (must be byte-identical on both sides, per the plan): fields joined by
 \\x1f, NULL -> \\N, date -> YYYY-MM-DD, timestamptz -> ISO-8601 UTC, float -> 17 significant digits.
@@ -575,11 +577,34 @@ def check_j_fund_scores(sconn: sqlite3.Connection, pconn: psycopg.Connection) ->
                f"{n_bad if n_bad >= 0 else 'row-count mismatch'}")
 
 
+def check_k_schema_coverage(sconn: sqlite3.Connection, pconn: psycopg.Connection, rename_map: dict) -> None:
+    """(k) Every live SQLite column of a migrated table has a Postgres destination.
+
+    Added 2026-09-23 after check (j) was found to carry a static exclusion that had silently rotted
+    (score_base/multiplier). Checks (a)-(j) only ever look at columns Postgres HAS, so a column added
+    to SQLite after db/pg/rename_map.yaml was introspected would be dropped by the seed and every
+    other check would stay green. This is schema-level and cheap, and it is what would catch that."""
+    print("(k) Schema coverage: every live SQLite column has a Postgres destination")
+    for sqlite_table, schema, table in [*TABLES, ("fund_scores", "gold", "fund_scores")]:
+        s_cols = [r[1] for r in sconn.execute(f"PRAGMA table_info({sqlite_table})")]
+        col_map = rename_map["columns"].get(sqlite_table, {})
+        pg_cols = {r[0] for r in pconn.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_schema = %s AND table_name = %s",
+            (schema, table))}
+        # Same rule as pg_seed.build_column_plan: a column with no rename entry is identity-mapped
+        # (tables like regime_history have no `columns:` block at all). A target that is not an
+        # identifier is rename_map's prose annotation for a Postgres-only column ("NEW — ...").
+        no_dest = [c for c in s_cols
+                   if str(col_map.get(c, c)).isidentifier() and col_map.get(c, c) not in pg_cols]
+        record(f"k:{schema}.{table}", not no_dest,
+               f"{len(s_cols)} sqlite columns; no Postgres destination column: {no_dest}")
+
+
 # =============================================================================
 # Orchestration
 # =============================================================================
 
-ALL_CHECK_LETTERS = {"a", "b", "c", "d", "e", "f", "g", "h", "i", "j"}
+ALL_CHECK_LETTERS = {"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k"}
 
 
 def _record_migration_state(pconn: psycopg.Connection, sqlite_path: Path) -> None:
@@ -662,6 +687,8 @@ def main() -> int:
             check_i_spot_diff(sconn, pconn)
         if "j" in only:
             check_j_fund_scores(sconn, pconn)
+        if "k" in only:
+            check_k_schema_coverage(sconn, pconn, rename_map)
 
     failed = [r for r in RESULTS if not r.passed]
     print(f"\n{'='*70}\n{len(RESULTS)} checks run, {len(failed)} failed\n{'='*70}")
