@@ -11,10 +11,15 @@ which uses incremental sync keyed on batch_id to avoid unsustainable full reload
 Pass --full to force a complete reload of ALL tables.
 """
 
+import os
 import sys
 import sqlite3
-import pandas as pd
-from sqlalchemy import create_engine, text
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import shared.config  # noqa: E402,F401  (side effect: autoloads .env, so FONDOS_DB_BACKEND is seen)
+import pandas as pd  # noqa: E402
+from sqlalchemy import create_engine, text  # noqa: E402
 
 # ----------------------------------------------------------------------
 # CONFIG  -- adjust only if your paths / credentials differ
@@ -116,7 +121,25 @@ def _sync_incremental(src, dst, t: str) -> None:
         _load_full(src, dst, t)
 
 
+def primary_backend_refusal(environ=None) -> str | None:
+    """Message if this SQLite->Superset mirror must not run, else None.
+
+    Once Postgres is the primary store, SQLite is frozen; mirroring it would publish stale data to
+    Superset while looking healthy.
+    """
+    env = os.environ if environ is None else environ
+    if str(env.get("FONDOS_DB_BACKEND", "sqlite")).strip().lower() == "postgres":
+        return ("REFUSING TO RUN: FONDOS_DB_BACKEND=postgres, so SQLite is no longer the live store and "
+                "this mirror would push a frozen snapshot to Superset. Point Superset at the primary "
+                "Postgres (gold.*/silver.*) instead of syncing from SQLite (backlog FND-0069).")
+    return None
+
+
 def main() -> None:
+    refusal = primary_backend_refusal()
+    if refusal:
+        print(refusal, file=sys.stderr)
+        sys.exit(3)
     full_reload = "--full" in sys.argv
     print(f"Source : {SQLITE_PATH}")
     print(f"Target : {PG_URL}")
