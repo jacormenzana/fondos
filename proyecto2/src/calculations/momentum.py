@@ -22,6 +22,7 @@ import pandas as pd
 import sqlite3
 
 from shared.config import MIN_PEERS   # minimo de fondos en la categoria para calcular percentil
+from shared.db import is_postgres_connection
 
 
 # ============================================================
@@ -38,15 +39,20 @@ def load_category_returns(
     de la misma naturaleza para un horizonte dado.
     Devuelve Series indexada por ISIN.
     """
-    rows = conn.execute("""
+    # Postgres migration Stage 9 (found live 2026-09-22): proyecto2/src/calculations/*.py issue
+    # their own direct SQL and were never in scope for any prior stage's read-path port (only
+    # readers/db_readers.py was ported) — surfaced by the first-ever end-to-end run_pipeline.py
+    # --backend postgres rehearsal, not any per-function unit test.
+    ph = "%s" if is_postgres_connection(conn) else "?"
+    rows = conn.execute(f"""
         SELECT fmet.isin, fmet.value
         FROM fund_metrics fmet
         JOIN fund_master fm ON fm.ISIN = fmet.isin
         WHERE fmet.metric   = 'return_ann'
-          AND fmet.horizon  = ?
+          AND fmet.horizon  = {ph}
           AND fmet.real_flag = 0
           AND fmet.value    IS NOT NULL
-          AND fm.Fund_Nature = ?
+          AND fm.Fund_Nature = {ph}
     """, (horizon, fund_nature)).fetchall()
 
     if not rows:

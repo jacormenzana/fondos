@@ -33,6 +33,7 @@ from shared.config import (
     PERSISTENCE_STEP_MONTHS as STEP_MONTHS,
     PERSISTENCE_MIN_WINDOWS as MIN_WINDOWS,
 )
+from shared.db import is_postgres_connection
 
 
 # ============================================================
@@ -50,19 +51,21 @@ def _category_return_in_window(
     Calcula la rentabilidad media anualizada de la categoria en una ventana.
     Excluye el propio fondo para evitar autocorrelacion.
     """
-    rows = conn.execute("""
+    # Postgres migration Stage 9 (found live 2026-09-22): see momentum.py's identical note.
+    ph = "%s" if is_postgres_connection(conn) else "?"
+    rows = conn.execute(f"""
         SELECT fnm.ISIN,
                MIN(fnm.NAV) AS nav_start,
                MAX(fnm.NAV) AS nav_end,
                COUNT(*)     AS n_months
         FROM fund_nav_monthly fnm
         JOIN fund_master fm ON fm.ISIN = fnm.ISIN
-        WHERE fm.Fund_Nature = ?
-          AND fnm.ISIN != ?
-          AND fnm.Date >= ?
-          AND fnm.Date <= ?
+        WHERE fm.Fund_Nature = {ph}
+          AND fnm.ISIN != {ph}
+          AND fnm.Date >= {ph}
+          AND fnm.Date <= {ph}
         GROUP BY fnm.ISIN
-        HAVING COUNT(*) >= ?
+        HAVING COUNT(*) >= {ph}
     """, (fund_nature, exclude_isin,
           start_date.strftime("%Y-%m-%d"),
           end_date.strftime("%Y-%m-%d"),

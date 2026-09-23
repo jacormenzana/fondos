@@ -32,6 +32,7 @@ import pandas as pd
 import sqlite3
 
 from shared.config import CAPTURE_MIN_PERIODS as MIN_PERIODS  # minimo de periodos positivos/negativos para calcular
+from shared.db import is_postgres_connection
 
 
 # ============================================================
@@ -49,12 +50,15 @@ def load_peer_benchmark(
 
     Devuelve Series indexada por fecha con retorno mensual medio de la categoria.
     """
-    rows = conn.execute("""
+    # Postgres migration Stage 9 (found live 2026-09-22): see momentum.py's identical note —
+    # proyecto2/src/calculations/*.py were never in scope for any prior stage's read-path port.
+    ph = "%s" if is_postgres_connection(conn) else "?"
+    rows = conn.execute(f"""
         SELECT fnm.ISIN, fnm.Date, fnm.NAV
         FROM fund_nav_monthly fnm
         JOIN fund_master fm ON fm.ISIN = fnm.ISIN
-        WHERE fm.Fund_Nature = ?
-          AND fnm.ISIN != ?
+        WHERE fm.Fund_Nature = {ph}
+          AND fnm.ISIN != {ph}
         ORDER BY fnm.ISIN, fnm.Date
     """, (fund_nature, exclude_isin)).fetchall()
 
