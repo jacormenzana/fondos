@@ -324,7 +324,9 @@ columns:
     # NEW columns (P3 Phase 3a, 2026-09-19 — see db/pg/30_gold.sql's fund_scores comment).
     # Not a rename: these have no SQLite source column. Populated by pg_seed.py parsing `notes`
     # (format 'regime=<X>' / 'regime=<X> | excluido: <reason>', 100% of live rows match) plus
-    # as_of_date := calculated_at. score_base/multiplier have no historical source — NULL backfill.
+    # as_of_date := calculated_at. score_base/multiplier: copied from SQLite when it has the columns
+    # (v27+, Phase 3a — corrected 2026-09-23; this used to say NULL backfill and the loader discarded
+    # populated data); NULL only for pre-v27 sources or rows predating Phase 3a.
     regime: "NEW — parsed from notes, PK member"
     as_of_date: "NEW — := calculated_at for backfilled rows, PK member"
     score_base: "NEW — NULL backfill, no historical source"

@@ -551,7 +551,28 @@ def check_j_fund_scores(sconn: sqlite3.Connection, pconn: psycopg.Connection) ->
     ok = s_rendered == p_rendered
     record("j:overlapping_columns_value_match", ok,
            f"sqlite={len(s_rendered)} pg={len(p_rendered)} rows compared on the 6 columns with a "
-           f"direct SQLite source (excludes the 5 new derived/NULL-backfilled columns)")
+           f"direct SQLite source (excludes the derived columns regime/as_of_date/exclusion_reason)")
+
+    # score_base / multiplier are NOT derived: SQLite v27+ carries real columns for them and the
+    # seed copies them. They used to be excluded here as "NULL-backfilled", which is how a loader
+    # that discarded 4,475 populated rows passed this gate (found 2026-09-23). Compared exactly
+    # (both sides are double precision) whenever the SQLite source has the columns.
+    src_cols = {r[1].lower() for r in sconn.execute("PRAGMA table_info(fund_scores)")}
+    if {"score_base", "multiplier"} <= src_cols:
+        def _f(v):
+            return repr(float(v)) if v is not None else "\\N"
+
+        sb = sorted("\x1f".join([str(i), str(b), str(v), _f(sc), _f(mu)]) for i, b, v, sc, mu in
+                    sconn.execute("SELECT isin, block, score_version, score_base, multiplier FROM fund_scores"))
+        pb = sorted("\x1f".join([str(i), str(b), str(v), _f(sc), _f(mu)]) for i, b, v, sc, mu in
+                    pconn.execute(
+                        "SELECT isin, block, score_version, score_base, multiplier FROM gold.fund_scores "
+                        "UNION ALL SELECT isin, block, score_version, score_base, multiplier "
+                        "FROM control.quarantine_fund_scores_orphans"))
+        n_bad = sum(1 for a, b in zip(sb, pb) if a != b) if len(sb) == len(pb) else -1
+        record("j:score_base_multiplier_value_match", sb == pb,
+               f"sqlite={len(sb)} pg={len(pb)} rows; rows differing: "
+               f"{n_bad if n_bad >= 0 else 'row-count mismatch'}")
 
 
 # =============================================================================

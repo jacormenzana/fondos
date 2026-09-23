@@ -611,9 +611,19 @@ def load_fund_scores_unit(sconn: sqlite3.Connection, pconn: psycopg.Connection) 
         # routed through _clear_table() anyway (not a bare TRUNCATE) so this stays correct
         # automatically if that ever changes, rather than needing this call site remembered too.
         _clear_table(pconn, target, "gold", "fund_scores")
+        # score_base / multiplier: SQLite gained real columns for these in v27 (P3 Phase 3a, the
+        # same day this loader was written) and P3 now populates them, so a hard NULL here
+        # silently DISCARDED populated data — found 2026-09-23 by an A/B of the same P3 run on
+        # SQLite vs Postgres: 4,475 seeded rows had them NULL in Postgres and populated in
+        # SQLite (recoverable from score_detail, but the denormalised columns disagreed, and
+        # reconcile check (j) excluded them so the gate could not see it). Copy them when the
+        # source has the columns; an older (pre-v27) SQLite file keeps the NULL backfill.
+        src_cols = {r[1].lower() for r in sconn.execute("PRAGMA table_info(fund_scores)")}
+        sel_base = "score_base" if "score_base" in src_cols else "NULL"
+        sel_mult = "multiplier" if "multiplier" in src_cols else "NULL"
         cur = sconn.execute(
-            "SELECT isin, block, score_version, score_total, eligible, calculated_at, "
-            "score_detail, notes FROM fund_scores"
+            f"SELECT isin, block, score_version, score_total, {sel_base}, {sel_mult}, eligible, "
+            f"calculated_at, score_detail, notes FROM fund_scores"
         )
         n_main = n_quarantine = 0
         # Orphan rows buffered, not written via a second simultaneous COPY stream — same fix, same
@@ -622,8 +632,8 @@ def load_fund_scores_unit(sconn: sqlite3.Connection, pconn: psycopg.Connection) 
         quarantine_rows: list[list] = []
         with pconn.cursor().copy(main_copy_sql) as main_cp:
             while batch := cur.fetchmany(FETCH_CHUNK):
-                for isin, block, score_version, score_total, eligible, calculated_at, \
-                        score_detail, notes in batch:
+                for isin, block, score_version, score_total, score_base, multiplier, eligible, \
+                        calculated_at, score_detail, notes in batch:
                     m = _FUND_SCORES_NOTES_RE.match(notes or "")
                     if m is None:
                         raise CoercionError(
@@ -642,8 +652,8 @@ def load_fund_scores_unit(sconn: sqlite3.Connection, pconn: psycopg.Connection) 
                         coerce_text(block, table="fund_scores", column="block"),
                         coerce_text(score_version, table="fund_scores", column="score_version"),
                         coerce_float(score_total),
-                        None,  # score_base — never persisted historically
-                        None,  # multiplier — never persisted historically
+                        coerce_float(score_base),   # NULL only if the SQLite source lacks the column
+                        coerce_float(multiplier),   # (pre-v27) or the row itself predates Phase 3a
                         coerce_smallint(eligible, table="fund_scores", column="eligible"),
                         coerce_date(calculated_at, table="fund_scores", column="calculated_at"),
                         as_of_date_val,
