@@ -346,23 +346,16 @@ def build_m2_global(conn: sqlite3.Connection,
 
 if __name__ == "__main__":
     import sys
-    candidates = [
-        Path(_ROOT) / "db" / "fondos.sqlite",
-        Path("db") / "fondos.sqlite",
-        Path("fondos.sqlite"),
-    ]
-    db_path = next((p for p in candidates if p.exists()), None)
-    if db_path is None:
-        try:
-            from shared.config import DB_PATH
-            db_path = Path(DB_PATH)
-        except Exception:
-            pass
-    if db_path is None or not db_path.exists():
-        print(f"ERROR: No se encuentra fondos.sqlite. Probados: {[str(c) for c in candidates]}")
+    # Same fix as proyecto1/core/fund_family_builder.py's CLI (Postgres migration Stage 9): a raw
+    # sqlite3.connect() here ignores --backend / FONDOS_DB_BACKEND and would write M2 series to the
+    # retired SQLite after cutover.
+    from shared.db import get_connection
+    _backend = sys.argv[sys.argv.index("--backend") + 1] if "--backend" in sys.argv else None
+    try:
+        conn = get_connection(backend=_backend)
+    except FileNotFoundError as exc:
+        print(f"ERROR: {exc}")
         sys.exit(1)
-    print(f"BD: {db_path}")
-    conn = sqlite3.connect(str(db_path))
     dry  = "--dry-run" in sys.argv
     n    = build_m2_global(conn, dry_run=dry)
     print(f"Total: {n} registros")

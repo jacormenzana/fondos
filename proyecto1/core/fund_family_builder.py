@@ -721,24 +721,28 @@ if __name__ == "__main__":
         "--dry-run", action="store_true",
         help="Muestra grupos pero no escribe en BD"
     )
+    parser.add_argument(
+        "--backend", choices=["sqlite", "postgres"], default=None,
+        help="Backend de BD para esta ejecucion (migracion, addendum 2026-09-20). "
+             "Si se omite, resuelve la variable de entorno FONDOS_DB_BACKEND "
+             "('sqlite' si no esta definida)."
+    )
     args = parser.parse_args()
 
+    # Postgres migration Stage 9 (found 2026-09-23 by auditing every raw sqlite3.connect): this block
+    # opened SQLite directly, and P1_discoverAllFunds.bat runs it as `python -m
+    # proyecto1.core.fund_family_builder` at the end of every P1 cycle. After cutover the rest of P1
+    # would write to Postgres while THIS step silently kept rebuilding families in the retired SQLite
+    # — exit code 0, no error, split-brain. get_connection() resolves the backend (flag, else
+    # FONDOS_DB_BACKEND) and raises FileNotFoundError itself for a missing SQLite file.
+    from shared.db import get_connection, is_postgres_connection
     try:
-        from shared.config import DB_PATH
-        db_path = Path(DB_PATH)
-    except Exception:
-        candidates = [
-            Path(_ROOT) / "db" / "fondos.sqlite",
-            Path("db") / "fondos.sqlite",
-        ]
-        db_path = next((p for p in candidates if p.exists()), None)
-
-    if db_path is None or not db_path.exists():
-        print("ERROR: No se encuentra fondos.sqlite")
+        _conn = get_connection(backend=args.backend)
+    except FileNotFoundError as exc:
+        print(f"ERROR: {exc}")
         sys.exit(1)
 
-    print(f"BD: {db_path}")
-    _conn = sqlite3.connect(str(db_path))
+    print("BD: Postgres (FONDOS_PG_DSN)" if is_postgres_connection(_conn) else "BD: SQLite (shared.config.DB_PATH)")
     n = build_fund_families(_conn, dry_run=args.dry_run)
     print(f"Total: {n} fondos procesados")
     _conn.close()
