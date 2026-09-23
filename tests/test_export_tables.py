@@ -38,7 +38,9 @@ if str(_ROOT) not in sys.path:
 from shared.export_tables import (  # noqa: E402
     TableExportConfig,
     _drop_excluded,
+    _legacy_header_map,
     _read_table_df,
+    _restore_legacy_headers,
     export_tables,
 )
 
@@ -130,6 +132,42 @@ def test_sqlite_missing_database_raises_before_writing_anything(tmp_path):
 # =============================================================================
 # Part B — Postgres
 # =============================================================================
+
+# --- header restoration (pure functions, no database needed) -----------------
+
+def test_restore_legacy_headers_maps_postgres_names_back_to_the_sqlite_spelling():
+    df = pd.DataFrame(columns=["isin", "fund_name", "fund_nature", "pg_only_new_column"])
+    out = _restore_legacy_headers(df, "fund_master")
+    # Mapped columns regain their historical spelling; a column absent from the map is untouched.
+    assert list(out.columns) == ["ISIN", "Fund_Name", "Fund_Nature", "pg_only_new_column"]
+
+
+def test_restore_legacy_headers_leaves_unmapped_tables_alone():
+    df = pd.DataFrame(columns=["isin", "whatever"])
+    assert list(_restore_legacy_headers(df, "table_not_in_the_map").columns) == ["isin", "whatever"]
+
+
+def test_restore_legacy_headers_covers_the_five_tables_the_p1_export_reads():
+    m = _legacy_header_map()
+    for table in ("fund_master", "fund_kiid_metadata", "fund_benchmarks", "fund_families",
+                  "fund_cost_schedule"):
+        assert m.get(table), f"{table} missing from rename_map.yaml `columns:` — export headers would change"
+
+
+def test_the_inverse_header_map_is_unambiguous_for_every_table():
+    """If two SQLite spellings mapped to one Postgres name, inverting would silently keep only one
+    and a column would lose its historical header. rename_map.yaml is hand-maintained, so guard it."""
+    import yaml
+    from shared.export_tables import _RENAME_MAP_PATH
+    forward = yaml.safe_load(_RENAME_MAP_PATH.read_text(encoding="utf-8"))["columns"]
+    inverse = _legacy_header_map()
+    for table, cols in forward.items():
+        if isinstance(cols, dict):
+            # "NEW — ..." annotations (Postgres-only columns) are deliberately not inverted.
+            real = {sq: pg for sq, pg in cols.items() if str(pg).isidentifier()}
+            assert len(inverse[table]) == len(real), f"{table}: two SQLite columns map to one PG name"
+            assert not any(not str(k).isidentifier() for k in inverse[table]),                 f"{table}: an annotation leaked into the header map"
+
 
 _TABLE_DDL = (
     "CREATE TABLE {t} (isin text, fund_name text, raw_kiid_text text, score double precision, "

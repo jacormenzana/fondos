@@ -47,12 +47,13 @@ Cambios v17:
 
 from dataclasses import dataclass, field
 from datetime import date, datetime
+from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
 import pandas as pd
 
-from shared.db import get_connection, table_columns
+from shared.db import get_connection, is_postgres_connection, table_columns
 
 # Postgres migration (Stage 9, 2026-09-23 — the export/reporting port the plan's original Stage 7
 # named but that was silently dropped when Stage 7 was renumbered): Postgres returns timestamptz
@@ -60,6 +61,28 @@ from shared.db import get_connection, table_columns
 # datetimes with timezones"). Rendered as naive wall-clock time in the project's operating zone —
 # the same zone pg_seed.py assumed when it promoted SQLite's naive timestamp text to timestamptz.
 _EXPORT_TZ = "Europe/Madrid"
+
+_RENAME_MAP_PATH = Path(__file__).resolve().parents[1] / "db" / "pg" / "rename_map.yaml"
+
+
+@lru_cache(maxsize=1)
+def _legacy_header_map() -> dict:
+    """{table: {postgres_column: legacy_sqlite_column}} — the inverse of db/pg/rename_map.yaml's
+    `columns:` section, the single source of truth for the SQLite→Postgres rename (so there is no
+    second dictionary to drift). Empty if the file or PyYAML is unavailable: the export then still
+    works, just with Postgres' own lower_snake headers."""
+    try:
+        import yaml
+        cols = yaml.safe_load(_RENAME_MAP_PATH.read_text(encoding="utf-8")).get("columns", {})
+    except Exception as exc:  # missing file / no PyYAML / malformed YAML: degrade, but say so
+        print(f"    AVISO: mapa de cabeceras no disponible ({type(exc).__name__}: {exc}); "
+              "el Excel llevará los nombres lower_snake de Postgres")
+        return {}
+    # rename_map.yaml marks Postgres-only columns with a prose annotation in the TARGET slot
+    # ("NEW — NULL backfill, ..."), not a column name. They have no legacy spelling, so skip them
+    # (they keep their Postgres name) instead of inverting an annotation into the map.
+    return {t: {pg: sq for sq, pg in m.items() if str(pg).isidentifier()}
+            for t, m in cols.items() if isinstance(m, dict)}
 
 
 # ============================================================
@@ -190,6 +213,16 @@ def _drop_timezones(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _restore_legacy_headers(df: pd.DataFrame, table: str) -> pd.DataFrame:
+    """Postgres lower_snake column names → the SQLite spelling the Excel has always carried
+    (`isin` → `ISIN`, `fund_name` → `Fund_Name`). The launcher (P1_discoverAllFunds.bat) regenerates
+    this file every P1 cycle and the P1 audit skills read it by those names, so a silent header
+    change at cutover would break them. Columns absent from the map (Postgres-only additions) keep
+    their own names."""
+    m = _legacy_header_map().get(table, {})
+    return df.rename(columns={c: m[c] for c in df.columns if c in m}) if m else df
+
+
 def _drop_excluded(df: pd.DataFrame, exclude_cols: list) -> pd.DataFrame:
     """Quita exclude_cols sin distinguir mayúsculas: Postgres devuelve `raw_kiid_text` aunque el
     llamante pida `Raw_KIID_Text`; con comparación exacta la exclusión NO se aplicaría y el
@@ -230,10 +263,11 @@ def export_tables(
     Los errores por tabla se acumulan y se reportan al final;
     un fallo en una tabla no aborta el export de las restantes.
 
-    Cabeceras: las que devuelve cada motor. SQLite conserva la grafía histórica (`ISIN`,
-    `Fund_Name`); Postgres devuelve los nombres lower_snake de db/pg/rename_map.yaml (`isin`,
-    `fund_name`) — sin mapa inverso, un `SELECT *` exportado desde Postgres cambia las cabeceras
-    del Excel respecto al de SQLite.
+    Cabeceras: idénticas en ambos motores para las tablas de db/pg/rename_map.yaml. Postgres
+    devuelve lower_snake (`isin`, `fund_name`); se restauran a la grafía histórica de SQLite
+    (`ISIN`, `Fund_Name`) invirtiendo ese mapa, porque el lanzador regenera este Excel en cada
+    ciclo P1 y las skills de auditoría P1 lo leen por esos nombres. Columnas que solo existen en
+    Postgres (no están en el mapa) conservan su nombre.
     """
     output_path = _resolve_writable_path(Path(output_path))
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -260,6 +294,9 @@ def export_tables(
                     # Excluir columnas (solo cuando NO se usó include_cols)
                     if not cfg.include_cols and cfg.exclude_cols:
                         df = _drop_excluded(df, cfg.exclude_cols)
+
+                    if is_postgres_connection(conn):
+                        df = _restore_legacy_headers(df, cfg.table)
 
                     df.to_excel(
                         writer,
