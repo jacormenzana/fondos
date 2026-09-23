@@ -128,6 +128,7 @@ def export_p1(
     db_path=None,
     include_kiid_text: bool = False,
     block=None,
+    backend=None,
 ):
     """
     Exporta las tablas de P1 a un fichero Excel con fecha en el nombre.
@@ -138,6 +139,7 @@ def export_p1(
         include_kiid_text: incluir columna Raw_KIID_Text (default: False)
         block:             si se indica, filtra por heuristic_block.
                            Debe ser uno de VALID_BLOCKS; abort con ValueError si no.
+        backend:           None (FONDOS_DB_BACKEND), "sqlite" o "postgres".
 
     Devuelve la ruta del fichero generado.
     """
@@ -166,6 +168,7 @@ def export_p1(
         output_path=out_path,
         db_path=db_path,
         verbose=True,
+        backend=backend,
     )
 
 
@@ -197,6 +200,12 @@ if __name__ == "__main__":
             f"Valores: {sorted(VALID_BLOCKS)}"
         ),
     )
+    parser.add_argument(
+        "--backend", choices=["sqlite", "postgres"], default=None,
+        help="Backend de BD para esta ejecucion (migracion, addendum 2026-09-20). "
+             "Si se omite, resuelve la variable de entorno FONDOS_DB_BACKEND "
+             "('sqlite' si no esta definida)."
+    )
     args = parser.parse_args()
 
     export_p1(
@@ -204,4 +213,5 @@ if __name__ == "__main__":
         db_path=args.db,
         include_kiid_text=args.include_kiid_text,
         block=args.block,
+        backend=args.backend,
     )

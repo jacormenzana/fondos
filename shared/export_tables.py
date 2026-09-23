@@ -45,13 +45,21 @@ Cambios v17:
     por bloques con pd.read_sql_query + chunksize).
 """
 
-import sqlite3
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
 
 import pandas as pd
+
+from shared.db import get_connection, table_columns
+
+# Postgres migration (Stage 9, 2026-09-23 — the export/reporting port the plan's original Stage 7
+# named but that was silently dropped when Stage 7 was renumbered): Postgres returns timestamptz
+# as tz-aware datetimes, which DataFrame.to_excel refuses outright ("Excel does not support
+# datetimes with timezones"). Rendered as naive wall-clock time in the project's operating zone —
+# the same zone pg_seed.py assumed when it promoted SQLite's naive timestamp text to timestamptz.
+_EXPORT_TZ = "Europe/Madrid"
 
 
 # ============================================================
@@ -91,23 +99,23 @@ class TableExportConfig:
     def effective_sheet(self) -> str:
         return self.sheet_name or self.table
 
-    def build_query(self, conn: sqlite3.Connection) -> str:
+    def build_query(self, conn) -> str:
         """
         Construye el SELECT SQL para esta configuración.
 
         Si include_cols está definido → SELECT explícito de esas columnas.
         Si solo exclude_cols → SELECT * y se filtra el DataFrame después.
+
+        Las columnas de include_cols se resuelven sin distinguir mayúsculas y se citan con la
+        grafía REAL de la BD: Postgres pliega a minúsculas al crear (`isin`, no `ISIN`) y un
+        identificador citado distingue mayúsculas, así que `"ISIN"` fallaría allí aunque el
+        llamante (que sigue usando la grafía de SQLite) pida exactamente la columna que existe.
         """
         if self.include_cols:
             # Verificar que las columnas existen en la tabla
-            existing = {
-                r[1]
-                for r in conn.execute(
-                    f"PRAGMA table_info({self.table})"
-                ).fetchall()
-            }
-            valid_cols = [c for c in self.include_cols if c in existing]
-            missing    = [c for c in self.include_cols if c not in existing]
+            existing = {c.lower(): c for c in table_columns(conn, self.table)}
+            valid_cols = [existing[c.lower()] for c in self.include_cols if c.lower() in existing]
+            missing    = [c for c in self.include_cols if c.lower() not in existing]
             if missing:
                 # Advertir pero no abortar — se exportan las que existen
                 print(f"    AVISO [{self.table}]: columnas no encontradas "
@@ -145,6 +153,53 @@ def _resolve_writable_path(path: Path) -> Path:
         return alt
 
 
+def _read_table_df(conn, query: str, chunk_size: int = 0) -> pd.DataFrame:
+    """
+    Ejecuta `query` y devuelve un DataFrame, idéntico en ambos motores.
+
+    Sustituye a pd.read_sql_query, que sobre una conexión psycopg3 (no SQLAlchemy) emite un
+    aviso y depende de cómo pandas trate las filas del row_factory compatible con sqlite3.Row;
+    aquí el cursor se lee explícitamente (mismo criterio que fund_scorer/pipeline en Stage 6).
+    `coerce_float=True` replica el default de read_sql_query: `numeric` de Postgres llega como
+    Decimal, y pandas escribe un Decimal en Excel como TEXTO, no como número.
+    """
+    cur = conn.execute(query)
+    cols = [d[0] for d in cur.description]
+    if chunk_size > 0:
+        frames = []
+        while batch := cur.fetchmany(chunk_size):
+            frames.append(pd.DataFrame.from_records(
+                [tuple(r) for r in batch], columns=cols, coerce_float=True))
+        df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=cols)
+    else:
+        df = pd.DataFrame.from_records(
+            [tuple(r) for r in cur.fetchall()], columns=cols, coerce_float=True)
+    return _drop_timezones(df)
+
+
+def _drop_timezones(df: pd.DataFrame) -> pd.DataFrame:
+    """Columnas timestamptz (tz-aware) → hora local naive; to_excel rechaza datetimes con tz."""
+    for col in df.columns:
+        s = df[col]
+        if isinstance(s.dtype, pd.DatetimeTZDtype):
+            df[col] = s.dt.tz_convert(_EXPORT_TZ).dt.tz_localize(None)
+        elif s.dtype == object:
+            first = s.dropna().head(1)
+            if len(first) and isinstance(first.iloc[0], datetime) and first.iloc[0].tzinfo is not None:
+                df[col] = pd.to_datetime(s, utc=True).dt.tz_convert(_EXPORT_TZ).dt.tz_localize(None)
+    return df
+
+
+def _drop_excluded(df: pd.DataFrame, exclude_cols: list) -> pd.DataFrame:
+    """Quita exclude_cols sin distinguir mayúsculas: Postgres devuelve `raw_kiid_text` aunque el
+    llamante pida `Raw_KIID_Text`; con comparación exacta la exclusión NO se aplicaría y el
+    export incluiría ~58M caracteres de texto KIID (~500 MB en vez de ~10 MB — el bug que
+    documenta la cabecera v17)."""
+    wanted = {c.lower() for c in exclude_cols}
+    drop = [c for c in df.columns if str(c).lower() in wanted]
+    return df.drop(columns=drop) if drop else df
+
+
 # ============================================================
 # Motor de exportación
 # ============================================================
@@ -154,15 +209,18 @@ def export_tables(
     output_path: Path,
     db_path:     Path,
     verbose:     bool = True,
+    backend:     Optional[str] = None,
 ) -> Path:
     """
-    Exporta una lista de tablas SQLite a un fichero Excel multi-hoja.
+    Exporta una lista de tablas a un fichero Excel multi-hoja.
 
     Parámetros:
         tables:       lista de TableExportConfig con las tablas a exportar.
         output_path:  ruta completa del fichero .xlsx a generar.
-        db_path:      ruta a fondos.sqlite.
+        db_path:      ruta a fondos.sqlite (solo aplica si el backend resuelto es "sqlite").
         verbose:      si True, imprime progreso por consola.
+        backend:      None (resuelve FONDOS_DB_BACKEND, "sqlite" por defecto), "sqlite" o
+                      "postgres" (FONDOS_PG_DSN). Ver shared.db.get_connection.
 
     Devuelve la ruta del fichero generado.
 
@@ -171,19 +229,23 @@ def export_tables(
 
     Los errores por tabla se acumulan y se reportan al final;
     un fallo en una tabla no aborta el export de las restantes.
+
+    Cabeceras: las que devuelve cada motor. SQLite conserva la grafía histórica (`ISIN`,
+    `Fund_Name`); Postgres devuelve los nombres lower_snake de db/pg/rename_map.yaml (`isin`,
+    `fund_name`) — sin mapa inverso, un `SELECT *` exportado desde Postgres cambia las cabeceras
+    del Excel respecto al de SQLite.
     """
     output_path = _resolve_writable_path(Path(output_path))
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    if not Path(db_path).exists():
-        raise FileNotFoundError(f"BD no encontrada: {db_path}")
+    # get_connection lanza FileNotFoundError si el backend resuelto es sqlite y la BD no existe.
+    conn = get_connection(Path(db_path), backend=backend)
 
     if verbose:
         print(f"\nExportación -> {output_path}")
-        print(f"BD:            {db_path}")
+        print(f"BD:            {db_path if backend != 'postgres' else '(Postgres: FONDOS_PG_DSN)'}")
         print(f"Tablas:        {len(tables)}\n")
 
-    conn = sqlite3.connect(str(db_path))
     errors: list[str] = []
 
     try:
@@ -192,20 +254,12 @@ def export_tables(
                 try:
                     query = cfg.build_query(conn)
 
-                    if cfg.chunk_size > 0:
-                        # Streaming por bloques para tablas grandes
-                        chunks = pd.read_sql_query(
-                            query, conn, chunksize=cfg.chunk_size
-                        )
-                        df = pd.concat(chunks, ignore_index=True)
-                    else:
-                        df = pd.read_sql_query(query, conn)
+                    # chunk_size > 0: lectura por bloques para tablas grandes
+                    df = _read_table_df(conn, query, cfg.chunk_size)
 
                     # Excluir columnas (solo cuando NO se usó include_cols)
                     if not cfg.include_cols and cfg.exclude_cols:
-                        drop = [c for c in cfg.exclude_cols if c in df.columns]
-                        if drop:
-                            df = df.drop(columns=drop)
+                        df = _drop_excluded(df, cfg.exclude_cols)
 
                     df.to_excel(
                         writer,
@@ -236,6 +290,11 @@ def export_tables(
                     errors.append(msg)
                     if verbose:
                         print(f"  {msg}")
+                    # Postgres aborts the WHOLE transaction on a failed statement, so without this
+                    # every later table would fail with InFailedSqlTransaction and the "one bad
+                    # table doesn't abort the rest" guarantee above would silently not hold. A
+                    # no-op on SQLite (read-only queries leave no open transaction to roll back).
+                    conn.rollback()
 
     finally:
         conn.close()
