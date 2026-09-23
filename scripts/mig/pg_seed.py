@@ -45,6 +45,8 @@ Usage:
     python -X utf8 scripts/mig/pg_seed.py                  # run (resumable — see control.seed_progress)
     python -X utf8 scripts/mig/pg_seed.py --dry-run         # print the unit plan, touch nothing
     python -X utf8 scripts/mig/pg_seed.py --only bronze.fund_nav_daily   # single unit (debug)
+    # Refuses (exit 3) a target that already passed the reconciliation gate, or whose tables hold rows
+    # control.seed_progress does not record as loaded. --force-reseed bypasses only the first refusal.
 
 Environment:
     FONDOS_SQLITE_PATH   default: db/fondos.sqlite (relative to repo root)
@@ -791,10 +793,76 @@ def vacuum_freeze_all(pconn: psycopg.Connection) -> None:
 # Orchestration
 # =============================================================================
 
+# =============================================================================
+# Preflight: refuse a target this loader was not designed for.
+#
+# pg_seed is a ONE-SHOT loader for an EMPTY database (plan §P3). Found 2026-09-23: pointed at an
+# already-seeded database it dies half-way with a ForeignKeyViolation clearing silver.fund_families
+# (fund_master_family_fk was added after the original load), having already cleared other tables.
+# Worse, at the other extreme, nothing stopped it from TRUNCATE-ing a database that has since become
+# the live primary — the plan flagged exactly that ("needs a guard before Postgres is trusted as
+# primary"). So it fails FAST and CLEARLY instead of auto-purging: an auto-wipe fix would make the
+# seeder able to destroy live data, which is the worse failure of the two.
+# =============================================================================
+
+def _target_units() -> list[tuple[str, str, str]]:
+    """(seed_progress unit name, schema, table) for every table this loader writes."""
+    units: list[tuple[str, str, str]] = []
+    for spec in TABLE_SPECS:
+        if spec.partition_metrics:
+            units += [(f"gold.fmts_p_{m}", "gold", f"fmts_p_{m}") for m in spec.partition_metrics]
+        else:
+            units.append((f"{spec.schema}.{spec.table}", spec.schema, spec.table))
+    return units
+
+
+def gate_already_passed(pconn: psycopg.Connection) -> bool:
+    """A control.migration_state row is written only when pg_reconcile's full gate went green: the
+    database has been certified and may be the live primary."""
+    return bool(pconn.execute("SELECT EXISTS (SELECT 1 FROM control.migration_state)").fetchone()[0])
+
+
+def populated_but_not_recorded(pconn: psycopg.Connection, units: list[tuple[str, str, str]]) -> list[str]:
+    """Units whose target table holds rows that control.seed_progress does NOT record as loaded —
+    i.e. data this loader did not put there (or a progress table that was reset)."""
+    found = []
+    for unit, schema, table in units:
+        if seed_unit_done(pconn, unit):
+            continue
+        has_rows = pconn.execute(
+            sql.SQL("SELECT EXISTS (SELECT 1 FROM {})").format(sql.Identifier(schema, table))
+        ).fetchone()[0]
+        if has_rows:
+            found.append(unit)
+    return found
+
+
+def preflight(pconn: psycopg.Connection, *, force_reseed: bool, only: Optional[str]) -> Optional[str]:
+    """Error message if it is unsafe to proceed, else None."""
+    if gate_already_passed(pconn) and not force_reseed:
+        return ("control.migration_state has a row: this database already passed the reconciliation "
+                "gate and may be the live primary. Re-seeding TRUNCATEs tables and would overwrite "
+                "live data, so it is refused. Pass --force-reseed only for a database you know is "
+                "disposable.")
+    if not only:
+        bad = populated_but_not_recorded(pconn, _target_units())
+        if bad:
+            shown = ", ".join(bad[:5]) + (f" (+{len(bad) - 5} more)" if len(bad) > 5 else "")
+            return (f"these tables already contain rows that control.seed_progress does not record as "
+                    f"loaded: {shown}. pg_seed is a one-shot loader for an EMPTY database — on a "
+                    f"populated one it fails mid-load with a ForeignKeyViolation. Recreate the "
+                    f"database from db/pg/00_roles_schemas.sql .. 40_matviews.sql and seed that. (To "
+                    f"resume a crashed load, re-run without touching control.seed_progress.)")
+    return None
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--dry-run", action="store_true", help="print the unit plan, touch nothing")
     parser.add_argument("--only", help="load a single unit, e.g. bronze.fund_nav_daily (debug)")
+    parser.add_argument("--force-reseed", action="store_true",
+                        help="bypass the refusal to seed a database that already passed the "
+                             "reconciliation gate (only for a database you know is disposable)")
     args = parser.parse_args()
 
     sqlite_path = Path(os.environ.get("FONDOS_SQLITE_PATH", str(DEFAULT_SQLITE_PATH)))
@@ -824,6 +892,10 @@ def main() -> int:
         return 0
 
     with psycopg.connect(pg_dsn) as pconn:
+        problem = preflight(pconn, force_reseed=args.force_reseed, only=args.only)
+        if problem:
+            print(f"ERROR: {problem}", file=sys.stderr)
+            return 3
         for spec in TABLE_SPECS:
             unit_label = f"{spec.schema}.{spec.table}"
             if args.only and args.only != unit_label:
