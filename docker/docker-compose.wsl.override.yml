@@ -1,0 +1,30 @@
+# docker-compose.wsl.override.yml — the LIVE Postgres 17 on the WSL2 dev/prod-interim host.
+#
+# The repo's docker-compose.yml targets the eventual Ubuntu host (/var/lib/fondos-pgdata, port
+# 5432). On this WSL2 box port 5432 belongs to the separate Postgres 15 dev/test server
+# (`pg-server`, /opt/docker/db/postgresql), so the live stack is redirected with this override:
+#   - published port 5436
+#   - data + secret under /opt/docker/db/postgresql17/ (same 940 GB disk as the rest of WSL;
+#     NOT /tmp, which is a 3.9 GB RAM-backed tmpfs in this distro)
+# Everything else (image, command, healthcheck, mem_limit, DDL mount, postgresql.conf) is the base
+# file, unmodified. Only paths and the port are host-specific; no secret is stored here.
+#
+# Bring it up / recreate it (from any directory, inside WSL):
+#   docker compose -p docker \
+#     -f /mnt/c/desarrollo/fondos/docker/docker-compose.yml \
+#     -f /mnt/c/desarrollo/fondos/docker/docker-compose.wsl.override.yml \
+#     up -d postgres
+# (the same command is saved as /opt/docker/db/postgresql17/up.sh)
+#
+# Data/secret layout:  /opt/docker/db/postgresql17/{data,secrets,backups}
+services:
+  postgres:
+    # !override REPLACES the base ports list (Compose's default list-merge would append and also
+    # request 5432, which is taken).
+    ports: !override
+      - "5436:5432"
+    volumes:
+      - /opt/docker/db/postgresql17/data:/var/lib/postgresql/data
+secrets:
+  postgres_password:
+    file: /opt/docker/db/postgresql17/secrets/postgres_password
