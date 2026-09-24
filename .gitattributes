@@ -9,3 +9,6 @@
 *.txt  text eol=lf
 *.json text eol=lf
 *.yml  text eol=lf
+
+# Shell scripts run under bash/WSL: CRLF breaks them (": command not found")
+*.sh   text eol=lf
