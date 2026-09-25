@@ -25,6 +25,27 @@ services:
       - "5436:5432"
     volumes:
       - /opt/docker/db/postgresql17/data:/var/lib/postgresql/data
+      # FND-0071: WAL archive + physical base backups (PITR). Created/owned by
+      # scripts/ops/setup_wal_archive.sh. create_host_path:false => compose REFUSES to start if the
+      # directory is missing, instead of silently creating a root-owned one that would make
+      # archive_command fail and let pg_wal fill the disk.
+      - type: bind
+        source: /opt/docker/db/postgresql17/pitr
+        target: /pitr
+        bind:
+          create_host_path: false
+    # Command-line -c beats postgresql.conf (which stays the shared, host-agnostic base file).
+    # Atomic, never overwrites: copy to .tmp then rename; a non-zero exit makes Postgres retry.
+    # archive_timeout bounds the recovery-point objective on quiet periods (only forces a switch
+    # when there was WAL activity since the last one).
+    command: !override
+      - postgres
+      - -c
+      - config_file=/etc/postgresql/postgresql.conf
+      - -c
+      - archive_command=test ! -f /pitr/wal/%f && cp %p /pitr/wal/%f.tmp && mv /pitr/wal/%f.tmp /pitr/wal/%f
+      - -c
+      - archive_timeout=900
 secrets:
   postgres_password:
     file: /opt/docker/db/postgresql17/secrets/postgres_password
