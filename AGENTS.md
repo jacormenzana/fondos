@@ -323,6 +323,7 @@ proyecto2/
       test_nav_discovery_writers_pg.py
       test_nav_monthly_write_20260913.py
     pipeline/
+      test_refresh_matviews_and_update_isin.py
       test_run_pipeline_writes_pg.py
     readers/
       test_db_readers_misc_pg.py

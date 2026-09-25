@@ -627,6 +627,26 @@ _P3_CONSUMED_METRICS: tuple[str, ...] = (
 )
 
 
+def _refresh_gold_matviews(conn, logger) -> bool:
+    """Refreshes the BI matviews (gold.mv_*) once, after the last per-ISIN commit (FND-0077).
+    Non-fatal by design: a stale BI layer must not fail a P2 run whose metrics are already
+    committed. Returns True on success. No-op (False) on SQLite, which has no matviews."""
+    if not is_postgres_connection(conn):
+        return False
+    try:
+        conn.execute("SELECT control.refresh_gold_matviews()")
+        conn.commit()
+        logger.info("[MATVIEW] gold.mv_* refreshed")
+        return True
+    except Exception as exc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        logger.warning(f"[MATVIEW] refresh_gold_matviews failed (non-fatal): {exc}")
+        return False
+
+
 def run(
     isins: list[str] | None = None,
     horizons_filter: list[str] | None = None,
@@ -1457,6 +1477,11 @@ def run(
                     f"[ROLLING] Motor rolling falló (no fatal): {exc}\n"
                     f"{traceback.format_exc()}"
                 )
+
+        # BI layer: refresh once, after every per-ISIN commit and the rolling engine.
+        if not dry_run and total_written > 0 and not _refresh_gold_matviews(conn, logger) \
+                and is_postgres_connection(conn):
+            n_warnings += 1
 
     except Exception as exc:
         status = "ERROR"

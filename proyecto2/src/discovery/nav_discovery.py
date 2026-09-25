@@ -1693,11 +1693,20 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=Non
 # Modo UPDATE
 # ============================================================
 
-def run_update(conn, dry_run, bearer_token=None, stale_days=3, monthly_grain=False):
+def _restrict_to_isins(rows, isins):
+    """Keeps only rows whose ISIN (first column) is in `isins`; None/empty = no restriction."""
+    if not isins:
+        return rows
+    wanted = {i.strip().upper() for i in isins}
+    return [r for r in rows if r[0].upper() in wanted]
+
+
+def run_update(conn, dry_run, bearer_token=None, stale_days=3, monthly_grain=False, isins=None):
     rows = conn.execute(
         "SELECT isin, source_id, last_nav_date FROM nav_sources "
         "WHERE status='OK' ORDER BY isin"
     ).fetchall()
+    rows = _restrict_to_isins(rows, isins)
 
     if not rows:
         print("No hay fondos con status=OK en nav_sources.")
@@ -2210,7 +2219,8 @@ def main():
                  stale_days    = args.stale_days)
     elif args.mode == "update":
         run_update(conn, dry_run=args.dry_run, bearer_token=args.bearer_token,
-                   stale_days=args.stale_days, monthly_grain=args.monthly_grain)
+                   stale_days=args.stale_days, monthly_grain=args.monthly_grain,
+                   isins=isins if args.isin else None)
     elif args.mode == "recalculate-monthly":
         isins_rcm = [args.isin.strip().upper()] if args.isin else None
         run_recalculate_monthly(conn, isins=isins_rcm, dry_run=args.dry_run)
