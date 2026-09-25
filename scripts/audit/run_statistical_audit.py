@@ -114,7 +114,9 @@ if str(_ROOT) not in sys.path:
 import pandas as pd
 
 from shared.config import DB_PATH, RISK_FREE_RATE_ANN
+from shared.db import get_connection, is_postgres_connection
 from shared.statistical_audit.catalog_cost_columns import COST_COLUMNS
+from shared.statistical_audit.catalog_version import compute_catalog_version
 from shared.statistical_audit.catalog_group_checks import COST_GROUP_CHECKS
 from shared.statistical_audit.catalog_invariants import COST_INVARIANTS, P2_INVARIANTS
 from shared.statistical_audit.catalog_metric_bounds import get_metric_bound
@@ -136,10 +138,37 @@ from shared.statistical_audit.invariants import (
 )
 from shared.statistical_audit.compare_runs import compare_runs, load_run_statistics
 from shared.statistical_audit.outliers import detect_outliers
-from shared.statistical_audit.persistence import emit_findings, emit_statistics, statistics_to_frame
+from shared.statistical_audit.persistence import clear_run, emit_findings, emit_statistics, statistics_to_frame
 from shared.statistical_audit.snapshot import build_population
 
 MIN_PEERS = 5
+
+
+# ============================================================
+# Backend dialect helpers (SQLite retired 2026-09-23; Postgres is primary).
+# Every query below is written once, unquoted, and adapted here rather than
+# duplicated per dialect.
+# ============================================================
+
+def _ph(conn) -> str:
+    # Runner-local `?` -> `%s` is safe: none of these queries touch jsonb, whose
+    # native `?` operator is why shared/db.py refuses a global translator.
+    return "%s" if is_postgres_connection(conn) else "?"
+
+
+def _sql(conn, query: str) -> str:
+    """Adapts a query written with `?` placeholders and a `{window}` slot for
+    the connected backend. fund_metric_timeseries.window is `window_label` in
+    Postgres (`window` is a reserved word there; db/pg/rename_map.yaml)."""
+    window_col = "window_label" if is_postgres_connection(conn) else "window"
+    return query.replace("{window}", window_col).replace("?", _ph(conn))
+
+
+def _restore_case(df: pd.DataFrame, canonical: tuple[str, ...]) -> pd.DataFrame:
+    """Postgres folds unquoted result columns to lowercase; the catalogs and
+    downstream code use the SQLite-declared spelling (e.g. ISIN, Fund_Nature)."""
+    by_lower = {c.lower(): c for c in canonical}
+    return df.rename(columns={c: by_lower[c.lower()] for c in df.columns if c.lower() in by_lower})
 
 
 # ============================================================
@@ -164,9 +193,20 @@ _COST_SCHEDULE_QUERY = """
 """
 
 
+_COST_MASTER_COLS = (
+    "ISIN", "Ongoing_Charge_Recurrent", "Entry_Fee_Pct", "Exit_Fee_Pct",
+    "Entry_Fee_Pct_Max", "Exit_Fee_Pct_Max", "Management_Fee_Pct",
+    "Transaction_Cost_Pct", "Performance_Fee_Pct", "Performance_Fee_Basis",
+    "ACI_1Y", "ACI_RHP", "Cost_RHP_Years",
+)
+_COST_SCHEDULE_COLS = (
+    "ISIN", "Horizon_Years", "Is_RHP", "Total_Costs_EUR", "Total_Costs_Pct", "Annual_Impact_Pct",
+)
+
+
 def run_cost_audit(conn: sqlite3.Connection) -> "AuditRun":
-    master = build_population(conn, _COST_MASTER_QUERY)
-    schedule = build_population(conn, _COST_SCHEDULE_QUERY)
+    master = _restore_case(build_population(conn, _COST_MASTER_QUERY), _COST_MASTER_COLS)
+    schedule = _restore_case(build_population(conn, _COST_SCHEDULE_QUERY), _COST_SCHEDULE_COLS)
     frames_by_table = {"fund_master": master, "fund_cost_schedule": schedule}
 
     run = AuditRun(domain="cost_attributes")
@@ -257,10 +297,10 @@ _TS_LATEST_QUERY = """
     JOIN (
         SELECT isin, real_flag, MAX(date) AS max_date
         FROM fund_metric_timeseries
-        WHERE metric = ? AND window = ?
+        WHERE metric = ? AND {window} = ?
         GROUP BY isin, real_flag
     ) latest ON latest.isin = t.isin AND latest.real_flag = t.real_flag AND latest.max_date = t.date
-    WHERE t.metric = ? AND t.window = ?
+    WHERE t.metric = ? AND t.{window} = ?
 """
 
 
@@ -303,7 +343,7 @@ def _latest_ipc_yoy(conn: sqlite3.Connection) -> float | None:
 
 
 def _fetch_latest_timeseries_snapshot(conn: sqlite3.Connection, metric: str, window: str) -> pd.DataFrame:
-    return pd.read_sql_query(_TS_LATEST_QUERY, conn, params=(metric, window, metric, window))
+    return pd.read_sql_query(_sql(conn, _TS_LATEST_QUERY), conn, params=(metric, window, metric, window))
 
 
 _TS_SERIES_SUMMARY_QUERY = """
@@ -311,7 +351,7 @@ _TS_SERIES_SUMMARY_QUERY = """
            MIN(date) AS min_date, MAX(date) AS max_date,
            COUNT(DISTINCT date) AS n_dates, COUNT(*) AS n_rows
     FROM fund_metric_timeseries
-    WHERE metric = ? AND window = ?
+    WHERE metric = ? AND {window} = ?
     GROUP BY isin, real_flag
 """
 
@@ -320,6 +360,7 @@ def _month_span(min_date: str, max_date: str) -> int:
     """Inclusive month count between two 'YYYY-MM-DD' dates (e.g. same month
     -> 1). Cheap string-slice parse -- these are always month-end dates
     written by the pipeline, never free-text."""
+    min_date, max_date = str(min_date), str(max_date)  # Postgres returns datetime.date
     y1, m1 = int(min_date[:4]), int(min_date[5:7])
     y2, m2 = int(max_date[:4]), int(max_date[5:7])
     return (y2 - y1) * 12 + (m2 - m1) + 1
@@ -346,7 +387,7 @@ def _run_timeseries_integrity(run: "AuditRun", conn: sqlite3.Connection) -> None
     """
     for metric in _SCALAR_TIMESERIES_METRICS:
         for window in _SCALAR_TIMESERIES_WINDOWS:
-            rows = conn.execute(_TS_SERIES_SUMMARY_QUERY, (metric, window)).fetchall()
+            rows = conn.execute(_sql(conn, _TS_SERIES_SUMMARY_QUERY), (metric, window)).fetchall()
             if not rows:
                 run.skipped.append(f"BLOCK5/6 TIMESERIES_INTEGRITY {metric}/{window}: no timeseries rows")
                 continue
@@ -400,7 +441,7 @@ def _periodic_return_variance(conn: sqlite3.Connection, isins: list[str]) -> pd.
     """
     if not isins:
         return pd.DataFrame(columns=["isin", "periodic_return_variance"])
-    placeholders = ",".join("?" for _ in isins)
+    placeholders = ",".join(_ph(conn) for _ in isins)
     nav_df = pd.read_sql_query(
         f"""SELECT ISIN AS isin, Date AS date, NAV AS nav FROM fund_nav_monthly
             WHERE ISIN IN ({placeholders}) ORDER BY ISIN, Date""",
@@ -417,8 +458,11 @@ def _periodic_return_variance(conn: sqlite3.Connection, isins: list[str]) -> pd.
     return variances
 
 
+_P2_METRICS_COLS = ("isin", "metric", "horizon", "value", "real_flag", "metric_version", "Fund_Nature")
+
+
 def run_p2_audit(conn: sqlite3.Connection) -> "AuditRun":
-    long_df = build_population(conn, _P2_METRICS_QUERY)
+    long_df = _restore_case(build_population(conn, _P2_METRICS_QUERY), _P2_METRICS_COLS)
 
     run = AuditRun(domain="p2_metrics")
     run.universe_size = int(long_df["isin"].nunique())
@@ -713,10 +757,13 @@ def _run_invariants(run: AuditRun, rules, frames: list[pd.DataFrame], block: str
 # ============================================================
 
 def _persist(conn: sqlite3.Connection, run: "AuditRun", run_id: str) -> tuple[int, int]:
+    catalog_version = compute_catalog_version()
+    clear_run(conn, run_id, run.domain)
     n_stats = 0
     for population, group_key, stats, n in run.statistics:
-        n_stats += emit_statistics(conn, run_id, run.domain, population, group_key, stats, n=n)
-    n_findings = emit_findings(conn, run_id, run.domain, run.findings)
+        n_stats += emit_statistics(conn, run_id, run.domain, population, group_key, stats, n=n,
+                                   catalog_version=catalog_version)
+    n_findings = emit_findings(conn, run_id, run.domain, run.findings, catalog_version=catalog_version)
     return n_stats, n_findings
 
 
@@ -782,7 +829,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--domain", choices=["costs", "p2"], required=True)
     parser.add_argument("--mode", choices=["report", "check"], default="report")
-    parser.add_argument("--db", default=str(DB_PATH))
+    parser.add_argument("--backend", choices=["sqlite", "postgres"], default=None,
+                        help="Default: FONDOS_DB_BACKEND (postgres since the 2026-09-23 cutover)")
+    parser.add_argument("--db", default=str(DB_PATH), help="SQLite path; only used with --backend sqlite")
     parser.add_argument("--persist", action="store_true")
     parser.add_argument("--run-id", default=None)
     parser.add_argument("--compare-to", default=None, help="Prior run_id to diff against (function #13)")
@@ -791,7 +840,7 @@ def main() -> int:
     run_id = args.run_id or datetime.now(timezone.utc).strftime("audit_%Y%m%dT%H%M%SZ")
     keep_open = args.persist or args.compare_to
 
-    conn = sqlite3.connect(args.db)
+    conn = get_connection(Path(args.db), backend=args.backend)
     try:
         run = run_cost_audit(conn) if args.domain == "costs" else run_p2_audit(conn)
     finally:

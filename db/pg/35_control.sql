@@ -113,6 +113,7 @@ CREATE TABLE IF NOT EXISTS control.audit_statistic (
     group_key               text        NOT NULL,   -- e.g. 'vol_ann|since_inception|0|v1'
     stat_name                 text        NOT NULL,   -- 'n_total' / 'p50' / 'skew' / 'zero_pct' / ...
     stat_text                   text,       -- status labels / non-numeric facts
+    catalog_version               text,       -- content hash of the catalogs+tolerances; NULL = pre-versioning
 
     CONSTRAINT audit_statistic_pkey PRIMARY KEY (run_id, domain, population, group_key, stat_name)
 );
@@ -138,6 +139,7 @@ CREATE TABLE IF NOT EXISTS control.audit_finding (
     isin                                       varchar(12),   -- NULL for population-level findings
     evidence                                     text,
     root_cause_candidate                           text,
+    catalog_version                                  text,   -- content hash of the catalogs+tolerances; NULL = pre-versioning
 
     CONSTRAINT audit_finding_isin_fk FOREIGN KEY (isin) REFERENCES silver.fund_master (isin) ON DELETE CASCADE
 );

@@ -38,6 +38,7 @@ def _make_audit_statistic(conn):
             stat_value  DOUBLE PRECISION,
             stat_text   TEXT,
             n           INTEGER,
+            catalog_version TEXT,
             PRIMARY KEY (run_id, domain, population, group_key, stat_name)
         )
     """)
@@ -61,7 +62,8 @@ def _make_audit_finding(conn):
             threshold             DOUBLE PRECISION,
             distance              DOUBLE PRECISION,
             evidence              TEXT,
-            root_cause_candidate  TEXT
+            root_cause_candidate  TEXT,
+            catalog_version       TEXT
         )
     """)
 
@@ -140,12 +142,12 @@ def test_emit_findings_writes_rows_with_missing_keys_as_null(
         "block": "BLOCK2", "rule_id": "R1", "rule_class": "STATISTICAL_ANOMALY",
         "severity": "WARN", "group_key": "Exit_Fee_Pct__EQUALS__Management_Fee_Pct",
     }]
-    n = emit_findings(conn, "run1", "cost_attributes", findings)
+    n = emit_findings(conn, "run1", "cost_attributes", findings, catalog_version="abc123def456")
     assert n == 1
     row = conn.execute(
-        "SELECT rule_id, severity, isin FROM audit_finding WHERE run_id='run1'"
+        "SELECT rule_id, severity, isin, catalog_version FROM audit_finding WHERE run_id='run1'"
     ).fetchone()
-    assert row == ("R1", "WARN", None)
+    assert row == ("R1", "WARN", None, "abc123def456")
 
     assert emit_findings(conn, "run1", "cost_attributes", []) == 0
 
@@ -218,3 +220,24 @@ def test_preserve_and_write_preserves_before_writing_and_rolls_back_on_failure(
     finally:
         conn.rollback()
         conn.autocommit = True
+
+
+def test_clear_run_makes_repersist_idempotent(pg_session_conn, pg_conn_module_schema):
+    from shared.statistical_audit.persistence import clear_run
+
+    conn = pg_session_conn
+    conn.execute(f"SET search_path = {pg_conn_module_schema}")
+    _make_audit_statistic(conn)
+    _make_audit_finding(conn)
+    finding = {"block": "BLOCK2", "rule_id": "R1", "rule_class": "STATISTICAL_ANOMALY",
+               "severity": "WARN", "group_key": "g"}
+
+    for _ in range(2):
+        clear_run(conn, "run1", "cost_attributes")
+        emit_statistics(conn, "run1", "cost_attributes", "GLOBAL", "g", {"p50": 1.0})
+        emit_findings(conn, "run1", "cost_attributes", [finding])
+    emit_findings(conn, "run2", "cost_attributes", [finding])
+
+    assert conn.execute("SELECT COUNT(*) FROM audit_finding WHERE run_id='run1'").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM audit_statistic WHERE run_id='run1'").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM audit_finding WHERE run_id='run2'").fetchone()[0] == 1

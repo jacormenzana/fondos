@@ -20,6 +20,8 @@ from typing import Sequence
 
 import pandas as pd
 
+from shared.db import is_postgres_connection
+
 DRIFT_STATS: tuple[str, ...] = (
     "n_valid", "null_pct", "coverage_pct", "mean", "p50", "sd", "p95",
     "zero_pct", "skew", "kurtosis",
@@ -36,9 +38,10 @@ class RunComparisonResult:
 
 
 def load_run_statistics(conn: sqlite3.Connection, run_id: str, domain: str) -> pd.DataFrame:
+    ph = "%s" if is_postgres_connection(conn) else "?"
     return pd.read_sql_query(
         "SELECT population, group_key, stat_name, stat_value FROM audit_statistic "
-        "WHERE run_id = ? AND domain = ?",
+        f"WHERE run_id = {ph} AND domain = {ph}",
         conn, params=(run_id, domain),
     )
 

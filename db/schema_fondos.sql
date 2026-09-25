@@ -922,6 +922,7 @@ CREATE TABLE IF NOT EXISTS audit_statistic (
     stat_value      REAL,               -- numeric statistics; NULL = not computed (never NaN)
     stat_text       TEXT,               -- status labels / non-numeric facts (mass_class, cv_status, ...)
     n               INTEGER,
+    catalog_version TEXT,               -- content hash of the catalogs+tolerances that produced the row; NULL = pre-versioning
 
     PRIMARY KEY (run_id, domain, population, group_key, stat_name)
 );
@@ -947,6 +948,7 @@ CREATE TABLE IF NOT EXISTS audit_finding (
     distance              REAL,
     evidence              TEXT,
     root_cause_candidate  TEXT,
+    catalog_version       TEXT,         -- content hash of the catalogs+tolerances that produced the row; NULL = pre-versioning
 
     FOREIGN KEY (isin) REFERENCES fund_master (ISIN) ON DELETE CASCADE
 );

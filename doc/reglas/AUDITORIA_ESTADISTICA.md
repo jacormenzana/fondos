@@ -535,6 +535,14 @@ nivel de población, no de fondo. Se proponen dos tablas nuevas, append-only, in
 Separar ambas tablas permite reevaluar umbrales sin recalcular distribuciones, y convierte
 `compare_runs` (§4 #13) en una consulta sobre `audit_statistic`, no en un mecanismo aparte.
 
+Ambas tablas llevan `catalog_version` (2026-09-25): hash de contenido (SHA-1, 12 hex) de
+`catalog_*.py` + `tolerances.py`, calculado por `catalog_version.compute_catalog_version()` en cada
+`--persist`. Permite atribuir un hallazgo al conjunto exacto de reglas/umbrales que lo produjo.
+`NULL` = fila anterior al versionado (no se fabrica una versión retroactiva). Es un hash y no una
+cadena manual (como `CALC_VERSION`) para que no pueda olvidarse de incrementar. Cambiar un umbral
+o un catálogo cambia el hash; comparar dos `run_id` con `catalog_version` distinta explica una
+deriva que no viene de los datos.
+
 ---
 
 ## §7. Correcciones a las especificaciones actuales de las dos skills

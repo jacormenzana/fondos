@@ -446,6 +446,7 @@ columns:
     distance: distance
     evidence: evidence
     root_cause_candidate: root_cause_candidate
+    catalog_version: catalog_version
 
   audit_statistic:
     # already lower_snake — no renames
@@ -458,3 +459,4 @@ columns:
     stat_value: stat_value
     stat_text: stat_text
     n: n
+    catalog_version: catalog_version

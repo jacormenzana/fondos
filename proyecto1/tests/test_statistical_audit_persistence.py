@@ -31,6 +31,7 @@ from shared.statistical_audit.persistence import (
     emit_findings,
     emit_statistics,
     preserve_and_write,
+    clear_run,
 )
 
 
@@ -65,6 +66,13 @@ class TestEmitStatistics:
         ).fetchone()[0]
         assert value is None
 
+    def test_catalog_version_stored_and_null_by_default(self):
+        conn = _memory_conn()
+        emit_statistics(conn, "v1", "p2_metrics", "GLOBAL", "g", {"p50": 1.0}, catalog_version="abc123def456")
+        emit_statistics(conn, "v0", "p2_metrics", "GLOBAL", "g", {"p50": 1.0})
+        got = dict(conn.execute("SELECT run_id, catalog_version FROM audit_statistic").fetchall())
+        assert got == {"v1": "abc123def456", "v0": None}  # NULL = pre-versioning, never a fabricated version
+
     def test_replace_semantics_on_rerun_same_run_id(self):
         conn = _memory_conn()
         emit_statistics(conn, "run1", "cost_attributes", "GLOBAL", "ACI_RHP", {"p50": 1.0})
@@ -90,9 +98,51 @@ class TestEmitFindings:
         ).fetchone()
         assert row == ("R1", "WARN", None)
 
+    def test_catalog_version_stored_on_findings(self):
+        conn = _memory_conn()
+        finding = {"block": "BLOCK2", "rule_id": "R1", "rule_class": "STATISTICAL_ANOMALY",
+                   "severity": "WARN", "group_key": "g"}
+        emit_findings(conn, "run1", "cost_attributes", [finding], catalog_version="abc123def456")
+        emit_findings(conn, "run2", "cost_attributes", [finding])
+        got = dict(conn.execute("SELECT run_id, catalog_version FROM audit_finding").fetchall())
+        assert got == {"run1": "abc123def456", "run2": None}
+
     def test_empty_findings_writes_nothing(self):
         conn = _memory_conn()
         assert emit_findings(conn, "run1", "cost_attributes", []) == 0
+
+
+class TestClearRun:
+    def _finding(self):
+        return {"block": "BLOCK2", "rule_id": "R1", "rule_class": "STATISTICAL_ANOMALY",
+                "severity": "WARN", "group_key": "g"}
+
+    def test_repersisting_same_run_id_does_not_duplicate(self):
+        conn = _memory_conn()
+        for _ in range(2):
+            clear_run(conn, "run1", "cost_attributes")
+            emit_statistics(conn, "run1", "cost_attributes", "GLOBAL", "g", {"p50": 1.0})
+            emit_findings(conn, "run1", "cost_attributes", [self._finding()])
+        assert conn.execute("SELECT COUNT(*) FROM audit_finding").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM audit_statistic").fetchone()[0] == 1
+
+    def test_removes_stale_stat_groups_from_a_previous_persist(self):
+        conn = _memory_conn()
+        emit_statistics(conn, "run1", "cost_attributes", "GLOBAL", "old_group", {"p50": 1.0})
+        clear_run(conn, "run1", "cost_attributes")
+        emit_statistics(conn, "run1", "cost_attributes", "GLOBAL", "new_group", {"p50": 2.0})
+        groups = [r[0] for r in conn.execute("SELECT group_key FROM audit_statistic")]
+        assert groups == ["new_group"]
+
+    def test_scoped_to_run_id_and_domain(self):
+        conn = _memory_conn()
+        emit_findings(conn, "run1", "cost_attributes", [self._finding()])
+        emit_findings(conn, "run1", "p2_metrics", [self._finding()])
+        emit_findings(conn, "run2", "cost_attributes", [self._finding()])
+        n_stats, n_findings = clear_run(conn, "run1", "cost_attributes")
+        assert n_findings == 1
+        left = sorted(conn.execute("SELECT run_id, domain FROM audit_finding").fetchall())
+        assert left == [("run1", "p2_metrics"), ("run2", "cost_attributes")]
 
 
 class TestPreserveAndWrite:

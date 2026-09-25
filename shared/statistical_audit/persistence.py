@@ -43,6 +43,7 @@ def emit_statistics(
     group_key: str,
     stats: Mapping[str, Any],
     n: int | None = None,
+    catalog_version: str | None = None,
 ) -> int:
     """One row per stats entry. Numeric values go to stat_value; NaN is
     stored as NULL (NULL means "not computed", matching profile_moments'/
@@ -54,26 +55,44 @@ def emit_statistics(
     rows = []
     for stat_name, value in stats.items():
         stat_value, stat_text = _split_value(value)
-        rows.append((run_id, domain, population, group_key, stat_name, stat_value, stat_text, n))
+        rows.append((run_id, domain, population, group_key, stat_name, stat_value, stat_text, n, catalog_version))
 
     if is_postgres_connection(conn):
         sql = (
             "INSERT INTO audit_statistic "
-            "(run_id, domain, population, group_key, stat_name, stat_value, stat_text, n) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) "
+            "(run_id, domain, population, group_key, stat_name, stat_value, stat_text, n, catalog_version) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
             "ON CONFLICT (run_id, domain, population, group_key, stat_name) DO UPDATE SET "
             "stat_value = excluded.stat_value, stat_text = excluded.stat_text, "
-            "n = excluded.n, computed_at = DEFAULT"
+            "n = excluded.n, catalog_version = excluded.catalog_version, computed_at = DEFAULT"
         )
     else:
         sql = (
             "INSERT OR REPLACE INTO audit_statistic "
-            "(run_id, domain, population, group_key, stat_name, stat_value, stat_text, n) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+            "(run_id, domain, population, group_key, stat_name, stat_value, stat_text, n, catalog_version) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
     executemany(conn, sql, rows)
     conn.commit()
     return len(rows)
+
+
+def clear_run(conn: sqlite3.Connection, run_id: str, domain: str) -> tuple[int, int]:
+    """Deletes any rows a previous persist left for (run_id, domain) so that
+    re-persisting the same run_id replaces it instead of duplicating findings
+    (audit_finding is a plain INSERT; audit_statistic's upsert would also leave
+    stale rows for groups a re-run no longer produces). Does NOT commit: the
+    caller's first emit_* commit lands the delete and the first inserts
+    together, so an interrupted persist rolls back to the prior run intact.
+    """
+    ph = "%s" if is_postgres_connection(conn) else "?"
+    n_findings = conn.execute(
+        f"DELETE FROM audit_finding WHERE run_id = {ph} AND domain = {ph}", (run_id, domain)
+    ).rowcount
+    n_stats = conn.execute(
+        f"DELETE FROM audit_statistic WHERE run_id = {ph} AND domain = {ph}", (run_id, domain)
+    ).rowcount
+    return n_stats, n_findings
 
 
 def statistics_to_frame(
@@ -113,6 +132,7 @@ def emit_findings(
     run_id: str,
     domain: str,
     findings: Sequence[Mapping[str, Any]],
+    catalog_version: str | None = None,
 ) -> int:
     """findings: mappings keyed by (a subset of) _FINDING_COLUMNS; any
     column absent from a given finding is written as NULL.
@@ -121,14 +141,14 @@ def emit_findings(
         return 0
 
     rows = [
-        (run_id, domain, *(f.get(col) for col in _FINDING_COLUMNS))
+        (run_id, domain, catalog_version, *(f.get(col) for col in _FINDING_COLUMNS))
         for f in findings
     ]
     ph = "%s" if is_postgres_connection(conn) else "?"
-    placeholders = ", ".join([ph] * (2 + len(_FINDING_COLUMNS)))
+    placeholders = ", ".join([ph] * (3 + len(_FINDING_COLUMNS)))
     executemany(
         conn,
-        f"INSERT INTO audit_finding (run_id, domain, {', '.join(_FINDING_COLUMNS)}) "
+        f"INSERT INTO audit_finding (run_id, domain, catalog_version, {', '.join(_FINDING_COLUMNS)}) "
         f"VALUES ({placeholders})",
         rows,
     )
