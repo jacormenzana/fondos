@@ -913,13 +913,9 @@ def _write_nav_rows_daily(conn, rows, dry_run) -> int:
 def _ensure_data_status_column(conn) -> None:
     """Migración idempotente v25: añade data_status a nav_sources si no existe."""
     if is_postgres_connection(conn):
-        # Postgres soporta ADD COLUMN IF NOT EXISTS de forma nativa -- no hace falta
-        # comprobar la columna antes (el target schema ya la define; esto es un no-op).
-        conn.execute("ALTER TABLE nav_sources ADD COLUMN IF NOT EXISTS data_status TEXT DEFAULT 'OK'")
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_nav_sources_data_status ON nav_sources (data_status)"
-        )
-        conn.commit()
+        # db/pg/35_control.sql ya define la columna y el indice. Ni siquiera un ALTER/CREATE
+        # INDEX IF NOT EXISTS no-op se permite sin ser owner de la tabla, asi que emitirlos
+        # aqui romperia bajo el rol de minimo privilegio fondos_app (FND-0072).
         return
     cols = {r[1] for r in conn.execute("PRAGMA table_info(nav_sources)").fetchall()}
     if "data_status" not in cols:

@@ -703,12 +703,11 @@ def run(
 
         conn = get_connection(backend=backend)
 
-        # EFF-1: add OLS cadence columns if not yet present (idempotent)
-        if is_postgres_connection(conn):
-            for _col, _ctype in [("last_ols_quarter", "TEXT"), ("last_ols_nav_count", "INTEGER")]:
-                conn.execute(f"ALTER TABLE fund_metric_state ADD COLUMN IF NOT EXISTS {_col} {_ctype}")
-                conn.commit()
-        else:
+        # EFF-1: add OLS cadence columns if not yet present (idempotent).
+        # Postgres: db/pg/35_control.sql already defines them; even a no-op
+        # ALTER ... IF NOT EXISTS requires table ownership, so issuing it at runtime
+        # would fail under the least-privilege fondos_app role (FND-0072).
+        if not is_postgres_connection(conn):
             for _col, _ctype in [("last_ols_quarter", "TEXT"), ("last_ols_nav_count", "INTEGER")]:
                 try:
                     conn.execute(f"ALTER TABLE fund_metric_state ADD COLUMN {_col} {_ctype}")

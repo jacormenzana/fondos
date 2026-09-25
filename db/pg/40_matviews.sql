@@ -132,8 +132,9 @@ BEGIN
   REFRESH MATERIALIZED VIEW CONCURRENTLY gold.mv_fmts_peer_stats;
   REFRESH MATERIALIZED VIEW CONCURRENTLY gold.mv_fmts_latest;
   REFRESH MATERIALIZED VIEW CONCURRENTLY gold.mv_fund_coverage;
+  -- format() has no %f: '%.1fs' raised "unrecognized format() type specifier" and rolled back the whole refresh.
   INSERT INTO control.p2_pipeline_log (step, status, message)
-    VALUES ('MV_REFRESH','OK', format('%.1fs', extract(epoch FROM clock_timestamp() - t0)));
+    VALUES ('MV_REFRESH','OK', to_char(extract(epoch FROM clock_timestamp() - t0), 'FM990.0') || 's');
   PERFORM pg_advisory_unlock(hashtext('refresh_gold_matviews'));
 EXCEPTION WHEN OTHERS THEN
   PERFORM pg_advisory_unlock(hashtext('refresh_gold_matviews'));

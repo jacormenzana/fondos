@@ -235,25 +235,23 @@ def test_write_nav_rows_daily_deletes_stale_source_and_upserts(
     assert _write_nav_rows_daily(conn, [], dry_run=False) == 0
 
 
-def test_ensure_data_status_column_is_idempotent(pg_session_conn, pg_conn_module_schema):
+def test_ensure_data_status_column_issues_no_ddl_on_postgres(pg_session_conn, pg_conn_module_schema):
+    # The column/index belong to db/pg/35_control.sql. Even a no-op ALTER ... IF NOT EXISTS needs table
+    # ownership, so runtime DDL would fail under the least-privilege fondos_app role (FND-0072).
     conn = pg_session_conn
     conn.execute(f"SET search_path = {pg_conn_module_schema}")
     _make_nav_sources(conn, with_data_status=False)
 
-    cols_before = {r[0] for r in conn.execute(
-        "SELECT column_name FROM information_schema.columns "
-        f"WHERE table_schema='{pg_conn_module_schema}' AND table_name='nav_sources'"
-    ).fetchall()}
-    assert "data_status" not in cols_before
+    def _cols():
+        return {r[0] for r in conn.execute(
+            "SELECT column_name FROM information_schema.columns "
+            f"WHERE table_schema='{pg_conn_module_schema}' AND table_name='nav_sources'"
+        ).fetchall()}
 
+    before = _cols()
     _ensure_data_status_column(conn)
-    _ensure_data_status_column(conn)  # second call must not raise (IF NOT EXISTS)
-
-    cols_after = {r[0] for r in conn.execute(
-        "SELECT column_name FROM information_schema.columns "
-        f"WHERE table_schema='{pg_conn_module_schema}' AND table_name='nav_sources'"
-    ).fetchall()}
-    assert "data_status" in cols_after
+    _ensure_data_status_column(conn)
+    assert _cols() == before and "data_status" not in _cols()
 
 
 def test_overwrite_nav_rows_monthly_replaces_full_history(
