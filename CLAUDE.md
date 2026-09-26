@@ -18,6 +18,13 @@ These are the only Claude-Code-specific notes; everything else is in `AGENTS.md`
 - **AST validation after every Python edit** (P#3 / R-8):
   `python -c "import ast; ast.parse(open('archivo.py').read()); print('AST OK')"`
 - Use the session scratchpad directory for temporary files, not the project tree.
+- **Live Postgres:** the operational store is PG17 in the `fondos_postgres` container
+  (`127.0.0.1:5436`, `/opt/docker/db/postgresql17/`, recreate with its `up.sh`); the repo `.env`
+  selects it (`FONDOS_DB_BACKEND=postgres`, `FONDOS_PG_DSN` = `fondos_app`, `FONDOS_PG_DSN_OWNER` =
+  `fondos_owner`). `pg-server` (`:5432`) is the disposable dev/test server. Ops scripts are in
+  `scripts/ops/`; hermetic tests: `C:\data\envs\des\python.exe scripts/ops/run_pg_tests.py`. Never
+  print DSN passwords, and never stop/recreate the live container from a session (ask the user to
+  run the script). Backlog: `gestion.backlog` (same server, dbname `gestion`).
 - **WSL2-hosted Postgres (dev/rehearsal containers `pg-server`, `fondos_postgres`):** WSL2
   idle-shuts-down the Ubuntu distro when no `wsl` process is attached, SIGTERM-ing every container;
   the next `wsl` call cold-boots it. Symptom: containers show `Up 1-2 seconds`, connections time out.

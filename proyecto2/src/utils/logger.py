@@ -52,10 +52,26 @@ class _StructuredFmt(logging.Formatter):
         else:
             idx_str = "[    /    ]"
 
-        return (
+        line = (
             f"{idx_str} | {ts} | {self._run_id} | {isin} | "
             f"{record.levelname} | {ev_type} | {detail} | {count} | {dur_ms}"
         )
+        # FND-0067: FUND-ERR passes the traceback as the log MESSAGE (p2_evt overrides the event
+        # column, so getMessage() was never printed), and logger.exception() carries it in
+        # exc_info. Append whichever exists, indented under the line, so a per-fund failure
+        # keeps its file/line and the fixed-column layout of the first line is untouched.
+        tb = ""
+        if getattr(record, "p2_evt", None) is not None:
+            msg = record.getMessage()
+            if "Traceback (most recent call last)" in msg:
+                tb = msg
+        if not tb and record.exc_info:
+            tb = self.formatException(record.exc_info)
+        if not tb and record.exc_text:
+            tb = record.exc_text
+        if tb:
+            line += "\n" + "\n".join("    " + ln for ln in tb.rstrip().splitlines())
+        return line
 
 
 def get_pipeline_logger(run_id: str = "pipeline") -> logging.Logger:

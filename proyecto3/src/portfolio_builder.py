@@ -562,18 +562,23 @@ class PortfolioBuilder:
         # Positional tuple-unpacking below means the SELECT's column NAME doesn't matter, only
         # the reference in FROM must resolve to the real physical column.
         _role_col = "position_role" if is_postgres_connection(self.conn) else "role"
+        # FND-0063: fund_nature comes from fund_master (LEFT JOIN: a fund dropped from the master
+        # since the previous cycle must not lose its row) -- Portfolio.summary() reads it for
+        # every fund, so a dict without it raised KeyError on the load_previous() -> summary() path.
         weight_rows = self.conn.execute(f"""
-            SELECT isin, block, weight, {_role_col}
-            FROM portfolio_weights
-            WHERE scenario_id = {_ph}
+            SELECT pw.isin, pw.block, pw.weight, pw.{_role_col},
+                   COALESCE(fm.Fund_Nature, 'Desconocida')
+            FROM portfolio_weights pw
+            LEFT JOIN fund_master fm ON fm.ISIN = pw.isin
+            WHERE pw.scenario_id = {_ph}
         """, (scenario_id,)).fetchall()
         if not weight_rows:
             return None
 
         sub_map: dict[str, list[dict]] = {}
-        for isin, block, weight, role in weight_rows:
+        for isin, block, weight, role, nature in weight_rows:
             sub_map.setdefault(block, []).append({
-                "isin": isin, "weight": weight, "role": role,
+                "isin": isin, "weight": weight, "role": role, "fund_nature": nature,
             })
 
         try:

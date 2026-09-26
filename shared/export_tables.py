@@ -277,7 +277,9 @@ def export_tables(
 
     if verbose:
         print(f"\nExportación -> {output_path}")
-        print(f"BD:            {db_path if backend != 'postgres' else '(Postgres: FONDOS_PG_DSN)'}")
+        # FND-0097: `backend` is None when it comes from FONDOS_DB_BACKEND, so ask the live
+        # connection which store it really is instead of assuming SQLite.
+        print(f"BD:            {'(Postgres: FONDOS_PG_DSN)' if is_postgres_connection(conn) else db_path}")
         print(f"Tablas:        {len(tables)}\n")
 
     errors: list[str] = []

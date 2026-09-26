@@ -144,7 +144,9 @@ def export_p1(
     Devuelve la ruta del fichero generado.
     """
     print(f"DEBUG _ROOT     = {_ROOT}")
-    print(f"DEBUG DB_PATH   = {DB_PATH}")
+    # FND-0097: only meaningful for the sqlite backend; the actual store is printed by
+    # export_tables ("BD:" line) once the connection is open.
+    print(f"DEBUG DB_PATH   = {DB_PATH}  (solo backend sqlite)")
     print(f"DEBUG EXPORT_DIR= {EXPORT_DIR}")
 
     # Validar block contra whitelist (safe interpolation guard)

@@ -96,13 +96,16 @@ def test_load_previous_uses_position_role_column(pg_session_conn, pg_conn_module
             PRIMARY KEY (scenario_id, isin)
         )
     """)
+    conn.execute("CREATE TABLE fund_master (isin text PRIMARY KEY, fund_nature text)")
+    conn.execute("INSERT INTO fund_master VALUES ('X1', 'Renta Variable')")
     conn.execute("""
         INSERT INTO portfolio_scenarios VALUES
         ('scn_old', 'Defensiva', 'Expansion', '2026-08-01', %s)
     """, (json.dumps({"oil_yoy": 0.01}),))
     conn.execute("""
         INSERT INTO portfolio_weights VALUES
-        ('scn_old', 'X1', 'Defensiva', 0.15, 'core', NULL)
+        ('scn_old', 'X1', 'Defensiva', 0.15, 'core', NULL),
+        ('scn_old', 'GONE', 'Defensiva', 0.05, 'core', NULL)
     """)
 
     builder = PortfolioBuilder(conn)
@@ -112,5 +115,10 @@ def test_load_previous_uses_position_role_column(pg_session_conn, pg_conn_module
     # before the fix — portfolio_weights has no "role" column on Postgres, only position_role.
     assert prev is not None
     assert prev.scenario_id == "scn_old"
-    assert prev.sub_portfolios[0].funds[0]["isin"] == "X1"
-    assert prev.sub_portfolios[0].funds[0]["role"] == "core"
+    funds = {f["isin"]: f for f in prev.sub_portfolios[0].funds}
+    assert funds["X1"]["role"] == "core"
+    # FND-0063: fund_nature is loaded (and a fund missing from fund_master keeps its row), so
+    # summary() -- which reads f["fund_nature"] for every fund -- no longer raises KeyError.
+    assert funds["X1"]["fund_nature"] == "Renta Variable"
+    assert funds["GONE"]["fund_nature"] == "Desconocida"
+    assert "Renta Variable" in prev.summary()

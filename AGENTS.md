@@ -89,17 +89,33 @@ logs the action to `BACKLOG_LOGS`.
 ## Context
 
 ~3,200 European investment funds. Goal: capital preservation relative to IPC+M3 (~6–7% annual, max drawdown 15%, 3–5 year horizon).  
-Stack: Python 3.13, SQLite, Windows 10, Conda env `des`.  
+Stack: Python 3.13, PostgreSQL 17 (live operational store), Windows 10, Conda env `des`.  
 <!-- AUTO:BEGIN schema-version -->
 DB: `db/fondos.sqlite` (schema v26). Master list: `c:\data\fondos\in\GestoresDeFondosv1.xlsx`.
 <!-- AUTO:END schema-version -->
 
-**⚠ Migration in progress (announced 2026-09-17):** the operational store above (SQLite) is being
-migrated to PostgreSQL, target host Ubuntu 24.04 / Docker. P1+P2 infrastructure artifacts
-(`docker/`, `db/pg/*.sql`, `scripts/mig/pg_seed.py`, `scripts/mig/pg_reconcile.py`) are committed
-but **not yet deployed** — SQLite remains the live operational database until the reconciliation
-gate passes and the 3-stage cutover (dual-write → bake → retire) completes. See
-`doc/reglas/P4_BI_CHARTER.md` §0 for current status and the migration plan for the full design.
+**Live store = PostgreSQL 17 (cutover executed 2026-09-23).** The `db/fondos.sqlite` line above is
+the **retired** SQLite file: sealed read-only (`chmod 444`), frozen at the cutover, kept only as the
+migration baseline — never write to it and never read it as current data. The repo `.env`
+(git-ignored) sets `FONDOS_DB_BACKEND=postgres`; every process prints `[DB] backend=postgres (env)`.
+
+| Item | Where |
+|------|-------|
+| Live server | Docker container `fondos_postgres` (PG17) in WSL2 Ubuntu, `127.0.0.1:5436`, data under `/opt/docker/db/postgresql17/` — compose: `docker/docker-compose.yml` + `docker/docker-compose.wsl.override.yml` |
+| Schemas | `bronze` / `silver` / `gold` / `control` (DDL: `db/pg/`, column renames: `db/pg/rename_map.yaml`) |
+| Pipeline role | `FONDOS_PG_DSN` → `fondos_app` (DML only). Runtime code must **never** issue DDL |
+| Owner role | `FONDOS_PG_DSN_OWNER` → `fondos_owner` (seeds, migrations, DDL; swap dbname to `gestion` for the backlog) |
+| Read-only roles | `fondos_ro` (analyst), `superset_ro` (BI: silver+gold) |
+| Dev/test server | `pg-server` (PG15, `:5432`) — disposable; never share a server between tests and live data |
+| Ops scripts | `scripts/ops/` — `backup_live_pg.sh`, `setup_wal_archive.sh`, `create_readonly_roles.sh`, `apply_benchmark_ms_checks.py`, `run_pg_tests.py` |
+
+Postgres tests: `python scripts/ops/run_pg_tests.py` (hermetic throwaway container, no credentials).
+Dialect rules learned in the migration (psycopg3 `with conn:` closes the connection, lowercase
+column folding, `date` objects) are enforced by `tests/test_dialect_coverage.py` and
+`tests/test_sql_explain_sweep_pg.py`; see `doc/reglas/NORMAS_IMPLEMENTACION.md` §7 before adding SQL.
+Recovery state (WAL archiving / PITR, off-box copy) is tracked in `gestion.backlog` (FND-0070,
+FND-0071) — check it before any operation that assumes a restore point exists.
+See `doc/reglas/P4_BI_CHARTER.md` §0 for the migration design.
 
 ---
 
@@ -109,7 +125,7 @@ gate passes and the 3-stage cutover (dual-write → bake → retire) completes. 
 P1  Ingestion + classification     → ACTIVE
 P2  Quantitative metrics           → ACTIVE
 P3  Regime-aware scoring + portfolio → ACTIVE (modules exist, production use evolving)
-P4  Analytics/BI sync (SQLite → Postgres + Superset) → ACTIVE (rolling-signal visualization)
+P4  Analytics/BI (read-only roles on the live Postgres; legacy SQLite mirror retired) → ACTIVE
 
 Flow: P1 → P2 → P3 → P4  (unidirectional)
 ```
@@ -336,6 +352,7 @@ proyecto2/
       test_rolling_dashboard_pg.py
     utils/
       test_fingerprint.py
+      test_logger_structured.py
     writers/
       test_metrics_writer_pg.py
       test_timeseries_writer.py
@@ -366,7 +383,7 @@ proyecto2/
 Runs are idempotent via an input fingerprint: `utils/fingerprint.py::compute_input_hash()` (SHA-1 over NAV
 last-date/rows/value + IPC coverage + `METRIC_VERSION` + `CALC_VERSION`) is stored in `fund_metric_state`.
 Unchanged inputs → 100% cache-hit, 0 recomputed. **Bump `CALC_VERSION` (`run_pipeline.py`, currently
-`"20260820"`) to force a full recompute** of all ISINs (e.g. after changing calculation logic).
+`"20260918"`) to force a full recompute** of all ISINs (e.g. after changing calculation logic).
 
 ### Macro factors (OLS model — machine-verified)
 
@@ -514,17 +531,17 @@ Weight method: `score_proportional`.
 **Two things live under "P4" right now — do not conflate them.** See `doc/reglas/P4_BI_CHARTER.md`
 §0 for the full picture; summary here:
 
-1. **The BI mirror (ACTIVE today, described below)** — pushes SQLite metric tables to a Docker
-   Postgres analytics store (port 5433) and surfaces them in Superset for rolling-signal
-   visualization. This is the only P4 pipeline actually in production.
-2. **The full operational migration (artifacts committed, NOT deployed)** — the complete P1+P2+P3
-   database is migrating to PostgreSQL as the operational store (port 5432, target Ubuntu host),
-   superseding #1 in scope once cut over. Artifacts: `docker/docker-compose.yml`,
+1. **The legacy BI mirror (SUPERSEDED by the cutover, described below for history)** — pushed
+   SQLite metric tables to a Docker Postgres analytics store (port 5433) for Superset. The source
+   SQLite is now sealed, so `P4_syncToPostgres.bat` refuses to run; BI reads the live store through
+   the read-only roles (`gold.mv_*` matviews, refreshed at the end of each P2 run).
+2. **The operational migration (DEPLOYED 2026-09-23)** — the complete P1+P2+P3 database now lives
+   in PostgreSQL 17 (live server: see the Context table above). Artifacts: `docker/docker-compose.yml`,
    `docker/postgresql.conf`, `db/pg/00_roles_schemas.sql` … `40_matviews.sql`,
-   `db/pg/rename_map.yaml`, `scripts/mig/pg_seed.py`, `scripts/mig/pg_reconcile.py`. Do not treat
-   these as live infrastructure — nothing has run against the target host yet.
+   `db/pg/rename_map.yaml`, `scripts/mig/pg_seed.py` (one-shot on an EMPTY database),
+   `scripts/mig/pg_reconcile.py`.
 
-### BI mirror (#1 above — current production pipeline)
+### Legacy BI mirror (#1 above — historical)
 
 | Component | Path / Target |
 |-----------|---------------|

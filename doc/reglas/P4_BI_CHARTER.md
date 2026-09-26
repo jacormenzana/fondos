@@ -11,13 +11,14 @@ abajo (§1-§6) deja de ser el fin último y pasa a ser un subconjunto/precursor
 completa. La §7 "Postgres solo para analytics" ya **no es cierta** como restricción futura — es
 la restricción del estado *anterior* a la migración, documentada aquí por completitud histórica.
 
-**Estado real a fecha de esta revisión:** los artefactos de infraestructura P1+P2 de la migración
-completa ya están commiteados (`docker/docker-compose.yml`, `docker/postgresql.conf`,
-`db/pg/00_roles_schemas.sql` … `40_matviews.sql`, `db/pg/rename_map.yaml`) junto con el loader de
-seed y el gate de reconciliación (`scripts/mig/pg_seed.py`, `scripts/mig/pg_reconcile.py`) — pero
-**nada de esto se ha desplegado todavía contra el Dell OptiPlex objetivo**. La réplica BI descrita
-en §1-§8 sigue siendo el único pipeline P4 en producción hoy. No confundir "artefactos committeados"
-con "migración ejecutada".
+**Estado real (actualizado 2026-09-26):** el cutover se ejecutó el 2026-09-23. La base operacional
+completa (P1+P2+P3) vive en PostgreSQL 17 (contenedor `fondos_postgres`, `127.0.0.1:5436`,
+esquemas `bronze`/`silver`/`gold`/`control`), SQLite quedó sellado en solo lectura como línea base
+de la migración, y los pipelines corren con el rol `fondos_app`. La réplica BI descrita en §1-§8 es
+**histórica**: `shared/load_fondos_to_postgres.py` se niega a ejecutarse con
+`FONDOS_DB_BACKEND=postgres`; BI lee el store vivo mediante los roles de solo lectura
+(`fondos_ro`, `superset_ro`) y las matviews `gold.mv_*`. Ver `AGENTS.md` (sección Context) para el
+mapa operativo vigente.
 
 ---
 
