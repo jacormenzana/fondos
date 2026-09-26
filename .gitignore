@@ -33,3 +33,6 @@ scripts/launch/180
 
 # Local environment file (backend switch, DSNs) — loaded by shared/config.py; never commit
 .env
+
+# Local credentials scratch file (FND-0079: was untracked and NOT ignored) - never commit
+passwords.txt
