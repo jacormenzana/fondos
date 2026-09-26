@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import json
 import os
-import sqlite3
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -41,6 +40,8 @@ sys.path.insert(0, str(_REPO))
 # proyecto1/tests/test_audit_fixes_20260715.py.
 sys.path.insert(0, str(_REPO / "proyecto1" / "core"))
 
+from shared.db import get_connection
+from shared.export_tables import legacy_columns
 from proyecto1.core.classify_utils import (
     SECTOR_FOCUS_TRANSLATION_MAP,
     THEME_TO_SECTOR_FOCUS_MAP,
@@ -64,9 +65,6 @@ from proyecto1.core.classify_utils import (
     bmk_severity_nature,
 )
 from kiid_parser import detect_wrong_kiid_document
-
-# ── DB path ───────────────────────────────────────────────────────────────────
-DB_PATH = _REPO / "db" / "fondos.sqlite"
 
 # ── Local aliases → SC-H canonical vocabulary (R-1 / 2026-07-15) ─────────────
 # All benchmark-comparison constants and helpers have been promoted to
@@ -164,24 +162,35 @@ def _root_cause_credit(fm_cq: str, bmk_cq: str, bmk_name: str) -> str:
 
 # ── Main audit ────────────────────────────────────────────────────────────────
 
-def run_audit(db_path: Path = DB_PATH) -> dict:
-    """Run the full audit. Returns a structured findings dict."""
-    con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-    con.row_factory = sqlite3.Row
+def _fetch_dicts(cur, table: str) -> list[dict]:
+    """Rows of an already-executed read-only cursor as dicts keyed by the SQLite spelling of each
+    column (`ISIN`, `Fund_Nature`). Postgres folds result names to lowercase (`isin`), so the keys
+    are mapped back through the single rename map (shared.export_tables.legacy_columns) — the audit
+    logic below indexes rows by the legacy spelling and stays identical on both backends (FND-0069).
+    The SQL is executed at the call sites (literals), so tests/test_sql_explain_sweep_pg.py sees it."""
+    legacy = legacy_columns(table)
+    cols = [legacy.get(d[0], d[0]) for d in cur.description]
+    return [dict(zip(cols, tuple(row))) for row in cur.fetchall()]
+
+
+def run_audit(db_path: Optional[Path] = None, backend: Optional[str] = None) -> dict:
+    """Run the full audit. Returns a structured findings dict.
+
+    Read-only. `backend` None resolves FONDOS_DB_BACKEND (postgres after the 2026-09-23 cutover);
+    `db_path` only applies to the sqlite backend (default: shared.config.DB_PATH)."""
+    con = get_connection(Path(db_path) if db_path else None, backend=backend)
 
     # ── Load data ──────────────────────────────────────────────────────────────
-    bmk_rows = con.execute(
-        "SELECT * FROM fund_benchmarks ORDER BY ISIN, source"
-    ).fetchall()
-    fm_rows = con.execute(
+    bmk_rows = _fetch_dicts(
+        con.execute("SELECT * FROM fund_benchmarks ORDER BY ISIN, source"), "fund_benchmarks")
+    fm_rows = _fetch_dicts(con.execute(
         "SELECT ISIN, Fund_Name, Fund_Nature, Geography, Sector_Focus, Theme, "
         "       Market_Cap_Focus, Fund_Currency, Asset_Currency, Hedging_Policy, "
         "       Credit_Quality, Duration_Profile, Benchmark_Declared, Benchmark_Type, "
         "       Alt_Strategy, SRRI, Management_Company "
-        "FROM fund_master"
-    ).fetchall()
+        "FROM fund_master"), "fund_master")
 
-    fm: dict[str, dict] = {r["ISIN"]: dict(r) for r in fm_rows}
+    fm: dict[str, dict] = {r["ISIN"]: r for r in fm_rows}
 
     # WRONG_DOC / stale-classification detection per ISIN — a WRONG_DOC fund's
     # fund_master row is a KNOWN-stale echo of a prior cycle (publish_fund is
@@ -201,10 +210,9 @@ def run_audit(db_path: Path = DB_PATH) -> dict:
     # ('FORCE_REFRESH') alone does not. So re-run the same detector here
     # (DRY / P#11 — no new detection logic) against the cached text directly.
     kiid_status: dict[str, str] = {}
-    for r in con.execute(
-        "SELECT ISIN, KIID_Status, Raw_KIID_Text FROM fund_kiid_metadata "
-        "WHERE KIID_Class=1"
-    ).fetchall():
+    for r in _fetch_dicts(con.execute(
+        "SELECT ISIN, KIID_Status, Raw_KIID_Text FROM fund_kiid_metadata WHERE KIID_Class=1"
+    ), "fund_kiid_metadata"):
         status = r["KIID_Status"]
         if status != "WRONG_DOC" and detect_wrong_kiid_document(r["Raw_KIID_Text"]):
             status = "WRONG_DOC"  # live-detected, regardless of stored status
@@ -213,7 +221,7 @@ def run_audit(db_path: Path = DB_PATH) -> dict:
     # Group benchmarks by ISIN → list[row]
     bmk_by_isin: dict[str, list] = defaultdict(list)
     for r in bmk_rows:
-        bmk_by_isin[r["ISIN"]].append(dict(r))
+        bmk_by_isin[r["ISIN"]].append(r)
 
     # ─────────────────────────────────────────────────────────────────────────
     # EXERCISE A — Multi-benchmark ISINs
@@ -740,14 +748,15 @@ if __name__ == "__main__":
         _sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
     parser = argparse.ArgumentParser(description="Benchmark consistency audit (read-only)")
-    parser.add_argument("--db",  default=str(DB_PATH),
-                        help="Path to fondos.sqlite (default: db/fondos.sqlite)")
+    parser.add_argument("--db",  default=None,
+                        help="Path to a SQLite file (sqlite backend only; default: db/fondos.sqlite)")
+    parser.add_argument("--backend", default=None, choices=("sqlite", "postgres"),
+                        help="Default: FONDOS_DB_BACKEND (postgres since the 2026-09-23 cutover)")
     parser.add_argument("--out", default=None,
                         help="Write findings JSON to this path")
     args = parser.parse_args()
 
-    db = Path(args.db)
-    findings = run_audit(db)
+    findings = run_audit(args.db, backend=args.backend)
     print_summary(findings)
 
     out_path = args.out
@@ -757,5 +766,6 @@ if __name__ == "__main__":
 
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as fh:
-        json.dump(findings, fh, indent=2, ensure_ascii=False)
+        # default=str: Postgres returns real datetime/date objects (e.g. extracted_at) where SQLite gave text
+        json.dump(findings, fh, indent=2, ensure_ascii=False, default=str)
     print(f"  Findings saved → {out_path}\n")

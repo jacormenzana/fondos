@@ -213,6 +213,13 @@ def _drop_timezones(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def legacy_columns(table: str) -> dict:
+    """{postgres_column: legacy_sqlite_column} for one table (empty when unmapped). Public accessor
+    of the single rename map, for read-only tools that index rows by the SQLite spelling
+    (`r["ISIN"]`) and must keep working when Postgres returns the folded lowercase names (FND-0069)."""
+    return _legacy_header_map().get(table, {})
+
+
 def _restore_legacy_headers(df: pd.DataFrame, table: str) -> pd.DataFrame:
     """Postgres lower_snake column names → the SQLite spelling the Excel has always carried
     (`isin` → `ISIN`, `fund_name` → `Fund_Name`). The launcher (P1_discoverAllFunds.bat) regenerates
