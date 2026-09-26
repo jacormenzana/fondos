@@ -22,7 +22,7 @@ def validate_nav(nav_df):
         if (ratios > 8).any() or (ratios < 0.125).any():
             return False, (
                 "NAV contiene saltos >8x entre observaciones adyacentes "
-                "(posible mezcla de escalas — ejecutar repair_nav_scale_20260719.py)"
+                "(posible mezcla de escalas — revisar la serie en nav_discovery)"
             )
     return True, None
 

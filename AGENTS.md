@@ -321,7 +321,6 @@ proyecto2/
       test_drawdown.py
       test_m2_global_builder_pg.py
       test_macro_sensitivity.py
-      test_nav_scale_repair_20260719.py
       test_regime_returns.py
       test_returns.py
       test_risk_metrics.py

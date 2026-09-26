@@ -55,8 +55,6 @@ _FILE_EXEMPT: dict[str, str] = {
         "DESIGN: one-shot SQLite schema migration, run before the Postgres cutover",
     "shared/migrate_schema_v27.py":
         "DESIGN: one-shot SQLite schema migration mirroring the Postgres DDL into SQLite",
-    "proyecto1/migrate_v20_benchmark_role.py":
-        "DESIGN: one-shot SQLite data migration, run before the Postgres cutover",
 }
 
 R_FRAGMENT = ("DESIGN: a fragment (column list, IN-list of placeholders, expression) is assembled at runtime "

@@ -36,7 +36,6 @@ _SCAN_DIRS = ("proyecto1", "proyecto2", "proyecto3", "shared")
 
 # Rule 1 — "file" or "file::function". SQLite-only by design.
 _QMARK_EXEMPT = {
-    "proyecto1/migrate_v20_benchmark_role.py":  "one-shot SQLite data migration",
     "shared/migrate_schema_v27.py":             "one-shot SQLite schema migration (mirrors the Postgres DDL into SQLite)",
     "shared/schema_checks.py::check_schema_v24": "legacy SQLite-only diagnostic; no live caller (migration Stage 2)",
     "shared/schema_checks.py::check_schema_v26": "legacy SQLite-only diagnostic; no live caller (migration Stage 2)",
@@ -47,11 +46,8 @@ _CONNECT_EXEMPT = {
     "shared/db.py":                                "the implementation of get_connection itself",
     "shared/init_db.py":                           "creates the SQLite schema; Postgres schema comes from db/pg/*.sql",
     "shared/load_fondos_to_postgres.py":           "legacy SQLite→Postgres BI mirror (P4); SQLite is its source by definition",
-    "proyecto1/migrate_v20_benchmark_role.py":     "one-shot SQLite data migration",
     "proyecto1/core/normalize_db_casing_v20.py":   "legacy standalone CLI; run() already accepts an injected connection, and "
                                                    "the pipeline's own global normalisation covers Postgres",
-    "proyecto1/tools/audit_benchmark_consistency.py": "SQLite-only read-only audit tool — MUST be ported (or pointed at an "
-                                                   "export) before SQLite is retired; tracked in the backlog",
 }
 
 _SKIP_PARTS = {"tests", "__pycache__", "log", "upload"}
