@@ -7,6 +7,11 @@ shared test server or live data.
     python scripts/ops/run_pg_tests.py -k statistical_audit # extra args go to one pytest run (repo root)
     python scripts/ops/run_pg_tests.py --port 5440 --image postgres:17
 
+The port defaults to the first free one from 5437 up (a port left half-open by a killed run is
+skipped), stale `pg-test-*` containers from earlier killed runs are removed before starting, and the
+container is stopped on SIGTERM/Ctrl-C too. A killed run used to leave a stale WSL port-forward and
+the NEXT run then hung silently at its first DB test (2026-09-26).
+
 Uses `docker` directly when it works, else `docker` inside WSL (Ubuntu). Under WSL the
 distro idle-shuts-down and kills containers unless a wsl process stays attached, so a
 `sleep infinity` session is held for the duration (see CLAUDE.md, WSL2-hosted Postgres).
@@ -15,6 +20,8 @@ from __future__ import annotations
 
 import argparse
 import shutil
+import signal
+import socket
 import subprocess
 import sys
 import time
@@ -40,6 +47,35 @@ def _psql(docker: list[str], name: str, args: list[str], stdin: bytes | None = N
     return subprocess.run(cmd, input=stdin, capture_output=True)
 
 
+def _free_port(start: int = 5437, tries: int = 40) -> int:
+    """First port from `start` that nothing on this host is listening on or has half-open."""
+    for port in range(start, start + tries):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            if s.connect_ex(("127.0.0.1", port)) != 0:          # nothing accepts connections there
+                try:
+                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as b:
+                        b.bind(("127.0.0.1", port))             # and we can actually claim it
+                    return port
+                except OSError:
+                    continue
+    raise SystemExit(f"no free port in {start}..{start + tries - 1}")
+
+
+def _remove_stale_containers(docker: list[str], keep: str) -> None:
+    """Throwaway `pg-test-*` containers older than 30 min are leftovers of a killed run."""
+    out = subprocess.run(docker + ["ps", "-a", "--filter", "name=pg-test-", "--format", "{{.Names}}|{{.RunningFor}}"],
+                         capture_output=True, text=True).stdout.splitlines()
+    for line in out:
+        name, _, age = line.partition("|")
+        name = name.strip()
+        if not name or name == keep:
+            continue
+        minutes = int(age.split()[0]) if age.split() and age.split()[0].isdigit() and "minute" in age else None
+        if minutes is None or minutes >= 30:      # hours/days/"About an hour"/"Exited" -> stale
+            print(f"[pg-test] removing stale container {name} ({age.strip()})", flush=True)
+            subprocess.run(docker + ["rm", "-f", name], capture_output=True)
+
+
 def _wait_ready(docker: list[str], name: str, timeout_s: int = 60) -> None:
     # The image restarts the server once after initdb; require two consecutive successes.
     deadline, ok = time.time() + timeout_s, 0
@@ -53,14 +89,22 @@ def _wait_ready(docker: list[str], name: str, timeout_s: int = 60) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--port", type=int, default=5437)
+    ap.add_argument("--port", type=int, default=0, help="default: first free port from 5437")
     ap.add_argument("--image", default="postgres:15")
     ap.add_argument("--distro", default="Ubuntu")
     ap.add_argument("pytest_args", nargs="*", help="passed to a single pytest run from the repo root")
     args = ap.parse_args()
 
     docker = _docker_prefix(args.distro)
+    if not args.port:
+        args.port = _free_port()
     name = f"pg-test-{args.port}"
+    _remove_stale_containers(docker, keep=name)
+    subprocess.run(docker + ["rm", "-f", name], capture_output=True)       # same-name leftover
+    # `timeout`/task killers send SIGTERM, which skips `finally` unless converted to an exit.
+    for sig in (getattr(signal, "SIGTERM", None), getattr(signal, "SIGBREAK", None)):
+        if sig is not None:
+            signal.signal(sig, lambda *_: sys.exit(143))
     keepalive = None
     if docker[0] == "wsl":
         keepalive = subprocess.Popen(["wsl", "-d", args.distro, "--", "sleep", "infinity"],
