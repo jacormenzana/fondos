@@ -8,6 +8,9 @@
 #                + archive_command -> prove archiving works -> first base backup -> restore drill.
 #                Downtime ~1-2 min (recreate). Pause the launchers / close DBeaver+Metabase first, or --force.
 #   basebackup   one physical base backup (pg_basebackup + pg_verifybackup). Schedule weekly.
+#                flags for `drill` (FND-0101): --named recovers to a NAMED restore point instead of an LSN;
+#                --swap then rehearses the runbook's promote steps (dump -> fondos_restore -> rename swap ->
+#                probe + grants check) inside the scratch container.
 #   drill        restore the newest base + archived WAL into a SCRATCH container up to a marker LSN and
 #                compare a probe query with live. Live is only read (plus one pg_switch_wal()).
 #   prune        keep the newest KEEP_BASES (default 2) base backups and delete WAL older than the oldest
@@ -28,8 +31,8 @@
 set -euo pipefail
 
 MODE="setup"; case "${1:-}" in setup|basebackup|drill|prune|status) MODE="$1"; shift;; esac
-FORCE=0; YES=0; KEEP_DRILL=${KEEP_DRILL:-0}
-for a in "$@"; do case "$a" in --force) FORCE=1;; --yes) YES=1;; --keep-drill) KEEP_DRILL=1;; *) echo "unknown flag: $a"; exit 2;; esac; done
+FORCE=0; YES=0; KEEP_DRILL=${KEEP_DRILL:-0}; NAMED=0; SWAP=0
+for a in "$@"; do case "$a" in --force) FORCE=1;; --yes) YES=1;; --keep-drill) KEEP_DRILL=1;; --named) NAMED=1;; --swap) SWAP=1;; *) echo "unknown flag: $a"; exit 2;; esac; done
 
 BASE=${PG_BASE:-/opt/docker/db/postgresql17}
 PITR=${PITR_ROOT:-$BASE/pitr}
@@ -145,6 +148,33 @@ cleanup_drill() {
   [ "$KEEP_DRILL" = 1 ] || rootrun 'rm -rf /pitr/drill_data' 2>/dev/null || true
 }
 
+# FND-0101: rehearse, INSIDE the scratch container, the promote-to-live steps of
+# doc/operativos/W2_ROLLBACK_RUNBOOK.md (Path A step 2/4/5): dump the recovered database, restore it as
+# fondos_restore, swap names, and re-check probe + grants. Live is not touched.
+swap_rehearsal() {
+  local want="$1" t0 got dsz
+  local D=(docker exec "$DRILL_CTR" psql -U "$PGU" -At -q)
+  t0=$(date +%s)
+  say "[swap] dumping the recovered database and restoring it as fondos_restore (scratch)"
+  "${D[@]}" -d postgres -c "CREATE DATABASE fondos_restore" || die "SWAP FAILED: cannot create fondos_restore"
+  docker exec "$DRILL_CTR" sh -c "pg_dump -U $PGU -d $PGD -Fc -Z0 | pg_restore -U $PGU -d fondos_restore --no-owner" \
+    || die "SWAP FAILED: dump/restore pipeline reported errors"
+  say "[swap] restored in $(( $(date +%s) - t0 ))s; renaming databases (no other connections)"
+  "${D[@]}" -d postgres -c "ALTER DATABASE $PGD RENAME TO ${PGD}_failed_w2" || die "SWAP FAILED: rename of the failed database"
+  "${D[@]}" -d postgres -c "ALTER DATABASE fondos_restore RENAME TO $PGD" || die "SWAP FAILED: rename of the restored database"
+  got=$("${D[@]}" -d "$PGD" -c "$PROBE_SQL")
+  [ "$got" = "$want" ] || die "SWAP FAILED: probe after swap is '$got', expected '$want'"
+  # runbook step 5: the pipeline / read-only roles must still hold their privileges in the restored database
+  for chk in "fondos_app:INSERT" "fondos_app:UPDATE" "fondos_app:DELETE" "fondos_ro:SELECT"; do
+    r=${chk%%:*}; p=${chk##*:}
+    [ "$("${D[@]}" -d "$PGD" -c "select has_table_privilege('$r','silver.fund_master','$p')")" = "t" ] \
+      || die "SWAP FAILED: role $r lost $p on silver.fund_master in the restored database"
+  done
+  [ "$("${D[@]}" -d "$PGD" -c "select has_table_privilege('fondos_app','control.benchmark_ms_checks','INSERT')")" = "t" ] \
+    || die "SWAP FAILED: fondos_app lacks INSERT on control.benchmark_ms_checks in the restored database"
+  say "[swap] OK in $(( $(date +%s) - t0 ))s total: probe='$got', grants for fondos_app/fondos_ro intact"
+}
+
 drill() {
   local base; base=$(latest_base); [ -n "$base" ] || die "no complete base backup in $PITR/base (run: basebackup)"
   say "[drill] base=$base -> scratch container on 127.0.0.1:$DRILL_PORT (live is only read)"
@@ -153,16 +183,23 @@ drill() {
   # Marker = a position that exists in the WAL NOW (taken before the switch: pg_current_wal_lsn() after a
   # switch is the start of the next, not-yet-archived segment and recovery could never reach it). Then force
   # that segment out to the archive and wait for the file itself (archived_count also counts .backup files).
-  local marker seg probe_live i
+  local marker seg probe_live i tkey tval lsn
   probe_live=$(psqlc "$PROBE_SQL")
-  marker=$(psqlc "select pg_current_wal_lsn()")
-  seg=$(psqlc "select pg_walfile_name('$marker')")
+  if [ "$NAMED" = 1 ]; then
+    # FND-0101: recover to a NAMED restore point (what the pre-W2 runbook step creates), not an LSN.
+    marker="drill_$(date +%Y%m%d_%H%M%S)"; tkey="recovery_target_name"; tval="$marker"
+    lsn=$(psqlc "select pg_create_restore_point('$marker')")
+    seg=$(psqlc "select pg_walfile_name('$lsn')")
+  else
+    marker=$(psqlc "select pg_current_wal_lsn()"); tkey="recovery_target_lsn"; tval="$marker"
+    seg=$(psqlc "select pg_walfile_name('$marker')")
+  fi
   psqlc "select pg_switch_wal()" >/dev/null
   for i in $(seq 1 60); do dx test -f "/pitr/wal/$seg" && break; sleep 2; done
   dx test -f "/pitr/wal/$seg" || die "segment $seg containing the marker never reached the archive - cannot drill"
-  say "   marker LSN=$marker  live probe='$probe_live'"
+  say "   marker ($tkey)=$marker  live probe='$probe_live'"
   rootrun "cp -a /pitr/base/$base /pitr/drill_data && rm -f /pitr/drill_data/postmaster.pid \
-    && printf \"restore_command = 'cp /pitr/wal/%%f \\\"%%p\\\"'\nrecovery_target_lsn = '$marker'\nrecovery_target_action = 'promote'\nrecovery_target_inclusive = true\n\" >> /pitr/drill_data/postgresql.auto.conf \
+    && printf \"restore_command = 'cp /pitr/wal/%%f \\\"%%p\\\"'\n$tkey = '$tval'\nrecovery_target_action = 'promote'\nrecovery_target_inclusive = true\n\" >> /pitr/drill_data/postgresql.auto.conf \
     && touch /pitr/drill_data/recovery.signal && chown -R 999:999 /pitr/drill_data && chmod 700 /pitr/drill_data"
   docker run -d --name "$DRILL_CTR" -v "$PITR/drill_data:/var/lib/postgresql/data" -v "$PITR/wal:/pitr/wal:ro" \
     -p "127.0.0.1:$DRILL_PORT:5432" "$IMG" postgres -c archive_mode=off -c listen_addresses='*' >/dev/null
@@ -181,6 +218,7 @@ drill() {
   say "   promoted; WAL segments restored from the archive: $restored; probe restored='$probe_rest' live='$probe_live'"
   [ "$restored" -ge 1 ] || die "DRILL FAILED: recovery used no archived WAL (archive not exercised)"
   [ "$probe_rest" = "$probe_live" ] || die "DRILL FAILED: probe differs (a pipeline may have written between marker and probe - rerun while idle)"
+  if [ "$SWAP" = 1 ]; then swap_rehearsal "$probe_live"; fi
   cleanup_drill; trap - EXIT
   say "[drill] PASSED: base + archived WAL restored to $marker and matched live. Scratch removed."
 }

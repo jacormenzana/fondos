@@ -81,9 +81,13 @@ just before the damage, in a **scratch** container, exactly as `setup_wal_archiv
 promote it to live by the same rename procedure as Path A (dump the scratch database with `pg_dump -Fc`
 and restore it as `fondos_restore`).
 
-**Not yet drilled:** restoring to a *named restore point/time* and promoting the result to live. The
-drill proves base + WAL replay to an LSN on a scratch server only. Run that variant once (scratch) before
-relying on it, and file the result on FND-0071.
+**Drilled 2026-09-26 (FND-0101):** `setup_wal_archive.sh drill --named --swap` creates a named restore
+point on live, recovers the newest base + WAL to it in a scratch container, then rehearses the promote
+steps there (dump → `fondos_restore` → `ALTER DATABASE` rename swap) and checks the probe and the
+privileges of `fondos_app` / `fondos_ro`. Result: PASSED — recovery ≈ 3 min (408 WAL segments), dump+restore
+≈ 10 min for the whole database, `fondos_app` and `fondos_ro` privileges intact after the swap. Budget
+≈ 15 min of downtime for a real Path B on this hardware. Not covered by the drill: a *time* target
+(`recovery_target_time`) — same mechanism, different key in `postgresql.auto.conf`.
 
 ## 4. Acceptance after any restore
 
