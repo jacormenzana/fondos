@@ -6,8 +6,10 @@
 `fondos_app` role and grants, `gold.mv_*` matviews, audit rows, `control.*` tables, all new loads).
 Use it only as a forensic baseline.
 
-**Gate.** W2 does not start until §1 is complete: a verified pre-W2 dump, FND-0071 live (WAL
-archiving + a passed drill) and an off-box copy (FND-0070).
+**Gate.** W2 does not start until §1 is complete: a verified pre-W2 dump and FND-0071 live (WAL
+archiving + a passed drill). The off-box copy (FND-0070) was **waived for W2 by the owner on
+2026-09-26** — the data stays on the local disk and is transferred to an external device later; until
+then a single-disk failure loses data, dumps and WAL together (FND-0070 stays open).
 
 ## 0. Decide: re-run or roll back
 
@@ -37,7 +39,7 @@ do not start another launcher.
 3. **Named restore point**: as `fondos_owner` run `select pg_create_restore_point('pre_w2_<YYYYMMDD>')`
    and note the returned LSN plus the wall-clock time (used in §3).
 4. **Off-box copy** (FND-0070) of the dump, `globals_*.sql` and the newest base backup + WAL, verified
-   readable at the destination.
+   readable at the destination. *(Waived for W2 — see the Gate note; still to be done.)*
 5. **Files outside Postgres**: list `C:\data\fondos\kiid_retired\` (rollback of the database does not
    move PDFs). Run `p1_kiid_sync --sync` (additive) in W2, but keep `--retire-orphans` for a
    separate step after review — it moves PDFs on disk, which a database restore does not undo.
