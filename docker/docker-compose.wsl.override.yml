@@ -23,6 +23,13 @@ services:
     # request 5432, which is taken).
     ports: !override
       - "5436:5432"
+    # Metabase (`metabase-app`) lives on the external `data-net` network (shared with the old
+    # `pg-server`). Join it so Metabase reaches this server as host `fondos_postgres`, port 5432
+    # (the INTERNAL port, not 5436). `default` must be listed too: naming any network here drops
+    # the implicit project network.
+    networks:
+      - default
+      - data-net
     volumes:
       - /opt/docker/db/postgresql17/data:/var/lib/postgresql/data
       # FND-0071: WAL archive + physical base backups (PITR). Created/owned by
@@ -46,6 +53,9 @@ services:
       - archive_command=test ! -f /pitr/wal/%f && cp %p /pitr/wal/%f.tmp && mv /pitr/wal/%f.tmp /pitr/wal/%f
       - -c
       - archive_timeout=900
+networks:
+  data-net:
+    external: true
 secrets:
   postgres_password:
     file: /opt/docker/db/postgresql17/secrets/postgres_password
