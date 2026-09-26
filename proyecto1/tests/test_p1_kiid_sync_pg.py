@@ -201,7 +201,7 @@ def test_cmd_backfill_lifecycle_sqlite_own_connection_path(tmp_path):
     with patch.object(_pks, "DB_PATH", db_path), \
          patch.object(_pks, "KIID_DIR", kiid_dir), \
          patch.object(_pks, "KIID_RETIRED_BASE", retired_base):
-        cmd_backfill_lifecycle(None)
+        cmd_backfill_lifecycle(None, backend="sqlite")   # SQLite path on purpose (FND-0102)
 
     conn2 = sqlite3.connect(db_path)
     row = conn2.execute("SELECT isin, status FROM kiid_lifecycle WHERE isin = 'SQ001'").fetchone()

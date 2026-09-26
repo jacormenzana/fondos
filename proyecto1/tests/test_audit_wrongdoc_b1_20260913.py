@@ -96,7 +96,7 @@ def _build_db(path: str) -> None:
 def findings(tmp_path):
     db_path = tmp_path / "test_fondos.sqlite"
     _build_db(str(db_path))
-    return run_audit(db_path=db_path)
+    return run_audit(db_path=db_path, backend="sqlite")   # temp SQLite fixture on purpose (FND-0102)
 
 
 class TestB1KnownWrongDocBucket:

@@ -69,7 +69,7 @@ def test_cmd_harvest_sqlite_writes_catalogue_rows(tmp_path):
     conn.close()  # just create the file
 
     with patch.object(_pdh, "DB_PATH", db_path), patch.object(_pdh, "_get", _mock_get):
-        cmd_harvest(None)
+        cmd_harvest(None, backend="sqlite")   # SQLite path on purpose; default is postgres since FND-0102
 
     conn2 = sqlite3.connect(db_path)
     rows = conn2.execute(

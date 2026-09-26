@@ -77,7 +77,7 @@ def test_report_sqlite_runs_end_to_end(tmp_path):
     buf = io.StringIO()
     with patch.object(_pdh, "DB_PATH", db_path):
         with redirect_stdout(buf):
-            cmd_report_codsus(None)
+            cmd_report_codsus(None, backend="sqlite")   # SQLite path on purpose (FND-0102)
     output = buf.getvalue()
     assert "codSus DISCOVERY REPORT" in output
     assert "Funds (unique ISIN): 2" in output

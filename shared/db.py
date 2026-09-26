@@ -32,7 +32,7 @@ ported and validated, and even then only via the explicit dual-write wiring at c
 — not by anything in this file changing behavior on its own.
 
 **2026-09-20 addendum — `FONDOS_DB_BACKEND` global switch.** `backend` now defaults to `None`,
-which resolves this env var (falling back to `"sqlite"` when unset). This is the literal "flip
+which resolves this env var (falling back to `"postgres"` when unset since 2026-09-26, FND-0102). This is the literal "flip
 Postgres to primary" mechanism the migration plan's cutover step (§Addendum Stage 9) needs — it
 does not change today's behavior by itself (the env var is unset everywhere in production right
 now) and it is not the read-path port; it is the switch that becomes meaningful only once the
@@ -153,9 +153,10 @@ _PG_DSN_ENV_VAR = "FONDOS_PG_DSN"
 
 # The one global switch (2026-09-20, migration addendum — see plan §Addendum Stage 0). Read lazily,
 # same reasoning as _PG_DSN_ENV_VAR: importing shared.db must never require this to be set. Every
-# call site that doesn't pass backend= explicitly resolves through here, so flipping this one
-# variable is what "make Postgres primary" actually means operationally — today it's unset
-# everywhere, so every caller still gets "sqlite", the same as before this constant existed.
+# call site that doesn't pass backend= explicitly resolves through here. Since the SQLite retirement
+# decision (2026-09-26, FND-0102) an UNSET variable resolves to "postgres": a missing .env can no
+# longer fall back silently to the frozen, sealed SQLite file. "sqlite" must now be asked for
+# explicitly (backend="sqlite" / FONDOS_DB_BACKEND=sqlite) until the dual-backend code is removed.
 _DB_BACKEND_ENV_VAR = "FONDOS_DB_BACKEND"
 
 
@@ -444,9 +445,8 @@ def get_connection(
     """
     Devuelve una conexion a la base de datos configurada.
 
-    backend=None (por defecto): resuelve la variable de entorno FONDOS_DB_BACKEND ("sqlite" si no
-    esta definida — sin cambios de comportamiento respecto a cualquier llamada existente mientras
-    esa variable siga sin definirse en el entorno). Pasar backend="sqlite" o backend="postgres"
+    backend=None (por defecto): resuelve la variable de entorno FONDOS_DB_BACKEND ("postgres" si no
+    esta definida desde la retirada de SQLite, 2026-09-26; antes era "sqlite"). Pasar backend="sqlite" o backend="postgres"
     explicitamente ignora la variable de entorno para esa llamada puntual (usado por los flags
     --backend de los entry points, para poder apuntar una ejecucion a Postgres sin tocar el switch
     global). Ver plan de migracion, Addendum Stage 0.
@@ -465,7 +465,7 @@ def get_connection(
     Parámetros:
         db_path: ruta alternativa a la BD SQLite. Si es None, usa DB_PATH de shared.config.
                  Solo aplica cuando el backend resuelto es "sqlite".
-        backend: None (resuelve FONDOS_DB_BACKEND, "sqlite" por defecto), "sqlite" o "postgres".
+        backend: None (resuelve FONDOS_DB_BACKEND, "postgres" por defecto), "sqlite" o "postgres".
 
     Lanza FileNotFoundError si la BD SQLite no existe (backend resuelto "sqlite").
     Lanza RuntimeError si FONDOS_PG_DSN no esta definida (backend resuelto "postgres").
@@ -476,7 +476,7 @@ def get_connection(
     else:
         import os
         _source = "env" if _DB_BACKEND_ENV_VAR in os.environ else "default"
-        backend = os.environ.get(_DB_BACKEND_ENV_VAR, "sqlite")
+        backend = os.environ.get(_DB_BACKEND_ENV_VAR, "postgres")
 
     if backend == "postgres":
         if psycopg is None:

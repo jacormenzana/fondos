@@ -73,17 +73,29 @@ def test_backend_is_announced_once_per_process_with_its_source(monkeypatch, tmp_
     p = tmp_path / "t.sqlite"
     sqlite3.connect(p).close()
     monkeypatch.setattr(db, "_BACKEND_ANNOUNCED", False)
-    monkeypatch.delenv("FONDOS_DB_BACKEND", raising=False)
+    monkeypatch.setenv("FONDOS_DB_BACKEND", "sqlite")
 
     db.get_connection(p).close()
     db.get_connection(p).close()
     err = capsys.readouterr().err
-    assert err.count("[DB] backend=sqlite (default)") == 1     # once, not per connection
+    assert err.count("[DB] backend=sqlite (env)") == 1         # once, not per connection
     assert str(p) in err
 
     monkeypatch.setattr(db, "_BACKEND_ANNOUNCED", False)
     db.get_connection(p, backend="sqlite").close()
     assert "[DB] backend=sqlite (arg)" in capsys.readouterr().err
+
+
+def test_unset_backend_resolves_to_postgres_never_to_the_sealed_sqlite(monkeypatch, tmp_path):
+    """FND-0102: with FONDOS_DB_BACKEND unset, get_connection() must NOT open the frozen SQLite
+    file — it resolves to postgres, so an unset FONDOS_PG_DSN fails loudly instead."""
+    p = tmp_path / "t.sqlite"
+    sqlite3.connect(p).close()
+    monkeypatch.delenv("FONDOS_DB_BACKEND", raising=False)
+    monkeypatch.delenv("FONDOS_PG_DSN", raising=False)
+    import pytest
+    with pytest.raises(RuntimeError, match="FONDOS_PG_DSN"):
+        db.get_connection(p)
 
 
 def test_postgres_announcement_shows_host_port_dbname_and_nothing_else(monkeypatch, capsys):
