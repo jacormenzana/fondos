@@ -13,11 +13,10 @@ extractor, y este defecto vive en el ESCRITOR, aguas abajo de lo medido. De ahí
 que la prueba ataque directamente la función de escritura contra una BD real
 en memoria, que es donde se cruza el contrato de escala.
 
-R-7: no importa pipeline.py ni core.io; la BD es :memory:.
+R-7: no importa pipeline.py ni core.io; la BD es un esquema Postgres aislado (fixture pg_conn, SAVEPOINT).
 """
 
 import os
-import sqlite3
 import sys
 
 import pytest
@@ -27,24 +26,36 @@ _CORE_DIR = os.path.normpath(os.path.join(_TESTS_DIR, '..', 'core'))
 if _CORE_DIR not in sys.path:
     sys.path.insert(0, _CORE_DIR)
 
-from sqlite_writer import correct_oc_aci_mismatch          # noqa: E402
+from fund_writer import correct_oc_aci_mismatch          # noqa: E402
+
+
+_PG = {}
+
+
+@pytest.fixture(autouse=True)
+def _pg_connection(pg_conn):
+    """Hand the per-test savepoint-wrapped Postgres connection to the module's DB-building helper."""
+    _PG["conn"] = pg_conn
+    yield
+    _PG.clear()
+
 
 
 def _conn(oc_inicial=0.001):
-    """BD mínima en memoria con la única columna que importa aquí."""
-    c = sqlite3.connect(':memory:')
+    """BD mínima con la única columna que importa aquí (Postgres, revertida al acabar el test)."""
+    c = _PG["conn"]
     c.execute("""CREATE TABLE fund_master (
                      ISIN TEXT PRIMARY KEY,
-                     Ongoing_Charge_Recurrent REAL,
+                     Ongoing_Charge_Recurrent DOUBLE PRECISION,
                      Updated_At TEXT)""")
-    c.execute("INSERT INTO fund_master VALUES (?,?,?)",
+    c.execute("INSERT INTO fund_master VALUES (%s,%s,%s)",
               ('LU3085135567', oc_inicial, '2026-08-23'))
     return c
 
 
 def _oc(c, isin='LU3085135567'):
     return c.execute(
-        "SELECT Ongoing_Charge_Recurrent FROM fund_master WHERE ISIN=?",
+        "SELECT Ongoing_Charge_Recurrent FROM fund_master WHERE ISIN=%s",
         (isin,)).fetchone()[0]
 
 

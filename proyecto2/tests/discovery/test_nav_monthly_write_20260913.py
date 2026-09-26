@@ -21,7 +21,6 @@ in RECALCULATE_MONTHLY), scoped down to just the affected months.
 R-7 compliant: no pipeline.py / core.io imports.
 """
 
-import sqlite3
 import sys
 from pathlib import Path
 
@@ -35,9 +34,22 @@ for _p in (str(_P2_ROOT), str(_REPO), str(_CORE_DIR)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from sqlite_writer import create_schema
-
 from proyecto2.src.discovery.nav_discovery import _resample_to_monthly, _write_nav_rows
+
+
+_PG = {}
+
+
+@pytest.fixture(autouse=True)
+def _pg_connection(pg_app_conn):
+    """Hand the per-test savepoint-wrapped Postgres connection (real DDL, app search_path) to the module's DB-building helper."""
+    _PG["conn"] = pg_app_conn
+    # These tests exercise NAV logic, not referential integrity: skip FK triggers for this test only
+    # (transactional -> undone with the SAVEPOINT).
+    pg_app_conn.execute("SET LOCAL session_replication_role = replica")
+    yield
+    _PG.clear()
+
 
 
 def _make_row(isin: str, date: str, nav: float, source: str = "MORNINGSTAR_CHART") -> dict:
@@ -52,16 +64,17 @@ def _make_row(isin: str, date: str, nav: float, source: str = "MORNINGSTAR_CHART
     }
 
 
-def _memory_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(":memory:")
-    create_schema(conn)
-    return conn
+def _memory_conn():
+    """Conexion Postgres del test (DDL real de db/pg, revertida al acabar)."""
+    return _PG["conn"]
 
 
 def _nav_rows(conn, isin: str) -> list[tuple]:
-    return conn.execute(
-        "SELECT Date, NAV FROM fund_nav_monthly WHERE ISIN=? ORDER BY Date", (isin,)
+    """(YYYY-MM-DD string, NAV) tuples: Postgres returns real date objects, the assertions use ISO text."""
+    rows = conn.execute(
+        "SELECT Date, NAV FROM fund_nav_monthly WHERE ISIN=%s ORDER BY Date", (isin,)
     ).fetchall()
+    return [(str(d), nav) for d, nav in rows]
 
 
 class TestWriteNavRowsOpenMonthFix:

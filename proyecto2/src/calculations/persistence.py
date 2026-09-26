@@ -26,14 +26,13 @@ Requisito: minimo MIN_WINDOWS ventanas validas para calcular la metrica.
 
 import numpy as np
 import pandas as pd
-import sqlite3
 
 from shared.config import (
     PERSISTENCE_WINDOW_MONTHS as WINDOW_MONTHS,
     PERSISTENCE_STEP_MONTHS as STEP_MONTHS,
     PERSISTENCE_MIN_WINDOWS as MIN_WINDOWS,
 )
-from shared.db import is_postgres_connection
+
 
 
 # ============================================================
@@ -41,7 +40,7 @@ from shared.db import is_postgres_connection
 # ============================================================
 
 def _category_return_in_window(
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
     fund_nature: str,
     exclude_isin: str,
     start_date: pd.Timestamp,
@@ -52,7 +51,7 @@ def _category_return_in_window(
     Excluye el propio fondo para evitar autocorrelacion.
     """
     # Postgres migration Stage 9 (found live 2026-09-22): see momentum.py's identical note.
-    ph = "%s" if is_postgres_connection(conn) else "?"
+    ph = "%s"
     rows = conn.execute(f"""
         SELECT fnm.ISIN,
                MIN(fnm.NAV) AS nav_start,
@@ -93,7 +92,7 @@ def compute_persistence(
     isin: str,
     fund_nature: str,
     nav_df: pd.DataFrame,
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
 ) -> list[tuple]:
     """
     Calcula la persistencia del alpha para un fondo.

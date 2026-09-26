@@ -37,9 +37,8 @@ def _default_scenario_id(regime: str, date) -> str:
     return f"cartera_{regime.lower()}_{date.year}{date.month:02d}"
 
 
-def main(scenario_id: str | None = None, dry_run: bool = False, backend: str | None = None,
-         allow_stale: bool = False) -> int:
-    conn = get_connection(backend=backend)
+def main(scenario_id: str | None = None, dry_run: bool = False, allow_stale: bool = False) -> int:
+    conn = get_connection()
     clf  = RegimeClassifier(conn)
 
     # FND-0098: refuse to score/persist a portfolio from outdated NAV / macro / universe data.
@@ -89,18 +88,10 @@ if __name__ == "__main__":
     _args = sys.argv[1:]
     _dry_run = "--dry-run" in _args
     _allow_stale = "--allow-stale" in _args
-    # --backend {sqlite,postgres} — migration addendum 2026-09-20. None resolves
-    # FONDOS_DB_BACKEND ("sqlite" if unset). Manual parsing to match this script's existing
-    # positional-scenario_id style rather than introducing argparse for one new flag.
-    _backend = None
-    if "--backend" in _args:
-        _i = _args.index("--backend")
-        _backend = _args[_i + 1]
-        del _args[_i:_i + 2]
     _positional = [a for a in _args if a not in ("--dry-run", "--allow-stale")]
     scenario_arg = _positional[0] if _positional else None
 
     from shared.backlog_client import capture_exceptions
     with capture_exceptions(object_name="p3_build_portfolio.py", object_type="JOB"):
-        _rc = main(scenario_arg, dry_run=_dry_run, backend=_backend, allow_stale=_allow_stale)
+        _rc = main(scenario_arg, dry_run=_dry_run, allow_stale=_allow_stale)
     sys.exit(_rc)

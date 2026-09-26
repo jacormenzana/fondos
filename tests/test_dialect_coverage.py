@@ -1,4 +1,8 @@
 """
+SQLite RETIRED (2026-09-26, FND-0102): rules 1 and 2 below are now absolute (no exemptions) and rule 7
+(`test_no_production_module_imports_sqlite3`) forbids the import outright. What follows is the original
+rationale, kept because the failure classes it describes are what those rules still prevent.
+
 tests/test_dialect_coverage.py — static guards against the failure classes that cost the Postgres
 migration the most rework: production code that was never dialect-ported, found only after the
 fact by grep.
@@ -35,20 +39,10 @@ _ROOT = Path(__file__).resolve().parent.parent
 _SCAN_DIRS = ("proyecto1", "proyecto2", "proyecto3", "shared")
 
 # Rule 1 — "file" or "file::function". SQLite-only by design.
-_QMARK_EXEMPT = {
-    "shared/migrate_schema_v27.py":             "one-shot SQLite schema migration (mirrors the Postgres DDL into SQLite)",
-    "shared/schema_checks.py::check_schema_v24": "legacy SQLite-only diagnostic; no live caller (migration Stage 2)",
-    "shared/schema_checks.py::check_schema_v26": "legacy SQLite-only diagnostic; no live caller (migration Stage 2)",
-}
+_QMARK_EXEMPT: dict = {}
 
 # Rule 2 — files allowed to open SQLite directly.
-_CONNECT_EXEMPT = {
-    "shared/db.py":                                "the implementation of get_connection itself",
-    "shared/init_db.py":                           "creates the SQLite schema; Postgres schema comes from db/pg/*.sql",
-    "shared/load_fondos_to_postgres.py":           "legacy SQLite→Postgres BI mirror (P4); SQLite is its source by definition",
-    "proyecto1/core/normalize_db_casing_v20.py":   "legacy standalone CLI; run() already accepts an injected connection, and "
-                                                   "the pipeline's own global normalisation covers Postgres",
-}
+_CONNECT_EXEMPT: dict = {}
 
 _SKIP_PARTS = {"tests", "__pycache__", "log", "upload"}
 _NONCANONICAL = re.compile(r"(_\d{8}(_\d+)?|_prod|_last|[Bb]ack[Uu]p)\.py$")
@@ -109,8 +103,7 @@ def test_no_function_executes_sqlite_only_placeholders_without_dialect_branching
         "dialect helpers, so they cannot run against Postgres (psycopg3 raises \"the query has 0 "
         "placeholders but N parameters were passed\", often masked by a broad except):\n  "
         + "\n  ".join(offenders)
-        + "\nPort with `ph = \"%s\" if is_postgres_connection(conn) else \"?\"` (see shared/db.py), or — "
-          "only if SQLite-only by design — add to _QMARK_EXEMPT with a reason."
+        + "\nUse `%s` placeholders (Postgres is the only backend since the SQLite retirement)."
     )
 
 
@@ -134,8 +127,7 @@ def test_no_production_module_opens_sqlite_directly():
         "These modules open SQLite with a raw sqlite3.connect(), so --backend / FONDOS_DB_BACKEND "
         "cannot reach them (after cutover they would keep writing to the retired database with no "
         "error):\n  " + "\n  ".join(offenders)
-        + "\nUse shared.db.get_connection(backend=...), or — only if SQLite-only by design — add to "
-          "_CONNECT_EXEMPT with a reason."
+        + "\nUse shared.db.get_connection()."
     )
 
 
@@ -240,17 +232,12 @@ _EXCEPT_EXEMPT: dict[str, str] = {
     "shared/backlog_client.py":
         "DESIGN: uses its own short-lived connection to the separate `gestion` database and never touches "
         "the pipeline connection, so a swallowed failure cannot poison the pipeline transaction",
-    "shared/load_fondos_to_postgres.py":
-        "DESIGN: legacy BI mirror (P4) that owns its connections and reads SQLite as its source; not on the "
-        "pipeline path",
-    "shared/init_db.py":
-        "DESIGN: creates the SQLite schema (SQLite does not abort the transaction on a failed statement)",
     "shared/db.py::execute_fail_soft":
         "DESIGN: this IS the fail-soft helper: on Postgres it wraps the statement in a SAVEPOINT (or runs in "
         "autocommit, where there is no enclosing transaction) and rolls back to it on failure",
-    "proyecto1/core/sqlite_writer.py::_upsert_kiid_benchmark":
-        "DESIGN: the Postgres branch wraps its INSERT in SAVEPOINT bench_upsert and rolls back to it before "
-        "re-raising into this handler; the SQLite branch does not abort the transaction on a failed statement",
+    "proyecto1/core/fund_writer.py::_upsert_kiid_benchmark":
+        "DESIGN: the INSERT is wrapped in SAVEPOINT bench_upsert and rolled back to it before re-raising "
+        "into this handler",
 }
 
 _TXN_CONTROL = re.compile(r"^\s*(ROLLBACK|COMMIT|BEGIN|SAVEPOINT|RELEASE|END)\b", re.I)
@@ -452,3 +439,78 @@ def test_with_conn_rule_flags_a_bare_connection_but_not_a_transaction_helper():
     assert find_bare_with_conn("def f(conn):\n    with conn:\n        conn.execute('x')\n") == [("f", 2)]
     assert find_bare_with_conn("def f(conn):\n    with db_transaction(conn):\n        pass\n") == []
     assert find_bare_with_conn("def f(self):\n    with self.conn:\n        pass\n") == [("f", 2)]
+
+
+# ─── Rule 7 — SQLite is retired: nothing in production may import it ─────────────────────────────
+_SQLITE_FREE_DIRS = ("proyecto1", "proyecto2", "proyecto3", "shared",
+                     "scripts/launch", "scripts/audit", "scripts/ops", "scripts/diag")
+# Migration tooling that must read the sealed file until it is archived (FND-0103), then goes too.
+_SQLITE_IMPORT_EXEMPT = {
+    "scripts/mig/pg_seed.py": "one-shot loader whose SOURCE is the sealed SQLite file (deleted at archive time)",
+    "scripts/mig/pg_reconcile.py": "reconciliation gate against the sealed SQLite file (deleted at archive time)",
+}
+
+
+def find_sqlite_imports(src: str) -> list[int]:
+    """Line numbers of real `import sqlite3` / `from sqlite3 import ...` statements (AST based)."""
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return []
+    hits = []
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Import) and any(a.name.split(".")[0] == "sqlite3" for a in n.names):
+            hits.append(n.lineno)
+        elif isinstance(n, ast.ImportFrom) and (n.module or "").split(".")[0] == "sqlite3":
+            hits.append(n.lineno)
+    return hits
+
+
+def _sqlite_free_sources():
+    for d in _SQLITE_FREE_DIRS:
+        base = _ROOT / d
+        if not base.exists():
+            continue
+        for p in base.rglob("*.py"):
+            rel = p.relative_to(_ROOT)
+            if {"tests", "__pycache__", "log", "upload", "prev"} & set(rel.parts) or p.name.startswith("test_"):
+                continue
+            yield rel.as_posix(), p
+
+
+def test_no_production_module_imports_sqlite3():
+    offenders = [f"{rel}:{ln}" for rel, p in _sqlite_free_sources()
+                 for ln in find_sqlite_imports(p.read_text(encoding="utf-8", errors="replace"))
+                 if rel not in _SQLITE_IMPORT_EXEMPT]
+    assert not offenders, (
+        "SQLite was retired on 2026-09-26 (FND-0102); these production modules still import it:\n  "
+        + "\n  ".join(offenders)
+        + "\nUse shared.db.get_connection() (Postgres). Migration-only exemptions live in _SQLITE_IMPORT_EXEMPT."
+    )
+
+
+def test_sqlite_import_exemptions_are_not_stale():
+    stale = [k for k in _SQLITE_IMPORT_EXEMPT if not (_ROOT / k).exists()]
+    assert not stale, f"_SQLITE_IMPORT_EXEMPT lists files that no longer exist (delete the entries): {stale}"
+
+
+def test_sqlite_import_rule_flags_both_import_forms_but_not_a_comment():
+    assert find_sqlite_imports("import sqlite3\n") == [1]
+    assert find_sqlite_imports("import os, sqlite3 as sq\n") == [1]
+    assert find_sqlite_imports("from sqlite3 import Row\n") == [1]
+    assert find_sqlite_imports("# import sqlite3\nx = 'import sqlite3'\n") == []
+
+
+# ─── Rule 8 — launchers must not pass flags the entry points no longer accept ──────────────────────
+def test_launchers_do_not_pass_the_removed_db_and_backend_flags():
+    """P1_discoverAllFunds.bat (called by P1_P2_Complete.bat) passed `--db "%DB%"` to scripts that
+    dropped the flag with the SQLite retirement: argparse would exit 2 and abort the monthly chain."""
+    offenders = []
+    for bat in sorted((_ROOT / "scripts" / "launch").glob("*.bat")):
+        for n, line in enumerate(bat.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+            code = line.strip()
+            if code.startswith(("::", "rem ", "REM ")):
+                continue
+            if re.search(r"(?<![\w-])--(?:db|backend)\b", code) or "fondos.sqlite" in code:
+                offenders.append(f"{bat.name}:{n}: {code[:100]}")
+    assert not offenders, "launchers still pass removed flags / the SQLite file:\n  " + "\n  ".join(offenders)

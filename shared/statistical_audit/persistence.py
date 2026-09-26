@@ -8,7 +8,6 @@ preserve_and_write, fund_cost_corrections.
 from __future__ import annotations
 
 import math
-import sqlite3
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,12 +16,12 @@ from typing import Any, Callable, Mapping, Sequence
 import pandas as pd
 
 try:
-    from shared.db import is_postgres_connection, executemany
+    from shared.db import executemany
 except ModuleNotFoundError:
     _shared_root = Path(__file__).resolve().parents[2]
     if str(_shared_root) not in sys.path:
         sys.path.insert(0, str(_shared_root))
-    from shared.db import is_postgres_connection, executemany
+    from shared.db import executemany
 
 
 def _split_value(value: Any) -> tuple[float | None, str | None]:
@@ -36,7 +35,7 @@ def _split_value(value: Any) -> tuple[float | None, str | None]:
 
 
 def emit_statistics(
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
     run_id: str,
     domain: str,
     population: str,
@@ -57,27 +56,20 @@ def emit_statistics(
         stat_value, stat_text = _split_value(value)
         rows.append((run_id, domain, population, group_key, stat_name, stat_value, stat_text, n, catalog_version))
 
-    if is_postgres_connection(conn):
-        sql = (
-            "INSERT INTO audit_statistic "
-            "(run_id, domain, population, group_key, stat_name, stat_value, stat_text, n, catalog_version) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
-            "ON CONFLICT (run_id, domain, population, group_key, stat_name) DO UPDATE SET "
-            "stat_value = excluded.stat_value, stat_text = excluded.stat_text, "
-            "n = excluded.n, catalog_version = excluded.catalog_version, computed_at = DEFAULT"
-        )
-    else:
-        sql = (
-            "INSERT OR REPLACE INTO audit_statistic "
-            "(run_id, domain, population, group_key, stat_name, stat_value, stat_text, n, catalog_version) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
-        )
+    sql = (
+        "INSERT INTO audit_statistic "
+        "(run_id, domain, population, group_key, stat_name, stat_value, stat_text, n, catalog_version) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
+        "ON CONFLICT (run_id, domain, population, group_key, stat_name) DO UPDATE SET "
+        "stat_value = excluded.stat_value, stat_text = excluded.stat_text, "
+        "n = excluded.n, catalog_version = excluded.catalog_version, computed_at = DEFAULT"
+    )
     executemany(conn, sql, rows)
     conn.commit()
     return len(rows)
 
 
-def clear_run(conn: sqlite3.Connection, run_id: str, domain: str) -> tuple[int, int]:
+def clear_run(conn: "psycopg.Connection", run_id: str, domain: str) -> tuple[int, int]:
     """Deletes any rows a previous persist left for (run_id, domain) so that
     re-persisting the same run_id replaces it instead of duplicating findings
     (audit_finding is a plain INSERT; audit_statistic's upsert would also leave
@@ -85,7 +77,7 @@ def clear_run(conn: sqlite3.Connection, run_id: str, domain: str) -> tuple[int, 
     caller's first emit_* commit lands the delete and the first inserts
     together, so an interrupted persist rolls back to the prior run intact.
     """
-    ph = "%s" if is_postgres_connection(conn) else "?"
+    ph = "%s"
     n_findings = conn.execute(
         f"DELETE FROM audit_finding WHERE run_id = {ph} AND domain = {ph}", (run_id, domain)
     ).rowcount
@@ -128,7 +120,7 @@ _FINDING_COLUMNS = (
 
 
 def emit_findings(
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
     run_id: str,
     domain: str,
     findings: Sequence[Mapping[str, Any]],
@@ -144,7 +136,7 @@ def emit_findings(
         (run_id, domain, catalog_version, *(f.get(col) for col in _FINDING_COLUMNS))
         for f in findings
     ]
-    ph = "%s" if is_postgres_connection(conn) else "?"
+    ph = "%s"
     placeholders = ", ".join([ph] * (3 + len(_FINDING_COLUMNS)))
     executemany(
         conn,
@@ -167,9 +159,9 @@ class CorrectionRecord:
 
 
 def preserve_and_write(
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
     record: CorrectionRecord,
-    apply_write: Callable[[sqlite3.Connection], None],
+    apply_write: Callable[["psycopg.Connection"], None],
 ) -> None:
     """Writes the preservation row to fund_cost_corrections and then runs
     apply_write(conn), both inside one transaction. Closes finding J
@@ -180,22 +172,13 @@ def preserve_and_write(
     row must never exist without the write it documents, or vice versa.
     """
     try:
-        if is_postgres_connection(conn):
-            conn.execute(
-                "INSERT INTO fund_cost_corrections "
-                "(isin, column_name, old_value, new_value, reason, evidence) "
-                "VALUES (%s, %s, %s, %s, %s, %s)",
-                (record.isin, record.column, record.old_value, record.new_value,
-                 record.reason, record.evidence),
-            )
-        else:
-            conn.execute(
-                "INSERT INTO fund_cost_corrections "
-                "(ISIN, Column_Name, Old_Value, New_Value, Reason, Evidence) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (record.isin, record.column, record.old_value, record.new_value,
-                 record.reason, record.evidence),
-            )
+        conn.execute(
+            "INSERT INTO fund_cost_corrections "
+            "(isin, column_name, old_value, new_value, reason, evidence) "
+            "VALUES (%s, %s, %s, %s, %s, %s)",
+            (record.isin, record.column, record.old_value, record.new_value,
+             record.reason, record.evidence),
+        )
         apply_write(conn)
     except Exception:
         conn.rollback()

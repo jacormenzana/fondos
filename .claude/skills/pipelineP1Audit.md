@@ -116,7 +116,7 @@ FROM fund_master;
 SELECT Fund_Nature, COUNT(*) n FROM fund_master
 WHERE Profile IS NULL GROUP BY Fund_Nature ORDER BY n DESC;
 ```
-Verify that no known-valid SRRI was silently cleared (`sqlite_writer.py` COALESCE protection applies only when `SRRI_Quality_Flag IS NOT NULL AND != 'NONE'`).
+Verify that no known-valid SRRI was silently cleared (`fund_writer.py` COALESCE protection applies only when `SRRI_Quality_Flag IS NOT NULL AND != 'NONE'`).
 
 **Reliability Control 3 — Cost arbitration verdict distribution.** `NULL` vs `'BOTH_FAIL'` are not equivalent (`NULL` = never attempted; `'BOTH_FAIL'` = attempted, both paths failed):
 ```sql

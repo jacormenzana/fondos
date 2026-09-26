@@ -338,7 +338,7 @@ Cambios v19 (2026-04-16) — análisis de 3.204 KIIDs reales:
 
   INIT-FLAG-1  _empty_result(): añadido "Fee_Known_Flag": None para
                inicialización correcta del dict de resultado.
-               El COALESCE en sqlite_writer preservará el valor existente
+               El COALESCE en fund_writer preservará el valor existente
                si el ciclo CACHED no vuelve a extraer.
 
 

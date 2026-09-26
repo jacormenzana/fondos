@@ -10,7 +10,7 @@ Run from repo root:
     python -m pytest proyecto2/tests/readers/test_preflight.py -v
 """
 
-import sqlite3
+import pytest
 import sys
 from pathlib import Path
 
@@ -29,10 +29,22 @@ MV = "v1"  # metric_version constant used in tests
 # Helpers
 # ============================================================
 
-def _make_db() -> sqlite3.Connection:
-    """In-memory DB with the minimal schema required by count_isins_with_new_nav."""
-    conn = sqlite3.connect(":memory:")
-    conn.executescript("""
+_PG = {}
+
+
+@pytest.fixture(autouse=True)
+def _pg_connection(pg_conn):
+    """Hand the per-test savepoint-wrapped Postgres connection (real DDL, app search_path) to the module's DB-building helper."""
+    _PG["conn"] = pg_conn
+    yield
+    _PG.clear()
+
+
+
+def _make_db():
+    """Tablas toy en Postgres (esquema public, SAVEPOINT revertido al acabar) con tipos reales."""
+    conn = _PG["conn"]
+    conn.execute("""
         CREATE TABLE fund_master (
             ISIN TEXT PRIMARY KEY,
             Fund_Name TEXT NOT NULL,
@@ -40,15 +52,15 @@ def _make_db() -> sqlite3.Connection:
         );
         CREATE TABLE fund_nav_monthly (
             ISIN TEXT NOT NULL,
-            Date TEXT NOT NULL,
-            NAV  REAL,
+            Date DATE NOT NULL,
+            NAV  DOUBLE PRECISION,
             PRIMARY KEY (ISIN, Date)
         );
         CREATE TABLE fund_metric_state (
             isin           TEXT NOT NULL,
             metric_version TEXT NOT NULL,
             input_hash     TEXT NOT NULL,
-            calculated_at  TEXT NOT NULL,
+            calculated_at  DATE NOT NULL,
             PRIMARY KEY (isin, metric_version)
         );
         CREATE TABLE nav_sources (
@@ -63,25 +75,25 @@ def _make_db() -> sqlite3.Connection:
 def _add_fund(conn, isin="IE0001", nav_date="2024-06-30"):
     """Insert a fund into fund_master + one NAV row."""
     conn.execute(
-        "INSERT OR IGNORE INTO fund_master VALUES (?, 'Test Fund', 'Renta Fija')",
+        "INSERT INTO fund_master VALUES (%s, 'Test Fund', 'Renta Fija') ON CONFLICT DO NOTHING",
         (isin,),
     )
     conn.execute(
-        "INSERT OR IGNORE INTO fund_nav_monthly VALUES (?, ?, 100.0)",
+        "INSERT INTO fund_nav_monthly VALUES (%s, %s, 100.0) ON CONFLICT DO NOTHING",
         (isin, nav_date),
     )
 
 
 def _add_state(conn, isin="IE0001", calculated_at="2024-06-30", mv=MV):
     conn.execute(
-        "INSERT OR REPLACE INTO fund_metric_state VALUES (?, ?, 'hash123', ?)",
+        "INSERT INTO fund_metric_state VALUES (%s, %s, 'hash123', %s) ON CONFLICT (isin, metric_version) DO UPDATE SET input_hash = excluded.input_hash, calculated_at = excluded.calculated_at",
         (isin, mv, calculated_at),
     )
 
 
 def _add_nav_source(conn, isin="IE0001", last_nav_date="2024-06-30"):
     conn.execute(
-        "INSERT OR REPLACE INTO nav_sources VALUES (?, ?, 'OK')",
+        "INSERT INTO nav_sources VALUES (%s, %s, 'OK') ON CONFLICT (isin) DO UPDATE SET last_nav_date = excluded.last_nav_date, status = excluded.status",
         (isin, last_nav_date),
     )
 

@@ -144,8 +144,8 @@ elif "income" in name_l:
 
 NO eliminar:
 - Entrada `'Income Oriented' → 'Orientado a Renta'` en `FAMILY_TRANSLATION_MAP` (línea 1889 de `classify_utils.py`). Es red de seguridad legítima para emisores futuros desconocidos.
-- Cláusulas `WHEN TRIM(Family) = 'Income Oriented' THEN 'Orientado a Renta'` en `sqlite_writer.py` (líneas 264-265 y 767-768). Son red de seguridad de capa BD.
-- Control SELECT de `sqlite_writer.py:724`. Es detector automático de regresión.
+- Cláusulas `WHEN TRIM(Family) = 'Income Oriented' THEN 'Orientado a Renta'` en `fund_writer.py` (líneas 264-265 y 767-768). Son red de seguridad de capa BD.
+- Control SELECT de `fund_writer.py:724`. Es detector automático de regresión.
 
 NO refactorizar:
 - `ALLOWED_FAMILY_BY_NATURE` para usar constantes (BL-58).
@@ -704,7 +704,7 @@ Sonnet debe **DETENERSE y consultar** antes de:
 - Tocar `ALLOWED_FAMILY_BY_NATURE`, `_DEFAULT_FAMILY_BY_NATURE` o cualquier mapa de validación INTER-x. Cambios autorizados: solo añadir el par adyacente `("Mixtos", "Renta Fija Corto Plazo")` y la constante `_UNIVERSAL_ADJACENT` según Sección 3.2.1.
 - Eliminar redes de seguridad (`FAMILY_TRANSLATION_MAP`, traducciones SQL post-UPSERT, controles SELECT, comentarios documentales).
 - Cambiar firmas públicas de funciones existentes (`build_fund_families`, `correct_family_inconsistencies`, `_resolve_family_nature`).
-- Cualquier cambio en `pipeline.py`, `sqlite_writer.py`, `fund_characterizer.py` o cualquier otro fichero no listado en la Sección 4.
+- Cualquier cambio en `pipeline.py`, `fund_writer.py`, `fund_characterizer.py` o cualquier otro fichero no listado en la Sección 4.
 - Cualquier cosa que la especificación no cubra explícitamente y que afecte a más de un fichero.
 
 Sonnet **puede proceder sin consultar** para:

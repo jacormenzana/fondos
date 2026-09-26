@@ -173,12 +173,12 @@ def _fetch_dicts(cur, table: str) -> list[dict]:
     return [dict(zip(cols, tuple(row))) for row in cur.fetchall()]
 
 
-def run_audit(db_path: Optional[Path] = None, backend: Optional[str] = None) -> dict:
+def run_audit(conn=None) -> dict:
     """Run the full audit. Returns a structured findings dict.
 
-    Read-only. `backend` None resolves FONDOS_DB_BACKEND (postgres after the 2026-09-23 cutover);
-    `db_path` only applies to the sqlite backend (default: shared.config.DB_PATH)."""
-    con = get_connection(Path(db_path) if db_path else None, backend=backend)
+    Read-only. `conn` injects an already-open connection (tests);
+    the function only closes a connection it opened itself."""
+    con = conn if conn is not None else get_connection()
 
     # ── Load data ──────────────────────────────────────────────────────────────
     bmk_rows = _fetch_dicts(
@@ -643,7 +643,8 @@ def run_audit(db_path: Optional[Path] = None, backend: Optional[str] = None) -> 
                         ),
                     })
 
-    con.close()
+    if conn is None:
+        con.close()
 
     return {
         "meta": {
@@ -748,15 +749,11 @@ if __name__ == "__main__":
         _sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
     parser = argparse.ArgumentParser(description="Benchmark consistency audit (read-only)")
-    parser.add_argument("--db",  default=None,
-                        help="Path to a SQLite file (sqlite backend only; default: db/fondos.sqlite)")
-    parser.add_argument("--backend", default=None, choices=("sqlite", "postgres"),
-                        help="Default: FONDOS_DB_BACKEND (postgres since the 2026-09-23 cutover)")
     parser.add_argument("--out", default=None,
                         help="Write findings JSON to this path")
     args = parser.parse_args()
 
-    findings = run_audit(args.db, backend=args.backend)
+    findings = run_audit()
     print_summary(findings)
 
     out_path = args.out

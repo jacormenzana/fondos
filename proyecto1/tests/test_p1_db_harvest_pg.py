@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import importlib.util
 import os
-import sqlite3
 import sys
 from unittest.mock import patch, MagicMock
 
@@ -58,27 +57,6 @@ def _mock_get(*_args, **_kwargs):
     resp.status_code = 200
     resp.raise_for_status = lambda: None
     return resp
-
-
-def test_cmd_harvest_sqlite_writes_catalogue_rows(tmp_path):
-    """Own-connection SQLite path (conn=None, the CLI's default) — confirms the dialect-aware
-    refactor made no behavior change: the DDL guard, upsert, and final COUNT still work exactly
-    as before."""
-    db_path = str(tmp_path / "harvest_test.sqlite")
-    conn = sqlite3.connect(db_path)
-    conn.close()  # just create the file
-
-    with patch.object(_pdh, "DB_PATH", db_path), patch.object(_pdh, "_get", _mock_get):
-        cmd_harvest(None, backend="sqlite")   # SQLite path on purpose; default is postgres since FND-0102
-
-    conn2 = sqlite3.connect(db_path)
-    rows = conn2.execute(
-        "SELECT isin, cod_sus, cod_doc FROM db_document_catalogue ORDER BY cod_sus"
-    ).fetchall()
-    conn2.close()
-    assert len(rows) == 2
-    assert {r[1] for r in rows} == {"KIID", "LIIC"}
-    assert all(r[0] == "LU0000000001" for r in rows)
 
 
 def test_cmd_harvest_postgres_writes_catalogue_rows_and_skips_duplicates(

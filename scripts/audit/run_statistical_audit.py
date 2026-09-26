@@ -101,7 +101,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import sqlite3
 import sys
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -113,8 +112,8 @@ if str(_ROOT) not in sys.path:
 
 import pandas as pd
 
-from shared.config import DB_PATH, RISK_FREE_RATE_ANN
-from shared.db import get_connection, is_postgres_connection
+from shared.config import RISK_FREE_RATE_ANN
+from shared.db import get_connection
 from shared.statistical_audit.catalog_cost_columns import COST_COLUMNS
 from shared.statistical_audit.catalog_version import compute_catalog_version
 from shared.statistical_audit.catalog_group_checks import COST_GROUP_CHECKS
@@ -153,14 +152,14 @@ MIN_PEERS = 5
 def _ph(conn) -> str:
     # Runner-local `?` -> `%s` is safe: none of these queries touch jsonb, whose
     # native `?` operator is why shared/db.py refuses a global translator.
-    return "%s" if is_postgres_connection(conn) else "?"
+    return "%s"
 
 
 def _sql(conn, query: str) -> str:
     """Adapts a query written with `?` placeholders and a `{window}` slot for
     the connected backend. fund_metric_timeseries.window is `window_label` in
     Postgres (`window` is a reserved word there; db/pg/rename_map.yaml)."""
-    window_col = "window_label" if is_postgres_connection(conn) else "window"
+    window_col = "window_label"
     return query.replace("{window}", window_col).replace("?", _ph(conn))
 
 
@@ -204,7 +203,7 @@ _COST_SCHEDULE_COLS = (
 )
 
 
-def run_cost_audit(conn: sqlite3.Connection) -> "AuditRun":
+def run_cost_audit(conn: "psycopg.Connection") -> "AuditRun":
     master = _restore_case(build_population(conn, _COST_MASTER_QUERY), _COST_MASTER_COLS)
     schedule = _restore_case(build_population(conn, _COST_SCHEDULE_QUERY), _COST_SCHEDULE_COLS)
     frames_by_table = {"fund_master": master, "fund_cost_schedule": schedule}
@@ -320,7 +319,7 @@ def _pivot_return_ann_by_real_flag(long_df: pd.DataFrame) -> pd.DataFrame:
     return nominal.merge(real, on=join_keys, how="inner")
 
 
-def _latest_ipc_yoy(conn: sqlite3.Connection) -> float | None:
+def _latest_ipc_yoy(conn: "psycopg.Connection") -> float | None:
     """Single scalar YoY inflation rate from the latest available ES CPI
     index vs. ~12 months prior — a coarse eligibility gate for
     REAL_EQUALS_NOMINAL/DEFLATION_ORDER, not a per-fund/per-horizon
@@ -342,7 +341,7 @@ def _latest_ipc_yoy(conn: sqlite3.Connection) -> float | None:
     return float(latest["ipc_index"] / prior_index - 1.0)
 
 
-def _fetch_latest_timeseries_snapshot(conn: sqlite3.Connection, metric: str, window: str) -> pd.DataFrame:
+def _fetch_latest_timeseries_snapshot(conn: "psycopg.Connection", metric: str, window: str) -> pd.DataFrame:
     return pd.read_sql_query(_sql(conn, _TS_LATEST_QUERY), conn, params=(metric, window, metric, window))
 
 
@@ -366,7 +365,7 @@ def _month_span(min_date: str, max_date: str) -> int:
     return (y2 - y1) * 12 + (m2 - m1) + 1
 
 
-def _run_timeseries_integrity(run: "AuditRun", conn: sqlite3.Connection) -> None:
+def _run_timeseries_integrity(run: "AuditRun", conn: "psycopg.Connection") -> None:
     """Function #11 (gap #11, wired 2026-09-15) over each (metric, window)
     combo already scoped by _SCALAR_TIMESERIES_METRICS/_WINDOWS.
 
@@ -430,7 +429,7 @@ def _run_timeseries_integrity(run: "AuditRun", conn: sqlite3.Connection) -> None
                 })
 
 
-def _periodic_return_variance(conn: sqlite3.Connection, isins: list[str]) -> pd.DataFrame:
+def _periodic_return_variance(conn: "psycopg.Connection", isins: list[str]) -> pd.DataFrame:
     """Per-ISIN sample variance (ddof=1) of monthly simple returns, derived
     directly from fund_nav_monthly -- NOT from vol_ann, which would make
     FROZEN_NAV_ZERO_VOL circular and vacuously true (P1.1, 2026-09-15).
@@ -461,7 +460,7 @@ def _periodic_return_variance(conn: sqlite3.Connection, isins: list[str]) -> pd.
 _P2_METRICS_COLS = ("isin", "metric", "horizon", "value", "real_flag", "metric_version", "Fund_Nature")
 
 
-def run_p2_audit(conn: sqlite3.Connection) -> "AuditRun":
+def run_p2_audit(conn: "psycopg.Connection") -> "AuditRun":
     long_df = _restore_case(build_population(conn, _P2_METRICS_QUERY), _P2_METRICS_COLS)
 
     run = AuditRun(domain="p2_metrics")
@@ -756,7 +755,7 @@ def _run_invariants(run: AuditRun, rules, frames: list[pd.DataFrame], block: str
 # Persistence, reporting, CLI
 # ============================================================
 
-def _persist(conn: sqlite3.Connection, run: "AuditRun", run_id: str) -> tuple[int, int]:
+def _persist(conn: "psycopg.Connection", run: "AuditRun", run_id: str) -> tuple[int, int]:
     catalog_version = compute_catalog_version()
     clear_run(conn, run_id, run.domain)
     n_stats = 0
@@ -800,7 +799,7 @@ def _has_blocking_findings(run: "AuditRun") -> bool:
     return False
 
 
-def _print_drift_report(conn: sqlite3.Connection, run: "AuditRun", compare_to: str, top_n: int = 20) -> None:
+def _print_drift_report(conn: "psycopg.Connection", run: "AuditRun", compare_to: str, top_n: int = 20) -> None:
     previous = load_run_statistics(conn, compare_to, run.domain)
     if previous.empty:
         print(f"! --compare-to {compare_to}: no audit_statistic rows found for domain={run.domain}")
@@ -830,9 +829,6 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--domain", choices=["costs", "p2"], required=True)
     parser.add_argument("--mode", choices=["report", "check"], default="report")
-    parser.add_argument("--backend", choices=["sqlite", "postgres"], default=None,
-                        help="Default: FONDOS_DB_BACKEND (postgres since the 2026-09-23 cutover)")
-    parser.add_argument("--db", default=str(DB_PATH), help="SQLite path; only used with --backend sqlite")
     parser.add_argument("--persist", action="store_true")
     parser.add_argument("--run-id", default=None)
     parser.add_argument("--compare-to", default=None, help="Prior run_id to diff against (function #13)")
@@ -841,7 +837,7 @@ def main() -> int:
     run_id = args.run_id or datetime.now(timezone.utc).strftime("audit_%Y%m%dT%H%M%SZ")
     keep_open = args.persist or args.compare_to
 
-    conn = get_connection(Path(args.db), backend=args.backend)
+    conn = get_connection()
     try:
         run = run_cost_audit(conn) if args.domain == "costs" else run_p2_audit(conn)
     finally:

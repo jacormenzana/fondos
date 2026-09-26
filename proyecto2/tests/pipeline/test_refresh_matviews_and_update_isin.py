@@ -29,22 +29,13 @@ def _log():
     return logging.getLogger("test_refresh_matviews")
 
 
-def test_refresh_is_a_noop_on_sqlite(monkeypatch):
-    monkeypatch.setattr(rp, "is_postgres_connection", lambda c: False)
-    conn = _Conn()
-    assert rp._refresh_gold_matviews(conn, _log()) is False
-    assert conn.executed == []
-
-
 def test_refresh_calls_the_function_once_and_commits(monkeypatch):
-    monkeypatch.setattr(rp, "is_postgres_connection", lambda c: True)
     conn = _Conn()
     assert rp._refresh_gold_matviews(conn, _log()) is True
     assert conn.executed == ["SELECT control.refresh_gold_matviews()"] and conn.commits == 1
 
 
 def test_refresh_failure_is_non_fatal_and_rolls_back(monkeypatch, caplog):
-    monkeypatch.setattr(rp, "is_postgres_connection", lambda c: True)
     conn = _Conn(fail=True)
     with caplog.at_level(logging.WARNING):
         assert rp._refresh_gold_matviews(conn, _log()) is False

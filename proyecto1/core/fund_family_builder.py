@@ -50,7 +50,6 @@ Uso:
 """
 
 import re
-import sqlite3
 import unicodedata
 from pathlib import Path
 import sys
@@ -63,7 +62,7 @@ try:
 except ImportError:
     from core.classify_utils import RFC_INCOMPATIBLE_FAMILIES
 
-from shared.db import is_postgres_connection, executemany, execute_fail_soft
+from shared.db import executemany, execute_fail_soft
 
 
 # Familias con heterogeneidad estructural confirmada (cross-nature por diseno del gestor).
@@ -384,7 +383,7 @@ def _resolve_family_nature(
 
 
 def correct_family_inconsistencies(
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
     dry_run: bool = False,
 ) -> int:
     """
@@ -450,8 +449,8 @@ def correct_family_inconsistencies(
         return len(corrections)
 
     # Aplicar correcciones
-    ph = "%s" if is_postgres_connection(conn) else "?"
-    _now_sql = "now()" if is_postgres_connection(conn) else "datetime('now')"
+    ph = "%s"
+    _now_sql = "now()"
     executemany(
         conn,
         f"UPDATE fund_master SET Fund_Nature = {ph} WHERE ISIN = {ph}",
@@ -515,9 +514,8 @@ def correct_family_inconsistencies(
     return len(corrections)
 
 
-
 def build_fund_families(
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
     dry_run: bool = False,
 ) -> int:
     """
@@ -585,9 +583,8 @@ def build_fund_families(
         return len(updates)
 
     # Actualizar en batch
-    ph = "%s" if is_postgres_connection(conn) else "?"
-    if is_postgres_connection(conn):
-        _ensure_family_rows(conn, family_data)
+    ph = "%s"
+    _ensure_family_rows(conn, family_data)
     executemany(
         conn,
         f"UPDATE fund_master SET fund_family_id = {ph} WHERE ISIN = {ph}",
@@ -645,7 +642,7 @@ def _ensure_family_rows(conn, family_data: list[tuple]) -> None:
 
 
 def _populate_fund_families(
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
     family_data: list[tuple],
 ) -> int:
     """
@@ -677,34 +674,24 @@ def _populate_fund_families(
         (fam_id, name, family_natures.get(fam_id), n, now_str)
         for fam_id, name, n in family_data
     ]
-    if is_postgres_connection(conn):
-        # fund_master.fund_family_id has a real FK to fund_families on Postgres (SQLite never
-        # enforced it), so DELETE-everything-then-INSERT is rejected: upsert, then drop only the
-        # families that no fund references any more.
-        executemany(
-            conn,
-            "INSERT INTO fund_families (family_id, family_name, fund_nature, n_funds, updated_at) "
-            "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (family_id) DO UPDATE SET "
-            "family_name = EXCLUDED.family_name, fund_nature = EXCLUDED.fund_nature, "
-            "n_funds = EXCLUDED.n_funds, updated_at = EXCLUDED.updated_at",
-            rows,
-        )
-        conn.execute("DELETE FROM fund_families WHERE family_id <> ALL(%s)", ([r[0] for r in rows],))
-    else:
-        conn.execute("DELETE FROM fund_families")
-        executemany(
-            conn,
-            "INSERT INTO fund_families "
-            "(family_id, family_name, Fund_Nature, n_funds, Updated_At) "
-            "VALUES (?, ?, ?, ?, ?)",
-            rows,
-        )
+    # fund_master.fund_family_id has a real FK to fund_families on Postgres (SQLite never
+    # enforced it), so DELETE-everything-then-INSERT is rejected: upsert, then drop only the
+    # families that no fund references any more.
+    executemany(
+        conn,
+        "INSERT INTO fund_families (family_id, family_name, fund_nature, n_funds, updated_at) "
+        "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (family_id) DO UPDATE SET "
+        "family_name = EXCLUDED.family_name, fund_nature = EXCLUDED.fund_nature, "
+        "n_funds = EXCLUDED.n_funds, updated_at = EXCLUDED.updated_at",
+        rows,
+    )
+    conn.execute("DELETE FROM fund_families WHERE family_id <> ALL(%s)", ([r[0] for r in rows],))
     conn.commit()
     print(f"  [FamilyBuilder] fund_families populated: {len(rows)} familias")
     return len(rows)
 
 
-def _validate_family_consistency(conn: sqlite3.Connection) -> list:
+def _validate_family_consistency(conn: "psycopg.Connection") -> list:
     """
     Detecta familias con mas de una Fund_Nature distinta.
     Devuelve lista de (fam_id, natures_set, nombres_lista).
@@ -751,12 +738,6 @@ if __name__ == "__main__":
         "--dry-run", action="store_true",
         help="Muestra grupos pero no escribe en BD"
     )
-    parser.add_argument(
-        "--backend", choices=["sqlite", "postgres"], default=None,
-        help="Backend de BD para esta ejecucion (migracion, addendum 2026-09-20). "
-             "Si se omite, resuelve la variable de entorno FONDOS_DB_BACKEND "
-             "('sqlite' si no esta definida)."
-    )
     args = parser.parse_args()
 
     # Postgres migration Stage 9 (found 2026-09-23 by auditing every raw sqlite3.connect): this block
@@ -765,14 +746,14 @@ if __name__ == "__main__":
     # would write to Postgres while THIS step silently kept rebuilding families in the retired SQLite
     # — exit code 0, no error, split-brain. get_connection() resolves the backend (flag, else
     # FONDOS_DB_BACKEND) and raises FileNotFoundError itself for a missing SQLite file.
-    from shared.db import get_connection, is_postgres_connection
+    from shared.db import get_connection
     try:
-        _conn = get_connection(backend=args.backend)
+        _conn = get_connection()
     except FileNotFoundError as exc:
         print(f"ERROR: {exc}")
         sys.exit(1)
 
-    print("BD: Postgres (FONDOS_PG_DSN)" if is_postgres_connection(_conn) else "BD: SQLite (shared.config.DB_PATH)")
+    print("BD: Postgres (FONDOS_PG_DSN)")
     n = build_fund_families(_conn, dry_run=args.dry_run)
     print(f"Total: {n} fondos procesados")
     _conn.close()

@@ -25,7 +25,6 @@ Run from repo root:
     python -m pytest proyecto3/tests/test_backtest_parity.py -v
 """
 
-import sqlite3
 import sys
 from pathlib import Path
 
@@ -49,27 +48,26 @@ CREATE TABLE fund_master (
     Fund_Nature TEXT,
     Management_Company TEXT,
     fund_family_id TEXT,
-    In_Current_Universe INTEGER DEFAULT 1
+    In_Current_Universe SMALLINT DEFAULT 1
 );
 CREATE TABLE fund_scores (
-    isin TEXT, block TEXT, score_version TEXT, regime TEXT, as_of_date TEXT,
+    isin TEXT, block TEXT, score_version TEXT, regime TEXT, as_of_date DATE,
     score_total REAL, score_detail TEXT, eligible INTEGER
 );
 """
 # Fase 3a (P3 optimization plan, migracion SQLite 2026-09-19): fund_scores'
 # PK se extendio a (isin, block, score_version, regime, as_of_date) -- ver
-# shared/migrate_schema_v27.py. Ambos caminos de este test ahora filtran
+# db/pg/30_gold.sql. Ambos caminos de este test ahora filtran
 # por regimen; todas las filas sembradas usan el mismo regimen que
 # _fake_regime_result() para que ambos caminos encuentren los mismos datos.
 _TEST_REGIME = "Shock_Energetico"
 
 
 @pytest.fixture
-def conn():
-    c = sqlite3.connect(":memory:")
-    c.executescript(_SCHEMA)
-    yield c
-    c.close()
+def conn(pg_conn):
+    """Tablas toy en Postgres (esquema public, SAVEPOINT revertido al acabar el test)."""
+    pg_conn.execute(_SCHEMA)
+    return pg_conn
 
 
 def _seed(conn, n_per_sub: int = 12) -> None:
@@ -98,16 +96,15 @@ def _seed(conn, n_per_sub: int = 12) -> None:
             conn.execute(
                 "INSERT INTO fund_master (ISIN, Fund_Name, Fund_Nature, "
                 "Management_Company, fund_family_id, In_Current_Universe) "
-                "VALUES (?, ?, ?, ?, NULL, 1)",
+                "VALUES (%s, %s, %s, %s, NULL, 1)",
                 (isin, f"Fund {isin}", nature, mgr),
             )
             conn.execute(
                 "INSERT INTO fund_scores (isin, block, score_version, regime, "
                 "as_of_date, score_total, score_detail, eligible) "
-                "VALUES (?, ?, 'v1', ?, '2026-06-30', ?, '{}', 1)",
+                "VALUES (%s, %s, 'v1', %s, '2026-06-30', %s, '{}', 1)",
                 (isin, sub, _TEST_REGIME, score),
             )
-    conn.commit()
 
 
 def _fake_regime_result(sub_weights: dict[str, float]) -> RegimeResult:

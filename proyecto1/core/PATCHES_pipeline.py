@@ -15,13 +15,13 @@
 # PATCH P1 — Import de EffectiveReader y barrido global
 # =============================================================
 # Localización: bloque de imports (líneas ~73)
-# Añadir DESPUÉS de `from core.sqlite_writer import publish_fund, log_ingestion`
+# Añadir DESPUÉS de `from core.fund_writer import publish_fund, log_ingestion`
 
-OLD_P1 = """from core.sqlite_writer import publish_fund, log_ingestion
+OLD_P1 = """from core.fund_writer import publish_fund, log_ingestion
 
 #print("[DEBUG] Cargo pipeline.py")        """
 
-NEW_P1 = """from core.sqlite_writer import (
+NEW_P1 = """from core.fund_writer import (
     publish_fund,
     log_ingestion,
     global_post_pipeline_normalize_db,   # BL-53/56/57: barrido global
@@ -171,7 +171,7 @@ NEW_P5 = """            kiid_text = kiid_meta = parsed = classification = pdf_by
 # =============================================================
 #
 # Causa raíz arquitectónica:
-#   _post_upsert_normalize_db() en sqlite_writer.py opera sobre el ISIN
+#   _post_upsert_normalize_db() en fund_writer.py opera sobre el ISIN
 #   recién upserted (WHERE ISIN=?). Los fondos no procesados en el ciclo
 #   (KIID_Status=WRONG_DOC, sin bloque que los recoja, errores) conservan
 #   indefinidamente sus valores stale en inglés en BD.

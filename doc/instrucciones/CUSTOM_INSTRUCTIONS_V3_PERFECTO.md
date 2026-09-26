@@ -15,7 +15,7 @@ Este proyecto implementa un sistema de clasificación automatizada de fondos de 
 2. Clasificación especializada por bloques → `blocks/*.py` (MONETARIOS, RF, RV, MIXTOS, ALTERNATIVO, RESTANTES)
 3. Caracterización y enriquecimiento → `fund_characterizer.py`
 4. Validación de consistencia semántica → `classify_utils.py`
-5. Persistencia en SQLite → `sqlite_writer.py`
+5. Persistencia en SQLite → `fund_writer.py`
 
 **Esquema:** v17 (25 atributos categóricos, 15 numéricos, 8 flags)
 

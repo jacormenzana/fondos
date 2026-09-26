@@ -45,7 +45,6 @@ fund_benchmarks: pipeline.py prefiere cualquier fila MORNINGSTAR sobre KIID.
 """
 
 import argparse
-import sqlite3
 import sys
 import time
 import random
@@ -64,7 +63,6 @@ sys.path.insert(0, str(_ROOT))   # para shared.*
 sys.path.insert(0, str(_P1))     # para core.*
 
 from shared.config import (
-    DB_PATH,
     BENCH_NEGATIVE_BACKOFF_DAYS,
     BENCH_ANOMALY_MIN_FUNDS,
     BENCH_ANOMALY_MIN_SHARE,
@@ -73,7 +71,7 @@ from shared.config import (
     BENCH_MAX_ERROR_RATE,
     BENCH_EXIT_NETWORK,
 )
-from shared.db import get_connection, is_postgres_connection, execute_fail_soft
+from shared.db import get_connection, execute_fail_soft
 from core.benchmark_normalizer import normalize_benchmark, clean_benchmark
 
 try:
@@ -254,7 +252,7 @@ def _extract_benchmark(fund_unused, ms_id: str) -> dict:
 # ============================================================
 
 def _write_benchmark(
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
     isin: str,
     raw_name:    Optional[str],
     ms_id_bench: Optional[str],
@@ -287,47 +285,30 @@ def _write_benchmark(
     # value, which is a behavior change from SQLite. Explicit `benchmark_role = DEFAULT` in SET
     # replicates the existing SQLite behavior exactly (see fund_benchmarks DDL — benchmark_role
     # has the same DEFAULT 'asset_proxy' on both sides).
-    if is_postgres_connection(conn):
-        conn.execute("""
-            INSERT INTO fund_benchmarks
-                (ISIN, source, benchmark_raw, benchmark_id, benchmark_name,
-                 provider, asset_class, confidence, extracted_at)
-            VALUES (%s, 'MORNINGSTAR', %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (ISIN, source) DO UPDATE SET
-                benchmark_raw  = excluded.benchmark_raw,
-                benchmark_id   = excluded.benchmark_id,
-                benchmark_name = excluded.benchmark_name,
-                provider       = excluded.provider,
-                asset_class    = excluded.asset_class,
-                confidence     = excluded.confidence,
-                extracted_at   = excluded.extracted_at,
-                benchmark_role = DEFAULT
-        """, (
-            isin,
-            raw_name,
-            norm.canonical_id   if norm else None,
-            norm.canonical_name if norm else raw_name,
-            norm.provider       if norm else None,
-            norm.asset_class    if norm else None,
-            norm.confidence     if norm else 'LOW',
-            now,
-        ))
-    else:
-        conn.execute("""
-            INSERT OR REPLACE INTO fund_benchmarks
-                (ISIN, source, benchmark_raw, benchmark_id, benchmark_name,
-                 provider, asset_class, confidence, extracted_at)
-            VALUES (?, 'MORNINGSTAR', ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            isin,
-            raw_name,
-            norm.canonical_id   if norm else None,
-            norm.canonical_name if norm else raw_name,
-            norm.provider       if norm else None,
-            norm.asset_class    if norm else None,
-            norm.confidence     if norm else 'LOW',
-            now,
-        ))
+    conn.execute("""
+        INSERT INTO fund_benchmarks
+            (ISIN, source, benchmark_raw, benchmark_id, benchmark_name,
+             provider, asset_class, confidence, extracted_at)
+        VALUES (%s, 'MORNINGSTAR', %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (ISIN, source) DO UPDATE SET
+            benchmark_raw  = excluded.benchmark_raw,
+            benchmark_id   = excluded.benchmark_id,
+            benchmark_name = excluded.benchmark_name,
+            provider       = excluded.provider,
+            asset_class    = excluded.asset_class,
+            confidence     = excluded.confidence,
+            extracted_at   = excluded.extracted_at,
+            benchmark_role = DEFAULT
+    """, (
+        isin,
+        raw_name,
+        norm.canonical_id   if norm else None,
+        norm.canonical_name if norm else raw_name,
+        norm.provider       if norm else None,
+        norm.asset_class    if norm else None,
+        norm.confidence     if norm else 'LOW',
+        now,
+    ))
     conn.commit()
 
     return 'NORMALIZADO' if norm else 'RAW_ONLY'
@@ -341,8 +322,6 @@ def _cache_available(conn) -> bool:
     """True si el backend es Postgres y control.benchmark_ms_checks existe y es legible.
     Devuelve False (sin excepcion) en SQLite o si el DDL aun no se aplico: el loader sigue
     funcionando, simplemente sin cache."""
-    if not is_postgres_connection(conn):
-        return False
     ok = execute_fail_soft(conn, "SELECT 1 FROM benchmark_ms_checks LIMIT 0")
     conn.commit()
     return ok
@@ -420,7 +399,7 @@ def _log_bench_event(conn, isin: Optional[str], status: str, message: str, dry_r
     anomalias sean consultables a lo largo del tiempo. No-op en dry-run."""
     if dry_run:
         return
-    from core.sqlite_writer import log_ingestion   # import diferido: modulo pesado
+    from core.fund_writer import log_ingestion   # import diferido: modulo pesado
     log_ingestion(conn, isin, "BENCH_MS", status, (message or "")[:500])
     conn.commit()
 
@@ -430,7 +409,7 @@ def _log_bench_event(conn, isin: Optional[str], status: str, message: str, dry_r
 # ============================================================
 
 def run_benchmark_load(
-    conn:         sqlite3.Connection,
+    conn:         "psycopg.Connection",
     isins:        list[tuple[str, Optional[str]]],  # [(isin, ms_id), ...]
     dry_run:      bool = False,
     verbose:      bool = True,
@@ -600,7 +579,7 @@ def run_benchmark_load(
 # ============================================================
 
 def _get_isins_for_load(
-    conn:          sqlite3.Connection,
+    conn:          "psycopg.Connection",
     only_missing:  bool = False,
     sample:        Optional[int] = None,
     isin_filter:   Optional[str] = None,
@@ -615,7 +594,7 @@ def _get_isins_for_load(
     isin_filter:  procesar solo este ISIN concreto
     recheck_negatives: ignora la cache negativa (solo tiene efecto con only_missing)
     """
-    ph = "%s" if is_postgres_connection(conn) else "?"
+    ph = "%s"
 
     if isin_filter:
         rows = conn.execute(f"""
@@ -669,9 +648,9 @@ def _print_bench_telemetry(conn, days: int = 30) -> None:
     """Resumen de los eventos BENCH_MS (PLACEHOLDER / SCHEMA / ANOMALY) de los ultimos `days`
     dias con ejemplos: una subida o un nombre valido rechazado se ve en la salida normal de
     cada ejecucion, sin depender de una revision manual."""
-    ph = "%s" if is_postgres_connection(conn) else "?"
+    ph = "%s"
     since = datetime.now(timezone.utc) - timedelta(days=days)
-    since_param = since if is_postgres_connection(conn) else since.isoformat(timespec="seconds")
+    since_param = since
     try:
         counts = conn.execute(f"""
             SELECT status, COUNT(*)
@@ -696,7 +675,7 @@ def _print_bench_telemetry(conn, days: int = 30) -> None:
         print(f"  [WARN] no se pudo leer ingestion_log para el resumen BENCH_MS: {e}")
 
 
-def run_gap_analysis(conn: sqlite3.Connection) -> None:
+def run_gap_analysis(conn: "psycopg.Connection") -> None:
     """
     Muestra el estado de cobertura de benchmarks comparando las tres fuentes:
     KIID (Benchmark_Declared en fund_master), MORNINGSTAR (fund_benchmarks)

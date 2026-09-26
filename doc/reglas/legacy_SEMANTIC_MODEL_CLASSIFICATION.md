@@ -610,10 +610,10 @@ in a column breaks GROUP BY aggregations and WHERE filters, fragmenting populati
 'Renta Fija Flexible', 'Retorno Absoluto', etc.). The migration to English ('Equity Core',
 'Fixed Income Flexible', 'Absolute Return') happened with schema v20 to align with
 Morningstar Category naming. Any Spanish family values in the DB are legacy and should be
-migrated by `sqlite_writer._normalize_record` (defense-in-depth, per R-1).
+migrated by `fund_writer._normalize_record` (defense-in-depth, per R-1).
 
 Normalization maps for legacy Spanish→English translations live exclusively in
-`classify_utils.py` (R-1). The defense-in-depth copy in `sqlite_writer._normalize_record`
+`classify_utils.py` (R-1). The defense-in-depth copy in `fund_writer._normalize_record`
 is the only authorized duplicate.
 
 ---

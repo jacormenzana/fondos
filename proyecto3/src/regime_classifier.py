@@ -35,7 +35,6 @@ Uso:
     historia = clf.classify_historical()
 """
 
-import sqlite3
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -159,7 +158,7 @@ class SemaforoResult:
 # Carga de datos macro
 # ============================================================
 
-def _load_macro_series(conn: sqlite3.Connection) -> pd.DataFrame:
+def _load_macro_series(conn: "psycopg.Connection") -> pd.DataFrame:
     """
     Carga y pivota todas las series macro necesarias para la clasificacion.
     Devuelve DataFrame mensual con columnas:
@@ -397,7 +396,7 @@ class RegimeClassifier:
         historia = clf.classify_historical()
     """
 
-    def __init__(self, conn: sqlite3.Connection):
+    def __init__(self, conn: "psycopg.Connection"):
         self.conn   = conn
         self._macro = _load_macro_series(conn)
         self._historical_cache: pd.DataFrame | None = None

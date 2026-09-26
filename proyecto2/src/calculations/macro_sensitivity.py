@@ -56,7 +56,6 @@ Se aplica filtro VIF para eliminar factores con multicolinealidad severa (VIF>10
 
 import numpy as np
 import pandas as pd
-import sqlite3
 
 from shared.config import (
     MACRO_OLS_MIN_OBS,
@@ -79,7 +78,7 @@ _PER_FUND_MIN_COVERAGE = MACRO_OLS_PER_FUND_MIN_COVERAGE
 # Carga de factores macro
 # ============================================================
 
-def load_macro_factors(conn: sqlite3.Connection) -> pd.DataFrame:
+def load_macro_factors(conn: "psycopg.Connection") -> pd.DataFrame:
     """
     Carga y construye el DataFrame de factores macro mensuales.
     Devuelve DataFrame indexado por fecha (fin de mes) con columnas:

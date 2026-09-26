@@ -67,7 +67,7 @@ def gate_record() -> dict:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Archive the retired SQLite database (FND-0103)")
-    ap.add_argument("--db", default=None, help="SQLite file (default: shared.config.DB_PATH)")
+    ap.add_argument("--db", default=None, help="SQLite file (default: db/fondos.sqlite of this repo)")
     ap.add_argument("--dest", default=str(DEFAULT_DEST))
     ap.add_argument("--due", default=DEFAULT_DUE, help="earliest archive date, YYYY-MM-DD")
     ap.add_argument("--apply", action="store_true")
@@ -75,8 +75,7 @@ def main() -> int:
     ap.add_argument("--include-backups", action="store_true", help="also move db/fondos.sqlite.bak_*")
     args = ap.parse_args()
 
-    from shared.config import DB_PATH
-    db = Path(args.db) if args.db else Path(DB_PATH)
+    db = Path(args.db) if args.db else ROOT / "db" / "fondos.sqlite"
     dest = Path(args.dest)
     due = date.fromisoformat(args.due)
     today = date.today()

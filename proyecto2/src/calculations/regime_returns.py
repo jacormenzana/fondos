@@ -65,7 +65,6 @@ Nota sobre cobertura de regimenes (P2-03 / cierre 2026-08-18):
 
 import numpy as np
 import pandas as pd
-import sqlite3
 
 from shared.config import (
     RISK_FREE_RATE_ANN,
@@ -92,7 +91,7 @@ from src.calculations.returns import (
 # Carga del historico de regimenes
 # ============================================================
 
-def load_regime_history(conn: sqlite3.Connection) -> pd.DataFrame:
+def load_regime_history(conn: "psycopg.Connection") -> pd.DataFrame:
     """
     Construye el historico de regimenes usando RegimeClassifier.
 

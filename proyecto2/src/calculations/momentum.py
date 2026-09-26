@@ -19,10 +19,9 @@ El calculo requiere que haya al menos MIN_PEERS fondos en la misma categoria.
 
 import numpy as np
 import pandas as pd
-import sqlite3
 
 from shared.config import MIN_PEERS   # minimo de fondos en la categoria para calcular percentil
-from shared.db import is_postgres_connection
+
 
 
 # ============================================================
@@ -30,7 +29,7 @@ from shared.db import is_postgres_connection
 # ============================================================
 
 def load_category_returns(
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
     fund_nature: str,
     horizon: str,
 ) -> pd.Series:
@@ -43,7 +42,7 @@ def load_category_returns(
     # their own direct SQL and were never in scope for any prior stage's read-path port (only
     # readers/db_readers.py was ported) — surfaced by the first-ever end-to-end run_pipeline.py
     # --backend postgres rehearsal, not any per-function unit test.
-    ph = "%s" if is_postgres_connection(conn) else "?"
+    ph = "%s"
     rows = conn.execute(f"""
         SELECT fmet.isin, fmet.value
         FROM fund_metrics fmet
@@ -69,7 +68,7 @@ def compute_momentum(
     isin: str,
     fund_nature: str,
     nav_df: pd.DataFrame,
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
 ) -> list[tuple]:
     """
     Calcula metricas de momentum para un fondo.

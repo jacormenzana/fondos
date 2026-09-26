@@ -226,7 +226,7 @@ def log_event(status: str, message: str) -> bool:
         sys.path.insert(0, str(ROOT))
         sys.path.insert(0, str(ROOT / "proyecto1"))
         from shared.db import get_connection
-        from core.sqlite_writer import log_ingestion
+        from core.fund_writer import log_ingestion
         conn = get_connection()
         try:
             log_ingestion(conn, None, "P1P2_ORCH", status, message[:500])

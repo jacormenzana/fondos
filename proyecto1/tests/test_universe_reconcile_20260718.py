@@ -3,7 +3,7 @@
 """
 Regression tests for FIX-UNIVERSE-RECON-1 (2026-07-18).
 
-Tests reconcile_universe_membership() from sqlite_writer.py:
+Tests reconcile_universe_membership() from fund_writer.py:
   - Basic flag setting (3 in-universe, 2 orphans)
   - Idempotency (same result on double call)
   - Re-entry: an orphan that comes back to the universe flips to 1
@@ -16,23 +16,35 @@ R-7: no imports of pipeline.py or core.io.
 from __future__ import annotations
 
 import os
-import sqlite3
 import sys
+
+import pytest
 
 _TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
 _CORE_DIR  = os.path.normpath(os.path.join(_TESTS_DIR, "..", "core"))
 if _CORE_DIR not in sys.path:
     sys.path.insert(0, _CORE_DIR)
 
-from sqlite_writer import reconcile_universe_membership
+from fund_writer import reconcile_universe_membership
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
-def _make_db(isins: list[str]) -> sqlite3.Connection:
-    """Create an in-memory fund_master with a minimal schema and seed ISINs."""
-    conn = sqlite3.connect(":memory:")
-    conn.isolation_level = None  # manual transaction control
+_PG = {}
+
+
+@pytest.fixture(autouse=True)
+def _pg_connection(pg_conn):
+    """Hand the per-test savepoint-wrapped Postgres connection (real DDL, app search_path) to the module's DB-building helper."""
+    _PG["conn"] = pg_conn
+    yield
+    _PG.clear()
+
+
+
+def _make_db(isins: list[str]):
+    """Tabla fund_master mínima (toy) en Postgres, revertida al acabar el test, con ISINs sembrados."""
+    conn = _PG["conn"]
     conn.execute("""
         CREATE TABLE fund_master (
             ISIN TEXT PRIMARY KEY,
@@ -45,12 +57,12 @@ def _make_db(isins: list[str]) -> sqlite3.Connection:
     """)
     for isin in isins:
         conn.execute(
-            "INSERT INTO fund_master (ISIN) VALUES (?)", (isin,)
+            "INSERT INTO fund_master (ISIN) VALUES (%s)", (isin,)
         )
     return conn
 
 
-def _flag_map(conn: sqlite3.Connection) -> dict[str, int]:
+def _flag_map(conn) -> dict[str, int]:
     """Return {ISIN: In_Current_Universe} for all rows."""
     return {
         r[0]: r[1]

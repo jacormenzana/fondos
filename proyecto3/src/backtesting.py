@@ -36,7 +36,6 @@ Uso:
     print(bt.summary(results))
 """
 
-import sqlite3
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -46,7 +45,7 @@ import sys
 _ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT))
 
-from shared.db import is_postgres_connection
+
 from proyecto3.src.regime_classifier import RegimeClassifier, REGIME_WEIGHTS
 from proyecto3.src.portfolio_engine import select_and_weight, DEFAULT_CONSTRAINTS
 
@@ -67,7 +66,7 @@ BENCHMARK_METRIC = "return_ann" # metrica base para benchmark
 # Carga de NAV historico
 # ============================================================
 
-def _load_nav_matrix(conn: sqlite3.Connection) -> pd.DataFrame:
+def _load_nav_matrix(conn: "psycopg.Connection") -> pd.DataFrame:
     """
     Carga la matriz de NAV mensual para todos los fondos.
     Devuelve DataFrame con fechas como indice y ISINs como columnas.
@@ -100,7 +99,7 @@ def _load_nav_matrix(conn: sqlite3.Connection) -> pd.DataFrame:
     return wide
 
 
-def _load_candidates(conn: sqlite3.Connection,
+def _load_candidates(conn: "psycopg.Connection",
                       score_version: str,
                       regime: str) -> dict[str, pd.DataFrame]:
     """
@@ -145,7 +144,7 @@ def _load_candidates(conn: sqlite3.Connection,
     # una fila elegible mas antigua -- resucitando en silencio una
     # puntuacion obsoleta. Bug real encontrado en el smoke test en vivo de
     # esta migracion (2026-09-19).
-    ph = "%s" if is_postgres_connection(conn) else "?"
+    ph = "%s"
     rows = conn.execute(f"""
         WITH latest AS (
             SELECT fs.block, fs.isin, fs.score_total, fs.eligible,
@@ -323,7 +322,7 @@ def _blend_to_master(
 
 class Backtester:
 
-    def __init__(self, conn: sqlite3.Connection, score_version: str = "v1"):
+    def __init__(self, conn: "psycopg.Connection", score_version: str = "v1"):
         self.conn          = conn
         self.score_version = score_version
         self._nav          = _load_nav_matrix(conn)

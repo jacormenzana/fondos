@@ -30,7 +30,6 @@ test harness for.
 R-7 compliant: no pipeline.py / core.io imports.
 """
 
-import sqlite3
 import sys
 from datetime import date, timedelta
 from pathlib import Path
@@ -45,15 +44,27 @@ for _p in (str(_P2_ROOT), str(_REPO), str(_CORE_DIR)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from sqlite_writer import create_schema
-
 from proyecto2.src.discovery.nav_discovery import _auto_freeze_stale_navs, _FROZEN_NAV_DAYS
 
 
-def _memory_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(":memory:")
-    create_schema(conn)
-    return conn
+_PG = {}
+
+
+@pytest.fixture(autouse=True)
+def _pg_connection(pg_session_conn, pg_conn_module_schema):
+    """_auto_freeze_stale_navs commits, which a SAVEPOINT fixture cannot survive: use an isolated
+    schema holding a clone of the REAL control.nav_sources (PK, CHECKs, defaults)."""
+    conn = pg_session_conn
+    conn.execute(f"SET search_path = {pg_conn_module_schema}, control, public")
+    conn.execute("CREATE TABLE nav_sources (LIKE control.nav_sources INCLUDING ALL)")
+    _PG["conn"] = conn
+    yield
+    _PG.clear()
+
+
+def _memory_conn():
+    """Conexion Postgres del test (DDL real de db/pg, revertida al acabar)."""
+    return _PG["conn"]
 
 
 def _insert_source(
@@ -66,10 +77,9 @@ def _insert_source(
 ):
     conn.execute(
         "INSERT INTO nav_sources (isin, source, source_id, last_nav_date, "
-        "last_checked, status, data_status) VALUES (?, 'MORNINGSTAR', ?, ?, ?, ?, ?)",
+        "last_checked, status, data_status) VALUES (%s, 'MORNINGSTAR', %s, %s, %s, %s, %s)",
         (isin, f"ms_{isin}", last_nav_date, last_checked, status, data_status),
     )
-    conn.commit()
 
 
 class TestAutoFreezeStaleNavs:
@@ -108,13 +118,13 @@ class TestAutoFreezeStaleNavs:
         conn = _memory_conn()
         old_nav = (date.today() - timedelta(days=_FROZEN_NAV_DAYS + 30)).isoformat()
         old_check = (date.today() - timedelta(days=90)).isoformat()
-        _insert_source(conn, "LU_UNCHECKED01", old_nav, old_check)
+        _insert_source(conn, "LU_UNCHK01", old_nav, old_check)
 
         frozen = _auto_freeze_stale_navs(conn, dry_run=False)
 
         assert frozen == []
         row = conn.execute(
-            "SELECT data_status FROM nav_sources WHERE isin='LU_UNCHECKED01'"
+            "SELECT data_status FROM nav_sources WHERE isin='LU_UNCHK01'"
         ).fetchone()
         assert row[0] == "OK"
 
@@ -122,7 +132,7 @@ class TestAutoFreezeStaleNavs:
         conn = _memory_conn()
         old_nav = (date.today() - timedelta(days=_FROZEN_NAV_DAYS + 30)).isoformat()
         recent_check = (date.today() - timedelta(days=5)).isoformat()
-        _insert_source(conn, "LU_ALREADYFROZEN", old_nav, recent_check,
+        _insert_source(conn, "LU_ALRFRZ01", old_nav, recent_check,
                         data_status="STALE_FROZEN")
 
         frozen = _auto_freeze_stale_navs(conn, dry_run=False)

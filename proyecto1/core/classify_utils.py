@@ -76,7 +76,7 @@ Cambios v8:
          función pública invocada por pipeline tras BL-44. Re-infiere Family/Type
          para fondos reclasificados a Restantes (valores heredados son falsos por
          construcción). Estrategia: Fase 2 léxica + Fase 3 residual (DQ=WARN).
-         Marca flags _bl62_force_overwrite_* para que BL-64 (sqlite_writer) fuerce
+         Marca flags _bl62_force_overwrite_* para que BL-64 (fund_writer) fuerce
          sobrescritura sin COALESCE. Principio #2 DRY: catálogo centralizado aquí,
          invocado desde pipeline; bloques no duplican lógica de inferencia.
 
@@ -250,7 +250,7 @@ def cost_values_agree(a: Optional[float], b: Optional[float]) -> bool:
 #
 # Los dos sitios que aplican NFC localmente (priips_cost_extractor:920 y
 # kiid_parser:3566) se mantienen como defensa en profundidad (R-1 §defense-
-# in-depth, ver sqlite_writer._normalize_record); son idempotentes.
+# in-depth, ver fund_writer._normalize_record); son idempotentes.
 # ============================================================
 
 def normalize_kiid_text(s: Optional[str]) -> Optional[str]:
@@ -4916,7 +4916,7 @@ THEMATIC_MAP: dict = {
 # Punto ÚNICO de verdad (Principio #2 DRY).
 # BL-53/54 (idioma objetivo: INGLÉS, GICS-EN — v20 §2A.1 #6). El emisor único
 # produce ya las 8 etiquetas canónicas en inglés; las conversiones ES→EN aguas
-# abajo (pipeline._SF_ES_TO_EN, sqlite_writer CASE) quedan obsoletas (Principio #1/#2).
+# abajo (pipeline._SF_ES_TO_EN, fund_writer CASE) quedan obsoletas (Principio #1/#2).
 # Invocado desde fund_characterizer.detect_sector_focus() y pipeline.py.
 # Cualquier nuevo Theme se añade SOLO aquí — no en otros módulos.
 # ============================================================
@@ -5403,7 +5403,7 @@ else:  # config no importable: degradar sin corromper (warnings-only consumer)
 # (CNAV, ETF, VNAV) porque copia la forma canónica del catálogo, nunca .title().
 # Si el valor no casa con ningún canónico, se devuelve intacto (el chequeo de
 # allowed-values lo señalará como WARNING). Aplicar pre-persist en
-# sqlite_writer._normalize_record (los valores no mutan a mitad de flujo).
+# fund_writer._normalize_record (los valores no mutan a mitad de flujo).
 # ============================================================
 def _casefold_key(s: str) -> str:
     """Clave de comparación: minúsculas, espacios/guiones-bajos colapsados."""
@@ -7021,7 +7021,7 @@ def validate_all_semantic_consistency(
 
     # ── Normalización de casing (silenciosa) — antes del loop ALLOWED_VALUES ──
     # Los bloques emiten Leverage_Used/Accumulation_Policy/Hedging_Policy en
-    # MAYÚSCULAS (convención heredada del extractor KIID). sqlite_writer ya
+    # MAYÚSCULAS (convención heredada del extractor KIID). fund_writer ya
     # normaliza el casing al escribir en BD, pero validate_all_semantic_consistency
     # corre ANTES de esa escritura. Las INTER rules superiores (INTER-2/INTER-7/
     # INTER-12) ya evaluaron los valores originales correctamente; esta paso sólo
@@ -7776,7 +7776,7 @@ def propagate_nature_to_restantes_type_family(
       Fase 3: residual sin patrón → Family=None, Type=None, DQ_Flag=WARN.
 
     Marca flags de sobrescritura forzada (_bl62_force_overwrite_*) para que
-    BL-64 en sqlite_writer los aplique sin COALESCE.
+    BL-64 en fund_writer los aplique sin COALESCE.
 
     Restricciones:
       R-2: triple acción documentada (Fase 1 placeholder / Fase 2 léxica / Fase 3 residual).
@@ -7797,7 +7797,7 @@ def propagate_nature_to_restantes_type_family(
     if inferred_family is not None:
         fund_record['Family'] = inferred_family
         fund_record['Type'] = inferred_type
-        # BL-64: forzar sobrescritura en sqlite_writer (sin COALESCE)
+        # BL-64: forzar sobrescritura en fund_writer (sin COALESCE)
         fund_record['_bl62_force_overwrite_family'] = True
         fund_record['_bl62_force_overwrite_type'] = True
         if log_fn:

@@ -91,13 +91,15 @@ logs the action to `BACKLOG_LOGS`.
 ~3,200 European investment funds. Goal: capital preservation relative to IPC+M3 (~6–7% annual, max drawdown 15%, 3–5 year horizon).  
 Stack: Python 3.13, PostgreSQL 17 (live operational store), Windows 10, Conda env `des`.  
 <!-- AUTO:BEGIN schema-version -->
-DB: `db/fondos.sqlite` (schema v26). Master list: `c:\data\fondos\in\GestoresDeFondosv1.xlsx`.
+DB: PostgreSQL 17 (schema v26; legacy SQLite retired 2026-09-26). Master list: `c:\data\fondos\in\GestoresDeFondosv1.xlsx`.
 <!-- AUTO:END schema-version -->
 
-**Live store = PostgreSQL 17 (cutover executed 2026-09-23).** The `db/fondos.sqlite` line above is
-the **retired** SQLite file: sealed read-only (`chmod 444`), frozen at the cutover, kept only as the
-migration baseline — never write to it and never read it as current data. The repo `.env`
-(git-ignored) sets `FONDOS_DB_BACKEND=postgres`; every process prints `[DB] backend=postgres (env)`.
+**Live store = PostgreSQL 17 (cutover executed 2026-09-23); SQLite is retired (2026-09-26, FND-0102).**
+There is no dual-backend code any more: `shared/db.py::get_connection()` returns a psycopg3 connection
+and nothing in production may import `sqlite3` (enforced by `tests/test_dialect_coverage.py`). The sealed
+`db/fondos.sqlite` (read-only since the cutover) is only awaiting archive on/after 2026-10-03
+(`scripts/ops/archive_sqlite.py`, FND-0103) — never write to it and never read it as current data. The
+repo `.env` (git-ignored) sets `FONDOS_PG_DSN`; every process prints `[DB] backend=postgres ...`.
 
 | Item | Where |
 |------|-------|
@@ -150,7 +152,7 @@ behaviour as P2 coverage grows). Ordering: run P2 before the P1 nature-first pas
 | 3 | `proyecto1/blocks/<block>.py` | Specialized classifier → `classification` dict |
 | 4 | `proyecto1/core/fund_characterizer.py` | Fill missing v3 attributes |
 | 5 | `proyecto1/core/pipeline.py` | Orchestrate + INTER rules + defaults |
-| 6 | `proyecto1/core/sqlite_writer.py` | Idempotent UPSERT with COALESCE |
+| 6 | `proyecto1/core/fund_writer.py` | Idempotent UPSERT with COALESCE |
 | 7 | `proyecto1/core/fund_family_builder.py` | Run once after all blocks; group share classes into families |
 
 ### Classification blocks (sequential, mutually exclusive)
@@ -218,7 +220,7 @@ PDFs and `Raw_KIID_Text` (in `fund_kiid_metadata`) are **never deleted**.
 ### Key support modules
 
 <!-- AUTO:BEGIN kill-switches-line -->
-- `shared/config.py` — all constants: `DB_PATH`, `SCHEMA_VERSION` (`"v26"`), `DOMAIN_VALUES`, `ATTRIBUTE_CATALOG`, kill-switches (`PRIIPS_COST_EXTRACTION_ENABLED`, `SHORT_HORIZON_SCORING_ENABLED`, `ROLLING_STATS_ENABLED`, `ROLLING_PCTILE_P3_ENABLED`, `PORTFOLIO_HYSTERESIS_ENABLED`, `ROTATION_COST_GATE_ENABLED`, `BENCHMARK_DECOMP_ENABLED`, `BENCHMARK_ROLE_ENABLED`, `INTER18_RECONCILIATION_ENABLED`, `DLA2_ARBITRATION_ENABLED`)
+- `shared/config.py` — all constants: `SCHEMA_VERSION` (`"v26"`), `DOMAIN_VALUES`, `ATTRIBUTE_CATALOG`, kill-switches (`PRIIPS_COST_EXTRACTION_ENABLED`, `SHORT_HORIZON_SCORING_ENABLED`, `ROLLING_STATS_ENABLED`, `ROLLING_PCTILE_P3_ENABLED`, `PORTFOLIO_HYSTERESIS_ENABLED`, `ROTATION_COST_GATE_ENABLED`, `BENCHMARK_DECOMP_ENABLED`, `BENCHMARK_ROLE_ENABLED`, `INTER18_RECONCILIATION_ENABLED`, `DLA2_ARBITRATION_ENABLED`)
 <!-- AUTO:END kill-switches-line -->
 - `shared/schema_checks.py` — `assert_schema_alignment()` validates DB columns at startup
 - `proyecto1/core/classify_utils.py` — **single source of truth** for all categorical normalization maps (EN→ES for Sector_Focus, Type, Family). Import from here; never duplicate elsewhere (P#11 / R-1).
@@ -244,13 +246,12 @@ PDFs and `Raw_KIID_Text` (in `fund_kiid_metadata`) are **never deleted**.
 | `dla_table_serializer.py` | `proyecto1/core` |
 | `fund_characterizer.py` | `proyecto1/core` |
 | `fund_family_builder.py` | `proyecto1/core` |
+| `fund_writer.py` | `proyecto1/core` |
 | `io.py` | `proyecto1/core` |
 | `kiid_parser.py` | `proyecto1/core` |
 | `mark_stale.py` | `proyecto1/core` |
-| `normalize_db_casing_v20.py` | `proyecto1/core` |
 | `pipeline.py` | `proyecto1/core` |
 | `priips_cost_extractor.py` | `proyecto1/core` |
-| `sqlite_writer.py` | `proyecto1/core` |
 | `srri_text.py` | `proyecto1/core` |
 | `srri_v4_geometric.py` | `proyecto1/core` |
 | `srri_v5_geometric.py` | `proyecto1/core` |
@@ -354,7 +355,6 @@ proyecto2/
       test_logger_structured.py
     writers/
       test_metrics_writer_pg.py
-      test_timeseries_writer.py
 ```
 <!-- AUTO:END p2-module-map -->
 
@@ -538,30 +538,19 @@ funds do not block a run); limits live in `shared/config.py::P3_FRESHNESS_MAX_AG
 
 ## P4 — Analytics / BI Sync
 
-**Two things live under "P4" right now — do not conflate them.** See `doc/reglas/P4_BI_CHARTER.md`
+**Two things live under "P4".** See `doc/reglas/P4_BI_CHARTER.md`
 §0 for the full picture; summary here:
 
-1. **The legacy BI mirror (SUPERSEDED by the cutover, described below for history)** — pushed
-   SQLite metric tables to a Docker Postgres analytics store (port 5433) for Superset. The source
-   SQLite is now sealed, so `P4_syncToPostgres.bat` refuses to run; BI reads the live store through
-   the read-only roles (`gold.mv_*` matviews, refreshed at the end of each P2 run).
+1. **BI on the live store** — Metabase/Superset read the live Postgres through the read-only roles
+   (`fondos_ro`, `superset_ro`) and the `gold.mv_*` matviews, refreshed at the end of each P2 run. The
+   old SQLite→Postgres BI mirror (`P4_syncToPostgres.bat`, `shared/load_fondos_to_postgres.py`) was
+   deleted with the SQLite retirement.
 2. **The operational migration (DEPLOYED 2026-09-23)** — the complete P1+P2+P3 database now lives
    in PostgreSQL 17 (live server: see the Context table above). Artifacts: `docker/docker-compose.yml`,
    `docker/postgresql.conf`, `db/pg/00_roles_schemas.sql` … `40_matviews.sql`,
    `db/pg/rename_map.yaml`, `scripts/mig/pg_seed.py` (one-shot on an EMPTY database),
    `scripts/mig/pg_reconcile.py`.
 
-### Legacy BI mirror (#1 above — historical)
-
-| Component | Path / Target |
-|-----------|---------------|
-| Launcher | `scripts/launch/P4_syncToPostgres.bat` |
-| ETL | `shared/load_fondos_to_postgres.py` (SQLite → Postgres) |
-| Schema DDL | `db/postgres_analytics_ddl.sql` (one-time) |
-| Postgres | Docker, port **5433** (`postgresql://superset:superset@localhost:5433/fondos`) |
-| Superset | Docker, port **8088** |
-
-Datasets registered: `fund_metric_timeseries` (long format), `fund_metric_alerts`, `fund_master` (dimension).
 Local-only alternative: `proyecto2/src/reports/rolling_dashboard.py` emits a self-contained HTML dashboard.
 
 ---
@@ -600,12 +589,12 @@ Log: `proyecto1/log/log_pipeline_YYYYMMDD_HHMMSS.log`. Duration: ~8–12 min.
 **P1 single block:**
 ```batch
 cd C:\desarrollo\fondos\proyecto1
-python run_block.py --block mixtos --db ..\db\fondos.sqlite --master "c:\data\fondos\in\GestoresDeFondosv1.xlsx"
+python run_block.py --block mixtos --master "c:\data\fondos\in\GestoresDeFondosv1.xlsx"
 ```
 
 **P1 specific ISINs:**
 ```batch
-python run_block.py --block mixtos --db ..\db\fondos.sqlite --master "..." --list-isin LU0232465467,LU1873127366
+python run_block.py --block mixtos --master "..." --list-isin LU0232465467,LU1873127366
 ```
 
 **P2 data discovery (run before pipeline — macro + NAV):**
@@ -646,13 +635,6 @@ python -X utf8 -m proyecto2.src.pipeline.run_pipeline --isin LU1234567890 --dry-
 scripts\launch\P3_generateReport.bat
 ```
 
-**P4 sync to Postgres/Superset:**
-```batch
-scripts\launch\P4_syncToPostgres.bat
-# one-time DDL:
-psql "postgresql://superset:superset@localhost:5433/fondos" -f db\postgres_analytics_ddl.sql
-```
-
 **Tests:**
 ```batch
 # P1 tests (from repo root)
@@ -689,7 +671,6 @@ UPDATE fund_kiid_metadata SET KIID_Status='FORCE_REFRESH' WHERE ISIN='<isin>' AN
 | `P2_discoverLoadMetrics.bat` | P2 |
 | `P3_buildPortfolio.bat` | P3 |
 | `P3_generateReport.bat` | P3 |
-| `P4_syncToPostgres.bat` | P4 |
 <!-- AUTO:END launchers -->
 
 ---
@@ -774,7 +755,7 @@ the logging normative in `doc/reglas/NORMAS_IMPLEMENTACION.md` §4. **Violation 
 
 ### The 11 principles (canonical: `PRINCIPIOS_DISENO.md`)
 
-1. **COALESCE mandatory** — All SQLite upserts on extracted fields: `COALESCE(excluded.col, col)`. Exception: `SRRI_Visual` (regenerated each cycle).
+1. **COALESCE mandatory** — All upserts on extracted fields: `COALESCE(excluded.col, col)`. Exception: `SRRI_Visual` (regenerated each cycle).
 2. **Root cause only** — No symptomatic patches. No ad-hoc SQL to fix classification data (use the Python module).
 3. **Read before modifying** — Always read the production file. Never assume content.
 4. **Regime-aware scoring** — Metrics conditioned on macro regime, not global history.
@@ -788,7 +769,7 @@ the logging normative in `doc/reglas/NORMAS_IMPLEMENTACION.md` §4. **Violation 
 
 ### Architecture restrictions R-1..R-8 (canonical: `RESTRICCIONES_ARQUITECTURA.md`)
 
-- **R-1** — Normalization maps live only in `classify_utils.py`. No duplicates elsewhere (except `sqlite_writer._normalize_record` as intentional defense-in-depth). *(This is the enforced instance of P#11.)*
+- **R-1** — Normalization maps live only in `classify_utils.py`. No duplicates elsewhere (except `fund_writer._normalize_record` as intentional defense-in-depth). *(This is the enforced instance of P#11.)*
 - **R-2** — Changing a persisted attribute requires: (1) fix the classifier, (2) fix INTER rules in pipeline, (3) SQL migration or FORCE_REFRESH on affected funds.
 - **R-3** — Adding an attribute to `characterize_fund()` → add its column to `_v3_row` SELECT in `pipeline.py` (~line 643) that controls `_needs_char`.
 - **R-4** — INTER rules use effective values: `_X_eff = record.get("X") or _X_bd`. Never `record.get("X")` alone (CACHED funds may have None in record).

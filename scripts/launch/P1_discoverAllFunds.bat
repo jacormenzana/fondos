@@ -13,7 +13,6 @@ chcp 65001 > nul
 :: ============================================================
 
 set ROOT=C:\desarrollo\fondos
-set DB=%ROOT%\db\fondos.sqlite
 set LOG_DIR=%ROOT%\proyecto1\log
 
 :: Resolve bare 'python' calls below to the 'des' Conda env (bare python on
@@ -29,7 +28,6 @@ if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
 
 echo ============================================================ >> "%LOG%"
 echo  Pipeline P1 - Inicio: %STAMP%                              >> "%LOG%"
-echo  DB:     %DB%                                                >> "%LOG%"
 echo ============================================================ >> "%LOG%"
 
 echo.
@@ -43,7 +41,7 @@ echo.
 echo [%time%] Paso 0: mark_stale (max 50 fondos, antiguedad ^> 180 dias)
 echo. >> "%LOG%"
 echo --- PASO 0: mark_stale ------------------------------------ >> "%LOG%"
-python -X utf8 "%ROOT%\scripts\launch\mark_stale.py" --db "%DB%" --max-age 180 --max-funds 50 >> "%LOG%" 2>&1
+python -X utf8 "%ROOT%\scripts\launch\mark_stale.py" --max-age 180 --max-funds 50 >> "%LOG%" 2>&1
 set RC0=!ERRORLEVEL!
 
 :: -- OPT-B3: single nature-first pass (replaces 7 sequential block runs) -----
@@ -61,15 +59,15 @@ set RC0=!ERRORLEVEL!
 ::
 :: Per-block debug (kept for single-block testing):
 ::   pushd %ROOT%\proyecto1
-::   python -X utf8 run_block.py --block monetarios --db "%DB%" --master-db
+::   python -X utf8 run_block.py --block monetarios --master-db
 ::   popd
 :: Para usar el Excel maestro legacy en debug puntual:
-::   python -X utf8 run_block.py --block monetarios --db "%DB%" --master "c:\data\fondos\in\GestoresDeFondosv1.xlsx"
+::   python -X utf8 run_block.py --block monetarios --master "c:\data\fondos\in\GestoresDeFondosv1.xlsx"
 echo [%time%] Clasificacion: NATURE_FIRST (OPT-B3, pasada unica)
 echo. >> "%LOG%"
 echo --- NATURE_FIRST (OPT-B3) --------------------------------- >> "%LOG%"
 pushd %ROOT%\proyecto1
-python -X utf8 run_block.py --nature-first --db "%DB%" --master-db >> "%LOG%" 2>&1
+python -X utf8 run_block.py --nature-first --master-db >> "%LOG%" 2>&1
 set RC1=!ERRORLEVEL!
 popd
 
@@ -87,7 +85,7 @@ echo [%time%] export_p1 (--include-kiid-text)
 echo. >> "%LOG%"
 echo --- export_p1 --------------------------------------------- >> "%LOG%"
 pushd %ROOT%
-python -X utf8 -m proyecto1.src.analysis.export_p1 --include-kiid-text --db "%DB%" >> "%LOG%" 2>&1
+python -X utf8 -m proyecto1.src.analysis.export_p1 --include-kiid-text >> "%LOG%" 2>&1
 set RC3=!ERRORLEVEL!
 popd
 

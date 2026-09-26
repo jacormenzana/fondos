@@ -18,7 +18,6 @@ R-7: no imports of pipeline.py or core.io.
 from __future__ import annotations
 
 import os
-import sqlite3
 import sys
 
 import pytest
@@ -32,24 +31,6 @@ for _p in (_ROOT_DIR, _TOOLS_DIR):
 
 from audit_benchmark_consistency import run_audit  # noqa: E402
 
-_SCHEMA = """
-CREATE TABLE fund_master (
-    ISIN TEXT PRIMARY KEY, Fund_Name TEXT, Fund_Nature TEXT, Geography TEXT,
-    Sector_Focus TEXT, Theme TEXT, Market_Cap_Focus TEXT, Fund_Currency TEXT,
-    Asset_Currency TEXT, Hedging_Policy TEXT, Credit_Quality TEXT,
-    Duration_Profile TEXT, Benchmark_Declared TEXT, Benchmark_Type TEXT,
-    Alt_Strategy TEXT, SRRI INTEGER, Management_Company TEXT
-);
-CREATE TABLE fund_benchmarks (
-    ISIN TEXT, source TEXT, benchmark_raw TEXT, benchmark_id TEXT,
-    benchmark_name TEXT, provider TEXT, asset_class TEXT, confidence TEXT,
-    extracted_at TEXT, benchmark_role TEXT
-);
-CREATE TABLE fund_kiid_metadata (
-    ISIN TEXT, KIID_Class INTEGER, KIID_Status TEXT, Raw_KIID_Text TEXT
-);
-"""
-
 _GENUINE_KIID = (
     "KEY INVESTOR INFORMATION\nSome Bond Fund\nObjectives and Investment Policy\n"
     "The fund invests in fixed income securities. Risk indicator: 3/7.\n" + "x" * 100
@@ -62,10 +43,8 @@ _UMBRELLA_ANNUAL_REPORT = (
 )
 
 
-def _build_db(path: str) -> None:
-    con = sqlite3.connect(path)
-    con.executescript(_SCHEMA)
-
+def _build_db(con) -> None:
+    """Siembra las tablas REALES (db/pg) con tres fondos; la conexion es la del test (SAVEPOINT)."""
     funds = [
         # (ISIN, Fund_Nature, KIID_Status, Raw_KIID_Text)
         ("XX_LIVE_BUG",   "Renta Fija Flexible", "OK",             _GENUINE_KIID),
@@ -74,29 +53,27 @@ def _build_db(path: str) -> None:
     ]
     for isin, nature, status, text in funds:
         con.execute(
-            "INSERT INTO fund_master (ISIN, Fund_Name, Fund_Nature) VALUES (?,?,?)",
+            "INSERT INTO fund_master (ISIN, Fund_Name, Fund_Nature, Heuristic_Block, Heuristic_Core) "
+            "VALUES (%s,%s,%s,'RESTANTES',0)",
             (isin, f"{isin} FUND", nature),
         )
         con.execute(
             "INSERT INTO fund_benchmarks (ISIN, source, benchmark_name, provider, "
-            "asset_class, confidence, benchmark_role) VALUES (?,?,?,?,?,?,?)",
+            "asset_class, confidence, benchmark_role) VALUES (%s,%s,%s,%s,%s,%s,%s)",
             (isin, "MORNINGSTAR", "Some Equity Index", "Morningstar", "Equity",
              "HIGH", "asset_proxy"),
         )
         con.execute(
             "INSERT INTO fund_kiid_metadata (ISIN, KIID_Class, KIID_Status, "
-            "Raw_KIID_Text) VALUES (?,1,?,?)",
+            "Raw_KIID_Text) VALUES (%s,1,%s,%s)",
             (isin, status, text),
         )
-    con.commit()
-    con.close()
 
 
 @pytest.fixture()
-def findings(tmp_path):
-    db_path = tmp_path / "test_fondos.sqlite"
-    _build_db(str(db_path))
-    return run_audit(db_path=db_path, backend="sqlite")   # temp SQLite fixture on purpose (FND-0102)
+def findings(pg_app_conn):
+    _build_db(pg_app_conn)
+    return run_audit(conn=pg_app_conn)
 
 
 class TestB1KnownWrongDocBucket:

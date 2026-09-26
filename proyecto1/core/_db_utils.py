@@ -5,7 +5,7 @@ Cambios:
 
   v1 (2026-04-25) — BL-49/50/53/56/57: helper _eff() centralizado.
                     Causa raíz arquitectónica común:
-                    El patrón COALESCE en sqlite_writer preserva valores en BD
+                    El patrón COALESCE en fund_writer preserva valores en BD
                     que el ciclo en curso no recalcula. Las reglas de inferencia
                     del pipeline operaban sobre fund_master_record (dict del
                     ciclo) sin leer la BD, perdiendo información para fondos
@@ -17,18 +17,17 @@ Cambios:
 
 from __future__ import annotations
 
-import sqlite3
 from typing import Any, Dict, Optional
 
 try:
-    from shared.db import is_postgres_connection, table_columns
+    from shared.db import table_columns
 except ModuleNotFoundError:
     import sys as _sys_shared
     from pathlib import Path as _Path_shared
     _shared_root = _Path_shared(__file__).resolve().parents[2]
     if str(_shared_root) not in _sys_shared.path:
         _sys_shared.path.insert(0, str(_shared_root))
-    from shared.db import is_postgres_connection, table_columns
+    from shared.db import table_columns
 
 
 # Conjunto canónico de campos cuya lectura efectiva es requerida por reglas
@@ -90,7 +89,7 @@ class EffectiveReader:
     Garantías:
       - Como mucho UNA query SELECT por campo y por ISIN (caché interna).
       - No reintroduce valores en fund_master_record (no muta el dict).
-        Esto es deliberado: el COALESCE de sqlite_writer ya preserva el
+        Esto es deliberado: el COALESCE de fund_writer ya preserva el
         valor de BD; mutar el dict podría provocar dobles escrituras y
         romper la semántica "el bloque tiene la última palabra" para
         campos no-COALESCE.
@@ -98,7 +97,7 @@ class EffectiveReader:
 
     __slots__ = ("_conn", "_isin", "_cache", "_bd_loaded")
 
-    def __init__(self, conn: sqlite3.Connection, isin: str):
+    def __init__(self, conn: "psycopg.Connection", isin: str):
         self._conn = conn
         self._isin = isin
         self._cache: Dict[str, Optional[Any]] = {}
@@ -113,7 +112,7 @@ class EffectiveReader:
         # must have run at startup and guaranteed all whitelist fields exist.
         # A silent swallow here was the root cause of the v20 silent null-out
         # (see FIX-EFF-CH header above).
-        _ph = "%s" if is_postgres_connection(self._conn) else "?"
+        _ph = "%s"
         row = self._conn.execute(
             f"SELECT {cols} FROM fund_master WHERE ISIN={_ph}",
             (self._isin,)
@@ -168,14 +167,14 @@ class EffectiveReader:
 
 
 def make_eff_reader(
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
     isin: str,
 ) -> EffectiveReader:
     """Constructor convencional. Atajo para uso desde pipeline."""
     return EffectiveReader(conn, isin)
 
 
-def assert_eff_fields_alignment(conn: sqlite3.Connection) -> None:
+def assert_eff_fields_alignment(conn: "psycopg.Connection") -> None:
     """
     Verifica que todos los campos de _EFF_FIELDS_WHITELIST existen como columnas
     en fund_master. Debe llamarse al inicio del pipeline (junto a
@@ -187,15 +186,12 @@ def assert_eff_fields_alignment(conn: sqlite3.Connection) -> None:
     schema live — fail-fast en startup, antes de procesar cualquier fondo.
     """
     live_cols = table_columns(conn, "fund_master")
-    if is_postgres_connection(conn):
-        # table_columns() returns lowercase on PG (unquoted-identifier folding — see its own
-        # docstring); fold the whitelist to match, same convention as schema_checks.py's
-        # verify_db_schema(). PG folding means every whitelist field resolves to its real
-        # lower_snake column with no rename needed (verified empirically, migration addendum §1).
-        live_cols = {c.lower() for c in live_cols}
-        missing = {f for f in _EFF_FIELDS_WHITELIST if f.lower() not in live_cols}
-    else:
-        missing = _EFF_FIELDS_WHITELIST - live_cols
+    # table_columns() returns lowercase on PG (unquoted-identifier folding — see its own
+    # docstring); fold the whitelist to match, same convention as schema_checks.py's
+    # verify_db_schema(). PG folding means every whitelist field resolves to its real
+    # lower_snake column with no rename needed (verified empirically, migration addendum §1).
+    live_cols = {c.lower() for c in live_cols}
+    missing = {f for f in _EFF_FIELDS_WHITELIST if f.lower() not in live_cols}
     if missing:
         raise AssertionError(
             f"_EFF_FIELDS_WHITELIST contiene {len(missing)} campo(s) ausentes "

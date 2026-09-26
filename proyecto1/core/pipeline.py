@@ -119,7 +119,7 @@ Cambios v29 (2026-04-30):
             Estrategia: inferencia léxica desde Fund_Name (Fase 2) con
             fallback a NULL+DQ=WARN (Fase 3). Marca flags
             _bl62_force_overwrite_family/_type para que BL-64 en
-            sqlite_writer fuerce sobrescritura sin COALESCE.
+            fund_writer fuerce sobrescritura sin COALESCE.
             Import classify_utils ampliado: propagate_nature_to_restantes_type_family.
 
 core/pipeline.py  — v28
@@ -241,7 +241,7 @@ try:
     from proyecto1.core.fund_characterizer import characterize_fund
 except ImportError:
     from core.fund_characterizer import characterize_fund
-from core.sqlite_writer import (
+from core.fund_writer import (
     publish_fund,
     log_ingestion,
     correct_oc_aci_mismatch,             # BL-COST-5: OC/ACI mismatch correction
@@ -249,15 +249,15 @@ from core.sqlite_writer import (
 )
 from core._db_utils import EffectiveReader   # BL-49/50: lectura efectiva
 try:
-    from shared.db import is_postgres_connection, fail_soft_block
+    from shared.db import fail_soft_block
 except ModuleNotFoundError:
-    # shared no está aún en sys.path — añadirlo explícitamente (mismo patrón que sqlite_writer.py).
+    # shared no está aún en sys.path — añadirlo explícitamente (mismo patrón que fund_writer.py).
     import sys as _sys_shared
     from pathlib import Path as _Path_shared
     _shared_root = _Path_shared(__file__).resolve().parents[2]
     if str(_shared_root) not in _sys_shared.path:
         _sys_shared.path.insert(0, str(_shared_root))
-    from shared.db import is_postgres_connection, fail_soft_block
+    from shared.db import fail_soft_block
 # P1-19: única definición de la escala de coste (P#11 / R-1)
 try:
     from core.cost_scale import OC_RATIO_MAX as _OC_RATIO_MAX
@@ -498,7 +498,6 @@ def load_master_excelPrevio(path: Path) -> pd.DataFrame:
     raise ValueError("No se ha encontrado columna ISIN en el maestro.")
 
 
-
 # -------------------------------------------------
 # Utilidades
 # -------------------------------------------------
@@ -550,7 +549,7 @@ def _finalize_data_quality_issues(
     for check_code, dq_level, log_status, message in issues:
         log_ingestion(conn, isin, check_code, log_status, message)
 
-    _ph = "%s" if is_postgres_connection(conn) else "?"
+    _ph = "%s"
     conn.execute(
         f"DELETE FROM fund_data_quality_issues WHERE ISIN = {_ph}", (isin,)
     )
@@ -572,7 +571,6 @@ def _finalize_data_quality_issues(
     return max(levels, key=lambda lvl: DATA_QUALITY_SEVERITY.get(lvl, 0))
 
 
-
 def _get_available_isins(conn, df_master: pd.DataFrame) -> list[str]:
     """
     Devuelve los ISIN del maestro que aún no han sido clasificados
@@ -591,7 +589,6 @@ def _get_available_isins(conn, df_master: pd.DataFrame) -> list[str]:
     classified_isins = {r[0] for r in rows if r[0]}
 
     return sorted(all_isins - classified_isins)
-
 
 
 _CANON_KEYS_CACHE = None
@@ -656,9 +653,6 @@ def validate_classification_contract(
             raise ValueError(
                 f"[{block_name}] ISIN {isin} - {k} debe ser str o None (recibido {type(v)})"
             )
-
-
-
 
 
 # -------------------------------------------------
@@ -782,11 +776,10 @@ def run_block(
     if nature_first:
         try:
             from shared.db import round_sql as _round_sql, int_cast_sql as _int_cast_sql
-            _pg = is_postgres_connection(conn)
             # CAST(ROUND(x) AS INT): SQLite ties away-from-zero + truncating CAST; Postgres's
             # native ROUND()/CAST() break ties/round differently (round_sql/int_cast_sql's own
             # docstrings — same gap export_metrics.py already found and fixed for its q_* queries).
-            _srri_expr = _int_cast_sql(_round_sql("value", 0, pg=_pg), pg=_pg)
+            _srri_expr = _int_cast_sql(_round_sql("value", 0))
             with fail_soft_block(conn):   # SAVEPOINT: the handler below swallows a failure
                 _srri_rows = conn.execute(
                     f"SELECT ISIN, {_srri_expr} FROM fund_metrics "
@@ -842,7 +835,7 @@ def run_block(
                 # WRONG_DOC ahora — evitamos que cicle indefinidamente consumiendo
                 # un slot de descarga en cada run sin posibilidad de resolución.
                 if _kiid_err == "no_links_found":
-                    _ph = "%s" if is_postgres_connection(conn) else "?"
+                    _ph = "%s"
                     _cached_row = conn.execute(
                         f"SELECT Raw_KIID_Text FROM fund_kiid_metadata "
                         f"WHERE ISIN={_ph} AND KIID_Class=1",
@@ -877,7 +870,7 @@ def run_block(
             # Recuperar SRRI_Visual previo de la BD
             _srri_visual_prev  = None
             _srri_textual_prev = None
-            _ph = "%s" if is_postgres_connection(conn) else "?"
+            _ph = "%s"
             _row = conn.execute(
                 f"SELECT SRRI_Visual, SRRI_Textual FROM fund_kiid_metadata "
                 f"WHERE ISIN={_ph} AND KIID_Class=1",
@@ -1071,7 +1064,7 @@ def run_block(
             # completa (Family/Type/etc.), no solo un parche de Fund_Nature.
             # OPT-B: nature vote resolved this upfront; INTER-DBLCLAIM is a no-op in nature_first mode.
             if not nature_first and classification.get("Fund_Nature") == "Mixtos" and block_name == "MIXTOS":
-                _ph = "%s" if is_postgres_connection(conn) else "?"
+                _ph = "%s"
                 _bd_nature_dblclaim = conn.execute(
                     f"SELECT Fund_Nature FROM fund_master WHERE ISIN={_ph}", (isin,)
                 ).fetchone()
@@ -1224,7 +1217,7 @@ def run_block(
                 # Para CACHED: verificar si faltan atributos v3 en BD
                 # P06: ampliado para detectar Geography=NULL y
                 #      inconsistencia Nature/Investment_Universe (P09)
-                _ph = "%s" if is_postgres_connection(conn) else "?"
+                _ph = "%s"
                 _v3_row = conn.execute(
                     f"SELECT Investment_Universe, Accumulation_Policy, Hedging_Policy, "
                     f"Investment_Focus, Credit_Quality, Geography, Fund_Nature, "
@@ -1758,7 +1751,7 @@ def run_block(
             # Accumulation_Policy: v20 canónico es TITLE (Accumulation/
             # Distribution). El override legacy v19 a UPPER se ELIMINA: era
             # contraproducente (forzaba Title→UPPER, contra config.DOMAIN_VALUES).
-            # normalize_casing en sqlite_writer canonicaliza el casing.
+            # normalize_casing en fund_writer canonicaliza el casing.
 
             # Currency_Hedged: mapear "Yes" → "Hedged"
             if fund_master_record.get("Currency_Hedged") == "Yes":
@@ -1800,7 +1793,7 @@ def run_block(
             #
             # Lectura BD R-4 (mantenida de v29).
             # Umbrales: Monetario SRRI≥3, RFC SRRI≥5 (alineado con _NATURE_VOL_BANDS={2,3,4}).
-            _ph = "%s" if is_postgres_connection(conn) else "?"
+            _ph = "%s"
             _nat44_bd_row = conn.execute(
                 f"SELECT Fund_Nature, SRRI FROM fund_master WHERE ISIN={_ph}", (isin,)
             ).fetchone()
@@ -2023,7 +2016,7 @@ def run_block(
             #      EFECTIVO vía EffectiveReader (como ya hace BL-50, arriba).
             #      Cuando fund_master_record["Geography"] es None este ciclo,
             #      la condición nunca se cumplía y la regla no se disparaba
-            #      -- el COALESCE de sqlite_writer conservaba entonces el
+            #      -- el COALESCE de fund_writer conservaba entonces el
             #      Geography/Investment_Universe de BD, potencialmente
             #      incoherentes entre sí desde un ciclo anterior, sin que
             #      esta regla llegara nunca a re-certificarlos.
@@ -2169,7 +2162,7 @@ def run_block(
             # persistido, pero contador BL30_INVESTMENT_FOCUS_SECTOR oscilando
             # 15<->326 entre ciclos completos en vez de converger). Pura lectura,
             # sin efectos secundarios — es seguro adelantarla.
-            _ph = "%s" if is_postgres_connection(conn) else "?"
+            _ph = "%s"
             _bd_prev = conn.execute(
                 f"SELECT Sector_Focus, Hedging_Policy, "
                 f"Investment_Focus, Benchmark_Declared, Benchmark_Type "
@@ -2400,7 +2393,7 @@ def run_block(
             # estilo de gestión de acciones no tiene significado semántico.
             # Mixtos y Alternativo se preservan: pueden tener exposición equity significativa
             # con sesgo de estilo declarado en el KID.
-            # _style_profile_cleared=True → sqlite_writer usa OW en lugar de COALESCE,
+            # _style_profile_cleared=True → fund_writer usa OW en lugar de COALESCE,
             # limpiando valores stale en BD incluso en ciclos CACHED (R-4 defensivo).
             _sp_inter_nature = fund_master_record.get("Fund_Nature")
             if _sp_inter_nature in ("Monetario", "Renta Fija Corto Plazo", "Renta Fija Flexible"):
@@ -2438,7 +2431,7 @@ def run_block(
             # por ella. Este bloque garantiza cobertura universal.
             #
             # CAUSA RAÍZ previa: si fund_master_record tenía un campo a None pero
-            # BD tenía un valor antiguo, el COALESCE en sqlite_writer preservaba
+            # BD tenía un valor antiguo, el COALESCE en fund_writer preservaba
             # el valor antiguo — creando inconsistencia con los campos nuevos
             # escritos con valor no-NULL. Fix: leer valores BD previos y usarlos
             # en la comparación INTER.
@@ -2646,7 +2639,7 @@ def run_block(
             # mente incoherente y debe anularse. Extendido (2026-07-11) para cubrir
             # RF Flexible (73 fondos con 'All Cap' stale de ciclos anteriores) y
             # otras natures no-equity además de Monetario/RFCP.
-            # _market_cap_focus_cleared=True → sqlite_writer OW para limpiar stale en BD.
+            # _market_cap_focus_cleared=True → fund_writer OW para limpiar stale en BD.
             _MCF_NON_EQUITY_NATURES_INTER = (
                 "Monetario", "Renta Fija Corto Plazo", "Renta Fija Flexible",
                 "Alternativo", "Restantes", "Estructurado",
@@ -2699,7 +2692,7 @@ def run_block(
             # Caso B: el parser devolvió None — verificar si BD tiene un valor
             # contaminado que el COALESCE preservaría
             elif not fund_master_record.get("Benchmark_Declared"):
-                _ph = "%s" if is_postgres_connection(conn) else "?"
+                _ph = "%s"
                 _bench_bd_row = conn.execute(
                     f"SELECT Benchmark_Declared FROM fund_master WHERE ISIN={_ph}",
                     (isin,)
@@ -2847,7 +2840,7 @@ def run_block(
                     # v21: fallback a BD para Investment_Universe
                     _universe = fund_master_record.get("Investment_Universe")
                     if not _universe:
-                        _ph = "%s" if is_postgres_connection(conn) else "?"
+                        _ph = "%s"
                         _univ_bd = conn.execute(
                             f"SELECT Investment_Universe FROM fund_master WHERE ISIN={_ph}",
                             (isin,)
@@ -2908,7 +2901,6 @@ def run_block(
                         )
 
 
-
             _total_ms = round((time.perf_counter() - _t_fund_start) * 1000)
             _breakdown = "|".join(
                 f"{k}:{v}ms" for k, v in _t_phases.items()
@@ -2937,7 +2929,7 @@ def run_block(
                 # P1-17: Management_Fee_Pct se lee también — el extractor lo usa SOLO
                 # como destino de reparación de FIX-OC-BIND cuando no logra rederivar
                 # la gestión del texto (nunca se republica como extracción).
-                _ph = "%s" if is_postgres_connection(conn) else "?"
+                _ph = "%s"
                 _cost_bd_row = conn.execute(
                     f"SELECT Cost_Extraction_Quality, Ongoing_Charge_Recurrent, "
                     f"Entry_Fee_Pct_Max, Exit_Fee_Pct_Max, Management_Fee_Pct "
@@ -3281,7 +3273,7 @@ def run_block(
     # Postgres — this function's connection stays open and keeps being used by the CALLER
     # (run_block.py's main(): run_global_normalization/reconcile_universe_membership/conn.commit())
     # after this function returns, so a poisoned transaction here would break code outside it too.
-    _ph = "%s" if is_postgres_connection(conn) else "?"
+    _ph = "%s"
     try:
         with fail_soft_block(conn):
             _incidencias = conn.execute(f"""
@@ -3371,7 +3363,7 @@ def run_block(
 # =============================================================
 #
 # Causa raíz arquitectónica:
-#   _post_upsert_normalize_db() en sqlite_writer.py opera sobre el ISIN
+#   _post_upsert_normalize_db() en fund_writer.py opera sobre el ISIN
 #   recién upserted (WHERE ISIN=?). Los fondos no procesados en el ciclo
 #   (KIID_Status=WRONG_DOC, sin bloque que los recoja, errores) conservan
 #   indefinidamente sus valores stale en inglés en BD.

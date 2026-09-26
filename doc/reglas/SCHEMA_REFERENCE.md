@@ -591,7 +591,7 @@ off-peak). SQLite WAL + commit-por-lote evitan bloqueos concurrentes.
 
 ## NOTAS CRÍTICAS
 
-### COALESCE en sqlite_writer.py
+### COALESCE en fund_writer.py
 
 Columnas con COALESCE (preservan valor anterior si nuevo es NULL):
 - `Raw_KIID_Text`

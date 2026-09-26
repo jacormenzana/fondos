@@ -51,7 +51,6 @@ P2-03 / Option B — Recalentamiento y Recalentamiento_Tardio (cierre 2026-08-19
   Véase también: regime_returns.py (nota sobre cobertura, P2-03 / ACT-08 2026-08-18).
 """
 
-import sqlite3
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -68,7 +67,7 @@ from shared.config import (
     SHORT_HORIZON_SCORING_ENABLED,
     ROLLING_PCTILE_P3_ENABLED,
 )
-from shared.db import is_postgres_connection, executemany
+from shared.db import executemany
 
 
 # ============================================================
@@ -308,7 +307,7 @@ class FundScore:
 # ============================================================
 
 def load_fund_metrics_for_scoring(
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
     regime: str | None = None,
 ) -> pd.DataFrame:
     """
@@ -374,7 +373,7 @@ def load_fund_metrics_for_scoring(
             ("return_ann_slope",      "rolling_3y",      1),
         ]
 
-    ph = "%s" if is_postgres_connection(conn) else "?"
+    ph = "%s"
     rows = []
     for metric, horizon, real_flag in metrics_needed:
         result = conn.execute(f"""
@@ -888,7 +887,7 @@ def deduplicate_by_family(df: pd.DataFrame) -> pd.DataFrame:
 # ============================================================
 
 def score_funds(
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
     regime_result: RegimeResult,
     score_version: str = "v1",
     dry_run: bool = False,
@@ -1041,7 +1040,7 @@ def _safe_int(val):
 # ============================================================
 
 def _persist_scores(
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
     df: pd.DataFrame,
     regime: str,
     score_version: str,
@@ -1060,27 +1059,18 @@ def _persist_scores(
     unica fuente de verdad para regime/exclusion_reason.
     """
     today = pd.Timestamp.today().strftime("%Y-%m-%d")
-    if is_postgres_connection(conn):
-        sql = """
-            INSERT INTO fund_scores
-                (isin, block, score_version, regime, as_of_date, score_total,
-                 score_base, multiplier, score_detail, eligible,
-                 exclusion_reason, calculated_at, notes)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s)
-            ON CONFLICT (isin, block, score_version, regime, as_of_date) DO UPDATE SET
-                score_total = excluded.score_total, score_base = excluded.score_base,
-                multiplier = excluded.multiplier, score_detail = excluded.score_detail,
-                eligible = excluded.eligible, exclusion_reason = excluded.exclusion_reason,
-                calculated_at = excluded.calculated_at, notes = excluded.notes
-        """
-    else:
-        sql = """
-            INSERT OR REPLACE INTO fund_scores
-                (isin, block, score_version, regime, as_of_date, score_total,
-                 score_base, multiplier, score_detail, eligible,
-                 exclusion_reason, calculated_at, notes)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """
+    sql = """
+        INSERT INTO fund_scores
+            (isin, block, score_version, regime, as_of_date, score_total,
+             score_base, multiplier, score_detail, eligible,
+             exclusion_reason, calculated_at, notes)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s)
+        ON CONFLICT (isin, block, score_version, regime, as_of_date) DO UPDATE SET
+            score_total = excluded.score_total, score_base = excluded.score_base,
+            multiplier = excluded.multiplier, score_detail = excluded.score_detail,
+            eligible = excluded.eligible, exclusion_reason = excluded.exclusion_reason,
+            calculated_at = excluded.calculated_at, notes = excluded.notes
+    """
     rows = []
     for _, r in df.iterrows():
         rows.append((

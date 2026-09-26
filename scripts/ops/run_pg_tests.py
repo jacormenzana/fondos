@@ -19,6 +19,7 @@ distro idle-shuts-down and kills containers unless a wsl process stays attached,
 from __future__ import annotations
 
 import argparse
+import random
 import shutil
 import signal
 import socket
@@ -47,9 +48,13 @@ def _psql(docker: list[str], name: str, args: list[str], stdin: bytes | None = N
     return subprocess.run(cmd, input=stdin, capture_output=True)
 
 
-def _free_port(start: int = 5437, tries: int = 40) -> int:
-    """First port from `start` that nothing on this host is listening on or has half-open."""
-    for port in range(start, start + tries):
+def _free_port(start: int = 5437, tries: int = 100) -> int:
+    """A port in [start, start+tries) that nothing on this host is listening on. The scan starts at a
+    RANDOM offset: WSL2 keeps a just-released forward alive for a while, and reusing the port of the
+    previous run made the next one hang silently (2026-09-26)."""
+    offset = random.randrange(tries)
+    for k in range(tries):
+        port = start + (offset + k) % tries
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             if s.connect_ex(("127.0.0.1", port)) != 0:          # nothing accepts connections there
                 try:
@@ -74,6 +79,23 @@ def _remove_stale_containers(docker: list[str], keep: str) -> None:
         if minutes is None or minutes >= 30:      # hours/days/"About an hour"/"Exited" -> stale
             print(f"[pg-test] removing stale container {name} ({age.strip()})", flush=True)
             subprocess.run(docker + ["rm", "-f", name], capture_output=True)
+
+
+def _check_host_reachable(port: int, attempts: int = 3) -> None:
+    """Fail fast (with a clear message) if the database is not reachable FROM THE HOST through the
+    published port - a dead WSL port-forward otherwise makes pytest stall silently at its first DB test."""
+    import psycopg
+    last = None
+    for _ in range(attempts):
+        try:
+            with psycopg.connect(f"postgresql://postgres@127.0.0.1:{port}/{DB_NAME}", connect_timeout=8) as c:
+                c.execute("select 1")
+            return
+        except Exception as exc:                                  # noqa: BLE001
+            last = exc
+            time.sleep(2)
+    raise SystemExit(f"[pg-test] 127.0.0.1:{port} is not reachable from the host ({type(last).__name__}: {last}). "
+                     "Stale WSL port-forward? Re-run (a new random port is chosen).")
 
 
 def _wait_ready(docker: list[str], name: str, timeout_s: int = 60) -> None:
@@ -108,7 +130,7 @@ def main() -> int:
     keepalive = None
     if docker[0] == "wsl":
         keepalive = subprocess.Popen(["wsl", "-d", args.distro, "--", "sleep", "infinity"],
-                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     rc = 1
     try:
         run = subprocess.run(docker + ["run", "-d", "--rm", "--name", name,
@@ -124,9 +146,11 @@ def main() -> int:
                 print(f"DDL {stem}.sql failed:\n{res.stderr.decode(errors='replace')}", file=sys.stderr)
                 return 1
         print(f"[pg-test] {args.image} on 127.0.0.1:{args.port}, DDL loaded", flush=True)
+        _check_host_reachable(args.port)
 
         import os
-        env = dict(os.environ, FONDOS_TEST_PG_DSN=f"postgresql://postgres@127.0.0.1:{args.port}/{DB_NAME}")
+        env = dict(os.environ, FONDOS_TEST_PG_DSN=f"postgresql://postgres@127.0.0.1:{args.port}/{DB_NAME}",
+                   PGCONNECT_TIMEOUT="10")           # a dead forward must fail, not hang
         if args.pytest_args:
             runs = [(ROOT, args.pytest_args)]
         else:
@@ -134,7 +158,10 @@ def main() -> int:
                     (ROOT / "proyecto2", ["tests", "--ignore=tests/discovery/test_historia.py"])]  # test_historia needs the network
         rc = 0
         for cwd, targets in runs:
-            rc |= subprocess.run([sys.executable, "-m", "pytest", "-q", *targets], cwd=cwd, env=env).returncode
+            # stdin=DEVNULL: a child that inherits the caller's stdin (a tool/CI pipe) can block forever waiting on it
+            # (found 2026-09-26: identical runs hung with an inherited stdin and passed with /dev/null).
+            rc |= subprocess.run([sys.executable, "-m", "pytest", "-q", *targets], cwd=cwd, env=env,
+                                 stdin=subprocess.DEVNULL).returncode
         return rc
     finally:
         subprocess.run(docker + ["stop", name], capture_output=True)

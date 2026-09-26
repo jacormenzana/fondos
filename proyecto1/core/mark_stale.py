@@ -14,28 +14,18 @@ from pathlib import Path
 _ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT / "proyecto1"))
 
-from core.sqlite_writer import get_connection
+from core.fund_writer import get_connection
 from core.io import mark_stale_for_refresh
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--db",        default=str(_ROOT / "db" / "fondos.sqlite"))
     parser.add_argument("--max-age",   type=int, default=180,
                         help="Días de antigüedad para marcar FORCE_REFRESH")
     parser.add_argument("--max-funds", type=int, default=50,
                         help="Máximo de fondos a marcar por ejecución (anti-avalancha)")
-    parser.add_argument("--backend", choices=["sqlite", "postgres"], default=None,
-                        help="Backend de BD (migracion, addendum 2026-09-20). Si se omite, "
-                             "resuelve FONDOS_DB_BACKEND ('sqlite' si no esta definida). "
-                             "Con --backend postgres, --db se ignora.")
     args = parser.parse_args()
 
-    db_path = Path(args.db)
-    backend = args.backend
-    if backend != "postgres" and not db_path.exists():
-        print(f"ERROR: BD no encontrada: {db_path}"); sys.exit(1)
-
-    conn = get_connection(db_path, backend=backend)
+    conn = get_connection()
     n = mark_stale_for_refresh(conn, max_age_days=args.max_age, max_funds=args.max_funds)
     conn.close()
 

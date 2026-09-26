@@ -16,7 +16,7 @@ Para cualquier BL que implique modificación de un atributo persistido o regla I
 - [ ] ¿Cuántos fondos están afectados por el defecto? (query SQL exacta)
 - [ ] ¿Cuál es la causa raíz, no el síntoma? (Principio #2 — `PRINCIPIOS_DISENO.md`)
 - [ ] ¿Qué módulos emiten ese atributo? (`grep` en todos los `.py`)
-- [ ] ¿Hay COALESCE sobre ese atributo en `sqlite_writer`?
+- [ ] ¿Hay COALESCE sobre ese atributo en `fund_writer`?
 
 Si alguna respuesta es "no sé", completar el diagnóstico antes de codificar.
 
@@ -173,7 +173,7 @@ Sin estos tres elementos, no se debe abrir un BL en backlog.
 |---------------------------|---------------------------------------------------------------------|
 | `pipeline.py`             | Inicio/fin de bloque, BL disparos universales, resumen de ciclo     |
 | `classify_utils.py`       | `apply_semantic_validation` (warnings), inferencias por fallback    |
-| `sqlite_writer.py`        | UPSERT con flags forzados, normalizaciones EN→ES aplicadas          |
+| `fund_writer.py`        | UPSERT con flags forzados, normalizaciones EN→ES aplicadas          |
 | `kiid_parser.py`          | Atributos NO detectados con patrones esperados (señal de regresión) |
 | `fund_characterizer.py`   | Atributos enriquecidos por fallback (no por extracción directa)     |
 | `benchmark_normalizer.py` | Benchmarks no reconocidos (señal de catálogo obsoleto)              |
@@ -184,7 +184,7 @@ Sin estos tres elementos, no se debe abrir un BL en backlog.
 
 ### §4.8 Implementación incremental — orden de despliegue
 
-**Ola 1** (Sprint A.1.b — completado): `pipeline.py`, `classify_utils.py`, `sqlite_writer.py`, `restantes.py`.  
+**Ola 1** (Sprint A.1.b — completado): `pipeline.py`, `classify_utils.py`, `fund_writer.py`, `restantes.py`.  
 **Ola 2** (Sprint A.2): `monetarios.py`, `rf_corto.py`, `rf_flexible.py`, `renta_variable.py`, `mixtos.py`, `alternativos.py`.  
 **Ola 3** (Sprint A.3): `kiid_parser.py`, `benchmark_normalizer.py`, `srri_v4_geometric.py`, `fund_characterizer.py`.
 
@@ -296,7 +296,7 @@ Si la sesión usa flujo Opus → Sonnet:
 | 23/04 | BL-52 | Universe='Country' con Geography=región (12) | Sin auto-corrección Country↔Regional | — |
 | 23/04 | BL-53 | Sector_Focus en inglés (20) | Mapa Theme→Sector duplicado en 2 módulos | R-1 |
 | 25/04 | BL-49 v2 | 7 fondos Hedged → Unhedged | (a) `_HEDGED` sin variantes EURH; (b) `\b` falla en EURHDG; (c) default sin `_ch_bd` | R-4, R-5 |
-| 25/04 | BL-53/54 v2 | 20 fondos siguen en inglés tras Sonnet | COALESCE preserva valor stale; Sonnet añadió mapa duplicado en sqlite_writer | R-1, R-2 |
+| 25/04 | BL-53/54 v2 | 20 fondos siguen en inglés tras Sonnet | COALESCE preserva valor stale; Sonnet añadió mapa duplicado en fund_writer | R-1, R-2 |
 | 25/04 | BL-55 v1 | Inferencia Exit_Fee=0 captura solo 3/670 | Ventana global, no acotada al contexto | R-6 |
 
 ---

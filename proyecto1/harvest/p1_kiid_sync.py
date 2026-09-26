@@ -39,9 +39,7 @@ _HARVEST_DIR   = Path(__file__).resolve().parent        # proyecto1/harvest/
 _PROYECTO1_DIR = _HARVEST_DIR.parent                    # proyecto1/
 _ROOT          = _PROYECTO1_DIR.parent                  # repo root
 sys.path.insert(0, str(_ROOT))
-from shared.config import DB_PATH  # noqa: E402
-from shared.db import get_connection, is_postgres_connection  # noqa: E402
-import sqlite3
+from shared.db import get_connection  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -99,27 +97,18 @@ def _ensure_lifecycle_table(conn) -> None:
     # Postgres migration Phase 5c (2026-09-20): silver.kiid_lifecycle is already provisioned by
     # db/pg/20_silver.sql (applied once via psql) — not by this script's inline DDL, which is
     # SQLite-only (conn.executescript() doesn't exist on psycopg3 either way). Same architecture
-    # as p1_db_harvest.py's DDL guard / sqlite_writer.create_schema(): Postgres schema creation is
+    # as p1_db_harvest.py's DDL guard / fund_writer.create_schema(): Postgres schema creation is
     # external, not autotranslated at runtime.
-    if is_postgres_connection(conn):
-        return
-    conn.executescript(DDL_LIFECYCLE)
-    conn.commit()
+    return
 
 
 def _lifecycle_activate(conn, isin: str, href: str, start_date: str) -> None:
     """Insert a new active lifecycle period. Idempotent: INSERT OR IGNORE on same (isin, start_date)."""
-    if is_postgres_connection(conn):
-        conn.execute("""
-            INSERT INTO kiid_lifecycle (isin, start_date, end_date, status, href, retire_dir)
-            VALUES (%s, %s, NULL, 'commercializing', %s, NULL)
-            ON CONFLICT (isin, start_date) DO NOTHING
-        """, (isin, start_date, href))
-    else:
-        conn.execute("""
-            INSERT OR IGNORE INTO kiid_lifecycle (isin, start_date, end_date, status, href, retire_dir)
-            VALUES (?, ?, NULL, 'commercializing', ?, NULL)
-        """, (isin, start_date, href))
+    conn.execute("""
+        INSERT INTO kiid_lifecycle (isin, start_date, end_date, status, href, retire_dir)
+        VALUES (%s, %s, NULL, 'commercializing', %s, NULL)
+        ON CONFLICT (isin, start_date) DO NOTHING
+    """, (isin, start_date, href))
 
 
 def _lifecycle_retire(conn, isin: str, end_date: str, retire_dir: str) -> None:
@@ -128,33 +117,25 @@ def _lifecycle_retire(conn, isin: str, end_date: str, retire_dir: str) -> None:
     If no active row exists (file predates the lifecycle table), insert a retired row
     using end_date as an approximated start_date.
     """
-    pg = is_postgres_connection(conn)
-    ph = "%s" if pg else "?"
+    ph = "%s"
     updated = conn.execute(f"""
         UPDATE kiid_lifecycle
         SET status = 'retired', end_date = {ph}, retire_dir = {ph}
         WHERE isin = {ph} AND end_date IS NULL
     """, (end_date, retire_dir, isin)).rowcount
     if updated == 0:
-        if pg:
-            conn.execute("""
-                INSERT INTO kiid_lifecycle
-                    (isin, start_date, end_date, status, href, retire_dir)
-                VALUES (%s, %s, %s, 'retired', NULL, %s)
-                ON CONFLICT (isin, start_date) DO NOTHING
-            """, (isin, end_date, end_date, retire_dir))
-        else:
-            conn.execute("""
-                INSERT OR IGNORE INTO kiid_lifecycle
-                    (isin, start_date, end_date, status, href, retire_dir)
-                VALUES (?, ?, ?, 'retired', NULL, ?)
-            """, (isin, end_date, end_date, retire_dir))
+        conn.execute("""
+            INSERT INTO kiid_lifecycle
+                (isin, start_date, end_date, status, href, retire_dir)
+            VALUES (%s, %s, %s, 'retired', NULL, %s)
+            ON CONFLICT (isin, start_date) DO NOTHING
+        """, (isin, end_date, end_date, retire_dir))
 
 
 # ---------------------------------------------------------------------------
 # PHASE 4 — KIID Delta
 # ---------------------------------------------------------------------------
-def compute_delta(conn=None, backend=None) -> dict:
+def compute_delta(conn=None) -> dict:
     """
     Returns:
       target   : {isin: href}  — from db_document_catalogue WHERE codSus='KIID'
@@ -165,12 +146,12 @@ def compute_delta(conn=None, backend=None) -> dict:
 
     conn: injected connection (Postgres or SQLite) — used by tests and any future dialect-aware
     caller. When None (the CLI's default), opens (and closes) its own short-lived connection via
-    get_connection(backend=backend) (migration addendum, Stage 5, 2026-09-20). No placeholder
+    get_connection() (migration addendum, Stage 5, 2026-09-20). No placeholder
     translation needed — this query has none.
     """
     own_conn = conn is None
     if own_conn:
-        conn = get_connection(DB_PATH, backend=backend)
+        conn = get_connection()
     rows = conn.execute("""
         SELECT DISTINCT isin, href
         FROM db_document_catalogue
@@ -195,14 +176,14 @@ def compute_delta(conn=None, backend=None) -> dict:
     }
 
 
-def cmd_dry_run(args, backend=None) -> None:  # noqa: ARG001
+def cmd_dry_run(args) -> None:  # noqa: ARG001
     """Phase 4 — KIID delta only.  No writes, no downloads."""
     log.info("Phase 4 — KIID delta (dry-run)")
 
     if not KIID_DIR.exists():
         log.warning("KIID_DIR does not exist: %s", KIID_DIR)
 
-    delta   = compute_delta(backend=backend)
+    delta   = compute_delta()
     target  = delta["target"]
     missing = delta["missing"]
     present = delta["present"]
@@ -266,12 +247,11 @@ def _download_with_retry(session: requests.Session, href: str) -> tuple[bool, by
     return False, b"", last_reason
 
 
-def cmd_sync(args, conn=None, backend=None) -> None:
+def cmd_sync(args, conn=None) -> None:
     """Phase 5 — Download net-new KIID PDFs and record each in kiid_lifecycle.
 
     conn: injected connection — used by tests and any future dialect-aware caller. When None
-    (the CLI's default), opens (and closes) its own connection via get_connection(backend=
-    backend) (migration addendum, Stage 5, 2026-09-20).
+    (the CLI's default), opens (and closes) its own connection via get_connection() (migration addendum, Stage 5, 2026-09-20).
     """
     limit: int | None = args.limit
     today = date.today().isoformat()   # YYYY-MM-DD
@@ -284,7 +264,7 @@ def cmd_sync(args, conn=None, backend=None) -> None:
 
     own_conn = conn is None
     if own_conn:
-        conn = get_connection(DB_PATH, backend=backend)
+        conn = get_connection()
 
     delta   = compute_delta(conn=conn)
     target  = delta["target"]
@@ -371,15 +351,14 @@ def _write_report(path: Path, downloaded: list, failed: list,
 # ---------------------------------------------------------------------------
 # RETIRE ORPHANS
 # ---------------------------------------------------------------------------
-def cmd_retire_orphans(args, conn=None, backend=None) -> None:  # noqa: ARG001
+def cmd_retire_orphans(args, conn=None) -> None:  # noqa: ARG001
     """
     Move orphan KIIDs to kiid_retired/YYYYMMDD/ and record retirement in kiid_lifecycle.
     Orphans = local PDFs whose ISIN is not in the latest harvest's codSus='KIID' set.
     Files are moved (never deleted) — the archive is permanent and queryable.
 
     conn: injected connection — used by tests and any future dialect-aware caller. When None
-    (the CLI's default), opens (and closes) its own connection via get_connection(backend=
-    backend) (migration addendum, Stage 5, 2026-09-20).
+    (the CLI's default), opens (and closes) its own connection via get_connection() (migration addendum, Stage 5, 2026-09-20).
     """
     today    = date.today().isoformat()          # YYYY-MM-DD  e.g. 2026-07-18
     today_d  = datetime.now().strftime("%Y%m%d") # YYYYMMDD    e.g. 20260718  (retire_dir)
@@ -387,7 +366,7 @@ def cmd_retire_orphans(args, conn=None, backend=None) -> None:  # noqa: ARG001
 
     own_conn = conn is None
     if own_conn:
-        conn = get_connection(DB_PATH, backend=backend)
+        conn = get_connection()
 
     delta   = compute_delta(conn=conn)
     orphans = sorted(delta["orphans"])
@@ -448,7 +427,7 @@ def cmd_retire_orphans(args, conn=None, backend=None) -> None:  # noqa: ARG001
 # ---------------------------------------------------------------------------
 # BACKFILL LIFECYCLE — one-time population from disk state
 # ---------------------------------------------------------------------------
-def cmd_backfill_lifecycle(args, conn=None, backend=None) -> None:  # noqa: ARG001
+def cmd_backfill_lifecycle(args, conn=None) -> None:  # noqa: ARG001
     """
     One-time command: populate kiid_lifecycle from the current disk state.
 
@@ -460,14 +439,12 @@ def cmd_backfill_lifecycle(args, conn=None, backend=None) -> None:  # noqa: ARG0
     href        : from db_document_catalogue (latest harvest, codSus='KIID') where available
 
     conn: injected connection — used by tests and any future dialect-aware caller. When None
-    (the CLI's default), opens (and closes) its own connection via get_connection(backend=
-    backend) (migration addendum, Stage 5, 2026-09-20).
+    (the CLI's default), opens (and closes) its own connection via get_connection() (migration addendum, Stage 5, 2026-09-20).
     """
     own_conn = conn is None
     if own_conn:
-        conn = get_connection(DB_PATH, backend=backend)
-    pg = is_postgres_connection(conn)
-    ph = "%s" if pg else "?"
+        conn = get_connection()
+    ph = "%s"
     _ensure_lifecycle_table(conn)
 
     # Build href lookup from latest harvest
@@ -498,19 +475,12 @@ def cmd_backfill_lifecycle(args, conn=None, backend=None) -> None:  # noqa: ARG0
             skipped += 1
             continue
 
-        if pg:
-            conn.execute("""
-                INSERT INTO kiid_lifecycle
-                    (isin, start_date, end_date, status, href, retire_dir)
-                VALUES (%s, %s, NULL, 'commercializing', %s, NULL)
-                ON CONFLICT (isin, start_date) DO NOTHING
-            """, (isin, start_date, href))
-        else:
-            conn.execute("""
-                INSERT OR IGNORE INTO kiid_lifecycle
-                    (isin, start_date, end_date, status, href, retire_dir)
-                VALUES (?, ?, NULL, 'commercializing', ?, NULL)
-            """, (isin, start_date, href))
+        conn.execute("""
+            INSERT INTO kiid_lifecycle
+                (isin, start_date, end_date, status, href, retire_dir)
+            VALUES (%s, %s, NULL, 'commercializing', %s, NULL)
+            ON CONFLICT (isin, start_date) DO NOTHING
+        """, (isin, start_date, href))
         inserted += 1
 
     log.info("Active: %d inserted, %d already had an active row", inserted, skipped)
@@ -547,19 +517,12 @@ def cmd_backfill_lifecycle(args, conn=None, backend=None) -> None:  # noqa: ARG0
                     retired_skipped += 1
                     continue
 
-                if pg:
-                    conn.execute("""
-                        INSERT INTO kiid_lifecycle
-                            (isin, start_date, end_date, status, href, retire_dir)
-                        VALUES (%s, %s, %s, 'retired', %s, %s)
-                        ON CONFLICT (isin, start_date) DO NOTHING
-                    """, (isin, start_date, end_date, href, retire_dir))
-                else:
-                    conn.execute("""
-                        INSERT OR IGNORE INTO kiid_lifecycle
-                            (isin, start_date, end_date, status, href, retire_dir)
-                        VALUES (?, ?, ?, 'retired', ?, ?)
-                    """, (isin, start_date, end_date, href, retire_dir))
+                conn.execute("""
+                    INSERT INTO kiid_lifecycle
+                        (isin, start_date, end_date, status, href, retire_dir)
+                    VALUES (%s, %s, %s, 'retired', %s, %s)
+                    ON CONFLICT (isin, start_date) DO NOTHING
+                """, (isin, start_date, end_date, href, retire_dir))
                 retired_inserted += 1
 
         log.info("Retired: %d inserted, %d already had a row", retired_inserted, retired_skipped)
@@ -601,19 +564,16 @@ def main():
     ap.add_argument("--backfill-lifecycle", action="store_true", default=False,
                     dest="backfill_lifecycle",
                     help="One-time: populate kiid_lifecycle from disk state")
-    ap.add_argument("--backend", choices=["sqlite", "postgres"], default=None,
-                    help="Backend de BD (migracion, addendum 2026-09-20). Si se omite, resuelve "
-                         "FONDOS_DB_BACKEND ('sqlite' si no esta definida).")
     args = ap.parse_args()
 
     if args.backfill_lifecycle:
-        cmd_backfill_lifecycle(args, backend=args.backend)
+        cmd_backfill_lifecycle(args)
     elif args.retire_orphans:
-        cmd_retire_orphans(args, backend=args.backend)
+        cmd_retire_orphans(args)
     elif args.sync:
-        cmd_sync(args, backend=args.backend)
+        cmd_sync(args)
     else:
-        cmd_dry_run(args, backend=args.backend)
+        cmd_dry_run(args)
 
 
 if __name__ == "__main__":

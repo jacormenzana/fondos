@@ -31,17 +31,15 @@ Two things worth knowing before touching this file again:
     use native operators instead of `julianday()`/`DATE()`.
 """
 
-import sqlite3
 import pandas as pd
 
-from shared.db import is_postgres_connection
 
 
 # ============================================================
 # NAV
 # ============================================================
 
-def load_nav(conn: sqlite3.Connection, isin: str) -> pd.DataFrame:
+def load_nav(conn: "psycopg.Connection", isin: str) -> pd.DataFrame:
     """
     Carga la serie NAV mensual de un fondo desde fund_nav_monthly.
 
@@ -51,7 +49,7 @@ def load_nav(conn: sqlite3.Connection, isin: str) -> pd.DataFrame:
     Ordenado por fecha ascendente.
     Devuelve DataFrame vacío si el fondo no tiene datos.
     """
-    ph = "%s" if is_postgres_connection(conn) else "?"
+    ph = "%s"
     rows = conn.execute(f"""
         SELECT Date AS date, NAV AS nav
         FROM fund_nav_monthly
@@ -69,7 +67,7 @@ def load_nav(conn: sqlite3.Connection, isin: str) -> pd.DataFrame:
 
 
 def count_isins_with_new_nav(
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
     metric_version: str,
 ) -> tuple[int, int, int]:
     """
@@ -89,7 +87,7 @@ def count_isins_with_new_nav(
     n_never_calculated  ISINs with no fund_metric_state row for metric_version
     n_universe          total ISINs in the fund_nav_monthly ∩ fund_master universe
     """
-    ph = "%s" if is_postgres_connection(conn) else "?"
+    ph = "%s"
     row = conn.execute(
         f"""
         SELECT
@@ -116,7 +114,7 @@ def count_isins_with_new_nav(
     return int(n_new or 0), int(n_never or 0), int(n_total or 0)
 
 
-def get_isins_with_nav(conn: sqlite3.Connection) -> list[str]:
+def get_isins_with_nav(conn: "psycopg.Connection") -> list[str]:
     """Devuelve la lista de ISINs con al menos una fila en fund_nav_monthly
     Y con entrada en fund_master (P2-01 / BUG-SIGNAL-DIAG).
 
@@ -150,7 +148,7 @@ def get_isins_with_nav(conn: sqlite3.Connection) -> list[str]:
     return [r[0] for r in rows]
 
 
-def load_nav_daily(conn: sqlite3.Connection, isin: str) -> pd.DataFrame:
+def load_nav_daily(conn: "psycopg.Connection", isin: str) -> pd.DataFrame:
     """
     Carga la serie NAV diaria de un fondo desde fund_nav_daily (v24).
 
@@ -163,7 +161,7 @@ def load_nav_daily(conn: sqlite3.Connection, isin: str) -> pd.DataFrame:
     Ordenado por fecha ascendente.
     Devuelve DataFrame vacío si el fondo no tiene datos diarios.
     """
-    ph = "%s" if is_postgres_connection(conn) else "?"
+    ph = "%s"
     rows = conn.execute(f"""
         SELECT Date AS date, NAV AS nav
         FROM fund_nav_daily
@@ -180,7 +178,7 @@ def load_nav_daily(conn: sqlite3.Connection, isin: str) -> pd.DataFrame:
     return df
 
 
-def get_isins_with_nav_daily(conn: sqlite3.Connection) -> list[str]:
+def get_isins_with_nav_daily(conn: "psycopg.Connection") -> list[str]:
     """Devuelve la lista de ISINs con al menos una fila en fund_nav_daily
     Y con entrada en fund_master (simetrico con get_isins_with_nav, P2-01).
 
@@ -200,7 +198,7 @@ def get_isins_with_nav_daily(conn: sqlite3.Connection) -> list[str]:
 # IPC
 # ============================================================
 
-def load_ipc(conn: sqlite3.Connection, geography: str = "ES") -> pd.DataFrame:
+def load_ipc(conn: "psycopg.Connection", geography: str = "ES") -> pd.DataFrame:
     """
     Carga el índice IPC mensual desde series_inflation.
 
@@ -213,7 +211,7 @@ def load_ipc(conn: sqlite3.Connection, geography: str = "ES") -> pd.DataFrame:
     Fechas normalizadas a fin de mes para alinear con las fechas NAV.
     Devuelve DataFrame vacío si no hay datos para la geografía solicitada.
     """
-    ph = "%s" if is_postgres_connection(conn) else "?"
+    ph = "%s"
     rows = conn.execute(f"""
         SELECT date, ipc_index
         FROM series_inflation
@@ -230,9 +228,9 @@ def load_ipc(conn: sqlite3.Connection, geography: str = "ES") -> pd.DataFrame:
     return df
 
 
-def ipc_available(conn: sqlite3.Connection, geography: str = "ES") -> bool:
+def ipc_available(conn: "psycopg.Connection", geography: str = "ES") -> bool:
     """Devuelve True si hay datos IPC para la geografía indicada."""
-    ph = "%s" if is_postgres_connection(conn) else "?"
+    ph = "%s"
     n = conn.execute(
         f"SELECT COUNT(*) FROM series_inflation WHERE geography = {ph}",
         (geography,)
@@ -241,7 +239,7 @@ def ipc_available(conn: sqlite3.Connection, geography: str = "ES") -> bool:
 
 
 def load_rf_rate(
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
     indicator: str = "rate_deposit",
     geography: str = "EU",
 ) -> pd.DataFrame:
@@ -262,7 +260,7 @@ def load_rf_rate(
 
     Devuelve DataFrame vacío si no hay datos en la BD.
     """
-    ph = "%s" if is_postgres_connection(conn) else "?"
+    ph = "%s"
     rows = conn.execute(
         f"SELECT date, value FROM series_macro "
         f"WHERE indicator = {ph} AND geography = {ph} ORDER BY date",
@@ -282,7 +280,7 @@ def load_rf_rate(
 # P1 Fund Attributes (P1→P2 integration interface)
 # ============================================================
 
-def load_fund_attributes(conn: sqlite3.Connection) -> pd.DataFrame:
+def load_fund_attributes(conn: "psycopg.Connection") -> pd.DataFrame:
     """
     Carga los atributos de clasificación P1 relevantes para el pipeline P2.
 
@@ -321,7 +319,7 @@ def load_fund_attributes(conn: sqlite3.Connection) -> pd.DataFrame:
 # ============================================================
 
 def load_ts_cohort(
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
     metric_version: str,
     run_start_iso: str,
 ) -> list[tuple[str, int]]:
@@ -351,11 +349,10 @@ def load_ts_cohort(
     calculated_at = per-fund run stamp (orchestration). See run_pipeline
     module docstring for the full classification rule (EXPECTED vs ANOMALY).
     """
-    pg = is_postgres_connection(conn)
-    ph = "%s" if pg else "?"
+    ph = "%s"
     # SQLite's DATE(x) extracts the date part of a text/datetime value; Postgres has no 1-arg
     # DATE() function — fund_metrics.load_ts is `timestamptz` there, so ::date does the same job.
-    ts_date_expr = "fm.load_ts::date" if pg else "DATE(fm.load_ts)"
+    ts_date_expr = "fm.load_ts::date"
     rows = conn.execute(
         f"""
         SELECT {ts_date_expr} AS ts_date, COUNT(*) AS cnt
@@ -373,7 +370,7 @@ def load_ts_cohort(
 
 
 def count_stale_nav_funds(
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
     metric_version: str,
     run_start_iso: str,
     max_age_days: int = 60,
@@ -405,13 +402,11 @@ def count_stale_nav_funds(
     Integer count of stale-NAV ISINs (0 = all up to date).
     """
     _as_of = as_of_iso if as_of_iso is not None else run_start_iso
-    pg = is_postgres_connection(conn)
-    ph = "%s" if pg else "?"
+    ph = "%s"
     # SQLite has no native date subtraction; julianday(a) - julianday(b) is its idiom for "days
     # between". Postgres date - date already yields an integer day count directly — no julianday
     # equivalent needed, and nav_latest.max_nav_date is a genuine `date` column there (10_bronze.sql).
-    age_expr = (f"({ph}::date - nav_latest.max_nav_date)" if pg
-                else f"(julianday({ph}) - julianday(nav_latest.max_nav_date))")
+    age_expr = (f"({ph}::date - nav_latest.max_nav_date)")
     row = conn.execute(
         f"""
         SELECT COUNT(DISTINCT fms.isin)
@@ -431,7 +426,7 @@ def count_stale_nav_funds(
 
 
 def coverage_snapshot(
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
     metrics: list[str],
     horizon: str = "since_inception",
 ) -> list[tuple[str, int]]:
@@ -450,7 +445,7 @@ def coverage_snapshot(
     -------
     List of (metric, count) in the same order as `metrics`.
     """
-    ph = "%s" if is_postgres_connection(conn) else "?"
+    ph = "%s"
     result = []
     for metric in metrics:
         row = conn.execute(

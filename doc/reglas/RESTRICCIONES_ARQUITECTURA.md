@@ -19,7 +19,7 @@ El pipeline está formado por estos módulos, en orden de ejecución por fondo:
 | `blocks/*.py` | Clasificadores especializados (MONETARIOS, RF, RV, MIXTOS, ALTERNATIVO, RESTANTES) | parsed dict | classification dict |
 | `fund_characterizer.py` | Enriquecimiento universal (Subtype, Style, Currency_Hedged, Sector_Focus, etc.) | classification dict + KIID | classification enriquecido |
 | `pipeline.py` | Orquestador: lee BD, llama bloques+characterize, aplica reglas INTER, llama writer | maestro Excel | UPSERT a SQLite |
-| `sqlite_writer.py` | Persistencia idempotente (UPSERT con COALESCE) | record dict | escritura BD |
+| `fund_writer.py` | Persistencia idempotente (UPSERT con COALESCE) | record dict | escritura BD |
 
 Cada módulo tiene **una responsabilidad** y debe respetarla.
 
@@ -40,7 +40,7 @@ La normalización de valores categóricos (mapas EN→ES para Sector_Focus, Type
 
 **Permitido y obligatorio:**
 - Importar las funciones canónicas (`map_theme_to_sector_focus`, `normalize_sector_focus`, `apply_post_characterize_normalization`) desde `classify_utils.py`.
-- En `sqlite_writer.py`, mantener `_normalize_record` y `_post_upsert_normalize_db` exclusivamente como **defensa en profundidad** que duplica intencionalmente los mapas de `classify_utils.py`. Esta es la única excepción autorizada al DRY estricto y debe documentarse en cada definición.
+- En `fund_writer.py`, mantener `_normalize_record` y `_post_upsert_normalize_db` exclusivamente como **defensa en profundidad** que duplica intencionalmente los mapas de `classify_utils.py`. Esta es la única excepción autorizada al DRY estricto y debe documentarse en cada definición.
 
 **Justificación:** la duplicación de mapas en múltiples módulos es la causa estructural del 50% de los defectos lingüísticos detectados (BL-22, BL-53, BL-54). Cada nuevo Theme/Type/Family añadido debe ser un cambio en una sola línea.
 

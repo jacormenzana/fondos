@@ -36,7 +36,6 @@ Uso:
     portfolio = builder.build(regime_result, scenario_id="shock_energia_2026Q1")
 """
 
-import sqlite3
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -55,7 +54,6 @@ from proyecto3.src.portfolio_engine import (
     assign_weights as engine_assign_weights,
 )
 from shared.config import PORTFOLIO_HYSTERESIS_ENABLED, ROTATION_COST_GATE_ENABLED
-from shared.db import is_postgres_connection
 
 
 # ============================================================
@@ -146,7 +144,7 @@ class Portfolio:
 # ============================================================
 
 def _select_funds_for_subportfolio(
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
     subportfolio: str,
     score_version: str,
     regime: str,
@@ -200,7 +198,7 @@ def _select_funds_for_subportfolio(
     # excluido de Defensiva' HOY seguia siendo seleccionado con su
     # puntuacion elegible de Marzo, porque el filtro de eligible estaba
     # dentro del CTE.
-    ph = "%s" if is_postgres_connection(conn) else "?"
+    ph = "%s"
     rows = conn.execute(f"""
         WITH latest AS (
             SELECT fs.isin, fs.score_total, fs.eligible,
@@ -292,7 +290,7 @@ def _assign_weights(
 # ============================================================
 
 def estimate_rotation_cost(
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
     isin_out: str,
     isin_in: str,
 ) -> float:
@@ -320,7 +318,7 @@ def estimate_rotation_cost(
     DEFAULT_EXIT_FEE_PCT  = 0.5   # % -- sin dato alguno (ni por fondo ni por naturaleza)
     DEFAULT_ENTRY_FEE_PCT = 0.0   # % -- coherente con rotation_costs (toda naturaleza a 0)
 
-    ph = "%s" if is_postgres_connection(conn) else "?"
+    ph = "%s"
 
     def _get_exit_fee_pct(isin: str) -> float:
         row = conn.execute(f"""
@@ -346,7 +344,7 @@ def estimate_rotation_cost(
 
 
 def should_rotate(
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
     isin_current: str,
     score_current: float,
     isin_candidate: str,
@@ -398,7 +396,7 @@ def should_rotate(
 
 
 def rotation_plan(
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
     portfolio_current: "Portfolio",
     portfolio_new: "Portfolio",
     score_version: str = "v1",
@@ -464,7 +462,7 @@ def rotation_plan(
 
 
 def _apply_rotation_gate(
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
     tentative: "Portfolio",
     previous: "Portfolio",
     score_version: str,
@@ -505,7 +503,7 @@ def _apply_rotation_gate(
         if entrant_idx is None:
             continue
 
-        _ph = "%s" if is_postgres_connection(conn) else "?"
+        _ph = "%s"
         row = conn.execute(f"""
             SELECT fs.score_total, fm.Fund_Name, fm.Fund_Nature, fm.Management_Company
             FROM fund_scores fs JOIN fund_master fm ON fm.ISIN = fs.isin
@@ -528,7 +526,7 @@ def _apply_rotation_gate(
 
 class PortfolioBuilder:
 
-    def __init__(self, conn: sqlite3.Connection):
+    def __init__(self, conn: "psycopg.Connection"):
         self.conn = conn
 
     def load_previous(self, exclude_scenario_id: str | None = None) -> "Portfolio | None":
@@ -546,7 +544,7 @@ class PortfolioBuilder:
         build() cargarlo por si mismo cuando PORTFOLIO_HYSTERESIS_ENABLED
         esta activo, sin que cada caller tenga que reconstruirlo a mano.
         """
-        _ph = "%s" if is_postgres_connection(self.conn) else "?"
+        _ph = "%s"
         row = self.conn.execute(f"""
             SELECT scenario_id, profile, macro_regime, notes
             FROM portfolio_scenarios
@@ -561,7 +559,7 @@ class PortfolioBuilder:
         # role -> position_role: reserved word on Postgres (SQL:2003, db/pg/rename_map.yaml).
         # Positional tuple-unpacking below means the SELECT's column NAME doesn't matter, only
         # the reference in FROM must resolve to the real physical column.
-        _role_col = "position_role" if is_postgres_connection(self.conn) else "role"
+        _role_col = "position_role"
         # FND-0063: fund_nature comes from fund_master (LEFT JOIN: a fund dropped from the master
         # since the previous cycle must not lose its row) -- Portfolio.summary() reads it for
         # every fund, so a dict without it raised KeyError on the load_previous() -> summary() path.
@@ -737,39 +735,25 @@ class PortfolioBuilder:
         """Persiste el escenario y los pesos en BD."""
         today = pd.Timestamp.today().strftime("%Y-%m-%d")
 
-        pg = is_postgres_connection(self.conn)
 
         # Insertar escenario
-        if pg:
-            self.conn.execute("""
-                INSERT INTO portfolio_scenarios
-                    (scenario_id, profile, macro_regime, created_at, notes)
-                VALUES (%s, %s, %s, %s, %s)
-                ON CONFLICT (scenario_id) DO UPDATE SET
-                    profile = excluded.profile, macro_regime = excluded.macro_regime,
-                    created_at = excluded.created_at, notes = excluded.notes
-            """, (
-                portfolio.scenario_id,
-                portfolio.profile,
-                portfolio.regime,
-                today,
-                json.dumps(portfolio.macro_context, ensure_ascii=False),
-            ))
-        else:
-            self.conn.execute("""
-                INSERT OR REPLACE INTO portfolio_scenarios
-                    (scenario_id, profile, macro_regime, created_at, notes)
-                VALUES (?, ?, ?, ?, ?)
-            """, (
-                portfolio.scenario_id,
-                portfolio.profile,
-                portfolio.regime,
-                today,
-                json.dumps(portfolio.macro_context, ensure_ascii=False),
-            ))
+        self.conn.execute("""
+            INSERT INTO portfolio_scenarios
+                (scenario_id, profile, macro_regime, created_at, notes)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (scenario_id) DO UPDATE SET
+                profile = excluded.profile, macro_regime = excluded.macro_regime,
+                created_at = excluded.created_at, notes = excluded.notes
+        """, (
+            portfolio.scenario_id,
+            portfolio.profile,
+            portfolio.regime,
+            today,
+            json.dumps(portfolio.macro_context, ensure_ascii=False),
+        ))
 
         # Eliminar pesos anteriores del escenario
-        ph = "%s" if pg else "?"
+        ph = "%s"
         self.conn.execute(
             f"DELETE FROM portfolio_weights WHERE scenario_id={ph}",
             (portfolio.scenario_id,)
@@ -777,7 +761,7 @@ class PortfolioBuilder:
 
         # Insertar pesos. `role` -> `position_role` en Postgres (palabra reservada SQL:2003,
         # db/pg/rename_map.yaml).
-        role_col = "position_role" if pg else "role"
+        role_col = "position_role"
         for f in portfolio.all_funds:
             self.conn.execute(f"""
                 INSERT INTO portfolio_weights

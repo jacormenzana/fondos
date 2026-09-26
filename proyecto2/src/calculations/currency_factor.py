@@ -31,9 +31,8 @@ Divisas soportadas: USD, JPY, GBP, CNY. Otras → lista vacia.
 
 import numpy as np
 import pandas as pd
-import sqlite3
 
-from shared.db import is_postgres_connection
+
 
 MIN_OBS = 24  # minimo de observaciones para calcular la metrica
 
@@ -53,7 +52,7 @@ _FX_INDICATORS = {
 # ============================================================
 
 def load_fx_eur_divisa(
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
     currency: str,
 ) -> pd.Series | None:
     """
@@ -93,7 +92,7 @@ def load_fx_eur_divisa(
     # Para otras divisas: cargar divisa/USD y cruzar
     indicator = _FX_INDICATORS[currency]
     # Postgres migration Stage 9 (found live 2026-09-22): see momentum.py's identical note.
-    ph = "%s" if is_postgres_connection(conn) else "?"
+    ph = "%s"
     rows_fx = conn.execute(f"""
         SELECT date, value FROM series_macro
         WHERE indicator = {ph} AND geography = 'GLOBAL'
@@ -133,7 +132,7 @@ def compute_currency_factor(
     fund_currency: str,
     hedging_policy: str | None,
     nav_df: pd.DataFrame,
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
     asset_currency: str | None = None,
 ) -> list[tuple]:
     """

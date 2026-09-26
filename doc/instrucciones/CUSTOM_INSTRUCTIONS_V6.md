@@ -30,7 +30,7 @@ Every normative statement in this file carries one of three statuses. **Never as
 
 Automated classification of ~3,205 European UCITS/OICVM funds from KIID/DDF regulatory PDFs.
 
-**Pipeline:** (1) text extraction → `kiid_parser.py` · (2) specialized classification by block → `blocks/*.py` (MONETARY, FI-SHORT, FI-FLEX, EQUITY, MIXED, ALTERNATIVE, REMAINING) · (3) characterization → `fund_characterizer.py` · (4) semantic validation → `classify_utils.py` · (5) persistence → `sqlite_writer.py`.
+**Pipeline:** (1) text extraction → `kiid_parser.py` · (2) specialized classification by block → `blocks/*.py` (MONETARY, FI-SHORT, FI-FLEX, EQUITY, MIXED, ALTERNATIVE, REMAINING) · (3) characterization → `fund_characterizer.py` · (4) semantic validation → `classify_utils.py` · (5) persistence → `fund_writer.py`.
 
 **DB:** SQLite `db/fondos.sqlite`, schema v19+, WAL mode; single connection source `shared/db.py::get_connection()`.
 
@@ -367,7 +367,7 @@ These govern *how* Claude edits this codebase. They are as binding as the data r
 
 ## C. SCHEMA-CHANGE & IDEMPOTENCY PROTOCOL  🆕
 
-**C-1 — R-2 (any persisted-attribute change needs three parts).** Modifying a persisted column requires: (a) **pipeline fix** (the classifier emits the new value), (b) **SQL migration** (existing rows updated), and (c) **COALESCE review** in `sqlite_writer.publish_fund()`. The new columns `Investment_Focus`/`Credit_Quality` and updated sets (Investment_Universe→4, +T5, +All Cap/SMID, +PARTIAL) each need a migration if not already applied. Migrations use `LIKE`/`TRIM` comparisons, never exact match, to tolerate padding (R-9). `migrate_v18_to_v19.py` must also rebuild FK-dependent tables.
+**C-1 — R-2 (any persisted-attribute change needs three parts).** Modifying a persisted column requires: (a) **pipeline fix** (the classifier emits the new value), (b) **SQL migration** (existing rows updated), and (c) **COALESCE review** in `fund_writer.publish_fund()`. The new columns `Investment_Focus`/`Credit_Quality` and updated sets (Investment_Universe→4, +T5, +All Cap/SMID, +PARTIAL) each need a migration if not already applied. Migrations use `LIKE`/`TRIM` comparisons, never exact match, to tolerate padding (R-9). `migrate_v18_to_v19.py` must also rebuild FK-dependent tables.
 
 **C-2 — CACHED / COALESCE hazard (root of BL-44 class).** `COALESCE` in `publish_fund()` preserves stale values for CACHED funds, so a corrected in-memory value may never persist. INTER rules must therefore read **effective values** (`_X_p`/`_X_bd`) or do an explicit DB fallback read (`EffectiveReader` pattern), not just the current record. When changing a value's meaning, verify the CACHED path actually overwrites.
 

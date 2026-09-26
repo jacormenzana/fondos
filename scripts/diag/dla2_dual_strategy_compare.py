@@ -522,13 +522,13 @@ def main(pdf_dir=None, pdf=None, db_path=None, csv_path=None, log_path=None,
     # BD opcional para comparar con OC actual.
     db = {}
     if db_path:
-        import sqlite3
         try:
-            conn = sqlite3.connect(db_path)
+            from shared.db import get_connection      # Postgres (SQLite retired, FND-0102); db_path is ignored
+            conn = get_connection()
             isins = [p.stem for p in pdfs]
             for i in range(0, len(isins), 400):
                 chunk = isins[i:i + 400]
-                ph = ",".join("?" * len(chunk))
+                ph = ",".join(["%s"] * len(chunk))
                 for r in conn.execute(
                     f"SELECT ISIN, Ongoing_Charge_Recurrent, Cost_Extraction_Quality "
                     f"FROM fund_master WHERE ISIN IN ({ph})", chunk):

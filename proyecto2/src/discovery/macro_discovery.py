@@ -30,7 +30,6 @@ de fuentes).
 """
 
 import argparse
-import sqlite3
 import sys
 import time
 from datetime import datetime, date
@@ -46,8 +45,7 @@ _ROOT   = _P2_SRC.parent.parent                           # c:\desarrollo\fondos
 sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_P2_SRC.parent))                   # proyecto2/
 
-from shared.config import DB_PATH
-from shared.db import get_connection, is_postgres_connection, executemany
+from shared.db import get_connection, executemany
 
 # -- Constantes -----------------------------------------------
 REQUEST_TIMEOUT = 30        # segundos por peticion HTTP
@@ -149,7 +147,7 @@ def _get_csv(url: str, params: dict | None = None, **kwargs) -> pd.DataFrame:
 # ============================================================
 
 def _write_inflation(
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
     rows: list[dict],
     dry_run: bool,
 ) -> int:
@@ -159,19 +157,12 @@ def _write_inflation(
     """
     if not rows or dry_run:
         return 0
-    if is_postgres_connection(conn):
-        sql = """
-            INSERT INTO series_inflation (date, geography, ipc_index, source)
-            VALUES (%s, %s, %s, %s)
-            ON CONFLICT (date, geography) DO UPDATE SET
-                ipc_index = excluded.ipc_index, source = excluded.source, load_ts = DEFAULT
-        """
-    else:
-        sql = """
-            INSERT OR REPLACE INTO series_inflation
-                (date, geography, ipc_index, source)
-            VALUES (?, ?, ?, ?)
-        """
+    sql = """
+        INSERT INTO series_inflation (date, geography, ipc_index, source)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (date, geography) DO UPDATE SET
+            ipc_index = excluded.ipc_index, source = excluded.source, load_ts = DEFAULT
+    """
     executemany(conn, sql, [
         (r["date"], r["geography"], r["ipc_index"], r["source"])
         for r in rows
@@ -181,7 +172,7 @@ def _write_inflation(
 
 
 def _write_macro(
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
     rows: list[dict],
     dry_run: bool,
 ) -> int:
@@ -191,20 +182,13 @@ def _write_macro(
     """
     if not rows or dry_run:
         return 0
-    if is_postgres_connection(conn):
-        sql = """
-            INSERT INTO series_macro (date, indicator, geography, value, unit, source)
-            VALUES (%s, %s, %s, %s, %s, %s)
-            ON CONFLICT (date, indicator, geography) DO UPDATE SET
-                value = excluded.value, unit = excluded.unit, source = excluded.source,
-                load_ts = DEFAULT
-        """
-    else:
-        sql = """
-            INSERT OR REPLACE INTO series_macro
-                (date, indicator, geography, value, unit, source)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """
+    sql = """
+        INSERT INTO series_macro (date, indicator, geography, value, unit, source)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        ON CONFLICT (date, indicator, geography) DO UPDATE SET
+            value = excluded.value, unit = excluded.unit, source = excluded.source,
+            load_ts = DEFAULT
+    """
     executemany(conn, sql, [
         (r["date"], r["indicator"], r["geography"],
          r["value"], r["unit"], r["source"])
@@ -1023,7 +1007,6 @@ def run(
     dry_run: bool = False,
     verbose: bool = False,
     fred_api_key: str | None = None,
-    backend: str | None = None,   # migration addendum 2026-09-20 — see run_pipeline.py's run()
 ) -> None:
     """
     Descarga y persiste todos los indicadores macro.
@@ -1035,7 +1018,7 @@ def run(
     if sources is None:
         sources = list(SOURCES)
 
-    conn = get_connection(backend=backend)
+    conn = get_connection()
     today = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"\n{'='*60}")
     print(f"  Macro Loader  |  {today}  |  dry_run={dry_run}")
@@ -1136,11 +1119,6 @@ if __name__ == "__main__":
              "spread_ig usa BAA10YM (Moody's, publica) y no requiere clave. "
              "Alternativa: exportar variable de entorno FRED_API_KEY antes de ejecutar.",
     )
-    parser.add_argument(
-        "--backend", choices=["sqlite", "postgres"], default=None,
-        help="Backend de BD para esta ejecucion (migracion, addendum 2026-09-20). "
-             "Si se omite, resuelve FONDOS_DB_BACKEND ('sqlite' si no esta definida).",
-    )
     args = parser.parse_args()
 
     # {font} = valor de --source (default "all" si no se especifica)
@@ -1155,7 +1133,6 @@ if __name__ == "__main__":
             dry_run=args.dry_run,
             verbose=args.verbose,
             fred_api_key=args.fred_api_key,
-            backend=args.backend,
         )
     finally:
         _teardown_run_logger(_log_fh, _orig_out, _orig_err)

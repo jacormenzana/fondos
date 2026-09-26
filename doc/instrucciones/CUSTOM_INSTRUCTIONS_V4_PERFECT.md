@@ -15,7 +15,7 @@ This project implements an automated classification system for European investme
 * 2. Specialized classification by blocks → blocks/*.py (MONETARY, FI, EQ, MIXED, ALTERNATIVE, REMAINING)
 * 3. Characterization and enrichment → fund_characterizer.py
 * 4. Semantic consistency validation → classify_utils.py
-* 5. Persistence in SQLite → sqlite_writer.py
+* 5. Persistence in SQLite → fund_writer.py
 
 **Schema:** v17 (25 categorical attributes, 15 numerical, 8 flags)
 

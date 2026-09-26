@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import importlib.util
 import os
-import sqlite3
 import sys
 from datetime import date
 from pathlib import Path
@@ -175,35 +174,3 @@ def test_cmd_backfill_lifecycle_postgres_populates_from_disk(
         cmd_backfill_lifecycle(None, conn=conn)
     n = conn.execute("SELECT COUNT(*) FROM kiid_lifecycle").fetchone()[0]
     assert n == 2
-
-
-def test_cmd_backfill_lifecycle_sqlite_own_connection_path(tmp_path):
-    """Own-connection SQLite path (conn=None, the CLI's default) — confirms the dialect-aware
-    refactor (conn injection, own_conn bookkeeping) made no behavior change here. Zero prior test
-    coverage for this function existed before this port."""
-    db_path = str(tmp_path / "kiid_sync_test.sqlite")
-    conn = sqlite3.connect(db_path)
-    conn.execute("""
-        CREATE TABLE db_document_catalogue (
-            harvest_ts TEXT NOT NULL, gestora_label TEXT NOT NULL, gestora_value TEXT,
-            cod_db TEXT NOT NULL, fund_name TEXT, isin TEXT, link_label TEXT NOT NULL,
-            href TEXT NOT NULL, cod_doc TEXT, cod_sus TEXT, cod_cont TEXT, idioma TEXT
-        )
-    """)
-    conn.commit()
-    conn.close()
-
-    kiid_dir = tmp_path / "kiid_sqlite"
-    kiid_dir.mkdir()
-    (kiid_dir / "SQ001.pdf").write_bytes(b"%PDF-1.4 fake")
-    retired_base = tmp_path / "kiid_retired_sqlite"
-
-    with patch.object(_pks, "DB_PATH", db_path), \
-         patch.object(_pks, "KIID_DIR", kiid_dir), \
-         patch.object(_pks, "KIID_RETIRED_BASE", retired_base):
-        cmd_backfill_lifecycle(None, backend="sqlite")   # SQLite path on purpose (FND-0102)
-
-    conn2 = sqlite3.connect(db_path)
-    row = conn2.execute("SELECT isin, status FROM kiid_lifecycle WHERE isin = 'SQ001'").fetchone()
-    conn2.close()
-    assert row == ("SQ001", "commercializing")

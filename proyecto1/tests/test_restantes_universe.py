@@ -27,7 +27,6 @@ no dependan del Excel real ni de fund_master de producción — cumple R-7.
 from __future__ import annotations
 
 import os
-import sqlite3
 import sys
 
 import pandas as pd
@@ -44,43 +43,53 @@ for _p in (_CORE_DIR, _P1_DIR, _ROOT_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from sqlite_writer import create_schema
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+_PG = {}
+
+
+@pytest.fixture(autouse=True)
+def _pg_connection(pg_app_conn):
+    """Hand the per-test savepoint-wrapped Postgres connection (real DDL, app search_path) to the module's DB-building helper."""
+    _PG["conn"] = pg_app_conn
+    yield
+    _PG.clear()
+
+
+
 def _memory_conn():
-    conn = sqlite3.connect(":memory:")
-    create_schema(conn)
-    return conn
+    """Conexion Postgres del test (DDL real de db/pg, revertida al acabar)."""
+    return _PG["conn"]
 
 
 def _seed_fund_master(conn, isin: str, block: str, name: str = "TEST FUND") -> None:
     """Inserta una fila mínima en fund_master (solo columnas NOT NULL)."""
     conn.execute(
         """
-        INSERT OR IGNORE INTO fund_master
+        INSERT INTO fund_master
             (ISIN, Fund_Name, Fund_Nature, Heuristic_Block, Heuristic_Core)
-        VALUES (?, ?, 'Restantes', ?, 0)
+        VALUES (%s, %s, 'Restantes', %s, 0)
+        ON CONFLICT DO NOTHING
         """,
         (isin, name, block),
     )
-    conn.commit()
 
 
 def _seed_wrong_doc(conn, isin: str) -> None:
     """Marca un ISIN como WRONG_DOC en fund_kiid_metadata."""
     conn.execute(
         """
-        INSERT OR IGNORE INTO fund_kiid_metadata
+        INSERT INTO fund_kiid_metadata
             (ISIN, KIID_Class, KIID_Status)
-        VALUES (?, 1, 'WRONG_DOC')
+        VALUES (%s, 1, 'WRONG_DOC')
+        ON CONFLICT DO NOTHING
         """,
         (isin,),
     )
-    conn.commit()
 
 
 def _make_df(*rows) -> pd.DataFrame:

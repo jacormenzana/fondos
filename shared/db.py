@@ -1,99 +1,56 @@
 # shared/db.py
 # -*- coding: utf-8 -*-
 """
-Conexion a fondos.sqlite (y, durante la migracion, a Postgres) para P1/P2/P3.
-
-Sustituye a proyecto1/src/db.py y proyecto2/src/db.py.
+Conexion a la base de datos operacional (PostgreSQL 17) para P1/P2/P3.
 
 Uso desde cualquier modulo:
     from shared.db import get_connection
 
-Cambios v17:
-  - timeout=30 en sqlite3.connect() — evita OperationalError en accesos
-    concurrentes desde scripts distintos bajo WAL mode.
-  - get_connection() acepta db_path opcional para tests y scripts
-    que necesiten apuntar a una BD distinta de la configurada.
+SQLite fue retirado (2026-09-26, FND-0102): esta capa es solo Postgres. Los parametros
+`db_path` y `backend` de get_connection() se conservan unicamente para no tocar de golpe cada
+entry point; `db_path` se ignora y `backend` solo admite None/"postgres".
 
-=== Dual-dialect capability (2026-09-18, migration plan §5b) — read before touching this file ===
+Notas de diseno que siguen vigentes:
 
-`get_connection()` now accepts an optional `backend` keyword ("sqlite", the default — zero
-behavior change for any existing caller — or "postgres"). This is the deliberate, scoped answer to
-"how do we port the connection layer without breaking the live production pipeline": NOT a
-wholesale one-way swap, NOT a parallel module tree (would violate P#11 DRY — two near-duplicate
-copies of every writer coexisting for months), but a factory that can produce either connection
-type, with individual functions ported IN PLACE, one at a time, each branching internally on
-connection type for the parts that actually differ. See `is_postgres_connection()` below for the
-canonical way to do that branch.
+**Sin traductor automatico de placeholders.** Cada funcion escribe su propio SQL con `%s`. `?` no
+se traduce porque es tambien el operador jsonb de Postgres (`?`, `?|`, `?&`); una sustitucion ciega
+corromperia consultas sobre `gold.fund_scores.score_detail` o
+`bronze.fund_kiid_metadata.processing_breakdown`.
 
-**Migration invariant, load-bearing:** every existing call site (`get_connection()` with no args,
-or `get_connection(db_path)`) is completely unaffected — they get a SQLite connection exactly as
-before. Nothing in production routes to Postgres until a whole tranche (P1, then P2, then P3) is
-ported and validated, and even then only via the explicit dual-write wiring at cutover (plan §5e)
-— not by anything in this file changing behavior on its own.
+**Acceso a filas.** Toda conexion usa `_NamedRow` como row_factory: soporta `row[0]` Y `row["col"]`,
+y al iterar devuelve valores en orden de columna (no claves). Con `dict_row`, `list(row)` devolveria
+los NOMBRES de columna y acabarian escritos como datos en los informes (descubierto portando
+export_metrics.build_estado()); el codigo del repositorio usa ambos estilos de acceso.
 
-**2026-09-20 addendum — `FONDOS_DB_BACKEND` global switch.** `backend` now defaults to `None`,
-which resolves this env var (falling back to `"postgres"` when unset since 2026-09-26, FND-0102). This is the literal "flip
-Postgres to primary" mechanism the migration plan's cutover step (§Addendum Stage 9) needs — it
-does not change today's behavior by itself (the env var is unset everywhere in production right
-now) and it is not the read-path port; it is the switch that becomes meaningful only once the
-read-path tranches (§Addendum Stages 1-7) are complete and verified. Passing `backend=` explicitly
-still overrides it per-call, which is how per-entry-point `--backend` CLI flags rehearse a single
-tranche against Postgres without touching the global default.
-
-**Deliberately NOT built: an automatic `?` → `%s` placeholder translator.** It looks like an
-obvious convenience, and was considered — rejected because `?` is not just SQLite's placeholder
-character, it is also PostgreSQL's own native jsonb containment operator (`?`, `?|`, `?&`,
-`jsonb_column ? 'key'`). A blind regex substitution on a ported query that ever touches
-`gold.fund_scores.score_detail` or `bronze.fund_kiid_metadata.processing_breakdown` (both `jsonb`
-in the target schema — see `db/pg/10_bronze.sql` / `30_gold.sql`) would silently corrupt that
-operator into a placeholder. Each ported function writes its own explicit `%s`-parameterized SQL
-string for the Postgres branch — more typing, no footgun.
-
-**What IS built:** `is_postgres_connection(conn)` — the one canonical dialect check, so ported
-functions don't each need their own `isinstance` import juggling.
-
-**Row access — corrected 2026-09-20, first Phase 5b port.** The original design here used
-`psycopg.rows.dict_row` and asserted "name-based access is already the codebase's dominant style."
-That assertion was wrong, found by actually porting `proyecto2/src/analysis/export_metrics.py`'s
-`q_estado()`/`export()` against live Postgres: its consumer `build_estado()` does
-`ws.append(list(r))`, relying on `sqlite3.Row`'s iteration-yields-values-in-column-order behavior
-(same as a tuple). `list(a_dict_row_result)` yields the dict's KEYS instead — column names would
-have silently landed in the Excel report as if they were data, with no exception raised anywhere to
-catch it. Root-caused once here rather than patched at each of the ~86 call sites (P#2/P#11):
-`_SqliteCompatRow` (below) supports BOTH `row[0]` and `row["col"]`, matching `sqlite3.Row` exactly,
-including iteration yielding values. This is now the `row_factory` for every `backend="postgres"`
-connection — ported functions can keep whatever access style the original SQLite code used.
-
-This whole `backend="postgres"` branch, and every per-function dialect branch it enables, is
-transitional — deleted once SQLite is retired (plan §5e Stage 3), same category as the seed
-loader's reverse-coercion functions kept only for the rollback runbook.
+**`with conn:` de psycopg3 hace COMMIT y luego CIERRA la conexion** (verificado 2026-09-20). En una
+conexion de larga vida usa `db_transaction(conn)`.
 """
 
-import sqlite3
 import sys
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional
 
 _ROOT = Path(__file__).resolve().parent.parent   # c:/desarrollo/fondos
 sys.path.insert(0, str(_ROOT))
 
-from shared.config import DB_PATH
+# Side effect on purpose: importing shared.config autoloads the repo's .env (FONDOS_PG_DSN, ...) into the
+# environment. Every process that connects imports this module, so this is what makes the DSN available.
+# (It used to come for free through `from shared.config import DB_PATH`; removing DB_PATH silently dropped
+# the autoload from every entry point — caught by the first live run after the SQLite retirement.)
+import shared.config  # noqa: E402,F401
 
 try:
     import psycopg
     from psycopg.types.numeric import FloatLoader as _psycopg_float_loader
-except ImportError:  # pragma: no cover — psycopg3 optional until a caller actually asks for it
+except ImportError:  # pragma: no cover
     psycopg = None
     _psycopg_float_loader = None
 
 
-class _SqliteCompatRow:
-    """A psycopg3 row that behaves like sqlite3.Row: subscriptable by int OR str, iterates values
-    (not keys) in column order. See the "Row access" note in this module's docstring for why this
-    exists — dict_row alone silently breaks any code relying on sqlite3.Row's positional/iteration
-    behavior (e.g. `list(row)`, `for v in row`), which turned out to be common in this codebase.
-    """
+class _NamedRow:
+    """Fila psycopg3 subscriptable por int O por str; iterar devuelve valores (no claves), en orden
+    de columna. Ver la nota "Acceso a filas" del docstring del modulo."""
     __slots__ = ("_columns", "_index", "_values")
 
     def __init__(self, columns: list, index: dict, values: tuple):
@@ -119,12 +76,9 @@ class _SqliteCompatRow:
         return f"<Row {dict(zip(self._columns, self._values))}>"
 
     def __eq__(self, other):
-        # sqlite3.Row supports content equality between two distinct row objects (verified
-        # directly, Phase 5c, 2026-09-20: r1 == r2 is True for two separately-fetched rows with
-        # identical content) — without this, write-path code that compares rows (dedup, diff
-        # checks) would silently always get False under Postgres. Only compares against another
-        # _SqliteCompatRow; NotImplemented lets Python fall back sanely for anything else.
-        if isinstance(other, _SqliteCompatRow):
+        # Igualdad por contenido entre filas distintas (el codigo de escritura compara filas para
+        # deduplicar / diff); sin esto siempre daria False.
+        if isinstance(other, _NamedRow):
             return self._columns == other._columns and self._values == other._values
         return NotImplemented
 
@@ -132,99 +86,53 @@ class _SqliteCompatRow:
         return hash((tuple(self._columns), tuple(self._values)))
 
 
-def _sqlite_compat_row_factory(cursor):
-    """psycopg3 row-factory protocol: (cursor) -> (values: tuple) -> Row. Column name/index lookup
-    is built once per cursor.description (i.e. once per query, not once per row) and shared by
-    reference across every row in the result set — same amortized cost as sqlite3.Row's own
-    implementation."""
-    # cursor.description is None for statements with no result columns (SET, DDL, etc.) — psycopg3
-    # still asks the row_factory to build a row maker in that case even though it's never called.
+def _named_row_factory(cursor):
+    """Protocolo row-factory de psycopg3: (cursor) -> (values) -> fila. El indice de columnas se
+    construye una vez por consulta y se comparte entre todas las filas del resultado."""
+    # cursor.description es None en sentencias sin columnas de resultado (SET, DDL...).
     columns = [d.name for d in cursor.description] if cursor.description else []
     index = {name: i for i, name in enumerate(columns)}
 
     def make_row(values):
-        return _SqliteCompatRow(columns, index, values)
+        return _NamedRow(columns, index, values)
 
     return make_row
 
-# Populated lazily (see _pg_dsn()) rather than at import time, so importing shared.db never
-# requires FONDOS_PG_DSN to be set — only actually requesting backend="postgres" does.
-_PG_DSN_ENV_VAR = "FONDOS_PG_DSN"
 
-# The one global switch (2026-09-20, migration addendum — see plan §Addendum Stage 0). Read lazily,
-# same reasoning as _PG_DSN_ENV_VAR: importing shared.db must never require this to be set. Every
-# call site that doesn't pass backend= explicitly resolves through here. Since the SQLite retirement
-# decision (2026-09-26, FND-0102) an UNSET variable resolves to "postgres": a missing .env can no
-# longer fall back silently to the frozen, sealed SQLite file. "sqlite" must now be asked for
-# explicitly (backend="sqlite" / FONDOS_DB_BACKEND=sqlite) until the dual-backend code is removed.
+# Se lee de forma perezosa: importar shared.db nunca exige que FONDOS_PG_DSN este definido.
+_PG_DSN_ENV_VAR = "FONDOS_PG_DSN"
 _DB_BACKEND_ENV_VAR = "FONDOS_DB_BACKEND"
 
 
-def is_postgres_connection(conn) -> bool:
-    """The one canonical dialect check — use this instead of a local `isinstance` in every ported
-    function. True for a connection returned by `get_connection(backend="postgres")` (or
-    `pg_conn`/`pg_conn_module_schema` from `shared.testing.pg_fixtures`, which return the same
-    psycopg3 connection type); False for the default SQLite connection."""
-    return psycopg is not None and isinstance(conn, psycopg.Connection)
-
-
 def execute_fail_soft(conn, sql: str, params=()) -> bool:
-    """Execute a statement that must never propagate a failure or poison the enclosing
-    transaction — the recurring `try: conn.execute(...); except: pass` pattern used throughout P1
-    for non-critical writes (ingestion_log entries, etc.). On Postgres this wraps the statement in
-    a nested SAVEPOINT so a failure rolls back only this one statement, not the whole transaction —
-    found live 2026-09-20 (first in sqlite_writer.log_ingestion/_upsert_kiid_benchmark, then again
-    in fund_family_builder.py — three occurrences of the same gap is the P#11/DRY threshold for
-    centralizing rather than re-deriving the SAVEPOINT dance at each call site): Postgres aborts the
-    WHOLE enclosing transaction on any failed statement, unlike SQLite, so a caught-and-swallowed
-    exception there was silently poisoning every later statement in the same transaction. Returns
-    True if the statement succeeded, False if it failed (and was contained).
+    """Ejecuta una sentencia que nunca debe propagar un fallo ni envenenar la transaccion
+    circundante (el patron `try: conn.execute(...); except: pass` de P1: ingestion_log, etc.).
+    Postgres aborta la transaccion ENTERA ante cualquier sentencia fallida, asi que se envuelve en
+    un SAVEPOINT: un fallo revierte solo esta sentencia. Devuelve True si tuvo exito.
 
-    Found live 2026-09-20 (fund_family_builder.py's own PG regression test, via
-    pg_conn_module_schema): SAVEPOINT raises `NoActiveSqlTransaction` when the connection is in
-    autocommit mode — there's no enclosing transaction to nest a savepoint inside. That's not a
-    test-only quirk: in autocommit mode every statement already IS its own implicit transaction,
-    so a failure can't poison a "later statement" the way it does inside an explicit transaction —
-    the whole reason this helper exists doesn't apply, and the SAVEPOINT dance is both unnecessary
-    and invalid there. Branch on `conn.autocommit` accordingly."""
-    if is_postgres_connection(conn):
-        if conn.autocommit:
-            try:
-                conn.execute(sql, params)
-                return True
-            except Exception:
-                return False
-        conn.execute("SAVEPOINT fail_soft_sp")
+    En modo autocommit no hay transaccion circundante (SAVEPOINT lanzaria NoActiveSqlTransaction) y
+    cada sentencia ya es su propia transaccion, asi que basta el try/except."""
+    if conn.autocommit:
         try:
             conn.execute(sql, params)
-        except Exception:
-            conn.execute("ROLLBACK TO SAVEPOINT fail_soft_sp")
-            return False
-        else:
-            conn.execute("RELEASE SAVEPOINT fail_soft_sp")
             return True
+        except Exception:
+            return False
+    conn.execute("SAVEPOINT fail_soft_sp")
+    try:
+        conn.execute(sql, params)
+    except Exception:
+        conn.execute("ROLLBACK TO SAVEPOINT fail_soft_sp")
+        return False
     else:
-        try:
-            conn.execute(sql, params)
-            return True
-        except Exception:
-            return False
+        conn.execute("RELEASE SAVEPOINT fail_soft_sp")
+        return True
 
 
 @contextmanager
 def fail_soft_block(conn):
-    """Block-shaped sibling of execute_fail_soft() (single statement, returns bool) — for a
-    `try: <several statements>; except Exception as e: <log and continue>` block that itself needs
-    SAVEPOINT protection on Postgres, found live 2026-09-20 porting pipeline.py's run_block() tail
-    (post-cycle summary/sweep logic: several independent fail-soft try/except blocks share one
-    transaction, any one of them failing would otherwise poison every later statement — including
-    ones in the CALLER, since run_block.py's main() keeps using the same connection after
-    run_block() returns).
-
-    Unlike execute_fail_soft(), this does NOT swallow the exception — it only protects the
-    transaction (SAVEPOINT before, ROLLBACK TO SAVEPOINT + re-raise on failure) and always pairs
-    with the caller's own try/except, which keeps its existing logging/printing behavior
-    unchanged:
+    """Version en bloque de execute_fail_soft(): protege la transaccion con un SAVEPOINT alrededor de
+    varias sentencias y RE-LANZA el fallo (el llamador conserva su propio try/except y su log):
 
         try:
             with fail_soft_block(conn):
@@ -232,15 +140,9 @@ def fail_soft_block(conn):
         except Exception as e:
             print(f"WARN: {e}")
 
-    Do not call conn.commit() *inside* the `with` block — a commit destroys the SAVEPOINT before
-    the context manager's own RELEASE SAVEPOINT can run (the exact failure mode documented in
-    shared/testing/pg_fixtures.py's pg_conn_module_schema). Commit after the `with` block exits
-    cleanly instead.
-
-    On SQLite, or Postgres in autocommit mode (see execute_fail_soft for why autocommit changes
-    the picture), this is a no-op passthrough — the caller's own try/except already provides
-    identical behavior there."""
-    if is_postgres_connection(conn) and not conn.autocommit:
+    No llames a conn.commit() DENTRO del bloque: destruye el SAVEPOINT antes del RELEASE. En
+    autocommit es un paso directo."""
+    if not conn.autocommit:
         conn.execute("SAVEPOINT fail_soft_block_sp")
         try:
             yield
@@ -254,154 +156,65 @@ def fail_soft_block(conn):
 
 
 def executemany(conn, sql: str, params_seq) -> None:
-    """sqlite3.Connection.executemany() is a convenience method directly on the connection.
-    psycopg3 has no such thing — Connection has no executemany at all, only Cursor does (found
-    live 2026-09-20 porting fund_family_builder.py: AttributeError: 'Connection' object has no
-    attribute 'executemany'). This is a real, likely-recurring gap (bulk per-row writes are common
-    across P1/P2/P3), so it's centralized here once (P#11/DRY) rather than each ported function
-    re-deriving `conn.cursor().executemany(...)` for its own Postgres branch."""
-    if is_postgres_connection(conn):
-        conn.cursor().executemany(sql, params_seq)
-    else:
-        conn.executemany(sql, params_seq)
+    """psycopg3 no tiene Connection.executemany (solo Cursor): centralizado aqui (P#11)."""
+    conn.cursor().executemany(sql, params_seq)
 
 
-def round_sql(expr: str, decimals: int, *, pg: bool) -> str:
-    """ROUND() SQL fragment, dialect-safe. SQLite's ROUND() operates on the raw IEEE754 double and
-    breaks exact .5 ties AWAY FROM ZERO. Postgres has no ROUND(double precision, integer) overload
-    at all (only ROUND(numeric, integer) — found live 2026-09-20, UndefinedFunction), and neither
-    obvious Postgres substitute reproduces SQLite's output:
-      - `ROUND(x::numeric, n)::double precision` — the numeric CAST "snaps" a noisy double like
-        0.2875*100 = 28.749999999999996 to the clean decimal 28.75 before rounding, then rounds
-        that (now-exact) tie up to 28.8. SQLite rounds the noisy double directly and gets 28.7.
-        Real data hit this: ~1% of rows in q_consistencia/q_tendencia diverged between engines.
-      - Postgres's single-arg `round(double precision)` avoids the numeric snap, but breaks exact
-        ties with ROUND HALF TO EVEN (round(2.5)=2, round(-2.5)=-2) — SQLite uses round half AWAY
-        FROM ZERO (round(2.5)=3, round(-2.5)=-3). Different rule, same class of silent divergence.
-    The formula below (scale, round-half-away-from-zero via floor+sign, descale) stays in double
-    precision throughout — no numeric/Decimal ever appears, so the Python-side return type is
-    `float` on both dialects too, matching SQLite exactly rather than approximately. Deliberately a
-    small explicit helper, not a general SQL-string rewriter — same reasoning as this module's
-    rejected `?`->`%s` auto-translator: safe only because every call site is reviewed, not
-    pattern-matched, and because every case above was verified against real, previously-diverging
-    data before being trusted, not assumed correct from the formula alone.
+def round_sql(expr: str, decimals: int) -> str:
+    """Fragmento SQL ROUND() para double precision.
 
-    Known, accepted residual: cross-validated against the full live q_consistencia (3683 rows,
-    100% match) and q_tendencia (3666 rows) datasets — q_tendencia still shows 38 single-cell
-    diffs out of ~66,000 (0.058%), every one exactly +0.001 in Postgres versus SQLite. Root cause:
-    the scale-multiply step above (`(expr) * scale`) is itself one more double-precision
-    multiplication, which can occasionally land a value that is genuinely a hair below a decimal
-    boundary (per the double's full, un-rounded binary value) exactly ON that boundary, tipping the
-    tie the other way — a deeper fix would require arbitrary-precision (Decimal) evaluation of the
-    original expression rather than double arithmetic at any stage, which is disproportionate for a
-    display-rounded reporting value at 3-4 decimal places. Bounded, one-directional, sub-0.1%,
-    last-decimal-digit only — accepted rather than chased further.
-
-    Moved here from export_metrics.py (2026-09-20, migration addendum Stage 3) once pipeline.py
-    needed the identical logic (P#11/DRY) — export_metrics.py now imports it under its original
-    private name so its ~97 call sites needed no changes."""
-    if pg:
-        scale = 10 ** decimals
-        return (
-            f"(sign(({expr})::double precision) * "
-            f"floor(abs(({expr})::double precision) * {scale} + 0.5) / {scale})"
-        )
-    return f"ROUND({expr}, {decimals})"
+    Postgres solo tiene ROUND(numeric, integer): el CAST a numeric "limpia" dobles ruidosos
+    (28.749999999999996 -> 28.75) y cambia el desempate, y round(double) de un solo argumento
+    redondea mitades al par. La formula de abajo (escalar, redondear mitad-alejandose-de-cero con
+    floor+sign, desescalar) se mantiene en doble precision -- sin Decimal en el lado Python -- y
+    reproduce los valores historicos del informe (validada contra q_consistencia, 3683 filas,
+    100% igual; q_tendencia difiere en el ultimo decimal en 0.058% de celdas, aceptado)."""
+    scale = 10 ** decimals
+    return (
+        f"(sign(({expr})::double precision) * "
+        f"floor(abs(({expr})::double precision) * {scale} + 0.5) / {scale})"
+    )
 
 
-def int_cast_sql(expr: str, *, pg: bool) -> str:
-    """CAST(expr AS INTEGER), dialect-safe. SQLite's CAST-to-INTEGER TRUNCATES toward zero
-    (CAST(4.9999999 AS INTEGER) = 4). Postgres's CAST(double precision AS INTEGER) ROUNDS to
-    nearest instead (round-half-to-even: CAST(4.9999999 AS INTEGER) = 5, CAST(4.5 AS INTEGER) = 4)
-    — found live 2026-09-20, same class of divergence as round_sql(). `trunc(expr)::integer`
-    matches SQLite's truncation exactly (verified against 4.9999999/-4.9999999/4.5/5.5/-4.5).
-    Moved here alongside round_sql() — see its docstring for why."""
-    if pg:
-        return f"trunc(({expr})::double precision)::integer"
-    return f"CAST({expr} AS INTEGER)"
+def int_cast_sql(expr: str) -> str:
+    """CAST a entero TRUNCANDO hacia cero (el CAST de Postgres sobre double redondea al par; el
+    historico del informe trunca: 4.9999999 -> 4)."""
+    return f"trunc(({expr})::double precision)::integer"
 
 
 def db_transaction(conn):
-    """Dialect-aware equivalent of SQLite's `with conn:` idiom — commit-on-success /
-    rollback-on-exception, connection stays open either way. Use as `with db_transaction(conn):`.
-
-    **Why this exists — a real, previously-undiscovered bug, not a style preference.** Verified
-    live 2026-09-20: a bare `with conn:` on a psycopg3 Connection COMMITS *and then CLOSES* the
-    connection on a clean exit (`conn.closed is True` immediately after, even on success) — a
-    fundamentally different semantic from sqlite3's `with conn:`, which only manages the
-    transaction and never closes. Naively porting `with conn:` unchanged inside a function called
-    repeatedly on one long-lived pipeline connection (the normal shape in this codebase — see
-    `sqlite_writer.py::publish_fund()`, called once per fund) would close the connection after the
-    FIRST call and break every subsequent one in the same run. First found and fixed inline in
-    `publish_fund()` (`txn = conn.transaction() if is_postgres_connection(conn) else conn`);
-    centralized here once further sites needed the identical fix (P#11/DRY) rather than repeating
-    the ternary at each one. `conn.transaction()` is psycopg3's actual `with conn:`-equivalent
-    primitive: commits on success, rolls back on exception, connection stays open."""
-    return conn.transaction() if is_postgres_connection(conn) else conn
+    """Equivalente de `with conn:` (commit al salir bien / rollback ante excepcion) que NO cierra la
+    conexion. Usa `with db_transaction(conn):`. Un `with conn:` desnudo de psycopg3 hace COMMIT y
+    luego CIERRA la conexion; en una conexion de larga vida romperia toda llamada posterior."""
+    return conn.transaction()
 
 
 def in_transaction(conn) -> bool:
-    """Dialect-aware equivalent of sqlite3.Connection.in_transaction — True when conn currently has
-    an open transaction a caller should append to rather than starting its own (the EFF-2 "single
-    transaction for all per-fund writes" batching pattern in proyecto2, found live 2026-09-20
-    porting metrics_writer.py/run_pipeline.py: 7 call sites check this before deciding whether to
-    issue their own BEGIN/COMMIT). SQLite: conn.in_transaction directly. Postgres (psycopg3,
-    autocommit=False by default): the server reports IDLE only right after connect or after the
-    last commit/rollback — any statement since then auto-opens an implicit transaction, so a
-    non-IDLE status is the equivalent signal."""
-    if is_postgres_connection(conn):
-        import psycopg.pq
-        return conn.info.transaction_status != psycopg.pq.TransactionStatus.IDLE
-    return conn.in_transaction
+    """True si conn tiene ya una transaccion abierta a la que el llamador debe AÑADIR sus escrituras
+    en vez de abrir la suya (patron EFF-2 de proyecto2). psycopg3 (autocommit=False): el servidor
+    solo esta IDLE justo tras conectar o tras el ultimo commit/rollback."""
+    import psycopg.pq
+    return conn.info.transaction_status != psycopg.pq.TransactionStatus.IDLE
 
 
-def begin_immediate(conn, max_attempts: int = 5) -> None:
-    """Dialect-aware equivalent of SQLite's `BEGIN IMMEDIATE` with lock-retry backoff. Only call
-    when `not in_transaction(conn)` — mirrors the SQLite call sites this replaces, which only ever
-    reach their own BEGIN when they've already confirmed no transaction is open.
-
-    SQLite: `BEGIN IMMEDIATE` acquires the write lock up front (vs default deferred BEGIN, which
-    can deadlock under WAL with concurrent writers); retries with exponential backoff on
-    "database is locked". Postgres: plain `BEGIN` — MVCC + row-level locking means there is no
-    whole-database lock to acquire up front, and a lock wait blocks rather than raising, so no
-    retry loop applies there."""
-    if is_postgres_connection(conn):
-        conn.execute("BEGIN")
-        return
-    import time
-    for attempt in range(max_attempts):
-        try:
-            conn.execute("BEGIN IMMEDIATE")
-            return
-        except sqlite3.OperationalError as exc:
-            if "database is locked" in str(exc) and attempt < max_attempts - 1:
-                time.sleep(2 ** attempt)
-            else:
-                raise
+def begin_immediate(conn) -> None:
+    """Abre una transaccion (`BEGIN`). Llamar solo si `not in_transaction(conn)`. Postgres usa MVCC y
+    bloqueos de fila que ESPERAN en vez de lanzar, asi que no hay bucle de reintento."""
+    conn.execute("BEGIN")
 
 
 def table_columns(conn, table: str) -> set:
-    """Column-name set for `table` — the `PRAGMA table_info(...)` equivalent, dialect-aware.
-    SQLite: PRAGMA table_info, returning names in whatever case they were created with (this
-    codebase's SQLite tables use mixed Title_Case). Postgres: information_schema.columns,
-    restricted to `current_schemas(false)` (the connection's own search_path) rather than a
-    hardcoded schema name, so it resolves the same unqualified table an unquoted `SELECT ... FROM
-    table` in the caller's own SQL would hit.
-
-    Caller beware: Postgres always folds unquoted-created identifiers to lowercase, so this
-    returns lowercase names there regardless of how the table was originally named in SQLite. A
-    caller comparing against a mixed-case catalog (e.g. shared.config.DOMAIN_VALUES keys, which
-    mirror the original SQLite column names) must fold case itself before comparing — this helper
-    intentionally does not guess a normalization the caller might not want."""
-    if is_postgres_connection(conn):
-        rows = conn.execute(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_name = %s AND table_schema = ANY(current_schemas(false))",
-            (table,),
-        ).fetchall()
-        return {r[0] for r in rows}
-    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
-    return {r[1] for r in rows}
+    """Conjunto de nombres de columna de `table` (information_schema), restringido al search_path de
+    la conexion (`current_schemas(false)`) para resolver la misma tabla sin cualificar que
+    resolveria el SQL del llamador. Postgres pliega a minusculas los identificadores sin comillas:
+    quien compare contra un catalogo en mixed-case (p. ej. shared.config.DOMAIN_VALUES) debe
+    plegar mayusculas el mismo."""
+    rows = conn.execute(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_name = %s AND table_schema = ANY(current_schemas(false))",
+        (table,),
+    ).fetchall()
+    return {r[0] for r in rows}
 
 
 def _pg_dsn() -> str:
@@ -409,8 +222,8 @@ def _pg_dsn() -> str:
     dsn = os.environ.get(_PG_DSN_ENV_VAR)
     if not dsn:
         raise RuntimeError(
-            f"get_connection(backend='postgres') requires {_PG_DSN_ENV_VAR} to be set "
-            "(e.g. postgresql://fondos_app@localhost:5432/fondos). Password via PGPASSWORD env "
+            f"get_connection() requires {_PG_DSN_ENV_VAR} to be set "
+            "(e.g. postgresql://fondos_app@127.0.0.1:5436/fondos). Password via PGPASSWORD env "
             "var or a .pgpass file — never on the command line or hardcoded."
         )
     return dsn
@@ -420,56 +233,26 @@ _BACKEND_ANNOUNCED = False
 
 
 def _announce_backend(conn, backend: str, source: str) -> None:
-    """Once per process, say which database this process actually connected to.
-
-    FND-0068 (2026-09-23): after cutover, a single step that misses the backend switch keeps
-    writing to the retired SQLite with exit code 0 while the rest of the run writes to Postgres —
-    silent split-brain. Nothing in a log said which backend a step used, so it could not even be
-    detected after the fact. One line per process fixes that. Never prints the DSN (it may carry a
-    user name; the password lives in PGPASSWORD/.pgpass), only host/port/dbname."""
+    """Una vez por proceso, di a que base de datos se conecto (FND-0068). Nunca imprime el DSN,
+    solo host/port/dbname."""
     global _BACKEND_ANNOUNCED
     if _BACKEND_ANNOUNCED:
         return
     _BACKEND_ANNOUNCED = True
-    if backend == "postgres":
-        i = conn.info
-        where = f"host={i.host} port={i.port} dbname={i.dbname}"
-    else:
-        where = f"path={conn.execute('PRAGMA database_list').fetchone()[2]}"
-    print(f"[DB] backend={backend} ({source}) {where}", file=sys.stderr, flush=True)
+    i = conn.info
+    print(f"[DB] backend={backend} ({source}) host={i.host} port={i.port} dbname={i.dbname}",
+          file=sys.stderr, flush=True)
 
 
 def get_connection(
     db_path: Optional[Path] = None, *, backend: Optional[str] = None
-) -> Union[sqlite3.Connection, "psycopg.Connection"]:
-    """
-    Devuelve una conexion a la base de datos configurada.
+) -> "psycopg.Connection":
+    """Conexion psycopg3 a la base de datos apuntada por FONDOS_PG_DSN.
 
-    backend=None (por defecto): resuelve la variable de entorno FONDOS_DB_BACKEND ("postgres" si no
-    esta definida desde la retirada de SQLite, 2026-09-26; antes era "sqlite"). Pasar backend="sqlite" o backend="postgres"
-    explicitamente ignora la variable de entorno para esa llamada puntual (usado por los flags
-    --backend de los entry points, para poder apuntar una ejecucion a Postgres sin tocar el switch
-    global). Ver plan de migracion, Addendum Stage 0.
+    `db_path` se ignora (legado de SQLite). `backend` solo admite None o "postgres" (se lee tambien
+    FONDOS_DB_BACKEND, que solo puede valer "postgres"); cualquier otro valor lanza ValueError.
 
-    backend="sqlite" (resuelto): conexion sqlite3 a fondos.sqlite con:
-      - foreign_keys activadas
-      - journal_mode WAL (escrituras concurrentes seguras)
-      - timeout=30s (reintenta en caso de bloqueo concurrente)
-      - row_factory = sqlite3.Row (acceso por nombre de columna)
-
-    backend="postgres" (migracion §5b — ver el docstring del modulo antes de usarlo):
-    conexion psycopg3 a la base de datos apuntada por la variable de entorno FONDOS_PG_DSN, con
-    row_factory compatible con sqlite3.Row (acceso por indice O por nombre de columna, igual que
-    el codigo SQLite existente — ver _SqliteCompatRow). `db_path` se ignora en este modo.
-
-    Parámetros:
-        db_path: ruta alternativa a la BD SQLite. Si es None, usa DB_PATH de shared.config.
-                 Solo aplica cuando el backend resuelto es "sqlite".
-        backend: None (resuelve FONDOS_DB_BACKEND, "postgres" por defecto), "sqlite" o "postgres".
-
-    Lanza FileNotFoundError si la BD SQLite no existe (backend resuelto "sqlite").
-    Lanza RuntimeError si FONDOS_PG_DSN no esta definida (backend resuelto "postgres").
-    Ejecutar primero:  python -m shared.init_db
+    Lanza RuntimeError si FONDOS_PG_DSN no esta definida o psycopg3 no esta instalado.
     """
     if backend is not None:
         _source = "arg"
@@ -477,71 +260,25 @@ def get_connection(
         import os
         _source = "env" if _DB_BACKEND_ENV_VAR in os.environ else "default"
         backend = os.environ.get(_DB_BACKEND_ENV_VAR, "postgres")
-
-    if backend == "postgres":
-        if psycopg is None:
-            raise RuntimeError(
-                "backend='postgres' requires psycopg3 (pip install 'psycopg[binary]') — "
-                "not installed in this environment."
-            )
-        conn = psycopg.connect(_pg_dsn(), row_factory=_sqlite_compat_row_factory)
-        # SQLite parity for computed numerics: AVG()/SUM() over integers (and any ::numeric
-        # expression) come back from Postgres as decimal.Decimal, where SQLite returned a float.
-        # Decimal breaks float arithmetic (`Decimal * float` raises TypeError), pandas dtypes and
-        # Excel writes (a Decimal is written as text). The live DDL has no NUMERIC columns — every
-        # stored real is double precision — so this only touches computed expressions; registering
-        # the loader here restores the SQLite type contract once for every caller instead of a
-        # ::float8 cast at each query site (P#11).
-        conn.adapters.register_loader("numeric", _psycopg_float_loader)
-        # db/pg/00_roles_schemas.sql sets this via ALTER ROLE for fondos_owner/fondos_app so that
-        # unqualified table names (the whole point of the schema design — see the DDL's own
-        # comment) resolve without query rewrites. Set it here too, defensively: found live
-        # 2026-09-20 that the role actually in FONDOS_PG_DSN right now (postgres superuser, not
-        # fondos_app) has the ordinary "$user", public default — an unqualified `fund_metrics`
-        # query failed outright. Redundant once every caller uses fondos_app, harmless meanwhile.
-        conn.execute("SET search_path = gold, silver, bronze, control, public")
-        # Commit immediately: plain SET (no LOCAL) is still transaction-scoped in the sense that a
-        # ROLLBACK of the transaction that issued it undoes it too, unless committed first. Found
-        # live 2026-09-20: a caller that rolls back after a later failed statement (export_metrics
-        # .export()'s per-sheet error recovery) silently lost the search_path along with it, so the
-        # NEXT sheet's otherwise-correct query failed with "relation ... does not exist" — a bug
-        # nothing downstream could plausibly have anticipated, only found by exercising the real
-        # multi-statement, error-recovering call pattern end to end.
-        conn.commit()
-        _announce_backend(conn, "postgres", _source)
-        return conn
-    if backend != "sqlite":
-        raise ValueError(f"Unknown backend {backend!r} — expected 'sqlite' or 'postgres'")
-
-    target = Path(db_path) if db_path is not None else DB_PATH
-
-    if not target.exists():
-        raise FileNotFoundError(
-            f"No se encuentra la base de datos: {target}\n"
-            "Ejecuta primero: python -m shared.init_db"
+    if backend != "postgres":
+        raise ValueError(
+            f"backend {backend!r} no existe: SQLite fue retirado (2026-09-26, FND-0102); "
+            "solo 'postgres'."
         )
-
-    conn = sqlite3.connect(str(target), timeout=30)
-    conn.execute("PRAGMA foreign_keys = ON;")
-    conn.execute("PRAGMA journal_mode = WAL;")
-    # Performance pragmas (safe with WAL):
-    #   synchronous=NORMAL — skips per-commit WAL fsync; power-safe under WAL
-    #     (a checkpoint sync still protects against corruption on crash).
-    #   cache_size=-65536  — 64 MB page cache (vs ~2 MB default); reduces
-    #     repeated btree traversals on the 16M-row fund_metric_timeseries.
-    #   temp_store=MEMORY  — sorts/indexes for GROUP BY / subqueries stay in RAM.
-    #   mmap_size          — 512 MB memory-mapped read window; speeds sequential
-    #     reads on large tables without extra system calls.
-    conn.execute("PRAGMA synchronous = NORMAL;")
-    conn.execute("PRAGMA cache_size = -65536;")
-    conn.execute("PRAGMA temp_store = MEMORY;")
-    conn.execute("PRAGMA mmap_size = 536870912;")
-    conn.row_factory = sqlite3.Row
-    # isolation_level=None: delega control de transacciones a SQLite y al
-    # código explícito (with conn:). Evita que Python abra transacciones
-    # implícitas que interfieren con ON CONFLICT DO UPDATE (SQLite 3.24+).
-    # Sin esto, executescript() en create_schema resetea isolation_level a ''
-    # y el upsert falla con "ON CONFLICT clause does not match any PK".
-    conn.isolation_level = None
-    _announce_backend(conn, "sqlite", _source)
+    if psycopg is None:
+        raise RuntimeError(
+            "psycopg3 is required (pip install 'psycopg[binary]') — not installed in this environment."
+        )
+    conn = psycopg.connect(_pg_dsn(), row_factory=_named_row_factory)
+    # AVG()/SUM() sobre enteros (y cualquier ::numeric) llegan como decimal.Decimal, que rompe la
+    # aritmetica con floats, los dtypes de pandas y las escrituras a Excel (un Decimal se escribe
+    # como texto). El DDL no tiene columnas NUMERIC (todo real almacenado es double precision), asi
+    # que esto solo afecta a expresiones calculadas: se registra una vez para todo llamador (P#11).
+    conn.adapters.register_loader("numeric", _psycopg_float_loader)
+    # db/pg/00_roles_schemas.sql fija el search_path por ALTER ROLE; se fija tambien aqui por si el rol
+    # de la conexion no es fondos_app/fondos_owner. Se hace COMMIT enseguida: un SET sin LOCAL se
+    # deshace con el ROLLBACK de la transaccion que lo emitio (visto en el export_metrics por hoja).
+    conn.execute("SET search_path = gold, silver, bronze, control, public")
+    conn.commit()
+    _announce_backend(conn, "postgres", _source)
     return conn

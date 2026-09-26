@@ -67,23 +67,6 @@ def _make_catalogue_sqlite(conn):
     conn.commit()
 
 
-def test_report_sqlite_runs_end_to_end(tmp_path):
-    """Own-connection SQLite path — confirms the dialect-aware refactor made no behavior change."""
-    db_path = str(tmp_path / "report_test.sqlite")
-    conn = sqlite3.connect(db_path)
-    _make_catalogue_sqlite(conn)
-    conn.close()
-
-    buf = io.StringIO()
-    with patch.object(_pdh, "DB_PATH", db_path):
-        with redirect_stdout(buf):
-            cmd_report_codsus(None, backend="sqlite")   # SQLite path on purpose (FND-0102)
-    output = buf.getvalue()
-    assert "codSus DISCOVERY REPORT" in output
-    assert "Funds (unique ISIN): 2" in output
-    assert "In harvest, not in fund_master (new funds): 1" in output
-
-
 def test_report_postgres_runs_end_to_end_on_one_reused_connection(pg_conn):
     """The connection-leak-fix regression proof: everything (including §6 reconciliation, which
     used to open 2 MORE connections) runs correctly against the single injected `conn`."""

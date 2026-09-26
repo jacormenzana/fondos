@@ -11,7 +11,7 @@ documentado en ninguna parte:
                                            -> pipeline.py:1473
                                            -> UPSERT con COALESCE
   2. los extractores de coste PRIIPs/UCITS -> _COST_FIELDS -> mismo UPSERT
-  3. `sqlite_writer.correct_oc_aci_mismatch` -> UPDATE posterior SIN COALESCE
+  3. `fund_writer.correct_oc_aci_mismatch` -> UPDATE posterior SIN COALESCE
                                               (FIX-OC-WRITE-ORDER: debe ir DESPUÉS
                                                de publish_fund o el COALESCE lo pisa)
 

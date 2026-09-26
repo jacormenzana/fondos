@@ -13,30 +13,26 @@ to_sql, no llamada por run_pipeline.py, no audit-column-aware) -- ver
 historial git para el contenido anterior.
 """
 
-import sqlite3
 import sys
-import time
 from datetime import date
 from pathlib import Path
 
 try:
-    from shared.db import is_postgres_connection, in_transaction, begin_immediate
+    from shared.db import in_transaction, begin_immediate
 except ModuleNotFoundError:
     _shared_root = Path(__file__).resolve().parents[3]
     if str(_shared_root) not in sys.path:
         sys.path.insert(0, str(_shared_root))
-    from shared.db import is_postgres_connection, in_transaction, begin_immediate
+    from shared.db import in_transaction, begin_immediate
 
 
-def _executemany(conn, sql: str, data: list) -> "sqlite3.Cursor":
+def _executemany(conn, sql: str, data: list) -> "psycopg.Cursor":
     """executemany that returns the cursor on both dialects (psycopg3's Connection has no
     executemany of its own -- see shared/db.py's own executemany() docstring for the same gap;
     this local variant returns the cursor because write_timeseries needs cur.rowcount)."""
-    if is_postgres_connection(conn):
-        cur = conn.cursor()
-        cur.executemany(sql, data)
-        return cur
-    return conn.executemany(sql, data)
+    cur = conn.cursor()
+    cur.executemany(sql, data)
+    return cur
 
 
 def rows_from_metric_tuples(
@@ -66,13 +62,6 @@ _METRICS_UPSERT_PG = """
                 algorithm_version = excluded.algorithm_version, batch_id = excluded.batch_id,
                 load_ts = DEFAULT
         """
-_METRICS_UPSERT_SQLITE = """
-            INSERT OR REPLACE INTO fund_metrics
-                (isin, metric, horizon, value, real_flag,
-                 calculation_date, metric_version, benchmark_id, source_rows,
-                 algorithm_version, batch_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
-        """
 
 
 def _metric_row_tuples(isin, metrics, horizon, today, metric_version, algorithm_version, batch_id) -> list:
@@ -95,7 +84,7 @@ def _metric_row_tuples(isin, metrics, horizon, today, metric_version, algorithm_
 
 
 def write_metrics_batch(
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
     items: list,
     dry_run: bool,
     *,
@@ -115,7 +104,7 @@ def write_metrics_batch(
     if not items or dry_run:
         return 0
     today = date.today().isoformat()
-    sql = _METRICS_UPSERT_PG if is_postgres_connection(conn) else _METRICS_UPSERT_SQLITE
+    sql = _METRICS_UPSERT_PG
     rows: list = []
     for isin, horizon, metrics in items:
         rows.extend(_metric_row_tuples(isin, metrics, horizon, today, metric_version,
@@ -138,7 +127,7 @@ def write_metrics_batch(
 
 
 def write_metrics(
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
     isin: str,
     metrics: list[dict],
     horizon: str,
@@ -163,32 +152,24 @@ def write_metrics(
         return 0
 
     today = date.today().isoformat()
-    sql = _METRICS_UPSERT_PG if is_postgres_connection(conn) else _METRICS_UPSERT_SQLITE
+    sql = _METRICS_UPSERT_PG
     rows = _metric_row_tuples(isin, metrics, horizon, today, metric_version, algorithm_version, batch_id)
     # EFF-2: skip own transaction when the caller batches for us
     if in_transaction(conn):
         _executemany(conn, sql, rows)
         return len(rows)
-    for attempt in range(5):
-        try:
-            begin_immediate(conn)
-            try:
-                _executemany(conn, sql, rows)
-                conn.execute("COMMIT")
-            except Exception:
-                conn.execute("ROLLBACK")
-                raise
-            return len(rows)
-        except sqlite3.OperationalError as exc:
-            if "database is locked" in str(exc) and attempt < 4:
-                time.sleep(2 ** attempt)
-            else:
-                raise
-    return 0
+    begin_immediate(conn)
+    try:
+        _executemany(conn, sql, rows)
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    return len(rows)
 
 
 def write_timeseries(
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
     rows: list[dict],
     dry_run: bool,
     *,
@@ -215,41 +196,23 @@ def write_timeseries(
     """
     if not rows or dry_run:
         return 0
-    if is_postgres_connection(conn):
-        # window -> window_label: PG reserved word, renamed in the target schema (db/pg/rename_map.yaml)
-        sql = """
-            INSERT INTO fund_metric_timeseries
-                (isin, metric, window_label, date, value, real_flag,
-                 ref_type, ref_value, source_rows,
-                 algorithm_version, batch_id)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (isin, metric, window_label, date, real_flag) DO UPDATE SET
-                value             = excluded.value,
-                ref_type          = excluded.ref_type,
-                ref_value         = excluded.ref_value,
-                source_rows       = excluded.source_rows,
-                algorithm_version = excluded.algorithm_version,
-                batch_id          = excluded.batch_id
-            WHERE fund_metric_timeseries.value IS DISTINCT FROM excluded.value
-               OR fund_metric_timeseries.algorithm_version IS DISTINCT FROM excluded.algorithm_version
-        """
-    else:
-        sql = """
-            INSERT INTO fund_metric_timeseries
-                (isin, metric, window, date, value, real_flag,
-                 ref_type, ref_value, source_rows,
-                 algorithm_version, batch_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(isin, metric, window, date, real_flag) DO UPDATE SET
-                value             = excluded.value,
-                ref_type          = excluded.ref_type,
-                ref_value         = excluded.ref_value,
-                source_rows       = excluded.source_rows,
-                algorithm_version = excluded.algorithm_version,
-                batch_id          = excluded.batch_id
-            WHERE fund_metric_timeseries.value IS NOT excluded.value
-               OR fund_metric_timeseries.algorithm_version IS NOT excluded.algorithm_version
-        """
+    # window -> window_label: PG reserved word, renamed in the target schema (db/pg/rename_map.yaml)
+    sql = """
+        INSERT INTO fund_metric_timeseries
+            (isin, metric, window_label, date, value, real_flag,
+             ref_type, ref_value, source_rows,
+             algorithm_version, batch_id)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (isin, metric, window_label, date, real_flag) DO UPDATE SET
+            value             = excluded.value,
+            ref_type          = excluded.ref_type,
+            ref_value         = excluded.ref_value,
+            source_rows       = excluded.source_rows,
+            algorithm_version = excluded.algorithm_version,
+            batch_id          = excluded.batch_id
+        WHERE fund_metric_timeseries.value IS DISTINCT FROM excluded.value
+           OR fund_metric_timeseries.algorithm_version IS DISTINCT FROM excluded.algorithm_version
+    """
     data = [
         (
             r["isin"], r["metric"], r["window"], r["date"],
@@ -267,26 +230,18 @@ def write_timeseries(
     if in_transaction(conn):
         cur = _executemany(conn, sql, data)
         return cur.rowcount if cur.rowcount >= 0 else len(data)
-    for attempt in range(5):
-        try:
-            begin_immediate(conn)
-            try:
-                cur = _executemany(conn, sql, data)
-                conn.execute("COMMIT")
-                return cur.rowcount if cur.rowcount >= 0 else len(data)
-            except Exception:
-                conn.execute("ROLLBACK")
-                raise
-        except sqlite3.OperationalError as exc:
-            if "database is locked" in str(exc) and attempt < 4:
-                time.sleep(2 ** attempt)
-            else:
-                raise
-    return 0
+    begin_immediate(conn)
+    try:
+        cur = _executemany(conn, sql, data)
+        conn.execute("COMMIT")
+        return cur.rowcount if cur.rowcount >= 0 else len(data)
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
 
 
 def replace_beta_set(
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
     isin: str,
     metrics: list[dict],
     horizon: str,
@@ -314,35 +269,22 @@ def replace_beta_set(
         return 0
 
     today = date.today().isoformat()
-    if is_postgres_connection(conn):
-        sql_del = (
-            "DELETE FROM fund_metrics "
-            "WHERE isin=%s AND metric LIKE 'beta_%%' AND horizon=%s AND metric_version=%s"
-        )
-        sql_ins = """
-            INSERT INTO fund_metrics
-                (isin, metric, horizon, value, real_flag,
-                 calculation_date, metric_version, benchmark_id, source_rows,
-                 algorithm_version, batch_id)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, NULL, %s, %s, %s)
-            ON CONFLICT (isin, metric, horizon, real_flag, metric_version) DO UPDATE SET
-                value = excluded.value, calculation_date = excluded.calculation_date,
-                benchmark_id = excluded.benchmark_id, source_rows = excluded.source_rows,
-                algorithm_version = excluded.algorithm_version, batch_id = excluded.batch_id,
-                load_ts = DEFAULT
-        """
-    else:
-        sql_del = (
-            "DELETE FROM fund_metrics "
-            "WHERE isin=? AND metric LIKE 'beta_%' AND horizon=? AND metric_version=?"
-        )
-        sql_ins = """
-            INSERT OR REPLACE INTO fund_metrics
-                (isin, metric, horizon, value, real_flag,
-                 calculation_date, metric_version, benchmark_id, source_rows,
-                 algorithm_version, batch_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
-        """
+    sql_del = (
+        "DELETE FROM fund_metrics "
+        "WHERE isin=%s AND metric LIKE 'beta_%%' AND horizon=%s AND metric_version=%s"
+    )
+    sql_ins = """
+        INSERT INTO fund_metrics
+            (isin, metric, horizon, value, real_flag,
+             calculation_date, metric_version, benchmark_id, source_rows,
+             algorithm_version, batch_id)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, NULL, %s, %s, %s)
+        ON CONFLICT (isin, metric, horizon, real_flag, metric_version) DO UPDATE SET
+            value = excluded.value, calculation_date = excluded.calculation_date,
+            benchmark_id = excluded.benchmark_id, source_rows = excluded.source_rows,
+            algorithm_version = excluded.algorithm_version, batch_id = excluded.batch_id,
+            load_ts = DEFAULT
+    """
     rows = [
         (
             isin,
@@ -364,20 +306,12 @@ def replace_beta_set(
         conn.execute(sql_del, (isin, horizon, metric_version))
         _executemany(conn, sql_ins, rows)
         return len(rows)
-    for attempt in range(5):
-        try:
-            begin_immediate(conn)
-            try:
-                conn.execute(sql_del, (isin, horizon, metric_version))
-                _executemany(conn, sql_ins, rows)
-                conn.execute("COMMIT")
-            except Exception:
-                conn.execute("ROLLBACK")
-                raise
-            return len(rows)
-        except sqlite3.OperationalError as exc:
-            if "database is locked" in str(exc) and attempt < 4:
-                time.sleep(2 ** attempt)
-            else:
-                raise
-    return 0
+    begin_immediate(conn)
+    try:
+        conn.execute(sql_del, (isin, horizon, metric_version))
+        _executemany(conn, sql_ins, rows)
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    return len(rows)

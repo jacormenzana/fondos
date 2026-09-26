@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import io
 import os
-import sqlite3
 import sys
 import uuid
 from decimal import Decimal
@@ -64,73 +63,7 @@ def _sheet_names(path: Path) -> list[str]:
 
 
 # =============================================================================
-# Part A — SQLite (existing behavior must not change)
-# =============================================================================
-
-@pytest.fixture()
-def sqlite_db(tmp_path: Path) -> Path:
-    db = tmp_path / "t.sqlite"
-    conn = sqlite3.connect(db)
-    conn.execute(
-        "CREATE TABLE fund_master (ISIN TEXT, Fund_Name TEXT, Fund_Nature TEXT, "
-        "Raw_KIID_Text TEXT, Score REAL)"
-    )
-    conn.executemany(
-        "INSERT INTO fund_master VALUES (?,?,?,?,?)",
-        [("B02", "Beta", "Mixtos", "long text b", 2.5),
-         ("A01", "Alpha", "Renta Variable", "long text a", 1.25)],
-    )
-    conn.commit()
-    conn.close()
-    return db
-
-
-def test_sqlite_exclude_cols_order_by_and_numeric_cells(sqlite_db, tmp_path):
-    out = tmp_path / "o.xlsx"
-    export_tables(
-        [TableExportConfig(table="fund_master", sheet_name="S1",
-                           exclude_cols=["Raw_KIID_Text"], order_by="ISIN")],
-        out, sqlite_db, verbose=False, backend="sqlite",
-    )
-    rows = _sheet_rows(out, "S1")
-    assert rows[0] == ["ISIN", "Fund_Name", "Fund_Nature", "Score"]
-    assert [r[0] for r in rows[1:]] == ["A01", "B02"]
-    assert isinstance(rows[1][3], float) and rows[1][3] == 1.25
-
-
-def test_sqlite_include_cols_is_case_insensitive_and_orders_as_requested(sqlite_db, tmp_path):
-    out = tmp_path / "o.xlsx"
-    export_tables(
-        [TableExportConfig(table="fund_master", sheet_name="S1",
-                           include_cols=["fund_name", "ISIN"], order_by="ISIN")],
-        out, sqlite_db, verbose=False, backend="sqlite",
-    )
-    rows = _sheet_rows(out, "S1")
-    # Columns are quoted with their REAL spelling, in the caller's requested order.
-    assert rows[0] == ["Fund_Name", "ISIN"]
-    assert rows[1] == ["Alpha", "A01"]
-
-
-def test_sqlite_one_bad_table_does_not_abort_the_others(sqlite_db, tmp_path):
-    out = tmp_path / "o.xlsx"
-    export_tables(
-        [TableExportConfig(table="no_such_table", sheet_name="BAD"),
-         TableExportConfig(table="fund_master", sheet_name="GOOD")],
-        out, sqlite_db, verbose=False, backend="sqlite",
-    )
-    assert _sheet_names(out) == ["GOOD"]
-
-
-def test_sqlite_missing_database_raises_before_writing_anything(tmp_path):
-    out = tmp_path / "o.xlsx"
-    with pytest.raises(FileNotFoundError):
-        export_tables([TableExportConfig(table="fund_master")], out,
-                      tmp_path / "does_not_exist.sqlite", verbose=False, backend="sqlite")
-    assert not out.exists()
-
-
-# =============================================================================
-# Part B — Postgres
+# Postgres
 # =============================================================================
 
 # --- header restoration (pure functions, no database needed) -----------------
@@ -254,7 +187,7 @@ def test_pg_end_to_end_one_bad_table_does_not_poison_the_rest(committed_pg_table
     export_tables(
         [TableExportConfig(table="no_such_table_xyz", sheet_name="BAD"),
          TableExportConfig(table=name, sheet_name="GOOD", exclude_cols=["Raw_KIID_Text"])],
-        out, Path("unused-for-postgres"), verbose=False, backend="postgres",
+        out, verbose=False,
     )
     assert _sheet_names(out) == ["GOOD"]
     rows = _sheet_rows(out, "GOOD")

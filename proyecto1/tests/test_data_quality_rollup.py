@@ -18,7 +18,8 @@ DATA_QUALITY_SEVERITY), no una mutacion secuencial.
 
 import os
 import sys
-import sqlite3
+
+import pytest
 
 _TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
 _CORE_DIR = os.path.normpath(os.path.join(_TESTS_DIR, '..', 'core'))
@@ -29,13 +30,23 @@ for _p in (_CORE_DIR, _P1_DIR, _ROOT_DIR):
         sys.path.insert(0, _p)
 
 from pipeline import _derive_data_quality_flag, _finalize_data_quality_issues
-from sqlite_writer import create_schema
+
+
+_PG = {}
+
+
+@pytest.fixture(autouse=True)
+def _pg_connection(pg_app_conn):
+    """Hand the per-test savepoint-wrapped Postgres connection (real DDL, app search_path) to the module's DB-building helper."""
+    _PG["conn"] = pg_app_conn
+    yield
+    _PG.clear()
+
 
 
 def _memory_conn():
-    conn = sqlite3.connect(":memory:")
-    create_schema(conn)
-    return conn
+    """Conexion Postgres del test (DDL real de db/pg, revertida al acabar)."""
+    return _PG["conn"]
 
 
 # ---------------------------------------------------------------------------
@@ -117,7 +128,7 @@ def test_multiple_concurrent_issues_all_reach_ingestion_log():
     _finalize_data_quality_issues(conn, isin, "OK", issues)
 
     rows = conn.execute(
-        "SELECT step, status, message FROM ingestion_log WHERE ISIN = ? ORDER BY id",
+        "SELECT step, status, message FROM ingestion_log WHERE ISIN = %s ORDER BY id",
         (isin,),
     ).fetchall()
     assert len(rows) == 3
@@ -143,7 +154,7 @@ def test_issues_persisted_to_fund_data_quality_issues_table():
 
     rows = conn.execute(
         "SELECT check_code, level, message FROM fund_data_quality_issues "
-        "WHERE ISIN = ? ORDER BY check_code",
+        "WHERE ISIN = %s ORDER BY check_code",
         (isin,),
     ).fetchall()
     assert rows == [
@@ -164,14 +175,14 @@ def test_fund_data_quality_issues_rebuilt_each_cycle_not_accumulated():
         [("FUNDCCY_NAME_KIID_MISMATCH", "WARN", "WARN", "mismatch ciclo 1")],
     )
     rows = conn.execute(
-        "SELECT check_code FROM fund_data_quality_issues WHERE ISIN = ?", (isin,)
+        "SELECT check_code FROM fund_data_quality_issues WHERE ISIN = %s", (isin,)
     ).fetchall()
     assert len(rows) == 1
 
     # Ciclo siguiente: el mismatch ya no se detecta (se corrigio el dato).
     _finalize_data_quality_issues(conn, isin, "OK", [])
     rows = conn.execute(
-        "SELECT check_code FROM fund_data_quality_issues WHERE ISIN = ?", (isin,)
+        "SELECT check_code FROM fund_data_quality_issues WHERE ISIN = %s", (isin,)
     ).fetchall()
     assert rows == []
 
@@ -185,10 +196,10 @@ def test_finalize_does_not_affect_other_isins():
     _finalize_data_quality_issues(conn, "LU_TEST_9B", "OK", [])
 
     rows_a = conn.execute(
-        "SELECT check_code FROM fund_data_quality_issues WHERE ISIN = ?", ("LU_TEST_9A",)
+        "SELECT check_code FROM fund_data_quality_issues WHERE ISIN = %s", ("LU_TEST_9A",)
     ).fetchall()
     rows_b = conn.execute(
-        "SELECT check_code FROM fund_data_quality_issues WHERE ISIN = ?", ("LU_TEST_9B",)
+        "SELECT check_code FROM fund_data_quality_issues WHERE ISIN = %s", ("LU_TEST_9B",)
     ).fetchall()
     assert len(rows_a) == 1
     assert len(rows_b) == 0

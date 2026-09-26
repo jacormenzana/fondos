@@ -1,4 +1,4 @@
-# core/sqlite_writer.py  — v25
+# core/fund_writer.py  — v25
 # -*- coding: utf-8 -*-
 """
 Publicación idempotente del output estructural de Proyecto 1 en SQLite.
@@ -108,7 +108,6 @@ Cambios v17:
   - 42 → 45 parámetros en upsert_fund_master
 """
 
-import sqlite3
 import re
 from pathlib import Path
 from typing import Dict, Iterable, Optional, Any
@@ -153,24 +152,24 @@ def _load_schema_sql() -> str:
 # ============================================================
 # CONEXIÓN
 # Re-export de shared.db.get_connection — función canónica única (DRY).
-# sqlite_writer la re-exporta para mantener compatibilidad con
+# fund_writer la re-exporta para mantener compatibilidad con
 # run_block.py y otros módulos que la importan desde aquí.
 # ============================================================
 try:
-    from shared.db import get_connection, is_postgres_connection   # noqa: F401  (re-export)
+    from shared.db import get_connection   # noqa: F401  (re-export)
 except ModuleNotFoundError:
     # shared no está aún en sys.path — añadirlo explícitamente.
-    # Estructura esperada: <raiz>/proyecto1/core/sqlite_writer.py
+    # Estructura esperada: <raiz>/proyecto1/core/fund_writer.py
     #                      <raiz>/shared/db.py
     import sys as _sys
     from pathlib import Path as _Path
     _shared_root = _Path(__file__).resolve().parents[2]
     if str(_shared_root) not in _sys.path:
         _sys.path.insert(0, str(_shared_root))
-    from shared.db import get_connection, is_postgres_connection   # noqa: F401  (re-export)
+    from shared.db import get_connection   # noqa: F401  (re-export)
 
 
-def create_schema(conn: sqlite3.Connection) -> None:
+def create_schema(conn: "psycopg.Connection") -> None:
     """Crea todas las tablas del sistema leyendo db/schema_fondos.sql.
 
     SQLite-only by design, not merely unported: Postgres schema provisioning is a different
@@ -179,16 +178,13 @@ def create_schema(conn: sqlite3.Connection) -> None:
     translate at runtime (conn.executescript() doesn't exist on psycopg3 either way, and
     autotranslating SQLite DDL would duplicate the hand-authored Postgres DDL — a P#11 violation).
     Guard clearly rather than let a stray call fail on an opaque AttributeError."""
-    if is_postgres_connection(conn):
-        raise RuntimeError(
-            "create_schema() is SQLite-only. For Postgres, apply db/pg/00_roles_schemas.sql .. "
-            "40_matviews.sql via psql (see docker-compose.yml) — not this function."
-        )
-    conn.executescript(_load_schema_sql())
-    conn.commit()
+    raise RuntimeError(
+        "create_schema() is SQLite-only. For Postgres, apply db/pg/00_roles_schemas.sql .. "
+        "40_matviews.sql via psql (see docker-compose.yml) — not this function."
+    )
 
 
-def close_connection(conn: sqlite3.Connection) -> None:
+def close_connection(conn: "psycopg.Connection") -> None:
     conn.commit()
     conn.close()
 
@@ -336,7 +332,7 @@ def _normalize_record(record: Dict[str, Optional[Any]]) -> Dict[str, Optional[An
 # Sobre 3.204 fondos en SQLite local: ~80–120 ms total. Despreciable.
 # ============================================================
 
-def _post_upsert_normalize_db(conn: sqlite3.Connection, isin: str) -> None:
+def _post_upsert_normalize_db(conn: "psycopg.Connection", isin: str) -> None:
     """
     Aplica las traducciones EN→ES directamente sobre fund_master para el ISIN
     recién tocado. Cubre el caso COALESCE con valor stale en inglés (BL-53/54).
@@ -346,7 +342,7 @@ def _post_upsert_normalize_db(conn: sqlite3.Connection, isin: str) -> None:
     """
     import logging as _log
     _logger = _log.getLogger(__name__)
-    ph = "%s" if is_postgres_connection(conn) else "?"
+    ph = "%s"
 
     # Capturar valores antes para detectar cambios (logging de stale)
     # v20: Type (→Vehicle_Structure) y Subtype (borrada) ya NO se normalizan aquí.
@@ -411,7 +407,7 @@ def _post_upsert_normalize_db(conn: sqlite3.Connection, isin: str) -> None:
 # FUND MASTER UPSERT  (v17 — 45 columnas)
 # ============================================================
 
-def upsert_fund_master(conn: sqlite3.Connection,
+def upsert_fund_master(conn: "psycopg.Connection",
                        record: Dict[str, Optional[Any]]) -> None:
     """
     Upsert canónico en fund_master — v20.
@@ -532,10 +528,10 @@ def upsert_fund_master(conn: sqlite3.Connection,
     # function. SQLite's UPSERT syntax (ON CONFLICT/DO UPDATE/excluded.col/COALESCE below) was
     # deliberately modeled after Postgres's, so it is IDENTICAL on both engines — verified live
     # against the real schema and real partial-record COALESCE scenarios before trusting it (see
-    # proyecto1/tests/test_sqlite_writer_pg_upsert.py). Column names (mixed-case here, e.g. ISIN,
+    # proyecto1/tests/test_fund_writer_pg_upsert.py). Column names (mixed-case here, e.g. ISIN,
     # Fund_Name) auto-fold to lower_snake under Postgres's unquoted-identifier rule, matching the
     # migrated schema — same mechanism the whole read-path port already relied on.
-    ph = "%s" if is_postgres_connection(conn) else "?"
+    ph = "%s"
     placeholders = ", ".join([ph] * len(insert_cols))
     params = tuple(v for _c, v, _p in spec)
 
@@ -588,7 +584,7 @@ def upsert_fund_master(conn: sqlite3.Connection,
 # KIID METADATA UPSERT
 # ============================================================
 
-def upsert_kiid_metadata(conn: sqlite3.Connection,
+def upsert_kiid_metadata(conn: "psycopg.Connection",
                          kiid_record: Dict[str, Optional[Any]]) -> None:
     """
     UPSERT extendido con validación cruzada SRRI.
@@ -716,8 +712,7 @@ def upsert_kiid_metadata(conn: sqlite3.Connection,
     # The 28 '?' characters here are exactly the 28 VALUES placeholders (verified by count, no
     # other '?' appears anywhere in the query text, e.g. in a comment), so a plain substitution is
     # safe — unlike Phase 5b's q_rentabilidad_dist, there is no '%' to collide with here.
-    if is_postgres_connection(conn):
-        sql = sql.replace("?", "%s")
+    sql = sql.replace("?", "%s")
     conn.execute(sql, params)
 
 
@@ -725,25 +720,18 @@ def upsert_kiid_metadata(conn: sqlite3.Connection,
 # NAV SERIES INSERT
 # ============================================================
 
-def insert_nav_series(conn: sqlite3.Connection, isin: str,
+def insert_nav_series(conn: "psycopg.Connection", isin: str,
                       nav_series: Iterable[Dict[str, Any]]) -> None:
     # Postgres migration Phase 5c: INSERT OR IGNORE's direct equivalent is
     # ON CONFLICT DO NOTHING — both silently skip a row whose key already exists rather than
     # erroring or overwriting. Conflict target (isin, date) matches fund_nav_monthly's real PK
     # (verified live: PK columns are (date, isin), order doesn't matter for the ON CONFLICT clause).
-    if is_postgres_connection(conn):
-        sql = """
-        INSERT INTO fund_nav_monthly
-            (isin, date, nav, nav_currency, nav_type, is_estimated, data_source, ingested_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (isin, date) DO NOTHING
-        """
-    else:
-        sql = """
-        INSERT OR IGNORE INTO fund_nav_monthly
-            (ISIN, Date, NAV, NAV_Currency, NAV_Type, Is_Estimated, Data_Source, Ingested_At)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """
+    sql = """
+    INSERT INTO fund_nav_monthly
+        (isin, date, nav, nav_currency, nav_type, is_estimated, data_source, ingested_at)
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+    ON CONFLICT (isin, date) DO NOTHING
+    """
     now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
     for row in nav_series:
         conn.execute(sql, (
@@ -762,7 +750,7 @@ def insert_nav_series(conn: sqlite3.Connection, isin: str,
 # BENCHMARK UPSERT (secundario — desde KIID)
 # ============================================================
 
-def _upsert_kiid_benchmark(conn: sqlite3.Connection,
+def _upsert_kiid_benchmark(conn: "psycopg.Connection",
                             benchmark_declared: str,
                             isin: str) -> None:
     normalize_benchmark = _get_normalizer()
@@ -788,66 +776,49 @@ def _upsert_kiid_benchmark(conn: sqlite3.Connection,
         # against. Conflict target is (isin, source) — the table's real composite PK (verified
         # live), not isin alone; 'source' is always 'KIID' here but the PK allows other sources
         # (e.g. a different pipeline) to coexist per ISIN.
-        if is_postgres_connection(conn):
-            # Postgres aborts the WHOLE enclosing transaction on any failed statement, not just
-            # back to the nearest point — confirmed live 2026-09-20 while investigating an
-            # unrelated pg_fixtures.py test failure. This function's own try/except (below) is
-            # deliberately fail-soft (a benchmark-normalization problem must never interrupt the
-            # pipeline), but under Postgres a caught-and-swallowed failure here would silently
-            # poison every LATER statement in publish_fund's SAME transaction (log_ingestion,
-            # upsert_cost_schedule) — defeating the fail-soft intent entirely. A nested SAVEPOINT,
-            # rolled back on failure before re-raising to the existing outer except, contains the
-            # damage to just this statement, matching what the original SQLite code never had to
-            # do because SQLite doesn't abort the whole transaction the same way.
-            conn.execute("SAVEPOINT bench_upsert")
-            try:
-                conn.execute("""
-                    INSERT INTO fund_benchmarks
-                        (isin, source, benchmark_raw, benchmark_id, benchmark_name,
-                         provider, asset_class, confidence, benchmark_role, extracted_at)
-                    VALUES (%s, 'KIID', %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (isin, source) DO UPDATE SET
-                        benchmark_raw  = excluded.benchmark_raw,
-                        benchmark_id   = excluded.benchmark_id,
-                        benchmark_name = excluded.benchmark_name,
-                        provider       = excluded.provider,
-                        asset_class    = excluded.asset_class,
-                        confidence     = excluded.confidence,
-                        benchmark_role = excluded.benchmark_role,
-                        extracted_at   = excluded.extracted_at
-                """, (
-                    isin,
-                    benchmark_declared,
-                    norm.canonical_id   if norm else None,
-                    norm.canonical_name if norm else benchmark_declared,
-                    norm.provider       if norm else None,
-                    norm.asset_class    if norm else None,
-                    norm.confidence     if norm else 'LOW',
-                    _role,
-                    now,
-                ))
-            except Exception:
-                conn.execute("ROLLBACK TO SAVEPOINT bench_upsert")
-                raise
-            else:
-                conn.execute("RELEASE SAVEPOINT bench_upsert")
-            return
-        conn.execute("""
-            INSERT OR REPLACE INTO fund_benchmarks
-                (ISIN, source, benchmark_raw, benchmark_id, benchmark_name,
-                 provider, asset_class, confidence, benchmark_role, extracted_at)
-            VALUES (?, 'KIID', ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            isin,
-            benchmark_declared,
-            norm.canonical_id   if norm else None,
-            norm.canonical_name if norm else benchmark_declared,
-            norm.provider       if norm else None,
-            norm.asset_class    if norm else None,
-            norm.confidence     if norm else 'LOW',
-            _role,
-            now,
-        ))
+        # Postgres aborts the WHOLE enclosing transaction on any failed statement, not just
+        # back to the nearest point — confirmed live 2026-09-20 while investigating an
+        # unrelated pg_fixtures.py test failure. This function's own try/except (below) is
+        # deliberately fail-soft (a benchmark-normalization problem must never interrupt the
+        # pipeline), but under Postgres a caught-and-swallowed failure here would silently
+        # poison every LATER statement in publish_fund's SAME transaction (log_ingestion,
+        # upsert_cost_schedule) — defeating the fail-soft intent entirely. A nested SAVEPOINT,
+        # rolled back on failure before re-raising to the existing outer except, contains the
+        # damage to just this statement, matching what the original SQLite code never had to
+        # do because SQLite doesn't abort the whole transaction the same way.
+        conn.execute("SAVEPOINT bench_upsert")
+        try:
+            conn.execute("""
+                INSERT INTO fund_benchmarks
+                    (isin, source, benchmark_raw, benchmark_id, benchmark_name,
+                     provider, asset_class, confidence, benchmark_role, extracted_at)
+                VALUES (%s, 'KIID', %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (isin, source) DO UPDATE SET
+                    benchmark_raw  = excluded.benchmark_raw,
+                    benchmark_id   = excluded.benchmark_id,
+                    benchmark_name = excluded.benchmark_name,
+                    provider       = excluded.provider,
+                    asset_class    = excluded.asset_class,
+                    confidence     = excluded.confidence,
+                    benchmark_role = excluded.benchmark_role,
+                    extracted_at   = excluded.extracted_at
+            """, (
+                isin,
+                benchmark_declared,
+                norm.canonical_id   if norm else None,
+                norm.canonical_name if norm else benchmark_declared,
+                norm.provider       if norm else None,
+                norm.asset_class    if norm else None,
+                norm.confidence     if norm else 'LOW',
+                _role,
+                now,
+            ))
+        except Exception:
+            conn.execute("ROLLBACK TO SAVEPOINT bench_upsert")
+            raise
+        else:
+            conn.execute("RELEASE SAVEPOINT bench_upsert")
+        return
     except Exception as exc:
         # No interrumpir el pipeline por un fallo de benchmark, pero NO
         # silenciar: un 'no such column: benchmark_role' indica que falta la
@@ -863,7 +834,7 @@ def _upsert_kiid_benchmark(conn: sqlite3.Connection,
 # LOG
 # ============================================================
 
-def log_ingestion(conn: sqlite3.Connection, isin: Optional[str],
+def log_ingestion(conn: "psycopg.Connection", isin: Optional[str],
                   step: str, status: str,
                   message: Optional[str]) -> None:
     # Plain append-only INSERT, no conflict/upsert logic — placeholder character is the only
@@ -878,10 +849,8 @@ def log_ingestion(conn: sqlite3.Connection, isin: Optional[str],
     # even though the Python code never saw the original exception), rolling back the fund's ENTIRE
     # substantive write (fund_master, KIID, NAV, cost schedule) over an INCIDENTAL log-write
     # failure — the exact opposite of "El log nunca debe interrumpir el pipeline".
-    pg = is_postgres_connection(conn)
-    ph = "%s" if pg else "?"
-    if pg:
-        conn.execute("SAVEPOINT log_ingestion_sp")
+    ph = "%s"
+    conn.execute("SAVEPOINT log_ingestion_sp")
     try:
         conn.execute(
             f"INSERT INTO ingestion_log (ISIN, step, status, message, created_at) "
@@ -890,11 +859,9 @@ def log_ingestion(conn: sqlite3.Connection, isin: Optional[str],
              datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")),
         )
     except Exception:
-        if pg:
-            conn.execute("ROLLBACK TO SAVEPOINT log_ingestion_sp")
+        conn.execute("ROLLBACK TO SAVEPOINT log_ingestion_sp")
         return  # El log nunca debe interrumpir el pipeline
-    if pg:
-        conn.execute("RELEASE SAVEPOINT log_ingestion_sp")
+    conn.execute("RELEASE SAVEPOINT log_ingestion_sp")
 
 
 # ============================================================
@@ -902,7 +869,7 @@ def log_ingestion(conn: sqlite3.Connection, isin: Optional[str],
 # ============================================================
 
 def publish_fund(
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
     fund_master_record: Dict[str, Optional[Any]],
     nav_series: Optional[Iterable[Dict[str, Any]]] = None,
     kiid_record: Optional[Dict[str, Optional[Any]]] = None,
@@ -919,7 +886,7 @@ def publish_fund(
     # one connection, which is what this function's own shape demands. `conn.transaction()`
     # (verified live: commits on success, rolls back on exception, connection stays open — the
     # actual sqlite3-`with conn:`-equivalent primitive) is the correct fix.
-    txn = conn.transaction() if is_postgres_connection(conn) else conn
+    txn = conn.transaction()
     try:
         with txn:
             upsert_fund_master(conn, fund_master_record)
@@ -964,7 +931,7 @@ def publish_fund(
 # Idempotente. Coste ~150ms sobre 3.204 filas.
 # ============================================================
 
-def global_post_pipeline_normalize_db(conn: sqlite3.Connection) -> Dict[str, int]:
+def global_post_pipeline_normalize_db(conn: "psycopg.Connection") -> Dict[str, int]:
     """
     Normalización global de fund_master tras finalizar el pipeline.
 
@@ -1066,7 +1033,7 @@ def global_post_pipeline_normalize_db(conn: sqlite3.Connection) -> Dict[str, int
 # ============================================================
 
 def upsert_cost_schedule(
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
     isin: str,
     schedule_rows: list,
 ) -> int:
@@ -1096,9 +1063,8 @@ def upsert_cost_schedule(
     # conflict logic at all), so only two dialect-specific pieces: the placeholder character, and
     # SQLite's datetime('now') function — Postgres has no such function (it uses now(), which
     # returns timestamptz directly, matching fund_cost_schedule.updated_at's target type).
-    pg = is_postgres_connection(conn)
-    ph = "%s" if pg else "?"
-    now_fn = "now()" if pg else "datetime('now')"
+    ph = "%s"
+    now_fn = "now()"
     cur = conn.cursor()
     cur.execute(f"DELETE FROM fund_cost_schedule WHERE ISIN = {ph}", (isin,))
     for row in schedule_rows:
@@ -1141,7 +1107,7 @@ def upsert_cost_schedule(
 # ============================================================
 
 def correct_oc_aci_mismatch(
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
     isin: str,
     ter_pct: float,
     source_note: str = "BL-COST-5",
@@ -1192,7 +1158,7 @@ def correct_oc_aci_mismatch(
 
     # Postgres migration Phase 5c: plain UPDATE, placeholder-only translation. cur.rowcount is a
     # standard DB-API cursor attribute — verified live to behave identically on psycopg3.
-    ph = "%s" if is_postgres_connection(conn) else "?"
+    ph = "%s"
     cur = conn.execute(
         f"UPDATE fund_master SET Ongoing_Charge_Recurrent = {ph}, Updated_At = {ph} "
         f"WHERE ISIN = {ph}",
@@ -1230,7 +1196,7 @@ _SQLITE_IN_CHUNK = 900   # safe margin below the 999 SQLite variable limit
 
 
 def reconcile_universe_membership(
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
     current_isins: list[str],
 ) -> tuple[int, int]:
     """
@@ -1255,7 +1221,7 @@ def reconcile_universe_membership(
     # 2. Re-flag the current universe in chunks to respect SQLite's
     #    per-statement variable limit (~999). Postgres has no such limit, but the chunking is
     #    harmless there too (Phase 5c) — only the placeholder character needs to change.
-    ph = "%s" if is_postgres_connection(conn) else "?"
+    ph = "%s"
     for start in range(0, len(isins), _SQLITE_IN_CHUNK):
         chunk = isins[start: start + _SQLITE_IN_CHUNK]
         placeholders = ",".join([ph] * len(chunk))

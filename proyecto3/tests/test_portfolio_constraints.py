@@ -20,7 +20,6 @@ Run from repo root:
 """
 
 import random
-import sqlite3
 import sys
 from pathlib import Path
 
@@ -152,16 +151,16 @@ CREATE TABLE fund_master (
     Fund_Nature TEXT,
     Management_Company TEXT,
     fund_family_id TEXT,
-    In_Current_Universe INTEGER DEFAULT 1
+    In_Current_Universe SMALLINT DEFAULT 1
 );
 CREATE TABLE fund_scores (
-    isin TEXT, block TEXT, score_version TEXT, regime TEXT, as_of_date TEXT,
-    score_total REAL, score_detail TEXT, eligible INTEGER, exclusion_reason TEXT
+    isin TEXT, block TEXT, score_version TEXT, regime TEXT, as_of_date DATE,
+    score_total DOUBLE PRECISION, score_detail TEXT, eligible SMALLINT, exclusion_reason TEXT
 );
 """
 # Fase 3a (P3 optimization plan, migracion SQLite 2026-09-19): fund_scores'
 # PK se extendio a (isin, block, score_version, regime, as_of_date) -- ver
-# shared/migrate_schema_v27.py. _select_funds_for_subportfolio ahora filtra
+# db/pg/30_gold.sql. _select_funds_for_subportfolio ahora filtra
 # por regimen; el esquema/fixture de test refleja la forma real de la
 # tabla, y todas las filas sembradas usan el mismo regimen de prueba para
 # que el filtro las encuentre.
@@ -169,23 +168,22 @@ _TEST_REGIME = "Shock_Energetico"
 
 
 @pytest.fixture
-def conn():
-    c = sqlite3.connect(":memory:")
-    c.executescript(_SCHEMA)
-    yield c
-    c.close()
+def conn(pg_conn):
+    """Tablas toy en Postgres (esquema public, SAVEPOINT revertido al acabar el test)."""
+    pg_conn.execute(_SCHEMA)
+    return pg_conn
 
 
 def _insert_fund(conn, isin, score, mgr="MgrA", nature="Renta Variable"):
     conn.execute(
         "INSERT INTO fund_master (ISIN, Fund_Name, Fund_Nature, Management_Company, "
-        "fund_family_id, In_Current_Universe) VALUES (?, ?, ?, ?, NULL, 1)",
+        "fund_family_id, In_Current_Universe) VALUES (%s, %s, %s, %s, NULL, 1)",
         (isin, f"Fund {isin}", nature, mgr),
     )
     conn.execute(
         "INSERT INTO fund_scores (isin, block, score_version, regime, as_of_date, "
         "score_total, score_detail, eligible) "
-        "VALUES (?, 'Equilibrada', 'v1', ?, '2026-09-19', ?, '{}', 1)",
+        "VALUES (%s, 'Equilibrada', 'v1', %s, '2026-09-19', %s, '{}', 1)",
         (isin, _TEST_REGIME, score),
     )
 
@@ -196,7 +194,6 @@ def test_manager_cap_stops_at_max_funds_per_mgr(conn):
     for i in range(3):
         _insert_fund(conn, f"MGRA{i}", score=0.9 - i * 0.01, mgr="SameManager")
     _insert_fund(conn, "OTHER1", score=0.5, mgr="OtherManager")
-    conn.commit()
 
     selected = _select_funds_for_subportfolio(conn, "Equilibrada", "v1", _TEST_REGIME)
     same_mgr_count = (selected["management_company"] == "SameManager").sum()
@@ -209,7 +206,6 @@ def test_hysteresis_band_retains_incumbent_within_band(conn):
     # (5%) after the bonus -- should still rank above the challenger.
     _insert_fund(conn, "INCUMBENT", score=1.00, mgr="MgrA")
     _insert_fund(conn, "CHALLENGER", score=1.03, mgr="MgrB")  # +3%, inside the 5% band
-    conn.commit()
 
     selected = _select_funds_for_subportfolio(
         conn, "Equilibrada", "v1", _TEST_REGIME, incumbent_isins=frozenset({"INCUMBENT"}))
@@ -222,7 +218,6 @@ def test_hysteresis_band_displaced_by_challenger_beyond_band(conn):
     # displace it in ranking (the bonus doesn't insulate forever).
     _insert_fund(conn, "INCUMBENT", score=1.00, mgr="MgrA")
     _insert_fund(conn, "CHALLENGER", score=1.10, mgr="MgrB")  # +10%, beyond the 5% band
-    conn.commit()
 
     selected = _select_funds_for_subportfolio(
         conn, "Equilibrada", "v1", _TEST_REGIME, incumbent_isins=frozenset({"INCUMBENT"}))
@@ -264,25 +259,24 @@ def test_stale_eligible_row_does_not_resurrect_a_now_ineligible_fund(conn):
 
     conn.execute(
         "INSERT INTO fund_master (ISIN, Fund_Name, Fund_Nature, Management_Company, "
-        "fund_family_id, In_Current_Universe) VALUES (?, ?, ?, ?, NULL, 1)",
+        "fund_family_id, In_Current_Universe) VALUES (%s, %s, %s, %s, NULL, 1)",
         ("DEMOTED", "Fund DEMOTED", "Renta Variable", "DemotedMgr"),
     )
     # Older row: eligible, high score -- would rank #1 by score alone.
     conn.execute(
         "INSERT INTO fund_scores (isin, block, score_version, regime, as_of_date, "
         "score_total, score_detail, eligible, exclusion_reason) "
-        "VALUES ('DEMOTED', 'Equilibrada', 'v1', ?, '2026-03-21', 0.99, '{}', 1, NULL)",
+        "VALUES ('DEMOTED', 'Equilibrada', 'v1', %s, '2026-03-21', 0.99, '{}', 1, NULL)",
         (_TEST_REGIME,),
     )
     # Newer row: same fund, now ineligible -- this is the row that should govern.
     conn.execute(
         "INSERT INTO fund_scores (isin, block, score_version, regime, as_of_date, "
         "score_total, score_detail, eligible, exclusion_reason) "
-        "VALUES ('DEMOTED', 'Equilibrada', 'v1', ?, '2026-09-19', 0.0, '{}', 0, "
+        "VALUES ('DEMOTED', 'Equilibrada', 'v1', %s, '2026-09-19', 0.0, '{}', 0, "
         "'Credit_Quality=High Yield excluido de Defensiva')",
         (_TEST_REGIME,),
     )
-    conn.commit()
 
     selected = _select_funds_for_subportfolio(conn, "Equilibrada", "v1", _TEST_REGIME)
     assert "DEMOTED" not in selected["isin"].values, (

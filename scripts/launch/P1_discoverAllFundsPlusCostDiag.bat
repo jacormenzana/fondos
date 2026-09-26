@@ -12,7 +12,6 @@ chcp 65001 > nul
 :: ============================================================
 
 set ROOT=C:\desarrollo\fondos
-set DB=%ROOT%\db\fondos.sqlite
 set MASTER=c:\data\fondos\in\GestoresDeFondosv1.xlsx
 set LOG_DIR=%ROOT%\proyecto1\log
 
@@ -35,7 +34,6 @@ if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
 
 echo ============================================================ >> "%LOG%"
 echo  Pipeline P1 - Inicio: %STAMP%                              >> "%LOG%"
-echo  DB:     %DB%                                                >> "%LOG%"
 echo ============================================================ >> "%LOG%"
 
 echo.
@@ -49,7 +47,7 @@ echo.
 echo [%time%] Paso 0: mark_stale (max 50 fondos, antiguedad ^> 180 dias)
 echo. >> "%LOG%"
 echo --- PASO 0: mark_stale ------------------------------------ >> "%LOG%"
-python -X utf8 "%ROOT%\scripts\launch\mark_stale.py" --db "%DB%" --max-age 180 --max-funds 50 >> "%LOG%" 2>&1
+python -X utf8 "%ROOT%\scripts\launch\mark_stale.py" --max-age 180 --max-funds 50 >> "%LOG%" 2>&1
 set RC0=!ERRORLEVEL!
 
 :: -- Bloques de clasificacion -------------------------------------------------
@@ -57,43 +55,43 @@ echo [%time%] Bloque: monetarios
 echo. >> "%LOG%"
 echo --- BLOQUE: monetarios ------------------------------------ >> "%LOG%"
 pushd %ROOT%\proyecto1
-python -X utf8 run_block.py --block monetarios     --db "%DB%" --master "%MASTER%" >> "%LOG%" 2>&1
+python -X utf8 run_block.py --block monetarios     --master "%MASTER%" >> "%LOG%" 2>&1
 set RC1=!ERRORLEVEL!
 
 echo [%time%] Bloque: rf_corto
 echo. >> "%LOG%"
 echo --- BLOQUE: rf_corto -------------------------------------- >> "%LOG%"
-python -X utf8 run_block.py --block rf_corto       --db "%DB%" --master "%MASTER%" >> "%LOG%" 2>&1
+python -X utf8 run_block.py --block rf_corto       --master "%MASTER%" >> "%LOG%" 2>&1
 set RC2=!ERRORLEVEL!
 
 echo [%time%] Bloque: rf_flexible
 echo. >> "%LOG%"
 echo --- BLOQUE: rf_flexible ----------------------------------- >> "%LOG%"
-python -X utf8 run_block.py --block rf_flexible    --db "%DB%" --master "%MASTER%" >> "%LOG%" 2>&1
+python -X utf8 run_block.py --block rf_flexible    --master "%MASTER%" >> "%LOG%" 2>&1
 set RC3=!ERRORLEVEL!
 
 echo [%time%] Bloque: renta_variable
 echo. >> "%LOG%"
 echo --- BLOQUE: renta_variable -------------------------------- >> "%LOG%"
-python -X utf8 run_block.py --block renta_variable --db "%DB%" --master "%MASTER%" >> "%LOG%" 2>&1
+python -X utf8 run_block.py --block renta_variable --master "%MASTER%" >> "%LOG%" 2>&1
 set RC4=!ERRORLEVEL!
 
 echo [%time%] Bloque: mixtos
 echo. >> "%LOG%"
 echo --- BLOQUE: mixtos ---------------------------------------- >> "%LOG%"
-python -X utf8 run_block.py --block mixtos         --db "%DB%" --master "%MASTER%" >> "%LOG%" 2>&1
+python -X utf8 run_block.py --block mixtos         --master "%MASTER%" >> "%LOG%" 2>&1
 set RC5=!ERRORLEVEL!
 
 echo [%time%] Bloque: alternativos
 echo. >> "%LOG%"
 echo --- BLOQUE: alternativos ---------------------------------- >> "%LOG%"
-python -X utf8 run_block.py --block alternativos   --db "%DB%" --master "%MASTER%" >> "%LOG%" 2>&1
+python -X utf8 run_block.py --block alternativos   --master "%MASTER%" >> "%LOG%" 2>&1
 set RC6=!ERRORLEVEL!
 
 echo [%time%] Bloque: restantes
 echo. >> "%LOG%"
 echo --- BLOQUE: restantes ------------------------------------- >> "%LOG%"
-python -X utf8 run_block.py --block restantes      --db "%DB%" --master "%MASTER%" >> "%LOG%" 2>&1
+python -X utf8 run_block.py --block restantes      --master "%MASTER%" >> "%LOG%" 2>&1
 set RC7=!ERRORLEVEL!
 popd
 

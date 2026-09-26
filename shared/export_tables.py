@@ -28,7 +28,6 @@ Uso típico desde un módulo de proyecto:
     out = export_tables(
         tables=TABLES,
         output_path=Path("out/mi_export_20260401.xlsx"),
-        db_path=DB_PATH,
     )
 
 Cambios v17:
@@ -53,7 +52,7 @@ from typing import Optional
 
 import pandas as pd
 
-from shared.db import get_connection, is_postgres_connection, table_columns
+from shared.db import get_connection, table_columns
 
 # Postgres migration (Stage 9, 2026-09-23 — the export/reporting port the plan's original Stage 7
 # named but that was silently dropped when Stage 7 was renumbered): Postgres returns timestamptz
@@ -247,9 +246,7 @@ def _drop_excluded(df: pd.DataFrame, exclude_cols: list) -> pd.DataFrame:
 def export_tables(
     tables:      list[TableExportConfig],
     output_path: Path,
-    db_path:     Path,
     verbose:     bool = True,
-    backend:     Optional[str] = None,
 ) -> Path:
     """
     Exporta una lista de tablas a un fichero Excel multi-hoja.
@@ -257,10 +254,7 @@ def export_tables(
     Parámetros:
         tables:       lista de TableExportConfig con las tablas a exportar.
         output_path:  ruta completa del fichero .xlsx a generar.
-        db_path:      ruta a fondos.sqlite (solo aplica si el backend resuelto es "sqlite").
         verbose:      si True, imprime progreso por consola.
-        backend:      None (resuelve FONDOS_DB_BACKEND, "sqlite" por defecto), "sqlite" o
-                      "postgres" (FONDOS_PG_DSN). Ver shared.db.get_connection.
 
     Devuelve la ruta del fichero generado.
 
@@ -279,14 +273,11 @@ def export_tables(
     output_path = _resolve_writable_path(Path(output_path))
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # get_connection lanza FileNotFoundError si el backend resuelto es sqlite y la BD no existe.
-    conn = get_connection(Path(db_path), backend=backend)
+    conn = get_connection()
 
     if verbose:
         print(f"\nExportación -> {output_path}")
-        # FND-0097: `backend` is None when it comes from FONDOS_DB_BACKEND, so ask the live
-        # connection which store it really is instead of assuming SQLite.
-        print(f"BD:            {'(Postgres: FONDOS_PG_DSN)' if is_postgres_connection(conn) else db_path}")
+        print("BD:            (Postgres: FONDOS_PG_DSN)")
         print(f"Tablas:        {len(tables)}\n")
 
     errors: list[str] = []
@@ -304,8 +295,7 @@ def export_tables(
                     if not cfg.include_cols and cfg.exclude_cols:
                         df = _drop_excluded(df, cfg.exclude_cols)
 
-                    if is_postgres_connection(conn):
-                        df = _restore_legacy_headers(df, cfg.table)
+                    df = _restore_legacy_headers(df, cfg.table)
 
                     df.to_excel(
                         writer,

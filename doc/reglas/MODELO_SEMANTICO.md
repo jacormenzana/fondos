@@ -487,7 +487,7 @@ texto KIID del fondo; `Investment_Universe` puede ser una inferencia por defecto
 **Auto-corrección:** SC-G1 es auto-correctable. Implementado en INTER-20.
 
 **Severidad:** WARN→auto (igual que SC-D1/SC-D2): el valor corregido se persiste en BD
-vía la A2-merge de pipeline.py + COALESCE de sqlite_writer.
+vía la A2-merge de pipeline.py + COALESCE de fund_writer.
 
 **Causa raíz histórica:** BL-33 (INTER-13) asigna `Investment_Universe='Global'` a fondos
 Monetario y Renta Fija Corto Plazo por defecto (inferencia por naturaleza del fondo), sin
@@ -601,7 +601,7 @@ rompe `GROUP BY` / `WHERE` queries fragmentando poblaciones.
 'Renta Fija Flexible', 'Retorno Absoluto', etc.). La migración a inglés ('Equity Core',
 'Flexible Fixed Income', 'Absolute Return') se realizó con el schema v20 para alinear con
 Morningstar Category naming. Los valores legacy en español en la BD son residuales y deben
-ser migrados por `sqlite_writer._normalize_record` (defensa en profundidad, única excepción
+ser migrados por `fund_writer._normalize_record` (defensa en profundidad, única excepción
 autorizada a R-1).
 
 Los mapas de normalización para traducciones legacy ES→EN viven exclusivamente en

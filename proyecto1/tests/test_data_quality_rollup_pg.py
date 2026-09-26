@@ -9,7 +9,7 @@ migration's "port function and test together" discipline.
 
 Uses `pg_conn` (SAVEPOINT, autocommit=False), NOT `pg_conn_module_schema` — deliberately, and only
 after finding out why the obvious choice is wrong. `_finalize_data_quality_issues()` calls
-`log_ingestion()` (sqlite_writer.py) for each issue, which issues a bare `SAVEPOINT` of its own —
+`log_ingestion()` (fund_writer.py) for each issue, which issues a bare `SAVEPOINT` of its own —
 valid SQL only when a transaction block is already open. Under real production
 (`get_connection(backend="postgres")`, `autocommit=False` by default), psycopg3 auto-opens an
 implicit transaction on the first statement of any new transaction, so this always holds — verified

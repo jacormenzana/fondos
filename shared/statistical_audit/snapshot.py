@@ -1,7 +1,6 @@
 """Functions #1-#2 (AUDITORIA_ESTADISTICA.md §4): build_population, build_snapshot."""
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass
 from typing import Sequence
 
@@ -13,7 +12,7 @@ class UniverseFilterMissingError(ValueError):
 
 
 def build_population(
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
     query: str,
     params: Sequence = (),
     require_universe_filter: bool = True,

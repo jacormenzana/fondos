@@ -30,7 +30,7 @@ from pathlib import Path
 _ROOT = Path(__file__).resolve().parents[3]   # c:/desarrollo/fondos
 sys.path.insert(0, str(_ROOT))
 
-from shared.config import DB_PATH, DATA_DIR
+from shared.config import DATA_DIR
 
 # Directorio de salida: c:/desarrollo/fondos/out/export/
 _OUT_DIR: Path = DATA_DIR.parent / 'out'
@@ -125,28 +125,21 @@ def get_tables(
 
 def export_p1(
     output_dir=None,
-    db_path=None,
     include_kiid_text: bool = False,
     block=None,
-    backend=None,
 ):
     """
     Exporta las tablas de P1 a un fichero Excel con fecha en el nombre.
 
     Parametros:
         output_dir:        directorio de salida (default: out/export/)
-        db_path:           ruta a la BD (default: DB_PATH de shared/config)
         include_kiid_text: incluir columna Raw_KIID_Text (default: False)
         block:             si se indica, filtra por heuristic_block.
                            Debe ser uno de VALID_BLOCKS; abort con ValueError si no.
-        backend:           None (FONDOS_DB_BACKEND), "sqlite" o "postgres".
 
     Devuelve la ruta del fichero generado.
     """
     print(f"DEBUG _ROOT     = {_ROOT}")
-    # FND-0097: only meaningful for the sqlite backend; the actual store is printed by
-    # export_tables ("BD:" line) once the connection is open.
-    print(f"DEBUG DB_PATH   = {DB_PATH}  (solo backend sqlite)")
     print(f"DEBUG EXPORT_DIR= {EXPORT_DIR}")
 
     # Validar block contra whitelist (safe interpolation guard)
@@ -159,7 +152,6 @@ def export_p1(
         print(f"Filtro activo: heuristic_block = '{block}'")
 
     output_dir = Path(output_dir) if output_dir else EXPORT_DIR
-    db_path    = Path(db_path)    if db_path    else DB_PATH
 
     prefix   = f"p1_export_{block.lower()}" if block else "p1_export"
     out_path = output_dir / dated_filename(prefix)
@@ -168,9 +160,7 @@ def export_p1(
     return export_tables(
         tables=tables,
         output_path=out_path,
-        db_path=db_path,
         verbose=True,
-        backend=backend,
     )
 
 
@@ -189,10 +179,6 @@ if __name__ == "__main__":
         help="Directorio de salida (default: out/export/)"
     )
     parser.add_argument(
-        "--db", default=None,
-        help="Ruta alternativa a fondos.sqlite"
-    )
-    parser.add_argument(
         "--include-kiid-text", action="store_true",
         help="Incluir columna Raw_KIID_Text (fichero mas grande)"
     )
@@ -204,18 +190,10 @@ if __name__ == "__main__":
             f"Valores: {sorted(VALID_BLOCKS)}"
         ),
     )
-    parser.add_argument(
-        "--backend", choices=["sqlite", "postgres"], default=None,
-        help="Backend de BD para esta ejecucion (migracion, addendum 2026-09-20). "
-             "Si se omite, resuelve la variable de entorno FONDOS_DB_BACKEND "
-             "('sqlite' si no esta definida)."
-    )
     args = parser.parse_args()
 
     export_p1(
         output_dir=args.output,
-        db_path=args.db,
         include_kiid_text=args.include_kiid_text,
         block=args.block,
-        backend=args.backend,
     )

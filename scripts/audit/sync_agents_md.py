@@ -258,7 +258,7 @@ def gen_schema_version() -> str:
     assigns = _config_assigns()
     ver = assigns.get("SCHEMA_VERSION", "???")
     return (
-        f"DB: `db/fondos.sqlite` (schema {ver}). "
+        f"DB: PostgreSQL 17 (schema {ver}; legacy SQLite retired 2026-09-26). "
         r"Master list: `c:\data\fondos\in\GestoresDeFondosv1.xlsx`."
     )
 
@@ -269,7 +269,7 @@ def gen_kill_switches_line() -> str:
     switches = _kill_switches_ordered()
     names = ", ".join(f"`{n}`" for n, _ in switches)
     return (
-        f"- `shared/config.py` — all constants: `DB_PATH`, `SCHEMA_VERSION` (`\"{ver}\"`), "
+        f"- `shared/config.py` — all constants: `SCHEMA_VERSION` (`\"{ver}\"`), "
         f"`DOMAIN_VALUES`, `ATTRIBUTE_CATALOG`, kill-switches ({names})"
     )
 

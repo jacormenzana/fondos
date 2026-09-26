@@ -181,7 +181,6 @@ def extract_text_from_pdf_bytes(
     return "\n".join(text_parts)
 
 
-
 def pdf_sha256(pdf_bytes: bytes) -> str:
     return hashlib.sha256(pdf_bytes).hexdigest()
 
@@ -365,7 +364,6 @@ def _load_local_kiid(
         return None
 
 
-
 # ============================================================
 # TRANSICIÓN AUTOMÁTICA A FORCE_REFRESH POR ANTIGÜEDAD
 # ============================================================
@@ -403,15 +401,14 @@ def mark_stale_for_refresh(
     # NULLS FIRST is itself Postgres-originated syntax that SQLite later adopted, so the ORDER BY
     # clause needs no translation.
     try:
-        from shared.db import is_postgres_connection
+        pass
     except ImportError:
         import sys as _sys
         from pathlib import Path as _Path
         _root = _Path(__file__).resolve().parents[2]
         if str(_root) not in _sys.path:
             _sys.path.insert(0, str(_root))
-        from shared.db import is_postgres_connection
-    ph = "%s" if is_postgres_connection(conn) else "?"
+    ph = "%s"
 
     # Seleccionar los más antiguos primero (FIFO de antigüedad)
     sql = f"""
@@ -520,15 +517,15 @@ def find_kiid_links_from_db(isin: str, conn) -> List[str]:
         # function's own broad except into a silent "no links found" — would have blocked every
         # FORCE_REFRESH/new-fund KIID re-download from ever finding its source URL under Postgres.
         try:
-            from shared.db import is_postgres_connection, fail_soft_block
+            from shared.db import fail_soft_block
         except ImportError:
             import sys as _sys
             from pathlib import Path as _Path
             _root = _Path(__file__).resolve().parents[2]
             if str(_root) not in _sys.path:
                 _sys.path.insert(0, str(_root))
-            from shared.db import is_postgres_connection, fail_soft_block
-        _ph = "%s" if is_postgres_connection(conn) else "?"
+            from shared.db import fail_soft_block
+        _ph = "%s"
         # SAVEPOINT-protected: on Postgres a failed statement aborts the WHOLE enclosing
         # transaction, and the handler below swallows the error and lets the caller carry on with
         # the same connection — without this every later statement would fail with
@@ -622,7 +619,7 @@ def _process_pdf_bytes(
     # FIX-DATA-INTEGRITY-2 (2026-06-17): la línea original mutaba kiid_text
     # IN-PLACE con el bloque DLA2 recién serializado. kiid_text es el valor
     # que esta función devuelve y que termina en Raw_KIID_Text (vía
-    # get_kiid_for_isin -> pipeline.py L1750 -> sqlite_writer COALESCE),
+    # get_kiid_for_isin -> pipeline.py L1750 -> fund_writer COALESCE),
     # horneando PERMANENTEMENTE contenido derivado (grid '|||') dentro de lo
     # que debería ser texto puro extraído del PDF. Esta es la fuente ORIGINAL
     # de la corrupción confirmada en 30 fondos (FIX-DATA-INTEGRITY-1 en
@@ -771,15 +768,15 @@ def get_kiid_for_isin(
             # exactly the dangerous "worked, but via the wrong path" class this migration has hit
             # before (Stage 4's `_is_stale()`).
             try:
-                from shared.db import is_postgres_connection, fail_soft_block
+                from shared.db import fail_soft_block
             except ImportError:
                 import sys as _sys
                 from pathlib import Path as _Path
                 _root = _Path(__file__).resolve().parents[2]
                 if str(_root) not in _sys.path:
                     _sys.path.insert(0, str(_root))
-                from shared.db import is_postgres_connection, fail_soft_block
-            _ph = "%s" if is_postgres_connection(conn) else "?"
+                from shared.db import fail_soft_block
+            _ph = "%s"
             # SAVEPOINT-protected (see find_kiid_links_from_db): the handler below turns a failed
             # lookup into a cache miss and the pipeline keeps using this connection.
             with fail_soft_block(conn):
@@ -816,7 +813,7 @@ def get_kiid_for_isin(
                 # FIX-DATA-INTEGRITY-1 (2026-06-17): la línea original mutaba
                 # _cached_text IN-PLACE. _cached_text es el mismo valor que esta
                 # función devuelve como kiid_text, y pipeline.py L1750 lo asigna
-                # DIRECTAMENTE a kiid_record["Raw_KIID_Text"] -> sqlite_writer's
+                # DIRECTAMENTE a kiid_record["Raw_KIID_Text"] -> fund_writer's
                 # COALESCE lo persiste de vuelta en la columna Raw_KIID_Text en
                 # CADA ciclo (CACHED o FORCE_REFRESH-con-hash-reuse) en que este
                 # bloque se ejecuta. Resultado: el bloque DLA2 (potencialmente

@@ -1,7 +1,7 @@
 # proyecto1/tests/test_cost_oc_mismatch.py
 # -*- coding: utf-8 -*-
 """
-Tests unitarios de sqlite_writer.correct_oc_aci_mismatch.
+Tests unitarios de fund_writer.correct_oc_aci_mismatch.
 
 BL-COST-4d (Sprint 2 S2-C). Verifica la ruta de escritura no-COALESCE
 que BL-COST-5 usará para corregir fondos con OC=ACI@RHP en BD.
@@ -9,7 +9,6 @@ que BL-COST-5 usará para corregir fondos con OC=ACI@RHP en BD.
 
 import os
 import sys
-import sqlite3
 import pytest
 
 _TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -18,14 +17,25 @@ if _CORE_DIR not in sys.path:
     sys.path.insert(0, _CORE_DIR)
 
 
+_PG = {}
+
+
+@pytest.fixture(autouse=True)
+def _pg_connection(pg_app_conn):
+    """Hand the per-test savepoint-wrapped Postgres connection (real DDL, app search_path) to the module's DB-building helper."""
+    _PG["conn"] = pg_app_conn
+    yield
+    _PG.clear()
+
+
+
 def _make_conn():
-    """Crea una BD en memoria con la columna necesaria."""
-    conn = sqlite3.connect(":memory:")
-    conn.isolation_level = None
+    """Tabla mínima en Postgres (revertida al acabar el test) con la columna necesaria."""
+    conn = _PG["conn"]
     conn.execute("""
         CREATE TABLE fund_master (
             ISIN TEXT PRIMARY KEY,
-            Ongoing_Charge_Recurrent REAL,
+            Ongoing_Charge_Recurrent DOUBLE PRECISION,
             Updated_At TEXT
         )
     """)
@@ -43,7 +53,7 @@ def test_correct_oc_updates_value():
     `Ongoing_Charge_Recurrent*100 == Management_Fee_Pct`, relación que solo se
     sostiene si OC es ratio y la comisión de gestión porcentaje entero.
     """
-    from sqlite_writer import correct_oc_aci_mismatch
+    from fund_writer import correct_oc_aci_mismatch
     conn = _make_conn()
     result = correct_oc_aci_mismatch(conn, 'TEST0001', ter_pct=0.70)
     assert result is True
@@ -55,7 +65,7 @@ def test_correct_oc_updates_value():
 
 def test_correct_oc_returns_false_for_missing_isin():
     """ISIN inexistente → retorna False, no lanza excepción."""
-    from sqlite_writer import correct_oc_aci_mismatch
+    from fund_writer import correct_oc_aci_mismatch
     conn = _make_conn()
     result = correct_oc_aci_mismatch(conn, 'NONEXIST', ter_pct=0.50)
     assert result is False
@@ -63,7 +73,7 @@ def test_correct_oc_returns_false_for_missing_isin():
 
 def test_correct_oc_does_not_touch_other_isins():
     """Solo modifica el ISIN solicitado; otros registros no se alteran."""
-    from sqlite_writer import correct_oc_aci_mismatch
+    from fund_writer import correct_oc_aci_mismatch
     conn = _make_conn()
     conn.execute("INSERT INTO fund_master VALUES ('TEST0002', 1.5, '2026-01-01')")
     correct_oc_aci_mismatch(conn, 'TEST0001', ter_pct=0.70)
@@ -75,7 +85,7 @@ def test_correct_oc_does_not_touch_other_isins():
 
 def test_correct_oc_updated_at_is_populated():
     """Updated_At se rellena como ISO string tras la corrección."""
-    from sqlite_writer import correct_oc_aci_mismatch
+    from fund_writer import correct_oc_aci_mismatch
     conn = _make_conn()
     correct_oc_aci_mismatch(conn, 'TEST0001', ter_pct=0.70)
     row = conn.execute(
@@ -91,10 +101,10 @@ def _coalesce_upsert(conn, isin, new_oc):
     """Simulates publish_fund's COALESCE(excluded.col, col) UPSERT for OC."""
     conn.execute("""
         INSERT INTO fund_master (ISIN, Ongoing_Charge_Recurrent, Updated_At)
-        VALUES (?, ?, '2026-08-23')
+        VALUES (%s, %s, '2026-08-23')
         ON CONFLICT(ISIN) DO UPDATE
         SET Ongoing_Charge_Recurrent = COALESCE(excluded.Ongoing_Charge_Recurrent,
-                                                 Ongoing_Charge_Recurrent),
+                                                 fund_master.Ongoing_Charge_Recurrent),
             Updated_At = excluded.Updated_At
     """, (isin, new_oc))
 
@@ -113,7 +123,7 @@ def test_write_order_correction_survives_coalesce_upsert():
     PORCENTAJE y se almacena como RATIO. La intención de la prueba (el orden de
     escritura: la reparación debe ganar al UPSERT) no cambia.
     """
-    from sqlite_writer import correct_oc_aci_mismatch
+    from fund_writer import correct_oc_aci_mismatch
     conn = _make_conn()  # fund starts with OC=2.4 (the ACI, contaminated)
 
     # Step 1 — COALESCE UPSERT (publish_fund equivalent)
@@ -141,7 +151,7 @@ def test_wrong_write_order_demonstrates_bug():
     causes the COALESCE UPSERT to clobber the correction.
     Kept as documentation; NOT the production path (see FIX-OC-WRITE-ORDER).
     """
-    from sqlite_writer import correct_oc_aci_mismatch
+    from fund_writer import correct_oc_aci_mismatch
     conn = _make_conn()  # OC=2.4 (contaminated)
 
     # Step 1 — repair fires first (OLD, wrong order)

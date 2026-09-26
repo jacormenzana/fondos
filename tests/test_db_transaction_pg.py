@@ -12,7 +12,7 @@ a clean exit — verified live 2026-09-20, `conn.closed is True` immediately aft
 sqlite3's `with conn:` only manages the transaction and never closes. Naively porting `with conn:`
 unchanged inside a function called repeatedly on one long-lived pipeline connection (the normal
 shape in this codebase) would close the connection after the FIRST call and break every subsequent
-one in the same run — first found while porting sqlite_writer.py::publish_fund() (fixed inline
+one in the same run — first found while porting fund_writer.py::publish_fund() (fixed inline
 there), then centralized here as db_transaction() once pipeline.py needed the identical fix at 3
 more sites (P#11/DRY). These tests prove the primitive's own contract directly, the same way
 fail_soft_block()'s tests do, rather than only proving it indirectly through pipeline.py's much
@@ -27,7 +27,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from shared.db import db_transaction, is_postgres_connection
+from shared.db import db_transaction
 
 
 def test_connection_stays_open_and_usable_after_a_successful_block(pg_conn):
@@ -91,13 +91,3 @@ def test_rolls_back_on_exception_and_connection_survives(pg_conn):
     pg_conn.execute("INSERT INTO dbtxn_fail_t VALUES (100)")
     row = pg_conn.execute("SELECT n FROM dbtxn_fail_t").fetchone()
     assert row == (100,)
-
-
-def test_is_a_passthrough_on_sqlite():
-    """On SQLite, db_transaction(conn) must return conn itself unchanged (no psycopg-specific
-    wrapping) — confirms the dialect branch, not just the Postgres side. No PG connection needed."""
-    import sqlite3
-    conn = sqlite3.connect(":memory:")
-    assert not is_postgres_connection(conn)
-    assert db_transaction(conn) is conn
-    conn.close()

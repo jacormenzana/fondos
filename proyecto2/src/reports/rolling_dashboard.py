@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sqlite3
 import sys
 import warnings
 from datetime import date
@@ -44,8 +43,7 @@ from typing import Any
 _ROOT = Path(__file__).resolve().parent.parent.parent.parent   # c:\desarrollo\fondos
 sys.path.insert(0, str(_ROOT))
 
-from shared.config import DB_PATH
-from shared.db import get_connection, is_postgres_connection
+from shared.db import get_connection
 
 # ── Fichero vendorizado ────────────────────────────────────────────────────────
 _VENDOR_CHARTJS = Path(__file__).parent / "_vendor" / "chartjs_4.4.0.min.js"
@@ -201,7 +199,7 @@ def _nclause(nature: str | None, alias: str = "m") -> str:
 
 
 def _window_col(conn) -> str:
-    return "window_label" if is_postgres_connection(conn) else "window"
+    return "window_label"
 
 
 def _load_snapshot(conn, nature: str | None = None) -> list:
@@ -213,14 +211,14 @@ def _load_snapshot(conn, nature: str | None = None) -> list:
 def _load_series(conn, isins: list[str]) -> list:
     if not isins:
         return []
-    one_ph = "%s" if is_postgres_connection(conn) else "?"
+    one_ph = "%s"
     ph = ",".join([one_ph] * len(isins))
     return conn.execute(
         _SQL_SERIES.format(ph=ph, wc=_window_col(conn)), isins
     ).fetchall()
 
 
-def _load_scalar_metrics(conn: sqlite3.Connection, isins: list[str]) -> list:
+def _load_scalar_metrics(conn: "psycopg.Connection", isins: list[str]) -> list:
     """Carga métricas escalares para los ISINs seleccionados (max 8)."""
     if not isins:
         return []
@@ -815,25 +813,20 @@ function sortTable(tableId, col) {{
 # ── Punto de entrada ──────────────────────────────────────────────────────────
 
 def generate_dashboard(
-    db_path: Path = DB_PATH,
     output_path: Path | None = None,
     nature: str | None = None,
     isins: list[str] | None = None,
-    backend: str | None = None,
 ) -> Path:
     """
     Genera el dashboard HTML P2.
 
     Args:
-        db_path:     Ruta a fondos.sqlite. Ignorado si backend="postgres".
         output_path: Ruta de salida del HTML (por defecto out/reports/).
         nature:      Filtrar todo el informe a un Fund_Nature concreto.
         isins:       Lista de ISINs cuyos series rolling se grafican (max 8).
                      Si None, se auto-seleccionan hasta 8 fondos con más ALARMs.
-        backend:     "sqlite" (por defecto, resuelve FONDOS_DB_BACKEND si None) o "postgres"
-                     (migracion, addendum 2026-09-20).
     """
-    conn = get_connection(db_path, backend=backend)
+    conn = get_connection()
     try:
         print("[1/5] Cargando snapshot (tier-1, rolling_1y)…", flush=True)
         snap_rows = _load_snapshot(conn, nature)
@@ -888,16 +881,10 @@ if __name__ == "__main__":
     parser.add_argument("--isin",   default=None,
                         help="ISINs a graficar, separados por comas (max 8). "
                              "Si se omite, auto-selecciona los fondos con más ALARMs.")
-    parser.add_argument("--db",     default=None,
-                        help="Ruta alternativa a fondos.sqlite")
-    parser.add_argument("--backend", choices=["sqlite", "postgres"], default=None,
-                        help="Backend de BD (migracion, addendum 2026-09-20). Si se omite, "
-                             "resuelve FONDOS_DB_BACKEND ('sqlite' si no esta definida).")
     args = parser.parse_args()
 
-    db_path    = Path(args.db) if args.db else DB_PATH
     out_path   = Path(args.output) if args.output else None
     isin_list  = [i.strip() for i in args.isin.split(",") if i.strip()] if args.isin else None
 
-    generate_dashboard(db_path=db_path, output_path=out_path,
-                       nature=args.nature, isins=isin_list, backend=args.backend)
+    generate_dashboard(output_path=out_path,
+                       nature=args.nature, isins=isin_list)

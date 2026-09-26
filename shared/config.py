@@ -4,18 +4,19 @@
 Configuracion centralizada del sistema de fondos.
 
 Todos los proyectos (P1, P2, P3) importan de aqui la ruta a la base de
-datos unificada, los parametros globales y los vocabularios de dominio.
+datos unificada, los parametros globales y los vocabularios de dominio. (La ruta a la BD SQLite, DB_PATH, se elimino
+con su retirada — 2026-09-26, FND-0102; la BD es PostgreSQL, ver shared/db.py.)
 
 Sustituye a proyecto1/src/config.py y proyecto2/src/config.py.
 
 Uso desde cualquier modulo:
-    from shared.config import DB_PATH, RISK_FREE_RATE_ANN
+    from shared.config import RISK_FREE_RATE_ANN
 
 Cambios v23 (2026-07-18, FIX-UNIVERSE-RECON-1):
   - SCHEMA_VERSION: "v22" → "v23".
   - fund_master: In_Current_Universe (INTEGER NOT NULL DEFAULT 1) añadida.
     Soft-delete flag regenerado en cada ciclo por reconcile_universe_membership()
-    en sqlite_writer.py. 1 = en el harvest vigente, 0 = huérfano. No COALESCE-
+    en fund_writer.py. 1 = en el harvest vigente, 0 = huérfano. No COALESCE-
     protegido (mismo patrón que SRRI_Visual). No clasificación: no entra en
     ATTRIBUTE_CATALOG.
 
@@ -52,7 +53,7 @@ Cambios v21 (2026-07-05, BL-44-FX):
 Cambios v19.2 (BL-COST Sprint 2 S2-D):
   - PRIIPS_COST_EXTRACTION_ENABLED: False → True.
     Activado tras smoke test y despliegue de S2-C (pipeline.py v37,
-    sqlite_writer.py v25, ucits_cost_extractor.py nuevo).
+    fund_writer.py v25, ucits_cost_extractor.py nuevo).
 
 Cambios v19.1:
   - COST_CROSS_VALIDATION_TOLERANCE_PCT corregido: 0.05 → 0.0005 (5bp reales).
@@ -154,7 +155,7 @@ SCHEMA_VERSION: str = "v26"
 # 1 = fondo pertenece al harvest vigente (db_document_catalogue MAX),
 # 0 = huérfano preservado en fund_master por la política append-only.
 # No es COALESCE-protegido: regenerado completamente cada ciclo por
-# reconcile_universe_membership() (sqlite_writer.py). No entra en
+# reconcile_universe_membership() (fund_writer.py). No entra en
 # ATTRIBUTE_CATALOG ni en characterize_fund() (no es atributo de
 # clasificación — es provenance de pipeline).
 
@@ -359,11 +360,6 @@ P3_NAV_UNIVERSE_PERCENTILE: float = 0.10
 P3_MIN_UNIFORM_METRICS_SHARE: float = 0.98
 P3_MACRO_RELEASE_LAG_INDICATORS: tuple = ("ipc_yoy_avg", "cli_eu")
 P3_EXIT_STALE_INPUTS: int = 2
-
-# ============================================================
-# Base de datos unificada
-# ============================================================
-DB_PATH: Path = _ROOT / "db" / "fondos.sqlite"
 
 # ============================================================
 # Directorios de datos externos (inputs no versionados)

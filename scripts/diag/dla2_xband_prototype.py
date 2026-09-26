@@ -819,7 +819,7 @@ def _load_db(conn, isins):
     isins = list(isins)
     for i in range(0, len(isins), 400):
         chunk = isins[i:i + 400]
-        ph = ",".join("?" * len(chunk))
+        ph = ",".join(["%s"] * len(chunk))
         for r in conn.execute(f"SELECT ISIN,{cols} FROM fund_master WHERE ISIN IN ({ph})", chunk):
             out[r[0]] = {"oc": r[1], "entry": r[2], "exit": r[3], "quality": r[4]}
     return out
@@ -872,8 +872,8 @@ def main(pdf_dir=None, pdf=None, db_path=None, csv_path=None, log_path=None,
         if project_root and str(Path(project_root)) not in sys.path:
             sys.path.insert(0, str(Path(project_root)))
         try:
-            import sqlite3
-            conn = sqlite3.connect(db_path)
+            from shared.db import get_connection      # Postgres (SQLite retired, FND-0102); db_path is ignored
+            conn = get_connection()
             db = _load_db(conn, [p.stem for p in pdfs])
             log.w(f"BD cargada: {len(db)} ISINs encontrados en fund_master")
         except Exception as e:

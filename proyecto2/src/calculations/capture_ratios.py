@@ -29,10 +29,9 @@ Todas con horizon='since_inception' y real_flag=0.
 
 import numpy as np
 import pandas as pd
-import sqlite3
 
 from shared.config import CAPTURE_MIN_PERIODS as MIN_PERIODS  # minimo de periodos positivos/negativos para calcular
-from shared.db import is_postgres_connection
+
 
 
 # ============================================================
@@ -40,7 +39,7 @@ from shared.db import is_postgres_connection
 # ============================================================
 
 def load_peer_benchmark(
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
     fund_nature: str,
     exclude_isin: str,
 ) -> pd.Series:
@@ -52,7 +51,7 @@ def load_peer_benchmark(
     """
     # Postgres migration Stage 9 (found live 2026-09-22): see momentum.py's identical note —
     # proyecto2/src/calculations/*.py were never in scope for any prior stage's read-path port.
-    ph = "%s" if is_postgres_connection(conn) else "?"
+    ph = "%s"
     rows = conn.execute(f"""
         SELECT fnm.ISIN, fnm.Date, fnm.NAV
         FROM fund_nav_monthly fnm
@@ -86,7 +85,7 @@ def compute_capture_ratios(
     isin: str,
     fund_nature: str,
     nav_df: pd.DataFrame,
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
 ) -> list[tuple]:
     """
     Calcula los ratios de captura upside/downside para un fondo.

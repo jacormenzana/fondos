@@ -45,16 +45,8 @@ from _allowlist import bad_reasons, check_reason
 _FILE_EXEMPT: dict[str, str] = {
     "shared/backlog_client.py":
         "DESIGN: talks to the separate `gestion` database (backlog schema), not the fondos schema this sweep loads",
-    "shared/load_fondos_to_postgres.py":
-        "DESIGN: legacy SQLite->Postgres BI mirror (P4); SQLite is its source and it writes its own analytics DB",
-    "shared/init_db.py":
-        "DESIGN: creates the SQLite schema; the Postgres schema comes from db/pg/*.sql",
     "shared/testing/pg_fixtures.py":
         "DESIGN: test harness; issues SAVEPOINT/CREATE SCHEMA against a throwaway database",
-    "shared/migrate_schema_v26.py":
-        "DESIGN: one-shot SQLite schema migration, run before the Postgres cutover",
-    "shared/migrate_schema_v27.py":
-        "DESIGN: one-shot SQLite schema migration mirroring the Postgres DDL into SQLite",
 }
 
 R_FRAGMENT = ("DESIGN: a fragment (column list, IN-list of placeholders, expression) is assembled at runtime "
@@ -70,17 +62,13 @@ _UNVERIFIED_BASELINE: dict[str, str] = {
         R_FRAGMENT,
     "proyecto1/core/fund_family_builder.py::correct_family_inconsistencies::a713ae01":
         R_FRAGMENT,
-    "proyecto1/core/normalize_db_casing_v20.py::run::0e2c4a30":
-        R_FRAGMENT,
-    "proyecto1/core/normalize_db_casing_v20.py::run::c887964a":
-        R_FRAGMENT,
     "proyecto1/core/pipeline.py::run_block::f3aba990":
         R_FRAGMENT,
-    "proyecto1/core/sqlite_writer.py::reconcile_universe_membership::c91915df":
+    "proyecto1/core/fund_writer.py::reconcile_universe_membership::c91915df":
         R_FRAGMENT,
-    "proyecto1/core/sqlite_writer.py::upsert_fund_master::df967a38":
+    "proyecto1/core/fund_writer.py::upsert_fund_master::df967a38":
         R_FRAGMENT,
-    "proyecto1/core/sqlite_writer.py::upsert_kiid_metadata::29696e01":
+    "proyecto1/core/fund_writer.py::upsert_kiid_metadata::29696e01":
         R_OPAQUE,
     "proyecto2/src/analysis/export_metrics.py::q_candidatos::044141c8":
         R_FRAGMENT,
@@ -131,15 +119,7 @@ _EXPLAIN_EXEMPT: dict[str, str] = {}
 
 # SQLite-only syntax outside a function that references the dialect helpers. Key is a site_id, a
 # `file::function`, or a whole `file`.
-_SQLITE_UNGUARDED_EXEMPT: dict[str, str] = {
-    "shared/db.py::get_connection":
-        "DESIGN: the PRAGMAs run only in the SQLite branch; the Postgres branch returns earlier in the same function",
-    "shared/db.py::_announce_backend":
-        "DESIGN: PRAGMA database_list is read only when backend != 'postgres'; the postgres branch reports host/port",
-    "shared/schema_checks.py":
-        "DESIGN: legacy check_schema_v19..v26 chain is SQLite-only with no live caller; assert_schema_alignment "
-        "goes through the dialect-aware _table_columns instead",
-}
+_SQLITE_UNGUARDED_EXEMPT: dict[str, str] = {}      # SQLite retired (FND-0102): SQLite-only syntax has no exemptions
 
 # table -> reason. Tables where INSERT without ON CONFLICT is correct: append-only logs, or rows
 # replaced by a purge that runs in a different function than the INSERT.

@@ -56,7 +56,6 @@ import ctypes
 import hashlib  # noqa: F401 (used via fingerprint module)
 import logging
 import signal
-import sqlite3
 import sys
 import time
 import traceback
@@ -82,7 +81,7 @@ from shared.config import MIN_PEERS, REGIME_MIN_NAV_TOTAL
 from shared.config import (
     ROLLING_STATS_ENABLED, ALERT_RULES, ROLLING_TIMESERIES_METRICS
 )
-from shared.db import get_connection, is_postgres_connection, in_transaction, begin_immediate, executemany
+from shared.db import get_connection, in_transaction, begin_immediate, executemany
 from src.readers.db_readers import (
     load_nav, get_isins_with_nav, load_ipc, ipc_available, load_nav_daily,
     load_rf_rate,                    # §4g — historical risk-free rate (€STR proxy)
@@ -180,9 +179,9 @@ def _allow_sleep() -> None:
 # fund_metric_state helpers (idempotency cache, v27)
 # ============================================================
 
-def _get_stored_hash(conn: sqlite3.Connection, isin: str) -> str | None:
+def _get_stored_hash(conn: "psycopg.Connection", isin: str) -> str | None:
     """Devuelve el input_hash almacenado para (isin, METRIC_VERSION), o None."""
-    ph = "%s" if is_postgres_connection(conn) else "?"
+    ph = "%s"
     row = conn.execute(
         f"SELECT input_hash FROM fund_metric_state "
         f"WHERE isin={ph} AND metric_version={ph}",
@@ -192,7 +191,7 @@ def _get_stored_hash(conn: sqlite3.Connection, isin: str) -> str | None:
 
 
 def _upsert_metric_state(
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
     isin: str,
     input_hash: str,
     dry_run: bool,
@@ -203,19 +202,12 @@ def _upsert_metric_state(
     """
     if dry_run:
         return
-    if is_postgres_connection(conn):
-        sql = (
-            "INSERT INTO fund_metric_state (isin, metric_version, input_hash, calculated_at)"
-            " VALUES (%s, %s, %s, %s)"
-            " ON CONFLICT (isin, metric_version) DO UPDATE SET"
-            " input_hash = excluded.input_hash, calculated_at = excluded.calculated_at"
-        )
-    else:
-        sql = (
-            "INSERT OR REPLACE INTO fund_metric_state"
-            " (isin, metric_version, input_hash, calculated_at)"
-            " VALUES (?, ?, ?, ?)"
-        )
+    sql = (
+        "INSERT INTO fund_metric_state (isin, metric_version, input_hash, calculated_at)"
+        " VALUES (%s, %s, %s, %s)"
+        " ON CONFLICT (isin, metric_version) DO UPDATE SET"
+        " input_hash = excluded.input_hash, calculated_at = excluded.calculated_at"
+    )
     args = (isin, METRIC_VERSION, input_hash, date.today().isoformat())
     # EFF-2: skip own transaction when the caller batches for us
     if in_transaction(conn):
@@ -230,21 +222,14 @@ def _upsert_metric_state(
     # Also verified the connection survives clean and stays usable afterward. No retry-on-lock
     # loop is needed for Postgres in the first place — begin_immediate()'s own docstring already
     # explains why (MVCC + row locks block rather than raise), so there is nothing to add here.
-    for attempt in range(3):
-        try:
-            begin_immediate(conn)
-            try:
-                conn.execute(sql, args)
-                conn.execute("COMMIT")
-            except Exception:
-                conn.execute("ROLLBACK")
-                raise
-            return
-        except sqlite3.OperationalError as exc:
-            if "database is locked" in str(exc) and attempt < 2:
-                time.sleep(2 ** attempt)
-            else:
-                raise
+    begin_immediate(conn)
+    try:
+        conn.execute(sql, args)
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    return
 
 
 # ============================================================
@@ -252,7 +237,7 @@ def _upsert_metric_state(
 # ============================================================
 
 def _ols_is_fresh(
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
     isin: str,
     nav_count: int,
     current_quarter: str,
@@ -270,7 +255,7 @@ def _ols_is_fresh(
     """
     if force:
         return False
-    ph = "%s" if is_postgres_connection(conn) else "?"
+    ph = "%s"
     row = conn.execute(
         f"SELECT last_ols_quarter, last_ols_nav_count FROM fund_metric_state "
         f"WHERE isin={ph} AND metric_version={ph}",
@@ -282,7 +267,7 @@ def _ols_is_fresh(
 
 
 def _update_ols_state(
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
     isin: str,
     current_quarter: str,
     nav_count: int,
@@ -291,7 +276,7 @@ def _update_ols_state(
     """Record that OLS was computed for this fund in current_quarter."""
     if dry_run:
         return
-    ph = "%s" if is_postgres_connection(conn) else "?"
+    ph = "%s"
     conn.execute(
         f"UPDATE fund_metric_state SET last_ols_quarter={ph}, last_ols_nav_count={ph} "
         f"WHERE isin={ph} AND metric_version={ph}",
@@ -315,7 +300,7 @@ class _FundMetricCtx:
     needs so MetricFamilySpec entries can stay declarative — no per-family
     argument marshalling scattered through the per-fund loop."""
     isin: str
-    conn: sqlite3.Connection
+    conn: "psycopg.Connection"
     nav_df: pd.DataFrame
     fund_nature: str | None
     fund_currency: str | None
@@ -412,7 +397,7 @@ def _run_metric_family(
 
 
 def _write_metric_alerts(
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
     alert_rows: list[dict],
     dry_run: bool,
 ) -> int:
@@ -423,24 +408,16 @@ def _write_metric_alerts(
     """
     if not alert_rows or dry_run:
         return 0
-    if is_postgres_connection(conn):
-        sql = """
-            INSERT INTO fund_metric_alerts
-                (isin, metric, window_label, level, rule_code,
-                 value, reference_value, ref_type)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (isin, metric, window_label) DO UPDATE SET
-                level = excluded.level, rule_code = excluded.rule_code,
-                value = excluded.value, reference_value = excluded.reference_value,
-                ref_type = excluded.ref_type, detected_at = DEFAULT
-        """
-    else:
-        sql = """
-            INSERT OR REPLACE INTO fund_metric_alerts
-                (isin, metric, window, level, rule_code,
-                 value, reference_value, ref_type)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """
+    sql = """
+        INSERT INTO fund_metric_alerts
+            (isin, metric, window_label, level, rule_code,
+             value, reference_value, ref_type)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (isin, metric, window_label) DO UPDATE SET
+            level = excluded.level, rule_code = excluded.rule_code,
+            value = excluded.value, reference_value = excluded.reference_value,
+            ref_type = excluded.ref_type, detected_at = DEFAULT
+    """
     data = [
         (
             r["isin"], r["metric"], r["window"],
@@ -451,26 +428,18 @@ def _write_metric_alerts(
     ]
     # `except sqlite3.OperationalError` below: SQLite-only by design, verified safe under Postgres
     # — see _upsert_metric_state()'s comment above for the full reasoning (same retry-wrapper shape).
-    for attempt in range(5):
-        try:
-            begin_immediate(conn)
-            try:
-                executemany(conn, sql, data)
-                conn.execute("COMMIT")
-                return len(data)
-            except Exception:
-                conn.execute("ROLLBACK")
-                raise
-        except sqlite3.OperationalError as exc:
-            if "database is locked" in str(exc) and attempt < 4:
-                time.sleep(2 ** attempt)
-            else:
-                raise
-    return 0
+    begin_immediate(conn)
+    try:
+        executemany(conn, sql, data)
+        conn.execute("COMMIT")
+        return len(data)
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
 
 
 def _log(
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
     isin: str,
     step: str,
     status: str,
@@ -481,7 +450,7 @@ def _log(
     """EFF-2: skips own BEGIN/COMMIT when caller already has an open transaction."""
     if dry_run:
         return
-    ph = "%s" if is_postgres_connection(conn) else "?"
+    ph = "%s"
     sql = (
         "INSERT INTO p2_pipeline_log"
         " (isin, step, status, horizon, metric_version, message, batch_id)"
@@ -494,21 +463,14 @@ def _log(
         return
     # `except sqlite3.OperationalError` below: SQLite-only by design, verified safe under Postgres
     # — see _upsert_metric_state()'s comment above for the full reasoning (same retry-wrapper shape).
-    for attempt in range(5):
-        try:
-            begin_immediate(conn)
-            try:
-                conn.execute(sql, args)
-                conn.execute("COMMIT")
-            except Exception:
-                conn.execute("ROLLBACK")
-                raise
-            return
-        except sqlite3.OperationalError as exc:
-            if "database is locked" in str(exc) and attempt < 4:
-                time.sleep(2 ** attempt)
-            else:
-                raise
+    begin_immediate(conn)
+    try:
+        conn.execute(sql, args)
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    return
 
 
 # ============================================================
@@ -520,7 +482,7 @@ def _process_horizon(
     nav_df: pd.DataFrame,
     ipc_df: pd.DataFrame | None,
     horizon: str,
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
     dry_run: bool,
     rf_rate_df: pd.DataFrame | None = None,
 ) -> int:
@@ -632,8 +594,6 @@ def _refresh_gold_matviews(conn, logger) -> bool:
     """Refreshes the BI matviews (gold.mv_*) once, after the last per-ISIN commit (FND-0077).
     Non-fatal by design: a stale BI layer must not fail a P2 run whose metrics are already
     committed. Returns True on success. No-op (False) on SQLite, which has no matviews."""
-    if not is_postgres_connection(conn):
-        return False
     try:
         conn.execute("SELECT control.refresh_gold_matviews()")
         conn.commit()
@@ -658,7 +618,6 @@ def run(
     dry_run: bool = False,
     resume: bool = False,
     max_new_per_run: int = 0,                   # §4d — cap cold-start (0 = unlimited)
-    backend: str | None = None,                 # migration addendum 2026-09-20 — None resolves
                                                   # FONDOS_DB_BACKEND (default "sqlite"); explicit
                                                   # "sqlite"/"postgres" overrides it for this run
                                                   # only, without touching the global switch.
@@ -722,19 +681,12 @@ def run(
             f"to_date={to_date} force={force}"
         )
 
-        conn = get_connection(backend=backend)
+        conn = get_connection()
 
         # EFF-1: add OLS cadence columns if not yet present (idempotent).
         # Postgres: db/pg/35_control.sql already defines them; even a no-op
         # ALTER ... IF NOT EXISTS requires table ownership, so issuing it at runtime
         # would fail under the least-privilege fondos_app role (FND-0072).
-        if not is_postgres_connection(conn):
-            for _col, _ctype in [("last_ols_quarter", "TEXT"), ("last_ols_nav_count", "INTEGER")]:
-                try:
-                    conn.execute(f"ALTER TABLE fund_metric_state ADD COLUMN {_col} {_ctype}")
-                    conn.commit()
-                except sqlite3.OperationalError:
-                    pass  # column already exists
 
         # ── v26: Backfill detection ──────────────────────────────────────────
         # A run is a "backfill" when it forces recomputation of previously
@@ -764,7 +716,7 @@ def run(
 
         if _is_backfill and not dry_run:
             try:
-                ph = "%s" if is_postgres_connection(conn) else "?"
+                ph = "%s"
                 conn.execute(
                     "INSERT INTO p2_pipeline_log"
                     " (isin, step, status, horizon, metric_version, message, batch_id)"
@@ -913,7 +865,7 @@ def run(
             # Also gate on IPC freshness: new IPC rows change every fund's
             # input hash even when NAV is unchanged.  A single global check
             # suffices because IPC is a shared time series.
-            _ph_pf = "%s" if is_postgres_connection(conn) else "?"
+            _ph_pf = "%s"
             _pf_last_calc = conn.execute(
                 f"SELECT MAX(calculated_at) FROM fund_metric_state "
                 f"WHERE metric_version={_ph_pf}",
@@ -951,7 +903,7 @@ def run(
         # Legacy --resume (today-based skip)
         if resume and not dry_run:
             today_str = date.today().isoformat()
-            _ph_resume = "%s" if is_postgres_connection(conn) else "?"
+            _ph_resume = "%s"
             done = {r[0] for r in conn.execute(
                 f"SELECT DISTINCT isin FROM fund_metrics "
                 f"WHERE calculation_date = {_ph_resume} AND metric_version = {_ph_resume}",
@@ -1177,7 +1129,7 @@ def run(
                                      f"{len(sh_rows)} metricas cortas (d1)", dry_run)
 
                 # ---- Atributos del fondo ----------------------------
-                _ph_fm = "%s" if is_postgres_connection(conn) else "?"
+                _ph_fm = "%s"
                 _fm = conn.execute(
                     f"""SELECT Fund_Nature, Fund_Currency, Hedging_Policy,
                               Asset_Currency, Geography, Development_Status
@@ -1302,7 +1254,7 @@ def run(
 
                 # v25: consumir flag RECALCULATE_METRICS (inside per-fund txn)
                 if isin_written > 0 and not dry_run:
-                    ph = "%s" if is_postgres_connection(conn) else "?"
+                    ph = "%s"
                     conn.execute(
                         "UPDATE nav_sources SET data_status='OK' "
                         f"WHERE isin={ph} AND data_status='RECALCULATE_METRICS'",
@@ -1409,7 +1361,7 @@ def run(
                     # deliberately, since this fallback path only ever runs on a small in-memory
                     # subset (len(_latest_roll) < max(50, total//10)); redirecting it to the
                     # matviews is a Stage 9/cutover-time performance decision, not a correctness one.
-                    _window_col = "window_label" if is_postgres_connection(conn) else "window"
+                    _window_col = "window_label"
                     _latest_cols = ["isin", "metric", "window", "date", "value", "real_flag",
                                     "Fund_Nature"]
                     _latest_rows = conn.execute(f"""
@@ -1487,8 +1439,7 @@ def run(
                 conn.rollback()
 
         # BI layer: refresh once, after every per-ISIN commit and the rolling engine.
-        if not dry_run and total_written > 0 and not _refresh_gold_matviews(conn, logger) \
-                and is_postgres_connection(conn):
+        if not dry_run and total_written > 0 and not _refresh_gold_matviews(conn, logger):
             n_warnings += 1
 
     except Exception as exc:
@@ -1519,7 +1470,7 @@ def run(
         # P2-12: persist RUN_SUMMARY row for operational observability
         if conn is not None and not dry_run:
             try:
-                _ph = "%s" if is_postgres_connection(conn) else "?"
+                _ph = "%s"
                 begin_immediate(conn)
                 conn.execute(
                     "INSERT INTO p2_pipeline_log"
@@ -1544,7 +1495,7 @@ def run(
             # v26: BACKFILL_END marker (logged after RUN_SUMMARY so it's always last)
             if _is_backfill:
                 try:
-                    _ph = "%s" if is_postgres_connection(conn) else "?"
+                    _ph = "%s"
                     begin_immediate(conn)
                     conn.execute(
                         "INSERT INTO p2_pipeline_log"
@@ -1689,12 +1640,6 @@ if __name__ == "__main__":
              "0 = sin limite (default). Ej: --max-new-per-run 100 distribuye "
              "un intake masivo en multiples ejecuciones sin comprometer el SLA."
     )
-    parser.add_argument(
-        "--backend", choices=["sqlite", "postgres"], default=None,
-        help="Backend de BD para esta ejecucion (migracion, addendum 2026-09-20). "
-             "Si se omite, resuelve la variable de entorno FONDOS_DB_BACKEND "
-             "('sqlite' si no esta definida)."
-    )
     args = parser.parse_args()
 
     from shared.backlog_client import capture_exceptions
@@ -1711,6 +1656,5 @@ if __name__ == "__main__":
             dry_run=args.dry_run,
             resume=args.resume,
             max_new_per_run=args.max_new_per_run,
-            backend=args.backend,
         )
     sys.exit(_rc)

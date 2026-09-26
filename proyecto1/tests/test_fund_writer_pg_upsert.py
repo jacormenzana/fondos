@@ -1,11 +1,11 @@
-# proyecto1/tests/test_sqlite_writer_pg_upsert.py
+# proyecto1/tests/test_fund_writer_pg_upsert.py
 # -*- coding: utf-8 -*-
 """
-Postgres migration Phase 5c (2026-09-20) — dedicated regression tests for sqlite_writer.py's
+Postgres migration Phase 5c (2026-09-20) — dedicated regression tests for fund_writer.py's
 COALESCE/preservation upsert invariants, written per the migration plan's own discipline ("Every
 one of these three patterns gets a dedicated regression test... asserting the specific invariant...
 written before the site is touched, so the rewrite is red->green per site"). Covers the functions
-ported so far; grows as more of sqlite_writer.py's write path is ported.
+ported so far; grows as more of fund_writer.py's write path is ported.
 
 Named invariants under test (plan §5c):
   - upsert_fund_master(): "P#1 COALESCE upserts map to ON CONFLICT ... DO UPDATE SET
@@ -24,9 +24,9 @@ would not — exactly what surfaced during manual verification of upsert_fund_ma
 before its test was written (a first attempt with an unrealistic all-NULL partial record hit two
 real NOT NULL constraints that a real classifier call would never actually violate).
 
-R-7 note: this test necessarily imports the real production module (sqlite_writer.py) — the R-7
+R-7 note: this test necessarily imports the real production module (fund_writer.py) — the R-7
 "no imports of pipeline.py or core.io" restriction is about avoiding the classification pipeline's
-heavier dependencies, not about avoiding sqlite_writer.py itself (already the norm in this
+heavier dependencies, not about avoiding fund_writer.py itself (already the norm in this
 directory — see test_cost_oc_mismatch.py, test_universe_reconcile_20260718.py, etc.).
 """
 from __future__ import annotations
@@ -49,7 +49,7 @@ if _P1_DIR not in sys.path:
     # (found live 2026-09-20 while first verifying this function manually, before this test existed).
     sys.path.insert(0, _P1_DIR)
 
-from sqlite_writer import (  # noqa: E402
+from fund_writer import (  # noqa: E402
     upsert_fund_master,
     upsert_kiid_metadata,
     insert_nav_series,

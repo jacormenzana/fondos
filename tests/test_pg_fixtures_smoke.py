@@ -62,12 +62,12 @@ def test_pg_conn_survives_a_failing_statement(pg_conn):
     CORRECTED 2026-09-20 (Phase 5c) — the original version of this test asserted that a plain
     `pg_conn.execute("SELECT 1")` succeeds immediately after a caught, swallowed failure, with no
     recovery statement in between. That is wrong about real Postgres/psycopg3 semantics, found live
-    while porting sqlite_writer.py: a failed statement aborts the WHOLE enclosing transaction (not
+    while porting fund_writer.py: a failed statement aborts the WHOLE enclosing transaction (not
     just back to the nearest point), and EVERY subsequent statement fails with
     `InFailedSqlTransaction` until an explicit `ROLLBACK TO SAVEPOINT` (or full rollback) runs — a
     plain follow-up `execute()` does NOT recover on its own. This test now demonstrates the actual
     correct recovery pattern (a caller-owned nested SAVEPOINT around the risky statement) — the
-    same pattern applied for real in sqlite_writer.py's log_ingestion() and _upsert_kiid_benchmark()
+    same pattern applied for real in fund_writer.py's log_ingestion() and _upsert_kiid_benchmark()
     after this exact gap surfaced them as live bugs (a caught exception there was silently
     poisoning the rest of publish_fund's transaction)."""
     pg_conn.execute("CREATE TABLE IF NOT EXISTS pytest_smoke_partial (n integer)")

@@ -14,7 +14,7 @@ En SQLite, todo campo de texto extraído del KIID debe usar `COALESCE(excluded.c
 **Razón:**  
 Un ciclo en estado `CACHED` (sin descarga HTTP) no re-extrae información del KIID. Si el código de escritura no usa COALESCE, todos los campos extraídos se sobrescribirían con NULL, perdiendo información valiosa de ciclos anteriores.
 
-**Ejemplo correcto (`sqlite_writer.py`):**
+**Ejemplo correcto (`fund_writer.py`):**
 
 ```python
 # CORRECTO - Preserva valor anterior si nuevo es NULL
@@ -342,7 +342,7 @@ SQL directo es aceptable **solo** para:
 
 | Principio | Se aplica en | Validación |
 |-----------|--------------|------------|
-| #1 COALESCE | sqlite_writer.py, cualquier INSERT/UPDATE | Verificar ON CONFLICT con COALESCE |
+| #1 COALESCE | fund_writer.py, cualquier INSERT/UPDATE | Verificar ON CONFLICT con COALESCE |
 | #2 Root cause | Todo debugging, fix de bug | ¿Se eliminó la causa o solo el síntoma? |
 | #3 Verificar ficheros | Modificación de código | ¿Leíste el archivo con view tool? |
 | #4 Regime-aware | P3 scoring (futuro) | ¿Métricas condicionadas a régimen? |

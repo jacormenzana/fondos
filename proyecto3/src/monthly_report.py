@@ -15,7 +15,6 @@ Uso:
     generate_report(conn, output_dir="c:/data/fondos/reports")
 """
 
-import sqlite3
 import pandas as pd
 from pathlib import Path
 from datetime import date
@@ -34,7 +33,7 @@ except ImportError:
 from proyecto3.src.regime_classifier import RegimeClassifier
 from proyecto3.src.backtesting import Backtester
 from shared.config import REPORTS_DIR as _DEFAULT_REPORTS_DIR
-from shared.db import is_postgres_connection, round_sql, int_cast_sql
+from shared.db import round_sql, int_cast_sql
 
 
 # ============================================================
@@ -96,7 +95,7 @@ def _autofit(ws, min_width=8, max_width=40):
 # Calculo del objetivo minimo IPC + M3
 # ============================================================
 
-def _get_objetivo_ipc_m3(conn: sqlite3.Connection) -> dict:
+def _get_objetivo_ipc_m3(conn: "psycopg.Connection") -> dict:
     """
     Calcula el objetivo minimo anual de preservacion de patrimonio:
         objetivo = IPC_yoy + M3_yoy
@@ -277,8 +276,7 @@ def _build_cartera(ws, conn, scenario_id="shock_energia_2026Q1"):
     # ROUND()/CAST(...AS INTEGER) dialect gap (SQLite tie-breaking/truncation vs Postgres's —
     # same class already found+fixed in export_metrics.py and pipeline.py's SRRI batch-load):
     # round_sql()/int_cast_sql() (shared/db.py) generate the dialect-safe SQL fragment for each.
-    _pg = is_postgres_connection(conn)
-    _ph = "%s" if _pg else "?"
+    _ph = "%s"
     rows = conn.execute(f"""
         WITH latest_scores AS (
             SELECT fs.isin, fs.block, fs.score_version, fs.regime, fs.score_total,
@@ -290,25 +288,25 @@ def _build_cartera(ws, conn, scenario_id="shock_energia_2026Q1"):
         )
         SELECT pw.block, pw.isin, fm.Fund_Name, fm.Fund_Nature,
                fm.Management_Company,
-               {round_sql("pw.weight * 100", 1, pg=_pg)} as peso_master,
-               {round_sql("fs.score_total", 4, pg=_pg)} as score,
-               {round_sql("ret.value * 100", 2, pg=_pg)} as return_real,
-               {round_sql("dd.value * 100", 2, pg=_pg)}    as max_dd,
-               {round_sql("fx.value * 100", 2, pg=_pg)}    as fx_ann_pct,
+               {round_sql("pw.weight * 100", 1)} as peso_master,
+               {round_sql("fs.score_total", 4)} as score,
+               {round_sql("ret.value * 100", 2)} as return_real,
+               {round_sql("dd.value * 100", 2)}    as max_dd,
+               {round_sql("fx.value * 100", 2)}    as fx_ann_pct,
                fm.Fund_Currency,
                fm.Hedging_Policy,
                fm.Geography,
-               {round_sql("oil.value", 4, pg=_pg)}          as beta_oil,
-               {round_sql("reu.value", 4, pg=_pg)}          as beta_rate_eu,
-               {round_sql("rus.value", 4, pg=_pg)}          as beta_rate_us,
-               {round_sql("r2.value", 3, pg=_pg)}           as macro_r2,
-               {round_sql("per.value", 3, pg=_pg)}           as alpha_persistence,
+               {round_sql("oil.value", 4)}          as beta_oil,
+               {round_sql("reu.value", 4)}          as beta_rate_eu,
+               {round_sql("rus.value", 4)}          as beta_rate_us,
+               {round_sql("r2.value", 3)}           as macro_r2,
+               {round_sql("per.value", 3)}           as alpha_persistence,
                fm.SRRI                         as srri_kiid,
-               {int_cast_sql("srri.value", pg=_pg)}      as srri_calc,
+               {int_cast_sql("srri.value")}      as srri_calc,
                -- v24 short-horizon overlay (metric_version='d1') ------
-               {round_sql("sh_dd.value * 100", 2, pg=_pg)}     as short_dd_6m,
-               {round_sql("sh_va.value * 100", 2, pg=_pg)}     as short_vol_adj_3m,
-               {round_sql("sh_lq.value", 4, pg=_pg)}           as short_liq_flag
+               {round_sql("sh_dd.value * 100", 2)}     as short_dd_6m,
+               {round_sql("sh_va.value * 100", 2)}     as short_vol_adj_3m,
+               {round_sql("sh_lq.value", 4)}           as short_liq_flag
         FROM portfolio_weights pw
         JOIN portfolio_scenarios ps ON ps.scenario_id = pw.scenario_id
         JOIN fund_master fm ON fm.ISIN = pw.isin
@@ -734,7 +732,7 @@ def _build_macro_indicadores(ws, conn):
 
     row_offset = 3
 
-    _ph_macro = "%s" if is_postgres_connection(conn) else "?"
+    _ph_macro = "%s"
     for indicator, geography, label, unit, calc_yoy, mult in indicadores:
         rows_db = conn.execute(f"""
             SELECT date, value FROM series_macro
@@ -848,7 +846,7 @@ def _build_macro_indicadores(ws, conn):
 
 
 def generate_report(
-    conn: sqlite3.Connection,
+    conn: "psycopg.Connection",
     output_dir: str | None = None,
     scenario_id: str = "shock_energia_2026Q1",
     score_version: str = "v1",

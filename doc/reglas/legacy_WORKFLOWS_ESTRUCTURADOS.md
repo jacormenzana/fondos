@@ -73,7 +73,7 @@ LU1244045850    | Robeco BP US Pre... | 4      | 4       | VISUAL_ONLY
 CONTEXTO CARGADO:
 - kiid_parser.py (función parse_kiid_generic)
 - srri_v4_geometric.py (extractor visual)
-- sqlite_writer.py (lógica de persistencia)
+- fund_writer.py (lógica de persistencia)
 
 HIPÓTESIS INICIAL:
 Posiblemente el extractor visual está generando detecciones espurias, 
@@ -711,7 +711,7 @@ Lógica:
 
 MÓDULOS EXISTENTES RELEVANTES:
 - io.py (get_kiid_for_isin — función de descarga)
-- sqlite_writer.py (upsert_kiid_metadata — persistencia)
+- fund_writer.py (upsert_kiid_metadata — persistencia)
 - fund_kiid_metadata.KIID_PDF_Hash (columna ya existe, sin uso actual)
 
 CASOS DE USO:
@@ -826,7 +826,7 @@ def get_kiid_for_isin(conn, isin, url, force_refresh=False):
     # ... [resto de lógica]
 ```
 
-MODIFICACIONES EN sqlite_writer.py:
+MODIFICACIONES EN fund_writer.py:
 ```python
 # Añadir COALESCE para KIID_PDF_Hash
 INSERT INTO fund_kiid_metadata (...)
@@ -849,7 +849,7 @@ Fase 2: Modificar io.py (integración)
   - Añadir lógica de persistencia post-descarga
   - Backward compatible (si cache falla, fallback a HTTP normal)
 
-Fase 3: Modificar sqlite_writer.py (COALESCE)
+Fase 3: Modificar fund_writer.py (COALESCE)
   - Añadir COALESCE para KIID_PDF_Hash
 
 Fase 4: Migración de datos (one-time script)

@@ -14,7 +14,7 @@ En SQLite, todo campo de texto extraído del KIID debe usar `COALESCE(excluded.c
 **Razón:**  
 Un ciclo en estado `CACHED` (sin descarga HTTP) no re-extrae información del KIID. Si el código de escritura no usa COALESCE, todos los campos extraídos se sobrescribirían con NULL, perdiendo información valiosa de ciclos anteriores.
 
-**Ejemplo correcto (`sqlite_writer.py`):**
+**Ejemplo correcto (`fund_writer.py`):**
 
 ```python
 # CORRECTO - Preserva valor anterior si nuevo es NULL
@@ -359,12 +359,12 @@ multiplica los paths de normalización, y genera falsos negativos en tests de re
 Antes de v20 (2026), `Family` estaba en español ('RV Núcleo', 'Renta Fija Flexible', etc.).
 La migración a inglés ('Equity Core', 'Flexible Fixed Income') fue necesaria para alinear con
 Morningstar Category naming. Los valores legacy en español deben ser migrados por
-`sqlite_writer._normalize_record` (defensa en profundidad).
+`fund_writer._normalize_record` (defensa en profundidad).
 
 **Aplicación:**  
 Los mapas de normalización ES→EN viven exclusivamente en `classify_utils.py` (R-1 en
 `RESTRICCIONES_ARQUITECTURA.md`; instancia enforced de **P#11**). La copia en
-`sqlite_writer._normalize_record` es la **única excepción autorizada** al DRY estricto (P#11) y
+`fund_writer._normalize_record` es la **única excepción autorizada** al DRY estricto (P#11) y
 debe documentarse en cada definición.
 
 ---
@@ -465,7 +465,7 @@ exige eliminarla **en un único lugar**, no replicar el fix.
 **Instancia canónica enforced — R-1:**  
 `RESTRICCIONES_ARQUITECTURA.md` **R-1** («punto único de normalización lingüística») es la
 instancia concreta y verificable de este principio: los mapas categóricos viven exclusivamente en
-`classify_utils.py`. La copia en `sqlite_writer._normalize_record` es la **única excepción
+`classify_utils.py`. La copia en `fund_writer._normalize_record` es la **única excepción
 autorizada** al DRY estricto (defensa en profundidad) y debe documentarse en cada definición
 (ver P#8).
 
@@ -489,7 +489,7 @@ reglas anti-duplicación, cobertura mínima por módulo, despliegue incremental)
 
 | Principio | Se aplica en | Validación |
 |-----------|--------------|------------|
-| #1 COALESCE | `sqlite_writer.py`, cualquier INSERT/UPDATE | ¿ON CONFLICT usa COALESCE? |
+| #1 COALESCE | `fund_writer.py`, cualquier INSERT/UPDATE | ¿ON CONFLICT usa COALESCE? |
 | #2 Root cause | Todo debugging, fix de bug | ¿Se eliminó la causa o solo el síntoma? |
 | #3 Verificar ficheros | Modificación de código | ¿Leíste el archivo antes de modificar? |
 | #4 Regime-aware | P3 scoring | ¿Métricas condicionadas al régimen macro? |

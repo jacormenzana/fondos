@@ -10,7 +10,6 @@ process really used.
 """
 from __future__ import annotations
 
-import sqlite3
 import sys
 from pathlib import Path
 
@@ -69,33 +68,24 @@ def test_env_file_is_never_autoloaded_under_pytest(monkeypatch, tmp_path):
     assert "FONDOS_TEST_ONLY_SENTINEL" not in os.environ
 
 
-def test_backend_is_announced_once_per_process_with_its_source(monkeypatch, tmp_path, capsys):
-    p = tmp_path / "t.sqlite"
-    sqlite3.connect(p).close()
-    monkeypatch.setattr(db, "_BACKEND_ANNOUNCED", False)
-    monkeypatch.setenv("FONDOS_DB_BACKEND", "sqlite")
-
-    db.get_connection(p).close()
-    db.get_connection(p).close()
-    err = capsys.readouterr().err
-    assert err.count("[DB] backend=sqlite (env)") == 1         # once, not per connection
-    assert str(p) in err
-
-    monkeypatch.setattr(db, "_BACKEND_ANNOUNCED", False)
-    db.get_connection(p, backend="sqlite").close()
-    assert "[DB] backend=sqlite (arg)" in capsys.readouterr().err
-
-
-def test_unset_backend_resolves_to_postgres_never_to_the_sealed_sqlite(monkeypatch, tmp_path):
-    """FND-0102: with FONDOS_DB_BACKEND unset, get_connection() must NOT open the frozen SQLite
-    file — it resolves to postgres, so an unset FONDOS_PG_DSN fails loudly instead."""
-    p = tmp_path / "t.sqlite"
-    sqlite3.connect(p).close()
+def test_unset_backend_resolves_to_postgres(monkeypatch):
+    """FND-0102: with FONDOS_DB_BACKEND unset, get_connection() resolves to postgres, so an unset
+    FONDOS_PG_DSN fails loudly (there is no other backend to fall back to)."""
     monkeypatch.delenv("FONDOS_DB_BACKEND", raising=False)
     monkeypatch.delenv("FONDOS_PG_DSN", raising=False)
     import pytest
     with pytest.raises(RuntimeError, match="FONDOS_PG_DSN"):
-        db.get_connection(p)
+        db.get_connection()
+
+
+def test_sqlite_backend_no_longer_exists(monkeypatch):
+    import pytest
+    monkeypatch.setenv("FONDOS_PG_DSN", "postgresql://x@127.0.0.1:1/x")
+    with pytest.raises(ValueError, match="SQLite fue retirado"):
+        db.get_connection(backend="sqlite")
+    monkeypatch.setenv("FONDOS_DB_BACKEND", "sqlite")
+    with pytest.raises(ValueError, match="SQLite fue retirado"):
+        db.get_connection()
 
 
 def test_postgres_announcement_shows_host_port_dbname_and_nothing_else(monkeypatch, capsys):
@@ -109,3 +99,21 @@ def test_postgres_announcement_shows_host_port_dbname_and_nothing_else(monkeypat
     err = capsys.readouterr().err
     assert err.strip() == "[DB] backend=postgres (env) host=db.example port=5432 dbname=fondos"
     assert "SECRET" not in err and "user" not in err
+
+
+def test_importing_shared_db_autoloads_the_env_file_in_a_clean_process(tmp_path):
+    """Regression (2026-09-26): shared.db used to import shared.config only for DB_PATH; deleting DB_PATH
+    silently removed the .env autoload from every entry point, so no process found FONDOS_PG_DSN.
+    Runs in a subprocess because autoload is (deliberately) disabled under pytest."""
+    import subprocess
+    import sys
+    f = tmp_path / "test.env"
+    f.write_text("FONDOS_PG_DSN=postgresql://autoload@127.0.0.1:1/x\n", encoding="utf-8")
+    env = {k: v for k, v in __import__("os").environ.items() if k not in ("FONDOS_PG_DSN", "PYTEST_CURRENT_TEST")}
+    env["FONDOS_ENV_FILE"] = str(f)
+    out = subprocess.run(
+        [sys.executable, "-c", "import shared.db, os; print(os.environ.get('FONDOS_PG_DSN'))"],
+        cwd=str(Path(__file__).resolve().parent.parent), env=env, capture_output=True, text=True, timeout=60,
+        stdin=subprocess.DEVNULL,
+    )
+    assert out.stdout.strip() == "postgresql://autoload@127.0.0.1:1/x", out.stderr[-400:]

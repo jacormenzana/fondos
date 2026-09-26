@@ -41,7 +41,6 @@ Ejemplos:
 import argparse
 import re
 import requests
-import sqlite3
 import sys
 import time
 import random
@@ -85,7 +84,7 @@ _ROOT   = _P2_SRC.parent.parent
 sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_P2_SRC.parent))
 
-from shared.db import get_connection, is_postgres_connection, executemany
+from shared.db import get_connection, executemany
 
 try:
     import mstarpy
@@ -556,57 +555,33 @@ def _write_nav_source(
     if dry_run:
         return
     today = date.today().isoformat()
-    if is_postgres_connection(conn):
-        # NOTA (encontrado en vivo 2026-09-20): a diferencia de SQLite, donde un
-        # nombre de columna sin cualificar en DO UPDATE SET resuelve sin ambiguedad
-        # a la fila actual de la tabla destino, Postgres lanza
-        # psycopg.errors.AmbiguousColumn si esa misma columna tambien existe en
-        # `excluded` -- hay que cualificar explicitamente con el nombre de tabla.
-        conn.execute("""
-            INSERT INTO nav_sources
-                (isin, source, source_id, first_nav_date, last_nav_date,
-                 nav_count, discovered_at, last_checked, status)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (isin) DO UPDATE SET
-                source         = excluded.source,
-                -- P#1 COALESCE: nunca borrar un code ya resuelto (no regresar OK->NOT_FOUND)
-                source_id      = COALESCE(NULLIF(excluded.source_id, ''), nav_sources.source_id),
-                first_nav_date = COALESCE(excluded.first_nav_date, nav_sources.first_nav_date),
-                last_nav_date  = COALESCE(excluded.last_nav_date,  nav_sources.last_nav_date),
-                nav_count      = COALESCE(excluded.nav_count,      nav_sources.nav_count),
-                last_checked   = excluded.last_checked,
-                -- Solo degradar a NOT_FOUND si no hay code resuelto previo
-                status         = CASE
-                    WHEN excluded.status = 'NOT_FOUND'
-                     AND nav_sources.source_id IS NOT NULL AND nav_sources.source_id != ''
-                    THEN nav_sources.status  -- mantener estado actual (OK)
-                    ELSE excluded.status     -- actualizar normalmente
-                END
-        """, (isin, source, source_id, first_date, last_date,
-              nav_count, today, today, status))
-    else:
-        conn.execute("""
-            INSERT INTO nav_sources
-                (isin, source, source_id, first_nav_date, last_nav_date,
-                 nav_count, discovered_at, last_checked, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(isin) DO UPDATE SET
-                source         = excluded.source,
-                -- P#1 COALESCE: nunca borrar un code ya resuelto (no regresar OK->NOT_FOUND)
-                source_id      = COALESCE(NULLIF(excluded.source_id, ''), source_id),
-                first_nav_date = COALESCE(excluded.first_nav_date, first_nav_date),
-                last_nav_date  = COALESCE(excluded.last_nav_date,  last_nav_date),
-                nav_count      = COALESCE(excluded.nav_count,      nav_count),
-                last_checked   = excluded.last_checked,
-                -- Solo degradar a NOT_FOUND si no hay code resuelto previo
-                status         = CASE
-                    WHEN excluded.status = 'NOT_FOUND'
-                     AND source_id IS NOT NULL AND source_id != ''
-                    THEN status          -- mantener estado actual (OK)
-                    ELSE excluded.status -- actualizar normalmente
-                END
-        """, (isin, source, source_id, first_date, last_date,
-              nav_count, today, today, status))
+    # NOTA (encontrado en vivo 2026-09-20): a diferencia de SQLite, donde un
+    # nombre de columna sin cualificar en DO UPDATE SET resuelve sin ambiguedad
+    # a la fila actual de la tabla destino, Postgres lanza
+    # psycopg.errors.AmbiguousColumn si esa misma columna tambien existe en
+    # `excluded` -- hay que cualificar explicitamente con el nombre de tabla.
+    conn.execute("""
+        INSERT INTO nav_sources
+            (isin, source, source_id, first_nav_date, last_nav_date,
+             nav_count, discovered_at, last_checked, status)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (isin) DO UPDATE SET
+            source         = excluded.source,
+            -- P#1 COALESCE: nunca borrar un code ya resuelto (no regresar OK->NOT_FOUND)
+            source_id      = COALESCE(NULLIF(excluded.source_id, ''), nav_sources.source_id),
+            first_nav_date = COALESCE(excluded.first_nav_date, nav_sources.first_nav_date),
+            last_nav_date  = COALESCE(excluded.last_nav_date,  nav_sources.last_nav_date),
+            nav_count      = COALESCE(excluded.nav_count,      nav_sources.nav_count),
+            last_checked   = excluded.last_checked,
+            -- Solo degradar a NOT_FOUND si no hay code resuelto previo
+            status         = CASE
+                WHEN excluded.status = 'NOT_FOUND'
+                 AND nav_sources.source_id IS NOT NULL AND nav_sources.source_id != ''
+                THEN nav_sources.status  -- mantener estado actual (OK)
+                ELSE excluded.status     -- actualizar normalmente
+            END
+    """, (isin, source, source_id, first_date, last_date,
+          nav_count, today, today, status))
     conn.commit()
 
 
@@ -754,8 +729,7 @@ def _splice_new_chart_batch(conn, isin: str, rows: list, jump_threshold: float =
     new_min_date = min(new_by_date)
 
     overlap_dates = list(new_by_date.keys())
-    _pg = is_postgres_connection(conn)
-    _one_ph = "%s" if _pg else "?"
+    _one_ph = "%s"
     in_ph = ",".join([_one_ph] * len(overlap_dates))
     overlap = conn.execute(
         f"SELECT Date, NAV FROM fund_nav_daily WHERE ISIN={_one_ph} "
@@ -830,32 +804,19 @@ def _write_nav_rows(conn, rows, dry_run) -> int:
     # la nueva -- misma logica que _overwrite_nav_rows_monthly() pero acotada
     # a los meses que realmente se estan escribiendo, no todo el historico del ISIN.
     months = {(r["ISIN"], r["Date"][:7]) for r in rows}
-    if is_postgres_connection(conn):
-        # Date es tipo `date` en Postgres (no text) -- substr() necesita el cast explicito.
-        executemany(
-            conn,
-            "DELETE FROM fund_nav_monthly WHERE isin=%s AND substr(date::text,1,7)=%s",
-            list(months),
-        )
-        executemany(conn, """
-            INSERT INTO fund_nav_monthly
-                (isin, date, nav, nav_currency, nav_type, is_estimated, data_source)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (isin, date) DO NOTHING
-        """, [(r["ISIN"], r["Date"], r["NAV"], r["NAV_Currency"],
-               r["NAV_Type"], r["Is_Estimated"], r["Data_Source"]) for r in rows])
-    else:
-        executemany(
-            conn,
-            "DELETE FROM fund_nav_monthly WHERE ISIN=? AND substr(Date,1,7)=?",
-            list(months),
-        )
-        executemany(conn, """
-            INSERT OR IGNORE INTO fund_nav_monthly
-                (ISIN, Date, NAV, NAV_Currency, NAV_Type, Is_Estimated, Data_Source)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, [(r["ISIN"], r["Date"], r["NAV"], r["NAV_Currency"],
-               r["NAV_Type"], r["Is_Estimated"], r["Data_Source"]) for r in rows])
+    # Date es tipo `date` en Postgres (no text) -- substr() necesita el cast explicito.
+    executemany(
+        conn,
+        "DELETE FROM fund_nav_monthly WHERE isin=%s AND substr(date::text,1,7)=%s",
+        list(months),
+    )
+    executemany(conn, """
+        INSERT INTO fund_nav_monthly
+            (isin, date, nav, nav_currency, nav_type, is_estimated, data_source)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (isin, date) DO NOTHING
+    """, [(r["ISIN"], r["Date"], r["NAV"], r["NAV_Currency"],
+           r["NAV_Type"], r["Is_Estimated"], r["Data_Source"]) for r in rows])
     # No commit aqui — el llamante agrupa commits por lote para reducir fsyncs
     return len(rows)
 
@@ -874,34 +835,22 @@ def _write_nav_rows_daily(conn, rows, dry_run) -> int:
     if not rows or dry_run:
         return 0
     isin = rows[0]["ISIN"]
-    if is_postgres_connection(conn):
-        conn.execute(
-            "DELETE FROM fund_nav_daily WHERE isin=%s AND data_source != 'MORNINGSTAR_CHART'",
-            (isin,),
-        )
-        executemany(conn, """
-            INSERT INTO fund_nav_daily
-                (isin, date, nav, nav_currency, nav_type, is_estimated, data_source)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (isin, date) DO UPDATE SET
-                nav          = excluded.nav,
-                nav_currency = excluded.nav_currency,
-                nav_type     = excluded.nav_type,
-                is_estimated = excluded.is_estimated,
-                data_source  = excluded.data_source
-        """, [(r["ISIN"], r["Date"], r["NAV"], r["NAV_Currency"],
-               r["NAV_Type"], r["Is_Estimated"], r["Data_Source"]) for r in rows])
-    else:
-        conn.execute(
-            "DELETE FROM fund_nav_daily WHERE ISIN=? AND Data_Source != 'MORNINGSTAR_CHART'",
-            (isin,),
-        )
-        executemany(conn, """
-            INSERT OR REPLACE INTO fund_nav_daily
-                (ISIN, Date, NAV, NAV_Currency, NAV_Type, Is_Estimated, Data_Source)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, [(r["ISIN"], r["Date"], r["NAV"], r["NAV_Currency"],
-               r["NAV_Type"], r["Is_Estimated"], r["Data_Source"]) for r in rows])
+    conn.execute(
+        "DELETE FROM fund_nav_daily WHERE isin=%s AND data_source != 'MORNINGSTAR_CHART'",
+        (isin,),
+    )
+    executemany(conn, """
+        INSERT INTO fund_nav_daily
+            (isin, date, nav, nav_currency, nav_type, is_estimated, data_source)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (isin, date) DO UPDATE SET
+            nav          = excluded.nav,
+            nav_currency = excluded.nav_currency,
+            nav_type     = excluded.nav_type,
+            is_estimated = excluded.is_estimated,
+            data_source  = excluded.data_source
+    """, [(r["ISIN"], r["Date"], r["NAV"], r["NAV_Currency"],
+           r["NAV_Type"], r["Is_Estimated"], r["Data_Source"]) for r in rows])
     # No commit aqui — el llamante agrupa commits por lote para reducir fsyncs
     return len(rows)
 
@@ -912,23 +861,10 @@ def _write_nav_rows_daily(conn, rows, dry_run) -> int:
 
 def _ensure_data_status_column(conn) -> None:
     """Migración idempotente v25: añade data_status a nav_sources si no existe."""
-    if is_postgres_connection(conn):
-        # db/pg/35_control.sql ya define la columna y el indice. Ni siquiera un ALTER/CREATE
-        # INDEX IF NOT EXISTS no-op se permite sin ser owner de la tabla, asi que emitirlos
-        # aqui romperia bajo el rol de minimo privilegio fondos_app (FND-0072).
-        return
-    cols = {r[1] for r in conn.execute("PRAGMA table_info(nav_sources)").fetchall()}
-    if "data_status" not in cols:
-        conn.execute("""
-            ALTER TABLE nav_sources
-            ADD COLUMN data_status TEXT DEFAULT 'OK'
-        """)
-        conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_nav_sources_data_status
-            ON nav_sources (data_status)
-        """)
-        conn.commit()
-        print("  [v25] Migración aplicada: data_status añadido a nav_sources.", flush=True)
+    # db/pg/35_control.sql ya define la columna y el indice. Ni siquiera un ALTER/CREATE
+    # INDEX IF NOT EXISTS no-op se permite sin ser owner de la tabla, asi que emitirlos
+    # aqui romperia bajo el rol de minimo privilegio fondos_app (FND-0072).
+    return
 
 
 def _overwrite_nav_rows_monthly(conn, isin: str, rows: list[dict], dry_run: bool) -> int:
@@ -941,22 +877,13 @@ def _overwrite_nav_rows_monthly(conn, isin: str, rows: list[dict], dry_run: bool
     if not rows or dry_run:
         return len(rows) if dry_run else 0
     rows = _normalize_nav_scale(rows)
-    if is_postgres_connection(conn):
-        conn.execute("DELETE FROM fund_nav_monthly WHERE isin=%s", (isin,))
-        executemany(conn, """
-            INSERT INTO fund_nav_monthly
-                (isin, date, nav, nav_currency, nav_type, is_estimated, data_source)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-        """, [(r["ISIN"], r["Date"], r["NAV"], r["NAV_Currency"],
-               r["NAV_Type"], r["Is_Estimated"], r["Data_Source"]) for r in rows])
-    else:
-        conn.execute("DELETE FROM fund_nav_monthly WHERE ISIN=?", (isin,))
-        executemany(conn, """
-            INSERT INTO fund_nav_monthly
-                (ISIN, Date, NAV, NAV_Currency, NAV_Type, Is_Estimated, Data_Source)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, [(r["ISIN"], r["Date"], r["NAV"], r["NAV_Currency"],
-               r["NAV_Type"], r["Is_Estimated"], r["Data_Source"]) for r in rows])
+    conn.execute("DELETE FROM fund_nav_monthly WHERE isin=%s", (isin,))
+    executemany(conn, """
+        INSERT INTO fund_nav_monthly
+            (isin, date, nav, nav_currency, nav_type, is_estimated, data_source)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+    """, [(r["ISIN"], r["Date"], r["NAV"], r["NAV_Currency"],
+           r["NAV_Type"], r["Is_Estimated"], r["Data_Source"]) for r in rows])
     return len(rows)
 
 
@@ -976,7 +903,7 @@ def run_discover(conn, isins, dry_run, verbose, skip_if_recent: bool = False):
     """
     if skip_if_recent and not dry_run:
         today_s = date.today().isoformat()
-        _ph = "%s" if is_postgres_connection(conn) else "?"
+        _ph = "%s"
         recent  = conn.execute(
             f"SELECT COUNT(*) FROM nav_sources WHERE last_checked >= {_ph}",
             (today_s,)
@@ -1148,7 +1075,7 @@ def _auto_freeze_stale_navs(conn, dry_run: bool) -> list:
     _today = date.today()
     _freeze_threshold = (_today - timedelta(days=_FROZEN_NAV_DAYS)).isoformat()
     _recent_check_threshold = (_today - timedelta(days=30)).isoformat()
-    _ph = "%s" if is_postgres_connection(conn) else "?"
+    _ph = "%s"
     _to_freeze = conn.execute(
         f"""
         SELECT isin, last_nav_date, last_checked
@@ -1204,7 +1131,7 @@ def _fetch_one(idx, isin, ms_id, currency, eff_desde, bearer, delay_secs):
 def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=None,
              workers=1, stale_days=3):
     if isins:
-        _one_ph = "%s" if is_postgres_connection(conn) else "?"
+        _one_ph = "%s"
         ph      = ",".join([_one_ph] * len(isins))
         db_rows = {r[0]: r[1] for r in conn.execute(
             f"SELECT isin, source_id FROM nav_sources "
@@ -1259,9 +1186,6 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=Non
     # que es idempotente (la proxima ejecucion lo reprocesa).
     _BATCH_COMMIT = 20          # commit cada N ISINs exitosos
     _batch_pending = 0
-    if not dry_run and not is_postgres_connection(conn):
-        conn.execute("PRAGMA synchronous = NORMAL")
-        conn.execute("PRAGMA cache_size = -65536")  # 64 MB page cache
 
     # -- Bearer token para chartservice (obtenido una sola vez por run) -----
     if bearer_token:
@@ -1300,7 +1224,7 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=Non
                 print(f"  [{idx:>4}/{total}] {isin}", end=" ", flush=True)
                 _daily_cols = ["ISIN", "Date", "NAV", "NAV_Currency", "NAV_Type",
                                "Is_Estimated", "Data_Source"]
-                _ph = "%s" if is_postgres_connection(conn) else "?"
+                _ph = "%s"
                 _daily = conn.execute(
                     f"SELECT ISIN, Date, NAV, NAV_Currency, NAV_Type, "
                     f"Is_Estimated, Data_Source FROM fund_nav_daily "
@@ -1318,7 +1242,7 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=Non
                 _monthly = _resample_to_monthly([dict(zip(_daily_cols, r)) for r in _daily])
                 _written = _overwrite_nav_rows_monthly(conn, isin, _monthly, dry_run)
                 if not dry_run:
-                    _ph = "%s" if is_postgres_connection(conn) else "?"
+                    _ph = "%s"
                     conn.execute(
                         f"UPDATE nav_sources SET data_status='OK', last_nav_date={_ph}, "
                         f"nav_count={_ph} WHERE isin={_ph}",
@@ -1335,7 +1259,7 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=Non
                 resolved = _resolve_isin(isin)
                 if resolved and resolved.get("code"):
                     ms_id = resolved["code"]
-                    _ph = "%s" if is_postgres_connection(conn) else "?"
+                    _ph = "%s"
                     conn.execute(f"UPDATE nav_sources SET source_id={_ph} WHERE isin={_ph}",
                                  (ms_id, isin))
                     conn.commit()
@@ -1419,9 +1343,8 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=Non
                 last_d_stored_cur = last_daily.get(risin)
                 if _rl_m_rows and not dry_run:
                     new_last = _rl_m_rows[-1]["Date"]
-                    _pg = is_postgres_connection(conn)
-                    _ph = "%s" if _pg else "?"
-                    _nav_isin_col = "isin" if _pg else "ISIN"
+                    _ph = "%s"
+                    _nav_isin_col = "isin"
                     if last_d_stored_cur:
                         conn.execute(
                             f"UPDATE nav_sources SET last_nav_date={_ph}, last_checked={_ph}, "
@@ -1514,7 +1437,7 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=Non
         if ds == "RECALCULATE_MONTHLY":
             _daily_cols = ["ISIN", "Date", "NAV", "NAV_Currency", "NAV_Type",
                            "Is_Estimated", "Data_Source"]
-            _ph = "%s" if is_postgres_connection(conn) else "?"
+            _ph = "%s"
             _daily = conn.execute(
                 f"SELECT ISIN, Date, NAV, NAV_Currency, NAV_Type, "
                 f"Is_Estimated, Data_Source FROM fund_nav_daily "
@@ -1530,7 +1453,7 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=Non
             _monthly = _resample_to_monthly([dict(zip(_daily_cols, r)) for r in _daily])
             _written = _overwrite_nav_rows_monthly(conn, isin, _monthly, dry_run)
             if not dry_run:
-                _ph = "%s" if is_postgres_connection(conn) else "?"
+                _ph = "%s"
                 conn.execute(
                     f"UPDATE nav_sources SET data_status='OK', last_nav_date={_ph}, "
                     f"nav_count={_ph} WHERE isin={_ph}",
@@ -1550,7 +1473,7 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=Non
             resolved = _resolve_isin(isin)
             if resolved and resolved.get("code"):
                 ms_id = resolved["code"]
-                _ph = "%s" if is_postgres_connection(conn) else "?"
+                _ph = "%s"
                 conn.execute(
                     f"UPDATE nav_sources SET source_id={_ph} WHERE isin={_ph}",
                     (ms_id, isin)
@@ -1639,9 +1562,8 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=Non
         if monthly_rows and not dry_run:
             new_last = monthly_rows[-1]["Date"]
             today_s  = _today.isoformat()
-            _pg = is_postgres_connection(conn)
-            _ph = "%s" if _pg else "?"
-            _nav_isin_col = "isin" if _pg else "ISIN"
+            _ph = "%s"
+            _nav_isin_col = "isin"
             if last_d_stored:
                 # Delta: conservar first_nav_date original; nav_count desde la tabla
                 conn.execute(
@@ -1749,9 +1671,6 @@ def run_update(conn, dry_run, bearer_token=None, stale_days=3, monthly_grain=Fal
     errors_update  = 0
     _BATCH_COMMIT  = 20
     _batch_pending = 0
-    if not dry_run and not is_postgres_connection(conn):
-        conn.execute("PRAGMA synchronous = NORMAL")
-        conn.execute("PRAGMA cache_size = -65536")
 
     # ── Auto-freeze: detectar series estructuralmente detenidas ───────────────
     # Nota: NO se toca fund_master.In_Current_Universe — eso es dominio P1;
@@ -1809,7 +1728,7 @@ def run_update(conn, dry_run, bearer_token=None, stale_days=3, monthly_grain=Fal
         if ds == "RECALCULATE_MONTHLY":
             _daily_cols = ["ISIN", "Date", "NAV", "NAV_Currency", "NAV_Type",
                            "Is_Estimated", "Data_Source"]
-            _ph = "%s" if is_postgres_connection(conn) else "?"
+            _ph = "%s"
             _daily = conn.execute(
                 f"SELECT ISIN, Date, NAV, NAV_Currency, NAV_Type, "
                 f"Is_Estimated, Data_Source FROM fund_nav_daily "
@@ -1825,7 +1744,7 @@ def run_update(conn, dry_run, bearer_token=None, stale_days=3, monthly_grain=Fal
             _monthly = _resample_to_monthly([dict(zip(_daily_cols, r)) for r in _daily])
             _written = _overwrite_nav_rows_monthly(conn, isin, _monthly, dry_run)
             if not dry_run:
-                _ph = "%s" if is_postgres_connection(conn) else "?"
+                _ph = "%s"
                 conn.execute(
                     f"UPDATE nav_sources SET data_status='OK', last_nav_date={_ph}, "
                     f"nav_count={_ph} WHERE isin={_ph}",
@@ -1924,7 +1843,7 @@ def run_update(conn, dry_run, bearer_token=None, stale_days=3, monthly_grain=Fal
 
         if monthly_rows and not dry_run:
             new_last = max(r["Date"] for r in monthly_rows)
-            _ph = "%s" if is_postgres_connection(conn) else "?"
+            _ph = "%s"
             conn.execute(
                 f"UPDATE nav_sources SET last_nav_date={_ph}, last_checked={_ph}, "
                 f"data_status='OK' WHERE isin={_ph}",
@@ -1970,7 +1889,7 @@ def run_recalculate_monthly(conn, isins=None, dry_run=False):
     Tras el recálculo, pone data_status='OK'.
     """
     if isins:
-        _one_ph = "%s" if is_postgres_connection(conn) else "?"
+        _one_ph = "%s"
         ph   = ",".join([_one_ph] * len(isins))
         rows = conn.execute(
             f"SELECT isin FROM nav_sources WHERE isin IN ({ph})", isins
@@ -1992,9 +1911,6 @@ def run_recalculate_monthly(conn, isins=None, dry_run=False):
     total_written = 0
     _BATCH_COMMIT  = 50
     _batch_pending = 0
-    if not dry_run and not is_postgres_connection(conn):
-        conn.execute("PRAGMA synchronous = NORMAL")
-        conn.execute("PRAGMA cache_size = -65536")
 
     print(f"Recalculando {total} ISINs (diario→mensual, sin red) | dry_run={dry_run}\n")
 
@@ -2004,7 +1920,7 @@ def run_recalculate_monthly(conn, isins=None, dry_run=False):
 
         _daily_cols = ["ISIN", "Date", "NAV", "NAV_Currency", "NAV_Type",
                        "Is_Estimated", "Data_Source"]
-        _ph = "%s" if is_postgres_connection(conn) else "?"
+        _ph = "%s"
         daily = conn.execute(
             f"SELECT ISIN, Date, NAV, NAV_Currency, NAV_Type, Is_Estimated, Data_Source "
             f"FROM fund_nav_daily "
@@ -2025,7 +1941,7 @@ def run_recalculate_monthly(conn, isins=None, dry_run=False):
         total_written += written
 
         if not dry_run:
-            _ph = "%s" if is_postgres_connection(conn) else "?"
+            _ph = "%s"
             conn.execute(
                 f"UPDATE nav_sources SET data_status='OK', last_nav_date={_ph}, "
                 f"nav_count={_ph} WHERE isin={_ph}",
@@ -2139,10 +2055,6 @@ def main():
                         help="En modo update, decide 'al dia' por grano MENSUAL: un fondo "
                              "esta al dia si su ultimo NAV ya cubre el ultimo fin de mes "
                              "completado. A mitad de mes solo descarga huecos genuinos.")
-    parser.add_argument("--backend", choices=["sqlite", "postgres"], default=None,
-                        help="Backend de BD para esta ejecucion (migracion, addendum "
-                             "2026-09-20). Si se omite, resuelve FONDOS_DB_BACKEND "
-                             "('sqlite' si no esta definida).")
     args = parser.parse_args()
 
     # -- Logs con timestamp unico por invocacion -----------------------------
@@ -2156,7 +2068,7 @@ def main():
     print(f"  Log stdout : {_log_path}", flush=True)
     print(f"  Log stderr : {_err_path}", flush=True)
 
-    conn = get_connection(backend=args.backend)
+    conn = get_connection()
 
     # v25: migración idempotente — añade data_status si no existe aún
     _ensure_data_status_column(conn)
@@ -2195,7 +2107,7 @@ def main():
     elif args.mode == "load":
         ms_prefix = args.ms_prefix.upper() if args.ms_prefix else None
         if ms_prefix and not args.isin:
-            _ph = "%s" if is_postgres_connection(conn) else "?"
+            _ph = "%s"
             prefix_isins = [r[0] for r in conn.execute(
                 f"SELECT isin FROM nav_sources WHERE status='OK' AND source_id LIKE {_ph} ORDER BY isin",
                 (ms_prefix + "%",)

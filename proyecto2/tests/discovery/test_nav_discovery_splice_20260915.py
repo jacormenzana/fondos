@@ -25,7 +25,6 @@ sequential branch, run_update).
 R-7 compliant: no pipeline.py / core.io imports.
 """
 
-import sqlite3
 import sys
 from pathlib import Path
 
@@ -39,25 +38,36 @@ for _p in (str(_P2_ROOT), str(_REPO), str(_CORE_DIR)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from sqlite_writer import create_schema
-
 from proyecto2.src.discovery.nav_discovery import _splice_new_chart_batch
 
 
-def _memory_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(":memory:")
-    create_schema(conn)
-    return conn
+_PG = {}
+
+
+@pytest.fixture(autouse=True)
+def _pg_connection(pg_app_conn):
+    """Hand the per-test savepoint-wrapped Postgres connection (real DDL, app search_path) to the module's DB-building helper."""
+    _PG["conn"] = pg_app_conn
+    # These tests exercise NAV logic, not referential integrity: skip FK triggers for this test only
+    # (transactional -> undone with the SAVEPOINT).
+    pg_app_conn.execute("SET LOCAL session_replication_role = replica")
+    yield
+    _PG.clear()
+
+
+
+def _memory_conn():
+    """Conexion Postgres del test (DDL real de db/pg, revertida al acabar)."""
+    return _PG["conn"]
 
 
 def _insert_existing_daily(conn, isin: str, date: str, nav: float,
                             source: str = "MORNINGSTAR_CHART"):
     conn.execute(
         "INSERT INTO fund_nav_daily (ISIN, Date, NAV, NAV_Currency, NAV_Type, "
-        "Is_Estimated, Data_Source) VALUES (?, ?, ?, 'EUR', 'TOTAL_RETURN_IDX', 0, ?)",
+        "Is_Estimated, Data_Source) VALUES (%s, %s, %s, 'EUR', 'TOTAL_RETURN_IDX', 0, %s)",
         (isin, date, nav, source),
     )
-    conn.commit()
 
 
 def _new_row(isin: str, date: str, nav: float, source: str = "MORNINGSTAR_CHART") -> dict:

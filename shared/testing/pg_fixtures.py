@@ -5,7 +5,7 @@ pg_fixtures.py — Postgres test harness (plan §5a "Test harness stand-up").
 description of that work as "additive, not a redesign" is only true for tests that never exercise
 dialect-specific SQL. In practice, EVERY `:memory:` test file audited so far (see the grep in the
 migration plan and memory/project_pg_fixture_5a_20260918.md) calls a real production function from
-`sqlite_writer.py` / `metrics_writer.py` / etc. that itself issues `?`-placeholder, SQLite-flavored
+`fund_writer.py` / `metrics_writer.py` / etc. that itself issues `?`-placeholder, SQLite-flavored
 SQL (`INSERT OR IGNORE`, `INSERT OR REPLACE`). **Rewriting such a test onto this fixture without
 first porting the function it calls will not pass** — it isn't a fixture problem, the SQL under
 test is the wrong dialect. Port function and test together, in the same change, per the plan's
@@ -165,3 +165,14 @@ def pg_conn_module_schema(pg_session_conn: "psycopg.Connection", request: pytest
         conn.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
         conn.execute("SET search_path = DEFAULT")
         conn.autocommit = False
+
+
+@pytest.fixture()
+def pg_app_conn(pg_conn: "psycopg.Connection") -> "psycopg.Connection":
+    """`pg_conn` with the application's search_path (gold, silver, bronze, control, public), so
+    unqualified production SQL resolves against the REAL DDL the hermetic runner loads (db/pg/*.sql)
+    — the same tables, constraints and defaults the live database has. The SET is transactional, so
+    it is undone with the test's SAVEPOINT. Use this to port the old `:memory:` SQLite tests that
+    built their own toy schema (SQLite retirement, FND-0102)."""
+    pg_conn.execute("SET search_path = gold, silver, bronze, control, public")
+    return pg_conn

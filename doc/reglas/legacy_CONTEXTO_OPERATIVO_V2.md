@@ -57,7 +57,7 @@ c:\desarrollo\fondos\
 │   │   ├── pipeline_cache.py  ← run_block(), fund_master_record
 │   │   ├── kiid_parser.py     ← parse_kiid_generic(), v17
 │   │   ├── classify_utils.py  ← classify_fund(), detect_geography()
-│   │   ├── sqlite_writer.py   ← publish_fund(), COALESCE logic
+│   │   ├── fund_writer.py   ← publish_fund(), COALESCE logic
 │   │   ├── srri_v4_geometric.py ← Extractor visual SRRI (MAX_BAND_ITER=15)
 │   │   ├── fund_family_builder.py ← build_fund_families(), Regla 4
 │   │   └── benchmark_normalizer.py ← ~97% cobertura benchmarks
@@ -158,7 +158,7 @@ Consultar `PRINCIPIOS_DISENO.md` para detalles completos. Resumen:
 |---------|------|------------------|
 | `mark_stale.py` | `scripts/launch/` | **PENDIENTE** (Paso 0 falló en último ciclo) |
 | `io.py` | `proyecto1/core/` | Sin Opción B automática; mark_stale_for_refresh(); retry 1/2/4s |
-| `sqlite_writer.py` | `proyecto1/core/` | COALESCE KIID_Downloaded_At |
+| `fund_writer.py` | `proyecto1/core/` | COALESCE KIID_Downloaded_At |
 | `srri_v4_geometric.py` | `proyecto1/core/` | MAX_BAND_ITER=15 (fix Robeco blob) |
 
 **Prioridad MEDIA:**

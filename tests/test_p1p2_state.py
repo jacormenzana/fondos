@@ -181,7 +181,7 @@ def test_step_telemetry_is_best_effort_and_reports_failures(path, monkeypatch, c
 
 
 def _fake_db_modules(monkeypatch, *, connect_raises: bool):
-    """Replace shared.db / core.sqlite_writer / shared.backlog_client with fakes, so these tests can
+    """Replace shared.db / core.fund_writer / shared.backlog_client with fakes, so these tests can
     never reach a real database whatever FONDOS_DB_BACKEND / .env say."""
     import sys
     import types
@@ -197,11 +197,11 @@ def _fake_db_modules(monkeypatch, *, connect_raises: bool):
         return FakeConn()
 
     shared_db = types.ModuleType("shared.db"); shared_db.get_connection = get_connection
-    writer = types.ModuleType("core.sqlite_writer")
+    writer = types.ModuleType("core.fund_writer")
     writer.log_ingestion = lambda conn, isin, step, status, msg: calls.append((step, status, msg))
     backlog = types.ModuleType("shared.backlog_client")
     backlog.report_incident = lambda **kw: (_ for _ in ()).throw(RuntimeError("backlog down"))
-    for name, mod in (("shared.db", shared_db), ("core.sqlite_writer", writer),
+    for name, mod in (("shared.db", shared_db), ("core.fund_writer", writer),
                       ("shared.backlog_client", backlog)):
         monkeypatch.setitem(sys.modules, name, mod)
     return calls

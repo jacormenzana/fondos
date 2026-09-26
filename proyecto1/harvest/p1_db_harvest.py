@@ -19,7 +19,6 @@ import argparse
 import json
 import logging
 import re
-import sqlite3
 import sys
 import time
 import xml.etree.ElementTree as ET
@@ -37,8 +36,7 @@ _HARVEST_DIR   = Path(__file__).resolve().parent        # proyecto1/harvest/
 _PROYECTO1_DIR = _HARVEST_DIR.parent                    # proyecto1/
 _ROOT          = _PROYECTO1_DIR.parent                  # repo root
 sys.path.insert(0, str(_ROOT))
-from shared.config import DB_PATH  # noqa: E402
-from shared.db import get_connection, is_postgres_connection, executemany  # noqa: E402
+from shared.db import get_connection, executemany  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -210,16 +208,14 @@ def cmd_probe(args) -> None:  # noqa: ARG001
 # ---------------------------------------------------------------------------
 # PHASE 1-2 — Harvest + Normalize
 # ---------------------------------------------------------------------------
-def cmd_harvest(args, conn=None, backend=None) -> None:
+def cmd_harvest(args, conn=None) -> None:
     """
     Phase 1: Fetch catalogo.xml → emit raw JSONL (before any parsing).
     Phase 2: Parse each href → UPSERT into db_document_catalogue.
     §6.1: href captured verbatim. §6.2: no codSus allowlist.
 
-    conn: injected connection (Postgres or SQLite) — used by tests and any future dialect-aware
-    caller. When None (the CLI's default), opens its own connection via get_connection(backend=
-    backend) — resolves FONDOS_DB_BACKEND when backend is also None, defaulting to SQLite exactly
-    as before this function accepted a backend at all (migration addendum, Stage 5, 2026-09-20).
+    conn: injected connection — used by tests. When None (the CLI's default), opens its own
+    connection via get_connection().
     """
     harvest_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     jsonl_path = _HARVEST_DIR / f"harvest_raw_{harvest_ts}.jsonl"
@@ -273,38 +269,25 @@ def cmd_harvest(args, conn=None, backend=None) -> None:
     log.info("Raw JSONL written: %d rows → %s", len(raw_rows), jsonl_path.name)
 
     # Phase 2: Normalize (parse href) → DB
-    log.info("Phase 2 — Normalizing + loading to DB: %s", DB_PATH)
+    log.info("Phase 2 — Normalizing + loading to DB")
     own_conn = conn is None
     if own_conn:
-        conn = get_connection(DB_PATH, backend=backend)
-    pg = is_postgres_connection(conn)
-    ph = "%s" if pg else "?"
-    if pg:
-        # bronze.db_document_catalogue is already provisioned by db/pg/10_bronze.sql (applied
-        # once via psql, see docker-compose.yml) — not by this script's inline DDL, which is
-        # SQLite-only (conn.executescript() doesn't exist on psycopg3 either way). Same
-        # architecture as sqlite_writer.create_schema(): Postgres schema creation is external,
-        # not autotranslated at runtime.
-        pass
-    else:
-        conn.executescript(DDL_CATALOGUE)
-        conn.commit()
+        conn = get_connection()
+    ph = "%s"
+    # bronze.db_document_catalogue is already provisioned by db/pg/10_bronze.sql (applied
+    # once via psql, see docker-compose.yml) — not by this script's inline DDL, which is
+    # SQLite-only (conn.executescript() doesn't exist on psycopg3 either way). Same
+    # architecture as fund_writer.create_schema(): Postgres schema creation is external,
+    # not autotranslated at runtime.
+    pass
 
-    if pg:
-        upsert_sql = """
-            INSERT INTO db_document_catalogue
-                (harvest_ts, gestora_label, gestora_value, cod_db, fund_name,
-                 isin, link_label, href, cod_doc, cod_sus, cod_cont, idioma)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-            ON CONFLICT (harvest_ts, cod_db, href) DO NOTHING
-        """
-    else:
-        upsert_sql = """
-            INSERT OR IGNORE INTO db_document_catalogue
-                (harvest_ts, gestora_label, gestora_value, cod_db, fund_name,
-                 isin, link_label, href, cod_doc, cod_sus, cod_cont, idioma)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-        """
+    upsert_sql = """
+        INSERT INTO db_document_catalogue
+            (harvest_ts, gestora_label, gestora_value, cod_db, fund_name,
+             isin, link_label, href, cod_doc, cod_sus, cod_cont, idioma)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        ON CONFLICT (harvest_ts, cod_db, href) DO NOTHING
+    """
 
     batch = []
     for row in raw_rows:
@@ -363,18 +346,18 @@ def cmd_harvest(args, conn=None, backend=None) -> None:
 # ---------------------------------------------------------------------------
 # PHASE 3 — codSus Discovery Report
 # ---------------------------------------------------------------------------
-def cmd_report_codsus(args, conn=None, backend=None) -> None:
+def cmd_report_codsus(args, conn=None) -> None:
     """
     Phase 3: Query db_document_catalogue (latest harvest_ts) and emit
     the mandatory codSus discovery report (§7 Phase 3).
 
     conn: injected connection — same convention as cmd_harvest(). When None, opens one via
-    get_connection(backend=backend) (migration addendum, Stage 5, 2026-09-20).
+    get_connection() (migration addendum, Stage 5, 2026-09-20).
     """
     own_conn = conn is None
     if own_conn:
-        conn = get_connection(DB_PATH, backend=backend)
-    ph = "%s" if is_postgres_connection(conn) else "?"
+        conn = get_connection()
+    ph = "%s"
 
     # Resolve latest harvest_ts
     row = conn.execute(
@@ -591,17 +574,14 @@ def main():
     ap.add_argument("--harvest",       action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--report-codsus", action="store_true", dest="report_codsus",
                     help=argparse.SUPPRESS)
-    ap.add_argument("--backend", choices=["sqlite", "postgres"], default=None,
-                    help="Backend de BD (migracion, addendum 2026-09-20). Si se omite, resuelve "
-                         "FONDOS_DB_BACKEND ('sqlite' si no esta definida).")
     args = ap.parse_args()
 
     if args.probe:
         cmd_probe(args)
     elif args.harvest:
-        cmd_harvest(args, backend=args.backend)
+        cmd_harvest(args)
     elif args.report_codsus:
-        cmd_report_codsus(args, backend=args.backend)
+        cmd_report_codsus(args)
     else:
         ap.print_help()
 

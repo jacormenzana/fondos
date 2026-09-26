@@ -43,8 +43,7 @@ EXECUTION (Windows, conda env `des`)
   Optional: --limit N (smoke test), --only-priips, --isins FR..,LU.. (subset).
 
 NO side effects on the DB (read-only). Single connection. python -X utf8 safe.
-Reads the database selected by FONDOS_DB_BACKEND (Postgres since the 2026-09-23 cutover);
-`--backend` overrides it and `--db` only applies to the sqlite backend.
+Reads the live Postgres database (FONDOS_PG_DSN).
 """
 
 import argparse
@@ -292,8 +291,6 @@ def _write_summary_log(summary_text: str, out_path: Optional[str]) -> Path:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Cost-extraction corpus diagnostic")
-    ap.add_argument("--db", default=None, help="SQLite file (sqlite backend only)")
-    ap.add_argument("--backend", default=None, choices=("sqlite", "postgres"))
     ap.add_argument("--kiid-dir", required=True)
     ap.add_argument("--out", default=None)
     ap.add_argument("--limit", type=int, default=0)
@@ -326,7 +323,7 @@ def main() -> int:
 
     from shared.db import get_connection
     from shared.export_tables import legacy_columns
-    conn = get_connection(Path(args.db) if args.db else None, backend=args.backend)
+    conn = get_connection()
     try:
         cur = conn.execute(sql)
         # Postgres folds result names to lowercase; evaluate_fund indexes by the SQLite spelling.
