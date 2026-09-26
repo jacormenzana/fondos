@@ -275,6 +275,29 @@ def test_get_isins_skips_cached_negatives_until_next_check(pg_session_conn, pg_c
         assert len(_bl._get_isins_for_load(conn, only_missing=False)) == 3
 
 
+def test_empty_selection_logs_why_nothing_was_processed(pg_session_conn, pg_conn_module_schema, capsys):
+    """2026-09-26: a run whose every ISIN sat in the negative cache ended in 2 s with one generic
+    line and no per-ISIN events, which read as a silent failure. The log must state the numbers."""
+    conn = pg_session_conn
+    _make_schema(conn, pg_conn_module_schema)
+    _add_nav(conn, "AAA", "BBB", "CCC")
+    conn.execute("INSERT INTO fund_benchmarks (isin, source) VALUES ('CCC', 'MORNINGSTAR')")
+    now = datetime.now(timezone.utc)
+    conn.execute("INSERT INTO benchmark_ms_checks VALUES ('AAA', 1, %s, %s)", (now, now + timedelta(days=5)))
+    conn.execute("INSERT INTO benchmark_ms_checks VALUES ('BBB', 1, %s, %s)", (now, now + timedelta(days=9)))
+
+    with _non_autocommit(conn):
+        assert _bl._get_isins_for_load(conn, only_missing=True) == []
+        info = _bl._print_empty_selection_summary(conn, True, None)
+
+    out = capsys.readouterr().out
+    assert info["universe"] == 3 and info["with_benchmark"] == 1
+    assert info["cached"] == 2 and info["due"] == 0
+    assert info["next_check"].date() == (now + timedelta(days=5)).date()      # the EARLIEST return date
+    assert "En cache negativa" in out and f"{info['next_check']:%Y-%m-%d}" in out
+    assert "--recheck-negatives" in out and "Eventos BENCH_MS" in out
+
+
 def test_record_negative_backs_off_and_clear_removes(pg_session_conn, pg_conn_module_schema):
     conn = pg_session_conn
     _make_schema(conn, pg_conn_module_schema)

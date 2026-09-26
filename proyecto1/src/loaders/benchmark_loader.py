@@ -675,6 +675,48 @@ def _print_bench_telemetry(conn, days: int = 30) -> None:
         print(f"  [WARN] no se pudo leer ingestion_log para el resumen BENCH_MS: {e}")
 
 
+def _print_empty_selection_summary(conn, only_missing: bool, isin_filter: Optional[str]) -> dict:
+    """Explica en el log POR QUE no hay ISINs que procesar. Un paso que termina en 2 s sin una
+    sola linea por ISIN parece un fallo silencioso; aqui queda registrado que la cache negativa
+    (FND-0081) los esta omitiendo, cuantos son y cuando vuelven a tocar. Devuelve las cifras."""
+    info: dict = {"universe": 0, "with_benchmark": 0, "cached": 0, "due": 0, "next_check": None}
+    print("Sin ISINs que procesar.")
+    try:
+        info["universe"] = conn.execute(
+            "SELECT COUNT(*) FROM nav_sources WHERE status = 'OK'").fetchone()[0]
+        if isin_filter:
+            print(f"  ISIN {isin_filter}: no figura en nav_sources con status OK.")
+        elif only_missing:
+            info["with_benchmark"] = conn.execute(
+                "SELECT COUNT(DISTINCT isin) FROM fund_benchmarks WHERE source = 'MORNINGSTAR'"
+            ).fetchone()[0]
+            if _cache_available(conn):
+                now = datetime.now(timezone.utc)
+                row = conn.execute("""
+                    SELECT COUNT(*) FILTER (WHERE next_check_at >  %s),
+                           COUNT(*) FILTER (WHERE next_check_at <= %s),
+                           MIN(next_check_at) FILTER (WHERE next_check_at > %s)
+                    FROM benchmark_ms_checks
+                """, (now, now, now)).fetchone()
+                info["cached"], info["due"], info["next_check"] = row[0], row[1], row[2]
+            print(f"  Universo (nav_sources con status OK):              {info['universe']}")
+            print(f"  Ya con benchmark Morningstar:                         {info['with_benchmark']}")
+            print(f"  En cache negativa (omitidos hasta su next_check_at):  {info['cached']}"
+                  + (f"  -> proxima consulta {info['next_check']:%Y-%m-%d}"
+                     if info["next_check"] else ""))
+            print(f"  Vencidos en cache negativa (deberian procesarse):     {info['due']}")
+            print("  Para forzar la reconsulta: --recheck-negatives. "
+                  "Si el universo es 0: nav_discovery --mode discover.")
+        else:
+            print("  nav_sources no tiene ISINs con status OK: "
+                  "ejecuta primero nav_discovery --mode discover.")
+    except Exception as e:
+        conn.rollback()
+        print(f"  [WARN] no se pudo calcular el resumen de la cache negativa: {e}")
+    _print_bench_telemetry(conn)
+    return info
+
+
 def run_gap_analysis(conn: "psycopg.Connection") -> None:
     """
     Muestra el estado de cobertura de benchmarks comparando las tres fuentes:
@@ -850,9 +892,7 @@ def main() -> int:
     )
 
     if not isins:
-        print("Sin ISINs que procesar. "
-              "Ejecuta primero nav_discovery --mode discover "
-              "(o usa --recheck-negatives si todos estan en la cache negativa).")
+        _print_empty_selection_summary(conn, only_missing, args.isin)
         conn.close()
         return 0
 
