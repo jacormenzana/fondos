@@ -15,6 +15,7 @@ Limits live in shared/config.py (P3_FRESHNESS_MAX_AGE_DAYS).
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Iterable, Mapping, Optional
@@ -30,6 +31,7 @@ class FreshnessCheck:
     max_age_days: int
     ok: bool
     detail: str = ""
+    show_age: bool = True        # False for non-date checks (metric-version uniformity)
 
 
 def _age(newest: Optional[date], today: date) -> Optional[int]:
@@ -70,6 +72,8 @@ def evaluate_freshness(
     limits: Mapping[str, int],
     nav_percentile: float,
     release_lag_indicators: Iterable[str],
+    metric_versions: Optional[Iterable] = None,
+    min_uniform_share: float = 1.0,
 ) -> list[FreshnessCheck]:
     """Judge NAV, regime-input macro and harvest freshness. Never raises on missing data:
     a missing date is a FAILED check (no data is the stalest case)."""
@@ -91,11 +95,35 @@ def evaluate_freshness(
 
     checks.append(_check("harvest", parse_harvest_ts(harvest_ts), today, limits["harvest"],
                          "newest db_document_catalogue harvest_ts"))
+    if metric_versions is not None:
+        checks.append(_uniformity_check(list(metric_versions), min_uniform_share))
     return checks
 
 
-def load_freshness_inputs(conn) -> tuple[list, object]:
-    """(per-fund newest monthly NAV dates of the active universe, newest harvest_ts).
+def _uniformity_check(versions: list, min_share: float) -> FreshnessCheck:
+    """Metrics computed under different CALC_VERSIONs are not comparable (peer percentiles, momentum
+    rank and the P3 score mix them), so require that nearly every active fund sits on ONE version.
+    A partial refresh after a CALC_VERSION bump (or a sample run) breaks this on purpose."""
+    counts = Counter(str(v) for v in versions if v is not None)
+    total = sum(counts.values())
+    if not total:
+        return FreshnessCheck("metrics_calc_version", None, None, 0, False,
+                              "no return_ann metrics for the active universe", show_age=False)
+    dominant, n = counts.most_common(1)[0]
+    share = n / total
+    others = ", ".join(f"{v}:{k}" for v, k in counts.most_common()[1:4]) or "none"
+    dated = [v for v in counts if v.isdigit()]            # 'PRE_V26_UNKNOWN' etc. are not versions
+    newest = max(dated) if dated else dominant
+    note = "" if dominant == newest else f"; NEWER version {newest} exists on {counts[newest]} funds"
+    return FreshnessCheck(
+        "metrics_calc_version", None, None, 0, share >= min_share,
+        f"{share:.1%} of {total} active funds on CALC_VERSION {dominant} (min {min_share:.0%}); others: {others}{note}",
+        show_age=False)
+
+
+def load_freshness_inputs(conn) -> tuple[list, object, list]:
+    """(per-fund newest monthly NAV dates of the active universe, newest harvest_ts, per-fund
+    CALC_VERSION of the deflated since-inception return_ann row).
 
     Plain SQL valid on both backends (unquoted lowercase identifiers resolve on Postgres and
     SQLite alike); dates are normalised by evaluate_freshness.
@@ -106,19 +134,27 @@ def load_freshness_inputs(conn) -> tuple[list, object]:
         "WHERE fm.in_current_universe = 1 GROUP BY n.isin"
     ).fetchall()
     harvest = conn.execute("SELECT MAX(harvest_ts) FROM db_document_catalogue").fetchone()
-    return [r[1] for r in nav_rows], (harvest[0] if harvest else None)
+    ver_rows = conn.execute(
+        "SELECT fm.isin, fm.algorithm_version FROM fund_metrics fm "
+        "JOIN fund_master m ON m.isin = fm.isin "
+        "WHERE m.in_current_universe = 1 AND fm.metric = 'return_ann' "
+        "AND fm.horizon = 'since_inception' AND fm.real_flag = 1"
+    ).fetchall()
+    return [r[1] for r in nav_rows], (harvest[0] if harvest else None), [r[1] for r in ver_rows]
 
 
 def check_universe_freshness(conn, classifier, today: Optional[date] = None) -> list[FreshnessCheck]:
     """Read the inputs and evaluate them with the limits from shared/config.py."""
     from shared.config import (
-        P3_FRESHNESS_MAX_AGE_DAYS, P3_MACRO_RELEASE_LAG_INDICATORS, P3_NAV_UNIVERSE_PERCENTILE,
+        P3_FRESHNESS_MAX_AGE_DAYS, P3_MACRO_RELEASE_LAG_INDICATORS, P3_MIN_UNIFORM_METRICS_SHARE,
+        P3_NAV_UNIVERSE_PERCENTILE,
     )
-    nav_dates, harvest_ts = load_freshness_inputs(conn)
+    nav_dates, harvest_ts, versions = load_freshness_inputs(conn)
     return evaluate_freshness(
         nav_dates, classifier.input_last_dates(), harvest_ts,
         today or date.today(), P3_FRESHNESS_MAX_AGE_DAYS,
         P3_NAV_UNIVERSE_PERCENTILE, P3_MACRO_RELEASE_LAG_INDICATORS,
+        metric_versions=versions, min_uniform_share=P3_MIN_UNIFORM_METRICS_SHARE,
     )
 
 
@@ -129,8 +165,12 @@ def stale_checks(checks: Iterable[FreshnessCheck]) -> list[FreshnessCheck]:
 def format_report(checks: list[FreshnessCheck]) -> str:
     lines = ["DATA FRESHNESS (P3 gate)"]
     for c in checks:
+        tag = 'OK ' if c.ok else 'STALE'
+        if not c.show_age:
+            lines.append(f"  [{tag}] {c.name:24s} {c.detail}")
+            continue
         newest = c.newest.isoformat() if c.newest else "sin datos"
         age = f"{c.age_days}d" if c.age_days is not None else "n/a"
-        lines.append(f"  [{'OK ' if c.ok else 'STALE'}] {c.name:24s} newest={newest:10s} "
+        lines.append(f"  [{tag}] {c.name:24s} newest={newest:10s} "
                      f"age={age:>5s} (max {c.max_age_days}d)  {c.detail}")
     return "\n".join(lines)

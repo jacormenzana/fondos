@@ -353,6 +353,10 @@ P3_FRESHNESS_MAX_AGE_DAYS: dict = {
     "harvest": 45,
 }
 P3_NAV_UNIVERSE_PERCENTILE: float = 0.10
+# Metric-version uniformity: at least this share of the active universe must have its metrics computed
+# under ONE CALC_VERSION (the dominant one). Peer percentiles / momentum rank / the P3 score mix funds,
+# so a partial refresh after a version bump (or a sample run) must not silently produce a portfolio.
+P3_MIN_UNIFORM_METRICS_SHARE: float = 0.98
 P3_MACRO_RELEASE_LAG_INDICATORS: tuple = ("ipc_yoy_avg", "cli_eu")
 P3_EXIT_STALE_INPUTS: int = 2
 

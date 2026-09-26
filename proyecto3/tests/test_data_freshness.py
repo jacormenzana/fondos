@@ -96,3 +96,53 @@ def test_report_marks_stale_lines():
     checks = _run([date(2026, 8, 1)] * 20, _fresh_macro())
     report = format_report(checks)
     assert "[STALE] nav_p10" in report and "[OK ] harvest" in report
+
+
+# ---- metric-version uniformity (assessment 2026-09-26: mixed CALC_VERSIONs must not pass silently) ----
+
+def _fresh_inputs():
+    return [date(2026, 9, 25)] * 20, _fresh_macro()
+
+
+def test_uniform_metrics_version_passes():
+    nav, macro = _fresh_inputs()
+    checks = evaluate_freshness(nav, macro, "20260920_000000", TODAY, LIMITS, PCT, LAG,
+                                metric_versions=["20260918"] * 100, min_uniform_share=0.98)
+    assert _by_name(checks)["metrics_calc_version"].ok is True
+
+
+def test_mixed_metrics_versions_fail_and_name_the_versions():
+    nav, macro = _fresh_inputs()
+    versions = ["20260917"] * 95 + ["20260918"] * 5          # a partial refresh after a version bump
+    checks = evaluate_freshness(nav, macro, "20260920_000000", TODAY, LIMITS, PCT, LAG,
+                                metric_versions=versions, min_uniform_share=0.98)
+    c = _by_name(checks)["metrics_calc_version"]
+    assert c.ok is False and "20260917" in c.detail and "NEWER version 20260918" in c.detail
+    assert "metrics_calc_version" in [x.name for x in stale_checks(checks)]
+
+
+def test_no_metrics_at_all_is_a_failure_not_a_crash():
+    nav, macro = _fresh_inputs()
+    checks = evaluate_freshness(nav, macro, "20260920_000000", TODAY, LIMITS, PCT, LAG,
+                                metric_versions=[], min_uniform_share=0.98)
+    assert _by_name(checks)["metrics_calc_version"].ok is False
+
+
+def test_uniformity_check_is_skipped_when_versions_are_not_supplied():
+    nav, macro = _fresh_inputs()
+    assert "metrics_calc_version" not in _by_name(_run(nav, macro))
+
+
+def test_report_renders_the_uniformity_line_without_a_date_column():
+    nav, macro = _fresh_inputs()
+    checks = evaluate_freshness(nav, macro, "20260920_000000", TODAY, LIMITS, PCT, LAG,
+                                metric_versions=["20260917"] * 90 + ["20260918"] * 10, min_uniform_share=0.98)
+    report = format_report(checks)
+    assert "[STALE] metrics_calc_version" in report and "90.0%" in report
+
+
+def test_undated_version_labels_are_never_reported_as_the_newer_version():
+    nav, macro = _fresh_inputs()
+    checks = evaluate_freshness(nav, macro, "20260920_000000", TODAY, LIMITS, PCT, LAG,
+                                metric_versions=["20260917"] * 95 + ["PRE_V26_UNKNOWN"] * 5, min_uniform_share=0.98)
+    assert "NEWER version" not in _by_name(checks)["metrics_calc_version"].detail

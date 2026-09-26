@@ -520,9 +520,11 @@ Weight method: `score_proportional`.
 
 `scripts/launch/p3_build_portfolio.py` checks input freshness **before** scoring or persisting and
 exits `P3_EXIT_STALE_INPUTS` (2) if it fails: the 10th percentile of each active fund's newest
-monthly NAV, the last valid date of each regime input, and the newest harvest. The check is
-universe-level (a few frozen funds do not block a run); limits live in
-`shared/config.py::P3_FRESHNESS_MAX_AGE_DAYS`. `--allow-stale` overrides; `--dry-run` only warns.
+monthly NAV, the last valid date of each regime input, the newest harvest, and that at least
+`P3_MIN_UNIFORM_METRICS_SHARE` of the active funds have their metrics on ONE `CALC_VERSION` (a partial
+refresh after a version bump would mix incomparable metrics). The check is universe-level (a few frozen
+funds do not block a run); limits live in `shared/config.py::P3_FRESHNESS_MAX_AGE_DAYS`.
+`--allow-stale` overrides; `--dry-run` only warns.
 
 ### DB tables used by P3
 
