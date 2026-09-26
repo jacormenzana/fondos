@@ -205,6 +205,7 @@ import pandas as pd
 import re
 
 from core.io import get_kiid_for_isin
+from core.benchmark_normalizer import merge_benchmark_sources
 from core.kiid_parser import parse_kiid_generic, detect_wrong_kiid_document, resolve_stuck_wrong_doc
 from core.classify_utils import (
     detect_strategy        as _detect_strategy,
@@ -758,32 +759,19 @@ def run_block(
     # A single SELECT avoids per-ISIN queries in the hot loop.
     _bmk_by_isin: dict = {}
     try:
-        _bmk_rows = conn.execute("""
-            SELECT ISIN, source, asset_class, benchmark_role, benchmark_name, confidence
-            FROM fund_benchmarks
-            WHERE source IN ('MORNINGSTAR','KIID')
-        """).fetchall()
-        # Two-pass: MORNINGSTAR takes priority over KIID.
-        _seen_ms: set = set()
-        for _bi in _bmk_rows:
-            _b_isin, _b_src, _b_ac, _b_role, _b_name, _b_conf = _bi
-            if _b_src == 'MORNINGSTAR':
-                _bmk_by_isin[_b_isin] = {
-                    "asset_class":    _b_ac,
-                    "benchmark_role": _b_role or "asset_proxy",
-                    "benchmark_name": _b_name,
-                    "confidence":     _b_conf or "HIGH",
-                }
-                _seen_ms.add(_b_isin)
-        for _bi in _bmk_rows:
-            _b_isin, _b_src, _b_ac, _b_role, _b_name, _b_conf = _bi
-            if _b_src == 'KIID' and _b_isin not in _seen_ms:
-                _bmk_by_isin[_b_isin] = {
-                    "asset_class":    _b_ac,
-                    "benchmark_role": _b_role or "asset_proxy",
-                    "benchmark_name": _b_name,
-                    "confidence":     _b_conf or "MEDIUM",  # KIID = semi-redundant
-                }
+        # SAVEPOINT-protected: on Postgres a failed statement aborts the whole enclosing
+        # transaction, and this handler swallows the error so the run carries on with the same
+        # connection (2026-09-26 transaction-poisoning audit).
+        with fail_soft_block(conn):
+            _bmk_rows = conn.execute("""
+                SELECT ISIN, source, asset_class, benchmark_role, benchmark_name, confidence
+                FROM fund_benchmarks
+                WHERE source IN ('MORNINGSTAR','KIID')
+            """).fetchall()
+        # MORNINGSTAR takes priority over KIID, except that a Morningstar row with a NULL
+        # asset_class never hides a KIID row that has one. One implementation (P#11), pure and
+        # testable without this module: core.benchmark_normalizer.merge_benchmark_sources.
+        _bmk_by_isin = merge_benchmark_sources(_bmk_rows)
     except Exception as _bmk_err:
         print(f"[WARN] SC-H: no se pudo cargar fund_benchmarks: {_bmk_err}")
 
@@ -799,11 +787,13 @@ def run_block(
             # native ROUND()/CAST() break ties/round differently (round_sql/int_cast_sql's own
             # docstrings — same gap export_metrics.py already found and fixed for its q_* queries).
             _srri_expr = _int_cast_sql(_round_sql("value", 0, pg=_pg), pg=_pg)
-            for _si, _sv in conn.execute(
-                f"SELECT ISIN, {_srri_expr} FROM fund_metrics "
-                f"WHERE metric='srri_nav' AND horizon='since_inception' "
-                f"AND real_flag=0 AND value IS NOT NULL"
-            ).fetchall():
+            with fail_soft_block(conn):   # SAVEPOINT: the handler below swallows a failure
+                _srri_rows = conn.execute(
+                    f"SELECT ISIN, {_srri_expr} FROM fund_metrics "
+                    f"WHERE metric='srri_nav' AND horizon='since_inception' "
+                    f"AND real_flag=0 AND value IS NOT NULL"
+                ).fetchall()
+            for _si, _sv in _srri_rows:
                 if _sv is not None:
                     _srri_nav_by_isin[_si] = max(1, min(7, int(_sv)))
         except Exception as _srri_err:

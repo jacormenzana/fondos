@@ -18,6 +18,7 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Sequence
 
+import numpy as np
 import pandas as pd
 
 from shared.db import is_postgres_connection
@@ -28,6 +29,12 @@ DRIFT_STATS: tuple[str, ...] = (
 )
 
 _KEY_COLUMNS = ["population", "group_key", "stat_name"]
+
+# A difference below this is floating-point noise, not drift: the same statistic recomputed on the same
+# data can differ at ~1e-16 (summation order), and reporting it as "moved" buries the real shifts (found
+# 2026-09-26: 28 "non-zero deltas" that were all +0.0%). rtol 1e-9 = nine significant digits.
+NOISE_RTOL: float = 1e-9
+NOISE_ATOL: float = 1e-12
 
 
 @dataclass
@@ -60,6 +67,10 @@ def compare_runs(
     merged["delta"] = merged["stat_value_current"] - merged["stat_value_previous"]
     denom = merged["stat_value_previous"].abs()
     merged["pct_change"] = (merged["delta"] / denom).where(denom > 0)
+    merged["is_noise"] = np.isclose(
+        merged["stat_value_current"].astype(float), merged["stat_value_previous"].astype(float),
+        rtol=NOISE_RTOL, atol=NOISE_ATOL, equal_nan=True,
+    )
     merged = merged.rename(columns={
         "stat_value_previous": "previous_value", "stat_value_current": "current_value",
     })

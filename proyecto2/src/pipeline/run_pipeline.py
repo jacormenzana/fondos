@@ -756,7 +756,10 @@ def run(
                         f"current={CALC_VERSION}"
                     )
             except Exception:
-                pass  # column may not exist yet on first run after migration
+                # column may not exist yet on first run after migration. Roll back: on Postgres a
+                # failed statement aborts the transaction, and every later statement would fail
+                # with InFailedSqlTransaction (2026-09-26 transaction-poisoning audit).
+                conn.rollback()
 
         if _is_backfill and not dry_run:
             try:
@@ -769,7 +772,7 @@ def run(
                 )
                 conn.commit()
             except Exception:
-                pass  # never block pipeline on audit logging
+                conn.rollback()  # never block the pipeline on audit logging, nor leave the txn aborted
             logger.info(
                 f"[BACKFILL] Full recompute initiated | batch_id={RUN_BATCH_ID} | "
                 f"reason: {_backfill_reason}"
@@ -1477,6 +1480,9 @@ def run(
                     f"[ROLLING] Motor rolling falló (no fatal): {exc}\n"
                     f"{traceback.format_exc()}"
                 )
+                # Non-fatal, so the run continues on this connection (matview refresh, RUN_SUMMARY):
+                # clear a Postgres-aborted transaction first (transaction-poisoning audit).
+                conn.rollback()
 
         # BI layer: refresh once, after every per-ISIN commit and the rolling engine.
         if not dry_run and total_written > 0 and not _refresh_gold_matviews(conn, logger) \
@@ -1490,6 +1496,13 @@ def run(
             f"{traceback.format_exc()}"
         )
         # P2-12: swallow here so finally runs and rc=2 is returned to __main__
+        # The finally block writes RUN_SUMMARY on this same connection: clear an aborted
+        # Postgres transaction first or the ERROR summary would silently fail to persist.
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass  # connection already unusable; the finally block guards its own writes
 
     finally:
         elapsed_total = time.time() - t_run_start
@@ -1524,7 +1537,7 @@ def run(
                 )
                 conn.execute("COMMIT")
             except Exception:
-                pass  # never crash in finally
+                conn.rollback()  # never crash in finally; leave no aborted txn for what follows
 
             # v26: BACKFILL_END marker (logged after RUN_SUMMARY so it's always last)
             if _is_backfill:
@@ -1547,7 +1560,7 @@ def run(
                     )
                     conn.execute("COMMIT")
                 except Exception:
-                    pass  # never crash in finally
+                    conn.rollback()  # never crash in finally; leave no aborted txn for what follows
 
         # ── Observability signals ─────────────────────────────────────────────
         # Three diagnostic lines emitted after every non-dry run that processed

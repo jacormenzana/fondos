@@ -82,8 +82,10 @@ from shared.config import DB_PATH
 
 try:
     import psycopg
+    from psycopg.types.numeric import FloatLoader as _psycopg_float_loader
 except ImportError:  # pragma: no cover — psycopg3 optional until a caller actually asks for it
     psycopg = None
+    _psycopg_float_loader = None
 
 
 class _SqliteCompatRow:
@@ -483,6 +485,14 @@ def get_connection(
                 "not installed in this environment."
             )
         conn = psycopg.connect(_pg_dsn(), row_factory=_sqlite_compat_row_factory)
+        # SQLite parity for computed numerics: AVG()/SUM() over integers (and any ::numeric
+        # expression) come back from Postgres as decimal.Decimal, where SQLite returned a float.
+        # Decimal breaks float arithmetic (`Decimal * float` raises TypeError), pandas dtypes and
+        # Excel writes (a Decimal is written as text). The live DDL has no NUMERIC columns — every
+        # stored real is double precision — so this only touches computed expressions; registering
+        # the loader here restores the SQLite type contract once for every caller instead of a
+        # ::float8 cast at each query site (P#11).
+        conn.adapters.register_loader("numeric", _psycopg_float_loader)
         # db/pg/00_roles_schemas.sql sets this via ALTER ROLE for fondos_owner/fondos_app so that
         # unqualified table names (the whole point of the schema design — see the DDL's own
         # comment) resolve without query rewrites. Set it here too, defensively: found live

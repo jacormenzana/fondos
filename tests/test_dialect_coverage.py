@@ -224,3 +224,235 @@ def test_backend_default_rule_flags_a_hardcoded_default_but_not_none():
     assert find_hardcoded_backend_defaults('def f(a, backend="postgres"): pass')
     assert not find_hardcoded_backend_defaults("def export(o, *, backend=None): pass")
     assert not find_hardcoded_backend_defaults('def g(mode="sqlite"): pass')
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+# Rules 5 and 6 (2026-09-26 post-cutover hardening) — both are Postgres transaction hazards that
+# SQLite hides. Allowlists follow tests/_allowlist.py: {key: reason}, reason cites an FND ticket or
+# starts with 'DESIGN: <real explanation>'.
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+from _allowlist import bad_reasons  # noqa: E402  (grouped with the rules that use it)
+
+_CONN_NAMES = {"conn", "connection", "con", "cnx", "_conn"}
+
+# Rule 5 — "file" or "file::function". Bare `with conn:` is allowed nowhere by default.
+_WITH_CONN_EXEMPT: dict[str, str] = {}
+
+# Rule 6 — "file" or "file::function". Broad handlers around SQL that neither re-raise nor roll back.
+_EXCEPT_EXEMPT: dict[str, str] = {
+    "shared/backlog_client.py":
+        "DESIGN: uses its own short-lived connection to the separate `gestion` database and never touches "
+        "the pipeline connection, so a swallowed failure cannot poison the pipeline transaction",
+    "shared/load_fondos_to_postgres.py":
+        "DESIGN: legacy BI mirror (P4) that owns its connections and reads SQLite as its source; not on the "
+        "pipeline path",
+    "shared/init_db.py":
+        "DESIGN: creates the SQLite schema (SQLite does not abort the transaction on a failed statement)",
+    "shared/db.py::execute_fail_soft":
+        "DESIGN: this IS the fail-soft helper: on Postgres it wraps the statement in a SAVEPOINT (or runs in "
+        "autocommit, where there is no enclosing transaction) and rolls back to it on failure",
+    "proyecto1/core/sqlite_writer.py::_upsert_kiid_benchmark":
+        "DESIGN: the Postgres branch wraps its INSERT in SAVEPOINT bench_upsert and rolls back to it before "
+        "re-raising into this handler; the SQLite branch does not abort the transaction on a failed statement",
+}
+
+_TXN_CONTROL = re.compile(r"^\s*(ROLLBACK|COMMIT|BEGIN|SAVEPOINT|RELEASE|END)\b", re.I)
+_PROTECTING_CONTEXTS = {"fail_soft_block", "db_transaction", "transaction"}
+
+
+def _parents(tree: ast.AST) -> dict:
+    return {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+
+
+def _enclosing_function(node: ast.AST, parents: dict) -> str:
+    while node in parents:
+        node = parents[node]
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return node.name
+    return "<module>"
+
+
+def find_bare_with_conn(src: str) -> list[tuple[str, int]]:
+    """(function, line) of every `with conn:` — a bare connection used as a context manager. On
+    psycopg3 that COMMITS and then CLOSES the connection on a clean exit (sqlite3's only manages the
+    transaction), so the next statement raises 'the connection is closed'. Use
+    shared.db.db_transaction(conn)."""
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return []
+    parents = _parents(tree)
+    hits = []
+    for n in ast.walk(tree):
+        if isinstance(n, (ast.With, ast.AsyncWith)):
+            for item in n.items:
+                e = item.context_expr
+                if ((isinstance(e, ast.Name) and e.id in _CONN_NAMES)
+                        or (isinstance(e, ast.Attribute) and e.attr in _CONN_NAMES)):
+                    hits.append((_enclosing_function(n, parents), n.lineno))
+    return hits
+
+
+def _calls_in(nodes):
+    for root in nodes:
+        stack = [root]
+        while stack:
+            n = stack.pop()
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+                continue
+            if isinstance(n, ast.Call):
+                yield n
+            stack.extend(ast.iter_child_nodes(n))
+
+
+def _call_name(call: ast.Call) -> str:
+    f = call.func
+    return f.attr if isinstance(f, ast.Attribute) else f.id if isinstance(f, ast.Name) else ""
+
+
+def _is_broad(handler: ast.ExceptHandler) -> bool:
+    t = handler.type
+    if t is None:
+        return True
+    elts = t.elts if isinstance(t, ast.Tuple) else [t]
+    names = [e.id if isinstance(e, ast.Name) else e.attr if isinstance(e, ast.Attribute) else "" for e in elts]
+    return any(n in ("Exception", "BaseException") for n in names)
+
+
+def _handler_recovers(handler: ast.ExceptHandler) -> bool:
+    """Re-raises, or rolls the transaction back."""
+    for n in ast.walk(handler):
+        if isinstance(n, ast.Raise):
+            return True
+        if isinstance(n, ast.Call):
+            if _call_name(n) == "rollback":
+                return True
+            if (_call_name(n) == "execute" and n.args and isinstance(n.args[0], ast.Constant)
+                    and isinstance(n.args[0].value, str) and "ROLLBACK" in n.args[0].value.upper()):
+                return True
+    return False
+
+
+def _body_is_protected(body: list) -> bool:
+    for n in ast.walk(ast.Module(body=body, type_ignores=[])):
+        if isinstance(n, (ast.With, ast.AsyncWith)):
+            for item in n.items:
+                if isinstance(item.context_expr, ast.Call) and _call_name(item.context_expr) in _PROTECTING_CONTEXTS:
+                    return True
+    return False
+
+
+def find_swallowed_sql_errors(src: str) -> list[tuple[str, int]]:
+    """(function, line) of every broad `except` whose `try` body runs `.execute()` / `.executemany()`
+    and whose handler neither re-raises nor rolls back, with the statement not protected by
+    fail_soft_block / db_transaction. On Postgres a failed statement aborts the WHOLE transaction; a
+    swallowed error then makes every later statement on that connection fail with
+    InFailedSqlTransaction, far from the real cause (SQLite has no such behaviour, so the pattern
+    looked harmless for years). Statements that are themselves transaction control (ROLLBACK,
+    COMMIT, SAVEPOINT ...) are ignored."""
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return []
+    parents = _parents(tree)
+    hits = []
+    for t in ast.walk(tree):
+        if not isinstance(t, ast.Try):
+            continue
+        execs = [c for c in _calls_in(t.body) if _call_name(c) in ("execute", "executemany")]
+        real = [c for c in execs
+                if not (c.args and isinstance(c.args[0], ast.Constant) and isinstance(c.args[0].value, str)
+                        and _TXN_CONTROL.match(c.args[0].value))]
+        if not real or _body_is_protected(t.body):
+            continue
+        for h in t.handlers:
+            if _is_broad(h) and not _handler_recovers(h):
+                hits.append((_enclosing_function(h, parents), h.lineno))
+    return sorted(set(hits))
+
+
+def _exempt(allowlist: dict, rel: str, func: str) -> bool:
+    return rel in allowlist or f"{rel}::{func}" in allowlist
+
+
+def test_no_bare_with_conn_in_production_code():
+    offenders = [f"{rel}::{fn} (line {ln})" for rel, p in _production_sources()
+                 for fn, ln in find_bare_with_conn(p.read_text(encoding="utf-8", errors="replace"))
+                 if not _exempt(_WITH_CONN_EXEMPT, rel, fn)]
+    assert not offenders, (
+        "`with conn:` on a psycopg3 connection commits AND CLOSES it (found live 2026-09-20). Use "
+        "shared.db.db_transaction(conn):\n  " + "\n  ".join(offenders))
+
+
+def test_no_swallowed_sql_error_leaves_a_postgres_transaction_aborted():
+    offenders = [f"{rel}::{fn} (line {ln})" for rel, p in _production_sources()
+                 for fn, ln in find_swallowed_sql_errors(p.read_text(encoding="utf-8", errors="replace"))
+                 if not _exempt(_EXCEPT_EXEMPT, rel, fn)]
+    assert not offenders, (
+        "A broad `except` swallows a failed SQL statement without re-raising or rolling back. On "
+        "Postgres that leaves the whole transaction aborted and every later statement on the "
+        "connection fails with InFailedSqlTransaction. Fix it: wrap the statement in "
+        "shared.db.fail_soft_block(conn) (SAVEPOINT), use execute_fail_soft(), or call "
+        "conn.rollback() in the handler. Exempt only with a reason in _EXCEPT_EXEMPT:\n  "
+        + "\n  ".join(offenders))
+
+
+def test_rule_5_and_6_allowlists_are_well_formed_and_not_stale():
+    for name in ("_WITH_CONN_EXEMPT", "_EXCEPT_EXEMPT"):
+        assert not bad_reasons(globals()[name]), (
+            f"{name}: reason must cite an FND-#### ticket or start with 'DESIGN: <explanation >= 20 chars>'")
+    known_files = {rel for rel, _ in _production_sources()}
+    stale = [k for d in (_WITH_CONN_EXEMPT, _EXCEPT_EXEMPT) for k in d if k.split("::")[0] not in known_files]
+    assert not stale, f"exemptions naming files that no longer exist: {stale}"
+
+
+_SWALLOWS = '''
+def load(conn, isin):
+    try:
+        return conn.execute("SELECT * FROM t WHERE isin = %s", (isin,)).fetchone()
+    except Exception:
+        return None
+'''
+_ROLLS_BACK = '''
+def load(conn, isin):
+    try:
+        return conn.execute("SELECT * FROM t WHERE isin = %s", (isin,)).fetchone()
+    except Exception:
+        conn.rollback()
+        return None
+'''
+_SAVEPOINT_PROTECTED = '''
+def load(conn, isin):
+    try:
+        with fail_soft_block(conn):
+            return conn.execute("SELECT * FROM t WHERE isin = %s", (isin,)).fetchone()
+    except Exception:
+        return None
+'''
+_ONLY_TXN_CONTROL = '''
+def recover(conn):
+    try:
+        conn.execute("ROLLBACK")
+    except Exception:
+        pass
+'''
+_NARROW = '''
+def load(conn, isin):
+    try:
+        return conn.execute("SELECT 1").fetchone()
+    except KeyError:
+        return None
+'''
+
+
+def test_swallow_rule_flags_the_bad_shape_and_accepts_the_safe_ones():
+    assert find_swallowed_sql_errors(_SWALLOWS) == [("load", 5)]
+    for safe in (_ROLLS_BACK, _SAVEPOINT_PROTECTED, _ONLY_TXN_CONTROL, _NARROW):
+        assert find_swallowed_sql_errors(safe) == []
+
+
+def test_with_conn_rule_flags_a_bare_connection_but_not_a_transaction_helper():
+    assert find_bare_with_conn("def f(conn):\n    with conn:\n        conn.execute('x')\n") == [("f", 2)]
+    assert find_bare_with_conn("def f(conn):\n    with db_transaction(conn):\n        pass\n") == []
+    assert find_bare_with_conn("def f(self):\n    with self.conn:\n        pass\n") == [("f", 2)]

@@ -1104,6 +1104,8 @@ def run(
 # ============================================================
 
 if __name__ == "__main__":
+    from shared.backlog_client import install_excepthook
+    install_excepthook(object_name="macro_discovery.py")    # unhandled failure -> backlog ticket
     parser = argparse.ArgumentParser(description="Carga de datos macroeconomicos")
     parser.add_argument(
         "--source",

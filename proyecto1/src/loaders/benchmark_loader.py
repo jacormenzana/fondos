@@ -34,9 +34,14 @@ Modos de uso:
 
 Arquitectura:
     nav_sources (ms_id) → API Morningstar performance/v4 (requests directo)
-        → indexName
+        → MsPerformancePayload (pydantic: forma) → _classify_index_name (semantica)
         → benchmark_normalizer
         → fund_benchmarks (source=MORNINGSTAR)
+
+Cache negativa (Postgres, 2026-09-26): los ISINs para los que Morningstar no devuelve benchmark
+se registran en control.benchmark_ms_checks y `--mode update` no los vuelve a consultar hasta
+`next_check_at` (backoff 7/30/90 dias, shared/config.py). Nunca se guarda un centinela en
+fund_benchmarks: pipeline.py prefiere cualquier fila MORNINGSTAR sobre KIID.
 """
 
 import argparse
@@ -45,9 +50,12 @@ import sys
 import time
 import random
 import requests
-from datetime import datetime
+from collections import Counter, defaultdict
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Callable, Optional
+
+from pydantic import BaseModel, ConfigDict, StrictStr, ValidationError
 
 _ROOT = Path(__file__).resolve().parents[3]   # c:/desarrollo/fondos
 _P1   = _ROOT / "proyecto1"                     # c:/desarrollo/fondos/proyecto1
@@ -55,8 +63,17 @@ _P1   = _ROOT / "proyecto1"                     # c:/desarrollo/fondos/proyecto1
 sys.path.insert(0, str(_ROOT))   # para shared.*
 sys.path.insert(0, str(_P1))     # para core.*
 
-from shared.config import DB_PATH
-from shared.db import get_connection, is_postgres_connection
+from shared.config import (
+    DB_PATH,
+    BENCH_NEGATIVE_BACKOFF_DAYS,
+    BENCH_ANOMALY_MIN_FUNDS,
+    BENCH_ANOMALY_MIN_SHARE,
+    BENCH_SCHEMA_ERROR_LIMIT,
+    BENCH_CONSECUTIVE_ERROR_LIMIT,
+    BENCH_MAX_ERROR_RATE,
+    BENCH_EXIT_NETWORK,
+)
+from shared.db import get_connection, is_postgres_connection, execute_fail_soft
 from core.benchmark_normalizer import normalize_benchmark, clean_benchmark
 
 try:
@@ -91,7 +108,49 @@ MS_COOLDOWN_SECS  = (15, 30)      # duracion pausa larga
 
 
 # ============================================================
-# Extraccion de benchmark desde mstarpy
+# Validacion de la respuesta de Morningstar
+# ============================================================
+# Dos capas, deliberadamente separadas:
+#   1. FORMA (pydantic): el cuerpo es un objeto y `indexName` es un string o null. Un cambio de
+#      forma del endpoint es un SCHEMA ERROR — nunca se cachea como "sin benchmark".
+#   2. SEMANTICA (funcion pura): pydantic valida tipos, no sabe que strings son basura. La lista
+#      de placeholders y las comprobaciones estructurales viven en _classify_index_name.
+
+class MsPerformancePayload(BaseModel):
+    """Subconjunto de performance/v4 que usa el loader. Campos extra ignorados."""
+    model_config = ConfigDict(extra="ignore")
+
+    indexName:    Optional[StrictStr] = None   # StrictStr: un int/dict/list NO se coacciona a str
+    categoryName: Optional[Any]       = None   # solo informativo (raw_text); nunca falla la carga
+
+
+# Placeholders del proveedor que NO son un benchmark (comparacion en minusculas).
+_PLACEHOLDER_INDEX_NAMES = frozenset({
+    "none", "null", "n/a", "na", "-", "--", "tbd", "unclassified", "not benchmarked",
+})
+
+
+def _classify_index_name(raw: Optional[str]) -> tuple[Optional[str], str]:
+    """Clasifica un `indexName` ya validado en forma. Devuelve (nombre_limpio, tipo):
+        'OK'          — nombre utilizable (devuelto sin espacios laterales)
+        'NONE'        — ausente, null o en blanco: Morningstar no asigna benchmark
+        'PLACEHOLDER' — presente pero no es un benchmark (denylist o estructura invalida:
+                        < 4 caracteres, sin ninguna letra, solo puntuacion)
+    """
+    if raw is None:
+        return None, "NONE"
+    s = raw.strip()
+    if not s:
+        return None, "NONE"
+    if s.lower() in _PLACEHOLDER_INDEX_NAMES:
+        return None, "PLACEHOLDER"
+    if len(s) < 4 or not any(ch.isalpha() for ch in s):
+        return None, "PLACEHOLDER"
+    return s, "OK"
+
+
+# ============================================================
+# Extraccion de benchmark
 # ============================================================
 
 def _random_ua() -> str:
@@ -108,9 +167,18 @@ def _fetch_benchmark_direct(ms_id: str) -> dict:
         indexName  — nombre del benchmark asignado por Morningstar
         categoryName — categoria del fondo
 
-    Devuelve dict con claves: benchmark_name, raw_text, error
+    Devuelve dict con claves:
+        benchmark_name — nombre limpio, o None
+        raw_text       — categoryName (referencia)
+        error          — fallo de transporte / HTTP (reintentable; nunca se cachea)
+        kind           — 'OK' | 'NONE' | 'PLACEHOLDER' | 'SCHEMA' | 'ERROR'
+        rejected_raw   — valor bruto rechazado como placeholder (kind='PLACEHOLDER')
+        schema_error   — descripcion del fallo de forma (kind='SCHEMA')
     """
-    result = {"benchmark_name": None, "raw_text": None, "error": None}
+    result = {
+        "benchmark_name": None, "raw_text": None, "error": None,
+        "kind": "NONE", "rejected_raw": None, "schema_error": None,
+    }
 
     url = _MS_PERF_URL.format(ms_id=ms_id)
     headers = {
@@ -126,24 +194,44 @@ def _fetch_benchmark_direct(ms_id: str) -> dict:
         )
         if r.status_code != 200:
             result["error"] = f"HTTP {r.status_code}"
+            result["kind"] = "ERROR"
             return result
 
-        data = r.json()
+        try:
+            data = r.json()
+        except ValueError:
+            result["schema_error"] = "el cuerpo no es JSON"
+            result["kind"] = "SCHEMA"
+            return result
         if not isinstance(data, dict):
-            result["error"] = "respuesta no es dict"
+            result["schema_error"] = f"el cuerpo no es un objeto ({type(data).__name__})"
+            result["kind"] = "SCHEMA"
             return result
 
-        index_name = data.get("indexName")
-        if index_name and isinstance(index_name, str) and len(index_name) > 3:
-            result["benchmark_name"] = index_name
+        try:
+            payload = MsPerformancePayload.model_validate(data)
+        except ValidationError as e:
+            first = e.errors()[0]
+            result["schema_error"] = (
+                f"{'.'.join(str(p) for p in first['loc'])}: {first['msg']}"
+            )[:200]
+            result["kind"] = "SCHEMA"
+            return result
+
+        name, kind = _classify_index_name(payload.indexName)
+        result["kind"] = kind
+        if kind == "OK":
+            result["benchmark_name"] = name
+        elif kind == "PLACEHOLDER":
+            result["rejected_raw"] = payload.indexName
 
         # Guardar categoryName como raw_text para referencia
-        cat = data.get("categoryName")
-        if cat:
-            result["raw_text"] = str(cat)[:200]
+        if payload.categoryName:
+            result["raw_text"] = str(payload.categoryName)[:200]
 
     except Exception as e:
         result["error"] = str(e)[:100]
+        result["kind"] = "ERROR"
 
     return result
 
@@ -188,7 +276,7 @@ def _write_benchmark(
             return f"NORMALIZADO → {norm.canonical_id}"
         return f"RAW_ONLY → {raw_name[:60]}"
 
-    now = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S')
+    now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S')
 
     # Postgres migration Phase 5c (2026-09-20): INSERT OR REPLACE -> ON CONFLICT DO UPDATE.
     # Faithful translation, not just placeholder swap: SQLite's REPLACE is DELETE+INSERT, so any
@@ -246,6 +334,98 @@ def _write_benchmark(
 
 
 # ============================================================
+# Cache negativa (control.benchmark_ms_checks) — solo Postgres
+# ============================================================
+
+def _cache_available(conn) -> bool:
+    """True si el backend es Postgres y control.benchmark_ms_checks existe y es legible.
+    Devuelve False (sin excepcion) en SQLite o si el DDL aun no se aplico: el loader sigue
+    funcionando, simplemente sin cache."""
+    if not is_postgres_connection(conn):
+        return False
+    ok = execute_fail_soft(conn, "SELECT 1 FROM benchmark_ms_checks LIMIT 0")
+    conn.commit()
+    return ok
+
+
+def _negative_next_check(n_misses: int, now: datetime) -> datetime:
+    """next_check_at tras el n-esimo fallo consecutivo (backoff en shared/config.py)."""
+    days = BENCH_NEGATIVE_BACKOFF_DAYS[min(n_misses, len(BENCH_NEGATIVE_BACKOFF_DAYS)) - 1]
+    return now + timedelta(days=days)
+
+
+def _record_negative(conn, isin: str, now: datetime) -> None:
+    """Registra (o incrementa) el fallo de un ISIN. Best-effort: nunca interrumpe la carga."""
+    row = conn.execute(
+        "SELECT n_misses FROM benchmark_ms_checks WHERE isin = %s", (isin,)
+    ).fetchone()
+    n = (row[0] if row else 0) + 1
+    execute_fail_soft(conn, """
+        INSERT INTO benchmark_ms_checks (isin, n_misses, last_checked_at, next_check_at)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (isin) DO UPDATE SET
+            n_misses        = excluded.n_misses,
+            last_checked_at = excluded.last_checked_at,
+            next_check_at   = excluded.next_check_at
+    """, (isin, n, now, _negative_next_check(n, now)))
+    conn.commit()
+
+
+def _clear_negative(conn, isin: str) -> None:
+    """Borra el fallo registrado de un ISIN cuando Morningstar ya devuelve benchmark."""
+    execute_fail_soft(conn, "DELETE FROM benchmark_ms_checks WHERE isin = %s", (isin,))
+    conn.commit()
+
+
+def _get_probe_isins(conn) -> list:
+    """Hasta 2 ISINs que YA tienen benchmark Morningstar normalizado: sirven para comprobar que
+    el endpoint sigue devolviendo `indexName` antes de cachear ningun fallo."""
+    rows = conn.execute("""
+        SELECT ns.isin, ns.source_id
+        FROM nav_sources ns
+        JOIN fund_benchmarks fb ON fb.isin = ns.isin AND fb.source = 'MORNINGSTAR'
+        WHERE ns.status = 'OK' AND fb.benchmark_id IS NOT NULL
+        ORDER BY ns.isin
+        LIMIT 2
+    """).fetchall()
+    return [(r[0], r[1]) for r in rows]
+
+
+def _probe_endpoint(conn, fetch: Optional[Callable[[str], dict]] = None) -> str:
+    """'skipped' (menos de 2 ISINs con benchmark: BD nueva/DR), 'ok' (al menos uno sigue
+    devolviendo un indexName valido) o 'failed' (ninguno lo devuelve: el endpoint cambio)."""
+    fetch = fetch or _fetch_benchmark_direct
+    probes = _get_probe_isins(conn)
+    if len(probes) < 2:
+        return "skipped"
+    for isin, ms_id in probes:
+        if fetch(ms_id or isin)["kind"] == "OK":
+            return "ok"
+    return "failed"
+
+
+def _load_known_raw_names(conn) -> set:
+    """Nombres brutos de indexName que YA estan mapeados a un benchmark normalizado: un nombre
+    conocido nunca activa el circuit-breaker de anomalias (alta legitima masiva)."""
+    rows = conn.execute("""
+        SELECT DISTINCT benchmark_raw
+        FROM fund_benchmarks
+        WHERE source = 'MORNINGSTAR' AND benchmark_id IS NOT NULL AND benchmark_raw IS NOT NULL
+    """).fetchall()
+    return {r[0] for r in rows}
+
+
+def _log_bench_event(conn, isin: Optional[str], status: str, message: str, dry_run: bool) -> None:
+    """Una fila en ingestion_log (step='BENCH_MS') para que placeholders, errores de forma y
+    anomalias sean consultables a lo largo del tiempo. No-op en dry-run."""
+    if dry_run:
+        return
+    from core.sqlite_writer import log_ingestion   # import diferido: modulo pesado
+    log_ingestion(conn, isin, "BENCH_MS", status, (message or "")[:500])
+    conn.commit()
+
+
+# ============================================================
 # Funcion principal de carga
 # ============================================================
 
@@ -255,19 +435,49 @@ def run_benchmark_load(
     dry_run:      bool = False,
     verbose:      bool = True,
     debug:        bool = False,
+    use_cache:    Optional[bool] = None,
+    fetch:        Optional[Callable[[str], dict]] = None,
+    throttle:     bool = True,
 ) -> dict:
     """
     Ejecuta la extraccion y persistencia de benchmarks para una lista de ISINs.
 
     Parametros:
-        conn:     conexion a fondos.sqlite
+        conn:     conexion a la BD
         isins:    lista de (isin, ms_id) — ms_id puede ser None
         dry_run:  si True, no escribe en BD
         verbose:  si True, imprime progreso fondo a fondo
+        use_cache: None = automatico (Postgres con control.benchmark_ms_checks disponible y sin
+                   dry-run); False la desactiva. `fetch`/`throttle` existen para tests.
 
-    Devuelve dict con contadores: ok, no_benchmark, error, total
+    Devuelve dict con contadores: ok, no_benchmark, error, total, placeholder, schema_error,
+    quarantined, negatives_recorded, probe.
     """
-    counters = {'ok': 0, 'no_benchmark': 0, 'error': 0, 'total': len(isins)}
+    fetch = fetch or _fetch_benchmark_direct
+    counters = {
+        'ok': 0, 'no_benchmark': 0, 'error': 0, 'total': len(isins),
+        'placeholder': 0, 'schema_error': 0, 'quarantined': 0,
+        'negatives_recorded': 0, 'probe': 'n/a',
+        'attempted': 0, 'aborted': False,
+    }
+    consecutive_errors = 0
+
+    if use_cache is None:
+        use_cache = (not dry_run) and _cache_available(conn)
+    suppress_negatives = False
+    if use_cache:
+        counters['probe'] = _probe_endpoint(conn, fetch)
+        if counters['probe'] == 'failed':
+            suppress_negatives = True
+            print("  [WARN] [BENCH-PROBE] ningun ISIN con benchmark conocido devolvio indexName: "
+                  "el endpoint pudo cambiar. No se registraran fallos en la cache en esta carga.")
+        elif counters['probe'] == 'skipped' and verbose:
+            print("  [INFO] [BENCH-PROBE] omitida (menos de 2 ISINs con benchmark Morningstar)")
+
+    known_names = _load_known_raw_names(conn)
+    name_counts: Counter = Counter()
+    written_by_name: dict = defaultdict(list)
+    quarantined: set = set()
 
     for idx, (isin, ms_id) in enumerate(isins, 1):
         if verbose:
@@ -278,17 +488,45 @@ def run_benchmark_load(
             secs = random.uniform(*MS_COOLDOWN_SECS)
             if verbose:
                 print(f"\n  [COOLDOWN] {secs:.0f}s tras {counters['ok']} fondos OK")
-            time.sleep(secs)
+            if throttle:
+                time.sleep(secs)
 
         # Llamada directa a la API — sin mstarpy, sin Selenium
         effective_ms_id = ms_id or isin
-        bench_data = _fetch_benchmark_direct(effective_ms_id)
+        bench_data = fetch(effective_ms_id)
+        counters['attempted'] += 1
 
         if bench_data["error"]:
             counters['error'] += 1
+            consecutive_errors += 1
             if verbose:
                 print(f"ERROR ({bench_data['error']})")
-            time.sleep(random.uniform(*MS_DELAY_ERR))
+            if consecutive_errors >= BENCH_CONSECUTIVE_ERROR_LIMIT:
+                # An outage, not an isolated failure: further calls only burn time (each one waits
+                # out its own retries). Nothing has been cached for these ISINs.
+                counters['aborted'] = True
+                print(f"\n  [ERROR] [BENCH-NETWORK] {consecutive_errors} consultas consecutivas "
+                      f"fallidas: se detiene la carga ({counters['attempted']} de {counters['total']} "
+                      f"intentadas). Ultimo error: {bench_data['error']}")
+                break
+            if throttle:
+                time.sleep(random.uniform(*MS_DELAY_ERR))
+            continue
+        consecutive_errors = 0
+
+        # Error de FORMA: el endpoint cambio de contrato. Nunca se cachea; si se repite, deja
+        # de registrar fallos en esta carga.
+        if bench_data["kind"] == "SCHEMA":
+            counters['schema_error'] += 1
+            _log_bench_event(conn, isin, "SCHEMA", bench_data["schema_error"], dry_run)
+            if verbose:
+                print(f"SCHEMA_ERROR ({bench_data['schema_error']})")
+            if counters['schema_error'] > BENCH_SCHEMA_ERROR_LIMIT and not suppress_negatives:
+                suppress_negatives = True
+                print(f"  [WARN] [BENCH-SCHEMA] mas de {BENCH_SCHEMA_ERROR_LIMIT} respuestas con "
+                      f"forma inesperada: no se registraran fallos en la cache en esta carga.")
+            if throttle:
+                time.sleep(random.uniform(*MS_DELAY_ERR))
             continue
 
         # Modo diagnostico
@@ -296,24 +534,63 @@ def run_benchmark_load(
             print(f"\n    [DEBUG] benchmark_name={bench_data['benchmark_name']!r}")
             print(f"    [DEBUG] raw_text={str(bench_data['raw_text'])[:80]!r}")
 
+        if bench_data["kind"] == "PLACEHOLDER":
+            counters['placeholder'] += 1
+            _log_bench_event(conn, isin, "PLACEHOLDER", str(bench_data["rejected_raw"]), dry_run)
+
+        raw = bench_data['benchmark_name']
+
+        # Circuit-breaker de anomalias: un nombre NUEVO (no mapeado antes) que aparece en muchos
+        # fondos de golpe es casi seguro un placeholder nuevo del proveedor.
+        if raw:
+            if raw in quarantined:
+                counters['quarantined'] += 1
+                if verbose:
+                    print("QUARANTINED")
+                if throttle:
+                    time.sleep(random.uniform(*MS_DELAY_OK))
+                continue
+            name_counts[raw] += 1
+            if raw not in known_names:
+                written_by_name[raw].append(isin)
+                if (name_counts[raw] > BENCH_ANOMALY_MIN_FUNDS
+                        and name_counts[raw] / idx > BENCH_ANOMALY_MIN_SHARE):
+                    quarantined.add(raw)
+                    counters['quarantined'] += 1
+                    pct = 100.0 * name_counts[raw] / idx
+                    msg = (f"'{raw}' en {name_counts[raw]} fondos ({pct:.0f}% de los "
+                           f"procesados) y no es un benchmark conocido: en cuarentena. "
+                           f"Ya escritos (revisar): {', '.join(written_by_name[raw][:25])}")
+                    print(f"\n  [WARN] [BENCH-ANOMALY] {msg}")
+                    _log_bench_event(conn, None, "ANOMALY", msg, dry_run)
+                    if verbose:
+                        print("QUARANTINED")
+                    continue
+
         # Persistir
         status = _write_benchmark(
             conn,
             isin,
-            bench_data['benchmark_name'],
+            raw,
             None,
             dry_run,
         )
 
         if 'NORMALIZADO' in status or 'RAW_ONLY' in status:
             counters['ok'] += 1
+            if use_cache:
+                _clear_negative(conn, isin)
         else:
             counters['no_benchmark'] += 1
+            if use_cache and not suppress_negatives:
+                _record_negative(conn, isin, datetime.now(timezone.utc))
+                counters['negatives_recorded'] += 1
 
         if verbose:
             print(status)
 
-        time.sleep(random.uniform(*MS_DELAY_OK))
+        if throttle:
+            time.sleep(random.uniform(*MS_DELAY_OK))
 
     return counters
 
@@ -327,13 +604,16 @@ def _get_isins_for_load(
     only_missing:  bool = False,
     sample:        Optional[int] = None,
     isin_filter:   Optional[str] = None,
+    recheck_negatives: bool = False,
 ) -> list[tuple[str, Optional[str]]]:
     """
     Selecciona los ISINs a procesar desde nav_sources.
 
-    only_missing: solo ISINs sin entrada en fund_benchmarks (source=MORNINGSTAR)
+    only_missing: solo ISINs sin entrada en fund_benchmarks (source=MORNINGSTAR); en Postgres
+                  tambien omite los que estan en la cache negativa hasta su next_check_at
     sample:       limitar a N ISINs aleatorios
     isin_filter:  procesar solo este ISIN concreto
+    recheck_negatives: ignora la cache negativa (solo tiene efecto con only_missing)
     """
     ph = "%s" if is_postgres_connection(conn) else "?"
 
@@ -346,7 +626,7 @@ def _get_isins_for_load(
         return [(r[0], r[1]) for r in rows]
 
     if only_missing:
-        rows = conn.execute("""
+        sql = """
             SELECT ns.isin, ns.source_id
             FROM nav_sources ns
             WHERE ns.status = 'OK'
@@ -354,8 +634,17 @@ def _get_isins_for_load(
                 SELECT 1 FROM fund_benchmarks fb
                 WHERE fb.ISIN = ns.isin AND fb.source = 'MORNINGSTAR'
               )
-            ORDER BY ns.isin
-        """).fetchall()
+        """
+        params: tuple = ()
+        if not recheck_negatives and _cache_available(conn):
+            sql += """
+              AND NOT EXISTS (
+                SELECT 1 FROM benchmark_ms_checks c
+                WHERE c.isin = ns.isin AND c.next_check_at > %s
+              )
+            """
+            params = (datetime.now(timezone.utc),)
+        rows = conn.execute(sql + " ORDER BY ns.isin", params).fetchall()
     else:
         rows = conn.execute("""
             SELECT ns.isin, ns.source_id
@@ -375,6 +664,37 @@ def _get_isins_for_load(
 # ============================================================
 # Analisis de gaps (diagnostico)
 # ============================================================
+
+def _print_bench_telemetry(conn, days: int = 30) -> None:
+    """Resumen de los eventos BENCH_MS (PLACEHOLDER / SCHEMA / ANOMALY) de los ultimos `days`
+    dias con ejemplos: una subida o un nombre valido rechazado se ve en la salida normal de
+    cada ejecucion, sin depender de una revision manual."""
+    ph = "%s" if is_postgres_connection(conn) else "?"
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    since_param = since if is_postgres_connection(conn) else since.isoformat(timespec="seconds")
+    try:
+        counts = conn.execute(f"""
+            SELECT status, COUNT(*)
+            FROM ingestion_log
+            WHERE step = 'BENCH_MS' AND created_at >= {ph}
+            GROUP BY status
+            ORDER BY status
+        """, (since_param,)).fetchall()
+        print(f"\n  Eventos BENCH_MS ultimos {days} dias:")
+        if not counts:
+            print("    (ninguno)")
+        for status, n in counts:
+            samples = conn.execute(f"""
+                SELECT message FROM ingestion_log
+                WHERE step = 'BENCH_MS' AND status = {ph} AND created_at >= {ph}
+                ORDER BY id DESC LIMIT 5
+            """, (status, since_param)).fetchall()
+            shown = "; ".join(str(s[0])[:60] for s in samples)
+            print(f"    {status:12s} {n:5d}   ej.: {shown}")
+    except Exception as e:
+        conn.rollback()
+        print(f"  [WARN] no se pudo leer ingestion_log para el resumen BENCH_MS: {e}")
+
 
 def run_gap_analysis(conn: sqlite3.Connection) -> None:
     """
@@ -438,24 +758,49 @@ def run_gap_analysis(conn: sqlite3.Connection) -> None:
     print(f"    Nuevos (sin KIID):         {solo_ms:5d}")
     print(f"\n  Sin ninguna fuente:          {sin_nada:5d} ({sin_nada/total*100:.1f}%)")
 
-    # Top benchmarks por proveedor
+    # Top benchmarks por proveedor.
+    # Postgres (a diferencia del bare-column de SQLite) exige que toda columna no agregada figure
+    # en el GROUP BY: MIN(benchmark_name) es fiel porque benchmark_name = canonical_name depende
+    # funcionalmente de benchmark_id; COUNT(DISTINCT) avisa si esa dependencia se rompiera.
     print(f"\n  Top 10 benchmarks Morningstar:")
     rows = conn.execute("""
-        SELECT benchmark_id, benchmark_name, COUNT(*) as n
+        SELECT benchmark_id,
+               MIN(benchmark_name)            AS benchmark_name,
+               COUNT(DISTINCT benchmark_name) AS n_names,
+               COUNT(*)                       AS n
         FROM fund_benchmarks
         WHERE source = 'MORNINGSTAR' AND benchmark_id IS NOT NULL
         GROUP BY benchmark_id
-        ORDER BY n DESC LIMIT 10
+        ORDER BY n DESC, benchmark_id
+        LIMIT 10
     """).fetchall()
     for r in rows:
-        print(f"    {r[2]:4d}x  {r[0]:30s}  {r[1]}")
+        flag = f"  [WARN {r[2]} nombres/id]" if r[2] > 1 else ""
+        print(f"    {r[3]:4d}x  {r[0]:30s}  {r[1]}{flag}")
+
+    _print_bench_telemetry(conn)
 
 
 # ============================================================
 # Entry point
 # ============================================================
 
-def main() -> None:
+def _network_verdict(counters: dict) -> Optional[str]:
+    """None when the run is acceptable, else why it must exit BENCH_EXIT_NETWORK. Pure, so it is
+    unit-tested. A run that stopped early on consecutive failures, or whose failure rate over the
+    calls actually made exceeds BENCH_MAX_ERROR_RATE, must not look clean: the ISINs it could not
+    evaluate keep their previous state and are retried next run (errors are never cached)."""
+    if counters.get('aborted'):
+        return (f"carga detenida tras {BENCH_CONSECUTIVE_ERROR_LIMIT} fallos consecutivos "
+                f"({counters['error']} errores en {counters['attempted']} consultas).")
+    attempted = counters.get('attempted', 0)
+    if attempted >= 20 and counters['error'] > BENCH_MAX_ERROR_RATE * attempted:
+        return (f"{counters['error']} de {attempted} consultas fallaron "
+                f"({100.0 * counters['error'] / attempted:.0f}% > {100 * BENCH_MAX_ERROR_RATE:.0f}% permitido).")
+    return None
+
+
+def main() -> int:
     parser = argparse.ArgumentParser(
         description="Carga de benchmarks desde Morningstar → fund_benchmarks"
     )
@@ -500,6 +845,12 @@ def main() -> None:
         action="store_true",
         help="Mostrar dict completo de information() para diagnostico",
     )
+    parser.add_argument(
+        "--recheck-negatives",
+        action="store_true",
+        help="Ignorar la cache negativa: volver a consultar ISINs sin benchmark aunque no "
+             "les toque todavia (solo Postgres)",
+    )
     args = parser.parse_args()
 
     conn = get_connection()
@@ -507,7 +858,7 @@ def main() -> None:
     if args.mode == "gaps":
         run_gap_analysis(conn)
         conn.close()
-        return
+        return 0
 
     only_missing = (args.mode == "update") or args.only_missing
 
@@ -516,13 +867,15 @@ def main() -> None:
         only_missing=only_missing,
         sample=args.sample,
         isin_filter=args.isin,
+        recheck_negatives=args.recheck_negatives,
     )
 
     if not isins:
         print("Sin ISINs que procesar. "
-              "Ejecuta primero nav_discovery --mode discover.")
+              "Ejecuta primero nav_discovery --mode discover "
+              "(o usa --recheck-negatives si todos estan en la cache negativa).")
         conn.close()
-        return
+        return 0
 
     print(f"\n{'[DRY-RUN] ' if args.dry_run else ''}"
           f"Benchmark Loader — Morningstar")
@@ -543,11 +896,29 @@ def main() -> None:
     print(f"  Con benchmark:  {counters['ok']:5d}")
     print(f"  Sin benchmark:  {counters['no_benchmark']:5d}  (Morningstar no lo tiene asignado)")
     print(f"  Errores:        {counters['error']:5d}")
-    if not args.dry_run:
-        run_gap_analysis(conn)
+    print(f"  Placeholders:   {counters['placeholder']:5d}  (rejected_placeholder: {counters['placeholder']})")
+    print(f"  Forma inesp.:   {counters['schema_error']:5d}  (schema_errors: {counters['schema_error']})")
+    print(f"  Cuarentena:     {counters['quarantined']:5d}")
+    print(f"  Cache negativa: {counters['negatives_recorded']:5d}  (sonda: {counters['probe']})")
+    # Solo lectura: se ejecuta tambien en dry-run para que este tramo se ejercite en cada
+    # ensayo (el GroupingError de 2026-09-26 solo aparecia tras una carga real).
+    run_gap_analysis(conn)
 
     conn.close()
 
+    # Exit code (2026-09-26 rehearsal: an outage made 610 of 687 calls fail and the run still
+    # exited 0). Errors are never cached, so a failed run leaves nothing behind that a re-run
+    # would not simply retry.
+    verdict = _network_verdict(counters)
+    if verdict:
+        print(f"\n  [ERROR] [BENCH-NETWORK] {verdict}")
+        print("  Los errores no se cachean: al volver la red basta relanzar el paso "
+              "(P1_P2_Complete.bat --from 1).")
+        return BENCH_EXIT_NETWORK
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    from shared.backlog_client import install_excepthook
+    install_excepthook(object_name="benchmark_loader.py")   # unhandled failure -> backlog ticket
+    sys.exit(main())

@@ -563,6 +563,7 @@ def cmd_report_codsus(args, conn=None, backend=None) -> None:
             for isin in sorted(in_master_not_harvest)[:10]:
                 print(f"    {isin}")
     except Exception as exc:
+        conn.rollback()   # a failed query aborts the Postgres transaction; the caller may reuse conn
         print(f"  Reconciliation skipped: {exc}")
 
     if own_conn:

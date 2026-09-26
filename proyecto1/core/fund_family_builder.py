@@ -741,6 +741,8 @@ def _validate_family_consistency(conn: sqlite3.Connection) -> list:
 
 if __name__ == "__main__":
     import argparse
+    from shared.backlog_client import install_excepthook
+    install_excepthook(object_name="fund_family_builder.py")   # unhandled failure -> backlog ticket
 
     parser = argparse.ArgumentParser(
         description="Asigna fund_family_id agrupando clases del mismo fondo"

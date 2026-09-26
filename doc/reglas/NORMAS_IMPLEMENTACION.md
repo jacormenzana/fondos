@@ -301,6 +301,39 @@ Si la sesión usa flujo Opus → Sonnet:
 
 ---
 
+## §7. Guardas estáticas de dialecto (SQLite → Postgres) y protocolo de allowlists
+
+Origen: el 2026-09-26 `P1_P2_Complete.bat` abortó en el primer ciclo posterior al cutover porque
+`benchmark_loader.run_gap_analysis()` seleccionaba una columna no agregada con `GROUP BY` (SQLite lo
+tolera, Postgres lanza `GroupingError`). Estaba en un tramo diagnóstico que solo se ejecuta tras una
+carga real, así que ningún ensayo lo había ejecutado nunca. Un regex no puede decidir si SQL es
+válido; el parser de Postgres sí, sin ejecutar nada (`EXPLAIN` planifica, no corre).
+
+| Guarda | Fichero | Qué impide |
+|--------|---------|-----------|
+| Barrido EXPLAIN | `tests/test_sql_explain_sweep_pg.py` (+ `tests/_sql_sites.py`) | Toda sentencia que el código de producción ejecuta y que resuelve estáticamente se EXPLAINea contra el DDL real de `db/pg/`. Detecta `GroupingError`, función/columna/tabla inexistente, sintaxis. Las sentencias no resolubles (listas de columnas dinámicas) se fijan en un baseline de conjunto exacto y se EXPLAINean parcialmente con el fragmento dinámico sustituido por `NULL`. |
+| SQL solo-SQLite acotado | ídem | `PRAGMA`, `INSERT OR REPLACE`, `datetime('now')`, `julianday`… solo dentro de funciones que bifurcan por dialecto. |
+| INSERT idempotente | ídem | Todo `INSERT` en la ruta Postgres lleva `ON CONFLICT`, o es `DELETE`+`INSERT` de la misma tabla en la misma función, o su tabla figura como append-only. Es lo que hace seguro `P1_P2_Complete.bat --from N` (re-ejecuta el paso N completo). |
+| `with conn:` | `tests/test_dialect_coverage.py` | En psycopg3 `with conn:` hace commit **y cierra** la conexión; usar `shared.db.db_transaction(conn)`. |
+| Error SQL tragado | ídem | Un `except Exception` que traga una sentencia fallida sin `raise` ni `rollback()` deja abortada toda la transacción Postgres (`InFailedSqlTransaction` en cada sentencia posterior, lejos de la causa). Usar `fail_soft_block(conn)`, `execute_fail_soft()` o `conn.rollback()`. |
+
+**Protocolo de allowlists** (`tests/_allowlist.py`). Cada entrada es `{clave: motivo}` y el motivo debe
+citar un ticket del backlog (`FND-0123 …`) o empezar por `DESIGN:` seguido de una explicación real
+(≥ 20 caracteres). Reglas: (1) una clave obsoleta (su destino ya no existe) **hace fallar** la suite;
+(2) el mensaje de fallo imprime la línea exacta a añadir; (3) la evidencia de una exención va en el
+mensaje de commit y se señala al operador para su revisión; (4) solo es exento un manejador cuya
+conexión no puede ser Postgres (p. ej. una rama SQLite), nunca porque «normalmente funciona»;
+(5) un hallazgo real se corrige en su módulo (P#7), no se exime. Añadir una exención es una decisión,
+no un hábito.
+
+**Reglas de precisión al escribir SQL portable:** `MIN()`/`MAX()` (o incluir la columna en el
+`GROUP BY`) para toda columna no agregada; placeholders `%s` con la variante SQLite bajo
+`is_postgres_connection(conn)`; el nombre de columna `window` es `window_label` en Postgres.
+`get_connection()` registra un loader `numeric → float` para que `AVG()`/`SUM()` devuelvan `float`
+como SQLite (el DDL vivo no tiene columnas NUMERIC).
+
+---
+
 **FIN NORMAS DE IMPLEMENTACIÓN**
 
 *Creado 2026-07-12. Absorbe: §3 (P-1/P-4) de `RESTRICCIONES_ARQUITECTURA.md` v1.0,*

@@ -204,7 +204,9 @@ def q_provenance(conn) -> dict:
                 "fondos_batch":      row[4],
             }
     except Exception:
-        pass
+        # columns v26 may not exist yet. Roll back: on Postgres a failed SELECT aborts the
+        # transaction and the sheet queries that follow would all fail with InFailedSqlTransaction.
+        conn.rollback()
     return {}
 
 
@@ -1639,6 +1641,8 @@ def export(output_dir: Path, min_fondos: int = 100, *, backend: str | None = Non
 # ============================================================
 
 if __name__ == "__main__":
+    from shared.backlog_client import install_excepthook
+    install_excepthook(object_name="export_metrics.py")     # unhandled failure -> backlog ticket
     parser = argparse.ArgumentParser(
         description="Exporta metricas P2 a Excel")
     parser.add_argument(

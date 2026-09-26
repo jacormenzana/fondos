@@ -60,6 +60,47 @@ def test_capture_exceptions_does_not_swallow_on_report_failure(monkeypatch):
             raise ValueError("original failure")
 
 
+def _run_hook(monkeypatch, exc):
+    """Install the hook over a recording 'previous' hook and invoke it as the interpreter would."""
+    import sys
+    seen = []
+    monkeypatch.setattr(sys, "excepthook", lambda t, e, tb: seen.append(e))
+    backlog_client.install_excepthook(object_name="unit_test_entry.py")
+    sys.excepthook(type(exc), exc, exc.__traceback__)
+    return seen
+
+
+def test_excepthook_reports_an_unhandled_exception_then_defers_to_the_previous_hook(monkeypatch):
+    reported = []
+    monkeypatch.setattr(backlog_client, "report_incident", lambda **kw: reported.append(kw))
+    boom = ValueError("boom")
+    seen = _run_hook(monkeypatch, boom)
+    assert seen == [boom]                                    # the original hook still runs
+    assert len(reported) == 1 and reported[0]["object_name"] == "unit_test_entry.py"
+    assert "ValueError: boom" in reported[0]["scenario_description"]
+
+
+def test_excepthook_ignores_keyboard_interrupt_and_system_exit(monkeypatch):
+    reported = []
+    monkeypatch.setattr(backlog_client, "report_incident", lambda **kw: reported.append(kw))
+    for exc in (KeyboardInterrupt(), SystemExit(2)):
+        assert _run_hook(monkeypatch, exc) == [exc]
+    assert reported == []
+
+
+def test_excepthook_never_masks_the_original_error_when_reporting_fails(monkeypatch):
+    monkeypatch.setattr(backlog_client, "report_incident",
+                        lambda **kw: (_ for _ in ()).throw(RuntimeError("backlog write exploded")))
+    original = ValueError("original failure")
+    assert _run_hook(monkeypatch, original) == [original]
+
+
+def test_excepthook_is_a_silent_noop_when_the_dsn_is_unset(monkeypatch):
+    monkeypatch.delenv("FONDOS_BACKLOG_PG_DSN", raising=False)
+    original = ValueError("no dsn")
+    assert _run_hook(monkeypatch, original) == [original]
+
+
 @pytest.mark.skipif(
     not os.environ.get("FONDOS_BACKLOG_PG_DSN") or psycopg is None,
     reason="FONDOS_BACKLOG_PG_DSN not set or psycopg3 not installed — set it to a live "

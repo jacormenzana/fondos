@@ -520,24 +520,29 @@ def find_kiid_links_from_db(isin: str, conn) -> List[str]:
         # function's own broad except into a silent "no links found" — would have blocked every
         # FORCE_REFRESH/new-fund KIID re-download from ever finding its source URL under Postgres.
         try:
-            from shared.db import is_postgres_connection
+            from shared.db import is_postgres_connection, fail_soft_block
         except ImportError:
             import sys as _sys
             from pathlib import Path as _Path
             _root = _Path(__file__).resolve().parents[2]
             if str(_root) not in _sys.path:
                 _sys.path.insert(0, str(_root))
-            from shared.db import is_postgres_connection
+            from shared.db import is_postgres_connection, fail_soft_block
         _ph = "%s" if is_postgres_connection(conn) else "?"
-        rows = conn.execute(
-            f"""
-            SELECT href FROM db_document_catalogue
-            WHERE isin = {_ph}
-              AND cod_sus = 'KIID'
-              AND harvest_ts = (SELECT MAX(harvest_ts) FROM db_document_catalogue)
-            """,
-            (isin,),
-        ).fetchall()
+        # SAVEPOINT-protected: on Postgres a failed statement aborts the WHOLE enclosing
+        # transaction, and the handler below swallows the error and lets the caller carry on with
+        # the same connection — without this every later statement would fail with
+        # InFailedSqlTransaction (2026-09-26 transaction-poisoning audit).
+        with fail_soft_block(conn):
+            rows = conn.execute(
+                f"""
+                SELECT href FROM db_document_catalogue
+                WHERE isin = {_ph}
+                  AND cod_sus = 'KIID'
+                  AND harvest_ts = (SELECT MAX(harvest_ts) FROM db_document_catalogue)
+                """,
+                (isin,),
+            ).fetchall()
         return [r[0] for r in rows if r[0]]
     except Exception as exc:
         # Degrade to "no links" (callers fall back to the Excel index), but never silently: this
@@ -766,23 +771,26 @@ def get_kiid_for_isin(
             # exactly the dangerous "worked, but via the wrong path" class this migration has hit
             # before (Stage 4's `_is_stale()`).
             try:
-                from shared.db import is_postgres_connection
+                from shared.db import is_postgres_connection, fail_soft_block
             except ImportError:
                 import sys as _sys
                 from pathlib import Path as _Path
                 _root = _Path(__file__).resolve().parents[2]
                 if str(_root) not in _sys.path:
                     _sys.path.insert(0, str(_root))
-                from shared.db import is_postgres_connection
+                from shared.db import is_postgres_connection, fail_soft_block
             _ph = "%s" if is_postgres_connection(conn) else "?"
-            cached = conn.execute(
-                f"""SELECT Raw_KIID_Text, KIID_PDF_Hash, KIID_URL,
-                          KIID_Downloaded_At, DLA2_Table_Text, KIID_Status
-                   FROM fund_kiid_metadata
-                   WHERE ISIN = {_ph} AND KIID_Class = 1
-                     AND Raw_KIID_Text IS NOT NULL""",
-                (isin,)
-            ).fetchone()
+            # SAVEPOINT-protected (see find_kiid_links_from_db): the handler below turns a failed
+            # lookup into a cache miss and the pipeline keeps using this connection.
+            with fail_soft_block(conn):
+                cached = conn.execute(
+                    f"""SELECT Raw_KIID_Text, KIID_PDF_Hash, KIID_URL,
+                              KIID_Downloaded_At, DLA2_Table_Text, KIID_Status
+                       FROM fund_kiid_metadata
+                       WHERE ISIN = {_ph} AND KIID_Class = 1
+                         AND Raw_KIID_Text IS NOT NULL""",
+                    (isin,)
+                ).fetchone()
             if cached and cached[0] and cached[0].strip():
                 _cached_text          = cached[0]
                 _cached_hash          = cached[1]

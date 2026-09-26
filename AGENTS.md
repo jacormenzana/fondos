@@ -551,6 +551,18 @@ P1_P2_Complete.bat
 Runs sequentially: P1_refreshBenchmarks → P1_discoverAllFunds → P2_discoverLoadMetrics → P2_calculateIndicators.
 Aborts on the first step that fails. Log: `proyecto1/log/log_P1_P2_complete_YYYYMMDD_HHMMSS.log`.
 
+**Resume after a failure:** `P1_P2_Complete.bat --from N` re-runs step N in full and the steps after it.
+Safe because every write in the four steps is idempotent (enforced by `tests/test_sql_explain_sweep_pg.py`);
+allowed only when the last run failed at step N or later (state in `proyecto1/log/P1_P2_Complete.state`,
+logic in `scripts/launch/p1p2_state.py`); `--from-any` overrides the guard and is recorded in `ingestion_log`.
+The launcher also runs the statistical audits (`p2`, `costs`) with `--persist` before PASO 1 and again with
+`--compare-to` after a successful run, writing the drift report to `proyecto1/log/log_P1_P2_audit_<STAMP>.log`; and
+after PASO 2 it repairs (`run_block.py --recompute-costs`, cache-only) only the funds whose ongoing charge that
+P1 pass re-contaminated with ACI_RHP — the previously contaminated ones are left as they are. The benchmark
+loader exits 3 (stopping PASO 1) when more than a tenth of its Morningstar calls fail or 10 fail in a row.
+Postgres SQL validity is checked by an `EXPLAIN` sweep over every statement production code executes — see
+`doc/reglas/NORMAS_IMPLEMENTACION.md` §7 before adding SQL or an allowlist entry.
+
 **P1 full pipeline:**
 ```batch
 cd C:\desarrollo\fondos\scripts\launch

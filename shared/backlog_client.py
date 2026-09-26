@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 import traceback
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -211,6 +212,48 @@ def capture_exceptions(
             # exception below.
             logger.warning("[BACKLOG-AUTOLOG] report_incident raised unexpectedly", exc_info=True)
         raise
+
+
+def install_excepthook(
+    *,
+    object_name: str,
+    project_code: str = "FND",
+    schema_name: Optional[str] = None,
+    object_type: str = "JOB",
+) -> None:
+    """
+    One-line alternative to capture_exceptions() for an entry point whose `__main__` block is long
+    (re-indenting it into a `with` block just to add a wrapper is churn and risk):
+
+        if __name__ == "__main__":
+            from shared.backlog_client import install_excepthook
+            install_excepthook(object_name="export_metrics.py")
+            ...existing code, unchanged...
+
+    Installs a `sys.excepthook` that best-effort logs an UNHANDLED Exception to the backlog (via
+    report_incident) and then hands over to the previous hook, so the traceback, the exit code and
+    everything else behave exactly as before. SystemExit and KeyboardInterrupt never reach an
+    excepthook as Exceptions and are not reported. Like the rest of this module it is a silent
+    no-op while FONDOS_BACKLOG_PG_DSN is unset.
+    """
+    previous = sys.excepthook
+
+    def _hook(exc_type, exc, tb):
+        if isinstance(exc, Exception):
+            try:
+                text = "".join(traceback.format_exception(exc_type, exc, tb))
+                report_incident(
+                    object_name=object_name,
+                    project_code=project_code,
+                    schema_name=schema_name,
+                    object_type=object_type,
+                    scenario_description=f"{exc_type.__name__}: {exc}\n\n{text[-4000:]}",
+                )
+            except Exception:
+                logger.warning("[BACKLOG-AUTOLOG] report_incident raised unexpectedly", exc_info=True)
+        previous(exc_type, exc, tb)
+
+    sys.excepthook = _hook
 
 
 def check_dsn(verbose: bool = True) -> bool:

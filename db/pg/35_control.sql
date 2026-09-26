@@ -101,6 +101,25 @@ CREATE INDEX IF NOT EXISTS idx_nav_sources_source ON control.nav_sources (source
 CREATE INDEX IF NOT EXISTS idx_nav_sources_data_status ON control.nav_sources (data_status);
 
 -- -----------------------------------------------------------------------------
+-- control.benchmark_ms_checks — negative cache for proyecto1/src/loaders/benchmark_loader.py.
+-- One row per ISIN for which Morningstar returned NO benchmark (or a rejected placeholder). The
+-- loader's `--mode update` skips an ISIN until next_check_at, backing off per consecutive miss
+-- (shared/config.py BENCH_NEGATIVE_BACKOFF_DAYS). PG-only, no SQLite source (like regime_history).
+-- Deliberately NOT a sentinel row in silver.fund_benchmarks: pipeline.py prefers any MORNINGSTAR
+-- row over a KIID row, so a "no benchmark" marker there would displace real KIID data.
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS control.benchmark_ms_checks (
+    isin              varchar(12) PRIMARY KEY,
+    n_misses           integer     NOT NULL CHECK (n_misses >= 1),
+    last_checked_at     timestamptz NOT NULL,
+    next_check_at        timestamptz NOT NULL,
+
+    CONSTRAINT benchmark_ms_checks_isin_fk FOREIGN KEY (isin) REFERENCES silver.fund_master (isin) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_bms_checks_next ON control.benchmark_ms_checks (next_check_at);
+
+-- -----------------------------------------------------------------------------
 -- control.audit_statistic / control.audit_finding — statistical-audit-engine outputs
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS control.audit_statistic (

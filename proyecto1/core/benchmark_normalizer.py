@@ -1007,3 +1007,53 @@ def normalize_benchmark(raw: str) -> Optional[BenchmarkResult]:
         return BenchmarkResult(_idmap[decomp], cleaned, None, decomp, 'LOW')
 
     return None
+
+
+# ============================================================
+# Source precedence for the per-ISIN benchmark signal (SC-H)
+# ============================================================
+
+def merge_benchmark_sources(rows) -> dict:
+    """Collapse `fund_benchmarks` rows into ONE benchmark signal per ISIN, for
+    resolve_nature_evidence and the SC-H consistency rules.
+
+    `rows` are (isin, source, asset_class, benchmark_role, benchmark_name, confidence), source in
+    {'MORNINGSTAR', 'KIID'}. Returns {isin: {asset_class, benchmark_role, benchmark_name,
+    confidence}}.
+
+    Precedence (decided 2026-09-26; documented in doc/reglas/MODELO_SEMANTICO.md):
+      * MORNINGSTAR is preferred over KIID whenever both exist (an independent market signal, as
+        opposed to the KIID text the classifier already reads). The two labels answer different
+        questions (Morningstar `Mixed` describes the fund's allocation, the KIID label describes its
+        benchmark), so a disagreement between two NON-NULL values is NOT resolved here: Morningstar
+        wins and both labels' effects are weighed by the SC-H rules through `confidence`.
+      * Exception, the one defect this function fixes: a Morningstar row whose `asset_class` is
+        NULL (an unnormalised, LOW-confidence name) must not hide a KIID row that HAS an asset
+        class. In that case the KIID row is used. Found 2026-09-26 on 5 of 1,939 ISINs that have
+        both sources.
+      * Defaults are unchanged: role 'asset_proxy'; confidence 'HIGH' (Morningstar) / 'MEDIUM'
+        (KIID, semi-redundant with the classifier's own input).
+    """
+    def _rec(asset_class, role, name, confidence, default_conf):
+        return {
+            "asset_class":    asset_class,
+            "benchmark_role": role or "asset_proxy",
+            "benchmark_name": name,
+            "confidence":     confidence or default_conf,
+        }
+
+    ms: dict = {}
+    kiid: dict = {}
+    for isin, source, asset_class, role, name, confidence in rows:
+        if source == 'MORNINGSTAR':
+            ms[isin] = _rec(asset_class, role, name, confidence, "HIGH")
+        elif source == 'KIID':
+            kiid[isin] = _rec(asset_class, role, name, confidence, "MEDIUM")
+
+    merged = dict(kiid)
+    for isin, rec in ms.items():
+        k = kiid.get(isin)
+        if rec["asset_class"] is None and k is not None and k["asset_class"] is not None:
+            continue   # keep the KIID row: it carries an asset class the Morningstar row lacks
+        merged[isin] = rec
+    return merged

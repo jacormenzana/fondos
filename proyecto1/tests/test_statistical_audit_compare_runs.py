@@ -97,3 +97,31 @@ class TestStatisticsToFrame:
         result = compare_runs(previous, current)
         row = result.deltas.iloc[0]
         assert row["delta"] == pytest.approx(0.071 - 0.15)
+
+
+class TestNoiseFilter:
+    """2026-09-26: the launcher's post-run drift report listed 28 'non-zero deltas' that were all
+    floating-point noise (~1e-16, +0.0%). Material shifts must survive; noise must be flagged."""
+
+    def _frame(self, values):
+        import pandas as pd
+        return pd.DataFrame([{"population": "GLOBAL", "group_key": g, "stat_name": "mean", "stat_value": v}
+                             for g, v in values.items()])
+
+    def test_float_noise_is_flagged_and_a_real_shift_is_not(self):
+        prev = self._frame({"a": 1.2918, "b": 10.0, "c": 5.0})
+        curr = self._frame({"a": 1.2918 * (1 + 1e-15), "b": 10.0 * 1.05, "c": 5.0})
+        r = compare_runs(prev, curr).deltas.set_index("group_key")
+        assert bool(r.loc["a", "is_noise"]) and r.loc["a", "delta"] != 0        # noise: differs, but immaterial
+        assert not bool(r.loc["b", "is_noise"])                                  # 5% shift: material
+        assert bool(r.loc["c", "is_noise"]) and r.loc["c", "delta"] == 0         # identical
+
+    def test_a_tiny_but_real_shift_is_not_hidden(self):
+        prev = self._frame({"x": 1.0})
+        curr = self._frame({"x": 1.0 + 1e-6})                                    # 1e-6 relative >> 1e-9
+        assert not bool(compare_runs(prev, curr).deltas.iloc[0]["is_noise"])
+
+    def test_values_near_zero_use_the_absolute_tolerance(self):
+        prev = self._frame({"z": 0.0})
+        curr = self._frame({"z": 1e-14})
+        assert bool(compare_runs(prev, curr).deltas.iloc[0]["is_noise"])

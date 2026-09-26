@@ -817,9 +817,10 @@ def _print_drift_report(conn: sqlite3.Connection, run: "AuditRun", compare_to: s
         print(f"  - {', '.join(result.dropped_groups[:top_n])}")
 
     moved = result.deltas.dropna(subset=["delta"])
-    moved = moved[moved["delta"] != 0]
+    moved = moved[(moved["delta"] != 0) & ~moved["is_noise"]]
+    n_noise = int(((result.deltas["delta"] != 0) & result.deltas["is_noise"]).sum())
     moved = moved.sort_values("delta", key=lambda s: s.abs(), ascending=False)
-    print(f"Largest deltas (top {top_n} of {len(moved)} non-zero):")
+    print(f"Largest deltas (top {top_n} of {len(moved)} material; {n_noise} floating-point-noise differences hidden):")
     for _, row in moved.head(top_n).iterrows():
         pct = f" ({row['pct_change']:+.1%})" if pd.notna(row["pct_change"]) else ""
         print(f"  {row['group_key']} [{row['stat_name']}]: {row['previous_value']:.6g} -> {row['current_value']:.6g}{pct}")

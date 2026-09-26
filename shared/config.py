@@ -306,6 +306,35 @@ COST_CMP_ABS_TOL: float = 0.0002   # 0.02 pp — suelo de redondeo/tipografía
 COST_CMP_REL_TOL: float = 0.01     # 1% relativo — escala con la magnitud
 
 # ============================================================
+# Morningstar benchmark loader (proyecto1/src/loaders/benchmark_loader.py)
+# ============================================================
+# Negative cache: ISINs for which Morningstar returned no benchmark are not re-queried until
+# `next_check_at` (control.benchmark_ms_checks). Days to wait after the 1st, 2nd and later
+# consecutive miss — newly launched funds are the likeliest to gain a benchmark, so the first
+# re-check is soon and the interval then decays. `--mode load` and `--recheck-negatives` bypass it.
+BENCH_NEGATIVE_BACKOFF_DAYS: tuple = (7, 30, 90)
+
+# Anomaly circuit-breaker: a raw `indexName` that is NOT already a known benchmark and is returned
+# for more than MIN_FUNDS funds AND for more than MIN_SHARE of the funds processed so far is
+# quarantined for the rest of the run (no fund_benchmarks write, no cache row) and logged as
+# BENCH_MS/ANOMALY. Guards against the vendor starting to return a new placeholder at scale.
+BENCH_ANOMALY_MIN_FUNDS: int = 20
+BENCH_ANOMALY_MIN_SHARE: float = 0.40
+
+# Network/HTTP failure guard (2026-09-26 rehearsal: an outage made 610 of 687 calls fail and the run
+# still exited 0). The loader stops early after this many CONSECUTIVE failed calls (an outage, not a
+# throttled call), and exits BENCH_EXIT_NETWORK when the failure rate of the calls it made exceeds
+# BENCH_MAX_ERROR_RATE. Errors are never cached, so a re-run simply retries them; P1_P2_Complete.bat
+# then stops at PASO 1 and is resumed with `--from 1` once the network is back.
+BENCH_CONSECUTIVE_ERROR_LIMIT: int = 10
+BENCH_MAX_ERROR_RATE: float = 0.10
+BENCH_EXIT_NETWORK: int = 3
+
+# Payload-shape errors (wrong types, non-object body) tolerated in one run before the loader stops
+# writing negatives for the rest of that run (an endpoint change must not poison the cache).
+BENCH_SCHEMA_ERROR_LIMIT: int = 5
+
+# ============================================================
 # Base de datos unificada
 # ============================================================
 DB_PATH: Path = _ROOT / "db" / "fondos.sqlite"

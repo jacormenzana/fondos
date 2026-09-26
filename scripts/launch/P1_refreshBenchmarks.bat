@@ -21,7 +21,6 @@ chcp 65001 > nul
 :: ============================================================
 
 set ROOT=C:\desarrollo\fondos
-set DB=%ROOT%\db\fondos.sqlite
 set LOG_DIR=%ROOT%\proyecto1\log
 
 :: Resolve bare 'python' calls below to the 'des' Conda env (bare python on
@@ -41,7 +40,7 @@ if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
 echo ============================================================ >> "%LOG%"
 echo  P1_refreshBenchmarks - Inicio: %STAMP%                     >> "%LOG%"
 echo  Modo: %MODE%                                                >> "%LOG%"
-echo  DB:   %DB%                                                  >> "%LOG%"
+echo  Backend: resuelto por shared/db.py (FONDOS_DB_BACKEND / .env)     >> "%LOG%"
 echo ============================================================ >> "%LOG%"
 
 echo.

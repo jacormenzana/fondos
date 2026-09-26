@@ -26,11 +26,14 @@ def main():
                         help="Máximo de fondos a marcar por ejecución (anti-avalancha)")
     args = parser.parse_args()
 
-    db_path = Path(args.db)
-    if not db_path.exists():
-        print(f"ERROR: BD no encontrada: {db_path}"); sys.exit(1)
-
-    conn = get_connection(db_path)
+    # No pre-check of the SQLite path: --db only matters when the resolved backend is SQLite, and
+    # get_connection() raises FileNotFoundError itself in that case. With FONDOS_DB_BACKEND=postgres
+    # the (retired) SQLite file is irrelevant, so requiring it to exist would abort PASO 2 of
+    # P1_P2_Complete.bat the day the file is archived, before touching Postgres at all.
+    try:
+        conn = get_connection(Path(args.db))
+    except FileNotFoundError as e:
+        print(f"ERROR: {e}"); sys.exit(1)
     n = mark_stale_for_refresh(conn, max_age_days=args.max_age, max_funds=args.max_funds)
     conn.close()
 
@@ -38,4 +41,7 @@ def main():
           f"(antigüedad > {args.max_age} días, límite {args.max_funds}/ciclo)")
 
 if __name__ == "__main__":
+    sys.path.insert(0, str(_ROOT))
+    from shared.backlog_client import install_excepthook
+    install_excepthook(object_name="mark_stale.py")         # unhandled failure -> backlog ticket
     main()

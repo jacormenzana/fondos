@@ -2229,4 +2229,6 @@ def main():
 
 
 if __name__ == "__main__":
+    from shared.backlog_client import install_excepthook
+    install_excepthook(object_name="nav_discovery.py")      # unhandled failure -> backlog ticket
     main()

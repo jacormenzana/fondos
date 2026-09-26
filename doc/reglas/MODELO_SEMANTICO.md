@@ -513,6 +513,22 @@ no puede reclasificar, por lo que el camino de remediación es siempre
 es la señal independiente de mayor calidad; `source='KIID'` es semi-redundante (parsea el
 mismo documento que el clasificador). El pipeline prefiere MORNINGSTAR con fallback a KIID.
 
+**Precedencia de `asset_class` entre fuentes (decisión 2026-09-26).** Implementada en
+`core.benchmark_normalizer.merge_benchmark_sources` (única implementación; `pipeline.run_block` la
+invoca):
+- Si existen ambas fuentes, **MORNINGSTAR prevalece** aunque los valores no nulos difieran. Las dos
+  etiquetas responden a preguntas distintas: `Mixed` de Morningstar describe la *asignación del
+  fondo*, la etiqueta KIID describe la *composición de su benchmark*. Un desacuerdo entre dos valores
+  no nulos **no es un defecto** y no se arbitra aquí: ambas señales llegan a las reglas SC-H, que las
+  ponderan por `confidence`. Sobrescribir la asignación con la clase del benchmark podría falsear el
+  perfil de riesgo de un fondo (objetivo: preservación de capital).
+- **Excepción única:** una fila MORNINGSTAR con `asset_class` NULL (nombre no normalizado, confianza
+  LOW) no oculta una fila KIID que sí tiene `asset_class`; en ese caso se usa la KIID.
+- Medido el 2026-09-26 sobre los 1.939 ISINs con ambas fuentes: 319 difieren; 67 implican un NULL en
+  un lado (mayoritariamente Morningstar rellenando un hueco KIID) y 252 son conflictos reales no
+  nulos, de los cuales 209 son Morningstar `Mixed` frente a una clase única del benchmark KIID y 34
+  son `Fixed Income` frente a `Rate` (granularidad). La excepción de arriba afecta a 5 ISINs.
+
 **Vocabulario centralizado (R-1):** todos los mapas de polos de crédito, geografía y sector
 del benchmark viven en `classify_utils.py` (`BMK_CONSISTENT`, `BMK_TOLERATED`,
 `bmk_tok_credit()`, `bmk_geography()`, etc.) y son importados por el validador y por

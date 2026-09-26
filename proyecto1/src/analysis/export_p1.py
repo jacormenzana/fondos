@@ -177,6 +177,8 @@ def export_p1(
 # ============================================================
 
 if __name__ == "__main__":
+    from shared.backlog_client import install_excepthook
+    install_excepthook(object_name="export_p1.py")          # unhandled failure -> backlog ticket
     parser = argparse.ArgumentParser(
         description="Exportacion de tablas P1 a Excel"
     )

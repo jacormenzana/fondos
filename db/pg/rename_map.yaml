@@ -74,6 +74,12 @@ new_tables_no_sqlite_source:
       every call). Excluded from scripts/mig/pg_reconcile.py's checks entirely — there is nothing
       on the SQLite side to reconcile it against.
 
+  benchmark_ms_checks:
+    status: >
+      NEW — 2026-09-26. Negative cache for proyecto1/src/loaders/benchmark_loader.py (control
+      schema, db/pg/35_control.sql). No SQLite equivalent; populated by application code, not the
+      seed. Excluded from scripts/mig/pg_reconcile.py.
+
 views:
   v_cost_arbitration_overall:
     status: >
