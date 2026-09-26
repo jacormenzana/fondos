@@ -176,13 +176,17 @@ Report counts for all 7 categories:
 
 | Code | Check | Action threshold |
 |------|-------|-----------------|
-| B1 | Fund_Nature vs benchmark asset class (CRITICAL) | Any > 0 → investigate |
-| B2 | Geography mismatch (fm vs benchmark) | > 10 → triage |
-| B3 | Development_Status mismatch | > 5 → triage |
-| B4 | Market_Cap mismatch | Ignore "All Cap" gaps (sentinel) |
-| B5 | Credit_Quality mismatch | > 3 → triage |
-| B6 | SRRI mismatch | > 5 → triage |
-| B7 | Declared benchmark drift from historical | > 20 → triage |
+| B1 | asset_class vs Fund_Nature (CRITICAL/WARN/INFO) | Any CRITICAL > 0 → investigate |
+| B2 | Geography (conflict + gap, fm vs benchmark) | > 10 → triage |
+| B3 | Sector / Theme (conflict + gap) | > 5 conflicts → triage |
+| B4 | Market_Cap_Focus (conflict + gap) | Ignore "All Cap" gaps (sentinel) |
+| B5 | Currency / Hedging_Policy conflict | > 3 → triage |
+| B6 | Credit_Quality / Duration_Profile (Fixed Income only) | > 3 → triage |
+| B7 | Benchmark_Declared vs KIID benchmark_name (extraction drift) | > 20 → triage |
+
+(Codes and thresholds verified against `proyecto1/tools/audit_benchmark_consistency.py` — the
+tool's own header comment and output-field names are authoritative; this table must mirror them,
+not the other way round.)
 
 For each non-trivial bucket, classify every conflict as:
 - **Root-cause bug** → fix in the correct Python module (P#7), enter Step 4.

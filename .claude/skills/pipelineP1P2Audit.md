@@ -187,24 +187,25 @@ Compare against prior baseline. Flag any regression.
 - Spot-check metric ranges: vol ≥ 0, |sharpe| plausible, max_drawdown ∈ [−100%, 0], real vs nominal consistency.
 - Surface NaN/NULL coverage per metric (query `fund_metrics` grouped by `metric`).
 - Flag ISINs with full-NULL metric rows.
-- **`load_ts` cohort check.** Use the `[RUN COHORT]` log line as the primary source. A split is EXPECTED only when every stale row's `metric` is in the OLS-cadence set (`beta_*`, `energy_sensitivity_pct`, `hy_spread_sensitivity_pct`) AND the fund's `calculated_at` advanced. Any stale row **outside** that set, or any fund with stale rows but a non-advanced `calculated_at`, is an **ANOMALY** (silent write failure) — flag with ISIN + metric list using this aggregate query:
+- **Scoping caveat — read before running any query below.** `fund_metrics.load_ts` is SQLite's `CURRENT_TIMESTAMP` (UTC); `fund_metric_state.calculated_at` is Python `date.today()` (local system clock). They disagree by the local UTC offset for any fund persisted in the last few hours of the local calendar day — routine for P2 runs that start ~21:00 and finish after local midnight. Two consequences: (1) `calculated_at = date('now')` silently scopes to nothing, or only part of the run, when the audit runs on a different calendar day than the pipeline, or when the run itself straddled local midnight. **Scope by `batch_id` instead** — get it from the `[RUN END]`/`[BACKFILL]` log line or `SELECT batch_id FROM fund_metrics ORDER BY load_ts DESC LIMIT 1` — and use `fund_metrics.batch_id = '<BATCH_ID>'` directly, or `fund_metric_state.isin IN (SELECT DISTINCT isin FROM fund_metrics WHERE batch_id = '<BATCH_ID>')` for state-only queries. (2) `DATE(load_ts)` (UTC) will look up to one calendar day *older* than `calculated_at` (local) with no bug involved — never spuriously *newer*, so only the "older" comparisons below need a 1-day tolerance.
+- **`load_ts` cohort check.** Use the `[RUN COHORT]` log line as the primary source. A split is EXPECTED only when every stale row's `metric` is in the OLS-cadence set (`beta_*`, `energy_sensitivity_pct`, `hy_spread_sensitivity_pct`) AND the fund's `calculated_at` advanced. Any stale row **outside** that set, or any fund with stale rows but a non-advanced `calculated_at`, is an **ANOMALY** (silent write failure) — flag with ISIN + metric list using this aggregate query (batch-scoped; >1 day tolerance absorbs the UTC/local skew above, not a bug):
   ```sql
-  -- Identify ANOMALY funds: stale load_ts on a non-cadence metric
+  -- Identify ANOMALY funds: load_ts >1 calendar day stale vs calculated_at, on a non-cadence metric
   SELECT fm.isin, fm.metric, DATE(fm.load_ts) AS load_date, fms.calculated_at
   FROM fund_metrics fm
   JOIN fund_metric_state fms ON fm.isin = fms.isin AND fms.metric_version = 'v1'
-  WHERE fms.calculated_at = date('now')
-    AND DATE(fm.load_ts) < date('now')
+  WHERE fm.batch_id = '<BATCH_ID>'
+    AND (julianday(fms.calculated_at) - julianday(DATE(fm.load_ts))) > 1
     AND fm.metric NOT LIKE 'beta_%'
     AND fm.metric NOT IN ('energy_sensitivity_pct','hy_spread_sensitivity_pct');
   ```
-- **Run-stamp vs value-stamp reconciliation.** Assert `MAX(fm.load_ts) ≤ fms.calculated_at` per ISIN. A `load_ts` **newer** than `calculated_at` indicates a write/commit ordering bug:
+- **Run-stamp vs value-stamp reconciliation.** Assert `MAX(fm.load_ts) ≤ fms.calculated_at` per ISIN. A `load_ts` **newer** than `calculated_at` indicates a write/commit ordering bug (the UTC/local skew never produces a false positive in this direction, so no tolerance needed):
   ```sql
-  SELECT fms.isin, MAX(DATE(fm.load_ts)) AS max_load_ts, fms.calculated_at
+  SELECT fm.isin, MAX(DATE(fm.load_ts)) AS max_load_ts, fms.calculated_at
   FROM fund_metric_state fms
   JOIN fund_metrics fm ON fms.isin = fm.isin
-  WHERE fms.metric_version = 'v1' AND fms.calculated_at = date('now')
-  GROUP BY fms.isin, fms.calculated_at
+  WHERE fm.batch_id = '<BATCH_ID>'
+  GROUP BY fm.isin, fms.calculated_at
   HAVING max_load_ts > fms.calculated_at;
   ```
 - **Orphan-beta staleness.** Flag any `beta_*` row whose `load_ts` predates `calculated_at` by more than 91 days — beyond EFF-1 cadence it is a stuck/orphan value:
@@ -217,32 +218,30 @@ Compare against prior baseline. Flag any regression.
   ```
 - **NAV-staleness gate.** Use the `[NAV STALE]` log line as the primary source. Any WARNING means funds were recomputed on prices > 60 days old. Verify with:
   ```sql
-  SELECT fms.isin, MAX(n.Date) AS newest_nav, fms.calculated_at,
+  SELECT fm.isin, MAX(n.Date) AS newest_nav, fms.calculated_at,
          julianday(fms.calculated_at) - julianday(MAX(n.Date)) AS age_days
-  FROM fund_metric_state fms
-  JOIN fund_nav_monthly n ON fms.isin = n.ISIN
-  WHERE fms.metric_version = 'v1' AND fms.calculated_at = date('now')
-  GROUP BY fms.isin, fms.calculated_at
+  FROM (SELECT DISTINCT isin FROM fund_metrics WHERE batch_id = '<BATCH_ID>') fm
+  JOIN fund_nav_monthly n ON fm.isin = n.ISIN
+  JOIN fund_metric_state fms ON fm.isin = fms.isin AND fms.metric_version = 'v1'
+  GROUP BY fm.isin
   HAVING age_days > 60
   ORDER BY age_days DESC;
   ```
   Cross-reference `nav_sources.data_status`. Fix: `nav_discovery --mode update`, then P2 with `--force`.
-- **Real/nominal pairing integrity.** When IPC is available, every deflatable `real_flag=0` metric must have a `real_flag=1` pair. Orphan singles indicate a silent deflation gap:
+- **Real/nominal pairing integrity.** When IPC is available, every deflatable `real_flag=0` metric must have a `real_flag=1` pair. Orphan singles indicate a silent deflation gap.
+  DB metric names: `return_ann` (not `return_ann_real`; P3 aliases it internally — see P2-14), `max_dd` (not `max_drawdown`), plus `vol_ann`, `sharpe` — verified paired 1:1 in production (each 28,583/28,583 rows at real_flag 0/1, 2026-09-14). **`alpha_persistence`/`capture_ratio`/`momentum_rank` are NOT deflatable by design** (`persistence.py` docstring: "generated real_flag=0" only — cross-sectional rank/ratio metrics have no "real" variant) — do not include them here; they produced a permanent ~10,300-row false-positive every prior audit run.
   ```sql
   SELECT a.isin, a.metric, a.horizon
   FROM fund_metrics a
   WHERE a.real_flag = 0
-    AND a.metric IN (
-        'return_ann_real','sharpe','max_drawdown',
-        'alpha_persistence','capture_ratio','momentum_rank'
-    )
+    AND a.metric IN ('return_ann','sharpe','max_dd','vol_ann')
     AND NOT EXISTS (
         SELECT 1 FROM fund_metrics b
         WHERE b.isin = a.isin AND b.metric = a.metric
           AND b.horizon = a.horizon AND b.real_flag = 1
     );
   ```
-- **Coverage delta vs baseline.** Use the `[COVERAGE]` log line (diff current run vs previous run in the log). A drop > ~2% on any P3-consumed metric (`return_ann_real`, `sharpe`, `max_drawdown`, `alpha_persistence`, `capture_ratio`, `momentum_rank`) signals an upstream NAV loss or calc regression — triage immediately.
+- **Coverage delta vs baseline.** Use the `[COVERAGE]` log line (diff current run vs previous run in the log). A drop > ~2% on any P3-consumed metric (`return_ann`, `sharpe`, `max_dd`, `alpha_persistence`, `capture_ratio`, `momentum_rank`) signals an upstream NAV loss or calc regression — triage immediately.
 
 #### Step 6 — P2 Process-Efficiency & Redundancy
 
