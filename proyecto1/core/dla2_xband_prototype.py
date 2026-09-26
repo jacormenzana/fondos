@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-scripts/diag/dla2_xband_prototype.py  v3.3  -- BL-DLA-2-XBAND (prototipo)
+proyecto1/core/dla2_xband_prototype.py  v3.3  -- BL-DLA-2-XBAND (prototipo)
 =============================================================
 v3.2 (2026-06-04, BL-DLA-2 NFD-accent root fix, Fidelity ONLY_RULED): algunas
     gestoras (FIL/Fidelity y otras) emiten acentos DESCOMPUESTOS (NFD: "o"+U+0301)

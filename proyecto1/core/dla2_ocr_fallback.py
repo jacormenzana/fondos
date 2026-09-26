@@ -40,9 +40,9 @@ import pytesseract
 from PIL import Image
 
 # La vía OCR reutiliza el parser de la vía ruled. Ambos módulos viven en
-# scripts/diag/. Aseguramos que ese directorio (el de ESTE fichero) esté en
-# sys.path para que el import funcione tanto con `python scripts\diag\...py`
-# como con `python -m scripts.diag.dla2_ocr_fallback` o importado desde el harness.
+# proyecto1/core/. Aseguramos que ese directorio (el de ESTE fichero) esté en
+# sys.path para que el import funcione tanto como script suelto como importado por
+# cost_arbitration.
 _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)

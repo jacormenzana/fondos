@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-scripts/diag/dla2_dual_strategy_compare.py  v2.8  -- BL-DLA-2-DUALCMP
+proyecto1/core/dla2_dual_strategy_compare.py  v2.8  -- BL-DLA-2-DUALCMP
 =============================================================
 Compara DOS estrategias de extracción de OC sobre cada KIID, para decidir con
 datos la lógica de arbitraje (NO asume prioridad fija — se demostró que tanto
@@ -82,10 +82,9 @@ except ImportError:
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _load_xband(project_root: Path):
-    """Importa dla2_xband_prototype desde el mismo directorio o scripts/diag."""
+    """Importa dla2_xband_prototype desde el mismo directorio (proyecto1/core)."""
     here = Path(__file__).resolve().parent
-    for cand in (here / "dla2_xband_prototype.py",
-                 project_root / "scripts" / "diag" / "dla2_xband_prototype.py"):
+    for cand in (here / "dla2_xband_prototype.py",):
         if cand.exists():
             spec = importlib.util.spec_from_file_location("dla2_xband_prototype", cand)
             mod = importlib.util.module_from_spec(spec)
@@ -522,6 +521,7 @@ def main(pdf_dir=None, pdf=None, db_path=None, csv_path=None, log_path=None,
     # BD opcional para comparar con OC actual.
     db = {}
     if db_path:
+        conn = None
         try:
             from shared.db import get_connection      # Postgres (SQLite retired, FND-0102); db_path is ignored
             conn = get_connection()
@@ -535,6 +535,11 @@ def main(pdf_dir=None, pdf=None, db_path=None, csv_path=None, log_path=None,
                     db[r[0]] = {"oc": r[1], "quality": r[2]}
         except Exception as e:
             print(f"[WARN] BD no cargada: {e}")
+            if conn is not None:
+                conn.rollback()          # a failed statement must not leave an aborted transaction
+        finally:
+            if conn is not None:
+                conn.close()
 
     buf = []
     def w(s=""):

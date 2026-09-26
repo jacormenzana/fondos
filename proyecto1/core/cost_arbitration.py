@@ -58,7 +58,7 @@ def _import_cost_values_agree():
 #   bands-X : extract_from_open_pdf  (+ claves _OC_GESTION_VAL / _OC_OPERACION_VAL)
 #   ruled   : extract_ruled_from_pdf, _recover_oc_text  (gest/oper etiquetados)
 #   OCR     : extract_ocr_from_pdf, pdf_needs_ocr        (solo en BOTH_FAIL)
-# Imports diferidos y defensivos: los módulos pueden vivir en core/ o scripts/diag
+# Imports diferidos y defensivos: viven en proyecto1/core (movidos desde scripts/diag el 2026-09-26)
 # y el sys.path varía según el lanzador. Se resuelven en la 1ª llamada.
 _PRIMS: Dict[str, Any] = {}
 
@@ -78,18 +78,15 @@ def _load_primitives() -> Dict[str, Any]:
         raise ImportError(f"No se pudo importar {attrs} desde {modnames}: {last}")
 
     (extract_from_open_pdf, extract_aci_xband) = _imp(
-        ("dla2_xband_prototype", "core.dla2_xband_prototype",
-         "scripts.diag.dla2_xband_prototype"),
+        ("dla2_xband_prototype", "core.dla2_xband_prototype"),
         ("extract_from_open_pdf", "extract_aci_xband"))
     (extract_ruled_from_pdf, _recover_oc_text) = _imp(
-        ("dla2_dual_strategy_compare", "core.dla2_dual_strategy_compare",
-         "scripts.diag.dla2_dual_strategy_compare"),
+        ("dla2_dual_strategy_compare", "core.dla2_dual_strategy_compare"),
         ("extract_ruled_from_pdf", "_recover_oc_text"))
     # OCR es opcional: si no está disponible, BOTH_FAIL se reporta sin recuperar.
     try:
         (extract_ocr_from_pdf, pdf_needs_ocr) = _imp(
-            ("dla2_ocr_fallback", "core.dla2_ocr_fallback",
-             "scripts.diag.dla2_ocr_fallback"),
+            ("dla2_ocr_fallback", "core.dla2_ocr_fallback"),
             ("extract_ocr_from_pdf", "pdf_needs_ocr"))
     except ImportError:
         extract_ocr_from_pdf = pdf_needs_ocr = None
