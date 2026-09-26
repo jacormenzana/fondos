@@ -1,1 +1,0 @@
-C:\desarrollo\fondos>python -m pytest tests/test_dla_extractor.py -v

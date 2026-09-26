@@ -36,26 +36,29 @@ EXECUTION (Windows, conda env `des`)
 ------------------------------------
   cd C:\\desarrollo\\fondos
   set PYTHONPATH=proyecto1;proyecto1\\core;shared
-  python -X utf8 proyecto1\\scripts\\diag\\diag_cost_extraction.py ^
-      --db C:\\desarrollo\\fondos\\db\\fondos.sqlite ^
+  python -X utf8 scripts\\diag\\diag_cost_extraction.py ^
       --kiid-dir C:\\data\\fondos\\kiid ^
       --out C:\\desarrollo\\fondos\\out\\diag\\cost_diag_YYYYMMDD.csv
 
   Optional: --limit N (smoke test), --only-priips, --isins FR..,LU.. (subset).
 
 NO side effects on the DB (read-only). Single connection. python -X utf8 safe.
+Reads the database selected by FONDOS_DB_BACKEND (Postgres since the 2026-09-23 cutover);
+`--backend` overrides it and `--db` only applies to the sqlite backend.
 """
 
 import argparse
 import csv
 import math
 import os
-import sqlite3
 import sys
 from datetime import date, datetime
 from io import BytesIO
 from pathlib import Path
 from typing import Optional
+
+# `shared` lives at the repo root; the launchers only put proyecto1/core on PYTHONPATH.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 
 # ---------------------------------------------------------------------------
@@ -289,7 +292,8 @@ def _write_summary_log(summary_text: str, out_path: Optional[str]) -> Path:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Cost-extraction corpus diagnostic")
-    ap.add_argument("--db", required=True)
+    ap.add_argument("--db", default=None, help="SQLite file (sqlite backend only)")
+    ap.add_argument("--backend", default=None, choices=("sqlite", "postgres"))
     ap.add_argument("--kiid-dir", required=True)
     ap.add_argument("--out", default=None)
     ap.add_argument("--limit", type=int, default=0)
@@ -306,10 +310,7 @@ def main() -> int:
         print("Set PYTHONPATH=proyecto1;proyecto1\\core;shared")
         return 2
 
-    db = Path(args.db)
     kiid_dir = Path(args.kiid_dir)
-    if not db.exists():
-        print("FATAL: DB not found:", db); return 2
     if not kiid_dir.exists():
         print("FATAL: kiid dir not found:", kiid_dir); return 2
 
@@ -323,10 +324,15 @@ def main() -> int:
     limit_clause = f"LIMIT {args.limit}" if args.limit > 0 else ""
     sql = SELECT_SQL.format(where=where_clause, limit=limit_clause)
 
-    conn = sqlite3.connect(str(db))
-    conn.row_factory = sqlite3.Row
+    from shared.db import get_connection
+    from shared.export_tables import legacy_columns
+    conn = get_connection(Path(args.db) if args.db else None, backend=args.backend)
     try:
-        rows = [dict(r) for r in conn.execute(sql).fetchall()]
+        cur = conn.execute(sql)
+        # Postgres folds result names to lowercase; evaluate_fund indexes by the SQLite spelling.
+        legacy = {**legacy_columns("fund_kiid_metadata"), **legacy_columns("fund_master")}
+        cols = [legacy.get(d[0], d[0]) for d in cur.description]
+        rows = [dict(zip(cols, tuple(r))) for r in cur.fetchall()]
     finally:
         conn.close()
 

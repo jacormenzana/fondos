@@ -11,7 +11,6 @@ chcp 65001 > nul
 :: ============================================================
 
 set ROOT=C:\desarrollo\fondos
-set DB=%ROOT%\db\fondos.sqlite
 set LOG_DIR=%ROOT%\proyecto1\log
 set KIID_DIR=c:\data\fondos\kiid
 set DIAG_OUT_DIR=%ROOT%\out\diag
@@ -41,7 +40,6 @@ echo.
 
 echo ============================================================ >> "%LOG%"
 echo  Cost Diag - Inicio: %STAMP%                                 >> "%LOG%"
-echo  DB:         %DB%                                            >> "%LOG%"
 echo  KIID_DIR:   %KIID_DIR%                                      >> "%LOG%"
 echo  PYTHONPATH: %PYTHONPATH%                                    >> "%LOG%"
 echo  OUT:        %DIAG_OUT%                                      >> "%LOG%"
@@ -49,7 +47,6 @@ echo ============================================================ >> "%LOG%"
 
 pushd %ROOT%
 python -X utf8 "%ROOT%\scripts\diag\diag_cost_extraction.py" ^
-    --db "%DB%" ^
     --kiid-dir "%KIID_DIR%" ^
     --only-priips ^
     --out "%DIAG_OUT%" >> "%LOG%" 2>&1

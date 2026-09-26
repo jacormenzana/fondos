@@ -4,7 +4,7 @@
 Postgres migration — "shared P1/P2/P3 functionality" phase (2026-09-20) — dedicated regression
 tests for shared/statistical_audit/persistence.py's three DB-writing functions (emit_statistics,
 emit_findings, preserve_and_write). This module is used by scripts/audit/run_statistical_audit.py
-and scripts/diag/diag_cost_duplication_reconcile.py, backing the
+(and, until its 2026-09-26 retirement, scripts/diag/diag_cost_duplication_reconcile.py), backing the
 auditStatisticalDataDistributionCostAttributes/P2Metrics skills — genuinely shared across the P1
 cost-attribute audit and the P2 metrics audit (audit_statistic/audit_finding are tagged "P1/P2" in
 AGENTS.md's table roster), so it is the first module ported in this phase rather than under either

@@ -136,7 +136,6 @@ echo ============================================================ >> "%LOG%"
 
 pushd %ROOT%
 python -X utf8 "%ROOT%\scripts\diag\diag_cost_extraction.py" ^
-    --db "%DB%" ^
     --kiid-dir "%KIID_DIR%" ^
     --only-priips ^
     --out "%LOG_DIAG_OUT%" 

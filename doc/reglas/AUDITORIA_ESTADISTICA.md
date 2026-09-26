@@ -342,7 +342,7 @@ hallazgo original (ninguna consulta/script respalda esa cifra — confirmado por
 el repo, existe solo en prosa).
 
 Diagnóstico dedicado (`scripts/diag/diag_cost_duplication_reconcile.py`, solo lectura, sin
-escrituras) prueba dos hipótesis por relajación sucesiva de alcance, con diferencia de conjuntos
+escrituras; retirado el 2026-09-26 con el resto del tooling SQLite — recuperable en el historial de git) prueba dos hipótesis por relajación sucesiva de alcance, con diferencia de conjuntos
 (no solo recuento) en cada paso:
 
 | Alcance | ISINs marcados | Nuevos vs. anterior |
