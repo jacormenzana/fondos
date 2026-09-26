@@ -34,9 +34,7 @@ echo.
 
 pushd "%ROOT%"
 
-%PYTHON% -X utf8 -c ^
-"from shared.db import get_connection; from proyecto3.src.monthly_report import generate_report; print(generate_report(get_connection(), output_dir=r'%OUT_DIR%'))" ^
->> "%LOG%" 2>> "%ERR%"
+%PYTHON% -X utf8 -c "from shared.db import get_connection; from proyecto3.src.monthly_report import generate_report; print(generate_report(get_connection(), output_dir=r'%OUT_DIR%'))" >> "%LOG%" 2>> "%ERR%"
 
 set RC=%ERRORLEVEL%
 popd
