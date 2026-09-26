@@ -335,6 +335,28 @@ BENCH_EXIT_NETWORK: int = 3
 BENCH_SCHEMA_ERROR_LIMIT: int = 5
 
 # ============================================================
+# P3 data-freshness gate (proyecto3/src/data_freshness.py, FND-0098)
+# ============================================================
+# p3_build_portfolio aborts (exit 2) when its inputs are older than these limits, unless
+# `--allow-stale`. Ages are in calendar days vs. today. The check is universe-level, NOT per fund:
+# a few permanently frozen funds (FND-0041) must not block every run.
+#   nav_p10        : the 10th percentile of "newest monthly NAV date" over the active universe
+#                    (so up to ~10% of funds may lag; a stale load moves the whole distribution)
+#   macro_market   : last valid date of the market-driven regime inputs (macro series are indexed
+#                    at month-end, so an age can be negative for the current month -> treated as 0)
+#   macro_release  : same for the release-lag inputs (IPC / OECD CLI publish 4-8 weeks late)
+#   harvest        : age of the newest db_document_catalogue harvest_ts (fund universe membership)
+P3_FRESHNESS_MAX_AGE_DAYS: dict = {
+    "nav_p10": 14,
+    "macro_market": 45,
+    "macro_release": 100,
+    "harvest": 45,
+}
+P3_NAV_UNIVERSE_PERCENTILE: float = 0.10
+P3_MACRO_RELEASE_LAG_INDICATORS: tuple = ("ipc_yoy_avg", "cli_eu")
+P3_EXIT_STALE_INPUTS: int = 2
+
+# ============================================================
 # Base de datos unificada
 # ============================================================
 DB_PATH: Path = _ROOT / "db" / "fondos.sqlite"

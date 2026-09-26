@@ -459,6 +459,7 @@ python -m proyecto2.src.discovery.macro_discovery --source all
 | Module | Folder |
 |--------|--------|
 | `backtesting.py` | `proyecto3/src` |
+| `data_freshness.py` | `proyecto3/src` |
 | `fund_scorer.py` | `proyecto3/src` |
 | `monthly_report.py` | `proyecto3/src` |
 | `portfolio_builder.py` | `proyecto3/src` |
@@ -515,6 +516,14 @@ Weight method: `score_proportional`.
 ### Monthly report (monthly_report.py)
 
 `generate_report(conn, output_dir="c:/data/fondos/reports")` → Excel with sheets: `0_Portada`, `1_Cartera`, `2_Regimen`, `3_Backtesting`, `4_Rotacion`.
+
+### Data-freshness gate (`data_freshness.py`)
+
+`scripts/launch/p3_build_portfolio.py` checks input freshness **before** scoring or persisting and
+exits `P3_EXIT_STALE_INPUTS` (2) if it fails: the 10th percentile of each active fund's newest
+monthly NAV, the last valid date of each regime input, and the newest harvest. The check is
+universe-level (a few frozen funds do not block a run); limits live in
+`shared/config.py::P3_FRESHNESS_MAX_AGE_DAYS`. `--allow-stale` overrides; `--dry-run` only warns.
 
 ### DB tables used by P3
 

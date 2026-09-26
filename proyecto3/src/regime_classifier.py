@@ -312,6 +312,12 @@ def _load_macro_series(conn: sqlite3.Connection) -> pd.DataFrame:
 # Logica de clasificacion
 # ============================================================
 
+# Indicadores que consume _classify_row (mismo orden que sus parametros).
+REGIME_INPUT_INDICATORS: tuple = (
+    "oil_yoy", "ipc_yoy_avg", "cli_eu", "rate_deposit", "d_rate_3m", "spread_hy", "vix_yoy",
+)
+
+
 def _classify_row(
     oil_yoy:      float | None,
     ipc_yoy_avg:  float | None,
@@ -395,6 +401,18 @@ class RegimeClassifier:
         self.conn   = conn
         self._macro = _load_macro_series(conn)
         self._historical_cache: pd.DataFrame | None = None
+
+    def input_last_dates(self) -> dict:
+        """Ultima fecha con dato de cada indicador que consume _classify_row (FND-0098).
+
+        classify_current() hace ffill, asi que la fecha del regimen no delata un indicador
+        congelado; esto expone la fecha REAL de cada entrada (None si la columna falta o esta
+        vacia) para el gate de frescura de p3_build_portfolio.
+        """
+        return {
+            col: (self._macro[col].last_valid_index() if col in self._macro.columns else None)
+            for col in REGIME_INPUT_INDICATORS
+        }
 
     def classify_current(self) -> RegimeResult:
         """Clasifica el regimen del ultimo mes disponible."""

@@ -24,7 +24,9 @@ from pathlib import Path
 _ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT))
 
+from shared.config import P3_EXIT_STALE_INPUTS
 from shared.db import get_connection
+from proyecto3.src.data_freshness import check_universe_freshness, format_report, stale_checks
 from proyecto3.src.regime_classifier import RegimeClassifier
 from proyecto3.src.fund_scorer import score_funds
 from proyecto3.src.portfolio_builder import PortfolioBuilder
@@ -35,9 +37,29 @@ def _default_scenario_id(regime: str, date) -> str:
     return f"cartera_{regime.lower()}_{date.year}{date.month:02d}"
 
 
-def main(scenario_id: str | None = None, dry_run: bool = False, backend: str | None = None) -> int:
+def main(scenario_id: str | None = None, dry_run: bool = False, backend: str | None = None,
+         allow_stale: bool = False) -> int:
     conn = get_connection(backend=backend)
     clf  = RegimeClassifier(conn)
+
+    # FND-0098: refuse to score/persist a portfolio from outdated NAV / macro / universe data.
+    # A dry-run persists nothing, so it only warns; --allow-stale overrides (loudly) a real run.
+    checks = check_universe_freshness(conn, clf)
+    print(format_report(checks))
+    print()
+    _stale = stale_checks(checks)
+    if _stale:
+        _names = ", ".join(c.name for c in _stale)
+        if dry_run or allow_stale:
+            print(f"AVISO: entradas desactualizadas ({_names}) -- continuando por "
+                  f"{'--dry-run' if dry_run else '--allow-stale'}.")
+            print()
+        else:
+            print(f"ERROR: entradas desactualizadas ({_names}) -- abortando sin puntuar ni "
+                  f"persistir. Refresque los datos (P2_discoverLoadMetrics.bat / harvest) o "
+                  f"use --allow-stale bajo su responsabilidad.")
+            return P3_EXIT_STALE_INPUTS
+
     reg  = clf.classify_current()
 
     print(clf.current_regime_report())
@@ -66,6 +88,7 @@ def main(scenario_id: str | None = None, dry_run: bool = False, backend: str | N
 if __name__ == "__main__":
     _args = sys.argv[1:]
     _dry_run = "--dry-run" in _args
+    _allow_stale = "--allow-stale" in _args
     # --backend {sqlite,postgres} — migration addendum 2026-09-20. None resolves
     # FONDOS_DB_BACKEND ("sqlite" if unset). Manual parsing to match this script's existing
     # positional-scenario_id style rather than introducing argparse for one new flag.
@@ -74,10 +97,10 @@ if __name__ == "__main__":
         _i = _args.index("--backend")
         _backend = _args[_i + 1]
         del _args[_i:_i + 2]
-    _positional = [a for a in _args if a != "--dry-run"]
+    _positional = [a for a in _args if a not in ("--dry-run", "--allow-stale")]
     scenario_arg = _positional[0] if _positional else None
 
     from shared.backlog_client import capture_exceptions
     with capture_exceptions(object_name="p3_build_portfolio.py", object_type="JOB"):
-        _rc = main(scenario_arg, dry_run=_dry_run, backend=_backend)
+        _rc = main(scenario_arg, dry_run=_dry_run, backend=_backend, allow_stale=_allow_stale)
     sys.exit(_rc)
