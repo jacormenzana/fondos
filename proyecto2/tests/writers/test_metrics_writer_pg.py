@@ -26,7 +26,9 @@ from __future__ import annotations
 
 import math
 
-from src.writers.metrics_writer import replace_beta_set, write_metrics, write_timeseries
+from src.writers.metrics_writer import (
+    replace_beta_set, write_metrics, write_metrics_batch, write_timeseries,
+)
 
 
 def _make_fund_metrics(conn):
@@ -199,3 +201,86 @@ def test_replace_beta_set_drops_orphans_and_spares_other_metrics(pg_session_conn
         "SELECT value FROM fund_metrics WHERE isin='ES0001' AND metric='sharpe'"
     ).fetchone()[0]
     assert sharpe == 0.5
+
+
+# ---- FND-0092: one-transaction batch writer for the whole-universe rolling category write -----------
+
+_KW = dict(algorithm_version="V1", batch_id="B1", metric_version="v1")
+
+
+def _items():
+    def mk(metric, value):
+        return {"metric": metric, "value": value, "real_flag": 0, "source_rows": 12}
+    return [
+        ("ES0001", "rolling_1y", [mk("vol_ann_pctile_cat", 0.25), mk("max_dd_pctile_cat", 0.75)]),
+        ("ES0001", "rolling_3y", [mk("vol_ann_pctile_cat", 0.5)]),
+        ("ES0002", "rolling_1y", [mk("vol_ann_pctile_cat", float("nan"))]),   # NaN -> NULL
+    ]
+
+
+def _dump(conn):
+    return conn.execute(
+        "SELECT isin, metric, horizon, value, real_flag, algorithm_version, batch_id, metric_version "
+        "FROM fund_metrics ORDER BY isin, metric, horizon"
+    ).fetchall()
+
+
+def test_write_metrics_batch_matches_per_call_writer(pg_session_conn, pg_conn_module_schema):
+    conn = pg_session_conn
+    conn.execute(f"SET search_path = {pg_conn_module_schema}")
+    _make_fund_metrics(conn)
+    for isin, horizon, metrics in _items():
+        write_metrics(conn, isin, metrics, horizon, dry_run=False, **_KW)
+    expected = [tuple(r) for r in _dump(conn)]
+    conn.execute("DELETE FROM fund_metrics")
+
+    n = write_metrics_batch(conn, _items(), dry_run=False, **_KW)
+    assert n == 4
+    assert [tuple(r) for r in _dump(conn)] == expected          # identical rows, NaN -> NULL included
+    # idempotent upsert: a second identical batch changes nothing and adds nothing
+    write_metrics_batch(conn, _items(), dry_run=False, **_KW)
+    assert [tuple(r) for r in _dump(conn)] == expected
+
+
+def test_write_metrics_batch_chunks_and_counts(pg_session_conn, pg_conn_module_schema):
+    conn = pg_session_conn
+    conn.execute(f"SET search_path = {pg_conn_module_schema}")
+    _make_fund_metrics(conn)
+    assert write_metrics_batch(conn, _items(), dry_run=False, chunk=1, **_KW) == 4
+    assert len(_dump(conn)) == 4
+
+
+def test_write_metrics_batch_appends_to_caller_transaction(pg_session_conn, pg_conn_module_schema):
+    conn = pg_session_conn
+    conn.execute(f"SET search_path = {pg_conn_module_schema}")
+    _make_fund_metrics(conn)
+    conn.execute("BEGIN")
+    write_metrics_batch(conn, _items(), dry_run=False, **_KW)
+    conn.execute("ROLLBACK")                       # the caller owns the transaction: nothing was committed
+    assert _dump(conn) == []
+
+
+def test_write_metrics_batch_is_atomic_when_a_chunk_fails(pg_session_conn, pg_conn_module_schema):
+    conn = pg_session_conn
+    conn.execute(f"SET search_path = {pg_conn_module_schema}")
+    _make_fund_metrics(conn)
+    items = _items()
+    items[2][2][0]["real_flag"] = "not-a-smallint"  # fails in the 4th chunk (chunk=1), after 3 rows went in
+    try:
+        write_metrics_batch(conn, items, dry_run=False, chunk=1, **_KW)
+        raise AssertionError("expected a database error")
+    except AssertionError:
+        raise
+    except Exception:
+        pass
+    assert _dump(conn) == []                        # the whole batch rolled back, no partial universe
+
+
+def test_write_metrics_batch_noop_cases(pg_session_conn, pg_conn_module_schema):
+    conn = pg_session_conn
+    conn.execute(f"SET search_path = {pg_conn_module_schema}")
+    _make_fund_metrics(conn)
+    assert write_metrics_batch(conn, [], dry_run=False, **_KW) == 0
+    assert write_metrics_batch(conn, _items(), dry_run=True, **_KW) == 0
+    assert write_metrics_batch(conn, [("ES0001", "rolling_1y", [])], dry_run=False, **_KW) == 0
+    assert _dump(conn) == []

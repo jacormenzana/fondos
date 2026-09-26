@@ -52,6 +52,91 @@ def rows_from_metric_tuples(
     ]
 
 
+# One statement per dialect, shared by write_metrics and write_metrics_batch (module constants so the
+# EXPLAIN sweep in tests/test_sql_explain_sweep_pg.py still resolves and verifies the Postgres one).
+_METRICS_UPSERT_PG = """
+            INSERT INTO fund_metrics
+                (isin, metric, horizon, value, real_flag,
+                 calculation_date, metric_version, benchmark_id, source_rows,
+                 algorithm_version, batch_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, NULL, %s, %s, %s)
+            ON CONFLICT (isin, metric, horizon, real_flag, metric_version) DO UPDATE SET
+                value = excluded.value, calculation_date = excluded.calculation_date,
+                benchmark_id = excluded.benchmark_id, source_rows = excluded.source_rows,
+                algorithm_version = excluded.algorithm_version, batch_id = excluded.batch_id,
+                load_ts = DEFAULT
+        """
+_METRICS_UPSERT_SQLITE = """
+            INSERT OR REPLACE INTO fund_metrics
+                (isin, metric, horizon, value, real_flag,
+                 calculation_date, metric_version, benchmark_id, source_rows,
+                 algorithm_version, batch_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
+        """
+
+
+def _metric_row_tuples(isin, metrics, horizon, today, metric_version, algorithm_version, batch_id) -> list:
+    return [
+        (
+            isin,
+            m["metric"],
+            horizon,
+            m["value"] if not (isinstance(m["value"], float) and
+                                m["value"] != m["value"]) else None,  # NaN -> NULL
+            m["real_flag"],
+            today,
+            metric_version,
+            m.get("source_rows"),
+            algorithm_version,
+            batch_id,
+        )
+        for m in metrics
+    ]
+
+
+def write_metrics_batch(
+    conn: sqlite3.Connection,
+    items: list,
+    dry_run: bool,
+    *,
+    algorithm_version: str,
+    batch_id: str,
+    metric_version: str,
+    chunk: int = 5000,
+) -> int:
+    """Writes many (isin, horizon, metrics) groups to fund_metrics in ONE transaction (FND-0092).
+
+    `items` = [(isin, horizon, [metric dicts]), ...]. Same rows/SQL as write_metrics (shared
+    helpers), but a single BEGIN/COMMIT and chunked executemany instead of one transaction per
+    (isin, horizon): the whole-universe rolling category write was ~17k commits ≈ 15 min on
+    Postgres. If the caller already holds a transaction the function appends to it (EFF-2) and
+    leaves the commit to the caller; on error the transaction it opened is rolled back whole.
+    """
+    if not items or dry_run:
+        return 0
+    today = date.today().isoformat()
+    sql = _METRICS_UPSERT_PG if is_postgres_connection(conn) else _METRICS_UPSERT_SQLITE
+    rows: list = []
+    for isin, horizon, metrics in items:
+        rows.extend(_metric_row_tuples(isin, metrics, horizon, today, metric_version,
+                                       algorithm_version, batch_id))
+    if not rows:
+        return 0
+    own_txn = not in_transaction(conn)
+    if own_txn:
+        begin_immediate(conn)
+    try:
+        for i in range(0, len(rows), chunk):
+            _executemany(conn, sql, rows[i:i + chunk])
+        if own_txn:
+            conn.execute("COMMIT")
+    except Exception:
+        if own_txn:
+            conn.execute("ROLLBACK")
+        raise
+    return len(rows)
+
+
 def write_metrics(
     conn: sqlite3.Connection,
     isin: str,
@@ -78,43 +163,8 @@ def write_metrics(
         return 0
 
     today = date.today().isoformat()
-    if is_postgres_connection(conn):
-        sql = """
-            INSERT INTO fund_metrics
-                (isin, metric, horizon, value, real_flag,
-                 calculation_date, metric_version, benchmark_id, source_rows,
-                 algorithm_version, batch_id)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, NULL, %s, %s, %s)
-            ON CONFLICT (isin, metric, horizon, real_flag, metric_version) DO UPDATE SET
-                value = excluded.value, calculation_date = excluded.calculation_date,
-                benchmark_id = excluded.benchmark_id, source_rows = excluded.source_rows,
-                algorithm_version = excluded.algorithm_version, batch_id = excluded.batch_id,
-                load_ts = DEFAULT
-        """
-    else:
-        sql = """
-            INSERT OR REPLACE INTO fund_metrics
-                (isin, metric, horizon, value, real_flag,
-                 calculation_date, metric_version, benchmark_id, source_rows,
-                 algorithm_version, batch_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
-        """
-    rows = [
-        (
-            isin,
-            m["metric"],
-            horizon,
-            m["value"] if not (isinstance(m["value"], float) and
-                                m["value"] != m["value"]) else None,  # NaN -> NULL
-            m["real_flag"],
-            today,
-            metric_version,
-            m.get("source_rows"),
-            algorithm_version,
-            batch_id,
-        )
-        for m in metrics
-    ]
+    sql = _METRICS_UPSERT_PG if is_postgres_connection(conn) else _METRICS_UPSERT_SQLITE
+    rows = _metric_row_tuples(isin, metrics, horizon, today, metric_version, algorithm_version, batch_id)
     # EFF-2: skip own transaction when the caller batches for us
     if in_transaction(conn):
         _executemany(conn, sql, rows)

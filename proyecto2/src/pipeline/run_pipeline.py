@@ -120,6 +120,7 @@ from src.utils.logger import get_pipeline_logger
 from src.writers.metrics_writer import (
     rows_from_metric_tuples as _rows_from_metric_tuples,
     write_metrics as _write_metrics,
+    write_metrics_batch as _write_metrics_batch,
     write_timeseries as _write_timeseries,
     replace_beta_set as _replace_beta_set,
 )
@@ -1451,13 +1452,14 @@ def run(
                             "real_flag":   r["real_flag"],
                             "source_rows": r.get("source_rows"),
                         })
-                    n_cat = 0
-                    for (s_isin, s_window), s_rows in cat_by.items():
-                        n_cat += _write_metrics(
-                            conn, s_isin, s_rows, s_window, dry_run,
-                            algorithm_version=CALC_VERSION, batch_id=RUN_BATCH_ID,
-                            metric_version=METRIC_VERSION,
-                        )
+                    # FND-0092: ONE transaction / chunked executemany for the whole universe (was one
+                    # BEGIN/COMMIT per (fund, window): ~17k commits, ~15 min on Postgres).
+                    n_cat = _write_metrics_batch(
+                        conn, [(s_isin, s_window, s_rows) for (s_isin, s_window), s_rows in cat_by.items()],
+                        dry_run,
+                        algorithm_version=CALC_VERSION, batch_id=RUN_BATCH_ID,
+                        metric_version=METRIC_VERSION,
+                    )
                     logger.info(
                         f"[ROLLING] {len(cat_sig_rows)} señales de categoria → "
                         f"{n_cat} escritas en fund_metrics"
