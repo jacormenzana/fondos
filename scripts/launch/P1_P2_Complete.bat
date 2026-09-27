@@ -43,6 +43,12 @@ chcp 65001 > nul
 ::   el codigo commiteado). Se guarda la lista de fondos contaminados antes de PASO 2 y despues se
 ::   ejecuta `run_block.py --recompute-costs` (solo cache, sin descargas) SOLO sobre los que este
 ::   P1 acaba de contaminar; los ya contaminados de antes no se tocan.
+:: Log de detalle por paso (FND-0109, 2026-09-27): cada paso escribe su propio log en su propio
+::   fichero con su propio timestamp (distinto del de este orquestador); el log de orquestacion
+::   solo tenia cabeceras y RC, sin nombrar esos ficheros, lo que parecia un fallo silencioso
+::   cuando un paso no tenia nada que hacer (p. ej. PASO 1 con la cache negativa llena). Tras cada
+::   paso ejecutado (no saltado) se busca el log de detalle mas reciente de ese paso y se anota su
+::   ruta y su recuento de [WARN]/[ERROR]; si el paso fallo, tambien sus ultimas 15 lineas.
 :: La logica del estado vive en p1p2_state.py (testeable); este .bat solo lo invoca.
 :: Estado: proyecto1\log\P1_P2_Complete.state (variable P1P2_STATE_FILE para cambiarlo).
 :: Codigos de salida propios: 2 = --from rechazado, 3 = estado no escribible,
@@ -165,6 +171,7 @@ for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format HHmmss"') do se
 echo [%T1E:~0,2%:%T1E:~2,2%:%T1E:~4,2%] PASO 1/4 fin (RC=!RC1!)
 echo --- PASO 1/4 fin: RC=!RC1!  Fin: !T1E! --------------------- >> "%LOG%"
 "%PYTHON%" "%LAUNCH%\p1p2_state.py" step --step 1 --rc !RC1! --start !T1! --end !T1E! !FROM_ANY_USED!
+call :log_step_detail "%ROOT%\proyecto1\log" "log_benchmarks_*.log" "!RC1!"
 
 if !RC1! NEQ 0 (
     set FINAL_RC=!RC1!
@@ -198,6 +205,7 @@ for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format HHmmss"') do se
 echo [%T2E:~0,2%:%T2E:~2,2%:%T2E:~4,2%] PASO 2/4 fin (RC=!RC2!)
 echo --- PASO 2/4 fin: RC=!RC2!  Fin: !T2E! --------------------- >> "%LOG%"
 "%PYTHON%" "%LAUNCH%\p1p2_state.py" step --step 2 --rc !RC2! --start !T2! --end !T2E! !FROM_ANY_USED!
+call :log_step_detail "%ROOT%\proyecto1\log" "log_pipeline_*.log" "!RC2!"
 
 if !RC2! NEQ 0 (
     set FINAL_RC=!RC2!
@@ -249,6 +257,7 @@ for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format HHmmss"') do se
 echo [%T3E:~0,2%:%T3E:~2,2%:%T3E:~4,2%] PASO 3/4 fin (RC=!RC3!)
 echo --- PASO 3/4 fin: RC=!RC3!  Fin: !T3E! --------------------- >> "%LOG%"
 "%PYTHON%" "%LAUNCH%\p1p2_state.py" step --step 3 --rc !RC3! --start !T3! --end !T3E! !FROM_ANY_USED!
+call :log_step_detail "%ROOT%\proyecto2\log" "log_P2_discoverMetrics_*.log" "!RC3!"
 
 if !RC3! NEQ 0 (
     set FINAL_RC=!RC3!
@@ -275,6 +284,7 @@ for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format HHmmss"') do se
 echo [%T4E:~0,2%:%T4E:~2,2%:%T4E:~4,2%] PASO 4/4 fin (RC=!RC4!)
 echo --- PASO 4/4 fin: RC=!RC4!  Fin: !T4E! --------------------- >> "%LOG%"
 "%PYTHON%" "%LAUNCH%\p1p2_state.py" step --step 4 --rc !RC4! --start !T4! --end !T4E! !FROM_ANY_USED!
+call :log_step_detail "%ROOT%\proyecto2\log" "log_P2_calcIndicators_*.log" "!RC4!"
 
 if !RC4! NEQ 0 (
     set FINAL_RC=!RC4!
@@ -344,6 +354,37 @@ echo.
 :: could expand it (verified empirically) -- chain on one line so %FINAL_RC%
 :: substitutes at parse time, while the scope is still active.
 endlocal & exit /b %FINAL_RC%
+
+:: ============================================================
+:: Subrutina: anota en %LOG% el log de detalle real de un paso (FND-0109, 2026-09-27).
+:: %1 = directorio de log del paso, %2 = patron glob (mas reciente por fecha de modificacion),
+:: %3 = RC del paso (si != 0, tambien vuelca sus ultimas 15 lineas).
+:: ============================================================
+:log_step_detail
+setlocal
+set "SLD_DIR=%~1"
+set "SLD_PAT=%~2"
+set "SLD_RC=%~3"
+set "SLD_FILE="
+for /f "delims=" %%f in ('dir /b /o-d "%SLD_DIR%\%SLD_PAT%" 2^>nul') do if not defined SLD_FILE set "SLD_FILE=%%f"
+if not defined SLD_FILE (
+    echo   [WARN] no se encontro log de detalle para %SLD_PAT% en %SLD_DIR% >> "%LOG%"
+    endlocal
+    exit /b 0
+)
+set "SLD_PATH=%SLD_DIR%\%SLD_FILE%"
+set SLD_WARN=0
+set SLD_ERR=0
+for /f %%c in ('findstr /c:"[WARN]" "%SLD_PATH%" 2^>nul ^| find /c /v ""') do set SLD_WARN=%%c
+for /f %%c in ('findstr /c:"[ERROR]" "%SLD_PATH%" 2^>nul ^| find /c /v ""') do set SLD_ERR=%%c
+echo   log detalle: %SLD_PATH%  (WARN=%SLD_WARN% ERROR=%SLD_ERR%) >> "%LOG%"
+if not "%SLD_RC%"=="0" (
+    echo   --- ultimas lineas del log de detalle -------------------------- >> "%LOG%"
+    powershell -NoProfile -Command "Get-Content -LiteralPath '%SLD_PATH%' -Tail 15" >> "%LOG%" 2>nul
+    echo   ------------------------------------------------------------------ >> "%LOG%"
+)
+endlocal
+exit /b 0
 
 :abort_check
 echo.
