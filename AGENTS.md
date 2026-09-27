@@ -336,6 +336,7 @@ proyecto2/
       test_fred_es.py
       test_fred_es2.py
       test_historia.py
+      test_macro_discovery_loaders_20260927.py
       test_macro_discovery_pg.py
       test_nav_discovery_cli_isin_split_20260927.py
       test_nav_discovery_date_types_pg.py
