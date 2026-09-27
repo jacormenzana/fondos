@@ -2134,8 +2134,11 @@ def main():
                    stale_days=args.stale_days, monthly_grain=args.monthly_grain,
                    isins=isins if args.isin else None)
     elif args.mode == "recalculate-monthly":
-        isins_rcm = [args.isin.strip().upper()] if args.isin else None
-        run_recalculate_monthly(conn, isins=isins_rcm, dry_run=args.dry_run)
+        # FND-0096 (2026-09-27): this used to wrap the whole --isin string into a single-element
+        # list ([args.isin.strip().upper()]) instead of splitting on comma like every other mode
+        # does (`isins` above, line ~2077) -- `--isin A,B` was treated as one ISIN literally named
+        # "A,B". Reuse the already-split `isins`, same pattern as the `update` branch just above.
+        run_recalculate_monthly(conn, isins=isins if args.isin else None, dry_run=args.dry_run)
 
     conn.close()
 
