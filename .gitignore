@@ -26,6 +26,11 @@ out/
 
 # Archivos de configuración locales duplicados con fecha
 *_2026[0-9]*
+# ...pero no los tests con fecha en el nombre: convención establecida del proyecto
+# (test_nav_discovery_freeze_20260915.py y hermanos, ya trackeados antes de esta regla;
+# la regla de arriba los ocultaba en silencio para cualquier fichero NUEVO con ese patrón --
+# encontrado 2026-09-27 al no aparecer test_nav_discovery_cli_isin_split_20260927.py en git status).
+!test_*_2026[0-9]*.py
 
 # IDE local (VSCode workspace state, machine-specific)
 .vscode/
