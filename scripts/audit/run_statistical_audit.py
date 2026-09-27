@@ -163,6 +163,16 @@ def _sql(conn, query: str) -> str:
     return query.replace("{window}", window_col).replace("?", _ph(conn))
 
 
+def _df(conn, query: str, params=()) -> pd.DataFrame:
+    """pd.read_sql_query(query, conn, ...) emits a UserWarning on a plain psycopg3 connection
+    ("only supports SQLAlchemy connectable ... or sqlite3 DBAPI2") on every single call -- pure log
+    noise on a hermetic/live run (FND-0108). fetchall()+DataFrame(columns=...), same pattern already
+    used by export_tables.py/pipeline.py/fund_scorer.py/db_readers.py for the identical reason."""
+    cur = conn.execute(query, params)
+    cols = [d[0] for d in cur.description]   # index, not .name: portable across psycopg3/sqlite3
+    return pd.DataFrame([tuple(r) for r in cur.fetchall()], columns=cols)
+
+
 def _restore_case(df: pd.DataFrame, canonical: tuple[str, ...]) -> pd.DataFrame:
     """Postgres folds unquoted result columns to lowercase; the catalogs and
     downstream code use the SQLite-declared spelling (e.g. ISIN, Fund_Nature)."""
@@ -342,7 +352,7 @@ def _latest_ipc_yoy(conn: "psycopg.Connection") -> float | None:
 
 
 def _fetch_latest_timeseries_snapshot(conn: "psycopg.Connection", metric: str, window: str) -> pd.DataFrame:
-    return pd.read_sql_query(_sql(conn, _TS_LATEST_QUERY), conn, params=(metric, window, metric, window))
+    return _df(conn, _sql(conn, _TS_LATEST_QUERY), (metric, window, metric, window))
 
 
 _TS_SERIES_SUMMARY_QUERY = """
@@ -441,10 +451,11 @@ def _periodic_return_variance(conn: "psycopg.Connection", isins: list[str]) -> p
     if not isins:
         return pd.DataFrame(columns=["isin", "periodic_return_variance"])
     placeholders = ",".join(_ph(conn) for _ in isins)
-    nav_df = pd.read_sql_query(
+    nav_df = _df(
+        conn,
         f"""SELECT ISIN AS isin, Date AS date, NAV AS nav FROM fund_nav_monthly
             WHERE ISIN IN ({placeholders}) ORDER BY ISIN, Date""",
-        conn, params=isins,
+        isins,
     )
     if nav_df.empty:
         return pd.DataFrame(columns=["isin", "periodic_return_variance"])

@@ -23,7 +23,13 @@ def build_population(
             "require_universe_filter=False only for tables with no universe "
             "concept (reference/lookup tables)."
         )
-    return pd.read_sql_query(query, conn, params=params)
+    # fetchall()+DataFrame(columns=...), not pd.read_sql_query(query, conn, ...): on a plain
+    # psycopg3 connection (not SQLAlchemy) it emits a UserWarning on every call — pure log noise
+    # on a hermetic/live run (FND-0108); same pattern already used by export_tables.py/pipeline.py/
+    # fund_scorer.py/db_readers.py for the identical reason.
+    cur = conn.execute(query, params)
+    cols = [d[0] for d in cur.description]   # index, not .name: portable across psycopg3/sqlite3
+    return pd.DataFrame([tuple(r) for r in cur.fetchall()], columns=cols)
 
 
 @dataclass

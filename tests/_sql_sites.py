@@ -250,11 +250,13 @@ def _resolve(node, scopes, dialect, depth=0):
 
 _ATTR_SINKS = {"execute": 0, "executemany": 0, "read_sql": 0, "read_sql_query": 0}
 _NAME_SINKS = {"execute_fail_soft": 1, "executemany": 1, "_executemany": 1, "read_sql": 0,
-               "read_sql_query": 0, "_read_table_df": 1, "build_population": 1}
+               "read_sql_query": 0, "_read_table_df": 1, "build_population": 1, "_df": 1}
 # Functions that merely forward their `sql` parameter to the driver: their CALLERS are the real
 # statements (and are sinks themselves, see _NAME_SINKS), so the pass-through is not a site.
+# _df (scripts/audit/run_statistical_audit.py, FND-0108): fetchall()+DataFrame(columns=...)
+# replacement for pd.read_sql_query, same shape as _read_table_df/build_population above.
 _PASSTHROUGH_WRAPPERS = {"execute_fail_soft", "executemany", "_executemany", "_read_table_df",
-                         "build_population"}
+                         "build_population", "_df"}
 
 
 def _sink(call: ast.Call):

@@ -45,11 +45,17 @@ class RunComparisonResult:
 
 def load_run_statistics(conn: "psycopg.Connection", run_id: str, domain: str) -> pd.DataFrame:
     ph = "%s"
-    return pd.read_sql_query(
+    # fetchall()+DataFrame(columns=...), not pd.read_sql_query(query, conn, ...): on a plain
+    # psycopg3 connection (not SQLAlchemy) it emits a UserWarning on every call — pure log noise
+    # on a hermetic/live run (FND-0108); same pattern already used by export_tables.py/pipeline.py/
+    # fund_scorer.py/db_readers.py for the identical reason.
+    cur = conn.execute(
         "SELECT population, group_key, stat_name, stat_value FROM audit_statistic "
         f"WHERE run_id = {ph} AND domain = {ph}",
-        conn, params=(run_id, domain),
+        (run_id, domain),
     )
+    cols = [d[0] for d in cur.description]   # index, not .name: portable across psycopg3/sqlite3
+    return pd.DataFrame([tuple(r) for r in cur.fetchall()], columns=cols)
 
 
 def compare_runs(
