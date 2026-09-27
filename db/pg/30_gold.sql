@@ -143,8 +143,11 @@ COMMENT ON TABLE gold.fmts_p_default IS
 CREATE INDEX IF NOT EXISTS idx_fmts_bi ON gold.fund_metric_timeseries
   (window_label, isin, date) INCLUDE (value_nominal, value_real, has_real);
 
--- ETL watermark / run correlator (genuinely new, §P2 index plan)
-CREATE INDEX IF NOT EXISTS idx_fmts_batch ON gold.fund_metric_timeseries (batch_id);
+-- idx_fmts_batch (ETL watermark / run correlator) DROPPED (FND-0115, 2026-09-27): 560MB across its
+-- 6 partition indexes for a column that is write-only everywhere in production code -- no statement
+-- ever filters WHERE batch_id=, confirmed by grep, and by idx_tup_read/idx_scan showing near-zero
+-- selectivity in the handful of scans it ever got. batch_id itself stays on the table (still useful
+-- for provenance/debugging via a full scan); only the dedicated index is gone.
 
 -- Extended statistics: metric/window_label are strongly correlated within a partition and PG
 -- would otherwise multiply selectivities independently and badly under-estimate. `real_flag`

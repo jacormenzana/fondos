@@ -68,7 +68,12 @@ _NAMED_METRICS = ("vol_ann", "max_dd", "return_ann", "sharpe", "sortino")
 _RELATION_RENAMES = {  # canonical name -> _new / _long_old suffix pieces, longest-first for safety
     "gold.fund_metric_timeseries": ("_new", "_long_old"),
 }
-_INDEX_RENAMES = ("idx_fmts_bi", "idx_fmts_batch")
+# idx_fmts_batch dropped from the live table (FND-0115, 2026-09-27, before this pivot's first live
+# --apply attempt) but this script's DDL substitution / rename lists still named it, so
+# _rename_old_to_long_old's ALTER INDEX failed with UndefinedTable against live (rehearsal never
+# caught this: the rehearsal was restored from a dump taken before the FND-0115 drop). Fixed in step
+# with removing idx_fmts_batch's CREATE INDEX from 30_gold.sql -- there is now only one index here.
+_INDEX_RENAMES = ("idx_fmts_bi",)
 _STATS_RENAME = "stx_fmts"
 _PKEY_NAME = "fmts_pkey"
 _FK_NAME = "fmts_isin_fk"
