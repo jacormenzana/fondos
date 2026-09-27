@@ -261,8 +261,10 @@ except ModuleNotFoundError:
 # P1-19: única definición de la escala de coste (P#11 / R-1)
 try:
     from core.cost_scale import OC_RATIO_MAX as _OC_RATIO_MAX
+    from core.cost_scale import guard_parser_ongoing_charge as _guard_parser_oc
 except ImportError:                          # proyecto1/core ya en sys.path
     from cost_scale import OC_RATIO_MAX as _OC_RATIO_MAX
+    from cost_scale import guard_parser_ongoing_charge as _guard_parser_oc
 
 # BL-COST-4c: extractores Sprint 2 (kill-switch interno en cada módulo)
 # Import condicional: el pipeline no rompe si los módulos no están presentes.
@@ -1434,6 +1436,26 @@ def run_block(
             _geo_en_final = _derive_geography_en(_geo_es_final, _geo_name_l)
             _devstat_final = derive_development_status(_geo_es_final, _geo_en_final, _geo_name_l)
 
+            # FIX-OC-PARSER-GUARD (root cause de FND-0034/FND-0095, 2026-09-27): parsed["Ongoing_Charge"]
+            # (escritor 1, kiid_parser) corre en CADA pase, incluidos los CACHED, donde el bloque
+            # completo del escritor 2 (con su propia guarda FIX-OC-PARSER-BIND, más abajo en este mismo
+            # archivo) se salta por rendimiento (`if pdf_bytes is not None or recompute_costs`) y nunca
+            # llega a proteger nada. SELECT dedicado (no se amplia _v3_row, mismo criterio que el de
+            # PC-3 más abajo): si BD ya tiene un valor bien ligado a la gestión y el del parser no lo
+            # está, se descarta para que el COALESCE del UPSERT conserve el de BD. Ver cost_scale.py::
+            # guard_parser_ongoing_charge para el detalle y los 5 ISINs reales que motivaron el fix.
+            _oc_parser_raw = parsed.get("Ongoing_Charge")
+            if _oc_parser_raw is not None:
+                _oc_guard_row = conn.execute(
+                    "SELECT Ongoing_Charge_Recurrent, Management_Fee_Pct, ACI_RHP, ACI_1Y "
+                    "FROM fund_master WHERE ISIN=%s", (isin,)
+                ).fetchone()
+                if _oc_guard_row is not None:
+                    _oc_parser_raw = _guard_parser_oc(
+                        _oc_parser_raw, _oc_guard_row[0], _oc_guard_row[1],
+                        _oc_guard_row[2], _oc_guard_row[3],
+                    )
+
             fund_master_record = {
                 # -------------------------
                 # Identidad
@@ -1530,7 +1552,9 @@ def run_block(
                 # usando el patrón _X_efectivo = record.get("X") or _X_bd según R-4.
                 # Las variables _oc_bd, _aci_rhp_bd, _kf_bd se añadirán al bloque de
                 # lectura BD previa en Sprint 2.
-                "Ongoing_Charge_Recurrent": parsed.get("Ongoing_Charge"),
+                # FIX-OC-PARSER-GUARD (2026-09-27): _oc_parser_raw ya pasó por la guarda de
+                # ligadura arriba -- no es parsed.get("Ongoing_Charge") en crudo.
+                "Ongoing_Charge_Recurrent": _oc_parser_raw,
                 # Accumulation_Policy: combinar characterizer (nombre) + kiid_parser (texto)
                 "Accumulation_Policy": (
                     classification.get("Accumulation_Policy") or

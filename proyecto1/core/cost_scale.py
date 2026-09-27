@@ -42,11 +42,29 @@ cambio de menor radio de impacto.
 
 from typing import Optional
 
+# Reutiliza la guarda de ligadura y la normalización de escala ya escritas y probadas para el
+# escritor 2 (FIX-OC-BIND, priips_cost_extractor.py) en vez de duplicar su heurística aquí
+# (P#11 / R-1). Import defensivo, PERO priips_cost_extractor.py hace a su vez imports SIN prefijo
+# de sus propios vecinos de core/ (cost_format_router, etc.) -- si quien importa cost_scale.py
+# (p.ej. pipeline.py) todavía no ha añadido proyecto1/core a sys.path en su propio orden de
+# imports, ese import bare falla dos niveles más abajo. Se añade aquí mismo, no se asume que el
+# llamador ya lo hizo (mismo patrón que fund_writer.py / BL-COST-4c-FIX-2 en pipeline.py).
+try:
+    from priips_cost_extractor import _resolve_oc_binding, _norm_existing_oc
+except ImportError:
+    import sys as _sys
+    from pathlib import Path as _Path
+    _core_dir = str(_Path(__file__).resolve().parent)
+    if _core_dir not in _sys.path:
+        _sys.path.insert(0, _core_dir)
+    from priips_cost_extractor import _resolve_oc_binding, _norm_existing_oc
+
 __all__ = [
     'OC_RATIO_MAX',
     'pct_to_ratio',
     'ratio_to_pct',
     'is_plausible_oc_ratio',
+    'guard_parser_ongoing_charge',
 ]
 
 # Techo de último recurso para el gasto corriente EN RATIO.
@@ -82,3 +100,53 @@ def is_plausible_oc_ratio(value: Optional[float]) -> bool:
     if value is None:
         return True
     return 0.0 <= value <= OC_RATIO_MAX
+
+
+def guard_parser_ongoing_charge(
+    parser_oc: Optional[float],
+    existing_oc_db: Optional[float],
+    management_fee_pct: Optional[float],
+    aci_rhp_pct: Optional[float],
+    aci_1y_pct: Optional[float],
+) -> Optional[float]:
+    """
+    FND-0034/FND-0095 (root cause, 2026-09-27): el escritor 1 (kiid_parser._detect_ongoing_charge,
+    vía parsed["Ongoing_Charge"]) corre en CADA pase de P1, incluidos los CACHED. El escritor 2 (los
+    extractores PRIIPs/UCITS) trae su propia guarda de ligadura ya probada (FIX-OC-PARSER-BIND en
+    priips_cost_extractor.py) que repara exactamente esta contaminación — pero ese bloque entero se
+    salta en CACHED (pipeline.py: `if pdf_bytes is not None or recompute_costs`, decisión de
+    rendimiento, no de datos) y nunca llega a ejecutarse. Resultado: el escritor 1 escribe sin
+    oposición en cada pase, y un valor ya correcto en BD (bien ligado a la gestión) puede quedar
+    pisado por una mala ligadura del regex de texto plano (ACI_RHP o coste de operación en vez del
+    componente de gestión) — verificado en vivo el 2026-09-26 sobre 5 ISINs (FR0011365212,
+    FR0013439478, IE00BJVNH654, IE00BJVNH761, IE00BYX5MX67).
+
+    Guarda ligera (una SELECT dedicada, sin ejecutar el extractor completo) que se antepone a esa
+    escritura: solo deja pasar el valor fresco del parser cuando no hay nada fiable que proteger
+    (sin valor en BD, o sin gestión con la que arbitrar) o cuando el valor fresco SÍ está bien ligado
+    a la gestión. Si el valor en BD ya está bien ligado y el del parser no lo está, se descarta
+    (None) para que el COALESCE del UPSERT conserve el valor de BD en vez de contaminarlo.
+
+    Reutiliza _resolve_oc_binding/_norm_existing_oc (priips_cost_extractor.py, ya probadas) en vez
+    de duplicar su heurística (P#11 / R-1) — misma tolerancia, mismo criterio de "mala ligadura".
+    Todos los argumentos *_pct/*_fee_pct en PORCENTAJE ENTERO (convención del resto del modelo);
+    parser_oc/existing_oc_db en la escala en que realmente llegan (parser_oc siempre ratio, por
+    contrato de kiid_parser; existing_oc_db en la escala legado que _norm_existing_oc normaliza).
+
+    Puro y conservador ante None (P-5): sin gestión con la que arbitrar, o sin valor previo que
+    proteger, se deja pasar el valor del parser sin tocar — el comportamiento actual no cambia.
+    """
+    if parser_oc is None or existing_oc_db is None:
+        return parser_oc
+    if management_fee_pct is None:
+        return parser_oc
+    mgmt_ratio = management_fee_pct / 100.0
+    aci_rhp_ratio = None if aci_rhp_pct is None else aci_rhp_pct / 100.0
+    aci_1y_ratio = None if aci_1y_pct is None else aci_1y_pct / 100.0
+
+    existing_norm = _norm_existing_oc(existing_oc_db)
+    if _resolve_oc_binding(existing_norm, mgmt_ratio, aci_rhp_ratio, aci_1y_ratio) is not None:
+        return parser_oc          # el valor en BD ya estaba mal ligado: nada fiable que proteger
+    if _resolve_oc_binding(parser_oc, mgmt_ratio, aci_rhp_ratio, aci_1y_ratio) is not None:
+        return None               # BD bien ligado, parser no está de acuerdo -> conservar BD
+    return parser_oc              # ambos de acuerdo (o el parser no diverge lo bastante)

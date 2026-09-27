@@ -30,6 +30,7 @@ if _CORE_DIR not in sys.path:
 
 from cost_scale import (                     # noqa: E402
     OC_RATIO_MAX,
+    guard_parser_ongoing_charge,
     is_plausible_oc_ratio,
     pct_to_ratio,
     ratio_to_pct,
@@ -95,3 +96,65 @@ def test_management_component_survives_the_guard():
     """El destino de reparación de FIX-OC-BIND debe ser siempre plausible."""
     for mgmt_pct in (0.05, 0.23, 1.46, 1.98, 2.71, 4.30):
         assert is_plausible_oc_ratio(pct_to_ratio(mgmt_pct)) is True
+
+
+# ---------------------------------------------------------------------------
+# guard_parser_ongoing_charge — root cause de FND-0034/FND-0095 (2026-09-27)
+# ---------------------------------------------------------------------------
+# El escritor 1 (kiid_parser._detect_ongoing_charge) corre en cada pase de P1,
+# incluidos los CACHED, donde el bloque completo del escritor 2 (con su propia
+# guarda FIX-OC-PARSER-BIND) se salta por rendimiento. Estos 5 casos son los
+# ISINs reales que re-contaminaron `Ongoing_Charge_Recurrent` en vivo el
+# 2026-09-26 (valores reales leídos de BD antes/después de --recompute-costs).
+
+# (isin, parser_oc bugueado, existing_oc BD correcto, mgmt%, aci_rhp%, aci_1y%)
+_REAL_RECONTAMINATION_CASES = [
+    ('FR0013439478', 0.02,   0.0069, 0.69, 2.0, 4.1),
+    ('FR0011365212', 0.003,  0.004,  0.40, 0.3, 0.3),
+    ('IE00BJVNH654',  0.013, 0.0198, 1.80, 1.3, 1.3),
+    ('IE00BJVNH761',  0.013, 0.0198, 1.80, 1.3, 1.3),
+]
+
+
+@pytest.mark.parametrize('isin,bad_parser_oc,good_existing_oc,mgmt_pct,aci_rhp_pct,aci_1y_pct',
+                          _REAL_RECONTAMINATION_CASES)
+def test_guard_protects_a_well_bound_existing_value_from_the_parsers_bad_binding(
+        isin, bad_parser_oc, good_existing_oc, mgmt_pct, aci_rhp_pct, aci_1y_pct):
+    """El valor en BD ya está bien ligado a la gestión; el parser lo confunde con el ACI. La
+    guarda debe descartar (None) el valor del parser para que el COALESCE preserve BD."""
+    result = guard_parser_ongoing_charge(
+        bad_parser_oc, good_existing_oc, mgmt_pct, aci_rhp_pct, aci_1y_pct)
+    assert result is None, f'{isin}: debió proteger {good_existing_oc}, dejó pasar {result}'
+
+
+def test_guard_lets_a_parser_value_through_when_it_agrees_with_a_well_bound_existing_value():
+    """FR0013439478 con el parser funcionando bien (0,69 %, no 2,0 %): nada que proteger."""
+    assert guard_parser_ongoing_charge(0.0069, 0.0069, 0.69, 2.0, 4.1) == 0.0069
+
+
+def test_guard_lets_the_parser_value_through_when_there_is_no_existing_value_to_protect():
+    """Fondo nuevo o sin OC previo: el escritor 1 es la única señal disponible."""
+    assert guard_parser_ongoing_charge(0.02, None, 0.69, 2.0, 4.1) == 0.02
+
+
+def test_guard_is_conservative_when_the_parser_found_nothing():
+    assert guard_parser_ongoing_charge(None, 0.0069, 0.69, 2.0, 4.1) is None
+
+
+def test_guard_lets_the_parser_value_through_without_a_management_fee_to_arbitrate_against():
+    """Sin gestión, no hay con qué decidir (P-5): no cambia el comportamiento actual."""
+    assert guard_parser_ongoing_charge(0.02, 0.0069, None, 2.0, 4.1) == 0.02
+
+
+def test_guard_does_not_protect_an_existing_value_that_was_already_badly_bound():
+    """Si el valor en BD YA es el ACI (mala ligadura previa), no hay nada fiable que proteger:
+    se deja pasar el valor fresco del parser (podría ser una oportunidad de mejora, nunca un
+    empeoramiento respecto al estado actual)."""
+    # existing_oc == aci_rhp (0.02 == 0.02): BD ya mal ligado
+    assert guard_parser_ongoing_charge(0.0069, 0.02, 0.69, 2.0, 4.1) == 0.0069
+
+
+def test_guard_accepts_the_legacy_percent_scale_for_existing_oc_db():
+    """existing_oc_db puede llegar en escala legado (>= 0.5 => porcentaje); _norm_existing_oc lo
+    normaliza antes de arbitrar. 0.69 (interpretado como 0,69 %) equivale a 0.0069 ratio."""
+    assert guard_parser_ongoing_charge(0.02, 0.69, 0.69, 2.0, 4.1) is None
