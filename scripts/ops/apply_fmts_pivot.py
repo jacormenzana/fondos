@@ -58,6 +58,13 @@ RO_ROLES = ("fondos_ro", "superset_ro")
 # swap (live -> *_long_old, then *_new -> live).
 _PARTITIONS = ("fmts_p_vol_ann", "fmts_p_max_dd", "fmts_p_return_ann", "fmts_p_sharpe",
                "fmts_p_sortino", "fmts_p_default")
+# The 5 named metric values from 30_gold.sql's FOR VALUES IN (...); fmts_p_default catches anything
+# else. Used to scope the anti-join verification per partition (see _verify) instead of one
+# all-at-once UNION ALL -- rehearsed against a live-scale (32M row) restored copy on 2026-09-27 and
+# OOM-killed the whole Postgres instance (shared_buffers=4GB on a 7.7GB WSL2 VM, plus parallel-worker
+# hash memory on top, for one unbounded bidirectional EXCEPT over the full table). Never widen this
+# back to a single unscoped query without re-rehearsing at live scale first.
+_NAMED_METRICS = ("vol_ann", "max_dd", "return_ann", "sharpe", "sortino")
 _RELATION_RENAMES = {  # canonical name -> _new / _long_old suffix pieces, longest-first for safety
     "gold.fund_metric_timeseries": ("_new", "_long_old"),
 }
@@ -181,22 +188,30 @@ def _verify(conn) -> list[str]:
         failures.append(f"row count: new={new_rows} != old_distinct_keys={old_distinct_keys}")
 
     # EXCEPT treats two NULLs as equal for row comparison (same semantics the plan calls for via
-    # "IS NOT DISTINCT FROM"), so this is a like-for-like anti-join in both directions.
-    (diff_count,) = conn.execute(f"""
-        SELECT count(*) FROM (
-            (SELECT isin, metric, window_label, real_flag, date, value
-             FROM gold.v_fund_metric_timeseries_long_new
-             EXCEPT
-             SELECT isin, metric, window_label, real_flag, date, value FROM {TABLE})
-            UNION ALL
-            (SELECT isin, metric, window_label, real_flag, date, value FROM {TABLE}
-             EXCEPT
-             SELECT isin, metric, window_label, real_flag, date, value
-             FROM gold.v_fund_metric_timeseries_long_new)
-        ) diff
-    """).fetchone()
-    if diff_count != 0:
-        failures.append(f"anti-join: {diff_count} differing rows between old and new (both directions)")
+    # "IS NOT DISTINCT FROM"), so this is a like-for-like anti-join in both directions. Scoped one
+    # metric partition at a time (not one UNION ALL over the whole table) and run with parallelism
+    # off and work_mem capped -- see _NAMED_METRICS' comment for why: an unscoped version of this
+    # query OOM-killed the whole Postgres instance during the 2026-09-27 rehearsal at live scale.
+    conn.execute("SET LOCAL max_parallel_workers_per_gather = 0")
+    conn.execute("SET LOCAL work_mem = '128MB'")
+    metric_filters = [("= %s", (m,)) for m in _NAMED_METRICS]
+    metric_filters.append(("!= ALL (%s)", (list(_NAMED_METRICS),)))
+    for op, params in metric_filters:
+        (diff_count,) = conn.execute(f"""
+            SELECT count(*) FROM (
+                (SELECT isin, metric, window_label, real_flag, date, value
+                 FROM gold.v_fund_metric_timeseries_long_new WHERE metric {op}
+                 EXCEPT
+                 SELECT isin, metric, window_label, real_flag, date, value FROM {TABLE} WHERE metric {op})
+                UNION ALL
+                (SELECT isin, metric, window_label, real_flag, date, value FROM {TABLE} WHERE metric {op}
+                 EXCEPT
+                 SELECT isin, metric, window_label, real_flag, date, value
+                 FROM gold.v_fund_metric_timeseries_long_new WHERE metric {op})
+            ) diff
+        """, params * 4).fetchone()
+        if diff_count != 0:
+            failures.append(f"anti-join (metric {op} {params[0]!r}): {diff_count} differing rows between old and new")
 
     (bad_ref,) = conn.execute(
         f"SELECT count(*) FROM {TABLE} WHERE ref_type IS NOT NULL OR ref_value IS NOT NULL"
@@ -252,7 +267,11 @@ def _swap_views(conn) -> None:
     # for the already-built, already-verified staging one.
     for mv in _MATVIEWS:
         conn.execute(f"DROP MATERIALIZED VIEW {mv}")
-    conn.execute(f"DROP VIEW {_VIEW}")
+    # IF EXISTS: unlike the 3 matviews (which already exist pre-pivot, built directly on the base
+    # table), this view is NET NEW -- introduced by the pivot itself to give the wide table a long
+    # shape. On a first-ever --apply (rehearsed 2026-09-27) it never existed yet; an unconditional
+    # DROP VIEW failed with UndefinedTable there. Idempotent for a second run too.
+    conn.execute(f"DROP VIEW IF EXISTS {_VIEW}")
 
     conn.execute(f"ALTER VIEW {_VIEW}_new RENAME TO v_fund_metric_timeseries_long")
     for mv in _MATVIEWS:
