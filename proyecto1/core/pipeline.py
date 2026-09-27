@@ -216,11 +216,6 @@ from core.classify_utils import (
     validate_strategy_replication,                          # BL-61
     detect_currency_hedged_from_kiid,                       # BL-49
     propagate_nature_to_restantes_type_family,              # BL-62
-    detect_explicit_equity_majority,                        # INTER-DBLCLAIM
-    detect_nature_from_benchmark,                           # INTER-DBLCLAIM (voto 3/3)
-    detect_nature_from_kiid,                                # INTER-VOTE3
-    resolve_rf_subtype,                                     # INTER-VOTE3
-    _NATURE_CANONICAL,                                      # INTER-VOTE3
     resolve_nature_vote,                                    # OPT-B: nature-first vote (superseded)
     resolve_nature_evidence,                                # OPT-B3: evidence-weighted classifier
     _NATURE_TO_BLOCK,                                       # OPT-B: nature → block routing (R-1)
@@ -1045,166 +1040,20 @@ def run_block(
             if _is_structured:
                 classification["Fund_Nature"] = "Estructurado"
 
-            # INTER-DBLCLAIM (2026-07-04): tiebreaker para fondos reclamados
-            # por nombre tanto por renta_variable como por mixtos. Causa raíz:
-            # mixtos.get_universe_isins() usa patrones de nombre muy genéricos
-            # ("growth"/"income"/"dynamic"/"moderate"/"conservative") que son
-            # también descriptores de ESTILO comunes en renta variable pura
-            # (Growth investing, Income/dividend equity). mixtos se ejecuta
-            # DESPUÉS de renta_variable en el pipeline, así que sobrescribe
-            # silenciosamente vía COALESCE la clasificación correcta. Auditoría
-            # de 149 fondos con doble-reclamo: AB American Growth Portfolio
-            # ("mínimo 80%...en valores de renta variable"), Allianz EU EQ
-            # Growth ("mínimo 70%..."), Fidelity European/American Growth,
-            # JPM Europe Dynamic -- todos renta variable pura mal clasificada
-            # como Mixtos. Cuando el bloque MIXTOS clasifica Fund_Nature=
-            # 'Mixtos' pero BD ya tiene 'Renta Variable' (de un pase anterior
-            # de renta_variable en este mismo ciclo, o de un ciclo previo) Y el
-            # KIID declara explícitamente un umbral mayoritario de renta
-            # variable (≥60%), se re-clasifica con renta_variable.classify_fund()
-            # en lugar de aceptar la sobrescritura de mixtos -- corrección
-            # completa (Family/Type/etc.), no solo un parche de Fund_Nature.
-            # OPT-B: nature vote resolved this upfront; INTER-DBLCLAIM is a no-op in nature_first mode.
-            if not nature_first and classification.get("Fund_Nature") == "Mixtos" and block_name == "MIXTOS":
-                _ph = "%s"
-                _bd_nature_dblclaim = conn.execute(
-                    f"SELECT Fund_Nature FROM fund_master WHERE ISIN={_ph}", (isin,)
-                ).fetchone()
-                _bd_nature_dblclaim = _bd_nature_dblclaim[0] if _bd_nature_dblclaim else None
-                if _bd_nature_dblclaim == "Renta Variable":
-                    _eq_pct = detect_explicit_equity_majority(kiid_text)
-                    # FIX-P1-BENCH-VOTE (2026-07-04): cuando el KIID no declara
-                    # un umbral % explícito (ni numérico ni en palabras), se
-                    # consulta el índice de referencia como tercer voto
-                    # independiente antes de aceptar la sobrescritura de mixtos.
-                    _bench_vote = None
-                    if _eq_pct is None or _eq_pct < 60:
-                        _bench_vote = detect_nature_from_benchmark(_bench)
-                    if (_eq_pct is not None and _eq_pct >= 60) or _bench_vote == "Renta Variable":
-                        try:
-                            _rv_mod = importlib.import_module("blocks.renta_variable")
-                        except ImportError:
-                            _rv_mod = importlib.import_module("proyecto1.blocks.renta_variable")
-                        try:
-                            classification = _rv_mod.classify_fund(
-                                fund_name, kiid_text,
-                                benchmark_declared=_bench,
-                                srri_parsed=int(_srri_for_classify) if _srri_for_classify else None,
-                            )
-                        except TypeError:
-                            classification = _rv_mod.classify_fund(fund_name, kiid_text)
-                        if _eq_pct is not None and _eq_pct >= 60:
-                            log_ingestion(
-                                conn, isin, "INTER_DBLCLAIM_RV_WINS", "INFO",
-                                f"Doble-reclamo renta_variable+mixtos: KIID declara "
-                                f"{_eq_pct}% mínimo en renta variable → se preserva "
-                                f"Fund_Nature='Renta Variable' (mixtos no sobrescribe)"
-                            )
-                        else:
-                            log_ingestion(
-                                conn, isin, "INTER_DBLCLAIM_RV_WINS_BENCHMARK", "INFO",
-                                f"Doble-reclamo renta_variable+mixtos: KIID sin umbral "
-                                f"% explícito, pero Benchmark_Declared='{_bench}' es "
-                                f"índice de renta variable → se preserva "
-                                f"Fund_Nature='Renta Variable' (mixtos no sobrescribe)"
-                            )
-
-            # INTER-VOTE3 (2026-07-04): control de doble-verificación universal,
-            # extendido a TODOS los bloques y todo Fund_Nature (no solo el
-            # doble-reclamo mixtos+renta_variable de INTER-DBLCLAIM arriba).
-            # Tres señales independientes: Nombre (bloque ya asignado vía
-            # get_universe_isins), Texto-KIID (detect_nature_from_kiid +
-            # resolve_rf_subtype) y Benchmark_Declared (detect_nature_from_
-            # benchmark). Cuando Texto-KIID y Benchmark COINCIDEN entre sí en
-            # un valor distinto del ya asignado, se re-clasifica con el
-            # classify_fund() del bloque correspondiente al valor acordado.
-            # Auditoría full-corpus (2026-07-04): 62 fondos con este doble
-            # acuerdo independiente frente al valor ya asignado, en 5 bloques
-            # de origen distintos (MIXTOS, RESTANTES, MONETARIOS, ALTERNATIVOS,
-            # RENTA_VARIABLE) -- confirma que el gap no es exclusivo de un
-            # bloque (caso JPMorgan Europe High Yield Bond mal clasificado
-            # como Renta Variable pese a nombre truncado "H.YIEL.B.D" que los
-            # excludes de texto no capturan; DWS ESG Euro Money Market Fund
-            # mal clasificado como Renta Variable en RESTANTES).
-            # Excepción Monetario: detect_nature_from_kiid() solo llega a
-            # "Monetario" por dos vías -- patrones MMF explícitos (fiables) o
-            # el árbitro de último recurso "SRRI==1" (línea ~1730), que puede
-            # coincidir por casualidad con fondos absolute-return/macro que
-            # declaran su benchmark en términos de tipo de interés monetario
-            # como OBJETIVO DE RENTABILIDAD relativo, no como descripción de
-            # sus tenencias (confirmado: JPM Global Macro Opportunities
-            # LU0095938881/LU0115098948, SRRI bajo + benchmark ESTR overnight
-            # usado como "revalorización superior a su índice de referencia
-            # monetario" -- no es un fondo monetario). Por eso, para Monetario
-            # se exige además una frase MMF explícita en el propio texto KIID.
-            # OPT-B: nature vote resolved this upfront; INTER-VOTE3 is a no-op in nature_first mode.
-            _v3_current_nature = classification.get("Fund_Nature")
-            if not nature_first and _v3_current_nature and kiid_text:
-                _v3_raw = detect_nature_from_kiid(kiid_text)
-                if _v3_raw == "_RF_pending":
-                    _v3_raw = resolve_rf_subtype(_name_l, kiid_text)
-                _v3_kiid_nature = _NATURE_CANONICAL.get(_v3_raw) if _v3_raw else None
-                _v3_bench_nature = detect_nature_from_benchmark(_bench)
-
-                def _v3_coarse(_n):
-                    return "Renta Fija" if _n in (
-                        "Renta Fija Corto Plazo", "Renta Fija Flexible"
-                    ) else _n
-
-                if (_v3_kiid_nature and _v3_bench_nature
-                        and _v3_coarse(_v3_kiid_nature) == _v3_bench_nature
-                        and _v3_coarse(_v3_current_nature) != _v3_bench_nature):
-                    # Monetario queda fuera de la reclasificación automática:
-                    # detect_nature_from_kiid() solo llega a "Monetario" vía
-                    # patrones MMF explícitos (evaluados con múltiples guards
-                    # ya afinados dentro de la propia función) o el árbitro de
-                    # último recurso SRRI==1 -- replicar aquí esos mismos
-                    # guards duplicaría lógica (viola R-1). Confirmado con
-                    # falso positivo real: JPM Global Macro Opportunities
-                    # menciona "mercado monetario" solo para una asignación
-                    # SECUNDARIA de liquidez (hasta 10%), no como estrategia
-                    # primaria -- una regex simple aquí no distingue eso.
-                    # Se registra como aviso (Data_Quality_Flag) igual que
-                    # INTER-NTC, sin reclasificar.
-                    if _v3_bench_nature == "Monetario":
-                        log_ingestion(
-                            conn, isin, "INTER_VOTE3_MONETARIO_FLAG_ONLY", "WARN",
-                            f"KIID-text+Benchmark ('{_bench}') sugieren Monetario "
-                            f"frente a '{_v3_current_nature}' asignado por bloque "
-                            f"{block_name}, pero no se reclasifica automáticamente "
-                            f"(riesgo de falso positivo por asignación secundaria de "
-                            f"liquidez o benchmark usado como objetivo relativo) -- "
-                            f"revisar manualmente"
-                        )
-                        _v3_target_block = None
-                    else:
-                        _v3_target_block = {
-                            "Renta Variable":        "renta_variable",
-                            "Renta Fija Corto Plazo":"rf_corto",
-                            "Renta Fija Flexible":   "rf_flexible",
-                        }.get(_v3_kiid_nature)
-                    if _v3_target_block:
-                        try:
-                            _v3_mod = importlib.import_module(f"blocks.{_v3_target_block}")
-                        except ImportError:
-                            _v3_mod = importlib.import_module(f"proyecto1.blocks.{_v3_target_block}")
-                        _v3_classifier = dynamic_getattr(_v3_mod, ["classify_fund"])
-                        if _v3_classifier:
-                            try:
-                                classification = _v3_classifier(
-                                    fund_name, kiid_text,
-                                    benchmark_declared=_bench,
-                                    srri_parsed=int(_srri_for_classify) if _srri_for_classify else None,
-                                )
-                            except TypeError:
-                                classification = _v3_classifier(fund_name, kiid_text)
-                            log_ingestion(
-                                conn, isin, "INTER_VOTE3_RECLASSIFIED", "INFO",
-                                f"Doble señal independiente KIID-text+Benchmark "
-                                f"('{_bench}') acuerdan '{_v3_kiid_nature}' frente a "
-                                f"'{_v3_current_nature}' asignado por bloque "
-                                f"{block_name} → reclasificado"
-                            )
+            # INTER-DBLCLAIM / INTER-VOTE3 -- RETIRED (R-2, 2026-09-27, FND-0001).
+            # Both blocks (tiebreaker logic from 2026-07-04) were gated `if not nature_first`, and
+            # --nature-first --master-db has been the EXCLUSIVE invocation since 2026-08-16 (OPT-B:
+            # the nature vote is resolved upfront by resolve_nature_evidence(), making both blocks a
+            # structural no-op under it). R-2 retirement condition: 0 firings on a clean diff.
+            # Verified before deletion (the ticket's own explicit ask, since the DB's
+            # INTER_VOTE3_RETROACTIVE/_REVERTED_TBILL_FIX rows had NULL created_at and could not be
+            # dated directly): INTER_DBLCLAIM_RV_WINS / INTER_DBLCLAIM_RV_WINS_BENCHMARK /
+            # INTER_VOTE3_MONETARIO_FLAG_ONLY / INTER_VOTE3_RECLASSIFIED all last fired 2026-07-16 --
+            # zero firings since (73 days, every RUN_START row confirmed nature_first=True, 0
+            # exceptions). The RETROACTIVE/REVERTED_TBILL_FIX rows are a separate, already-applied
+            # one-time backfill script (not present anywhere in this codebase) -- unrelated to
+            # whether this live code still fires, and not evidence of it firing.
+            # Full logic + audit history preserved in git (last present at commit 4b0a945).
 
             _t_phases["classify"] = round((time.perf_counter() - _t0) * 1000)
 
