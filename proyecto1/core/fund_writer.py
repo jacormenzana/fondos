@@ -169,6 +169,16 @@ except ModuleNotFoundError:
     from shared.db import get_connection   # noqa: F401  (re-export)
 
 
+def _strip_nul_params(params: tuple) -> tuple:
+    """PostgreSQL text columns reject an embedded NUL (0x00) byte outright ("PostgreSQL text
+    fields cannot contain NUL (0x00) bytes"); SQLite accepted the same bytes silently, so this
+    never surfaced pre-cutover. core.io.extract_text_from_pdf_bytes now strips NULs at the raw-text
+    source, but a NUL that survives into a *derived* field (DLA2 table serialization, a cost-band
+    substring) takes a different path and reaches here anyway (FND-0110, LU1739342035 2026-09-26:
+    still failed after the source-level fix). Last-resort net right before every write."""
+    return tuple(v.replace("\x00", "") if isinstance(v, str) else v for v in params)
+
+
 def create_schema(conn: "psycopg.Connection") -> None:
     """Crea todas las tablas del sistema leyendo db/schema_fondos.sql.
 
@@ -563,7 +573,7 @@ def upsert_fund_master(conn: "psycopg.Connection",
         + "\n    ;"
     )
 
-    conn.execute(sql, params)
+    conn.execute(sql, _strip_nul_params(params))
 
     # ── Logging de sobrescritura forzada (BL-44 / BL-62) ──────────────────
     if force_nature:
@@ -713,7 +723,7 @@ def upsert_kiid_metadata(conn: "psycopg.Connection",
     # other '?' appears anywhere in the query text, e.g. in a comment), so a plain substitution is
     # safe — unlike Phase 5b's q_rentabilidad_dist, there is no '%' to collide with here.
     sql = sql.replace("?", "%s")
-    conn.execute(sql, params)
+    conn.execute(sql, _strip_nul_params(params))
 
 
 # ============================================================
@@ -1077,7 +1087,7 @@ def upsert_cost_schedule(
             )
             VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {now_fn})
             """,
-            (
+            _strip_nul_params((
                 isin,
                 row["Horizon_Years"],
                 int(row.get("Is_RHP", 0)),
@@ -1085,7 +1095,7 @@ def upsert_cost_schedule(
                 row.get("Total_Costs_Pct"),
                 row.get("Annual_Impact_Pct"),
                 row["Source"],
-            ),
+            )),
         )
     return len(schedule_rows)
 

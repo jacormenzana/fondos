@@ -60,7 +60,17 @@ from fund_writer import (  # noqa: E402
     reconcile_universe_membership,
     global_post_pipeline_normalize_db,
     log_ingestion,
+    _strip_nul_params,
 )
+
+
+def test_strip_nul_params_removes_embedded_nul_from_strings_only():
+    """FND-0110 (2026-09-26): LU1739342035's freshly-fetched KIID reached upsert_kiid_metadata
+    with a NUL byte surviving in a derived field (source-level stripping in core.io was not
+    enough); this is the last-resort net right before every INSERT/UPSERT in this module."""
+    assert _strip_nul_params(("clean", 3, None, "bad\x00text", 1.5)) == (
+        "clean", 3, None, "badtext", 1.5)
+    assert _strip_nul_params(()) == ()
 
 
 def _minimal_partial_record(isin: str, fund_nature: str, fund_name: str) -> dict:

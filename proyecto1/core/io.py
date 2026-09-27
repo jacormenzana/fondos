@@ -127,6 +127,15 @@ def _requests_session() -> requests.Session:
     return s
 
 
+def _strip_nul_bytes(text: str) -> str:
+    """PostgreSQL text columns reject NUL (0x00) bytes outright ("PostgreSQL text fields cannot
+    contain NUL (0x00) bytes"); SQLite silently accepted them, so this never surfaced before the
+    2026-09-23 cutover. Some malformed KIID PDFs decode with embedded NULs (pdfplumber and OCR
+    both can produce them). Root cause: strip at the single point all extracted KIID text passes
+    through, so every downstream consumer (classifier, DB writers) sees clean text (FND-0110)."""
+    return text.replace("\x00", "") if text else text
+
+
 def extract_text_from_pdf_bytes(
     pdf_bytes: bytes,
     ocr_enabled: bool = OCR_ENABLED,
@@ -147,7 +156,7 @@ def extract_text_from_pdf_bytes(
             )
             if not dla_meta.get("fallback") and dla_text and dla_text.strip():
                 emit_dla_log("(unknown)", dla_meta)   # ISIN no disponible en esta capa
-                return dla_text
+                return _strip_nul_bytes(dla_text)
             # fallback: DLA falló o produjo texto vacío → continuar a lógica original
         except Exception:
             pass   # Cualquier error de importación o ejecución → lógica original
@@ -178,7 +187,7 @@ def extract_text_from_pdf_bytes(
                     except Exception:
                         continue
 
-    return "\n".join(text_parts)
+    return _strip_nul_bytes("\n".join(text_parts))
 
 
 def pdf_sha256(pdf_bytes: bytes) -> str:
