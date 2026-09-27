@@ -27,6 +27,7 @@ Sub-commands (exit codes):
     baseline                            prints BASELINE_RUN_ID of the last run (empty if none)
     oc-before                           snapshot of the funds whose ongoing charge equals ACI_RHP
     oc-newly                            prints, comma-separated, the funds contaminated SINCE oc-before
+    restore-point --stamp S             pg_create_restore_point('p1p2_start_S'); always exits 0
 
 The file is the guard because it must work when the database is down. The database is used only for
 telemetry (ingestion_log rows, and a backlog ticket on failure) and every database call here is
@@ -208,6 +209,29 @@ def oc_newly(path: Path | None = None) -> list:
     return sorted(now - before) if now is not None else []
 
 
+# ── restore point (FND-0091) ─────────────────────────────────────────────────────────────────────
+# A named recovery point right before PASO 1 starts writing, once WAL archiving (FND-0071) made PITR
+# possible. Uses FONDOS_PG_DSN_OWNER, not shared.db.get_connection(): pg_create_restore_point() needs
+# an elevated role (fondos_app has DML-only privileges by design, FND-0072) and this module must
+# never depend on the app connection's privileges to protect against the app connection's own writes.
+# Best-effort like everything else here: no OWNER DSN, no WAL archiving, or any other failure just
+# means no restore point for this run — it never changes the launcher's exit code.
+
+def create_restore_point(stamp: str) -> bool:
+    dsn = os.environ.get("FONDOS_PG_DSN_OWNER")
+    if not dsn:
+        print("[p1p2_state] restore point skipped: FONDOS_PG_DSN_OWNER is not set", file=sys.stderr)
+        return False
+    try:
+        import psycopg
+        with psycopg.connect(dsn) as conn:            # commits + closes on clean exit (psycopg3)
+            conn.execute("SELECT pg_create_restore_point(%s)", (f"p1p2_start_{stamp}",))
+        return True
+    except Exception as exc:
+        print(f"[p1p2_state] restore point skipped: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return False
+
+
 # ── best-effort telemetry ────────────────────────────────────────────────────────────────────────
 
 def _seconds(start: str, end: str) -> int | None:
@@ -277,6 +301,9 @@ def main(argv: list | None = None) -> int:
     sub.add_parser("oc-before")
     sub.add_parser("oc-newly")
 
+    r = sub.add_parser("restore-point")
+    r.add_argument("--stamp", required=True)
+
     s = sub.add_parser("step")
     s.add_argument("--step", type=int, required=True)
     s.add_argument("--rc", type=int, required=True)
@@ -310,6 +337,9 @@ def main(argv: list | None = None) -> int:
         return RC_OK
     if args.cmd == "oc-newly":
         print(",".join(oc_newly()))
+        return RC_OK
+    if args.cmd == "restore-point":
+        create_restore_point(args.stamp)                 # best-effort: never fails the launcher
         return RC_OK
     # step: telemetry row (+ backlog ticket on failure); never fails the launcher
     secs = _seconds(args.start, args.end)

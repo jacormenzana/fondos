@@ -49,6 +49,10 @@ chcp 65001 > nul
 ::   cuando un paso no tenia nada que hacer (p. ej. PASO 1 con la cache negativa llena). Tras cada
 ::   paso ejecutado (no saltado) se busca el log de detalle mas reciente de ese paso y se anota su
 ::   ruta y su recuento de [WARN]/[ERROR]; si el paso fallo, tambien sus ultimas 15 lineas.
+:: Punto de restauracion (FND-0091, 2026-09-27): en un ciclo NUEVO (no --from N), justo antes de
+::   PASO 0, se crea pg_create_restore_point('p1p2_start_<STAMP>') via FONDOS_PG_DSN_OWNER -- posible
+::   ahora que el archivado WAL (FND-0071) esta en produccion. Best-effort (sin OWNER DSN, sin WAL
+::   archiving, o cualquier otro fallo -> se omite, nunca aborta el ciclo); el mensaje queda en el log.
 :: La logica del estado vive en p1p2_state.py (testeable); este .bat solo lo invoca.
 :: Estado: proyecto1\log\P1_P2_Complete.state (variable P1P2_STATE_FILE para cambiarlo).
 :: Codigos de salida propios: 2 = --from rechazado, 3 = estado no escribible,
@@ -137,6 +141,7 @@ set BASELINE_ID=
 :: ============================================================
 if !FROM_STEP! GTR 1 goto :baseline_reuse
 set BASELINE_ID=pre_%STAMP%
+"%PYTHON%" "%LAUNCH%\p1p2_state.py" restore-point --stamp !STAMP! >> "%LOG%" 2>&1
 echo. >> "%LOG%"
 echo --- PASO 0: auditoria estadistica baseline (run_id=!BASELINE_ID!^) ---- >> "%LOG%"
 echo [%STAMP%] PASO 0: auditoria estadistica baseline (!BASELINE_ID!^)

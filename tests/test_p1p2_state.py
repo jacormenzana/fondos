@@ -225,6 +225,78 @@ def test_telemetry_survives_a_broken_database_and_never_changes_the_exit_code(pa
 def test_seconds_handles_crossing_midnight_and_bad_input():
     assert st._seconds("235900", "000100") == 120
     assert st._seconds("100000", "100230") == 150
+
+
+# ── restore point (FND-0091) ─────────────────────────────────────────────────────────────────────
+
+def _fake_psycopg_module(monkeypatch, *, connect_raises: bool = False, execute_raises: bool = False):
+    """A fake `psycopg` module for create_restore_point(): it does `import psycopg` locally, so
+    patching sys.modules["psycopg"] (same technique as _fake_db_modules above) intercepts it without
+    the real driver or a real connection."""
+    import sys
+    import types
+    calls = []
+
+    class FakeConn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            calls.append("exit")
+            return False
+
+        def execute(self, sql, params):
+            if execute_raises:
+                raise RuntimeError("statement failed")
+            calls.append((sql, params))
+
+    def connect(dsn):
+        calls.append(("connect", dsn))
+        if connect_raises:
+            raise RuntimeError("connection refused")
+        return FakeConn()
+
+    fake = types.ModuleType("psycopg")
+    fake.connect = connect
+    monkeypatch.setitem(sys.modules, "psycopg", fake)
+    return calls
+
+
+def test_restore_point_skips_without_the_owner_dsn(monkeypatch, capsys):
+    monkeypatch.delenv("FONDOS_PG_DSN_OWNER", raising=False)
+    assert st.create_restore_point("20260101_000000") is False
+    err = capsys.readouterr().err
+    assert "restore point skipped" in err and "FONDOS_PG_DSN_OWNER" in err
+
+
+def test_restore_point_calls_pg_create_restore_point_with_a_stamped_name(monkeypatch):
+    monkeypatch.setenv("FONDOS_PG_DSN_OWNER", "postgresql://fondos_owner@localhost/fondos")
+    calls = _fake_psycopg_module(monkeypatch)
+    assert st.create_restore_point("20260101_000000") is True
+    assert ("connect", "postgresql://fondos_owner@localhost/fondos") in calls
+    sql, params = next(c for c in calls if isinstance(c, tuple) and c[0] != "connect")
+    assert "pg_create_restore_point" in sql
+    assert params == ("p1p2_start_20260101_000000",)
+    assert "exit" in calls
+
+
+def test_restore_point_survives_a_broken_connection(monkeypatch, capsys):
+    monkeypatch.setenv("FONDOS_PG_DSN_OWNER", "postgresql://fondos_owner@localhost/fondos")
+    _fake_psycopg_module(monkeypatch, connect_raises=True)
+    assert st.create_restore_point("20260101_000000") is False
+    assert "restore point skipped" in capsys.readouterr().err
+
+
+def test_restore_point_survives_a_failed_statement(monkeypatch, capsys):
+    monkeypatch.setenv("FONDOS_PG_DSN_OWNER", "postgresql://fondos_owner@localhost/fondos")
+    _fake_psycopg_module(monkeypatch, execute_raises=True)
+    assert st.create_restore_point("20260101_000000") is False
+    assert "restore point skipped" in capsys.readouterr().err
+
+
+def test_restore_point_cli_always_exits_0(monkeypatch):
+    monkeypatch.delenv("FONDOS_PG_DSN_OWNER", raising=False)   # skips, but must not fail the launcher
+    assert st.main(["restore-point", "--stamp", "20260101_000000"]) == 0
     assert st._seconds("", "100230") is None and st._seconds("xx", "yy") is None
 
 
