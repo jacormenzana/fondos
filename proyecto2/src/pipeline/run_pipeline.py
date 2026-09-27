@@ -478,6 +478,33 @@ def _log(
 # Calculo de un horizonte
 # ============================================================
 
+def _nav_data_freshness_delta(
+    nav_df: pd.DataFrame, horizon: str, as_of: "pd.Timestamp | None" = None,
+) -> list[dict]:
+    """FND-0021 (2026-09-27, BI-02): days since the fund's last NAV, as one fund_metrics row.
+
+    Only meaningful on since_inception -- a crisis/rolling horizon slice ends years ago by
+    construction, so the same computation there would always report a large, misleading delta.
+    Pure (no DB, no clock dependency beyond the optional `as_of` override) so it is directly
+    testable; `_process_horizon` is the only caller and appends the result to its own metric list.
+
+    Scope note: the ticket's other half ("auto-trigger FORCE_REFRESH if >45 days") is deliberately
+    NOT implemented -- it would be P2 writing into P1's fund_kiid_metadata.KIID_Status, a new
+    cross-layer write with no existing precedent (AGENTS.md's only P1<-P2 feedback is P1 READING
+    P2's srri_nav, never P2 writing into P1's tables), and the same class of "automate an action
+    with a real side effect" decision this session deferred to the owner elsewhere (FND-0100).
+    """
+    if horizon != "since_inception" or nav_df.empty:
+        return []
+    last_nav_date = pd.to_datetime(nav_df["date"]).max()
+    today = as_of if as_of is not None else pd.Timestamp.today().normalize()
+    delta_days = (today - last_nav_date).days
+    return [{
+        "metric": "nav_data_freshness_delta", "value": float(delta_days),
+        "real_flag": 0, "source_rows": len(nav_df),
+    }]
+
+
 def _process_horizon(
     isin: str,
     nav_df: pd.DataFrame,
@@ -517,6 +544,8 @@ def _process_horizon(
             "real_flag": real_flag,
             "source_rows": len(nav_df),
         })
+
+    cons_metrics += _nav_data_freshness_delta(nav_df, horizon)
 
     all_metrics = risk_metrics + cons_metrics
     written = _write_metrics(
