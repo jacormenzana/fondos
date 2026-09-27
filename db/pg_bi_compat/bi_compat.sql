@@ -80,12 +80,10 @@ SELECT
        "date" AS "date",
        "value" AS "value",
        "real_flag" AS "real_flag",
-       "ref_type" AS "ref_type",
-       "ref_value" AS "ref_value",
        "source_rows" AS "source_rows",
        "algorithm_version" AS "algorithm_version",
        "batch_id" AS "batch_id"
-FROM   gold.fund_metric_timeseries;
+FROM   gold.v_fund_metric_timeseries_long;
 GRANT SELECT ON bi_compat.fund_metric_timeseries TO superset_ro;
 
 CREATE OR REPLACE VIEW bi_compat.fund_metric_alerts AS

@@ -488,13 +488,17 @@ def load_latest_rolling_metrics_for_category_snapshot(
     test_category_snapshot_metrics_is_the_5_curated_metrics (db_readers test file) keeps the two
     lists from drifting apart instead.
     """
+    # v27 pivot: real_flag no longer lives on fund_metric_timeseries itself (it was pivoted into
+    # value_nominal/value_real) — v_fund_metric_timeseries_long reconstructs the pre-pivot long
+    # (real_flag) shape this query still needs, losslessly (has_real gates the real row, not
+    # value IS NOT NULL, so a real row with a NULL value is preserved).
     rows = conn.execute("""
         SELECT t.isin, t.metric, t.window_label AS window, t.date,
                t.value, t.real_flag, m.Fund_Nature
-        FROM fund_metric_timeseries t
+        FROM v_fund_metric_timeseries_long t
         JOIN (
             SELECT isin, metric, window_label, real_flag, MAX(date) AS mx
-            FROM fund_metric_timeseries
+            FROM v_fund_metric_timeseries_long
             WHERE metric IN ('vol_ann','max_dd','return_ann','sharpe','sortino')
             GROUP BY isin, metric, window_label, real_flag
         ) latest

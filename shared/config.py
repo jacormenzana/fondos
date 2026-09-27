@@ -12,6 +12,16 @@ Sustituye a proyecto1/src/config.py y proyecto2/src/config.py.
 Uso desde cualquier modulo:
     from shared.config import RISK_FREE_RATE_ANN
 
+Cambios v27 (2026-09-27, pivot de real_flag):
+  - SCHEMA_VERSION: "v26" → "v27".
+  - gold.fund_metric_timeseries: real_flag (smallint, parte de la PK) pivotado a
+    value_nominal/value_real/has_real — real_flag deja de existir como columna.
+    ref_type/ref_value ELIMINADAS (100% NULL en produccion antes del pivote).
+    gold.v_fund_metric_timeseries_long reconstruye la forma larga (real_flag) pre-pivote,
+    sin perdida, para todo lector que aun la necesite (Superset, auditoria estadistica).
+    Ver db/pg/30_gold.sql, db/pg/40_matviews.sql, scripts/ops/apply_fmts_pivot.py.
+  - gold.fund_metrics NO tocada (data dispersa 59/41, ~24 lectores en P3 — fuera de alcance).
+
 Cambios v23 (2026-07-18, FIX-UNIVERSE-RECON-1):
   - SCHEMA_VERSION: "v22" → "v23".
   - fund_master: In_Current_Universe (INTEGER NOT NULL DEFAULT 1) añadida.
@@ -146,7 +156,7 @@ _autoload_env_file()
 # ============================================================
 # Versión canónica del schema de BD
 # ============================================================
-SCHEMA_VERSION: str = "v26"
+SCHEMA_VERSION: str = "v27"
 
 # ============================================================
 # v23 (FIX-UNIVERSE-RECON-1, 2026-07-18): In_Current_Universe (fund_master)

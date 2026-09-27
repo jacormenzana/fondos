@@ -300,12 +300,15 @@ _IPC_QUERY = "SELECT date, ipc_index FROM series_inflation WHERE geography = 'ES
 _SCALAR_TIMESERIES_METRICS = ("vol_ann", "max_dd", "return_ann", "sharpe", "sortino")
 _SCALAR_TIMESERIES_WINDOWS = ("rolling_1y", "rolling_2y", "rolling_3y", "rolling_5y", "rolling_10y")
 
+# v27 pivot: fund_metric_timeseries no longer carries real_flag (pivoted into value_nominal/
+# value_real, see db/pg/30_gold.sql) — v_fund_metric_timeseries_long reconstructs the pre-pivot
+# long shape this audit still needs, losslessly.
 _TS_LATEST_QUERY = """
     SELECT t.isin, t.real_flag, t.value AS ts_value
-    FROM fund_metric_timeseries t
+    FROM v_fund_metric_timeseries_long t
     JOIN (
         SELECT isin, real_flag, MAX(date) AS max_date
-        FROM fund_metric_timeseries
+        FROM v_fund_metric_timeseries_long
         WHERE metric = ? AND {window} = ?
         GROUP BY isin, real_flag
     ) latest ON latest.isin = t.isin AND latest.real_flag = t.real_flag AND latest.max_date = t.date
@@ -355,11 +358,12 @@ def _fetch_latest_timeseries_snapshot(conn: "psycopg.Connection", metric: str, w
     return _df(conn, _sql(conn, _TS_LATEST_QUERY), (metric, window, metric, window))
 
 
+# v27 pivot: same reason as _TS_LATEST_QUERY above — reads the long-shape compatibility view.
 _TS_SERIES_SUMMARY_QUERY = """
     SELECT isin, real_flag,
            MIN(date) AS min_date, MAX(date) AS max_date,
            COUNT(DISTINCT date) AS n_dates, COUNT(*) AS n_rows
-    FROM fund_metric_timeseries
+    FROM v_fund_metric_timeseries_long
     WHERE metric = ? AND {window} = ?
     GROUP BY isin, real_flag
 """

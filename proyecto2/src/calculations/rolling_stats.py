@@ -179,6 +179,7 @@ def compute_rolling_rows(
     periods_per_year: int = _PERIODS_YEAR_MONTHLY,
     risk_free_rate: float = 0.0,
     rf_series: pd.DataFrame | None = None,
+    deflation_diagnostics: list[dict] | None = None,
 ) -> list[dict]:
     """
     Calcula las series rolling de las 5 métricas curadas para un ISIN.
@@ -207,6 +208,14 @@ def compute_rolling_rows(
                       cada punto rolling usa la tasa activa en esa fecha (forward-fill),
                       eliminando la distorsión histórica del Sharpe/Sortino con tipo plano.
                       (§4g del plan de re-ingeniería 2026-08.)
+    deflation_diagnostics : opcional, keyword-only, backward-compatible (default None -- ningun
+                      llamador existente lo pasa). Si se provee una lista, y hay ipc_df pero la
+                      serie real termina en None (todo el ISIN sin deflactar, nunca una fecha
+                      suelta -- ver nota de ffill/bfill mas abajo), se le hace append() de
+                      {"isin": isin, "reason": "no-date-match"|"ipc0-zero"}. El llamador
+                      (run_pipeline.py) usa esto para loguear [DEFL-SKIP] y contar
+                      defl_skipped en el RUN_SUMMARY (v27, ver pivot plan) -- no vive aqui
+                      porque este modulo no debe asumir un logger de pipeline (R-7).
 
     Returns
     -------
@@ -265,6 +274,10 @@ def compute_rolling_rows(
             # Deflactar NAV: NAV_real[t] = NAV[t] / (IPC[t] / IPC[0])
             if ipc_vals[0] != 0 and not np.isnan(ipc_vals[0]):
                 nav_real = nav_series / (ipc_vals / ipc_vals[0])
+            elif deflation_diagnostics is not None:
+                deflation_diagnostics.append({"isin": isin, "reason": "ipc0-zero"})
+        elif deflation_diagnostics is not None:
+            deflation_diagnostics.append({"isin": isin, "reason": "no-date-match"})
 
     rows: list[dict] = []
 

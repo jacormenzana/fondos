@@ -34,20 +34,39 @@ CREATE INDEX IF NOT EXISTS idx_metrics_date ON gold.fund_metrics (calculation_da
 CREATE INDEX IF NOT EXISTS idx_metrics_scan ON gold.fund_metrics (metric, horizon, real_flag, isin)
   INCLUDE (value);
 
+-- APPLY_FMTS_PIVOT: BEGIN base table DDL (table, partitions, indexes, statistics, reloptions).
+-- scripts/ops/apply_fmts_pivot.py extracts this exact block by these sentinel comments (not by
+-- line number or a `CREATE TABLE ...` regex, which would silently break on an unrelated edit
+-- above it) and substitutes gold.fund_metric_timeseries/fmts_p_*/idx_fmts_*/stx_fmts/fmts_pkey ->
+-- their `_new` staging names to build+verify the pivoted table before ever touching the live one.
+-- Keep this block self-contained (no forward reference to anything outside BEGIN/END) if you edit
+-- it, or the migration script's substitution will silently miss the addition.
 -- -----------------------------------------------------------------------------
--- gold.fund_metric_timeseries — 32.2M rows live (measured 2026-09-17, up from the 31.7M baseline).
+-- gold.fund_metric_timeseries — 16.2M rows live (v27 pivot, 2026-09-27; was 32.2M/real_flag-keyed
+-- through v26 — see the pivot plan and scripts/ops/apply_fmts_pivot.py for the live migration).
 -- PARTITION BY LIST (metric) — the ONE partitioning decision in this DB (§P2 "Partitioning").
 --
--- Justification is NOT read performance (32M rows is comfortable single-table territory in PG) —
+-- Justification is NOT read performance (16M rows is comfortable single-table territory in PG) —
 -- it is the metric-scoped bulk-delete/recompute cycle: TRUNCATE gold.fmts_p_sharpe instead of a
--- 6.3M-row DELETE + a vacuum scanning ~7GB of index. HASH(isin) and RANGE(date) were both
--- explicitly rejected — see the plan for the reasoning.
+-- multi-million-row DELETE + a vacuum scanning several GB of index. HASH(isin) and RANGE(date)
+-- were both explicitly rejected — see the plan for the reasoning. A RANGE(date) sub-partition was
+-- re-evaluated for the v27 pivot and rejected again: the hot query paths filter on window_label and
+-- isin, never on date, so date sub-partitioning would add ~130 empty-pruning partitions per metric
+-- for no benefit (measured live, 2026-09-27).
 --
 -- Metric list verified CLOSED against shared/config.py ROLLING_TIMESERIES_METRICS (5 metrics) and
--- the populated grain measured live: 5 metrics x 5 windows (rolling_1y/2y/3y/5y/10y), 481 distinct
--- dates, ~1,287,000 rows per (metric,window) pair — near-perfect partition balance, no skew.
+-- the populated grain measured live: 5 metrics x 5 windows (rolling_1y/2y/3y/5y/10y), 488 distinct
+-- dates, ~650,000 rows per (metric,window) pair post-pivot — near-perfect partition balance, no skew.
 -- The 3 SHORT_WINDOWS (rolling_1m/3m/6m) have ZERO rows today (SHORT_HORIZON_SCORING_ENABLED=False)
 -- but stay in the CHECK constraint so flipping that kill-switch needs no migration.
+--
+-- v27 pivot (real_flag removed from the key): `value`/`ref_value` split into `value_nominal`/
+-- `value_real`, with `has_real` distinguishing "no real row" (has_real=false) from "real row whose
+-- value is NULL" (has_real=true, value_real=NULL — a NaN result, e.g. too few observations). This
+-- makes the pivot lossless: gold.v_fund_metric_timeseries_long (40_matviews.sql) reconstructs the
+-- exact pre-pivot row set for every consumer that still needs the long (real_flag) shape.
+-- `ref_type`/`ref_value` DROPPED (v27): confirmed 100% NULL on every live row before the pivot —
+-- this table never uses them (fund_metric_alerts carries reference values separately).
 --
 -- `window` -> `window_label`: PostgreSQL reserved word (see rename_map.yaml).
 -- Column order: fixed-width first (8->4->2), then varlena — saves ~250MB on this table alone.
@@ -55,21 +74,20 @@ CREATE INDEX IF NOT EXISTS idx_metrics_scan ON gold.fund_metrics (metric, horizo
 -- data; batch_id already carries run provenance.
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS gold.fund_metric_timeseries (
-    value              double precision,
-    ref_value          double precision,
+    value_nominal      double precision,
+    value_real         double precision,
     date               date             NOT NULL,
     source_rows         integer,
-    real_flag           smallint         NOT NULL DEFAULT 0 CHECK (real_flag IN (0,1)),
+    has_real             boolean          NOT NULL DEFAULT false,
     isin                 varchar(12)      NOT NULL,
     metric               text             NOT NULL,
     window_label          text             NOT NULL
         CHECK (window_label IN ('rolling_1m','rolling_3m','rolling_6m',
                                  'rolling_1y','rolling_2y','rolling_3y','rolling_5y','rolling_10y')),
-    ref_type              text,
     algorithm_version      text,
     batch_id               text,
 
-    CONSTRAINT fmts_pkey PRIMARY KEY (isin, metric, window_label, date, real_flag)
+    CONSTRAINT fmts_pkey PRIMARY KEY (isin, metric, window_label, date)
 ) PARTITION BY LIST (metric);
 
 -- NEITHER fillfactor NOR parallel_workers is set here on the partitioned PARENT — confirmed
@@ -112,34 +130,40 @@ COMMENT ON TABLE gold.fmts_p_default IS
   'See plan §P2 for the promotion runbook.';
 
 -- idx_fmts_isin_metric_window_real_date dropped entirely: the PK's leading 3 columns already
--- serve isin=?/metric=?/window_label=? via prefix range scan + real_flag filter (~250-400 rows
--- total per prefix). This was redundant against its own PK in SQLite too (§P2 index plan).
+-- serve isin=?/metric=?/window_label=? via prefix range scan (~65-80 rows total per prefix
+-- post-v27-pivot). This was redundant against its own PK in SQLite too (§P2 index plan).
 --
 -- Cross-sectional/BI index, reshaped as a LOCAL (per-partition) index with `metric` dropped
 -- (partition pruning already supplies it) and INCLUDE added — the single highest-leverage index
 -- change in this migration: turns the Superset cross-sectional scan and the peer-comparison scan
 -- into index-only scans (no heap access). This is what kills the 2.5h self-join, together with
--- gold.mv_fmts_peer_stats (see 40_matviews.sql).
+-- gold.mv_fmts_peer_stats (see 40_matviews.sql). v27: `real_flag` dropped from the key (the pivot
+-- removed it from the table) and `has_real` added to INCLUDE so gold.v_fund_metric_timeseries_long
+-- can still serve an index-only scan for the unpivoted (real_flag) shape.
 CREATE INDEX IF NOT EXISTS idx_fmts_bi ON gold.fund_metric_timeseries
-  (window_label, real_flag, isin, date) INCLUDE (value, ref_value);
+  (window_label, isin, date) INCLUDE (value_nominal, value_real, has_real);
 
 -- ETL watermark / run correlator (genuinely new, §P2 index plan)
 CREATE INDEX IF NOT EXISTS idx_fmts_batch ON gold.fund_metric_timeseries (batch_id);
 
--- Extended statistics: metric/window_label/real_flag are strongly correlated within a partition
--- and PG would otherwise multiply selectivities independently and badly under-estimate.
+-- Extended statistics: metric/window_label are strongly correlated within a partition and PG
+-- would otherwise multiply selectivities independently and badly under-estimate. `real_flag`
+-- dropped from this statistics object in v27 — the column no longer exists on this table.
 CREATE STATISTICS IF NOT EXISTS stx_fmts (ndistinct, dependencies, mcv)
-  ON metric, window_label, real_flag FROM gold.fund_metric_timeseries;
+  ON metric, window_label FROM gold.fund_metric_timeseries;
 ALTER TABLE gold.fund_metric_timeseries ALTER COLUMN isin SET STATISTICS 1000;
 
 -- Storage parameters (fillfactor, parallel_workers) and insert-triggered autovacuum
 -- (§P2 Autovacuum), all applied per-partition in one pass — settings on the partitioned PARENT
 -- are NOT inherited by physical partitions (unlike column defaults/constraints, which are);
 -- PG doesn't just ignore this, it actively REJECTS some reloptions (parallel_workers, confirmed
--- against a live PG 15.19) on a relation with no physical storage. fillfactor=100 because these
--- rows are never UPDATEd. For autovacuum, what matters here is the visibility map (idx_fmts_bi's
--- index-only scans depend on it), hence insert_scale_factor is the load-bearing knob, not the
--- delete-triggered ones.
+-- against a live PG 15.19) on a relation with no physical storage. fillfactor=100 is a MISNOMER
+-- carried from the initial migration ("never UPDATEd") — the upsert's conditional DO UPDATE (see
+-- metrics_writer.py::write_timeseries) does rewrite rows when a value or algorithm_version
+-- changes; fillfactor=100 is still the right choice because most writes ARE no-ops (unchanged
+-- inputs), not because updates never happen. For autovacuum, what matters here is the visibility
+-- map (idx_fmts_bi's index-only scans depend on it), hence insert_scale_factor is the load-bearing
+-- knob, not the delete-triggered ones.
 DO $$
 DECLARE p text;
 BEGIN
@@ -160,6 +184,7 @@ BEGIN
       )$f$, p);
   END LOOP;
 END $$;
+-- APPLY_FMTS_PIVOT: END base table DDL
 
 -- -----------------------------------------------------------------------------
 -- gold.fund_metric_alerts — 14,674 rows, rolling-signal alerts

@@ -38,11 +38,15 @@ def _make_tables(conn):
             isin text PRIMARY KEY, fund_name text, fund_nature text
         )
     """)
+    # v27 pivot: no more real_flag -- value_nominal/value_real/has_real (see db/pg/30_gold.sql and
+    # the pivot plan). This dashboard only ever wanted the nominal series, so value_real/has_real
+    # aren't exercised here beyond existing with their defaults.
     conn.execute("""
         CREATE TABLE fund_metric_timeseries (
             isin text NOT NULL, metric text NOT NULL, window_label text NOT NULL,
-            date date NOT NULL, value double precision, real_flag smallint NOT NULL DEFAULT 0,
-            PRIMARY KEY (isin, metric, window_label, date, real_flag)
+            date date NOT NULL, value_nominal double precision,
+            value_real double precision, has_real boolean NOT NULL DEFAULT false,
+            PRIMARY KEY (isin, metric, window_label, date)
         )
     """)
     conn.execute("""
@@ -62,12 +66,12 @@ def test_load_snapshot_uses_window_label_column(pg_session_conn, pg_conn_module_
     _make_tables(conn)
     conn.execute("INSERT INTO fund_master VALUES ('X1', 'Fund X', 'Renta Variable')")
     conn.execute(
-        "INSERT INTO fund_metric_timeseries VALUES "
-        "('X1', 'vol_ann', 'rolling_1y', '2026-06-30', 0.15, 0)"
+        "INSERT INTO fund_metric_timeseries (isin, metric, window_label, date, value_nominal) VALUES "
+        "('X1', 'vol_ann', 'rolling_1y', '2026-06-30', 0.15)"
     )
     conn.execute(
-        "INSERT INTO fund_metric_timeseries VALUES "
-        "('X1', 'return_ann', 'rolling_1y', '2026-06-30', 0.08, 0)"
+        "INSERT INTO fund_metric_timeseries (isin, metric, window_label, date, value_nominal) VALUES "
+        "('X1', 'return_ann', 'rolling_1y', '2026-06-30', 0.08)"
     )
 
     rows = _load_snapshot(conn)
@@ -85,7 +89,8 @@ def test_load_series_uses_window_label_and_dynamic_in_list(pg_session_conn, pg_c
     _make_tables(conn)
     for i, isin in enumerate(["X1", "X2", "X3"]):
         conn.execute(
-            "INSERT INTO fund_metric_timeseries VALUES (%s, 'vol_ann', 'rolling_1y', %s, %s, 0)",
+            "INSERT INTO fund_metric_timeseries (isin, metric, window_label, date, value_nominal) "
+            "VALUES (%s, 'vol_ann', 'rolling_1y', %s, %s)",
             (isin, f"2026-0{i+1}-28", 0.10 + i * 0.01),
         )
 

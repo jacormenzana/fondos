@@ -168,6 +168,59 @@ def write_metrics(
     return len(rows)
 
 
+# v27 pivot (2026-09-27): the resulting row is built from the SAME expressions in SET and WHERE
+# (row-wise IS DISTINCT FROM against the identical CASE/OR expressions) -- "write only if the
+# resulting row differs from the stored one" -- so the two can't drift apart the way two
+# independently-written predicates could (a real risk flagged in review of the pivot plan; see
+# harmonic-marinating-balloon.md "Review round 3"). ref_type/ref_value DROPPED (v27): always NULL
+# on every live row pre-pivot (confirmed against production), never written here again.
+_TIMESERIES_UPSERT_PG = """
+    INSERT INTO fund_metric_timeseries
+        (isin, metric, window_label, date, value_nominal, value_real, has_real, source_rows,
+         algorithm_version, batch_id)
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    ON CONFLICT (isin, metric, window_label, date) DO UPDATE SET
+        value_nominal     = excluded.value_nominal,
+        value_real        = CASE WHEN excluded.has_real THEN excluded.value_real
+                                  ELSE fund_metric_timeseries.value_real END,
+        has_real          = fund_metric_timeseries.has_real OR excluded.has_real,
+        source_rows       = excluded.source_rows,
+        algorithm_version = excluded.algorithm_version,
+        batch_id          = excluded.batch_id
+    WHERE (fund_metric_timeseries.value_nominal, fund_metric_timeseries.value_real,
+           fund_metric_timeseries.has_real, fund_metric_timeseries.algorithm_version)
+          IS DISTINCT FROM
+          (excluded.value_nominal,
+           CASE WHEN excluded.has_real THEN excluded.value_real ELSE fund_metric_timeseries.value_real END,
+           fund_metric_timeseries.has_real OR excluded.has_real,
+           excluded.algorithm_version)
+"""
+
+
+def _group_timeseries_pairs(rows: list[dict]) -> dict[tuple, dict]:
+    """Groups the long-format rows (one dict per real_flag, as produced by
+    rolling_stats.compute_rolling_rows) by (isin, metric, window, date) into the pivoted shape
+    write_timeseries needs. A real_flag=1 row with no matching real_flag=0 row for the same key is
+    structurally impossible (compute_rolling_rows always emits the nominal variant first) and
+    raises -- the caller (run_pipeline.py) confines that failure to the one fund being processed."""
+    grouped: dict[tuple, dict] = {}
+    for r in rows:
+        key = (r["isin"], r["metric"], r["window"], r["date"])
+        slot = grouped.setdefault(key, {})
+        if r["real_flag"] == 0:
+            slot["value_nominal"] = r["value"]
+            slot["source_rows"] = r.get("source_rows")
+        elif r["real_flag"] == 1:
+            slot["has_real"] = True
+            slot["value_real"] = r["value"]
+        else:
+            raise ValueError(f"write_timeseries: unexpected real_flag={r['real_flag']!r} for key={key}")
+    for key, slot in grouped.items():
+        if "value_nominal" not in slot:
+            raise ValueError(f"write_timeseries: real_flag=1 row with no real_flag=0 row for key={key}")
+    return grouped
+
+
 def write_timeseries(
     conn: "psycopg.Connection",
     rows: list[dict],
@@ -176,7 +229,7 @@ def write_timeseries(
     algorithm_version: str,
     batch_id: str,
 ) -> int:
-    """Escribe filas en fund_metric_timeseries con upsert (P0, 2026-09-15).
+    """Escribe filas en fund_metric_timeseries con upsert (P0, 2026-09-15; pivoted v27, 2026-09-27).
 
     Root cause fix: antes usaba INSERT OR IGNORE, lo que hacia que un
     --force silenciosamente no-opeara sobre filas ya existentes -- un
@@ -187,6 +240,11 @@ def write_timeseries(
     re-ejecucion con valores identicos no escribe paginas nuevas, por lo
     que las ejecuciones incrementales normales no ven crecimiento de WAL.
 
+    v27: la tabla ya no tiene real_flag en su clave (pivotado a value_nominal/value_real/has_real,
+    ver db/pg/30_gold.sql) -- `rows` sigue llegando en formato largo (un dict por real_flag); esta
+    funcion los agrupa por (isin, metric, window, date) y escribe una sola fila por clave. Un
+    write nominal-only (sin IPC disponible) nunca toca value_real/has_real de una fila existente.
+
     Devuelve el n. de filas insertadas O actualizadas (0 si no habia
     cambios reales o dry_run). NOTA: antes de este fix el valor devuelto
     contaba solo inserciones; ahora tambien cuenta actualizaciones -- ver
@@ -196,43 +254,26 @@ def write_timeseries(
     """
     if not rows or dry_run:
         return 0
-    # window -> window_label: PG reserved word, renamed in the target schema (db/pg/rename_map.yaml)
-    sql = """
-        INSERT INTO fund_metric_timeseries
-            (isin, metric, window_label, date, value, real_flag,
-             ref_type, ref_value, source_rows,
-             algorithm_version, batch_id)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (isin, metric, window_label, date, real_flag) DO UPDATE SET
-            value             = excluded.value,
-            ref_type          = excluded.ref_type,
-            ref_value         = excluded.ref_value,
-            source_rows       = excluded.source_rows,
-            algorithm_version = excluded.algorithm_version,
-            batch_id          = excluded.batch_id
-        WHERE fund_metric_timeseries.value IS DISTINCT FROM excluded.value
-           OR fund_metric_timeseries.algorithm_version IS DISTINCT FROM excluded.algorithm_version
-    """
+    grouped = _group_timeseries_pairs(rows)
     data = [
         (
-            r["isin"], r["metric"], r["window"], r["date"],
-            r["value"],
-            r["real_flag"],
-            r.get("ref_type"),
-            r.get("ref_value"),
-            r.get("source_rows"),
+            isin, metric, window, dt,
+            slot["value_nominal"],
+            slot.get("value_real"),
+            slot.get("has_real", False),
+            slot.get("source_rows"),
             algorithm_version,
             batch_id,
         )
-        for r in rows
+        for (isin, metric, window, dt), slot in grouped.items()
     ]
     # EFF-2: skip own transaction when the caller batches for us
     if in_transaction(conn):
-        cur = _executemany(conn, sql, data)
+        cur = _executemany(conn, _TIMESERIES_UPSERT_PG, data)
         return cur.rowcount if cur.rowcount >= 0 else len(data)
     begin_immediate(conn)
     try:
-        cur = _executemany(conn, sql, data)
+        cur = _executemany(conn, _TIMESERIES_UPSERT_PG, data)
         conn.execute("COMMIT")
         return cur.rowcount if cur.rowcount >= 0 else len(data)
     except Exception:

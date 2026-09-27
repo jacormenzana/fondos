@@ -405,6 +405,13 @@ FUND_METRICS_AUDIT_COLUMNS: list[str] = [
 FUND_METRIC_TIMESERIES_AUDIT_COLUMNS: list[str] = [
     "algorithm_version",
     "batch_id",
+    # v27 (2026-09-27): real_flag pivoted out of the key into these three columns (see
+    # db/pg/30_gold.sql and scripts/ops/apply_fmts_pivot.py) — asserted here so a database that
+    # hasn't been through the pivot migration (or a rolled-back one) fails loudly at startup
+    # instead of metrics_writer.py's INSERT failing deep inside the P2 per-fund loop.
+    "value_nominal",
+    "value_real",
+    "has_real",
 ]
 P2_PIPELINE_LOG_AUDIT_COLUMNS: list[str] = [
     "batch_id",

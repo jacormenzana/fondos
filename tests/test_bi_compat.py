@@ -34,10 +34,18 @@ def test_committed_sql_is_not_stale(rename_map):
 
 
 def test_every_legacy_column_is_exposed_under_its_legacy_name(rename_map):
+    """Every rename_map column appears in the generated view under its legacy name, EXCEPT
+    g.BI_COLUMN_EXCLUDE entries (v27 pivot, FND fund_metric_timeseries: ref_type/ref_value were
+    100% NULL pre-pivot and the compat view drops them — rename_map.yaml still lists them because
+    it separately pins fidelity to the frozen SQLite source, checked below)."""
     sql = g.OUT_FILE.read_text(encoding="utf-8")
     for table in g.BI_TABLES:
         view = re.search(rf"CREATE OR REPLACE VIEW bi_compat\.{table} AS(.*?);\n", sql, re.S).group(1)
+        excluded = g.BI_COLUMN_EXCLUDE.get(table, frozenset())
         for old, new in rename_map["columns"][table].items():
+            if old in excluded:
+                assert f'"{new}" AS "{old}"' not in view, f"{table}: {old} should be excluded, but is present"
+                continue
             assert f'"{new}" AS "{old}"' in view, f"{table}: {old} -> {new} missing"
 
 

@@ -102,7 +102,10 @@ _UNVERIFIED_BASELINE: dict[str, str] = {
         R_FRAGMENT,
     "proyecto2/src/reports/rolling_dashboard.py::_load_scalar_metrics::7f9f6f99":
         R_FRAGMENT,
-    "proyecto2/src/reports/rolling_dashboard.py::_load_snapshot::0e9e5af9":
+    # v27 pivot (2026-09-27): hash moved because _SQL_SNAPSHOT's text changed (value -> value_nominal,
+    # real_flag dropped, see rolling_dashboard.py) — same reason as before (R_FRAGMENT), not a new class
+    # of unresolved statement.
+    "proyecto2/src/reports/rolling_dashboard.py::_load_snapshot::2486c866":
         R_FRAGMENT,
     "proyecto3/src/monthly_report.py::_build_cartera::f0c000d9":
         R_FRAGMENT,

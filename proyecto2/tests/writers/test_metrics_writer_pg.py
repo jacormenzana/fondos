@@ -21,6 +21,12 @@ preserve_and_write test, which DOES need it because that function uses the Pytho
 gold.fund_metric_timeseries / gold.fund_metric_alerts rename `window` -> `window_label` in the
 target schema (PG reserved word, db/pg/rename_map.yaml) -- the production port branches on this;
 these tests use the renamed column directly, matching what the ported SQL actually targets.
+
+v27 pivot (2026-09-27): fund_metric_timeseries dropped real_flag from its key (pivoted into
+value_nominal/value_real/has_real, see db/pg/30_gold.sql and the pivot plan). write_timeseries()
+still ACCEPTS the long format (one dict per real_flag) -- that contract is unchanged, callers
+(rolling_stats.compute_rolling_rows) are untouched -- but now groups pairs internally
+(_group_timeseries_pairs) and writes one pivoted row per (isin, metric, window, date).
 """
 from __future__ import annotations
 
@@ -58,31 +64,46 @@ def _make_fund_metric_timeseries(conn):
             metric            text NOT NULL,
             window_label      text NOT NULL,
             date              date NOT NULL,
-            value             double precision,
-            real_flag         smallint NOT NULL DEFAULT 0,
-            ref_type          text,
-            ref_value         double precision,
+            value_nominal     double precision,
+            value_real        double precision,
+            has_real          boolean NOT NULL DEFAULT false,
             source_rows       integer,
             algorithm_version text,
             batch_id          text,
-            PRIMARY KEY (isin, metric, window_label, date, real_flag)
+            PRIMARY KEY (isin, metric, window_label, date)
         )
     """)
 
 
 def _ts_row(value, source_rows=12, date="2026-06-30"):
+    """A nominal-only (real_flag=0) long-format row -- write_timeseries()'s input contract is
+    unchanged by the pivot, only what it does with it internally."""
     return {
         "isin": "ES0001", "metric": "sortino", "window": "rolling_1y",
-        "date": date, "value": value, "real_flag": 0,
-        "ref_type": None, "ref_value": None, "source_rows": source_rows,
+        "date": date, "value": value, "real_flag": 0, "source_rows": source_rows,
+    }
+
+
+def _ts_row_real(value, source_rows=12, date="2026-06-30"):
+    return {
+        "isin": "ES0001", "metric": "sortino", "window": "rolling_1y",
+        "date": date, "value": value, "real_flag": 1, "source_rows": source_rows,
     }
 
 
 def _fetch_ts_row(conn, date="2026-06-30"):
     return conn.execute(
-        "SELECT value, algorithm_version, batch_id FROM fund_metric_timeseries "
+        "SELECT value_nominal, algorithm_version, batch_id FROM fund_metric_timeseries "
         "WHERE isin='ES0001' AND metric='sortino' AND window_label='rolling_1y' "
-        f"AND date='{date}' AND real_flag=0"
+        f"AND date='{date}'"
+    ).fetchone()
+
+
+def _fetch_ts_pivoted(conn, date="2026-06-30"):
+    return conn.execute(
+        "SELECT value_nominal, value_real, has_real FROM fund_metric_timeseries "
+        "WHERE isin='ES0001' AND metric='sortino' AND window_label='rolling_1y' "
+        f"AND date='{date}'"
     ).fetchone()
 
 
@@ -111,7 +132,7 @@ def test_write_timeseries_upsert_semantics(pg_session_conn, pg_conn_module_schem
     row = _fetch_ts_row(conn)
     assert row[0] == 0.25 and row[1] == "V2" and row[2] == "B2"
 
-    # Different dates coexist under the (isin, metric, window_label, date, real_flag) PK.
+    # Different dates coexist under the (isin, metric, window_label, date) PK.
     write_timeseries(conn, [_ts_row(0.30, date="2026-07-31")], dry_run=False,
                       algorithm_version="V2", batch_id="B2")
     count = conn.execute(
@@ -122,6 +143,84 @@ def test_write_timeseries_upsert_semantics(pg_session_conn, pg_conn_module_schem
     assert write_timeseries(conn, [], dry_run=False, algorithm_version="V1", batch_id="B1") == 0
     assert write_timeseries(conn, [_ts_row(0.99)], dry_run=True,
                              algorithm_version="V1", batch_id="B1") == 0
+
+
+def test_write_timeseries_real_without_nominal_raises(pg_session_conn, pg_conn_module_schema):
+    """Structurally impossible per rolling_stats.compute_rolling_rows (always emits real_flag=0
+    first) -- write_timeseries must fail loud rather than guess, and run_pipeline.py confines the
+    failure to the one fund being processed (run_pipeline.py:1322-1340: per-fund ROLLBACK + continue)."""
+    conn = pg_session_conn
+    conn.execute(f"SET search_path = {pg_conn_module_schema}")
+    _make_fund_metric_timeseries(conn)
+    try:
+        write_timeseries(conn, [_ts_row_real(0.05)], dry_run=False,
+                          algorithm_version="V1", batch_id="B1")
+        raise AssertionError("expected ValueError")
+    except AssertionError:
+        raise
+    except ValueError:
+        pass
+
+
+def test_write_timeseries_pivot_truth_table(pg_session_conn, pg_conn_module_schema):
+    """Table-driven coverage of every stored x incoming state the pivot upsert must handle (§pivot
+    plan "Verification" — review round 3 flagged the dense WHERE clause as fragile, so this pins
+    every combination the SET/WHERE expressions are built from)."""
+    conn = pg_session_conn
+    conn.execute(f"SET search_path = {pg_conn_module_schema}")
+
+    def write(rows, alg="V1", batch="B1"):
+        return write_timeseries(conn, rows, dry_run=False, algorithm_version=alg, batch_id=batch)
+
+    # 1. Insert, nominal-only -> has_real=false, value_real stays NULL.
+    _make_fund_metric_timeseries(conn)
+    n = write([_ts_row(1.0)])
+    assert n == 1
+    assert _fetch_ts_pivoted(conn) == (1.0, None, False)
+
+    # 2. Insert, pair -> has_real=true, value_real set.
+    conn.execute("TRUNCATE fund_metric_timeseries")
+    n = write([_ts_row(1.0), _ts_row_real(0.8)])
+    assert n == 1
+    assert _fetch_ts_pivoted(conn) == (1.0, 0.8, True)
+
+    # 3. Insert, pair with a NULL real value (a NaN result) -> has_real=true anyway (NOT gated on
+    # value_real IS NOT NULL -- that's the whole point of has_real existing, §pivot plan "v1 defect").
+    conn.execute("TRUNCATE fund_metric_timeseries")
+    n = write([_ts_row(1.0), _ts_row_real(None)])
+    assert n == 1
+    assert _fetch_ts_pivoted(conn) == (1.0, None, True)
+
+    # 4. Update: nominal-only write over an existing has_real=true row NEVER touches the real side.
+    conn.execute("TRUNCATE fund_metric_timeseries")
+    write([_ts_row(1.0), _ts_row_real(0.8)])
+    n = write([_ts_row(2.0)])
+    assert n == 1
+    assert _fetch_ts_pivoted(conn) == (2.0, 0.8, True)
+
+    # 5. Update: nominal-only write, unchanged value -> no-op (rowcount 0).
+    n = write([_ts_row(2.0)])
+    assert n == 0
+    assert _fetch_ts_pivoted(conn) == (2.0, 0.8, True)
+
+    # 6. Update: pair over an existing has_real=false row -> has_real flips true, value_real set.
+    conn.execute("TRUNCATE fund_metric_timeseries")
+    write([_ts_row(1.0)])
+    n = write([_ts_row(1.0), _ts_row_real(0.5)])
+    assert n == 1
+    assert _fetch_ts_pivoted(conn) == (1.0, 0.5, True)
+
+    # 7. Update: identical pair rewrite -> no-op (rowcount 0) -- the WHERE clause's row comparison
+    # must agree with the SET clause's own expressions, or this would spuriously "change" every run.
+    n = write([_ts_row(1.0), _ts_row_real(0.5)])
+    assert n == 0
+    assert _fetch_ts_pivoted(conn) == (1.0, 0.5, True)
+
+    # 8. Update: algorithm_version alone changes -> not a no-op, even with identical values.
+    n = write([_ts_row(1.0), _ts_row_real(0.5)], alg="V2", batch="B2")
+    assert n == 1
+    row = _fetch_ts_row(conn)
+    assert row[1] == "V2" and row[2] == "B2"
 
 
 def test_write_timeseries_batches_inside_caller_transaction(pg_session_conn, pg_conn_module_schema):

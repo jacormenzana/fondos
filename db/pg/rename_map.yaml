@@ -270,6 +270,14 @@ columns:
     last_ols_nav_count: last_ols_nav_count
 
   fund_metric_timeseries:
+    # This map records the frozen, retired SQLite source's columns (tests/test_bi_compat.py checks
+    # it against the sealed db/fondos.sqlite verbatim) — it must NOT be edited for the v27 pivot.
+    # real_flag/ref_type/ref_value below are still real SQLite-era column names; the live Postgres
+    # base table dropped them (see db/pg/30_gold.sql), but gold.v_fund_metric_timeseries_long
+    # reconstructs them for BI. gen_bi_compat.py's BI_COLUMN_EXCLUDE (not this file) is what drops
+    # ref_type/ref_value from the generated bi_compat view — they were 100% NULL pre-pivot and the
+    # compat view only ever emits typed NULLs for them, so the legacy dataset gains nothing by
+    # keeping them and the exclusion avoids maintaining columns nobody reads.
     isin: isin
     metric: metric
     window: window_label   # structural rename — reserved word

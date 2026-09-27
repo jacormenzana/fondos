@@ -507,6 +507,28 @@ off-peak). SQLite WAL + commit-por-lote evitan bloqueos concurrentes.
 
 **Índices:** `idx_macro_indicator ON (indicator, geography)`, `idx_macro_date ON (date)`
 
+### TABLA P2-3b: fund_metric_timeseries
+
+**Propósito:** Series rolling de las 5 métricas curadas (`vol_ann`, `max_dd`, `return_ann`, `sharpe`,
+`sortino`) por fondo/ventana/fecha. Particionada `PARTITION BY LIST (metric)`. Pivotada: la variante
+nominal y la deflactada por IPC comparten fila en lugar de vivir en filas separadas por `real_flag`
+(diseño previo, retirado — ver `gold.v_fund_metric_timeseries_long` para la forma larga, usada por
+Superset y la auditoría estadística).
+**Clave primaria:** `(isin, metric, window_label, date)`
+
+| Columna | Tipo | Valores / Nota |
+|---------|------|----------------|
+| isin | TEXT | FK → fund_master |
+| metric | TEXT | `vol_ann` \| `max_dd` \| `return_ann` \| `sharpe` \| `sortino` |
+| window_label | TEXT | `rolling_1m` \| `rolling_3m` \| `rolling_6m` \| `rolling_1y` \| `rolling_2y` \| `rolling_3y` \| `rolling_5y` \| `rolling_10y` |
+| date | DATE | Fecha de cálculo (fin de ventana) |
+| value_nominal | REAL | Valor nominal |
+| value_real | REAL | Valor deflactado por IPC; NULL si `has_real=false` (no calculado) o si el resultado fue NaN |
+| has_real | BOOLEAN | Distingue "sin fila real" (`false`) de "fila real con valor NULL" (`true`, NaN) — hace el pivote sin pérdida |
+| source_rows | INTEGER | Nº de NAV usados en el cálculo |
+| algorithm_version | TEXT | `CALC_VERSION` del último run que modificó cualquiera de los dos lados |
+| batch_id | TEXT | Id del run P2 que hizo la última escritura |
+
 ### TABLA P2-4: fund_metrics
 
 **Propósito:** Todas las métricas calculadas por fondo (una fila por combinación métrica/horizonte)  

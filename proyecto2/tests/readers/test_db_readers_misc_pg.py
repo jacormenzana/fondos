@@ -184,14 +184,29 @@ def test_load_fund_attributes(pg_session_conn, pg_conn_module_schema):
 
 def _make_fmts_tables(conn):
     conn.execute("CREATE TABLE fund_master (isin text PRIMARY KEY, fund_nature text)")
+    # v27 pivot: no more real_flag on the base table (see db/pg/30_gold.sql and the pivot plan).
     conn.execute("""
         CREATE TABLE fund_metric_timeseries (
-            value double precision, ref_value double precision, date date NOT NULL,
-            source_rows integer, real_flag smallint NOT NULL DEFAULT 0,
+            value_nominal double precision, value_real double precision, date date NOT NULL,
+            source_rows integer, has_real boolean NOT NULL DEFAULT false,
             isin varchar(12) NOT NULL, metric text NOT NULL, window_label text NOT NULL,
-            ref_type text, algorithm_version text, batch_id text,
-            PRIMARY KEY (isin, metric, window_label, date, real_flag)
+            algorithm_version text, batch_id text,
+            PRIMARY KEY (isin, metric, window_label, date)
         )
+    """)
+    # load_latest_rolling_metrics_for_category_snapshot() reads through this compat view, not the
+    # base table directly -- mirrors gold.v_fund_metric_timeseries_long (db/pg/40_matviews.sql).
+    conn.execute("""
+        CREATE OR REPLACE VIEW v_fund_metric_timeseries_long AS
+        SELECT t.isin, t.metric, t.window_label, v.real_flag, t.date, v.value,
+               NULL::text AS ref_type, NULL::double precision AS ref_value,
+               t.source_rows, t.algorithm_version, t.batch_id
+        FROM fund_metric_timeseries t
+        CROSS JOIN LATERAL (
+          VALUES (0::smallint, t.value_nominal, true),
+                 (1::smallint, t.value_real,    t.has_real)
+        ) AS v(real_flag, value, present)
+        WHERE v.present
     """)
 
 
@@ -210,8 +225,8 @@ def test_load_latest_rolling_metrics_covers_all_5_curated_metrics_not_just_3(
     for metric, value in (("vol_ann", 0.12), ("max_dd", -0.30), ("return_ann", 0.05),
                            ("sharpe", 0.8), ("sortino", 1.1)):
         conn.execute(
-            "INSERT INTO fund_metric_timeseries (isin, metric, window_label, date, value, real_flag) "
-            "VALUES ('X1', %s, 'rolling_1y', '2026-09-01', %s, 0)", (metric, value))
+            "INSERT INTO fund_metric_timeseries (isin, metric, window_label, date, value_nominal) "
+            "VALUES ('X1', %s, 'rolling_1y', '2026-09-01', %s)", (metric, value))
 
     rows = load_latest_rolling_metrics_for_category_snapshot(conn)
 
@@ -228,11 +243,11 @@ def test_load_latest_rolling_metrics_takes_the_latest_date_per_group(
     _make_fmts_tables(conn)
     conn.execute("INSERT INTO fund_master VALUES ('X1', 'Renta Variable')")
     conn.execute(
-        "INSERT INTO fund_metric_timeseries (isin, metric, window_label, date, value, real_flag) "
-        "VALUES ('X1', 'sharpe', 'rolling_1y', '2026-08-01', 0.5, 0)")
+        "INSERT INTO fund_metric_timeseries (isin, metric, window_label, date, value_nominal) "
+        "VALUES ('X1', 'sharpe', 'rolling_1y', '2026-08-01', 0.5)")
     conn.execute(
-        "INSERT INTO fund_metric_timeseries (isin, metric, window_label, date, value, real_flag) "
-        "VALUES ('X1', 'sharpe', 'rolling_1y', '2026-09-01', 0.9, 0)")
+        "INSERT INTO fund_metric_timeseries (isin, metric, window_label, date, value_nominal) "
+        "VALUES ('X1', 'sharpe', 'rolling_1y', '2026-09-01', 0.9)")
 
     rows = load_latest_rolling_metrics_for_category_snapshot(conn)
 
@@ -246,8 +261,8 @@ def test_load_latest_rolling_metrics_ignores_metrics_outside_the_curated_5(
     _make_fmts_tables(conn)
     conn.execute("INSERT INTO fund_master VALUES ('X1', 'Renta Variable')")
     conn.execute(
-        "INSERT INTO fund_metric_timeseries (isin, metric, window_label, date, value, real_flag) "
-        "VALUES ('X1', 'not_a_curated_metric', 'rolling_1y', '2026-09-01', 1.0, 0)")
+        "INSERT INTO fund_metric_timeseries (isin, metric, window_label, date, value_nominal) "
+        "VALUES ('X1', 'not_a_curated_metric', 'rolling_1y', '2026-09-01', 1.0)")
 
     rows = load_latest_rolling_metrics_for_category_snapshot(conn)
 

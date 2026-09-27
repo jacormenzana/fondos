@@ -91,7 +91,7 @@ logs the action to `BACKLOG_LOGS`.
 ~3,200 European investment funds. Goal: capital preservation relative to IPC+M3 (~6–7% annual, max drawdown 15%, 3–5 year horizon).  
 Stack: Python 3.13, PostgreSQL 17 (live operational store), Windows 10, Conda env `des`.  
 <!-- AUTO:BEGIN schema-version -->
-DB: PostgreSQL 17 (schema v26; legacy SQLite retired 2026-09-26). Master list: `c:\data\fondos\in\GestoresDeFondosv1.xlsx`.
+DB: PostgreSQL 17 (schema v27; legacy SQLite retired 2026-09-26). Master list: `c:\data\fondos\in\GestoresDeFondosv1.xlsx`.
 <!-- AUTO:END schema-version -->
 
 **Live store = PostgreSQL 17 (cutover executed 2026-09-23); SQLite is retired (2026-09-26, FND-0102).**
@@ -220,7 +220,7 @@ PDFs and `Raw_KIID_Text` (in `fund_kiid_metadata`) are **never deleted**.
 ### Key support modules
 
 <!-- AUTO:BEGIN kill-switches-line -->
-- `shared/config.py` — all constants: `SCHEMA_VERSION` (`"v26"`), `DOMAIN_VALUES`, `ATTRIBUTE_CATALOG`, kill-switches (`PRIIPS_COST_EXTRACTION_ENABLED`, `SHORT_HORIZON_SCORING_ENABLED`, `ROLLING_STATS_ENABLED`, `ROLLING_PCTILE_P3_ENABLED`, `PORTFOLIO_HYSTERESIS_ENABLED`, `ROTATION_COST_GATE_ENABLED`, `BENCHMARK_DECOMP_ENABLED`, `BENCHMARK_ROLE_ENABLED`, `INTER18_RECONCILIATION_ENABLED`, `DLA2_ARBITRATION_ENABLED`)
+- `shared/config.py` — all constants: `SCHEMA_VERSION` (`"v27"`), `DOMAIN_VALUES`, `ATTRIBUTE_CATALOG`, kill-switches (`PRIIPS_COST_EXTRACTION_ENABLED`, `SHORT_HORIZON_SCORING_ENABLED`, `ROLLING_STATS_ENABLED`, `ROLLING_PCTILE_P3_ENABLED`, `PORTFOLIO_HYSTERESIS_ENABLED`, `ROTATION_COST_GATE_ENABLED`, `BENCHMARK_DECOMP_ENABLED`, `BENCHMARK_ROLE_ENABLED`, `INTER18_RECONCILIATION_ENABLED`, `DLA2_ARBITRATION_ENABLED`)
 <!-- AUTO:END kill-switches-line -->
 - `shared/schema_checks.py` — `assert_schema_alignment()` validates DB columns at startup
 - `proyecto1/core/classify_utils.py` — **single source of truth** for all categorical normalization maps (EN→ES for Sector_Focus, Type, Family). Import from here; never duplicate elsewhere (P#11 / R-1).
@@ -374,7 +374,7 @@ proyecto2/
 | `series_macro` | `(date, indicator, geography)` | All macro time series |
 | `fund_metrics` | `(ISIN, metric, horizon, real_flag)` | All calculated metrics |
 | `fund_nav_daily` | `(ISIN, Date)` | Daily NAV series — short-horizon source |
-| `fund_metric_timeseries` | `(ISIN, metric, date, ...)` | Long-format rolling metric series (~16.6M rows) |
+| `fund_metric_timeseries` | `(ISIN, metric, date, ...)` | Rolling metric series (~16.2M rows; v27, `value_nominal`/`value_real`/`has_real` — no more `real_flag` key; `gold.v_fund_metric_timeseries_long` reconstructs the long shape) |
 | `fund_metric_alerts` | `(ISIN, alert_type, ...)` | Rolling-signal alerts |
 | `fund_metric_state` | `ISIN` | Per-fund calc fingerprint/state (cache control) |
 | `p2_pipeline_log` | `id` | Per-run traceability |

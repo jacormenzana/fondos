@@ -115,47 +115,45 @@ _PCTILE_TABLE_COLS: list[tuple] = [  # (metric_key, label)
 
 # ── SQL: Tier 1 — snapshot de última fecha, ventana rolling_1y (universo) ─────
 # Solo rolling_1y: es la ventana usada por nature_summary y peer_refs.
-# Filtra por (metric, window='rolling_1y', real_flag) → ~3 200 fondos × 3 métricas
-# = ~9 600 filas; índice idx_fmts_metric_window_real_date sirve el GROUP BY.
+# Filtra por (metric, window='rolling_1y') → ~3 200 fondos × 3 métricas = ~9 600 filas;
+# idx_fmts_bi sirve el GROUP BY.
 # {wc}: window column name — 'window' on SQLite, 'window_label' on Postgres (reserved word
 # there, db/pg/rename_map.yaml; applies to BOTH fund_metric_timeseries and fund_metric_alerts).
 # Substituted by each loader function via is_postgres_connection(conn), same mechanism already
 # used for {nature_clause}/{ph}/{metric_in}/{isin_in} below. Output column position, not name,
 # is what pivot_metrics()/nature_summary()/etc. rely on (positional tuple unpacking throughout
 # this file), so no AS-aliasing is needed — only the FROM/JOIN/WHERE references matter.
+# v27 pivot: this dashboard only ever wanted the nominal series (real_flag=0) — reads
+# value_nominal directly off the base table instead of the real_flag-keyed long shape.
 _SQL_SNAPSHOT = """
-    SELECT t.isin, t.metric, t.{wc}, t.date, t.value,
+    SELECT t.isin, t.metric, t.{wc}, t.date, t.value_nominal,
            m.Fund_Nature, m.Fund_Name
     FROM fund_metric_timeseries t
     JOIN (
-        SELECT metric, {wc}, real_flag, MAX(date) AS mx
+        SELECT metric, {wc}, MAX(date) AS mx
         FROM fund_metric_timeseries
         WHERE metric IN ('vol_ann','max_dd','return_ann')
           AND {wc} = 'rolling_1y'
-          AND real_flag = 0
-        GROUP BY metric, {wc}, real_flag
+        GROUP BY metric, {wc}
     ) latest ON t.metric    = latest.metric
              AND t.{wc}    = latest.{wc}
-             AND t.real_flag = latest.real_flag
              AND t.date      = latest.mx
     LEFT JOIN fund_master m ON t.isin = m.ISIN
-    WHERE t.real_flag = 0
-      AND t.metric IN ('vol_ann','max_dd','return_ann')
+    WHERE t.metric IN ('vol_ann','max_dd','return_ann')
       AND t.{wc} = 'rolling_1y'
-      AND t.value IS NOT NULL
+      AND t.value_nominal IS NOT NULL
     {nature_clause}
 """
 
 # ── SQL: Tier 2 — series completas para ISINs seleccionados ───────────────────
 _SQL_SERIES = """
-    SELECT t.isin, t.metric, t.{wc}, t.date, t.value,
+    SELECT t.isin, t.metric, t.{wc}, t.date, t.value_nominal,
            m.Fund_Nature, m.Fund_Name
     FROM fund_metric_timeseries t
     LEFT JOIN fund_master m ON t.isin = m.ISIN
     WHERE t.isin IN ({ph})
-      AND t.real_flag = 0
       AND t.metric IN ('vol_ann','max_dd','return_ann')
-      AND t.value IS NOT NULL
+      AND t.value_nominal IS NOT NULL
     ORDER BY t.isin, t.metric, t.{wc}, t.date
 """
 

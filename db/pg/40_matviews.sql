@@ -69,13 +69,45 @@ GROUP BY fm.fund_nature
 ORDER BY fondos DESC;
 
 
+-- APPLY_FMTS_PIVOT: BEGIN long view + matviews DDL. scripts/ops/apply_fmts_pivot.py extracts this
+-- exact block by these sentinel comments and substitutes gold.fund_metric_timeseries/
+-- v_fund_metric_timeseries_long/mv_fmts_peer_stats/mv_fmts_latest/mv_fund_coverage (and their
+-- unique indexes) -> their `_new` staging names, same reasoning as 30_gold.sql's sentinel pair.
+-- Keep this self-contained (no GRANTs inside — those apply to the live names only, added back by
+-- the migration script's swap step, never built under `_new`).
+-- -----------------------------------------------------------------------------
+-- gold.v_fund_metric_timeseries_long — v27 pivot compatibility view (2026-09-27).
+-- gold.fund_metric_timeseries dropped `real_flag` from its key (pivoted into `value_nominal`/
+-- `value_real`, with `has_real` distinguishing "no real row" from "real row, NULL value" — see
+-- 30_gold.sql). This view reconstructs the exact pre-pivot long (one-row-per-real_flag) shape for
+-- every reader that still wants it: LOSSLESS, because `has_real` (not `value_real IS NOT NULL`)
+-- gates whether the real row is emitted, so a real row whose value is NULL is preserved. Verified
+-- against EXPLAIN on the live PG17 (2026-09-27): the per-ISIN shape uses the PK index, and the
+-- cross-sectional (window_label) shape uses idx_fmts_bi as a Bitmap Index Scan — both push the
+-- predicate through the LATERAL, so this is not a regression vs. querying the base table directly.
+-- `ref_type`/`ref_value` are re-exposed as typed NULLs — they were always NULL and were dropped
+-- from the base table by the pivot (confirmed 0 non-NULL rows pre-migration); kept here only so
+-- readers built on the old column list (bi_compat, mv_fmts_latest) don't need their own edits.
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE VIEW gold.v_fund_metric_timeseries_long AS
+SELECT t.isin, t.metric, t.window_label, v.real_flag, t.date, v.value,
+       NULL::text AS ref_type, NULL::double precision AS ref_value,
+       t.source_rows, t.algorithm_version, t.batch_id
+FROM   gold.fund_metric_timeseries t
+CROSS JOIN LATERAL (
+  VALUES (0::smallint, t.value_nominal, true),
+         (1::smallint, t.value_real,    t.has_real)
+) AS v(real_flag, value, present)
+WHERE  v.present;
+
 -- =============================================================================
 -- Materialized views (§P4). Each carries a UNIQUE index — required for
 -- REFRESH MATERIALIZED VIEW CONCURRENTLY, which computes into a temp relation and applies a diff
 -- instead of taking ACCESS EXCLUSIVE (which would block an open Superset dashboard).
 -- =============================================================================
 
--- --- FLAGSHIP: kills the documented 2.5h self-join. ~240K rows. ---
+-- --- FLAGSHIP: kills the documented 2.5h self-join. ~240K rows pre-pivot; v27 keeps counting both
+-- real_flag sides via the long view, so the row count here is unchanged by the pivot. ---
 CREATE MATERIALIZED VIEW IF NOT EXISTS gold.mv_fmts_peer_stats AS
 SELECT t.metric, t.window_label, t.real_flag, t.date, m.heuristic_block,
        count(*)                                                    AS n_funds,
@@ -84,7 +116,7 @@ SELECT t.metric, t.window_label, t.real_flag, t.date, m.heuristic_block,
        percentile_cont(0.25) WITHIN GROUP (ORDER BY t.value)       AS peer_p25,
        percentile_cont(0.50) WITHIN GROUP (ORDER BY t.value)       AS peer_p50,
        percentile_cont(0.75) WITHIN GROUP (ORDER BY t.value)       AS peer_p75
-FROM   gold.fund_metric_timeseries t
+FROM   gold.v_fund_metric_timeseries_long t
 JOIN   silver.fund_master m USING (isin)
 WHERE  t.value IS NOT NULL
 GROUP  BY 1,2,3,4,5;
@@ -92,25 +124,31 @@ GROUP  BY 1,2,3,4,5;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_fmts_peer_stats
   ON gold.mv_fmts_peer_stats (metric, window_label, real_flag, date, heuristic_block);
 
--- --- "Current state of every fund" — P3/dashboard landing query. ~300K rows. ---
+-- --- "Current state of every fund" — P3/dashboard landing query. ~300K rows pre-pivot; unchanged
+-- by v27 (still one row per real_flag side via the long view). ---
 CREATE MATERIALIZED VIEW IF NOT EXISTS gold.mv_fmts_latest AS
 SELECT DISTINCT ON (isin, metric, window_label, real_flag)
-       isin, metric, window_label, real_flag, date, value, ref_type, ref_value,
-       algorithm_version, batch_id
-FROM   gold.fund_metric_timeseries
+       isin, metric, window_label, real_flag, date, value,
+       source_rows, algorithm_version, batch_id
+FROM   gold.v_fund_metric_timeseries_long
 ORDER  BY isin, metric, window_label, real_flag, date DESC;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_fmts_latest
   ON gold.mv_fmts_latest (isin, metric, window_label, real_flag);
 
--- --- Kills the documented 105s COUNT(*). ~19K rows. Reconciliation/coverage surface. ---
+-- --- Kills the documented 105s COUNT(*). Reconciliation/coverage surface. v27: reads the base
+-- table's value_nominal directly (no real_flag dimension left to group by), so n_rows/n_non_null
+-- here roughly HALVE vs. pre-pivot — this is the pivot working as intended (one row now serves
+-- both nominal and real), not a data loss. scripts/mig/pg_reconcile.py's expectations were updated
+-- for this at the same time (§pivot plan). ---
 CREATE MATERIALIZED VIEW IF NOT EXISTS gold.mv_fund_coverage AS
-SELECT isin, metric, count(*) AS n_rows, count(value) AS n_non_null,
+SELECT isin, metric, count(*) AS n_rows, count(value_nominal) AS n_non_null,
        min(date) AS first_date, max(date) AS last_date
 FROM   gold.fund_metric_timeseries
 GROUP  BY 1,2;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_fund_coverage ON gold.mv_fund_coverage (isin, metric);
+-- APPLY_FMTS_PIVOT: END long view + matviews DDL
 
 GRANT SELECT ON gold.mv_fmts_peer_stats, gold.mv_fmts_latest, gold.mv_fund_coverage TO superset_ro;
 GRANT SELECT ON silver.v_cost_arbitration_overall TO superset_ro;   -- schema is silver; superset_ro has USAGE there

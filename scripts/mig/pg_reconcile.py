@@ -86,13 +86,19 @@ TABLES = [
     ("fund_kiid_metadata", "bronze", "fund_kiid_metadata"),
     ("db_document_catalogue", "bronze", "db_document_catalogue"),
     ("fund_metrics", "gold", "fund_metrics"),
-    ("fund_metric_timeseries", "gold", "fund_metric_timeseries"),
     ("fund_metric_alerts", "gold", "fund_metric_alerts"),
-    # fund_scores deliberately excluded from this generic list — see check_fund_scores_bespoke()
-    # below. Its PG shape gained 5 columns with no SQLite source (P3 Phase 3a, 2026-09-19:
+    # fund_scores and (since 2026-09-27) fund_metric_timeseries deliberately excluded from this
+    # generic list — see check_fund_scores_bespoke() below for the former's own bespoke check.
+    # fund_scores: its PG shape gained 5 columns with no SQLite source (P3 Phase 3a, 2026-09-19:
     # regime/as_of_date/score_base/multiplier/exclusion_reason), so the generic per-column-set
     # row-hash in check (b) would compare rows with different field counts on each side and never
     # match, regardless of correctness — that's a broken check, not evidence of a broken migration.
+    # fund_metric_timeseries: the v27 pivot (real_flag -> value_nominal/value_real/has_real, see
+    # db/pg/30_gold.sql) dropped real_flag from the key entirely, so its PG row count is now ~half
+    # the frozen SQLite source's and its column set no longer matches — same broken-check shape as
+    # fund_scores, for the same reason (the schema intentionally diverged after the SQLite source
+    # was sealed 2026-09-26). check (g) below (date ranges per metric x window) is unaffected and
+    # still runs against it, since neither side of that check touches real_flag/value.
     ("portfolio_scenarios", "gold", "portfolio_scenarios"),
     ("portfolio_weights", "gold", "portfolio_weights"),
     ("rotation_costs", "gold", "rotation_costs"),

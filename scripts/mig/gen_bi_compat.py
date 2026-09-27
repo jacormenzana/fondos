@@ -29,6 +29,20 @@ OUT_FILE = REPO_ROOT / "db" / "pg_bi_compat" / "bi_compat.sql"
 # The three datasets registered in Superset (AGENTS.md, P4 BI mirror).
 BI_TABLES = ("fund_master", "fund_metric_timeseries", "fund_metric_alerts")
 
+# v27 pivot (2026-09-27): gold.fund_metric_timeseries no longer carries real_flag/ref_type/ref_value
+# (see db/pg/30_gold.sql). Superset's legacy dataset still expects the long (real_flag) shape, so
+# this one BI-facing view sources from the lossless unpivot instead of the base table directly —
+# every other BI_TABLES entry still maps straight onto its own schema-qualified table.
+BI_SOURCE_OVERRIDE = {"fund_metric_timeseries": "gold.v_fund_metric_timeseries_long"}
+
+# rename_map.yaml intentionally still LISTS ref_type/ref_value for fund_metric_timeseries (it
+# records the frozen, retired SQLite source's real columns — tests/test_bi_compat.py checks it
+# against the sealed db/fondos.sqlite verbatim, so it must not be edited for this pivot). They are
+# excluded here instead: both were 100% NULL on every live row before the pivot, and the compat
+# view (gold.v_fund_metric_timeseries_long) only ever emits typed NULLs for them — the legacy
+# dataset gains nothing from carrying columns nobody reads.
+BI_COLUMN_EXCLUDE: dict[str, set[str]] = {"fund_metric_timeseries": {"ref_type", "ref_value"}}
+
 
 def _q(ident: str) -> str:
     return '"' + ident.replace('"', '""') + '"'
@@ -47,13 +61,15 @@ def render(rename_map: dict) -> str:
         "",
     ]
     for table in BI_TABLES:
-        cols = rename_map["columns"][table]
+        exclude = BI_COLUMN_EXCLUDE.get(table, frozenset())
+        cols = {old: new for old, new in rename_map["columns"][table].items() if old not in exclude}
         select = ",\n".join(f"       {_q(new)} AS {_q(old)}" for old, new in cols.items())
+        source = BI_SOURCE_OVERRIDE.get(table, f"{layer_of[table]}.{table}")
         out += [
             f"CREATE OR REPLACE VIEW bi_compat.{table} AS",
             "SELECT",
             select,
-            f"FROM   {layer_of[table]}.{table};",
+            f"FROM   {source};",
             f"GRANT SELECT ON bi_compat.{table} TO superset_ro;",
             "",
         ]

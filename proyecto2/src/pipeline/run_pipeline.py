@@ -704,6 +704,7 @@ def run(
     n_skipped     = 0
     n_errors      = 0
     n_warnings    = 0   # P2-12: logger.warning() call count for RUN_SUMMARY
+    defl_skipped  = 0   # v27 pivot: ISINs where rolling_stats.py couldn't build a real series
     total_written = 0
     total         = 0
     conn          = None
@@ -1235,6 +1236,7 @@ def run(
                 # v28: pctile_self computed here from roll_rows (already in RAM),
                 # eliminating the post-loop full-table read for the self-percentile.
                 if _want("rolling") and ROLLING_STATS_ENABLED:
+                    _defl_diag: list[dict] = []
                     roll_rows = compute_rolling_rows(
                         isin, nav_df,
                         rolling_windows=ROLLING_WINDOWS,
@@ -1243,7 +1245,23 @@ def run(
                         periods_per_year=12,
                         risk_free_rate=RISK_FREE_RATE_ANN,         # fallback scalar
                         rf_series=rf_rate_df if not rf_rate_df.empty else None,  # §4g
+                        deflation_diagnostics=_defl_diag,
                     )
+                    # v27 pivot follow-up (§pivot plan "Deflation detection"): rolling_stats.py's
+                    # exact-date IPC merge can skip a whole ISIN's real series (never a single date
+                    # -- the merge is followed by ffill/bfill). Zero live ISINs hit this as of
+                    # 2026-09-27 (3,711/3,711 paired), but has_real=false now always has a visible
+                    # cause instead of silently looking identical to "not yet computed".
+                    for _diag in _defl_diag:
+                        n_warnings += 1
+                        defl_skipped += 1
+                        logger.warning(
+                            "", extra=dict(
+                                p2_idx=idx, p2_total=total, p2_isin=isin,
+                                p2_evt="DEFL-SKIP", p2_detail=_diag["reason"],
+                                p2_count="", p2_dur_ms="",
+                            )
+                        )
                     ts_written = _write_timeseries(
                         conn, roll_rows, dry_run,
                         algorithm_version=CALC_VERSION, batch_id=RUN_BATCH_ID,
@@ -1481,7 +1499,7 @@ def run(
         logger.info(
             f"[RUN END] run_id={run_id} status={status} "
             f"processed={n_processed} skipped={n_skipped} errors={n_errors} "
-            f"warnings={n_warnings} total_written={total_written} "
+            f"warnings={n_warnings} defl_skipped={defl_skipped} total_written={total_written} "
             f"elapsed={elapsed_total:.0f}s"
         )
         sys.stdout.flush()
@@ -1501,7 +1519,8 @@ def run(
                         (
                             f"run_id={run_id} processed={n_processed} "
                             f"skipped={n_skipped} errors={n_errors} "
-                            f"warnings={n_warnings} written={total_written} "
+                            f"warnings={n_warnings} defl_skipped={defl_skipped} "
+                            f"written={total_written} "
                             f"elapsed={elapsed_total:.0f}s"
                         ),
                         RUN_BATCH_ID,
