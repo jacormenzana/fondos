@@ -29,6 +29,8 @@ from src.readers.db_readers import (  # noqa: E402
     ipc_available,
     load_rf_rate,
     load_fund_attributes,
+    CATEGORY_SNAPSHOT_METRICS,
+    load_latest_rolling_metrics_for_category_snapshot,
 )
 
 
@@ -174,3 +176,79 @@ def test_load_fund_attributes(pg_session_conn, pg_conn_module_schema):
     assert df.index.name == "ISIN"
     assert df.loc["X1", "Fund_Nature"] == "Renta Variable"
     assert df.loc["X1", "In_Current_Universe"] == 1
+
+
+# ---------------------------------------------------------------------------
+# load_latest_rolling_metrics_for_category_snapshot — FND-0093 (2026-09-27)
+# ---------------------------------------------------------------------------
+
+def _make_fmts_tables(conn):
+    conn.execute("CREATE TABLE fund_master (isin text PRIMARY KEY, fund_nature text)")
+    conn.execute("""
+        CREATE TABLE fund_metric_timeseries (
+            value double precision, ref_value double precision, date date NOT NULL,
+            source_rows integer, real_flag smallint NOT NULL DEFAULT 0,
+            isin varchar(12) NOT NULL, metric text NOT NULL, window_label text NOT NULL,
+            ref_type text, algorithm_version text, batch_id text,
+            PRIMARY KEY (isin, metric, window_label, date, real_flag)
+        )
+    """)
+
+
+def test_category_snapshot_metrics_is_the_5_curated_metrics():
+    """The exact regression: the fallback query this replaces hardcoded only 3 of these 5."""
+    assert set(CATEGORY_SNAPSHOT_METRICS) == {"vol_ann", "max_dd", "return_ann", "sharpe", "sortino"}
+
+
+def test_load_latest_rolling_metrics_covers_all_5_curated_metrics_not_just_3(
+        pg_session_conn, pg_conn_module_schema):
+    """FND-0093: before the fix, sharpe/sortino rows were silently excluded from this result."""
+    conn = pg_session_conn
+    conn.execute(f"SET search_path = {pg_conn_module_schema}")
+    _make_fmts_tables(conn)
+    conn.execute("INSERT INTO fund_master VALUES ('X1', 'Renta Variable')")
+    for metric, value in (("vol_ann", 0.12), ("max_dd", -0.30), ("return_ann", 0.05),
+                           ("sharpe", 0.8), ("sortino", 1.1)):
+        conn.execute(
+            "INSERT INTO fund_metric_timeseries (isin, metric, window_label, date, value, real_flag) "
+            "VALUES ('X1', %s, 'rolling_1y', '2026-09-01', %s, 0)", (metric, value))
+
+    rows = load_latest_rolling_metrics_for_category_snapshot(conn)
+
+    metrics_seen = {r[1] for r in rows}
+    assert metrics_seen == {"vol_ann", "max_dd", "return_ann", "sharpe", "sortino"}, metrics_seen
+    sharpe_row = next(r for r in rows if r[1] == "sharpe")
+    assert sharpe_row[0] == "X1" and sharpe_row[4] == 0.8 and sharpe_row[6] == "Renta Variable"
+
+
+def test_load_latest_rolling_metrics_takes_the_latest_date_per_group(
+        pg_session_conn, pg_conn_module_schema):
+    conn = pg_session_conn
+    conn.execute(f"SET search_path = {pg_conn_module_schema}")
+    _make_fmts_tables(conn)
+    conn.execute("INSERT INTO fund_master VALUES ('X1', 'Renta Variable')")
+    conn.execute(
+        "INSERT INTO fund_metric_timeseries (isin, metric, window_label, date, value, real_flag) "
+        "VALUES ('X1', 'sharpe', 'rolling_1y', '2026-08-01', 0.5, 0)")
+    conn.execute(
+        "INSERT INTO fund_metric_timeseries (isin, metric, window_label, date, value, real_flag) "
+        "VALUES ('X1', 'sharpe', 'rolling_1y', '2026-09-01', 0.9, 0)")
+
+    rows = load_latest_rolling_metrics_for_category_snapshot(conn)
+
+    assert len(rows) == 1 and rows[0][4] == 0.9   # the 09-01 row, not the stale 08-01 one
+
+
+def test_load_latest_rolling_metrics_ignores_metrics_outside_the_curated_5(
+        pg_session_conn, pg_conn_module_schema):
+    conn = pg_session_conn
+    conn.execute(f"SET search_path = {pg_conn_module_schema}")
+    _make_fmts_tables(conn)
+    conn.execute("INSERT INTO fund_master VALUES ('X1', 'Renta Variable')")
+    conn.execute(
+        "INSERT INTO fund_metric_timeseries (isin, metric, window_label, date, value, real_flag) "
+        "VALUES ('X1', 'not_a_curated_metric', 'rolling_1y', '2026-09-01', 1.0, 0)")
+
+    rows = load_latest_rolling_metrics_for_category_snapshot(conn)
+
+    assert rows == []

@@ -458,3 +458,52 @@ def coverage_snapshot(
         ).fetchone()
         result.append((metric, int(row[0] or 0)))
     return result
+
+
+# The 5 curated rolling metrics compute_rolling_rows() (rolling_stats.py) computes for every window.
+# Single source of truth (P#11/R-1) for "which metrics need a category (pctile_cat/zscore_cat)
+# refresh" — load_latest_rolling_metrics_for_category_snapshot() below is the only caller.
+CATEGORY_SNAPSHOT_METRICS = ("vol_ann", "max_dd", "return_ann", "sharpe", "sortino")
+
+
+def load_latest_rolling_metrics_for_category_snapshot(
+    conn: "psycopg.Connection",
+) -> list[tuple]:
+    """Latest (isin, metric, window, date, value, real_flag, Fund_Nature) row per
+    (isin, metric, window, real_flag) in fund_metric_timeseries, for all of CATEGORY_SNAPSHOT_METRICS.
+
+    FND-0093 (2026-09-27): the fallback path in run_pipeline.py's rolling-category-refresh (used on
+    hash-skip-dominated runs, where most funds are cached and only a few get recomputed, so the
+    cross-sectional snapshot is rebuilt from the DB instead of the in-memory roll_rows) only queried
+    3 of the 5 curated metrics -- sharpe/sortino category rows silently went stale. Extracted into its
+    own function so the metric list has one place to be correct, and so it is directly testable
+    (the query it replaces was inlined inside a large per-fund loop).
+
+    Returns raw rows (not a DataFrame): the caller already builds one with its own column list.
+
+    The IN-list below is a literal, not built from CATEGORY_SNAPSHOT_METRICS: a `.join()`-assembled
+    fragment is opaque to the EXPLAIN sweep's static resolver (tests/_sql_sites.py can trace a plain
+    `?`/`{ph}` substitution or a module-level literal, not a generator expression), so it would
+    escape EXPLAIN entirely -- the exact failure mode this fix closes for the query it replaces.
+    test_category_snapshot_metrics_is_the_5_curated_metrics (db_readers test file) keeps the two
+    lists from drifting apart instead.
+    """
+    rows = conn.execute("""
+        SELECT t.isin, t.metric, t.window_label AS window, t.date,
+               t.value, t.real_flag, m.Fund_Nature
+        FROM fund_metric_timeseries t
+        JOIN (
+            SELECT isin, metric, window_label, real_flag, MAX(date) AS mx
+            FROM fund_metric_timeseries
+            WHERE metric IN ('vol_ann','max_dd','return_ann','sharpe','sortino')
+            GROUP BY isin, metric, window_label, real_flag
+        ) latest
+          ON  t.isin         = latest.isin
+          AND t.metric       = latest.metric
+          AND t.window_label = latest.window_label
+          AND t.real_flag    = latest.real_flag
+          AND t.date         = latest.mx
+        LEFT JOIN fund_master m ON t.isin = m.ISIN
+        WHERE t.metric IN ('vol_ann','max_dd','return_ann','sharpe','sortino')
+    """).fetchall()
+    return rows

@@ -89,6 +89,7 @@ from src.readers.db_readers import (
     load_ts_cohort,                  # observability: load_ts cohort (two-timestamp model)
     count_stale_nav_funds,           # observability: NAV-staleness gate
     coverage_snapshot,               # observability: P3-consumed metric coverage
+    load_latest_rolling_metrics_for_category_snapshot,   # FND-0093 category-refresh fallback
 )
 from src.calculations.short_horizon import compute_short_horizon_metrics
 from src.calculations.risk_metrics import compute_risk_metrics
@@ -1351,41 +1352,26 @@ def run(
                         f"[ROLLING] Fallback DB query (solo {len(_latest_roll)} "
                         "fondos en memoria — mayoría hash-skipped)"
                     )
-                    # window -> window_label: real column rename on Postgres (reserved word,
-                    # db/pg/rename_map.yaml). fetchall()+manual DataFrame instead of pd.read_sql(sql,
-                    # conn) — same reasoning as db_readers.py::load_fund_attributes: works against a
-                    # raw psycopg3 connection but emits a UserWarning every call, avoided elsewhere
-                    # in this migration. This is the exact self-join the migration plan calls out as
-                    # the reason gold.mv_fmts_peer_stats/mv_fmts_latest exist (2.5h against the base
-                    # tables on the full 32M-row table) — left querying the base tables here
+                    # This is the exact self-join the migration plan calls out as the reason
+                    # gold.mv_fmts_peer_stats/mv_fmts_latest exist (2.5h against the base tables on
+                    # the full 32M-row table) — left querying the base tables (see db_readers.py::
+                    # load_latest_rolling_metrics_for_category_snapshot for the query itself)
                     # deliberately, since this fallback path only ever runs on a small in-memory
                     # subset (len(_latest_roll) < max(50, total//10)); redirecting it to the
                     # matviews is a Stage 9/cutover-time performance decision, not a correctness one.
-                    _window_col = "window_label"
                     _latest_cols = ["isin", "metric", "window", "date", "value", "real_flag",
                                     "Fund_Nature"]
-                    _latest_rows = conn.execute(f"""
-                        SELECT t.isin, t.metric, t.{_window_col} AS window, t.date,
-                               t.value, t.real_flag, m.Fund_Nature
-                        FROM fund_metric_timeseries t
-                        JOIN (
-                            SELECT isin, metric, {_window_col}, real_flag, MAX(date) AS mx
-                            FROM fund_metric_timeseries
-                            WHERE metric IN (
-                                'vol_ann','max_dd','return_ann'
-                            )
-                            GROUP BY isin, metric, {_window_col}, real_flag
-                        ) latest
-                          ON  t.isin       = latest.isin
-                          AND t.metric     = latest.metric
-                          AND t.{_window_col} = latest.{_window_col}
-                          AND t.real_flag  = latest.real_flag
-                          AND t.date       = latest.mx
-                        LEFT JOIN fund_master m ON t.isin = m.ISIN
-                        WHERE t.metric IN (
-                            'vol_ann','max_dd','return_ann'
-                        )
-                    """).fetchall()
+                    # FND-0093 (2026-09-27): this fallback path only refreshed the category
+                    # (pctile_cat/zscore_cat) signals for 3 of the 5 curated metrics
+                    # (compute_rolling_rows in rolling_stats.py computes vol_ann/max_dd/return_ann/
+                    # sharpe/sortino) -- sharpe/sortino category rows went stale on any
+                    # hash-skip-dominated run (the common case: most funds cached, only a few
+                    # recomputed, which is exactly when this DB-query fallback -- not the in-memory
+                    # path above, which already carries all 5 -- fires). No fix needed for a fund's
+                    # OWN sharpe/sortino value, only for its category rank among peers. Extracted into
+                    # db_readers.py::load_latest_rolling_metrics_for_category_snapshot() so the metric
+                    # list has one place to be correct (CATEGORY_SNAPSHOT_METRICS) and is testable.
+                    _latest_rows = load_latest_rolling_metrics_for_category_snapshot(conn)
                     latest_df = pd.DataFrame(_latest_rows, columns=_latest_cols)
                 if not latest_df.empty:
                     # compute_category_snapshot expects 'date' column —
