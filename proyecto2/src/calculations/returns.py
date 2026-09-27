@@ -7,6 +7,10 @@ Cálculo de métricas de retorno y eficiencia sobre series NAV.
 import numpy as np
 import pandas as pd
 
+# FND-0075: floor below which an annualized downside deviation is treated as a numerical artifact
+# (near-flat-fund near-zero denominator), not a real risk signal — see downside_deviation_ann().
+_MIN_DOWNSIDE_DEV_ANN: float = 0.001   # 0.1% annualized
+
 
 def monthly_returns(series: pd.Series) -> pd.Series:
     """Retornos mensuales simples (pct_change)."""
@@ -82,7 +86,20 @@ def downside_deviation_ann(
     var = float(downside_sq.mean())
     if var <= 0:
         return np.nan
-    return float(np.sqrt(var) * np.sqrt(periods_per_year))
+    dd_ann = float(np.sqrt(var) * np.sqrt(periods_per_year))
+
+    # FND-0075 (2026-09-27): a near-flat fund (Monetario/RF Corto) dips below the MAR in only a
+    # handful of periods, by a tiny amount each time -- var > 0 but vanishingly small, which the
+    # `var <= 0` guard above does not catch. The Sortino ratio this feeds then divides by that near-
+    # zero denominator and explodes to a numerically-derived but meaningless magnitude (measured
+    # live: up to 2505 for a real Monetario fund, when a genuinely good fund rarely exceeds single
+    # digits). _MIN_DOWNSIDE_DEV_ANN is deliberately far below any real fund's downside deviation
+    # (SRRI's own bucket 1, "negligible volatility", starts at 0.5% *total* vol; downside deviation
+    # is a strict subset of that) -- this only catches the numerical-artifact case, never a
+    # genuinely low-risk fund's real ratio.
+    if dd_ann < _MIN_DOWNSIDE_DEV_ANN:
+        return np.nan
+    return dd_ann
 
 
 def sortino_ratio(

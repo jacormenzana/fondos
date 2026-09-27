@@ -109,6 +109,22 @@ class TestDownsideDeviationAnn:
         expected = math.sqrt(downside_sq.mean()) * math.sqrt(12)
         assert result == pytest.approx(expected, rel=1e-9)
 
+    def test_a_near_flat_fund_returns_nan_not_a_near_zero_denominator(self):
+        """FND-0075: a near-flat fund (Monetario/RF Corto) can dip below the MAR by a tiny amount
+        in a single period -- var > 0 (the existing `var <= 0` guard doesn't catch it) but the
+        resulting downside deviation is vanishingly small, and the Sortino ratio it feeds explodes
+        to a numerically-derived but meaningless magnitude (measured live: up to 2505 for a real
+        Monetario fund). A single 0.05% monthly dip among 11 flat months is exactly this shape."""
+        rets = np.array([0.0] * 11 + [-0.0005])
+        result = downside_deviation_ann(rets, mar_per_period=0.0, periods_per_year=12)
+        assert math.isnan(result)
+
+    def test_a_genuinely_small_but_real_downside_is_not_floored(self):
+        """The floor must not swallow a real, if modest, downside signal."""
+        rets = np.array([0.0] * 11 + [-0.01])   # a real 1% monthly dip
+        result = downside_deviation_ann(rets, mar_per_period=0.0, periods_per_year=12)
+        assert not math.isnan(result) and result > 0.001
+
     def test_not_sample_std_of_negative_subset(self):
         """Regression guard: must NOT equal np.std(negatives, ddof=1)*sqrt(12)
         -- that was regime_returns.py's divergent local Sortino denominator
@@ -131,6 +147,17 @@ class TestSortinoRatio:
         dd = downside_deviation_ann(r.to_numpy(), rfr / 12, periods_per_year=12)
         expected = (annualized_return(s) - rfr) / dd
         assert result == pytest.approx(expected, rel=1e-9)
+
+    def test_a_near_flat_fund_is_nan_not_an_exploded_ratio(self):
+        """FND-0075 end to end: a Monetario-shaped NAV series (near-flat, one tiny dip below the
+        MAR) must come out NaN, not a numerically-derived four-digit "Sortino ratio"."""
+        navs = [100.0]
+        for i in range(11):
+            navs.append(navs[-1] * 1.0003)
+        navs.append(navs[-1] * (1.0003 - 0.0005))   # one tiny dip below the flat trend
+        s = _nav(navs)
+        result = sortino_ratio(s, risk_free_rate_ann=0.0)
+        assert math.isnan(result)
 
 
 class TestFromReturnsVariants:
