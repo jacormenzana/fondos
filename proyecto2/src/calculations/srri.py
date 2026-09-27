@@ -90,7 +90,14 @@ def compute_srri(nav_series: pd.Series, periods_per_year: int = 12) -> dict:
         n_periods      (int, numero de retornos usados)
         method         (str, descripcion del metodo aplicado)
     """
-    if len(nav_series) < 14:  # minimo 13 NAV -> 12 retornos mensuales = 1 ano
+    # FND-0094 (2026-09-27, root cause): este check decia `< 14` pero el propio comentario decia
+    # "minimo 13 NAV" -- un off-by-one real entre el comentario y el codigo. 13 NAV -> pct_change +
+    # dropna -> 12 retornos, que es EXACTAMENTE el minimo que exige el check de abajo (`len(returns)
+    # < 12`); con el umbral en 14 esa serie de 13 nunca llegaba a evaluarse. Efecto medido en vivo:
+    # rolling_1y (ventana de 12 meses, tipicamente 13 filas NAV mensuales en la practica) daba
+    # srri_nav=0 (no calculable) en 3.702 de 3.704 fondos activos -- no por falta de historial real,
+    # sino por este umbral mas estricto de lo que el propio metodo necesita.
+    if len(nav_series) < 13:  # minimo 13 NAV -> 12 retornos mensuales = 1 ano
         return {
             "srri": 0,
             "volatility_ann": np.nan,

@@ -330,6 +330,7 @@ proyecto2/
       test_risk_metrics.py
       test_rolling_stats.py
       test_short_horizon.py
+      test_srri.py
     discovery/
       test_eurostat.py
       test_fred_es.py
