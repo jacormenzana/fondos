@@ -62,8 +62,9 @@ def get_tables(
     include_kiid_text: si True, incluye Raw_KIID_Text en fund_kiid_metadata.
                        Util para analisis del parser OCR pero genera ficheros
                        mucho mas grandes (~500 MB vs ~10 MB).
-    block_filter:      si se indica, restringe ambas hojas al subconjunto de
-                       ISINs cuyo heuristic_block coincide con ese valor.
+    block_filter:      si se indica, restringe las 5 hojas al subconjunto de
+                       ISINs (o, en fund_families, de familias con al menos un
+                       fondo) cuyo heuristic_block coincide con ese valor.
                        Debe ser uno de VALID_BLOCKS; se valida antes de llamar.
     """
     kiid_exclude = [] if include_kiid_text else ["Raw_KIID_Text"]
@@ -71,11 +72,21 @@ def get_tables(
     # Clausulas WHERE para filtrado por bloque
     fm_where   = None
     kiid_where = None
+    family_where = None
     if block_filter:
         # Interpolacion segura: block_filter ya validado contra VALID_BLOCKS en export_p1()
         fm_where   = f"heuristic_block = '{block_filter}'"
+        # FND-0065 (2026-09-27): fund_benchmarks/fund_families do NOT have a heuristic_block
+        # column (only fund_master does) -- fm_where applied to them directly crashed with
+        # "column heuristic_block does not exist" (reproduced live). fund_benchmarks is keyed by
+        # ISIN, same subquery shape as kiid_where; fund_families has no ISIN at all (it's an
+        # aggregate keyed by family_id/fund_family_id), so it needs its own, differently-shaped one.
         kiid_where = (
             f"ISIN IN (SELECT ISIN FROM fund_master WHERE heuristic_block = '{block_filter}')"
+        )
+        family_where = (
+            f"family_id IN (SELECT fund_family_id FROM fund_master "
+            f"WHERE heuristic_block = '{block_filter}' AND fund_family_id IS NOT NULL)"
         )
 
     return [
@@ -98,14 +109,14 @@ def get_tables(
             sheet_name="3_FundBenchmarks",
             exclude_cols=[],
             order_by="ISIN",
-            where=fm_where,
+            where=kiid_where,
         ),
         TableExportConfig(
             table="fund_families",
             sheet_name="4_FundFamilies",
             exclude_cols=[],
             order_by="family_id",
-            where=fm_where,
+            where=family_where,
         ),
         TableExportConfig(
             table="fund_cost_schedule",
@@ -144,11 +155,18 @@ def export_p1(
 
     # Validar block contra whitelist (safe interpolation guard)
     if block is not None:
+        # FND-0065 (2026-09-27): heuristic_block is stored uppercase (RENTA_VARIABLE, ...), but
+        # --block's own documented usage examples are lowercase ("--block renta_variable"). Only
+        # the VALIDATION used .upper() -- the value actually interpolated into the WHERE clauses
+        # stayed as typed, so a correctly-validated, correctly-documented invocation silently
+        # matched 0 rows on every sheet (reproduced live). Normalize once, here, and use the
+        # normalized value everywhere below.
         if block.upper() not in VALID_BLOCKS:
             raise ValueError(
                 f"--block '{block}' no valido. "
                 f"Valores permitidos: {sorted(VALID_BLOCKS)}"
             )
+        block = block.upper()
         print(f"Filtro activo: heuristic_block = '{block}'")
 
     output_dir = Path(output_dir) if output_dir else EXPORT_DIR
