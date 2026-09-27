@@ -101,7 +101,7 @@ from src.calculations.regime_returns import (
     load_regime_history, compute_regime_returns
 )
 from src.calculations.m2_global_builder import build_m2_global
-from src.calculations.momentum import compute_momentum
+from src.calculations.momentum import compute_momentum, reset_category_returns_cache
 from src.calculations.capture_ratios import compute_capture_ratios
 from src.calculations.persistence import compute_persistence
 from src.calculations.currency_factor import compute_currency_factor
@@ -633,6 +633,10 @@ def run(
     global _ABORT, RUN_BATCH_ID
     _ABORT = False
     RUN_BATCH_ID = _new_batch_id()   # v26: unique id for this run; written to every Gold row
+    # FND-0064: freeze this run's own category-returns cache so every fund in the same category
+    # sees the same peer snapshot, regardless of where it falls in this run's processing order
+    # (momentum.py's per-run cache would otherwise carry over from any earlier call in this process).
+    reset_category_returns_cache()
     _install_signal_handlers()
     _prevent_sleep()
 

@@ -22,7 +22,7 @@ import pandas as pd
 from shared.config import PERSISTENCE_WINDOW_MONTHS
 from src.calculations.capture_ratios import load_peer_benchmark
 from src.calculations.currency_factor import load_fx_eur_divisa
-from src.calculations.momentum import load_category_returns
+from src.calculations.momentum import load_category_returns, reset_category_returns_cache
 from src.calculations.persistence import _category_return_in_window
 
 
@@ -38,6 +38,7 @@ def _scratch(conn, schema: str) -> None:
 
 
 def test_load_category_returns_filters_by_horizon_nature_realflag_and_null(pg_conn):
+    reset_category_returns_cache()   # this module's cache is process-global (FND-0064); isolate
     _scratch(pg_conn, "calc_momentum_t")
     pg_conn.execute("INSERT INTO fund_master VALUES ('A','Mixtos'),('B','Mixtos'),('C','Mixtos'),"
                     "('D','Renta Variable'),('E','Mixtos')")
@@ -51,6 +52,58 @@ def test_load_category_returns_filters_by_horizon_nature_realflag_and_null(pg_co
     """)
     s = load_category_returns(pg_conn, "Mixtos", "rolling_1y")
     assert dict(s) == {"A": 0.10, "B": 0.20}
+
+
+# ---------------------------------------------------------------------------
+# FND-0064: within-run cache — every fund in the same category must see the same peer snapshot
+# regardless of processing order, instead of a later fund seeing peers' freshly-just-written values.
+# ---------------------------------------------------------------------------
+
+def test_load_category_returns_is_cached_within_a_run(pg_conn):
+    """The exact bug: a peer's return_ann written AFTER the first read must not change what a
+    later-in-the-same-run fund sees for that (fund_nature, horizon) -- that would be the same
+    non-determinism this fix closes (a fund's momentum depending on batch processing order)."""
+    reset_category_returns_cache()
+    _scratch(pg_conn, "calc_momentum_cache_t")
+    pg_conn.execute("INSERT INTO fund_master VALUES ('A','Mixtos'),('B','Mixtos')")
+    pg_conn.execute("INSERT INTO fund_metrics VALUES ('A','return_ann','rolling_1y',0,0.10)")
+
+    first = load_category_returns(pg_conn, "Mixtos", "rolling_1y")
+    assert dict(first) == {"A": 0.10}
+
+    # Simulate the pipeline writing B's return_ann later in the SAME run (B was processed after A).
+    pg_conn.execute("INSERT INTO fund_metrics VALUES ('B','return_ann','rolling_1y',0,0.20)")
+    second = load_category_returns(pg_conn, "Mixtos", "rolling_1y")
+    assert dict(second) == {"A": 0.10}, "B's later write must not appear in this run's snapshot"
+
+
+def test_reset_category_returns_cache_starts_a_fresh_snapshot(pg_conn):
+    """reset_category_returns_cache() is what run_pipeline.py's run() calls once per invocation --
+    without it, a long-lived process (tests, a scheduler) would carry a stale snapshot forever."""
+    reset_category_returns_cache()
+    _scratch(pg_conn, "calc_momentum_reset_t")
+    pg_conn.execute("INSERT INTO fund_master VALUES ('A','Mixtos')")
+    pg_conn.execute("INSERT INTO fund_metrics VALUES ('A','return_ann','rolling_1y',0,0.10)")
+    load_category_returns(pg_conn, "Mixtos", "rolling_1y")   # populate the cache
+
+    pg_conn.execute("UPDATE fund_metrics SET value = 0.99 WHERE isin = 'A'")
+    reset_category_returns_cache()
+    fresh = load_category_returns(pg_conn, "Mixtos", "rolling_1y")
+    assert dict(fresh) == {"A": 0.99}
+
+
+def test_load_category_returns_cache_keys_on_fund_nature_and_horizon_separately(pg_conn):
+    reset_category_returns_cache()
+    _scratch(pg_conn, "calc_momentum_keys_t")
+    pg_conn.execute("INSERT INTO fund_master VALUES ('A','Mixtos'),('B','Renta Variable')")
+    pg_conn.execute("""INSERT INTO fund_metrics VALUES
+        ('A','return_ann','rolling_1y',0,0.10),
+        ('A','return_ann','rolling_3y',0,0.30),
+        ('B','return_ann','rolling_1y',0,0.50)
+    """)
+    assert dict(load_category_returns(pg_conn, "Mixtos", "rolling_1y")) == {"A": 0.10}
+    assert dict(load_category_returns(pg_conn, "Mixtos", "rolling_3y")) == {"A": 0.30}
+    assert dict(load_category_returns(pg_conn, "Renta Variable", "rolling_1y")) == {"B": 0.50}
 
 
 def test_load_peer_benchmark_averages_peer_returns_and_excludes_self_and_other_natures(pg_conn):

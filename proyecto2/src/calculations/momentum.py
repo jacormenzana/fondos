@@ -23,10 +23,25 @@ import pandas as pd
 from shared.config import MIN_PEERS   # minimo de fondos en la categoria para calcular percentil
 
 
+# ============================================================
+# Carga de rentabilidades por categoria (FND-0064: cacheada por ejecucion)
+# ============================================================
+# run_pipeline.py procesa los fondos uno a uno, ESCRIBIENDO return_ann en fund_metrics a medida que
+# avanza. Sin cache, un fondo procesado a mitad de tanda ve el return_ann RECIEN escrito de los pares
+# de su categoria ya procesados en ESTE MISMO run, mientras que uno procesado antes vio el valor de
+# la tanda anterior -- el mismo universo de fondos, en dos ordenes de proceso distintos, produce
+# momentum/percentiles distintos para el mismo fondo. La cache congela el snapshot de cada
+# (fund_nature, horizon) la PRIMERA vez que se consulta en la tanda: todos los fondos de la misma
+# categoria ven entonces exactamente el mismo peer set, sea el primero o el ultimo en procesarse.
+_category_returns_cache: dict[tuple[str, str], pd.Series] = {}
 
-# ============================================================
-# Carga de rentabilidades por categoria
-# ============================================================
+
+def reset_category_returns_cache() -> None:
+    """Llamar UNA vez al principio de cada ejecucion del pipeline (run_pipeline.py), antes del bucle
+    por fondo. Sin esto, un proceso de larga vida (tests, un scheduler) reutilizaria el snapshot de
+    una tanda anterior."""
+    _category_returns_cache.clear()
+
 
 def load_category_returns(
     conn: "psycopg.Connection",
@@ -37,7 +52,13 @@ def load_category_returns(
     Carga las rentabilidades nominales anualizadas de todos los fondos
     de la misma naturaleza para un horizonte dado.
     Devuelve Series indexada por ISIN.
+
+    Cacheada por (fund_nature, horizon) durante la ejecucion -- ver reset_category_returns_cache().
     """
+    key = (fund_nature, horizon)
+    if key in _category_returns_cache:
+        return _category_returns_cache[key]
+
     # Postgres migration Stage 9 (found live 2026-09-22): proyecto2/src/calculations/*.py issue
     # their own direct SQL and were never in scope for any prior stage's read-path port (only
     # readers/db_readers.py was ported) — surfaced by the first-ever end-to-end run_pipeline.py
@@ -54,10 +75,9 @@ def load_category_returns(
           AND fm.Fund_Nature = {ph}
     """, (horizon, fund_nature)).fetchall()
 
-    if not rows:
-        return pd.Series(dtype=float)
-
-    return pd.Series({r[0]: float(r[1]) for r in rows})
+    result = pd.Series(dtype=float) if not rows else pd.Series({r[0]: float(r[1]) for r in rows})
+    _category_returns_cache[key] = result
+    return result
 
 
 # ============================================================
