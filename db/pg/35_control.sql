@@ -251,11 +251,21 @@ CREATE OR REPLACE FUNCTION control.maintain_clusters(p_threshold numeric DEFAULT
 RETURNS void LANGUAGE plpgsql AS $$
 DECLARE
   r record;
+  v_pkey name;
   t0 timestamptz;
 BEGIN
   FOR r IN SELECT schemaname, tablename FROM control.v_cluster_health WHERE needs_cluster LOOP
     t0 := clock_timestamp();
-    EXECUTE format('CLUSTER %I.%I', r.schemaname, r.tablename);
+    -- CLUSTER with no USING clause requires the table to have been clustered before
+    -- (relies on indisclustered from a prior run); on a never-clustered table it raises
+    -- UndefinedObject ("no previously clustered index"). Look up the PK index explicitly.
+    SELECT ic.relname INTO v_pkey
+    FROM   pg_index i
+    JOIN   pg_class ic ON ic.oid = i.indexrelid
+    JOIN   pg_class tc ON tc.oid = i.indrelid
+    JOIN   pg_namespace n ON n.oid = tc.relnamespace
+    WHERE  n.nspname = r.schemaname AND tc.relname = r.tablename AND i.indisprimary;
+    EXECUTE format('CLUSTER %I.%I USING %I', r.schemaname, r.tablename, v_pkey);
     EXECUTE format('ANALYZE %I.%I', r.schemaname, r.tablename);
     INSERT INTO control.p2_pipeline_log (step, status, message)
       VALUES ('CLUSTER_MAINT', 'OK',
