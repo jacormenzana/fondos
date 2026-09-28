@@ -105,6 +105,7 @@ import sys
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Sequence
 
 _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
@@ -155,12 +156,30 @@ def _ph(conn) -> str:
     return "%s"
 
 
-def _sql(conn, query: str) -> str:
-    """Adapts a query written with `?` placeholders and a `{window}` slot for
-    the connected backend. fund_metric_timeseries.window is `window_label` in
-    Postgres (`window` is a reserved word there; db/pg/rename_map.yaml)."""
+def _sql(conn, query: str, isin_filter: str = "") -> str:
+    """Adapts a query written with `?` placeholders, a `{window}` slot, and an
+    optional `{isin_filter}` slot for the connected backend. fund_metric_timeseries.window
+    is `window_label` in Postgres (`window` is a reserved word there; db/pg/rename_map.yaml).
+    `isin_filter` (from _isin_filter()) is substituted before the `?`->placeholder pass so
+    its own `?`s get adapted too."""
     window_col = "window_label"
-    return query.replace("{window}", window_col).replace("?", _ph(conn))
+    return (
+        query.replace("{window}", window_col)
+        .replace("{isin_filter}", isin_filter)
+        .replace("?", _ph(conn))
+    )
+
+
+def _isin_filter(conn, isins: "Sequence[str] | None", column: str) -> tuple[str, tuple]:
+    """Wave 0 (2026-09-28, audit-skill-alignment plan): an opt-in `{isin_filter}` fragment
+    so every domain query can be scoped to a fixed ISIN list -- required to validate this
+    module's changes on the 40-ISIN sample (feedback_validate_on_isin_samples) instead of
+    the full universe. Returns ("", ()) when isins is falsy, so every call site that always
+    substitutes {isin_filter} works unchanged whether or not --isin was passed."""
+    if not isins:
+        return "", ()
+    placeholders = ",".join(_ph(conn) for _ in isins)
+    return f"AND {column} IN ({placeholders})", tuple(isins)
 
 
 def _df(conn, query: str, params=()) -> pd.DataFrame:
@@ -191,6 +210,7 @@ _COST_MASTER_QUERY = """
            ACI_1Y, ACI_RHP, Cost_RHP_Years
     FROM fund_master
     WHERE In_Current_Universe = 1
+    {isin_filter}
 """
 
 _COST_SCHEDULE_QUERY = """
@@ -199,6 +219,7 @@ _COST_SCHEDULE_QUERY = """
     FROM fund_cost_schedule s
     JOIN fund_master m ON m.ISIN = s.ISIN
     WHERE m.In_Current_Universe = 1
+    {isin_filter}
 """
 
 
@@ -213,9 +234,13 @@ _COST_SCHEDULE_COLS = (
 )
 
 
-def run_cost_audit(conn: "psycopg.Connection") -> "AuditRun":
-    master = _restore_case(build_population(conn, _COST_MASTER_QUERY), _COST_MASTER_COLS)
-    schedule = _restore_case(build_population(conn, _COST_SCHEDULE_QUERY), _COST_SCHEDULE_COLS)
+def run_cost_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = None) -> "AuditRun":
+    master_filter, master_params = _isin_filter(conn, isins, "ISIN")
+    schedule_filter, schedule_params = _isin_filter(conn, isins, "s.ISIN")
+    master_query = _COST_MASTER_QUERY.replace("{isin_filter}", master_filter)
+    schedule_query = _COST_SCHEDULE_QUERY.replace("{isin_filter}", schedule_filter)
+    master = _restore_case(build_population(conn, master_query, master_params), _COST_MASTER_COLS)
+    schedule = _restore_case(build_population(conn, schedule_query, schedule_params), _COST_SCHEDULE_COLS)
     frames_by_table = {"fund_master": master, "fund_cost_schedule": schedule}
 
     run = AuditRun(domain="cost_attributes")
@@ -270,6 +295,7 @@ _P2_METRICS_QUERY = """
     FROM fund_metrics fm
     JOIN fund_master m ON m.ISIN = fm.ISIN
     WHERE m.In_Current_Universe = 1
+    {isin_filter}
 """
 
 _P2_GROUP_KEYS = ("metric", "horizon", "real_flag", "metric_version")
@@ -310,6 +336,7 @@ _TS_LATEST_QUERY = """
         SELECT isin, real_flag, MAX(date) AS max_date
         FROM v_fund_metric_timeseries_long
         WHERE metric = ? AND {window} = ?
+        {isin_filter}
         GROUP BY isin, real_flag
     ) latest ON latest.isin = t.isin AND latest.real_flag = t.real_flag AND latest.max_date = t.date
     WHERE t.metric = ? AND t.{window} = ?
@@ -354,8 +381,12 @@ def _latest_ipc_yoy(conn: "psycopg.Connection") -> float | None:
     return float(latest["ipc_index"] / prior_index - 1.0)
 
 
-def _fetch_latest_timeseries_snapshot(conn: "psycopg.Connection", metric: str, window: str) -> pd.DataFrame:
-    return _df(conn, _sql(conn, _TS_LATEST_QUERY), (metric, window, metric, window))
+def _fetch_latest_timeseries_snapshot(
+    conn: "psycopg.Connection", metric: str, window: str, isins: Sequence[str] | None = None,
+) -> pd.DataFrame:
+    isin_filter, isin_params = _isin_filter(conn, isins, "isin")
+    query = _sql(conn, _TS_LATEST_QUERY, isin_filter=isin_filter)
+    return _df(conn, query, (metric, window, *isin_params, metric, window))
 
 
 # v27 pivot: same reason as _TS_LATEST_QUERY above — reads the long-shape compatibility view.
@@ -365,6 +396,7 @@ _TS_SERIES_SUMMARY_QUERY = """
            COUNT(DISTINCT date) AS n_dates, COUNT(*) AS n_rows
     FROM v_fund_metric_timeseries_long
     WHERE metric = ? AND {window} = ?
+    {isin_filter}
     GROUP BY isin, real_flag
 """
 
@@ -379,7 +411,9 @@ def _month_span(min_date: str, max_date: str) -> int:
     return (y2 - y1) * 12 + (m2 - m1) + 1
 
 
-def _run_timeseries_integrity(run: "AuditRun", conn: "psycopg.Connection") -> None:
+def _run_timeseries_integrity(
+    run: "AuditRun", conn: "psycopg.Connection", isins: Sequence[str] | None = None,
+) -> None:
     """Function #11 (gap #11, wired 2026-09-15) over each (metric, window)
     combo already scoped by _SCALAR_TIMESERIES_METRICS/_WINDOWS.
 
@@ -398,9 +432,11 @@ def _run_timeseries_integrity(run: "AuditRun", conn: "psycopg.Connection") -> No
     universe-wide calendar -- a short or recently-launched fund is never
     penalized for months that simply predate its own history.
     """
+    isin_filter, isin_params = _isin_filter(conn, isins, "isin")
+    summary_query = _sql(conn, _TS_SERIES_SUMMARY_QUERY, isin_filter=isin_filter)
     for metric in _SCALAR_TIMESERIES_METRICS:
         for window in _SCALAR_TIMESERIES_WINDOWS:
-            rows = conn.execute(_sql(conn, _TS_SERIES_SUMMARY_QUERY), (metric, window)).fetchall()
+            rows = conn.execute(summary_query, (metric, window, *isin_params)).fetchall()
             if not rows:
                 run.skipped.append(f"BLOCK5/6 TIMESERIES_INTEGRITY {metric}/{window}: no timeseries rows")
                 continue
@@ -475,8 +511,10 @@ def _periodic_return_variance(conn: "psycopg.Connection", isins: list[str]) -> p
 _P2_METRICS_COLS = ("isin", "metric", "horizon", "value", "real_flag", "metric_version", "Fund_Nature")
 
 
-def run_p2_audit(conn: "psycopg.Connection") -> "AuditRun":
-    long_df = _restore_case(build_population(conn, _P2_METRICS_QUERY), _P2_METRICS_COLS)
+def run_p2_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = None) -> "AuditRun":
+    metrics_filter, metrics_params = _isin_filter(conn, isins, "fm.ISIN")
+    metrics_query = _P2_METRICS_QUERY.replace("{isin_filter}", metrics_filter)
+    long_df = _restore_case(build_population(conn, metrics_query, metrics_params), _P2_METRICS_COLS)
 
     run = AuditRun(domain="p2_metrics")
     run.universe_size = int(long_df["isin"].nunique())
@@ -559,7 +597,7 @@ def run_p2_audit(conn: "psycopg.Connection") -> "AuditRun":
 
     for metric in _SCALAR_TIMESERIES_METRICS:
         for window in _SCALAR_TIMESERIES_WINDOWS:
-            ts_snapshot = _fetch_latest_timeseries_snapshot(conn, metric, window)
+            ts_snapshot = _fetch_latest_timeseries_snapshot(conn, metric, window, isins=isins)
             if ts_snapshot.empty:
                 run.skipped.append(f"BLOCK2 SCALAR_EQUALS_TIMESERIES {metric}/{window}: no timeseries rows")
                 continue
@@ -589,7 +627,7 @@ def run_p2_audit(conn: "psycopg.Connection") -> "AuditRun":
                     "root_cause_candidate": P2_PAIRS["SCALAR_EQUALS_TIMESERIES"].diagnosis,
                 })
 
-    _run_timeseries_integrity(run, conn)
+    _run_timeseries_integrity(run, conn, isins=isins)
 
     wide_for_invariants = _pivot_all_metrics(long_df)
     if not deflation_frame.empty:
@@ -847,14 +885,29 @@ def main() -> int:
     parser.add_argument("--persist", action="store_true")
     parser.add_argument("--run-id", default=None)
     parser.add_argument("--compare-to", default=None, help="Prior run_id to diff against (function #13)")
+    parser.add_argument(
+        "--isin", default=None,
+        help="Comma-separated ISIN list to scope the audit to (e.g. the 40-ISIN validation sample). "
+             "Omit for the full In_Current_Universe population.",
+    )
     args = parser.parse_args()
 
-    run_id = args.run_id or datetime.now(timezone.utc).strftime("audit_%Y%m%dT%H%M%SZ")
+    isins = [i.strip() for i in args.isin.split(",") if i.strip()] if args.isin else None
+
+    # A --run-id the caller typed explicitly is trusted as-is; the auto-generated default gets a
+    # _sample suffix under --isin so a sample-scoped run can never silently become a --compare-to
+    # baseline for a full-universe run (feedback_validate_on_isin_samples).
+    if args.run_id:
+        run_id = args.run_id
+    else:
+        run_id = datetime.now(timezone.utc).strftime("audit_%Y%m%dT%H%M%SZ")
+        if isins:
+            run_id += "_sample"
     keep_open = args.persist or args.compare_to
 
     conn = get_connection()
     try:
-        run = run_cost_audit(conn) if args.domain == "costs" else run_p2_audit(conn)
+        run = run_cost_audit(conn, isins=isins) if args.domain == "costs" else run_p2_audit(conn, isins=isins)
     finally:
         if not keep_open:
             conn.close()
