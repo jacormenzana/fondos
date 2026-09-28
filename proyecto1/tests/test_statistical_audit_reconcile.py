@@ -5,11 +5,10 @@
 §4). Filtra hallazgos ya conocidos por el motor de alertas de produccion
 (fund_metric_alerts) para devolver solo el conjunto incremental.
 
-Nota (2026-09-15): esta funcion existe y esta testeada pero deliberadamente
-NO esta cableada en scripts/audit/run_statistical_audit.py todavia --
-fund_metric_alerts en produccion conserva filas de codigo pre-fix hasta el
-proximo ciclo P2 real (ver docstring de reconcile.py y AUDITORIA_ESTADISTICA.md
-§2.6/§2.7). Cablearla hoy reconciliaria contra datos obsoletos.
+Nota (actualizada 2026-09-28, B5/FND-0127): esta funcion ahora SI esta cableada en
+scripts/audit/run_statistical_audit.py (_run_alert_reconciliation, run_p2_audit) -- el bloqueo de
+2026-09-15 (fund_metric_alerts con filas pre-fix obsoletas) se resolvio anadiendo una comprobacion
+de frescura (_alerts_are_stale) en el propio runner en vez de dejar la funcion sin cablear.
 
 Cumple R-7: sin importar pipeline.py ni core.io.
 """

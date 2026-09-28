@@ -101,6 +101,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -113,7 +114,7 @@ if str(_ROOT) not in sys.path:
 
 import pandas as pd
 
-from shared.config import RISK_FREE_RATE_ANN
+from shared.config import MIN_NAV_ROWS, RISK_FREE_RATE_ANN, ROLLING_WINDOWS
 from shared.db import get_connection
 from shared.statistical_audit.catalog_cost_columns import COST_COLUMNS
 from shared.statistical_audit.catalog_version import compute_catalog_version
@@ -139,7 +140,10 @@ from shared.statistical_audit.invariants import (
 from shared.statistical_audit.compare_runs import compare_runs, load_run_statistics
 from shared.statistical_audit.outliers import detect_outliers
 from shared.statistical_audit.persistence import clear_run, emit_findings, emit_statistics, statistics_to_frame
-from shared.statistical_audit.snapshot import build_population
+from shared.statistical_audit.reconcile import reconcile_with_alerts
+from shared.statistical_audit.recompute_gate import assert_recompute_happened, capture_state
+from shared.statistical_audit.snapshot import build_population, build_snapshot
+from shared.statistical_audit.tolerances import KID_ROUNDING_TOLERANCE_PP
 
 MIN_PEERS = 5
 
@@ -148,6 +152,18 @@ MIN_PEERS = 5
 # constants, this is a drift-detection threshold, not a measured comparison tolerance between two
 # same-run values -- it belongs here, not in that file's audited-sweep-only scope.
 COVERAGE_CLIFF_PCT = 0.02
+
+# B1 (FND-0123, 2026-09-28): cost skill Block 6 misparse guard -- a schedule row with
+# Total_Costs_EUR below this floor at Horizon_Years >= 1 has likely lost a thousands separator
+# during extraction (e.g. "1.234" parsed as 1.234 EUR instead of 1234). Same reasoning class as
+# COVERAGE_CLIFF_PCT: a heuristic detection threshold, not a measured comparison tolerance.
+SCHEDULE_EUR_MISPARSE_FLOOR = 20
+
+# B3 (FND-0125, 2026-09-28): both skills' snapshot contract -- per-ISIN MAX(date) settlement lag
+# tolerance before a fund is held out of cross-sectional fund_metric_timeseries blocks. Same
+# reasoning class as COVERAGE_CLIFF_PCT/SCHEDULE_EUR_MISPARSE_FLOOR (a stated default from the
+# skill text, not a live-DB-swept comparison tolerance) -- deliberately not in tolerances.py.
+SNAPSHOT_MAX_SPREAD_DAYS = 5
 
 
 # ============================================================
@@ -240,6 +256,103 @@ _COST_SCHEDULE_COLS = (
 )
 
 
+def _run_cost_schedule_integrity(run: "AuditRun", master: pd.DataFrame, schedule: pd.DataFrame) -> None:
+    """Block 6 (costs, B1/FND-0123, 2026-09-28): fund_cost_schedule <-> fund_master coherence.
+    Five checks the skill mandates and the runner never implemented at all -- pure pandas on the
+    two frames run_cost_audit already loaded, no new SQL.
+    """
+    if schedule.empty:
+        run.skipped.append("BLOCK6 cost schedule integrity: fund_cost_schedule is empty for this population")
+        return
+
+    # (a) EUR<->Pct coherence: a 10,000 EUR notional means Total_Costs_EUR == 100 * Total_Costs_Pct.
+    coherence = schedule.dropna(subset=["Total_Costs_EUR", "Total_Costs_Pct"])
+    if not coherence.empty:
+        implied_pct = coherence["Total_Costs_EUR"] / 100.0
+        n_mismatch = int(((implied_pct - coherence["Total_Costs_Pct"]).abs() >= KID_ROUNDING_TOLERANCE_PP).sum())
+        if n_mismatch:
+            run.findings.append({
+                "block": "BLOCK6", "rule_id": "SCHEDULE_EUR_PCT_COHERENCE",
+                "rule_class": "PLAUSIBILITY", "severity": "WARN", "group_key": "SCHEDULE_EUR_PCT_COHERENCE",
+                "value": None, "reference_value": None, "threshold": KID_ROUNDING_TOLERANCE_PP,
+                "distance": float(n_mismatch),
+                "evidence": f"{n_mismatch}/{len(coherence)} rows: Total_Costs_EUR/100 != Total_Costs_Pct "
+                            f"beyond {KID_ROUNDING_TOLERANCE_PP}pp",
+                "root_cause_candidate": "Total_Costs_EUR/Total_Costs_Pct extracted from inconsistent sources "
+                                         "or a scale error",
+            })
+
+    # (b) Total_Costs_EUR < floor misparse guard (thousands-separator loss), Horizon_Years >= 1
+    # only -- genuine sub-1-year horizons can legitimately carry a small EUR cost.
+    candidates = schedule.dropna(subset=["Total_Costs_EUR", "Horizon_Years"])
+    misparse = candidates[
+        (candidates["Total_Costs_EUR"] < SCHEDULE_EUR_MISPARSE_FLOOR) & (candidates["Horizon_Years"] >= 1)
+    ]
+    if not misparse.empty:
+        run.findings.append({
+            "block": "BLOCK6", "rule_id": "SCHEDULE_EUR_MISPARSE",
+            "rule_class": "PLAUSIBILITY", "severity": "WARN", "group_key": "SCHEDULE_EUR_MISPARSE",
+            "value": None, "reference_value": None, "threshold": SCHEDULE_EUR_MISPARSE_FLOOR,
+            "distance": float(len(misparse)),
+            "evidence": f"{len(misparse)} rows with Total_Costs_EUR < {SCHEDULE_EUR_MISPARSE_FLOOR} "
+                        f"at Horizon_Years >= 1",
+            "root_cause_candidate": "Thousands separator lost during extraction",
+        })
+
+    rhp_rows = schedule[schedule["Is_RHP"] == 1]
+
+    # (e) >1 Is_RHP=1 row per ISIN -- no UNIQUE constraint enforces this (idx_cost_schedule_rhp is
+    # a plain partial index).
+    rhp_counts = rhp_rows.groupby("ISIN").size()
+    dup_rhp = rhp_counts[rhp_counts > 1]
+    if not dup_rhp.empty:
+        run.findings.append({
+            "block": "BLOCK6", "rule_id": "SCHEDULE_MULTIPLE_RHP_ROWS",
+            "rule_class": "HARD_INVARIANT", "severity": "ALARM", "group_key": "SCHEDULE_MULTIPLE_RHP_ROWS",
+            "value": None, "reference_value": None, "threshold": 1,
+            "distance": float(len(dup_rhp)),
+            "evidence": f"{len(dup_rhp)} ISINs have >1 Is_RHP=1 row (max {int(dup_rhp.max())})",
+            "root_cause_candidate": "Schedule-build logic marked more than one Horizon_Years row as the RHP row",
+        })
+
+    # (c) Is_RHP=1 row's Annual_Impact_Pct vs fund_master.ACI_RHP -- ACI_RHP is DERIVED from this
+    # value by construction (fund_writer.py/priips_cost_extractor.py FIX-ACI-SCHEDULE-INJECT), so
+    # a mismatch beyond KID rounding means the two have gone out of sync.
+    rhp_join = rhp_rows.dropna(subset=["Annual_Impact_Pct"]).merge(
+        master[["ISIN", "ACI_RHP"]].dropna(subset=["ACI_RHP"]), on="ISIN", how="inner",
+    )
+    if not rhp_join.empty:
+        n_disagree = int(
+            ((rhp_join["Annual_Impact_Pct"] - rhp_join["ACI_RHP"]).abs() >= KID_ROUNDING_TOLERANCE_PP).sum()
+        )
+        if n_disagree:
+            run.findings.append({
+                "block": "BLOCK6", "rule_id": "SCHEDULE_RHP_ACI_MISMATCH",
+                "rule_class": "HARD_INVARIANT", "severity": "ALARM", "group_key": "SCHEDULE_RHP_ACI_MISMATCH",
+                "value": None, "reference_value": None, "threshold": KID_ROUNDING_TOLERANCE_PP,
+                "distance": float(n_disagree),
+                "evidence": f"{n_disagree}/{len(rhp_join)} Is_RHP=1 rows: Annual_Impact_Pct != "
+                            f"fund_master.ACI_RHP beyond {KID_ROUNDING_TOLERANCE_PP}pp",
+                "root_cause_candidate": "fund_master.ACI_RHP and the Is_RHP=1 schedule row were written by "
+                                         "different, now-diverged extraction passes",
+            })
+
+    # (d) ACI_RHP set with no Is_RHP=1 row at all for that ISIN.
+    isins_with_rhp_row = set(rhp_rows["ISIN"])
+    orphans = master[master["ACI_RHP"].notna() & ~master["ISIN"].isin(isins_with_rhp_row)]
+    if not orphans.empty:
+        run.findings.append({
+            "block": "BLOCK6", "rule_id": "SCHEDULE_ACI_RHP_ORPHAN",
+            "rule_class": "HARD_INVARIANT", "severity": "ALARM", "group_key": "SCHEDULE_ACI_RHP_ORPHAN",
+            "value": None, "reference_value": None, "threshold": None,
+            "distance": float(len(orphans)),
+            "evidence": f"{len(orphans)} ISINs have fund_master.ACI_RHP set but no fund_cost_schedule "
+                        f"Is_RHP=1 row",
+            "root_cause_candidate": "ACI_RHP set by a fallback path that never wrote/promoted a schedule row "
+                                     "(see FIX-ACI-SCHEDULE-INJECT)",
+        })
+
+
 def run_cost_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = None) -> "AuditRun":
     master_filter, master_params = _isin_filter(conn, isins, "ISIN")
     schedule_filter, schedule_params = _isin_filter(conn, isins, "s.ISIN")
@@ -287,6 +400,7 @@ def run_cost_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = Non
 
     _run_invariants(run, COST_INVARIANTS, [master, schedule], block="BLOCK5")
     _run_group_checks(run, COST_GROUP_CHECKS, schedule)
+    _run_cost_schedule_integrity(run, master, schedule)
 
     return run
 
@@ -297,7 +411,7 @@ def run_cost_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = Non
 
 _P2_METRICS_QUERY = """
     SELECT fm.ISIN, fm.metric, fm.horizon, fm.value, fm.real_flag, fm.metric_version,
-           m.Fund_Nature
+           fm.batch_id, m.Fund_Nature
     FROM fund_metrics fm
     JOIN fund_master m ON m.ISIN = fm.ISIN
     WHERE m.In_Current_Universe = 1
@@ -323,6 +437,23 @@ _PEER_REAL_FLAG = 0
 
 _IPC_QUERY = "SELECT date, ipc_index FROM series_inflation WHERE geography = 'ES' ORDER BY date"
 
+# B5 (FND-0127, 2026-09-28): Block 4 <-> fund_metric_alerts reconciliation (function #12).
+_ALERTS_QUERY = """
+    SELECT a.isin, a.metric, a.detected_at
+    FROM fund_metric_alerts a
+    JOIN fund_master m ON m.ISIN = a.isin
+    WHERE m.In_Current_Universe = 1
+    {isin_filter}
+"""
+
+_MAX_CALC_DATE_QUERY = """
+    SELECT MAX(fm.calculation_date) AS max_calc_date
+    FROM fund_metrics fm
+    JOIN fund_master m ON m.ISIN = fm.ISIN
+    WHERE m.In_Current_Universe = 1
+    {isin_filter}
+"""
+
 # SCALAR_EQUALS_TIMESERIES (2026-09-13): per-(metric,window) queries, each a
 # clean prefix match on idx_fmts_mwr_isin_date (~3s, ~25 combos ≈ 70-90s
 # total) — verified empirically that combining all 5 metrics x 5 windows into
@@ -330,13 +461,17 @@ _IPC_QUERY = "SELECT date, ipc_index FROM series_inflation WHERE geography = 'ES
 # (120s for 184k rows); per-combo calls are equivalent total work, cleaner to
 # reason about, and let each combo report independently.
 _SCALAR_TIMESERIES_METRICS = ("vol_ann", "max_dd", "return_ann", "sharpe", "sortino")
-_SCALAR_TIMESERIES_WINDOWS = ("rolling_1y", "rolling_2y", "rolling_3y", "rolling_5y", "rolling_10y")
+# B7 (FND-0129, 2026-09-28): derived from shared.config.ROLLING_WINDOWS (P#11/R-1) instead of a
+# hardcoded tuple literal. No behaviour change today -- ROLLING_WINDOWS has no 1m/3m/6m keys;
+# those are SHORT_WINDOWS, written into fund_metrics with metric_version='d1', not into
+# fund_metric_timeseries (the P2 skill's scope text naming them here is itself stale -- Wave 3).
+_SCALAR_TIMESERIES_WINDOWS = tuple(ROLLING_WINDOWS.keys())
 
 # v27 pivot: fund_metric_timeseries no longer carries real_flag (pivoted into value_nominal/
 # value_real, see db/pg/30_gold.sql) — v_fund_metric_timeseries_long reconstructs the pre-pivot
 # long shape this audit still needs, losslessly.
 _TS_LATEST_QUERY = """
-    SELECT t.isin, t.real_flag, t.value AS ts_value
+    SELECT t.isin, t.real_flag, t.value AS ts_value, t.date
     FROM v_fund_metric_timeseries_long t
     JOIN (
         SELECT isin, real_flag, MAX(date) AS max_date
@@ -399,10 +534,15 @@ def _fetch_latest_timeseries_snapshot(
 
 
 # v27 pivot: same reason as _TS_LATEST_QUERY above — reads the long-shape compatibility view.
+# n_null_batch/n_below_min_obs (B2/FND-0124, 2026-09-28): the two Block 6 provenance checks the
+# P2 skill mandates -- added as aggregate FILTER columns rather than a second query, riding the
+# same GROUP BY and the same idx_fmts_mwr_isin_date-style index scan as the four columns above.
 _TS_SERIES_SUMMARY_QUERY = """
     SELECT isin, real_flag,
            MIN(date) AS min_date, MAX(date) AS max_date,
-           COUNT(DISTINCT date) AS n_dates, COUNT(*) AS n_rows
+           COUNT(DISTINCT date) AS n_dates, COUNT(*) AS n_rows,
+           COUNT(*) FILTER (WHERE batch_id IS NULL) AS n_null_batch,
+           COUNT(*) FILTER (WHERE value IS NOT NULL AND source_rows < ?) AS n_below_min_obs
     FROM v_fund_metric_timeseries_long
     WHERE metric = ? AND {window} = ?
     {isin_filter}
@@ -445,7 +585,7 @@ def _run_timeseries_integrity(
     summary_query = _sql(conn, _TS_SERIES_SUMMARY_QUERY, isin_filter=isin_filter)
     for metric in _SCALAR_TIMESERIES_METRICS:
         for window in _SCALAR_TIMESERIES_WINDOWS:
-            rows = conn.execute(summary_query, (metric, window, *isin_params)).fetchall()
+            rows = conn.execute(summary_query, (MIN_NAV_ROWS, metric, window, *isin_params)).fetchall()
             if not rows:
                 run.skipped.append(f"BLOCK5/6 TIMESERIES_INTEGRITY {metric}/{window}: no timeseries rows")
                 continue
@@ -454,7 +594,7 @@ def _run_timeseries_integrity(
             # PK (isin, metric, window, date, real_flag) makes n_rows > n_dates
             # structurally impossible for a fixed (metric, window) -- this is
             # a paranoia check for a schema/migration defect, not a data issue.
-            n_dup_series = sum(1 for _, _, _, _, n_dates, n_rows in rows if n_rows > n_dates)
+            n_dup_series = sum(1 for row in rows if row[5] > row[4])
             if n_dup_series:
                 run.findings.append({
                     "block": "BLOCK5", "rule_id": "TIMESERIES_DUPLICATE",
@@ -468,12 +608,16 @@ def _run_timeseries_integrity(
 
             n_series_with_gaps = 0
             n_gap_months = 0
-            for _isin, _rf, min_d, max_d, n_dates, _n_rows in rows:
+            n_null_batch_total = 0
+            n_below_min_obs_total = 0
+            for _isin, _rf, min_d, max_d, n_dates, _n_rows, n_null_batch, n_below_min_obs in rows:
                 expected = _month_span(min_d, max_d)
                 gap = expected - n_dates
                 if gap > 0:
                     n_series_with_gaps += 1
                     n_gap_months += gap
+                n_null_batch_total += n_null_batch
+                n_below_min_obs_total += n_below_min_obs
             if n_series_with_gaps:
                 run.findings.append({
                     "block": "BLOCK4", "rule_id": "TIMESERIES_GAP",
@@ -485,6 +629,34 @@ def _run_timeseries_integrity(
                                 f"not vs. a universe calendar)",
                     "root_cause_candidate": "Skipped month in a fund's own rolling-metric "
                                              "history (a genuine hole, not a short/new fund)",
+                })
+
+            # B2/FND-0124 (2026-09-28): the two P2 Block 6 provenance checks the skill mandates.
+            if n_null_batch_total:
+                run.findings.append({
+                    "block": "BLOCK6", "rule_id": "TIMESERIES_NULL_PROVENANCE",
+                    "rule_class": "STATISTICAL_ANOMALY", "severity": "INFO",
+                    "group_key": group_key, "value": None, "reference_value": None, "threshold": None,
+                    "distance": float(n_null_batch_total),
+                    "evidence": f"{n_null_batch_total} rows have batch_id IS NULL -- a NULL means the row "
+                                f"predates the v26 audit columns (first-insert provenance; INSERT OR IGNORE "
+                                f"preserves it)",
+                    "root_cause_candidate": "Row written before the v26 batch_id/algorithm_version columns "
+                                             "existed",
+                })
+            if n_below_min_obs_total:
+                run.findings.append({
+                    "block": "BLOCK6", "rule_id": "TIMESERIES_BELOW_MIN_OBS",
+                    "rule_class": "STATISTICAL_ANOMALY", "severity": "WARN",
+                    "group_key": group_key, "value": None, "reference_value": None,
+                    "threshold": MIN_NAV_ROWS, "distance": float(n_below_min_obs_total),
+                    "evidence": f"{n_below_min_obs_total} rows have a non-NULL value with "
+                                f"source_rows < {MIN_NAV_ROWS} (the min-obs floor compute_rolling_rows() "
+                                f"uses today -- historical rows written under an earlier, lower floor are "
+                                f"a plausible non-defect explanation, not just a current bug)",
+                    "root_cause_candidate": "A value was written despite insufficient observations for "
+                                             "that window, or MIN_NAV_ROWS was raised after these rows "
+                                             "were written",
                 })
 
 
@@ -517,7 +689,9 @@ def _periodic_return_variance(conn: "psycopg.Connection", isins: list[str]) -> p
     return variances
 
 
-_P2_METRICS_COLS = ("isin", "metric", "horizon", "value", "real_flag", "metric_version", "Fund_Nature")
+_P2_METRICS_COLS = (
+    "isin", "metric", "horizon", "value", "real_flag", "metric_version", "batch_id", "Fund_Nature",
+)
 
 
 def _deflation_meaningful(metric: str) -> bool:
@@ -537,6 +711,130 @@ def _deflation_meaningful(metric: str) -> bool:
     if metric.endswith("_zscore_cat") or metric.endswith("_pctile_cat"):
         return False
     return get_metric_spec(metric).statistical_type in ("continuous_positive", "continuous_signed")
+
+
+def _run_beta_orphan_check(run: "AuditRun", long_df: pd.DataFrame) -> None:
+    """Block 6 (P2, B2/FND-0124, 2026-09-28): flags beta_* rows whose batch_id is not internally
+    consistent -- either the beta_* group itself spans more than one batch_id for the same
+    (isin, horizon, metric_version), or it diverges from macro_r2's batch_id there.
+    replace_beta_set() (proyecto2/src/writers/metrics_writer.py) writes every beta_*/macro_r2/
+    energy_sensitivity_pct/hy_spread_sensitivity_pct row of one OLS step in a single atomic
+    DELETE+INSERT stamped with one batch_id -- divergence is structurally impossible for a
+    healthy write, so any hit here is a genuine defect (an interrupted/partial write, or rows
+    surviving from a superseded OLS run).
+
+    Deliberately NOT compared against "the fund's latest P2 run batch": control.fund_metric_state
+    carries no batch_id, and OLS is quarter-cached (last_ols_quarter) rather than recomputed every
+    run, so that comparison would false-positive on every fund whose OLS legitimately didn't
+    recompute this cycle.
+    """
+    if "batch_id" not in long_df.columns:
+        run.skipped.append("BLOCK6 BETA_ORPHAN_BATCH: batch_id not present in the queried frame")
+        return
+
+    join_keys = ["isin", "horizon", "metric_version"]
+    beta = long_df[long_df["metric"].str.startswith("beta_")]
+    if beta.empty:
+        run.skipped.append("BLOCK6 BETA_ORPHAN_BATCH: no beta_* rows in this population")
+        return
+
+    n_internal = int((beta.groupby(join_keys)["batch_id"].nunique(dropna=False) > 1).sum())
+
+    macro_r2 = long_df[long_df["metric"] == "macro_r2"][join_keys + ["batch_id"]].rename(
+        columns={"batch_id": "macro_r2_batch_id"})
+    beta_batch = beta.groupby(join_keys)["batch_id"].first().reset_index()
+    cross = beta_batch.merge(macro_r2, on=join_keys, how="inner")
+    n_cross = int((cross["batch_id"] != cross["macro_r2_batch_id"]).sum())
+
+    n_total = n_internal + n_cross
+    if n_total:
+        run.findings.append({
+            "block": "BLOCK6", "rule_id": "BETA_ORPHAN_BATCH",
+            "rule_class": "HARD_INVARIANT", "severity": "ALARM", "group_key": "BETA_ORPHAN_BATCH",
+            "value": None, "reference_value": None, "threshold": None,
+            "distance": float(n_total),
+            "evidence": f"{n_internal} (isin,horizon,metric_version) groups have beta_* rows spanning "
+                        f"more than one batch_id; {n_cross} groups have a beta_* batch_id diverging from "
+                        f"macro_r2's -- replace_beta_set() writes both atomically, so this is structurally "
+                        f"impossible for a healthy write",
+            "root_cause_candidate": "Interrupted/partial OLS write, or beta_* rows surviving from a "
+                                     "superseded run",
+        })
+
+
+def _emit_snapshot_held_out_finding(run: "AuditRun") -> None:
+    """B3 (FND-0125, 2026-09-28): one aggregate INFO finding covering every ISIN the snapshot
+    staleness gate held out across all (metric, window) combos -- not one finding per combo,
+    which would be 25 near-duplicate lines for the same underlying stale funds. No-op when
+    run.snapshot_held_out is empty (the common case)."""
+    if not run.snapshot_held_out:
+        return
+    run.findings.append({
+        "block": "BLOCK1", "rule_id": "SNAPSHOT_HELD_OUT",
+        "rule_class": "STATISTICAL_ANOMALY", "severity": "INFO", "group_key": "SNAPSHOT_HELD_OUT",
+        "value": None, "reference_value": None, "threshold": SNAPSHOT_MAX_SPREAD_DAYS,
+        "distance": float(len(run.snapshot_held_out)),
+        "evidence": f"{len(run.snapshot_held_out)} distinct ISINs held out of cross-sectional "
+                    f"timeseries blocks (beyond {SNAPSHOT_MAX_SPREAD_DAYS} calendar days of their "
+                    f"slice's max date); max observed spread {run.snapshot_max_spread_days:.0f} days",
+        "root_cause_candidate": "Settlement lag or stale NAV for these funds relative to the universe",
+    })
+
+
+def _alerts_are_stale(max_alert_date, max_calc_date) -> bool:
+    """B5 (FND-0127, 2026-09-28): the alert engine has not run since the last P2 recompute for
+    this population when its latest detected_at predates the latest fund_metrics.calculation_date.
+    Pure comparison, factored out of _run_alert_reconciliation() for testability without a DB.
+    `max_alert_date` is a pandas Timestamp (or NaT); `max_calc_date` a datetime.date (or None).
+    """
+    if max_calc_date is None or pd.isna(max_alert_date):
+        return False
+    return max_alert_date.date() < max_calc_date
+
+
+def _run_alert_reconciliation(
+    run: "AuditRun", conn: "psycopg.Connection", isins: Sequence[str] | None = None,
+) -> None:
+    """Block 4 <-> fund_metric_alerts reconciliation (function #12, B5/FND-0127, 2026-09-28).
+    reconcile_with_alerts() (shared/statistical_audit/reconcile.py, tested, previously unwired)
+    filters run.findings down to the subset NOT already surfaced by the production alert engine
+    -- the skill's own framing: "report only outliers that the operational alarm engine did not
+    already surface -- these are the incremental audit findings." Call this LAST, after every
+    other step that can add a BLOCK4 finding (including B4's TIMESERIES-population outliers).
+
+    Freshness gate (_alerts_are_stale): if the alert engine has not run since the last P2
+    recompute for this population, reconciling would compare this run's fresh findings against a
+    stale alert snapshot and could silently drop a real incremental finding -- skip reconciliation
+    entirely rather than mislead.
+    """
+    alerts_filter, alerts_params = _isin_filter(conn, isins, "a.isin")
+    alerts_query = _ALERTS_QUERY.replace("{isin_filter}", alerts_filter)
+    alerts_df = _restore_case(build_population(conn, alerts_query, alerts_params), ("isin", "metric", "detected_at"))
+    if alerts_df.empty:
+        run.skipped.append("BLOCK4 ALERT_RECONCILIATION: no fund_metric_alerts rows for this population")
+        return
+
+    calc_filter, calc_params = _isin_filter(conn, isins, "m.ISIN")
+    calc_query = _MAX_CALC_DATE_QUERY.replace("{isin_filter}", calc_filter)
+    max_calc_date = conn.execute(calc_query, calc_params).fetchone()[0]
+    max_alert_date = pd.to_datetime(alerts_df["detected_at"]).max()
+
+    if _alerts_are_stale(max_alert_date, max_calc_date):
+        run.skipped.append(
+            f"BLOCK4 ALERT_RECONCILIATION: alerts stale (latest detected_at {max_alert_date.date()} < "
+            f"latest fund_metrics.calculation_date {max_calc_date}) -- alert engine has not run since "
+            f"the last P2 recompute"
+        )
+        return
+
+    before = len(run.findings)
+    run.findings = reconcile_with_alerts(run.findings, alerts_df)
+    n_suppressed = before - len(run.findings)
+    if n_suppressed:
+        run.skipped.append(
+            f"BLOCK4 ALERT_RECONCILIATION: {n_suppressed} findings already surfaced by the production "
+            f"alert engine, suppressed as non-incremental"
+        )
 
 
 def run_p2_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = None) -> "AuditRun":
@@ -643,10 +941,48 @@ def run_p2_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = None)
 
     for metric in _SCALAR_TIMESERIES_METRICS:
         for window in _SCALAR_TIMESERIES_WINDOWS:
-            ts_snapshot = _fetch_latest_timeseries_snapshot(conn, metric, window, isins=isins)
-            if ts_snapshot.empty:
+            ts_raw = _fetch_latest_timeseries_snapshot(conn, metric, window, isins=isins)
+            if ts_raw.empty:
                 run.skipped.append(f"BLOCK2 SCALAR_EQUALS_TIMESERIES {metric}/{window}: no timeseries rows")
                 continue
+            # B3 (FND-0125, 2026-09-28): snapshot staleness/tolerance gate -- both skills mandate
+            # holding funds beyond SNAPSHOT_MAX_SPREAD_DAYS of their slice's own max date out of
+            # cross-sectional blocks, never silently dropping them. build_snapshot()'s
+            # per-(slice_key, entity) latest-row reduction is a no-op here (ts_raw is already one
+            # row per (isin, real_flag) from the SQL's own correlated MAX(date)); this call's real
+            # job is the tolerance split + date-spread measurement.
+            snap = build_snapshot(
+                ts_raw, entity_key="isin", slice_keys=["real_flag"], date_column="date",
+                tolerance_days=SNAPSHOT_MAX_SPREAD_DAYS,
+            )
+            run.snapshot_held_out.update(snap.held_out["isin"].tolist())
+            run.snapshot_max_spread_days = max(run.snapshot_max_spread_days, snap.date_spread_days)
+            ts_snapshot = snap.eligible
+            if ts_snapshot.empty:
+                run.skipped.append(
+                    f"BLOCK2 SCALAR_EQUALS_TIMESERIES {metric}/{window}: all rows held out by the "
+                    f"snapshot staleness gate"
+                )
+                continue
+
+            # B4 (FND-0126, 2026-09-28): profile fund_metric_timeseries' own distribution as a
+            # population distinct from fund_metrics' since_inception scalar -- Blocks 1/4/7 on the
+            # staleness-filtered snapshot, split by real_flag. Reuses ts_snapshot as fetched for
+            # SCALAR_EQUALS_TIMESERIES just below -- zero extra DB round-trips.
+            ts_spec = get_metric_spec(metric)
+            for real_flag_value, rf_group in ts_snapshot.groupby("real_flag"):
+                ts_group_key = f"{metric}|{window}|{real_flag_value}"
+                ts_series = rf_group["ts_value"]
+                _block1(run, ts_group_key, ts_series, len(rf_group), numeric=True,
+                        supports_moments=ts_spec.supports_moments, population="TIMESERIES")
+                if ts_spec.statistical_type in ("continuous_positive", "continuous_signed", "bounded_unit"):
+                    ts_indexed = ts_series.set_axis(rf_group["isin"])
+                    for method in ("IQR", "MAD_Z"):
+                        _block4(run, ts_group_key, ts_indexed, method)
+                ts_bound = get_metric_bound(metric)
+                if ts_bound is not None:
+                    _block7(run, ts_group_key, rf_group, "ts_value", ts_bound)
+
             scalar_slice = long_df[(long_df["metric"] == metric) & (long_df["horizon"] == window)]
             merged = scalar_slice.merge(ts_snapshot, on=["isin", "real_flag"], how="inner")
             if merged.empty:
@@ -673,7 +1009,9 @@ def run_p2_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = None)
                     "root_cause_candidate": P2_PAIRS["SCALAR_EQUALS_TIMESERIES"].diagnosis,
                 })
 
+    _emit_snapshot_held_out_finding(run)
     _run_timeseries_integrity(run, conn, isins=isins)
+    _run_beta_orphan_check(run, long_df)
 
     wide_for_invariants = _pivot_all_metrics(long_df)
     if not deflation_frame.empty:
@@ -687,6 +1025,8 @@ def run_p2_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = None)
         if not prv.empty:
             wide_for_invariants = wide_for_invariants.merge(prv, on="isin", how="left")
     _run_invariants(run, P2_INVARIANTS, [wide_for_invariants], block="BLOCK5")
+
+    _run_alert_reconciliation(run, conn, isins=isins)
 
     return run
 
@@ -714,6 +1054,11 @@ class AuditRun:
         self.statistics: list[tuple] = []  # (population, group_key, stats_dict, n)
         self.findings: list[dict] = []
         self.skipped: list[str] = []
+        # B3 (FND-0125, 2026-09-28): snapshot staleness gate -- populated only by run_p2_audit
+        # (fund_metric_timeseries has no cost-domain equivalent); always present so _print_report
+        # stays domain-agnostic (prints the line only when non-empty).
+        self.snapshot_held_out: set[str] = set()
+        self.snapshot_max_spread_days: float = 0.0
 
 
 def _block1(
@@ -729,10 +1074,13 @@ def _block1(
     stats.update(profile_mass_points(series))
     run.statistics.append((population, group_key, stats, stats.get("n_valid")))
 
-    # PEER findings are additional context for a GLOBAL group already profiled
-    # above; only escalate to a finding once, at GLOBAL, to avoid duplicate
-    # noise for every peer segment of the same underlying group.
-    if population != "GLOBAL":
+    # PEER findings are additional context for a GLOBAL group already profiled above; only
+    # escalate to a finding once, at GLOBAL, to avoid duplicate noise for every peer segment of
+    # the same underlying group. TIMESERIES (B4/FND-0126, 2026-09-28) is NOT that -- it is a
+    # genuinely distinct population (the latest fund_metric_timeseries snapshot, not the
+    # fund_metrics since_inception scalar) that can carry its own independent defects, so it
+    # must escalate findings on its own account, not be silently suppressed like PEER segments.
+    if population.startswith("PEER:"):
         return
 
     if stats.get("mass_class") == "TEMPLATE_OR_DEFAULT":
@@ -883,6 +1231,11 @@ def _print_report(run: "AuditRun", run_id: str) -> None:
     print(f"=== Statistical audit — domain={run.domain} run_id={run_id} ===")
     print(f"Universe size: {run.universe_size}")
     print(f"Groups/columns profiled: {len(run.statistics)}")
+    # B3 (FND-0125, 2026-09-28): printed only when non-empty -- always present on AuditRun but
+    # only run_p2_audit ever populates it (fund_metric_timeseries has no cost-domain equivalent).
+    if run.snapshot_held_out:
+        print(f"Snapshot: max date spread {run.snapshot_max_spread_days:.0f}d, "
+              f"{len(run.snapshot_held_out)} ISINs held out (tolerance {SNAPSHOT_MAX_SPREAD_DAYS}d)")
     print()
     print(f"Findings: {len(run.findings)}")
     by_block: dict[str, int] = {}
@@ -965,9 +1318,28 @@ def _print_drift_report(result, compare_to: str, top_n: int = 20) -> None:
         print(f"  {row['group_key']} [{row['stat_name']}]: {row['previous_value']:.6g} -> {row['current_value']:.6g}{pct}")
 
 
+def _print_recompute_verification(result: "RecomputeCheckResult") -> int:
+    print(f"=== Recompute verification: {result.n_checked} (isin, metric_version) rows checked ===")
+    if result.unchanged.empty and result.missing_after.empty:
+        print("OK: every row's input_hash/calculated_at changed since the snapshot.")
+        return 0
+    if not result.unchanged.empty:
+        print(f"! {len(result.unchanged)} rows UNCHANGED (idempotency cache bypassed processing -- "
+              f"the 'after' numbers are stale, per Method Control #3):")
+        for _, row in result.unchanged.iterrows():
+            print(f"  {row['isin']} / {row['metric_version']}: "
+                  f"input_hash={row['input_hash']} calculated_at={row['calculated_at']}")
+    if not result.missing_after.empty:
+        print(f"! {len(result.missing_after)} rows MISSING from the current state "
+              f"(dropped from fund_metric_state since the snapshot):")
+        for _, row in result.missing_after.iterrows():
+            print(f"  {row['isin']} / {row['metric_version']}")
+    return 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--domain", choices=["costs", "p2"], required=True)
+    parser.add_argument("--domain", choices=["costs", "p2"], default=None)
     parser.add_argument("--mode", choices=["report", "check"], default="report")
     parser.add_argument("--persist", action="store_true")
     parser.add_argument("--run-id", default=None)
@@ -977,9 +1349,44 @@ def main() -> int:
         help="Comma-separated ISIN list to scope the audit to (e.g. the 40-ISIN validation sample). "
              "Omit for the full In_Current_Universe population.",
     )
+    parser.add_argument(
+        "--state-snapshot", metavar="PATH", default=None,
+        help="Capture control.fund_metric_state for --isin to PATH (JSON) and exit -- run this "
+             "before applying a fix. P2 only (function #14, Method Control #3).",
+    )
+    parser.add_argument(
+        "--verify-recompute", metavar="PATH", default=None,
+        help="Compare current control.fund_metric_state for --isin against a prior "
+             "--state-snapshot capture at PATH; exit 1 if any (isin, metric_version) row's "
+             "input_hash/calculated_at is unchanged. P2 only (function #14, Method Control #3).",
+    )
     args = parser.parse_args()
 
     isins = [i.strip() for i in args.isin.split(",") if i.strip()] if args.isin else None
+
+    # B6 (FND-0128, 2026-09-28): --state-snapshot/--verify-recompute are a standalone P2-only
+    # utility, independent of --domain/--mode -- they read/write control.fund_metric_state
+    # directly and never run the audit itself.
+    if args.state_snapshot or args.verify_recompute:
+        if not isins:
+            parser.error("--state-snapshot/--verify-recompute require --isin")
+        conn = get_connection()
+        try:
+            current = capture_state(conn, isins)
+        finally:
+            conn.close()
+        if args.state_snapshot:
+            with open(args.state_snapshot, "w", encoding="utf-8") as f:
+                json.dump(current.to_dict(orient="records"), f, indent=2)
+            print(f"Captured state for {len(current)} (isin, metric_version) rows -> {args.state_snapshot}")
+            return 0
+        with open(args.verify_recompute, "r", encoding="utf-8") as f:
+            before = pd.DataFrame(json.load(f))
+        result = assert_recompute_happened(before, current)
+        return _print_recompute_verification(result)
+
+    if not args.domain:
+        parser.error("--domain is required (unless --state-snapshot/--verify-recompute is given)")
 
     # A --run-id the caller typed explicitly is trusted as-is; the auto-generated default gets a
     # _sample suffix under --isin so a sample-scoped run can never silently become a --compare-to
