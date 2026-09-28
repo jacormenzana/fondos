@@ -32,6 +32,7 @@ from typing import Sequence
 import numpy as np
 import pandas as pd
 
+from .deflation import deflate_nav
 from .returns import downside_deviation_ann
 from shared.config import MIN_PEERS as _MIN_PEERS_DEFAULT
 
@@ -209,10 +210,11 @@ def compute_rolling_rows(
                       eliminando la distorsión histórica del Sharpe/Sortino con tipo plano.
                       (§4g del plan de re-ingeniería 2026-08.)
     deflation_diagnostics : opcional, keyword-only, backward-compatible (default None -- ningun
-                      llamador existente lo pasa). Si se provee una lista, y hay ipc_df pero la
-                      serie real termina en None (todo el ISIN sin deflactar, nunca una fecha
-                      suelta -- ver nota de ffill/bfill mas abajo), se le hace append() de
-                      {"isin": isin, "reason": "no-date-match"|"ipc0-zero"}. El llamador
+                      llamador existente lo pasa). Si se provee una lista, y hay ipc_df pero
+                      deflate_nav() (FND-0114, 2026-09-28) no puede producir una serie real
+                      (todo el ISIN sin deflactar -- ipc_df sin ningun valor de IPC aprovechable,
+                      o IPC base cero/NaN en la primera fecha), se le hace append() de
+                      {"isin": isin, "reason": "deflation-unavailable"}. El llamador
                       (run_pipeline.py) usa esto para loguear [DEFL-SKIP] y contar
                       defl_skipped en el RUN_SUMMARY (v27, ver pivot plan) -- no vive aqui
                       porque este modulo no debe asumir un logger de pipeline (R-7).
@@ -255,29 +257,23 @@ def compute_rolling_rows(
     else:
         _rf_vals = np.full(n, risk_free_rate, dtype=float)
 
-    # Deflactar si hay IPC
+    # Deflactar si hay IPC -- FND-0114 (2026-09-28): reutiliza deflation.py::deflate_nav()
+    # (merge_asof(direction='backward'), el fix canonico ya vigente desde v35/CALC_VERSION
+    # 20260918 y aplicado en consistency.py/risk_metrics.py/short_horizon.py/run_pipeline.py) en
+    # vez de un merge exacto por fecha + ffill/bfill posicional propio -- la misma clase de
+    # defecto que merge_asof ya corrigio en consistency.py, duplicada aqui (P#11). El merge
+    # exacto + relleno posicional podia, en teoria, rellenar una fecha NAV anterior a la primera
+    # fecha IPC disponible con un valor IPC POSTERIOR (look-ahead) en vez del valor IPC mas
+    # antiguo conocido; 0 ISIN en vivo lo sufren hoy (verificado 2026-09-27, 3.711/3.711 pares
+    # coinciden) porque ipc_df no se recorta por ventana aqui, pero el riesgo estructural seguia
+    # presente para cualquier fondo cuyo historial de NAV empiece antes que la cobertura de IPC.
     nav_real: np.ndarray | None = None
     if ipc_df is not None and not ipc_df.empty:
-        ipc_df = ipc_df.copy()
-        ipc_df["date"] = pd.to_datetime(ipc_df["date"])
-        merged = nav_df[["date"]].merge(
-            ipc_df[["date", "ipc_index"]].rename(columns={"ipc_index": "ipc"}),
-            on="date", how="left"
-        )
-        ipc_vals = merged["ipc"].to_numpy(dtype=float)
-        if not np.all(np.isnan(ipc_vals)):
-            # Rellenar NaN por forward-fill (datos macroeconómicos con retardo)
-            mask = np.isnan(ipc_vals)
-            if mask.any():
-                df_tmp = pd.Series(ipc_vals)
-                ipc_vals = df_tmp.ffill().bfill().to_numpy(dtype=float)
-            # Deflactar NAV: NAV_real[t] = NAV[t] / (IPC[t] / IPC[0])
-            if ipc_vals[0] != 0 and not np.isnan(ipc_vals[0]):
-                nav_real = nav_series / (ipc_vals / ipc_vals[0])
-            elif deflation_diagnostics is not None:
-                deflation_diagnostics.append({"isin": isin, "reason": "ipc0-zero"})
+        df_real = deflate_nav(nav_df[["date", "nav"]], ipc_df)
+        if not df_real.empty:
+            nav_real = df_real["nav_real"].to_numpy(dtype=float)
         elif deflation_diagnostics is not None:
-            deflation_diagnostics.append({"isin": isin, "reason": "no-date-match"})
+            deflation_diagnostics.append({"isin": isin, "reason": "deflation-unavailable"})
 
     rows: list[dict] = []
 

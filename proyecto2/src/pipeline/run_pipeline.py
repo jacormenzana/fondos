@@ -570,7 +570,19 @@ _ALL_METRIC_FAMILIES = frozenset({
 
 # Bump this string whenever the calculation logic changes to force a
 # cache-miss in fund_metric_state even when NAV/IPC inputs are unchanged.
-CALC_VERSION: str = "20260918"  # v35: deflate_nav() switched from
+CALC_VERSION: str = "20260928"  # v36 (FND-0114): rolling_stats.py::compute_rolling_rows() was
+# the last module still reimplementing deflation locally (exact-date merge + positional
+# ffill/bfill) instead of calling deflate_nav() -- the same class of defect v35 already fixed in
+# consistency.py, duplicated here (P#11). The positional ffill/bfill could, in theory, backfill a
+# NAV date earlier than the first available IPC observation with a LATER ipc value (look-ahead)
+# instead of the earliest known one; 0 live ISINs are affected today (verified 2026-09-27,
+# 3,711/3,711 nominal/real pairs match exactly) because ipc_df is passed unsliced here too, but
+# the structural risk remained for any fund whose NAV history starts before IPC coverage begins.
+# Switched compute_rolling_rows() to call deflate_nav() directly; the two consolidated
+# diagnostics reasons ("no-date-match"/"ipc0-zero") became one ("deflation-unavailable") since
+# deflate_nav() doesn't expose which internal branch produced an empty result.
+#
+# v35: deflate_nav() switched from
 # reindex+ffill+bfill to pd.merge_asof(direction='backward'), and
 # run_pipeline.py stopped pre-slicing ipc_df to each window before calling
 # it. v34's reindex-based fix (previous CALC_VERSION) closed the systemic

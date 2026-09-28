@@ -28,6 +28,7 @@ from src.calculations.rolling_stats import (
     cat_signals_from_snapshot,
     resolve_rf_rate,
 )
+from src.calculations.deflation import deflate_nav
 from src.calculations.returns import sortino_ratio, downside_deviation_ann
 
 
@@ -333,6 +334,76 @@ class TestComputeRollingRows:
         flags = {r["real_flag"] for r in rows}
         assert 1 in flags, "real_flag=1 (deflactado) no encontrado en el output"
         assert 0 in flags, "real_flag=0 (nominal) desapareció"
+
+    def test_ipc_leading_gap_uses_correct_earlier_anchor_not_a_later_one(self):
+        """FND-0114 (2026-09-28): compute_rolling_rows() now delegates to
+        deflation.py::deflate_nav() (merge_asof backward) instead of its own exact-date
+        merge + positional ffill/bfill. Regression coverage for the defect class that
+        change closes: mirrors test_deflation.py's
+        test_leading_date_uses_the_correct_earlier_ipc_value_not_a_later_one, but through
+        the full compute_rolling_rows() integration -- the old inline merge, if it had
+        ever received an ipc_df with a gap right at the NAV window's start, could pick a
+        LATER (look-ahead) IPC value instead of the correct earlier one.
+
+        Expected value is computed independently via the same two building blocks
+        production code uses (deflate_nav + _roll_return_ann on the resulting real NAV
+        window) rather than hand-derived, since return_ann's annualizing power transform
+        (total**(1/years)) makes a shortcut algebraic reconstruction from the nominal
+        value error-prone.
+        """
+        dates = pd.to_datetime(["2023-09-29", "2023-10-31", "2023-11-30"])
+        navs = [100.0, 102.0, 101.0]
+        nav_df = pd.DataFrame({"date": dates, "nav": navs})
+        ipc_df = pd.DataFrame({
+            "date": pd.to_datetime(["2023-08-31", "2023-09-30", "2023-10-31", "2023-11-30"]),
+            # Aug=95.29 is the correct backward anchor for 2023-09-29 (no exact match);
+            # Sep=96.09 is what a naive/positional bfill would grab instead (look-ahead).
+            "ipc_index": [95.29, 96.09, 96.09, 95.58],
+        })
+
+        rows = compute_rolling_rows(
+            "LEADGAP01", nav_df,
+            rolling_windows={"rolling_3m": 3},
+            min_obs=1, periods_per_year=12,
+            ipc_df=ipc_df,
+        )
+        actual = next(
+            r["value"] for r in rows
+            if r["metric"] == "return_ann" and r["real_flag"] == 1 and r["date"] == "2023-11-30"
+        )
+
+        df_real = deflate_nav(nav_df, ipc_df)
+        expected_correct = _roll_return_ann(df_real["nav_real"].to_numpy(dtype=float), 12)
+        assert actual == pytest.approx(expected_correct, rel=1e-9)
+
+        # And confirm this genuinely differs from what the wrong (look-ahead) anchor would
+        # give -- i.e. the scenario actually exercises the divergence, not a coincidence
+        # where both anchors happen to produce the same window result.
+        ipc_df_wrong_anchor = ipc_df.copy()
+        ipc_df_wrong_anchor.loc[ipc_df_wrong_anchor["date"] == "2023-08-31", "ipc_index"] = 96.09
+        df_real_wrong = deflate_nav(nav_df, ipc_df_wrong_anchor)
+        expected_wrong = _roll_return_ann(df_real_wrong["nav_real"].to_numpy(dtype=float), 12)
+        assert actual != pytest.approx(expected_wrong, rel=1e-6)
+
+    def test_deflation_diagnostics_logs_deflation_unavailable_when_ipc_unusable(self):
+        """FND-0114 (2026-09-28): the two previous reasons ("no-date-match"/"ipc0-zero")
+        collapsed into one ("deflation-unavailable") since deflate_nav() doesn't expose
+        which of its internal branches (no usable IPC value at all vs. zero/NaN base)
+        produced an empty result -- run_pipeline.py's [DEFL-SKIP] logging treats the
+        reason string opaquely (just logs it), so this is a safe consolidation.
+        """
+        nav_df = self._simple_nav(6)
+        ipc_df = pd.DataFrame({"date": nav_df["date"], "ipc_index": [math.nan] * 6})
+        diagnostics: list[dict] = []
+        rows = compute_rolling_rows(
+            "NOIPC0001", nav_df,
+            rolling_windows={"rolling_3m": 3},
+            min_obs=1, periods_per_year=12,
+            ipc_df=ipc_df,
+            deflation_diagnostics=diagnostics,
+        )
+        assert diagnostics == [{"isin": "NOIPC0001", "reason": "deflation-unavailable"}]
+        assert not any(r["real_flag"] == 1 for r in rows)
 
     def test_gap_month_excluded_from_window_by_calendar_date(self):
         """
