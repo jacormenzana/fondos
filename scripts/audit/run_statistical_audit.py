@@ -84,13 +84,19 @@ skipped):
     fixing it properly needs a relative-tolerance extension to PairRule or a
     root-cause look at the divergence itself, deferred pending a decision.
   - Block 4's reconciliation against fund_metric_alerts (function #12,
-    reconcile_with_alerts) is not wired into this runner yet. The three
-    root-cause defects that blocked it (AUDITORIA_ESTADISTICA.md §2.5:
-    value/reference_value NULL, VOL_CAT_P90/P97 dead) were fixed in
-    rolling_stats.py / shared/config.py on 2026-09-13, but the live
-    fund_metric_alerts table still holds rows written by the old code
-    until the next real P2 run — wiring #12 in now would reconcile
-    against stale data, so it waits for that recompute.
+    reconcile_with_alerts) is wired in (2026-09-28), gated on a freshness
+    check (_alerts_are_stale) comparing the latest fund_metric_alerts.detected_at
+    against the latest fund_metrics.calculation_date for the population --
+    reconciliation is skipped, not silently run against stale data, when the
+    alert engine hasn't run since the last P2 recompute.
+
+D1 (FND-0134, 2026-09-28, Wave 4 boundary declaration): this module produces
+the raw findings/statistics data both skills' §5 Output Format is built from --
+it does NOT itself produce that section's narrative synthesis (corrections-
+applied summary, residual inventory, ranked action items). That synthesis is
+the calling skill session's responsibility, working from this module's
+--persist'd audit_statistic/audit_finding rows or its --mode report stdout.
+Deliberate, not a gap: the module stays read-only/detection-only (P#2, R-2).
 
 Usage:
     python -X utf8 scripts/audit/run_statistical_audit.py --domain costs
@@ -1372,6 +1378,29 @@ def _print_report(run: "AuditRun", run_id: str) -> None:
     print(f"Skipped ({len(run.skipped)}):")
     for s in run.skipped:
         print(f"  ! {s}")
+    print()
+
+    # D1 (FND-0134, 2026-09-28): this module produces the data both skills' Section 5 Output
+    # Format is built from, not that section's narrative synthesis itself -- said once, here,
+    # rather than only in the module docstring, so it is visible on every run.
+    print("Note: narrative synthesis (corrections applied, residual inventory, ranked action "
+          "items -- skill Section 5) is the calling skill session's job, built from the findings "
+          "above. This module is read-only/detection-only by design (P#2, R-2).")
+
+    # D2 (FND-0135, 2026-09-28): redirected from Gemini's CST-03 (a write path into
+    # fund_cost_corrections from this runner) -- rejected, would violate the read-only boundary
+    # above and duplicate persistence.preserve_and_write (function #16), which remediation owns.
+    # Instead: name the actual remediation command for this run's own per-fund findings.
+    if run.domain == "cost_attributes":
+        isins_with_findings = sorted({f["isin"] for f in run.findings if f.get("isin")})
+        if isins_with_findings:
+            isin_csv = ",".join(isins_with_findings)
+            print(f"Remediation: run_block.py --nature-first --master-db --recompute-costs "
+                  f"--list-isin {isin_csv}")
+        else:
+            print("Remediation: no per-fund finding carries an ISIN this run (only "
+                  "population-level findings) -- investigate the root cause before targeting a "
+                  "--recompute-costs batch.")
 
 
 def _has_blocking_findings(run: "AuditRun") -> bool:
