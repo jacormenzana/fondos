@@ -221,9 +221,14 @@ def _resolve(node, scopes, dialect, depth=0):
                 + _resolve(node.orelse, scopes, dialect, depth + 1))[:_MAX_VARIANTS]
     if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
         if node.func.id == "_sql" and len(node.args) == 2:
-            # scripts/audit/run_statistical_audit.py::_sql(conn, query): substitutes the `{window}`
-            # slot and turns `?` into the backend's placeholder.
+            # scripts/audit/run_statistical_audit.py::_sql(conn, query, isin_filter=...): substitutes
+            # the `{window}` slot and turns `?` into the backend's placeholder. `{isin_filter}` (FND-0118,
+            # 2026-09-28) is checked against the always-present empty-filter case ("" -- the token
+            # removed entirely, what --isin omitted produces) regardless of whether this call site
+            # passes an isin_filter keyword: EXPLAIN only needs one syntactically valid representative,
+            # and every call ultimately resolves through the same `{isin_filter}` slot at runtime.
             return [(t.replace("{window}", "window_label" if dialect == "pg" else "window")
+                      .replace("{isin_filter}", "")
                       .replace("?", "%s" if dialect == "pg" else "?"), r)
                     for t, r in _resolve(node.args[1], scopes, dialect, depth + 1)]
     if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):

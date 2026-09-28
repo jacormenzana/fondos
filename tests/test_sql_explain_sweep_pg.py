@@ -111,8 +111,28 @@ _UNVERIFIED_BASELINE: dict[str, str] = {
         R_FRAGMENT,
     "scripts/audit/run_statistical_audit.py::_periodic_return_variance::63f46a57":
         R_FRAGMENT,
+    # FND-0118 (2026-09-28, --isin filter): each of these builds its query via
+    # `<QUERY_CONST>.replace("{isin_filter}", <variable>)`, not a literal or an f-string -- the
+    # resolver has no handling for `.replace()` calls (only `.strip()`/`.format()`), so the whole
+    # expression is opaque at this site. All were extensively live-verified with real ISINs against
+    # the live Postgres DSN in the same session (both non-empty and empty isin_filter cases).
+    "scripts/audit/run_statistical_audit.py::_run_alert_reconciliation::6173610d":
+        R_OPAQUE,
+    "scripts/audit/run_statistical_audit.py::_run_alert_reconciliation::6b9fd696":
+        R_OPAQUE,
+    "scripts/audit/run_statistical_audit.py::run_cost_audit::2d039166":
+        R_OPAQUE,
+    "scripts/audit/run_statistical_audit.py::run_cost_audit::900a591e":
+        R_OPAQUE,
+    "scripts/audit/run_statistical_audit.py::run_p2_audit::268ce6e3":
+        R_OPAQUE,
     "shared/export_tables.py::export_tables::874d473f":
         R_OPAQUE,
+    # B6/FND-0128 (2026-09-28, --state-snapshot/--verify-recompute): ISIN IN-list built with
+    # `",".join(...)` and interpolated via an f-string -- a dynamic column/placeholder count, same
+    # class as the other _db_utils.py/fund_writer.py R_FRAGMENT entries above, not a new pattern.
+    "shared/statistical_audit/recompute_gate.py::capture_state::808c9ca2":
+        R_FRAGMENT,
     "shared/statistical_audit/persistence.py::emit_findings::2725fd2e":
         R_FRAGMENT,
 }
