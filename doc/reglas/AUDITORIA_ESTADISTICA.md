@@ -482,9 +482,9 @@ entre el dominio de coste, P1, y el de métricas, P2).
 | 9 | `check_invariant(frame, rule)` | frame + expresión (`when` opcional) → violaciones | cualquiera | evaluador restringido sobre columnas nombradas; soporta `sortino >= sharpe - tolerance WHEN excess_return > 0` |
 | 10 | `check_bounds(vector, bound_spec)` | vector + bound → breaches tipados | métricas con bound declarado | `bound_type ∈ {HARD_INVARIANT, PLAUSIBILITY}`; carve-out por prefijo `crisis_` |
 | 11 | `check_timeseries_integrity(series)` | serie por `(isin, metric, window, real_flag)` → duplicados, huecos, provenance | `fund_metric_timeseries` | huecos contra `expected_date_index` derivado del calendario real de origen — no `mes_siguiente == mes_anterior+1` |
-| 12 | `reconcile_with_alerts(findings, alerts_df)` | hallazgos + `fund_metric_alerts` → hallazgos incrementales | P2 | D1–D3 (§2.5) corregidos en código 2026-09-13; **aún no implementada ni cableada** — la tabla en producción conserva filas antiguas hasta el próximo ciclo P2 real, así que reconciliar hoy sería contra datos obsoletos |
-| 13 | `compare_runs(current_profile, previous_profile)` | dos perfiles almacenados → `Δn, Δcoverage, Δmedian, Δp95, Δsd, Δzero%, Δskew, Δkurtosis` | todas | implementada (`shared/statistical_audit/compare_runs.py`); cableada en el runner vía `--compare-to <run_id>`; el "octavo bloque" que faltaba en ambas skills |
-| 14 | `assert_recompute_happened(isins, prior_state)` | ISINs + estado previo → booleano | P2 | codifica en función el Method Control #3 de la skill (`fund_metric_state.input_hash` debe cambiar) |
+| 12 | `reconcile_with_alerts(findings, alerts_df)` | hallazgos + `fund_metric_alerts` → hallazgos incrementales | P2 | D1–D3 (§2.5) corregidos en código 2026-09-13; **implementada y cableada 2026-09-28** (`shared/statistical_audit/reconcile.py`, llamada al final de `run_p2_audit`) — con una comprobación de frescura (`_alerts_are_stale`, latest `detected_at` vs latest `fund_metrics.calculation_date`) que sustituye la espera al "próximo ciclo P2 real" por un chequeo automático en cada ejecución |
+| 13 | `compare_runs(current_profile, previous_profile)` | dos perfiles almacenados → `Δn, Δcoverage, Δmedian, Δp95, Δsd, Δzero%, Δskew, Δkurtosis` | todas | implementada (`shared/statistical_audit/compare_runs.py`); cableada en el runner vía `--compare-to <run_id>`; el "octavo bloque" que faltaba en ambas skills. **Extendida 2026-09-28:** `COVERAGE_CLIFF` (>2% caída de `n_valid`) ahora se computa a partir del mismo resultado y se emite como hallazgo `BLOCK1`, no solo como línea impresa |
+| 14 | `assert_recompute_happened(isins, prior_state)` | ISINs + estado previo → booleano | P2 | codifica en función el Method Control #3 de la skill (`fund_metric_state.input_hash` debe cambiar). **Implementada 2026-09-28** (`shared/statistical_audit/recompute_gate.py`, `capture_state`/`assert_recompute_happened`) con CLI `--state-snapshot`/`--verify-recompute` en el runner — solo lectura sobre `control.fund_metric_state`, dominio P2 |
 | 15 | `emit_statistics(facts)` / `emit_findings(evaluations)` | hechos / evaluaciones de regla → filas en BD | todas | separa **hecho estadístico** de **evaluación de regla** — ver §6 |
 | 16 | `preserve_and_write(isin, column, old, new, reason, evidence)` | valores → escritura + preservación | solo coste | **resuelve la brecha J de §7** — hoy `fund_cost_corrections` no tiene ningún escritor en código |
 | 17 | `check_group_constancy(frame, rule)` | frame + `(group_column, value_column, min_group_size)` → grupos donde el valor es idéntico en todas sus filas | cualquiera con una clave de agrupación repetida (hoy: coste por `ISIN`/`Horizon_Years`, §2.8) | extensión de Bloque 5 para defectos **entre filas** que `check_invariant` (función #9, por-fila) no puede expresar; misma disciplina de exclusión de NULL que #9 |
@@ -549,10 +549,10 @@ deriva que no viene de los datos.
 
 | # | Hallazgo | Skill afectada | Corrección exacta |
 |---|---|---|---|
-| A | `fund_metric_alerts.value` NULL en 100% de filas | P2 | **corregido 2026-09-13** en `rolling_stats.py` (§2.5); Bloque 4 sigue sin reconciliar contra la tabla en vivo hasta el próximo ciclo P2 real |
+| A | `fund_metric_alerts.value` NULL en 100% de filas | P2 | **corregido 2026-09-13** en `rolling_stats.py` (§2.5); Bloque 4 **reconcilia contra la tabla en vivo desde 2026-09-28** (§4 #12), con comprobación de frescura en cada ejecución en vez de esperar a un ciclo P2 concreto |
 | B | `reference_value` NULL en exactamente las 612 filas ALARM | P2 | **corregido 2026-09-13** en `rolling_stats.py` (§2.5) |
 | C | `VOL_CAT_P90`/`VOL_CAT_P97` nunca disparan (`rolling_6m` sin filas) | P2 | **corregido 2026-09-13**: `ALERT_RULES` retargeteado a `rolling_1y` (§2.5) |
-| D | La skill P2 incluye `rolling_1m/3m/6m` en el alcance de `fund_metric_timeseries` | P2 §2 | corregir: esas ventanas cortas viven en `fund_metrics` (`metric_version='d1'`, ~22k filas cada una), no en la serie curada |
+| D | La skill P2 incluye `rolling_1m/3m/6m` en el alcance de `fund_metric_timeseries` | P2 §2 | **corregido 2026-09-28** en la skill; esas ventanas cortas viven en `fund_metrics` (`metric_version='d1'`, `SHORT_WINDOWS`), no en la serie curada. El runner deriva `_SCALAR_TIMESERIES_WINDOWS` de `shared.config.ROLLING_WINDOWS` (sin claves `1m/3m/6m` hoy), así que se autocorrige si eso cambia |
 | E | "~16.6M filas" en `fund_metric_timeseries` | P2 §2, `AGENTS.md` | actualizar a **31.705.170** (verificado) |
 | F | "Reutilizar `compute_alerts` ... de `shared/config.py`" | P2 §Bloque 4 | `compute_alerts` está en `rolling_stats.py:370`; solo `ALERT_RULES` vive en `config.py` |
 | G | Cita `MIN_OBS_REGIME`, `_VOL_SANITY_CAP` como constantes importables | P2 | son literales locales de función, duplicados entre P2 y P3 — registrar como deuda P#11/R-1 antes de que el motor los importe; no asumir que existen en `shared/config.py` |
@@ -561,7 +561,7 @@ deriva que no viene de los datos.
 | J | `fund_cost_corrections` tiene 6.077 filas pero **cero escritores en código** | Coste §1, §6 | la contract de preservación es hoy solo una promesa de prompt; implementar `preserve_and_write` (§4 #16) como único punto de escritura antes de construir cualquier automatización sobre este dominio |
 | K | Sin catálogo de escala/unidad legible por máquina | Coste §7, Bloque 7 | resuelto por `catalog_cost_columns.py` (§5) |
 | L | Convenciones de nombre incompatibles ya presentes en `fund_cost_corrections.Column_Name` | Coste | verificado: coexisten `schedule.Total_Costs_EUR@1.0y` y `fund_cost_schedule.Total_Costs_Pct@h=1` en la misma columna — normalizar antes de que cualquier lector automatizado consuma la tabla |
-| M | Dos invariantes de Bloque 5 no universales (`sortino≥sharpe`, `vol_ann>0 si return≠0`) | ambas | corregidos en §2.4; aplicar en `catalog_invariants.py` |
+| M | Dos invariantes de Bloque 5 no universales (`sortino≥sharpe`, `vol_ann>0 si return≠0`) | ambas | corregidos en §2.4 y en `catalog_invariants.py`; **reflejado en la skill P2 2026-09-28** (las dos filas de la tabla Bloque 5 ahora citan `SORTINO_VS_SHARPE_UP/DOWN` y `FROZEN_NAV_ZERO_VOL` explícitamente) |
 | N | Recomendación externa de usar YAML para los catálogos | — | rechazada: `environment.yml` no incluye PyYAML y el CI actual (`agents-sync.yml`) no instala ninguna dependencia; usar diccionarios Python, el idioma ya establecido por `ALERT_RULES` |
 
 ---
@@ -593,6 +593,44 @@ deriva que no viene de los datos.
    `fund_metric_alerts` en producción conserva las filas antiguas hasta el próximo ciclo P2 real;
    función #12 (`reconcile_with_alerts`) queda especificada pero no implementada, a la espera de
    ese recompute para tener una base fiable contra la que reconciliar.
+
+5. **Fase E — cierre de brechas skill↔runner + sincronía de documentación** ✅ 2026-09-28
+   (sesión de alineación runner/skills, plan `generate-the-related-action-silly-cake.md`, tickets
+   `FND-0118`–`FND-0135`). Tres oleadas:
+   - **Filtro `--isin`** (prerrequisito): toda la validación de este trabajo corre sobre una
+     muestra real de ISINs en vivo, nunca sobre la población completa.
+   - **Gaps de bajo riesgo:** bound de `capture_ratio` (Bloque 7, antes ausente pese a estar en
+     ambas skills); rebaja de severidad para `PATHOLOGICAL_SHAPE` en familias de régimen
+     (`PATHOLOGICAL_SHAPE_EXPECTED`, INFO); `REAL_EQUALS_NOMINAL` generalizado de `return_ann`
+     a cualquier métrica con ambos `real_flag` — una prueba en vivo sobre 3 ISINs reales detectó
+     una clase real de falso positivo (`drawdown_duration`, `pct_*_months`, `*_zscore_cat` son
+     invariantes por construcción bajo un deflactor uniforme, misma razón que retiró
+     `VOL_ANN_EQUALS_SRRI_VOL`) — corregido con `_deflation_meaningful()` antes de mergear;
+     `COVERAGE_CLIFF` (§4 #13) como hallazgo automático, no solo impresión.
+   - **Funciones nuevas del runner (§4 #12, #14) + Bloque 6 completo:** Bloque 6 de coste
+     (`_run_cost_schedule_integrity`, 5 comprobaciones — era pura especificación); Bloque 6 de P2
+     (consistencia de `batch_id` de `beta_*`, provenance de `fund_metric_timeseries`); gate de
+     staleness del snapshot (`build_snapshot`, función #2, ya existía y estaba testeada pero sin
+     usar); distribuciones propias de `fund_metric_timeseries` como población `TIMESERIES` — al
+     implementar esto se encontró y corrigió un bug real: la compuerta de `_block1` para no
+     duplicar hallazgos de `PEER` (`if population != "GLOBAL": return`) habría suprimido también,
+     en silencio, todos los hallazgos de la población `TIMESERIES`; corregida a
+     `if population.startswith("PEER:"): return`, verificado en vivo (70 hallazgos reales que
+     antes eran invisibles); `reconcile_with_alerts` (§4 #12) cableado; `assert_recompute_happened`
+     (§4 #14) implementado con CLI `--state-snapshot`/`--verify-recompute`.
+   - **Sincronía de documentación:** `catalog_retired.py` (registro `RETIRED_RULES`, saca del
+     comentario de código a un registro consultable las correcciones ya aplicadas que las skills
+     aún describían en su forma anterior); `--list-catalog` en el runner (todas las reglas activas
+     + retiradas, sin conexión a BD); `scripts/audit/check_audit_skill_sync.py` (comprobación
+     asesora, nunca bloqueante — el hallazgo real al construirla: ninguna skill cita los
+     `rule_id` del catálogo textualmente, las describen en prosa/expresión matemática, así que un
+     chequeo de coincidencia literal sería puro ruido; en su lugar hace una comprobación de
+     autoconsistencia de `RETIRED_RULES` más un recuento comparativo catálogo↔tabla-markdown para
+     revisión humana); las dos skills y este documento actualizados.
+   - 60+ tests nuevos/actualizados (`proyecto1/tests/test_statistical_audit_*.py`); cada cambio
+     verificado en vivo contra datos reales (muestras de 3 y 40 ISIN, ambos dominios) antes de
+     darse por cerrado — dos defectos reales solo aparecieron así, no en los tests unitarios (el
+     falso positivo de `REAL_EQUALS_NOMINAL` y el bug de la compuerta de población).
 
 **Principio que se mantiene íntegro de ambas skills originales:** el resultado estadístico es
 evidencia, nunca autoriza por sí solo una corrección. La corrección se hace sobre el módulo de

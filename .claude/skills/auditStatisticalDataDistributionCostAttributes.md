@@ -15,13 +15,15 @@
 
 **`fund_master`:** `Ongoing_Charge_Recurrent`, `Entry_Fee_Pct`, `Entry_Fee_Pct_Max`, `Exit_Fee_Pct`, `Exit_Fee_Pct_Max`, `Management_Fee_Pct`, `Transaction_Cost_Pct`, `Performance_Fee_Pct`, `Performance_Fee_Basis`, `ACI_1Y`, `ACI_RHP`, `Cost_RHP_Years`.
 **`fund_cost_schedule`:** `Horizon_Years`, `Is_RHP`, `Total_Costs_EUR`, `Total_Costs_Pct`, `Annual_Impact_Pct`.
-**Filter:** `In_Current_Universe = 1` always.
+**Filter:** `In_Current_Universe = 1` always. `--isin <csv>` scopes any run to a fixed ISIN list (e.g. the 40-ISIN validation sample) instead of the full universe.
 
 ---
 
 ## 3. The Seven Blocks — run ALL, in order
 
 Blocks 1–2 are the highest-yield and must never be dropped: **the cross-component matrix (Block 2) found a 663-fund defect that appears in no distribution table.**
+
+**Reference:** `python scripts/audit/run_statistical_audit.py --list-catalog --domain costs` prints every active rule (declarative catalog + procedural) with its block, tolerance/bound, and the retired-rules registry — no DB connection. Run it before editing this file; the tables below can drift from the catalogs (see `scripts/audit/check_audit_skill_sync.py`).
 
 ### Block 1 — Distributions (per column)
 `n · null% · min · p50 · p95 · max · zero% · mode · mode%`
@@ -55,10 +57,12 @@ IQR fence (1.5×) and MAD robust-z (> 3.5, extremes > 5).
 | `Ongoing_Charge × 100 ≠ ACI_RHP` | OC contaminated with the ACI |
 
 ### Block 6 — `fund_cost_schedule` integrity
-- `Total_Costs_EUR` vs `Total_Costs_Pct` coherence (EUR/100 on a 10 000 base).
-- `Total_Costs_EUR < 20` → misparse (thousands separator), **except** genuine sub-1-year horizons.
-- Schedule `Is_RHP=1` row vs `fund_master.ACI_RHP` agreement.
-- `ACI_RHP` set with no `Is_RHP` row; multiple `Is_RHP=1` rows.
+**Implemented 2026-09-28 (`_run_cost_schedule_integrity`) — this block was pure specification until then; the five checks below now run as `SCHEDULE_*` findings.**
+- `Total_Costs_EUR` vs `Total_Costs_Pct` coherence (EUR/100 on a 10 000 base) — `SCHEDULE_EUR_PCT_COHERENCE`, tolerance `KID_ROUNDING_TOLERANCE_PP`.
+- `Total_Costs_EUR < 20` → misparse (thousands separator), **except** genuine sub-1-year horizons — `SCHEDULE_EUR_MISPARSE`.
+- Schedule `Is_RHP=1` row vs `fund_master.ACI_RHP` agreement — `SCHEDULE_RHP_ACI_MISMATCH`. The comparand is `Annual_Impact_Pct` specifically (confirmed against `fund_writer.py`/`priips_cost_extractor.py`: `ACI_RHP` is derived from the `Is_RHP=1` row's `Annual_Impact_Pct` by construction, not `Total_Costs_Pct`), tolerance `KID_ROUNDING_TOLERANCE_PP`.
+- `ACI_RHP` set with no `Is_RHP` row — `SCHEDULE_ACI_RHP_ORPHAN`; multiple `Is_RHP=1` rows — `SCHEDULE_MULTIPLE_RHP_ROWS` (no `UNIQUE` constraint enforces one-per-ISIN; `idx_cost_schedule_rhp` is a plain partial index).
+- **Function #17 — group-constancy detector, previously undocumented here:** `Total_Costs_Pct`/`Total_Costs_EUR` duplicated identically across a fund's different `Horizon_Years` rows is a distinct defect class (a 447-fund/264-residual-row real finding, `AUDITORIA_ESTADISTICA.md` §2.7) — `TOTAL_COSTS_PCT_CONSTANT_ACROSS_HORIZONS` / `TOTAL_COSTS_EUR_CONSTANT_ACROSS_HORIZONS`, `HARD_INVARIANT`, `shared/statistical_audit/catalog_group_checks.py`. Detection only, no repair.
 
 ### Block 7 — Plausibility bounds & scale
 | Column | Scale | Plausible |
@@ -68,6 +72,7 @@ IQR fence (1.5×) and MAD robust-z (> 3.5, extremes > 5).
 | `*_Pct_Max`, `ACI_*`, `Management_Fee_Pct` | **integer percent** | 0–25 |
 | `Transaction_Cost_Pct` | integer percent | 0–5 |
 - The ratio/percent split across same-named columns is the standing scale trap. Verify before comparing.
+- **Dual bound layer (previously undocumented here):** the table above is the review-trigger *plausibility* range. Most columns also carry a separate, stricter DDL *hard* bound (a live `CHECK` constraint, e.g. `Management_Fee_Pct` hard-capped at 10 vs. plausibility 0–25; `ACI_1Y` hard-capped at 50 vs. plausibility 0–25) — both layers are checked independently and can each produce their own finding. `shared/statistical_audit/catalog_cost_columns.py` (`CostColumnSpec.hard_bound`/`.plausibility_bound`) is the single source for both; `--list-catalog` prints them side by side.
 
 ---
 

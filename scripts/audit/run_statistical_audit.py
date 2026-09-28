@@ -120,7 +120,8 @@ from shared.statistical_audit.catalog_cost_columns import COST_COLUMNS
 from shared.statistical_audit.catalog_version import compute_catalog_version
 from shared.statistical_audit.catalog_group_checks import COST_GROUP_CHECKS
 from shared.statistical_audit.catalog_invariants import COST_INVARIANTS, P2_INVARIANTS
-from shared.statistical_audit.catalog_metric_bounds import get_metric_bound
+from shared.statistical_audit.catalog_metric_bounds import METRIC_BOUNDS, get_metric_bound
+from shared.statistical_audit.catalog_retired import RETIRED_RULES
 from shared.statistical_audit.catalog_metrics import get_metric_spec
 from shared.statistical_audit.catalog_pairs import COST_PAIRS, P2_PAIRS
 from shared.statistical_audit.comparisons import compare_pairs
@@ -1213,6 +1214,125 @@ def _run_invariants(run: AuditRun, rules, frames: list[pd.DataFrame], block: str
 
 
 # ============================================================
+# C2 (FND-0131, 2026-09-28): --list-catalog -- rules generated inline in this file rather than
+# from one of the declarative catalog dicts (COST_PAIRS, P2_PAIRS, COST_INVARIANTS, P2_INVARIANTS,
+# METRIC_BOUNDS, COST_COLUMNS, COST_GROUP_CHECKS -- those are read directly by _print_catalog).
+# Kept as one flat tuple, not a class hierarchy: this is a documentation registry, not executed
+# logic, so a dict-of-fields per row is the simplest thing that can print itself and be diffed
+# against a skill .md file by check_audit_skill_sync.py (C3).
+# ============================================================
+
+_PROCEDURAL_RULES: tuple[dict, ...] = (
+    {"rule_id": "DOMINANT_VALUE_CONCENTRATION", "block": "BLOCK1", "domain": "both",
+     "description": "mode% > 40% (dominant_threshold) -- template/hardcoded value or upstream bleed"},
+    {"rule_id": "PATHOLOGICAL_SHAPE", "block": "BLOCK3", "domain": "both",
+     "description": "|skew| > 3 or kurtosis > 10 on a non-regime, non-peer group"},
+    {"rule_id": "PATHOLOGICAL_SHAPE_EXPECTED", "block": "BLOCK3", "domain": "p2",
+     "description": "same threshold as PATHOLOGICAL_SHAPE but on a regime-suffixed metric "
+                     "(MetricSpec.high_kurtosis_expected) -- INFO, not WARN"},
+    {"rule_id": "OUTLIER_IQR / OUTLIER_MAD_Z", "block": "BLOCK4", "domain": "both",
+     "description": "IQR fence (1.5x) / MAD robust-z (WARN >=3.5, ALARM >=5); skipped when "
+                     "zero_pct >= 0.70 or n < 8"},
+    {"rule_id": "BOUND_<metric-or-column>", "block": "BLOCK7", "domain": "both",
+     "description": "value outside [min, max] from METRIC_BOUNDS (p2) or "
+                     "CostColumnSpec.hard_bound/plausibility_bound (costs, both layers checked "
+                     "independently); crisis_-prefixed horizons carved out (P2 only)"},
+    {"rule_id": "SCHEDULE_EUR_PCT_COHERENCE", "block": "BLOCK6", "domain": "costs",
+     "description": "Total_Costs_EUR/100 vs Total_Costs_Pct beyond KID_ROUNDING_TOLERANCE_PP"},
+    {"rule_id": "SCHEDULE_EUR_MISPARSE", "block": "BLOCK6", "domain": "costs",
+     "description": f"Total_Costs_EUR < {SCHEDULE_EUR_MISPARSE_FLOOR} at Horizon_Years >= 1"},
+    {"rule_id": "SCHEDULE_MULTIPLE_RHP_ROWS", "block": "BLOCK6", "domain": "costs",
+     "description": ">1 Is_RHP=1 row per ISIN (no UNIQUE constraint enforces this)"},
+    {"rule_id": "SCHEDULE_RHP_ACI_MISMATCH", "block": "BLOCK6", "domain": "costs",
+     "description": "Is_RHP=1 row's Annual_Impact_Pct vs fund_master.ACI_RHP beyond "
+                     "KID_ROUNDING_TOLERANCE_PP"},
+    {"rule_id": "SCHEDULE_ACI_RHP_ORPHAN", "block": "BLOCK6", "domain": "costs",
+     "description": "fund_master.ACI_RHP set with no Is_RHP=1 schedule row"},
+    {"rule_id": "BETA_ORPHAN_BATCH", "block": "BLOCK6", "domain": "p2",
+     "description": "beta_* rows not internally consistent on batch_id, or diverging from "
+                     "macro_r2's batch_id (same OLS-step atomic write)"},
+    {"rule_id": "TIMESERIES_DUPLICATE", "block": "BLOCK5", "domain": "p2",
+     "description": "n_rows > n_distinct_dates for an (isin, real_flag) series -- the PK should "
+                     "make this impossible"},
+    {"rule_id": "TIMESERIES_GAP", "block": "BLOCK4", "domain": "p2",
+     "description": "missing months within a series' own [min,max] history"},
+    {"rule_id": "TIMESERIES_NULL_PROVENANCE", "block": "BLOCK6", "domain": "p2",
+     "description": "batch_id IS NULL -- row predates the v26 audit columns"},
+    {"rule_id": "TIMESERIES_BELOW_MIN_OBS", "block": "BLOCK6", "domain": "p2",
+     "description": f"non-NULL value with source_rows < MIN_NAV_ROWS ({MIN_NAV_ROWS})"},
+    {"rule_id": "SNAPSHOT_HELD_OUT", "block": "BLOCK1", "domain": "p2",
+     "description": f"ISIN's latest date beyond {SNAPSHOT_MAX_SPREAD_DAYS} calendar days of its "
+                     f"slice's max date -- held out of cross-sectional timeseries blocks"},
+    {"rule_id": "COVERAGE_CLIFF", "block": "BLOCK1", "domain": "both",
+     "description": f"n_valid drop > {COVERAGE_CLIFF_PCT:.0%} vs the prior persisted run "
+                     f"(--compare-to only)"},
+    {"rule_id": "REAL_EQUALS_NOMINAL_<metric>", "block": "BLOCK2", "domain": "p2",
+     "description": "generalized per-metric from the REAL_EQUALS_NOMINAL PairRule -- one per "
+                     "metric with both real_flag values present and _deflation_meaningful()"},
+    {"rule_id": "SCALAR_EQUALS_TIMESERIES_<metric>_<window>", "block": "BLOCK2", "domain": "p2",
+     "description": "generalized per-(metric,window) from the SCALAR_EQUALS_TIMESERIES PairRule"},
+)
+
+
+def _print_catalog(domain: str | None) -> None:
+    show_costs = domain in (None, "costs")
+    show_p2 = domain in (None, "p2")
+
+    if show_costs:
+        print("=== COST domain ===")
+        print("-- Block 2 (cross-component pairs) --")
+        for rule in COST_PAIRS.values():
+            print(f"  {rule.rule_id:45s} tol={rule.tolerance}")
+        print("-- Block 5 (invariants) --")
+        for rule in COST_INVARIANTS:
+            print(f"  {rule.rule_id:32s} [{rule.bound_type:16s}] {rule.expression}")
+        print("-- Block 5/6 (group-constancy, function #17) --")
+        for rule in COST_GROUP_CHECKS:
+            print(f"  {rule.rule_id:45s} group={rule.group_column} value={rule.value_column}")
+        print("-- Block 7 (bounds -- dual hard/plausibility layer) --")
+        for column, spec in COST_COLUMNS.items():
+            for label, bound in (("hard", spec.hard_bound), ("plausibility", spec.plausibility_bound)):
+                if bound is not None:
+                    print(f"  {column:28s} [{label:12s}] [{bound.min_value}, {bound.max_value}] "
+                          f"({bound.bound_type})")
+        print()
+
+    if show_p2:
+        print("=== P2 domain ===")
+        print("-- Block 2 (cross-value pairs) --")
+        for rule in P2_PAIRS.values():
+            print(f"  {rule.rule_id:32s} tol={rule.tolerance}")
+        print("-- Block 5 (invariants) --")
+        for rule in P2_INVARIANTS:
+            when = f" when {rule.when}" if rule.when else ""
+            print(f"  {rule.rule_id:32s} [{rule.bound_type:16s}] {rule.expression}{when}")
+        print("-- Block 7 (bounds) --")
+        for metric, bound in METRIC_BOUNDS.items():
+            print(f"  {metric:28s} [{bound.min_value}, {bound.max_value}] ({bound.bound_type})")
+        print(f"  {'<bounded_unit metrics>':28s} [0.0, 1.0] (PLAUSIBILITY) -- generic rule, one "
+              f"per bounded_unit MetricSpec not already listed above")
+        print()
+
+    print("=== Procedural rules (generated inline, not from a catalog dict) ===")
+    for rule in _PROCEDURAL_RULES:
+        if domain is not None and rule["domain"] not in (domain, "both"):
+            continue
+        print(f"  {rule['rule_id']:45s} {rule['block']:7s} [{rule['domain']:5s}] {rule['description']}")
+    print()
+
+    print("=== Retired/corrected rules (RETIRED_RULES) ===")
+    for rule_id, entry in RETIRED_RULES.items():
+        if entry.replaced_by is None:
+            status = "removed, no replacement"
+        elif entry.replaced_by == rule_id:
+            status = "active under the same id -- definition corrected"
+        else:
+            status = f"replaced by {entry.replaced_by}"
+        print(f"  {rule_id:32s} [{entry.date}] {status}")
+        print(f"    {entry.reason}")
+
+
+# ============================================================
 # Persistence, reporting, CLI
 # ============================================================
 
@@ -1360,9 +1480,20 @@ def main() -> int:
              "--state-snapshot capture at PATH; exit 1 if any (isin, metric_version) row's "
              "input_hash/calculated_at is unchanged. P2 only (function #14, Method Control #3).",
     )
+    parser.add_argument(
+        "--list-catalog", action="store_true",
+        help="Print every active rule (from the declarative catalogs and the procedural rules "
+             "generated inline in this file) plus RETIRED_RULES, then exit. No DB connection. "
+             "Combine with --domain to filter to one domain.",
+    )
     args = parser.parse_args()
 
     isins = [i.strip() for i in args.isin.split(",") if i.strip()] if args.isin else None
+
+    # C2 (FND-0131, 2026-09-28): standalone, no DB connection, independent of --isin/--mode.
+    if args.list_catalog:
+        _print_catalog(args.domain)
+        return 0
 
     # B6 (FND-0128, 2026-09-28): --state-snapshot/--verify-recompute are a standalone P2-only
     # utility, independent of --domain/--mode -- they read/write control.fund_metric_state
