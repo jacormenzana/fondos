@@ -40,3 +40,12 @@ def test_continuous_signed_metric_without_explicit_entry_has_no_bound():
 def test_bound_carries_the_correct_metric_name_not_the_template_wildcard():
     b = get_metric_bound("alpha_persistence")
     assert b.metric == "alpha_persistence"
+
+
+def test_capture_ratio_has_explicit_bound():
+    # FND-0119 (2026-09-28): capture_ratio was named in the skill's Block 5/7
+    # but had no coverage anywhere (unlike upside_capture/downside_capture,
+    # which are HARD_INVARIANT-covered by CAPTURE_CLAMP).
+    b = get_metric_bound("capture_ratio")
+    assert (b.min_value, b.max_value) == (-5.0, 5.0)
+    assert b.bound_type == "PLAUSIBILITY"

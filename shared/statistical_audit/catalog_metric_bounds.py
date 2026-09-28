@@ -8,6 +8,12 @@ get a single generic 0-1 rule generated from their MetricSpec.statistical_type
 rather than one hand-written entry per metric (P#11/DRY) — the cost-domain
 catalog has no equivalent shortcut because its columns don't share one
 common [0,1] shape.
+
+capture_ratio (2026-09-28, audit-skill-alignment plan Wave 1, FND-0119): unlike
+upside_capture/downside_capture, capture_ratio itself was named in the P2
+skill's Block 5 ("capture_ratio finite") and Block 7 (-5..5) but had no
+CAPTURE_CLAMP coverage and no entry here — a confirmed, unintentional gap,
+not a deliberate non-duplication.
 """
 from __future__ import annotations
 
@@ -20,6 +26,7 @@ METRIC_BOUNDS: dict[str, BoundRule] = {
     "vol_ann": BoundRule("vol_ann", 0.0, 5.0, "PLAUSIBILITY"),
     "srri_volatility": BoundRule("srri_volatility", 0.0, 5.0, "PLAUSIBILITY"),
     "return_ann": BoundRule("return_ann", -0.9, 3.0, "PLAUSIBILITY"),
+    "capture_ratio": BoundRule("capture_ratio", -5.0, 5.0, "PLAUSIBILITY"),
 }
 
 _BOUNDED_UNIT_TEMPLATE = BoundRule("*", 0.0, 1.0, "PLAUSIBILITY")

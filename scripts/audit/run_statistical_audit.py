@@ -143,6 +143,12 @@ from shared.statistical_audit.snapshot import build_population
 
 MIN_PEERS = 5
 
+# A4 (FND-0122, 2026-09-28): both skills' Block 1 mandate flagging a coverage (n_valid) drop of
+# more than this fraction vs. the prior persisted run. Unlike shared/statistical_audit/tolerances.py's
+# constants, this is a drift-detection threshold, not a measured comparison tolerance between two
+# same-run values -- it belongs here, not in that file's audited-sweep-only scope.
+COVERAGE_CLIFF_PCT = 0.02
+
 
 # ============================================================
 # Backend dialect helpers (SQLite retired 2026-09-23; Postgres is primary).
@@ -343,19 +349,22 @@ _TS_LATEST_QUERY = """
 """
 
 
-def _pivot_return_ann_by_real_flag(long_df: pd.DataFrame) -> pd.DataFrame:
-    """return_ann_nominal/return_ann_real as sibling columns of the same row
-    (isin, horizon, metric_version) — needed by REAL_EQUALS_NOMINAL and
-    DEFLATION_ORDER, neither of which can be expressed on _pivot_all_metrics'
-    output (there, real_flag is part of the index, so nominal and real values
-    for the same metric never appear side by side in one row).
+def _pivot_by_real_flag(long_df: pd.DataFrame, metric: str) -> pd.DataFrame:
+    """<metric>_nominal/<metric>_real as sibling columns of the same row
+    (isin, horizon, metric_version) for one metric — needed by REAL_EQUALS_NOMINAL
+    (A3, FND-0121: generalized from return_ann-only to every metric with both
+    real_flag values present) and by DEFLATION_ORDER (return_ann only). Neither can
+    be expressed on _pivot_all_metrics' output (there, real_flag is part of the
+    index, so nominal and real values for the same metric never appear side by
+    side in one row). Empty when the metric has no overlapping nominal/real rows
+    (the common case — most metrics are never deflated).
     """
     join_keys = ["isin", "horizon", "metric_version"]
-    subset = long_df[long_df["metric"] == "return_ann"]
+    subset = long_df[long_df["metric"] == metric]
     nominal = subset[subset["real_flag"] == 0][join_keys + ["value"]].rename(
-        columns={"value": "return_ann_nominal"})
+        columns={"value": f"{metric}_nominal"})
     real = subset[subset["real_flag"] == 1][join_keys + ["value"]].rename(
-        columns={"value": "return_ann_real"})
+        columns={"value": f"{metric}_real"})
     return nominal.merge(real, on=join_keys, how="inner")
 
 
@@ -511,6 +520,25 @@ def _periodic_return_variance(conn: "psycopg.Connection", isins: list[str]) -> p
 _P2_METRICS_COLS = ("isin", "metric", "horizon", "value", "real_flag", "metric_version", "Fund_Nature")
 
 
+def _deflation_meaningful(metric: str) -> bool:
+    """REAL_EQUALS_NOMINAL (A3, FND-0121, 2026-09-28) only means anything for a metric whose raw
+    value scales with a uniform per-run deflator (one ES-CPI scalar applied to every fund).
+    Guards against a real, empirically-confirmed false-positive class (live 3-ISIN smoke test,
+    2026-09-28): count/fraction/rank statistics are UNCHANGED by a uniform deflator by
+    construction -- real==nominal there is guaranteed, not a defect, the exact reason
+    VOL_ANN_EQUALS_SRRI_VOL was retired. drawdown_duration (count) and pct_*_months (bounded_unit,
+    sign-of-return-derived) are excluded by statistical_type; *_zscore_cat/*_pctile_cat
+    (rolling_stats.py) are cross-sectional standardized statistics -- a z-score or percentile
+    rank is exactly invariant to scaling every peer's raw value by the same constant, regardless
+    of the underlying metric's own statistical_type (return_ann_zscore_cat inherits return_ann's
+    continuous_signed type via catalog_metrics.py's regime-suffix prefix match, so the suffix
+    check must be independent of, not folded into, the type filter).
+    """
+    if metric.endswith("_zscore_cat") or metric.endswith("_pctile_cat"):
+        return False
+    return get_metric_spec(metric).statistical_type in ("continuous_positive", "continuous_signed")
+
+
 def run_p2_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = None) -> "AuditRun":
     metrics_filter, metrics_params = _isin_filter(conn, isins, "fm.ISIN")
     metrics_query = _P2_METRICS_QUERY.replace("{isin_filter}", metrics_filter)
@@ -525,7 +553,8 @@ def run_p2_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = None)
         spec = get_metric_spec(metric)
         series = group["value"]
 
-        _block1(run, group_key, series, len(group), numeric=True, supports_moments=spec.supports_moments)
+        _block1(run, group_key, series, len(group), numeric=True, supports_moments=spec.supports_moments,
+                high_kurtosis_expected=spec.high_kurtosis_expected)
 
         if spec.statistical_type in ("continuous_positive", "continuous_signed", "bounded_unit"):
             indexed = series.set_axis(group["isin"])
@@ -574,17 +603,32 @@ def run_p2_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = None)
             })
 
     ipc_yoy = _latest_ipc_yoy(conn)
-    deflation_frame = _pivot_return_ann_by_real_flag(long_df)
+    deflation_frame = _pivot_by_real_flag(long_df, "return_ann")
     if deflation_frame.empty:
-        run.skipped.append("BLOCK2 REAL_EQUALS_NOMINAL: no overlapping nominal/real return_ann rows")
+        run.skipped.append("BLOCK5 DEFLATION_ORDER: no overlapping nominal/real return_ann rows")
     else:
         deflation_frame = deflation_frame.assign(ipc_yoy=ipc_yoy if ipc_yoy is not None else float("nan"))
-        rule = P2_PAIRS["REAL_EQUALS_NOMINAL"]
-        result = compare_pairs(deflation_frame, "return_ann_nominal", "return_ann_real", rule)
+
+    # A3 (FND-0121, 2026-09-28): REAL_EQUALS_NOMINAL generalized from return_ann-only to every
+    # metric with both real_flag values present (P2 skill states the rule generically, "same
+    # metric"). DEFLATION_ORDER stays return_ann-only above -- ordering isn't a meaningful check
+    # for e.g. vol_ann/sharpe. See _deflation_meaningful() for the false-positive guard this needs.
+    n_real_nominal_checked = 0
+    for metric in sorted(long_df["metric"].unique()):
+        if not _deflation_meaningful(metric):
+            continue
+        pivot = deflation_frame if metric == "return_ann" else _pivot_by_real_flag(long_df, metric)
+        if pivot.empty:
+            continue
+        if "ipc_yoy" not in pivot.columns:
+            pivot = pivot.assign(ipc_yoy=ipc_yoy if ipc_yoy is not None else float("nan"))
+        n_real_nominal_checked += 1
+        rule = replace(P2_PAIRS["REAL_EQUALS_NOMINAL"], rule_id=f"REAL_EQUALS_NOMINAL_{metric}")
+        result = compare_pairs(pivot, f"{metric}_nominal", f"{metric}_real", rule)
         if result.triggered:
             run.findings.append({
-                "block": "BLOCK2", "rule_id": "REAL_EQUALS_NOMINAL", "rule_class": "STATISTICAL_ANOMALY",
-                "severity": rule.severity, "group_key": "REAL_EQUALS_NOMINAL",
+                "block": "BLOCK2", "rule_id": rule.rule_id, "rule_class": "STATISTICAL_ANOMALY",
+                "severity": rule.severity, "group_key": rule.rule_id,
                 "value": None, "reference_value": None, "threshold": rule.tolerance,
                 "distance": float(result.n_matches),
                 "evidence": (
@@ -594,6 +638,8 @@ def run_p2_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = None)
                 ),
                 "root_cause_candidate": rule.diagnosis,
             })
+    if n_real_nominal_checked == 0:
+        run.skipped.append("BLOCK2 REAL_EQUALS_NOMINAL: no metric has overlapping nominal/real rows")
 
     for metric in _SCALAR_TIMESERIES_METRICS:
         for window in _SCALAR_TIMESERIES_WINDOWS:
@@ -673,6 +719,7 @@ class AuditRun:
 def _block1(
     run: AuditRun, group_key: str, series: pd.Series, n_expected: int,
     numeric: bool = True, supports_moments: bool = True, population: str = "GLOBAL",
+    high_kurtosis_expected: bool = False,
 ) -> None:
     stats: dict = profile_coverage(series, n_expected=n_expected)
     if numeric:
@@ -699,14 +746,27 @@ def _block1(
         })
 
     if stats.get("shape_status") == "OK" and (abs(stats.get("skew", 0) or 0) > 3 or (stats.get("kurtosis", 0) or 0) > 10):
-        run.findings.append({
-            "block": "BLOCK3", "rule_id": "PATHOLOGICAL_SHAPE",
-            "rule_class": "STATISTICAL_ANOMALY", "severity": "WARN", "group_key": group_key,
-            "value": stats["skew"], "reference_value": 3.0, "threshold": 3.0,
-            "distance": None,
-            "evidence": f"skew={stats['skew']:.2f} kurtosis={stats['kurtosis']:.2f}",
-            "root_cause_candidate": "Scale contamination or a NAV/value anomaly survived upstream guards",
-        })
+        # A4 (FND-0120, 2026-09-28): regime-family groups (few obs per regime) are expected to
+        # have high kurtosis by design (P2 skill Block 3 carve-out) -- route them to an INFO
+        # bucket instead of the WARN a non-regime group's pathological shape gets.
+        if high_kurtosis_expected:
+            run.findings.append({
+                "block": "BLOCK3", "rule_id": "PATHOLOGICAL_SHAPE_EXPECTED",
+                "rule_class": "STATISTICAL_ANOMALY", "severity": "INFO", "group_key": group_key,
+                "value": stats["skew"], "reference_value": 3.0, "threshold": 3.0,
+                "distance": None,
+                "evidence": f"skew={stats['skew']:.2f} kurtosis={stats['kurtosis']:.2f}",
+                "root_cause_candidate": "Expected by design -- few observations per regime, not a defect",
+            })
+        else:
+            run.findings.append({
+                "block": "BLOCK3", "rule_id": "PATHOLOGICAL_SHAPE",
+                "rule_class": "STATISTICAL_ANOMALY", "severity": "WARN", "group_key": group_key,
+                "value": stats["skew"], "reference_value": 3.0, "threshold": 3.0,
+                "distance": None,
+                "evidence": f"skew={stats['skew']:.2f} kurtosis={stats['kurtosis']:.2f}",
+                "root_cause_candidate": "Scale contamination or a NAV/value anomaly survived upstream guards",
+            })
 
 
 _OUTLIER_SEVERITY_MAP = {"OUTLIER": "WARN", "WARN": "WARN", "ALARM": "ALARM"}
@@ -852,15 +912,42 @@ def _has_blocking_findings(run: "AuditRun") -> bool:
     return False
 
 
-def _print_drift_report(conn: "psycopg.Connection", run: "AuditRun", compare_to: str, top_n: int = 20) -> None:
+def _compute_drift(conn: "psycopg.Connection", run: "AuditRun", compare_to: str):
+    """Loads the prior run's persisted statistics and compares them against the current
+    run's in-memory statistics. Returns None when no prior audit_statistic rows exist for
+    compare_to/domain -- computed once and shared by _apply_coverage_cliff_findings (must run
+    before _print_report so the finding is counted) and _print_drift_report (prints after)."""
     previous = load_run_statistics(conn, compare_to, run.domain)
     if previous.empty:
-        print(f"! --compare-to {compare_to}: no audit_statistic rows found for domain={run.domain}")
-        return
-
+        return None
     current = statistics_to_frame(run.statistics)
-    result = compare_runs(previous, current)
+    return compare_runs(previous, current)
 
+
+def _apply_coverage_cliff_findings(run: "AuditRun", result) -> None:
+    """A4 (FND-0122, 2026-09-28): both skills mandate flagging a coverage (n_valid) drop of more
+    than COVERAGE_CLIFF_PCT vs. the prior persisted run as an automatic Block 1 finding -- not
+    just a printed drift-report line, which --compare-to already gave for free. GLOBAL-only, same
+    as every other _block1 escalation (PEER segments are context for an already-flagged GLOBAL
+    group, never flagged a second time)."""
+    n_valid_deltas = result.deltas[
+        (result.deltas["stat_name"] == "n_valid") & (result.deltas["population"] == "GLOBAL")
+    ]
+    for _, row in n_valid_deltas.iterrows():
+        pct_change = row["pct_change"]
+        if pd.isna(pct_change) or pct_change > -COVERAGE_CLIFF_PCT:
+            continue
+        run.findings.append({
+            "block": "BLOCK1", "rule_id": "COVERAGE_CLIFF",
+            "rule_class": "STATISTICAL_ANOMALY", "severity": "WARN", "group_key": row["group_key"],
+            "value": row["current_value"], "reference_value": row["previous_value"],
+            "threshold": -COVERAGE_CLIFF_PCT, "distance": float(pct_change),
+            "evidence": f"n_valid {row['previous_value']:.0f} -> {row['current_value']:.0f} ({pct_change:+.1%})",
+            "root_cause_candidate": "Upstream NAV loss or calc regression -- coverage dropped for this group",
+        })
+
+
+def _print_drift_report(result, compare_to: str, top_n: int = 20) -> None:
     print(f"=== Drift vs run_id={compare_to} ===")
     print(f"New groups: {len(result.new_groups)}  Dropped groups: {len(result.dropped_groups)}")
     if result.new_groups:
@@ -912,11 +999,18 @@ def main() -> int:
         if not keep_open:
             conn.close()
 
+    drift_result = _compute_drift(conn, run, args.compare_to) if args.compare_to else None
+    if drift_result is not None:
+        _apply_coverage_cliff_findings(run, drift_result)
+
     _print_report(run, run_id)
 
     if args.compare_to:
         print()
-        _print_drift_report(conn, run, args.compare_to)
+        if drift_result is None:
+            print(f"! --compare-to {args.compare_to}: no audit_statistic rows found for domain={run.domain}")
+        else:
+            _print_drift_report(drift_result, args.compare_to)
 
     if args.persist:
         n_stats, n_findings = _persist(conn, run, run_id)
