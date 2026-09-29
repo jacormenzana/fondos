@@ -60,6 +60,21 @@ def test_isin_filter_builds_in_clause_with_adapted_placeholders():
     assert params == ("LU1", "LU2", "LU3")
 
 
+# FND-0137 Section B (2026-09-29): the 3 new boundary/lifespan queries never leak an
+# un-adapted {isin_filter} or {window} token or a bare `?` -- same discipline as the
+# timeseries queries above.
+
+def test_boundary_and_lifespan_queries_never_leak_unadapted_tokens():
+    for q in (
+        runner._TS_WINDOW_DEFLATION_QUERY, runner._NAV_DATES_QUERY,
+        runner._INFLATION_BOUNDARY_QUERY, runner._MACRO_BOUNDARY_QUERY, runner._NAV_LIFESPAN_QUERY,
+    ):
+        adapted = runner._sql(object(), q, isin_filter="AND t.isin IN (%s)")
+        assert "{isin_filter}" not in adapted
+        assert "{window}" not in adapted
+        assert "?" not in adapted
+
+
 def test_sql_substitutes_isin_filter_before_placeholder_pass():
     frag, _ = runner._isin_filter(object(), ["LU1"], "isin")
     out = runner._sql(object(), "SELECT 1 WHERE metric = ? {isin_filter} GROUP BY isin", isin_filter=frag)

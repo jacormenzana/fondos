@@ -445,6 +445,36 @@ _PEER_REAL_FLAG = 0
 
 _IPC_QUERY = "SELECT date, ipc_index FROM series_inflation WHERE geography = 'ES' ORDER BY date"
 
+# FND-0137 Section B (2026-09-29): Reference Boundary Audit + Orphaned Asset Identification
+# (AUDITORIA_ESTADISTICA.md §4 Block 6, temporal integrity). INFO-severity only -- a fund whose
+# NAV history predates or outlasts a macro source's coverage is an expected, correctly-handled
+# degradation (deflate_nav()'s leading-gap bfill / a merge_asof backward match that's simply the
+# most recent one available for a trailing date), not a defect; catalog_invariants.py's
+# WINDOW_FISHER_IDENTITY (Section A) already row-checks that the degradation was applied
+# correctly, so this section reports COVERAGE, not correctness.
+_INFLATION_BOUNDARY_QUERY = (
+    "SELECT geography, MIN(date) AS min_date, MAX(date) AS max_date FROM series_inflation "
+    "GROUP BY geography ORDER BY geography"
+)
+_MACRO_BOUNDARY_QUERY = (
+    "SELECT indicator, geography, MIN(date) AS min_date, MAX(date) AS max_date FROM series_macro "
+    "GROUP BY indicator, geography ORDER BY indicator, geography"
+)
+
+# Operational lifespan comes from fund_nav_monthly (the actual deflation INPUT and the same
+# population the FND-0114 investigation itself used to count the 275 affected ISINs), not from
+# fund_metric_timeseries: the timeseries table only carries ROLLING-WINDOW END dates -- a strict
+# subset of a fund's true lifespan that starts well after inception and would understate any
+# leading-gap overrun.
+_NAV_LIFESPAN_QUERY = """
+    SELECT n.ISIN AS isin, MIN(n.Date) AS min_date, MAX(n.Date) AS max_date
+    FROM fund_nav_monthly n
+    JOIN fund_master m ON m.ISIN = n.ISIN
+    WHERE m.In_Current_Universe = 1
+    {isin_filter}
+    GROUP BY n.ISIN
+"""
+
 # B5 (FND-0127, 2026-09-28): Block 4 <-> fund_metric_alerts reconciliation (function #12).
 _ALERTS_QUERY = """
     SELECT a.isin, a.metric, a.detected_at
@@ -785,6 +815,100 @@ def _deflation_meaningful(metric: str) -> bool:
     return get_metric_spec(metric).statistical_type in ("continuous_positive", "continuous_signed")
 
 
+def _run_reference_boundary_audit(run: "AuditRun", conn: "psycopg.Connection") -> None:
+    """FND-0137 Section B, part 1 (Reference Boundary Audit): logs the absolute MIN/MAX date of
+    every external macro source (series_inflation per geography, series_macro per
+    indicator/geography) as an INFO Block 6 finding. Pure coverage reporting -- a source with a
+    late start or an old MAX date is normal (macro data is published with a lag; ES CPI itself
+    only starts 2000-01), not itself a defect. Run once per audit, at initialization, so the
+    boundaries are visible in every report even when nothing downstream trips on them.
+    """
+    for geography, min_date, max_date in _df(conn, _sql(conn, _INFLATION_BOUNDARY_QUERY)).itertuples(index=False):
+        run.findings.append({
+            "block": "BLOCK6", "rule_id": "MACRO_SOURCE_BOUNDARY",
+            "rule_class": "STATISTICAL_ANOMALY", "severity": "INFO",
+            "group_key": f"series_inflation|{geography}", "value": None, "reference_value": None,
+            "threshold": None, "distance": None,
+            "evidence": f"coverage [{min_date}, {max_date}]",
+            "root_cause_candidate": "Reference boundary, not a defect -- context for any "
+                                     "leading/trailing-gap finding below",
+        })
+    for indicator, geography, min_date, max_date in _df(conn, _sql(conn, _MACRO_BOUNDARY_QUERY)).itertuples(index=False):
+        run.findings.append({
+            "block": "BLOCK6", "rule_id": "MACRO_SOURCE_BOUNDARY",
+            "rule_class": "STATISTICAL_ANOMALY", "severity": "INFO",
+            "group_key": f"series_macro|{indicator}|{geography}", "value": None,
+            "reference_value": None, "threshold": None, "distance": None,
+            "evidence": f"coverage [{min_date}, {max_date}]",
+            "root_cause_candidate": "Reference boundary, not a defect -- context for any "
+                                     "leading/trailing-gap finding below",
+        })
+
+
+def _run_orphaned_asset_check(
+    run: "AuditRun", conn: "psycopg.Connection", isins: Sequence[str] | None = None,
+) -> None:
+    """FND-0137 Section B, part 2 (Orphaned Asset Identification): funds whose NAV lifespan
+    extends beyond the ES CPI series' own coverage on either edge. INFO only, by design --
+    Section A's WINDOW_FISHER_IDENTITY/WINDOW_DEFLATION_STRICT already verify, ROW BY ROW, that
+    the degradation for these funds was applied CORRECTLY (deflate_nav()'s leading-gap bfill, or
+    a merge_asof(backward) match against the latest known CPI point for a trailing date); this
+    finding is coverage context, not a second correctness check on the same funds.
+
+    Named CPI_COVERAGE_LEADING_GAP / CPI_COVERAGE_TRAILING_GAP to distinguish the two edges:
+    leading (NAV starts before CPI coverage -- the FND-0114 population, 275/2953 live ISINs)
+    needs the leading-gap bfill; trailing (NAV outlives the latest known CPI point, normal
+    operational lag between NAV and CPI publication) needs no fill at all -- merge_asof(backward)
+    naturally reuses the latest known value, which is correct behaviour, not a gap.
+    """
+    isin_filter, isin_params = _isin_filter(conn, isins, "n.ISIN")
+    lifespan = _df(conn, _sql(conn, _NAV_LIFESPAN_QUERY, isin_filter=isin_filter), isin_params)
+    if lifespan.empty:
+        run.skipped.append("BLOCK6 CPI_COVERAGE_LEADING_GAP/CPI_COVERAGE_TRAILING_GAP: no NAV rows")
+        return
+
+    ipc_bounds = _df(conn, _sql(conn, _INFLATION_BOUNDARY_QUERY))
+    es_bounds = ipc_bounds[ipc_bounds["geography"] == "ES"]
+    if es_bounds.empty:
+        run.skipped.append("BLOCK6 CPI_COVERAGE_LEADING_GAP/CPI_COVERAGE_TRAILING_GAP: no ES CPI coverage")
+        return
+    ipc_min, ipc_max = es_bounds.iloc[0][["min_date", "max_date"]]
+
+    lifespan["min_date"] = pd.to_datetime(lifespan["min_date"])
+    lifespan["max_date"] = pd.to_datetime(lifespan["max_date"])
+    leading = lifespan[lifespan["min_date"] < pd.Timestamp(ipc_min)]
+    trailing = lifespan[lifespan["max_date"] > pd.Timestamp(ipc_max)]
+
+    if not leading.empty:
+        run.findings.append({
+            "block": "BLOCK6", "rule_id": "CPI_COVERAGE_LEADING_GAP",
+            "rule_class": "STATISTICAL_ANOMALY", "severity": "INFO",
+            "group_key": "CPI_COVERAGE_LEADING_GAP", "value": None, "reference_value": None,
+            "threshold": None, "distance": float(len(leading)),
+            "evidence": f"{len(leading)}/{len(lifespan)} ISINs' NAV history starts before ES CPI "
+                        f"coverage ({ipc_min}) -- deflate_nav()'s leading-gap bfill applies; "
+                        f"verify row-by-row correctness via WINDOW_FISHER_IDENTITY (Section A), "
+                        f"not here",
+            "root_cause_candidate": "Expected degradation for a fund older than ES CPI coverage, "
+                                     "not itself a defect",
+            "violating_isins": tuple(sorted(leading["isin"].tolist())),
+        })
+    if not trailing.empty:
+        run.findings.append({
+            "block": "BLOCK6", "rule_id": "CPI_COVERAGE_TRAILING_GAP",
+            "rule_class": "STATISTICAL_ANOMALY", "severity": "INFO",
+            "group_key": "CPI_COVERAGE_TRAILING_GAP", "value": None, "reference_value": None,
+            "threshold": None, "distance": float(len(trailing)),
+            "evidence": f"{len(trailing)}/{len(lifespan)} ISINs' NAV history extends past the "
+                        f"latest known ES CPI point ({ipc_max}) -- normal NAV-vs-CPI publication "
+                        f"lag; deflator for those recent dates is carried forward flat via "
+                        f"merge_asof(backward), not a gap needing a fill",
+            "root_cause_candidate": "Normal operational lag between NAV and macro-source "
+                                     "publication, not a defect",
+            "violating_isins": tuple(sorted(trailing["isin"].tolist())),
+        })
+
+
 def _run_beta_orphan_check(run: "AuditRun", long_df: pd.DataFrame) -> None:
     """Block 6 (P2, B2/FND-0124, 2026-09-28): flags beta_* rows whose batch_id is not internally
     consistent -- either the beta_* group itself spans more than one batch_id for the same
@@ -916,6 +1040,11 @@ def run_p2_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = None)
 
     run = AuditRun(domain="p2_metrics")
     run.universe_size = int(long_df["isin"].nunique())
+
+    # FND-0137 Section B: run at initialization so the boundaries are visible in every report,
+    # independent of whether anything below trips on them.
+    _run_reference_boundary_audit(run, conn)
+    _run_orphaned_asset_check(run, conn, isins=isins)
 
     for keys, group in long_df.groupby(list(_P2_GROUP_KEYS)):
         metric, horizon, real_flag, metric_version = keys
@@ -1363,6 +1492,16 @@ _PROCEDURAL_RULES: tuple[dict, ...] = (
                      "metric with both real_flag values present and _deflation_meaningful()"},
     {"rule_id": "SCALAR_EQUALS_TIMESERIES_<metric>_<window>", "block": "BLOCK2", "domain": "p2",
      "description": "generalized per-(metric,window) from the SCALAR_EQUALS_TIMESERIES PairRule"},
+    {"rule_id": "MACRO_SOURCE_BOUNDARY", "block": "BLOCK6", "domain": "p2",
+     "description": "INFO: MIN/MAX date of every series_inflation geography and series_macro "
+                     "indicator/geography -- coverage context, not a defect (FND-0137 §B)"},
+    {"rule_id": "CPI_COVERAGE_LEADING_GAP", "block": "BLOCK6", "domain": "p2",
+     "description": "INFO: ISIN's NAV history starts before ES CPI coverage begins -- expected "
+                     "degradation (deflate_nav()'s leading-gap bfill), verified row-by-row by "
+                     "WINDOW_FISHER_IDENTITY, not a second correctness check here (FND-0137 §B)"},
+    {"rule_id": "CPI_COVERAGE_TRAILING_GAP", "block": "BLOCK6", "domain": "p2",
+     "description": "INFO: ISIN's NAV history extends past the latest known ES CPI point -- "
+                     "normal NAV-vs-CPI publication lag, not a gap needing a fill (FND-0137 §B)"},
 )
 
 

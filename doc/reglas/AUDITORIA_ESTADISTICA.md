@@ -636,3 +636,40 @@ deriva que no viene de los datos.
 evidencia, nunca autoriza por sí solo una corrección. La corrección se hace sobre el módulo de
 cálculo o escritura, y se valida mediante recómputo reproducible (Method Control #3 de ambas
 skills, codificado en §4 #14).
+
+6. **Fase F — detectores de la clase FND-0114 (Bloque 5 + Bloque 6)** ✅ 2026-09-29 (ticket
+   `FND-0137`, commit `46be939`). Origen: FND-0114 (`rolling_stats.py` deflactaba con un ancla de
+   rebase sesgada por look-ahead — 275/2.953 ISIN afectados) tenía código corregido pero ningún
+   invariante del motor podía haberlo detectado. Una regla literal "real==nominal en t=0" (la
+   propuesta inicial) se descartó tras investigar: `deflate_nav()` rebasa el deflactor a
+   exactamente 1 en la primera fecha NAV bajo CUALQUIER ancla, correcta o defectuosa — la regla
+   pasaría por construcción.
+   - **Bloque 5 — 3 reglas nuevas en `P2_INVARIANTS`**, evaluadas sobre un frame nuevo por
+     ventana (`build_window_deflation_frame()`, `shared/statistical_audit/timeseries.py`, puro,
+     testeable sin BD): `WINDOW_NOMINAL_IDENTITY` (PLAUSIBILITY — el `return_ann` nominal
+     almacenado debe coincidir con `fund_nav_monthly` actual; protege contra un reescritura de
+     histórico NAV posterior al cálculo, para que no se confunda con un defecto de deflación);
+     `WINDOW_DEFLATION_STRICT` (HARD_INVARIANT — real < nominal cuando el CPI de esa ventana
+     concreta sube, no un escalar YoY único como en `DEFLATION_ORDER`); `WINDOW_FISHER_IDENTITY`
+     (HARD_INVARIANT — el deflactor IMPLÍCITO en el par nominal/real almacenado debe igualar
+     `ipc_fin/ipc_inicio` bajo el contrato exacto de `deflate_nav()` — esta es la regla que sí
+     detecta FND-0114, probado reproduciendo literalmente el código defectuoso pre-`a483f49` en
+     un test). Gate de rendimiento medido ANTES de escribir el frame: población completa × 5
+     ventanas, 7,3s (límite 120s) — sin necesidad de prefiltro SQL.
+   - **Bloque 6 — Reference Boundary Audit + Orphaned Asset Identification**: `MACRO_SOURCE_BOUNDARY`
+     (INFO, cobertura MIN/MAX de cada fuente `series_inflation`/`series_macro`, informativo, no
+     defecto); `CPI_COVERAGE_LEADING_GAP`/`CPI_COVERAGE_TRAILING_GAP` (INFO — ISIN cuyo historial
+     NAV empieza antes o termina después de la cobertura de CPI ES; la degradación ya está
+     verificada fila a fila por `WINDOW_FISHER_IDENTITY`, este hallazgo es contexto de cobertura,
+     no una segunda comprobación de corrección).
+   - **Validación en vivo:** muestra 40-ISIN (20 de los 275 FND-0114 + 20 control) — el lote
+     FND-0114 dio 0 violaciones (el dueño ejecutó el recómputo de los 275 ISIN durante la misma
+     sesión; verificado independientemente sobre la población completa: 0/31.100 filas aplicables
+     violan `WINDOW_FISHER_IDENTITY`, cerrando FND-0114); el lote de control marcó hallazgos
+     legítimos de staleness pre-`a483f49` (`algorithm_version` anterior al bump de `CALC_VERSION`),
+     confirmado por `w_nominal_gap≈1e-15` en cada violación (descarta un defecto del propio
+     detector). `CPI_COVERAGE_LEADING_GAP` marcó 20/40 y `CPI_COVERAGE_TRAILING_GAP` 40/40 en la
+     misma muestra, como se esperaba.
+   - Pendiente de la misma directiva externa, fuera de alcance de esta fase: sección C (escáner
+     AST de anti-patrones) y sección D (motor de reconciliación shadow) — ver
+     `FND-0137` en `gestion.backlog` para el detalle de alcance de cada una.
