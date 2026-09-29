@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from ..regime_taxonomy import REGIME_SUFFIX
 from .invariants import InvariantRule
-from .tolerances import FLOAT_IDENTITY_TOLERANCE, KID_ROUNDING_TOLERANCE_PP
+from .tolerances import FLOAT_IDENTITY_TOLERANCE, IPC_ELIGIBILITY_FLOOR, KID_ROUNDING_TOLERANCE_PP
 
 P2_INVARIANTS: tuple[InvariantRule, ...] = (
     InvariantRule("MAX_DD_RANGE", "-1 <= max_dd <= 0", bound_type="HARD_INVARIANT",
@@ -67,6 +67,39 @@ P2_INVARIANTS: tuple[InvariantRule, ...] = (
         bound_type="HARD_INVARIANT",
         description="Frozen/flat NAV masquerading as zero volatility (corrected per §2.4 — "
                      "the original 'vol_ann>0 when return_ann!=0' rule is not a true invariant)",
+    ),
+    # FND-0114 detectors (2026-09-29). Evaluated on the per-window frame built by
+    # timeseries.build_window_deflation_frame() (w_* columns) -- _run_invariants routes each
+    # rule to whichever frame carries its columns, so these never touch the since_inception
+    # wide frame. A literal "real == nominal at t=0" rule was rejected: deflate_nav() rebases
+    # the deflator to 1 at the first NAV date under ANY anchor (correct or buggy), so it cannot
+    # detect this failure class -- it would pass by construction. WINDOW_FISHER_IDENTITY below
+    # instead cross-checks the deflator IMPLIED by the stored nominal/real return_ann pair
+    # against the one the CPI series actually supports.
+    InvariantRule(
+        "WINDOW_NOMINAL_IDENTITY", f"w_nominal_gap <= {FLOAT_IDENTITY_TOLERANCE}",
+        bound_type="PLAUSIBILITY",
+        description="Stored nominal return_ann != (nav_end/nav_start)^(1/years) from today's "
+                     "fund_nav_monthly -- row stale vs a rewritten NAV history (not a deflation "
+                     "defect); gates the two deflation rules below so a NAV rewrite can't be "
+                     "mistaken for a deflation bug",
+    ),
+    InvariantRule(
+        "WINDOW_DEFLATION_STRICT", "w_return_real < w_return_nominal",
+        when=f"w_cpi_ann > {IPC_ELIGIBILITY_FLOOR} and "
+             f"w_nominal_gap <= {FLOAT_IDENTITY_TOLERANCE}",
+        bound_type="HARD_INVARIANT",
+        description="Real return_ann not strictly below nominal over a window with positive "
+                     "CPI change -- deflator flattened over that window (FND-0114 class)",
+    ),
+    InvariantRule(
+        "WINDOW_FISHER_IDENTITY",
+        f"abs(w_deflator_implied / w_deflator_expected - 1) <= {FLOAT_IDENTITY_TOLERANCE}",
+        when=f"w_nominal_gap <= {FLOAT_IDENTITY_TOLERANCE}",
+        bound_type="HARD_INVARIANT",
+        description="Deflator implied by stored nominal/real return_ann != ipc(end)/ipc(start) "
+                     "under deflate_nav()'s merge_asof(backward)+leading-bfill contract -- wrong "
+                     "IPC anchor or date alignment in the real series (FND-0114 class)",
     ),
 ) + tuple(
     # N_OBS_NONNEG fix (2026-09-13): the catalog cited a bare `n_obs` column

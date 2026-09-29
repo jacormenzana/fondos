@@ -150,6 +150,7 @@ from shared.statistical_audit.persistence import clear_run, emit_findings, emit_
 from shared.statistical_audit.reconcile import reconcile_with_alerts
 from shared.statistical_audit.recompute_gate import assert_recompute_happened, capture_state
 from shared.statistical_audit.snapshot import build_population, build_snapshot
+from shared.statistical_audit.timeseries import build_window_deflation_frame
 from shared.statistical_audit.tolerances import KID_ROUNDING_TOLERANCE_PP
 
 MIN_PEERS = 5
@@ -555,6 +556,70 @@ _TS_SERIES_SUMMARY_QUERY = """
     {isin_filter}
     GROUP BY isin, real_flag
 """
+
+
+# FND-0114 (2026-09-29): inputs to timeseries.build_window_deflation_frame() -- the per-window
+# Block 5 deflation invariants (WINDOW_NOMINAL_IDENTITY/WINDOW_DEFLATION_STRICT/
+# WINDOW_FISHER_IDENTITY, catalog_invariants.py). Reads the base fund_metric_timeseries table
+# directly (post-v27-pivot, nominal/real already sit side by side per row -- no long-shape view
+# needed) rather than v_fund_metric_timeseries_long, since this needs both variants on one row,
+# not the long/pivoted shape the view reconstructs. Step-0 timing (2026-09-29, live DB, count-only
+# then full fetch): ~1.4s/window fetch x 5 windows = 7.3s total, well under the 120s gate -- no
+# SQL-side prefilter needed.
+_TS_WINDOW_DEFLATION_QUERY = """
+    SELECT t.isin, t.date, t.value_nominal AS w_return_nominal, t.value_real AS w_return_real,
+           t.source_rows AS w_n_obs
+    FROM fund_metric_timeseries t
+    JOIN fund_master m ON m.ISIN = t.isin
+    WHERE t.metric = 'return_ann' AND t.{window} = ?
+      AND t.has_real AND t.value_nominal IS NOT NULL AND t.value_real IS NOT NULL
+      AND m.In_Current_Universe = 1
+    {isin_filter}
+"""
+
+_NAV_DATES_QUERY = """
+    SELECT n.ISIN AS isin, n.Date AS date, n.NAV AS nav
+    FROM fund_nav_monthly n
+    JOIN fund_master m ON m.ISIN = n.ISIN
+    WHERE m.In_Current_Universe = 1
+    {isin_filter}
+"""
+
+
+def _build_window_deflation_frame(
+    conn: "psycopg.Connection", isins: Sequence[str] | None = None,
+) -> pd.DataFrame:
+    """Fetches the three raw inputs (per-window return_ann pairs, NAV dates+values, ES CPI) and
+    hands them to the pure builder (shared.statistical_audit.timeseries.build_window_deflation_frame,
+    R-7-testable without a DB). One frame across all ROLLING_WINDOWS keys, concatenated with a
+    window_label column so _run_invariants can route the 3 FND-0114 rules to it in one pass.
+    Empty (not an error) when the population has no eligible rows yet -- the same "skip, don't
+    fail" contract every other frame builder in this module follows.
+    """
+    isin_filter, isin_params = _isin_filter(conn, isins, "t.isin")
+    ts_query = _sql(conn, _TS_WINDOW_DEFLATION_QUERY, isin_filter=isin_filter)
+    ts_frames = []
+    for window_label in ROLLING_WINDOWS:
+        df = _df(conn, ts_query, (window_label, *isin_params))
+        if df.empty:
+            continue
+        df["window_label"] = window_label
+        ts_frames.append(df)
+    if not ts_frames:
+        return pd.DataFrame()
+    ts = pd.concat(ts_frames, ignore_index=True)
+
+    nav_isin_filter, nav_isin_params = _isin_filter(conn, isins, "n.ISIN")
+    nav_query = _sql(conn, _NAV_DATES_QUERY, isin_filter=nav_isin_filter)
+    nav_dates = _df(conn, nav_query, nav_isin_params)
+    if nav_dates.empty:
+        return pd.DataFrame()
+
+    ipc = build_population(conn, _IPC_QUERY, require_universe_filter=False)
+    if ipc.empty:
+        return pd.DataFrame()
+
+    return build_window_deflation_frame(ts, nav_dates, ipc)
 
 
 def _month_span(min_date: str, max_date: str) -> int:
@@ -1031,7 +1096,17 @@ def run_p2_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = None)
         prv = _periodic_return_variance(conn, wide_for_invariants["isin"].unique().tolist())
         if not prv.empty:
             wide_for_invariants = wide_for_invariants.merge(prv, on="isin", how="left")
-    _run_invariants(run, P2_INVARIANTS, [wide_for_invariants], block="BLOCK5")
+
+    # FND-0114 (2026-09-29): separate frame -- WINDOW_NOMINAL_IDENTITY/WINDOW_DEFLATION_STRICT/
+    # WINDOW_FISHER_IDENTITY need per-window rows (isin, date, window_label), which
+    # wide_for_invariants (indexed by isin/horizon/real_flag/metric_version) cannot carry. Empty
+    # is a legitimate "nothing eligible yet" result, not an error -- _run_invariants already
+    # reports a per-rule skip when none of the frames it's given carry a rule's columns, so no
+    # separate empty-check is needed here.
+    window_deflation_frame = _build_window_deflation_frame(conn, isins=isins)
+    _run_invariants(
+        run, P2_INVARIANTS, [wide_for_invariants, window_deflation_frame], block="BLOCK5",
+    )
 
     _run_alert_reconciliation(run, conn, isins=isins)
 
@@ -1209,13 +1284,24 @@ def _run_invariants(run: AuditRun, rules, frames: list[pd.DataFrame], block: str
         result = check_invariant(frame, rule)
         if result.n_violations == 0:
             continue
+        # FND-0114 (2026-09-29): when the violating rows carry an isin column (the per-window
+        # deflation frame does; the since_inception wide frame does too), name the affected ISINs
+        # in the evidence and keep the raw list on the finding (NOT one of _FINDING_COLUMNS, so
+        # emit_findings() never persists it) -- _print_report's remediation block reads it back.
+        evidence = f"{result.n_violations}/{result.n_applicable} applicable rows violate"
+        violating_isins: tuple[str, ...] = ()
+        if "isin" in result.violations.columns:
+            violating_isins = tuple(sorted(result.violations["isin"].dropna().unique().tolist()))
+            if violating_isins:
+                evidence += f" across {len(violating_isins)} ISINs"
         run.findings.append({
             "block": block, "rule_id": rule.rule_id, "rule_class": rule.bound_type,
             "severity": "ALARM" if rule.bound_type == "HARD_INVARIANT" else "WARN",
             "group_key": rule.rule_id, "value": None, "reference_value": None, "threshold": None,
             "distance": float(result.n_violations),
-            "evidence": f"{result.n_violations}/{result.n_applicable} applicable rows violate",
+            "evidence": evidence,
             "root_cause_candidate": rule.description,
+            "violating_isins": violating_isins,
         })
 
 
@@ -1401,6 +1487,24 @@ def _print_report(run: "AuditRun", run_id: str) -> None:
             print("Remediation: no per-fund finding carries an ISIN this run (only "
                   "population-level findings) -- investigate the root cause before targeting a "
                   "--recompute-costs batch.")
+
+    # FND-0114 (2026-09-29): same idea as the cost_attributes block above, for the two deflation
+    # invariants (WINDOW_DEFLATION_STRICT, WINDOW_FISHER_IDENTITY) -- point straight at the
+    # affected ISINs rather than leaving the reader to re-derive them from the count.
+    if run.domain == "p2_metrics":
+        _DEFLATION_RULES = ("WINDOW_DEFLATION_STRICT", "WINDOW_FISHER_IDENTITY")
+        defl_isins = sorted({
+            isin for f in run.findings if f["rule_id"] in _DEFLATION_RULES
+            for isin in f.get("violating_isins", ())
+        })
+        if defl_isins:
+            isin_csv = ",".join(defl_isins)
+            print(f"\nRemediation (FND-0114 class, {len(defl_isins)} ISINs): "
+                  f"run_pipeline.py --isin {isin_csv} --force")
+            print("Certify with: --state-snapshot snap.json --isin <ISINs> (before) -> "
+                  "run_pipeline.py --force -> --verify-recompute snap.json --isin <ISINs> "
+                  "(every input_hash must change) -> re-run this audit on the same ISINs and "
+                  "confirm 0 WINDOW_DEFLATION_STRICT/WINDOW_FISHER_IDENTITY violations.")
 
 
 def _has_blocking_findings(run: "AuditRun") -> bool:
