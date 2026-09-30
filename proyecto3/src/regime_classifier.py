@@ -441,6 +441,81 @@ def persist_regime_history(conn: "psycopg.Connection", hist: pd.DataFrame,
 
 
 # ============================================================
+# Semaforo: senales por indicador
+# ============================================================
+
+_SEMAFORO_SEVERITY = {"Verde": 0, "Ambar": 1, "Rojo": 2}
+
+
+def _semaforo_indicator_signals(filled: pd.DataFrame) -> dict:
+    """Senales de indicador vigentes en el ULTIMO mes de `filled` (macro con ffill).
+
+    Devuelve {clave: (severidad, texto)}; una clave por indicador. Es pura (solo lee `filled`),
+    de modo que semaforo(n_last) la evalua sobre ventanas recortadas sin duplicar la logica.
+    """
+    out = {}
+
+    # Shock petroleo mensual (Fase 1d: oil_mom ya derivado en _load_macro_series; antes se
+    # probaba "oil_wti_GLOBAL", una columna que nunca sobrevivia al filtro)
+    if "oil_mom" in filled.columns:
+        s = filled["oil_mom"].dropna()
+        if not s.empty:
+            v = s.iloc[-1]
+            if v > SEMAFORO_OIL_SPIKE:
+                out["oil"] = ("Rojo", f"Shock petroleo: +{v*100:.1f}% mensual")
+            elif v > SEMAFORO_OIL_MOM:
+                out["oil"] = ("Ambar", f"Petroleo acelerando: +{v*100:.1f}%/mes")
+
+    # CLI cruzando 100 o cayendo bruscamente
+    if "cli_eu" in filled.columns:
+        cli = filled["cli_eu"].dropna().iloc[-2:]
+        if len(cli) == 2:
+            drop = cli.iloc[-2] - cli.iloc[-1]
+            if drop > SEMAFORO_CLI_DROP:
+                out["cli"] = ("Rojo", f"CLI cae {drop:.1f}pts en 1 mes")
+            elif abs(cli.iloc[-1] - CLI_EXPANSION) < SEMAFORO_CLI_CROSS:
+                out["cli"] = ("Ambar", f"CLI en zona critica: {cli.iloc[-1]:.1f}")
+
+    # IPC acelerando
+    if "ipc_yoy_avg" in filled.columns:
+        ipc = filled["ipc_yoy_avg"].dropna().iloc[-2:]
+        if len(ipc) == 2:
+            accel = ipc.iloc[-1] - ipc.iloc[0]
+            if accel > SEMAFORO_IPC_ACCEL:
+                out["ipc"] = ("Ambar", f"IPC acelera {accel*100:.2f}pp")
+
+    # Tipos con salto brusco
+    if "rate_deposit" in filled.columns:
+        rate = filled["rate_deposit"].dropna().iloc[-2:]
+        if len(rate) == 2:
+            jump = abs(rate.iloc[-1] - rate.iloc[0])
+            if jump >= SEMAFORO_RATE_JUMP:
+                out["rate"] = ("Rojo", f"Tipos saltan {jump:.2f}pp en 1 mes")
+
+    # Spread HY -- estres de credito
+    if "spread_hy" in filled.columns:
+        s = filled["spread_hy"].dropna()
+        if not s.empty:
+            v = s.iloc[-1]
+            if v > SEMAFORO_SPREAD_RED:
+                out["spread"] = ("Rojo", f"Spread HY critico: {v:.1f}%")
+            elif v > SEMAFORO_SPREAD_AMBER:
+                out["spread"] = ("Ambar", f"Spread HY elevado: {v:.1f}%")
+
+    # VIX -- miedo de mercado (Fase 1d: mismo defecto que el petroleo)
+    if "vix_mom" in filled.columns:
+        s = filled["vix_mom"].dropna()
+        if not s.empty:
+            v = s.iloc[-1]
+            if v > SEMAFORO_VIX_SPIKE:
+                out["vix"] = ("Rojo", f"VIX spike: +{v*100:.1f}% mensual")
+            elif v > SEMAFORO_VIX_MOM:
+                out["vix"] = ("Ambar", f"VIX subiendo: +{v*100:.1f}%/mes")
+
+    return out
+
+
+# ============================================================
 # Clase principal
 # ============================================================
 
@@ -596,11 +671,18 @@ class RegimeClassifier:
         pct    = (counts / counts.sum() * 100).round(1)
         return pd.DataFrame({"meses": counts, "pct": pct})
 
-    def semaforo(self, n_last: int = 3) -> SemaforoResult:
+    def semaforo(self, n_last: int = 1) -> SemaforoResult:
         """
         Semaforo de estabilidad del regimen actual.
         Verde: estable | Ambar: senales de cambio | Rojo: cambio confirmado
+
+        n_last (FND-0154): confirmacion multi-mes. Una senal de indicador solo cuenta si se
+        cumple en CADA uno de los ultimos n_last meses (con la severidad mas baja que tuvo en
+        ese tramo); n_last=1 (por defecto) lee solo el ultimo mes, como antes. El cambio de
+        regimen es un suceso, no un estado: se evalua siempre en el ultimo mes y no se somete
+        a la ventana.
         """
+        n_last = max(1, int(n_last))
         hist   = self.classify_historical()
         filled = self._macro.ffill()
         signals = []
@@ -617,80 +699,15 @@ class RegimeClassifier:
             curr = hist["regime"].iloc[-1] if not hist.empty else "Desconocido"
             prev = None
 
-        # Shock petroleo mensual (Fase 1d: oil_mom ya derivado en
-        # _load_macro_series; antes se probaba "oil_wti_GLOBAL", una
-        # columna que _load_macro_series nunca deja pasar -- esta senal
-        # jamas podia dispararse)
-        if "oil_mom" in filled.columns:
-            oil_mom_series = filled["oil_mom"].dropna()
-            if not oil_mom_series.empty:
-                oil_mom = oil_mom_series.iloc[-1]
-                if oil_mom > SEMAFORO_OIL_SPIKE:
-                    signals.append(f"Shock petroleo: +{oil_mom*100:.1f}% mensual")
-                    color = "Rojo"
-                elif oil_mom > SEMAFORO_OIL_MOM:
-                    signals.append(f"Petroleo acelerando: +{oil_mom*100:.1f}%/mes")
-                    if color == "Verde":
-                        color = "Ambar"
-
-        # CLI cruzando 100 o cayendo bruscamente
-        if "cli_eu" in filled.columns:
-            cli = filled["cli_eu"].dropna().iloc[-2:]
-            if len(cli) == 2:
-                cli_drop = cli.iloc[-2] - cli.iloc[-1]
-                if cli_drop > SEMAFORO_CLI_DROP:
-                    signals.append(f"CLI cae {cli_drop:.1f}pts en 1 mes")
-                    color = "Rojo"
-                elif abs(cli.iloc[-1] - CLI_EXPANSION) < SEMAFORO_CLI_CROSS:
-                    signals.append(f"CLI en zona critica: {cli.iloc[-1]:.1f}")
-                    if color == "Verde":
-                        color = "Ambar"
-
-        # IPC acelerando
-        if "ipc_yoy_avg" in filled.columns:
-            ipc = filled["ipc_yoy_avg"].dropna().iloc[-2:]
-            if len(ipc) == 2:
-                ipc_accel = ipc.iloc[-1] - ipc.iloc[0]
-                if ipc_accel > SEMAFORO_IPC_ACCEL * 2:
-                    signals.append(f"IPC acelera {ipc_accel*100:.2f}pp")
-                    if color == "Verde":
-                        color = "Ambar"
-
-        # Tipos con salto brusco
-        if "rate_deposit" in filled.columns:
-            rate = filled["rate_deposit"].dropna().iloc[-2:]
-            if len(rate) == 2:
-                rate_jump = abs(rate.iloc[-1] - rate.iloc[0])
-                if rate_jump >= SEMAFORO_RATE_JUMP:
-                    signals.append(f"Tipos saltan {rate_jump:.2f}pp en 1 mes")
-                    color = "Rojo"
-
-        # Spread HY -- estres de credito
-        if "spread_hy" in filled.columns:
-            spread = filled["spread_hy"].dropna()
-            if not spread.empty:
-                s = spread.iloc[-1]
-                if s > SEMAFORO_SPREAD_RED:
-                    signals.append(f"Spread HY critico: {s:.1f}%")
-                    color = "Rojo"
-                elif s > SEMAFORO_SPREAD_AMBER:
-                    signals.append(f"Spread HY elevado: {s:.1f}%")
-                    if color == "Verde":
-                        color = "Ambar"
-
-        # VIX -- miedo de mercado (Fase 1d: mismo defecto que el shock de
-        # petroleo -- "vix_GLOBAL" nunca sobrevivia al filtro de columnas)
-        if "vix_mom" in filled.columns:
-            vix_mom_series = filled["vix_mom"].dropna()
-            if not vix_mom_series.empty:
-                vix_mom = vix_mom_series.iloc[-1]
-                if vix_mom > SEMAFORO_VIX_SPIKE:
-                    signals.append(f"VIX spike: +{vix_mom*100:.1f}% mensual")
-                    color = "Rojo"
-                elif vix_mom > SEMAFORO_VIX_MOM:
-                    signals.append(f"VIX subiendo: +{vix_mom*100:.1f}%/mes")
-                    if color == "Verde":
-                        color = "Ambar"
+        # Senales de indicadores: interseccion de los ultimos n_last meses
+        window = [_semaforo_indicator_signals(filled.iloc[:len(filled) - k]) for k in range(n_last)]
+        for key, (sev, text) in window[0].items():
+            if not all(key in w for w in window[1:]):
+                continue
+            sev = min((w[key][0] for w in window), key=_SEMAFORO_SEVERITY.get)
+            signals.append(text)
+            if _SEMAFORO_SEVERITY[sev] > _SEMAFORO_SEVERITY[color]:
+                color = sev
 
         return SemaforoResult(
             color=color,
