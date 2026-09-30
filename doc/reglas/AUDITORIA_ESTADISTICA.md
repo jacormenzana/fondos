@@ -670,6 +670,24 @@ skills, codificado en §4 #14).
      confirmado por `w_nominal_gap≈1e-15` en cada violación (descarta un defecto del propio
      detector). `CPI_COVERAGE_LEADING_GAP` marcó 20/40 y `CPI_COVERAGE_TRAILING_GAP` 40/40 en la
      misma muestra, como se esperaba.
-   - Pendiente de la misma directiva externa, fuera de alcance de esta fase: sección C (escáner
-     AST de anti-patrones) y sección D (motor de reconciliación shadow) — ver
-     `FND-0137` en `gestion.backlog` para el detalle de alcance de cada una.
+   - **Sección C — escáner AST de anti-patrones** (`tests/test_silent_fill_scan.py`, commit
+     `be0d48b`): guarda estática, mismo patrón que `tests/test_dialect_coverage.py` (funciones
+     puras `find_*()` sobre `ast.walk()`, allowlist `{clave: motivo}` con motivo obligatorio
+     `FND-####`/`DESIGN:`, auto-tests sobre código bueno/malo). Marca toda llamada
+     `.bfill()`/`.ffill()`/`.fillna()` de pandas en `proyecto1/2/3` y `shared/` sin revisión
+     (`.bfill()` es el mecanismo exacto de FND-0114). Se acotó la directiva original: NO se
+     escanean `COALESCE`/`LEFT JOIN` en SQL (P#1 hace obligatorio `COALESCE(excluded.x, x)`), y
+     no hay exención por "envuelto en logging" (una línea de log junto a un bfill con look-ahead
+     no habría detectado FND-0114). Alcance deliberadamente igual al de `test_dialect_coverage.py`:
+     no cubre `scripts/`. Su primera ejecución destapó `FND-0138` (`short_horizon.py` duplica la
+     deflación) y `FND-0139` (`_rf_aligned` de `rolling_stats.py`).
+   - **Sección D — reconciliación shadow clean-room** (`scripts/audit/shadow_reconciliation.py`,
+     commit `6ce303d`): recálculo independiente (sin importar `proyecto2.src.calculations`) de
+     las 5 métricas curadas since_inception nominales (`return_ann`, `vol_ann`, `max_dd`,
+     `sharpe`, `sortino`) desde `fund_nav_monthly`, comparado celda a celda con `fund_metrics`.
+     Comparte solo `shared.db.get_connection()` y `RISK_FREE_RATE_ANN` como fallback. El tipo
+     libre de riesgo se resuelve por fecha desde `series_macro/rate_deposit/EU` (en %, `/100`),
+     igual que producción — la primera pasada con el 4 % plano mostró una "divergencia"
+     sistemática que era solo esa diferencia de entrada (asimetría ya documentada en §2.9).
+     Rechaza ejecutarse sin `--isin`, `--stratified-sample` (máx. 60) o `--population` (solo
+     dueño). Validación en vivo: 40 ISIN × 5 métricas = 200/200 coincidencias.

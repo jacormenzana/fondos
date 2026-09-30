@@ -28,6 +28,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from .deflation import deflate_nav
 from .drawdown import compute_drawdown, max_drawdown
 from shared.config import LIQUIDITY_FLAG_THRESHOLD as _LIQUIDITY_THRESHOLD_DEFAULT
 
@@ -87,30 +88,6 @@ def _cumulative_return(nav: pd.Series) -> float:
     return round(float(nav.iloc[-1] / nav.iloc[0]) - 1.0, 6)
 
 
-def _deflate_nav(nav: pd.Series, dates: pd.Series,
-                 ipc_df: pd.DataFrame | None) -> pd.Series | None:
-    """
-    Deflacta la serie NAV por el IPC (ratio: ipc[t] / ipc[t0]).
-    Devuelve None si ipc_df es None o no hay solapamiento.
-    """
-    if ipc_df is None or ipc_df.empty:
-        return None
-
-    # Alinear IPC a fechas de sesiones diarias (forward-fill desde mensual)
-    ipc = ipc_df.set_index("date")["ipc_index"]
-    ipc_aligned = ipc.reindex(dates).ffill().bfill()
-
-    if ipc_aligned.isna().all():
-        return None
-
-    ipc_base = ipc_aligned.iloc[0]
-    if ipc_base == 0 or np.isnan(ipc_base):
-        return None
-
-    deflator = ipc_aligned / ipc_base
-    return nav.values / deflator.values  # type: ignore[return-value]
-
-
 # ---------------------------------------------------------------------------
 # Función pública principal
 # ---------------------------------------------------------------------------
@@ -168,10 +145,14 @@ def compute_short_horizon_metrics(
         results.append(("short_liquidity_flag", liq_flag, 0))
 
     # -- Retorno acumulado real (deflactado por IPC) --------------------------
-    nav_real = _deflate_nav(nav, dates, ipc_df)
-    if nav_real is not None:
-        nav_real_s = pd.Series(nav_real)
-        ret_real = _cumulative_return(nav_real_s)
+    # FND-0138 (2026-09-30): usa deflation.py::deflate_nav() (merge_asof backward) en vez de una
+    # copia local (reindex exacto + ffill().bfill()). La copia local descartaba el ancla IPC
+    # anterior a la ventana (reindex(dates) solo conserva las fechas de la ventana), y bfill()
+    # rellenaba la primera fecha con un IPC POSTERIOR (look-ahead): 118/120 ventanas en vivo
+    # difirieron, hasta 2,1 pp en short_return_cum_real a 6m. Misma clase de defecto que FND-0114.
+    df_real = deflate_nav(pd.DataFrame({"date": dates, "nav": nav}), ipc_df)
+    if not df_real.empty:
+        ret_real = _cumulative_return(df_real["nav_real"].reset_index(drop=True))
         results.append(("short_return_cum_real", ret_real, 1))
 
     return results

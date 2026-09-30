@@ -570,7 +570,13 @@ _ALL_METRIC_FAMILIES = frozenset({
 
 # Bump this string whenever the calculation logic changes to force a
 # cache-miss in fund_metric_state even when NAV/IPC inputs are unchanged.
-CALC_VERSION: str = "20260928"  # v36 (FND-0114): rolling_stats.py::compute_rolling_rows() was
+CALC_VERSION: str = "20260930"  # v37 (FND-0138): short_horizon.py kept its own deflation copy
+# (exact reindex + ffill().bfill()) that lost the pre-window IPC anchor and gave each short window's
+# first date a LATER month's CPI -- 118/120 sampled live windows differed, up to 2.1 pp on
+# rolling_6m short_return_cum_real (real_flag=1, metric_version d1). Now calls deflate_nav().
+# Only the d1 real metric changes value; the bump forces the recompute (owner-run).
+#
+# v36 (FND-0114): rolling_stats.py::compute_rolling_rows() was
 # the last module still reimplementing deflation locally (exact-date merge + positional
 # ffill/bfill) instead of calling deflate_nav() -- the same class of defect v35 already fixed in
 # consistency.py, duplicated here (P#11). The positional ffill/bfill could, in theory, backfill a

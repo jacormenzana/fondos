@@ -26,26 +26,18 @@ was written to confirm (deflation.py::deflate_nav, the FND-0114 fix itself, corr
 
   - proyecto2/src/calculations/short_horizon.py::_deflate_nav — a SEPARATE, un-migrated local
     reimplementation of NAV deflation (exact-reindex + ffill + bfill), duplicating deflate_nav()
-    (P#11/R-1 violation) instead of calling it. Checked materiality before allowlisting: its
-    window is always the trailing SHORT_WINDOWS days (near "now"), never reaching back to the
-    ES-CPI leading-gap era the way rolling_stats.py's full-history rolling windows did, so this is
-    NOT currently producing wrong live data the way FND-0114 was -- but it is the same fragile
-    shape, and a future change to SHORT_WINDOWS or MIN_NAV_ROWS could make it live-wrong with no
-    warning. Tracked as FND-0138 (OPT, not BUG), not fixed in this session -- root-cause fix is a
-    straightforward swap to `deflation.py::deflate_nav()`, deliberately left for its own
-    session/validation pass rather than folded into this scanner's commit.
+    (P#11/R-1 violation). FND-0138. CORRECTION (2026-09-30): the first version of this note said
+    it was "not currently live-wrong" -- reasoned from the code, never measured, and WRONG:
+    reindex(dates) keeps only the window's own dates, so the pre-window IPC anchor is lost and
+    bfill() gave the window's first date a LATER month's CPI (look-ahead). Measured live:
+    118/120 sampled short windows differed, up to 2.1 pp on rolling_6m short_return_cum_real.
+    Fixed the same day by calling deflate_nav(); the exemption was removed with the function.
   - proyecto2/src/calculations/rolling_stats.py::compute_rolling_rows (the `_rf_aligned` risk-free
-    rate lookup, not the NAV deflation this module also contains) — `.bfill()` on a reindexed
-    rate series can silently replace the intended "fall through to the static risk_free_rate
-    scalar for out-of-range dates" behavior (the `np.where(_rf_aligned.isna(), risk_free_rate,
-    ...)` a few lines below never fires for those rows once bfill() has already replaced their
-    NaN with a look-ahead rate). Smaller blast radius than FND-0114 (a risk-free-rate input to
-    Sharpe/Sortino, not a multiplicative NAV rebase) but the same anti-pattern shape. Tracked as
-    FND-0139 (INV — materiality not yet confirmed against live data), not fixed in this session.
-
-Both are exempted below with their ticket, NOT with 'DESIGN: safe' -- the reason text makes clear
-these are open findings, not reviewed-and-accepted patterns, so a later contributor doesn't read
-the exemption as an endorsement.
+    rate lookup) — FND-0139: suspected that bfill() masks the np.where(..., risk_free_rate, ...)
+    fallback. Investigated 2026-09-29/30 and REJECTED: bfill() before the series' first point is
+    the documented, test-pinned contract shared with resolve_rf_rate() (earliest known rate rather
+    than the flat default), so the scalar and rolling write paths agree; and 0 of 6.5M stored
+    rows reach that branch. Only a contradicting code comment was wrong, and it was corrected.
 """
 from __future__ import annotations
 
@@ -98,18 +90,11 @@ _SILENT_FILL_EXEMPT: dict[str, str] = {
         "DESIGN: a single-date point lookup (not a rebase anchor applied across a whole series) "
         "with an explicit `fallback` parameter and pytest coverage pinning it against the "
         "vectorized path below -- bounded blast radius, already tested.",
-    "proyecto2/src/calculations/short_horizon.py::_deflate_nav":
-        "FND-0138 (OPT): separate, un-migrated local deflation reimplementation (P#11/R-1 "
-        "violation) instead of calling deflation.py::deflate_nav(). Checked not currently "
-        "live-wrong (window is always the trailing SHORT_WINDOWS days, never reaching the "
-        "ES-CPI leading-gap era) -- same fragile shape as the FND-0114 defect, root-cause fix is "
-        "a straightforward swap, deliberately not done in this scanner-adding commit.",
     "proyecto2/src/calculations/rolling_stats.py::compute_rolling_rows":
-        "FND-0139 (INV): the _rf_aligned risk-free-rate bfill() can mask the intended "
-        "np.where(...,risk_free_rate,...) fallback for NAV dates before the RF series' own "
-        "coverage begins (once bfill() replaces NaN with a look-ahead rate, isna() no longer "
-        "routes that row to the safe scalar fallback) -- materiality against live data not yet "
-        "checked, not fixed in this session.",
+        "DESIGN: the _rf_aligned ffill().bfill() is the documented contract shared with "
+        "resolve_rf_rate() (dates before the RF series' first point take the earliest known rate "
+        "rather than the flat default; pinned by test_rolling_stats.py so the scalar and rolling "
+        "write paths agree). FND-0139 investigated and rejected: 0 of 6.5M stored rows reach it.",
 }
 
 

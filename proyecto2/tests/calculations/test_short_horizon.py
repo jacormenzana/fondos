@@ -207,6 +207,27 @@ def test_compute_metrics_real_flag_convention():
     assert "short_return_cum_real" in names_by_flag[1]
 
 
+def test_real_return_uses_prior_month_ipc_anchor_not_a_later_one():
+    """FND-0138 (2026-09-30): a window that starts mid-month must anchor its first date on the
+    LAST KNOWN (prior month-end) IPC, not bfill a later one. The old local reindex+ffill().bfill()
+    deflator back-filled the first date with the window's own first in-window month-end (look-
+    ahead): here it would see ipc_start=101 and report real==nominal-ish (~5.0%) instead of
+    1.05 * 100/101 - 1 = 3.96%. Live impact before the fix: 118/120 sampled windows differed,
+    up to 2.1 pp on rolling_6m."""
+    dates = pd.date_range("2025-02-10", periods=15, freq="B")   # Feb 10 .. Feb 28
+    assert dates[-1] == pd.Timestamp("2025-02-28")
+    navs = np.linspace(100.0, 105.0, 15)
+    df = pd.DataFrame({"date": dates, "nav": navs})
+    ipc_df = pd.DataFrame({
+        "date": pd.to_datetime(["2025-01-31", "2025-02-28"]),
+        "ipc_index": [100.0, 101.0],
+    })
+
+    result = dict((m, v) for m, v, _ in compute_short_horizon_metrics(df, ipc_df=ipc_df))
+
+    assert result["short_return_cum_real"] == pytest.approx(1.05 * 100.0 / 101.0 - 1.0, abs=1e-6)
+
+
 def test_compute_metrics_drawdown_non_positive():
     """Max drawdown must be <= 0 for any NAV series."""
     import random

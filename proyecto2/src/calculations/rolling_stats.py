@@ -237,7 +237,12 @@ def compute_rolling_rows(
 
     # §4g: build date-aligned RF rate vector (one value per NAV row, forward-filled).
     # When rf_series is provided each window-end date uses its historically correct rate.
-    # Fall back to the static risk_free_rate scalar for dates outside the series range.
+    # Dates AFTER the series end reuse its last known rate (ffill); dates BEFORE its first
+    # point take the earliest known rate (bfill, by design -- same contract as resolve_rf_rate()
+    # below and pinned by test_rolling_stats.py, so the scalar and rolling write paths agree).
+    # The static risk_free_rate scalar is used only when rf_series is None/empty or a value is
+    # still NaN. FND-0139 (2026-09-30): confirmed intended, 0 live rows reach the pre-coverage
+    # branch (earliest first window-end row is 2000-11-30 vs RF coverage from 2000-03).
     if rf_series is not None and not rf_series.empty:
         _rf_s = rf_series.copy()
         _rf_s["date"] = pd.to_datetime(_rf_s["date"]) + pd.offsets.MonthEnd(0)
