@@ -8,7 +8,8 @@ Produce un Excel con las siguientes hojas:
   1_Cartera         Detalle de fondos con pesos y metricas clave
   2_Regimen         Clasificacion macro actual e historica
   3_Backtesting     Resumen de resultados del backtesting
-  4_Rotacion        Recomendaciones de rotacion si procede
+  4_Macro_Indicadores  Indicadores macro
+  (no existe aun una hoja de rotacion -- pendiente en el backlog)
 
 Uso:
     from proyecto3.src.monthly_report import generate_report

@@ -517,12 +517,12 @@ python -m proyecto2.src.discovery.macro_discovery --source all
 
 ### Portfolio construction constraints
 
-Max 10 funds/sub-portfolio · max 20% per fund · max 30% per manager · min 3% per fund · max 5 same Fund_Nature per sub-portfolio.  
+Max 10 funds/sub-portfolio · max 20% per fund · max 2 funds per manager (a count, global across sub-portfolios — there is no weight cap per manager) · min 3% per fund · max 5 same Fund_Nature per sub-portfolio.  
 Weight method: `score_proportional`.
 
 ### Monthly report (monthly_report.py)
 
-`generate_report(conn, output_dir="c:/data/fondos/reports")` → Excel with sheets: `0_Portada`, `1_Cartera`, `2_Regimen`, `3_Backtesting`, `4_Rotacion`.
+`generate_report(conn, output_dir="c:/data/fondos/reports")` → Excel with sheets: `0_Portada`, `1_Cartera`, `2_Regimen`, `3_Backtesting`, `4_Macro_Indicadores`. There is no rotation sheet yet (tracked in the backlog).
 
 ### Data-freshness gate (`data_freshness.py`)
 
