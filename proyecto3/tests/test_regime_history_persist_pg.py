@@ -13,21 +13,9 @@ from proyecto3.src.regime_classifier import CLASSIFIER_VERSION, persist_regime_h
 
 
 def _make_table(conn):
-    conn.execute("""
-        CREATE TABLE regime_history (
-            weight_defensive double precision NOT NULL,
-            weight_balanced  double precision NOT NULL,
-            weight_dynamic   double precision NOT NULL,
-            oil_yoy double precision, ipc_yoy_avg double precision, cli_eu double precision,
-            rate_deposit double precision, d_rate_3m double precision, spread_hy double precision,
-            vix_yoy double precision, term_spread double precision,
-            date date NOT NULL,
-            classifier_version text NOT NULL,
-            regime text NOT NULL,
-            membership_json jsonb,
-            PRIMARY KEY (date, classifier_version)
-        )
-    """)
+    # Clone the REAL table (db/pg/30_gold.sql is loaded into the hermetic container) so a drift
+    # between the writer's column list and the DDL fails here instead of in production.
+    conn.execute("CREATE TABLE regime_history (LIKE gold.regime_history INCLUDING ALL)")
 
 
 def _hist(regime="Expansion", cli=101.0, term_spread=None):
