@@ -56,6 +56,17 @@ from shared.regime_taxonomy import (
     REGIME_SUFFIX as _REGIME_SUFFIX,
     REGIME_WEIGHTS,
 )
+from shared.db import executemany
+
+# Etiqueta de la logica que produce las filas de gold.regime_history (PK (date, classifier_version)).
+# Subir al cambiar ramas o umbrales de _classify_row: asi un cambio de logica no pisa el historico
+# escrito con la logica anterior y ambos quedan comparables en la tabla.
+CLASSIFIER_VERSION = "flat-tree-v2"
+
+_HISTORY_COLUMNS = (
+    "weight_defensive", "weight_balanced", "weight_dynamic", "oil_yoy", "ipc_yoy_avg", "cli_eu",
+    "rate_deposit", "d_rate_3m", "spread_hy", "vix_yoy", "term_spread",
+)
 
 
 # ============================================================
@@ -383,6 +394,53 @@ def _classify_row(
 
 
 # ============================================================
+# Persistencia del historico (gold.regime_history)
+# ============================================================
+
+def persist_regime_history(conn: "psycopg.Connection", hist: pd.DataFrame,
+                           classifier_version: str = CLASSIFIER_VERSION,
+                           dry_run: bool = False) -> int:
+    """Upsert idempotente de `hist` (salida de classify_historical) en gold.regime_history.
+
+    ON CONFLICT DO UPDATE: los datos macro se revisan y el ffill arrastra el ultimo dato, asi que
+    re-ejecutar con la misma version debe refrescar las filas, no conservar las antiguas.
+    """
+    if hist is None or hist.empty:
+        return 0
+
+    def _num(v):
+        return None if v is None or pd.isna(v) else float(v)
+
+    rows = [
+        (pd.Timestamp(d).date(), classifier_version, r["regime"], *[_num(r[c]) for c in _HISTORY_COLUMNS])
+        for d, r in hist.iterrows()
+    ]
+    if dry_run:
+        return len(rows)
+    # Literal (no f-string/join): the EXPLAIN sweep (tests/test_sql_explain_sweep_pg.py) can only
+    # verify statements it resolves statically.
+    executemany(
+        conn,
+        """
+        INSERT INTO regime_history
+            (date, classifier_version, regime, weight_defensive, weight_balanced, weight_dynamic,
+             oil_yoy, ipc_yoy_avg, cli_eu, rate_deposit, d_rate_3m, spread_hy, vix_yoy, term_spread)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (date, classifier_version) DO UPDATE SET
+            regime = excluded.regime, weight_defensive = excluded.weight_defensive,
+            weight_balanced = excluded.weight_balanced, weight_dynamic = excluded.weight_dynamic,
+            oil_yoy = excluded.oil_yoy, ipc_yoy_avg = excluded.ipc_yoy_avg, cli_eu = excluded.cli_eu,
+            rate_deposit = excluded.rate_deposit, d_rate_3m = excluded.d_rate_3m,
+            spread_hy = excluded.spread_hy, vix_yoy = excluded.vix_yoy,
+            term_spread = excluded.term_spread
+        """,
+        rows,
+    )
+    conn.commit()
+    return len(rows)
+
+
+# ============================================================
 # Clase principal
 # ============================================================
 
@@ -524,6 +582,10 @@ class RegimeClassifier:
 
         self._historical_cache = pd.DataFrame(records).set_index("date")
         return self._historical_cache.copy()
+
+    def persist_history(self, dry_run: bool = False) -> int:
+        """Escribe classify_historical() en gold.regime_history (FND-0153). Devuelve filas escritas."""
+        return persist_regime_history(self.conn, self.classify_historical(), dry_run=dry_run)
 
     def regime_summary(self) -> pd.DataFrame:
         """Distribucion historica de regimenes (% del tiempo en cada uno)."""

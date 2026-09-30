@@ -64,6 +64,10 @@ def main(scenario_id: str | None = None, dry_run: bool = False, allow_stale: boo
     print(clf.current_regime_report())
     print()
 
+    if not dry_run:
+        print(f"Historico de regimenes persistido: {clf.persist_history()} filas (gold.regime_history).")
+        print()
+
     if not scenario_id:
         scenario_id = _default_scenario_id(reg.regime, reg.date)
     print(f"Scenario: {scenario_id}" + (" (dry-run, sin persistir)" if dry_run else ""))
