@@ -568,6 +568,14 @@ _ALL_METRIC_FAMILIES = frozenset({
     "persistence", "fx", "regime", "rolling", "short",
 })
 
+
+def _covers_all_families(metrics_filter: "list[str] | None") -> bool:
+    """True when a run recomputes every metric family (FND-0144).
+
+    Only such a run may stamp fund_metric_state's per-fund input hash.
+    """
+    return metrics_filter is None or _ALL_METRIC_FAMILIES <= set(metrics_filter)
+
 # Bump this string whenever the calculation logic changes to force a
 # cache-miss in fund_metric_state even when NAV/IPC inputs are unchanged.
 CALC_VERSION: str = "20260930"  # v37 (FND-0138): short_horizon.py kept its own deflation copy
@@ -1332,8 +1340,13 @@ def run(
                     )
 
                 # v27: upsert input-hash para skip en proximas ejecuciones
+                # FND-0144: fund_metric_state holds ONE hash per fund with no family dimension, so
+                # only a run covering every family may stamp it. A scoped --metrics run would
+                # otherwise mark the fund as up to date and the next plain run would cache-hit,
+                # freezing the families that were not recomputed at the old CALC_VERSION.
                 if isin_written > 0:
-                    _upsert_metric_state(conn, isin, current_hash, dry_run)
+                    if _covers_all_families(metrics_filter):
+                        _upsert_metric_state(conn, isin, current_hash, dry_run)
                     # EFF-1: persist OLS quarter so next run in same quarter skips
                     if _ols_ran:
                         _update_ols_state(conn, isin, current_quarter, len(nav_df), dry_run)

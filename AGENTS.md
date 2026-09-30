@@ -345,6 +345,7 @@ proyecto2/
       test_nav_discovery_writers_pg.py
       test_nav_monthly_write_20260913.py
     pipeline/
+      test_metric_state_scoped_run_fnd0144.py
       test_nav_data_freshness_delta_20260927.py
       test_refresh_matviews_and_update_isin.py
       test_run_pipeline_writes_pg.py
