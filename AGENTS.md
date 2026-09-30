@@ -522,7 +522,7 @@ Weight method: `score_proportional`.
 
 ### Monthly report (monthly_report.py)
 
-`generate_report(conn, output_dir="c:/data/fondos/reports")` → Excel with sheets: `0_Portada`, `1_Cartera`, `2_Regimen`, `3_Backtesting`, `4_Macro_Indicadores`. There is no rotation sheet yet (tracked in the backlog).
+`generate_report(conn, output_dir="c:/data/fondos/reports")` → Excel with sheets: `0_Portada`, `1_Cartera`, `2_Regimen`, `3_Backtesting`, `4_Rotacion`, `5_Macro_Indicadores`. `4_Rotacion` only shows the rotation plan the builder persisted in the scenario (needs `ROTATION_COST_GATE_ENABLED` and a previous portfolio); otherwise it says so.
 
 ### Data-freshness gate (`data_freshness.py`)
 

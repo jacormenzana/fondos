@@ -8,14 +8,15 @@ Produce un Excel con las siguientes hojas:
   1_Cartera         Detalle de fondos con pesos y metricas clave
   2_Regimen         Clasificacion macro actual e historica
   3_Backtesting     Resumen de resultados del backtesting
-  4_Macro_Indicadores  Indicadores macro
-  (no existe aun una hoja de rotacion -- pendiente en el backlog)
+  4_Rotacion        Plan de rotacion persistido en el escenario (si lo hay)
+  5_Macro_Indicadores  Indicadores macro
 
 Uso:
     from proyecto3.src.monthly_report import generate_report
     generate_report(conn, output_dir="c:/data/fondos/reports")
 """
 
+import json
 import pandas as pd
 from pathlib import Path
 from datetime import date
@@ -698,6 +699,64 @@ def _build_backtesting(ws, conn):
     _autofit(ws)
 
 
+def _rotation_plan_from_notes(notes_json) -> list[dict] | None:
+    """rotation_plan guardado en portfolio_scenarios.notes (lo escribe PortfolioBuilder.build
+    cuando ROTATION_COST_GATE_ENABLED y hay cartera previa). None si no hay plan persistido."""
+    try:
+        notes = json.loads(notes_json) if notes_json else {}
+    except (TypeError, ValueError):
+        return None
+    plan = notes.get("rotation_plan") if isinstance(notes, dict) else None
+    return plan if isinstance(plan, list) else None
+
+
+def _build_rotacion(ws, conn, scenario_id):
+    """Hoja 4 -- Plan de rotacion del escenario (FND-0155).
+
+    Solo LEE el plan que el constructor persistio en el escenario: recalcularlo aqui podria
+    diverger de lo que de verdad se construyo. Sin plan (filtro de rotacion desactivado o sin
+    cartera previa) la hoja lo dice en vez de quedar vacia sin explicacion.
+    """
+    ws.sheet_view.showGridLines = False
+    ws.merge_cells(f"A1:{get_column_letter(7)}1")
+    ws["A1"] = f"ROTACION  |  Escenario: {scenario_id}"
+    ws["A1"].font = TITLE_FONT
+    ws["A1"].fill = TITLE_FILL
+    ws["A1"].alignment = _center()
+
+    row = conn.execute(
+        "SELECT notes FROM portfolio_scenarios WHERE scenario_id = %s", (scenario_id,)
+    ).fetchone()
+    plan = _rotation_plan_from_notes(row[0] if row else None)
+    if not plan:
+        ws.cell(3, 1, "Sin plan de rotacion persistido para este escenario (filtro de coste de "
+                      "rotacion desactivado o no habia cartera previa).").font = _font(size=10, color="888780")
+        ws.column_dimensions["A"].width = 100
+        return
+
+    isins = sorted({op[k] for op in plan for k in ("isin_out", "isin_in") if op.get(k)})
+    names = dict(conn.execute(
+        "SELECT ISIN, Fund_Name FROM fund_master WHERE ISIN = ANY(%s)", (isins,)).fetchall())
+
+    headers = ["Sub-cartera", "Sale", "Entra", "Recomendada", "Coste est. %", "Razon"]
+    _apply_header(ws, headers, row=3)
+    for op in sorted(plan, key=lambda o: (o.get("subportfolio") or "", o.get("isin_out") or "")):
+        out_, in_ = op.get("isin_out"), op.get("isin_in")
+        cost = op.get("coste_est")
+        vals = [
+            op.get("subportfolio"),
+            f"{out_} {names.get(out_, '')}".strip() if out_ else "",
+            f"{in_} {names.get(in_, '')}".strip() if in_ else "--",
+            "Si" if op.get("recomendar") else "No (se mantiene el titular)",
+            f"{cost*100:.2f}%" if cost is not None else "",
+            op.get("razon") or "",
+        ]
+        r_idx = ws.max_row + 1
+        for c_idx, val in enumerate(vals, 1):
+            ws.cell(r_idx, c_idx, val).font = _font(size=10)
+    _autofit(ws)
+
+
 # ============================================================
 # Generador principal
 # ============================================================
@@ -887,9 +946,13 @@ def generate_report(
     _build_backtesting(ws3, conn)
     print("  3_Backtesting OK")
 
-    ws4 = wb.create_sheet("4_Macro_Indicadores")
-    _build_macro_indicadores(ws4, conn)
-    print("  4_Macro_Indicadores OK")
+    ws4 = wb.create_sheet("4_Rotacion")
+    _build_rotacion(ws4, conn, scenario_id)
+    print("  4_Rotacion OK")
+
+    ws5 = wb.create_sheet("5_Macro_Indicadores")
+    _build_macro_indicadores(ws5, conn)
+    print("  5_Macro_Indicadores OK")
 
     wb.save(output_path)
     print(f"\nInforme generado: {output_path}")
