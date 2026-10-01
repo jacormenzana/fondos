@@ -47,6 +47,7 @@ _ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT))
 
 from proyecto3.src.regime_classifier import RegimeResult
+from proyecto3.src.score_candidates import load_current_candidates
 from proyecto3.src.portfolio_engine import (
     PortfolioConstraints,
     clamp_and_renormalize,
@@ -183,54 +184,15 @@ def _select_funds_for_subportfolio(
     consulta que idx_scores_latest (misma forma que gold.idx_scores_latest
     en db/pg/30_gold.sql) esta pensado para servir.
     """
-    # Cargar scores elegibles para esta sub-cartera, filtrados al regimen
-    # dado y a la fila mas reciente por fondo (fund_family_id puede ser
-    # NULL para fondos no procesados por family_builder).
-    #
-    # IMPORTANTE: eligible/score_total>0 se filtran DESPUES de resolver
-    # rn=1, no dentro del CTE `latest`. Filtrarlos dentro del CTE (antes de
-    # que ROW_NUMBER() calcule el ranking) descartaria la fila MAS RECIENTE
-    # de un fondo si esa fila resulta ser inelegible -- y ROW_NUMBER()
-    # asignaria entonces rn=1 a una fila ELEGIBLE mas ANTIGUA, resucitando
-    # en silencio una puntuacion obsoleta para un fondo que hoy esta
-    # excluido. Bug real, encontrado en el smoke test en vivo de esta
-    # migracion (2026-09-19): un fondo marcado 'Credit_Quality=High Yield
-    # excluido de Defensiva' HOY seguia siendo seleccionado con su
-    # puntuacion elegible de Marzo, porque el filtro de eligible estaba
-    # dentro del CTE.
-    ph = "%s"
-    rows = conn.execute(f"""
-        WITH latest AS (
-            SELECT fs.isin, fs.score_total, fs.eligible,
-                   ROW_NUMBER() OVER (
-                       PARTITION BY fs.isin, fs.block, fs.score_version
-                       ORDER BY fs.as_of_date DESC
-                   ) AS rn
-            FROM fund_scores fs
-            WHERE fs.block = {ph}
-              AND fs.score_version = {ph}
-              AND fs.regime = {ph}
-        )
-        SELECT latest.isin, latest.score_total,
-               fm.Fund_Name, fm.Fund_Nature, fm.Management_Company,
-               fm.fund_family_id
-        FROM latest
-        JOIN fund_master fm ON fm.ISIN = latest.isin
-        WHERE latest.rn = 1
-          AND latest.eligible = 1
-          AND latest.score_total > 0
-          AND fm.In_Current_Universe = 1
-        ORDER BY latest.score_total DESC
-    """, (subportfolio, score_version, regime)).fetchall()
-
-    if not rows:
+    # FND-0171: la consulta de candidatos vive en score_candidates.py, compartida con el
+    # Backtester. Solo cuentan las filas de la ULTIMA ejecucion de scoring de este
+    # (bloque, version, regimen); una fila mas antigua es un fondo que hoy no se puntua
+    # (antes seguia siendo candidato: 2 de 30 fondos de la cartera del 2026-10-01 salian
+    # de filas de Marzo). fund_family_id puede ser NULL para fondos sin family_builder.
+    candidates = load_current_candidates(conn, score_version, regime, subportfolio)
+    if candidates.empty:
         return pd.DataFrame()
-
-    candidates = pd.DataFrame(rows, columns=[
-        "isin", "score_total",
-        "fund_name", "fund_nature", "management_company",
-        "fund_family_id"
-    ])
+    candidates = candidates.drop(columns="block")
 
     constraints = PortfolioConstraints(
         max_funds_per_sub=max_funds,

@@ -48,6 +48,7 @@ sys.path.insert(0, str(_ROOT))
 
 from proyecto3.src.regime_classifier import RegimeClassifier, REGIME_WEIGHTS
 from proyecto3.src.portfolio_engine import select_and_weight, DEFAULT_CONSTRAINTS
+from proyecto3.src.score_candidates import load_current_candidates
 
 
 # ============================================================
@@ -136,48 +137,13 @@ def _load_candidates(conn: "psycopg.Connection",
     hay). Esta cobertura crece con cada ejecucion futura de score_funds()
     bajo un regimen distinto.
     """
-    # IMPORTANTE: mismo cuidado que portfolio_builder.py::
-    # _select_funds_for_subportfolio -- eligible/score_total>0 se filtran
-    # DESPUES de resolver rn=1, no dentro del CTE `latest`. Filtrarlos
-    # dentro del CTE descartaria la fila MAS RECIENTE de un fondo si esa
-    # fila resulta ser inelegible, dejando que ROW_NUMBER() asigne rn=1 a
-    # una fila elegible mas antigua -- resucitando en silencio una
-    # puntuacion obsoleta. Bug real encontrado en el smoke test en vivo de
-    # esta migracion (2026-09-19).
-    ph = "%s"
-    rows = conn.execute(f"""
-        WITH latest AS (
-            SELECT fs.block, fs.isin, fs.score_total, fs.eligible,
-                   ROW_NUMBER() OVER (
-                       PARTITION BY fs.isin, fs.block, fs.score_version
-                       ORDER BY fs.as_of_date DESC
-                   ) AS rn
-            FROM fund_scores fs
-            WHERE fs.score_version = {ph}
-              AND fs.regime = {ph}
-        )
-        SELECT latest.block, latest.isin, latest.score_total,
-               fm.Fund_Name, fm.Fund_Nature, fm.Management_Company,
-               fm.fund_family_id
-        FROM latest
-        JOIN fund_master fm ON fm.ISIN = latest.isin
-        WHERE latest.rn = 1
-          AND latest.eligible = 1
-          AND latest.score_total > 0
-          AND fm.In_Current_Universe = 1
-        ORDER BY latest.block, latest.score_total DESC
-    """, (score_version, regime)).fetchall()
-
-    by_block: dict[str, list] = {}
-    for row in rows:
-        by_block.setdefault(row[0], []).append(row[1:])
-
+    # FND-0171: misma consulta que PortfolioBuilder (score_candidates.py): solo filas de la
+    # ULTIMA ejecucion de scoring del (bloque, version, regimen). Antes cada modulo llevaba su
+    # copia y las dos dejaban elegir filas obsoletas de fondos que ya no se puntuan.
+    candidates = load_current_candidates(conn, score_version, regime)
     return {
-        block: pd.DataFrame(data, columns=[
-            "isin", "score_total", "fund_name", "fund_nature",
-            "management_company", "fund_family_id",
-        ])
-        for block, data in by_block.items()
+        block: grp.drop(columns="block").reset_index(drop=True)
+        for block, grp in candidates.groupby("block", sort=False)
     }
 
 

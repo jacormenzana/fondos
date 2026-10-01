@@ -283,3 +283,85 @@ def test_stale_eligible_row_does_not_resurrect_a_now_ineligible_fund(conn):
         "a fund whose LATEST fund_scores row is ineligible must not be "
         "selected using a stale eligible row from an earlier as_of_date"
     )
+
+
+# ============================================================
+# 3. FND-0171 -- candidates come only from the LATEST scoring run
+# ============================================================
+
+def _score_row(conn, isin, as_of, score, block="Equilibrada", regime=_TEST_REGIME, eligible=1):
+    conn.execute(
+        "INSERT INTO fund_scores (isin, block, score_version, regime, as_of_date, "
+        "score_total, score_detail, eligible) VALUES (%s, %s, 'v1', %s, %s, %s, '{}', %s)",
+        (isin, block, regime, as_of, score, eligible),
+    )
+
+
+def _master(conn, isin, mgr=None):
+    conn.execute(
+        "INSERT INTO fund_master (ISIN, Fund_Name, Fund_Nature, Management_Company, "
+        "fund_family_id, In_Current_Universe) VALUES (%s, %s, 'Renta Variable', %s, NULL, 1)",
+        (isin, f"Fund {isin}", mgr or f"Mgr{isin}"),
+    )
+
+
+def test_fund_not_rescored_in_the_latest_run_is_not_a_candidate(conn):
+    # LIVE CASE 2026-10-01: two Defensiva funds in the 30-fund portfolio were chosen from
+    # 2026-03-21 rows because they were simply absent from the 2026-10-01 run (family
+    # de-duplication / lost metrics). Absent from the latest run => not a candidate, no matter
+    # how high the old score was.
+    for i in range(3):
+        _master(conn, f"CURRENT{i}")
+        _score_row(conn, f"CURRENT{i}", "2026-10-01", 0.80 - i * 0.01)
+    _master(conn, "ORPHAN")
+    _score_row(conn, "ORPHAN", "2026-03-21", 1.50)           # eligible, top score, but old run
+
+    selected = _select_funds_for_subportfolio(conn, "Equilibrada", "v1", _TEST_REGIME)
+    assert set(selected["isin"]) == {"CURRENT0", "CURRENT1", "CURRENT2"}
+
+
+def test_backtester_candidate_loader_applies_the_same_rule(conn):
+    from proyecto3.src.backtesting import _load_candidates
+    for i in range(2):
+        _master(conn, f"CURRENT{i}")
+        _score_row(conn, f"CURRENT{i}", "2026-10-01", 0.80 - i * 0.01)
+    _master(conn, "ORPHAN")
+    _score_row(conn, "ORPHAN", "2026-03-21", 1.50)
+
+    by_block = _load_candidates(conn, "v1", _TEST_REGIME)
+    assert set(by_block["Equilibrada"]["isin"]) == {"CURRENT0", "CURRENT1"}
+    assert "block" not in by_block["Equilibrada"].columns
+
+
+def test_latest_run_is_resolved_per_block(conn):
+    # Each block has its own latest run: a run on a later date for another block must not
+    # wipe out this block's candidates.
+    _master(conn, "EQ")
+    _score_row(conn, "EQ", "2026-09-26", 0.9, block="Equilibrada")
+    _master(conn, "DEF")
+    _score_row(conn, "DEF", "2026-10-01", 0.9, block="Defensiva")
+
+    assert set(_select_funds_for_subportfolio(conn, "Equilibrada", "v1", _TEST_REGIME)["isin"]) == {"EQ"}
+    assert set(_select_funds_for_subportfolio(conn, "Defensiva", "v1", _TEST_REGIME)["isin"]) == {"DEF"}
+
+
+def test_latest_run_is_resolved_per_regime(conn):
+    # A run under another regime on a later date does not make this regime's run stale.
+    _master(conn, "SHOCK")
+    _score_row(conn, "SHOCK", "2026-09-26", 0.9, regime=_TEST_REGIME)
+    _master(conn, "CRISIS")
+    _score_row(conn, "CRISIS", "2026-10-01", 0.9, regime="Crisis_Financiera")
+
+    assert set(_select_funds_for_subportfolio(conn, "Equilibrada", "v1", _TEST_REGIME)["isin"]) == {"SHOCK"}
+
+
+def test_inactive_funds_and_ineligible_latest_rows_are_still_excluded(conn):
+    _master(conn, "OK")
+    _score_row(conn, "OK", "2026-10-01", 0.9)
+    _master(conn, "INELIGIBLE")
+    _score_row(conn, "INELIGIBLE", "2026-10-01", 0.0, eligible=0)
+    _master(conn, "RETIRED")
+    _score_row(conn, "RETIRED", "2026-10-01", 0.95)
+    conn.execute("UPDATE fund_master SET In_Current_Universe = 0 WHERE ISIN = 'RETIRED'")
+
+    assert set(_select_funds_for_subportfolio(conn, "Equilibrada", "v1", _TEST_REGIME)["isin"]) == {"OK"}
