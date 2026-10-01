@@ -457,13 +457,43 @@ def _quarantine_invalid_nav(
         return 0
     begin_immediate(conn)
     try:
-        n = conn.execute("DELETE FROM fund_metrics WHERE isin=%s", (isin,)).rowcount
-        conn.execute("DELETE FROM fund_metric_timeseries WHERE isin=%s", (isin,))
-        conn.execute("DELETE FROM fund_metric_alerts WHERE isin=%s", (isin,))
-        conn.execute("DELETE FROM fund_metric_state WHERE isin=%s", (isin,))
+        n = _delete_fund_derived_rows(conn, isin)
         conn.execute(
             "UPDATE nav_sources SET data_status='INVALID_NAV' WHERE isin=%s", (isin,)
         )
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    return n
+
+
+def _delete_fund_derived_rows(conn: "psycopg.Connection", isin: str) -> int:
+    """Delete everything P2 derived for one fund (metrics, rolling series, alerts, cache hash).
+    Runs inside the caller's transaction. Returns the fund_metrics rows deleted."""
+    n = conn.execute("DELETE FROM fund_metrics WHERE isin=%s", (isin,)).rowcount
+    conn.execute("DELETE FROM fund_metric_timeseries WHERE isin=%s", (isin,))
+    conn.execute("DELETE FROM fund_metric_alerts WHERE isin=%s", (isin,))
+    conn.execute("DELETE FROM fund_metric_state WHERE isin=%s", (isin,))
+    return n
+
+
+def _clear_insufficient_history(
+    conn: "psycopg.Connection",
+    isin: str,
+    dry_run: bool,
+) -> int:
+    """FND-0168: a fund whose FULL monthly NAV series is shorter than MIN_NAV_ROWS cannot be
+    computed, and the plain `continue` it used to get left whatever metrics an earlier run wrote,
+    so P3 kept scoring it on stale values and the freshness gate counted it as an old CALC_VERSION.
+    Same fail-closed treatment as _quarantine_invalid_nav, minus the nav_sources flag: the NAV is
+    not invalid, just short, and the fund recovers by itself once it has MIN_NAV_ROWS observations
+    (its hash is gone, so the next run recomputes it). Returns the metric rows deleted."""
+    if dry_run:
+        return 0
+    begin_immediate(conn)
+    try:
+        n = _delete_fund_derived_rows(conn, isin)
         conn.execute("COMMIT")
     except Exception:
         conn.execute("ROLLBACK")
@@ -1122,6 +1152,25 @@ def run(
                         _log(conn, isin, "NAV_LOAD", "QUARANTINE", None,
                              f"{n_cleared} filas fund_metrics eliminadas; data_status=INVALID_NAV",
                              dry_run)
+                    n_skipped += 1
+                    continue
+
+                # ---- Insufficient history (FND-0168) ------------------
+                # Judged on the FULL series, before any --from-date/--to-date clipping: a long fund
+                # that a targeted recalc merely clipped short must keep its metrics.
+                if len(nav_df) < MIN_NAV_ROWS:
+                    n_cleared = _clear_insufficient_history(conn, isin, dry_run)
+                    if n_cleared:
+                        _log(conn, isin, "CALC", "SKIP", None,
+                             f"Solo {len(nav_df)} filas NAV (minimo {MIN_NAV_ROWS}); "
+                             f"{n_cleared} filas fund_metrics obsoletas eliminadas", dry_run)
+                    logger.debug(
+                        "", extra=dict(
+                            p2_idx=idx, p2_total=total, p2_isin=isin,
+                            p2_evt="SKIP", p2_detail=f"historial insuficiente ({len(nav_df)} filas)",
+                            p2_count=n_cleared, p2_dur_ms=round((time.time() - t_fund) * 1000),
+                        )
+                    )
                     n_skipped += 1
                     continue
 
