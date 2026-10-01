@@ -75,7 +75,7 @@ sys.path.insert(0, str(_P2_DIR))
 
 from shared.config import RISK_FREE_RATE_ANN, METRIC_VERSION
 from shared.config import CRISIS_WINDOWS, ROLLING_WINDOWS, REGION_IPC, MIN_NAV_ROWS
-from shared.config import MIN_NAV_MACRO, MIN_NAV_PERSIST
+from shared.config import MIN_NAV_MACRO, MIN_NAV_PERSIST, P2_QUARANTINE_ALERT_THRESHOLD
 from shared.config import SHORT_WINDOWS, SHORT_WINDOW_MIN_OBS, METRIC_VERSION_SHORT
 from shared.config import MIN_PEERS, REGIME_MIN_NAV_TOTAL
 from shared.config import (
@@ -439,6 +439,58 @@ def _write_metric_alerts(
         raise
 
 
+def _quarantine_invalid_nav(
+    conn: "psycopg.Connection",
+    isin: str,
+    dry_run: bool,
+) -> int:
+    """FND-0164: fail closed when validate_nav() rejects a fund's NAV series.
+
+    Skipping the fund (the previous behaviour) left its OLD metrics, rolling series, alerts and
+    input hash in place, so a fund whose Morningstar series is garbage (>8x jumps) kept
+    metrics with false -97% drawdowns and stayed eligible for P3 scoring. Now the fund's derived
+    rows are removed and nav_sources.data_status is set to 'INVALID_NAV'. Recovery is automatic:
+    once validate_nav() passes again the next run recomputes the fund (its hash is gone) and
+    _clear_invalid_nav_flag() puts data_status back to 'OK'. Returns the metric rows deleted.
+    """
+    if dry_run:
+        return 0
+    begin_immediate(conn)
+    try:
+        n = conn.execute("DELETE FROM fund_metrics WHERE isin=%s", (isin,)).rowcount
+        conn.execute("DELETE FROM fund_metric_timeseries WHERE isin=%s", (isin,))
+        conn.execute("DELETE FROM fund_metric_alerts WHERE isin=%s", (isin,))
+        conn.execute("DELETE FROM fund_metric_state WHERE isin=%s", (isin,))
+        conn.execute(
+            "UPDATE nav_sources SET data_status='INVALID_NAV' WHERE isin=%s", (isin,)
+        )
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    return n
+
+
+def _alert_quarantine(run_id: str, n_quarantined: int) -> None:
+    """FND-0164: open (or append to) a backlog ticket when a run quarantines more funds than
+    P2_QUARANTINE_ALERT_THRESHOLD. A handful is normal Morningstar noise; a spike is a source problem.
+    Inert without FONDOS_BACKLOG_PG_DSN and never raises (shared.backlog_client contract)."""
+    try:
+        from shared.backlog_client import report_incident
+        report_incident(
+            object_name="P2 NAV quarantine",
+            object_type="JOB",
+            title=f"P2 run quarantined {n_quarantined} funds with invalid NAV (> {P2_QUARANTINE_ALERT_THRESHOLD})",
+            scenario_description=(
+                f"run_id={run_id}: validate_nav() rejected {n_quarantined} funds; their metrics were cleared "
+                "and nav_sources.data_status set to INVALID_NAV. Query p2_pipeline_log WHERE step='NAV_LOAD' "
+                "AND status='QUARANTINE' for the list; compare the Morningstar chart payloads (FND-0164)."
+            ),
+        )
+    except Exception:
+        pass
+
+
 def _log(
     conn: "psycopg.Connection",
     isin: str,
@@ -730,6 +782,7 @@ def run(
     n_skipped     = 0
     n_errors      = 0
     n_warnings    = 0   # P2-12: logger.warning() call count for RUN_SUMMARY
+    n_quarantined = 0   # FND-0164: funds whose NAV failed validate_nav() and were cleared
     defl_skipped  = 0   # v27 pivot: ISINs where rolling_stats.py couldn't build a real series
     total_written = 0
     total         = 0
@@ -1063,6 +1116,12 @@ def run(
                         )
                     )
                     _log(conn, isin, "NAV_LOAD", "WARN", None, err, dry_run)
+                    n_cleared = _quarantine_invalid_nav(conn, isin, dry_run)   # FND-0164
+                    n_quarantined += 1
+                    if n_cleared:
+                        _log(conn, isin, "NAV_LOAD", "QUARANTINE", None,
+                             f"{n_cleared} filas fund_metrics eliminadas; data_status=INVALID_NAV",
+                             dry_run)
                     n_skipped += 1
                     continue
 
@@ -1335,7 +1394,7 @@ def run(
                     ph = "%s"
                     conn.execute(
                         "UPDATE nav_sources SET data_status='OK' "
-                        f"WHERE isin={ph} AND data_status='RECALCULATE_METRICS'",
+                        f"WHERE isin={ph} AND data_status IN ('RECALCULATE_METRICS','INVALID_NAV')",
                         (isin,)
                     )
 
@@ -1531,8 +1590,10 @@ def run(
             f"[RUN END] run_id={run_id} status={status} "
             f"processed={n_processed} skipped={n_skipped} errors={n_errors} "
             f"warnings={n_warnings} defl_skipped={defl_skipped} total_written={total_written} "
-            f"elapsed={elapsed_total:.0f}s"
+            f"quarantined={n_quarantined} elapsed={elapsed_total:.0f}s"
         )
+        if n_quarantined > P2_QUARANTINE_ALERT_THRESHOLD and not dry_run:
+            _alert_quarantine(run_id, n_quarantined)    # FND-0164: no more silent anomalies
         sys.stdout.flush()
         sys.stderr.flush()
         # P2-12: persist RUN_SUMMARY row for operational observability
@@ -1551,7 +1612,7 @@ def run(
                             f"run_id={run_id} processed={n_processed} "
                             f"skipped={n_skipped} errors={n_errors} "
                             f"warnings={n_warnings} defl_skipped={defl_skipped} "
-                            f"written={total_written} "
+                            f"written={total_written} quarantined={n_quarantined} "
                             f"elapsed={elapsed_total:.0f}s"
                         ),
                         RUN_BATCH_ID,

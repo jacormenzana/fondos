@@ -177,3 +177,32 @@ def test_update_ols_state(pg_session_conn, pg_conn_module_schema):
         f"SELECT last_ols_quarter FROM fund_metric_state WHERE isin='ES0001' AND metric_version='{rp.METRIC_VERSION}'"
     ).fetchone()
     assert row2[0] == "2026Q1"
+
+
+def test_quarantine_invalid_nav_clears_derived_rows_and_flags_source(pg_session_conn, pg_conn_module_schema):
+    """FND-0164: a validate_nav() failure must remove the fund's stale metrics, not just skip it."""
+    conn = pg_session_conn
+    conn.execute(f"SET search_path = {pg_conn_module_schema}")
+    _make_fund_metric_state(conn)
+    _make_fund_metric_alerts(conn)
+    conn.execute("CREATE TABLE fund_metrics (isin text, metric text, horizon text, value double precision)")
+    conn.execute("CREATE TABLE fund_metric_timeseries (isin text, metric text)")
+    conn.execute("CREATE TABLE nav_sources (isin text PRIMARY KEY, data_status text DEFAULT 'OK')")
+    for isin in ("BAD", "GOOD"):
+        conn.execute("INSERT INTO fund_metrics VALUES (%s,'max_drawdown','since_inception',-0.97)", (isin,))
+        conn.execute("INSERT INTO fund_metrics VALUES (%s,'sharpe','since_inception',0.5)", (isin,))
+        conn.execute("INSERT INTO fund_metric_timeseries VALUES (%s,'sharpe')", (isin,))
+        conn.execute("INSERT INTO nav_sources (isin) VALUES (%s)", (isin,))
+        rp._upsert_metric_state(conn, isin, "h", dry_run=False)
+    conn.execute("INSERT INTO fund_metric_alerts (isin,metric,window_label,level,rule_code) VALUES ('BAD','sharpe','w','WARN','R')")
+
+    assert rp._quarantine_invalid_nav(conn, "BAD", dry_run=True) == 0
+    assert conn.execute("SELECT COUNT(*) FROM fund_metrics WHERE isin='BAD'").fetchone()[0] == 2
+
+    assert rp._quarantine_invalid_nav(conn, "BAD", dry_run=False) == 2
+    for t in ("fund_metrics", "fund_metric_timeseries", "fund_metric_alerts", "fund_metric_state"):
+        assert conn.execute(f"SELECT COUNT(*) FROM {t} WHERE isin='BAD'").fetchone()[0] == 0, t
+        if t != "fund_metric_alerts":
+            assert conn.execute(f"SELECT COUNT(*) FROM {t} WHERE isin='GOOD'").fetchone()[0] >= 1, t
+    assert conn.execute("SELECT data_status FROM nav_sources WHERE isin='BAD'").fetchone()[0] == "INVALID_NAV"
+    assert conn.execute("SELECT data_status FROM nav_sources WHERE isin='GOOD'").fetchone()[0] == "OK"

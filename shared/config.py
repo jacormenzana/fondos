@@ -439,6 +439,8 @@ REGION_IPC: str = "ES"
 MIN_NAV_ROWS: int = 12
 # Mínimo de observaciones para regresión macro OLS (REL-5: centralizado aquí)
 MIN_NAV_MACRO: int = 36
+# FND-0164: a P2 run that quarantines more funds than this (validate_nav failures) opens a backlog ticket.
+P2_QUARANTINE_ALERT_THRESHOLD: int = 10
 # Mínimo de observaciones para métricas de persistencia del alpha (≥7 años)
 MIN_NAV_PERSIST: int = 84
 

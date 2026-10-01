@@ -93,7 +93,9 @@ CREATE TABLE IF NOT EXISTS control.nav_sources (
         -- kept even though only OK/STALE_FROZEN appear in today's snapshot — they're legitimate
         -- transient states in the documented nav_discovery state machine, not everything that
         -- happens to be live right now.
-        CHECK (data_status IN ('OK','FORCE_REFRESH','RECALCULATE_MONTHLY','RECALCULATE_METRICS','PENDING','STALE_FROZEN'))
+        -- INVALID_NAV added 2026-10-01 (FND-0164): set by run_pipeline._quarantine_invalid_nav() when
+        -- validate_nav() rejects the series (>8x jumps); cleared back to OK once the series validates.
+        CHECK (data_status IN ('OK','FORCE_REFRESH','RECALCULATE_MONTHLY','RECALCULATE_METRICS','PENDING','STALE_FROZEN','INVALID_NAV'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_nav_sources_status ON control.nav_sources (status);
