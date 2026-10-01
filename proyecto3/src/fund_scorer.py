@@ -1088,6 +1088,23 @@ def _persist_scores(
             today,
             _build_score_notes(regime, r["exclusion_reason"]),
         ))
-    executemany(conn, sql, rows)
-    conn.commit()
+    if not rows:
+        return   # nunca borrar la ejecucion existente por una entrada vacia
+
+    # FND-0172: una ejecucion de scoring es AUTORITATIVA para su (score_version, regime,
+    # as_of_date): el upsert por si solo dejaba las filas de una ejecucion anterior del
+    # MISMO dia para fondos que esta ya no puntua (p.ej. 27 filas, 24 elegibles, de 14 fondos
+    # cuyas metricas borro FND-0168), y como llevan el as_of_date mas reciente seguian
+    # pasando la regla de score_candidates.py. Borrado + insercion en UNA transaccion: si el
+    # insert falla, el rollback restaura la ejecucion anterior intacta.
+    try:
+        conn.execute(
+            "DELETE FROM fund_scores WHERE score_version = %s AND regime = %s AND as_of_date = %s",
+            (score_version, regime, today),
+        )
+        executemany(conn, sql, rows)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     print(f"Persistidos {len(rows)} scores en fund_scores.")
