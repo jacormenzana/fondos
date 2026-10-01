@@ -192,9 +192,34 @@ def test_coverage_cliff_skips_nan_pct_change_without_error():
 # mathematically guaranteed identical under a uniform per-run deflator, not coincidences.
 
 def test_deflation_meaningful_true_for_continuous_return_metrics():
+    # Level-type statistics: a uniform deflator shifts them, so real==nominal IS a signal.
+    # vol_ann was asserted here by FND-0121 and removed by FND-0174 (see the dispersion test
+    # below). sharpe/sortino/max_dd are pinned as still-meaningful so the exclusions added for
+    # FND-0174 cannot silently widen into "exclude everything".
     assert runner._deflation_meaningful("return_ann")
-    assert runner._deflation_meaningful("vol_ann")
     assert runner._deflation_meaningful("worst_month")
+    assert runner._deflation_meaningful("sharpe")
+    assert runner._deflation_meaningful("sortino")
+    assert runner._deflation_meaningful("max_dd")
+
+
+# FND-0174 (2026-10-01): two more false-positive classes, found because the 40-ISIN sample
+# audit returned RC=1 on six BLOCK2 REAL_EQUALS_NOMINAL_* findings. Measured, not argued:
+#  - *_pctile_self (rank within the fund's OWN history): all 98 interior real==nominal pairs were
+#    EXACT rank ties (|diff| == 0.0) -- a rank is unchanged whenever deflation does not reorder it.
+#  - vol_ann (dispersion): an independent recomputation from raw NAV + CPI reproduced the stored
+#    REAL volatility to 1e-6 on 12/12 flagged rows -- deflation was applied; a smooth deflator
+#    barely moves a standard deviation, so "real must visibly differ" has no power for it.
+
+def test_deflation_meaningful_false_for_pctile_self_rank_statistics():
+    for metric in ("max_dd_pctile_self", "return_ann_pctile_self", "sharpe_pctile_self",
+                   "sortino_pctile_self", "vol_ann_pctile_self"):
+        assert not runner._deflation_meaningful(metric), metric
+
+
+def test_deflation_meaningful_false_for_dispersion_statistics():
+    for metric in ("vol_ann", "vol_ann_expansion", "srri_volatility", "fx_volatility_ann"):
+        assert not runner._deflation_meaningful(metric), metric
 
 
 def test_deflation_meaningful_false_for_count_metric():

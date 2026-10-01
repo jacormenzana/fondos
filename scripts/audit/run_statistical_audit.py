@@ -809,8 +809,24 @@ def _deflation_meaningful(metric: str) -> bool:
     of the underlying metric's own statistical_type (return_ann_zscore_cat inherits return_ann's
     continuous_signed type via catalog_metrics.py's regime-suffix prefix match, so the suffix
     check must be independent of, not folded into, the type filter).
+
+    FND-0174 (2026-10-01) added two more classes, both found because a 40-ISIN sample audit
+    returned RC=1 on six BLOCK2 findings (BLOCK2 blocks unconditionally), and both measured
+    rather than assumed:
+      * any *_pctile_* rank statistic -- including *_pctile_self (rank within the fund's OWN
+        history), which the cross-sectional check above missed. All 98 interior real==nominal
+        pairs on the sample were EXACT rank ties (|diff| == 0.0): a rank is unchanged whenever
+        deflation does not reorder it.
+      * dispersion statistics (vol_*, *volatility*). A smooth deflator barely moves a standard
+        deviation, so "real must visibly differ from nominal" has no power for them: an
+        independent recomputation from raw NAV + CPI reproduced the stored REAL vol_ann to 1e-6
+        on 12/12 flagged rows (e.g. real 0.135806 vs nominal 0.135337) -- deflation was applied.
+    Deflation correctness stays covered by DEFLATION_ORDER and WINDOW_FISHER_IDENTITY (level-type
+    return_ann), neither of which is touched here.
     """
-    if metric.endswith("_zscore_cat") or metric.endswith("_pctile_cat"):
+    if metric.endswith("_zscore_cat") or "_pctile_" in metric:
+        return False
+    if metric.startswith("vol_") or "volatility" in metric:
         return False
     return get_metric_spec(metric).statistical_type in ("continuous_positive", "continuous_signed")
 
