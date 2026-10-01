@@ -481,3 +481,44 @@ def test_emit_snapshot_held_out_finding_absent_when_nothing_held_out():
     run = runner.AuditRun(domain="p2_metrics")
     runner._emit_snapshot_held_out_finding(run)
     assert not run.findings
+
+
+def _finding(block, rule_id, rule_class, severity):
+    return {"block": block, "rule_id": rule_id, "rule_class": rule_class, "severity": severity}
+
+
+def _run_with(*findings):
+    run = runner.AuditRun(domain="p2_metrics")
+    run.findings.extend(findings)
+    return run
+
+
+def test_blocking_hard_invariant_blocks():
+    assert runner._has_blocking_findings(
+        _run_with(_finding("BLOCK6", "SCHEDULE_MULTIPLE_RHP_ROWS", "HARD_INVARIANT", "ALARM")))
+
+
+def test_blocking_block2_blocks_even_at_warn():
+    assert runner._has_blocking_findings(
+        _run_with(_finding("BLOCK2", "SCALAR_EQUALS_TIMESERIES_X", "STATISTICAL", "WARN")))
+
+
+def test_blocking_timeseries_duplicate_blocks():
+    assert runner._has_blocking_findings(
+        _run_with(_finding("BLOCK5", "TIMESERIES_DUPLICATE", "STATISTICAL", "ALARM")))
+
+
+def test_blocking_outlier_alarm_does_not_block_fnd0175():
+    assert not runner._has_blocking_findings(
+        _run_with(_finding("BLOCK4", "OUTLIER_MAD_Z", "STATISTICAL", "ALARM")))
+
+
+def test_blocking_other_warnings_do_not_block():
+    assert not runner._has_blocking_findings(_run_with(
+        _finding("BLOCK4", "OUTLIER_IQR", "STATISTICAL", "WARN"),
+        _finding("BLOCK4", "TIMESERIES_GAP", "STATISTICAL", "WARN"),
+        _finding("BLOCK1", "COVERAGE_CLIFF", "STATISTICAL", "WARN")))
+
+
+def test_blocking_empty_run_does_not_block():
+    assert not runner._has_blocking_findings(_run_with())

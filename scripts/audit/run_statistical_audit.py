@@ -1663,12 +1663,18 @@ def _print_report(run: "AuditRun", run_id: str) -> None:
 
 
 def _has_blocking_findings(run: "AuditRun") -> bool:
+    """--mode check blocks only on defect classes: HARD_INVARIANT, BLOCK2 (scalar vs
+    timeseries / deflation identities) and TIMESERIES_DUPLICATE. BLOCK4 outliers
+    (OUTLIER_MAD_Z/ALARM, |robust z| >= 5) are review items, reported but non-blocking
+    (FND-0175): on the 40-ISIN sample 141 of them fired with 0 defects among the
+    fund-return families, and the full population produces tens of thousands, so
+    blocking on them made the gate unpassable."""
     for f in run.findings:
         if f["rule_class"] == "HARD_INVARIANT":
             return True
         if f["block"] == "BLOCK2":
             return True
-        if f["block"] == "BLOCK4" and f["severity"] == "ALARM":
+        if f["rule_id"] == "TIMESERIES_DUPLICATE":
             return True
     return False
 
