@@ -206,3 +206,38 @@ def test_quarantine_invalid_nav_clears_derived_rows_and_flags_source(pg_session_
             assert conn.execute(f"SELECT COUNT(*) FROM {t} WHERE isin='GOOD'").fetchone()[0] >= 1, t
     assert conn.execute("SELECT data_status FROM nav_sources WHERE isin='BAD'").fetchone()[0] == "INVALID_NAV"
     assert conn.execute("SELECT data_status FROM nav_sources WHERE isin='GOOD'").fetchone()[0] == "OK"
+
+
+def test_clear_short_horizon_rows_touches_only_that_horizon(pg_session_conn, pg_conn_module_schema):
+    """FND-0177: a bad daily tail window clears ONE short horizon of ONE fund, nothing else."""
+    conn = pg_session_conn
+    conn.execute(f"SET search_path = {pg_conn_module_schema}")
+    conn.execute("CREATE TABLE fund_metrics (isin text, metric text, horizon text, value double precision)")
+    for isin in ("BAD", "GOOD"):
+        for hz in ("rolling_1m", "rolling_3m", "since_inception"):
+            conn.execute("INSERT INTO fund_metrics VALUES (%s,'sharpe',%s,0.5)", (isin, hz))
+
+    assert rp._clear_short_horizon_rows(conn, "BAD", "rolling_1m", dry_run=True) == 0
+    assert conn.execute("SELECT COUNT(*) FROM fund_metrics").fetchone()[0] == 6
+
+    assert rp._clear_short_horizon_rows(conn, "BAD", "rolling_1m", dry_run=False) == 1
+    left = {(r[0], r[1]) for r in conn.execute("SELECT isin, horizon FROM fund_metrics").fetchall()}
+    assert ("BAD", "rolling_1m") not in left
+    assert {("BAD", "rolling_3m"), ("BAD", "since_inception"), ("GOOD", "rolling_1m")} <= left
+    assert len(left) == 5
+
+
+def test_validate_nav_rejects_scale_glitch_in_daily_tail_window():
+    """FND-0177: validate_nav() works on the daily tail window exactly as on the monthly series."""
+    import pandas as pd
+    from src.utils.validators import validate_nav
+
+    dates = pd.date_range("2026-01-01", periods=63, freq="B")
+    clean = pd.DataFrame({"date": dates, "nav": [100.0 + i * 0.01 for i in range(63)]})
+    assert validate_nav(clean.tail(21).reset_index(drop=True))[0] is True
+
+    glitch = clean.copy()
+    glitch.loc[40:, "nav"] = glitch.loc[40:, "nav"] * 100       # 1 -> 100 scale seam inside the window
+    ok, err = validate_nav(glitch.tail(63).reset_index(drop=True))
+    assert ok is False and "saltos" in err
+    assert validate_nav(glitch.tail(10).reset_index(drop=True))[0] is True   # seam outside a shorter tail

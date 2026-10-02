@@ -478,6 +478,24 @@ def _delete_fund_derived_rows(conn: "psycopg.Connection", isin: str) -> int:
     return n
 
 
+def _clear_short_horizon_rows(
+    conn: "psycopg.Connection",
+    isin: str,
+    horizon: str,
+    dry_run: bool,
+) -> int:
+    """FND-0177: the daily tail window of a short horizon failed validate_nav(). Remove that
+    horizon's metrics so an earlier run's values (computed before the glitch entered the window)
+    are not served as current. Runs inside the caller's per-fund transaction (no BEGIN/COMMIT here)
+    and touches only this horizon: the fund's monthly metrics and its eligibility are unaffected.
+    Recovery is automatic once the window is clean again. Returns the rows deleted."""
+    if dry_run:
+        return 0
+    return conn.execute(
+        "DELETE FROM fund_metrics WHERE isin=%s AND horizon=%s", (isin, horizon)
+    ).rowcount
+
+
 def _clear_insufficient_history(
     conn: "psycopg.Connection",
     isin: str,
@@ -1291,6 +1309,18 @@ def run(
                                 _log(conn, isin, "CALC", "SKIP", sh_name,
                                      f"Solo {len(nav_sh)} filas NAV diario "
                                      f"(min {min_obs})", dry_run)
+                                continue
+                            # FND-0177: validate_nav() above only sees the MONTHLY series; scale
+                            # glitches that exist only in fund_nav_daily would reach the short
+                            # windows unchecked. Validate the exact window used, and fail closed
+                            # for THIS horizon only (the fund's monthly metrics are unaffected).
+                            ok_sh, err_sh = validate_nav(nav_sh)
+                            if not ok_sh:
+                                n_warnings += 1
+                                n_sh = _clear_short_horizon_rows(conn, isin, sh_name, dry_run)
+                                _log(conn, isin, "CALC", "WARN", sh_name,
+                                     f"NAV diario invalido en la ventana ({err_sh}); "
+                                     f"{n_sh} filas fund_metrics de {sh_name} eliminadas", dry_run)
                                 continue
                             sh_list = compute_short_horizon_metrics(nav_sh, ipc_df)
                             sh_rows = _rows_from_metric_tuples(sh_list, len(nav_sh))
