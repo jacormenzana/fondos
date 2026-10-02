@@ -31,6 +31,7 @@ sys.path.insert(0, str(_ROOT))
 
 _METRIC_LIKE = ("beta\\_%", "macro\\_%")           # LIKE patterns for the snapshot (betas + r2/alpha/n_obs)
 _HORIZON = "since_inception"
+_BETA_PLAUSIBLE_MAX = 5.0                          # |beta| above this is a calculation defect (FND-0176 saw 600-1,100)
 
 
 def _connect():
@@ -82,7 +83,7 @@ def compare(path: str, version: str, metric_like: str | None, out: str | None) -
     metrics = sorted({m for _, m in before if metric_like is None or m == metric_like})
     flagged = []
     problems = 0
-    print(f"{'metric':22s} {'compared':>8s} {'old_ver':>7s} {'null/nan':>8s} {'mean|d|':>10s} {'med|d|':>10s} {'max|d|':>10s} {'>3sig':>6s} {'top1%':>6s}")
+    print(f"{'metric':22s} {'compared':>8s} {'old_ver':>7s} {'null/nan':>8s} {'mean|d|':>10s} {'med|d|':>10s} {'max|d|':>10s} {'mean d':>10s} {'med d':>10s} {'>3sig':>6s} {'top1%':>6s} {'|v|>5':>6s}")
     for m in metrics:
         deltas, old_ver, bad = [], 0, 0
         for (isin, mm), b in before.items():
@@ -110,7 +111,11 @@ def compare(path: str, version: str, metric_like: str | None, out: str | None) -
         cutoff = sorted(ad)[int(len(ad) * 0.99)] if len(ad) >= 100 else float("inf")
         n3 = [(i, d, b, v) for i, d, b, v in deltas if sig and abs(d - med) > 3 * sig]
         t1 = [(i, d, b, v) for i, d, b, v in deltas if cutoff > 0 and abs(d) >= cutoff]   # all-zero deltas flag nothing
-        print(f"{m:22s} {len(deltas):8d} {old_ver:7d} {bad:8d} {statistics.mean(ad):10.5f} {statistics.median(ad):10.5f} {max(ad):10.5f} {len(n3):6d} {len(t1):6d}")
+        implausible = sum(1 for _, _, _, v in deltas if m.startswith("beta_") and abs(v) > _BETA_PLAUSIBLE_MAX)
+        sd = [d for _, d, _, _ in deltas]                  # signed: direction of the shift (macro_r2: up = better fit)
+        print(f"{m:22s} {len(deltas):8d} {old_ver:7d} {bad:8d} {statistics.mean(ad):10.5f} {statistics.median(ad):10.5f} {max(ad):10.5f} "
+              f"{statistics.mean(sd):10.5f} {statistics.median(sd):10.5f} {len(n3):6d} {len(t1):6d} {implausible:6d}")
+        problems += implausible
         flagged += [(m, i, b, v, d, "3sigma" if (i, d, b, v) in n3 else "top1pct") for i, d, b, v in {*n3, *t1}]
         problems += bad + old_ver
     if out:
