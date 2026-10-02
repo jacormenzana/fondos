@@ -54,7 +54,9 @@ from typing import Optional
 # ============================================================
 # Screener: resuelve ISIN -> securityID (code interno)
 _MS_SCREENER_URL  = "https://global.morningstar.com/api/v1/{lang}/tools/screener/_data"
-# Performance mensual (mantenido como fallback; ya no es el camino principal de descarga)
+# Performance mensual. DEPRECATED (FND-0167, 2026-10-02): ninguna ruta de produccion lo llama
+# (solo _download_nav_daily); NO es un fallback valido: para las 3 clases en cuarentena (FND-0166)
+# devuelve la misma serie corrupta que chartservice (misma fuente aguas arriba). Solo diagnostico.
 _MS_PERF_URL      = "https://api-global.morningstar.com/sal-service/v1/fund/performance/v4/{code}"
 _MS_APIKEY        = "lstzFDEOhfFNMLikKa0am9mgEKLBl49T"
 _MS_PERF_PARAMS   = {"clientId": "MDC", "version": "4.71.0"}
@@ -230,6 +232,10 @@ def _resample_to_monthly(rows: list[dict]) -> list[dict]:
 
 def _download_nav(code: str, isin: str, currency: str, desde: str):
     """
+    DEPRECATED (FND-0167): sin llamadores en produccion y no usar como fallback -- comparte la
+    serie aguas arriba de chartservice, asi que una corrupcion de Morningstar afecta a ambos
+    endpoints por igual (verificado en FND-0166). Un fallback real debe ser una fuente independiente.
+
     Descarga la serie de retorno total mensual via el endpoint
     sal-service/v1/fund/performance/v4/{code} (acceso directo HTTP,
     sin mstarpy.Funds constructor, sin bearer token de scraping).
