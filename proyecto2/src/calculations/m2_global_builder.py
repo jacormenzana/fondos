@@ -52,6 +52,23 @@ _UPSERT_SERIES_MACRO_PG = """
 """
 
 
+def series_tail_health(values, windows=(12, 60)) -> dict:
+    """FND-0176: tail diagnostics that summary stats (min/max/mean) hide. For each window N returns the share of
+    exact zeros and the population std of the last N values; a zero-filled or frozen tail shows as
+    zero_share ~ 1 and std ~ 0 while the whole-series min/max/mean still look plausible."""
+    vals = [float(v) for v in values]
+    out = {}
+    for n in windows:
+        tail = vals[-n:]
+        if not tail:
+            out[n] = {"n": 0, "zero_share": None, "std": None}
+            continue
+        mean = sum(tail) / len(tail)
+        std = (sum((x - mean) ** 2 for x in tail) / len(tail)) ** 0.5
+        out[n] = {"n": len(tail), "zero_share": sum(1 for x in tail if abs(x) < 1e-12) / len(tail), "std": std}
+    return out
+
+
 def m2_global_is_degenerate(dates, values, latest_input_date,
                           max_lag_months: int = 2, flat_months: int = 12):
     """FND-0176: decide whether the stored m2_global_yoy series must be rebuilt.
@@ -265,6 +282,12 @@ def build_m2_global(conn: "psycopg.Connection",
     print(f"  YoY: min={result['m2_global_yoy'].min():.1f}% "
           f"max={result['m2_global_yoy'].max():.1f}% "
           f"media={result['m2_global_yoy'].mean():.1f}%")
+
+    _th = series_tail_health(result["m2_global_yoy"].values)
+    for _n, _h in _th.items():
+        print(f"  Cola ultimos {_n}: ceros={_h['zero_share']:.0%} std={_h['std']:.3f}")
+    if _th[12]["zero_share"] is not None and (_th[12]["zero_share"] >= 0.5 or _th[12]["std"] < 1e-6):
+        print("  [M2_Global] AVISO: la cola de m2_global_yoy esta a cero o congelada (revisar escalas/componentes)")
 
     if dry_run:
         return len(result)

@@ -177,3 +177,21 @@ def test_japan_plain_yen_level_does_not_swamp_global_yoy(pg_session_conn, pg_con
     last = conn.execute("SELECT value FROM series_macro WHERE indicator='m2_global_yoy' AND geography='GLOBAL' "
                         "ORDER BY date DESC LIMIT 1").fetchone()[0]
     assert last > 5.0, f"global YoY {last} ~ 0 means Japan swamps the sum (unit-scale bug)"
+
+
+def test_series_tail_health_flags_zero_and_frozen_tails():
+    from src.calculations.m2_global_builder import series_tail_health
+
+    healthy = [1.0, 2.0, 3.0, 4.0] * 20
+    h = series_tail_health(healthy)
+    assert h[12]["zero_share"] == 0.0 and h[12]["std"] > 1.0 and h[60]["n"] == 60
+
+    zero_tail = [5.0, -3.0, 8.0] * 30 + [0.0] * 60                    # plausible overall, dead tail (the live case)
+    z = series_tail_health(zero_tail)
+    assert z[12]["zero_share"] == 1.0 and z[12]["std"] == 0.0 and z[60]["zero_share"] == 1.0
+
+    frozen = [1.0] * 5 + [2.5] * 60                                   # constant but not zero
+    f = series_tail_health(frozen)
+    assert f[12]["zero_share"] == 0.0 and f[12]["std"] == 0.0
+
+    assert series_tail_health([])[12]["n"] == 0
