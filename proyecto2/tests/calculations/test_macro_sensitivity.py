@@ -380,3 +380,40 @@ class TestPerFundWindowedSelection:
         )
         result = compute_macro_sensitivity(nav, macro)
         assert result == [], f"Expected [] when all factors pruned, got {result}"
+
+
+# ============================================================
+# Tests — FND-0176: zero-filled / near-constant factor guard
+# ============================================================
+
+def test_longest_zero_run():
+    from src.calculations.macro_sensitivity import _longest_zero_run
+    assert _longest_zero_run(np.array([1.0, 0.0, 0.0, 2.0, 0.0])) == 2
+    assert _longest_zero_run(np.array([0.0] * 5)) == 5
+    assert _longest_zero_run(np.array([1.0, 2.0])) == 0
+    assert _longest_zero_run(np.array([1e-5, 0.0, 1e-5])) == 1      # near-zero is not zero
+
+
+def test_zero_filled_factor_is_dropped_not_exploded():
+    """m2_global_yoy zero-filled (a few ~1e-5 blips keep std > 1e-10) must not yield a huge beta."""
+    n = MIN_OBS + 10
+    macro = _macro_oil_only(n)
+    z = np.zeros(n)
+    z[3], z[8], z[15] = 2e-5, -1e-5, 3e-5            # std ~ 4e-6: passes the old std > 1e-10 guard
+    macro["m2_global_yoy"] = z
+    assert macro["m2_global_yoy"].std() > 1e-10
+    result = compute_macro_sensitivity(_nav_df(n), macro)
+    assert _extract(result, "beta_m2_global") == "MISSING"
+    assert _extract(result, "beta_oil") != "MISSING"
+    assert all(abs(v) < 5 for name, v, _ in result if name.startswith("beta_") and v is not None)
+
+
+def test_rate_change_factor_with_long_zero_run_is_kept():
+    """d_rate_* are legitimately flat for years (d_rate_eu: 41 zero months on live) - never dropped by the gate."""
+    n = MIN_OBS + 10
+    macro = _macro_oil_only(n)
+    d = np.random.default_rng(5).normal(0, 0.2, n)
+    d[:40] = 0.0
+    macro["d_rate_eu"] = d
+    result = compute_macro_sensitivity(_nav_df(n), macro)
+    assert _extract(result, "beta_rate_eu") != "MISSING"

@@ -507,6 +507,11 @@ MIN_PEERS: int = 5   # mínimo de fondos en la categoría para percentiles (mome
 MACRO_OLS_MIN_OBS: int = 60                    # mínimo meses solapados NAV+macro para el OLS
 MACRO_OLS_PER_FUND_MIN_COVERAGE: float = 0.85  # cobertura mínima por-fondo de cada factor
 MACRO_VIF_THRESHOLD: float = 10.0              # eliminar factores con VIF > umbral
+# FND-0176: a factor with a run of >= this many consecutive exact zeros inside a fund's estimation window is
+# degenerate (a stale/zero-filled series, e.g. m2_global_yoy 2021-07..2026-02) and is dropped from that OLS.
+# Exempt: MACRO_ZERO_RUN_EXEMPT_PREFIXES (rate-change factors are legitimately flat: d_rate_eu has a 41-month zero run).
+MACRO_FACTOR_MAX_ZERO_RUN: int = 12
+MACRO_ZERO_RUN_EXEMPT_PREFIXES: tuple = ("d_rate_",)
 
 # Factores a proteger del filtro VIF según geografía del fondo — se suman al
 # conjunto base {d_rate_eu, oil_yoy, m3_yoy} para evitar que factores

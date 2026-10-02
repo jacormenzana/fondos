@@ -100,7 +100,7 @@ from src.calculations.macro_sensitivity import (
 from src.calculations.regime_returns import (
     load_regime_history, compute_regime_returns
 )
-from src.calculations.m2_global_builder import build_m2_global
+from src.calculations.m2_global_builder import build_m2_global, m2_global_needs_rebuild
 from src.calculations.momentum import compute_momentum, reset_category_returns_cache
 from src.calculations.capture_ratios import compute_capture_ratios
 from src.calculations.persistence import compute_persistence
@@ -660,7 +660,9 @@ def _covers_all_families(metrics_filter: "list[str] | None") -> bool:
 
 # Bump this string whenever the calculation logic changes to force a
 # cache-miss in fund_metric_state even when NAV/IPC inputs are unchanged.
-CALC_VERSION: str = "20260930"  # v37 (FND-0138): short_horizon.py kept its own deflation copy
+CALC_VERSION: str = "20261002"  # v38 (FND-0176): m2_global_yoy was garbage (JP unit scale x1e6 + CN/JP extension never ran,
+# so the global sum was a constant and YoY ~0 after 2017) -> beta_m2_global 600-1,100 on 172 funds; series rebuilt,
+# builder fixed, near-constant factor guard added in macro_sensitivity. Previous: v37 (FND-0138): short_horizon.py kept its own deflation copy
 # (exact reindex + ffill().bfill()) that lost the pre-window IPC anchor and gave each short window's
 # first date a LATER month's CPI -- 118/120 sampled live windows differed, up to 2.1 pp on
 # rolling_6m short_return_cum_real (real_flag=1, metric_version d1). Now calls deflate_nav().
@@ -927,9 +929,13 @@ def run(
             )
 
             # -- Auto-build M2 Global si no existe aún ----------------------
-            if "m2_global_yoy" not in macro_df.columns:
-                logger.info("  [M2_Global] No detectado en factores. Construyendo...")
-                rows_built = build_m2_global(conn, dry_run=dry_run)
+            # FND-0176: rebuild also when the stored series is stale or zero-filled, not only when absent.
+            _m2_rebuild, _m2_why = ("m2_global_yoy" not in macro_df.columns, "ausente")
+            if not _m2_rebuild:
+                _m2_rebuild, _m2_why = m2_global_needs_rebuild(conn)
+            if _m2_rebuild:
+                logger.info(f"  [M2_Global] Reconstruyendo ({_m2_why})...")
+                rows_built = build_m2_global(conn, dry_run=dry_run, only_global=("m2_global_yoy" in macro_df.columns))
                 if rows_built > 0:
                     logger.info(
                         f"  [M2_Global] {rows_built} registros construidos. "

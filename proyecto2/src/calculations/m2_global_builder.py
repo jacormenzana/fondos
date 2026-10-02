@@ -52,11 +52,47 @@ _UPSERT_SERIES_MACRO_PG = """
 """
 
 
+def m2_global_is_degenerate(dates, values, latest_input_date,
+                          max_lag_months: int = 2, flat_months: int = 12):
+    """FND-0176: decide whether the stored m2_global_yoy series must be rebuilt.
+
+    Returns (needs_rebuild, reason). The series is degenerate when it is empty, lags the latest M2 input
+    month by more than `max_lag_months`, or its last `flat_months` values are all exactly zero (a
+    zero-filled tail makes the OLS design singular). `dates` are month-end timestamps, ascending."""
+    if len(values) == 0:
+        return True, "serie ausente"
+    lag = (latest_input_date.year - dates[-1].year) * 12 + (latest_input_date.month - dates[-1].month)
+    if lag > max_lag_months:
+        return True, f"desfasada {lag} meses respecto a sus entradas"
+    tail = list(values)[-flat_months:]
+    if len(tail) >= flat_months and all(abs(float(v)) < 1e-12 for v in tail):
+        return True, f"ultimos {flat_months} meses exactamente a cero"
+    return False, ""
+
+
+def m2_global_needs_rebuild(conn: "psycopg.Connection"):
+    """Reads the stored series and its inputs and applies m2_global_is_degenerate()."""
+    rows = conn.execute("""
+        SELECT date, value FROM series_macro
+        WHERE indicator='m2_global_yoy' AND geography='GLOBAL' ORDER BY date
+    """).fetchall()
+    latest = conn.execute("""
+        SELECT MAX(date) FROM series_macro
+        WHERE indicator='m2_level' AND geography IN ('US','EU')
+    """).fetchone()[0]
+    if latest is None:
+        return False, "sin entradas M2"
+    return m2_global_is_degenerate([r[0] for r in rows], [r[1] for r in rows], latest)
+
+
 def build_m2_global(conn: "psycopg.Connection",
-                    dry_run: bool = False) -> int:
+                    dry_run: bool = False,
+                    only_global: bool = False) -> int:
     """
     Construye M2 Global y persiste en series_macro.
     Devuelve numero de registros escritos.
+
+    only_global=True (FND-0176) refresca SOLO m2_global_yoy/GLOBAL y no toca los m2_yoy US/CN/JP.
     """
     # Cargar M2 niveles
     q = """
@@ -143,7 +179,7 @@ def build_m2_global(conn: "psycopg.Connection",
             extend_dates = all_dates[all_dates > last_valid_cn]
             for dt in extend_dates:
                 yoy = pboc_yoy.get(str(dt.year), 0.085)
-                prev = cn_level.get(dt - pd.DateOffset(months=1))
+                prev = cn_level.get(dt - pd.offsets.MonthEnd(1))   # FND-0176: month-end label (DateOffset(months=1) never matched)
                 if prev is not None and not np.isnan(prev):
                     cn_level[dt] = prev * (1 + yoy / 12)
 
@@ -171,12 +207,15 @@ def build_m2_global(conn: "psycopg.Connection",
             extend_dates = all_dates[all_dates > last_valid_jp]
             for dt in extend_dates:
                 yoy = boj_yoy.get(str(dt.year), 0.025)
-                prev = jp_level.get(dt - pd.DateOffset(months=1))
+                prev = jp_level.get(dt - pd.offsets.MonthEnd(1))   # FND-0176
                 if prev is not None and not np.isnan(prev):
                     jp_level[dt] = prev * (1 + yoy / 12)
 
         jp_level_local = jp_level.copy()   # guardar en JPY antes de convertir
-        result["m2_jp_usd"] = (jp_level / wide["fx_jpy_usd_GLOBAL"]) / 1_000
+        # FND-0176: MYAGM2JPM189N is in plain JPY (6e14-1e15), despite the "jpy_mn" unit label; dividing by 1_000
+        # made Japan ~8.5e9 "bn USD" and swamped the other three components (the global YoY became ~0 once
+        # the JP level stopped in 2017). Same scale as CN: JPY -> USD -> bn USD.
+        result["m2_jp_usd"] = (jp_level / wide["fx_jpy_usd_GLOBAL"]) / 1_000_000_000
 
     # M2 EU: usar nivel directo desde BCE (m2_level_EU en millones EUR)
     # Convertir millones EUR -> bn USD usando tipo de cambio
@@ -253,6 +292,9 @@ def build_m2_global(conn: "psycopg.Connection",
     executemany(conn, sql, rows_out)
     conn.commit()
     print(f"  [M2_Global] {len(rows_out)} registros persistidos (m2_global_yoy)")
+
+    if only_global:
+        return len(rows_out)
 
     # ----------------------------------------------------------------
     # Persistir m2_yoy individuales calculados desde niveles en moneda local

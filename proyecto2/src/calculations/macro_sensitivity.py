@@ -61,6 +61,8 @@ from shared.config import (
     MACRO_OLS_MIN_OBS,
     MACRO_OLS_PER_FUND_MIN_COVERAGE,
     MACRO_VIF_THRESHOLD,
+    MACRO_FACTOR_MAX_ZERO_RUN,
+    MACRO_ZERO_RUN_EXEMPT_PREFIXES,
     MACRO_GEO_FORCE_KEEP,
     MACRO_DEV_STATUS_FORCE_KEEP,
 )
@@ -291,6 +293,15 @@ _FACTOR_TO_METRIC = {
     "eur_cny_yoy":   "beta_eur_cny",
 }
 
+def _longest_zero_run(values) -> int:
+    """Longest run of consecutive exact zeros (|x| < 1e-12) in a 1-D array (FND-0176)."""
+    best = cur = 0
+    for x in values:
+        cur = cur + 1 if abs(x) < 1e-12 else 0
+        if cur > best:
+            best = cur
+    return best
+
 
 def _compute_vif(X_cols: np.ndarray) -> np.ndarray:
     """
@@ -387,6 +398,13 @@ def compute_macro_sensitivity(
     # value" warnings printed directly to stderr — the try/except in _ols cannot catch them.
     _stds = merged[factor_cols].std()
     factor_cols = [c for c in factor_cols if _stds[c] > 1e-10]
+
+    # FND-0176: also drop factors that are zero-filled for a long stretch of THIS window. The std test above
+    # misses them when a few near-zero values keep the std above 1e-10 (m2_global_yoy: std 2e-5), and a
+    # constant factor next to the intercept makes the design singular (betas of 600-1,100 on 172 funds).
+    factor_cols = [c for c in factor_cols
+                   if c.startswith(MACRO_ZERO_RUN_EXEMPT_PREFIXES)
+                   or _longest_zero_run(merged[c].values) < MACRO_FACTOR_MAX_ZERO_RUN]
     if not factor_cols:
         return []
     X_raw = merged[factor_cols].values
