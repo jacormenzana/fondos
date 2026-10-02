@@ -53,6 +53,7 @@ from proyecto3.src.portfolio_engine import (
     clamp_and_renormalize,
     select_candidates,
     assign_weights as engine_assign_weights,
+    round_master_weights,
 )
 from shared.config import PORTFOLIO_HYSTERESIS_ENABLED, ROTATION_COST_GATE_ENABLED
 
@@ -110,15 +111,14 @@ class Portfolio:
     @property
     def all_funds(self) -> list[dict]:
         """Lista de todos los fondos con peso en la cartera maestra."""
-        result = []
+        result, raw = [], []
         for sp in self.sub_portfolios:
             for f in sp.funds:
-                master_weight = f["weight"] * sp.regime_weight
-                result.append({
-                    **f,
-                    "subportfolio":   sp.name,
-                    "master_weight":  round(master_weight, 4),
-                })
+                raw.append((f["isin"], f["weight"] * sp.regime_weight))
+                result.append({**f, "subportfolio": sp.name})
+        # FND-0169: largest-remainder rounding so the master weights sum to 1.0000, not 0.9999
+        for entry, w in zip(result, round_master_weights(raw)):
+            entry["master_weight"] = w
         return result
 
     def summary(self) -> str:

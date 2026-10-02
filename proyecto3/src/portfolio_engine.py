@@ -35,6 +35,32 @@ import pandas as pd
 
 
 # ============================================================
+# Master-weight rounding (shared by PortfolioBuilder and Backtester)
+# ============================================================
+
+def round_master_weights(raw: list, decimals: int = 4) -> list:
+    """Round master weights to `decimals` places so they SUM to the rounded total (FND-0169).
+
+    Rounding every weight independently left the portfolio at 0.9999 (each weight is off by up to
+    half a unit and the errors do not cancel). Largest-remainder rounding: floor every weight on the
+    grid, then hand the leftover units (at most one each) to the weights with the largest discarded
+    fractions; ties break on the id so the result does not depend on input order. No weight moves by
+    more than one grid unit (0.0001 at 4 dp), far below any constraint tolerance.
+
+    raw: list of (id, weight) pairs; id is the ISIN (used only as the tie-break).
+    Returns the rounded weights in the same order as `raw`."""
+    scale = 10 ** decimals
+    exact = [float(w) * scale for _, w in raw]
+    floors = [int(e + 1e-9) for e in exact]                 # +1e-9: 0.0576*1e4 must not become 575.99999
+    target = int(round(sum(exact)))
+    leftover = target - sum(floors)
+    order = sorted(range(len(raw)), key=lambda i: (-(exact[i] - floors[i]), str(raw[i][0])))
+    for i in order[:max(leftover, 0)]:
+        floors[i] += 1
+    return [f / scale for f in floors]
+
+
+# ============================================================
 # Constraints
 # ============================================================
 

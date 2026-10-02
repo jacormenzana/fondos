@@ -365,3 +365,49 @@ def test_inactive_funds_and_ineligible_latest_rows_are_still_excluded(conn):
     conn.execute("UPDATE fund_master SET In_Current_Universe = 0 WHERE ISIN = 'RETIRED'")
 
     assert set(_select_funds_for_subportfolio(conn, "Equilibrada", "v1", _TEST_REGIME)["isin"]) == {"OK"}
+
+
+# ============================================================
+# FND-0169: master weights must sum to 1.0000 (largest-remainder rounding)
+# ============================================================
+
+def test_round_master_weights_sums_to_one_and_moves_at_most_one_unit():
+    from proyecto3.src.portfolio_engine import round_master_weights
+    rng = random.Random(169)
+    for _ in range(300):
+        n = rng.randint(3, 30)
+        raw_w = [rng.random() + 0.05 for _ in range(n)]
+        tot = sum(raw_w)
+        raw = [(f"ISIN{i:03d}", w / tot) for i, w in enumerate(raw_w)]
+        out = round_master_weights(raw)
+        assert round(sum(out), 4) == 1.0
+        assert all(abs(o - r) <= 1.0001e-4 for o, (_, r) in zip(out, raw))      # one grid unit at most
+        assert all(abs(o * 1e4 - round(o * 1e4)) < 1e-6 for o in out)             # on the 4-dp grid
+
+
+def test_round_master_weights_is_order_independent_and_keeps_a_short_total():
+    from proyecto3.src.portfolio_engine import round_master_weights
+    raw = [("A", 0.33335), ("B", 0.33335), ("C", 0.33330)]
+    fwd = dict(zip("ABC", round_master_weights(raw)))
+    rev = dict(zip("CBA", round_master_weights(list(reversed(raw)))))
+    assert fwd == rev and round(sum(fwd.values()), 4) == 1.0
+    short = round_master_weights([("A", 0.30), ("B", 0.2)])                       # an unfilled portfolio keeps its total
+    assert short == [0.3, 0.2]
+
+
+def test_portfolio_all_funds_master_weights_sum_to_one():
+    """The live case (cartera_shock_energetico_202609): independent rounding gave blocks 0.55 / 0.1001 / 0.3498 = 0.9999."""
+    from proyecto3.src.portfolio_builder import Portfolio, SubPortfolioAllocation
+    third = [0.0576, 0.0576, 0.0576, 0.0576, 0.0576, 0.0576, 0.0576, 0.0576, 0.0576, 0.1824]
+    funds = lambda p, k: [{"isin": f"{p}{i}", "weight": w / sum(third)} for i, w in enumerate(third[:k])]
+    pf = Portfolio(scenario_id="t", regime="Shock_Energetico", profile="p", sub_portfolios=[
+        SubPortfolioAllocation("Defensiva", 0.55, funds("D", 10)),
+        SubPortfolioAllocation("Equilibrada", 0.10, funds("E", 9)),
+        SubPortfolioAllocation("Dinamica", 0.35, funds("Y", 10)),
+    ])
+    for sp in pf.sub_portfolios:                                                   # internal weights sum to 1 per block
+        tot = sum(f["weight"] for f in sp.funds)
+        for f in sp.funds:
+            f["weight"] /= tot
+    mw = [f["master_weight"] for f in pf.all_funds]
+    assert round(sum(mw), 4) == 1.0

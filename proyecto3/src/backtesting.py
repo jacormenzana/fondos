@@ -47,7 +47,7 @@ sys.path.insert(0, str(_ROOT))
 
 
 from proyecto3.src.regime_classifier import RegimeClassifier, REGIME_WEIGHTS
-from proyecto3.src.portfolio_engine import select_and_weight, DEFAULT_CONSTRAINTS
+from proyecto3.src.portfolio_engine import select_and_weight, DEFAULT_CONSTRAINTS, round_master_weights
 from proyecto3.src.score_candidates import load_current_candidates
 
 
@@ -283,7 +283,9 @@ def _blend_to_master(
     # con round(..., 4) -- sin este redondeo, el mismo calculo produce un
     # float sin redondear aqui (p.ej. 0.057585 vs 0.0576), rompiendo la
     # paridad exacta que test_backtest_parity.py verifica.
-    return {isin: round(w, 4) for isin, w in master.items()}
+    # FND-0169: same largest-remainder rounding as Portfolio.all_funds, so the map sums to 1.0000 and parity holds.
+    ids = list(master)
+    return dict(zip(ids, round_master_weights([(i, master[i]) for i in ids])))
 
 
 class Backtester:
