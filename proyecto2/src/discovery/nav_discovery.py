@@ -827,6 +827,60 @@ def _write_nav_rows(conn, rows, dry_run) -> int:
     return len(rows)
 
 
+_DAILY_SPIKE_MAX_MOVE = 0.30      # FND-0177 rule B: an isolated daily move beyond +/-30% that reverts next day is a bad print
+_DAILY_SEAM_RATIO = 8.0           # FND-0177: a PERSISTENT level shift >= 8x is a scale seam (same threshold as validate_nav)
+
+
+def _filter_daily_anomalies(rows: list, spike_max_move: float = _DAILY_SPIKE_MAX_MOVE,
+                            seam_ratio: float = _DAILY_SEAM_RATIO):
+    """FND-0177: quality gate for one ISIN's daily batch BEFORE it reaches fund_nav_daily.
+
+    validate_nav() only sees the monthly series, so daily-only glitches used to pass. Two defects seen live:
+      * isolated bad prints (1.0 among ~100, 9.16 among ~41): the move into the row and the move out of it both
+        exceed +/-30% in OPPOSITE directions -> the row is dropped;
+      * a scale seam (133,009 -> 99.75 and then stable): the level shifts >= 8x and STAYS there -> every row before
+        the last seam is dropped (the latest segment is the one that matches the current price scale).
+    A persistent move below 8x (a real crash, a real jump) is never touched. Returns (kept, dropped) with
+    dropped = [(row, reason)]; the caller logs them. Rows must carry "Date" and "NAV".
+    """
+    if len(rows) < 2:
+        return list(rows), []
+    srt = sorted(rows, key=lambda r: r["Date"])
+    dropped, keep = [], [True] * len(srt)
+    # seams: last position where consecutive raw navs jump by >= seam_ratio in either direction
+    last_seam = 0
+    for i in range(1, len(srt)):
+        a, b = srt[i - 1]["NAV"], srt[i]["NAV"]
+        if a and b and a > 0 and b > 0 and max(a / b, b / a) >= seam_ratio:
+            # an isolated spike looks like two seams (in and out): the level must PERSIST (next row stays near this
+            # one) and must not simply be the return to the level two rows back
+            nxt = srt[i + 1]["NAV"] if i + 1 < len(srt) else None
+            back = srt[i - 2]["NAV"] if i >= 2 else None
+            reverts = nxt is not None and nxt > 0 and max(nxt / b, b / nxt) >= seam_ratio
+            returns = back is not None and back > 0 and max(back / b, b / back) < seam_ratio
+            if not reverts and not returns:
+                last_seam = i
+    for i in range(last_seam):
+        keep[i] = False
+        dropped.append((srt[i], f"pre-seam segment (level shift >= {seam_ratio:g}x at {srt[last_seam]['Date']})"))
+    # isolated spikes/dips inside the kept segment; the "previous" row is the last one KEPT, so a good row sandwiched
+    # between two bad prints (1.0, 100.0, 1.0) is judged against the real level, not against the bad neighbour
+    prev = srt[last_seam]["NAV"] if last_seam < len(srt) else None
+    for i in range(last_seam + 1, len(srt) - 1):
+        v, n = srt[i]["NAV"], srt[i + 1]["NAV"]
+        if not (prev and v and n and prev > 0 and v > 0 and n > 0):
+            prev = v if v and v > 0 else prev
+            continue
+        move_in, move_out = v / prev - 1.0, n / v - 1.0
+        if abs(move_in) > spike_max_move and abs(move_out) > spike_max_move and move_in * move_out < 0:
+            keep[i] = False
+            dropped.append((srt[i], f"isolated spike {move_in:+.0%} in / {move_out:+.0%} out"))
+        else:
+            prev = v
+    kept = [r for r, k in zip(srt, keep) if k]
+    return kept, dropped
+
+
 def _write_nav_rows_daily(conn, rows, dry_run) -> int:
     """Persiste filas NAV diarias en fund_nav_daily.
 
@@ -841,6 +895,12 @@ def _write_nav_rows_daily(conn, rows, dry_run) -> int:
     if not rows or dry_run:
         return 0
     isin = rows[0]["ISIN"]
+    rows, _bad = _filter_daily_anomalies(rows)
+    if _bad:
+        print(f"[WARN] {isin}: {len(_bad)} daily NAV row(s) rejected by the FND-0177 quality gate "
+              f"(first: {_bad[0][0]['Date']} nav={_bad[0][0]['NAV']} - {_bad[0][1]})")
+        if not rows:
+            return 0
     conn.execute(
         "DELETE FROM fund_nav_daily WHERE isin=%s AND data_source != 'MORNINGSTAR_CHART'",
         (isin,),
