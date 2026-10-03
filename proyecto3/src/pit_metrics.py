@@ -40,6 +40,7 @@ gates from daily NAV (d1c).
 
 import importlib.util
 import sys
+import types
 from pathlib import Path
 
 import numpy as np
@@ -51,23 +52,34 @@ if str(_ROOT) not in sys.path:
 
 from shared.config import RISK_FREE_RATE_ANN
 
-_P2_CALC = _ROOT / "proyecto2" / "src" / "calculations"
+_P2_SRC = _ROOT / "proyecto2" / "src"
 _P2_MODULES: dict = {}
 
 PERIODS_PER_YEAR = 12
 
 
-def load_p2_calc(name: str):
-    """Load a PURE P2 calculation module (returns, drawdown, deflation, srri) by file path.
+def load_p2_calc(name: str, subdir: str = "calculations"):
+    """Load a PURE P2 module (calculations: returns, drawdown, deflation, srri, short_horizon, ...;
+    utils: validators) by file path.
 
     P2 modules import each other as `src.calculations.*`, which collides with P3's own `src` package, so
-    they are loaded by path under a private name. Only modules without intra-package imports work."""
-    if name not in _P2_MODULES:
-        spec = importlib.util.spec_from_file_location(f"_p2_calc_{name}", _P2_CALC / f"{name}.py")
+    they are loaded by path as members of a private package (`_p2_<subdir>`; this also resolves their
+    relative imports such as `from .deflation import ...`). Modules that import `src.*` absolutely
+    (risk_metrics, run_pipeline, ...) cannot be loaded this way."""
+    key = (subdir, name)
+    if key not in _P2_MODULES:
+        pkg = f"_p2_{subdir}"
+        if pkg not in sys.modules:
+            package = types.ModuleType(pkg)
+            package.__path__ = [str(_P2_SRC / subdir)]
+            sys.modules[pkg] = package
+        full = f"{pkg}.{name}"
+        spec = importlib.util.spec_from_file_location(full, _P2_SRC / subdir / f"{name}.py")
         mod = importlib.util.module_from_spec(spec)
+        sys.modules[full] = mod
         spec.loader.exec_module(mod)
-        _P2_MODULES[name] = mod
-    return _P2_MODULES[name]
+        _P2_MODULES[key] = mod
+    return _P2_MODULES[key]
 
 
 def _srri_tables():
