@@ -588,18 +588,31 @@ def test_lu1502282632_dla2_ideal():
 # ---------------------------------------------------------------------------
 from priips_cost_extractor import extract_priips_costs, _pick_aci_for_horizon
 
-_DB_PATH = r'C:\desarrollo\fondos\db\fondos.sqlite'
-_DB_EXISTS = os.path.exists(_DB_PATH)
+def _corpus_conn():
+    """Read-only look at the live Postgres corpus (SQLite was retired, FND-0102); None when unreachable."""
+    try:
+        sys.path.insert(0, os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..')))
+        from shared.db import get_connection
+        return get_connection(backend='postgres')
+    except Exception:
+        return None
+
+
+_c = _corpus_conn()
+_DB_EXISTS = _c is not None
+if _c is not None:
+    _c.close()
 
 
 def _fed_from_db(isin: str):
     """Load Raw_KIID_Text + DLA2_Table_Text for a fund (KIID_Class=1)."""
-    import sqlite3
-    con = sqlite3.connect(_DB_PATH)
+    con = _corpus_conn()
+    if con is None:
+        return None
     try:
         row = con.execute(
-            "SELECT Raw_KIID_Text, DLA2_Table_Text FROM fund_kiid_metadata "
-            "WHERE ISIN=? AND KIID_Class=1", (isin,)).fetchone()
+            "SELECT raw_kiid_text, dla2_table_text FROM fund_kiid_metadata "
+            "WHERE isin=%s AND kiid_class=1", (isin,)).fetchone()
     finally:
         con.close()
     if not row:
@@ -639,7 +652,7 @@ def test_bogus_isrhp_return_footnote_recovers_via_longest():
     assert out.get('ACI_RHP') == 0.4, out.get('ACI_RHP')
 
 
-@pytest.mark.skipif(not _DB_EXISTS, reason="fondos.sqlite no disponible")
+@pytest.mark.skipif(not _DB_EXISTS, reason="corpus Postgres no disponible")
 def test_ishares_en_annual_cost_impact_recovers():
     """RC-1 on the real English iShares layout (IE00B3D07F16): bogus is_rhp
     return figure rejected, real 0.4% RHP recovered via LONGEST."""
@@ -649,7 +662,7 @@ def test_ishares_en_annual_cost_impact_recovers():
     assert extract_priips_costs(fed, 'IE00B3D07F16').get('ACI_RHP') == 0.4
 
 
-@pytest.mark.skipif(not _DB_EXISTS, reason="fondos.sqlite no disponible")
+@pytest.mark.skipif(not _DB_EXISTS, reason="corpus Postgres no disponible")
 def test_neuberger_collapsed_single_value_recovers():
     """RC-2 on the real Neuberger Berman full-grid layout (IE00BLLXGV72): the
     incidencia row collapsed to a single 1.2% value (RHP column None);

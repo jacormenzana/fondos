@@ -25,7 +25,6 @@ mismo patrón que test_priips_cost_extractor.py.
 """
 
 import os
-import sqlite3
 import sys
 import unicodedata
 
@@ -36,27 +35,38 @@ _CORE_DIR = os.path.normpath(os.path.join(_TESTS_DIR, '..', 'core'))
 if _CORE_DIR not in sys.path:
     sys.path.insert(0, _CORE_DIR)
 
-_DB_PATH = r'C:\desarrollo\fondos\db\fondos.sqlite'
-_DB_EXISTS = os.path.exists(_DB_PATH)
+def _corpus_conn():
+    """Read-only look at the live Postgres corpus (SQLite was retired, FND-0102); None when unreachable."""
+    try:
+        sys.path.insert(0, os.path.normpath(os.path.join(_TESTS_DIR, '..', '..')))
+        from shared.db import get_connection
+        return get_connection(backend='postgres')
+    except Exception:
+        return None
+
+
+_c = _corpus_conn()
+_DB_EXISTS = _c is not None
+if _c is not None:
+    _c.close()
 
 pytestmark = pytest.mark.skipif(not _DB_EXISTS, reason='corpus DB not available')
 
 
 def _aci_rhp(isin):
     from priips_cost_extractor import extract_priips_costs
-    con = sqlite3.connect(f'file:{_DB_PATH}?mode=ro', uri=True)
-    con.row_factory = sqlite3.Row
+    con = _corpus_conn()
     try:
         m = con.execute(
-            'SELECT Ongoing_Charge_Recurrent oc FROM fund_master WHERE ISIN=?',
+            'SELECT ongoing_charge_recurrent AS oc FROM fund_master WHERE isin=%s',
             (isin,)).fetchone()
         k = con.execute(
-            'SELECT Raw_KIID_Text, DLA2_Table_Text FROM fund_kiid_metadata '
-            'WHERE ISIN=? AND KIID_Class=1', (isin,)).fetchone()
+            'SELECT raw_kiid_text, dla2_table_text FROM fund_kiid_metadata '
+            'WHERE isin=%s AND kiid_class=1', (isin,)).fetchone()
         if m is None or k is None:
             pytest.skip(f'{isin} not in corpus')
         txt = unicodedata.normalize(
-            'NFC', (k['DLA2_Table_Text'] or '') + '\n' + (k['Raw_KIID_Text'] or ''))
+            'NFC', (k['dla2_table_text'] or '') + '\n' + (k['raw_kiid_text'] or ''))
         return extract_priips_costs(text=txt, isin=isin,
                                     existing_oc=m['oc']).get('ACI_RHP')
     finally:
@@ -99,11 +109,11 @@ def test_label_backed_inversion_is_left_alone(isin, expected):
 
 def test_rule_never_raises_an_aci():
     """Nunca sube un ACI: solo puede acercarlo a la baja hacia su etiqueta."""
-    con = sqlite3.connect(f'file:{_DB_PATH}?mode=ro', uri=True)
+    con = _corpus_conn()
     try:
-        before = dict(con.execute(
-            'SELECT ISIN, ACI_RHP FROM fund_master WHERE ISIN IN '
-            "('ES0175437005','IE000XHDJXE4','IE00BDGV0290')").fetchall())
+        before = {r['isin']: r['aci_rhp'] for r in con.execute(
+            'SELECT isin, aci_rhp FROM fund_master WHERE isin IN '
+            "('ES0175437005','IE000XHDJXE4','IE00BDGV0290')").fetchall()}
     finally:
         con.close()
     for isin, old in before.items():

@@ -9,12 +9,12 @@ Uso:
     lanzar run_block desde entorno des
 
     # Universo desde DB (por defecto tras la implementacion de harvest):
-    python run_block.py --block mixtos --db ..\db\fondos.sqlite --master-db
-    python run_block.py --nature-first --db ..\db\fondos.sqlite --master-db
+    python run_block.py --block mixtos --master-db
+    python run_block.py --nature-first --master-db
 
     # Universo desde Excel maestro (modo legacy / debug):
-    python run_block.py --block mixtos --db ..\db\fondos.sqlite --master "c:\\data\\fondos\\in\\GestoresDeFondosv1.xlsx" --sample 5
-    python run_block.py --block mixtos --db ..\db\fondos.sqlite --master "c:\\data\\fondos\\in\\GestoresDeFondosv1.xlsx" --list-isin LU0232465467,LU1873127366
+    python run_block.py --block mixtos --master "c:\\data\\fondos\\in\\GestoresDeFondosv1.xlsx" --sample 5
+    python run_block.py --block mixtos --master "c:\\data\\fondos\\in\\GestoresDeFondosv1.xlsx" --list-isin LU0232465467,LU1873127366
 """
 
 import argparse
