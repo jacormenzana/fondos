@@ -36,6 +36,7 @@ Uso:
     print(bt.summary(results))
 """
 
+import logging
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -47,8 +48,13 @@ sys.path.insert(0, str(_ROOT))
 
 
 from proyecto3.src.regime_classifier import RegimeClassifier, REGIME_WEIGHTS
-from proyecto3.src.portfolio_engine import select_and_weight, DEFAULT_CONSTRAINTS, round_master_weights
+from proyecto3.src.portfolio_engine import (
+    select_and_weight, DEFAULT_CONSTRAINTS, round_master_weights, cash_weight,
+)
 from proyecto3.src.score_candidates import load_current_candidates
+from shared.config import REGIME_PUBLICATION_LAG_MONTHS
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================
@@ -151,26 +157,101 @@ def _load_candidates(conn: "psycopg.Connection",
 # Calculo de rentabilidad de cartera hipotetica
 # ============================================================
 
+_WARNED: set = set()
+
+
+def _warn_once(key: str, message: str) -> None:
+    """Log `message` once per process -- _cash_return runs per month x window."""
+    if key not in _WARNED:
+        _WARNED.add(key)
+        logger.warning(message)
+
+
+def _load_cash_rates(conn: "psycopg.Connection") -> pd.Series:
+    """
+    Tipo de deposito BCE (rate_deposit, % anual, puntos porcentuales) como serie
+    mensual a fin de mes, con forward-fill. Es el rendimiento de la linea de
+    liquidez del backtest (FND-0197). Vacia si no hay datos.
+    """
+    rows = conn.execute("""
+        SELECT date, value
+        FROM series_macro
+        WHERE indicator = 'rate_deposit' AND geography = 'EU'
+        ORDER BY date
+    """).fetchall()
+    if not rows:
+        return pd.Series(dtype=float)
+
+    df = pd.DataFrame(rows, columns=["date", "value"])
+    df["date"] = pd.to_datetime(df["date"]) + pd.offsets.MonthEnd(0)
+    s = df.groupby("date")["value"].last().astype(float)
+    full = pd.date_range(s.index.min(), s.index.max(), freq=pd.offsets.MonthEnd())
+    return s.reindex(full).ffill()
+
+
+def _cash_return(
+    cash_rates: pd.Series | None,
+    date_start: pd.Timestamp,
+    date_end: pd.Timestamp,
+) -> float:
+    """
+    Rentabilidad compuesta de la liquidez entre date_start y date_end (FND-0197).
+
+    Cada mes se devenga con el tipo conocido AL INICIO de ese mes (el de fin del
+    mes anterior; as-of, nunca un valor futuro): (1 + r/100/12). Funciona con
+    tipos negativos (BCE 2014-2022: -0.50%): es un factor mensual, sin divisiones
+    ni logaritmos. Sin dato de tipo para un mes (antes del inicio de la serie o
+    serie vacia) ese mes devenga 0 -- conservador, y se avisa una sola vez.
+    """
+    months = pd.date_range(date_start, date_end, freq=pd.offsets.MonthEnd())
+    if len(months) < 2:
+        return 0.0
+    if cash_rates is None or cash_rates.empty:
+        _warn_once("cash-no-series", "cash leg: no rate_deposit series -- liquidity accrues 0%")
+        return 0.0
+
+    prior = months[:-1]
+    rates = cash_rates.reindex(prior, method="ffill")
+    if rates.isna().any():
+        _warn_once("cash-pre-series",
+                   "cash leg: no rate_deposit before %s -- those months accrue 0%%" % cash_rates.index.min().date())
+    factors = 1.0 + rates.fillna(0.0).to_numpy(dtype=float) / 100.0 / 12.0
+    return float(np.prod(factors) - 1.0)
+
+
 def _portfolio_return(
     nav_matrix: pd.DataFrame,
-    isins_weights: dict,   # {isin: weight}
+    isins_weights: dict,   # {isin: weight}; sum(weights) <= 1, the rest is cash
     date_start: pd.Timestamp,
     months_forward: int,
-) -> float | None:
+    cash_rates: pd.Series | None = None,
+) -> tuple[float | None, float | None]:
     """
-    Calcula la rentabilidad de una cartera ponderada en una ventana forward.
+    Rentabilidad de una cartera ponderada en una ventana forward.
+    Devuelve (rentabilidad, fund_data_share).
+
+    FND-0188/0197: ya NO se renormalizan los pesos sobre los fondos con dato.
+    Peso no asignado (residuo de liquidez, ver portfolio_engine.cash_weight) y
+    peso de fondos sin NAV en la ventana se mantienen como liquidez al tipo de
+    deposito BCE. fund_data_share = peso con NAV / peso asignado a fondos
+    (1.0 = todos los fondos con dato) para que el llamador vea la cobertura.
+    Cartera vacia (regimen sin puntuaciones) o sin ningun fondo con dato ->
+    (None, share): no se fabrica una rentabilidad 100% liquidez.
     """
     # Encontrar fecha final
     all_dates = nav_matrix.index
     future_dates = all_dates[all_dates > date_start]
     if len(future_dates) < months_forward:
-        return None
+        return None, None
 
     date_end = future_dates[months_forward - 1]
 
-    returns = []
-    weights = []
+    total_w = float(sum(isins_weights.values()))
+    if total_w <= 0:
+        return None, None
 
+    covered_w = 0.0
+    weighted = 0.0
     for isin, weight in isins_weights.items():
         if isin not in nav_matrix.columns:
             continue
@@ -182,20 +263,17 @@ def _portfolio_return(
         if pd.isna(nav_start) or pd.isna(nav_end) or nav_start <= 0:
             continue
 
-        ret = (nav_end / nav_start) - 1
-        returns.append(ret)
-        weights.append(weight)
+        weighted  += ((nav_end / nav_start) - 1) * weight
+        covered_w += weight
 
-    if not returns:
-        return None
+    share = covered_w / total_w
+    if covered_w <= 0:
+        return None, share
 
-    # Renormalizar pesos
-    total_w = sum(weights)
-    if total_w <= 0:
-        return None
-
-    weighted_return = sum(r * w / total_w for r, w in zip(returns, weights))
-    return round(float(weighted_return), 6)
+    cash_share = max(0.0, 1.0 - covered_w)
+    if cash_share > 0:
+        weighted += cash_share * _cash_return(cash_rates, date_start, date_end)
+    return round(float(weighted), 6), share
 
 
 def _benchmark_return(
@@ -290,11 +368,17 @@ def _blend_to_master(
 
 class Backtester:
 
-    def __init__(self, conn: "psycopg.Connection", score_version: str = "v1"):
+    def __init__(self, conn: "psycopg.Connection", score_version: str = "v1",
+                 publication_lags: dict | None = None):
+        """publication_lags: {indicator: months} for the regime inputs (FND-0194). None -> the config
+        default REGIME_PUBLICATION_LAG_MONTHS (point-in-time regime); {} disables it (legacy behaviour,
+        only useful to measure the effect of the lag)."""
         self.conn          = conn
         self.score_version = score_version
         self._nav          = _load_nav_matrix(conn)
-        self._clf          = RegimeClassifier(conn)
+        self._cash         = _load_cash_rates(conn)
+        lags = REGIME_PUBLICATION_LAG_MONTHS if publication_lags is None else publication_lags
+        self._clf          = RegimeClassifier(conn, publication_lags=lags)
         self._selection_cache: dict[str, dict[str, pd.DataFrame]] = {}
         # Fase 3a (P3 optimization plan, migracion SQLite 2026-09-19):
         # _load_candidates ahora requiere `regime` (fund_scores acumula
@@ -367,7 +451,15 @@ class Backtester:
         # Precalcular seleccion por regimen (peso interno, cacheado por
         # etiqueta -- ver _select_for_regime).
         for regime in hist["regime"].unique():
-            self._select_for_regime(regime)
+            selection = self._select_for_regime(regime)
+            if all(df.empty for df in selection.values()):
+                # FND-0188: no scored candidates for this regime -> its months cannot be evaluated
+                # (and are NOT back-filled with another regime's scores). Say so instead of dropping silently.
+                n_months = int((hist["regime"] == regime).sum())
+                logger.warning(
+                    "backtest: regime %s has no scored candidates -- %d of %d months are NOT evaluated "
+                    "(run score_funds() under that regime to cover it)", regime, n_months, len(hist),
+                )
 
         records = []
         for i, (date, row) in enumerate(hist.iterrows()):
@@ -390,14 +482,17 @@ class Backtester:
             weights = _blend_to_master(selection, sub_w)
 
             rec = {
-                "date":   date,
-                "regime": regime,
+                "date":        date,
+                "regime":      regime,
+                "n_funds":     len(weights),
+                "cash_weight": cash_weight(weights) if weights else None,
             }
 
             for w in FORWARD_WINDOWS:
-                ret   = _portfolio_return(self._nav, weights, date, w)
+                ret, share = _portfolio_return(self._nav, weights, date, w, self._cash)
                 bench = _benchmark_return(self._nav, date, w)
                 rec[f"ret_{w}m"]    = ret
+                rec[f"cov_{w}m"]    = share
                 rec[f"bench_{w}m"]  = bench
                 rec[f"excess_{w}m"] = (ret - bench
                                         if ret is not None and bench is not None
@@ -409,7 +504,8 @@ class Backtester:
                 print(f"  Procesados {i+1}/{len(hist)} meses...")
 
         df = pd.DataFrame(records).set_index("date")
-        print(f"Backtesting completado. {len(df)} periodos evaluados.")
+        n_eval = int(df["ret_1m"].notna().sum())
+        print(f"Backtesting completado. {n_eval} de {len(df)} meses evaluados.")
         return df
 
     def summary(self, results: pd.DataFrame) -> str:
@@ -421,6 +517,21 @@ class Backtester:
             "BACKTESTING P3 -- Resumen por regimen",
             "=" * 60,
         ]
+
+        # FND-0188: months that could not be evaluated are reported, not silently dropped
+        if "n_funds" in results.columns:
+            empty = results[results["n_funds"] == 0]
+            if not empty.empty:
+                by_regime = empty.groupby("regime").size()
+                lines.append("COBERTURA: meses SIN evaluar por regimen sin puntuaciones -> "
+                             + ", ".join(f"{r}: {n}" for r, n in by_regime.items())
+                             + f" (de {len(results)} meses)")
+        if "cov_12m" in results.columns:
+            low = results["cov_12m"].dropna()
+            low = low[low < 1.0]
+            if len(low):
+                lines.append(f"COBERTURA: {len(low)} meses con fondos sin NAV (su peso se mantuvo en "
+                             f"liquidez; cobertura media {low.mean():.0%})")
 
         # Por regimen
         for regime in results["regime"].unique():

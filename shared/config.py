@@ -369,6 +369,20 @@ P3_NAV_UNIVERSE_PERCENTILE: float = 0.10
 # so a partial refresh after a version bump (or a sample run) must not silently produce a portfolio.
 P3_MIN_UNIFORM_METRICS_SHARE: float = 0.98
 P3_MACRO_RELEASE_LAG_INDICATORS: tuple = ("ipc_yoy_avg", "cli_eu")
+# Publication lag, in months, of the release-lagged regime inputs, keyed by series_macro.indicator (FND-0194).
+# Used ONLY by the backtester (RegimeClassifier(publication_lags=...)): the value dated month m is treated as
+# observable from month m+lag, so the regime at t uses only data already published at t. Deliberately
+# conservative fixed lags (not the real, revised release calendar): IPC flash ~2 weeks but final/EU series
+# ~4-6 weeks, OECD CLI 4-8 weeks, ECB M3 ~4 weeks, M2/unemployment 4-6 weeks. Live classification does not
+# lag (it always takes the latest value). Market-driven inputs (oil, VIX, spreads, rates, FX) are not lagged.
+REGIME_PUBLICATION_LAG_MONTHS: dict = {
+    "ipc_index":     2,
+    "cli":           2,
+    "m3_yoy":        2,
+    "m2_yoy":        2,
+    "m2_global_yoy": 2,
+    "unemployment":  2,
+}
 P3_EXIT_STALE_INPUTS: int = 2
 
 # ============================================================

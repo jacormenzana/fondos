@@ -54,6 +54,7 @@ from proyecto3.src.portfolio_engine import (
     select_candidates,
     assign_weights as engine_assign_weights,
     round_master_weights,
+    cash_weight,
 )
 from shared.config import PORTFOLIO_HYSTERESIS_ENABLED, ROTATION_COST_GATE_ENABLED
 
@@ -121,6 +122,13 @@ class Portfolio:
             entry["master_weight"] = w
         return result
 
+    @property
+    def cash_weight(self) -> float:
+        """Residue held as cash when a sub-portfolio cannot reach its regime weight under the per-fund cap
+        (FND-0187). 0.0 for every feasible portfolio. Not persisted: portfolio_weights has no cash row, so
+        persisted master weights then sum to 1 - cash_weight."""
+        return cash_weight([f["master_weight"] for f in self.all_funds])
+
     def summary(self) -> str:
         lines = [
             f"CARTERA: {self.scenario_id}",
@@ -137,6 +145,8 @@ class Portfolio:
                 )
         lines.append(f"\n{'='*60}")
         lines.append(f"Total fondos: {sum(sp.n_funds for sp in self.sub_portfolios)}")
+        if self.cash_weight > 0:
+            lines.append(f"Liquidez (residuo por tope de peso / sub-cartera sin fondos): {self.cash_weight:.1%}")
         return "\n".join(lines)
 
 

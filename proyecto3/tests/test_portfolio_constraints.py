@@ -30,6 +30,7 @@ _ROOT = Path(__file__).resolve().parents[2]  # c:\desarrollo\fondos
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+from proyecto3.src.portfolio_engine import cash_weight
 from proyecto3.src.portfolio_builder import (
     _clamp_and_renormalize,
     _select_funds_for_subportfolio,
@@ -80,37 +81,41 @@ def test_pathological_dominant_score_converges_to_uniform_cap():
         assert v == pytest.approx(HI, abs=1e-4)
 
 
-def test_infeasible_n_below_5_does_not_crash_and_still_sums_to_one():
-    # n=4: n*HI = 0.80 < 1.0 -- no assignment can respect both the cap and
-    # sum-to-1.0. Must not raise, must not silently produce a distribution
-    # that doesn't sum to 1.0 (a valid portfolio always allocates 100% of
-    # capital, even in this unsolvable-bounds edge case).
+def test_infeasible_n_below_5_keeps_cap_strict_and_leaves_residue_as_cash():
+    # FND-0187: n=4 -> n*HI = 0.80 < 1.0. The cap is NOT breached (the old behaviour inflated every
+    # fund to 25%); the 0.20 residue is an explicit cash line, not spread over the funds.
     w = _clamp_and_renormalize(pd.Series([1.0, 1.0, 1.0, 1.0]), LO, HI)
-    assert w.sum() == pytest.approx(1.0, abs=1e-3)
-    # Infeasibility is unavoidable here, but the residual must be SHARED
-    # (proportional/equal spread), not dumped entirely on one fund -- every
-    # weight should land near 0.25, not one fund at 0.40+ and the rest at 0.20.
-    assert w.max() < 0.30, f"residual concentrated on one fund: {w.tolist()}"
+    assert (w <= HI + 1e-9).all(), f"cap breached: {w.tolist()}"
+    assert w.sum() == pytest.approx(4 * HI, abs=1e-9)
+    assert cash_weight(w.tolist()) == pytest.approx(1.0 - 4 * HI, abs=1e-9)
 
 
-def test_infeasible_no_headroom_still_preserves_relative_score_order():
-    # n=2 under hi=0.20 is maximally infeasible (2*0.20=0.40 << 1.0): both
-    # funds get clamped to hi in the very first iteration, leaving zero
-    # headroom for either. The naive fallback (split the 0.60 residual
-    # equally) would erase the original 49.26%/50.74% score-proportional
-    # signal entirely, landing both at exactly 0.50 -- this is the defect
-    # caught by test_hysteresis_uses_score_total_not_effective_score_for_weight_input
-    # failing before the original-proportions fallback was added. The
-    # higher-scored fund must still end up with the larger final weight.
-    w = _clamp_and_renormalize(pd.Series([1.00, 1.03]), LO, HI)
-    assert w.sum() == pytest.approx(1.0, abs=1e-3)
-    assert w.iloc[1] > w.iloc[0], f"score ordering erased by infeasibility fallback: {w.tolist()}"
+@pytest.mark.parametrize("n,expected_cash", [(1, 0.80), (2, 0.60), (3, 0.40), (4, 0.20)])
+def test_infeasible_cash_residue_matches_the_shortfall(n, expected_cash):
+    # Only 3 funds pass the filters -> 60% invested, 40% cash (never a silent 60% total).
+    w = _clamp_and_renormalize(pd.Series([float(i + 1) for i in range(n)]), LO, HI)
+    assert (w <= HI + 1e-9).all()
+    assert cash_weight(w.tolist()) == pytest.approx(expected_cash, abs=1e-9)
+    assert w.sum() + cash_weight(w.tolist()) == pytest.approx(1.0, abs=1e-9)
 
 
-def test_infeasible_n_above_33_does_not_crash():
+def test_infeasible_logs_a_warning_instead_of_printing(caplog):
+    with caplog.at_level("WARNING", logger="proyecto3.src.portfolio_engine"):
+        _clamp_and_renormalize(pd.Series([1.0, 2.0, 3.0]), LO, HI)
+    assert any("liquidez" in r.getMessage() for r in caplog.records)
+
+
+def test_feasible_n_has_no_cash_residue():
+    w = _clamp_and_renormalize(pd.Series([1.0, 2.0, 3.0, 4.0, 5.0, 6.0]), LO, HI)
+    assert cash_weight(w.tolist()) == pytest.approx(0.0, abs=1e-3)
+
+
+def test_infeasible_n_above_33_does_not_crash(caplog):
     # n=40: n*LO = 1.20 > 1.0 -- the floor alone already exceeds 100%.
-    w = _clamp_and_renormalize(pd.Series([1.0] * 40), LO, HI)
+    with caplog.at_level("ERROR", logger="proyecto3.src.portfolio_engine"):
+        w = _clamp_and_renormalize(pd.Series([1.0] * 40), LO, HI)
     assert w.sum() == pytest.approx(1.0, abs=1e-3)
+    assert any("suelo infactible" in r.getMessage() for r in caplog.records)
 
 
 def test_all_zero_scores_falls_back_to_equal_weight():
@@ -231,10 +236,12 @@ def test_hysteresis_uses_score_total_not_effective_score_for_weight_input():
     # therefore final portfolio weights) uses score_total, never the
     # bonus-inflated effective_score.
     from proyecto3.src.portfolio_builder import _assign_weights
+    # n=6 keeps the sub-portfolio feasible (n*HI >= 1, FND-0187) and unclamped, so the weights still
+    # reflect the score ratio (with n<5 every fund sits at the cap and the signal is flat by design).
     df = pd.DataFrame({
-        "isin": ["A", "B"],
-        "score_total": [1.00, 1.03],
-        "effective_score": [1.05, 1.03],  # A has the hysteresis bonus applied
+        "isin": ["A", "B", "C", "D", "E", "F"],
+        "score_total": [1.00, 1.03, 1.00, 1.00, 1.00, 1.00],
+        "effective_score": [1.05, 1.03, 1.00, 1.00, 1.00, 1.00],  # A has the hysteresis bonus applied
     })
     weighted = _assign_weights(df)
     # B has the higher score_total (1.03 > 1.00) -> B must get the larger weight,

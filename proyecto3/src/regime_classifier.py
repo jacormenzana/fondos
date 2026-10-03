@@ -169,12 +169,32 @@ class SemaforoResult:
 # Carga de datos macro
 # ============================================================
 
-def _load_macro_series(conn: "psycopg.Connection") -> pd.DataFrame:
+def _apply_publication_lags(df: pd.DataFrame, lags: dict) -> pd.DataFrame:
+    """
+    Point-in-time: el valor fechado en el mes m solo es observable desde m+lag (FND-0194).
+    Desplaza `date` de las filas cuyo `indicator` esta en `lags` ANTES de derivar yoy/diff, de modo
+    que toda serie derivada tambien es causal. Las filas desplazadas mas alla de la ultima fecha real
+    de datos se descartan (no se inventan meses futuros).
+    """
+    cap = df["date"].max()
+    out = df.copy()
+    for indicator, lag in lags.items():
+        if not lag:
+            continue
+        mask = out["indicator"] == indicator
+        out.loc[mask, "date"] = out.loc[mask, "date"] + pd.offsets.MonthEnd(int(lag))
+    return out[out["date"] <= cap]
+
+
+def _load_macro_series(conn: "psycopg.Connection", publication_lags: dict | None = None) -> pd.DataFrame:
     """
     Carga y pivota todas las series macro necesarias para la clasificacion.
     Devuelve DataFrame mensual con columnas:
         oil_wti, ipc_yoy_es, ipc_yoy_eu, cli_eu, rate_deposit, m3_yoy
     Fechas normalizadas a fin de mes.
+
+    publication_lags: {indicator: meses}. None (por defecto, uso en vivo) = sin retraso; el backtester
+    pasa REGIME_PUBLICATION_LAG_MONTHS para que el regimen en t use solo datos ya publicados.
     """
     query = """
         SELECT date, indicator, geography, value
@@ -203,6 +223,8 @@ def _load_macro_series(conn: "psycopg.Connection") -> pd.DataFrame:
     df = pd.DataFrame(rows, columns=["date", "indicator", "geography", "value"])
     df["date"]  = pd.to_datetime(df["date"]) + pd.offsets.MonthEnd(0)
     df["value"] = df["value"].astype(float)
+    if publication_lags:
+        df = _apply_publication_lags(df, publication_lags)
     df["key"]   = df["indicator"] + "_" + df["geography"]
 
     wide = df.pivot_table(index="date", columns="key",
@@ -529,9 +551,9 @@ class RegimeClassifier:
         historia = clf.classify_historical()
     """
 
-    def __init__(self, conn: "psycopg.Connection"):
+    def __init__(self, conn: "psycopg.Connection", publication_lags: dict | None = None):
         self.conn   = conn
-        self._macro = _load_macro_series(conn)
+        self._macro = _load_macro_series(conn, publication_lags)
         self._historical_cache: pd.DataFrame | None = None
 
     def input_last_dates(self) -> dict:

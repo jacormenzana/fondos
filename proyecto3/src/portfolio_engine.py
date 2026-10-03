@@ -29,14 +29,28 @@ Uso:
     result = select_and_weight(candidates_by_sub, sub_weights, constraints)
 """
 
+import logging
 from dataclasses import dataclass
 
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================
 # Master-weight rounding (shared by PortfolioBuilder and Backtester)
 # ============================================================
+
+def cash_weight(master_weights) -> float:
+    """Share of the portfolio not allocated to any fund (FND-0187): 1 - sum(master weights), floored at 0.
+
+    Sub-portfolios with fewer than ceil(1/max_weight) eligible funds cannot reach 100% under the per-fund cap
+    (clamp_and_renormalize), and a sub-portfolio with no eligible fund allocates nothing; both leave a residue
+    that is held as an explicit cash line instead of breaching the cap. `master_weights` is an iterable of
+    weights or a {isin: weight} mapping."""
+    values = master_weights.values() if hasattr(master_weights, "values") else master_weights
+    return max(0.0, round(1.0 - float(sum(values)), 4))
+
 
 def round_master_weights(raw: list, decimals: int = 4) -> list:
     """Round master weights to `decimals` places so they SUM to the rounded total (FND-0169).
@@ -106,11 +120,19 @@ def clamp_and_renormalize(
     import existente en proyecto3/tests/test_portfolio_constraints.py.
 
     Precondicion de factibilidad: n*lo <= 1.0 <= n*hi (n = len(weights)).
-    Con lo=0.03, hi=0.20, eso exige n in [5, 33] -- una sub-cartera de 4
-    fondos es infactible bajo el tope del 20% y producia silenciosamente
-    pesos del 25%. Si es infactible, o si el bucle no converge en max_iter
-    (lo que en un problema factible no deberia ocurrir nunca -- la
-    redistribucion proporcional sobre un simplex 1-D converge
+    Con lo=0.03, hi=0.20, eso exige n in [5, 33].
+
+    FND-0187: si n*hi < 1 (menos de 5 fondos con tope 20%) el tope se
+    respeta de forma ESTRICTA: cada fondo recibe `hi` y los pesos suman
+    n*hi < 1.0; el residuo 1 - sum(pesos) NO se reparte entre los fondos
+    sino que queda como linea explicita de liquidez (ver cash_weight()).
+    Antes se inflaban los pesos hasta el 25% (n=4) violando el tope. Los
+    pesos devueltos son INTERNOS a la sub-cartera: el llamador los combina
+    con el peso de regimen y calcula la liquidez a nivel master.
+
+    Si n*lo > 1 (n > 33, imposible con max_funds_per_sub=10), o si el bucle
+    no converge en max_iter (en un problema factible no deberia ocurrir
+    nunca -- la redistribucion proporcional sobre un simplex 1-D converge
     monotonamente), se registra un ERROR y el residuo final se reparte
     proporcionalmente sobre el margen disponible (o, si no hay ningun
     margen, en proporcion a los pesos originales pre-clamp) en vez de
@@ -119,6 +141,13 @@ def clamp_and_renormalize(
     n = len(weights)
     if n == 0:
         return weights
+
+    if n * hi < 1.0 - 1e-9:
+        logger.warning(
+            "clamp_and_renormalize: n=%d fondos con tope %.2f no cubren el 100%% -- tope estricto, "
+            "%.1f%% de la sub-cartera queda en liquidez", n, hi, (1.0 - n * hi) * 100,
+        )
+        return pd.Series(float(hi), index=weights.index)
 
     w = weights.copy().astype(float)
     total = w.sum()
@@ -129,12 +158,11 @@ def clamp_and_renormalize(
     w = w / total
     original = w.copy()
 
-    feasible = n * lo <= 1.0 + 1e-9 and 1.0 <= n * hi + 1e-9
-    if not feasible:
-        print(f"  [ERROR] clamp_and_renormalize: cotas infactibles para "
-              f"n={n} fondos (lo={lo}, hi={hi} -> rango [{n*lo:.2f}, "
-              f"{n*hi:.2f}] no cubre 1.0). El resultado puede violar lo/hi "
-              f"-- tratar esta sub-cartera como invalida.")
+    if n * lo > 1.0 + 1e-9:
+        logger.error(
+            "clamp_and_renormalize: suelo infactible para n=%d fondos (lo=%s -> %.2f > 1.0). "
+            "El resultado puede violar lo -- tratar esta sub-cartera como invalida.", n, lo, n * lo,
+        )
 
     clamped_lo = pd.Series(False, index=w.index)
     clamped_hi = pd.Series(False, index=w.index)
@@ -162,10 +190,10 @@ def clamp_and_renormalize(
         else:
             w[free_mask] = remaining / free_mask.sum()
     else:
-        print(f"  [ERROR] clamp_and_renormalize: no convergio en "
-              f"{max_iter} iteraciones (n={n}, lo={lo}, hi={hi}). Se usa "
-              f"la ultima iteracion -- tratar esta sub-cartera como "
-              f"invalida e investigar.")
+        logger.error(
+            "clamp_and_renormalize: no convergio en %d iteraciones (n=%d, lo=%s, hi=%s). Se usa la "
+            "ultima iteracion -- tratar esta sub-cartera como invalida e investigar.", max_iter, n, lo, hi,
+        )
 
     w = w.round(4)
     diff = round(1.0 - w.sum(), 4)
