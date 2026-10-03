@@ -677,6 +677,7 @@ UPDATE fund_kiid_metadata SET KIID_Status='FORCE_REFRESH' WHERE ISIN='<isin>' AN
 | `P1_discoverAllFunds.bat` | P1 |
 | `P1_discoverAllFundsPlusCostDiag.bat` | P1 |
 | `P1_refreshBenchmarks.bat` | P1 |
+| `P2_P3.bat` | P2 |
 | `P2_calculateIndicators.bat` | P2 |
 | `P2_discoverLoadMetrics.bat` | P2 |
 | `P3_buildPortfolio.bat` | P3 |
