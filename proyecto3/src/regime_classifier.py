@@ -680,6 +680,19 @@ class RegimeClassifier:
         self._historical_cache = pd.DataFrame(records).set_index("date")
         return self._historical_cache.copy()
 
+    def absolute_target_annual(self) -> pd.Series:
+        """Objetivo anual absoluto IPC + M3 observable en cada mes (FND-0189): IPC medio ES+EU (yoy,
+        decimal) + M3 Eurozona yoy / 100, con forward-fill. Misma definicion que monthly_report
+        (ipc_yoy + m3_yoy; sin M3 se usa solo el IPC). Si este clasificador se construyo con
+        publication_lags, ambas series ya llevan el retraso: es el objetivo conocido en t.
+        Serie vacia si no hay IPC."""
+        if self._macro.empty or "ipc_yoy_avg" not in self._macro.columns:
+            return pd.Series(dtype=float)
+        macro = self._macro.ffill()
+        ipc = macro["ipc_yoy_avg"]
+        m3 = macro["m3_yoy"] / 100.0 if "m3_yoy" in macro.columns else pd.Series(0.0, index=macro.index)
+        return (ipc + m3.fillna(0.0)).where(ipc.notna()).rename("target_annual")
+
     def persist_history(self, dry_run: bool = False) -> int:
         """Escribe classify_historical() en gold.regime_history (FND-0153). Devuelve filas escritas."""
         return persist_regime_history(self.conn, self.classify_historical(), dry_run=dry_run)

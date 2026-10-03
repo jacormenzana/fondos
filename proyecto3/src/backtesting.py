@@ -431,6 +431,8 @@ class Backtester:
         use_cache: bool = True,
         max_stale_days: int = 45,
         current_universe_only: bool = False,
+        tx_cost_bps: float = 0.0,
+        entry_sides: int = 1,
     ) -> pd.DataFrame:
         """
         Backtest POINT-IN-TIME (FND-0159): en cada fin de mes t el universo se puntua solo con la
@@ -439,7 +441,13 @@ class Backtester:
         constructor en vivo, y las rentabilidades forward se calculan en bloque (producto matricial) con
         la liquidez al tipo de deposito BCE. Devuelve las mismas columnas que run() mas n_funds,
         cash_weight y cov_*; summary() las acepta. Ver pit_backtest.py para la metodologia y sus limites
-        (costes de transaccion: FND-0190, pendiente).
+        (el benchmark es el pool elegible equiponderado, sin friccion).
+
+        tx_cost_bps / entry_sides (FND-0190): coste de ejecucion por lado en puntos basicos, cobrado UNA vez
+        por ventana de tenencia en la entrada (entry_sides=1; 2 = ida y vuelta, mas estricto); 0 = sin
+        friccion. Para la rejilla 0/25/50 pb usar pit_cost_sensitivity(). Columnas extra: ret_wm es neto,
+        gross_wm/cost_wm el desglose, target_wm/vs_target_wm el objetivo absoluto IPC+M3 conocido en t,
+        cash_ret_1m la rentabilidad mensual de la liquidez (para el Sharpe en summary()).
 
         isins: lista para acotar el universo (p.ej. la muestra de 40 ISIN); None = universo completo.
         cache_dir/use_cache: cache parquet de las etapas pesadas (use_cache=False = --no-cache).
@@ -474,9 +482,23 @@ class Backtester:
         run = compute_pit_scores(inputs, at, hist["regime"], cache, max_stale_days=max_stale_days,
                                  current_universe_only=current_universe_only)
         self.last_pit_run = run                          # tiempos por etapa, cache hits, cobertura de gates cortos
+        self.last_pit_context = dict(inputs=inputs, hist=hist, at=at, max_stale_days=max_stale_days)
         print("  etapas (s): " + ", ".join(f"{k}={v:.1f}" for k, v in run.timings.items())
               + f" | cache: {run.cache_hits}")
-        return run_pit_backtest(run, inputs, hist, at, max_stale_days=max_stale_days)
+        target = self._clf.absolute_target_annual() if hasattr(self._clf, "absolute_target_annual") else None
+        self.last_pit_context["target"] = target
+        return run_pit_backtest(run, inputs, hist, at, max_stale_days=max_stale_days, tx_cost_bps=tx_cost_bps,
+                                entry_sides=entry_sides, target_annual=target)
+
+    def pit_cost_sensitivity(self, bps=(0.0, 25.0, 50.0), entry_sides: int = 1) -> pd.DataFrame:
+        """Rejilla de sensibilidad a costes simetricos (por defecto 0/25/50 pb por lado) sobre la ULTIMA
+        ejecucion de run_pit(); la seleccion se calcula una sola vez para todos los niveles de coste."""
+        from proyecto3.src.pit_backtest import cost_sensitivity
+        if not hasattr(self, "last_pit_run"):
+            raise RuntimeError("run_pit() debe ejecutarse antes que pit_cost_sensitivity()")
+        c = self.last_pit_context
+        return cost_sensitivity(self.last_pit_run, c["inputs"], c["hist"], c["at"], bps=bps, entry_sides=entry_sides,
+                                max_stale_days=c["max_stale_days"], target_annual=c.get("target"))
 
     def run(
         self,
@@ -633,6 +655,31 @@ class Backtester:
                 f"exceso {excess_ann:+.1f}% | "
                 f"hit ratio {hit_ratio:.0f}%"
             )
+
+        # FND-0189/0190: serie mensual encadenada (rentabilidades 1m sin solapar), Sharpe contra la liquidez
+        # real de cada mes y objetivo absoluto IPC+M3 -- solo en tablas de run_pit() (llevan cash_ret_1m)
+        if "cash_ret_1m" in results.columns and "bench_1m" in results.columns:
+            from proyecto3.src.pit_backtest import table_stats
+            stats = table_stats(results)
+            lines.append("")
+            net = " neta de la rotacion real mes a mes" if "net_turnover_1m" in results.columns else ""
+            lines.append("SERIE SIMULADA (1m encadenado" + net + "; Sharpe = exceso sobre la liquidez de cada mes):")
+            for name, s in (("cartera", stats["portfolio"]), ("pool benchmark", stats["benchmark"])):
+                lines.append(
+                    f"  {name:15s} rent. anual {s['ann_return']*100:+.1f}% | vol {s['ann_vol']*100:.1f}% | "
+                    f"Sharpe {s['sharpe']:.2f} | max DD {s['max_drawdown']*100:.1f}% | {s['n_months']} meses"
+                )
+            if "tx_cost_bps" in results.attrs:
+                lines.append(f"  costes: {results.attrs['tx_cost_bps']:.0f} pb/lado; rentabilidades por ventana con coste de "
+                             f"entrada x {results.attrs['entry_sides']} lado(s); serie encadenada con coste por rotacion")
+                if "turnover" in results.columns and results["turnover"].notna().any():
+                    lines.append(f"  rotacion media mensual {results['turnover'].mean()*100:.0f}% del capital")
+            for w in FORWARD_WINDOWS:
+                col = f"vs_target_{w}m"
+                if col in results.columns and results[col].notna().any():
+                    v = results[col].dropna()
+                    lines.append(f"  objetivo IPC+M3 {w:2d}m: supera en {(v > 0).mean()*100:.0f}% de los meses "
+                                 f"(exceso medio {v.mean()*100:+.1f}%)")
 
         return "\n".join(lines)
 

@@ -384,3 +384,221 @@ def test_backtester_run_pit_scopes_the_universe_by_isin_list(chain, monkeypatch,
     held = bt.last_pit_run.scores["isin"].unique()
     assert set(held) <= set(subset)
     assert not list(tmp_path.glob("*.parquet"))                      # use_cache=False wrote nothing
+
+
+# ============================================================
+# N4 costs, IPC+M3 target, series statistics (FND-0190 / FND-0189)
+# ============================================================
+
+from proyecto3.src.pit_backtest import (
+    COST_GRID_BPS, assemble_table, cost_sensitivity, prepare_pit_backtest, series_stats, table_stats,
+    target_window_return,
+)
+from proyecto3.src.pit_metrics import load_p2_calc
+from proyecto3.src.regime_classifier import RegimeClassifier
+
+
+def _one_date_case(invested=0.6, r=(0.10, -0.02), cash=0.01):
+    t = MONTHS[40]
+    W = pd.DataFrame({"A": [invested * 0.5], "B": [invested * 0.5]}, index=pd.DatetimeIndex([t]))
+    R = pd.DataFrame({"A": [r[0]], "B": [r[1]]}, index=W.index)
+    return W, R, pd.Series([cash], index=W.index)
+
+
+def test_zero_cost_is_exactly_the_frictionless_return():
+    W, R, c = _one_date_case()
+    assert portfolio_returns(W, R, c, tx_cost=0.0)[0].iloc[0] == portfolio_returns(W, R, c)[0].iloc[0]
+
+
+def test_entry_cost_is_charged_on_the_invested_sleeve_only_in_closed_form():
+    W, R, c = _one_date_case(invested=0.6)
+    gross = portfolio_returns(W, R, c)[0].iloc[0]
+    cost = 25 / 1e4                                                         # 25 bps, one side
+    net = portfolio_returns(W, R, c, tx_cost=cost)[0].iloc[0]
+    weighted = 0.3 * 0.10 + 0.3 * -0.02
+    invested_value = 0.6 + weighted                                         # end value of the invested sleeve
+    assert gross == pytest.approx(weighted + 0.4 * 0.01, abs=1e-6)
+    assert gross - net == pytest.approx(cost * invested_value, abs=1e-6)    # the 40% in cash pays nothing
+    W1, R1, c1 = _one_date_case(invested=1.0)
+    gross_full = portfolio_returns(W1, R1, c1)[0].iloc[0]
+    net_full = portfolio_returns(W1, R1, c1, tx_cost=cost)[0].iloc[0]
+    assert gross_full - net_full == pytest.approx(cost * (1.0 + 0.5 * 0.10 + 0.5 * -0.02), abs=1e-6)
+
+
+def test_cost_is_never_charged_on_funds_without_a_usable_nav_or_on_an_empty_portfolio():
+    t = MONTHS[40]
+    W = pd.DataFrame({"A": [0.5], "DEAD": [0.5]}, index=pd.DatetimeIndex([t]))
+    R = pd.DataFrame({"A": [0.04], "DEAD": [np.nan]}, index=W.index)
+    zero_cash = pd.Series([0.0], index=W.index)
+    gross = portfolio_returns(W, R, zero_cash)[0].iloc[0]
+    net = portfolio_returns(W, R, zero_cash, tx_cost=0.01)[0].iloc[0]
+    assert gross - net == pytest.approx(0.01 * (0.5 + 0.5 * 0.04), abs=1e-6)        # only A was bought
+    empty = pd.DataFrame({"A": [np.nan]}, index=W.index)
+    assert np.isnan(portfolio_returns(empty, R[["A"]], zero_cash, tx_cost=0.01)[0].iloc[0])
+
+
+def test_assembled_table_cost_grid_is_monotone_and_benchmark_is_frictionless(chain):
+    nav, attrs, regime_hist, inputs, cache, run1 = chain
+    prep = prepare_pit_backtest(run1, inputs, regime_hist, AT)
+    t0, t25, t50 = (assemble_table(prep, b) for b in COST_GRID_BPS)
+    for w in (1, 3, 12):
+        assert (t0[f"cost_{w}m"].dropna() == 0).all()
+        assert (t25[f"cost_{w}m"].dropna() > 0).all()
+        assert (t50[f"cost_{w}m"] > t25[f"cost_{w}m"] * 1.9).all()                  # ~2x the cost for 2x the bps
+        assert (t0[f"ret_{w}m"] >= t25[f"ret_{w}m"]).all() and (t25[f"ret_{w}m"] >= t50[f"ret_{w}m"]).all()
+        pd.testing.assert_series_equal(t0[f"bench_{w}m"], t50[f"bench_{w}m"])      # the benchmark pays no costs
+        assert np.allclose(t25[f"gross_{w}m"], t0[f"ret_{w}m"], equal_nan=True)
+        assert np.allclose(t25[f"gross_{w}m"] - t25[f"cost_{w}m"], t25[f"ret_{w}m"], equal_nan=True)
+    # absolute scale: 25 bps on at most ~the whole capital -> a 1m cost between 0 and ~0.25% (catches a unit error)
+    assert (t25["cost_1m"].dropna() < 0.0025 * 1.3).all() and (t25["cost_1m"].dropna() > 0.0025 * 0.05).all()
+    assert t25["cost_1m"].mean() == pytest.approx(0.0025 * (1.0 - t25["cash_weight"].mean()), rel=0.35)
+    both = assemble_table(prep, 25, entry_sides=2)
+    assert np.allclose(both["cost_1m"], 2 * t25["cost_1m"], rtol=1e-3, equal_nan=True)   # round trip = twice the entry cost
+    assert t25.attrs["tx_cost_bps"] == 25 and both.attrs["entry_sides"] == 2
+
+
+def test_cost_sensitivity_rows_and_ordering(chain):
+    nav, attrs, regime_hist, inputs, cache, run1 = chain
+    grid = cost_sensitivity(run1, inputs, regime_hist, AT)
+    assert set(grid["bps_per_side"]) == {0.0, 25.0, 50.0} and set(grid["window_m"]) == {1, 3, 12}
+    assert len(grid) == 9
+    for w, g in grid.groupby("window_m"):
+        g = g.sort_values("bps_per_side")
+        assert g["mean_ret"].is_monotonic_decreasing and g["mean_excess"].is_monotonic_decreasing
+        assert g["mean_cost"].iloc[0] == 0 and g["mean_cost"].iloc[-1] > g["mean_cost"].iloc[1] > 0
+
+
+def test_target_window_return_is_the_compounded_annual_objective_known_at_entry():
+    ann = pd.Series([0.05, 0.08], index=pd.DatetimeIndex([MONTHS[10], MONTHS[20]]))
+    at = pd.DatetimeIndex([MONTHS[5], MONTHS[10], MONTHS[15], MONTHS[25]])
+    r12 = target_window_return(ann, at, 12)
+    r3 = target_window_return(ann, at, 3)
+    assert np.isnan(r12[MONTHS[5]])                                         # nothing known yet
+    assert r12[MONTHS[10]] == pytest.approx(0.05) and r12[MONTHS[15]] == pytest.approx(0.05)      # carried forward
+    assert r12[MONTHS[25]] == pytest.approx(0.08)
+    assert r3[MONTHS[25]] == pytest.approx(1.08 ** 0.25 - 1)
+    assert target_window_return(None, at, 12).isna().all()
+
+
+def test_classifier_absolute_target_is_ipc_plus_m3_with_ipc_only_fallback():
+    idx = pd.date_range("2020-01-31", periods=6, freq=pd.offsets.MonthEnd())
+    clf = object.__new__(RegimeClassifier)
+    clf._macro = pd.DataFrame({"ipc_yoy_avg": [0.02, 0.025, np.nan, 0.03, np.nan, 0.035],
+                               "m3_yoy": [4.0, 5.0, 6.0, np.nan, np.nan, np.nan]}, index=idx)
+    tgt = clf.absolute_target_annual()
+    assert tgt.iloc[0] == pytest.approx(0.02 + 0.04) and tgt.iloc[1] == pytest.approx(0.025 + 0.05)
+    assert tgt.iloc[2] == pytest.approx(0.025 + 0.06)                       # IPC carried forward (ffill) + M3 of the month
+    assert tgt.iloc[3] == pytest.approx(0.03 + 0.06)                        # M3 carried forward
+    assert tgt.iloc[5] == pytest.approx(0.035 + 0.06)
+    clf._macro = pd.DataFrame({"ipc_yoy_avg": [0.02, 0.03], "m3_yoy": [np.nan, 5.0]}, index=idx[:2])
+    early = clf.absolute_target_annual()
+    assert early.iloc[0] == pytest.approx(0.02) and early.iloc[1] == pytest.approx(0.03 + 0.05)   # M3 not yet published
+    clf._macro = pd.DataFrame({"ipc_yoy_avg": [0.02, 0.03]}, index=idx[:2])  # no M3 column at all
+    assert list(clf.absolute_target_annual()) == pytest.approx([0.02, 0.03])
+    clf._macro = pd.DataFrame({"m3_yoy": [4.0]}, index=idx[:1])
+    assert clf.absolute_target_annual().empty
+
+
+def test_series_stats_match_hand_computation_and_p2_volatility():
+    rng = np.random.default_rng(2)
+    idx = pd.date_range("2010-01-31", periods=60, freq=pd.offsets.MonthEnd())
+    r = pd.Series(rng.normal(0.006, 0.02, 60), index=idx)
+    cash = pd.Series(0.002, index=idx)
+    s = series_stats(r, cash)
+    ex = r - 0.002
+    assert s["sharpe"] == pytest.approx(ex.mean() / ex.std(ddof=1) * np.sqrt(12))
+    assert s["ann_return"] == pytest.approx((1 + r).prod() ** (12 / 60) - 1)
+    nav = pd.Series(100.0 * np.concatenate([[1.0], (1 + r).cumprod().to_numpy()]))
+    returns_mod = load_p2_calc("returns")
+    assert s["ann_vol"] == pytest.approx(returns_mod.annualized_volatility(nav))       # same vol as the P2 definition
+    cum = (1 + r).cumprod()
+    assert s["max_drawdown"] == pytest.approx((cum / cum.cummax() - 1).min()) and s["max_drawdown"] <= 0
+    assert s["n_months"] == 60
+
+
+def test_series_stats_edge_cases():
+    idx = pd.date_range("2010-01-31", periods=12, freq=pd.offsets.MonthEnd())
+    flat = series_stats(pd.Series(0.01, index=idx))
+    assert np.isnan(flat["sharpe"]) and flat["ann_vol"] == pytest.approx(0.0, abs=1e-12)
+    assert series_stats(pd.Series([0.01], index=idx[:1]))["n_months"] == 1
+    with_gaps = pd.Series([0.01, np.nan, 0.02, np.nan, -0.01], index=idx[:5])
+    assert series_stats(with_gaps)["n_months"] == 3
+    neg_cash = series_stats(pd.Series(0.01, index=idx) + np.linspace(-0.001, 0.001, 12), pd.Series(-0.0004, index=idx))
+    assert np.isfinite(neg_cash["sharpe"])                                  # negative cash rates are fine
+
+
+class _FakeClfTarget(_FakeClf):
+    def __init__(self, hist, target):
+        super().__init__(hist)
+        self._target = target
+
+    def absolute_target_annual(self):
+        return self._target
+
+
+def test_run_pit_table_carries_costs_target_and_summary_sections(chain, monkeypatch, tmp_path):
+    nav, attrs, regime_hist, inputs, cache, run1 = chain
+    seen = {}
+    bt = _patched_backtester(monkeypatch, nav, attrs, regime_hist, seen)
+    target = pd.Series(0.06, index=MONTHS)
+    bt._clf = _FakeClfTarget(regime_hist, target)
+    free = bt.run_pit(start_date="2013-01-31", end_date="2017-06-30", cache_dir=tmp_path)
+    paid = bt.run_pit(start_date="2013-01-31", end_date="2017-06-30", cache_dir=tmp_path, tx_cost_bps=50)
+    assert {"cash_ret_1m", "gross_1m", "cost_1m", "target_12m", "vs_target_12m"} <= set(paid.columns)
+    assert (free["ret_1m"] - paid["ret_1m"]).dropna().gt(0).all()
+    assert free["target_12m"].dropna().iloc[0] == pytest.approx(0.06)
+    text = bt.summary(paid)
+    assert "SERIE SIMULADA" in text and "Sharpe" in text and "objetivo IPC+M3" in text and "50 pb/lado" in text
+    grid = bt.pit_cost_sensitivity()
+    assert len(grid) == 9 and "hit_vs_target" in grid.columns
+    stats = table_stats(free)
+    assert stats["portfolio"]["n_months"] > 30 and np.isfinite(stats["portfolio"]["sharpe"])
+
+
+def test_pit_cost_sensitivity_requires_a_prior_run():
+    from proyecto3.src.backtesting import Backtester
+    with pytest.raises(RuntimeError):
+        Backtester.pit_cost_sensitivity(object.__new__(Backtester))
+
+
+# ---------------- chained-series cost = real turnover (not 100% monthly entry) ----------------
+
+from proyecto3.src.pit_backtest import monthly_turnover
+
+
+def test_monthly_turnover_counts_entries_and_exits_and_restarts_from_cash_after_an_empty_month():
+    idx = pd.date_range("2015-01-31", periods=6, freq=pd.offsets.MonthEnd())
+    W = pd.DataFrame({"A": [0.8, 0.5, 0.5, np.nan, 1.0, 1.0],
+                      "B": [0.2, np.nan, np.nan, np.nan, np.nan, np.nan],
+                      "C": [np.nan, 0.5, 0.5, np.nan, np.nan, np.nan]}, index=idx)
+    t = monthly_turnover(W)
+    assert t.iloc[0] == pytest.approx(1.0)                  # first month: everything is bought from cash
+    assert t.iloc[1] == pytest.approx(0.3 + 0.2 + 0.5)      # trim A by 0.3, sell B (0.2), buy C (0.5)
+    assert t.iloc[2] == pytest.approx(0.0)                  # unchanged portfolio trades nothing
+    assert np.isnan(t.iloc[3])                              # empty portfolio: no turnover, no return
+    assert t.iloc[4] == pytest.approx(1.0)                  # after an empty month it starts again from cash
+    assert t.iloc[5] == pytest.approx(0.0)
+
+
+def test_chained_series_is_net_of_turnover_and_a_static_portfolio_pays_almost_nothing(chain):
+    nav, attrs, regime_hist, inputs, cache, run1 = chain
+    prep = prepare_pit_backtest(run1, inputs, regime_hist, AT)
+    free = assemble_table(prep, 0.0)
+    paid = assemble_table(prep, 25.0)
+    assert np.allclose(free["net_turnover_1m"], free["gross_1m"], equal_nan=True)            # no cost, no difference
+    assert np.allclose(paid["net_turnover_1m"], paid["gross_1m"] - 0.0025 * paid["turnover"], equal_nan=True)
+    assert (paid["turnover"].dropna() >= 0).all() and paid["turnover"].dropna().iloc[0] > 0.5   # first month enters from cash
+    st = table_stats(paid)["portfolio"]
+    from_ret = series_stats(paid["ret_1m"], paid["cash_ret_1m"])
+    from_net = series_stats(paid["net_turnover_1m"], paid["cash_ret_1m"])
+    assert st["sharpe"] == pytest.approx(from_net["sharpe"]) and st["sharpe"] != pytest.approx(from_ret["sharpe"])
+    assert table_stats(free)["portfolio"]["sharpe"] == pytest.approx(series_stats(free["ret_1m"], free["cash_ret_1m"])["sharpe"])
+
+
+def test_summary_reports_turnover_based_cost_for_the_chained_series(chain, monkeypatch, tmp_path):
+    nav, attrs, regime_hist, inputs, cache, run1 = chain
+    bt = _patched_backtester(monkeypatch, nav, attrs, regime_hist, {})
+    bt._clf = _FakeClfTarget(regime_hist, pd.Series(0.06, index=MONTHS))
+    table = bt.run_pit(start_date="2013-01-31", end_date="2017-06-30", cache_dir=tmp_path, tx_cost_bps=25)
+    text = bt.summary(table)
+    assert "neta de la rotacion real" in text and "rotacion media mensual" in text and "coste por rotacion" in text
