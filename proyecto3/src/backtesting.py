@@ -450,6 +450,7 @@ class Backtester:
         current_universe_only: bool = False,
         tx_cost_bps: float = 0.0,
         entry_sides: int = 1,
+        hysteresis_band: float = 0.0,
     ) -> pd.DataFrame:
         """
         Backtest POINT-IN-TIME (FND-0159): en cada fin de mes t el universo se puntua solo con la
@@ -466,11 +467,18 @@ class Backtester:
         gross_wm/cost_wm el desglose, target_wm/vs_target_wm el objetivo absoluto IPC+M3 conocido en t,
         cash_ret_1m la rentabilidad mensual de la liquidez (para el Sharpe en summary()).
 
+        hysteresis_band (FND-0205): 0 = cada mes es una seleccion nueva; b > 0 da a los fondos que cada
+        sub-cartera tenia el mes anterior un bonus de score b (0.05 = +5%) en el ranking, como el constructor
+        en vivo con PORTFOLIO_HYSTERESIS_ENABLED. Para comparar bandas usar pit_hysteresis_experiment().
+
         isins: lista para acotar el universo (p.ej. la muestra de 40 ISIN); None = universo completo.
         cache_dir/use_cache: cache parquet de las etapas pesadas (use_cache=False = --no-cache).
         run() conserva el comportamiento anterior CON look-ahead, solo para comparar.
         """
-        from proyecto3.src.pit_backtest import run_pit_backtest
+        import dataclasses
+
+        from proyecto3.src.pit_backtest import last_complete_month_end, run_pit_backtest
+        from proyecto3.src.portfolio_engine import DEFAULT_CONSTRAINTS
         from proyecto3.src.pit_cache import ParquetCache
         from proyecto3.src.pit_inputs import (
             iter_daily_chunks, load_attributes, load_ipc, load_nav_panel, load_rate_deposit,
@@ -481,12 +489,18 @@ class Backtester:
         if hist.empty:
             print("ERROR: No hay clasificacion historica disponible.")
             return pd.DataFrame()
-        last = hist.index.max() if end_date is None else min(pd.Timestamp(end_date), hist.index.max())
+        nav = load_nav_panel(self.conn, isins)
+        if nav.empty:
+            return pd.DataFrame()
+        # FND-0204: el indice del clasificador con retrasos llega 2 meses mas alla del ultimo dato; no se evalua
+        # ninguna fecha posterior al ultimo mes que el NAV cubre por completo
+        last = min(hist.index.max(), last_complete_month_end(nav.index.max()))
+        if end_date is not None:
+            last = min(pd.Timestamp(end_date), last)
         at = pd.date_range(pd.Timestamp(start_date) + pd.offsets.MonthEnd(0), last, freq=pd.offsets.MonthEnd())
         if len(at) == 0:
             return pd.DataFrame()
 
-        nav = load_nav_panel(self.conn, isins)
         attrs = load_attributes(self.conn, isins)
         daily_isins = list(nav.columns)
         inputs = PitInputs(
@@ -499,13 +513,32 @@ class Backtester:
         run = compute_pit_scores(inputs, at, hist["regime"], cache, max_stale_days=max_stale_days,
                                  current_universe_only=current_universe_only)
         self.last_pit_run = run                          # tiempos por etapa, cache hits, cobertura de gates cortos
-        self.last_pit_context = dict(inputs=inputs, hist=hist, at=at, max_stale_days=max_stale_days)
+        self.last_pit_context = dict(inputs=inputs, hist=hist, at=at, max_stale_days=max_stale_days,
+                                     tx_cost_bps=tx_cost_bps, entry_sides=entry_sides)
         print("  etapas (s): " + ", ".join(f"{k}={v:.1f}" for k, v in run.timings.items())
               + f" | cache: {run.cache_hits}")
         target = self._clf.absolute_target_annual() if hasattr(self._clf, "absolute_target_annual") else None
         self.last_pit_context["target"] = target
+        constraints = (dataclasses.replace(DEFAULT_CONSTRAINTS, hysteresis_band=hysteresis_band)
+                       if hysteresis_band else DEFAULT_CONSTRAINTS)
         return run_pit_backtest(run, inputs, hist, at, max_stale_days=max_stale_days, tx_cost_bps=tx_cost_bps,
-                                entry_sides=entry_sides, target_annual=target)
+                                entry_sides=entry_sides, target_annual=target, constraints=constraints,
+                                use_incumbents=bool(hysteresis_band))
+
+    def pit_hysteresis_experiment(self, bands=(0.0, 0.05, 0.10, 0.20, 0.40), tx_cost_bps: float | None = None,
+                                  entry_sides: int | None = None) -> pd.DataFrame:
+        """FND-0205: una fila por banda de histeresis (0 = sin titulares) sobre la ULTIMA ejecucion de run_pit():
+        rotacion, lastre anual de costes, estadisticas de la serie encadenada neta de rotacion real y
+        resultado a 12 meses. Mismos scores y mismos retornos forward en todas las filas."""
+        from proyecto3.src.pit_backtest import hysteresis_experiment
+        if not hasattr(self, "last_pit_run"):
+            raise RuntimeError("run_pit() debe ejecutarse antes que pit_hysteresis_experiment()")
+        c = self.last_pit_context
+        return hysteresis_experiment(
+            self.last_pit_run, c["inputs"], c["hist"], c["at"], bands=bands,
+            tx_cost_bps=c.get("tx_cost_bps", 25.0) if tx_cost_bps is None else tx_cost_bps,
+            entry_sides=c.get("entry_sides", 1) if entry_sides is None else entry_sides,
+            max_stale_days=c["max_stale_days"], target_annual=c.get("target"))
 
     def pit_cost_sensitivity(self, bps=(0.0, 25.0, 50.0), entry_sides: int = 1) -> pd.DataFrame:
         """Rejilla de sensibilidad a costes simetricos (por defecto 0/25/50 pb por lado) sobre la ULTIMA
@@ -622,12 +655,19 @@ class Backtester:
                 lines.append("COBERTURA: meses SIN evaluar por regimen sin puntuaciones -> "
                              + ", ".join(f"{r}: {n}" for r, n in by_regime.items())
                              + f" (de {len(results)} meses)")
-        if "cov_12m" in results.columns:
-            low = results["cov_12m"].dropna()
-            low = low[low < 1.0]
-            if len(low):
-                lines.append(f"COBERTURA: {len(low)} meses con fondos sin NAV (su peso se mantuvo en "
-                             f"liquidez; cobertura media {low.mean():.0%})")
+        for w in FORWARD_WINDOWS:
+            cov_col, ret_col = f"cov_{w}m", f"ret_{w}m"
+            if cov_col not in results.columns:
+                continue
+            beyond = results[ret_col].isna()
+            if beyond.any():
+                lines.append(f"COBERTURA: {int(beyond.sum())} meses sin rentabilidad a {w}m (ventana mas alla del "
+                             f"historial NAV o cartera vacia; no evaluados)")
+            partial = results[cov_col].dropna()
+            partial = partial[(partial > 0) & (partial < 1.0)]
+            if len(partial):
+                lines.append(f"COBERTURA: {len(partial)} meses a {w}m con fondos sin NAV (su peso se mantuvo en "
+                             f"liquidez; cobertura media {partial.mean():.0%})")
 
         # Por regimen
         for regime in results["regime"].unique():

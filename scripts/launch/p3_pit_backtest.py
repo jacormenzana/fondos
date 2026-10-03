@@ -15,6 +15,8 @@ Artifacts (one directory per run, default C:\\data\\fondos\\reports\\pit_backtes
     summary.txt              Backtester.summary(): per-regime and global results, simulated series, target
     pit_backtest_table.csv/.parquet   one row per month-end (returns net of costs, benchmark, target, turnover)
     cost_sensitivity.csv     0/25/50 bps per side x 1/3/12 months (mean return, cost, excess, hit ratios)
+    hysteresis_experiment.csv  one row per hysteresis band (0 = no incumbents): turnover, cost drag, chained-series
+                             return/vol/Sharpe/drawdown, 12m excess (FND-0205); skipped with --hysteresis-grid ""
     series_stats.json        annual return / vol / Sharpe / max drawdown of the chained monthly series
     universe_by_date.csv     funds entering / stale / too young / scored / eligible at every date
     short_gate_coverage.csv  where the short-horizon gates were evaluable (fail-open view)
@@ -63,6 +65,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="cost sensitivity grid in bp per side (default 0,25,50)")
     p.add_argument("--entry-sides", type=int, choices=(1, 2), default=1,
                    help="1 = cost once per window at entry (approved convention); 2 = round trip")
+    p.add_argument("--hysteresis-band", type=float, default=0.0,
+                   help="score bonus for last month's holdings in the MAIN table (0 = every month a fresh selection; 0.05 = +5%%)")
+    p.add_argument("--hysteresis-grid", default="0,0.05,0.10,0.20,0.40",
+                   help='bands compared in hysteresis_experiment.csv (default "0,0.05,0.10,0.20,0.40"; "" = skip)')
     p.add_argument("--max-stale-days", type=int, default=45, help="max age of a NAV observation (default 45)")
     p.add_argument("--current-universe-only", action="store_true",
                    help="exclude In_Current_Universe=0 funds (default: retired funds ARE in the PIT universe)")
@@ -112,7 +118,7 @@ def _git_commit() -> str:
 
 
 def write_artifacts(out_dir: Path, table: pd.DataFrame, grid: pd.DataFrame, bt, summary: str, manifest: dict,
-                    save_scores: bool = True) -> dict:
+                    save_scores: bool = True, hysteresis: "pd.DataFrame | None" = None) -> dict:
     """Write every artifact; returns {name: path}. Missing optional pieces (short coverage) are skipped."""
     out_dir.mkdir(parents=True, exist_ok=True)
     run = bt.last_pit_run
@@ -127,6 +133,8 @@ def write_artifacts(out_dir: Path, table: pd.DataFrame, grid: pd.DataFrame, bt, 
     _put("pit_backtest_table.csv", lambda p: table.to_csv(p, float_format="%.8g"))
     _put("pit_backtest_table.parquet", lambda p: table.to_parquet(p))
     _put("cost_sensitivity.csv", lambda p: grid.to_csv(p, index=False, float_format="%.8g"))
+    if hysteresis is not None:
+        _put("hysteresis_experiment.csv", lambda p: hysteresis.to_csv(p, index=False, float_format="%.8g"))
     _put("series_stats.json", lambda p: p.write_text(json.dumps(table_stats(table), indent=2, default=str), encoding="utf-8"))
     _put("universe_by_date.csv", lambda p: run.universe.to_csv(p))
     if run.short_coverage is not None:
@@ -160,6 +168,7 @@ def main(argv=None, conn=None) -> int:
     log_path = _setup_logging(stamp)
     out_dir = Path(args.out_dir) if args.out_dir else DEFAULT_OUT_ROOT / stamp
     grid_bps = tuple(float(x) for x in args.grid_bps.split(",") if x.strip())
+    hyst_bands = tuple(float(x) for x in args.hysteresis_grid.split(",") if x.strip())
     conn = conn or get_connection()
 
     isins = resolve_isins(conn, args)
@@ -181,11 +190,12 @@ def main(argv=None, conn=None) -> int:
     table = bt.run_pit(start_date=args.start, end_date=args.end, isins=isins, cache_dir=args.cache_dir,
                        use_cache=not args.no_cache, max_stale_days=args.max_stale_days,
                        current_universe_only=args.current_universe_only, tx_cost_bps=args.bps_main,
-                       entry_sides=args.entry_sides)
+                       entry_sides=args.entry_sides, hysteresis_band=args.hysteresis_band)
     if table is None or table.empty:
         logger.error("nothing to evaluate (no regime history or empty date range)")
         return EXIT_NOTHING_TO_EVALUATE
     grid = bt.pit_cost_sensitivity(bps=grid_bps, entry_sides=args.entry_sides)
+    hysteresis = bt.pit_hysteresis_experiment(bands=hyst_bands) if hyst_bands else None
     summary = bt.summary(table)
     elapsed = time.perf_counter() - t0
 
@@ -197,7 +207,12 @@ def main(argv=None, conn=None) -> int:
         "dates": [str(table.index.min().date()), str(table.index.max().date()), int(len(table))],
         "python": sys.version.split()[0], "pandas": pd.__version__, "log": str(log_path),
     }
-    written = write_artifacts(out_dir, table, grid, bt, summary, manifest, save_scores=not args.no_scores)
+    written = write_artifacts(out_dir, table, grid, bt, summary, manifest, save_scores=not args.no_scores,
+                              hysteresis=hysteresis)
+    if hysteresis is not None:
+        logger.info("hysteresis experiment (turnover / Sharpe by band):\n%s",
+                    hysteresis[["hysteresis_band", "mean_turnover", "annual_cost_drag", "ann_return", "sharpe",
+                                "max_drawdown", "mean_excess_12m"]].round(4).to_string(index=False))
     print(summary)
     logger.info("done in %.1f s | stages %s | artifacts in %s", elapsed,
                 {k: round(v, 1) for k, v in bt.last_pit_run.timings.items()}, out_dir)

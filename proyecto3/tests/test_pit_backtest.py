@@ -602,3 +602,147 @@ def test_summary_reports_turnover_based_cost_for_the_chained_series(chain, monke
     table = bt.run_pit(start_date="2013-01-31", end_date="2017-06-30", cache_dir=tmp_path, tx_cost_bps=25)
     text = bt.summary(table)
     assert "neta de la rotacion real" in text and "rotacion media mensual" in text and "coste por rotacion" in text
+
+
+# ============================================================
+# FND-0204: data end handling.  FND-0205: incumbents / hysteresis
+# ============================================================
+
+from proyecto3.src.pit_backtest import HYSTERESIS_GRID, hysteresis_experiment, last_complete_month_end
+
+
+@pytest.mark.parametrize("last_nav,expected", [
+    ("2026-10-03", "2026-09-30"),      # 3 days into October: September is the last complete month
+    ("2026-09-29", "2026-09-30"),      # within the 5-day tolerance of the month end: September is complete
+    ("2026-09-30", "2026-09-30"),
+    ("2026-09-24", "2026-08-31"),      # 6 days short of the month end: not complete
+    ("2026-02-27", "2026-02-28"),
+])
+def test_last_complete_month_end(last_nav, expected):
+    assert last_complete_month_end(pd.Timestamp(last_nav)) == pd.Timestamp(expected)
+
+
+def test_a_window_ending_after_the_data_is_nan_even_if_the_last_nav_is_within_the_staleness_tolerance():
+    # NAV on month-ends up to 2020-09-30 plus a first observation of October (2020-10-03)
+    idx = list(pd.date_range("2019-01-31", "2020-09-30", freq=pd.offsets.MonthEnd())) + [pd.Timestamp("2020-10-03")]
+    nav = pd.DataFrame({"A": 100.0 * 1.01 ** np.arange(len(idx))}, index=pd.DatetimeIndex(idx))
+    at = pd.DatetimeIndex([pd.Timestamp("2020-08-31"), pd.Timestamp("2020-09-30")])
+    r1 = forward_returns(nav, at, 1, max_stale_days=45)
+    assert r1.loc["2020-08-31", "A"] == pytest.approx(nav.loc["2020-09-30", "A"] / nav.loc["2020-08-31", "A"] - 1.0)   # ends AT the data end
+    # t=2020-09-30, w=1 would end 2020-10-31 > data end: the as-of rule would use the 2020-10-03 NAV (3 days of
+    # return presented as a month). It must be NaN.
+    assert np.isnan(r1.loc["2020-09-30", "A"])
+    r3 = forward_returns(nav, pd.DatetimeIndex([pd.Timestamp("2020-06-30"), pd.Timestamp("2020-07-31")]), 3, 45)
+    assert not np.isnan(r3.loc["2020-06-30", "A"]) and np.isnan(r3.loc["2020-07-31", "A"])
+
+
+def test_run_pit_default_end_is_clipped_to_the_last_month_the_nav_covers(chain, monkeypatch, tmp_path):
+    nav, attrs, regime_hist, inputs, cache, run1 = chain
+    # the lagged classifier's index runs 2 months past the data (publication-lag shift)
+    extended = pd.concat([regime_hist, regime_hist.iloc[-1:].set_axis([MONTHS[-1] + pd.offsets.MonthEnd(1)]),
+                          regime_hist.iloc[-1:].set_axis([MONTHS[-1] + pd.offsets.MonthEnd(2)])])
+    bt = _patched_backtester(monkeypatch, nav, attrs, extended, {})
+    table = bt.run_pit(start_date="2016-01-31", cache_dir=tmp_path)
+    assert table.index.max() == MONTHS[-1]                                   # not MONTHS[-1] + 2 months
+    assert table["ret_1m"].isna().sum() == 1 and table["ret_12m"].isna().sum() == 12   # only genuine window tails
+    capped = bt.run_pit(start_date="2016-01-31", end_date="2030-12-31", cache_dir=tmp_path)
+    assert capped.index.max() == MONTHS[-1]                                  # an explicit end cannot go beyond the data either
+
+
+def test_summary_distinguishes_windows_past_the_data_from_funds_without_nav():
+    idx = pd.date_range("2020-01-31", periods=6, freq=pd.offsets.MonthEnd())
+    res = pd.DataFrame({
+        "regime": "Expansion", "n_funds": 10,
+        "ret_1m": [0.01, 0.01, 0.01, 0.01, 0.01, np.nan], "bench_1m": 0.0, "excess_1m": 0.01, "cov_1m": [1, 1, 0.5, 1, 1, 0.0],
+        "ret_3m": [0.02, 0.02, 0.02, np.nan, np.nan, np.nan], "bench_3m": 0.0, "excess_3m": 0.02, "cov_3m": [1, 1, 1, 0.0, 0.0, 0.0],
+        "ret_12m": np.nan, "bench_12m": np.nan, "excess_12m": np.nan, "cov_12m": 0.0,
+    }, index=idx)
+    from proyecto3.src.backtesting import Backtester
+    text = Backtester.summary(object.__new__(Backtester), res)
+    assert "1 meses sin rentabilidad a 1m (ventana mas alla del historial NAV" in text
+    assert "3 meses sin rentabilidad a 3m" in text and "6 meses sin rentabilidad a 12m" in text
+    assert "1 meses a 1m con fondos sin NAV" in text and "mas alla del historial NAV o cartera vacia; no evaluados" in text
+    assert "fondos sin NAV" in text and text.count("con fondos sin NAV") == 1       # only the 0 < cov < 1 month
+
+
+# ---------------- incumbents ----------------
+
+def _two_month_scores():
+    """12 Defensiva candidates; in month 2 F10 edges past F9 by 1%."""
+    natures = ["Monetario", "Renta Fija Corto Plazo", "Renta Fija Flexible"]
+    rows = []
+    for t, s10, s9 in ((MONTHS[50], 0.50, 0.60), (MONTHS[51], 0.606, 0.60)):
+        for i in range(12):
+            score = {10: s10, 9: s9}.get(i, 1.0 - 0.04 * i if i < 9 else 0.45)
+            rows.append(dict(as_of=t, regime="Expansion", isin=f"F{i}", subportfolio="Defensiva", fund_name=f"F{i}",
+                             fund_nature=natures[i % 3], fund_family_id=None, score_base=score, multiplier=1.0,
+                             score_final=score, eligible=True, exclusion_reason=None))
+    return pd.DataFrame(rows)
+
+
+def test_incumbents_keep_the_held_fund_against_a_marginally_better_challenger():
+    from proyecto3.src.portfolio_engine import PortfolioConstraints
+    scores = _two_month_scores()
+    attrs = _attrs([f"F{i}" for i in range(12)])
+    at = pd.DatetimeIndex([MONTHS[50], MONTHS[51]])
+    hist = _hist(MONTHS[50], weights=(1.0, 0.0, 0.0))
+    plain, _ = build_weights(scores, attrs, hist, at)
+    sticky, _ = build_weights(scores, attrs, hist, at, PortfolioConstraints(hysteresis_band=0.05), use_incumbents=True)
+    held = lambda W, t: set(W.loc[t].dropna().index)
+    assert "F9" in held(plain, MONTHS[50]) and "F10" not in held(plain, MONTHS[50])          # month 1: top 10 = F0..F9
+    assert "F10" in held(plain, MONTHS[51]) and "F9" not in held(plain, MONTHS[51])          # no memory: challenger wins
+    assert "F9" in held(sticky, MONTHS[51]) and "F10" not in held(sticky, MONTHS[51])        # +5% bonus keeps the incumbent
+    narrow, _ = build_weights(scores, attrs, hist, at, PortfolioConstraints(hysteresis_band=0.001), use_incumbents=True)
+    assert "F10" in held(narrow, MONTHS[51])                                                # a band smaller than the gap does not
+
+
+def test_band_without_incumbents_changes_nothing_and_an_empty_month_resets_the_holdings():
+    from proyecto3.src.portfolio_engine import PortfolioConstraints
+    scores = _two_month_scores()
+    attrs = _attrs([f"F{i}" for i in range(12)])
+    hist = _hist(MONTHS[50], weights=(1.0, 0.0, 0.0))
+    at = pd.DatetimeIndex([MONTHS[50], MONTHS[51]])
+    base, _ = build_weights(scores, attrs, hist, at)
+    ignored, _ = build_weights(scores, attrs, hist, at, PortfolioConstraints(hysteresis_band=0.05))      # use_incumbents False
+    pd.testing.assert_frame_equal(base, ignored)
+    gap = pd.DatetimeIndex([MONTHS[50], MONTHS[51], MONTHS[52]])
+    scores_gap = scores.copy()
+    month3 = scores[scores["as_of"] == MONTHS[51]].assign(as_of=MONTHS[52])
+    scores_gap = pd.concat([scores[scores["as_of"] == MONTHS[50]], month3])                 # month 51 missing -> empty portfolio
+    W, cash = build_weights(scores_gap, attrs, hist, gap, PortfolioConstraints(hysteresis_band=0.05), use_incumbents=True)
+    assert W.loc[MONTHS[51]].dropna().empty and np.isnan(cash[MONTHS[51]])
+    assert "F10" in set(W.loc[MONTHS[52]].dropna().index)                                    # holdings were reset by the empty month
+
+
+def test_hysteresis_experiment_rows_and_turnover_reduction(chain):
+    nav, attrs, regime_hist, inputs, cache, run1 = chain
+    exp = hysteresis_experiment(run1, inputs, regime_hist, AT)
+    assert list(exp["hysteresis_band"]) == list(HYSTERESIS_GRID)
+    assert {"mean_turnover", "annual_cost_drag", "ann_return", "sharpe", "max_drawdown", "mean_excess_12m", "hit_12m",
+            "mean_funds"} <= set(exp.columns)
+    base = exp[exp["hysteresis_band"] == 0].iloc[0]
+    assert base["mean_turnover"] > 0
+    # annual drag = mean turnover x 12 x cost
+    assert (exp["annual_cost_drag"] - exp["mean_turnover"] * 12 * 0.0025).abs().max() < 1e-12
+    assert exp["mean_turnover"].iloc[-1] < base["mean_turnover"]                              # stickiness lowers turnover
+    # every band is really applied: distinct rows, turnover falling as the band widens (a band ignored would repeat 5%)
+    assert exp["mean_turnover"].round(6).nunique() == len(HYSTERESIS_GRID)
+    assert exp["mean_turnover"].is_monotonic_decreasing
+    # the baseline row IS the ordinary table
+    plain = run_pit_backtest(run1, inputs, regime_hist, AT, tx_cost_bps=25.0)
+    assert base["mean_turnover"] == pytest.approx(plain["turnover"].mean())
+    assert base["sharpe"] == pytest.approx(table_stats(plain)["portfolio"]["sharpe"])
+    assert exp.attrs["tx_cost_bps"] == 25.0
+
+
+def test_backtester_run_pit_hysteresis_band_and_experiment_wiring(chain, monkeypatch, tmp_path):
+    nav, attrs, regime_hist, inputs, cache, run1 = chain
+    bt = _patched_backtester(monkeypatch, nav, attrs, regime_hist, {})
+    free = bt.run_pit(start_date="2013-01-31", end_date="2017-06-30", cache_dir=tmp_path, tx_cost_bps=25)
+    sticky = bt.run_pit(start_date="2013-01-31", end_date="2017-06-30", cache_dir=tmp_path, tx_cost_bps=25, hysteresis_band=0.4)
+    assert sticky["turnover"].mean() < free["turnover"].mean()
+    exp = bt.pit_hysteresis_experiment(bands=(0.0, 0.4))
+    assert list(exp["hysteresis_band"]) == [0.0, 0.4] and exp.attrs["tx_cost_bps"] == 25
+    with pytest.raises(RuntimeError):
+        from proyecto3.src.backtesting import Backtester
+        Backtester.pit_hysteresis_experiment(object.__new__(Backtester))

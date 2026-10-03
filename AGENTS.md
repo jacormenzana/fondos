@@ -668,7 +668,7 @@ C:\data\envs\des\python.exe -X utf8 scripts\launch\p3_pit_backtest.py --sample-p
 C:\data\envs\des\python.exe -X utf8 scripts\launch\p3_pit_backtest.py
 ```
 Artifacts per run in `C:\data\fondos\reports\pit_backtest\<STAMP>\` (manifest, timings, summary, monthly table,
-cost sensitivity 0/25/50 bp, series stats, universe/short-gate coverage, all PIT scores); log in
+cost sensitivity 0/25/50 bp, hysteresis/turnover experiment, series stats, universe/short-gate coverage, all PIT scores); log in
 `proyecto3/log/log_P3_pitBacktest_<STAMP>.log`; parquet cache in `proyecto3/cache/pit/` (git-ignored, `--no-cache` to bypass).
 
 **Tests:**

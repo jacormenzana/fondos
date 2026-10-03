@@ -74,6 +74,11 @@ class _StubBacktester:
         type(self).calls["grid"] = (tuple(bps), entry_sides)
         return pd.DataFrame({"bps_per_side": list(bps), "window_m": 1, "mean_ret": 0.01})
 
+    def pit_hysteresis_experiment(self, bands=(0.0, 0.05)):
+        type(self).calls["hysteresis"] = tuple(bands)
+        return pd.DataFrame({"hysteresis_band": list(bands), "mean_turnover": 0.2, "annual_cost_drag": 0.006, "ann_return": 0.04,
+                             "sharpe": 0.6, "max_drawdown": -0.15, "mean_excess_12m": 0.01})
+
     def summary(self, table):
         return "BACKTESTING P3 -- stub summary"
 
@@ -109,6 +114,7 @@ def env(tmp_path, monkeypatch):
 def test_defaults_match_the_documented_contract():
     a = cli.build_parser().parse_args([])
     assert (a.start, a.end, a.bps_main, a.entry_sides, a.max_stale_days) == ("2005-01-31", None, 25.0, 1, 45)
+    assert a.hysteresis_band == 0.0 and a.hysteresis_grid == "0,0.05,0.10,0.20,0.40"
     assert a.grid_bps == "0,25,50" and not a.no_cache and not a.dry_run and not a.current_universe_only
     assert a.isin_file is None and a.isins is None and a.sample_per_nature is None
 
@@ -154,14 +160,17 @@ def test_run_forwards_arguments_and_writes_the_artifact_set(env):
     out = env / "out"
     rc = cli.main(["--isins", "A,B", "--start", "2011-01-31", "--end", "2011-12-31", "--bps-main", "50", "--grid-bps", "0,10",
                    "--entry-sides", "2", "--max-stale-days", "60", "--current-universe-only", "--no-cache",
+                   "--hysteresis-band", "0.1", "--hysteresis-grid", "0,0.3",
                    "--cache-dir", str(env / "cache"), "--out-dir", str(out)], conn=_Conn())
     assert rc == 0
     kw = _StubBacktester.calls["run_pit"]
     assert kw["isins"] == ["A", "B"] and kw["start_date"] == "2011-01-31" and kw["end_date"] == "2011-12-31"
     assert kw["tx_cost_bps"] == 50 and kw["entry_sides"] == 2 and kw["max_stale_days"] == 60
     assert kw["current_universe_only"] is True and kw["use_cache"] is False and kw["cache_dir"] == str(env / "cache")
-    assert _StubBacktester.calls["grid"] == ((0.0, 10.0), 2)
-    expected = {"summary.txt", "pit_backtest_table.csv", "pit_backtest_table.parquet", "cost_sensitivity.csv", "series_stats.json",
+    assert kw["hysteresis_band"] == 0.1
+    assert _StubBacktester.calls["grid"] == ((0.0, 10.0), 2) and _StubBacktester.calls["hysteresis"] == (0.0, 0.3)
+    expected = {"summary.txt", "pit_backtest_table.csv", "pit_backtest_table.parquet", "cost_sensitivity.csv", "hysteresis_experiment.csv",
+                "series_stats.json",
                 "universe_by_date.csv", "short_gate_coverage.csv", "scores_long.parquet", "timings.json", "manifest.json"}
     assert {p.name for p in out.iterdir()} == expected
 
@@ -181,6 +190,19 @@ def test_artifact_contents(env):
     assert manifest["scope"] == "2 ISINs" and manifest["dates"] == ["2010-01-31", "2011-12-31", 24]
     assert manifest["regime_publication_lags_months"] == REGIME_PUBLICATION_LAG_MONTHS and manifest["git_commit"]
     assert "manifest.json" in manifest["artifacts"] and manifest["args"]["bps_main"] == 25.0
+
+
+def test_hysteresis_grid_can_be_skipped_and_is_written_by_default(env):
+    out = env / "out"
+    cli.main(["--isins", "A", "--out-dir", str(out)], conn=_Conn())
+    exp = pd.read_csv(out / "hysteresis_experiment.csv")
+    assert list(exp["hysteresis_band"]) == [0.0, 0.05, 0.1, 0.2, 0.4] and "mean_turnover" in exp.columns
+    assert _StubBacktester.calls["run_pit"]["hysteresis_band"] == 0.0
+    out2 = env / "out2"
+    _StubBacktester.calls = {}
+    cli.main(["--isins", "A", "--out-dir", str(out2), "--hysteresis-grid", ""], conn=_Conn())
+    assert not (out2 / "hysteresis_experiment.csv").exists() and "hysteresis" not in _StubBacktester.calls
+    assert "hysteresis_experiment.csv" not in json.loads((out2 / "manifest.json").read_text(encoding="utf-8"))["artifacts"]
 
 
 def test_no_scores_flag_skips_the_large_file(env):

@@ -153,8 +153,8 @@ def test_summary_without_gaps_has_no_coverage_warning():
     res = pd.DataFrame({
         "regime": ["Expansion"] * 2, "n_funds": [10, 10],
         "ret_1m": [0.01, 0.02], "bench_1m": [0.0, 0.0], "excess_1m": [0.01, 0.02],
-        "ret_3m": [None] * 2, "bench_3m": [None] * 2, "excess_3m": [None] * 2,
-        "ret_12m": [None] * 2, "bench_12m": [None] * 2, "excess_12m": [None] * 2,
-        "cov_12m": [1.0, 1.0],
+        "ret_3m": [0.03, 0.04], "bench_3m": [0.0, 0.0], "excess_3m": [0.03, 0.04],
+        "ret_12m": [0.05, 0.06], "bench_12m": [0.0, 0.0], "excess_12m": [0.05, 0.06],
+        "cov_1m": [1.0, 1.0], "cov_3m": [1.0, 1.0], "cov_12m": [1.0, 1.0],
     }, index=idx)
     assert "COBERTURA" not in Backtester.summary(object.__new__(Backtester), res)

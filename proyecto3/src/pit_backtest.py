@@ -22,6 +22,7 @@ windows decided), the IPC+M3 absolute target of N3, incumbents/hysteresis, Sharp
 
 import logging
 import sys
+import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -40,6 +41,20 @@ logger = logging.getLogger(__name__)
 
 SUB_NAMES = ["Defensiva", "Equilibrada", "Dinamica"]
 CANDIDATE_COLUMNS = ["isin", "score_total", "fund_name", "fund_nature", "management_company", "fund_family_id"]
+
+
+# ============================================================
+# Data end
+# ============================================================
+
+def last_complete_month_end(last_nav: pd.Timestamp, tolerance_days: int = 5) -> pd.Timestamp:
+    """Last month-end the NAV data fully covers: the month-end of the last NAV date when that date is within
+    `tolerance_days` of it (a fund reporting on the 28th of a 30-day month still closes the month), otherwise the
+    PREVIOUS month-end (a last NAV of 2026-10-03 covers up to 2026-09-30 only). Windows ending after it are not
+    evaluable, and neither are evaluation dates after it (FND-0204)."""
+    last_nav = pd.Timestamp(last_nav)
+    me = last_nav + pd.offsets.MonthEnd(0)
+    return me if (me - last_nav).days <= tolerance_days else me - pd.offsets.MonthEnd(1)
 
 
 # ============================================================
@@ -69,20 +84,30 @@ def candidates_by_sub(scores_t: pd.DataFrame, attrs: pd.DataFrame) -> dict:
 
 
 def build_weights(scores: pd.DataFrame, attrs: pd.DataFrame, regime_hist: pd.DataFrame, at: pd.DatetimeIndex,
-                  constraints=DEFAULT_CONSTRAINTS) -> "tuple[pd.DataFrame, pd.Series]":
+                  constraints=DEFAULT_CONSTRAINTS, use_incumbents: bool = False) -> "tuple[pd.DataFrame, pd.Series]":
     """Master weights per date: (W [dates x isin], cash [dates]). regime_hist has weight_defensive/balanced/dynamic
-    (the lagged classifier's classify_historical()); dates without scores or regime row give an empty portfolio."""
+    (the lagged classifier's classify_historical()); dates without scores or regime row give an empty portfolio.
+
+    use_incumbents (FND-0205): the funds each sub-portfolio held the previous month are passed to the engine as
+    incumbents, so they get the hysteresis bonus constraints.hysteresis_band in the ranking (the same mechanism
+    as the live builder, PORTFOLIO_HYSTERESIS_ENABLED). An empty month resets the holdings. Only the SELECTION is
+    sticky: weights stay score-proportional, so turnover from re-weighting held funds remains."""
     rows, cash = {}, {}
+    incumbents: dict = {}
     hist = regime_hist.sort_index()
     by_date = dict(tuple(scores.groupby("as_of"))) if len(scores) else {}
     for t in at:
         pos = hist.index.searchsorted(t, side="right") - 1
         if t not in by_date or pos < 0:
             rows[t], cash[t] = {}, np.nan
+            incumbents = {}
             continue
         h = hist.iloc[pos]
         sub_w = dict(zip(SUB_NAMES, (h["weight_defensive"], h["weight_balanced"], h["weight_dynamic"])))
-        selection = select_and_weight(candidates_by_sub(by_date[t], attrs), sub_w, constraints)
+        selection = select_and_weight(candidates_by_sub(by_date[t], attrs), sub_w, constraints,
+                                      incumbents if use_incumbents else None)
+        if use_incumbents:
+            incumbents = {sub: frozenset(df["isin"]) for sub, df in selection.items() if not df.empty}
         master = _blend_to_master(selection, sub_w)
         rows[t], cash[t] = master, (cash_weight(master) if master else np.nan)
     W = pd.DataFrame.from_dict(rows, orient="index").reindex(at)
@@ -115,8 +140,12 @@ def cash_index(rate: "pd.DataFrame | None", months: pd.DatetimeIndex) -> pd.Seri
 def forward_returns(nav: pd.DataFrame, at: pd.DatetimeIndex, months: int, max_stale_days: int) -> pd.DataFrame:
     """Simple return of every fund from t to t+months (month-end grid): NAV as-of t and as-of t+months, each
     not older than max_stale_days (so a window running past the data is NaN once the last NAV is that old);
-    NaN when either end is unusable. Shape (dates x funds)."""
+    NaN when either end is unusable. A window whose END lies after the last month the data fully covers
+    (last_complete_month_end) is NaN too: without this, the as-of rule would let a window that ends in the
+    future use the last NAV as its end and silently evaluate a SHORTER period as if it were complete (FND-0204).
+    Shape (dates x funds)."""
     ends = pd.DatetimeIndex([t + pd.offsets.MonthEnd(months) for t in at])
+    data_end = last_complete_month_end(nav.index.max())
     start, _ = asof_snapshot(nav, at, max_stale_days)
     end, _ = asof_snapshot(nav, ends, max_stale_days)
     s = start.to_numpy()
@@ -124,6 +153,7 @@ def forward_returns(nav: pd.DataFrame, at: pd.DatetimeIndex, months: int, max_st
     with np.errstate(divide="ignore", invalid="ignore"):
         r = np.where((s > 0) & np.isfinite(s) & np.isfinite(e), e / s - 1.0, np.nan)
     out = pd.DataFrame(r, index=at, columns=nav.columns)
+    out.loc[np.asarray(ends > data_end), :] = np.nan
     return out
 
 
@@ -203,10 +233,10 @@ class PreparedBacktest:
 
 def prepare_pit_backtest(pit_run, inputs, regime_hist: pd.DataFrame, at: pd.DatetimeIndex,
                          windows=FORWARD_WINDOWS, max_stale_days: int = 45,
-                         constraints=DEFAULT_CONSTRAINTS) -> PreparedBacktest:
+                         constraints=DEFAULT_CONSTRAINTS, use_incumbents: bool = False) -> PreparedBacktest:
     at = pd.DatetimeIndex(at)
     windows = tuple(windows)
-    W, cash_w = build_weights(pit_run.scores, inputs.attrs, regime_hist, at, constraints)
+    W, cash_w = build_weights(pit_run.scores, inputs.attrs, regime_hist, at, constraints, use_incumbents)
     grid = pd.date_range(at.min(), at.max() + pd.offsets.MonthEnd(max(windows)), freq=pd.offsets.MonthEnd())
     cidx = cash_index(inputs.rate, grid)
     hist = regime_hist.sort_index()
@@ -282,10 +312,10 @@ def monthly_turnover(W: pd.DataFrame) -> pd.Series:
 def run_pit_backtest(pit_run, inputs, regime_hist: pd.DataFrame, at: pd.DatetimeIndex,
                      windows=FORWARD_WINDOWS, max_stale_days: int = 45, constraints=DEFAULT_CONSTRAINTS,
                      tx_cost_bps: float = 0.0, entry_sides: int = 1,
-                     target_annual: "pd.Series | None" = None) -> pd.DataFrame:
+                     target_annual: "pd.Series | None" = None, use_incumbents: bool = False) -> pd.DataFrame:
     """Backtest table (same columns as Backtester.run plus n_funds, cash_weight, cov_*, cost_*, target_*): one row
     per month-end. pit_run: PitRun from pit_run.compute_pit_scores for the same `at`; inputs: its PitInputs."""
-    prep = prepare_pit_backtest(pit_run, inputs, regime_hist, at, windows, max_stale_days, constraints)
+    prep = prepare_pit_backtest(pit_run, inputs, regime_hist, at, windows, max_stale_days, constraints, use_incumbents)
     return assemble_table(prep, tx_cost_bps, entry_sides, target_annual)
 
 
@@ -340,3 +370,45 @@ def table_stats(table: pd.DataFrame) -> dict:
     cash = table["cash_ret_1m"] if "cash_ret_1m" in table.columns else None
     port = table["net_turnover_1m"] if "net_turnover_1m" in table.columns else table["ret_1m"]
     return {"portfolio": series_stats(port, cash), "benchmark": series_stats(table["bench_1m"], cash)}
+
+
+HYSTERESIS_GRID = (0.0, 0.05, 0.10, 0.20, 0.40)
+
+
+def hysteresis_experiment(pit_run, inputs, regime_hist: pd.DataFrame, at: pd.DatetimeIndex,
+                          bands=HYSTERESIS_GRID, tx_cost_bps: float = 25.0, entry_sides: int = 1,
+                          windows=FORWARD_WINDOWS, max_stale_days: int = 45,
+                          target_annual: "pd.Series | None" = None) -> pd.DataFrame:
+    """FND-0205: how much of the turnover is selection churn, and what does stickiness cost or buy?
+
+    One row per hysteresis band. band 0 = no incumbents (the baseline: every month is a fresh selection); band b > 0
+    gives the previous month's holdings of each sub-portfolio a score bonus of b (0.05 = +5%) in the ranking. Same
+    scores, same forward returns, same benchmark for every row -- only the portfolios differ. Columns: mean/median
+    monthly turnover (sum |dw|, buys + sells), the annual drag at the given cost, the chained-series statistics net
+    of REAL turnover (annual return, vol, Sharpe, max drawdown), the mean number of funds, and the 12-month
+    window mean return / excess / hit ratio (entry cost once per window, as approved)."""
+    base = prepare_pit_backtest(pit_run, inputs, regime_hist, at, windows, max_stale_days)
+    rows = []
+    for b in bands:
+        if b == 0:
+            prep = base
+        else:
+            cons = dataclasses.replace(DEFAULT_CONSTRAINTS, hysteresis_band=b)
+            W, cash_w = build_weights(pit_run.scores, inputs.attrs, regime_hist, base.at, cons, use_incumbents=True)
+            prep = dataclasses.replace(base, W=W, cash_w=cash_w)
+        tab = assemble_table(prep, tx_cost_bps, entry_sides, target_annual)
+        st = table_stats(tab)["portfolio"]
+        e12 = tab[["ret_12m", "excess_12m"]].dropna() if 12 in prep.windows else pd.DataFrame()
+        rows.append({
+            "hysteresis_band": b,
+            "mean_turnover": float(tab["turnover"].mean()), "median_turnover": float(tab["turnover"].median()),
+            "annual_cost_drag": float(tab["turnover"].mean() * 12 * tx_cost_bps / 1e4),
+            "ann_return": st["ann_return"], "ann_vol": st["ann_vol"], "sharpe": st["sharpe"], "max_drawdown": st["max_drawdown"],
+            "mean_funds": float(tab["n_funds"].mean()),
+            "mean_ret_12m": float(e12["ret_12m"].mean()) if len(e12) else np.nan,
+            "mean_excess_12m": float(e12["excess_12m"].mean()) if len(e12) else np.nan,
+            "hit_12m": float((e12["excess_12m"] > 0).mean()) if len(e12) else np.nan,
+        })
+    out = pd.DataFrame(rows)
+    out.attrs["tx_cost_bps"] = tx_cost_bps
+    return out
