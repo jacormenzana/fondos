@@ -453,3 +453,27 @@ class TestBuilders:
         col = {h: v for h, v in zip(headers, data)}
         assert col["β Oro"] == 0.123 and col["β DXY"] == 0.456 and col["β CLI EU"] == 0.789
         assert col["N obs"] == 77 and col["Sc. Oil +25%"] == 0.02 and col["Sc. HY +300bp"] == -0.03
+
+    @pytest.mark.parametrize("builder, query", [
+        ("build_srri",          "q_srri_vs_kiid"),
+        ("build_rentabilidad",  "q_top_rentabilidad"),
+        ("build_riesgo",        "q_ret_dd_ratio"),
+        ("build_consistencia",  "q_consistencia"),
+        ("build_crisis",        "q_crisis"),
+        ("build_macro",         "q_macro_betas"),
+        ("build_candidatos",    "q_candidatos"),
+        ("build_persistencia",  "q_persistencia"),
+        ("build_divisa",        "q_divisa"),
+        ("build_regime_returns", "q_regime_returns"),
+        ("build_tendencia",     "q_tendencia"),
+    ])
+    def test_builders_fail_fast_when_query_width_drifts(self, monkeypatch, builder, query):
+        """A query returning a different column count than the sheet's headers must raise a clear
+        ValueError naming the sheet, not a generic 'tuple index out of range' (FND-0181 follow-up)."""
+        import proyecto2.src.analysis.export_metrics as em
+        conn = _minimal_conn()
+        monkeypatch.setattr(em, query, lambda *a, **k: [("only-one-column",)])
+        ws = openpyxl.Workbook().active
+        ws.title = builder
+        with pytest.raises(ValueError, match=r"query returns 1 columns but the sheet defines \d+ headers"):
+            getattr(em, builder)(ws, conn)

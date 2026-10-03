@@ -123,6 +123,16 @@ def _autofilter(ws):
 def _no_gridlines(ws):
     ws.sheet_view.showGridLines = False
 
+def _check_width(ws, headers, rows):
+    """Fail fast, with a clear message, when a query returns a different number of columns than the
+    sheet defines headers for (e.g. a metric dropped from the SQL but not from the sheet).
+    Positional row reads would otherwise surface as a generic 'tuple index out of range'."""
+    if rows and len(rows[0]) != len(headers):
+        raise ValueError(
+            f"{ws.title}: query returns {len(rows[0])} columns but the sheet defines "
+            f"{len(headers)} headers -- keep the SQL select list and build_* in sync")
+
+
 def _write_rows(ws, rows, start_row=2, fmt_map=None):
     """
     Escribe filas de datos.
@@ -606,6 +616,7 @@ def build_srri(ws, conn):
     header_row = ws.max_row
 
     rows = q_srri_vs_kiid(conn)
+    _check_width(ws, headers, rows)
     for r in rows:
         row_idx = ws.max_row + 1
         for c_idx, val in enumerate(r, 1):
@@ -674,6 +685,7 @@ def build_rentabilidad(ws, conn):
                9: "0.00", 10: "0.00"}
 
     rows = q_top_rentabilidad(conn)
+    _check_width(ws, headers, rows)
     for r in rows:
         row_idx = ws.max_row + 1
         for c_idx, val in enumerate(r, 1):
@@ -729,6 +741,7 @@ def build_riesgo(ws, conn):
     header_row = sep_row + 1
 
     rows = q_ret_dd_ratio(conn)
+    _check_width(ws, headers, rows)
     for r in rows:
         row_idx = ws.max_row + 1
         for c_idx, val in enumerate(r, 1):
@@ -760,6 +773,7 @@ def build_consistencia(ws, conn):
     _apply_header(ws, headers, row=2)
 
     rows = q_consistencia(conn)
+    _check_width(ws, headers, rows)
     for r in rows:
         row_idx = ws.max_row + 1
         for c_idx, val in enumerate(r, 1):
@@ -792,6 +806,7 @@ def build_crisis(ws, conn):
     _apply_header(ws, headers, row=2)
 
     rows = q_crisis(conn)
+    _check_width(ws, headers, rows)
     for r in rows:
         row_idx = ws.max_row + 1
         for c_idx, val in enumerate(r, 1):
@@ -948,6 +963,7 @@ def build_macro(ws, conn):
     _apply_header(ws, headers, row=2)
 
     rows = q_macro_betas(conn)
+    _check_width(ws, headers, rows)
     for r in rows:
         row_idx = ws.max_row + 1
         for c_idx, val in enumerate(r, 1):
@@ -1018,6 +1034,7 @@ def build_candidatos(ws, conn):
     _apply_header(ws, headers, row=2)
 
     rows = q_candidatos(conn)
+    _check_width(ws, headers, rows)
     for r in rows:
         row_idx = ws.max_row + 1
         for c_idx, val in enumerate(r, 1):
@@ -1104,6 +1121,7 @@ def build_persistencia(ws, conn):
     _apply_header(ws, headers, row=2)
 
     rows = q_persistencia(conn)
+    _check_width(ws, headers, rows)
     for r in rows:
         row_idx = ws.max_row + 1
         for c_idx, val in enumerate(r, 1):
@@ -1168,6 +1186,7 @@ def build_divisa(ws, conn):
     _apply_header(ws, headers, row=2)
 
     rows = q_divisa(conn)
+    _check_width(ws, headers, rows)
     for r in rows:
         row_idx = ws.max_row + 1
         for c_idx, val in enumerate(r, 1):
@@ -1314,6 +1333,7 @@ def build_regime_returns(ws, conn):
     _apply_header(ws, base_hdrs + regime_hdrs + crisis_hdrs, row=3)
 
     rows = q_regime_returns(conn)
+    _check_width(ws, base_hdrs + regime_hdrs + crisis_hdrs, rows)
     for r in rows:
         row_idx = ws.max_row + 1
         for c_idx, val in enumerate(r, 1):
@@ -1476,6 +1496,7 @@ def build_tendencia(ws, conn):
     _apply_header(ws, base_hdrs + window_hdrs, row=3)
 
     rows = q_tendencia(conn)
+    _check_width(ws, base_hdrs + window_hdrs, rows)
     for r in rows:
         row_idx = ws.max_row + 1
         for c_idx, val in enumerate(r, 1):
