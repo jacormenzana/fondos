@@ -53,8 +53,15 @@ def main() -> int:
             d = conn.execute(f"DELETE FROM bronze.fund_nav_daily WHERE isin = %s AND {cond}", [isin]).rowcount
             if d != n:
                 raise RuntimeError(f"{isin}: deleted {d}, expected {n} - rolled back")
+    conn.commit()        # the SELECTs above opened an implicit transaction: transaction() was only a SAVEPOINT in it
     conn.close()
-    print(f"DELETED {len(rows)} rows.")
+    chk = get_connection(backend="postgres")          # re-read from a FRESH connection: never trust the same session
+    left = sum(chk.execute(f"SELECT count(*) FROM bronze.fund_nav_daily WHERE isin = %s AND {cond}", [isin]).fetchone()[0]
+               for isin, cond, _ in RULES)
+    chk.close()
+    if left:
+        print(f"FAILED: {left} bad rows still present after the commit"); return 1
+    print(f"DELETED {len(rows)} rows (verified from a fresh connection).")
     return 0
 
 
