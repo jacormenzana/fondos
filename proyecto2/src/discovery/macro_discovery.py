@@ -649,19 +649,19 @@ _FRED_SERIES = {
         "write_inflation": False,
     },
 
-    # M2 China (CNY millones) -- para M2 Global
+    # M2 China (CNY, unidades simples: ~1.2e13-1.9e14, NO millones -- FND-0178) -- para M2 Global
     "MYAGM2CNM189N": {
         "indicator":  "m2_level",
         "geography":  "CN",
-        "unit":       "cny_mn",
+        "unit":       "cny",
         "write_inflation": False,
     },
 
-    # M2 Japon (JPY millones) -- para M2 Global
+    # M2 Japon (JPY, unidades simples: ~6e14-1e15, NO millones -- FND-0178) -- para M2 Global
     "MYAGM2JPM189N": {
         "indicator":  "m2_level",
         "geography":  "JP",
-        "unit":       "jpy_mn",
+        "unit":       "jpy",
         "write_inflation": False,
     },
 

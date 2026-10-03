@@ -412,7 +412,7 @@ CREATE INDEX IF NOT EXISTS idx_macro_date       ON series_macro (date);
 --                       EU: serie BCE observada
 --                       US: calculado desde m2_level (source=CALC)
 --                       CN/JP: calculado con extensiones estimadas (source=CALC_EST post-2019/2017)
---   m2_level          M2 nivel absoluto en moneda local (US=usd_bn, EU=eur_mn, CN=cny_mn, JP=jpy_mn)
+--   m2_level          M2 nivel absoluto en moneda local (US=usd_bn, EU=eur_mn, CN=cny, JP=jpy (plain units, not millions; FND-0178))
 --   m2_global_yoy     M2 Global YoY calculado (US+EU+CN+JP en USD) — source=CALC
 --   m3_yoy            M3 variación interanual (EU, serie BCE observada)
 --   m3_level          M3 nivel absoluto en EUR millones (EU, serie BCE) — P2 v2

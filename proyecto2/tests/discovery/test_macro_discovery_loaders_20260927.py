@@ -204,3 +204,12 @@ def test_load_eurostat_series_survives_a_gov_query_failure():
         rows = md.load_eurostat_series(desde="2000-01")
 
     assert len(rows) == 1 and rows[0]["indicator"] == "gdp_nom_eur"
+
+
+def test_fred_m2_level_units_match_magnitude_fnd0178():
+    """FND-0178: FRED MYAGM2CNM189N / MYAGM2JPM189N are plain CNY / JPY (1e13-1e15), not millions; a
+    '_mn' label on them mislabelled the magnitude by 1e6. Keep the labels honest and distinct per currency."""
+    from proyecto2.src.discovery import macro_discovery as md
+    assert md._FRED_SERIES["MYAGM2CNM189N"]["unit"] == "cny"
+    assert md._FRED_SERIES["MYAGM2JPM189N"]["unit"] == "jpy"
+    assert md._FRED_SERIES["MYAGM2CNM189N"]["unit"] != md._FRED_SERIES["MYAGM2JPM189N"]["unit"]
