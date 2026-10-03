@@ -425,6 +425,9 @@ def load_master_db(conn) -> pd.DataFrame:
     """
     Load the fund master from db_document_catalogue (latest harvest).
     Returns DataFrame with ISIN, Fund_Name, Management_Company — same schema as load_master_excel.
+    Only ISINs with a KIID row (cod_sus='KIID') are loaded: a fund whose KIID left the catalogue
+    (partial withdrawal) cannot be classified and drops out of the universe — see
+    p1_kiid_sync.classify_withdrawals / --retire-orphans.
     Raises ValueError if the table has no valid ISINs (run --harvest first).
     """
     # fetchall()+DataFrame(columns=...) explícitos, NO pd.read_sql_query(sql, conn): Postgres
@@ -442,6 +445,7 @@ def load_master_db(conn) -> pd.DataFrame:
         FROM db_document_catalogue
         WHERE isin IS NOT NULL
           AND isin != ''
+          AND cod_sus = 'KIID'
           AND harvest_ts = (SELECT MAX(harvest_ts) FROM db_document_catalogue)
         GROUP BY isin
         ORDER BY isin

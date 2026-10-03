@@ -177,6 +177,7 @@ Each block exposes `classify_fund(name, kiid_text, ...)` and `get_universe_isins
 | `FORCE_REFRESH` | Re-download on next cycle |
 | `WRONG_DOC` | PDF mismatch; fund excluded from all blocks |
 | `NOT_FOUND` | URL unreachable |
+| `RETIRED` | KIID row left the Deutsche Bank catalogue; set by `p1_kiid_sync --retire-orphans` together with `In_Current_Universe=0`; reversed by `--sync` (→ `FORCE_REFRESH`) if the row returns |
 
 HTTP policy: 3 retries (1s/2s/4s backoff), timeout 15s. 429 does NOT retry.  
 `scripts/launch/mark_stale.py` marks max 50 funds/cycle as FORCE_REFRESH (age > 180 days).
@@ -200,12 +201,19 @@ HTTP policy: 3 retries (1s/2s/4s backoff), timeout 15s. 429 does NOT retry.
 4. `p1_kiid_sync.py --sync` — download net-new KIIDs (hrefs captured verbatim, §6.1 — never URL-built)
 5. `p1_kiid_sync.py --retire-orphans` — archive orphan PDFs to `kiid_retired/YYYYMMDD/`; record in `kiid_lifecycle`
 
+**Launcher:** `scripts\launch\P1_harvestFunds.bat` runs this flow (steps 1–3 + a shrink gate
+`harvest_gate.py` between the report and any download/archive; `--sync`, `--retire-orphans`, `--full`
+opt in to the mutating phases — default is read-only on the PDFs). Audits: `AUDIT_P1.bat`, `AUDIT_P2.bat`.
+
 **Storage:**
 Active: `C:\data\fondos\kiid\{ISIN}.pdf` · Retired: `C:\data\fondos\kiid_retired\YYYYMMDD\{ISIN}.pdf`
 PDFs and `Raw_KIID_Text` (in `fund_kiid_metadata`) are **never deleted**.
 
 `kiid_lifecycle` table — one row per lifecycle period per ISIN:
 - `status = 'commercializing'` (active) or `'retired'`; `retire_dir` = YYYYMMDD archive subdirectory
+- `retire_scope` (on retired periods): `FULL` = the ISIN has no document at all in the latest harvest;
+  `PARTIAL` = other documents remain in the catalogue but the KIID row is gone. Both cases also get
+  `In_Current_Universe=0` and `KIID_Status='RETIRED'`; `--master-db` loads only ISINs with a KIID row.
 
 **"Orphan" (precise):** a local PDF in `kiid/` absent from the latest harvest's `db_document_catalogue` — fund was removed from the live XML catalogue. Not a fund that was "never registered".
 
@@ -671,11 +679,14 @@ UPDATE fund_kiid_metadata SET KIID_Status='FORCE_REFRESH' WHERE ISIN='<isin>' AN
 <!-- AUTO:BEGIN launchers -->
 | Script | Domain |
 |--------|--------|
+| `AUDIT_P1.bat` | — |
+| `AUDIT_P2.bat` | — |
 | `AUDIT_statistical.bat` | — |
 | `P1_P2_Complete.bat` | P1 |
 | `P1_diagCost.bat` | P1 |
 | `P1_discoverAllFunds.bat` | P1 |
 | `P1_discoverAllFundsPlusCostDiag.bat` | P1 |
+| `P1_harvestFunds.bat` | P1 |
 | `P1_refreshBenchmarks.bat` | P1 |
 | `P2_P3.bat` | P2 |
 | `P2_calculateIndicators.bat` | P2 |

@@ -363,6 +363,7 @@ columns:
     status: status
     href: href
     retire_dir: retire_dir
+    retire_scope: retire_scope
 
   nav_sources:
     # already lower_snake — no renames

@@ -93,6 +93,15 @@ def test_report_postgres_runs_end_to_end_on_one_reused_connection(pg_conn):
             (ts, isin, lbl, href, doc, sus),
         )
     pg_conn.execute("INSERT INTO fund_master VALUES ('LU0000000001', 'Fund One')")
+    # Master-only funds absent from the harvest: one already retired (history), one not yet.
+    pg_conn.execute("INSERT INTO fund_master VALUES ('LU0000000090', 'Old Retired'), ('LU0000000091', 'Newly Gone')")
+    pg_conn.execute("CREATE TABLE kiid_lifecycle (isin text, status text)")
+    pg_conn.execute("INSERT INTO kiid_lifecycle VALUES ('LU0000000090', 'retired')")
+    # A fund with documents but no KIID row (partial withdrawal)
+    pg_conn.execute(
+        "INSERT INTO db_document_catalogue (harvest_ts, gestora_label, cod_db, link_label, href, isin, cod_sus) "
+        "VALUES ('20260920_100000','G1','F9','LIIC','href9','LU0000000003','LIIC')"
+    )
 
     buf = io.StringIO()
     with redirect_stdout(buf):
@@ -100,8 +109,11 @@ def test_report_postgres_runs_end_to_end_on_one_reused_connection(pg_conn):
     output = buf.getvalue()
 
     assert "codSus DISCOVERY REPORT" in output
-    assert "Funds (unique ISIN): 2" in output
-    assert "In harvest, not in fund_master (new funds): 1" in output
+    assert "Funds (unique ISIN): 3" in output
+    assert "In harvest, not in fund_master (new funds): 2" in output
+    assert "In harvest WITHOUT a KIID row (partial withdrawal): 1" in output
+    assert "already retired (history, not listed): 1" in output
+    assert "NEW retirement candidates (no DB docs): 1" in output
     assert not pg_conn.closed, "an injected connection must never be closed by the function itself"
 
 

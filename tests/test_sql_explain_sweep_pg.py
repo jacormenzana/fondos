@@ -78,7 +78,7 @@ _UNVERIFIED_BASELINE: dict[str, str] = {
         R_FRAGMENT,
     "proyecto2/src/analysis/export_metrics.py::q_divisa::d93212d2":
         R_FRAGMENT,
-    "proyecto2/src/analysis/export_metrics.py::q_macro_betas::dc13db71":
+    "proyecto2/src/analysis/export_metrics.py::q_macro_betas::3269df46":
         R_FRAGMENT,
     "proyecto2/src/analysis/export_metrics.py::q_persistencia::96742e43":
         R_FRAGMENT,

@@ -30,6 +30,7 @@ _ENTRY_POINTS = [
     ("fund_family_builder",    ["proyecto1/core/fund_family_builder.py", "--help"], "."),
     ("audit_benchmark",        ["proyecto1/tools/audit_benchmark_consistency.py", "--help"], "."),
     ("statistical_audit",      ["scripts/audit/run_statistical_audit.py", "--help"], "."),
+    ("beta_shift_audit",       ["scripts/audit/beta_shift_audit.py", "--help"], "."),
     ("diag_cost_extraction",   ["scripts/diag/diag_cost_extraction.py", "--help"], "."),
     ("archive_sqlite",         ["scripts/ops/archive_sqlite.py", "--help"], "."),
     ("export_p1",              ["-m", "proyecto1.src.analysis.export_p1", "--help"], "."),

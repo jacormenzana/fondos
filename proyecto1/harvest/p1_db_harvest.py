@@ -530,8 +530,19 @@ def cmd_report_codsus(args, conn=None) -> None:
             ).fetchall()
         }
 
+        # ISINs already archived by --retire-orphans (kiid_lifecycle 'retired', no open
+        # 'commercializing' period) are known history, not a new exclusion: report them as a
+        # count only, so the candidate list below contains just the newly excluded funds.
+        already_retired = {
+            r[0] for r in conn.execute(
+                "SELECT isin FROM kiid_lifecycle WHERE status='retired' "
+                "AND isin NOT IN (SELECT isin FROM kiid_lifecycle WHERE status='commercializing')"
+            ).fetchall()
+        }
+
         in_harvest_not_master = harvest_isins - master_isins
-        in_master_not_harvest = master_isins - harvest_isins
+        in_master_not_harvest_all = master_isins - harvest_isins
+        in_master_not_harvest = in_master_not_harvest_all - already_retired
 
         print(f"  fund_master ISINs    : {len(master_isins):,}")
         print(f"  harvest ISINs        : {len(harvest_isins):,}")
@@ -540,7 +551,21 @@ def cmd_report_codsus(args, conn=None) -> None:
             print(f"  Sample (first 10):")
             for isin in sorted(in_harvest_not_master)[:10]:
                 print(f"    {isin}")
-        print(f"  In fund_master, not in harvest (no DB docs): {len(in_master_not_harvest):,}")
+        no_kiid = harvest_isins - {
+            r[0] for r in conn.execute(
+                f"SELECT DISTINCT isin FROM db_document_catalogue "
+                f"WHERE harvest_ts={ph} AND cod_sus='KIID' AND isin IS NOT NULL",
+                (harvest_ts,),
+            ).fetchall()
+        }
+        print(f"  In harvest WITHOUT a KIID row (partial withdrawal): {len(no_kiid):,}  "
+              f"(in fund_master: {len(no_kiid & master_isins):,})")
+        for isin in sorted(no_kiid)[:10]:
+            print(f"    {isin}  {'fund_master' if isin in master_isins else 'not in fund_master'}")
+        print(f"  In fund_master, not in harvest, already retired (history, not listed): "
+              f"{len(in_master_not_harvest_all & already_retired):,}")
+        print(f"  In fund_master, not in harvest, NEW retirement candidates (no DB docs): "
+              f"{len(in_master_not_harvest):,}")
         if in_master_not_harvest:
             print(f"  Sample (first 10):")
             for isin in sorted(in_master_not_harvest)[:10]:

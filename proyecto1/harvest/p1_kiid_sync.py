@@ -111,25 +111,129 @@ def _lifecycle_activate(conn, isin: str, href: str, start_date: str) -> None:
     """, (isin, start_date, href))
 
 
-def _lifecycle_retire(conn, isin: str, end_date: str, retire_dir: str) -> None:
+def _lifecycle_retire(conn, isin: str, end_date: str, retire_dir: str,
+                      scope: str | None = None) -> None:
     """
     Mark the current active period as retired.
     If no active row exists (file predates the lifecycle table), insert a retired row
     using end_date as an approximated start_date.
+
+    scope: 'FULL' | 'PARTIAL' (kiid_lifecycle.retire_scope) — None leaves the column untouched
+    (and unreferenced, so a table without it still works). When the ISIN is already retired
+    and no period is open, a given scope updates the latest retired period instead of adding
+    a duplicate row (keeps the retirement pass idempotent).
     """
     ph = "%s"
+    set_scope = ", retire_scope = %s" if scope else ""
     updated = conn.execute(f"""
         UPDATE kiid_lifecycle
-        SET status = 'retired', end_date = {ph}, retire_dir = {ph}
+        SET status = 'retired', end_date = {ph}, retire_dir = {ph}{set_scope}
         WHERE isin = {ph} AND end_date IS NULL
-    """, (end_date, retire_dir, isin)).rowcount
-    if updated == 0:
+    """, (end_date, retire_dir, *([scope] if scope else []), isin)).rowcount
+    if updated:
+        return
+    if scope:
+        latest = conn.execute("""
+            SELECT start_date FROM kiid_lifecycle
+            WHERE isin = %s AND status = 'retired'
+            ORDER BY end_date DESC NULLS LAST, start_date DESC LIMIT 1
+        """, (isin,)).fetchone()
+        if latest is not None:
+            conn.execute("""
+                UPDATE kiid_lifecycle SET retire_scope = %s
+                WHERE isin = %s AND start_date = %s AND retire_scope IS DISTINCT FROM %s
+            """, (scope, isin, latest[0], scope))
+            return
         conn.execute("""
             INSERT INTO kiid_lifecycle
-                (isin, start_date, end_date, status, href, retire_dir)
-            VALUES (%s, %s, %s, 'retired', NULL, %s)
+                (isin, start_date, end_date, status, href, retire_dir, retire_scope)
+            VALUES (%s, %s, %s, 'retired', NULL, %s, %s)
             ON CONFLICT (isin, start_date) DO NOTHING
-        """, (isin, end_date, end_date, retire_dir))
+        """, (isin, end_date, end_date, retire_dir, scope))
+        return
+    conn.execute("""
+        INSERT INTO kiid_lifecycle
+            (isin, start_date, end_date, status, href, retire_dir)
+        VALUES (%s, %s, %s, 'retired', NULL, %s)
+        ON CONFLICT (isin, start_date) DO NOTHING
+    """, (isin, end_date, end_date, retire_dir))
+
+
+# ---------------------------------------------------------------------------
+# Withdrawal classification — FULL vs PARTIAL documentation withdrawal
+# ---------------------------------------------------------------------------
+KIID_STATUS_RETIRED = "RETIRED"
+
+
+def classify_withdrawals(conn, candidates) -> dict[str, str]:
+    """
+    Classify every candidate ISIN that has NO KIID row in the latest harvest.
+
+      'FULL'    — the ISIN has no document at all in the latest harvest (delisted).
+      'PARTIAL' — other documents remain in the catalogue but the KIID row is gone.
+
+    ISINs that do have a KIID row are not withdrawn and are absent from the result.
+    Raises RuntimeError if the latest harvest has no KIID rows at all (empty/failed harvest):
+    classifying against it would flag the whole universe as withdrawn.
+    """
+    rows = conn.execute("""
+        SELECT DISTINCT isin, (cod_sus = 'KIID') AS is_kiid
+        FROM db_document_catalogue
+        WHERE isin IS NOT NULL AND isin != ''
+          AND harvest_ts = (SELECT MAX(harvest_ts) FROM db_document_catalogue)
+    """).fetchall()
+    any_isins  = {r[0] for r in rows}
+    kiid_isins = {r[0] for r in rows if r[1]}
+    if not kiid_isins:
+        raise RuntimeError("latest harvest has no KIID rows — refusing to classify withdrawals")
+    return {
+        isin: ("PARTIAL" if isin in any_isins else "FULL")
+        for isin in sorted(set(candidates))
+        if isin not in kiid_isins
+    }
+
+
+def _mark_withdrawn(conn, isin: str, scope: str, today: str, retire_dir: str | None,
+                    touch_lifecycle: bool = True) -> bool:
+    """
+    Apply the withdrawn marks to one ISIN: fund_master.In_Current_Universe=0,
+    fund_kiid_metadata.KIID_Status='RETIRED', kiid_lifecycle retired period with retire_scope.
+    Idempotent; returns True when anything changed. Reversal is by --sync (see
+    _reactivate_returned): a returning KIID row flips the status back to FORCE_REFRESH and
+    reconcile_universe_membership restores the universe flag.
+    """
+    changed = conn.execute(
+        "UPDATE fund_master SET In_Current_Universe = 0 "
+        "WHERE ISIN = %s AND In_Current_Universe <> 0", (isin,)
+    ).rowcount
+    changed += conn.execute(
+        "UPDATE fund_kiid_metadata SET KIID_Status = %s "
+        "WHERE ISIN = %s AND KIID_Status IS DISTINCT FROM %s",
+        (KIID_STATUS_RETIRED, isin, KIID_STATUS_RETIRED),
+    ).rowcount
+    if touch_lifecycle:
+        before = conn.execute(
+            "SELECT COUNT(*), COUNT(*) FILTER (WHERE status = 'retired' AND retire_scope = %s) "
+            "FROM kiid_lifecycle WHERE isin = %s", (scope, isin)
+        ).fetchone()
+        _lifecycle_retire(conn, isin, today, retire_dir, scope=scope)
+        after = conn.execute(
+            "SELECT COUNT(*), COUNT(*) FILTER (WHERE status = 'retired' AND retire_scope = %s) "
+            "FROM kiid_lifecycle WHERE isin = %s", (scope, isin)
+        ).fetchone()
+        changed += int(tuple(before) != tuple(after))
+    return bool(changed)
+
+
+def _reactivate_returned(conn, kiid_isins) -> int:
+    """KIID_Status RETIRED -> FORCE_REFRESH for ISINs whose KIID row is back in the catalogue."""
+    isins = sorted(kiid_isins)
+    if not isins:
+        return 0
+    return conn.execute(
+        "UPDATE fund_kiid_metadata SET KIID_Status = 'FORCE_REFRESH' "
+        "WHERE KIID_Status = %s AND ISIN = ANY(%s)", (KIID_STATUS_RETIRED, isins)
+    ).rowcount
 
 
 # ---------------------------------------------------------------------------
@@ -323,6 +427,11 @@ def cmd_sync(args, conn=None) -> None:
                 failed.append({"isin": isin, "reason": str(exc)})
                 tmp_path.unlink(missing_ok=True)
 
+    # A KIID row that came back for a RETIRED fund reopens it for the next P1 pass.
+    reactivated = _reactivate_returned(conn, target.keys())
+    if reactivated:
+        log.info("Reactivated %d RETIRED fund(s) whose KIID row is back in the catalogue", reactivated)
+
     conn.commit()
     if own_conn:
         conn.close()
@@ -353,9 +462,18 @@ def _write_report(path: Path, downloaded: list, failed: list,
 # ---------------------------------------------------------------------------
 def cmd_retire_orphans(args, conn=None) -> None:  # noqa: ARG001
     """
-    Move orphan KIIDs to kiid_retired/YYYYMMDD/ and record retirement in kiid_lifecycle.
-    Orphans = local PDFs whose ISIN is not in the latest harvest's codSus='KIID' set.
-    Files are moved (never deleted) — the archive is permanent and queryable.
+    Retire withdrawn funds: archive orphan KIID PDFs and mark every fund whose KIID row left the
+    catalogue as withdrawn (In_Current_Universe=0, KIID_Status='RETIRED', kiid_lifecycle
+    retired period with retire_scope).
+
+    Orphans = local PDFs whose ISIN is not in the latest harvest's codSus='KIID' set. Files are
+    moved (never deleted) — the archive is permanent and queryable.
+
+    Withdrawal scope (classify_withdrawals):
+      FULL    — the ISIN has no document at all in the latest harvest.
+      PARTIAL — other documents remain but the KIID row is gone.
+    Candidates are every fund_master ISIN plus the orphans, so funds without a local PDF are
+    marked too. Idempotent.
 
     conn: injected connection — used by tests and any future dialect-aware caller. When None
     (the CLI's default), opens (and closes) its own connection via get_connection() (migration addendum, Stage 5, 2026-09-20).
@@ -371,29 +489,31 @@ def cmd_retire_orphans(args, conn=None) -> None:  # noqa: ARG001
     delta   = compute_delta(conn=conn)
     orphans = sorted(delta["orphans"])
 
-    log.info("Retire orphans — %d orphans found", len(orphans))
+    master = [r[0] for r in conn.execute(
+        "SELECT ISIN FROM fund_master WHERE ISIN IS NOT NULL").fetchall()]
+    withdrawals = classify_withdrawals(conn, set(master) | set(orphans))
 
-    if not orphans:
-        log.info("Nothing to retire.")
-        if own_conn:
-            conn.close()
-        return
-
-    print(f"\nOrphans to retire: {len(orphans)}")
-    print(f"Source : {KIID_DIR}")
-    print(f"Dest   : {dest_dir}")
-    print(f"Sample (first 10):")
-    for isin in orphans[:10]:
-        print(f"  {isin}.pdf")
-    if len(orphans) > 10:
-        print(f"  ... +{len(orphans) - 10} more")
-
-    dest_dir.mkdir(parents=True, exist_ok=True)
+    log.info("Retire orphans — %d orphans found; %d withdrawn ISINs (FULL=%d PARTIAL=%d)",
+             len(orphans), len(withdrawals),
+             sum(1 for v in withdrawals.values() if v == "FULL"),
+             sum(1 for v in withdrawals.values() if v == "PARTIAL"))
 
     _ensure_lifecycle_table(conn)
 
     moved   = []
     skipped = []
+
+    if orphans:
+        print(f"\nOrphans to retire: {len(orphans)}")
+        print(f"Source : {KIID_DIR}")
+        print(f"Dest   : {dest_dir}")
+        print(f"Sample (first 10):")
+        for isin in orphans[:10]:
+            print(f"  {isin}.pdf")
+        if len(orphans) > 10:
+            print(f"  ... +{len(orphans) - 10} more")
+
+        dest_dir.mkdir(parents=True, exist_ok=True)
 
     for isin in orphans:
         src = KIID_DIR / f"{isin}.pdf"
@@ -410,18 +530,28 @@ def cmd_retire_orphans(args, conn=None) -> None:  # noqa: ARG001
 
         src.rename(dst)
         moved.append(isin)
-        # Lifecycle: close the current active period
-        _lifecycle_retire(conn, isin, today, today_d)
+        # Lifecycle: close the current active period (retire_dir = the archive subdirectory)
+        _lifecycle_retire(conn, isin, today, today_d, scope=withdrawals.get(isin))
+
+    # Withdrawn marks for every candidate (lifecycle already handled above for moved PDFs)
+    moved_set = set(moved)
+    newly_marked = {"FULL": 0, "PARTIAL": 0}
+    for isin, scope in withdrawals.items():
+        if _mark_withdrawn(conn, isin, scope, today, None,
+                           touch_lifecycle=isin not in moved_set) or isin in moved_set:
+            newly_marked[scope] += 1
 
     conn.commit()
     if own_conn:
         conn.close()
 
-    log.info("Retire complete: moved=%d  skipped=%d  dest=%s",
-             len(moved), len(skipped), dest_dir)
+    log.info("Retire complete: moved=%d  skipped=%d  dest=%s", len(moved), len(skipped), dest_dir)
     print(f"\nMoved {len(moved)} KIID PDFs to {dest_dir}")
     if skipped:
         print(f"Skipped {len(skipped)} (file missing or dest already exists)")
+    print(f"Withdrawn funds marked this run: FULL={newly_marked['FULL']}  "
+          f"PARTIAL={newly_marked['PARTIAL']}  "
+          f"(already marked, unchanged: {len(withdrawals) - sum(newly_marked.values())})")
 
 
 # ---------------------------------------------------------------------------

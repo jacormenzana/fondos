@@ -241,8 +241,14 @@ CREATE TABLE IF NOT EXISTS silver.kiid_lifecycle (
     status       text        NOT NULL DEFAULT 'commercializing',
     href         text,
     retire_dir   text,
+    retire_scope text,                   -- how much of the fund's documentation left the Deutsche
+                                          -- Bank catalogue: 'FULL' = ISIN has no document at all in
+                                          -- the latest harvest; 'PARTIAL' = other documents remain
+                                          -- but the KIID row is gone. NULL while commercializing.
 
-    CONSTRAINT kiid_lifecycle_pkey PRIMARY KEY (isin, start_date)
+    CONSTRAINT kiid_lifecycle_pkey PRIMARY KEY (isin, start_date),
+    CONSTRAINT kiid_lifecycle_retire_scope_chk
+        CHECK (retire_scope IS NULL OR retire_scope IN ('FULL','PARTIAL'))
 );
 
 CREATE INDEX IF NOT EXISTS ix_lc_isin ON silver.kiid_lifecycle (isin);
