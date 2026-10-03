@@ -386,6 +386,23 @@ class Backtester:
         # __init__ de forma regimen-agnostica. Se carga por regimen dentro
         # de _select_for_regime(), donde ya se cachea por etiqueta.
 
+    @classmethod
+    def for_pit(cls, conn: "psycopg.Connection", score_version: str = "v1",
+                publication_lags: dict | None = None) -> "Backtester":
+        """Backtester listo para run_pit() SIN cargar la matriz NAV del camino legado (el __init__ normal
+        hace un SELECT sin filtro + pivot de todo el historico que run_pit no usa: ~675k filas). Solo carga
+        el clasificador de regimen con los retrasos de publicacion (mismo valor por defecto que __init__).
+        run() (legado) no esta disponible en esta instancia."""
+        self = object.__new__(cls)
+        self.conn = conn
+        self.score_version = score_version
+        self._nav = None
+        self._cash = None
+        lags = REGIME_PUBLICATION_LAG_MONTHS if publication_lags is None else publication_lags
+        self._clf = RegimeClassifier(conn, publication_lags=lags)
+        self._selection_cache = {}
+        return self
+
     def _select_for_regime(self, regime: str) -> dict[str, pd.DataFrame]:
         """
         Selecciona y pondera (peso INTERNO por sub-cartera, no master) los
