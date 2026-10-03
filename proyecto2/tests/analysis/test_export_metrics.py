@@ -36,6 +36,7 @@ from proyecto2.src.analysis.export_metrics import (
     SHEETS,
     build_portada,
     build_estado,
+    build_macro,
     build_riesgo,
     build_consistencia,
     build_tendencia,
@@ -429,3 +430,26 @@ class TestBuilders:
         except Exception as exc:
             pytest.fail(f"build_regime_returns raised: {exc}")
         pass  # the fixture owns the connection
+
+    def test_build_macro_matches_query_width_and_header_order(self):
+        """Regression (FND-0181 follow-up): the sheet must stay aligned with q_macro_betas
+        after beta_m2_global left the query — header count == row width, values under the right label."""
+        conn = _minimal_conn()
+        seed = [("macro_r2", 0.55), ("beta_gold", 0.123), ("beta_dxy", 0.456),
+                ("beta_cli_eu", 0.789), ("macro_n_obs", 77.0), ("energy_sensitivity_pct", 0.02),
+                ("hy_spread_sensitivity_pct", -0.03)]
+        conn.cursor().executemany("""
+            INSERT INTO fund_metrics (isin, metric, horizon, value, real_flag, calculation_date,
+                                      algorithm_version, batch_id, source_rows)
+            VALUES ('ES0001', %s, 'since_inception', %s, 0, '2026-08-22', '20260820', 'batch-001', 60)
+            ON CONFLICT DO NOTHING""", seed)
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        build_macro(ws, conn)
+        headers = [c.value for c in ws[2]]
+        data = [c.value for c in ws[3]]
+        assert len(headers) == len(data) == 32
+        assert "β M2 Global" not in headers
+        col = {h: v for h, v in zip(headers, data)}
+        assert col["β Oro"] == 0.123 and col["β DXY"] == 0.456 and col["β CLI EU"] == 0.789
+        assert col["N obs"] == 77 and col["Sc. Oil +25%"] == 0.02 and col["Sc. HY +300bp"] == -0.03

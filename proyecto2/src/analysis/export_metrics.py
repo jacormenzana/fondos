@@ -916,9 +916,9 @@ def q_macro_betas(conn):
 def build_macro(ws, conn):
     _no_gridlines(ws)
 
-    N_COLS = 33  # 31 + 2 scenario metrics (P3-03, P3-04)
+    N_COLS = 32  # 30 + 2 scenario metrics (P3-03, P3-04); must equal len(q_macro_betas row)
     ws.merge_cells(f"A1:{get_column_letter(N_COLS)}1")
-    ws["A1"] = "SENSIBILIDADES MACRO POR FONDO (betas OLS) — pipeline v10: 24 factores"
+    ws["A1"] = "SENSIBILIDADES MACRO POR FONDO (betas OLS) — pipeline v10: 23 factores"
     ws["A1"].font = TITLE_FONT
     ws["A1"].fill = TITLE_FILL
     ws["A1"].alignment = Alignment(horizontal="center")
@@ -929,13 +929,13 @@ def build_macro(ws, conn):
         # Tipos
         "β rate EU", "β rate US", "β rate JP", "β rate CN",
         # Monetario
-        "β M3", "β M2 Global",
+        "β M3",
         # Inflación
         "β IPC ES", "β IPC EU", "β IPC US", "β IPC JP", "β IPC CN",
         # Materias primas
-        "β Oil", "β Cobre", "β Oro",
-        # Ciclo / FX
-        "β CLI EU", "β CLI US", "β DXY",
+        "β Oil", "β Cobre",
+        # Ciclo / FX / Oro (same order as q_macro_betas)
+        "β CLI EU", "β CLI US", "β DXY", "β Oro",
         # Riesgo financiero (v10)
         "β Spread HY", "β Spread IG", "β VIX", "β Term Spread",
         # Divisas (v10)
@@ -966,30 +966,30 @@ def build_macro(ws, conn):
             elif float(r2_val) >= 0.10:
                 cell.fill = GREEN_FILL
                 cell.font = GREEN_FONT
-        # SRRI (columna 30)
-        srri_val = r[29]
+        # SRRI (columna 29)
+        srri_val = r[28]
         if srri_val is not None:
             bg, fg = SRRI_COLORS.get(int(srri_val), ("FFFFFF", "000000"))
-            ws.cell(row_idx, 30).fill = _fill(bg)
-            ws.cell(row_idx, 30).font = _font(color=fg)
-        # P3-03: Sc. Oil +25% (col 32) — green if fund benefits (>+0.01), red if harmed (<-0.02)
-        esp_val = r[31]
+            ws.cell(row_idx, 29).fill = _fill(bg)
+            ws.cell(row_idx, 29).font = _font(color=fg)
+        # P3-03: Sc. Oil +25% (col 31) — green if fund benefits (>+0.01), red if harmed (<-0.02)
+        esp_val = r[30]
         if esp_val is not None:
             try:
                 v = float(esp_val)
-                cell = ws.cell(row_idx, 32)
+                cell = ws.cell(row_idx, 31)
                 if v > 0.01:
                     cell.fill = GREEN_FILL; cell.font = GREEN_FONT
                 elif v < -0.02:
                     cell.fill = RED_FILL;   cell.font = RED_FONT
             except (TypeError, ValueError):
                 pass
-        # P3-04: Sc. HY +300bp (col 33) — green if insensitive (>-0.01), red if exposed (<-0.05)
-        hys_val = r[32]
+        # P3-04: Sc. HY +300bp (col 32) — green if insensitive (>-0.01), red if exposed (<-0.05)
+        hys_val = r[31]
         if hys_val is not None:
             try:
                 v = float(hys_val)
-                cell = ws.cell(row_idx, 33)
+                cell = ws.cell(row_idx, 32)
                 if v > -0.01:
                     cell.fill = GREEN_FILL; cell.font = GREEN_FONT
                 elif v < -0.05:
@@ -998,10 +998,6 @@ def build_macro(ws, conn):
                 pass
 
     ws.auto_filter.ref = f"A2:{get_column_letter(N_COLS)}{ws.max_row}"
-    _freeze(ws, "A3")
-    _autofit(ws)
-
-    ws.auto_filter.ref = f"A2:{get_column_letter(21)}{ws.max_row}"
     _freeze(ws, "A3")
     _autofit(ws)
 
