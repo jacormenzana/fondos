@@ -839,7 +839,7 @@ def check_hard_filters(
 # Deduplicación por familia
 # ============================================================
 
-def deduplicate_by_family(df: pd.DataFrame) -> pd.DataFrame:
+def deduplicate_by_family(df: pd.DataFrame, verbose: bool = True) -> pd.DataFrame:
     """
     Cuando un fondo tiene múltiples clases en el universo de scoring,
     conserva solo la clase con mejor score_final por familia.
@@ -874,7 +874,7 @@ def deduplicate_by_family(df: pd.DataFrame) -> pd.DataFrame:
     n_total = len(df)
     n_repr  = df["family_representative"].sum()
     n_dedup = n_total - n_repr
-    if n_dedup > 0:
+    if n_dedup > 0 and verbose:
         print(f"  [Scorer] Deduplicación por familia: "
               f"{n_repr}/{n_total} clases representantes "
               f"({n_dedup} clases secundarias excluidas)")
@@ -886,62 +886,67 @@ def deduplicate_by_family(df: pd.DataFrame) -> pd.DataFrame:
 # Motor principal de scoring
 # ============================================================
 
-def score_funds(
-    conn: "psycopg.Connection",
-    regime_result: RegimeResult,
-    score_version: str = "v1",
-    dry_run: bool = False,
-) -> pd.DataFrame:
+def compute_regime_percentiles(df: pd.DataFrame, regime: str, verbose: bool = True) -> dict:
     """
-    Calcula el score de todos los fondos para el régimen dado.
+    Percentiles p25/p75 del universo para las metricas del regimen activo (bonus/malus empirico).
+    Devuelve los kwargs que espera compute_regime_multiplier (todos None si el regimen no tiene
+    historia en el universo -> el multiplicador empirico queda en 1.0).
 
-    Devuelve DataFrame con una fila por (fondo, sub-cartera) con columnas:
-        isin, fund_nature, subportfolio, score_base, score_final,
-        eligible, exclusion_reason, multiplier
-
-    Si dry_run=False, persiste en fund_scores.
+    Extraido de score_funds (FND-0159 d2) para que el scoring en vivo y el point-in-time del
+    backtester compartan una sola implementacion (P#11).
     """
-    regime = regime_result.regime
-    print(f"Scoring | Régimen: {regime} | versión: {score_version}")
-
-    df = load_fund_metrics_for_scoring(conn, regime=regime)
-    if df.empty:
-        print("ERROR: No hay métricas disponibles en fund_metrics.")
-        return pd.DataFrame()
-
-    print(f"Fondos con métricas: {len(df)}")
-
-    # Percentiles del régimen activo (para bonus/malus empírico)
     from proyecto3.src.regime_classifier import _REGIME_SUFFIX
+    pct = dict(
+        regime_return_p25=None, regime_return_p75=None,
+        regime_sharpe_p25=None, regime_sharpe_p75=None,
+        regime_sortino_p25=None, regime_sortino_p75=None,
+        regime_maxdd_p25=None, regime_maxdd_p75=None,
+    )
     suffix = _REGIME_SUFFIX.get(regime)
-    regime_p25 = regime_p75 = None
-    regime_sharpe_p25 = regime_sharpe_p75 = None
-    regime_sortino_p25 = regime_sortino_p75 = None
-    regime_maxdd_p25 = regime_maxdd_p75 = None
-    if suffix:
-        ret_col = f"return_ann_{suffix}"
-        if ret_col in df.columns and not df[ret_col].isna().all():
-            regime_p25 = df[ret_col].quantile(0.25)
-            regime_p75 = df[ret_col].quantile(0.75)
-        else:
-            print(
-                f"[WARN] Régimen '{regime}' no tiene métricas históricas en fund_metrics "
-                "(nunca observado en la serie macro disponible). "
-                "Scoring aplicado sin multiplicador empírico de régimen — base score vigente."
-            )
-        sharpe_col = f"sharpe_{suffix}" if suffix else None
-        if sharpe_col and sharpe_col in df.columns and not df[sharpe_col].isna().all():
-            regime_sharpe_p25 = df[sharpe_col].quantile(0.25)
-            regime_sharpe_p75 = df[sharpe_col].quantile(0.75)
-        # §3f: downside-risk lenses — sortino and max_dd per regime
-        sortino_col = f"sortino_{suffix}"
-        if sortino_col in df.columns and not df[sortino_col].isna().all():
-            regime_sortino_p25 = df[sortino_col].quantile(0.25)
-            regime_sortino_p75 = df[sortino_col].quantile(0.75)
-        maxdd_col = f"max_dd_{suffix}"
-        if maxdd_col in df.columns and not df[maxdd_col].isna().all():
-            regime_maxdd_p25 = df[maxdd_col].quantile(0.25)
-            regime_maxdd_p75 = df[maxdd_col].quantile(0.75)
+    if not suffix:
+        return pct
+
+    ret_col = f"return_ann_{suffix}"
+    if ret_col in df.columns and not df[ret_col].isna().all():
+        pct["regime_return_p25"] = df[ret_col].quantile(0.25)
+        pct["regime_return_p75"] = df[ret_col].quantile(0.75)
+    elif verbose:
+        print(
+            f"[WARN] Régimen '{regime}' no tiene métricas históricas en fund_metrics "
+            "(nunca observado en la serie macro disponible). "
+            "Scoring aplicado sin multiplicador empírico de régimen — base score vigente."
+        )
+    sharpe_col = f"sharpe_{suffix}"
+    if sharpe_col in df.columns and not df[sharpe_col].isna().all():
+        pct["regime_sharpe_p25"] = df[sharpe_col].quantile(0.25)
+        pct["regime_sharpe_p75"] = df[sharpe_col].quantile(0.75)
+    # §3f: downside-risk lenses — sortino and max_dd per regime
+    sortino_col = f"sortino_{suffix}"
+    if sortino_col in df.columns and not df[sortino_col].isna().all():
+        pct["regime_sortino_p25"] = df[sortino_col].quantile(0.25)
+        pct["regime_sortino_p75"] = df[sortino_col].quantile(0.75)
+    maxdd_col = f"max_dd_{suffix}"
+    if maxdd_col in df.columns and not df[maxdd_col].isna().all():
+        pct["regime_maxdd_p25"] = df[maxdd_col].quantile(0.25)
+        pct["regime_maxdd_p75"] = df[maxdd_col].quantile(0.75)
+    return pct
+
+
+def score_funds_from_df(df: pd.DataFrame, regime: str, verbose: bool = True) -> pd.DataFrame:
+    """
+    Nucleo PURO del scoring (sin DB, sin persistencia): puntua un frame de metricas ya cargado.
+
+    df: una fila por fondo (indice isin) con las columnas que devuelve
+        load_fund_metrics_for_scoring (metricas + atributos de fund_master). Las columnas ausentes
+        o NaN dan multiplicadores neutros / contribucion 0, nunca error.
+    Devuelve una fila por (fondo, sub-cartera) con isin, fund_name, fund_nature, fund_family_id,
+    subportfolio, score_base, multiplier, score_final, eligible, exclusion_reason, detail
+    (ya deduplicado por familia). Vacio si ningun fondo cae en una sub-cartera.
+
+    Lo usan score_funds (en vivo, tras cargar de la DB) y el backtester point-in-time (FND-0159),
+    que construye el frame de cada fecha solo con datos observables en ella.
+    """
+    regime_pct = compute_regime_percentiles(df, regime, verbose=verbose)
 
     results = []
 
@@ -956,17 +961,7 @@ def score_funds(
 
             excl = check_hard_filters(row, nature)
 
-            mult, mult_detail = compute_regime_multiplier(
-                row, regime,
-                regime_return_p25=regime_p25,
-                regime_return_p75=regime_p75,
-                regime_sharpe_p25=regime_sharpe_p25,
-                regime_sharpe_p75=regime_sharpe_p75,
-                regime_sortino_p25=regime_sortino_p25,
-                regime_sortino_p75=regime_sortino_p75,
-                regime_maxdd_p25=regime_maxdd_p25,
-                regime_maxdd_p75=regime_maxdd_p75,
-            )
+            mult, mult_detail = compute_regime_multiplier(row, regime, **regime_pct)
 
             score_final = score_base * mult if excl is None else 0.0
 
@@ -1001,7 +996,39 @@ def score_funds(
     df_results = pd.DataFrame(results)
 
     if not df_results.empty:
-        df_results = deduplicate_by_family(df_results)
+        df_results = deduplicate_by_family(df_results, verbose=verbose)
+    return df_results
+
+
+def score_funds(
+    conn: "psycopg.Connection",
+    regime_result: RegimeResult,
+    score_version: str = "v1",
+    dry_run: bool = False,
+) -> pd.DataFrame:
+    """
+    Calcula el score de todos los fondos para el régimen dado.
+
+    Devuelve DataFrame con una fila por (fondo, sub-cartera) con columnas:
+        isin, fund_nature, subportfolio, score_base, score_final,
+        eligible, exclusion_reason, multiplier
+
+    Si dry_run=False, persiste en fund_scores.
+
+    Adaptador fino sobre DB: carga las metricas actuales y delega el calculo en
+    score_funds_from_df (FND-0159 d2).
+    """
+    regime = regime_result.regime
+    print(f"Scoring | Régimen: {regime} | versión: {score_version}")
+
+    df = load_fund_metrics_for_scoring(conn, regime=regime)
+    if df.empty:
+        print("ERROR: No hay métricas disponibles en fund_metrics.")
+        return pd.DataFrame()
+
+    print(f"Fondos con métricas: {len(df)}")
+
+    df_results = score_funds_from_df(df, regime)
 
     if not dry_run and not df_results.empty:
         _persist_scores(conn, df_results, regime, score_version)

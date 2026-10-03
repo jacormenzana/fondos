@@ -478,6 +478,7 @@ python -m proyecto2.src.discovery.macro_discovery --source all
 | `data_freshness.py` | `proyecto3/src` |
 | `fund_scorer.py` | `proyecto3/src` |
 | `monthly_report.py` | `proyecto3/src` |
+| `pit_candidates.py` | `proyecto3/src` |
 | `pit_metrics.py` | `proyecto3/src` |
 | `pit_peer_metrics.py` | `proyecto3/src` |
 | `pit_short_horizon.py` | `proyecto3/src` |
