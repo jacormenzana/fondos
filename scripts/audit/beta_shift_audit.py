@@ -31,7 +31,8 @@ sys.path.insert(0, str(_ROOT))
 
 _METRIC_LIKE = ("beta\\_%", "macro\\_%")           # LIKE patterns for the snapshot (betas + r2/alpha/n_obs)
 _HORIZON = "since_inception"
-_BETA_PLAUSIBLE_MAX = 5.0                          # |beta| above this is a calculation defect (FND-0176 saw 600-1,100)
+_STALE_MAX_SHARE = 0.03                            # > 3% of a metric's funds on an older version = the P2 run did not finish
+_BETA_PLAUSIBLE_MAX = 5.0                         # |beta| above this is a calculation defect (FND-0176 saw 600-1,100)
 
 
 def _connect():
@@ -82,7 +83,8 @@ def compare(path: str, version: str, metric_like: str | None, out: str | None) -
     now = {(i, m): (v, ver) for i, m, v, ver in _fetch(conn)}
     metrics = sorted({m for _, m in before if metric_like is None or m == metric_like})
     flagged = []
-    problems = 0
+    problems = old_total = ok_total = bad_total = missing_total = 0
+    vanished = []                                           # metrics no fund carries at the new version any more
     print(f"{'metric':22s} {'compared':>8s} {'old_ver':>7s} {'null/nan':>8s} {'mean|d|':>10s} {'med|d|':>10s} {'max|d|':>10s} {'mean d':>10s} {'med d':>10s} {'>3sig':>6s} {'top1%':>6s} {'|v|>5':>6s}")
     for m in metrics:
         deltas, old_ver, bad = [], 0, 0
@@ -91,7 +93,8 @@ def compare(path: str, version: str, metric_like: str | None, out: str | None) -
                 continue
             cur = now.get((isin, mm))
             if cur is None:
-                continue                                    # fund dropped out of the metric (e.g. now quarantined)
+                missing_total += 1                          # fund dropped out of the metric (e.g. now quarantined)
+                continue
             v, ver = cur
             if ver != version:
                 old_ver += 1
@@ -101,10 +104,14 @@ def compare(path: str, version: str, metric_like: str | None, out: str | None) -
                 continue
             if b is not None:
                 deltas.append((isin, v - b, b, v))
+        old_total += old_ver
+        bad_total += bad
         if not deltas:
             print(f"{m:22s} {0:8d} {old_ver:7d} {bad:8d}")
-            problems += bad + old_ver
+            if not bad:
+                vanished.append(m)
             continue
+        ok_total += len(deltas)
         ad = [abs(d) for _, d, _, _ in deltas]
         sig = _robust_sigma([d for _, d, _, _ in deltas])
         med = statistics.median([d for _, d, _, _ in deltas])
@@ -117,16 +124,28 @@ def compare(path: str, version: str, metric_like: str | None, out: str | None) -
               f"{statistics.mean(sd):10.5f} {statistics.median(sd):10.5f} {len(n3):6d} {len(t1):6d} {implausible:6d}")
         problems += implausible
         flagged += [(m, i, b, v, d, "3sigma" if (i, d, b, v) in n3 else "top1pct") for i, d, b, v in {*n3, *t1}]
-        problems += bad + old_ver
     if out:
         with open(out, "w", newline="", encoding="utf8") as fh:
             w = csv.writer(fh)
             w.writerow(["metric", "isin", "before", "after", "delta", "flag"])
             w.writerows(sorted(flagged, key=lambda r: -abs(r[4])))
         print(f"outliers: {len(flagged)} rows -> {out}")
+    problems += bad_total
+    stale_share = old_total / (old_total + ok_total + bad_total) if (old_total + ok_total + bad_total) else 0.0
+    if stale_share > _STALE_MAX_SHARE:                      # GLOBAL share: the same few frozen funds dominate sparse metrics
+        problems += old_total
+        print(f"FAIL: {old_total} fund-metric rows ({stale_share:.1%}) are still on an older version (> {_STALE_MAX_SHARE:.0%}): the P2 run did not finish")
+    elif old_total:
+        print(f"NOTE: {old_total} fund-metric rows ({stale_share:.1%}) stay on an older version (<= {_STALE_MAX_SHARE:.0%}: funds P2 does not "
+              f"recompute, e.g. frozen or short-history funds); the P3 freshness gate applies its own uniformity share")
+    if vanished:
+        print(f"REVIEW: no fund carries these metrics at version {version} any more: {', '.join(vanished)} "
+              f"(expected when the model's VIF filter now drops the factor everywhere - check, do not ignore)")
+    if missing_total:
+        print(f"NOTE: {missing_total} baseline fund-metric rows no longer exist (fund quarantined or metric not produced any more)")
     if problems:
-        print(f"ATTENTION: {problems} fund-metric rows are still on an older version or NULL/NaN "
-              f"(the P2 run is incomplete or a metric was dropped)")
+        print(f"ATTENTION: {problems} fund-metric rows are NULL/NaN, implausible (|beta| > {_BETA_PLAUSIBLE_MAX:g}) or on an older "
+              f"version beyond tolerance (the P2 run is incomplete or a metric exploded)")
     return 1 if problems else 0
 
 
