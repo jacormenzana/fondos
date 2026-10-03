@@ -338,6 +338,7 @@ proyecto2/
       test_historia.py
       test_macro_discovery_loaders_20260927.py
       test_macro_discovery_pg.py
+      test_nav_daily_quality_gate_fnd0177.py
       test_nav_discovery_cli_isin_split_20260927.py
       test_nav_discovery_date_types_pg.py
       test_nav_discovery_freeze_20260915.py
@@ -391,7 +392,7 @@ proyecto2/
 Runs are idempotent via an input fingerprint: `utils/fingerprint.py::compute_input_hash()` (SHA-1 over NAV
 last-date/rows/value + IPC coverage + `METRIC_VERSION` + `CALC_VERSION`) is stored in `fund_metric_state`.
 Unchanged inputs → 100% cache-hit, 0 recomputed. **Bump `CALC_VERSION` (`run_pipeline.py`, currently
-`"20261002"`) to force a full recompute** of all ISINs (e.g. after changing calculation logic).
+`"20261003"`) to force a full recompute** of all ISINs (e.g. after changing calculation logic).
 
 ### Macro factors (OLS model — machine-verified)
 
@@ -414,7 +415,6 @@ Unchanged inputs → 100% cache-hit, 0 recomputed. **Bump `CALC_VERSION` (`run_p
 | `cli_yoy_us` | `beta_cli_us` |
 | `dxy_yoy` | `beta_dxy` |
 | `gold_yoy` | `beta_gold` |
-| `m2_global_yoy` | `beta_m2_global` |
 | `spread_hy` | `beta_spread_hy` |
 | `spread_ig` | `beta_spread_ig` |
 | `vix_yoy` | `beta_vix` |

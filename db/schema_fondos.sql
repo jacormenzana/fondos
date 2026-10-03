@@ -536,7 +536,7 @@ CREATE INDEX IF NOT EXISTS idx_metrics_date    ON fund_metrics (calculation_date
 --   beta_cli_eu/us        Sensibilidad CLI OCDE EU/US
 --   beta_dxy              Sensibilidad Dollar Index YoY
 --   beta_gold             Sensibilidad oro (PPICMM) YoY
---   beta_m2_global        Sensibilidad M2 Global YoY
+--   beta_m2_global        (RETIRED 2026-10-03, FND-0181: no longer computed) Sensibilidad M2 Global YoY
 --   beta_spread_hy        Sensibilidad spread HY nivel (P2 v10)
 --   beta_spread_ig        Sensibilidad spread IG nivel (P2-07)
 --   beta_vix              Sensibilidad VIX YoY (P2 v10)

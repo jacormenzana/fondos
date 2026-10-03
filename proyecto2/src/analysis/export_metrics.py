@@ -836,7 +836,6 @@ def q_macro_betas(conn):
                {_round_sql("clus.value", 4)}         AS beta_cli_us,
                {_round_sql("dxy.value", 4)}          AS beta_dxy,
                {_round_sql("gld.value", 4)}          AS beta_gold,
-               {_round_sql("m2g.value", 4)}          AS beta_m2_global,
                {_round_sql("sph.value", 4)}          AS beta_spread_hy,
                {_round_sql("spig.value", 4)}         AS beta_spread_ig,
                {_round_sql("vix.value", 4)}          AS beta_vix,
@@ -886,8 +885,6 @@ def q_macro_betas(conn):
                                    AND dxy.horizon='since_inception' AND dxy.real_flag=0
         LEFT JOIN fund_metrics gld  ON gld.isin=ret.isin   AND gld.metric='beta_gold'
                                    AND gld.horizon='since_inception' AND gld.real_flag=0
-        LEFT JOIN fund_metrics m2g  ON m2g.isin=ret.isin   AND m2g.metric='beta_m2_global'
-                                   AND m2g.horizon='since_inception' AND m2g.real_flag=0
         LEFT JOIN fund_metrics sph  ON sph.isin=ret.isin   AND sph.metric='beta_spread_hy'
                                    AND sph.horizon='since_inception' AND sph.real_flag=0
         LEFT JOIN fund_metrics spig ON spig.isin=ret.isin  AND spig.metric='beta_spread_ig'

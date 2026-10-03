@@ -39,7 +39,6 @@ Metricas generadas por fondo (horizon=since_inception, real_flag=0):
     beta_cli_us          sensibilidad a ciclo adelantado OCDE EEUU
     beta_dxy             sensibilidad a variacion interanual DXY
     beta_gold            sensibilidad a variacion interanual oro (PPICMM)
-    beta_m2_global       sensibilidad a M2 Global YoY
     beta_spread_hy           sensibilidad al diferencial HY (nivel, %)
     beta_spread_ig           sensibilidad al diferencial IG (nivel, %)
     beta_vix                 sensibilidad a variacion interanual VIX
@@ -99,7 +98,6 @@ def load_macro_factors(conn: "psycopg.Connection") -> pd.DataFrame:
            OR (indicator = 'cli'          AND geography IN ('EU','US'))
            OR (indicator = 'dxy'          AND geography = 'GLOBAL')
            OR (indicator = 'gold'         AND geography = 'GLOBAL')
-           OR (indicator = 'm2_global_yoy' AND geography = 'GLOBAL')
            OR (indicator = 'spread_hy'   AND geography = 'GLOBAL')
            OR (indicator = 'spread_ig'   AND geography = 'GLOBAL')
            OR (indicator = 'vix'         AND geography = 'GLOBAL')
@@ -169,9 +167,8 @@ def load_macro_factors(conn: "psycopg.Connection") -> pd.DataFrame:
     if "gold_GLOBAL" in wide.columns:
         wide["gold_yoy"] = wide["gold_GLOBAL"].pct_change(12, fill_method=None) * 100
 
-    # M2 Global YoY: ya viene calculado
-    if "m2_global_yoy_GLOBAL" in wide.columns:
-        wide["m2_global_yoy"] = wide["m2_global_yoy_GLOBAL"]
+    # M2 Global YoY: RETIRED as a regression factor (FND-0181, 2026-10-03): corrected series has VIF 25-532 and
+    # was dropped for every fund. The series is still built (P3 regime classifier input).
 
     # Spread HY: se usa como nivel (ya es diferencial en %, media mensual)
     # Valores altos = mayor aversion al riesgo / estres crediticio
@@ -224,7 +221,7 @@ def load_macro_factors(conn: "psycopg.Connection") -> pd.DataFrame:
         "d_rate_us",  "d_rate_jp",  "d_rate_cn",
         "oil_yoy",    "copper_yoy",
         "cli_yoy_eu", "cli_yoy_us",
-        "dxy_yoy",    "gold_yoy",   "m2_global_yoy",
+        "dxy_yoy",    "gold_yoy",
         "spread_hy",  "spread_ig",  "vix_yoy",    "term_spread",
         "eur_jpy_yoy", "eur_gbp_yoy", "eur_cny_yoy",
     ]
@@ -283,7 +280,6 @@ _FACTOR_TO_METRIC = {
     "cli_yoy_us":    "beta_cli_us",
     "dxy_yoy":       "beta_dxy",
     "gold_yoy":      "beta_gold",
-    "m2_global_yoy": "beta_m2_global",
     "spread_hy":     "beta_spread_hy",
     "spread_ig":     "beta_spread_ig",
     "vix_yoy":       "beta_vix",
@@ -400,7 +396,7 @@ def compute_macro_sensitivity(
     factor_cols = [c for c in factor_cols if _stds[c] > 1e-10]
 
     # FND-0176: also drop factors that are zero-filled for a long stretch of THIS window. The std test above
-    # misses them when a few near-zero values keep the std above 1e-10 (m2_global_yoy: std 2e-5), and a
+    # misses them when a few near-zero values keep the std above 1e-10 (a zero-filled factor: std 2e-5), and a
     # constant factor next to the intercept makes the design singular (betas of 600-1,100 on 172 funds).
     factor_cols = [c for c in factor_cols
                    if c.startswith(MACRO_ZERO_RUN_EXEMPT_PREFIXES)
