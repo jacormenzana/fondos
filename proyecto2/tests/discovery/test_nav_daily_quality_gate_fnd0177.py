@@ -46,3 +46,15 @@ def test_small_batches_pass_through():
 def test_good_row_between_two_bad_prints_is_kept():   # IE00B3L10570 2010-11-24..26: 1.0, 100.0, 1.0
     kept, bad = _filter_daily_anomalies(_rows([100, 100, 1.0, 100, 1.0, 100, 100]))
     assert [r["NAV"] for r in kept] == [100, 100, 100, 100, 100] and len(bad) == 2
+
+
+def test_gated_batch_feeds_the_monthly_resample_without_pre_seam_months():
+    """Regression (live 2026-10-03): the gate ran only inside the daily write, so a --force load resampled the UNFILTERED
+    batch and put 10 pre-seam months (~133,009) back into fund_nav_monthly. The gated batch must feed both writes."""
+    from proyecto2.src.discovery.nav_discovery import _gate_nav_batch, _resample_to_monthly
+    days = [(date(2016, 2, 26) + timedelta(days=30 * i)).isoformat() for i in range(14)]
+    navs = [133009.12] * 10 + [99.75, 100.5, 101.0, 100.8]
+    rows = [{"Date": d, "NAV": v, "ISIN": "X"} for d, v in zip(days, navs)]
+    monthly = _resample_to_monthly(_gate_nav_batch("X", rows))
+    assert [r["NAV"] for r in monthly] == [99.75, 100.5, 101.0, 100.8]
+    assert _resample_to_monthly(rows)[0]["NAV"] == 133009.12      # the ungated path is what leaked

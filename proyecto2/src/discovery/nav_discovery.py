@@ -881,6 +881,19 @@ def _filter_daily_anomalies(rows: list, spike_max_move: float = _DAILY_SPIKE_MAX
     return kept, dropped
 
 
+def _gate_nav_batch(isin: str, rows: list) -> list:
+    """FND-0177: run the daily quality gate on a freshly downloaded batch BEFORE it feeds both the daily write and the
+    monthly resample (a bad daily print or a pre-seam segment would otherwise reach fund_nav_monthly, where validate_nav
+    quarantines the fund). Warns once per ISIN; idempotent, so the gate inside _write_nav_rows_daily finds nothing left."""
+    if not rows:
+        return rows
+    kept, bad = _filter_daily_anomalies(rows)
+    if bad:
+        print(f"[WARN] {isin}: {len(bad)} daily NAV row(s) rejected by the FND-0177 quality gate "
+              f"(first: {bad[0][0]['Date']} nav={bad[0][0]['NAV']} - {bad[0][1]})")
+    return kept
+
+
 def _write_nav_rows_daily(conn, rows, dry_run) -> int:
     """Persiste filas NAV diarias en fund_nav_daily.
 
@@ -1395,6 +1408,7 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=Non
 
                 # Escrituras en BD: solo hilo principal (SQLite single-writer)
                 rnav_rows  = _splice_new_chart_batch(conn, risin, rnav_rows)
+                rnav_rows = _gate_nav_batch(risin, rnav_rows)
                 _rl_d_wr   = _write_nav_rows_daily(conn, rnav_rows, dry_run)
                 _rl_m_rows = _resample_to_monthly(rnav_rows)
                 _rl_m_wr   = _write_nav_rows(conn, _rl_m_rows, dry_run)
@@ -1447,6 +1461,7 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=Non
                     if rnav_rows:
                         time.sleep(random.uniform(*MS_DELAY_LOAD_OK))
                         rnav_rows  = _splice_new_chart_batch(conn, risin, rnav_rows)
+                        rnav_rows = _gate_nav_batch(risin, rnav_rows)
                         _rl_d_wr   = _write_nav_rows_daily(conn, rnav_rows, dry_run)
                         _rl_m_rows = _resample_to_monthly(rnav_rows)
                         _rl_m_wr   = _write_nav_rows(conn, _rl_m_rows, dry_run)
@@ -1609,6 +1624,7 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=Non
 
         # -- v24: persistir diario + mensual (INSERT OR IGNORE en ambas) ----
         nav_rows        = _splice_new_chart_batch(conn, isin, nav_rows)
+        nav_rows = _gate_nav_batch(isin, nav_rows)
         daily_written   = _write_nav_rows_daily(conn, nav_rows, dry_run)
         monthly_rows    = _resample_to_monthly(nav_rows)
         monthly_written = _write_nav_rows(conn, monthly_rows, dry_run)
@@ -1894,6 +1910,7 @@ def run_update(conn, dry_run, bearer_token=None, stale_days=3, monthly_grain=Fal
 
         # -- v24: persistir diario + mensual --------------------------------
         nav_rows      = _splice_new_chart_batch(conn, isin, nav_rows)
+        nav_rows = _gate_nav_batch(isin, nav_rows)
         daily_written = _write_nav_rows_daily(conn, nav_rows, dry_run)
         monthly_rows  = _resample_to_monthly(nav_rows)
         written       = _write_nav_rows(conn, monthly_rows, dry_run)
