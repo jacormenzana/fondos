@@ -32,12 +32,18 @@ chcp 65001 > nul
 ::   estado legible del ultimo ciclo, se rechaza (falla cerrado).
 :: --from-any: anula esa guarda. Queda en el log y en ingestion_log (P1P2_ORCH/FROM_ANY).
 ::
-:: Auditoria estadistica (PASO 0 y final): antes de PASO 1 se ejecutan las auditorias estadisticas
-::   de P2 y de costes con --persist (baseline pre_<STAMP>) y, si el ciclo termina OK, otra vez con
-::   --persist --compare-to <baseline>. Asi el desplazamiento de metricas (p. ej. tras un cambio de
-::   CALC_VERSION) queda cuantificado y registrado (control.audit_statistic / audit_finding) sin
-::   comandos manuales; el informe de deriva va a log_P1_P2_audit_<STAMP>.log. Con --from N > 1 se
-::   reutiliza el baseline del ciclo fallido. Un fallo de auditoria nunca aborta el ciclo.
+:: Auditoria P1 + P2 (PASO 0 y final): antes de PASO 1 se ejecutan AUDIT_P1.bat (estadistica de
+::   costes) y AUDIT_P2.bat (estadistica de metricas) con --persist (baseline pre_<STAMP>) y, si el
+::   ciclo termina OK, otra vez con --persist --compare-to <baseline>; la pasada final de P1 anade la
+::   consistencia de benchmarks B1-B7 (la baseline la omite: es una foto sin deriva que cuantificar).
+::   Asi el desplazamiento de metricas (p. ej. tras un cambio de CALC_VERSION) queda cuantificado y
+::   registrado (control.audit_statistic / audit_finding) sin comandos manuales; el informe de deriva
+::   va a log_P1_P2_audit_<STAMP>.log. Con --from N > 1 se reutiliza el baseline del ciclo fallido.
+::   Un fallo de auditoria nunca aborta el ciclo. Los pasos 2 y 4 se invocan con --no-audit para que
+::   su auditoria "suelta" no se duplique con esta.
+:: FONDOS_ORCH=1: los sub-launchers ven que hay orquestador y no tocan powercfg (el standby lo
+::   gestiona solo este script: antes cada paso lo restauraba al terminar y dejaba el resto del ciclo
+::   expuesto a la suspension).
 :: Reparacion de costes (tras PASO 2): un pase P1 puede volver a escribir
 ::   ongoing_charge_recurrent = ACI_RHP en fondos cacheados (comportamiento previo, verificado con
 ::   el codigo commiteado). Se guarda la lista de fondos contaminados antes de PASO 2 y despues se
@@ -63,6 +69,9 @@ set PYTHON=C:\data\envs\des\python.exe
 set ROOT=C:\desarrollo\fondos
 set LAUNCH=%ROOT%\scripts\launch
 set LOG_DIR=%ROOT%\proyecto1\log
+
+:: Marca para los sub-launchers: hay orquestador (no gestionar powercfg ni auditar por su cuenta).
+set FONDOS_ORCH=1
 
 :: --force flag: passed through to P2_calculateIndicators.bat to bypass
 :: hash-cache AND quarterly OLS gate (force full OLS recompute).
@@ -145,10 +154,10 @@ set BASELINE_ID=pre_%STAMP%
 echo. >> "%LOG%"
 echo --- PASO 0: auditoria estadistica baseline (run_id=!BASELINE_ID!^) ---- >> "%LOG%"
 echo [%STAMP%] PASO 0: auditoria estadistica baseline (!BASELINE_ID!^)
-"%PYTHON%" -u -X utf8 "%ROOT%\scripts\audit\run_statistical_audit.py" --domain p2 --mode report --persist --run-id !BASELINE_ID!_p2 >> "%AUDIT_LOG%" 2>&1
-if errorlevel 1 echo [WARN] auditoria baseline p2 fallo: no se cuantificara la deriva >> "%LOG%"
-"%PYTHON%" -u -X utf8 "%ROOT%\scripts\audit\run_statistical_audit.py" --domain costs --mode report --persist --run-id !BASELINE_ID!_costs >> "%AUDIT_LOG%" 2>&1
-if errorlevel 1 echo [WARN] auditoria baseline costs fallo: no se cuantificara la deriva >> "%LOG%"
+call "%LAUNCH%\AUDIT_P2.bat" --mode report --persist --run-id !BASELINE_ID!_p2 --log "%AUDIT_LOG%" > nul
+if errorlevel 1 echo [WARN] AUDIT_P2 baseline fallo: no se cuantificara la deriva >> "%LOG%"
+call "%LAUNCH%\AUDIT_P1.bat" --no-benchmark --mode report --persist --run-id !BASELINE_ID!_costs --log "%AUDIT_LOG%" > nul
+if errorlevel 1 echo [WARN] AUDIT_P1 baseline fallo: no se cuantificara la deriva >> "%LOG%"
 goto :baseline_done
 :baseline_reuse
 for /f "delims=" %%b in ('%PYTHON% %LAUNCH%\p1p2_state.py baseline') do set BASELINE_ID=%%b
@@ -203,7 +212,7 @@ echo [%T2:~0,2%:%T2:~2,2%:%T2:~4,2%] PASO 2/4: P1_discoverAllFunds
 echo. >> "%LOG%"
 echo --- PASO 2/4: P1_discoverAllFunds -- Inicio: !T2! ----------- >> "%LOG%"
 
-call "%LAUNCH%\P1_discoverAllFunds.bat"
+call "%LAUNCH%\P1_discoverAllFunds.bat" --no-audit
 set RC2=!ERRORLEVEL!
 
 for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format HHmmss"') do set T2E=%%a
@@ -282,7 +291,7 @@ echo [%T4:~0,2%:%T4:~2,2%:%T4:~4,2%] PASO 4/4: P2_calculateIndicators
 echo. >> "%LOG%"
 echo --- PASO 4/4: P2_calculateIndicators -- Inicio: !T4! -------- >> "%LOG%"
 
-call "%LAUNCH%\P2_calculateIndicators.bat" %FORCE_FLAG%
+call "%LAUNCH%\P2_calculateIndicators.bat" --no-audit %FORCE_FLAG%
 set RC4=!ERRORLEVEL!
 
 for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format HHmmss"') do set T4E=%%a
@@ -313,10 +322,10 @@ if not defined BASELINE_ID goto :post_audit_done
 echo. >> "%LOG%"
 echo --- Auditoria estadistica final (compare-to !BASELINE_ID!^) ---- >> "%LOG%"
 echo [AUDITORIA] deriva vs baseline !BASELINE_ID!
-"%PYTHON%" -u -X utf8 "%ROOT%\scripts\audit\run_statistical_audit.py" --domain p2 --mode report --persist --run-id post_!STAMP2!_p2 --compare-to !BASELINE_ID!_p2 >> "%AUDIT_LOG%" 2>&1
-if errorlevel 1 echo [WARN] auditoria final p2 fallo >> "%LOG%"
-"%PYTHON%" -u -X utf8 "%ROOT%\scripts\audit\run_statistical_audit.py" --domain costs --mode report --persist --run-id post_!STAMP2!_costs --compare-to !BASELINE_ID!_costs >> "%AUDIT_LOG%" 2>&1
-if errorlevel 1 echo [WARN] auditoria final costs fallo >> "%LOG%"
+call "%LAUNCH%\AUDIT_P2.bat" --mode report --persist --run-id post_!STAMP2!_p2 --compare-to !BASELINE_ID!_p2 --log "%AUDIT_LOG%" > nul
+if errorlevel 1 echo [WARN] AUDIT_P2 final fallo >> "%LOG%"
+call "%LAUNCH%\AUDIT_P1.bat" --mode report --persist --run-id post_!STAMP2!_costs --compare-to !BASELINE_ID!_costs --log "%AUDIT_LOG%" > nul
+if errorlevel 1 echo [WARN] AUDIT_P1 final fallo >> "%LOG%"
 echo   Informe de deriva: %AUDIT_LOG% >> "%LOG%"
 echo   Informe de deriva: %AUDIT_LOG%
 :post_audit_done

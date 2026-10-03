@@ -11,18 +11,18 @@ chcp 65001 > nul
 :: cartera (portfolio_scenarios, portfolio_weights).
 :: Modulo: scripts.launch.p3_build_portfolio
 ::
-:: Fase 3c (P3 optimization plan, 2026-09-18): antes, este ciclo solo se
-:: ejecutaba a mano desde scripts/test/test_scorer.py + test_portfolio.py
-:: (herramientas de debug, no un launcher canonico) -- P3_generateReport.bat
-:: solo genera el informe a partir de lo que ya este persistido; nada
-:: automatizaba clasificar -> puntuar -> construir en un solo paso.
+:: Antes de puntuar/persistir, p3_build_portfolio.py comprueba la frescura de las entradas
+:: (data_freshness.py) y sale con RC 2 si estan obsoletas: este launcher lo explica y dice
+:: como resolverlo.
 ::
 :: Uso:
 ::   P3_buildPortfolio.bat                       scenario_id autogenerado
 ::                                                (cartera_<regimen>_<YYYYMM>)
 ::   P3_buildPortfolio.bat mi_escenario_id        scenario_id explicito
-::   P3_buildPortfolio.bat --dry-run              no persiste (debug)
+::   P3_buildPortfolio.bat --dry-run              no persiste (debug; la frescura solo avisa)
 ::   P3_buildPortfolio.bat mi_escenario_id --dry-run   ambos combinados
+::   P3_buildPortfolio.bat --allow-stale          salta la puerta de frescura (con criterio)
+:: Todos los argumentos se reenvian tal cual a p3_build_portfolio.py.
 :: ============================================================
 
 set PYTHON=C:\data\envs\des\python.exe
@@ -35,28 +35,40 @@ set ERR=%LOG_DIR%\log_P3_buildPortfolio_%STAMP%_err.log
 
 if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
 
+echo ============================================================ >> "%LOG%"
+echo  P3 Build Portfolio -- Inicio: %STAMP%                       >> "%LOG%"
+echo  Args    : %*                                                >> "%LOG%"
+echo ============================================================ >> "%LOG%"
+
 echo ============================================================
 echo  P3 Build Portfolio -- Inicio: %STAMP%
 echo  Args    : %*
 echo  Log     : %LOG%
+echo  Err     : %ERR%
 echo ============================================================
 echo.
 
 pushd "%ROOT%"
-
-%PYTHON% -X utf8 scripts\launch\p3_build_portfolio.py %* >> "%LOG%" 2>> "%ERR%"
-
-set RC=%ERRORLEVEL%
+"%PYTHON%" -u -X utf8 scripts\launch\p3_build_portfolio.py %* >> "%LOG%" 2>> "%ERR%"
+set RC=!ERRORLEVEL!
 popd
 
 for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set STAMP2=%%a
 
+echo. >> "%LOG%"
+echo  P3 Build Portfolio -- Fin: %STAMP2% (RC=!RC!^) >> "%LOG%"
+
 echo.
-if %RC% NEQ 0 (
-    echo [%STAMP2%] ERROR rc=%RC% -- ver %ERR%
-) else (
+if !RC! EQU 0 (
     echo [%STAMP2%] P3 Build Portfolio completado
     echo   Log: %LOG%
+) else if !RC! EQU 2 (
+    echo [%STAMP2%] P3 Build Portfolio -- ENTRADAS OBSOLETAS (P3_EXIT_STALE_INPUTS, RC=2^)
+    echo   Nada se ha puntuado ni persistido. Refrescar con P1_P2_Complete.bat y repetir;
+    echo   o --allow-stale si se asume el riesgo. Detalle: %LOG%
+) else (
+    echo [%STAMP2%] ERROR rc=!RC! -- ver %ERR%
+    powershell -NoProfile -Command "Get-Content -LiteralPath '%ERR%' -Tail 15 -ErrorAction SilentlyContinue"
 )
 echo.
 

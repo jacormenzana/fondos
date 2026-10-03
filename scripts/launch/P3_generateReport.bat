@@ -6,14 +6,19 @@ chcp 65001 > nul
 
 :: ============================================================
 :: P3_generateReport.bat
-:: Genera el informe mensual de cartera (Excel, 5 hojas)
+:: Genera el informe mensual de cartera (Excel, 6 hojas) a partir de lo ya persistido
 :: Modulo: proyecto3.src.monthly_report.generate_report
 :: Output:  C:\desarrollo\fondos\out\export\informe_cartera_YYYYMMDD.xlsx
+::
+:: Uso:
+::   P3_generateReport.bat                 informe en out\export
+::   P3_generateReport.bat C:\otra\ruta    directorio de salida alternativo
 :: ============================================================
 
 set PYTHON=C:\data\envs\des\python.exe
 set ROOT=C:\desarrollo\fondos
 set OUT_DIR=%ROOT%\out\export
+if not "%~1"=="" set OUT_DIR=%~1
 set LOG_DIR=%ROOT%\proyecto3\log
 
 :: Timestamp YYYYMMDD_HHMMSS (wmic removed on newer Windows builds; PowerShell
@@ -25,6 +30,11 @@ set ERR=%LOG_DIR%\log_P3_report_%STAMP%_err.log
 if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
 if not exist "%OUT_DIR%"  mkdir "%OUT_DIR%"
 
+echo ============================================================ >> "%LOG%"
+echo  P3 Generate Report -- Inicio: %STAMP%                       >> "%LOG%"
+echo  Export : %OUT_DIR%                                          >> "%LOG%"
+echo ============================================================ >> "%LOG%"
+
 echo ============================================================
 echo  P3 Generate Report -- Inicio: %STAMP%
 echo  Export : %OUT_DIR%
@@ -34,17 +44,19 @@ echo.
 
 pushd "%ROOT%"
 
-%PYTHON% -X utf8 -c "from shared.db import get_connection; from proyecto3.src.monthly_report import generate_report; print(generate_report(get_connection(), output_dir=r'%OUT_DIR%'))" >> "%LOG%" 2>> "%ERR%"
-
-set RC=%ERRORLEVEL%
+:: Un one-liner: cmd no admite cadenas multilinea. Si generate_report falla, la excepcion sale por
+:: stderr (RC 1) y el proceso termina, lo que cierra la conexion.
+"%PYTHON%" -u -X utf8 -c "from shared.db import get_connection; from proyecto3.src.monthly_report import generate_report; c = get_connection(); print(generate_report(c, output_dir=r'%OUT_DIR%')); c.close()" >> "%LOG%" 2>> "%ERR%"
+set RC=!ERRORLEVEL!
 popd
 
 :: Timestamp de cierre
 for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set STAMP2=%%a
 
 echo.
-if %RC% NEQ 0 (
-    echo [%STAMP2%] ERROR rc=%RC% -- ver %ERR%
+if !RC! NEQ 0 (
+    echo [%STAMP2%] ERROR rc=!RC! -- ver %ERR%
+    powershell -NoProfile -Command "Get-Content -LiteralPath '%ERR%' -Tail 15 -ErrorAction SilentlyContinue"
 ) else (
     echo [%STAMP2%] P3 Generate Report completado
     echo   Excel en: %OUT_DIR%
