@@ -422,13 +422,70 @@ class Backtester:
         self._selection_cache[regime] = selection
         return selection
 
+    def run_pit(
+        self,
+        start_date: str = "2005-01-31",
+        end_date:   str | None = None,
+        isins: list | None = None,
+        cache_dir: "str | Path | None" = None,
+        use_cache: bool = True,
+        max_stale_days: int = 45,
+        current_universe_only: bool = False,
+    ) -> pd.DataFrame:
+        """
+        Backtest POINT-IN-TIME (FND-0159): en cada fin de mes t el universo se puntua solo con la
+        informacion disponible en t (metricas recalculadas sobre el NAV <= t, regimen con retrasos de
+        publicacion, fondos retirados incluidos), la cartera se construye con el mismo motor que el
+        constructor en vivo, y las rentabilidades forward se calculan en bloque (producto matricial) con
+        la liquidez al tipo de deposito BCE. Devuelve las mismas columnas que run() mas n_funds,
+        cash_weight y cov_*; summary() las acepta. Ver pit_backtest.py para la metodologia y sus limites
+        (costes de transaccion: FND-0190, pendiente).
+
+        isins: lista para acotar el universo (p.ej. la muestra de 40 ISIN); None = universo completo.
+        cache_dir/use_cache: cache parquet de las etapas pesadas (use_cache=False = --no-cache).
+        run() conserva el comportamiento anterior CON look-ahead, solo para comparar.
+        """
+        from proyecto3.src.pit_backtest import run_pit_backtest
+        from proyecto3.src.pit_cache import ParquetCache
+        from proyecto3.src.pit_inputs import (
+            iter_daily_chunks, load_attributes, load_ipc, load_nav_panel, load_rate_deposit,
+        )
+        from proyecto3.src.pit_run import PitInputs, compute_pit_scores
+
+        hist = self._clf.classify_historical()          # el clasificador de este Backtester ya lleva los retrasos
+        if hist.empty:
+            print("ERROR: No hay clasificacion historica disponible.")
+            return pd.DataFrame()
+        last = hist.index.max() if end_date is None else min(pd.Timestamp(end_date), hist.index.max())
+        at = pd.date_range(pd.Timestamp(start_date) + pd.offsets.MonthEnd(0), last, freq=pd.offsets.MonthEnd())
+        if len(at) == 0:
+            return pd.DataFrame()
+
+        nav = load_nav_panel(self.conn, isins)
+        attrs = load_attributes(self.conn, isins)
+        daily_isins = list(nav.columns)
+        inputs = PitInputs(
+            nav=nav, attrs=attrs, ipc=load_ipc(self.conn), rate=load_rate_deposit(self.conn),
+            daily_chunks=lambda: iter_daily_chunks(self.conn, daily_isins),
+        )
+        cache = ParquetCache(cache_dir if cache_dir is not None else _ROOT / "proyecto3" / "cache" / "pit",
+                             enabled=use_cache)
+        print(f"Backtesting PIT | {at[0].date()} -> {at[-1].date()} | {len(at)} meses | {nav.shape[1]} fondos")
+        run = compute_pit_scores(inputs, at, hist["regime"], cache, max_stale_days=max_stale_days,
+                                 current_universe_only=current_universe_only)
+        self.last_pit_run = run                          # tiempos por etapa, cache hits, cobertura de gates cortos
+        print("  etapas (s): " + ", ".join(f"{k}={v:.1f}" for k, v in run.timings.items())
+              + f" | cache: {run.cache_hits}")
+        return run_pit_backtest(run, inputs, hist, at, max_stale_days=max_stale_days)
+
     def run(
         self,
         start_date: str = "2005-01-01",
         end_date:   str | None = None,
     ) -> pd.DataFrame:
         """
-        Ejecuta el backtesting para el periodo dado.
+        Ejecuta el backtesting LEGADO para el periodo dado (usa los scores ACTUALES: con look-ahead;
+        el backtest riguroso es run_pit()).
 
         Devuelve DataFrame con una fila por mes con columnas:
             date, regime, ret_1m, ret_3m, ret_12m,

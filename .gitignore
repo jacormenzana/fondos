@@ -41,3 +41,6 @@ scripts/launch/180
 
 # Local credentials scratch file (FND-0079: was untracked and NOT ignored) - never commit
 passwords.txt
+
+# P3 point-in-time backtest parquet cache (regenerable)
+proyecto3/cache/

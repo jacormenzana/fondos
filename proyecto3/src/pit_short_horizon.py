@@ -149,3 +149,6 @@ def _log_coverage(coverage: pd.DataFrame) -> None:
     if len(empty):
         logger.warning("short gates fail-open on %d of %d dates (no fund has a usable daily window): %s .. %s",
                        len(empty), len(coverage), empty.min().date(), empty.max().date())
+
+
+log_coverage = _log_coverage                    # public alias for callers that aggregate coverage across chunks
