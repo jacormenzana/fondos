@@ -475,6 +475,7 @@ python -m proyecto2.src.discovery.macro_discovery --source all
 <!-- AUTO:BEGIN p3-module-map -->
 | Module | Folder |
 |--------|--------|
+| `backtest_inference.py` | `proyecto3/src` |
 | `backtesting.py` | `proyecto3/src` |
 | `data_freshness.py` | `proyecto3/src` |
 | `fund_scorer.py` | `proyecto3/src` |
@@ -486,6 +487,7 @@ python -m proyecto2.src.discovery.macro_discovery --source all
 | `pit_inputs.py` | `proyecto3/src` |
 | `pit_macro.py` | `proyecto3/src` |
 | `pit_metrics.py` | `proyecto3/src` |
+| `pit_oos.py` | `proyecto3/src` |
 | `pit_peer_metrics.py` | `proyecto3/src` |
 | `pit_run.py` | `proyecto3/src` |
 | `pit_short_horizon.py` | `proyecto3/src` |

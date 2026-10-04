@@ -59,6 +59,12 @@ _FILL_METHODS = {"bfill", "ffill", "fillna"}
 # reason: 'DESIGN: <explanation>' for a reviewed-and-accepted pattern, or 'FND-#### <note>' for a
 # real, open, ticketed finding this scanner surfaced but did not fix.
 _SILENT_FILL_EXEMPT: dict[str, str] = {
+    "proyecto3/src/backtest_inference.py::paired_sharpe_difference":
+        "DESIGN: fillna(0.0) on the CASH leg only: a month without a cash return counts as 0% accrual (conservative), a "
+        "constant that never borrows another date's value; the strategy returns themselves are dropna-aligned (FND-0219).",
+    "proyecto3/src/pit_oos.py::_excess":
+        "DESIGN: fillna(0.0) on the CASH leg only: a month without a cash return counts as 0% accrual (conservative), a "
+        "constant that never borrows another date's value (FND-0193 / FND-0217 reports).",
     "proyecto3/src/backtesting.py::_load_cash_rates":
         "DESIGN: forward fill only (a rate is carried to later months, never earlier) over the series' own span "
         "(FND-0228 review 2026-10-04); months before the series start stay missing and are warned about.",

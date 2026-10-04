@@ -84,25 +84,42 @@ def candidates_by_sub(scores_t: pd.DataFrame, attrs: pd.DataFrame) -> dict:
 
 
 def build_weights(scores: pd.DataFrame, attrs: pd.DataFrame, regime_hist: pd.DataFrame, at: pd.DatetimeIndex,
-                  constraints=DEFAULT_CONSTRAINTS, use_incumbents: bool = False) -> "tuple[pd.DataFrame, pd.Series]":
+                  constraints=DEFAULT_CONSTRAINTS, use_incumbents: bool = False, rebalance_every: int = 1,
+                  phase: int = 0, regime_trigger=False) -> "tuple[pd.DataFrame, pd.Series]":
     """Master weights per date: (W [dates x isin], cash [dates]). regime_hist has weight_defensive/balanced/dynamic
     (the lagged classifier's classify_historical()); dates without scores or regime row give an empty portfolio.
 
     use_incumbents (FND-0205): the funds each sub-portfolio held the previous month are passed to the engine as
     incumbents, so they get the hysteresis bonus constraints.hysteresis_band in the ranking (the same mechanism
     as the live builder, PORTFOLIO_HYSTERESIS_ENABLED). An empty month resets the holdings. Only the SELECTION is
-    sticky: weights stay score-proportional, so turnover from re-weighting held funds remains."""
+    sticky: weights stay score-proportional, so turnover from re-weighting held funds remains.
+
+    rebalance_every / phase (FND-0217): the portfolio is re-selected only on every `rebalance_every`-th evaluation date
+    (positions i with (i - phase) % rebalance_every == 0, counted over `at`); in between, the last portfolio is held as it
+    is (target weights, no drift) -- the regime weights are also frozen until the next rebalance. 1 = every month (default,
+    the previous behaviour). A month without scores empties the portfolio and forces a rebalance at the next dated month.
+    regime_trigger: also rebalance on a date whose regime label differs from the one at the last rebalance (react at once
+    to a regime change, slowly otherwise); only matters when rebalance_every > 1. True = any change; a collection of regime
+    names (e.g. {"Crisis_Financiera"}) = only a change INTO or OUT OF one of those regimes."""
     rows, cash = {}, {}
     incumbents: dict = {}
+    held_master, held_cash, held_regime = None, np.nan, None
     hist = regime_hist.sort_index()
     by_date = dict(tuple(scores.groupby("as_of"))) if len(scores) else {}
-    for t in at:
+    for i, t in enumerate(at):
         pos = hist.index.searchsorted(t, side="right") - 1
         if t not in by_date or pos < 0:
             rows[t], cash[t] = {}, np.nan
             incumbents = {}
+            held_master, held_cash, held_regime = None, np.nan, None
             continue
         h = hist.iloc[pos]
+        changed = bool(regime_trigger) and held_regime is not None and h["regime"] != held_regime
+        if changed and regime_trigger is not True:
+            changed = h["regime"] in regime_trigger or held_regime in regime_trigger
+        if rebalance_every > 1 and held_master is not None and (i - phase) % rebalance_every != 0 and not changed:
+            rows[t], cash[t] = held_master, held_cash                  # between rebalances: hold
+            continue
         sub_w = dict(zip(SUB_NAMES, (h["weight_defensive"], h["weight_balanced"], h["weight_dynamic"])))
         selection = select_and_weight(candidates_by_sub(by_date[t], attrs), sub_w, constraints,
                                       incumbents if use_incumbents else None)
@@ -110,6 +127,7 @@ def build_weights(scores: pd.DataFrame, attrs: pd.DataFrame, regime_hist: pd.Dat
             incumbents = {sub: frozenset(df["isin"]) for sub, df in selection.items() if not df.empty}
         master = _blend_to_master(selection, sub_w)
         rows[t], cash[t] = master, (cash_weight(master) if master else np.nan)
+        held_master, held_cash, held_regime = (master, cash[t], h["regime"]) if master else (None, np.nan, None)
     W = pd.DataFrame.from_dict(rows, orient="index").reindex(at)
     return W, pd.Series(cash).reindex(at)
 
@@ -233,10 +251,12 @@ class PreparedBacktest:
 
 def prepare_pit_backtest(pit_run, inputs, regime_hist: pd.DataFrame, at: pd.DatetimeIndex,
                          windows=FORWARD_WINDOWS, max_stale_days: int = 45,
-                         constraints=DEFAULT_CONSTRAINTS, use_incumbents: bool = False) -> PreparedBacktest:
+                         constraints=DEFAULT_CONSTRAINTS, use_incumbents: bool = False, rebalance_every: int = 1,
+                         phase: int = 0, regime_trigger=False) -> PreparedBacktest:
     at = pd.DatetimeIndex(at)
     windows = tuple(windows)
-    W, cash_w = build_weights(pit_run.scores, inputs.attrs, regime_hist, at, constraints, use_incumbents)
+    W, cash_w = build_weights(pit_run.scores, inputs.attrs, regime_hist, at, constraints, use_incumbents,
+                              rebalance_every, phase, regime_trigger)
     grid = pd.date_range(at.min(), at.max() + pd.offsets.MonthEnd(max(windows)), freq=pd.offsets.MonthEnd())
     cidx = cash_index(inputs.rate, grid)
     hist = regime_hist.sort_index()
