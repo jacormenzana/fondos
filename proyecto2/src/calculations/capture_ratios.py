@@ -30,6 +30,7 @@ Todas con horizon='since_inception' y real_flag=0.
 import numpy as np
 import pandas as pd
 
+from shared import config as _config
 from shared.config import CAPTURE_MIN_PERIODS as MIN_PERIODS  # minimo de periodos positivos/negativos para calcular
 
 
@@ -68,6 +69,13 @@ def load_peer_benchmark(
     df["date"] = pd.to_datetime(df["date"]) + pd.offsets.MonthEnd(0)
     df["nav"]  = df["nav"].astype(float)
 
+    if _config.CAPTURE_MONTH_END_ENABLED:
+        # FND-0202: a month-end grid per fund (last NAV of the month), and a return only between CONSECUTIVE months:
+        # a gap no longer turns into a multi-month return that is then averaged with 1-month returns.
+        wide = df.pivot_table(index="date", columns="isin", values="nav", aggfunc="last").sort_index()
+        wide = wide.reindex(pd.date_range(wide.index.min(), wide.index.max(), freq=pd.offsets.MonthEnd()))
+        return wide.pct_change(fill_method=None).mean(axis=1).dropna()
+
     # Retorno mensual por fondo
     df = df.sort_values(["isin", "date"])
     df["ret"] = df.groupby("isin")["nav"].pct_change()
@@ -103,7 +111,16 @@ def compute_capture_ratios(
 
     # Retornos mensuales del fondo
     nav = nav_df.set_index("date")["nav"].sort_index()
-    r_fondo = nav.pct_change().dropna()
+    if _config.CAPTURE_MONTH_END_ENABLED:
+        # FND-0202: same month-end grid as the peer benchmark. The raw dates mixed month-end and mid-month points, so the
+        # inner join with the (month-end) benchmark silently kept only the month-end ones.
+        nav = nav.copy()
+        nav.index = pd.DatetimeIndex(nav.index) + pd.offsets.MonthEnd(0)
+        nav = nav[~nav.index.duplicated(keep="last")]
+        nav = nav.reindex(pd.date_range(nav.index.min(), nav.index.max(), freq=pd.offsets.MonthEnd()))
+        r_fondo = nav.pct_change(fill_method=None).dropna()
+    else:
+        r_fondo = nav.pct_change().dropna()
 
     if len(r_fondo) < MIN_PERIODS * 2:
         return []

@@ -82,7 +82,18 @@ _PER_FUND_MIN_COVERAGE = MACRO_OLS_PER_FUND_MIN_COVERAGE
 # Carga de factores macro
 # ============================================================
 
-def load_macro_factors(conn: "psycopg.Connection") -> pd.DataFrame:
+def vif_options_from_config() -> dict:
+    """Keyword arguments for compute_macro_sensitivity from shared.config: {} (the production single pass) while
+    MACRO_VIF_ITERATIVE_ENABLED is off (FND-0196)."""
+    from shared import config
+    if not config.MACRO_VIF_ITERATIVE_ENABLED:
+        return {}
+    o = config.MACRO_ITERATIVE_VIF
+    return {"vif_mode": "iterative", "extra_priority": set(o["extra_priority"]), "exclude": set(o["exclude"]),
+            "max_factors_per_obs": o["max_factors_per_obs"]}
+
+
+def load_macro_factors(conn: "psycopg.Connection", clean: "bool | None" = None) -> pd.DataFrame:
     """
     Carga y construye el DataFrame de factores macro mensuales.
     Devuelve DataFrame indexado por fecha (fin de mes) con columnas:
@@ -113,6 +124,9 @@ def load_macro_factors(conn: "psycopg.Connection") -> pd.DataFrame:
     if not rows:
         return pd.DataFrame()
 
+    if clean is None:
+        from shared import config
+        clean = config.MACRO_FACTOR_CLEAN_ENABLED       # FND-0226 (default off)
     df = pd.DataFrame(rows, columns=["date", "indicator", "geography", "value"])
     df["date"]  = pd.to_datetime(df["date"]) + pd.offsets.MonthEnd(0)
     df["value"] = df["value"].astype(float)
@@ -121,6 +135,12 @@ def load_macro_factors(conn: "psycopg.Connection") -> pd.DataFrame:
     wide = df.pivot_table(index="date", columns="key",
                           values="value", aggfunc="last")
     wide.columns.name = None
+
+    if clean:
+        # FND-0226: a price-index level <= 0 is a placeholder for "missing" (series_macro ipc_index CN: 14 zeros), and
+        # pct_change over it yields +/-inf. Make it missing before the year-on-year change.
+        for col in [c for c in wide.columns if c.startswith("ipc_index_")]:
+            wide[col] = wide[col].where(wide[col] > 0)
 
     # Variaciones mensuales de tipos (nivel -> cambio)
     for col, new_col in [
@@ -230,6 +250,8 @@ def load_macro_factors(conn: "psycopg.Connection") -> pd.DataFrame:
     ]
     available = [f for f in factors if f in wide.columns]
     result = wide[available]
+    if clean:
+        result = result.replace([np.inf, -np.inf], np.nan)          # FND-0226: no infinite cell reaches the OLS
     # Excluir factores con cobertura insuficiente (<50% de filas no nulas)
     # para evitar que un factor esparso elimine todas las filas en dropna()
     min_coverage = 0.5

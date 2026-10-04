@@ -27,6 +27,7 @@ Requisito: minimo MIN_WINDOWS ventanas validas para calcular la metrica.
 import numpy as np
 import pandas as pd
 
+from shared import config as _config
 from shared.config import (
     PERSISTENCE_WINDOW_MONTHS as WINDOW_MONTHS,
     PERSISTENCE_STEP_MONTHS as STEP_MONTHS,
@@ -49,6 +50,10 @@ def _category_return_in_window(
     """
     Calcula la rentabilidad media anualizada de la categoria en una ventana.
     Excluye el propio fondo para evitar autocorrelacion.
+
+    FND-0200: hasta ahora el retorno de cada par era MAX(NAV) / MIN(NAV) de la ventana, que no es el retorno del
+    periodo (sesgo al alza: un fondo que cae de 100 a 80 contaba +25%). Con PERSISTENCE_FIRST_LAST_NAV_ENABLED se
+    usa el NAV de la primera y de la ultima fecha, como el retorno del propio fondo en compute_persistence.
     """
     # Postgres migration Stage 9 (found live 2026-09-22): see momentum.py's identical note.
     ph = "%s"
@@ -56,7 +61,9 @@ def _category_return_in_window(
         SELECT fnm.ISIN,
                MIN(fnm.NAV) AS nav_start,
                MAX(fnm.NAV) AS nav_end,
-               COUNT(*)     AS n_months
+               COUNT(*)     AS n_months,
+               (ARRAY_AGG(fnm.NAV ORDER BY fnm.Date ASC))[1]  AS nav_first,
+               (ARRAY_AGG(fnm.NAV ORDER BY fnm.Date DESC))[1] AS nav_last
         FROM fund_nav_monthly fnm
         JOIN fund_master fm ON fm.ISIN = fnm.ISIN
         WHERE fm.Fund_Nature = {ph}
@@ -74,7 +81,10 @@ def _category_return_in_window(
         return None
 
     returns = []
-    for isin, nav_s, nav_e, n in rows:
+    first_last = _config.PERSISTENCE_FIRST_LAST_NAV_ENABLED
+    for isin, nav_s, nav_e, n, nav_f, nav_l in rows:
+        if first_last:
+            nav_s, nav_e = nav_f, nav_l
         if nav_s and nav_e and nav_s > 0:
             years = n / 12
             ret = (nav_e / nav_s) ** (1 / years) - 1 if years > 0 else None

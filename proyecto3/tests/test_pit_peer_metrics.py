@@ -92,7 +92,7 @@ class _FakePeerConn:
                 s = self.panel[c].loc[:self.t].dropna()
                 s = s[(s.index >= pd.Timestamp(start)) & (s.index <= pd.Timestamp(end))]
                 if len(s) >= min_n:
-                    rows.append((c, float(s.min()), float(s.max()), len(s)))
+                    rows.append((c, float(s.min()), float(s.max()), len(s), float(s.iloc[0]), float(s.iloc[-1])))
             return _Rows(rows)
         if "order by fnm.isin, fnm.date" in sql_l:                           # capture peer panel
             nat, excl = params
@@ -133,7 +133,10 @@ def _check_points(panel):
 
 # ---------------- alpha_persistence ----------------
 
-def test_alpha_persistence_matches_p2_at_every_truncation(data):
+@pytest.mark.parametrize("first_last", [False, True], ids=["min_max_p2_today", "first_last_FND0200_flag"])
+def test_alpha_persistence_matches_p2_at_every_truncation(data, monkeypatch, first_last):
+    from shared import config
+    monkeypatch.setattr(config, "PERSISTENCE_FIRST_LAST_NAV_ENABLED", first_last)
     panel, nature = data
     res = alpha_persistence(panel, nature)
     dates = panel.index
@@ -256,3 +259,11 @@ def test_momentum_rank_staleness_drops_retired_funds(data):
     # the rank base shrinks from 8 to 7 funds: A1's rank = (#peers below it among the 7 observable) / 7
     obs = ra.loc[t, [c for c in panel.columns if nature[c] == "NAT_A" and c != "A0"]]
     assert limited.loc[t, "A1"] == pytest.approx((obs < obs["A1"]).sum() / 7)
+
+
+def test_capture_ratios_refuse_to_run_while_the_p2_month_end_flag_is_on(data, monkeypatch):
+    from shared import config
+    monkeypatch.setattr(config, "CAPTURE_MONTH_END_ENABLED", True)
+    panel, nature = data
+    with pytest.raises(NotImplementedError):
+        capture_ratios(panel, nature)

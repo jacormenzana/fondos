@@ -19,6 +19,15 @@ import hashlib
 import pandas as pd
 
 
+def effective_calc_version(calc_version: str) -> str:
+    """calc_version plus the enabled P2 bundle flags (shared.config.P2_BUNDLE_FLAGS). Unchanged while every flag is
+    off, so enabling none of them keeps today's fingerprints; flipping a flag changes every fund's fingerprint and the
+    next run recomputes all of them without a separate version bump."""
+    from shared import config
+    on = [name for name in config.P2_BUNDLE_FLAGS if getattr(config, name, False)]
+    return calc_version if not on else calc_version + "+" + "+".join(sorted(on))
+
+
 def compute_input_hash(
     nav_df: pd.DataFrame,
     ipc_df: pd.DataFrame | None,

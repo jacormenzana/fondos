@@ -81,7 +81,7 @@ def penalised(group: pd.DataFrame, variant: str, z_cut: float) -> pd.Series:
     """Boolean Series (False where the signal is missing)."""
     sig = signal(group, variant)
     cut = -VIX_CRISIS_THRESHOLD if variant == "sign_raw" else -z_cut
-    return (sig < cut).fillna(False)
+    return sig < cut                      # a comparison with NaN is False: no signal, no penalty
 
 
 def forward_max_drawdown(nav: pd.DataFrame, at: pd.DatetimeIndex, months: int = 12, max_stale_days: int = 45) -> pd.DataFrame:

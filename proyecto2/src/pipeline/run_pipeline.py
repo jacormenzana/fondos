@@ -95,7 +95,7 @@ from src.calculations.short_horizon import compute_short_horizon_metrics
 from src.calculations.risk_metrics import compute_risk_metrics
 from src.calculations.consistency import consistency_metrics
 from src.calculations.macro_sensitivity import (
-    load_macro_factors, compute_macro_sensitivity
+    load_macro_factors, compute_macro_sensitivity, vif_options_from_config
 )
 from src.calculations.regime_returns import (
     load_regime_history, compute_regime_returns
@@ -115,7 +115,7 @@ from src.calculations.rolling_stats import (
     cat_signals_from_snapshot,
     resolve_rf_rate,
 )
-from src.utils.fingerprint import compute_input_hash
+from src.utils.fingerprint import compute_input_hash, effective_calc_version
 from src.utils.logger import get_pipeline_logger
 from src.writers.metrics_writer import (
     rows_from_metric_tuples as _rows_from_metric_tuples,
@@ -1204,7 +1204,7 @@ def run(
                 # Hash computed on FULL nav_df (before any date clipping)
                 # so it represents the true data state.
                 current_hash = compute_input_hash(
-                    nav_df, ipc_df, METRIC_VERSION, CALC_VERSION
+                    nav_df, ipc_df, METRIC_VERSION, effective_calc_version(CALC_VERSION)
                 )
                 if not force and isin not in force_recalc_isins:
                     stored_hash = _get_stored_hash(conn, isin)
@@ -1374,6 +1374,7 @@ def run(
                                 geography=geography,
                                 development_status=development_status,
                                 diagnostics=_ols_diag,
+                                **vif_options_from_config(),            # FND-0196: {} while the flag is off
                             )
                             if sens_list:
                                 n_ols_funds += 1

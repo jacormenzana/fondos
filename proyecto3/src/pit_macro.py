@@ -36,7 +36,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from proyecto2.src.calculations.macro_sensitivity import MIN_OBS, compute_macro_sensitivity
-from shared.config import REGIME_PUBLICATION_LAG_MONTHS
+from shared.config import MACRO_ITERATIVE_VIF, REGIME_PUBLICATION_LAG_MONTHS
 
 logger = logging.getLogger(__name__)
 
@@ -44,11 +44,11 @@ MACRO_METRICS = ("beta_oil", "beta_rate_eu", "beta_spread_hy", "beta_vix", "macr
 
 VARIANTS = {
     "control": {},
-    "iterative_hy": {
+    "iterative_hy": {                                    # the options P2 uses when MACRO_VIF_ITERATIVE_ENABLED (one source)
         "vif_mode": "iterative",
-        "extra_priority": frozenset({"spread_hy", "vix_yoy"}),
-        "exclude": frozenset({"spread_ig"}),
-        "max_factors_per_obs": 10.0,
+        "extra_priority": frozenset(MACRO_ITERATIVE_VIF["extra_priority"]),
+        "exclude": frozenset(MACRO_ITERATIVE_VIF["exclude"]),
+        "max_factors_per_obs": MACRO_ITERATIVE_VIF["max_factors_per_obs"],
         "clean_inf": True,
     },
 }

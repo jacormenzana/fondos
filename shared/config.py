@@ -534,6 +534,32 @@ MACRO_OLS_MAX_CONDITION_INDEX: float = 30.0
 # Also the plausibility limit counted by scripts/audit/beta_shift_audit.py (FND-0176 saw 600-1,100).
 MACRO_BETA_PLAUSIBLE_MAX: float = 5.0
 
+# ---- P2 recompute bundle (FND-0196, FND-0226, FND-0200, FND-0202), prepared 2026-10-04 --------------------------------
+# Four corrections that CHANGE stored metric values. All default False: the code is in place and tested but dormant, so
+# nothing changes until the owner flips them TOGETHER and runs ONE full P2 recompute. The input fingerprint includes the
+# enabled flags (utils/fingerprint.effective_calc_version), so the first run after a flip recomputes every fund by itself;
+# still bump CALC_VERSION in the same change so the stored algorithm_version records the new logic.
+#   MACRO_VIF_ITERATIVE_ENABLED  FND-0196  macro OLS: iterative VIF (drop one factor at a time) with the options below,
+#                                          instead of dropping every factor over the threshold in one pass (which removed
+#                                          both members of a collinear pair, e.g. spread_hy / spread_ig, corr 0.91)
+#   MACRO_FACTOR_CLEAN_ENABLED   FND-0226  macro factors: a non-positive CPI index level is missing (series_macro CN has
+#                                          14 zeros) and +/-inf cells become NaN
+#   PERSISTENCE_FIRST_LAST_NAV_ENABLED  FND-0200  peer return in a window from the FIRST and LAST NAV (was MIN / MAX)
+#   CAPTURE_MONTH_END_ENABLED    FND-0202  capture ratios: fund and peers on a month-end grid, 1-month returns only
+MACRO_VIF_ITERATIVE_ENABLED: bool = False
+MACRO_FACTOR_CLEAN_ENABLED: bool = False
+PERSISTENCE_FIRST_LAST_NAV_ENABLED: bool = False
+CAPTURE_MONTH_END_ENABLED: bool = False
+P2_BUNDLE_FLAGS: tuple = ("MACRO_VIF_ITERATIVE_ENABLED", "MACRO_FACTOR_CLEAN_ENABLED",
+                          "PERSISTENCE_FIRST_LAST_NAV_ENABLED", "CAPTURE_MONTH_END_ENABLED")
+# Options of the iterative VIF (used when MACRO_VIF_ITERATIVE_ENABLED, and by the PIT variant "iterative_hy"): keep the two
+# crisis factors, drop spread_ig (the near-duplicate of spread_hy), and at most n_obs / 10 factors per fund.
+MACRO_ITERATIVE_VIF: dict = {
+    "extra_priority": ("spread_hy", "vix_yoy"),
+    "exclude": ("spread_ig",),
+    "max_factors_per_obs": 10.0,
+}
+
 # Factores a proteger del filtro VIF según geografía del fondo — se suman al
 # conjunto base {d_rate_eu, oil_yoy, m3_yoy} para evitar que factores
 # regionales clave sean descartados por correlación con factores globales.

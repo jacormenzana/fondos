@@ -13,9 +13,12 @@ FIDELITY CHOICE (owner decision 2026-10-03): P2's definitions are replicated EXA
 known defects, so the PIT result can be pinned to P2; each one is a backlog item and the PIT code is
 switched when P2 is fixed (change the flagged lines below + the oracle together):
   * FND-0200  persistence peer return = (MAX(NAV)/MIN(NAV)) ** (12/n) - 1 over the window (NOT last/first):
-              biased upward for every peer. Replicated in `_peer_window_returns`.
+              biased upward for every peer. Replicated in `_peer_window_returns`; with the P2 flag
+              PERSISTENCE_FIRST_LAST_NAV_ENABLED it follows P2 to the first/last NAV definition.
   * FND-0202  capture ratios join the fund's returns on RAW dates with a MONTH-END-normalized peer
-              benchmark: observations that are not month-end dated silently drop out. Replicated.
+              benchmark: observations that are not month-end dated silently drop out. Replicated. The PIT replica of
+              the P2 fix (CAPTURE_MONTH_END_ENABLED) is NOT built yet: capture_ratios raises while that flag is on,
+              rather than silently diverging from P2.
   * momentum_rank ranks the fund's since_inception return_ann inside its Fund_Nature including itself,
               and P2's peer set includes retired funds with their last stored value (unlimited staleness,
               `max_stale_days=None`); a PIT run should pass a finite `max_stale_days`.
@@ -35,6 +38,7 @@ _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+from shared import config as _config
 from shared.config import (
     CAPTURE_MIN_PERIODS,
     MIN_PEERS,
@@ -124,6 +128,10 @@ def capture_ratios(nav: pd.DataFrame, nature: pd.Series, min_periods: int = CAPT
     (computed as category sum/count minus f's own rows). FND-0202 replicated: f's returns are joined on RAW
     date, so only f's month-end-dated observations enter. Returns {upside_capture, downside_capture,
     capture_ratio}: DataFrames on `nav`'s index/columns, values at the fund's own observation dates."""
+    if _config.CAPTURE_MONTH_END_ENABLED:
+        raise NotImplementedError(
+            "CAPTURE_MONTH_END_ENABLED (FND-0202) is on in P2 but the PIT replica of the month-end capture ratios is not "
+            "built yet; the PIT backtest would silently diverge from P2. Turn the flag off for PIT runs or build the replica.")
     long = _returns_long(nav)
     shape = nav.shape
     res = {k: np.full(shape, np.nan) for k in ("upside_capture", "downside_capture", "capture_ratio")}
@@ -193,6 +201,15 @@ def _peer_window_returns(values: np.ndarray, dates: np.ndarray, ws: np.datetime6
     block = values[lo:hi]
     finite = np.isfinite(block)
     n = finite.sum(axis=0)
+    if _config.PERSISTENCE_FIRST_LAST_NAV_ENABLED and block.shape[0]:
+        # FND-0200 fixed in P2: return of the period, first and last observation inside the window
+        cols = np.arange(block.shape[1])
+        first = block[finite.argmax(axis=0), cols]
+        last = block[block.shape[0] - 1 - finite[::-1].argmax(axis=0), cols]
+        with np.errstate(all="ignore"):
+            ret = (last / first) ** (12.0 / n) - 1.0
+        ret[(n < min_obs) | ~np.isfinite(first) | (first <= 0)] = np.nan
+        return ret
     with np.errstate(all="ignore"):
         mn = np.where(finite, block, np.inf).min(axis=0)
         mx = np.where(finite, block, -np.inf).max(axis=0)
