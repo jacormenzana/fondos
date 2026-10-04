@@ -13,11 +13,11 @@
 # Schedule it (Windows Task Scheduler, daily, action: wsl.exe -d Ubuntu -e bash <this file>); the WSL
 # keepalive task keeps the distro up.
 set -uo pipefail
-OUT=/mnt/c/data/backups/fondos_pg
+OUT=${BACKUP_OUT:-/mnt/backups/pg_fondos/dump}   # BACKUP_OUT / BACKUP_STAMP / BACKUP_KEEP: overrides used by maintenance/wsl/wsl_06_backup_pg.sh
 SEC=/opt/docker/db/postgresql17/secrets
-KEEP=7; VERIFY=0
+KEEP=${BACKUP_KEEP:-7}; VERIFY=0
 while [ $# -gt 0 ]; do case "$1" in --verify-restore) VERIFY=1;; --keep) KEEP="$2"; shift;; *) echo "unknown arg $1"; exit 2;; esac; shift; done
-PW=$(cat $SEC/postgres_password); STAMP=$(date +%Y%m%d_%H%M)
+PW=$(cat $SEC/postgres_password); STAMP=${BACKUP_STAMP:-$(date +%Y%m%d_%H%M)}
 P="docker exec -e PGPASSWORD=$PW fondos_postgres"
 mkdir -p "$OUT"; FAIL=0
 

@@ -33,7 +33,7 @@ do not start another launcher.
 1. **Backup + restore proof** (WSL Ubuntu, keepalive running): 
    `bash /mnt/c/desarrollo/fondos/scripts/ops/backup_live_pg.sh --verify-restore`
    Expect `BACKUP OK` and `MATCH` on every table (~6 min). Note the file name `fondos_<STAMP>.dump`
-   (in `C:\data\backups\fondos_pg\`) — this is the **restore point**. Record it in the W2 ticket.
+   (in `/mnt/backups/pg_fondos/dump/` (WSL; `\wsl.localhost\Ubuntu\mnt\backups\pg_fondos\dump\` from Windows)) — this is the **restore point**. Record it in the W2 ticket.
 2. **WAL/PITR live** (FND-0071): `bash .../setup_wal_archive.sh status` shows a real
    `archive_command`, `failed=0`, and a complete base backup; `... drill` printed `DRILL PASSED`.
 3. **Named restore point**: as `fondos_owner` run `select pg_create_restore_point('pre_w2_<YYYYMMDD>')`
@@ -56,7 +56,7 @@ piece: the restore into a scratch database is exactly what `--verify-restore` do
    ```
    P="docker exec -e PGPASSWORD=$(cat /opt/docker/db/postgresql17/secrets/postgres_password) fondos_postgres"
    $P psql -h 127.0.0.1 -U fondos_owner -d postgres -c "CREATE DATABASE fondos_restore"
-   docker cp /mnt/c/data/backups/fondos_pg/fondos_<STAMP>.dump fondos_postgres:/tmp/restore.dump
+   docker cp /mnt/backups/pg_fondos/dump/fondos_<STAMP>.dump fondos_postgres:/tmp/restore.dump
    $P pg_restore -h 127.0.0.1 -U fondos_owner -d fondos_restore -j 4 --no-owner /tmp/restore.dump
    ```
 3. Validate `fondos_restore`: row counts of `silver.fund_master`, `bronze.fund_nav_daily`,

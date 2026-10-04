@@ -16,17 +16,21 @@
 # --mirror-dry-run  same checks, lists what WOULD be deleted, deletes nothing (implies --mirror-prune)
 # Exit code 0 = everything verified; non-zero = something failed (see the log). Missing D: -> exit 3.
 # Run as root (needed to read the PITR directory, owned by uid 999, and to mount D:).
+# --mirror-allow-large  lift the "deletions <= 60% of what D: holds" cap for ONE catch-up run (D: carries far more than the
+#                   pruned source, e.g. after the guard below used to refuse for weeks). The continuity guard still applies.
+#                   Check first with --mirror-dry-run --mirror-allow-large.
 # Without --mirror-prune nothing is ever deleted from D:/pitr (rsync runs without --delete) and it only grows.
 set -uo pipefail
 # Paths are overridable so the guards can be rehearsed on a scratch tree (OFFBOX_MNT set => no mount attempt).
 DRIVE=D; MNT=${OFFBOX_MNT:-/mnt/d}
-DEST=${OFFBOX_DEST:-$MNT/desarrollo/fondos/db/backup}
-LOCAL=${OFFBOX_LOCAL:-/mnt/c/data/backups/fondos_pg}
+DEST=${OFFBOX_DEST:-$MNT/desarrollo/fondos/db/backups/pg_fondos}   # root: logical dumps in $DEST/dump, physical (PITR) in $DEST/pitr
+DUMPDEST=$DEST/dump
+LOCAL=${OFFBOX_LOCAL:-/mnt/backups/pg_fondos/dump}
 PITR=${OFFBOX_PITR:-$(readlink -f /opt/docker/db/postgresql17/pitr)}
 LOG=${OFFBOX_LOG:-/mnt/c/data/backups/offbox_copy.log}
 HERE=$(cd "$(dirname "$0")" && pwd)
-KEEP=7; DEEP=0; DUMP=1; MIRROR=0; MIRROR_DRY=0
-while [ $# -gt 0 ]; do case "$1" in --deep) DEEP=1;; --no-dump) DUMP=0;; --mirror-prune) MIRROR=1;; --mirror-dry-run) MIRROR=1; MIRROR_DRY=1;; --keep) KEEP="$2"; shift;; *) echo "unknown arg $1"; exit 2;; esac; shift; done
+KEEP=7; DEEP=0; DUMP=1; MIRROR=0; MIRROR_DRY=0; ALLOW_LARGE=0
+while [ $# -gt 0 ]; do case "$1" in --deep) DEEP=1;; --no-dump) DUMP=0;; --mirror-prune) MIRROR=1;; --mirror-dry-run) MIRROR=1; MIRROR_DRY=1;; --mirror-allow-large) ALLOW_LARGE=1;; --keep) KEEP="$2"; shift;; *) echo "unknown arg $1"; exit 2;; esac; shift; done
 exec > >(tee -a "$LOG") 2>&1
 ts() { date '+%F %T'; }
 FAIL=0
@@ -39,13 +43,13 @@ if [ -z "${OFFBOX_MNT:-}" ] && ! mountpoint -q "$MNT"; then
   echo "[$(ts)] mounted $DRIVE: at $MNT"
 fi
 [ -d "$MNT/desarrollo" ] || { echo "[$(ts)] FATAL: $MNT/desarrollo missing - wrong disk mounted as $DRIVE:?"; exit 3; }
-mkdir -p "$DEST/pitr" || { echo "[$(ts)] FATAL: cannot write to $DEST"; exit 3; }
+mkdir -p "$DEST/pitr" "$DUMPDEST" || { echo "[$(ts)] FATAL: cannot write to $DEST"; exit 3; }
 [ -d "$PITR/base" ] && [ -d "$PITR/wal" ] || { echo "[$(ts)] FATAL: PITR dir $PITR has no base/ wal/"; exit 3; }
 free=$(df -B1 --output=avail "$MNT" | tail -1)
 [ "$free" -gt $(( 20*1024*1024*1024 )) ] || { echo "[$(ts)] FATAL: less than 20 GB free on $DRIVE:"; exit 3; }
 [ "$free" -gt $(( 80*1024*1024*1024 )) ] || echo "[$(ts)] WARN: only $(( free / 1024 / 1024 / 1024 )) GB free on $DRIVE: (floor 80 GB) - prune the PITR set (FND-0179)"
 
-# (2) fresh logical dump (writes to C:\data\backups\fondos_pg)
+# (2) fresh logical dump (writes to /mnt/backups/pg_fondos/dump)
 if [ $DUMP -eq 1 ]; then
   bash "$HERE/backup_live_pg.sh" || { echo "[$(ts)] logical backup reported problems"; FAIL=1; }
 fi
@@ -55,8 +59,8 @@ for pat in 'fondos_2*.dump' 'gestion_2*.dump' 'globals_*.sql'; do
   f=$(ls -1t $LOCAL/$pat 2>/dev/null | head -1)
   [ -n "$f" ] || { echo "[$(ts)] no local file for $pat"; FAIL=1; continue; }
   b=$(basename "$f")
-  if cp -f "$f" "$DEST/$b.partial" && mv -f "$DEST/$b.partial" "$DEST/$b"; then
-    a=$(sha256sum "$f" | cut -d' ' -f1); c=$(sha256sum "$DEST/$b" | cut -d' ' -f1)
+  if cp -f "$f" "$DUMPDEST/$b.partial" && mv -f "$DUMPDEST/$b.partial" "$DUMPDEST/$b"; then
+    a=$(sha256sum "$f" | cut -d' ' -f1); c=$(sha256sum "$DUMPDEST/$b" | cut -d' ' -f1)
     if [ "$a" = "$c" ]; then echo "[$(ts)] $b: copied, SHA-256 MATCH ($(stat -c %s "$f") bytes)"; else echo "[$(ts)] $b: SHA-256 MISMATCH"; FAIL=1; fi
   else echo "[$(ts)] $b: copy FAILED"; FAIL=1; fi
 done
@@ -86,12 +90,20 @@ if [ $MIRROR -eq 1 ]; then
       [ -e "$DEST/pitr/base/$b.complete" ] && [ -e "$DEST/pitr/base/$b/backup_label" ] || { echo "[$(ts)] mirror: REFUSED - base $b is not complete on $DRIVE:"; ok=0; }
     done
     nw_src=$(find "$PITR/wal" -type f | wc -l); nw_dst=$(find "$DEST/pitr/wal" -type f | wc -l)
-    [ "$nw_src" -ge 100 ] || { echo "[$(ts)] mirror: REFUSED - source WAL archive has only $nw_src files"; ok=0; }
+    # Continuity guard (replaces the old "at least 100 WAL files" count, which a healthy, freshly pruned archive fails:
+    # prune keeps only the WAL since the OLDEST kept base, so right after two close base backups it holds a handful of
+    # segments). What proves the source archive is intact is that it still contains the segment where its oldest kept
+    # base starts: then every kept base can be rolled forward and everything older on D: is dead weight.
+    oldest_b=$(ls -1 "$PITR"/base/*.complete 2>/dev/null | sort | head -1); oldest_b=$(basename "${oldest_b:-x}" .complete)
+    seg=$(grep -m1 '^START WAL LOCATION' "$PITR/base/$oldest_b/backup_label" 2>/dev/null | sed -E 's/.*\(file ([0-9A-F]+)\).*/\1/')
+    if [ -z "$seg" ]; then echo "[$(ts)] mirror: REFUSED - cannot read the start WAL segment of the oldest source base ($oldest_b)"; ok=0
+    elif [ ! -e "$PITR/wal/$seg" ]; then echo "[$(ts)] mirror: REFUSED - source WAL archive lacks segment $seg, where its oldest base $oldest_b starts (archive not continuous)"; ok=0
+    else echo "[$(ts)] mirror: source WAL archive continuous from $seg (oldest kept base $oldest_b; $nw_src segment(s) in archive, $nw_dst on $DRIVE:)"; fi
     if [ $ok -eq 1 ]; then
       # Count first, delete second: --max-delete alone only stops AFTER N deletions, it does not refuse. A wipe
       # (source far smaller than D:) is refused outright when the deletions exceed 60% of what D: holds (min 200).
       for d in wal base; do
-        nd_dst=$(find "$DEST/pitr/$d" -type f | wc -l); cap=$(( nd_dst * 6 / 10 )); [ "$cap" -ge 200 ] || cap=200
+        nd_dst=$(find "$DEST/pitr/$d" -type f | wc -l); cap=$(( nd_dst * 6 / 10 )); [ "$cap" -ge 200 ] || cap=200; [ "$ALLOW_LARGE" -eq 1 ] && cap=$nd_dst
         nd=$(rsync -rtn --no-perms --no-owner --no-group --delete --itemize-changes "$PITR/$d/" "$DEST/pitr/$d/" | grep -c '^\*deleting')
         if [ "$nd" -gt "$cap" ]; then
           echo "[$(ts)] mirror pitr/$d: REFUSED - $nd deletions exceed the cap $cap (D: holds $nd_dst files, source $d has $(find "$PITR/$d" -type f | wc -l)); nothing deleted"
@@ -112,7 +124,7 @@ fi
 # (5) prune old dump sets on D: only when this run was clean
 if [ $FAIL -eq 0 ]; then
   for k in 'fondos_2*.dump' 'gestion_2*.dump' 'globals_*.sql'; do
-    ls -1t $DEST/$k 2>/dev/null | tail -n +$((KEEP+1)) | xargs -r rm -v | sed 's/^/   pruned /'
+    ls -1t $DUMPDEST/$k 2>/dev/null | tail -n +$((KEEP+1)) | xargs -r rm -v | sed 's/^/   pruned /'
   done
 fi
 sync
