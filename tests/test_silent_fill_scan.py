@@ -59,6 +59,38 @@ _FILL_METHODS = {"bfill", "ffill", "fillna"}
 # reason: 'DESIGN: <explanation>' for a reviewed-and-accepted pattern, or 'FND-#### <note>' for a
 # real, open, ticketed finding this scanner surfaced but did not fix.
 _SILENT_FILL_EXEMPT: dict[str, str] = {
+    "proyecto3/src/backtesting.py::_load_cash_rates":
+        "DESIGN: forward fill only (a rate is carried to later months, never earlier) over the series' own span "
+        "(FND-0228 review 2026-10-04); months before the series start stay missing and are warned about.",
+    "proyecto3/src/backtesting.py::_cash_return":
+        "DESIGN: fillna(0.0) on months with no rate_deposit before the series start: the cash leg accrues nothing "
+        "(conservative), warned once -- a constant, not another date's value (FND-0228 review 2026-10-04).",
+    "proyecto3/src/pit_backtest.py::cash_index":
+        "DESIGN: fillna(0.0) on months before the first rate_deposit: cash accrues 0% there (conservative, warned once); "
+        "a constant, not a later value (FND-0228 review 2026-10-04).",
+    "proyecto3/src/pit_backtest.py::target_window_return":
+        "DESIGN: forward fill of the IPC+M3 target (latest value <= t, already publication-lagged); carries past "
+        "values forward only (FND-0228 review 2026-10-04).",
+    "proyecto3/src/pit_backtest.py::monthly_turnover":
+        "DESIGN: NaN weight means 'not held' = 0 and the first month enters from cash; constants, no other date's "
+        "value is used (FND-0228 review 2026-10-04).",
+    "proyecto3/src/pit_backtest.py::series_stats":
+        "DESIGN: a month with no cash return counts as 0 in the excess return (conservative); a constant, not "
+        "another date's value (FND-0228 review 2026-10-04).",
+    "proyecto3/src/pit_candidates.py::pit_scores":
+        "DESIGN: an unknown In_Current_Universe flag counts as 0 (not in the current universe) before the optional "
+        "filter; a constant, never another date's value (FND-0228 review 2026-10-04).",
+    "proyecto3/src/pit_metrics.py::aligned_rf":
+        "DESIGN: ffill, then bfill ONLY before the series' first observation (resolve_rf_rate's documented, test-pinned "
+        "contract, FND-0139). PIT-safe because assert_series_cover refuses any evaluation date earlier than the first "
+        "observable month (2000-03 live, evaluations start 2005); FND-0228 review 2026-10-04.",
+    "proyecto3/src/pit_metrics.py::aligned_ipc":
+        "DESIGN: ffill, then bfill ONLY before the lagged IPC's first observation (deflate_nav's contract, FND-0114 "
+        "fix). PIT-safe because assert_series_cover refuses any evaluation date earlier than the first observable "
+        "month; FND-0228 review 2026-10-04.",
+    "proyecto3/src/pit_peer_metrics.py::capture_ratios":
+        "DESIGN: left join of the fund's own monthly returns onto the category totals; a month without own returns "
+        "counts 0 so the category sum minus the fund is unchanged. Constants only (FND-0228 review 2026-10-04).",
     "proyecto2/src/calculations/deflation.py::deflate_nav":
         "DESIGN: FND-0114's own canonical fix -- merge_asof(backward) already finds the correct "
         "prior value for every in-coverage date; this bfill() only reaches the genuinely-"

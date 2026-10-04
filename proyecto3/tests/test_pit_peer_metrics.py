@@ -261,9 +261,66 @@ def test_momentum_rank_staleness_drops_retired_funds(data):
     assert limited.loc[t, "A1"] == pytest.approx((obs < obs["A1"]).sum() / 7)
 
 
-def test_capture_ratios_refuse_to_run_while_the_p2_month_end_flag_is_on(data, monkeypatch):
+def _p2_month_end_value(panel, nature, isin, t):
+    """P2 capture_ratios (flag on) on the panel truncated at the month-end t; None when the fund has no bar that month."""
+    s = panel[isin].loc[:t].dropna()
+    if s.empty or (s.index[-1] + pd.offsets.MonthEnd(0)) != t:
+        return None
+    conn = _FakePeerConn(panel, nature, t)
+    nav_df = pd.DataFrame({"date": s.index, "nav": s.to_numpy()})
+    return {m: v for m, v, _ in p2_capture.compute_capture_ratios(isin, nature[isin], nav_df, conn)}
+
+
+def test_month_end_capture_matches_p2_with_the_flag_at_every_month_end_truncation(data, monkeypatch):
+    # FND-0227: the PIT replica of the FND-0202 fix is pinned to P2's own function on the truncated panel
     from shared import config
     monkeypatch.setattr(config, "CAPTURE_MONTH_END_ENABLED", True)
     panel, nature = data
-    with pytest.raises(NotImplementedError):
-        capture_ratios(panel, nature)
+    res = capture_ratios(panel, nature)
+    checked = scored = 0
+    for isin in panel.columns:
+        for i in _check_points(panel):
+            t = panel.index[i] + pd.offsets.MonthEnd(0)
+            out = _p2_month_end_value(panel, nature, isin, t)
+            if out is None:
+                continue
+            for name in ("upside_capture", "downside_capture", "capture_ratio"):
+                _eq(res[name].loc[t, isin], out.get(name), f"{name} {isin} {t.date()}")
+            checked += 1
+            scored += "capture_ratio" in out
+    assert checked > 50 and scored > 20
+
+
+def test_month_end_capture_includes_mid_month_dated_funds(monkeypatch):
+    # the old join dropped every observation that is not month-end dated; the fix keeps them
+    from shared import config
+    n = 80
+    me = pd.date_range("2010-01-31", periods=n, freq=pd.offsets.MonthEnd())
+    rng = np.random.default_rng(3)
+    cols = {f"P{i}": pd.Series(100.0 * np.cumprod(1.0 + rng.normal(0.003, 0.02, n)), index=me) for i in range(5)}
+    cols["MID"] = pd.Series(100.0 * np.cumprod(1.0 + rng.normal(0.003, 0.02, n)), index=me - pd.Timedelta(days=12))
+    panel = pd.DataFrame(cols).sort_index()
+    nature = pd.Series({c: "X" for c in panel.columns})
+    monkeypatch.setattr(config, "CAPTURE_MONTH_END_ENABLED", False)
+    assert capture_ratios(panel, nature)["capture_ratio"]["MID"].notna().sum() == 0
+    monkeypatch.setattr(config, "CAPTURE_MONTH_END_ENABLED", True)
+    assert capture_ratios(panel, nature)["capture_ratio"]["MID"].notna().sum() > 20
+
+
+def test_month_end_capture_does_not_change_when_later_data_is_added(data, monkeypatch):
+    from shared import config
+    monkeypatch.setattr(config, "CAPTURE_MONTH_END_ENABLED", True)
+    panel, nature = data
+    full = capture_ratios(panel, nature)
+    cut = panel.iloc[:100]
+    part = capture_ratios(cut, nature)
+    for name in full:
+        pd.testing.assert_frame_equal(part[name], full[name].loc[part[name].index])
+
+
+def test_month_end_capture_reports_only_month_end_rows(data, monkeypatch):
+    from shared import config
+    monkeypatch.setattr(config, "CAPTURE_MONTH_END_ENABLED", True)
+    panel, nature = data
+    idx = capture_ratios(panel, nature)["capture_ratio"].index
+    assert (idx == idx + pd.offsets.MonthEnd(0)).all() and idx.is_monotonic_increasing

@@ -16,9 +16,9 @@ switched when P2 is fixed (change the flagged lines below + the oracle together)
               biased upward for every peer. Replicated in `_peer_window_returns`; with the P2 flag
               PERSISTENCE_FIRST_LAST_NAV_ENABLED it follows P2 to the first/last NAV definition.
   * FND-0202  capture ratios join the fund's returns on RAW dates with a MONTH-END-normalized peer
-              benchmark: observations that are not month-end dated silently drop out. Replicated. The PIT replica of
-              the P2 fix (CAPTURE_MONTH_END_ENABLED) is NOT built yet: capture_ratios raises while that flag is on,
-              rather than silently diverging from P2.
+              benchmark: observations that are not month-end dated silently drop out. Replicated. With the P2 flag
+              CAPTURE_MONTH_END_ENABLED the month-end version is used (`_capture_ratios_month_end`): month bars, 1-month
+              returns only, values reported on month-end dates (FND-0227).
   * momentum_rank ranks the fund's since_inception return_ann inside its Fund_Nature including itself,
               and P2's peer set includes retired funds with their last stored value (unlimited staleness,
               `max_stale_days=None`); a PIT run should pass a finite `max_stale_days`.
@@ -121,6 +121,53 @@ def _returns_long(nav: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _capture_ratios_month_end(nav: pd.DataFrame, nature: pd.Series, min_periods: int = CAPTURE_MIN_PERIODS) -> dict:
+    """PIT replica of P2 capture_ratios with CAPTURE_MONTH_END_ENABLED (FND-0202 fixed, FND-0227).
+
+    P2 puts every fund and peer on a month-end grid (the last observation of the month), takes returns only between
+    CONSECUTIVE months, builds the peer benchmark as the mean of the peers' returns of that month (the fund excluded)
+    and joins on the same month-end dates. Replicated with cumulative sums, so one pass gives the value of every month.
+
+    Result frames are indexed by the month-end grid (not by nav's raw dates) and hold the value at month-end t for the
+    funds that have a bar in that month. PIT-safe by construction: the value at t only uses bars up to t, and a month-end
+    row is the first moment at which every observation of the month is known (a mid-month row would mix a partial month
+    with peers that report later in it). Same output contract as capture_ratios otherwise."""
+    me = nav.index + pd.offsets.MonthEnd(0)
+    bars = nav.groupby(me).last()                                  # last non-null NAV of each month, per fund
+    grid = pd.date_range(bars.index.min(), bars.index.max(), freq=pd.offsets.MonthEnd())
+    bars = bars.reindex(grid)
+    ret = bars.pct_change(fill_method=None).to_numpy(dtype=float)  # a gap month gives no return, never a multi-month one
+    fin = np.isfinite(ret)
+    rz = np.where(fin, ret, 0.0)
+    nat = nature.reindex(bars.columns).to_numpy(dtype=object)
+    bench = np.full(ret.shape, np.nan)
+    for n in pd.unique(nat[pd.notna(nat)]):
+        idx = np.where(nat == n)[0]
+        cat_sum, cat_n = rz[:, idx].sum(axis=1), fin[:, idx].sum(axis=1)
+        peers_n = cat_n[:, None] - fin[:, idx]
+        peers_sum = cat_sum[:, None] - rz[:, idx]
+        with np.errstate(divide="ignore", invalid="ignore"):
+            bench[:, idx] = np.where(peers_n > 0, peers_sum / peers_n, np.nan)
+    valid = fin & np.isfinite(bench)
+    up, down = valid & (bench > 0), valid & (bench < 0)
+    c = np.cumsum
+    n_ret, m = c(fin, axis=0), c(valid, axis=0)
+    up_n, dn_n = c(up, axis=0), c(down, axis=0)
+    up_f, up_b = c(np.where(up, ret, 0.0), axis=0), c(np.where(up, bench, 0.0), axis=0)
+    dn_f, dn_b = c(np.where(down, ret, 0.0), axis=0), c(np.where(down, bench, 0.0), axis=0)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        upside = (up_f / up_n) / (up_b / up_n)
+        downside = (dn_f / dn_n) / (dn_b / dn_n)
+        ratio = upside / downside
+    ok = ((n_ret >= min_periods * 2) & (m >= min_periods * 2) & (up_n >= min_periods) & (dn_n >= min_periods)
+          & (np.abs(downside) >= _DOWNSIDE_FLOOR) & bars.notna().to_numpy())
+    out = {}
+    for name, v in (("upside_capture", upside), ("downside_capture", downside), ("capture_ratio", ratio)):
+        vv = np.where(np.isnan(v), np.nan, np.clip(v, -_CLAMP, _CLAMP))
+        out[name] = pd.DataFrame(np.where(ok, vv, np.nan), index=grid, columns=nav.columns)
+    return out
+
+
 def capture_ratios(nav: pd.DataFrame, nature: pd.Series, min_periods: int = CAPTURE_MIN_PERIODS) -> dict:
     """Expanding upside/downside capture and capture_ratio vs the peer benchmark (P2 capture_ratios).
 
@@ -129,9 +176,7 @@ def capture_ratios(nav: pd.DataFrame, nature: pd.Series, min_periods: int = CAPT
     date, so only f's month-end-dated observations enter. Returns {upside_capture, downside_capture,
     capture_ratio}: DataFrames on `nav`'s index/columns, values at the fund's own observation dates."""
     if _config.CAPTURE_MONTH_END_ENABLED:
-        raise NotImplementedError(
-            "CAPTURE_MONTH_END_ENABLED (FND-0202) is on in P2 but the PIT replica of the month-end capture ratios is not "
-            "built yet; the PIT backtest would silently diverge from P2. Turn the flag off for PIT runs or build the replica.")
+        return _capture_ratios_month_end(nav, nature, min_periods)
     long = _returns_long(nav)
     shape = nav.shape
     res = {k: np.full(shape, np.nan) for k in ("upside_capture", "downside_capture", "capture_ratio")}

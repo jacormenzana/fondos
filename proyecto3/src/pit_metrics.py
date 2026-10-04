@@ -109,6 +109,28 @@ def aligned_rf(dates: pd.DatetimeIndex, rf: "pd.DataFrame | None", fallback: flo
     return aligned.reindex(targets).to_numpy()
 
 
+def first_observable_date(rf: "pd.DataFrame | None", ipc: "pd.DataFrame | None", lag_months: int = 0) -> "pd.Timestamp | None":
+    """First month-end at which BOTH the risk-free series and the (publication-lagged) IPC are observable; None when
+    neither exists. Before it, aligned_rf / aligned_ipc fall back to bfill (the earliest value, P2's documented
+    contract), which for an EVALUATION date earlier than this would use data that did not exist yet."""
+    firsts = []
+    if rf is not None and len(rf):
+        firsts.append(_month_end(rf["date"]).min())
+    if ipc is not None and len(ipc):
+        firsts.append(_month_end(ipc["date"]).min() + pd.offsets.MonthEnd(int(lag_months)))
+    return max(firsts) if firsts else None
+
+
+def assert_series_cover(at: pd.DatetimeIndex, rf: "pd.DataFrame | None", ipc: "pd.DataFrame | None", lag_months: int = 0) -> None:
+    """FND-0228: refuse to evaluate a date before the rf / IPC series are observable (the bfill would leak the first value
+    backwards). Dates after it are safe: the bfill then only reaches NAV history older than the series."""
+    first = first_observable_date(rf, ipc, lag_months)
+    if first is not None and len(at) and pd.DatetimeIndex(at).min() < first:
+        raise ValueError(f"PIT evaluation date {pd.DatetimeIndex(at).min().date()} precedes the first month at which the "
+                         f"risk-free rate and the lagged IPC are both observable ({first.date()}): the backward fill of "
+                         f"aligned_rf / aligned_ipc would use a later value. Start the backtest on or after {first.date()}.")
+
+
 def aligned_ipc(dates: pd.DatetimeIndex, ipc: "pd.DataFrame | None", lag_months: int = 0) -> "np.ndarray | None":
     """IPC index observable at each date: backward as-of (deflate_nav semantics, bfill before the series),
     after delaying the IPC by `lag_months` (publication lag). None when there is no IPC."""

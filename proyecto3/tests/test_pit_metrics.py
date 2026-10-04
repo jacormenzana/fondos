@@ -216,3 +216,26 @@ def test_constant_nav_has_zero_vol_and_nan_sharpe_without_crashing():
     assert res["vol_ann"]["FLAT"].iloc[5] == pytest.approx(0.0, abs=1e-12)
     assert np.isnan(res["sharpe"]["FLAT"].iloc[5])
     assert res["max_dd"]["FLAT"].iloc[5] == 0.0
+
+
+# ---------------- FND-0228: the bfill of rf / IPC cannot reach an evaluation date ----------------
+
+def test_first_observable_date_is_the_later_of_the_two_series_after_the_ipc_lag():
+    from proyecto3.src.pit_metrics import first_observable_date
+    rf = pd.DataFrame({"date": pd.to_datetime(["2000-03-31", "2000-04-30"]), "rate": [0.03, 0.03]})
+    ipc = pd.DataFrame({"date": pd.to_datetime(["2000-01-31", "2000-02-29"]), "ipc_index": [100.0, 101.0]})
+    assert first_observable_date(rf, ipc, 2) == pd.Timestamp("2000-03-31")      # ipc 2000-01 + 2 months = 2000-03
+    assert first_observable_date(rf, ipc, 0) == pd.Timestamp("2000-03-31")      # now the rate is the later one
+    assert first_observable_date(None, None) is None
+    assert first_observable_date(None, ipc, 2) == pd.Timestamp("2000-03-31")
+
+
+def test_assert_series_cover_refuses_dates_before_the_series_and_accepts_later_ones():
+    from proyecto3.src.pit_metrics import assert_series_cover
+    rf = pd.DataFrame({"date": pd.to_datetime(["2000-03-31"]), "rate": [0.03]})
+    ipc = pd.DataFrame({"date": pd.to_datetime(["2000-01-31"]), "ipc_index": [100.0]})
+    assert_series_cover(pd.DatetimeIndex(["2005-01-31", "2005-02-28"]), rf, ipc, 2)       # fine
+    assert_series_cover(pd.DatetimeIndex(["2000-03-31"]), rf, ipc, 2)                     # the first observable month itself
+    with pytest.raises(ValueError, match="precedes"):
+        assert_series_cover(pd.DatetimeIndex(["1999-12-31", "2005-01-31"]), rf, ipc, 2)
+    assert_series_cover(pd.DatetimeIndex(["1990-01-31"]), None, None, 2)                  # no series, no bfill: nothing to guard

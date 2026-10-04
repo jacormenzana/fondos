@@ -25,7 +25,7 @@ if str(_ROOT) not in sys.path:
 
 from proyecto3.src.pit_cache import CODE_VERSION, ParquetCache, cached_frames, content_hash
 from proyecto3.src.pit_candidates import DEFAULT_MAX_STALE_DAYS, pit_scores
-from proyecto3.src.pit_metrics import expanding_risk_metrics
+from proyecto3.src.pit_metrics import assert_series_cover, expanding_risk_metrics
 from proyecto3.src.pit_peer_metrics import alpha_persistence, capture_ratios, momentum_rank
 from proyecto3.src.pit_short_horizon import SHORT_GATE_METRICS, log_coverage, short_gate_metrics
 from shared.config import MIN_NAV_ROWS, REGIME_PUBLICATION_LAG_MONTHS
@@ -71,6 +71,7 @@ def compute_pit_scores(
     """Run the whole PIT scoring chain for the dates `at`. ipc_lag_months defaults to the regime IPC lag."""
     at = pd.DatetimeIndex(at)
     lag = REGIME_PUBLICATION_LAG_MONTHS.get("ipc_index", 0) if ipc_lag_months is None else ipc_lag_months
+    assert_series_cover(at, inputs.rate, inputs.ipc, lag)                  # FND-0228: bfill cannot reach an evaluation date
     nature = inputs.attrs["Fund_Nature"].reindex(inputs.nav.columns)
     timings, hits = {}, {}
 
@@ -82,7 +83,10 @@ def compute_pit_scores(
     timings["risk"], hits["risk"] = secs, hit
 
     # ---- d1b: peer metrics (persistence + capture) ----
-    peers_key = content_hash(inputs.nav, nature, CODE_VERSION)
+    from shared import config as _config
+    peer_flags = {n: True for n in ("PERSISTENCE_FIRST_LAST_NAV_ENABLED", "CAPTURE_MONTH_END_ENABLED")
+                  if getattr(_config, n, False)}
+    peers_key = content_hash(inputs.nav, nature, CODE_VERSION, *([peer_flags] if peer_flags else []))
     peers, hit, secs = cached_frames(cache, "peers", peers_key, lambda: {
         **alpha_persistence(inputs.nav, nature), **capture_ratios(inputs.nav, nature)})
     timings["peers"], hits["peers"] = secs, hit

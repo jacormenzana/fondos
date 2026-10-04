@@ -66,8 +66,10 @@ def test_grants_are_read_only_and_limited_to_superset_ro():
 def test_legacy_names_match_the_live_sqlite_columns(rename_map):
     """rename_map keys must equal the real SQLite columns, i.e. what the legacy mirror published."""
     db = _ROOT / "db" / "fondos.sqlite"
-    if not db.exists():
-        pytest.skip("live SQLite not present")
+    # SQLite is retired (FND-0102/0103): the sealed file is archived, and anything that merely opens the old path
+    # leaves a 0-byte file behind. Only a real database (non-empty) can be compared with rename_map.
+    if not db.exists() or db.stat().st_size == 0:
+        pytest.skip("legacy SQLite is retired/archived (missing or empty): nothing to compare rename_map against")
     con = sqlite3.connect(f"file:{db}?mode=ro&immutable=1", uri=True)
     try:
         for table in g.BI_TABLES:
