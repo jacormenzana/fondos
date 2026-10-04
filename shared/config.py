@@ -245,6 +245,11 @@ ROLLING_PCTILE_HORIZON: str = "rolling_3y"
 # nunca se ejecutaba en producción. Default False: comportamiento actual
 # sin cambios hasta activarlo.
 PORTFOLIO_HYSTERESIS_ENABLED: bool = False
+# FND-0158 (2026-10-04, owner decision): incumbent score bonus used when PORTFOLIO_HYSTERESIS_ENABLED. 10% = best blind
+# (2017+) net Sharpe in 3 of 4 full-universe PIT attribution runs, inside the owner's 10-20% range; 20% only lowers turnover
+# further without a better Sharpe (out/reports/pit_backtest/20261004_*). Single source: portfolio_builder.HYSTERESIS_BAND
+# reads it. Enabling the switch waits for the P2 recompute (portfolios on one CALC_VERSION) and the first uniform P3 build.
+PORTFOLIO_HYSTERESIS_BAND: float = 0.10
 
 # Kill-switch P3 optimization plan Phase 2d (2026-09-18): activa el filtro
 # de coste de rotación en PortfolioBuilder.build() -- revierte al titular

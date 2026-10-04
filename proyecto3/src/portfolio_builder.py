@@ -56,7 +56,7 @@ from proyecto3.src.portfolio_engine import (
     round_master_weights,
     cash_weight,
 )
-from shared.config import PORTFOLIO_HYSTERESIS_ENABLED, ROTATION_COST_GATE_ENABLED
+from shared.config import PORTFOLIO_HYSTERESIS_BAND, PORTFOLIO_HYSTERESIS_ENABLED, ROTATION_COST_GATE_ENABLED
 
 
 # ============================================================
@@ -78,8 +78,9 @@ WEIGHT_METHOD = "score_proportional"
 # Histeresis: banda minima que un retador debe superar sobre el score del
 # titular para justificar la rotacion. Impide que senales de horizonte corto
 # provoquen rotaciones excesivas; las senales deben *confirmar* el cambio.
-# Ej.: 0.05 => el retador necesita score >= titular * 1.05 para desplazarlo.
-HYSTERESIS_BAND: float = 0.05
+# Ej.: 0.10 => el retador necesita score >= titular * 1.10 para desplazarlo. El valor vive en
+# shared.config.PORTFOLIO_HYSTERESIS_BAND (FND-0158); aqui solo se re-exporta bajo el nombre historico.
+HYSTERESIS_BAND: float = PORTFOLIO_HYSTERESIS_BAND
 
 
 # ============================================================

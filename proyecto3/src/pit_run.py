@@ -161,7 +161,7 @@ def compute_pit_scores(
     else:
         score_key = content_hash(risk_key, peers_key, short_keys, at, regime_by_date, inputs.attrs,
                                  {"stale": max_stale_days, "min_obs": min_obs, "cur": current_universe_only,
-                                  "scorer_cfg": SCORER_CONFIG_HASH},          # FND-0192: a changed scorer value can never hit a stale cache
+                                  "scorer_cfg": SCORER_CONFIG_HASH, "universe_cols": 2},          # FND-0192: a changed scorer value can never hit a stale cache
                                  CODE_VERSION, *macro_key)          # macro_key empty without group B
         frames, hit, secs = cached_frames(cache, "scores", score_key, _score)
     scores, universe = frames["scores"], frames["universe"]

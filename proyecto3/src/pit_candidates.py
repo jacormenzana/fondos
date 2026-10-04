@@ -125,7 +125,8 @@ def pit_scores(
         pos = regimes.index.searchsorted(t, side="right") - 1
         if pos < 0:
             logger.warning("pit_scores: no regime label at or before %s -- date skipped", t.date())
-            rows.append(dict(as_of=t, regime=None, entered=0, stale=0, young=0, scored=0, eligible=0))
+            rows.append(dict(as_of=t, regime=None, entered=0, stale=0, young=0, scored=0, eligible=0,
+                             entered_retired=0, eligible_retired=0))
             continue
         regime = regimes.iloc[pos]
 
@@ -155,8 +156,14 @@ def pit_scores(
         res = score_funds_from_df(frame, regime, verbose=False) if len(frame) else pd.DataFrame()
         n_scored = len(res)
         n_elig = int(res["eligible"].sum()) if n_scored else 0
+        retired = _retired_isins(frame.index, in_universe)
+        n_elig_retired = 0
+        if n_scored:
+            res_isin = res["isin"] if "isin" in res.columns else res.index.to_series()
+            n_elig_retired = int(res["eligible"][res_isin.isin(retired).to_numpy()].sum())
         rows.append(dict(as_of=t, regime=regime, entered=len(frame), stale=n_stale, young=n_young,
-                         scored=n_scored, eligible=n_elig))
+                         scored=n_scored, eligible=n_elig, entered_retired=len(retired),
+                         eligible_retired=n_elig_retired))
         if n_scored:
             if not keep_detail:
                 res = res.drop(columns=["detail"])
@@ -170,12 +177,25 @@ def pit_scores(
     return scores, universe
 
 
+def _retired_isins(isins: pd.Index, in_universe: "pd.Series | None") -> pd.Index:
+    """ISINs of `isins` that are not in today's catalogue (In_Current_Universe = 0): the survivorship counterweight
+    the PIT universe carries (FND-0198). A missing flag column or a NULL flag counts as not retired (unknown)."""
+    if in_universe is None:
+        return isins[:0]
+    flag = in_universe.reindex(isins)
+    return isins[(flag == 0).to_numpy()]
+
+
 def _log_universe(universe: pd.DataFrame) -> None:
     if universe.empty:
         return
     logger.info("PIT scoring: %d dates, funds entering per date min/median/max = %d/%d/%d; stale dropped %d, "
                 "too young %d (fund-dates)", len(universe), universe["entered"].min(), universe["entered"].median(),
                 universe["entered"].max(), int(universe["stale"].sum()), int(universe["young"].sum()))
+    if "entered_retired" in universe.columns and universe["entered"].sum():
+        logger.info("PIT survivorship composition: retired funds (In_Current_Universe=0) are %.1f%% of fund-dates entering "
+                    "and %.1f%% of eligible fund-dates", 100 * universe["entered_retired"].sum() / universe["entered"].sum(),
+                    100 * universe["eligible_retired"].sum() / max(universe["eligible"].sum(), 1))
     empty = universe.index[universe["scored"] == 0]
     if len(empty):
         logger.warning("PIT scoring: no scored funds on %d of %d dates (%s .. %s) -- those months have no portfolio",

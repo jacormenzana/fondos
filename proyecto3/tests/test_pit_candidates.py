@@ -120,6 +120,25 @@ def test_in_current_universe_zero_funds_are_included_by_default_and_filterable(w
     assert not {"DEAD", "RV9"} & set(scores_cur[scores_cur["as_of"] == t]["isin"])
 
 
+def test_universe_reports_the_retired_share_at_every_date(world):
+    scores_all, uni_all = _run(world)
+    scores_cur, uni_cur = _run(world, current_universe_only=True)
+    t = AT[2]
+    assert uni_all.loc[t, "entered_retired"] == 2                            # DEAD and RV9 enter at t
+    assert uni_all.loc[t, "entered_retired"] <= uni_all.loc[t, "entered"]
+    assert (uni_all["eligible_retired"] <= uni_all["eligible"]).all()
+    expected = scores_all[(scores_all["as_of"] == t) & scores_all["isin"].isin(["DEAD", "RV9"])]["eligible"].sum()
+    assert uni_all.loc[t, "eligible_retired"] == expected
+    assert (uni_cur["entered_retired"] == 0).all() and (uni_cur["eligible_retired"] == 0).all()
+    assert uni_all["entered"].sum() > uni_cur["entered"].sum()               # the retired funds are the difference
+
+
+def test_retired_share_is_zero_without_the_universe_flag(world):
+    panel, nature, attrs, regimes, risk, peers, mom = world
+    _, uni = pit_scores(AT, risk, peers, attrs.drop(columns="In_Current_Universe"), regimes, momentum=mom)
+    assert (uni["entered_retired"] == 0).all()
+
+
 def test_stale_window_is_configurable(world):
     _, loose = _run(world, max_stale_days=2500)
     _, tight = _run(world)
