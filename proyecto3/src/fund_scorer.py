@@ -19,12 +19,18 @@ Pesos del scoring base (horizon=since_inception):
     capture_ratio        Defensiva  5% / Equilibrada 10% / Dinámica 15%
     momentum_rank        Defensiva  5% / Equilibrada 10% / Dinámica 10%
 
-Multiplicadores de régimen (por perfil de sensibilidad):
-    beta_oil > 0.01              x1.20  cobertura energética
-    beta_rate_eu < -0.10         x0.70  muy sensible a BCE
+Multiplicadores estructurales:
     fx_contribution_pct > 0.60   x0.80  retorno mayormente divisa
     alpha_persistence > 0.60     x1.15  gestor consistente
-    macro_r2 > 0.50              x0.85  muy determinado por macro
+
+Multiplicadores macro RETIRADOS 2026-10-04 (FND-0225, decision del propietario tras el backtest PIT de universo
+completo, runs 20261004_165611 / 20261004_172934): beta_oil > 0.01 x1.20, beta_rate_eu < -0.10 x0.70,
+macro_r2 > 0.50 x0.85 y las patas de crisis beta_spread_hy / beta_vix (x0.60 / x1.30). Las de petroleo, VIX y spread
+HY no se activaban NUNCA en produccion (umbrales 15-40x fuera del rango real de las betas y, ademas, con el signo
+invertido); el spread HY no aporta nada y el VIX solo se comporta como una penalizacion de volatilidad suave cuyo
+beneficio es un unico episodio (2008-09); macro_r2 penalizaba a los fondos que menos caen. Quedan la penalizacion FX
+(no evaluada: sin equivalente PIT todavia) y el bonus de persistencia de alpha. Las betas macro se siguen calculando
+en P2 (informes, auditoria); el scorer ya no las lee.
 
 Filtros duros:
     max_drawdown < límite_sub    excluir (riesgo de ruina)
@@ -150,19 +156,13 @@ MAX_DRAWDOWN_LIMIT = -0.25
 MIN_REAL_RETURN    =  0.00
 MAX_SRRI_DEFENSIVE = 5
 
-# Umbrales multiplicadores de régimen
-BETA_OIL_THRESHOLD      =  0.01
-BETA_RATE_EU_THRESHOLD  = -0.10
+# Umbrales multiplicadores estructurales (los macro -oil, tipos, R2, crisis VIX/spread- se retiraron, ver docstring)
 FX_CONTRIBUTION_LIMIT   =  0.60
 ALPHA_PERS_THRESHOLD    =  0.60
-MACRO_R2_LIMIT          =  0.50
 
 # Multiplicadores
-MULT_OIL_BONUS     = 1.20
-MULT_RATE_EU_MALUS = 0.70
 MULT_FX_MALUS      = 0.80
 MULT_ALPHA_BONUS   = 1.15
-MULT_MACRO_MALUS   = 0.85
 
 # §3f — Crisis stress thresholds (crisis_stress_score_mdd and _ttr)
 CRISIS_MDD_SHALLOW   = -0.10   # drawdown ≥ -10% in crisis → resilient
@@ -221,13 +221,6 @@ SHORT_VOL_LIMIT_BY_SUB: dict[str, float | None] = {
 # Umbral de iliquidez: si liquidity_flag > este valor, los gates cortos se omiten
 # (datos no confiables — fondos con NAV diario sintético).
 SHORT_LIQUIDITY_TRUST_THRESHOLD: float = 0.20
-
-# Crisis Financiera (v10)
-SPREAD_HY_CRISIS_THRESHOLD =  0.02
-SPREAD_HY_HEDGE_THRESHOLD  = -0.01
-VIX_CRISIS_THRESHOLD       =  0.02
-MULT_CRISIS_SPREAD_MALUS   =  0.60
-MULT_CRISIS_SPREAD_BONUS   =  1.30
 
 # Bonus/malus empírico por régimen
 MULT_REGIME_RETURN_BONUS = 1.20
@@ -329,12 +322,7 @@ def load_fund_metrics_for_scoring(
         ("alpha_persistence",   "since_inception", 0),
         ("capture_ratio",       "since_inception", 0),
         ("momentum_rank",       "since_inception", 0),
-        ("beta_oil",            "since_inception", 0),
-        ("beta_rate_eu",        "since_inception", 0),
-        ("beta_spread_hy",      "since_inception", 0),  # Crisis_Financiera
-        ("beta_vix",            "since_inception", 0),  # Crisis_Financiera
         ("fx_contribution_pct", "since_inception", 0),
-        ("macro_r2",            "since_inception", 0),
         ("srri_nav",            "since_inception", 0),
     ]
 
@@ -574,34 +562,8 @@ def compute_regime_multiplier(
     multiplier = 1.0
     detail: dict = {}
 
-    # ── Crisis_Financiera ─────────────────────────────────────────────────────
-    if regime == "Crisis_Financiera":
-        beta_spread = row.get("beta_spread_hy", np.nan)
-        if not np.isnan(beta_spread):
-            if beta_spread > SPREAD_HY_CRISIS_THRESHOLD:
-                multiplier *= MULT_CRISIS_SPREAD_MALUS
-                detail["crisis_spread_malus"] = MULT_CRISIS_SPREAD_MALUS
-            elif beta_spread < SPREAD_HY_HEDGE_THRESHOLD:
-                multiplier *= MULT_CRISIS_SPREAD_BONUS
-                detail["crisis_spread_bonus"] = MULT_CRISIS_SPREAD_BONUS
-        beta_vix = row.get("beta_vix", np.nan)
-        if not np.isnan(beta_vix) and beta_vix > VIX_CRISIS_THRESHOLD:
-            multiplier *= MULT_CRISIS_SPREAD_MALUS
-            detail["crisis_vix_malus"] = MULT_CRISIS_SPREAD_MALUS
-
-    # ── Bonus cobertura energética ────────────────────────────────────────────
-    if regime in ("Shock_Energetico", "Estanflacion", "Recalentamiento"):
-        beta_oil = row.get("beta_oil", np.nan)
-        if not np.isnan(beta_oil) and beta_oil > BETA_OIL_THRESHOLD:
-            multiplier *= MULT_OIL_BONUS
-            detail["beta_oil_bonus"] = MULT_OIL_BONUS
-
-    # ── Penalización sensibilidad tipos BCE ───────────────────────────────────
-    if regime in ("Recalentamiento_Tardio", "Shock_Energetico", "Estanflacion"):
-        beta_rate = row.get("beta_rate_eu", np.nan)
-        if not np.isnan(beta_rate) and beta_rate < BETA_RATE_EU_THRESHOLD:
-            multiplier *= MULT_RATE_EU_MALUS
-            detail["beta_rate_eu_malus"] = MULT_RATE_EU_MALUS
+    # Multiplicadores macro (crisis spread/VIX, petroleo, tipos BCE, macro_r2) RETIRADOS 2026-10-04 (FND-0225): ver
+    # el docstring del modulo. No reintroducir sin validacion fuera de muestra (FND-0193).
 
     # ── Penalización exceso divisa ────────────────────────────────────────────
     fx_pct = row.get("fx_contribution_pct", np.nan)
@@ -614,12 +576,6 @@ def compute_regime_multiplier(
     if not np.isnan(alpha_pers) and alpha_pers > ALPHA_PERS_THRESHOLD:
         multiplier *= MULT_ALPHA_BONUS
         detail["alpha_persistence_bonus"] = MULT_ALPHA_BONUS
-
-    # ── Penalización alta dependencia macro ───────────────────────────────────
-    macro_r2 = row.get("macro_r2", np.nan)
-    if not np.isnan(macro_r2) and macro_r2 > MACRO_R2_LIMIT:
-        multiplier *= MULT_MACRO_MALUS
-        detail["macro_r2_malus"] = MULT_MACRO_MALUS
 
     # ── P2-10: señales rolling-percentil (kill-switched) ─────────────────────
     # Penaliza fondos en percentiles altos de volatilidad/drawdown recientes;
@@ -756,8 +712,8 @@ def compute_regime_multiplier(
     # Antes estaba a mitad de cadena (tras el bloque de régimen empírico),
     # lo que dejaba sin amortiguar los multiplicadores de estrés de crisis y
     # de pendiente que se aplicaban después, y en cambio SÍ amortiguaba los
-    # multiplicadores estructurales (crisis spread/VIX, beta_oil, beta_rate_eu,
-    # fx, alpha, macro_r2) que no dependen del historial por régimen y por
+    # multiplicadores estructurales (fx, alpha; los macro se retiraron en FND-0225)
+    # que no dependen del historial por régimen y por
     # tanto no deberían depender de regime_coverage_ratio. Ahora amortigua el
     # multiplicador NETO acumulado, tal y como describe el comentario.
     coverage = row.get("regime_coverage_ratio", np.nan)

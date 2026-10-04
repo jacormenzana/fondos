@@ -113,25 +113,19 @@ def test_iterative_variant_cleans_infinite_macro_cells():
     assert "clean_inf" in VARIANTS["iterative_hy"]
 
 
-def test_a_crisis_beta_reaches_the_scorer_and_moves_the_multiplier():
-    """beta_vix above the production threshold in Crisis_Financiera applies the x0.6 malus; without macro it is neutral."""
+def test_macro_betas_flow_into_the_scoring_frame_but_no_longer_move_the_multiplier():
+    """FND-0225: the crisis VIX/HY, oil, rate and macro_r2 multipliers were retired from the scorer (2026-10-04); the
+    group B frames still reach pit_scores (the variants are evaluated from them) without changing any score."""
     panel, nature, attrs, regimes = _universe()
     risk, peers, mom = _inputs(panel, nature, AT)
     t_crisis = DATES[75]
     at = pd.DatetimeIndex([t_crisis])
-    base, _ = pit_scores(at, risk, peers, attrs, regimes, momentum=mom)
-    victim = base["isin"].iloc[0]
-    vix = pd.DataFrame(0.0, index=at, columns=panel.columns)
-    vix[victim] = 0.05                                        # > VIX_CRISIS_THRESHOLD (0.02)
-    macro = {"beta_vix": vix}
-    with_macro, _ = pit_scores(at, risk, peers, attrs, regimes, momentum=mom, macro=macro)
-    m0 = base.set_index(["isin", "subportfolio"])["multiplier"]
-    m1 = with_macro.set_index(["isin", "subportfolio"])["multiplier"]
     assert regimes.loc[t_crisis] == "Crisis_Financiera"
-    hit = m1[m1.index.get_level_values(0) == victim]
-    assert (hit < m0.loc[hit.index]).all()
-    others = m1[m1.index.get_level_values(0) != victim]
-    assert np.allclose(others.to_numpy(), m0.loc[others.index].to_numpy())
+    base, _ = pit_scores(at, risk, peers, attrs, regimes, momentum=mom)
+    vix = pd.DataFrame(0.05, index=at, columns=panel.columns)          # a value the OLD rule penalised
+    r2 = pd.DataFrame(0.9, index=at, columns=panel.columns)            # above the old macro_r2 limit
+    with_macro, _ = pit_scores(at, risk, peers, attrs, regimes, momentum=mom, macro={"beta_vix": vix, "macro_r2": r2})
+    pd.testing.assert_frame_equal(base.reset_index(drop=True), with_macro.reset_index(drop=True))
 
 
 def test_variant_signature_is_deterministic_and_reflects_the_settings():

@@ -534,7 +534,7 @@ python -m proyecto2.src.discovery.macro_discovery --source all
 | capture_ratio | 5% | 10% | 15% |
 | momentum_rank | 5% | 10% | 10% |
 
-**Layer 3 – Regime multipliers:** beta_oil > 0.01 → ×1.20; beta_rate_eu < −0.10 → ×0.70; fx_contribution_pct > 0.60 → ×0.80; alpha_persistence > 0.60 → ×1.15; macro_r2 > 0.50 → ×0.85.
+**Layer 3 – Structural multipliers:** fx_contribution_pct > 0.60 → ×0.80; alpha_persistence > 0.60 → ×1.15 (plus the empirical regime-return and crisis-stress multipliers). The macro multipliers (beta_oil, beta_rate_eu, macro_r2, crisis beta_spread_hy / beta_vix) were **retired 2026-10-04** (FND-0225): the oil / VIX / HY legs never fired in production (threshold scale and sign), and the full-universe PIT backtests showed no robust benefit beyond one episode (2008-09). The scorer no longer reads the macro betas; P2 still computes them. Do not reintroduce without out-of-sample validation (FND-0193).
 
 ### Portfolio construction constraints
 

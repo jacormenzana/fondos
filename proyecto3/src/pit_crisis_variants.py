@@ -32,10 +32,14 @@ _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from proyecto3.src.fund_scorer import MULT_CRISIS_SPREAD_MALUS, VIX_CRISIS_THRESHOLD
 from proyecto3.src.pit_candidates import asof_snapshot
 
 logger = logging.getLogger(__name__)
+
+# Production values of the retired crisis legs (fund_scorer, removed 2026-10-04, FND-0225), kept here only so the
+# evaluation of the candidates stays reproducible: threshold of the sign-only variant and the malus applied to flagged funds.
+VIX_CRISIS_THRESHOLD = 0.02
+MULT_CRISIS_SPREAD_MALUS = 0.60
 
 CRISIS_VARIANTS = ("sign_raw", "z_vix", "z_vix_resid", "z_spread")
 Z_CUTS = (1.0, 1.5)

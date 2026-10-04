@@ -753,8 +753,10 @@ class TestRealPdfIE0032875985:
         """Intenta cargar el PDF del corpus. Salta si no disponible."""
         import sqlite3, os
         db_path = r"c:\desarrollo\fondos\db\fondos.sqlite"
-        if not os.path.exists(db_path):
-            pytest.skip(f"BD no disponible: {db_path}")
+        # SQLite retired (FND-0102/0103): a missing OR empty (0-byte, left behind by anything that opens the old path) file
+        # is "not available", not a database to query
+        if not os.path.exists(db_path) or os.path.getsize(db_path) == 0:
+            pytest.skip(f"BD no disponible (retirada o vacia): {db_path}")
         conn = sqlite3.connect(db_path)
         try:
             row = conn.execute(
