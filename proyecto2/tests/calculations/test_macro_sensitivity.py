@@ -464,3 +464,67 @@ def test_out_of_range_beta_is_returned_as_none_with_derived_none(monkeypatch):
     assert _extract(result, "energy_sensitivity_pct") is None
     assert _extract(result, "beta_spread_hy") not in ("MISSING", None)
     assert _extract(result, "hy_spread_sensitivity_pct") is not None
+
+
+# ============================================================
+# FND-0196 / FND-0224: optional VIF switches (defaults reproduce production)
+# ============================================================
+
+def _macro_collinear_pair(n: int = 90, start: str = "2012-01-31") -> pd.DataFrame:
+    """spread_hy and spread_ig are near-duplicates (corr ~0.99); d_rate_eu / oil_yoy / m3_yoy are independent."""
+    dates = pd.date_range(start=start, periods=n, freq="ME")
+    rng = np.random.default_rng(11)
+    hy = rng.normal(0, 1.0, n)
+    return pd.DataFrame({
+        "d_rate_eu": rng.normal(0, 0.1, n),
+        "oil_yoy": rng.normal(0, 5.0, n),
+        "m3_yoy": rng.normal(0, 1.0, n),
+        "spread_hy": hy,
+        "spread_ig": hy * 0.8 + rng.normal(0, 0.1, n),
+    }, index=dates)
+
+
+def _nav_for(macro: pd.DataFrame) -> pd.DataFrame:
+    rng = np.random.default_rng(3)
+    r = 0.002 * macro["spread_hy"].values + rng.normal(0.004, 0.01, len(macro))
+    return pd.DataFrame({"date": macro.index, "nav": 100.0 * np.exp(np.cumsum(r))})
+
+
+def _metric_names(out) -> set:
+    return {m for m, _, _ in out}
+
+
+def test_single_pass_default_drops_both_members_of_a_collinear_pair():
+    macro = _macro_collinear_pair()
+    names = _metric_names(compute_macro_sensitivity(_nav_for(macro), macro))
+    assert "beta_spread_hy" not in names and "beta_spread_ig" not in names
+
+
+def test_iterative_mode_keeps_one_member_of_the_pair():
+    macro = _macro_collinear_pair()
+    names = _metric_names(compute_macro_sensitivity(_nav_for(macro), macro, vif_mode="iterative"))
+    assert ("beta_spread_hy" in names) != ("beta_spread_ig" in names)
+
+
+def test_iterative_with_exclude_and_protection_keeps_spread_hy():
+    macro = _macro_collinear_pair()
+    out = compute_macro_sensitivity(_nav_for(macro), macro, vif_mode="iterative",
+                                    extra_priority={"spread_hy"}, exclude={"spread_ig"})
+    names = _metric_names(out)
+    assert "beta_spread_hy" in names and "beta_spread_ig" not in names
+
+
+def test_default_options_are_identical_to_explicit_single_mode():
+    macro = _macro_collinear_pair()
+    nav = _nav_for(macro)
+    assert compute_macro_sensitivity(nav, macro) == compute_macro_sensitivity(nav, macro, vif_mode="single")
+
+
+def test_max_factors_per_obs_caps_the_number_of_betas():
+    macro = _macro_collinear_pair(n=100)
+    nav = _nav_for(macro)
+    free = [m for m, _, _ in compute_macro_sensitivity(nav, macro, vif_mode="iterative") if m.startswith("beta_")]
+    capped = [m for m, _, _ in compute_macro_sensitivity(nav, macro, vif_mode="iterative", max_factors_per_obs=33)
+              if m.startswith("beta_")]
+    assert len(free) >= 4
+    assert 1 <= len(capped) <= 3                 # 99 returns / 33 -> at most 3 factors

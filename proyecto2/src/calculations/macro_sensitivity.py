@@ -328,6 +328,24 @@ def _compute_vif(X_cols: np.ndarray) -> np.ndarray:
 
 VIF_THRESHOLD = MACRO_VIF_THRESHOLD  # eliminar factores con VIF > umbral
 
+
+def _iterative_vif_filter(merged: pd.DataFrame, factor_cols: list, priority: set,
+                          max_factors: "int | None" = None) -> list:
+    """FND-0196 / FND-0224: drop ONE factor at a time (the highest VIF among the unprotected ones) and recompute,
+    until every unprotected factor is at or under VIF_THRESHOLD. The single pass in compute_macro_sensitivity
+    deletes both members of a collinear pair (spread_hy / spread_ig, corr 0.91); this keeps the survivor.
+    max_factors (optional) also keeps dropping the highest-VIF unprotected factor while more than that many remain,
+    so a short history is not fitted with more regressors than it can support."""
+    cols = list(factor_cols)
+    while len(cols) > 1:
+        vif = pd.Series(_compute_vif(merged[cols].values), index=cols)
+        droppable = vif[~vif.index.isin(priority)]
+        over_cap = max_factors is not None and len(cols) > max_factors
+        if droppable.empty or (droppable.max() <= VIF_THRESHOLD and not over_cap):
+            break
+        cols.remove(droppable.idxmax())
+    return cols
+
 # Factores a proteger del filtro VIF segun geografia / estado de desarrollo
 # del fondo. Catalogo canonico: shared/config.py (MACRO_GEO_FORCE_KEEP,
 # MACRO_DEV_STATUS_FORCE_KEEP).
@@ -341,6 +359,10 @@ def compute_macro_sensitivity(
     geography: str | None = None,
     development_status: str | None = None,
     diagnostics: dict | None = None,
+    vif_mode: str = "single",
+    extra_priority: "set[str] | None" = None,
+    exclude: "set[str] | None" = None,
+    max_factors_per_obs: "float | None" = None,
 ) -> list[tuple]:
     """
     Calcula las betas macro para un fondo.
@@ -357,6 +379,13 @@ def compute_macro_sensitivity(
                            "cond_dropped" (factores eliminados por mal condicionamiento,
                            incluso los protegidos) y "beta_nulled" (betas fuera de rango
                            o no finitas, devueltas con valor None).
+
+    Opciones FND-0196 / FND-0224 (por defecto reproducen EXACTAMENTE el comportamiento de produccion):
+        vif_mode:            "single" (un solo paso, produccion) | "iterative" (quita un factor cada vez, ver
+                             _iterative_vif_filter).
+        extra_priority:      factores adicionales protegidos del filtro VIF (solo cuenta en vif_mode="iterative").
+        exclude:             factores que se descartan antes del ajuste (p.ej. {"spread_ig"}, pareja de spread_hy).
+        max_factors_per_obs: si se da, a lo sumo n_obs / este valor factores (iterativo, mayor VIF primero).
 
     Devuelve lista de (metric, value, real_flag). Un value None = metrica invalidada
     por el circuit breaker post-OLS (el writer lo persiste como NULL).
@@ -410,14 +439,14 @@ def compute_macro_sensitivity(
     factor_cols = [c for c in factor_cols
                    if c.startswith(MACRO_ZERO_RUN_EXEMPT_PREFIXES)
                    or _longest_zero_run(merged[c].values) < MACRO_FACTOR_MAX_ZERO_RUN]
+    if exclude:
+        factor_cols = [c for c in factor_cols if c not in exclude]
     if not factor_cols:
         return []
     X_raw = merged[factor_cols].values
 
     # Filtrar factores con alta multicolinealidad (VIF > umbral)
     if X_raw.shape[1] > 1:
-        vif_vals = _compute_vif(X_raw)
-        keep_mask = vif_vals <= VIF_THRESHOLD
         # Conjunto base siempre protegido
         priority: set[str] = {"d_rate_eu", "oil_yoy", "m3_yoy"}
         # Factores regionales del fondo: proteger aunque tengan VIF alto
@@ -425,10 +454,18 @@ def compute_macro_sensitivity(
             priority |= _GEO_FORCE_KEEP.get(geography, set())
         if development_status:
             priority |= _DEV_STATUS_FORCE_KEEP.get(development_status, set())
-        for i, col in enumerate(factor_cols):
-            if col in priority:
-                keep_mask[i] = True
-        factor_cols = [c for c, k in zip(factor_cols, keep_mask) if k]
+        if vif_mode == "iterative":
+            if extra_priority:
+                priority |= set(extra_priority)
+            cap = None if not max_factors_per_obs else max(1, int(len(y) / max_factors_per_obs))
+            factor_cols = _iterative_vif_filter(merged, factor_cols, priority, cap)
+        else:
+            vif_vals = _compute_vif(X_raw)
+            keep_mask = vif_vals <= VIF_THRESHOLD
+            for i, col in enumerate(factor_cols):
+                if col in priority:
+                    keep_mask[i] = True
+            factor_cols = [c for c, k in zip(factor_cols, keep_mask) if k]
         X_raw       = merged[factor_cols].values
 
     X = np.column_stack([np.ones(len(y)), X_raw])
