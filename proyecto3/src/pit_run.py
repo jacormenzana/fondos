@@ -40,6 +40,8 @@ class PitInputs:
     ipc: "pd.DataFrame | None"        # date, ipc_index
     rate: "pd.DataFrame | None"       # date, rate (decimal) -- risk-free rate and cash yield
     daily_chunks: "callable | None" = None   # () -> iterable of long daily frames; None = no short gates
+    macro: "pd.DataFrame | None" = None      # macro_sensitivity.load_macro_factors(); None = no group B (PIT v1)
+    fund_geo: "pd.DataFrame | None" = None   # index isin; geography / development_status (pit_macro.load_macro_fund_attrs)
 
 
 @dataclass
@@ -61,6 +63,7 @@ def compute_pit_scores(
     current_universe_only: bool = False,
     ipc_lag_months: "int | None" = None,
     keep_detail: bool = False,
+    macro_variant: "str | None" = None,
 ) -> PitRun:
     """Run the whole PIT scoring chain for the dates `at`. ipc_lag_months defaults to the regime IPC lag."""
     at = pd.DatetimeIndex(at)
@@ -123,12 +126,23 @@ def compute_pit_scores(
         timings["short"] = time.perf_counter() - t0
         hits["short"] = f"{n_hit}/{n_chunk} chunks"
 
+    # ---- d1d (FND-0224): group B macro betas / macro_r2 with the production regression, publication-lagged ----
+    macro, macro_key = None, ()
+    if macro_variant is not None and inputs.macro is not None:
+        from proyecto3.src.pit_macro import expanding_macro_metrics, variant_signature
+        macro_key = content_hash(inputs.nav, inputs.macro, inputs.fund_geo if inputs.fund_geo is not None else "no-geo",
+                                 at, {"variant": variant_signature(macro_variant), "lags": REGIME_PUBLICATION_LAG_MONTHS}, CODE_VERSION)
+        macro, hit, secs = cached_frames(cache, "macro", macro_key, lambda: expanding_macro_metrics(
+            inputs.nav, inputs.macro, at, inputs.fund_geo, variant=macro_variant))
+        timings["macro"], hits["macro"] = secs, hit
+        macro_key = (macro_key,)
+
     # ---- d2: score the universe at every date (the dominant cost: cached too, except with keep_detail) ----
     def _score():
         s, u = pit_scores(
             at, risk, peers, inputs.attrs, regime_by_date, momentum=momentum, short=short,
             max_stale_days=max_stale_days, min_obs=min_obs, current_universe_only=current_universe_only,
-            keep_detail=keep_detail,
+            keep_detail=keep_detail, macro=macro,
         )
         return {"scores": s, "universe": u}
 
@@ -138,7 +152,8 @@ def compute_pit_scores(
         secs = time.perf_counter() - t0
     else:
         score_key = content_hash(risk_key, peers_key, short_keys, at, regime_by_date, inputs.attrs,
-                                 {"stale": max_stale_days, "min_obs": min_obs, "cur": current_universe_only}, CODE_VERSION)
+                                 {"stale": max_stale_days, "min_obs": min_obs, "cur": current_universe_only}, CODE_VERSION,
+                                 *macro_key)          # empty without group B: existing cache keys are unchanged
         frames, hit, secs = cached_frames(cache, "scores", score_key, _score)
     scores, universe = frames["scores"], frames["universe"]
     universe.index.name = "as_of"

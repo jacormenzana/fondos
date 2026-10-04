@@ -87,6 +87,8 @@ def pit_scores(
     min_obs: int = MIN_NAV_ROWS,
     current_universe_only: bool = False,
     keep_detail: bool = False,
+    macro: "dict | None" = None,
+    macro_max_stale_days: int = 100,
 ) -> "tuple[pd.DataFrame, pd.DataFrame]":
     """Score the universe as of every date in `at`.
 
@@ -108,6 +110,12 @@ def pit_scores(
     n_obs_fresh, last_obs = asof_snapshot(risk["n_obs"], at, max_stale_days)
     for name in ("alpha_persistence", "capture_ratio"):
         snaps[name], _ = asof_snapshot(peers[name], at, max_stale_days)
+    # FND-0224: group B macro metrics (pit_macro.expanding_macro_metrics), evaluated on a coarser grid than `at`;
+    # the last evaluation date <= t carries forward for at most macro_max_stale_days (a quarter plus slack)
+    macro_snaps = {}
+    if macro is not None:
+        for name, frame_m in macro.items():
+            macro_snaps[name], _ = asof_snapshot(frame_m, at, macro_max_stale_days)
 
     attrs = attrs.copy()
     in_universe = attrs["In_Current_Universe"] if "In_Current_Universe" in attrs.columns else None
@@ -141,6 +149,8 @@ def pit_scores(
             for src, dst in SHORT_COLUMN_MAP.items():
                 if src in short and t in short[src].index:
                     frame[dst] = short[src].loc[t].reindex(isins)
+        for name, snap in macro_snaps.items():
+            frame[name] = snap.iloc[i].reindex(isins)
 
         res = score_funds_from_df(frame, regime, verbose=False) if len(frame) else pd.DataFrame()
         n_scored = len(res)
