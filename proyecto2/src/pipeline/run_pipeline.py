@@ -834,6 +834,7 @@ def run(
     n_errors      = 0
     n_warnings    = 0   # P2-12: logger.warning() call count for RUN_SUMMARY
     n_quarantined = 0   # FND-0164: funds whose NAV failed validate_nav() and were cleared
+    n_ols_funds = n_cond_funds = n_beta_nulled = 0   # FND-0208: macro OLS guard trip rates (calibration evidence)
     defl_skipped  = 0   # v27 pivot: ISINs where rolling_stats.py couldn't build a real series
     total_written = 0
     total         = 0
@@ -1367,11 +1368,23 @@ def run(
                                 )
                             )
                         else:
+                            _ols_diag: dict = {}
                             sens_list = compute_macro_sensitivity(
                                 nav_df, macro_df,
                                 geography=geography,
                                 development_status=development_status,
+                                diagnostics=_ols_diag,
                             )
+                            if sens_list:
+                                n_ols_funds += 1
+                            if _ols_diag:
+                                # FND-0208: condition-guard drops / post-OLS beta circuit breaker
+                                n_cond_funds += bool(_ols_diag.get("cond_dropped"))
+                                n_beta_nulled += len(_ols_diag.get("beta_nulled", ()))
+                                _msg = (f"[FND-0208] macro OLS guards: cond_dropped={_ols_diag.get('cond_dropped', [])} "
+                                        f"beta_nulled={_ols_diag.get('beta_nulled', [])}")
+                                logger.warning(f"{isin} {_msg}")
+                                _log(conn, isin, "CALC", "WARN", "since_inception", _msg, dry_run)
                             sens_rows = _rows_from_metric_tuples(sens_list, len(nav_df))
                             # Use _replace_beta_set (delete+insert, one transaction)
                             # so VIF-dropped factors from prior runs are cleaned up.
@@ -1676,7 +1689,8 @@ def run(
             f"[RUN END] run_id={run_id} status={status} "
             f"processed={n_processed} skipped={n_skipped} errors={n_errors} "
             f"warnings={n_warnings} defl_skipped={defl_skipped} total_written={total_written} "
-            f"quarantined={n_quarantined} elapsed={elapsed_total:.0f}s"
+            f"quarantined={n_quarantined} ols_funds={n_ols_funds} cond_guard_funds={n_cond_funds} "
+            f"betas_nulled={n_beta_nulled} elapsed={elapsed_total:.0f}s"
         )
         if n_quarantined > P2_QUARANTINE_ALERT_THRESHOLD and not dry_run:
             _alert_quarantine(run_id, n_quarantined)    # FND-0164: no more silent anomalies
@@ -1699,7 +1713,8 @@ def run(
                             f"skipped={n_skipped} errors={n_errors} "
                             f"warnings={n_warnings} defl_skipped={defl_skipped} "
                             f"written={total_written} quarantined={n_quarantined} "
-                            f"elapsed={elapsed_total:.0f}s"
+                            f"ols_funds={n_ols_funds} cond_guard_funds={n_cond_funds} "
+                            f"betas_nulled={n_beta_nulled} elapsed={elapsed_total:.0f}s"
                         ),
                         RUN_BATCH_ID,
                     ),

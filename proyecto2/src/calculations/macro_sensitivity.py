@@ -64,7 +64,10 @@ from shared.config import (
     MACRO_ZERO_RUN_EXEMPT_PREFIXES,
     MACRO_GEO_FORCE_KEEP,
     MACRO_DEV_STATUS_FORCE_KEEP,
+    MACRO_OLS_MAX_CONDITION_INDEX,
+    MACRO_BETA_PLAUSIBLE_MAX,
 )
+from shared.dq_guards import scaled_condition_number, most_collinear_column, bound_or_none
 
 MIN_OBS = MACRO_OLS_MIN_OBS
 
@@ -337,6 +340,7 @@ def compute_macro_sensitivity(
     macro_df: pd.DataFrame,
     geography: str | None = None,
     development_status: str | None = None,
+    diagnostics: dict | None = None,
 ) -> list[tuple]:
     """
     Calcula las betas macro para un fondo.
@@ -349,8 +353,13 @@ def compute_macro_sensitivity(
                            VIF aunque su colinealidad con factores globales sea alta.
         development_status: Development_Status del fondo. 'Emerging'/'Frontier'
                            protege spread_hy y dxy_yoy del filtro VIF.
+        diagnostics:       dict opcional que se rellena (FND-0208) con
+                           "cond_dropped" (factores eliminados por mal condicionamiento,
+                           incluso los protegidos) y "beta_nulled" (betas fuera de rango
+                           o no finitas, devueltas con valor None).
 
-    Devuelve lista de (metric, value, real_flag).
+    Devuelve lista de (metric, value, real_flag). Un value None = metrica invalidada
+    por el circuit breaker post-OLS (el writer lo persiste como NULL).
     Devuelve lista vacia si no hay suficientes datos solapados.
     """
     if nav_df.empty or macro_df.empty:
@@ -424,6 +433,20 @@ def compute_macro_sensitivity(
 
     X = np.column_stack([np.ones(len(y)), X_raw])
 
+    # FND-0208: numerical-stability guard. VIF only sees factor-vs-factor collinearity and is bypassed by the
+    # protected factors; the BKW condition index of the full design (intercept included, columns unit-scaled)
+    # also catches a near-constant factor and any protected-factor degeneracy. Drop the most collinear factor
+    # (this fund only) until the design is well-conditioned.
+    cond_dropped: list[str] = []
+    while factor_cols and scaled_condition_number(X) > MACRO_OLS_MAX_CONDITION_INDEX:
+        j = most_collinear_column(X)
+        cond_dropped.append(factor_cols.pop(j - 1))
+        X = np.delete(X, j, axis=1)
+    if diagnostics is not None and cond_dropped:
+        diagnostics["cond_dropped"] = cond_dropped
+    if not factor_cols:
+        return []
+
     result = _ols(y, X)
     if result is None:
         return []
@@ -440,16 +463,26 @@ def compute_macro_sensitivity(
         ("macro_n_obs", float(n_obs),   0),
     ]
 
+    beta_nulled: list[str] = []
     for i, col in enumerate(factor_cols):
         metric_name = _FACTOR_TO_METRIC.get(col)
         if metric_name:
-            metrics.append((metric_name, float(beta[i + 1]), 0))
+            # FND-0208 circuit breaker: an implausible/non-finite beta is persisted as NULL ("attempted,
+            # invalidated"), never as a value that could reach P3 scoring.
+            b, tripped = bound_or_none(beta[i + 1], MACRO_BETA_PLAUSIBLE_MAX)
+            if tripped:
+                beta_nulled.append(metric_name)
+            metrics.append((metric_name, b, 0))
+    if diagnostics is not None and beta_nulled:
+        diagnostics["beta_nulled"] = beta_nulled
 
-    # P3-03/P3-04: scenario sensitivity metrics derived from OLS betas
+    # P3-03/P3-04: scenario sensitivity metrics derived from the (bounded) OLS betas
     _betas = {m: v for m, v, _ in metrics if m.startswith("beta_")}
     if "beta_oil" in _betas:
-        metrics.append(("energy_sensitivity_pct", _betas["beta_oil"] * 0.25, 0))
+        metrics.append(("energy_sensitivity_pct",
+                        None if _betas["beta_oil"] is None else _betas["beta_oil"] * 0.25, 0))
     if "beta_spread_hy" in _betas:
-        metrics.append(("hy_spread_sensitivity_pct", _betas["beta_spread_hy"] * 3.0, 0))
+        metrics.append(("hy_spread_sensitivity_pct",
+                        None if _betas["beta_spread_hy"] is None else _betas["beta_spread_hy"] * 3.0, 0))
 
     return metrics

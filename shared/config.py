@@ -526,6 +526,13 @@ MACRO_VIF_THRESHOLD: float = 10.0              # eliminar factores con VIF > umb
 # Exempt: MACRO_ZERO_RUN_EXEMPT_PREFIXES (rate-change factors are legitimately flat: d_rate_eu has a 41-month zero run).
 MACRO_FACTOR_MAX_ZERO_RUN: int = 12
 MACRO_ZERO_RUN_EXEMPT_PREFIXES: tuple = ("d_rate_",)
+# FND-0208: numerical-stability guards around the macro OLS (shared/dq_guards.py).
+# Pre-OLS: Belsley-Kuh-Welsch condition index of the unit-scaled design (intercept included); while it exceeds
+# this level the most collinear factor is dropped for that fund (even a VIF force-keep one). 30 = BKW "severe".
+MACRO_OLS_MAX_CONDITION_INDEX: float = 30.0
+# Post-OLS circuit breaker: a beta with |beta| above this (or non-finite) is written as NULL, not as a value.
+# Also the plausibility limit counted by scripts/audit/beta_shift_audit.py (FND-0176 saw 600-1,100).
+MACRO_BETA_PLAUSIBLE_MAX: float = 5.0
 
 # Factores a proteger del filtro VIF según geografía del fondo — se suman al
 # conjunto base {d_rate_eu, oil_yoy, m3_yoy} para evitar que factores

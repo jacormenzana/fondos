@@ -32,7 +32,7 @@ sys.path.insert(0, str(_ROOT))
 _METRIC_LIKE = ("beta\\_%", "macro\\_%")           # LIKE patterns for the snapshot (betas + r2/alpha/n_obs)
 _HORIZON = "since_inception"
 _STALE_MAX_SHARE = 0.03                            # > 3% of a metric's funds on an older version = the P2 run did not finish
-_BETA_PLAUSIBLE_MAX = 5.0                         # |beta| above this is a calculation defect (FND-0176 saw 600-1,100)
+from shared.config import MACRO_BETA_PLAUSIBLE_MAX as _BETA_PLAUSIBLE_MAX   # |beta| above this is a defect (FND-0176/0208)
 
 
 def _connect():

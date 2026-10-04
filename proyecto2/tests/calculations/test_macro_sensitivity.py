@@ -417,3 +417,50 @@ def test_rate_change_factor_with_long_zero_run_is_kept():
     macro["d_rate_eu"] = d
     result = compute_macro_sensitivity(_nav_df(n), macro)
     assert _extract(result, "beta_rate_eu") != "MISSING"
+
+
+# ============================================================
+# Tests — FND-0208: pre-OLS condition guard + post-OLS beta circuit breaker
+# ============================================================
+
+def test_near_constant_protected_factor_is_dropped_by_condition_guard():
+    """d_rate_eu is VIF-protected and zero-run-exempt; a near-constant NON-zero one (collinear with the intercept)
+    must still be dropped by the condition-index guard, with the other betas intact and bounded."""
+    n = MIN_OBS + 10
+    macro = _macro_with_oil_and_hy(n)
+    macro["d_rate_eu"] = 0.3 + 1e-6 * np.random.default_rng(3).normal(size=n)
+    diag: dict = {}
+    result = compute_macro_sensitivity(_nav_df(n), macro, diagnostics=diag)
+    assert diag["cond_dropped"] == ["d_rate_eu"]
+    assert _extract(result, "beta_rate_eu") == "MISSING"
+    assert _extract(result, "beta_oil") != "MISSING"
+    assert all(abs(v) < 5 for name, v, _ in result if name.startswith("beta_") and v is not None)
+
+
+def test_healthy_design_untouched_and_no_diagnostics():
+    n = MIN_OBS + 10
+    diag: dict = {}
+    result = compute_macro_sensitivity(_nav_df(n), _macro_with_oil_and_hy(n), diagnostics=diag)
+    assert diag == {}
+    assert _extract(result, "beta_oil") not in ("MISSING", None)
+
+
+def test_out_of_range_beta_is_returned_as_none_with_derived_none(monkeypatch):
+    import src.calculations.macro_sensitivity as ms
+    n = MIN_OBS + 10
+    real_ols = ms._ols
+
+    def _huge_oil(y, X):
+        out = real_ols(y, X)
+        out["beta"] = out["beta"].copy()
+        out["beta"][1] = 1127.0                      # first factor column (oil_yoy)
+        return out
+
+    monkeypatch.setattr(ms, "_ols", _huge_oil)
+    diag: dict = {}
+    result = compute_macro_sensitivity(_nav_df(n), _macro_with_oil_and_hy(n), diagnostics=diag)
+    assert diag["beta_nulled"] == ["beta_oil"]
+    assert _extract(result, "beta_oil") is None
+    assert _extract(result, "energy_sensitivity_pct") is None
+    assert _extract(result, "beta_spread_hy") not in ("MISSING", None)
+    assert _extract(result, "hy_spread_sensitivity_pct") is not None
