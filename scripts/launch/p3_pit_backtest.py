@@ -44,7 +44,7 @@ from proyecto3.src.pit_cache import CODE_VERSION
 from shared.config import REGIME_PUBLICATION_LAG_MONTHS
 from shared.db import get_connection
 
-DEFAULT_OUT_ROOT = Path(r"c:\data\fondos\reports\pit_backtest")
+DEFAULT_OUT_ROOT = _ROOT / "out" / "reports" / "pit_backtest"      # inside the project (git-ignored out/), no longer c:\data
 DEFAULT_CACHE_DIR = _ROOT / "proyecto3" / "cache" / "pit"
 LOG_DIR = _ROOT / "proyecto3" / "log"
 EXIT_NOTHING_TO_EVALUATE = 2
@@ -76,6 +76,10 @@ def build_parser() -> argparse.ArgumentParser:
                         "macro_coverage.csv and crisis_variants.csv (sign/scale variants of the crisis multiplier)")
     p.add_argument("--macro-workers", type=int, default=1,
                    help="processes for the macro regressions (about 1 h single-process for the full universe; results identical)")
+    p.add_argument("--flag", action="append", default=[], metavar="NAME=0|1",
+                   help="override one P2 bundle flag for THIS run only (e.g. CAPTURE_MONTH_END_ENABLED=0): lets you attribute an effect "
+                        "to one fix without editing shared/config.py. Repeatable; allowed names: shared.config.P2_BUNDLE_FLAGS. The "
+                        "effective flag state is recorded in manifest.json")
     p.add_argument("--current-universe-only", action="store_true",
                    help="exclude In_Current_Universe=0 funds (default: retired funds ARE in the PIT universe)")
     p.add_argument("--cache-dir", default=str(DEFAULT_CACHE_DIR), help="parquet cache directory")
@@ -174,10 +178,28 @@ def _setup_logging(stamp: str) -> Path:
     return path
 
 
+def apply_flag_overrides(specs, cfg=None) -> dict:
+    """Apply "NAME=0|1" overrides to the P2 bundle flags of shared.config for this process; returns the EFFECTIVE state of
+    every bundle flag. Unknown names or values are rejected (a typo must not silently run the wrong experiment)."""
+    if cfg is None:
+        import shared.config as cfg
+    for spec in specs or []:
+        name, sep, raw = spec.partition("=")
+        name = name.strip()
+        if name not in cfg.P2_BUNDLE_FLAGS:
+            raise SystemExit(f"--flag {spec!r}: {name!r} is not a P2 bundle flag; choose one of {list(cfg.P2_BUNDLE_FLAGS)}")
+        if raw.strip().lower() not in ("0", "1", "true", "false"):
+            raise SystemExit(f"--flag {spec!r}: the value must be 0/1 (or true/false)")
+        setattr(cfg, name, raw.strip().lower() in ("1", "true"))
+    return {n: bool(getattr(cfg, n)) for n in cfg.P2_BUNDLE_FLAGS}
+
+
 def main(argv=None, conn=None) -> int:
     args = build_parser().parse_args(argv)
+    flag_state = apply_flag_overrides(args.flag)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_path = _setup_logging(stamp)
+    logger.info("P2 bundle flags in effect: %s", flag_state)
     out_dir = Path(args.out_dir) if args.out_dir else DEFAULT_OUT_ROOT / stamp
     grid_bps = tuple(float(x) for x in args.grid_bps.split(",") if x.strip())
     hyst_bands = tuple(float(x) for x in args.hysteresis_grid.split(",") if x.strip())
@@ -217,7 +239,7 @@ def main(argv=None, conn=None) -> int:
     manifest = {
         "started": stamp, "elapsed_seconds": round(elapsed, 1), "git_commit": _git_commit(), "scope": scope,
         "n_isins_requested": None if isins is None else len(isins), "n_funds_with_nav": int(n_universe),
-        "args": vars(args), "cache_code_version": CODE_VERSION,
+        "args": vars(args), "p2_bundle_flags": flag_state, "cache_code_version": CODE_VERSION,
         "regime_publication_lags_months": REGIME_PUBLICATION_LAG_MONTHS,
         "dates": [str(table.index.min().date()), str(table.index.max().date()), int(len(table))],
         "python": sys.version.split()[0], "pandas": pd.__version__, "log": str(log_path),

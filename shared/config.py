@@ -399,7 +399,7 @@ MASTER_EXCEL: Path = DATA_DIR / "GestoresDeFondosv1.xlsx"
 # Directorios de outputs generados (no versionados)
 # ============================================================
 METRICS_DIR:  Path = _ROOT / "out" / "metrics"
-REPORTS_DIR:  Path = _ROOT / "out" / "export"
+REPORTS_DIR:  Path = _ROOT / "out" / "reports"     # P3 monthly report, rolling dashboard and PIT backtest runs (was out/export)
 
 # ============================================================
 # Logging

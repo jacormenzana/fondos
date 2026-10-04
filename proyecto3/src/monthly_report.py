@@ -13,7 +13,7 @@ Produce un Excel con las siguientes hojas:
 
 Uso:
     from proyecto3.src.monthly_report import generate_report
-    generate_report(conn, output_dir="c:/data/fondos/reports")
+    generate_report(conn)                      # default: out/reports inside the project (shared.config.REPORTS_DIR)
 """
 
 import json

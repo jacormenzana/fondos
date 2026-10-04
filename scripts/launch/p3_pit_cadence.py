@@ -3,7 +3,7 @@
 r"""
 Rebalance-cadence experiment on a SAVED PIT backtest run (FND-0217). Read-only on the DB.
 
-    C:\data\envs\des\python.exe -X utf8 scripts\launch\p3_pit_cadence.py --run-dir c:\data\fondos\reports\pit_backtest\<STAMP>
+    C:\data\envs\des\python.exe -X utf8 scripts\launch\p3_pit_cadence.py --run-dir out\reports\pit_backtest\<STAMP>
 
 Rebalances every k months (default 1, 2, 3, 4, 6, 12) holding the portfolio in between. Every phase of each cadence is run
 (which months you rebalance in is luck for k > 1) and the statistics are reported on the phase-averaged return series with the

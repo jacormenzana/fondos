@@ -546,7 +546,7 @@ Weight method: `score_proportional`.
 
 ### Monthly report (monthly_report.py)
 
-`generate_report(conn, output_dir="c:/data/fondos/reports")` → Excel with sheets: `0_Portada`, `1_Cartera`, `2_Regimen`, `3_Backtesting`, `4_Rotacion`, `5_Macro_Indicadores`. `4_Rotacion` only shows the rotation plan the builder persisted in the scenario (needs `ROTATION_COST_GATE_ENABLED` and a previous portfolio); otherwise it says so.
+`generate_report(conn)` (default `out/reports/`, `shared.config.REPORTS_DIR`) → Excel with sheets: `0_Portada`, `1_Cartera`, `2_Regimen`, `3_Backtesting`, `4_Rotacion`, `5_Macro_Indicadores`. `4_Rotacion` only shows the rotation plan the builder persisted in the scenario (needs `ROTATION_COST_GATE_ENABLED` and a previous portfolio); otherwise it says so.
 
 ### Data-freshness gate (`data_freshness.py`)
 
@@ -673,7 +673,7 @@ C:\data\envs\des\python.exe -X utf8 scripts\launch\p3_pit_backtest.py --dry-run
 C:\data\envs\des\python.exe -X utf8 scripts\launch\p3_pit_backtest.py --sample-per-nature 4
 C:\data\envs\des\python.exe -X utf8 scripts\launch\p3_pit_backtest.py
 ```
-Artifacts per run in `C:\data\fondos\reports\pit_backtest\<STAMP>\` (manifest, timings, summary, monthly table,
+Artifacts per run in `out\reports\pit_backtest\<STAMP>\` (inside the project; `--out-dir` overrides) (manifest, timings, summary, monthly table,
 cost sensitivity 0/25/50 bp, hysteresis/turnover experiment, series stats, universe/short-gate coverage, all PIT scores); log in
 `proyecto3/log/log_P3_pitBacktest_<STAMP>.log`; parquet cache in `proyecto3/cache/pit/` (git-ignored, `--no-cache` to bypass).
 

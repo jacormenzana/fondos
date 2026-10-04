@@ -136,7 +136,7 @@ prosa.
 ## 6. Alternativa local (sin Docker)
 
 `proyecto2/src/reports/rolling_dashboard.py` emite un dashboard HTML autocontenido con Chart.js
-incrustado. No requiere Postgres ni Superset. Salida: `c:/data/fondos/reports/rolling_dash_*.html`.
+incrustado. No requiere Postgres ni Superset. Salida: `out/reports/rolling_dashboard_*.html` (inside the project).
 Esta alternativa **no se ve afectada** por la migración operacional — sigue siendo válida
 independientemente de qué motor sea el store operacional.
 

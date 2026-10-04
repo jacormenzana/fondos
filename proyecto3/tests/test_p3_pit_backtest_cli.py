@@ -243,3 +243,32 @@ def test_for_pit_does_not_touch_the_database_or_load_the_legacy_matrix(monkeypat
     assert seen["lags"] == REGIME_PUBLICATION_LAG_MONTHS
     backtesting.Backtester.for_pit(_NoDb(), publication_lags={})
     assert seen["lags"] == {}                                                       # explicit {} disables the lag
+
+
+# ---------------- --flag overrides (attribute an effect to one P2 fix) ----------------
+
+def test_flag_override_sets_only_the_named_flags_and_returns_the_effective_state(monkeypatch):
+    from shared import config
+    for name in config.P2_BUNDLE_FLAGS:
+        monkeypatch.setattr(config, name, True)
+    state = cli.apply_flag_overrides(["CAPTURE_MONTH_END_ENABLED=0", "PERSISTENCE_FIRST_LAST_NAV_ENABLED=true"])
+    assert state["CAPTURE_MONTH_END_ENABLED"] is False and config.CAPTURE_MONTH_END_ENABLED is False
+    assert state["PERSISTENCE_FIRST_LAST_NAV_ENABLED"] is True and config.MACRO_VIF_ITERATIVE_ENABLED is True
+    assert set(state) == set(config.P2_BUNDLE_FLAGS)
+
+
+def test_flag_override_without_specs_changes_nothing(monkeypatch):
+    from shared import config
+    before = {n: getattr(config, n) for n in config.P2_BUNDLE_FLAGS}
+    assert cli.apply_flag_overrides([]) == before and cli.apply_flag_overrides(None) == before
+
+
+@pytest.mark.parametrize("spec", ["NOT_A_FLAG=1", "CAPTURE_MONTH_END_ENABLED=maybe", "CAPTURE_MONTH_END_ENABLED", "ROLLING_STATS_ENABLED=0"])
+def test_flag_override_rejects_unknown_names_and_bad_values(spec):
+    with pytest.raises(SystemExit):
+        cli.apply_flag_overrides([spec])
+
+
+def test_the_parser_collects_repeated_flags():
+    args = cli.build_parser().parse_args(["--flag", "CAPTURE_MONTH_END_ENABLED=0", "--flag", "PERSISTENCE_FIRST_LAST_NAV_ENABLED=1"])
+    assert args.flag == ["CAPTURE_MONTH_END_ENABLED=0", "PERSISTENCE_FIRST_LAST_NAV_ENABLED=1"]

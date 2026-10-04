@@ -3,7 +3,7 @@
 r"""
 Out-of-sample test of the rotation parameters on a SAVED PIT backtest run (FND-0193 / FND-0207). Read-only on the DB.
 
-    C:\data\envs\des\python.exe -X utf8 scripts\launch\p3_pit_oos.py --run-dir c:\data\fondos\reports\pit_backtest\<STAMP>
+    C:\data\envs\des\python.exe -X utf8 scripts\launch\p3_pit_oos.py --run-dir out\reports\pit_backtest\<STAMP>
 
 Reuses the scores of that run (scores_long.parquet), so it needs no recomputation of the scoring (minutes, not an hour):
 for the grid hysteresis band x weight no-trade band it builds the portfolios, chooses a cell ONLY on the design period
