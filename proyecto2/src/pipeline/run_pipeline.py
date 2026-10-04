@@ -678,7 +678,9 @@ def _covers_all_families(metrics_filter: "list[str] | None") -> bool:
 
 # Bump this string whenever the calculation logic changes to force a
 # cache-miss in fund_metric_state even when NAV/IPC inputs are unchanged.
-CALC_VERSION: str = "20261003"  # v39 (FND-0181): beta_m2_global retired from the OLS factor set (VIF 25-532, dropped for every fund; other factors
+CALC_VERSION: str = "20261004"  # v40 (FND-0196, FND-0226, FND-0200, FND-0202): the P2 recompute bundle switched on together (iterative VIF with spread_hy / vix_yoy
+# protected and spread_ig dropped, macro factor cleaning of the CN CPI zeros / inf, alpha_persistence peer return from first/last NAV instead of MAX/MIN, capture ratios on a
+# month-end grid; flags in shared/config.py) -> next full P2 recomputes every fund (the fingerprint also includes the flags); v39 (FND-0181): beta_m2_global retired from the OLS factor set (VIF 25-532, dropped for every fund; other factors
 # are re-screened without it) -> next full P2 recomputes every fund; v38 (FND-0176): m2_global_yoy was garbage (JP unit scale x1e6 + CN/JP extension never ran,
 # so the global sum was a constant and YoY ~0 after 2017) -> beta_m2_global 600-1,100 on 172 funds; series rebuilt,
 # builder fixed, near-constant factor guard added in macro_sensitivity. Previous: v37 (FND-0138): short_horizon.py kept its own deflation copy

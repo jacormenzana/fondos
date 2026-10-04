@@ -155,7 +155,9 @@ def test_alpha_persistence_matches_p2_at_every_truncation(data, monkeypatch, fir
     assert checked > 60 and scored > 20                                      # the scored branch really ran
 
 
-def test_persistence_replicates_the_min_max_peer_bias():
+def test_persistence_replicates_the_min_max_peer_bias(monkeypatch):
+    from shared import config
+    monkeypatch.setattr(config, "PERSISTENCE_FIRST_LAST_NAV_ENABLED", False)      # the legacy definition under test
     # Peer NAV: 100 -> 200 -> 100 over the window. last/first = 0.0% but MAX/MIN = +100%/n-years: the
     # replicated P2 formula (FND-0200) must see a hugely positive peer return, so the fund must NOT beat it.
     n = 60
@@ -179,7 +181,9 @@ def test_persistence_needs_enough_history_and_windows(data):
 
 # ---------------- capture ratios ----------------
 
-def test_capture_ratios_match_p2_at_every_truncation(data):
+def test_capture_ratios_match_p2_at_every_truncation(data, monkeypatch):
+    from shared import config
+    monkeypatch.setattr(config, "CAPTURE_MONTH_END_ENABLED", False)               # legacy raw-date join under test
     panel, nature = data
     res = capture_ratios(panel, nature)
     dates = panel.index
@@ -198,7 +202,9 @@ def test_capture_ratios_match_p2_at_every_truncation(data):
     assert checked > 60 and scored > 20
 
 
-def test_capture_only_uses_month_end_dated_observations():
+def test_capture_only_uses_month_end_dated_observations(monkeypatch):
+    from shared import config
+    monkeypatch.setattr(config, "CAPTURE_MONTH_END_ENABLED", False)               # legacy raw-date join under test
     # FND-0202 replicated: a fund whose observations are ALL mid-month never joins the month-end peer benchmark
     n = 80
     me = pd.date_range("2010-01-31", periods=n, freq=pd.offsets.MonthEnd())

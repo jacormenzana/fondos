@@ -48,21 +48,29 @@ def _set(monkeypatch, **flags):
         monkeypatch.setattr(config, name, value)
 
 
-# ---------------- defaults ----------------
+def _off(monkeypatch):
+    """Legacy state: every bundle flag False (the production defaults before the 2026-10-04 flip). The tests below state
+    the flag values they need instead of relying on the shipped defaults."""
+    _set(monkeypatch, **{name: False for name in config.P2_BUNDLE_FLAGS})
 
-def test_every_bundle_flag_is_off_by_default():
+
+# ---------------- the flag set ----------------
+
+def test_bundle_flags_are_listed_and_are_booleans():
     assert config.P2_BUNDLE_FLAGS == ("MACRO_VIF_ITERATIVE_ENABLED", "MACRO_FACTOR_CLEAN_ENABLED",
                                       "PERSISTENCE_FIRST_LAST_NAV_ENABLED", "CAPTURE_MONTH_END_ENABLED")
-    assert all(getattr(config, name) is False for name in config.P2_BUNDLE_FLAGS)
+    assert all(isinstance(getattr(config, name), bool) for name in config.P2_BUNDLE_FLAGS)
 
 
 # ---------------- fingerprint ----------------
 
-def test_effective_calc_version_is_unchanged_while_every_flag_is_off():
+def test_effective_calc_version_is_unchanged_while_every_flag_is_off(monkeypatch):
+    _off(monkeypatch)
     assert effective_calc_version("20261003") == "20261003"
 
 
 def test_effective_calc_version_changes_when_any_flag_is_on(monkeypatch):
+    _off(monkeypatch)
     _set(monkeypatch, CAPTURE_MONTH_END_ENABLED=True)
     one = effective_calc_version("20261003")
     _set(monkeypatch, MACRO_FACTOR_CLEAN_ENABLED=True)
@@ -73,7 +81,8 @@ def test_effective_calc_version_changes_when_any_flag_is_on(monkeypatch):
 
 # ---------------- FND-0196: iterative VIF options ----------------
 
-def test_vif_options_are_empty_by_default_and_come_from_config_when_enabled(monkeypatch):
+def test_vif_options_are_empty_when_off_and_come_from_config_when_enabled(monkeypatch):
+    _off(monkeypatch)
     assert macro_sensitivity.vif_options_from_config() == {}
     _set(monkeypatch, MACRO_VIF_ITERATIVE_ENABLED=True)
     o = macro_sensitivity.vif_options_from_config()
@@ -101,6 +110,7 @@ def test_a_zero_cpi_level_gives_infinite_factor_cells_unless_cleaned():
 
 
 def test_cleaning_follows_the_config_flag_by_default(monkeypatch):
+    _off(monkeypatch)
     conn = _FakeConn(_cn_cpi_rows())
     assert np.isinf(macro_sensitivity.load_macro_factors(conn)["ipc_yoy_cn"].to_numpy(dtype=float)).any()
     _set(monkeypatch, MACRO_FACTOR_CLEAN_ENABLED=True)
@@ -117,7 +127,8 @@ def _peer_return():
         _FakeConn(_PEER_ROWS), "Renta Variable", "OWN", pd.Timestamp("2018-01-31"), pd.Timestamp("2021-01-31"))
 
 
-def test_peer_return_uses_min_max_by_default_which_reports_a_gain_for_a_falling_fund():
+def test_peer_return_uses_min_max_when_the_flag_is_off_which_reports_a_gain_for_a_falling_fund(monkeypatch):
+    _off(monkeypatch)
     assert _peer_return() == pytest.approx((100.0 / 80.0) ** (1 / 3.0) - 1)
 
 
@@ -141,6 +152,7 @@ def _peer_nav_rows(n=90, gap_at=None, seed=2):
 
 
 def test_a_gap_in_a_peer_series_is_a_multi_month_return_unless_the_grid_is_enforced(monkeypatch):
+    _off(monkeypatch)
     conn = _FakeConn(_peer_nav_rows(gap_at=10))
     old = capture_ratios.load_peer_benchmark(conn, "Renta Variable", "OWN")
     _set(monkeypatch, CAPTURE_MONTH_END_ENABLED=True)
@@ -158,6 +170,7 @@ def _fund_nav_mid_month(n=90, seed=5):
 
 
 def test_mid_month_fund_dates_find_no_overlap_with_the_month_end_benchmark_unless_normalised(monkeypatch):
+    _off(monkeypatch)
     conn = _FakeConn(_peer_nav_rows())
     nav = _fund_nav_mid_month()
     assert capture_ratios.compute_capture_ratios("OWN", "Renta Variable", nav, conn) == []

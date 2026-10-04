@@ -1,7 +1,8 @@
 # P2 recompute bundle — runbook (FND-0196, FND-0226, FND-0200, FND-0202)
 
-Four corrections that change stored P2 metric values. The code is merged **dormant**: every flag in `shared/config.py`
-defaults to `False` and nothing changes until the owner flips them together and runs ONE full P2 recompute.
+Four corrections that change stored P2 metric values. **Status 2026-10-04: the flags are ON in `shared/config.py` and
+`CALC_VERSION` is `20261004`, but the stored metrics are still the old ones until the owner runs the ONE full P2
+recompute below.** (Before the flip they were merged dormant, all `False`.)
 
 | Flag (`shared/config.py`) | Ticket | What changes | Measured / expected effect |
 |---|---|---|---|
@@ -28,10 +29,21 @@ flip recomputes every fund without a separate step. Still bump `CALC_VERSION` in
    (correlation 0.987, capture coverage 76.7% -> 82.0%, identical top-10 in 99.7% of sub-portfolio pools). The PIT guard
    `assert_series_cover` (FND-0228) refuses evaluation dates before 2000-03 (first month with rate and lagged IPC).
 
-## Flip (one commit)
-1. `shared/config.py`: set the four flags to `True`.
-2. `proyecto2/src/pipeline/run_pipeline.py`: bump `CALC_VERSION` (new date string) and add a one-line comment naming the four tickets.
-3. `python scripts/audit/sync_agents_md.py --write` (kill-switch line), commit.
+## Flip (DONE 2026-10-04, one commit)
+1. `shared/config.py`: the four flags are `True`.
+2. `proyecto2/src/pipeline/run_pipeline.py`: `CALC_VERSION = "20261004"` (v40) with a comment naming the four tickets.
+3. AGENTS.md synced. Tests: P2 334, P3 289, hermetic Postgres suites all green with the flags on; legacy-path tests state their flag values
+   explicitly. P2 dry-run on the 32-fund sample with the flags on: 32 processed, 0 errors, 0 warnings, nothing written.
+
+Expected change of the VALUES on that sample (flags off vs on, same data): `alpha_persistence` changes for 27 of 30 funds, mean +0.34
+(max +0.84): the alpha bonus (x1.15 above 0.6) fires for about 1.6% of funds today and will fire for many more, so **P3 scores and the
+portfolio will shift** after the recompute. `capture_ratio` changes for all funds (mean +0.04), coverage 30 -> 31; `beta_spread_hy`
+3 -> 27 funds, `beta_vix` 26 -> 27; `macro_r2` +0.03 on average. The CN CPI factor is unusable either way (series ends 2024-03).
+**Recommended before the 4-hour run** (about 15 min, owner-run, P2 paused, containers up):
+`C:\data\envs\des\python.exe -X utf8 scripts\launch\p3_pit_backtest.py --hysteresis-grid ""` and compare with the baseline run
+20261003_234917 (same code path with the flags off): it shows what the corrected persistence and capture do to the portfolio before
+production metrics change. The same recompute also carries the FND-0208 macro OLS guards, whose counters (`cond_guard_funds`,
+`ols_funds`) settle the condition-index limit decision.
 
 ## Run
 Canonical full P2 (about 4 h): `scripts\launch\P2_calculateIndicators.bat`. P3 needs `--allow-stale` until the metrics are

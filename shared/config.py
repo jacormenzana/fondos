@@ -534,11 +534,11 @@ MACRO_OLS_MAX_CONDITION_INDEX: float = 30.0
 # Also the plausibility limit counted by scripts/audit/beta_shift_audit.py (FND-0176 saw 600-1,100).
 MACRO_BETA_PLAUSIBLE_MAX: float = 5.0
 
-# ---- P2 recompute bundle (FND-0196, FND-0226, FND-0200, FND-0202), prepared 2026-10-04 --------------------------------
-# Four corrections that CHANGE stored metric values. All default False: the code is in place and tested but dormant, so
-# nothing changes until the owner flips them TOGETHER and runs ONE full P2 recompute. The input fingerprint includes the
-# enabled flags (utils/fingerprint.effective_calc_version), so the first run after a flip recomputes every fund by itself;
-# still bump CALC_VERSION in the same change so the stored algorithm_version records the new logic.
+# ---- P2 recompute bundle (FND-0196, FND-0226, FND-0200, FND-0202), ACTIVE since 2026-10-04 ------------------------------
+# Four corrections that CHANGE stored metric values, switched on TOGETHER for ONE full P2 recompute (CALC_VERSION 20261004).
+# Until that recompute has run, the stored metrics are still the old ones. The input fingerprint includes the enabled flags
+# (utils/fingerprint.effective_calc_version), so the first run recomputes every fund by itself. ROLLBACK: set the flags back
+# to False and bump CALC_VERSION again (another full run); the legacy code paths stay in place for that.
 #   MACRO_VIF_ITERATIVE_ENABLED  FND-0196  macro OLS: iterative VIF (drop one factor at a time) with the options below,
 #                                          instead of dropping every factor over the threshold in one pass (which removed
 #                                          both members of a collinear pair, e.g. spread_hy / spread_ig, corr 0.91)
@@ -546,10 +546,10 @@ MACRO_BETA_PLAUSIBLE_MAX: float = 5.0
 #                                          14 zeros) and +/-inf cells become NaN
 #   PERSISTENCE_FIRST_LAST_NAV_ENABLED  FND-0200  peer return in a window from the FIRST and LAST NAV (was MIN / MAX)
 #   CAPTURE_MONTH_END_ENABLED    FND-0202  capture ratios: fund and peers on a month-end grid, 1-month returns only
-MACRO_VIF_ITERATIVE_ENABLED: bool = False
-MACRO_FACTOR_CLEAN_ENABLED: bool = False
-PERSISTENCE_FIRST_LAST_NAV_ENABLED: bool = False
-CAPTURE_MONTH_END_ENABLED: bool = False
+MACRO_VIF_ITERATIVE_ENABLED: bool = True
+MACRO_FACTOR_CLEAN_ENABLED: bool = True
+PERSISTENCE_FIRST_LAST_NAV_ENABLED: bool = True
+CAPTURE_MONTH_END_ENABLED: bool = True
 P2_BUNDLE_FLAGS: tuple = ("MACRO_VIF_ITERATIVE_ENABLED", "MACRO_FACTOR_CLEAN_ENABLED",
                           "PERSISTENCE_FIRST_LAST_NAV_ENABLED", "CAPTURE_MONTH_END_ENABLED")
 # Options of the iterative VIF (used when MACRO_VIF_ITERATIVE_ENABLED, and by the PIT variant "iterative_hy"): keep the two
