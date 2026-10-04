@@ -1,0 +1,152 @@
+# proyecto3/config/scorer_params.yaml
+# Every tunable number of the P3 scorer in ONE place (FND-0192). Loaded by proyecto3/src/scorer_config.py at import and
+# exposed under the same names in fund_scorer.py. The sha1 of this content (SCORER_CONFIG_HASH) is part of the PIT cache
+# keys, so changing a value can never serve stale cached scores. Validation (known keys, types, weight sums) runs on load.
+# Values here are an exact copy of the previous in-code constants (tests/golden_scorer_params.json pins that).
+
+# ----------------------------------------------------------------------------------------------------
+# Base scoring weights (fallback) and per sub-portfolio weights; each set sums to 1
+# ----------------------------------------------------------------------------------------------------
+BASE_WEIGHTS:
+  return_ann_real: 0.25
+  sharpe: 0.2
+  max_dd: 0.2
+  alpha_persistence: 0.15
+  capture_ratio: 0.1
+  momentum_rank: 0.1
+SUBPORTFOLIO_WEIGHTS:
+  Defensiva:
+    return_ann_real: 0.2
+    sharpe: 0.25
+    max_dd: 0.3
+    alpha_persistence: 0.15
+    capture_ratio: 0.05
+    momentum_rank: 0.05
+  Equilibrada:
+    return_ann_real: 0.25
+    sharpe: 0.2
+    max_dd: 0.2
+    alpha_persistence: 0.15
+    capture_ratio: 0.1
+    momentum_rank: 0.1
+  Dinamica:
+    return_ann_real: 0.3
+    sharpe: 0.15
+    max_dd: 0.15
+    alpha_persistence: 0.15
+    capture_ratio: 0.15
+    momentum_rank: 0.1
+
+# ----------------------------------------------------------------------------------------------------
+# Fund nature -> sub-portfolio mapping and the nature-fit bonus
+# ----------------------------------------------------------------------------------------------------
+SUBPORTFOLIO_MAPPING:
+  Defensiva:
+  - Monetario
+  - Renta Fija Corto Plazo
+  - Renta Fija Flexible
+  Equilibrada:
+  - Renta Fija Flexible
+  - Mixtos
+  - Renta Variable
+  Dinamica:
+  - Renta Variable
+  - Mixtos
+  - Alternativo
+NATURE_PROFILE_BONUS:
+  Defensiva:
+    Monetario: 1.25
+    Renta Fija Corto Plazo: 1.1
+    Renta Fija Flexible: 1.0
+  Equilibrada:
+    Mixtos: 1.1
+    Renta Variable: 1.0
+    Renta Fija Flexible: 0.95
+  Dinamica:
+    Renta Variable: 1.1
+    Alternativo: 1.05
+    Mixtos: 0.95
+
+# ----------------------------------------------------------------------------------------------------
+# Hard filters (layer 1)
+# ----------------------------------------------------------------------------------------------------
+MAX_DRAWDOWN_BY_SUB:
+  Defensiva: -0.2
+  Equilibrada: -0.3
+  Dinamica: -0.4
+MIN_REAL_RETURN_BY_SUB:
+  Defensiva: -0.05
+  Equilibrada: -0.02
+  Dinamica: 0.0
+MAX_DRAWDOWN_LIMIT: -0.25
+MIN_REAL_RETURN: 0.0
+MAX_SRRI_DEFENSIVE: 5
+
+# ----------------------------------------------------------------------------------------------------
+# Structural multipliers (layer 3). The macro ones were retired 2026-10-04 (FND-0225)
+# ----------------------------------------------------------------------------------------------------
+FX_CONTRIBUTION_LIMIT: 0.6
+ALPHA_PERS_THRESHOLD: 0.6
+MULT_FX_MALUS: 0.8
+MULT_ALPHA_BONUS: 1.15
+
+# ----------------------------------------------------------------------------------------------------
+# Crisis-stress multipliers
+# ----------------------------------------------------------------------------------------------------
+CRISIS_MDD_SHALLOW: -0.1
+CRISIS_MDD_DEEP: -0.3
+CRISIS_TTR_FAST: 6.0
+CRISIS_TTR_SLOW: 24.0
+MULT_CRISIS_MDD_BONUS: 1.1
+MULT_CRISIS_MDD_MALUS: 0.8
+MULT_CRISIS_TTR_BONUS: 1.1
+MULT_CRISIS_TTR_MALUS: 0.85
+
+# ----------------------------------------------------------------------------------------------------
+# Empirical per-regime multipliers and the percentile cut-offs they use
+# ----------------------------------------------------------------------------------------------------
+REGIME_PERCENTILE_LOW: 0.25
+REGIME_PERCENTILE_HIGH: 0.75
+MULT_REGIME_RETURN_BONUS: 1.2
+MULT_REGIME_RETURN_MALUS: 0.8
+MULT_REGIME_SHARPE_BONUS: 1.1
+MULT_REGIME_SHARPE_MALUS: 0.9
+MULT_REGIME_SORTINO_BONUS: 1.08
+MULT_REGIME_SORTINO_MALUS: 0.92
+MULT_REGIME_MAXDD_BONUS: 1.1
+MULT_REGIME_MAXDD_MALUS: 0.8
+MIN_OBS_REGIME_SCORING: 12
+REGIME_COVERAGE_MIN: 0.43
+REGIME_COVERAGE_DAMP: 0.5
+
+# ----------------------------------------------------------------------------------------------------
+# Slope trend multipliers
+# ----------------------------------------------------------------------------------------------------
+SLOPE_IMPROVING_THRESHOLD: 0.05
+SLOPE_DETERIORATING_THRESHOLD: -0.05
+MULT_SLOPE_BONUS: 1.05
+MULT_SLOPE_MALUS: 0.95
+
+# ----------------------------------------------------------------------------------------------------
+# Short-horizon gates and weights
+# ----------------------------------------------------------------------------------------------------
+SHORT_DD_LIMIT_BY_SUB:
+  Defensiva: -0.08
+  Equilibrada: -0.15
+  Dinamica: -0.25
+SHORT_VOL_LIMIT_BY_SUB:
+  Defensiva: 0.15
+  Equilibrada: 0.22
+  Dinamica: null
+SHORT_LIQUIDITY_TRUST_THRESHOLD: 0.2
+SHORT_HORIZON_WEIGHTS:
+  Defensiva:
+    short_return_cum__rolling_3m: 0.03
+    short_return_cum__rolling_6m: 0.04
+  Equilibrada:
+    short_return_cum__rolling_3m: 0.04
+    short_return_cum__rolling_6m: 0.04
+  Dinamica:
+    short_return_cum__rolling_3m: 0.05
+    short_return_cum__rolling_6m: 0.05
+

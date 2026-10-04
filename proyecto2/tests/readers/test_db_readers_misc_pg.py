@@ -86,7 +86,7 @@ def test_load_nav_daily_returns_sorted_series(pg_session_conn, pg_conn_module_sc
     assert list(df["nav"]) == [100.0, 101.0]
 
 
-def test_get_isins_with_nav_excludes_orphans_and_inactive(pg_session_conn, pg_conn_module_schema):
+def test_get_isins_with_nav_excludes_orphans_and_stale_frozen_but_keeps_invalid_nav(pg_session_conn, pg_conn_module_schema):
     conn = pg_session_conn
     conn.execute(f"SET search_path = {pg_conn_module_schema}")
     _make_nav_tables(conn)
@@ -96,10 +96,14 @@ def test_get_isins_with_nav_excludes_orphans_and_inactive(pg_session_conn, pg_co
     conn.execute("INSERT INTO fund_nav_monthly VALUES ('X2', '2024-01-31', 100.0)")
     # orphan NAV: no fund_master row -> must be excluded
     conn.execute("INSERT INTO fund_nav_monthly VALUES ('X3', '2024-01-31', 100.0)")
-    conn.execute("INSERT INTO nav_sources VALUES ('X2', 'INACTIVE')")
+    conn.execute("INSERT INTO nav_sources VALUES ('X2', 'STALE_FROZEN')")
+    # quarantined NAV (FND-0164) stays in the universe so the NAV validation can clear it
+    conn.execute("INSERT INTO fund_master VALUES ('X4', 'Renta Variable')")
+    conn.execute("INSERT INTO fund_nav_monthly VALUES ('X4', '2024-01-31', 100.0)")
+    conn.execute("INSERT INTO nav_sources VALUES ('X4', 'INVALID_NAV')")
 
     isins = get_isins_with_nav(conn)
-    assert isins == ["X1"], f"expected only X1 (X2 INACTIVE, X3 orphan), got {isins}"
+    assert isins == ["X1", "X4"], f"expected X1 and X4 (X2 STALE_FROZEN, X3 orphan), got {isins}"
 
 
 def test_get_isins_with_nav_daily(pg_session_conn, pg_conn_module_schema):

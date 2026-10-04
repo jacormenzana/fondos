@@ -1,0 +1,137 @@
+{
+  "ALPHA_PERS_THRESHOLD": 0.6,
+  "BASE_WEIGHTS": {
+    "alpha_persistence": 0.15,
+    "capture_ratio": 0.1,
+    "max_dd": 0.2,
+    "momentum_rank": 0.1,
+    "return_ann_real": 0.25,
+    "sharpe": 0.2
+  },
+  "CRISIS_MDD_DEEP": -0.3,
+  "CRISIS_MDD_SHALLOW": -0.1,
+  "CRISIS_TTR_FAST": 6.0,
+  "CRISIS_TTR_SLOW": 24.0,
+  "FX_CONTRIBUTION_LIMIT": 0.6,
+  "MAX_DRAWDOWN_BY_SUB": {
+    "Defensiva": -0.2,
+    "Dinamica": -0.4,
+    "Equilibrada": -0.3
+  },
+  "MAX_DRAWDOWN_LIMIT": -0.25,
+  "MAX_SRRI_DEFENSIVE": 5,
+  "MIN_OBS_REGIME_SCORING": 12,
+  "MIN_REAL_RETURN": 0.0,
+  "MIN_REAL_RETURN_BY_SUB": {
+    "Defensiva": -0.05,
+    "Dinamica": 0.0,
+    "Equilibrada": -0.02
+  },
+  "MULT_ALPHA_BONUS": 1.15,
+  "MULT_CRISIS_MDD_BONUS": 1.1,
+  "MULT_CRISIS_MDD_MALUS": 0.8,
+  "MULT_CRISIS_TTR_BONUS": 1.1,
+  "MULT_CRISIS_TTR_MALUS": 0.85,
+  "MULT_FX_MALUS": 0.8,
+  "MULT_REGIME_MAXDD_BONUS": 1.1,
+  "MULT_REGIME_MAXDD_MALUS": 0.8,
+  "MULT_REGIME_RETURN_BONUS": 1.2,
+  "MULT_REGIME_RETURN_MALUS": 0.8,
+  "MULT_REGIME_SHARPE_BONUS": 1.1,
+  "MULT_REGIME_SHARPE_MALUS": 0.9,
+  "MULT_REGIME_SORTINO_BONUS": 1.08,
+  "MULT_REGIME_SORTINO_MALUS": 0.92,
+  "MULT_SLOPE_BONUS": 1.05,
+  "MULT_SLOPE_MALUS": 0.95,
+  "NATURE_PROFILE_BONUS": {
+    "Defensiva": {
+      "Monetario": 1.25,
+      "Renta Fija Corto Plazo": 1.1,
+      "Renta Fija Flexible": 1.0
+    },
+    "Dinamica": {
+      "Alternativo": 1.05,
+      "Mixtos": 0.95,
+      "Renta Variable": 1.1
+    },
+    "Equilibrada": {
+      "Mixtos": 1.1,
+      "Renta Fija Flexible": 0.95,
+      "Renta Variable": 1.0
+    }
+  },
+  "REGIME_COVERAGE_DAMP": 0.5,
+  "REGIME_COVERAGE_MIN": 0.43,
+  "REGIME_PERCENTILE_HIGH": 0.75,
+  "REGIME_PERCENTILE_LOW": 0.25,
+  "SHORT_DD_LIMIT_BY_SUB": {
+    "Defensiva": -0.08,
+    "Dinamica": -0.25,
+    "Equilibrada": -0.15
+  },
+  "SHORT_HORIZON_WEIGHTS": {
+    "Defensiva": {
+      "short_return_cum__rolling_3m": 0.03,
+      "short_return_cum__rolling_6m": 0.04
+    },
+    "Dinamica": {
+      "short_return_cum__rolling_3m": 0.05,
+      "short_return_cum__rolling_6m": 0.05
+    },
+    "Equilibrada": {
+      "short_return_cum__rolling_3m": 0.04,
+      "short_return_cum__rolling_6m": 0.04
+    }
+  },
+  "SHORT_LIQUIDITY_TRUST_THRESHOLD": 0.2,
+  "SHORT_VOL_LIMIT_BY_SUB": {
+    "Defensiva": 0.15,
+    "Dinamica": null,
+    "Equilibrada": 0.22
+  },
+  "SLOPE_DETERIORATING_THRESHOLD": -0.05,
+  "SLOPE_IMPROVING_THRESHOLD": 0.05,
+  "SUBPORTFOLIO_MAPPING": {
+    "Defensiva": [
+      "Monetario",
+      "Renta Fija Corto Plazo",
+      "Renta Fija Flexible"
+    ],
+    "Dinamica": [
+      "Renta Variable",
+      "Mixtos",
+      "Alternativo"
+    ],
+    "Equilibrada": [
+      "Renta Fija Flexible",
+      "Mixtos",
+      "Renta Variable"
+    ]
+  },
+  "SUBPORTFOLIO_WEIGHTS": {
+    "Defensiva": {
+      "alpha_persistence": 0.15,
+      "capture_ratio": 0.05,
+      "max_dd": 0.3,
+      "momentum_rank": 0.05,
+      "return_ann_real": 0.2,
+      "sharpe": 0.25
+    },
+    "Dinamica": {
+      "alpha_persistence": 0.15,
+      "capture_ratio": 0.15,
+      "max_dd": 0.15,
+      "momentum_rank": 0.1,
+      "return_ann_real": 0.3,
+      "sharpe": 0.15
+    },
+    "Equilibrada": {
+      "alpha_persistence": 0.15,
+      "capture_ratio": 0.1,
+      "max_dd": 0.2,
+      "momentum_rank": 0.1,
+      "return_ann_real": 0.25,
+      "sharpe": 0.2
+    }
+  }
+}

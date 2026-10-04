@@ -71,6 +71,7 @@ from proyecto3.src.regime_classifier import RegimeResult
 from shared.config import (
     METRIC_VERSION_SHORT,
     SHORT_HORIZON_SCORING_ENABLED,
+    ROLLING_PCTILE_HORIZON,
     ROLLING_PCTILE_P3_ENABLED,
 )
 from shared.db import executemany
@@ -80,159 +81,103 @@ from shared.db import executemany
 # Constantes
 # ============================================================
 
+# FND-0192: every number below comes from proyecto3/config/scorer_params.yaml (validated on load); the names are unchanged.
+# SCORER_CONFIG_HASH identifies the loaded values and feeds the PIT cache keys. To try other values, point load_scorer_params()
+# at another file and reload this module (the values are read once, at import).
+from proyecto3.src.scorer_config import SCORER_CONFIG_HASH, load_scorer_params  # noqa: E402
+
+_P = load_scorer_params()
+
+# Inline numbers that used to sit inside the functions
+REGIME_PERCENTILE_LOW = _P["REGIME_PERCENTILE_LOW"]
+REGIME_PERCENTILE_HIGH = _P["REGIME_PERCENTILE_HIGH"]
+SHORT_HORIZON_WEIGHTS = _P["SHORT_HORIZON_WEIGHTS"]
+
 # Pesos scoring base globales (fallback)
-BASE_WEIGHTS = {
-    "return_ann_real":   0.25,
-    "sharpe":            0.20,
-    "max_dd":      0.20,
-    "alpha_persistence": 0.15,
-    "capture_ratio":     0.10,
-    "momentum_rank":     0.10,
-}
+BASE_WEIGHTS = _P["BASE_WEIGHTS"]
 
 # Pesos diferenciados por sub-cartera
-SUBPORTFOLIO_WEIGHTS = {
-    "Defensiva": {
-        "return_ann_real":   0.20,
-        "sharpe":            0.25,
-        "max_dd":      0.30,
-        "alpha_persistence": 0.15,
-        "capture_ratio":     0.05,
-        "momentum_rank":     0.05,
-    },
-    "Equilibrada": {
-        "return_ann_real":   0.25,
-        "sharpe":            0.20,
-        "max_dd":      0.20,
-        "alpha_persistence": 0.15,
-        "capture_ratio":     0.10,
-        "momentum_rank":     0.10,
-    },
-    "Dinamica": {
-        "return_ann_real":   0.30,
-        "sharpe":            0.15,
-        "max_dd":      0.15,
-        "alpha_persistence": 0.15,
-        "capture_ratio":     0.15,
-        "momentum_rank":     0.10,
-    },
-}
+SUBPORTFOLIO_WEIGHTS = _P["SUBPORTFOLIO_WEIGHTS"]
 
 # Bonus por naturaleza del fondo según sub-cartera
-NATURE_PROFILE_BONUS = {
-    "Defensiva": {
-        "Monetario":              1.25,
-        "Renta Fija Corto Plazo": 1.10,
-        "Renta Fija Flexible":    1.00,
-    },
-    "Equilibrada": {
-        "Mixtos":              1.10,
-        "Renta Variable":      1.00,
-        "Renta Fija Flexible": 0.95,
-    },
-    "Dinamica": {
-        "Renta Variable": 1.10,
-        "Alternativo":    1.05,
-        "Mixtos":         0.95,
-    },
-}
+NATURE_PROFILE_BONUS = _P["NATURE_PROFILE_BONUS"]
 
 # Filtros duros por sub-cartera
-MAX_DRAWDOWN_BY_SUB = {
-    "Defensiva":   -0.20,
-    "Equilibrada": -0.30,
-    "Dinamica":    -0.40,
-}
+MAX_DRAWDOWN_BY_SUB = _P["MAX_DRAWDOWN_BY_SUB"]
 
 # Retorno real mínimo por sub-cartera
-MIN_REAL_RETURN_BY_SUB = {
-    "Defensiva":   -0.05,   # tolerar hasta -5% real (monetarios en alta inflación)
-    "Equilibrada": -0.02,
-    "Dinamica":     0.00,
-}
+MIN_REAL_RETURN_BY_SUB = _P["MIN_REAL_RETURN_BY_SUB"]
 
 # Filtros duros globales
-MAX_DRAWDOWN_LIMIT = -0.25
-MIN_REAL_RETURN    =  0.00
-MAX_SRRI_DEFENSIVE = 5
+MAX_DRAWDOWN_LIMIT = _P["MAX_DRAWDOWN_LIMIT"]
+MIN_REAL_RETURN = _P["MIN_REAL_RETURN"]
+MAX_SRRI_DEFENSIVE = _P["MAX_SRRI_DEFENSIVE"]
 
 # Umbrales multiplicadores estructurales (los macro -oil, tipos, R2, crisis VIX/spread- se retiraron, ver docstring)
-FX_CONTRIBUTION_LIMIT   =  0.60
-ALPHA_PERS_THRESHOLD    =  0.60
+FX_CONTRIBUTION_LIMIT = _P["FX_CONTRIBUTION_LIMIT"]
+ALPHA_PERS_THRESHOLD = _P["ALPHA_PERS_THRESHOLD"]
 
 # Multiplicadores
-MULT_FX_MALUS      = 0.80
-MULT_ALPHA_BONUS   = 1.15
+MULT_FX_MALUS = _P["MULT_FX_MALUS"]
+MULT_ALPHA_BONUS = _P["MULT_ALPHA_BONUS"]
 
 # §3f — Crisis stress thresholds (crisis_stress_score_mdd and _ttr)
-CRISIS_MDD_SHALLOW   = -0.10   # drawdown ≥ -10% in crisis → resilient
-CRISIS_MDD_DEEP      = -0.30   # drawdown ≤ -30% in crisis → vulnerable
-CRISIS_TTR_FAST      =  6.0    # recovery ≤ 6 months → resilient
-CRISIS_TTR_SLOW      = 24.0    # recovery ≥ 24 months → slow
-MULT_CRISIS_MDD_BONUS  = 1.10
-MULT_CRISIS_MDD_MALUS  = 0.80
-MULT_CRISIS_TTR_BONUS  = 1.10
-MULT_CRISIS_TTR_MALUS  = 0.85
+CRISIS_MDD_SHALLOW = _P["CRISIS_MDD_SHALLOW"]
+CRISIS_MDD_DEEP = _P["CRISIS_MDD_DEEP"]
+CRISIS_TTR_FAST = _P["CRISIS_TTR_FAST"]
+CRISIS_TTR_SLOW = _P["CRISIS_TTR_SLOW"]
+MULT_CRISIS_MDD_BONUS = _P["MULT_CRISIS_MDD_BONUS"]
+MULT_CRISIS_MDD_MALUS = _P["MULT_CRISIS_MDD_MALUS"]
+MULT_CRISIS_TTR_BONUS = _P["MULT_CRISIS_TTR_BONUS"]
+MULT_CRISIS_TTR_MALUS = _P["MULT_CRISIS_TTR_MALUS"]
 
 # §3f — Regime Sharpe multipliers (modestos: complementan el regime_return)
-MULT_REGIME_SHARPE_BONUS = 1.10
-MULT_REGIME_SHARPE_MALUS = 0.90
+MULT_REGIME_SHARPE_BONUS = _P["MULT_REGIME_SHARPE_BONUS"]
+MULT_REGIME_SHARPE_MALUS = _P["MULT_REGIME_SHARPE_MALUS"]
 
 # §3f — Regime Sortino multipliers (downside-risk lens: complementa Sharpe)
-MULT_REGIME_SORTINO_BONUS = 1.08   # sortino >= p75 del universo en ese régimen
-MULT_REGIME_SORTINO_MALUS = 0.92   # sortino <= p25
+MULT_REGIME_SORTINO_BONUS = _P["MULT_REGIME_SORTINO_BONUS"]
+MULT_REGIME_SORTINO_MALUS = _P["MULT_REGIME_SORTINO_MALUS"]
 
 # §3f — Regime Max-DD multipliers (capital-destruction lens por régimen)
 # max_dd es negativo: mayor valor absoluto = peor (e.g. -0.40 < -0.10).
-MULT_REGIME_MAXDD_BONUS  = 1.10   # max_dd_reg >= p75 (menos negativo = menor pérdida)
-MULT_REGIME_MAXDD_MALUS  = 0.80   # max_dd_reg <= p25 (más negativo = mayor pérdida)
+MULT_REGIME_MAXDD_BONUS = _P["MULT_REGIME_MAXDD_BONUS"]
+MULT_REGIME_MAXDD_MALUS = _P["MULT_REGIME_MAXDD_MALUS"]
 
 # Umbral mínimo de regime_coverage_ratio para aplicar multiplicadores empíricos.
 # Por debajo del umbral, los multiplicadores de régimen se ponderan hacia 1.0
 # (fondo con historia insuficiente en regímenes → no castigar/premiar con pocos datos).
-REGIME_COVERAGE_MIN  = 0.43   # ≈ 3 de 7 regímenes con n_obs >= 12
-REGIME_COVERAGE_DAMP = 0.50   # fracción del multiplicador neto que se retiene si < MIN
+REGIME_COVERAGE_MIN = _P["REGIME_COVERAGE_MIN"]
+REGIME_COVERAGE_DAMP = _P["REGIME_COVERAGE_DAMP"]
 
 # §3f — Slope trend thresholds (normalized slope: std-devs per period)
-SLOPE_IMPROVING_THRESHOLD   =  0.05
-SLOPE_DETERIORATING_THRESHOLD = -0.05
-MULT_SLOPE_BONUS = 1.05
-MULT_SLOPE_MALUS = 0.95
+SLOPE_IMPROVING_THRESHOLD = _P["SLOPE_IMPROVING_THRESHOLD"]
+SLOPE_DETERIORATING_THRESHOLD = _P["SLOPE_DETERIORATING_THRESHOLD"]
+MULT_SLOPE_BONUS = _P["MULT_SLOPE_BONUS"]
+MULT_SLOPE_MALUS = _P["MULT_SLOPE_MALUS"]
 
 # -- Horizonte corto — gate duro defensivo (v24) -------------------------
 # Umbral de drawdown corto (rolling_6m, metric_version='d1') por sub-cartera.
 # Fondos que superen la pérdida máxima reciente son excluidos del ciclo.
 # None = gate inactivo para esa sub-cartera.
-SHORT_DD_LIMIT_BY_SUB: dict[str, float | None] = {
-    "Defensiva":   -0.08,   # tolerancia 8% en 6 meses
-    "Equilibrada": -0.15,   # tolerancia 15% en 6 meses
-    "Dinamica":    -0.25,   # tolerancia 25% en 6 meses
-}
+SHORT_DD_LIMIT_BY_SUB: dict[str, float | None] = _P["SHORT_DD_LIMIT_BY_SUB"]
 
 # Umbral de volatilidad diaria AC-ajustada (rolling_3m) por sub-cartera.
 # Fondos con vol corta superior son excluidos.
 # None = gate inactivo.
-SHORT_VOL_LIMIT_BY_SUB: dict[str, float | None] = {
-    "Defensiva":   0.15,    # 15% vol anualizada en 3 meses
-    "Equilibrada": 0.22,
-    "Dinamica":    None,    # sin tope de vol para Dinamica
-}
+SHORT_VOL_LIMIT_BY_SUB: dict[str, float | None] = _P["SHORT_VOL_LIMIT_BY_SUB"]
 
 # Umbral de iliquidez: si liquidity_flag > este valor, los gates cortos se omiten
 # (datos no confiables — fondos con NAV diario sintético).
-SHORT_LIQUIDITY_TRUST_THRESHOLD: float = 0.20
+SHORT_LIQUIDITY_TRUST_THRESHOLD: float = _P["SHORT_LIQUIDITY_TRUST_THRESHOLD"]
 
 # Bonus/malus empírico por régimen
-MULT_REGIME_RETURN_BONUS = 1.20
-MULT_REGIME_RETURN_MALUS = 0.80
-MIN_OBS_REGIME_SCORING   = 12
+MULT_REGIME_RETURN_BONUS = _P["MULT_REGIME_RETURN_BONUS"]
+MULT_REGIME_RETURN_MALUS = _P["MULT_REGIME_RETURN_MALUS"]
+MIN_OBS_REGIME_SCORING = _P["MIN_OBS_REGIME_SCORING"]
 
 # Sub-carteras por naturaleza de fondo
-SUBPORTFOLIO_MAPPING = {
-    "Defensiva":   ["Monetario", "Renta Fija Corto Plazo", "Renta Fija Flexible"],
-    "Equilibrada": ["Renta Fija Flexible", "Mixtos", "Renta Variable"],
-    "Dinamica":    ["Renta Variable", "Mixtos", "Alternativo"],
-}
+SUBPORTFOLIO_MAPPING = _P["SUBPORTFOLIO_MAPPING"]
 
 
 # ============================================================
@@ -299,22 +244,9 @@ class FundScore:
 # Carga de métricas P2  (v17 — SELECT ampliado)
 # ============================================================
 
-def load_fund_metrics_for_scoring(
-    conn: "psycopg.Connection",
-    regime: str | None = None,
-) -> pd.DataFrame:
-    """
-    Carga todas las métricas necesarias para el scoring desde fund_metrics.
-    Devuelve DataFrame indexado por ISIN con una columna por métrica.
-
-    regime: si se proporciona, carga también las métricas históricas
-            del régimen activo (return_ann_{suffix}, sharpe_{suffix},
-            n_obs_{suffix}) para usar como multiplicadores empíricos.
-
-    v17: SELECT fund_master ampliado con Investment_Focus, Credit_Quality,
-         Ongoing_Charge y SRRI_Quality_Flag.
-    """
-    # Métricas estáticas (independientes del régimen)
+def scoring_metric_requests(regime: str | None = None) -> list:
+    """(metric, horizon, real_flag) triples that load_fund_metrics_for_scoring reads from fund_metrics (pure: no DB).
+    Extracted from the loader so what the scorer asks for can be tested against what P2 writes (FND-0199)."""
     metrics_needed = [
         ("return_ann",          "since_inception", 1),  # real
         ("sharpe",              "since_inception", 0),
@@ -353,13 +285,34 @@ def load_fund_metrics_for_scoring(
     # P2-10: rolling percentile signals + slope trends (kill-switched)
     if ROLLING_PCTILE_P3_ENABLED:
         metrics_needed += [
-            ("vol_ann_pctile_cat",    "since_inception", 0),
-            ("max_dd_pctile_cat",     "since_inception", 0),
-            ("return_ann_pctile_cat", "since_inception", 0),
+            ("vol_ann_pctile_cat",    ROLLING_PCTILE_HORIZON, 0),     # FND-0199: P2 stores these per rolling window
+            ("max_dd_pctile_cat",     ROLLING_PCTILE_HORIZON, 0),
+            ("return_ann_pctile_cat", ROLLING_PCTILE_HORIZON, 0),
             # §3e slope trends (rolling_3y window, same horizon key)
             ("sharpe_slope",          "rolling_3y",      0),
             ("return_ann_slope",      "rolling_3y",      1),
         ]
+
+    return metrics_needed
+
+
+def load_fund_metrics_for_scoring(
+    conn: "psycopg.Connection",
+    regime: str | None = None,
+) -> pd.DataFrame:
+    """
+    Carga todas las métricas necesarias para el scoring desde fund_metrics.
+    Devuelve DataFrame indexado por ISIN con una columna por métrica.
+
+    regime: si se proporciona, carga también las métricas históricas
+            del régimen activo (return_ann_{suffix}, sharpe_{suffix},
+            n_obs_{suffix}) para usar como multiplicadores empíricos.
+
+    v17: SELECT fund_master ampliado con Investment_Focus, Credit_Quality,
+         Ongoing_Charge y SRRI_Quality_Flag.
+    """
+    # Métricas estáticas (independientes del régimen)
+    metrics_needed = scoring_metric_requests(regime)
 
     ph = "%s"
     rows = []
@@ -470,15 +423,7 @@ def compute_base_scores(
     # Pesos modestos (3-5%); columnas con sufijo __horizonte (R-1: no dup).
     # Las métricas de retorno corto son señales de tendencia secundarias.
     if SHORT_HORIZON_SCORING_ENABLED:
-        short_w = {
-            "Defensiva":   {"short_return_cum__rolling_3m": 0.03,
-                            "short_return_cum__rolling_6m": 0.04},
-            "Equilibrada": {"short_return_cum__rolling_3m": 0.04,
-                            "short_return_cum__rolling_6m": 0.04},
-            "Dinamica":    {"short_return_cum__rolling_3m": 0.05,
-                            "short_return_cum__rolling_6m": 0.05},
-        }
-        weights.update(short_w.get(subportfolio, {}))
+        weights.update(SHORT_HORIZON_WEIGHTS.get(subportfolio, {}))
 
     # Métricas que deben invertirse (menor RAW = mejor), para
     # _normalize_metric(invert=True) -- Fase 1a (P3 optimization plan):
@@ -864,8 +809,8 @@ def compute_regime_percentiles(df: pd.DataFrame, regime: str, verbose: bool = Tr
 
     ret_col = f"return_ann_{suffix}"
     if ret_col in df.columns and not df[ret_col].isna().all():
-        pct["regime_return_p25"] = df[ret_col].quantile(0.25)
-        pct["regime_return_p75"] = df[ret_col].quantile(0.75)
+        pct["regime_return_p25"] = df[ret_col].quantile(REGIME_PERCENTILE_LOW)
+        pct["regime_return_p75"] = df[ret_col].quantile(REGIME_PERCENTILE_HIGH)
     elif verbose:
         print(
             f"[WARN] Régimen '{regime}' no tiene métricas históricas en fund_metrics "
@@ -874,17 +819,17 @@ def compute_regime_percentiles(df: pd.DataFrame, regime: str, verbose: bool = Tr
         )
     sharpe_col = f"sharpe_{suffix}"
     if sharpe_col in df.columns and not df[sharpe_col].isna().all():
-        pct["regime_sharpe_p25"] = df[sharpe_col].quantile(0.25)
-        pct["regime_sharpe_p75"] = df[sharpe_col].quantile(0.75)
+        pct["regime_sharpe_p25"] = df[sharpe_col].quantile(REGIME_PERCENTILE_LOW)
+        pct["regime_sharpe_p75"] = df[sharpe_col].quantile(REGIME_PERCENTILE_HIGH)
     # §3f: downside-risk lenses — sortino and max_dd per regime
     sortino_col = f"sortino_{suffix}"
     if sortino_col in df.columns and not df[sortino_col].isna().all():
-        pct["regime_sortino_p25"] = df[sortino_col].quantile(0.25)
-        pct["regime_sortino_p75"] = df[sortino_col].quantile(0.75)
+        pct["regime_sortino_p25"] = df[sortino_col].quantile(REGIME_PERCENTILE_LOW)
+        pct["regime_sortino_p75"] = df[sortino_col].quantile(REGIME_PERCENTILE_HIGH)
     maxdd_col = f"max_dd_{suffix}"
     if maxdd_col in df.columns and not df[maxdd_col].isna().all():
-        pct["regime_maxdd_p25"] = df[maxdd_col].quantile(0.25)
-        pct["regime_maxdd_p75"] = df[maxdd_col].quantile(0.75)
+        pct["regime_maxdd_p25"] = df[maxdd_col].quantile(REGIME_PERCENTILE_LOW)
+        pct["regime_maxdd_p75"] = df[maxdd_col].quantile(REGIME_PERCENTILE_HIGH)
     return pct
 
 

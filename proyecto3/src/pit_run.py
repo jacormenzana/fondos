@@ -26,6 +26,7 @@ if str(_ROOT) not in sys.path:
 from proyecto3.src.pit_cache import CODE_VERSION, ParquetCache, cached_frames, content_hash
 from proyecto3.src.pit_candidates import DEFAULT_MAX_STALE_DAYS, pit_scores
 from proyecto3.src.pit_metrics import assert_series_cover, expanding_risk_metrics
+from proyecto3.src.scorer_config import SCORER_CONFIG_HASH
 from proyecto3.src.pit_peer_metrics import alpha_persistence, capture_ratios, momentum_rank
 from proyecto3.src.pit_short_horizon import SHORT_GATE_METRICS, log_coverage, short_gate_metrics
 from shared.config import MIN_NAV_ROWS, REGIME_PUBLICATION_LAG_MONTHS
@@ -159,8 +160,9 @@ def compute_pit_scores(
         secs = time.perf_counter() - t0
     else:
         score_key = content_hash(risk_key, peers_key, short_keys, at, regime_by_date, inputs.attrs,
-                                 {"stale": max_stale_days, "min_obs": min_obs, "cur": current_universe_only}, CODE_VERSION,
-                                 *macro_key)          # empty without group B: existing cache keys are unchanged
+                                 {"stale": max_stale_days, "min_obs": min_obs, "cur": current_universe_only,
+                                  "scorer_cfg": SCORER_CONFIG_HASH},          # FND-0192: a changed scorer value can never hit a stale cache
+                                 CODE_VERSION, *macro_key)          # macro_key empty without group B
         frames, hit, secs = cached_frames(cache, "scores", score_key, _score)
     scores, universe = frames["scores"], frames["universe"]
     universe.index.name = "as_of"

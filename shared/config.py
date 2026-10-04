@@ -231,6 +231,10 @@ ROLLING_STATS_ENABLED: bool = True
 # en la Capa 3 del scoring P3. Activar SOLO tras validar correlación predictiva
 # con retorno futuro en el régimen activo (backtest walk-forward pendiente).
 ROLLING_PCTILE_P3_ENABLED: bool = False
+# FND-0199: horizon under which P2 stores the category percentiles (vol_ann / max_dd / return_ann _pctile_cat) that the
+# scorer reads when ROLLING_PCTILE_P3_ENABLED. P2 writes them per rolling window (rolling_1y .. rolling_10y), never at
+# since_inception, so the old read returned nothing. rolling_3y matches the slope signals read next to them.
+ROLLING_PCTILE_HORIZON: str = "rolling_3y"
 
 # Kill-switch P3 optimization plan Phase 2c (2026-09-18): activa la carga
 # automática de la cartera del escenario anterior en PortfolioBuilder.build()

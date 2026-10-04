@@ -130,9 +130,13 @@ def get_isins_with_nav(conn: "psycopg.Connection") -> list[str]:
     que el fondo haya pasado por el pipeline P1; la correcta accion es excluir
     esos ISINs del universo P2 hasta que P1 los clasifique.
 
-    Excluye fondos con nav_sources.data_status='INACTIVE': fondos cuyo NAV
+    Excluye fondos con nav_sources.data_status='STALE_FROZEN': fondos cuyo NAV
     esta permanentemente congelado (p.ej. liquidados sin fecha de cierre
     registrada) y cuya recomputacion metrica seria silenciosa perdida de CPU.
+    (FND-0201: antes filtraba 'INACTIVE', un estado que el CHECK de
+    control.nav_sources no admite, asi que la exclusion nunca actuaba.
+    'INVALID_NAV' NO se excluye a proposito: esos fondos deben seguir en el
+    universo para que la validacion de NAV los limpie, FND-0164.)
     Sus filas existentes en fund_metrics se conservan para seguimiento de
     posiciones en cartera. El COALESCE('OK') garantiza que ISINs sin fila en
     nav_sources (fondos con NAV pero sin descubrimiento previo) siguen incluidos.
@@ -142,7 +146,7 @@ def get_isins_with_nav(conn: "psycopg.Connection") -> list[str]:
            FROM fund_nav_monthly n
            INNER JOIN fund_master m USING (ISIN)
            LEFT JOIN nav_sources s USING (ISIN)
-           WHERE COALESCE(s.data_status, 'OK') <> 'INACTIVE'
+           WHERE COALESCE(s.data_status, 'OK') <> 'STALE_FROZEN'
            ORDER BY n.ISIN"""
     ).fetchall()
     return [r[0] for r in rows]
