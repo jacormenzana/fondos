@@ -451,6 +451,8 @@ class Backtester:
         tx_cost_bps: float = 0.0,
         entry_sides: int = 1,
         hysteresis_band: float = 0.0,
+        macro_variant: "str | None" = None,
+        macro_workers: int = 1,
     ) -> pd.DataFrame:
         """
         Backtest POINT-IN-TIME (FND-0159): en cada fin de mes t el universo se puntua solo con la
@@ -470,6 +472,10 @@ class Backtester:
         hysteresis_band (FND-0205): 0 = cada mes es una seleccion nueva; b > 0 da a los fondos que cada
         sub-cartera tenia el mes anterior un bonus de score b (0.05 = +5%) en el ranking, como el constructor
         en vivo con PORTFOLIO_HYSTERESIS_ENABLED. Para comparar bandas usar pit_hysteresis_experiment().
+
+        macro_variant (FND-0224): None = PIT v1 (sin el grupo B del scorer: los multiplicadores macro son neutros);
+        "control" = betas macro y macro_r2 PIT con la regresion de produccion; "iterative_hy" = el candidato con VIF
+        iterativo (ver pit_macro.py). macro_workers > 1 reparte los fondos en procesos (resultado identico).
 
         isins: lista para acotar el universo (p.ej. la muestra de 40 ISIN); None = universo completo.
         cache_dir/use_cache: cache parquet de las etapas pesadas (use_cache=False = --no-cache).
@@ -503,15 +509,22 @@ class Backtester:
 
         attrs = load_attributes(self.conn, isins)
         daily_isins = list(nav.columns)
+        macro = fund_geo = None
+        if macro_variant is not None:
+            from proyecto2.src.calculations.macro_sensitivity import load_macro_factors
+            from proyecto3.src.pit_macro import load_macro_fund_attrs
+            macro, fund_geo = load_macro_factors(self.conn), load_macro_fund_attrs(self.conn, isins)
         inputs = PitInputs(
             nav=nav, attrs=attrs, ipc=load_ipc(self.conn), rate=load_rate_deposit(self.conn),
             daily_chunks=lambda: iter_daily_chunks(self.conn, daily_isins),
+            macro=macro, fund_geo=fund_geo,
         )
         cache = ParquetCache(cache_dir if cache_dir is not None else _ROOT / "proyecto3" / "cache" / "pit",
                              enabled=use_cache)
         print(f"Backtesting PIT | {at[0].date()} -> {at[-1].date()} | {len(at)} meses | {nav.shape[1]} fondos")
         run = compute_pit_scores(inputs, at, hist["regime"], cache, max_stale_days=max_stale_days,
-                                 current_universe_only=current_universe_only)
+                                 current_universe_only=current_universe_only, macro_variant=macro_variant,
+                                 macro_workers=macro_workers)
         self.last_pit_run = run                          # tiempos por etapa, cache hits, cobertura de gates cortos
         self.last_pit_context = dict(inputs=inputs, hist=hist, at=at, max_stale_days=max_stale_days,
                                      tx_cost_bps=tx_cost_bps, entry_sides=entry_sides)
@@ -539,6 +552,18 @@ class Backtester:
             tx_cost_bps=c.get("tx_cost_bps", 25.0) if tx_cost_bps is None else tx_cost_bps,
             entry_sides=c.get("entry_sides", 1) if entry_sides is None else entry_sides,
             max_stale_days=c["max_stale_days"], target_annual=c.get("target"))
+
+    def pit_crisis_variants(self, **kw) -> pd.DataFrame:
+        """FND-0224 fase B: evalua variantes de signo/escala de los multiplicadores de crisis sobre la ULTIMA ejecucion
+        de run_pit() con grupo B (macro_variant != None). Solo lectura; ver pit_crisis_variants.py."""
+        from proyecto3.src.pit_backtest import forward_returns
+        from proyecto3.src.pit_crisis_variants import evaluate_crisis_variants, forward_max_drawdown
+        if not hasattr(self, "last_pit_run") or self.last_pit_run.macro is None:
+            raise RuntimeError("run_pit(macro_variant=...) debe ejecutarse antes que pit_crisis_variants()")
+        c = self.last_pit_context
+        fwd = forward_returns(c["inputs"].nav, c["at"], 12, c["max_stale_days"])
+        fdd = forward_max_drawdown(c["inputs"].nav, c["at"], 12, c["max_stale_days"])
+        return evaluate_crisis_variants(self.last_pit_run, fwd, c["at"], forward_dd=fdd, **kw)
 
     def pit_cost_sensitivity(self, bps=(0.0, 25.0, 50.0), entry_sides: int = 1) -> pd.DataFrame:
         """Rejilla de sensibilidad a costes simetricos (por defecto 0/25/50 pb por lado) sobre la ULTIMA

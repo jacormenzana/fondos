@@ -70,6 +70,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--hysteresis-grid", default="0,0.05,0.10,0.20,0.40",
                    help='bands compared in hysteresis_experiment.csv (default "0,0.05,0.10,0.20,0.40"; "" = skip)')
     p.add_argument("--max-stale-days", type=int, default=45, help="max age of a NAV observation (default 45)")
+    p.add_argument("--macro-variant", choices=("none", "control", "iterative_hy"), default="none",
+                   help="FND-0224 scorer group B in the backtest: none = PIT v1 (macro multipliers neutral); control = PIT macro "
+                        "betas with the production regression; iterative_hy = iterative VIF candidate. Not none: also writes "
+                        "macro_coverage.csv and crisis_variants.csv (sign/scale variants of the crisis multiplier)")
+    p.add_argument("--macro-workers", type=int, default=1,
+                   help="processes for the macro regressions (about 1 h single-process for the full universe; results identical)")
     p.add_argument("--current-universe-only", action="store_true",
                    help="exclude In_Current_Universe=0 funds (default: retired funds ARE in the PIT universe)")
     p.add_argument("--cache-dir", default=str(DEFAULT_CACHE_DIR), help="parquet cache directory")
@@ -118,7 +124,8 @@ def _git_commit() -> str:
 
 
 def write_artifacts(out_dir: Path, table: pd.DataFrame, grid: pd.DataFrame, bt, summary: str, manifest: dict,
-                    save_scores: bool = True, hysteresis: "pd.DataFrame | None" = None) -> dict:
+                    save_scores: bool = True, hysteresis: "pd.DataFrame | None" = None,
+                    crisis_variants: "pd.DataFrame | None" = None) -> dict:
     """Write every artifact; returns {name: path}. Missing optional pieces (short coverage) are skipped."""
     out_dir.mkdir(parents=True, exist_ok=True)
     run = bt.last_pit_run
@@ -135,6 +142,11 @@ def write_artifacts(out_dir: Path, table: pd.DataFrame, grid: pd.DataFrame, bt, 
     _put("cost_sensitivity.csv", lambda p: grid.to_csv(p, index=False, float_format="%.8g"))
     if hysteresis is not None:
         _put("hysteresis_experiment.csv", lambda p: hysteresis.to_csv(p, index=False, float_format="%.8g"))
+    if crisis_variants is not None:
+        _put("crisis_variants.csv", lambda p: crisis_variants.to_csv(p, index=False, float_format="%.6g"))
+    if run.macro is not None:
+        _put("macro_coverage.csv", lambda p: pd.DataFrame(
+            {m: f.notna().mean(axis=1) for m, f in run.macro.items()}).to_csv(p, float_format="%.4f"))
     _put("series_stats.json", lambda p: p.write_text(json.dumps(table_stats(table), indent=2, default=str), encoding="utf-8"))
     _put("universe_by_date.csv", lambda p: run.universe.to_csv(p))
     if run.short_coverage is not None:
@@ -190,12 +202,15 @@ def main(argv=None, conn=None) -> int:
     table = bt.run_pit(start_date=args.start, end_date=args.end, isins=isins, cache_dir=args.cache_dir,
                        use_cache=not args.no_cache, max_stale_days=args.max_stale_days,
                        current_universe_only=args.current_universe_only, tx_cost_bps=args.bps_main,
-                       entry_sides=args.entry_sides, hysteresis_band=args.hysteresis_band)
+                       entry_sides=args.entry_sides, hysteresis_band=args.hysteresis_band,
+                       macro_variant=None if args.macro_variant == "none" else args.macro_variant,
+                       macro_workers=args.macro_workers)
     if table is None or table.empty:
         logger.error("nothing to evaluate (no regime history or empty date range)")
         return EXIT_NOTHING_TO_EVALUATE
     grid = bt.pit_cost_sensitivity(bps=grid_bps, entry_sides=args.entry_sides)
     hysteresis = bt.pit_hysteresis_experiment(bands=hyst_bands) if hyst_bands else None
+    crisis_variants = bt.pit_crisis_variants() if args.macro_variant != "none" else None
     summary = bt.summary(table)
     elapsed = time.perf_counter() - t0
 
@@ -208,7 +223,9 @@ def main(argv=None, conn=None) -> int:
         "python": sys.version.split()[0], "pandas": pd.__version__, "log": str(log_path),
     }
     written = write_artifacts(out_dir, table, grid, bt, summary, manifest, save_scores=not args.no_scores,
-                              hysteresis=hysteresis)
+                              hysteresis=hysteresis, crisis_variants=crisis_variants)
+    if crisis_variants is not None:
+        logger.info("crisis multiplier variants (FND-0225):\n%s", crisis_variants.round(4).to_string(index=False))
     if hysteresis is not None:
         logger.info("hysteresis experiment (turnover / Sharpe by band):\n%s",
                     hysteresis[["hysteresis_band", "mean_turnover", "annual_cost_drag", "ann_return", "sharpe",

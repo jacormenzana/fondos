@@ -51,6 +51,8 @@ class PitRun:
     timings: dict = field(default_factory=dict)
     cache_hits: dict = field(default_factory=dict)
     short_coverage: "pd.DataFrame | None" = None     # per date: funds with daily NAV / evaluable windows (fail-open view)
+    macro: "dict | None" = None                      # FND-0224 group B frames {metric: dates x isin}, None without group B
+    vol_ann: "pd.DataFrame | None" = None            # expanding annualised volatility panel (base-risk control for variants)
 
 
 def compute_pit_scores(
@@ -64,6 +66,7 @@ def compute_pit_scores(
     ipc_lag_months: "int | None" = None,
     keep_detail: bool = False,
     macro_variant: "str | None" = None,
+    macro_workers: int = 1,
 ) -> PitRun:
     """Run the whole PIT scoring chain for the dates `at`. ipc_lag_months defaults to the regime IPC lag."""
     at = pd.DatetimeIndex(at)
@@ -133,7 +136,7 @@ def compute_pit_scores(
         macro_key = content_hash(inputs.nav, inputs.macro, inputs.fund_geo if inputs.fund_geo is not None else "no-geo",
                                  at, {"variant": variant_signature(macro_variant), "lags": REGIME_PUBLICATION_LAG_MONTHS}, CODE_VERSION)
         macro, hit, secs = cached_frames(cache, "macro", macro_key, lambda: expanding_macro_metrics(
-            inputs.nav, inputs.macro, at, inputs.fund_geo, variant=macro_variant))
+            inputs.nav, inputs.macro, at, inputs.fund_geo, variant=macro_variant, workers=macro_workers))
         timings["macro"], hits["macro"] = secs, hit
         macro_key = (macro_key,)
 
@@ -160,4 +163,5 @@ def compute_pit_scores(
     timings["scoring"], hits["scoring"] = secs, hit
     timings["total"] = sum(timings.values())
     logger.info("PIT scoring chain: %s", {k: round(v, 2) for k, v in timings.items()})
-    return PitRun(scores=scores, universe=universe, timings=timings, cache_hits=hits, short_coverage=short_coverage)
+    return PitRun(scores=scores, universe=universe, timings=timings, cache_hits=hits, short_coverage=short_coverage,
+                  macro=macro, vol_ann=risk.get("vol_ann"))

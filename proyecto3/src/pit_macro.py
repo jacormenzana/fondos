@@ -99,15 +99,19 @@ def expanding_macro_metrics(
     lags: "dict | None" = None,
     variant: str = "control",
     step_months: int = 3,
+    workers: int = 1,
 ) -> dict:
     """{metric: DataFrame(evaluation dates x isin)} for MACRO_METRICS.
 
     nav: raw-date wide monthly NAV panel (pit_inputs.load_nav_panel); macro: macro_sensitivity.load_macro_factors();
     at: evaluation month-ends; fund_attrs: index isin, optional columns geography / development_status (the same
     inputs the P2 pipeline passes). Dates with month % step_months != 0 are skipped (the scorer carries the last
-    value forward, see pit_candidates.pit_scores)."""
+    value forward, see pit_candidates.pit_scores). workers > 1 splits the funds over processes (the regressions are
+    independent per fund and date, so the result is identical to workers=1)."""
     if variant not in VARIANTS:
         raise ValueError(f"unknown macro variant {variant!r}; choose one of {sorted(VARIANTS)}")
+    if workers > 1 and nav.shape[1] > 1:
+        return _parallel_macro_metrics(nav, macro, at, fund_attrs, lags, variant, step_months, workers)
     opts = dict(VARIANTS[variant])
     clean_inf = opts.pop("clean_inf", False)
     lags = REGIME_PUBLICATION_LAG_MONTHS if lags is None else lags
@@ -138,6 +142,24 @@ def expanding_macro_metrics(
                 if name in out and value is not None:
                     out[name].at[t, isin] = value
     return out
+
+
+def _chunk_task(args) -> dict:
+    nav, macro, at, fund_attrs, lags, variant, step_months = args
+    return expanding_macro_metrics(nav, macro, at, fund_attrs, lags, variant, step_months, workers=1)
+
+
+def _parallel_macro_metrics(nav, macro, at, fund_attrs, lags, variant, step_months, workers) -> dict:
+    from concurrent.futures import ProcessPoolExecutor
+    n_chunks = min(nav.shape[1], workers * 4)
+    tasks = []
+    for idx in np.array_split(np.arange(nav.shape[1]), n_chunks):
+        cols = list(nav.columns[idx])
+        attrs = None if fund_attrs is None else fund_attrs.reindex(cols)
+        tasks.append((nav[cols], macro, at, attrs, lags, variant, step_months))
+    with ProcessPoolExecutor(max_workers=workers) as pool:
+        parts = list(pool.map(_chunk_task, tasks))
+    return {m: pd.concat([p[m] for p in parts], axis=1).reindex(columns=nav.columns) for m in MACRO_METRICS}
 
 
 def _clean(value):

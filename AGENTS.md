@@ -481,6 +481,7 @@ python -m proyecto2.src.discovery.macro_discovery --source all
 | `pit_backtest.py` | `proyecto3/src` |
 | `pit_cache.py` | `proyecto3/src` |
 | `pit_candidates.py` | `proyecto3/src` |
+| `pit_crisis_variants.py` | `proyecto3/src` |
 | `pit_inputs.py` | `proyecto3/src` |
 | `pit_macro.py` | `proyecto3/src` |
 | `pit_metrics.py` | `proyecto3/src` |
