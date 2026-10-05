@@ -567,7 +567,7 @@ P2_BUNDLE_FLAGS: tuple = ("MACRO_VIF_ITERATIVE_ENABLED", "MACRO_FACTOR_CLEAN_ENA
 # owner applies scripts/ops/migrate_fund_metric_family_state.py --apply, THEN this flag (P2 asserts the table at startup);
 # the first run adopts every fund from its legacy hash without recomputing. ROLLBACK: set False -- the next plain run
 # recomputes every fund once (the legacy hash column then holds a composite hash), no schema change needed.
-FAMILY_VERSIONING_ENABLED: bool = False
+FAMILY_VERSIONING_ENABLED: bool = True
 # Options of the iterative VIF (used when MACRO_VIF_ITERATIVE_ENABLED, and by the PIT variant "iterative_hy"): keep the two
 # crisis factors, drop spread_ig (the near-duplicate of spread_hy), and at most n_obs / 10 factors per fund.
 MACRO_ITERATIVE_VIF: dict = {
