@@ -255,6 +255,8 @@ Condición: se cumple **cualquiera** de los dos criterios siguientes.
 
 **Regla de governance:** los backfills deben ser eventos controlados y atribuibles. Nunca lanzar `--force` en producción sin registrar el motivo en el historial de cambios (commit message o backlog). Un `CALC_VERSION` bump sin un commit que lo documente es un error de proceso.
 
+**Versiones por familia (FND-0236, `FAMILY_VERSIONING_ENABLED`):** `CALC_VERSION` es la época *global* (cambio que afecta a todas las familias). Un cambio que afecta a una sola de las nueve familias de métricas (`risk, macro, momentum, capture, persistence, fx, regime, rolling, short`) se registra en `FAMILY_CALC_OVERRIDES` (`proyecto2/src/utils/family_versions.py`) y **no** incrementa `CALC_VERSION`: solo esa familia se recalcula. El token de una familia es `CALC_VERSION` (+ `.override` si lo tiene) y es el `algorithm_version` de sus filas; las puertas que comparan versiones (p. ej. `beta_shift_audit.expected_version`) esperan el token de la familia, no el `CALC_VERSION` desnudo. Un flag del bundle P2 pertenece a una familia (`FLAG_FAMILIES`); un test exige que todo flag de `P2_BUNDLE_FLAGS` esté mapeado. Con el interruptor apagado el comportamiento es el de siempre.
+
 **Trazabilidad:** tras un backfill, todas las filas de `fund_metrics` reescritas llevan el nuevo `algorithm_version` (= `CALC_VERSION` actualizado) y el `batch_id` del run de backfill. Las filas de `fund_metric_timeseries` conservan el `algorithm_version` y `batch_id` del run que las insertó originalmente (`INSERT OR IGNORE`), preservando la procedencia histórica.
 
 ---

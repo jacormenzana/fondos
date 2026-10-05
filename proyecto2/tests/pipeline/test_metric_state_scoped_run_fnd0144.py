@@ -22,9 +22,14 @@ def test_scoped_run_does_not_cover_all_families(subset):
 
 
 def test_state_upsert_is_guarded_by_family_coverage():
-    """The only _upsert_metric_state call in the fund loop must sit under the guard."""
+    """Every _upsert_metric_state call in the fund loop must be conditional on what the run covered.
+
+    Two legitimate call sites since FND-0236, in source order: the per-family one (switch on), which stamps the legacy
+    row with a composite hash only when every family is current, and the legacy one under `_covers_all_families(...)`.
+    """
     src = Path(rp.__file__).read_text(encoding="utf-8")
     calls = [m.start() for m in re.finditer(r"^\s+_upsert_metric_state\(conn, isin", src, re.M)]
-    assert len(calls) == 1
-    window = src[max(0, calls[0] - 200):calls[0]]
-    assert "_covers_all_families(metrics_filter)" in window
+    assert len(calls) == 2
+    versioned, legacy = (src[max(0, c - 900):c] for c in calls)
+    assert "_fam_dec is not None" in versioned and "all(f in _fam_dec.stamp" in versioned
+    assert "_covers_all_families(metrics_filter)" in legacy

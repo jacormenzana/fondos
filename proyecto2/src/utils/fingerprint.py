@@ -60,6 +60,16 @@ def compute_input_hash(
     afecten al último valor; si se necesita más sensibilidad, pasar
     calc_version nuevo para forzar recalculo completo.
     """
+    raw = f"{data_fingerprint(nav_df, ipc_df)}||{metric_version}||{calc_version}"
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+
+def data_fingerprint(nav_df: pd.DataFrame, ipc_df: pd.DataFrame | None) -> str:
+    """The data half of the input hash: NAV (last date, rows, last value) and IPC (last date, rows).
+
+    Shared by compute_input_hash() and the per-family hashes (FND-0236), so both always see the same data
+    state. The string is byte-identical to what compute_input_hash() has always composed.
+    """
     # --- NAV fingerprint --------------------------------------------------
     if nav_df is None or nav_df.empty:
         nav_fp = "EMPTY"
@@ -77,6 +87,4 @@ def compute_input_hash(
         ipc_n   = len(ipc_df)
         ipc_fp  = f"{ipc_max}|{ipc_n}"
 
-    # --- Compose and hash -------------------------------------------------
-    raw = f"{nav_fp}||{ipc_fp}||{metric_version}||{calc_version}"
-    return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+    return f"{nav_fp}||{ipc_fp}"

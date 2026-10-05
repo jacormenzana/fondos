@@ -116,7 +116,10 @@ from src.calculations.rolling_stats import (
     cat_signals_from_snapshot,
     resolve_rf_rate,
 )
-from src.utils.fingerprint import compute_input_hash, effective_calc_version
+from src.utils.fingerprint import compute_input_hash, effective_calc_version, data_fingerprint
+from src.utils.family_versions import (   # FND-0236 (dormant until shared.config.FAMILY_VERSIONING_ENABLED)
+    ALL_FAMILIES, FLAG_FAMILIES, composite_hash, current_family_hashes, decide_fund, family_token,
+)
 from src.utils.logger import get_pipeline_logger
 from src.writers.metrics_writer import (
     rows_from_metric_tuples as _rows_from_metric_tuples,
@@ -235,6 +238,74 @@ def _upsert_metric_state(
 
 
 # ============================================================
+# Per-metric-family versioning (FND-0236) — dormant while shared.config.FAMILY_VERSIONING_ENABLED is False
+# ============================================================
+
+def _family_versioning_on() -> bool:
+    """Read at call time (not import time) so the switch and the tests can flip it."""
+    from shared import config as _cfg
+    return bool(getattr(_cfg, "FAMILY_VERSIONING_ENABLED", False))
+
+
+def _algo(family: str) -> str:
+    """algorithm_version written on `family`'s rows: CALC_VERSION, plus the family override once it has one.
+    With the switch off (or no override) this is exactly CALC_VERSION, i.e. the value written today."""
+    return family_token(family, CALC_VERSION) if _family_versioning_on() else CALC_VERSION
+
+
+def _enabled_bundle_flags() -> tuple:
+    """Names in shared.config.P2_BUNDLE_FLAGS that are currently on (the same set effective_calc_version() uses)."""
+    from shared import config as _cfg
+    return tuple(n for n in _cfg.P2_BUNDLE_FLAGS if getattr(_cfg, n, False))
+
+
+def _get_family_hashes(conn: "psycopg.Connection", isin: str) -> dict:
+    """{family: input_hash} stored for (isin, METRIC_VERSION); {} for a fund with no family state yet."""
+    ph = "%s"
+    rows = conn.execute(
+        f"SELECT family, input_hash FROM fund_metric_family_state "
+        f"WHERE isin={ph} AND metric_version={ph}",
+        (isin, METRIC_VERSION),
+    ).fetchall()
+    return {r[0]: r[1] for r in rows}
+
+
+def _upsert_family_state(
+    conn: "psycopg.Connection",
+    isin: str,
+    hashes: dict,
+    dry_run: bool,
+) -> None:
+    """Stamp the given {family: hash} for one fund. Same transaction handling as _upsert_metric_state():
+    joins the caller's per-fund transaction (EFF-2) or opens its own."""
+    if dry_run or not hashes:
+        return
+    sql = (
+        "INSERT INTO fund_metric_family_state"
+        " (isin, metric_version, family, input_hash, family_token, calculated_at, batch_id)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s)"
+        " ON CONFLICT (isin, metric_version, family) DO UPDATE SET"
+        " input_hash = excluded.input_hash, family_token = excluded.family_token,"
+        " calculated_at = excluded.calculated_at, batch_id = excluded.batch_id"
+    )
+    today = date.today().isoformat()
+    rows = [(isin, METRIC_VERSION, fam, h, family_token(fam, CALC_VERSION), today, RUN_BATCH_ID)
+            for fam, h in sorted(hashes.items())]
+    if in_transaction(conn):
+        for r in rows:
+            conn.execute(sql, r)
+        return
+    begin_immediate(conn)
+    try:
+        for r in rows:
+            conn.execute(sql, r)
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+
+
+# ============================================================
 # OLS quarterly-cadence helpers (EFF-1)
 # ============================================================
 
@@ -271,7 +342,7 @@ def _ols_is_fresh(
     ).fetchone()
     if not row or row[0] is None:
         return False
-    return (row[0] == current_quarter and row[2] == CALC_VERSION
+    return (row[0] == current_quarter and row[2] == _algo("macro")      # FND-0236: the macro family's own token
             and (nav_count - (row[1] or 0)) < 3)
 
 
@@ -289,7 +360,7 @@ def _update_ols_state(
     conn.execute(
         f"UPDATE fund_metric_state SET last_ols_quarter={ph}, last_ols_nav_count={ph}, "
         f"last_ols_calc_version={ph} WHERE isin={ph} AND metric_version={ph}",
-        (current_quarter, nav_count, CALC_VERSION, isin, METRIC_VERSION),
+        (current_quarter, nav_count, _algo("macro"), isin, METRIC_VERSION),
     )
 
 
@@ -401,7 +472,7 @@ def _run_metric_family(
     rows = _rows_from_metric_tuples(result, len(ctx.nav_df))
     return spec.writer(
         ctx.conn, ctx.isin, rows, spec.horizon, dry_run,
-        algorithm_version=CALC_VERSION, batch_id=RUN_BATCH_ID, metric_version=METRIC_VERSION,
+        algorithm_version=_algo(spec.name), batch_id=RUN_BATCH_ID, metric_version=METRIC_VERSION,
     )
 
 
@@ -658,7 +729,7 @@ def _process_horizon(
     all_metrics = risk_metrics + cons_metrics
     written = _write_metrics(
         conn, isin, all_metrics, horizon, dry_run,
-        algorithm_version=CALC_VERSION, batch_id=RUN_BATCH_ID, metric_version=METRIC_VERSION,
+        algorithm_version=_algo("risk"), batch_id=RUN_BATCH_ID, metric_version=METRIC_VERSION,
     )
     _log(conn, isin, "CALC", "OK", horizon,
          f"{written} metricas calculadas", dry_run)
@@ -671,10 +742,7 @@ def _process_horizon(
 
 # All metric families available via --metrics.
 # None means "all".
-_ALL_METRIC_FAMILIES = frozenset({
-    "risk", "macro", "momentum", "capture",
-    "persistence", "fx", "regime", "rolling", "short",
-})
+_ALL_METRIC_FAMILIES = frozenset(ALL_FAMILIES)     # single definition: utils/family_versions.py (FND-0236)
 
 
 def _covers_all_families(metrics_filter: "list[str] | None") -> bool:
@@ -832,6 +900,12 @@ def run(
         """True si la familia debe calcularse según metrics_filter."""
         return metrics_filter is None or family in metrics_filter
 
+    # FND-0236: per-metric-family versioning. `_wanted_families` = what --metrics asks for; inside the fund loop `_wantf`
+    # narrows that to the families the decision says are stale (identical to `_want` while the switch is off).
+    _fam_on = _family_versioning_on()
+    _wanted_families = frozenset(ALL_FAMILIES if metrics_filter is None else metrics_filter)
+    _wantf = _want
+
     # Backfill flag (defined before try so finally can reference it)
     _is_backfill    = False
     _backfill_reason = ""
@@ -845,6 +919,15 @@ def run(
     n_warnings    = 0   # P2-12: logger.warning() call count for RUN_SUMMARY
     n_quarantined = 0   # FND-0164: funds whose NAV failed validate_nav() and were cleared
     n_ols_funds = n_cond_funds = n_beta_nulled = 0   # FND-0208: macro OLS guard trip rates (calibration evidence)
+    fam_run_counts = {f: 0 for f in ALL_FAMILIES}   # FND-0236: funds per family actually run (versioning ON only)
+    n_family_seeded = 0                              # FND-0236: funds adopted from the legacy hash, nothing recomputed
+
+    def _fam_summary() -> str:
+        """FND-0236: ' fam_run=risk:12,macro:3073,... fam_seeded=N' for the run summary ('' while versioning is off)."""
+        if not _fam_on:
+            return ""
+        return (" fam_run=" + ",".join(f"{f}:{n}" for f, n in fam_run_counts.items())
+                + f" fam_seeded={n_family_seeded}")
     defl_skipped  = 0   # v27 pivot: ISINs where rolling_stats.py couldn't build a real series
     total_written = 0
     total         = 0
@@ -864,7 +947,8 @@ def run(
         # ownership, so it cannot be issued at runtime under the least-privilege fondos_app role
         # (FND-0072). Instead, fail here, before any work, if the migration has not been applied --
         # not per fund in the middle of a multi-hour run. Scoped to fund_metric_state on purpose.
-        assert_schema_alignment(conn, tables=("fund_metric_state",))
+        assert_schema_alignment(
+            conn, tables=("fund_metric_state", "fund_metric_family_state") if _fam_on else ("fund_metric_state",))
 
         # ── v26: Backfill detection ──────────────────────────────────────────
         # A run is a "backfill" when it forces recomputation of previously
@@ -880,7 +964,11 @@ def run(
                     "SELECT algorithm_version FROM fund_metrics "
                     "WHERE algorithm_version IS NOT NULL LIMIT 1"
                 ).fetchone()
-                if _stored_algo and _stored_algo[0] and _stored_algo[0] != CALC_VERSION:
+                # FND-0236: with versioning on, a row may legitimately carry a family token (CALC_VERSION.override);
+                # drift means "not any current token". With it off the set is {CALC_VERSION}: unchanged behaviour.
+                _current_tokens = ({family_token(f, CALC_VERSION) for f in ALL_FAMILIES}
+                                   if _fam_on else {CALC_VERSION})
+                if _stored_algo and _stored_algo[0] and _stored_algo[0] not in _current_tokens:
                     _is_backfill = True
                     _backfill_reason = (
                         f"CALC_VERSION drift: stored={_stored_algo[0]} "
@@ -1218,7 +1306,40 @@ def run(
                 current_hash = compute_input_hash(
                     nav_df, ipc_df, METRIC_VERSION, effective_calc_version(CALC_VERSION)
                 )
-                if not force and isin not in force_recalc_isins:
+                # FND-0236: with the switch on, the decision is per metric family (utils/family_versions.decide_fund);
+                # `current_hash` above stays the LEGACY hash, used here only to adopt funds without family state.
+                _fam_dec = None
+                _fam_cur: dict = {}
+                _fam_stored: dict = {}
+                if _fam_on:
+                    _fam_cur = current_family_hashes(
+                        data_fingerprint(nav_df, ipc_df), METRIC_VERSION, CALC_VERSION, _enabled_bundle_flags()
+                    )
+                    _fam_stored = _get_family_hashes(conn, isin)
+                    _fam_dec = decide_fund(
+                        _wanted_families, _fam_stored, _fam_cur,
+                        force=force or isin in force_recalc_isins,
+                        legacy_stored=None if _fam_stored else _get_stored_hash(conn, isin),
+                        legacy_current=current_hash,
+                    )
+                    if _fam_dec.seed:
+                        _upsert_family_state(conn, isin, _fam_cur, dry_run)
+                        if not dry_run:
+                            conn.execute("COMMIT")      # adopted: nothing else will be written for this fund
+                        n_family_seeded += 1
+                    if _fam_dec.cache_hit:
+                        logger.debug(
+                            "", extra=dict(
+                                p2_idx=idx, p2_total=total, p2_isin=isin,
+                                p2_evt="Cache hit", p2_detail=f"families: {_fam_dec.reason}",
+                                p2_count="", p2_dur_ms=round((time.time() - t_fund) * 1000),
+                            )
+                        )
+                        n_skipped += 1
+                        continue
+                    for _f in _fam_dec.run:
+                        fam_run_counts[_f] += 1
+                elif not force and isin not in force_recalc_isins:
                     stored_hash = _get_stored_hash(conn, isin)
                     if stored_hash == current_hash:
                         elapsed_ms = round((time.time() - t_fund) * 1000)
@@ -1231,6 +1352,8 @@ def run(
                         )
                         n_skipped += 1
                         continue
+
+                _wantf = _want if _fam_dec is None else (lambda fam, _run=_fam_dec.run: fam in _run)
 
                 # ---- Optional date-range clipping --------------------
                 # (--from-date / --to-date: targeted recalc of a sub-period)
@@ -1265,7 +1388,7 @@ def run(
                     _fund_txn_open = True
 
                 # ---- Since inception ---------------------------------
-                if _want("risk"):
+                if _wantf("risk"):
                     if horizons_filter is None or "since_inception" in horizons_filter:
                         isin_written += _process_horizon(
                             isin, nav_df, ipc_df, "since_inception", conn, dry_run,
@@ -1273,7 +1396,7 @@ def run(
                         )
 
                 # ---- Ventanas de crisis ------------------------------
-                if _want("risk"):
+                if _wantf("risk"):
                     for crisis_name, (start, end) in CRISIS_WINDOWS.items():
                         if horizons_filter and crisis_name not in horizons_filter:
                             continue
@@ -1295,7 +1418,7 @@ def run(
                 # ---- Horizontes rolling ------------------------------
                 # REL-3: date-based slicing (tail(N) puede excluir meses con
                 # retraso puntual de publicación).
-                if _want("risk"):
+                if _wantf("risk"):
                     for horizon_name, months in ROLLING_WINDOWS.items():
                         if horizons_filter and horizon_name not in horizons_filter:
                             continue
@@ -1311,7 +1434,7 @@ def run(
                         )
 
                 # ---- Horizontes cortos diarios (v24) -----------------
-                if _want("short"):
+                if _wantf("short"):
                     nav_daily = load_nav_daily(conn, isin)
                     if not nav_daily.empty:
                         for sh_name, sh_days in SHORT_WINDOWS.items():
@@ -1340,7 +1463,7 @@ def run(
                             sh_rows = _rows_from_metric_tuples(sh_list, len(nav_sh))
                             isin_written += _write_metrics(
                                 conn, isin, sh_rows, sh_name, dry_run,
-                                algorithm_version=CALC_VERSION, batch_id=RUN_BATCH_ID,
+                                algorithm_version=_algo("short"), batch_id=RUN_BATCH_ID,
                                 metric_version=METRIC_VERSION_SHORT,
                             )
                             if sh_rows:
@@ -1367,7 +1490,7 @@ def run(
 
                 if _has_macro:
                     # -- Sensibilidad macro (OLS quarterly cadence, EFF-1) --
-                    if _want("macro"):
+                    if _wantf("macro"):
                         _skip_ols = _ols_is_fresh(conn, isin, len(nav_df), current_quarter, force=force)
                         if _skip_ols:
                             logger.debug(
@@ -1408,7 +1531,7 @@ def run(
                             # since they are always recomputed when OLS runs.
                             isin_written += _replace_beta_set(
                                 conn, isin, sens_rows, "since_inception", dry_run,
-                                algorithm_version=CALC_VERSION, batch_id=RUN_BATCH_ID,
+                                algorithm_version=_algo("macro"), batch_id=RUN_BATCH_ID,
                                 metric_version=METRIC_VERSION,
                             )
                             _ols_ran = True
@@ -1427,12 +1550,12 @@ def run(
                     regime_df=regime_df, has_macro=_has_macro,
                 )
                 for _spec in _PER_FUND_METRIC_FAMILIES:
-                    isin_written += _run_metric_family(_spec, _fund_ctx, dry_run, _want)
+                    isin_written += _run_metric_family(_spec, _fund_ctx, dry_run, _wantf)
 
                 # -- Indicadores rolling (v26 — ROLLING_STATS_ENABLED) --
                 # v28: pctile_self computed here from roll_rows (already in RAM),
                 # eliminating the post-loop full-table read for the self-percentile.
-                if _want("rolling") and ROLLING_STATS_ENABLED:
+                if _wantf("rolling") and ROLLING_STATS_ENABLED:
                     _defl_diag: list[dict] = []
                     roll_rows = compute_rolling_rows(
                         isin, nav_df,
@@ -1461,7 +1584,7 @@ def run(
                         )
                     ts_written = _write_timeseries(
                         conn, roll_rows, dry_run,
-                        algorithm_version=CALC_VERSION, batch_id=RUN_BATCH_ID,
+                        algorithm_version=_algo("rolling"), batch_id=RUN_BATCH_ID,
                     )
                     if ts_written:
                         _log(conn, isin, "ROLLING", "OK", "all_windows",
@@ -1497,7 +1620,7 @@ def run(
                         for w_name, w_rows in self_by.items():
                             isin_written += _write_metrics(
                                 conn, isin, w_rows, w_name, dry_run,
-                                algorithm_version=CALC_VERSION, batch_id=RUN_BATCH_ID,
+                                algorithm_version=_algo("rolling"), batch_id=RUN_BATCH_ID,
                                 metric_version=METRIC_VERSION,
                             )
 
@@ -1516,7 +1639,14 @@ def run(
                 # otherwise mark the fund as up to date and the next plain run would cache-hit,
                 # freezing the families that were not recomputed at the old CALC_VERSION.
                 if isin_written > 0:
-                    if _covers_all_families(metrics_filter):
+                    if _fam_dec is not None:
+                        # FND-0236: stamp exactly the families this run evaluated (a scoped run records its own
+                        # families instead of being unrecorded); the legacy row, kept for its readers, is stamped
+                        # with a composite hash only once every family is current.
+                        _upsert_family_state(conn, isin, {f: _fam_cur[f] for f in _fam_dec.stamp}, dry_run)
+                        if all(f in _fam_dec.stamp or _fam_stored.get(f) == _fam_cur[f] for f in ALL_FAMILIES):
+                            _upsert_metric_state(conn, isin, composite_hash(_fam_cur), dry_run)
+                    elif _covers_all_families(metrics_filter):
                         _upsert_metric_state(conn, isin, current_hash, dry_run)
                     # EFF-1: persist OLS quarter so next run in same quarter skips
                     if _ols_ran:
@@ -1568,7 +1698,10 @@ def run(
         # P2-05: skip cross-sectional snapshot when nothing was recomputed this run.
         # _latest_roll is empty → fallback DB query (16.6M-row scan) would fire
         # for no benefit; the previous run's snapshot is still correct.
-        if _want("rolling") and ROLLING_STATS_ENABLED and not dry_run and n_processed > 0:
+        # FND-0236: with versioning on, `n_processed > 0` can be true because of a non-rolling family (e.g. a macro-only
+        # change); the cross-sectional snapshot then has no fresh per-fund input and must not fall back to the full scan.
+        if (_want("rolling") and ROLLING_STATS_ENABLED and not dry_run and n_processed > 0
+                and (not _fam_on or fam_run_counts["rolling"] > 0)):
             logger.info(
                 "[ROLLING] Calculando snapshot cross-seccional (ultima fecha)..."
             )
@@ -1648,7 +1781,7 @@ def run(
                     n_cat = _write_metrics_batch(
                         conn, [(s_isin, s_window, s_rows) for (s_isin, s_window), s_rows in cat_by.items()],
                         dry_run,
-                        algorithm_version=CALC_VERSION, batch_id=RUN_BATCH_ID,
+                        algorithm_version=_algo("rolling"), batch_id=RUN_BATCH_ID,
                         metric_version=METRIC_VERSION,
                     )
                     logger.info(
@@ -1703,7 +1836,7 @@ def run(
             f"processed={n_processed} skipped={n_skipped} errors={n_errors} "
             f"warnings={n_warnings} defl_skipped={defl_skipped} total_written={total_written} "
             f"quarantined={n_quarantined} ols_funds={n_ols_funds} cond_guard_funds={n_cond_funds} "
-            f"betas_nulled={n_beta_nulled} elapsed={elapsed_total:.0f}s"
+            f"betas_nulled={n_beta_nulled} elapsed={elapsed_total:.0f}s{_fam_summary()}"
         )
         if n_quarantined > P2_QUARANTINE_ALERT_THRESHOLD and not dry_run:
             _alert_quarantine(run_id, n_quarantined)    # FND-0164: no more silent anomalies
@@ -1727,7 +1860,7 @@ def run(
                             f"warnings={n_warnings} defl_skipped={defl_skipped} "
                             f"written={total_written} quarantined={n_quarantined} "
                             f"ols_funds={n_ols_funds} cond_guard_funds={n_cond_funds} "
-                            f"betas_nulled={n_beta_nulled} elapsed={elapsed_total:.0f}s"
+                            f"betas_nulled={n_beta_nulled} elapsed={elapsed_total:.0f}s{_fam_summary()}"
                         ),
                         RUN_BATCH_ID,
                     ),

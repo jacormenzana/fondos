@@ -23,6 +23,25 @@ CREATE TABLE IF NOT EXISTS control.fund_metric_state (
 ) WITH (fillfactor = 85);   -- rewritten every P2 cycle — HOT-eligible with the low secondary-index count here
 
 -- -----------------------------------------------------------------------------
+-- control.fund_metric_family_state — per-family calc fingerprint (FND-0236), used only while
+-- shared.config.FAMILY_VERSIONING_ENABLED is on: one row per (fund, metric_version, family) so a change to one
+-- metric family recomputes that family alone. Seeded lazily from fund_metric_state.input_hash (no backfill needed).
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS control.fund_metric_family_state (
+    isin           varchar(12) NOT NULL,
+    metric_version text        NOT NULL DEFAULT 'v1',
+    family         text        NOT NULL,
+    input_hash     text        NOT NULL,   -- SHA-1 hex: data fingerprint + metric version + family token + the family's flags
+    family_token   text        NOT NULL,   -- CALC_VERSION[.override] the family was last computed under
+    calculated_at  date        NOT NULL,
+    batch_id       text,
+    CONSTRAINT fund_metric_family_state_pkey PRIMARY KEY (isin, metric_version, family),
+    CONSTRAINT fund_metric_family_state_isin_fk FOREIGN KEY (isin) REFERENCES silver.fund_master (isin) ON DELETE CASCADE,
+    CONSTRAINT fund_metric_family_state_family_ck CHECK (family IN
+        ('risk','macro','momentum','capture','persistence','fx','regime','rolling','short'))
+) WITH (fillfactor = 85);
+
+-- -----------------------------------------------------------------------------
 -- control.p2_pipeline_log — 575K rows, per-run traceability. Append-only.
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS control.p2_pipeline_log (

@@ -425,6 +425,19 @@ FUND_METRIC_STATE_COLUMNS: list[str] = [
     "last_ols_nav_count",
     "last_ols_calc_version",
 ]
+# control.fund_metric_family_state (FND-0236): one row per (fund, metric version, family). Checked ONLY when a caller asks
+# for it by name (P2 startup does when shared.config.FAMILY_VERSIONING_ENABLED is on), never by the all-tables check, so a
+# database without the table still passes while the switch is off.
+FUND_METRIC_FAMILY_STATE_COLUMNS: list[str] = [
+    "isin",
+    "metric_version",
+    "family",
+    "input_hash",
+    "family_token",
+    "calculated_at",
+    "batch_id",
+]
+OPTIONAL_TABLES: frozenset = frozenset({"fund_metric_family_state"})
 
 
 # ============================================================
@@ -482,8 +495,11 @@ def verify_db_schema(conn, tables=None) -> dict[str, list[str]]:
         ("fund_metric_timeseries",   frozenset(FUND_METRIC_TIMESERIES_AUDIT_COLUMNS)),
         ("p2_pipeline_log",          frozenset(P2_PIPELINE_LOG_AUDIT_COLUMNS)),
         ("fund_metric_state",        frozenset(FUND_METRIC_STATE_COLUMNS)),
+        ("fund_metric_family_state", frozenset(FUND_METRIC_FAMILY_STATE_COLUMNS)),
     ]
-    if tables is not None:
+    if tables is None:
+        checks = [(t, cols) for t, cols in checks if t not in OPTIONAL_TABLES]
+    else:
         wanted = {t.lower() for t in tables}
         checks = [(t, cols) for t, cols in checks if t in wanted]
 
@@ -530,7 +546,8 @@ def assert_schema_alignment(conn, tables=None) -> None:
             lines.append(f"  {table}: faltan {cols}")
         lines.append(
             "Aplica el DDL: db/pg/00_roles_schemas.sql .. 40_matviews.sql (con el rol propietario); "
-            "fund_metric_state.last_ols_calc_version: scripts/ops/migrate_fund_metric_state_ols_calc_version.py --apply"
+            "fund_metric_state.last_ols_calc_version: scripts/ops/migrate_fund_metric_state_ols_calc_version.py --apply; "
+            "fund_metric_family_state (FAMILY_VERSIONING_ENABLED): scripts/ops/migrate_fund_metric_family_state.py --apply"
         )
         raise AssertionError("\n".join(lines))
 

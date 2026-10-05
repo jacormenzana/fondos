@@ -74,7 +74,28 @@ def _robust_sigma(xs):
     return 1.4826 * statistics.median([abs(x - med) for x in xs]) or 0.0
 
 
+def expected_version(calc_version: str, overrides: dict | None = None) -> str:
+    """The algorithm_version the live macro rows must carry (FND-0236).
+
+    With shared.config.FAMILY_VERSIONING_ENABLED the macro family has its own token (CALC_VERSION plus its override once
+    it has one), so a macro-only change no longer moves CALC_VERSION. With the switch off, or with no macro override, this
+    is CALC_VERSION itself: the launchers keep passing `--version <CALC_VERSION>` unchanged. `overrides` is for tests;
+    production reads FAMILY_CALC_OVERRIDES from the pure module (loaded by path: it has no package-relative imports).
+    """
+    from shared import config
+    if not getattr(config, "FAMILY_VERSIONING_ENABLED", False):
+        return calc_version
+    import importlib.util
+    path = _ROOT / "proyecto2" / "src" / "utils" / "family_versions.py"
+    spec = importlib.util.spec_from_file_location("_family_versions_for_audit", path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod                  # a @dataclass in the module resolves its own module through sys.modules
+    spec.loader.exec_module(mod)
+    return mod.family_token("macro", calc_version, overrides)
+
+
 def compare(path: str, version: str, metric_like: str | None, out: str | None) -> int:
+    expected = expected_version(version)
     before = {}
     with open(path, encoding="utf8") as fh:
         for r in csv.DictReader(fh):
@@ -96,7 +117,7 @@ def compare(path: str, version: str, metric_like: str | None, out: str | None) -
                 missing_total += 1                          # fund dropped out of the metric (e.g. now quarantined)
                 continue
             v, ver = cur
-            if ver != version:
+            if ver != expected:
                 old_ver += 1
                 continue
             if v is None or (isinstance(v, float) and math.isnan(v)):

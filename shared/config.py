@@ -561,6 +561,13 @@ PERSISTENCE_FIRST_LAST_NAV_ENABLED: bool = True
 CAPTURE_MONTH_END_ENABLED: bool = True
 P2_BUNDLE_FLAGS: tuple = ("MACRO_VIF_ITERATIVE_ENABLED", "MACRO_FACTOR_CLEAN_ENABLED",
                           "PERSISTENCE_FIRST_LAST_NAV_ENABLED", "CAPTURE_MONTH_END_ENABLED")
+# FND-0236: per-metric-family calculation versions. OFF = today's behaviour (one global CALC_VERSION and one input hash per
+# fund). ON = each of the nine families has its own state row (control.fund_metric_family_state), so a change that touches one
+# family (bump FAMILY_CALC_OVERRIDES[family] in utils/family_versions.py) recomputes only that family. Switch-on order:
+# owner applies scripts/ops/migrate_fund_metric_family_state.py --apply, THEN this flag (P2 asserts the table at startup);
+# the first run adopts every fund from its legacy hash without recomputing. ROLLBACK: set False -- the next plain run
+# recomputes every fund once (the legacy hash column then holds a composite hash), no schema change needed.
+FAMILY_VERSIONING_ENABLED: bool = False
 # Options of the iterative VIF (used when MACRO_VIF_ITERATIVE_ENABLED, and by the PIT variant "iterative_hy"): keep the two
 # crisis factors, drop spread_ig (the near-duplicate of spread_hy), and at most n_obs / 10 factors per fund.
 MACRO_ITERATIVE_VIF: dict = {
