@@ -1,8 +1,7 @@
 @echo off
-setlocal enabledelayedexpansion
-
-:: Forzar UTF-8 en cmd
-chcp 65001 > nul
+setlocal EnableExtensions EnableDelayedExpansion
+call "%~dp0lib\common.bat" :init || (endlocal & exit /b 101)
+call "%COMMON%" :utf8_on
 
 :: ============================================================
 :: P1_harvestFunds.bat -- Proceso de harvest completo (descubrimiento + ciclo de vida KIID)
@@ -40,9 +39,6 @@ chcp 65001 > nul
 ::   cualquier otro = RC del paso que fallo. Aborta en el primer paso con RC != 0.
 :: ============================================================
 
-set PYTHON=C:\data\envs\des\python.exe
-set ROOT=C:\desarrollo\fondos
-set LAUNCH=%ROOT%\scripts\launch
 set HARVEST=%ROOT%\proyecto1\harvest
 set LOG_DIR=%ROOT%\proyecto1\log
 
@@ -89,10 +85,12 @@ if /i "%~1"=="--max-drop-pct" (
     shift
     goto :parse
 )
+if /i "%~1"=="-h"     goto :help
+if /i "%~1"=="--help" goto :help
 goto :bad_args
 :parsed
 
-for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set STAMP=%%a
+call "%COMMON%" :get_time STAMP yyyyMMdd_HHmmss
 set LOG=%LOG_DIR%\log_harvest_%STAMP%.log
 if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
 
@@ -107,7 +105,7 @@ echo   Log: %LOG%
 echo.
 
 :: Prevenir suspension durante descargas largas, salvo que lo gestione un orquestador.
-if not defined FONDOS_ORCH powercfg -change -standby-timeout-ac 0 > nul 2>&1
+call "%COMMON%" :standby_disable
 
 set FINAL_RC=0
 set RC1=SALTADO
@@ -197,9 +195,9 @@ if "!RUN_RETIRE!"=="1" (
 
 :fin
 popd
-if not defined FONDOS_ORCH powercfg -change -standby-timeout-ac 30 > nul 2>&1
+call "%COMMON%" :standby_restore
 
-for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set STAMP2=%%a
+call "%COMMON%" :get_time STAMP2 yyyyMMdd_HHmmss
 echo. >> "%LOG%"
 echo ============================================================ >> "%LOG%"
 echo  P1 Harvest -- Fin: %STAMP2% (RC1=!RC1! RC2=!RC2! RC3=!RC3! RC4=!RC4! RC5=!RC5! RC6=!RC6!^) >> "%LOG%"
@@ -209,7 +207,7 @@ echo.
 if !FINAL_RC! NEQ 0 (
     echo [%STAMP2%] P1 Harvest -- Fin ERROR (RC1=!RC1! RC2=!RC2! RC3=!RC3! RC4=!RC4! RC5=!RC5! RC6=!RC6!^)
     echo   Ultimas lineas del log:
-    powershell -NoProfile -Command "Get-Content -LiteralPath '%LOG%' -Tail 15"
+    call "%COMMON%" :tail "%LOG%" 15
 ) else (
     echo [%STAMP2%] P1 Harvest completado
     if "!RUN_SYNC!"=="0" echo   Revisar el delta en el log; relanzar con --sync [--retire-orphans] para aplicarlo.
@@ -217,9 +215,16 @@ if !FINAL_RC! NEQ 0 (
 echo   Log: %LOG%
 echo.
 
+call "%COMMON%" :utf8_off
 endlocal & exit /b %FINAL_RC%
-
 :bad_args
 echo [ERROR] Argumento no valido: %~1
-echo Uso: P1_harvestFunds.bat [--sync] [--retire-orphans] [--full] [--skip-harvest] [--limit N] [--max-drop-pct N]
-endlocal & exit /b 4
+echo Uso: P1_harvestFunds.bat [--sync] [--retire-orphans] [--full] [--skip-harvest] [--limit N] [--max-drop-pct N] [-h]
+call "%COMMON%" :utf8_off
+endlocal & exit /b %RC_USAGE%
+
+:help
+echo Uso: P1_harvestFunds.bat [--sync] [--retire-orphans] [--full] [--skip-harvest] [--limit N] [--max-drop-pct N] [-h]
+echo   sin flags: harvest + informe + puerta + delta (solo lectura de PDF); ver la cabecera del fichero
+call "%COMMON%" :utf8_off
+endlocal & exit /b 0

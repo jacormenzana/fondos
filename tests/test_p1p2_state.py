@@ -396,3 +396,140 @@ def test_cli_oc_commands_print_the_list_and_never_fail_the_launcher(ocfile, monk
     assert capsys.readouterr().out.strip() == "X,Y"
     _fake_oc_db(monkeypatch, [], raises=True)
     assert st.main(["oc-before"]) == st.RC_OK and st.main(["oc-newly"]) == st.RC_OK
+
+
+# ─── .env is loaded before the restore point gives up (the 2026-10-03 cycle skipped it) ──────────
+
+def test_restore_point_loads_the_dotenv_when_the_owner_dsn_is_not_in_the_environment(monkeypatch):
+    monkeypatch.delenv("FONDOS_PG_DSN_OWNER", raising=False)
+    calls = _fake_psycopg_module(monkeypatch)
+
+    def fake_load():                                   # what importing shared.config does with the .env
+        monkeypatch.setenv("FONDOS_PG_DSN_OWNER", "postgresql://fondos_owner@localhost/fondos")
+
+    monkeypatch.setattr(st, "_load_dotenv", fake_load)
+    assert st.create_restore_point("20260101_000000") is True
+    assert ("connect", "postgresql://fondos_owner@localhost/fondos") in calls
+
+
+def test_restore_point_does_not_reload_the_dotenv_when_the_dsn_is_already_set(monkeypatch):
+    monkeypatch.setenv("FONDOS_PG_DSN_OWNER", "postgresql://fondos_owner@localhost/fondos")
+    _fake_psycopg_module(monkeypatch)
+    monkeypatch.setattr(st, "_load_dotenv", lambda: pytest.fail("the real environment must win"))
+    assert st.create_restore_point("20260101_000000") is True
+
+
+# ─── preflight ───────────────────────────────────────────────────────────────────────────────────
+
+class _OkConn:
+    closed = False
+
+    def execute(self, sql):
+        assert sql == "SELECT 1"
+        return self
+
+    def fetchone(self):
+        return (1,)
+
+    def close(self):
+        self.closed = True
+
+
+def _levels(results):
+    return [lv for lv, _ in results]
+
+
+def test_preflight_all_green():
+    conn = _OkConn()
+    res = st.preflight_checks({"FONDOS_PG_DSN_OWNER": "x", "FRED_API_KEY": "k"}, lambda: conn, 100.0)
+    assert _levels(res) == ["OK", "OK", "OK", "OK"]
+    assert conn.closed, "the probe connection must be closed"
+
+
+def test_preflight_a_dead_database_is_blocking_and_points_at_the_wsl_keepalive():
+    def boom():
+        raise ConnectionError("timeout expired")
+
+    res = st.preflight_checks({"FONDOS_PG_DSN_OWNER": "x", "FRED_API_KEY": "k"}, boom, 100.0)
+    level, msg = res[0]
+    assert level == "FAIL" and "ConnectionError" in msg and "sleep infinity" in msg
+
+
+def test_preflight_missing_owner_dsn_or_fred_key_only_warn():
+    res = st.preflight_checks({}, lambda: _OkConn(), 100.0)
+    assert _levels(res) == ["OK", "WARN", "WARN", "OK"]
+    assert "restore point" in res[1][1] and "spread_hy" in res[2][1]
+
+
+@pytest.mark.parametrize("free,level", [(1.0, "WARN"), (None, "WARN"), (5.0, "OK")])
+def test_preflight_disk_space_is_only_ever_a_warning(free, level):
+    res = st.preflight_checks({"FONDOS_PG_DSN_OWNER": "x", "FRED_API_KEY": "k"}, lambda: _OkConn(), free)
+    assert res[-1][0] == level
+
+
+def test_preflight_exit_code_is_104_only_for_a_blocking_failure(monkeypatch, capsys):
+    monkeypatch.setattr(st, "_load_dotenv", lambda: None)
+    monkeypatch.setattr(st, "preflight_checks", lambda *a, **k: [("OK", "a"), ("WARN", "b")])
+    assert st.run_preflight() == 0
+    monkeypatch.setattr(st, "preflight_checks", lambda *a, **k: [("FAIL", "db"), ("WARN", "b")])
+    assert st.run_preflight() == st.RC_PREFLIGHT_FAILED == 104
+    out = capsys.readouterr().out
+    assert "[preflight] FAIL" in out and "[preflight] WARN" in out
+
+
+def test_cli_preflight_returns_its_exit_code(monkeypatch):
+    monkeypatch.setattr(st, "run_preflight", lambda: st.RC_PREFLIGHT_FAILED)
+    assert st.main(["preflight"]) == 104
+
+
+# ─── calc-version ────────────────────────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("line,expected", [
+    ('CALC_VERSION: str = "20261004"  # v40 (FND-0196)', "20261004"),
+    ("CALC_VERSION = '20260101'", "20260101"),
+    ('CALC_VERSION="20250101"', "20250101"),
+])
+def test_calc_version_reads_the_constant_without_importing_the_pipeline(tmp_path, line, expected):
+    f = tmp_path / "run_pipeline.py"
+    f.write_text("import nothing_that_exists\n" + line + "\n_OTHER = 1\n", encoding="utf-8")
+    assert st.calc_version(f) == expected
+
+
+def test_calc_version_ignores_mentions_in_comments_and_other_names(tmp_path):
+    f = tmp_path / "run_pipeline.py"
+    f.write_text('# CALC_VERSION = "11111111"\nOLD_CALC_VERSION = "22222222"\n', encoding="utf-8")
+    assert st.calc_version(f) is None
+
+
+def test_calc_version_is_none_for_a_missing_file(tmp_path):
+    assert st.calc_version(tmp_path / "nope.py") is None
+
+
+def test_calc_version_matches_the_real_pipeline():
+    v = st.calc_version()
+    assert v and v.isdigit() and len(v) == 8
+
+
+def test_cli_calc_version_prints_it_and_never_fails(monkeypatch, capsys):
+    monkeypatch.setattr(st, "calc_version", lambda path=None: "20261004")
+    assert st.main(["calc-version"]) == 0
+    assert capsys.readouterr().out.strip() == "20261004"
+    monkeypatch.setattr(st, "calc_version", lambda path=None: None)
+    assert st.main(["calc-version"]) == 0
+    assert capsys.readouterr().out.strip() == ""
+
+
+# ─── last-result (P1_P2_P3.bat --only-p3 refuses to build P3 on a cycle that did not finish OK) ─────
+
+def test_last_result_reports_how_the_last_cycle_ended(path, capsys):
+    assert st.main(["last-result"]) == st.RC_OK and capsys.readouterr().out.strip() == "NONE"       # no state at all
+    _seed(path, result="FAILED", step=2)
+    assert st.main(["last-result"]) == st.RC_OK and capsys.readouterr().out.strip() == "FAILED"
+    _seed(path, result="OK", step=0)
+    assert st.main(["last-result"]) == st.RC_OK and capsys.readouterr().out.strip() == "OK"
+
+
+def test_last_result_of_a_corrupt_state_is_none_not_ok(path, capsys):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("garbage")
+    assert st.main(["last-result"]) == st.RC_OK and capsys.readouterr().out.strip() == "NONE"

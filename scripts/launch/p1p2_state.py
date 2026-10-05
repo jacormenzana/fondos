@@ -21,13 +21,16 @@ State file (default proyecto1/log/P1_P2_Complete.state, override with env P1P2_S
     BASELINE_RUN_ID=<id>     (statistical-audit baseline of the chain, so a resumed run compares to it)
 
 Sub-commands (exit codes):
-    check  [--from N] [--from-any]      0 allowed | 2 refused | 3 state path not writable | 4 bad args
+    check  [--from N] [--from-any]      0 allowed | 102 refused | 103 state path not writable | 100 bad args
     write  --result OK|FAILED --failed-step N --stamp S [--from-any-used]
     step   --step N --rc R --start HHMMSS --end HHMMSS     always exits 0 (best-effort telemetry)
     baseline                            prints BASELINE_RUN_ID of the last run (empty if none)
+    last-result                         prints OK | FAILED | NONE (no readable state): how the last cycle ended
     oc-before                           snapshot of the funds whose ongoing charge equals ACI_RHP
     oc-newly                            prints, comma-separated, the funds contaminated SINCE oc-before
     restore-point --stamp S             pg_create_restore_point('p1p2_start_S'); always exits 0
+    preflight                           environment checks before the cycle: 0 ok | 104 a blocking check failed
+    calc-version                        prints P2's CALC_VERSION (read from run_pipeline.py, no heavy import)
 
 The file is the guard because it must work when the database is down. The database is used only for
 telemetry (ingestion_log rows, and a backlog ticket on failure) and every database call here is
@@ -37,6 +40,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 import tempfile
 from datetime import datetime
@@ -48,7 +52,10 @@ STEPS = (1, 2, 3, 4)
 STEP_NAMES = {1: "P1_refreshBenchmarks", 2: "P1_discoverAllFunds",
               3: "P2_discoverLoadMetrics", 4: "P2_calculateIndicators"}
 
-RC_OK, RC_REFUSED, RC_NOT_WRITABLE, RC_BAD_ARGS = 0, 2, 3, 4
+# The launcher's OWN exit codes live in 100-199 (doc/reglas/NORMAS_BATCH.md): they can never collide with the
+# 1-99 codes of the tools a step runs, which the launcher propagates untouched. They must equal the RC_* constants
+# of scripts/launch/lib/common.bat (tests/test_batch_standards.py enforces it).
+RC_OK, RC_BAD_ARGS, RC_REFUSED, RC_NOT_WRITABLE, RC_PREFLIGHT_FAILED = 0, 100, 102, 103, 104
 
 
 def state_path() -> Path:
@@ -217,7 +224,20 @@ def oc_newly(path: Path | None = None) -> list:
 # Best-effort like everything else here: no OWNER DSN, no WAL archiving, or any other failure just
 # means no restore point for this run — it never changes the launcher's exit code.
 
+def _load_dotenv() -> None:
+    """Importing shared.config loads the repo .env (never under pytest). The launcher starts this module
+    as a fresh process, so without this the owner DSN that lives only in .env is invisible here: the
+    restore point of the 2026-10-03 cycle was skipped for that reason although the DSN was configured."""
+    try:
+        sys.path.insert(0, str(ROOT))
+        import shared.config  # noqa: F401
+    except Exception as exc:
+        print(f"[p1p2_state] .env not loaded: {type(exc).__name__}: {exc}", file=sys.stderr)
+
+
 def create_restore_point(stamp: str) -> bool:
+    if not os.environ.get("FONDOS_PG_DSN_OWNER"):
+        _load_dotenv()
     dsn = os.environ.get("FONDOS_PG_DSN_OWNER")
     if not dsn:
         print("[p1p2_state] restore point skipped: FONDOS_PG_DSN_OWNER is not set", file=sys.stderr)
@@ -230,6 +250,84 @@ def create_restore_point(stamp: str) -> bool:
     except Exception as exc:
         print(f"[p1p2_state] restore point skipped: {type(exc).__name__}: {exc}", file=sys.stderr)
         return False
+
+
+# ── preflight (checks before a cycle that takes hours) ───────────────────────────────────────────
+# A dead database (WSL2 stops the distro when no `wsl` process is attached) used to show up as a failed
+# PASO 1; the owner DSN missing used to show up as a silently skipped restore point. Both are decidable
+# in a second, before anything is written, so the launcher asks first.
+
+MIN_FREE_GB = 5.0                                       # logs, exports and the audit CSVs land on this drive
+WSL_KEEPALIVE_HINT = 'start `wsl -d Ubuntu -- bash -c "sleep infinity"` in the background and retry'
+
+_OK, _WARN, _FAIL = "OK", "WARN", "FAIL"
+
+
+def preflight_checks(environ, connect, free_gb: float | None) -> list:
+    """[(level, message)]. Pure over its inputs (R-7): `connect()` opens the app connection, `environ`
+    is already .env-loaded, `free_gb` is the free space of the working drive (None = unknown)."""
+    out = []
+    try:
+        conn = connect()
+        try:
+            conn.execute("SELECT 1").fetchone()
+        finally:
+            conn.close()
+        out.append((_OK, "database reachable (FONDOS_PG_DSN)"))
+    except Exception as exc:
+        out.append((_FAIL, f"database unreachable ({type(exc).__name__}: {str(exc)[:120]}): {WSL_KEEPALIVE_HINT}"))
+    if environ.get("FONDOS_PG_DSN_OWNER"):
+        out.append((_OK, "FONDOS_PG_DSN_OWNER set (restore point possible)"))
+    else:
+        out.append((_WARN, "FONDOS_PG_DSN_OWNER not set: no restore point will be created for this cycle"))
+    if environ.get("FRED_API_KEY"):
+        out.append((_OK, "FRED_API_KEY set"))
+    else:
+        out.append((_WARN, "FRED_API_KEY not set: the macro loader falls back to FRED's public endpoint. Add "
+                           "FRED_API_KEY=<key> to the repo .env (free key: https://fred.stlouisfed.org/docs/api/api_key.html). "
+                           "Note FRED serves only ~3 years of the ICE BofA spread_hy even with a key (verified 2026-10-05: "
+                           "37 months); the longer history already in series_macro is kept, never reloaded"))
+    if free_gb is None:
+        out.append((_WARN, "free disk space could not be read"))
+    elif free_gb < MIN_FREE_GB:
+        out.append((_WARN, f"only {free_gb:.1f} GB free on the working drive (< {MIN_FREE_GB:.0f} GB)"))
+    else:
+        out.append((_OK, f"{free_gb:.0f} GB free on the working drive"))
+    return out
+
+
+def run_preflight() -> int:
+    """Prints one line per check; RC_PREFLIGHT_FAILED only when a blocking (FAIL) check failed."""
+    _load_dotenv()
+    try:
+        import shutil
+        free = shutil.disk_usage(str(ROOT)).free / 1e9
+    except OSError:
+        free = None
+
+    def _connect():
+        sys.path.insert(0, str(ROOT))
+        from shared.db import get_connection
+        return get_connection()
+
+    results = preflight_checks(os.environ, _connect, free)
+    for level, msg in results:
+        print(f"[preflight] {level:<4} {msg}")
+    return RC_PREFLIGHT_FAILED if any(lv == _FAIL for lv, _ in results) else RC_OK
+
+
+_CALC_VERSION_RE = re.compile(r"""^CALC_VERSION\s*(?::\s*str\s*)?=\s*["'](\d+)["']""", re.M)
+RUN_PIPELINE = ROOT / "proyecto2" / "src" / "pipeline" / "run_pipeline.py"
+
+
+def calc_version(path: Path | None = None) -> str | None:
+    """P2's CALC_VERSION, read from the source text: importing run_pipeline would load the whole P2
+    stack just to print one constant. None when the file or the constant cannot be found."""
+    try:
+        m = _CALC_VERSION_RE.search((path or RUN_PIPELINE).read_text(encoding="utf-8"))
+    except OSError:
+        return None
+    return m.group(1) if m else None
 
 
 # ── best-effort telemetry ────────────────────────────────────────────────────────────────────────
@@ -298,11 +396,15 @@ def main(argv: list | None = None) -> int:
     w.add_argument("--baseline-id", default="")
 
     sub.add_parser("baseline")
+    sub.add_parser("last-result")
     sub.add_parser("oc-before")
     sub.add_parser("oc-newly")
 
     r = sub.add_parser("restore-point")
     r.add_argument("--stamp", required=True)
+
+    sub.add_parser("preflight")
+    sub.add_parser("calc-version")
 
     s = sub.add_parser("step")
     s.add_argument("--step", type=int, required=True)
@@ -328,6 +430,10 @@ def main(argv: list | None = None) -> int:
         write_state(args.result, args.failed_step, args.stamp, args.from_any_used,
                     baseline_id=args.baseline_id)
         return RC_OK
+    if args.cmd == "last-result":
+        state = read_state()
+        print(state["LAST_RESULT"] if state else "NONE")
+        return RC_OK
     if args.cmd == "baseline":
         state = read_state()
         print(state["BASELINE_RUN_ID"] if state else "")
@@ -340,6 +446,11 @@ def main(argv: list | None = None) -> int:
         return RC_OK
     if args.cmd == "restore-point":
         create_restore_point(args.stamp)                 # best-effort: never fails the launcher
+        return RC_OK
+    if args.cmd == "preflight":
+        return run_preflight()
+    if args.cmd == "calc-version":
+        print(calc_version() or "")                     # empty = not found: the launcher skips what needs it
         return RC_OK
     # step: telemetry row (+ backlog ticket on failure); never fails the launcher
     secs = _seconds(args.start, args.end)

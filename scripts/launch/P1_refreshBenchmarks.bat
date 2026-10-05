@@ -1,8 +1,7 @@
 @echo off
-setlocal enabledelayedexpansion
-
-:: Forzar UTF-8 en cmd para evitar UnicodeEncodeError con caracteres no-ASCII
-chcp 65001 > nul
+setlocal EnableExtensions EnableDelayedExpansion
+call "%~dp0lib\common.bat" :init || (endlocal & exit /b 101)
+call "%COMMON%" :utf8_on
 
 :: ============================================================
 :: P1_refreshBenchmarks.bat  -- Recarga periodica de benchmarks Morningstar
@@ -24,8 +23,6 @@ chcp 65001 > nul
 :: seguidos); P1_P2_Complete.bat detiene el ciclo en ese caso.
 :: ============================================================
 
-set PYTHON=C:\data\envs\des\python.exe
-set ROOT=C:\desarrollo\fondos
 set LOG_DIR=%ROOT%\proyecto1\log
 
 set MODE=update
@@ -42,7 +39,7 @@ goto :collect
 
 :: Timestamp YYYYMMDD_HHMMSS (wmic removed on newer Windows builds; PowerShell
 :: is the portable replacement)
-for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set STAMP=%%a
+call "%COMMON%" :get_time STAMP yyyyMMdd_HHmmss
 set LOG=%LOG_DIR%\log_benchmarks_%STAMP%.log
 
 if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
@@ -63,7 +60,7 @@ pushd "%ROOT%"
 set RC=!ERRORLEVEL!
 popd
 
-for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set STAMP2=%%a
+call "%COMMON%" :get_time STAMP2 yyyyMMdd_HHmmss
 
 echo. >> "%LOG%"
 echo ============================================================ >> "%LOG%"
@@ -82,4 +79,5 @@ echo.
 :: endlocal discards delayed expansion before !VAR! on the next line could
 :: expand it (verified empirically) -- chain on one line so %RC%
 :: substitutes at parse time, while the scope is still active.
+call "%COMMON%" :utf8_off
 endlocal & exit /b %RC%

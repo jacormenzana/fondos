@@ -1,8 +1,7 @@
 @echo off
-setlocal enabledelayedexpansion
-
-:: Forzar UTF-8 en cmd
-chcp 65001 > nul
+setlocal EnableExtensions EnableDelayedExpansion
+call "%~dp0lib\common.bat" :init || (endlocal & exit /b 101)
+call "%COMMON%" :utf8_on
 
 :: ============================================================
 :: P2_calculateIndicators.bat  (v30 -- AUDIT_P2 launcher, flags, orchestrator-aware standby)
@@ -31,9 +30,6 @@ chcp 65001 > nul
 ::   - v27: python -u, exit-code capture inmediato, footer diferenciado, RC a ambos logs
 :: ============================================================
 
-set PYTHON=C:\data\envs\des\python.exe
-set ROOT=C:\desarrollo\fondos
-set LAUNCH=%ROOT%\scripts\launch
 set LOG_DIR=%ROOT%\proyecto2\log
 
 set FORCE_FLAG=
@@ -65,7 +61,7 @@ goto :parse
 
 :: Timestamp YYYYMMDD_HHMMSS (wmic removed on newer Windows builds; PowerShell
 :: is the portable replacement)
-for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set STAMP=%%a
+call "%COMMON%" :get_time STAMP yyyyMMdd_HHmmss
 set LOG=%LOG_DIR%\log_P2_calcIndicators_%STAMP%.log
 set ERR=%LOG_DIR%\log_P2_calcIndicators_%STAMP%_err.log
 set AUDIT_LOG=%LOG_DIR%\log_P2_audit_%STAMP%.log
@@ -88,12 +84,9 @@ echo.
 pushd "%ROOT%"
 
 :: -- Prevenir suspension/hibernacion durante la ejecucion ----------------------
-:: Standby AC a 0 min = nunca suspender mientras hay alimentacion de red.
-:: Bajo el orquestador (FONDOS_ORCH) lo gestiona el, no este script.
-if not defined FONDOS_ORCH (
-    echo [%time%] Desactivando suspension AC (powercfg standby 0 min^)
-    powercfg -change -standby-timeout-ac 0 > nul 2>&1
-)
+:: lib\common.bat guarda el valor real y lo restaura al final. Bajo un orquestador (FONDOS_ORCH)
+:: no hace nada: lo gestiona el.
+call "%COMMON%" :standby_disable
 
 :: -- PIPELINE ------------------------------------------------------------------
 echo [%time%] Ejecutando pipeline de calculo de indicadores
@@ -145,14 +138,11 @@ if "!RUN_AUDIT!"=="0" (
 
 popd
 
-:: -- Restaurar standby AC al valor por defecto de Windows (30 min) -------------
-if not defined FONDOS_ORCH (
-    echo [%time%] Restaurando suspension AC (powercfg standby 30 min^)
-    powercfg -change -standby-timeout-ac 30 > nul 2>&1
-)
+:: -- Restaurar la suspension AC al valor que tenia ----------------------------
+call "%COMMON%" :standby_restore
 
 :: -- Pie del log ---------------------------------------------------------------
-for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set STAMP2=%%a
+call "%COMMON%" :get_time STAMP2 yyyyMMdd_HHmmss
 
 :: FINAL_RC: pipeline tiene precedencia; export en segundo lugar; audit
 :: (report mode) solo cuenta si las dos fases anteriores fueron OK -- en report mode
@@ -211,4 +201,5 @@ echo.
 :: endlocal discards delayed expansion before !FINAL_RC! on the next line
 :: could expand it (verified empirically) -- chain on one line so %FINAL_RC%
 :: substitutes at parse time, while the scope is still active.
+call "%COMMON%" :utf8_off
 endlocal & exit /b %FINAL_RC%

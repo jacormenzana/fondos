@@ -1,9 +1,7 @@
 @echo off
-setlocal enabledelayedexpansion
-
-:: Forzar UTF-8 en cmd para evitar UnicodeEncodeError con caracteres no-ASCII
-:: en el fichero de log generado por >> redireccion
-chcp 65001 > nul
+setlocal EnableExtensions EnableDelayedExpansion
+call "%~dp0lib\common.bat" :init || (endlocal & exit /b 101)
+call "%COMMON%" :utf8_on
 
 :: ============================================================
 :: P1_discoverAllFunds.bat  -- Pipeline P1 completo + export Excel + auditoria P1
@@ -23,13 +21,7 @@ chcp 65001 > nul
 :: mezclar sus [WARN] con el triage del pipeline.
 :: ============================================================
 
-set ROOT=C:\desarrollo\fondos
-set LAUNCH=%ROOT%\scripts\launch
 set LOG_DIR=%ROOT%\proyecto1\log
-
-:: Resolve bare 'python' calls below to the 'des' Conda env (bare python on
-:: PATH otherwise hits the WindowsApps shim -> "Permission denied").
-set PATH=C:\data\envs\des;C:\data\envs\des\Scripts;%PATH%
 
 set RUN_AUDIT=1
 set RUN_EXPORT=1
@@ -46,14 +38,23 @@ if /i "%~1"=="--no-export" (
     shift
     goto :parse
 )
+if /i "%~1"=="-h"     goto :help
+if /i "%~1"=="--help" goto :help
 echo [ERROR] Argumento desconocido: %~1
-echo Uso: P1_discoverAllFunds.bat [--no-audit] [--no-export]
-endlocal & exit /b 4
+echo Uso: P1_discoverAllFunds.bat [--no-audit] [--no-export] [-h]
+call "%COMMON%" :utf8_off
+endlocal & exit /b %RC_USAGE%
+:help
+echo Uso: P1_discoverAllFunds.bat [--no-audit] [--no-export] [-h]
+echo   --no-audit    sin auditoria P1
+echo   --no-export   sin export Excel
+call "%COMMON%" :utf8_off
+endlocal & exit /b 0
 :parsed
 
 :: Timestamp YYYYMMDD_HHMMSS (wmic removed on newer Windows builds; PowerShell
 :: is the portable replacement)
-for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set STAMP=%%a
+call "%COMMON%" :get_time STAMP yyyyMMdd_HHmmss
 set LOG=%LOG_DIR%\log_pipeline_%STAMP%.log
 set AUDIT_LOG=%LOG_DIR%\log_P1_audit_%STAMP%.log
 
@@ -74,7 +75,7 @@ echo.
 echo [%time%] Paso 0: mark_stale (max 50 fondos, antiguedad ^> 180 dias)
 echo. >> "%LOG%"
 echo --- PASO 0: mark_stale ------------------------------------ >> "%LOG%"
-python -u -X utf8 "%ROOT%\scripts\launch\mark_stale.py" --max-age 180 --max-funds 50 >> "%LOG%" 2>&1
+"%PYTHON%" -u -X utf8 "%ROOT%\scripts\launch\mark_stale.py" --max-age 180 --max-funds 50 >> "%LOG%" 2>&1
 set RC0=!ERRORLEVEL!
 
 :: -- OPT-B3: single nature-first pass (replaces 7 sequential block runs) -----
@@ -100,7 +101,7 @@ echo [%time%] Clasificacion: NATURE_FIRST (OPT-B3, pasada unica)
 echo. >> "%LOG%"
 echo --- NATURE_FIRST (OPT-B3) --------------------------------- >> "%LOG%"
 pushd "%ROOT%\proyecto1"
-python -u -X utf8 run_block.py --nature-first --master-db >> "%LOG%" 2>&1
+"%PYTHON%" -u -X utf8 run_block.py --nature-first --master-db >> "%LOG%" 2>&1
 set RC1=!ERRORLEVEL!
 popd
 
@@ -109,7 +110,7 @@ echo [%time%] fund_family_builder
 echo. >> "%LOG%"
 echo --- fund_family_builder ----------------------------------- >> "%LOG%"
 pushd "%ROOT%"
-python -u -X utf8 -m proyecto1.core.fund_family_builder >> "%LOG%" 2>&1
+"%PYTHON%" -u -X utf8 -m proyecto1.core.fund_family_builder >> "%LOG%" 2>&1
 set RC2=!ERRORLEVEL!
 popd
 
@@ -120,7 +121,7 @@ if "!RUN_EXPORT!"=="1" (
     echo. >> "%LOG%"
     echo --- export_p1 --------------------------------------------- >> "%LOG%"
     pushd "%ROOT%"
-    python -u -X utf8 -m proyecto1.src.analysis.export_p1 --include-kiid-text >> "%LOG%" 2>&1
+    "%PYTHON%" -u -X utf8 -m proyecto1.src.analysis.export_p1 --include-kiid-text >> "%LOG%" 2>&1
     set RC3=!ERRORLEVEL!
     popd
 ) else (
@@ -152,7 +153,7 @@ if !FINAL_RC! EQU 0 if !RC3! NEQ 0 set FINAL_RC=!RC3!
 if !FINAL_RC! EQU 0 if !RC4! NEQ 0 set FINAL_RC=!RC4!
 
 :: -- Pie del log --------------------------------------------------------------
-for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set STAMP2=%%a
+call "%COMMON%" :get_time STAMP2 yyyyMMdd_HHmmss
 echo. >> "%LOG%"
 echo ============================================================ >> "%LOG%"
 echo  Pipeline P1 - Fin: %STAMP2% (RC0=!RC0! RC1=!RC1! RC2=!RC2! RC3=!RC3! RC4=!RC4!^) >> "%LOG%"
@@ -171,4 +172,5 @@ echo.
 :: endlocal discards delayed expansion before !VAR! on the next line could
 :: expand it (verified empirically) -- chain on one line so %FINAL_RC%
 :: substitutes at parse time, while the scope is still active.
+call "%COMMON%" :utf8_off
 endlocal & exit /b %FINAL_RC%

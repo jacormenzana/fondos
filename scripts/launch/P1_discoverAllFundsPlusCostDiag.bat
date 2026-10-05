@@ -1,25 +1,19 @@
 @echo off
-setlocal enabledelayedexpansion
-
-:: Forzar UTF-8 en cmd para evitar UnicodeEncodeError con caracteres no-ASCII
-:: en el fichero de log generado por >> redireccion
-chcp 65001 > nul
+setlocal EnableExtensions EnableDelayedExpansion
+call "%~dp0lib\common.bat" :init || (endlocal & exit /b 101)
+call "%COMMON%" :utf8_on
 
 :: ============================================================
-:: discoverAllFunds.bat  -- Pipeline P1 completo
+:: P1_discoverAllFundsPlusCostDiag.bat -- Pipeline P1 por bloques (legacy) + Cost Diag
+:: Uso: P1_discoverAllFundsPlusCostDiag.bat   (sin argumentos)
 :: Ejecutar desde: C:\desarrollo\fondos\scripts\launch\
 :: Log generado en: C:\desarrollo\fondos\proyecto1\log\
 :: ============================================================
 
-set ROOT=C:\desarrollo\fondos
 set MASTER=c:\data\fondos\in\GestoresDeFondosv1.xlsx
 set LOG_DIR=%ROOT%\proyecto1\log
 
-:: Resolve bare 'python' calls below to the 'des' Conda env (bare python on
-:: PATH otherwise hits the WindowsApps shim -> "Permission denied").
-set PATH=C:\data\envs\des;C:\data\envs\des\Scripts;%PATH%
-
-:: --- LÍNEAS A AÑADIR ---
+:: --- LINEAS A ANADIR ---
 set KIID_DIR=c:\data\fondos\kiid
 set LOG_DIAG_OUT_DIR=%ROOT%\out\diag
 set PYTHONPATH=%ROOT%\proyecto1;%ROOT%\proyecto1\core;%ROOT%\shared
@@ -27,7 +21,7 @@ set PYTHONPATH=%ROOT%\proyecto1;%ROOT%\proyecto1\core;%ROOT%\shared
 
 :: Timestamp YYYYMMDD_HHMMSS (wmic removed on newer Windows builds; PowerShell
 :: is the portable replacement)
-for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set STAMP=%%a
+call "%COMMON%" :get_time STAMP yyyyMMdd_HHmmss
 set LOG=%LOG_DIR%\log_pipeline_%STAMP%.log
 
 if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
@@ -47,7 +41,7 @@ echo.
 echo [%time%] Paso 0: mark_stale (max 50 fondos, antiguedad ^> 180 dias)
 echo. >> "%LOG%"
 echo --- PASO 0: mark_stale ------------------------------------ >> "%LOG%"
-python -X utf8 "%ROOT%\scripts\launch\mark_stale.py" --max-age 180 --max-funds 50 >> "%LOG%" 2>&1
+"%PYTHON%" -X utf8 "%ROOT%\scripts\launch\mark_stale.py" --max-age 180 --max-funds 50 >> "%LOG%" 2>&1
 set RC0=!ERRORLEVEL!
 
 :: -- Bloques de clasificacion -------------------------------------------------
@@ -55,43 +49,43 @@ echo [%time%] Bloque: monetarios
 echo. >> "%LOG%"
 echo --- BLOQUE: monetarios ------------------------------------ >> "%LOG%"
 pushd %ROOT%\proyecto1
-python -X utf8 run_block.py --block monetarios     --master "%MASTER%" >> "%LOG%" 2>&1
+"%PYTHON%" -X utf8 run_block.py --block monetarios     --master "%MASTER%" >> "%LOG%" 2>&1
 set RC1=!ERRORLEVEL!
 
 echo [%time%] Bloque: rf_corto
 echo. >> "%LOG%"
 echo --- BLOQUE: rf_corto -------------------------------------- >> "%LOG%"
-python -X utf8 run_block.py --block rf_corto       --master "%MASTER%" >> "%LOG%" 2>&1
+"%PYTHON%" -X utf8 run_block.py --block rf_corto       --master "%MASTER%" >> "%LOG%" 2>&1
 set RC2=!ERRORLEVEL!
 
 echo [%time%] Bloque: rf_flexible
 echo. >> "%LOG%"
 echo --- BLOQUE: rf_flexible ----------------------------------- >> "%LOG%"
-python -X utf8 run_block.py --block rf_flexible    --master "%MASTER%" >> "%LOG%" 2>&1
+"%PYTHON%" -X utf8 run_block.py --block rf_flexible    --master "%MASTER%" >> "%LOG%" 2>&1
 set RC3=!ERRORLEVEL!
 
 echo [%time%] Bloque: renta_variable
 echo. >> "%LOG%"
 echo --- BLOQUE: renta_variable -------------------------------- >> "%LOG%"
-python -X utf8 run_block.py --block renta_variable --master "%MASTER%" >> "%LOG%" 2>&1
+"%PYTHON%" -X utf8 run_block.py --block renta_variable --master "%MASTER%" >> "%LOG%" 2>&1
 set RC4=!ERRORLEVEL!
 
 echo [%time%] Bloque: mixtos
 echo. >> "%LOG%"
 echo --- BLOQUE: mixtos ---------------------------------------- >> "%LOG%"
-python -X utf8 run_block.py --block mixtos         --master "%MASTER%" >> "%LOG%" 2>&1
+"%PYTHON%" -X utf8 run_block.py --block mixtos         --master "%MASTER%" >> "%LOG%" 2>&1
 set RC5=!ERRORLEVEL!
 
 echo [%time%] Bloque: alternativos
 echo. >> "%LOG%"
 echo --- BLOQUE: alternativos ---------------------------------- >> "%LOG%"
-python -X utf8 run_block.py --block alternativos   --master "%MASTER%" >> "%LOG%" 2>&1
+"%PYTHON%" -X utf8 run_block.py --block alternativos   --master "%MASTER%" >> "%LOG%" 2>&1
 set RC6=!ERRORLEVEL!
 
 echo [%time%] Bloque: restantes
 echo. >> "%LOG%"
 echo --- BLOQUE: restantes ------------------------------------- >> "%LOG%"
-python -X utf8 run_block.py --block restantes      --master "%MASTER%" >> "%LOG%" 2>&1
+"%PYTHON%" -X utf8 run_block.py --block restantes      --master "%MASTER%" >> "%LOG%" 2>&1
 set RC7=!ERRORLEVEL!
 popd
 
@@ -100,12 +94,12 @@ echo [%time%] fund_family_builder
 echo. >> "%LOG%"
 echo --- fund_family_builder ----------------------------------- >> "%LOG%"
 pushd %ROOT%
-python -X utf8 -m proyecto1.core.fund_family_builder >> "%LOG%" 2>&1
+"%PYTHON%" -X utf8 -m proyecto1.core.fund_family_builder >> "%LOG%" 2>&1
 set RC8=!ERRORLEVEL!
 popd
 
 :: -- Pie del log --------------------------------------------------------------
-for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set STAMP2=%%a
+call "%COMMON%" :get_time STAMP2 yyyyMMdd_HHmmss
 echo. >> "%LOG%"
 echo ============================================================ >> "%LOG%"
 echo  Pipeline P1 - Fin: %STAMP2% (RC0=!RC0! RC1=!RC1! RC2=!RC2! RC3=!RC3! RC4=!RC4! RC5=!RC5! RC6=!RC6! RC7=!RC7! RC8=!RC8!^) >> "%LOG%"
@@ -121,7 +115,6 @@ echo.
 :: FIX: Corregidas redirecciones, variable %LOG_DIAG_OUT% y popd
 :: ============================================================
 
-
 set LOG_DIAG_OUT=%LOG_DIAG_OUT_DIR%\cost_diag_%STAMP2%_p1g.csv
 set LOG_DIAG_SUMMARY=%LOG_DIAG_OUT_DIR%\cost_diag_summary_%STAMP2%.log
 
@@ -133,7 +126,7 @@ echo  SUMMARY: %LOG_DIAG_SUMMARY%                                 >> "%LOG%"
 echo ============================================================ >> "%LOG%"
 
 pushd %ROOT%
-python -X utf8 "%ROOT%\scripts\diag\diag_cost_extraction.py" ^
+"%PYTHON%" -X utf8 "%ROOT%\scripts\diag\diag_cost_extraction.py" ^
     --kiid-dir "%KIID_DIR%" ^
     --only-priips ^
     --out "%LOG_DIAG_OUT%" 
@@ -173,4 +166,5 @@ if !FINAL_RC! EQU 0 if !DIAG_RC! NEQ 0 set FINAL_RC=!DIAG_RC!
 :: endlocal discards delayed expansion before !VAR! on the next line could
 :: expand it (verified empirically) -- chain on one line so %FINAL_RC%
 :: substitutes at parse time, while the scope is still active.
+call "%COMMON%" :utf8_off
 endlocal & exit /b %FINAL_RC%

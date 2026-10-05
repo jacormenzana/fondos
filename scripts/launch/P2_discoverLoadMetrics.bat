@@ -1,8 +1,7 @@
 @echo off
-setlocal enabledelayedexpansion
-
-:: Forzar UTF-8 en cmd
-chcp 65001 > nul
+setlocal EnableExtensions EnableDelayedExpansion
+call "%~dp0lib\common.bat" :init || (endlocal & exit /b 101)
+call "%COMMON%" :utf8_on
 
 :: ============================================================
 :: P2_discoverLoadMetrics.bat
@@ -21,8 +20,6 @@ chcp 65001 > nul
 ::   P2_discoverLoadMetrics.bat --skip-macro    solo NAV (discover + load)
 :: ============================================================
 
-set PYTHON=C:\data\envs\des\python.exe
-set ROOT=C:\desarrollo\fondos
 set LOG_DIR=%ROOT%\proyecto2\log
 
 set WORKERS_ARG=
@@ -42,12 +39,14 @@ if /i "%~1"=="--skip-macro" (
     shift
     goto :parse
 )
+if /i "%~1"=="-h"     goto :help
+if /i "%~1"=="--help" goto :help
 goto :bad_args
 :parsed
 
 :: Timestamp YYYYMMDD_HHMMSS (wmic removed on newer Windows builds; PowerShell
 :: is the portable replacement)
-for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set STAMP=%%a
+call "%COMMON%" :get_time STAMP yyyyMMdd_HHmmss
 set LOG=%LOG_DIR%\log_P2_discoverMetrics_%STAMP%.log
 set ERR=%LOG_DIR%\log_P2_discoverMetrics_%STAMP%_err.log
 
@@ -115,7 +114,7 @@ for %%V in (RC_INE RC_BCE RC_FRED RC_EUROSTAT RC_DISCOVER RC_LOAD) do (
 set SUMMARY=INE=!RC_INE! BCE=!RC_BCE! FRED=!RC_FRED! EUROSTAT=!RC_EUROSTAT! DISCOVER=!RC_DISCOVER! LOAD=!RC_LOAD!
 
 :: -- Pie del log ---------------------------------------------------------------
-for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set STAMP2=%%a
+call "%COMMON%" :get_time STAMP2 yyyyMMdd_HHmmss
 
 echo. >> "%LOG%"
 echo ============================================================ >> "%LOG%"
@@ -135,9 +134,17 @@ echo.
 :: endlocal discards delayed expansion before !VAR! on the next line could
 :: expand it (verified empirically) -- chain on one line so %FINAL_RC%
 :: substitutes at parse time, while the scope is still active.
+call "%COMMON%" :utf8_off
 endlocal & exit /b %FINAL_RC%
-
 :bad_args
 echo [ERROR] Argumento no valido: %~1
-echo Uso: P2_discoverLoadMetrics.bat [--workers N] [--skip-macro]
-endlocal & exit /b 4
+echo Uso: P2_discoverLoadMetrics.bat [--workers N] [--skip-macro] [-h]
+call "%COMMON%" :utf8_off
+endlocal & exit /b %RC_USAGE%
+
+:help
+echo Uso: P2_discoverLoadMetrics.bat [--workers N] [--skip-macro] [-h]
+echo   --workers N   N hilos en el NAV load
+echo   --skip-macro  solo NAV, sin carga macro
+call "%COMMON%" :utf8_off
+endlocal & exit /b 0

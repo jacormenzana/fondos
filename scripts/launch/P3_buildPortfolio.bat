@@ -1,8 +1,7 @@
 @echo off
-setlocal enabledelayedexpansion
-
-:: Forzar UTF-8 en cmd
-chcp 65001 > nul
+setlocal EnableExtensions EnableDelayedExpansion
+call "%~dp0lib\common.bat" :init || (endlocal & exit /b 101)
+call "%COMMON%" :utf8_on
 
 :: ============================================================
 :: P3_buildPortfolio.bat
@@ -25,11 +24,9 @@ chcp 65001 > nul
 :: Todos los argumentos se reenvian tal cual a p3_build_portfolio.py.
 :: ============================================================
 
-set PYTHON=C:\data\envs\des\python.exe
-set ROOT=C:\desarrollo\fondos
 set LOG_DIR=%ROOT%\proyecto3\log
 
-for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set STAMP=%%a
+call "%COMMON%" :get_time STAMP yyyyMMdd_HHmmss
 set LOG=%LOG_DIR%\log_P3_buildPortfolio_%STAMP%.log
 set ERR=%LOG_DIR%\log_P3_buildPortfolio_%STAMP%_err.log
 
@@ -53,7 +50,7 @@ pushd "%ROOT%"
 set RC=!ERRORLEVEL!
 popd
 
-for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set STAMP2=%%a
+call "%COMMON%" :get_time STAMP2 yyyyMMdd_HHmmss
 
 echo. >> "%LOG%"
 echo  P3 Build Portfolio -- Fin: %STAMP2% (RC=!RC!^) >> "%LOG%"
@@ -68,7 +65,7 @@ if !RC! EQU 0 (
     echo   o --allow-stale si se asume el riesgo. Detalle: %LOG%
 ) else (
     echo [%STAMP2%] ERROR rc=!RC! -- ver %ERR%
-    powershell -NoProfile -Command "Get-Content -LiteralPath '%ERR%' -Tail 15 -ErrorAction SilentlyContinue"
+    call "%COMMON%" :tail "%ERR%" 15
 )
 echo.
 
@@ -76,4 +73,5 @@ echo.
 :: expand it (verified empirically, same pattern as the other P2/P3
 :: launchers) -- chain on one line so %RC% substitutes at parse time, while
 :: the scope is still active.
+call "%COMMON%" :utf8_off
 endlocal & exit /b %RC%

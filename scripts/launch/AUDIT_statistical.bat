@@ -1,8 +1,7 @@
 @echo off
-setlocal enabledelayedexpansion
-
-:: Forzar UTF-8 en cmd
-chcp 65001 > nul
+setlocal EnableExtensions EnableDelayedExpansion
+call "%~dp0lib\common.bat" :init || (endlocal & exit /b 101)
+call "%COMMON%" :utf8_on
 
 :: ============================================================
 :: AUDIT_statistical.bat
@@ -18,14 +17,15 @@ chcp 65001 > nul
 :: se reenvian tal cual a run_statistical_audit.py (--mode, --persist, --run-id).
 :: ============================================================
 
-set PYTHON=C:\data\envs\des\python.exe
-set ROOT=C:\desarrollo\fondos
 set LOG_DIR=%ROOT%\out\audit\log
 
+if /i "%~1"=="-h"     goto :help
+if /i "%~1"=="--help" goto :help
 set DOMAIN=%~1
 if "%DOMAIN%"=="" (
     echo Uso: AUDIT_statistical.bat costs^|p2 [--mode check] [--persist]
-    exit /b 2
+    call "%COMMON%" :utf8_off
+    endlocal & exit /b %RC_USAGE%
 )
 shift
 
@@ -38,8 +38,8 @@ goto collect_args
 :args_done
 
 :: Timestamp YYYYMMDD_HHMMSS (wmic removed on newer Windows builds; PowerShell
-:: is the portable replacement — see repo-wide wmic removal noted 2026-09-13).
-for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set STAMP=%%a
+:: is the portable replacement -- see repo-wide wmic removal noted 2026-09-13).
+call "%COMMON%" :get_time STAMP yyyyMMdd_HHmmss
 set LOG=%LOG_DIR%\log_AUDIT_%DOMAIN%_%STAMP%.log
 set ERR=%LOG_DIR%\log_AUDIT_%DOMAIN%_%STAMP%_err.log
 
@@ -60,12 +60,12 @@ echo.
 
 pushd "%ROOT%"
 
-%PYTHON% -u -X utf8 scripts\audit\run_statistical_audit.py --domain %DOMAIN%%EXTRA_ARGS% >> "%LOG%" 2>> "%ERR%"
+"%PYTHON%" -u -X utf8 scripts\audit\run_statistical_audit.py --domain %DOMAIN%%EXTRA_ARGS% >> "%LOG%" 2>> "%ERR%"
 set RC=!ERRORLEVEL!
 
 popd
 
-for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set STAMP2=%%a
+call "%COMMON%" :get_time STAMP2 yyyyMMdd_HHmmss
 
 echo. >> "%LOG%"
 echo ============================================================ >> "%LOG%"
@@ -89,10 +89,17 @@ echo   Log stderr : %ERR%
 echo.
 
 :: endlocal discards the setlocal-scoped RC before !RC! can expand (delayed
-:: expansion is reverted by endlocal too) — chaining on one line lets cmd
+:: expansion is reverted by endlocal too) -- chaining on one line lets cmd
 :: substitute %RC% at parse time, while the scope is still active, before
 :: endlocal and exit run. Splitting this into two lines silently returns 0
-:: regardless of RC (verified empirically on this machine's cmd.exe — the
+:: regardless of RC (verified empirically on this machine's cmd.exe -- the
 :: same endlocal+exit/b!VAR! pattern in P2_calculateIndicators.bat and other
 :: scripts/launch/*.bat launchers likely has this latent bug too).
+call "%COMMON%" :utf8_off
 endlocal & exit /b %RC%
+
+:help
+echo Uso: AUDIT_statistical.bat costs^|p2 [--mode check] [--persist] [-h]
+echo   dominio obligatorio (costs o p2); el resto se reenvia a run_statistical_audit.py
+call "%COMMON%" :utf8_off
+endlocal & exit /b 0
