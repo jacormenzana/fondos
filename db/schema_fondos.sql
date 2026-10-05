@@ -868,6 +868,7 @@ CREATE TABLE IF NOT EXISTS fund_metric_state (
     calculated_at       TEXT    NOT NULL,           -- ISO date of last successful run
     last_ols_quarter    TEXT,                        -- YYYY-Q of last OLS run (EFF-1)
     last_ols_nav_count  INTEGER,                     -- NAV row count at last OLS (EFF-1)
+    last_ols_calc_version TEXT,                      -- CALC_VERSION of last OLS; NULL = stale
     PRIMARY KEY (isin, metric_version),
     FOREIGN KEY (isin) REFERENCES fund_master (ISIN) ON DELETE CASCADE
 );

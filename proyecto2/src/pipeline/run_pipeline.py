@@ -82,6 +82,7 @@ from shared.config import (
     ROLLING_STATS_ENABLED, ALERT_RULES, ROLLING_TIMESERIES_METRICS
 )
 from shared.db import get_connection, in_transaction, begin_immediate, executemany
+from shared.schema_checks import assert_schema_alignment
 from src.readers.db_readers import (
     load_nav, get_isins_with_nav, load_ipc, ipc_available, load_nav_daily,
     load_rf_rate,                    # §4g — historical risk-free rate (€STR proxy)
@@ -244,7 +245,13 @@ def _ols_is_fresh(
     current_quarter: str,
     force: bool = False,
 ) -> bool:
-    """True if OLS betas are still fresh: computed this quarter and NAV grew < 3 rows.
+    """True if OLS betas are still fresh: computed this quarter, under the current
+    CALC_VERSION, and NAV grew < 3 rows.
+
+    The CALC_VERSION leg matters: a version bump changes the OLS logic, so betas computed under an
+    older version are stale even inside the same quarter. Without it the 2026-10-04 bump bypassed the
+    input-hash cache but every fund skipped OLS (ols_funds=0) and the macro rows stayed on the old
+    version. A NULL last_ols_calc_version (row written before the column existed) counts as stale.
 
     When force=True always returns False so --force guarantees a full OLS recompute
     (not just a hash-cache bypass) even within the same quarter.
@@ -258,13 +265,14 @@ def _ols_is_fresh(
         return False
     ph = "%s"
     row = conn.execute(
-        f"SELECT last_ols_quarter, last_ols_nav_count FROM fund_metric_state "
+        f"SELECT last_ols_quarter, last_ols_nav_count, last_ols_calc_version FROM fund_metric_state "
         f"WHERE isin={ph} AND metric_version={ph}",
         (isin, METRIC_VERSION),
     ).fetchone()
     if not row or row[0] is None:
         return False
-    return row[0] == current_quarter and (nav_count - (row[1] or 0)) < 3
+    return (row[0] == current_quarter and row[2] == CALC_VERSION
+            and (nav_count - (row[1] or 0)) < 3)
 
 
 def _update_ols_state(
@@ -274,14 +282,14 @@ def _update_ols_state(
     nav_count: int,
     dry_run: bool,
 ) -> None:
-    """Record that OLS was computed for this fund in current_quarter."""
+    """Record that OLS was computed for this fund in current_quarter under CALC_VERSION."""
     if dry_run:
         return
     ph = "%s"
     conn.execute(
-        f"UPDATE fund_metric_state SET last_ols_quarter={ph}, last_ols_nav_count={ph} "
-        f"WHERE isin={ph} AND metric_version={ph}",
-        (current_quarter, nav_count, isin, METRIC_VERSION),
+        f"UPDATE fund_metric_state SET last_ols_quarter={ph}, last_ols_nav_count={ph}, "
+        f"last_ols_calc_version={ph} WHERE isin={ph} AND metric_version={ph}",
+        (current_quarter, nav_count, CALC_VERSION, isin, METRIC_VERSION),
     )
 
 
@@ -851,10 +859,12 @@ def run(
 
         conn = get_connection()
 
-        # EFF-1: add OLS cadence columns if not yet present (idempotent).
-        # Postgres: db/pg/35_control.sql already defines them; even a no-op
-        # ALTER ... IF NOT EXISTS requires table ownership, so issuing it at runtime
-        # would fail under the least-privilege fondos_app role (FND-0072).
+        # EFF-1: the OLS cadence columns (last_ols_quarter / last_ols_nav_count / last_ols_calc_version)
+        # are defined in db/pg/35_control.sql. Even a no-op ALTER ... IF NOT EXISTS requires table
+        # ownership, so it cannot be issued at runtime under the least-privilege fondos_app role
+        # (FND-0072). Instead, fail here, before any work, if the migration has not been applied --
+        # not per fund in the middle of a multi-hour run. Scoped to fund_metric_state on purpose.
+        assert_schema_alignment(conn, tables=("fund_metric_state",))
 
         # ── v26: Backfill detection ──────────────────────────────────────────
         # A run is a "backfill" when it forces recomputation of previously

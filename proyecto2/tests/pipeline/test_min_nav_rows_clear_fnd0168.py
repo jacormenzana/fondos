@@ -12,7 +12,8 @@ def test_clear_insufficient_history_deletes_derived_rows_but_not_the_nav_flag(
     conn.execute(f"SET search_path = {pg_conn_module_schema}")
     conn.execute("""CREATE TABLE fund_metric_state (isin text NOT NULL, metric_version text NOT NULL DEFAULT 'v1',
                     input_hash text NOT NULL, calculated_at date NOT NULL, last_ols_quarter text,
-                    last_ols_nav_count integer, PRIMARY KEY (isin, metric_version))""")
+                    last_ols_nav_count integer, last_ols_calc_version text,
+                    PRIMARY KEY (isin, metric_version))""")
     conn.execute("CREATE TABLE fund_metrics (isin text, metric text, horizon text, value double precision)")
     conn.execute("CREATE TABLE fund_metric_timeseries (isin text, metric text)")
     conn.execute("CREATE TABLE fund_metric_alerts (isin text, metric text)")

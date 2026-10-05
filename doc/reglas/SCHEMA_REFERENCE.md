@@ -57,6 +57,12 @@ No data migration is required; this section names the layering that already exis
 without touching source data. Bump `CALC_VERSION` in `run_pipeline.py` and run with `--force` to
 trigger a full Gold recompute. All Gold rows produced by that run share the new `batch_id`.
 
+**OLS cadence state (`fund_metric_state`):** `last_ols_quarter`, `last_ols_nav_count` and
+`last_ols_calc_version` gate the macro OLS to a quarterly cadence. The gate is `CALC_VERSION`-aware:
+OLS is skipped only when the quarter matches, `last_ols_calc_version = CALC_VERSION` and NAV grew by
+fewer than 3 rows (NULL version = stale). A `CALC_VERSION` bump therefore recomputes the macro betas
+without `--force`. P2 asserts the three columns at startup (`shared/schema_checks.py`).
+
 ---
 
 ## TABLA 1: fund_master

@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS control.fund_metric_state (
     calculated_at            date        NOT NULL,
     last_ols_quarter          text,
     last_ols_nav_count         integer,
+    last_ols_calc_version      text,        -- CALC_VERSION of the last OLS run; NULL = stale (OLS gate is CALC_VERSION-aware)
 
     CONSTRAINT fund_metric_state_pkey PRIMARY KEY (isin, metric_version),
     CONSTRAINT fund_metric_state_isin_fk FOREIGN KEY (isin) REFERENCES silver.fund_master (isin) ON DELETE CASCADE

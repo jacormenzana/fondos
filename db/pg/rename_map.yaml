@@ -268,6 +268,7 @@ columns:
     calculated_at: calculated_at
     last_ols_quarter: last_ols_quarter
     last_ols_nav_count: last_ols_nav_count
+    last_ols_calc_version: last_ols_calc_version
 
   fund_metric_timeseries:
     # This map records the frozen, retired SQLite source's columns (tests/test_bi_compat.py checks

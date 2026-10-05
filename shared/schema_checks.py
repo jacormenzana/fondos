@@ -416,6 +416,15 @@ FUND_METRIC_TIMESERIES_AUDIT_COLUMNS: list[str] = [
 P2_PIPELINE_LOG_AUDIT_COLUMNS: list[str] = [
     "batch_id",
 ]
+# control.fund_metric_state: the OLS-cadence gate reads these on every fund. last_ols_calc_version
+# (2026-10-05) makes the quarterly gate CALC_VERSION-aware; a database that has not had
+# scripts/ops/migrate_fund_metric_state_ols_calc_version.py applied must fail at P2 startup, not in
+# the per-fund loop.
+FUND_METRIC_STATE_COLUMNS: list[str] = [
+    "last_ols_quarter",
+    "last_ols_nav_count",
+    "last_ols_calc_version",
+]
 
 
 # ============================================================
@@ -443,10 +452,13 @@ def _table_columns(conn, table: str) -> set[str]:
     return {r["column_name"] for r in cur.fetchall()}
 
 
-def verify_db_schema(conn) -> dict[str, list[str]]:
+def verify_db_schema(conn, tables=None) -> dict[str, list[str]]:
     """
     Verifica que la BD tenga todas las columnas esperadas en las
     tres tablas canónicas.
+
+    `tables`: opcional, restringe la comprobación a esas tablas (p. ej. el arranque de P2 solo
+    necesita fund_metric_state). None = todas.
 
     Devuelve dict {tabla: [columnas_faltantes]}.
     Dict vacío = schema alineado.
@@ -469,7 +481,11 @@ def verify_db_schema(conn) -> dict[str, list[str]]:
         ("fund_metrics",             frozenset(FUND_METRICS_AUDIT_COLUMNS)),
         ("fund_metric_timeseries",   frozenset(FUND_METRIC_TIMESERIES_AUDIT_COLUMNS)),
         ("p2_pipeline_log",          frozenset(P2_PIPELINE_LOG_AUDIT_COLUMNS)),
+        ("fund_metric_state",        frozenset(FUND_METRIC_STATE_COLUMNS)),
     ]
+    if tables is not None:
+        wanted = {t.lower() for t in tables}
+        checks = [(t, cols) for t, cols in checks if t in wanted]
 
     for table, expected in checks:
         try:
@@ -490,7 +506,7 @@ def verify_db_schema(conn) -> dict[str, list[str]]:
 # ============================================================
 # assert_schema_alignment
 # ============================================================
-def assert_schema_alignment(conn) -> None:
+def assert_schema_alignment(conn, tables=None) -> None:
     """
     Comprueba que fund_master, fund_kiid_metadata, ingestion_log,
     fund_benchmarks, fund_data_quality_issues, fund_nav_monthly y
@@ -505,7 +521,7 @@ def assert_schema_alignment(conn) -> None:
         from shared.schema_checks import assert_schema_alignment
         assert_schema_alignment(conn)
     """
-    missing = verify_db_schema(conn)
+    missing = verify_db_schema(conn, tables)
     if missing:
         lines = [
             f"Schema de BD desalineado con schema_checks.py (v{_schema_version()}):"
@@ -513,7 +529,8 @@ def assert_schema_alignment(conn) -> None:
         for table, cols in missing.items():
             lines.append(f"  {table}: faltan {cols}")
         lines.append(
-            "Aplica el DDL: db/pg/00_roles_schemas.sql .. 40_matviews.sql (con el rol propietario)"
+            "Aplica el DDL: db/pg/00_roles_schemas.sql .. 40_matviews.sql (con el rol propietario); "
+            "fund_metric_state.last_ols_calc_version: scripts/ops/migrate_fund_metric_state_ols_calc_version.py --apply"
         )
         raise AssertionError("\n".join(lines))
 
