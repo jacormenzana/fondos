@@ -187,3 +187,36 @@ def test_scoped_stamp_leaves_other_families_for_the_next_full_run():
     stored = {f: cur[f] for f in first.stamp}
     second = fv.decide_fund(ALL, stored, cur)
     assert second.run == frozenset(ALL - {"regime"})
+
+
+# ---------------------------------------------------------------- what to stamp after the transaction
+def test_a_fund_that_wrote_rows_is_stamped_for_every_evaluated_family():
+    cur = _hashes()
+    d = fv.decide_fund(ALL, {}, cur)
+    assert fv.families_to_stamp(d, {}, cur, rows_written=12) == frozenset(ALL)
+
+
+def test_a_new_fund_that_wrote_nothing_is_not_stamped():
+    cur = _hashes()
+    d = fv.decide_fund(ALL, {}, cur)
+    assert fv.families_to_stamp(d, {}, cur, rows_written=0) == frozenset()
+
+
+def test_established_fund_with_a_gated_out_family_is_stamped_even_with_zero_rows():
+    """The rehearsal finding: a macro-only bump on a fund whose history is too short for the OLS writes no macro rows;
+    without a stamp it would be 'processed' on every later run."""
+    stored = _hashes()
+    cur = _hashes(overrides={"macro": "20261101"})
+    d = fv.decide_fund(ALL, stored, cur)
+    assert d.run == frozenset({"macro"})
+    assert fv.families_to_stamp(d, stored, cur, rows_written=0) == frozenset({"macro"})
+
+
+def test_scoped_run_on_an_established_fund_is_stamped_for_its_own_families():
+    stored = _hashes()
+    cur = _hashes(cv="20261101")
+    d = fv.decide_fund({"fx"}, stored, cur)
+    assert d.run == frozenset({"fx"})
+    # the other families are stale too, so the fund is NOT established: nothing is stamped on zero rows
+    assert fv.families_to_stamp(d, stored, cur, rows_written=0) == frozenset()
+    assert fv.families_to_stamp(d, stored, cur, rows_written=3) == frozenset({"fx"})

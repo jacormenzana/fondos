@@ -29,9 +29,10 @@ def switch(monkeypatch):
     return _set
 
 
-def test_switch_is_off_by_default():
+def test_switch_is_a_plain_boolean():
+    """A code constant, flipped by the owner after migrate_fund_metric_family_state.py --apply (not an env var)."""
     from shared import config
-    assert config.FAMILY_VERSIONING_ENABLED is False
+    assert isinstance(config.FAMILY_VERSIONING_ENABLED, bool)
 
 
 def test_all_metric_families_is_the_single_definition():

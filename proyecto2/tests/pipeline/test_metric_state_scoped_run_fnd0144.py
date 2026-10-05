@@ -31,5 +31,5 @@ def test_state_upsert_is_guarded_by_family_coverage():
     calls = [m.start() for m in re.finditer(r"^\s+_upsert_metric_state\(conn, isin", src, re.M)]
     assert len(calls) == 2
     versioned, legacy = (src[max(0, c - 900):c] for c in calls)
-    assert "_fam_dec is not None" in versioned and "all(f in _fam_dec.stamp" in versioned
+    assert "_fam_dec is not None" in versioned and "all(f in _stamp" in versioned
     assert "_covers_all_families(metrics_filter)" in legacy

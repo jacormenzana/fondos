@@ -127,6 +127,21 @@ def decide_fund(wanted: Iterable[str], stored: Mapping, current: Mapping, *, for
     return FundDecision(stale, stale, False, False, "stale: " + ",".join(sorted(stale)))
 
 
+def families_to_stamp(decision: FundDecision, stored: Mapping, current: Mapping, rows_written: int) -> frozenset:
+    """Families to record once the fund's transaction has succeeded.
+
+    A fund that wrote rows is stamped for every family the decision evaluated (the pre-versioning rule: "wrote something =
+    up to date"). An ESTABLISHED fund (every family outside this run's set already current) is stamped even when the run
+    wrote nothing: a family it never qualifies for (macro on a history too short for the OLS) writes no rows by design,
+    and without a stamp it would be re-evaluated -- and the run counted as "processed" -- on every future run. A new fund
+    that wrote nothing is not stamped, as before.
+    """
+    if rows_written > 0:
+        return decision.stamp
+    established = bool(stored) and all(stored.get(f) == current[f] for f in ALL_FAMILIES if f not in decision.run)
+    return decision.stamp if established else frozenset()
+
+
 def _check_family(family: str) -> None:
     if family not in ALL_FAMILIES:
         raise ValueError(f"unknown metric family: {family!r}")

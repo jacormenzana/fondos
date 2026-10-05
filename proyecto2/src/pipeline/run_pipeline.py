@@ -118,7 +118,7 @@ from src.calculations.rolling_stats import (
 )
 from src.utils.fingerprint import compute_input_hash, effective_calc_version, data_fingerprint
 from src.utils.family_versions import (   # FND-0236 (dormant until shared.config.FAMILY_VERSIONING_ENABLED)
-    ALL_FAMILIES, FLAG_FAMILIES, composite_hash, current_family_hashes, decide_fund, family_token,
+    ALL_FAMILIES, FLAG_FAMILIES, composite_hash, current_family_hashes, decide_fund, families_to_stamp, family_token,
 )
 from src.utils.logger import get_pipeline_logger
 from src.writers.metrics_writer import (
@@ -1638,13 +1638,17 @@ def run(
                 # only a run covering every family may stamp it. A scoped --metrics run would
                 # otherwise mark the fund as up to date and the next plain run would cache-hit,
                 # freezing the families that were not recomputed at the old CALC_VERSION.
-                if isin_written > 0:
+                # FND-0236: with versioning on, an established fund is also stamped when this run wrote nothing
+                # (a family it never qualifies for) -- see family_versions.families_to_stamp().
+                _stamp = (families_to_stamp(_fam_dec, _fam_stored, _fam_cur, isin_written)
+                          if _fam_dec is not None else frozenset())
+                if isin_written > 0 or _stamp:
                     if _fam_dec is not None:
                         # FND-0236: stamp exactly the families this run evaluated (a scoped run records its own
                         # families instead of being unrecorded); the legacy row, kept for its readers, is stamped
                         # with a composite hash only once every family is current.
-                        _upsert_family_state(conn, isin, {f: _fam_cur[f] for f in _fam_dec.stamp}, dry_run)
-                        if all(f in _fam_dec.stamp or _fam_stored.get(f) == _fam_cur[f] for f in ALL_FAMILIES):
+                        _upsert_family_state(conn, isin, {f: _fam_cur[f] for f in _stamp}, dry_run)
+                        if all(f in _stamp or _fam_stored.get(f) == _fam_cur[f] for f in ALL_FAMILIES):
                             _upsert_metric_state(conn, isin, composite_hash(_fam_cur), dry_run)
                     elif _covers_all_families(metrics_filter):
                         _upsert_metric_state(conn, isin, current_hash, dry_run)
