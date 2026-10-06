@@ -32,6 +32,7 @@ Divisas soportadas: USD, JPY, GBP, CNY. Otras → lista vacia.
 import numpy as np
 import pandas as pd
 
+from shared.config import FX_CONTRIBUTION_PCT_CLAMP
 
 
 MIN_OBS = 24  # minimo de observaciones para calcular la metrica
@@ -209,7 +210,7 @@ def compute_currency_factor(
     total_ann = float((1 + np.mean(r_total_arr)) ** 12 - 1)
     if abs(total_ann) > 1e-6:
         fx_pct = fx_contribution_ann / total_ann
-        fx_pct = max(-5.0, min(5.0, fx_pct))  # clamp outliers
+        fx_pct = max(-FX_CONTRIBUTION_PCT_CLAMP, min(FX_CONTRIBUTION_PCT_CLAMP, fx_pct))  # clamp outliers
     else:
         fx_pct = 0.0
 

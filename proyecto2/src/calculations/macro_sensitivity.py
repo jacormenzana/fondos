@@ -66,6 +66,8 @@ from shared.config import (
     MACRO_DEV_STATUS_FORCE_KEEP,
     MACRO_OLS_MAX_CONDITION_INDEX,
     MACRO_BETA_PLAUSIBLE_MAX,
+    ENERGY_SCENARIO_SHOCK,
+    HY_SPREAD_SCENARIO_SHOCK,
 )
 from shared.dq_guards import scaled_condition_number, most_collinear_column, bound_or_none
 
@@ -539,9 +541,9 @@ def compute_macro_sensitivity(
     _betas = {m: v for m, v, _ in metrics if m.startswith("beta_")}
     if "beta_oil" in _betas:
         metrics.append(("energy_sensitivity_pct",
-                        None if _betas["beta_oil"] is None else _betas["beta_oil"] * 0.25, 0))
+                        None if _betas["beta_oil"] is None else _betas["beta_oil"] * ENERGY_SCENARIO_SHOCK, 0))
     if "beta_spread_hy" in _betas:
         metrics.append(("hy_spread_sensitivity_pct",
-                        None if _betas["beta_spread_hy"] is None else _betas["beta_spread_hy"] * 3.0, 0))
+                        None if _betas["beta_spread_hy"] is None else _betas["beta_spread_hy"] * HY_SPREAD_SCENARIO_SHOCK, 0))
 
     return metrics

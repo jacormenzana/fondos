@@ -3,7 +3,7 @@ are NOT already expressed as a Block 5 invariant in catalog_invariants.py.
 Deliberately does not duplicate coverage: max_dd, srri_nav, upside/downside
 capture, macro_r2, |sharpe|/|sortino| already have an equivalent
 HARD_INVARIANT or PLAUSIBILITY rule in P2_INVARIANTS. bounded_unit metrics
-(momentum, persistence, pct-months, sensitivities, regime_coverage_ratio)
+(momentum, persistence, pct-months, regime_coverage_ratio)
 get a single generic 0-1 rule generated from their MetricSpec.statistical_type
 rather than one hand-written entry per metric (P#11/DRY) — the cost-domain
 catalog has no equivalent shortcut because its columns don't share one
@@ -19,14 +19,30 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from shared.config import (
+    ENERGY_SCENARIO_SHOCK, FX_CONTRIBUTION_PCT_CLAMP, HY_SPREAD_SCENARIO_SHOCK, MACRO_BETA_PLAUSIBLE_MAX,
+)
+
 from .catalog_metrics import get_metric_spec
 from .invariants import BoundRule
+
+_ENERGY_MAX = MACRO_BETA_PLAUSIBLE_MAX * ENERGY_SCENARIO_SHOCK
+_HY_SPREAD_MAX = MACRO_BETA_PLAUSIBLE_MAX * HY_SPREAD_SCENARIO_SHOCK
 
 METRIC_BOUNDS: dict[str, BoundRule] = {
     "vol_ann": BoundRule("vol_ann", 0.0, 5.0, "PLAUSIBILITY"),
     "srri_volatility": BoundRule("srri_volatility", 0.0, 5.0, "PLAUSIBILITY"),
     "return_ann": BoundRule("return_ann", -0.9, 3.0, "PLAUSIBILITY"),
     "capture_ratio": BoundRule("capture_ratio", -5.0, 5.0, "PLAUSIBILITY"),
+    # FND-0234 (2026-10-06): these three are signed scales, not unit fractions; the generic [0, 1] bound they used to get
+    # flagged 1,935 / 906 / 467 live rows as "outside bounds" that were correct. The limits derive from the producers'
+    # own constants (shared.config), so they move with them: scenario impacts are bounded by the beta circuit breaker x the
+    # shock, fx_contribution_pct by its clamp (a value AT the clamp is the unstable-ratio problem of FND-0235, not a bound
+    # violation).
+    "energy_sensitivity_pct": BoundRule("energy_sensitivity_pct", -_ENERGY_MAX, _ENERGY_MAX, "PLAUSIBILITY"),
+    "hy_spread_sensitivity_pct": BoundRule("hy_spread_sensitivity_pct", -_HY_SPREAD_MAX, _HY_SPREAD_MAX, "PLAUSIBILITY"),
+    "fx_contribution_pct": BoundRule("fx_contribution_pct", -FX_CONTRIBUTION_PCT_CLAMP, FX_CONTRIBUTION_PCT_CLAMP,
+                                     "PLAUSIBILITY"),
 }
 
 _BOUNDED_UNIT_TEMPLATE = BoundRule("*", 0.0, 1.0, "PLAUSIBILITY")

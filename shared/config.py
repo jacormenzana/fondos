@@ -542,6 +542,13 @@ MACRO_OLS_MAX_CONDITION_INDEX: float = 30.0
 # Post-OLS circuit breaker: a beta with |beta| above this (or non-finite) is written as NULL, not as a value.
 # Also the plausibility limit counted by scripts/audit/beta_shift_audit.py (FND-0176 saw 600-1,100).
 MACRO_BETA_PLAUSIBLE_MAX: float = 5.0
+# FND-0234: scales of three derived P2 metrics, named once so the producer and the audit's plausibility bound cannot drift.
+# energy_sensitivity_pct = beta_oil * ENERGY_SCENARIO_SHOCK (a +25% WTI scenario); hy_spread_sensitivity_pct = beta_spread_hy *
+# HY_SPREAD_SCENARIO_SHOCK (+300 bp); both are SIGNED return impacts, bounded by MACRO_BETA_PLAUSIBLE_MAX x the shock (the beta
+# circuit breaker nulls anything larger). fx_contribution_pct = fx_ann / total_ann clamped to +-FX_CONTRIBUTION_PCT_CLAMP.
+ENERGY_SCENARIO_SHOCK: float = 0.25
+HY_SPREAD_SCENARIO_SHOCK: float = 3.0
+FX_CONTRIBUTION_PCT_CLAMP: float = 5.0
 
 # ---- P2 recompute bundle (FND-0196, FND-0226, FND-0200, FND-0202), ACTIVE since 2026-10-04 ------------------------------
 # Four corrections that CHANGE stored metric values, switched on TOGETHER for ONE full P2 recompute (CALC_VERSION 20261004).
