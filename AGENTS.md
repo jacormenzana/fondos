@@ -342,6 +342,7 @@ proyecto2/
       test_risk_metrics.py
       test_rolling_stats.py
       test_short_horizon.py
+      test_sortino_downside_bound.py
       test_srri.py
     discovery/
       test_eurostat.py

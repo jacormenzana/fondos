@@ -46,18 +46,22 @@ RETIRED_RULES: dict[str, RetiredRule] = {
         replaced_by="FROZEN_NAV_ZERO_VOL",
     ),
     "SORTINO_VS_SHARPE_UP": RetiredRule(
-        reason="Together with SORTINO_VS_SHARPE_DOWN, replaces the unconditional 'sortino >= "
-               "sharpe' the P2 skill's Block 5 table still states: that form is false whenever "
-               "excess return is negative. Sign-conditioned on excess_return (UP applies when "
-               "excess_return > 0, DOWN when < 0).",
+        reason="Replaces the unconditional 'sortino >= sharpe' the P2 skill's Block 5 table still "
+               "states: that form is false for a negative numerator. 2026-10-06 (FND-0234): the sign is now "
+               "the stored Sharpe's (sharpe > 0), not `return_ann - RISK_FREE_RATE_ANN` -- P2 divides by the "
+               "date-aligned risk-free rate (2.5% / 0.75%), not the 4% config constant, so the old sign was "
+               "wrong for every row with a return between the two.",
         date="2026-09-13",
         replaced_by="SORTINO_VS_SHARPE_UP",
     ),
     "SORTINO_VS_SHARPE_DOWN": RetiredRule(
-        reason="See SORTINO_VS_SHARPE_UP -- the DOWN-side sign-conditioned half of the same "
-               "correction.",
-        date="2026-09-13",
-        replaced_by="SORTINO_VS_SHARPE_DOWN",
+        reason="Retired 2026-10-06 (FND-0234): 8,700 live WARNs (2,441 ISINs) were false. 4,332 came from taking the "
+               "sign from return_ann - 4% while P2 divides by the date-aligned risk-free rate; the other 4,368 are "
+               "correct values: with a negative numerator the downside deviation (a semi-deviation about the MAR over "
+               "ALL periods) legitimately exceeds sigma, so sortino > sharpe. Replaced by SORTINO_DOWNSIDE_BOUND "
+               "(dd^2 <= sigma^2 + 12 * shortfall^2), which holds.",
+        date="2026-10-06",
+        replaced_by="SORTINO_DOWNSIDE_BOUND",
     ),
     "ANNUAL_LE_ACCUMULATED": RetiredRule(
         reason="Tolerance widened from FLOAT_IDENTITY_TOLERANCE (0.0001) to "

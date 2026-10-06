@@ -27,10 +27,11 @@ gaps from the prior version of this file):
     idx_fmts_isin_metric_window_real_date/idx_fmts_mwr_isin_date, ~3s each,
     ~70-90s total) rather than one combined query, which was measured at
     120s for the same total row count.
-  - excess_return (return_ann - RISK_FREE_RATE_ANN) and
-    return_ann_nominal/return_ann_real (pivoted from real_flag) are now
+  - return_ann_nominal/return_ann_real (pivoted from real_flag) are
     derived and merged into the Block 5 invariant frame, activating
-    SORTINO_VS_SHARPE_UP/DOWN and DEFLATION_ORDER. N_OBS_NONNEG was
+    DEFLATION_ORDER; the Sortino/Sharpe checks use columns derived from the stored pair
+    (ratio_bounds.add_downside_deviation_columns, FND-0234 -- the old excess_return
+    column assumed a risk-free rate P2 does not use). N_OBS_NONNEG was
     corrected to the 7 real per-regime `n_obs_{regime}` columns (the
     original bare `n_obs` never existed).
 
@@ -120,7 +121,7 @@ if str(_ROOT) not in sys.path:
 
 import pandas as pd
 
-from shared.config import CRISIS_WINDOWS, MIN_NAV_ROWS, RISK_FREE_RATE_ANN, ROLLING_WINDOWS
+from shared.config import CRISIS_WINDOWS, MIN_NAV_ROWS, ROLLING_WINDOWS
 from shared.db import get_connection
 from shared.statistical_audit.catalog_cost_columns import COST_COLUMNS
 from shared.statistical_audit.catalog_version import compute_catalog_version
@@ -148,6 +149,7 @@ from shared.statistical_audit.accepted_residuals import apply_accepted, load_acc
 from shared.statistical_audit.compare_runs import compare_runs, load_run_statistics
 from shared.statistical_audit.outliers import detect_outliers
 from shared.statistical_audit.persistence import clear_run, emit_findings, emit_statistics, statistics_to_frame
+from shared.statistical_audit.ratio_bounds import add_downside_deviation_columns
 from shared.statistical_audit.reconcile import reconcile_with_alerts
 from shared.statistical_audit.recompute_gate import assert_recompute_happened, capture_state
 from shared.statistical_audit.snapshot import build_population, build_snapshot
@@ -1251,8 +1253,12 @@ def run_p2_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = None)
         wide_for_invariants = wide_for_invariants.merge(
             deflation_frame, on=["isin", "horizon", "metric_version"], how="left",
         )
-    if "return_ann" in wide_for_invariants.columns:
-        wide_for_invariants["excess_return"] = wide_for_invariants["return_ann"] - RISK_FREE_RATE_ANN
+    # FND-0234: SORTINO_VS_SHARPE_UP takes its sign from the stored Sharpe, and SORTINO_DOWNSIDE_BOUND needs the implied
+    # and maximum downside deviation; both come from the stored pair (no risk-free rate is assumed) plus n_obs.
+    nobs_keys = ["isin", "horizon", "real_flag", "metric_version"]
+    nobs = (long_df[long_df["metric"] == "return_ann"][nobs_keys + ["source_rows"]]
+            .rename(columns={"source_rows": "n_obs"}).drop_duplicates(subset=nobs_keys))
+    wide_for_invariants = add_downside_deviation_columns(wide_for_invariants.merge(nobs, on=nobs_keys, how="left"))
     if "vol_ann" in wide_for_invariants.columns:
         prv = _periodic_return_variance(conn, wide_for_invariants["isin"].unique().tolist())
         if not prv.empty:

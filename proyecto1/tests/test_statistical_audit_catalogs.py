@@ -117,12 +117,20 @@ class TestPairsCatalog:
 
 class TestInvariantsCatalogAgainstEngine:
     def test_catalog_sortino_rule_is_the_corrected_sign_conditioned_version(self):
+        # FND-0234: the sign is the stored Sharpe's (not return_ann - an assumed risk-free rate).
         rule = next(r for r in P2_INVARIANTS if r.rule_id == "SORTINO_VS_SHARPE_UP")
-        assert rule.when == "excess_return > 0"
+        assert rule.when == "sharpe > 0"
 
-        df = pd.DataFrame({"sharpe": [-0.5], "sortino": [-1.0], "excess_return": [-0.10]})
+        df = pd.DataFrame({"sharpe": [-0.5], "sortino": [-1.0]})
         result = check_invariant(df, rule)
         assert result.n_applicable == 0  # the doc's own counterexample is excluded
+
+    def test_the_down_half_was_retired_and_replaced_by_the_bound_that_holds(self):
+        from shared.statistical_audit.catalog_retired import RETIRED_RULES
+        assert all(r.rule_id != "SORTINO_VS_SHARPE_DOWN" for r in P2_INVARIANTS)
+        assert RETIRED_RULES["SORTINO_VS_SHARPE_DOWN"].replaced_by == "SORTINO_DOWNSIDE_BOUND"
+        bound = next(r for r in P2_INVARIANTS if r.rule_id == "SORTINO_DOWNSIDE_BOUND")
+        assert bound.when == "sharpe < 0 and sortino < 0"
 
     def test_catalog_oc_contamination_rule_fires_on_known_pattern(self):
         rule = next(r for r in COST_INVARIANTS if r.rule_id == "OC_NOT_CONTAMINATED")
@@ -161,7 +169,7 @@ class TestToleranceConstants:
         )
         for rule_id, expected in [
             ("SORTINO_VS_SHARPE_UP", f"sortino >= sharpe - {FLOAT_IDENTITY_TOLERANCE}"),
-            ("SORTINO_VS_SHARPE_DOWN", f"sortino <= sharpe + {FLOAT_IDENTITY_TOLERANCE}"),
+            ("SORTINO_DOWNSIDE_BOUND", f"dd_ann_implied <= dd_ann_max * (1 + {FLOAT_IDENTITY_TOLERANCE})"),
             ("DEFLATION_ORDER",
              f"return_ann_real <= return_ann_nominal + {FLOAT_IDENTITY_TOLERANCE}"),
             ("MONTH_SHARE_OVERFLOW",

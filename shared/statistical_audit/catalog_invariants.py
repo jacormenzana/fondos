@@ -1,7 +1,9 @@
 """§5 catalog_invariants — Block 5 structural invariants for both domains,
-with the two corrections from AUDITORIA_ESTADISTICA.md §2.4 applied:
-SORTINO_VS_SHARPE is sign-conditioned on excess_return (the unconditional
-"sortino >= sharpe" is false whenever excess return is negative), and the
+with the corrections from AUDITORIA_ESTADISTICA.md §2.4 applied:
+SORTINO_VS_SHARPE_UP is sign-conditioned on the stored Sharpe (the unconditional
+"sortino >= sharpe" is false for a negative numerator; the sign comes from the stored ratio, not from a
+re-computed excess over an assumed risk-free rate -- FND-0234), its DOWN half is replaced by the bound that holds
+(SORTINO_DOWNSIDE_BOUND, shared/statistical_audit/ratio_bounds.py), and the
 original "vol_ann>0 when return_ann!=0" rule is replaced by
 FROZEN_NAV_ZERO_VOL, which ties zero volatility to actual periodic-return
 variance rather than to return_ann being nonzero (a flat nonzero periodic
@@ -36,14 +38,21 @@ P2_INVARIANTS: tuple[InvariantRule, ...] = (
         f"pct_positive_months + pct_negative_months <= 1 + {FLOAT_IDENTITY_TOLERANCE}",
         bound_type="HARD_INVARIANT", description="Month-share overflow"),
     InvariantRule(
+        # FND-0234 (2026-10-06): the sign is the stored Sharpe's (vol_ann > 0, so it is the numerator's, whatever risk-free
+        # rate P2 used); it used to be `return_ann - 4%`, a rate P2 does not divide by. 0 violations in 23,000 rows.
         "SORTINO_VS_SHARPE_UP", f"sortino >= sharpe - {FLOAT_IDENTITY_TOLERANCE}",
-        when="excess_return > 0", bound_type="PLAUSIBILITY",
-        description="Downside-dev defect (sign-conditioned per §2.4 — not universal)",
+        when="sharpe > 0", bound_type="PLAUSIBILITY",
+        description="Downside deviation above the standard deviation with a positive numerator (impossible: "
+                    "dd <= sigma when the mean is above the MAR)",
     ),
     InvariantRule(
-        "SORTINO_VS_SHARPE_DOWN", f"sortino <= sharpe + {FLOAT_IDENTITY_TOLERANCE}",
-        when="excess_return < 0", bound_type="PLAUSIBILITY",
-        description="Downside-dev defect (sign-conditioned per §2.4 — not universal)",
+        # Replaces SORTINO_VS_SHARPE_DOWN (retired, catalog_retired.py): with a negative numerator dd > sigma is
+        # legitimate, so "sortino <= sharpe" fired on 4,368 correct rows (+ 4,332 from the wrong sign basis). The bound
+        # that does hold is dd^2 <= sigma^2 + 12 * shortfall^2 -- columns built by ratio_bounds.add_downside_deviation_columns.
+        "SORTINO_DOWNSIDE_BOUND", f"dd_ann_implied <= dd_ann_max * (1 + {FLOAT_IDENTITY_TOLERANCE})",
+        when="sharpe < 0 and sortino < 0", bound_type="PLAUSIBILITY",
+        description="Downside deviation larger than the root-mean-square deviation about the risk-free rate allows "
+                    "(downside-dev defect)",
     ),
     InvariantRule("CAPTURE_CLAMP", "abs(upside_capture) <= 5 and abs(downside_capture) <= 5",
                   bound_type="HARD_INVARIANT", description="Clamp bound breached"),

@@ -36,6 +36,15 @@ def test_fully_removed_rule_has_no_replacement():
 
 
 def test_self_corrected_rules_replace_by_the_same_id():
-    for rule_id in ("FROZEN_NAV_ZERO_VOL", "SORTINO_VS_SHARPE_UP", "SORTINO_VS_SHARPE_DOWN",
+    for rule_id in ("FROZEN_NAV_ZERO_VOL", "SORTINO_VS_SHARPE_UP",
                      "ANNUAL_LE_ACCUMULATED", "ANNUAL_EQUALS_TOTAL_AT_1Y"):
         assert RETIRED_RULES[rule_id].replaced_by == rule_id
+
+
+def test_a_replaced_rule_points_at_an_active_rule():
+    """SORTINO_VS_SHARPE_DOWN no longer exists (FND-0234); its replacement must be a live catalog rule."""
+    from shared.statistical_audit.catalog_invariants import P2_INVARIANTS
+    replacement = RETIRED_RULES["SORTINO_VS_SHARPE_DOWN"].replaced_by
+    assert replacement == "SORTINO_DOWNSIDE_BOUND"
+    assert replacement in {r.rule_id for r in P2_INVARIANTS}
+    assert "SORTINO_VS_SHARPE_DOWN" not in {r.rule_id for r in P2_INVARIANTS}

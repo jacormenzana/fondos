@@ -125,6 +125,23 @@ declaradas HARD/PLAUSIBILITY** es un error de secuenciación, no solo de guarda 
 ambos cálculos correctos. La regla correcta, con idéntico numerador en ambos:
 `excess_return > 0 → Sortino ≥ Sharpe`; `excess_return < 0 → Sortino ≤ Sharpe`.
 
+*Corrección 2026-10-06 (FND-0234):* la mitad `< 0` tampoco era una invariante y la condición de signo
+estaba mal formada. (1) El signo se calculaba como `return_ann − RISK_FREE_RATE_ANN` (4 %), pero P2
+divide por el tipo libre de riesgo **alineado por fecha** (2,5 % en la mayoría de filas, 0,75 % en
+`crisis_2022`): 4.332 de las 8.700 filas "infractoras" tenían en realidad numerador positivo. (2) Con
+numerador negativo la desviación a la baja (semidesviación respecto al MAR sobre **todos** los
+periodos) puede superar legítimamente a σ, porque `dd² ≤ σ² + (media − MAR)²`: las otras 4.368 filas
+eran valores correctos (fondos muy por debajo del tipo libre de riesgo, p. ej. −40 % en `crisis_2008`).
+Ahora: el signo es el del Sharpe almacenado (`sharpe > 0` ⇒ `Sortino ≥ Sharpe`, 0 violaciones en 23.000
+filas) y `SORTINO_VS_SHARPE_DOWN` está retirada y sustituida por `SORTINO_DOWNSIDE_BOUND`:
+`dd_implícita² ≤ vol² + 12·shortfall²`, con `shortfall = max(MAR − g, 0) + σ_m²/2` y el MAR recuperado
+exactamente del par almacenado (`rf = return_ann − sharpe·vol`, sin suponer ningún tipo), calculado en
+`shared/statistical_audit/ratio_bounds.py`. Validada contra las fórmulas reales de P2 con series
+aleatorias (incl. ventanas de 12 puntos y fondos monetarios): 0 falsos positivos y detecta una
+desviación a la baja corrompida; en vivo, 0 hallazgos. El exponente usa la más permisiva de las dos
+convenciones de anualización (FND-0240: `annualized_return` cuenta puntos NAV, no intervalos), de modo
+que la regla no cambia si esa convención se corrige.
+
 **`vol_ann > 0` cuando `return_ann ≠ 0`** — no es una imposibilidad matemática: una serie con
 retorno periódico idéntico y distinto de cero produce `vol_ann=0` sin que la serie esté congelada.
 La comprobación correcta ata volatilidad cero a **varianza de retornos periódicos**, no a
