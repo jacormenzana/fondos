@@ -146,9 +146,13 @@ from shared.statistical_audit.invariants import (
     expression_identifiers,
 )
 from shared.statistical_audit.accepted_residuals import apply_accepted, load_accepted
-from shared.statistical_audit.compare_runs import compare_runs, load_run_statistics
+from shared.statistical_audit.compare_runs import (
+    compare_runs, compare_violators, drift_label, load_run_statistics,
+)
 from shared.statistical_audit.outliers import detect_outliers
-from shared.statistical_audit.persistence import clear_run, emit_findings, emit_statistics, statistics_to_frame
+from shared.statistical_audit.persistence import (
+    clear_run, emit_finding_isins, emit_findings, emit_statistics, load_finding_isins, statistics_to_frame,
+)
 from shared.statistical_audit.ratio_bounds import add_downside_deviation_columns
 from shared.statistical_audit.reconcile import reconcile_with_alerts
 from shared.statistical_audit.recompute_gate import assert_recompute_happened, capture_state
@@ -1310,6 +1314,8 @@ class AuditRun:
         self.snapshot_max_spread_days: float = 0.0
         # FND-0234(e): one line per finding the accepted-residual baseline downgraded or narrowed (printed by _print_report)
         self.accepted_notes: list[str] = []
+        # FND-0234(d): rows written to audit_finding_isin by _persist (0 when the table does not exist yet)
+        self.persisted_isin_rows: int = 0
 
 
 def _block1(
@@ -1624,6 +1630,7 @@ def _persist(conn: "psycopg.Connection", run: "AuditRun", run_id: str) -> tuple[
         n_stats += emit_statistics(conn, run_id, run.domain, population, group_key, stats, n=n,
                                    catalog_version=catalog_version)
     n_findings = emit_findings(conn, run_id, run.domain, run.findings, catalog_version=catalog_version)
+    run.persisted_isin_rows = emit_finding_isins(conn, run_id, run.domain, run.findings)
     return n_stats, n_findings
 
 
@@ -1782,7 +1789,31 @@ def _print_drift_report(result, compare_to: str, top_n: int = 20) -> None:
     print(f"Largest deltas (top {top_n} of {len(moved)} material; {n_noise} floating-point-noise differences hidden):")
     for _, row in moved.head(top_n).iterrows():
         pct = f" ({row['pct_change']:+.1%})" if pd.notna(row["pct_change"]) else ""
-        print(f"  {row['group_key']} [{row['stat_name']}]: {row['previous_value']:.6g} -> {row['current_value']:.6g}{pct}")
+        label = drift_label(row["population"], row["group_key"])
+        print(f"  {label} [{row['stat_name']}]: {row['previous_value']:.6g} -> {row['current_value']:.6g}{pct}")
+
+
+def _current_violators(run: "AuditRun") -> pd.DataFrame:
+    """The in-memory run's violators as the frame load_finding_isins returns (rule_id, group_key, isin)."""
+    rows = [(f["rule_id"], f.get("group_key") or f["rule_id"], isin)
+            for f in run.findings for isin in (f.get("violating_isins") or ())]
+    return pd.DataFrame(rows, columns=["rule_id", "group_key", "isin"])
+
+
+def _print_violator_drift(conn: "psycopg.Connection", run: "AuditRun", compare_to: str) -> None:
+    """FND-0234(d): which funds are new / resolved / unchanged per rule since `compare_to` -- not just how many rows."""
+    current = _current_violators(run)
+    previous = load_finding_isins(conn, compare_to, run.domain)
+    if previous.empty:
+        if not current.empty:
+            print(f"Violators vs {compare_to}: the baseline has no ISIN detail (persisted before audit_finding_isin "
+                  "existed); the next --persist run becomes the baseline.")
+        return
+    drift = compare_violators(previous, current)
+    moved = drift[(drift["new"] > 0) | (drift["resolved"] > 0)]
+    print(f"Violators vs {compare_to}: {len(drift)} rules with ISIN detail, {len(moved)} changed")
+    for _, r in moved.iterrows():
+        print(f"  {r['rule_id']}: +{int(r['new'])} new, -{int(r['resolved'])} resolved, {int(r['unchanged'])} unchanged")
 
 
 def _print_recompute_verification(result: "RecomputeCheckResult") -> int:
@@ -1897,11 +1928,15 @@ def main() -> int:
             print(f"! --compare-to {args.compare_to}: no audit_statistic rows found for domain={run.domain}")
         else:
             _print_drift_report(drift_result, args.compare_to)
+            _print_violator_drift(conn, run, args.compare_to)
 
     if args.persist:
         n_stats, n_findings = _persist(conn, run, run_id)
         print()
         print(f"Persisted: {n_stats} audit_statistic rows, {n_findings} audit_finding rows (run_id={run_id})")
+        print(f"ISIN detail: {run.persisted_isin_rows} audit_finding_isin rows"
+              + ("" if run.persisted_isin_rows or not any(f.get("violating_isins") for f in run.findings)
+                 else " (table missing: run scripts/ops/migrate_audit_finding_isin.py --apply to keep the violators)"))
 
     if keep_open:
         conn.close()

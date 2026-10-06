@@ -58,6 +58,38 @@ def load_run_statistics(conn: "psycopg.Connection", run_id: str, domain: str) ->
     return pd.DataFrame([tuple(r) for r in cur.fetchall()], columns=cols)
 
 
+def drift_label(population: str, group_key: str) -> str:
+    """How a statistic is named in the drift report. `group_key` alone is NOT unique: the same key (e.g.
+    "sortino|since_inception|0|v1") exists once per population (GLOBAL and one PEER:<nature> each), and the report used to
+    print them identically -- the same line twice with different numbers. GLOBAL keeps the bare key; any other population
+    is appended. (Keys with four parts come from fund_metrics, three-part ones from the fund_metric_timeseries snapshot.)"""
+    return group_key if population in (None, "", "GLOBAL") else f"{group_key} @ {population}"
+
+
+def compare_violators(previous: pd.DataFrame, current: pd.DataFrame) -> pd.DataFrame:
+    """Violator drift between two runs, per (rule_id, group_key): how many ISINs are new, resolved, unchanged.
+
+    previous / current: frames with rule_id, group_key, isin (persistence.load_finding_isins, or the in-memory findings'
+    violating_isins). A rule that appears on only one side counts every ISIN as new (or resolved). Sorted so the rules that
+    moved most come first."""
+    columns = ["rule_id", "group_key", "new", "resolved", "unchanged"]
+    keys = ["rule_id", "group_key"]
+    if previous.empty and current.empty:
+        return pd.DataFrame(columns=columns)
+
+    def _sets(df):
+        return {k: set(g["isin"]) for k, g in df.groupby(keys)} if not df.empty else {}
+
+    prev_s, curr_s = _sets(previous), _sets(current)
+    rows = []
+    for key in sorted(set(prev_s) | set(curr_s)):
+        p, c = prev_s.get(key, set()), curr_s.get(key, set())
+        rows.append((key[0], key[1], len(c - p), len(p - c), len(p & c)))
+    out = pd.DataFrame(rows, columns=columns)
+    out["moved"] = out["new"] + out["resolved"]
+    return out.sort_values(["moved", "rule_id"], ascending=[False, True]).drop(columns="moved").reset_index(drop=True)
+
+
 def compare_runs(
     previous: pd.DataFrame,
     current: pd.DataFrame,

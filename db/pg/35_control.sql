@@ -209,6 +209,22 @@ CREATE TABLE IF NOT EXISTS control.audit_accepted_finding (
     CONSTRAINT audit_accepted_finding_expiry_ck CHECK (expires_at > accepted_at)
 );
 
+-- -----------------------------------------------------------------------------
+-- control.audit_finding_isin — the ISINs behind a group-level finding (FND-0234(d))
+-- audit_finding keeps ONE row per invariant/group rule (isin NULL) -- "88/2809 rows violate" -- so which funds violated could
+-- only be recovered by re-running the audit. One row per (run, rule, ISIN) here: triage without a 4-minute audit, violator
+-- drift between runs (new / resolved / unchanged), and the input of the accepted-residual baseline.
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS control.audit_finding_isin (
+    run_id    text        NOT NULL,
+    domain    text        NOT NULL,
+    rule_id   text        NOT NULL,
+    group_key text        NOT NULL,
+    isin      varchar(12) NOT NULL,
+    CONSTRAINT audit_finding_isin_pkey PRIMARY KEY (run_id, domain, rule_id, group_key, isin),
+    CONSTRAINT audit_finding_isin_isin_fk FOREIGN KEY (isin) REFERENCES silver.fund_master (isin) ON DELETE CASCADE
+);
+
 
 -- =============================================================================
 -- Migration bookkeeping (new in PG — no SQLite analog)

@@ -601,6 +601,29 @@ Corrección asociada: los marcos de costes nombran la columna `ISIN` y la búsqu
 infractores era en minúsculas, así que todos los ALARM de costes decían "0 ISINs"; ahora se busca sin
 distinguir mayúsculas.
 
+### 6.2 ISIN de cada hallazgo y deriva de infractores (FND-0234(d))
+
+`audit_finding` guarda **una fila agregada** por invariante o regla de grupo ("88/2809 filas
+violan", `isin` NULL); saber *qué fondos* obligaba a repetir la auditoría (~4 min). Con
+`--persist` ahora se escribe `control.audit_finding_isin` (`run_id, domain, rule_id, group_key,
+isin`, PK sobre las cinco y FK a `fund_master` con borrado en cascada): una fila por infractor de
+cada hallazgo que lleva `violating_isins`. `clear_run` borra el detalle del mismo `run_id`, así que
+volver a persistir un `run_id` lo sustituye. Crear la tabla: `scripts/ops/migrate_audit_finding_isin.py
+--apply` (propietario). Sin la tabla `--persist` funciona igual y avisa de que no guardó el detalle.
+
+Con `--compare-to`, además de la deriva de estadísticas, el informe imprime la **deriva de
+infractores** por regla (`+n nuevos, −m resueltos, k sin cambio`, `compare_runs.compare_violators`).
+Solo es posible si la ejecución de referencia tiene detalle de ISIN; si no, lo dice y la siguiente
+ejecución con `--persist` pasa a ser la referencia.
+
+*"Colisión de `group_key`" — resultó ser de presentación, no de datos.* `compare_runs` ya clavaba
+por `(population, group_key, stat_name)`; el informe de deriva imprimía solo `group_key`, de modo
+que la misma clave (`sortino|since_inception|0|v1`) aparecía dos veces —una por población, `GLOBAL` y
+`PEER:<naturaleza>`— con cifras distintas. Ahora `drift_label` añade ` @ <población>` a las que no
+son `GLOBAL`. Las claves de cuatro partes provienen de `fund_metrics` y las de tres del snapshot de
+`fund_metric_timeseries` (`sharpe|rolling_5y|0|v1` frente a `sharpe|rolling_5y|0`): son claves
+distintas, no una colisión.
+
 ---
 
 ## §7. Correcciones a las especificaciones actuales de las dos skills

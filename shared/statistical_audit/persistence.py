@@ -84,7 +84,15 @@ def clear_run(conn: "psycopg.Connection", run_id: str, domain: str) -> tuple[int
     n_stats = conn.execute(
         f"DELETE FROM audit_statistic WHERE run_id = {ph} AND domain = {ph}", (run_id, domain)
     ).rowcount
+    if finding_isin_table_exists(conn):          # FND-0234(d): the ISIN detail of the same run goes with it
+        conn.execute(f"DELETE FROM audit_finding_isin WHERE run_id = {ph} AND domain = {ph}", (run_id, domain))
     return n_stats, n_findings
+
+
+def finding_isin_table_exists(conn: "psycopg.Connection") -> bool:
+    """True when audit_finding_isin is visible on the connection's search_path (the owner migration was applied).
+    Unqualified on purpose, like every other table name in this module."""
+    return conn.execute("SELECT to_regclass('audit_finding_isin')").fetchone()[0] is not None
 
 
 def statistics_to_frame(
@@ -173,6 +181,43 @@ def emit_accepted_residuals(
     )
     conn.commit()
     return len(rows)
+
+
+def emit_finding_isins(
+    conn: "psycopg.Connection",
+    run_id: str,
+    domain: str,
+    findings: Sequence[Mapping[str, Any]],
+) -> int:
+    """One row per (rule, group_key, ISIN) for every finding that carries `violating_isins` (FND-0234(d)). audit_finding keeps
+    one aggregate row per invariant ("88/2809 rows violate"); this table says WHICH funds. Idempotent (ON CONFLICT DO NOTHING).
+    Commits. Returns the rows written; 0 -- and no error -- when the table does not exist yet (migration not applied)."""
+    rows = sorted({
+        (run_id, domain, f["rule_id"], f.get("group_key") or f["rule_id"], isin)
+        for f in findings for isin in (f.get("violating_isins") or ())
+    })
+    if not rows or not finding_isin_table_exists(conn):
+        return 0
+    executemany(
+        conn,
+        "INSERT INTO audit_finding_isin (run_id, domain, rule_id, group_key, isin) VALUES (%s, %s, %s, %s, %s) "
+        "ON CONFLICT DO NOTHING",
+        rows,
+    )
+    conn.commit()
+    return len(rows)
+
+
+def load_finding_isins(conn: "psycopg.Connection", run_id: str, domain: str) -> pd.DataFrame:
+    """The persisted violators of one run: columns rule_id, group_key, isin (empty frame when there are none, or no table)."""
+    columns = ["rule_id", "group_key", "isin"]
+    if not finding_isin_table_exists(conn):
+        return pd.DataFrame(columns=columns)
+    cur = conn.execute(
+        "SELECT rule_id, group_key, isin FROM audit_finding_isin WHERE run_id = %s AND domain = %s",
+        (run_id, domain),
+    )
+    return pd.DataFrame([tuple(r) for r in cur.fetchall()], columns=columns)
 
 
 @dataclass
