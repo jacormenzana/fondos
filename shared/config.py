@@ -560,7 +560,15 @@ MACRO_FACTOR_CLEAN_ENABLED: bool = True
 PERSISTENCE_FIRST_LAST_NAV_ENABLED: bool = True
 CAPTURE_MONTH_END_ENABLED: bool = True
 P2_BUNDLE_FLAGS: tuple = ("MACRO_VIF_ITERATIVE_ENABLED", "MACRO_FACTOR_CLEAN_ENABLED",
-                          "PERSISTENCE_FIRST_LAST_NAV_ENABLED", "CAPTURE_MONTH_END_ENABLED")
+                          "PERSISTENCE_FIRST_LAST_NAV_ENABLED", "CAPTURE_MONTH_END_ENABLED",
+                          "ANNUALIZATION_INTERVAL_ENABLED")
+# FND-0240: annualise a NAV window over its INTERVALS (N points span N - 1 periods) instead of its points. OFF = the stored
+# convention (years = N / 12), bit-for-bit. ON changes the stored return_ann / sharpe / sortino of the risk family and the
+# rolling timeseries: about +0.5 pp on rolling_1y, -1.2 pp on the crisis windows, +0.04 pp since inception -- and nothing in the
+# P3 portfolio (Spearman 1.0000 of the scores, same top 10, measured 2026-10-06). The audit mirrors the convention through
+# shared/annualization.py. FLIP ONLY TOGETHER WITH THE RECOMPUTE of the families it touches (utils/family_versions.FLAG_FAMILIES:
+# risk, rolling): until then the stored values keep the old convention and the audit's nominal/Fisher identities report the gap.
+ANNUALIZATION_INTERVAL_ENABLED: bool = False
 # FND-0236: per-metric-family calculation versions. OFF = today's behaviour (one global CALC_VERSION and one input hash per
 # fund). ON = each of the nine families has its own state row (control.fund_metric_family_state), so a change that touches one
 # family (bump FAMILY_CALC_OVERRIDES[family] in utils/family_versions.py) recomputes only that family. Switch-on order:

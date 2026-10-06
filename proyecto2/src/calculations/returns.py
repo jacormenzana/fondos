@@ -7,6 +7,8 @@ Cálculo de métricas de retorno y eficiencia sobre series NAV.
 import numpy as np
 import pandas as pd
 
+from shared.annualization import years_spanned
+
 # FND-0075: floor below which an annualized downside deviation is treated as a numerical artifact
 # (near-flat-fund near-zero denominator), not a real risk signal — see downside_deviation_ann().
 _MIN_DOWNSIDE_DEV_ANN: float = 0.001   # 0.1% annualized
@@ -25,7 +27,7 @@ def annualized_return(series: pd.Series, periods_per_year: int = 12) -> float:
     if len(series) < 2:
         return np.nan
     total = series.iloc[-1] / series.iloc[0]
-    years = len(series) / periods_per_year
+    years = years_spanned(len(series), periods_per_year)     # FND-0240: N points span N - 1 periods when the switch is on
     return float(total ** (1.0 / years) - 1.0)
 
 

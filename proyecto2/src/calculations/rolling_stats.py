@@ -34,6 +34,7 @@ import pandas as pd
 
 from .deflation import deflate_nav
 from .returns import downside_deviation_ann
+from shared.annualization import years_spanned
 from shared.config import MIN_PEERS as _MIN_PEERS_DEFAULT
 
 
@@ -116,7 +117,7 @@ def _roll_return_ann(nav_window: np.ndarray, periods_per_year: int) -> float:
     total = nav_window[-1] / nav_window[0]
     if total <= 0:
         return math.nan
-    years = len(nav_window) / periods_per_year
+    years = years_spanned(len(nav_window), periods_per_year)     # FND-0240 (same helper as returns.annualized_return)
     return float(total ** (1.0 / years) - 1.0)
 
 

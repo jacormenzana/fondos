@@ -22,7 +22,7 @@ from utils.fingerprint import compute_input_hash, data_fingerprint  # noqa: E402
 CV = "20261004"
 MV = "v1"
 FLAGS = ("MACRO_VIF_ITERATIVE_ENABLED", "MACRO_FACTOR_CLEAN_ENABLED",
-         "PERSISTENCE_FIRST_LAST_NAV_ENABLED", "CAPTURE_MONTH_END_ENABLED")
+         "PERSISTENCE_FIRST_LAST_NAV_ENABLED", "CAPTURE_MONTH_END_ENABLED", "ANNUALIZATION_INTERVAL_ENABLED")
 
 
 def _nav(n=60, last=100.0):
@@ -93,13 +93,13 @@ def test_new_nav_data_changes_every_family_hash():
 def test_flipping_a_bundle_flag_changes_only_its_family(flag):
     on = _hashes(flags=FLAGS)
     off = _hashes(flags=tuple(f for f in FLAGS if f != flag))
-    assert [f for f in fv.ALL_FAMILIES if on[f] != off[f]] == [fv.FLAG_FAMILIES[flag]]
+    assert [f for f in fv.ALL_FAMILIES if on[f] != off[f]] == list(fv.flag_families(flag))
 
 
 def test_every_bundle_flag_in_config_is_mapped_to_a_family():
     from shared import config
     assert set(config.P2_BUNDLE_FLAGS) == set(fv.FLAG_FAMILIES)
-    assert set(fv.FLAG_FAMILIES.values()) <= set(fv.ALL_FAMILIES)
+    assert {f for flag in fv.FLAG_FAMILIES for f in fv.flag_families(flag)} <= set(fv.ALL_FAMILIES)
 
 
 def test_hashes_are_deterministic_and_distinct_per_family():

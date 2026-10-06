@@ -38,14 +38,22 @@ ALL_FAMILIES: tuple = (
 # Example (a macro-only change): FAMILY_CALC_OVERRIDES = {"macro": "20261101"}.
 FAMILY_CALC_OVERRIDES: dict = {}
 
-# shared.config.P2_BUNDLE_FLAGS -> the one family each flag changes. A test asserts every bundle flag is mapped
-# here, so a new flag cannot silently fall back to "recompute everything" or "recompute nothing".
+# shared.config.P2_BUNDLE_FLAGS -> the family (or tuple of families) each flag changes. A test asserts every bundle flag is
+# mapped here, so a new flag cannot silently fall back to "recompute everything" or "recompute nothing".
 FLAG_FAMILIES: dict = {
     "MACRO_VIF_ITERATIVE_ENABLED": "macro",
     "MACRO_FACTOR_CLEAN_ENABLED": "macro",
     "PERSISTENCE_FIRST_LAST_NAV_ENABLED": "persistence",
     "CAPTURE_MONTH_END_ENABLED": "capture",
+    # FND-0240: returns.annualized_return feeds the risk family (return_ann, sharpe, sortino), rolling_stats the rolling one.
+    "ANNUALIZATION_INTERVAL_ENABLED": ("risk", "rolling"),
 }
+
+
+def flag_families(flag: str) -> tuple:
+    """The families `flag` changes, always as a tuple (a flag may map to one family or several)."""
+    value = FLAG_FAMILIES.get(flag, ())
+    return (value,) if isinstance(value, str) else tuple(value)
 
 
 def family_token(family: str, calc_version: str, overrides: Mapping | None = None) -> str:
@@ -58,7 +66,7 @@ def family_token(family: str, calc_version: str, overrides: Mapping | None = Non
 def family_flags(family: str, flags_on: Iterable[str]) -> str:
     """'+'-joined, sorted names of the enabled bundle flags that belong to `family` ('' when none)."""
     _check_family(family)
-    return "+".join(sorted(f for f in flags_on if FLAG_FAMILIES.get(f) == family))
+    return "+".join(sorted(f for f in flags_on if family in flag_families(f)))
 
 
 def family_hash(data_fp: str, metric_version: str, family: str, calc_version: str,

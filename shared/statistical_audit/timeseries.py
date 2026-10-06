@@ -16,6 +16,8 @@ from typing import Mapping, Sequence
 
 import pandas as pd
 
+from shared.annualization import years_spanned
+
 
 @dataclass
 class TimeseriesIntegrityResult:
@@ -129,7 +131,7 @@ def scalar_window_cpi(
         frame[frame.columns[1]] = frame[frame.columns[1]].astype("Int64")
     out = out.merge(ends, on=["isin", "end_pos"], how="left").merge(starts, on=["isin", "start_pos"], how="left")
 
-    years = out["n_obs"].astype(float) / periods_per_year
+    years = years_spanned(out["n_obs"].astype(float), periods_per_year)     # the producers' convention (FND-0240)
     out["window_cpi_ann"] = (out["ipc_end"] / out["ipc_start"]) ** (1 / years) - 1
     return out.drop(columns=["last_pos", "end_pos", "start_pos", "ipc_end", "ipc_start"])
 
@@ -176,7 +178,7 @@ def build_window_deflation_frame(
     start["start_pos"] = start["start_pos"].astype("Int64")
     out = out.merge(start, on=["isin", "start_pos"], how="left")
 
-    years = out["w_n_obs"] / periods_per_year
+    years = years_spanned(out["w_n_obs"], periods_per_year)     # the producers' convention (FND-0240)
     # Guard rail (not FND-0114 itself): stored nominal return_ann must still match today's
     # fund_nav_monthly, else the row is stale vs a rewritten NAV history, not a deflation defect
     # -- WINDOW_NOMINAL_IDENTITY reports that separately and gates the two deflation rules.
