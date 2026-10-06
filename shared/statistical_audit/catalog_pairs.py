@@ -14,13 +14,15 @@ from .tolerances import FLOAT_IDENTITY_TOLERANCE, IPC_ELIGIBILITY_FLOOR
 
 def _ipc_eligibility(df: pd.DataFrame) -> pd.Series:
     """True where deflation was actually possible — the REAL_EQUALS_NOMINAL
-    pair only means anything when IPC was nonzero over the horizon. Caller's
-    input frame must carry an 'ipc_yoy' column for this rule to fire; absent
-    that column it fails closed (never eligible) rather than raising.
+    pair only means anything when IPC was nonzero over the horizon. The caller's
+    frame carries 'window_cpi_ann' (the CPI change over each row's own window, FND-0234) or, for callers that
+    only have a scalar, 'ipc_yoy'; the per-row column wins. A row whose window CPI is NaN (undecidable) is never
+    eligible. With neither column the rule fails closed (never eligible) rather than raising.
     """
-    if "ipc_yoy" not in df.columns:
+    column = "window_cpi_ann" if "window_cpi_ann" in df.columns else "ipc_yoy"
+    if column not in df.columns:
         return pd.Series(False, index=df.index)
-    return df["ipc_yoy"] > IPC_ELIGIBILITY_FLOOR
+    return df[column] > IPC_ELIGIBILITY_FLOOR
 
 
 P2_PAIRS: dict[str, PairRule] = {

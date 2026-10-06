@@ -130,6 +130,20 @@ retorno periódico idéntico y distinto de cero produce `vol_ann=0` sin que la s
 La comprobación correcta ata volatilidad cero a **varianza de retornos periódicos**, no a
 `return_ann`: `vol_ann==0 AND periodic_return_variance > ε → inconsistencia`.
 
+**`return_ann_real ≤ return_ann_nominal` (`DEFLATION_ORDER`)** — solo vale en una ventana con
+inflación positiva. La regla se condicionaba al YoY **de hoy** (+4,55 %), de modo que los 21 fondos
+lanzados en primavera de 2008, cuya ventana `crisis_2008` termina en la caída del IPC de 2009
+(−1,1 % … −0,06 % anualizado), daban un ALARM por un `real > nominal` correcto (FND-0234, 2026-10-06).
+Ahora la elegibilidad es `window_cpi_ann > IPC_ELIGIBILITY_FLOOR`: la variación de IPC **de la propia
+ventana de cada fila** (`timeseries.scalar_window_cpi`, que localiza la ventana con la misma
+convención que `deflate_nav` y `build_window_deflation_frame`). Verificado con datos vivos: la ventana
+así calculada reproduce el par real/nominal almacenado (identidad de Fisher) en 22.437 de 22.440
+filas, y las 21 violaciones desaparecen; una inversión real sobre una ventana inflacionaria sigue
+dando ALARM (test). `REAL_EQUALS_NOMINAL` usa la misma elegibilidad por fila. Pendiente conocido:
+para métricas puntuales (`worst_month`, `max_dd`) la diferencia real/nominal depende del IPC del mes
+concreto, no del de la ventana, así que `REAL_EQUALS_NOMINAL_worst_month` (~1.200 filas) sigue siendo
+una regla mal planteada para esas métricas.
+
 ### 2.5 Defectos verificados en el motor de alertas operacional (`fund_metric_alerts`) — CORREGIDOS 2026-09-13
 
 El Bloque 4 de la skill P2 exige "reconciliar contra `fund_metric_alerts`" para reportar solo

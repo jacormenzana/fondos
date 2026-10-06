@@ -120,7 +120,7 @@ if str(_ROOT) not in sys.path:
 
 import pandas as pd
 
-from shared.config import MIN_NAV_ROWS, RISK_FREE_RATE_ANN, ROLLING_WINDOWS
+from shared.config import CRISIS_WINDOWS, MIN_NAV_ROWS, RISK_FREE_RATE_ANN, ROLLING_WINDOWS
 from shared.db import get_connection
 from shared.statistical_audit.catalog_cost_columns import COST_COLUMNS
 from shared.statistical_audit.catalog_version import compute_catalog_version
@@ -151,8 +151,8 @@ from shared.statistical_audit.persistence import clear_run, emit_findings, emit_
 from shared.statistical_audit.reconcile import reconcile_with_alerts
 from shared.statistical_audit.recompute_gate import assert_recompute_happened, capture_state
 from shared.statistical_audit.snapshot import build_population, build_snapshot
-from shared.statistical_audit.timeseries import build_window_deflation_frame
-from shared.statistical_audit.tolerances import KID_ROUNDING_TOLERANCE_PP
+from shared.statistical_audit.timeseries import build_window_deflation_frame, scalar_window_cpi
+from shared.statistical_audit.tolerances import IPC_ELIGIBILITY_FLOOR, KID_ROUNDING_TOLERANCE_PP
 
 MIN_PEERS = 5
 
@@ -422,7 +422,7 @@ def run_cost_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = Non
 
 _P2_METRICS_QUERY = """
     SELECT fm.ISIN, fm.metric, fm.horizon, fm.value, fm.real_flag, fm.metric_version,
-           fm.batch_id, m.Fund_Nature
+           fm.batch_id, m.Fund_Nature, fm.source_rows
     FROM fund_metrics fm
     JOIN fund_master m ON m.ISIN = fm.ISIN
     WHERE m.In_Current_Universe = 1
@@ -544,26 +544,26 @@ def _pivot_by_real_flag(long_df: pd.DataFrame, metric: str) -> pd.DataFrame:
     return nominal.merge(real, on=join_keys, how="inner")
 
 
-def _latest_ipc_yoy(conn: "psycopg.Connection") -> float | None:
-    """Single scalar YoY inflation rate from the latest available ES CPI
-    index vs. ~12 months prior — a coarse eligibility gate for
-    REAL_EQUALS_NOMINAL/DEFLATION_ORDER, not a per-fund/per-horizon
-    calculation. Deliberately approximate: these two checks only need to know
-    whether deflation was possible at all, not the exact rate.
+def _scalar_window_cpi_table(
+    long_df: pd.DataFrame, nav_dates: pd.DataFrame, ipc: pd.DataFrame,
+) -> pd.DataFrame:
+    """(isin, horizon, metric_version) -> window_cpi_ann for every stored scalar fund_metrics window (FND-0234).
+
+    Replaces the scalar "latest ES YoY" the deflation checks used as their eligibility gate: whether deflation must
+    lower a return depends on the inflation OVER THE ROW'S OWN WINDOW, not on today's. The window of every metric of
+    one (isin, horizon, metric_version) is the same one return_ann was computed on, so n_obs is read from its
+    nominal row. Empty when there is nothing to locate (no NAV dates or no CPI): the rules then find no eligible row,
+    which is "undecidable", never "violating".
     """
-    df = build_population(conn, _IPC_QUERY, require_universe_filter=False)
-    if len(df) < 13:
-        return None
-    df["date"] = pd.to_datetime(df["date"])
-    latest = df.iloc[-1]
-    year_ago_cutoff = latest["date"] - pd.DateOffset(years=1)
-    prior = df[df["date"] <= year_ago_cutoff]
-    if prior.empty:
-        return None
-    prior_index = prior.iloc[-1]["ipc_index"]
-    if prior_index == 0:
-        return None
-    return float(latest["ipc_index"] / prior_index - 1.0)
+    keys = ["isin", "horizon", "metric_version"]
+    nominal = long_df[(long_df["metric"] == "return_ann") & (long_df["real_flag"] == 0)]
+    if nominal.empty or nav_dates.empty or ipc.empty or "source_rows" not in nominal.columns:
+        return pd.DataFrame(columns=keys + ["window_cpi_ann"])
+    rows = nominal[keys + ["source_rows"]].dropna(subset=["source_rows"]).rename(columns={"source_rows": "n_obs"})
+    rows = rows.drop_duplicates(subset=keys)
+    # a horizon not listed here ends at the fund's last NAV (since_inception, rolling_*)
+    window_ends = {name: end for name, (_start, end) in CRISIS_WINDOWS.items()}
+    return scalar_window_cpi(rows, nav_dates, ipc, window_ends)[keys + ["window_cpi_ann"]]
 
 
 def _fetch_latest_timeseries_snapshot(
@@ -619,8 +619,20 @@ _NAV_DATES_QUERY = """
 """
 
 
+def _load_deflation_inputs(
+    conn: "psycopg.Connection", isins: Sequence[str] | None = None,
+) -> tuple:
+    """(nav_dates, ipc): the fund_nav_monthly rows and the ES CPI both deflation frame builders read -- fetched once."""
+    nav_isin_filter, nav_isin_params = _isin_filter(conn, isins, "n.ISIN")
+    nav_query = _sql(conn, _NAV_DATES_QUERY, isin_filter=nav_isin_filter)
+    nav_dates = _df(conn, nav_query, nav_isin_params)
+    ipc = build_population(conn, _IPC_QUERY, require_universe_filter=False)
+    return nav_dates, ipc
+
+
 def _build_window_deflation_frame(
     conn: "psycopg.Connection", isins: Sequence[str] | None = None,
+    inputs: "tuple | None" = None,
 ) -> pd.DataFrame:
     """Fetches the three raw inputs (per-window return_ann pairs, NAV dates+values, ES CPI) and
     hands them to the pure builder (shared.statistical_audit.timeseries.build_window_deflation_frame,
@@ -642,14 +654,8 @@ def _build_window_deflation_frame(
         return pd.DataFrame()
     ts = pd.concat(ts_frames, ignore_index=True)
 
-    nav_isin_filter, nav_isin_params = _isin_filter(conn, isins, "n.ISIN")
-    nav_query = _sql(conn, _NAV_DATES_QUERY, isin_filter=nav_isin_filter)
-    nav_dates = _df(conn, nav_query, nav_isin_params)
-    if nav_dates.empty:
-        return pd.DataFrame()
-
-    ipc = build_population(conn, _IPC_QUERY, require_universe_filter=False)
-    if ipc.empty:
+    nav_dates, ipc = inputs if inputs is not None else _load_deflation_inputs(conn, isins)
+    if nav_dates.empty or ipc.empty:
         return pd.DataFrame()
 
     return build_window_deflation_frame(ts, nav_dates, ipc)
@@ -795,7 +801,7 @@ def _periodic_return_variance(conn: "psycopg.Connection", isins: list[str]) -> p
 
 
 _P2_METRICS_COLS = (
-    "isin", "metric", "horizon", "value", "real_flag", "metric_version", "batch_id", "Fund_Nature",
+    "isin", "metric", "horizon", "value", "real_flag", "metric_version", "batch_id", "Fund_Nature", "source_rows",
 )
 
 
@@ -1120,12 +1126,20 @@ def run_p2_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = None)
                 "root_cause_candidate": rule.diagnosis,
             })
 
-    ipc_yoy = _latest_ipc_yoy(conn)
+    # FND-0234 (2026-10-06): the eligibility of DEFLATION_ORDER and REAL_EQUALS_NOMINAL is the CPI change over each
+    # row's OWN window (window_cpi_ann), not today's YoY: a fund whose window sits in a deflationary stretch
+    # legitimately has real > nominal (21 funds launched in spring 2008 were an ALARM for that).
+    deflation_inputs = _load_deflation_inputs(conn, isins)
+    scalar_cpi = _scalar_window_cpi_table(long_df, *deflation_inputs)
+    cpi_keys = ["isin", "horizon", "metric_version"]
     deflation_frame = _pivot_by_real_flag(long_df, "return_ann")
     if deflation_frame.empty:
         run.skipped.append("BLOCK5 DEFLATION_ORDER: no overlapping nominal/real return_ann rows")
     else:
-        deflation_frame = deflation_frame.assign(ipc_yoy=ipc_yoy if ipc_yoy is not None else float("nan"))
+        deflation_frame = deflation_frame.merge(scalar_cpi, on=cpi_keys, how="left")
+        if "window_cpi_ann" not in deflation_frame.columns or deflation_frame["window_cpi_ann"].isna().all():
+            run.skipped.append("BLOCK5 DEFLATION_ORDER / REAL_EQUALS_NOMINAL: no stored window could be located "
+                               "against fund_nav_monthly + the ES CPI (undecidable, nothing evaluated)")
 
     # A3 (FND-0121, 2026-09-28): REAL_EQUALS_NOMINAL generalized from return_ann-only to every
     # metric with both real_flag values present (P2 skill states the rule generically, "same
@@ -1138,8 +1152,8 @@ def run_p2_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = None)
         pivot = deflation_frame if metric == "return_ann" else _pivot_by_real_flag(long_df, metric)
         if pivot.empty:
             continue
-        if "ipc_yoy" not in pivot.columns:
-            pivot = pivot.assign(ipc_yoy=ipc_yoy if ipc_yoy is not None else float("nan"))
+        if "window_cpi_ann" not in pivot.columns:
+            pivot = pivot.merge(scalar_cpi, on=cpi_keys, how="left")
         n_real_nominal_checked += 1
         rule = replace(P2_PAIRS["REAL_EQUALS_NOMINAL"], rule_id=f"REAL_EQUALS_NOMINAL_{metric}")
         result = compare_pairs(pivot, f"{metric}_nominal", f"{metric}_real", rule)
@@ -1151,8 +1165,7 @@ def run_p2_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = None)
                 "distance": float(result.n_matches),
                 "evidence": (
                     f"{result.n_matches}/{result.n_eligible} eligible rows within tolerance "
-                    f"(ipc_yoy={ipc_yoy:.4f})" if ipc_yoy is not None else
-                    f"{result.n_matches}/{result.n_eligible} eligible rows within tolerance"
+                    f"(eligible = window CPI > {IPC_ELIGIBILITY_FLOOR})"
                 ),
                 "root_cause_candidate": rule.diagnosis,
             })
@@ -1251,7 +1264,7 @@ def run_p2_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = None)
     # is a legitimate "nothing eligible yet" result, not an error -- _run_invariants already
     # reports a per-rule skip when none of the frames it's given carry a rule's columns, so no
     # separate empty-check is needed here.
-    window_deflation_frame = _build_window_deflation_frame(conn, isins=isins)
+    window_deflation_frame = _build_window_deflation_frame(conn, isins=isins, inputs=deflation_inputs)
     _run_invariants(
         run, P2_INVARIANTS, [wide_for_invariants, window_deflation_frame], block="BLOCK5",
     )

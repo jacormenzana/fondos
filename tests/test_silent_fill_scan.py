@@ -102,9 +102,11 @@ _SILENT_FILL_EXEMPT: dict[str, str] = {
         "prior value for every in-coverage date; this bfill() only reaches the genuinely-"
         "uncovered LEADING gap (no earlier IPC value exists at all, not a same-side choice), and "
         "is exactly the anchor WINDOW_FISHER_IDENTITY (FND-0137 Section A) verifies row-by-row.",
-    "shared/statistical_audit/timeseries.py::build_window_deflation_frame":
-        "DESIGN: reproduces deflate_nav()'s exact contract (see above) so the audit frame checks "
-        "calculations against their own spec (FND-0137 Section A) -- not independent imputation.",
+    "shared/statistical_audit/timeseries.py::nav_with_ipc":
+        "DESIGN: reproduces deflate_nav()'s exact contract (see above) so the audit frames check "
+        "calculations against their own spec (FND-0137 Section A) -- not independent imputation. "
+        "Shared by build_window_deflation_frame and scalar_window_cpi (FND-0234); it was inline in the "
+        "former before the helper was extracted.",
     "shared/statistical_audit/invariants.py::check_invariant":
         "DESIGN: fillna(False) on a boolean Series already gated by an explicit notna() mask "
         "upstream (the `applicable` variable) -- defensive only, never changes which rows count "

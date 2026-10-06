@@ -50,9 +50,14 @@ P2_INVARIANTS: tuple[InvariantRule, ...] = (
     InvariantRule("MACRO_R2_RANGE", "0 <= macro_r2 <= 1", bound_type="HARD_INVARIANT",
                   description="R² clamp breached"),
     InvariantRule(
+        # FND-0234 (2026-10-06): eligible only where the row's OWN window had positive CPI change
+        # (window_cpi_ann, scripts/audit/run_statistical_audit.py via timeseries.scalar_window_cpi). It used to be
+        # gated on TODAY's YoY (+4.55%), so the 21 funds launched in spring 2008 -- whose crisis_2008 window ends
+        # in the 2009 CPI decline (annualised -1.1% .. -0.06%) -- raised a HARD_INVARIANT ALARM for a correct
+        # real > nominal. IPC_ELIGIBILITY_FLOOR is the same floor WINDOW_DEFLATION_STRICT uses below.
         "DEFLATION_ORDER", f"return_ann_real <= return_ann_nominal + {FLOAT_IDENTITY_TOLERANCE}",
-        when="ipc_yoy > 0", bound_type="HARD_INVARIANT",
-        description="Deflation inverted",
+        when=f"window_cpi_ann > {IPC_ELIGIBILITY_FLOOR}", bound_type="HARD_INVARIANT",
+        description="Deflation inverted over a window with positive CPI change",
     ),
     InvariantRule("SHARPE_BOUND", "abs(sharpe) < 10", bound_type="PLAUSIBILITY",
                   description="Risk-free or vol denominator defect"),

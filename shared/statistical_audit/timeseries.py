@@ -64,6 +64,76 @@ def check_timeseries_integrity(
     return TimeseriesIntegrityResult(n_series, duplicates, gaps)
 
 
+def nav_with_ipc(nav_dates: pd.DataFrame, ipc: pd.DataFrame) -> pd.DataFrame:
+    """Each fund's NAV rows with the CPI index deflate_nav() would attach to them, and their position (`pos`) in the
+    fund's own series. Shared by build_window_deflation_frame and scalar_window_cpi so both reproduce the same contract.
+
+    nav_dates: isin, date, nav (fund_nav_monthly, unfiltered). ipc: date, ipc_index (raw series_inflation rows, one
+    geography). Reproduces deflate_nav(): ipc dates moved to month end (db_readers.load_ipc), merge_asof(backward), then
+    bfill() only the genuinely-uncovered leading gap per ISIN.
+    """
+    ipc = ipc[["date", "ipc_index"]].copy()
+    ipc["date"] = pd.to_datetime(ipc["date"]) + pd.offsets.MonthEnd(0)  # matches db_readers.load_ipc()
+    ipc["ipc_index"] = ipc["ipc_index"].astype(float)
+    ipc = ipc.sort_values("date")
+
+    nav = nav_dates[["isin", "date", "nav"]].copy()
+    nav["date"] = pd.to_datetime(nav["date"])
+    nav["nav"] = nav["nav"].astype(float)
+    nav = nav.sort_values("date")
+    nav = pd.merge_asof(nav, ipc, on="date", direction="backward")
+    nav = nav.sort_values(["isin", "date"]).reset_index(drop=True)
+    # Contract under test (deflate_nav): a NAV date before the fund's own IPC-aligned coverage
+    # takes the earliest known IPC value instead of being dropped or given a later one.
+    # audit: bfill-ok -- reproduces the production deflation contract, not silent imputation.
+    nav["ipc_index"] = nav.groupby("isin")["ipc_index"].bfill()
+    nav["pos"] = nav.groupby("isin").cumcount()
+    return nav
+
+
+def scalar_window_cpi(
+    rows: pd.DataFrame, nav_dates: pd.DataFrame, ipc: pd.DataFrame,
+    window_ends: "Mapping[str, str | None] | None" = None, periods_per_year: int = 12,
+) -> pd.DataFrame:
+    """The CPI change over the window each stored scalar metric row was computed on (FND-0234 / DEFLATION_ORDER).
+
+    rows:        isin, horizon, metric_version, n_obs -- one row per stored fund_metrics (isin, horizon, version);
+                 n_obs is the metric's source_rows (NAV points in its window).
+    window_ends: {horizon: 'YYYY-MM-DD' | None} -- the last date a horizon's window can reach (the crisis windows'
+                 end dates). A horizon missing from the mapping, or mapped to None, ends at the fund's last NAV
+                 (since_inception and the rolling windows).
+
+    The window is located the way build_window_deflation_frame locates it: its last NAV is the fund's last NAV on or
+    before the horizon's end, and its first NAV is n_obs - 1 positions earlier. Returns `rows` plus window_cpi_ann
+    (annualised CPI change over that window; NaN = undecidable: the window cannot be located or has no CPI), so a rule
+    can be gated on "was there inflation OVER THIS WINDOW" instead of today's CPI -- a fund whose window sits in a
+    deflationary stretch (e.g. a fund launched in spring 2008, window ending March 2009) legitimately has real > nominal.
+    """
+    nav = nav_with_ipc(nav_dates, ipc)
+    out = rows.copy()
+    last_pos = nav.groupby("isin")["pos"].max().rename("last_pos")
+    out = out.merge(last_pos, on="isin", how="left")
+    out["end_pos"] = out["last_pos"]
+    for horizon, end in (window_ends or {}).items():
+        if end is None:
+            continue
+        upto = nav[nav["date"] <= pd.Timestamp(end)].groupby("isin")["pos"].max()
+        mask = out["horizon"] == horizon
+        out.loc[mask, "end_pos"] = out.loc[mask, "isin"].map(upto)
+    out["end_pos"] = out["end_pos"].astype("Int64")
+    out["start_pos"] = (out["end_pos"] - (out["n_obs"].astype("Int64") - 1)).astype("Int64")
+
+    ends = nav[["isin", "pos", "ipc_index"]].rename(columns={"pos": "end_pos", "ipc_index": "ipc_end"})
+    starts = nav[["isin", "pos", "ipc_index"]].rename(columns={"pos": "start_pos", "ipc_index": "ipc_start"})
+    for frame in (ends, starts):
+        frame[frame.columns[1]] = frame[frame.columns[1]].astype("Int64")
+    out = out.merge(ends, on=["isin", "end_pos"], how="left").merge(starts, on=["isin", "start_pos"], how="left")
+
+    years = out["n_obs"].astype(float) / periods_per_year
+    out["window_cpi_ann"] = (out["ipc_end"] / out["ipc_start"]) ** (1 / years) - 1
+    return out.drop(columns=["last_pos", "end_pos", "start_pos", "ipc_end", "ipc_start"])
+
+
 def build_window_deflation_frame(
     ts: pd.DataFrame, nav_dates: pd.DataFrame, ipc: pd.DataFrame, periods_per_year: int = 12,
 ) -> pd.DataFrame:
@@ -89,22 +159,7 @@ def build_window_deflation_frame(
     or n_obs would reach before the series start) get NaN deflators and are therefore left out of
     n_applicable by check_invariant -- undecidable, never "violating" (P#1/R-4).
     """
-    ipc = ipc[["date", "ipc_index"]].copy()
-    ipc["date"] = pd.to_datetime(ipc["date"]) + pd.offsets.MonthEnd(0)  # matches db_readers.load_ipc()
-    ipc["ipc_index"] = ipc["ipc_index"].astype(float)
-    ipc = ipc.sort_values("date")
-
-    nav = nav_dates[["isin", "date", "nav"]].copy()
-    nav["date"] = pd.to_datetime(nav["date"])
-    nav["nav"] = nav["nav"].astype(float)
-    nav = nav.sort_values("date")
-    nav = pd.merge_asof(nav, ipc, on="date", direction="backward")
-    nav = nav.sort_values(["isin", "date"]).reset_index(drop=True)
-    # Contract under test (deflate_nav): a NAV date before the fund's own IPC-aligned coverage
-    # takes the earliest known IPC value instead of being dropped or given a later one.
-    # audit: bfill-ok -- reproduces the production deflation contract, not silent imputation.
-    nav["ipc_index"] = nav.groupby("isin")["ipc_index"].bfill()
-    nav["pos"] = nav.groupby("isin").cumcount()
+    nav = nav_with_ipc(nav_dates, ipc)
 
     out = ts.copy()
     out["date"] = pd.to_datetime(out["date"])
