@@ -190,6 +190,25 @@ CREATE INDEX IF NOT EXISTS idx_audit_finding_isin ON control.audit_finding (isin
 CREATE INDEX IF NOT EXISTS idx_audit_finding_rule ON control.audit_finding (domain, rule_id);
 CREATE INDEX IF NOT EXISTS idx_audit_finding_run ON control.audit_finding (run_id);
 
+-- -----------------------------------------------------------------------------
+-- control.audit_accepted_finding — accepted-residual baseline (FND-0234(e))
+-- A (domain, rule, ISIN) violation the owner has decided to live with for now, tied to the AP that will fix it and
+-- with a mandatory expiry. The audit engine downgrades a finding whose violating ISINs are ALL accepted (and still
+-- reports them as INFO); an ISIN that is not accepted keeps the finding an ALARM, so only NEW violations alert.
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS control.audit_accepted_finding (
+    domain       text        NOT NULL,                  -- cost_attributes | p2_metrics (audit_finding.domain)
+    rule_id      text        NOT NULL,
+    isin         varchar(12) NOT NULL,
+    ap_id        text        NOT NULL,                  -- the backlog ticket that owns the fix, e.g. FND-0034
+    reason       text        NOT NULL,
+    accepted_at  date        NOT NULL DEFAULT current_date,
+    accepted_by  text,
+    expires_at   date        NOT NULL,
+    CONSTRAINT audit_accepted_finding_pkey PRIMARY KEY (domain, rule_id, isin),
+    CONSTRAINT audit_accepted_finding_expiry_ck CHECK (expires_at > accepted_at)
+);
+
 
 -- =============================================================================
 -- Migration bookkeeping (new in PG — no SQLite analog)

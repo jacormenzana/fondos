@@ -35,15 +35,14 @@ DDL_FILE = ROOT / "db" / "pg" / "35_control.sql"
 LOCK_TIMEOUT = "5s"
 RC_OK, RC_FAILED, RC_USAGE, RC_REFUSED = 0, 1, 2, 3
 
-_DDL_RE = re.compile(r"CREATE TABLE IF NOT EXISTS control\.fund_metric_family_state \(.*?\)\s*WITH \(fillfactor = \d+\);",
-                     re.S)
-
-
-def ddl_sql(path: Path = DDL_FILE) -> str:
-    """The CREATE TABLE statement, as written in db/pg/35_control.sql (without the trailing ';')."""
-    m = _DDL_RE.search(path.read_text(encoding="utf-8"))
+def ddl_sql(path: Path = DDL_FILE, table: str = TABLE) -> str:
+    """The CREATE TABLE statement for `table`, as written in db/pg/35_control.sql (without the trailing ';').
+    The statement ends at the first closing parenthesis in column 0 (plus any table options up to the ';').
+    `table` is a parameter so the other control-table migrations reuse this (scripts/ops/migrate_audit_accepted_finding.py)."""
+    pattern = re.compile(rf"CREATE TABLE IF NOT EXISTS {re.escape(table)} \(.*?\n\)[^;]*;", re.S)
+    m = pattern.search(path.read_text(encoding="utf-8"))
     if not m:
-        raise RuntimeError(f"CREATE TABLE {TABLE} not found in {path}")
+        raise RuntimeError(f"CREATE TABLE {table} not found in {path}")
     return m.group(0).rstrip(";")
 
 
@@ -54,13 +53,14 @@ def table_exists(conn, table: str = TABLE) -> bool:
     ).fetchone() is not None
 
 
-def migrate(conn, lock_timeout: str = LOCK_TIMEOUT) -> None:
+def migrate(conn, lock_timeout: str = LOCK_TIMEOUT, table: str = TABLE) -> None:
     """CREATE TABLE IF NOT EXISTS in ONE transaction. Raises on any failure (caller rolls back)."""
     conn.execute(f"SET LOCAL lock_timeout = '{lock_timeout}'")
-    conn.execute(ddl_sql())
+    conn.execute(ddl_sql(table=table))
 
 
-def main(argv: list | None = None) -> int:
+def main(argv: list | None = None, table: str = TABLE) -> int:
+    """Shared CLI of the control-table migrations; migrate_audit_accepted_finding.py calls it with its own table."""
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--apply", action="store_true", help="execute the migration (default: dry run)")
     args = ap.parse_args(argv)
@@ -87,11 +87,11 @@ def main(argv: list | None = None) -> int:
         print(f"connection failed: {type(exc).__name__}", file=sys.stderr)
         return RC_USAGE
     with conn:
-        existed = table_exists(conn)
-        print(f"{TABLE}: {'present' if existed else 'absent'}")
+        existed = table_exists(conn, table)
+        print(f"{table}: {'present' if existed else 'absent'}")
         conn.rollback()
         if not args.apply:
-            print("\nDRY RUN: nothing changed. DDL that --apply would run:\n" + ddl_sql())
+            print("\nDRY RUN: nothing changed. DDL that --apply would run:\n" + ddl_sql(table=table))
             return RC_OK
         if lock_file_held():
             print(f"REFUSED: the launcher cycle lock is held ({LOCK_FILE}); a cycle is running.", file=sys.stderr)
@@ -103,14 +103,14 @@ def main(argv: list | None = None) -> int:
                   "P2 appears to be running.", file=sys.stderr)
             return RC_REFUSED
         try:
-            migrate(conn)
+            migrate(conn, table=table)
             conn.commit()
         except Exception as exc:
             conn.rollback()
             print(f"FAILED, rolled back (nothing committed): {type(exc).__name__}: {exc}", file=sys.stderr)
             return RC_FAILED
-        print(f"\nAPPLIED: {TABLE} is {'already there (no change)' if existed else 'created'}. "
-              "Verify, then set FAMILY_VERSIONING_ENABLED = True.")
+        print(f"\nAPPLIED: {table} is {'already there (no change)' if existed else 'created'}. "
+              + ("Verify, then set FAMILY_VERSIONING_ENABLED = True." if table == TABLE else "Verify."))
         return RC_OK
 
 

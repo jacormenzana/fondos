@@ -144,6 +144,7 @@ from shared.statistical_audit.invariants import (
     check_invariant,
     expression_identifiers,
 )
+from shared.statistical_audit.accepted_residuals import apply_accepted, load_accepted
 from shared.statistical_audit.compare_runs import compare_runs, load_run_statistics
 from shared.statistical_audit.outliers import detect_outliers
 from shared.statistical_audit.persistence import clear_run, emit_findings, emit_statistics, statistics_to_frame
@@ -321,6 +322,7 @@ def _run_cost_schedule_integrity(run: "AuditRun", master: pd.DataFrame, schedule
             "distance": float(len(dup_rhp)),
             "evidence": f"{len(dup_rhp)} ISINs have >1 Is_RHP=1 row (max {int(dup_rhp.max())})",
             "root_cause_candidate": "Schedule-build logic marked more than one Horizon_Years row as the RHP row",
+            "violating_isins": tuple(sorted(dup_rhp.index.tolist())),
         })
 
     # (c) Is_RHP=1 row's Annual_Impact_Pct vs fund_master.ACI_RHP -- ACI_RHP is DERIVED from this
@@ -330,9 +332,8 @@ def _run_cost_schedule_integrity(run: "AuditRun", master: pd.DataFrame, schedule
         master[["ISIN", "ACI_RHP"]].dropna(subset=["ACI_RHP"]), on="ISIN", how="inner",
     )
     if not rhp_join.empty:
-        n_disagree = int(
-            ((rhp_join["Annual_Impact_Pct"] - rhp_join["ACI_RHP"]).abs() >= KID_ROUNDING_TOLERANCE_PP).sum()
-        )
+        disagree_mask = (rhp_join["Annual_Impact_Pct"] - rhp_join["ACI_RHP"]).abs() >= KID_ROUNDING_TOLERANCE_PP
+        n_disagree = int(disagree_mask.sum())
         if n_disagree:
             run.findings.append({
                 "block": "BLOCK6", "rule_id": "SCHEDULE_RHP_ACI_MISMATCH",
@@ -343,6 +344,7 @@ def _run_cost_schedule_integrity(run: "AuditRun", master: pd.DataFrame, schedule
                             f"fund_master.ACI_RHP beyond {KID_ROUNDING_TOLERANCE_PP}pp",
                 "root_cause_candidate": "fund_master.ACI_RHP and the Is_RHP=1 schedule row were written by "
                                          "different, now-diverged extraction passes",
+                "violating_isins": tuple(sorted(rhp_join.loc[disagree_mask, "ISIN"].unique().tolist())),
             })
 
     # (d) ACI_RHP set with no Is_RHP=1 row at all for that ISIN.
@@ -358,6 +360,7 @@ def _run_cost_schedule_integrity(run: "AuditRun", master: pd.DataFrame, schedule
                         f"Is_RHP=1 row",
             "root_cause_candidate": "ACI_RHP set by a fallback path that never wrote/promoted a schedule row "
                                      "(see FIX-ACI-SCHEDULE-INJECT)",
+            "violating_isins": tuple(sorted(orphans["ISIN"].tolist())),
         })
 
 
@@ -1286,6 +1289,8 @@ class AuditRun:
         # stays domain-agnostic (prints the line only when non-empty).
         self.snapshot_held_out: set[str] = set()
         self.snapshot_max_spread_days: float = 0.0
+        # FND-0234(e): one line per finding the accepted-residual baseline downgraded or narrowed (printed by _print_report)
+        self.accepted_notes: list[str] = []
 
 
 def _block1(
@@ -1403,6 +1408,7 @@ def _run_group_checks(run: AuditRun, rules, frame: pd.DataFrame, block: str = "B
         result = check_group_constancy(frame, rule)
         if result.n_violating_groups == 0:
             continue
+        group_isin_col = _isin_column(result.violations) if str(rule.group_column).lower() == "isin" else None
         run.findings.append({
             "block": block, "rule_id": rule.rule_id, "rule_class": "HARD_INVARIANT",
             "severity": "ALARM", "group_key": rule.rule_id, "value": None,
@@ -1412,7 +1418,14 @@ def _run_group_checks(run: AuditRun, rules, frame: pd.DataFrame, block: str = "B
                         f"{rule.min_group_size}+ Horizon_Years rows have identical "
                         f"{rule.value_column} across every row",
             "root_cause_candidate": rule.description,
+            "violating_isins": (tuple(sorted(result.violations[group_isin_col].dropna().unique().tolist()))
+                                if group_isin_col else ()),
         })
+
+
+def _isin_column(df: pd.DataFrame) -> "str | None":
+    """The column of `df` holding the ISIN, whatever its case (cost frames: ISIN, P2 frames: isin), else None."""
+    return next((c for c in df.columns if str(c).lower() == "isin"), None)
 
 
 def _run_invariants(run: AuditRun, rules, frames: list[pd.DataFrame], block: str) -> None:
@@ -1435,8 +1448,9 @@ def _run_invariants(run: AuditRun, rules, frames: list[pd.DataFrame], block: str
         # emit_findings() never persists it) -- _print_report's remediation block reads it back.
         evidence = f"{result.n_violations}/{result.n_applicable} applicable rows violate"
         violating_isins: tuple[str, ...] = ()
-        if "isin" in result.violations.columns:
-            violating_isins = tuple(sorted(result.violations["isin"].dropna().unique().tolist()))
+        isin_col = _isin_column(result.violations)     # FND-0234: the cost frames spell it ISIN, the P2 frames isin
+        if isin_col is not None:
+            violating_isins = tuple(sorted(result.violations[isin_col].dropna().unique().tolist()))
             if violating_isins:
                 evidence += f" across {len(violating_isins)} ISINs"
         run.findings.append({
@@ -1615,6 +1629,11 @@ def _print_report(run: "AuditRun", run_id: str) -> None:
         if f["block"] == "BLOCK4":
             continue  # per-ISIN outlier rows are numerous; summarized above, not listed
         print(f"  [{f['severity']}] {f['block']} {f['rule_id']} ({f['group_key']}): {f['evidence']}")
+    if run.accepted_notes:                      # FND-0234(e): never silent -- say what the baseline absorbed
+        print()
+        print(f"Accepted residuals ({len(run.accepted_notes)} findings; scripts/audit/accept_audit_residual.py):")
+        for note in run.accepted_notes:
+            print(f"  = {note}")
     print()
     print(f"Skipped ({len(run.skipped)}):")
     for s in run.skipped:
@@ -1660,6 +1679,21 @@ def _print_report(run: "AuditRun", run_id: str) -> None:
                   "run_pipeline.py --force -> --verify-recompute snap.json --isin <ISINs> "
                   "(every input_hash must change) -> re-run this audit on the same ISINs and "
                   "confirm 0 WINDOW_DEFLATION_STRICT/WINDOW_FISHER_IDENTITY violations.")
+
+
+def _apply_accepted_residuals(conn: "psycopg.Connection", run: "AuditRun") -> None:
+    """Downgrade the findings whose violating ISINs are all accepted (shared.statistical_audit.accepted_residuals).
+    Never fails the audit: a database without control.audit_accepted_finding (migration not applied) simply has no
+    accepted residuals, and says so on stderr."""
+    try:
+        accepted = load_accepted(conn, run.domain)
+    except Exception as exc:
+        conn.rollback()                 # Postgres aborts the transaction on a failed statement
+        print(f"[accepted-residuals] none applied ({type(exc).__name__}): control.audit_accepted_finding "
+              "is not readable; run scripts/ops/migrate_audit_accepted_finding.py", file=sys.stderr)
+        return
+    if accepted:
+        run.findings, run.accepted_notes = apply_accepted(run.findings, accepted)
 
 
 def _has_blocking_findings(run: "AuditRun") -> bool:
@@ -1827,6 +1861,7 @@ def main() -> int:
     conn = get_connection()
     try:
         run = run_cost_audit(conn, isins=isins) if args.domain == "costs" else run_p2_audit(conn, isins=isins)
+        _apply_accepted_residuals(conn, run)
     finally:
         if not keep_open:
             conn.close()

@@ -148,6 +148,33 @@ def emit_findings(
     return len(rows)
 
 
+def emit_accepted_residuals(
+    conn: "psycopg.Connection",
+    domain: str,
+    rule_id: str,
+    isins: Sequence[str],
+    ap_id: str,
+    reason: str,
+    expires_at: Any,
+    accepted_by: str | None = None,
+) -> int:
+    """Records (or renews) acceptances for `isins` under (domain, rule_id). Re-accepting an ISIN replaces its AP, reason
+    and expiry (an explicit renewal). Commits. Returns the number of rows written."""
+    if not isins:
+        return 0
+    rows = [(domain, rule_id, i, ap_id, reason, accepted_by, expires_at) for i in sorted(set(isins))]
+    executemany(
+        conn,
+        "INSERT INTO audit_accepted_finding (domain, rule_id, isin, ap_id, reason, accepted_by, expires_at) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s) "
+        "ON CONFLICT (domain, rule_id, isin) DO UPDATE SET ap_id = excluded.ap_id, reason = excluded.reason, "
+        "accepted_by = excluded.accepted_by, expires_at = excluded.expires_at, accepted_at = current_date",
+        rows,
+    )
+    conn.commit()
+    return len(rows)
+
+
 @dataclass
 class CorrectionRecord:
     isin: str

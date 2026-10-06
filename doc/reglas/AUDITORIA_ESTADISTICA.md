@@ -543,6 +543,33 @@ cadena manual (como `CALC_VERSION`) para que no pueda olvidarse de incrementar. 
 o un catálogo cambia el hash; comparar dos `run_id` con `catalog_version` distinta explica una
 deriva que no viene de los datos.
 
+### 6.1 Residuales aceptados (FND-0234(e))
+
+Una violación de invariante que el pipeline aún no sabe reparar (p. ej. los 92 fondos con
+`Ongoing_Charge_Recurrent` copiado de `ACI_RHP`, FND-0034) producía el mismo ALARM en cada
+auditoría. `control.audit_accepted_finding` permite **aceptar** un `(domain, rule_id, isin)` con el AP
+que lo arregla (`ap_id`), un motivo y una **caducidad obligatoria** (por defecto 90 días, máximo 180):
+
+- Un hallazgo cuyos ISIN infractores están **todos** aceptados pasa a `INFO` / clase
+  `ACCEPTED_RESIDUAL`: se sigue informando y persistiendo (no se oculta nada) y `--mode check` ya no
+  bloquea por él.
+- Un hallazgo con **algún ISIN no aceptado** conserva su severidad y se restringe a los ISIN nuevos
+  (`distance` = cuántos son nuevos): solo alertan las violaciones nuevas.
+- Una aceptación caducada deja de contar, así que un residual olvidado vuelve solo.
+- Solo se pueden aceptar hallazgos que llevan `violating_isins` (invariantes, constancia de grupo y
+  los ALARM de integridad del calendario de costes). Las estadísticas de población (Bloques 1-3) no.
+- La clave es la pertenencia al conjunto, no un valor: una violación que empeora en un ISIN ya
+  aceptado no se detecta (la caducidad lo acota).
+
+Alta y renovación: `python scripts/audit/accept_audit_residual.py --domain costs --rule <RULE> --ap
+FND-xxxx --reason "..." [--apply]` (sin `--apply` solo muestra los ISIN). Crear la tabla:
+`scripts/ops/migrate_audit_accepted_finding.py --apply` (propietario). Sin la tabla la auditoría
+funciona igual y avisa por stderr de que no hay residuales aceptados.
+
+Corrección asociada: los marcos de costes nombran la columna `ISIN` y la búsqueda de ISIN
+infractores era en minúsculas, así que todos los ALARM de costes decían "0 ISINs"; ahora se busca sin
+distinguir mayúsculas.
+
 ---
 
 ## §7. Correcciones a las especificaciones actuales de las dos skills
