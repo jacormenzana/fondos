@@ -83,3 +83,10 @@ FLOAT_IDENTITY_TOLERANCE = 0.0001
 # point, so the eligibility floor itself is the only principled anchor
 # available without a fresh, dedicated investigation of the wider curve.
 IPC_ELIGIBILITY_FLOOR = 0.001
+
+# --- Class 3b: magnitude floor for a ratio compared with another ratio (FND-0234, 2026-10-06) ---
+# Sharpe and Sortino share their numerator (return_ann - rf), so when it is ~0 both ratios are ~0 and "equal within 0.0001" is
+# arithmetic, not evidence. 17 of the 25 live SHARPE_EQUALS_SORTINO matches had |ratio| < 3e-4 (return_ann within 0.1 pp of the
+# 2.5% risk-free rate). 0.01 = a numerator of about 0.1 pp of annual return at 10% volatility: below it the ratio is
+# numerically indistinguishable from zero.
+RATIO_ELIGIBILITY_FLOOR = 0.01

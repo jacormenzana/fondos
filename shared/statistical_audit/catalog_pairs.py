@@ -9,7 +9,7 @@ from itertools import combinations
 import pandas as pd
 
 from .comparisons import PairRule
-from .tolerances import FLOAT_IDENTITY_TOLERANCE, IPC_ELIGIBILITY_FLOOR
+from .tolerances import FLOAT_IDENTITY_TOLERANCE, IPC_ELIGIBILITY_FLOOR, RATIO_ELIGIBILITY_FLOOR
 
 
 def _ipc_eligibility(df: pd.DataFrame) -> pd.Series:
@@ -23,6 +23,17 @@ def _ipc_eligibility(df: pd.DataFrame) -> pd.Series:
     if column not in df.columns:
         return pd.Series(False, index=df.index)
     return df[column] > IPC_ELIGIBILITY_FLOOR
+
+
+def _positive_ratio_eligibility(df: pd.DataFrame) -> pd.Series:
+    """Rows where Sharpe and Sortino are both clearly POSITIVE (above RATIO_ELIGIBILITY_FLOOR). That is the only place where
+    sortino == sharpe means something: with a positive numerator the downside deviation is strictly below the standard deviation
+    (dd^2 <= (1/N) * sum_{r<MAR} (r - mean)^2 < sigma^2), so equal ratios there are a defect signature. With a negative numerator
+    dd/sigma crosses 1 as the shortfall grows (dd^2 = sigma^2 (1 - 1/N) + (mean - MAR)^2): equality is a coincidence at the
+    crossing, 8 of 21,755 live rows. With a numerator near 0 both ratios are near 0. Fails closed without the columns."""
+    if "sharpe" not in df.columns or "sortino" not in df.columns:
+        return pd.Series(False, index=df.index)
+    return (df["sharpe"] > RATIO_ELIGIBILITY_FLOOR) & (df["sortino"] > RATIO_ELIGIBILITY_FLOOR)
 
 
 P2_PAIRS: dict[str, PairRule] = {
@@ -44,8 +55,12 @@ P2_PAIRS: dict[str, PairRule] = {
     # this is an identity test (sortino's downside-dev either collapsed to
     # sharpe's total vol by defect, or the two are genuinely different) and
     # 0.0001 is already the correct value.
+    # FND-0234 (2026-10-06): eligibility = both ratios clearly positive. The 25 live matches were 17 near-zero numerators
+    # (|ratio| < 3e-4: return_ann within 0.1 pp of the risk-free rate) and 8 negative-numerator coincidences at the dd/sigma = 1
+    # crossing; none had a positive numerator, where equality is impossible by construction (see _positive_ratio_eligibility).
     "SHARPE_EQUALS_SORTINO": PairRule(
         rule_id="SHARPE_EQUALS_SORTINO", tolerance=FLOAT_IDENTITY_TOLERANCE, min_matches=8,
+        eligibility=_positive_ratio_eligibility,
         diagnosis="Sortino downside-dev collapsed to total vol",
     ),
     "CAPTURE_UP_EQUALS_DOWN": PairRule(

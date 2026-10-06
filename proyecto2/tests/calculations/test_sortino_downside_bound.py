@@ -117,3 +117,16 @@ def test_undefined_rows_are_not_applicable_never_violating():
 def test_missing_columns_give_nan_columns_not_an_error():
     out = add_downside_deviation_columns(pd.DataFrame({"x": [1, 2]}))
     assert out[["rf_implied", "dd_ann_implied", "dd_ann_max"]].isna().all().all()
+
+
+def test_equal_ratios_with_a_clear_positive_numerator_do_not_occur_on_correct_data():
+    """The premise of SHARPE_EQUALS_SORTINO's eligibility (FND-0234): with a positive numerator dd < sigma strictly, so
+    sortino == sharpe there would be a defect. On 4,500 random series through the real formulas it never happens."""
+    from shared.statistical_audit.tolerances import RATIO_ELIGIBILITY_FLOOR
+    hits = 0
+    for seed in (21, 22, 23):
+        frame = _random_frame(seed)
+        positive = frame[(frame["sharpe"] > RATIO_ELIGIBILITY_FLOOR) & (frame["sortino"] > RATIO_ELIGIBILITY_FLOOR)]
+        assert len(positive) > 200
+        hits += int(((positive["sortino"] - positive["sharpe"]).abs() < 1e-4).sum())
+    assert hits == 0

@@ -63,6 +63,15 @@ RETIRED_RULES: dict[str, RetiredRule] = {
         date="2026-10-06",
         replaced_by="SORTINO_DOWNSIDE_BOUND",
     ),
+    "SHARPE_EQUALS_SORTINO": RetiredRule(
+        reason="Eligibility restricted 2026-10-06 (FND-0234) to rows where BOTH ratios are clearly positive (> 0.01). The live "
+               "25 matches were arithmetic or coincidence, not a defect: 17 had a numerator near 0 (both ratios ~0), 8 a "
+               "negative numerator where dd/sigma legitimately crosses 1. With a positive numerator dd < sigma strictly, so "
+               "equal ratios there remain a real 'downside deviation collapsed to total volatility' signature. The P2 skill's "
+               "Block 2 table states the pair without any eligibility.",
+        date="2026-10-06",
+        replaced_by="SHARPE_EQUALS_SORTINO",
+    ),
     "ANNUAL_LE_ACCUMULATED": RetiredRule(
         reason="Tolerance widened from FLOAT_IDENTITY_TOLERANCE (0.0001) to "
                "KID_ROUNDING_TOLERANCE_PP (0.06 percentage points): at 0.0001 this rule produced "

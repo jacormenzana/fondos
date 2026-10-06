@@ -142,6 +142,16 @@ desviación a la baja corrompida; en vivo, 0 hallazgos. El exponente usa la más
 convenciones de anualización (FND-0240: `annualized_return` cuenta puntos NAV, no intervalos), de modo
 que la regla no cambia si esa convención se corrige.
 
+*`SHARPE_EQUALS_SORTINO` (FND-0234, 2026-10-06):* las 25 coincidencias vivas no eran un defecto:
+17 tenían un numerador ≈ 0 (`return_ann` a ≤ 0,1 pp del tipo libre de riesgo, ambos ratios ≈ 0, iguales
+por aritmética) y 8 un numerador negativo, donde `dd/σ` cruza 1 de forma legítima
+(`dd² = σ²(1−1/N) + (media−MAR)²`). Con numerador **positivo** `dd < σ` estrictamente, así que ahí sí
+es la firma de "la desviación a la baja colapsó a la volatilidad total". La elegibilidad pasa a ser
+"ambos ratios > `RATIO_ELIGIBILITY_FLOOR` (0,01)": 0 hallazgos en vivo, y un test con 4.500 series
+aleatorias muestra que en datos correctos nunca hay igualdad con numerador positivo. Pendiente
+relacionado: `CAPTURE_UP_EQUALS_DOWN` (10 filas, capture ≈ 1 en fondos que replican un índice) parece
+igualdad legítima de la misma clase; sin tocar.
+
 **`vol_ann > 0` cuando `return_ann ≠ 0`** — no es una imposibilidad matemática: una serie con
 retorno periódico idéntico y distinto de cero produce `vol_ann=0` sin que la serie esté congelada.
 La comprobación correcta ata volatilidad cero a **varianza de retornos periódicos**, no a
