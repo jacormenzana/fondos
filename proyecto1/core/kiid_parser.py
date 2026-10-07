@@ -466,6 +466,11 @@ import re
 import unicodedata
 from datetime import date
 try:
+    from proyecto1.core.classify_utils import HEDGED_CLASS_CODE_RE   # FND-0244: single definition of the "...H" hedged class codes
+except ImportError:
+    from core.classify_utils import HEDGED_CLASS_CODE_RE
+
+try:
     from proyecto1.core.srri_text import extract_srri
 except ImportError:
     from core.srri_text import extract_srri
@@ -949,6 +954,14 @@ def parse_kiid_generic(
                 result["Inference_Trace"] = _append_trace(
                     result["Inference_Trace"],
                     "HEDGING_FROM_NAME"
+                )
+            # FND-0244: this is the PERSISTED path (the characterizer's Currency_Hedged is no longer stored since v20). A share-class code
+            # ending in H (AH, BH, ZH, PH, BDH, BGDH, ZDH, PDH) survives the ~30-character name cut when the explicit marker does not.
+            elif HEDGED_CLASS_CODE_RE.search(name_up.lower()):
+                result["Hedging_Policy"] = "HEDGED"
+                result["Inference_Trace"] = _append_trace(
+                    result["Inference_Trace"],
+                    "HEDGING_FROM_NAME_CLASSCODE"
                 )
 
     # -------------------------------------------------

@@ -92,6 +92,7 @@ try:
         _get_obj_bounds, _extract_window,
         map_theme_to_sector_focus,   # BL-54: mapa canónico Theme→Sector_Focus
         detect_currency_hedged_from_kiid,  # BL-49/DRY: patrones KIID centralizados
+        HEDGED_CLASS_CODE_RE,              # FND-0244: codigos de clase que acaban en H
     )
 except ImportError:
     from core.classify_utils import (
@@ -104,6 +105,7 @@ except ImportError:
         _get_obj_bounds, _extract_window,
         map_theme_to_sector_focus,   # BL-54: mapa canónico Theme→Sector_Focus
         detect_currency_hedged_from_kiid,  # BL-49/DRY: patrones KIID centralizados
+        HEDGED_CLASS_CODE_RE,              # FND-0244: codigos de clase que acaban en H
     )
 
 
@@ -550,11 +552,6 @@ def detect_market_cap_focus(
 # DETECT_CURRENCY_HEDGED
 # =============================================================
 
-# FND-0244: whole-token share-class codes ending in H = hedged class (see detect_currency_hedged). Letters: A (Morgan Stanley), B / P / Z
-# (Capital Group) + optional G (gross) + optional D (distribution) + H.
-_HEDGED_CLASS_CODE = re.compile(r"(?:^|\s)[abpz]g?d?h(?=\s|$)")
-
-
 def detect_currency_hedged(name_l: str, kiid_text: Optional[str] = None) -> Optional[str]:
     """Detecta política de cobertura de divisa desde el nombre de la clase.
 
@@ -599,7 +596,7 @@ def detect_currency_hedged(name_l: str, kiid_text: Optional[str] = None) -> Opti
     # "BDH" / "BGDH" / "ZDH" / "PDH"), as a whole token. The catalogue names are cut at ~30 characters, so the explicit marker is often
     # gone. Measured on the 2,950 active funds: 43 carry such a token; 11 of them have a KIID that states the hedge, 0 state the opposite;
     # 17 were stored "Unhedged". Evaluated after the explicit lists so "unhedged"/"sin cobertura" in the name still wins.
-    if _HEDGED_CLASS_CODE.search(name_l):
+    if HEDGED_CLASS_CODE_RE.search(name_l):
         return "Hedged"
 
     # BL-49/DRY: fallback al texto KIID delegado en classify_utils (Principio #2).

@@ -5329,6 +5329,13 @@ _CH_UNHEDGED_RE: list[tuple[str, re.Pattern]] = [
 ]
 
 
+# FND-0244 (2026-10-07): share-class codes that END in H and mean "hedged", as a WHOLE token of the (lower-case) fund name: Morgan Stanley /
+# M&G / Fidelity "AH", Capital Group "BH" "ZH" "PH" "BDH" "BGDH" "ZDH" "PDH". The catalogue names are cut at ~30 characters, so the explicit
+# marker is often gone while the class code survives. Measured on the 2,950 active funds: 43 carry such a token, 11 have a KIID that states the
+# hedge, 0 state the opposite. Single definition (P#11): used by the persisted path (kiid_parser, Hedging_Policy) and by the characterizer.
+HEDGED_CLASS_CODE_RE = re.compile(r"(?:^|\s)[abpz]g?d?h(?=\s|$)")
+
+
 def detect_currency_hedged_from_kiid(
     kiid_text: str,
 ) -> tuple[Optional[str], Optional[str]]:

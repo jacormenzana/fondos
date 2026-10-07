@@ -79,3 +79,28 @@ def test_an_explicit_unhedged_statement_in_the_name_still_wins_over_the_class_co
 def test_the_existing_explicit_markers_are_unchanged():
     for name in ("fund a eurhdg acc", "fund a usd hedged", "fund (h) acc", "fund gbph acc"):
         assert detect_currency_hedged(name) == "Hedged", name
+
+
+# ---------------------------------------------------------------- the PERSISTED path (kiid_parser) -- the characterizer's Currency_Hedged is not stored since v20
+from core.kiid_parser import parse_kiid_generic  # noqa: E402
+
+_NO_HEDGE_TEXT = "This document provides key information about this investment product. " * 6
+
+
+@pytest.mark.parametrize("name", ["CAPITAL NEW PERSPECTIVE BH ACC", "MS SICAV GLOBAL BRANDS AH", "CAPITAL G NW PRSP BGDH EUH INC",
+                                  "M&G (LUX) OPTIMAL INCOME AH ACC", "CAPITAL G. NEW PERSP PDH EUR"])
+def test_the_class_code_sets_the_stored_hedging_policy_through_the_parser(name):
+    r = parse_kiid_generic(_NO_HEDGE_TEXT, None, None, name)
+    assert r["Hedging_Policy"] == "HEDGED" and "HEDGING_FROM_NAME_CLASSCODE" in r["Inference_Trace"]
+
+
+def test_the_explicit_marker_keeps_its_own_trace_and_a_plain_class_is_untouched():
+    explicit = parse_kiid_generic(_NO_HEDGE_TEXT, None, None, "FUND A USD HEDGED")
+    assert explicit["Hedging_Policy"] == "HEDGED" and "HEDGING_FROM_NAME_CLASSCODE" not in explicit["Inference_Trace"]
+    plain = parse_kiid_generic(_NO_HEDGE_TEXT, None, None, "CAPITAL NEW PERSPECTIVE B ACC")
+    assert plain["Hedging_Policy"] is None
+
+
+def test_one_definition_serves_both_detectors():
+    from core import classify_utils, fund_characterizer, kiid_parser
+    assert fund_characterizer.HEDGED_CLASS_CODE_RE is classify_utils.HEDGED_CLASS_CODE_RE is kiid_parser.HEDGED_CLASS_CODE_RE
