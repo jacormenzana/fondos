@@ -2104,7 +2104,12 @@ ES_HEDGED = [
 ]
 
 ES_UNHEDGED = [
-    r"\bno\s+est[aá]\s+cubierta\b",
+    # FND-0244 (2026-10-07): "no está cubierta" alone fired on the PRIIPs boilerplate "dicha pérdida no está cubierta por ningún régimen de
+    # compensación o protección para los inversores" (the investor-compensation scheme, nothing to do with currency) and, being evaluated
+    # BEFORE ES_HEDGED, turned classes whose own text says "Es una clase de participaciones con cobertura cambiaria" into UNHEDGED (14 active
+    # Morgan Stanley / Capital Group classes). The pattern keeps its currency meaning: it must not be followed by "por ningún ...",
+    # "por el fondo de garantía" or "por el sistema".
+    r"\bno\s+est[aá]\s+cubierta\b(?!\s+por\s+(?:ning[uú]n|el\s+fondo\s+de\s+garant[ií]a|el\s+sistema))",
     r"\bno\s+se\s+aplica\s+cobertura\s+de\s+divisa\b",
     r"\bsin\s+cobertura\s+de\s+divisa\b",
     # NUEVO: "sin cobertura" genérico — 7 casos

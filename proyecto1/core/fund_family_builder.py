@@ -58,11 +58,15 @@ _ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT))
 
 try:
-    from proyecto1.core.classify_utils import RFC_INCOMPATIBLE_FAMILIES  # BL-64e DRY (P#11)
+    from proyecto1.core.classify_utils import (  # BL-64e DRY (P#11); FND-0244: the family arbitration reuses the one classifier
+        RFC_INCOMPATIBLE_FAMILIES, detect_nature_from_kiid, resolve_nature_evidence,
+    )
+    from proyecto1.core.benchmark_normalizer import merge_benchmark_sources
 except ImportError:
-    from core.classify_utils import RFC_INCOMPATIBLE_FAMILIES
+    from core.classify_utils import RFC_INCOMPATIBLE_FAMILIES, detect_nature_from_kiid, resolve_nature_evidence
+    from core.benchmark_normalizer import merge_benchmark_sources
 
-from shared.db import executemany, execute_fail_soft
+from shared.db import executemany, execute_fail_soft, fail_soft_block
 
 
 # Familias con heterogeneidad de Fund_Nature CONOCIDA, identificadas por su NOMBRE NORMALIZADO (la raiz que produce _normalize_name), nunca
@@ -415,6 +419,76 @@ def _resolve_family_nature(
     return None, []  # No determinable de forma segura
 
 
+# ============================================================
+# FND-0244 part 2 -- family-level nature arbitration (rule 4)
+# ============================================================
+#
+# The share classes of ONE fund hold the same portfolio, so they have ONE nature. They end up with different ones for reasons unrelated to
+# the fund: each class is classified alone, from its own KIID (classes of one fund come in different languages - the phrase lists are mostly
+# Spanish - or with gaps), its own benchmark / Morningstar row (hedged classes often have none) and its own realized-volatility band, which
+# moves with the NAV currency (Allianz Best Styles AT: USD class band 6 -> Renta Variable by the volatility veto, EUR class band 5 -> Mixtos,
+# identical KIID / benchmark / Morningstar evidence). Rules 1-3 only look at quality flags and cannot decide these.
+#
+# Rule 4 decides the family ONCE with the single classifier (resolve_nature_evidence, P#11): the REFERENCE class is the one a EUR investor
+# holds (fund_currency EUR first - the platform's investor-currency semantics, FND-0243), then the one whose KIID yields an ex-ante vote,
+# then the longest NAV history, then the lowest ISIN; its name, KIID text and realized-volatility band are used, and the benchmark /
+# Morningstar signals are completed from any sibling that has them. Applied only to ADJACENT natures (never a RV vs Monetario merge, which
+# would point at a false family) and never to Restantes; the winner must be one of the natures the family already has.
+
+def _reference_sort_key(m: dict) -> tuple:
+    has_vote = detect_nature_from_kiid(m.get("kiid_text") or "") is not None
+    return (
+        (m.get("fund_currency") or "").upper() != "EUR",
+        not has_vote,
+        -(m.get("nav_n") or 0),
+        m["ISIN"],
+    )
+
+
+def resolve_family_nature_by_reference(members: list[dict]) -> tuple[str | None, list[str], str]:
+    """Rule 4. `members` carry ISIN, Fund_Name, Fund_Nature, fund_currency, nav_n, kiid_text, benchmark_declared, ms_asset_class, srri_band.
+
+    Returns (nature, [ISINs to correct], reason); (None, [], reason) when the family cannot be decided safely."""
+    nature_set = {m["Fund_Nature"] for m in members if m.get("Fund_Nature")}
+    if len(nature_set) <= 1:
+        return None, [], "consistent"
+    if "Restantes" in nature_set or not _is_adjacent_pair(nature_set):
+        return None, [], "non-adjacent natures: left for review"
+    ref = sorted(members, key=_reference_sort_key)[0]
+    if not (ref.get("kiid_text") or "").strip():
+        return None, [], "reference class has no KIID text"
+    bench = next((m["benchmark_declared"] for m in sorted(members, key=_reference_sort_key) if m.get("benchmark_declared")), None)
+    ms = next((m["ms_asset_class"] for m in sorted(members, key=_reference_sort_key) if m.get("ms_asset_class")), None)
+    nature, conf, trace = resolve_nature_evidence((ref["Fund_Name"] or "").lower(), ref["kiid_text"], bench, ref.get("srri_band"), ms)
+    if nature is None or nature not in nature_set:
+        return None, [], f"reference class {ref['ISIN']} resolves to {nature!r}, not one of the family's natures"
+    return nature, [m["ISIN"] for m in members if m["Fund_Nature"] != nature],         f"reference class {ref['ISIN']} ({trace.get('reason')}, conf {conf:.2f})"
+
+
+def _load_family_evidence(conn, members: list[dict]) -> list[dict]:
+    """Add the inputs resolve_nature_evidence needs to each member of an inconsistent family (a handful of families per run)."""
+    isins = [m["ISIN"] for m in members]
+    ph = ",".join("%s" for _ in isins)
+    kiid = dict(conn.execute(
+        f"SELECT ISIN, Raw_KIID_Text FROM fund_kiid_metadata WHERE KIID_Class = 1 AND ISIN IN ({ph})", isins).fetchall())
+    meta = {r[0]: r[1:] for r in conn.execute(
+        f"SELECT ISIN, Fund_Currency, Benchmark_Declared FROM fund_master WHERE ISIN IN ({ph})", isins).fetchall()}
+    nav = dict(conn.execute(f"SELECT ISIN, COUNT(*) FROM fund_nav_monthly WHERE ISIN IN ({ph}) GROUP BY ISIN", isins).fetchall())
+    bmk = merge_benchmark_sources(conn.execute(
+        f"SELECT ISIN, source, asset_class, benchmark_role, benchmark_name, confidence FROM fund_benchmarks "
+        f"WHERE source IN ('MORNINGSTAR','KIID') AND ISIN IN ({ph})", isins).fetchall())
+    band = {r[0]: int(round(float(r[1]))) for r in conn.execute(
+        f"SELECT ISIN, value FROM fund_metrics WHERE metric = 'srri_nav' AND horizon = 'since_inception' AND real_flag = 0 "
+        f"AND value IS NOT NULL AND ISIN IN ({ph})", isins).fetchall()}
+    out = []
+    for m in members:
+        i = m["ISIN"]
+        out.append({**m, "kiid_text": kiid.get(i), "fund_currency": (meta.get(i) or (None, None))[0],
+                    "benchmark_declared": (meta.get(i) or (None, None))[1], "nav_n": nav.get(i, 0),
+                    "ms_asset_class": (bmk.get(i) or {}).get("asset_class"), "srri_band": band.get(i)})
+    return out
+
+
 def correct_family_inconsistencies(
     conn: "psycopg.Connection",
     dry_run: bool = False,
@@ -456,6 +530,14 @@ def correct_family_inconsistencies(
             continue  # familia consistente
 
         correct_nature, isins_to_fix = _resolve_family_nature(members)
+        if not correct_nature and not _is_structural_heterogeneity([m["Fund_Name"] for m in members]):
+            # FND-0244 part 2: rules 1-3 look only at quality flags; rule 4 decides by the reference class's evidence
+            try:
+                with fail_soft_block(conn):
+                    correct_nature, isins_to_fix, _why = resolve_family_nature_by_reference(_load_family_evidence(conn, members))
+            except Exception as _exc:
+                correct_nature, isins_to_fix = None, []
+                print(f"  [FamilyBuilder] rule 4 skipped for {fam_id}: {type(_exc).__name__}")
 
         if correct_nature and isins_to_fix:
             for isin in isins_to_fix:

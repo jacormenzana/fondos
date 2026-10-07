@@ -550,6 +550,11 @@ def detect_market_cap_focus(
 # DETECT_CURRENCY_HEDGED
 # =============================================================
 
+# FND-0244: whole-token share-class codes ending in H = hedged class (see detect_currency_hedged). Letters: A (Morgan Stanley), B / P / Z
+# (Capital Group) + optional G (gross) + optional D (distribution) + H.
+_HEDGED_CLASS_CODE = re.compile(r"(?:^|\s)[abpz]g?d?h(?=\s|$)")
+
+
 def detect_currency_hedged(name_l: str, kiid_text: Optional[str] = None) -> Optional[str]:
     """Detecta política de cobertura de divisa desde el nombre de la clase.
 
@@ -589,6 +594,12 @@ def detect_currency_hedged(name_l: str, kiid_text: Optional[str] = None) -> Opti
     if any(s in name_l for s in _UNHEDGED):
         return "Unhedged"
     if any(s in name_l for s in _HEDGED):
+        return "Hedged"
+    # FND-0244 (2026-10-07): share-class codes that END in H and mean "hedged" (Morgan Stanley "AH", Capital Group "BH" / "ZH" / "PH" /
+    # "BDH" / "BGDH" / "ZDH" / "PDH"), as a whole token. The catalogue names are cut at ~30 characters, so the explicit marker is often
+    # gone. Measured on the 2,950 active funds: 43 carry such a token; 11 of them have a KIID that states the hedge, 0 state the opposite;
+    # 17 were stored "Unhedged". Evaluated after the explicit lists so "unhedged"/"sin cobertura" in the name still wins.
+    if _HEDGED_CLASS_CODE.search(name_l):
         return "Hedged"
 
     # BL-49/DRY: fallback al texto KIID delegado en classify_utils (Principio #2).
