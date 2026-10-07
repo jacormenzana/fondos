@@ -44,7 +44,16 @@ def test_on_the_pp_rule_decides_and_the_ratio_no_longer_matters(switch):
     assert _mult(fx_contribution_ann=0.03) == (fs.MULT_FX_MALUS, True)
     assert _mult(fx_contribution_ann=0.02) == (1.0, False)                                    # strictly above the limit
     assert _mult(fx_contribution_ann=np.nan) == (1.0, False)
+    assert _mult(fx_contribution_ann=None) == (1.0, False)                                    # an object column with None must not raise
+    assert _mult(fx_contribution_ann=None, fx_contribution_pct=0.9) == (1.0, False)           # the ratio is not a fallback when on
     assert _mult(fx_contribution_pct=5.0) == (1.0, False)                                     # ratio only: no pp -> no malus
+
+
+def test_off_a_missing_or_none_ratio_is_no_malus_either(switch):
+    switch(False)
+    assert _mult(fx_contribution_pct=None) == (1.0, False)
+    assert _mult(fx_contribution_pct=np.nan) == (1.0, False)
+    assert _mult() == (1.0, False)
 
 
 def test_the_loader_requests_the_pp_metric_only_when_on(switch):

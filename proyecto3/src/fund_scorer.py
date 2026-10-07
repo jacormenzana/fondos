@@ -521,7 +521,7 @@ def compute_regime_multiplier(
         fx_val, fx_limit = row.get("fx_contribution_ann", np.nan), _shared_config.FX_CONTRIBUTION_PP_LIMIT
     else:
         fx_val, fx_limit = row.get("fx_contribution_pct", np.nan), FX_CONTRIBUTION_LIMIT
-    if not np.isnan(fx_val) and abs(fx_val) > fx_limit:
+    if not pd.isna(fx_val) and abs(fx_val) > fx_limit:      # pd.isna: None / NaN / missing all mean "no malus" (np.isnan(None) raises)
         multiplier *= MULT_FX_MALUS
         detail["fx_malus"] = MULT_FX_MALUS
 
