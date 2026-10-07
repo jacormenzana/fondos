@@ -78,3 +78,22 @@ def test_the_winner_must_be_a_nature_the_family_already_has():
 def test_a_reference_class_without_kiid_text_is_not_decided():
     nature, fix, why = resolve_family_nature_by_reference([_m("A", "X", "Mixtos", text=None), _m("B", "X", "Renta Variable", ccy="USD", text=None)])
     assert nature is None and "no KIID text" in why
+
+
+# ---------------------------------------------------------------- non-adjacent natures: only when nothing active depends on the family
+def test_non_adjacent_natures_are_arbitrated_by_the_reference_evidence_when_the_caller_allows_it():
+    """Franklin Alt St: Alternativo vs Mixtos, all retired. The EUR reference class's own evidence decides, never a default nature."""
+    eur = _m("A1", "DWS FLOAT RATE NOTE W EUR", "Renta Fija Corto Plazo")                                               # the shared bond template resolves to Renta Fija Corto Plazo
+    other = _m("B1", "DWS FLOAT RATE NOTE I EURHDG", "Alternativo")                                                     # not an adjacent pair
+    assert resolve_family_nature_by_reference([eur, other])[0] is None                                # default: left for review
+    nature, fix, _ = resolve_family_nature_by_reference([eur, other], allow_non_adjacent=True)
+    assert nature == "Renta Fija Corto Plazo" and fix == ["B1"]
+
+
+def test_allowing_non_adjacent_never_invents_a_nature_nor_touches_restantes():
+    a = _m("A1", "X EUR", "Mixtos", text=EQUITY, band=5)                                              # the reference resolves to Renta Variable
+    b = _m("B1", "X USD", "Monetario", ccy="USD", text=EQUITY, band=5)
+    nature, fix, why = resolve_family_nature_by_reference([a, b], allow_non_adjacent=True)
+    assert nature is None and "not one of the family's natures" in why
+    r = resolve_family_nature_by_reference([_m("A1", "X", "Restantes"), _m("B1", "X", "Monetario")], allow_non_adjacent=True)
+    assert r[0] is None

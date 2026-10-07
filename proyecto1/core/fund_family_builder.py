@@ -445,14 +445,19 @@ def _reference_sort_key(m: dict) -> tuple:
     )
 
 
-def resolve_family_nature_by_reference(members: list[dict]) -> tuple[str | None, list[str], str]:
+def resolve_family_nature_by_reference(members: list[dict], allow_non_adjacent: bool = False) -> tuple[str | None, list[str], str]:
     """Rule 4. `members` carry ISIN, Fund_Name, Fund_Nature, fund_currency, nav_n, kiid_text, benchmark_declared, ms_asset_class, srri_band.
+
+    `allow_non_adjacent`: arbitrate natures that are NOT adjacent too. The caller passes True only for a family with NO active member (a retired
+    fund feeds no output, so a wrong family key cannot hurt P3 and the harmonisation only removes noise); an active family with non-adjacent
+    natures stays flagged, because non-adjacent natures usually mean the family key merged two different funds. The decision is still the
+    reference class's own evidence, never a default nature.
 
     Returns (nature, [ISINs to correct], reason); (None, [], reason) when the family cannot be decided safely."""
     nature_set = {m["Fund_Nature"] for m in members if m.get("Fund_Nature")}
     if len(nature_set) <= 1:
         return None, [], "consistent"
-    if "Restantes" in nature_set or not _is_adjacent_pair(nature_set):
+    if "Restantes" in nature_set or (not allow_non_adjacent and not _is_adjacent_pair(nature_set)):
         return None, [], "non-adjacent natures: left for review"
     ref = sorted(members, key=_reference_sort_key)[0]
     if not (ref.get("kiid_text") or "").strip():
@@ -502,7 +507,7 @@ def correct_family_inconsistencies(
     # Obtener datos necesarios para la evaluación
     rows = conn.execute("""
         SELECT fm.ISIN, fm.Fund_Name, fm.Fund_Nature, fm.fund_family_id,
-               fm.Data_Quality_Flag, fm.SRRI_Quality_Flag
+               fm.Data_Quality_Flag, fm.SRRI_Quality_Flag, fm.In_Current_Universe
         FROM fund_master fm
         WHERE fm.fund_family_id IS NOT NULL
           AND fm.Fund_Nature IS NOT NULL
@@ -511,13 +516,14 @@ def correct_family_inconsistencies(
 
     from collections import defaultdict
     families: dict = defaultdict(list)
-    for isin, name, nature, fam_id, dq, sq in rows:
+    for isin, name, nature, fam_id, dq, sq, active in rows:
         families[fam_id].append({
             "ISIN": isin,
             "Fund_Name": name,
             "Fund_Nature": nature,
             "Data_Quality_Flag": dq,
             "SRRI_Quality_Flag": sq,
+            "active": bool(active),
         })
 
     corrections = []
@@ -534,7 +540,8 @@ def correct_family_inconsistencies(
             # FND-0244 part 2: rules 1-3 look only at quality flags; rule 4 decides by the reference class's evidence
             try:
                 with fail_soft_block(conn):
-                    correct_nature, isins_to_fix, _why = resolve_family_nature_by_reference(_load_family_evidence(conn, members))
+                    correct_nature, isins_to_fix, _why = resolve_family_nature_by_reference(
+                        _load_family_evidence(conn, members), allow_non_adjacent=not any(m["active"] for m in members))
             except Exception as _exc:
                 correct_nature, isins_to_fix = None, []
                 print(f"  [FamilyBuilder] rule 4 skipped for {fam_id}: {type(_exc).__name__}")
@@ -717,7 +724,10 @@ def build_fund_families(
     _populate_fund_families(conn, family_data)
 
     # ── Validación post-corrección ────────────────────────────────────────────
-    inconsistencias = _validate_family_consistency(conn)
+    inconsistencias = _validate_family_consistency(conn, active_only=True)
+    n_inactive_only = len(_validate_family_consistency(conn)) - len(inconsistencias)
+    if n_inactive_only > 0:
+        print(f"  [FamilyBuilder] {n_inactive_only} familias con Fund_Nature inconsistente SOLO por fondos retirados (sin efecto, sin AVISO)")
     # Separar las conocidas (heterogeneidad estructural documentada) del resto
     known     = [(f, n, nm) for f, n, nm in inconsistencias if _is_known_heterogeneous(nm)]
     unknown   = [(f, n, nm) for f, n, nm in inconsistencias if not _is_known_heterogeneous(nm)]
@@ -812,15 +822,19 @@ def _is_known_heterogeneous(names: list) -> bool:
     return bool(stems) and stems <= _KNOWN_HETEROGENEOUS_STEMS
 
 
-def _validate_family_consistency(conn: "psycopg.Connection") -> list:
+def _validate_family_consistency(conn: "psycopg.Connection", active_only: bool = False) -> list:
     """
     Detecta familias con mas de una Fund_Nature distinta.
     Devuelve lista de (fam_id, natures_set, nombres_lista).
+
+    active_only: considera solo los miembros activos (In_Current_Universe = 1). Un fondo retirado no alimenta ninguna salida, asi que una
+    familia que solo es inconsistente por ellos no merece AVISO (FND-0244).
     """
     rows = conn.execute("""
         SELECT fund_family_id, Fund_Nature, Fund_Name
         FROM fund_master
         WHERE fund_family_id IS NOT NULL
+        """ + ("AND In_Current_Universe = 1" if active_only else "") + """
         ORDER BY fund_family_id
     """).fetchall()
 

@@ -27,7 +27,8 @@ BOND_ST = PAD + ("Objectives and investment policy. The objective of the investm
 
 def _tables(conn):
     conn.execute("""CREATE TABLE fund_master (isin TEXT PRIMARY KEY, fund_name TEXT, management_company TEXT, fund_nature TEXT,
-        fund_family_id TEXT, data_quality_flag TEXT, srri_quality_flag TEXT, family TEXT, fund_currency TEXT, benchmark_declared TEXT)""")
+        fund_family_id TEXT, data_quality_flag TEXT, srri_quality_flag TEXT, family TEXT, fund_currency TEXT, benchmark_declared TEXT,
+        in_current_universe INTEGER DEFAULT 1)""")
     conn.execute("CREATE TABLE ingestion_log (id SERIAL PRIMARY KEY, isin TEXT, step TEXT, status TEXT, message TEXT, created_at TEXT)")
     conn.execute("CREATE TABLE fund_kiid_metadata (isin TEXT, kiid_class INTEGER, raw_kiid_text TEXT)")
     conn.execute("CREATE TABLE fund_nav_monthly (isin TEXT, date DATE, nav DOUBLE PRECISION)")
@@ -36,9 +37,10 @@ def _tables(conn):
     conn.execute("CREATE TABLE fund_metrics (isin TEXT, metric TEXT, horizon TEXT, real_flag INTEGER, value DOUBLE PRECISION)")
 
 
-def _fund(conn, isin, name, nature, ccy, text=BOND_ST, band=2, nav=60):
+def _fund(conn, isin, name, nature, ccy, text=BOND_ST, band=2, nav=60, active=1):
     conn.execute("INSERT INTO fund_master (isin, fund_name, management_company, fund_nature, fund_family_id, data_quality_flag, "
-                 "srri_quality_flag, fund_currency) VALUES (%s,%s,'MC',%s,'FAM_000001','OK','HIGH',%s)", (isin, name, nature, ccy))
+                 "srri_quality_flag, fund_currency, in_current_universe) VALUES (%s,%s,'MC',%s,'FAM_000001','OK','HIGH',%s,%s)",
+                 (isin, name, nature, ccy, active))
     conn.execute("INSERT INTO fund_kiid_metadata VALUES (%s, 1, %s)", (isin, text))
     conn.execute("INSERT INTO fund_metrics VALUES (%s, 'srri_nav', 'since_inception', 0, %s)", (isin, float(band)))
     for i in range(nav):
@@ -76,10 +78,47 @@ def test_a_missing_evidence_table_does_not_abort_the_transaction(pg_conn_module_
     conn = pg_session_conn
     conn.execute(f"SET search_path = {pg_conn_module_schema}")
     conn.execute("""CREATE TABLE fund_master (isin TEXT PRIMARY KEY, fund_name TEXT, management_company TEXT, fund_nature TEXT,
-        fund_family_id TEXT, data_quality_flag TEXT, srri_quality_flag TEXT, family TEXT)""")
+        fund_family_id TEXT, data_quality_flag TEXT, srri_quality_flag TEXT, family TEXT, in_current_universe INTEGER DEFAULT 1)""")
     conn.execute("CREATE TABLE ingestion_log (id SERIAL PRIMARY KEY, isin TEXT, step TEXT, status TEXT, message TEXT, created_at TEXT)")
     conn.execute("INSERT INTO fund_master VALUES ('A','X EUR','MC','Mixtos','FAM_000001','OK','HIGH',NULL), "
                  "('B','X USD','MC','Renta Variable','FAM_000001','OK','HIGH',NULL)")
     conn.commit()
     assert _ffb.correct_family_inconsistencies(conn) == 0
     assert conn.execute("SELECT count(*) FROM fund_master").fetchone()[0] == 2          # the connection is still usable
+
+
+# ---------------------------------------------------------------- inactive-only families (Franklin Alt St)
+def test_a_retired_family_with_non_adjacent_natures_is_arbitrated_but_an_active_one_is_not(pg_conn_module_schema, pg_session_conn):
+    conn = pg_session_conn
+    conn.execute(f"SET search_path = {pg_conn_module_schema}")
+    _tables(conn)
+    # retired family: Monetario vs Renta Fija Corto Plazo are adjacent, so use a non-adjacent pair with the same bond-short-duration text
+    _fund(conn, "IE000000EUR1", "DWS FLOAT RATE NOTE W EUR", "Renta Fija Corto Plazo", "EUR", active=0)
+    _fund(conn, "LU000000EUR2", "DWS FLOAT RATE NOTE I EURHDG", "Alternativo", "EUR", active=0)
+    conn.commit()
+    assert _ffb.correct_family_inconsistencies(conn) == 1
+    assert dict(conn.execute("SELECT isin, fund_nature FROM fund_master").fetchall()) == {
+        "IE000000EUR1": "Renta Fija Corto Plazo", "LU000000EUR2": "Renta Fija Corto Plazo"}
+
+
+def test_an_active_family_with_non_adjacent_natures_stays_untouched(pg_conn_module_schema, pg_session_conn):
+    conn = pg_session_conn
+    conn.execute(f"SET search_path = {pg_conn_module_schema}")
+    _tables(conn)
+    _fund(conn, "IE000000EUR1", "DWS FLOAT RATE NOTE W EUR", "Renta Fija Corto Plazo", "EUR", active=1)
+    _fund(conn, "LU000000EUR2", "DWS FLOAT RATE NOTE I EURHDG", "Alternativo", "EUR", active=0)       # ONE active member is enough to keep it flagged
+    conn.commit()
+    assert _ffb.correct_family_inconsistencies(conn) == 0
+    assert dict(conn.execute("SELECT isin, fund_nature FROM fund_master").fetchall()) == {
+        "IE000000EUR1": "Renta Fija Corto Plazo", "LU000000EUR2": "Alternativo"}
+
+
+def test_the_consistency_warning_ignores_families_that_are_inconsistent_only_through_retired_funds(pg_conn_module_schema, pg_session_conn):
+    conn = pg_session_conn
+    conn.execute(f"SET search_path = {pg_conn_module_schema}")
+    _tables(conn)
+    _fund(conn, "A", "FUND A", "Mixtos", "EUR", active=1)
+    _fund(conn, "B", "FUND B", "Renta Variable", "EUR", active=0)                            # inconsistent only through the retired class
+    conn.commit()
+    assert len(_ffb._validate_family_consistency(conn)) == 1
+    assert _ffb._validate_family_consistency(conn, active_only=True) == []

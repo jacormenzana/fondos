@@ -42,7 +42,8 @@ def _make_fund_master(conn):
             fund_family_id TEXT,
             data_quality_flag TEXT,
             srri_quality_flag TEXT,
-            family TEXT
+            family TEXT,
+            in_current_universe INTEGER DEFAULT 1
         )
     """)
 
@@ -240,7 +241,7 @@ def _make_fund_master_with_family_fk(conn):
         CREATE TABLE fund_master (
             isin TEXT PRIMARY KEY, fund_name TEXT, management_company TEXT, fund_nature TEXT,
             fund_family_id TEXT REFERENCES fund_families (family_id),
-            data_quality_flag TEXT, srri_quality_flag TEXT, family TEXT
+            data_quality_flag TEXT, srri_quality_flag TEXT, family TEXT, in_current_universe INTEGER DEFAULT 1
         )
     """)
 
