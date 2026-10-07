@@ -230,7 +230,7 @@ PDFs and `Raw_KIID_Text` (in `fund_kiid_metadata`) are **never deleted**.
 ### Key support modules
 
 <!-- AUTO:BEGIN kill-switches-line -->
-- `shared/config.py` — all constants: `SCHEMA_VERSION` (`"v27"`), `DOMAIN_VALUES`, `ATTRIBUTE_CATALOG`, kill-switches (`PRIIPS_COST_EXTRACTION_ENABLED`, `SHORT_HORIZON_SCORING_ENABLED`, `ROLLING_STATS_ENABLED`, `ROLLING_PCTILE_P3_ENABLED`, `PORTFOLIO_HYSTERESIS_ENABLED`, `ROTATION_COST_GATE_ENABLED`, `BENCHMARK_DECOMP_ENABLED`, `BENCHMARK_ROLE_ENABLED`, `INTER18_RECONCILIATION_ENABLED`, `DLA2_ARBITRATION_ENABLED`, `MACRO_VIF_ITERATIVE_ENABLED`, `MACRO_FACTOR_CLEAN_ENABLED`, `PERSISTENCE_FIRST_LAST_NAV_ENABLED`, `CAPTURE_MONTH_END_ENABLED`, `ANNUALIZATION_INTERVAL_ENABLED`, `FAMILY_VERSIONING_ENABLED`)
+- `shared/config.py` — all constants: `SCHEMA_VERSION` (`"v27"`), `DOMAIN_VALUES`, `ATTRIBUTE_CATALOG`, kill-switches (`PRIIPS_COST_EXTRACTION_ENABLED`, `SHORT_HORIZON_SCORING_ENABLED`, `ROLLING_STATS_ENABLED`, `ROLLING_PCTILE_P3_ENABLED`, `PORTFOLIO_HYSTERESIS_ENABLED`, `ROTATION_COST_GATE_ENABLED`, `BENCHMARK_DECOMP_ENABLED`, `BENCHMARK_ROLE_ENABLED`, `INTER18_RECONCILIATION_ENABLED`, `DLA2_ARBITRATION_ENABLED`, `MACRO_VIF_ITERATIVE_ENABLED`, `MACRO_FACTOR_CLEAN_ENABLED`, `PERSISTENCE_FIRST_LAST_NAV_ENABLED`, `CAPTURE_MONTH_END_ENABLED`, `ANNUALIZATION_INTERVAL_ENABLED`, `DEFLATION_MONTH_ALIGN_ENABLED`, `FAMILY_VERSIONING_ENABLED`)
 <!-- AUTO:END kill-switches-line -->
 - `shared/schema_checks.py` — `assert_schema_alignment()` validates DB columns at startup
 - `proyecto1/core/classify_utils.py` — **single source of truth** for all categorical normalization maps (EN→ES for Sector_Focus, Type, Family). Import from here; never duplicate elsewhere (P#11 / R-1).
@@ -334,6 +334,7 @@ proyecto2/
       test_calculations_pg.py
       test_consistency.py
       test_deflation.py
+      test_deflation_month_align_fnd0241.py
       test_drawdown.py
       test_m2_global_builder_pg.py
       test_macro_sensitivity.py

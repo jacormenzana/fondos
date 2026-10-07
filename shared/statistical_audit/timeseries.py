@@ -17,6 +17,7 @@ from typing import Mapping, Sequence
 import pandas as pd
 
 from shared.annualization import years_spanned
+from shared.deflation_alignment import cpi_lookup_dates
 
 
 @dataclass
@@ -83,7 +84,11 @@ def nav_with_ipc(nav_dates: pd.DataFrame, ipc: pd.DataFrame) -> pd.DataFrame:
     nav["date"] = pd.to_datetime(nav["date"])
     nav["nav"] = nav["nav"].astype(float)
     nav = nav.sort_values("date")
-    nav = pd.merge_asof(nav, ipc, on="date", direction="backward")
+    # FND-0241: the same month-end lookup deflate_nav uses (shared/deflation_alignment.py), so producer and audit agree.
+    nav["_cpi_key"] = cpi_lookup_dates(nav["date"]).to_numpy()
+    nav = nav.sort_values("_cpi_key")
+    nav = pd.merge_asof(nav, ipc.rename(columns={"date": "_ipc_date"}), left_on="_cpi_key", right_on="_ipc_date",
+                        direction="backward").drop(columns=["_cpi_key", "_ipc_date"])
     nav = nav.sort_values(["isin", "date"]).reset_index(drop=True)
     # Contract under test (deflate_nav): a NAV date before the fund's own IPC-aligned coverage
     # takes the earliest known IPC value instead of being dropped or given a later one.

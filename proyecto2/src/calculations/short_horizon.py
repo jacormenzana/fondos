@@ -150,7 +150,8 @@ def compute_short_horizon_metrics(
     # anterior a la ventana (reindex(dates) solo conserva las fechas de la ventana), y bfill()
     # rellenaba la primera fecha con un IPC POSTERIOR (look-ahead): 118/120 ventanas en vivo
     # difirieron, hasta 2,1 pp en short_return_cum_real a 6m. Misma clase de defecto que FND-0114.
-    df_real = deflate_nav(pd.DataFrame({"date": dates, "nav": nav}), ipc_df)
+    # FND-0241: DAILY series -- never month-align (every day of a month would take that month's CPI).
+    df_real = deflate_nav(pd.DataFrame({"date": dates, "nav": nav}), ipc_df, align_month_end=False)
     if not df_real.empty:
         ret_real = _cumulative_return(df_real["nav_real"].reset_index(drop=True))
         results.append(("short_return_cum_real", ret_real, 1))

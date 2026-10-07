@@ -4,8 +4,10 @@ Deflacion de series NAV por IPC.
 """
 import pandas as pd
 
+from shared.deflation_alignment import cpi_lookup_dates
 
-def deflate_nav(nav_df: pd.DataFrame, ipc_df: pd.DataFrame | None) -> pd.DataFrame:
+
+def deflate_nav(nav_df: pd.DataFrame, ipc_df: pd.DataFrame | None, align_month_end: bool | None = None) -> pd.DataFrame:
     """
     Deflacta una serie NAV por el IPC.
 
@@ -38,6 +40,12 @@ def deflate_nav(nav_df: pd.DataFrame, ipc_df: pd.DataFrame | None) -> pd.DataFra
     sharpe, sortino y max_dd son todos ratios/retornos sobre nav_real,
     invariantes a escalar toda la serie por una constante.
 
+    FND-0241: align_month_end (None = shared.config.DEFLATION_MONTH_ALIGN_ENABLED, default False) mueve cada
+    fecha NAV a su propio fin de mes natural antes de buscar el IPC (load_ipc fecha el IPC en fin de mes natural,
+    el NAV mensual en el ultimo dia habil: sin esto el 29% de los NAV toman el IPC del mes ANTERIOR y su retorno
+    real mensual es identico al nominal). Series diarias (short_horizon) deben pasar False. Ver
+    shared/deflation_alignment.py.
+
     Devuelve DataFrame vacio (columnas date/nav/nav_real) si ipc_df es None,
     vacio, o no hay ningun solapamiento aprovechable.
     """
@@ -49,7 +57,11 @@ def deflate_nav(nav_df: pd.DataFrame, ipc_df: pd.DataFrame | None) -> pd.DataFra
     nav_df = nav_df.sort_values("date").reset_index(drop=True)
     ipc_df = ipc_df[["date", "ipc_index"]].sort_values("date").reset_index(drop=True)
 
-    merged = pd.merge_asof(nav_df, ipc_df, on="date", direction="backward")
+    # FND-0241: a monthly NAV is dated on the last BUSINESS day, the CPI on the calendar month-end; with the switch on the NAV
+    # looks the CPI up with its own month-end (a daily series, e.g. short_horizon, passes align_month_end=False).
+    nav_df = nav_df.assign(_cpi_key=cpi_lookup_dates(nav_df["date"], align_month_end).to_numpy())
+    merged = pd.merge_asof(nav_df, ipc_df.rename(columns={"date": "_ipc_date"}),
+                           left_on="_cpi_key", right_on="_ipc_date", direction="backward")
 
     if merged["ipc_index"].isna().any():
         # A NAV date precedes ipc_df's earliest available date entirely --
