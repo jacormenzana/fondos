@@ -35,6 +35,7 @@ import pandas as pd
 from .deflation import deflate_nav
 from .returns import downside_deviation_ann
 from shared.annualization import years_spanned
+from shared.sortino_reliability import downside_count_reliable
 from shared.config import MIN_PEERS as _MIN_PEERS_DEFAULT
 
 
@@ -157,6 +158,8 @@ def _roll_sortino(
     if len(rets) < 2:
         return math.nan
     mar_per_period = risk_free_rate_ann / periods_per_year
+    if not downside_count_reliable(rets, mar_per_period):    # FND-0242 (off = stored behaviour)
+        return math.nan
     downside_dev_ann = downside_deviation_ann(rets, mar_per_period, periods_per_year)
     if math.isnan(downside_dev_ann):
         return math.nan

@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from shared.annualization import years_spanned
+from shared.sortino_reliability import downside_count_reliable
 
 # FND-0075: floor below which an annualized downside deviation is treated as a numerical artifact
 # (near-flat-fund near-zero denominator), not a real risk signal — see downside_deviation_ann().
@@ -122,6 +123,9 @@ def sortino_ratio(
 
     r = monthly_returns(series)
     mar_per_period = risk_free_rate_ann / periods_per_year
+    # FND-0242: a denominator built from 2-4 shortfalls is noise (shared/sortino_reliability.py); off = stored behaviour.
+    if not downside_count_reliable(r.to_numpy(), mar_per_period):
+        return np.nan
     downside_std = downside_deviation_ann(r.to_numpy(), mar_per_period, periods_per_year)
 
     if np.isnan(downside_std) or downside_std == 0:

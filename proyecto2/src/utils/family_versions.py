@@ -49,6 +49,8 @@ FLAG_FAMILIES: dict = {
     "ANNUALIZATION_INTERVAL_ENABLED": ("risk", "rolling"),
     # FND-0241: deflate_nav feeds risk (risk_metrics + consistency), rolling (rolling_stats) and short (daily, never aligned -> not listed).
     "DEFLATION_MONTH_ALIGN_ENABLED": ("risk", "rolling"),
+    # FND-0242: sortino_ratio feeds the risk family, rolling_stats._roll_sortino the rolling one (regime path untouched).
+    "SORTINO_MIN_DOWNSIDE_COUNT_ENABLED": ("risk", "rolling"),
 }
 
 

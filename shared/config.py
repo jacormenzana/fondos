@@ -568,7 +568,8 @@ PERSISTENCE_FIRST_LAST_NAV_ENABLED: bool = True
 CAPTURE_MONTH_END_ENABLED: bool = True
 P2_BUNDLE_FLAGS: tuple = ("MACRO_VIF_ITERATIVE_ENABLED", "MACRO_FACTOR_CLEAN_ENABLED",
                           "PERSISTENCE_FIRST_LAST_NAV_ENABLED", "CAPTURE_MONTH_END_ENABLED",
-                          "ANNUALIZATION_INTERVAL_ENABLED", "DEFLATION_MONTH_ALIGN_ENABLED")
+                          "ANNUALIZATION_INTERVAL_ENABLED", "DEFLATION_MONTH_ALIGN_ENABLED",
+                          "SORTINO_MIN_DOWNSIDE_COUNT_ENABLED")
 # FND-0240: annualise a NAV window over its INTERVALS (N points span N - 1 periods) instead of its points. OFF = the stored
 # convention (years = N / 12), bit-for-bit. ON changes the stored return_ann / sharpe / sortino of the risk family and the
 # rolling timeseries: about +0.5 pp on rolling_1y, -1.2 pp on the crisis windows, +0.04 pp since inception -- and nothing in the
@@ -583,6 +584,14 @@ ANNUALIZATION_INTERVAL_ENABLED: bool = False
 # shared/deflation_alignment.py. FLIP ONLY TOGETHER WITH THE RECOMPUTE of the families it touches (utils/family_versions.FLAG_FAMILIES:
 # risk, rolling; short_horizon is daily and never aligned): until then the stored values keep the old lookup.
 DEFLATION_MONTH_ALIGN_ENABLED: bool = False
+# FND-0242: Sortino is NaN when its downside deviation rests on fewer than max(SORTINO_MIN_DOWNSIDE_OBS, ceil(SORTINO_MIN_DOWNSIDE_SHARE * n))
+# below-MAR periods (relative SE of the deviation ~ 0.7 / sqrt(k): 35% at k = 4). Replaces nothing: the FND-0075 magnitude floor stays as a
+# second guard. Scalar (sortino_ratio) and rolling (_roll_sortino) paths only; the regime path (sortino_ratio_from_returns) is untouched.
+# Measured 2026-10-07: removes 0.7% of the stored Sortino values (2.2% of rolling_1y, 11% of Monetario) and the removed ones have median |Sortino|
+# 4.3 vs 0.8. FLIP ONLY TOGETHER WITH THE RECOMPUTE of the families it touches (utils/family_versions.FLAG_FAMILIES: risk, rolling).
+SORTINO_MIN_DOWNSIDE_COUNT_ENABLED: bool = False
+SORTINO_MIN_DOWNSIDE_OBS: int = 3
+SORTINO_MIN_DOWNSIDE_SHARE: float = 0.15
 # FND-0236: per-metric-family calculation versions. OFF = today's behaviour (one global CALC_VERSION and one input hash per
 # fund). ON = each of the nine families has its own state row (control.fund_metric_family_state), so a change that touches one
 # family (bump FAMILY_CALC_OVERRIDES[family] in utils/family_versions.py) recomputes only that family. Switch-on order:
