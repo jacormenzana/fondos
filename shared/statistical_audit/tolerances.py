@@ -30,9 +30,8 @@ sweep/decision before touching):
     *return-variance* floor — different physical units (squared returns)
     from every constant above; aliasing it to FLOAT_IDENTITY_TOLERANCE
     would be a coincidence-driven rename, not a justified one.
-  - CAPTURE_UP_EQUALS_DOWN (catalog_pairs.py) uses 0.001, already distinct
-    from the 0.0001 rules audited here; left untouched pending its own
-    measurement.
+  - (CAPTURE_UP_EQUALS_DOWN was here until 2026-10-07: measured, it is a float-identity
+    comparison like the others and now uses FLOAT_IDENTITY_TOLERANCE -- see catalog_pairs.py.)
   - SCALAR_EQUALS_TIMESERIES (catalog_pairs.py) is NOT resolved by any
     single absolute constant — see the module docstring in catalog_pairs.py
     and AUDITORIA_ESTADISTICA.md §2.7 for the sweep showing per-metric
@@ -55,7 +54,8 @@ from __future__ import annotations
 KID_ROUNDING_TOLERANCE_PP = 0.06
 
 # --- Class 2: float-identity comparisons ---
-# OC_NOT_CONTAMINATED, SHARPE_EQUALS_SORTINO, SORTINO_VS_SHARPE_UP/DOWN,
+# OC_NOT_CONTAMINATED, SHARPE_EQUALS_SORTINO, SORTINO_VS_SHARPE_UP, CAPTURE_UP_EQUALS_DOWN (2026-10-07: at the former
+# 0.001 the expected CHANCE matches, ~10 of 2,810 rows, exceeded min_matches),
 # DEFLATION_ORDER and MONTH_SHARE_OVERFLOW compare raw computed floats with
 # no publication-rounding step between them. Sweep (2026-09-13, live DB,
 # tolerances 0.0001/0.001/0.01/0.06):

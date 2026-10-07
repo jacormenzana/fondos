@@ -148,9 +148,19 @@ por aritmética) y 8 un numerador negativo, donde `dd/σ` cruza 1 de forma legí
 (`dd² = σ²(1−1/N) + (media−MAR)²`). Con numerador **positivo** `dd < σ` estrictamente, así que ahí sí
 es la firma de "la desviación a la baja colapsó a la volatilidad total". La elegibilidad pasa a ser
 "ambos ratios > `RATIO_ELIGIBILITY_FLOOR` (0,01)": 0 hallazgos en vivo, y un test con 4.500 series
-aleatorias muestra que en datos correctos nunca hay igualdad con numerador positivo. Pendiente
-relacionado: `CAPTURE_UP_EQUALS_DOWN` (10 filas, capture ≈ 1 en fondos que replican un índice) parece
-igualdad legítima de la misma clase; sin tocar.
+aleatorias muestra que en datos correctos nunca hay igualdad con numerador positivo.
+
+*`CAPTURE_UP_EQUALS_DOWN` (FND-0234, 2026-10-07):* las 10 coincidencias vivas **no** eran fondos
+indexados (una primera lectura, equivocada, lo suponía): solo uno es un fondo índice; el resto son
+fondos activos (Templeton Asian Growth, Pictet Japan, SISF Energy, JPM HY…). Sobre las 2.810 filas
+`since_inception`, `|upside − downside| < t` se cumple en 0 / 0 / 1 / 5 / 10 / 55 / 131 filas para
+`t` = 1e-9 / 1e-5 / 1e-4 / 5e-4 / 1e-3 / 5e-3 / 1e-2: una densidad suave (~10⁴ por unidad), es decir,
+azar. Con la tolerancia de 0,001 se esperan ~10 coincidencias fortuitas, por encima de
+`min_matches = 8`, y la regla saltaba siempre. Un denominador colapsado daría igualdad **a precisión
+de float en muchos fondos a la vez** (0 filas por debajo de 1e-9). Se usa la tolerancia de identidad
+`FLOAT_IDENTITY_TOLERANCE` (1e-4; ~1 coincidencia fortuita). Excluir los fondos con `capture_ratio`
+≈ 1, que parecía lo natural, habría ocultado precisamente el defecto buscado: un denominador colapsado
+deja `capture_ratio = up/down` exactamente en 1.
 
 **`vol_ann > 0` cuando `return_ann ≠ 0`** — no es una imposibilidad matemática: una serie con
 retorno periódico idéntico y distinto de cero produce `vol_ann=0` sin que la serie esté congelada.

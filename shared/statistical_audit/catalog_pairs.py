@@ -63,8 +63,14 @@ P2_PAIRS: dict[str, PairRule] = {
         eligibility=_positive_ratio_eligibility,
         diagnosis="Sortino downside-dev collapsed to total vol",
     ),
+    # FND-0234 (2026-10-07): tolerance 0.001 -> FLOAT_IDENTITY_TOLERANCE, the class-2 identity constant. Measured on the live
+    # 2,810 since_inception rows: |upside - downside| < t holds for 0 / 0 / 1 / 5 / 10 / 55 / 131 rows at t = 1e-9 / 1e-5 / 1e-4 /
+    # 5e-4 / 1e-3 / 5e-3 / 1e-2 -- a smooth ~1e4-per-unit density, i.e. chance. At 0.001 the rule expects ~10 matches by luck,
+    # above min_matches = 8, so it fired on ordinary ACTIVE funds (Templeton Asian Growth, Pictet Japan, SISF Energy, JPM HY ...:
+    # one of the ten is an index fund), not on a defect. A collapsed denominator would make up == down to float precision for
+    # many funds at once (0 rows below 1e-9). At 1e-4 the chance count is ~1, well under min_matches.
     "CAPTURE_UP_EQUALS_DOWN": PairRule(
-        rule_id="CAPTURE_UP_EQUALS_DOWN", tolerance=0.001, min_matches=8,
+        rule_id="CAPTURE_UP_EQUALS_DOWN", tolerance=FLOAT_IDENTITY_TOLERANCE, min_matches=8,
         diagnosis="Capture denominator defect",
     ),
     # Tolerance NOT recalibrated 2026-09-13 — audited and found NOT to fit any
