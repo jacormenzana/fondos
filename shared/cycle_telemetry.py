@@ -75,6 +75,13 @@ def judge(value: Optional[float], baseline: Optional[float] = None, warn_ratio: 
 
 
 # --------------------------------------------------------------------------------------------- plumbing
+def _ensure_repo_on_path() -> None:
+    import sys
+    root = str(Path(__file__).resolve().parents[1])
+    if root not in sys.path:
+        sys.path.insert(0, root)
+
+
 def current_cycle_id() -> Optional[str]:
     return os.environ.get(ENV_CYCLE_ID) or None
 
@@ -99,6 +106,13 @@ def _now() -> str:
 
 def _connect(dsn: Optional[str] = None):
     dsn = dsn or os.environ.get(ENV_DSN)
+    if not dsn:
+        try:        # run as a script by a launcher: shared.config autoloads the repo .env (FONDOS_PG_DSN)
+            _ensure_repo_on_path()
+            import shared.config  # noqa: F401
+        except Exception:
+            pass
+        dsn = os.environ.get(ENV_DSN)
     if not dsn or psycopg is None:
         raise RuntimeError("no telemetry DSN / psycopg")
     return psycopg.connect(dsn, autocommit=True, connect_timeout=CONNECT_TIMEOUT_S,
@@ -226,6 +240,11 @@ def _apply(conn, ev: dict) -> None:
             raise ValueError(f"unknown telemetry op {op!r}")
 
 
+def _is_not_installed(exc: BaseException) -> bool:
+    """True when the failure is "the telemetry tables do not exist" (psycopg UndefinedTable / UndefinedSchema, SQLSTATE 42P01 / 3F000)."""
+    return getattr(exc, "sqlstate", None) in ("42P01", "3F000") or type(exc).__name__ in ("UndefinedTable", "InvalidSchemaName")
+
+
 def emit(event: dict, conn=None) -> bool:
     """Apply one event. True when it reached the database; otherwise it is appended to the fallback file and False is returned.
     Never raises (Exception only: KeyboardInterrupt / SystemExit propagate on purpose)."""
@@ -239,7 +258,9 @@ def emit(event: dict, conn=None) -> bool:
             return True
         finally:
             c.close()
-    except Exception:
+    except Exception as exc:
+        if _is_not_installed(exc):
+            return False        # the DDL is not applied (yet): a CONFIGURATION absence, not an outage -- writing a fallback would only pile up debt
         _write_fallback(event)
         return False
 
@@ -362,3 +383,89 @@ def raise_flag(flag_code: str, severity: str, *, scope: str = "", detail: Option
         ap_status = "LOOKUP_FAILED" if ap_id else None
     return _send("flag", cycle_id, conn, flag_code=flag_code, severity=severity, scope=scope, detail=detail, evidence=evidence,
                  ap_id=ap_id, ap_status=ap_status, ts=ts)
+
+
+# --------------------------------------------------------------------------------------------- command line (what the .bat launchers call)
+def _state_path(cycle_id: str) -> Path:
+    return fallback_path().with_name(f"cycle_telemetry_state_{cycle_id}.json")
+
+
+def _read_state(cycle_id: str) -> dict:
+    try:
+        return json.loads(_state_path(cycle_id).read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _write_state(cycle_id: str, state: dict) -> None:
+    try:
+        p = _state_path(cycle_id)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(state), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    """`python -m shared.cycle_telemetry <begin|end|step-begin|step-end|metric|flag|pending> ...`
+
+    ALWAYS returns 0 (NORMAS_BATCH: a launcher's RC is its own; telemetry must never change it) and prints nothing unless asked (`pending`).
+    Without FONDOS_CYCLE_ID every sub-command is a no-op. The step start time travels between step-begin and step-end in a small state
+    file next to the fallback, because a batch file cannot hold an ISO timestamp portably."""
+    import argparse
+    try:
+        ap = argparse.ArgumentParser(prog="shared.cycle_telemetry")
+        sub = ap.add_subparsers(dest="cmd", required=True)
+        b = sub.add_parser("begin"); b.add_argument("--launcher", required=True); b.add_argument("--parent"); b.add_argument("--resume-from", type=int)
+        b.add_argument("--calc-version"); b.add_argument("--restore-point"); b.add_argument("--option", action="append", default=[])
+        e = sub.add_parser("end"); e.add_argument("--status", required=True, choices=["OK", "FAILED", "ABORTED"]); e.add_argument("--rc", type=int)
+        e.add_argument("--failed-step"); e.add_argument("--regime"); e.add_argument("--semaforo")
+        sb = sub.add_parser("step-begin"); sb.add_argument("step"); sb.add_argument("--attempt", type=int, default=1); sb.add_argument("--log")
+        se = sub.add_parser("step-end"); se.add_argument("step"); se.add_argument("rc", type=int); se.add_argument("--attempt", type=int, default=1)
+        se.add_argument("--warn", type=int); se.add_argument("--error", type=int); se.add_argument("--log"); se.add_argument("--skipped", action="store_true")
+        m = sub.add_parser("metric"); m.add_argument("step"); m.add_argument("code"); m.add_argument("value", type=float); m.add_argument("--scope", default="")
+        f = sub.add_parser("flag"); f.add_argument("code"); f.add_argument("severity", choices=["INFO", "WARN", "HIGH"]); f.add_argument("--scope", default="")
+        f.add_argument("--detail"); f.add_argument("--ap")
+        sub.add_parser("pending")
+        a = ap.parse_args(list(argv) if argv is not None else None)
+    except SystemExit:
+        return 0                                    # a malformed call must not fail the launcher either
+    except Exception:
+        return 0
+    try:
+        if a.cmd == "pending":
+            print(pending_fallback_bytes())
+            return 0
+        cid = current_cycle_id()
+        if not cid:
+            return 0
+        if a.cmd == "begin":
+            opts = dict(o.split("=", 1) for o in a.option if "=" in o)
+            begin_cycle(a.launcher, opts, parent_cycle_id=a.parent, resume_from=a.resume_from, calc_version=a.calc_version,
+                        restore_point=a.restore_point)
+            _write_state(cid, {})
+        elif a.cmd == "end":
+            end_cycle(a.status, a.rc, failed_step=a.failed_step, regime=a.regime, semaforo=a.semaforo)
+        elif a.cmd == "step-begin":
+            ts = _now()
+            st = _read_state(cid)
+            st[f"{a.step}#{a.attempt}"] = ts
+            _write_state(cid, st)
+            step_begin(a.step, attempt=a.attempt, ts=ts, log_path=a.log)
+        elif a.cmd == "step-end":
+            st = _read_state(cid)
+            step_end(a.step, a.rc, started_at=st.get(f"{a.step}#{a.attempt}"), attempt=a.attempt, warn_count=a.warn, error_count=a.error,
+                     log_path=a.log, skipped=a.skipped)
+        elif a.cmd == "metric":
+            record_metric(a.step, a.code, a.value, scope=a.scope)
+        elif a.cmd == "flag":
+            raise_flag(a.code, a.severity, scope=a.scope, detail=a.detail, ap_id=a.ap)
+    except Exception:
+        pass
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+    _ensure_repo_on_path()          # `python shared/cycle_telemetry.py ...` (how common.bat calls it): `shared` must be importable
+    sys.exit(main())

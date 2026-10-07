@@ -200,3 +200,55 @@ def test_refresh_resolves_only_the_unverified_flags(monkeypatch):
 
     n = ct.refresh_unverified_flags(C(), lookup=lambda ap: "CLOSED" if ap == "FND-1" else "LOOKUP_FAILED")
     assert n == 1 and updates == [("CLOSED", "c1", "A", "")]
+
+
+# ---------------------------------------------------------------- DDL not applied is not an outage
+class _Undefined(Exception):
+    sqlstate = "42P01"
+
+
+def test_missing_telemetry_tables_are_a_configuration_absence_and_leave_no_fallback_debt(monkeypatch, _isolated):
+    monkeypatch.setattr(ct, "_connect", lambda *a, **k: (_ for _ in ()).throw(_Undefined("relation control.cycle_run does not exist")))
+    assert ct.emit({"op": "metric", "cycle_id": "c"}) is False and not _isolated.exists()
+    monkeypatch.setattr(ct, "_connect", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("server closed the connection")))
+    assert ct.emit({"op": "metric", "cycle_id": "c"}) is False and _isolated.exists()          # a real outage still spills
+
+
+# ---------------------------------------------------------------- the command line the .bat files call
+@pytest.fixture
+def cli(monkeypatch, _isolated):
+    sent = []
+    monkeypatch.setattr(ct, "emit", lambda ev, conn=None: sent.append(ev) or True)
+    monkeypatch.setattr(ct, "replay_fallback", lambda conn=None: 0)
+    return sent
+
+
+def test_cli_without_a_cycle_id_does_nothing_and_returns_zero(cli):
+    for argv in (["begin", "--launcher", "L"], ["step-begin", "P2_CALC"], ["step-end", "P2_CALC", "0"], ["end", "--status", "OK", "--rc", "0"]):
+        assert ct.main(argv) == 0
+    assert cli == []
+
+
+def test_cli_carries_the_step_start_between_two_processes(monkeypatch, cli):
+    monkeypatch.setenv(ct.ENV_CYCLE_ID, "20261007_120000")
+    assert ct.main(["begin", "--launcher", "P1_P2_P3", "--option", "force=1", "--resume-from", "3"]) == 0
+    assert ct.main(["step-begin", "P2_CALC", "--log", "x.log"]) == 0
+    assert ct.main(["step-end", "P2_CALC", "0", "--warn", "4", "--error", "0"]) == 0
+    assert ct.main(["end", "--status", "OK", "--rc", "0", "--regime", "Expansion"]) == 0
+    ops = {e["op"]: e for e in cli}
+    assert list(ops) == ["cycle_begin", "step_begin", "step_end", "cycle_end"]
+    assert ops["cycle_begin"]["options"] == {"force": "1"} and ops["cycle_begin"]["resume_from"] == 3
+    assert ops["step_end"]["started_at"] == ops["step_begin"]["ts"] and ops["step_end"]["warn_count"] == 4 and ops["step_end"]["rc"] == 0
+    assert ops["cycle_end"]["regime"] == "Expansion"
+
+
+def test_cli_never_fails_the_launcher(monkeypatch, cli):
+    monkeypatch.setenv(ct.ENV_CYCLE_ID, "c")
+    assert ct.main(["no-such-command"]) == 0 and ct.main([]) == 0 and ct.main(["step-end", "X", "not-a-number"]) == 0
+    monkeypatch.setattr(ct, "emit", lambda ev, conn=None: (_ for _ in ()).throw(RuntimeError("boom")))
+    assert ct.main(["step-begin", "P2_CALC"]) == 0
+
+
+def test_cli_pending_reports_the_fallback_size(monkeypatch, _isolated, capsys):
+    _isolated.write_text("x" * 12, encoding="utf-8")
+    assert ct.main(["pending"]) == 0 and capsys.readouterr().out.strip() == "12"

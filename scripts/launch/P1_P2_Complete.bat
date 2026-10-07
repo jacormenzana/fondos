@@ -244,6 +244,15 @@ if !PRE_RC! NEQ 0 (
     exit /b !PRE_RC!
 )
 
+:: Telemetria de ciclo (opt-in: FONDOS_TELEMETRY=1; mejor esfuerzo, nunca cambia ningun RC). Bajo P1_P2_P3.bat el ciclo
+:: ya existe (FONDOS_CYCLE_ID heredado) y este lanzador solo anade sus pasos.
+set "TELEM_OWNER="
+if "%FONDOS_TELEMETRY%"=="1" if not defined FONDOS_CYCLE_ID (
+    set "FONDOS_CYCLE_ID=%STAMP%"
+    set "TELEM_OWNER=1"
+    call "%COMMON%" :telemetry begin --launcher P1_P2_Complete --resume-from !FROM_STEP!
+)
+
 :: Prevenir suspension/hibernacion durante la ejecucion (~30-90 min); owner = este lanzador la
 :: gestiona y los que invoca no la tocan (FONDOS_ORCH).
 call "%COMMON%" :standby_disable owner
@@ -339,6 +348,13 @@ if !FINAL_RC! EQU 0 (
     set "RESULT_TXT=ERROR"
 )
 
+if defined TELEM_OWNER (
+    call :telem_code step!FAILED_STEP!
+    set "TFS="
+    if defined TCODE set "TFS=--failed-step !TCODE!"
+    call "%COMMON%" :telemetry end --status !RESULT! --rc !FINAL_RC! !TFS!
+)
+
 echo. >> "%LOG%"
 echo ============================================================ >> "%LOG%"
 echo  P1+P2 Complete -- Fin !RESULT_TXT!: !STAMP_END! >> "%LOG%"
@@ -395,6 +411,8 @@ exit /b 0
 :: ------------------------------------------------------------
 :aux_py
 set "AUX_LOG=%LOG_DIR%\log_P1_P2_%~1_%STAMP%.log"
+call :telem_code %~1
+if defined TCODE call "%COMMON%" :telemetry step-begin !TCODE!
 echo [%~1] %~2
 echo. >> "%LOG%"
 echo --- %~2 -- log: %AUX_LOG% >> "%LOG%"
@@ -402,6 +420,7 @@ pushd "%ROOT%"
 "%PYTHON%" -u -X utf8 !AUX_TARGET! !AUX_ARGS! >> "%AUX_LOG%" 2>&1
 set "AUX_RC=!ERRORLEVEL!"
 popd
+if defined TCODE call "%COMMON%" :telemetry step-end !TCODE! !AUX_RC!
 echo --- %~2 fin: RC=!AUX_RC! >> "%LOG%"
 call :key_lines "%AUX_LOG%"
 exit /b 0
@@ -411,11 +430,14 @@ exit /b 0
 ::   Argumentos en AUX_ARGS. Salida: AUX_RC.
 :: ------------------------------------------------------------
 :aux_bat
+call :telem_code %~1
+if defined TCODE call "%COMMON%" :telemetry step-begin !TCODE!
 echo [%~1] %~2
 echo. >> "%LOG%"
 echo --- %~2 >> "%LOG%"
 call "%LAUNCH%\%~3.bat" !AUX_ARGS!
 set "AUX_RC=!ERRORLEVEL!"
+if defined TCODE call "%COMMON%" :telemetry step-end !TCODE! !AUX_RC!
 echo --- %~2 fin: RC=!AUX_RC! >> "%LOG%"
 exit /b 0
 
@@ -425,6 +447,23 @@ exit /b 0
 :key_lines
 findstr /b /c:"[ATENCION]" /c:"P3 NO aceptaria" /c:"P3 aceptaria" "%~1" >> "%LOG%" 2>nul
 findstr /b /c:"[ATENCION]" /c:"P3 NO aceptaria" /c:"P3 aceptaria" "%~1" 2>nul
+exit /b 0
+
+:: ------------------------------------------------------------
+:: :telem_code CLAVE -- fija TCODE con el codigo de paso de la telemetria (control.cycle_step_def.step_code) para
+::   stepN (N = 1-4) o la etiqueta de un paso auxiliar; vacio si no tiene.
+:: ------------------------------------------------------------
+:telem_code
+set "TCODE="
+if "%~1"=="step1" set "TCODE=P1_BENCH"
+if "%~1"=="step2" set "TCODE=P1_CLASSIFY"
+if "%~1"=="step3" set "TCODE=P2_DISCOVER"
+if "%~1"=="step4" set "TCODE=P2_CALC"
+if "%~1"=="harvest" set "TCODE=HARVEST"
+if "%~1"=="beta_snapshot" set "TCODE=BETA_SNAPSHOT"
+if "%~1"=="beta_compare" set "TCODE=BETA_COMPARE"
+if "%~1"=="p3_freshness" set "TCODE=P3_FRESHNESS"
+if "%~1"=="cycle_report" set "TCODE=CYCLE_REPORT"
 exit /b 0
 
 :: ------------------------------------------------------------
@@ -442,6 +481,8 @@ if !FROM_STEP! GTR %~1 (
 )
 
 set "STEP_ARGS=!S%~1_ARGS!"
+call :telem_code step%~1
+if defined TCODE call "%COMMON%" :telemetry step-begin !TCODE!
 call "%COMMON%" :get_time T_START HHmmss
 echo [!T_START:~0,2!:!T_START:~2,2!:!T_START:~4,2!] PASO %~1/%STEP_TOTAL%: %~2
 echo. >> "%LOG%"
@@ -449,6 +490,7 @@ echo --- PASO %~1/%STEP_TOTAL%: %~2 -- Inicio: !T_START! ---------- >> "%LOG%"
 
 call "%LAUNCH%\%~2.bat" !STEP_ARGS!
 set "STEP_RC=!ERRORLEVEL!"
+if defined TCODE call "%COMMON%" :telemetry step-end !TCODE! !STEP_RC!
 
 call "%COMMON%" :get_time T_END HHmmss
 echo [!T_END:~0,2!:!T_END:~2,2!:!T_END:~4,2!] PASO %~1/%STEP_TOTAL% fin ^(RC=!STEP_RC!^)

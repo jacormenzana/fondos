@@ -444,3 +444,64 @@ def test_the_three_cyclers_exclude_each_other_and_the_nested_one_is_not_refused_
         out, _ = first.communicate(timeout=240)
     assert first.returncode == 0, out                  # P1_P2_Complete ran NESTED under it: it did not ask for the lock again
     assert tree.tools().count("run_pipeline") == 1
+
+
+# ─── cycle telemetry (FND-0239): opt-in, best effort, never changes a return code ────────────────
+
+def _with_telemetry(tree, tmp_path, tool_source=None):
+    """Copy the REAL shared/cycle_telemetry.py into the throwaway tree (or a replacement) and return the env that turns it on with NO database."""
+    dst = tree.root / "shared" / "cycle_telemetry.py"
+    if tool_source is None:
+        shutil.copy(REAL / "shared" / "cycle_telemetry.py", dst)
+    else:
+        dst.write_text(tool_source)
+    fb = tmp_path / "telemetry_fallback.jsonl"
+    return fb, dict(FONDOS_TELEMETRY="1", FONDOS_PG_DSN="", FONDOS_CYCLE_FALLBACK=str(fb))
+
+
+def _events(fb):
+    import json
+    return [json.loads(ln) for ln in fb.read_text(encoding="utf-8").splitlines() if ln.strip()] if fb.exists() else []
+
+
+def test_telemetry_off_by_default_writes_nothing(tree, tmp_path):
+    fb, _ = _with_telemetry(tree, tmp_path)
+    r = tree.run("P1_P2_Complete", *CYCLE, FONDOS_CYCLE_FALLBACK=str(fb))             # FONDOS_TELEMETRY not set
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert not fb.exists()
+
+
+def test_telemetry_on_records_the_cycle_and_its_steps_in_order_and_the_rc_is_the_same(tree, tmp_path):
+    fb, env = _with_telemetry(tree, tmp_path)
+    r = tree.run("P1_P2_Complete", *CYCLE, **env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    ev = _events(fb)
+    ops = [e["op"] for e in ev]
+    assert ops[0] == "cycle_begin" and ops[-1] == "cycle_end"
+    steps = [e["step_code"] for e in ev if e["op"] == "step_end"]
+    main = [s for s in steps if s in ("P1_BENCH", "P1_CLASSIFY", "P2_DISCOVER", "P2_CALC")]
+    assert main == ["P1_BENCH", "P1_CLASSIFY", "P2_DISCOVER", "P2_CALC"]                # the four steps, in order
+    assert all(e["rc"] == 0 for e in ev if e["op"] == "step_end")
+    assert ev[-1]["status"] == "OK" and ev[-1]["rc"] == 0 and len({e["cycle_id"] for e in ev}) == 1
+    begin = {e["step_code"]: e for e in ev if e["op"] == "step_begin"}
+    end = {e["step_code"]: e for e in ev if e["op"] == "step_end"}
+    assert all(end[s]["started_at"] == begin[s]["ts"] for s in begin)                    # the start travelled between two Python processes
+
+
+def test_a_failing_step_is_recorded_as_failed_and_its_rc_is_propagated_untouched(tree, tmp_path):
+    plain = tree.run("P1_P2_Complete", *CYCLE, STUB_RC_RUN_PIPELINE="7")
+    assert plain.returncode != 0
+    fb, env = _with_telemetry(tree, tmp_path)
+    with_telemetry = tree.run("P1_P2_Complete", *CYCLE, STUB_RC_RUN_PIPELINE="7", **env)
+    assert with_telemetry.returncode == plain.returncode                                # telemetry changes no return code
+    ev = _events(fb)
+    last = ev[-1]
+    assert last["op"] == "cycle_end" and last["status"] == "FAILED" and last["failed_step"] == "P2_CALC" and last["rc"] == plain.returncode
+    assert [e["rc"] for e in ev if e["op"] == "step_end" and e["step_code"] == "P2_CALC"] == [7]
+
+
+def test_a_broken_telemetry_tool_cannot_fail_the_cycle(tree, tmp_path):
+    fb, env = _with_telemetry(tree, tmp_path, tool_source="import sys\nsys.exit(9)\n")
+    r = tree.run("P1_P2_Complete", *CYCLE, **env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert tree.state()["LAST_RESULT"] == "OK"

@@ -24,6 +24,7 @@
 ::   :state_query SUB VAR        salida de `p1p2_state.py SUB` en VAR (baseline, calc-version, last-result...)
 ::   :log_open DIR TAG TITULO   fija STAMP, LOG, ERR y escribe la cabecera del log
 ::   :log_close TITULO RC       fija STAMP2 y escribe el pie del log
+::   :telemetry SUBCMD [args]   telemetria de ciclo (shared/cycle_telemetry.py); nada sin FONDOS_CYCLE_ID
 :: ============================================================
 :: `shift` desplaza tambien %0: la ubicacion de la libreria se captura ANTES de consumir la etiqueta.
 set "_HERE=%~dp0"
@@ -184,4 +185,15 @@ echo. >> "%LOG%"
 echo ============================================================ >> "%LOG%"
 echo  %~1 -- Fin: %STAMP2% (RC=%~2) >> "%LOG%"
 echo ============================================================ >> "%LOG%"
+exit /b 0
+
+:: ------------------------------------------------------------
+:: :telemetry SUBCMD [args] -- telemetria de ciclo, mejor esfuerzo. Sin FONDOS_CYCLE_ID (lo exporta el orquestador solo con
+::   FONDOS_TELEMETRY=1) no hace nada. SIEMPRE devuelve 0 y descarta su salida: no puede cambiar el RC de ningun lanzador.
+::   Llamarla DESPUES de capturar el RC del paso (ERRORLEVEL se pierde al invocar Python). Hasta 9 argumentos (%* ignora el shift
+::   del despachador); un valor con '=' o espacios debe ir entrecomillado.
+:: ------------------------------------------------------------
+:telemetry
+if not defined FONDOS_CYCLE_ID exit /b 0
+"%PYTHON%" -X utf8 "%ROOT%\shared\cycle_telemetry.py" %1 %2 %3 %4 %5 %6 %7 %8 %9 >nul 2>nul
 exit /b 0
