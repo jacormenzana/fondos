@@ -65,16 +65,16 @@ except ImportError:
 from shared.db import executemany, execute_fail_soft
 
 
-# Familias con heterogeneidad estructural confirmada (cross-nature por diseno del gestor).
-# El clasificador no puede resolverlas porque el gestor usa la misma denominacion base para
-# clases de accion de nature genuinamente distinta (p.ej. una clase equity + una clase bond).
-# Se suprimen del AVISO de post-correccion para evitar ruido repetitivo en cada ejecucion.
-# Fuente: auditoria pipelineP1P2Audit 2026-08-18.
-_KNOWN_HETEROGENEOUS_FAMILIES: frozenset[str] = frozenset({
-    "FAM_000104",  # ALLIANZ BEST STYLES AT — Mixtos + Renta Variable
-    "FAM_000267",  # ASHMORE SICAV EM SD    — Monetario + Renta Fija Flexible
-    "FAM_000722",  # CAPITAL G.NW PERSP BD  — Renta Fija Flexible + Renta Variable
-    "FAM_001081",  # DWS FLOAT RATE NOTE    — Renta Fija Corto Plazo + Renta Fija Flexible
+# Familias con heterogeneidad de Fund_Nature CONOCIDA, identificadas por su NOMBRE NORMALIZADO (la raiz que produce _normalize_name), nunca
+# por fund_family_id: el builder REASIGNA los FAM_xxxxxx secuencialmente en cada ejecucion (sorted(groups)), asi que una lista por id
+# apuntaba a otras familias en cuanto cambiaba el universo (FND-0244, 2026-10-07: de los 4 ids documentados, 3 ya apuntaban a otro fondo y
+# ocultaban inconsistencias REALES). Solo se suprimen del AVISO de post-correccion las familias de esta lista.
+#   allianz best styles at: LU2696130686 EUR = Mixtos, LU2710823126 USD = Renta Variable. Misma evidencia KIID/Morningstar; la clase USD
+#   cruza a RV por el arbitraje de volatilidad realizada (banda 6 frente a 5, en parte por el NAV en USD). Es un desempate, no diseno del
+#   gestor: se resolvera con el arbitraje a nivel de familia de FND-0244. Retiradas (ya homogeneas): ashmore sicav em sd, capital g nw persp
+#   bd, dws float rate note.
+_KNOWN_HETEROGENEOUS_STEMS: frozenset[str] = frozenset({
+    "allianz best styles at",
 })
 
 
@@ -92,6 +92,12 @@ _CLASS_SUFFIXES = re.compile(
         | eur\s*h(?:edged?)?      # EUR H, EUR Hedged
         | usd\s*h(?:edged?)?      # USD H, USD Hedged
         | \(h\)                   # (H)
+        # FND-0244 (2026-10-07): the catalogue names are cut at ~30 characters and abbreviate the hedge marker. Measured on the 3,762
+        # names: "hdg"/"hed" (48 + 13 funds), the currency glued to the marker for EVERY currency ("EURH", "GBPH", "USDHDG", "CHFH"),
+        # and the Capital Group-style class codes that end in H ("BH", "ZH", "PH", "AH", "BDH", "BGDH", "ZDH", "PDH").
+        | hdg | hed
+        | (?:eur|usd|gbp|chf|jpy|sek|nok|dkk|aud|cad|sgd|hkd|cnh)\s*h(?:dg|ed)?
+        | [abpz]g?d?h
 
         # -- Divisas ISO (solas al final) --
         | eur | usd | gbp | jpy | chf | aud | cad | sek | nok | dkk
@@ -99,6 +105,9 @@ _CLASS_SUFFIXES = re.compile(
 
         # -- Tipo de participacion / distribucion --
         | acc(?:umulation)?       # Acc, Accumulation
+        | ac                      # FND-0244: "Acc" cut by the 30-character name limit -- 725 of 3,762 funds (19%) ended in it and, because
+                                  # it was not a suffix, blocked every suffix before it: each formed a single-fund family
+        | in                      # FND-0244: "Inc" cut by the same limit ("... EUR IN"); never a class-less word at the END of a fund name
         | dist(?:ribution)?       # Dist, Distribution
         | inc                     # Inc abreviado únicamente.
                                   # "Income" (palabra completa) NO se trata
@@ -122,6 +131,10 @@ _CLASS_SUFFIXES = re.compile(
         | retail | institutional | inst | instl
         | clean | dirty
         | r | i | p | e | x | z   # letras sueltas comunes de clase
+
+        # -- Codigos de clase propios de gestora (FND-0244, medidos: parte de los fondos que acaban en el codigo comparten raiz
+        #    con un hermano de la misma gestora en el 54-92% de los casos, n >= 5) --
+        | lc | ld | fc | fd | nc | sc | tfc | tfd | lch
 
         # -- Otros sufijos comunes --
         | nr | net | gross
@@ -160,11 +173,31 @@ def _normalize_name(name: str) -> str:
     # Eliminar sufijos iterativamente hasta convergencia
     for _ in range(10):   # max 10 iteraciones para evitar bucle infinito
         s_prev = s
-        s = _CLASS_SUFFIXES.sub("", s).strip()
+        s = _strip_one_class_suffix(s)
         if s == s_prev:
             break
 
     return s.strip()
+
+
+def _strip_one_class_suffix(s: str) -> str:
+    """Strip ONE trailing class suffix. FND-0244 acronym guard: a run of THREE OR MORE single letters ("S D E M D A", "N G C F I") is the
+    fund's own acronym spelled with spaces, not a stack of class letters; stripping it collapsed two different Neuberger funds into the
+    stem "neuberger". Two spaced letters ("F N", "T A", "A C": Franklin / JPM class codes) and letter+digit codes ("A2", "D4") are class
+    codes and keep being stripped, as before."""
+    m = _CLASS_SUFFIXES.search(s)
+    if not m:
+        return s
+    token = m.group(1)
+    if re.fullmatch(r"[a-z]", token):
+        run = 1
+        for t in reversed(s[: m.start()].split()):
+            if not re.fullmatch(r"[a-z]", t):
+                break
+            run += 1
+        if run >= 3:
+            return s
+    return s[: m.start()].strip()
 
 
 # ============================================================
@@ -604,8 +637,8 @@ def build_fund_families(
     # ── Validación post-corrección ────────────────────────────────────────────
     inconsistencias = _validate_family_consistency(conn)
     # Separar las conocidas (heterogeneidad estructural documentada) del resto
-    known     = [(f, n, nm) for f, n, nm in inconsistencias if f in _KNOWN_HETEROGENEOUS_FAMILIES]
-    unknown   = [(f, n, nm) for f, n, nm in inconsistencias if f not in _KNOWN_HETEROGENEOUS_FAMILIES]
+    known     = [(f, n, nm) for f, n, nm in inconsistencias if _is_known_heterogeneous(nm)]
+    unknown   = [(f, n, nm) for f, n, nm in inconsistencias if not _is_known_heterogeneous(nm)]
     n_total   = len(inconsistencias)
     n_incons  = len(unknown)
     if unknown:
@@ -689,6 +722,12 @@ def _populate_fund_families(
     conn.commit()
     print(f"  [FamilyBuilder] fund_families populated: {len(rows)} familias")
     return len(rows)
+
+
+def _is_known_heterogeneous(names: list) -> bool:
+    """True when every member of the family has a normalised stem listed in _KNOWN_HETEROGENEOUS_STEMS (stable across runs, unlike the ids)."""
+    stems = {_normalize_name(n) for n in names if n}
+    return bool(stems) and stems <= _KNOWN_HETEROGENEOUS_STEMS
 
 
 def _validate_family_consistency(conn: "psycopg.Connection") -> list:
