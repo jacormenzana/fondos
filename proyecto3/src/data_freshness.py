@@ -143,19 +143,70 @@ def load_freshness_inputs(conn) -> tuple[list, object, list]:
     return [r[1] for r in nav_rows], (harvest[0] if harvest else None), [r[1] for r in ver_rows]
 
 
+def fx_view_canary_check(pairs: list, tol: float = 0.003, strong: float = 0.01, min_canaries: int = 8,
+                         min_share: float = 0.9) -> FreshnessCheck:
+    """FND-0235 lock: were the stored fx_contribution_ann values computed under FX_CONTRIBUTION_EUR_VIEW_ENABLED? (pure)
+
+    `pairs` = [(isin, stored, recomputed)] where `recomputed` is the EUR-view value computed NOW from the same NAV and FX series. The
+    legacy metric has the OPPOSITE sign, so on a fund whose |recomputed| >= `strong` (1 pp/yr) a legacy row differs by >= 2 pp, far above the
+    `tol` (0.3 pp) that a NAV added since the last P2 run can move it. Only those canaries count; fewer than `min_canaries` of them, or fewer than
+    `min_share` matching, fails the lock (fail-closed: an unverifiable state is not a verified one). A presence check cannot do this: the
+    legacy rows carry the same metric name."""
+    strong_pairs = [(i, s, r) for i, s, r in pairs if r is not None and abs(r) >= strong]
+    name = "fx_view_canary"
+    if len(strong_pairs) < min_canaries:
+        return FreshnessCheck(name, None, None, 0, False,
+                              f"inconclusive: only {len(strong_pairs)} canary funds with |fx| >= {strong:.0%} (need {min_canaries}); "
+                              f"cannot verify the fx family was recomputed under FX_CONTRIBUTION_EUR_VIEW_ENABLED", show_age=False)
+    ok_n = sum(1 for _, s, r in strong_pairs if s is not None and abs(s - r) <= tol)
+    share = ok_n / len(strong_pairs)
+    return FreshnessCheck(
+        name, None, None, 0, share >= min_share,
+        f"{ok_n}/{len(strong_pairs)} canary funds ({share:.0%}, min {min_share:.0%}) carry the EUR-view fx_contribution_ann"
+        + ("" if share >= min_share else " -- the stored values are still the legacy (opposite-sign) metric: "
+           "run the P2 recompute of the fx family BEFORE P3"), show_age=False)
+
+
+def load_fx_canary_pairs(conn, n_candidates: int = 80, n_canaries: int = 25) -> list:
+    """[(isin, stored fx_contribution_ann, EUR-view value recomputed now)] for a deterministic sample of the FX-exposed active funds."""
+    from proyecto2.src.calculations.currency_factor import compute_currency_factor
+    rows = conn.execute(
+        "SELECT m.isin, m.fund_currency, m.hedging_policy, m.asset_currency, f.value "
+        "FROM fund_metrics f JOIN fund_master m ON m.isin = f.isin "
+        "WHERE m.in_current_universe = 1 AND f.metric = 'fx_contribution_ann' "
+        "AND f.horizon = 'since_inception' AND f.real_flag = 0 ORDER BY md5(m.isin) LIMIT %s", (n_candidates,)
+    ).fetchall()
+    pairs = []
+    for isin, fund_ccy, hedging, asset_ccy, stored in rows:
+        nav = conn.execute("SELECT date, nav FROM fund_nav_monthly WHERE isin = %s ORDER BY date", (isin,)).fetchall()
+        nav_df = pd.DataFrame(nav, columns=["date", "nav"])
+        nav_df["date"] = pd.to_datetime(nav_df["date"])
+        nav_df["nav"] = nav_df["nav"].astype(float)
+        out = {m: v for m, v, _ in compute_currency_factor(isin, fund_ccy, hedging, nav_df, conn, asset_currency=asset_ccy)}
+        if "fx_contribution_ann" in out:
+            pairs.append((isin, None if stored is None else float(stored), float(out["fx_contribution_ann"])))
+        if len(pairs) >= n_canaries * 4:           # enough candidates to find the strong ones; the verdict filters them
+            break
+    return pairs
+
+
 def check_universe_freshness(conn, classifier, today: Optional[date] = None) -> list[FreshnessCheck]:
     """Read the inputs and evaluate them with the limits from shared/config.py."""
+    from shared import config as _config
     from shared.config import (
         P3_FRESHNESS_MAX_AGE_DAYS, P3_MACRO_RELEASE_LAG_INDICATORS, P3_MIN_UNIFORM_METRICS_SHARE,
         P3_NAV_UNIVERSE_PERCENTILE,
     )
     nav_dates, harvest_ts, versions = load_freshness_inputs(conn)
-    return evaluate_freshness(
+    checks = evaluate_freshness(
         nav_dates, classifier.input_last_dates(), harvest_ts,
         today or date.today(), P3_FRESHNESS_MAX_AGE_DAYS,
         P3_NAV_UNIVERSE_PERCENTILE, P3_MACRO_RELEASE_LAG_INDICATORS,
         metric_versions=versions, min_uniform_share=P3_MIN_UNIFORM_METRICS_SHARE,
     )
+    if _config.FX_CONTRIBUTION_EUR_VIEW_ENABLED:      # FND-0235: the scorer reads fx_contribution_ann; refuse a legacy-signed one
+        checks = list(checks) + [fx_view_canary_check(load_fx_canary_pairs(conn))]
+    return checks
 
 
 def stale_checks(checks: Iterable[FreshnessCheck]) -> list[FreshnessCheck]:
