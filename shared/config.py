@@ -569,7 +569,7 @@ CAPTURE_MONTH_END_ENABLED: bool = True
 P2_BUNDLE_FLAGS: tuple = ("MACRO_VIF_ITERATIVE_ENABLED", "MACRO_FACTOR_CLEAN_ENABLED",
                           "PERSISTENCE_FIRST_LAST_NAV_ENABLED", "CAPTURE_MONTH_END_ENABLED",
                           "ANNUALIZATION_INTERVAL_ENABLED", "DEFLATION_MONTH_ALIGN_ENABLED",
-                          "SORTINO_MIN_DOWNSIDE_COUNT_ENABLED")
+                          "SORTINO_MIN_DOWNSIDE_COUNT_ENABLED", "FX_CONTRIBUTION_EUR_VIEW_ENABLED")
 # FND-0240: annualise a NAV window over its INTERVALS (N points span N - 1 periods) instead of its points. OFF = the stored
 # convention (years = N / 12), bit-for-bit. ON changes the stored return_ann / sharpe / sortino of the risk family and the
 # rolling timeseries: about +0.5 pp on rolling_1y, -1.2 pp on the crisis windows, +0.04 pp since inception -- and nothing in the
@@ -592,6 +592,18 @@ DEFLATION_MONTH_ALIGN_ENABLED: bool = False
 SORTINO_MIN_DOWNSIDE_COUNT_ENABLED: bool = False
 SORTINO_MIN_DOWNSIDE_OBS: int = 3
 SORTINO_MIN_DOWNSIDE_SHARE: float = 0.15
+# FND-0235: the FX contribution seen by a EUR investor, as a signed annual pp figure. OFF = the stored metric (fx = mean of the log change
+# of foreign-units-per-EUR, i.e. the OPPOSITE sign of a EUR investor's contribution, divided into the fund's own-currency return: for the
+# 579 of 711 funds in non-EUR share classes the NAV already is in the foreign currency, so the ratio mixes two currency bases; and an
+# unstable ratio clamped to +-5). ON: fx_contribution_ann = -(foreign-per-EUR log change) of the ASSET currency (Asset_Currency = EUR means no
+# exposure whatever the class currency), the total return is converted to EUR for non-EUR classes, fx_contribution_pct is the ratio to that
+# EUR total and is NOT written when |EUR total| < FX_RATIO_MIN_TOTAL_ANN (no fake 0.0), and the P3 scorer applies MULT_FX_MALUS when
+# |fx_contribution_ann| > FX_CONTRIBUTION_PP_LIMIT instead of |fx_contribution_pct| > 0.60 (it also stops reading the ratio).
+# FX_CONTRIBUTION_PP_LIMIT = 2 pp/yr: ~a third of the 6-7% IPC+M3 target; on 630 exposed funds it flags 24 (the ratio rule flags 38, 10 in common).
+# FLIP ONLY TOGETHER WITH THE RECOMPUTE of the 'fx' family (utils/family_versions.FLAG_FAMILIES) and BEFORE the next P3 run.
+FX_CONTRIBUTION_EUR_VIEW_ENABLED: bool = False
+FX_CONTRIBUTION_PP_LIMIT: float = 0.02
+FX_RATIO_MIN_TOTAL_ANN: float = 0.01
 # FND-0236: per-metric-family calculation versions. OFF = today's behaviour (one global CALC_VERSION and one input hash per
 # fund). ON = each of the nine families has its own state row (control.fund_metric_family_state), so a change that touches one
 # family (bump FAMILY_CALC_OVERRIDES[family] in utils/family_versions.py) recomputes only that family. Switch-on order:

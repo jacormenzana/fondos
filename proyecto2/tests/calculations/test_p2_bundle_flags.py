@@ -60,7 +60,7 @@ def test_bundle_flags_are_listed_and_are_booleans():
     assert config.P2_BUNDLE_FLAGS == ("MACRO_VIF_ITERATIVE_ENABLED", "MACRO_FACTOR_CLEAN_ENABLED",
                                       "PERSISTENCE_FIRST_LAST_NAV_ENABLED", "CAPTURE_MONTH_END_ENABLED",
                                       "ANNUALIZATION_INTERVAL_ENABLED", "DEFLATION_MONTH_ALIGN_ENABLED",
-                                      "SORTINO_MIN_DOWNSIDE_COUNT_ENABLED")
+                                      "SORTINO_MIN_DOWNSIDE_COUNT_ENABLED", "FX_CONTRIBUTION_EUR_VIEW_ENABLED")
     assert all(isinstance(getattr(config, name), bool) for name in config.P2_BUNDLE_FLAGS)
 
 

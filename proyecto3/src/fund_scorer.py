@@ -20,7 +20,8 @@ Pesos del scoring base (horizon=since_inception):
     momentum_rank        Defensiva  5% / Equilibrada 10% / Dinámica 10%
 
 Multiplicadores estructurales:
-    fx_contribution_pct > 0.60   x0.80  retorno mayormente divisa
+    fx_contribution_pct > 0.60   x0.80  retorno mayormente divisa (FND-0235: con FX_CONTRIBUTION_EUR_VIEW_ENABLED,
+                                        |fx_contribution_ann| > FX_CONTRIBUTION_PP_LIMIT = 2 pp/anio, vista del inversor EUR)
     alpha_persistence > 0.60     x1.15  gestor consistente
 
 Multiplicadores macro RETIRADOS 2026-10-04 (FND-0225, decision del propietario tras el backtest PIT de universo
@@ -68,6 +69,7 @@ _ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT))
 
 from proyecto3.src.regime_classifier import RegimeResult
+from shared import config as _shared_config
 from shared.config import (
     METRIC_VERSION_SHORT,
     SHORT_HORIZON_SCORING_ENABLED,
@@ -257,6 +259,8 @@ def scoring_metric_requests(regime: str | None = None) -> list:
         ("fx_contribution_pct", "since_inception", 0),
         ("srri_nav",            "since_inception", 0),
     ]
+    if _shared_config.FX_CONTRIBUTION_EUR_VIEW_ENABLED:      # FND-0235: the malus reads the signed pp contribution
+        metrics_needed.append(("fx_contribution_ann", "since_inception", 0))
 
     # Crisis stress (always load — used in Crisis_Financiera multiplier)
     metrics_needed += [
@@ -511,8 +515,13 @@ def compute_regime_multiplier(
     # el docstring del modulo. No reintroducir sin validacion fuera de muestra (FND-0193).
 
     # ── Penalización exceso divisa ────────────────────────────────────────────
-    fx_pct = row.get("fx_contribution_pct", np.nan)
-    if not np.isnan(fx_pct) and abs(fx_pct) > FX_CONTRIBUTION_LIMIT:
+    # FND-0235: with FX_CONTRIBUTION_EUR_VIEW_ENABLED the rule is on the EUR investor's signed contribution in pp (|fx_contribution_ann| >
+    # FX_CONTRIBUTION_PP_LIMIT); the ratio below (|fx_contribution_pct| > 0.60) is the stored rule, unstable for low-return funds.
+    if _shared_config.FX_CONTRIBUTION_EUR_VIEW_ENABLED:
+        fx_val, fx_limit = row.get("fx_contribution_ann", np.nan), _shared_config.FX_CONTRIBUTION_PP_LIMIT
+    else:
+        fx_val, fx_limit = row.get("fx_contribution_pct", np.nan), FX_CONTRIBUTION_LIMIT
+    if not np.isnan(fx_val) and abs(fx_val) > fx_limit:
         multiplier *= MULT_FX_MALUS
         detail["fx_malus"] = MULT_FX_MALUS
 

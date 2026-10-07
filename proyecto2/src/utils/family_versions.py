@@ -51,6 +51,8 @@ FLAG_FAMILIES: dict = {
     "DEFLATION_MONTH_ALIGN_ENABLED": ("risk", "rolling"),
     # FND-0242: sortino_ratio feeds the risk family, rolling_stats._roll_sortino the rolling one (regime path untouched).
     "SORTINO_MIN_DOWNSIDE_COUNT_ENABLED": ("risk", "rolling"),
+    # FND-0235: currency_factor.compute_currency_factor is the fx family (fx_contribution_ann / _pct / fx_volatility_ann).
+    "FX_CONTRIBUTION_EUR_VIEW_ENABLED": "fx",
 }
 
 
