@@ -269,6 +269,20 @@ Condición: se cumple **cualquiera** de los dos criterios siguientes.
 
 ---
 
+## §5c. Telemetría de ciclos (FND-0239)
+
+**Qué es:** `shared/cycle_telemetry.py` + las tablas `control.cycle_*` y la vista `control.v_cycle_exec` (bloque `cycle_telemetry` de `db/pg/35_control.sql`; el dueño lo aplica con `scripts/ops/migrate_cycle_telemetry.py`, simulacro por defecto, `--apply` en una sola transacción). Registra por ciclo y por intento de paso: duración, rc, estado, línea base y ratio; métricas escalares tipadas; ejecuciones de auditoría; y *flags* enlazados al backlog. Es la fuente programática de "estado del pipeline" (p. ej. para candados entre módulos), en lugar de leer logs.
+
+**Reglas de diseño (obligatorias para quien lo use):**
+- **Aislamiento de fallos.** Toda función pública captura `Exception` (nunca `BaseException`: Ctrl-C / `SystemExit` deben seguir matando un ciclo colgado), conecta con `connect_timeout=3` y `statement_timeout=3000`, abre una conexión corta por evento, no retiene transacción entre pasos y no reintenta. Un fallo de escritura va a `log/cycle_telemetry_fallback.jsonl`. **Nunca cambia el RC de un launcher** (NORMAS_BATCH).
+- **Opt-in.** Sin `FONDOS_CYCLE_ID` todas las llamadas devuelven `False` sin tocar nada.
+- **Eventos idempotentes.** Cada escritura es un upsert por PK; `begin_cycle()` reproduce primero el fichero de respaldo (en orden, rotándolo a `.done` si todo se aplica; si falla, deja el resto). PREFLIGHT solo informa de los bytes pendientes.
+- **Líneas base en la ingesta, no en las vistas.** `baseline` = mediana de los ≤ 5 valores OK anteriores; sin juicio por ratio hasta tener ≥ 3 (*warm-up*); los techos absolutos (`cycle_step_def.hard_max_s`, sembrados a 2× el máximo observado) actúan desde el primer ciclo y como respaldo permanente. Umbrales y techos son **datos** (UPDATE, no despliegue).
+- **Enlace al backlog en el momento de escribir:** `ap_status` = estado real, `NOT_FOUND` (el backlog respondió y no existe) o `LOOKUP_FAILED` (caída/timeout: **nunca** se cuenta como huérfano; `refresh_unverified_flags()` lo reintenta). `flags_orphan` cuenta solo `ap_id IS NULL`, `CLOSED` o `NOT_FOUND`.
+- La vista pre-agrega cada fuente por ciclo antes de unir (sin producto pasos × flags; hay prueba).
+
+**Estado (2026-10-07):** etapa 1 construida (DDL, migración, módulo, pruebas). Pendiente: etapa 2 (ganchos en `scripts/launch/lib/common.bat` y en el `finally` de `run_pipeline`), etapa 3 (ingesta de los contadores de `p2_pipeline_log`/logs y catálogo de flags `BACKFILL_NO_WORK`, `FAMILY_VERSION_STALE`, `RUN_ERROR_ZERO_WORK`, `DIAG_FAILED_CYCLE_OK`, `STEP_SLOW`…), reetiquetado de `attention_items()` y *backfill* histórico. El plan completo está en `~/.claude/plans/sorted-plotting-key.md`.
+
 ## §6. Smoke test y catálogo de regresiones
 
 ### §6.1 Smoke test post-implementación

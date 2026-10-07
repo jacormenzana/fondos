@@ -256,6 +256,21 @@ def install_excepthook(
     sys.excepthook = _hook
 
 
+def get_action_point_status(ap_id: str) -> str:
+    """Read-only status of one backlog ticket for the cycle telemetry (FND-0239): its real status, 'NOT_FOUND' (the backlog answered and has
+    no such AP) or 'LOOKUP_FAILED' (no DSN, outage, timeout -- never to be read as "no ticket"). Never raises; same 5 s limits as the
+    rest of this module's short-lived connections."""
+    try:
+        dsn = _dsn()
+        if not dsn or psycopg is None:
+            return "LOOKUP_FAILED"
+        with psycopg.connect(dsn, connect_timeout=5, options="-c statement_timeout=5000") as conn:
+            row = conn.execute("SELECT status FROM backlog.backlog WHERE action_point_id = %s", (ap_id,)).fetchone()
+        return "NOT_FOUND" if row is None else str(row[0])
+    except Exception:
+        return "LOOKUP_FAILED"
+
+
 def check_dsn(verbose: bool = True) -> bool:
     """
     Read-only diagnostic: verifies FONDOS_BACKLOG_PG_DSN is set, psycopg3 is installed, the

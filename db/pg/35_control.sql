@@ -226,6 +226,217 @@ CREATE TABLE IF NOT EXISTS control.audit_finding_isin (
 );
 
 
+-- -----------------------------------------------------------------------------
+-- BEGIN cycle_telemetry (FND-0239) -- orchestrated-cycle telemetry: one row per cycle / step attempt, typed metrics with baselines
+-- computed AT INGEST (no percentile work in views), flags linked to the backlog, the executive view v_cycle_exec.
+-- Written best-effort by shared/cycle_telemetry.py (failure-isolated: a telemetry outage never changes a launcher RC).
+-- Applied on the live DB only by the owner: scripts/ops/migrate_cycle_telemetry.py reads this block (single source of truth).
+-- -----------------------------------------------------------------------------
+
+-- One row per orchestrated cycle (P1_P2_Complete, P1_P2_P3, P2_P3_complete, P3_buildPortfolio).
+CREATE TABLE IF NOT EXISTS control.cycle_run (
+    cycle_id        text PRIMARY KEY,                  -- the launcher STAMP, YYYYMMDD_HHMMSS
+    launcher        text        NOT NULL,
+    parent_cycle_id text REFERENCES control.cycle_run (cycle_id),   -- --from N / --only-p3 lineage
+    started_at      timestamptz NOT NULL,
+    ended_at        timestamptz,
+    status          text        NOT NULL DEFAULT 'RUNNING' CHECK (status IN ('RUNNING','OK','FAILED','ABORTED')),
+    rc              integer,
+    failed_step     text,
+    resume_from     smallint,
+    options         jsonb       NOT NULL DEFAULT '{}',
+    calc_version    text,
+    git_commit      text,
+    restore_point   text,
+    universe_active integer,
+    regime          text,
+    semaforo        text
+);
+
+-- The steps the executive view knows, with their duration ceilings as DATA (changing one is an UPDATE, not a deploy).
+-- hard_max_s is active from the first cycle and stays a permanent backstop after warm-up: seeded at 2x the longest duration observed in
+-- the 2026-10-04/05 logs (P2_CALC 16,158 s -> 32,400 s, P1_CLASSIFY 5,760 s -> 11,520 s); the others are generous placeholders.
+CREATE TABLE IF NOT EXISTS control.cycle_step_def (
+    step_code   text PRIMARY KEY,
+    step_kind   text NOT NULL CHECK (step_kind IN ('PIPELINE','GATE','DIAGNOSTIC')),
+    seq         smallint NOT NULL,
+    description text NOT NULL,
+    warn_ratio  numeric,                               -- duration / baseline median; NULL = never flagged on ratio
+    alarm_ratio numeric,
+    hard_max_s  double precision
+);
+
+-- One row per step attempt (a pipeline step, a gate or a diagnostic).
+CREATE TABLE IF NOT EXISTS control.cycle_step (
+    cycle_id    text        NOT NULL REFERENCES control.cycle_run (cycle_id) ON DELETE CASCADE,
+    step_code   text        NOT NULL,
+    attempt     smallint    NOT NULL DEFAULT 1,
+    step_kind   text        NOT NULL CHECK (step_kind IN ('PIPELINE','GATE','DIAGNOSTIC')),
+    seq         smallint,
+    started_at  timestamptz NOT NULL,
+    ended_at    timestamptz,
+    rc          integer,
+    dur_s       double precision,
+    baseline_s  double precision,                      -- median dur_s of the previous <= 5 OK attempts of this step (NULL during warm-up)
+    ratio       double precision,
+    status      text CHECK (status IN ('RUNNING','OK','WARN','FAILED','SKIPPED')),
+    warn_count  integer,
+    error_count integer,
+    batch_id    text,                                  -- joins control.p2_pipeline_log.batch_id for P2 steps
+    log_path    text,
+    CONSTRAINT cycle_step_pkey PRIMARY KEY (cycle_id, step_code, attempt)
+);
+
+-- The catalogue of scalar telemetry: meaning + thresholds as DATA.
+CREATE TABLE IF NOT EXISTS control.cycle_metric_def (
+    metric_code     text PRIMARY KEY,
+    description     text NOT NULL,
+    unit            text,
+    direction       text CHECK (direction IN ('LOWER_BETTER','HIGHER_BETTER','NEUTRAL')),
+    baseline_cycles smallint NOT NULL DEFAULT 5,
+    warn_ratio      numeric,
+    alarm_ratio     numeric,
+    hard_min        double precision,                  -- absolute invariants only
+    hard_max        double precision
+);
+
+-- Long-format scalar telemetry; baseline_value / ratio are written at ingest.
+CREATE TABLE IF NOT EXISTS control.cycle_metric (
+    cycle_id       text        NOT NULL REFERENCES control.cycle_run (cycle_id) ON DELETE CASCADE,
+    step_code      text        NOT NULL,
+    metric_code    text        NOT NULL,
+    scope          text        NOT NULL DEFAULT '',    -- metric family / audit domain / nature / ''
+    value_num      double precision,
+    value_text     text,
+    baseline_value double precision,
+    ratio          double precision,
+    recorded_at    timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT cycle_metric_pkey PRIMARY KEY (cycle_id, step_code, metric_code, scope)
+);
+
+-- Audit runs attached to a cycle (the identity of the findings stays in control.audit_finding).
+CREATE TABLE IF NOT EXISTS control.cycle_audit_run (
+    cycle_id    text     NOT NULL REFERENCES control.cycle_run (cycle_id) ON DELETE CASCADE,
+    domain      text     NOT NULL,                     -- p2_metrics | cost_attributes | benchmark
+    phase       text     NOT NULL CHECK (phase IN ('pre','post')),
+    run_id      text     NOT NULL,
+    n_alarm     integer, n_warn integer, n_info integer,
+    n_new       integer, n_resolved integer, n_unchanged integer,
+    n_stagnant  integer,                               -- unchanged for >= 3 consecutive cycles
+    CONSTRAINT cycle_audit_run_pkey PRIMARY KEY (cycle_id, domain, phase)
+);
+
+-- Flags raised at the end of a cycle by the rule catalogue; ap_id links to gestion.backlog (no FK: another database).
+-- ap_status is read from the backlog AT WRITE TIME and has three distinct "no ticket" states so an outage of the backlog is never read as
+-- "no ticket": a real status, NOT_FOUND (reachable, no such AP), LOOKUP_FAILED (exception / timeout; retried at the next ingest).
+CREATE TABLE IF NOT EXISTS control.cycle_flag (
+    cycle_id  text   NOT NULL REFERENCES control.cycle_run (cycle_id) ON DELETE CASCADE,
+    flag_code text   NOT NULL,
+    scope     text   NOT NULL DEFAULT '',
+    severity  text   NOT NULL CHECK (severity IN ('INFO','WARN','HIGH')),
+    detail    text,
+    evidence  double precision,
+    ap_id     text,                                    -- NULL = untracked (candidate for a new AP)
+    ap_status text CHECK (ap_status IN ('OPEN','TODO','IN_PROGRESS','READY_FOR_DEPLOY','BLOCKED','DEFERRED','CLOSED','NOT_FOUND','LOOKUP_FAILED')),
+    CONSTRAINT cycle_flag_pkey PRIMARY KEY (cycle_id, flag_code, scope)
+);
+
+-- Standing mapping flag -> AP (the zero-entropy policy): a flag with an unexpired ack inherits its ap_id.
+CREATE TABLE IF NOT EXISTS control.cycle_flag_ack (
+    flag_code  text NOT NULL,
+    scope      text NOT NULL DEFAULT '',
+    ap_id      text NOT NULL,
+    note       text,
+    expires_at date,
+    CONSTRAINT cycle_flag_ack_pkey PRIMARY KEY (flag_code, scope)
+);
+
+CREATE INDEX IF NOT EXISTS idx_cycle_step_code   ON control.cycle_step (step_code, started_at);
+CREATE INDEX IF NOT EXISTS idx_cycle_metric_code ON control.cycle_metric (metric_code, cycle_id);
+
+-- Seeds (idempotent; thresholds are tuned with UPDATEs, never by editing this block).
+INSERT INTO control.cycle_step_def (step_code, step_kind, seq, description, warn_ratio, alarm_ratio, hard_max_s) VALUES
+    ('PREFLIGHT',     'GATE',       0, 'preflight: DB reachable, owner DSN, FRED key, disk',                 NULL, NULL,   600),
+    ('AUDIT_BASE',    'DIAGNOSTIC', 1, 'baseline statistical audits (p2, costs) with --persist',             1.5,  3.0,   3600),
+    ('BETA_SNAPSHOT', 'DIAGNOSTIC', 2, 'macro-beta snapshot before the cycle',                               1.5,  3.0,   3600),
+    ('HARVEST',       'PIPELINE',   3, 'P1_harvestFunds: catalogue harvest + KIID delta',                    1.5,  3.0,   7200),
+    ('P1_BENCH',      'PIPELINE',   4, 'PASO 1: benchmark refresh',                                          1.5,  3.0,   3600),
+    ('P1_CLASSIFY',   'PIPELINE',   5, 'PASO 2: P1 nature-first classification',                             1.5,  3.0,  11520),
+    ('P2_DISCOVER',   'PIPELINE',   6, 'PASO 3: macro + NAV discovery and load',                             1.5,  3.0,  14400),
+    ('P2_CALC',       'PIPELINE',   7, 'PASO 4: P2 indicators (run_pipeline + export)',                      1.5,  3.0,  32400),
+    ('AUDIT_FINAL',   'DIAGNOSTIC', 8, 'final statistical audits with drift against the baseline',           1.5,  3.0,   3600),
+    ('BETA_COMPARE',  'DIAGNOSTIC', 9, 'macro-beta comparison against the snapshot',                         1.5,  3.0,   3600),
+    ('P3_FRESHNESS',  'GATE',      10, 'P3 freshness verdict (same gate as P3)',                             NULL, NULL,   600),
+    ('CYCLE_REPORT',  'DIAGNOSTIC',11, 'cycle report ([ATENCION] lines)',                                    1.5,  3.0,   1800),
+    ('P3_BUILD',      'PIPELINE',  12, 'P3 scoring + portfolio build',                                       1.5,  3.0,   7200),
+    ('P3_REPORT',     'PIPELINE',  13, 'P3 monthly report',                                                  1.5,  3.0,   3600)
+ON CONFLICT (step_code) DO NOTHING;
+
+INSERT INTO control.cycle_metric_def (metric_code, description, unit, direction, warn_ratio, alarm_ratio) VALUES
+    ('p2_processed',   'funds processed by the P2 run',                    'funds', 'NEUTRAL',      NULL, NULL),
+    ('p2_skipped',     'funds skipped (cache hit) by the P2 run',          'funds', 'NEUTRAL',      NULL, NULL),
+    ('p2_errors',      'funds that errored in the P2 run',                 'funds', 'LOWER_BETTER', 2.0,  5.0),
+    ('p2_warnings',    'warnings of the P2 run',                           'count', 'LOWER_BETTER', 2.0,  5.0),
+    ('p2_written_rows','metric rows written by the P2 run',                'rows',  'NEUTRAL',      NULL, NULL),
+    ('p2_quarantined', 'metric rows quarantined by the P2 run',            'rows',  'LOWER_BETTER', 2.0,  5.0),
+    ('ols_funds',      'funds that went through the macro OLS',            'funds', 'NEUTRAL',      NULL, NULL),
+    ('cond_guard_funds','funds nulled by the condition-number guard',      'funds', 'LOWER_BETTER', 2.0,  5.0),
+    ('betas_nulled',   'macro betas nulled by the VIF / guards',           'count', 'LOWER_BETTER', 2.0,  5.0),
+    ('p2_elapsed_s',   'wall time of the P2 run',                          's',     'LOWER_BETTER', 1.5,  3.0),
+    ('cache_hit_pct',  'share of funds skipped by the fingerprint cache',  'pct',   'NEUTRAL',      NULL, NULL),
+    ('family_version_coverage_pct', 'share of rows of a metric family on the current algorithm_version', 'pct', 'HIGHER_BETTER', NULL, NULL),
+    ('universe_active','active funds in the universe',                     'funds', 'NEUTRAL',      NULL, NULL),
+    ('nav_stale_n',    'active funds whose newest NAV is stale (one predicate, FND-0233)', 'funds', 'LOWER_BETTER', 2.0, 5.0),
+    ('dq_warn_n',      'open data-quality warnings of the cycle',          'count', 'LOWER_BETTER', 2.0,  5.0),
+    ('alerts_alarm_n', 'rolling-signal ALARM alerts',                      'count', 'LOWER_BETTER', 2.0,  5.0),
+    ('dist_drift_z',   'z-score of a key metric moment against its last runs', 'z',  'LOWER_BETTER', NULL, NULL),
+    ('p3_scored',      'funds scored by P3',                               'funds', 'NEUTRAL',      NULL, NULL),
+    ('p3_eligible',    'funds eligible after the P3 hard filters',         'funds', 'NEUTRAL',      NULL, NULL),
+    ('portfolio_funds','funds in the built portfolio',                     'funds', 'NEUTRAL',      NULL, NULL)
+ON CONFLICT (metric_code) DO NOTHING;
+
+-- The executive view. Every source is pre-aggregated PER CYCLE before joining, so there is no steps x flags fan-out; baselines and ratios were
+-- written at ingest, so there is no percentile / LATERAL work here.
+CREATE OR REPLACE VIEW control.v_cycle_exec AS
+WITH st AS (   -- last attempt of each step
+    SELECT DISTINCT ON (cycle_id, step_code) cycle_id, step_code, dur_s, ratio, status
+    FROM control.cycle_step ORDER BY cycle_id, step_code, attempt DESC),
+stp AS (
+    SELECT cycle_id,
+           max(dur_s) FILTER (WHERE step_code = 'P1_CLASSIFY') / 60 AS p1_min,
+           max(dur_s) FILTER (WHERE step_code = 'P2_DISCOVER') / 60 AS p2_load_min,
+           max(dur_s) FILTER (WHERE step_code = 'P2_CALC')     / 60 AS p2_calc_min,
+           max(dur_s) FILTER (WHERE step_code = 'P3_BUILD')    / 60 AS p3_min,
+           max(ratio) AS worst_step_ratio,
+           count(*) FILTER (WHERE status = 'FAILED') AS steps_failed
+    FROM st GROUP BY cycle_id),
+met AS (
+    SELECT cycle_id,
+           max(value_num) FILTER (WHERE metric_code = 'ols_funds')                    AS ols_funds,
+           max(value_num) FILTER (WHERE metric_code = 'cache_hit_pct' AND scope = '') AS cache_hit_pct
+    FROM control.cycle_metric GROUP BY cycle_id),
+aud AS (
+    SELECT cycle_id, sum(n_alarm) AS alarms_post, sum(n_stagnant) AS alarms_stagnant
+    FROM control.cycle_audit_run WHERE phase = 'post' GROUP BY cycle_id),
+fl AS (
+    SELECT cycle_id,
+           count(*) FILTER (WHERE severity = 'HIGH')                                                       AS flags_high,
+           count(*) FILTER (WHERE severity <> 'INFO' AND (ap_id IS NULL OR ap_status IN ('CLOSED','NOT_FOUND'))) AS flags_orphan,
+           count(*) FILTER (WHERE severity <> 'INFO' AND ap_status = 'LOOKUP_FAILED')                      AS flags_unverified,
+           string_agg(flag_code, ',' ORDER BY flag_code) FILTER (WHERE severity = 'HIGH')                  AS high_flags
+    FROM control.cycle_flag GROUP BY cycle_id)
+SELECT r.cycle_id, r.launcher, r.started_at, r.status, r.failed_step,
+       round((extract(epoch FROM r.ended_at - r.started_at) / 3600)::numeric, 2) AS total_h,
+       stp.p1_min, stp.p2_load_min, stp.p2_calc_min, stp.p3_min, stp.worst_step_ratio, COALESCE(stp.steps_failed, 0) AS steps_failed,
+       met.ols_funds, met.cache_hit_pct, aud.alarms_post, aud.alarms_stagnant,
+       COALESCE(fl.flags_high, 0) AS flags_high, COALESCE(fl.flags_orphan, 0) AS flags_orphan,   -- orphan => candidate for a new AP
+       COALESCE(fl.flags_unverified, 0) AS flags_unverified,                                      -- backlog lookup failed; retried at ingest
+       fl.high_flags, r.regime, r.semaforo
+FROM control.cycle_run r
+LEFT JOIN stp USING (cycle_id) LEFT JOIN met USING (cycle_id)
+LEFT JOIN aud USING (cycle_id) LEFT JOIN fl USING (cycle_id);
+-- END cycle_telemetry
+
 -- =============================================================================
 -- Migration bookkeeping (new in PG — no SQLite analog)
 -- =============================================================================
