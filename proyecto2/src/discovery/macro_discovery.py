@@ -781,7 +781,8 @@ def load_fred_series(
         api_key = os.environ.get("FRED_API_KEY") or None
 
     if api_key:
-        print(f"  [FRED] Descargando series (API key: {api_key[:6]}...)...")
+        # FND-0238: no part of a credential belongs in a log -- only the fact that one is set.
+        print("  [FRED] Descargando series (API key: configurada)...")
     else:
         print("  [FRED] Descargando series (sin API key -- series ICE BofA limitadas a ~3 años)...")
 

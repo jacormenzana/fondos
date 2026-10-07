@@ -2635,8 +2635,19 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
     # bond_dominant=True (from "debt securities" secondary allowance) with
     # eq_dominant=False → function returned _RF_pending at line 2352 instead of
     # "Renta Variable".
+    # FIX-RV-EN-PRIMARILY-COMMON-STOCKS-1 (FND-0237, 2026-10-07): the same declaration with the North American term for ordinary
+    # shares. FIX-RV-COMMON-STOCKS-1 (2026-08-20) added "common stocks" only as a PRESENCE signal (has_equity); the dominant-mandate
+    # pattern below stopped at "shares", so "the fund invests primarily in common stocks that the investment adviser believes have the
+    # potential for growth" (Capital Group New Perspective: 8 hedged share classes, no benchmark, abbreviated names) never reached
+    # eq_dominant and the fund fell to Restantes. "stocks" alone is deliberately NOT accepted (stock-picking / stock-index prose).
+    # FIX-RV-EN-WILL-MAINLY-BE-SHARES-1 (FND-0237): "Investments will mainly be shares in large and medium sized Japanese companies"
+    # (ARCUS JAPAN, LU0573573127: TOPIX benchmark, ~95% shares, up to 15% bonds) -- the equity mandate is declared as what the
+    # investments WILL BE, with no "invest(s) primarily in". Requires the future-tense subject + adverb + "be/consist of/comprise".
     )) or bool(re.search(
-        r'invest(?:s|ing)?\s+primarily\s+in[^.]{0,50}shares\b', w
+        r'(?:investments?|assets?|portfolio)\s+(?:will|shall)\s+(?:mainly|primarily|principally)\s+'
+        r'(?:be|consist\s+of|comprise)\s+(?:of\s+)?(?:shares|equities|common\s+stocks?)\b', w
+    )) or bool(re.search(
+        r'invest(?:s|ing)?\s+primarily\s+in[^.]{0,50}(?:shares|common\s+stocks?)\b', w
     # FIX-RV-EN-PRIMARILY-EQUITIES-1 (2026-08-13): "primarily/mainly/
     # principally in [geographic/style modifier] equities" — English equity
     # mandate where a geographic or style qualifier (or even a parenthetical

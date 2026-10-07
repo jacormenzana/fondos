@@ -148,6 +148,21 @@ def test_load_fred_series_parses_a_fetched_series_and_tags_inflation(monkeypatch
     ]
 
 
+def test_load_fred_series_never_prints_any_part_of_the_api_key(monkeypatch, capsys):
+    """FND-0238: the run log used to carry the first 6 characters of the key."""
+    monkeypatch.setattr(md, "_FRED_SERIES", {
+        "CPIAUCSL": {"indicator": "ipc_index", "geography": "US", "unit": "index", "write_inflation": True},
+    })
+    key = "abcd1234efgh5678abcd1234efgh5678"
+    with patch.object(md, "_fred_fetch", return_value=None):
+        md.load_fred_series(desde="2000-01", api_key=key)
+        monkeypatch.setenv("FRED_API_KEY", key)
+        md.load_fred_series(desde="2000-01")                       # the key read from the environment is not echoed either
+    out = capsys.readouterr().out
+    assert "[FRED] Descargando series (API key: configurada)" in out
+    assert not any(key[:n] in out for n in range(2, len(key) + 1)), out
+
+
 def test_load_fred_series_skips_a_series_that_returns_none(monkeypatch):
     monkeypatch.setattr(md, "_FRED_SERIES", {
         "CPIAUCSL": {"indicator": "ipc_index", "geography": "US", "unit": "index",
