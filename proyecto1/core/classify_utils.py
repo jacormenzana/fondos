@@ -432,7 +432,7 @@ NAME_SIGNALS_MONETARIO: list = [
     # Otros
     "institut liq",
     "euro liq reserv", "liq reserv",
-    "inst esq euro money", "geldmarkt",
+    "inst esq euro money", "geldmarkt", "geldmkt",
     # BNP InstiCash / Pictet Sovereign MM / Amundi Cash
     "insticash", "instica eur",
     "pictet sov", "sov st mney", "sover.sho",
@@ -1264,6 +1264,11 @@ def detect_nature_from_name(name_l: str) -> Optional[str]:
 _PREFILTER_MON_INCLUDE = [
     "money market", "monetary",
     "money mkt", "money mket",
+    # FIX-MON-GELDMKT-1 (2026-10-07): German "Geldmarkt" (money market), full and as abbreviated in the catalogue names ("DWS VORSORG
+    # GELDMKT LC EUR ACC"). Prefilter-only: the KIID of that fund is the same template as DWS FLOAT RATE NOTE ("invests in government and
+    # corporate bonds ... average duration max 12 months"), so the NAME is the only signal that separates a money-market fund from a
+    # short-duration bond fund there.
+    "geldmarkt", "geldmkt",
     "euro m mkt", "eu m mkt", "standard mm vnav", "lqudty lvnav",
     "inscash", "gbp liq lvnav", "gbp liq cnav", "usd treasur cnav",
     "usd liq cnav", "fidelity euro cash", "fidelity fund us cash",
@@ -2465,6 +2470,14 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
         "high yield bonds", "investment grade",
         "grado de inversión", "calificación crediticia",
     ])
+    # FIX-RF-EN-INVESTS-IN-BONDS-1 (FND-0244 / DWS residual, 2026-10-07): the English declaration "the fund invests in government and
+    # corporate bonds ..." (DWS FLOAT RATE NOTE USD class, "average duration ... a maximum of 12 months") matched NONE of the presence
+    # phrases above (Spanish or generic-noun forms), so its text returned None while the EUR sibling resolved to Renta Fija Corto Plazo
+    # through another wording. Presence only (has_bonds): with no equity signal it reaches _RF_pending -> resolve_rf_subtype, which already
+    # reads the duration; with an equity signal it reaches the existing has_equity+has_bonds arbitration. Up to six plain words between
+    # "in" and "bonds" (no sentence boundary), present tense only ("may invest in" is not a mandate).
+    has_bonds = has_bonds or bool(re.search(
+        r'\binvests?\s+(?:primarily\s+|mainly\s+|principally\s+)?in\s+(?:[a-z-]+\s+){0,6}bonds\b', w))
 
     # RF dominante (declaración explícita de objetivo)
     # FIX-P1-NTC (2026-07-04): "renta fija", "fixed income" y "grado de
