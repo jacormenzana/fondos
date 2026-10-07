@@ -194,13 +194,17 @@ def test_coverage_cliff_skips_nan_pct_change_without_error():
 def test_deflation_meaningful_true_for_continuous_return_metrics():
     # Level-type statistics: a uniform deflator shifts them, so real==nominal IS a signal.
     # vol_ann was asserted here by FND-0121 and removed by FND-0174 (see the dispersion test
-    # below). sharpe/sortino/max_dd are pinned as still-meaningful so the exclusions added for
-    # FND-0174 cannot silently widen into "exclude everything".
+    # below). return_ann / sharpe / ret_vol_simple are pinned as still-meaningful so the exclusions
+    # added for FND-0174 / FND-0234 cannot silently widen into "exclude everything".
     assert runner._deflation_meaningful("return_ann")
-    assert runner._deflation_meaningful("worst_month")
     assert runner._deflation_meaningful("sharpe")
-    assert runner._deflation_meaningful("sortino")
-    assert runner._deflation_meaningful("max_dd")
+    assert runner._deflation_meaningful("ret_vol_simple")
+
+
+def test_deflation_meaningful_false_for_point_and_saturating_metrics():
+    """FND-0234 (2026-10-07): the real-nominal gap of these is not set by the window's CPI -- see _deflation_meaningful."""
+    for metric in ("worst_month", "max_dd", "sortino"):
+        assert not runner._deflation_meaningful(metric), metric
 
 
 # FND-0174 (2026-10-01): two more false-positive classes, found because the 40-ISIN sample

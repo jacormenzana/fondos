@@ -811,6 +811,9 @@ _P2_METRICS_COLS = (
 )
 
 
+_POINT_OR_SATURATING_METRICS = frozenset({"worst_month", "max_dd", "sortino"})
+
+
 def _deflation_meaningful(metric: str) -> bool:
     """REAL_EQUALS_NOMINAL (A3, FND-0121, 2026-09-28) only means anything for a metric whose raw
     value scales with a uniform per-run deflator (one ES-CPI scalar applied to every fund).
@@ -838,8 +841,22 @@ def _deflation_meaningful(metric: str) -> bool:
         on 12/12 flagged rows (e.g. real 0.135806 vs nominal 0.135337) -- deflation was applied.
     Deflation correctness stays covered by DEFLATION_ORDER and WINDOW_FISHER_IDENTITY (level-type
     return_ann), neither of which is touched here.
+
+    FND-0234 (2026-10-07) added the last class: metrics whose real-vs-nominal gap is NOT set by the
+    window's CPI (the rule's eligibility), so "real must visibly differ" is undecidable from stored
+    values. Measured on the live universe (22,440 / 22,315 nominal-real pairs, window CPI > 0.1%):
+      * worst_month, max_dd -- POINT / PATH metrics: the gap is ~|value| x the CPI of the one month
+        (or the one peak-to-trough episode) that defines them, typically 0.1-0.3% x 10% = 2e-4, below
+        the 1e-3 tolerance whatever the window did (1,212 / 236 hits).
+      * sortino -- saturates for windows far below the MAR (crisis_2008 / crisis_2022, return -5..-50%):
+        sortino ~ -1.2..-2 is nearly insensitive to a CPI shift (31 hits, all with deeply negative return).
+    The exact-equality hits among worst_month (506 at <1e-9) are a real but different defect -- the
+    month-end CPI alignment of deflate_nav, tracked on its own AP -- and are not decidable here (a
+    zero CPI month, 5 of 320, is legitimate), so the production-side test owns it.
     """
     if metric.endswith("_zscore_cat") or "_pctile_" in metric:
+        return False
+    if metric in _POINT_OR_SATURATING_METRICS:
         return False
     if metric.startswith("vol_") or "volatility" in metric:
         return False

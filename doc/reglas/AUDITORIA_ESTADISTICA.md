@@ -176,10 +176,21 @@ ventana de cada fila** (`timeseries.scalar_window_cpi`, que localiza la ventana 
 convención que `deflate_nav` y `build_window_deflation_frame`). Verificado con datos vivos: la ventana
 así calculada reproduce el par real/nominal almacenado (identidad de Fisher) en 22.437 de 22.440
 filas, y las 21 violaciones desaparecen; una inversión real sobre una ventana inflacionaria sigue
-dando ALARM (test). `REAL_EQUALS_NOMINAL` usa la misma elegibilidad por fila. Pendiente conocido:
-para métricas puntuales (`worst_month`, `max_dd`) la diferencia real/nominal depende del IPC del mes
-concreto, no del de la ventana, así que `REAL_EQUALS_NOMINAL_worst_month` (~1.200 filas) sigue siendo
-una regla mal planteada para esas métricas.
+dando ALARM (test). `REAL_EQUALS_NOMINAL` usa la misma elegibilidad por fila.
+
+**`REAL_EQUALS_NOMINAL` ya no se evalúa para `worst_month`, `max_dd` ni `sortino`** (FND-0234,
+2026-10-07; `_POINT_OR_SATURATING_METRICS` en el runner). Medido en vivo (pares nominal/real con IPC de
+ventana > 0,1 %): 1.212 / 236 / 31 coincidencias dentro de la tolerancia (1e-3), todas con deflactación
+correcta. Para métricas **puntuales o de camino** (`worst_month`, `max_dd`) la diferencia real/nominal es
+≈ |valor| × IPC del único mes (o episodio pico-valle) que las define: 0,1 × 0,2 % = 2e-4 < 1e-3, haga lo que
+haga la ventana. `sortino` **satura** en ventanas muy por debajo del MAR (`crisis_2008`/`crisis_2022`,
+retornos −5…−50 %): vale ≈ −1,2…−2 y apenas reacciona a un desplazamiento de IPC. El valor almacenado no
+permite decidir, así que la regla no tiene poder y se retira para esas tres (como `vol_ann`, FND-0174);
+sigue activa donde la brecha la fija el IPC de la ventana (`return_ann`, `sharpe`, `ret_vol_simple`), y la
+corrección de la deflactación sigue cubierta por `DEFLATION_ORDER` y la identidad de Fisher.
+Efecto colateral del análisis (defecto real, otro AP): 506 pares de `worst_month` son idénticos a 1e-9
+porque `deflate_nav` alinea con `merge_asof(backward)` contra un IPC fechado a fin de mes natural, y un
+NAV de fin de mes hábil (29,1 % de las fechas) toma el IPC del mes anterior.
 
 ### 2.5 Defectos verificados en el motor de alertas operacional (`fund_metric_alerts`) — CORREGIDOS 2026-09-13
 
