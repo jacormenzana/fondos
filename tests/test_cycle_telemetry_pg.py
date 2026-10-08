@@ -51,7 +51,7 @@ def test_the_ddl_block_is_what_the_migration_script_applies_and_it_is_idempotent
     mig.migrate(pg_conn)                              # second run: nothing breaks, seeds untouched
     n = pg_conn.execute("SELECT count(*) FROM control.cycle_step_def").fetchone()[0]
     mig.migrate(pg_conn)
-    assert pg_conn.execute("SELECT count(*) FROM control.cycle_step_def").fetchone()[0] == n == 14
+    assert pg_conn.execute("SELECT count(*) FROM control.cycle_step_def").fetchone()[0] == n == 15      # 14 + BETA_GATE (stage 3)
 
 
 def test_seeds_carry_the_data_derived_ceilings_and_survive_tuning(pg_conn):

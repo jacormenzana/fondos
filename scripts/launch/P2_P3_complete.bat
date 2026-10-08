@@ -92,6 +92,15 @@ call "%COMMON%" :get_time STAMP yyyyMMdd_HHmmss
 if not exist "%AUDIT_DIR%" mkdir "%AUDIT_DIR%"
 call "%COMMON%" :standby_disable owner
 
+:: Telemetria de ciclo (opt-in: FONDOS_TELEMETRY=1; mejor esfuerzo, nunca cambia ningun RC). Dueno del ciclo si nadie lo es ya.
+set "TELEM_OWNER="
+set "TELEM_STEP="
+if "%FONDOS_TELEMETRY%"=="1" if not defined FONDOS_CYCLE_ID (
+    set "FONDOS_CYCLE_ID=%STAMP%"
+    set "TELEM_OWNER=1"
+    call "%COMMON%" :telemetry begin --launcher P2_P3_complete
+)
+
 :: -- CALC_VERSION vigente (nunca escrita a mano) ----------------------------------
 call "%COMMON%" :state_query calc-version CALC_VER
 if not defined CALC_VER (
@@ -108,10 +117,14 @@ if defined BASELINE (
     echo Usando el baseline indicado: !BASELINE!
 ) else (
     set "BASELINE=%AUDIT_DIR%\macro_betas_p2p3_!STAMP!.csv"
+    call "%COMMON%" :telemetry step-begin BETA_SNAPSHOT
     "%PYTHON%" -X utf8 scripts\audit\beta_shift_audit.py --snapshot "!BASELINE!"
-    if errorlevel 1 (
+    set "BS_RC=!ERRORLEVEL!"
+    call "%COMMON%" :telemetry step-end BETA_SNAPSHOT !BS_RC!
+    if !BS_RC! NEQ 0 (
         echo [ERROR] no se pudo tomar el baseline de betas.
-        set "RC=!ERRORLEVEL!"
+        set "RC=!BS_RC!"
+        set "TELEM_STEP=BETA_SNAPSHOT"
         goto :finish
     )
 )
@@ -121,9 +134,14 @@ echo.
 echo ===================================================
 echo 2. Ejecutando recalculo P2 (CALC_VERSION !CALC_VER!)
 echo ===================================================
+call "%COMMON%" :telemetry step-begin P2_CALC
 call "%LAUNCH%\P2_calculateIndicators.bat"
-if errorlevel 1 (
-    set "RC=!ERRORLEVEL!"
+set "P2_RC=!ERRORLEVEL!"
+call "%COMMON%" :telemetry step-end P2_CALC !P2_RC!
+call "%COMMON%" :telemetry ingest-p2
+if !P2_RC! NEQ 0 (
+    set "RC=!P2_RC!"
+    set "TELEM_STEP=P2_CALC"
     goto :finish
 )
 
@@ -132,10 +150,14 @@ echo.
 echo ===================================================
 echo 3. Beta-shift audit (CALC_VERSION !CALC_VER!)
 echo ===================================================
+call "%COMMON%" :telemetry step-begin BETA_COMPARE
 "%PYTHON%" -X utf8 scripts\audit\beta_shift_audit.py --compare "!BASELINE!" --version !CALC_VER! --out "%AUDIT_DIR%\beta_shift_outliers_!STAMP!.csv"
-if errorlevel 1 (
-    echo [ERROR] Beta-shift audit fallo con codigo !ERRORLEVEL!.
-    set "RC=!ERRORLEVEL!"
+set "BC_RC=!ERRORLEVEL!"
+call "%COMMON%" :telemetry step-end BETA_COMPARE !BC_RC!
+if !BC_RC! NEQ 0 (
+    echo [ERROR] Beta-shift audit fallo con codigo !BC_RC!.
+    set "RC=!BC_RC!"
+    set "TELEM_STEP=BETA_COMPARE"
     goto :finish
 )
 echo [OK] Beta-shift audit paso correctamente.
@@ -145,14 +167,22 @@ echo.
 echo ===================================================
 echo 4. Ejecutando P3 (Build Portfolio y Generate Report)
 echo ===================================================
+call "%COMMON%" :telemetry step-begin P3_BUILD
 call "%LAUNCH%\P3_buildPortfolio.bat"
-if errorlevel 1 (
-    set "RC=!ERRORLEVEL!"
+set "P3B_RC=!ERRORLEVEL!"
+call "%COMMON%" :telemetry step-end P3_BUILD !P3B_RC!
+if !P3B_RC! NEQ 0 (
+    set "RC=!P3B_RC!"
+    set "TELEM_STEP=P3_BUILD"
     goto :finish
 )
+call "%COMMON%" :telemetry step-begin P3_REPORT
 call "%LAUNCH%\P3_generateReport.bat"
-if errorlevel 1 (
-    set "RC=!ERRORLEVEL!"
+set "P3R_RC=!ERRORLEVEL!"
+call "%COMMON%" :telemetry step-end P3_REPORT !P3R_RC!
+if !P3R_RC! NEQ 0 (
+    set "RC=!P3R_RC!"
+    set "TELEM_STEP=P3_REPORT"
     goto :finish
 )
 
@@ -201,6 +231,16 @@ if /i "!LOADER_CHOICE!"=="S" (
 
 :finish
 call "%COMMON%" :standby_restore
+if defined TELEM_OWNER (
+    set "TELEM_STATUS=OK"
+    set "TFS="
+    if "!RC!" NEQ "0" (
+        set "TELEM_STATUS=FAILED"
+        if defined TELEM_STEP set "TFS=--failed-step !TELEM_STEP!"
+    )
+    call "%COMMON%" :telemetry evaluate-flags --status !TELEM_STATUS!
+    call "%COMMON%" :telemetry end --status !TELEM_STATUS! --rc !RC! !TFS!
+)
 echo.
 echo ===================================================
 if "!RC!"=="0" (

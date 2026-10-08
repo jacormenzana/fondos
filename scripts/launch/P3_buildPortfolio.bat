@@ -46,10 +46,27 @@ echo  Err     : %ERR%
 echo ============================================================
 echo.
 
+:: Telemetria de ciclo (opt-in: FONDOS_TELEMETRY=1; mejor esfuerzo, nunca cambia el RC). Solo si nadie mas es dueno del ciclo: bajo
+:: P1_P2_P3.bat / P2_P3_complete.bat es el padre quien registra el paso P3_BUILD.
+set "TELEM_OWNER="
+if "%FONDOS_TELEMETRY%"=="1" if not defined FONDOS_CYCLE_ID (
+    set "FONDOS_CYCLE_ID=%STAMP%"
+    set "TELEM_OWNER=1"
+    call "%COMMON%" :telemetry begin --launcher P3_buildPortfolio
+    call "%COMMON%" :telemetry step-begin P3_BUILD
+)
+
 pushd "%ROOT%"
 "%PYTHON%" -u -X utf8 scripts\launch\p3_build_portfolio.py %* >> "%LOG%" 2>> "%ERR%"
 set RC=!ERRORLEVEL!
 popd
+
+if defined TELEM_OWNER (
+    call "%COMMON%" :telemetry step-end P3_BUILD !RC!
+    if "!RC!"=="0" (set "TELEM_STATUS=OK") else (set "TELEM_STATUS=FAILED")
+    call "%COMMON%" :telemetry evaluate-flags --status !TELEM_STATUS!
+    if "!RC!"=="0" (call "%COMMON%" :telemetry end --status OK --rc !RC!) else (call "%COMMON%" :telemetry end --status FAILED --rc !RC! --failed-step P3_BUILD)
+)
 
 call "%COMMON%" :get_time STAMP2 yyyyMMdd_HHmmss
 

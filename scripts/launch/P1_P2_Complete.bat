@@ -324,6 +324,9 @@ call :run_step 4 P2_calculateIndicators "log_P2_calcIndicators_*.log" "%ROOT%\pr
 :: ============================================================
 :fin
 
+:: Contadores de P2 (RUN_SUMMARY / BACKFILL_* de la ventana de P2_CALC) a la telemetria: solo si el paso 4 llego a ejecutarse.
+if not "!RC4!"=="n/a" if not "!RC4!"=="SALTADO" call "%COMMON%" :telemetry ingest-p2
+
 if !FINAL_RC! EQU 0 (
     if defined BASELINE_ID call :audit_final
     call :post_diagnostics
@@ -350,6 +353,7 @@ if !FINAL_RC! EQU 0 (
 )
 
 if defined TELEM_OWNER (
+    call "%COMMON%" :telemetry evaluate-flags --status !RESULT!
     call :telem_code step!FAILED_STEP!
     set "TFS="
     if defined TCODE set "TFS=--failed-step !TCODE!"
@@ -552,10 +556,19 @@ set "BASELINE_ID=pre_!STAMP!"
 echo. >> "%LOG%"
 echo --- PASO 0: auditoria estadistica baseline (run_id=!BASELINE_ID!) ---- >> "%LOG%"
 echo [!STAMP!] PASO 0: auditoria estadistica baseline (!BASELINE_ID!)
+call "%COMMON%" :telemetry step-begin AUDIT_BASE
 call "%LAUNCH%\AUDIT_P2.bat" --mode report --persist --run-id !BASELINE_ID!_p2 --log "%AUDIT_LOG%" > nul
-if errorlevel 1 echo [WARN] AUDIT_P2 baseline fallo: no se cuantificara la deriva >> "%LOG%"
+set "AB_RC2=!ERRORLEVEL!"
+if !AB_RC2! NEQ 0 echo [WARN] AUDIT_P2 baseline fallo: no se cuantificara la deriva >> "%LOG%"
 call "%LAUNCH%\AUDIT_P1.bat" --no-benchmark --mode report --persist --run-id !BASELINE_ID!_costs --log "%AUDIT_LOG%" > nul
-if errorlevel 1 echo [WARN] AUDIT_P1 baseline fallo: no se cuantificara la deriva >> "%LOG%"
+set "AB_RC1=!ERRORLEVEL!"
+if !AB_RC1! NEQ 0 echo [WARN] AUDIT_P1 baseline fallo: no se cuantificara la deriva >> "%LOG%"
+set "AB_RC=0"
+if !AB_RC2! NEQ 0 set "AB_RC=!AB_RC2!"
+if !AB_RC1! NEQ 0 set "AB_RC=!AB_RC1!"
+call "%COMMON%" :telemetry step-end AUDIT_BASE !AB_RC!
+call "%COMMON%" :telemetry audit-run p2_metrics pre !BASELINE_ID!_p2
+call "%COMMON%" :telemetry audit-run cost_attributes pre !BASELINE_ID!_costs
 exit /b 0
 
 :: ------------------------------------------------------------
@@ -630,10 +643,19 @@ call "%COMMON%" :get_time AUDIT_STAMP yyyyMMdd_HHmmss
 echo. >> "%LOG%"
 echo --- Auditoria estadistica final (compare-to !BASELINE_ID!) ---- >> "%LOG%"
 echo [AUDITORIA] deriva vs baseline !BASELINE_ID!
+call "%COMMON%" :telemetry step-begin AUDIT_FINAL
 call "%LAUNCH%\AUDIT_P2.bat" --mode report --persist --run-id post_!AUDIT_STAMP!_p2 --compare-to !BASELINE_ID!_p2 --log "%AUDIT_LOG%" > nul
-if errorlevel 1 echo [WARN] AUDIT_P2 final fallo >> "%LOG%"
+set "AF_RC2=!ERRORLEVEL!"
+if !AF_RC2! NEQ 0 echo [WARN] AUDIT_P2 final fallo >> "%LOG%"
 call "%LAUNCH%\AUDIT_P1.bat" --mode report --persist --run-id post_!AUDIT_STAMP!_costs --compare-to !BASELINE_ID!_costs --log "%AUDIT_LOG%" > nul
-if errorlevel 1 echo [WARN] AUDIT_P1 final fallo >> "%LOG%"
+set "AF_RC1=!ERRORLEVEL!"
+if !AF_RC1! NEQ 0 echo [WARN] AUDIT_P1 final fallo >> "%LOG%"
+set "AF_RC=0"
+if !AF_RC2! NEQ 0 set "AF_RC=!AF_RC2!"
+if !AF_RC1! NEQ 0 set "AF_RC=!AF_RC1!"
+call "%COMMON%" :telemetry step-end AUDIT_FINAL !AF_RC!
+call "%COMMON%" :telemetry audit-run p2_metrics post post_!AUDIT_STAMP!_p2 --baseline !BASELINE_ID!_p2
+call "%COMMON%" :telemetry audit-run cost_attributes post post_!AUDIT_STAMP!_costs --baseline !BASELINE_ID!_costs
 echo   Informe de deriva: %AUDIT_LOG% >> "%LOG%"
 echo   Informe de deriva: %AUDIT_LOG%
 exit /b 0

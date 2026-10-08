@@ -368,8 +368,9 @@ INSERT INTO control.cycle_step_def (step_code, step_kind, seq, description, warn
     ('BETA_COMPARE',  'DIAGNOSTIC', 9, 'macro-beta comparison against the snapshot',                         1.5,  3.0,   3600),
     ('P3_FRESHNESS',  'GATE',      10, 'P3 freshness verdict (same gate as P3)',                             NULL, NULL,   600),
     ('CYCLE_REPORT',  'DIAGNOSTIC',11, 'cycle report ([ATENCION] lines)',                                    1.5,  3.0,   1800),
-    ('P3_BUILD',      'PIPELINE',  12, 'P3 scoring + portfolio build',                                       1.5,  3.0,   7200),
-    ('P3_REPORT',     'PIPELINE',  13, 'P3 monthly report',                                                  1.5,  3.0,   3600)
+    ('BETA_GATE',     'GATE',      12, 'beta gate of P1_P2_P3: blocking macro-beta comparison before P3',     NULL, NULL,   3600),
+    ('P3_BUILD',      'PIPELINE',  13, 'P3 scoring + portfolio build',                                       1.5,  3.0,   7200),
+    ('P3_REPORT',     'PIPELINE',  14, 'P3 monthly report',                                                  1.5,  3.0,   3600)
 ON CONFLICT (step_code) DO NOTHING;
 
 INSERT INTO control.cycle_metric_def (metric_code, description, unit, direction, warn_ratio, alarm_ratio) VALUES

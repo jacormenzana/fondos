@@ -40,6 +40,15 @@ echo  Log    : %LOG%
 echo ============================================================
 echo.
 
+:: Telemetria de ciclo (opt-in: FONDOS_TELEMETRY=1; mejor esfuerzo, nunca cambia el RC). Solo si nadie mas es dueno del ciclo.
+set "TELEM_OWNER="
+if "%FONDOS_TELEMETRY%"=="1" if not defined FONDOS_CYCLE_ID (
+    set "FONDOS_CYCLE_ID=%STAMP%"
+    set "TELEM_OWNER=1"
+    call "%COMMON%" :telemetry begin --launcher P3_generateReport
+    call "%COMMON%" :telemetry step-begin P3_REPORT
+)
+
 pushd "%ROOT%"
 
 :: Un one-liner: cmd no admite cadenas multilinea. Si generate_report falla, la excepcion sale por
@@ -47,6 +56,11 @@ pushd "%ROOT%"
 "%PYTHON%" -u -X utf8 -c "from shared.db import get_connection; from proyecto3.src.monthly_report import generate_report; c = get_connection(); print(generate_report(c, output_dir=r'%OUT_DIR%')); c.close()" >> "%LOG%" 2>> "%ERR%"
 set RC=!ERRORLEVEL!
 popd
+
+if defined TELEM_OWNER (
+    call "%COMMON%" :telemetry step-end P3_REPORT !RC!
+    if "!RC!"=="0" (call "%COMMON%" :telemetry end --status OK --rc !RC!) else (call "%COMMON%" :telemetry end --status FAILED --rc !RC! --failed-step P3_REPORT)
+)
 
 :: Timestamp de cierre
 call "%COMMON%" :get_time STAMP2 yyyyMMdd_HHmmss

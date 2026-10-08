@@ -566,3 +566,88 @@ def test_a_broken_telemetry_tool_cannot_fail_the_cycle(tree, tmp_path):
     r = tree.run("P1_P2_Complete", *CYCLE, **env)
     assert r.returncode == 0, r.stdout + r.stderr
     assert tree.state()["LAST_RESULT"] == "OK"
+
+
+# ─── cycle telemetry, stage 3: the whole chain is instrumented (still opt-in, still RC-neutral) ───
+
+def _step_order(ev, op="step_end"):
+    return [e["step_code"] for e in ev if e["op"] == op]
+
+
+def test_p1_p2_p3_owns_one_cycle_and_records_audits_beta_gate_and_p3_in_order(tree, tmp_path):
+    fb, env = _with_telemetry(tree, tmp_path)
+    r = tree.run("P1_P2_P3", *P123, STUB_VERDICT_P3_FRESHNESS_CHECK="P3 aceptaria estos datos", **env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    ev = _events(fb)
+    assert [e["op"] for e in ev].count("cycle_begin") == 1 and [e["op"] for e in ev].count("cycle_end") == 1      # ONE cycle, owned by P1_P2_P3
+    assert ev[0]["op"] == "cycle_begin" and ev[0]["launcher"] == "P1_P2_P3" and ev[-1]["status"] == "OK"
+    assert len({e["cycle_id"] for e in ev}) == 1
+    order = _step_order(ev)
+    for a, b in (("AUDIT_BASE", "P1_BENCH"), ("P2_CALC", "AUDIT_FINAL"), ("AUDIT_FINAL", "BETA_GATE"), ("BETA_GATE", "P3_BUILD"), ("P3_BUILD", "P3_REPORT")):
+        assert order.index(a) < order.index(b), (a, b, order)
+    assert all(e["rc"] == 0 for e in ev if e["op"] == "step_end")
+    assert _step_order(ev, "step_begin").count("P3_BUILD") == 1                                       # the nested P3 launcher did not add its own
+
+
+def test_a_failing_p3_or_beta_gate_is_the_failed_step_and_the_rc_is_unchanged(tree, tmp_path):
+    for stub, step in (("STUB_RC_P3_BUILD_PORTFOLIO", "P3_BUILD"), ("STUB_RC_BETA_SHIFT_AUDIT", "BETA_GATE")):
+        plain = tree.run("P1_P2_P3", *P123, **{stub: "5"})
+        assert plain.returncode == 5, plain.stdout + plain.stderr
+        fb = tmp_path / f"fb_{step}.jsonl"
+        _, env = _with_telemetry(tree, tmp_path)
+        env["FONDOS_CYCLE_FALLBACK"] = str(fb)
+        with_t = tree.run("P1_P2_P3", *P123, **{stub: "5"}, **env)
+        assert with_t.returncode == plain.returncode
+        end = _events(fb)[-1]
+        assert end["op"] == "cycle_end" and end["status"] == "FAILED" and end["failed_step"] == step and end["rc"] == 5
+
+
+def test_p2_p3_complete_owns_its_cycle_with_every_step(tree, tmp_path):
+    fb, env = _with_telemetry(tree, tmp_path)
+    r = tree.run("P2_P3_complete", "--no-pause", **env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    ev = _events(fb)
+    assert ev[0]["op"] == "cycle_begin" and ev[0]["launcher"] == "P2_P3_complete" and ev[-1]["status"] == "OK"
+    assert _step_order(ev) == ["BETA_SNAPSHOT", "P2_CALC", "BETA_COMPARE", "P3_BUILD", "P3_REPORT"]
+
+
+def test_p2_p3_complete_failure_keeps_its_rc_and_names_the_step(tree, tmp_path):
+    plain = tree.run("P2_P3_complete", "--no-pause", STUB_RC_RUN_PIPELINE="4")
+    fb, env = _with_telemetry(tree, tmp_path)
+    with_t = tree.run("P2_P3_complete", "--no-pause", STUB_RC_RUN_PIPELINE="4", **env)
+    assert with_t.returncode == plain.returncode != 0
+    end = _events(fb)[-1]
+    assert end["status"] == "FAILED" and end["failed_step"] == "P2_CALC"
+
+
+def test_a_standalone_p3_launcher_opens_and_closes_its_own_cycle(tree, tmp_path):
+    fb, env = _with_telemetry(tree, tmp_path)
+    r = tree.run("P3_buildPortfolio", **env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    ev = _events(fb)
+    assert [e["op"] for e in ev] == ["cycle_begin", "step_begin", "step_end", "cycle_end"]
+    assert ev[0]["launcher"] == "P3_buildPortfolio" and ev[2]["step_code"] == "P3_BUILD" and ev[3]["status"] == "OK"
+    fb2 = tmp_path / "fb2.jsonl"
+    env["FONDOS_CYCLE_FALLBACK"] = str(fb2)
+    r = tree.run("P3_generateReport", **env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    ev = _events(fb2)
+    assert ev[0]["launcher"] == "P3_generateReport" and _step_order(ev) == ["P3_REPORT"] and ev[-1]["status"] == "OK"
+
+
+def test_a_standalone_p3_failure_keeps_the_stale_inputs_rc(tree, tmp_path):
+    plain = tree.run("P3_buildPortfolio", STUB_RC_P3_BUILD_PORTFOLIO="2")
+    assert plain.returncode == 2
+    fb, env = _with_telemetry(tree, tmp_path)
+    with_t = tree.run("P3_buildPortfolio", STUB_RC_P3_BUILD_PORTFOLIO="2", **env)
+    assert with_t.returncode == 2
+    end = _events(fb)[-1]
+    assert end["status"] == "FAILED" and end["failed_step"] == "P3_BUILD" and end["rc"] == 2
+
+
+def test_telemetry_off_leaves_every_hooked_launcher_silent(tree, tmp_path):
+    fb, _ = _with_telemetry(tree, tmp_path)
+    for name, args in (("P1_P2_P3", P123), ("P2_P3_complete", ["--no-pause"]), ("P3_buildPortfolio", []), ("P3_generateReport", [])):
+        r = tree.run(name, *args, FONDOS_CYCLE_FALLBACK=str(fb))
+        assert r.returncode == 0, (name, r.stdout + r.stderr)
+    assert not fb.exists()

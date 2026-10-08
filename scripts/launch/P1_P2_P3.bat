@@ -200,6 +200,16 @@ echo.
 
 call "%COMMON%" :standby_disable owner
 
+:: Telemetria de ciclo (opt-in: FONDOS_TELEMETRY=1; mejor esfuerzo, nunca cambia ningun RC). Este lanzador es el DUENO del ciclo: exporta
+:: FONDOS_CYCLE_ID y P1_P2_Complete.bat, anidado, solo anade sus pasos; aqui se anaden la puerta de betas y P3.
+set "TELEM_OWNER="
+set "TELEM_STEP="
+if "%FONDOS_TELEMETRY%"=="1" if not defined FONDOS_CYCLE_ID (
+    set "FONDOS_CYCLE_ID=%STAMP%"
+    set "TELEM_OWNER=1"
+    call "%COMMON%" :telemetry begin --launcher P1_P2_P3
+)
+
 :: ============================================================
 :: FASE A: ciclo P1+P2 (o solo comprobar que el ultimo termino OK con --only-p3)
 :: ============================================================
@@ -254,9 +264,13 @@ if not exist "!BETA_CSV!" (
     goto :finish
 )
 echo --- FASE B: betas contra !BETA_CSV! ^(CALC_VERSION !CALC_VER!^) >> "%LOG%"
+call "%COMMON%" :telemetry step-begin BETA_GATE
 "%PYTHON%" -X utf8 scripts\audit\beta_shift_audit.py --compare "!BETA_CSV!" --version !CALC_VER! --out "%DATA_AUDIT_DIR%\beta_shift_outliers_gate_!STAMP!.csv"
-if errorlevel 1 (
-    set "RC=!ERRORLEVEL!"
+set "BG_RC=!ERRORLEVEL!"
+call "%COMMON%" :telemetry step-end BETA_GATE !BG_RC!
+if !BG_RC! NEQ 0 (
+    set "RC=!BG_RC!"
+    set "TELEM_STEP=BETA_GATE"
     echo [ERROR] la puerta de betas fallo ^(RC=!RC!^): no se construye P3.
     echo --- FASE B fin: RC=!RC! >> "%LOG%"
     goto :finish
@@ -276,23 +290,33 @@ if defined OPT_scenario set "P3_ARGS=!OPT_scenario!"
 if defined FLAG_p3_dry_run set "P3_ARGS=!P3_ARGS! --dry-run"
 if defined FLAG_allow_stale set "P3_ARGS=!P3_ARGS! --allow-stale"
 echo --- FASE C: P3_buildPortfolio.bat !P3_ARGS! >> "%LOG%"
+call "%COMMON%" :telemetry step-begin P3_BUILD
 call "%LAUNCH%\P3_buildPortfolio.bat" !P3_ARGS!
 set "RC=!ERRORLEVEL!"
+call "%COMMON%" :telemetry step-end P3_BUILD !RC!
 echo --- FASE C fin build: RC=!RC! >> "%LOG%"
-if !RC! NEQ 0 goto :finish
+if !RC! NEQ 0 (
+    set "TELEM_STEP=P3_BUILD"
+    goto :finish
+)
 
 if defined FLAG_p3_dry_run (
     echo Informe omitido: --p3-dry-run no persiste nada.
     goto :finish
 )
+call "%COMMON%" :telemetry step-begin P3_REPORT
 if defined OPT_report_dir (
     call "%LAUNCH%\P3_generateReport.bat" "!OPT_report_dir!"
 ) else (
     call "%LAUNCH%\P3_generateReport.bat"
 )
 set "RC=!ERRORLEVEL!"
+call "%COMMON%" :telemetry step-end P3_REPORT !RC!
 echo --- FASE C fin informe: RC=!RC! >> "%LOG%"
-if !RC! NEQ 0 goto :finish
+if !RC! NEQ 0 (
+    set "TELEM_STEP=P3_REPORT"
+    goto :finish
+)
 
 :: ============================================================
 :: FASE D: confirmaciones (push y prueba del loader); --no-prompts las omite
@@ -341,6 +365,16 @@ if /i "!LOADER_CHOICE!"=="S" (
 
 :finish
 call "%COMMON%" :standby_restore
+if defined TELEM_OWNER (
+    set "TELEM_STATUS=OK"
+    set "TFS="
+    if "!RC!" NEQ "0" (
+        set "TELEM_STATUS=FAILED"
+        if defined TELEM_STEP set "TFS=--failed-step !TELEM_STEP!"
+    )
+    call "%COMMON%" :telemetry evaluate-flags --status !TELEM_STATUS!
+    call "%COMMON%" :telemetry end --status !TELEM_STATUS! --rc !RC! !TFS!
+)
 call "%COMMON%" :log_close "P1+P2+P3" !RC!
 echo.
 echo ===================================================

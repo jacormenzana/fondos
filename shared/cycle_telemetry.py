@@ -406,8 +406,27 @@ def _write_state(cycle_id: str, state: dict) -> None:
         pass
 
 
+def _database_command(a, cycle_id: str) -> None:
+    """The sub-commands that READ the database (P2 window, cycle facts, audit findings). Failure-isolated like every emit: a missing table
+    (DDL not applied) or an outage leaves nothing behind and changes nothing."""
+    _ensure_repo_on_path()
+    c = _connect()
+    try:
+        if a.cmd == "ingest-p2":
+            from shared.cycle_telemetry_ingest import ingest_p2
+            ingest_p2(c, cycle_id, since=a.since)
+        elif a.cmd == "evaluate-flags":
+            from shared.cycle_telemetry_flags import evaluate_cycle
+            evaluate_cycle(c, cycle_id, a.status)
+        else:
+            from shared.cycle_telemetry_ingest import record_audit
+            record_audit(c, cycle_id, a.domain, a.phase, a.run_id, baseline_run_id=a.baseline)
+    finally:
+        c.close()
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    """`python -m shared.cycle_telemetry <begin|end|step-begin|step-end|metric|flag|pending> ...`
+    """`python -m shared.cycle_telemetry <begin|end|step-begin|step-end|metric|flag|ingest-p2|evaluate-flags|audit-run|pending> ...`
 
     ALWAYS returns 0 (NORMAS_BATCH: a launcher's RC is its own; telemetry must never change it) and prints nothing unless asked (`pending`).
     Without FONDOS_CYCLE_ID every sub-command is a no-op. The step start time travels between step-begin and step-end in a small state
@@ -426,6 +445,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         m = sub.add_parser("metric"); m.add_argument("step"); m.add_argument("code"); m.add_argument("value", type=float); m.add_argument("--scope", default="")
         f = sub.add_parser("flag"); f.add_argument("code"); f.add_argument("severity", choices=["INFO", "WARN", "HIGH"]); f.add_argument("--scope", default="")
         f.add_argument("--detail"); f.add_argument("--ap")
+        ip = sub.add_parser("ingest-p2"); ip.add_argument("--since")           # RUN_SUMMARY / BACKFILL_* rows of the P2_CALC window -> metrics + flags
+        ef = sub.add_parser("evaluate-flags"); ef.add_argument("--status", default="OK")   # the end-of-cycle flag catalogue
+        ar = sub.add_parser("audit-run"); ar.add_argument("domain"); ar.add_argument("phase", choices=["pre", "post"]); ar.add_argument("run_id")
+        ar.add_argument("--baseline")                                          # counts read from control.audit_finding by run_id
         sub.add_parser("pending")
         a = ap.parse_args(list(argv) if argv is not None else None)
     except SystemExit:
@@ -460,6 +483,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             record_metric(a.step, a.code, a.value, scope=a.scope)
         elif a.cmd == "flag":
             raise_flag(a.code, a.severity, scope=a.scope, detail=a.detail, ap_id=a.ap)
+        elif a.cmd in ("ingest-p2", "evaluate-flags", "audit-run"):
+            _database_command(a, cid)
     except Exception:
         pass
     return 0
