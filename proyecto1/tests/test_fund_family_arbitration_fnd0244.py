@@ -97,3 +97,27 @@ def test_allowing_non_adjacent_never_invents_a_nature_nor_touches_restantes():
     assert nature is None and "not one of the family's natures" in why
     r = resolve_family_nature_by_reference([_m("A1", "X", "Restantes"), _m("B1", "X", "Monetario")], allow_non_adjacent=True)
     assert r[0] is None
+
+
+# ---------------------------------------------------------------- regression matrix, pure side (Franklin Alt St and neighbours)
+def test_an_arbitrated_family_is_consistent_on_the_next_pass_nothing_to_correct():
+    eur = _m("A1", "DWS FLOAT RATE NOTE W EUR", "Renta Fija Corto Plazo")
+    other = _m("B1", "DWS FLOAT RATE NOTE I EURHDG", "Alternativo")
+    nature, fix, _ = resolve_family_nature_by_reference([eur, other], allow_non_adjacent=True)
+    assert (nature, fix) == ("Renta Fija Corto Plazo", ["B1"])
+    again = [dict(m, Fund_Nature=nature) for m in (eur, other)]                       # what the builder persisted
+    assert resolve_family_nature_by_reference(again, allow_non_adjacent=True) == (None, [], "consistent")
+
+
+def test_restantes_never_wins_whatever_position_it_has_and_whatever_the_caller_allows():
+    for allow in (False, True):
+        ref_first = [_m("A1", "X EUR", "Restantes"), _m("B1", "X USD", "Renta Fija Corto Plazo", ccy="USD")]
+        ref_last = [_m("A1", "X EUR", "Renta Fija Corto Plazo"), _m("B1", "X USD", "Restantes", ccy="USD")]
+        for members in (ref_first, ref_last):
+            assert resolve_family_nature_by_reference(members, allow_non_adjacent=allow)[0] is None
+
+
+def test_the_allow_flag_is_the_only_difference_between_an_active_and_a_retired_non_adjacent_family():
+    members = [_m("A1", "DWS FLOAT RATE NOTE W EUR", "Renta Fija Corto Plazo"), _m("B1", "DWS FLOAT RATE NOTE I EURHDG", "Alternativo")]
+    assert resolve_family_nature_by_reference(members, allow_non_adjacent=False)[0] is None
+    assert resolve_family_nature_by_reference(members, allow_non_adjacent=True)[0] == "Renta Fija Corto Plazo"

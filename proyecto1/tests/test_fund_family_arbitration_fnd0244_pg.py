@@ -37,10 +37,10 @@ def _tables(conn):
     conn.execute("CREATE TABLE fund_metrics (isin TEXT, metric TEXT, horizon TEXT, real_flag INTEGER, value DOUBLE PRECISION)")
 
 
-def _fund(conn, isin, name, nature, ccy, text=BOND_ST, band=2, nav=60, active=1):
+def _fund(conn, isin, name, nature, ccy, text=BOND_ST, band=2, nav=60, active=1, fam="FAM_000001"):
     conn.execute("INSERT INTO fund_master (isin, fund_name, management_company, fund_nature, fund_family_id, data_quality_flag, "
-                 "srri_quality_flag, fund_currency, in_current_universe) VALUES (%s,%s,'MC',%s,'FAM_000001','OK','HIGH',%s,%s)",
-                 (isin, name, nature, ccy, active))
+                 "srri_quality_flag, fund_currency, in_current_universe) VALUES (%s,%s,'MC',%s,%s,'OK','HIGH',%s,%s)",
+                 (isin, name, nature, fam, ccy, active))
     conn.execute("INSERT INTO fund_kiid_metadata VALUES (%s, 1, %s)", (isin, text))
     conn.execute("INSERT INTO fund_metrics VALUES (%s, 'srri_nav', 'since_inception', 0, %s)", (isin, float(band)))
     for i in range(nav):
@@ -122,3 +122,91 @@ def test_the_consistency_warning_ignores_families_that_are_inconsistent_only_thr
     conn.commit()
     assert len(_ffb._validate_family_consistency(conn)) == 1
     assert _ffb._validate_family_consistency(conn, active_only=True) == []
+
+
+# ---------------------------------------------------------------- regression matrix (Franklin Alt St and neighbours), ONE call over a mixed catalogue
+def _natures(conn):
+    return dict(conn.execute("SELECT isin, fund_nature FROM fund_master").fetchall())
+
+
+def _corrections(conn):
+    return conn.execute("SELECT count(*) FROM ingestion_log WHERE step = 'FAMILY_NATURE_CORRECTION'").fetchone()[0]
+
+
+def _mixed_catalogue(conn):
+    # F_RETIRED: non-adjacent natures, no active member (Franklin Alt St shape) -> arbitrated by the EUR reference class
+    _fund(conn, "RET_EUR_1", "DWS FLOAT RATE NOTE W EUR", "Renta Fija Corto Plazo", "EUR", active=0, fam="F_RETIRED")
+    _fund(conn, "RET_EUR_2", "DWS FLOAT RATE NOTE I EURHDG", "Alternativo", "EUR", active=0, fam="F_RETIRED")
+    # F_ADJACENT: adjacent natures, ACTIVE -> rule 4 as before (the inactive rule must not be needed nor interfere)
+    _fund(conn, "ADJ_EUR_1", "DWS FLOAT RATE NOTE LD EUR INC", "Renta Fija Corto Plazo", "EUR", fam="F_ADJACENT")
+    _fund(conn, "ADJ_USD_2", "DWS FLOAT RATE NOTE LD USD INC", "Renta Fija Flexible", "USD", nav=200, fam="F_ADJACENT")
+    # F_ONE_ACTIVE: non-adjacent natures, ONE active member -> stays flagged and untouched
+    _fund(conn, "ONE_EUR_1", "GAMMA FLOAT NOTE W EUR", "Renta Fija Corto Plazo", "EUR", active=1, fam="F_ONE_ACTIVE")
+    _fund(conn, "ONE_EUR_2", "GAMMA FLOAT NOTE I EURHDG", "Alternativo", "EUR", active=0, fam="F_ONE_ACTIVE")
+    # F_RESTANTES: retired, 3 classes, Restantes among non-adjacent natures -> rule 4 leaves it alone (Restantes never wins, never decides)
+    _fund(conn, "RST_EUR_1", "DELTA FLOAT NOTE W EUR", "Restantes", "EUR", active=0, fam="F_RESTANTES")
+    _fund(conn, "RST_EUR_2", "DELTA FLOAT NOTE I EURHDG", "Renta Fija Corto Plazo", "EUR", active=0, fam="F_RESTANTES")
+    _fund(conn, "RST_EUR_3", "DELTA FLOAT NOTE R EUR", "Alternativo", "EUR", active=0, fam="F_RESTANTES")
+    # F_RESTANTES_PAIR: a two-class family with Restantes is settled by the older rule 2-bis-A (the specific nature wins, Restantes is overwritten)
+    _fund(conn, "RSP_EUR_1", "EPSILON FLOAT NOTE W EUR", "Restantes", "EUR", active=0, fam="F_RESTANTES_PAIR")
+    _fund(conn, "RSP_EUR_2", "EPSILON FLOAT NOTE I EUR", "Renta Fija Corto Plazo", "EUR", active=0, fam="F_RESTANTES_PAIR")
+    # F_TWO_ACTIVE: non-adjacent natures, every member active -> stays flagged and untouched (the key probably merged two funds)
+    _fund(conn, "TWO_EUR_1", "ACME FUND EUR", "Renta Variable", "EUR", fam="F_TWO_ACTIVE")
+    _fund(conn, "TWO_USD_2", "ACME FUND USD", "Monetario", "USD", fam="F_TWO_ACTIVE")
+    conn.commit()
+
+
+def test_the_matrix_one_call_over_a_mixed_catalogue(pg_conn_module_schema, pg_session_conn):
+    conn = pg_session_conn
+    conn.execute(f"SET search_path = {pg_conn_module_schema}")
+    _tables(conn)
+    _mixed_catalogue(conn)
+    assert _ffb.correct_family_inconsistencies(conn) == 3          # F_RETIRED + F_ADJACENT (rule 4) and F_RESTANTES_PAIR (rule 2-bis-A), nothing else
+    assert _natures(conn) == {
+        "RET_EUR_1": "Renta Fija Corto Plazo", "RET_EUR_2": "Renta Fija Corto Plazo",        # inactive-only family arbitrated by the EUR class
+        "ADJ_EUR_1": "Renta Fija Corto Plazo", "ADJ_USD_2": "Renta Fija Corto Plazo",        # active adjacent family: rule 4 untouched by the new rule
+        "ONE_EUR_1": "Renta Fija Corto Plazo", "ONE_EUR_2": "Alternativo",                   # one active member keeps the flag
+        "TWO_EUR_1": "Renta Variable", "TWO_USD_2": "Monetario",                             # all active, non-adjacent: untouched
+        "RST_EUR_1": "Restantes", "RST_EUR_2": "Renta Fija Corto Plazo", "RST_EUR_3": "Alternativo",   # Restantes never decides: untouched
+        "RSP_EUR_1": "Renta Fija Corto Plazo", "RSP_EUR_2": "Renta Fija Corto Plazo"}        # ... and as a pair it is the one overwritten
+    logged = {r[0] for r in conn.execute("SELECT isin FROM ingestion_log WHERE step = 'FAMILY_NATURE_CORRECTION'").fetchall()}
+    assert logged == {"RET_EUR_2", "ADJ_USD_2", "RSP_EUR_1"}
+
+
+def test_the_matrix_rerun_is_a_no_op_without_duplicate_log_rows(pg_conn_module_schema, pg_session_conn):
+    conn = pg_session_conn
+    conn.execute(f"SET search_path = {pg_conn_module_schema}")
+    _tables(conn)
+    _mixed_catalogue(conn)
+    assert _ffb.correct_family_inconsistencies(conn) == 3
+    after_first, rows_first = _natures(conn), _corrections(conn)
+    assert _ffb.correct_family_inconsistencies(conn) == 0
+    assert _natures(conn) == after_first and _corrections(conn) == rows_first == 3
+
+
+def test_a_member_turning_active_between_two_runs_stops_the_inactive_only_arbitration_and_nothing_is_sticky(pg_conn_module_schema, pg_session_conn):
+    conn = pg_session_conn
+    conn.execute(f"SET search_path = {pg_conn_module_schema}")
+    _tables(conn)
+    _fund(conn, "FRK_EUR_1", "DWS FLOAT RATE NOTE W EUR", "Renta Fija Corto Plazo", "EUR", active=0, fam="F_FRANKLIN")
+    _fund(conn, "FRK_EUR_2", "DWS FLOAT RATE NOTE I EURHDG", "Alternativo", "EUR", active=0, fam="F_FRANKLIN")
+    conn.execute("UPDATE fund_master SET in_current_universe = 1 WHERE isin = 'FRK_EUR_2'")        # the retired class comes back
+    conn.commit()
+    assert _ffb.correct_family_inconsistencies(conn) == 0                                          # one active member: not arbitrated
+    assert _natures(conn) == {"FRK_EUR_1": "Renta Fija Corto Plazo", "FRK_EUR_2": "Alternativo"}
+    conn.execute("UPDATE fund_master SET in_current_universe = 0 WHERE isin = 'FRK_EUR_2'")        # retired again: the rule applies again
+    conn.commit()
+    assert _ffb.correct_family_inconsistencies(conn) == 1
+    assert _natures(conn) == {"FRK_EUR_1": "Renta Fija Corto Plazo", "FRK_EUR_2": "Renta Fija Corto Plazo"}
+
+
+def test_the_post_correction_warning_after_the_matrix_counts_only_the_active_flagged_family(pg_conn_module_schema, pg_session_conn):
+    conn = pg_session_conn
+    conn.execute(f"SET search_path = {pg_conn_module_schema}")
+    _tables(conn)
+    _mixed_catalogue(conn)
+    _ffb.correct_family_inconsistencies(conn)
+    flagged_active = {row[0] for row in _ffb._validate_family_consistency(conn, active_only=True)}
+    flagged_all = {row[0] for row in _ffb._validate_family_consistency(conn)}
+    assert flagged_active == {"F_TWO_ACTIVE"}                       # the only family still inconsistent through ACTIVE members
+    assert flagged_all == {"F_TWO_ACTIVE", "F_ONE_ACTIVE", "F_RESTANTES"}      # retired / mixed-through-retired ones are noise, not an alarm
