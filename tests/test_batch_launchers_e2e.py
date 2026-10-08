@@ -290,6 +290,33 @@ def test_help_prints_usage_and_exits_0_without_running_any_tool(tree, name, flag
     assert r.stdout.strip(), (name, flag, "empty usage")
 
 
+# ─── the legacy block path is gone: P1 + cost diag is an orchestrator of two existing launchers ───
+
+def test_p1_plus_cost_diag_runs_the_nature_first_launcher_then_the_diagnostic_and_never_the_block_path(tree):
+    r = tree.run("P1_discoverAllFundsPlusCostDiag", "--no-audit", "--no-export")
+    assert r.returncode == 0, r.stdout + r.stderr
+    ln = tree.lines()
+    run_block = [x for x in ln if x.startswith("run_block")]
+    assert run_block and all("--nature-first --master-db" in x or "--family-nature-refresh --master-db" in x for x in run_block), run_block
+    assert not any("--block" in x or "--master " in x or "--master\t" in x for x in ln), ln          # no legacy block, no Excel master
+    t = tree.tools()
+    assert t.index("mark_stale") < t.index("fund_family_builder") < t.index("diag_cost_extraction"), t     # P1 first, the diagnostic last
+    assert "--no-audit" not in " ".join(ln) and "export_p1" not in t                                   # the options reached P1_discoverAllFunds
+
+
+def test_p1_plus_cost_diag_returns_the_first_failing_rc_and_still_runs_the_diagnostic(tree):
+    r = tree.run("P1_discoverAllFundsPlusCostDiag", "--no-audit", "--no-export", STUB_RC_FUND_FAMILY_BUILDER="7")
+    assert r.returncode == 7, r.stdout + r.stderr
+    assert "diag_cost_extraction" in tree.tools()                                                      # every phase runs, as before
+    r = tree.run("P1_discoverAllFundsPlusCostDiag", "--no-audit", "--no-export", STUB_RC_DIAG_COST_EXTRACTION="9")
+    assert r.returncode == 9                                                                           # P1 fine: the diagnostic's code
+
+
+def test_p1_plus_cost_diag_rejects_an_unknown_option_before_running_anything(tree):
+    r = tree.run("P1_discoverAllFundsPlusCostDiag", "--frobnicate")
+    assert r.returncode == 100 and "run_block" not in tree.tools() and "mark_stale" not in tree.tools()
+
+
 # ─── environment guard: a blocked PostgreSQL driver is RC 106 everywhere, before any tool runs ──────
 
 BLOCKED = {"FONDOS_DB_DRIVER_MODULE": "no_such_driver_module_xyz"}      # same ImportError path as a blocked DLL

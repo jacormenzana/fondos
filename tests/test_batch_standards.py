@@ -121,6 +121,16 @@ def test_launchers_that_reject_arguments_also_answer_help():
     _per_file("help", chk, "Add `-h`/`--help` (usage, RC 0).")
 
 
+def test_no_launcher_invokes_the_legacy_block_path():
+    """2026-10-08: the by-block path (`run_block.py --block X --master <Excel>`) classifies with the legacy paradigm and takes its universe and labels from the
+    Excel master; one accidental run rewrote 37 live rows and re-activated ~277 retired funds. Launchers use `--nature-first --master-db` only."""
+    pat = re.compile(r"run_block\.py\b[^\r\n]*--(block|master)(?![-\w])")      # --master-db is the sanctioned flag
+
+    def chk(p):
+        return [(n, "legacy block path: " + ln.strip()[:80]) for n, ln in _code(p) if pat.search(ln)]
+    _per_file("no_legacy_block", chk, "Call P1_discoverAllFunds.bat (nature-first) instead of run_block.py --block/--master.")
+
+
 def test_every_launcher_answers_both_help_flags_before_doing_anything():
     """2026-10-08: a probe `--help` over the real launchers started real runs in the ones that forward their arguments. EVERY launcher (the
     template included) must test for both flags in code; tests/test_batch_launchers_e2e.py proves, per launcher, that nothing runs."""
