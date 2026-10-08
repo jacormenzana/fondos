@@ -20,14 +20,22 @@ decidir (estado, reanudación, validaciones, informes, SQL) vive en **Python con
 ```bat
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
-call "%~dp0lib\common.bat" :init || (endlocal & exit /b 101)
+call "%~dp0lib\common.bat" :init "%~nx0" & set "RC_BOOT=!ERRORLEVEL!"
+if %RC_BOOT% NEQ 0 (endlocal & exit /b %RC_BOOT%)
 call "%COMMON%" :utf8_on
 :: ... cabecera de documentacion (§3), configuracion, argumentos, ejecucion ...
 call "%COMMON%" :utf8_off
 endlocal & exit /b %RC%
 ```
 
-- Las cuatro primeras líneas son idénticas en todos los lanzadores de `scripts/launch`.
+- Las cinco primeras líneas son idénticas en todos los lanzadores de `scripts/launch`. `:init` devuelve su propio código
+  (`101` intérprete, `106` driver PostgreSQL) y el lanzador sale con él (`RC_BOOT`); la segunda línea se parsea ya con `RC_BOOT` fijado.
+- **Guarda de entorno (`RC_ENV_BLOCKED = 106`).** `:init` comprueba que `psycopg` carga en el intérprete (el control de
+  aplicaciones de Windows puede bloquear su DLL y, sin guarda, cada herramienta muere a mitad con un traceback ajeno).
+  Una vez por árbol de procesos (`FONDOS_DB_DRIVER_OK`) y recordado 10 min entre ejecuciones (`proyecto1/log/env_driver_ok`);
+  un entorno bloqueado nunca se recuerda. Registro local `proyecto1/log/env_blocked.log` (tope 1 MB: se trunca). La capa Python
+  (`shared/env_guard.py::require_db_driver()`, usada por `run_pg_tests.py`, los `migrate_*.py` y el preflight de
+  `p1p2_state.py`) hace siempre el import real y no usa el marcador. Sin reintentos, sin otro intérprete, sin DLL copiada.
 - Solo ASCII (los mensajes van sin acentos) y finales de línea **CRLF** (los editores y `Write` generan LF: convertir
   siempre; un `.bat` con LF falla en `cmd.exe`).
 - `endlocal & exit /b %RC%` va en **una sola línea**: `endlocal` descarta la expansión retardada, y `%RC%` se sustituye
@@ -71,7 +79,7 @@ Prohibido en líneas no comentadas: `C:\desarrollo`, `C:\data\envs`, literales d
 |---|---|---|
 | `0` | éxito | |
 | `1-99` | **la herramienta que falló**, propagada sin tocar | `3` benchmark loader, `5/6` puerta del harvest, `2` frescura de P3 |
-| `100-199` | **el propio lanzador** (constantes `RC_*` de `:init`) | `100` argumentos inválidos, `101` intérprete no encontrado, `102` reanudación rechazada, `103` estado no escribible, `104` preflight fallido, `105` otra instancia en ejecución |
+| `100-199` | **el propio lanzador** (constantes `RC_*` de `:init`) | `100` argumentos inválidos, `101` intérprete no encontrado, `102` reanudación rechazada, `103` estado no escribible, `104` preflight fallido, `105` otra instancia en ejecución, `106` driver PostgreSQL bloqueado |
 
 Así un código propio **nunca** coincide con el de una herramienta (antes un harvest fallido, RC 5, era
 indistinguible de «intérprete no encontrado»). No se escriben literales 1-99 en `exit /b`. Las constantes de

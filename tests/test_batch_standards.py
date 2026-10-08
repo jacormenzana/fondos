@@ -98,7 +98,8 @@ def test_skeleton_first_lines():
             return [] if ls[0].lower() == "@echo off" else [(1, "must start with @echo off")]
         want = ["@echo off",
                 "setlocal EnableExtensions EnableDelayedExpansion",
-                'call "%~dp0lib\\common.bat" :init || (endlocal & exit /b 101)',
+                'call "%~dp0lib\\common.bat" :init "%~nx0" & set "RC_BOOT=!ERRORLEVEL!"',
+                "if %RC_BOOT% NEQ 0 (endlocal & exit /b %RC_BOOT%)",
                 'call "%COMMON%" :utf8_on']
         return [(i + 1, f"line {i + 1} must be exactly: {w}") for i, w in enumerate(want) if ls[i] != w]
     _per_file("skeleton", chk, "Start from scripts/launch/_template.bat.")
@@ -256,9 +257,14 @@ def test_exit_code_constants_match_the_python_helper():
     spec.loader.exec_module(st)
     rc = dict(re.findall(r'^set "(RC_\w+)=(\d+)"', "\n".join(_lines(COMMON)), re.M))
     assert rc == {"RC_USAGE": "100", "RC_ENV": "101", "RC_REFUSED": "102", "RC_STATE": "103",
-                  "RC_PREFLIGHT": "104", "RC_BUSY": "105"}, rc
-    assert (st.RC_BAD_ARGS, st.RC_REFUSED, st.RC_NOT_WRITABLE, st.RC_PREFLIGHT_FAILED) == (
-        int(rc["RC_USAGE"]), int(rc["RC_REFUSED"]), int(rc["RC_STATE"]), int(rc["RC_PREFLIGHT"]))
+                  "RC_PREFLIGHT": "104", "RC_BUSY": "105", "RC_ENV_BLOCKED": "106"}, rc
+    assert (st.RC_BAD_ARGS, st.RC_REFUSED, st.RC_NOT_WRITABLE, st.RC_PREFLIGHT_FAILED, st.RC_ENV_BLOCKED) == (
+        int(rc["RC_USAGE"]), int(rc["RC_REFUSED"]), int(rc["RC_STATE"]), int(rc["RC_PREFLIGHT"]),
+        int(rc["RC_ENV_BLOCKED"]))
+    spec = importlib.util.spec_from_file_location("env_guard", ROOT / "shared" / "env_guard.py")
+    guard = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(guard)
+    assert guard.RC_ENV_BLOCKED == int(rc["RC_ENV_BLOCKED"])      # the Python layer and the batch layer: one number
     assert all(100 <= int(v) <= 199 for v in rc.values())
 
 

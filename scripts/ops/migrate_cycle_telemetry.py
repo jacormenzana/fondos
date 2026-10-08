@@ -62,6 +62,8 @@ def main(argv: list | None = None) -> int:
 
     sys.path.insert(0, str(ROOT))
     sys.path.insert(0, str(ROOT / "scripts" / "ops"))
+    from shared.env_guard import require_db_driver     # RC 106 up front, not a traceback mid-run
+    require_db_driver()
     import os
     import shared.config  # noqa: F401  (autoloads .env: FONDOS_PG_DSN_OWNER)
     import psycopg

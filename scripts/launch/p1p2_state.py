@@ -56,6 +56,7 @@ STEP_NAMES = {1: "P1_refreshBenchmarks", 2: "P1_discoverAllFunds",
 # 1-99 codes of the tools a step runs, which the launcher propagates untouched. They must equal the RC_* constants
 # of scripts/launch/lib/common.bat (tests/test_batch_standards.py enforces it).
 RC_OK, RC_BAD_ARGS, RC_REFUSED, RC_NOT_WRITABLE, RC_PREFLIGHT_FAILED = 0, 100, 102, 103, 104
+RC_ENV_BLOCKED = 106            # PostgreSQL driver cannot load (Application Control); == shared/env_guard.RC_ENV_BLOCKED
 
 
 def state_path() -> Path:
@@ -297,7 +298,16 @@ def preflight_checks(environ, connect, free_gb: float | None) -> list:
 
 
 def run_preflight() -> int:
-    """Prints one line per check; RC_PREFLIGHT_FAILED only when a blocking (FAIL) check failed."""
+    """Prints one line per check; RC_PREFLIGHT_FAILED only when a blocking (FAIL) check failed. A PostgreSQL driver
+    that cannot load is the third net of the environment guard (lib/common.bat :init, shared.env_guard): RC 106,
+    not a generic 'database unreachable'."""
+    sys.path.insert(0, str(ROOT))
+    from shared import env_guard
+    ok, detail = env_guard.check_driver()
+    if not ok:
+        print(f"[preflight] FAIL PostgreSQL driver cannot be loaded ({detail}): RC {RC_ENV_BLOCKED}, nothing was run")
+        env_guard.record_block(env_guard.DEFAULT_STATE_DIR, "p1p2_state.py preflight", detail)
+        return RC_ENV_BLOCKED
     _load_dotenv()
     try:
         import shutil

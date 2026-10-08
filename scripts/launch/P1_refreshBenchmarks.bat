@@ -1,6 +1,7 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
-call "%~dp0lib\common.bat" :init || (endlocal & exit /b 101)
+call "%~dp0lib\common.bat" :init "%~nx0" & set "RC_BOOT=!ERRORLEVEL!"
+if %RC_BOOT% NEQ 0 (endlocal & exit /b %RC_BOOT%)
 call "%COMMON%" :utf8_on
 
 :: ============================================================

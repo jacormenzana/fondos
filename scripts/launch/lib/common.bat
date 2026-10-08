@@ -4,8 +4,9 @@
 :: Norma: doc/reglas/NORMAS_BATCH.md (este fichero es su implementacion de referencia).
 ::
 :: Uso (el llamante ya tiene `setlocal EnableExtensions EnableDelayedExpansion`):
-::   call "%~dp0lib\common.bat" :init || (endlocal & exit /b 101)    <- UNA vez, al principio
-::   call "%COMMON%" :etiqueta [argumentos]                          <- despues, en cualquier sitio
+::   call "%~dp0lib\common.bat" :init "%~nx0" & set "RC_BOOT=!ERRORLEVEL!"   <- UNA vez, al principio
+::   if %RC_BOOT% NEQ 0 (endlocal & exit /b %RC_BOOT%)                       <- y salir con el RC de :init (101 / 106)
+::   call "%COMMON%" :etiqueta [argumentos]                                  <- despues, en cualquier sitio
 ::
 :: Contrato de TODAS las subrutinas:
 ::   - No llaman a setlocal: las variables que fijan quedan visibles para el llamante.
@@ -14,7 +15,7 @@
 ::   - Los argumentos empiezan en %1 (la etiqueta se consume aqui, en el despachador).
 ::
 :: Subrutinas:
-::   :init                      ROOT LIB COMMON LAUNCH STATE_DIR PYTHON y las constantes RC_*
+::   :init NOMBRE               ROOT LIB COMMON LAUNCH STATE_DIR PYTHON y las constantes RC_*; comprueba interprete y driver PostgreSQL
 ::   :get_time VAR FORMATO      hora actual con formato .NET en VAR (p. ej. yyyyMMdd_HHmmss)
 ::   :tail FICHERO N            ultimas N lineas de un fichero
 ::   :is_uint VALOR             RC 0 si es un entero positivo
@@ -45,7 +46,12 @@ goto %_LBL%
 ::   STATE_DIR   donde viven el estado, el bloqueo y el valor guardado de la suspension
 ::   RC_*        codigos de salida PROPIOS de un lanzador (rango 100-199, ver la norma): los de las
 ::               herramientas que invoca (1-99) se propagan sin tocar y nunca pueden coincidir.
-::   RC 101 si no existe el interprete.
+::   RC 101 si no existe el interprete. RC 106 (RC_ENV_BLOCKED) si el driver PostgreSQL (psycopg) no carga:
+::   el control de aplicaciones de Windows puede bloquear su DLL y toda herramienta de BD moriria a mitad de
+::   ejecucion con un traceback ajeno. NOMBRE (%~nx0 del lanzador) solo se usa para el registro local
+::   STATE_DIR\env_blocked.log (tope 1 MB). El control cuesta una vez por arbol de procesos
+::   (FONDOS_DB_DRIVER_OK la exporta el lanzador mas externo) y se recuerda 10 minutos entre ejecuciones
+::   (marcador STATE_DIR\env_driver_ok); un entorno bloqueado nunca se recuerda. Logica en shared/env_guard.py.
 :: ------------------------------------------------------------
 :init
 for %%I in ("%_HERE%.") do set "LIB=%%~fI"
@@ -65,10 +71,17 @@ set "RC_REFUSED=102"
 set "RC_STATE=103"
 set "RC_PREFLIGHT=104"
 set "RC_BUSY=105"
+set "RC_ENV_BLOCKED=106"
 if not exist "%PYTHON%" (
     echo [ERROR] Interprete Python no encontrado: %PYTHON%
     exit /b 101
 )
+if defined FONDOS_DB_DRIVER_OK exit /b 0
+"%PYTHON%" "%LIB%\batch_helpers.py" driver-check "%STATE_DIR%" "%~1"
+if errorlevel 107 exit /b 101
+if errorlevel 106 exit /b 106
+if errorlevel 1 exit /b 101
+set "FONDOS_DB_DRIVER_OK=1"
 exit /b 0
 
 :: ------------------------------------------------------------

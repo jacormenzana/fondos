@@ -635,7 +635,7 @@ step 1). After a successful cycle, non-blocking diagnostics: final audit with dr
 `--shadow N`, `--benchmark-gaps`, `--dashboard`, `--diag-cost`. The diagnostics never change the cycle's RC.
 Every launcher follows `doc/reglas/NORMAS_BATCH.md` (shared `scripts/launch/lib/common.bat`): paths derived from the file's
 own location, no hard-coded versions/dates, the launcher's own exit codes in 100-199 (100 usage, 101 interpreter, 102 resume
-refused, 103 state, 104 preflight, 105 another instance running — tool codes 1-99 pass through untouched), single-instance lock
+refused, 103 state, 104 preflight, 105 another instance running, 106 PostgreSQL driver blocked by Application Control — checked by `:init` and `shared/env_guard.py`; tool codes 1-99 pass through untouched), single-instance lock
 shared by `P1_P2_Complete.bat`, `P2_P3_complete.bat` and `P1_P2_P3.bat` (the integrated P1→P2→beta gate→P3 run: `--only-p3`
 resumes just the gate + P3 on the last OK cycle), and the real standby timeout saved and restored.
 Postgres SQL validity is checked by an `EXPLAIN` sweep over every statement production code executes — see

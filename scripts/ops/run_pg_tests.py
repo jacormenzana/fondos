@@ -117,6 +117,10 @@ def main() -> int:
     ap.add_argument("pytest_args", nargs="*", help="passed to a single pytest run from the repo root")
     args = ap.parse_args()
 
+    sys.path.insert(0, str(ROOT))
+    from shared.env_guard import require_db_driver
+    require_db_driver("run_pg_tests.py")        # RC 106 before any docker work: the suites cannot connect without it
+
     docker = _docker_prefix(args.distro)
     if not args.port:
         args.port = _free_port()

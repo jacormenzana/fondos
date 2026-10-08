@@ -12,6 +12,9 @@ Sub-commands (always exit 0 unless the arguments are wrong):
     time FORMAT            current time with a .NET-style format (yyyy MM dd HH mm ss and separators), e.g. yyyyMMdd_HHmmss
     standby-minutes        AC suspension timeout of the active power plan, in minutes; prints nothing if unknown
     tail FILE [N]          the last N lines (default 15) of FILE; nothing if it does not exist
+    driver-check STATE_DIR LAUNCHER
+                           exit 0 when the PostgreSQL driver loads in THIS interpreter, 106 (RC_ENV_BLOCKED) when it
+                           does not (shared/env_guard.py: message on stderr, local record, 10-minute ok marker)
 """
 from __future__ import annotations
 
@@ -20,6 +23,7 @@ import re
 import subprocess
 import sys
 from datetime import datetime
+from pathlib import Path
 
 # .NET custom format tokens the launchers use -> strftime. Anything else is rejected: a typo must never
 # silently print a wrong stamp that then names a log file or a baseline.
@@ -74,6 +78,21 @@ def tail(path: str, n: int = 15) -> str:
         return ""
 
 
+ROOT = Path(__file__).resolve().parents[3]
+
+
+def driver_check(state_dir: str, launcher: str) -> int:
+    """The batch-layer environment guard. The logic lives in shared/env_guard.py (one implementation for the
+    launchers and the Python tools); this only locates it relative to the library, like every other path."""
+    sys.path.insert(0, str(ROOT))
+    try:
+        from shared import env_guard
+    except ImportError as exc:
+        print(f"[batch_helpers] shared/env_guard.py not found under {ROOT}: {exc}", file=sys.stderr)
+        return 1
+    return env_guard.batch_check(state_dir, launcher)
+
+
 def main(argv: list | None = None) -> int:
     a = list(sys.argv[1:] if argv is None else argv)
     if a[:1] == ["time"] and len(a) == 2:
@@ -93,7 +112,10 @@ def main(argv: list | None = None) -> int:
         if out:
             print(out)
         return 0
-    print("usage: batch_helpers.py time FORMAT | standby-minutes | tail FILE [N]", file=sys.stderr)
+    if a[:1] == ["driver-check"] and len(a) in (2, 3):
+        return driver_check(a[1], a[2] if len(a) == 3 else "")
+    print("usage: batch_helpers.py time FORMAT | standby-minutes | tail FILE [N] | driver-check STATE_DIR [LAUNCHER]",
+          file=sys.stderr)
     return 2
 
 

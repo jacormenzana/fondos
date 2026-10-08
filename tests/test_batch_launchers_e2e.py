@@ -101,6 +101,7 @@ class Tree:
         (self.root / "shared").mkdir()
         (self.root / "shared/__init__.py").touch()
         (self.root / "shared/config.py").write_text("")
+        shutil.copy(REAL / "shared" / "env_guard.py", self.root / "shared")        # the environment guard (RC 106)
         (self.root / "shared/db.py").write_text(
             "import os\n\nclass _Cur:\n    def fetchone(self): return (1,)\n    def fetchall(self): return []\n\n"
             "class _Conn:\n    def execute(self, *a, **k): return _Cur()\n    def close(self): pass\n\n"
@@ -248,6 +249,46 @@ def test_the_launchers_own_codes(tree):
         assert tree.run(sub, "--help").returncode == 0, sub
     assert tree.run("P1_discoverAllFunds", "--nope").returncode == 100
     assert tree.tools() == []                                                    # none of the above ran a tool
+
+
+# ─── environment guard: a blocked PostgreSQL driver is RC 106 everywhere, before any tool runs ──────
+
+BLOCKED = {"FONDOS_DB_DRIVER_MODULE": "no_such_driver_module_xyz"}      # same ImportError path as a blocked DLL
+
+
+@pytest.mark.parametrize("name", _LAUNCHERS)
+def test_a_blocked_driver_stops_every_launcher_with_106_before_any_tool(tree, name):
+    r = tree.run(name, "--help", **BLOCKED)
+    assert r.returncode == 106, (name, r.stdout, r.stderr)
+    assert "RC 106" in r.stderr and tree.tools() == []
+    assert not (tree.logs / "env_driver_ok").exists()                       # a blocked environment is never cached
+    assert "launcher=" + f"{name}.bat" in (tree.logs / "env_blocked.log").read_text()
+
+
+def test_the_interpreter_missing_is_still_101_not_106(tree):
+    r = tree.run("P1_P2_Complete", "--help", FONDOS_PYTHON=str(tree.root / "no_python.exe"), **BLOCKED)
+    assert r.returncode == 101
+
+
+def test_the_guard_is_checked_once_per_process_tree_and_cached_for_ten_minutes(tree):
+    assert tree.run("P1_discoverAllFunds", "--help").returncode == 0
+    marker = tree.logs / "env_driver_ok"
+    assert marker.exists()
+    # inside the window the marker is honoured (cost optimisation; the python layer still does the real import)
+    assert tree.run("P1_discoverAllFunds", "--help", **BLOCKED).returncode == 0
+    # expired marker -> the real check runs again and reports the block
+    interp, mtime, _ = marker.read_text().rsplit("|", 2)
+    marker.write_text(f"{interp}|{mtime}|1")
+    assert tree.run("P1_discoverAllFunds", "--help", **BLOCKED).returncode == 106
+    assert not marker.exists()
+    # a launcher nested under an owner skips the check altogether
+    assert tree.run("P1_discoverAllFunds", "--help", FONDOS_DB_DRIVER_OK="1", **BLOCKED).returncode == 0
+
+
+def test_the_preflight_reports_106_when_the_driver_is_blocked(tree):
+    r = subprocess.run([sys.executable, str(tree.launch / "p1p2_state.py"), "preflight"],
+                       env=tree.env(**BLOCKED), cwd=str(tree.root), capture_output=True, text=True, errors="replace")
+    assert r.returncode == 106 and "PostgreSQL driver cannot be loaded" in r.stdout
 
 
 def test_a_dead_database_aborts_in_preflight_without_touching_the_resume_state(tree):
