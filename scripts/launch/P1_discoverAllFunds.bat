@@ -10,7 +10,7 @@ call "%COMMON%" :utf8_on
 :: Log generado en: C:\desarrollo\fondos\proyecto1\log\
 :: Excel generado en: C:\desarrollo\fondos\out\export\
 ::
-:: Pasos: mark_stale -> nature-first -> fund_family_builder -> export_p1 -> AUDIT_P1
+:: Pasos: mark_stale -> nature-first -> fund_family_builder -> family-nature-refresh -> export_p1 -> AUDIT_P1
 ::
 :: Uso:
 ::   P1_discoverAllFunds.bat                  ciclo completo
@@ -115,6 +115,19 @@ pushd "%ROOT%"
 set RC2=!ERRORLEVEL!
 popd
 
+:: -- family nature refresh (FND-0244) ------------------------------------------
+:: El builder reescribe SOLO Fund_Nature de las clases corregidas; los atributos derivados de la naturaleza
+:: (perfil, estilo, calidad crediticia, duracion...) se recalculan aqui, solo para los fondos activos pendientes
+:: (FAMILY_NATURE_CORRECTION sin FAMILY_REFRESH_DONE), con texto en cache. Sin pendientes no hace nada. El gate de
+:: P3 (family_refresh_pending) bloquea la cartera mientras quede alguno.
+echo [%time%] family nature refresh
+echo. >> "%LOG%"
+echo --- family_nature_refresh --------------------------------- >> "%LOG%"
+pushd "%ROOT%\proyecto1"
+"%PYTHON%" -u -X utf8 run_block.py --family-nature-refresh --master-db >> "%LOG%" 2>&1
+set RC2R=!ERRORLEVEL!
+popd
+
 :: -- export_p1 (Excel dump de tablas P1, incl. texto KIID bruto) --------------
 set RC3=0
 if "!RUN_EXPORT!"=="1" (
@@ -150,6 +163,7 @@ set FINAL_RC=0
 if !RC0! NEQ 0 set FINAL_RC=!RC0!
 if !FINAL_RC! EQU 0 if !RC1! NEQ 0 set FINAL_RC=!RC1!
 if !FINAL_RC! EQU 0 if !RC2! NEQ 0 set FINAL_RC=!RC2!
+if !FINAL_RC! EQU 0 if !RC2R! NEQ 0 set FINAL_RC=!RC2R!
 if !FINAL_RC! EQU 0 if !RC3! NEQ 0 set FINAL_RC=!RC3!
 if !FINAL_RC! EQU 0 if !RC4! NEQ 0 set FINAL_RC=!RC4!
 
@@ -157,12 +171,12 @@ if !FINAL_RC! EQU 0 if !RC4! NEQ 0 set FINAL_RC=!RC4!
 call "%COMMON%" :get_time STAMP2 yyyyMMdd_HHmmss
 echo. >> "%LOG%"
 echo ============================================================ >> "%LOG%"
-echo  Pipeline P1 - Fin: %STAMP2% (RC0=!RC0! RC1=!RC1! RC2=!RC2! RC3=!RC3! RC4=!RC4!^) >> "%LOG%"
+echo  Pipeline P1 - Fin: %STAMP2% (RC0=!RC0! RC1=!RC1! RC2=!RC2! RC2R=!RC2R! RC3=!RC3! RC4=!RC4!^) >> "%LOG%"
 echo ============================================================ >> "%LOG%"
 
 echo.
 if !FINAL_RC! NEQ 0 (
-    echo [%STAMP2%] Pipeline P1 -- Fin ERROR (RC0=!RC0! RC1=!RC1! RC2=!RC2! RC3=!RC3! RC4=!RC4!^)
+    echo [%STAMP2%] Pipeline P1 -- Fin ERROR (RC0=!RC0! RC1=!RC1! RC2=!RC2! RC2R=!RC2R! RC3=!RC3! RC4=!RC4!^)
 ) else (
     echo [%STAMP2%] Pipeline P1 completado
 )

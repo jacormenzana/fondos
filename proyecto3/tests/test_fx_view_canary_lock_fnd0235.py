@@ -119,11 +119,14 @@ class _Clf:
 def test_the_gate_adds_the_canary_only_when_the_flag_is_on(monkeypatch, switch):
     monkeypatch.setattr(df, "load_freshness_inputs", lambda conn: ([], None, []))
     monkeypatch.setattr(df, "evaluate_freshness", lambda *a, **k: [])
+    import shared.family_refresh as _fr
+    monkeypatch.setattr(_fr, "pending_family_refresh", lambda conn, active_only=True: [])      # the family-refresh check is its own test
     seen = []
     monkeypatch.setattr(df, "load_fx_canary_pairs", lambda conn: seen.append(1) or [])
     switch(False)
-    assert df.check_universe_freshness(None, _Clf(), today=date(2026, 10, 7)) == [] and not seen
+    off = df.check_universe_freshness(None, _Clf(), today=date(2026, 10, 7))
+    assert [c.name for c in off] == ["family_refresh_pending"] and off[0].ok and not seen          # no canary check with the flag off
     switch(True)
     checks = df.check_universe_freshness(None, _Clf(), today=date(2026, 10, 7))
-    assert [c.name for c in checks] == ["fx_view_canary"] and seen and not checks[0].ok               # no canaries -> fail closed
-    assert df.stale_checks(checks) == checks
+    assert [c.name for c in checks] == ["family_refresh_pending", "fx_view_canary"] and seen and not checks[1].ok   # no canaries -> fail closed
+    assert df.stale_checks(checks) == [checks[1]]

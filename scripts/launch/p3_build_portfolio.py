@@ -61,6 +61,26 @@ def main(scenario_id: str | None = None, dry_run: bool = False, allow_stale: boo
 
     reg  = clf.classify_current()
 
+    if not scenario_id:
+        scenario_id = _default_scenario_id(reg.regime, reg.date)
+
+    # An --allow-stale override of a real run is never silent (FND-0244 follow-up): it is recorded BEFORE anything is persisted, and a
+    # bypass that cannot be recorded does not run.
+    if _stale and allow_stale and not dry_run:
+        from shared.family_refresh import pending_family_refresh
+        from shared.gate_bypass import record_gate_bypass
+        try:
+            _rec = record_gate_bypass(conn, [(c.name, c.detail) for c in _stale], scenario_id, pending_family_refresh(conn))
+            conn.commit()                                       # durable BEFORE anything is scored or persisted
+        except Exception as exc:
+            conn.rollback()
+            print(f"ERROR: no se pudo registrar la auditoria de --allow-stale ({type(exc).__name__}: {str(exc)[:160]}) -- "
+                  f"abortando sin puntuar ni persistir.")
+            return 1
+        print(f"AUDITORIA --allow-stale registrada: ingestion_log={_rec['ingestion_log']} filas, audit_finding={_rec['audit_finding']}, "
+              f"cycle_flag={'si' if _rec['cycle_flag'] else 'no'} (control.v_p3_gate_bypass las lee).")
+        print()
+
     print(clf.current_regime_report())
     print()
 
@@ -68,8 +88,6 @@ def main(scenario_id: str | None = None, dry_run: bool = False, allow_stale: boo
         print(f"Historico de regimenes persistido: {clf.persist_history()} filas (gold.regime_history).")
         print()
 
-    if not scenario_id:
-        scenario_id = _default_scenario_id(reg.regime, reg.date)
     print(f"Scenario: {scenario_id}" + (" (dry-run, sin persistir)" if dry_run else ""))
     print()
 

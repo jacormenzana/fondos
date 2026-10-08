@@ -43,6 +43,15 @@ def main():
     p.add_argument("--nature-first", action="store_true", default=False,
                    help="OPT-B: single-pass nature-vote dispatch over ALL ISINs. "
                         "Mutually exclusive with --block.")
+    p.add_argument("--family-nature-refresh", action="store_true", default=False,
+                   help=(
+                       "Recalcula los atributos DERIVADOS de la naturaleza (perfil, estilo, calidad crediticia, duracion...) "
+                       "de los fondos ACTIVOS cuya Fund_Nature reescribio fund_family_builder (FAMILY_NATURE_CORRECTION sin "
+                       "FAMILY_REFRESH_DONE posterior), conservando la naturaleza de la familia en vez de dejar que la "
+                       "evidencia propia del fondo la revierta. Implica --nature-first; el conjunto se SELECCIONA, no se "
+                       "pasa (incompatible con --block, --list-isin y --sample). Solo texto en cache, sin descargas; sin "
+                       "pendientes no hace nada."
+                   ))
     p.add_argument("--master", default=None,
                    help="Excel maestro (GestoresDeFondosv1.xlsx) — modo legacy")
     p.add_argument("--master-db", action="store_true", default=False,
@@ -76,6 +85,10 @@ def main():
                    ))
     args = p.parse_args()
 
+    if args.family_nature_refresh:
+        if args.block or args.list_isin or args.sample:
+            p.error("--family-nature-refresh selects its own funds: it excludes --block, --list-isin and --sample.")
+        args.nature_first = True
     if not args.nature_first and not args.block:
         p.error("--block is required unless --nature-first is specified.")
     if args.nature_first and args.block:
@@ -133,9 +146,10 @@ def main():
         kiid_source=args.kiid_source,
         nature_first=args.nature_first,
         recompute_costs=args.recompute_costs,
+        family_refresh=args.family_nature_refresh,
     )
 
-    _mode = "NATURE_FIRST" if args.nature_first else args.block
+    _mode = "FAMILY_REFRESH" if args.family_nature_refresh else ("NATURE_FIRST" if args.nature_first else args.block)
     print(f"Bloque/modo {_mode} procesado. Registros publicados: {len(published)}")
 
 

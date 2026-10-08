@@ -846,7 +846,16 @@ def _upsert_kiid_benchmark(conn: "psycopg.Connection",
 
 def log_ingestion(conn: "psycopg.Connection", isin: Optional[str],
                   step: str, status: str,
-                  message: Optional[str]) -> None:
+                  message: Optional[str], strict: bool = False) -> None:
+    # strict=True: the row is part of an atomic unit (publish_fund's `extra_log`): a failed INSERT must raise
+    # so the enclosing transaction rolls the whole unit back, instead of being swallowed like an incidental log.
+    if strict:
+        conn.execute(
+            "INSERT INTO ingestion_log (ISIN, step, status, message, created_at) VALUES (%s,%s,%s,%s,%s)",
+            (isin, step, status, message,
+             datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")),
+        )
+        return
     # Plain append-only INSERT, no conflict/upsert logic — placeholder character is the only
     # dialect-specific piece (Postgres migration Phase 5c).
     #
@@ -884,6 +893,7 @@ def publish_fund(
     nav_series: Optional[Iterable[Dict[str, Any]]] = None,
     kiid_record: Optional[Dict[str, Optional[Any]]] = None,
     cost_schedule_rows: Optional[list] = None,   # BL-COST-4c A-3: atomicidad con schedule
+    extra_log: Optional[list] = None,            # [(step, status, message)] written STRICTLY inside the same transaction
 ) -> None:
     # Postgres migration Phase 5c — critical finding, not an assumption: bare `with conn:` on a
     # psycopg3 Connection COMMITS *and then CLOSES the connection* on a clean exit (verified live
@@ -912,6 +922,9 @@ def publish_fund(
             if cost_schedule_rows:
                 upsert_cost_schedule(conn, fund_master_record["ISIN"], cost_schedule_rows)
             log_ingestion(conn, fund_master_record.get("ISIN"), "PUBLISH_FUND", "OK", None)
+            # Rows that must commit together with the fund or not at all (FAMILY_REFRESH_DONE, FND-0244 follow-up).
+            for _step, _status, _message in (extra_log or ()):
+                log_ingestion(conn, fund_master_record.get("ISIN"), _step, _status, _message, strict=True)
     except Exception as exc:
         try:
             log_ingestion(conn, fund_master_record.get("ISIN"),

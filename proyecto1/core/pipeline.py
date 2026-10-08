@@ -678,7 +678,13 @@ def run_block(
     kiid_source: str = "auto",
     nature_first: bool = False,
     recompute_costs: bool = False,
+    family_refresh: bool = False,
 ) -> List[Dict[str, Any]]:
+    # family_refresh (FND-0244 follow-up): recompute ONLY the active funds whose Fund_Nature was rewritten by the family
+    # builder (shared.family_refresh.pending_family_refresh), keeping the persisted family nature instead of letting the
+    # fund's own evidence vote it back. Implies nature_first; each fund's FAMILY_REFRESH_DONE row commits with its upsert.
+    if family_refresh and (not nature_first or list_isin or sample_size):
+        raise ValueError("family_refresh requires nature_first and excludes list_isin / sample_size: the set is SELECTED, not passed")
 
     # OPT-B: in nature_first mode block_module may be None; skip block-specific setup
     if nature_first:
@@ -718,6 +724,15 @@ def run_block(
             print(f"[NATURE_FIRST] nota: el maestro lista cada ISIN en varias "
                   f"hojas; se procesa una vez por ISIN único (dedup OK).")
         isins = isins[:sample_size] if sample_size else isins
+        if family_refresh:
+            from shared.family_refresh import pending_family_refresh, split_reachable, summarize_pending
+            _pending = pending_family_refresh(conn, active_only=True)
+            isins, _unreachable = split_reachable(_pending, isins)
+            print(f"[FAMILY_REFRESH] pendientes (activos): {summarize_pending(_pending)}; "
+                  f"alcanzables por el maestro: {len(isins)}")
+            if _unreachable:
+                print(f"[FAMILY_REFRESH] WARN {len(_unreachable)} pendientes activos fuera del maestro "
+                      f"(no alcanzables por el clasificador): {', '.join(_unreachable[:20])}")
     else:
         # RESTANTES es bloque residual: necesita conn para excluir ISINs ya clasificados
         universe = get_universe(df_master, conn) if heuristic_core == 0 else get_universe(df_master)
@@ -737,6 +752,9 @@ def run_block(
             print(f"[{block_name}] {excluded} ISINs excluidos por KIID_Status=WRONG_DOC")
 
     total = len(isins)
+    if family_refresh and not total:
+        print("[FAMILY_REFRESH] nada pendiente: sin cambios")
+        return []
     published = []
     _cycle_start_ts = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
     try:
@@ -792,6 +810,12 @@ def run_block(
                     _srri_nav_by_isin[_si] = max(1, min(7, int(_sv)))
         except Exception as _srri_err:
             print(f"[WARN] OPT-B3: no se pudo cargar srri_nav: {_srri_err}")
+
+    # FND-0244 follow-up: the persisted (family-arbitrated) nature of each fund to refresh.
+    _family_nature: dict = {}
+    if family_refresh and isins:
+        _family_nature = dict(conn.execute(
+            "SELECT ISIN, Fund_Nature FROM fund_master WHERE ISIN = ANY(%s)", (list(isins),)).fetchall())
 
     for idx, isin in enumerate(isins, 1):
         _t_fund_start = time.perf_counter()
@@ -957,6 +981,8 @@ def run_block(
             if isinstance(_srri_for_classify, dict):
                 _srri_for_classify = _srri_for_classify.get("SRRI")
 
+            _fam_override = False
+            _fam_own_nature = None
             if nature_first:
                 # OPT-B3 (2026-07-16): evidence-weighted classifier → dispatch.
                 # KIID-primary + guarded name-override (Monetario/RFC) + benchmark
@@ -971,6 +997,11 @@ def run_block(
                     srri_nav_band=_srri_band,
                     ext_asset_class=_ms_asset_cls,
                 )
+                if family_refresh:
+                    from shared.family_refresh import apply_family_nature
+                    _fam_own_nature = _voted_nature
+                    _voted_nature, _ev_trace, _fam_override = apply_family_nature(
+                        _voted_nature, _family_nature.get(isin), _ev_trace, _nat_conf)
                 _dispatch_blk = _NATURE_TO_BLOCK.get(_voted_nature) if _voted_nature else None
                 if _dispatch_blk and not _is_structured:
                     try:
@@ -1001,7 +1032,7 @@ def run_block(
                     )
                     # Baja confianza → DQ flag (revisión). Sustituye el parcheo
                     # INTER-DBLCLAIM/VOTE3 por señalización explícita.
-                    if _nat_conf < _NATURE_CONF_THRESHOLD:
+                    if _nat_conf < _NATURE_CONF_THRESHOLD and not _fam_override:
                         log_ingestion(
                             conn, isin, "NATURE_LOW_CONFIDENCE", "WARN",
                             f"[OPT-B3] Fund_Nature={_voted_nature} con confianza baja "
@@ -3092,8 +3123,13 @@ def run_block(
                 **_arb_fields,
             }
 
+            _extra_log = None
+            if _fam_override:
+                from shared.family_refresh import STEP_DONE as _FAMILY_REFRESH_DONE
+                _extra_log = [(_FAMILY_REFRESH_DONE, "OK",
+                               f"nature={classification.get('Fund_Nature')} own_evidence={_fam_own_nature}")]
             publish_fund(conn, fund_master_record, None, kiid_record,
-                         cost_schedule_rows=_schedule_rows or None)
+                         cost_schedule_rows=_schedule_rows or None, extra_log=_extra_log)
 
             # FIX-OC-WRITE-ORDER (2026-08-23): BL-COST-5 no-COALESCE repair fires
             # HERE — after publish_fund — so the COALESCE UPSERT above cannot
@@ -3180,7 +3216,7 @@ def run_block(
     # predates this cycle's start timestamp — they were not refreshed here.
     # Guard: only runs on full-universe runs (nature_first=True, no list_isin,
     # no sample_size) to avoid wiping valid rows during partial runs.
-    if nature_first and list_isin is None and sample_size is None:
+    if nature_first and list_isin is None and sample_size is None and not family_refresh:   # a refresh touches a handful of funds
         try:
             with fail_soft_block(conn):
                 _dq_deleted = conn.execute(

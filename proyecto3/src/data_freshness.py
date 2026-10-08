@@ -143,6 +143,20 @@ def load_freshness_inputs(conn) -> tuple[list, object, list]:
     return [r[1] for r in nav_rows], (harvest[0] if harvest else None), [r[1] for r in ver_rows]
 
 
+def family_refresh_check(pending: list, limit: int = 50) -> FreshnessCheck:
+    """FND-0244 follow-up lock (pure): is any ACTIVE fund still waiting for the refresh of its nature-derived attributes?
+
+    The family builder rewrites a share class's Fund_Nature; its profile / style / credit quality / duration keep the values of the
+    OLD nature until `run_block.py --family-nature-refresh` recomputes them, and the scorer would rank the fund on a mix. `pending` is
+    shared.family_refresh.pending_family_refresh (active, non-WRONG_DOC funds only: a retired fund feeds no output). Any pending fund
+    is STALE (binary on purpose); the detail carries the count and the first `limit` ISINs."""
+    from shared.family_refresh import summarize_pending
+    return FreshnessCheck("family_refresh_pending", None, None, 0, not pending,
+                          summarize_pending(pending, limit) + ("" if not pending else
+                                                               " -- run `run_block.py --family-nature-refresh` (P1_discoverAllFunds.bat does it) BEFORE P3"),
+                          show_age=False)
+
+
 def fx_view_canary_check(pairs: list, tol: float = 0.003, strong: float = 0.01, min_canaries: int = 8,
                          min_share: float = 0.9) -> FreshnessCheck:
     """FND-0235 lock: were the stored fx_contribution_ann values computed under FX_CONTRIBUTION_EUR_VIEW_ENABLED? (pure)
@@ -204,6 +218,8 @@ def check_universe_freshness(conn, classifier, today: Optional[date] = None) -> 
         P3_NAV_UNIVERSE_PERCENTILE, P3_MACRO_RELEASE_LAG_INDICATORS,
         metric_versions=versions, min_uniform_share=P3_MIN_UNIFORM_METRICS_SHARE,
     )
+    from shared.family_refresh import pending_family_refresh
+    checks = list(checks) + [family_refresh_check(pending_family_refresh(conn))]
     if _config.FX_CONTRIBUTION_EUR_VIEW_ENABLED:      # FND-0235: the scorer reads fx_contribution_ann; refuse a legacy-signed one
         checks = list(checks) + [fx_view_canary_check(load_fx_canary_pairs(conn))]
     return checks

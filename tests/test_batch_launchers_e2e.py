@@ -251,6 +251,26 @@ def test_the_launchers_own_codes(tree):
     assert tree.tools() == []                                                    # none of the above ran a tool
 
 
+# ─── FND-0244: the family-nature refresh runs after the family builder, with no ISIN passed ─────────
+
+def test_p1_discover_all_funds_refreshes_the_family_corrected_funds_after_the_builder(tree):
+    r = tree.run("P1_discoverAllFunds", "--no-audit", "--no-export")
+    assert r.returncode == 0, r.stdout + r.stderr
+    ln = tree.lines()
+    first = next(i for i, x in enumerate(ln) if x.startswith("run_block --nature-first --master-db"))
+    builder = next(i for i, x in enumerate(ln) if x.startswith("fund_family_builder"))
+    refresh = next(i for i, x in enumerate(ln) if x.startswith("run_block --family-nature-refresh --master-db"))
+    assert first < builder < refresh, ln
+    assert "--list-isin" not in ln[refresh] and "--sample" not in ln[refresh]            # the set is selected, never passed
+
+
+def test_a_failing_refresh_step_makes_the_launcher_fail(tree):
+    r = tree.run("P1_discoverAllFunds", "--no-audit", "--no-export", STUB_RC_RUN_BLOCK="7")
+    assert r.returncode == 7, r.stdout + r.stderr
+    log = max(tree.logs.glob("log_pipeline_*.log"), key=lambda f: f.stat().st_mtime).read_text(errors="replace")
+    assert "RC1=7" in log and "RC2R=7" in log                  # both run_block steps report their own code in the footer
+
+
 # ─── environment guard: a blocked PostgreSQL driver is RC 106 everywhere, before any tool runs ──────
 
 BLOCKED = {"FONDOS_DB_DRIVER_MODULE": "no_such_driver_module_xyz"}      # same ImportError path as a blocked DLL

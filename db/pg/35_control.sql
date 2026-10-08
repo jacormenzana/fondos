@@ -611,3 +611,31 @@ CREATE OR REPLACE FUNCTION control.log_disk_headroom_skip(
           format('%s skipped: required=%s available=%s',
                  p_operation, p_required_bytes, p_available_bytes));
 $$;
+
+-- BEGIN p3_gate_bypass (FND-0244 follow-up) -- audit trail of a P3 `--allow-stale` override
+-- Owner migration: scripts/ops/migrate_audit_finding_p3_gate.py (dry run by default). Idempotent. Nothing depends on it:
+-- shared/gate_bypass.py feature-detects the CHECK below and otherwise records the bypass in control.ingestion_log only.
+DO $$
+DECLARE c text;
+BEGIN
+  FOR c IN SELECT conname FROM pg_constraint
+            WHERE conrelid = 'control.audit_finding'::regclass AND contype = 'c'
+              AND pg_get_constraintdef(oid) ILIKE '%domain%' AND pg_get_constraintdef(oid) NOT ILIKE '%p3_gate%'
+  LOOP
+    EXECUTE format('ALTER TABLE control.audit_finding DROP CONSTRAINT %I', c);
+  END LOOP;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'control.audit_finding'::regclass AND contype = 'c'
+                  AND pg_get_constraintdef(oid) ILIKE '%p3_gate%') THEN
+    ALTER TABLE control.audit_finding ADD CONSTRAINT audit_finding_domain_check
+      CHECK (domain IN ('p2_metrics', 'cost_attributes', 'p3_gate'));
+  END IF;
+END $$;
+
+-- One reading surface whatever the DDL state: the ingestion_log rows always, the audit_finding rows once the CHECK admits them.
+CREATE OR REPLACE VIEW control.v_p3_gate_bypass AS
+  SELECT 'ingestion_log'::text AS source, created_at AS event_ts, isin, message AS detail
+    FROM control.ingestion_log WHERE step = 'P3_STALE_BYPASS'
+  UNION ALL
+  SELECT 'audit_finding'::text, detected_at, isin, evidence
+    FROM control.audit_finding WHERE domain = 'p3_gate';
+-- END p3_gate_bypass

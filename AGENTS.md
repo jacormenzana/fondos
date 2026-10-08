@@ -570,7 +570,8 @@ monthly NAV, the last valid date of each regime input, the newest harvest, and t
 `P3_MIN_UNIFORM_METRICS_SHARE` of the active funds have their metrics on ONE `CALC_VERSION` (a partial
 refresh after a version bump would mix incomparable metrics). The check is universe-level (a few frozen
 funds do not block a run); limits live in `shared/config.py::P3_FRESHNESS_MAX_AGE_DAYS`.
-`--allow-stale` overrides; `--dry-run` only warns.
+`--allow-stale` overrides (and is audited: `P3_STALE_BYPASS` rows in `ingestion_log` before anything is scored; see `NORMAS_IMPLEMENTACION.md` §5d); `--dry-run` only warns.
+A further universe check, `family_refresh_pending`, is STALE while any active fund whose `Fund_Nature` the family builder rewrote still awaits `run_block.py --family-nature-refresh`.
 
 ### DB tables used by P3
 
@@ -657,6 +658,13 @@ python run_block.py --block mixtos --master "c:\data\fondos\in\GestoresDeFondosv
 **P1 specific ISINs:**
 ```batch
 python run_block.py --block mixtos --master "..." --list-isin LU0232465467,LU1873127366
+```
+
+**P1 family-nature refresh** (recomputes the attributes derived from the nature of funds `fund_family_builder` corrected; the set is selected, never passed;
+`P1_discoverAllFunds.bat` runs it after the builder; closure check: `scripts/audit/verify_family_refresh.py`):
+```batch
+cd C:\desarrollo\fondos\proyecto1
+python run_block.py --family-nature-refresh --master-db
 ```
 
 **P2 data discovery (run before pipeline — macro + NAV):**

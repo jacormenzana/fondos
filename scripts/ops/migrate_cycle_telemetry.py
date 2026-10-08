@@ -34,11 +34,12 @@ LOCK_TIMEOUT = "5s"
 RC_OK, RC_FAILED, RC_USAGE, RC_REFUSED = 0, 1, 2, 3
 
 
-def ddl_block(path: Path = DDL_FILE) -> str:
-    """The telemetry DDL exactly as written in db/pg/35_control.sql, markers included."""
-    m = re.search(r"-- BEGIN cycle_telemetry.*?-- END cycle_telemetry[^\n]*", path.read_text(encoding="utf-8"), re.S)
+def ddl_block(path: Path = DDL_FILE, name: str = "cycle_telemetry") -> str:
+    """A DDL block exactly as written in db/pg/35_control.sql, markers included (default: the telemetry block;
+    migrate_audit_finding_p3_gate.py reuses this with name='p3_gate_bypass', P#11)."""
+    m = re.search(rf"-- BEGIN {re.escape(name)}.*?-- END {re.escape(name)}[^\n]*", path.read_text(encoding="utf-8"), re.S)
     if not m:
-        raise RuntimeError(f"`-- BEGIN cycle_telemetry` ... `-- END cycle_telemetry` block not found in {path}")
+        raise RuntimeError(f"`-- BEGIN {name}` ... `-- END {name}` block not found in {path}")
     return m.group(0)
 
 
