@@ -67,7 +67,8 @@ exit /b 0
 
 _LAUNCHERS = ["_template", "P1_P2_Complete", "P2_P3_complete", "P1_P2_P3", "P1_refreshBenchmarks", "P1_discoverAllFunds",
               "P2_discoverLoadMetrics", "P2_calculateIndicators", "P1_harvestFunds", "P1_diagCost",
-              "AUDIT_P1", "AUDIT_P2", "P3_buildPortfolio", "P3_generateReport"]
+              "AUDIT_P1", "AUDIT_P2", "AUDIT_statistical", "P3_buildPortfolio", "P3_generateReport",
+              "P1_discoverAllFundsPlusCostDiag"]
 
 
 class Tree:
@@ -110,7 +111,11 @@ class Tree:
         (self.root / "proyecto3/src").mkdir(parents=True)
         (self.root / "proyecto3/__init__.py").touch()
         (self.root / "proyecto3/src/__init__.py").touch()
-        (self.root / "proyecto3/src/monthly_report.py").write_text("def generate_report(c, output_dir=None):\n    return 'report'\n")
+        (self.root / "proyecto3/src/monthly_report.py").write_text(       # records itself in the trace: a launcher that ran it ran a real report
+            "import os\n\ndef generate_report(c, output_dir=None):\n"
+            "    with open(os.environ['STUB_TRACE'], 'a') as f:\n"
+            "        f.write('generate_report %s\\n' % output_dir)\n"
+            "    return 'report'\n")
         (base / "bin").mkdir()
         (base / "bin" / "powercfg.bat").write_text(_POWERCFG_STUB)
 
@@ -269,6 +274,20 @@ def test_a_failing_refresh_step_makes_the_launcher_fail(tree):
     assert r.returncode == 7, r.stdout + r.stderr
     log = max(tree.logs.glob("log_pipeline_*.log"), key=lambda f: f.stat().st_mtime).read_text(errors="replace")
     assert "RC1=7" in log and "RC2R=7" in log                  # both run_block steps report their own code in the footer
+
+
+# ─── --help / -h must never reach a tool (2026-10-08 incident: `--help` over the real launchers started real runs) ───
+
+@pytest.mark.parametrize("flag", ["--help", "-h"])
+@pytest.mark.parametrize("name", _LAUNCHERS)
+def test_help_prints_usage_and_exits_0_without_running_any_tool(tree, name, flag):
+    r = tree.run(name, flag)
+    assert r.returncode == 0, (name, flag, r.stdout + r.stderr)
+    assert tree.tools() == [], (name, flag, tree.tools())                    # no business logic, no orchestrated tool (generate_report included)
+    assert not list(tree.logs.glob("log_*")), (name, flag, [f.name for f in tree.logs.glob("log_*")])    # and no run log was opened
+    for sub in ("proyecto2/log", "proyecto3/log", "out", flag):              # nor any directory a real run would have created
+        assert not (tree.root / sub).exists(), (name, flag, sub)
+    assert r.stdout.strip(), (name, flag, "empty usage")
 
 
 # ─── environment guard: a blocked PostgreSQL driver is RC 106 everywhere, before any tool runs ──────

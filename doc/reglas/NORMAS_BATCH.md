@@ -47,6 +47,16 @@ Bloque `::` inmediatamente tras el esqueleto con: qué hace (una línea), **`Uso
 **códigos de salida**. Es contrato, no historial: los números de ticket y la historia van al `git log` y a
 `AGENTS.md`. Una cabecera de más de ~60 líneas es señal de que la lógica debería estar en Python.
 
+**`-h` / `--help` nunca ejecuta nada.** TODO lanzador (la plantilla incluida) reconoce `-h` y `--help` ANTES de cualquier trabajo: imprime su uso
+y sale con RC 0, sin abrir log ni invocar ninguna herramienta. Los lanzadores con tabla de opciones lo hacen en su análisis de argumentos
+(`:parse` → `:help`); los que reenvían sus argumentos a una ejecución real (`AUDIT_*`, `P1_refreshBenchmarks`, `P2_calculateIndicators`,
+`P3_*`, `P1_diagCost`, `P1_discoverAllFundsPlusCostDiag`) llevan un bucle `for %%A in (%*)` al principio y `:show_help` al final, que imprime
+**la propia cabecera** del fichero (`lib\batch_helpers.py usage`): una sola fuente, la que este apartado ya exige. Motivo (2026-10-08): una
+sonda `--help` sobre los lanzadores reales arrancó ejecuciones reales (uno de ellos, la ruta heredada por bloques con Excel maestro, reescribió
+37 filas de `fund_master`). `tests/test_batch_standards.py` exige ambos literales en el código de cada lanzador y
+`tests/test_batch_launchers_e2e.py` demuestra, para cada uno y para ambas banderas, que no corre ninguna herramienta ni crea logs ni directorios.
+**Y nunca se sondea un lanzador con argumentos sobre el repositorio real**: solo en el árbol simulado del e2e.
+
 ## §4. Rutas y entorno — nada fijo
 
 | Qué | Cómo |

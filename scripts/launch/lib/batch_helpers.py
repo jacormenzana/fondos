@@ -12,6 +12,7 @@ Sub-commands (always exit 0 unless the arguments are wrong):
     time FORMAT            current time with a .NET-style format (yyyy MM dd HH mm ss and separators), e.g. yyyyMMdd_HHmmss
     standby-minutes        AC suspension timeout of the active power plan, in minutes; prints nothing if unknown
     tail FILE [N]          the last N lines (default 15) of FILE; nothing if it does not exist
+    usage FILE             the usage of a launcher: its own header comment block (what -h/--help prints, before anything runs)
     driver-check STATE_DIR LAUNCHER
                            exit 0 when the PostgreSQL driver loads in THIS interpreter, 106 (RC_ENV_BLOCKED) when it
                            does not (shared/env_guard.py: message on stderr, local record, 10-minute ok marker)
@@ -81,6 +82,32 @@ def tail(path: str, n: int = 15) -> str:
 ROOT = Path(__file__).resolve().parents[3]
 
 
+def usage_text(path: str) -> str:
+    """The usage of a launcher = its own header comment: the run of `::` lines that follows the five skeleton lines, minus the `:: ====` rules
+    and the leading `:: `. ONE source (the file's header, which NORMAS_BATCH.md section 3 already requires to document every option), so
+    `-h/--help` of the launchers that have no hand-written usage cannot drift from it. Empty when the file has no header."""
+    try:
+        lines = Path(path).read_bytes().decode("utf-8", errors="replace").replace("\r\n", "\n").split("\n")
+    except OSError:
+        return ""
+    out, started = [], False
+    for ln in lines[5:]:
+        if ln.startswith("::"):
+            started = True
+            body = ln[2:]
+            if body.strip().strip("=") == "":
+                if out:
+                    out.append("")          # a rule inside the header separates blocks; collapsed below
+                continue
+            out.append(body[1:] if body.startswith(" ") else body)
+        elif started or ln.strip():
+            break
+    text = "\n".join(out).strip("\n")
+    while "\n\n\n" in text:
+        text = text.replace("\n\n\n", "\n\n")
+    return text
+
+
 def driver_check(state_dir: str, launcher: str) -> int:
     """The batch-layer environment guard. The logic lives in shared/env_guard.py (one implementation for the
     launchers and the Python tools); this only locates it relative to the library, like every other path."""
@@ -112,9 +139,13 @@ def main(argv: list | None = None) -> int:
         if out:
             print(out)
         return 0
+    if a[:1] == ["usage"] and len(a) == 2:
+        text = usage_text(a[1])
+        print(text or f"(no usage header in {Path(a[1]).name})")
+        return 0
     if a[:1] == ["driver-check"] and len(a) in (2, 3):
         return driver_check(a[1], a[2] if len(a) == 3 else "")
-    print("usage: batch_helpers.py time FORMAT | standby-minutes | tail FILE [N] | driver-check STATE_DIR [LAUNCHER]",
+    print("usage: batch_helpers.py time FORMAT | standby-minutes | tail FILE [N] | usage FILE | driver-check STATE_DIR [LAUNCHER]",
           file=sys.stderr)
     return 2
 

@@ -25,6 +25,13 @@ call "%COMMON%" :utf8_on
 :: Todos los argumentos se reenvian tal cual a p3_build_portfolio.py.
 :: ============================================================
 
+:: -h / --help: the usage (this header) and out, BEFORE anything runs (NORMAS_BATCH.md section 3). This launcher forwards its arguments to
+:: a real run, so an argument it did not recognise used to start one (2026-10-08: `--help` over the real launchers).
+for %%A in (%*) do (
+    if /i "%%~A"=="-h" goto :show_help
+    if /i "%%~A"=="--help" goto :show_help
+)
+
 set LOG_DIR=%ROOT%\proyecto3\log
 
 call "%COMMON%" :get_time STAMP yyyyMMdd_HHmmss
@@ -93,3 +100,12 @@ echo.
 :: the scope is still active.
 call "%COMMON%" :utf8_off
 endlocal & exit /b %RC%
+
+
+:: ------------------------------------------------------------
+:: :show_help -- usage = the header of this file (lib\batch_helpers.py usage); RC 0, nothing else runs.
+:: ------------------------------------------------------------
+:show_help
+"%PYTHON%" "%LIB%\batch_helpers.py" usage "%~f0"
+call "%COMMON%" :utf8_off
+endlocal & exit /b 0

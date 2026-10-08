@@ -121,6 +121,17 @@ def test_launchers_that_reject_arguments_also_answer_help():
     _per_file("help", chk, "Add `-h`/`--help` (usage, RC 0).")
 
 
+def test_every_launcher_answers_both_help_flags_before_doing_anything():
+    """2026-10-08: a probe `--help` over the real launchers started real runs in the ones that forward their arguments. EVERY launcher (the
+    template included) must test for both flags in code; tests/test_batch_launchers_e2e.py proves, per launcher, that nothing runs."""
+    def chk(p):
+        if IS_LIB(p):
+            return []
+        code = "\n".join(ln for _, ln in _code(p))
+        return [] if ('"-h"' in code and '"--help"' in code) else [(1, 'no `"-h"` and `"--help"` test in code')]
+    _per_file("help_flags", chk, "Add the -h/--help gate (the 2026-10-08 entry of NORMAS_BATCH.md section 3).")
+
+
 # ─── §4 nothing fixed ────────────────────────────────────────────────────────────────────────────
 
 def test_no_fixed_repo_or_interpreter_paths():

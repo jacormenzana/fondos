@@ -124,7 +124,7 @@ def test_a_failed_check_is_an_attention_item_but_a_slow_one_is_only_a_warning_ma
             "seconds": {"fetch": 4.0, "detect": 3.0, "compare": 0.1, "total": 7.1}}
     assert cr.attention_items(_report(hedging_drift=slow), None) == []                 # a corpus constant would repeat every cycle
     text = cr.render_text(_report(hedging_drift=slow), None, [])
-    assert "total=7.1s) [WARN lento: limite 5s]" in text and "fetch=4.0s" in text
+    assert "total=7.1s) [WARN lento: limite 20s]" in text and "fetch=4.0s" in text
 
 
 def test_render_always_prints_the_breakdown_and_says_when_it_was_skipped():
@@ -233,3 +233,40 @@ def _canned_for_main():
         def close(self):
             pass
     return Conn()          # no cursor(): the drift check fails soft
+
+
+# ---------------------------------------------------------------- the time budget (20 s): INFO within it, WARNING only above it
+def test_the_budget_is_20_seconds_above_the_measured_baseline_of_about_14():
+    assert cr.HEDGING_DRIFT_SLOW_S == 20.0
+    rows = [_row("A", None, name="F HEDGED")]
+    assert cr.scan_hedging_drift([rows], _derive_by_name, clock=_Clock(1.0))["slow"] is False       # 3 + 1 + 1 = 5 s... well within it
+    assert cr.scan_hedging_drift([rows] * 10, _derive_by_name, clock=_Clock(1.0))["slow"] is True    # 11 fetches + 10 + 10 = 31 s > 20 s
+
+
+def _scan_result(total, count=6, isins=("LU1", "LU2")):
+    return {"skipped": False, "scanned": 2552, "count": count, "isins": list(isins), "slow": total > cr.HEDGING_DRIFT_SLOW_S,
+            "seconds": {"fetch": 0.3, "detect": total - 0.3, "compare": 0.0, "total": total}}
+
+
+def test_a_run_inside_the_budget_logs_info_with_the_time_and_the_funds_and_no_warning(monkeypatch, caplog):
+    import logging
+    monkeypatch.setattr(cr, "scan_hedging_drift", lambda *a, **k: _scan_result(13.8))
+    with caplog.at_level(logging.INFO, logger="p1p2_cycle_report"):
+        cr.collect_hedging_drift(_Conn([]))
+    assert [r.levelname for r in caplog.records] == ["INFO"]
+    msg = caplog.records[0].message
+    assert "6 funds drift of 2552 scanned in 13.8s" in msg and "LU1, LU2" in msg
+
+
+def test_a_run_over_the_budget_is_the_only_warning(monkeypatch, caplog):
+    import logging
+    monkeypatch.setattr(cr, "scan_hedging_drift", lambda *a, **k: _scan_result(21.5))
+    with caplog.at_level(logging.INFO, logger="p1p2_cycle_report"):
+        cr.collect_hedging_drift(_Conn([]))
+    assert [r.levelname for r in caplog.records] == ["WARNING"] and "limit 20s" in caplog.records[0].message
+
+
+def test_the_report_line_lists_the_drifting_funds_without_a_warning_marker_inside_the_budget():
+    text = cr.render_text(_report(hedging_drift=_scan_result(13.8)), None, [])
+    assert "Deriva de Hedging_Policy: 6 fondos de 2552 revisados" in text and "WARN lento" not in text
+    assert "    LU1, LU2" in text

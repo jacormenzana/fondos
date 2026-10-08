@@ -90,3 +90,40 @@ def test_cli_tail_and_usage_errors(tmp_path, capsys):
     assert bh.main(["tail", str(tmp_path / "none.log")]) == 0 and capsys.readouterr().out == ""
     assert bh.main(["tail", str(f), "x"]) == 2
     assert bh.main(["frobnicate"]) == 2 and bh.main([]) == 2
+
+
+# ─── usage: what -h/--help prints = the launcher's own header ───────────────────────────────────────
+
+_LAUNCHER = "\r\n".join([
+    "@echo off", "setlocal", "L3", "L4", "L5", "",
+    ":: ==========", ":: X.bat -- does a thing", "::", ":: Uso:", "::   X.bat [--a]", ":: ==========", "",
+    "set A=1", ":: not part of the header", ""])
+
+
+def test_usage_is_the_header_comment_without_rules_or_the_comment_marker(tmp_path):
+    f = tmp_path / "X.bat"
+    f.write_bytes(_LAUNCHER.encode("ascii"))
+    text = bh.usage_text(str(f))
+    assert text.splitlines() == ["X.bat -- does a thing", "", "Uso:", "  X.bat [--a]"]
+    assert "set A" not in text and "not part of the header" not in text and "==" not in text
+
+
+def test_usage_of_a_file_without_a_header_or_a_missing_file_is_empty(tmp_path):
+    f = tmp_path / "Y.bat"
+    f.write_bytes("\r\n".join(["@echo off", "1", "2", "3", "4", "set A=1", ""]).encode("ascii"))
+    assert bh.usage_text(str(f)) == "" and bh.usage_text(str(tmp_path / "none.bat")) == ""
+
+
+def test_cli_usage_prints_and_never_fails(tmp_path, capsys):
+    f = tmp_path / "X.bat"
+    f.write_bytes(_LAUNCHER.encode("ascii"))
+    assert bh.main(["usage", str(f)]) == 0
+    assert "X.bat [--a]" in capsys.readouterr().out
+    assert bh.main(["usage", str(tmp_path / "none.bat")]) == 0
+    assert "no usage header" in capsys.readouterr().out
+
+
+def test_every_real_launcher_has_a_printable_usage():
+    launch = Path(__file__).resolve().parent.parent / "scripts" / "launch"
+    for f in sorted(launch.glob("*.bat")):
+        assert "uso" in bh.usage_text(str(f)).lower(), f.name

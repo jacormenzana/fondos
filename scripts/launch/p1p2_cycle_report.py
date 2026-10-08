@@ -50,7 +50,10 @@ NAV_STALE_DAYS = 60              # prices older than this are "stale" (pipelineP
 COVERAGE_DROP_PP = 2.0           # a P3-consumed metric losing more than this many points of coverage
 TOP_N = 12                       # rows shown per ranked list
 HEDGING_DRIFT_BATCH = 200        # rows per server-side cursor fetch (bounded memory: the texts are ~15 kB each)
-HEDGING_DRIFT_SLOW_S = 5.0       # over this the check logs a WARNING with its time breakdown (it still runs; --no-hedging-drift skips it)
+# Time budget of the drift check. Measured 2026-10-08 on the live corpus: 13.8 s for 2,552 funds, ~98% of it in the KIID regexes (re-measured
+# with a profiler: compiling them costs nothing), so ~14 s is the I/O + regex baseline, not a regression. Within the budget the run is a plain
+# INFO line; only an overrun (a real degradation: a slower disk, a regex that backtracks, a corpus that doubled) is a WARNING.
+HEDGING_DRIFT_SLOW_S = 20.0
 HEDGING_DRIFT_LIST = 20          # ISINs kept in the JSON
 
 RC_OK, RC_DB_UNREADABLE = 0, 1
@@ -286,10 +289,14 @@ def collect_hedging_drift(conn) -> dict:
         res = scan_hedging_drift(_hedging_batches(conn), lambda text, lang, name: derive_hedging_policy(text, lang, name)[0])
     except Exception as exc:
         return {"skipped": False, "error": f"{type(exc).__name__}: {str(exc)[:160]}"}
+    s = res["seconds"]
     if res["slow"]:
-        s = res["seconds"]
         log.warning("hedging_drift slow: total=%.1fs (limit %.0fs) fetch=%.1fs detect=%.1fs compare=%.1fs scanned=%d",
                     s["total"], HEDGING_DRIFT_SLOW_S, s["fetch"], s["detect"], s["compare"], res["scanned"])
+    else:                                  # within the budget: the facts, as a neutral diagnostic
+        log.info("hedging_drift: %d funds drift of %d scanned in %.1fs (fetch=%.1fs detect=%.1fs compare=%.1fs)%s",
+                 res["count"], res["scanned"], s["total"], s["fetch"], s["detect"], s["compare"],
+                 (": " + ", ".join(res["isins"])) if res["isins"] else "")
     return res
 
 
@@ -420,6 +427,8 @@ def render_text(report: dict, previous: dict | None, items: list) -> str:
             L += [f"Deriva de Hedging_Policy: {hd['count']} fondos de {hd['scanned']} revisados "
                   f"(fetch={s['fetch']:.1f}s detect={s['detect']:.1f}s compare={s['compare']:.1f}s total={s['total']:.1f}s)"
                   + (f" [WARN lento: limite {HEDGING_DRIFT_SLOW_S:.0f}s]" if hd.get("slow") else "")]
+            if hd.get("isins"):                  # neutral diagnostic: which funds (the first HEDGING_DRIFT_LIST)
+                L += ["    " + ", ".join(hd["isins"])]
     L += ["-" * 60]
     L += [f"[ATENCION] {i}" for i in items] if items else ["Sin puntos de atencion."]
     return "\n".join(L)
@@ -428,6 +437,8 @@ def render_text(report: dict, previous: dict | None, items: list) -> str:
 # ── CLI ───────────────────────────────────────────────────────────────────────────────────────────
 
 def main(argv: list | None = None) -> int:
+    if not logging.getLogger().handlers:             # make the INFO diagnostics and the overrun WARNING visible in the launcher's log
+        logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--stamp", default=datetime.now().strftime("%Y%m%d_%H%M%S"),
                     help="id of this report (names the JSON file); default: now")
