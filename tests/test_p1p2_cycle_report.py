@@ -197,6 +197,7 @@ def _canned():
         cr.Q_COVERAGE: [("sharpe", 980)],
         cr.Q_ALERTS: [("ALARM", 2)],
         cr.Q_OLS_ZERO_BACKFILL: [("P2-20261005_020156-771354",)],
+        cr.Q_HEDGING_CANDIDATES: [],        # streamed through a server-side cursor: see tests/test_p1p2_hedging_drift.py
     }
 
 

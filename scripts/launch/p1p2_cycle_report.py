@@ -17,7 +17,12 @@ What it reports (active universe = fund_master.in_current_universe = 1):
   * NAV: funds whose newest monthly NAV is older than NAV_STALE_DAYS (frozen funds counted apart),
     nav_sources status mix;
   * P2: real/nominal pairing gaps, coverage of every metric P3 reads (since_inception) and its change
-    vs the previous report, rolling alerts by level.
+    vs the previous report, rolling alerts by level;
+  * hedging drift (FND-0244): active funds whose stored Hedging_Policy is not Hedged although the CURRENT parser
+    derives HEDGED from their cached KIID text and name. It is caused by CODE changes, not by new KIIDs, so it looks
+    at the whole active universe, with the same derivation a P1 pass persists (kiid_parser.derive_hedging_policy);
+    expected to be 0 after a full P1 cycle. Streamed in server-side batches, timed (a breakdown is always printed; over
+    HEDGING_DRIFT_SLOW_S a WARNING with it), skippable with --no-hedging-drift.
 
 Output: text on stdout and P1_P2_cycle_report_<stamp>.json in --out-dir. The previous report is the
 newest other P1_P2_cycle_report_*.json there. Read-only; exit 0 unless the database cannot be read.
@@ -30,17 +35,23 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
+import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+log = logging.getLogger("p1p2_cycle_report")
 DEFAULT_OUT_DIR = ROOT / "proyecto1" / "log"
 REPORT_GLOB = "P1_P2_cycle_report_*.json"
 
 NAV_STALE_DAYS = 60              # prices older than this are "stale" (pipelineP1P2Audit, NAV-staleness gate)
 COVERAGE_DROP_PP = 2.0           # a P3-consumed metric losing more than this many points of coverage
 TOP_N = 12                       # rows shown per ranked list
+HEDGING_DRIFT_BATCH = 200        # rows per server-side cursor fetch (bounded memory: the texts are ~15 kB each)
+HEDGING_DRIFT_SLOW_S = 5.0       # over this the check logs a WARNING with its time breakdown (it still runs; --no-hedging-drift skips it)
+HEDGING_DRIFT_LIST = 20          # ISINs kept in the JSON
 
 RC_OK, RC_DB_UNREADABLE = 0, 1
 _LEVEL_RANK = {"WARN": 0, "MISSING": 1, "INFERRED": 2}      # DQ levels, most actionable first; INFO last
@@ -179,6 +190,18 @@ Q_ALERTS = """
     ORDER BY a.level
 """
 
+# FND-0244 hedging drift. The fixes only ever move a fund TOWARD Hedged, so a fund already stored as Hedged cannot drift and is not read
+# (the texts are the heavy part: ~40 MB over the ~2,550 remaining active funds). Streamed through a server-side cursor.
+Q_HEDGING_CANDIDATES = """
+    SELECT fm.isin, fm.fund_name, fm.hedging_policy, k.language, k.raw_kiid_text
+    FROM fund_master fm
+    JOIN fund_kiid_metadata k ON k.isin = fm.isin AND k.kiid_class = 1
+    WHERE fm.in_current_universe = 1
+      AND fm.hedging_policy IS DISTINCT FROM 'Hedged'
+      AND k.raw_kiid_text IS NOT NULL
+    ORDER BY fm.isin
+"""
+
 
 # ── collection ────────────────────────────────────────────────────────────────────────────────────
 # Every statement is passed to execute() as its Q_* constant, never through a wrapper: the SQL sweep
@@ -212,6 +235,62 @@ def collect(conn, since: date, today: date) -> dict:
         "alerts": {r[0]: int(r[1]) for r in conn.execute(Q_ALERTS).fetchall()},
         "ols_zero_backfills": [r[0] for r in conn.execute(Q_OLS_ZERO_BACKFILL, (since,)).fetchall()],
     }
+
+
+# ── hedging drift (FND-0244) ──────────────────────────────────────────────────────────────────────
+
+def scan_hedging_drift(batches, derive, clock=time.perf_counter, slow_s: float = HEDGING_DRIFT_SLOW_S) -> dict:
+    """Pure over its inputs. `batches` yields lists of rows (isin, fund_name, stored policy, language, kiid text); `derive(text, language,
+    name)` returns the policy a P1 pass would persist. Counts the funds whose stored policy is not Hedged while `derive` says HEDGED, and
+    times the three phases separately: waiting for rows (fetch), the detectors (detect) and the comparison (compare)."""
+    secs = {"fetch": 0.0, "detect": 0.0, "compare": 0.0}
+    drift, scanned = [], 0
+    it = iter(batches)
+    while True:
+        t0 = clock()
+        batch = next(it, None)
+        secs["fetch"] += clock() - t0
+        if batch is None:
+            break
+        t0 = clock()
+        derived = [derive(text, lang, name) for _isin, name, _stored, lang, text in batch]
+        secs["detect"] += clock() - t0
+        t0 = clock()
+        for (isin, _name, stored, _lang, _text), policy in zip(batch, derived):
+            if policy == "HEDGED" and (stored or "").upper() != "HEDGED":
+                drift.append(isin)
+        secs["compare"] += clock() - t0
+        scanned += len(batch)
+    total = sum(secs.values())
+    return {"skipped": False, "scanned": scanned, "count": len(drift), "isins": drift[:HEDGING_DRIFT_LIST],
+            "seconds": {**{k: round(v, 3) for k, v in secs.items()}, "total": round(total, 3)}, "slow": total > slow_s}
+
+
+def _hedging_batches(conn, size: int = HEDGING_DRIFT_BATCH):
+    """Server-side cursor: only `size` texts are ever in memory, whatever the size of the universe."""
+    with conn.cursor(name="hedging_drift") as cur:
+        cur.execute(Q_HEDGING_CANDIDATES)
+        while True:
+            rows = cur.fetchmany(size)
+            if not rows:
+                return
+            yield rows
+
+
+def collect_hedging_drift(conn) -> dict:
+    """Fail-soft: the diagnostics never change the cycle, so any problem becomes an `error` entry in the report, not an exception."""
+    try:
+        sys.path.insert(0, str(ROOT))
+        sys.path.insert(0, str(ROOT / "proyecto1"))          # P1 modules import each other as `core.*`
+        from core.kiid_parser import derive_hedging_policy
+        res = scan_hedging_drift(_hedging_batches(conn), lambda text, lang, name: derive_hedging_policy(text, lang, name)[0])
+    except Exception as exc:
+        return {"skipped": False, "error": f"{type(exc).__name__}: {str(exc)[:160]}"}
+    if res["slow"]:
+        s = res["seconds"]
+        log.warning("hedging_drift slow: total=%.1fs (limit %.0fs) fetch=%.1fs detect=%.1fs compare=%.1fs scanned=%d",
+                    s["total"], HEDGING_DRIFT_SLOW_S, s["fetch"], s["detect"], s["compare"], res["scanned"])
+    return res
 
 
 # ── analysis (pure: no database, R-7) ─────────────────────────────────────────────────────────────
@@ -255,6 +334,15 @@ def attention_items(report: dict, previous: dict | None) -> list:
         items.append(f"{len(zero_ols)} ejecucion(es) P2 con backfill por CALC_VERSION terminaron con ols_funds=0 "
                      f"({', '.join(zero_ols)}): el OLS macro no se recalculo y las betas macro siguen en la version "
                      "anterior; la puerta de betas (beta_shift_audit) fallara")
+    hd = report.get("hedging_drift") or {}                  # absent in reports written before this check
+    if hd.get("count"):
+        items.append(f"{hd['count']} fondos activos con Hedging_Policy distinta de Hedged que el parser actual deriva como HEDGED "
+                     f"(p. ej. {', '.join(hd.get('isins', [])[:5])}): deriva por cambio de codigo, no por KIID nuevo; "
+                     "un ciclo P1 completo los corrige (COALESCE). Esperado tras el ciclo: 0")
+    if hd.get("error"):
+        items.append(f"no se pudo calcular la deriva de Hedging_Policy: {hd['error']}")
+    # A slow run is NOT an attention item: it is a constant of the corpus (measured 2026-10-08: ~14 s, all in the KIID regexes), so an item would
+    # repeat every cycle. It is a WARNING in the log and a marker on the report line; the check stays active (--no-hedging-drift skips it).
     if previous:
         cur_pct, prev_pct = coverage_pct(report), coverage_pct(previous)
         for m in sorted(cur_pct):
@@ -321,6 +409,17 @@ def render_text(report: dict, previous: dict | None, items: list) -> str:
         d = f"  ({pct[m] - ppct[m]:+.1f} pp)" if m in ppct and abs(pct[m] - ppct[m]) >= 0.05 else ""
         L += [f"    {m:<28} {report['coverage'][m]:>6}  {pct[m]:6.1f}%{d}"]
     L += ["Alertas rolling (activos): " + (", ".join(f"{k}={v}" for k, v in report["alerts"].items()) or "ninguna")]
+    hd = report.get("hedging_drift")
+    if hd:
+        if hd.get("skipped"):
+            L += ["Deriva de Hedging_Policy: omitida (--no-hedging-drift)"]
+        elif hd.get("error"):
+            L += [f"Deriva de Hedging_Policy: no disponible ({hd['error']})"]
+        else:
+            s = hd["seconds"]
+            L += [f"Deriva de Hedging_Policy: {hd['count']} fondos de {hd['scanned']} revisados "
+                  f"(fetch={s['fetch']:.1f}s detect={s['detect']:.1f}s compare={s['compare']:.1f}s total={s['total']:.1f}s)"
+                  + (f" [WARN lento: limite {HEDGING_DRIFT_SLOW_S:.0f}s]" if hd.get("slow") else "")]
     L += ["-" * 60]
     L += [f"[ATENCION] {i}" for i in items] if items else ["Sin puntos de atencion."]
     return "\n".join(L)
@@ -336,6 +435,8 @@ def main(argv: list | None = None) -> int:
                     help="YYYY-MM-DD, start of the cycle (DQ issues and low-confidence rows are counted from "
                          "it); default: today")
     ap.add_argument("--out-dir", default=str(DEFAULT_OUT_DIR))
+    ap.add_argument("--no-hedging-drift", dest="hedging_drift", action="store_false",
+                    help="skip the Hedging_Policy drift check (it streams ~40 MB of cached KIID text; on by default)")
     args = ap.parse_args(argv)
 
     today = date.today()
@@ -353,6 +454,7 @@ def main(argv: list | None = None) -> int:
         conn = get_connection()
         try:
             report = collect(conn, since, today)
+            report["hedging_drift"] = collect_hedging_drift(conn) if args.hedging_drift else {"skipped": True}
         finally:
             conn.close()
     except Exception as exc:

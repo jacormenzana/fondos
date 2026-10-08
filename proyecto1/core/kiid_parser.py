@@ -943,26 +943,12 @@ def parse_kiid_generic(
                     "CURRENCY_FROM_NAME"
                 )
 
-        # Hedging_Policy desde nombre: H, HGD, HEDG, HEDGED, (H), HGDB
+        # Hedging_Policy desde nombre: H, HGD, HEDG, HEDGED, (H), HGDB, or a class code ending in H (see hedging_from_name)
         if not result.get("Hedging_Policy"):
-            _HEDGE_IN_NAME = re.compile(
-                r'\b(?:HGD[B]?|HEDG(?:ED)?)\b|\(H\)|\bH\s+(?:ACC|INC|DIST|EUR|USD|GBP)',
-                re.IGNORECASE
-            )
-            if _HEDGE_IN_NAME.search(name_up):
-                result["Hedging_Policy"] = "HEDGED"
-                result["Inference_Trace"] = _append_trace(
-                    result["Inference_Trace"],
-                    "HEDGING_FROM_NAME"
-                )
-            # FND-0244: this is the PERSISTED path (the characterizer's Currency_Hedged is no longer stored since v20). A share-class code
-            # ending in H (AH, BH, ZH, PH, BDH, BGDH, ZDH, PDH) survives the ~30-character name cut when the explicit marker does not.
-            elif HEDGED_CLASS_CODE_RE.search(name_up.lower()):
-                result["Hedging_Policy"] = "HEDGED"
-                result["Inference_Trace"] = _append_trace(
-                    result["Inference_Trace"],
-                    "HEDGING_FROM_NAME_CLASSCODE"
-                )
+            _name_hedge, _name_tag = hedging_from_name(fund_name)
+            if _name_hedge:
+                result["Hedging_Policy"] = _name_hedge
+                result["Inference_Trace"] = _append_trace(result["Inference_Trace"], _name_tag)
 
     # -------------------------------------------------
     # PASO 10 — Ongoing_Charge (gastos corrientes)
@@ -2247,6 +2233,36 @@ def _detect_hedging_policy(text: str, language: Optional[str]) -> Optional[str]:
                 return "HEDGED"
 
     return None
+
+
+_HEDGE_IN_NAME = re.compile(
+    r'\b(?:HGD[B]?|HEDG(?:ED)?)\b|\(H\)|\bH\s+(?:ACC|INC|DIST|EUR|USD|GBP)',
+    re.IGNORECASE
+)
+
+
+def hedging_from_name(fund_name: Optional[str]) -> tuple:
+    """(policy, trace tag) from the fund NAME alone, or (None, None). The PERSISTED name fallback of Hedging_Policy (the characterizer's
+    Currency_Hedged is no longer stored since v20): an explicit marker (H, HGD, HEDG, HEDGED, (H), HGDB) or, FND-0244, a share-class code
+    ending in H (AH, BH, ZH, PH, BDH, BGDH, ZDH, PDH) that survives the ~30-character name cut when the marker does not."""
+    if not fund_name:
+        return None, None
+    name_up = fund_name.upper()
+    if _HEDGE_IN_NAME.search(name_up):
+        return "HEDGED", "HEDGING_FROM_NAME"
+    if HEDGED_CLASS_CODE_RE.search(name_up.lower()):
+        return "HEDGED", "HEDGING_FROM_NAME_CLASSCODE"
+    return None, None
+
+
+def derive_hedging_policy(kiid_text: Optional[str], language: Optional[str], fund_name: Optional[str]) -> tuple:
+    """The Hedging_Policy that parse_kiid_generic would PERSIST for these inputs: the KIID text decides first (PASO 7), the name only when
+    the text does not (PASO 9b). One definition for the parser and for the drift check of the cycle report (p1p2_cycle_report.py),
+    so the report can never disagree with what a P1 pass would write. Returns (policy, trace tag) or (None, None)."""
+    hedge = _detect_hedging_policy(kiid_text or "", language)
+    if hedge:
+        return hedge, f"HEDGING_TEXT[{language}]"
+    return hedging_from_name(fund_name)
 
 
 # =================================================
