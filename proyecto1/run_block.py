@@ -8,20 +8,19 @@ Uso:
     activar entorno des
     lanzar run_block desde entorno des
 
-    # Universo desde DB (por defecto tras la implementacion de harvest):
-    python run_block.py --block mixtos --master-db
+    # Universo desde el catalogo del ultimo harvest (unico modo):
     python run_block.py --nature-first --master-db
+    python run_block.py --nature-first --master-db --list-isin LU0232465467,LU1873127366
+    python run_block.py --family-nature-refresh --master-db
 
-    # Universo desde Excel maestro (modo legacy / debug):
-    python run_block.py --block mixtos --master "c:\\data\\fondos\\in\\GestoresDeFondosv1.xlsx" --sample 5
-    python run_block.py --block mixtos --master "c:\\data\\fondos\\in\\GestoresDeFondosv1.xlsx" --list-isin LU0232465467,LU1873127366
+    # RETIRADOS (FND-0247): --block <nombre> y --master <Excel>. El camino por bloques con el Excel maestro reescribia
+    # etiquetas en la BD en vivo (heuristic_block, management_company, naturaleza) y reactivaba fondos retirados.
+    # Se rechazan antes de abrir ninguna conexion; no hay modo simulado ni anulacion.
 """
 
 import argparse
-import importlib
-from pathlib import Path
 
-from core.pipeline import run_block, load_master_excel, load_master_db
+from core.pipeline import run_block, load_master_db
 from core.classify_utils import resolve_nature_vote  # noqa: F401 — validates OPT-B import
 from core.fund_writer import get_connection, create_schema
 import sys
@@ -31,31 +30,32 @@ from shared.schema_checks import assert_schema_alignment
 
 from core._db_utils import assert_eff_fields_alignment
 
-BLOCKS_PACKAGE = "blocks"
+RETIRED_MESSAGE = (
+    "--block and --master <Excel> are RETIRED (FND-0247): the by-block path classified with the legacy paradigm and took its universe and labels "
+    "from the Excel master, which rewrote live fund_master rows and re-activated retired funds. Use --nature-first --master-db "
+    "[--list-isin A,B] (or --family-nature-refresh --master-db). Nothing was run and no connection was opened.")
 
 
 def main():
 
     p = argparse.ArgumentParser()
     p.add_argument("--block", required=False, default=None,
-                   help="Nombre del bloque (module name en blocks/). "
-                        "Omit when using --nature-first.")
+                   help="RETIRED (FND-0247): refused before any connection is opened. Use --nature-first --master-db.")
     p.add_argument("--nature-first", action="store_true", default=False,
-                   help="OPT-B: single-pass nature-vote dispatch over ALL ISINs. "
-                        "Mutually exclusive with --block.")
+                   help="OPT-B: single-pass nature-vote dispatch over ALL ISINs (the only classification mode).")
     p.add_argument("--family-nature-refresh", action="store_true", default=False,
                    help=(
                        "Recalcula los atributos DERIVADOS de la naturaleza (perfil, estilo, calidad crediticia, duracion...) "
                        "de los fondos ACTIVOS cuya Fund_Nature reescribio fund_family_builder (FAMILY_NATURE_CORRECTION sin "
                        "FAMILY_REFRESH_DONE posterior), conservando la naturaleza de la familia en vez de dejar que la "
                        "evidencia propia del fondo la revierta. Implica --nature-first; el conjunto se SELECCIONA, no se "
-                       "pasa (incompatible con --block, --list-isin y --sample). Solo texto en cache, sin descargas; sin "
+                       "pasa (incompatible con --list-isin y --sample). Solo texto en cache, sin descargas; sin "
                        "pendientes no hace nada."
                    ))
     p.add_argument("--master", default=None,
-                   help="Excel maestro (GestoresDeFondosv1.xlsx) — modo legacy")
+                   help="RETIRED (FND-0247): the Excel master is refused before any connection is opened. Use --master-db.")
     p.add_argument("--master-db", action="store_true", default=False,
-                   help="Cargar universo de fondos desde db_document_catalogue (harvest DB)")
+                   help="Universo de fondos desde db_document_catalogue (ultimo harvest). Obligatorio.")
     p.add_argument("--sample", type=int, default=None,
                    help="sample size (opcional)")
     p.add_argument("--stop-on-error", action="store_true")
@@ -85,34 +85,28 @@ def main():
                    ))
     args = p.parse_args()
 
+    # RETIRED (FND-0247). The by-block path classified with the legacy paradigm and took its universe and labels from the Excel master; one accidental
+    # run (2026-10-08) rewrote 37 live fund_master rows and re-activated ~277 retired funds through its universe reconcile. It is refused BEFORE any
+    # connection is opened: there is no dry-run to fall back to and no override, because the only safe version of a write path that must never
+    # run is one that cannot start.
+    if args.block or args.master:
+        p.error(RETIRED_MESSAGE)
     if args.family_nature_refresh:
-        if args.block or args.list_isin or args.sample:
-            p.error("--family-nature-refresh selects its own funds: it excludes --block, --list-isin and --sample.")
+        if args.list_isin or args.sample:
+            p.error("--family-nature-refresh selects its own funds: it excludes --list-isin and --sample.")
         args.nature_first = True
-    if not args.nature_first and not args.block:
-        p.error("--block is required unless --nature-first is specified.")
-    if args.nature_first and args.block:
-        p.error("--block and --nature-first are mutually exclusive.")
-    if not args.master and not args.master_db:
-        p.error("Se requiere --master-db (recomendado) o --master <ruta_excel>.")
-    if args.master and args.master_db:
-        p.error("--master y --master-db son mutuamente excluyentes.")
+    if not args.nature_first:
+        p.error("--nature-first (or --family-nature-refresh) is required.")
+    if not args.master_db:
+        p.error("--master-db is required: the universe comes from the latest harvest (db_document_catalogue), never from an Excel.")
 
     list_isin = None
     if args.list_isin:
         list_isin = [x.strip() for x in args.list_isin.split(",") if x.strip()]
 
-    master_path = Path(args.master) if args.master else None
-
-
-    # Cargar bloque (no depende de conn ni de maestro)
-    if args.nature_first:
-        block_mod = None
-        print("[DEBUG] Modo: NATURE_FIRST (OPT-B) — universo completo del maestro")
-    else:
-        print(f"[DEBUG] Carga bloque: {BLOCKS_PACKAGE}.{args.block}")
-        block_mod = importlib.import_module(f"{BLOCKS_PACKAGE}.{args.block}")
-        print(f"[DEBUG] block_mod: {block_mod}")
+    master_path = None
+    block_mod = None
+    print("[DEBUG] Modo: NATURE_FIRST (OPT-B) — universo completo del maestro")
 
     # Conexión y schema (idempotente) — abierta antes del maestro para --master-db
     conn = get_connection()
@@ -127,11 +121,8 @@ def main():
     assert_schema_alignment(conn)
     assert_eff_fields_alignment(conn)
 
-    # Cargar maestro (DB o Excel)
-    if args.master_db:
-        df_master = load_master_db(conn)
-    else:
-        df_master = load_master_excel(master_path)
+    # Cargar maestro: siempre el catalogo del ultimo harvest
+    df_master = load_master_db(conn)
     print(f"[DEBUG] Maestro cargado: {df_master.shape}")
 
     # Ejecutar bloque / pasada nature-first
@@ -149,7 +140,7 @@ def main():
         family_refresh=args.family_nature_refresh,
     )
 
-    _mode = "FAMILY_REFRESH" if args.family_nature_refresh else ("NATURE_FIRST" if args.nature_first else args.block)
+    _mode = "FAMILY_REFRESH" if args.family_nature_refresh else "NATURE_FIRST"
     print(f"Bloque/modo {_mode} procesado. Registros publicados: {len(published)}")
 
 

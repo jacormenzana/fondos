@@ -92,12 +92,10 @@ set RC0=!ERRORLEVEL!
 :: P2 (P2_calculateIndicators.bat) before this pass. Funds without NAV history
 :: (srri_nav NULL) are classified ex-ante only (name/KIID/benchmark) -- no error.
 ::
-:: Per-block debug (kept for single-block testing):
+:: Debug of a few funds (nature-first is the only mode; --block and --master <Excel> are retired and refused):
 ::   pushd %ROOT%\proyecto1
-::   python -X utf8 run_block.py --block monetarios --master-db
+::   python -X utf8 run_block.py --nature-first --master-db --list-isin LU0232465467,LU1873127366
 ::   popd
-:: Para usar el Excel maestro legacy en debug puntual:
-::   python -X utf8 run_block.py --block monetarios --master "c:\data\fondos\in\GestoresDeFondosv1.xlsx"
 echo [%time%] Clasificacion: NATURE_FIRST (OPT-B3, pasada unica)
 echo. >> "%LOG%"
 echo --- NATURE_FIRST (OPT-B3) --------------------------------- >> "%LOG%"

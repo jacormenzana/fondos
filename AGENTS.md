@@ -649,15 +649,11 @@ P1_discoverAllFunds.bat
 ```
 Log: `proyecto1/log/log_pipeline_YYYYMMDD_HHMMSS.log`. Duration: ~8–12 min.
 
-**P1 single block:**
+**P1 specific ISINs** (the only classification mode is nature-first over the harvest catalogue; `--block` and `--master <Excel>` are RETIRED, FND-0247:
+refused before any connection is opened, and `pipeline.run_block(nature_first=False)` raises `NotImplementedError`):
 ```batch
 cd C:\desarrollo\fondos\proyecto1
-python run_block.py --block mixtos --master "c:\data\fondos\in\GestoresDeFondosv1.xlsx"
-```
-
-**P1 specific ISINs:**
-```batch
-python run_block.py --block mixtos --master "..." --list-isin LU0232465467,LU1873127366
+python run_block.py --nature-first --master-db --list-isin LU0232465467,LU1873127366
 ```
 
 **P1 family-nature refresh** (recomputes the attributes derived from the nature of funds `fund_family_builder` corrected; the set is selected, never passed;

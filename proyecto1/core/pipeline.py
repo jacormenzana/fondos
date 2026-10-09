@@ -680,6 +680,13 @@ def run_block(
     recompute_costs: bool = False,
     family_refresh: bool = False,
 ) -> List[Dict[str, Any]]:
+    # RETIRED (FND-0247): the by-block classification (nature_first=False) is refused for every caller, not only for the CLI. It took the universe and the
+    # labels from the Excel master and rewrote live rows (2026-10-08). The branches below that serve it are kept only until they are deleted in one pass.
+    if not nature_first:
+        raise NotImplementedError(
+            "run_block(nature_first=False) is RETIRED (FND-0247): classification is nature-first over the harvest catalogue "
+            "(run_block.py --nature-first --master-db). No database statement was executed.")
+
     # family_refresh (FND-0244 follow-up): recompute ONLY the active funds whose Fund_Nature was rewritten by the family
     # builder (shared.family_refresh.pending_family_refresh), keeping the persisted family nature instead of letting the
     # fund's own evidence vote it back. Implies nature_first; each fund's FAMILY_REFRESH_DONE row commits with its upsert.
