@@ -51,3 +51,17 @@ def test_the_code_reference_probe_ignores_docstrings_and_catches_real_reads(tmp_
     (tmp_path / "scorer.py").write_text('beta = row["beta_rate_eu"]\n', encoding="utf-8")
     ok, detail = m.probe_absent_re_in("scorer.py", pattern)
     assert ok is False and "STILL references" in detail
+
+
+def test_ticket_closed_probe_reads_through_the_backlog_client_and_never_passes_on_a_failed_lookup():
+    assert m.probe_ticket_closed("FND-1", lookup=lambda t: "CLOSED") == (True, "FND-1 is CLOSED")
+    ok, detail = m.probe_ticket_closed("FND-1", lookup=lambda t: "IN_PROGRESS")
+    assert ok is False and "IN_PROGRESS" in detail
+    ok, detail = m.probe_ticket_closed("FND-1", lookup=lambda t: "LOOKUP_FAILED")
+    assert ok is None and "check by hand" in detail                      # unverifiable is MANUAL, never READY
+    assert m.probe_ticket_closed("FND-1", lookup=lambda t: "NOT_FOUND")[0] is False
+
+
+def test_the_module_holds_no_sql_on_the_backlog_database():
+    src = (_ROOT / "scripts" / "audit" / "rfd_matrix_probe.py").read_text(encoding="utf-8")
+    assert "backlog.backlog" not in src and "psycopg" not in src

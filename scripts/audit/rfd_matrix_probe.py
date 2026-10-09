@@ -33,8 +33,8 @@ ROOT = Path(__file__).resolve().parents[2]
 
 # ticket -> list of probes: (kind, *args). The text of each ticket's closing condition is in its backlog log; this table is its executable form.
 SPEC = {
-    "FND-0073": [("task_ok", "Fondos PG basebackup+prune"), ("task_ok", "Fondos PG offbox copy"),
-                 ("manual", "DBeaver -> :5436 as fondos_ro and Metabase -> superset_ro repointed; delete the DBeaver connection to the retired sqlite path")],
+    # the DBeaver / Metabase repoint (manual) was split out to FND-0248: this ticket is now fully machine-verifiable
+    "FND-0073": [("task_ok", "Fondos PG basebackup+prune"), ("task_ok", "Fondos PG offbox copy")],
     "FND-0181": [("pushed", "af3a3db"), ("metric_absent", "beta_m2_global")],
     "FND-0196": [("pushed", "8507fad"), ("flag", "MACRO_VIF_ITERATIVE_ENABLED", True), ("calc_share", 0.95), ("ols_ran",)],
     "FND-0200": [("pushed", "8507fad"), ("flag", "PERSISTENCE_FIRST_LAST_NAV_ENABLED", True), ("calc_share", 0.95)],
@@ -132,9 +132,15 @@ def probe_db(conn, kind: str, *args) -> tuple:
     raise ValueError(kind)
 
 
-def probe_ticket_closed(backlog_conn, tid: str) -> tuple:
-    row = backlog_conn.execute("SELECT status FROM backlog.backlog WHERE action_point_id = %s", (tid,)).fetchone()
-    st = row[0] if row else "NOT_FOUND"
+def probe_ticket_closed(tid: str, lookup=None) -> tuple:
+    """Status of another ticket, read through shared.backlog_client (the single owner of backlog reads: the backlog is a SEPARATE database, so no
+    SQL on it belongs in this module). 'LOOKUP_FAILED' (no DSN, outage) is unverifiable, never a pass: it returns MANUAL."""
+    if lookup is None:
+        sys.path.insert(0, str(ROOT))
+        from shared.backlog_client import get_action_point_status as lookup
+    st = lookup(tid)
+    if st == "LOOKUP_FAILED":
+        return None, f"{tid}: the backlog could not be read (no FONDOS_BACKLOG_PG_DSN or outage): check by hand"
     return st == "CLOSED", f"{tid} is {st}"
 
 
@@ -142,12 +148,9 @@ def evaluate(spec: dict = SPEC) -> list:
     sys.path.insert(0, str(ROOT))
     from shared.env_guard import require_db_driver
     require_db_driver("rfd_matrix_probe.py")
-    import os
     import shared.config  # noqa: F401  (loads .env)
-    import psycopg
     from shared.db import get_connection
     conn = get_connection()
-    bconn = psycopg.connect(os.environ["FONDOS_BACKLOG_PG_DSN"]) if os.environ.get("FONDOS_BACKLOG_PG_DSN") else None
     rows = []
     for tid, probes in spec.items():
         results = []
@@ -165,7 +168,7 @@ def evaluate(spec: dict = SPEC) -> list:
                 elif kind == "task_ok":
                     results.append(probe_task_ok(*args))
                 elif kind == "ticket_closed":
-                    results.append(probe_ticket_closed(bconn, *args) if bconn else (None, "no FONDOS_BACKLOG_PG_DSN: check by hand"))
+                    results.append(probe_ticket_closed(*args))
                 elif kind == "manual":
                     results.append((None, args[0]))
                 else:
