@@ -604,6 +604,15 @@ SORTINO_MIN_DOWNSIDE_SHARE: float = 0.15
 FX_CONTRIBUTION_EUR_VIEW_ENABLED: bool = False
 FX_CONTRIBUTION_PP_LIMIT: float = 0.02
 FX_RATIO_MIN_TOTAL_ANN: float = 0.01
+# FND-0243: the platform's investor is EUR-domiciled, so every share class is scored on a EUR NAV. ON = readers convert a non-EUR class's
+# NAV to EUR with the ECB reference rate (units of currency per EUR) of the SAME date convention as FND-0241: the end-of-period monthly rate
+# for monthly NAV, the same business day's rate for daily NAV. MUST equal FX_CONTRIBUTION_EUR_VIEW_ENABLED (owner directive 2026-10-07:
+# neither may be enabled alone; P2/P3 refuse to start otherwise), because with a EUR NAV the class-conversion branch of the FX view would
+# convert a second time. Rates: series_macro, loaded by macro_discovery --source bce for every currency in EUR_FX_CURRENCIES.
+EUR_NAV_CONVERSION_ENABLED: bool = False
+EUR_FX_CURRENCIES: tuple = ("USD", "GBP", "JPY", "CHF")
+EUR_FX_MONTHLY_INDICATOR: str = "fx_eom_eur"       # EXR.M.<CCY>.EUR.SP00.E, stamped on the calendar month-end
+EUR_FX_DAILY_INDICATOR: str = "fx_d_eur"           # EXR.D.<CCY>.EUR.SP00.A
 # FND-0236: per-metric-family calculation versions. OFF = today's behaviour (one global CALC_VERSION and one input hash per
 # fund). ON = each of the nine families has its own state row (control.fund_metric_family_state), so a change that touches one
 # family (bump FAMILY_CALC_OVERRIDES[family] in utils/family_versions.py) recomputes only that family. Switch-on order:

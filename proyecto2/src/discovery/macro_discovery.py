@@ -198,6 +198,11 @@ def _write_macro(
     return len(rows)
 
 
+def _month_end(d: str) -> str:
+    """'YYYY-MM-DD' -> the calendar last day of that month (end-of-period series, FND-0243)."""
+    return (pd.Timestamp(d[:7] + "-01") + pd.offsets.MonthEnd(0)).strftime("%Y-%m-%d")
+
+
 def _fmt_date(d: str | date) -> str:
     """Normaliza cualquier fecha a 'YYYY-MM-DD'."""
     if isinstance(d, date):
@@ -356,6 +361,18 @@ _BCE_SERIES = {
     },
 }
 
+# FND-0243: ECB reference rates, units of <CCY> per 1 EUR (EUR NAV = class NAV / rate), for every class currency the EUR conversion needs.
+# Monthly END-OF-PERIOD (SP00.E, not the monthly average the FRED fx_* series carry) is stamped on the calendar month-end: it is the rate
+# of the last business day of that month, the date convention of FND-0241. The daily series converts fund_nav_daily.
+from shared.config import EUR_FX_CURRENCIES, EUR_FX_DAILY_INDICATOR, EUR_FX_MONTHLY_INDICATOR  # noqa: E402
+for _ccy in EUR_FX_CURRENCIES:
+    _BCE_SERIES[f"fx_eom_eur_{_ccy}"] = {
+        "series_key": f"EXR/M.{_ccy}.EUR.SP00.E", "indicator": EUR_FX_MONTHLY_INDICATOR, "geography": _ccy,
+        "unit": "ccy_per_eur", "write_inflation": False, "stamp": "month_end"}
+    _BCE_SERIES[f"fx_d_eur_{_ccy}"] = {
+        "series_key": f"EXR/D.{_ccy}.EUR.SP00.A", "indicator": EUR_FX_DAILY_INDICATOR, "geography": _ccy,
+        "unit": "ccy_per_eur", "write_inflation": False}
+
 
 def load_bce_series(desde: str = "2000-01", verbose: bool = False) -> tuple[list[dict], list[dict]]:
     """
@@ -446,6 +463,8 @@ def load_bce_series(desde: str = "2000-01", verbose: bool = False) -> tuple[list
                 fecha = _fmt_date(period)
                 if fecha < desde + "-01":
                     continue
+                if cfg.get("stamp") == "month_end":          # an end-of-period monthly value belongs to the month's last day
+                    fecha = _month_end(fecha)
 
                 macro_row = {
                     "date":      fecha,
