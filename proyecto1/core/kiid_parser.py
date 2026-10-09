@@ -2380,8 +2380,13 @@ def _detect_fund_currency(text: str, language: Optional[str]) -> Optional[str]:
     #   "Costes totales EUR 30"
     #   "Costes totales 54 €"
     #   "Costes totales 8 USD"
+    # FND-0243 (2026-10-09): also the English label ("Total costs 194 EUR", "Total costs EUR 3,108") and the
+    # footnote marker ("Costes totales* 102 EUR", "Total costs (*) ..."). Before, an English PRIIPs KID never
+    # reached this stage and fell to the base-fund fallbacks below: 73 of the 99 active funds without
+    # Fund_Currency were English KIDs with this exact row. Measured on the 2,950 active funds: agrees with the
+    # persisted value in 2,478, differs in 11 (9 EUR-hedged classes persisted as their USD base currency).
     _COSTS_CURR_RE = re.compile(
-        r'costes\s+totales\s+'
+        r'(?:costes\s+totales|total\s+costs)\s*\*?\s*(?:\(\*\))?\s*'
         r'(?:'
         r'(EUR|USD|GBP|JPY|CHF|SEK|NOK|DKK|AUD|CAD|PLN|CZK|HUF|€|\$|£|¥)'  # divisa antes
         r'|[\d\s,\.]+\s*(EUR|USD|GBP|JPY|CHF|SEK|NOK|DKK|AUD|CAD|PLN|CZK|HUF|€|\$|£|¥)'  # divisa después
@@ -2422,6 +2427,25 @@ def _detect_fund_currency(text: str, language: Optional[str]) -> Optional[str]:
     m_cost_table = _COSTS_CURR_TABLE_RE.search(text)
     if m_cost_table:
         result = _normalize_currency(m_cost_table.group(1).upper())
+        if result:
+            return result
+
+    # FND-0243 (2026-10-09): PRIIPs investment example ("Example investment: EUR 10,000", "Inversión: 10.000 EUR",
+    # "suponiendo que invierta 10.000 EUR", "investment of €10.000") -- the amount is stated in the currency of THIS
+    # share class, like the cost table, so it outranks the base-fund fallbacks below. Measured on the active funds:
+    # agrees with the persisted value in 2,062; every disagreement is a fund the cost table also contradicts.
+    _EXAMPLE_CURR_RE = re.compile(
+        r'(?:example\s+investment|investment\s+example|inversi[oó]n(?:\s+de\s+ejemplo)?|invierta|invest(?:ment)?\s+of)'
+        r'\s*:?\s*(?:'
+        r'(EUR|USD|GBP|JPY|CHF|SEK|NOK|DKK|AUD|CAD|PLN|CZK|HUF|€|\$|£|¥)\s*\d{1,3}(?:[.,\s\']\d{3})*'
+        r'|\d{1,3}(?:[.,\s\']\d{3})*\s*(EUR|USD|GBP|JPY|CHF|SEK|NOK|DKK|AUD|CAD|PLN|CZK|HUF|€|\$|£|¥)'
+        r')',
+        re.IGNORECASE
+    )
+    m_example = _EXAMPLE_CURR_RE.search(text)
+    if m_example:
+        raw = (m_example.group(1) or m_example.group(2) or "").strip()
+        result = _normalize_currency({"€": "EUR", "$": "USD", "£": "GBP", "¥": "JPY"}.get(raw, raw.upper()))
         if result:
             return result
 

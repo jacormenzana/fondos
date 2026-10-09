@@ -3893,6 +3893,33 @@ def detect_fund_currency_from_name(fund_name: Optional[str]) -> Optional[str]:
     return "CNH" if code == "CNY" else code
 
 
+# FND-0243 (2026-10-09): the hedged-class token in the name ("EURH AC", "A EURHDG ACC", "R USDHD ACC", "ZH EUR HD
+# ACC", "(EURHDG)", "EURHEDGED") names the currency the class is DENOMINATED in (the target of the hedge). The
+# trailing-suffix extractor above deliberately ignores it (test_name_suffix_none_without_recognizable_pattern) for
+# fear that the hedge target need not be the class currency; for the five currencies the platform converts it
+# is, measured on the 2,950 active funds: agrees with the persisted Fund_Currency in 401, and the 6 disagreements
+# are persisted values both PRIIPs signals (cost table + investment example) also contradict. It also resolves the
+# classes whose KIID is the REPRESENTATIVE document of a sister class ("This document in respect of the Class R EUR
+# is a representative ..." for ALGEBRIS ... R USDHD ACC), where no text signal can. Lookahead instead of \b
+# (R-5: "EURHDG" has no word boundary inside); two different tokens in one name = ambiguous = None.
+_HEDGED_CLASS_CURRENCY_TOKEN = re.compile(
+    r'(?<![A-Z])(EUR|USD|GBP|CHF|JPY)\s?H(?:EDGED|DG|D)?(?![A-Z])',
+    re.IGNORECASE,
+)
+
+
+def detect_hedged_class_currency_from_name(fund_name: Optional[str]) -> Optional[str]:
+    """
+    Currency of a hedged share class from its name token ("... A EURHDG ACC" -> 'EUR', "... R USDHD ACC" -> 'USD').
+    None without a token or with two different ones. Complements detect_fund_currency_from_name (trailing suffix),
+    which keeps precedence; see FND-0243 above.
+    """
+    if not fund_name:
+        return None
+    found = {m.group(1).upper() for m in _HEDGED_CLASS_CURRENCY_TOKEN.finditer(fund_name)}
+    return found.pop() if len(found) == 1 else None
+
+
 # FIX-ASSET-CCY-2 (2026-07-05): fallback a texto KIID cuando el nombre del
 # fondo no declara divisa. A diferencia de la Portfolio_Currency eliminada
 # en v20 (frases literales tipo "the reference currency of the portfolio

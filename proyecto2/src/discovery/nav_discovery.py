@@ -230,7 +230,7 @@ def _resample_to_monthly(rows: list[dict]) -> list[dict]:
 # Descarga NAV historico
 # ============================================================
 
-def _download_nav(code: str, isin: str, currency: str, desde: str):
+def _download_nav(code: str, isin: str, currency: str | None, desde: str):
     """
     DEPRECATED (FND-0167): sin llamadores en produccion y no usar como fallback -- comparte la
     serie aguas arriba de chartservice, asi que una corrupcion de Morningstar afecta a ambos
@@ -280,7 +280,7 @@ def _download_nav(code: str, isin: str, currency: str, desde: str):
             if not serie:
                 return [], "empty"
 
-            base_currency = hd.get("baseCurrency") or currency or "EUR"
+            base_currency = hd.get("baseCurrency") or currency
             rows = []
             for entry in serie:
                 val      = entry.get("value")
@@ -452,7 +452,7 @@ def _get_bearer_token() -> str:
 def _download_nav_daily(
     code: str,
     isin: str,
-    currency: str,
+    currency: str | None,
     desde: str,
     bearer: str,
 ) -> tuple[list[dict], str, str | None]:
@@ -526,7 +526,7 @@ def _download_nav_daily(
                     "ISIN":         isin,
                     "Date":         str(nav_date)[:10],
                     "NAV":          float(val),
-                    "NAV_Currency": currency or "EUR",
+                    "NAV_Currency": currency,
                     "NAV_Type":     "TOTAL_RETURN_IDX",
                     "Is_Estimated": 0,
                     "Data_Source":  "MORNINGSTAR_CHART",
@@ -1240,7 +1240,9 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=Non
         "WHERE Data_Source='MORNINGSTAR_CHART' GROUP BY ISIN"
     ).fetchall()}
     # currency map — elimina el SELECT por ISIN dentro del loop
-    currency_map = {r[0]: (r[1] or "EUR") for r in conn.execute(
+    # FND-0243: NULL Fund_Currency stays NULL in NAV_Currency (unknown, never assumed EUR); the EUR conversion
+    # reads fund_master.fund_currency and excludes a fund whose class currency is unknown.
+    currency_map = {r[0]: r[1] for r in conn.execute(
         "SELECT ISIN, Fund_Currency FROM fund_master"
     ).fetchall()}
     # Auto-freeze ANTES de leer data_status_map, para que los recien
@@ -1347,7 +1349,7 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=Non
                 errors_load += 1
                 continue
 
-            currency      = currency_map.get(isin, "EUR")
+            currency      = currency_map.get(isin)
             last_d_stored = last_daily.get(isin)
             force_this    = force or (ds == "FORCE_REFRESH")
             _t0_fund      = datetime.now()
@@ -1566,7 +1568,7 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=Non
             errors_load += 1
             continue
 
-        currency = currency_map.get(isin, "EUR")
+        currency = currency_map.get(isin)
 
         # -- Delta: calcular ventana de descarga minima ----------------------
         last_d_stored = last_daily.get(isin)
@@ -1724,7 +1726,9 @@ def run_update(conn, dry_run, bearer_token=None, stale_days=3, monthly_grain=Fal
         "SELECT ISIN, MAX(Date) FROM fund_nav_daily "
         "WHERE Data_Source='MORNINGSTAR_CHART' GROUP BY ISIN"
     ).fetchall()}
-    currency_map = {r[0]: (r[1] or "EUR") for r in conn.execute(
+    # FND-0243: NULL Fund_Currency stays NULL in NAV_Currency (unknown, never assumed EUR); the EUR conversion
+    # reads fund_master.fund_currency and excludes a fund whose class currency is unknown.
+    currency_map = {r[0]: r[1] for r in conn.execute(
         "SELECT ISIN, Fund_Currency FROM fund_master"
     ).fetchall()}
     data_status_upd = {r[0]: (r[1] or "OK") for r in conn.execute(
@@ -1803,7 +1807,7 @@ def run_update(conn, dry_run, bearer_token=None, stale_days=3, monthly_grain=Fal
     for idx, (isin, ms_id, last_nav_date) in enumerate(rows, 1):
         _t0 = datetime.now()
 
-        currency = currency_map.get(isin, "EUR")
+        currency = currency_map.get(isin)
         ds = data_status_upd.get(isin, "OK") or "OK"
 
         # -- RECALCULATE_MONTHLY: sin red, solo resamplear diario→mensual ----

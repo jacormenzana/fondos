@@ -356,6 +356,7 @@ proyecto2/
       test_historia.py
       test_macro_discovery_loaders_20260927.py
       test_macro_discovery_pg.py
+      test_nav_currency_no_default_fnd0243.py
       test_nav_daily_quality_gate_fnd0177.py
       test_nav_discovery_cli_isin_split_20260927.py
       test_nav_discovery_date_types_pg.py

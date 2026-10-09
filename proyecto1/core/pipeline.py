@@ -223,6 +223,7 @@ from core.classify_utils import (
     detect_asset_currency_from_name,                        # BL-44-FX / Asset_Currency
     detect_asset_currency_from_kiid_text,                   # Asset_Currency (fallback)
     detect_fund_currency_from_name,                         # FIX-FUNDCCY-2 (cross-check)
+    detect_hedged_class_currency_from_name,                 # FND-0243
     detect_geography           as detect_geography_from_name,   # FIX-GEO-1 (cross-check)
     detect_geography_from_kiid,                             # FIX-GEO-1 (cross-check)
     _derive_geography_en,                                   # FIX-GEO-1 (traducción ES→EN)
@@ -1234,7 +1235,9 @@ def run_block(
             # (0 desacuerdos de 186 fondos con ambas señales presentes) -- es
             # una unificación de criterio sin coste, no una corrección.
             _fundccy_kiid = parsed.get("Fund_Currency")
-            _fundccy_name = detect_fund_currency_from_name(fund_name)
+            # FND-0243: a hedged-class token counts as the name signal when there is no trailing suffix.
+            _fundccy_name = (detect_fund_currency_from_name(fund_name)
+                             or detect_hedged_class_currency_from_name(fund_name))
             _assetccy_kiid = detect_asset_currency_from_kiid_text(kiid_text)
             _assetccy_name = detect_asset_currency_from_name(fund_name)
 
