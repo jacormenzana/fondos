@@ -53,6 +53,8 @@ FLAG_FAMILIES: dict = {
     "SORTINO_MIN_DOWNSIDE_COUNT_ENABLED": ("risk", "rolling"),
     # FND-0235: currency_factor.compute_currency_factor is the fx family (fx_contribution_ann / _pct / fx_volatility_ann).
     "FX_CONTRIBUTION_EUR_VIEW_ENABLED": "fx",
+    # FND-0243: the EUR view changes the NAV every family reads (own NAV and peer NAVs), so it stales them all.
+    "EUR_NAV_CONVERSION_ENABLED": ALL_FAMILIES,
 }
 
 

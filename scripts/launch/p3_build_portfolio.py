@@ -26,6 +26,7 @@ sys.path.insert(0, str(_ROOT))
 
 from shared.config import P3_EXIT_STALE_INPUTS
 from shared.db import get_connection
+from shared.eur_nav import assert_release_coupling   # FND-0243 D4
 from proyecto3.src.data_freshness import check_universe_freshness, format_report, stale_checks
 from proyecto3.src.regime_classifier import RegimeClassifier
 from proyecto3.src.fund_scorer import score_funds
@@ -38,6 +39,7 @@ def _default_scenario_id(regime: str, date) -> str:
 
 
 def main(scenario_id: str | None = None, dry_run: bool = False, allow_stale: bool = False) -> int:
+    assert_release_coupling()   # FND-0243 D4: EUR view and FND-0235 switches move together
     conn = get_connection()
     clf  = RegimeClassifier(conn)
 

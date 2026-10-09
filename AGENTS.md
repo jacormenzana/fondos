@@ -336,6 +336,7 @@ proyecto2/
       test_deflation.py
       test_deflation_month_align_fnd0241.py
       test_drawdown.py
+      test_eur_view_coupling_fnd0243.py
       test_fx_eur_view_fnd0235.py
       test_m2_global_builder_pg.py
       test_macro_sensitivity.py

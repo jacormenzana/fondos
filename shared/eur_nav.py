@@ -168,6 +168,35 @@ def apply_eur_view_frame(conn, df: pd.DataFrame, isin_col: str = "isin") -> pd.D
     return convert_frame(df, load_fund_currencies(conn), load_rates(conn), isin_col=isin_col)
 
 
+class ReleaseCouplingError(RuntimeError):
+    """The EUR view and the switches it depends on are in an inconsistent state (owner decision D4)."""
+
+
+def release_coupling_errors(cfg=config) -> list[str]:
+    """Pure: why the current switch combination may not run (empty = consistent).
+
+    - EUR_NAV_CONVERSION_ENABLED == FX_CONTRIBUTION_EUR_VIEW_ENABLED (owner directive 2026-10-07, "neither may be enabled
+      alone"): with converted NAV the FND-0235 view must not convert the class currency again, and without it the FX view
+      would be computed on class-currency returns while everything else is in EUR.
+    - EUR view ON => PERSISTENCE_FIRST_LAST_NAV_ENABLED: the legacy MIN/MAX peer return has no date to convert at."""
+    errors = []
+    if cfg.EUR_NAV_CONVERSION_ENABLED != cfg.FX_CONTRIBUTION_EUR_VIEW_ENABLED:
+        errors.append(f"EUR_NAV_CONVERSION_ENABLED={cfg.EUR_NAV_CONVERSION_ENABLED} but "
+                      f"FX_CONTRIBUTION_EUR_VIEW_ENABLED={cfg.FX_CONTRIBUTION_EUR_VIEW_ENABLED}: FND-0243 and FND-0235 are "
+                      f"released together, neither may be enabled alone")
+    if cfg.EUR_NAV_CONVERSION_ENABLED and not cfg.PERSISTENCE_FIRST_LAST_NAV_ENABLED:
+        errors.append("EUR_NAV_CONVERSION_ENABLED requires PERSISTENCE_FIRST_LAST_NAV_ENABLED (MIN/MAX peer NAVs carry no "
+                      "date to convert at)")
+    return errors
+
+
+def assert_release_coupling() -> None:
+    """Called first by every P2/P3 entry point, before any connection or write: refuse an inconsistent switch state."""
+    errors = release_coupling_errors()
+    if errors:
+        raise ReleaseCouplingError("Refusing to run (FND-0243 D4): " + "; ".join(errors))
+
+
 def is_excluded(nav_df: pd.DataFrame) -> bool:
     """True when apply_eur_view excluded the fund (class currency unknown or without rates)."""
     return nav_df.attrs.get(ATTR) in EXCLUDED_STATUSES

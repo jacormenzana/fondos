@@ -569,7 +569,8 @@ CAPTURE_MONTH_END_ENABLED: bool = True
 P2_BUNDLE_FLAGS: tuple = ("MACRO_VIF_ITERATIVE_ENABLED", "MACRO_FACTOR_CLEAN_ENABLED",
                           "PERSISTENCE_FIRST_LAST_NAV_ENABLED", "CAPTURE_MONTH_END_ENABLED",
                           "ANNUALIZATION_INTERVAL_ENABLED", "DEFLATION_MONTH_ALIGN_ENABLED",
-                          "SORTINO_MIN_DOWNSIDE_COUNT_ENABLED", "FX_CONTRIBUTION_EUR_VIEW_ENABLED")
+                          "SORTINO_MIN_DOWNSIDE_COUNT_ENABLED", "FX_CONTRIBUTION_EUR_VIEW_ENABLED",
+                          "EUR_NAV_CONVERSION_ENABLED")
 # FND-0240: annualise a NAV window over its INTERVALS (N points span N - 1 periods) instead of its points. OFF = the stored
 # convention (years = N / 12), bit-for-bit. ON changes the stored return_ann / sharpe / sortino of the risk family and the
 # rolling timeseries: about +0.5 pp on rolling_1y, -1.2 pp on the crisis windows, +0.04 pp since inception -- and nothing in the
@@ -609,6 +610,8 @@ FX_RATIO_MIN_TOTAL_ANN: float = 0.01
 # for monthly NAV, the same business day's rate for daily NAV. MUST equal FX_CONTRIBUTION_EUR_VIEW_ENABLED (owner directive 2026-10-07:
 # neither may be enabled alone; P2/P3 refuse to start otherwise), because with a EUR NAV the class-conversion branch of the FX view would
 # convert a second time. Rates: series_macro, loaded by macro_discovery --source bce for every currency in EUR_FX_CURRENCIES.
+# A P2 bundle flag on ALL metric families: turning it on must recompute EVERY fund, not only the non-EUR ones whose NAV
+# fingerprint moves -- the peer-based metrics (capture, persistence) of a EUR fund change too, because its peers are now in EUR.
 EUR_NAV_CONVERSION_ENABLED: bool = False
 EUR_FX_CURRENCIES: tuple = ("USD", "GBP", "JPY", "CHF")
 EUR_FX_MONTHLY_INDICATOR: str = "fx_eom_eur"       # EXR.M.<CCY>.EUR.SP00.E, stamped on the calendar month-end

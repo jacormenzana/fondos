@@ -85,6 +85,7 @@ from shared.db import get_connection, in_transaction, begin_immediate, executema
 from shared.schema_checks import assert_schema_alignment
 from shared import config as shared_config                    # FND-0243: switch read at run time
 from shared.eur_nav import is_excluded as eur_excluded, ATTR as EUR_ATTR   # FND-0243
+from shared.eur_nav import assert_release_coupling                          # FND-0243 D4
 from src.readers.db_readers import (
     load_nav, get_isins_with_nav, load_ipc, ipc_available, load_nav_daily,
     load_rf_rate,                    # §4g — historical risk-free rate (€STR proxy)
@@ -947,6 +948,7 @@ def run(
             f"to_date={to_date} force={force}"
         )
 
+        assert_release_coupling()   # FND-0243 D4: refuse an inconsistent EUR-view switch state before any connection
         conn = get_connection()
 
         # EFF-1: the OLS cadence columns (last_ols_quarter / last_ols_nav_count / last_ols_calc_version)

@@ -167,6 +167,10 @@ def eur_view_decomposition(r_total, r_fx_asset, r_fx_class=None) -> dict:
 
 def _compute_eur_view(conn, nav_df, fund_currency, asset_currency) -> list:
     asset_ccy, class_ccy = eur_view_currencies(fund_currency, asset_currency)
+    if config.EUR_NAV_CONVERSION_ENABLED:
+        # FND-0243: nav_df is already the EUR view (load_nav converted it), so its return IS the EUR return; converting the
+        # class currency again would count the class FX move twice. The exposure (asset_ccy) is unchanged.
+        class_ccy = None
     if asset_ccy is None or asset_ccy not in _FX_INDICATORS or (class_ccy is not None and class_ccy not in _FX_INDICATORS):
         return []
     fx_asset = load_fx_eur_divisa(conn, asset_ccy)

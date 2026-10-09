@@ -43,6 +43,7 @@ from proyecto3.src.pit_backtest import COST_GRID_BPS, table_stats
 from proyecto3.src.pit_cache import CODE_VERSION
 from shared.config import REGIME_PUBLICATION_LAG_MONTHS
 from shared.db import get_connection
+from shared.eur_nav import assert_release_coupling   # FND-0243 D4
 
 DEFAULT_OUT_ROOT = _ROOT / "out" / "reports" / "pit_backtest"      # inside the project (git-ignored out/), no longer c:\data
 DEFAULT_CACHE_DIR = _ROOT / "proyecto3" / "cache" / "pit"
@@ -197,6 +198,7 @@ def apply_flag_overrides(specs, cfg=None) -> dict:
 def main(argv=None, conn=None) -> int:
     args = build_parser().parse_args(argv)
     flag_state = apply_flag_overrides(args.flag)
+    assert_release_coupling()   # FND-0243 D4: checked AFTER --flag overrides, before any connection
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_path = _setup_logging(stamp)
     logger.info("P2 bundle flags in effect: %s", flag_state)
