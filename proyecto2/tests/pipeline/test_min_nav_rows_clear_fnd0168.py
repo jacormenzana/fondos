@@ -45,7 +45,8 @@ def test_under_floor_check_runs_on_the_full_series_before_clipping_and_hash():
     clearing check has to sit before the date clipping (and before the cache-hash shortcut)."""
     src = Path(rp.__file__).read_text(encoding="utf-8")
     calls = [i for i in range(len(src)) if src.startswith("_clear_insufficient_history(conn, isin", i)]
-    assert len(calls) == 1
-    call = calls[0]
-    assert call < src.index("compute_input_hash(\n                    nav_df, ipc_df")
-    assert call < src.index("if from_date:\n                    nav_df = nav_df[")
+    # Two clearing paths share the helper: under MIN_NAV_ROWS (FND-0168) and excluded from the EUR view (FND-0243).
+    assert len(calls) == 2
+    for call in calls:
+        assert call < src.index("compute_input_hash(\n                    nav_df, ipc_df")
+        assert call < src.index("if from_date:\n                    nav_df = nav_df[")

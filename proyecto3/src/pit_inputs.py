@@ -18,6 +18,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from shared.config import REGION_IPC
+from shared.eur_nav import apply_eur_view_frame   # FND-0243
 
 ATTRIBUTE_FRAME_COLUMNS = ["ISIN", "Fund_Name", "Fund_Nature", "srri_kiid", "Investment_Focus", "Credit_Quality",
                            "Ongoing_Charge", "SRRI_Quality_Flag", "fund_family_id", "Management_Company",
@@ -37,6 +38,9 @@ def load_nav_panel(conn: "psycopg.Connection", isins: "list | None" = None) -> p
     df = pd.DataFrame([tuple(r) for r in rows], columns=["isin", "date", "nav"])
     df["date"] = pd.to_datetime(df["date"])
     df["nav"] = df["nav"].astype(float)
+    df = apply_eur_view_frame(conn, df)   # FND-0243: EUR view, identity while the switch is off
+    if df.empty:
+        return pd.DataFrame()
     wide = df.pivot_table(index="date", columns="isin", values="nav", aggfunc="last").sort_index()
     wide.columns.name = None
     return wide
@@ -98,4 +102,4 @@ def iter_daily_chunks(conn: "psycopg.Connection", isins: list, chunk_size: int =
         df = pd.DataFrame([tuple(r) for r in rows], columns=["isin", "date", "nav"])
         df["date"] = pd.to_datetime(df["date"])
         df["nav"] = df["nav"].astype(float)
-        yield df
+        yield apply_eur_view_frame(conn, df)   # FND-0243: EUR view, identity while the switch is off

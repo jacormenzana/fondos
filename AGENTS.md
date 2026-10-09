@@ -374,6 +374,7 @@ proyecto2/
       test_run_pipeline_writes_pg.py
     readers/
       test_db_readers_misc_pg.py
+      test_eur_nav_readers_fnd0243_pg.py
       test_preflight.py
       test_preflight_pg.py
       test_reliability_signals.py

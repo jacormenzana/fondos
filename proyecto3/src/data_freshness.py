@@ -184,6 +184,7 @@ def fx_view_canary_check(pairs: list, tol: float = 0.003, strong: float = 0.01, 
 def load_fx_canary_pairs(conn, n_candidates: int = 80, n_canaries: int = 25) -> list:
     """[(isin, stored fx_contribution_ann, EUR-view value recomputed now)] for a deterministic sample of the FX-exposed active funds."""
     from proyecto2.src.calculations.currency_factor import compute_currency_factor
+    from proyecto2.src.readers.db_readers import load_nav   # FND-0243: the same (EUR-view) NAV P2 computed on
     rows = conn.execute(
         "SELECT m.isin, m.fund_currency, m.hedging_policy, m.asset_currency, f.value "
         "FROM fund_metrics f JOIN fund_master m ON m.isin = f.isin "
@@ -192,10 +193,7 @@ def load_fx_canary_pairs(conn, n_candidates: int = 80, n_canaries: int = 25) -> 
     ).fetchall()
     pairs = []
     for isin, fund_ccy, hedging, asset_ccy, stored in rows:
-        nav = conn.execute("SELECT date, nav FROM fund_nav_monthly WHERE isin = %s ORDER BY date", (isin,)).fetchall()
-        nav_df = pd.DataFrame(nav, columns=["date", "nav"])
-        nav_df["date"] = pd.to_datetime(nav_df["date"])
-        nav_df["nav"] = nav_df["nav"].astype(float)
+        nav_df = load_nav(conn, isin)
         out = {m: v for m, v, _ in compute_currency_factor(isin, fund_ccy, hedging, nav_df, conn, asset_currency=asset_ccy)}
         if "fx_contribution_ann" in out:
             pairs.append((isin, None if stored is None else float(stored), float(out["fx_contribution_ann"])))

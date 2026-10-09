@@ -33,6 +33,7 @@ Two things worth knowing before touching this file again:
 
 import pandas as pd
 
+from shared.eur_nav import apply_eur_view   # FND-0243
 
 
 # ============================================================
@@ -58,12 +59,13 @@ def load_nav(conn: "psycopg.Connection", isin: str) -> pd.DataFrame:
     """, (isin,)).fetchall()
 
     if not rows:
-        return pd.DataFrame(columns=["date", "nav"])
+        return apply_eur_view(conn, isin, pd.DataFrame(columns=["date", "nav"]))
 
     df = pd.DataFrame(rows, columns=["date", "nav"])
     df["date"] = pd.to_datetime(df["date"])
     df["nav"]  = df["nav"].astype(float)
-    return df
+    # FND-0243: EUR view of the class-currency NAV (identity while EUR_NAV_CONVERSION_ENABLED is off)
+    return apply_eur_view(conn, isin, df)
 
 
 def count_isins_with_new_nav(
@@ -174,12 +176,13 @@ def load_nav_daily(conn: "psycopg.Connection", isin: str) -> pd.DataFrame:
     """, (isin,)).fetchall()
 
     if not rows:
-        return pd.DataFrame(columns=["date", "nav"])
+        return apply_eur_view(conn, isin, pd.DataFrame(columns=["date", "nav"]))
 
     df = pd.DataFrame(rows, columns=["date", "nav"])
     df["date"] = pd.to_datetime(df["date"])
     df["nav"]  = df["nav"].astype(float)
-    return df
+    # FND-0243: EUR view of the class-currency NAV (identity while EUR_NAV_CONVERSION_ENABLED is off)
+    return apply_eur_view(conn, isin, df)
 
 
 def get_isins_with_nav_daily(conn: "psycopg.Connection") -> list[str]:

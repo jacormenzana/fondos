@@ -28,6 +28,7 @@ import numpy as np
 import pandas as pd
 
 from shared import config as _config
+from shared.eur_nav import apply_eur_view_frame   # FND-0243
 from shared.config import (
     PERSISTENCE_WINDOW_MONTHS as WINDOW_MONTHS,
     PERSISTENCE_STEP_MONTHS as STEP_MONTHS,
@@ -63,7 +64,9 @@ def _category_return_in_window(
                MAX(fnm.NAV) AS nav_end,
                COUNT(*)     AS n_months,
                (ARRAY_AGG(fnm.NAV ORDER BY fnm.Date ASC))[1]  AS nav_first,
-               (ARRAY_AGG(fnm.NAV ORDER BY fnm.Date DESC))[1] AS nav_last
+               (ARRAY_AGG(fnm.NAV ORDER BY fnm.Date DESC))[1] AS nav_last,
+               MIN(fnm.Date) AS d_first,
+               MAX(fnm.Date) AS d_last
         FROM fund_nav_monthly fnm
         JOIN fund_master fm ON fm.ISIN = fnm.ISIN
         WHERE fm.Fund_Nature = {ph}
@@ -80,9 +83,13 @@ def _category_return_in_window(
     if not rows:
         return None
 
+    if _config.EUR_NAV_CONVERSION_ENABLED:
+        rows = _peer_rows_in_eur(conn, rows)
+
     returns = []
     first_last = _config.PERSISTENCE_FIRST_LAST_NAV_ENABLED
-    for isin, nav_s, nav_e, n, nav_f, nav_l in rows:
+    for row in rows:
+        isin, nav_s, nav_e, n, nav_f, nav_l = row[:6]   # [6:8] = window dates, used only by the EUR view
         if first_last:
             nav_s, nav_e = nav_f, nav_l
         if nav_s and nav_e and nav_s > 0:
@@ -92,6 +99,25 @@ def _category_return_in_window(
                 returns.append(ret)
 
     return float(np.mean(returns)) if returns else None
+
+
+def _peer_rows_in_eur(conn, rows: list) -> list:
+    """FND-0243: the window's first and last NAV of each peer converted to EUR at their own dates. Peers whose
+    class currency is not convertible (or lacks a rate at either date) leave the peer group. The EUR view needs
+    the first/last path (PERSISTENCE_FIRST_LAST_NAV_ENABLED): MIN/MAX NAV carry no date, so they stay unconverted
+    and the startup coupling check refuses that combination."""
+    pts = pd.DataFrame(
+        [(r[0], r[6], r[4], "f") for r in rows] + [(r[0], r[7], r[5], "l") for r in rows],
+        columns=["isin", "date", "nav", "pt"])
+    conv = apply_eur_view_frame(conn, pts)
+    wide = conv.pivot_table(index="isin", columns="pt", values="nav", aggfunc="first")
+    out = []
+    for isin, nav_s, nav_e, n, _nav_f, _nav_l, d_f, d_l in rows:
+        if isin in wide.index and {"f", "l"} <= set(wide.columns):
+            f, l = wide.at[isin, "f"], wide.at[isin, "l"]
+            if pd.notna(f) and pd.notna(l):
+                out.append((isin, nav_s, nav_e, n, float(f), float(l), d_f, d_l))
+    return out
 
 
 # ============================================================

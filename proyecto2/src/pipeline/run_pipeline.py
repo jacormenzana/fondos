@@ -83,6 +83,8 @@ from shared.config import (
 )
 from shared.db import get_connection, in_transaction, begin_immediate, executemany
 from shared.schema_checks import assert_schema_alignment
+from shared import config as shared_config                    # FND-0243: switch read at run time
+from shared.eur_nav import is_excluded as eur_excluded, ATTR as EUR_ATTR   # FND-0243
 from src.readers.db_readers import (
     load_nav, get_isins_with_nav, load_ipc, ipc_available, load_nav_daily,
     load_rf_rate,                    # §4g — historical risk-free rate (€STR proxy)
@@ -918,6 +920,11 @@ def run(
     n_errors      = 0
     n_warnings    = 0   # P2-12: logger.warning() call count for RUN_SUMMARY
     n_quarantined = 0   # FND-0164: funds whose NAV failed validate_nav() and were cleared
+    n_ccy_excluded = 0  # FND-0243: funds excluded from the EUR view (class currency unknown / no ECB rates)
+
+    def _ccy_summary() -> str:
+        # Present only with the EUR view on, so the summary line is byte-identical while it is dormant.
+        return f" ccy_excluded={n_ccy_excluded}" if shared_config.EUR_NAV_CONVERSION_ENABLED else ""
     n_ols_funds = n_cond_funds = n_beta_nulled = 0   # FND-0208: macro OLS guard trip rates (calibration evidence)
     fam_run_counts = {f: 0 for f in ALL_FAMILIES}   # FND-0236: funds per family actually run (versioning ON only)
     n_family_seeded = 0                              # FND-0236: funds adopted from the legacy hash, nothing recomputed
@@ -1249,6 +1256,18 @@ def run(
             try:
                 # ---- NAV load + validation ---------------------------
                 nav_df = load_nav(conn, isin)
+                # ---- FND-0243: EUR view excluded the fund (owner decision D3) ------------
+                # Its class currency is unknown or has no ECB rates, so no EUR metric can be computed; the
+                # metrics an earlier run wrote on the class-currency NAV are cleared (fail-closed, same as
+                # FND-0168) so P3 never scores them. It recovers by itself once the currency is resolved.
+                if eur_excluded(nav_df):
+                    n_cleared = _clear_insufficient_history(conn, isin, dry_run)
+                    _log(conn, isin, "NAV_LOAD", "CCY_EXCLUDED", None,
+                         f"{nav_df.attrs[EUR_ATTR]}: sin divisa de clase convertible a EUR; "
+                         f"{n_cleared} filas fund_metrics eliminadas", dry_run)
+                    n_ccy_excluded += 1
+                    n_skipped += 1
+                    continue
                 if nav_df.empty:
                     logger.debug(
                         "", extra=dict(
@@ -1840,7 +1859,7 @@ def run(
             f"processed={n_processed} skipped={n_skipped} errors={n_errors} "
             f"warnings={n_warnings} defl_skipped={defl_skipped} total_written={total_written} "
             f"quarantined={n_quarantined} ols_funds={n_ols_funds} cond_guard_funds={n_cond_funds} "
-            f"betas_nulled={n_beta_nulled} elapsed={elapsed_total:.0f}s{_fam_summary()}"
+            f"betas_nulled={n_beta_nulled} elapsed={elapsed_total:.0f}s{_fam_summary()}{_ccy_summary()}"
         )
         if n_quarantined > P2_QUARANTINE_ALERT_THRESHOLD and not dry_run:
             _alert_quarantine(run_id, n_quarantined)    # FND-0164: no more silent anomalies
@@ -1864,7 +1883,7 @@ def run(
                             f"warnings={n_warnings} defl_skipped={defl_skipped} "
                             f"written={total_written} quarantined={n_quarantined} "
                             f"ols_funds={n_ols_funds} cond_guard_funds={n_cond_funds} "
-                            f"betas_nulled={n_beta_nulled} elapsed={elapsed_total:.0f}s{_fam_summary()}"
+                            f"betas_nulled={n_beta_nulled} elapsed={elapsed_total:.0f}s{_fam_summary()}{_ccy_summary()}"
                         ),
                         RUN_BATCH_ID,
                     ),

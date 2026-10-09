@@ -31,6 +31,7 @@ import numpy as np
 import pandas as pd
 
 from shared import config as _config
+from shared.eur_nav import apply_eur_view_frame   # FND-0243
 from shared.config import CAPTURE_MIN_PERIODS as MIN_PERIODS  # minimo de periodos positivos/negativos para calcular
 
 
@@ -66,8 +67,13 @@ def load_peer_benchmark(
         return pd.Series(dtype=float)
 
     df = pd.DataFrame(rows, columns=["isin", "date", "nav"])
-    df["date"] = pd.to_datetime(df["date"]) + pd.offsets.MonthEnd(0)
     df["nav"]  = df["nav"].astype(float)
+    # FND-0243: peers in EUR at their own NAV dates (before the month-end stamp); funds without a convertible
+    # class currency drop out of the peer group. Identity while EUR_NAV_CONVERSION_ENABLED is off.
+    df = apply_eur_view_frame(conn, df)
+    if df.empty:
+        return pd.Series(dtype=float)
+    df["date"] = pd.to_datetime(df["date"]) + pd.offsets.MonthEnd(0)
 
     if _config.CAPTURE_MONTH_END_ENABLED:
         # FND-0202: a month-end grid per fund (last NAV of the month), and a return only between CONSECUTIVE months:

@@ -52,6 +52,7 @@ from proyecto3.src.portfolio_engine import (
     select_and_weight, DEFAULT_CONSTRAINTS, round_master_weights, cash_weight,
 )
 from proyecto3.src.score_candidates import load_current_candidates
+from shared.eur_nav import apply_eur_view_frame   # FND-0243
 from shared.config import REGIME_PUBLICATION_LAG_MONTHS
 
 logger = logging.getLogger(__name__)
@@ -89,8 +90,12 @@ def _load_nav_matrix(conn: "psycopg.Connection") -> pd.DataFrame:
         return pd.DataFrame()
 
     df = pd.DataFrame(rows, columns=["isin", "date", "nav"])
-    df["date"] = pd.to_datetime(df["date"]) + pd.offsets.MonthEnd(0)
     df["nav"]  = df["nav"].astype(float)
+    # FND-0243: EUR view at the NAV's own date (before the month-end stamp); identity while the switch is off
+    df = apply_eur_view_frame(conn, df)
+    if df.empty:
+        return pd.DataFrame()
+    df["date"] = pd.to_datetime(df["date"]) + pd.offsets.MonthEnd(0)
 
     wide = df.pivot_table(index="date", columns="isin",
                           values="nav", aggfunc="last")
