@@ -417,7 +417,9 @@ proyecto2/
 Runs are idempotent via an input fingerprint: `utils/fingerprint.py::compute_input_hash()` (SHA-1 over NAV
 last-date/rows/value + IPC coverage + `METRIC_VERSION` + `CALC_VERSION`) is stored in `fund_metric_state`.
 Unchanged inputs → 100% cache-hit, 0 recomputed. **Bump `CALC_VERSION` (`run_pipeline.py`, currently
-`"20261004"`) to force a full recompute** of all ISINs (e.g. after changing calculation logic).
+`"20261010"`) to force a full recompute** of all ISINs (e.g. after changing calculation logic). Enabling a P2 bundle flag
+also forces it (the fingerprint includes the flags), but bump `CALC_VERSION` with it anyway: `algorithm_version` is stamped from
+`CALC_VERSION` alone, so only a bump lets the beta gate and the P3 `metrics_calc_version` gate tell recomputed rows from old ones.
 `CALC_VERSION` is the *global* epoch. Per-metric-family versions (FND-0236, `proyecto2/src/utils/family_versions.py`, behind
 `FAMILY_VERSIONING_ENABLED`, off until the owner applies `scripts/ops/migrate_fund_metric_family_state.py`) let a change that
 touches one of the nine families recompute only that family: add it to `FAMILY_CALC_OVERRIDES` instead of bumping `CALC_VERSION`.
