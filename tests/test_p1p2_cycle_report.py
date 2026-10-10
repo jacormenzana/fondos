@@ -197,6 +197,7 @@ def _canned():
         cr.Q_COVERAGE: [("sharpe", 980)],
         cr.Q_ALERTS: [("ALARM", 2)],
         cr.Q_OLS_ZERO_BACKFILL: [("P2-20261005_020156-771354",)],
+        cr.Q_CLASS_CCY_UNKNOWN: [("IE00B8J38129",)],   # FND-0243
         cr.Q_HEDGING_CANDIDATES: [],        # streamed through a server-side cursor: see tests/test_p1p2_hedging_drift.py
     }
 
@@ -214,6 +215,7 @@ def test_collect_builds_the_json_shape_and_passes_the_cycle_dates_to_the_queries
     assert params[cr.Q_NAV_STALE] == (date(2026, 8, 5),)            # today - NAV_STALE_DAYS (60)
     assert rep["ols_zero_backfills"] == ["P2-20261005_020156-771354"]
     assert params[cr.Q_OLS_ZERO_BACKFILL] == (date(2026, 10, 1),)
+    assert rep["class_ccy_unknown"] == ["IE00B8J38129"] and isinstance(rep["eur_view_on"], bool)
     json.dumps(rep)                                                 # must be JSON-serialisable
 
 

@@ -222,7 +222,7 @@ def _canned_for_main():
         cr.Q_UNIVERSE: [(1000, 50, 1050)], cr.Q_NATURE: [("Mixtos", 1000)], cr.Q_KIID_STATUS: [("OK", 1000)],
         cr.Q_RELIABILITY: [(0, 0, 0, 0)], cr.Q_WRONG_DOC_STALE: [], cr.Q_LOW_CONFIDENCE: [(0,)], cr.Q_DQ_CYCLE: [],
         cr.Q_NAV_STALE: [], cr.Q_NAV_SOURCES: [], cr.Q_REAL_ORPHANS: [], cr.Q_COVERAGE: [("sharpe", 1000)],
-        cr.Q_ALERTS: [], cr.Q_OLS_ZERO_BACKFILL: [],
+        cr.Q_ALERTS: [], cr.Q_OLS_ZERO_BACKFILL: [], cr.Q_CLASS_CCY_UNKNOWN: [],
     }
 
     class Conn:

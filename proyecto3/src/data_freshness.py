@@ -202,6 +202,48 @@ def load_fx_canary_pairs(conn, n_candidates: int = 80, n_canaries: int = 25) -> 
     return pairs
 
 
+def fx_coverage_check(per_ccy: Mapping[str, tuple], unknown_ccy: int, max_gap_days: int) -> FreshnessCheck:
+    """FND-0243 lock (pure): can every active non-EUR share class be converted to EUR up to its newest NAV?
+
+    `per_ccy` = {currency: (newest monthly NAV date of its active funds, newest ECB daily rate date or None, n funds)}. A currency
+    whose rates end more than `max_gap_days` before its newest NAV would silently lose the newest NAV rows (no extrapolation in
+    shared/eur_nav.py), so it is STALE; a currency with no rates at all is STALE. Active funds whose class currency is unknown are
+    EXCLUDED by design (owner decision D3) and only reported in the detail -- they never block the build."""
+    bad, parts = [], []
+    for ccy in sorted(per_ccy):
+        nav_newest, fx_newest, n = per_ccy[ccy]
+        nav_d, fx_d = _to_date(nav_newest), _to_date(fx_newest)
+        if fx_d is None:
+            bad.append(f"{ccy}: no ECB rates ({n} funds)")
+        elif nav_d is not None and (nav_d - fx_d).days > max_gap_days:
+            bad.append(f"{ccy}: rates end {fx_d.isoformat()}, NAV up to {nav_d.isoformat()} ({n} funds)")
+        else:
+            parts.append(f"{ccy}:{n}")
+    detail = ("; ".join(bad) + " -- run macro_discovery --source bce BEFORE P3") if bad else (
+        "rates cover " + (", ".join(parts) or "no non-EUR active fund"))
+    detail += f"; {unknown_ccy} active funds with unknown class currency excluded from EUR scoring"
+    return FreshnessCheck("fx_coverage", None, None, 0, not bad, detail, show_age=False)
+
+
+def load_fx_coverage_inputs(conn) -> tuple[dict, int]:
+    """({currency: (newest NAV date, newest daily rate date, n active funds)}, n active funds with NAV and unknown currency)."""
+    from shared.config import EUR_FX_DAILY_INDICATOR
+    nav = conn.execute(
+        "SELECT upper(fm.fund_currency), MAX(n.date), COUNT(DISTINCT n.isin) FROM fund_nav_monthly n "
+        "JOIN fund_master fm ON fm.isin = n.isin "
+        "WHERE fm.in_current_universe = 1 AND fm.fund_currency IS NOT NULL AND upper(fm.fund_currency) <> 'EUR' "
+        "GROUP BY upper(fm.fund_currency)"
+    ).fetchall()
+    fx = dict(conn.execute(
+        "SELECT geography, MAX(date) FROM series_macro WHERE indicator = %s GROUP BY geography", (EUR_FX_DAILY_INDICATOR,)
+    ).fetchall())
+    unknown = conn.execute(
+        "SELECT COUNT(DISTINCT n.isin) FROM fund_nav_monthly n JOIN fund_master fm ON fm.isin = n.isin "
+        "WHERE fm.in_current_universe = 1 AND fm.fund_currency IS NULL"
+    ).fetchone()[0]
+    return {r[0]: (r[1], fx.get(r[0]), int(r[2])) for r in nav}, int(unknown or 0)
+
+
 def check_universe_freshness(conn, classifier, today: Optional[date] = None) -> list[FreshnessCheck]:
     """Read the inputs and evaluate them with the limits from shared/config.py."""
     from shared import config as _config
@@ -220,6 +262,10 @@ def check_universe_freshness(conn, classifier, today: Optional[date] = None) -> 
     checks = list(checks) + [family_refresh_check(pending_family_refresh(conn))]
     if _config.FX_CONTRIBUTION_EUR_VIEW_ENABLED:      # FND-0235: the scorer reads fx_contribution_ann; refuse a legacy-signed one
         checks = list(checks) + [fx_view_canary_check(load_fx_canary_pairs(conn))]
+    if _config.EUR_NAV_CONVERSION_ENABLED:            # FND-0243: every active non-EUR class must be convertible up to its NAV
+        from shared.eur_nav import FX_MAX_GAP_DAYS
+        per_ccy, unknown = load_fx_coverage_inputs(conn)
+        checks = list(checks) + [fx_coverage_check(per_ccy, unknown, FX_MAX_GAP_DAYS)]
     return checks
 
 

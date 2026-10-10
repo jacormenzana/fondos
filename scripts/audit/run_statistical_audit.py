@@ -123,6 +123,7 @@ import pandas as pd
 
 from shared.config import CRISIS_WINDOWS, MIN_NAV_ROWS, ROLLING_WINDOWS
 from shared.db import get_connection
+from shared.eur_nav import apply_eur_view_frame   # FND-0243: audit the NAV P2 computed on
 from shared.statistical_audit.catalog_cost_columns import COST_COLUMNS
 from shared.statistical_audit.catalog_version import compute_catalog_version
 from shared.statistical_audit.catalog_group_checks import COST_GROUP_CHECKS
@@ -631,7 +632,7 @@ def _load_deflation_inputs(
     """(nav_dates, ipc): the fund_nav_monthly rows and the ES CPI both deflation frame builders read -- fetched once."""
     nav_isin_filter, nav_isin_params = _isin_filter(conn, isins, "n.ISIN")
     nav_query = _sql(conn, _NAV_DATES_QUERY, isin_filter=nav_isin_filter)
-    nav_dates = _df(conn, nav_query, nav_isin_params)
+    nav_dates = apply_eur_view_frame(conn, _df(conn, nav_query, nav_isin_params))   # FND-0243 (identity while off)
     ipc = build_population(conn, _IPC_QUERY, require_universe_filter=False)
     return nav_dates, ipc
 
@@ -795,6 +796,7 @@ def _periodic_return_variance(conn: "psycopg.Connection", isins: list[str]) -> p
             WHERE ISIN IN ({placeholders}) ORDER BY ISIN, Date""",
         isins,
     )
+    nav_df = apply_eur_view_frame(conn, nav_df)   # FND-0243: the same EUR NAV vol_ann was computed on
     if nav_df.empty:
         return pd.DataFrame(columns=["isin", "periodic_return_variance"])
     variances = (

@@ -66,6 +66,9 @@ import numpy as np
 import pandas as pd
 
 from shared.config import RISK_FREE_RATE_ANN
+# FND-0243: the EUR view is INPUT preparation (the same NAV production computed on), not metric logic, so it is shared on purpose;
+# the formulas below stay independent. Identity while EUR_NAV_CONVERSION_ENABLED is off.
+from shared.eur_nav import apply_eur_view
 from shared.db import get_connection
 
 # ============================================================
@@ -250,7 +253,7 @@ def load_nav(conn, isin: str) -> pd.DataFrame:
     """Columns: date, nav -- both needed (dates to resolve the risk-free rate at the horizon's
     end date, not just the NAV levels the formulas consume)."""
     rows = conn.execute(_NAV_QUERY, (isin,)).fetchall()
-    return pd.DataFrame(rows, columns=["date", "nav"]).astype({"nav": float})
+    return apply_eur_view(conn, isin, pd.DataFrame(rows, columns=["date", "nav"]).astype({"nav": float}))
 
 
 def load_rf_series(conn) -> pd.DataFrame:

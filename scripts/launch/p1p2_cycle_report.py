@@ -193,6 +193,17 @@ Q_ALERTS = """
     ORDER BY a.level
 """
 
+# FND-0243: active funds with NAV whose share-class currency is unknown. With EUR_NAV_CONVERSION_ENABLED they are EXCLUDED from
+# EUR scoring (never assumed EUR); while it is off they are scored on their stored NAV as if it were EUR.
+Q_CLASS_CCY_UNKNOWN = """
+    SELECT fm.isin
+    FROM fund_master fm
+    WHERE fm.in_current_universe = 1
+      AND fm.fund_currency IS NULL
+      AND EXISTS (SELECT 1 FROM fund_nav_monthly n WHERE n.isin = fm.isin)
+    ORDER BY fm.isin
+"""
+
 # FND-0244 hedging drift. The fixes only ever move a fund TOWARD Hedged, so a fund already stored as Hedged cannot drift and is not read
 # (the texts are the heavy part: ~40 MB over the ~2,550 remaining active funds). Streamed through a server-side cursor.
 Q_HEDGING_CANDIDATES = """
@@ -209,6 +220,12 @@ Q_HEDGING_CANDIDATES = """
 # ── collection ────────────────────────────────────────────────────────────────────────────────────
 # Every statement is passed to execute() as its Q_* constant, never through a wrapper: the SQL sweep
 # (tests/test_sql_explain_sweep_pg.py) can only EXPLAIN a statement it can see as a literal at the call.
+
+def _eur_view_on() -> bool:
+    sys.path.insert(0, str(ROOT))
+    from shared import config
+    return bool(config.EUR_NAV_CONVERSION_ENABLED)
+
 
 def collect(conn, since: date, today: date) -> dict:
     """The raw facts of one cycle as a JSON-serialisable dict. Read-only."""
@@ -237,6 +254,8 @@ def collect(conn, since: date, today: date) -> dict:
         "coverage": {r[0]: int(r[1]) for r in conn.execute(Q_COVERAGE).fetchall()},
         "alerts": {r[0]: int(r[1]) for r in conn.execute(Q_ALERTS).fetchall()},
         "ols_zero_backfills": [r[0] for r in conn.execute(Q_OLS_ZERO_BACKFILL, (since,)).fetchall()],
+        "class_ccy_unknown": [r[0] for r in conn.execute(Q_CLASS_CCY_UNKNOWN).fetchall()],
+        "eur_view_on": _eur_view_on(),
     }
 
 
@@ -341,6 +360,12 @@ def attention_items(report: dict, previous: dict | None) -> list:
         items.append(f"{len(zero_ols)} ejecucion(es) P2 con backfill por CALC_VERSION terminaron con ols_funds=0 "
                      f"({', '.join(zero_ols)}): el OLS macro no se recalculo y las betas macro siguen en la version "
                      "anterior; la puerta de betas (beta_shift_audit) fallara")
+    unk = report.get("class_ccy_unknown", [])               # absent in reports written before this check (FND-0243)
+    if unk:
+        fate = ("EXCLUIDOS del scoring EUR (EUR_NAV_CONVERSION_ENABLED)" if report.get("eur_view_on") else
+                "puntuados hoy como si su NAV fuera EUR; quedaran EXCLUIDOS al activar EUR_NAV_CONVERSION_ENABLED")
+        items.append(f"{len(unk)} fondos activos con NAV y sin divisa de clase (Fund_Currency NULL): {fate} "
+                     f"(p. ej. {', '.join(unk[:5])}); resolver en P1 (FND-0243)")
     hd = report.get("hedging_drift") or {}                  # absent in reports written before this check
     if hd.get("count"):
         items.append(f"{hd['count']} fondos activos con Hedging_Policy distinta de Hedged que el parser actual deriva como HEDGED "
@@ -415,6 +440,9 @@ def render_text(report: dict, previous: dict | None, items: list) -> str:
     for m in sorted(pct):
         d = f"  ({pct[m] - ppct[m]:+.1f} pp)" if m in ppct and abs(pct[m] - ppct[m]) >= 0.05 else ""
         L += [f"    {m:<28} {report['coverage'][m]:>6}  {pct[m]:6.1f}%{d}"]
+    unk = report.get("class_ccy_unknown")
+    if unk is not None:
+        L += [f"Divisa de clase desconocida (activos con NAV): {len(unk)}"] + ([f"    {', '.join(unk[:TOP_N])}"] if unk else [])
     L += ["Alertas rolling (activos): " + (", ".join(f"{k}={v}" for k, v in report["alerts"].items()) or "ninguna")]
     hd = report.get("hedging_drift")
     if hd:
