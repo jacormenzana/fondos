@@ -431,6 +431,19 @@ def list_links(*, history: bool = False, status: Optional[str] = None, ids: Opti
         return _rows(c, sql + " ORDER BY from_id, to_id, link_type, event_ts, event_id", tuple(params))
 
 
+def append_log(action_point_id: str, username: str, comment: str, *, conn=None) -> int:
+    """Append one progress note to `backlog.BACKLOG_LOGS` (insert-only, like every progress record: AGENTS.md "never overwrite
+    prior progress"). Does NOT touch the ticket's status. Fail-loud; returns the new log_id."""
+    if not str(action_point_id or "").strip() or not str(username or "").strip() or not str(comment or "").strip():
+        raise ValueError("action_point_id, username and comment are all required")
+    with _session(conn) as c:
+        (log_id,) = c.execute(
+            "INSERT INTO backlog.BACKLOG_LOGS (action_point_id, username, comment) VALUES (%s, %s, %s) RETURNING log_id",
+            (action_point_id, username, comment),
+        ).fetchone()
+    return log_id
+
+
 def record_link_events(events: list[dict], *, conn=None) -> list[int]:
     """Append link events (insert-only; a retype, confirmation or rejection is a NEW event, never an update) in ONE transaction:
     every event is validated before the first insert, so a batch is applied whole or not at all. Each event is a dict with

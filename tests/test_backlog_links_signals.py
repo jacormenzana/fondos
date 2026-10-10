@@ -48,6 +48,21 @@ def test_reverse_cue_swaps_the_direction():
     assert s1 == {("FND-0005", "FND-0004"): {"type": "SPLIT_FROM", "n": 1, "evidence": s1[("FND-0005", "FND-0004")]["evidence"]}}
 
 
+def test_cues_found_on_live_data_prerequisite_for_filed_from_closes_with_same_as():
+    # review of the live candidates, 2026-10-11: each of these was mis-typed before
+    docs = {
+        "FND-0001": "Prerequisite for FND-0002.",                                   # 0002 depends on 0001 (reverse)
+        "FND-0003": "Filed 2026-10-07 from FND-0004 part 2 (owner directive).",     # split, not "depends on"
+        "FND-0005": "This auto-captured ticket closes with FND-0006.",              # shared release
+        "FND-0007": "Daily-backup scheduling: owner said hold (same as FND-0001).", # "same as" is not a duplicate
+    }
+    s1 = L.signal_explicit(docs, KNOWN)
+    assert s1[("FND-0002", "FND-0001")]["type"] == "DEPENDS_ON"
+    assert s1[("FND-0003", "FND-0004")]["type"] == "SPLIT_FROM"
+    assert s1[("FND-0005", "FND-0006")]["type"] == "RELEASE_WITH"
+    assert s1[("FND-0007", "FND-0001")]["type"] == "RELATED"
+
+
 def test_a_stray_word_before_the_sentence_does_not_reverse_the_link():
     s1 = L.signal_explicit({"FND-0001": "This blocks the whole run. Related: FND-0002."}, KNOWN)
     assert s1[("FND-0001", "FND-0002")]["type"] == "RELATED"

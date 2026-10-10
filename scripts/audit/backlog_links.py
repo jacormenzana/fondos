@@ -69,9 +69,11 @@ _IDENT_RX = re.compile(r"[A-Za-z][A-Za-z0-9_]{5,}")
 
 # (link type, regex over the text around a mention). First match in this order wins; no cue = RELATED.
 _CUES = (
-    ("DUPLICATES", re.compile(r"duplicate[sd]? of|dup of|duplicado de|same as", re.I)),
-    ("SPLIT_FROM", re.compile(r"split (?:from|out of)|carved out of|spun off from|derived from|child of|desglosado de", re.I)),
-    ("RELEASE_WITH", re.compile(r"releas\w+ (?:together )?with|ships? with|same release|together with|junto con", re.I)),
+    ("DUPLICATES", re.compile(r"duplicate[sd]? of|dup of|duplicado de", re.I)),
+    ("SPLIT_FROM", re.compile(r"split (?:from|out of)|carved out of|spun off from|derived from|child of|desglosado de"
+                             r"|\bfiled\b[^.\n]{0,40}\bfrom\b", re.I)),
+    ("RELEASE_WITH", re.compile(r"releas\w+ (?:together )?with|ships? with|same release|together with|junto con"
+                               r"|\bcloses? with\b|grouped (?:into|with)", re.I)),
     ("DEPENDS_ON", re.compile(r"depends? on|blocked by|requires|prerequisite|waits? for|depende de|bloqueado por", re.I)),
     ("OVERLAPS", re.compile(r"overlaps?|absorb\w*|integrat\w+|same (?:column|signal|module|code)|solapa", re.I)),
 )
@@ -80,7 +82,7 @@ _CUES = (
 # the text just before the mention, so a stray "blocks" earlier in the sentence does not count.
 _REVERSE_CUES = (
     ("SPLIT_FROM", re.compile(r"split (?:out )?(?:to|into)\W*$|spun off to\W*$|desglosado en\W*$", re.I)),
-    ("DEPENDS_ON", re.compile(r"\bblocks\W*$|\bbloquea\W*$", re.I)),
+    ("DEPENDS_ON", re.compile(r"\bblocks\W*$|\bbloquea\W*$|\bprerequisite (?:for|of)\W*$|\bneeded by\W*$", re.I)),
     ("DUPLICATES", re.compile(r"duplicated by\W*$|duplicado por\W*$", re.I)),
 )
 

@@ -117,3 +117,14 @@ def test_database_error_propagates_and_the_caller_can_roll_the_batch_back(db):
         with db.transaction():                      # a savepoint standing in for the caller's transaction
             bc.record_link_events([good, _ev("FND-9001", "FND-0000", "RELATED", "PROPOSED")], conn=db)
     assert bc.list_links(history=True, conn=db) == []
+
+
+def test_append_log_inserts_without_touching_the_ticket_status(db):
+    before = bc.list_tickets(ids=["FND-9001"], conn=db)[0]
+    log_id = bc.append_log("FND-9001", "pytest", "relations note", conn=db)
+    assert isinstance(log_id, int)
+    assert bc.list_logs(ids=["FND-9001"], conn=db)[-1]["comment"] == "relations note"
+    assert bc.list_tickets(ids=["FND-9001"], conn=db)[0]["status"] == before["status"] == "OPEN"
+    with pytest.raises(psycopg.errors.ForeignKeyViolation):
+        with db.transaction():
+            bc.append_log("FND-0000", "pytest", "orphan", conn=db)

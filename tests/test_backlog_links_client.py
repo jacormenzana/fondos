@@ -66,3 +66,11 @@ def test_argument_validation():
         bc.list_tickets(closed_since=datetime(2026, 1, 1))          # only meaningful with open_only=True
     with pytest.raises(ValueError):
         bc.list_links(status="MAYBE")
+
+
+def test_append_log_validates_and_fails_loud_without_a_dsn(monkeypatch):
+    monkeypatch.delenv("FONDOS_BACKLOG_PG_DSN", raising=False)
+    with pytest.raises(ValueError):
+        bc.append_log("FND-0001", "u", "  ")
+    with pytest.raises(bc.BacklogUnavailable):
+        bc.append_log("FND-0001", "u", "a note")
