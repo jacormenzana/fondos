@@ -57,6 +57,13 @@ def _ev(f, t, typ, st, **kw):
     return {"from_id": f, "to_id": t, "link_type": typ, "status": st, "evidence": "e", "username": "u", **kw}
 
 
+def test_links_store_presence_is_detected(pg_conn):
+    pg_conn.execute(SCHEMA_SQL)
+    assert bc.links_store_present(conn=pg_conn) is False        # DDL of 20_links.sql not applied yet
+    mig.migrate(pg_conn)
+    assert bc.links_store_present(conn=pg_conn) is True
+
+
 def test_ticket_scopes(db):
     assert _ids(bc.list_tickets(conn=db)) == ["FND-9001", "FND-9002", "FND-9003", "FND-9004"]
     assert _ids(bc.list_tickets(open_only=True, conn=db)) == ["FND-9001", "FND-9002"]

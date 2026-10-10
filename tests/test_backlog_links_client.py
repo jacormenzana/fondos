@@ -33,9 +33,10 @@ def test_link_vocabulary_is_the_ddl_check_list():
     lambda: bc.list_tickets(),
     lambda: bc.list_logs(),
     lambda: bc.list_links(),
+    lambda: bc.links_store_present(),
     lambda: bc.record_link_event(from_id="FND-1", to_id="FND-2", link_type="RELATED", status="PROPOSED",
                                  evidence="x", username="u"),
-], ids=["list_tickets", "list_logs", "list_links", "record_link_event"])
+], ids=["list_tickets", "list_logs", "list_links", "links_store_present", "record_link_event"])
 def test_fails_loud_without_a_dsn(monkeypatch, call):
     # unlike report_incident(): an unreachable backlog must never read as "no tickets / no links"
     monkeypatch.delenv("FONDOS_BACKLOG_PG_DSN", raising=False)

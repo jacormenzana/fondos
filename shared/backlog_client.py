@@ -349,6 +349,14 @@ def list_logs(*, ids: Optional[list[str]] = None, conn=None) -> list[dict]:
         return _rows(c, sql + " ORDER BY action_point_id, log_ts, log_id", params)
 
 
+def links_store_present(*, conn=None) -> bool:
+    """True when the relationship DDL (db/pg_backlog/20_links.sql) has been applied. Lets a read-only tool say "links not
+    deployed yet" instead of failing -- or, worse, reporting an empty link set as if it were a reviewed one."""
+    with _session(conn) as c:
+        (reg,) = c.execute("SELECT to_regclass('backlog.v_backlog_link') IS NOT NULL").fetchone()
+    return bool(reg)
+
+
 def list_links(*, history: bool = False, status: Optional[str] = None, ids: Optional[list[str]] = None,
                conn=None) -> list[dict]:
     """Links between tickets. Default: the CURRENT state of every (from, to, type) pair (`v_backlog_link`, latest event wins).
