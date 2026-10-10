@@ -10,7 +10,7 @@ Signals (each pair of tickets can carry several; none decides alone):
   S1 explicit   an FND id mentioned in a ticket's title / description / logs; the wording around it suggests the link type
   S2 footprint  files touched by the commits that name the ticket (+ paths cited in its text), IDF-weighted overlap
   S3 vocabulary repo identifiers (config switches, DDL tables/columns, module and function names) shared by two tickets, IDF-weighted
-  S4 text       TF-IDF cosine of title + description + logs (numpy only: scikit-learn / rich are not installed in env `des`)
+  S4 text       TF-IDF cosine of title + description + logs (stdlib, shared/backlog_overlap.py; scikit-learn / rich are not installed in env `des`)
 
     python scripts/audit/backlog_links.py --all                       # clusters + ranked unreviewed candidates (read-only)
     python scripts/audit/backlog_links.py --for FND-0246              # neighbours; exit 1 while a confirmed DEPENDS_ON target is open
@@ -47,6 +47,7 @@ if str(_ROOT) not in sys.path:
 
 import shared.config  # noqa: E402,F401  (side effect: autoloads the repo .env, FONDOS_BACKLOG_PG_DSN)
 from shared import backlog_client as bc  # noqa: E402
+from shared.backlog_overlap import tfidf_cosine  # noqa: E402  (S4; shared with report_incident)
 
 OUT_DIR = _ROOT / "out" / "reports" / "backlog_links"
 
@@ -54,9 +55,9 @@ OUT_DIR = _ROOT / "out" / "reports" / "backlog_links"
 # or S2 / S3 on their own, or S4 with corroboration. Pure constants: changing one is a code review, not a runtime flag.
 T_S2 = 0.30                        # weighted file overlap
 T_S3 = 0.25                        # weighted identifier overlap
-T_S4 = 0.45                        # TF-IDF cosine, alone
-T_S4_WITH_OTHER = 0.25             # TF-IDF cosine when S2 / S3 corroborate it
-T_CORROBORATE = (0.10, 0.15)       # S2 alone is a co-commit: it needs S3 >= first or S4 >= second
+T_S4 = 0.35                        # TF-IDF cosine, alone (31% of the pairs it fires on are stated links)
+T_S4_WITH_OTHER = 0.20             # TF-IDF cosine when S2 / S3 corroborate it
+T_CORROBORATE = (0.10, 0.20)       # S2 alone is a co-commit: it needs S3 >= first or S4 >= second
 STRONG = 0.60                      # combined confidence from which --new exits 1
 MAX_DF_SHARE = 0.10                # a term / file in more than this share of the tickets carries no information (hub modules)
 SMOOTH = 2.0                       # additive smoothing of the weighted Jaccard: one shared term in two tiny sets is not "1.00"
@@ -64,13 +65,7 @@ MAX_PER_TICKET = 5                 # non-explicit candidates kept per pending ti
 
 _ID_RX = re.compile(r"\bFND-0*(\d{1,4})\b")
 _PATH_RX = re.compile(r"(?<![\w/\\])((?:[\w.\-]+[/\\])*[\w.\-]+\.(?:py|sql|bat|md|yaml|yml|json|toml|ps1|sh))\b")
-_TOKEN_RX = re.compile(r"[a-z0-9_]{3,}")
 _IDENT_RX = re.compile(r"[A-Za-z][A-Za-z0-9_]{5,}")
-_STOP = frozenset("""
-the and for with that this from are was were not but have has had its into when then than also any all can will would should
-may might per via out one two new old use used using see set get got run runs ran
-los las del una uno unos unas para por con que como pero más mas sus son está esta este esto
-""".split())
 
 # (link type, regex over the text around a mention). First match in this order wins; no cue = RELATED.
 _CUES = (
@@ -209,43 +204,8 @@ def idf_overlap(sets: dict[str, set[str]], *, max_df_share: float = MAX_DF_SHARE
     return out
 
 
-def tokens(text: str) -> list[str]:
-    return [t for t in _TOKEN_RX.findall(text.lower()) if t not in _STOP and not t.isdigit()]
-
-
 def vocabulary_terms(doc: str, vocab: set[str]) -> set[str]:
     return {t.lower() for t in _IDENT_RX.findall(doc) if t.lower() in vocab}
-
-
-def tfidf_cosine(docs: dict[str, str], min_cos: float = 0.10) -> dict[tuple, float]:
-    """S4: {(a, b): cosine} above `min_cos`. sublinear tf, smoothed idf, L2 rows; numpy only."""
-    import numpy as np
-    ids = sorted(docs)
-    toks = {i: Counter(tokens(docs[i])) for i in ids}
-    df = Counter(t for c in toks.values() for t in c)
-    vocab = {t: k for k, t in enumerate(sorted(t for t, c in df.items() if c >= 2))}
-    if len(ids) < 2 or not vocab:
-        return {}
-    n = len(ids)
-    idf = np.zeros(len(vocab))
-    for t, k in vocab.items():
-        idf[k] = math.log((1 + n) / (1 + df[t])) + 1.0
-    m = np.zeros((n, len(vocab)))
-    for r, i in enumerate(ids):
-        for t, c in toks[i].items():
-            k = vocab.get(t)
-            if k is not None:
-                m[r, k] = (1.0 + math.log(c)) * idf[k]
-    norm = np.linalg.norm(m, axis=1)
-    norm[norm == 0] = 1.0
-    m = m / norm[:, None]
-    sim = m @ m.T
-    out = {}
-    for r in range(n):
-        for c in range(r + 1, n):
-            if sim[r, c] >= min_cos:
-                out[(ids[r], ids[c])] = float(sim[r, c])
-    return out
 
 
 def build_candidates(*, s1: dict, s2: dict, s3: dict, s4: dict, existing: set[tuple], scope: Optional[set[str]] = None) -> list[dict]:
@@ -485,6 +445,27 @@ def _short(t: dict, n: int = 70) -> str:
     return (t.get("title") or "")[:n]
 
 
+def cycle_summary(an: Optional[Analysis] = None) -> dict:
+    """Counts for the cycle report's one line (p1p2_cycle_report.py): read-only, no printing. `blocked_in_progress` lists the
+    tickets already being worked on whose CONFIRMED DEPENDS_ON prerequisite is still not closed (the attention item)."""
+    an = an or _load()
+    cands = an.candidates(an.scope())
+    confirmed = [l for l in an.links if l["status"] == "CONFIRMED"]
+    pending = an.open_ids
+    cl = clusters([(a, b) for (a, b) in an.s1 if a in pending and b in pending]
+                  + [(l["from_id"], l["to_id"]) for l in confirmed if l["from_id"] in pending and l["to_id"] in pending])
+    blocked = [l for l in confirmed if l["link_type"] == "DEPENDS_ON" and l["from_id"] in pending and l["to_id"] in pending]
+    return {
+        "open": len(pending), "links_confirmed": len(confirmed),
+        "candidates_unreviewed": len(cands), "candidates_stated": sum("S1" in c["signals"] for c in cands),
+        "clusters": len(cl), "largest_cluster": len(cl[0]) if cl else 0,
+        "open_depends_on": len(blocked),
+        "blocked_in_progress": sorted({l["from_id"] for l in blocked
+                                       if an.tickets[l["from_id"]]["status"] in ("IN_PROGRESS", "READY_FOR_DEPLOY")}),
+        "store_applied": bool(an.links) or bc.links_store_present(),
+    }
+
+
 def mode_all(an: Analysis, top: int) -> int:
     scope = an.scope()
     cands = an.candidates(scope)
@@ -495,6 +476,11 @@ def mode_all(an: Analysis, top: int) -> int:
     print(f"unreviewed candidates in scope: {len(cands)}  (S1 {sum('S1' in c['signals'] for c in cands)}, "
           f"S2 {sum('S2' in c['signals'] for c in cands)}, S3 {sum('S3' in c['signals'] for c in cands)}, "
           f"S4 {sum('S4' in c['signals'] for c in cands)})")
+    decided = [l for l in an.links if l["status"] in ("CONFIRMED", "REJECTED")]
+    forced = [l for l in decided if "FORCED despite" in (l.get("evidence") or "")]
+    if forced:      # D-3: systematic overriding of the staleness pre-flight must be visible
+        print(f"forced rows (kept despite a stale ticket): {len(forced)} of {len(decided)} decided links "
+              f"({len(forced) / len(decided):.0%}) -- each needs its one-line reason in the backlog log")
     cl = clusters(explicit_open + [(a, b) for a, b in confirmed if a in an.open_ids and b in an.open_ids])
     print(f"\nclusters among open tickets (explicit mentions + confirmed links): {len(cl)}")
     for g in cl[:15]:

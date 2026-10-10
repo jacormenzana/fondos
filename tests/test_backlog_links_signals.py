@@ -200,3 +200,17 @@ def test_apply_review_dry_run_confirm_and_archive(tmp_path, monkeypatch):
     again = tmp_path / path.name                                  # same file name re-created: refused (already archived)
     again.write_text("x", encoding="utf-8")
     assert L.mode_apply_review(again, confirm=True, forced=set(), username="u") == 2
+
+
+# ─── cycle report summary ────────────────────────────────────────────────────────────────────────────────────────────────
+
+def test_cycle_summary_counts_and_lists_tickets_in_progress_behind_an_open_prerequisite():
+    tickets = [{"action_point_id": i, "status": s, "title": f"ticket {i}", "closure_ts": None}
+               for i, s in (("FND-0001", "IN_PROGRESS"), ("FND-0002", "OPEN"), ("FND-0003", "CLOSED"), ("FND-0004", "OPEN"))]
+    links = [{"from_id": "FND-0001", "to_id": "FND-0002", "link_type": "DEPENDS_ON", "status": "CONFIRMED"},
+             {"from_id": "FND-0004", "to_id": "FND-0003", "link_type": "DEPENDS_ON", "status": "CONFIRMED"},   # prerequisite closed
+             {"from_id": "FND-0004", "to_id": "FND-0001", "link_type": "RELATED", "status": "PROPOSED"}]
+    s = L.cycle_summary(L.Analysis(tickets, [], links, [], set()))
+    assert s["open"] == 3 and s["links_confirmed"] == 2
+    assert s["open_depends_on"] == 1 and s["blocked_in_progress"] == ["FND-0001"]
+    assert s["store_applied"] is True

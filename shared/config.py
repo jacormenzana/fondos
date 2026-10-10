@@ -623,6 +623,16 @@ EUR_FX_DAILY_INDICATOR: str = "fx_d_eur"           # EXR.D.<CCY>.EUR.SP00.A
 # the first run adopts every fund from its legacy hash without recomputing. ROLLBACK: set False -- the next plain run
 # recomputes every fund once (the legacy hash column then holds a composite hash), no schema change needed.
 FAMILY_VERSIONING_ENABLED: bool = True
+# Two-tier overlap policy of the automatic incident capture (shared/backlog_client.report_incident; NORMAS_BACKLOG.md §7,
+# owner safeguards S-2 / D-1). OFF = today's behaviour: only the exact (project_code, object_name, 24 h) dedup. ON = before a new
+# ticket is opened the incident is compared with the OPEN tickets: HIGH confidence (names an open ticket, or the same object_name
+# with text similarity >= BACKLOG_INCIDENT_HIGH_COSINE) is appended to that ticket with a log note saying why; MEDIUM
+# (similarity >= BACKLOG_INCIDENT_MEDIUM_COSINE, or the same object_name with a weaker match) opens the new ticket and only
+# SUGGESTS the related one. Switch-on gate (D-1): `scripts/audit/backlog_links_calibration.py --gate` reports ZERO false merges
+# on the historical replay and the synthetic fixture (tests/fixtures/backlog_incident_cases.json); attach its report to the ticket.
+BACKLOG_INCIDENT_AUTO_APPEND_ENABLED: bool = False
+BACKLOG_INCIDENT_HIGH_COSINE: float = 0.70
+BACKLOG_INCIDENT_MEDIUM_COSINE: float = 0.45
 # Options of the iterative VIF (used when MACRO_VIF_ITERATIVE_ENABLED, and by the PIT variant "iterative_hy"): keep the two
 # crisis factors, drop spread_ig (the near-duplicate of spread_hy), and at most n_obs / 10 factors per fund.
 MACRO_ITERATIVE_VIF: dict = {

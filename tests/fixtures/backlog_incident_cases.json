@@ -1,0 +1,101 @@
+{
+  "_comment": "Synthetic calibration set for the automatic-incident overlap policy (owner directive D-1, NORMAS_BACKLOG.md section 7). Each case: the OPEN tickets, the incoming incident, and the tier it must get. 'never_high' cases are the false-merge guard: a HIGH there would append an unrelated defect to a ticket. A new auto-reporting component or error/log format needs a case here (tests/test_backlog_overlap.py::test_every_incident_reporter_has_a_fixture_case enforces it).",
+  "object_name_prefixes": [
+    "run_block.py",
+    "run_pipeline.py",
+    "p3_build_portfolio.py",
+    "p3_pit_backtest.py",
+    "fund_family_builder.py",
+    "export_p1.py",
+    "benchmark_loader.py",
+    "export_metrics.py",
+    "macro_discovery.py",
+    "nav_discovery.py",
+    "mark_stale.py",
+    "P2 NAV quarantine",
+    "P1_P2_Complete.bat PASO"
+  ],
+  "cases": [
+    {
+      "name": "same module, different defect (never merge)",
+      "open": [{"action_point_id": "FND-1001", "title": "[auto] run_pipeline.py: KeyError fund_nav_monthly",
+                "object_name": "run_pipeline.py",
+                "scenario_description": "KeyError: 'fund_nav_monthly' while reading the NAV panel in get_isins_with_nav. Traceback: File run_pipeline.py line 612 in main"}],
+      "incident": {"object_name": "run_pipeline.py",
+                   "scenario": "MemoryError: unable to allocate array while computing rolling windows. Traceback: File run_pipeline.py line 1450 in compute_rolling_rows"},
+      "never_high": true
+    },
+    {
+      "name": "same defect, same wording",
+      "open": [{"action_point_id": "FND-1002", "title": "[auto] run_pipeline.py: UndefinedColumn real_flag",
+                "object_name": "run_pipeline.py",
+                "scenario_description": "psycopg.errors.UndefinedColumn: column real_flag does not exist in fund_metric_timeseries. Traceback: File run_pipeline.py line 800 in write_timeseries"}],
+      "incident": {"object_name": "run_pipeline.py",
+                   "scenario": "psycopg.errors.UndefinedColumn: column real_flag does not exist in fund_metric_timeseries. Traceback: File run_pipeline.py line 801 in write_timeseries"},
+      "expect": "HIGH"
+    },
+    {
+      "name": "launcher step failed with the same RC",
+      "open": [{"action_point_id": "FND-1003", "title": "[auto] P1_P2_Complete.bat PASO 3 (P2_discoverLoadMetrics)",
+                "object_name": "P1_P2_Complete.bat PASO 3 (P2_discoverLoadMetrics)",
+                "scenario_description": "PASO 3 (P2_discoverLoadMetrics) failed with RC=2 after 120s. See the step's log under proyecto1/log or proyecto2/log."}],
+      "incident": {"object_name": "P1_P2_Complete.bat PASO 3 (P2_discoverLoadMetrics)",
+                   "scenario": "PASO 3 (P2_discoverLoadMetrics) failed with RC=2 after 4015s. See the step's log under proyecto1/log or proyecto2/log."},
+      "expect": "HIGH"
+    },
+    {
+      "name": "launcher step failed with a DIFFERENT RC (never merge)",
+      "open": [{"action_point_id": "FND-1004", "title": "[auto] P1_P2_Complete.bat PASO 3 (P2_discoverLoadMetrics)",
+                "object_name": "P1_P2_Complete.bat PASO 3 (P2_discoverLoadMetrics)",
+                "scenario_description": "PASO 3 (P2_discoverLoadMetrics) failed with RC=2 after 120s. See the step's log under proyecto1/log or proyecto2/log."}],
+      "incident": {"object_name": "P1_P2_Complete.bat PASO 3 (P2_discoverLoadMetrics)",
+                   "scenario": "PASO 3 (P2_discoverLoadMetrics) failed with RC=101 after 4s. See the step's log under proyecto1/log or proyecto2/log."},
+      "never_high": true
+    },
+    {
+      "name": "different launcher step (never merge)",
+      "open": [{"action_point_id": "FND-1005", "title": "[auto] P1_P2_Complete.bat PASO 3 (P2_discoverLoadMetrics)",
+                "object_name": "P1_P2_Complete.bat PASO 3 (P2_discoverLoadMetrics)",
+                "scenario_description": "PASO 3 (P2_discoverLoadMetrics) failed with RC=2 after 120s. See the step's log under proyecto1/log or proyecto2/log."}],
+      "incident": {"object_name": "P1_P2_Complete.bat PASO 4 (P2_calculateIndicators)",
+                   "scenario": "PASO 4 (P2_calculateIndicators) failed with RC=2 after 900s. See the step's log under proyecto1/log or proyecto2/log."},
+      "never_high": true
+    },
+    {
+      "name": "truncated traceback of the same defect (never merge: suggest at most)",
+      "open": [{"action_point_id": "FND-1006", "title": "[auto] export_metrics.py: PermissionError",
+                "object_name": "export_metrics.py",
+                "scenario_description": "PermissionError: [Errno 13] Permission denied: out/reports/metrics.xlsx. Traceback: File export_metrics.py line 1700 in export_all; File openpyxl/writer/excel.py line 300 in save"}],
+      "incident": {"object_name": "export_metrics.py",
+                   "scenario": "PermissionError: [Errno 13] Permission denied: out/reports/metrics.xlsx"},
+      "never_high": true
+    },
+    {
+      "name": "names an open ticket explicitly (a citation is a suggestion, never a merge)",
+      "open": [{"action_point_id": "FND-1007", "title": "P2 quarantine alerting", "object_name": "P2 NAV quarantine",
+                "scenario_description": "print the quarantined count in RUN_SUMMARY"}],
+      "incident": {"object_name": "nav_discovery.py",
+                   "scenario": "RuntimeError: quarantine spike, see FND-1007 for the alerting rule"},
+      "never_high": true,
+      "expect": "MEDIUM"
+    },
+    {
+      "name": "unrelated incident",
+      "open": [{"action_point_id": "FND-1008", "title": "[auto] export_metrics.py: PermissionError",
+                "object_name": "export_metrics.py",
+                "scenario_description": "PermissionError: [Errno 13] Permission denied: out/reports/metrics.xlsx"}],
+      "incident": {"object_name": "macro_discovery.py",
+                   "scenario": "ConnectionError: HTTPSConnectionPool host api.stlouisfed.org read timed out after 30 seconds"},
+      "expect": "NONE"
+    },
+    {
+      "name": "NAV quarantine spike on a later run (same reporter, different run id)",
+      "open": [{"action_point_id": "FND-1009", "title": "P2 run quarantined 14 funds with invalid NAV (> 10)",
+                "object_name": "P2 NAV quarantine",
+                "scenario_description": "run_id=P2-20261001_020000: validate_nav() rejected 14 funds; their metrics were cleared and nav_sources.data_status set to INVALID_NAV."}],
+      "incident": {"object_name": "P2 NAV quarantine",
+                   "scenario": "run_id=P2-20261008_020000: validate_nav() rejected 17 funds; their metrics were cleared and nav_sources.data_status set to INVALID_NAV."},
+      "expect": "HIGH"
+    }
+  ]
+}

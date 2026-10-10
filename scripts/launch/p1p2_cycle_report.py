@@ -321,6 +321,17 @@ def collect_hedging_drift(conn) -> dict:
 
 # ── analysis (pure: no database, R-7) ─────────────────────────────────────────────────────────────
 
+def collect_backlog_links() -> dict:
+    """Relationship state of the action-point backlog (scripts/audit/backlog_links.py; NORMAS_BACKLOG.md). Never raises: the backlog
+    is a different database, and its being down must not cost the cycle report."""
+    try:
+        sys.path.insert(0, str(ROOT / "scripts" / "audit"))
+        import backlog_links
+        return backlog_links.cycle_summary()
+    except Exception as exc:
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
 def coverage_pct(report: dict) -> dict:
     """Share (0-100) of the active universe that has each P3-consumed metric."""
     active = report.get("universe", {}).get("active", 0)
@@ -373,6 +384,10 @@ def attention_items(report: dict, previous: dict | None) -> list:
                      "un ciclo P1 completo los corrige (COALESCE). Esperado tras el ciclo: 0")
     if hd.get("error"):
         items.append(f"no se pudo calcular la deriva de Hedging_Policy: {hd['error']}")
+    bl = report.get("backlog_links") or {}                  # absent in reports written before this check
+    if bl.get("blocked_in_progress"):
+        items.append(f"{len(bl['blocked_in_progress'])} tickets en curso con un prerequisito DEPENDS_ON sin cerrar "
+                     f"({', '.join(bl['blocked_in_progress'][:6])}): backlog_links.py --for <id>")
     # A slow run is NOT an attention item: it is a constant of the corpus (measured 2026-10-08: ~14 s, all in the KIID regexes), so an item would
     # repeat every cycle. It is a WARNING in the log and a marker on the report line; the check stays active (--no-hedging-drift skips it).
     if previous:
@@ -457,6 +472,17 @@ def render_text(report: dict, previous: dict | None, items: list) -> str:
                   + (f" [WARN lento: limite {HEDGING_DRIFT_SLOW_S:.0f}s]" if hd.get("slow") else "")]
             if hd.get("isins"):                  # neutral diagnostic: which funds (the first HEDGING_DRIFT_LIST)
                 L += ["    " + ", ".join(hd["isins"])]
+    bl = report.get("backlog_links")
+    if bl:
+        if bl.get("error"):
+            L += [f"Relaciones del backlog: no disponible ({bl['error']})"]
+        elif not bl.get("store_applied"):
+            L += [f"Relaciones del backlog: almacen sin aplicar; {bl['candidates_unreviewed']} candidatas sin revisar "
+                  f"({bl['candidates_stated']} citadas en texto), {bl['clusters']} grupos entre {bl['open']} tickets abiertos"]
+        else:
+            L += [f"Relaciones del backlog: {bl['links_confirmed']} confirmadas, {bl['open_depends_on']} DEPENDS_ON entre abiertos, "
+                  f"{bl['candidates_unreviewed']} candidatas sin revisar ({bl['candidates_stated']} citadas en texto), "
+                  f"{bl['clusters']} grupos (mayor {bl['largest_cluster']})"]
     L += ["-" * 60]
     L += [f"[ATENCION] {i}" for i in items] if items else ["Sin puntos de atencion."]
     return "\n".join(L)
@@ -494,6 +520,7 @@ def main(argv: list | None = None) -> int:
         try:
             report = collect(conn, since, today)
             report["hedging_drift"] = collect_hedging_drift(conn) if args.hedging_drift else {"skipped": True}
+            report["backlog_links"] = collect_backlog_links()
         finally:
             conn.close()
     except Exception as exc:

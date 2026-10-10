@@ -76,6 +76,40 @@ def _write_fallback(**fields) -> None:
         logger.warning("[BACKLOG-AUTOLOG] fallback log write also failed — incident not persisted anywhere", exc_info=True)
 
 
+def _overlap_settings() -> Optional[tuple]:
+    """(high_cosine, medium_cosine) when the two-tier overlap policy is switched on, else None. Kept apart so tests can set it
+    and so a missing / broken config can never get in the way of recording an incident."""
+    try:
+        from shared import config
+        if not getattr(config, "BACKLOG_INCIDENT_AUTO_APPEND_ENABLED", False):
+            return None
+        return (float(config.BACKLOG_INCIDENT_HIGH_COSINE), float(config.BACKLOG_INCIDENT_MEDIUM_COSINE))
+    except Exception:
+        return None
+
+
+def _overlap_policy(cur, object_name: str, scenario_description: str) -> Optional[dict]:
+    """Owner safeguard S-2: compare an incident with the OPEN tickets (shared/backlog_overlap.py). None when the policy is off or
+    cannot be evaluated -- an overlap check must never stop an incident from being recorded."""
+    settings = _overlap_settings()
+    if settings is None:
+        return None
+    try:
+        from shared.backlog_overlap import classify_incident
+        with cur.connection.transaction():      # a savepoint: a failing check must not abort the incident's own inserts
+            cur.execute(
+                "SELECT action_point_id, title, object_name, scenario_description FROM backlog.BACKLOG "
+                "WHERE status IN ('OPEN','TODO','IN_PROGRESS','BLOCKED')"
+            )
+            cols = [c.name for c in cur.description]
+            candidates = [dict(zip(cols, r)) for r in cur.fetchall()]
+        return classify_incident(scenario=scenario_description, object_name=object_name, candidates=candidates,
+                                 high_cosine=settings[0], medium_cosine=settings[1])
+    except Exception:
+        logger.warning("[BACKLOG-AUTOLOG] overlap check failed -- recording the incident without it", exc_info=True)
+        return None
+
+
 def report_incident(
     *,
     object_name: str,
@@ -140,6 +174,21 @@ def report_incident(
                     )
                     return apid
 
+                policy = _overlap_policy(cur, object_name, scenario_description)
+                if policy and policy["tier"] == "HIGH":
+                    apid = policy["ticket"]
+                    cur.execute(
+                        """
+                        INSERT INTO backlog.BACKLOG_LOGS (action_point_id, username, comment)
+                        VALUES (%s, 'SYSTEM_AUTODETECT', %s)
+                        """,
+                        (apid, f"Reincidence detected (overlap: {policy['reason']}) on {object_name}: {scenario_description}"),
+                    )
+                    conn.commit()
+                    logger.warning("[BACKLOG-AUTOLOG] Incident appended to overlapping %s (%s)", apid, policy["reason"])
+                    return apid
+                suggestion = policy if policy and policy["tier"] == "MEDIUM" else None
+
                 cur.execute(
                     "SELECT 'FND-' || LPAD(nextval('backlog.seq_backlog_fnd')::text, 4, '0')"
                 )
@@ -162,7 +211,9 @@ def report_incident(
                     INSERT INTO backlog.BACKLOG_LOGS (action_point_id, username, comment)
                     VALUES (%s, 'SYSTEM_AUTODETECT', %s)
                     """,
-                    (apid, f"Auto-opened: {scenario_description}"),
+                    (apid, f"Auto-opened: {scenario_description}"
+                           + (f"\n\nPossibly related (NOT merged): {suggestion['ticket']} -- {suggestion['reason']}"
+                              if suggestion else "")),
                 )
                 conn.commit()
                 logger.warning("[BACKLOG-AUTOLOG] New incident opened: %s (%s)", apid, object_name)

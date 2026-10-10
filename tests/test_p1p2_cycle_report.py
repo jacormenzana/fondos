@@ -267,3 +267,30 @@ def test_main_with_an_unreadable_database_exits_1_and_writes_nothing(tmp_path, m
 
 def test_main_rejects_a_bad_since_date_with_rc_4(tmp_path):
     assert cr.main(["--since", "04/10/2026", "--out-dir", str(tmp_path)]) == 4
+
+
+# --- backlog relationship line (scripts/audit/backlog_links.py via collect_backlog_links) ---
+
+def test_backlog_links_item_flags_tickets_in_progress_behind_an_open_prerequisite():
+    cur = _report(backlog_links={"blocked_in_progress": ["FND-0246", "FND-0100"]})
+    items = cr.attention_items(cur, None)
+    assert any("DEPENDS_ON" in i and "FND-0246" in i and "2 tickets" in i for i in items)
+    assert cr.attention_items(_report(backlog_links={"blocked_in_progress": []}), None) == []
+    assert cr.attention_items(_report(), None) == []                      # old reports without the key are tolerated
+
+
+def test_backlog_links_line_renders_unavailable_unapplied_and_applied_states():
+    base = {"open": 46, "candidates_unreviewed": 143, "candidates_stated": 108, "clusters": 4, "largest_cluster": 27,
+            "links_confirmed": 0, "open_depends_on": 0, "blocked_in_progress": [], "store_applied": False}
+    text = cr.render_text(_report(backlog_links={"error": "BacklogUnavailable: no dsn"}), None, [])
+    assert "Relaciones del backlog: no disponible" in text
+    text = cr.render_text(_report(backlog_links=base), None, [])
+    assert "almacen sin aplicar" in text and "143 candidatas" in text
+    text = cr.render_text(_report(backlog_links=dict(base, store_applied=True, links_confirmed=9)), None, [])
+    assert "9 confirmadas" in text and "almacen sin aplicar" not in text
+
+
+def test_collect_backlog_links_never_raises(monkeypatch):
+    import sys
+    monkeypatch.setitem(sys.modules, "backlog_links", None)               # import fails -> the error is reported, not raised
+    assert "error" in cr.collect_backlog_links()
