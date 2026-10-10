@@ -21,6 +21,8 @@ clean room is that it cannot.
 What IS shared, deliberately (a connection helper and a fallback numeric constant are not
 calculation logic):
   - shared.db.get_connection() — a DB connection, not a formula.
+  - shared.eur_nav.apply_eur_view() — INPUT preparation (FND-0243): with EUR_NAV_CONVERSION_ENABLED the stored metrics are
+    computed on the EUR view of the NAV, so the shadow must read the same input; an identity while the switch is off.
   - shared.config.RISK_FREE_RATE_ANN — used only as shadow_resolve_rf_rate()'s FALLBACK, exactly
     the role it plays in production too (resolve_rf_rate()'s own `fallback` argument). The actual
     risk-free rate sharpe/sortino uses is date-resolved from a historical monthly series
