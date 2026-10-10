@@ -24,6 +24,15 @@ if str(_ROOT) not in sys.path:
 from proyecto3.src.pit_inputs import (
     ATTRIBUTE_FRAME_COLUMNS, iter_daily_chunks, load_attributes, load_ipc, load_nav_panel, load_rate_deposit,
 )
+import pytest  # noqa: E402
+
+@pytest.fixture(autouse=True)
+def _pin_switches_to_this_module_s_fixtures(monkeypatch):
+    """Toy schemas without fund_currency / ECB rates: the EUR NAV view (FND-0243) is tested in proyecto2 readers/test_eur_nav_readers_fnd0243_pg.py. Released switches default to True since 2026-10-10 (FND-0243 release); their own behaviour is covered by
+    their dedicated tests."""
+    from shared import config as _c
+    monkeypatch.setattr(_c, "EUR_NAV_CONVERSION_ENABLED", False, raising=False)
+
 
 
 def _schema(conn, schema):

@@ -21,6 +21,14 @@ from proyecto2.src.calculations import currency_factor as cf
 from proyecto3.src import data_freshness as df
 from shared import config
 
+@pytest.fixture(autouse=True)
+def _pin_switches_to_this_module_s_fixtures(monkeypatch):
+    """Fake connections serve only the canary's SQL: the FND-0235 lock is tested on class-currency NAV (EUR NAV view off). Released switches default to True since 2026-10-10 (FND-0243 release); their own behaviour is covered by
+    their dedicated tests."""
+    from shared import config as _c
+    monkeypatch.setattr(_c, "EUR_NAV_CONVERSION_ENABLED", False, raising=False)
+
+
 
 @pytest.fixture
 def switch(monkeypatch):

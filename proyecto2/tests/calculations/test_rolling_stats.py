@@ -92,7 +92,9 @@ class TestRollMaxDD:
 
 
 class TestRollReturnAnn:
-    def test_double_in_one_year(self):
+    def test_double_in_one_year(self, monkeypatch):
+        from shared import config
+        monkeypatch.setattr(config, "ANNUALIZATION_INTERVAL_ENABLED", False)   # legacy convention (FND-0240 off)
         """NAV que dobla: [100, 200] con periods_per_year=2 → years=1 → ret=100%."""
         # Convention: years = len(nav) / periods_per_year
         # len=2, periods_per_year=2 → years=1 → total^(1/1) - 1 = 2-1 = 1.0
@@ -100,7 +102,9 @@ class TestRollReturnAnn:
         ret = _roll_return_ann(nav, periods_per_year=2)
         assert ret == pytest.approx(1.0, abs=1e-8)
 
-    def test_known_12m_return(self):
+    def test_known_12m_return(self, monkeypatch):
+        from shared import config
+        monkeypatch.setattr(config, "ANNUALIZATION_INTERVAL_ENABLED", False)   # legacy convention (FND-0240 off)
         """12 puntos NAV creciendo 10%/año: len=12, years=12/12=1 → ret≈10%."""
         # NAV = 100*(1.1)^(i/11) para i in 0..11 → total = 1.1, years = 12/12 = 1
         navs = [100.0 * (1.1 ** (i / 11)) for i in range(12)]
@@ -335,7 +339,9 @@ class TestComputeRollingRows:
         assert 1 in flags, "real_flag=1 (deflactado) no encontrado en el output"
         assert 0 in flags, "real_flag=0 (nominal) desapareció"
 
-    def test_ipc_leading_gap_uses_correct_earlier_anchor_not_a_later_one(self):
+    def test_ipc_leading_gap_uses_correct_earlier_anchor_not_a_later_one(self, monkeypatch):
+        from shared import config
+        monkeypatch.setattr(config, "DEFLATION_MONTH_ALIGN_ENABLED", False)   # pre-FND-0241 alignment (covered in its own test)
         """FND-0114 (2026-09-28): compute_rolling_rows() now delegates to
         deflation.py::deflate_nav() (merge_asof backward) instead of its own exact-date
         merge + positional ffill/bfill. Regression coverage for the defect class that

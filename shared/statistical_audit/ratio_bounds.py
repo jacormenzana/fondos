@@ -51,11 +51,17 @@ def add_downside_deviation_columns(df: pd.DataFrame, n_obs_column: str = "n_obs"
     out["dd_ann_implied"] = numerator / out["sortino"].replace(0, np.nan).astype(float)
 
     n = out[n_obs_column].astype(float) if n_obs_column in out.columns else pd.Series(np.nan, index=out.index)
-    per_month = 1.0 / PERIODS_PER_YEAR
-    interval = n / (PERIODS_PER_YEAR * (n - 1))                          # total^(1/(n-1)), total = (1+ret)^(n/12)
-    exponent = pd.concat([pd.Series(per_month, index=out.index), interval.where(n > 1)], axis=1).max(axis=1)
+    per_month = 1.0 / PERIODS_PER_YEAR                                   # interval convention (FND-0240 on): total = (1+ret)^((n-1)/12)
+    legacy = n / (PERIODS_PER_YEAR * (n - 1))                            # points convention (FND-0240 off): total = (1+ret)^(n/12)
     base = 1.0 + out["return_ann"].astype(float)
-    g_m = np.where(base > 0, np.power(base.where(base > 0), exponent) - 1.0, np.nan)
+    pos = base.where(base > 0)
+    # The more permissive of the two conventions is the one giving the SMALLER monthly geometric mean (a larger shortfall):
+    # with base > 1 that is the smaller exponent, with base < 1 the larger one. Taking the max exponent everywhere (the
+    # earlier code) under-allowed positive returns once FND-0240 made the interval convention the real one: 10-19 false
+    # SORTINO_DOWNSIDE_BOUND violations per 1,500 correct series (2026-10-10). Valid under either convention, no config read.
+    g_interval = np.power(pos, per_month) - 1.0
+    g_legacy = np.power(pos, legacy.where(n > 1)) - 1.0
+    g_m = np.fmin(g_interval, g_legacy).where(base > 0)                   # fmin ignores the NaN of an undefined legacy exponent
 
     mar = out["rf_implied"] / PERIODS_PER_YEAR
     sigma_m = vol / np.sqrt(PERIODS_PER_YEAR)

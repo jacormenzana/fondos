@@ -22,6 +22,15 @@ from shared.statistical_audit.catalog_invariants import P2_INVARIANTS  # noqa: E
 from shared.statistical_audit.catalog_pairs import P2_PAIRS, _ipc_eligibility  # noqa: E402
 from shared.statistical_audit.timeseries import nav_with_ipc, scalar_window_cpi  # noqa: E402
 
+@pytest.fixture(autouse=True)
+def _pin_switches_to_this_module_s_fixtures(monkeypatch):
+    """The fixtures' expected values were built with the legacy annualization (N/12) and CPI lookup. Released switches default to True since 2026-10-10 (FND-0243 release); their own behaviour is covered by
+    their dedicated tests."""
+    from shared import config as _c
+    monkeypatch.setattr(_c, "ANNUALIZATION_INTERVAL_ENABLED", False, raising=False)
+    monkeypatch.setattr(_c, "DEFLATION_MONTH_ALIGN_ENABLED", False, raising=False)
+
+
 _spec = importlib.util.spec_from_file_location(
     "run_statistical_audit_wcpi", os.path.join(_ROOT, "scripts", "audit", "run_statistical_audit.py"))
 runner = importlib.util.module_from_spec(_spec)

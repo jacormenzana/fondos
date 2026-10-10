@@ -136,6 +136,7 @@ def test_peer_return_uses_min_max_when_the_flag_is_off_which_reports_a_gain_for_
 
 
 def test_peer_return_uses_first_and_last_nav_when_enabled(monkeypatch):
+    _off(monkeypatch)
     _set(monkeypatch, PERSISTENCE_FIRST_LAST_NAV_ENABLED=True)
     assert _peer_return() == pytest.approx((80.0 / 100.0) ** (1 / 3.0) - 1)
     assert _peer_return() < 0

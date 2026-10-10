@@ -83,7 +83,9 @@ class TestWindowBoundaryUsesBackwardFill:
     is pd.merge_asof(direction='backward'), which finds the correct earlier
     anchor regardless of what's inside the passed-in ipc_df's own range."""
 
-    def test_leading_date_uses_the_correct_earlier_ipc_value_not_a_later_one(self):
+    def test_leading_date_uses_the_correct_earlier_ipc_value_not_a_later_one(self, monkeypatch):
+        from shared import config
+        monkeypatch.setattr(config, "DEFLATION_MONTH_ALIGN_ENABLED", False)   # pre-FND-0241 alignment (covered in its own test)
         nav_df = _df(
             ["2023-09-29", "2023-10-31", "2023-11-30"],  # window start: no exact Sep match
             [100.0, 102.0, 101.0],

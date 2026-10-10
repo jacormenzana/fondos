@@ -25,6 +25,14 @@ if str(_ROOT) not in sys.path:
 from proyecto3.src.pit_metrics import expanding_risk_metrics, load_p2_calc
 from proyecto3.src.pit_peer_metrics import alpha_persistence, capture_ratios, momentum_rank
 
+@pytest.fixture(autouse=True)
+def _pin_switches_to_this_module_s_fixtures(monkeypatch):
+    """Fake 6-column peer rows and no fund_master currencies: PIT vs P2 peer parity is checked with the EUR NAV view off (both sides read the same converted panel in production). Released switches default to True since 2026-10-10 (FND-0243 release); their own behaviour is covered by
+    their dedicated tests."""
+    from shared import config as _c
+    monkeypatch.setattr(_c, "EUR_NAV_CONVERSION_ENABLED", False, raising=False)
+
+
 p2_persistence = load_p2_calc("persistence")
 p2_capture = load_p2_calc("capture_ratios")
 p2_momentum = load_p2_calc("momentum")

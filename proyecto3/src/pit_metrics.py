@@ -11,13 +11,14 @@ panel (month-end dates x ISINs, NaN where a fund has no observation) and the IPC
 Definitions are P2's, vectorized over time (one numpy pass per fund) instead of re-running P2 per
 date, and are pinned to P2's own pure functions by proyecto3/tests/test_pit_metrics.py on every
 truncation point (P#11: same maths, no divergent copy -- the test, not this file, is the guarantee):
-  * return_ann = (NAV_t / NAV_0) ** (12 / n) - 1 with n = observations so far (P2 uses len/12, NOT
-    (n-1)/12) -- returns.annualized_return
+  * return_ann = (NAV_t / NAV_0) ** (1 / years) - 1, years = shared.annualization.years_spanned(n) (n/12 legacy, (n-1)/12 with
+    FND-0240) -- returns.annualized_return
   * vol_ann    = std(simple monthly returns, ddof=1) * sqrt(12), needs >= 2 returns
   * sharpe     = (return_ann - rf_t) / vol_ann, rf_t = deposit rate as of the month of t
     (rolling_stats.resolve_rf_rate semantics: month-end align, ffill, bfill before the series)
   * max_dd     = min over the expanding drawdown vs running max
-  * *_real     = same on NAV deflated by IPC as of t (deflation.deflate_nav: backward as-of)
+  * *_real     = same on NAV deflated by IPC as of t (deflation.deflate_nav: backward as-of on
+    shared.deflation_alignment.cpi_lookup_dates, i.e. the NAV's own month-end with FND-0241)
   * srri_nav   = ESMA bucket of vol_ann (srri.compute_srri: needs 13 NAV, 0 if vol > 5.0)
 
 Dates: P2 works on the RAW NAV dates (most funds report mid/late month, not month-end) and aligns IPC
@@ -51,6 +52,8 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from shared.config import RISK_FREE_RATE_ANN
+from shared.annualization import years_spanned            # FND-0240: the producers' convention, read at call time
+from shared.deflation_alignment import cpi_lookup_dates   # FND-0241: which CPI month a NAV date belongs to
 
 _P2_SRC = _ROOT / "proyecto2" / "src"
 _P2_MODULES: dict = {}
@@ -158,7 +161,9 @@ def _fund_expanding(x: np.ndarray, rf_t: np.ndarray, ipc_t: "np.ndarray | None")
 
     with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
         if m >= 2:
-            out["return_ann"][1:] = (x[1:] / x[0]) ** (PERIODS_PER_YEAR / n[1:]) - 1.0
+            # FND-0240: same exponent as returns.annualized_return (N points span N-1 intervals when the switch is on)
+            inv_years = 1.0 / years_spanned(n[1:], PERIODS_PER_YEAR)
+            out["return_ann"][1:] = (x[1:] / x[0]) ** inv_years - 1.0
 
             r = x[1:] / x[:-1] - 1.0                           # simple monthly returns (pct_change)
             k = np.arange(1, m, dtype=float)                   # returns available at obs index 1..m-1
@@ -188,7 +193,7 @@ def _fund_expanding(x: np.ndarray, rf_t: np.ndarray, ipc_t: "np.ndarray | None")
             y = x / ipc_t                                      # deflated NAV up to a constant (base cancels)
             out["max_dd_real"] = np.minimum.accumulate(y / np.maximum.accumulate(y) - 1.0)
             if m >= 2:
-                out["return_ann_real"][1:] = (y[1:] / y[0]) ** (PERIODS_PER_YEAR / n[1:]) - 1.0
+                out["return_ann_real"][1:] = (y[1:] / y[0]) ** (1.0 / years_spanned(n[1:], PERIODS_PER_YEAR)) - 1.0
     return out
 
 
@@ -208,7 +213,8 @@ def expanding_risk_metrics(
     works on the fund's own dropna'd observations)."""
     dates = pd.DatetimeIndex(nav_wide.index)
     rf_t = aligned_rf(dates, rf, rf_fallback)
-    ipc_t = aligned_ipc(dates, ipc, ipc_lag_months)
+    # FND-0241: look the CPI up on each NAV date's own month-end when the switch is on (deflate_nav does the same)
+    ipc_t = aligned_ipc(pd.DatetimeIndex(cpi_lookup_dates(dates)), ipc, ipc_lag_months)
     arrays = {k: np.full(nav_wide.shape, np.nan) for k in METRICS}
 
     values = nav_wide.to_numpy(dtype=float)

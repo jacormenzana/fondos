@@ -30,6 +30,15 @@ from shared.statistical_audit.invariants import check_invariant
 from shared.statistical_audit.catalog_invariants import P2_INVARIANTS
 from shared.statistical_audit.timeseries import build_window_deflation_frame, check_timeseries_integrity
 
+@pytest.fixture(autouse=True)
+def _pin_switches_to_this_module_s_fixtures(monkeypatch):
+    """The fixtures' expected values were built with the legacy annualization (N/12) and CPI lookup. Released switches default to True since 2026-10-10 (FND-0243 release); their own behaviour is covered by
+    their dedicated tests."""
+    from shared import config as _c
+    monkeypatch.setattr(_c, "ANNUALIZATION_INTERVAL_ENABLED", False, raising=False)
+    monkeypatch.setattr(_c, "DEFLATION_MONTH_ALIGN_ENABLED", False, raising=False)
+
+
 _FISHER = next(r for r in P2_INVARIANTS if r.rule_id == "WINDOW_FISHER_IDENTITY")
 _STRICT = next(r for r in P2_INVARIANTS if r.rule_id == "WINDOW_DEFLATION_STRICT")
 _NOMINAL = next(r for r in P2_INVARIANTS if r.rule_id == "WINDOW_NOMINAL_IDENTITY")

@@ -53,7 +53,9 @@ class TestMonthlyReturns:
 
 
 class TestAnnualizedReturn:
-    def test_matches_geometric_formula(self):
+    def test_matches_geometric_formula(self, monkeypatch):
+        from shared import config
+        monkeypatch.setattr(config, "ANNUALIZATION_INTERVAL_ENABLED", False)   # legacy convention (FND-0240 off)
         s = _nav(_NAVS)
         result = annualized_return(s)
         total = _NAVS[-1] / _NAVS[0]

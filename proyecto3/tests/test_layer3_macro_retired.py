@@ -21,6 +21,15 @@ if str(_ROOT) not in sys.path:
 
 from proyecto3.src import fund_scorer as fs
 
+@pytest.fixture(autouse=True)
+def _pin_switches_to_this_module_s_fixtures(monkeypatch):
+    """This module pins the LEGACY fx malus (fx_contribution_pct > 0.60); the FND-0235 malus has its own tests (test_fx_malus_eur_view_fnd0235.py). Released switches default to True since 2026-10-10 (FND-0243 release); their own behaviour is covered by
+    their dedicated tests."""
+    from shared import config as _c
+    monkeypatch.setattr(_c, "FX_CONTRIBUTION_EUR_VIEW_ENABLED", False, raising=False)
+    monkeypatch.setattr(_c, "EUR_NAV_CONVERSION_ENABLED", False, raising=False)
+
+
 REGIMES = ["Crisis_Financiera", "Shock_Energetico", "Estanflacion", "Recalentamiento", "Recalentamiento_Tardio",
            "Contraccion", "Expansion"]
 EXTREME_MACRO = {"beta_oil": 0.9, "beta_rate_eu": -0.9, "beta_spread_hy": 0.9, "beta_vix": 0.9, "macro_r2": 0.99}
