@@ -271,6 +271,145 @@ def get_action_point_status(ap_id: str) -> str:
         return "LOOKUP_FAILED"
 
 
+# --- Relationships between action points (db/pg_backlog/20_links.sql; procedure in NORMAS_BACKLOG.md) ------------------
+# Unlike report_incident(), this API is FAIL-LOUD: its callers are operator tools (scripts/audit/backlog_links.py) whose whole
+# result IS the data, so an unreachable backlog must stop them -- it must never read as "no tickets" or "no links". Every function
+# takes an optional `conn` (a caller-owned psycopg connection, never committed here) so the hermetic tests and a multi-step
+# caller share one transaction; without it each call opens its own short-lived connection under FONDOS_BACKLOG_PG_DSN.
+
+LINK_TYPES = ("DEPENDS_ON", "RELEASE_WITH", "OVERLAPS", "DUPLICATES", "SPLIT_FROM", "RELATED")
+LINK_STATUSES = ("PROPOSED", "CONFIRMED", "REJECTED")
+_ANALYSIS_OPTIONS = "-c statement_timeout=30000"
+
+_TICKET_COLS = (
+    "action_point_id, title, project_code, nature, schema_name, object_type, object_name, status, priority, reporter, "
+    "assignee, creation_ts, update_ts, closure_ts, solution_type, release_version, scenario_description"
+)
+_LINK_COLS = "event_id, from_id, to_id, link_type, status, evidence, absorbs, username, event_ts"
+
+
+class BacklogUnavailable(RuntimeError):
+    """The backlog cannot be reached (no DSN, no driver). Raised instead of returning an empty answer."""
+
+
+@contextmanager
+def _session(conn=None):
+    if conn is not None:
+        yield conn
+        return
+    dsn = _dsn()
+    if not dsn:
+        raise BacklogUnavailable(f"{_DSN_ENV_VAR} is not set")
+    if psycopg is None:
+        raise BacklogUnavailable("psycopg3 is not installed (pip install 'psycopg[binary]')")
+    # `with` commits on a normal exit and rolls back on an exception, then closes.
+    with psycopg.connect(dsn, connect_timeout=5, options=_ANALYSIS_OPTIONS) as own:
+        yield own
+
+
+def _rows(conn, sql: str, params: tuple = ()) -> list[dict]:
+    with conn.cursor() as cur:
+        cur.execute(sql, params)
+        cols = [c.name for c in cur.description]
+        return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+
+def list_tickets(*, open_only: bool = False, closed_since: Optional[datetime] = None,
+                 ids: Optional[list[str]] = None, conn=None) -> list[dict]:
+    """Tickets of `backlog.BACKLOG`, ordered by id. `open_only` = status <> CLOSED; adding `closed_since` also returns the
+    tickets closed at or after it (the sweep set: open + recently closed). `ids` restricts the answer (a requested id that is
+    missing from it no longer exists -- the staleness pre-flight of `--apply-review` relies on that)."""
+    if closed_since is not None and not open_only:
+        raise ValueError("closed_since only applies together with open_only=True")
+    where: list[str] = []
+    params: list = []
+    if ids is not None:
+        where.append("action_point_id = ANY(%s)")
+        params.append(list(ids))
+    if open_only and closed_since is None:
+        where.append("status <> 'CLOSED'")
+    elif open_only:
+        where.append("(status <> 'CLOSED' OR closure_ts >= %s)")
+        params.append(closed_since)
+    sql = f"SELECT {_TICKET_COLS} FROM backlog.BACKLOG"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    with _session(conn) as c:
+        return _rows(c, sql + " ORDER BY action_point_id", tuple(params))
+
+
+def list_logs(*, ids: Optional[list[str]] = None, conn=None) -> list[dict]:
+    """Progress log rows of `backlog.BACKLOG_LOGS` (oldest first within a ticket), optionally for the given ticket ids."""
+    sql = "SELECT log_id, action_point_id, log_ts, username, comment FROM backlog.BACKLOG_LOGS"
+    params: tuple = ()
+    if ids is not None:
+        sql += " WHERE action_point_id = ANY(%s)"
+        params = (list(ids),)
+    with _session(conn) as c:
+        return _rows(c, sql + " ORDER BY action_point_id, log_ts, log_id", params)
+
+
+def list_links(*, history: bool = False, status: Optional[str] = None, ids: Optional[list[str]] = None,
+               conn=None) -> list[dict]:
+    """Links between tickets. Default: the CURRENT state of every (from, to, type) pair (`v_backlog_link`, latest event wins).
+    `history=True` returns every event instead, oldest first. `status` keeps one state; `ids` keeps the links that touch any of
+    those tickets (either end)."""
+    if status is not None and status not in LINK_STATUSES:
+        raise ValueError(f"status must be one of {LINK_STATUSES}, got {status!r}")
+    where: list[str] = []
+    params: list = []
+    if status is not None:
+        where.append("status = %s")
+        params.append(status)
+    if ids is not None:
+        where.append("(from_id = ANY(%s) OR to_id = ANY(%s))")
+        params += [list(ids), list(ids)]
+    src = "backlog.backlog_link_event" if history else "backlog.v_backlog_link"
+    sql = f"SELECT {_LINK_COLS} FROM {src}"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    with _session(conn) as c:
+        return _rows(c, sql + " ORDER BY from_id, to_id, link_type, event_ts, event_id", tuple(params))
+
+
+def record_link_events(events: list[dict], *, conn=None) -> list[int]:
+    """Append link events (insert-only; a retype, confirmation or rejection is a NEW event, never an update) in ONE transaction:
+    every event is validated before the first insert, so a batch is applied whole or not at all. Each event is a dict with
+    from_id, to_id, link_type, status, evidence, username and optional absorbs. Returns the new event ids in order. Raises
+    ValueError on a bad event and the driver's error (e.g. a foreign-key violation on an unknown ticket); never swallows."""
+    checked = []
+    for ev in events:
+        missing = [k for k in ("from_id", "to_id", "link_type", "status", "evidence", "username") if not str(ev.get(k) or "").strip()]
+        if missing:
+            raise ValueError(f"link event {ev!r} lacks {missing}")
+        if ev["link_type"] not in LINK_TYPES:
+            raise ValueError(f"link_type must be one of {LINK_TYPES}, got {ev['link_type']!r}")
+        if ev["status"] not in LINK_STATUSES:
+            raise ValueError(f"status must be one of {LINK_STATUSES}, got {ev['status']!r}")
+        if ev["from_id"] == ev["to_id"]:
+            raise ValueError(f"a ticket cannot be linked to itself ({ev['from_id']})")
+        checked.append((ev["from_id"], ev["to_id"], ev["link_type"], ev["status"], ev["evidence"], ev.get("absorbs"),
+                        ev["username"]))
+    ids: list[int] = []
+    with _session(conn) as c:
+        for row in checked:
+            (event_id,) = c.execute(
+                "INSERT INTO backlog.backlog_link_event (from_id, to_id, link_type, status, evidence, absorbs, username) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING event_id", row,
+            ).fetchone()
+            ids.append(event_id)
+    return ids
+
+
+def record_link_event(*, from_id: str, to_id: str, link_type: str, status: str, evidence: str, username: str,
+                      absorbs: Optional[str] = None, conn=None) -> int:
+    """One-event form of record_link_events()."""
+    return record_link_events([{
+        "from_id": from_id, "to_id": to_id, "link_type": link_type, "status": status,
+        "evidence": evidence, "absorbs": absorbs, "username": username,
+    }], conn=conn)[0]
+
+
 def check_dsn(verbose: bool = True) -> bool:
     """
     Read-only diagnostic: verifies FONDOS_BACKLOG_PG_DSN is set, psycopg3 is installed, the
