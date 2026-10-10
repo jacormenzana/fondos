@@ -39,7 +39,7 @@ def _ipc(ends, seed):
 
 # ---------------------------------------------------------------- the switch and its wiring
 def test_switch_is_off_by_default_in_the_bundle_and_mapped_to_the_families_it_changes():
-    assert config.DEFLATION_MONTH_ALIGN_ENABLED is False
+    assert config.DEFLATION_MONTH_ALIGN_ENABLED is True   # released 2026-10-10 with FND-0243 (owner decision; was dormant)
     assert "DEFLATION_MONTH_ALIGN_ENABLED" in config.P2_BUNDLE_FLAGS
     assert family_versions.flag_families("DEFLATION_MONTH_ALIGN_ENABLED") == ("risk", "rolling")   # short_horizon is daily
 

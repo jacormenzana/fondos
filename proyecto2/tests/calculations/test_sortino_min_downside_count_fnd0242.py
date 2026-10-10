@@ -36,7 +36,7 @@ def _money_fund(n=51, k=4, up=0.0033, down=0.0005):
 
 # ---------------------------------------------------------------- the switch and its wiring
 def test_switch_is_off_by_default_in_the_bundle_and_mapped_to_the_families_it_changes():
-    assert config.SORTINO_MIN_DOWNSIDE_COUNT_ENABLED is False
+    assert config.SORTINO_MIN_DOWNSIDE_COUNT_ENABLED is True   # released 2026-10-10 with FND-0243 (owner decision; was dormant)
     assert "SORTINO_MIN_DOWNSIDE_COUNT_ENABLED" in config.P2_BUNDLE_FLAGS
     assert family_versions.flag_families("SORTINO_MIN_DOWNSIDE_COUNT_ENABLED") == ("risk", "rolling")
     assert (config.SORTINO_MIN_DOWNSIDE_OBS, config.SORTINO_MIN_DOWNSIDE_SHARE) == (3, 0.15)

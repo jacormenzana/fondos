@@ -30,7 +30,7 @@ def _nav(n, seed=0, drift=0.004, sigma=0.02):
 
 # ---------------------------------------------------------------- the helper and the default
 def test_switch_is_off_by_default_and_listed_in_the_bundle_so_fingerprints_follow_it():
-    assert config.ANNUALIZATION_INTERVAL_ENABLED is False
+    assert config.ANNUALIZATION_INTERVAL_ENABLED is True   # released 2026-10-10 with FND-0243 (owner decision; was dormant)
     assert "ANNUALIZATION_INTERVAL_ENABLED" in config.P2_BUNDLE_FLAGS
 
 

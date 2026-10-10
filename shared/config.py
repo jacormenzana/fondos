@@ -577,20 +577,20 @@ P2_BUNDLE_FLAGS: tuple = ("MACRO_VIF_ITERATIVE_ENABLED", "MACRO_FACTOR_CLEAN_ENA
 # P3 portfolio (Spearman 1.0000 of the scores, same top 10, measured 2026-10-06). The audit mirrors the convention through
 # shared/annualization.py. FLIP ONLY TOGETHER WITH THE RECOMPUTE of the families it touches (utils/family_versions.FLAG_FAMILIES:
 # risk, rolling): until then the stored values keep the old convention and the audit's nominal/Fisher identities report the gap.
-ANNUALIZATION_INTERVAL_ENABLED: bool = False
+ANNUALIZATION_INTERVAL_ENABLED: bool = True
 # FND-0241: look the CPI up with each MONTHLY NAV's own calendar month-end. OFF = the stored convention (merge_asof backward against
 # a CPI stamped on the calendar month-end), under which the 29% of NAVs dated on the last BUSINESS day took the previous month's CPI
 # and had real monthly return == nominal. ON changes the stored real series: worst_month real up to ~2 pp (18% of funds > 0.1 pp),
 # real vol_ann up to ~0.5 pp, return_ann real up to ~0.3 pp (400-fund sample, 2026-10-07). The audit mirrors it through
 # shared/deflation_alignment.py. FLIP ONLY TOGETHER WITH THE RECOMPUTE of the families it touches (utils/family_versions.FLAG_FAMILIES:
 # risk, rolling; short_horizon is daily and never aligned): until then the stored values keep the old lookup.
-DEFLATION_MONTH_ALIGN_ENABLED: bool = False
+DEFLATION_MONTH_ALIGN_ENABLED: bool = True
 # FND-0242: Sortino is NaN when its downside deviation rests on fewer than max(SORTINO_MIN_DOWNSIDE_OBS, ceil(SORTINO_MIN_DOWNSIDE_SHARE * n))
 # below-MAR periods (relative SE of the deviation ~ 0.7 / sqrt(k): 35% at k = 4). Replaces nothing: the FND-0075 magnitude floor stays as a
 # second guard. Scalar (sortino_ratio) and rolling (_roll_sortino) paths only; the regime path (sortino_ratio_from_returns) is untouched.
 # Measured 2026-10-07: removes 0.7% of the stored Sortino values (2.2% of rolling_1y, 11% of Monetario) and the removed ones have median |Sortino|
 # 4.3 vs 0.8. FLIP ONLY TOGETHER WITH THE RECOMPUTE of the families it touches (utils/family_versions.FLAG_FAMILIES: risk, rolling).
-SORTINO_MIN_DOWNSIDE_COUNT_ENABLED: bool = False
+SORTINO_MIN_DOWNSIDE_COUNT_ENABLED: bool = True
 SORTINO_MIN_DOWNSIDE_OBS: int = 3
 SORTINO_MIN_DOWNSIDE_SHARE: float = 0.15
 # FND-0235: the FX contribution seen by a EUR investor, as a signed annual pp figure. OFF = the stored metric (fx = mean of the log change
@@ -602,7 +602,7 @@ SORTINO_MIN_DOWNSIDE_SHARE: float = 0.15
 # |fx_contribution_ann| > FX_CONTRIBUTION_PP_LIMIT instead of |fx_contribution_pct| > 0.60 (it also stops reading the ratio).
 # FX_CONTRIBUTION_PP_LIMIT = 2 pp/yr: ~a third of the 6-7% IPC+M3 target; on 630 exposed funds it flags 24 (the ratio rule flags 38, 10 in common).
 # FLIP ONLY TOGETHER WITH THE RECOMPUTE of the 'fx' family (utils/family_versions.FLAG_FAMILIES) and BEFORE the next P3 run.
-FX_CONTRIBUTION_EUR_VIEW_ENABLED: bool = False
+FX_CONTRIBUTION_EUR_VIEW_ENABLED: bool = True
 FX_CONTRIBUTION_PP_LIMIT: float = 0.02
 FX_RATIO_MIN_TOTAL_ANN: float = 0.01
 # FND-0243: the platform's investor is EUR-domiciled, so every share class is scored on a EUR NAV. ON = readers convert a non-EUR class's
@@ -612,7 +612,7 @@ FX_RATIO_MIN_TOTAL_ANN: float = 0.01
 # convert a second time. Rates: series_macro, loaded by macro_discovery --source bce for every currency in EUR_FX_CURRENCIES.
 # A P2 bundle flag on ALL metric families: turning it on must recompute EVERY fund, not only the non-EUR ones whose NAV
 # fingerprint moves -- the peer-based metrics (capture, persistence) of a EUR fund change too, because its peers are now in EUR.
-EUR_NAV_CONVERSION_ENABLED: bool = False
+EUR_NAV_CONVERSION_ENABLED: bool = True
 EUR_FX_CURRENCIES: tuple = ("USD", "GBP", "JPY", "CHF")
 EUR_FX_MONTHLY_INDICATOR: str = "fx_eom_eur"       # EXR.M.<CCY>.EUR.SP00.E, stamped on the calendar month-end
 EUR_FX_DAILY_INDICATOR: str = "fx_d_eur"           # EXR.D.<CCY>.EUR.SP00.A

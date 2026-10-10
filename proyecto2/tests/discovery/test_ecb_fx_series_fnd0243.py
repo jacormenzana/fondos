@@ -109,7 +109,7 @@ def test_month_end_helper_handles_february_and_leap_years():
     assert md._month_end("2026-12-01") == "2026-12-31"
 
 
-def test_conversion_ships_dormant_and_coupled_with_the_fx_eur_view():
+def test_conversion_is_released_and_coupled_with_the_fx_eur_view():
     # Owner directive 2026-10-07: neither switch may be enabled alone (the startup assertion arrives in step 4).
-    assert EUR_NAV_CONVERSION_ENABLED is False
+    assert EUR_NAV_CONVERSION_ENABLED is True   # released 2026-10-10 with FND-0243 (owner decision; was dormant)
     assert EUR_NAV_CONVERSION_ENABLED == FX_CONTRIBUTION_EUR_VIEW_ENABLED

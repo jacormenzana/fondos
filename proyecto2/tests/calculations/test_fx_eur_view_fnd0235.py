@@ -19,6 +19,9 @@ IDX = pd.date_range("2019-01-31", periods=N, freq="ME")
 
 @pytest.fixture
 def switch(monkeypatch):
+    # These tests feed a CLASS-currency NAV, i.e. the FX view without the FND-0243 EUR NAV view (which is released together
+    # with it and drops the class leg; covered in test_eur_view_coupling_fnd0243.py).
+    monkeypatch.setattr(config, "EUR_NAV_CONVERSION_ENABLED", False, raising=False)
     return lambda on: monkeypatch.setattr(config, "FX_CONTRIBUTION_EUR_VIEW_ENABLED", on, raising=False)
 
 
@@ -41,7 +44,7 @@ def _run(nav, fc, ac, hp=None):
 
 # ---------------------------------------------------------------- wiring
 def test_switch_is_off_by_default_in_the_bundle_and_mapped_to_the_fx_family():
-    assert config.FX_CONTRIBUTION_EUR_VIEW_ENABLED is False
+    assert config.FX_CONTRIBUTION_EUR_VIEW_ENABLED is True   # released 2026-10-10 with FND-0243 (owner decision; was dormant)
     assert "FX_CONTRIBUTION_EUR_VIEW_ENABLED" in config.P2_BUNDLE_FLAGS
     assert family_versions.flag_families("FX_CONTRIBUTION_EUR_VIEW_ENABLED") == ("fx",)
     assert (config.FX_CONTRIBUTION_PP_LIMIT, config.FX_RATIO_MIN_TOTAL_ANN) == (0.02, 0.01)
