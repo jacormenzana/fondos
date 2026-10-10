@@ -365,6 +365,7 @@ proyecto2/
       test_nav_discovery_splice_20260915.py
       test_nav_discovery_writers_pg.py
       test_nav_monthly_write_20260913.py
+      test_nav_source_unavailable_rc.py
     pipeline/
       test_family_versioning_fnd0236_pg.py
       test_family_versioning_wiring_fnd0236.py

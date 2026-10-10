@@ -109,6 +109,10 @@ NAV_FREQUENCY     = "daily"      # mstarpy 8 solo garantiza daily; resampleamos 
 
 # Backoff exponencial para errores de red transitorios (429, timeout, DNS)
 MS_RETRY_MAX      = 3            # intentos maximos por fondo (sal-service / discover)
+# Exit code when the chartservice bearer token cannot be obtained (at start) or renewed (mid-run): the NAV source is unavailable,
+# so no / not all NAV was loaded. Before 2026-10-10 both paths printed an error and exited 0, so P2_discoverLoadMetrics reported
+# LOAD=0 for a load that wrote nothing (silent break). Per-fund 'no data' outcomes stay non-fatal (exit 0, [WARN] on stderr).
+RC_SOURCE_UNAVAILABLE = 2
 MS_BACKOFF_BASE   = 30           # segundos base (30 -> 90 -> 270)
 MS_BACKOFF_FACTOR = 3            # multiplicador entre intentos
 
@@ -1207,6 +1211,15 @@ def _fetch_one(idx, isin, ms_id, currency, eff_desde, bearer, delay_secs):
     return idx, isin, rows, err, elapsed, eff_desde
 
 
+def _token_exit_code(token_lost: bool, mode: str) -> int:
+    """0, or RC_SOURCE_UNAVAILABLE (with an [ERROR] line) when the bearer token was lost mid-run: some funds were not loaded."""
+    if token_lost:
+        print(f"[ERROR] {mode}: el token chartservice no se pudo renovar a mitad del proceso; parte de los fondos no se "
+              f"cargo. Exit {RC_SOURCE_UNAVAILABLE}.", file=sys.stderr, flush=True)
+        return RC_SOURCE_UNAVAILABLE
+    return 0
+
+
 def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=None,
              workers=1, stale_days=3):
     if isins:
@@ -1279,10 +1292,11 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=Non
         except RuntimeError as e:
             print(f"\n  ERROR: {e}")
             print(f"[ERROR] Bearer token no disponible. Pipeline abortado.", file=sys.stderr, flush=True)
-            return
+            return RC_SOURCE_UNAVAILABLE
 
     bearer_acquired_at = time.time()
     _TOKEN_MAX_AGE_S   = 45 * 60
+    token_lost         = False   # renewal failed mid-run -> RC_SOURCE_UNAVAILABLE at the end
 
     if workers > 1:
         # ----------------------------------------------------------------
@@ -1478,6 +1492,7 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=Non
                         print(f"-> sin datos ({rerr})", flush=True)
                         errors_load += 1
             except RuntimeError as e:
+                token_lost = True
                 print(f"  [token] ERROR renovando: {e}", flush=True)
                 print(f"[ERROR] Token chartservice no renovable en mitad del proceso. "
                       f"{len(auth_retry)} ISINs sin reintentar.", file=sys.stderr, flush=True)
@@ -1500,7 +1515,7 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=Non
                 f"(no_access/empty/transient). Ver stdout log para detalle.",
                 file=sys.stderr, flush=True,
             )
-        return
+        return _token_exit_code(token_lost, "run_load")
 
     # ================================================================
     # Modo secuencial (workers=1, default) — loop original
@@ -1604,6 +1619,7 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=Non
                     bearer_acquired_at = time.time()
                     print("  [token] ok.", flush=True)
                 except RuntimeError:
+                    token_lost = True
                     print("  [token] ERROR: no se pudo renovar.", flush=True)
                 nav_rows, err_type, _ = _download_nav_daily(
                     ms_id, isin, currency, eff_desde, bearer)
@@ -1693,6 +1709,7 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=Non
             f"(no_access/empty/transient). Ver stdout log para detalle.",
             file=sys.stderr, flush=True,
         )
+    return _token_exit_code(token_lost, "run_load")
 
 
 # ============================================================
@@ -1799,10 +1816,11 @@ def run_update(conn, dry_run, bearer_token=None, stale_days=3, monthly_grain=Fal
         except RuntimeError as e:
             print(f"\n  ERROR: {e}")
             print(f"[ERROR] Bearer token no disponible. Pipeline update abortado.", file=sys.stderr, flush=True)
-            return
+            return RC_SOURCE_UNAVAILABLE
 
     bearer_acquired_at = time.time()
     _TOKEN_MAX_AGE_S   = 45 * 60
+    token_lost         = False   # renewal failed mid-run -> RC_SOURCE_UNAVAILABLE at the end
 
     for idx, (isin, ms_id, last_nav_date) in enumerate(rows, 1):
         _t0 = datetime.now()
@@ -1896,7 +1914,7 @@ def run_update(conn, dry_run, bearer_token=None, stale_days=3, monthly_grain=Fal
                     bearer = _get_bearer_token()
                     bearer_acquired_at = time.time()
                 except RuntimeError:
-                    pass
+                    token_lost = True
                 nav_rows, err_type, _ = _download_nav_daily(
                     code, isin, currency, desde, bearer)
             else:
@@ -1956,6 +1974,7 @@ def run_update(conn, dry_run, bearer_token=None, stale_days=3, monthly_grain=Fal
             f"(no_access/transient). Ver stdout log para detalle.",
             file=sys.stderr, flush=True,
         )
+    return _token_exit_code(token_lost, "run_update")
 
 
 # ============================================================
@@ -2168,6 +2187,7 @@ def main():
         isins = (random.sample(all_isins, min(args.sample, len(all_isins)))
                  if args.sample else all_isins)
 
+    rc = 0
     if args.mode == "discover":
         if getattr(args, 'retry_errors', False):
             error_isins = [r[0] for r in conn.execute(
@@ -2207,7 +2227,7 @@ def main():
             isins_load = prefix_isins
         else:
             isins_load = isins if args.isin else None
-        run_load(conn,
+        rc = run_load(conn,
                  isins         = isins_load,
                  desde         = args.desde,
                  dry_run       = args.dry_run,
@@ -2217,7 +2237,7 @@ def main():
                  workers       = args.workers,
                  stale_days    = args.stale_days)
     elif args.mode == "update":
-        run_update(conn, dry_run=args.dry_run, bearer_token=args.bearer_token,
+        rc = run_update(conn, dry_run=args.dry_run, bearer_token=args.bearer_token,
                    stale_days=args.stale_days, monthly_grain=args.monthly_grain,
                    isins=isins if args.isin else None)
     elif args.mode == "recalculate-monthly":
@@ -2228,9 +2248,10 @@ def main():
         run_recalculate_monthly(conn, isins=isins if args.isin else None, dry_run=args.dry_run)
 
     conn.close()
+    return rc or 0      # run_load / run_update: RC_SOURCE_UNAVAILABLE when the NAV source was unavailable
 
 
 if __name__ == "__main__":
     from shared.backlog_client import install_excepthook
     install_excepthook(object_name="nav_discovery.py")      # unhandled failure -> backlog ticket
-    main()
+    sys.exit(main())
