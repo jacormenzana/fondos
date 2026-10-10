@@ -26,6 +26,7 @@ call "%COMMON%" :utf8_on
 ::   P2_P3_complete.bat                    ciclo completo
 ::   P2_P3_complete.bat --baseline CSV     comparar contra un snapshot de betas existente
 ::   P2_P3_complete.bat --no-pause         sin pausa final (ejecucion programada)
+::   P2_P3_complete.bat --no-prompts        sin las preguntas finales (push y prueba del loader): ninguna se ejecuta
 ::   P2_P3_complete.bat -h                 esta ayuda
 :: Codigos de salida: 0 OK | 100 argumentos invalidos | 101 interprete no encontrado |
 ::   105 otra instancia en ejecucion | 1-99 = RC propagado del paso que fallo.
@@ -37,6 +38,7 @@ set "LOCK_FILE=%STATE_DIR%\fondos_cycle.lock"
 
 set "BASELINE="
 set "NO_PAUSE="
+set "NO_PROMPTS="
 
 :parse
 if "%~1"=="" goto :parsed
@@ -52,6 +54,11 @@ if /i "%~1"=="--baseline" (
 )
 if /i "%~1"=="--no-pause" (
     set "NO_PAUSE=1"
+    shift
+    goto :parse
+)
+if /i "%~1"=="--no-prompts" (
+    set "NO_PROMPTS=1"
     shift
     goto :parse
 )
@@ -187,6 +194,10 @@ if !P3R_RC! NEQ 0 (
 )
 
 :: -- 5. Push opcional (siempre con confirmacion) -----------------------------------
+if defined NO_PROMPTS (
+    echo --no-prompts: sin push ni prueba del loader.
+    goto :finish
+)
 echo.
 set "BRANCH="
 set "AHEAD="
@@ -267,8 +278,9 @@ call "%COMMON%" :utf8_off
 endlocal & exit /b 0
 
 :usage_text
-echo Uso: P2_P3_complete.bat [--baseline CSV] [--no-pause]
+echo Uso: P2_P3_complete.bat [--baseline CSV] [--no-pause] [--no-prompts]
 echo   --baseline CSV   comparar las betas contra un snapshot existente (por defecto se toma uno antes del recalculo)
 echo   --no-pause       sin pausa final
+echo   --no-prompts      sin las preguntas finales (push y prueba del loader)
 echo   -h, --help       esta ayuda
 exit /b 0

@@ -747,6 +747,8 @@ UPDATE fund_kiid_metadata SET KIID_Status='FORCE_REFRESH' WHERE ISIN='<isin>' AN
 | `AUDIT_P1.bat` | — |
 | `AUDIT_P2.bat` | — |
 | `AUDIT_statistical.bat` | — |
+| `FND-0246.bat` | — |
+| `FND-0246_V2.bat` | — |
 | `P1_P2_Complete.bat` | P1 |
 | `P1_P2_P3.bat` | P1 |
 | `P1_diagCost.bat` | P1 |

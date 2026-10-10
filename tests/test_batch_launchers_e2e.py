@@ -52,6 +52,7 @@ _PY_TOOLS = [
     "proyecto1/src/loaders/benchmark_loader.py", "proyecto2/src/discovery/macro_discovery.py",
     "proyecto2/src/discovery/nav_discovery.py", "proyecto2/src/analysis/export_metrics.py",
     "proyecto2/src/reports/rolling_dashboard.py", "scripts/diag/diag_cost_extraction.py",
+    "scripts/launch/release_check.py", "scripts/audit/verify_fund_currency.py",
 ]
 
 _POWERCFG_STUB = """@echo off
@@ -68,7 +69,7 @@ exit /b 0
 _LAUNCHERS = ["_template", "P1_P2_Complete", "P2_P3_complete", "P1_P2_P3", "P1_refreshBenchmarks", "P1_discoverAllFunds",
               "P2_discoverLoadMetrics", "P2_calculateIndicators", "P1_harvestFunds", "P1_diagCost",
               "AUDIT_P1", "AUDIT_P2", "AUDIT_statistical", "P3_buildPortfolio", "P3_generateReport",
-              "P1_discoverAllFundsPlusCostDiag"]
+              "P1_discoverAllFundsPlusCostDiag", "FND-0246", "FND-0246_V2"]
 
 
 class Tree:
@@ -697,3 +698,76 @@ def test_telemetry_off_leaves_every_hooked_launcher_silent(tree, tmp_path):
         r = tree.run(name, *args, FONDOS_CYCLE_FALLBACK=str(fb))
         assert r.returncode == 0, (name, r.stdout + r.stderr)
     assert not fb.exists()
+
+
+# ─── FND-0246 / FND-0246_V2: the 2026-10-10 release launchers ───────────────────────────────────
+
+def _first(ln, prefix):
+    return next(i for i, x in enumerate(ln) if x.startswith(prefix))
+
+
+def test_v2_checks_the_release_configuration_then_runs_p2_p3_without_prompts(tree):
+    r = tree.run("FND-0246_V2", "--no-pause")
+    assert r.returncode == 0, r.stdout + r.stderr
+    ln = tree.lines()
+    assert ln[0].startswith("release_check")
+    assert _first(ln, "release_check") < _first(ln, "beta_shift_audit --snapshot") < _first(ln, "run_pipeline")         < _first(ln, "beta_shift_audit --compare") < _first(ln, "p3_build_portfolio")
+    assert "--force" not in " ".join(x for x in ln if x.startswith("run_pipeline"))      # the release forces the recompute itself
+    assert "benchmark_loader" not in tree.tools() and "--no-prompts" in r.stdout          # no question asked, nothing extra run
+    assert any(x.startswith("generate_report") for x in ln)                              # P3 report included
+
+
+def test_v2_runs_nothing_when_the_release_configuration_is_not_in_the_code(tree):
+    r = tree.run("FND-0246_V2", "--no-pause", STUB_RC_RELEASE_CHECK="1")
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert tree.tools() == ["release_check"]
+
+
+def test_full_release_runs_p1_then_the_currency_gate_then_nav_then_p2_p3(tree):
+    r = tree.run("FND-0246", "--no-pause")
+    assert r.returncode == 0, r.stdout + r.stderr
+    ln = tree.lines()
+    assert ln[0].startswith("release_check")                                             # fails fast, before P1
+    assert _first(ln, "run_block") < _first(ln, "verify_fund_currency") < _first(ln, "nav_discovery")         < _first(ln, "run_pipeline") < _first(ln, "p3_build_portfolio")
+    assert tree.tools().count("run_pipeline") == 1
+    assert power_ok(tree)                                                                # one owner saves and restores
+
+
+def test_full_release_stops_before_p2_when_a_class_currency_is_pending(tree):
+    r = tree.run("FND-0246", "--no-pause", STUB_RC_VERIFY_FUND_CURRENCY="1")
+    assert r.returncode == 1, r.stdout + r.stderr
+    t = tree.tools()
+    assert "run_block" in t and "nav_discovery" not in t and "run_pipeline" not in t
+
+
+def test_full_release_stops_on_a_failed_nav_load(tree):
+    r = tree.run("FND-0246", "--no-pause", STUB_RC_NAV_DISCOVERY="2")
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert "run_pipeline" not in tree.tools()
+
+
+def test_the_release_launchers_work_when_started_from_scripts_launch(tree):
+    for name in ("FND-0246_V2", "FND-0246"):
+        r = subprocess.run(tree._cmd(name, ["--no-pause"]), env=tree.env(), cwd=str(tree.launch),
+                           capture_output=True, text=True, errors="replace", timeout=240, stdin=subprocess.DEVNULL)
+        assert r.returncode == 0, (name, r.stdout + r.stderr)
+
+
+def test_the_full_release_shares_the_cycle_lock(tree):
+    first = tree.popen("P1_P2_Complete", *CYCLE, STUB_SLEEP_BENCHMARK_LOADER="6")
+    try:
+        deadline = time.time() + 60
+        while "benchmark_loader" not in tree.tools():
+            assert first.poll() is None and time.time() < deadline, "the first cycle did not reach step 1"
+            time.sleep(0.3)
+        assert tree.run("FND-0246", "--no-pause").returncode == 105
+        assert tree.run("FND-0246_V2", "--no-pause").returncode == 105                   # via P2_P3_complete
+    finally:
+        out, _ = first.communicate(timeout=240)
+    assert first.returncode == 0, out
+
+
+def test_p2_p3_no_prompts_skips_the_push_and_the_loader_questions(tree):
+    r = tree.run("P2_P3_complete", "--no-pause", "--no-prompts")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "--no-prompts" in r.stdout and "Estas satisfecho" not in r.stdout and "benchmark_loader" not in tree.tools()

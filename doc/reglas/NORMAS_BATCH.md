@@ -117,13 +117,14 @@ existe— y **sin PowerShell**). Ultimas lineas de un log: `:tail FICHERO N`.
 
 ## §9. Instancia única
 
-Los lanzadores de **nivel superior** que escriben estado o recalculan (`P1_P2_Complete`, `P2_P3_complete`) comparten un
+Los lanzadores de **nivel superior** que escriben estado o recalculan (`P1_P2_Complete`, `P2_P3_complete`, `P1_P2_P3`, y el de la
+release `FND-0246`, que encadena P1 -> P2 -> P3) comparten un
 bloqueo: `call :cycle 9>"%LOCK_FILE%"` mantiene un manejador abierto mientras corre `:cycle`; una segunda instancia no
 puede abrirlo, `:cycle` no se ejecuta (`LOCK_HELD` sin definir) y sale con RC 105. Lo cierra el sistema aunque el proceso
 muera: **no hay bloqueos huérfanos que limpiar**. Los sub-lanzadores **no** se bloquean (heredarían el manejador del padre). Un lanzador de nivel superior **anidado** bajo otro
 (`P1_P2_P3` invoca a `P1_P2_Complete`) no vuelve a pedirlo: el externo exporta `FONDOS_CYCLE_LOCK=1` y el interno ejecuta
 `:cycle` sin la redirección (`if defined FONDOS_CYCLE_LOCK (call :cycle) else (call :cycle 9>"%LOCK_FILE%")`).
-El test estático exige ese patrón en los tres lanzadores de nivel superior.
+El test estático exige ese patrón en los lanzadores de nivel superior (`TOP_LEVEL_LOCKED` en `tests/test_batch_standards.py`).
 
 ## §10. Estado y reanudación
 
