@@ -3920,6 +3920,12 @@ def detect_hedged_class_currency_from_name(fund_name: Optional[str]) -> Optional
     return found.pop() if len(found) == 1 else None
 
 
+def detect_share_class_currency_from_name(fund_name: Optional[str]) -> Optional[str]:
+    """The NAME signal of Fund_Currency as P1 persists it (FND-0243): trailing suffix first, else the hedged-class token. Single
+    definition used by the pipeline and by the release gate (P#11)."""
+    return detect_fund_currency_from_name(fund_name) or detect_hedged_class_currency_from_name(fund_name)
+
+
 # FIX-ASSET-CCY-2 (2026-07-05): fallback a texto KIID cuando el nombre del
 # fondo no declara divisa. A diferencia de la Portfolio_Currency eliminada
 # en v20 (frases literales tipo "the reference currency of the portfolio

@@ -225,6 +225,17 @@ def fx_coverage_check(per_ccy: Mapping[str, tuple], unknown_ccy: int, max_gap_da
     return FreshnessCheck("fx_coverage", None, None, 0, not bad, detail, show_age=False)
 
 
+def fund_currency_check(pending: list, unknown: list) -> FreshnessCheck:
+    """FND-0243 release lock (pure): with the EUR view on, every active fund's stored Fund_Currency must be what a P1 pass persists
+    now (shared/fund_currency_gate.py). A pending change means the conversion would use a stale currency -- e.g. a EUR-hedged class
+    still stored as its USD base currency would be divided by the USD rate -- so the build waits for the P1 pass."""
+    from shared.fund_currency_gate import summarize
+    return FreshnessCheck("fund_currency_current", None, None, 0, not pending,
+                          summarize(pending, unknown) + ("" if not pending else
+                                                         " -- run the P1 pass (P1_discoverAllFunds.bat) BEFORE P3"),
+                          show_age=False)
+
+
 def load_fx_coverage_inputs(conn) -> tuple[dict, int]:
     """({currency: (newest NAV date, newest daily rate date, n active funds)}, n active funds with NAV and unknown currency)."""
     from shared.config import EUR_FX_DAILY_INDICATOR
@@ -266,6 +277,8 @@ def check_universe_freshness(conn, classifier, today: Optional[date] = None) -> 
         from shared.eur_nav import FX_MAX_GAP_DAYS
         per_ccy, unknown = load_fx_coverage_inputs(conn)
         checks = list(checks) + [fx_coverage_check(per_ccy, unknown, FX_MAX_GAP_DAYS)]
+        from shared.fund_currency_gate import pending_fund_currency
+        checks = list(checks) + [fund_currency_check(*pending_fund_currency(conn))]
     return checks
 
 

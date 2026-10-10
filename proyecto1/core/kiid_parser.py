@@ -467,8 +467,10 @@ import unicodedata
 from datetime import date
 try:
     from proyecto1.core.classify_utils import HEDGED_CLASS_CODE_RE   # FND-0244: single definition of the "...H" hedged class codes
+    from proyecto1.core.classify_utils import detect_share_class_currency_from_name   # FND-0243
 except ImportError:
     from core.classify_utils import HEDGED_CLASS_CODE_RE
+    from core.classify_utils import detect_share_class_currency_from_name
 
 try:
     from proyecto1.core.srri_text import extract_srri
@@ -932,12 +934,9 @@ def parse_kiid_generic(
 
         # Fund_Currency desde nombre: "... EUR ACC", "... USD INC", etc.
         if not result.get("Fund_Currency"):
-            _CURR_IN_NAME = re.compile(
-                r'\b(EUR|USD|GBP|JPY|CHF|SEK|NOK|DKK|AUD|CAD|PLN|CZK|HUF)\b'
-            )
-            m_name_curr = _CURR_IN_NAME.search(name_up)
-            if m_name_curr:
-                result["Fund_Currency"] = m_name_curr.group(1)
+            _name_word = fund_currency_from_name_word(name_up)
+            if _name_word:
+                result["Fund_Currency"] = _name_word
                 result["Inference_Trace"] = _append_trace(
                     result["Inference_Trace"],
                     "CURRENCY_FROM_NAME"
@@ -2367,6 +2366,24 @@ def _normalize_currency(val: str) -> Optional[str]:
         return v_up
 
     return None
+
+
+_CURR_WORD_IN_NAME = re.compile(r'\b(EUR|USD|GBP|JPY|CHF|SEK|NOK|DKK|AUD|CAD|PLN|CZK|HUF)\b')
+
+
+def fund_currency_from_name_word(fund_name: Optional[str]) -> Optional[str]:
+    """parse_kiid_generic's last Fund_Currency fallback: the first standalone currency word of the name."""
+    m = _CURR_WORD_IN_NAME.search((fund_name or "").upper())
+    return m.group(1) if m else None
+
+
+def resolve_fund_currency(kiid_text: Optional[str], language: Optional[str], fund_name: Optional[str]) -> Optional[str]:
+    """The Fund_Currency a P1 pass persists for this text and name (FND-0243 release gate): the name signal (trailing suffix,
+    else hedged token) wins, else the KIID text (_detect_fund_currency), else the first currency word of the name -- the same
+    precedence as pipeline.py ('_fundccy_name or _fundccy_kiid', the latter = parse_kiid_generic's PASO 8 + 9b). None = unknown."""
+    return (detect_share_class_currency_from_name(fund_name)
+            or _detect_fund_currency(kiid_text or "", language)
+            or fund_currency_from_name_word(fund_name))
 
 
 def _detect_fund_currency(text: str, language: Optional[str]) -> Optional[str]:

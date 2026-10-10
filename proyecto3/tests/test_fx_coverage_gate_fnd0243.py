@@ -61,13 +61,22 @@ def test_the_gate_adds_fx_coverage_only_with_the_eur_view(monkeypatch):
     monkeypatch.setattr(df, "load_fx_canary_pairs", lambda conn: [])
     monkeypatch.setattr(df, "load_fx_coverage_inputs",
                         lambda conn: ({"USD": (date(2026, 10, 7), date(2026, 9, 1), 3)}, 2))
+    import shared.fund_currency_gate as _fcg
+    monkeypatch.setattr(_fcg, "pending_fund_currency", lambda conn: ([("IE1", "X", "USD", "EUR")], []))
     monkeypatch.setattr(config, "FX_CONTRIBUTION_EUR_VIEW_ENABLED", False, raising=False)
     monkeypatch.setattr(config, "EUR_NAV_CONVERSION_ENABLED", False, raising=False)
     off = df.check_universe_freshness(None, _Clf(), today=date(2026, 10, 9))
-    assert "fx_coverage" not in [c.name for c in off]
+    assert not {"fx_coverage", "fund_currency_current"} & {c.name for c in off}
     monkeypatch.setattr(config, "EUR_NAV_CONVERSION_ENABLED", True, raising=False)
     on = {c.name: c for c in df.check_universe_freshness(None, _Clf(), today=date(2026, 10, 9))}
     assert "fx_coverage" in on and not on["fx_coverage"].ok
+    assert "fund_currency_current" in on and not on["fund_currency_current"].ok
+    assert "USD->EUR:1" in on["fund_currency_current"].detail and "P1 pass" in on["fund_currency_current"].detail
+
+
+def test_fund_currency_check_passes_with_nothing_pending():
+    c = df.fund_currency_check([], ["IE00B8J38129"])
+    assert c.ok and "0 active funds" in c.detail and "1 stay unknown" in c.detail
 
 
 # ---------------- cycle report ----------------
