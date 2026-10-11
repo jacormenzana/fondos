@@ -48,9 +48,10 @@ def _same(a, b):
 
 
 # ------------------------------------------------------------------ the switch and its registration
-def test_switch_ships_off_and_is_in_the_bundle_and_the_family_map():
+def test_switch_is_on_since_2026_10_11_and_is_in_the_bundle_and_the_family_map():
+    """Pins the DOCUMENTED default (flipped with the CALC_VERSION 20261011 recompute); every other test states the value it needs."""
     from src.utils.family_versions import FLAG_FAMILIES
-    assert config.ANNUALIZATION_BY_DATES_ENABLED is False
+    assert config.ANNUALIZATION_BY_DATES_ENABLED is True
     assert "ANNUALIZATION_BY_DATES_ENABLED" in config.P2_BUNDLE_FLAGS
     assert set(FLAG_FAMILIES["ANNUALIZATION_BY_DATES_ENABLED"]) == {"risk", "rolling", "regime", "persistence"}
 

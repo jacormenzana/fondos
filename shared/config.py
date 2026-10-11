@@ -617,9 +617,12 @@ ANNUALIZATION_INTERVAL_ENABLED: bool = True
 # the dense-equivalent number of points of the first..last calendar month (through the SAME years_spanned, so every existing convention is
 # kept), k-month returns enter the vol as k-month returns, one-month statistics use one-month returns only. A DENSE series is bit-identical;
 # only the funds with an internal gap move (5 of 2,933 active funds on 2026-10-11). OFF = the stored convention. The audit and the PIT mirror
-# it through shared/annualization.py. SHIPPED OFF: FLIP ONLY TOGETHER WITH the CALC_VERSION bump and the recompute of the families it touches
-# (utils/family_versions.FLAG_FAMILIES: risk, rolling, regime, persistence); until then the stored values keep the row convention.
-ANNUALIZATION_BY_DATES_ENABLED: bool = False
+# it through shared/annualization.py. ON since 2026-10-11 (owner decision; it shipped OFF in 7a679ca / e73794b), flipped TOGETHER WITH the
+# CALC_VERSION bump (20261011) and the full P2 recompute of the families it touches (utils/family_versions.FLAG_FAMILIES: risk, rolling,
+# regime, persistence). Measured before the flip on the production code over 2,950 active funds: 2,871 bit-identical, 5 moved (the funds
+# with an internal NAV gap). Rolling back means setting it to False AND recomputing again: the stored values follow the convention they
+# were computed under, and the audit's identities would report the gap until then.
+ANNUALIZATION_BY_DATES_ENABLED: bool = True
 # FND-0241: look the CPI up with each MONTHLY NAV's own calendar month-end. OFF = the stored convention (merge_asof backward against
 # a CPI stamped on the calendar month-end), under which the 29% of NAVs dated on the last BUSINESS day took the previous month's CPI
 # and had real monthly return == nominal. ON changes the stored real series: worst_month real up to ~2 pp (18% of funds > 0.1 pp),

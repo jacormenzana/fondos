@@ -757,7 +757,9 @@ def _covers_all_families(metrics_filter: "list[str] | None") -> bool:
 
 # Bump this string whenever the calculation logic changes to force a
 # cache-miss in fund_metric_state even when NAV/IPC inputs are unchanged.
-CALC_VERSION: str = "20261010"  # v41 (FND-0243 + FND-0235 + FND-0240/0241/0242 release, 2026-10-10): EUR view of every NAV, FX view on the EUR
+CALC_VERSION: str = "20261011"  # v42 (FND-0253, 2026-10-11): annualise by DATES, not by NAV rows (ANNUALIZATION_BY_DATES_ENABLED on): risk, rolling, regime and
+# persistence families; only the 5 funds with an internal NAV gap change value, the bump makes algorithm_version tell recomputed rows from the
+# 20261010 ones. v41 (FND-0243 + FND-0235 + FND-0240/0241/0242 release, 2026-10-10): EUR view of every NAV, FX view on the EUR
 # investor, interval annualization, month-aligned CPI lookup, Sortino downside-count guard. The fingerprint already changes with the
 # switches; the bump makes algorithm_version change too, so beta_shift_audit and the P3 metrics_calc_version gate can tell recomputed rows
 # from pre-release rows (with 20261004 kept, both would pass on a half-finished run). v40 (FND-0196, FND-0226, FND-0200, FND-0202): the P2 recompute bundle switched on together (iterative VIF with spread_hy / vix_yoy

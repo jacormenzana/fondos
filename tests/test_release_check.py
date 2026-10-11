@@ -11,7 +11,7 @@ import release_check as rc  # noqa: E402
 
 
 def _cfg(**over):
-    base = {n: True for n in rc.RELEASE_SWITCHES}
+    base = {n: True for n in rc.ALL_SWITCHES}
     base.update(over)
     return SimpleNamespace(**base)
 
@@ -41,3 +41,10 @@ def test_the_release_switches_are_the_released_set():
     assert rc.RELEASE_SWITCHES == ("EUR_NAV_CONVERSION_ENABLED", "FX_CONTRIBUTION_EUR_VIEW_ENABLED",
                                    "ANNUALIZATION_INTERVAL_ENABLED", "DEFLATION_MONTH_ALIGN_ENABLED",
                                    "SORTINO_MIN_DOWNSIDE_COUNT_ENABLED")
+
+
+def test_the_later_by_dates_switch_is_part_of_the_check_and_reported_by_name():
+    assert rc.LATER_SWITCHES == ("ANNUALIZATION_BY_DATES_ENABLED",)
+    assert set(rc.ALL_SWITCHES) == set(rc.RELEASE_SWITCHES) | set(rc.LATER_SWITCHES)
+    out = rc.problems(_cfg(ANNUALIZATION_BY_DATES_ENABLED=False), [], "20261011")
+    assert out == ["ANNUALIZATION_BY_DATES_ENABLED is not True in shared/config.py"]

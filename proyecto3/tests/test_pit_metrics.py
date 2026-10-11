@@ -37,6 +37,15 @@ DATES = pd.date_range("2005-01-31", periods=N, freq=pd.offsets.MonthEnd())
 TOL = dict(rel=1e-9, abs=1e-9)
 
 
+@pytest.fixture(autouse=True)
+def _row_convention(monkeypatch):
+    """This module pins PIT to P2's scalar functions called WITHOUT dates (the stored row convention), on a panel that has a fund with an
+    internal gap. The by-dates convention (ANNUALIZATION_BY_DATES_ENABLED, ON since 2026-10-11, FND-0253) is proved against P2 called WITH
+    dates in test_pit_by_dates_fnd0253.py; here the module states the convention it checks instead of inheriting the default."""
+    from shared import config as _config
+    monkeypatch.setattr(_config, "ANNUALIZATION_BY_DATES_ENABLED", False, raising=False)
+
+
 def _panel() -> pd.DataFrame:
     rng = np.random.default_rng(7)
     cols = {}

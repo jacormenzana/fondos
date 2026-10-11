@@ -390,18 +390,18 @@ proyecto2/
 
 `returns.annualized_return` / `rolling_stats` historically took the horizon from the NUMBER OF NAV ROWS, so a monthly series with missing
 months was treated as consecutive (return_ann inflated: LU1663960000 stored 20.9% vs 6.5% by dates). `ANNUALIZATION_BY_DATES_ENABLED`
-(**shipped OFF**) annualises by the first..last calendar month through the same `shared/annualization.years_spanned` (a dense series is
+(**ON since 2026-10-11**, `CALC_VERSION` 20261011) annualises by the first..last calendar month through the same `shared/annualization.years_spanned` (a dense series is
 bit-identical), weights a k-month return as k months in the vol (`kweighted_std`), uses one-month returns only for consistency / regime
-statistics, and is mirrored by `statistical_audit/timeseries.py` and the PIT metrics. Flip it ONLY with the `CALC_VERSION` bump and the
-recompute of the `risk`, `rolling`, `regime`, `persistence` families (`utils/family_versions.FLAG_FAMILIES`); the build-time continuity guard
-(`FUND_DATA_ELIGIBILITY_ENABLED`, `P3_FUND_NAV_MIN_COVERAGE`) stays as defence in depth.
+statistics, and is mirrored by `statistical_audit/timeseries.py` and the PIT metrics. It was flipped together with the `CALC_VERSION` bump and
+the recompute of the `risk`, `rolling`, `regime`, `persistence` families (`utils/family_versions.FLAG_FAMILIES`); undoing it needs another
+recompute. The build-time continuity guard (`FUND_DATA_ELIGIBILITY_ENABLED`, `P3_FUND_NAV_MIN_COVERAGE`) stays as defence in depth.
 
 ### Idempotency & caching
 
 Runs are idempotent via an input fingerprint: `utils/fingerprint.py::compute_input_hash()` (SHA-1 over NAV
 last-date/rows/value + IPC coverage + `METRIC_VERSION` + `CALC_VERSION`) is stored in `fund_metric_state`.
 Unchanged inputs → 100% cache-hit, 0 recomputed. **Bump `CALC_VERSION` (`run_pipeline.py`, currently
-`"20261010"`) to force a full recompute** of all ISINs (e.g. after changing calculation logic). Enabling a P2 bundle flag
+`"20261011"`) to force a full recompute** of all ISINs (e.g. after changing calculation logic). Enabling a P2 bundle flag
 also forces it (the fingerprint includes the flags), but bump `CALC_VERSION` with it anyway: `algorithm_version` is stamped from
 `CALC_VERSION` alone, so only a bump lets the beta gate and the P3 `metrics_calc_version` gate tell recomputed rows from old ones.
 `CALC_VERSION` is the *global* epoch. Per-metric-family versions (FND-0236, `proyecto2/src/utils/family_versions.py`, behind

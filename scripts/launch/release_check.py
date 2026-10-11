@@ -31,12 +31,17 @@ RELEASE_SWITCHES = (
     "DEFLATION_MONTH_ALIGN_ENABLED",        # FND-0241
     "SORTINO_MIN_DOWNSIDE_COUNT_ENABLED",   # FND-0242
 )
+# Switches released AFTER that set, checked by the same mechanism (owner decision 2026-10-11).
+LATER_SWITCHES = (
+    "ANNUALIZATION_BY_DATES_ENABLED",       # FND-0253
+)
+ALL_SWITCHES = RELEASE_SWITCHES + LATER_SWITCHES
 RC_OK, RC_NOT_READY = 0, 1
 
 
 def problems(cfg, coupling_errors: list, calc_version: "str | None") -> list:
     """Pure: why the configuration is not the release one (empty = ready)."""
-    out = [f"{name} is not True in shared/config.py" for name in RELEASE_SWITCHES if getattr(cfg, name, None) is not True]
+    out = [f"{name} is not True in shared/config.py" for name in ALL_SWITCHES if getattr(cfg, name, None) is not True]
     out += list(coupling_errors)
     if not calc_version:
         out.append("CALC_VERSION could not be read from proyecto2/src/pipeline/run_pipeline.py")
@@ -54,7 +59,7 @@ def main() -> int:
 
     cv = calc_version()
     found = problems(config, release_coupling_errors(config), cv)
-    for name in RELEASE_SWITCHES:
+    for name in ALL_SWITCHES:
         print(f"  {name:<36} {getattr(config, name, None)}")
     if cv:
         print(f"  CALC_VERSION {cv}  (fingerprint: {effective_calc_version(cv)})")
