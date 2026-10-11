@@ -261,3 +261,34 @@ def test_the_fisher_identity_holds_on_a_gappy_series_when_producer_and_audit_agr
     frame = build_window_deflation_frame(ts, nav_dates, ipc)
     assert frame["w_deflator_implied"].iloc[0] == pytest.approx(frame["w_deflator_expected"].iloc[0], rel=1e-9)
     assert frame["w_nominal_gap"].iloc[0] < 1e-9
+
+
+# ------------------------------------------------------------------ month_ordinals: equivalence and cost (2026-10-11 regression)
+def _month_ordinals_pandas(dates):
+    idx = pd.DatetimeIndex(pd.to_datetime(pd.Series(dates).reset_index(drop=True)))
+    return idx.year.to_numpy(dtype="int64") * 12 + idx.month.to_numpy(dtype="int64") - 1
+
+
+def test_month_ordinals_equals_the_pandas_definition_on_every_input_type():
+    import datetime as dt
+    rng = np.random.default_rng(0)
+    days = pd.to_datetime("1999-12-25") + pd.to_timedelta(rng.integers(0, 9500, 120), unit="D")
+    inputs = [pd.Series(days), pd.DatetimeIndex(days), days.to_numpy(), [d.date() for d in days[:30]], list(days[:30]),
+              [d.to_pydatetime() for d in days[:30]], [d.strftime("%Y-%m-%d") for d in days[:30]],
+              pd.Series(days).dt.tz_localize("Europe/Madrid"), [dt.date(2018, 3, 29), dt.date(2026, 10, 9)],
+              pd.Series(days[:20], index=range(50, 70))]
+    for v in inputs:
+        got = annualization.month_ordinals(v)
+        assert got.dtype == np.int64 and np.array_equal(got, _month_ordinals_pandas(v))
+
+
+def test_month_ordinals_is_cheap_enough_for_persistence_peer_loop():
+    """persistence calls it ~50k times per fund with two dates: building pandas objects there made persistence 4x slower (6 s -> 25 s per
+    fund, 26 h for the universe). A loose bound (not a benchmark): 2,000 calls well under a second."""
+    import datetime as dt
+    import time
+    two = [dt.date(2018, 3, 29), dt.date(2026, 10, 9)]
+    t0 = time.perf_counter()
+    for _ in range(2000):
+        annualization.month_ordinals(two)
+    assert time.perf_counter() - t0 < 1.0

@@ -56,7 +56,20 @@ def month_ordinals(dates):
     """int64 array: calendar month ordinal (year * 12 + month - 1) of each date. Month-end alignment is implicit: only the calendar month
     of a date counts, so a NAV dated on the last BUSINESS day and one dated on the calendar month-end are the same month."""
     import numpy as np
-    import pandas as pd
+    # Fast path (numpy only): this is called ~50k times per fund by persistence's peer loop, where building pandas objects cost 4x the
+    # whole persistence calculation (measured 2026-10-11: 6.2 s -> 25 s per fund). months since 1970-01 + 1970 * 12 = year * 12 + month - 1.
+    try:
+        arr = np.asarray(dates)
+        if arr.dtype.kind == "O":                                  # python date / datetime / Timestamp objects
+            import warnings
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")                     # tz-aware values warn: they take the pandas path (wall-clock month)
+                arr = arr.astype("datetime64[ns]")
+        if arr.dtype.kind == "M":
+            return arr.astype("datetime64[M]").astype("int64") + 1970 * 12
+    except (TypeError, ValueError, Warning):
+        pass
+    import pandas as pd                                            # strings, tz-aware values and anything numpy cannot take
     idx = pd.DatetimeIndex(pd.to_datetime(pd.Series(dates).reset_index(drop=True)))
     return (idx.year.to_numpy(dtype="int64") * 12 + idx.month.to_numpy(dtype="int64") - 1)
 
