@@ -303,6 +303,39 @@ CREATE TABLE IF NOT EXISTS gold.portfolio_scenarios (
     notes           text
 );
 
+-- Scenario lifecycle (owner decision 2026-10-11; proyecto3/src/scenario_lifecycle.py). Applied on the live server by the OWNER through
+-- scripts/ops/migrate_portfolio_scenario_status.py (dry run by default), which runs exactly this block. Idempotent: the first run
+-- archives every existing scenario except the newest one (left DRAFT: it is not promoted until the owner decides); re-runs change nothing.
+-- BEGIN scenario_lifecycle
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema = 'gold' AND table_name = 'portfolio_scenarios' AND column_name = 'status') THEN
+        ALTER TABLE gold.portfolio_scenarios ADD COLUMN status text NOT NULL DEFAULT 'ARCHIVED';
+        ALTER TABLE gold.portfolio_scenarios ALTER COLUMN status SET DEFAULT 'DRAFT';
+        UPDATE gold.portfolio_scenarios SET status = 'DRAFT'
+         WHERE scenario_id = (SELECT scenario_id FROM gold.portfolio_scenarios ORDER BY created_at DESC, scenario_id DESC LIMIT 1);
+    END IF;
+END $$;
+-- built_at: the build instant (created_at is a DATE and stays one: changing its type would touch every reader and the seed). Legacy rows
+-- get created_at at midnight; new rows take the default. Newest-first ordering is SQL-native, with no parsing of the id.
+ALTER TABLE gold.portfolio_scenarios ADD COLUMN IF NOT EXISTS built_at timestamptz;
+UPDATE gold.portfolio_scenarios SET built_at = created_at::timestamptz WHERE built_at IS NULL;
+ALTER TABLE gold.portfolio_scenarios ALTER COLUMN built_at SET DEFAULT now();
+ALTER TABLE gold.portfolio_scenarios ALTER COLUMN built_at SET NOT NULL;
+ALTER TABLE gold.portfolio_scenarios ADD COLUMN IF NOT EXISTS promoted_at timestamptz;
+ALTER TABLE gold.portfolio_scenarios ADD COLUMN IF NOT EXISTS promoted_by text;
+ALTER TABLE gold.portfolio_scenarios ADD COLUMN IF NOT EXISTS supersedes  text;
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'portfolio_scenarios_status_chk') THEN
+        ALTER TABLE gold.portfolio_scenarios
+            ADD CONSTRAINT portfolio_scenarios_status_chk CHECK (status IN ('DRAFT', 'PRODUCTION', 'ARCHIVED'));
+    END IF;
+END $$;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_portfolio_scenarios_production ON gold.portfolio_scenarios ((status)) WHERE status = 'PRODUCTION';
+-- END scenario_lifecycle
+
 -- -----------------------------------------------------------------------------
 -- gold.portfolio_weights — 30 rows, fund weights within each scenario
 -- `role` -> `position_role` (rename_map.yaml — avoids the SQL:2003 reserved word)
