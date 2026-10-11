@@ -10,9 +10,18 @@ call "%COMMON%" :utf8_on
 :: Modulo: proyecto3.src.monthly_report.generate_report
 :: Output:  C:\desarrollo\fondos\out\export\informe_cartera_YYYYMMDD.xlsx
 ::
+:: Informa el escenario en PRODUCCION (proyecto3\src\scenario_lifecycle.py). Sin escenario en PRODUCCION no genera nada y
+:: termina con RC 3; --scenario ID informa otro y --draft el DRAFT mas reciente (el que acaba de construir el ciclo, antes de
+:: promoverlo): ambos quedan marcados NO PRODUCCION y con otro nombre de fichero.
+::
 :: Uso:
-::   P3_generateReport.bat                 informe en out\export
-::   P3_generateReport.bat C:\otra\ruta    directorio de salida alternativo
+::   P3_generateReport.bat                         informe del escenario en PRODUCCION, en out\export
+::   P3_generateReport.bat C:\otra\ruta            directorio de salida alternativo
+::   P3_generateReport.bat --scenario ID           informe de un escenario concreto (marcado NO PRODUCCION)
+::   P3_generateReport.bat --draft                 informe del DRAFT mas reciente (marcado NO PRODUCCION)
+::   P3_generateReport.bat -h                      esta ayuda
+:: Codigos de salida: 0 OK | 3 sin escenario que informar | 100 argumentos invalidos | 101 interprete no encontrado |
+::   106 driver PostgreSQL bloqueado | 1-99 = RC de la herramienta.
 :: ============================================================
 
 :: -h / --help: the usage (this header) and out, BEFORE anything runs (NORMAS_BATCH.md section 3). This launcher forwards its arguments to
@@ -22,8 +31,26 @@ for %%A in (%*) do (
     if /i "%%~A"=="--help" goto :show_help
 )
 
-set OUT_DIR=%ROOT%\out\export
-if not "%~1"=="" set OUT_DIR=%~1
+set "OUT_DIR=%ROOT%\out\export"
+set "SCEN_ARG="
+:parse_args
+if "%~1"=="" goto :args_done
+if /i "%~1"=="--scenario" (
+    if "%~2"=="" goto :bad_args
+    set "SCEN_ARG=--scenario %~2"
+    shift
+    shift
+    goto :parse_args
+)
+if /i "%~1"=="--draft" (
+    set "SCEN_ARG=--draft"
+    shift
+    goto :parse_args
+)
+set "OUT_DIR=%~1"
+shift
+goto :parse_args
+:args_done
 set LOG_DIR=%ROOT%\proyecto3\log
 
 :: Timestamp YYYYMMDD_HHMMSS (wmic removed on newer Windows builds; PowerShell
@@ -58,9 +85,8 @@ if "%FONDOS_TELEMETRY%"=="1" if not defined FONDOS_CYCLE_ID (
 
 pushd "%ROOT%"
 
-:: Un one-liner: cmd no admite cadenas multilinea. Si generate_report falla, la excepcion sale por
-:: stderr (RC 1) y el proceso termina, lo que cierra la conexion.
-"%PYTHON%" -u -X utf8 -c "from shared.db import get_connection; from proyecto3.src.monthly_report import generate_report; c = get_connection(); print(generate_report(c, output_dir=r'%OUT_DIR%')); c.close()" >> "%LOG%" 2>> "%ERR%"
+:: p3_generate_report.py: sin escenario que informar sale con RC 3 (mensaje en el log); una excepcion sale por stderr (RC 1).
+"%PYTHON%" -u -X utf8 "%LAUNCH%\p3_generate_report.py" --output-dir "%OUT_DIR%" !SCEN_ARG! >> "%LOG%" 2>> "%ERR%"
 set RC=!ERRORLEVEL!
 popd
 
@@ -72,13 +98,16 @@ if defined TELEM_OWNER (
 :: Timestamp de cierre
 call "%COMMON%" :get_time STAMP2 yyyyMMdd_HHmmss
 
+set "SHOWN_DIR=!OUT_DIR!"
+if defined SCEN_ARG set "SHOWN_DIR=!OUT_DIR! (un escenario que no esta en PRODUCCION va a la subcarpeta borradores)"
+
 echo.
 if !RC! NEQ 0 (
     echo [%STAMP2%] ERROR rc=!RC! -- ver %ERR%
     call "%COMMON%" :tail "%ERR%" 15
 ) else (
     echo [%STAMP2%] P3 Generate Report completado
-    echo   Excel en: %OUT_DIR%
+    echo   Excel en: !SHOWN_DIR!
     echo   Log     : %LOG%
 )
 echo.
@@ -88,6 +117,16 @@ echo.
 :: substitutes at parse time, while the scope is still active.
 call "%COMMON%" :utf8_off
 endlocal & exit /b %RC%
+
+
+:: ------------------------------------------------------------
+:: :bad_args -- argumentos invalidos: RC_USAGE (100), nada se ejecuta. Etiqueta aparte: un exit /b dentro de bloques anidados
+:: no devolvia el codigo (verificado en el arbol simulado).
+:: ------------------------------------------------------------
+:bad_args
+echo [ERROR] --scenario requiere un id de escenario
+call "%COMMON%" :utf8_off
+endlocal & exit /b %RC_USAGE%
 
 
 :: ------------------------------------------------------------

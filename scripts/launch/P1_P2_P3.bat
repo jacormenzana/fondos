@@ -306,9 +306,9 @@ if defined FLAG_p3_dry_run (
 )
 call "%COMMON%" :telemetry step-begin P3_REPORT
 if defined OPT_report_dir (
-    call "%LAUNCH%\P3_generateReport.bat" "!OPT_report_dir!"
+    call "%LAUNCH%\P3_generateReport.bat" --draft "!OPT_report_dir!"
 ) else (
-    call "%LAUNCH%\P3_generateReport.bat"
+    call "%LAUNCH%\P3_generateReport.bat" --draft
 )
 set "RC=!ERRORLEVEL!"
 call "%COMMON%" :telemetry step-end P3_REPORT !RC!

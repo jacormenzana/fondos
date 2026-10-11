@@ -184,7 +184,9 @@ if !P3B_RC! NEQ 0 (
     goto :finish
 )
 call "%COMMON%" :telemetry step-begin P3_REPORT
-call "%LAUNCH%\P3_generateReport.bat"
+:: --draft: el ciclo informa el DRAFT que acaba de construir (marcado NO PRODUCCION); el informe oficial lo genera el owner con
+:: P3_generateReport.bat tras promover (p3_promote_scenario.py). Sin esto el informe fallaria (RC 3) en cada ciclo hasta promover.
+call "%LAUNCH%\P3_generateReport.bat" --draft
 set "P3R_RC=!ERRORLEVEL!"
 call "%COMMON%" :telemetry step-end P3_REPORT !P3R_RC!
 if !P3R_RC! NEQ 0 (

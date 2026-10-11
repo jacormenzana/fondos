@@ -88,6 +88,7 @@ class Tree:
             if f.is_file():                                   # not __pycache__
                 shutil.copy(f, self.launch / "lib")
         shutil.copy(REAL / "scripts" / "launch" / "p1p2_state.py", self.launch)
+        shutil.copy(REAL / "scripts" / "launch" / "p3_generate_report.py", self.launch)      # the real CLI over the stubbed report
         for rel in _PY_TOOLS:
             p = self.root / rel
             p.parent.mkdir(parents=True, exist_ok=True)
@@ -105,17 +106,25 @@ class Tree:
         (self.root / "shared/config.py").write_text("")
         shutil.copy(REAL / "shared" / "env_guard.py", self.root / "shared")        # the environment guard (RC 106)
         (self.root / "shared/db.py").write_text(
-            "import os\n\nclass _Cur:\n    def fetchone(self): return (1,)\n    def fetchall(self): return []\n\n"
-            "class _Conn:\n    def execute(self, *a, **k): return _Cur()\n    def close(self): pass\n\n"
+            "import os\n\nclass _Cur:\n    def __init__(self, sql=''): self.sql = sql\n"
+            "    def fetchone(self): return (1,)\n"
+            "    def fetchall(self):\n"        # the newest-DRAFT query (scenario_lifecycle.latest_drafts) finds one unless STUB_NO_DRAFT
+            "        if \"status = 'DRAFT'\" in self.sql and not os.environ.get('STUB_NO_DRAFT'): return [('cartera_stub_b1',)]\n"
+            "        return []\n\n"
+            "class _Conn:\n    def execute(self, sql='', *a, **k): return _Cur(sql)\n    def close(self): pass\n\n"
             "def get_connection():\n    if os.environ.get('STUB_DB_DOWN'):\n        raise ConnectionError('db down')\n"
             "    return _Conn()\n")
         (self.root / "proyecto3/src").mkdir(parents=True)
         (self.root / "proyecto3/__init__.py").touch()
         (self.root / "proyecto3/src/__init__.py").touch()
+        shutil.copy(REAL / "proyecto3" / "src" / "scenario_lifecycle.py", self.root / "proyecto3/src")   # pure stdlib: the real one
         (self.root / "proyecto3/src/monthly_report.py").write_text(       # records itself in the trace: a launcher that ran it ran a real report
-            "import os\n\ndef generate_report(c, output_dir=None):\n"
+            "import os\n\ndef generate_report(c, output_dir=None, scenario_id=None):\n"
             "    with open(os.environ['STUB_TRACE'], 'a') as f:\n"
-            "        f.write('generate_report %s\\n' % output_dir)\n"
+            "        f.write('generate_report %s %s\\n' % (output_dir, scenario_id))\n"
+            "    if os.environ.get('STUB_NO_SCENARIO'):\n"
+            "        from proyecto3.src.scenario_lifecycle import NoProductionScenario\n"
+            "        raise NoProductionScenario('sin escenario en PRODUCCION')\n"
             "    return 'report'\n")
         (base / "bin").mkdir()
         (base / "bin" / "powercfg.bat").write_text(_POWERCFG_STUB)
@@ -771,3 +780,53 @@ def test_p2_p3_no_prompts_skips_the_push_and_the_loader_questions(tree):
     r = tree.run("P2_P3_complete", "--no-pause", "--no-prompts")
     assert r.returncode == 0, r.stdout + r.stderr
     assert "--no-prompts" in r.stdout and "Estas satisfecho" not in r.stdout and "benchmark_loader" not in tree.tools()
+
+
+# ─── P3_generateReport: the report follows the scenario lifecycle (2026-10-11) ────────────────────
+
+def test_report_launcher_reports_the_production_scenario_by_default(tree):
+    r = tree.run("P3_generateReport")
+    assert r.returncode == 0, r.stdout + r.stderr
+    ln = [x for x in tree.lines() if x.startswith("generate_report")]
+    assert len(ln) == 1 and ln[0].endswith(" None"), ln                     # no scenario forced: the library resolves PRODUCTION
+
+
+def test_report_launcher_forwards_an_explicit_scenario_and_output_dir(tree, tmp_path):
+    out = tmp_path / "otra ruta"
+    r = tree.run("P3_generateReport", str(out), "--scenario", "cartera_x_b1")
+    assert r.returncode == 0, r.stdout + r.stderr
+    ln = [x for x in tree.lines() if x.startswith("generate_report")]
+    assert len(ln) == 1 and ln[0].endswith(" cartera_x_b1") and str(out) in ln[0], ln
+
+
+def test_report_launcher_exits_3_when_there_is_no_scenario_to_report(tree):
+    r = tree.run("P3_generateReport", STUB_NO_SCENARIO="1")
+    assert r.returncode == 3, r.stdout + r.stderr                           # the tool's code passes through untouched
+    assert "sin escenario en PRODUCCION" in r.stdout + (list(tree.logs.parent.parent.glob("proyecto3/log/log_P3_report_*.log")) and
+                                                          "".join(f.read_text(errors="replace")
+                                                                  for f in tree.logs.parent.parent.glob("proyecto3/log/log_P3_report_*.log")) or "")
+
+
+def test_report_launcher_draft_reports_the_newest_draft_explicitly(tree):
+    r = tree.run("P3_generateReport", "--draft")
+    assert r.returncode == 0, r.stdout + r.stderr
+    ln = [x for x in tree.lines() if x.startswith("generate_report")]
+    assert len(ln) == 1 and ln[0].endswith(" cartera_stub_b1"), ln          # resolved by the tool, passed to the library as an explicit id
+
+
+def test_report_launcher_draft_without_any_draft_exits_3(tree):
+    r = tree.run("P3_generateReport", "--draft", STUB_NO_DRAFT="1")
+    assert r.returncode == 3, r.stdout + r.stderr
+    assert not [x for x in tree.lines() if x.startswith("generate_report")]
+
+
+def test_the_cycle_launcher_reports_the_draft_it_just_built(tree):
+    r = tree.run("P2_P3_complete", "--no-pause", "--no-prompts")
+    assert r.returncode == 0, r.stdout + r.stderr
+    ln = [x for x in tree.lines() if x.startswith("generate_report")]
+    assert len(ln) == 1 and ln[0].endswith(" cartera_stub_b1"), ln          # never the implicit PRODUCTION: nothing is promoted yet
+
+
+def test_report_launcher_rejects_scenario_without_an_id(tree):
+    assert tree.run("P3_generateReport", "--scenario").returncode == 100
+    assert not [x for x in tree.lines() if x.startswith("generate_report")]

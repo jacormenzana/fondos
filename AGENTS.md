@@ -537,11 +537,33 @@ python -m proyecto2.src.discovery.macro_discovery --source all
 ### Portfolio construction constraints
 
 Max 10 funds/sub-portfolio · max 20% per fund · max 2 funds per manager (a count, global across sub-portfolios — there is no weight cap per manager) · min 3% per fund · max 5 same Fund_Nature per sub-portfolio.  
-Weight method: `score_proportional`.
+Weight method: `score_proportional`. Sub-portfolio and master weights sum to exactly 1.0000 (largest-remainder rounding, never a weight past
+its bound); the currency budget is a construction constraint too (see "Scenario lifecycle & currency exposure").
 
 ### Monthly report (monthly_report.py)
 
 `generate_report(conn)` (default `out/reports/`, `shared.config.REPORTS_DIR`) → Excel with sheets: `0_Portada`, `1_Cartera`, `2_Regimen`, `3_Backtesting`, `4_Rotacion`, `5_Macro_Indicadores`. `4_Rotacion` only shows the rotation plan the builder persisted in the scenario (needs `ROTATION_COST_GATE_ENABLED` and a previous portfolio); otherwise it says so.
+
+### Scenario lifecycle & currency exposure (`scenario_lifecycle.py`, `shared/fx_exposure.py`)
+
+A portfolio scenario is `DRAFT` → `PRODUCTION` → `ARCHIVED` (`portfolio_scenarios.status`; one PRODUCTION row, DB-enforced). The build
+(`p3_build_portfolio.py`) only writes a DRAFT, under a unique id `cartera_<regime>_<YYYYMM>_b<YYYYMMDDHHMMSS>`, and never replaces anything that is not
+a DRAFT (`--replace-draft` replaces a DRAFT). Promotion is an owner command, `scripts\launch\p3_promote_scenario.py <id>`, gated on: DRAFT with weights
+summing to 1, no stale input in the P3 freshness gate, net non-EUR exposure ≤ `MAX_NON_EUR_UNHEDGED_WEIGHT` (30%, `shared/fx_exposure.py`: a foreign
+class counts as exposed whatever it hedges inside; a EUR class only if unhedged with non-EUR assets) and zero ALARM in the latest persisted `p2_metrics`
+audit. The exposure limit is a **hard gate with no override** (the mandate changes in `shared/config.py` by a reviewed commit, not at promotion
+time); only the ALARM gate takes a written reason (`--accept-alarms`), logged in `ingestion_log`. The build declares its structural cash
+(`cash_weight` in the scenario notes: a sub-portfolio short of eligible non-exposed funds holds the residue as cash, FND-0187, and prints which one
+and why); the gate requires weights + declared cash = 1 with cash ≤ `MAX_PORTFOLIO_CASH_WEIGHT` (10%, also a hard gate), and a refused promotion
+writes one `P3_SCENARIO_PROMOTION_BLOCKED` row to `ingestion_log`. The report and the rotation plan read PRODUCTION; with
+none (or before the owner applies `scripts/ops/migrate_portfolio_scenario_status.py`) the report fails closed (RC 3) unless `--scenario ID` or `--draft`
+(the newest DRAFT) is given, in which case it is marked NO PRODUCCION and written under its own file name in the `borradores\` subfolder of the
+output directory, never next to the official report. The cycle launchers (`P2_P3_complete.bat`,
+`P1_P2_P3.bat`) report the DRAFT they just built with `--draft`; the official report is the owner's `P3_generateReport.bat` after promotion. Cover sheet
+shows the scenario and its currency exposure. The limit is also a **construction constraint** (`FX_EXPOSURE_CONSTRAINT_ENABLED`,
+`portfolio_engine.select_within_exposure`): each sub-portfolio drops its lowest-scored exposed fund and re-selects until its exposed weight is within
+the budget, so a DRAFT is promotable by construction (a residue the non-exposed pool cannot absorb is held as cash). It is the safety net under the
+regime-evidence FX neutralisation, which stays dormant until its PIT validation.
 
 ### Data-freshness gate (`data_freshness.py`)
 
@@ -677,7 +699,7 @@ python -X utf8 -m proyecto2.src.pipeline.run_pipeline
 python -X utf8 -m proyecto2.src.pipeline.run_pipeline --isin LU1234567890 --dry-run
 ```
 
-**P3 monthly report:**
+**P3 monthly report** (the PRODUCTION scenario; `--scenario ID` for another one, marked NO PRODUCCION):
 ```batch
 scripts\launch\P3_generateReport.bat
 ```

@@ -149,6 +149,7 @@ fase nueva se añade como previa/posterior, no renumerando. Un fallo de prefligh
 | `find` / `sort` a secas resuelven a las de GNU si cmd se lanza desde Git Bash (`find` recorre el disco: 100 % CPU, cuelgue) | rutas explícitas: `"%WINFIND%"` (la fija `:init`); `findstr` y `type` son seguros |
 | `cmd /c "ruta" "arg entrecomillado"` quita las comillas equivocadas (más de dos comillas en la línea) | desde un proceso externo: `cmd /s /c ""ruta" "arg""` |
 | una herramienta que escribe el `.bat` convierte `\f`, `\t` en una ruta en caracteres de control | el test estático rechaza caracteres de control; revisar con `grep -P` |
+| `exit /b %RC_USAGE%` dentro de un bloque `( )` ANIDADO del bucle de argumentos (`if` > `if` con `shift`/`goto`) devolvio 0 (P3_generateReport, 2026-10-11, verificado en el arbol simulado) | salir desde una etiqueta aparte: `if "%~2"=="" goto :bad_args` y `:bad_args` = mensaje + `call "%COMMON%" :utf8_off` + `endlocal & exit /b %RC_USAGE%` |
 | `goto :etiqueta` a una etiqueta inexistente termina el batch | las subrutinas se despachan con etiquetas conocidas (`common.bat`) |
 | Escribir `.bat` con una herramienta que genera LF | convertir a CRLF y verificar con `file` |
 

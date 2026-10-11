@@ -25,6 +25,8 @@ _ROOT = Path(__file__).resolve().parent.parent
 _ENTRY_POINTS = [
     ("run_block",              ["run_block.py", "--help"], "proyecto1"),
     ("mark_stale",             ["scripts/launch/mark_stale.py", "--help"], "."),
+    ("p3_generate_report",     ["scripts/launch/p3_generate_report.py", "--help"], "."),
+    ("p3_promote_scenario",    ["scripts/launch/p3_promote_scenario.py", "--help"], "."),
     ("p1_db_harvest",          ["proyecto1/harvest/p1_db_harvest.py", "--help"], "."),
     ("p1_kiid_sync",           ["proyecto1/harvest/p1_kiid_sync.py", "--help"], "."),
     ("fund_family_builder",    ["proyecto1/core/fund_family_builder.py", "--help"], "."),
@@ -74,7 +76,8 @@ def test_the_smoke_list_covers_every_launcher_python_call():
                 if tok.endswith(".py") and "/" in tok and tok not in listed and Path(tok).name not in listed:
                     if (_ROOT / tok).exists() or tok.startswith("scripts/"):
                         missing.append(f"{bat.name}: {tok}")
-    # p1p2_state / p3_build_portfolio / mark_stale helpers have no --help contract of their own
-    ignore = ("p1p2_state.py", "p3_build_portfolio.py", "run_pytest")
+    # p1p2_state / p3_build_portfolio / mark_stale helpers have no --help contract of their own; verify_fund_currency is a
+    # read-only gate with no arguments (a "--help" would run it against the DB, which this test must never do)
+    ignore = ("p1p2_state.py", "p3_build_portfolio.py", "run_pytest", "verify_fund_currency.py")
     missing = [m for m in missing if not any(i in m for i in ignore)]
     assert not missing, "launcher entry points not covered by the smoke test:\n  " + "\n  ".join(sorted(set(missing)))
