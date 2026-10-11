@@ -294,3 +294,33 @@ def test_collect_backlog_links_never_raises(monkeypatch):
     import sys
     monkeypatch.setitem(sys.modules, "backlog_links", None)               # import fails -> the error is reported, not raised
     assert "error" in cr.collect_backlog_links()
+
+
+# ─── data governance (FND-0251) ───────────────────────────────────────────────
+
+def test_governance_items_announce_lapsing_residuals_and_the_overrides_in_production():
+    gov = {"residual_attention": ["[p2_metrics] residual aceptado WINDOW_FISHER_IDENTITY (6 ISINs, FND-0250) caduca el 2026-10-30 (19 dias)"],
+           "production_overrides": {"scenario": "cartera_x_b1", "overrides": ["[OVERRIDE:DATA_SCENARIO] FND-0234: falso positivo"]}}
+    items = cr.attention_items(_report(governance=gov), None)
+    assert any("caduca el 2026-10-30" in i for i in items)
+    assert any("cartera_x_b1" in i and "[OVERRIDE:DATA_SCENARIO]" in i for i in items)
+
+
+def test_a_report_without_the_governance_key_or_with_nothing_to_say_flags_nothing():
+    assert cr.attention_items(_report(), None) == []
+    assert cr.attention_items(_report(governance={"residual_attention": [], "production_overrides": {}}), None) == []
+
+
+def test_collect_governance_never_raises_and_reports_the_error(monkeypatch):
+    class _Boom:
+        def execute(self, *a, **k):
+            raise RuntimeError("db gone")
+
+        def rollback(self):
+            pass
+    out = cr.collect_governance(_Boom(), date(2026, 10, 11))
+    # the residual monitor swallows its own failure and says so (one line per domain); the overrides lookup reports an error key
+    assert len(out["residual_attention"]) == 2 and all("no se pudo evaluar la caducidad" in l for l in out["residual_attention"])
+    assert "error" in out and out["production_overrides"] == {}
+    items = cr.attention_items(_report(governance=out), None)
+    assert any("no se pudo evaluar la gobernanza" in i for i in items)

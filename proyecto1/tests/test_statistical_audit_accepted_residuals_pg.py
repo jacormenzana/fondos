@@ -67,6 +67,51 @@ def test_expired_acceptances_are_not_loaded(pg_session_conn, pg_conn_module_sche
     assert set(load_accepted(conn, DOMAIN)[RULE]) == {"LIVE"}
 
 
+def _seed_expiry_window(conn):
+    today = date.today()
+    ins = ("INSERT INTO audit_accepted_finding (domain, rule_id, isin, ap_id, reason, accepted_at, expires_at) "
+           "VALUES (%s, %s, %s, %s, 'known residual', current_date - 90, %s)")
+    for isin, ap, delta in (("A", "FND-0001", 29), ("B", "FND-0001", 30), ("C", "FND-0002", 31),
+                            ("D", "FND-0003", -1), ("E", "FND-0004", 0)):
+        conn.execute(ins, (DOMAIN, RULE, isin, ap, today + timedelta(days=delta)))
+    conn.commit()
+    return today
+
+
+def test_expiring_soon_lists_the_active_acceptances_inside_the_window_grouped_by_rule_and_ap(pg_session_conn, pg_conn_module_schema):
+    from shared.statistical_audit.accepted_residuals import expiring_soon
+    conn = pg_session_conn
+    conn.execute(f"SET search_path = {pg_conn_module_schema}")
+    _make_table(conn)
+    today = _seed_expiry_window(conn)
+    got = expiring_soon(conn, DOMAIN, 30, today)
+    # E lapses today (still active), A and B (30 days: edge inclusive) share a group; C (31) is outside, D (expired) is gone
+    assert got == [(RULE, "FND-0004", today, 1), (RULE, "FND-0001", today + timedelta(days=29), 2)]
+    assert expiring_soon(conn, DOMAIN, 28, today) == [(RULE, "FND-0004", today, 1)]
+    assert expiring_soon(conn, "p2_metrics", 30, today) == []                  # domains are separate
+
+
+def test_attention_lines_announce_the_lapse_and_a_closed_ap_and_never_a_failed_lookup(pg_session_conn, pg_conn_module_schema):
+    from shared.statistical_audit.accepted_residuals import attention_lines
+    conn = pg_session_conn
+    conn.execute(f"SET search_path = {pg_conn_module_schema}")
+    _make_table(conn)
+    today = _seed_expiry_window(conn)
+    status = {"FND-0001": "LOOKUP_FAILED", "FND-0002": "CLOSED", "FND-0004": "IN_PROGRESS"}
+    lines = attention_lines(conn, DOMAIN, 30, today, ap_status=lambda ap: status.get(ap, "OPEN"))
+    text = "\n".join(lines)
+    assert "caduca el" in text and "FND-0004" in text and "FND-0001" in text and "2 ISINs" in text
+    assert "FND-0002, que esta CLOSED" in text                                   # accepted under a ticket that is already closed
+    assert "FND-0001, que esta CLOSED" not in text                               # an unanswered lookup is never read as closed
+
+
+def test_attention_lines_are_silent_when_the_table_is_missing(pg_session_conn, pg_conn_module_schema):
+    from shared.statistical_audit.accepted_residuals import attention_lines
+    conn = pg_session_conn
+    conn.execute(f"SET search_path = {pg_conn_module_schema}")                   # throwaway schema: no audit_accepted_finding
+    assert attention_lines(conn, DOMAIN, 30, ap_status=lambda ap: "CLOSED") == []
+
+
 def test_end_to_end_a_finding_is_downgraded_by_what_the_table_holds(pg_session_conn, pg_conn_module_schema):
     conn = pg_session_conn
     conn.execute(f"SET search_path = {pg_conn_module_schema}")

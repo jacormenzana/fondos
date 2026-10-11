@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
@@ -135,39 +136,149 @@ def declared_cash(conn, scenario_id: str) -> float:
     return parse_declared_cash(row[0] if row else None)
 
 
-def promotion_blockers(*, status: Optional[str], n_funds: int, weight_sum: float, stale_checks: list,
-                       exposure_non_eur: float, budget: float, alarms: int, accept_alarms: Optional[str] = None,
-                       declared_cash: float = 0.0, max_cash: Optional[float] = None) -> list:
-    """Pure: why a scenario may not be promoted (empty = promotable).
+# Stable gate codes (FND-0251): every blocker and override line starts with one, so the refusals in ingestion_log can be counted per gate
+# with a plain LIKE instead of parsing prose (KPI source). The text after the code is free.
+GATE_STATUS, GATE_WEIGHTS, GATE_CASH, GATE_FRESHNESS, GATE_FX = "STATUS", "WEIGHTS", "CASH", "FRESHNESS", "FX"
+GATE_AUDIT_STALE, GATE_DATA_COVERAGE = "AUDIT_STALE", "DATA_COVERAGE"
+GATE_DATA_SCENARIO, GATE_RESIDUAL_SCENARIO, GATE_DATA_UNIVERSE = "DATA_SCENARIO", "RESIDUAL_SCENARIO", "DATA_UNIVERSE"
+GATE_OVERRIDE_AP = "OVERRIDE_AP"
+AP_RE = re.compile(r"^FND-\d{4}$")
+# Gates a reasoned override (--accept-alarms "motivo" --ap FND-nnnn) may cover: defects ON the scenario and the audit's blind spots.
+# Everything else is hard: exposure, cash, weights, freshness, a stale audit, and universe-only defects (their way out is an accepted
+# residual with its own AP and expiry, not a promotion flag).
+OVERRIDABLE_GATES = frozenset({GATE_DATA_SCENARIO, GATE_RESIDUAL_SCENARIO, GATE_DATA_COVERAGE})
 
-    Two HARD gates without override (owner decisions 2026-10-11): the currency-exposure budget (`shared.config.MAX_NON_EUR_UNHEDGED_WEIGHT`)
-    and the declared structural cash (`MAX_PORTFOLIO_CASH_WEIGHT`) -- the mandate changes by a reviewed config commit, not at promotion time.
-    The weights must add up to 1 INCLUDING the cash the build declared; an undeclared shortfall is an error. Only the audit-ALARM gate takes
-    a reasoned `accept_alarms`, which the caller logs."""
+
+def _names(items, limit: int = 6) -> str:
+    items = list(items)
+    return ", ".join(items[:limit]) + (f" y {len(items) - limit} mas" if len(items) > limit else "")
+
+
+@dataclass
+class PromotionVerdict:
+    """`blockers`: what still stops the promotion (each starts with its [GATE:CODE]). `overridden`: [(code, text)] gates the reasoned
+    override covered -- the caller logs them as [OVERRIDE:<code>]; empty when no override was needed or accepted."""
+    blockers: list = field(default_factory=list)
+    overridden: list = field(default_factory=list)
+
+
+def evaluate_promotion(*, status: Optional[str], n_funds: int, weight_sum: float, stale_checks: list,
+                       exposure_non_eur: float, budget: float, audit, built_at=None,
+                       accept_alarms: Optional[str] = None, accept_ap: Optional[str] = None, ap_exists: Optional[bool] = None,
+                       declared_cash: float = 0.0, max_cash: Optional[float] = None) -> PromotionVerdict:
+    """Pure: why a scenario may not be promoted (empty `blockers` = promotable) and which gates a reasoned override covered.
+
+    HARD gates, no override (owner decisions 2026-10-11): the currency-exposure budget (`shared.config.MAX_NON_EUR_UNHEDGED_WEIGHT`) and the
+    declared structural cash (`MAX_PORTFOLIO_CASH_WEIGHT`) -- the mandate changes by a reviewed config commit, not at promotion time. The
+    weights must add up to 1 INCLUDING the cash the build declared.
+
+    Data gates (FND-0251), from `audit` (shared.statistical_audit.gating.AuditScope of the latest persisted p2_metrics run):
+      * AUDIT_STALE       no persisted run, or older than the DRAFT build: the evidence does not describe this scenario. No override.
+      * DATA_SCENARIO     an open hard defect touches a fund of the scenario (or cannot be placed). Reasoned override with an AP.
+      * RESIDUAL_SCENARIO an ACTIVE accepted residual sits on a fund of the scenario: a residual is tolerated in the universe, never in
+                          a portfolio. Reasoned override with an AP.
+      * DATA_COVERAGE     funds of the scenario the audit did not check (held out of the snapshot, outside the audited population), or
+                          coverage UNKNOWN. Reasoned override with an AP.
+      * DATA_UNIVERSE     an open hard defect outside the scenario that no active residual covers. No override: accept it with
+                          scripts/audit/accept_audit_residual.py (AP + expiry), which is its own audited step.
+    Statistical anomalies on the scenario's funds are information (the selection picks score extremes), never a blocker.
+
+    `accept_alarms` is the reason and `accept_ap` the owning ticket (FND-nnnn); `ap_exists` is the backlog lookup (None = could not be
+    checked: a warning for the caller, not a blocker; False = the ticket does not exist: the override is refused)."""
     if max_cash is None:
         from shared.config import MAX_PORTFOLIO_CASH_WEIGHT as max_cash
-    out = []
+    hard: list = []
+    soft: list = []                                              # (code, text): what the reasoned override can cover
+
+    def g(code: str, text: str) -> str:
+        return f"[GATE:{code}] {text}"
+
     if status is None:
-        out.append("el escenario no existe o el ciclo de vida no esta instalado")
+        hard.append(g(GATE_STATUS, "el escenario no existe o el ciclo de vida no esta instalado"))
     elif status != STATUS_DRAFT:
-        out.append(f"el escenario esta en {status}: solo un DRAFT se promueve")
+        hard.append(g(GATE_STATUS, f"el escenario esta en {status}: solo un DRAFT se promueve"))
     if n_funds <= 0:
-        out.append("el escenario no tiene pesos")
+        hard.append(g(GATE_WEIGHTS, "el escenario no tiene pesos"))
     elif abs(weight_sum + declared_cash - 1.0) > 1e-3:
-        out.append(f"los pesos suman {weight_sum:.4f}, no 1.0" if declared_cash <= 0 else
-                   f"los pesos suman {weight_sum:.4f} + liquidez declarada {declared_cash:.4f}, no 1.0")
+        hard.append(g(GATE_WEIGHTS, f"los pesos suman {weight_sum:.4f}, no 1.0" if declared_cash <= 0 else
+                      f"los pesos suman {weight_sum:.4f} + liquidez declarada {declared_cash:.4f}, no 1.0"))
     if declared_cash > max_cash + 1e-9:
-        out.append(f"liquidez estructural declarada {declared_cash:.1%} excede el tope {max_cash:.0%} (puerta dura: sin override; "
-                   "faltan fondos elegibles no expuestos: refresque datos, amplie el universo o cambie el tope por commit revisado)")
+        hard.append(g(GATE_CASH, f"liquidez estructural declarada {declared_cash:.1%} excede el tope {max_cash:.0%} (puerta dura: sin override; "
+                      "faltan fondos elegibles no expuestos: refresque datos, amplie el universo o cambie el tope por commit revisado)"))
     if stale_checks:
-        out.append("entradas desactualizadas en la puerta de frescura de P3: " + ", ".join(stale_checks))
+        hard.append(g(GATE_FRESHNESS, "entradas desactualizadas en la puerta de frescura de P3: " + ", ".join(stale_checks)))
     if exposure_non_eur > budget + 1e-9:
-        out.append(f"exposicion no-EUR {exposure_non_eur:.1%} excede el presupuesto {budget:.0%} (puerta dura: sin override; "
-                   "reconstruya la cartera)")
-    if alarms > 0 and not (accept_alarms or "").strip():
-        out.append(f"{alarms} hallazgos ALARM abiertos en la ultima auditoria persistida "
-                   "(--accept-alarms \"motivo\" para promover igualmente)")
-    return out
+        hard.append(g(GATE_FX, f"exposicion no-EUR {exposure_non_eur:.1%} excede el presupuesto {budget:.0%} (puerta dura: sin override; "
+                      "reconstruya la cartera)"))
+
+    # --- data gates --------------------------------------------------------------------------------------------------------------
+    if not audit.has_run:
+        hard.append(g(GATE_AUDIT_STALE, "no hay ninguna auditoria persistida del dominio p2_metrics (sin override): ejecute "
+                      "run_statistical_audit.py --domain p2 --persist"))
+    elif built_at is not None and audit.run_ts is not None and audit.run_ts < built_at:
+        hard.append(g(GATE_AUDIT_STALE, f"la ultima auditoria persistida ({audit.run_id}, {audit.run_ts:%Y-%m-%d %H:%M}) es anterior a la "
+                      f"construccion del DRAFT ({built_at:%Y-%m-%d %H:%M}): no describe esta cartera (sin override). Ejecute "
+                      "run_statistical_audit.py --domain p2 --persist"))
+    if audit.has_run:
+        for d in audit.on_scenario:
+            who = (f"{len(d.isins)} fondos de la cartera: {_names(d.isins)}" if d.isins
+                   else "sin ISIN atribuible: se asume que toca la cartera")
+            soft.append((GATE_DATA_SCENARIO, g(GATE_DATA_SCENARIO, f"defecto duro {d.rule_id} abierto, {who} ({d.evidence[:140]})")))
+        for rule_id, isin, ap_id, expires_at in audit.residuals_on_scenario:
+            soft.append((GATE_RESIDUAL_SCENARIO, g(GATE_RESIDUAL_SCENARIO,
+                         f"residual aceptado {rule_id} sobre {isin} ({ap_id}, hasta {expires_at}) y el fondo esta en la cartera: un "
+                         "residual se tolera en el universo, no en una cartera")))
+        if audit.coverage != "OK":
+            soft.append((GATE_DATA_COVERAGE, g(GATE_DATA_COVERAGE, f"cobertura de la auditoria DESCONOCIDA: {audit.coverage_detail}")))
+        if audit.held_out_on_scenario:
+            soft.append((GATE_DATA_COVERAGE, g(GATE_DATA_COVERAGE, f"{len(audit.held_out_on_scenario)} fondos de la cartera quedaron fuera de los "
+                         f"bloques transversales de la auditoria (NAV desfasado): {_names(audit.held_out_on_scenario)}")))
+        if audit.outside_population:
+            soft.append((GATE_DATA_COVERAGE, g(GATE_DATA_COVERAGE, f"{len(audit.outside_population)} fondos de la cartera ya no estan en el "
+                         f"universo auditado (In_Current_Universe != 1): {_names(audit.outside_population)}")))
+        for d in audit.universe_only:
+            hard.append(g(GATE_DATA_UNIVERSE, f"defecto duro {d.rule_id} abierto fuera de la cartera, {len(d.isins)} fondos "
+                          f"({_names(d.isins)}) sin residual aceptado vigente (sin override): accept_audit_residual.py --domain p2 "
+                          f"--rule {d.rule_id} --ap FND-nnnn --reason \"...\" --apply"))
+
+    verdict = PromotionVerdict(blockers=hard)
+    if not soft:
+        return verdict
+    reason = (accept_alarms or "").strip()
+    ap = (accept_ap or "").strip().upper()
+    if reason and AP_RE.match(ap) and ap_exists is not False:
+        verdict.overridden = list(soft)
+    else:
+        verdict.blockers.extend(text for _code, text in soft)
+        if reason and not AP_RE.match(ap):
+            verdict.blockers.append(g(GATE_OVERRIDE_AP, "--accept-alarms exige --ap FND-nnnn (el ticket que corrige la causa): sin el, "
+                                      "el override no se aplica"))
+        elif reason and ap_exists is False:
+            verdict.blockers.append(g(GATE_OVERRIDE_AP, f"--ap {ap} no existe en gestion.backlog: el override no se aplica"))
+        else:
+            verdict.blockers.append("(--accept-alarms \"motivo\" --ap FND-nnnn cubre los defectos y huecos de cobertura de la CARTERA)")
+    return verdict
+
+
+def promotion_blockers(**kw) -> list:
+    """Thin wrapper over evaluate_promotion for callers that only need the refusal list."""
+    return evaluate_promotion(**kw).blockers
+
+
+def signoff_line(audit, overridden: list, ap: Optional[str] = None, reason: Optional[str] = None) -> str:
+    """One machine-readable line for the promotion note: what the data gate looked at and what it let through. The audit trail of a
+    promotion (ingestion_log, step P3_SCENARIO_PROMOTED) carries it, so 'what was accepted' is in the record, not in a chat."""
+    parts = [f"audit {audit.run_id or 'none'}",
+             f"defects on scenario {sum(len(d.isins) or 1 for d in audit.on_scenario)}",
+             f"universe-only open {sum(len(d.isins) for d in audit.universe_only)}",
+             f"anomalies on scenario {len(audit.anomalies_on_scenario)} (informational)"]
+    if audit.covered_by_residual:
+        aps = sorted({r[2] for r in audit.covered_by_residual})
+        until = min(r[3] for r in audit.covered_by_residual)
+        parts.append(f"covered by residual {len({r[1] for r in audit.covered_by_residual})} ISINs ({', '.join(aps)}, until {until})")
+    for code, _text in overridden:
+        parts.append(f"[OVERRIDE:{code}] {ap}: {(reason or '').strip()}")
+    return "; ".join(parts)
 
 
 def record_blocked(conn, scenario_id: str, username: str, blockers: list) -> None:

@@ -27,6 +27,7 @@ class PairComparisonResult:
     n_matches: int
     triggered: bool
     matched_rows: pd.DataFrame
+    unmatched_rows: pd.DataFrame | None = None     # eligible rows that did NOT match (FND-0251)
 
 
 def compare_pairs(
@@ -50,4 +51,5 @@ def compare_pairs(
         n_matches=n_matches,
         triggered=n_matches >= rule.min_matches,
         matched_rows=df.loc[match],
+        unmatched_rows=df.loc[eligible & ~match],
     )

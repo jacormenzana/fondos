@@ -332,6 +332,40 @@ def collect_backlog_links() -> dict:
         return {"error": f"{type(exc).__name__}: {exc}"}
 
 
+def collect_governance(conn, today: date | None = None) -> dict:
+    """Data-governance facts of the cycle (FND-0251): accepted audit residuals about to lapse (or whose AP is already CLOSED) and the
+    reasoned overrides the PRODUCTION scenario was promoted with. Read-only; never raises (an unreadable source becomes an `error` key,
+    not a failed report)."""
+    out: dict = {"residual_attention": [], "production_overrides": {}}
+    try:
+        sys.path.insert(0, str(ROOT))
+        from shared.config import AUDIT_RESIDUAL_EXPIRY_WARN_DAYS
+        from shared.backlog_client import get_action_point_status
+        from shared.statistical_audit.accepted_residuals import attention_lines
+        for domain in ("p2_metrics", "cost_attributes"):
+            out["residual_attention"] += [f"[{domain}] {line}" for line in
+                                          attention_lines(conn, domain, AUDIT_RESIDUAL_EXPIRY_WARN_DAYS, today,
+                                                          ap_status=get_action_point_status)]
+    except Exception as exc:                                      # noqa: BLE001
+        out["error"] = f"{type(exc).__name__}: {exc}"
+    try:
+        from proyecto3.src import scenario_lifecycle as lc
+        prod = lc.production_scenario_id(conn)
+        if prod:
+            row = conn.execute("SELECT message FROM ingestion_log WHERE step = %s AND message LIKE %s "
+                               "ORDER BY created_at DESC LIMIT 1", (lc.STEP_PROMOTED, f"scenario {prod} promoted%")).fetchone()
+            message = row[0] if row else ""
+            out["production_overrides"] = {"scenario": prod,
+                                           "overrides": [p.strip() for p in message.split("; ") if p.strip().startswith("[OVERRIDE:")]}
+    except Exception as exc:                                      # noqa: BLE001
+        try:
+            conn.rollback()
+        except Exception:                                         # noqa: BLE001
+            pass
+        out.setdefault("error", f"{type(exc).__name__}: {exc}")
+    return out
+
+
 def coverage_pct(report: dict) -> dict:
     """Share (0-100) of the active universe that has each P3-consumed metric."""
     active = report.get("universe", {}).get("active", 0)
@@ -388,6 +422,15 @@ def attention_items(report: dict, previous: dict | None) -> list:
     if bl.get("blocked_in_progress"):
         items.append(f"{len(bl['blocked_in_progress'])} tickets en curso con un prerequisito DEPENDS_ON sin cerrar "
                      f"({', '.join(bl['blocked_in_progress'][:6])}): backlog_links.py --for <id>")
+    gov = report.get("governance") or {}                    # absent in reports written before this check (FND-0251)
+    for line in gov.get("residual_attention", []):
+        items.append(line)
+    po = gov.get("production_overrides") or {}
+    if po.get("overrides"):
+        items.append(f"el escenario PRODUCCION {po['scenario']} se promovio con {len(po['overrides'])} override(s) de datos que siguen "
+                     f"vigentes hasta que otro lo sustituya: {' | '.join(po['overrides'])[:300]}")
+    if gov.get("error"):
+        items.append(f"no se pudo evaluar la gobernanza de datos (residuales / overrides): {gov['error']}")
     # A slow run is NOT an attention item: it is a constant of the corpus (measured 2026-10-08: ~14 s, all in the KIID regexes), so an item would
     # repeat every cycle. It is a WARNING in the log and a marker on the report line; the check stays active (--no-hedging-drift skips it).
     if previous:
@@ -521,6 +564,7 @@ def main(argv: list | None = None) -> int:
             report = collect(conn, since, today)
             report["hedging_drift"] = collect_hedging_drift(conn) if args.hedging_drift else {"skipped": True}
             report["backlog_links"] = collect_backlog_links()
+            report["governance"] = collect_governance(conn, today)
         finally:
             conn.close()
     except Exception as exc:

@@ -550,9 +550,14 @@ A portfolio scenario is `DRAFT` → `PRODUCTION` → `ARCHIVED` (`portfolio_scen
 (`p3_build_portfolio.py`) only writes a DRAFT, under a unique id `cartera_<regime>_<YYYYMM>_b<YYYYMMDDHHMMSS>`, and never replaces anything that is not
 a DRAFT (`--replace-draft` replaces a DRAFT). Promotion is an owner command, `scripts\launch\p3_promote_scenario.py <id>`, gated on: DRAFT with weights
 summing to 1, no stale input in the P3 freshness gate, net non-EUR exposure ≤ `MAX_NON_EUR_UNHEDGED_WEIGHT` (30%, `shared/fx_exposure.py`: a foreign
-class counts as exposed whatever it hedges inside; a EUR class only if unhedged with non-EUR assets) and zero ALARM in the latest persisted `p2_metrics`
-audit. The exposure limit is a **hard gate with no override** (the mandate changes in `shared/config.py` by a reviewed commit, not at promotion
-time); only the ALARM gate takes a written reason (`--accept-alarms`), logged in `ingestion_log`. The build declares its structural cash
+class counts as exposed whatever it hedges inside; a EUR class only if unhedged with non-EUR assets) and the **data gate** (FND-0251): the latest persisted
+`p2_metrics` audit must be newer than the DRAFT build and have no open *hard defect* (`HARD_INVARIANT`, `BLOCK2`, `TIMESERIES_DUPLICATE`:
+`shared/statistical_audit/gating.py`, the same predicate as the audit's `--mode check`) on a fund of the scenario; a hard defect outside it needs an
+active accepted residual (`accept_audit_residual.py`, AP + expiry), and an accepted residual never covers a selected fund. Statistical anomalies
+(`OUTLIER_MAD_Z`) on the scenario's funds are listed and never block. The exposure limit is a **hard gate with no override** (the mandate changes in
+`shared/config.py` by a reviewed commit, not at promotion time); only the data gates on the scenario's own funds take a written reason **and the owning
+ticket** (`--accept-alarms "motivo" --ap FND-nnnn`), logged in `ingestion_log` as `[OVERRIDE:<gate>]`; every refusal carries a stable `[GATE:<X>]`
+code and residuals about to lapse are warned `AUDIT_RESIDUAL_EXPIRY_WARN_DAYS` ahead. The build declares its structural cash
 (`cash_weight` in the scenario notes: a sub-portfolio short of eligible non-exposed funds holds the residue as cash, FND-0187, and prints which one
 and why); the gate requires weights + declared cash = 1 with cash ≤ `MAX_PORTFOLIO_CASH_WEIGHT` (10%, also a hard gate), and a refused promotion
 writes one `P3_SCENARIO_PROMOTION_BLOCKED` row to `ingestion_log`. The report and the rotation plan read PRODUCTION; with

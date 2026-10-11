@@ -15,6 +15,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from proyecto3.src import scenario_lifecycle as lc  # noqa: E402
+from shared.statistical_audit.gating import AuditScope  # noqa: E402
 from proyecto3.src.portfolio_builder import Portfolio, SubPortfolioAllocation  # noqa: E402
 from proyecto3.src.portfolio_engine import PortfolioConstraints, select_and_weight  # noqa: E402
 
@@ -48,7 +49,8 @@ def _portfolio(sub_weights, scarce_sub):
 def _gate(portfolio, declared):
     weights = [f["master_weight"] for f in portfolio.all_funds]
     return lc.promotion_blockers(status="DRAFT", n_funds=len(weights), weight_sum=sum(weights), stale_checks=[],
-                                 exposure_non_eur=0.0, budget=0.30, alarms=0, declared_cash=declared, max_cash=CAP)
+                                 exposure_non_eur=0.0, budget=0.30, audit=AuditScope(run_id="r", run_ts=None),
+                                 declared_cash=declared, max_cash=CAP)
 
 
 def test_a_small_scarce_sub_portfolio_yields_declared_cash_inside_the_cap_and_promotes():

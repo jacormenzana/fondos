@@ -623,6 +623,24 @@ que lo arregla (`ap_id`), un motivo y una **caducidad obligatoria** (por defecto
 - La clave es la pertenencia al conjunto, no un valor: una violación que empeora en un ISIN ya
   aceptado no se detecta (la caducidad lo acota).
 
+**Uso en la promoción de carteras (FND-0251).** La puerta de datos de `p3_promote_scenario.py` aplica el mismo predicado que
+`--mode check` (`shared/statistical_audit/gating.py::is_blocking`: `HARD_INVARIANT`, `BLOCK2`, `TIMESERIES_DUPLICATE`) pero
+**por alcance**: lo evalúa contra los fondos de `portfolio_weights` en el momento de promover, sobre la última auditoría *persistida*:
+
+| Hallazgo | Fondo en la cartera | Solo en el universo |
+|---|---|---|
+| Defecto duro | bloquea (`[GATE:DATA_SCENARIO]`); override con motivo **y** `--ap FND-nnnn` | bloquea (`[GATE:DATA_UNIVERSE]`) salvo residual aceptado vigente |
+| Anomalía estadística (`OUTLIER_MAD_Z`...) | se lista por fondo, no bloquea | solo la auditoría |
+| Residual aceptado vigente sobre un fondo de la cartera | bloquea (`[GATE:RESIDUAL_SCENARIO]`): un residual se tolera en el universo, nunca en una cartera | — |
+
+Además: `[GATE:AUDIT_STALE]` (sin override) si no hay auditoría persistida o es anterior a la construcción del DRAFT, y
+`[GATE:DATA_COVERAGE]` si algún fondo de la cartera quedó fuera de los bloques transversales (`SNAPSHOT_HELD_OUT`, ahora con su
+`audit_finding_isin`), salió del universo auditado o la cobertura es DESCONOCIDA (el detalle persistido no cuadra con su recuento: se
+repite la auditoría con `--persist`; nunca se infiere por fondo). La caducidad se avisa `AUDIT_RESIDUAL_EXPIRY_WARN_DAYS` días antes en
+el informe de la auditoría, la promoción y el informe de ciclo (`expiring_soon`, `attention_lines`), junto con los residuales cuyo AP ya
+está CLOSED. Un hallazgo íntegramente aceptado se persiste con la `rule_class` que tenía (severidad `INFO`): `ACCEPTED_RESIDUAL` solo
+existe en memoria porque el `CHECK` de `control.audit_finding` no la admite.
+
 Alta y renovación: `python scripts/audit/accept_audit_residual.py --domain costs --rule <RULE> --ap
 FND-xxxx --reason "..." [--apply]` (sin `--apply` solo muestra los ISIN). Crear la tabla:
 `scripts/ops/migrate_audit_accepted_finding.py --apply` (propietario). Sin la tabla la auditoría

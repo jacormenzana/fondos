@@ -121,7 +121,7 @@ if str(_ROOT) not in sys.path:
 
 import pandas as pd
 
-from shared.config import CRISIS_WINDOWS, MIN_NAV_ROWS, ROLLING_WINDOWS
+from shared.config import AUDIT_RESIDUAL_EXPIRY_WARN_DAYS, CRISIS_WINDOWS, MIN_NAV_ROWS, ROLLING_WINDOWS
 from shared.db import get_connection
 from shared.eur_nav import apply_eur_view_frame   # FND-0243: audit the NAV P2 computed on
 from shared.statistical_audit.catalog_cost_columns import COST_COLUMNS
@@ -146,7 +146,8 @@ from shared.statistical_audit.invariants import (
     check_invariant,
     expression_identifiers,
 )
-from shared.statistical_audit.accepted_residuals import apply_accepted, load_accepted
+from shared.statistical_audit.accepted_residuals import apply_accepted, attention_lines, load_accepted
+from shared.statistical_audit.gating import is_blocking
 from shared.statistical_audit.compare_runs import (
     compare_runs, compare_violators, drift_label, load_run_statistics,
 )
@@ -1020,6 +1021,9 @@ def _emit_snapshot_held_out_finding(run: "AuditRun") -> None:
         "rule_class": "STATISTICAL_ANOMALY", "severity": "INFO", "group_key": "SNAPSHOT_HELD_OUT",
         "value": None, "reference_value": None, "threshold": SNAPSHOT_MAX_SPREAD_DAYS,
         "distance": float(len(run.snapshot_held_out)),
+        # FND-0251: persisted per ISIN (audit_finding_isin) so the promotion gate knows WHICH scenario funds the cross-sectional
+        # blocks never looked at; the count above is its consistency check (coverage UNKNOWN when they disagree).
+        "violating_isins": tuple(sorted(run.snapshot_held_out)),
         "evidence": f"{len(run.snapshot_held_out)} distinct ISINs held out of cross-sectional "
                     f"timeseries blocks (beyond {SNAPSHOT_MAX_SPREAD_DAYS} calendar days of their "
                     f"slice's max date); max observed spread {run.snapshot_max_spread_days:.0f} days",
@@ -1148,6 +1152,7 @@ def run_p2_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = None)
                 "value": None, "reference_value": None, "threshold": rule.tolerance,
                 "distance": float(result.n_matches),
                 "evidence": f"{result.n_matches}/{result.n_eligible} eligible rows within tolerance",
+                "violating_isins": _isins_of(result.matched_rows),
                 "root_cause_candidate": rule.diagnosis,
             })
 
@@ -1192,6 +1197,7 @@ def run_p2_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = None)
                     f"{result.n_matches}/{result.n_eligible} eligible rows within tolerance "
                     f"(eligible = window CPI > {IPC_ELIGIBILITY_FLOOR})"
                 ),
+                "violating_isins": _isins_of(result.matched_rows),
                 "root_cause_candidate": rule.diagnosis,
             })
     if n_real_nominal_checked == 0:
@@ -1264,6 +1270,7 @@ def run_p2_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = None)
                     "distance": float(n_divergent),
                     "evidence": f"{n_divergent}/{result.n_eligible} funds diverge between "
                                 f"fund_metrics scalar and latest fund_metric_timeseries snapshot",
+                    "violating_isins": _isins_of(result.unmatched_rows),
                     "root_cause_candidate": P2_PAIRS["SCALAR_EQUALS_TIMESERIES"].diagnosis,
                 })
 
@@ -1303,6 +1310,14 @@ def run_p2_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = None)
     return run
 
 
+def _isins_of(rows) -> tuple:
+    """Sorted distinct ISINs of a result frame. FND-0251: a BLOCK2 finding that names its funds is scoped to a portfolio by the
+    promotion gate (shared.statistical_audit.gating); one that does not is assumed to touch every portfolio."""
+    if rows is None or len(rows) == 0 or "isin" not in rows.columns:
+        return ()
+    return tuple(sorted(rows["isin"].dropna().astype(str).unique().tolist()))
+
+
 def _pivot_two_metrics(long_df: pd.DataFrame, metric_a: str, metric_b: str) -> pd.DataFrame:
     join_keys = ["isin", "horizon", "real_flag", "metric_version"]
     left = long_df[long_df["metric"] == metric_a][join_keys + ["value"]].rename(columns={"value": metric_a})
@@ -1333,6 +1348,7 @@ class AuditRun:
         self.snapshot_max_spread_days: float = 0.0
         # FND-0234(e): one line per finding the accepted-residual baseline downgraded or narrowed (printed by _print_report)
         self.accepted_notes: list[str] = []
+        self.residual_attention: list[str] = []   # FND-0251: acceptances about to lapse (accepted_residuals.attention_lines)
         # FND-0234(d): rows written to audit_finding_isin by _persist (0 when the table does not exist yet)
         self.persisted_isin_rows: int = 0
 
@@ -1679,6 +1695,8 @@ def _print_report(run: "AuditRun", run_id: str) -> None:
         print(f"Accepted residuals ({len(run.accepted_notes)} findings; scripts/audit/accept_audit_residual.py):")
         for note in run.accepted_notes:
             print(f"  = {note}")
+    for line in run.residual_attention:         # FND-0251: a lapse is announced, never a surprise at promotion time
+        print(f"  ! {line}")
     print()
     print(f"Skipped ({len(run.skipped)}):")
     for s in run.skipped:
@@ -1739,6 +1757,7 @@ def _apply_accepted_residuals(conn: "psycopg.Connection", run: "AuditRun") -> No
         return
     if accepted:
         run.findings, run.accepted_notes = apply_accepted(run.findings, accepted)
+    run.residual_attention = attention_lines(conn, run.domain, AUDIT_RESIDUAL_EXPIRY_WARN_DAYS)   # no backlog lookup in the audit
 
 
 def _has_blocking_findings(run: "AuditRun") -> bool:
@@ -1748,14 +1767,9 @@ def _has_blocking_findings(run: "AuditRun") -> bool:
     (FND-0175): on the 40-ISIN sample 141 of them fired with 0 defects among the
     fund-return families, and the full population produces tens of thousands, so
     blocking on them made the gate unpassable."""
-    for f in run.findings:
-        if f["rule_class"] == "HARD_INVARIANT":
-            return True
-        if f["block"] == "BLOCK2":
-            return True
-        if f["rule_id"] == "TIMESERIES_DUPLICATE":
-            return True
-    return False
+    # The predicate itself lives in shared.statistical_audit.gating (FND-0251): the P3 promotion gate applies the same rule, scoped to
+    # the funds of the scenario, so the two can never drift apart.
+    return any(is_blocking(f.get("rule_class"), f.get("block"), f.get("rule_id")) for f in run.findings)
 
 
 def _compute_drift(conn: "psycopg.Connection", run: "AuditRun", compare_to: str):

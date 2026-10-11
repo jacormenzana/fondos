@@ -407,6 +407,9 @@ FX_EXPOSURE_CONSTRAINT_ENABLED: bool = True
 # Cash appears only when a sub-portfolio has too few eligible non-exposed funds to reach 100% under the per-fund cap (FND-0187); the build
 # records it in the scenario notes and prints which sub-portfolio is short. Hard gate, no override: change the constant by a reviewed commit.
 MAX_PORTFOLIO_CASH_WEIGHT: float = 0.10
+# FND-0251: an accepted audit residual (control.audit_accepted_finding) is announced this many days before it lapses (audit report, promotion,
+# cycle report). A warning, never a gate: a lapsed residual simply stops counting, so the finding comes back by itself at the next audit.
+AUDIT_RESIDUAL_EXPIRY_WARN_DAYS: int = 30
 
 # ============================================================
 # Directorios de datos externos (inputs no versionados)
