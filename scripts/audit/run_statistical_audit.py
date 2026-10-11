@@ -818,6 +818,23 @@ _POINT_OR_SATURATING_METRICS = frozenset({"worst_month", "max_dd", "sortino"})
 
 
 def _deflation_meaningful(metric: str) -> bool:
+# FND-0252 (owner decision 2026-10-11): REAL_EQUALS_NOMINAL for a RATIO metric over a short crisis window. Sharpe = excess return / vol and the
+# deflator moves both together, so real ~= nominal happens with the deflator fully applied. Measured on the live universe (28,522 stored
+# sharpe pairs): the 13 rows that tripped the rule are all crisis_2008 / crisis_2022, their real return is 0.5-6.7 pp below nominal and their
+# vol differs; the |real - nominal| counts grow in proportion to the tolerance with no spike at zero (5 / 18 / 39 / 156 / 564 / 2,051 under
+# 1e-4 / 1e-3 / 3e-3 / 1e-2 / 3e-2 / 1e-1). The rule keeps its power on every other horizon, and an unapplied deflator on a crisis window is
+# still caught by REAL_EQUALS_NOMINAL_return_ann, DEFLATION_ORDER and WINDOW_FISHER_IDENTITY (all level metrics, untouched).
+_RATIO_CRISIS_EXEMPT_METRICS = frozenset({"sharpe"})
+_CRISIS_HORIZON_PREFIX = "crisis_"
+
+
+def _drop_crisis_ratio_rows(metric: str, pivot: pd.DataFrame) -> pd.DataFrame:
+    """`pivot` without its crisis_* horizon rows when `metric` is a ratio the rule has no power for there (FND-0252); else unchanged."""
+    if metric not in _RATIO_CRISIS_EXEMPT_METRICS or "horizon" not in pivot.columns:
+        return pivot
+    return pivot[~pivot["horizon"].astype(str).str.startswith(_CRISIS_HORIZON_PREFIX)]
+
+
     """REAL_EQUALS_NOMINAL (A3, FND-0121, 2026-09-28) only means anything for a metric whose raw
     value scales with a uniform per-run deflator (one ES-CPI scalar applied to every fund).
     Guards against a real, empirically-confirmed false-positive class (live 3-ISIN smoke test,
@@ -1181,6 +1198,9 @@ def run_p2_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = None)
             continue
         pivot = deflation_frame if metric == "return_ann" else _pivot_by_real_flag(long_df, metric)
         if pivot.empty:
+        if pivot.empty:
+            continue
+        pivot = _drop_crisis_ratio_rows(metric, pivot)               # FND-0252
             continue
         if "window_cpi_ann" not in pivot.columns:
             pivot = pivot.merge(scalar_cpi, on=cpi_keys, how="left")

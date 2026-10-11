@@ -188,6 +188,14 @@ retornos −5…−50 %): vale ≈ −1,2…−2 y apenas reacciona a un desplaz
 permite decidir, así que la regla no tiene poder y se retira para esas tres (como `vol_ann`, FND-0174);
 sigue activa donde la brecha la fija el IPC de la ventana (`return_ann`, `sharpe`, `ret_vol_simple`), y la
 corrección de la deflactación sigue cubierta por `DEFLATION_ORDER` y la identidad de Fisher.
+
+**`REAL_EQUALS_NOMINAL_sharpe` ya no se evalúa en horizontes `crisis_*`** (FND-0252, 2026-10-11;
+`_drop_crisis_ratio_rows`). El Sharpe es un cociente de dos magnitudes que el deflactor mueve a la vez: real ≈ nominal
+ocurre con la deflactación aplicada. Medido en vivo (28.522 pares almacenados): las 13 filas que disparaban la regla eran
+todas `crisis_2008`/`crisis_2022`, con retorno real 0,5–6,7 pp por debajo del nominal y volatilidad distinta, y el recuento de
+|real − nominal| crece proporcionalmente a la tolerancia (5 / 18 / 39 / 156 / 564 / 2.051 bajo 1e-4 … 1e-1) sin pico en cero.
+Fuera de crisis la regla conserva su poder, y un deflactor no aplicado en una ventana de crisis lo siguen detectando
+`REAL_EQUALS_NOMINAL_return_ann`, `DEFLATION_ORDER` y `WINDOW_FISHER_IDENTITY`.
 Efecto colateral del análisis (defecto real, otro AP): 506 pares de `worst_month` son idénticos a 1e-9
 porque `deflate_nav` alinea con `merge_asof(backward)` contra un IPC fechado a fin de mes natural, y un
 NAV de fin de mes hábil (29,1 % de las fechas) toma el IPC del mes anterior.

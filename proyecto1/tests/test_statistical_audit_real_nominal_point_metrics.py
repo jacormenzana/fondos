@@ -58,3 +58,39 @@ def test_a_window_integrated_metric_with_deflation_not_applied_still_triggers():
     frame = pd.DataFrame({"return_ann_nominal": np.linspace(0.02, 0.09, n), "window_cpi_ann": np.full(n, 0.03)})
     frame["return_ann_real"] = frame["return_ann_nominal"]
     assert compare_pairs(frame, "return_ann_nominal", "return_ann_real", RULE).triggered
+
+
+# ---- FND-0252: sharpe on crisis_* horizons --------------------------------------------------------------------------------------
+
+def _sharpe_pivot(horizons, same=True, n_each=10):
+    rows = []
+    for h in horizons:
+        for k in range(n_each):
+            nom = -1.0 - 0.1 * k
+            rows.append({"isin": f"{h}{k}", "horizon": h, "sharpe_nominal": nom,
+                         "sharpe_real": nom if same else nom - 0.5, "window_cpi_ann": 0.04})
+    return pd.DataFrame(rows)
+
+
+def test_sharpe_rows_on_crisis_horizons_are_not_evaluated():
+    pivot = _sharpe_pivot(["crisis_2008", "crisis_2022", "since_inception"])
+    kept = runner._drop_crisis_ratio_rows("sharpe", pivot)
+    assert set(kept["horizon"]) == {"since_inception"} and len(kept) == 10
+
+
+def test_the_rule_still_trips_for_sharpe_on_a_non_crisis_horizon_so_it_keeps_its_power():
+    kept = runner._drop_crisis_ratio_rows("sharpe", _sharpe_pivot(["crisis_2022", "rolling_3y"]))
+    assert compare_pairs(kept, "sharpe_nominal", "sharpe_real", RULE).triggered          # identical real == nominal off-crisis is a defect
+
+
+def test_crisis_sharpe_equal_to_nominal_no_longer_trips_the_rule():
+    pivot = _sharpe_pivot(["crisis_2008", "crisis_2022"])
+    assert compare_pairs(pivot, "sharpe_nominal", "sharpe_real", RULE).triggered         # before FND-0252 this fired
+    assert runner._drop_crisis_ratio_rows("sharpe", pivot).empty                         # the runner skips these rows
+
+
+def test_other_metrics_keep_their_crisis_rows_and_the_level_metric_still_guards_the_deflator():
+    pivot = _sharpe_pivot(["crisis_2022"]).rename(columns={"sharpe_nominal": "return_ann_nominal", "sharpe_real": "return_ann_real"})
+    assert len(runner._drop_crisis_ratio_rows("return_ann", pivot)) == 10                # return_ann is untouched ...
+    assert compare_pairs(pivot, "return_ann_nominal", "return_ann_real", RULE).triggered  # ... and flags an unapplied deflator
+    assert runner._deflation_meaningful("sharpe")                                        # the metric-level answer is unchanged
