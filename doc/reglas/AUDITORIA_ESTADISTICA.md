@@ -682,6 +682,19 @@ son `GLOBAL`. Las claves de cuatro partes provienen de `fund_metrics` y las de t
 `fund_metric_timeseries` (`sharpe|rolling_5y|0|v1` frente a `sharpe|rolling_5y|0`): son claves
 distintas, no una colisión.
 
+### 6.3 Causa raíz mecánica: RCA-E (FND-0251)
+
+`shared/statistical_audit/rca.py` antepone `RCA-E:` a `root_cause_candidate` de un hallazgo **solo** cuando *todos* sus
+ISIN infractores están en un estado mecánico y verificable:
+
+- NAV mensual más antiguo que `P3_FUND_NAV_MAX_AGE_DAYS`, o
+- métricas en un `algorithm_version` anterior al más reciente de `fund_metrics` (el fondo quedó fuera del último recálculo).
+
+Todo lo demás queda **sin clasificar** para revisión humana. No existe, y no debe añadirse sin validación fuera de muestra, una
+etiqueta automática de causa de mercado (RCA-M) ni de ingeniería (RCA-I): un MAD-z no distingue un episodio de mercado de un
+defecto. El prefijo no cambia severidad, clase ni ninguna puerta, y no usa `nav_sources.status` (vale `OK` para los fondos
+congelados, FND-0041). El informe de la auditoría imprime cuántos hallazgos etiquetó.
+
 ---
 
 ## §7. Correcciones a las especificaciones actuales de las dos skills

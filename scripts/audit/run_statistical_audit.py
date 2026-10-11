@@ -121,7 +121,7 @@ if str(_ROOT) not in sys.path:
 
 import pandas as pd
 
-from shared.config import AUDIT_RESIDUAL_EXPIRY_WARN_DAYS, CRISIS_WINDOWS, MIN_NAV_ROWS, ROLLING_WINDOWS
+from shared.config import AUDIT_RESIDUAL_EXPIRY_WARN_DAYS, CRISIS_WINDOWS, MIN_NAV_ROWS, P3_FUND_NAV_MAX_AGE_DAYS, ROLLING_WINDOWS
 from shared.db import get_connection
 from shared.eur_nav import apply_eur_view_frame   # FND-0243: audit the NAV P2 computed on
 from shared.statistical_audit.catalog_cost_columns import COST_COLUMNS
@@ -148,6 +148,7 @@ from shared.statistical_audit.invariants import (
 )
 from shared.statistical_audit.accepted_residuals import apply_accepted, attention_lines, load_accepted
 from shared.statistical_audit.gating import is_blocking
+from shared.statistical_audit.rca import load_stale_states, tag_findings
 from shared.statistical_audit.compare_runs import (
     compare_runs, compare_violators, drift_label, load_run_statistics,
 )
@@ -817,7 +818,6 @@ _P2_METRICS_COLS = (
 _POINT_OR_SATURATING_METRICS = frozenset({"worst_month", "max_dd", "sortino"})
 
 
-def _deflation_meaningful(metric: str) -> bool:
 # FND-0252 (owner decision 2026-10-11): REAL_EQUALS_NOMINAL for a RATIO metric over a short crisis window. Sharpe = excess return / vol and the
 # deflator moves both together, so real ~= nominal happens with the deflator fully applied. Measured on the live universe (28,522 stored
 # sharpe pairs): the 13 rows that tripped the rule are all crisis_2008 / crisis_2022, their real return is 0.5-6.7 pp below nominal and their
@@ -835,6 +835,7 @@ def _drop_crisis_ratio_rows(metric: str, pivot: pd.DataFrame) -> pd.DataFrame:
     return pivot[~pivot["horizon"].astype(str).str.startswith(_CRISIS_HORIZON_PREFIX)]
 
 
+def _deflation_meaningful(metric: str) -> bool:
     """REAL_EQUALS_NOMINAL (A3, FND-0121, 2026-09-28) only means anything for a metric whose raw
     value scales with a uniform per-run deflator (one ES-CPI scalar applied to every fund).
     Guards against a real, empirically-confirmed false-positive class (live 3-ISIN smoke test,
@@ -1198,9 +1199,9 @@ def run_p2_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = None)
             continue
         pivot = deflation_frame if metric == "return_ann" else _pivot_by_real_flag(long_df, metric)
         if pivot.empty:
-        if pivot.empty:
             continue
         pivot = _drop_crisis_ratio_rows(metric, pivot)               # FND-0252
+        if pivot.empty:
             continue
         if "window_cpi_ann" not in pivot.columns:
             pivot = pivot.merge(scalar_cpi, on=cpi_keys, how="left")
@@ -1369,6 +1370,7 @@ class AuditRun:
         # FND-0234(e): one line per finding the accepted-residual baseline downgraded or narrowed (printed by _print_report)
         self.accepted_notes: list[str] = []
         self.residual_attention: list[str] = []   # FND-0251: acceptances about to lapse (accepted_residuals.attention_lines)
+        self.rca_e_tagged = 0                     # FND-0251 Commit C: findings whose root cause is a mechanical stale state
         # FND-0234(d): rows written to audit_finding_isin by _persist (0 when the table does not exist yet)
         self.persisted_isin_rows: int = 0
 
@@ -1715,6 +1717,8 @@ def _print_report(run: "AuditRun", run_id: str) -> None:
         print(f"Accepted residuals ({len(run.accepted_notes)} findings; scripts/audit/accept_audit_residual.py):")
         for note in run.accepted_notes:
             print(f"  = {note}")
+    if run.rca_e_tagged:                        # FND-0251 Commit C: only mechanical states are tagged; the rest is for a human
+        print(f"  = RCA-E (mechanical stale state): {run.rca_e_tagged} findings tagged in root_cause_candidate; untagged findings stay UNCLASSIFIED")
     for line in run.residual_attention:         # FND-0251: a lapse is announced, never a surprise at promotion time
         print(f"  ! {line}")
     print()
@@ -1762,6 +1766,22 @@ def _print_report(run: "AuditRun", run_id: str) -> None:
                   "run_pipeline.py --force -> --verify-recompute snap.json --isin <ISINs> "
                   "(every input_hash must change) -> re-run this audit on the same ISINs and "
                   "confirm 0 WINDOW_DEFLATION_STRICT/WINDOW_FISHER_IDENTITY violations.")
+
+
+def _apply_rca_e(conn: "psycopg.Connection", run: "AuditRun") -> None:
+    """FND-0251 Commit C: tag (prefix of root_cause_candidate) the findings whose violating ISINs are ALL in a mechanical stale state
+    (NAV older than P3_FUND_NAV_MAX_AGE_DAYS, or metrics left on an older algorithm_version). Never infers market or engineering causes,
+    never changes a severity or a gate, never fails the audit."""
+    try:
+        isins = {i for f in run.findings for i in (f.get("violating_isins") or ())}
+        states = load_stale_states(conn, isins, P3_FUND_NAV_MAX_AGE_DAYS)
+        run.rca_e_tagged = tag_findings(run.findings, states)
+    except Exception as exc:                    # noqa: BLE001 -- a label never breaks the audit
+        try:
+            conn.rollback()
+        except Exception:                       # noqa: BLE001
+            pass
+        print(f"[rca-e] not applied ({type(exc).__name__})", file=sys.stderr)
 
 
 def _apply_accepted_residuals(conn: "psycopg.Connection", run: "AuditRun") -> None:
@@ -1965,6 +1985,7 @@ def main() -> int:
     try:
         run = run_cost_audit(conn, isins=isins) if args.domain == "costs" else run_p2_audit(conn, isins=isins)
         _apply_accepted_residuals(conn, run)
+        _apply_rca_e(conn, run)
     finally:
         if not keep_open:
             conn.close()
