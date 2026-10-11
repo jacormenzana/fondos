@@ -58,6 +58,7 @@ def apply_accepted(findings: Sequence[Mapping[str, Any]], accepted: Accepted) ->
         g = dict(f)
         if not remaining:
             g["severity"] = "INFO"
+            g["accepted_from_class"] = f.get("rule_class")      # control.audit_finding's CHECK has no ACCEPTED_RESIDUAL class
             g["rule_class"] = ACCEPTED_CLASS
             g["evidence"] = (f"ACCEPTED RESIDUAL ({', '.join(aps)}, until {until}): {len(hit)}/{len(isins)} ISINs; "
                              f"was: {f.get('evidence')}")

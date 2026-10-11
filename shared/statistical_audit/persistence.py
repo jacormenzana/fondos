@@ -127,6 +127,17 @@ _FINDING_COLUMNS = (
 )
 
 
+def _persisted_value(finding: Mapping[str, Any], column: str) -> Any:
+    """A finding's value for `column`. A fully accepted finding (accepted_residuals.apply_accepted) carries the in-memory class
+    ACCEPTED_RESIDUAL, which control.audit_finding.rule_class's CHECK does not allow: it is persisted under the class it had
+    before the downgrade (severity INFO, evidence "ACCEPTED RESIDUAL ..."), so accepting every violator of a rule cannot
+    make --persist fail. The promotion gate (gating.py) re-derives acceptance from audit_accepted_finding, never from this."""
+    value = finding.get(column)
+    if column == "rule_class" and value == "ACCEPTED_RESIDUAL":
+        return finding.get("accepted_from_class") or "HARD_INVARIANT"
+    return value
+
+
 def emit_findings(
     conn: "psycopg.Connection",
     run_id: str,
@@ -141,7 +152,7 @@ def emit_findings(
         return 0
 
     rows = [
-        (run_id, domain, catalog_version, *(f.get(col) for col in _FINDING_COLUMNS))
+        (run_id, domain, catalog_version, *(_persisted_value(f, col) for col in _FINDING_COLUMNS))
         for f in findings
     ]
     ph = "%s"

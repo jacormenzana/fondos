@@ -81,6 +81,24 @@ def test_end_to_end_a_finding_is_downgraded_by_what_the_table_holds(pg_session_c
     assert run.accepted_notes and "1 NEW" in run.accepted_notes[0]
 
 
+def test_a_fully_accepted_finding_persists_under_its_original_class(pg_session_conn, pg_conn_module_schema):
+    """control.audit_finding.rule_class has no ACCEPTED_RESIDUAL value: persisting a finding whose violators are ALL accepted used to
+    raise CheckViolation and lose the whole --persist. It is now written as INFO under the class it had before the downgrade."""
+    from shared.statistical_audit.persistence import emit_findings
+    conn = pg_session_conn
+    conn.execute(f"SET search_path = {pg_conn_module_schema}")
+    conn.execute("CREATE TABLE audit_finding (LIKE control.audit_finding INCLUDING ALL)")     # real CHECK constraints, no FK
+    finding = {"block": "BLOCK5", "rule_id": "WINDOW_FISHER_IDENTITY", "rule_class": "HARD_INVARIANT", "severity": "ALARM",
+               "group_key": "WINDOW_FISHER_IDENTITY", "distance": 2.0, "evidence": "2/10", "violating_isins": ("A", "B")}
+    accepted = {"WINDOW_FISHER_IDENTITY": {"A": ("FND-0250", date.today()), "B": ("FND-0250", date.today())}}
+    out, _ = apply_accepted([finding], accepted)
+    assert out[0]["rule_class"] == "ACCEPTED_RESIDUAL" and out[0]["severity"] == "INFO"       # in memory: unchanged contract
+
+    assert emit_findings(conn, "run1", "p2_metrics", out) == 1
+    row = conn.execute("SELECT rule_class, severity, evidence FROM audit_finding").fetchone()
+    assert (row[0], row[1]) == ("HARD_INVARIANT", "INFO") and row[2].startswith("ACCEPTED RESIDUAL (FND-0250")
+
+
 def test_a_missing_table_means_no_accepted_residuals_and_leaves_the_connection_usable(
         pg_session_conn, pg_conn_module_schema, capsys):
     conn = pg_session_conn
