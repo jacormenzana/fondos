@@ -183,13 +183,16 @@ def test_artifact_contents(env):
     assert set(pd.read_csv(out / "cost_sensitivity.csv")["bps_per_side"]) == {0.0, 25.0, 50.0}
     stats = json.loads((out / "series_stats.json").read_text(encoding="utf-8"))
     assert set(stats) == {"portfolio", "benchmark"} and {"sharpe", "ann_return", "max_drawdown"} <= set(stats["portfolio"])
-    assert (out / "summary.txt").read_text(encoding="utf-8") == "BACKTESTING P3 -- stub summary"
+    text = (out / "summary.txt").read_text(encoding="utf-8")                                  # FND-0251: the notice heads the summary
+    assert text.startswith("NOTE: live build-time data eligibility") and text.endswith("\n\nBACKTESTING P3 -- stub summary")
     timings = json.loads((out / "timings.json").read_text(encoding="utf-8"))
     assert timings["seconds"]["total"] == 2.1 and timings["cache_hits"] == {"risk": False}
     manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["scope"] == "2 ISINs" and manifest["dates"] == ["2010-01-31", "2011-12-31", 24]
     assert manifest["regime_publication_lags_months"] == REGIME_PUBLICATION_LAG_MONTHS and manifest["git_commit"]
     assert "manifest.json" in manifest["artifacts"] and manifest["args"]["bps_main"] == 25.0
+    assert any("NOT modelled" in n and "FND-0254" in n for n in manifest["not_modelled"])          # FND-0251: what a PIT run does not model
+    assert (out / "summary.txt").read_text(encoding="utf-8").startswith("NOTE: live build-time data eligibility")
 
 
 def test_hysteresis_grid_can_be_skipped_and_is_written_by_default(env):

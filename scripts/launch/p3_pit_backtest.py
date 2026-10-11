@@ -128,6 +128,11 @@ def _git_commit() -> str:
         return "unknown"
 
 
+# FND-0251 / FND-0254: what a PIT run does NOT model, said in the artifacts themselves so a PIT-vs-live divergence is never misread.
+NOT_MODELLED_NOTICE = ("live build-time data eligibility (FUND_DATA_ELIGIBILITY_ENABLED: stale NAV, accepted residual, NAV continuity) is NOT "
+                       "modelled in this point-in-time run; PIT parity is tracked in FND-0254")
+
+
 def write_artifacts(out_dir: Path, table: pd.DataFrame, grid: pd.DataFrame, bt, summary: str, manifest: dict,
                     save_scores: bool = True, hysteresis: "pd.DataFrame | None" = None,
                     crisis_variants: "pd.DataFrame | None" = None) -> dict:
@@ -141,7 +146,7 @@ def write_artifacts(out_dir: Path, table: pd.DataFrame, grid: pd.DataFrame, bt, 
         writer(path)
         written[name] = str(path)
 
-    _put("summary.txt", lambda p: p.write_text(summary, encoding="utf-8"))
+    _put("summary.txt", lambda p: p.write_text(f"NOTE: {NOT_MODELLED_NOTICE}\n\n{summary}", encoding="utf-8"))
     _put("pit_backtest_table.csv", lambda p: table.to_csv(p, float_format="%.8g"))
     _put("pit_backtest_table.parquet", lambda p: table.to_parquet(p))
     _put("cost_sensitivity.csv", lambda p: grid.to_csv(p, index=False, float_format="%.8g"))
@@ -245,6 +250,7 @@ def main(argv=None, conn=None) -> int:
         "regime_publication_lags_months": REGIME_PUBLICATION_LAG_MONTHS,
         "dates": [str(table.index.min().date()), str(table.index.max().date()), int(len(table))],
         "python": sys.version.split()[0], "pandas": pd.__version__, "log": str(log_path),
+        "not_modelled": [NOT_MODELLED_NOTICE],
     }
     written = write_artifacts(out_dir, table, grid, bt, summary, manifest, save_scores=not args.no_scores,
                               hysteresis=hysteresis, crisis_variants=crisis_variants)
