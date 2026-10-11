@@ -393,6 +393,14 @@ REGIME_PUBLICATION_LAG_MONTHS: dict = {
     "unemployment":  2,
 }
 P3_EXIT_STALE_INPUTS: int = 2
+# Net unhedged non-EUR exposure budget (share of the MASTER portfolio weight), owner decision 2026-10-11. Derived from the mandate: a -10% move
+# of the foreign currency vs EUR costs 0.10 x w of the portfolio, and 3 pp (w = 30%) is the share of the 15% max-drawdown budget granted to this
+# single factor. Measured by shared/fx_exposure.py; used by the build log, the report cover and the promotion gate (HARD, no override).
+MAX_NON_EUR_UNHEDGED_WEIGHT: float = 0.30
+# Largest structural cash residue (share of the MASTER portfolio) a scenario may DECLARE and still be promoted (owner decision 2026-10-11).
+# Cash appears only when a sub-portfolio has too few eligible non-exposed funds to reach 100% under the per-fund cap (FND-0187); the build
+# records it in the scenario notes and prints which sub-portfolio is short. Hard gate, no override: change the constant by a reviewed commit.
+MAX_PORTFOLIO_CASH_WEIGHT: float = 0.10
 
 # ============================================================
 # Directorios de datos externos (inputs no versionados)

@@ -488,6 +488,7 @@ python -m proyecto2.src.discovery.macro_discovery --source all
 | `portfolio_builder.py` | `proyecto3/src` |
 | `portfolio_engine.py` | `proyecto3/src` |
 | `regime_classifier.py` | `proyecto3/src` |
+| `scenario_lifecycle.py` | `proyecto3/src` |
 | `score_candidates.py` | `proyecto3/src` |
 | `scorer_config.py` | `proyecto3/src` |
 <!-- AUTO:END p3-module-map -->
