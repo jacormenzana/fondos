@@ -400,7 +400,7 @@ def load_fund_metrics_for_scoring(
 # Elegibilidad de datos en construccion (FND-0251, Commit B)
 # ============================================================
 
-ELIGIBILITY_COLUMNS = ["nav_last_date", "nav_age_days", "residual_reason"]
+ELIGIBILITY_COLUMNS = ["nav_last_date", "nav_age_days", "residual_reason", "nav_gap_reason"]
 RESIDUAL_AUDIT_DOMAIN = "p2_metrics"      # audit_finding / audit_accepted_finding.domain of the P2 statistical audit
 
 
@@ -409,6 +409,8 @@ def load_eligibility_inputs(conn: "psycopg.Connection", as_of: date | None = Non
       nav_last_date   newest fund_nav_monthly date (NaT = the fund has no monthly NAV)
       nav_age_days    (as_of - nav_last_date).days, NaN when there is no NAV
       residual_reason 'RULE (AP, hasta DATE); ...' for the ACTIVE accepted audit residuals of the fund, else None
+      nav_gap_reason  'nav_gap: coverage 34% (35/104 months, 2018-03..2026-10), longest gap 5 months, 27 gaps' when the fund's own monthly NAV span
+                      is too sparse (P3_FUND_NAV_MIN_COVERAGE / P3_FUND_NAV_MAX_GAP_RUN_MONTHS), else None
     A missing control.audit_accepted_finding (owner migration not applied) means no residuals, not an error."""
     from shared.statistical_audit.accepted_residuals import load_accepted
     as_of = as_of or date.today()
@@ -421,7 +423,32 @@ def load_eligibility_inputs(conn: "psycopg.Connection", as_of: date | None = Non
                 reasons.setdefault(isin, []).append(f"{rule_id} ({ap_id}, hasta {until})")
     out = out.join(pd.Series({i: "; ".join(sorted(v)) for i, v in reasons.items()}, name="residual_reason", dtype=object), how="outer")
     out["nav_age_days"] = [(as_of - d).days if pd.notna(d) else np.nan for d in out["nav_last_date"]]
+    out["nav_gap_reason"] = pd.Series(_nav_gap_reasons(conn), dtype=object)
     return out[ELIGIBILITY_COLUMNS]
+
+
+def _nav_gap_reasons(conn: "psycopg.Connection") -> dict:
+    """{isin: reason} for the funds whose monthly NAV is too sparse over their own first..last span (FND-0251 item C). One static query:
+    the gap before each month is (months since the previous row) - 1; coverage = rows / expected months."""
+    min_cov = _shared_config.P3_FUND_NAV_MIN_COVERAGE
+    max_run = _shared_config.P3_FUND_NAV_MAX_GAP_RUN_MONTHS
+    rows = conn.execute(
+        "SELECT isin, COUNT(*) AS n_rows, MIN(m) AS first_m, MAX(m) AS last_m, COALESCE(MAX(gap), 0) AS longest_gap, "
+        "COUNT(*) FILTER (WHERE gap > 0) AS n_gaps FROM ("
+        "SELECT isin, m, ((EXTRACT(year FROM m) * 12 + EXTRACT(month FROM m)) - "
+        "LAG(EXTRACT(year FROM m) * 12 + EXTRACT(month FROM m)) OVER (PARTITION BY isin ORDER BY m) - 1) AS gap FROM ("
+        "SELECT isin, date_trunc('month', date)::date AS m FROM fund_nav_monthly GROUP BY isin, date_trunc('month', date)) mm) g "
+        "GROUP BY isin").fetchall()
+    out: dict = {}
+    for isin, n_rows, first_m, last_m, longest, n_gaps in rows:
+        expected = (last_m.year - first_m.year) * 12 + (last_m.month - first_m.month) + 1
+        if expected < 2 or int(n_gaps) == 0:
+            continue
+        coverage = int(n_rows) / expected
+        if coverage < min_cov or int(longest) >= max_run:
+            out[isin] = (f"nav_gap: coverage {coverage:.0%} ({int(n_rows)}/{expected} months, {first_m:%Y-%m}..{last_m:%Y-%m}), "
+                         f"longest gap {int(longest)} months, {int(n_gaps)} gaps")
+    return out
 
 
 # ============================================================
@@ -736,6 +763,9 @@ def check_hard_filters(
         residual = row.get("residual_reason")
         if isinstance(residual, str) and residual:
             return f"accepted_residual: {residual}"
+        gap = row.get("nav_gap_reason")                       # FND-0251 item C: the text carries coverage, span and gap count (auditable)
+        if isinstance(gap, str) and gap:
+            return gap
 
     dd = row.get("max_dd", np.nan)
     dd_limit = MAX_DRAWDOWN_BY_SUB.get(subportfolio, MAX_DRAWDOWN_LIMIT)

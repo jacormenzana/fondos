@@ -417,6 +417,13 @@ MAX_PORTFOLIO_CASH_WEIGHT: float = 0.10
 # input, so the PIT run is NOT affected by this switch (no PIT parity yet: FND-0254; its run manifest says so).
 FUND_DATA_ELIGIBILITY_ENABLED: bool = True
 P3_FUND_NAV_MAX_AGE_DAYS: int = 60        # same threshold as NAV_STALE_DAYS of the cycle report (monthly NAV, month-end indexed)
+# NAV continuity (FND-0251 item C, same switch): over its OWN first..last monthly NAV span a fund is ineligible when its coverage (rows / expected
+# months) is below P3_FUND_NAV_MIN_COVERAGE, or its longest run of consecutive missing months reaches P3_FUND_NAV_MAX_GAP_RUN_MONTHS.
+# Why: P2 annualises by NUMBER OF ROWS, not dates (FND-0253), so a sparse series gets an inflated return_ann (LU1663960000: 20.9% stored vs 6.5% by
+# dates, scored 0.78 in Dinamica). This is the GUARD; the fix is FND-0253. Measured 2026-10-11: 5 of 2,933 active funds trip it, 2 of them eligible,
+# 0 in PRODUCTION; no quarterly reporter exists in the active universe.
+P3_FUND_NAV_MIN_COVERAGE: float = 0.80
+P3_FUND_NAV_MAX_GAP_RUN_MONTHS: int = 6
 # FND-0251: an accepted audit residual (control.audit_accepted_finding) is announced this many days before it lapses (audit report, promotion,
 # cycle report). A warning, never a gate: a lapsed residual simply stops counting, so the finding comes back by itself at the next audit.
 AUDIT_RESIDUAL_EXPIRY_WARN_DAYS: int = 30

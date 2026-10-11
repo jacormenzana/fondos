@@ -129,3 +129,38 @@ def test_score_funds_from_df_end_to_end_excludes_only_the_flagged_fund(monkeypat
     on = fs.score_funds_from_df(df, "Expansion", verbose=False)
     changed = sw.diff_eligibility(off, on)
     assert set(changed["isin"]) == {"OLD"} and changed["exclusion_reason_on"].str.startswith("nav_stale").all()
+
+
+# ---- NAV continuity (item C) ----------------------------------------------------------------------------------------------------
+
+def test_a_sparse_nav_reason_excludes_with_the_audit_text(on):
+    reason = "nav_gap: coverage 34% (35/104 months, 2018-03..2026-10), longest gap 5 months, 27 gaps"
+    assert fs.check_hard_filters(_row(nav_gap_reason=reason), "Dinamica") == reason
+
+
+def test_the_continuity_reason_comes_after_stale_nav_and_residual(on):
+    both = _row(nav_age_days=400.0, nav_last_date="2025-09-01", nav_gap_reason="nav_gap: x")
+    assert fs.check_hard_filters(both, "Equilibrada").startswith("nav_stale")
+    res = _row(residual_reason="R (FND-1, hasta 2027-01-09)", nav_gap_reason="nav_gap: x")
+    assert fs.check_hard_filters(res, "Equilibrada").startswith("accepted_residual")
+
+
+def test_off_ignores_the_continuity_reason(monkeypatch):
+    monkeypatch.setattr(cfg, "FUND_DATA_ELIGIBILITY_ENABLED", False)
+    assert fs.check_hard_filters(_row(nav_gap_reason="nav_gap: x"), "Equilibrada") is None
+
+
+def test_the_continuity_thresholds_are_the_documented_ones():
+    assert cfg.P3_FUND_NAV_MIN_COVERAGE == 0.80 and cfg.P3_FUND_NAV_MAX_GAP_RUN_MONTHS == 6
+
+
+def test_data_reasons_lists_every_flagged_fund_even_when_a_sibling_takes_its_family_slot(on):
+    frame = pd.DataFrame({
+        "nav_last_date": ["2026-09-30", "2025-01-31", None, "2026-09-30"],
+        "nav_age_days": [11.0, 618.0, np.nan, 11.0],
+        "residual_reason": [None, None, "R (FND-1, hasta 2027-01-09)", None],
+        "nav_gap_reason": [None, None, None, "nav_gap: coverage 35% (12/34 months, 2023-01..2025-10), longest gap 2 months, 11 gaps"],
+    }, index=pd.Index(["OK", "STALE", "RESID", "SPARSE"], name="isin"))
+    got = sw.data_reasons(frame, fs.check_hard_filters)
+    assert set(got) == {"STALE", "RESID", "SPARSE"}
+    assert got["STALE"].startswith("nav_stale") and got["RESID"].startswith("accepted_residual") and got["SPARSE"].startswith("nav_gap")

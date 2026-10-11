@@ -62,6 +62,18 @@ def diff_eligibility(res_off: pd.DataFrame, res_on: pd.DataFrame) -> pd.DataFram
     return out.sort_values(["subportfolio", "change", "isin"]).reset_index(drop=True)
 
 
+def data_reasons(frame: pd.DataFrame, check) -> dict:
+    """{isin: reason} for the funds that carry a data-eligibility reason (stale NAV / residual / NAV gap) BEFORE family de-duplication: `check` is
+    fund_scorer.check_hard_filters. Fed only the eligibility columns, every other filter sees NaN and passes, so the answer is the data rule alone.
+    A fund excluded here may not show in the per-block diff when a sibling class of its family takes the slot (family_out)."""
+    out: dict = {}
+    for isin, row in frame.iterrows():
+        reason = check(row, "Equilibrada")
+        if reason:
+            out[isin] = reason
+    return out
+
+
 def main(argv: list | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--regime", default=None, help="default: the regime of the latest persisted scoring")
@@ -88,7 +100,9 @@ def main(argv: list | None = None) -> int:
             inputs = fs.load_eligibility_inputs(conn)
             res_off = fs.score_funds_from_df(df, regime, verbose=False)
             cfg.FUND_DATA_ELIGIBILITY_ENABLED = True
-            res_on = fs.score_funds_from_df(df.join(inputs[fs.ELIGIBILITY_COLUMNS], how="left"), regime, verbose=False)
+            df_on = df.join(inputs[fs.ELIGIBILITY_COLUMNS], how="left")
+            res_on = fs.score_funds_from_df(df_on, regime, verbose=False)
+            flagged = data_reasons(df_on[fs.ELIGIBILITY_COLUMNS], fs.check_hard_filters)
         finally:
             cfg.FUND_DATA_ELIGIBILITY_ENABLED = saved
         conn.rollback()
@@ -111,10 +125,13 @@ def main(argv: list | None = None) -> int:
                 print(f"{len(fam)} more pairs only change the family representative (a sibling class takes over; not an exclusion):")
                 for _, r in fam.iterrows():
                     print(f"  {r['subportfolio']:12s} {r['isin']}  {str(r['fund_name'])[:44]:44s} {r['change']}")
+        print(f"\n{len(flagged)} funds carry a data-eligibility reason today (before family de-duplication):")
+        for isin, reason in sorted(flagged.items()):
+            print(f"  {isin}  {reason[:150]}")
         prod = conn.execute("SELECT scenario_id FROM portfolio_scenarios WHERE status = 'PRODUCTION'").fetchone()
         if prod is not None:
             held = {r[0] for r in conn.execute("SELECT isin FROM portfolio_weights WHERE scenario_id = %s", (prod[0],)).fetchall()}
-            hit = sorted(set(diff["isin"]) & held)
+            hit = sorted((set(diff["isin"]) | set(flagged)) & held)
             print(f"\nfunds of the PRODUCTION scenario {prod[0]} that the switch would exclude or replace: {len(hit)}"
                   + (f" {hit}" if hit else ""))
         conn.rollback()

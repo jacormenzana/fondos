@@ -103,3 +103,46 @@ def test_with_the_switch_on_the_scorer_excludes_exactly_the_stale_and_the_residu
     assert not elig["STALE"] and reason["STALE"].startswith("nav_stale: last NAV 2025-12-31")
     assert not elig["RESID"] and reason["RESID"].startswith("accepted_residual: REAL_EQUALS_NOMINAL_sharpe (FND-0252")
     assert not res[res["isin"] == "FRESH"]["score_final"].isna().any()
+
+
+# ---- NAV continuity (item C) ----------------------------------------------------------------------------------------------------
+
+def _months(start_year, start_month, n, skip=()):
+    out = []
+    y, m = start_year, start_month
+    for i in range(n):
+        if i not in skip:
+            out.append(f"{y:04d}-{m:02d}-28")
+        m += 1
+        if m == 13:
+            y, m = y + 1, 1
+    return out
+
+
+def _seed_nav(conn, isin, dates):
+    for d in dates:
+        conn.execute("INSERT INTO fund_nav_monthly VALUES (%s, %s, 1.0)", (isin, d))
+
+
+def test_continuity_flags_only_sparse_or_long_outage_series_and_names_the_numbers(pg_session_conn, pg_conn_module_schema):
+    conn = pg_session_conn
+    _world(conn, pg_conn_module_schema)
+    _seed_nav(conn, "FULL", _months(2023, 1, 36))                                   # 36/36: no gap
+    _seed_nav(conn, "SPARSE", _months(2023, 1, 36, skip={i for i in range(36) if i % 3}))   # one row a quarter: 12/34 = 35% coverage
+    _seed_nav(conn, "OUTAGE", _months(2023, 1, 40, skip=set(range(10, 16))))        # 34/40 = 85% coverage, ONE hole of 6 months
+    _seed_nav(conn, "SHORTHOLE", _months(2023, 1, 40, skip={10, 11, 12}))           # 37/40 = 92%, hole of 3 months: tolerated
+    conn.commit()
+    got = fs.load_eligibility_inputs(conn, as_of=AS_OF)["nav_gap_reason"]
+    assert pd.isna(got.get("FULL")) and pd.isna(got.get("SHORTHOLE"))
+    assert got["SPARSE"].startswith("nav_gap: coverage 35% (12/34 months, 2023-01..2025-10)")
+    assert "longest gap 2 months" in got["SPARSE"] and "11 gaps" in got["SPARSE"]
+    assert got["OUTAGE"].startswith("nav_gap: coverage 85% (34/40 months, 2023-01..2026-04)")
+    assert "longest gap 6 months, 1 gaps" in got["OUTAGE"]
+    assert pd.isna(got.get("FRESH"))                                                # the base world's consecutive months
+
+
+def test_a_one_row_fund_and_a_two_month_fund_are_not_flagged(pg_session_conn, pg_conn_module_schema):
+    conn = pg_session_conn
+    _world(conn, pg_conn_module_schema)
+    got = fs.load_eligibility_inputs(conn, as_of=AS_OF)["nav_gap_reason"]
+    assert got.dropna().empty                                                       # STALE (1 row), RESID (1 row), FRESH (2 consecutive)
