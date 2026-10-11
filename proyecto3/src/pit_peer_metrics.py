@@ -39,6 +39,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from shared import config as _config
+from shared.annualization import by_dates_enabled as _by_dates_enabled, month_ordinals as _month_ordinals   # FND-0253
 from shared.config import (
     CAPTURE_MIN_PERIODS,
     MIN_PEERS,
@@ -246,19 +247,26 @@ def _peer_window_returns(values: np.ndarray, dates: np.ndarray, ws: np.datetime6
     block = values[lo:hi]
     finite = np.isfinite(block)
     n = finite.sum(axis=0)
+    n_exp = n                                   # the horizon (12 / n_exp) -- the observation count below keeps gating min_obs
+    if _by_dates_enabled() and block.shape[0]:
+        # FND-0253: dense-equivalent points of the first..last observation of each peer in the window (== n without gaps)
+        mo = _month_ordinals(dates[lo:hi])
+        first_row = finite.argmax(axis=0)
+        last_row = block.shape[0] - 1 - finite[::-1].argmax(axis=0)
+        n_exp = np.where(n > 0, mo[last_row] - mo[first_row] + 1, n)
     if _config.PERSISTENCE_FIRST_LAST_NAV_ENABLED and block.shape[0]:
         # FND-0200 fixed in P2: return of the period, first and last observation inside the window
         cols = np.arange(block.shape[1])
         first = block[finite.argmax(axis=0), cols]
         last = block[block.shape[0] - 1 - finite[::-1].argmax(axis=0), cols]
         with np.errstate(all="ignore"):
-            ret = (last / first) ** (12.0 / n) - 1.0
+            ret = (last / first) ** (12.0 / n_exp) - 1.0
         ret[(n < min_obs) | ~np.isfinite(first) | (first <= 0)] = np.nan
         return ret
     with np.errstate(all="ignore"):
         mn = np.where(finite, block, np.inf).min(axis=0)
         mx = np.where(finite, block, -np.inf).max(axis=0)
-        ret = (mx / mn) ** (12.0 / n) - 1.0
+        ret = (mx / mn) ** (12.0 / n_exp) - 1.0
     ret[(n < min_obs) | ~np.isfinite(mn) | (mn <= 0)] = np.nan
     return ret
 
@@ -295,6 +303,7 @@ def alpha_persistence(
             continue
         fdates = nav.index[pos]
         fvals = col[pos]
+        f_months = _month_ordinals(fdates) if _by_dates_enabled() else None      # FND-0253
         start, last = fdates[0], fdates[-1]
         group = peers_of[nat.iloc[j]]
 
@@ -308,7 +317,8 @@ def alpha_persistence(
             hi = np.searchsorted(fdates.to_numpy(), we.to_datetime64(), side="right")
             nw = hi - lo
             if nw >= min_obs:
-                ret_f = (fvals[hi - 1] / fvals[lo]) ** (12.0 / nw) - 1.0
+                nw_exp = nw if f_months is None else int(f_months[hi - 1] - f_months[lo]) + 1
+                ret_f = (fvals[hi - 1] / fvals[lo]) ** (12.0 / nw_exp) - 1.0
                 key = (nat.iloc[j], ws, we)
                 if key not in window_cache:
                     window_cache[key] = _peer_window_returns(values[:, group], dates, ws.to_datetime64(),

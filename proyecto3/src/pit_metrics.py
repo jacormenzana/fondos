@@ -52,7 +52,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from shared.config import RISK_FREE_RATE_ANN
-from shared.annualization import years_spanned            # FND-0240: the producers' convention, read at call time
+from shared.annualization import by_dates_enabled, month_ordinals, years_spanned   # FND-0240 / FND-0253: the producers' conventions, read at call time
 from shared.deflation_alignment import cpi_lookup_dates   # FND-0241: which CPI month a NAV date belongs to
 
 _P2_SRC = _ROOT / "proyecto2" / "src"
@@ -148,10 +148,18 @@ def aligned_ipc(dates: pd.DatetimeIndex, ipc: "pd.DataFrame | None", lag_months:
     return out
 
 
-def _fund_expanding(x: np.ndarray, rf_t: np.ndarray, ipc_t: "np.ndarray | None") -> dict:
-    """Expanding metrics of ONE fund over its consecutive observations x (all finite, > 0)."""
+def _fund_expanding(x: np.ndarray, rf_t: np.ndarray, ipc_t: "np.ndarray | None", months: "np.ndarray | None" = None) -> dict:
+    """Expanding metrics of ONE fund over its consecutive observations x (all finite, > 0).
+
+    `months` (FND-0253, only with ANNUALIZATION_BY_DATES_ENABLED): calendar-month ordinal of each observation. The horizon of the
+    expanding window ending at observation i is then the dense-equivalent number of points of the first..i-th month (identical to the row
+    count for a fund without gaps) and a return spanning k months enters the expanding vol as a k-month return. None = the row convention."""
     m = len(x)
     n = np.arange(1, m + 1, dtype=float)
+    n_eff = n if months is None else (months - months[0] + 1).astype(float)      # == n when the observations are consecutive months
+    kg = None if months is None else np.maximum(np.diff(months), 1).astype(float)
+    if kg is not None and (kg == 1.0).all():
+        kg = None                                                              # dense: the legacy expressions below, bit-for-bit
     nan = np.full(m, np.nan)
     out = {k: nan.copy() for k in METRICS}
     out["n_obs"] = n
@@ -162,16 +170,22 @@ def _fund_expanding(x: np.ndarray, rf_t: np.ndarray, ipc_t: "np.ndarray | None")
     with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
         if m >= 2:
             # FND-0240: same exponent as returns.annualized_return (N points span N-1 intervals when the switch is on)
-            inv_years = 1.0 / years_spanned(n[1:], PERIODS_PER_YEAR)
+            inv_years = 1.0 / years_spanned(n_eff[1:], PERIODS_PER_YEAR)
             out["return_ann"][1:] = (x[1:] / x[0]) ** inv_years - 1.0
 
             r = x[1:] / x[:-1] - 1.0                           # simple monthly returns (pct_change)
             k = np.arange(1, m, dtype=float)                   # returns available at obs index 1..m-1
-            rc = r - r.mean()                                  # variance is shift-invariant; centring avoids cancellation
-            cs1, cs2 = np.cumsum(rc), np.cumsum(rc * rc)
             var = np.full(m - 1, np.nan)
             ok = k >= 2
-            var[ok] = np.maximum((cs2[ok] - cs1[ok] ** 2 / k[ok]) / (k[ok] - 1.0), 0.0)
+            if kg is None:
+                rc = r - r.mean()                              # variance is shift-invariant; centring avoids cancellation
+                cs1, cs2 = np.cumsum(rc), np.cumsum(rc * rc)
+                var[ok] = np.maximum((cs2[ok] - cs1[ok] ** 2 / k[ok]) / (k[ok] - 1.0), 0.0)
+            else:
+                # FND-0253: expanding k-weighted variance, sum((r - k mu)^2 / k) / (t - 1) with mu = sum(r) / sum(k)
+                #   = (sum(r^2 / k) - (sum r)^2 / sum k) / (t - 1)
+                csr, csk, csq = np.cumsum(r), np.cumsum(kg), np.cumsum(r * r / kg)
+                var[ok] = np.maximum((csq[ok] - csr[ok] ** 2 / csk[ok]) / (k[ok] - 1.0), 0.0)
             vol = np.sqrt(var) * np.sqrt(PERIODS_PER_YEAR)
             out["vol_ann"][1:] = vol
 
@@ -193,7 +207,7 @@ def _fund_expanding(x: np.ndarray, rf_t: np.ndarray, ipc_t: "np.ndarray | None")
             y = x / ipc_t                                      # deflated NAV up to a constant (base cancels)
             out["max_dd_real"] = np.minimum.accumulate(y / np.maximum.accumulate(y) - 1.0)
             if m >= 2:
-                out["return_ann_real"][1:] = (y[1:] / y[0]) ** (1.0 / years_spanned(n[1:], PERIODS_PER_YEAR)) - 1.0
+                out["return_ann_real"][1:] = (y[1:] / y[0]) ** (1.0 / years_spanned(n_eff[1:], PERIODS_PER_YEAR)) - 1.0
     return out
 
 
@@ -218,13 +232,15 @@ def expanding_risk_metrics(
     arrays = {k: np.full(nav_wide.shape, np.nan) for k in METRICS}
 
     values = nav_wide.to_numpy(dtype=float)
+    month_ords = month_ordinals(dates) if by_dates_enabled() else None      # FND-0253
     for j in range(values.shape[1]):
         col_vals = values[:, j]
         mask = np.isfinite(col_vals) & (col_vals > 0)
         if not mask.any():
             continue
         pos = np.flatnonzero(mask)
-        fund = _fund_expanding(col_vals[pos], rf_t[pos], None if ipc_t is None else ipc_t[pos])
+        fund = _fund_expanding(col_vals[pos], rf_t[pos], None if ipc_t is None else ipc_t[pos],
+                               None if month_ords is None else month_ords[pos])
         for k in METRICS:
             arrays[k][pos, j] = fund[k]
     return {k: pd.DataFrame(a, index=nav_wide.index, columns=nav_wide.columns) for k, a in arrays.items()}

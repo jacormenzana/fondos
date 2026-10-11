@@ -78,15 +78,19 @@ def compute_pit_scores(
     timings, hits = {}, {}
 
     # ---- d1a: expanding risk metrics ----
+    from shared import config as _config
+    # FND-0253: the by-dates annualisation changes the expanding return / vol of funds with NAV gaps, so it is part of the key WHEN ON
+    # (an OFF run keeps today's keys: the warm cache stays valid).
+    risk_flags = {n: True for n in ("ANNUALIZATION_BY_DATES_ENABLED",) if getattr(_config, n, False)}
     risk_key = content_hash(inputs.nav, inputs.ipc if inputs.ipc is not None else "no-ipc",
-                            inputs.rate if inputs.rate is not None else "no-rate", {"lag": lag}, CODE_VERSION)
+                            inputs.rate if inputs.rate is not None else "no-rate", {"lag": lag}, CODE_VERSION,
+                            *([risk_flags] if risk_flags else []))
     risk, hit, secs = cached_frames(cache, "risk", risk_key, lambda: expanding_risk_metrics(
         inputs.nav, inputs.ipc, inputs.rate, ipc_lag_months=lag))
     timings["risk"], hits["risk"] = secs, hit
 
     # ---- d1b: peer metrics (persistence + capture) ----
-    from shared import config as _config
-    peer_flags = {n: True for n in ("PERSISTENCE_FIRST_LAST_NAV_ENABLED", "CAPTURE_MONTH_END_ENABLED")
+    peer_flags = {n: True for n in ("PERSISTENCE_FIRST_LAST_NAV_ENABLED", "CAPTURE_MONTH_END_ENABLED", "ANNUALIZATION_BY_DATES_ENABLED")
                   if getattr(_config, n, False)}
     peers_key = content_hash(inputs.nav, nature, CODE_VERSION, *([peer_flags] if peer_flags else []))
     peers, hit, secs = cached_frames(cache, "peers", peers_key, lambda: {
