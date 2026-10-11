@@ -63,6 +63,18 @@ MAX_DF_SHARE = 0.10                # a term / file in more than this share of th
 SMOOTH = 2.0                       # additive smoothing of the weighted Jaccard: one shared term in two tiny sets is not "1.00"
 MAX_PER_TICKET = 5                 # non-explicit candidates kept per pending ticket (S1 links are never capped)
 
+# Files the backlog procedure itself makes every ticket cite (see footprints()): never footprint evidence.
+PROCEDURE_PATHS = frozenset({
+    "scripts/audit/backlog_links.py",
+    "scripts/audit/backlog_links_calibration.py",
+    "shared/backlog_client.py",
+    "shared/backlog_overlap.py",
+    "doc/reglas/NORMAS_BACKLOG.md",
+    "db/pg_backlog/20_links.sql",
+})
+# ... and their identifiers, for the same reason, on the S3 side (vocabulary_terms).
+PROCEDURE_TERMS = frozenset(p.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower() for p in PROCEDURE_PATHS)
+
 _ID_RX = re.compile(r"\bFND-0*(\d{1,4})\b")
 _PATH_RX = re.compile(r"(?<![\w/\\])((?:[\w.\-]+[/\\])*[\w.\-]+\.(?:py|sql|bat|md|yaml|yml|json|toml|ps1|sh))\b")
 _IDENT_RX = re.compile(r"[A-Za-z][A-Za-z0-9_]{5,}")
@@ -164,7 +176,12 @@ def resolve_paths(paths: Iterable[str], known_files: Iterable[str]) -> set[str]:
 
 
 def footprints(docs: dict[str, str], commits: list[dict]) -> dict[str, set[str]]:
-    """S2 input: per ticket, the files of the commits whose message names it plus the repo files its own text cites."""
+    """S2 input: per ticket, the files of the commits whose message names it plus the repo files its own text cites.
+
+    `PROCEDURE_PATHS` are dropped: the start-of-ticket dependency scan (NORMAS_BACKLOG.md §4) makes EVERY ticket's first log cite
+    this tooling, so those paths say nothing about what the ticket is about. Measured 2026-10-11: the four tickets filed with a scan
+    note (FND-0255..0258) came out pairwise linked at 0.64-0.70 on `backlog_links.py` alone. MAX_DF_SHARE would only filter them
+    once ~22 tickets carried the note."""
     files: dict[str, set[str]] = defaultdict(set)
     known = set()
     for c in commits:
@@ -173,7 +190,7 @@ def footprints(docs: dict[str, str], commits: list[dict]) -> dict[str, set[str]]
             files[norm_id(m.group(0))].update(c["files"])
     for tid, text in docs.items():
         files[tid].update(resolve_paths(extract_paths(text), known))
-    return {t: f for t, f in files.items() if t in docs and f}
+    return {t: f - PROCEDURE_PATHS for t, f in files.items() if t in docs and f - PROCEDURE_PATHS}
 
 
 def idf_overlap(sets: dict[str, set[str]], *, max_df_share: float = MAX_DF_SHARE) -> dict[tuple, tuple]:
@@ -207,7 +224,9 @@ def idf_overlap(sets: dict[str, set[str]], *, max_df_share: float = MAX_DF_SHARE
 
 
 def vocabulary_terms(doc: str, vocab: set[str]) -> set[str]:
-    return {t.lower() for t in _IDENT_RX.findall(doc) if t.lower() in vocab}
+    """S3 input: the repo identifiers a ticket names, minus PROCEDURE_TERMS (see footprints(): the dependency-scan note names
+    this tooling in every ticket, so it is not evidence of a shared concern)."""
+    return {t.lower() for t in _IDENT_RX.findall(doc) if t.lower() in vocab} - PROCEDURE_TERMS
 
 
 def build_candidates(*, s1: dict, s2: dict, s3: dict, s4: dict, existing: set[tuple], scope: Optional[set[str]] = None) -> list[dict]:

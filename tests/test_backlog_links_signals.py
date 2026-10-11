@@ -229,3 +229,20 @@ def test_cycle_summary_counts_and_lists_tickets_in_progress_behind_an_open_prere
     assert s["open"] == 3 and s["links_confirmed"] == 2
     assert s["open_depends_on"] == 1 and s["blocked_in_progress"] == ["FND-0001"]
     assert s["store_applied"] is True
+
+
+def test_footprint_drops_the_paths_the_procedure_makes_every_ticket_cite():
+    # the start-of-ticket dependency scan cites the tooling in every first log: that is not a shared concern
+    tool = sorted(L.PROCEDURE_PATHS)[0]
+    commits = [{"message": "chore: scan (FND-0001, FND-0002)", "files": [tool, "proyecto2/src/calculations/returns.py"]}]
+    docs = {"FND-0001": f"scan recorded with {tool}", "FND-0002": f"scan recorded with {tool}", "FND-0003": f"only {tool}"}
+    fp = L.footprints(docs, commits)
+    assert tool not in fp["FND-0001"] and fp["FND-0001"] == {"proyecto2/src/calculations/returns.py"}
+    assert "FND-0003" not in fp                       # nothing left once the procedure path is removed
+
+
+def test_vocabulary_drops_the_procedure_identifiers_too():
+    # same artifact on the S3 side: "backlog_links" is named by every scan note
+    vocab = {"backlog_links", "capture_ratios"}
+    assert L.vocabulary_terms("scan with backlog_links on capture_ratios", vocab) == {"capture_ratios"}
+    assert L.PROCEDURE_TERMS >= {"backlog_links", "backlog_client"}
