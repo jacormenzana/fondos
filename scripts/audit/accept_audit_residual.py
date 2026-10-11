@@ -9,7 +9,7 @@ accept_audit_residual.py -- accept the CURRENT violators of one statistical-audi
 
 What it does: runs the audit for the domain in memory (read-only, no persist), takes the ISINs that violate `--rule` right now
 (optionally narrowed with --isin) and records them in control.audit_accepted_finding with the owning AP, the reason and an
-expiry (default 90 days, capped at 180: nothing is accepted for ever). From then on the audit reports those ISINs as INFO
+expiry (default 90 days, which is also the cap: nothing is accepted for ever; a longer need is a renewal). From then on the audit reports those ISINs as INFO
 ("ACCEPTED RESIDUAL") instead of an ALARM, and an ISIN that is NOT accepted keeps the rule an ALARM, so only new violations
 alert. An acceptance is renewed by running this again; it lapses by itself when it expires.
 
@@ -68,7 +68,7 @@ def main(argv: "list | None" = None) -> int:
     ap.add_argument("--rule", required=True, help="rule_id as printed by the audit, e.g. OC_NOT_CONTAMINATED")
     ap.add_argument("--ap", required=True, help="the backlog action point that owns the fix, e.g. FND-0034")
     ap.add_argument("--reason", required=True)
-    ap.add_argument("--days", type=int, default=90, help="validity in days (default 90, capped at 180)")
+    ap.add_argument("--days", type=int, default=90, help="validity in days (default 90; values above 90 are capped at 90)")
     ap.add_argument("--by", default=None, help="who accepts (default: the OS user)")
     ap.add_argument("--isin", default=None, help="comma-separated: accept only these (they must violate the rule now)")
     ap.add_argument("--apply", action="store_true", help="write the acceptance (default: dry run)")

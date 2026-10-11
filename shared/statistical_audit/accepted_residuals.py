@@ -115,8 +115,13 @@ def attention_lines(conn: "psycopg.Connection", domain: str, within_days: int = 
     return lines
 
 
-def expiry_after(days: int, today: date | None = None, max_days: int = 180) -> date:
-    """Expiry date for an acceptance, capped so that no residual can be accepted for ever."""
+# FND-0251 (owner decision 2026-10-11): an acceptance lives at most 90 days (it was 180). A residual that needs longer is RENEWED, which is
+# a new decision with a new look at the finding, not a longer waiver. Acceptances made before this change keep their own expiry.
+MAX_RESIDUAL_DAYS = 90
+
+
+def expiry_after(days: int, today: date | None = None, max_days: int = MAX_RESIDUAL_DAYS) -> date:
+    """Expiry date for an acceptance, capped at MAX_RESIDUAL_DAYS so that no residual can be accepted for ever."""
     from datetime import timedelta
     if days < 1:
         raise ValueError("days must be >= 1")

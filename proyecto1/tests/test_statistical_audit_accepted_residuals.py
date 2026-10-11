@@ -101,7 +101,8 @@ def test_the_earliest_expiry_is_reported():
 def test_expiry_after_is_capped_and_validated():
     today = date(2026, 10, 5)
     assert expiry_after(90, today) == today + timedelta(days=90)
-    assert expiry_after(10_000, today) == today + timedelta(days=180)
+    assert expiry_after(10_000, today) == today + timedelta(days=90)          # FND-0251: the cap is 90 days (it was 180)
+    assert expiry_after(90, today) == today + timedelta(days=90) and expiry_after(30, today) == today + timedelta(days=30)
     with pytest.raises(ValueError):
         expiry_after(0, today)
 

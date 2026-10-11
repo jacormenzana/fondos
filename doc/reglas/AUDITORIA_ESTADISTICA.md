@@ -610,7 +610,8 @@ deriva que no viene de los datos.
 Una violación de invariante que el pipeline aún no sabe reparar (p. ej. los 92 fondos con
 `Ongoing_Charge_Recurrent` copiado de `ACI_RHP`, FND-0034) producía el mismo ALARM en cada
 auditoría. `control.audit_accepted_finding` permite **aceptar** un `(domain, rule_id, isin)` con el AP
-que lo arregla (`ap_id`), un motivo y una **caducidad obligatoria** (por defecto 90 días, máximo 180):
+que lo arregla (`ap_id`), un motivo y una **caducidad obligatoria** (por defecto 90 días, que es también el máximo desde FND-0251: una necesidad mayor es una renovación, no
+una exención más larga; las aceptaciones anteriores conservan su caducidad):
 
 - Un hallazgo cuyos ISIN infractores están **todos** aceptados pasa a `INFO` / clase
   `ACCEPTED_RESIDUAL`: se sigue informando y persistiendo (no se oculta nada) y `--mode check` ya no
