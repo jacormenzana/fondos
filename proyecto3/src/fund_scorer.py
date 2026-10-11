@@ -64,6 +64,7 @@ from pathlib import Path
 from dataclasses import dataclass, field
 import sys
 import json
+from datetime import date
 
 _ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT))
@@ -389,7 +390,38 @@ def load_fund_metrics_for_scoring(
     fm = pd.DataFrame(_fm_rows, columns=_fm_cols).set_index("ISIN")
 
     # inner join: huerfanos (In_Current_Universe=0) quedan excluidos del scoring
-    return wide.join(fm, how="inner")
+    out = wide.join(fm, how="inner")
+    if _shared_config.FUND_DATA_ELIGIBILITY_ENABLED:             # FND-0251 Commit B: OFF = no extra query, no extra column
+        out = out.join(load_eligibility_inputs(conn)[ELIGIBILITY_COLUMNS], how="left")
+    return out
+
+
+# ============================================================
+# Elegibilidad de datos en construccion (FND-0251, Commit B)
+# ============================================================
+
+ELIGIBILITY_COLUMNS = ["nav_last_date", "nav_age_days", "residual_reason"]
+RESIDUAL_AUDIT_DOMAIN = "p2_metrics"      # audit_finding / audit_accepted_finding.domain of the P2 statistical audit
+
+
+def load_eligibility_inputs(conn: "psycopg.Connection", as_of: date | None = None) -> pd.DataFrame:
+    """Per-fund inputs of the build-time data eligibility rule (read-only). Index isin; columns:
+      nav_last_date   newest fund_nav_monthly date (NaT = the fund has no monthly NAV)
+      nav_age_days    (as_of - nav_last_date).days, NaN when there is no NAV
+      residual_reason 'RULE (AP, hasta DATE); ...' for the ACTIVE accepted audit residuals of the fund, else None
+    A missing control.audit_accepted_finding (owner migration not applied) means no residuals, not an error."""
+    from shared.statistical_audit.accepted_residuals import load_accepted
+    as_of = as_of or date.today()
+    nav = conn.execute("SELECT isin, MAX(date) FROM fund_nav_monthly GROUP BY isin").fetchall()
+    out = pd.DataFrame([tuple(r) for r in nav], columns=["isin", "nav_last_date"]).set_index("isin")
+    reasons: dict = {}
+    if conn.execute("SELECT to_regclass('audit_accepted_finding')").fetchone()[0] is not None:
+        for rule_id, by_isin in load_accepted(conn, RESIDUAL_AUDIT_DOMAIN, as_of).items():
+            for isin, (ap_id, until) in by_isin.items():
+                reasons.setdefault(isin, []).append(f"{rule_id} ({ap_id}, hasta {until})")
+    out = out.join(pd.Series({i: "; ".join(sorted(v)) for i, v in reasons.items()}, name="residual_reason", dtype=object), how="outer")
+    out["nav_age_days"] = [(as_of - d).days if pd.notna(d) else np.nan for d in out["nav_last_date"]]
+    return out[ELIGIBILITY_COLUMNS]
 
 
 # ============================================================
@@ -692,7 +724,19 @@ def check_hard_filters(
     Devuelve None si pasa todos, o el motivo de exclusión.
 
     v17: Credit_Quality='High Yield' excluido de Defensiva.
+    FND-0251 (Commit B, FUND_DATA_ELIGIBILITY_ENABLED, OFF por defecto): antes que nada, un fondo con NAV mensual
+    mas antiguo que P3_FUND_NAV_MAX_AGE_DAYS o con un residual de auditoria aceptado vigente no es elegible.
+    Las columnas ausentes (frames point-in-time) o NaN no excluyen: fail-open, como el resto de filtros.
     """
+    if _shared_config.FUND_DATA_ELIGIBILITY_ENABLED:
+        age = row.get("nav_age_days", np.nan)
+        limit = _shared_config.P3_FUND_NAV_MAX_AGE_DAYS
+        if age is not None and not pd.isna(age) and float(age) > limit:
+            return f"nav_stale: last NAV {row.get('nav_last_date')} ({int(age)} d > {limit} d)"
+        residual = row.get("residual_reason")
+        if isinstance(residual, str) and residual:
+            return f"accepted_residual: {residual}"
+
     dd = row.get("max_dd", np.nan)
     dd_limit = MAX_DRAWDOWN_BY_SUB.get(subportfolio, MAX_DRAWDOWN_LIMIT)
     if not np.isnan(dd) and dd < dd_limit:

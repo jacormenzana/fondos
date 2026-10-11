@@ -203,7 +203,7 @@ PDFs and `Raw_KIID_Text` (in `fund_kiid_metadata`) are **never deleted**.
 ### Key support modules
 
 <!-- AUTO:BEGIN kill-switches-line -->
-- `shared/config.py` — all constants: `SCHEMA_VERSION` (`"v27"`), `DOMAIN_VALUES`, `ATTRIBUTE_CATALOG`, kill-switches (`PRIIPS_COST_EXTRACTION_ENABLED`, `SHORT_HORIZON_SCORING_ENABLED`, `ROLLING_STATS_ENABLED`, `ROLLING_PCTILE_P3_ENABLED`, `PORTFOLIO_HYSTERESIS_ENABLED`, `ROTATION_COST_GATE_ENABLED`, `BENCHMARK_DECOMP_ENABLED`, `BENCHMARK_ROLE_ENABLED`, `INTER18_RECONCILIATION_ENABLED`, `DLA2_ARBITRATION_ENABLED`, `FX_EXPOSURE_CONSTRAINT_ENABLED`, `MACRO_VIF_ITERATIVE_ENABLED`, `MACRO_FACTOR_CLEAN_ENABLED`, `PERSISTENCE_FIRST_LAST_NAV_ENABLED`, `CAPTURE_MONTH_END_ENABLED`, `ANNUALIZATION_INTERVAL_ENABLED`, `DEFLATION_MONTH_ALIGN_ENABLED`, `SORTINO_MIN_DOWNSIDE_COUNT_ENABLED`, `FX_CONTRIBUTION_EUR_VIEW_ENABLED`, `EUR_NAV_CONVERSION_ENABLED`, `FAMILY_VERSIONING_ENABLED`, `BACKLOG_INCIDENT_AUTO_APPEND_ENABLED`)
+- `shared/config.py` — all constants: `SCHEMA_VERSION` (`"v27"`), `DOMAIN_VALUES`, `ATTRIBUTE_CATALOG`, kill-switches (`PRIIPS_COST_EXTRACTION_ENABLED`, `SHORT_HORIZON_SCORING_ENABLED`, `ROLLING_STATS_ENABLED`, `ROLLING_PCTILE_P3_ENABLED`, `PORTFOLIO_HYSTERESIS_ENABLED`, `ROTATION_COST_GATE_ENABLED`, `BENCHMARK_DECOMP_ENABLED`, `BENCHMARK_ROLE_ENABLED`, `INTER18_RECONCILIATION_ENABLED`, `DLA2_ARBITRATION_ENABLED`, `FX_EXPOSURE_CONSTRAINT_ENABLED`, `FUND_DATA_ELIGIBILITY_ENABLED`, `MACRO_VIF_ITERATIVE_ENABLED`, `MACRO_FACTOR_CLEAN_ENABLED`, `PERSISTENCE_FIRST_LAST_NAV_ENABLED`, `CAPTURE_MONTH_END_ENABLED`, `ANNUALIZATION_INTERVAL_ENABLED`, `DEFLATION_MONTH_ALIGN_ENABLED`, `SORTINO_MIN_DOWNSIDE_COUNT_ENABLED`, `FX_CONTRIBUTION_EUR_VIEW_ENABLED`, `EUR_NAV_CONVERSION_ENABLED`, `FAMILY_VERSIONING_ENABLED`, `BACKLOG_INCIDENT_AUTO_APPEND_ENABLED`)
 <!-- AUTO:END kill-switches-line -->
 - `shared/schema_checks.py` — `assert_schema_alignment()` validates DB columns at startup
 - `proyecto1/core/classify_utils.py` — **single source of truth** for all categorical normalization maps (EN→ES for Sector_Focus, Type, Family). Import from here; never duplicate elsewhere (P#11 / R-1).
@@ -557,7 +557,10 @@ active accepted residual (`accept_audit_residual.py`, AP + expiry), and an accep
 (`OUTLIER_MAD_Z`) on the scenario's funds are listed and never block. The exposure limit is a **hard gate with no override** (the mandate changes in
 `shared/config.py` by a reviewed commit, not at promotion time); only the data gates on the scenario's own funds take a written reason **and the owning
 ticket** (`--accept-alarms "motivo" --ap FND-nnnn`), logged in `ingestion_log` as `[OVERRIDE:<gate>]`; every refusal carries a stable `[GATE:<X>]`
-code and residuals about to lapse are warned `AUDIT_RESIDUAL_EXPIRY_WARN_DAYS` ahead. The build declares its structural cash
+code and residuals about to lapse are warned `AUDIT_RESIDUAL_EXPIRY_WARN_DAYS` ahead. The build-time counterpart is
+`FUND_DATA_ELIGIBILITY_ENABLED` (**shipped OFF**; `fund_scorer.load_eligibility_inputs` / `check_hard_filters`): a fund whose monthly NAV is older than
+`P3_FUND_NAV_MAX_AGE_DAYS`, or that carries an active accepted residual, is ineligible, so the builder never selects what the gate would refuse; read
+`scripts/audit/eligibility_switch_diff.py` (read-only ON/OFF eligible-set diff) before turning it on. The build declares its structural cash
 (`cash_weight` in the scenario notes: a sub-portfolio short of eligible non-exposed funds holds the residue as cash, FND-0187, and prints which one
 and why); the gate requires weights + declared cash = 1 with cash ≤ `MAX_PORTFOLIO_CASH_WEIGHT` (10%, also a hard gate), and a refused promotion
 writes one `P3_SCENARIO_PROMOTION_BLOCKED` row to `ingestion_log`. The report and the rotation plan read PRODUCTION; with

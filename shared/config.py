@@ -407,6 +407,15 @@ FX_EXPOSURE_CONSTRAINT_ENABLED: bool = True
 # Cash appears only when a sub-portfolio has too few eligible non-exposed funds to reach 100% under the per-fund cap (FND-0187); the build
 # records it in the scenario notes and prints which sub-portfolio is short. Hard gate, no override: change the constant by a reviewed commit.
 MAX_PORTFOLIO_CASH_WEIGHT: float = 0.10
+# FND-0251 (Commit B), build-time data eligibility in the live scorer: with the switch ON a fund is INELIGIBLE (exclusion_reason set, score 0) when
+#   * its newest monthly NAV is older than P3_FUND_NAV_MAX_AGE_DAYS (today's incidental protection is the drawdown filter, which only
+#     catches frozen funds that also fell), or
+#   * it carries an ACTIVE accepted audit residual (control.audit_accepted_finding, domain p2_metrics): a residual is tolerated in the
+#     universe, never in a portfolio -- the promotion gate refuses such a portfolio, so the build must not select it in the first place.
+# SHIPPED OFF: turn it on only after scripts/audit/eligibility_switch_diff.py shows an eligible-set difference the owner has reviewed. The
+# point-in-time backtest frames carry neither input, so the PIT run is not affected by this switch (no PIT parity yet).
+FUND_DATA_ELIGIBILITY_ENABLED: bool = False
+P3_FUND_NAV_MAX_AGE_DAYS: int = 60        # same threshold as NAV_STALE_DAYS of the cycle report (monthly NAV, month-end indexed)
 # FND-0251: an accepted audit residual (control.audit_accepted_finding) is announced this many days before it lapses (audit report, promotion,
 # cycle report). A warning, never a gate: a lapsed residual simply stops counting, so the finding comes back by itself at the next audit.
 AUDIT_RESIDUAL_EXPIRY_WARN_DAYS: int = 30
