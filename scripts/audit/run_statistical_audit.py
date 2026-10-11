@@ -147,7 +147,7 @@ from shared.statistical_audit.invariants import (
     expression_identifiers,
 )
 from shared.statistical_audit.accepted_residuals import apply_accepted, attention_lines, load_accepted
-from shared.statistical_audit.gating import is_blocking
+from shared.statistical_audit.gating import SAMPLE_RUN_SUFFIX, is_blocking
 from shared.statistical_audit.rca import load_stale_states, tag_findings
 from shared.statistical_audit.compare_runs import (
     compare_runs, compare_violators, drift_label, load_run_statistics,
@@ -1908,6 +1908,16 @@ def _print_recompute_verification(result: "RecomputeCheckResult") -> int:
     return 1
 
 
+def _resolve_run_id(run_id: str | None, isins: Sequence[str] | None, now: datetime) -> str:
+    """The run id. Any run scoped with --isin ends in SAMPLE_RUN_SUFFIX, an explicit --run-id included, so a sample can never become a
+    --compare-to baseline for a full-universe run (feedback_validate_on_isin_samples) nor the promotion gate's evidence
+    (gating.load_scope skips the suffix). Without --isin an explicit id is kept as typed (the cycle launchers' shape)."""
+    resolved = run_id or now.strftime("audit_%Y%m%dT%H%M%SZ")
+    if isins and not resolved.endswith(SAMPLE_RUN_SUFFIX):
+        resolved += SAMPLE_RUN_SUFFIX
+    return resolved
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--domain", choices=["costs", "p2"], default=None)
@@ -1970,15 +1980,9 @@ def main() -> int:
     if not args.domain:
         parser.error("--domain is required (unless --state-snapshot/--verify-recompute is given)")
 
-    # A --run-id the caller typed explicitly is trusted as-is; the auto-generated default gets a
-    # _sample suffix under --isin so a sample-scoped run can never silently become a --compare-to
-    # baseline for a full-universe run (feedback_validate_on_isin_samples).
-    if args.run_id:
-        run_id = args.run_id
-    else:
-        run_id = datetime.now(timezone.utc).strftime("audit_%Y%m%dT%H%M%SZ")
-        if isins:
-            run_id += "_sample"
+    run_id = _resolve_run_id(args.run_id, isins, datetime.now(timezone.utc))
+    if args.run_id and run_id != args.run_id:
+        print(f"[run-id] {args.run_id} -> {run_id}: a run scoped with --isin is always a sample run", file=sys.stderr)
     keep_open = args.persist or args.compare_to
 
     conn = get_connection()

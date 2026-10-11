@@ -31,6 +31,9 @@ BLOCKING_BLOCKS = frozenset({"BLOCK2"})
 BLOCKING_RULE_IDS = frozenset({"TIMESERIES_DUPLICATE"})
 
 HELD_OUT_RULE_ID = "SNAPSHOT_HELD_OUT"          # run_statistical_audit._emit_snapshot_held_out_finding
+# A run scoped with --isin always ends in this suffix (run_statistical_audit._resolve_run_id) and is never promotion evidence: a 40-ISIN
+# sample persisted after the DRAFT would otherwise pass for the latest audit of the whole universe (two-pillar plan, G2 quick win).
+SAMPLE_RUN_SUFFIX = "_sample"
 
 COVERAGE_OK = "OK"
 COVERAGE_UNKNOWN = "UNKNOWN"                    # the persisted detail disagrees with its own count: re-run the audit
@@ -123,12 +126,12 @@ def coverage_of(held_out_count: Optional[float], held_out_isins: Iterable[str], 
 # ---- read-only loader -----------------------------------------------------------------------------------------------------------
 
 def load_scope(conn, domain: str, scenario_isins: Iterable[str], accepted: Optional[Mapping[str, Mapping[str, tuple]]] = None) -> AuditScope:
-    """AuditScope of the latest persisted run of `domain` for `scenario_isins`. Read-only. `accepted` = the ACTIVE acceptances
+    """AuditScope of the latest persisted full-universe run of `domain` (sample runs are skipped) for `scenario_isins`. Read-only. `accepted` = the ACTIVE acceptances
     (accepted_residuals.load_accepted; the caller decides what a missing table means)."""
     scenario = sorted(set(scenario_isins))
     accepted = accepted or {}
     run = conn.execute(
-        "SELECT run_id, MAX(detected_at) FROM audit_finding WHERE domain = %s GROUP BY run_id "
+        "SELECT run_id, MAX(detected_at) FROM audit_finding WHERE domain = %s AND right(run_id, 7) <> '_sample' GROUP BY run_id "
         "ORDER BY MAX(detected_at) DESC LIMIT 1", (domain,)).fetchone()
     if run is None:
         return scope_findings((), {}, scenario, accepted)

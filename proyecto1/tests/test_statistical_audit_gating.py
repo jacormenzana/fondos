@@ -229,6 +229,63 @@ def test_loader_without_the_detail_table_treats_aggregate_defects_as_touching_th
     assert [(d.rule_id, d.isins) for d in scope.on_scenario] == [(RULE, ())]
 
 
+class _RunsConn(_Conn):
+    """Several persisted runs; applies the loader's sample-exclusion clause only if the SQL carries it (so the test fails without it)."""
+    def __init__(self, runs, **kw):
+        super().__init__(run=None, **kw)
+        self.runs = runs                                          # [(run_id, ts)]
+
+    def execute(self, sql, params=()):
+        s = " ".join(sql.split())
+        if s.startswith("SELECT run_id, MAX(detected_at) FROM audit_finding"):
+            self.sql.append(s)
+            runs = [r for r in self.runs if not (f"right(run_id, 7) <> '{gating.SAMPLE_RUN_SUFFIX}'" in s
+                                                   and r[0].endswith(gating.SAMPLE_RUN_SUFFIX))]
+            rows = sorted(runs, key=lambda r: r[1], reverse=True)[:1]
+            return SimpleNamespace(fetchone=lambda: rows[0] if rows else None, fetchall=lambda: list(rows))
+        return super().execute(sql, params)
+
+
+def _ts(hour):
+    return datetime(2026, 10, 11, hour, 0, tzinfo=timezone.utc)
+
+
+def test_the_sample_filter_literal_matches_the_constant():
+    assert len(gating.SAMPLE_RUN_SUFFIX) == 7                     # right(run_id, 7) in the SQL literal
+    assert f"right(run_id, 7) <> '{gating.SAMPLE_RUN_SUFFIX}'" in inspect.getsource(gating.load_scope)
+
+
+def test_loader_skips_a_newer_sample_run_and_uses_the_latest_full_run():
+    conn = _RunsConn([("audit_full", _ts(10)), ("audit_20261011T120000Z_sample", _ts(12)), ("post_x_p2", _ts(11))])
+    assert gating.load_scope(conn, "p2_metrics", ["IN1"], {}).run_id == "post_x_p2"
+
+
+def test_loader_with_only_sample_runs_has_no_evidence():
+    conn = _RunsConn([("audit_20261011T120000Z_sample", _ts(12))])
+    assert not gating.load_scope(conn, "p2_metrics", ["IN1"], {}).has_run      # -> GATE:AUDIT_STALE at promotion
+
+
+def _runner(name):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(name, os.path.join(_ROOT, "scripts", "audit", "run_statistical_audit.py"))
+    runner = importlib.util.module_from_spec(spec)
+    sys.modules[name] = runner
+    spec.loader.exec_module(runner)
+    return runner
+
+
+@pytest.mark.parametrize("run_id, isins, expected", [
+    (None, None, "audit_20261011T120000Z"),
+    (None, ["LU1"], "audit_20261011T120000Z_sample"),
+    ("my_check", ["LU1"], "my_check_sample"),                       # an explicit id under --isin is suffixed too
+    ("my_check_sample", ["LU1"], "my_check_sample"),                # never doubled
+    ("post_20261011_190000_p2", None, "post_20261011_190000_p2"),   # the cycle launchers' shape: kept as typed
+    ("x", [], "x"),                                                 # an empty --isin list is not a scope
+])
+def test_resolve_run_id_marks_every_isin_scoped_run_as_a_sample(run_id, isins, expected):
+    assert _runner("run_statistical_audit_runid")._resolve_run_id(run_id, isins, _ts(12)) == expected
+
+
 def test_loader_is_read_only():
     conn = _Conn(findings=[_row(RULE)], detail=[(RULE, RULE, "IN1")])
     gating.load_scope(conn, "p2_metrics", ["IN1"], {})
