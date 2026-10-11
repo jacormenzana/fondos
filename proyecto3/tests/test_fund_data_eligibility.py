@@ -36,11 +36,13 @@ def on(monkeypatch):
     monkeypatch.setattr(cfg, "P3_FUND_NAV_MAX_AGE_DAYS", 60)
 
 
-def test_the_switch_ships_off():
+def test_the_documented_default_of_the_switch_is_on_since_2026_10_11():
+    """Pins the DOCUMENTED default (shared/config.py, AGENTS.md): flipping it either way is a reviewed commit that changes this test.
+    Every other test in this module states the value it needs explicitly (monkeypatch), so none inherits the default."""
     import ast
     src = (_ROOT / "shared" / "config.py").read_text(encoding="utf-8")
     node = next(n for n in ast.parse(src).body if isinstance(n, ast.AnnAssign) and getattr(n.target, "id", "") == "FUND_DATA_ELIGIBILITY_ENABLED")
-    assert node.value.value is False, "Commit B must ship OFF: enabling it is a separate, reviewed commit"
+    assert node.value.value is True
 
 
 def test_off_changes_nothing_even_for_a_fund_that_would_be_excluded(monkeypatch):

@@ -558,9 +558,9 @@ active accepted residual (`accept_audit_residual.py`, AP + expiry), and an accep
 `shared/config.py` by a reviewed commit, not at promotion time); only the data gates on the scenario's own funds take a written reason **and the owning
 ticket** (`--accept-alarms "motivo" --ap FND-nnnn`), logged in `ingestion_log` as `[OVERRIDE:<gate>]`; every refusal carries a stable `[GATE:<X>]`
 code and residuals about to lapse are warned `AUDIT_RESIDUAL_EXPIRY_WARN_DAYS` ahead. The build-time counterpart is
-`FUND_DATA_ELIGIBILITY_ENABLED` (**shipped OFF**; `fund_scorer.load_eligibility_inputs` / `check_hard_filters`): a fund whose monthly NAV is older than
+`FUND_DATA_ELIGIBILITY_ENABLED` (**ON since 2026-10-11**; `fund_scorer.load_eligibility_inputs` / `check_hard_filters`): a fund whose monthly NAV is older than
 `P3_FUND_NAV_MAX_AGE_DAYS`, or that carries an active accepted residual, is ineligible, so the builder never selects what the gate would refuse; read
-`scripts/audit/eligibility_switch_diff.py` (read-only ON/OFF eligible-set diff) before turning it on. The build declares its structural cash
+`scripts/audit/eligibility_switch_diff.py` (read-only ON/OFF eligible-set diff) shows what it changes; the PIT backtest does not model it (FND-0254). The build declares its structural cash
 (`cash_weight` in the scenario notes: a sub-portfolio short of eligible non-exposed funds holds the residue as cash, FND-0187, and prints which one
 and why); the gate requires weights + declared cash = 1 with cash ≤ `MAX_PORTFOLIO_CASH_WEIGHT` (10%, also a hard gate), and a refused promotion
 writes one `P3_SCENARIO_PROMOTION_BLOCKED` row to `ingestion_log`. The report and the rotation plan read PRODUCTION; with

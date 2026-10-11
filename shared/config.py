@@ -412,9 +412,10 @@ MAX_PORTFOLIO_CASH_WEIGHT: float = 0.10
 #     catches frozen funds that also fell), or
 #   * it carries an ACTIVE accepted audit residual (control.audit_accepted_finding, domain p2_metrics): a residual is tolerated in the
 #     universe, never in a portfolio -- the promotion gate refuses such a portfolio, so the build must not select it in the first place.
-# SHIPPED OFF: turn it on only after scripts/audit/eligibility_switch_diff.py shows an eligible-set difference the owner has reviewed. The
-# point-in-time backtest frames carry neither input, so the PIT run is not affected by this switch (no PIT parity yet).
-FUND_DATA_ELIGIBILITY_ENABLED: bool = False
+# ON since 2026-10-11 (owner decision), after scripts/audit/eligibility_switch_diff.py showed an EMPTY eligible-set difference on the live inputs
+# (it shipped OFF in 385e31c). Rollback = set it back to False: nothing is written, no DDL. The point-in-time backtest frames carry neither
+# input, so the PIT run is NOT affected by this switch (no PIT parity yet: FND-0254; its run manifest says so).
+FUND_DATA_ELIGIBILITY_ENABLED: bool = True
 P3_FUND_NAV_MAX_AGE_DAYS: int = 60        # same threshold as NAV_STALE_DAYS of the cycle report (monthly NAV, month-end indexed)
 # FND-0251: an accepted audit residual (control.audit_accepted_finding) is announced this many days before it lapses (audit report, promotion,
 # cycle report). A warning, never a gate: a lapsed residual simply stops counting, so the finding comes back by itself at the next audit.

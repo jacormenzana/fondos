@@ -37,8 +37,12 @@ from proyecto3.src.portfolio_builder import PortfolioBuilder
 
 
 def test_load_fund_metrics_for_scoring_returns_mixed_case_columns(
-    pg_session_conn, pg_conn_module_schema,
+    pg_session_conn, pg_conn_module_schema, monkeypatch,
 ):
+    # This test is about column-case folding on a toy schema with only fund_master + fund_metrics: it states the build-time data-eligibility
+    # switch it needs (OFF: that rule reads fund_nav_monthly, covered by test_fund_data_eligibility_pg.py) instead of inheriting the default.
+    import shared.config as _cfg
+    monkeypatch.setattr(_cfg, "FUND_DATA_ELIGIBILITY_ENABLED", False)
     conn = pg_session_conn
     conn.execute(f"SET search_path = {pg_conn_module_schema}")
     conn.execute("""
