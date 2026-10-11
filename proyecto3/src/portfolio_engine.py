@@ -93,6 +93,9 @@ class PortfolioConstraints:
     max_same_nature:     int   = 5      # max fondos de la misma naturaleza por sub-cartera
     max_funds_per_mgr:   int   = 2      # max fondos de una misma gestora, global entre sub-carteras
     hysteresis_band:     float = 0.05   # bonus de score para titulares (ver select_candidates)
+    # Peso maximo (dentro de cada sub-cartera, por tanto tambien en la maestra) de fondos con la columna `fx_exposed` verdadera; None = sin limite
+    # (paridad con el Backtester, cuyos candidatos no traen la columna). Ver select_within_exposure.
+    max_exposed_weight:  float | None = None
 
 
 DEFAULT_CONSTRAINTS = PortfolioConstraints()
@@ -195,9 +198,11 @@ def clamp_and_renormalize(
             "ultima iteracion -- tratar esta sub-cartera como invalida e investigar.", max_iter, n, lo, hi,
         )
 
-    w = w.round(4)
-    diff = round(1.0 - w.sum(), 4)
-    if diff != 0:
+    # Residual of a non-converged / infeasible problem (a converged one is 1.0 up to floating point): spread it over the headroom
+    # BEFORE rounding. The previous code rounded first, corrected the 4-dp residual, and then rounded each weight AGAIN, which undid
+    # the correction and left sub-portfolios summing to 1.0001 / 0.9999 (owner review 2026-10-11).
+    diff = 1.0 - float(w.sum())
+    if abs(diff) > 1e-9:
         headroom = (hi - w).clip(lower=0) if diff > 0 else (w - lo).clip(lower=0)
         if headroom.sum() > 0:
             w = w + headroom / headroom.sum() * diff
@@ -205,9 +210,12 @@ def clamp_and_renormalize(
             w = w + original / original.sum() * diff
         else:
             w = w + diff / len(w)
-        w = w.round(4)
 
-    return w
+    # Largest-remainder rounding to 4 dp (same helper as the master weights, FND-0169): the weights SUM to the rounded total exactly,
+    # and only a weight with a non-zero fractional part can receive the leftover unit, so a weight sitting on `lo` or `hi` never
+    # crosses its bound (adjusting "the largest position" would breach the per-fund cap, which is where it usually sits).
+    rounded = round_master_weights(list(zip(w.index, w.tolist())))
+    return pd.Series(rounded, index=w.index, dtype=float)
 
 
 # ============================================================
@@ -299,6 +307,56 @@ def select_candidates(
     return pd.DataFrame(selected) if selected else pd.DataFrame()
 
 
+def select_within_exposure(
+    candidates: pd.DataFrame,
+    constraints: PortfolioConstraints,
+    *,
+    exclude_isins: set | None = None,
+    exclude_families: set | None = None,
+    mgr_global: dict | None = None,
+    incumbent_isins: frozenset | None = None,
+) -> pd.DataFrame:
+    """select_candidates + el limite de exposicion (constraints.max_exposed_weight sobre la columna booleana `fx_exposed`).
+
+    Mandato 2026-10-11 (presupuesto de divisa no-EUR): una cartera construida solo por score llego a 79% en divisa USD porque los multiplicadores
+    de regimen premiaban a todos los fondos USD a la vez. Un limite por fondo no acota esa concentracion (nueve fondos que comparten un factor
+    pasan cada uno su propio filtro), asi que el limite es de cartera: se selecciona, se ponderan los elegidos y, mientras el peso expuesto
+    exceda el presupuesto, se descarta el fondo expuesto de MENOR score y se vuelve a seleccionar (entran los siguientes candidatos, expuestos o
+    no, bajo las mismas restricciones de diversificacion). Determinista: cada vuelta quita un candidato, asi que termina; si no quedan fondos
+    no expuestos suficientes el residuo queda como liquidez (cash_weight) en vez de romper el presupuesto.
+
+    Sin limite o sin la columna `fx_exposed` equivale exactamente a select_candidates (paridad con el Backtester). El estado compartido
+    (exclude_*, mgr_global) solo se muta con la seleccion FINAL, no con las pruebas descartadas."""
+    budget = constraints.max_exposed_weight
+    if budget is None or candidates.empty or "fx_exposed" not in candidates.columns:
+        return select_candidates(candidates, constraints, exclude_isins=exclude_isins, exclude_families=exclude_families,
+                                 mgr_global=mgr_global, incumbent_isins=incumbent_isins)
+
+    exclude_isins    = exclude_isins if exclude_isins is not None else set()
+    exclude_families = exclude_families if exclude_families is not None else set()
+    mgr_global       = mgr_global if mgr_global is not None else {}
+
+    pool = candidates
+    while True:
+        trial = select_candidates(
+            pool, constraints, exclude_isins=set(exclude_isins), exclude_families=set(exclude_families),
+            mgr_global=dict(mgr_global), incumbent_isins=incumbent_isins)
+        if trial.empty:
+            break
+        exposed = trial["fx_exposed"].astype(bool)
+        weights = assign_weights(trial, constraints)["weight"]
+        if float(weights[exposed].sum()) <= budget + 1e-9:
+            break
+        victim = trial.loc[exposed].sort_values(["score_total", "isin"], ascending=[True, True]).iloc[0]["isin"]
+        logger.info("[FX-BUDGET] exposed weight %.1f%% > %.0f%%: dropping %s (lowest-scored exposed fund)",
+                    100.0 * float(weights[exposed].sum()), 100.0 * budget, victim)
+        pool = pool[pool["isin"] != victim]
+
+    # Commit: the same deterministic selection, now over the final pool, on the real shared state.
+    return select_candidates(pool, constraints, exclude_isins=exclude_isins, exclude_families=exclude_families,
+                             mgr_global=mgr_global, incumbent_isins=incumbent_isins)
+
+
 def assign_weights(
     df: pd.DataFrame,
     constraints: PortfolioConstraints,
@@ -376,7 +434,7 @@ def select_and_weight(
             continue
 
         candidates = candidates_by_sub.get(sub_name, pd.DataFrame())
-        selected = select_candidates(
+        selected = select_within_exposure(
             candidates, constraints,
             exclude_isins=isins_used,
             exclude_families=families_used,

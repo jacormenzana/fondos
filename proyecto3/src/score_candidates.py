@@ -30,12 +30,36 @@ as_of_date posterior dejaria fuera al resto; score_funds() no tiene modo
 parcial, y los datos de prueba deben respetarlo.
 """
 
+import dataclasses
+
 import pandas as pd
+
+from shared import fx_exposure
+from shared.config import FX_EXPOSURE_CONSTRAINT_ENABLED, MAX_NON_EUR_UNHEDGED_WEIGHT
 
 CANDIDATE_COLUMNS = [
     "block", "isin", "score_total",
     "fund_name", "fund_nature", "management_company", "fund_family_id",
 ]
+
+
+def flag_fx_exposed(conn: "psycopg.Connection", candidates: pd.DataFrame) -> pd.DataFrame:
+    """Adds the boolean column `fx_exposed` (does the fund count against the non-EUR budget) used by
+    portfolio_engine.select_within_exposure. SAME rule as the promotion gate (shared/fx_exposure.py). Both PortfolioBuilder and the
+    Backtester call this, so their selections stay identical (test_backtest_parity.py). Returns the frame untouched when the constraint
+    is off or there is nothing to flag."""
+    if not FX_EXPOSURE_CONSTRAINT_ENABLED or candidates.empty:
+        return candidates
+    isins = candidates["isin"].tolist()
+    flags = fx_exposure.exposed_flags(fx_exposure.load_attrs(conn, isins), isins)
+    return candidates.assign(fx_exposed=candidates["isin"].map(flags).astype(bool))
+
+
+def exposure_constrained(constraints):
+    """`constraints` with max_exposed_weight = MAX_NON_EUR_UNHEDGED_WEIGHT when the constraint is enabled (else unchanged)."""
+    if not FX_EXPOSURE_CONSTRAINT_ENABLED:
+        return constraints
+    return dataclasses.replace(constraints, max_exposed_weight=MAX_NON_EUR_UNHEDGED_WEIGHT)
 
 
 def load_current_candidates(conn: "psycopg.Connection",

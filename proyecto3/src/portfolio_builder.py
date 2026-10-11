@@ -47,11 +47,12 @@ _ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT))
 
 from proyecto3.src.regime_classifier import RegimeResult
-from proyecto3.src.score_candidates import load_current_candidates
+from proyecto3.src.score_candidates import exposure_constrained, flag_fx_exposed, load_current_candidates
+from proyecto3.src import scenario_lifecycle as _lifecycle
 from proyecto3.src.portfolio_engine import (
     PortfolioConstraints,
     clamp_and_renormalize,
-    select_candidates,
+    select_within_exposure,
     assign_weights as engine_assign_weights,
     round_master_weights,
     cash_weight,
@@ -205,21 +206,31 @@ def _select_funds_for_subportfolio(
         return pd.DataFrame()
     candidates = candidates.drop(columns="block")
 
-    constraints = PortfolioConstraints(
+    # Mandato de divisa (2026-10-11): marcar los candidatos que cuentan contra el presupuesto no-EUR con LA MISMA regla que la puerta de
+    # promocion (shared/fx_exposure.py) y limitar el peso expuesto de la sub-cartera (portfolio_engine.select_within_exposure).
+    candidates = flag_fx_exposed(conn, candidates)
+
+    constraints = exposure_constrained(PortfolioConstraints(
         max_funds_per_sub=max_funds,
         max_weight_per_fund=MAX_WEIGHT_PER_FUND,
         min_weight_per_fund=MIN_WEIGHT_PER_FUND,
         max_same_nature=MAX_SAME_NATURE,
         max_funds_per_mgr=MAX_FUNDS_PER_MGR,
         hysteresis_band=HYSTERESIS_BAND,
-    )
-    return select_candidates(
+    ))
+    pool = {
+        "candidates": int(len(candidates)),
+        "exposed": int(candidates["fx_exposed"].sum()) if "fx_exposed" in candidates.columns else 0,
+    }
+    selected = select_within_exposure(
         candidates, constraints,
         exclude_isins=exclude_isins,
         exclude_families=exclude_names,   # reutilizamos el param para familias
         mgr_global=mgr_global,
         incumbent_isins=incumbent_isins,
     )
+    selected.attrs["pool"] = pool         # for the build-time cash diagnostic (build())
+    return selected
 
 
 # ============================================================
@@ -518,13 +529,22 @@ class PortfolioBuilder:
         esta activo, sin que cada caller tenga que reconstruirlo a mano.
         """
         _ph = "%s"
-        row = self.conn.execute(f"""
-            SELECT scenario_id, profile, macro_regime, notes
-            FROM portfolio_scenarios
-            WHERE scenario_id != COALESCE({_ph}, '')
-            ORDER BY created_at DESC
-            LIMIT 1
-        """, (exclude_scenario_id,)).fetchone()
+        if _lifecycle.has_status_column(self.conn):
+            # Scenario lifecycle (2026-10-11): the baseline of a rotation is what is in PRODUCTION, never "the newest row" (a
+            # test run or a draft must not become the incumbent); no PRODUCTION yet -> no previous portfolio.
+            row = self.conn.execute(f"""
+                SELECT scenario_id, profile, macro_regime, notes
+                FROM portfolio_scenarios
+                WHERE status = 'PRODUCTION' AND scenario_id != COALESCE({_ph}, '')
+            """, (exclude_scenario_id,)).fetchone()
+        else:
+            row = self.conn.execute(f"""
+                SELECT scenario_id, profile, macro_regime, notes
+                FROM portfolio_scenarios
+                WHERE scenario_id != COALESCE({_ph}, '')
+                ORDER BY created_at DESC, scenario_id DESC
+                LIMIT 1
+            """, (exclude_scenario_id,)).fetchone()
         if row is None:
             return None
 
@@ -580,6 +600,7 @@ class PortfolioBuilder:
         profile:            str = "Equilibrada",
         dry_run:            bool = False,
         previous_portfolio: "Portfolio | None" = None,
+        replace_draft:      bool = False,
     ) -> Portfolio:
         """
         Construye la cartera maestra para el regimen dado.
@@ -598,6 +619,8 @@ class PortfolioBuilder:
                                 duracion. Si es None y PORTFOLIO_HYSTERESIS_ENABLED
                                 esta activo, se carga automaticamente via
                                 load_previous() (Fase 2c).
+            replace_draft:      permitir sobrescribir un escenario DRAFT existente con el
+                                mismo id (nunca PRODUCTION ni ARCHIVED).
         """
         if previous_portfolio is None and PORTFOLIO_HYSTERESIS_ENABLED:
             previous_portfolio = self.load_previous(exclude_scenario_id=scenario_id)
@@ -640,7 +663,18 @@ class PortfolioBuilder:
                 continue
 
             # Asignar pesos internos
+            pool = dict(selected.attrs.get("pool") or {})
             selected = _assign_weights(selected)
+
+            # Diagnostico de liquidez estructural (2026-10-11): se dice AL CONSTRUIR que sub-cartera se queda corta y por que, no
+            # solo al promover (la puerta de promocion rechaza la liquidez declarada por encima de MAX_PORTFOLIO_CASH_WEIGHT).
+            _sub_cash = round(1.0 - float(selected["weight"].sum()), 4)
+            if _sub_cash > 0 and pool:
+                _non_exposed = pool["candidates"] - pool["exposed"]
+                print(f"  AVISO liquidez {sub_name}: {_sub_cash:.0%} de la sub-cartera sin asignar "
+                      f"({len(selected)} fondos; candidatos elegibles {pool['candidates']}, expuestos {pool['exposed']}, "
+                      f"no expuestos {_non_exposed}; con el tope de {MAX_WEIGHT_PER_FUND:.0%} por fondo hacen falta al menos "
+                      f"{int(np.ceil(1.0 / MAX_WEIGHT_PER_FUND))} fondos)")
 
             funds_list = []
             for _, row in selected.iterrows():
@@ -699,25 +733,53 @@ class PortfolioBuilder:
                 self.conn, portfolio, previous_portfolio, score_version)
             portfolio.macro_context["rotation_plan"] = rotation_plan_result
 
+        # Liquidez estructural DECLARADA (la puerta de promocion exige pesos + liquidez declarada = 1 y la acota)
+        portfolio.macro_context["cash_weight"] = portfolio.cash_weight
+
         if not dry_run:
-            self._persist(portfolio, score_version)
+            self._persist(portfolio, score_version, replace_draft=replace_draft)
 
         return portfolio
 
-    def _persist(self, portfolio: Portfolio, score_version: str) -> None:
-        """Persiste el escenario y los pesos en BD."""
+    def _persist(self, portfolio: Portfolio, score_version: str, replace_draft: bool = False) -> None:
+        """Persiste el escenario y los pesos en BD.
+
+        Con el ciclo de vida instalado (portfolio_scenarios.status) el escenario entra como DRAFT y NUNCA se sobrescribe
+        nada que no sea un DRAFT pedido con replace_draft (2026-10-10: la reconstruccion del mismo mes destruyo la cartera
+        previa). Sin la columna se conserva el upsert historico (los ids por defecto ya son unicos por construccion)."""
         today = pd.Timestamp.today().strftime("%Y-%m-%d")
 
+        has_lifecycle = _lifecycle.has_status_column(self.conn)
+        if has_lifecycle:
+            current = _lifecycle.get_status(self.conn, portfolio.scenario_id)
+            if current is not None and not (replace_draft and current == _lifecycle.STATUS_DRAFT):
+                self.conn.rollback()
+                raise _lifecycle.ScenarioExists(
+                    f"el escenario '{portfolio.scenario_id}' ya existe en estado {current}: no se sobrescribe "
+                    f"(use otro id; --replace-draft solo reemplaza un DRAFT)")
 
-        # Insertar escenario
-        self.conn.execute("""
-            INSERT INTO portfolio_scenarios
-                (scenario_id, profile, macro_regime, created_at, notes)
-            VALUES (%s, %s, %s, %s, %s)
-            ON CONFLICT (scenario_id) DO UPDATE SET
-                profile = excluded.profile, macro_regime = excluded.macro_regime,
-                created_at = excluded.created_at, notes = excluded.notes
-        """, (
+        # Insertar escenario (status toma su DEFAULT 'DRAFT'; un reemplazo de DRAFT conserva su estado). built_at (instante de la
+        # construccion) existe junto con status: mismo bloque DDL.
+        # Dos sentencias estaticas (la barrida EXPLAIN no admite SQL construido): con y sin la columna.
+        if has_lifecycle:
+            insert_scenario = """
+                INSERT INTO portfolio_scenarios
+                    (scenario_id, profile, macro_regime, created_at, notes, built_at)
+                VALUES (%s, %s, %s, %s, %s, now())
+                ON CONFLICT (scenario_id) DO UPDATE SET
+                    profile = excluded.profile, macro_regime = excluded.macro_regime,
+                    created_at = excluded.created_at, notes = excluded.notes, built_at = now()
+            """
+        else:
+            insert_scenario = """
+                INSERT INTO portfolio_scenarios
+                    (scenario_id, profile, macro_regime, created_at, notes)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (scenario_id) DO UPDATE SET
+                    profile = excluded.profile, macro_regime = excluded.macro_regime,
+                    created_at = excluded.created_at, notes = excluded.notes
+            """
+        self.conn.execute(insert_scenario, (
             portfolio.scenario_id,
             portfolio.profile,
             portfolio.regime,

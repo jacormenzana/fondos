@@ -24,21 +24,25 @@ from pathlib import Path
 _ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT))
 
-from shared.config import P3_EXIT_STALE_INPUTS
+from shared.config import MAX_NON_EUR_UNHEDGED_WEIGHT, MAX_PORTFOLIO_CASH_WEIGHT, P3_EXIT_STALE_INPUTS
 from shared.db import get_connection
 from shared.eur_nav import assert_release_coupling   # FND-0243 D4
 from proyecto3.src.data_freshness import check_universe_freshness, format_report, stale_checks
 from proyecto3.src.regime_classifier import RegimeClassifier
 from proyecto3.src.fund_scorer import score_funds
 from proyecto3.src.portfolio_builder import PortfolioBuilder
+from proyecto3.src import scenario_lifecycle as lifecycle
+from shared import fx_exposure
 
 
-def _default_scenario_id(regime: str, date) -> str:
-    """cartera_<regimen>_<YYYYMM>, p.ej. cartera_shock_energetico_202609."""
-    return f"cartera_{regime.lower()}_{date.year}{date.month:02d}"
+def _default_scenario_id(regime: str, date=None) -> str:
+    """cartera_<regimen>_<YYYYMM>_b<YYYYMMDDHHMMSS>: unico por construccion. Antes era cartera_<regimen>_<YYYYMM> y reconstruir en el
+    mismo mes y regimen sobrescribia la cartera anterior (2026-10-10). `date` se conserva por compatibilidad y ya no interviene."""
+    return lifecycle.build_scenario_id(regime)
 
 
-def main(scenario_id: str | None = None, dry_run: bool = False, allow_stale: bool = False) -> int:
+def main(scenario_id: str | None = None, dry_run: bool = False, allow_stale: bool = False,
+         replace_draft: bool = False) -> int:
     assert_release_coupling()   # FND-0243 D4: EUR view and FND-0235 switches move together
     conn = get_connection()
     clf  = RegimeClassifier(conn)
@@ -102,8 +106,25 @@ def main(scenario_id: str | None = None, dry_run: bool = False, allow_stale: boo
     print()
 
     builder   = PortfolioBuilder(conn)
-    portfolio = builder.build(reg, scenario_id=scenario_id, dry_run=dry_run)
+    try:
+        portfolio = builder.build(reg, scenario_id=scenario_id, dry_run=dry_run, replace_draft=replace_draft)
+    except lifecycle.ScenarioExists as exc:
+        print(f"ERROR: {exc}")
+        return lifecycle.EXIT_NO_SCENARIO
     print(portfolio.summary())
+
+    # Currency exposure (owner decision 2026-10-11: budget MAX_NON_EUR_UNHEDGED_WEIGHT; binding at construction with
+    # FX_EXPOSURE_CONSTRAINT_ENABLED, so an AVISO here means the constraint is off or the pool had no non-exposed funds left).
+    weights = {f["isin"]: f["master_weight"] for f in portfolio.all_funds}
+    expo = fx_exposure.portfolio_summary(conn, weights, MAX_NON_EUR_UNHEDGED_WEIGHT)
+    print()
+    print(("AVISO: " if expo["over_budget"] else "") + fx_exposure.format_line(expo))
+    cash = portfolio.cash_weight
+    print(("AVISO: " if cash > MAX_PORTFOLIO_CASH_WEIGHT else "")
+          + f"Liquidez estructural declarada: {cash:.1%} (tope de promocion {MAX_PORTFOLIO_CASH_WEIGHT:.0%})"
+          + (" -- el escenario NO sera promovible" if cash > MAX_PORTFOLIO_CASH_WEIGHT else ""))
+    if not dry_run:
+        print(f"Escenario '{scenario_id}' creado como DRAFT. No se promueve solo: p3_promote_scenario.py {scenario_id}")
 
     return 0
 
@@ -112,10 +133,11 @@ if __name__ == "__main__":
     _args = sys.argv[1:]
     _dry_run = "--dry-run" in _args
     _allow_stale = "--allow-stale" in _args
-    _positional = [a for a in _args if a not in ("--dry-run", "--allow-stale")]
+    _replace_draft = "--replace-draft" in _args
+    _positional = [a for a in _args if a not in ("--dry-run", "--allow-stale", "--replace-draft")]
     scenario_arg = _positional[0] if _positional else None
 
     from shared.backlog_client import capture_exceptions
     with capture_exceptions(object_name="p3_build_portfolio.py", object_type="JOB"):
-        _rc = main(scenario_arg, dry_run=_dry_run, allow_stale=_allow_stale)
+        _rc = main(scenario_arg, dry_run=_dry_run, allow_stale=_allow_stale, replace_draft=_replace_draft)
     sys.exit(_rc)

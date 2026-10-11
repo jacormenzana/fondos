@@ -38,6 +38,9 @@ if str(_ROOT) not in sys.path:
 from proyecto3.src.portfolio_builder import PortfolioBuilder
 from proyecto3.src.portfolio_engine import DEFAULT_CONSTRAINTS, select_and_weight
 from proyecto3.src.backtesting import _load_candidates, _blend_to_master
+from proyecto3.src.score_candidates import exposure_constrained
+from shared import fx_exposure
+from shared.config import MAX_NON_EUR_UNHEDGED_WEIGHT
 from proyecto3.src.regime_classifier import RegimeResult
 
 
@@ -48,7 +51,10 @@ CREATE TABLE fund_master (
     Fund_Nature TEXT,
     Management_Company TEXT,
     fund_family_id TEXT,
-    In_Current_Universe SMALLINT DEFAULT 1
+    In_Current_Universe SMALLINT DEFAULT 1,
+    fund_currency TEXT,
+    hedging_policy TEXT,
+    asset_currency TEXT
 );
 CREATE TABLE fund_scores (
     isin TEXT, block TEXT, score_version TEXT, regime TEXT, as_of_date DATE,
@@ -137,7 +143,7 @@ def test_builder_and_backtester_produce_identical_master_weights(conn, sub_weigh
     # PortfolioBuilder) + select_and_weight() + _blend_to_master(), sin
     # pasar por Portfolio/SubPortfolioAllocation en absoluto.
     candidates = _load_candidates(conn, score_version="v1", regime=_TEST_REGIME)
-    selection  = select_and_weight(candidates, sub_weights, DEFAULT_CONSTRAINTS)
+    selection  = select_and_weight(candidates, sub_weights, exposure_constrained(DEFAULT_CONSTRAINTS))
     backtest_weights = _blend_to_master(selection, sub_weights)
 
     assert builder_weights.keys() == backtest_weights.keys(), (
@@ -178,10 +184,36 @@ def test_parity_holds_with_incumbents_and_hysteresis(conn):
     builder_weights = {f["isin"]: f["master_weight"] for f in portfolio.all_funds}
 
     candidates = _load_candidates(conn, score_version="v1", regime=_TEST_REGIME)
-    selection  = select_and_weight(candidates, sub_weights, DEFAULT_CONSTRAINTS,
+    selection  = select_and_weight(candidates, sub_weights, exposure_constrained(DEFAULT_CONSTRAINTS),
                                     incumbents=incumbents)
     backtest_weights = _blend_to_master(selection, sub_weights)
 
     assert builder_weights.keys() == backtest_weights.keys()
     for isin in builder_weights:
         assert builder_weights[isin] == pytest.approx(backtest_weights[isin], abs=1e-9)
+
+
+@pytest.mark.parametrize("sub_weights", [
+    {"Defensiva": 0.55, "Equilibrada": 0.35, "Dinamica": 0.10},
+    {"Defensiva": 0.20, "Equilibrada": 0.45, "Dinamica": 0.35},
+])
+def test_parity_holds_when_the_best_funds_are_currency_exposed(conn, sub_weights):
+    """The failure mode the exposure constraint exists for: the top-scored funds of every sub-portfolio are USD classes. Builder and
+    backtester must drop the SAME exposed funds, and the portfolio must respect the budget."""
+    _seed(conn)
+    conn.execute("UPDATE fund_master SET fund_currency = 'USD', hedging_policy = 'Unhedged', asset_currency = 'USD' "
+                 "WHERE CAST(SUBSTRING(ISIN FROM 4) AS INTEGER) < 8")          # the 8 best-scored funds of each sub-portfolio
+    reg = _fake_regime_result(sub_weights)
+
+    portfolio = PortfolioBuilder(conn).build(reg, scenario_id="parity_fx", dry_run=True)
+    builder_weights = {f["isin"]: f["master_weight"] for f in portfolio.all_funds}
+
+    candidates = _load_candidates(conn, score_version="v1", regime=_TEST_REGIME)
+    selection = select_and_weight(candidates, sub_weights, exposure_constrained(DEFAULT_CONSTRAINTS))
+    backtest_weights = _blend_to_master(selection, sub_weights)
+
+    assert builder_weights.keys() == backtest_weights.keys()
+    for isin in builder_weights:
+        assert builder_weights[isin] == pytest.approx(backtest_weights[isin], abs=1e-9)
+    summary = fx_exposure.portfolio_summary(conn, builder_weights, MAX_NON_EUR_UNHEDGED_WEIGHT)
+    assert 0 < summary["non_eur"] <= MAX_NON_EUR_UNHEDGED_WEIGHT + 1e-4          # constrained, not eliminated

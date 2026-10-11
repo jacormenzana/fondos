@@ -395,8 +395,14 @@ REGIME_PUBLICATION_LAG_MONTHS: dict = {
 P3_EXIT_STALE_INPUTS: int = 2
 # Net unhedged non-EUR exposure budget (share of the MASTER portfolio weight), owner decision 2026-10-11. Derived from the mandate: a -10% move
 # of the foreign currency vs EUR costs 0.10 x w of the portfolio, and 3 pp (w = 30%) is the share of the 15% max-drawdown budget granted to this
-# single factor. Measured by shared/fx_exposure.py; used by the build log, the report cover and the promotion gate (HARD, no override).
+# single factor. Measured by shared/fx_exposure.py; used by the build log, the report cover, the promotion gate (HARD, no override) and, with
+# FX_EXPOSURE_CONSTRAINT_ENABLED, by the builder itself.
 MAX_NON_EUR_UNHEDGED_WEIGHT: float = 0.30
+# Owner decision 2026-10-11: the budget is also a CONSTRUCTION constraint (portfolio_engine.select_within_exposure): each sub-portfolio is built so
+# its exposed weight stays within the budget, hence so does the master portfolio -- the October DRAFT must be promotable by construction, not by
+# luck. It is the safety net under the regime-evidence FX-neutralisation (REGIME_EVIDENCE_FX_NEUTRAL, dormant until its PIT validation), not a
+# substitute for it. False restores the unconstrained build (the promotion gate still blocks an over-budget scenario).
+FX_EXPOSURE_CONSTRAINT_ENABLED: bool = True
 # Largest structural cash residue (share of the MASTER portfolio) a scenario may DECLARE and still be promoted (owner decision 2026-10-11).
 # Cash appears only when a sub-portfolio has too few eligible non-exposed funds to reach 100% under the per-fund cap (FND-0187); the build
 # records it in the scenario notes and prints which sub-portfolio is short. Hard gate, no override: change the constant by a reviewed commit.

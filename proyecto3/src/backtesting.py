@@ -51,7 +51,7 @@ from proyecto3.src.regime_classifier import RegimeClassifier, REGIME_WEIGHTS
 from proyecto3.src.portfolio_engine import (
     select_and_weight, DEFAULT_CONSTRAINTS, round_master_weights, cash_weight,
 )
-from proyecto3.src.score_candidates import load_current_candidates
+from proyecto3.src.score_candidates import exposure_constrained, flag_fx_exposed, load_current_candidates
 from shared.eur_nav import apply_eur_view_frame   # FND-0243
 from shared.config import REGIME_PUBLICATION_LAG_MONTHS
 
@@ -151,7 +151,7 @@ def _load_candidates(conn: "psycopg.Connection",
     # FND-0171: misma consulta que PortfolioBuilder (score_candidates.py): solo filas de la
     # ULTIMA ejecucion de scoring del (bloque, version, regimen). Antes cada modulo llevaba su
     # copia y las dos dejaban elegir filas obsoletas de fondos que ya no se puntuan.
-    candidates = load_current_candidates(conn, score_version, regime)
+    candidates = flag_fx_exposed(conn, load_current_candidates(conn, score_version, regime))   # same rule/constraint as PortfolioBuilder
     return {
         block: grp.drop(columns="block").reset_index(drop=True)
         for block, grp in candidates.groupby("block", sort=False)
@@ -440,7 +440,7 @@ class Backtester:
         sub_w          = dict(zip(sub_names, regime_weights))
 
         candidates = _load_candidates(self.conn, self.score_version, regime)
-        selection  = select_and_weight(candidates, sub_w, DEFAULT_CONSTRAINTS)
+        selection  = select_and_weight(candidates, sub_w, exposure_constrained(DEFAULT_CONSTRAINTS))
         self._selection_cache[regime] = selection
         return selection
 

@@ -156,7 +156,10 @@ CREATE TABLE fund_master (
     Fund_Nature TEXT,
     Management_Company TEXT,
     fund_family_id TEXT,
-    In_Current_Universe SMALLINT DEFAULT 1
+    In_Current_Universe SMALLINT DEFAULT 1,
+    fund_currency TEXT,
+    hedging_policy TEXT,
+    asset_currency TEXT
 );
 CREATE TABLE fund_scores (
     isin TEXT, block TEXT, score_version TEXT, regime TEXT, as_of_date DATE,

@@ -34,7 +34,9 @@ except ImportError:
 
 from proyecto3.src.regime_classifier import RegimeClassifier
 from proyecto3.src.backtesting import Backtester
-from shared.config import REPORTS_DIR as _DEFAULT_REPORTS_DIR
+from shared.config import REPORTS_DIR as _DEFAULT_REPORTS_DIR, MAX_NON_EUR_UNHEDGED_WEIGHT, MAX_PORTFOLIO_CASH_WEIGHT
+from proyecto3.src import scenario_lifecycle as _lifecycle
+from shared import fx_exposure as _fx_exposure
 from shared.db import round_sql, int_cast_sql
 
 
@@ -175,7 +177,17 @@ def _get_objetivo_ipc_m3(conn: "psycopg.Connection") -> dict:
 # Hojas del informe
 # ============================================================
 
-def _build_portada(ws, conn, clf, scenario_id="shock_energia_2026Q1"):
+def _scenario_exposure(conn, scenario_id):
+    """KPI de exposicion divisa no-EUR del escenario (shared/fx_exposure.py), o None si el escenario no tiene pesos."""
+    rows = conn.execute(
+        "SELECT isin, weight FROM portfolio_weights WHERE scenario_id = %s", (scenario_id,)).fetchall()
+    if not rows:
+        return None
+    weights = {r[0]: float(r[1]) for r in rows}
+    return _fx_exposure.portfolio_summary(conn, weights, MAX_NON_EUR_UNHEDGED_WEIGHT)
+
+
+def _build_portada(ws, conn, clf, scenario_id, is_production=True):
     """Hoja 0 — Portada con resumen ejecutivo."""
     ws.sheet_view.showGridLines = False
 
@@ -208,6 +220,22 @@ def _build_portada(ws, conn, clf, scenario_id="shock_energia_2026Q1"):
         ("Dinamica", f"{r.weight_dynamic:.0%}"),
     ]
 
+    # Escenario que se informa y su exposicion divisa (2026-10-11: el informe de 2026-10-11 mostraba un escenario obsoleto
+    # y la cartera real tenia un 79% en USD sin que ninguna cifra lo dijera)
+    expo = _scenario_exposure(conn, scenario_id)
+    cash_declared = _lifecycle.declared_cash(conn, scenario_id)
+    datos_regimen += [
+        ("", ""),
+        ("ESCENARIO", f"{scenario_id}  " + ("(PRODUCCION)" if is_production else "(NO PRODUCCION)")),
+        ("EXPOSICION DIVISA NO-EUR",
+         (f"{expo['non_eur']:.1%} " + ("EXCEDE " if expo["over_budget"] else "dentro de ")
+          + f"presupuesto {expo['budget']:.0%}  [" +
+          ", ".join(f"{c} {w:.1%}" for c, w in expo["by_currency"].items() if c != _fx_exposure.MCY) + "]")
+         if expo else "N/D (escenario sin pesos)"),
+        ("LIQUIDEZ ESTRUCTURAL DECLARADA",
+         f"{cash_declared:.1%} (tope de promocion {MAX_PORTFOLIO_CASH_WEIGHT:.0%})"),
+    ]
+
     # Objetivo IPC+M3
     obj = _get_objetivo_ipc_m3(conn)
     datos_regimen += [
@@ -231,6 +259,15 @@ def _build_portada(ws, conn, clf, scenario_id="shock_energia_2026Q1"):
         elif label == "SEMAFORO":
             cell_val.fill = _fill(sem_bg)
             cell_val.font = _font(bold=True, size=10, color=sem_fg)
+        elif label == "ESCENARIO" and not is_production:
+            cell_val.fill = _fill("F8D7DA")
+            cell_val.font = _font(bold=True, size=10, color="721C24")
+        elif label == "EXPOSICION DIVISA NO-EUR" and expo and expo["over_budget"]:
+            cell_val.fill = _fill("F8D7DA")
+            cell_val.font = _font(bold=True, size=10, color="721C24")
+        elif label == "LIQUIDEZ ESTRUCTURAL DECLARADA" and cash_declared > MAX_PORTFOLIO_CASH_WEIGHT + 1e-9:
+            cell_val.fill = _fill("F8D7DA")
+            cell_val.font = _font(bold=True, size=10, color="721C24")
 
     # Senales del semaforo
     if sem.signals:
@@ -242,7 +279,7 @@ def _build_portada(ws, conn, clf, scenario_id="shock_energia_2026Q1"):
     _autofit(ws)
 
 
-def _build_cartera(ws, conn, scenario_id="shock_energia_2026Q1"):
+def _build_cartera(ws, conn, scenario_id):
     """Hoja 1 — Detalle de fondos de la cartera actual."""
     ws.sheet_view.showGridLines = False
 
@@ -905,21 +942,34 @@ def _build_macro_indicadores(ws, conn):
     _autofit(ws)
 
 
+DRAFTS_SUBDIR = "borradores"               # informes de escenarios que no estan en PRODUCCION (borradores, --scenario)
+
+
 def generate_report(
     conn: "psycopg.Connection",
     output_dir: str | None = None,
-    scenario_id: str = "shock_energia_2026Q1",
+    scenario_id: str | None = None,
     score_version: str = "v1",
 ) -> Path:
     """
     Genera el informe mensual completo en Excel.
 
+    scenario_id=None informa el escenario en PRODUCCION; sin el, o sin ciclo de vida instalado, lanza
+    scenario_lifecycle.NoProductionScenario (nunca recurre a "el mas reciente" ni a un id fijo: el defecto que llevo
+    el informe de 2026-10-11 a presentar la cartera de marzo). Un escenario explicito que no esta en PRODUCCION se informa
+    con el aviso NO PRODUCCION, un fichero distinto y la subcarpeta `borradores` del directorio de salida (nunca junto al
+    informe oficial).
+
     Devuelve la ruta del fichero generado.
     """
+    scenario_id, is_production = _lifecycle.resolve_report_scenario(conn, scenario_id)
     today      = date.today().strftime("%Y%m%d")
-    filename   = f"informe_cartera_{today}.xlsx"
+    filename   = (f"informe_cartera_{today}.xlsx" if is_production
+                  else f"informe_cartera_{today}_{scenario_id}.xlsx")
     if output_dir is None:
         output_dir = str(_DEFAULT_REPORTS_DIR)
+    if not is_production:                      # un informe NO PRODUCCION no se guarda junto al oficial: subcarpeta aparte
+        output_dir = str(Path(output_dir) / DRAFTS_SUBDIR)
     output_path = Path(output_dir) / filename
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
@@ -931,7 +981,7 @@ def generate_report(
     print("Generando informe mensual...")
 
     ws0 = wb.create_sheet("0_Portada")
-    _build_portada(ws0, conn, clf, scenario_id)
+    _build_portada(ws0, conn, clf, scenario_id, is_production)
     print("  0_Portada OK")
 
     ws1 = wb.create_sheet("1_Cartera")
