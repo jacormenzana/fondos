@@ -86,7 +86,8 @@ def band_grid_tables(pit_run, inputs, regime_hist: pd.DataFrame, at: pd.Datetime
             Wb = base.W
         else:
             cons = dataclasses.replace(DEFAULT_CONSTRAINTS, hysteresis_band=b)
-            Wb, _ = build_weights(pit_run.scores, inputs.attrs, regime_hist, base.at, cons, use_incumbents=True)
+            Wb, _ = build_weights(pit_run.scores, inputs.attrs, regime_hist, base.at, cons, use_incumbents=True,
+                                  fx_exposed=getattr(inputs, "fx_exposed", None))
         for d in deltas:
             W = apply_weight_no_trade_band(Wb, d)
             held = W.notna().any(axis=1)
@@ -177,7 +178,7 @@ def cadence_tables(pit_run, inputs, regime_hist: pd.DataFrame, at: pd.DatetimeIn
         for phase in range(k):
             W, cash_w = build_weights(pit_run.scores, inputs.attrs, regime_hist, base.at, cons,
                                       use_incumbents=bool(hysteresis_band), rebalance_every=k, phase=phase,
-                                      regime_trigger=regime_trigger)
+                                      regime_trigger=regime_trigger, fx_exposed=getattr(inputs, "fx_exposed", None))
             prep = dataclasses.replace(base, W=W, cash_w=cash_w)
             tables[(k, phase)] = assemble_table(prep, tx_cost_bps, entry_sides, target_annual)
     return tables
@@ -236,7 +237,7 @@ def load_saved_run(run_dir, conn):
     Reads scores_long.parquet and pit_backtest_table.csv from the folder and NAV / attributes / deposit rate / regime history
     from the DB (read-only). ipc is not needed by the portfolio / return layers, so it is left empty."""
     from types import SimpleNamespace
-    from proyecto3.src.pit_inputs import load_attributes, load_nav_panel, load_rate_deposit
+    from proyecto3.src.pit_inputs import load_attributes, load_fx_exposed, load_nav_panel, load_rate_deposit
     from proyecto3.src.pit_run import PitInputs
     from proyecto3.src.regime_classifier import RegimeClassifier
     from shared.config import REGIME_PUBLICATION_LAG_MONTHS
@@ -244,5 +245,7 @@ def load_saved_run(run_dir, conn):
     scores = pd.read_parquet(run / "scores_long.parquet")
     at = pd.DatetimeIndex(pd.read_csv(run / "pit_backtest_table.csv", parse_dates=["date"])["date"])
     hist = RegimeClassifier(conn, publication_lags=REGIME_PUBLICATION_LAG_MONTHS).classify_historical().sort_index()
-    inputs = PitInputs(nav=load_nav_panel(conn), attrs=load_attributes(conn), ipc=None, rate=load_rate_deposit(conn))
+    attrs = load_attributes(conn)
+    inputs = PitInputs(nav=load_nav_panel(conn), attrs=attrs, ipc=None, rate=load_rate_deposit(conn),
+                       fx_exposed=load_fx_exposed(conn, list(attrs.index)))
     return SimpleNamespace(scores=scores), inputs, hist, at

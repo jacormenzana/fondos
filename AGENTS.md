@@ -563,7 +563,9 @@ output directory, never next to the official report. The cycle launchers (`P2_P3
 shows the scenario and its currency exposure. The limit is also a **construction constraint** (`FX_EXPOSURE_CONSTRAINT_ENABLED`,
 `portfolio_engine.select_within_exposure`): each sub-portfolio drops its lowest-scored exposed fund and re-selects until its exposed weight is within
 the budget, so a DRAFT is promotable by construction (a residue the non-exposed pool cannot absorb is held as cash). It is the safety net under the
-regime-evidence FX neutralisation, which stays dormant until its PIT validation.
+regime-evidence FX neutralisation, which stays dormant until its PIT validation. The legacy backtester and the PIT backtest build under the same
+constraint (`score_candidates.exposure_constrained`; flags in `PitInputs.fx_exposed`, loaded by `pit_inputs.load_fx_exposed`, deliberately not a column
+of `attrs`, which feeds the PIT score cache keys), so a PIT run evaluates the model production runs.
 
 ### Data-freshness gate (`data_freshness.py`)
 

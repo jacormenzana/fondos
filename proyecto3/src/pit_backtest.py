@@ -36,6 +36,7 @@ if str(_ROOT) not in sys.path:
 from proyecto3.src.backtesting import FORWARD_WINDOWS, _blend_to_master
 from proyecto3.src.pit_candidates import asof_snapshot
 from proyecto3.src.portfolio_engine import DEFAULT_CONSTRAINTS, cash_weight, select_and_weight
+from proyecto3.src.score_candidates import exposure_constrained
 
 logger = logging.getLogger(__name__)
 
@@ -61,9 +62,11 @@ def last_complete_month_end(last_nav: pd.Timestamp, tolerance_days: int = 5) -> 
 # Selection over time
 # ============================================================
 
-def candidates_by_sub(scores_t: pd.DataFrame, attrs: pd.DataFrame) -> dict:
+def candidates_by_sub(scores_t: pd.DataFrame, attrs: pd.DataFrame, fx_exposed: "pd.Series | None" = None) -> dict:
     """Candidate frames per sub-portfolio from one date's scores: eligible and score > 0 (same rule as
-    score_candidates.load_current_candidates; the PIT universe already holds one row per fund and block)."""
+    score_candidates.load_current_candidates; the PIT universe already holds one row per fund and block).
+    `fx_exposed` (bool Series by isin) adds the `fx_exposed` column the engine's exposure constraint reads; a fund absent from it is
+    treated as not exposed, as in the live gate."""
     out = {}
     ok = scores_t[scores_t["eligible"] & (scores_t["score_final"] > 0)]
     for sub in SUB_NAMES:
@@ -71,21 +74,24 @@ def candidates_by_sub(scores_t: pd.DataFrame, attrs: pd.DataFrame) -> dict:
         if block.empty:
             out[sub] = pd.DataFrame(columns=CANDIDATE_COLUMNS)
             continue
-        frame = pd.DataFrame({
+        data = {
             "isin": block["isin"].to_numpy(),
             "score_total": block["score_final"].to_numpy(),
             "fund_name": block["fund_name"].to_numpy(),
             "fund_nature": block["fund_nature"].to_numpy(),
             "management_company": attrs["Management_Company"].reindex(block["isin"]).to_numpy(),
             "fund_family_id": block["fund_family_id"].to_numpy(),
-        }).sort_values("score_total", ascending=False).reset_index(drop=True)
+        }
+        if fx_exposed is not None:
+            data["fx_exposed"] = fx_exposed.reindex(block["isin"], fill_value=False).to_numpy(dtype=bool)
+        frame = pd.DataFrame(data).sort_values("score_total", ascending=False).reset_index(drop=True)
         out[sub] = frame
     return out
 
 
 def build_weights(scores: pd.DataFrame, attrs: pd.DataFrame, regime_hist: pd.DataFrame, at: pd.DatetimeIndex,
                   constraints=DEFAULT_CONSTRAINTS, use_incumbents: bool = False, rebalance_every: int = 1,
-                  phase: int = 0, regime_trigger=False) -> "tuple[pd.DataFrame, pd.Series]":
+                  phase: int = 0, regime_trigger=False, fx_exposed: "pd.Series | None" = None) -> "tuple[pd.DataFrame, pd.Series]":
     """Master weights per date: (W [dates x isin], cash [dates]). regime_hist has weight_defensive/balanced/dynamic
     (the lagged classifier's classify_historical()); dates without scores or regime row give an empty portfolio.
 
@@ -100,7 +106,13 @@ def build_weights(scores: pd.DataFrame, attrs: pd.DataFrame, regime_hist: pd.Dat
     the previous behaviour). A month without scores empties the portfolio and forces a rebalance at the next dated month.
     regime_trigger: also rebalance on a date whose regime label differs from the one at the last rebalance (react at once
     to a regime change, slowly otherwise); only matters when rebalance_every > 1. True = any change; a collection of regime
-    names (e.g. {"Crisis_Financiera"}) = only a change INTO or OUT OF one of those regimes."""
+    names (e.g. {"Crisis_Financiera"}) = only a change INTO or OUT OF one of those regimes.
+
+    fx_exposed (bool Series by isin): the currency-exposure flags of the funds. When supplied, the portfolio is built under the SAME
+    construction constraint as the live builder (score_candidates.exposure_constrained: exposed weight of every sub-portfolio <=
+    MAX_NON_EUR_UNHEDGED_WEIGHT), so the backtest evaluates the model that production runs. None = unconstrained (previous behaviour)."""
+    if fx_exposed is not None:
+        constraints = exposure_constrained(constraints)
     rows, cash = {}, {}
     incumbents: dict = {}
     held_master, held_cash, held_regime = None, np.nan, None
@@ -121,7 +133,7 @@ def build_weights(scores: pd.DataFrame, attrs: pd.DataFrame, regime_hist: pd.Dat
             rows[t], cash[t] = held_master, held_cash                  # between rebalances: hold
             continue
         sub_w = dict(zip(SUB_NAMES, (h["weight_defensive"], h["weight_balanced"], h["weight_dynamic"])))
-        selection = select_and_weight(candidates_by_sub(by_date[t], attrs), sub_w, constraints,
+        selection = select_and_weight(candidates_by_sub(by_date[t], attrs, fx_exposed), sub_w, constraints,
                                       incumbents if use_incumbents else None)
         if use_incumbents:
             incumbents = {sub: frozenset(df["isin"]) for sub, df in selection.items() if not df.empty}
@@ -256,7 +268,7 @@ def prepare_pit_backtest(pit_run, inputs, regime_hist: pd.DataFrame, at: pd.Date
     at = pd.DatetimeIndex(at)
     windows = tuple(windows)
     W, cash_w = build_weights(pit_run.scores, inputs.attrs, regime_hist, at, constraints, use_incumbents,
-                              rebalance_every, phase, regime_trigger)
+                              rebalance_every, phase, regime_trigger, fx_exposed=getattr(inputs, "fx_exposed", None))
     grid = pd.date_range(at.min(), at.max() + pd.offsets.MonthEnd(max(windows)), freq=pd.offsets.MonthEnd())
     cidx = cash_index(inputs.rate, grid)
     hist = regime_hist.sort_index()
@@ -414,7 +426,8 @@ def hysteresis_experiment(pit_run, inputs, regime_hist: pd.DataFrame, at: pd.Dat
             prep = base
         else:
             cons = dataclasses.replace(DEFAULT_CONSTRAINTS, hysteresis_band=b)
-            W, cash_w = build_weights(pit_run.scores, inputs.attrs, regime_hist, base.at, cons, use_incumbents=True)
+            W, cash_w = build_weights(pit_run.scores, inputs.attrs, regime_hist, base.at, cons, use_incumbents=True,
+                                      fx_exposed=getattr(inputs, "fx_exposed", None))
             prep = dataclasses.replace(base, W=W, cash_w=cash_w)
         tab = assemble_table(prep, tx_cost_bps, entry_sides, target_annual)
         st = table_stats(tab)["portfolio"]

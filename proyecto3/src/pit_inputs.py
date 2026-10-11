@@ -17,6 +17,7 @@ _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+from proyecto3.src.score_candidates import fx_exposed_map
 from shared.config import REGION_IPC
 from shared.eur_nav import apply_eur_view_frame   # FND-0243
 
@@ -66,6 +67,20 @@ def load_attributes(conn: "psycopg.Connection", isins: "list | None" = None) -> 
     df = pd.DataFrame([tuple(r) for r in rows], columns=ATTRIBUTE_FRAME_COLUMNS).set_index("ISIN")
     df.index.name = "isin"
     return df
+
+
+def load_fx_exposed(conn: "psycopg.Connection", isins) -> "pd.Series | None":
+    """Boolean Series (index isin): does the fund count against the non-EUR budget (today's class currency / hedging, like every static
+    attribute of the PIT universe -- documented look-ahead). None when the construction constraint is switched off.
+
+    Kept OUT of `load_attributes`: that frame is hashed into the score cache keys and scoring never reads currency, so adding columns
+    there would invalidate every cached PIT run for nothing."""
+    flags = fx_exposed_map(conn, isins)
+    if flags is None:
+        return None
+    s = pd.Series(flags, dtype=bool)
+    s.index.name = "isin"
+    return s
 
 
 def load_ipc(conn: "psycopg.Connection", geography: str = REGION_IPC) -> pd.DataFrame:

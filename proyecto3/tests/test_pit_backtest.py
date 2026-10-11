@@ -348,6 +348,7 @@ def _patched_backtester(monkeypatch, nav, attrs, regime_hist, seen):
     monkeypatch.setattr(pit_inputs, "load_attributes", lambda conn, isins=None: attrs if isins is None else attrs.loc[list(isins)])
     monkeypatch.setattr(pit_inputs, "load_ipc", lambda conn, geography="ES": inputs.ipc)
     monkeypatch.setattr(pit_inputs, "load_rate_deposit", lambda conn: inputs.rate)
+    monkeypatch.setattr(pit_inputs, "load_fx_exposed", lambda conn, isins: None)     # these chains run without a DB (flags: test_pit_exposure.py)
     monkeypatch.setattr(pit_inputs, "iter_daily_chunks", lambda conn, isins, chunk_size=300: iter(()))
     bt = object.__new__(Backtester)
     bt.conn = None

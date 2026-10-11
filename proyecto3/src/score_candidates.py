@@ -43,15 +43,24 @@ CANDIDATE_COLUMNS = [
 ]
 
 
+def fx_exposed_map(conn: "psycopg.Connection", isins) -> "dict | None":
+    """{isin: bool} -- does each fund count against the non-EUR budget (SAME rule as the promotion gate, shared/fx_exposure.py), or None
+    when the construction constraint is switched off. Used by the live builder, the legacy backtester and the PIT backtest."""
+    if not FX_EXPOSURE_CONSTRAINT_ENABLED:
+        return None
+    isins = list(isins)
+    return fx_exposure.exposed_flags(fx_exposure.load_attrs(conn, isins), isins)
+
+
 def flag_fx_exposed(conn: "psycopg.Connection", candidates: pd.DataFrame) -> pd.DataFrame:
-    """Adds the boolean column `fx_exposed` (does the fund count against the non-EUR budget) used by
-    portfolio_engine.select_within_exposure. SAME rule as the promotion gate (shared/fx_exposure.py). Both PortfolioBuilder and the
-    Backtester call this, so their selections stay identical (test_backtest_parity.py). Returns the frame untouched when the constraint
-    is off or there is nothing to flag."""
-    if not FX_EXPOSURE_CONSTRAINT_ENABLED or candidates.empty:
+    """Adds the boolean column `fx_exposed` used by portfolio_engine.select_within_exposure. Both PortfolioBuilder and the Backtester call
+    this, so their selections stay identical (test_backtest_parity.py). Returns the frame untouched when the constraint is off or there is
+    nothing to flag."""
+    if candidates.empty:
         return candidates
-    isins = candidates["isin"].tolist()
-    flags = fx_exposure.exposed_flags(fx_exposure.load_attrs(conn, isins), isins)
+    flags = fx_exposed_map(conn, candidates["isin"].tolist())
+    if flags is None:
+        return candidates
     return candidates.assign(fx_exposed=candidates["isin"].map(flags).astype(bool))
 
 

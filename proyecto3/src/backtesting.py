@@ -492,7 +492,7 @@ class Backtester:
         from proyecto3.src.portfolio_engine import DEFAULT_CONSTRAINTS
         from proyecto3.src.pit_cache import ParquetCache
         from proyecto3.src.pit_inputs import (
-            iter_daily_chunks, load_attributes, load_ipc, load_nav_panel, load_rate_deposit,
+            iter_daily_chunks, load_attributes, load_fx_exposed, load_ipc, load_nav_panel, load_rate_deposit,
         )
         from proyecto3.src.pit_run import PitInputs, compute_pit_scores
 
@@ -523,6 +523,7 @@ class Backtester:
             nav=nav, attrs=attrs, ipc=load_ipc(self.conn), rate=load_rate_deposit(self.conn),
             daily_chunks=lambda: iter_daily_chunks(self.conn, daily_isins),
             macro=macro, fund_geo=fund_geo,
+            fx_exposed=load_fx_exposed(self.conn, list(attrs.index)),    # same construction constraint as the live builder
         )
         cache = ParquetCache(cache_dir if cache_dir is not None else _ROOT / "proyecto3" / "cache" / "pit",
                              enabled=use_cache)

@@ -43,6 +43,7 @@ class PitInputs:
     daily_chunks: "callable | None" = None   # () -> iterable of long daily frames; None = no short gates
     macro: "pd.DataFrame | None" = None      # macro_sensitivity.load_macro_factors(); None = no group B (PIT v1)
     fund_geo: "pd.DataFrame | None" = None   # index isin; geography / development_status (pit_macro.load_macro_fund_attrs)
+    fx_exposed: "pd.Series | None" = None    # index isin, bool: counts against the non-EUR budget (pit_inputs.load_fx_exposed); None = no limit
 
 
 @dataclass
