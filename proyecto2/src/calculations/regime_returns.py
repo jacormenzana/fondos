@@ -77,6 +77,7 @@ from shared.config import (
 # coincidian por disciplina, no por construccion. Fuente unica ahora en
 # shared/regime_taxonomy.py (ver ese modulo para el porque vive en shared/
 # y no en proyecto3/).
+from shared.annualization import by_dates_enabled, gap_months, month_ordinals   # FND-0253
 from shared.regime_taxonomy import REGIME_SUFFIX as _REGIME_SUFFIX
 from src.calculations.drawdown import compute_drawdown, max_drawdown, time_to_recovery
 from src.calculations.returns import (
@@ -184,6 +185,12 @@ def compute_regime_returns(
     # conservar el último (cierre de mes más reciente)
     nav = nav[~nav.index.duplicated(keep="last")]
     r_simple = nav.pct_change().dropna()
+    if by_dates_enabled():
+        # FND-0253: a return that spans a NAV gap is not a month of its regime: keep one-month returns only, so n_obs counts real
+        # months and the exponent 12/n of annualized_return_from_returns is right. A dense series is unchanged (every k == 1).
+        _mo = month_ordinals(nav.index)
+        _k = pd.Series(np.concatenate(([1], gap_months(_mo))), index=nav.index)
+        r_simple = r_simple[_k.reindex(r_simple.index).to_numpy() == 1]
 
     # Cruzar con regimenes
     merged = pd.concat(

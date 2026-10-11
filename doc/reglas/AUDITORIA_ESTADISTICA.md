@@ -142,6 +142,13 @@ desviación a la baja corrompida; en vivo, 0 hallazgos. El exponente usa la más
 convenciones de anualización (FND-0240: `annualized_return` cuenta puntos NAV, no intervalos), de modo
 que la regla no cambia si esa convención se corrige.
 
+**Anualización por fechas (FND-0253, `ANNUALIZATION_BY_DATES_ENABLED`, apagada por defecto).** Con la bandera activa los productores (P2,
+`shared/annualization.py`) anualizan sobre el número de puntos de un NAV mensual *denso* equivalente al tramo primer..último mes natural
+(idéntico al recuento de filas cuando no hay huecos) y la auditoría lo replica en `timeseries.scalar_window_cpi` /
+`build_window_deflation_frame` (`_window_points`), de modo que `WINDOW_NOMINAL_IDENTITY` / `WINDOW_FISHER_IDENTITY` no reporten el cambio de
+convención como un defecto. Solo se mueven los fondos con huecos internos de NAV; la prueba de seguridad es que una serie densa es idéntica
+bit a bit con la bandera activa (`test_annualization_by_dates_fnd0253.py`, `test_pit_by_dates_fnd0253.py`).
+
 *`SHARPE_EQUALS_SORTINO` (FND-0234, 2026-10-06):* las 25 coincidencias vivas no eran un defecto:
 17 tenían un numerador ≈ 0 (`return_ann` a ≤ 0,1 pp del tipo libre de riesgo, ambos ratios ≈ 0, iguales
 por aritmética) y 8 un numerador negativo, donde `dd/σ` cruza 1 de forma legítima

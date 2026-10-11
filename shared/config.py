@@ -604,7 +604,7 @@ P2_BUNDLE_FLAGS: tuple = ("MACRO_VIF_ITERATIVE_ENABLED", "MACRO_FACTOR_CLEAN_ENA
                           "PERSISTENCE_FIRST_LAST_NAV_ENABLED", "CAPTURE_MONTH_END_ENABLED",
                           "ANNUALIZATION_INTERVAL_ENABLED", "DEFLATION_MONTH_ALIGN_ENABLED",
                           "SORTINO_MIN_DOWNSIDE_COUNT_ENABLED", "FX_CONTRIBUTION_EUR_VIEW_ENABLED",
-                          "EUR_NAV_CONVERSION_ENABLED")
+                          "EUR_NAV_CONVERSION_ENABLED", "ANNUALIZATION_BY_DATES_ENABLED")
 # FND-0240: annualise a NAV window over its INTERVALS (N points span N - 1 periods) instead of its points. OFF = the stored
 # convention (years = N / 12), bit-for-bit. ON changes the stored return_ann / sharpe / sortino of the risk family and the
 # rolling timeseries: about +0.5 pp on rolling_1y, -1.2 pp on the crisis windows, +0.04 pp since inception -- and nothing in the
@@ -612,6 +612,14 @@ P2_BUNDLE_FLAGS: tuple = ("MACRO_VIF_ITERATIVE_ENABLED", "MACRO_FACTOR_CLEAN_ENA
 # shared/annualization.py. FLIP ONLY TOGETHER WITH THE RECOMPUTE of the families it touches (utils/family_versions.FLAG_FAMILIES:
 # risk, rolling): until then the stored values keep the old convention and the audit's nominal/Fisher identities report the gap.
 ANNUALIZATION_INTERVAL_ENABLED: bool = True
+# FND-0253: annualise by DATES, not by rows. A NAV series with missing months was treated as consecutive: horizon understated, return_ann
+# inflated (LU1663960000: 35 rows over 104 months, stored 20.9% vs 6.5% by dates), vol mixing multi-month returns as monthly. ON = the horizon is
+# the dense-equivalent number of points of the first..last calendar month (through the SAME years_spanned, so every existing convention is
+# kept), k-month returns enter the vol as k-month returns, one-month statistics use one-month returns only. A DENSE series is bit-identical;
+# only the funds with an internal gap move (5 of 2,933 active funds on 2026-10-11). OFF = the stored convention. The audit and the PIT mirror
+# it through shared/annualization.py. SHIPPED OFF: FLIP ONLY TOGETHER WITH the CALC_VERSION bump and the recompute of the families it touches
+# (utils/family_versions.FLAG_FAMILIES: risk, rolling, regime, persistence); until then the stored values keep the row convention.
+ANNUALIZATION_BY_DATES_ENABLED: bool = False
 # FND-0241: look the CPI up with each MONTHLY NAV's own calendar month-end. OFF = the stored convention (merge_asof backward against
 # a CPI stamped on the calendar month-end), under which the 29% of NAVs dated on the last BUSINESS day took the previous month's CPI
 # and had real monthly return == nominal. ON changes the stored real series: worst_month real up to ~2 pp (18% of funds > 0.1 pp),

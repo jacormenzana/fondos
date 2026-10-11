@@ -16,7 +16,7 @@ from typing import Mapping, Sequence
 
 import pandas as pd
 
-from shared.annualization import years_spanned
+from shared.annualization import by_dates_enabled, years_spanned
 from shared.deflation_alignment import cpi_lookup_dates
 
 
@@ -98,6 +98,19 @@ def nav_with_ipc(nav_dates: pd.DataFrame, ipc: pd.DataFrame) -> pd.DataFrame:
     return nav
 
 
+def _window_points(n_obs: pd.Series, date_start: pd.Series, date_end: pd.Series) -> pd.Series:
+    """The `n` the producers feed to years_spanned() for each window. Row count (the stored convention) unless
+    ANNUALIZATION_BY_DATES_ENABLED (FND-0253): then the dense-equivalent number of points of the first..last calendar month,
+    i.e. shared.annualization.dense_equivalent_points -- identical to n_obs for a window without gaps. Undecidable dates fall back
+    to n_obs (the row is then judged exactly as before)."""
+    n = n_obs.astype(float)
+    if not by_dates_enabled():
+        return n
+    ds, de = pd.to_datetime(date_start), pd.to_datetime(date_end)
+    eff = ((de.dt.year - ds.dt.year) * 12 + (de.dt.month - ds.dt.month) + 1).astype(float)
+    return eff.where(eff >= 2, n)
+
+
 def scalar_window_cpi(
     rows: pd.DataFrame, nav_dates: pd.DataFrame, ipc: pd.DataFrame,
     window_ends: "Mapping[str, str | None] | None" = None, periods_per_year: int = 12,
@@ -130,15 +143,16 @@ def scalar_window_cpi(
     out["end_pos"] = out["end_pos"].astype("Int64")
     out["start_pos"] = (out["end_pos"] - (out["n_obs"].astype("Int64") - 1)).astype("Int64")
 
-    ends = nav[["isin", "pos", "ipc_index"]].rename(columns={"pos": "end_pos", "ipc_index": "ipc_end"})
-    starts = nav[["isin", "pos", "ipc_index"]].rename(columns={"pos": "start_pos", "ipc_index": "ipc_start"})
+    ends = nav[["isin", "pos", "ipc_index", "date"]].rename(columns={"pos": "end_pos", "ipc_index": "ipc_end", "date": "_date_end"})
+    starts = nav[["isin", "pos", "ipc_index", "date"]].rename(columns={"pos": "start_pos", "ipc_index": "ipc_start", "date": "_date_start"})
     for frame in (ends, starts):
         frame[frame.columns[1]] = frame[frame.columns[1]].astype("Int64")
     out = out.merge(ends, on=["isin", "end_pos"], how="left").merge(starts, on=["isin", "start_pos"], how="left")
 
-    years = years_spanned(out["n_obs"].astype(float), periods_per_year)     # the producers' convention (FND-0240)
+    # the producers' convention: FND-0240 interval switch through years_spanned, FND-0253 dates when its switch is on
+    years = years_spanned(_window_points(out["n_obs"], out["_date_start"], out["_date_end"]), periods_per_year)
     out["window_cpi_ann"] = (out["ipc_end"] / out["ipc_start"]) ** (1 / years) - 1
-    return out.drop(columns=["last_pos", "end_pos", "start_pos", "ipc_end", "ipc_start"])
+    return out.drop(columns=["last_pos", "end_pos", "start_pos", "ipc_end", "ipc_start", "_date_end", "_date_start"])
 
 
 def build_window_deflation_frame(
@@ -177,13 +191,14 @@ def build_window_deflation_frame(
     out["end_pos"] = out["end_pos"].astype("Int64")
     out["start_pos"] = (out["end_pos"] - (out["w_n_obs"] - 1)).astype("Int64")
 
-    start = nav[["isin", "pos", "ipc_index", "nav"]].rename(
-        columns={"pos": "start_pos", "ipc_index": "ipc_start", "nav": "nav_start"}
+    start = nav[["isin", "pos", "ipc_index", "nav", "date"]].rename(
+        columns={"pos": "start_pos", "ipc_index": "ipc_start", "nav": "nav_start", "date": "_date_start"}
     )
     start["start_pos"] = start["start_pos"].astype("Int64")
     out = out.merge(start, on=["isin", "start_pos"], how="left")
 
-    years = years_spanned(out["w_n_obs"], periods_per_year)     # the producers' convention (FND-0240)
+    # the producers' convention: FND-0240 interval switch through years_spanned, FND-0253 dates when its switch is on
+    years = years_spanned(_window_points(out["w_n_obs"], out["_date_start"], out["date"]), periods_per_year)
     # Guard rail (not FND-0114 itself): stored nominal return_ann must still match today's
     # fund_nav_monthly, else the row is stale vs a rewritten NAV history, not a deflation defect
     # -- WINDOW_NOMINAL_IDENTITY reports that separately and gates the two deflation rules.
@@ -195,4 +210,4 @@ def build_window_deflation_frame(
         (1 + out["w_return_nominal"]) / (1 + out["w_return_real"])
     ) ** years
     out["w_cpi_ann"] = out["w_deflator_expected"] ** (1 / years) - 1
-    return out
+    return out.drop(columns=["_date_start"])

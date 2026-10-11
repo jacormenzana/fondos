@@ -34,7 +34,9 @@ import pandas as pd
 
 from .deflation import deflate_nav
 from .returns import downside_deviation_ann
-from shared.annualization import years_spanned
+from shared.annualization import (
+    by_dates_enabled, dense_equivalent_points, gap_months, kweighted_std, month_ordinals, standardised_shortfalls, years_spanned,
+)
 from shared.sortino_reliability import downside_count_reliable
 from shared.config import MIN_PEERS as _MIN_PEERS_DEFAULT
 
@@ -52,13 +54,26 @@ _PERIODS_YEAR_DAILY:   int = 252
 # Helpers estadísticos de bajo nivel
 # ============================================================
 
-def _roll_vol_ann(nav_window: np.ndarray, periods_per_year: int) -> float:
-    """Volatilidad anualizada sobre un segmento NAV (array 1D)."""
+def _gaps(months: "np.ndarray | None") -> "np.ndarray | None":
+    """Months spanned by each return of a window, or None when every return is one month (or the by-dates convention is off). FND-0253.
+    `months` = calendar-month ordinals of the window's rows (shared.annualization.month_ordinals)."""
+    if months is None or len(months) < 2:
+        return None
+    k = gap_months(months)
+    return None if (k == 1).all() else k
+
+
+def _roll_vol_ann(nav_window: np.ndarray, periods_per_year: int, months: "np.ndarray | None" = None) -> float:
+    """Volatilidad anualizada sobre un segmento NAV (array 1D). `months` (FND-0253): month ordinals of the rows; a gap makes the
+    return a k-month return (kweighted_std). None / dense = the legacy expression, bit-for-bit."""
     if len(nav_window) < 3:
         return math.nan
     rets = np.diff(nav_window) / nav_window[:-1]
     if len(rets) < 2:
         return math.nan
+    k = _gaps(months)
+    if k is not None:
+        return kweighted_std(rets, k, periods_per_year)
     return float(np.std(rets, ddof=1) * math.sqrt(periods_per_year))
 
 
@@ -111,14 +126,20 @@ def _roll_max_dd(nav_window: np.ndarray) -> float:
     return float(dd.min())
 
 
-def _roll_return_ann(nav_window: np.ndarray, periods_per_year: int) -> float:
-    """Rentabilidad anualizada geométrica sobre un segmento NAV."""
+def _roll_return_ann(nav_window: np.ndarray, periods_per_year: int, months: "np.ndarray | None" = None) -> float:
+    """Rentabilidad anualizada geométrica sobre un segmento NAV. `months` (FND-0253): month ordinals of the rows; the horizon is then the
+    dense-equivalent number of points of the first..last calendar month (identical to len(nav_window) for a dense window)."""
     if len(nav_window) < 2:
         return math.nan
     total = nav_window[-1] / nav_window[0]
     if total <= 0:
         return math.nan
-    years = years_spanned(len(nav_window), periods_per_year)     # FND-0240 (same helper as returns.annualized_return)
+    n_points = len(nav_window)
+    if months is not None and len(months) == n_points:
+        eff = dense_equivalent_points(months)
+        if eff >= 2:
+            n_points = eff
+    years = years_spanned(n_points, periods_per_year)            # FND-0240 (same helper as returns.annualized_return)
     return float(total ** (1.0 / years) - 1.0)
 
 
@@ -126,6 +147,7 @@ def _roll_sharpe(
     nav_window: np.ndarray,
     periods_per_year: int,
     risk_free_rate_ann: float,
+    months: "np.ndarray | None" = None,
 ) -> float:
     """Ratio Sharpe rolling = (return_ann - rfr) / vol_ann.
 
@@ -133,8 +155,8 @@ def _roll_sharpe(
     """
     if len(nav_window) < 3:
         return math.nan
-    ret_ann = _roll_return_ann(nav_window, periods_per_year)
-    vol_ann = _roll_vol_ann(nav_window, periods_per_year)
+    ret_ann = _roll_return_ann(nav_window, periods_per_year, months)
+    vol_ann = _roll_vol_ann(nav_window, periods_per_year, months)
     if math.isnan(ret_ann) or math.isnan(vol_ann) or vol_ann == 0.0:
         return math.nan
     return float((ret_ann - risk_free_rate_ann) / vol_ann)
@@ -144,6 +166,7 @@ def _roll_sortino(
     nav_window: np.ndarray,
     periods_per_year: int,
     risk_free_rate_ann: float,
+    months: "np.ndarray | None" = None,
 ) -> float:
     """Ratio Sortino rolling = (return_ann - rfr) / downside_deviation_ann.
 
@@ -158,12 +181,20 @@ def _roll_sortino(
     if len(rets) < 2:
         return math.nan
     mar_per_period = risk_free_rate_ann / periods_per_year
-    if not downside_count_reliable(rets, mar_per_period):    # FND-0242 (off = stored behaviour)
-        return math.nan
-    downside_dev_ann = downside_deviation_ann(rets, mar_per_period, periods_per_year)
+    k = _gaps(months)
+    if k is not None:
+        # FND-0253: shortfalls of k-month returns against k * MAR, scaled by sqrt(k) (identical to the dense branch for k = 1)
+        z = standardised_shortfalls(rets, k, mar_per_period)
+        if not downside_count_reliable(z, 0.0):
+            return math.nan
+        downside_dev_ann = downside_deviation_ann(z, 0.0, periods_per_year)
+    else:
+        if not downside_count_reliable(rets, mar_per_period):    # FND-0242 (off = stored behaviour)
+            return math.nan
+        downside_dev_ann = downside_deviation_ann(rets, mar_per_period, periods_per_year)
     if math.isnan(downside_dev_ann):
         return math.nan
-    ret_ann = _roll_return_ann(nav_window, periods_per_year)
+    ret_ann = _roll_return_ann(nav_window, periods_per_year, months)
     if math.isnan(ret_ann):
         return math.nan
     return float((ret_ann - risk_free_rate_ann) / downside_dev_ann)
@@ -238,6 +269,8 @@ def compute_rolling_rows(
     nav_series = nav_df["nav"].to_numpy(dtype=float)
     dates = nav_df["date"].tolist()
     n = len(nav_series)
+    # FND-0253: calendar-month ordinal of each row, sliced per window below; None keeps the stored row convention bit-for-bit.
+    month_ords = month_ordinals(nav_df["date"]) if by_dates_enabled() else None
 
     # §4g: build date-aligned RF rate vector (one value per NAV row, forward-filled).
     # When rf_series is provided each window-end date uses its historically correct rate.
@@ -304,6 +337,7 @@ def compute_rolling_rows(
                 continue
             date_str = dates[i].date().isoformat()
 
+            win_months = None if month_ords is None else month_ords[start : i + 1]
             nav_variants: list[tuple[int, np.ndarray]] = [
                 (real_flag_default, window_nav)
             ]
@@ -320,11 +354,11 @@ def compute_rolling_rows(
                 # Compute all 5 curated metrics for this window slice.
                 # Base metrics computed once; Sharpe/Sortino reuse them internally.
                 metric_vals = (
-                    ("vol_ann",    _roll_vol_ann(nav_arr, periods_per_year)),
+                    ("vol_ann",    _roll_vol_ann(nav_arr, periods_per_year, win_months)),
                     ("max_dd",     _roll_max_dd(nav_arr)),
-                    ("return_ann", _roll_return_ann(nav_arr, periods_per_year)),
-                    ("sharpe",     _roll_sharpe(nav_arr, periods_per_year, _rf)),
-                    ("sortino",    _roll_sortino(nav_arr, periods_per_year, _rf)),
+                    ("return_ann", _roll_return_ann(nav_arr, periods_per_year, win_months)),
+                    ("sharpe",     _roll_sharpe(nav_arr, periods_per_year, _rf, win_months)),
+                    ("sortino",    _roll_sortino(nav_arr, periods_per_year, _rf, win_months)),
                 )
                 for metric, val in metric_vals:
                     rows.append({

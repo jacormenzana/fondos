@@ -47,6 +47,7 @@ def compute_risk_metrics(
 
     nav_df = nav_df.sort_values("date").reset_index(drop=True)
     nav_series = nav_df["nav"]
+    nav_dates = nav_df["date"]            # FND-0253: annualise by dates when ANNUALIZATION_BY_DATES_ENABLED (ignored otherwise)
 
     # -- METRICAS NOMINALES -----------------------------------
     dd_nom = compute_drawdown(nav_series)
@@ -57,18 +58,19 @@ def compute_risk_metrics(
         {"metric": "drawdown_duration",  "value": drawdown_duration(dd_nom),        "real_flag": 0},
         {"metric": "time_to_recovery",   "value": time_to_recovery(nav_series),     "real_flag": 0},
         # Retorno
-        {"metric": "return_ann",         "value": annualized_return(nav_series),    "real_flag": 0},
-        {"metric": "vol_ann",            "value": annualized_volatility(nav_series),"real_flag": 0},
+        {"metric": "return_ann",         "value": annualized_return(nav_series, dates=nav_dates),    "real_flag": 0},
+        {"metric": "vol_ann",            "value": annualized_volatility(nav_series, dates=nav_dates),"real_flag": 0},
         # Eficiencia
-        {"metric": "sharpe",             "value": sharpe_ratio(nav_series, risk_free_rate_ann),  "real_flag": 0},
-        {"metric": "sortino",            "value": sortino_ratio(nav_series, risk_free_rate_ann), "real_flag": 0},
-        {"metric": "ret_vol_simple",     "value": ret_vol_simple(nav_series),       "real_flag": 0},
+        {"metric": "sharpe",             "value": sharpe_ratio(nav_series, risk_free_rate_ann, dates=nav_dates),  "real_flag": 0},
+        {"metric": "sortino",            "value": sortino_ratio(nav_series, risk_free_rate_ann, dates=nav_dates), "real_flag": 0},
+        {"metric": "ret_vol_simple",     "value": ret_vol_simple(nav_series, dates=nav_dates),       "real_flag": 0},
     ])
 
     # -- METRICAS REALES (deflactadas) ------------------------
     if ipc_df is not None and not ipc_df.empty:
         df_real    = deflate_nav(nav_df, ipc_df)
         nav_real   = df_real["nav_real"].reset_index(drop=True)
+        real_dates = df_real["date"].reset_index(drop=True)
         dd_real    = compute_drawdown(nav_real)
 
         # Tipo libre de riesgo real ~ nominal - inflacion media del periodo
@@ -79,12 +81,12 @@ def compute_risk_metrics(
             {"metric": "drawdown_duration",  "value": drawdown_duration(dd_real),        "real_flag": 1},
             {"metric": "time_to_recovery",   "value": time_to_recovery(nav_real),        "real_flag": 1},
             # Retorno real
-            {"metric": "return_ann",         "value": annualized_return(nav_real),       "real_flag": 1},
-            {"metric": "vol_ann",            "value": annualized_volatility(nav_real),   "real_flag": 1},
+            {"metric": "return_ann",         "value": annualized_return(nav_real, dates=real_dates),       "real_flag": 1},
+            {"metric": "vol_ann",            "value": annualized_volatility(nav_real, dates=real_dates),   "real_flag": 1},
             # Eficiencia real
-            {"metric": "sharpe",             "value": sharpe_ratio(nav_real, risk_free_rate_ann),  "real_flag": 1},
-            {"metric": "sortino",            "value": sortino_ratio(nav_real, risk_free_rate_ann), "real_flag": 1},
-            {"metric": "ret_vol_simple",     "value": ret_vol_simple(nav_real),          "real_flag": 1},
+            {"metric": "sharpe",             "value": sharpe_ratio(nav_real, risk_free_rate_ann, dates=real_dates),  "real_flag": 1},
+            {"metric": "sortino",            "value": sortino_ratio(nav_real, risk_free_rate_ann, dates=real_dates), "real_flag": 1},
+            {"metric": "ret_vol_simple",     "value": ret_vol_simple(nav_real, dates=real_dates),          "real_flag": 1},
         ])
 
     # -- SRRI (calculado desde NAV nominal) --

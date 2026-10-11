@@ -203,7 +203,7 @@ PDFs and `Raw_KIID_Text` (in `fund_kiid_metadata`) are **never deleted**.
 ### Key support modules
 
 <!-- AUTO:BEGIN kill-switches-line -->
-- `shared/config.py` — all constants: `SCHEMA_VERSION` (`"v27"`), `DOMAIN_VALUES`, `ATTRIBUTE_CATALOG`, kill-switches (`PRIIPS_COST_EXTRACTION_ENABLED`, `SHORT_HORIZON_SCORING_ENABLED`, `ROLLING_STATS_ENABLED`, `ROLLING_PCTILE_P3_ENABLED`, `PORTFOLIO_HYSTERESIS_ENABLED`, `ROTATION_COST_GATE_ENABLED`, `BENCHMARK_DECOMP_ENABLED`, `BENCHMARK_ROLE_ENABLED`, `INTER18_RECONCILIATION_ENABLED`, `DLA2_ARBITRATION_ENABLED`, `FX_EXPOSURE_CONSTRAINT_ENABLED`, `FUND_DATA_ELIGIBILITY_ENABLED`, `MACRO_VIF_ITERATIVE_ENABLED`, `MACRO_FACTOR_CLEAN_ENABLED`, `PERSISTENCE_FIRST_LAST_NAV_ENABLED`, `CAPTURE_MONTH_END_ENABLED`, `ANNUALIZATION_INTERVAL_ENABLED`, `DEFLATION_MONTH_ALIGN_ENABLED`, `SORTINO_MIN_DOWNSIDE_COUNT_ENABLED`, `FX_CONTRIBUTION_EUR_VIEW_ENABLED`, `EUR_NAV_CONVERSION_ENABLED`, `FAMILY_VERSIONING_ENABLED`, `BACKLOG_INCIDENT_AUTO_APPEND_ENABLED`)
+- `shared/config.py` — all constants: `SCHEMA_VERSION` (`"v27"`), `DOMAIN_VALUES`, `ATTRIBUTE_CATALOG`, kill-switches (`PRIIPS_COST_EXTRACTION_ENABLED`, `SHORT_HORIZON_SCORING_ENABLED`, `ROLLING_STATS_ENABLED`, `ROLLING_PCTILE_P3_ENABLED`, `PORTFOLIO_HYSTERESIS_ENABLED`, `ROTATION_COST_GATE_ENABLED`, `BENCHMARK_DECOMP_ENABLED`, `BENCHMARK_ROLE_ENABLED`, `INTER18_RECONCILIATION_ENABLED`, `DLA2_ARBITRATION_ENABLED`, `FX_EXPOSURE_CONSTRAINT_ENABLED`, `FUND_DATA_ELIGIBILITY_ENABLED`, `MACRO_VIF_ITERATIVE_ENABLED`, `MACRO_FACTOR_CLEAN_ENABLED`, `PERSISTENCE_FIRST_LAST_NAV_ENABLED`, `CAPTURE_MONTH_END_ENABLED`, `ANNUALIZATION_INTERVAL_ENABLED`, `ANNUALIZATION_BY_DATES_ENABLED`, `DEFLATION_MONTH_ALIGN_ENABLED`, `SORTINO_MIN_DOWNSIDE_COUNT_ENABLED`, `FX_CONTRIBUTION_EUR_VIEW_ENABLED`, `EUR_NAV_CONVERSION_ENABLED`, `FAMILY_VERSIONING_ENABLED`, `BACKLOG_INCIDENT_AUTO_APPEND_ENABLED`)
 <!-- AUTO:END kill-switches-line -->
 - `shared/schema_checks.py` — `assert_schema_alignment()` validates DB columns at startup
 - `proyecto1/core/classify_utils.py` — **single source of truth** for all categorical normalization maps (EN→ES for Sector_Focus, Type, Family). Import from here; never duplicate elsewhere (P#11 / R-1).
@@ -303,6 +303,7 @@ proyecto2/
       test_export_metrics.py
     calculations/
       test_alert_engine_fix_20260913.py
+      test_annualization_by_dates_fnd0253.py
       test_annualization_interval_fnd0240.py
       test_calculations_pg.py
       test_consistency.py
@@ -384,6 +385,16 @@ proyecto2/
 
 `since_inception` (always), `crisis_windows` (per `CRISIS_WINDOWS` in config), rolling windows (per `ROLLING_WINDOWS` in config).  
 `real_flag=0` → nominal; `real_flag=1` → deflated by IPC.
+
+### Annualisation convention (FND-0240, FND-0253)
+
+`returns.annualized_return` / `rolling_stats` historically took the horizon from the NUMBER OF NAV ROWS, so a monthly series with missing
+months was treated as consecutive (return_ann inflated: LU1663960000 stored 20.9% vs 6.5% by dates). `ANNUALIZATION_BY_DATES_ENABLED`
+(**shipped OFF**) annualises by the first..last calendar month through the same `shared/annualization.years_spanned` (a dense series is
+bit-identical), weights a k-month return as k months in the vol (`kweighted_std`), uses one-month returns only for consistency / regime
+statistics, and is mirrored by `statistical_audit/timeseries.py` and the PIT metrics. Flip it ONLY with the `CALC_VERSION` bump and the
+recompute of the `risk`, `rolling`, `regime`, `persistence` families (`utils/family_versions.FLAG_FAMILIES`); the build-time continuity guard
+(`FUND_DATA_ELIGIBILITY_ENABLED`, `P3_FUND_NAV_MIN_COVERAGE`) stays as defence in depth.
 
 ### Idempotency & caching
 

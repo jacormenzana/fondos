@@ -28,6 +28,7 @@ import numpy as np
 import pandas as pd
 
 from shared import config as _config
+from shared.annualization import by_dates_enabled, month_ordinals   # FND-0253
 from shared.eur_nav import apply_eur_view_frame   # FND-0243
 from shared.config import (
     PERSISTENCE_WINDOW_MONTHS as WINDOW_MONTHS,
@@ -89,11 +90,12 @@ def _category_return_in_window(
     returns = []
     first_last = _config.PERSISTENCE_FIRST_LAST_NAV_ENABLED
     for row in rows:
-        isin, nav_s, nav_e, n, nav_f, nav_l = row[:6]   # [6:8] = window dates, used only by the EUR view
+        isin, nav_s, nav_e, n, nav_f, nav_l = row[:6]   # [6:8] = window dates (EUR view; FND-0253: the horizon by dates)
         if first_last:
             nav_s, nav_e = nav_f, nav_l
         if nav_s and nav_e and nav_s > 0:
-            years = n / 12
+            d_f, d_l = (row[6], row[7]) if len(row) >= 8 else (None, None)   # a 6-column row (stubs) has no dates: row count
+            years = _points_for_years(d_f, d_l, n) / 12
             ret = (nav_e / nav_s) ** (1 / years) - 1 if years > 0 else None
             if ret is not None:
                 returns.append(ret)
@@ -118,6 +120,16 @@ def _peer_rows_in_eur(conn, rows: list) -> list:
             if pd.notna(f) and pd.notna(l):
                 out.append((isin, nav_s, nav_e, n, float(f), float(l), d_f, d_l))
     return out
+
+
+def _points_for_years(first_date, last_date, n_rows: int) -> int:
+    """Rows to annualise over (the legacy `n / 12` sites). FND-0253: with ANNUALIZATION_BY_DATES_ENABLED, the dense-equivalent number of
+    points of the first..last calendar month, which equals n_rows for a window without gaps (so nothing moves for a dense series)."""
+    if not by_dates_enabled() or first_date is None or last_date is None:
+        return n_rows
+    mo = month_ordinals([first_date, last_date])
+    eff = int(mo[1] - mo[0]) + 1
+    return eff if eff >= 2 else n_rows
 
 
 # ============================================================
@@ -169,7 +181,7 @@ def compute_persistence(
             window_start += pd.DateOffset(months=STEP_MONTHS)
             continue
 
-        years_w = len(nav_w) / 12
+        years_w = _points_for_years(nav_w.index[0], nav_w.index[-1], len(nav_w)) / 12
         if years_w <= 0:
             window_start += pd.DateOffset(months=STEP_MONTHS)
             continue

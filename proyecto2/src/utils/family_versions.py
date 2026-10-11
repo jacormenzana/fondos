@@ -47,6 +47,8 @@ FLAG_FAMILIES: dict = {
     "CAPTURE_MONTH_END_ENABLED": "capture",
     # FND-0240: returns.annualized_return feeds the risk family (return_ann, sharpe, sortino), rolling_stats the rolling one.
     "ANNUALIZATION_INTERVAL_ENABLED": ("risk", "rolling"),
+    # FND-0253: annualise by DATES: returns.* (risk), rolling_stats (rolling), regime_returns (regime), persistence (persistence).
+    "ANNUALIZATION_BY_DATES_ENABLED": ("risk", "rolling", "regime", "persistence"),
     # FND-0241: deflate_nav feeds risk (risk_metrics + consistency), rolling (rolling_stats) and short (daily, never aligned -> not listed).
     "DEFLATION_MONTH_ALIGN_ENABLED": ("risk", "rolling"),
     # FND-0242: sortino_ratio feeds the risk family, rolling_stats._roll_sortino the rolling one (regime path untouched).

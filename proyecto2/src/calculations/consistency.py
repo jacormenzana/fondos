@@ -8,7 +8,9 @@ def consistency_metrics(nav_df, ipc_df=None):
     results = []
 
     # ---------- NOMINAL ----------
-    r_nom = monthly_returns(nav_df["nav"])
+    # FND-0253: with ANNUALIZATION_BY_DATES_ENABLED the "months" of these fractions are one-month returns only (a return spanning a
+    # NAV gap is not a monthly return); a dense series is unchanged.
+    r_nom = monthly_returns(nav_df["nav"], dates=nav_df["date"], one_month_only=True)
 
     results.extend([
         ("pct_positive_months", (r_nom > 0).mean(), 0),
@@ -26,7 +28,7 @@ def consistency_metrics(nav_df, ipc_df=None):
     if ipc_df is not None and not ipc_df.empty:
         deflated = deflate_nav(nav_df, ipc_df)
         if not deflated.empty:
-            r_real = monthly_returns(deflated["nav_real"])
+            r_real = monthly_returns(deflated["nav_real"], dates=deflated["date"], one_month_only=True)
 
             results.extend([
                 ("pct_positive_months", (r_real > 0).mean(), 1),
