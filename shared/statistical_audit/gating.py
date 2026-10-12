@@ -129,7 +129,9 @@ def coverage_of(held_out_count: Optional[float], held_out_isins: Iterable[str], 
 def select_evidence_run(conn, domain: str, contract: bool) -> tuple:
     """((run_id, run_ts) or None, note). Contract OFF: the latest audit_finding run id that is not a sample run. Contract ON (FND-0261,
     decision D4): the latest control.audit_run header with scope FULL and status other than INCOMPLETE -- a FAIL run IS evidence (it is
-    what blocks), and a run without a header (persisted before the table, or a crash: the header is in the rows' transaction) is not."""
+    what blocks), and a run without a header (persisted before the table, or a crash: the header is in the rows' transaction) is not.
+    run_ts = the run's started_at, when its data was read: the conservative reference against the DRAFT build time (an audit that read
+    the data before the build does not describe it, however late it was persisted)."""
     if not contract:
         run = conn.execute(
             "SELECT run_id, MAX(detected_at) FROM audit_finding WHERE domain = %s AND right(run_id, 7) <> '_sample' GROUP BY run_id "
@@ -139,8 +141,8 @@ def select_evidence_run(conn, domain: str, contract: bool) -> tuple:
         return None, ("control.audit_run no existe (AUDIT_COMPLETENESS_CONTRACT_ENABLED exige la tabla): aplique "
                       "scripts/ops/migrate_audit_run.py --apply y persista una auditoria completa")
     run = conn.execute(
-        "SELECT run_id, finished_at FROM audit_run WHERE domain = %s AND scope = 'FULL' AND status <> 'INCOMPLETE' "
-        "ORDER BY finished_at DESC LIMIT 1", (domain,)).fetchone()
+        "SELECT run_id, COALESCE(started_at, finished_at) AS run_ts FROM audit_run WHERE domain = %s AND scope = 'FULL' "
+        "AND status <> 'INCOMPLETE' ORDER BY COALESCE(started_at, finished_at) DESC LIMIT 1", (domain,)).fetchone()
     if run is None:
         return None, "ninguna auditoria de ambito FULL con estado distinto de INCOMPLETE en control.audit_run"
     return (run[0], run[1]), ""

@@ -92,6 +92,17 @@ def test_persist_run_writes_rows_and_header_together(tx_conn):
     assert row == ("FULL", "FAIL", [{"check": "OUTLIER"}], True, True)
 
 
+def test_finished_at_is_the_clock_time_not_the_start_of_the_long_audit_transaction(tx_conn):
+    # the runner reads the whole audit inside one transaction; now() would stamp the header with that transaction's start
+    conn = tx_conn
+    _tables(conn)
+    tx_start = conn.execute("SELECT now()").fetchone()[0]                                 # opens the transaction, like the audit reads
+    conn.execute("SELECT pg_sleep(0.3)")
+    persist_run(conn, "r1", DOMAIN, STATS, [], header=_header())
+    finished_at = conn.execute("SELECT finished_at FROM audit_run WHERE run_id = 'r1'").fetchone()[0]
+    assert (finished_at - tx_start).total_seconds() >= 0.25
+
+
 def test_a_failure_mid_persist_leaves_the_previous_run_intact_and_no_partial_rows(tx_conn):
     conn = tx_conn
     _tables(conn)
@@ -144,7 +155,7 @@ def test_the_gate_selects_the_latest_full_complete_header(tx_conn):
     for run_id, status, scope in (("r_fail", "FAIL", "FULL"), ("r_incomplete", "INCOMPLETE", "FULL"), ("r_sample", "PASS", "SAMPLE")):
         persist_run(conn, run_id, DOMAIN, [], [], header=_header(status, scope))
     run, note = select_evidence_run(conn, DOMAIN, contract=True)
-    assert run[0] == "r_fail" and note == ""
+    assert run == ("r_fail", T0) and note == ""                                       # run_ts = started_at, when the data was read
     conn.rollback()
 
 

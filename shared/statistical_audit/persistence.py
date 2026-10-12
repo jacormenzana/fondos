@@ -237,9 +237,11 @@ def _finding_isin_rows(run_id, domain, findings) -> list:
 AUDIT_RUN_COLUMNS = ("scope", "status", "started_at", "universe_size", "skips", "catalog_version", "git_commit", "git_clean", "config_hash")
 
 # Idempotent as DELETE + INSERT of the same (run_id, domain) inside persist_run: a re-persisted run never keeps an older header.
+# finished_at = clock_timestamp(), not the column default now(): the runner reads the whole audit inside ONE transaction, and now() is
+# that transaction's START (seen on the first live header, 2026-10-12: finished_at 25 ms after started_at for a 4-minute run).
 _AUDIT_RUN_SQL = (
-    "INSERT INTO audit_run (run_id, domain, scope, status, started_at, universe_size, skips, catalog_version, git_commit, git_clean, "
-    "config_hash) VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s)"
+    "INSERT INTO audit_run (run_id, domain, scope, status, started_at, finished_at, universe_size, skips, catalog_version, git_commit, "
+    "git_clean, config_hash) VALUES (%s, %s, %s, %s, %s, clock_timestamp(), %s, %s::jsonb, %s, %s, %s, %s)"
 )
 
 

@@ -319,7 +319,7 @@ def test_isins_of_is_sorted_distinct_and_tolerant():
 # ---------------- FND-0261: evidence from control.audit_run when the completeness contract is on ----------------
 
 class _HeaderConn(_Conn):
-    """control.audit_run headers [(run_id, finished_at, scope, status)]; applies the scope / status clauses only if the SQL carries them
+    """control.audit_run headers [(run_id, started_at, scope, status)]; applies the scope / status clauses only if the SQL carries them
     (so a test fails if the loader drops one)."""
     def __init__(self, headers, table=True, **kw):
         super().__init__(run=("legacy_run", _ts(23)), **kw)          # what the contract-OFF query would pick
@@ -331,7 +331,7 @@ class _HeaderConn(_Conn):
             self.sql.append(s)
             rows = [("audit_run",)] if self.table else [(None,)]
             return SimpleNamespace(fetchone=lambda: rows[0], fetchall=lambda: rows)
-        if s.startswith("SELECT run_id, finished_at FROM audit_run"):
+        if s.startswith("SELECT run_id, COALESCE(started_at, finished_at) AS run_ts FROM audit_run"):
             self.sql.append(s)
             hs = [h for h in self.headers
                   if not ("scope = 'FULL'" in s and h[2] != "FULL") and not ("status <> 'INCOMPLETE'" in s and h[3] == "INCOMPLETE")]
