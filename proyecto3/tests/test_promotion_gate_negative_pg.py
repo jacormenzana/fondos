@@ -52,7 +52,7 @@ def world(db, monkeypatch):
     conn = db
     conn.execute("ALTER TABLE fund_master ADD COLUMN fund_currency text, ADD COLUMN hedging_policy text, "
                  "ADD COLUMN asset_currency text, ADD COLUMN in_current_universe smallint NOT NULL DEFAULT 1")
-    for t in ("audit_finding", "audit_finding_isin", "audit_accepted_finding", "audit_run"):
+    for t in ("audit_finding", "audit_finding_isin", "audit_accepted_finding", "audit_run", "audit_exception_event"):
         conn.execute(f"CREATE TABLE {t} (LIKE control.{t} INCLUDING ALL)")          # real CHECK constraints and defaults, no FK
     # FND-0261 (AUDIT_COMPLETENESS_CONTRACT_ENABLED ON): the evidence is the run's header, written with its rows by --persist
     conn.execute("INSERT INTO audit_run (run_id, domain, scope, status, started_at) VALUES (%s, 'p2_metrics', 'FULL', 'PASS_WITH_WARNINGS', %s)",
@@ -235,6 +235,32 @@ def test_a_run_without_a_header_is_not_evidence(world, capsys):
     conn.execute("DELETE FROM audit_run")
     conn.commit()
     _assert_refused(conn, cli.main([SCENARIO]), capsys, "AUDIT_STALE")
+
+
+def test_governed_exceptions_on_a_consistent_history_promotes_and_the_note_names_the_grant(world, capsys, monkeypatch):
+    # FND-0263 with AUDIT_EXCEPTION_EVENTS_ENABLED: a universe residual recorded as GRANT + APPROVE covers the defect, the gate trusts
+    # the history, and the promotion note names the grant and the configuration hash
+    import shared.config as cfg
+    from shared.statistical_audit import persistence as ps
+    monkeypatch.setattr(cfg, "AUDIT_EXCEPTION_EVENTS_ENABLED", True)
+    conn, _ = world
+    _hard_finding(conn, [OUTSIDE])
+    gid = ps.grant_exception(conn, "p2_metrics", RULE, [OUTSIDE], "FND-0250", "a reason long enough", TODAY + timedelta(days=30), "ana")
+    ps.approve_exception(conn, gid, "ana")
+    rc = cli.main([SCENARIO])
+    assert rc == cli.RC_OK, capsys.readouterr().out
+    note = conn.execute("SELECT message FROM ingestion_log WHERE step = 'P3_SCENARIO_PROMOTED'").fetchone()[0]
+    assert f"exceptions {gid}" in note and "config v1:" in note
+
+
+def test_governed_exceptions_refuse_a_residual_written_behind_the_history(world, capsys, monkeypatch):
+    import shared.config as cfg
+    monkeypatch.setattr(cfg, "AUDIT_EXCEPTION_EVENTS_ENABLED", True)
+    conn, _ = world
+    _hard_finding(conn, [OUTSIDE])
+    _accept(conn, OUTSIDE, TODAY + timedelta(days=30))                                    # the legacy direct write: no event
+    rc = cli.main([SCENARIO, "--accept-alarms", "un motivo", "--ap", "FND-0251"])
+    _assert_refused(conn, rc, capsys, "EXCEPTIONS")
 
 
 def test_an_incomplete_full_run_is_not_evidence_and_the_refusal_says_why(world, capsys):

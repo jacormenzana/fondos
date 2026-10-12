@@ -438,6 +438,14 @@ AUDIT_RESIDUAL_EXPIRY_WARN_DAYS: int = 30
 # FAIL (known cost defects; costs do not feed the gate yet, G-COST), both with 0 required checks missing; the gate selected the same run, defects,
 # residuals and coverage for the PRODUCTION scenario with the switch OFF and ON. Rollback = False (no DDL to undo; headers stay harmless).
 AUDIT_COMPLETENESS_CONTRACT_ENABLED: bool = True
+# FND-0263 (GOV-04), governed exceptions. Whatever the switch, once the owner applies scripts/ops/migrate_audit_governance.py every accepted
+# residual is an append-only event (control.audit_exception_event: GRANT / RENEW, then a separate APPROVE, decision D6; REVOKE with a cause)
+# and control.audit_accepted_finding is refreshed from that history in the same transaction (accept_audit_residual.py). With the switch ON:
+#   * the promotion gate refuses ([GATE:EXCEPTIONS], no override) when the history cannot be read or the table disagrees with it, instead of
+#     reading an unreadable store as "no residuals";
+#   * accept_audit_residual.py refuses the legacy direct write when the history table is missing.
+# OFF until the owner has applied the migration (it backfills the current residuals as GRANT + APPROVE and checks the projection). Rollback = False.
+AUDIT_EXCEPTION_EVENTS_ENABLED: bool = False
 
 # ============================================================
 # Directorios de datos externos (inputs no versionados)

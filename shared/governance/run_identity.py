@@ -12,11 +12,24 @@ doc/reglas/GOBIERNO_CONTROLES.md). One definition for every recorder, so a promo
 from __future__ import annotations
 
 import hashlib
+import re
 import subprocess
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[2]
 CONFIG_HASH_VERSION = "v1"
+RUN_PIPELINE = _ROOT / "proyecto2" / "src" / "pipeline" / "run_pipeline.py"
+_CALC_VERSION_RE = re.compile(r"""^CALC_VERSION\s*(?::\s*str\s*)?=\s*["'](\d+)["']""", re.M)
+
+
+def calc_version(path: Path | None = None) -> str | None:
+    """P2's CALC_VERSION, read from the source text: importing run_pipeline would load the whole P2 stack just to read one constant.
+    None when the file or the constant cannot be found. (Moved here from scripts/launch/p1p2_state.py, which delegates: one reader.)"""
+    try:
+        m = _CALC_VERSION_RE.search((path or RUN_PIPELINE).read_text(encoding="utf-8"))
+    except OSError:
+        return None
+    return m.group(1) if m else None
 
 
 def git_state(root: Path = _ROOT) -> tuple:

@@ -200,6 +200,101 @@ def emit_accepted_residuals(
     return len(rows)
 
 
+# ---- exception history (FND-0263, GOV-04) -----------------------------------------------------------------------------------------
+# Every decision is an event in control.audit_exception_event (append-only, enforced by a trigger); control.audit_accepted_finding, which
+# every reader uses, is refreshed from accepted_residuals.fold_events in the SAME transaction as the event. Decision D6: GRANT (or
+# RENEW) then a separate APPROVE; a grant is not active until approved; same person allowed, no time pad.
+
+_EVENT_SQL = (
+    "INSERT INTO audit_exception_event (event_type, domain, rule_id, isins, ap_id, reason, expires_at, cause, ref_event_id, actor) "
+    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING event_id"
+)
+
+
+def exception_events_table_exists(conn: "psycopg.Connection") -> bool:
+    """True when audit_exception_event is visible (scripts/ops/migrate_audit_governance.py was applied)."""
+    return conn.execute("SELECT to_regclass('audit_exception_event')").fetchone()[0] is not None
+
+
+def _refresh_projection(conn: "psycopg.Connection", domain: str, rule_id: str, isins: Sequence[str]) -> None:
+    """Rewrite the audit_accepted_finding rows of (domain, rule_id, isins) from the folded history. No commit."""
+    from shared.statistical_audit.accepted_residuals import fold_events, load_events
+    folded = fold_events(load_events(conn, domain))
+    for isin in sorted(set(isins)):
+        state = folded.get((rule_id, isin))
+        if state is None:
+            conn.execute("DELETE FROM audit_accepted_finding WHERE domain = %s AND rule_id = %s AND isin = %s", (domain, rule_id, isin))
+            continue
+        conn.execute(
+            "INSERT INTO audit_accepted_finding (domain, rule_id, isin, ap_id, reason, accepted_by, accepted_at, expires_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) "
+            "ON CONFLICT (domain, rule_id, isin) DO UPDATE SET ap_id = excluded.ap_id, reason = excluded.reason, "
+            "accepted_by = excluded.accepted_by, accepted_at = excluded.accepted_at, expires_at = excluded.expires_at",
+            (domain, rule_id, isin, state["ap_id"], state["reason"], state["approved_by"], state["approved_at"].date(),
+             state["expires_at"]))
+
+
+def _write_event(conn, refresh: tuple | None, *values) -> int:
+    """Insert one event (and refresh the projection of `refresh` = (domain, rule_id, isins)) in one transaction; commit."""
+    try:
+        (event_id,) = conn.execute(_EVENT_SQL, values).fetchone()
+        if refresh is not None:
+            _refresh_projection(conn, *refresh)
+    except Exception:
+        conn.rollback()
+        raise
+    conn.commit()
+    return event_id
+
+
+def grant_exception(conn: "psycopg.Connection", domain: str, rule_id: str, isins: Sequence[str], ap_id: str, reason: str,
+                    expires_at: Any, actor: str, *, renew: bool = False) -> int:
+    """Record a GRANT (or RENEW) of (domain, rule_id, isins). Pending: nothing is accepted until approve_exception. Returns event_id."""
+    if not isins:
+        raise ValueError("a grant needs at least one ISIN")
+    return _write_event(conn, None, "RENEW" if renew else "GRANT", domain, rule_id, sorted(set(isins)), ap_id, reason, expires_at,
+                        None, None, actor)
+
+
+def _grant(conn, grant_event_id: int) -> tuple:
+    """(the event, its grant_state)."""
+    from shared.statistical_audit.accepted_residuals import grant_state, load_events
+    row = conn.execute("SELECT domain FROM audit_exception_event WHERE event_id = %s", (grant_event_id,)).fetchone()
+    if row is None:
+        raise ValueError(f"event {grant_event_id} does not exist")
+    events = load_events(conn, row[0])
+    return next(e for e in events if e["event_id"] == grant_event_id), grant_state(events, grant_event_id)
+
+
+def approve_exception(conn: "psycopg.Connection", grant_event_id: int, actor: str, today: Any = None) -> int:
+    """APPROVE a pending GRANT / RENEW: from now on its ISINs are accepted until its expiry. Refuses a grant that is not pending or
+    already lapsed (a decision on an expired grant is a new grant). Returns event_id."""
+    from datetime import date
+    g, state = _grant(conn, grant_event_id)
+    if state != "PENDING":
+        raise ValueError(f"event {grant_event_id} is {state}, not a pending grant")
+    if g["expires_at"] <= (today or date.today()):
+        raise ValueError(f"grant {grant_event_id} expired on {g['expires_at']}: record a new grant")
+    return _write_event(conn, (g["domain"], g["rule_id"], g["isins"]), "APPROVE", g["domain"], g["rule_id"], None, None, None, None,
+                        None, grant_event_id, actor)
+
+
+def revoke_exception(conn: "psycopg.Connection", grant_event_id: int, actor: str, cause: str, reason: str,
+                     isins: Sequence[str] | None = None) -> int:
+    """REVOKE a grant (all its ISINs, or `isins` among them): they stop being accepted now. `cause` in REVOKE_CAUSES. Returns event_id."""
+    from shared.statistical_audit.accepted_residuals import REVOKE_CAUSES
+    if cause not in REVOKE_CAUSES:
+        raise ValueError(f"cause must be one of {REVOKE_CAUSES}")
+    g, state = _grant(conn, grant_event_id)
+    if state in ("MISSING", "NOT_A_GRANT", "REVOKED"):
+        raise ValueError(f"event {grant_event_id} is {state}: nothing to revoke")
+    subset = sorted(set(isins)) if isins else None
+    if subset and not set(subset) <= set(g["isins"]):
+        raise ValueError(f"ISINs not in grant {grant_event_id}: {sorted(set(subset) - set(g['isins']))}")
+    return _write_event(conn, (g["domain"], g["rule_id"], subset or g["isins"]), "REVOKE", g["domain"], g["rule_id"], subset, None,
+                        reason, None, cause, grant_event_id, actor)
+
+
 def emit_finding_isins(
     conn: "psycopg.Connection",
     run_id: str,
@@ -243,6 +338,18 @@ _AUDIT_RUN_SQL = (
     "INSERT INTO audit_run (run_id, domain, scope, status, started_at, finished_at, universe_size, skips, catalog_version, git_commit, "
     "git_clean, config_hash) VALUES (%s, %s, %s, %s, %s, clock_timestamp(), %s, %s::jsonb, %s, %s, %s, %s)"
 )
+# FND-0263: the same row plus the execution manifest, once migrate_audit_governance.py added the column (feature-detected, so code deployed
+# before the migration keeps persisting instead of failing the whole run's transaction).
+AUDIT_RUN_MANIFEST = "manifest"
+_AUDIT_RUN_MANIFEST_SQL = (
+    "INSERT INTO audit_run (run_id, domain, scope, status, started_at, finished_at, universe_size, skips, catalog_version, git_commit, "
+    "git_clean, config_hash, manifest) VALUES (%s, %s, %s, %s, %s, clock_timestamp(), %s, %s::jsonb, %s, %s, %s, %s, %s::jsonb)"
+)
+
+
+def audit_run_has_manifest(conn: "psycopg.Connection") -> bool:
+    return conn.execute("SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('audit_run') AND attname = 'manifest' "
+                        "AND NOT attisdropped").fetchone() is not None
 
 
 def audit_run_table_exists(conn: "psycopg.Connection") -> bool:
@@ -271,7 +378,8 @@ def persist_run(
     """One audit run -- previous rows of the same (run_id, domain) removed, statistics, findings, ISIN detail and the audit_run header
     -- in ONE transaction: a run is either all there or not there at all (before FND-0261 each table committed on its own, so a crash
     left a partial run that the promotion gate could read as a real one). `statistics` = AuditRun.statistics 4-tuples
-    (population, group_key, stats, n); `header` = AUDIT_RUN_COLUMNS values (`skips` a JSON-ready list). Tables that do not exist yet
+    (population, group_key, stats, n); `header` = AUDIT_RUN_COLUMNS values (`skips` a JSON-ready list) plus, optionally, `manifest`
+    (a JSON-ready dict, written when the column exists). Tables that do not exist yet
     (audit_finding_isin, audit_run: owner migrations) are skipped, as before. Rolls back and re-raises on any failure."""
     try:
         clear_run(conn, run_id, domain)
@@ -291,7 +399,10 @@ def persist_run(
         header_written = False
         if header is not None and header_table:
             values = [json.dumps(header[c]) if c == "skips" else header[c] for c in AUDIT_RUN_COLUMNS]
-            conn.execute(_AUDIT_RUN_SQL, (run_id, domain, *values))
+            if AUDIT_RUN_MANIFEST in header and audit_run_has_manifest(conn):
+                conn.execute(_AUDIT_RUN_MANIFEST_SQL, (run_id, domain, *values, json.dumps(header[AUDIT_RUN_MANIFEST], default=str)))
+            else:
+                conn.execute(_AUDIT_RUN_SQL, (run_id, domain, *values))
             header_written = True
     except Exception:
         conn.rollback()

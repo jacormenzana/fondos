@@ -163,7 +163,7 @@ from shared.statistical_audit.outliers import detect_outliers
 from shared.statistical_audit.persistence import load_finding_isins, persist_run, statistics_to_frame
 from shared.statistical_audit import completeness as cpl
 from shared.statistical_audit.completeness import KIND_EMPTY, KIND_MISSING, KIND_NOT_APPLICABLE, Skip
-from shared.governance.run_identity import config_hash, git_state
+from shared.governance.run_identity import calc_version, config_hash, git_state
 from shared.statistical_audit.ratio_bounds import add_downside_deviation_columns
 from shared.statistical_audit.reconcile import reconcile_with_alerts
 from shared.statistical_audit.recompute_gate import assert_recompute_happened, capture_state
@@ -1701,12 +1701,36 @@ def _print_catalog(domain: str | None) -> None:
 # Persistence, reporting, CLI
 # ============================================================
 
-def _run_header(run: "AuditRun", scope: str, status: str, started_at: datetime, catalog_version: str) -> dict:
-    """control.audit_run values for this run (persistence.AUDIT_RUN_COLUMNS). No severity counts: cycle_audit_run derives those."""
+def _run_header(run: "AuditRun", scope: str, status: str, started_at: datetime, catalog_version: str,
+                manifest: dict | None = None) -> dict:
+    """control.audit_run values for this run (persistence.AUDIT_RUN_COLUMNS, plus `manifest` when given). No severity counts:
+    cycle_audit_run derives those."""
     sha, clean = git_state()
-    return {"scope": scope, "status": status, "started_at": started_at, "universe_size": run.universe_size,
-            "skips": cpl.skips_payload(run.skips, scope), "catalog_version": catalog_version,
-            "git_commit": sha, "git_clean": clean, "config_hash": config_hash()}
+    header = {"scope": scope, "status": status, "started_at": started_at, "universe_size": run.universe_size,
+              "skips": cpl.skips_payload(run.skips, scope), "catalog_version": catalog_version,
+              "git_commit": sha, "git_clean": clean, "config_hash": config_hash()}
+    if manifest is not None:
+        header["manifest"] = manifest
+    return header
+
+
+def _run_manifest(conn: "psycopg.Connection", run: "AuditRun") -> dict:
+    """The execution manifest (FND-0263): which data the run judged. CALC_VERSION of the code, the data cut-off and the algorithm_version
+    spread of the active universe (the inputs of the P3 freshness gate, read by the same function: P#11), and the run's coverage.
+    Information: a read failure is recorded in the manifest, never fails the persist (rolled back first: nothing is written yet)."""
+    from collections import Counter
+    manifest = {"calc_version": calc_version(), "universe_size": run.universe_size,
+                "snapshot_held_out": len(run.snapshot_held_out)}
+    try:
+        from proyecto3.src.data_freshness import load_freshness_inputs
+        nav_dates, harvest, versions = load_freshness_inputs(conn)
+        nav_dates = [d for d in nav_dates if d is not None]
+        manifest.update({"max_nav_date": max(nav_dates) if nav_dates else None, "newest_harvest": harvest,
+                         "algorithm_versions": dict(Counter(str(v) for v in versions))})
+    except Exception as exc:                                     # noqa: BLE001 -- information only
+        conn.rollback()
+        manifest["data_cutoff_error"] = type(exc).__name__
+    return manifest
 
 
 def _persist(conn: "psycopg.Connection", run: "AuditRun", run_id: str, *, scope: str | None = None,
@@ -1716,7 +1740,7 @@ def _persist(conn: "psycopg.Connection", run: "AuditRun", run_id: str, *, scope:
     catalog_version = compute_catalog_version()
     scope = scope or (cpl.SCOPE_SAMPLE if run_id.endswith(SAMPLE_RUN_SUFFIX) else cpl.SCOPE_FULL)
     status = cpl.run_status(run.skips, run.findings, scope)
-    header = _run_header(run, scope, status, started_at or datetime.now(timezone.utc), catalog_version)
+    header = _run_header(run, scope, status, started_at or datetime.now(timezone.utc), catalog_version, _run_manifest(conn, run))
     result = persist_run(conn, run_id, run.domain, run.statistics, run.findings, catalog_version=catalog_version, header=header)
     run.persisted_isin_rows = result.n_isin_rows
     run.persisted_header = result.header_written

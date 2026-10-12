@@ -160,6 +160,9 @@ _APPEND_ONLY_TABLES: dict[str, str] = {
     "audit_finding":
         "DESIGN: rows are keyed by run_id and the runner calls persistence.clear_run(run_id) before "
         "emit_findings, so a re-run replaces the run's rows instead of duplicating them",
+    "audit_exception_event":
+        "DESIGN: FND-0263 append-only decision log of accepted residuals (a trigger refuses UPDATE / DELETE / TRUNCATE); every "
+        "GRANT / APPROVE / REVOKE is a new row by definition, never re-run by a cycle (owner CLI only)",
 }
 
 _DML = {"SELECT", "WITH", "INSERT", "UPDATE", "DELETE", "VALUES"}

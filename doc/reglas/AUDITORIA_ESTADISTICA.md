@@ -657,10 +657,14 @@ el informe de la auditoría, la promoción y el informe de ciclo (`expiring_soon
 está CLOSED. Un hallazgo íntegramente aceptado se persiste con la `rule_class` que tenía (severidad `INFO`): `ACCEPTED_RESIDUAL` solo
 existe en memoria porque el `CHECK` de `control.audit_finding` no la admite.
 
-Alta y renovación: `python scripts/audit/accept_audit_residual.py --domain costs --rule <RULE> --ap
-FND-xxxx --reason "..." [--apply]` (sin `--apply` solo muestra los ISIN). Crear la tabla:
-`scripts/ops/migrate_audit_accepted_finding.py --apply` (propietario). Sin la tabla la auditoría
-funciona igual y avisa por stderr de que no hay residuales aceptados.
+Alta y renovación (decisión en dos pasos, FND-0263 / D6): `python scripts/audit/accept_audit_residual.py --domain costs --rule
+<RULE> --ap FND-xxxx --reason "..." [--renew] --apply` registra un `GRANT` (o `RENEW`) **pendiente**; `--approve <event_id> --apply`,
+como orden aparte, lo activa; `--revoke <event_id> --cause OWNER|AP_CLOSED|RESOLVED --reason "..." [--isin ...] --apply` lo retira;
+`--history --domain costs` muestra el registro. Sin `--apply` nada se escribe. Cada decisión es un evento de
+`control.audit_exception_event` (append-only) y `control.audit_accepted_finding` se refresca desde ese historial en la misma
+transacción (política completa: `GOBIERNO_CONTROLES.md` §5). Crear las tablas: `scripts/ops/migrate_audit_accepted_finding.py --apply`
+y `scripts/ops/migrate_audit_governance.py --apply` (propietario; la segunda vuelca los residuales vigentes como `GRANT` + `APPROVE`).
+Sin la tabla de residuales la auditoría funciona igual y lo registra como comprobación `ACCEPTED_RESIDUALS` ausente (§6.4).
 
 Corrección asociada: los marcos de costes nombran la columna `ISIN` y la búsqueda de ISIN
 infractores era en minúsculas, así que todos los ALARM de costes decían "0 ISINs"; ahora se busca sin

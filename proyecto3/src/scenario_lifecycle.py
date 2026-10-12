@@ -142,6 +142,7 @@ GATE_STATUS, GATE_WEIGHTS, GATE_CASH, GATE_FRESHNESS, GATE_FX = "STATUS", "WEIGH
 GATE_AUDIT_STALE, GATE_DATA_COVERAGE = "AUDIT_STALE", "DATA_COVERAGE"
 GATE_DATA_SCENARIO, GATE_RESIDUAL_SCENARIO, GATE_DATA_UNIVERSE = "DATA_SCENARIO", "RESIDUAL_SCENARIO", "DATA_UNIVERSE"
 GATE_OVERRIDE_AP = "OVERRIDE_AP"
+GATE_EXCEPTIONS = "EXCEPTIONS"                 # FND-0263: the accepted-residual history cannot be read or disagrees with its projection
 AP_RE = re.compile(r"^FND-\d{4}$")
 # Gates a reasoned override (--accept-alarms "motivo" --ap FND-nnnn) may cover: defects ON the scenario and the audit's blind spots.
 # Everything else is hard: exposure, cash, weights, freshness, a stale audit, and universe-only defects (their way out is an accepted
@@ -165,7 +166,8 @@ class PromotionVerdict:
 def evaluate_promotion(*, status: Optional[str], n_funds: int, weight_sum: float, stale_checks: list,
                        exposure_non_eur: float, budget: float, audit, built_at=None,
                        accept_alarms: Optional[str] = None, accept_ap: Optional[str] = None, ap_exists: Optional[bool] = None,
-                       declared_cash: float = 0.0, max_cash: Optional[float] = None) -> PromotionVerdict:
+                       declared_cash: float = 0.0, max_cash: Optional[float] = None,
+                       exceptions_problem: Optional[str] = None) -> PromotionVerdict:
     """Pure: why a scenario may not be promoted (empty `blockers` = promotable) and which gates a reasoned override covered.
 
     HARD gates, no override (owner decisions 2026-10-11): the currency-exposure budget (`shared.config.MAX_NON_EUR_UNHEDGED_WEIGHT`) and the
@@ -184,7 +186,11 @@ def evaluate_promotion(*, status: Optional[str], n_funds: int, weight_sum: float
     Statistical anomalies on the scenario's funds are information (the selection picks score extremes), never a blocker.
 
     `accept_alarms` is the reason and `accept_ap` the owning ticket (FND-nnnn); `ap_exists` is the backlog lookup (None = could not be
-    checked: a warning for the caller, not a blocker; False = the ticket does not exist: the override is refused)."""
+    checked: a warning for the caller, not a blocker; False = the ticket does not exist: the override is refused).
+
+    `exceptions_problem` (FND-0263, only with shared.config.AUDIT_EXCEPTION_EVENTS_ENABLED): why the accepted-residual history cannot be
+    trusted (unreadable, or the projection disagrees with it). EXCEPTIONS is hard, no override: the residuals the gate just read may be
+    wrong, so neither DATA_UNIVERSE nor RESIDUAL_SCENARIO can be evaluated."""
     if max_cash is None:
         from shared.config import MAX_PORTFOLIO_CASH_WEIGHT as max_cash
     hard: list = []
@@ -212,6 +218,8 @@ def evaluate_promotion(*, status: Optional[str], n_funds: int, weight_sum: float
                       "reconstruya la cartera)"))
 
     # --- data gates --------------------------------------------------------------------------------------------------------------
+    if exceptions_problem:
+        hard.append(g(GATE_EXCEPTIONS, f"el historial de residuales aceptados no es fiable (sin override): {exceptions_problem}"))
     if not audit.has_run:
         why = getattr(audit, "selection_note", "")
         hard.append(g(GATE_AUDIT_STALE, "no hay ninguna auditoria persistida del dominio p2_metrics (sin override): ejecute "

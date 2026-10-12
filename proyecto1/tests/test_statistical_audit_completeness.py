@@ -23,7 +23,7 @@ from shared.governance import controls as gc  # noqa: E402
 from shared.governance import run_identity as ri  # noqa: E402
 from shared.statistical_audit import completeness as cpl  # noqa: E402
 from shared.statistical_audit.completeness import Skip  # noqa: E402
-from shared.statistical_audit.persistence import AUDIT_RUN_COLUMNS  # noqa: E402
+from shared.statistical_audit.persistence import AUDIT_RUN_COLUMNS, AUDIT_RUN_MANIFEST  # noqa: E402
 
 _RUNNER = os.path.join(_ROOT, "scripts", "audit", "run_statistical_audit.py")
 _CONTROL_SQL = os.path.join(_ROOT, "db", "pg", "35_control.sql")
@@ -157,7 +157,16 @@ def _check_values(ddl, column):
 
 def test_audit_run_columns_are_the_key_the_database_default_and_what_the_writer_sets():
     cols = _columns(_create_table("control.audit_run"))
-    assert set(cols) == {"run_id", "domain", "finished_at"} | set(AUDIT_RUN_COLUMNS)
+    assert set(cols) == {"run_id", "domain", "finished_at", AUDIT_RUN_MANIFEST} | set(AUDIT_RUN_COLUMNS)
+
+
+def test_the_manifest_column_is_defined_identically_in_the_create_and_in_the_governance_block():
+    # a database created before FND-0263 gets the column from the block's ALTER; a fresh one from the CREATE: same definition
+    with open(_CONTROL_SQL, encoding="utf-8") as f:
+        sql = f.read()
+    create = re.search(r"^\s+manifest\s+(jsonb\s+NOT NULL DEFAULT '\{\}')", _create_table("control.audit_run"), re.M)
+    alter = re.search(r"ALTER TABLE control\.audit_run ADD COLUMN IF NOT EXISTS manifest (jsonb NOT NULL DEFAULT '\{\}');", sql)
+    assert create and alter and " ".join(create.group(1).split()) == alter.group(1)
 
 
 def test_audit_run_check_domains_match_the_code():

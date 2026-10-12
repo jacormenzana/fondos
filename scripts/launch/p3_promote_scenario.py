@@ -45,6 +45,31 @@ def _git_state() -> str:
     return describe_git_state(git_state(_ROOT))
 
 
+def _governed_exceptions(conn, enabled: bool) -> tuple:
+    """(problem or None, {(rule_id, isin): grant_event_id}) for the accepted residuals of AUDIT_DOMAIN (FND-0263). With
+    AUDIT_EXCEPTION_EVENTS_ENABLED an unreadable history, or a projection that disagrees with it, is a problem (GATE:EXCEPTIONS);
+    without it the history only feeds the promotion note, and is skipped silently when it cannot be read."""
+    from shared.statistical_audit import accepted_residuals
+    try:
+        governed = accepted_residuals.verify_governed(conn, AUDIT_DOMAIN)
+    except Exception as exc:                                     # noqa: BLE001 -- the caller decides what an unreadable store means
+        conn.rollback()
+        return ((f"control.audit_exception_event no es legible ({type(exc).__name__}): aplique scripts/ops/migrate_audit_governance.py"
+                 if enabled else None), {})
+    if enabled and governed["drift"]:
+        rule_id, isin, table, hist = governed["drift"][0]
+        return (f"{len(governed['drift'])} clave(s) (regla, ISIN) difieren entre audit_accepted_finding y su historial; p.ej. {rule_id} "
+                f"{isin}: tabla {table}, historial {hist}", governed["sources"])
+    return None, governed["sources"]
+
+
+def _exception_ids(scope, sources: dict) -> str:
+    """`exceptions <grant ids>` behind the residuals this promotion relied on or listed (for the note), or ''."""
+    keys = [(r[0], r[1]) for r in list(scope.covered_by_residual) + list(scope.residuals_on_scenario)]
+    ids = sorted({sources[k] for k in keys if k in sources})
+    return f"exceptions {','.join(str(i) for i in ids)}" if ids else ""
+
+
 def _built_at(conn, scenario_id: str):
     row = conn.execute("SELECT built_at FROM portfolio_scenarios WHERE scenario_id = %s", (scenario_id,)).fetchone()
     return row[0] if row else None
@@ -67,7 +92,9 @@ def main(argv=None) -> int:
     ap.add_argument("--ap", default=None, metavar="FND-nnnn", help="ticket que corrige la causa; obligatorio con --accept-alarms")
     args = ap.parse_args(argv)
 
-    from shared.config import AUDIT_RESIDUAL_EXPIRY_WARN_DAYS, MAX_NON_EUR_UNHEDGED_WEIGHT, MAX_PORTFOLIO_CASH_WEIGHT
+    from shared.config import (AUDIT_EXCEPTION_EVENTS_ENABLED, AUDIT_RESIDUAL_EXPIRY_WARN_DAYS, MAX_NON_EUR_UNHEDGED_WEIGHT,
+                               MAX_PORTFOLIO_CASH_WEIGHT)
+    from shared.governance.run_identity import config_hash
     from shared.db import get_connection
     from shared import backlog_client, fx_exposure
     from shared.statistical_audit import accepted_residuals, gating
@@ -99,6 +126,7 @@ def main(argv=None) -> int:
             accepted = {}
             print(f"AVISO: control.audit_accepted_finding no es legible ({type(exc).__name__}): sin residuales aceptados")
         scope = gating.load_scope(conn, AUDIT_DOMAIN, weights.keys(), accepted)
+        exceptions_problem, exception_sources = _governed_exceptions(conn, AUDIT_EXCEPTION_EVENTS_ENABLED)
 
         print(f"Escenario {args.scenario_id}: estado {status}, {len(weights)} fondos, pesos suman {sum(weights.values()):.4f}")
         print(fx_exposure.format_line(expo))
@@ -137,7 +165,8 @@ def main(argv=None) -> int:
         verdict = lc.evaluate_promotion(
             status=status, n_funds=len(weights), weight_sum=sum(weights.values()), stale_checks=stale,
             exposure_non_eur=expo["non_eur"], budget=MAX_NON_EUR_UNHEDGED_WEIGHT, audit=scope, built_at=built_at,
-            accept_alarms=reason, accept_ap=ap_id, ap_exists=ap_exists, declared_cash=cash, max_cash=MAX_PORTFOLIO_CASH_WEIGHT)
+            accept_alarms=reason, accept_ap=ap_id, ap_exists=ap_exists, declared_cash=cash, max_cash=MAX_PORTFOLIO_CASH_WEIGHT,
+            exceptions_problem=exceptions_problem)
         if verdict.blockers:
             print("\nNO PROMOVIBLE:")
             for b in verdict.blockers:
@@ -157,7 +186,10 @@ def main(argv=None) -> int:
             return RC_OK
 
         user = getpass.getuser()
-        note = "; ".join([f"non-EUR exposure {expo['non_eur']:.1%}", lc.signoff_line(scope, verdict.overridden, ap_id, reason), _git_state()])
+        # FND-0263: the note names the code (git), the configuration (hash of the *_ENABLED switches and MAX_* limits), the audit run (whose
+        # control.audit_run header holds the catalogue and the data manifest) and the exception grants relied on: one promotion row rebuilds them.
+        note = "; ".join(p for p in [f"non-EUR exposure {expo['non_eur']:.1%}", lc.signoff_line(scope, verdict.overridden, ap_id, reason),
+                                     _git_state(), f"config {config_hash()}", _exception_ids(scope, exception_sources)] if p)
         previous = lc.promote(conn, args.scenario_id, user, note)       # promotion + audit row in ONE transaction
         print(f"\nPROMOVIDO: {args.scenario_id} es ahora PRODUCCION" + (f"; {previous} -> ARCHIVED" if previous else ""))
         return RC_OK

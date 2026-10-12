@@ -40,7 +40,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import re
 import sys
 import tempfile
 from datetime import datetime
@@ -326,18 +325,12 @@ def run_preflight() -> int:
     return RC_PREFLIGHT_FAILED if any(lv == _FAIL for lv, _ in results) else RC_OK
 
 
-_CALC_VERSION_RE = re.compile(r"""^CALC_VERSION\s*(?::\s*str\s*)?=\s*["'](\d+)["']""", re.M)
-RUN_PIPELINE = ROOT / "proyecto2" / "src" / "pipeline" / "run_pipeline.py"
-
-
 def calc_version(path: Path | None = None) -> str | None:
-    """P2's CALC_VERSION, read from the source text: importing run_pipeline would load the whole P2
-    stack just to print one constant. None when the file or the constant cannot be found."""
-    try:
-        m = _CALC_VERSION_RE.search((path or RUN_PIPELINE).read_text(encoding="utf-8"))
-    except OSError:
-        return None
-    return m.group(1) if m else None
+    """P2's CALC_VERSION, read from the source text (no heavy import). The one reader lives in shared/governance/run_identity.py
+    (FND-0263: the audit manifest records it too, P#11); None when the file or the constant cannot be found."""
+    sys.path.insert(0, str(ROOT))
+    from shared.governance.run_identity import calc_version as _calc_version
+    return _calc_version(path)
 
 
 # ── best-effort telemetry ────────────────────────────────────────────────────────────────────────

@@ -105,6 +105,9 @@ class Tree:
         (self.root / "shared/__init__.py").touch()
         (self.root / "shared/config.py").write_text("")
         shutil.copy(REAL / "shared" / "env_guard.py", self.root / "shared")        # the environment guard (RC 106)
+        (self.root / "shared/governance").mkdir()                                     # pure stdlib: the real one (FND-0263, P#11):
+        (self.root / "shared/governance/__init__.py").touch()                         # p1p2_state calc-version reads CALC_VERSION
+        shutil.copy(REAL / "shared" / "governance" / "run_identity.py", self.root / "shared/governance")   # through it
         (self.root / "shared/db.py").write_text(
             "import os\n\nclass _Cur:\n    def __init__(self, sql=''): self.sql = sql\n"
             "    def fetchone(self): return (1,)\n"

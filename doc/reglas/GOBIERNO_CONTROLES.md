@@ -88,8 +88,8 @@ sin código de puerta propio.
 | `T-CASH` | liquidez estructural declarada ≤ `MAX_PORTFOLIO_CASH_WEIGHT` (10 %) | `BLOCK` | `GATE:CASH` | enforced |
 | `T-FX` | exposición neta no-EUR sin cobertura ≤ `MAX_NON_EUR_UNHEDGED_WEIGHT` (30 %) | `BLOCK` | `GATE:FX` | enforced |
 | `T-CODE` | `HEAD == origin/master` y ningún fichero rastreado modificado (los no rastreados se ignoran, D1); en `CODE_DEPLOY`: `WARN` | `BLOCK` | — | planned:FND-0265 |
-| `T-VERSION` | el registro lleva `CALC_VERSION`, versión del catálogo, sha de git y hash de los `*_ENABLED` y límites del mandato; en `CODE_DEPLOY`: `RECORD` | `BLOCK` | — | planned:FND-0263 |
-| `T-EVIDENCE` | un registro verificable dice qué controles se ejecutaron y con qué resultado; la promoción lo cita; en `CODE_DEPLOY`: `RECORD` | `BLOCK` | — | planned:FND-0263 |
+| `T-VERSION` | el registro lleva `CALC_VERSION`, versión del catálogo, sha de git y hash de los `*_ENABLED` y límites del mandato (se registra desde FND-0263: cabecera y manifiesto de `control.audit_run` y nota de promoción; rechazar sin él: FND-0265); en `CODE_DEPLOY`: `RECORD` | `BLOCK` | — | planned:FND-0265 |
+| `T-EVIDENCE` | un registro verificable dice qué controles se ejecutaron y con qué resultado; la promoción lo cita (la nota cita la auditoría, el hash de configuración y las concesiones de excepción desde FND-0263; el registro del veredicto del orquestador es FND-0265); en `CODE_DEPLOY`: `RECORD` | `BLOCK` | — | planned:FND-0265 |
 
 ### 3.2 Pilar Datos
 
@@ -107,6 +107,7 @@ sin código de puerta propio.
 | `D-PLAUSIBILITY` | clase `PLAUSIBILITY`: valor fuera de rango plausible, no imposible | `WARN` | `RULE_CLASS:PLAUSIBILITY` | enforced |
 | `D-OUTLIER` | clase `STATISTICAL_ANOMALY` (MAD-Z, IQR): elementos de revisión, nunca defectos | `WARN` | `RULE_CLASS:STATISTICAL_ANOMALY` | enforced |
 | `D-RESIDUAL` | defecto cuyos infractores están todos cubiertos por un residual aceptado vigente: se reporta rebajado, nunca se oculta | `WARN` | `RULE_CLASS:ACCEPTED_RESIDUAL` | enforced |
+| `D-EXCEPTIONS` | todo residual aceptado es un `GRANT` / `RENEW` más un `APPROVE` separado en `control.audit_exception_event` (D6), revocado con causa; la puerta rechaza si ese historial no se puede leer o `control.audit_accepted_finding` no coincide con él (§5) | `BLOCK` | `GATE:EXCEPTIONS` | dormant:AUDIT_EXCEPTION_EVENTS_ENABLED |
 
 `D-INVARIANT`, `D-IDENTITY` y `D-TS-DUP` son los tres criterios de `gating.is_blocking`; `D-DATA-SCENARIO`, `D-RESIDUAL-SCENARIO`
 y `D-DATA-UNIVERSE` reparten esos defectos por alcance (sobre la cartera / solo en el universo).
@@ -132,11 +133,25 @@ y `D-DATA-UNIVERSE` reparten esos defectos por alcance (sobre la cartera / solo 
 - Los límites del mandato (`MAX_NON_EUR_UNHEDGED_WEIGHT`, `MAX_PORTFOLIO_CASH_WEIGHT`) cambian solo en `shared/config.py` por un
   commit revisado; nunca en el momento de la promoción.
 
-## 5. Política de excepciones (resumen; detalle en FND-0263)
+## 5. Política de excepciones (FND-0263)
 
-Una excepción acotada (residual aceptado) lleva ticket y caducidad ≤ 90 días. Decisión D6: dos pasos, `GRANT` (motivo
-estructurado + ticket) y un evento `APPROVE` explícito y separado, ambos registrados, sin colchón de tiempo entre ellos. Un
-residual nunca cubre a un fondo seleccionado en una cartera (`D-RESIDUAL-SCENARIO`).
+Una excepción acotada (residual aceptado) lleva ticket y caducidad ≤ 90 días, y es una **decisión registrada**, no una fila editable:
+
+- **Historial append-only:** `control.audit_exception_event` (un disparador rechaza `UPDATE`, `DELETE` y `TRUNCATE`). Tipos:
+  `GRANT` (ISIN, ticket, motivo, caducidad), `RENEW` (igual, como renovación), `APPROVE` (de un `GRANT`/`RENEW` pendiente) y
+  `REVOKE` (de una concesión, total o de un subconjunto de ISIN, con causa `OWNER`, `AP_CLOSED` o `RESOLVED` y motivo). La caducidad
+  es implícita por fecha.
+- **Decisión D6:** dos pasos, `GRANT` y un `APPROVE` explícito y separado (otra orden: `accept_audit_residual.py --approve <id>`),
+  ambos registrados; la misma persona puede aprobar y no hay colchón de tiempo. Una concesión no cubre nada hasta aprobarse; una
+  concesión ya caducada no se aprueba (se concede de nuevo).
+- **Proyección:** `control.audit_accepted_finding` sigue siendo lo que leen la auditoría, la puerta, el *scorer* y los KPI; es el
+  estado actual del historial (`accepted_residuals.fold_events`) y el escritor la refresca en la misma transacción que el evento.
+- **Puerta (`D-EXCEPTIONS`, con `AUDIT_EXCEPTION_EVENTS_ENABLED`):** un historial ilegible o una proyección que no coincide con él
+  bloquea la promoción (`[GATE:EXCEPTIONS]`, sin override); nunca se lee como «no hay residuales».
+- **Reconstrucción:** la nota de la promoción cita la auditoría (su cabecera `control.audit_run` lleva código, catálogo, configuración y
+  manifiesto de datos), el hash de configuración y los `event_id` de las concesiones en que se apoyó.
+
+Un residual nunca cubre a un fondo seleccionado en una cartera (`D-RESIDUAL-SCENARIO`).
 
 ## 6. Cómo cambiar este catálogo
 

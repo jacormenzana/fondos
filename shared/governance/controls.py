@@ -137,11 +137,13 @@ CONTROLS = (
             "HEAD == origin/master and no modified tracked file (untracked files ignored; decision D1)",
             BLOCK, "", PLANNED_PREFIX + "FND-0265", deploy_consequence=WARN),
     Control("T-VERSION", PILLAR_TECHNICAL, "Version and configuration identified", "owner (release)",
-            "the run record carries CALC_VERSION, catalog version, git sha and a hash of the *_ENABLED flags and mandate limits",
-            BLOCK, "", PLANNED_PREFIX + "FND-0263", deploy_consequence=RECORD),
+            "the run record carries CALC_VERSION, catalog version, git sha and a hash of the *_ENABLED flags and mandate limits "
+            "(recorded since FND-0263: control.audit_run header + manifest, and the promotion note; refusing without it: FND-0265)",
+            BLOCK, "", PLANNED_PREFIX + "FND-0265", deploy_consequence=RECORD),
     Control("T-EVIDENCE", PILLAR_TECHNICAL, "Execution evidence", "owner (release)",
-            "a verifiable record states which controls ran, with which result, and the promotion record cites it",
-            BLOCK, "", PLANNED_PREFIX + "FND-0263", deploy_consequence=RECORD),
+            "a verifiable record states which controls ran, with which result, and the promotion record cites it (the note cites the "
+            "audit run, config hash and exception grants since FND-0263; the orchestrator's verdict record is FND-0265)",
+            BLOCK, "", PLANNED_PREFIX + "FND-0265", deploy_consequence=RECORD),
     # ---- Pillar DATA -----------------------------------------------------------------------------------------------------------
     Control("D-FRESHNESS", PILLAR_DATA, "Inputs are fresh", _OWNER_PROMOTION,
             "the P3 data-freshness gate (shared.config.P3_FRESHNESS_MAX_AGE_DAYS) reports no stale input",
@@ -180,6 +182,10 @@ CONTROLS = (
     Control("D-RESIDUAL", PILLAR_DATA, "Accepted residual", _OWNER_AUDIT,
             "a defect whose violators are all covered by an active accepted residual (ticket + expiry) is reported, downgraded, never hidden",
             WARN, SOURCE_RULE_CLASS + "ACCEPTED_RESIDUAL", STATUS_ENFORCED),
+    Control("D-EXCEPTIONS", PILLAR_DATA, "Accepted residuals are governed", _OWNER_AUDIT,
+            "every accepted residual is a GRANT / RENEW plus a separate APPROVE in control.audit_exception_event (decision D6), revoked "
+            "with a cause; the gate refuses when that history is unreadable or control.audit_accepted_finding disagrees with it",
+            BLOCK, SOURCE_GATE + "EXCEPTIONS", DORMANT_PREFIX + "AUDIT_EXCEPTION_EVENTS_ENABLED"),
     # ---- ORCHESTRATION ---------------------------------------------------------------------------------------------------------
     Control("G-OVERRIDE-AP", PILLAR_ORCHESTRATION, "An override names its ticket", _OWNER_PROMOTION,
             "--accept-alarms needs a reason and --ap FND-nnnn that exists in gestion.backlog; without it the override does not apply",

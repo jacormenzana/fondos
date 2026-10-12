@@ -92,6 +92,20 @@ def test_persist_run_writes_rows_and_header_together(tx_conn):
     assert row == ("FULL", "FAIL", [{"check": "OUTLIER"}], True, True)
 
 
+def test_the_manifest_is_written_when_the_column_exists_and_skipped_when_it_does_not(tx_conn):
+    # FND-0263: code deployed before migrate_audit_governance.py must keep persisting (the column is feature-detected)
+    conn = tx_conn
+    _tables(conn)
+    manifest = {"calc_version": "20261011", "max_nav_date": T0.date(), "algorithm_versions": {"20261011": 3}}
+    persist_run(conn, "r1", DOMAIN, STATS, [], header={**_header(), "manifest": manifest})
+    got = conn.execute("SELECT manifest FROM audit_run WHERE run_id = 'r1'").fetchone()[0]
+    assert got == {"calc_version": "20261011", "max_nav_date": str(T0.date()), "algorithm_versions": {"20261011": 3}}
+    conn.execute("ALTER TABLE audit_run DROP COLUMN manifest")
+    conn.commit()
+    res = persist_run(conn, "r2", DOMAIN, STATS, [], header={**_header(), "manifest": manifest})
+    assert res.header_written and conn.execute("SELECT count(*) FROM audit_run WHERE run_id = 'r2'").fetchone()[0] == 1
+
+
 def test_finished_at_is_the_clock_time_not_the_start_of_the_long_audit_transaction(tx_conn):
     # the runner reads the whole audit inside one transaction; now() would stamp the header with that transaction's start
     conn = tx_conn
@@ -165,7 +179,7 @@ def test_real_ddl_audit_run(pg_session_conn):
     cols = {r[0] for r in conn.execute(
         "SELECT column_name FROM information_schema.columns WHERE table_schema = 'control' AND table_name = 'audit_run'").fetchall()}
     assert cols == {"run_id", "domain", "scope", "status", "started_at", "finished_at", "universe_size", "skips", "catalog_version",
-                    "git_commit", "git_clean", "config_hash"}
+                    "git_commit", "git_clean", "config_hash", "manifest"}
     for scope, status in (("FULL", "DONE"), ("PARTIAL", "PASS")):
         conn.execute("SAVEPOINT s")
         with pytest.raises(Exception):
