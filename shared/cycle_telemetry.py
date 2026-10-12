@@ -36,7 +36,7 @@ except ImportError:  # pragma: no cover - psycopg3 not installed: every emit fal
 ENV_CYCLE_ID = "FONDOS_CYCLE_ID"
 ENV_FALLBACK = "FONDOS_CYCLE_FALLBACK"
 ENV_DSN = "FONDOS_PG_DSN"
-DEFAULT_FALLBACK = Path(__file__).resolve().parents[1] / "log" / "cycle_telemetry_fallback.jsonl"
+DEFAULT_FALLBACK = Path(__file__).resolve().parent / "log" / "cycle_telemetry_fallback.jsonl"   # == LOG_DIRS["shared"]
 
 BASELINE_K = 5            # previous OK values the baseline is the median of
 MIN_BASELINE_CYCLES = 3   # warm-up: no ratio-based judgement before this many baseline values

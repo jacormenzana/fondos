@@ -190,6 +190,25 @@ Sin estos tres elementos, no se debe abrir un BL en backlog.
 
 ---
 
+### §4.9 Enrutado de logs (destino único)
+
+Todo log se escribe en el `log/` de su proyecto o contexto; el registro canónico es `LOG_DIRS` en `shared/config.py`
+(`get_log_dir(contexto)` crea el directorio bajo demanda; contexto desconocido → `KeyError`).
+
+| Contexto | Directorio | Qué va aquí |
+|---|---|---|
+| `p1` | `proyecto1/log` | Launchers P1, auditoría P1/costes (`AUDIT_P1`, `AUDIT_statistical costs`), diagnóstico de costes, prototipos DLA |
+| `p2` | `proyecto2/log` | Launchers P2, `nav_discovery`, `macro_discovery`, auditoría P2 (`AUDIT_P2`, `AUDIT_statistical p2`) |
+| `p3` | `proyecto3/log` | Launchers P3, backtest PIT |
+| `shared` | `shared/log` | Ficheros de reserva de `backlog_client` y `cycle_telemetry`, y todo log de código bajo `shared/` |
+| `tests` | `tests/log` | Logs generados por la suite bajo `tests/` |
+
+Reglas: (1) un log nuevo registra su contexto aquí, nunca inventa un directorio ni escribe en la raíz del repo o en el cwd;
+(2) los datos (CSV, JSONL de cosecha, informes) **no** son logs y siguen en `out/` o su carpeta de dominio; (3) el estado de
+los launchers (`fondos_cycle.lock`, `*.state`, `env_driver_ok`, `env_blocked.log`, restauración de standby) vive en
+`proyecto1/log` (NORMAS_BATCH) y no se enruta por el registro; (4) `log/` y `logs/` están en `.gitignore` — un directorio
+nuevo se versiona con `.gitkeep` (`git add -f`). Guarda estática: `tests/test_log_paths.py`.
+
 ## §5. Convenciones de codificación DQ (`check_code`)
 
 Los códigos en `fund_data_quality_issues.check_code` siguen estas convenciones.
@@ -274,7 +293,7 @@ Condición: se cumple **cualquiera** de los dos criterios siguientes.
 **Qué es:** `shared/cycle_telemetry.py` + las tablas `control.cycle_*` y la vista `control.v_cycle_exec` (bloque `cycle_telemetry` de `db/pg/35_control.sql`; el dueño lo aplica con `scripts/ops/migrate_cycle_telemetry.py`, simulacro por defecto, `--apply` en una sola transacción). Registra por ciclo y por intento de paso: duración, rc, estado, línea base y ratio; métricas escalares tipadas; ejecuciones de auditoría; y *flags* enlazados al backlog. Es la fuente programática de "estado del pipeline" (p. ej. para candados entre módulos), en lugar de leer logs.
 
 **Reglas de diseño (obligatorias para quien lo use):**
-- **Aislamiento de fallos.** Toda función pública captura `Exception` (nunca `BaseException`: Ctrl-C / `SystemExit` deben seguir matando un ciclo colgado), conecta con `connect_timeout=3` y `statement_timeout=3000`, abre una conexión corta por evento, no retiene transacción entre pasos y no reintenta. Un fallo de escritura va a `log/cycle_telemetry_fallback.jsonl`. **Nunca cambia el RC de un launcher** (NORMAS_BATCH).
+- **Aislamiento de fallos.** Toda función pública captura `Exception` (nunca `BaseException`: Ctrl-C / `SystemExit` deben seguir matando un ciclo colgado), conecta con `connect_timeout=3` y `statement_timeout=3000`, abre una conexión corta por evento, no retiene transacción entre pasos y no reintenta. Un fallo de escritura va a `shared/log/cycle_telemetry_fallback.jsonl` (§4.9). **Nunca cambia el RC de un launcher** (NORMAS_BATCH).
 - **Opt-in.** Sin `FONDOS_CYCLE_ID` todas las llamadas devuelven `False` sin tocar nada.
 - **Eventos idempotentes.** Cada escritura es un upsert por PK; `begin_cycle()` reproduce primero el fichero de respaldo (en orden, rotándolo a `.done` si todo se aplica; si falla, deja el resto). PREFLIGHT solo informa de los bytes pendientes.
 - **Líneas base en la ingesta, no en las vistas.** `baseline` = mediana de los ≤ 5 valores OK anteriores; sin juicio por ratio hasta tener ≥ 3 (*warm-up*); los techos absolutos (`cycle_step_def.hard_max_s`, sembrados a 2× el máximo observado) actúan desde el primer ciclo y como respaldo permanente. Umbrales y techos son **datos** (UPDATE, no despliegue).

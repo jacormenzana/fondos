@@ -87,6 +87,7 @@ sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_P2_SRC.parent))
 
 from shared.db import get_connection, executemany
+from shared.config import get_log_dir
 
 try:
     import mstarpy
@@ -2165,8 +2166,7 @@ def main():
 
     # -- Logs con timestamp unico por invocacion -----------------------------
     _ts       = datetime.now().strftime("%Y%m%d_%H%M%S")
-    _log_dir  = Path(__file__).resolve().parent.parent.parent.parent / "logs"
-    _log_dir.mkdir(exist_ok=True)
+    _log_dir  = get_log_dir("p2")                        # proyecto2/log (LOG_DIRS)
     _log_path = _log_dir / f"navLoad_{args.mode}_{_ts}.log"
     _err_path = _log_dir / f"navLoad_{args.mode}_{_ts}_err.log"
     sys.stdout = _Tee(_log_path, sys.__stdout__)

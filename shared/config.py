@@ -443,21 +443,38 @@ REPORTS_DIR:  Path = _ROOT / "out" / "reports"     # P3 monthly report, rolling 
 # ============================================================
 # Logging
 # ============================================================
-# NOTA: No se crea el directorio aquí para evitar efectos
+# NOTA: No se crea ningún directorio aquí para evitar efectos
 # secundarios al importar. Usar get_log_dir() cuando se necesite.
-_LOG_DIR: Path = _ROOT / "logs"
+#
+# Registro único de enrutado de logs (doc/reglas/NORMAS_IMPLEMENTACION.md §4):
+# todo log va al log/ de su proyecto o contexto. El estado de los launchers
+# (lock, .state, env_driver_ok, env_blocked.log) vive en proyecto1/log por
+# decisión del propietario; no es un log y no se enruta por aquí.
+LOG_DIRS: dict[str, Path] = {
+    "p1":     _ROOT / "proyecto1" / "log",
+    "p2":     _ROOT / "proyecto2" / "log",
+    "p3":     _ROOT / "proyecto3" / "log",
+    "shared": _ROOT / "shared" / "log",
+    "tests":  _ROOT / "tests" / "log",
+}
 
 
-def get_log_dir() -> Path:
-    """Devuelve el directorio de logs, creándolo si no existe."""
-    _LOG_DIR.mkdir(parents=True, exist_ok=True)
-    return _LOG_DIR
+def get_log_dir(context: str = "shared") -> Path:
+    """Devuelve el directorio de logs del contexto (p1|p2|p3|shared|tests), creándolo si no existe.
+
+    KeyError si el contexto no está registrado: un log nuevo no puede inventarse un destino.
+    """
+    try:
+        d = LOG_DIRS[context]
+    except KeyError:
+        raise KeyError(f"unknown log context {context!r}; registered: {sorted(LOG_DIRS)}") from None
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
-# Compatibilidad con código existente que usa config.LOG_DIR
-# Se mantiene como property-like para no romper imports,
-# pero sin crear el directorio al importar.
-LOG_DIR: Path = _LOG_DIR
+# Compatibilidad con código existente que usa config.LOG_DIR (sin callers hoy).
+# Apunta al log/ de shared; no crea el directorio al importar.
+LOG_DIR: Path = LOG_DIRS["shared"]
 
 
 # ============================================================

@@ -18,7 +18,7 @@ call "%COMMON%" :utf8_on
 :: se reenvian tal cual a run_statistical_audit.py (--mode, --persist, --run-id).
 :: ============================================================
 
-set LOG_DIR=%ROOT%\out\audit\log
+set LOG_DIR=%ROOT%\proyecto1\log
 
 if /i "%~1"=="-h"     goto :help
 if /i "%~1"=="--help" goto :help
@@ -29,6 +29,9 @@ if "%DOMAIN%"=="" (
     endlocal & exit /b %RC_USAGE%
 )
 shift
+
+:: LOG_DIR = log/ del proyecto propietario del dominio (LOG_DIRS en shared/config.py): costs -> P1, p2 -> P2.
+if /i "%DOMAIN%"=="p2" set LOG_DIR=%ROOT%\proyecto2\log
 
 set EXTRA_ARGS=
 :collect_args

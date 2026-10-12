@@ -280,11 +280,13 @@ ORDER BY m.ISIN
 
 
 def _write_summary_log(summary_text: str, out_path: Optional[str]) -> Path:
-    """Write the summary block to a timestamped sibling log file."""
-    target_dir = Path(out_path).parent if out_path else Path("out/diag")
-    target_dir.mkdir(parents=True, exist_ok=True)
+    """Write the summary block to a timestamped log under proyecto1/log (LOG_DIRS["p1"]).
+
+    `out_path` (the CSV) is kept in the signature: data goes where the caller says, logs never do.
+    """
+    from shared.config import get_log_dir
     stamp = datetime.now().strftime("%Y%m%d_%H%M")
-    summary_log_path = target_dir / f"cost_diag_summary_{stamp}.log"
+    summary_log_path = get_log_dir("p1") / f"cost_diag_summary_{stamp}.log"
     summary_log_path.write_text(summary_text, encoding="utf-8")
     return summary_log_path
 

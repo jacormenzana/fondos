@@ -70,6 +70,8 @@ import unicodedata
 from pathlib import Path
 from collections import Counter
 
+_P1_LOG_DIR = Path(__file__).resolve().parent.parent / "log"   # proyecto1/log == LOG_DIRS["p1"] (test_log_paths)
+
 try:
     import pdfplumber
 except ImportError:
@@ -508,7 +510,8 @@ def main(pdf_dir=None, pdf=None, db_path=None, csv_path=None, log_path=None,
 
     base = Path.cwd()
     csv_file = Path(csv_path) if csv_path else base / "dla2_dual_strategy_compare.csv"
-    log_file = Path(log_path) if log_path else base / "dla2_dual_strategy_compare.log"
+    log_file = Path(log_path) if log_path else _P1_LOG_DIR / "dla2_dual_strategy_compare.log"
+    log_file.parent.mkdir(parents=True, exist_ok=True)
 
     if pdf:
         pdfs = [Path(pdf)]

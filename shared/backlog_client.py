@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 
 _DSN_ENV_VAR = "FONDOS_BACKLOG_PG_DSN"
 _FALLBACK_LOG_ENV_VAR = "FONDOS_BACKLOG_FALLBACK_LOG"
-_DEFAULT_FALLBACK_LOG = Path(__file__).resolve().parents[1] / "log" / "backlog_autolog_fallback.jsonl"
+_DEFAULT_FALLBACK_LOG = Path(__file__).resolve().parent / "log" / "backlog_autolog_fallback.jsonl"   # == LOG_DIRS["shared"]
 
 try:
     import psycopg

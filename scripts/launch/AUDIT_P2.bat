@@ -30,7 +30,7 @@ for %%A in (%*) do (
     if /i "%%~A"=="--help" goto :show_help
 )
 
-set LOG_DIR=%ROOT%\out\audit\log
+set LOG_DIR=%ROOT%\proyecto2\log
 
 set SHARED_LOG=
 set STAT_ARGS=

@@ -123,6 +123,8 @@ from io import StringIO
 from pathlib import Path
 from typing import Optional
 
+_P1_LOG_DIR = Path(__file__).resolve().parent.parent / "log"   # proyecto1/log == LOG_DIRS["p1"] (test_log_paths)
+
 try:
     import pdfplumber
     _HAS_PDFPLUMBER = True
@@ -851,7 +853,7 @@ def main(pdf_dir=None, pdf=None, db_path=None, csv_path=None, log_path=None,
     # Resolver salidas.
     base = Path(project_root).resolve() if project_root else Path.cwd()
     csv_file = Path(csv_path) if csv_path else base / "dla2_xband_prototype.csv"
-    log_file = Path(log_path) if log_path else base / "dla2_xband_prototype.log"
+    log_file = Path(log_path) if log_path else _P1_LOG_DIR / "dla2_xband_prototype.log"
 
     # Recopilar PDFs.
     pdfs = []
