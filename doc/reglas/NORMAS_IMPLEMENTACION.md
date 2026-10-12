@@ -202,12 +202,16 @@ Todo log se escribe en el `log/` de su proyecto o contexto; el registro canónic
 | `p3` | `proyecto3/log` | Launchers P3, backtest PIT |
 | `shared` | `shared/log` | Ficheros de reserva de `backlog_client` y `cycle_telemetry`, y todo log de código bajo `shared/` |
 | `tests` | `tests/log` | Logs generados por la suite bajo `tests/` |
+| host WSL/Docker (fuera del repo) | `c:\data\wsl\log\os` (`wsl_*`), `c:\data\wsl\log\docker\postgres` (`pg_*`) | Mantenimiento preventivo (`scripts/ops/maintenance`); `docker\metabase` y `docker\superset` reservados, sin escritor hoy |
 
 Reglas: (1) un log nuevo registra su contexto aquí, nunca inventa un directorio ni escribe en la raíz del repo o en el cwd;
 (2) los datos (CSV, JSONL de cosecha, informes) **no** son logs y siguen en `out/` o su carpeta de dominio; (3) el estado de
 los launchers (`fondos_cycle.lock`, `*.state`, `env_driver_ok`, `env_blocked.log`, restauración de standby) vive en
 `proyecto1/log` (NORMAS_BATCH) y no se enruta por el registro; (4) `log/` y `logs/` están en `.gitignore` — un directorio
-nuevo se versiona con `.gitkeep` (`git add -f`). Guarda estática: `tests/test_log_paths.py`.
+nuevo se versiona con `.gitkeep` (`git add -f`); (5) los logs de host WSL/Docker se enrutan por familia de script en
+`scripts/ops/maintenance/lib/common.sh` (`maint_log_dir`: prefijo `wsl_` / `pg_`; un prefijo no registrado aborta con RC 3);
+`MAINT_LOG_DIR` en el entorno fuerza un único directorio (pruebas). Guardas estáticas: `tests/test_log_paths.py`,
+`tests/test_maintenance_log_routing.py`.
 
 ## §5. Convenciones de codificación DQ (`check_code`)
 

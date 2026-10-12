@@ -4,9 +4,13 @@
 # Conventions (all scripts):
 #   * READ-ONLY by default. Anything that changes state needs an explicit --apply.
 #   * Exit code: 0 = all OK, 1 = warnings, 2 = critical findings, 3 = the script itself failed.
-#   * Output is mirrored to $MAINT_LOG_DIR/<script>_<stamp>.log (kept $MAINT_LOG_KEEP days).
+#   * Output is mirrored to <family log dir>/<script>_<stamp>.log (kept $MAINT_LOG_KEEP days). The family is the script-name
+#     prefix: wsl_* -> $WSL_LOG_OS, pg_* -> $WSL_LOG_PG (host-level logs, outside the repo; NORMAS_IMPLEMENTACION §4.9).
 #   * Never stops/recreates containers, never prints secrets, never touches volumes.
-MAINT_LOG_DIR=${MAINT_LOG_DIR:-/mnt/c/data/logs/maintenance}
+WSL_LOG_OS=${WSL_LOG_OS:-/mnt/c/data/wsl/log/os}
+WSL_LOG_PG=${WSL_LOG_PG:-/mnt/c/data/wsl/log/docker/postgres}
+_MAINT_FORCE_DIR=${MAINT_LOG_DIR:-}   # MAINT_LOG_DIR in the environment forces ONE directory for every family (tests / ad-hoc)
+MAINT_LOG_DIR=                        # resolved by maint_start; scripts read it afterwards (e.g. pg_capacity_history.csv)
 MAINT_LOG_KEEP=${MAINT_LOG_KEEP:-60}
 PG_CONTAINER=${PG_CONTAINER:-fondos_postgres}
 PG_SECRETS_DIR=${PG_SECRETS_DIR:-/opt/docker/db/postgresql17/secrets}
@@ -25,7 +29,17 @@ maint_args() {   # sets APPLY, DB (--db NAME) and ARGS (the remaining flags)
   done
 }
 
-maint_start() {  # maint_start <script-name> : tee everything to a log file, prune old logs
+maint_log_dir() {  # maint_log_dir <script-name> : the log directory of the script's family; rc 1 = family not registered
+  if [ -n "$_MAINT_FORCE_DIR" ]; then echo "$_MAINT_FORCE_DIR"; return 0; fi
+  case "$1" in
+    wsl_*) echo "$WSL_LOG_OS";;
+    pg_*)  echo "$WSL_LOG_PG";;
+    *)     return 1;;
+  esac
+}
+
+maint_start() {  # maint_start <script-name> : tee everything to a log file in the family dir, prune old logs there
+  MAINT_LOG_DIR=$(maint_log_dir "$1") || { echo "[CRIT] no log directory registered for script family of '$1' (add it in lib/common.sh maint_log_dir)" >&2; exit 3; }
   mkdir -p "$MAINT_LOG_DIR" 2>/dev/null || true
   LOG="$MAINT_LOG_DIR/${1}_$(date +%Y%m%d_%H%M%S).log"
   exec > >(tee -a "$LOG") 2>&1

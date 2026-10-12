@@ -1,6 +1,6 @@
 #!/bin/bash
 # pg_04_capacity_report.sh — size / growth / disk headroom (run weekly). READ-ONLY apart from appending
-# one row to $MAINT_LOG_DIR/pg_capacity_history.csv so growth can be trended.
+# one row to pg_capacity_history.csv in the Postgres log dir ($MAINT_LOG_DIR, resolved by maint_start) so growth can be trended.
 #   bash pg_04_capacity_report.sh [--db fondos]
 # Warns when the filesystem holding PGDATA has < CAP_WARN_FREE_PCT free (default 20) / crit < CAP_CRIT_FREE_PCT (10)
 # or pg_wal exceeds CAP_WAL_WARN_GB (default 20, ~1 day of WAL at P2 load).

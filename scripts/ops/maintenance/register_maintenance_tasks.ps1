@@ -9,7 +9,7 @@
 #   weekly  Sun 07:00  pg_run_all.sh weekly --apply + wsl_run_all.sh weekly --apply   (vacuum/analyze, docker/log cleanup, OS patches w/o docker)
 #   monthly 1st 07:00  pg_run_all.sh monthly (read-only reindex report) ; wsl_05_host_vhdx.ps1 report
 # --apply is deliberately NOT used for the monthly -verify-restore / VHDX compaction: run those by hand.
-# Results land in C:\data\logs\maintenance\*.log; a CRITICAL exit makes the task show a non-zero last result.
+# Results land in C:\data\wsl\log\os\wsl_*.log and C:\data\wsl\log\docker\postgres\pg_*.log; a CRITICAL exit makes the task show a non-zero last result.
 param([switch]$Register, [switch]$Unregister)
 $ErrorActionPreference = 'Stop'
 $m = '/mnt/c/desarrollo/fondos/scripts/ops/maintenance'
