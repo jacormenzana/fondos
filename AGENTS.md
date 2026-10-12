@@ -569,7 +569,9 @@ class counts as exposed whatever it hedges inside; a EUR class only if unhedged 
 `AUDIT_COMPLETENESS_CONTRACT_ENABLED` ON: the latest `control.audit_run` header of a FULL-scope, not INCOMPLETE `p2_metrics` audit; a sample or INCOMPLETE run is
 never evidence, an INCOMPLETE run exits 2; contract and header: `doc/reglas/AUDITORIA_ESTADISTICA.md` §6.4) must be newer than the DRAFT build and have no open *hard defect* (`HARD_INVARIANT`, `BLOCK2`, `TIMESERIES_DUPLICATE`:
 `shared/statistical_audit/gating.py`, the same predicate as the audit's `--mode check`) on a fund of the scenario; a hard defect outside it needs an
-active accepted residual (`accept_audit_residual.py`, AP + expiry), and an accepted residual never covers a selected fund. Statistical anomalies
+active accepted residual (`accept_audit_residual.py`, AP + expiry: a GRANT then a separate `--approve`, recorded in the append-only
+`control.audit_exception_event`; with `AUDIT_EXCEPTION_EVENTS_ENABLED` ON an unreadable or inconsistent history refuses as `[GATE:EXCEPTIONS]`, FND-0263,
+`doc/reglas/GOBIERNO_CONTROLES.md` §5), and an accepted residual never covers a selected fund. Statistical anomalies
 (`OUTLIER_MAD_Z`) on the scenario's funds are listed and never block. The exposure limit is a **hard gate with no override** (the mandate changes in
 `shared/config.py` by a reviewed commit, not at promotion time); only the data gates on the scenario's own funds take a written reason **and the owning
 ticket** (`--accept-alarms "motivo" --ap FND-nnnn`), logged in `ingestion_log` as `[OVERRIDE:<gate>]`; every refusal carries a stable `[GATE:<X>]`

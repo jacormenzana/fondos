@@ -185,7 +185,7 @@ CONTROLS = (
     Control("D-EXCEPTIONS", PILLAR_DATA, "Accepted residuals are governed", _OWNER_AUDIT,
             "every accepted residual is a GRANT / RENEW plus a separate APPROVE in control.audit_exception_event (decision D6), revoked "
             "with a cause; the gate refuses when that history is unreadable or control.audit_accepted_finding disagrees with it",
-            BLOCK, SOURCE_GATE + "EXCEPTIONS", DORMANT_PREFIX + "AUDIT_EXCEPTION_EVENTS_ENABLED"),
+            BLOCK, SOURCE_GATE + "EXCEPTIONS", STATUS_ENFORCED),
     # ---- ORCHESTRATION ---------------------------------------------------------------------------------------------------------
     Control("G-OVERRIDE-AP", PILLAR_ORCHESTRATION, "An override names its ticket", _OWNER_PROMOTION,
             "--accept-alarms needs a reason and --ap FND-nnnn that exists in gestion.backlog; without it the override does not apply",

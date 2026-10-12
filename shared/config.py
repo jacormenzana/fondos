@@ -444,8 +444,10 @@ AUDIT_COMPLETENESS_CONTRACT_ENABLED: bool = True
 #   * the promotion gate refuses ([GATE:EXCEPTIONS], no override) when the history cannot be read or the table disagrees with it, instead of
 #     reading an unreadable store as "no residuals";
 #   * accept_audit_residual.py refuses the legacy direct write when the history table is missing.
-# OFF until the owner has applied the migration (it backfills the current residuals as GRANT + APPROVE and checks the projection). Rollback = False.
-AUDIT_EXCEPTION_EVENTS_ENABLED: bool = False
+# ON since 2026-10-12 (owner decision): migration applied by the owner (4 backfill events, projection == history in both domains, verified as
+# fondos_app); shadow on the live data: the gate's history check returns no problem for the PRODUCTION scenario with the switch OFF and ON.
+# Rollback = False (no DDL to undo; the history stays and keeps being written).
+AUDIT_EXCEPTION_EVENTS_ENABLED: bool = True
 
 # ============================================================
 # Directorios de datos externos (inputs no versionados)

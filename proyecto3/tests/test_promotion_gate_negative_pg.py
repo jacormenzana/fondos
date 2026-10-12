@@ -92,10 +92,23 @@ def _hard_finding(conn, isins, rule=RULE, severity="ALARM", run=RUN, at=AUDITED)
     conn.commit()
 
 
-def _accept(conn, isin, expires, rule=RULE, ap="FND-0250"):
+def _accept_legacy(conn, isin, expires, rule=RULE, ap="FND-0250"):
+    """The pre-FND-0263 direct write: a projection row with no history behind it."""
     conn.execute("INSERT INTO audit_accepted_finding (domain, rule_id, isin, ap_id, reason, accepted_at, expires_at) "
                  "VALUES ('p2_metrics', %s, %s, %s, 'known residual', %s, %s)", (rule, isin, ap, TODAY - timedelta(days=60), expires))
     conn.commit()
+
+
+def _accept(conn, isin, expires, rule=RULE, ap="FND-0250"):
+    """A governed residual (AUDIT_EXCEPTION_EVENTS_ENABLED is ON): GRANT + APPROVE events dated when it was accepted, and the projection
+    row they fold to. Written directly (like the migration's backfill) so an already-expired residual can be seeded too."""
+    accepted = TODAY - timedelta(days=60)
+    (gid,) = conn.execute("INSERT INTO audit_exception_event (event_ts, event_type, domain, rule_id, isins, ap_id, reason, expires_at, actor) "
+                          "VALUES (%s::date::timestamptz, 'GRANT', 'p2_metrics', %s, %s, %s, 'known residual', %s, 'test') RETURNING event_id",
+                          (accepted, rule, [isin], ap, expires)).fetchone()
+    conn.execute("INSERT INTO audit_exception_event (event_ts, event_type, domain, rule_id, ref_event_id, actor) "
+                 "VALUES (%s::date::timestamptz, 'APPROVE', 'p2_metrics', %s, %s, 'test')", (accepted, rule, gid))
+    _accept_legacy(conn, isin, expires, rule, ap)
 
 
 def _held_out(conn, count, isins):
@@ -258,7 +271,7 @@ def test_governed_exceptions_refuse_a_residual_written_behind_the_history(world,
     monkeypatch.setattr(cfg, "AUDIT_EXCEPTION_EVENTS_ENABLED", True)
     conn, _ = world
     _hard_finding(conn, [OUTSIDE])
-    _accept(conn, OUTSIDE, TODAY + timedelta(days=30))                                    # the legacy direct write: no event
+    _accept_legacy(conn, OUTSIDE, TODAY + timedelta(days=30))                             # the legacy direct write: no event
     rc = cli.main([SCENARIO, "--accept-alarms", "un motivo", "--ap", "FND-0251"])
     _assert_refused(conn, rc, capsys, "EXCEPTIONS")
 

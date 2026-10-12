@@ -107,7 +107,7 @@ sin código de puerta propio.
 | `D-PLAUSIBILITY` | clase `PLAUSIBILITY`: valor fuera de rango plausible, no imposible | `WARN` | `RULE_CLASS:PLAUSIBILITY` | enforced |
 | `D-OUTLIER` | clase `STATISTICAL_ANOMALY` (MAD-Z, IQR): elementos de revisión, nunca defectos | `WARN` | `RULE_CLASS:STATISTICAL_ANOMALY` | enforced |
 | `D-RESIDUAL` | defecto cuyos infractores están todos cubiertos por un residual aceptado vigente: se reporta rebajado, nunca se oculta | `WARN` | `RULE_CLASS:ACCEPTED_RESIDUAL` | enforced |
-| `D-EXCEPTIONS` | todo residual aceptado es un `GRANT` / `RENEW` más un `APPROVE` separado en `control.audit_exception_event` (D6), revocado con causa; la puerta rechaza si ese historial no se puede leer o `control.audit_accepted_finding` no coincide con él (§5) | `BLOCK` | `GATE:EXCEPTIONS` | dormant:AUDIT_EXCEPTION_EVENTS_ENABLED |
+| `D-EXCEPTIONS` | todo residual aceptado es un `GRANT` / `RENEW` más un `APPROVE` separado en `control.audit_exception_event` (D6), revocado con causa; la puerta rechaza si ese historial no se puede leer o `control.audit_accepted_finding` no coincide con él (§5) | `BLOCK` | `GATE:EXCEPTIONS` | enforced |
 
 `D-INVARIANT`, `D-IDENTITY` y `D-TS-DUP` son los tres criterios de `gating.is_blocking`; `D-DATA-SCENARIO`, `D-RESIDUAL-SCENARIO`
 y `D-DATA-UNIVERSE` reparten esos defectos por alcance (sobre la cartera / solo en el universo).
@@ -146,7 +146,7 @@ Una excepción acotada (residual aceptado) lleva ticket y caducidad ≤ 90 días
   concesión ya caducada no se aprueba (se concede de nuevo).
 - **Proyección:** `control.audit_accepted_finding` sigue siendo lo que leen la auditoría, la puerta, el *scorer* y los KPI; es el
   estado actual del historial (`accepted_residuals.fold_events`) y el escritor la refresca en la misma transacción que el evento.
-- **Puerta (`D-EXCEPTIONS`, con `AUDIT_EXCEPTION_EVENTS_ENABLED`):** un historial ilegible o una proyección que no coincide con él
+- **Puerta (`D-EXCEPTIONS`, `AUDIT_EXCEPTION_EVENTS_ENABLED` encendido desde 2026-10-12):** un historial ilegible o una proyección que no coincide con él
   bloquea la promoción (`[GATE:EXCEPTIONS]`, sin override); nunca se lee como «no hay residuales».
 - **Reconstrucción:** la nota de la promoción cita la auditoría (su cabecera `control.audit_run` lleva código, catálogo, configuración y
   manifiesto de datos), el hash de configuración y los `event_id` de las concesiones en que se apoyó.
