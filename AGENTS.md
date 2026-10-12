@@ -17,6 +17,7 @@ for their respective domains; this file must not duplicate their content — it 
 | `AUDITORIA_ESTADISTICA.md` | *how statistical distribution audits work* | 7-block model evaluation, indicator catalog, generic function/config catalog for the cost-attribute and P2-metrics statistical audits |
 | `NORMAS_BATCH.md` | *how to write a `.bat` launcher* | The single criterion for every `.bat`: skeleton, no hard-coded paths/versions, own exit codes 100-199, single instance, standby/codepage restore, `cmd.exe` pitfalls; reference implementation `scripts/launch/lib/common.bat` + `P1_P2_Complete.bat`, template `_template.bat` |
 | `NORMAS_BACKLOG.md` | *how action points are recorded and related* | `gestion.backlog` domains and state machine, the relationship vocabulary (DEPENDS_ON / OVERLAPS / ...), the create/start/close procedure, the Scope Absorption Protocol, link discovery and review (`scripts/audit/backlog_links.py`), the automatic-incident overlap policy and its calibration gate |
+| `GOBIERNO_CONTROLES.md` | *which controls gate a deployment or a promotion* | The two-pillar control catalogue (`T-*` technical, `D-*` data, `G-*` orchestration: owner, criterion, consequence), the PASS / PASS_WITH_WARNINGS / FAIL / INCOMPLETE states, the CODE_DEPLOY vs PORTFOLIO_PROMOTION decision matrix and the precision policy; machine mirror `shared/governance/controls.py` |
 
 | Backlog registers | Answers | Canonical for |
 |---|---|---|
