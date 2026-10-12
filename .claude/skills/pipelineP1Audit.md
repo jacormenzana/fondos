@@ -16,7 +16,7 @@
 | Asset | Pattern | Location |
 |-------|---------|----------|
 | Pipeline log | `log_pipeline_*.log` (latest) | `proyecto1/log/` |
-| P1 export | `p1_export_*.xlsx` (latest) | `out/export/` |
+| P1 export | `p1_export_*.xlsx` (latest) | `out/reports/p1/` |
 | Benchmark audit findings | `benchmark_audit_findings.json` (latest) | `out/audit/` |
 | Benchmark audit tool | `audit_benchmark_consistency.py` | `proyecto1/tools/` |
 | DB | `fondos.sqlite` | `db/` |

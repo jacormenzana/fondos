@@ -556,7 +556,7 @@ its bound); the currency budget is a construction constraint too (see "Scenario 
 
 ### Monthly report (monthly_report.py)
 
-`generate_report(conn)` (default `out/reports/`, `shared.config.REPORTS_DIR`) → Excel with sheets: `0_Portada`, `1_Cartera`, `2_Regimen`, `3_Backtesting`, `4_Rotacion`, `5_Macro_Indicadores`. `4_Rotacion` only shows the rotation plan the builder persisted in the scenario (needs `ROTATION_COST_GATE_ENABLED` and a previous portfolio); otherwise it says so.
+`generate_report(conn)` (default `out/reports/p3/`, `shared.config.REPORT_DIRS["p3"]`; P1 exports go to `out/reports/p1/`, P2 metrics to `out/reports/p2/`) → Excel with sheets: `0_Portada`, `1_Cartera`, `2_Regimen`, `3_Backtesting`, `4_Rotacion`, `5_Macro_Indicadores`. `4_Rotacion` only shows the rotation plan the builder persisted in the scenario (needs `ROTATION_COST_GATE_ENABLED` and a previous portfolio); otherwise it says so.
 
 ### Scenario lifecycle & currency exposure (`scenario_lifecycle.py`, `shared/fx_exposure.py`)
 

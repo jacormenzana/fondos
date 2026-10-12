@@ -29,7 +29,7 @@ call "%COMMON%" :utf8_on
 ::                      fallo de P3, o construir una cartera nueva sin repetir el ciclo)
 ::   --baseline CSV     FASE B contra este snapshot de betas en vez del que tomo el ciclo
 ::   --scenario ID      scenario_id de la cartera (por defecto autogenerado: cartera_<regimen>_<YYYYMM>)
-::   --report-dir DIR   directorio de salida del informe (por defecto out\export)
+::   --report-dir DIR   directorio de salida del informe (por defecto out\reports\p3)
 ::   --p3-dry-run       P3 no persiste (debug); omite el informe y el push
 ::   --allow-stale      salta la puerta de frescura de P3 (con criterio)
 ::   --no-prompts       sin las confirmaciones de la FASE D (ejecucion programada)

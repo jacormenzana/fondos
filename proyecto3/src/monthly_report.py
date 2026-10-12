@@ -13,7 +13,7 @@ Produce un Excel con las siguientes hojas:
 
 Uso:
     from proyecto3.src.monthly_report import generate_report
-    generate_report(conn)                      # default: out/reports inside the project (shared.config.REPORTS_DIR)
+    generate_report(conn)                      # default: out/reports/p3 inside the project (shared.config.REPORT_DIRS["p3"])
 """
 
 import json
@@ -34,7 +34,9 @@ except ImportError:
 
 from proyecto3.src.regime_classifier import RegimeClassifier
 from proyecto3.src.backtesting import Backtester
-from shared.config import REPORTS_DIR as _DEFAULT_REPORTS_DIR, MAX_NON_EUR_UNHEDGED_WEIGHT, MAX_PORTFOLIO_CASH_WEIGHT
+from shared.config import REPORT_DIRS, MAX_NON_EUR_UNHEDGED_WEIGHT, MAX_PORTFOLIO_CASH_WEIGHT
+
+_DEFAULT_REPORTS_DIR = REPORT_DIRS["p3"]          # out/reports/p3 (single source: shared/config.py)
 from proyecto3.src import scenario_lifecycle as _lifecycle
 from shared import fx_exposure as _fx_exposure
 from shared.db import round_sql, int_cast_sql

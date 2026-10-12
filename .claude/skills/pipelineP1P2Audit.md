@@ -18,7 +18,7 @@
 | Asset | Pattern | Location |
 |-------|---------|----------|
 | Pipeline log | `log_pipeline_*.log` (latest) | `proyecto1/log/` |
-| P1 export | `p1_export_*.xlsx` (latest) | `out/export/` |
+| P1 export | `p1_export_*.xlsx` (latest) | `out/reports/p1/` |
 | Benchmark audit findings | `benchmark_audit_findings.json` (latest) | `out/audit/` |
 | Benchmark audit tool | `audit_benchmark_consistency.py` | `proyecto1/tools/` |
 
@@ -28,7 +28,7 @@
 |-------|---------|----------|
 | Standard log | `log_P2_calcIndicators_*.log` (latest, non-`_err`) | `proyecto2/log/` |
 | Error log | `log_P2_calcIndicators_*_err.log` (latest) | `proyecto2/log/` |
-| Metrics export | `p2_metricas_*.xlsx` (latest) | `out/metrics/` |
+| Metrics export | `p2_metricas_*.xlsx` (latest) | `out/reports/p2/` |
 | Per-run trace | `p2_pipeline_log` table | `db/fondos.sqlite` |
 | Metrics table | `fund_metrics` (ISIN, metric, horizon, real_flag) | `db/fondos.sqlite` |
 | Regime source of truth | `_REGIME_SUFFIX` (7 regimes) | `proyecto2/src/calculations/regime_returns.py` |

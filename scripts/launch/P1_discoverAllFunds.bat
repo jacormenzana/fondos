@@ -8,7 +8,7 @@ call "%COMMON%" :utf8_on
 :: P1_discoverAllFunds.bat  -- Pipeline P1 completo + export Excel + auditoria P1
 :: Ejecutar desde cualquier ruta.
 :: Log generado en: C:\desarrollo\fondos\proyecto1\log\
-:: Excel generado en: C:\desarrollo\fondos\out\export\
+:: Excel generado en: C:\desarrollo\fondos\out\reports\p1\
 ::
 :: Pasos: mark_stale -> nature-first -> fund_family_builder -> family-nature-refresh -> export_p1 -> AUDIT_P1
 ::

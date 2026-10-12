@@ -39,7 +39,7 @@ _ROOT   = _P2_SRC.parent                                  # c:/desarrollo/fondos
 sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_P2_SRC))
 
-from shared.config import METRICS_DIR, SCHEMA_VERSION
+from shared.config import REPORT_DIRS, SCHEMA_VERSION
 from shared.db import get_connection, round_sql as _round_sql, int_cast_sql as _int_cast_sql
 from shared.schema_checks import assert_schema_alignment
 
@@ -1643,8 +1643,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Exporta metricas P2 a Excel")
     parser.add_argument(
-        "--output", default=str(METRICS_DIR),
-        help="Directorio de salida (default: out/metrics/ bajo raiz del proyecto)")
+        "--output", default=str(REPORT_DIRS["p2"]),
+        help="Directorio de salida (default: out/reports/p2/ bajo raiz del proyecto)")
     parser.add_argument(
         "--min-fondos", type=int, default=2500,
         help="Minimo de fondos procesados para continuar (default: 2500)")

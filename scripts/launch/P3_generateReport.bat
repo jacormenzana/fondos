@@ -8,14 +8,14 @@ call "%COMMON%" :utf8_on
 :: P3_generateReport.bat
 :: Genera el informe mensual de cartera (Excel, 6 hojas) a partir de lo ya persistido
 :: Modulo: proyecto3.src.monthly_report.generate_report
-:: Output:  C:\desarrollo\fondos\out\export\informe_cartera_YYYYMMDD.xlsx
+:: Output:  C:\desarrollo\fondos\out\reports\p3\informe_cartera_YYYYMMDD.xlsx
 ::
 :: Informa el escenario en PRODUCCION (proyecto3\src\scenario_lifecycle.py). Sin escenario en PRODUCCION no genera nada y
 :: termina con RC 3; --scenario ID informa otro y --draft el DRAFT mas reciente (el que acaba de construir el ciclo, antes de
 :: promoverlo): ambos quedan marcados NO PRODUCCION y con otro nombre de fichero.
 ::
 :: Uso:
-::   P3_generateReport.bat                         informe del escenario en PRODUCCION, en out\export
+::   P3_generateReport.bat                         informe del escenario en PRODUCCION, en out\reports\p3
 ::   P3_generateReport.bat C:\otra\ruta            directorio de salida alternativo
 ::   P3_generateReport.bat --scenario ID           informe de un escenario concreto (marcado NO PRODUCCION)
 ::   P3_generateReport.bat --draft                 informe del DRAFT mas reciente (marcado NO PRODUCCION)
@@ -31,7 +31,7 @@ for %%A in (%*) do (
     if /i "%%~A"=="--help" goto :show_help
 )
 
-set "OUT_DIR=%ROOT%\out\export"
+set "OUT_DIR=%ROOT%\out\reports\p3"
 set "SCEN_ARG="
 :parse_args
 if "%~1"=="" goto :args_done

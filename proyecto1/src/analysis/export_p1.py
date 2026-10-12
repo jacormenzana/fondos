@@ -30,16 +30,15 @@ from pathlib import Path
 _ROOT = Path(__file__).resolve().parents[3]   # c:/desarrollo/fondos
 sys.path.insert(0, str(_ROOT))
 
-from shared.config import DATA_DIR
+from shared.config import REPORT_DIRS
 
-# Directorio de salida: c:/desarrollo/fondos/out/export/
-_OUT_DIR: Path = DATA_DIR.parent / 'out'
+# Directorio de salida: c:/desarrollo/fondos/out/reports/p1/  (REPORT_DIRS["p1"], shared/config.py)
 from shared.export_tables import TableExportConfig, export_tables, dated_filename
 
 # ============================================================
 # Directorio de salida por defecto
 # ============================================================
-EXPORT_DIR: Path = _OUT_DIR / "export"
+EXPORT_DIR: Path = REPORT_DIRS["p1"]
 
 # ============================================================
 # Configuracion de tablas P1
@@ -143,7 +142,7 @@ def export_p1(
     Exporta las tablas de P1 a un fichero Excel con fecha en el nombre.
 
     Parametros:
-        output_dir:        directorio de salida (default: out/export/)
+        output_dir:        directorio de salida (default: out/reports/p1/)
         include_kiid_text: incluir columna Raw_KIID_Text (default: False)
         block:             si se indica, filtra por heuristic_block.
                            Debe ser uno de VALID_BLOCKS; abort con ValueError si no.
@@ -194,7 +193,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--output", default=None,
-        help="Directorio de salida (default: out/export/)"
+        help="Directorio de salida (default: out/reports/p1/)"
     )
     parser.add_argument(
         "--include-kiid-text", action="store_true",

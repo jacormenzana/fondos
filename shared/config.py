@@ -437,8 +437,19 @@ MASTER_EXCEL: Path = DATA_DIR / "GestoresDeFondosv1.xlsx"
 # ============================================================
 # Directorios de outputs generados (no versionados)
 # ============================================================
-METRICS_DIR:  Path = _ROOT / "out" / "metrics"
-REPORTS_DIR:  Path = _ROOT / "out" / "reports"     # P3 monthly report, rolling dashboard and PIT backtest runs (was out/export)
+REPORTS_DIR:  Path = _ROOT / "out" / "reports"     # cross-project artifacts: rolling dashboard, PIT backtest runs, backlog_links
+
+# Per-project report outputs (the files a person opens): one directory each under REPORTS_DIR. Single source for the generators:
+#   p1 -> proyecto1.src.analysis.export_p1   (p1_export_*.xlsx)
+#   p2 -> proyecto2.src.analysis.export_metrics (p2_metricas_*.xlsx)
+#   p3 -> proyecto3.src.monthly_report       (informe_cartera_*.xlsx, drafts under p3/borradores)
+# (FND-0270: before it, p1 and p3 wrote to the export folder of out/ and p2 to its metrics folder)
+REPORT_DIRS: dict[str, Path] = {
+    "p1": REPORTS_DIR / "p1",
+    "p2": REPORTS_DIR / "p2",
+    "p3": REPORTS_DIR / "p3",
+}
+METRICS_DIR:  Path = REPORT_DIRS["p2"]             # compat alias, no callers left
 
 # ============================================================
 # Logging

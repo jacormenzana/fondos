@@ -29,7 +29,7 @@ def main(argv=None) -> int:
     group = ap.add_mutually_exclusive_group()
     group.add_argument("--scenario", default=None, help="id del escenario (por defecto, el de PRODUCCION)")
     group.add_argument("--draft", action="store_true", help="informa el DRAFT mas reciente (marcado NO PRODUCCION)")
-    ap.add_argument("--output-dir", default=None, help="directorio de salida (por defecto REPORTS_DIR de shared.config)")
+    ap.add_argument("--output-dir", default=None, help="directorio de salida (por defecto REPORT_DIRS['p3'] de shared.config: out/reports/p3)")
     args = ap.parse_args(argv)
 
     from shared.db import get_connection
