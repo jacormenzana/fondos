@@ -90,9 +90,9 @@ def test_exit_code(status, enabled, mode, blocking, rc):
     assert cpl.exit_code(status, contract_enabled=enabled, mode=mode, blocking=blocking) == rc
 
 
-def test_the_switch_ships_off():
-    # Flipping it is an owner decision after the migration and one shadow cycle: change this test in that same reviewed commit.
-    assert cfg.AUDIT_COMPLETENESS_CONTRACT_ENABLED is False
+def test_the_switch_is_a_bool_in_config():
+    # ON since 2026-10-12; whether its controls are marked enforced or dormant is checked by tests/test_governance_controls.py.
+    assert isinstance(cfg.AUDIT_COMPLETENESS_CONTRACT_ENABLED, bool)
 
 
 def test_statuses_are_the_governance_states():
@@ -191,7 +191,7 @@ def test_config_hash_covers_switches_and_mandate_limits_only():
     assert ri.config_hash(SimpleNamespace(A_ENABLED=False, MAX_X=0.25, OTHER=1)) != h        # a changed limit changes it
     assert ri.config_hash(SimpleNamespace(A_ENABLED=False, MAX_X=0.3, OTHER=2)) == h         # anything else does not
     assert [n for n, _v in ri.config_items(cfg)] and all(n.endswith("_ENABLED") or n.startswith("MAX_") for n, _v in ri.config_items(cfg))
-    assert ("AUDIT_COMPLETENESS_CONTRACT_ENABLED", False) in ri.config_items(cfg)
+    assert ("AUDIT_COMPLETENESS_CONTRACT_ENABLED", cfg.AUDIT_COMPLETENESS_CONTRACT_ENABLED) in ri.config_items(cfg)
 
 
 def test_git_state_outside_a_repository_is_unknown_not_an_error(tmp_path):

@@ -116,8 +116,8 @@ y `D-DATA-UNIVERSE` reparten esos defectos por alcance (sobre la cartera / solo 
 | Id | Criterio | Consecuencia | Fuente | Estado |
 |---|---|---|---|---|
 | `G-OVERRIDE-AP` | `--accept-alarms` exige motivo y `--ap FND-nnnn` existente en `gestion.backlog`; sin ello el override no se aplica | `BLOCK` | `GATE:OVERRIDE_AP` | enforced |
-| `G-COMPLETENESS` | cada comprobación obligatoria produjo resultado; una entrada `MISSING` (o una obligatoria `EMPTY` en corrida FULL) hace la corrida `INCOMPLETE`, código de salida 2, nunca un pase; el estado se escribe en `control.audit_run` con las filas de la corrida, en una sola transacción (§7) | `BLOCK` | `CODE:shared.statistical_audit.completeness.run_status` | dormant:AUDIT_COMPLETENESS_CONTRACT_ENABLED |
-| `G-EVIDENCE-RUN` | la corrida que lee la puerta es la última cabecera de `control.audit_run` de ámbito FULL y estado distinto de `INCOMPLETE`, posterior al DRAFT; una corrida FAIL cuenta (D4); una `_sample` nunca (siempre activo: `gating.SAMPLE_RUN_SUFFIX`) | `BLOCK` | `CODE:shared.statistical_audit.gating.select_evidence_run` | dormant:AUDIT_COMPLETENESS_CONTRACT_ENABLED |
+| `G-COMPLETENESS` | cada comprobación obligatoria produjo resultado; una entrada `MISSING` (o una obligatoria `EMPTY` en corrida FULL) hace la corrida `INCOMPLETE`, código de salida 2, nunca un pase; el estado se escribe en `control.audit_run` con las filas de la corrida, en una sola transacción (§7) | `BLOCK` | `CODE:shared.statistical_audit.completeness.run_status` | enforced |
+| `G-EVIDENCE-RUN` | la corrida que lee la puerta es la última cabecera de `control.audit_run` de ámbito FULL y estado distinto de `INCOMPLETE`, posterior al DRAFT; una corrida FAIL cuenta (D4); una `_sample` nunca (siempre activo: `gating.SAMPLE_RUN_SUFFIX`) | `BLOCK` | `CODE:shared.statistical_audit.gating.select_evidence_run` | enforced |
 | `G-COST` | los defectos de `cost_attributes` sobre fondos de la cartera cuentan como los de `p2_metrics` (D8: reproducción retrospectiva, un ciclo en sombra, luego bloquea) | `BLOCK` | — | planned:FND-0265 |
 | `G-REMEDIATION` | un ticket vinculado a un hallazgo se cierra solo con una re-auditoría completa que cubra los ISIN con cero infractores | `WARN` | — | planned:FND-0264 |
 
@@ -152,5 +152,5 @@ residual nunca cubre a un fondo seleccionado en una cartera (`D-RESIDUAL-SCENARI
 Contrato y cabecera de corrida: `AUDITORIA_ESTADISTICA.md` §6.4. Resumen: cada comprobación omitida se clasifica (`MISSING` /
 `EMPTY` / `NOT_APPLICABLE`); una corrida con una entrada obligatoria ausente es `INCOMPLETE`; su estado se guarda en
 `control.audit_run` en la misma transacción que sus filas, sin recuentos (los de `control.cycle_audit_run` se unen por `run_id`).
-Con `AUDIT_COMPLETENESS_CONTRACT_ENABLED` encendido, `INCOMPLETE` sale con código 2 y la promoción solo acepta como evidencia una
+Con `AUDIT_COMPLETENESS_CONTRACT_ENABLED` encendido (desde 2026-10-12), `INCOMPLETE` sale con código 2 y la promoción solo acepta como evidencia una
 cabecera FULL no `INCOMPLETE` (D4).

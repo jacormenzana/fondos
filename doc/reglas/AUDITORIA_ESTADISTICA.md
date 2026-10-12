@@ -724,7 +724,8 @@ sha de git y árbol limpio, `config_hash` de los interruptores `*_ENABLED` y lí
 cada tabla confirmaba por separado y una caída dejaba una corrida parcial legible como real. La cabecera no lleva recuentos de severidad
 ni de deriva: esos viven en `control.cycle_audit_run` (telemetría, FND-0239), que se une por `run_id`.
 
-Con `AUDIT_COMPLETENESS_CONTRACT_ENABLED` (apagado): una corrida `INCOMPLETE` sale con **código 2** (en ambos modos; los lanzadores de
+Con `AUDIT_COMPLETENESS_CONTRACT_ENABLED` (**encendido desde 2026-10-12**, tras la sombra sobre los datos vivos: corridas FULL de p2 y
+costes con 0 comprobaciones obligatorias ausentes y paridad de la puerta apagado/encendido): una corrida `INCOMPLETE` sale con **código 2** (en ambos modos; los lanzadores de
 ciclo lo tratan como `[WARN]`, nunca como fallo del ciclo), y la puerta de promoción toma su evidencia de `control.audit_run` (última
 cabecera FULL y no `INCOMPLETE`; una corrida FAIL cuenta, decisión D4) en lugar del último `run_id` de `audit_finding`. Orden del
 propietario: `scripts/ops/migrate_audit_run.py --apply` → una `--domain p2 --persist` completa (primera cabecera) → revisar los estados

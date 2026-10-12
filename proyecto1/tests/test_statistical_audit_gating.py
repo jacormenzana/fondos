@@ -167,6 +167,15 @@ def test_coverage_is_unknown_when_the_persisted_detail_disagrees_with_its_count_
 
 # ---------------- the loader over a fake connection ----------------
 
+@pytest.fixture(autouse=True)
+def _legacy_run_selection_by_default(monkeypatch):
+    """The loader tests below use a fake connection that only knows audit_finding: they exercise the run selection WITHOUT the
+    completeness contract (shared.config.AUDIT_COMPLETENESS_CONTRACT_ENABLED, ON since 2026-10-12). The contract path has its own
+    tests further down, which pass contract=True explicitly or set the switch themselves."""
+    import shared.config as cfg
+    monkeypatch.setattr(cfg, "AUDIT_COMPLETENESS_CONTRACT_ENABLED", False)
+
+
 class _Conn:
     def __init__(self, run=("run1", datetime(2026, 10, 11, 12, 0, tzinfo=timezone.utc)), findings=(), detail=(), anomalies=(),
                  in_universe=("IN1",), detail_table=True):

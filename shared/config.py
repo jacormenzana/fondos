@@ -433,8 +433,11 @@ AUDIT_RESIDUAL_EXPIRY_WARN_DAYS: int = 30
 #   * an INCOMPLETE run exits 2 (a required check could not run); the cycle launchers treat any audit RC as a [WARN], never a cycle failure;
 #   * the promotion gate takes its evidence from control.audit_run: the latest FULL-scope run whose status is not INCOMPLETE (a FAIL run
 #     counts: decision D4), instead of the latest audit_finding run id. A run persisted before the table has no header and is not evidence.
-# OFF until the owner has applied the migration, persisted one full audit and read the statuses of one shadow cycle. Rollback = False.
-AUDIT_COMPLETENESS_CONTRACT_ENABLED: bool = False
+# ON since 2026-10-12 (owner decision). Shadow evidence on the live data instead of a 9-hour cycle (the cycle reruns the same code on the
+# same tables): control.audit_run applied; FULL p2 run audit_20261012T182959Z = PASS_WITH_WARNINGS and FULL costs run audit_20261012T184300Z =
+# FAIL (known cost defects; costs do not feed the gate yet, G-COST), both with 0 required checks missing; the gate selected the same run, defects,
+# residuals and coverage for the PRODUCTION scenario with the switch OFF and ON. Rollback = False (no DDL to undo; headers stay harmless).
+AUDIT_COMPLETENESS_CONTRACT_ENABLED: bool = True
 
 # ============================================================
 # Directorios de datos externos (inputs no versionados)

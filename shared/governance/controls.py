@@ -187,11 +187,11 @@ CONTROLS = (
     Control("G-COMPLETENESS", PILLAR_ORCHESTRATION, "The audit ran everything it was required to", "owner (statistical audit)",
             "every required check produced a result; a MISSING input (or an EMPTY required check in a FULL run) makes the run INCOMPLETE, "
             "exit code 2, never a pass; the status is written to control.audit_run with the run's rows, in one transaction",
-            BLOCK, SOURCE_CODE + "shared.statistical_audit.completeness.run_status", DORMANT_PREFIX + "AUDIT_COMPLETENESS_CONTRACT_ENABLED"),
+            BLOCK, SOURCE_CODE + "shared.statistical_audit.completeness.run_status", STATUS_ENFORCED),
     Control("G-EVIDENCE-RUN", PILLAR_ORCHESTRATION, "Evidence-grade audit run", "owner (statistical audit)",
             "the run the gate reads is the latest control.audit_run header with scope FULL and status not INCOMPLETE, newer than the DRAFT; "
             "a FAIL run counts (decision D4); a _sample run never does (always on: gating.SAMPLE_RUN_SUFFIX)",
-            BLOCK, SOURCE_CODE + "shared.statistical_audit.gating.select_evidence_run", DORMANT_PREFIX + "AUDIT_COMPLETENESS_CONTRACT_ENABLED"),
+            BLOCK, SOURCE_CODE + "shared.statistical_audit.gating.select_evidence_run", STATUS_ENFORCED),
     Control("G-COST", PILLAR_ORCHESTRATION, "Cost domain at promotion", "owner (statistical audit)",
             "cost_attributes defects on a fund of the scenario count like p2_metrics ones (decision D8: replay, one shadow cycle, then block)",
             BLOCK, "", PLANNED_PREFIX + "FND-0265"),

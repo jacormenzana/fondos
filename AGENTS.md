@@ -565,8 +565,9 @@ A portfolio scenario is `DRAFT` → `PRODUCTION` → `ARCHIVED` (`portfolio_scen
 (`p3_build_portfolio.py`) only writes a DRAFT, under a unique id `cartera_<regime>_<YYYYMM>_b<YYYYMMDDHHMMSS>`, and never replaces anything that is not
 a DRAFT (`--replace-draft` replaces a DRAFT). Promotion is an owner command, `scripts\launch\p3_promote_scenario.py <id>`, gated on: DRAFT with weights
 summing to 1, no stale input in the P3 freshness gate, net non-EUR exposure ≤ `MAX_NON_EUR_UNHEDGED_WEIGHT` (30%, `shared/fx_exposure.py`: a foreign
-class counts as exposed whatever it hedges inside; a EUR class only if unhedged with non-EUR assets) and the **data gate** (FND-0251): the latest persisted
-`p2_metrics` audit must be newer than the DRAFT build and have no open *hard defect* (`HARD_INVARIANT`, `BLOCK2`, `TIMESERIES_DUPLICATE`:
+class counts as exposed whatever it hedges inside; a EUR class only if unhedged with non-EUR assets) and the **data gate** (FND-0251): the evidence run (FND-0261,
+`AUDIT_COMPLETENESS_CONTRACT_ENABLED` ON: the latest `control.audit_run` header of a FULL-scope, not INCOMPLETE `p2_metrics` audit; a sample or INCOMPLETE run is
+never evidence, an INCOMPLETE run exits 2; contract and header: `doc/reglas/AUDITORIA_ESTADISTICA.md` §6.4) must be newer than the DRAFT build and have no open *hard defect* (`HARD_INVARIANT`, `BLOCK2`, `TIMESERIES_DUPLICATE`:
 `shared/statistical_audit/gating.py`, the same predicate as the audit's `--mode check`) on a fund of the scenario; a hard defect outside it needs an
 active accepted residual (`accept_audit_residual.py`, AP + expiry), and an accepted residual never covers a selected fund. Statistical anomalies
 (`OUTLIER_MAD_Z`) on the scenario's funds are listed and never block. The exposure limit is a **hard gate with no override** (the mandate changes in

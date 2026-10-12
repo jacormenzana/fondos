@@ -52,8 +52,11 @@ def world(db, monkeypatch):
     conn = db
     conn.execute("ALTER TABLE fund_master ADD COLUMN fund_currency text, ADD COLUMN hedging_policy text, "
                  "ADD COLUMN asset_currency text, ADD COLUMN in_current_universe smallint NOT NULL DEFAULT 1")
-    for t in ("audit_finding", "audit_finding_isin", "audit_accepted_finding"):
+    for t in ("audit_finding", "audit_finding_isin", "audit_accepted_finding", "audit_run"):
         conn.execute(f"CREATE TABLE {t} (LIKE control.{t} INCLUDING ALL)")          # real CHECK constraints and defaults, no FK
+    # FND-0261 (AUDIT_COMPLETENESS_CONTRACT_ENABLED ON): the evidence is the run's header, written with its rows by --persist
+    conn.execute("INSERT INTO audit_run (run_id, domain, scope, status, started_at) VALUES (%s, 'p2_metrics', 'FULL', 'PASS_WITH_WARNINGS', %s)",
+                 (RUN, AUDITED))
     for isin in FUNDS + [OUTSIDE]:
         conn.execute("INSERT INTO fund_master (isin, fund_nature, fund_currency, hedging_policy, asset_currency) "
                      "VALUES (%s, 'Mixtos', 'EUR', 'Unhedged', 'EUR')", (isin,))
@@ -221,8 +224,26 @@ def test_an_audit_older_than_the_draft_build_refuses_and_no_override_helps(world
 def test_no_persisted_audit_at_all_refuses(world, capsys):
     conn, _ = world
     conn.execute("DELETE FROM audit_finding")
+    conn.execute("DELETE FROM audit_run")
     conn.commit()
     _assert_refused(conn, cli.main([SCENARIO]), capsys, "AUDIT_STALE")
+
+
+def test_a_run_without_a_header_is_not_evidence(world, capsys):
+    # FND-0261: findings persisted before control.audit_run existed (or by a crash) carry no completeness verdict
+    conn, _ = world
+    conn.execute("DELETE FROM audit_run")
+    conn.commit()
+    _assert_refused(conn, cli.main([SCENARIO]), capsys, "AUDIT_STALE")
+
+
+def test_an_incomplete_full_run_is_not_evidence_and_the_refusal_says_why(world, capsys):
+    conn, _ = world
+    conn.execute("UPDATE audit_run SET status = 'INCOMPLETE' WHERE run_id = %s", (RUN,))
+    conn.commit()
+    rc = cli.main([SCENARIO])
+    out = capsys.readouterr().out
+    assert rc != 0 and "[GATE:AUDIT_STALE]" in out and "INCOMPLETE" in out
 
 
 def test_a_selected_fund_held_out_of_the_audit_refuses(world, capsys):
