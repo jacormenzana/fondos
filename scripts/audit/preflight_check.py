@@ -6,6 +6,7 @@ preflight_check.py -- READ-ONLY pre-flight before acting on a stored plan, a sum
 Several Claude sessions work on this repository at once (2026-10-11: one built the FX constraint while another shipped a better promotion
 gate, promoted, and started a 5 h recompute). The five checks below take seconds and say whether the plan in your head is still true:
 
+  0. driver    psycopg imports or not, Smart App Control state, CodeIntegrity 3077 blocks, the active interpreter
   1. git       dirty files (another session's work in flight), commits ahead/behind origin, worktrees, stashes
   2. processes pipeline / test / audit processes running, the launcher cycle lock
   3. database  PRODUCTION scenario, newest persisted audit, metrics algorithm_version vs CALC_VERSION, last P2 run (read-only, fondos_app)
@@ -44,6 +45,11 @@ PROCESS_PATTERNS = (
     "migrate_",
 )
 LOCK_FILE = ROOT / "proyecto1" / "log" / "fondos_cycle.lock"
+# the interpreter every repo command is meant to run under. Two conda envs named `des` exist on the owner's machine
+# (C:\data\envs\des and C:\Users\jacor\.conda\envs\des, so `conda ... -n des` targets the WRONG one): a mismatch is
+# reported, never fatal -- Linux CI, the hermetic PG suite and any other host must keep working. FONDOS_PYTHON overrides.
+DEFAULT_INTERPRETER = r"C:\data\envs\des\python.exe"
+CI_LOOKBACK_HOURS = 6.0                 # how far back the CodeIntegrity 3077 query looks (bounded: the check stays fast)
 
 
 # ---------------------------------------------------------------- pure helpers (unit-tested)
@@ -105,12 +111,75 @@ def code_calc_version(source: str) -> Optional[str]:
     return m.group(1) if m else None
 
 
+def parse_driver_probe(text: str) -> tuple:
+    """(sac_state, [(when, file)]) from the one-shot Windows probe, which prints `SAC<TAB>state` and one
+    `EV<TAB>when<TAB>path` per CodeIntegrity 3077 event. Only the file's base name is kept (the full device path adds
+    nothing); anything unparsable is ignored, because a probe that half-worked must not crash the checker."""
+    sac, events = None, []
+    for line in (text or "").splitlines():
+        parts = line.rstrip("\r\n").split("\t")
+        if parts[0] == "SAC" and len(parts) >= 2:
+            sac = parts[1].strip() or None
+        elif parts[0] == "EV" and len(parts) >= 3:
+            when, path = parts[1].strip(), parts[2].strip()
+            if when and path:
+                events.append((when, path.replace("\\", "/").rsplit("/", 1)[-1]))
+    return sac, events
+
+
+def expected_interpreter() -> str:
+    return os.environ.get("FONDOS_PYTHON") or DEFAULT_INTERPRETER
+
+
+def same_interpreter(a: str, b: str) -> bool:
+    """Windows paths differ in case and in slash direction without being different files."""
+    return os.path.normcase(os.path.normpath(a or "")) == os.path.normcase(os.path.normpath(b or ""))
+
+
+def summarize_driver(import_ok: bool, detail: str, sac: Optional[str], events: list, interpreter: str,
+                     expected: Optional[str], lookback_hours: float = CI_LOOKBACK_HOURS) -> dict:
+    """The driver section, derived from already-collected facts so it is unit-testable without Windows."""
+    files = []
+    for _when, name in events:
+        if name not in files:
+            files.append(name)
+    return {
+        "import_ok": bool(import_ok),
+        "detail": detail or "",
+        "sac_state": sac,
+        "blocks": len(events),
+        "newest_block": max((w for w, _n in events), default=None),
+        "blocked_files": files,
+        "lookback_hours": lookback_hours,
+        "interpreter": interpreter,
+        "expected_interpreter": expected,
+        "interpreter_ok": same_interpreter(interpreter, expected) if expected else True,
+    }
+
+
 def verdict(report: dict, audit_max_age_days: float = 3.0) -> dict:
     """{'level': 'CLEAR'|'CAUTION', 'cautions': [...], 'notes': [...]}.
 
     CAUTION = something that makes acting on a stored plan unsafe right now (shared files being edited, a long job running, no production
     scenario). NOTES = things to know (commits ahead, mixed metric versions, recent memory, new tickets)."""
     cautions, notes = [], []
+    dr = report.get("driver") or {}
+    if dr:
+        look = dr.get("lookback_hours", CI_LOOKBACK_HOURS)
+        if not dr.get("import_ok"):
+            if dr.get("blocks"):
+                cautions.append(f"the PostgreSQL driver does not load while Application Control blocked {dr['blocks']} file(s) in the last "
+                                f"{look:g} h (newest {dr.get('newest_block')}): nothing DB-backed can run, but this is most likely a "
+                                f"transient reputation window -- re-check in a few minutes before escalating to the owner")
+            else:
+                cautions.append(f"the PostgreSQL driver does not load ({dr.get('detail', '')[:80]}) and no recent Application Control block "
+                                f"explains it: nothing DB-backed can run (RC 106)")
+        elif dr.get("blocks"):
+            notes.append(f"the driver loads now, but Application Control blocked {dr['blocks']} file(s) in the last {look:g} h "
+                         f"({', '.join(dr.get('blocked_files', [])[:3])}): a run started inside such a window fails with RC 106")
+        if not dr.get("interpreter_ok"):
+            notes.append(f"running under {dr.get('interpreter')}, not the expected {dr.get('expected_interpreter')}: two conda envs are "
+                         f"named `des` on the owner's machine, so address the env by explicit prefix (`-p <env dir>`), never `-n des`")
     g = report.get("git", {})
     d = g.get("dirty", {})
     if d.get("tracked") or d.get("untracked"):
@@ -163,6 +232,31 @@ def _run(cmd: list, timeout: int = 20) -> Optional[str]:
     except (OSError, subprocess.SubprocessError):
         return None
     return r.stdout if r.returncode == 0 else None
+
+
+def read_driver(lookback_hours: float = CI_LOOKBACK_HOURS) -> dict:
+    """Does the DB driver load in THIS interpreter, is Application Control enforcing, and did it block anything recently.
+
+    The repo's own guard (`shared/env_guard.check_driver`) answers the first question, so the checker and the launchers
+    agree by construction. The Windows-only part is one PowerShell call: it is the right place for event-log reading
+    (`env_guard` is stdlib-only and must import in an interpreter whose driver is broken). Anything unavailable -- another
+    OS, no PowerShell, an unreadable log -- degrades to "unknown" and the rest of the section still reports."""
+    try:
+        from shared import env_guard
+        ok, detail = env_guard.check_driver()
+    except Exception as exc:                                   # noqa: BLE001 -- report, do not crash the checker
+        ok, detail = False, f"{type(exc).__name__}: {str(exc)[:120]}"
+    sac, events = None, []
+    if sys.platform == "win32":
+        ps = ("$ErrorActionPreference='SilentlyContinue';"
+              "$p=(Get-ItemProperty 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\CI\\Policy')."
+              "VerifiedAndReputablePolicyState; \"SAC`t$p\";"
+              f"Get-WinEvent -FilterHashtable @{{LogName='Microsoft-Windows-CodeIntegrity/Operational';Id=3077;"
+              f"StartTime=(Get-Date).AddHours(-{lookback_hours})}} -MaxEvents 50 | ForEach-Object {{"
+              "$f='?'; if ($_.Message -match 'attempted to load (\\S+)') { $f=$matches[1] };"
+              "\"EV`t$($_.TimeCreated.ToString('yyyy-MM-dd HH:mm:ss'))`t$f\" }")
+        sac, events = parse_driver_probe(_run(["powershell", "-NoProfile", "-Command", ps], timeout=25) or "")
+    return summarize_driver(ok, detail, sac, events, sys.executable, expected_interpreter(), lookback_hours)
 
 
 def read_git(mine=()) -> dict:
@@ -321,6 +415,7 @@ def build_report(args) -> dict:
     mine = tuple(args.mine or ())
     src = (ROOT / "proyecto2" / "src" / "pipeline" / "run_pipeline.py")
     report = {
+        "driver": read_driver(),
         "git": read_git(mine),
         "processes": read_processes(),
         "db": {"error": "skipped"} if args.no_db else read_db(),
@@ -334,6 +429,15 @@ def build_report(args) -> dict:
 
 def render(r: dict) -> str:
     L = ["=== PRE-FLIGHT (read-only) ==="]
+    dr = r.get("driver") or {}
+    if dr:
+        L.append(f"[0] driver: import {'OK' if dr.get('import_ok') else 'BLOCKED (' + dr.get('detail', '')[:60] + ')'}"
+                 f" | SAC={dr.get('sac_state', '?')} | {dr.get('blocks', 0)} block(s)/{dr.get('lookback_hours', 0):g}h"
+                 f" (newest {dr.get('newest_block')}) | interpreter {'OK' if dr.get('interpreter_ok') else 'MISMATCH'}")
+        for f in dr.get("blocked_files", [])[:4]:
+            L.append(f"      blocked: {f}")
+        if not dr.get("interpreter_ok"):
+            L.append(f"      running under {dr.get('interpreter')}, expected {dr.get('expected_interpreter')}")
     g = r["git"]
     dirty = g.get("dirty", {})
     L.append("[1] git: " + (g.get("error") or

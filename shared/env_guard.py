@@ -9,6 +9,14 @@ languages (doc/reglas/NORMAS_BATCH.md, P#11).
 
 No retry, no alternative interpreter, no copied DLL: a blocked driver is an owner/IT decision.
 
+The block is often TRANSIENT, which the message says so an operator does not escalate a self-healing condition: Smart App
+Control blocks an unsigned binary whose reputation it does not yet know on first load and clears it once resolved (measured
+once, 2026-10-12, on psycopg's bundled libcrypto: ~32 minutes). Re-running the launcher later is therefore legitimate -- but
+this module still never retries, backs off or sleeps: a cycle launcher must fail in seconds, and a permanent policy block must
+not be indistinguishable from a transient one (owner decision, 2026-10-12). Diagnosis lives in
+`scripts/audit/preflight_check.py` section [0], which reads CodeIntegrity event 3077 and the Smart App Control state; this
+module stays stdlib-only and never touches the event log.
+
 Two layers, deliberately different:
     * batch layer  (`batch_check`)       -- skips the import while a marker `STATE_DIR/env_driver_ok` is fresh
                                             (interpreter + its mtime, 10 minutes). Cost optimisation only.
@@ -80,7 +88,11 @@ def record_block(state_dir: Path | str, launcher: str, detail: str, now: datetim
 def blocked_message(detail: str) -> str:
     return (f"[ERROR] RC {RC_ENV_BLOCKED}: the PostgreSQL driver cannot be loaded by {sys.executable} "
             f"({detail}). Windows Application Control is the usual cause. Nothing was run. Do not work around it "
-            f"(no other interpreter, no copied DLL): ask the owner to allow the driver, then retry.")
+            f"(no other interpreter, no copied DLL, no registry edit; this guard fails fast and never retries by design). "
+            f"The block may be TRANSIENT: Application Control blocks an unsigned binary it has no reputation for on first "
+            f"load and clears it once resolved (measured once, 2026-10-12: ~32 min), so re-running later may simply work. "
+            f"Diagnose before escalating: `python scripts/audit/preflight_check.py` section [0], or CodeIntegrity event "
+            f"3077, which names the exact file. If it does not clear, allowing the driver is an owner/IT decision.")
 
 
 # ── marker (batch layer only) ────────────────────────────────────────────────────────────────────

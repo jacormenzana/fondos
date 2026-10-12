@@ -61,10 +61,49 @@ def test_declared_own_files_are_listed_apart_and_do_not_count_as_another_session
     assert pf.split_dirty([("??", "scripts/audit/x.py")], mine=("scripts\\audit\\x.py",))["mine"] == ["scripts/audit/x.py"]
 
 
+# ---------------- driver: parser + summarizer ----------------
+
+def test_parse_driver_probe_reads_sac_and_events_ignoring_junk_lines():
+    text = "SAC\t1\nEV\t2026-10-12 13:38:47\t\\Device\\HarddiskVolume3\\...\\libcrypto-3-x64-1b25.dll\nnot a line\nEV\tbad"
+    sac, events = pf.parse_driver_probe(text)
+    assert sac == "1"
+    assert events == [("2026-10-12 13:38:47", "libcrypto-3-x64-1b25.dll")]
+
+
+def test_parse_driver_probe_on_empty_or_garbled_text_is_quiet():
+    assert pf.parse_driver_probe("") == (None, [])
+    assert pf.parse_driver_probe("garbage\nmore garbage") == (None, [])
+
+
+def test_same_interpreter_ignores_case_and_slash_direction():
+    assert pf.same_interpreter(r"C:\data\envs\des\python.exe", "c:/data/envs/des/python.exe")
+    assert not pf.same_interpreter(r"C:\data\envs\des\python.exe", r"C:\Users\jacor\.conda\envs\des\python.exe")
+
+
+def test_summarize_driver_ok_with_no_recent_blocks():
+    s = pf.summarize_driver(True, "", "0", [], r"C:\data\envs\des\python.exe", r"C:\data\envs\des\python.exe")
+    assert s["import_ok"] and s["blocks"] == 0 and s["newest_block"] is None and s["interpreter_ok"]
+
+
+def test_summarize_driver_blocked_dedupes_files_and_keeps_order():
+    events = [("13:38:47", "libcrypto.dll"), ("13:40:00", "libcrypto.dll"), ("14:10:41", "libssl.dll")]
+    s = pf.summarize_driver(False, "OSError: blocked", "1", events, "python.exe", None)
+    assert not s["import_ok"] and s["blocks"] == 3 and s["newest_block"] == "14:10:41"
+    assert s["blocked_files"] == ["libcrypto.dll", "libssl.dll"]
+    assert s["interpreter_ok"]                                     # no `expected` given -> never flags a mismatch
+
+
+def test_summarize_driver_flags_the_wrong_conda_env():
+    s = pf.summarize_driver(True, "", "0", [], r"C:\Users\jacor\.conda\envs\des\python.exe", r"C:\data\envs\des\python.exe")
+    assert not s["interpreter_ok"]
+
+
 # ---------------- verdict ----------------
 
 def _report(**over):
-    r = {"git": {"dirty": {"tracked": [], "untracked": [], "unowned": ["db/oper/a"]}, "ahead": 0, "behind": 0, "stashes": 0, "worktrees": ["a"]},
+    r = {"driver": {"import_ok": True, "detail": "", "blocks": 0, "newest_block": None, "blocked_files": [],
+                    "lookback_hours": 6.0, "interpreter": "x", "expected_interpreter": "x", "interpreter_ok": True},
+         "git": {"dirty": {"tracked": [], "untracked": [], "unowned": ["db/oper/a"]}, "ahead": 0, "behind": 0, "stashes": 0, "worktrees": ["a"]},
          "processes": {"running": [], "lock_held": False},
          "db": {"lifecycle_installed": True, "production": ["s1"], "audit_age_days": 0.5, "dominant_version": "20261011"},
          "memory": {"recent": [], "recent_hours": 6.0}, "backlog": {"new": [], "since_hours": 24.0}, "calc_version": "20261011"}
@@ -105,6 +144,53 @@ def test_an_unreadable_database_is_a_note_not_silence():
     v = pf.verdict(_report(db={"error": "cannot connect: OperationalError"}))
     assert any("database section not read" in n for n in v["notes"])
     assert pf.verdict(_report(db={"error": "skipped"}))["notes"] == []
+
+
+# ── driver: caution when blocked, a note (never a hard stop) for a stale block or a wrong interpreter ──
+
+def test_driver_blocked_is_a_caution_that_names_the_transient_window():
+    v = pf.verdict(_report(driver={"import_ok": False, "blocks": 2, "newest_block": "14:10:42"}))
+    assert v["level"] == "CAUTION"
+    assert any("transient" in c for c in v["cautions"])
+
+
+def test_driver_blocked_with_no_recent_block_is_still_a_caution_but_differently_worded():
+    v = pf.verdict(_report(driver={"import_ok": False, "blocks": 0}))
+    assert v["level"] == "CAUTION"
+    assert any("RC 106" in c for c in v["cautions"])
+
+
+def test_driver_loads_but_recent_blocks_exist_is_a_note_not_a_caution():
+    v = pf.verdict(_report(driver={"blocks": 1, "newest_block": "14:10:42", "blocked_files": ["libssl.dll"]}))
+    assert v["level"] == "CLEAR"
+    assert any("RC 106" in n for n in v["notes"])
+
+
+def test_a_mismatched_interpreter_is_a_note_never_a_hard_failure_cross_platform():
+    v = pf.verdict(_report(driver={"interpreter_ok": False, "interpreter": "/usr/bin/python3", "expected_interpreter": r"C:\data\envs\des\python.exe"}))
+    assert v["level"] == "CLEAR"
+    assert any("-n des" in n for n in v["notes"])
+
+
+def test_no_driver_section_at_all_changes_nothing_backward_compat():
+    r = _report()
+    del r["driver"]
+    assert pf.verdict(r) == {"level": "CLEAR", "cautions": [], "notes": []}
+
+
+# ---------------- render ----------------
+
+def test_render_shows_the_driver_section_first_and_lists_blocked_files():
+    r = _report(driver={"import_ok": False, "detail": "OSError: blocked", "sac_state": "1", "blocks": 2,
+                        "newest_block": "2026-10-12 14:10:42", "blocked_files": ["libssl.dll", "libcrypto.dll"],
+                        "interpreter_ok": False, "interpreter": "/usr/bin/python3", "expected_interpreter": r"C:\data\envs\des\python.exe"})
+    r["verdict"] = pf.verdict(r)
+    out = pf.render(r)
+    lines = out.splitlines()
+    assert lines[1].startswith("[0] driver:")
+    assert "BLOCKED" in lines[1] and "SAC=1" in lines[1] and "MISMATCH" in lines[1]
+    assert "blocked: libssl.dll" in out and "blocked: libcrypto.dll" in out
+    assert "expected" in out
 
 
 # ---------------- git reader on a throwaway repository ----------------
@@ -151,7 +237,7 @@ def test_memory_section_flags_recent_files_with_their_session_id(tmp_path):
 def test_cli_json_is_parseable_and_strict_maps_caution_to_exit_1(monkeypatch, capsys, tmp_path):
     rc = pf.main(["--no-db", "--json", "--memory-dir", str(tmp_path)])
     out = json.loads(capsys.readouterr().out)
-    assert rc == 0 and set(out) >= {"git", "processes", "db", "memory", "backlog", "verdict", "calc_version"}
+    assert rc == 0 and set(out) >= {"driver", "git", "processes", "db", "memory", "backlog", "verdict", "calc_version"}
     bad = _report(processes={"running": [{"pid": 1, "cmd": "run_pipeline"}]})
     bad["verdict"] = pf.verdict(bad)
     monkeypatch.setattr(pf, "build_report", lambda args: bad)

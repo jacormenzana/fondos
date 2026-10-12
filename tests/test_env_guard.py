@@ -41,6 +41,24 @@ def test_a_dll_style_oserror_is_also_a_block(monkeypatch):
     assert not ok and detail.startswith("OSError")
 
 
+# ── the message says the block may be transient, and still bans every workaround ────────────────
+
+def test_blocked_message_bans_every_workaround_and_states_the_rc():
+    msg = g.blocked_message("OSError: DLL load failed: blocked by policy")
+    assert f"RC {g.RC_ENV_BLOCKED}" in msg
+    for banned in ("no other interpreter", "no copied DLL", "no registry edit"):
+        assert banned in msg
+    assert "OSError: DLL load failed" in msg
+
+
+def test_blocked_message_names_the_transient_diagnosis_path():
+    msg = g.blocked_message("detail")
+    assert "TRANSIENT" in msg
+    assert "preflight_check.py" in msg
+    assert "3077" in msg
+    assert "owner/IT decision" in msg
+
+
 # ── marker ──────────────────────────────────────────────────────────────────────────────────────
 
 def test_marker_roundtrip_and_ttl(tmp_path):

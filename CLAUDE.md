@@ -14,6 +14,15 @@ These are the only Claude-Code-specific notes; everything else is in `AGENTS.md`
 
 - **Python interpreter:** use `C:\data\envs\des\python.exe` explicitly.
   A bare `python` may resolve to the wrong interpreter (WindowsApps shim) → "Permission denied".
+- **Two conda envs are both named `des`:** `C:\data\envs\des` (the repo's env) and
+  `C:\Users\jacor\.conda\envs\des` (a different one). `conda ... -n des` resolves to the **wrong**
+  one. Always address the repo env by explicit prefix: `conda ... -p C:\data\envs\des` (or the
+  PowerShell profile helper `fondos-conda`, which injects it and refuses to run without it).
+- **A blocked PostgreSQL driver (RC 106) may be transient**, not a policy decision: Windows Smart
+  App Control can block an unsigned DLL on first load and clear it once it resolves the file's
+  reputation (observed once, 2026-10-12, ~32 min on psycopg's bundled libcrypto). Diagnose with
+  `python scripts/audit/preflight_check.py` (section `[0]`) before escalating; still never retry,
+  copy a DLL, or edit the registry — `shared/env_guard.py` fails fast by design.
 - **Run P1 tests:** `C:\data\envs\des\python.exe -m pytest proyecto1/tests/`
 - **AST validation after every Python edit** (P#3 / R-8):
   `python -c "import ast; ast.parse(open('archivo.py').read()); print('AST OK')"`

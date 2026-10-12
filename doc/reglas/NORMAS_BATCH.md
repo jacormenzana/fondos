@@ -34,6 +34,9 @@ endlocal & exit /b %RC%
   aplicaciones de Windows puede bloquear su DLL y, sin guarda, cada herramienta muere a mitad con un traceback ajeno).
   Una vez por árbol de procesos (`FONDOS_DB_DRIVER_OK`) y recordado 10 min entre ejecuciones (`proyecto1/log/env_driver_ok`);
   un entorno bloqueado nunca se recuerda. Registro local `proyecto1/log/env_blocked.log` (tope 1 MB: se trunca). La capa Python
+  El bloqueo puede ser TRANSITORIO (Smart App Control bloquea un binario sin reputación conocida y lo libera al resolverla,
+  medido una vez el 2026-10-12: ~32 min; diagnostico en `scripts/audit/preflight_check.py` seccion [0], evento CodeIntegrity
+  3077). Sin reintento igualmente: relanzar mas tarde es legitimo, pero el lanzador sigue fallando rapido, nunca esperando.
   (`shared/env_guard.py::require_db_driver()`, usada por `run_pg_tests.py`, los `migrate_*.py` y el preflight de
   `p1p2_state.py`) hace siempre el import real y no usa el marcador. Sin reintentos, sin otro intérprete, sin DLL copiada.
 - Solo ASCII (los mensajes van sin acentos) y finales de línea **CRLF** (los editores y `Write` generan LF: convertir
