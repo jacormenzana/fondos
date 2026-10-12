@@ -213,8 +213,9 @@ def evaluate_promotion(*, status: Optional[str], n_funds: int, weight_sum: float
 
     # --- data gates --------------------------------------------------------------------------------------------------------------
     if not audit.has_run:
+        why = getattr(audit, "selection_note", "")
         hard.append(g(GATE_AUDIT_STALE, "no hay ninguna auditoria persistida del dominio p2_metrics (sin override): ejecute "
-                      "run_statistical_audit.py --domain p2 --persist"))
+                      "run_statistical_audit.py --domain p2 --persist" + (f" [{why}]" if why else "")))
     elif built_at is not None and audit.run_ts is not None and audit.run_ts < built_at:
         hard.append(g(GATE_AUDIT_STALE, f"la ultima auditoria persistida ({audit.run_id}, {audit.run_ts:%Y-%m-%d %H:%M}) es anterior a la "
                       f"construccion del DRAFT ({built_at:%Y-%m-%d %H:%M}): no describe esta cartera (sin override). Ejecute "

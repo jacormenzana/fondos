@@ -11,8 +11,10 @@ One register of every control with its pillar, owner, criterion and consequence;
     ORCHESTRATION    (G-*)  how the two combine: completeness of the audit itself, evidence selection, override and remediation.
 
 Nothing here runs a check. A control with `status == "enforced"` names the existing code that enforces it in `source`
-(a promotion gate code, or an audit defect class / block / rule id); a control with `status == "planned:FND-nnnn"` is
-owned by that ticket and is not mapped to any code yet. The consumers are the orchestrator (GOV-06) and the tests.
+(a promotion gate code, an audit defect class / block / rule id, or a function); `status == "dormant:<SWITCH>"` names code that
+exists behind a shared.config switch still OFF (the test fails once the switch is ON, so the register is updated with the flip);
+`status == "planned:FND-nnnn"` is owned by that ticket and is not mapped to any code yet. The consumers are the orchestrator
+(GOV-06) and the tests.
 
 Importing this module must stay free of pipeline imports (R-7): the tests read the gate constants, not the other way round.
 """
@@ -72,13 +74,16 @@ CONSEQUENCES = (BLOCK, BLOCK_UNLESS_OVERRIDE, WARN, RECORD)
 
 STATUS_ENFORCED = "enforced"
 PLANNED_PREFIX = "planned:"
+DORMANT_PREFIX = "dormant:"     # "dormant:<SWITCH>": the code exists behind a shared.config switch that is still OFF
 
-# `source` of an enforced control: "GATE:<code>" is a `GATE_*` constant of proyecto3/src/scenario_lifecycle.py; "RULE_CLASS:", "BLOCK:" and
-# "RULE_ID:" are audit finding attributes (shared/statistical_audit/gating.py for the three that block).
+# `source` of an enforced or dormant control: "GATE:<code>" is a `GATE_*` constant of proyecto3/src/scenario_lifecycle.py; "RULE_CLASS:",
+# "BLOCK:" and "RULE_ID:" are audit finding attributes (shared/statistical_audit/gating.py for the three that block); "CODE:<module.attr>"
+# names the function that applies a control with no gate code of its own.
 SOURCE_GATE = "GATE:"
 SOURCE_RULE_CLASS = "RULE_CLASS:"
 SOURCE_BLOCK = "BLOCK:"
 SOURCE_RULE_ID = "RULE_ID:"
+SOURCE_CODE = "CODE:"
 
 
 @dataclass(frozen=True)
@@ -89,8 +94,8 @@ class Control:
     owner: str
     criterion: str
     consequence: str                         # at PORTFOLIO_PROMOTION
-    source: str                              # "GATE:X" / "RULE_CLASS:X" / "BLOCK:X" / "RULE_ID:X" (enforced) or "" (planned)
-    status: str                              # STATUS_ENFORCED or "planned:FND-nnnn"
+    source: str                              # "GATE:X" / "RULE_CLASS:X" / "BLOCK:X" / "RULE_ID:X" / "CODE:m.f" (enforced, dormant); "" (planned)
+    status: str                              # STATUS_ENFORCED, "planned:FND-nnnn" or "dormant:<SWITCH>"
     deploy_consequence: Optional[str] = None  # at CODE_DEPLOY; None = not evaluated there
 
     @property
@@ -104,6 +109,10 @@ class Control:
     @property
     def planned_ticket(self) -> Optional[str]:
         return self.status[len(PLANNED_PREFIX):] if self.status.startswith(PLANNED_PREFIX) else None
+
+    @property
+    def dormant_switch(self) -> Optional[str]:
+        return self.status[len(DORMANT_PREFIX):] if self.status.startswith(DORMANT_PREFIX) else None
 
 
 _OWNER_PROMOTION = "owner (promotion command)"
@@ -176,12 +185,13 @@ CONTROLS = (
             "--accept-alarms needs a reason and --ap FND-nnnn that exists in gestion.backlog; without it the override does not apply",
             BLOCK, SOURCE_GATE + "OVERRIDE_AP", STATUS_ENFORCED),
     Control("G-COMPLETENESS", PILLAR_ORCHESTRATION, "The audit ran everything it was required to", "owner (statistical audit)",
-            "every mandatory rule produced a result; a skipped or unreadable dependency makes the run INCOMPLETE, never a pass",
-            BLOCK, "", PLANNED_PREFIX + "FND-0261"),
+            "every required check produced a result; a MISSING input (or an EMPTY required check in a FULL run) makes the run INCOMPLETE, "
+            "exit code 2, never a pass; the status is written to control.audit_run with the run's rows, in one transaction",
+            BLOCK, SOURCE_CODE + "shared.statistical_audit.completeness.run_status", DORMANT_PREFIX + "AUDIT_COMPLETENESS_CONTRACT_ENABLED"),
     Control("G-EVIDENCE-RUN", PILLAR_ORCHESTRATION, "Evidence-grade audit run", "owner (statistical audit)",
-            "the run the gate reads is FULL scope, not INCOMPLETE and newer than the DRAFT; a FAIL run counts (decision D4); a _sample "
-            "run never does (shipped ahead: gating.SAMPLE_RUN_SUFFIX)",
-            BLOCK, "", PLANNED_PREFIX + "FND-0261"),
+            "the run the gate reads is the latest control.audit_run header with scope FULL and status not INCOMPLETE, newer than the DRAFT; "
+            "a FAIL run counts (decision D4); a _sample run never does (always on: gating.SAMPLE_RUN_SUFFIX)",
+            BLOCK, SOURCE_CODE + "shared.statistical_audit.gating.select_evidence_run", DORMANT_PREFIX + "AUDIT_COMPLETENESS_CONTRACT_ENABLED"),
     Control("G-COST", PILLAR_ORCHESTRATION, "Cost domain at promotion", "owner (statistical audit)",
             "cost_attributes defects on a fund of the scenario count like p2_metrics ones (decision D8: replay, one shadow cycle, then block)",
             BLOCK, "", PLANNED_PREFIX + "FND-0265"),

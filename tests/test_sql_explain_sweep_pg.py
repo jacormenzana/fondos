@@ -135,6 +135,10 @@ _UNVERIFIED_BASELINE: dict[str, str] = {
         R_FRAGMENT,
     "shared/statistical_audit/persistence.py::emit_findings::2725fd2e":
         R_FRAGMENT,
+    # FND-0261: the same _FINDING_SQL statement, now also executed inside persist_run's single transaction (columns joined from
+    # _FINDING_COLUMNS: a literal copy would duplicate that list, P#11). Exercised for real by test_statistical_audit_audit_run_pg.py.
+    "shared/statistical_audit/persistence.py::persist_run::2725fd2e":
+        R_FRAGMENT,
 }
 
 # site_id -> reason. Statements EXPLAIN rejects for a reason that is not a defect.

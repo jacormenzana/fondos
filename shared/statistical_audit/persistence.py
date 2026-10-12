@@ -7,6 +7,7 @@ preserve_and_write, fund_cost_corrections.
 """
 from __future__ import annotations
 
+import json
 import math
 import sys
 from dataclasses import dataclass
@@ -51,22 +52,28 @@ def emit_statistics(
     strings, mass_class) goes to stat_text so no information from the
     profiling functions is lost.
     """
+    rows = _statistic_rows(run_id, domain, population, group_key, stats, n, catalog_version)
+    executemany(conn, _STATISTIC_SQL, rows)
+    conn.commit()
+    return len(rows)
+
+
+_STATISTIC_SQL = (
+    "INSERT INTO audit_statistic "
+    "(run_id, domain, population, group_key, stat_name, stat_value, stat_text, n, catalog_version) "
+    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
+    "ON CONFLICT (run_id, domain, population, group_key, stat_name) DO UPDATE SET "
+    "stat_value = excluded.stat_value, stat_text = excluded.stat_text, "
+    "n = excluded.n, catalog_version = excluded.catalog_version, computed_at = DEFAULT"
+)
+
+
+def _statistic_rows(run_id, domain, population, group_key, stats, n, catalog_version) -> list:
     rows = []
     for stat_name, value in stats.items():
         stat_value, stat_text = _split_value(value)
         rows.append((run_id, domain, population, group_key, stat_name, stat_value, stat_text, n, catalog_version))
-
-    sql = (
-        "INSERT INTO audit_statistic "
-        "(run_id, domain, population, group_key, stat_name, stat_value, stat_text, n, catalog_version) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
-        "ON CONFLICT (run_id, domain, population, group_key, stat_name) DO UPDATE SET "
-        "stat_value = excluded.stat_value, stat_text = excluded.stat_text, "
-        "n = excluded.n, catalog_version = excluded.catalog_version, computed_at = DEFAULT"
-    )
-    executemany(conn, sql, rows)
-    conn.commit()
-    return len(rows)
+    return rows
 
 
 def clear_run(conn: "psycopg.Connection", run_id: str, domain: str) -> tuple[int, int]:
@@ -150,21 +157,20 @@ def emit_findings(
     """
     if not findings:
         return 0
-
-    rows = [
-        (run_id, domain, catalog_version, *(_persisted_value(f, col) for col in _FINDING_COLUMNS))
-        for f in findings
-    ]
-    ph = "%s"
-    placeholders = ", ".join([ph] * (3 + len(_FINDING_COLUMNS)))
-    executemany(
-        conn,
-        f"INSERT INTO audit_finding (run_id, domain, catalog_version, {', '.join(_FINDING_COLUMNS)}) "
-        f"VALUES ({placeholders})",
-        rows,
-    )
+    rows = _finding_rows(run_id, domain, findings, catalog_version)
+    executemany(conn, _FINDING_SQL, rows)
     conn.commit()
     return len(rows)
+
+
+_FINDING_SQL = (
+    f"INSERT INTO audit_finding (run_id, domain, catalog_version, {', '.join(_FINDING_COLUMNS)}) "
+    f"VALUES ({', '.join(['%s'] * (3 + len(_FINDING_COLUMNS)))})"
+)
+
+
+def _finding_rows(run_id, domain, findings, catalog_version) -> list:
+    return [(run_id, domain, catalog_version, *(_persisted_value(f, col) for col in _FINDING_COLUMNS)) for f in findings]
 
 
 def emit_accepted_residuals(
@@ -203,20 +209,93 @@ def emit_finding_isins(
     """One row per (rule, group_key, ISIN) for every finding that carries `violating_isins` (FND-0234(d)). audit_finding keeps
     one aggregate row per invariant ("88/2809 rows violate"); this table says WHICH funds. Idempotent (ON CONFLICT DO NOTHING).
     Commits. Returns the rows written; 0 -- and no error -- when the table does not exist yet (migration not applied)."""
-    rows = sorted({
+    rows = _finding_isin_rows(run_id, domain, findings)
+    if not rows or not finding_isin_table_exists(conn):
+        return 0
+    executemany(conn, _FINDING_ISIN_SQL, rows)
+    conn.commit()
+    return len(rows)
+
+
+_FINDING_ISIN_SQL = (
+    "INSERT INTO audit_finding_isin (run_id, domain, rule_id, group_key, isin) VALUES (%s, %s, %s, %s, %s) "
+    "ON CONFLICT DO NOTHING"
+)
+
+
+def _finding_isin_rows(run_id, domain, findings) -> list:
+    return sorted({
         (run_id, domain, f["rule_id"], f.get("group_key") or f["rule_id"], isin)
         for f in findings for isin in (f.get("violating_isins") or ())
     })
-    if not rows or not finding_isin_table_exists(conn):
-        return 0
-    executemany(
-        conn,
-        "INSERT INTO audit_finding_isin (run_id, domain, rule_id, group_key, isin) VALUES (%s, %s, %s, %s, %s) "
-        "ON CONFLICT DO NOTHING",
-        rows,
-    )
+
+
+# ---- run header + atomic persistence (FND-0261) -----------------------------------------------------------------------------------
+
+# control.audit_run columns the writer sets (finished_at is the database's now()). No severity / drift counts: those live in
+# control.cycle_audit_run, derived from audit_finding by run_id (shared/cycle_telemetry_ingest.py); the two join on run_id (P#11).
+AUDIT_RUN_COLUMNS = ("scope", "status", "started_at", "universe_size", "skips", "catalog_version", "git_commit", "git_clean", "config_hash")
+
+# Idempotent as DELETE + INSERT of the same (run_id, domain) inside persist_run: a re-persisted run never keeps an older header.
+_AUDIT_RUN_SQL = (
+    "INSERT INTO audit_run (run_id, domain, scope, status, started_at, universe_size, skips, catalog_version, git_commit, git_clean, "
+    "config_hash) VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s)"
+)
+
+
+def audit_run_table_exists(conn: "psycopg.Connection") -> bool:
+    """True when audit_run is visible on the connection's search_path (scripts/ops/migrate_audit_run.py was applied)."""
+    return conn.execute("SELECT to_regclass('audit_run')").fetchone()[0] is not None
+
+
+@dataclass
+class PersistResult:
+    n_stats: int
+    n_findings: int
+    n_isin_rows: int
+    header_written: bool
+
+
+def persist_run(
+    conn: "psycopg.Connection",
+    run_id: str,
+    domain: str,
+    statistics: Sequence[tuple],
+    findings: Sequence[Mapping[str, Any]],
+    *,
+    catalog_version: str | None = None,
+    header: Mapping[str, Any] | None = None,
+) -> PersistResult:
+    """One audit run -- previous rows of the same (run_id, domain) removed, statistics, findings, ISIN detail and the audit_run header
+    -- in ONE transaction: a run is either all there or not there at all (before FND-0261 each table committed on its own, so a crash
+    left a partial run that the promotion gate could read as a real one). `statistics` = AuditRun.statistics 4-tuples
+    (population, group_key, stats, n); `header` = AUDIT_RUN_COLUMNS values (`skips` a JSON-ready list). Tables that do not exist yet
+    (audit_finding_isin, audit_run: owner migrations) are skipped, as before. Rolls back and re-raises on any failure."""
+    try:
+        clear_run(conn, run_id, domain)
+        header_table = audit_run_table_exists(conn)
+        if header_table:
+            conn.execute("DELETE FROM audit_run WHERE run_id = %s AND domain = %s", (run_id, domain))
+        stat_rows = [row for population, group_key, stats, n in statistics
+                     for row in _statistic_rows(run_id, domain, population, group_key, stats, n, catalog_version)]
+        if stat_rows:
+            executemany(conn, _STATISTIC_SQL, stat_rows)
+        finding_rows = _finding_rows(run_id, domain, findings, catalog_version)
+        if finding_rows:
+            executemany(conn, _FINDING_SQL, finding_rows)
+        isin_rows = _finding_isin_rows(run_id, domain, findings) if finding_isin_table_exists(conn) else []
+        if isin_rows:
+            executemany(conn, _FINDING_ISIN_SQL, isin_rows)
+        header_written = False
+        if header is not None and header_table:
+            values = [json.dumps(header[c]) if c == "skips" else header[c] for c in AUDIT_RUN_COLUMNS]
+            conn.execute(_AUDIT_RUN_SQL, (run_id, domain, *values))
+            header_written = True
+    except Exception:
+        conn.rollback()
+        raise
     conn.commit()
-    return len(rows)
+    return PersistResult(len(stat_rows), len(finding_rows), len(isin_rows), header_written)
 
 
 def load_finding_isins(conn: "psycopg.Connection", run_id: str, domain: str) -> pd.DataFrame:

@@ -73,7 +73,10 @@ veredicto de la auditoría estadística nunca detiene un ciclo (las auditorías 
 
 ## 3. Catálogo
 
-`Estado` = `enforced` (existe código que lo aplica; `Fuente` lo nombra) o `planned:FND-nnnn` (lo posee ese ticket; aún sin código).
+`Estado` = `enforced` (existe código que lo aplica; `Fuente` lo nombra), `dormant:<INTERRUPTOR>` (el código existe tras un
+interruptor de `shared/config.py` aún apagado; al encenderlo el control pasa a `enforced` en el mismo commit, el test lo exige) o
+`planned:FND-nnnn` (lo posee ese ticket; aún sin código). `Fuente` `CODE:<módulo.función>` nombra la función que aplica un control
+sin código de puerta propio.
 `Consecuencia` es la de `PORTFOLIO_PROMOTION`; en `CODE_DEPLOY` solo se evalúan los controles con consecuencia propia indicada.
 
 ### 3.1 Pilar Técnico
@@ -113,8 +116,8 @@ y `D-DATA-UNIVERSE` reparten esos defectos por alcance (sobre la cartera / solo 
 | Id | Criterio | Consecuencia | Fuente | Estado |
 |---|---|---|---|---|
 | `G-OVERRIDE-AP` | `--accept-alarms` exige motivo y `--ap FND-nnnn` existente en `gestion.backlog`; sin ello el override no se aplica | `BLOCK` | `GATE:OVERRIDE_AP` | enforced |
-| `G-COMPLETENESS` | cada regla obligatoria produjo resultado; una dependencia omitida o ilegible hace la corrida `INCOMPLETE`, nunca un pase | `BLOCK` | — | planned:FND-0261 |
-| `G-EVIDENCE-RUN` | la corrida que lee la puerta es de ámbito FULL, no `INCOMPLETE` y posterior al DRAFT; una corrida FAIL cuenta (D4); una `_sample` nunca (ya entregado: `gating.SAMPLE_RUN_SUFFIX`) | `BLOCK` | — | planned:FND-0261 |
+| `G-COMPLETENESS` | cada comprobación obligatoria produjo resultado; una entrada `MISSING` (o una obligatoria `EMPTY` en corrida FULL) hace la corrida `INCOMPLETE`, código de salida 2, nunca un pase; el estado se escribe en `control.audit_run` con las filas de la corrida, en una sola transacción (§7) | `BLOCK` | `CODE:shared.statistical_audit.completeness.run_status` | dormant:AUDIT_COMPLETENESS_CONTRACT_ENABLED |
+| `G-EVIDENCE-RUN` | la corrida que lee la puerta es la última cabecera de `control.audit_run` de ámbito FULL y estado distinto de `INCOMPLETE`, posterior al DRAFT; una corrida FAIL cuenta (D4); una `_sample` nunca (siempre activo: `gating.SAMPLE_RUN_SUFFIX`) | `BLOCK` | `CODE:shared.statistical_audit.gating.select_evidence_run` | dormant:AUDIT_COMPLETENESS_CONTRACT_ENABLED |
 | `G-COST` | los defectos de `cost_attributes` sobre fondos de la cartera cuentan como los de `p2_metrics` (D8: reproducción retrospectiva, un ciclo en sombra, luego bloquea) | `BLOCK` | — | planned:FND-0265 |
 | `G-REMEDIATION` | un ticket vinculado a un hallazgo se cierra solo con una re-auditoría completa que cubra los ISIN con cero infractores | `WARN` | — | planned:FND-0264 |
 
@@ -141,4 +144,13 @@ residual nunca cubre a un fondo seleccionado en una cartera (`D-RESIDUAL-SCENARI
    cualquier divergencia.
 2. Una puerta nueva de promoción (`GATE_*`) o una clase de defecto bloqueante nueva exige su control en el catálogo antes de
    fusionarse.
-3. Un control `planned:FND-nnnn` pasa a `enforced` cuando su ticket entrega el código; `Fuente` pasa a nombrarlo.
+3. Un control `planned:FND-nnnn` pasa a `enforced` cuando su ticket entrega el código; `Fuente` pasa a nombrarlo. Si el código
+   llega tras un interruptor apagado, pasa a `dormant:<INTERRUPTOR>` y a `enforced` en el commit que lo enciende.
+
+## 7. Completitud de la auditoría (`G-COMPLETENESS`, `G-EVIDENCE-RUN`)
+
+Contrato y cabecera de corrida: `AUDITORIA_ESTADISTICA.md` §6.4. Resumen: cada comprobación omitida se clasifica (`MISSING` /
+`EMPTY` / `NOT_APPLICABLE`); una corrida con una entrada obligatoria ausente es `INCOMPLETE`; su estado se guarda en
+`control.audit_run` en la misma transacción que sus filas, sin recuentos (los de `control.cycle_audit_run` se unen por `run_id`).
+Con `AUDIT_COMPLETENESS_CONTRACT_ENABLED` encendido, `INCOMPLETE` sale con código 2 y la promoción solo acepta como evidencia una
+cabecera FULL no `INCOMPLETE` (D4).

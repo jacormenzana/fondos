@@ -70,6 +70,7 @@ class AuditScope:
     coverage: str = COVERAGE_OK
     coverage_detail: str = ""
     isin_detail_available: bool = True                           # audit_finding_isin readable (owner migration applied)
+    selection_note: str = ""                                     # why no run qualified as evidence (completeness contract), "" otherwise
 
     @property
     def has_run(self) -> bool:
@@ -125,17 +126,41 @@ def coverage_of(held_out_count: Optional[float], held_out_isins: Iterable[str], 
 
 # ---- read-only loader -----------------------------------------------------------------------------------------------------------
 
-def load_scope(conn, domain: str, scenario_isins: Iterable[str], accepted: Optional[Mapping[str, Mapping[str, tuple]]] = None) -> AuditScope:
-    """AuditScope of the latest persisted full-universe run of `domain` (sample runs are skipped) for `scenario_isins`. Read-only. `accepted` = the ACTIVE acceptances
-    (accepted_residuals.load_accepted; the caller decides what a missing table means)."""
+def select_evidence_run(conn, domain: str, contract: bool) -> tuple:
+    """((run_id, run_ts) or None, note). Contract OFF: the latest audit_finding run id that is not a sample run. Contract ON (FND-0261,
+    decision D4): the latest control.audit_run header with scope FULL and status other than INCOMPLETE -- a FAIL run IS evidence (it is
+    what blocks), and a run without a header (persisted before the table, or a crash: the header is in the rows' transaction) is not."""
+    if not contract:
+        run = conn.execute(
+            "SELECT run_id, MAX(detected_at) FROM audit_finding WHERE domain = %s AND right(run_id, 7) <> '_sample' GROUP BY run_id "
+            "ORDER BY MAX(detected_at) DESC LIMIT 1", (domain,)).fetchone()
+        return (None if run is None else (run[0], run[1])), ""
+    if conn.execute("SELECT to_regclass('audit_run')").fetchone()[0] is None:
+        return None, ("control.audit_run no existe (AUDIT_COMPLETENESS_CONTRACT_ENABLED exige la tabla): aplique "
+                      "scripts/ops/migrate_audit_run.py --apply y persista una auditoria completa")
+    run = conn.execute(
+        "SELECT run_id, finished_at FROM audit_run WHERE domain = %s AND scope = 'FULL' AND status <> 'INCOMPLETE' "
+        "ORDER BY finished_at DESC LIMIT 1", (domain,)).fetchone()
+    if run is None:
+        return None, "ninguna auditoria de ambito FULL con estado distinto de INCOMPLETE en control.audit_run"
+    return (run[0], run[1]), ""
+
+
+def load_scope(conn, domain: str, scenario_isins: Iterable[str], accepted: Optional[Mapping[str, Mapping[str, tuple]]] = None,
+               contract: Optional[bool] = None) -> AuditScope:
+    """AuditScope of the evidence run of `domain` (select_evidence_run: never a sample run; with the completeness contract never an
+    INCOMPLETE one) for `scenario_isins`. Read-only. `accepted` = the ACTIVE acceptances (accepted_residuals.load_accepted; the caller
+    decides what a missing table means). `contract` None = shared.config.AUDIT_COMPLETENESS_CONTRACT_ENABLED."""
+    if contract is None:
+        from shared.config import AUDIT_COMPLETENESS_CONTRACT_ENABLED as contract
     scenario = sorted(set(scenario_isins))
     accepted = accepted or {}
-    run = conn.execute(
-        "SELECT run_id, MAX(detected_at) FROM audit_finding WHERE domain = %s AND right(run_id, 7) <> '_sample' GROUP BY run_id "
-        "ORDER BY MAX(detected_at) DESC LIMIT 1", (domain,)).fetchone()
+    run, note = select_evidence_run(conn, domain, contract)
     if run is None:
-        return scope_findings((), {}, scenario, accepted)
-    run_id, run_ts = run[0], run[1]
+        scope = scope_findings((), {}, scenario, accepted)
+        scope.selection_note = note
+        return scope
+    run_id, run_ts = run
 
     cols = ("rule_id", "rule_class", "block", "group_key", "isin", "evidence", "distance")
     rows = conn.execute(

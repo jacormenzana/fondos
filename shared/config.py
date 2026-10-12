@@ -427,6 +427,14 @@ P3_FUND_NAV_MAX_GAP_RUN_MONTHS: int = 6
 # FND-0251: an accepted audit residual (control.audit_accepted_finding) is announced this many days before it lapses (audit report, promotion,
 # cycle report). A warning, never a gate: a lapsed residual simply stops counting, so the finding comes back by itself at the next audit.
 AUDIT_RESIDUAL_EXPIRY_WARN_DAYS: int = 30
+# FND-0261 (GOV-02), audit completeness contract (shared/statistical_audit/completeness.py). Always on, whatever the switch: every skipped
+# check is classified (MISSING / EMPTY / NOT_APPLICABLE), the run status (PASS / PASS_WITH_WARNINGS / FAIL / INCOMPLETE) is printed and, once
+# the owner applies scripts/ops/migrate_audit_run.py, written to control.audit_run in the same transaction as the run's rows. With the switch ON:
+#   * an INCOMPLETE run exits 2 (a required check could not run); the cycle launchers treat any audit RC as a [WARN], never a cycle failure;
+#   * the promotion gate takes its evidence from control.audit_run: the latest FULL-scope run whose status is not INCOMPLETE (a FAIL run
+#     counts: decision D4), instead of the latest audit_finding run id. A run persisted before the table has no header and is not evidence.
+# OFF until the owner has applied the migration, persisted one full audit and read the statuses of one shadow cycle. Rollback = False.
+AUDIT_COMPLETENESS_CONTRACT_ENABLED: bool = False
 
 # ============================================================
 # Directorios de datos externos (inputs no versionados)

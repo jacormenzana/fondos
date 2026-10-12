@@ -225,6 +225,29 @@ CREATE TABLE IF NOT EXISTS control.audit_finding_isin (
     CONSTRAINT audit_finding_isin_isin_fk FOREIGN KEY (isin) REFERENCES silver.fund_master (isin) ON DELETE CASCADE
 );
 
+-- -----------------------------------------------------------------------------
+-- control.audit_run — one header per persisted audit run (FND-0261, GOV-02; doc/reglas/GOBIERNO_CONTROLES.md G-COMPLETENESS)
+-- Written by run_statistical_audit.py --persist in the SAME transaction as the run's audit_statistic / audit_finding /
+-- audit_finding_isin rows. scope FULL = whole universe, SAMPLE = --isin; status per shared/statistical_audit/completeness.py
+-- (INCOMPLETE = a required check could not run: never promotion evidence). skips = [{check, kind, resolved, detail}].
+-- No severity / drift counts: control.cycle_audit_run holds those and joins on run_id. Owner: scripts/ops/migrate_audit_run.py.
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS control.audit_run (
+    run_id          text        NOT NULL,
+    domain          text        NOT NULL CHECK (domain IN ('p2_metrics', 'cost_attributes')),
+    scope           text        NOT NULL CHECK (scope IN ('FULL', 'SAMPLE')),
+    status          text        NOT NULL CHECK (status IN ('PASS', 'PASS_WITH_WARNINGS', 'FAIL', 'INCOMPLETE')),
+    started_at      timestamptz,
+    finished_at     timestamptz NOT NULL DEFAULT now(),
+    universe_size   integer,
+    skips           jsonb       NOT NULL DEFAULT '[]',
+    catalog_version text,
+    git_commit      text,
+    git_clean       boolean,
+    config_hash     text,
+    CONSTRAINT audit_run_pkey PRIMARY KEY (run_id, domain)
+);
+
 
 -- -----------------------------------------------------------------------------
 -- BEGIN cycle_telemetry (FND-0239) -- orchestrated-cycle telemetry: one row per cycle / step attempt, typed metrics with baselines

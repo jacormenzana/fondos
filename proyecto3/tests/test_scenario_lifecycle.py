@@ -204,6 +204,12 @@ def test_the_audit_must_exist_and_be_newer_than_the_build_and_no_flag_covers_it(
     assert _ok(audit=old, built_at=None) == []                               # build time unknown (pre-lifecycle DRAFT): the CLI says so
 
 
+def test_a_stale_audit_says_why_no_run_qualified_as_evidence():
+    # FND-0261: with the completeness contract the loader explains an empty selection (no header table / only INCOMPLETE runs)
+    out = _ok(audit=AuditScope(selection_note="solo hay corridas INCOMPLETE"))
+    assert len(out) == 1 and out[0].startswith("[GATE:AUDIT_STALE]") and out[0].endswith("[solo hay corridas INCOMPLETE]")
+
+
 @pytest.mark.parametrize("over, fragment", [
     (dict(coverage="UNKNOWN", coverage_detail="held out 51 but 0 persisted"), "DESCONOCIDA"),
     (dict(held_out_on_scenario=("LU0007", "LU0008")), "2 fondos de la cartera quedaron fuera"),

@@ -54,16 +54,34 @@ def test_every_control_has_owner_criterion_consequence_and_a_known_state():
         assert c.title.strip() and c.owner.strip() and c.criterion.strip(), c.id
         assert c.consequence in gc.CONSEQUENCES, c.id
         assert c.deploy_consequence is None or c.deploy_consequence in gc.CONSEQUENCES, c.id
-        assert c.enforced or re.fullmatch(r"planned:FND-\d{4}", c.status), f"{c.id}: status {c.status!r}"
+        assert (c.enforced or re.fullmatch(r"planned:FND-\d{4}", c.status)
+                or re.fullmatch(r"dormant:[A-Z0-9_]+_ENABLED", c.status)), f"{c.id}: status {c.status!r}"
 
 
-def test_enforced_controls_name_a_source_and_planned_ones_name_none():
-    prefixes = (gc.SOURCE_GATE, gc.SOURCE_RULE_CLASS, gc.SOURCE_BLOCK, gc.SOURCE_RULE_ID)
+def test_enforced_and_dormant_controls_name_a_source_and_planned_ones_name_none():
+    prefixes = (gc.SOURCE_GATE, gc.SOURCE_RULE_CLASS, gc.SOURCE_BLOCK, gc.SOURCE_RULE_ID, gc.SOURCE_CODE)
     for c in gc.CONTROLS:
-        if c.enforced:
-            assert c.source.startswith(prefixes) and c.source.split(":", 1)[1], f"{c.id}: source {c.source!r}"
-        else:
+        if c.planned_ticket:
             assert c.source == "", f"{c.id} is planned and must not claim a source"
+        else:
+            assert c.source.startswith(prefixes) and c.source.split(":", 1)[1], f"{c.id}: source {c.source!r}"
+
+
+def test_a_code_source_resolves_to_a_real_function():
+    import importlib
+    for c in gc.CONTROLS:
+        if c.source.startswith(gc.SOURCE_CODE):
+            module, _, attr = c.source[len(gc.SOURCE_CODE):].rpartition(".")
+            assert callable(getattr(importlib.import_module(module), attr, None)), f"{c.id}: {c.source} does not resolve"
+
+
+def test_a_dormant_control_names_a_switch_that_is_still_off():
+    import shared.config as cfg
+    for c in gc.CONTROLS:
+        if c.dormant_switch:
+            assert hasattr(cfg, c.dormant_switch), f"{c.id}: {c.dormant_switch} is not in shared.config"
+            assert getattr(cfg, c.dormant_switch) is False, (
+                f"{c.id}: {c.dormant_switch} is ON -- mark the control enforced in controls.py and GOBIERNO_CONTROLES.md in the same commit")
 
 
 def test_every_source_is_claimed_by_exactly_one_control():

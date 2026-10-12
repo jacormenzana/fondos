@@ -252,7 +252,7 @@ def _ts(hour):
 
 def test_the_sample_filter_literal_matches_the_constant():
     assert len(gating.SAMPLE_RUN_SUFFIX) == 7                     # right(run_id, 7) in the SQL literal
-    assert f"right(run_id, 7) <> '{gating.SAMPLE_RUN_SUFFIX}'" in inspect.getsource(gating.load_scope)
+    assert f"right(run_id, 7) <> '{gating.SAMPLE_RUN_SUFFIX}'" in inspect.getsource(gating.select_evidence_run)
 
 
 def test_loader_skips_a_newer_sample_run_and_uses_the_latest_full_run():
@@ -314,3 +314,58 @@ def test_isins_of_is_sorted_distinct_and_tolerant():
     assert runner._isins_of(pd.DataFrame({"isin": ["B", "A", "B", None]})) == ("A", "B")
     assert runner._isins_of(pd.DataFrame({"isin": []})) == () and runner._isins_of(None) == ()
     assert runner._isins_of(pd.DataFrame({"other": ["A"]})) == ()
+
+
+# ---------------- FND-0261: evidence from control.audit_run when the completeness contract is on ----------------
+
+class _HeaderConn(_Conn):
+    """control.audit_run headers [(run_id, finished_at, scope, status)]; applies the scope / status clauses only if the SQL carries them
+    (so a test fails if the loader drops one)."""
+    def __init__(self, headers, table=True, **kw):
+        super().__init__(run=("legacy_run", _ts(23)), **kw)          # what the contract-OFF query would pick
+        self.headers, self.table = headers, table
+
+    def execute(self, sql, params=()):
+        s = " ".join(sql.split())
+        if "to_regclass('audit_run')" in s:
+            self.sql.append(s)
+            rows = [("audit_run",)] if self.table else [(None,)]
+            return SimpleNamespace(fetchone=lambda: rows[0], fetchall=lambda: rows)
+        if s.startswith("SELECT run_id, finished_at FROM audit_run"):
+            self.sql.append(s)
+            hs = [h for h in self.headers
+                  if not ("scope = 'FULL'" in s and h[2] != "FULL") and not ("status <> 'INCOMPLETE'" in s and h[3] == "INCOMPLETE")]
+            rows = [(h[0], h[1]) for h in sorted(hs, key=lambda h: h[1], reverse=True)[:1]]
+            return SimpleNamespace(fetchone=lambda: rows[0] if rows else None, fetchall=lambda: list(rows))
+        return super().execute(sql, params)
+
+
+def test_contract_on_takes_the_latest_full_complete_run_and_a_fail_run_counts():
+    conn = _HeaderConn([("full_pass", _ts(9), "FULL", "PASS"), ("full_fail", _ts(10), "FULL", "FAIL"),
+                        ("full_incomplete", _ts(12), "FULL", "INCOMPLETE"), ("x_sample", _ts(13), "SAMPLE", "PASS")])
+    scope = gating.load_scope(conn, "p2_metrics", ["IN1"], {}, contract=True)
+    assert scope.run_id == "full_fail" and scope.run_ts == _ts(10) and scope.selection_note == ""
+
+
+def test_contract_on_with_only_incomplete_or_sample_runs_has_no_evidence_and_says_why():
+    conn = _HeaderConn([("full_incomplete", _ts(12), "FULL", "INCOMPLETE"), ("x_sample", _ts(13), "SAMPLE", "PASS")])
+    scope = gating.load_scope(conn, "p2_metrics", ["IN1"], {}, contract=True)
+    assert not scope.has_run and "INCOMPLETE" in scope.selection_note
+
+
+def test_contract_on_without_the_header_table_fails_closed():
+    scope = gating.load_scope(_HeaderConn([], table=False), "p2_metrics", ["IN1"], {}, contract=True)
+    assert not scope.has_run and "migrate_audit_run.py" in scope.selection_note
+
+
+def test_contract_off_ignores_the_headers():
+    conn = _HeaderConn([("full_pass", _ts(9), "FULL", "PASS")])
+    assert gating.load_scope(conn, "p2_metrics", ["IN1"], {}, contract=False).run_id == "legacy_run"
+    assert not any("audit_run" in s for s in conn.sql)
+
+
+def test_contract_default_is_the_config_switch(monkeypatch):
+    import shared.config as cfg
+    conn = _HeaderConn([("full_pass", _ts(9), "FULL", "PASS")])
+    monkeypatch.setattr(cfg, "AUDIT_COMPLETENESS_CONTRACT_ENABLED", True)
+    assert gating.load_scope(conn, "p2_metrics", ["IN1"], {}).run_id == "full_pass"

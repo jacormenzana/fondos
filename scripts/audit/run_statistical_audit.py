@@ -104,6 +104,10 @@ Usage:
     python -X utf8 scripts/audit/run_statistical_audit.py --domain p2 --mode check
     python -X utf8 scripts/audit/run_statistical_audit.py --domain costs --persist
     python -X utf8 scripts/audit/run_statistical_audit.py --domain costs --compare-to audit_20260912T223518Z
+
+Exit codes: 0 ok; 1 --mode check found a defect (gating.is_blocking); 2 INCOMPLETE -- a required check could not run
+(shared/statistical_audit/completeness.py), only while shared.config.AUDIT_COMPLETENESS_CONTRACT_ENABLED is on (FND-0261).
+--persist writes the run's rows and its control.audit_run header in one transaction.
 """
 from __future__ import annotations
 
@@ -121,7 +125,10 @@ if str(_ROOT) not in sys.path:
 
 import pandas as pd
 
-from shared.config import AUDIT_RESIDUAL_EXPIRY_WARN_DAYS, CRISIS_WINDOWS, MIN_NAV_ROWS, P3_FUND_NAV_MAX_AGE_DAYS, ROLLING_WINDOWS
+from shared.config import (
+    AUDIT_COMPLETENESS_CONTRACT_ENABLED, AUDIT_RESIDUAL_EXPIRY_WARN_DAYS, CRISIS_WINDOWS, MIN_NAV_ROWS, P3_FUND_NAV_MAX_AGE_DAYS,
+    ROLLING_WINDOWS,
+)
 from shared.db import get_connection
 from shared.eur_nav import apply_eur_view_frame   # FND-0243: audit the NAV P2 computed on
 from shared.statistical_audit.catalog_cost_columns import COST_COLUMNS
@@ -153,9 +160,10 @@ from shared.statistical_audit.compare_runs import (
     compare_runs, compare_violators, drift_label, load_run_statistics,
 )
 from shared.statistical_audit.outliers import detect_outliers
-from shared.statistical_audit.persistence import (
-    clear_run, emit_finding_isins, emit_findings, emit_statistics, load_finding_isins, statistics_to_frame,
-)
+from shared.statistical_audit.persistence import load_finding_isins, persist_run, statistics_to_frame
+from shared.statistical_audit import completeness as cpl
+from shared.statistical_audit.completeness import KIND_EMPTY, KIND_MISSING, KIND_NOT_APPLICABLE, Skip
+from shared.governance.run_identity import config_hash, git_state
 from shared.statistical_audit.ratio_bounds import add_downside_deviation_columns
 from shared.statistical_audit.reconcile import reconcile_with_alerts
 from shared.statistical_audit.recompute_gate import assert_recompute_happened, capture_state
@@ -280,7 +288,7 @@ def _run_cost_schedule_integrity(run: "AuditRun", master: pd.DataFrame, schedule
     two frames run_cost_audit already loaded, no new SQL.
     """
     if schedule.empty:
-        run.skipped.append("BLOCK6 cost schedule integrity: fund_cost_schedule is empty for this population")
+        run.skip("COST_SCHEDULE_INTEGRITY", KIND_EMPTY, "BLOCK6 cost schedule integrity: fund_cost_schedule is empty for this population")
         return
 
     # (a) EUR<->Pct coherence: a 10,000 EUR notional means Total_Costs_EUR == 100 * Total_Costs_Pct.
@@ -388,7 +396,7 @@ def run_cost_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = Non
     for column, spec in COST_COLUMNS.items():
         frame = frames_by_table[spec.table]
         if column not in frame.columns:
-            run.skipped.append(f"BLOCK1/4/7 {column}: not present in the queried frame")
+            run.skip("COST_COLUMN", KIND_MISSING, f"BLOCK1/4/7 {column}: not present in the queried frame")
             continue
         series = frame[column]
         is_numeric = spec.scale != "categorical"
@@ -707,7 +715,7 @@ def _run_timeseries_integrity(
         for window in _SCALAR_TIMESERIES_WINDOWS:
             rows = conn.execute(summary_query, (MIN_NAV_ROWS, metric, window, *isin_params)).fetchall()
             if not rows:
-                run.skipped.append(f"BLOCK5/6 TIMESERIES_INTEGRITY {metric}/{window}: no timeseries rows")
+                run.skip("TIMESERIES_INTEGRITY", KIND_EMPTY, f"BLOCK5/6 TIMESERIES_INTEGRITY {metric}/{window}: no timeseries rows")
                 continue
             group_key = f"{metric}|{window}"
 
@@ -933,13 +941,13 @@ def _run_orphaned_asset_check(
     isin_filter, isin_params = _isin_filter(conn, isins, "n.ISIN")
     lifespan = _df(conn, _sql(conn, _NAV_LIFESPAN_QUERY, isin_filter=isin_filter), isin_params)
     if lifespan.empty:
-        run.skipped.append("BLOCK6 CPI_COVERAGE_LEADING_GAP/CPI_COVERAGE_TRAILING_GAP: no NAV rows")
+        run.skip("CPI_COVERAGE", KIND_EMPTY, "BLOCK6 CPI_COVERAGE_LEADING_GAP/CPI_COVERAGE_TRAILING_GAP: no NAV rows")
         return
 
     ipc_bounds = _df(conn, _sql(conn, _INFLATION_BOUNDARY_QUERY))
     es_bounds = ipc_bounds[ipc_bounds["geography"] == "ES"]
     if es_bounds.empty:
-        run.skipped.append("BLOCK6 CPI_COVERAGE_LEADING_GAP/CPI_COVERAGE_TRAILING_GAP: no ES CPI coverage")
+        run.skip("CPI_COVERAGE", KIND_MISSING, "BLOCK6 CPI_COVERAGE_LEADING_GAP/CPI_COVERAGE_TRAILING_GAP: no ES CPI coverage")
         return
     ipc_min, ipc_max = es_bounds.iloc[0][["min_date", "max_date"]]
 
@@ -994,13 +1002,13 @@ def _run_beta_orphan_check(run: "AuditRun", long_df: pd.DataFrame) -> None:
     recompute this cycle.
     """
     if "batch_id" not in long_df.columns:
-        run.skipped.append("BLOCK6 BETA_ORPHAN_BATCH: batch_id not present in the queried frame")
+        run.skip("BETA_ORPHAN_BATCH", KIND_MISSING, "BLOCK6 BETA_ORPHAN_BATCH: batch_id not present in the queried frame")
         return
 
     join_keys = ["isin", "horizon", "metric_version"]
     beta = long_df[long_df["metric"].str.startswith("beta_")]
     if beta.empty:
-        run.skipped.append("BLOCK6 BETA_ORPHAN_BATCH: no beta_* rows in this population")
+        run.skip("BETA_ORPHAN_BATCH", KIND_EMPTY, "BLOCK6 BETA_ORPHAN_BATCH: no beta_* rows in this population")
         return
 
     n_internal = int((beta.groupby(join_keys)["batch_id"].nunique(dropna=False) > 1).sum())
@@ -1079,7 +1087,7 @@ def _run_alert_reconciliation(
     alerts_query = _ALERTS_QUERY.replace("{isin_filter}", alerts_filter)
     alerts_df = _restore_case(build_population(conn, alerts_query, alerts_params), ("isin", "metric", "detected_at"))
     if alerts_df.empty:
-        run.skipped.append("BLOCK4 ALERT_RECONCILIATION: no fund_metric_alerts rows for this population")
+        run.skip("ALERT_RECONCILIATION", KIND_EMPTY, "BLOCK4 ALERT_RECONCILIATION: no fund_metric_alerts rows for this population")
         return
 
     calc_filter, calc_params = _isin_filter(conn, isins, "m.ISIN")
@@ -1088,7 +1096,8 @@ def _run_alert_reconciliation(
     max_alert_date = pd.to_datetime(alerts_df["detected_at"]).max()
 
     if _alerts_are_stale(max_alert_date, max_calc_date):
-        run.skipped.append(
+        run.skip(
+            "ALERT_RECONCILIATION", KIND_NOT_APPLICABLE,
             f"BLOCK4 ALERT_RECONCILIATION: alerts stale (latest detected_at {max_alert_date.date()} < "
             f"latest fund_metrics.calculation_date {max_calc_date}) -- alert engine has not run since "
             f"the last P2 recompute"
@@ -1099,7 +1108,8 @@ def _run_alert_reconciliation(
     run.findings = reconcile_with_alerts(run.findings, alerts_df)
     n_suppressed = before - len(run.findings)
     if n_suppressed:
-        run.skipped.append(
+        run.skip(
+            "ALERT_RECONCILIATION", KIND_NOT_APPLICABLE,
             f"BLOCK4 ALERT_RECONCILIATION: {n_suppressed} findings already surfaced by the production "
             f"alert engine, suppressed as non-incremental"
         )
@@ -1142,7 +1152,8 @@ def run_p2_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = None)
         ):
             for nature, peer_group in group.groupby("Fund_Nature"):
                 if len(peer_group) < MIN_PEERS:
-                    run.skipped.append(
+                    run.skip(
+                        "PEER_SEGMENT", KIND_NOT_APPLICABLE,
                         f"BLOCK1/4 PEER:{nature} {group_key}: {len(peer_group)} < MIN_PEERS={MIN_PEERS}"
                     )
                     continue
@@ -1160,7 +1171,7 @@ def run_p2_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = None)
         rule = P2_PAIRS[rule_id]
         wide = _pivot_two_metrics(long_df, metric_a, metric_b)
         if wide.empty:
-            run.skipped.append(f"BLOCK2 {rule_id}: no overlapping rows for {metric_a}/{metric_b}")
+            run.skip("P2_PAIR", KIND_EMPTY, f"BLOCK2 {rule_id}: no overlapping rows for {metric_a}/{metric_b}")
             continue
         result = compare_pairs(wide, metric_a, metric_b, rule)
         if result.triggered:
@@ -1182,12 +1193,13 @@ def run_p2_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = None)
     cpi_keys = ["isin", "horizon", "metric_version"]
     deflation_frame = _pivot_by_real_flag(long_df, "return_ann")
     if deflation_frame.empty:
-        run.skipped.append("BLOCK5 DEFLATION_ORDER: no overlapping nominal/real return_ann rows")
+        run.skip("DEFLATION_ORDER", KIND_EMPTY, "BLOCK5 DEFLATION_ORDER: no overlapping nominal/real return_ann rows")
     else:
         deflation_frame = deflation_frame.merge(scalar_cpi, on=cpi_keys, how="left")
         if "window_cpi_ann" not in deflation_frame.columns or deflation_frame["window_cpi_ann"].isna().all():
-            run.skipped.append("BLOCK5 DEFLATION_ORDER / REAL_EQUALS_NOMINAL: no stored window could be located "
-                               "against fund_nav_monthly + the ES CPI (undecidable, nothing evaluated)")
+            run.skip("DEFLATION_ORDER", KIND_EMPTY,
+                     "BLOCK5 DEFLATION_ORDER / REAL_EQUALS_NOMINAL: no stored window could be located "
+                     "against fund_nav_monthly + the ES CPI (undecidable, nothing evaluated)")
 
     # A3 (FND-0121, 2026-09-28): REAL_EQUALS_NOMINAL generalized from return_ann-only to every
     # metric with both real_flag values present (P2 skill states the rule generically, "same
@@ -1222,13 +1234,13 @@ def run_p2_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = None)
                 "root_cause_candidate": rule.diagnosis,
             })
     if n_real_nominal_checked == 0:
-        run.skipped.append("BLOCK2 REAL_EQUALS_NOMINAL: no metric has overlapping nominal/real rows")
+        run.skip("REAL_EQUALS_NOMINAL", KIND_EMPTY, "BLOCK2 REAL_EQUALS_NOMINAL: no metric has overlapping nominal/real rows")
 
     for metric in _SCALAR_TIMESERIES_METRICS:
         for window in _SCALAR_TIMESERIES_WINDOWS:
             ts_raw = _fetch_latest_timeseries_snapshot(conn, metric, window, isins=isins)
             if ts_raw.empty:
-                run.skipped.append(f"BLOCK2 SCALAR_EQUALS_TIMESERIES {metric}/{window}: no timeseries rows")
+                run.skip("SCALAR_EQUALS_TIMESERIES", KIND_EMPTY, f"BLOCK2 SCALAR_EQUALS_TIMESERIES {metric}/{window}: no timeseries rows")
                 continue
             # B3 (FND-0125, 2026-09-28): snapshot staleness/tolerance gate -- both skills mandate
             # holding funds beyond SNAPSHOT_MAX_SPREAD_DAYS of their slice's own max date out of
@@ -1244,7 +1256,8 @@ def run_p2_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = None)
             run.snapshot_max_spread_days = max(run.snapshot_max_spread_days, snap.date_spread_days)
             ts_snapshot = snap.eligible
             if ts_snapshot.empty:
-                run.skipped.append(
+                run.skip(                       # the held-out funds are the promotion gate's DATA_COVERAGE, not a missing input
+                    "SCALAR_EQUALS_TIMESERIES", KIND_NOT_APPLICABLE,
                     f"BLOCK2 SCALAR_EQUALS_TIMESERIES {metric}/{window}: all rows held out by the "
                     f"snapshot staleness gate"
                 )
@@ -1271,7 +1284,7 @@ def run_p2_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = None)
             scalar_slice = long_df[(long_df["metric"] == metric) & (long_df["horizon"] == window)]
             merged = scalar_slice.merge(ts_snapshot, on=["isin", "real_flag"], how="inner")
             if merged.empty:
-                run.skipped.append(f"BLOCK2 SCALAR_EQUALS_TIMESERIES {metric}/{window}: no overlapping rows")
+                run.skip("SCALAR_EQUALS_TIMESERIES", KIND_EMPTY, f"BLOCK2 SCALAR_EQUALS_TIMESERIES {metric}/{window}: no overlapping rows")
                 continue
             rule_id = f"SCALAR_EQUALS_TIMESERIES_{metric}_{window}"
             rule = replace(P2_PAIRS["SCALAR_EQUALS_TIMESERIES"], rule_id=rule_id)
@@ -1361,7 +1374,8 @@ class AuditRun:
         self.universe_size = 0
         self.statistics: list[tuple] = []  # (population, group_key, stats_dict, n)
         self.findings: list[dict] = []
-        self.skipped: list[str] = []
+        self.skipped: list[str] = []      # the printed lines; `skips` carries the same skips classified (FND-0261)
+        self.skips: list[Skip] = []
         # B3 (FND-0125, 2026-09-28): snapshot staleness gate -- populated only by run_p2_audit
         # (fund_metric_timeseries has no cost-domain equivalent); always present so _print_report
         # stays domain-agnostic (prints the line only when non-empty).
@@ -1373,6 +1387,13 @@ class AuditRun:
         self.rca_e_tagged = 0                     # FND-0251 Commit C: findings whose root cause is a mechanical stale state
         # FND-0234(d): rows written to audit_finding_isin by _persist (0 when the table does not exist yet)
         self.persisted_isin_rows: int = 0
+        self.persisted_header: bool = False       # FND-0261: control.audit_run row written by _persist
+
+    def skip(self, check: str, kind: str, message: str) -> None:
+        """Record a check that did not run: `check` is a key of completeness.CHECKS, `kind` MISSING / EMPTY / NOT_APPLICABLE
+        (completeness.py says how each resolves in a FULL or SAMPLE run). The only way the runner skips a check (contract test)."""
+        self.skips.append(Skip(check, kind, message))
+        self.skipped.append(message)
 
 
 def _block1(
@@ -1437,7 +1458,7 @@ _OUTLIER_SEVERITY_MAP = {"OUTLIER": "WARN", "WARN": "WARN", "ALARM": "ALARM"}
 def _block4(run: AuditRun, group_key: str, indexed_series: pd.Series, method: str) -> None:
     result = detect_outliers(indexed_series, method=method)
     if not result.available:
-        run.skipped.append(f"BLOCK4 {group_key} [{method}]: {result.unavailable_reason}")
+        run.skip("OUTLIER", KIND_NOT_APPLICABLE, f"BLOCK4 {group_key} [{method}]: {result.unavailable_reason}")
         return
     for isin, row in result.flags.iterrows():
         # detect_outliers uses "OUTLIER" as IQR's own severity label (outliers.py
@@ -1481,7 +1502,8 @@ def _run_group_checks(run: AuditRun, rules, frame: pd.DataFrame, block: str = "B
     """
     for rule in rules:
         if rule.group_column not in frame.columns or rule.value_column not in frame.columns:
-            run.skipped.append(
+            run.skip(
+                "GROUP_INVARIANT", KIND_MISSING,
                 f"{block} {rule.rule_id}: columns not present in the queried frame "
                 f"({rule.group_column!r}, {rule.value_column!r})"
             )
@@ -1518,7 +1540,7 @@ def _run_invariants(run: AuditRun, rules, frames: list[pd.DataFrame], block: str
 
         frame = next((f for f in frames if needed <= set(f.columns)), None)
         if frame is None:
-            run.skipped.append(f"{block} {rule.rule_id}: columns not present in any queried frame ({sorted(needed)})")
+            run.skip("INVARIANT", KIND_MISSING, f"{block} {rule.rule_id}: columns not present in any queried frame ({sorted(needed)})")
             continue
 
         result = check_invariant(frame, rule)
@@ -1679,16 +1701,35 @@ def _print_catalog(domain: str | None) -> None:
 # Persistence, reporting, CLI
 # ============================================================
 
-def _persist(conn: "psycopg.Connection", run: "AuditRun", run_id: str) -> tuple[int, int]:
+def _run_header(run: "AuditRun", scope: str, status: str, started_at: datetime, catalog_version: str) -> dict:
+    """control.audit_run values for this run (persistence.AUDIT_RUN_COLUMNS). No severity counts: cycle_audit_run derives those."""
+    sha, clean = git_state()
+    return {"scope": scope, "status": status, "started_at": started_at, "universe_size": run.universe_size,
+            "skips": cpl.skips_payload(run.skips, scope), "catalog_version": catalog_version,
+            "git_commit": sha, "git_clean": clean, "config_hash": config_hash()}
+
+
+def _persist(conn: "psycopg.Connection", run: "AuditRun", run_id: str, *, scope: str | None = None,
+             started_at: datetime | None = None) -> tuple[int, int]:
+    """The run's rows and its control.audit_run header in ONE transaction (persistence.persist_run, FND-0261). `scope` None = derived
+    from the run id (a sample run id ends in SAMPLE_RUN_SUFFIX)."""
     catalog_version = compute_catalog_version()
-    clear_run(conn, run_id, run.domain)
-    n_stats = 0
-    for population, group_key, stats, n in run.statistics:
-        n_stats += emit_statistics(conn, run_id, run.domain, population, group_key, stats, n=n,
-                                   catalog_version=catalog_version)
-    n_findings = emit_findings(conn, run_id, run.domain, run.findings, catalog_version=catalog_version)
-    run.persisted_isin_rows = emit_finding_isins(conn, run_id, run.domain, run.findings)
-    return n_stats, n_findings
+    scope = scope or (cpl.SCOPE_SAMPLE if run_id.endswith(SAMPLE_RUN_SUFFIX) else cpl.SCOPE_FULL)
+    status = cpl.run_status(run.skips, run.findings, scope)
+    header = _run_header(run, scope, status, started_at or datetime.now(timezone.utc), catalog_version)
+    result = persist_run(conn, run_id, run.domain, run.statistics, run.findings, catalog_version=catalog_version, header=header)
+    run.persisted_isin_rows = result.n_isin_rows
+    run.persisted_header = result.header_written
+    return result.n_stats, result.n_findings
+
+
+def _print_completeness(run: "AuditRun", scope: str, status: str) -> None:
+    """The completeness verdict (FND-0261). With the switch OFF it is a shadow line: the RC does not change."""
+    gaps = cpl.missing(run.skips, scope)
+    mode = "" if AUDIT_COMPLETENESS_CONTRACT_ENABLED else " [shadow: AUDIT_COMPLETENESS_CONTRACT_ENABLED is OFF, the RC is unchanged]"
+    print(f"Completeness: {status} (scope {scope}; {len(gaps)} required check(s) missing){mode}")
+    for s in gaps:
+        print(f"  x {s.check} [{s.kind}]: {s.detail}")
 
 
 def _print_report(run: "AuditRun", run_id: str) -> None:
@@ -1794,6 +1835,8 @@ def _apply_accepted_residuals(conn: "psycopg.Connection", run: "AuditRun") -> No
         conn.rollback()                 # Postgres aborts the transaction on a failed statement
         print(f"[accepted-residuals] none applied ({type(exc).__name__}): control.audit_accepted_finding "
               "is not readable; run scripts/ops/migrate_audit_accepted_finding.py", file=sys.stderr)
+        run.skip("ACCEPTED_RESIDUALS", KIND_MISSING,
+                 f"accepted-residual baseline not applied: control.audit_accepted_finding is not readable ({type(exc).__name__})")
         return
     if accepted:
         run.findings, run.accepted_notes = apply_accepted(run.findings, accepted)
@@ -1980,7 +2023,9 @@ def main() -> int:
     if not args.domain:
         parser.error("--domain is required (unless --state-snapshot/--verify-recompute is given)")
 
-    run_id = _resolve_run_id(args.run_id, isins, datetime.now(timezone.utc))
+    started_at = datetime.now(timezone.utc)
+    run_id = _resolve_run_id(args.run_id, isins, started_at)
+    scope = cpl.scope_of(isins)
     if args.run_id and run_id != args.run_id:
         print(f"[run-id] {args.run_id} -> {run_id}: a run scoped with --isin is always a sample run", file=sys.stderr)
     keep_open = args.persist or args.compare_to
@@ -1999,6 +2044,8 @@ def main() -> int:
         _apply_coverage_cliff_findings(run, drift_result)
 
     _print_report(run, run_id)
+    status = cpl.run_status(run.skips, run.findings, scope)
+    _print_completeness(run, scope, status)
 
     if args.compare_to:
         print()
@@ -2009,9 +2056,11 @@ def main() -> int:
             _print_violator_drift(conn, run, args.compare_to)
 
     if args.persist:
-        n_stats, n_findings = _persist(conn, run, run_id)
+        n_stats, n_findings = _persist(conn, run, run_id, scope=scope, started_at=started_at)
         print()
         print(f"Persisted: {n_stats} audit_statistic rows, {n_findings} audit_finding rows (run_id={run_id})")
+        print(f"Run header: control.audit_run {scope}/{status}" if run.persisted_header
+              else "Run header: not written (control.audit_run missing: run scripts/ops/migrate_audit_run.py --apply)")
         print(f"ISIN detail: {run.persisted_isin_rows} audit_finding_isin rows"
               + ("" if run.persisted_isin_rows or not any(f.get("violating_isins") for f in run.findings)
                  else " (table missing: run scripts/ops/migrate_audit_finding_isin.py --apply to keep the violators)"))
@@ -2019,9 +2068,8 @@ def main() -> int:
     if keep_open:
         conn.close()
 
-    if args.mode == "check" and _has_blocking_findings(run):
-        return 1
-    return 0
+    return cpl.exit_code(status, contract_enabled=AUDIT_COMPLETENESS_CONTRACT_ENABLED, mode=args.mode,
+                         blocking=_has_blocking_findings(run))
 
 
 if __name__ == "__main__":

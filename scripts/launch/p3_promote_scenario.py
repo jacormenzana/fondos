@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import argparse
 import getpass
-import subprocess
 import sys
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -42,13 +41,8 @@ AUDIT_DOMAIN = "p2_metrics"
 def _git_state() -> str:
     """`git <short sha>` + `clean`/`dirty-tracked` for the promotion note (information, never a gate: a promotion is a data operation,
     but the record should say which code produced the scenario's metrics). Untracked files do not count."""
-    try:
-        sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=_ROOT, capture_output=True, text=True, timeout=10).stdout.strip()
-        dirty = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=_ROOT, capture_output=True, text=True,
-                               timeout=10).stdout.strip()
-        return f"git {sha or 'n/a'} {'dirty-tracked' if dirty else 'clean'}"
-    except Exception:                                            # noqa: BLE001 -- information only
-        return "git n/a"
+    from shared.governance.run_identity import describe_git_state, git_state   # one capture for every recorder (P#11)
+    return describe_git_state(git_state(_ROOT))
 
 
 def _built_at(conn, scenario_id: str):

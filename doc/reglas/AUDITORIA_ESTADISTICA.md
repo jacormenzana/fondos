@@ -702,6 +702,34 @@ etiqueta automática de causa de mercado (RCA-M) ni de ingeniería (RCA-I): un M
 defecto. El prefijo no cambia severidad, clase ni ninguna puerta, y no usa `nav_sources.status` (vale `OK` para los fondos
 congelados, FND-0041). El informe de la auditoría imprime cuántos hallazgos etiquetó.
 
+### 6.4 Contrato de completitud y cabecera de corrida (FND-0261)
+
+Antes, una comprobación que no podía ejecutarse era una línea impresa (`Skipped`) y la corrida salía con 0: una columna, una serie de
+referencia o una tabla ausente degradaba la auditoría a un pase. Ahora cada omisión pasa por `AuditRun.skip(check, kind, texto)`
+(`shared/statistical_audit/completeness.py`; `CHECKS` registra cada clave y si es obligatoria):
+
+| Clase | Significa | Cómo se resuelve |
+|---|---|---|
+| `MISSING` | falta o no se puede leer una entrada que la comprobación necesita (columna, IPC de España, `audit_accepted_finding`) | siempre `MISSING` |
+| `EMPTY` | la población no tiene filas para la comprobación | `MISSING` si la comprobación es obligatoria y la corrida es FULL; `LEGIT_EMPTY` en una muestra (`--isin`) |
+| `NOT_APPLICABLE` | omitida por diseño (segmento de pares < `MIN_PEERS`, método de outliers sin datos, alertas desfasadas, fondos retenidos por el snapshot: eso es `DATA_COVERAGE` en la promoción) | no cuenta |
+
+Estado de la corrida (`run_status`): `INCOMPLETE` si queda algún `MISSING`; si no, `FAIL` con un defecto (`gating.is_blocking`),
+`PASS_WITH_WARNINGS` con un elemento de revisión WARN/ALARM, `PASS` en otro caso. Se imprime siempre (`Completeness: ...`; con el
+interruptor apagado es una línea en sombra que no cambia el código de salida).
+
+`--persist` escribe ahora en **una sola transacción** (`persistence.persist_run`) las filas de la corrida (`audit_statistic`,
+`audit_finding`, `audit_finding_isin`) y su cabecera `control.audit_run` (`scope` FULL/SAMPLE, `status`, `skips`, `catalog_version`,
+sha de git y árbol limpio, `config_hash` de los interruptores `*_ENABLED` y límites `MAX_*`): una corrida está entera o no está; antes
+cada tabla confirmaba por separado y una caída dejaba una corrida parcial legible como real. La cabecera no lleva recuentos de severidad
+ni de deriva: esos viven en `control.cycle_audit_run` (telemetría, FND-0239), que se une por `run_id`.
+
+Con `AUDIT_COMPLETENESS_CONTRACT_ENABLED` (apagado): una corrida `INCOMPLETE` sale con **código 2** (en ambos modos; los lanzadores de
+ciclo lo tratan como `[WARN]`, nunca como fallo del ciclo), y la puerta de promoción toma su evidencia de `control.audit_run` (última
+cabecera FULL y no `INCOMPLETE`; una corrida FAIL cuenta, decisión D4) en lugar del último `run_id` de `audit_finding`. Orden del
+propietario: `scripts/ops/migrate_audit_run.py --apply` → una `--domain p2 --persist` completa (primera cabecera) → revisar los estados
+de un ciclo en sombra → encender el interruptor (controles `G-COMPLETENESS` y `G-EVIDENCE-RUN` pasan a `enforced` en ese commit).
+
 ---
 
 ## §7. Correcciones a las especificaciones actuales de las dos skills
