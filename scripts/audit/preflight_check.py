@@ -1,0 +1,392 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""
+preflight_check.py -- READ-ONLY pre-flight before acting on a stored plan, a summary or a long-idle session.
+
+Several Claude sessions work on this repository at once (2026-10-11: one built the FX constraint while another shipped a better promotion
+gate, promoted, and started a 5 h recompute). The five checks below take seconds and say whether the plan in your head is still true:
+
+  1. git       dirty files (another session's work in flight), commits ahead/behind origin, worktrees, stashes
+  2. processes pipeline / test / audit processes running, the launcher cycle lock
+  3. database  PRODUCTION scenario, newest persisted audit, metrics algorithm_version vs CALC_VERSION, last P2 run (read-only, fondos_app)
+  4. memory    topic files touched recently (a file by another session = shared state moved)
+  5. backlog   tickets opened since --since-hours
+
+    python scripts/audit/preflight_check.py                 # report; exit 0
+    python scripts/audit/preflight_check.py --strict        # exit 1 when the verdict is CAUTION (use in a launcher / a hook)
+    python scripts/audit/preflight_check.py --json          # machine-readable
+
+Never writes anything, never fetches (origin figures are as of the last fetch), never prints a DSN. A section that cannot be read
+(no DSN, DB down, no PowerShell) says so and the rest still runs: absence of evidence is reported, not hidden.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Optional
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+# untracked directories that are known to belong to no current change set: reported, never a reason for caution
+KNOWN_UNOWNED_PREFIXES = ("db/oper/",)
+# command-line fragments of the processes whose presence means "someone is running a long job"
+PROCESS_PATTERNS = (
+    "run_pipeline", "P2_calculate", "P2_discover", "P1_P2", "P2_P3", "P3_build", "P3_generate", "p3_build_portfolio",
+    "p3_pit_backtest", "run_statistical_audit", "nav_discovery", "macro_discovery", "run_block", "run_pg_tests", "pytest",
+    "migrate_",
+)
+LOCK_FILE = ROOT / "proyecto1" / "log" / "fondos_cycle.lock"
+
+
+# ---------------------------------------------------------------- pure helpers (unit-tested)
+
+def parse_porcelain(text: str) -> list:
+    """[(xy, path)] from `git status --porcelain` output; a rename keeps the NEW path."""
+    out = []
+    for line in text.splitlines():
+        if len(line) < 4:
+            continue
+        xy, path = line[:2], line[3:].strip().strip('"')
+        if " -> " in path:
+            path = path.split(" -> ", 1)[1].strip().strip('"')
+        out.append((xy, path.replace("\\", "/")))
+    return out
+
+
+def split_dirty(entries: list, unowned_prefixes=KNOWN_UNOWNED_PREFIXES, mine=()) -> dict:
+    """{'tracked': [modified/staged], 'untracked': [new files], 'unowned': [under a known-unowned prefix], 'mine': [declared by the caller]}.
+
+    `mine` = paths (or prefixes) the calling session itself changed: the checker cannot tell them from another session's work, so the
+    caller declares them and they stop counting as somebody else's in-flight change."""
+    tracked, untracked, unowned, own = [], [], [], []
+    mine = tuple(m.replace("\\", "/") for m in mine)
+    for xy, path in entries:
+        if any(path.startswith(p) for p in unowned_prefixes):
+            unowned.append(path)
+        elif any(path == m or path.startswith(m) for m in mine):
+            own.append(path)
+        elif xy == "??":
+            untracked.append(path)
+        else:
+            tracked.append(path)
+    return {"tracked": tracked, "untracked": untracked, "unowned": unowned, "mine": own}
+
+
+def parse_left_right(text: str) -> Optional[tuple]:
+    """(behind, ahead) from `git rev-list --left-right --count origin/master...HEAD`, None if unreadable."""
+    m = re.match(r"^\s*(\d+)\s+(\d+)\s*$", text or "")
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def match_processes(rows: list, patterns=PROCESS_PATTERNS, own_pid: Optional[int] = None) -> list:
+    """[(pid, command)] whose command line contains a pattern (case-insensitive); never the checker itself."""
+    out = []
+    for pid, cmd in rows:
+        if own_pid is not None and pid == own_pid:
+            continue
+        low = (cmd or "").lower()
+        if "preflight_check" in low:
+            continue
+        if any(p.lower() in low for p in patterns):
+            out.append((pid, cmd))
+    return out
+
+
+def code_calc_version(source: str) -> Optional[str]:
+    m = re.search(r'^CALC_VERSION\s*(?::\s*str\s*)?=\s*"([^"]+)"', source, re.MULTILINE)
+    return m.group(1) if m else None
+
+
+def verdict(report: dict, audit_max_age_days: float = 3.0) -> dict:
+    """{'level': 'CLEAR'|'CAUTION', 'cautions': [...], 'notes': [...]}.
+
+    CAUTION = something that makes acting on a stored plan unsafe right now (shared files being edited, a long job running, no production
+    scenario). NOTES = things to know (commits ahead, mixed metric versions, recent memory, new tickets)."""
+    cautions, notes = [], []
+    g = report.get("git", {})
+    d = g.get("dirty", {})
+    if d.get("tracked") or d.get("untracked"):
+        n = len(d.get("tracked", [])) + len(d.get("untracked", []))
+        cautions.append(f"{n} modified/new file(s) in the working tree that are not a known-unowned path: another session's work in flight "
+                        f"-- do not edit, stage, test over or revert them")
+    if g.get("ahead"):
+        notes.append(f"{g['ahead']} local commit(s) not on origin (as of the last fetch): who pushes them?")
+    if g.get("behind"):
+        notes.append(f"{g['behind']} commit(s) on origin not in HEAD: fetch/rebase decision before committing")
+    if g.get("stashes"):
+        notes.append(f"{g['stashes']} git stash entr(y/ies)")
+    if len(g.get("worktrees", [])) > 1:
+        notes.append(f"{len(g['worktrees'])} git worktrees registered")
+    p = report.get("processes", {})
+    if p.get("running"):
+        cautions.append(f"{len(p['running'])} pipeline/test/audit process(es) running: a long job is in flight -- no P2/P3 run, full suite "
+                        f"or launcher until it ends")
+    if p.get("lock_held"):
+        cautions.append("launcher cycle lock present (proyecto1/log/fondos_cycle.lock)")
+    db = report.get("db", {})
+    if not db.get("error"):
+        if db.get("lifecycle_installed") and not db.get("production"):
+            cautions.append("lifecycle installed but no PRODUCTION scenario")
+        if db.get("p2_rows_last_10min"):
+            cautions.append(f"p2_pipeline_log wrote {db['p2_rows_last_10min']} row(s) in the last 10 minutes: a P2 run is in progress "
+                            f"(possibly from another machine or WSL, invisible to the process table)")
+        age = db.get("audit_age_days")
+        if age is not None and age > audit_max_age_days:
+            notes.append(f"newest persisted audit is {age:.1f} days old (> {audit_max_age_days:g}): the promotion gate will refuse as stale")
+        dom, code = db.get("dominant_version"), report.get("calc_version")
+        if dom and code and dom != code:
+            notes.append(f"stored metrics are mostly on {dom} but the code is CALC_VERSION {code}: a recompute is pending or running")
+    elif db.get("error") != "skipped":
+        notes.append(f"database section not read: {db['error']}")
+    m = report.get("memory", {})
+    if m.get("recent"):
+        notes.append(f"{len(m['recent'])} memory file(s) touched in the last {m.get('recent_hours')} h: read them before acting")
+    b = report.get("backlog", {})
+    if b.get("new"):
+        notes.append(f"{len(b['new'])} ticket(s) opened in the last {b.get('since_hours')} h: scan them before creating similar ones")
+    return {"level": "CAUTION" if cautions else "CLEAR", "cautions": cautions, "notes": notes}
+
+
+# ---------------------------------------------------------------- readers (side-effect free)
+
+def _run(cmd: list, timeout: int = 20) -> Optional[str]:
+    try:
+        r = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
+def read_git(mine=()) -> dict:
+    status = _run(["git", "status", "--porcelain", "--untracked-files=all"])
+    if status is None:
+        return {"error": "git not available / not a repository"}
+    lr = parse_left_right(_run(["git", "rev-list", "--left-right", "--count", "origin/master...HEAD"]) or "")
+    return {
+        "branch": (_run(["git", "branch", "--show-current"]) or "").strip(),
+        "head": (_run(["git", "log", "--oneline", "-3"]) or "").strip().splitlines(),
+        "behind": lr[0] if lr else None, "ahead": lr[1] if lr else None,
+        "dirty": split_dirty(parse_porcelain(status), mine=mine),
+        "stashes": len((_run(["git", "stash", "list"]) or "").strip().splitlines()),
+        "worktrees": [l for l in (_run(["git", "worktree", "list"]) or "").strip().splitlines() if l],
+    }
+
+
+def list_processes() -> Optional[list]:
+    """[(pid, command line)] of python/cmd processes (Windows PowerShell CIM); None when it cannot be read."""
+    script = ("Get-CimInstance Win32_Process -Filter \"Name='python.exe' or Name='cmd.exe' or Name='py.exe'\" | "
+              "ForEach-Object { '{0}|{1}' -f $_.ProcessId, $_.CommandLine }")
+    out = _run(["powershell.exe", "-NoProfile", "-Command", script], timeout=30)
+    if out is None:
+        return None
+    rows = []
+    for line in out.splitlines():
+        pid, _, cmd = line.partition("|")
+        if pid.strip().isdigit():
+            rows.append((int(pid), cmd.strip()))
+    return rows
+
+
+def cycle_lock_held() -> bool:
+    """True when ANOTHER process holds the launcher's cycle lock: the repo's own predicate (the file merely existing means nothing; the
+    launcher holds it open with write sharing denied, so opening it for append fails while held)."""
+    try:
+        sys.path.insert(0, str(ROOT / "scripts" / "ops"))
+        from migrate_fund_metric_state_ols_calc_version import lock_file_held
+        return bool(lock_file_held(LOCK_FILE))
+    except Exception:                                          # noqa: BLE001 -- predicate unavailable: same test, locally
+        if not LOCK_FILE.exists():
+            return False
+        try:
+            with open(LOCK_FILE, "a"):
+                return False
+        except OSError:
+            return True
+
+
+def read_processes() -> dict:
+    rows = list_processes()
+    return {
+        "running": None if rows is None else [{"pid": p, "cmd": c[:160]} for p, c in match_processes(rows, own_pid=os.getpid())],
+        "unreadable": rows is None,
+        "lock_held": cycle_lock_held(),
+    }
+
+
+def read_db() -> dict:
+    if not os.environ.get("FONDOS_PG_DSN") and not (ROOT / ".env").exists():
+        return {"error": "skipped"}
+    try:
+        import shared.config  # noqa: F401  (autoloads the repo .env)
+        from shared.db import get_connection
+        conn = get_connection()
+    except Exception as exc:                                   # noqa: BLE001 -- report, do not crash the checker
+        return {"error": f"cannot connect: {type(exc).__name__}"}
+    out: dict = {}
+    try:
+        cols = {r[0] for r in conn.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'portfolio_scenarios'").fetchall()}
+        out["lifecycle_installed"] = "status" in cols
+        if out["lifecycle_installed"]:
+            out["production"] = [r[0] for r in conn.execute(
+                "SELECT scenario_id FROM portfolio_scenarios WHERE status = 'PRODUCTION'").fetchall()]
+            out["drafts"] = int(conn.execute("SELECT COUNT(*) FROM portfolio_scenarios WHERE status = 'DRAFT'").fetchone()[0])
+        row = conn.execute("SELECT run_id, MAX(detected_at) FROM audit_finding WHERE domain = 'p2_metrics' GROUP BY run_id "
+                           "ORDER BY MAX(detected_at) DESC LIMIT 1").fetchone()
+        if row:
+            out["audit_run"] = row[0]
+            ts = row[1]
+            out["audit_at"] = str(ts)
+            if ts is not None:
+                now = datetime.now(ts.tzinfo) if getattr(ts, "tzinfo", None) else datetime.now()
+                out["audit_age_days"] = (now - ts).total_seconds() / 86400.0
+        vers = conn.execute("SELECT algorithm_version, COUNT(DISTINCT isin) FROM fund_metrics GROUP BY 1 ORDER BY 2 DESC LIMIT 4").fetchall()
+        out["versions"] = [(r[0], int(r[1])) for r in vers]
+        out["dominant_version"] = vers[0][0] if vers else None
+        last = conn.execute("SELECT step, status, created_at FROM p2_pipeline_log ORDER BY id DESC LIMIT 1").fetchone()
+        out["last_p2_log"] = [str(x) for x in last] if last else None
+        # a P2 run in progress logs continuously (same signal the owner-side migration scripts use): independent of the process table
+        out["p2_rows_last_10min"] = int(conn.execute(
+            "SELECT count(*) FROM p2_pipeline_log WHERE created_at > now() - make_interval(mins => %s)", (10,)).fetchone()[0])
+    except Exception as exc:                                   # noqa: BLE001
+        out["error"] = f"query failed: {type(exc).__name__}: {str(exc)[:80]}"
+    finally:
+        try:
+            conn.rollback()
+            conn.close()
+        except Exception:                                      # noqa: BLE001
+            pass
+    return out
+
+
+def memory_dir(explicit: Optional[str] = None) -> Optional[Path]:
+    if explicit:
+        return Path(explicit)
+    base = Path.home() / ".claude" / "projects"
+    if not base.is_dir():
+        return None
+    want = re.sub(r"[^A-Za-z0-9]", "-", str(ROOT)).lower()
+    for d in base.iterdir():
+        if d.name.lower() == want and (d / "memory").is_dir():
+            return d / "memory"
+    return None
+
+
+def read_memory(explicit: Optional[str], recent_hours: float) -> dict:
+    d = memory_dir(explicit)
+    if d is None:
+        return {"error": "memory directory not found", "recent": [], "recent_hours": recent_hours}
+    files = sorted((f for f in d.glob("*.md") if f.name != "MEMORY.md"), key=lambda f: f.stat().st_mtime, reverse=True)
+    cutoff = datetime.now().timestamp() - recent_hours * 3600
+    rows = []
+    for f in files[:12]:
+        head = f.read_text(encoding="utf-8", errors="replace")[:800]
+        m = re.search(r"originSessionId:\s*(\S+)", head)
+        rows.append({"file": f.name, "mtime": datetime.fromtimestamp(f.stat().st_mtime).strftime("%Y-%m-%d %H:%M"),
+                     "session": (m.group(1)[:8] if m else "?"), "recent": f.stat().st_mtime >= cutoff})
+    return {"dir": str(d), "newest": rows[:6], "recent": [r["file"] for r in rows if r["recent"]], "recent_hours": recent_hours}
+
+
+def read_backlog(since_hours: float) -> dict:
+    if not os.environ.get("FONDOS_BACKLOG_PG_DSN") and not (ROOT / ".env").exists():
+        return {"error": "skipped", "new": [], "since_hours": since_hours}
+    try:
+        import shared.config  # noqa: F401
+        from shared import backlog_client as bc
+        tickets = bc.list_tickets()
+    except Exception as exc:                                   # noqa: BLE001
+        return {"error": f"backlog not read: {type(exc).__name__}", "new": [], "since_hours": since_hours}
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=since_hours)
+    new = []
+    for t in tickets:
+        ts = t.get("creation_ts")
+        if ts is not None:
+            ts = ts if getattr(ts, "tzinfo", None) else ts.replace(tzinfo=timezone.utc)
+            if ts >= cutoff:
+                new.append({"id": t["action_point_id"], "status": t["status"], "title": str(t.get("title"))[:80]})
+    return {"open": sum(1 for t in tickets if t.get("status") != "CLOSED"), "new": new, "since_hours": since_hours}
+
+
+# ---------------------------------------------------------------- report
+
+def build_report(args) -> dict:
+    mine = tuple(args.mine or ())
+    src = (ROOT / "proyecto2" / "src" / "pipeline" / "run_pipeline.py")
+    report = {
+        "git": read_git(mine),
+        "processes": read_processes(),
+        "db": {"error": "skipped"} if args.no_db else read_db(),
+        "memory": read_memory(args.memory_dir, args.recent_hours),
+        "backlog": {"error": "skipped", "new": [], "since_hours": args.since_hours} if args.no_db else read_backlog(args.since_hours),
+        "calc_version": code_calc_version(src.read_text(encoding="utf-8", errors="replace")) if src.exists() else None,
+    }
+    report["verdict"] = verdict(report, args.audit_max_age_days)
+    return report
+
+
+def render(r: dict) -> str:
+    L = ["=== PRE-FLIGHT (read-only) ==="]
+    g = r["git"]
+    dirty = g.get("dirty", {})
+    L.append("[1] git: " + (g.get("error") or
+                            f"{g.get('branch', '?')} | ahead {g.get('ahead')} / behind {g.get('behind')} of origin/master (last fetch) | "
+                            f"{len(dirty.get('tracked', []))} modified, {len(dirty.get('untracked', []))} new, "
+                            f"{len(dirty.get('unowned', []))} known-unowned, {len(dirty.get('mine', []))} mine | {g.get('stashes', 0)} stash"))
+    for p in (dirty.get("tracked", []) + dirty.get("untracked", []))[:12]:
+        L.append(f"      dirty: {p}")
+    for h in g.get("head", [])[:3]:
+        L.append(f"      {h[:110]}")
+    p = r["processes"]
+    running = p.get("running") or []
+    L.append("[2] processes: " + ("unreadable" if p.get("unreadable") else f"{len(running)} pipeline/test/audit running")
+             + f" | cycle lock {'HELD' if p.get('lock_held') else 'free'}")
+    for x in running[:6]:
+        L.append(f"      pid {x['pid']}: {x['cmd'][:110]}")
+    d = r["db"]
+    if d.get("error"):
+        L.append(f"[3] database: not read ({d['error']})")
+    else:
+        L.append(f"[3] database: PRODUCTION={d.get('production')} drafts={d.get('drafts')} | audit {d.get('audit_run')} "
+                 f"({(d.get('audit_age_days') if d.get('audit_age_days') is not None else float('nan')):.1f} d) | metrics {d.get('versions')} vs code CALC_VERSION {r.get('calc_version')}")
+        L.append(f"      last p2_pipeline_log: {d.get('last_p2_log')}")
+    m = r["memory"]
+    L.append("[4] memory: " + (m.get("error") or f"{len(m.get('recent', []))} file(s) touched in the last {m.get('recent_hours', 0):g} h"))
+    for row in m.get("newest", [])[:4]:
+        L.append(f"      {row['mtime']} [{row['session']}] {row['file']}")
+    b = r["backlog"]
+    L.append("[5] backlog: " + (b.get("error") or f"{b.get('open', '?')} open; {len(b.get('new', []))} opened in the last {b.get('since_hours', 0):g} h"))
+    for t in b.get("new", [])[:6]:
+        L.append(f"      {t['id']} [{t['status']}] {t['title']}")
+    v = r["verdict"]
+    L.append(f"VERDICT: {v['level']}")
+    L += [f"  CAUTION: {c}" for c in v["cautions"]] + [f"  note: {n}" for n in v["notes"]]
+    return "\n".join(L)
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description="Read-only pre-flight before acting on a stored plan")
+    ap.add_argument("--strict", action="store_true", help="exit 1 when the verdict is CAUTION")
+    ap.add_argument("--json", action="store_true")
+    ap.add_argument("--no-db", action="store_true", help="skip the database and backlog sections")
+    ap.add_argument("--mine", nargs="*", default=[], metavar="PATH",
+                    help="paths (or prefixes) THIS session changed; they are listed apart and do not raise the caution")
+    ap.add_argument("--memory-dir", default=None)
+    ap.add_argument("--recent-hours", type=float, default=6.0)
+    ap.add_argument("--since-hours", type=float, default=24.0)
+    ap.add_argument("--audit-max-age-days", type=float, default=3.0)
+    args = ap.parse_args(argv)
+    report = build_report(args)
+    print(json.dumps(report, indent=2, default=str) if args.json else render(report))
+    return 1 if (args.strict and report["verdict"]["level"] == "CAUTION") else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -27,6 +27,9 @@ for their respective domains; this file must not duplicate their content — it 
 verify your change against `RESTRICCIONES_ARQUITECTURA.md` (R-1..R-8) and the pre-commit checklist.
 Creating or editing a `.bat`: read `NORMAS_BATCH.md` first and start from `scripts/launch/_template.bat`.
 Opening, starting or closing a backlog ticket: read `NORMAS_BACKLOG.md` (check related tickets first).
+Continuing from a summary, a stored plan or a long idle -- and before any commit, push, live write, launcher or ticket -- run the
+read-only pre-flight first (`python scripts/audit/preflight_check.py --mine <your files>`, skill `preflightCheck`): several sessions share
+this repo, and another one's uncommitted files or long jobs are never yours to touch.
 If a request conflicts with a principle or restriction, stop and report.
 
 ---
@@ -798,6 +801,7 @@ Repo-scoped skills used for diagnostics and backlog maintenance. Invoke by name.
 | `pipelineP1Audit` | Full diagnostic audit of a P1 classification pipeline run — log triage, DQ issue analysis, process-efficiency pass, benchmark-consistency audit (B1–B7 |
 | `pipelineP1P2Audit` | Full-cycle diagnostic audit of a P1→P2 pipeline run — classification log triage, DQ analysis, benchmark-consistency (B1–B7), quantitative-metrics reli |
 | `pipelineP2Audit` | Deep-dive audit of a P2 quantitative-metrics run (`P2_calculateIndicators.bat`) — log triage, process-efficiency & redundancy analysis, data-reliabili |
+| `preflightCheck` | Read-only pre-flight before acting on a stored plan, summary or handoff, or after a long idle — git dirty files, running jobs and cycle lock, DB state |
 <!-- AUTO:END skills-table -->
 
 ---
