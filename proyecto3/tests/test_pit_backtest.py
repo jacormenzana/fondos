@@ -30,6 +30,7 @@ from proyecto3.src.pit_backtest import (
     run_pit_backtest,
 )
 from proyecto3.src.pit_cache import ParquetCache
+from proyecto3.src.pit_candidates import DEFAULT_MAX_STALE_DAYS
 from proyecto3.src.pit_run import PitInputs, compute_pit_scores
 
 N = 130
@@ -313,10 +314,45 @@ def test_scoring_cache_key_covers_regimes_and_parameters(chain):
     other_regimes = regime_hist["regime"].where(regime_hist.index < MONTHS[80], "Estanflacion")
     changed_regime = compute_pit_scores(inputs, AT, other_regimes, cache)
     assert changed_regime.cache_hits["risk"] is True and changed_regime.cache_hits["scoring"] is False
-    changed_param = compute_pit_scores(inputs, AT, regime_hist["regime"], cache, max_stale_days=60)
+    # any value other than the default is "a changed parameter" (FND-0254: the default is the live P3_FUND_NAV_MAX_AGE_DAYS, not a fixed 45)
+    changed_param = compute_pit_scores(inputs, AT, regime_hist["regime"], cache, max_stale_days=DEFAULT_MAX_STALE_DAYS + 15)
     assert changed_param.cache_hits["scoring"] is False
     same = compute_pit_scores(inputs, AT, regime_hist["regime"], cache)
     assert same.cache_hits["scoring"] is True
+
+
+def test_the_eligibility_switch_is_part_of_the_scoring_key_only_when_on(chain, monkeypatch):
+    """FND-0254: an ON run keys the continuity rule; an OFF run is a different key (no stale hit), flipping back is a hit again."""
+    import shared.config as cfg
+    nav, attrs, regime_hist, inputs, cache, run1 = chain
+    monkeypatch.setattr(cfg, "FUND_DATA_ELIGIBILITY_ENABLED", False)
+    off = compute_pit_scores(inputs, AT, regime_hist["regime"], cache)
+    assert off.cache_hits["risk"] is True and off.cache_hits["scoring"] is False
+    off_again = compute_pit_scores(inputs, AT, regime_hist["regime"], cache)
+    assert off_again.cache_hits["scoring"] is True
+    monkeypatch.setattr(cfg, "FUND_DATA_ELIGIBILITY_ENABLED", True)
+    back_on = compute_pit_scores(inputs, AT, regime_hist["regime"], cache)
+    assert back_on.cache_hits["scoring"] is True                      # the ON key is the one run1 stored
+
+
+def test_a_nav_outage_excludes_the_fund_after_it_only_with_the_switch_on(chain, monkeypatch):
+    """End to end through compute_pit_scores: a 9-month hole in one fund's NAV is a continuity exclusion from the date the outage is
+    observable, with the live reason text; with the switch OFF the same data scores as before (no exclusion of that kind)."""
+    import shared.config as cfg
+    nav, attrs, regime_hist, inputs, cache, run1 = chain
+    holed = nav.copy()
+    holed.iloc[40:49, 0] = np.nan                                    # months 40..48 of the first fund: a 9-month outage, then it recovers
+    victim = holed.columns[0]
+    hinputs = PitInputs(nav=holed, attrs=attrs, ipc=inputs.ipc, rate=inputs.rate, daily_chunks=None)
+    monkeypatch.setattr(cfg, "FUND_DATA_ELIGIBILITY_ENABLED", True)
+    on = compute_pit_scores(hinputs, AT, regime_hist["regime"], cache).scores
+    monkeypatch.setattr(cfg, "FUND_DATA_ELIGIBILITY_ENABLED", False)
+    off = compute_pit_scores(hinputs, AT, regime_hist["regime"], cache).scores
+    after = lambda df: df[(df["isin"] == victim) & (df["as_of"] >= MONTHS[49])]
+    assert len(after(on)) and after(on)["exclusion_reason"].fillna("").str.startswith("nav_gap:").all()
+    assert not after(off)["exclusion_reason"].fillna("").str.startswith("nav_gap:").any()
+    before = lambda df: df[(df["isin"] == victim) & (df["as_of"] < MONTHS[40])]
+    assert not before(on)["exclusion_reason"].fillna("").str.startswith("nav_gap:").any()      # nothing observable yet
 
 
 def test_keep_detail_bypasses_the_scoring_cache(chain):

@@ -41,7 +41,8 @@ sys.path.insert(0, str(_ROOT))
 from proyecto3.src.backtesting import Backtester
 from proyecto3.src.pit_backtest import COST_GRID_BPS, table_stats
 from proyecto3.src.pit_cache import CODE_VERSION
-from shared.config import REGIME_PUBLICATION_LAG_MONTHS
+from shared.config import (FUND_DATA_ELIGIBILITY_ENABLED, P3_FUND_NAV_MAX_AGE_DAYS, P3_FUND_NAV_MAX_GAP_RUN_MONTHS,
+                           P3_FUND_NAV_MIN_COVERAGE, REGIME_PUBLICATION_LAG_MONTHS)
 from shared.db import get_connection
 from shared.eur_nav import assert_release_coupling   # FND-0243 D4
 
@@ -70,7 +71,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="score bonus for last month's holdings in the MAIN table (0 = every month a fresh selection; 0.05 = +5%%)")
     p.add_argument("--hysteresis-grid", default="0,0.05,0.10,0.20,0.40",
                    help='bands compared in hysteresis_experiment.csv (default "0,0.05,0.10,0.20,0.40"; "" = skip)')
-    p.add_argument("--max-stale-days", type=int, default=45, help="max age of a NAV observation (default 45)")
+    p.add_argument("--max-stale-days", type=int, default=P3_FUND_NAV_MAX_AGE_DAYS,
+                   help=f"max age of a NAV observation (default {P3_FUND_NAV_MAX_AGE_DAYS} = the live build-time stale-NAV bound, "
+                        f"P3_FUND_NAV_MAX_AGE_DAYS; FND-0254: it was a PIT-only 45)")
     p.add_argument("--macro-variant", choices=("none", "control", "iterative_hy"), default="none",
                    help="FND-0224 scorer group B in the backtest: none = PIT v1 (macro multipliers neutral); control = PIT macro "
                         "betas with the production regression; iterative_hy = iterative VIF candidate. Not none: also writes "
@@ -129,8 +132,11 @@ def _git_commit() -> str:
 
 
 # FND-0251 / FND-0254: what a PIT run does NOT model, said in the artifacts themselves so a PIT-vs-live divergence is never misread.
-NOT_MODELLED_NOTICE = ("live build-time data eligibility (FUND_DATA_ELIGIBILITY_ENABLED: stale NAV, accepted residual, NAV continuity) is NOT "
-                       "modelled in this point-in-time run; PIT parity is tracked in FND-0254")
+# Stale NAV (the universe rule, max_stale_days = the live bound) and NAV continuity (shared.nav_continuity, evaluated from the rows observable
+# at each date) ARE modelled since FND-0254; accepted audit residuals are not, on purpose: they are today's governance decisions.
+NOT_MODELLED_NOTICE = ("accepted audit residuals of the live build-time data eligibility (FUND_DATA_ELIGIBILITY_ENABLED) are NOT modelled in "
+                       "this point-in-time run: they are today's governance decisions, applying them in the past would be look-ahead "
+                       "(FND-0254); stale NAV and NAV continuity ARE modelled when the switch is ON")
 
 
 def write_artifacts(out_dir: Path, table: pd.DataFrame, grid: pd.DataFrame, bt, summary: str, manifest: dict,
@@ -251,6 +257,11 @@ def main(argv=None, conn=None) -> int:
         "dates": [str(table.index.min().date()), str(table.index.max().date()), int(len(table))],
         "python": sys.version.split()[0], "pandas": pd.__version__, "log": str(log_path),
         "not_modelled": [NOT_MODELLED_NOTICE],
+        # FND-0254: the build-time eligibility settings this run applied (the live rule when the switch is ON), auditable from the artifact
+        "data_eligibility": {"enabled": bool(FUND_DATA_ELIGIBILITY_ENABLED), "stale_nav_days": int(args.max_stale_days),
+                             "live_stale_nav_days": int(P3_FUND_NAV_MAX_AGE_DAYS),
+                             "nav_continuity": ({"min_coverage": P3_FUND_NAV_MIN_COVERAGE, "max_gap_run_months": P3_FUND_NAV_MAX_GAP_RUN_MONTHS}
+                                                if FUND_DATA_ELIGIBILITY_ENABLED else None)},
     }
     written = write_artifacts(out_dir, table, grid, bt, summary, manifest, save_scores=not args.no_scores,
                               hysteresis=hysteresis, crisis_variants=crisis_variants)

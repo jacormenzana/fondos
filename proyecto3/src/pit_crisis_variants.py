@@ -32,7 +32,7 @@ _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from proyecto3.src.pit_candidates import asof_snapshot
+from proyecto3.src.pit_candidates import DEFAULT_MAX_STALE_DAYS, asof_snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +88,7 @@ def penalised(group: pd.DataFrame, variant: str, z_cut: float) -> pd.Series:
     return sig < cut                      # a comparison with NaN is False: no signal, no penalty
 
 
-def forward_max_drawdown(nav: pd.DataFrame, at: pd.DatetimeIndex, months: int = 12, max_stale_days: int = 45) -> pd.DataFrame:
+def forward_max_drawdown(nav: pd.DataFrame, at: pd.DatetimeIndex, months: int = 12, max_stale_days: int = DEFAULT_MAX_STALE_DAYS) -> pd.DataFrame:
     """Worst peak-to-trough fall of each fund over the `months` after every date (month-end grid, as-of NAV), as a
     negative fraction (0 = no fall). NaN where any month of the window has no usable NAV. Shape (dates x funds). This is
     the yardstick of a DEFENSIVE rule: it gives up return on purpose, so what matters is the fall it avoids."""

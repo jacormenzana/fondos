@@ -42,6 +42,7 @@ if str(_ROOT) not in sys.path:
 from proyecto3.src.backtest_inference import (deflated_sharpe_ratio, effective_sample_size, paired_sharpe_difference,
                                               probabilistic_sharpe_ratio)
 from proyecto3.src.pit_backtest import FORWARD_WINDOWS, assemble_table, build_weights, prepare_pit_backtest, series_stats
+from proyecto3.src.pit_candidates import DEFAULT_MAX_STALE_DAYS
 from proyecto3.src.portfolio_engine import DEFAULT_CONSTRAINTS
 
 CADENCES = (1, 2, 3, 4, 6, 12)
@@ -77,7 +78,7 @@ def apply_weight_no_trade_band(W: pd.DataFrame, delta: float) -> pd.DataFrame:
 
 def band_grid_tables(pit_run, inputs, regime_hist: pd.DataFrame, at: pd.DatetimeIndex, bands=HYSTERESIS_BANDS,
                      deltas=WEIGHT_BANDS, tx_cost_bps: float = 25.0, entry_sides: int = 1, windows=FORWARD_WINDOWS,
-                     max_stale_days: int = 45, target_annual: "pd.Series | None" = None) -> dict:
+                     max_stale_days: int = DEFAULT_MAX_STALE_DAYS, target_annual: "pd.Series | None" = None) -> dict:
     """{(hysteresis_band, weight_band): backtest table}. Scores, forward returns and benchmark are shared by every cell."""
     base = prepare_pit_backtest(pit_run, inputs, regime_hist, at, windows, max_stale_days)
     tables = {}
@@ -165,7 +166,7 @@ def oos_report(tables: dict, split, reference=REFERENCE_CELL, tolerance: float =
 
 def cadence_tables(pit_run, inputs, regime_hist: pd.DataFrame, at: pd.DatetimeIndex, cadences=CADENCES,
                    hysteresis_band: float = 0.0, tx_cost_bps: float = 25.0, entry_sides: int = 1,
-                   max_stale_days: int = 45, target_annual: "pd.Series | None" = None,
+                   max_stale_days: int = DEFAULT_MAX_STALE_DAYS, target_annual: "pd.Series | None" = None,
                    regime_trigger=False) -> dict:
     """{(k, phase): backtest table} for every cadence k and every phase 0..k-1 (1m window only). Scores, forward returns and
     benchmark are shared; only the held portfolios differ. hysteresis_band > 0 gives the incumbents their bonus at each

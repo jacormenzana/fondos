@@ -146,3 +146,28 @@ def test_a_one_row_fund_and_a_two_month_fund_are_not_flagged(pg_session_conn, pg
     _world(conn, pg_conn_module_schema)
     got = fs.load_eligibility_inputs(conn, as_of=AS_OF)["nav_gap_reason"]
     assert got.dropna().empty                                                       # STALE (1 row), RESID (1 row), FRESH (2 consecutive)
+
+
+# ---- FND-0254: PIT parity -------------------------------------------------------------------------------------------------------
+
+def test_the_pit_panel_path_returns_exactly_the_live_reasons_from_the_same_rows(pg_session_conn, pg_conn_module_schema):
+    """Two implementations of ONE rule (live SQL aggregation vs the PIT wide-panel evaluation, both calling shared.nav_continuity):
+    seeded with the same rows they must return the same set of funds AND the same reason text, byte for byte."""
+    from shared.nav_continuity import reasons_by_date
+    conn = pg_session_conn
+    _world(conn, pg_conn_module_schema)
+    _seed_nav(conn, "FULL", _months(2023, 1, 36))
+    _seed_nav(conn, "SPARSE", _months(2023, 1, 36, skip={i for i in range(36) if i % 3}))
+    _seed_nav(conn, "OUTAGE", _months(2023, 1, 40, skip=set(range(10, 16))))
+    _seed_nav(conn, "SHORTHOLE", _months(2023, 1, 40, skip={10, 11, 12}))
+    _seed_nav(conn, "DUPMONTH", _months(2023, 1, 24, skip=set(range(8, 18))) + ["2023-02-15"])   # two rows in Feb-2023, one 10-month hole
+    conn.commit()
+    live = fs._nav_gap_reasons(conn)
+    rows = conn.execute("SELECT isin, date, nav FROM fund_nav_monthly ORDER BY date").fetchall()
+    long = pd.DataFrame([tuple(r) for r in rows], columns=["isin", "date", "nav"])
+    long["date"] = pd.to_datetime(long["date"])
+    wide = long.pivot_table(index="date", columns="isin", values="nav", aggfunc="last").sort_index()
+    at = pd.DatetimeIndex([wide.index.max()])
+    pit = reasons_by_date(wide, at, cfg.P3_FUND_NAV_MIN_COVERAGE, cfg.P3_FUND_NAV_MAX_GAP_RUN_MONTHS).iloc[0].dropna().to_dict()
+    assert {"SPARSE", "OUTAGE", "DUPMONTH"} <= set(live)                       # the fixture really exercises the rule
+    assert pit == live

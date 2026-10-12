@@ -38,7 +38,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from proyecto3.src.fund_scorer import score_funds_from_df
-from shared.config import MIN_NAV_ROWS
+from shared.config import MIN_NAV_ROWS, P3_FUND_NAV_MAX_AGE_DAYS
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +49,9 @@ SHORT_COLUMN_MAP = {                       # pit_short_horizon name -> column th
     "short_liquidity_flag_6m": "short_liquidity_flag__rolling_6m",
     "short_vol_adj_3m":        "short_vol_adj__rolling_3m",
 }
-DEFAULT_MAX_STALE_DAYS = 45
+# FND-0254: ONE definition of "stale NAV" for the live build-time eligibility rule and the PIT universe (was a PIT-only 45). A fund whose
+# newest NAV at t is older than this drops out of the PIT universe, which is what `check_hard_filters` does live (nav_stale).
+DEFAULT_MAX_STALE_DAYS = P3_FUND_NAV_MAX_AGE_DAYS
 
 
 def asof_snapshot(frame: pd.DataFrame, at: pd.DatetimeIndex, max_stale_days: "int | None" = None):
@@ -89,6 +91,7 @@ def pit_scores(
     keep_detail: bool = False,
     macro: "dict | None" = None,
     macro_max_stale_days: int = 100,
+    nav_gap: "pd.DataFrame | None" = None,
 ) -> "tuple[pd.DataFrame, pd.DataFrame]":
     """Score the universe as of every date in `at`.
 
@@ -99,6 +102,10 @@ def pit_scores(
              the regime at t is its latest value <= t; dates before the first label are skipped with a warning.
     momentum: pit_peer_metrics.momentum_rank output evaluated at `at`; short: pit_short_horizon.short_gate_metrics
              metrics dict evaluated at `at` (both optional: missing -> NaN -> neutral / fail-open).
+    nav_gap: shared.nav_continuity.reasons_by_date output (index == `at`, columns isin): the NAV-continuity exclusion reason of each
+             fund AS OF each date, fed to the scorer's own `check_hard_filters` through the `nav_gap_reason` column (FND-0254: the
+             live rule, not a second one). None = the rule is not applied. Accepted audit residuals are deliberately NOT modelled:
+             they are today's governance decisions, applying them in the past would be look-ahead.
     Returns (scores, universe): scores is long (as_of, regime, isin, subportfolio, ..., score_final, eligible,
     exclusion_reason[, detail]); universe has per-date counts (entered, stale, young, scored, eligible)."""
     at = pd.DatetimeIndex(at)
@@ -152,6 +159,8 @@ def pit_scores(
                     frame[dst] = short[src].loc[t].reindex(isins)
         for name, snap in macro_snaps.items():
             frame[name] = snap.iloc[i].reindex(isins)
+        if nav_gap is not None:
+            frame["nav_gap_reason"] = nav_gap.iloc[i].reindex(isins)
 
         res = score_funds_from_df(frame, regime, verbose=False) if len(frame) else pd.DataFrame()
         n_scored = len(res)

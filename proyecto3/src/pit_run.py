@@ -151,11 +151,21 @@ def compute_pit_scores(
         macro_key = (macro_key,)
 
     # ---- d2: score the universe at every date (the dominant cost: cached too, except with keep_detail) ----
+    # FND-0254: the live build-time eligibility rule's NAV-continuity part, evaluated from the NAV rows observable at each date and fed
+    # to the scorer's own check_hard_filters. Stale NAV is the universe rule above (max_stale_days, now the live P3_FUND_NAV_MAX_AGE_DAYS);
+    # accepted audit residuals are NOT modelled (today's governance decisions: look-ahead). It follows the live switch: OFF = rule absent.
+    elig_on = bool(getattr(_config, "FUND_DATA_ELIGIBILITY_ENABLED", False))
+    elig_params = {"min_coverage": _config.P3_FUND_NAV_MIN_COVERAGE, "max_gap_run": _config.P3_FUND_NAV_MAX_GAP_RUN_MONTHS} if elig_on else None
+
     def _score():
+        nav_gap = None
+        if elig_on:
+            from shared.nav_continuity import reasons_by_date
+            nav_gap = reasons_by_date(inputs.nav, at, elig_params["min_coverage"], elig_params["max_gap_run"])
         s, u = pit_scores(
             at, risk, peers, inputs.attrs, regime_by_date, momentum=momentum, short=short,
             max_stale_days=max_stale_days, min_obs=min_obs, current_universe_only=current_universe_only,
-            keep_detail=keep_detail, macro=macro,
+            keep_detail=keep_detail, macro=macro, nav_gap=nav_gap,
         )
         return {"scores": s, "universe": u}
 
@@ -167,7 +177,8 @@ def compute_pit_scores(
         score_key = content_hash(risk_key, peers_key, short_keys, at, regime_by_date, inputs.attrs,
                                  {"stale": max_stale_days, "min_obs": min_obs, "cur": current_universe_only,
                                   "scorer_cfg": SCORER_CONFIG_HASH, "universe_cols": 2},          # FND-0192: a changed scorer value can never hit a stale cache
-                                 CODE_VERSION, *macro_key)          # macro_key empty without group B
+                                 CODE_VERSION, *macro_key,          # macro_key empty without group B
+                                 *([{"nav_continuity": elig_params}] if elig_on else []))     # FND-0254: part of the key only when the rule is ON
         frames, hit, secs = cached_frames(cache, "scores", score_key, _score)
     scores, universe = frames["scores"], frames["universe"]
     universe.index.name = "as_of"

@@ -78,6 +78,7 @@ from shared.config import (
     ROLLING_PCTILE_P3_ENABLED,
 )
 from shared.db import executemany
+from shared.nav_continuity import gap_reason
 
 
 # ============================================================
@@ -441,13 +442,11 @@ def _nav_gap_reasons(conn: "psycopg.Connection") -> dict:
         "GROUP BY isin").fetchall()
     out: dict = {}
     for isin, n_rows, first_m, last_m, longest, n_gaps in rows:
-        expected = (last_m.year - first_m.year) * 12 + (last_m.month - first_m.month) + 1
-        if expected < 2 or int(n_gaps) == 0:
-            continue
-        coverage = int(n_rows) / expected
-        if coverage < min_cov or int(longest) >= max_run:
-            out[isin] = (f"nav_gap: coverage {coverage:.0%} ({int(n_rows)}/{expected} months, {first_m:%Y-%m}..{last_m:%Y-%m}), "
-                         f"longest gap {int(longest)} months, {int(n_gaps)} gaps")
+        # the predicate and its reason text live in shared/nav_continuity.py (FND-0254: the PIT backtest evaluates the SAME rule)
+        reason = gap_reason(n_rows, first_m.year * 12 + first_m.month - 1, last_m.year * 12 + last_m.month - 1,
+                            longest, n_gaps, min_cov, max_run)
+        if reason is not None:
+            out[isin] = reason
     return out
 
 

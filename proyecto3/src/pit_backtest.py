@@ -34,7 +34,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from proyecto3.src.backtesting import FORWARD_WINDOWS, _blend_to_master
-from proyecto3.src.pit_candidates import asof_snapshot
+from proyecto3.src.pit_candidates import DEFAULT_MAX_STALE_DAYS, asof_snapshot
 from proyecto3.src.portfolio_engine import DEFAULT_CONSTRAINTS, cash_weight, select_and_weight
 from proyecto3.src.score_candidates import exposure_constrained
 
@@ -262,7 +262,7 @@ class PreparedBacktest:
 
 
 def prepare_pit_backtest(pit_run, inputs, regime_hist: pd.DataFrame, at: pd.DatetimeIndex,
-                         windows=FORWARD_WINDOWS, max_stale_days: int = 45,
+                         windows=FORWARD_WINDOWS, max_stale_days: int = DEFAULT_MAX_STALE_DAYS,
                          constraints=DEFAULT_CONSTRAINTS, use_incumbents: bool = False, rebalance_every: int = 1,
                          phase: int = 0, regime_trigger=False) -> PreparedBacktest:
     at = pd.DatetimeIndex(at)
@@ -342,7 +342,7 @@ def monthly_turnover(W: pd.DataFrame) -> pd.Series:
 
 
 def run_pit_backtest(pit_run, inputs, regime_hist: pd.DataFrame, at: pd.DatetimeIndex,
-                     windows=FORWARD_WINDOWS, max_stale_days: int = 45, constraints=DEFAULT_CONSTRAINTS,
+                     windows=FORWARD_WINDOWS, max_stale_days: int = DEFAULT_MAX_STALE_DAYS, constraints=DEFAULT_CONSTRAINTS,
                      tx_cost_bps: float = 0.0, entry_sides: int = 1,
                      target_annual: "pd.Series | None" = None, use_incumbents: bool = False) -> pd.DataFrame:
     """Backtest table (same columns as Backtester.run plus n_funds, cash_weight, cov_*, cost_*, target_*): one row
@@ -356,7 +356,7 @@ COST_GRID_BPS = (0.0, 25.0, 50.0)
 
 def cost_sensitivity(pit_run, inputs, regime_hist: pd.DataFrame, at: pd.DatetimeIndex,
                      bps=COST_GRID_BPS, entry_sides: int = 1, windows=FORWARD_WINDOWS,
-                     max_stale_days: int = 45, constraints=DEFAULT_CONSTRAINTS,
+                     max_stale_days: int = DEFAULT_MAX_STALE_DAYS, constraints=DEFAULT_CONSTRAINTS,
                      target_annual: "pd.Series | None" = None) -> pd.DataFrame:
     """Symmetric cost sensitivity (0/25/50 bps per side by default): one row per (bps, window) with the mean net
     return, mean cost, mean excess vs the frictionless pool benchmark, hit ratio and, when a target is given, the
@@ -409,7 +409,7 @@ HYSTERESIS_GRID = (0.0, 0.05, 0.10, 0.20, 0.40)
 
 def hysteresis_experiment(pit_run, inputs, regime_hist: pd.DataFrame, at: pd.DatetimeIndex,
                           bands=HYSTERESIS_GRID, tx_cost_bps: float = 25.0, entry_sides: int = 1,
-                          windows=FORWARD_WINDOWS, max_stale_days: int = 45,
+                          windows=FORWARD_WINDOWS, max_stale_days: int = DEFAULT_MAX_STALE_DAYS,
                           target_annual: "pd.Series | None" = None) -> pd.DataFrame:
     """FND-0205: how much of the turnover is selection churn, and what does stickiness cost or buy?
 

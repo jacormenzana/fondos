@@ -31,7 +31,7 @@ _spec.loader.exec_module(cli)
 
 from proyecto3.src import backtesting
 from proyecto3.src.pit_run import PitRun
-from shared.config import REGIME_PUBLICATION_LAG_MONTHS
+from shared.config import P3_FUND_NAV_MAX_AGE_DAYS, REGIME_PUBLICATION_LAG_MONTHS
 
 
 # ---------------- stubs ----------------
@@ -113,7 +113,9 @@ def env(tmp_path, monkeypatch):
 
 def test_defaults_match_the_documented_contract():
     a = cli.build_parser().parse_args([])
-    assert (a.start, a.end, a.bps_main, a.entry_sides, a.max_stale_days) == ("2005-01-31", None, 25.0, 1, 45)
+    # FND-0254: the stale-NAV bound is the live one (shared.config.P3_FUND_NAV_MAX_AGE_DAYS), no longer a PIT-only 45
+    assert (a.start, a.end, a.bps_main, a.entry_sides) == ("2005-01-31", None, 25.0, 1)
+    assert a.max_stale_days == P3_FUND_NAV_MAX_AGE_DAYS == 60
     assert a.hysteresis_band == 0.0 and a.hysteresis_grid == "0,0.05,0.10,0.20,0.40"
     assert a.grid_bps == "0,25,50" and not a.no_cache and not a.dry_run and not a.current_universe_only
     assert a.isin_file is None and a.isins is None and a.sample_per_nature is None
@@ -184,15 +186,19 @@ def test_artifact_contents(env):
     stats = json.loads((out / "series_stats.json").read_text(encoding="utf-8"))
     assert set(stats) == {"portfolio", "benchmark"} and {"sharpe", "ann_return", "max_drawdown"} <= set(stats["portfolio"])
     text = (out / "summary.txt").read_text(encoding="utf-8")                                  # FND-0251: the notice heads the summary
-    assert text.startswith("NOTE: live build-time data eligibility") and text.endswith("\n\nBACKTESTING P3 -- stub summary")
+    assert text.startswith("NOTE: accepted audit residuals of the live build-time data eligibility") \
+        and text.endswith("\n\nBACKTESTING P3 -- stub summary")
     timings = json.loads((out / "timings.json").read_text(encoding="utf-8"))
     assert timings["seconds"]["total"] == 2.1 and timings["cache_hits"] == {"risk": False}
     manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["scope"] == "2 ISINs" and manifest["dates"] == ["2010-01-31", "2011-12-31", 24]
     assert manifest["regime_publication_lags_months"] == REGIME_PUBLICATION_LAG_MONTHS and manifest["git_commit"]
     assert "manifest.json" in manifest["artifacts"] and manifest["args"]["bps_main"] == 25.0
-    assert any("NOT modelled" in n and "FND-0254" in n for n in manifest["not_modelled"])          # FND-0251: what a PIT run does not model
-    assert (out / "summary.txt").read_text(encoding="utf-8").startswith("NOTE: live build-time data eligibility")
+    assert any("NOT modelled" in n and "FND-0254" in n and "look-ahead" in n for n in manifest["not_modelled"])   # what a PIT run does not model
+    elig = manifest["data_eligibility"]                              # FND-0254: what it DOES apply, auditable from the artifact
+    assert elig["stale_nav_days"] == elig["live_stale_nav_days"] == P3_FUND_NAV_MAX_AGE_DAYS
+    assert elig["enabled"] is True and set(elig["nav_continuity"]) == {"min_coverage", "max_gap_run_months"}
+    assert (out / "summary.txt").read_text(encoding="utf-8").startswith("NOTE: accepted audit residuals")
 
 
 def test_hysteresis_grid_can_be_skipped_and_is_written_by_default(env):

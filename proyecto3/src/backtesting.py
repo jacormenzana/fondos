@@ -53,7 +53,7 @@ from proyecto3.src.portfolio_engine import (
 )
 from proyecto3.src.score_candidates import exposure_constrained, flag_fx_exposed, load_current_candidates
 from shared.eur_nav import apply_eur_view_frame   # FND-0243
-from shared.config import REGIME_PUBLICATION_LAG_MONTHS
+from shared.config import P3_FUND_NAV_MAX_AGE_DAYS, REGIME_PUBLICATION_LAG_MONTHS
 
 logger = logging.getLogger(__name__)
 
@@ -451,7 +451,7 @@ class Backtester:
         isins: list | None = None,
         cache_dir: "str | Path | None" = None,
         use_cache: bool = True,
-        max_stale_days: int = 45,
+        max_stale_days: int = P3_FUND_NAV_MAX_AGE_DAYS,   # FND-0254: the live "stale NAV" bound (== pit_candidates.DEFAULT_MAX_STALE_DAYS)
         current_universe_only: bool = False,
         tx_cost_bps: float = 0.0,
         entry_sides: int = 1,

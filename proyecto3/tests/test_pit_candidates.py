@@ -221,3 +221,28 @@ def test_short_gates_flow_into_the_hard_filters():
     assert not s.loc["MM0", "eligible"] and "short_max_drawdown_6m" in s.loc["MM0", "exclusion_reason"]
     assert metrics["short_liquidity_flag_6m"].loc[t, "MM1"] > 0.20
     assert s.loc["MM1", "eligible"]                                     # untrusted daily data -> gate bypassed
+
+
+# ---------------- FND-0254: the live NAV-continuity rule, point in time ----------------
+
+def test_nav_gap_frame_excludes_a_fund_only_at_the_flagged_dates_and_touches_nothing_else(world):
+    base, _ = _run(world)
+    gap = pd.DataFrame(np.nan, index=AT, columns=world[0].columns, dtype=object)
+    gap.loc[AT[3:], "RV0"] = "nav_gap: coverage 50% (test)"
+    got, _ = _run(world, nav_gap=gap)
+    flagged = got[(got["isin"] == "RV0") & got["as_of"].isin(AT[3:])]
+    assert len(flagged) and not flagged["eligible"].any()
+    assert (flagged["exclusion_reason"] == "nav_gap: coverage 50% (test)").all()
+    assert (flagged["score_final"] == 0.0).all()                              # the scorer's own hard-filter path, not a second one
+    key = ["as_of", "isin", "subportfolio"]
+    cmp = base.merge(got, on=key, suffixes=("_base", "_gap"))
+    untouched = cmp[~((cmp["isin"] == "RV0") & cmp["as_of"].isin(AT[3:]))]
+    assert len(untouched) and (untouched["score_final_base"] == untouched["score_final_gap"]).all()
+    assert (untouched["eligible_base"] == untouched["eligible_gap"]).all()    # other funds' normalisation does not move
+
+
+def test_nav_gap_none_is_identical_to_not_passing_it(world):
+    a, ua = _run(world)
+    b, ub = _run(world, nav_gap=None)
+    pd.testing.assert_frame_equal(a, b)
+    pd.testing.assert_frame_equal(ua, ub)

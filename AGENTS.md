@@ -575,7 +575,7 @@ code and residuals about to lapse are warned `AUDIT_RESIDUAL_EXPIRY_WARN_DAYS` a
 `FUND_DATA_ELIGIBILITY_ENABLED` (**ON since 2026-10-11**; `fund_scorer.load_eligibility_inputs` / `check_hard_filters`): a fund whose monthly NAV is older than
 `P3_FUND_NAV_MAX_AGE_DAYS`, that carries an active accepted residual, or whose own monthly NAV span is too sparse (coverage < `P3_FUND_NAV_MIN_COVERAGE` or a run of
 `P3_FUND_NAV_MAX_GAP_RUN_MONTHS` missing months: P2 annualises by rows, not dates, FND-0253) is ineligible, so the builder never selects what the gate would refuse; read
-`scripts/audit/eligibility_switch_diff.py` (read-only ON/OFF eligible-set diff) shows what it changes; the PIT backtest does not model it (FND-0254). The build declares its structural cash
+`scripts/audit/eligibility_switch_diff.py` (read-only ON/OFF eligible-set diff) shows what it changes; the PIT backtest applies the same rule (FND-0254): a fund's stale-NAV drop uses the same `P3_FUND_NAV_MAX_AGE_DAYS` and the NAV-continuity test is evaluated from the rows observable at each date (`shared/nav_continuity.py`, one predicate for both), except accepted audit residuals, which are today's governance decisions and would be look-ahead. The build declares its structural cash
 (`cash_weight` in the scenario notes: a sub-portfolio short of eligible non-exposed funds holds the residue as cash, FND-0187, and prints which one
 and why); the gate requires weights + declared cash = 1 with cash ≤ `MAX_PORTFOLIO_CASH_WEIGHT` (10%, also a hard gate), and a refused promotion
 writes one `P3_SCENARIO_PROMOTION_BLOCKED` row to `ingestion_log`. The report and the rotation plan read PRODUCTION; with
