@@ -448,6 +448,18 @@ AUDIT_COMPLETENESS_CONTRACT_ENABLED: bool = True
 # fondos_app); shadow on the live data: the gate's history check returns no problem for the PRODUCTION scenario with the switch OFF and ON.
 # Rollback = False (no DDL to undo; the history stays and keeps being written).
 AUDIT_EXCEPTION_EVENTS_ENABLED: bool = True
+# FND-0265 (GOV-06), two-pillar orchestrator (shared/governance/orchestrator.py). The promotion always computes and prints its verdict (each
+# pillar PASS / PASS_WITH_WARNINGS / FAIL / INCOMPLETE and the decision); these switches decide what it may refuse:
+#   GOVERNANCE_ORCHESTRATOR_ENABLED  the verdict DECIDES the promotion (OFF: shadow, the legacy gate decides): weights tolerance 5e-5 (D2) and
+#                                    [GATE:MANIFEST] (the evidence audit run must carry git sha, config hash, catalogue and data manifest);
+#   CODE_INTEGRITY_GATE_ENABLED      [GATE:CODE] blocks when HEAD != origin/master or tracked files are modified (D1); OFF: a warning. Cycle
+#                                    launchers only ever warn (D3: p1p2_state preflight). Push before promoting;
+#   COST_DOMAIN_GATE_ENABLED         [GATE:COST] blocks on open hard defects of the cost_attributes audit on a fund of the scenario (D8: first
+#                                    scripts/audit/cost_gate_replay.py over the persisted runs, then one shadow cycle); OFF: a warning.
+# The last two act only inside the orchestrator, i.e. with GOVERNANCE_ORCHESTRATOR_ENABLED. All OFF until the owner has read the shadow lines.
+GOVERNANCE_ORCHESTRATOR_ENABLED: bool = False
+CODE_INTEGRITY_GATE_ENABLED: bool = False
+COST_DOMAIN_GATE_ENABLED: bool = False
 
 # ============================================================
 # Directorios de datos externos (inputs no versionados)

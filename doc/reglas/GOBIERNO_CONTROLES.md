@@ -84,12 +84,12 @@ sin código de puerta propio.
 | Id | Criterio | Consecuencia | Fuente | Estado |
 |---|---|---|---|---|
 | `T-STATUS` | el escenario existe, el ciclo de vida está instalado y su estado es DRAFT | `BLOCK` | `GATE:STATUS` | enforced |
-| `T-WEIGHTS` | hay pesos y Σ pesos + liquidez declarada = 1.0000 (§4) | `BLOCK` | `GATE:WEIGHTS` | enforced |
+| `T-WEIGHTS` | hay pesos y Σ pesos + liquidez declarada = 1.0000 (§4: tolerancia 5·10⁻⁵ cuando decide el orquestador, 10⁻³ en la puerta heredada) | `BLOCK` | `GATE:WEIGHTS` | enforced |
 | `T-CASH` | liquidez estructural declarada ≤ `MAX_PORTFOLIO_CASH_WEIGHT` (10 %) | `BLOCK` | `GATE:CASH` | enforced |
 | `T-FX` | exposición neta no-EUR sin cobertura ≤ `MAX_NON_EUR_UNHEDGED_WEIGHT` (30 %) | `BLOCK` | `GATE:FX` | enforced |
-| `T-CODE` | `HEAD == origin/master` y ningún fichero rastreado modificado (los no rastreados se ignoran, D1); en `CODE_DEPLOY`: `WARN` | `BLOCK` | — | planned:FND-0265 |
-| `T-VERSION` | el registro lleva `CALC_VERSION`, versión del catálogo, sha de git y hash de los `*_ENABLED` y límites del mandato (se registra desde FND-0263: cabecera y manifiesto de `control.audit_run` y nota de promoción; rechazar sin él: FND-0265); en `CODE_DEPLOY`: `RECORD` | `BLOCK` | — | planned:FND-0265 |
-| `T-EVIDENCE` | un registro verificable dice qué controles se ejecutaron y con qué resultado; la promoción lo cita (la nota cita la auditoría, el hash de configuración y las concesiones de excepción desde FND-0263; el registro del veredicto del orquestador es FND-0265); en `CODE_DEPLOY`: `RECORD` | `BLOCK` | — | planned:FND-0265 |
+| `T-CODE` | `HEAD == origin/master` (según el último *fetch*) y ningún fichero rastreado modificado (los no rastreados se ignoran, D1; `run_identity.code_integrity`, el mismo predicado que usará el *push* controlado de FND-0273); en `CODE_DEPLOY`: `WARN` (el *preflight* del ciclo, D3) | `BLOCK` | `GATE:CODE` | dormant:CODE_INTEGRITY_GATE_ENABLED |
+| `T-VERSION` | la cabecera `control.audit_run` de la auditoría de evidencia lleva sha de git, hash de configuración (`*_ENABLED` y `MAX_*`), versión del catálogo y manifiesto de datos (`CALC_VERSION`, corte, versiones de algoritmo); sin ellos no es evidencia; en `CODE_DEPLOY`: `RECORD` | `BLOCK` | `GATE:MANIFEST` | dormant:GOVERNANCE_ORCHESTRATOR_ENABLED |
+| `T-EVIDENCE` | el registro de la promoción (`ingestion_log`, misma transacción que la promoción) cita la auditoría, el hash de configuración, las concesiones de excepción y la línea de veredicto de dos pilares (estado de cada pilar y decisión); en `CODE_DEPLOY`: `RECORD` | `BLOCK` | `CODE:shared.governance.orchestrator.verdict_line` | enforced |
 
 ### 3.2 Pilar Datos
 
@@ -119,7 +119,7 @@ y `D-DATA-UNIVERSE` reparten esos defectos por alcance (sobre la cartera / solo 
 | `G-OVERRIDE-AP` | `--accept-alarms` exige motivo y `--ap FND-nnnn` existente en `gestion.backlog`; sin ello el override no se aplica | `BLOCK` | `GATE:OVERRIDE_AP` | enforced |
 | `G-COMPLETENESS` | cada comprobación obligatoria produjo resultado; una entrada `MISSING` (o una obligatoria `EMPTY` en corrida FULL) hace la corrida `INCOMPLETE`, código de salida 2, nunca un pase; el estado se escribe en `control.audit_run` con las filas de la corrida, en una sola transacción (§7) | `BLOCK` | `CODE:shared.statistical_audit.completeness.run_status` | enforced |
 | `G-EVIDENCE-RUN` | la corrida que lee la puerta es la última cabecera de `control.audit_run` de ámbito FULL y estado distinto de `INCOMPLETE`, posterior al DRAFT; una corrida FAIL cuenta (D4); una `_sample` nunca (siempre activo: `gating.SAMPLE_RUN_SUFFIX`) | `BLOCK` | `CODE:shared.statistical_audit.gating.select_evidence_run` | enforced |
-| `G-COST` | los defectos de `cost_attributes` sobre fondos de la cartera cuentan como los de `p2_metrics` (D8: reproducción retrospectiva, un ciclo en sombra, luego bloquea) | `BLOCK` | — | planned:FND-0265 |
+| `G-COST` | los defectos duros abiertos de la auditoría de evidencia de `cost_attributes` sobre fondos de la cartera rechazan como los de `p2_metrics` (D8: `scripts/audit/cost_gate_replay.py` sobre las corridas pasadas, un ciclo en sombra, luego el interruptor) | `BLOCK` | `GATE:COST` | dormant:COST_DOMAIN_GATE_ENABLED |
 | `G-REMEDIATION` | un ticket vinculado a un hallazgo se cierra solo con una re-auditoría completa que cubra los ISIN con cero infractores | `WARN` | — | planned:FND-0264 |
 
 ---
@@ -128,8 +128,9 @@ y `D-DATA-UNIVERSE` reparten esos defectos por alcance (sobre la cartera / solo 
 
 - Los pesos se construyen con **4 decimales**; la suma de pesos (más la liquidez declarada) es **1.0000** exacta tras el reparto por
   mayor resto (`portfolio_engine`). El constructor no cambia.
-- Tolerancia de la puerta `T-WEIGHTS` en la promoción: **5·10⁻⁵** (media unidad del cuarto decimal; decisión D2). Hoy el código usa
-  10⁻³; el endurecimiento lo entrega FND-0265 junto con la puerta de código, no esta fase.
+- Tolerancia de la puerta `T-WEIGHTS` en la promoción: **5·10⁻⁵** (media unidad del cuarto decimal; decisión D2,
+  `scenario_lifecycle.WEIGHT_TOLERANCE`), aplicada por el orquestador de dos pilares (§8); la puerta heredada conserva 10⁻³ mientras
+  `GOVERNANCE_ORCHESTRATOR_ENABLED` esté apagado.
 - Los límites del mandato (`MAX_NON_EUR_UNHEDGED_WEIGHT`, `MAX_PORTFOLIO_CASH_WEIGHT`) cambian solo en `shared/config.py` por un
   commit revisado; nunca en el momento de la promoción.
 
@@ -169,3 +170,23 @@ Contrato y cabecera de corrida: `AUDITORIA_ESTADISTICA.md` §6.4. Resumen: cada 
 `control.audit_run` en la misma transacción que sus filas, sin recuentos (los de `control.cycle_audit_run` se unen por `run_id`).
 Con `AUDIT_COMPLETENESS_CONTRACT_ENABLED` encendido (desde 2026-10-12), `INCOMPLETE` sale con código 2 y la promoción solo acepta como evidencia una
 cabecera FULL no `INCOMPLETE` (D4).
+
+## 8. Orquestador de dos pilares (FND-0265)
+
+`shared/governance/orchestrator.py::authorise_promotion` compone el veredicto de `PORTFOLIO_PROMOTION` sin duplicar ninguna puerta:
+toma las líneas `[GATE:<código>]` de `scenario_lifecycle.evaluate_promotion` (con la tolerancia D2) y añade las comprobaciones del pilar
+Técnico que no dependen de la cartera — `GATE:CODE` (D1, `run_identity.code_integrity`) y `GATE:MANIFEST` (cabecera de la auditoría de
+evidencia) — y el dominio de costes, `GATE:COST` (D8). Cada línea va al pilar del control cuya fuente es su código; el estado de cada pilar
+es `INCOMPLETE` si alguna línea es de evidencia no establecida (`AUDIT_STALE`, `EXCEPTIONS`, `MANIFEST`), `FAIL` si hay otra línea,
+`PASS_WITH_WARNINGS` con avisos y `PASS` en otro caso; la decisión sale de la matriz (§2). Una comprobación tras un interruptor apagado es
+un aviso (sombra), nunca un bloqueo.
+
+`p3_promote_scenario.py` calcula y muestra siempre ese veredicto y lo escribe en la nota de la promoción (`T-EVIDENCE`):
+
+| Interruptor (`shared/config.py`) | Encendido | Apagado |
+|---|---|---|
+| `GOVERNANCE_ORCHESTRATOR_ENABLED` | el veredicto **decide** (tolerancia 5·10⁻⁵, `GATE:MANIFEST`) | sombra: decide la puerta heredada |
+| `CODE_INTEGRITY_GATE_ENABLED` | `GATE:CODE` bloquea (haga *push* antes de promover) | aviso |
+| `COST_DOMAIN_GATE_ENABLED` | `GATE:COST` bloquea | aviso; antes de encender: `scripts/audit/cost_gate_replay.py` y un ciclo en sombra |
+
+Los dos últimos actúan dentro del orquestador. En `CODE_DEPLOY` el estado del código solo se avisa (`p1p2_state.py preflight`, D3).

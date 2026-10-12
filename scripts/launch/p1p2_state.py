@@ -263,10 +263,18 @@ WSL_KEEPALIVE_HINT = 'start `wsl -d Ubuntu -- bash -c "sleep infinity"` in the b
 _OK, _WARN, _FAIL = "OK", "WARN", "FAIL"
 
 
-def preflight_checks(environ, connect, free_gb: float | None) -> list:
+def preflight_checks(environ, connect, free_gb: float | None, code_state: dict | None = None) -> list:
     """[(level, message)]. Pure over its inputs (R-7): `connect()` opens the app connection, `environ`
-    is already .env-loaded, `free_gb` is the free space of the working drive (None = unknown)."""
+    is already .env-loaded, `free_gb` is the free space of the working drive (None = unknown), `code_state` is
+    shared.governance.run_identity.code_integrity() (None = not checked). The code state is only ever OK or WARN:
+    a cycle runs the working tree as it is (decision D3, FND-0265); only a portfolio promotion can block on it."""
     out = []
+    if code_state is not None:
+        if code_state.get("ok"):
+            out.append((_OK, f"code: {code_state.get('detail')}"))
+        else:
+            out.append((_WARN, f"code: {code_state.get('detail')} -- the cycle runs it anyway (D3); a promotion with "
+                               "CODE_INTEGRITY_GATE_ENABLED would refuse"))
     try:
         conn = connect()
         try:
@@ -319,7 +327,12 @@ def run_preflight() -> int:
         from shared.db import get_connection
         return get_connection()
 
-    results = preflight_checks(os.environ, _connect, free)
+    try:
+        from shared.governance.run_identity import code_integrity
+        code_state = code_integrity(ROOT)
+    except Exception as exc:                                     # noqa: BLE001 -- a warning source, never a reason to stop
+        code_state = {"ok": False, "detail": f"code state unavailable ({type(exc).__name__})"}
+    results = preflight_checks(os.environ, _connect, free, code_state)
     for level, msg in results:
         print(f"[preflight] {level:<4} {msg}")
     return RC_PREFLIGHT_FAILED if any(lv == _FAIL for lv, _ in results) else RC_OK

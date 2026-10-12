@@ -70,6 +70,49 @@ def _exception_ids(scope, sources: dict) -> str:
     return f"exceptions {','.join(str(i) for i in ids)}" if ids else ""
 
 
+COST_DOMAIN = "cost_attributes"
+
+
+def _evidence_header(conn, run_id):
+    """The control.audit_run row of the p2 evidence run as a dict (git_commit, config_hash, catalog_version, manifest), or None."""
+    from shared.statistical_audit.persistence import audit_run_has_manifest
+    if not run_id:
+        return None
+    try:
+        if conn.execute("SELECT to_regclass('audit_run')").fetchone()[0] is None:
+            return None
+        manifest_sql = "manifest" if audit_run_has_manifest(conn) else "NULL"
+        row = conn.execute(f"SELECT git_commit, config_hash, catalog_version, {manifest_sql} FROM audit_run "
+                           "WHERE run_id = %s AND domain = %s", (run_id, AUDIT_DOMAIN)).fetchone()
+    except Exception:                                            # noqa: BLE001 -- unreadable header = no header (GATE:MANIFEST says so)
+        conn.rollback()
+        return None
+    return None if row is None else dict(zip(("git_commit", "config_hash", "catalog_version", "manifest"), tuple(row)))
+
+
+def _cost_scope(conn, isins):
+    """(cost defects ON the scenario, has an evidence run) from the cost_attributes audit (decision D8), via the same loader as p2."""
+    from shared.statistical_audit import accepted_residuals, gating
+    try:
+        accepted = accepted_residuals.load_accepted(conn, COST_DOMAIN)
+    except Exception:                                            # noqa: BLE001 -- no residual table = nothing accepted
+        conn.rollback()
+        accepted = {}
+    scope = gating.load_scope(conn, COST_DOMAIN, isins, accepted)
+    return list(scope.on_scenario), scope.has_run
+
+
+def _print_verdict(v, decides: bool) -> None:
+    from shared.governance.orchestrator import verdict_line
+    print(f"\nOrquestador de dos pilares ({'DECIDE' if decides else 'en sombra: decide la puerta actual'}): {verdict_line(v)}")
+    for p, r in v.pillars.items():
+        for w in r.warnings:
+            print(f"  ~ [{p}] {w}")
+        if not decides:
+            for b in r.blockers:
+                print(f"  ! [{p}] {b}")
+
+
 def _built_at(conn, scenario_id: str):
     row = conn.execute("SELECT built_at FROM portfolio_scenarios WHERE scenario_id = %s", (scenario_id,)).fetchone()
     return row[0] if row else None
@@ -92,9 +135,11 @@ def main(argv=None) -> int:
     ap.add_argument("--ap", default=None, metavar="FND-nnnn", help="ticket que corrige la causa; obligatorio con --accept-alarms")
     args = ap.parse_args(argv)
 
-    from shared.config import (AUDIT_EXCEPTION_EVENTS_ENABLED, AUDIT_RESIDUAL_EXPIRY_WARN_DAYS, MAX_NON_EUR_UNHEDGED_WEIGHT,
+    from shared.config import (AUDIT_EXCEPTION_EVENTS_ENABLED, AUDIT_RESIDUAL_EXPIRY_WARN_DAYS, CODE_INTEGRITY_GATE_ENABLED,
+                               COST_DOMAIN_GATE_ENABLED, GOVERNANCE_ORCHESTRATOR_ENABLED, MAX_NON_EUR_UNHEDGED_WEIGHT,
                                MAX_PORTFOLIO_CASH_WEIGHT)
-    from shared.governance.run_identity import config_hash
+    from shared.governance import orchestrator
+    from shared.governance.run_identity import code_integrity, config_hash
     from shared.db import get_connection
     from shared import backlog_client, fx_exposure
     from shared.statistical_audit import accepted_residuals, gating
@@ -162,24 +207,37 @@ def main(argv=None) -> int:
             print(f"AVISO: no se pudo comprobar {ap_id} en gestion.backlog (FONDOS_BACKLOG_PG_DSN no definida o sin conexion): "
                   "se acepta por formato")
 
-        verdict = lc.evaluate_promotion(
-            status=status, n_funds=len(weights), weight_sum=sum(weights.values()), stale_checks=stale,
-            exposure_non_eur=expo["non_eur"], budget=MAX_NON_EUR_UNHEDGED_WEIGHT, audit=scope, built_at=built_at,
-            accept_alarms=reason, accept_ap=ap_id, ap_exists=ap_exists, declared_cash=cash, max_cash=MAX_PORTFOLIO_CASH_WEIGHT,
-            exceptions_problem=exceptions_problem)
-        if verdict.blockers:
+        gate_kw = dict(status=status, n_funds=len(weights), weight_sum=sum(weights.values()), stale_checks=stale,
+                       exposure_non_eur=expo["non_eur"], budget=MAX_NON_EUR_UNHEDGED_WEIGHT, audit=scope, built_at=built_at,
+                       accept_alarms=reason, accept_ap=ap_id, ap_exists=ap_exists, declared_cash=cash, max_cash=MAX_PORTFOLIO_CASH_WEIGHT,
+                       exceptions_problem=exceptions_problem)
+        legacy = lc.evaluate_promotion(**gate_kw)
+        # FND-0265: the two-pillar verdict is always computed and printed; it DECIDES only with GOVERNANCE_ORCHESTRATOR_ENABLED (else shadow)
+        tight = lc.evaluate_promotion(**gate_kw, weight_tolerance=lc.WEIGHT_TOLERANCE)                     # decision D2
+        cost_defects, cost_has_run = _cost_scope(conn, weights.keys())
+        two_pillar = orchestrator.authorise_promotion(
+            tight.blockers, overridden=tight.overridden, code_state=code_integrity(_ROOT), code_gate_enabled=CODE_INTEGRITY_GATE_ENABLED,
+            evidence_header=_evidence_header(conn, scope.run_id), cost_defects=cost_defects, cost_has_run=cost_has_run,
+            cost_gate_enabled=COST_DOMAIN_GATE_ENABLED)
+        _print_verdict(two_pillar, decides=GOVERNANCE_ORCHESTRATOR_ENABLED)
+        if GOVERNANCE_ORCHESTRATOR_ENABLED:
+            blockers = two_pillar.blockers + (list(two_pillar.notes) if two_pillar.blockers else [])
+            overridden = list(two_pillar.overridden)
+        else:
+            blockers, overridden = legacy.blockers, legacy.overridden
+        if blockers:
             print("\nNO PROMOVIBLE:")
-            for b in verdict.blockers:
+            for b in blockers:
                 print(f"  - {b}")
             if not args.dry_run:                                   # a real refusal leaves an audit row; a dry run writes nothing
                 try:
-                    lc.record_blocked(conn, args.scenario_id, getpass.getuser(), verdict.blockers)
+                    lc.record_blocked(conn, args.scenario_id, getpass.getuser(), blockers)
                 except Exception as exc:                           # noqa: BLE001 -- the refusal stands; say the trace was not written
                     print(f"AVISO: no se pudo registrar el intento bloqueado en ingestion_log: {exc}")
             return RC_BLOCKED
-        if verdict.overridden:
+        if overridden:
             print("\nOVERRIDE (puertas cubiertas por --accept-alarms + --ap):")
-            for code, text in verdict.overridden:
+            for code, text in overridden:
                 print(f"  - [OVERRIDE:{code}] {args.ap}: {text}")
         if args.dry_run:
             print("\nDRY RUN: promovible. Nada cambiado.")
@@ -188,8 +246,10 @@ def main(argv=None) -> int:
         user = getpass.getuser()
         # FND-0263: the note names the code (git), the configuration (hash of the *_ENABLED switches and MAX_* limits), the audit run (whose
         # control.audit_run header holds the catalogue and the data manifest) and the exception grants relied on: one promotion row rebuilds them.
-        note = "; ".join(p for p in [f"non-EUR exposure {expo['non_eur']:.1%}", lc.signoff_line(scope, verdict.overridden, ap_id, reason),
-                                     _git_state(), f"config {config_hash()}", _exception_ids(scope, exception_sources)] if p)
+        # FND-0265 (T-EVIDENCE): plus the two-pillar verdict line, whether it decided or ran in shadow.
+        note = "; ".join(p for p in [f"non-EUR exposure {expo['non_eur']:.1%}", lc.signoff_line(scope, overridden, ap_id, reason),
+                                     _git_state(), f"config {config_hash()}", _exception_ids(scope, exception_sources),
+                                     orchestrator.verdict_line(two_pillar)] if p)
         previous = lc.promote(conn, args.scenario_id, user, note)       # promotion + audit row in ONE transaction
         print(f"\nPROMOVIDO: {args.scenario_id} es ahora PRODUCCION" + (f"; {previous} -> ARCHIVED" if previous else ""))
         return RC_OK

@@ -162,8 +162,15 @@ def load_scope(conn, domain: str, scenario_isins: Iterable[str], accepted: Optio
         scope = scope_findings((), {}, scenario, accepted)
         scope.selection_note = note
         return scope
-    run_id, run_ts = run
+    return scope_for_run(conn, domain, run[0], run[1], scenario, accepted)
 
+
+def scope_for_run(conn, domain: str, run_id: str, run_ts, scenario_isins: Iterable[str],
+                  accepted: Optional[Mapping[str, Mapping[str, tuple]]] = None) -> AuditScope:
+    """AuditScope of ONE persisted run for `scenario_isins` (load_scope picks the evidence run; the cost-gate replay, FND-0265 / D8, walks
+    the past runs through this same function). Read-only."""
+    scenario = sorted(set(scenario_isins))
+    accepted = accepted or {}
     cols = ("rule_id", "rule_class", "block", "group_key", "isin", "evidence", "distance")
     rows = conn.execute(
         "SELECT rule_id, rule_class, block, group_key, isin, evidence, distance FROM audit_finding "

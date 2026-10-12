@@ -276,6 +276,83 @@ def test_governed_exceptions_refuse_a_residual_written_behind_the_history(world,
     _assert_refused(conn, rc, capsys, "EXCEPTIONS")
 
 
+# ---------------- FND-0265: the two-pillar orchestrator ----------------
+
+def _identify_run(conn):
+    """The evidence header carries code, configuration, catalogue and data manifest (what a post-FND-0263 --persist writes)."""
+    conn.execute("UPDATE audit_run SET git_commit = 'abc1234', config_hash = 'v1:000000000000', catalog_version = 'cv', "
+                 "manifest = '{\"calc_version\": \"20261011\"}'::jsonb WHERE run_id = %s", (RUN,))
+    conn.commit()
+
+
+def _orchestrator(monkeypatch, code_ok=True, code_gate=False, cost_gate=False):
+    import shared.config as cfg
+    import shared.governance.run_identity as ri
+    monkeypatch.setattr(cfg, "GOVERNANCE_ORCHESTRATOR_ENABLED", True)
+    monkeypatch.setattr(cfg, "CODE_INTEGRITY_GATE_ENABLED", code_gate)
+    monkeypatch.setattr(cfg, "COST_DOMAIN_GATE_ENABLED", cost_gate)
+    monkeypatch.setattr(ri, "code_integrity", lambda *a, **k: {"ok": code_ok, "detail": "clean" if code_ok else "1 modified tracked file(s)"})
+
+
+def _note(conn):
+    return conn.execute("SELECT message FROM ingestion_log WHERE step = 'P3_SCENARIO_PROMOTED'").fetchone()[0]
+
+
+def test_shadow_mode_records_the_two_pillar_verdict_and_the_legacy_gate_decides(world, capsys):
+    conn, _ = world                                                                       # switches OFF; header has no manifest
+    rc = cli.main([SCENARIO])
+    out = capsys.readouterr().out
+    assert rc == cli.RC_OK, out
+    assert "en sombra" in out and "two-pillar TECHNICAL=INCOMPLETE" in _note(conn)        # what it WOULD have said, on the record
+
+
+def test_the_orchestrator_promotes_a_clean_scenario_with_an_identified_evidence_run(world, capsys, monkeypatch):
+    conn, _ = world
+    _identify_run(conn)
+    _orchestrator(monkeypatch)
+    rc = cli.main([SCENARIO])
+    assert rc == cli.RC_OK, capsys.readouterr().out
+    assert "two-pillar TECHNICAL=PASS DATA=PASS" in _note(conn) and "AUTHORISED" in _note(conn)
+
+
+def test_the_orchestrator_refuses_an_evidence_run_that_does_not_identify_itself(world, capsys, monkeypatch):
+    conn, _ = world
+    _orchestrator(monkeypatch)
+    _assert_refused(conn, cli.main([SCENARIO, "--accept-alarms", "un motivo", "--ap", "FND-0251"]), capsys, "MANIFEST")
+
+
+def test_the_code_gate_refuses_modified_code_and_no_override_helps(world, capsys, monkeypatch):
+    conn, _ = world
+    _identify_run(conn)
+    _orchestrator(monkeypatch, code_ok=False, code_gate=True)
+    _assert_refused(conn, cli.main([SCENARIO, "--accept-alarms", "un motivo", "--ap", "FND-0251"]), capsys, "CODE")
+
+
+def test_modified_code_only_warns_while_the_code_gate_is_off(world, capsys, monkeypatch):
+    conn, _ = world
+    _identify_run(conn)
+    _orchestrator(monkeypatch, code_ok=False, code_gate=False)
+    rc = cli.main([SCENARIO])
+    out = capsys.readouterr().out
+    assert rc == cli.RC_OK and "[GATE:CODE]" in out and "sombra" in out
+
+
+def test_the_cost_gate_refuses_without_cost_evidence(world, capsys, monkeypatch):
+    conn, _ = world
+    _identify_run(conn)
+    _orchestrator(monkeypatch, cost_gate=True)
+    _assert_refused(conn, cli.main([SCENARIO]), capsys, "COST")
+
+
+def test_the_orchestrator_refuses_a_weight_sum_the_legacy_tolerance_would_let_through(world, capsys, monkeypatch):
+    conn, _ = world
+    _identify_run(conn)
+    _orchestrator(monkeypatch)
+    conn.execute("UPDATE portfolio_weights SET weight = 0.2499 WHERE scenario_id = %s AND isin = %s", (SCENARIO, FUNDS[0]))   # sum 0.9999
+    conn.commit()
+    _assert_refused(conn, cli.main([SCENARIO]), capsys, "WEIGHTS")
+
+
 def test_an_incomplete_full_run_is_not_evidence_and_the_refusal_says_why(world, capsys):
     conn, _ = world
     conn.execute("UPDATE audit_run SET status = 'INCOMPLETE' WHERE run_id = %s", (RUN,))

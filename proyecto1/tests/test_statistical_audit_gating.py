@@ -78,7 +78,7 @@ def test_the_held_out_finding_carries_its_isins_so_the_coverage_gate_can_name_th
 
 def test_the_loader_sql_filter_names_every_blocking_constant():
     """The persisted-row filter is SQL text (the EXPLAIN sweep needs a literal): keep it in step with the constants."""
-    src = inspect.getsource(gating.load_scope)
+    src = inspect.getsource(gating.scope_for_run)              # the per-run loader (FND-0265 split it out of load_scope)
     for cls in gating.BLOCKING_RULE_CLASSES:
         assert f"rule_class = '{cls}'" in src
     for block in gating.BLOCKING_BLOCKS:

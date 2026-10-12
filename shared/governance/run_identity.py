@@ -45,6 +45,38 @@ def git_state(root: Path = _ROOT) -> tuple:
         return (None, None)
 
 
+TIP_REF = "origin/master"          # decision D1: the reviewed code is what is on origin/master
+
+
+def code_integrity(root: Path = _ROOT, tip: str = TIP_REF) -> dict:
+    """THE code-integrity predicate (decision D1; shared with the gated push script, FND-0273): {"head", "tip", "at_tip", "clean",
+    "ok", "detail"}. at_tip = HEAD equals `tip` as of the LAST FETCH (no network here); clean = no modified tracked file (untracked files
+    are ignored). ok is True only when both are known and true; any git failure gives ok False with the reason, never an exception."""
+    def git(*args):
+        return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, timeout=10)
+    try:
+        head, tip_sha = git("rev-parse", "HEAD"), git("rev-parse", "--verify", "--quiet", tip)
+        dirty = git("status", "--porcelain", "--untracked-files=no")
+    except Exception as exc:                                     # noqa: BLE001 -- reported, never raised
+        return {"head": None, "tip": None, "at_tip": None, "clean": None, "ok": False, "detail": f"git unavailable ({type(exc).__name__})"}
+    h = head.stdout.strip() or None
+    t = tip_sha.stdout.strip() or None
+    at_tip = (h == t) if (h and t) else None
+    clean = (not dirty.stdout.strip()) if dirty.returncode == 0 else None
+    problems = []
+    if at_tip is None:
+        problems.append(f"cannot compare HEAD with {tip}")
+    elif not at_tip:
+        problems.append(f"HEAD {h[:7]} != {tip} {t[:7]} (push first, or check out {tip})")
+    if clean is None:
+        problems.append("cannot read the working tree state")
+    elif not clean:
+        n = len(dirty.stdout.strip().splitlines())
+        problems.append(f"{n} modified tracked file(s)")
+    return {"head": h, "tip": t, "at_tip": at_tip, "clean": clean, "ok": not problems,
+            "detail": "; ".join(problems) or f"HEAD {h[:7]} == {tip}, clean tracked tree"}
+
+
 def describe_git_state(state: tuple) -> str:
     """`git <sha> clean|dirty-tracked` (the promotion-note wording); `git n/a` when unknown."""
     sha, clean = state

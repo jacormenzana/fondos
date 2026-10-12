@@ -125,7 +125,7 @@ CONTROLS = (
             BLOCK, SOURCE_GATE + "STATUS", STATUS_ENFORCED),
     Control("T-WEIGHTS", PILLAR_TECHNICAL, "Weights add up to 1.0000", _OWNER_PROMOTION,
             "the scenario has weights and sum(weights) + declared structural cash = 1.0000 (weights are 4 dp, built by largest remainder; "
-            "gate tolerance today 1e-3, decision D2 sets it to 5e-5 in GOV-06)",
+            "tolerance 5e-5 per decision D2 when the two-pillar orchestrator decides, 1e-3 in the legacy gate)",
             BLOCK, SOURCE_GATE + "WEIGHTS", STATUS_ENFORCED),
     Control("T-CASH", PILLAR_TECHNICAL, "Structural cash within the mandate", _OWNER_PROMOTION,
             "declared cash <= MAX_PORTFOLIO_CASH_WEIGHT (shared/config.py, 10%); the mandate changes by a reviewed commit, not at promotion",
@@ -134,16 +134,17 @@ CONTROLS = (
             "net non-EUR unhedged exposure <= MAX_NON_EUR_UNHEDGED_WEIGHT (shared/config.py, 30%, shared/fx_exposure.py)",
             BLOCK, SOURCE_GATE + "FX", STATUS_ENFORCED),
     Control("T-CODE", PILLAR_TECHNICAL, "Code integrity", "owner (release)",
-            "HEAD == origin/master and no modified tracked file (untracked files ignored; decision D1)",
-            BLOCK, "", PLANNED_PREFIX + "FND-0265", deploy_consequence=WARN),
+            "HEAD == origin/master as of the last fetch and no modified tracked file (untracked files ignored; decision D1; "
+            "run_identity.code_integrity, the predicate the gated push of FND-0273 shares); the cycle preflight only warns (D3)",
+            BLOCK, SOURCE_GATE + "CODE", DORMANT_PREFIX + "CODE_INTEGRITY_GATE_ENABLED", deploy_consequence=WARN),
     Control("T-VERSION", PILLAR_TECHNICAL, "Version and configuration identified", "owner (release)",
-            "the run record carries CALC_VERSION, catalog version, git sha and a hash of the *_ENABLED flags and mandate limits "
-            "(recorded since FND-0263: control.audit_run header + manifest, and the promotion note; refusing without it: FND-0265)",
-            BLOCK, "", PLANNED_PREFIX + "FND-0265", deploy_consequence=RECORD),
+            "the evidence audit run's control.audit_run header carries git sha, config hash (*_ENABLED + MAX_*), catalogue version and the "
+            "data manifest (CALC_VERSION, cut-off, algorithm versions); a run without them is not promotion evidence",
+            BLOCK, SOURCE_GATE + "MANIFEST", DORMANT_PREFIX + "GOVERNANCE_ORCHESTRATOR_ENABLED", deploy_consequence=RECORD),
     Control("T-EVIDENCE", PILLAR_TECHNICAL, "Execution evidence", "owner (release)",
-            "a verifiable record states which controls ran, with which result, and the promotion record cites it (the note cites the "
-            "audit run, config hash and exception grants since FND-0263; the orchestrator's verdict record is FND-0265)",
-            BLOCK, "", PLANNED_PREFIX + "FND-0265", deploy_consequence=RECORD),
+            "the promotion record (ingestion_log, same transaction as the promotion) cites the audit run, config hash, exception grants "
+            "and the two-pillar verdict line (each pillar's state and the decision)",
+            BLOCK, SOURCE_CODE + "shared.governance.orchestrator.verdict_line", STATUS_ENFORCED, deploy_consequence=RECORD),
     # ---- Pillar DATA -----------------------------------------------------------------------------------------------------------
     Control("D-FRESHNESS", PILLAR_DATA, "Inputs are fresh", _OWNER_PROMOTION,
             "the P3 data-freshness gate (shared.config.P3_FRESHNESS_MAX_AGE_DAYS) reports no stale input",
@@ -199,8 +200,9 @@ CONTROLS = (
             "a FAIL run counts (decision D4); a _sample run never does (always on: gating.SAMPLE_RUN_SUFFIX)",
             BLOCK, SOURCE_CODE + "shared.statistical_audit.gating.select_evidence_run", STATUS_ENFORCED),
     Control("G-COST", PILLAR_ORCHESTRATION, "Cost domain at promotion", "owner (statistical audit)",
-            "cost_attributes defects on a fund of the scenario count like p2_metrics ones (decision D8: replay, one shadow cycle, then block)",
-            BLOCK, "", PLANNED_PREFIX + "FND-0265"),
+            "open hard defects of the cost_attributes evidence run on a fund of the scenario refuse like p2_metrics ones (decision D8: "
+            "scripts/audit/cost_gate_replay.py over the past runs, one shadow cycle, then the switch)",
+            BLOCK, SOURCE_GATE + "COST", DORMANT_PREFIX + "COST_DOMAIN_GATE_ENABLED"),
     Control("G-REMEDIATION", PILLAR_ORCHESTRATION, "Remediation is closed by evidence", "owner (backlog)",
             "a finding-linked ticket closes only on a complete re-audit that covers the ISINs with zero violators",
             WARN, "", PLANNED_PREFIX + "FND-0264"),

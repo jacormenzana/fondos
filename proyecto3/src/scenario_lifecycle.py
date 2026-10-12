@@ -143,6 +143,19 @@ GATE_AUDIT_STALE, GATE_DATA_COVERAGE = "AUDIT_STALE", "DATA_COVERAGE"
 GATE_DATA_SCENARIO, GATE_RESIDUAL_SCENARIO, GATE_DATA_UNIVERSE = "DATA_SCENARIO", "RESIDUAL_SCENARIO", "DATA_UNIVERSE"
 GATE_OVERRIDE_AP = "OVERRIDE_AP"
 GATE_EXCEPTIONS = "EXCEPTIONS"                 # FND-0263: the accepted-residual history cannot be read or disagrees with its projection
+# FND-0265 (two-pillar orchestrator, shared/governance/orchestrator.py): Pillar-1 checks evaluated there, written in the same format
+GATE_CODE = "CODE"                             # HEAD is not origin/master, or tracked files are modified (decision D1)
+GATE_MANIFEST = "MANIFEST"                     # the evidence audit run does not identify its code, configuration and data
+GATE_COST = "COST"                             # an open hard defect of the cost_attributes audit on a fund of the scenario (decision D8)
+# Sum of weights + declared cash must be 1 within this tolerance. The builder rounds to 4 dp by largest remainder, so the exact contract is
+# 1.0000; decision D2 sets the promotion tolerance to half a unit of the 4th decimal, applied by the orchestrator. The legacy gate keeps 1e-3.
+WEIGHT_TOLERANCE = 5e-5
+WEIGHT_TOLERANCE_LEGACY = 1e-3
+
+
+def gate_line(code: str, text: str) -> str:
+    """A blocker / override line: `[GATE:<code>] text` (stable prefix, counted with a plain LIKE in ingestion_log)."""
+    return f"[GATE:{code}] {text}"
 AP_RE = re.compile(r"^FND-\d{4}$")
 # Gates a reasoned override (--accept-alarms "motivo" --ap FND-nnnn) may cover: defects ON the scenario and the audit's blind spots.
 # Everything else is hard: exposure, cash, weights, freshness, a stale audit, and universe-only defects (their way out is an accepted
@@ -167,7 +180,8 @@ def evaluate_promotion(*, status: Optional[str], n_funds: int, weight_sum: float
                        exposure_non_eur: float, budget: float, audit, built_at=None,
                        accept_alarms: Optional[str] = None, accept_ap: Optional[str] = None, ap_exists: Optional[bool] = None,
                        declared_cash: float = 0.0, max_cash: Optional[float] = None,
-                       exceptions_problem: Optional[str] = None) -> PromotionVerdict:
+                       exceptions_problem: Optional[str] = None,
+                       weight_tolerance: float = WEIGHT_TOLERANCE_LEGACY) -> PromotionVerdict:
     """Pure: why a scenario may not be promoted (empty `blockers` = promotable) and which gates a reasoned override covered.
 
     HARD gates, no override (owner decisions 2026-10-11): the currency-exposure budget (`shared.config.MAX_NON_EUR_UNHEDGED_WEIGHT`) and the
@@ -196,8 +210,7 @@ def evaluate_promotion(*, status: Optional[str], n_funds: int, weight_sum: float
     hard: list = []
     soft: list = []                                              # (code, text): what the reasoned override can cover
 
-    def g(code: str, text: str) -> str:
-        return f"[GATE:{code}] {text}"
+    g = gate_line
 
     if status is None:
         hard.append(g(GATE_STATUS, "el escenario no existe o el ciclo de vida no esta instalado"))
@@ -205,7 +218,7 @@ def evaluate_promotion(*, status: Optional[str], n_funds: int, weight_sum: float
         hard.append(g(GATE_STATUS, f"el escenario esta en {status}: solo un DRAFT se promueve"))
     if n_funds <= 0:
         hard.append(g(GATE_WEIGHTS, "el escenario no tiene pesos"))
-    elif abs(weight_sum + declared_cash - 1.0) > 1e-3:
+    elif abs(weight_sum + declared_cash - 1.0) > weight_tolerance:
         hard.append(g(GATE_WEIGHTS, f"los pesos suman {weight_sum:.4f}, no 1.0" if declared_cash <= 0 else
                       f"los pesos suman {weight_sum:.4f} + liquidez declarada {declared_cash:.4f}, no 1.0"))
     if declared_cash > max_cash + 1e-9:
