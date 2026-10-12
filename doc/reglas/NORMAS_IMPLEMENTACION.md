@@ -210,7 +210,9 @@ los launchers (`fondos_cycle.lock`, `*.state`, `env_driver_ok`, `env_blocked.log
 `proyecto1/log` (NORMAS_BATCH) y no se enruta por el registro; (4) `log/` y `logs/` están en `.gitignore` — un directorio
 nuevo se versiona con `.gitkeep` (`git add -f`); (5) los logs de host WSL/Docker se enrutan por familia de script en
 `scripts/ops/maintenance/lib/common.sh` (`maint_log_dir`: prefijo `wsl_` / `pg_`; un prefijo no registrado aborta con RC 3);
-`MAINT_LOG_DIR` en el entorno fuerza un único directorio (pruebas). Guardas estáticas: `tests/test_log_paths.py`,
+`MAINT_LOG_DIR` en el entorno fuerza un único directorio (pruebas). Las tareas `Fondos maint *` (y las de backup PG) usan
+inicio de sesión interactivo: solo corren con la sesión del operador abierta; una ventana perdida se lanza al siguiente inicio
+(`StartWhenAvailable`), es un retraso, no una omisión. Guardas estáticas: `tests/test_log_paths.py`,
 `tests/test_maintenance_log_routing.py`.
 
 ## §5. Convenciones de codificación DQ (`check_code`)

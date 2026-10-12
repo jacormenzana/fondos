@@ -10,6 +10,8 @@
 #   monthly 1st 07:00  pg_run_all.sh monthly (read-only reindex report) ; wsl_05_host_vhdx.ps1 report
 # --apply is deliberately NOT used for the monthly -verify-restore / VHDX compaction: run those by hand.
 # Results land in C:\data\wsl\log\os\wsl_*.log and C:\data\wsl\log\docker\postgres\pg_*.log; a CRITICAL exit makes the task show a non-zero last result.
+# PREREQUISITE (accepted, same as the PG backup tasks): the tasks use an INTERACTIVE logon, so they run only while the operator's Windows
+# session is open. A window missed while logged off is not lost: StartWhenAvailable launches the task at the next logon (delay, not a skip).
 param([switch]$Register, [switch]$Unregister)
 $ErrorActionPreference = 'Stop'
 $m = '/mnt/c/desarrollo/fondos/scripts/ops/maintenance'
