@@ -161,6 +161,10 @@ CONTROLS = (
     Control("D-COVERAGE", PILLAR_DATA, "Every fund of the scenario was audited", _OWNER_AUDIT,
             "no fund of the scenario is held out of the audit's cross-sectional blocks or outside the audited population; coverage is known",
             BLOCK_UNLESS_OVERRIDE, SOURCE_GATE + "DATA_COVERAGE", STATUS_ENFORCED),
+    Control("D-ALARM-WATCH", PILLAR_DATA, "No weight increase for a PRODUCTION fund on alarm", _OWNER_PROMOTION,
+            "a fund of the PRODUCTION scenario with a current ALARM of shared.config.ALARM_WATCH_RULES in fund_metric_alerts (DD_CAT_P03, "
+            "VOL_CAT_P97) does not get a higher weight in the DRAFT (tolerance 1e-4); unreadable alerts refuse (fail closed); FND-0289",
+            BLOCK_UNLESS_OVERRIDE, SOURCE_GATE + "ALARM_WATCH", DORMANT_PREFIX + "ALARM_WATCH_GATE_ENABLED"),
     Control("D-DATA-UNIVERSE", PILLAR_DATA, "No unaccepted hard defect in the universe", _OWNER_AUDIT,
             "an open hard defect outside the scenario needs an active accepted residual (accept_audit_residual.py: ticket + expiry); "
             "there is no promotion-time override",

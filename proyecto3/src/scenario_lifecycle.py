@@ -136,6 +136,47 @@ def declared_cash(conn, scenario_id: str) -> float:
     return parse_declared_cash(row[0] if row else None)
 
 
+# --- PRODUCTION alarm watch (FND-0289) -----------------------------------------------------------------------------------------
+@dataclass(frozen=True)
+class AlarmWatchRow:
+    """A fund of the PRODUCTION scenario on a watched ALARM: its weight there and in the DRAFT (None = the DRAFT does not hold it)."""
+    isin: str
+    draft_weight: Optional[float]
+    prod_weight: float
+    rules: str
+
+
+def alarm_watch_keys(alert_rules: list, watched: tuple) -> list:
+    """(rule_code, metric, window) of each watched rule code, from ALERT_RULES: the alert rows of exactly those keys count, so a row
+    left over under another metric or window name never does. Pure; an unknown code is an error (a typo would watch nothing)."""
+    keys = [(r["rule_code"], r["metric"], r["window"]) for r in alert_rules if r["rule_code"] in watched]
+    unknown = set(watched) - {k[0] for k in keys}
+    if unknown:
+        raise ValueError(f"ALARM_WATCH_RULES names rule codes absent from ALERT_RULES: {sorted(unknown)}")
+    return keys
+
+
+def load_alarm_watch(conn, draft_id: str, keys: list) -> list:
+    """The PRODUCTION funds carrying a current ALARM on one of `keys`, with their PRODUCTION and DRAFT weights. Raises when the alerts
+    cannot be read: the caller fails closed (GATE_ALARM_WATCH)."""
+    codes, metrics, windows = ([k[i] for k in keys] for i in range(3))
+    rows = conn.execute(
+        "SELECT p.isin, d.weight, p.weight, string_agg(DISTINCT a.rule_code, ',' ORDER BY a.rule_code) "
+        "FROM portfolio_weights p "
+        "JOIN portfolio_scenarios s ON s.scenario_id = p.scenario_id AND s.status = 'PRODUCTION' "
+        "JOIN fund_metric_alerts a ON a.isin = p.isin AND a.level = 'ALARM' "
+        "AND (a.rule_code, a.metric, a.window_label) IN (SELECT * FROM unnest(%s::text[], %s::text[], %s::text[])) "
+        "LEFT JOIN portfolio_weights d ON d.isin = p.isin AND d.scenario_id = %s "
+        "GROUP BY p.isin, d.weight, p.weight ORDER BY p.isin",
+        (codes, metrics, windows, draft_id)).fetchall()
+    return [AlarmWatchRow(r[0], None if r[1] is None else float(r[1]), float(r[2]), r[3]) for r in rows]
+
+
+def alarm_watch_increases(rows: list, tolerance: float) -> list:
+    """The watched funds whose DRAFT weight exceeds their PRODUCTION weight by more than `tolerance`. Pure."""
+    return [r for r in rows if r.draft_weight is not None and r.draft_weight > r.prod_weight + tolerance]
+
+
 # Stable gate codes (FND-0251): every blocker and override line starts with one, so the refusals in ingestion_log can be counted per gate
 # with a plain LIKE instead of parsing prose (KPI source). The text after the code is free.
 GATE_STATUS, GATE_WEIGHTS, GATE_CASH, GATE_FRESHNESS, GATE_FX = "STATUS", "WEIGHTS", "CASH", "FRESHNESS", "FX"
@@ -147,6 +188,7 @@ GATE_EXCEPTIONS = "EXCEPTIONS"                 # FND-0263: the accepted-residual
 GATE_CODE = "CODE"                             # HEAD is not origin/master, or tracked files are modified (decision D1)
 GATE_MANIFEST = "MANIFEST"                     # the evidence audit run does not identify its code, configuration and data
 GATE_COST = "COST"                             # an open hard defect of the cost_attributes audit on a fund of the scenario (decision D8)
+GATE_ALARM_WATCH = "ALARM_WATCH"               # FND-0289: a PRODUCTION fund on a watched ALARM gets a higher weight in the DRAFT
 # Sum of weights + declared cash must be 1 within this tolerance. The builder rounds to 4 dp by largest remainder, so the exact contract is
 # 1.0000; decision D2 sets the promotion tolerance to half a unit of the 4th decimal, applied by the orchestrator. The legacy gate keeps 1e-3.
 WEIGHT_TOLERANCE = 5e-5
@@ -157,10 +199,10 @@ def gate_line(code: str, text: str) -> str:
     """A blocker / override line: `[GATE:<code>] text` (stable prefix, counted with a plain LIKE in ingestion_log)."""
     return f"[GATE:{code}] {text}"
 AP_RE = re.compile(r"^FND-\d{4}$")
-# Gates a reasoned override (--accept-alarms "motivo" --ap FND-nnnn) may cover: defects ON the scenario and the audit's blind spots.
-# Everything else is hard: exposure, cash, weights, freshness, a stale audit, and universe-only defects (their way out is an accepted
-# residual with its own AP and expiry, not a promotion flag).
-OVERRIDABLE_GATES = frozenset({GATE_DATA_SCENARIO, GATE_RESIDUAL_SCENARIO, GATE_DATA_COVERAGE})
+# Gates a reasoned override (--accept-alarms "motivo" --ap FND-nnnn) may cover: defects ON the scenario, the audit's blind spots and the
+# alarm watch (FND-0289). Everything else is hard: exposure, cash, weights, freshness, a stale audit, and universe-only defects (their way out
+# is an accepted residual with its own AP and expiry, not a promotion flag).
+OVERRIDABLE_GATES = frozenset({GATE_DATA_SCENARIO, GATE_RESIDUAL_SCENARIO, GATE_DATA_COVERAGE, GATE_ALARM_WATCH})
 
 
 def _names(items, limit: int = 6) -> str:
@@ -181,6 +223,8 @@ def evaluate_promotion(*, status: Optional[str], n_funds: int, weight_sum: float
                        accept_alarms: Optional[str] = None, accept_ap: Optional[str] = None, ap_exists: Optional[bool] = None,
                        declared_cash: float = 0.0, max_cash: Optional[float] = None,
                        exceptions_problem: Optional[str] = None,
+                       alarm_watch: Optional[list] = None, alarm_watch_problem: Optional[str] = None,
+                       alarm_watch_tolerance: float = 1e-4,
                        weight_tolerance: float = WEIGHT_TOLERANCE_LEGACY) -> PromotionVerdict:
     """Pure: why a scenario may not be promoted (empty `blockers` = promotable) and which gates a reasoned override covered.
 
@@ -204,7 +248,11 @@ def evaluate_promotion(*, status: Optional[str], n_funds: int, weight_sum: float
 
     `exceptions_problem` (FND-0263, only with shared.config.AUDIT_EXCEPTION_EVENTS_ENABLED): why the accepted-residual history cannot be
     trusted (unreadable, or the projection disagrees with it). EXCEPTIONS is hard, no override: the residuals the gate just read may be
-    wrong, so neither DATA_UNIVERSE nor RESIDUAL_SCENARIO can be evaluated."""
+    wrong, so neither DATA_UNIVERSE nor RESIDUAL_SCENARIO can be evaluated.
+
+    `alarm_watch` (FND-0289, only with shared.config.ALARM_WATCH_GATE_ENABLED; None = not evaluated): the AlarmWatchRow list of
+    load_alarm_watch. ALARM_WATCH, reasoned override with an AP, for every watched fund whose DRAFT weight exceeds its PRODUCTION weight
+    by more than `alarm_watch_tolerance`; `alarm_watch_problem` (the alerts could not be read) refuses under the same code (fail closed)."""
     if max_cash is None:
         from shared.config import MAX_PORTFOLIO_CASH_WEIGHT as max_cash
     hard: list = []
@@ -263,6 +311,14 @@ def evaluate_promotion(*, status: Optional[str], n_funds: int, weight_sum: float
                           f"({_names(d.isins)}) sin residual aceptado vigente (sin override): accept_audit_residual.py --domain p2 "
                           f"--rule {d.rule_id} --ap FND-nnnn --reason \"...\" --apply"))
 
+    # --- PRODUCTION alarm watch (FND-0289) ---------------------------------------------------------------------------------------
+    if alarm_watch_problem:
+        soft.append((GATE_ALARM_WATCH, g(GATE_ALARM_WATCH, f"no se pudieron leer las alarmas de fund_metric_alerts ({alarm_watch_problem}): "
+                     "la vigilancia de fondos en PRODUCCION no se puede comprobar")))
+    for r in alarm_watch_increases(alarm_watch or [], alarm_watch_tolerance):
+        soft.append((GATE_ALARM_WATCH, g(GATE_ALARM_WATCH, f"{r.isin} en ALARM ({r.rules}) sube de {r.prod_weight:.4f} en PRODUCCION a "
+                     f"{r.draft_weight:.4f} en el DRAFT: un fondo en alarma no gana peso")))
+
     verdict = PromotionVerdict(blockers=hard)
     if not soft:
         return verdict
@@ -278,7 +334,8 @@ def evaluate_promotion(*, status: Optional[str], n_funds: int, weight_sum: float
         elif reason and ap_exists is False:
             verdict.blockers.append(g(GATE_OVERRIDE_AP, f"--ap {ap} no existe en gestion.backlog: el override no se aplica"))
         else:
-            verdict.blockers.append("(--accept-alarms \"motivo\" --ap FND-nnnn cubre los defectos y huecos de cobertura de la CARTERA)")
+            verdict.blockers.append("(--accept-alarms \"motivo\" --ap FND-nnnn cubre los defectos y huecos de cobertura de la CARTERA "
+                                    "y la vigilancia de alarmas)")
     return verdict
 
 

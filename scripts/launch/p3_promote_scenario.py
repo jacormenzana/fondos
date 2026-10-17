@@ -15,8 +15,10 @@ Puertas (todas deben pasar; --dry-run las evalua sin promover). Cada rechazo lle
   * DATA_SCENARIO / RESIDUAL_SCENARIO / DATA_COVERAGE: ningun defecto duro abierto (HARD_INVARIANT, BLOCK2, TIMESERIES_DUPLICATE) toca
     un fondo de la cartera, ningun residual aceptado vigente cae sobre uno, y la auditoria miro todos sus fondos. Las anomalias
     estadisticas (OUTLIER_MAD_Z...) sobre fondos de la cartera se LISTAN y no bloquean (FND-0175);
-  * DATA_UNIVERSE: un defecto duro fuera de la cartera exige un residual aceptado vigente (accept_audit_residual.py, con AP y caducidad).
-El unico override (--accept-alarms "motivo" --ap FND-nnnn) cubre DATA_SCENARIO / RESIDUAL_SCENARIO / DATA_COVERAGE; exige el ticket que
+  * DATA_UNIVERSE: un defecto duro fuera de la cartera exige un residual aceptado vigente (accept_audit_residual.py, con AP y caducidad);
+  * ALARM_WATCH (FND-0289, con ALARM_WATCH_GATE_ENABLED; apagado se muestra en sombra): un fondo de PRODUCCION con una ALARM vigente de
+    ALARM_WATCH_RULES en fund_metric_alerts no puede subir de peso en el DRAFT; si las alarmas no se pueden leer, rechaza (fail closed).
+El unico override (--accept-alarms "motivo" --ap FND-nnnn) cubre DATA_SCENARIO / RESIDUAL_SCENARIO / DATA_COVERAGE / ALARM_WATCH; exige el ticket que
 corrige la causa y queda en ingestion_log como [OVERRIDE:<puerta>] junto con quien promueve. El anterior PRODUCCION pasa a ARCHIVED.
 
 Codigos de salida: 0 promovido (o dry-run promovible) | 1 bloqueado por una puerta | 3 escenario inexistente / ciclo de vida sin instalar.
@@ -113,6 +115,17 @@ def _print_verdict(v, decides: bool) -> None:
                 print(f"  ! [{p}] {b}")
 
 
+def _alarm_watch(conn, scenario_id: str) -> tuple:
+    """(rows, problem): the PRODUCTION funds on a watched ALARM with their weights (FND-0289), or the reason they could not be read."""
+    from shared.config import ALERT_RULES, ALARM_WATCH_RULES
+    from proyecto3.src import scenario_lifecycle as lc
+    try:
+        return lc.load_alarm_watch(conn, scenario_id, lc.alarm_watch_keys(ALERT_RULES, ALARM_WATCH_RULES)), None
+    except Exception as exc:                                     # noqa: BLE001 -- the gate fails closed on an unreadable store
+        conn.rollback()
+        return [], f"{type(exc).__name__}: {str(exc).splitlines()[0][:160]}"
+
+
 def _built_at(conn, scenario_id: str):
     row = conn.execute("SELECT built_at FROM portfolio_scenarios WHERE scenario_id = %s", (scenario_id,)).fetchone()
     return row[0] if row else None
@@ -135,9 +148,9 @@ def main(argv=None) -> int:
     ap.add_argument("--ap", default=None, metavar="FND-nnnn", help="ticket que corrige la causa; obligatorio con --accept-alarms")
     args = ap.parse_args(argv)
 
-    from shared.config import (AUDIT_EXCEPTION_EVENTS_ENABLED, AUDIT_RESIDUAL_EXPIRY_WARN_DAYS, CODE_INTEGRITY_GATE_ENABLED,
-                               COST_DOMAIN_GATE_ENABLED, GOVERNANCE_ORCHESTRATOR_ENABLED, MAX_NON_EUR_UNHEDGED_WEIGHT,
-                               MAX_PORTFOLIO_CASH_WEIGHT)
+    from shared.config import (ALARM_WATCH_GATE_ENABLED, ALARM_WATCH_WEIGHT_TOLERANCE, AUDIT_EXCEPTION_EVENTS_ENABLED,
+                               AUDIT_RESIDUAL_EXPIRY_WARN_DAYS, CODE_INTEGRITY_GATE_ENABLED, COST_DOMAIN_GATE_ENABLED,
+                               GOVERNANCE_ORCHESTRATOR_ENABLED, MAX_NON_EUR_UNHEDGED_WEIGHT, MAX_PORTFOLIO_CASH_WEIGHT)
     from shared.governance import orchestrator
     from shared.governance.run_identity import code_integrity, config_hash
     from shared.db import get_connection
@@ -207,10 +220,22 @@ def main(argv=None) -> int:
             print(f"AVISO: no se pudo comprobar {ap_id} en gestion.backlog (FONDOS_BACKLOG_PG_DSN no definida o sin conexion): "
                   "se acepta por formato")
 
+        watch, watch_problem = _alarm_watch(conn, args.scenario_id)
+        rising = lc.alarm_watch_increases(watch, ALARM_WATCH_WEIGHT_TOLERANCE)
+        mode = "puerta" if ALARM_WATCH_GATE_ENABLED else "sombra: ALARM_WATCH_GATE_ENABLED apagado, no bloquea"
+        print(f"Vigilancia de alarmas en PRODUCCION ({mode}): "
+              + (f"NO LEGIBLE ({watch_problem})" if watch_problem else
+                 f"{len(watch)} fondo(s) vigilado(s), {len(rising)} sube(n) de peso en el DRAFT"))
+        for r in watch:
+            draft = "fuera del DRAFT" if r.draft_weight is None else f"DRAFT {r.draft_weight:.4f}"
+            print(f"    {r.isin} [{r.rules}]: PRODUCCION {r.prod_weight:.4f} -> {draft}{'  << SUBE' if r in rising else ''}")
+
         gate_kw = dict(status=status, n_funds=len(weights), weight_sum=sum(weights.values()), stale_checks=stale,
                        exposure_non_eur=expo["non_eur"], budget=MAX_NON_EUR_UNHEDGED_WEIGHT, audit=scope, built_at=built_at,
                        accept_alarms=reason, accept_ap=ap_id, ap_exists=ap_exists, declared_cash=cash, max_cash=MAX_PORTFOLIO_CASH_WEIGHT,
                        exceptions_problem=exceptions_problem)
+        if ALARM_WATCH_GATE_ENABLED:
+            gate_kw.update(alarm_watch=watch, alarm_watch_problem=watch_problem, alarm_watch_tolerance=ALARM_WATCH_WEIGHT_TOLERANCE)
         legacy = lc.evaluate_promotion(**gate_kw)
         # FND-0265: the two-pillar verdict is always computed and printed; it DECIDES only with GOVERNANCE_ORCHESTRATOR_ENABLED (else shadow)
         tight = lc.evaluate_promotion(**gate_kw, weight_tolerance=lc.WEIGHT_TOLERANCE)                     # decision D2

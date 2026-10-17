@@ -454,3 +454,41 @@ def test_cli_prints_the_residual_expiry_warnings_even_in_a_dry_run(monkeypatch, 
     rc, _ = _run_cli(monkeypatch, _CliConn({"d": "DRAFT"}, {"A": 1.0}, ccy="EUR"), ["d", "--dry-run"],
                      residual_lines=["residual aceptado WINDOW_FISHER_IDENTITY (6 ISINs, FND-0250) caduca el 2026-10-30 (19 dias)"])
     assert rc == 0 and "AVISO: residual aceptado WINDOW_FISHER_IDENTITY" in capsys.readouterr().out
+
+
+# ---------------- FND-0289: PRODUCTION alarm watch (pure) ----------------
+
+def _row(isin="LU0001", draft=0.06, prod=0.05, rules="DD_CAT_P03"):
+    return lc.AlarmWatchRow(isin, draft, prod, rules)
+
+
+def test_alarm_watch_keys_come_from_alert_rules_and_an_unknown_code_is_an_error():
+    from shared.config import ALERT_RULES
+    keys = lc.alarm_watch_keys(ALERT_RULES, ("DD_CAT_P03", "VOL_CAT_P97"))
+    assert sorted(keys) == [("DD_CAT_P03", "max_dd", "rolling_1y"), ("VOL_CAT_P97", "vol_ann", "rolling_1y")]
+    with pytest.raises(ValueError, match="DD_CAT_P3"):
+        lc.alarm_watch_keys(ALERT_RULES, ("DD_CAT_P3",))
+
+
+def test_only_a_weight_increase_beyond_the_tolerance_counts():
+    rows = [_row("A", 0.0562, 0.0561), _row("B", 0.0563, 0.0561), _row("C", None, 0.05), _row("D", 0.03, 0.05)]
+    assert [r.isin for r in lc.alarm_watch_increases(rows, 1e-4)] == ["B"]
+
+
+def test_the_alarm_watch_is_not_evaluated_unless_rows_are_given():
+    assert _ok() == [] and _ok(alarm_watch=[]) == []
+
+
+def test_a_rising_watched_fund_is_a_soft_blocker_with_its_code():
+    out = _ok(alarm_watch=[_row()])
+    assert out[0].startswith("[GATE:ALARM_WATCH]") and "LU0001" in out[0] and "0.0500" in out[0] and "0.0600" in out[0]
+
+
+def test_the_reasoned_override_covers_the_alarm_watch():
+    v = _verdict(alarm_watch=[_row()], accept_alarms="owner decision", accept_ap="FND-0289", ap_exists=True)
+    assert v.blockers == [] and [c for c, _ in v.overridden] == [lc.GATE_ALARM_WATCH]
+
+
+def test_unreadable_alerts_refuse_under_the_same_code():
+    out = _ok(alarm_watch=[], alarm_watch_problem="UndefinedTable: fund_metric_alerts")
+    assert out[0].startswith("[GATE:ALARM_WATCH]") and "UndefinedTable" in out[0]

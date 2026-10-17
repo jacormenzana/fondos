@@ -398,3 +398,69 @@ def test_a_dry_run_of_a_refusal_writes_nothing(world, capsys):
     _hard_finding(conn, [FUNDS[1]])
     assert cli.main([SCENARIO, "--dry-run"]) == cli.RC_BLOCKED
     assert _refused_rows(conn) == [] and statuses(conn)[SCENARIO] == "DRAFT"
+
+
+# ---------------- FND-0289: the PRODUCTION alarm watch ----------------
+
+PROD = "legacy_b"
+
+
+def _watch(conn, monkeypatch, *, enabled=True, prod_weight=0.20, rule="DD_CAT_P03", metric="max_dd", window="rolling_1y", table=True):
+    """legacy_b becomes PRODUCTION holding FUNDS[0] at `prod_weight` (the DRAFT holds it at 0.25); one ALARM row on it."""
+    import shared.config as cfg
+    monkeypatch.setattr(cfg, "ALARM_WATCH_GATE_ENABLED", enabled)
+    conn.execute("UPDATE portfolio_scenarios SET status = 'ARCHIVED' WHERE status = 'PRODUCTION'")
+    conn.execute("UPDATE portfolio_scenarios SET status = 'PRODUCTION' WHERE scenario_id = %s", (PROD,))
+    conn.execute("INSERT INTO portfolio_weights (scenario_id, isin, block, weight) VALUES (%s, %s, 'Equilibrada', %s)",
+                 (PROD, FUNDS[0], prod_weight))
+    if table:
+        conn.execute("CREATE TABLE fund_metric_alerts (LIKE gold.fund_metric_alerts INCLUDING ALL)")
+        conn.execute("INSERT INTO fund_metric_alerts (isin, metric, window_label, level, rule_code, value, reference_value) "
+                     "VALUES (%s, %s, %s, 'ALARM', %s, -0.08, -0.07)", (FUNDS[0], metric, window, rule))
+    conn.commit()
+
+
+def test_a_watched_fund_that_gains_weight_refuses(world, capsys, monkeypatch):
+    conn, _ = world
+    _watch(conn, monkeypatch)
+    _assert_refused(conn, cli.main([SCENARIO]), capsys, "ALARM_WATCH")
+
+
+def test_the_alarm_watch_override_with_a_ticket_promotes_and_leaves_the_trace(world, capsys, monkeypatch):
+    conn, _ = world
+    _watch(conn, monkeypatch)
+    assert cli.main([SCENARIO, "--accept-alarms", "peso decidido por el owner", "--ap", "FND-0289"]) == cli.RC_OK
+    note = conn.execute("SELECT message FROM ingestion_log WHERE step = 'P3_SCENARIO_PROMOTED'").fetchone()[0]
+    assert "[OVERRIDE:ALARM_WATCH] FND-0289: peso decidido por el owner" in note
+
+
+def test_a_watched_fund_held_at_its_weight_promotes(world, capsys, monkeypatch):
+    conn, _ = world
+    _watch(conn, monkeypatch, prod_weight=0.25)
+    assert cli.main([SCENARIO]) == cli.RC_OK, capsys.readouterr().out
+
+
+def test_an_alarm_row_under_a_legacy_metric_name_is_not_watched(world, capsys, monkeypatch):
+    conn, _ = world
+    _watch(conn, monkeypatch, metric="roll_max_dd")                 # the 2026-08-14 rows nobody rewrites
+    assert cli.main([SCENARIO]) == cli.RC_OK, capsys.readouterr().out
+
+
+def test_an_unwatched_rule_is_not_watched(world, capsys, monkeypatch):
+    conn, _ = world
+    _watch(conn, monkeypatch, rule="RET_CAT_P05", metric="return_ann", window="rolling_3y")
+    assert cli.main([SCENARIO]) == cli.RC_OK, capsys.readouterr().out
+
+
+def test_with_the_switch_off_the_watch_is_shown_in_shadow_and_never_blocks(world, capsys, monkeypatch):
+    conn, _ = world
+    _watch(conn, monkeypatch, enabled=False)
+    rc = cli.main([SCENARIO])
+    out = capsys.readouterr().out
+    assert rc == cli.RC_OK and "sombra" in out and "<< SUBE" in out
+
+
+def test_unreadable_alerts_refuse_with_the_switch_on(world, capsys, monkeypatch):
+    conn, _ = world
+    _watch(conn, monkeypatch, table=False)
+    _assert_refused(conn, cli.main([SCENARIO]), capsys, "ALARM_WATCH")

@@ -424,6 +424,16 @@ P3_FUND_NAV_MAX_AGE_DAYS: int = 60        # same threshold as NAV_STALE_DAYS of 
 # 0 in PRODUCTION; no quarterly reporter exists in the active universe.
 P3_FUND_NAV_MIN_COVERAGE: float = 0.80
 P3_FUND_NAV_MAX_GAP_RUN_MONTHS: int = 6
+# FND-0289 (owner directive 2026-10-17), PRODUCTION alarm watch at promotion (scenario_lifecycle.GATE_ALARM_WATCH, control D-ALARM-WATCH): a fund
+# of the PRODUCTION scenario that carries a current ALARM row in fund_metric_alerts for one of ALARM_WATCH_RULES may not get a HIGHER master
+# weight in the promoted DRAFT (tolerance ALARM_WATCH_WEIGHT_TOLERANCE, one unit of the 4th decimal: largest-remainder rounding). Holding or
+# lowering it is fine; the watch ends when P2 rewrites the alert to WARN/OK. Reasoned override (--accept-alarms + --ap). Only the rule codes'
+# own (metric, window) pairs from ALERT_RULES are read, so legacy alert rows under other metric names never count. Fail closed: an unreadable
+# alerts table refuses. Generic rule over held funds (owner choice; P#5: no fund is named). Not mirrored in the PIT backtest: the alerts have
+# no history (same as the accepted-residual eligibility rule). Interim manual SQL check in FND-0289 until this switch is ON and pushed.
+ALARM_WATCH_GATE_ENABLED: bool = False
+ALARM_WATCH_RULES: tuple = ("DD_CAT_P03", "VOL_CAT_P97")
+ALARM_WATCH_WEIGHT_TOLERANCE: float = 1e-4
 # FND-0251: an accepted audit residual (control.audit_accepted_finding) is announced this many days before it lapses (audit report, promotion,
 # cycle report). A warning, never a gate: a lapsed residual simply stops counting, so the finding comes back by itself at the next audit.
 AUDIT_RESIDUAL_EXPIRY_WARN_DAYS: int = 30
