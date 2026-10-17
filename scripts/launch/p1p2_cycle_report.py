@@ -366,6 +366,25 @@ def collect_governance(conn, today: date | None = None) -> dict:
     return out
 
 
+def collect_macro_freshness(conn, today: date) -> dict:
+    """Per-series staleness of series_macro against each series' own limit (shared/macro_freshness.py, FND-0256) and the leg-by-leg state of the
+    composite regime inputs (ipc_yoy_avg). Read-only, informational; never raises (an unreadable source becomes an `error` key)."""
+    try:
+        sys.path.insert(0, str(ROOT))
+        from shared import macro_freshness as mf
+        rows = conn.execute("SELECT indicator, geography, MAX(date) FROM series_macro GROUP BY indicator, geography").fetchall()
+        statuses = mf.assess({(r[0], r[1]): r[2] for r in rows}, today)
+        composites = mf.composite_legs(statuses)
+        return {"series": len(statuses), "stale": [f"{s.indicator}/{s.geography}" for s in statuses if s.stale],
+                "composites": {k: v["state"] for k, v in composites.items()}, "lines": mf.attention_lines(statuses, composites)}
+    except Exception as exc:                                  # noqa: BLE001
+        try:
+            conn.rollback()
+        except Exception:                                     # noqa: BLE001
+            pass
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
 def coverage_pct(report: dict) -> dict:
     """Share (0-100) of the active universe that has each P3-consumed metric."""
     active = report.get("universe", {}).get("active", 0)
@@ -431,6 +450,10 @@ def attention_items(report: dict, previous: dict | None) -> list:
                      f"vigentes hasta que otro lo sustituya: {' | '.join(po['overrides'])[:300]}")
     if gov.get("error"):
         items.append(f"no se pudo evaluar la gobernanza de datos (residuales / overrides): {gov['error']}")
+    mfr = report.get("macro_freshness") or {}               # absent in reports written before this check (FND-0256)
+    items += mfr.get("lines", [])
+    if mfr.get("error"):
+        items.append(f"no se pudo evaluar la frescura de las series macro: {mfr['error']}")
     # A slow run is NOT an attention item: it is a constant of the corpus (measured 2026-10-08: ~14 s, all in the KIID regexes), so an item would
     # repeat every cycle. It is a WARNING in the log and a marker on the report line; the check stays active (--no-hedging-drift skips it).
     if previous:
@@ -515,6 +538,11 @@ def render_text(report: dict, previous: dict | None, items: list) -> str:
                   + (f" [WARN lento: limite {HEDGING_DRIFT_SLOW_S:.0f}s]" if hd.get("slow") else "")]
             if hd.get("isins"):                  # neutral diagnostic: which funds (the first HEDGING_DRIFT_LIST)
                 L += ["    " + ", ".join(hd["isins"])]
+    mfr = report.get("macro_freshness")
+    if mfr and not mfr.get("error"):
+        L += [f"Frescura macro: {mfr['series']} series, {len(mfr['stale'])} caducadas"
+              + (f" ({', '.join(mfr['stale'][:6])})" if mfr["stale"] else "")
+              + "; entradas de regimen: " + ", ".join(f"{k}={v}" for k, v in mfr["composites"].items())]
     bl = report.get("backlog_links")
     if bl:
         if bl.get("error"):
@@ -565,6 +593,7 @@ def main(argv: list | None = None) -> int:
             report["hedging_drift"] = collect_hedging_drift(conn) if args.hedging_drift else {"skipped": True}
             report["backlog_links"] = collect_backlog_links()
             report["governance"] = collect_governance(conn, today)
+            report["macro_freshness"] = collect_macro_freshness(conn, today)
         finally:
             conn.close()
     except Exception as exc:
