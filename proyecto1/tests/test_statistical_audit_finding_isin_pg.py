@@ -112,7 +112,7 @@ def test_real_ddl_columns_and_the_fund_master_foreign_key(pg_session_conn):
     cols = {r[0] for r in conn.execute(
         "SELECT column_name FROM information_schema.columns WHERE table_schema='control' "
         "AND table_name='audit_finding_isin'").fetchall()}
-    assert cols == {"run_id", "domain", "rule_id", "group_key", "isin"}
+    assert cols == {"run_id", "domain", "rule_id", "group_key", "isin", "algorithm_versions", "batch_ids"}      # + FND-0275 lineage
     kinds = {r[0]: r[1] for r in conn.execute(
         "SELECT conname, contype FROM pg_constraint WHERE conrelid = 'control.audit_finding_isin'::regclass").fetchall()}
     assert kinds == {"audit_finding_isin_pkey": "p", "audit_finding_isin_isin_fk": "f"}

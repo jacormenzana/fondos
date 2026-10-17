@@ -405,6 +405,39 @@ _FINDING_ISIN_SQL = (
     "INSERT INTO audit_finding_isin (run_id, domain, rule_id, group_key, isin) VALUES (%s, %s, %s, %s, %s) "
     "ON CONFLICT DO NOTHING"
 )
+# FND-0275: the same row plus the lineage of the metric rows the ISIN carried (feature-detected: scripts/ops/migrate_audit_finding_lineage.py)
+_FINDING_ISIN_LINEAGE_SQL = (
+    "INSERT INTO audit_finding_isin (run_id, domain, rule_id, group_key, isin, algorithm_versions, batch_ids) "
+    "VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING"
+)
+# Only the p2_metrics domain has stamped rows to look up: cost attributes carry no algorithm_version / batch_id (their lineage columns stay NULL).
+LINEAGE_DOMAINS = ("p2_metrics",)
+
+
+def finding_isin_has_lineage(conn: "psycopg.Connection") -> bool:
+    """True when audit_finding_isin carries the lineage columns (the FND-0275 owner migration was applied)."""
+    return conn.execute("SELECT count(*) FROM pg_attribute WHERE attrelid = to_regclass('audit_finding_isin') "
+                        "AND attname IN ('algorithm_versions', 'batch_ids') AND NOT attisdropped").fetchone()[0] == 2
+
+
+def load_metric_lineage(conn: "psycopg.Connection", isins: Sequence[str]) -> dict:
+    """{isin: (sorted distinct algorithm_versions, sorted distinct batch_ids)} of the fund_metrics rows each ISIN carries NOW (an ISIN
+    with no stamped row maps to two empty lists). Read on the persisting connection, right after the audit read the data (FND-0275)."""
+    out = {i: ([], []) for i in isins}
+    if not out:
+        return out
+    cur = conn.execute(
+        "SELECT isin, array_agg(DISTINCT algorithm_version) FILTER (WHERE algorithm_version IS NOT NULL), "
+        "array_agg(DISTINCT batch_id) FILTER (WHERE batch_id IS NOT NULL) FROM fund_metrics WHERE isin = ANY(%s) GROUP BY isin",
+        (sorted(out),))
+    for isin, versions, batches in cur.fetchall():
+        out[isin] = (sorted(versions or []), sorted(batches or []))
+    return out
+
+
+def _lineage_rows(isin_rows: Sequence[tuple], lineage: Mapping[str, tuple]) -> list:
+    """`isin_rows` (run_id, domain, rule_id, group_key, isin) extended with the ISIN's (algorithm_versions, batch_ids). Pure."""
+    return [(*row, *lineage.get(row[4], ([], []))) for row in isin_rows]
 
 
 def _finding_isin_rows(run_id, domain, findings) -> list:
@@ -484,7 +517,11 @@ def persist_run(
             executemany(conn, _FINDING_SQL, finding_rows)
         isin_rows = _finding_isin_rows(run_id, domain, findings) if finding_isin_table_exists(conn) else []
         if isin_rows:
-            executemany(conn, _FINDING_ISIN_SQL, isin_rows)
+            if domain in LINEAGE_DOMAINS and finding_isin_has_lineage(conn):             # FND-0275
+                lineage = load_metric_lineage(conn, sorted({r[4] for r in isin_rows}))
+                executemany(conn, _FINDING_ISIN_LINEAGE_SQL, _lineage_rows(isin_rows, lineage))
+            else:
+                executemany(conn, _FINDING_ISIN_SQL, isin_rows)
         header_written = False
         if header is not None and header_table:
             values = [json.dumps(header[c]) if c == "skips" else header[c] for c in AUDIT_RUN_COLUMNS]
@@ -510,6 +547,16 @@ def load_finding_isins(conn: "psycopg.Connection", run_id: str, domain: str) -> 
         (run_id, domain),
     )
     return pd.DataFrame([tuple(r) for r in cur.fetchall()], columns=columns)
+
+
+def load_finding_lineage(conn: "psycopg.Connection", run_id: str, domain: str) -> dict:
+    """{(rule_id, group_key, isin): (algorithm_versions, batch_ids)} persisted with one run (FND-0275). Rows written before the
+    migration, or a domain without lineage, are absent; empty dict when the columns do not exist."""
+    if not (finding_isin_table_exists(conn) and finding_isin_has_lineage(conn)):
+        return {}
+    cur = conn.execute("SELECT rule_id, group_key, isin, algorithm_versions, batch_ids FROM audit_finding_isin "
+                       "WHERE run_id = %s AND domain = %s AND algorithm_versions IS NOT NULL", (run_id, domain))
+    return {(r[0], r[1], r[2]): (list(r[3]), list(r[4] or [])) for r in cur.fetchall()}
 
 
 @dataclass

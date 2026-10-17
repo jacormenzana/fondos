@@ -154,8 +154,8 @@ call "%COMMON%" :get_time STAMP2 yyyyMMdd_HHmmss
 
 :: FINAL_RC: pipeline tiene precedencia; export en segundo lugar; audit
 :: (report mode) solo cuenta si las dos fases anteriores fueron OK -- en report mode
-:: la auditoria siempre devuelve 0, asi que RC_AUDIT!=0 solo puede significar un crash
-:: del propio script de auditoria, no un finding bloqueante.
+:: la auditoria devuelve 0 o 2 (INCOMPLETA: un chequeo obligatorio no pudo ejecutarse, no es evidencia de
+:: promocion), asi que RC_AUDIT!=0 es un crash o una auditoria incompleta, no un finding bloqueante.
 set FINAL_RC=!RC!
 if !RC! EQU 0 if !RC_EXPORT! NEQ 0 set FINAL_RC=!RC_EXPORT!
 if !RC! EQU 0 if !RC_EXPORT! EQU 0 if !RC_AUDIT! NEQ 0 set FINAL_RC=!RC_AUDIT!

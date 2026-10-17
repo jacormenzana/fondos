@@ -320,6 +320,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_audit_incident_live ON control.audit_incide
 CREATE INDEX IF NOT EXISTS idx_audit_incident_ap ON control.audit_incident (ap_id);
 -- END audit_incident
 
+-- BEGIN audit_finding_lineage (FND-0275, GOV-04b) -- data lineage of the rows a finding judged
+-- Owner migration: scripts/ops/migrate_audit_finding_lineage.py (dry run by default). Idempotent. Per (run, rule, group, ISIN): the DISTINCT
+-- fund_metrics.algorithm_version and batch_id values of the ISIN at persist time (p2_metrics only: the cost domain has no version stamp, NULL).
+-- Lets drift and RCA-E tell a violator that changed because its metrics were recomputed from one that changed on the same data. NULL =
+-- written before this block or not applicable; an empty array = the ISIN had no stamped metric row.
+ALTER TABLE control.audit_finding_isin ADD COLUMN IF NOT EXISTS algorithm_versions text[];
+ALTER TABLE control.audit_finding_isin ADD COLUMN IF NOT EXISTS batch_ids text[];
+-- END audit_finding_lineage
+
 
 -- -----------------------------------------------------------------------------
 -- BEGIN cycle_telemetry (FND-0239) -- orchestrated-cycle telemetry: one row per cycle / step attempt, typed metrics with baselines

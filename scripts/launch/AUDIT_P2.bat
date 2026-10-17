@@ -10,8 +10,9 @@ call "%COMMON%" :utf8_on
 :: Auditoria estadistica del dominio p2 (fund_metrics / fund_metric_timeseries):
 ::   scripts\audit\run_statistical_audit.py --domain p2
 ::
-:: Es diagnostico: en --mode report (defecto) siempre devuelve 0, asi que un RC != 0 solo
-:: significa que el propio script de auditoria se ha roto (o --mode check con hallazgos).
+:: Es diagnostico: en --mode report (defecto) devuelve 0 salvo RC 2 = auditoria INCOMPLETA (un chequeo obligatorio
+:: no pudo ejecutarse: no es evidencia de promocion, AUDITORIA_ESTADISTICA.md 6.4); --mode check devuelve 1 con
+:: hallazgos bloqueantes. Cualquier otro RC != 0 significa que el propio script de auditoria se ha roto.
 :: Quien la llama decide si propaga ese RC; P1_P2_Complete.bat nunca aborta por ella.
 ::
 :: Uso:

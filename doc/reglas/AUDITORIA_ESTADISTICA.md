@@ -680,6 +680,8 @@ cada hallazgo que lleva `violating_isins`. `clear_run` borra el detalle del mism
 volver a persistir un `run_id` lo sustituye. Crear la tabla: `scripts/ops/migrate_audit_finding_isin.py
 --apply` (propietario). Sin la tabla `--persist` funciona igual y avisa de que no guardó el detalle.
 
+**Linaje de datos por infractor (FND-0275).** Con las columnas `algorithm_versions` y `batch_ids` (`text[]`, nulas; `scripts/ops/migrate_audit_finding_lineage.py --apply`, propietario) cada fila guarda los valores distintos de `fund_metrics.algorithm_version` y `batch_id` que el ISIN llevaba al persistir (solo `p2_metrics`; el dominio de costes no tiene sello y queda en NULL; `[]` = el ISIN no tenía fila sellada). Sirve para distinguir un infractor que cambió porque se recalcularon sus métricas de uno que cambió con los mismos datos (deriva y RCA-E). Lectura: `persistence.load_finding_lineage`. Sin las columnas `--persist` escribe la fila anterior, sin error.
+
 Con `--compare-to`, además de la deriva de estadísticas, el informe imprime la **deriva de
 infractores** por regla (`+n nuevos, −m resueltos, k sin cambio`, `compare_runs.compare_violators`).
 Solo es posible si la ejecución de referencia tiene detalle de ISIN; si no, lo dice y la siguiente
