@@ -46,7 +46,8 @@ sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_P2_SRC.parent))                   # proyecto2/
 
 from shared.db import get_connection, executemany
-from proyecto2.src.discovery.source_chain import extend_series, jsonstat_series, rows_to_values, splice_check
+from proyecto2.src.discovery.source_chain import (
+    extend_series, jsonstat_series, oecd_csv_series, pct_change, rows_to_values, splice_check)
 
 # -- Constantes -----------------------------------------------
 REQUEST_TIMEOUT = 30        # segundos por peticion HTTP
@@ -585,18 +586,10 @@ _FRED_SERIES = {
         "unit":       "index",
         "write_inflation": False,
     },
-    # IPC China -- indice base 2015=100, NSA (OECD CPALTT01 via FRED).
-    # CHNCPALTT01IXNBM (previous series, OECD MEI) was discontinued at FRED with last
-    # observation 2023-11. CPALTT01CNM657N (OECD, all items, NSA, index 2015=100) extends
-    # through 2024-03 at the time of migration (2026-08-19) and is actively maintained.
-    # Same data concept and units — ipc_yoy_cn is a 12-month pct_change, so the base change
-    # between MEI and CPALTT01 is harmless as long as the series is internally consistent.
-    "CPALTT01CNM657N": {
-        "indicator":  "ipc_index",
-        "geography":  "CN",
-        "unit":       "index",
-        "write_inflation": False,
-    },
+    # IPC China: NOT loaded from FRED any more (FND-0293). The previous entry here, CPALTT01CNM657N, is the OECD MONTH-ON-MONTH growth
+    # rate (code 657 = "growth rate previous period"), not an index: 291 values in [-1.4, 2.6] were stored as ipc_index and ipc_yoy_cn
+    # was a 12-month change of a monthly rate. FRED mirrors the OECD MEI feed, which OECD stopped (last point 2024-03). The index now
+    # comes from the OECD API (_apply_oecd_cpi_chain), proven against this very series before it replaces it.
     # Petroleo crudo WTI -- precio mensual (USD/barril)
     "DCOILWTICO": {
         "indicator":        "oil_wti",
@@ -819,6 +812,78 @@ def _fred_fetch(series_id: str, desde: str, api_key: str | None) -> pd.DataFrame
         return df.dropna(subset=["value"])
 
 
+# FND-0293: OECD stopped the MEI feed that FRED mirrors, so JPNCPIALLMINMEI froze at 2021-06 and the China CPI at 2024-03. The OECD's own
+# G20 CPI dataset is live (JP to 2026-08, CN to 2026-09) on the same 2015=100 base.
+_OECD_API         = "https://sdmx.oecd.org/public/rest/data"
+_OECD_G20_CPI     = "OECD.SDD.TPS,DSD_G20_PRICES@DF_G20_PRICES,1.0"
+_OECD_CPI_KEY     = "CHN+JPN.M.N.CPI.IX._T.N._Z"            # area.freq.adjustment(N).measure(CPI).unit(IX).item(_T).-.-
+_JP_CPI_SPLICE    = {"min_overlap": 3, "rel_tol": 0.002}     # old FRED vs OECD differ by <= 0.03 index points (0.03%) at 2021-04..06
+# OECD index -> MoM % vs the FRED 657 series. abs_tol is DERIVED, not tuned: the index is published to one decimal at a level of ~100-116,
+# so a MoM change taken from it carries up to 2 x 0.05 / 100 = ~0.10 pp of quantisation, plus 0.05 pp for FRED's own 1-decimal rounding.
+# Measured 2026-10-17 over the 24-month window: median 0.009, max 0.136. A different measure is an order of magnitude away
+# (year-on-year vs these values: mean gap 2.2 pp).
+_CN_CPI_SPLICE    = {"min_overlap": 12, "abs_tol": 0.15, "window": 24}
+_CN_FRED_MOM_ID   = "CPALTT01CNM657N"                        # reference ONLY: the OECD month-on-month % change of the same index
+
+
+def _fetch_oecd_g20_cpi(desde: str) -> dict[str, dict[str, float]]:
+    """{'CHN'|'JPN': {'YYYY-MM-01': CPI index 2015=100}} from the OECD G20 CPI dataset."""
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            r = requests.get(f"{_OECD_API}/{_OECD_G20_CPI}/{_OECD_CPI_KEY}",
+                             params={"startPeriod": desde, "format": "csvfilewithlabels"}, timeout=REQUEST_TIMEOUT)
+            r.raise_for_status()
+            return oecd_csv_series(r.text)
+        except requests.RequestException:
+            if attempt == MAX_RETRIES:
+                raise
+            time.sleep(RETRY_WAIT)
+    raise RuntimeError("unreachable")
+
+
+def _apply_oecd_cpi_chain(macro_rows: list[dict], desde: str, api_key: str | None, fetch=None, fetch_ref=None) -> None:
+    """JP: continue the FRED index past its last month with the OECD index (splice-checked). CN: REPLACE the series with the OECD index
+    once its month-on-month change reproduces the old FRED 657 series (and covers every month of it, so no stale row survives the upsert).
+    Prints a [CHAIN] line per series; a refused or unavailable fallback loads nothing."""
+    try:
+        oecd = (fetch or _fetch_oecd_g20_cpi)(desde)
+    except Exception as e:  # noqa: BLE001 -- must not abort the other FRED series
+        print(f"[CHAIN] ipc_index/JP,CN OECD UNAVAILABLE ({type(e).__name__})")
+        return
+
+    # -- Japan: primary FRED (2015=100) + OECD after its last month
+    jp_primary = rows_to_values(macro_rows, "ipc_index", "JP")
+    jp = oecd.get("JPN", {})
+    res = splice_check(jp_primary, jp, **_JP_CPI_SPLICE)
+    if res.ok:
+        new = extend_series(jp_primary, jp, indicator="ipc_index", geography="JP", unit="index", source="OECD_G20")
+        macro_rows.extend(new)
+        if new:
+            print(f"[CHAIN] ipc_index/JP fallback ACTIVE: {len(new)} month(s) {new[0]['date']}..{new[-1]['date']} from OECD_G20 "
+                  f"(FRED ends {max(jp_primary)}; overlap {res.n_overlap}, max rel diff {res.max_rel_diff:.4f})")
+    else:
+        print(f"[CHAIN] ipc_index/JP fallback REFUSED ({res.reason})")
+
+    # -- China: the stored series was month-on-month %, so there is no primary to extend; prove the OECD index, then replace
+    cn = oecd.get("CHN", {})
+    try:
+        ref_df = (fetch_ref or (lambda: _fred_fetch(_CN_FRED_MOM_ID, desde, api_key)))()
+        ref = {} if ref_df is None else {d.strftime("%Y-%m-01"): float(v) for d, v in zip(ref_df["date"], ref_df["value"])}
+    except Exception as e:  # noqa: BLE001
+        print(f"[CHAIN] ipc_index/CN OECD index NOT LOADED: reference series unavailable ({type(e).__name__})")
+        return
+    res = splice_check(ref, pct_change(cn, 1), **_CN_CPI_SPLICE)
+    missing = sorted(d for d in ref if d not in cn)
+    if not res.ok or missing:
+        why = res.reason if not res.ok else f"{len(missing)} month(s) of the old series absent from OECD, e.g. {missing[0]}"
+        print(f"[CHAIN] ipc_index/CN OECD index REFUSED ({why})")
+        return
+    macro_rows.extend({"date": d, "indicator": "ipc_index", "geography": "CN", "value": v, "unit": "index", "source": "OECD_G20"}
+                      for d, v in sorted(cn.items()) if d >= desde + "-01")
+    print(f"[CHAIN] ipc_index/CN REPLACED by the OECD index: {len(cn)} month(s) {min(cn)}..{max(cn)} "
+          f"(MoM vs the old series over {res.n_overlap} months: max |diff| {res.max_abs_diff:.3f}pp)")
+
+
 def load_fred_series(
     desde:   str = "2000-01",
     verbose: bool = False,
@@ -910,6 +975,7 @@ def load_fred_series(
         _ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print(f"[{_fi:4d}/{_n_fred:4d}] | {_ts} | [FRED] | [{series_id}] | {count} | {_dur_ms}")
 
+    _apply_oecd_cpi_chain(macro_rows, desde, api_key)             # FND-0293: JP continued, CN replaced (OECD MEI feed discontinued)
     return inflation_rows, macro_rows
 
 

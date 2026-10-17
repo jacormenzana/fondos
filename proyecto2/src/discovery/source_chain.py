@@ -79,6 +79,34 @@ def jsonstat_series(data: Mapping, *, time_dim: str = "time") -> dict[str, float
     return out
 
 
+def oecd_csv_series(text: str, *, area_col: str = "REF_AREA") -> dict[str, dict[str, float]]:
+    """{area: {'YYYY-MM-01': value}} from an OECD SDMX 'csvfilewithlabels' response (one row per area x month).
+    Rows without a value are skipped; a malformed period raises, so a layout change cannot load silently shifted dates."""
+    import csv
+    import io
+    out: dict[str, dict[str, float]] = {}
+    for r in csv.DictReader(io.StringIO(text)):
+        v, p = r.get("OBS_VALUE"), r.get("TIME_PERIOD", "")
+        if v in (None, ""):
+            continue
+        if len(p) != 7 or p[4] != "-" or not (p[:4].isdigit() and p[5:].isdigit() and 1 <= int(p[5:]) <= 12):
+            raise ValueError(f"unexpected monthly TIME_PERIOD {p!r}")
+        out.setdefault(r[area_col], {})[p + "-01"] = float(v)
+    return out
+
+
+def pct_change(values: Mapping[str, float], months: int = 1) -> dict[str, float]:
+    """{'date': 100 * (v / v[date - months] - 1)} for the dates whose month-start predecessor `months` earlier exists."""
+    out: dict[str, float] = {}
+    for d, v in values.items():
+        y, m = int(d[:4]), int(d[5:7])
+        k = y * 12 + (m - 1) - months
+        prev = f"{k // 12:04d}-{k % 12 + 1:02d}-01"
+        if prev in values and values[prev]:
+            out[d] = 100.0 * (v / values[prev] - 1.0)
+    return out
+
+
 def rows_to_values(rows: list[dict], indicator: str, geography: str) -> dict[str, float]:
     """{'date': value} of the loader rows that belong to (indicator, geography)."""
     return {r["date"]: float(r["value"]) for r in rows if r["indicator"] == indicator and r["geography"] == geography}

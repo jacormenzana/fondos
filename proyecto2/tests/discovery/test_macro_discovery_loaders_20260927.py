@@ -33,6 +33,13 @@ for _p in (str(_P2_ROOT), str(_REPO)):
 from proyecto2.src.discovery import macro_discovery as md  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _no_network_chain(monkeypatch):
+    """FND-0293: load_fred_series now ends with the OECD CPI chain (a network call); these loader tests mock only _fred_fetch."""
+    monkeypatch.setattr(md, "_apply_oecd_cpi_chain", lambda *a, **k: None)
+    monkeypatch.setattr(md, "_apply_ipc_eu_chain", lambda *a, **k: None)
+
+
 # ---------------------------------------------------------------------------
 # load_ine_ipc -- single _get_json call, INE's DATOS_TABLA response shape
 # ---------------------------------------------------------------------------
