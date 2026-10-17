@@ -456,14 +456,15 @@ AUDIT_EXCEPTION_EVENTS_ENABLED: bool = True
 #                                    launchers only ever warn (D3: p1p2_state preflight). Push before promoting;
 #   COST_DOMAIN_GATE_ENABLED         [GATE:COST] blocks on open hard defects of the cost_attributes audit on a fund of the scenario (D8: first
 #                                    scripts/audit/cost_gate_replay.py over the persisted runs, then one shadow cycle); OFF: a warning.
-# The last two act only inside the orchestrator, i.e. with GOVERNANCE_ORCHESTRATOR_ENABLED. All OFF until the owner has read the shadow lines.
-GOVERNANCE_ORCHESTRATOR_ENABLED: bool = False
+# The last two act only inside the orchestrator, i.e. with GOVERNANCE_ORCHESTRATOR_ENABLED. ORCHESTRATOR and CODE_INTEGRITY ON since 2026-10-17 (owner read the
+# shadow verdict against evidence run audit_20261017T080449Z: DATA=PASS, only blocker = the scenario already PRODUCTION); COST stays OFF (FND-0276..0285).
+GOVERNANCE_ORCHESTRATOR_ENABLED: bool = True
 # FND-0264 (GOV-05), closed-loop remediation (shared/statistical_audit/incidents.py, scripts/audit/audit_incident.py). The plan (--plan, the D7
 # shadow log) and the closure check (--close-check) always read-only work; this switch lets `audit_incident.py --open` WRITE: it records an
 # incident in control.audit_incident (owner DDL: scripts/ops/migrate_audit_incident.py) and opens its backlog ticket through
 # backlog_client.report_incident(). Decision D7 = open on the FIRST CRITICAL occurrence (policy parameter); ON since 2026-10-17 (owner confirmed D7 = first on the plan).
 AUDIT_INCIDENT_LOOP_ENABLED: bool = True
-CODE_INTEGRITY_GATE_ENABLED: bool = False
+CODE_INTEGRITY_GATE_ENABLED: bool = True
 COST_DOMAIN_GATE_ENABLED: bool = False
 
 # ============================================================

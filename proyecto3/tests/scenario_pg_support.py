@@ -41,7 +41,12 @@ def statuses(conn):
 
 
 @pytest.fixture
-def db(pg_session_conn, pg_conn_module_schema):
+def db(pg_session_conn, pg_conn_module_schema, monkeypatch):
+    # These tests exercise the promotion CLI on a toy world (no pushed tree, no audit header): they pin the LEGACY gate. The two-pillar
+    # verdict has its own opt-in cases (test_promotion_gate_negative_pg._orchestrator), whatever the production switches say.
+    import shared.config as cfg
+    monkeypatch.setattr(cfg, "GOVERNANCE_ORCHESTRATOR_ENABLED", False)
+    monkeypatch.setattr(cfg, "CODE_INTEGRITY_GATE_ENABLED", False)
     conn = pg_session_conn
     conn.execute(f"SET search_path = {pg_conn_module_schema}")
     toy(conn)

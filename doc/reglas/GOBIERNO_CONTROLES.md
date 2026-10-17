@@ -87,8 +87,8 @@ sin código de puerta propio.
 | `T-WEIGHTS` | hay pesos y Σ pesos + liquidez declarada = 1.0000 (§4: tolerancia 5·10⁻⁵ cuando decide el orquestador, 10⁻³ en la puerta heredada) | `BLOCK` | `GATE:WEIGHTS` | enforced |
 | `T-CASH` | liquidez estructural declarada ≤ `MAX_PORTFOLIO_CASH_WEIGHT` (10 %) | `BLOCK` | `GATE:CASH` | enforced |
 | `T-FX` | exposición neta no-EUR sin cobertura ≤ `MAX_NON_EUR_UNHEDGED_WEIGHT` (30 %) | `BLOCK` | `GATE:FX` | enforced |
-| `T-CODE` | `HEAD == origin/master` (según el último *fetch*) y ningún fichero rastreado modificado (los no rastreados se ignoran, D1; `run_identity.code_integrity`, el mismo predicado que usará el *push* controlado de FND-0273); en `CODE_DEPLOY`: `WARN` (el *preflight* del ciclo, D3) | `BLOCK` | `GATE:CODE` | dormant:CODE_INTEGRITY_GATE_ENABLED |
-| `T-VERSION` | la cabecera `control.audit_run` de la auditoría de evidencia lleva sha de git, hash de configuración (`*_ENABLED` y `MAX_*`), versión del catálogo y manifiesto de datos (`CALC_VERSION`, corte, versiones de algoritmo); sin ellos no es evidencia; en `CODE_DEPLOY`: `RECORD` | `BLOCK` | `GATE:MANIFEST` | dormant:GOVERNANCE_ORCHESTRATOR_ENABLED |
+| `T-CODE` | `HEAD == origin/master` (según el último *fetch*) y ningún fichero rastreado modificado (los no rastreados se ignoran, D1; `run_identity.code_integrity`, el mismo predicado que usará el *push* controlado de FND-0273); en `CODE_DEPLOY`: `WARN` (el *preflight* del ciclo, D3) | `BLOCK` | `GATE:CODE` | enforced |
+| `T-VERSION` | la cabecera `control.audit_run` de la auditoría de evidencia lleva sha de git, hash de configuración (`*_ENABLED` y `MAX_*`), versión del catálogo y manifiesto de datos (`CALC_VERSION`, corte, versiones de algoritmo); sin ellos no es evidencia; en `CODE_DEPLOY`: `RECORD` | `BLOCK` | `GATE:MANIFEST` | enforced |
 | `T-EVIDENCE` | el registro de la promoción (`ingestion_log`, misma transacción que la promoción) cita la auditoría, el hash de configuración, las concesiones de excepción y la línea de veredicto de dos pilares (estado de cada pilar y decisión); en `CODE_DEPLOY`: `RECORD` | `BLOCK` | `CODE:shared.governance.orchestrator.verdict_line` | enforced |
 
 ### 3.2 Pilar Datos
@@ -130,7 +130,7 @@ y `D-DATA-UNIVERSE` reparten esos defectos por alcance (sobre la cartera / solo 
   mayor resto (`portfolio_engine`). El constructor no cambia.
 - Tolerancia de la puerta `T-WEIGHTS` en la promoción: **5·10⁻⁵** (media unidad del cuarto decimal; decisión D2,
   `scenario_lifecycle.WEIGHT_TOLERANCE`), aplicada por el orquestador de dos pilares (§8); la puerta heredada conserva 10⁻³ mientras
-  `GOVERNANCE_ORCHESTRATOR_ENABLED` esté apagado.
+  `GOVERNANCE_ORCHESTRATOR_ENABLED` esté apagado (encendido desde 2026-10-17: decide el orquestador).
 - Los límites del mandato (`MAX_NON_EUR_UNHEDGED_WEIGHT`, `MAX_PORTFOLIO_CASH_WEIGHT`) cambian solo en `shared/config.py` por un
   commit revisado; nunca en el momento de la promoción.
 

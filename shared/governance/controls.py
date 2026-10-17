@@ -136,11 +136,11 @@ CONTROLS = (
     Control("T-CODE", PILLAR_TECHNICAL, "Code integrity", "owner (release)",
             "HEAD == origin/master as of the last fetch and no modified tracked file (untracked files ignored; decision D1; "
             "run_identity.code_integrity, the predicate the gated push of FND-0273 shares); the cycle preflight only warns (D3)",
-            BLOCK, SOURCE_GATE + "CODE", DORMANT_PREFIX + "CODE_INTEGRITY_GATE_ENABLED", deploy_consequence=WARN),
+            BLOCK, SOURCE_GATE + "CODE", STATUS_ENFORCED, deploy_consequence=WARN),
     Control("T-VERSION", PILLAR_TECHNICAL, "Version and configuration identified", "owner (release)",
             "the evidence audit run's control.audit_run header carries git sha, config hash (*_ENABLED + MAX_*), catalogue version and the "
             "data manifest (CALC_VERSION, cut-off, algorithm versions); a run without them is not promotion evidence",
-            BLOCK, SOURCE_GATE + "MANIFEST", DORMANT_PREFIX + "GOVERNANCE_ORCHESTRATOR_ENABLED", deploy_consequence=RECORD),
+            BLOCK, SOURCE_GATE + "MANIFEST", STATUS_ENFORCED, deploy_consequence=RECORD),
     Control("T-EVIDENCE", PILLAR_TECHNICAL, "Execution evidence", "owner (release)",
             "the promotion record (ingestion_log, same transaction as the promotion) cites the audit run, config hash, exception grants "
             "and the two-pillar verdict line (each pillar's state and the decision)",

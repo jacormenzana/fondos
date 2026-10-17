@@ -317,6 +317,9 @@ def _run_cli(monkeypatch, conn, argv, scope=None, stale=(), ap_status="OPEN", re
     import proyecto3.src.data_freshness as df
     import proyecto3.src.regime_classifier as rcl
     from shared.statistical_audit import accepted_residuals as ar, gating
+    import shared.config as cfg
+    monkeypatch.setattr(cfg, "GOVERNANCE_ORCHESTRATOR_ENABLED", False)           # these cases pin the LEGACY gate; the two-pillar verdict has its own
+    monkeypatch.setattr(cfg, "CODE_INTEGRITY_GATE_ENABLED", False)               # opt-in cases (test_promotion_gate_negative_pg), whatever production says
     scope = scope if scope is not None else _scope()
     monkeypatch.setattr(shared.db, "get_connection", lambda: conn)
     monkeypatch.setattr(df, "check_universe_freshness", lambda c, clf: [SimpleNamespace(name=n, ok=False) for n in stale])
