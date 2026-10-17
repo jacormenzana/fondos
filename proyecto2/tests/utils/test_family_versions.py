@@ -64,8 +64,10 @@ def test_token_with_override_is_suffixed_and_only_for_that_family():
     assert fv.family_token("risk", CV, ov) == CV
 
 
-def test_default_overrides_are_empty():
-    assert fv.FAMILY_CALC_OVERRIDES == {}
+def test_the_only_live_override_is_the_macro_inflation_epoch():
+    # FND-0256 / FND-0293: forces the macro refit after the EU / JP / CN inflation series were repaired. Update this test with any new bump.
+    assert fv.FAMILY_CALC_OVERRIDES == {"macro": "20261017"}
+    assert set(fv.FAMILY_CALC_OVERRIDES) <= set(fv.ALL_FAMILIES)
 
 
 def test_unknown_family_is_rejected():

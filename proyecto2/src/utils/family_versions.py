@@ -34,9 +34,12 @@ ALL_FAMILIES: tuple = (
     "risk", "macro", "momentum", "capture", "persistence", "fx", "regime", "rolling", "short",
 )
 
-# Per-family epoch overrides. EMPTY by design: today every family follows CALC_VERSION.
-# Example (a macro-only change): FAMILY_CALC_OVERRIDES = {"macro": "20261101"}.
-FAMILY_CALC_OVERRIDES: dict = {}
+# Per-family epoch overrides: a family without an entry follows CALC_VERSION.
+# macro 20261017 (FND-0256 / FND-0293): the euro-area, Japan and China inflation series were repaired at the source (ECB ICP discontinued, OECD MEI
+# feed stopped, China loaded as a monthly rate). The OLS cadence gate (run_pipeline._ols_is_fresh) skips a fund whose betas are from this quarter
+# under the same macro token and whose NAV grew < 3 rows, so without this entry NO fund would refit tonight and beta_ipc_eu / _jp / _cn would keep
+# the old series until the next quarter. Only the macro family recomputes (a macro-only pass, ~9 min, not the 5 h full run).
+FAMILY_CALC_OVERRIDES: dict = {"macro": "20261017"}
 
 # shared.config.P2_BUNDLE_FLAGS -> the family (or tuple of families) each flag changes. A test asserts every bundle flag is
 # mapped here, so a new flag cannot silently fall back to "recompute everything" or "recompute nothing".
