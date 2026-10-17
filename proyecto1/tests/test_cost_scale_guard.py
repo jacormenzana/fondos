@@ -29,11 +29,13 @@ if _CORE_DIR not in sys.path:
     sys.path.insert(0, _CORE_DIR)
 
 from cost_scale import (                     # noqa: E402
+    OC_ACI_TOLERANCE_PP,
     OC_RATIO_MAX,
-    guard_parser_ongoing_charge,
+    equals_aci,
     is_plausible_oc_ratio,
     pct_to_ratio,
     ratio_to_pct,
+    resolve_ongoing_charge,
 )
 
 
@@ -99,62 +101,74 @@ def test_management_component_survives_the_guard():
 
 
 # ---------------------------------------------------------------------------
-# guard_parser_ongoing_charge — root cause de FND-0034/FND-0095 (2026-09-27)
+# resolve_ongoing_charge -- el UNICO escritor (FND-0034, 2026-10-17)
 # ---------------------------------------------------------------------------
-# El escritor 1 (kiid_parser._detect_ongoing_charge) corre en cada pase de P1,
-# incluidos los CACHED, donde el bloque completo del escritor 2 (con su propia
-# guarda FIX-OC-PARSER-BIND) se salta por rendimiento. Estos 5 casos son los
-# ISINs reales que re-contaminaron `Ongoing_Charge_Recurrent` en vivo el
-# 2026-09-26 (valores reales leídos de BD antes/después de --recompute-costs).
+# Sustituye a guard_parser_ongoing_charge (FND-0034/FND-0095, 2026-09-27): el parser (escritor 1) corre en cada pase, incluidos los
+# CACHED, y confundia el ACI con el gasto corriente. Los 4 casos reales de abajo son los ISINs que re-contaminaron la columna en vivo
+# el 2026-09-26; ahora el parser es un CANDIDATO mas y la comision de gestion (la fila de gestion de un PRIIPs ES el gasto corriente
+# sin costes de transaccion) gana a un parser que coincide con el ACI.
 
-# (isin, parser_oc bugueado, existing_oc BD correcto, mgmt%, aci_rhp%, aci_1y%)
+# (isin, parser_oc bugueado (ratio), mgmt%, aci_rhp%, aci_1y%, gasto corriente correcto (ratio))
 _REAL_RECONTAMINATION_CASES = [
-    ('FR0013439478', 0.02,   0.0069, 0.69, 2.0, 4.1),
-    ('FR0011365212', 0.003,  0.004,  0.40, 0.3, 0.3),
-    ('IE00BJVNH654',  0.013, 0.0198, 1.80, 1.3, 1.3),
-    ('IE00BJVNH761',  0.013, 0.0198, 1.80, 1.3, 1.3),
+    ('FR0013439478', 0.02,  0.69, 2.0, 4.1, 0.0069),
+    ('FR0011365212', 0.003, 0.40, 0.3, 0.3, 0.004),
+    ('IE00BJVNH654', 0.013, 1.80, 1.3, 1.3, 0.018),
+    ('IE00BJVNH761', 0.013, 1.80, 1.3, 1.3, 0.018),
 ]
 
 
-@pytest.mark.parametrize('isin,bad_parser_oc,good_existing_oc,mgmt_pct,aci_rhp_pct,aci_1y_pct',
-                          _REAL_RECONTAMINATION_CASES)
-def test_guard_protects_a_well_bound_existing_value_from_the_parsers_bad_binding(
-        isin, bad_parser_oc, good_existing_oc, mgmt_pct, aci_rhp_pct, aci_1y_pct):
-    """El valor en BD ya está bien ligado a la gestión; el parser lo confunde con el ACI. La
-    guarda debe descartar (None) el valor del parser para que el COALESCE preserve BD."""
-    result = guard_parser_ongoing_charge(
-        bad_parser_oc, good_existing_oc, mgmt_pct, aci_rhp_pct, aci_1y_pct)
-    assert result is None, f'{isin}: debió proteger {good_existing_oc}, dejó pasar {result}'
+@pytest.mark.parametrize('fmt', ['PRIIPS_KID', 'UCITS_KIID', 'UNKNOWN', None])
+@pytest.mark.parametrize('isin,bad_parser,mgmt_pct,aci_rhp,aci_1y,expected', _REAL_RECONTAMINATION_CASES)
+def test_a_parser_value_equal_to_the_aci_never_wins_over_the_management_fee(fmt, isin, bad_parser, mgmt_pct, aci_rhp, aci_1y, expected):
+    value, source = resolve_ongoing_charge(fmt, mgmt_pct, None, bad_parser, aci_rhp, aci_1y)
+    assert value == pytest.approx(expected), f'{isin}: dejo pasar {value} ({source})'
+    assert source == 'management_fee'
 
 
-def test_guard_lets_a_parser_value_through_when_it_agrees_with_a_well_bound_existing_value():
-    """FR0013439478 con el parser funcionando bien (0,69 %, no 2,0 %): nada que proteger."""
-    assert guard_parser_ongoing_charge(0.0069, 0.0069, 0.69, 2.0, 4.1) == 0.0069
+def test_the_priips_management_line_is_the_ongoing_charge_even_when_the_parser_disagrees_cleanly():
+    # TER (gestion + operacion) en el parser vs. la fila de gestion: el significado decidido es SIN costes de transaccion
+    assert resolve_ongoing_charge('PRIIPS_KID', 0.63, None, 0.0136, 3.2, 6.4) == (pytest.approx(0.0063), 'management_fee')
 
 
-def test_guard_lets_the_parser_value_through_when_there_is_no_existing_value_to_protect():
-    """Fondo nuevo o sin OC previo: el escritor 1 es la única señal disponible."""
-    assert guard_parser_ongoing_charge(0.02, None, 0.69, 2.0, 4.1) == 0.02
+def test_the_transaction_cost_is_never_the_ongoing_charge():
+    # 29 fondos medidos el 2026-10-17 tenian el coste de operacion (Transaction_Cost_Pct) guardado como gasto corriente
+    value, source = resolve_ongoing_charge('PRIIPS_KID', 1.61, None, 0.0010, 2.5, 6.7)
+    assert value == pytest.approx(0.0161) and source == 'management_fee'
 
 
-def test_guard_is_conservative_when_the_parser_found_nothing():
-    assert guard_parser_ongoing_charge(None, 0.0069, 0.69, 2.0, 4.1) is None
+def test_ucits_prefers_the_documents_own_ocf_then_the_parser_then_the_management_fee():
+    assert resolve_ongoing_charge('UCITS_KIID', 1.50, 0.0085, 0.0090, 2.0, 3.0) == (0.0085, 'ucits_ocf')
+    assert resolve_ongoing_charge('UCITS_KIID', 1.50, None, 0.0090, 2.0, 3.0) == (0.0090, 'parser')
+    assert resolve_ongoing_charge('UCITS_KIID', 1.50, None, None, 2.0, 3.0) == (pytest.approx(0.0150), 'management_fee')
 
 
-def test_guard_lets_the_parser_value_through_without_a_management_fee_to_arbitrate_against():
-    """Sin gestión, no hay con qué decidir (P-5): no cambia el comportamiento actual."""
-    assert guard_parser_ongoing_charge(0.02, 0.0069, None, 2.0, 4.1) == 0.02
+def test_an_unknown_format_uses_the_parser_then_the_management_fee():
+    assert resolve_ongoing_charge('UNKNOWN', 1.50, None, 0.0090, 2.0, 3.0) == (0.0090, 'parser')
+    assert resolve_ongoing_charge(None, 1.50, None, None, 2.0, 3.0) == (pytest.approx(0.0150), 'management_fee')
 
 
-def test_guard_does_not_protect_an_existing_value_that_was_already_badly_bound():
-    """Si el valor en BD YA es el ACI (mala ligadura previa), no hay nada fiable que proteger:
-    se deja pasar el valor fresco del parser (podría ser una oportunidad de mejora, nunca un
-    empeoramiento respecto al estado actual)."""
-    # existing_oc == aci_rhp (0.02 == 0.02): BD ya mal ligado
-    assert guard_parser_ongoing_charge(0.0069, 0.02, 0.69, 2.0, 4.1) == 0.0069
+def test_a_candidate_equal_to_either_aci_is_rejected_and_the_next_one_is_tried():
+    assert equals_aci(0.0200, 2.0, 4.1) and equals_aci(0.0410, 2.0, 4.1) and not equals_aci(0.0069, 2.0, 4.1)
+    # la gestion tambien puede ser el ACI (74 fondos medidos): entonces no hay candidato limpio
+    assert resolve_ongoing_charge('PRIIPS_KID', 2.0, None, 0.0200, 2.0, 4.1) == (None, 'none')
 
 
-def test_guard_accepts_the_legacy_percent_scale_for_existing_oc_db():
-    """existing_oc_db puede llegar en escala legado (>= 0.5 => porcentaje); _norm_existing_oc lo
-    normaliza antes de arbitrar. 0.69 (interpretado como 0,69 %) equivale a 0.0069 ratio."""
-    assert guard_parser_ongoing_charge(0.02, 0.69, 0.69, 2.0, 4.1) is None
+def test_an_exact_zero_is_a_failed_parse_not_a_zero_cost():
+    assert resolve_ongoing_charge('PRIIPS_KID', 0.0, None, 0.0, 1.0, 1.0) == (None, 'none')
+    assert resolve_ongoing_charge('UNKNOWN', 0.8, None, 0.0, 1.5, 1.5) == (pytest.approx(0.0080), 'management_fee')
+
+
+def test_a_scale_error_is_rejected_instead_of_written():
+    # 2,08 en una columna ratio es un 208 %: el rango [0, OC_RATIO_MAX] lo aplica el resolutor (antes lo hacia el pipeline, solo con PDF)
+    assert resolve_ongoing_charge('UNKNOWN', None, None, 2.08, 3.0, 3.0) == (None, 'none')
+    assert resolve_ongoing_charge('UCITS_KIID', None, 0.85, None, 3.0, 3.0)[0] is None      # un porcentaje metido en la columna ratio
+
+
+def test_no_candidate_means_none_so_coalesce_keeps_the_stored_value():
+    assert resolve_ongoing_charge('PRIIPS_KID', None, None, None, None, None) == (None, 'none')
+
+
+def test_the_contamination_tolerance_is_the_audits_tolerance():
+    """Un solo predicado de contaminacion: el resolutor, el aviso del pipeline y el invariante OC_NOT_CONTAMINATED de la auditoria."""
+    from shared.statistical_audit.tolerances import FLOAT_IDENTITY_TOLERANCE
+    assert OC_ACI_TOLERANCE_PP == FLOAT_IDENTITY_TOLERANCE

@@ -56,7 +56,6 @@ from fund_writer import (  # noqa: E402
     _upsert_kiid_benchmark,
     upsert_cost_schedule,
     publish_fund,
-    correct_oc_aci_mismatch,
     reconcile_universe_membership,
     global_post_pipeline_normalize_db,
     log_ingestion,
@@ -446,25 +445,33 @@ def test_publish_fund_error_path_rolls_back_and_logs(pg_conn):
     assert err_log is not None and err_log[0] == "ERROR"
 
 
-def test_correct_oc_aci_mismatch_converts_pct_to_ratio_no_coalesce(pg_conn):
-    """Deliberately non-COALESCE overwrite (unlike every other function in this file) — the whole
-    point of this function is to force-correct a bad value regardless of what's currently stored.
-    Also confirms the integer-percent -> decimal-ratio conversion happens via cost_scale.pct_to_ratio
-    (not hand-rolled here), and that a nonexistent ISIN returns False without erroring."""
+def test_ongoing_charge_has_one_writer_a_clean_value_replaces_and_none_never_erases(pg_conn):
+    """FND-0034: Ongoing_Charge_Recurrent is written by ONE UPSERT per pass (the value comes from cost_scale.resolve_ongoing_charge,
+    called by the pipeline before publish_fund); there is no second, post-publish UPDATE any more. The persistence contract that
+    remains is the column's ordinary COALESCE policy: a clean resolved value replaces a contaminated stored one (the repair the
+    deleted correct_oc_aci_mismatch used to force with a non-COALESCE UPDATE), and a pass with no clean candidate (None) keeps what
+    is stored. Values are RATIOS (0,0069 == 0,69 %)."""
     pg_conn.execute("SET search_path = gold, silver, bronze, control, public")
-
     isin = "LU1873132101"
     _ensure_fund_master_row(pg_conn, isin)
-    updated = correct_oc_aci_mismatch(pg_conn, isin, 0.70, "test-source")
-    assert updated is True
+    read = lambda: float(pg_conn.execute("SELECT ongoing_charge_recurrent FROM fund_master WHERE isin = %s", (isin,)).fetchone()[0])
 
-    new_value = pg_conn.execute(
-        "SELECT ongoing_charge_recurrent FROM fund_master WHERE isin = %s", (isin,)
-    ).fetchone()[0]
-    assert abs(float(new_value) - 0.007) < 1e-9, f"expected ~0.007 (0.70% as ratio), got {new_value}"
+    contaminated = {**_minimal_partial_record(isin, "Renta Variable", "TEST OC"), "Ongoing_Charge_Recurrent": 0.0200}   # == ACI_RHP 2.0 %
+    upsert_fund_master(pg_conn, contaminated)
+    assert abs(read() - 0.0200) < 1e-9
 
-    missing = correct_oc_aci_mismatch(pg_conn, "NOSUCHISIN01", 0.70, "test-source")
-    assert missing is False
+    clean = {**_minimal_partial_record(isin, "Renta Variable", "TEST OC"), "Ongoing_Charge_Recurrent": 0.0069}          # the resolver's value
+    upsert_fund_master(pg_conn, clean)
+    assert abs(read() - 0.0069) < 1e-9, "a clean resolved value must replace the contaminated stored one"
+
+    nothing = {**_minimal_partial_record(isin, "Renta Variable", "TEST OC"), "Ongoing_Charge_Recurrent": None}            # no clean candidate
+    upsert_fund_master(pg_conn, nothing)
+    assert abs(read() - 0.0069) < 1e-9, "None must never erase a stored value (COALESCE, P#1)"
+
+
+def test_fund_writer_no_longer_exposes_a_second_oc_writer():
+    import fund_writer
+    assert not hasattr(fund_writer, "correct_oc_aci_mismatch")
 
 
 def test_reconcile_universe_membership_flags_correctly(pg_conn):

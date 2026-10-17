@@ -239,7 +239,6 @@ except ImportError:
 from core.fund_writer import (
     publish_fund,
     log_ingestion,
-    correct_oc_aci_mismatch,             # BL-COST-5: OC/ACI mismatch correction
     global_post_pipeline_normalize_db,   # BL-53/56/57: barrido global
 )
 from core._db_utils import EffectiveReader   # BL-49/50: lectura efectiva
@@ -254,12 +253,11 @@ except ModuleNotFoundError:
         _sys_shared.path.insert(0, str(_shared_root))
     from shared.db import fail_soft_block
 # P1-19: única definición de la escala de coste (P#11 / R-1)
+# FND-0034: la tolerancia de contaminación OC == ACI es una sola (cost_scale); el escritor único es oc_resolution.resolve_fund_oc.
 try:
-    from core.cost_scale import OC_RATIO_MAX as _OC_RATIO_MAX
-    from core.cost_scale import guard_parser_ongoing_charge as _guard_parser_oc
+    from core.cost_scale import OC_ACI_TOLERANCE_PP as _OC_ACI_TOL_PP
 except ImportError:                          # proyecto1/core ya en sys.path
-    from cost_scale import OC_RATIO_MAX as _OC_RATIO_MAX
-    from cost_scale import guard_parser_ongoing_charge as _guard_parser_oc
+    from cost_scale import OC_ACI_TOLERANCE_PP as _OC_ACI_TOL_PP
 
 # BL-COST-4c: extractores Sprint 2 (kill-switch interno en cada módulo)
 # Import condicional: el pipeline no rompe si los módulos no están presentes.
@@ -273,11 +271,13 @@ if _core_dir not in _sys.path:
 try:
     from core.priips_cost_extractor import extract_priips_costs
     from core.ucits_cost_extractor  import extract_ucits_costs
+    from core.oc_resolution import resolve_fund_oc as _resolve_fund_oc   # FND-0034: el único escritor de Ongoing_Charge_Recurrent
     import core.priips_cost_extractor as _priips_ext_mod  # para leer kill-switch en runtime
     _COST_EXTRACTORS_AVAILABLE = True
 except ImportError as _e_cost_import:
     _COST_EXTRACTORS_AVAILABLE = False
     _priips_ext_mod = None
+    _resolve_fund_oc = None          # sin el módulo no hay candidato limpio: Ongoing_Charge_Recurrent queda como está (COALESCE)
     print(f"[BL-COST-4c] ImportError: {_e_cost_import}")
 
 # Nota: PRIIPS_COST_EXTRACTION_ENABLED se lee en runtime desde _priips_ext_mod
@@ -1299,25 +1299,9 @@ def run_block(
             _geo_en_final = _derive_geography_en(_geo_es_final, _geo_name_l)
             _devstat_final = derive_development_status(_geo_es_final, _geo_en_final, _geo_name_l)
 
-            # FIX-OC-PARSER-GUARD (root cause de FND-0034/FND-0095, 2026-09-27): parsed["Ongoing_Charge"]
-            # (escritor 1, kiid_parser) corre en CADA pase, incluidos los CACHED, donde el bloque
-            # completo del escritor 2 (con su propia guarda FIX-OC-PARSER-BIND, más abajo en este mismo
-            # archivo) se salta por rendimiento (`if pdf_bytes is not None or recompute_costs`) y nunca
-            # llega a proteger nada. SELECT dedicado (no se amplia _v3_row, mismo criterio que el de
-            # PC-3 más abajo): si BD ya tiene un valor bien ligado a la gestión y el del parser no lo
-            # está, se descarta para que el COALESCE del UPSERT conserve el de BD. Ver cost_scale.py::
-            # guard_parser_ongoing_charge para el detalle y los 5 ISINs reales que motivaron el fix.
-            _oc_parser_raw = parsed.get("Ongoing_Charge")
-            if _oc_parser_raw is not None:
-                _oc_guard_row = conn.execute(
-                    "SELECT Ongoing_Charge_Recurrent, Management_Fee_Pct, ACI_RHP, ACI_1Y "
-                    "FROM fund_master WHERE ISIN=%s", (isin,)
-                ).fetchone()
-                if _oc_guard_row is not None:
-                    _oc_parser_raw = _guard_parser_oc(
-                        _oc_parser_raw, _oc_guard_row[0], _oc_guard_row[1],
-                        _oc_guard_row[2], _oc_guard_row[3],
-                    )
+            # FND-0034 (2026-10-17): parsed["Ongoing_Charge"] (kiid_parser) ya NO se escribe: es un CANDIDATO. La guarda que
+            # vivía aquí (FIX-OC-PARSER-GUARD) la absorbe cost_scale.resolve_ongoing_charge, llamado una vez por fondo y pase
+            # justo antes de publish_fund (ver más abajo), que es el único escritor de Ongoing_Charge_Recurrent.
 
             fund_master_record = {
                 # -------------------------
@@ -1415,9 +1399,8 @@ def run_block(
                 # usando el patrón _X_efectivo = record.get("X") or _X_bd según R-4.
                 # Las variables _oc_bd, _aci_rhp_bd, _kf_bd se añadirán al bloque de
                 # lectura BD previa en Sprint 2.
-                # FIX-OC-PARSER-GUARD (2026-09-27): _oc_parser_raw ya pasó por la guarda de
-                # ligadura arriba -- no es parsed.get("Ongoing_Charge") en crudo.
-                "Ongoing_Charge_Recurrent": _oc_parser_raw,
+                # FND-0034: "Ongoing_Charge_Recurrent" NO se fija aquí. Lo escribe una sola vez, justo antes de publish_fund,
+                # cost_scale.resolve_ongoing_charge (parser, UCITS OCF y comisión de gestión son sus candidatos).
                 # Accumulation_Policy: combinar characterizer (nombre) + kiid_parser (texto)
                 "Accumulation_Policy": (
                     classification.get("Accumulation_Policy") or
@@ -2800,10 +2783,8 @@ def run_block(
             # Principio #2 DRY: routing PRIIPs/UCITS lo hace detect_kid_format.
             # Atomicidad: _schedule_rows se pasa a publish_fund (A-3 S2-C).
             _schedule_rows: list = []
-            # FIX-OC-WRITE-ORDER: initialized here so the no-COALESCE repair
-            # can fire AFTER publish_fund (see post-publish block below).
+            # FND-0034: el extractor PRIIPs solo AVISA (OC parecido al ACI); lo repara cost_scale.resolve_ongoing_charge, antes de publish_fund.
             _oc_mismatch: bool = False
-            _oc_mismatch_ter: "Optional[float]" = None
             _cost_enabled_rt = (
                 _COST_EXTRACTORS_AVAILABLE
                 and _priips_ext_mod is not None
@@ -2887,7 +2868,8 @@ def run_block(
                         # Extraer claves privadas antes de mezclar en fund_master_record
                         _schedule_rows    = _cost_dict.pop('_cost_schedule_rows', []) or []
                         _oc_mismatch      = _cost_dict.pop('_oc_aci_mismatch', False)
-                        _oc_mismatch_ter  = _cost_dict.pop('_oc_aci_mismatch_ter_pct', None)
+                        _cost_dict.pop('_oc_aci_mismatch_ter_pct', None)           # consultivo: ya no alimenta ninguna escritura
+                        _cost_dict.pop('Ongoing_Charge_Recurrent', None)   # FND-0034: consultivo; escribe resolve_ongoing_charge
 
                         # Campos que van a fund_master (11 columnas Sprint 2)
                         _COST_FIELDS = {
@@ -2895,25 +2877,15 @@ def run_block(
                             'Cost_RHP_Years', 'Entry_Fee_Pct_Max', 'Exit_Fee_Pct_Max',
                             'Management_Fee_Pct', 'Transaction_Cost_Pct',
                             'Performance_Fee_Pct', 'ACI_1Y', 'ACI_RHP',
-                            'Ongoing_Charge_Recurrent',   # solo presente si existing_oc is None
-                        }
+                        }   # Ongoing_Charge_Recurrent: NO es un campo del extractor (FND-0034, único escritor: el resolutor)
                         # COST-RANGE-GUARD (2026-07-18): guarda de seguridad de
                         # último recurso — los rangos están en los CHECK constraints
                         # del schema (db/schema_fondos.sql). Previene que un error
                         # de parsing fuera-de-rango aborte el UPSERT entero y pierda
                         # el fondo. La corrección de raíz es FIX-COST-RATIO-SAFE en
                         # cost_table_parser.py; esta guarda es cinturón + tirantes.
-                        # P1-19 (2026-08-24): esta guarda vigilaba TODAS las columnas
-                        # de coste MENOS `Ongoing_Charge_Recurrent`, que es justo la
-                        # única con tres escritores distintos. Por ese hueco entraron
-                        # sin oposición los 5 fondos con un gasto corriente del 208 %
-                        # (FIX-OC-SCALE): ninguna guarda los miró.
-                        #
-                        # ⚠ TRAMPA DE ESCALA: los límites de abajo están en PORCENTAJE
-                        # ENTERO, pero `Ongoing_Charge_Recurrent` está en RATIO DECIMAL.
-                        # Su techo NO puede escribirse aquí como 25.0; se toma de
-                        # `cost_scale.OC_RATIO_MAX`, la única definición de la
-                        # convención (P#11 / R-1).
+                        # Estos límites están en PORCENTAJE ENTERO. `Ongoing_Charge_Recurrent` (RATIO) ya no pasa por
+                        # aquí: su rango [0, OC_RATIO_MAX] lo aplica cost_scale.resolve_ongoing_charge (FND-0034).
                         _COST_PCT_LIMITS: dict = {
                             'Transaction_Cost_Pct': (0.0, 5.0),
                             'Management_Fee_Pct':   (0.0, 10.0),
@@ -2922,8 +2894,6 @@ def run_block(
                             'Performance_Fee_Pct':  (0.0, 30.0),
                             'ACI_1Y':               (0.0, 50.0),
                             'ACI_RHP':              (0.0, 25.0),
-                            # RATIO, no porcentaje — ver nota de arriba.
-                            'Ongoing_Charge_Recurrent': (0.0, _OC_RATIO_MAX),
                         }
                         for _cf in _COST_FIELDS:
                             if _cf in _cost_dict:
@@ -3102,6 +3072,22 @@ def run_block(
                 **_arb_fields,
             }
 
+            # FND-0034: el ÚNICO escritor de Ongoing_Charge_Recurrent. Candidatos: la comisión de gestión (la de esta extracción o,
+            # sin ella, la guardada), la cifra OCF UCITS y el parser; el formato se detecta en CADA pase (también CACHED, donde el
+            # bloque de extractores se salta). Sin candidato limpio -> None y COALESCE conserva el valor guardado.
+            _oc_value, _oc_source = None, "none"
+            if _resolve_fund_oc is not None:
+                _oc_stored = conn.execute(
+                    "SELECT Management_Fee_Pct, ACI_RHP, ACI_1Y FROM fund_master WHERE ISIN=%s", (isin,)).fetchone() or (None, None, None)
+                _oc_value, _oc_source, _ = _resolve_fund_oc(
+                    kiid_meta.get("Fed_Text_For_Cost") or kiid_text, parsed.get("Ongoing_Charge"), fund_master_record, _oc_stored)
+            fund_master_record["Ongoing_Charge_Recurrent"] = _oc_value
+            if _oc_mismatch:
+                # el extractor PRIIPs ya no repara (FND-0034): solo avisa; la reparación la hizo el resolutor o no hay candidato limpio
+                log_ingestion(conn, isin, "BL_COST_4C_OC_ACI_MISMATCH", "FIX" if _oc_value is not None else "WARN",
+                              f"OC={_oc_value} ({_oc_source})" if _oc_value is not None else
+                              "OC parece ACI y no hay candidato limpio; se conserva el valor guardado")
+
             _extra_log = None
             if _fam_override:
                 from shared.family_refresh import STEP_DONE as _FAMILY_REFRESH_DONE
@@ -3110,20 +3096,8 @@ def run_block(
             publish_fund(conn, fund_master_record, None, kiid_record,
                          cost_schedule_rows=_schedule_rows or None, extra_log=_extra_log)
 
-            # FIX-OC-WRITE-ORDER (2026-08-23): BL-COST-5 no-COALESCE repair fires
-            # HERE — after publish_fund — so the COALESCE UPSERT above cannot
-            # overwrite the correction with a parser-emitted value.
-            # Pre-fix the call was at line ~2949 (before publish_fund); any non-NULL
-            # parsed["Ongoing_Charge"] fed via COALESCE(excluded, col) re-contaminated
-            # the DB value on every reprocess.
-            if _oc_mismatch and _oc_mismatch_ter is not None:
-                correct_oc_aci_mismatch(conn, isin, _oc_mismatch_ter,
-                                        source_note="BL-COST-5")
-                log_ingestion(conn, isin, "BL_COST_4C_OC_ACI_MISMATCH",
-                              "FIX", f"OC corregido: {_oc_mismatch_ter:.4f}% (TER recon)")
-            elif _oc_mismatch:
-                log_ingestion(conn, isin, "BL_COST_4C_OC_ACI_MISMATCH",
-                              "WARN", "OC parece ACI pero TER no reconstruible; sin cambio")
+            # FND-0034: el repair post-publish sin COALESCE (FIX-OC-WRITE-ORDER, writer 3) se eliminó: ya no hay un segundo escritor
+            # que deba ir DESPUÉS del UPSERT para no ser pisado.
 
             published.append(fund_master_record)
 
@@ -3232,17 +3206,17 @@ def run_block(
                 WHERE In_Current_Universe = 1
                   AND Ongoing_Charge_Recurrent IS NOT NULL
                   AND ACI_RHP IS NOT NULL
-                  AND ABS(Ongoing_Charge_Recurrent * 100.0 - ACI_RHP) < 0.01
-            """).fetchone()[0]
+                  AND ABS(Ongoing_Charge_Recurrent * 100.0 - ACI_RHP) <= %s
+            """, (_OC_ACI_TOL_PP,)).fetchone()[0]
         if _oc_contaminated > 0:
             print(
                 f"  [WARN] FIX-OC-WRITE-ORDER: {_oc_contaminated} fondo(s) activos con "
-                f"Ongoing_Charge_Recurrent≈ACI_RHP (valor contaminado). "
-                f"Ejecutar --recompute-costs para reparar."
+                f"Ongoing_Charge_Recurrent≈ACI_RHP (valor contaminado: ni el parser, ni la gestión ni el OCF dieron un candidato limpio, "
+                f"y el valor guardado ya lo estaba; FND-0034). Revisar el KIID."
             )
             log_ingestion(
                 conn, None, "OC_ACI_CONTAMINATION", "WARN",
-                f"active_funds_oc_eq_aci={_oc_contaminated}; run --recompute-costs"
+                f"active_funds_oc_eq_aci={_oc_contaminated}; no clean candidate (FND-0034)"
             )
     except Exception:
         pass

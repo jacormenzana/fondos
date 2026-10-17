@@ -90,6 +90,14 @@ def _extract_ucits_oc(text: str) -> Optional[float]:
         return None
 
 
+def ucits_ongoing_charge_ratio(text: str) -> Optional[float]:
+    """
+    Candidato UCITS a Ongoing_Charge_Recurrent (FND-0034): la cifra de gastos corrientes del documento, en RATIO. Pública y pura: el
+    pipeline la llama en CADA pase (también CACHED) y la arbitra en `cost_scale.resolve_ongoing_charge`, el único escritor de la columna.
+    """
+    return _extract_ucits_oc(text)
+
+
 # ===========================================================================
 # API pública
 # ===========================================================================
@@ -123,7 +131,8 @@ def extract_ucits_costs(
           KID_Format               str     (siempre)
           KID_Currency             str | None
           Cost_Extraction_Quality  str     ('HIGH'|'LOW'|'NONE')
-          Ongoing_Charge_Recurrent float | None  (% entero; solo si existing_oc is None)
+          (ya NO se emite Ongoing_Charge_Recurrent: FND-0034, el único escritor es cost_scale.resolve_ongoing_charge; antes se
+           emitía en % entero sobre una columna ratio y el rango de 0.25 dejaba pasar valores 100 veces altos)
           Management_Fee_Pct       float | None  (% entero)
           Transaction_Cost_Pct     float | None  (% entero)
           _cost_schedule_rows      List[dict]    (siempre; 1 fila o [])
@@ -166,9 +175,9 @@ def extract_ucits_costs(
         if tran is not None:
             out['Transaction_Cost_Pct'] = _ratio_to_pct(tran)
 
-        # D. Ongoing_Charge_Recurrent — solo si existing_oc is None (COALESCE-safe, P-3)
-        if oc_ratio is not None and existing_oc is None:
-            out['Ongoing_Charge_Recurrent'] = _ratio_to_pct(oc_ratio)
+        # D. Ongoing_Charge_Recurrent: NO se emite (FND-0034). El gasto corriente lo escribe una sola vez, por pase, cost_scale.
+        #    resolve_ongoing_charge con `ucits_ongoing_charge_ratio(text)` como candidato; `existing_oc` se conserva en la firma por
+        #    compatibilidad y ya no se usa.
 
         # E. Fila de schedule sintética (1 fila a 1 año con OC como proxy)
         if oc_ratio is not None:
@@ -188,7 +197,7 @@ def extract_ucits_costs(
         _log.debug(
             "[BL-COST-4b] %s: UCITS OK — OC=%s, Mgmt=%s, Transac=%s, Quality=%s",
             isin,
-            out.get('Ongoing_Charge_Recurrent'),
+            oc_ratio,
             out.get('Management_Fee_Pct'),
             out.get('Transaction_Cost_Pct'),
             out.get('Cost_Extraction_Quality'),

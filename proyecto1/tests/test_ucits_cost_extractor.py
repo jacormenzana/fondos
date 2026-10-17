@@ -66,11 +66,13 @@ def test_killswitch_off_returns_empty(monkeypatch):
 
 def test_ucits_es_format_and_oc():
     """Texto UCITS en español: formato, OC, calidad y schedule correctos."""
-    from ucits_cost_extractor import extract_ucits_costs
+    from ucits_cost_extractor import extract_ucits_costs, ucits_ongoing_charge_ratio
     o = extract_ucits_costs(_UCITS_ES, 'TEST_ES')
     assert o['KID_Format'] == 'UCITS_KIID'
-    assert 'Ongoing_Charge_Recurrent' in o
-    assert abs(o['Ongoing_Charge_Recurrent'] - 0.85) < 0.01
+    # FND-0034: el extractor ya NO emite Ongoing_Charge_Recurrent (antes en % entero sobre una columna ratio); el candidato es un RATIO
+    # que arbitra cost_scale.resolve_ongoing_charge, el unico escritor
+    assert 'Ongoing_Charge_Recurrent' not in o
+    assert abs(ucits_ongoing_charge_ratio(_UCITS_ES) - 0.0085) < 1e-6
     assert o['Cost_Extraction_Quality'] == 'HIGH'
     rows = o['_cost_schedule_rows']
     assert len(rows) == 1
@@ -82,10 +84,11 @@ def test_ucits_es_format_and_oc():
 
 def test_ucits_en_format_and_oc():
     """Texto UCITS en inglés: OC 1.20% extraído correctamente."""
-    from ucits_cost_extractor import extract_ucits_costs
+    from ucits_cost_extractor import extract_ucits_costs, ucits_ongoing_charge_ratio
     o = extract_ucits_costs(_UCITS_EN, 'TEST_EN')
     assert o['KID_Format'] == 'UCITS_KIID'
-    assert abs(o['Ongoing_Charge_Recurrent'] - 1.20) < 0.01
+    assert 'Ongoing_Charge_Recurrent' not in o                                   # FND-0034: candidato, no escritura
+    assert abs(ucits_ongoing_charge_ratio(_UCITS_EN) - 0.0120) < 1e-6            # RATIO
     assert o['Cost_Extraction_Quality'] == 'HIGH'
     assert len(o['_cost_schedule_rows']) == 1
 

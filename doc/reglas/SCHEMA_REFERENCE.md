@@ -132,7 +132,7 @@ without `--force`. P2 asserts the three columns at startup (`shared/schema_check
 
 | Columna | Tipo | Nota |
 |---------|------|------|
-| Ongoing_Charge | REAL | TER (Total Expense Ratio) en % anual |
+| Ongoing_Charge_Recurrent | REAL | Gasto corriente **sin costes de transacción**, en **RATIO** (0,0075 = 0,75 %). Lo escribe un único escritor por pase, `cost_scale.resolve_ongoing_charge` (FND-0034): fila de gestión del PRIIPs / OCF del UCITS; nunca el ACI ni el coste de operación |
 | Accumulation_Policy | TEXT | `Accumulation` \| `Distribution` \| `Mixed` |
 | Entry_Fee_Pct | REAL | Comisión entrada en % |
 | Exit_Fee_Pct | REAL | Comisión salida en % |

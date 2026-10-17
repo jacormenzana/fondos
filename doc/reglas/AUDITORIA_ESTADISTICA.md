@@ -623,8 +623,8 @@ deriva que no viene de los datos.
 
 ### 6.1 Residuales aceptados (FND-0234(e))
 
-Una violación de invariante que el pipeline aún no sabe reparar (p. ej. los 92 fondos con
-`Ongoing_Charge_Recurrent` copiado de `ACI_RHP`, FND-0034) producía el mismo ALARM en cada
+Una violación de invariante que el pipeline aún no sabe reparar (p. ej. los fondos cuya comisión de gestión extraída coincide con
+el `ACI_RHP`, de modo que `Ongoing_Charge_Recurrent` no tiene ningún candidato limpio, FND-0034) producía el mismo ALARM en cada
 auditoría. `control.audit_accepted_finding` permite **aceptar** un `(domain, rule_id, isin)` con el AP
 que lo arregla (`ap_id`), un motivo y una **caducidad obligatoria** (por defecto 90 días, que es también el máximo desde FND-0251: una necesidad mayor es una renovación, no
 una exención más larga; las aceptaciones anteriores conservan su caducidad):

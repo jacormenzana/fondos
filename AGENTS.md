@@ -245,6 +245,7 @@ PDFs and `Raw_KIID_Text` (in `fund_kiid_metadata`) are **never deleted**.
 | `io.py` | `proyecto1/core` |
 | `kiid_parser.py` | `proyecto1/core` |
 | `mark_stale.py` | `proyecto1/core` |
+| `oc_resolution.py` | `proyecto1/core` |
 | `pipeline.py` | `proyecto1/core` |
 | `priips_cost_extractor.py` | `proyecto1/core` |
 | `srri_text.py` | `proyecto1/core` |
@@ -657,10 +658,9 @@ Safe because every write in the four steps is idempotent (enforced by `tests/tes
 allowed only when the last run failed at step N or later (state in `proyecto1/log/P1_P2_Complete.state`,
 logic in `scripts/launch/p1p2_state.py`); `--from-any` overrides the guard and is recorded in `ingestion_log`.
 The launcher also runs the statistical audits (`p2`, `costs`) with `--persist` before PASO 1 and again with
-`--compare-to` after a successful run, writing the drift report to `proyecto1/log/log_P1_P2_audit_<STAMP>.log`; and
-after PASO 2 it repairs (`run_block.py --recompute-costs`, cache-only) only the funds whose ongoing charge that
-P1 pass re-contaminated with ACI_RHP — the previously contaminated ones are left as they are. The benchmark
-loader exits 3 (stopping PASO 1) when more than a tenth of its Morningstar calls fail or 10 fail in a row.
+`--compare-to` after a successful run, writing the drift report to `proyecto1/log/log_P1_P2_audit_<STAMP>.log`. (There is
+no repair step after PASO 2 any more: `Ongoing_Charge_Recurrent` has a single writer, `cost_scale.resolve_ongoing_charge`, FND-0034.)
+The benchmark loader exits 3 (stopping PASO 1) when more than a tenth of its Morningstar calls fail or 10 fail in a row.
 
 **Cycle phases around the four steps** (steps keep their numbers; `P1_P2_Complete.bat --help` lists every option):
 a preflight (`p1p2_state.py preflight`: DB reachable, owner DSN, `FRED_API_KEY`, disk; a dead DB aborts with RC 104

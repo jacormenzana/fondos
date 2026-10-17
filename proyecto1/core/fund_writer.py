@@ -6,7 +6,7 @@ Publicación idempotente del output estructural de Proyecto 1 en SQLite.
 Cambios v25 (2026-05-23 — BL-COST Sprint 2 S2-C/S2-D):
   BL-COST-4c  publish_fund extendida con parámetro cost_schedule_rows.
               Permite persistir fund_cost_schedule en la misma transacción.
-  BL-COST-4d  correct_oc_aci_mismatch: escritura no-COALESCE para BL-COST-5.
+  BL-COST-4d  (retirado 2026-10-17, FND-0034: correct_oc_aci_mismatch, el 3er escritor de Ongoing_Charge_Recurrent, ya no existe).
 
 Cambios v24 (2026-05-19):
   BL-COST-2  Schema v19:
@@ -1111,93 +1111,6 @@ def upsert_cost_schedule(
             )),
         )
     return len(schedule_rows)
-
-
-# ============================================================
-# BL-COST-4d: Infraestructura para corrección OC-ACI mismatch
-# ============================================================
-#
-# Esta función NO se llama desde pipeline.py en Sprint 2.
-# Es infraestructura para BL-COST-5 (sesión Opus separada).
-# Proporciona la ruta de escritura no-COALESCE para corregir
-# Ongoing_Charge_Recurrent en los ~328 fondos donde el valor
-# en BD es ACI@RHP mal etiquetado como TER.
-#
-# Diseño (Principio #1 Root Cause):
-#   La causa raíz (mezcla TER/ACI en la columna legacy) se corrige
-#   en BL-COST-5 con análisis exhaustivo. Esta función es solo la
-#   palanca de escritura. No implementa ninguna heurística de detección.
-# ============================================================
-
-def correct_oc_aci_mismatch(
-    conn: "psycopg.Connection",
-    isin: str,
-    ter_pct: float,
-    source_note: str = "BL-COST-5",
-) -> bool:
-    """
-    Sobrescribe Ongoing_Charge_Recurrent directamente (sin COALESCE)
-    para corregir un fondo donde el valor en BD es ACI@RHP, no TER.
-
-    Invocado desde pipeline.py (BL-COST-5 block) AFTER the main publish_fund
-    UPSERT so the no-COALESCE write is not immediately overwritten by COALESCE.
-
-    FIX-OC-SCALE (2026-08-24) — CONVERSIÓN DE ESCALA OBLIGATORIA.
-    `ter_pct` llega en PORCENTAJE ENTERO (contrato del extractor: el campo
-    privado `_oc_aci_mismatch_ter_pct`), pero la columna
-    `fund_master.Ongoing_Charge_Recurrent` está en RATIO DECIMAL (0,0075 = 0,75 %;
-    media del universo activo 0,0139 frente a Management_Fee_Pct 1,3852).
-    Antes de este fix el valor se escribía SIN convertir, de modo que un TER
-    reconstruido de 2,08 % quedaba almacenado como 2,08 — es decir, 208 %.
-    Detectado en el despliegue del 2026-08-24: 5 fondos corrompidos
-    (LU3085135567 mgmt 1,98 + oper 0,10 -> 2,08), OC máximo 1,4 -> 2,08.
-    El bug era latente EN REPOSO pero se activa en cualquier re-extracción de
-    costes (`--recompute-costs`), que es justo cuando esta función se invoca.
-
-    Args:
-        conn:        conexión activa con isolation_level=None (WAL).
-        isin:        ISIN del fondo a corregir.
-        ter_pct:     TER corregido en PORCENTAJE ENTERO (ej: 0.70 para 0.70%).
-                     Se convierte a ratio aquí; nunca se escribe tal cual.
-        source_note: etiqueta para logging.
-
-    Returns:
-        True si la fila fue actualizada, False si ISIN no existe en fund_master.
-    """
-    import logging as _logging
-    _logger = _logging.getLogger(__name__)
-
-    if ter_pct is None:
-        return False
-    # FIX-OC-SCALE / P1-19: porcentaje entero -> ratio decimal (escala de la
-    # columna). La conversión NO se escribe aquí a mano: vive en `cost_scale`,
-    # única definición de la convención, para que los tres escritores de esta
-    # columna no puedan volver a discrepar (P#11 / R-1).
-    try:
-        from core.cost_scale import pct_to_ratio as _pct_to_ratio
-    except ImportError:
-        from cost_scale import pct_to_ratio as _pct_to_ratio
-    _ter_ratio = _pct_to_ratio(ter_pct)
-
-    # Postgres migration Phase 5c: plain UPDATE, placeholder-only translation. cur.rowcount is a
-    # standard DB-API cursor attribute — verified live to behave identically on psycopg3.
-    ph = "%s"
-    cur = conn.execute(
-        f"UPDATE fund_master SET Ongoing_Charge_Recurrent = {ph}, Updated_At = {ph} "
-        f"WHERE ISIN = {ph}",
-        (
-            _ter_ratio,
-            datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
-            isin,
-        ),
-    )
-    updated = cur.rowcount > 0
-    if updated:
-        _logger.info(
-            "[%s] [%s] Ongoing_Charge_Recurrent corregido: %.4f%% -> %.6f (ratio, no-COALESCE)",
-            isin, source_note, ter_pct, _ter_ratio,
-        )
-    return updated
 
 
 # ============================================================
