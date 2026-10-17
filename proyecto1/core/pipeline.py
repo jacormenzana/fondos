@@ -270,6 +270,7 @@ if _core_dir not in _sys.path:
     _sys.path.insert(0, _core_dir)
 try:
     from core.priips_cost_extractor import extract_priips_costs
+    from core.cost_totals_arbitration import extract_priips_costs_arbitrated   # FND-0279: totales del calendario, texto plano vs texto + DLA2
     from core.ucits_cost_extractor  import extract_ucits_costs
     from core.oc_resolution import resolve_fund_oc as _resolve_fund_oc   # FND-0034: el único escritor de Ongoing_Charge_Recurrent
     import core.priips_cost_extractor as _priips_ext_mod  # para leer kill-switch en runtime
@@ -2845,10 +2846,14 @@ def run_block(
 
                     _fmt = _dkf(_text_for_cost)
                     _cost_dict: dict = {}
+                    _totals_replaced: list = []
 
                     if _fmt == 'PRIIPS_KID':
-                        _cost_dict = extract_priips_costs(
-                            text=_text_for_cost,
+                        # FND-0279: con la tabla DLA2 añadida al texto, los totales del calendario se arbitran contra la lectura del texto plano
+                        # (la tabla a veces pierde una celda o un dígito); el resto de la salida es la de siempre.
+                        _cost_dict, _totals_replaced = extract_priips_costs_arbitrated(
+                            raw_text=kiid_text,
+                            fed_text=_text_for_cost,
                             isin=isin,
                             existing_oc=_oc_bd,
                             existing_entry=_entry_bd,
@@ -2870,6 +2875,10 @@ def run_block(
                         _oc_mismatch      = _cost_dict.pop('_oc_aci_mismatch', False)
                         _cost_dict.pop('_oc_aci_mismatch_ter_pct', None)           # consultivo: ya no alimenta ninguna escritura
                         _cost_dict.pop('Ongoing_Charge_Recurrent', None)   # FND-0034: consultivo; escribe resolve_ongoing_charge
+                        if _totals_replaced:
+                            log_ingestion(conn, isin, "COST_TOTALS_ARBITRATED", "FIX",
+                                          "totales del calendario tomados del texto plano (la tabla DLA2 los perdía o los truncaba): "
+                                          + "; ".join(f"{h:g}a {old} -> {new}" for h, old, new in _totals_replaced))
 
                         # Campos que van a fund_master (11 columnas Sprint 2)
                         _COST_FIELDS = {

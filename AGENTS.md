@@ -234,6 +234,7 @@ PDFs and `Raw_KIID_Text` (in `fund_kiid_metadata`) are **never deleted**.
 | `cost_pct_anchored.py` | `proyecto1/core` |
 | `cost_scale.py` | `proyecto1/core` |
 | `cost_table_parser.py` | `proyecto1/core` |
+| `cost_totals_arbitration.py` | `proyecto1/core` |
 | `dla2_dual_strategy_compare.py` | `proyecto1/core` |
 | `dla2_ocr_fallback.py` | `proyecto1/core` |
 | `dla2_xband_prototype.py` | `proyecto1/core` |
