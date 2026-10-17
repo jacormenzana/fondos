@@ -431,7 +431,7 @@ P3_FUND_NAV_MAX_GAP_RUN_MONTHS: int = 6
 # own (metric, window) pairs from ALERT_RULES are read, so legacy alert rows under other metric names never count. Fail closed: an unreadable
 # alerts table refuses. Generic rule over held funds (owner choice; P#5: no fund is named). Not mirrored in the PIT backtest: the alerts have
 # no history (same as the accepted-residual eligibility rule). Interim manual SQL check in FND-0289 until this switch is ON and pushed.
-ALARM_WATCH_GATE_ENABLED: bool = False
+ALARM_WATCH_GATE_ENABLED: bool = True
 ALARM_WATCH_RULES: tuple = ("DD_CAT_P03", "VOL_CAT_P97")
 ALARM_WATCH_WEIGHT_TOLERANCE: float = 1e-4
 # FND-0251: an accepted audit residual (control.audit_accepted_finding) is announced this many days before it lapses (audit report, promotion,

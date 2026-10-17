@@ -47,6 +47,8 @@ def db(pg_session_conn, pg_conn_module_schema, monkeypatch):
     import shared.config as cfg
     monkeypatch.setattr(cfg, "GOVERNANCE_ORCHESTRATOR_ENABLED", False)
     monkeypatch.setattr(cfg, "CODE_INTEGRITY_GATE_ENABLED", False)
+    # FND-0289: the toy world has no fund_metric_alerts, so the alarm watch would fail closed; its own cases switch it on (_watch).
+    monkeypatch.setattr(cfg, "ALARM_WATCH_GATE_ENABLED", False)
     conn = pg_session_conn
     conn.execute(f"SET search_path = {pg_conn_module_schema}")
     toy(conn)
