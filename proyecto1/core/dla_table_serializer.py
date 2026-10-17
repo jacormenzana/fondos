@@ -83,6 +83,23 @@ DLA2_SEPARATOR = '|||'   # DRY-SYNC: cost_table_parser.DLA2_SEPARATOR
 def _amounts(s: str) -> List[str]:
     return [m.group(1) or m.group(2) or m.group(3) for m in _AMT.finditer(s or "")]
 
+
+# FND-0279 (2026-10-17): the amounts of the "Costes totales" row are read with the PLAIN-TEXT PARSER's pattern (cost_table_parser._EUR_TOKEN: the currency before OR after the
+# number, thousands grouped by space / dot / comma / non-breaking space). `_AMT` above stops at a space ("1 216 EUR" reads "216", "10 000 EUR" reads "000") and only knows the prefix
+# "EUR 637" as "EUR"-less: in "EUR 637 EUR 1,141" the first number takes the NEXT cell's "EUR" and the last one vanishes. That made the serialized total row wrong for LU1734046979
+# (3-year total 216 instead of 1 216) and LU1683489089 (5-year total lost). Deliberately NOT applied to `_amounts`: that function also SCORES which candidate rows win (grid vs
+# text, lines below), and changing it moved that selection (measured on 408 real PDFs: a second, garbled grid variant started to win in 9 funds). No fallback to `_AMT`: a silent
+# degrade would reintroduce this defect. DRY-SYNC (P#11).
+try:
+    from cost_table_parser import _EUR_TOKEN as _AMT_TOTALS
+except ImportError:                       # proyecto1/core is not on sys.path as a top-level package
+    from core.cost_table_parser import _EUR_TOKEN as _AMT_TOTALS
+
+
+def _total_amounts(s: str) -> List[str]:
+    """Amounts of the totals row as written in the document, thousands separators kept ("1 216", "1,141", "10 000"); non-breaking spaces become plain spaces."""
+    return [re.sub(r'[\u00a0\u202f]', ' ', m.group(1) or m.group(2)) for m in _AMT_TOTALS.finditer(s or "")]
+
 def _pcts(s: str) -> List[str]:
     return [m.group(1) for m in _PCT.finditer(s or "")]
 
@@ -165,13 +182,13 @@ def _text_sections(text: str) -> Tuple[List[str], List[str]]:
     tw = _multi(r'costes?\s+totales?')
     aw = _multi(r'incidencia\s+anual\s+de\s+los\s+costes?')
     if tw or aw:
-        ncol = min(max(len(_amounts(tw or '')), len(_pcts(aw or '')), 1), len(horizons)) or 1
+        ncol = min(max(len(_total_amounts(tw or '')), len(_pcts(aw or '')), 1), len(horizons)) or 1
         if len(horizons) < ncol:
             horizons = (horizons + [horizons[-1]])[:ncol]
         ot_rows.append(DLA2_SEPARATOR + "horizonte" + DLA2_SEPARATOR +
                        DLA2_SEPARATOR.join(f"despues de {y} anos" for y in horizons[:ncol]) + DLA2_SEPARATOR)
         if tw:
-            a = _amounts(tw)[:ncol]
+            a = _total_amounts(tw)[:ncol]
             if a:
                 ot_rows.append(DLA2_SEPARATOR + "Costes totales" + DLA2_SEPARATOR +
                                DLA2_SEPARATOR.join(x + " EUR" for x in a) + DLA2_SEPARATOR)
