@@ -166,7 +166,7 @@ exit /b 0
 
 :: ------------------------------------------------------------
 :: :state_query SUBCOMANDO VAR -- guarda en VAR la salida (una linea) de `p1p2_state.py SUBCOMANDO`
-::   (baseline, calc-version, last-result, oc-newly...); VAR queda vacia si no imprime nada. Las
+::   (baseline, calc-version, last-result...); VAR queda vacia si no imprime nada. Las
 ::   comillas dobles EXTERIORES son imprescindibles: sin ellas cmd /c descarta las de los extremos y
 ::   rompe el comando cuando hay mas de dos pares (rutas con espacios).
 :: ------------------------------------------------------------

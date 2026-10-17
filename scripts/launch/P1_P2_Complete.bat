@@ -211,7 +211,6 @@ set "FONDOS_CYCLE_LOCK=1"
 
 call "%COMMON%" :log_open "%LOG_DIR%" P1_P2_complete "P1+P2 Complete"
 set "AUDIT_LOG=%LOG_DIR%\log_P1_P2_audit_%STAMP%.log"
-set "RECOMP_LOG=%LOG_DIR%\log_P1_P2_recompute_%STAMP%.log"
 
 echo  ROOT:      %ROOT% >> "%LOG%"
 echo  PYTHON:    %PYTHON% >> "%LOG%"
@@ -306,11 +305,10 @@ if !AUX_RC! NEQ 0 (
 call :run_step 1 P1_refreshBenchmarks "log_benchmarks_*.log" "%ROOT%\proyecto1\log"
 if !FAILED_STEP! NEQ 0 goto :fin
 
-:: -- PASO 2: pipeline P1 (+ reparacion de costes) ------------------------------
-if !FROM_STEP! LEQ 2 "%PYTHON%" "%LAUNCH%\p1p2_state.py" oc-before
+:: -- PASO 2: pipeline P1 -------------------------------------------------------
+:: (FND-0034: sin PASO 2b. El gasto corriente lo escribe UN solo escritor por pase, asi que ya no hay fondos re-contaminados que reparar.)
 call :run_step 2 P1_discoverAllFunds "log_pipeline_*.log" "%ROOT%\proyecto1\log"
 if !FAILED_STEP! NEQ 0 goto :fin
-if !FROM_STEP! LEQ 2 call :repair_oc_contamination
 
 :: -- PASO 3: macro + NAV discover/load -----------------------------------------
 call :run_step 3 P2_discoverLoadMetrics "log_P2_discoverMetrics_*.log" "%ROOT%\proyecto2\log"
@@ -609,30 +607,6 @@ set AUX_TARGET="%ROOT%\scripts\audit\beta_shift_audit.py"
 set AUX_ARGS=--compare "!BETA_CSV!" --version !CALC_VER! --out "%DATA_AUDIT_DIR%\beta_shift_outliers_!BASELINE_ID!.csv"
 call :aux_py beta_compare "comparacion de betas macro (CALC_VERSION !CALC_VER!)"
 set "RC_BETA=!AUX_RC!"
-exit /b 0
-
-:: ------------------------------------------------------------
-:: :repair_oc_contamination -- PASO 2b: recompute-costs (solo cache) sobre los fondos que ESTE P1 ha
-::   contaminado con ongoing_charge_recurrent = ACI_RHP. Nunca aborta el ciclo: si falla o no basta,
-::   avisa en el log. Los ya contaminados de antes no se tocan.
-:: ------------------------------------------------------------
-:repair_oc_contamination
-call "%COMMON%" :state_query oc-newly OC_FIX
-if not defined OC_FIX exit /b 0
-
-echo --- PASO 2b: recompute-costs de fondos contaminados por este P1: !OC_FIX! >> "%LOG%"
-echo [PASO 2b] recompute-costs ^(solo cache^) sobre fondos contaminados por este P1
-pushd "%ROOT%\proyecto1"
-"%PYTHON%" -X utf8 run_block.py --nature-first --master-db --recompute-costs --list-isin "!OC_FIX!" >> "%RECOMP_LOG%" 2>&1
-set "RC2B=!ERRORLEVEL!"
-popd
-echo --- PASO 2b fin: RC=!RC2B!  log: %RECOMP_LOG% >> "%LOG%"
-if !RC2B! NEQ 0 echo [WARN] recompute-costs fallo ^(RC=!RC2B!^): revisar %RECOMP_LOG% >> "%LOG%"
-
-:: Verificacion: si la reparacion fallo o no basto, el ciclo NO se detiene pero queda avisado.
-call "%COMMON%" :state_query oc-newly OC_LEFT
-if defined OC_LEFT echo [WARN] siguen contaminados por este P1 tras recompute-costs: !OC_LEFT! >> "%LOG%"
-if defined OC_LEFT echo [WARN] fondos contaminados por este P1 sin reparar: !OC_LEFT!
 exit /b 0
 
 :: ------------------------------------------------------------

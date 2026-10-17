@@ -26,8 +26,6 @@ Sub-commands (exit codes):
     step   --step N --rc R --start HHMMSS --end HHMMSS     always exits 0 (best-effort telemetry)
     baseline                            prints BASELINE_RUN_ID of the last run (empty if none)
     last-result                         prints OK | FAILED | NONE (no readable state): how the last cycle ended
-    oc-before                           snapshot of the funds whose ongoing charge equals ACI_RHP
-    oc-newly                            prints, comma-separated, the funds contaminated SINCE oc-before
     restore-point --stamp S             pg_create_restore_point('p1p2_start_S'); always exits 0
     preflight                           environment checks before the cycle: 0 ok | 104 a blocking check failed
     calc-version                        prints P2's CALC_VERSION (read from run_pipeline.py, no heavy import)
@@ -152,68 +150,6 @@ def check(from_step: int | None, from_any: bool, path: Path | None = None) -> tu
                             f"resume from {state['FAILED_STEP']} or earlier, never later. "
                             "Or use --from-any.")
     return RC_OK, ""
-
-
-# ── ongoing-charge contamination: repair only what THIS chain's P1 pass broke ────────────────────
-# A P1 pass re-extracts costs for some cached funds and can write ongoing_charge_recurrent = ACI_RHP
-# (the KID's annual cost impact, not the ongoing charge). Verified 2026-09-26 with the committed HEAD
-# code: pre-existing behaviour, 4 funds newly contaminated (91 -> 95 on live), two of which held
-# values that match their KID text. `run_block.py --recompute-costs` (cache-only, no downloads)
-# restores them exactly. This snapshots the contaminated set before PASO 2 and, after it, repairs
-# ONLY the funds contaminated since: the ~91 pre-existing ones are left exactly as they are.
-
-# Same predicate as pipeline.py's OC-CONTAMINATION-GUARD (tolerance 0.01 percentage points).
-_OC_SQL = ("SELECT ISIN FROM fund_master WHERE In_Current_Universe = 1 "
-           "AND Ongoing_Charge_Recurrent IS NOT NULL AND ACI_RHP IS NOT NULL "
-           "AND ABS(Ongoing_Charge_Recurrent * 100 - ACI_RHP) <= 0.01")
-
-
-def oc_file() -> Path:
-    override = os.environ.get("P1P2_OC_FILE")
-    return Path(override) if override else ROOT / "proyecto1" / "log" / "P1_P2_Complete.oc_before"
-
-
-def contaminated_isins() -> set | None:
-    """ISINs whose ongoing charge equals ACI_RHP right now; None if the database cannot be read."""
-    try:
-        sys.path.insert(0, str(ROOT))
-        from shared.db import get_connection
-        conn = get_connection()
-        try:
-            return {r[0] for r in conn.execute(_OC_SQL).fetchall()}
-        finally:
-            conn.close()
-    except Exception as exc:
-        print(f"[p1p2_state] ongoing-charge snapshot skipped: {type(exc).__name__}: {exc}", file=sys.stderr)
-        return None
-
-
-def oc_before(path: Path | None = None) -> bool:
-    """Write the pre-PASO-2 contaminated set. On failure remove any old file so a stale snapshot
-    can never be mistaken for this run's."""
-    p = path or oc_file()
-    found = contaminated_isins()
-    if found is None:
-        try:
-            p.unlink()
-        except OSError:
-            pass
-        return False
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text("\n".join(sorted(found)) + ("\n" if found else ""), encoding="utf-8")
-    return True
-
-
-def oc_newly(path: Path | None = None) -> list:
-    """Funds contaminated now but not in the pre-PASO-2 snapshot. Empty (repair nothing) when there is
-    no snapshot or the database cannot be read: never guess."""
-    p = path or oc_file()
-    try:
-        before = {ln.strip() for ln in p.read_text(encoding="utf-8").splitlines() if ln.strip()}
-    except OSError:
-        return []
-    now = contaminated_isins()
-    return sorted(now - before) if now is not None else []
 
 
 # ── restore point (FND-0091) ─────────────────────────────────────────────────────────────────────
@@ -413,8 +349,6 @@ def main(argv: list | None = None) -> int:
 
     sub.add_parser("baseline")
     sub.add_parser("last-result")
-    sub.add_parser("oc-before")
-    sub.add_parser("oc-newly")
 
     r = sub.add_parser("restore-point")
     r.add_argument("--stamp", required=True)
@@ -453,12 +387,6 @@ def main(argv: list | None = None) -> int:
     if args.cmd == "baseline":
         state = read_state()
         print(state["BASELINE_RUN_ID"] if state else "")
-        return RC_OK
-    if args.cmd == "oc-before":
-        oc_before()                                     # best-effort: a failure only disables the repair
-        return RC_OK
-    if args.cmd == "oc-newly":
-        print(",".join(oc_newly()))
         return RC_OK
     if args.cmd == "restore-point":
         create_restore_point(args.stamp)                 # best-effort: never fails the launcher
