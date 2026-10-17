@@ -591,7 +591,9 @@ def _extract_eur_from_cell(cell: str) -> Optional[float]:
 
     # Buscar importe con moneda explícita
     m = re.search(
-        r'(\d{1,3}(?:[.,\s  ]\d{3})*(?:[.,]\d{1,2})?)\s*(?:EUR|USD|GBP|CHF|€|\$)',
+        # FND-0279: without a left boundary re.search could start INSIDE a number ("1576 EUR" matched "576 EUR": LU0671501129 stored 576 at 5 years), and the grouped
+        # alternative came before the plain one; now a match cannot start after a digit and an ungrouped number is read whole.
+        r'(?<![\d.,])(\d{1,3}(?:[.,\s  ]\d{3})+(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)\s*(?:EUR|USD|GBP|CHF|€|\$)',
         cell, re.IGNORECASE,
     )
     if m:
@@ -1228,7 +1230,9 @@ def _parse_costs_over_time_plain(text: str) -> List[dict]:
 _TOTAL_COSTS_LABEL = re.compile(
     r'total\s+costs?|costes?\s+totales?|co[uû]ts?\s+totaux|gesamtkosten|costi\s+totali', re.IGNORECASE)
 _CURRENCY = r'(?:EUR|USD|GBP|CHF|€|\$|£)'
-_AMOUNT = r'\d{1,3}(?:[.,\s  ]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?'
+# FND-0279: the grouped alternative needs AT LEAST ONE thousands group (`+`, was `*`). With `*` the regex engine took the first alternative that matched, so an UNGROUPED number
+# after a prefix currency was cut at three digits ("EUR 1576" read 157, "EUR 10000" read 100); the plain `\d+` alternative now catches it.
+_AMOUNT = r'\d{1,3}(?:[.,\s  ]\d{3})+(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?'
 _EUR_TOKEN = re.compile(r'(?:' + _CURRENCY + r'\s*(' + _AMOUNT + r'))|(?:(' + _AMOUNT + r')\s*' + _CURRENCY + r')', re.IGNORECASE)
 _REBIND_LOOKAHEAD_LINES = 2          # the label's own line, then at most two more (the values of a label-first layout)
 
