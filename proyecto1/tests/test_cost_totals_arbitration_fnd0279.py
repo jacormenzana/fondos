@@ -176,3 +176,19 @@ def test_a_replacement_that_is_in_the_document_is_accepted():
 def test_total_appears_in_text(value, text, expected):
     from cost_totals_arbitration import total_appears_in_text
     assert total_appears_in_text(value, text) is expected
+
+
+@pytest.mark.parametrize("value, text, expected", [
+    # LU0617149793: the stress payout is ~170 characters after the label but FOUR lines below it -> not a total
+    (4931.0, "Costes totales 719 USD 1960 USD\nIncidencia anual de los costes (*)\n7,2% 3,0%\n412e2395-1673\nEn caso de salida después\nde 6 años\n4931 USD -50,7%", False),
+    (1960.0, "Costes totales 719 USD 1960 USD\nIncidencia anual de los costes (*)\n7,2% 3,0%", True),
+    # label-first layout: the values on the next two lines still count, the third does not
+    (719.0, "Costes totales\n719 USD\n1960 USD\n5555 USD", True),
+    (1960.0, "Costes totales\n719 USD\n1960 USD\n5555 USD", True),
+    (5555.0, "Costes totales\n719 USD\n1960 USD\n5555 USD", False),
+    # values BEFORE the label on the same line count (392,46 USD 1.162,12 USD Costes totales)
+    (1162.12, "392,46 USD 1.162,12 USD Costes totales", True),
+])
+def test_total_appears_on_the_label_line_or_the_next_two(value, text, expected):
+    from cost_totals_arbitration import total_appears_in_text
+    assert total_appears_in_text(value, text) is expected

@@ -97,7 +97,8 @@ def structural_violations(rows: Sequence[Row]) -> FrozenSet[str]:
 
 
 _NUMBER_TOKEN = re.compile(r'\d{1,3}(?:[ .,\u00a0\u202f]\d{3})+(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?')
-_LABEL_WINDOW = 260
+_LABEL_WINDOW = 260                    # characters after the label, an upper bound on top of the line rule below
+_LABEL_LOOKAHEAD_LINES = 2             # the label's own line plus at most two more (the values of a label-first layout): the window the column binding uses
 
 
 def _readings(token: str) -> List[float]:
@@ -111,9 +112,20 @@ def _readings(token: str) -> List[float]:
 
 
 def total_appears_in_text(value: float, text: str) -> bool:
-    """¿Aparece `value` tal cual en `text`, en los 260 caracteres siguientes a alguna etiqueta 'Costes totales'? (decimales y separadores de miles admitidos)."""
+    """¿Aparece `value` tal cual en `text`, en la línea de alguna etiqueta 'Costes totales' o en las dos siguientes? (decimales y separadores de miles admitidos).
+
+    FND-0279 (LU0617149793): una ventana de 260 caracteres daba por bueno el 4 931 USD del escenario de tensión, que está a ~170 caracteres de la etiqueta pero 4 líneas más
+    abajo; la ventana es ahora la misma que usa el enlace por columnas (`cost_table_parser._values_near_label`): la línea de la etiqueta (desde su inicio, porque hay
+    maquetaciones con los valores ANTES de la etiqueta) y dos más, acotada además a `_LABEL_WINDOW` caracteres tras la etiqueta por si el texto viene en una sola línea."""
     for label in _TOTAL_COSTS_LABEL.finditer(text or ''):
-        window = text[label.start(): label.start() + _LABEL_WINDOW]
+        line_start = text.rfind('\n', 0, label.start()) + 1
+        line_end = text.find('\n', label.end())
+        line_end = len(text) if line_end < 0 else line_end
+        # amounts BEFORE the label count only when the label ends its line ("392,46 USD 1.162,12 USD Costes totales"); when amounts follow the label on its line,
+        # what precedes it is a sentence ("Se invierten 10 000 EUR. Costes totales ..."), not a column of the row
+        start = label.start() if _NUMBER_TOKEN.search(text[label.end():line_end]) else line_start
+        lines = text[start:].splitlines()[:_LABEL_LOOKAHEAD_LINES + 1]
+        window = '\n'.join(lines)[: (label.start() - start) + _LABEL_WINDOW]
         for token in _NUMBER_TOKEN.findall(window):
             if any(abs(r - value) < 0.51 for r in _readings(token)):
                 return True
