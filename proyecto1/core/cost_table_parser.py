@@ -1219,6 +1219,7 @@ def _parse_costs_over_time_plain(text: str) -> List[dict]:
                         'source':         'PLAIN_GLOBAL_FALLBACK',
                     })
 
+    results = _bind_columns_by_label(text[m_hdr.start():m_hdr.start() + _LABEL_BIND_SPAN], results)
     return _rebind_duplicate_columns(window, results)
 
 
@@ -1258,6 +1259,45 @@ def _values_near_label(window: str, label: 're.Pattern', extractor) -> List[floa
         if vals:
             return vals
     return []
+
+
+_LABEL_BIND_SPAN = 6000                # how far past the section header the row labels are looked for (the window above is only 1,500)
+
+
+def _bind_columns_by_label(zone: str, results: List[dict]) -> List[dict]:
+    """The row labels are the evidence, the horizon labels are not (FND-0279, LU0617149793).
+
+    The per-horizon fragment search reads "the first amount within 200 characters after a horizon label", but a KID repeats the wording "En caso de salida
+    despues de N anos" in its SCENARIOS table, which in pdf text order comes BEFORE the costs table: the 1-year column then took the stress-scenario payout
+    (4 931 USD, with its -50,7 % read as an impact of 0,507) and the recommended-period column the "10000 USD invertidos" bullet, while the row the KID
+    labels "Costes totales 719 USD 1960 USD" was never read. PRIIPs prints one column per horizon in ascending order, so when the "Costes totales" line (and
+    the "Incidencia anual" line) carries exactly as many values as there are distinct horizons (at least two), those values ARE the columns: they replace
+    whatever the fragment search found. A line with a different number of values, totals that fall with the horizon, or impacts that rise with it leave the
+    entries untouched (the same guards as `_rebind_duplicate_columns`). `zone` starts at the section header. Mutates and returns `results`. Pure."""
+    years = sorted({e['horizon_years'] for e in results if (e.get('horizon_years') or 0) > 0})
+    n_cols = len(years)
+    if n_cols < 2:                  # one column found is not one column printed: a cell layout puts only the FIRST column's amount on the label line
+        return results              # (IE00BD8DY654: "Total Costs 666 EUR" with the 5-year amount in the next cell), so a single column is never bound
+
+    def column(e: dict) -> Optional[int]:
+        hy = e.get('horizon_years')
+        if hy is not None and hy > 0:
+            return years.index(hy)
+        return n_cols - 1 if e.get('is_rhp') else None      # the RHP column is the last one of the table
+
+    totals = _values_near_label(zone, _TOTAL_COSTS_LABEL, _extract_eur_list_from_cell)
+    acis = _values_near_label(zone, ACI_ROW, _extract_pct_list_from_cell)
+    if len(totals) == n_cols and all(a <= b for a, b in zip(totals, totals[1:])):
+        for e in results:
+            i = column(e)
+            if i is not None:
+                e['total_cost_eur'] = totals[i]
+    if len(acis) == n_cols and all(a >= b for a, b in zip(acis, acis[1:])):
+        for e in results:
+            i = column(e)
+            if i is not None:
+                e['aci_pct'] = acis[i]
+    return results
 
 
 def _rebind_duplicate_columns(window: str, results: List[dict]) -> List[dict]:
