@@ -171,7 +171,7 @@ def test_update_ols_state(pg_session_conn, pg_conn_module_schema):
         f"SELECT last_ols_quarter, last_ols_nav_count, last_ols_calc_version FROM fund_metric_state "
         f"WHERE isin='ES0001' AND metric_version='{rp.METRIC_VERSION}'"
     ).fetchone()
-    assert row == ("2026Q1", 120, rp.CALC_VERSION)
+    assert row == ("2026Q1", 120, rp._algo("macro"))             # the macro family's own token (FND-0236 / FND-0293 override)
 
     rp._update_ols_state(conn, "ES0001", "2026Q2", 999, dry_run=True)
     row2 = conn.execute(
@@ -204,10 +204,21 @@ def test_ols_is_fresh_true_when_quarter_version_and_nav_match(pg_session_conn, p
     conn = pg_session_conn
     conn.execute(f"SET search_path = {pg_conn_module_schema}")
     _make_fund_metric_state(conn)
-    _seed_ols_state(conn, calc_version=rp.CALC_VERSION)
+    _seed_ols_state(conn, calc_version=rp._algo("macro"))                # the macro family's own token
     assert rp._ols_is_fresh(conn, "ES0001", 102, "2026-4") is True      # NAV grew < 3 rows
     assert rp._ols_is_fresh(conn, "ES0001", 103, "2026-4") is False     # NAV grew >= 3 rows
     assert rp._ols_is_fresh(conn, "ES0001", 100, "2027-1") is False     # new quarter
+
+
+def test_a_fund_fitted_under_the_bare_calc_version_refits_once_the_macro_override_exists(pg_session_conn, pg_conn_module_schema):
+    """FND-0256 / FND-0293: the whole point of FAMILY_CALC_OVERRIDES['macro']. Betas fitted this quarter under the bare CALC_VERSION
+    (before the EU / JP / CN inflation series were repaired) must NOT count as fresh, or no fund would refit after the repair."""
+    conn = pg_session_conn
+    conn.execute(f"SET search_path = {pg_conn_module_schema}")
+    _make_fund_metric_state(conn)
+    assert rp._algo("macro") != rp.CALC_VERSION                          # the override is live
+    _seed_ols_state(conn, calc_version=rp.CALC_VERSION)                  # same quarter, same NAV count, old token
+    assert rp._ols_is_fresh(conn, "ES0001", 100, "2026-4") is False
 
 
 def test_ols_is_fresh_null_version_is_stale(pg_session_conn, pg_conn_module_schema):

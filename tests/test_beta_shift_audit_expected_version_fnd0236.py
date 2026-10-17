@@ -39,6 +39,9 @@ def test_switch_on_with_a_macro_override_expects_its_token(switch):
     assert audit.expected_version(CV, {"macro": "20261101"}) == f"{CV}.20261101"
 
 
-def test_default_overrides_in_the_repo_are_empty_so_the_gate_is_unchanged_today(switch):
+def test_the_gate_expects_the_repo_macro_override_token(switch):
+    """FND-0256 / FND-0293 put {"macro": "20261017"} in FAMILY_CALC_OVERRIDES: the beta gate must expect exactly the token P2 stamps."""
+    from proyecto2.src.utils.family_versions import FAMILY_CALC_OVERRIDES, family_token
     switch(True)
-    assert audit.expected_version(CV) == CV
+    assert audit.expected_version(CV) == family_token("macro", CV)
+    assert FAMILY_CALC_OVERRIDES.get("macro") and audit.expected_version(CV) == f"{CV}.{FAMILY_CALC_OVERRIDES['macro']}"
