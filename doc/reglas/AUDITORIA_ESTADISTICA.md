@@ -365,7 +365,7 @@ cierra la brecha P#11/R-1 donde `catalog_invariants.py` ya citaba un nombre
 `ROUNDING_TOLERANCE_PP` que no existía como constante real). Tres clases distintas, nunca
 conflacionadas:
 
-- **Publicación regulada** (`KID_ROUNDING_TOLERANCE_PP=0.06`) — sin cambios, ya descrito en §2.7.
+- **Publicación regulada** (`KID_ROUNDING_TOLERANCE_PP=0.06`) — sin cambios, ya descrito en §2.7. Desde 2026-10-17 también gobierna `MGMT_LE_TOTAL` y `TXN_LE_TOTAL` (FND-0280/0285): los componentes se publican con 2 decimales y el total `ACI_RHP` con 1; un `ACI_RHP` = 0 con un componente positivo (el KID declara «costes totales 0» y detalla un gasto corriente) sigue siendo una infracción real del origen.
 - **Identidad de coma flotante** (`FLOAT_IDENTITY_TOLERANCE=0.0001`) — `OC_NOT_CONTAMINATED`
   (89→89→93→190 violaciones en el barrido) y `SHARPE_EQUALS_SORTINO` (173→401→2.092→8.575
   coincidencias de 43.766 elegibles) crecen de forma monótona y sin meseta al ampliar la

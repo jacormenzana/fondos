@@ -137,9 +137,14 @@ COST_INVARIANTS: tuple[InvariantRule, ...] = (
         when="Cost_RHP_Years > 1 and Entry_Fee_Pct > 0", bound_type="HARD_INVARIANT",
         description="Entry cost must amortise",
     ),
-    InvariantRule("MGMT_LE_TOTAL", "Management_Fee_Pct <= ACI_RHP", bound_type="HARD_INVARIANT",
+    # FND-0280/0285 (2026-10-17): the components are published to 2 decimals (composition table) and the total ACI_RHP to 1 decimal
+    # (Reduction in Yield), so a component can exceed the total by up to half a unit of the coarser grid with nothing wrong. Measured over
+    # fund_master: 103 MGMT violators = 31 with ACI_RHP 0 (a KID that states "Total costs 0" while disclosing an ongoing charge), 50 within
+    # 0.10 and 36 further out; 33 TXN violators, 30 with ACI_RHP 0. The same KID_ROUNDING_TOLERANCE_PP as the cost pair rules below; the
+    # ACI_RHP = 0 funds stay flagged (a zero total contradicted by its own composition is a real source defect).
+    InvariantRule("MGMT_LE_TOTAL", f"Management_Fee_Pct <= ACI_RHP + {KID_ROUNDING_TOLERANCE_PP}", bound_type="HARD_INVARIANT",
                   description="Component exceeds total"),
-    InvariantRule("TXN_LE_TOTAL", "Transaction_Cost_Pct <= ACI_RHP", bound_type="HARD_INVARIANT",
+    InvariantRule("TXN_LE_TOTAL", f"Transaction_Cost_Pct <= ACI_RHP + {KID_ROUNDING_TOLERANCE_PP}", bound_type="HARD_INVARIANT",
                   description="Component exceeds total"),
     # KID_ROUNDING_TOLERANCE_PP (2026-09-13, AUDITORIA_ESTADISTICA.md §2.6-2.7, named constant
     # centralized in tolerances.py 2026-09-13): investigated the live 87%/45% violation rates on

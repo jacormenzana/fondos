@@ -1217,6 +1217,71 @@ def _parse_costs_over_time_plain(text: str) -> List[dict]:
                         'source':         'PLAIN_GLOBAL_FALLBACK',
                     })
 
+    return _rebind_duplicate_columns(window, results)
+
+
+# FIX-COST-COLUMN-BIND (2026-10-17, FND-0278 family): in plain text a multi-column row is ONE line ("Total costs €914 €1,560" /
+# "10.6% 3.8% each year", or the values BEFORE the label: "392,46 USD 1.162,12 USD Costes totales"). The per-horizon fragment search above
+# reads the first value after each horizon label, so every column took the first value: the 1-year total and annual impact were stored at
+# the RHP row too (audit: TOTAL_COSTS_*_CONSTANT_ACROSS_HORIZONS 335 funds, ANNUAL_EQUALS_TOTAL_AT_1Y 265, ANNUAL_LE_ACCUMULATED 223; of 1,304
+# cached KIDs with identical totals across explicit horizons the rebinding fixes 1,016). PRIIPs prints the columns in ascending horizon order.
+_TOTAL_COSTS_LABEL = re.compile(
+    r'total\s+costs?|costes?\s+totales?|co[uû]ts?\s+totaux|gesamtkosten|costi\s+totali', re.IGNORECASE)
+_CURRENCY = r'(?:EUR|USD|GBP|CHF|€|\$|£)'
+_AMOUNT = r'\d{1,3}(?:[.,\s  ]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?'
+_EUR_TOKEN = re.compile(r'(?:' + _CURRENCY + r'\s*(' + _AMOUNT + r'))|(?:(' + _AMOUNT + r')\s*' + _CURRENCY + r')', re.IGNORECASE)
+_REBIND_LOOKAHEAD_LINES = 2          # the label's own line, then at most two more (the values of a label-first layout)
+
+
+def _extract_eur_list_from_cell(cell: str) -> List[float]:
+    """Every currency-marked amount of `cell`, in order of appearance ("€914 €1,560" -> [914.0, 1560.0])."""
+    out: List[float] = []
+    for m in _EUR_TOKEN.finditer(cell):
+        v = _normalize_amount(m.group(1) or m.group(2))
+        if v is not None:
+            out.append(v)
+    return out
+
+
+def _values_near_label(window: str, label: 're.Pattern', extractor) -> List[float]:
+    """The values `extractor` finds on the label's own line or, failing that, on the next lines (first line that has any)."""
+    m = label.search(window)
+    if not m:
+        return []
+    lines = window[window.rfind('\n', 0, m.start()) + 1:].splitlines()[:_REBIND_LOOKAHEAD_LINES + 1]
+    for ln in lines:
+        vals = extractor(ln)
+        if vals:
+            return vals
+    return []
+
+
+def _rebind_duplicate_columns(window: str, results: List[dict]) -> List[dict]:
+    """When two or more explicit-horizon entries carry the SAME (total, aci) -- each column took the first value of a one-line multi-column
+    row -- bind the k values of the total-costs line and of the annual-impact line to the k horizons by position (ascending horizon order).
+    Acts only when the line carries EXACTLY k values, the cumulative totals do not decrease and the annual impacts do not increase with the
+    horizon; otherwise the entries are left as parsed. Mutates and returns `results`. Pure."""
+    cols = [e for e in results if not e.get('is_rhp') and (e.get('horizon_years') or 0) > 0]
+    if len(cols) < 2:
+        return results
+    sig = (cols[0].get('total_cost_eur'), cols[0].get('aci_pct'))
+    dup = sorted((e for e in cols if (e.get('total_cost_eur'), e.get('aci_pct')) == sig), key=lambda e: e['horizon_years'])
+    if len(dup) < 2 or sig == (None, None):
+        return results
+    k = len(dup)
+    totals = _values_near_label(window, _TOTAL_COSTS_LABEL, _extract_eur_list_from_cell) if sig[0] is not None else []
+    acis = _values_near_label(window, ACI_ROW, _extract_pct_list_from_cell) if sig[1] is not None else []
+    rhp_dup = [e for e in results if e.get('is_rhp') and (e.get('total_cost_eur'), e.get('aci_pct')) == sig]
+    if len(totals) == k and all(a <= b for a, b in zip(totals, totals[1:])):
+        for e, v in zip(dup, totals):
+            e['total_cost_eur'] = v
+        for e in rhp_dup:                        # the RHP column is the last one of the table: it takes the longest horizon's value
+            e['total_cost_eur'] = totals[-1]
+    if len(acis) == k and all(a >= b for a, b in zip(acis, acis[1:])):       # the annual impact amortises (ACI_RHP <= ACI_1Y, a hard invariant)
+        for e, v in zip(dup, acis):
+            e['aci_pct'] = v
+        for e in rhp_dup:
+            e['aci_pct'] = acis[-1]
     return results
 
 
