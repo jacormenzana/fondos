@@ -60,6 +60,12 @@ FLAG_FAMILIES: dict = {
 }
 
 
+# Families whose values are measured against the fund's PEER GROUP (same Fund_Nature): momentum rank, capture benchmark, persistence
+# peers. Their hash carries the fund's nature (FND-0292), so a reclassified fund recomputes them even though its NAV did not change.
+# A test asserts this equals the registry families flagged requires_fund_nature in run_pipeline.
+PEER_GROUP_FAMILIES: tuple = ("momentum", "capture", "persistence")
+
+
 def flag_families(flag: str) -> tuple:
     """The families `flag` changes, always as a tuple (a flag may map to one family or several)."""
     value = FLAG_FAMILIES.get(flag, ())
@@ -80,18 +86,22 @@ def family_flags(family: str, flags_on: Iterable[str]) -> str:
 
 
 def family_hash(data_fp: str, metric_version: str, family: str, calc_version: str,
-                flags_on: Iterable[str] = (), overrides: Mapping | None = None) -> str:
-    """SHA-1 over data + metric version + family token + the family's own enabled flags."""
+                flags_on: Iterable[str] = (), overrides: Mapping | None = None, peer_key: str | None = None) -> str:
+    """SHA-1 over data + metric version + family token + the family's own enabled flags, and for a PEER_GROUP_FAMILIES
+    family the fund's peer key (its Fund_Nature). Without a peer key (None / '') the string is the pre-FND-0292 one."""
     raw = (f"{data_fp}||{metric_version}||{family_token(family, calc_version, overrides)}"
            f"||{family}||{family_flags(family, flags_on)}")
+    if peer_key and family in PEER_GROUP_FAMILIES:
+        raw += f"||peer={peer_key}"
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()
 
 
 def current_family_hashes(data_fp: str, metric_version: str, calc_version: str,
-                          flags_on: Iterable[str] = (), overrides: Mapping | None = None) -> dict:
-    """{family: hash} for all nine families, for one fund's current data state."""
+                          flags_on: Iterable[str] = (), overrides: Mapping | None = None,
+                          peer_key: str | None = None) -> dict:
+    """{family: hash} for all nine families, for one fund's current data state (and peer key, see family_hash)."""
     flags_on = tuple(flags_on)
-    return {f: family_hash(data_fp, metric_version, f, calc_version, flags_on, overrides) for f in ALL_FAMILIES}
+    return {f: family_hash(data_fp, metric_version, f, calc_version, flags_on, overrides, peer_key) for f in ALL_FAMILIES}
 
 
 def composite_hash(family_hashes: Mapping) -> str:

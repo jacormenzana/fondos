@@ -110,6 +110,43 @@ def test_hashes_are_deterministic_and_distinct_per_family():
     assert len(set(a.values())) == len(fv.ALL_FAMILIES)
 
 
+# ---------------------------------------------------------------- FND-0292: the peer group is part of the peer families' input
+def _peer_hashes(nature):
+    fp = data_fingerprint(_nav(), _ipc())
+    return fv.current_family_hashes(fp, MV, CV, FLAGS, None, peer_key=nature)
+
+
+def test_a_nature_change_stales_exactly_the_peer_group_families():
+    before, after = _peer_hashes("Mixtos"), _peer_hashes("Renta Variable")
+    assert [f for f in fv.ALL_FAMILIES if before[f] != after[f]] == list(fv.PEER_GROUP_FAMILIES)
+
+
+def test_a_reclassified_fund_with_unchanged_nav_is_not_a_cache_hit_for_its_peer_families():
+    stored, cur = _peer_hashes("Mixtos"), _peer_hashes("Renta Variable")
+    d = fv.decide_fund(ALL, stored, cur)
+    assert d.run == frozenset(fv.PEER_GROUP_FAMILIES) and not d.cache_hit
+
+
+def test_same_nature_is_a_cache_hit():
+    cur = _peer_hashes("Mixtos")
+    assert fv.decide_fund(ALL, dict(cur), _peer_hashes("Mixtos")).cache_hit
+
+
+@pytest.mark.parametrize("peer_key", [None, ""])
+def test_no_peer_key_keeps_the_pre_fnd0292_hashes(peer_key):
+    fp = data_fingerprint(_nav(), _ipc())
+    assert fv.current_family_hashes(fp, MV, CV, FLAGS, None, peer_key=peer_key) == _hashes()
+
+
+def test_peer_group_families_match_the_registry_families_that_need_a_nature():
+    import re
+    src = (Path(__file__).resolve().parents[2] / "src" / "pipeline" / "run_pipeline.py").read_text(encoding="utf-8")
+    block = src[src.index("_PER_FUND_METRIC_FAMILIES: list"):src.index("def _run_metric_family")]
+    needing = [m.group(1) for m in re.finditer(r'MetricFamilySpec\(\s*"(\w+)".*?(?=MetricFamilySpec\(|\Z)', block, re.S)
+               if "requires_fund_nature=True" in m.group(0)]
+    assert sorted(needing) == sorted(fv.PEER_GROUP_FAMILIES)
+
+
 def test_composite_hash_changes_iff_a_family_hash_changes():
     base = _hashes()
     assert fv.composite_hash(base) == fv.composite_hash(dict(base))

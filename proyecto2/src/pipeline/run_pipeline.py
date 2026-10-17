@@ -1338,8 +1338,11 @@ def run(
                 _fam_cur: dict = {}
                 _fam_stored: dict = {}
                 if _fam_on:
+                    # FND-0292: the peer-group families also depend on the fund's Fund_Nature (its peers), not only on its NAV.
+                    _nat_row = conn.execute("SELECT Fund_Nature FROM fund_master WHERE ISIN=%s", (isin,)).fetchone()
                     _fam_cur = current_family_hashes(
-                        data_fingerprint(nav_df, ipc_df), METRIC_VERSION, CALC_VERSION, _enabled_bundle_flags()
+                        data_fingerprint(nav_df, ipc_df), METRIC_VERSION, CALC_VERSION, _enabled_bundle_flags(),
+                        peer_key=_nat_row[0] if _nat_row else None,
                     )
                     _fam_stored = _get_family_hashes(conn, isin)
                     _fam_dec = decide_fund(
