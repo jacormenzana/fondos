@@ -23,12 +23,16 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any, Iterable, Mapping, Optional
 
+from shared.statistical_audit import criticality as _crit
+
 # The defect classes. `rule_class` is what the detector asserts; BLOCK2 are the scalar-vs-timeseries / deflation identities
 # (a wrong number that every consumer reads); TIMESERIES_DUPLICATE is a corrupt append-only series. FND-0175: BLOCK4 outliers
 # (OUTLIER_MAD_Z / ALARM) are review items, not defects -- on the full population they number in the thousands.
-BLOCKING_RULE_CLASSES = frozenset({"HARD_INVARIANT"})
-BLOCKING_BLOCKS = frozenset({"BLOCK2"})
-BLOCKING_RULE_IDS = frozenset({"TIMESERIES_DUPLICATE"})
+# FND-0262: the sets below are VIEWS of the criticality model (shared/statistical_audit/criticality.py owns the data). BLOCK2 is a defect
+# block in the P2 domain only (its cost-domain BLOCK2 are population-level coincidence detectors, MINOR): see criticality.py.
+BLOCKING_RULE_CLASSES = _crit.CRITICAL_RULE_CLASSES
+BLOCKING_BLOCKS = _crit.critical_blocks()
+BLOCKING_RULE_IDS = _crit.CRITICAL_RULE_IDS
 
 HELD_OUT_RULE_ID = "SNAPSHOT_HELD_OUT"          # run_statistical_audit._emit_snapshot_held_out_finding
 # A run scoped with --isin always ends in this suffix (run_statistical_audit._resolve_run_id) and is never promotion evidence: a 40-ISIN
@@ -39,9 +43,10 @@ COVERAGE_OK = "OK"
 COVERAGE_UNKNOWN = "UNKNOWN"                    # the persisted detail disagrees with its own count: re-run the audit
 
 
-def is_blocking(rule_class: Optional[str], block: Optional[str], rule_id: Optional[str]) -> bool:
-    """True for a finding that is a DEFECT (blocks `--mode check`; blocks a promotion when it touches the scenario)."""
-    return (rule_class in BLOCKING_RULE_CLASSES) or (block in BLOCKING_BLOCKS) or (rule_id in BLOCKING_RULE_IDS)
+def is_blocking(rule_class: Optional[str], block: Optional[str], rule_id: Optional[str], domain: Optional[str] = None) -> bool:
+    """True for a finding that is a DEFECT, i.e. CRITICAL in the criticality model (blocks `--mode check`; blocks a promotion when it
+    touches the scenario). `domain` (p2_metrics / cost_attributes) decides what a block means; None = the legacy domain-agnostic view."""
+    return _crit.is_critical(domain, rule_class, block, rule_id)
 
 
 @dataclass(frozen=True)
@@ -78,7 +83,8 @@ class AuditScope:
 
 
 def scope_findings(findings: Iterable[Mapping[str, Any]], finding_isins: Mapping[tuple, Iterable[str]], scenario_isins: Iterable[str],
-                   accepted: Mapping[str, Mapping[str, tuple]], *, run_id: Optional[str] = None, run_ts: Optional[datetime] = None) -> AuditScope:
+                   accepted: Mapping[str, Mapping[str, tuple]], *, run_id: Optional[str] = None, run_ts: Optional[datetime] = None,
+                   domain: Optional[str] = None) -> AuditScope:
     """Pure. `findings`: persisted audit_finding rows (rule_id, rule_class, block, group_key, isin, evidence); `finding_isins`:
     {(rule_id, group_key): {isin}} from audit_finding_isin; `accepted`: ACTIVE acceptances {rule_id: {isin: (ap_id, expires_at)}}."""
     scenario = frozenset(scenario_isins)
@@ -91,7 +97,7 @@ def scope_findings(findings: Iterable[Mapping[str, Any]], finding_isins: Mapping
 
     for f in findings:
         rule_id, group_key = f.get("rule_id"), f.get("group_key") or f.get("rule_id")
-        if not is_blocking(f.get("rule_class"), f.get("block"), rule_id):
+        if not is_blocking(f.get("rule_class"), f.get("block"), rule_id, domain):
             continue
         isins = {f["isin"]} if f.get("isin") else set(finding_isins.get((rule_id, group_key), ()))
         evidence = str(f.get("evidence") or "")
@@ -185,7 +191,7 @@ def scope_for_run(conn, domain: str, run_id: str, run_ts, scenario_isins: Iterab
                 "SELECT rule_id, group_key, isin FROM audit_finding_isin WHERE run_id = %s AND domain = %s", (run_id, domain)).fetchall():
             finding_isins.setdefault((rule_id, group_key), set()).add(isin)
 
-    scope = scope_findings(findings, finding_isins, scenario, accepted, run_id=run_id, run_ts=run_ts)
+    scope = scope_findings(findings, finding_isins, scenario, accepted, run_id=run_id, run_ts=run_ts, domain=domain)
     scope.isin_detail_available = detail_ok
 
     held = next((f for f in findings if f["rule_id"] == HELD_OUT_RULE_ID), None)

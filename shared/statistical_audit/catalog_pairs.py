@@ -9,7 +9,9 @@ from itertools import combinations
 import pandas as pd
 
 from .comparisons import PairRule
-from .tolerances import FLOAT_IDENTITY_TOLERANCE, IPC_ELIGIBILITY_FLOOR, RATIO_ELIGIBILITY_FLOOR
+from .tolerances import (
+    COST_PAIR_TOLERANCE_PP, FLOAT_IDENTITY_TOLERANCE, IPC_ELIGIBILITY_FLOOR, RATIO_ELIGIBILITY_FLOOR, SCALAR_TIMESERIES_TOLERANCE,
+)
 
 
 def _ipc_eligibility(df: pd.DataFrame) -> pd.Series:
@@ -86,8 +88,10 @@ P2_PAIRS: dict[str, PairRule] = {
     # (run_pipeline.py + CALC_VERSION bump, §2.9). This rule's tolerance stays
     # at its prior value on purpose: fixing the cause, not widening the
     # number, is the correct resolution once a real cause is identified.
+    # RESOLVED 2026-10-16 (FND-0262, D5): after the FND-0253 full recompute both causes are gone and the largest divergence over 25
+    # (metric, window) combinations is 1.4e-12; the constant is tolerances.SCALAR_TIMESERIES_TOLERANCE (see its justification).
     "SCALAR_EQUALS_TIMESERIES": PairRule(
-        rule_id="SCALAR_EQUALS_TIMESERIES", tolerance=0.0001, min_matches=8,
+        rule_id="SCALAR_EQUALS_TIMESERIES", tolerance=SCALAR_TIMESERIES_TOLERANCE, min_matches=8,
         diagnosis="Snapshot/timeseries divergence (write-path inconsistency)",
     ),
 }
@@ -119,7 +123,7 @@ def _build_cost_pairs() -> dict[str, PairRule]:
     for left, right in combinations(_COST_PERCENT_COLUMNS, 2):
         rule_id = f"{left}__EQUALS__{right}"
         pairs[rule_id] = PairRule(
-            rule_id=rule_id, tolerance=0.005, min_matches=8,
+            rule_id=rule_id, tolerance=COST_PAIR_TOLERANCE_PP, min_matches=8,
             eligibility=_positive_left(left),
             diagnosis=f"{left} and {right} hold the same value — binding failure",
         )

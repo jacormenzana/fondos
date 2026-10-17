@@ -32,13 +32,9 @@ sweep/decision before touching):
     would be a coincidence-driven rename, not a justified one.
   - (CAPTURE_UP_EQUALS_DOWN was here until 2026-10-07: measured, it is a float-identity
     comparison like the others and now uses FLOAT_IDENTITY_TOLERANCE -- see catalog_pairs.py.)
-  - SCALAR_EQUALS_TIMESERIES (catalog_pairs.py) is NOT resolved by any
-    single absolute constant — see the module docstring in catalog_pairs.py
-    and AUDITORIA_ESTADISTICA.md §2.7 for the sweep showing per-metric
-    divergence rates that never converge to a shared floor (sharpe still
-    diverges on 82% of rows at tolerance=0.10). Left at its prior value,
-    flagged as an open architectural question (relative vs. absolute
-    tolerance), not silently "fixed" with an unjustified number.
+  - (SCALAR_EQUALS_TIMESERIES was here until 2026-10-16: it could not be resolved by any single absolute constant while the two tables
+    disagreed because of NAV staleness and a formula asymmetry (AUDITORIA_ESTADISTICA.md §2.7/§2.9). Both were fixed at the cause; the
+    measurement after the full recompute is under SCALAR_TIMESERIES_TOLERANCE below, decision D5: absolute, no relative tolerance.)
 """
 from __future__ import annotations
 
@@ -90,3 +86,22 @@ IPC_ELIGIBILITY_FLOOR = 0.001
 # 2.5% risk-free rate). 0.01 = a numerator of about 0.1 pp of annual return at 10% volatility: below it the ratio is
 # numerically indistinguishable from zero.
 RATIO_ELIGIBILITY_FLOOR = 0.01
+
+# --- Class 1b: published precision of a cost percentage compared with another one (FND-0262) ---
+# The cost columns of the X__EQUALS__Y pairs (fees, ACI) are percentages the KID publishes with 2 decimals, so two components "hold the
+# same value" when they agree within HALF a unit of that last published decimal: 0.005 percentage points. Same class as
+# KID_ROUNDING_TOLERANCE_PP (regulator-rounded values), a different grid (2 decimals, not the 1-decimal Reduction in Yield). The pairs are
+# population-level coincidence detectors (MINOR in the criticality model), so a tolerance one decimal wider or narrower moves a count,
+# never a gate; it was not re-swept in FND-0262.
+COST_PAIR_TOLERANCE_PP = 0.005
+
+# --- Class 2b: scalar vs latest timeseries snapshot (SCALAR_EQUALS_TIMESERIES, FND-0262, decision D5) ---
+# The scalar in fund_metrics and the latest fund_metric_timeseries row come from two write paths over the SAME series, so after a
+# consistent recompute they are the same float. Measured 2026-10-16 on the persisted universe after the FND-0253 full recompute
+# (audit_20261012T201920Z data; 25 combinations of vol_ann / max_dd / return_ann / sharpe / sortino x rolling_1y..10y, 5,612-5,738 funds
+# each): the largest absolute divergence is 1.4e-12 (sharpe rolling_1y), and ZERO funds diverge beyond 1e-6, in every family, at any
+# relative tolerance from 0.1% to 5%. The 2026-09-13 divergences (50-97% of rows, never converging under any rtol up to 0.30) were NAV
+# staleness between the two tables plus the flat-vs-date-aligned risk-free asymmetry, both fixed at the cause (AUDITORIA_ESTADISTICA 2.9).
+# So no metric family needs a relative tolerance (D5): the class-2 float-identity constant keeps eight orders of magnitude of margin, and
+# a looser tolerance would only hide a stale snapshot, which is exactly what the rule exists to detect.
+SCALAR_TIMESERIES_TOLERANCE = FLOAT_IDENTITY_TOLERANCE

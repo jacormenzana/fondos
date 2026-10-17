@@ -100,6 +100,12 @@ def evaluate_freshness(
     return checks
 
 
+def uniformity_check(versions: list, min_share: float) -> FreshnessCheck:
+    """Public name of the CALC_VERSION uniformity rule: the statistical audit's ALGORITHM_VERSION_UNIFORMITY (FND-0262) applies the SAME
+    rule and threshold as this freshness gate (P#11)."""
+    return _uniformity_check(versions, min_share)
+
+
 def _uniformity_check(versions: list, min_share: float) -> FreshnessCheck:
     """Metrics computed under different CALC_VERSIONs are not comparable (peer percentiles, momentum
     rank and the P3 score mix them), so require that nearly every active fund sits on ONE version.

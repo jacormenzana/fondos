@@ -169,7 +169,9 @@ CONTROLS = (
             "findings of rule class HARD_INVARIANT (a value outside a hard bound, a violated cross-column identity) are defects",
             BLOCK, SOURCE_RULE_CLASS + "HARD_INVARIANT", STATUS_ENFORCED),
     Control("D-IDENTITY", PILLAR_DATA, "Scalar and time-series values agree", _OWNER_AUDIT,
-            "findings of block BLOCK2 (scalar-vs-timeseries and deflation identities) are defects: every consumer reads a wrong number",
+            "findings of block BLOCK2 in the P2 domain (scalar-vs-timeseries, real-vs-nominal, Sharpe-vs-Sortino, capture identities) are "
+            "defects: every consumer reads a wrong number; the cost-domain BLOCK2 'X__EQUALS__Y' coincidence pairs are MINOR "
+            "(shared/statistical_audit/criticality.py, FND-0262)",
             BLOCK, SOURCE_BLOCK + "BLOCK2", STATUS_ENFORCED),
     Control("D-TS-DUP", PILLAR_DATA, "Append-only series are not duplicated", _OWNER_AUDIT,
             "TIMESERIES_DUPLICATE findings are defects: a corrupt append-only series",

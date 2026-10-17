@@ -54,6 +54,7 @@ CHECKS = {
     "GROUP_INVARIANT": True,               # group-level invariants (columns the rule needs)
     "INVARIANT": True,                     # row-level invariants (columns the rule needs)
     "ACCEPTED_RESIDUALS": True,            # control.audit_accepted_finding readable
+    "ALGORITHM_VERSION_UNIFORMITY": True,  # BLOCK6 share of active funds on one CALC_VERSION (FND-0262, D4)
     "ALERT_RECONCILIATION": False,         # suppression of findings the alert engine already raised: optional by design
     "PEER_SEGMENT": False,                 # peer segments below MIN_PEERS
     "OUTLIER": False,                      # an outlier method without enough values
@@ -91,12 +92,13 @@ def missing(skips: Iterable[Skip], scope: str) -> list:
     return [s for s in skips if resolve(s, scope) == RESOLVED_MISSING]
 
 
-def run_status(skips: Iterable[Skip], findings: Iterable[Mapping[str, Any]], scope: str) -> str:
-    """INCOMPLETE > FAIL > PASS_WITH_WARNINGS > PASS (shared.governance.controls.STATES order)."""
+def run_status(skips: Iterable[Skip], findings: Iterable[Mapping[str, Any]], scope: str, domain: Optional[str] = None) -> str:
+    """INCOMPLETE > FAIL > PASS_WITH_WARNINGS > PASS (shared.governance.controls.STATES order). FAIL = a CRITICAL finding in `domain`
+    (shared/statistical_audit/criticality.py; None = the legacy domain-agnostic view)."""
     if missing(skips, scope):
         return STATE_INCOMPLETE
     findings = list(findings)
-    if any(is_blocking(f.get("rule_class"), f.get("block"), f.get("rule_id")) for f in findings):
+    if any(is_blocking(f.get("rule_class"), f.get("block"), f.get("rule_id"), domain) for f in findings):
         return STATE_FAIL
     if any(f.get("severity") in ("WARN", "ALARM") for f in findings):
         return STATE_PASS_WITH_WARNINGS

@@ -127,7 +127,7 @@ import pandas as pd
 
 from shared.config import (
     AUDIT_COMPLETENESS_CONTRACT_ENABLED, AUDIT_RESIDUAL_EXPIRY_WARN_DAYS, CRISIS_WINDOWS, MIN_NAV_ROWS, P3_FUND_NAV_MAX_AGE_DAYS,
-    ROLLING_WINDOWS,
+    P3_MIN_UNIFORM_METRICS_SHARE, ROLLING_WINDOWS,
 )
 from shared.db import get_connection
 from shared.eur_nav import apply_eur_view_frame   # FND-0243: audit the NAV P2 computed on
@@ -731,6 +731,8 @@ def _run_timeseries_integrity(
                     "distance": float(n_dup_series),
                     "evidence": f"{n_dup_series} (isin,real_flag) series have n_rows > n_distinct_dates "
                                 f"-- the PK should make this impossible",
+                    # FND-0262: a CRITICAL finding names its funds, or the promotion gate must assume it touches every scenario
+                    "violating_isins": tuple(sorted({row[0] for row in rows if row[5] > row[4]})),
                     "root_cause_candidate": "Schema/migration defect, not a calculation issue",
                 })
 
@@ -738,12 +740,14 @@ def _run_timeseries_integrity(
             n_gap_months = 0
             n_null_batch_total = 0
             n_below_min_obs_total = 0
+            gap_isins: set = set()
             for _isin, _rf, min_d, max_d, n_dates, _n_rows, n_null_batch, n_below_min_obs in rows:
                 expected = _month_span(min_d, max_d)
                 gap = expected - n_dates
                 if gap > 0:
                     n_series_with_gaps += 1
                     n_gap_months += gap
+                    gap_isins.add(_isin)
                 n_null_batch_total += n_null_batch
                 n_below_min_obs_total += n_below_min_obs
             if n_series_with_gaps:
@@ -755,6 +759,7 @@ def _run_timeseries_integrity(
                     "evidence": f"{n_gap_months} missing months across {n_series_with_gaps}/{len(rows)} "
                                 f"series (within each series' own [min,max] history -- "
                                 f"not vs. a universe calendar)",
+                    "violating_isins": tuple(sorted(gap_isins)),     # FND-0262 / FND-0173: the triage needs the funds, not a count
                     "root_cause_candidate": "Skipped month in a fund's own rolling-metric "
                                              "history (a genuine hole, not a short/new fund)",
                 })
@@ -986,6 +991,37 @@ def _run_orphaned_asset_check(
         })
 
 
+def _run_algorithm_version_uniformity(run: "AuditRun", conn, isins=None, loader=None) -> None:
+    """ALGORITHM_VERSION_UNIFORMITY (FND-0262, decision D4 'algorithm drift'): at least P3_MIN_UNIFORM_METRICS_SHARE of the active funds
+    carry their metrics on ONE CALC_VERSION -- metrics of different versions are not comparable (peer percentiles, momentum rank, the P3
+    score mix them). The SAME rule and threshold as the P3 freshness gate (proyecto3/src/data_freshness.uniformity_check, P#11), read by
+    the same loader. MAJOR (PLAUSIBILITY): the freshness gate already refuses a build on it; the audit records it with the run.
+    Universe-level, so a --isin sample run does not evaluate it. `loader` is injectable for the tests."""
+    if isins:
+        run.skip("ALGORITHM_VERSION_UNIFORMITY", KIND_NOT_APPLICABLE,
+                 "BLOCK6 ALGORITHM_VERSION_UNIFORMITY: a universe-level check, not evaluated on an --isin sample")
+        return
+    from proyecto3.src.data_freshness import load_freshness_inputs, uniformity_check
+    try:
+        _nav, _harvest, versions = (loader or load_freshness_inputs)(conn)
+    except Exception as exc:                                     # noqa: BLE001 -- an unreadable input is a missing check, not a pass
+        conn.rollback()
+        run.skip("ALGORITHM_VERSION_UNIFORMITY", KIND_MISSING,
+                 f"BLOCK6 ALGORITHM_VERSION_UNIFORMITY: metric versions not readable ({type(exc).__name__})")
+        return
+    if not [v for v in versions if v is not None]:
+        run.skip("ALGORITHM_VERSION_UNIFORMITY", KIND_EMPTY, "BLOCK6 ALGORITHM_VERSION_UNIFORMITY: no return_ann metrics for the active universe")
+        return
+    check = uniformity_check(list(versions), P3_MIN_UNIFORM_METRICS_SHARE)
+    if not check.ok:
+        run.findings.append({
+            "block": "BLOCK6", "rule_id": "ALGORITHM_VERSION_UNIFORMITY", "rule_class": "PLAUSIBILITY", "severity": "WARN",
+            "group_key": "metrics_calc_version", "value": None, "reference_value": P3_MIN_UNIFORM_METRICS_SHARE,
+            "threshold": P3_MIN_UNIFORM_METRICS_SHARE, "distance": None, "evidence": check.detail,
+            "root_cause_candidate": "Partial refresh after a CALC_VERSION bump (or funds frozen out of the last recompute)",
+        })
+
+
 def _run_beta_orphan_check(run: "AuditRun", long_df: pd.DataFrame) -> None:
     """Block 6 (P2, B2/FND-0124, 2026-09-28): flags beta_* rows whose batch_id is not internally
     consistent -- either the beta_* group itself spans more than one batch_id for the same
@@ -1011,13 +1047,17 @@ def _run_beta_orphan_check(run: "AuditRun", long_df: pd.DataFrame) -> None:
         run.skip("BETA_ORPHAN_BATCH", KIND_EMPTY, "BLOCK6 BETA_ORPHAN_BATCH: no beta_* rows in this population")
         return
 
-    n_internal = int((beta.groupby(join_keys)["batch_id"].nunique(dropna=False) > 1).sum())
+    split = beta.groupby(join_keys)["batch_id"].nunique(dropna=False) > 1
+    n_internal = int(split.sum())
 
     macro_r2 = long_df[long_df["metric"] == "macro_r2"][join_keys + ["batch_id"]].rename(
         columns={"batch_id": "macro_r2_batch_id"})
     beta_batch = beta.groupby(join_keys)["batch_id"].first().reset_index()
     cross = beta_batch.merge(macro_r2, on=join_keys, how="inner")
-    n_cross = int((cross["batch_id"] != cross["macro_r2_batch_id"]).sum())
+    diverging = cross["batch_id"] != cross["macro_r2_batch_id"]
+    n_cross = int(diverging.sum())
+    # FND-0262: a CRITICAL finding names its funds (the promotion gate places it on, or off, the scenario)
+    orphan_isins = tuple(sorted(set(split[split].index.get_level_values("isin")) | set(cross.loc[diverging, "isin"])))
 
     n_total = n_internal + n_cross
     if n_total:
@@ -1030,9 +1070,33 @@ def _run_beta_orphan_check(run: "AuditRun", long_df: pd.DataFrame) -> None:
                         f"more than one batch_id; {n_cross} groups have a beta_* batch_id diverging from "
                         f"macro_r2's -- replace_beta_set() writes both atomically, so this is structurally "
                         f"impossible for a healthy write",
+            "violating_isins": orphan_isins,
             "root_cause_candidate": "Interrupted/partial OLS write, or beta_* rows surviving from a "
                                      "superseded run",
         })
+
+
+def _scalar_vs_timeseries_finding(metric: str, window: str, merged: pd.DataFrame) -> "dict | None":
+    """The SCALAR_EQUALS_TIMESERIES_<metric>_<window> finding for one (metric, window), or None. `merged` holds `scalar_value` (fund_metrics)
+    and `ts_value` (latest fund_metric_timeseries snapshot) per fund. Some divergence is expected from ordinary calc-timing lag between the
+    two write paths (fund_metrics is replaced fresh each run; fund_metric_timeseries is append-only per new date), so the finding needs the
+    same n >= min_matches significance as the rest of the catalogue, not a zero-tolerance count. Pure (extracted for its cases, FND-0262)."""
+    rule_id = f"SCALAR_EQUALS_TIMESERIES_{metric}_{window}"
+    rule = replace(P2_PAIRS["SCALAR_EQUALS_TIMESERIES"], rule_id=rule_id)
+    result = compare_pairs(merged, "scalar_value", "ts_value", rule)
+    n_divergent = result.n_eligible - result.n_matches
+    if n_divergent < rule.min_matches:
+        return None
+    return {
+        "block": "BLOCK2", "rule_id": rule_id, "rule_class": "STATISTICAL_ANOMALY",
+        "severity": "WARN", "group_key": f"{metric}|{window}",
+        "value": None, "reference_value": None, "threshold": rule.tolerance,
+        "distance": float(n_divergent),
+        "evidence": f"{n_divergent}/{result.n_eligible} funds diverge between "
+                    f"fund_metrics scalar and latest fund_metric_timeseries snapshot",
+        "violating_isins": _isins_of(result.unmatched_rows),
+        "root_cause_candidate": P2_PAIRS["SCALAR_EQUALS_TIMESERIES"].diagnosis,
+    }
 
 
 def _emit_snapshot_held_out_finding(run: "AuditRun") -> None:
@@ -1286,30 +1350,13 @@ def run_p2_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = None)
             if merged.empty:
                 run.skip("SCALAR_EQUALS_TIMESERIES", KIND_EMPTY, f"BLOCK2 SCALAR_EQUALS_TIMESERIES {metric}/{window}: no overlapping rows")
                 continue
-            rule_id = f"SCALAR_EQUALS_TIMESERIES_{metric}_{window}"
-            rule = replace(P2_PAIRS["SCALAR_EQUALS_TIMESERIES"], rule_id=rule_id)
-            merged = merged.rename(columns={"value": "scalar_value"})
-            result = compare_pairs(merged, "scalar_value", "ts_value", rule)
-            # Some divergence is expected from ordinary calc-timing lag between
-            # the two write paths (fund_metrics is INSERT OR REPLACE'd fresh
-            # each run; fund_metric_timeseries is INSERT OR IGNORE, append-only
-            # per new date) — gate on the same n>=8 significance convention
-            # used throughout this catalog, not a zero-tolerance count.
-            n_divergent = result.n_eligible - result.n_matches
-            if n_divergent >= rule.min_matches:
-                run.findings.append({
-                    "block": "BLOCK2", "rule_id": rule_id, "rule_class": "STATISTICAL_ANOMALY",
-                    "severity": "WARN", "group_key": f"{metric}|{window}",
-                    "value": None, "reference_value": None, "threshold": rule.tolerance,
-                    "distance": float(n_divergent),
-                    "evidence": f"{n_divergent}/{result.n_eligible} funds diverge between "
-                                f"fund_metrics scalar and latest fund_metric_timeseries snapshot",
-                    "violating_isins": _isins_of(result.unmatched_rows),
-                    "root_cause_candidate": P2_PAIRS["SCALAR_EQUALS_TIMESERIES"].diagnosis,
-                })
+            finding = _scalar_vs_timeseries_finding(metric, window, merged.rename(columns={"value": "scalar_value"}))
+            if finding is not None:
+                run.findings.append(finding)
 
     _emit_snapshot_held_out_finding(run)
     _run_timeseries_integrity(run, conn, isins=isins)
+    _run_algorithm_version_uniformity(run, conn, isins=isins)
     _run_beta_orphan_check(run, long_df)
 
     wide_for_invariants = _pivot_all_metrics(long_df)
@@ -1347,9 +1394,10 @@ def run_p2_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = None)
 def _isins_of(rows) -> tuple:
     """Sorted distinct ISINs of a result frame. FND-0251: a BLOCK2 finding that names its funds is scoped to a portfolio by the
     promotion gate (shared.statistical_audit.gating); one that does not is assumed to touch every portfolio."""
-    if rows is None or len(rows) == 0 or "isin" not in rows.columns:
+    column = _isin_column(rows) if rows is not None else None       # cost frames name it ISIN, P2 frames isin (FND-0262)
+    if column is None or len(rows) == 0:
         return ()
-    return tuple(sorted(rows["isin"].dropna().astype(str).unique().tolist()))
+    return tuple(sorted(rows[column].dropna().astype(str).unique().tolist()))
 
 
 def _pivot_two_metrics(long_df: pd.DataFrame, metric_a: str, metric_b: str) -> pd.DataFrame:
@@ -1492,6 +1540,7 @@ def _block7(
         "distance": float(result.n_breaches),
         "evidence": f"{result.n_breaches} rows outside [{rule.min_value}, {rule.max_value}]"
                     + (f"; {result.n_carved_out} carved out under crisis_ prefix" if result.n_carved_out else ""),
+        "violating_isins": _isins_of(result.breaches),   # FND-0262: a hard-bound breach is CRITICAL and must name its funds
         "root_cause_candidate": None,
     })
 
@@ -1739,7 +1788,7 @@ def _persist(conn: "psycopg.Connection", run: "AuditRun", run_id: str, *, scope:
     from the run id (a sample run id ends in SAMPLE_RUN_SUFFIX)."""
     catalog_version = compute_catalog_version()
     scope = scope or (cpl.SCOPE_SAMPLE if run_id.endswith(SAMPLE_RUN_SUFFIX) else cpl.SCOPE_FULL)
-    status = cpl.run_status(run.skips, run.findings, scope)
+    status = cpl.run_status(run.skips, run.findings, scope, run.domain)
     header = _run_header(run, scope, status, started_at or datetime.now(timezone.utc), catalog_version, _run_manifest(conn, run))
     result = persist_run(conn, run_id, run.domain, run.statistics, run.findings, catalog_version=catalog_version, header=header)
     run.persisted_isin_rows = result.n_isin_rows
@@ -1876,7 +1925,7 @@ def _has_blocking_findings(run: "AuditRun") -> bool:
     blocking on them made the gate unpassable."""
     # The predicate itself lives in shared.statistical_audit.gating (FND-0251): the P3 promotion gate applies the same rule, scoped to
     # the funds of the scenario, so the two can never drift apart.
-    return any(is_blocking(f.get("rule_class"), f.get("block"), f.get("rule_id")) for f in run.findings)
+    return any(is_blocking(f.get("rule_class"), f.get("block"), f.get("rule_id"), run.domain) for f in run.findings)
 
 
 def _compute_drift(conn: "psycopg.Connection", run: "AuditRun", compare_to: str):
@@ -2068,7 +2117,7 @@ def main() -> int:
         _apply_coverage_cliff_findings(run, drift_result)
 
     _print_report(run, run_id)
-    status = cpl.run_status(run.skips, run.findings, scope)
+    status = cpl.run_status(run.skips, run.findings, scope, run.domain)
     _print_completeness(run, scope, status)
 
     if args.compare_to:

@@ -102,7 +102,7 @@ sin código de puerta propio.
 | `D-COVERAGE` | todos los fondos de la cartera fueron auditados (ninguno fuera de los bloques transversales ni fuera de la población); cobertura conocida | `BLOCK_UNLESS_OVERRIDE` | `GATE:DATA_COVERAGE` | enforced |
 | `D-DATA-UNIVERSE` | un defecto duro abierto fuera de la cartera exige residual aceptado vigente (`accept_audit_residual.py`: ticket + caducidad); sin override en la promoción | `BLOCK` | `GATE:DATA_UNIVERSE` | enforced |
 | `D-INVARIANT` | clase de regla `HARD_INVARIANT` (valor fuera de cota dura, identidad entre columnas violada) | `BLOCK` | `RULE_CLASS:HARD_INVARIANT` | enforced |
-| `D-IDENTITY` | bloque `BLOCK2`: identidades escalar-vs-serie temporal y de deflactación | `BLOCK` | `BLOCK:BLOCK2` | enforced |
+| `D-IDENTITY` | bloque `BLOCK2` del dominio p2: identidades escalar-vs-serie temporal, real-vs-nominal, Sharpe-vs-Sortino y de captura; los pares `X__EQUALS__Y` de costes (coincidencias de población, sin ISIN) son `MINOR` (modelo de criticidad, `AUDITORIA_ESTADISTICA.md` §6.5) | `BLOCK` | `BLOCK:BLOCK2` | enforced |
 | `D-TS-DUP` | `TIMESERIES_DUPLICATE`: serie append-only corrupta | `BLOCK` | `RULE_ID:TIMESERIES_DUPLICATE` | enforced |
 | `D-PLAUSIBILITY` | clase `PLAUSIBILITY`: valor fuera de rango plausible, no imposible | `WARN` | `RULE_CLASS:PLAUSIBILITY` | enforced |
 | `D-OUTLIER` | clase `STATISTICAL_ANOMALY` (MAD-Z, IQR): elementos de revisión, nunca defectos | `WARN` | `RULE_CLASS:STATISTICAL_ANOMALY` | enforced |

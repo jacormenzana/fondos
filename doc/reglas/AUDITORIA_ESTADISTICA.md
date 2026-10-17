@@ -735,6 +735,59 @@ cabecera FULL y no `INCOMPLETE`; una corrida FAIL cuenta, decisión D4) en lugar
 propietario: `scripts/ops/migrate_audit_run.py --apply` → una `--domain p2 --persist` completa (primera cabecera) → revisar los estados
 de un ciclo en sombra → encender el interruptor (controles `G-COMPLETENESS` y `G-EVIDENCE-RUN` pasan a `enforced` en ese commit).
 
+### 6.5 Modelo de criticidad (FND-0262)
+
+`shared/statistical_audit/criticality.py` es el único lugar que decide qué hallazgo es un **defecto**. Tres niveles, cada uno con una
+consecuencia y la evidencia que debe llevar:
+
+| Nivel | Qué es | Consecuencia | Evidencia exigida |
+|---|---|---|---|
+| `CRITICAL` | un valor erróneo o corrupto que un consumidor lee | rechaza la promoción si toca un fondo de la cartera; `--mode check` sale con 1; solo se tolera como residual aceptado (ticket + caducidad) | `violating_isins` (un defecto que no se puede ubicar se supone dentro de toda cartera) |
+| `MAJOR` | un valor fuera de su rango plausible, no imposible (`PLAUSIBILITY`) | se lista para revisión; nunca bloquea | el valor o recuento y la cota |
+| `MINOR` | anomalía estadística o contexto (outliers, forma, concentración, cobertura) | información; nunca bloquea | el estadístico que lo disparó |
+
+`CRITICAL` = clase `HARD_INVARIANT`, la regla `TIMESERIES_DUPLICATE` y el bloque `BLOCK2` **del dominio p2** (identidades: real vs
+nominal, escalar vs serie, Sharpe vs Sortino, captura). El mismo bloque no significa lo mismo en costes: allí `BLOCK2` son los pares
+`X__EQUALS__Y` de dos componentes de coste, detectores de coincidencia **de población** (una fila por par, sin ISIN, p. ej. «19/1858 filas
+elegibles dentro de tolerancia»): sugieren una copia, pero dos comisiones iguales son legítimas → `MINOR`. Tratarlos como defectos hacía
+que la puerta de costes rechazara toda cartera en toda corrida pasada (FND-0265, reproducción 60/60). `gating.is_blocking` recibe ahora el
+dominio; sus tres conjuntos heredados son vistas del modelo.
+
+Comprobaciones: `scripts/audit/criticality_diff.py [--all]` compara, sobre las corridas persistidas, el predicado heredado con el del modelo
+(2026-10-16: 17 corridas p2 sin ningún cambio; en las de costes solo dejan de bloquear los 7 pares de coincidencia; código 1 ante cualquier
+otro cambio). `proyecto1/tests/test_statistical_audit_criticality.py` exige un caso positivo y uno negativo por cada regla `CRITICAL`
+(invariantes evaluados por el motor real, reglas de grupo, cotas duras, pares de identidad p2, escalar-vs-serie, duplicados de serie) y que
+todo emisor capaz de producir un `CRITICAL` nombre sus ISIN (`TIMESERIES_DUPLICATE`, `BOUND_*` duros y `BETA_ORPHAN_BATCH` no lo hacían;
+`TIMESERIES_GAP` tampoco, y por eso FND-0173 no podía triarse).
+
+Regla nueva `ALGORITHM_VERSION_UNIFORMITY` (`BLOCK6`, `MAJOR`, decisión D4): al menos `P3_MIN_UNIFORM_METRICS_SHARE` de los fondos activos
+con sus métricas en un mismo `CALC_VERSION`; la misma regla y umbral que la puerta de frescura de P3 (`data_freshness.uniformity_check`).
+Es comprobación obligatoria del contrato de completitud y no se evalúa en una muestra `--isin`.
+
+**Tolerancias (decisión D5, 2026-10-16).** Toda tolerancia es una constante con nombre y comentario de justificación en `tolerances.py`
+(`test_every_named_tolerance_has_a_comment_directly_above_it`); ninguna `PairRule` lleva un literal (`COST_PAIR_TOLERANCE_PP` = media unidad
+del 2.º decimal publicado; `SCALAR_TIMESERIES_TOLERANCE` = identidad en coma flotante). `SCALAR_EQUALS_TIMESERIES` quedó **resuelta**: tras la
+recompuesta completa de FND-0253, en las 25 combinaciones (`vol_ann`, `max_dd`, `return_ann`, `sharpe`, `sortino` × `rolling_1y..10y`;
+5.612-5.738 fondos cada una) la mayor divergencia absoluta entre el escalar y la última fila de la serie es 1,4·10⁻¹² y **ningún** fondo
+diverge más de 10⁻⁶ ni con tolerancias relativas de 0,1 % a 5 %. Las divergencias de septiembre (50-97 % de las filas) venían de NAV
+desfasado entre las dos tablas y de la asimetría de tasa libre de riesgo, ya corregidas en su causa (§2.9). Ninguna familia de métricas
+necesita tolerancia relativa: una mayor solo ocultaría un snapshot obsoleto, que es lo que la regla detecta.
+
+**`TIMESERIES_GAP` (FND-0173), triaje 2026-10-16** sobre la población completa: 7 fondos con huecos en `fund_metric_timeseries`, el hallazgo
+nombra ya sus ISIN. Cinco (`LU2330520862`, `LU2331123724`, `LU2331315981`, `LU2334589889`, `LU2337294180`) tienen el mismo hueco en
+`fund_nav_monthly`: dato de origen (cobertura de NAV del 36-38 %, huecos de hasta 5 meses). Dos (`IE00BJ7BP819`, `LU1663960000`) tienen meses
+con NAV pero sin métrica móvil: la ventana de 12 meses con pocas observaciones no alcanza `min_obs`, consecuencia del mismo NAV disperso
+(el segundo es el fondo de FND-0253). Ninguno está en la cartera PRODUCTION y los tres con más huecos ya salen de la construcción por
+`nav_gap` (`FUND_DATA_ELIGIBILITY_ENABLED`). Veredicto: huecos **legítimos y ya contenidos**, no un defecto del cálculo.
+
+**Estado de la puerta de costes (`COST_DOMAIN_GATE_ENABLED`), 2026-10-16.** Con el modelo, el dominio de costes ya no rechaza por los pares
+de coincidencia. Lo que queda es real: en la cartera PRODUCTION, **10 de 30 fondos** tienen algún defecto `CRITICAL` de costes (constancia de
+`Total_Costs` entre horizontes 5, `ANNUAL_LE_ACCUMULATED` 3, `ANNUAL_EQUALS_TOTAL_AT_1Y` 2, y 1 en `ACI_AMORTISATION_ORDER`,
+`ACI_MUST_AMORTISE`, `MGMT_LE_TOTAL`, `TXN_LE_TOTAL`); en el universo 905 fondos fuera de cartera. La puerta de costes mira solo los fondos
+de la cartera (como la de p2 `DATA_SCENARIO`), no el universo. Para encenderla hay que corregir la extracción de esos fondos o aceptarlos
+como residual (`accept_audit_residual.py --domain costs`, ticket + caducidad); alternativa de diseño: excluirlos en la construcción como
+ya se hace con los residuales de p2.
+
 ---
 
 ## §7. Correcciones a las especificaciones actuales de las dos skills
