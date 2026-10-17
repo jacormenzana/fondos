@@ -37,6 +37,8 @@ from proyecto2.src.discovery import macro_discovery as md  # noqa: E402
 def _no_network_chain(monkeypatch):
     """FND-0293: load_fred_series now ends with the OECD CPI chain (a network call); these loader tests mock only _fred_fetch."""
     monkeypatch.setattr(md, "_apply_oecd_cpi_chain", lambda *a, **k: None)
+    monkeypatch.setattr(md, "_apply_m2_chain", lambda *a, **k: None)
+    monkeypatch.setattr(md, "_apply_cn_policy_rate", lambda *a, **k: None)
     monkeypatch.setattr(md, "_apply_ipc_eu_chain", lambda *a, **k: None)
 
 

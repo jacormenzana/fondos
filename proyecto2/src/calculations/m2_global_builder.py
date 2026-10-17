@@ -87,8 +87,23 @@ def m2_global_is_degenerate(dates, values, latest_input_date,
     return False, ""
 
 
+ESTIMATE_REASON_PREFIX = "CALC_EST"      # run_pipeline refreshes the individual m2_yoy rows too (not only m2_global_yoy) for this reason
+
+
+def m2_estimates_precede_observed(observed_last: dict, estimate_first: dict):
+    """FND-0293: once real CN / JP M2 levels exist for months the stored m2_yoy still ESTIMATES (source 'CALC_EST', built when the FRED
+    series stopped in 2019 / 2017), the stored m2_global_yoy and the individual m2_yoy rows are built on estimates and must be rebuilt.
+    `observed_last[geo]` = newest m2_level month of that geography, `estimate_first[geo]` = first CALC_EST m2_yoy month (either may be
+    missing). Compared by (year, month): estimates are month-end dated, levels month-start. Returns (needs_rebuild, reason)."""
+    for geo in sorted(set(observed_last) & set(estimate_first)):
+        o, e = observed_last[geo], estimate_first[geo]
+        if o is not None and e is not None and (e.year, e.month) <= (o.year, o.month):
+            return True, (f"{ESTIMATE_REASON_PREFIX}: m2_yoy {geo} is estimated from {e:%Y-%m} but observed M2 now reaches {o:%Y-%m}")
+    return False, ""
+
+
 def m2_global_needs_rebuild(conn: "psycopg.Connection"):
-    """Reads the stored series and its inputs and applies m2_global_is_degenerate()."""
+    """Reads the stored series and its inputs and applies m2_global_is_degenerate() and m2_estimates_precede_observed()."""
     rows = conn.execute("""
         SELECT date, value FROM series_macro
         WHERE indicator='m2_global_yoy' AND geography='GLOBAL' ORDER BY date
@@ -99,7 +114,17 @@ def m2_global_needs_rebuild(conn: "psycopg.Connection"):
     """).fetchone()[0]
     if latest is None:
         return False, "sin entradas M2"
-    return m2_global_is_degenerate([r[0] for r in rows], [r[1] for r in rows], latest)
+    degenerate = m2_global_is_degenerate([r[0] for r in rows], [r[1] for r in rows], latest)
+    if degenerate[0]:
+        return degenerate
+    observed = dict(conn.execute("""
+        SELECT geography, MAX(date) FROM series_macro WHERE indicator='m2_level' AND geography IN ('CN','JP') GROUP BY geography
+    """).fetchall())
+    estimated = dict(conn.execute("""
+        SELECT geography, MIN(date) FROM series_macro
+        WHERE indicator='m2_yoy' AND geography IN ('CN','JP') AND source='CALC_EST' GROUP BY geography
+    """).fetchall())
+    return m2_estimates_precede_observed(observed, estimated)
 
 
 def build_m2_global(conn: "psycopg.Connection",

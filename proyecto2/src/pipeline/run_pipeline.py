@@ -104,7 +104,7 @@ from src.calculations.macro_sensitivity import (
 from src.calculations.regime_returns import (
     load_regime_history, compute_regime_returns
 )
-from src.calculations.m2_global_builder import build_m2_global, m2_global_needs_rebuild
+from src.calculations.m2_global_builder import ESTIMATE_REASON_PREFIX, build_m2_global, m2_global_needs_rebuild
 from src.calculations.momentum import compute_momentum, reset_category_returns_cache
 from src.calculations import peer_panel   # FND-0255: per-run peer panel cache (capture, persistence)
 from src.calculations.capture_ratios import compute_capture_ratios
@@ -1073,7 +1073,9 @@ def run(
                 _m2_rebuild, _m2_why = m2_global_needs_rebuild(conn)
             if _m2_rebuild:
                 logger.info(f"  [M2_Global] Reconstruyendo ({_m2_why})...")
-                rows_built = build_m2_global(conn, dry_run=dry_run, only_global=("m2_global_yoy" in macro_df.columns))
+                # FND-0293: when the trigger is "estimates precede observed M2" the individual m2_yoy CN / JP rows are stale too -> full rebuild
+                rows_built = build_m2_global(conn, dry_run=dry_run, only_global=(
+                    "m2_global_yoy" in macro_df.columns and not str(_m2_why).startswith(ESTIMATE_REASON_PREFIX)))
                 if rows_built > 0:
                     logger.info(
                         f"  [M2_Global] {rows_built} registros construidos. "

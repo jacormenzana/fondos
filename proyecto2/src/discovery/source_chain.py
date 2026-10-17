@@ -25,29 +25,41 @@ class SpliceResult:
     max_abs_diff: float | None
     max_rel_diff: float | None
     reason: str
+    n_outliers: int = 0
 
 
 def splice_check(primary: Mapping[str, float], fallback: Mapping[str, float], *, min_overlap: int = 3,
-                 abs_tol: float | None = None, rel_tol: float | None = None, window: int = 24) -> SpliceResult:
+                 abs_tol: float | None = None, rel_tol: float | None = None, window: int = 24, min_share: float = 1.0) -> SpliceResult:
     """Do `primary` and `fallback` measure the same thing? Both map 'YYYY-MM-DD' (month start) -> value.
 
-    Compared on the LAST `window` months they share. Needs >= min_overlap shared months and, for every shared month,
+    Compared on the LAST `window` months they share. Needs >= min_overlap shared months and, for the shared months,
     |p - f| <= abs_tol (if given) and |p - f| / |p| <= rel_tol (if given). At least one tolerance is required: a splice
     with no stated tolerance would accept anything.
+
+    min_share (default 1.0 = every month) is the fraction of shared months that must be within tolerance. Below 1.0 it admits ISOLATED
+    outliers (a single revised or mistyped month, e.g. China M2 2017-12: 1 month of 236 differs by 0.8%, the other 235 agree to six digits)
+    while a different measure, which deviates everywhere, still fails. The count of outliers is returned and should be printed.
     """
     if abs_tol is None and rel_tol is None:
         raise ValueError("splice_check needs abs_tol and/or rel_tol")
+    if not 0.0 < min_share <= 1.0:
+        raise ValueError("min_share must be in (0, 1]")
     shared = sorted(set(primary) & set(fallback))[-window:]
     if len(shared) < min_overlap:
         return SpliceResult(False, len(shared), None, None, f"overlap {len(shared)} < {min_overlap} months")
     abs_d = [abs(primary[m] - fallback[m]) for m in shared]
     rel_d = [abs(primary[m] - fallback[m]) / abs(primary[m]) if primary[m] else float("inf") for m in shared]
     max_abs, max_rel = max(abs_d), max(rel_d)
-    if abs_tol is not None and max_abs > abs_tol:
-        return SpliceResult(False, len(shared), max_abs, max_rel, f"max |diff| {max_abs:.6g} > abs_tol {abs_tol}")
-    if rel_tol is not None and max_rel > rel_tol:
-        return SpliceResult(False, len(shared), max_abs, max_rel, f"max rel diff {max_rel:.4g} > rel_tol {rel_tol}")
-    return SpliceResult(True, len(shared), max_abs, max_rel, "ok")
+    outliers = sum(1 for a, r in zip(abs_d, rel_d) if (abs_tol is not None and a > abs_tol) or (rel_tol is not None and r > rel_tol))
+    if outliers > int((1.0 - min_share) * len(shared) + 1e-9):
+        if abs_tol is not None and max_abs > abs_tol:
+            why = f"max |diff| {max_abs:.6g} > abs_tol {abs_tol}"
+        else:
+            why = f"max rel diff {max_rel:.4g} > rel_tol {rel_tol}"
+        if min_share < 1.0:
+            why += f" in {outliers} of {len(shared)} months (allowed {int((1.0 - min_share) * len(shared) + 1e-9)})"
+        return SpliceResult(False, len(shared), max_abs, max_rel, why, outliers)
+    return SpliceResult(True, len(shared), max_abs, max_rel, "ok", outliers)
 
 
 def extend_series(primary: Mapping[str, float], fallback: Mapping[str, float], *, indicator: str, geography: str, unit: str,
@@ -79,19 +91,63 @@ def jsonstat_series(data: Mapping, *, time_dim: str = "time") -> dict[str, float
     return out
 
 
-def oecd_csv_series(text: str, *, area_col: str = "REF_AREA") -> dict[str, dict[str, float]]:
+def _month_start(p: str) -> str:
+    """'YYYY-MM' -> 'YYYY-MM-01'; anything else (quarters, years, bad months) raises, so a layout change cannot load shifted dates."""
+    if len(p) != 7 or p[4] != "-" or not (p[:4].isdigit() and p[5:].isdigit() and 1 <= int(p[5:]) <= 12):
+        raise ValueError(f"unexpected monthly TIME_PERIOD {p!r}")
+    return p + "-01"
+
+
+def oecd_csv_series(text: str, *, area_col: str = "REF_AREA", where: Mapping[str, str] | None = None) -> dict[str, dict[str, float]]:
     """{area: {'YYYY-MM-01': value}} from an OECD SDMX 'csvfilewithlabels' response (one row per area x month).
-    Rows without a value are skipped; a malformed period raises, so a layout change cannot load silently shifted dates."""
+    Rows without a value are skipped, and `where` keeps only the rows whose columns equal the given values (e.g. {"ADJUSTMENT": "N"}),
+    so two variants of one series can never be mixed into a month."""
     import csv
     import io
     out: dict[str, dict[str, float]] = {}
     for r in csv.DictReader(io.StringIO(text)):
+        if where and any(r.get(k) != v for k, v in where.items()):
+            continue
         v, p = r.get("OBS_VALUE"), r.get("TIME_PERIOD", "")
         if v in (None, ""):
             continue
-        if len(p) != 7 or p[4] != "-" or not (p[:4].isdigit() and p[5:].isdigit() and 1 <= int(p[5:]) <= 12):
-            raise ValueError(f"unexpected monthly TIME_PERIOD {p!r}")
-        out.setdefault(r[area_col], {})[p + "-01"] = float(v)
+        out.setdefault(r[area_col], {})[_month_start(p)] = float(v)
+    return out
+
+
+def bis_csv_series(text: str) -> dict[str, float]:
+    """{'YYYY-MM-01': value} from a BIS data-portal CSV (TIME_PERIOD, OBS_VALUE); rows without a value are skipped."""
+    import csv
+    import io
+    return {_month_start(r["TIME_PERIOD"]): float(r["OBS_VALUE"]) for r in csv.DictReader(io.StringIO(text)) if r.get("OBS_VALUE")}
+
+
+def boj_series(payload: Mapping, *, scale: float = 1.0) -> dict[str, float]:
+    """{'YYYY-MM-01': value * scale} from ONE page of a Bank of Japan time-series API response (SURVEY_DATES as YYYYMM).
+    Months the BoJ publishes as null are skipped, never zero-filled."""
+    out: dict[str, float] = {}
+    for res in payload.get("RESULTSET", []):
+        vals = res["VALUES"]
+        for t, v in zip(vals["SURVEY_DATES"], vals["VALUES"]):
+            if v is None:
+                continue
+            s = str(t)
+            out[_month_start(f"{s[:4]}-{s[4:]}")] = float(v) * scale
+    return out
+
+
+def monthly_gaps(values: Mapping[str, float]) -> list[str]:
+    """Month starts missing between the first and the last key of `values` (a series that is allowed to replace another must have none)."""
+    if not values:
+        return []
+    ms = sorted(values)
+    y0, m0 = int(ms[0][:4]), int(ms[0][5:7])
+    y1, m1 = int(ms[-1][:4]), int(ms[-1][5:7])
+    out = []
+    for k in range(y0 * 12 + m0 - 1, y1 * 12 + m1):
+        d = f"{k // 12:04d}-{k % 12 + 1:02d}-01"
+        if d not in values:
+            out.append(d)
     return out
 
 

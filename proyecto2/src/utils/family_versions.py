@@ -39,7 +39,9 @@ ALL_FAMILIES: tuple = (
 # feed stopped, China loaded as a monthly rate). The OLS cadence gate (run_pipeline._ols_is_fresh) skips a fund whose betas are from this quarter
 # under the same macro token and whose NAV grew < 3 rows, so without this entry NO fund would refit tonight and beta_ipc_eu / _jp / _cn would keep
 # the old series until the next quarter. Only the macro family recomputes (a macro-only pass, ~9 min, not the 5 h full run).
-FAMILY_CALC_OVERRIDES: dict = {"macro": "20261017"}
+# macro 20261018 (FND-0293 legs 3-5): China / Japan M2 now real (m2_global_yoy rebuilt without CALC_EST) and the China policy rate is the BIS
+# 1-year LPR (d_rate_cn had ~no variance for a decade). Same mechanism: tonight's 20261017 would otherwise count as fresh for this quarter.
+FAMILY_CALC_OVERRIDES: dict = {"macro": "20261018"}
 
 # shared.config.P2_BUNDLE_FLAGS -> the family (or tuple of families) each flag changes. A test asserts every bundle flag is
 # mapped here, so a new flag cannot silently fall back to "recompute everything" or "recompute nothing".

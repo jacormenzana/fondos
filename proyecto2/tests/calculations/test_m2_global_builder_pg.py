@@ -150,6 +150,51 @@ def test_only_global_refresh_replaces_degenerate_series_and_leaves_m2_yoy(pg_ses
     assert m2_global_needs_rebuild(conn)[0] is False
 
 
+def test_m2_estimates_precede_observed_rule():
+    from datetime import date
+    from src.calculations.m2_global_builder import m2_estimates_precede_observed
+    # FRED stopped: levels end 2019-08, estimates start 2019-09 -> consistent
+    assert m2_estimates_precede_observed({"CN": date(2019, 8, 1)}, {"CN": date(2019, 9, 30)}) == (False, "")
+    # the OECD chain loaded real levels to 2026-07: the stored estimates from 2019-09 are now stale
+    stale = m2_estimates_precede_observed({"CN": date(2026, 7, 1)}, {"CN": date(2019, 9, 30)})
+    assert stale[0] is True and stale[1].startswith("CALC_EST") and "CN" in stale[1] and "2026-07" in stale[1]
+    # after the rebuild the estimates start after the observed end (the last fx months): consistent again
+    assert m2_estimates_precede_observed({"CN": date(2026, 7, 1)}, {"CN": date(2026, 8, 31)}) == (False, "")
+    # same month counts as overlapping (month-end estimate vs month-start level); missing geographies are ignored
+    assert m2_estimates_precede_observed({"JP": date(2026, 9, 1)}, {"JP": date(2026, 9, 30)})[0] is True
+    assert m2_estimates_precede_observed({"JP": date(2026, 9, 1)}, {}) == (False, "")
+    assert m2_estimates_precede_observed({}, {"CN": date(2019, 9, 30)}) == (False, "")
+
+
+def test_real_cn_m2_makes_the_stored_estimates_stale_until_a_full_rebuild(pg_session_conn, pg_conn_module_schema):
+    """FND-0293 end to end: estimated tail -> real levels arrive -> needs_rebuild says so -> a FULL build (only_global=False) replaces the estimates
+    -> needs_rebuild is quiet again (idempotent, so the trigger cannot fire on every run)."""
+    from src.calculations.m2_global_builder import m2_global_needs_rebuild
+    conn = pg_session_conn
+    conn.execute(f"SET search_path = {pg_conn_module_schema}")
+    _make_series_macro(conn)
+    _seed_minimal_m2_inputs(conn)                                             # US + EU + fx_usd_eur, 2024-01..2025-02
+    dates = ["2024-01-31", "2024-02-29", "2024-03-31", "2024-04-30", "2024-05-31", "2024-06-30", "2024-07-31", "2024-08-31", "2024-09-30",
+             "2024-10-31", "2024-11-30", "2024-12-31", "2025-01-31", "2025-02-28"]
+    for i, d in enumerate(dates):
+        conn.execute("INSERT INTO series_macro (date, indicator, geography, value, unit, source) VALUES (%s,'fx_cny_usd','GLOBAL',7.2,'ratio','FRED')", (d,))
+        if i < 8:                                                             # the FRED level stops early (as in 2019)
+            conn.execute("INSERT INTO series_macro (date, indicator, geography, value, unit, source) VALUES (%s,'m2_level','CN',%s,'cny','FRED')",
+                         (d[:8] + "01", 2.0e14 + i * 1e12))
+    build_m2_global(conn, dry_run=False, only_global=False)                   # persists CALC_EST m2_yoy CN from the first extended month
+    assert conn.execute("SELECT COUNT(*) FROM series_macro WHERE indicator='m2_yoy' AND geography='CN' AND source='CALC_EST'").fetchone()[0] > 0
+    assert m2_global_needs_rebuild(conn) == (False, "")
+
+    for i, d in enumerate(dates[8:], start=8):                                # the chain now supplies real levels for the rest
+        conn.execute("INSERT INTO series_macro (date, indicator, geography, value, unit, source) VALUES (%s,'m2_level','CN',%s,'cny','OECD_MONAGG')",
+                     (d[:8] + "01", 2.0e14 + i * 1e12))
+    need, why = m2_global_needs_rebuild(conn)
+    assert need is True and why.startswith("CALC_EST")
+
+    build_m2_global(conn, dry_run=False, only_global=False)
+    assert m2_global_needs_rebuild(conn) == (False, "")
+
+
 def test_japan_plain_yen_level_does_not_swamp_global_yoy(pg_session_conn, pg_conn_module_schema):
     """FND-0176: MYAGM2JPM189N is in plain JPY (~9e14). The builder used to divide by 1_000, making Japan
     ~6e9 'bn USD' and the global YoY ~0 whenever Japan was flat. With a flat JP level and growing

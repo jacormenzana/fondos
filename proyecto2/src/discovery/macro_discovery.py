@@ -47,7 +47,8 @@ sys.path.insert(0, str(_P2_SRC.parent))                   # proyecto2/
 
 from shared.db import get_connection, executemany
 from proyecto2.src.discovery.source_chain import (
-    extend_series, jsonstat_series, oecd_csv_series, pct_change, rows_to_values, splice_check)
+    bis_csv_series, boj_series, extend_series, jsonstat_series, monthly_gaps, oecd_csv_series, pct_change, rows_to_values,
+    splice_check)
 
 # -- Constantes -----------------------------------------------
 REQUEST_TIMEOUT = 30        # segundos por peticion HTTP
@@ -572,13 +573,9 @@ _FRED_SERIES = {
         "unit":       "pct",
         "write_inflation": False,
     },
-    # Tipo referencia Banco Popular de China (LPR, %)
-    "INTDSRCNM193N": {
-        "indicator":  "rate_policy",
-        "geography":  "CN",
-        "unit":       "pct",
-        "write_inflation": False,
-    },
+    # Tipo de politica China: NOT loaded from FRED any more (FND-0293). INTDSRCNM193N (IMF discount rate, last point 2025-06) changed ONCE
+    # since 2015 (-0.35 in 2015-11) while the 1-year LPR this entry was meant to be moved 18 times, so d_rate_cn carried no information for a
+    # decade. The 1-year LPR comes from the BIS (_apply_cn_policy_rate).
     # IPC Japon -- indice base 2015=100 (OCDE via FRED)
     "JPNCPIALLMINMEI": {
         "indicator":  "ipc_index",
@@ -884,6 +881,115 @@ def _apply_oecd_cpi_chain(macro_rows: list[dict], desde: str, api_key: str | Non
           f"(MoM vs the old series over {res.n_overlap} months: max |diff| {res.max_abs_diff:.3f}pp)")
 
 
+# FND-0293: M2 for China and Japan. The FRED series (IMF data) stopped in 2019-08 / 2017-02 and m2_global_builder has been extending them with
+# hard-coded growth rates (source CALC_EST). The OECD monetary-aggregates dataset (CN) and the Bank of Japan time-series API (JP; no key) carry the
+# same M2 to 2026; over the shared months FRED/OECD CN has a median ratio of 1.0000000 and FRED/BoJ JP of 1.00000 (worst month 0.22%).
+_BOJ_API         = "https://www.stat-search.boj.or.jp/api/v1/getDataCode"
+_BIS_API         = "https://stats.bis.org/api/v2/data/dataflow/BIS"
+_OECD_MONAGG     = "OECD.SDD.STES,DSD_STES@DF_MONAGG,4.0"
+# min_share 0.9: China M2 FRED vs OECD agree to 6 digits in 235 of 236 months and differ by 0.8% in 2017-12 only; a different measure
+# would deviate in most months, so up to 2 of the 24 compared months may be outliers (reported in the [CHAIN] line).
+_M2_SPLICE       = {"min_overlap": 12, "rel_tol": 0.005, "window": 24, "min_share": 0.9}
+_HTTP_HEADERS    = {"User-Agent": "Mozilla/5.0 (fondos macro_discovery)"}
+
+
+def _http_text(url: str, params: dict | None = None) -> str:
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            r = requests.get(url, params=params, headers=_HTTP_HEADERS, timeout=REQUEST_TIMEOUT)
+            r.raise_for_status()
+            return r.text
+        except requests.RequestException:
+            if attempt == MAX_RETRIES:
+                raise
+            time.sleep(RETRY_WAIT)
+    raise RuntimeError("unreachable")
+
+
+def _fetch_oecd_m2_cn(desde: str) -> dict[str, float]:
+    """{'YYYY-MM-01': M2 China in plain CNY} from the OECD monetary aggregates (MABM, national currency, millions, not adjusted)."""
+    text = _http_text(f"{_OECD_API}/{_OECD_MONAGG}/CHN.M.MABM.XDC.....", {"startPeriod": desde, "format": "csvfilewithlabels"})
+    return {d: v * 1e6 for d, v in oecd_csv_series(text, where={"ADJUSTMENT": "N"}).get("CHN", {}).items()}
+
+
+def _fetch_boj_m2_jp(desde: str) -> dict[str, float]:
+    """{'YYYY-MM-01': M2 Japan in plain JPY} from the BoJ time-series API (MD02 / MAM1NAM2M2MO, 100 million yen, monthly average)."""
+    out: dict[str, float] = {}
+    position = None
+    for _ in range(10):                                           # the API pages its results; NEXTPOSITION is null on the last page
+        params = {"format": "json", "lang": "en", "db": "MD02", "code": "MAM1NAM2M2MO", "startDate": desde.replace("-", "")}
+        if position:
+            params["startPosition"] = position
+        import json
+        payload = json.loads(_http_text(_BOJ_API, params))
+        out.update(boj_series(payload, scale=1e8))
+        position = payload.get("NEXTPOSITION")
+        if not position:
+            break
+    return out
+
+
+def _apply_m2_chain(macro_rows: list[dict], desde: str, fetch_cn=None, fetch_jp=None) -> None:
+    """Continue m2_level CN / JP past the last month of the FRED series with the OECD / BoJ one, once the splice over the shared months passes.
+    Prints a [CHAIN] line per series; a refused or unavailable fallback loads nothing (m2_global_builder then keeps its CALC_EST extension)."""
+    for geo, unit, source, fetch in (("CN", "cny", "OECD_MONAGG", fetch_cn or _fetch_oecd_m2_cn),
+                                     ("JP", "jpy", "BOJ", fetch_jp or _fetch_boj_m2_jp)):
+        primary = rows_to_values(macro_rows, "m2_level", geo)
+        try:
+            fallback = fetch(desde)
+        except Exception as e:  # noqa: BLE001 -- must not abort the other FRED series
+            print(f"[CHAIN] m2_level/{geo} fallback UNAVAILABLE ({type(e).__name__}); series ends {max(primary) if primary else 'never loaded'}")
+            continue
+        res = splice_check(primary, fallback, **_M2_SPLICE)
+        if not res.ok:
+            print(f"[CHAIN] m2_level/{geo} fallback REFUSED ({res.reason})")
+            continue
+        new = extend_series(primary, fallback, indicator="m2_level", geography=geo, unit=unit, source=source)
+        macro_rows.extend(new)
+        if new:
+            print(f"[CHAIN] m2_level/{geo} fallback ACTIVE: {len(new)} month(s) {new[0]['date']}..{new[-1]['date']} from {source} "
+                  f"(FRED ends {max(primary)}; overlap {res.n_overlap}, {res.n_outliers} outlier month(s), max rel diff {res.max_rel_diff:.4f})")
+
+
+# FND-0293: the China policy rate is a DEFINITION CORRECTION, not a continuation. The old FRED series was a stale administrative rate (one change
+# since 2015), so there is nothing to splice: the BIS 1-year-LPR series replaces it. It may do so only if it is complete (no missing month between
+# its first and last), long enough, in a plausible range and recent -- otherwise the old rows stay and the problem is visible, not hidden.
+_CN_RATE_GATE = {"lo": 0.0, "hi": 15.0, "min_months": 240, "max_age_months": 4}
+
+
+def _fetch_bis_policy_rate_cn(desde: str) -> dict[str, float]:
+    return bis_csv_series(_http_text(f"{_BIS_API}/WS_CBPOL/1.0/M.CN", {"startPeriod": desde, "detail": "dataonly", "format": "csv"}))
+
+
+def _apply_cn_policy_rate(macro_rows: list[dict], desde: str, fetch=None, today: date | None = None) -> None:
+    try:
+        bis = (fetch or _fetch_bis_policy_rate_cn)(desde)
+    except Exception as e:  # noqa: BLE001
+        print(f"[CHAIN] rate_policy/CN BIS series UNAVAILABLE ({type(e).__name__}); the previous rows are kept")
+        return
+    t = today or date.today()
+    problems = []
+    if len(bis) < _CN_RATE_GATE["min_months"]:
+        problems.append(f"only {len(bis)} month(s)")
+    gaps = monthly_gaps(bis)
+    if gaps:
+        problems.append(f"{len(gaps)} missing month(s), e.g. {gaps[0]}")
+    if bis and not all(_CN_RATE_GATE["lo"] <= v <= _CN_RATE_GATE["hi"] for v in bis.values()):
+        problems.append("value outside the plausible range")
+    if bis:
+        last = max(bis)
+        age = (t.year - int(last[:4])) * 12 + (t.month - int(last[5:7]))
+        if age > _CN_RATE_GATE["max_age_months"]:
+            problems.append(f"newest month {last[:7]} is {age} months old")
+    if problems or not bis:
+        print(f"[CHAIN] rate_policy/CN BIS series REFUSED ({'; '.join(problems) or 'empty'}); the previous rows are kept")
+        return
+    macro_rows.extend({"date": d, "indicator": "rate_policy", "geography": "CN", "value": v, "unit": "pct", "source": "BIS"}
+                      for d, v in sorted(bis.items()) if d >= desde + "-01")
+    print(f"[CHAIN] rate_policy/CN REPLACED by the BIS 1-year LPR series: {len(bis)} month(s) {min(bis)}..{max(bis)} "
+          f"(definition correction: the previous FRED discount-rate series changed once since 2015)")
+
+
 def load_fred_series(
     desde:   str = "2000-01",
     verbose: bool = False,
@@ -976,6 +1082,8 @@ def load_fred_series(
         print(f"[{_fi:4d}/{_n_fred:4d}] | {_ts} | [FRED] | [{series_id}] | {count} | {_dur_ms}")
 
     _apply_oecd_cpi_chain(macro_rows, desde, api_key)             # FND-0293: JP continued, CN replaced (OECD MEI feed discontinued)
+    _apply_m2_chain(macro_rows, desde)                            # FND-0293: M2 CN / JP continued (FRED/IMF series stopped 2019 / 2017)
+    _apply_cn_policy_rate(macro_rows, desde)                      # FND-0293: China policy rate = BIS 1-year LPR (definition correction)
     return inflation_rows, macro_rows
 
 

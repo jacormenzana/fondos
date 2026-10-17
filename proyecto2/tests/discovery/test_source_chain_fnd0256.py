@@ -253,3 +253,129 @@ def test_load_fred_series_calls_the_oecd_chain_once(monkeypatch):
     monkeypatch.setattr(md, "_apply_oecd_cpi_chain", lambda macro, desde, key, **kw: calls.append(desde))
     md.load_fred_series("2000-01", api_key=None)
     assert calls == ["2000-01"]
+
+
+# ================================================================ FND-0293 legs 3-5: M2 CN / JP chains, China policy rate
+def _months(start_year, n, value=lambda i: 100.0 + i):
+    out = {}
+    for i in range(n):
+        y, m = start_year + i // 12, i % 12 + 1
+        out[f"{y}-{m:02d}-01"] = float(value(i))
+    return out
+
+
+def test_min_share_admits_an_isolated_outlier_but_not_a_different_measure():
+    primary = _months(2017, 24)
+    one_bad = dict(primary)
+    one_bad["2017-12-01"] *= 1.008                                           # the single revised month of China M2
+    assert not sc.splice_check(primary, one_bad, rel_tol=0.005).ok           # strict default refuses it
+    r = sc.splice_check(primary, one_bad, rel_tol=0.005, min_share=0.9)
+    assert r.ok and r.n_outliers == 1
+    everywhere = {d: v * 1.02 for d, v in primary.items()}                   # a different measure deviates in every month
+    r = sc.splice_check(primary, everywhere, rel_tol=0.005, min_share=0.9)
+    assert not r.ok and "in 24 of 24 months" in r.reason
+
+
+def test_min_share_is_validated():
+    with pytest.raises(ValueError):
+        sc.splice_check({"a": 1.0}, {"a": 1.0}, rel_tol=0.1, min_share=0.0)
+
+
+def test_oecd_csv_where_filters_variants_and_never_mixes_them():
+    txt = ("REF_AREA,TIME_PERIOD,OBS_VALUE,ADJUSTMENT\nJPN,2026-07,10,Y\nJPN,2026-07,11,N\nCHN,2026-07,5,N\nCHN,2026-08,,N\n")
+    assert sc.oecd_csv_series(txt, where={"ADJUSTMENT": "N"}) == {"JPN": {"2026-07-01": 11.0}, "CHN": {"2026-07-01": 5.0}}
+    assert sc.oecd_csv_series("REF_AREA,TIME_PERIOD,OBS_VALUE\nCHN,2026-07,5\n", where={"ADJUSTMENT": "N"}) == {}   # layout change -> nothing
+
+
+def test_bis_csv_series_and_boj_series_parse_and_skip_nulls():
+    assert sc.bis_csv_series("FREQ,REF_AREA,TIME_PERIOD,OBS_VALUE\nM,CN,2026-08,3\nM,CN,2026-09,3.0\nM,CN,2026-10,\n") == {
+        "2026-08-01": 3.0, "2026-09-01": 3.0}
+    payload = {"RESULTSET": [{"VALUES": {"SURVEY_DATES": [202608, 202609, 202610], "VALUES": [12964539, 12956351, None]}}]}
+    assert sc.boj_series(payload, scale=1e8) == {"2026-08-01": 12964539e8, "2026-09-01": 12956351e8}
+    with pytest.raises(ValueError):
+        sc.boj_series({"RESULTSET": [{"VALUES": {"SURVEY_DATES": [20268], "VALUES": [1.0]}}]})
+
+
+def test_monthly_gaps():
+    assert sc.monthly_gaps({"2026-01-01": 1, "2026-02-01": 1, "2026-03-01": 1}) == []
+    assert sc.monthly_gaps({"2025-11-01": 1, "2026-02-01": 1}) == ["2025-12-01", "2026-01-01"]
+    assert sc.monthly_gaps({}) == []
+
+
+def _m2_primary(geo, n=36):
+    return [{"date": d, "indicator": "m2_level", "geography": geo, "value": v, "unit": "x", "source": "FRED"}
+            for d, v in _months(2017, n, lambda i: 1e14 * (1 + 0.005 * i)).items()]
+
+
+def test_m2_chain_continues_cn_and_jp_after_the_fred_end_and_tags_the_source(capsys):
+    macro = _m2_primary("CN") + _m2_primary("JP")
+    full = {d: v for d, v in _months(2017, 40, lambda i: 1e14 * (1 + 0.005 * i)).items()}      # the fallback shares the 36 months, adds 4
+    md._apply_m2_chain(macro, "2000-01", fetch_cn=lambda desde: dict(full), fetch_jp=lambda desde: dict(full))
+    new_cn = [m for m in macro if m["geography"] == "CN" and m["source"] == "OECD_MONAGG"]
+    new_jp = [m for m in macro if m["geography"] == "JP" and m["source"] == "BOJ"]
+    assert len(new_cn) == len(new_jp) == 4 and new_cn[0]["date"] == "2020-01-01"
+    assert all(m["unit"] == "cny" for m in new_cn) and all(m["unit"] == "jpy" for m in new_jp)
+    out = capsys.readouterr().out
+    assert "m2_level/CN fallback ACTIVE" in out and "m2_level/JP fallback ACTIVE" in out
+
+
+def test_m2_chain_refuses_a_fallback_in_other_units_and_survives_an_unreachable_one(capsys):
+    macro = _m2_primary("CN") + _m2_primary("JP")
+    n = len(macro)
+    wrong_units = {d: v / 1e6 for d, v in _months(2017, 40, lambda i: 1e14 * (1 + 0.005 * i)).items()}   # forgot the x1e6
+    def boom(desde):
+        raise ConnectionError("down")
+    md._apply_m2_chain(macro, "2000-01", fetch_cn=lambda desde: wrong_units, fetch_jp=boom)
+    out = capsys.readouterr().out
+    assert len(macro) == n and "m2_level/CN fallback REFUSED" in out and "m2_level/JP fallback UNAVAILABLE" in out
+
+
+def _bis_cn(n=300, last="2026-09"):
+    """A complete monthly series ending at `last`, in the plausible range."""
+    ly, lm = int(last[:4]), int(last[5:])
+    k0 = ly * 12 + lm - 1 - (n - 1)
+    return {f"{k // 12:04d}-{k % 12 + 1:02d}-01": 3.0 + (k % 7) * 0.1 for k in range(k0, k0 + n)}
+
+
+def test_cn_policy_rate_is_replaced_by_the_complete_bis_series(capsys):
+    from datetime import date
+    macro = []
+    md._apply_cn_policy_rate(macro, "2000-01", fetch=lambda desde: _bis_cn(), today=date(2026, 10, 17))
+    rows = [m for m in macro if m["indicator"] == "rate_policy" and m["geography"] == "CN"]
+    assert len(rows) >= 240 and all(m["source"] == "BIS" and m["unit"] == "pct" for m in rows)
+    assert "rate_policy/CN REPLACED" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("mutate,expect", [
+    (lambda s: {d: v for d, v in s.items() if d != "2020-06-01"}, "missing month"),
+    (lambda s: {d: 99.0 for d in s}, "plausible range"),
+    (lambda s: dict(list(sorted(s.items()))[-100:]), "only 100"),
+    (lambda s: {d: v for d, v in s.items() if d <= "2025-10-01"}, "months old"),
+])
+def test_cn_policy_rate_refuses_an_incomplete_implausible_short_or_stale_series(capsys, mutate, expect):
+    from datetime import date
+    macro = []
+    md._apply_cn_policy_rate(macro, "2000-01", fetch=lambda desde: mutate(_bis_cn()), today=date(2026, 10, 17))
+    assert macro == [] and expect in capsys.readouterr().out
+
+
+def test_cn_policy_rate_unreachable_keeps_the_previous_rows(capsys):
+    macro = []
+    def boom(desde):
+        raise ConnectionError("down")
+    md._apply_cn_policy_rate(macro, "2000-01", fetch=boom)
+    assert macro == [] and "UNAVAILABLE" in capsys.readouterr().out
+
+
+def test_the_stale_fred_china_rate_entry_is_gone():
+    assert "INTDSRCNM193N" not in md._FRED_SERIES
+
+
+def test_load_fred_series_calls_all_chains(monkeypatch):
+    calls = []
+    monkeypatch.setattr(md, "_FRED_SERIES", {})
+    monkeypatch.setattr(md, "_apply_oecd_cpi_chain", lambda *a, **k: calls.append("cpi"))
+    monkeypatch.setattr(md, "_apply_m2_chain", lambda *a, **k: calls.append("m2"))
+    monkeypatch.setattr(md, "_apply_cn_policy_rate", lambda *a, **k: calls.append("rate"))
+    md.load_fred_series("2000-01", api_key=None)
+    assert calls == ["cpi", "m2", "rate"]
