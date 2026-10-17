@@ -458,6 +458,11 @@ AUDIT_EXCEPTION_EVENTS_ENABLED: bool = True
 #                                    scripts/audit/cost_gate_replay.py over the persisted runs, then one shadow cycle); OFF: a warning.
 # The last two act only inside the orchestrator, i.e. with GOVERNANCE_ORCHESTRATOR_ENABLED. All OFF until the owner has read the shadow lines.
 GOVERNANCE_ORCHESTRATOR_ENABLED: bool = False
+# FND-0264 (GOV-05), closed-loop remediation (shared/statistical_audit/incidents.py, scripts/audit/audit_incident.py). The plan (--plan, the D7
+# shadow log) and the closure check (--close-check) always read-only work; this switch lets `audit_incident.py --open` WRITE: it records an
+# incident in control.audit_incident (owner DDL: scripts/ops/migrate_audit_incident.py) and opens its backlog ticket through
+# backlog_client.report_incident(). Decision D7 = open on the FIRST CRITICAL occurrence (policy parameter); the owner confirms on the plan first.
+AUDIT_INCIDENT_LOOP_ENABLED: bool = False
 CODE_INTEGRITY_GATE_ENABLED: bool = False
 COST_DOMAIN_GATE_ENABLED: bool = False
 

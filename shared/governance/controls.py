@@ -206,8 +206,10 @@ CONTROLS = (
             "scripts/audit/cost_gate_replay.py over the past runs, one shadow cycle, then the switch)",
             BLOCK, SOURCE_GATE + "COST", DORMANT_PREFIX + "COST_DOMAIN_GATE_ENABLED"),
     Control("G-REMEDIATION", PILLAR_ORCHESTRATION, "Remediation is closed by evidence", "owner (backlog)",
-            "a finding-linked ticket closes only on a complete re-audit that covers the ISINs with zero violators",
-            WARN, "", PLANNED_PREFIX + "FND-0264"),
+            "a CRITICAL finding becomes an incident (control.audit_incident); a ticket linked to it closes only when the incident is "
+            "CERTIFIED by a later, complete re-audit run (not INCOMPLETE, FULL or covering the affected ISINs, none still violating; a "
+            "recompute alone never certifies) or ACCEPTED through active residuals; enforced by scripts/ops/close_release.py",
+            BLOCK, SOURCE_CODE + "shared.statistical_audit.incidents.closable", DORMANT_PREFIX + "AUDIT_INCIDENT_LOOP_ENABLED"),
 )
 
 CONTROLS_BY_ID = {c.id: c for c in CONTROLS}

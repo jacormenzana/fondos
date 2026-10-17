@@ -13,7 +13,8 @@
     "nav_discovery.py",
     "mark_stale.py",
     "P2 NAV quarantine",
-    "P1_P2_Complete.bat PASO"
+    "P1_P2_Complete.bat PASO",
+    "audit_incident:"
   ],
   "cases": [
     {
@@ -95,6 +96,22 @@
                 "scenario_description": "run_id=P2-20261001_020000: validate_nav() rejected 14 funds; their metrics were cleared and nav_sources.data_status set to INVALID_NAV."}],
       "incident": {"object_name": "P2 NAV quarantine",
                    "scenario": "run_id=P2-20261008_020000: validate_nav() rejected 17 funds; their metrics were cleared and nav_sources.data_status set to INVALID_NAV."},
+      "expect": "HIGH"
+    },
+    {
+      "name": "audit incident: different rule, same reporter (never merge)",
+      "open": [{"action_point_id": "FND-1101", "title": "[AUDIT-INCIDENT] cost_attributes MGMT_LE_TOTAL: 73 fund(s)", "object_name": "audit_incident:cost_attributes|MGMT_LE_TOTAL|MGMT_LE_TOTAL",
+                "scenario_description": "CRITICAL finding MGMT_LE_TOTAL / MGMT_LE_TOTAL in cost_attributes (run audit_20261012T184300Z): 73/2836 applicable rows violate across 73 ISINs. Affected: 73 ISIN(s). Close only on a certifying re-audit (scripts/audit/audit_incident.py --certify) or an active accepted residual."}],
+      "incident": {"object_name": "audit_incident:cost_attributes|TXN_LE_TOTAL|TXN_LE_TOTAL",
+                   "scenario": "CRITICAL finding TXN_LE_TOTAL / TXN_LE_TOTAL in cost_attributes (run audit_20261012T184300Z): 23/2834 applicable rows violate across 23 ISINs. Affected: 23 ISIN(s). Close only on a certifying re-audit (scripts/audit/audit_incident.py --certify) or an active accepted residual."},
+      "never_high": true
+    },
+    {
+      "name": "audit incident: same rule re-reported in a later run (append, not duplicate)",
+      "open": [{"action_point_id": "FND-1102", "title": "[AUDIT-INCIDENT] cost_attributes MGMT_LE_TOTAL: 73 fund(s)", "object_name": "audit_incident:cost_attributes|MGMT_LE_TOTAL|MGMT_LE_TOTAL",
+                "scenario_description": "CRITICAL finding MGMT_LE_TOTAL / MGMT_LE_TOTAL in cost_attributes (run audit_20261012T184300Z): 73/2836 applicable rows violate across 73 ISINs. Affected: 73 ISIN(s). Close only on a certifying re-audit (scripts/audit/audit_incident.py --certify) or an active accepted residual."}],
+      "incident": {"object_name": "audit_incident:cost_attributes|MGMT_LE_TOTAL|MGMT_LE_TOTAL",
+                   "scenario": "CRITICAL finding MGMT_LE_TOTAL / MGMT_LE_TOTAL in cost_attributes (run audit_20261012T184300Z): 73/2836 applicable rows violate across 73 ISINs. Affected: 73 ISIN(s). Close only on a certifying re-audit (scripts/audit/audit_incident.py --certify) or an active accepted residual."},
       "expect": "HIGH"
     }
   ]

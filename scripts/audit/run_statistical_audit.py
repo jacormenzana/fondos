@@ -1436,6 +1436,7 @@ class AuditRun:
         # FND-0234(d): rows written to audit_finding_isin by _persist (0 when the table does not exist yet)
         self.persisted_isin_rows: int = 0
         self.persisted_header: bool = False       # FND-0261: control.audit_run row written by _persist
+        self.scope_isins: tuple | None = None     # FND-0264: the ISINs of an --isin run, recorded in the manifest so it can certify them
 
     def skip(self, check: str, kind: str, message: str) -> None:
         """Record a check that did not run: `check` is a key of completeness.CHECKS, `kind` MISSING / EMPTY / NOT_APPLICABLE
@@ -1770,6 +1771,8 @@ def _run_manifest(conn: "psycopg.Connection", run: "AuditRun") -> dict:
     from collections import Counter
     manifest = {"calc_version": calc_version(), "universe_size": run.universe_size,
                 "snapshot_held_out": len(run.snapshot_held_out)}
+    if run.scope_isins:                                       # FND-0264: a sample run says WHICH funds it covered
+        manifest["scope_isins"] = sorted(run.scope_isins)
     try:
         from proyecto3.src.data_freshness import load_freshness_inputs
         nav_dates, harvest, versions = load_freshness_inputs(conn)
@@ -2106,6 +2109,7 @@ def main() -> int:
     conn = get_connection()
     try:
         run = run_cost_audit(conn, isins=isins) if args.domain == "costs" else run_p2_audit(conn, isins=isins)
+        run.scope_isins = tuple(isins) if isins else None
         _apply_accepted_residuals(conn, run)
         _apply_rca_e(conn, run)
     finally:

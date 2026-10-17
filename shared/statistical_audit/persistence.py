@@ -295,6 +295,95 @@ def revoke_exception(conn: "psycopg.Connection", grant_event_id: int, actor: str
                         reason, None, cause, grant_event_id, actor)
 
 
+# ---- incidents (FND-0264, GOV-05) ------------------------------------------------------------------------------------------------------------
+# The decisions live in shared/statistical_audit/incidents.py (pure); these functions only write them, each in its own transaction.
+
+def incident_table_exists(conn: "psycopg.Connection") -> bool:
+    """True when audit_incident is visible (scripts/ops/migrate_audit_incident.py was applied)."""
+    return conn.execute("SELECT to_regclass('audit_incident')").fetchone()[0] is not None
+
+
+def open_incident(conn: "psycopg.Connection", cand, *, ap_id: str | None = None, affected_calc_version: str | None = None) -> int:
+    """INSERT one OPEN incident for a Candidate (incidents.Candidate). Idempotent: the partial unique index "one live incident per finding
+    key" turns a second open into ON CONFLICT DO NOTHING, reported as a ValueError (a re-run of --open never duplicates). Commits; returns
+    incident_id."""
+    try:
+        row = conn.execute(
+            "INSERT INTO audit_incident (finding_key, domain, rule_id, group_key, ap_id, affected_calc_version, isins, opened_run_id) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING RETURNING incident_id",
+            (cand.key, cand.domain, cand.rule_id, cand.group_key, ap_id, affected_calc_version, list(cand.isins), cand.run_id)).fetchone()
+    except Exception:
+        conn.rollback()
+        raise
+    if row is None:
+        conn.rollback()
+        raise ValueError(f"a live incident already exists for {cand.key}")
+    conn.commit()
+    return row[0]
+
+
+def annotate_incident(conn: "psycopg.Connection", incident_id: int, *, ap_id: str | None = None, root_cause: str | None = None,
+                      corrective_action: str | None = None, fix_kind: str | None = None) -> None:
+    """Record the owner's analysis on an OPEN incident (COALESCE: an omitted field keeps its value). Commits."""
+    from shared.statistical_audit.incidents import FIX_KINDS
+    if fix_kind is not None and fix_kind not in FIX_KINDS:
+        raise ValueError(f"fix_kind must be one of {FIX_KINDS}")
+    try:
+        n = conn.execute(
+            "UPDATE audit_incident SET ap_id = COALESCE(%s, ap_id), root_cause = COALESCE(%s, root_cause), "
+            "corrective_action = COALESCE(%s, corrective_action), fix_kind = COALESCE(%s, fix_kind) "
+            "WHERE incident_id = %s AND state = 'OPEN'", (ap_id, root_cause, corrective_action, fix_kind, incident_id)).rowcount
+    except Exception:
+        conn.rollback()
+        raise
+    if n != 1:
+        conn.rollback()
+        raise ValueError(f"incident {incident_id} does not exist or is not OPEN")
+    conn.commit()
+
+
+def _require_one(conn, n: int, incident_id: int, expected: str) -> None:
+    if n != 1:
+        conn.rollback()
+        raise ValueError(f"incident {incident_id} is not {expected}")
+    conn.commit()
+
+
+def certify_incident(conn: "psycopg.Connection", incident_id: int, run_id: str) -> None:
+    """OPEN -> CERTIFIED by the re-audit `run_id`. The caller has run incidents.certify first; this only records it."""
+    try:
+        n = conn.execute("UPDATE audit_incident SET state = 'CERTIFIED', certified_run_id = %s, certified_at = clock_timestamp() "
+                         "WHERE incident_id = %s AND state = 'OPEN'", (run_id, incident_id)).rowcount
+    except Exception:
+        conn.rollback()
+        raise
+    _require_one(conn, n, incident_id, "OPEN")
+
+
+def accept_incident(conn: "psycopg.Connection", incident_id: int) -> None:
+    """OPEN -> ACCEPTED (the caller has run incidents.acceptance against the active residuals)."""
+    try:
+        n = conn.execute("UPDATE audit_incident SET state = 'ACCEPTED' WHERE incident_id = %s AND state = 'OPEN'", (incident_id,)).rowcount
+    except Exception:
+        conn.rollback()
+        raise
+    _require_one(conn, n, incident_id, "OPEN")
+
+
+def close_incident(conn: "psycopg.Connection", incident_id: int) -> None:
+    """CERTIFIED / ACCEPTED -> CLOSED, once the backlog ticket is closed."""
+    try:
+        n = conn.execute("UPDATE audit_incident SET state = 'CLOSED', closed_at = clock_timestamp() "
+                         "WHERE incident_id = %s AND state IN ('CERTIFIED', 'ACCEPTED')", (incident_id,)).rowcount
+    except Exception:
+        conn.rollback()
+        raise
+    if n != 1:
+        conn.rollback()
+        raise ValueError(f"incident {incident_id} is neither CERTIFIED nor ACCEPTED")
+    conn.commit()
+
+
 def emit_finding_isins(
     conn: "psycopg.Connection",
     run_id: str,

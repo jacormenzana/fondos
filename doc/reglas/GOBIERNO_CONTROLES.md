@@ -120,7 +120,7 @@ y `D-DATA-UNIVERSE` reparten esos defectos por alcance (sobre la cartera / solo 
 | `G-COMPLETENESS` | cada comprobación obligatoria produjo resultado; una entrada `MISSING` (o una obligatoria `EMPTY` en corrida FULL) hace la corrida `INCOMPLETE`, código de salida 2, nunca un pase; el estado se escribe en `control.audit_run` con las filas de la corrida, en una sola transacción (§7) | `BLOCK` | `CODE:shared.statistical_audit.completeness.run_status` | enforced |
 | `G-EVIDENCE-RUN` | la corrida que lee la puerta es la última cabecera de `control.audit_run` de ámbito FULL y estado distinto de `INCOMPLETE`, posterior al DRAFT; una corrida FAIL cuenta (D4); una `_sample` nunca (siempre activo: `gating.SAMPLE_RUN_SUFFIX`) | `BLOCK` | `CODE:shared.statistical_audit.gating.select_evidence_run` | enforced |
 | `G-COST` | los defectos duros abiertos de la auditoría de evidencia de `cost_attributes` sobre fondos de la cartera rechazan como los de `p2_metrics` (D8: `scripts/audit/cost_gate_replay.py` sobre las corridas pasadas, un ciclo en sombra, luego el interruptor) | `BLOCK` | `GATE:COST` | dormant:COST_DOMAIN_GATE_ENABLED |
-| `G-REMEDIATION` | un ticket vinculado a un hallazgo se cierra solo con una re-auditoría completa que cubra los ISIN con cero infractores | `WARN` | — | planned:FND-0264 |
+| `G-REMEDIATION` | un hallazgo `CRITICAL` es un incidente (`control.audit_incident`); el ticket vinculado se cierra solo con el incidente `CERTIFIED` por una re-auditoría posterior y completa (no `INCOMPLETE`, `FULL` o que cubra los ISIN afectados, ninguno sigue infringiendo; una recomputación sola nunca certifica) o `ACCEPTED` por residuales activos; lo aplica `scripts/ops/close_release.py` (§9) | `BLOCK` | `CODE:shared.statistical_audit.incidents.closable` | dormant:AUDIT_INCIDENT_LOOP_ENABLED |
 
 ---
 
@@ -190,3 +190,28 @@ un aviso (sombra), nunca un bloqueo.
 | `COST_DOMAIN_GATE_ENABLED` | `GATE:COST` bloquea | aviso; antes de encender: `scripts/audit/cost_gate_replay.py` y un ciclo en sombra |
 
 Los dos últimos actúan dentro del orquestador. En `CODE_DEPLOY` el estado del código solo se avisa (`p1p2_state.py preflight`, D3).
+
+## 9. Remediación en bucle cerrado (`G-REMEDIATION`, FND-0264)
+
+Un defecto `CRITICAL` (`AUDITORIA_ESTADISTICA.md` §6.5) no se cierra por una afirmación ni por una recomputación: se cierra con **evidencia**.
+`shared/statistical_audit/incidents.py` (puro) decide; `scripts/audit/audit_incident.py` lo registra.
+
+| Estado | Cómo se llega |
+|---|---|
+| `OPEN` | un hallazgo `CRITICAL` sin incidente vivo (decisión D7: se abre en la **primera** aparición; el criterio es un parámetro `--policy`). Clave = dominio + regla + grupo (un incidente por regla y grupo, no por fondo: los ISIN son la foto de los afectados al abrirlo) |
+| `CERTIFIED` | una re-auditoría **posterior** (`--certify ID --run RUN_ID`): cabecera `control.audit_run` que no sea `INCOMPLETE`; ámbito `FULL`, o una muestra cuyo manifiesto cubra todos los ISIN afectados; ninguno de ellos infringe ya la regla (una regla ausente de una re-auditoría completa cuenta como corregida); si la corrección fue una recomputación (`fix_kind` `RECOMPUTE`), además la prueba de que se ejecutó (`--snapshot` previo: todos los `input_hash` cambiaron) |
+| `ACCEPTED` | no se corrige pero **todos** los ISIN afectados tienen un residual aceptado **vigente** (FND-0263, ticket + caducidad) |
+| `CLOSED` | el ticket del backlog se cerró sobre uno de los dos estados anteriores |
+
+El auditor sigue siendo de solo lectura: la corrección se ejecuta en su pipeline propietario (`run_pipeline.py --isin … --force`,
+`run_block.py …`); aquí solo se detecta, se registra y se certifica con una auditoría posterior.
+
+**Puerta de cierre.** El backlog (`gestion`) y `fondos` son bases distintas, así que ninguna restricción SQL puede enlazarlas: la puerta vive
+en la única herramienta que cierra releases, `scripts/ops/close_release.py` (envoltorio de `backlog.sp_close_release`, simulacro por defecto,
+etiqueta sin usar, conjunto exacto de tickets, un registro por ticket). Rechaza un ticket vinculado a un incidente no certificado ni aceptado;
+con `AUDIT_INCIDENT_LOOP_ENABLED` encendido y sin la tabla, rechaza (fallo cerrado). `audit_incident.py --close-check FND-nnnn` da el mismo
+veredicto sin escribir. Un cierre sin despliegue (`REJECTED`, `DUPLICATED`) sigue siendo un cambio de estado registrado a mano.
+
+`audit_incident.py --plan` (solo lectura, sin tabla ni interruptor) imprime los incidentes que **se abrirían**: es el registro en sombra de la
+decisión D7. Abrirlos (`--open`, que crea el incidente y su ticket con `backlog_client.report_incident`) exige `AUDIT_INCIDENT_LOOP_ENABLED`
+y la tabla (`scripts/ops/migrate_audit_incident.py`, propietario).
