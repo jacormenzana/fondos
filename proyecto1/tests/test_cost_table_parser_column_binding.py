@@ -99,5 +99,7 @@ def test_component_vs_total_rules_tolerate_kid_rounding_but_not_a_real_excess():
         assert str(KID_ROUNDING_TOLERANCE_PP) in expr, expr
         holds = lambda comp, total: eval(expr, {}, {column: comp, "ACI_RHP": total})
         assert holds(0.12, 0.10)                  # 0.02 over: the 2-decimal component vs the 1-decimal total
-        assert not holds(0.31, 0.0)               # a zero total against a disclosed 0.31 charge stays a violation
+        assert not holds(0.31, 0.0)               # a zero total against a disclosed 0.31 charge IS a violation when the rule applies...
+        assert rules[rule_id].when == "Cost_RHP_Years >= 1"   # ...and it applies only to holding periods of a year or more: an annual
+                                                           # charge over '1 day to 3 months' (LU0987193777) is legitimately a ~0 total
         assert not holds(0.61, 0.40)

@@ -137,15 +137,19 @@ COST_INVARIANTS: tuple[InvariantRule, ...] = (
         when="Cost_RHP_Years > 1 and Entry_Fee_Pct > 0", bound_type="HARD_INVARIANT",
         description="Entry cost must amortise",
     ),
-    # FND-0280/0285 (2026-10-17): the components are published to 2 decimals (composition table) and the total ACI_RHP to 1 decimal
-    # (Reduction in Yield), so a component can exceed the total by up to half a unit of the coarser grid with nothing wrong. Measured over
-    # fund_master: 103 MGMT violators = 31 with ACI_RHP 0 (a KID that states "Total costs 0" while disclosing an ongoing charge), 50 within
-    # 0.10 and 36 further out; 33 TXN violators, 30 with ACI_RHP 0. The same KID_ROUNDING_TOLERANCE_PP as the cost pair rules below; the
-    # ACI_RHP = 0 funds stay flagged (a zero total contradicted by its own composition is a real source defect).
-    InvariantRule("MGMT_LE_TOTAL", f"Management_Fee_Pct <= ACI_RHP + {KID_ROUNDING_TOLERANCE_PP}", bound_type="HARD_INVARIANT",
-                  description="Component exceeds total"),
-    InvariantRule("TXN_LE_TOTAL", f"Transaction_Cost_Pct <= ACI_RHP + {KID_ROUNDING_TOLERANCE_PP}", bound_type="HARD_INVARIANT",
-                  description="Component exceeds total"),
+    # FND-0280/0285 (2026-10-17). The components are ANNUAL percentages (management, transaction) published to 2 decimals; ACI_RHP is the cost
+    # impact over the HOLDING PERIOD published to 1 decimal. Two consequences, both measured over fund_master (103 MGMT / 33 TXN violators):
+    #  * Rounding: a component can exceed the total by up to half a unit of the coarser grid (50 MGMT violators within 0.10 pp):
+    #    KID_ROUNDING_TOLERANCE_PP, the constant the cost pair rules below use.
+    #  * Holding periods under a year (money market, short-term: "1 day to 3 months", LU0987193777): the cost over the period is a fraction of
+    #    the annual charge (0.31 %/yr over 3 months = 0.08 USD, shown as "Total costs 0 / 0.0 %"), so an annual component legitimately exceeds the
+    #    total. 36 of the 42 funds with a zero total and a positive component have an RHP under 1 year or unstated. The comparison only holds
+    #    for Cost_RHP_Years >= 1 (an unknown RHP is not comparable either: the rule is skipped, not failed). A zero total at RHP >= 1 year with a
+    #    positive component (6 funds) stays flagged: that one is a real extraction defect.
+    InvariantRule("MGMT_LE_TOTAL", f"Management_Fee_Pct <= ACI_RHP + {KID_ROUNDING_TOLERANCE_PP}", when="Cost_RHP_Years >= 1",
+                  bound_type="HARD_INVARIANT", description="Component exceeds total"),
+    InvariantRule("TXN_LE_TOTAL", f"Transaction_Cost_Pct <= ACI_RHP + {KID_ROUNDING_TOLERANCE_PP}", when="Cost_RHP_Years >= 1",
+                  bound_type="HARD_INVARIANT", description="Component exceeds total"),
     # KID_ROUNDING_TOLERANCE_PP (2026-09-13, AUDITORIA_ESTADISTICA.md §2.6-2.7, named constant
     # centralized in tolerances.py 2026-09-13): investigated the live 87%/45% violation rates on
     # these two rules with tolerance 0.0001. KID Annual_Impact_Pct (Reduction in Yield) is
