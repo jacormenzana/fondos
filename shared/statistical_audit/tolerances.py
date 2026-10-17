@@ -49,6 +49,17 @@ from __future__ import annotations
 # regulatory publication format, not an arbitrary proximity heuristic.
 KID_ROUNDING_TOLERANCE_PP = 0.06
 
+# One-year relation band (FND-0278, owner decision 2026-10-17). At horizon 1 the KID's Annual_Impact_Pct and Total_Costs_Pct are the same cost, but the KID itself
+# publishes them on slightly different bases (the 1-decimal ACI, and the older template that assumes the moderate first-year return instead of 0 %), so the pair can differ
+# by more than the 0.06 pp rounding noise without any extraction defect: LU1683489089 6.7 % vs 6.37 % (ratio 1.05), IE0031575503 10.6 % vs 9.14 % (ratio 1.16). Measured on
+# the live schedule (2,076 one-year rows, 198 outside the 0.06 pp tolerance): 164 have annual / total in [0.956, 1.160]; NONE lie in [0.77, 0.95) or in [1.20, 2.50); the
+# other 34 (down to 0.03, up to 118) are extraction errors (a euro total read as 4 EUR for a 4.6 % impact). A ratio inside the band is a KID convention, not a defect. The
+# owner chose the NARROW band (0.9 to 1.25): it classifies today's data exactly like the wide one (0.8 to 2.0) and keeps the room (0.06 below, 0.09 above the accepted
+# values) without tolerating a doubling in future data. Applies ONLY at horizon 1; beyond one year the strict relation stays.
+KID_ONE_YEAR_RATIO_MIN = 0.9
+# Upper edge of the same band: the largest accepted ratio observed is 1.160 (IE0031575503), 0.09 below the cut; the next flagged value is 2.5.
+KID_ONE_YEAR_RATIO_MAX = 1.25
+
 # One published unit of the KID's Annual Cost Impact (ACI_1Y, ACI_RHP): both are published with ONE decimal, so each carries up to +-0.05 pp of
 # rounding and a difference of two of them is exact only to 0.10 pp (FND-0276/0277, measured 2026-10-17 over fund_master, 2,852 funds with both
 # ACI: 59 of the 135 ACI_AMORTISATION_ORDER violators differ by exactly 0.1; every one of the 97 ACI_MUST_AMORTISE violators has an entry fee of

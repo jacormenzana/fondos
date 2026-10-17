@@ -120,7 +120,7 @@ INVARIANT_CASES = {   # rule_id -> (violating row, passing row), evaluated by th
                           {"ACI_1Y": 1.5, "ACI_RHP": 1.2, "Cost_RHP_Years": 5, "Entry_Fee_Pct": 1.0}),
     "MGMT_LE_TOTAL": ({"Management_Fee_Pct": 2.0, "ACI_RHP": 1.0, "Cost_RHP_Years": 5.0}, {"Management_Fee_Pct": 0.5, "ACI_RHP": 1.0, "Cost_RHP_Years": 5.0}),
     "TXN_LE_TOTAL": ({"Transaction_Cost_Pct": 2.0, "ACI_RHP": 1.0, "Cost_RHP_Years": 5.0}, {"Transaction_Cost_Pct": 0.1, "ACI_RHP": 1.0, "Cost_RHP_Years": 5.0}),
-    "ANNUAL_LE_ACCUMULATED": ({"Annual_Impact_Pct": 2.0, "Total_Costs_Pct": 1.0}, {"Annual_Impact_Pct": 1.0, "Total_Costs_Pct": 1.0}),
+    "ANNUAL_LE_ACCUMULATED": ({"Annual_Impact_Pct": 2.0, "Total_Costs_Pct": 1.0, "Horizon_Years": 5}, {"Annual_Impact_Pct": 1.0, "Total_Costs_Pct": 1.0, "Horizon_Years": 5}),
     "ANNUAL_EQUALS_TOTAL_AT_1Y": ({"Annual_Impact_Pct": 1.5, "Total_Costs_Pct": 1.0, "Horizon_Years": 1},
                                   {"Annual_Impact_Pct": 1.0, "Total_Costs_Pct": 1.02, "Horizon_Years": 1}),
     "OC_NOT_CONTAMINATED": ({"Ongoing_Charge_Recurrent": 0.015, "ACI_RHP": 1.5}, {"Ongoing_Charge_Recurrent": 0.012, "ACI_RHP": 1.5}),

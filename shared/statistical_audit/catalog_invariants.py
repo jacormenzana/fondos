@@ -13,7 +13,8 @@ from __future__ import annotations
 
 from ..regime_taxonomy import REGIME_SUFFIX
 from .invariants import InvariantRule
-from .tolerances import ACI_AMORTISATION_VISIBLE_PP, ACI_ORDER_TOLERANCE_PP, FLOAT_IDENTITY_TOLERANCE, IPC_ELIGIBILITY_FLOOR, KID_ROUNDING_TOLERANCE_PP
+from .tolerances import (ACI_AMORTISATION_VISIBLE_PP, ACI_ORDER_TOLERANCE_PP, FLOAT_IDENTITY_TOLERANCE, IPC_ELIGIBILITY_FLOOR, KID_ONE_YEAR_RATIO_MAX,
+                         KID_ONE_YEAR_RATIO_MIN, KID_ROUNDING_TOLERANCE_PP)
 
 P2_INVARIANTS: tuple[InvariantRule, ...] = (
     InvariantRule("MAX_DD_RANGE", "-1 <= max_dd <= 0", bound_type="HARD_INVARIANT",
@@ -163,14 +164,20 @@ COST_INVARIANTS: tuple[InvariantRule, ...] = (
     # 447 funds — an extraction bug, not a rounding artifact) and remain correctly flagged. This
     # tolerance is grounded in the KID's own regulatory publication format, not an arbitrary
     # proximity heuristic.
+    # FND-0278 (2026-10-17, owner decision): at horizon 1 the pair may also differ by a KID CONVENTION, not only by rounding -- the KID publishes the 1-decimal ACI and,
+    # in the older template, assumes the moderate first-year return. tolerances.KID_ONE_YEAR_RATIO_MIN/MAX (0.9 to 1.25, evidence there) accept that band at horizon 1 ONLY;
+    # beyond one year the relation stays strict, and a ratio outside the band (0.03 .. 118 in the live data) is still an extraction defect. Written with multiplications, not
+    # a division, so a zero total never divides: Total_Costs_Pct = 0 with a positive annual impact still violates.
     InvariantRule("ANNUAL_LE_ACCUMULATED",
-                  f"Annual_Impact_Pct <= Total_Costs_Pct + {KID_ROUNDING_TOLERANCE_PP}",
+                  f"(Annual_Impact_Pct <= Total_Costs_Pct + {KID_ROUNDING_TOLERANCE_PP}) | "
+                  f"((Horizon_Years == 1) & (Annual_Impact_Pct <= Total_Costs_Pct * {KID_ONE_YEAR_RATIO_MAX}))",
                   bound_type="HARD_INVARIANT", description="Annual exceeds accumulated"),
     InvariantRule(
         "ANNUAL_EQUALS_TOTAL_AT_1Y",
-        f"abs(Annual_Impact_Pct - Total_Costs_Pct) < {KID_ROUNDING_TOLERANCE_PP}",
+        f"(abs(Annual_Impact_Pct - Total_Costs_Pct) < {KID_ROUNDING_TOLERANCE_PP}) | "
+        f"((Annual_Impact_Pct >= Total_Costs_Pct * {KID_ONE_YEAR_RATIO_MIN}) & (Annual_Impact_Pct <= Total_Costs_Pct * {KID_ONE_YEAR_RATIO_MAX}))",
         when="Horizon_Years == 1", bound_type="HARD_INVARIANT",
-        description="Equal by definition at horizon 1y (within KID rounding)",
+        description="Equal at horizon 1y within KID rounding or the KID's own convention band",
     ),
     # FLOAT_IDENTITY_TOLERANCE audited 2026-09-13 (tolerances.py): sweep at
     # 0.0001/0.001/0.01/0.06 gave 89/89/93/190 violations — monotonic growth with no rounding-grid

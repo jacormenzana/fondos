@@ -260,6 +260,12 @@ regulatorio del KID, no una heurística de proximidad arbitraria) en `ANNUAL_EQU
 (P1), no de este motor; requiere su propia investigación con las skills de coste
 (`costP1AuditPipelineAndDiagCost`), fuera de alcance aquí.
 
+**Banda de un año (FND-0278, decisión del propietario 2026-10-17).** A horizonte 1 el KID publica `Annual_Impact_Pct` y `Total_Costs_Pct` sobre bases ligeramente distintas (ACI con
+un decimal; plantilla antigua que asume el rendimiento moderado del primer año en vez de 0 %), de modo que el par puede diferir más de 0,06 pp sin defecto de extracción. Medido sobre
+2.076 filas de un año (198 fuera de 0,06 pp): 164 tienen anual/total en [0,956; 1,160], ninguna en [0,77; 0,95) ni en [1,20; 2,50), y las otras 34 (0,03 a 118) son errores de
+extracción. `ANNUAL_EQUALS_TOTAL_AT_1Y` acepta además `KID_ONE_YEAR_RATIO_MIN..MAX` = 0,9 a 1,25 (`tolerances.py`) y `ANNUAL_LE_ACCUMULATED` acepta a horizonte 1 hasta MAX veces el
+total; más allá de un año la relación sigue siendo estricta. La banda estrecha clasifica los datos de hoy igual que una de 0,8 a 2,0 pero no tolera una duplicación futura.
+
 **Hallazgo mayor surgido al cablear `SCALAR_EQUALS_TIMESERIES` — bug real de ingesta NAV,
 CORREGIDO 2026-09-13 (sesión de seguimiento, autorizada explícitamente).** Al cablear esta
 comprobación (§4 #8, antes sin implementar) contra los 25 pares (metric, window) reales, la

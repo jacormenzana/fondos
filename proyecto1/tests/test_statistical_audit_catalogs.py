@@ -23,6 +23,8 @@ from shared.statistical_audit.invariants import check_invariant
 from shared.statistical_audit.tolerances import (
     FLOAT_IDENTITY_TOLERANCE,
     IPC_ELIGIBILITY_FLOOR,
+    KID_ONE_YEAR_RATIO_MAX,
+    KID_ONE_YEAR_RATIO_MIN,
     KID_ROUNDING_TOLERANCE_PP,
 )
 
@@ -154,10 +156,13 @@ class TestToleranceConstants:
 
     def test_kid_rounding_rules_use_the_named_constant(self):
         for rule_id, expected in [
+            # FND-0278: both also accept the KID's one-year convention band (tolerances.KID_ONE_YEAR_RATIO_MIN / MAX), at horizon 1 only.
             ("ANNUAL_LE_ACCUMULATED",
-             f"Annual_Impact_Pct <= Total_Costs_Pct + {KID_ROUNDING_TOLERANCE_PP}"),
+             f"(Annual_Impact_Pct <= Total_Costs_Pct + {KID_ROUNDING_TOLERANCE_PP}) | "
+             f"((Horizon_Years == 1) & (Annual_Impact_Pct <= Total_Costs_Pct * {KID_ONE_YEAR_RATIO_MAX}))"),
             ("ANNUAL_EQUALS_TOTAL_AT_1Y",
-             f"abs(Annual_Impact_Pct - Total_Costs_Pct) < {KID_ROUNDING_TOLERANCE_PP}"),
+             f"(abs(Annual_Impact_Pct - Total_Costs_Pct) < {KID_ROUNDING_TOLERANCE_PP}) | "
+             f"((Annual_Impact_Pct >= Total_Costs_Pct * {KID_ONE_YEAR_RATIO_MIN}) & (Annual_Impact_Pct <= Total_Costs_Pct * {KID_ONE_YEAR_RATIO_MAX}))"),
         ]:
             rule = next(r for r in COST_INVARIANTS if r.rule_id == rule_id)
             assert rule.expression == expected

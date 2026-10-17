@@ -79,13 +79,18 @@ RETIRED_RULES: dict[str, RetiredRule] = {
                "own 1-decimal Annual_Impact_Pct rounding vs Total_Costs_Pct's 2-decimal computed "
                "precision. 0.06 eliminates the rounding noise while preserving the genuine "
                "447-fund cost-schedule duplication defect (264 residual rows). Neither skill's "
-               "Method Controls mention this tolerance at all -- both imply exact equality.",
-        date="2026-09-13",
+               "Method Controls mention this tolerance at all -- both imply exact equality. "
+               "2026-10-17 (FND-0278, owner decision): at horizon 1 ONLY, an annual impact up to "
+               "KID_ONE_YEAR_RATIO_MAX (1.25) times the total is also accepted -- 164 of the 198 one-year "
+               "rows outside the 0.06 pp tolerance sit at annual/total 0.956..1.160 (the KID's 1-decimal ACI "
+               "and the older template's assumed first-year return), the other 34 (0.03..118) are extraction errors.",
+        date="2026-10-17",
         replaced_by="ANNUAL_LE_ACCUMULATED",
     ),
     "ANNUAL_EQUALS_TOTAL_AT_1Y": RetiredRule(
-        reason="Same KID-rounding tolerance widening as ANNUAL_LE_ACCUMULATED -- see that entry.",
-        date="2026-09-13",
+        reason="Same KID-rounding tolerance widening as ANNUAL_LE_ACCUMULATED -- see that entry. 2026-10-17 (FND-0278): at horizon 1 the pair is also "
+               "accepted when annual / total lies in [KID_ONE_YEAR_RATIO_MIN, KID_ONE_YEAR_RATIO_MAX] = [0.9, 1.25] (a KID convention, not a defect).",
+        date="2026-10-17",
         replaced_by="ANNUAL_EQUALS_TOTAL_AT_1Y",
     ),
 }
