@@ -226,8 +226,8 @@ def test_the_plan_runs_without_the_incident_table_and_counts_every_key_as_new():
 
 
 # --- switch, catalogue and the runner's sample scope --------------------------------------------------------------------------------------------
-def test_the_incident_loop_switch_ships_off():
-    assert cfg.AUDIT_INCIDENT_LOOP_ENABLED is False
+def test_the_incident_loop_switch_is_on_since_the_owner_confirmed_d7():
+    assert cfg.AUDIT_INCIDENT_LOOP_ENABLED is True
 
 
 def test_the_incident_ddl_block_carries_the_live_index_and_the_certification_checks():

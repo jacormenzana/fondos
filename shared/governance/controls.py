@@ -209,7 +209,7 @@ CONTROLS = (
             "a CRITICAL finding becomes an incident (control.audit_incident); a ticket linked to it closes only when the incident is "
             "CERTIFIED by a later, complete re-audit run (not INCOMPLETE, FULL or covering the affected ISINs, none still violating; a "
             "recompute alone never certifies) or ACCEPTED through active residuals; enforced by scripts/ops/close_release.py",
-            BLOCK, SOURCE_CODE + "shared.statistical_audit.incidents.closable", DORMANT_PREFIX + "AUDIT_INCIDENT_LOOP_ENABLED"),
+            BLOCK, SOURCE_CODE + "shared.statistical_audit.incidents.closable", STATUS_ENFORCED),
 )
 
 CONTROLS_BY_ID = {c.id: c for c in CONTROLS}

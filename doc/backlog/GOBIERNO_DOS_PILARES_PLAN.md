@@ -181,7 +181,7 @@ It closes G2's worst case: a sample can no longer pass for promotion evidence. C
 | D4 | Valid audit evidence | FULL scope + status ≠ INCOMPLETE + newer than the DRAFT. A FAIL run IS valid evidence (it is what blocks); accepting only PASS runs would let the gate skip a FAIL and fall back to an older PASS. Sample runs never count | **Approved** 2026-10-11 (wording corrected) |
 | D5 | Relative tolerances | Only for families whose divergence is proportional to level | **Scheduled**: decided at phase 03's exit, on the per-family divergence measured during phase 03 |
 | D6 | Approver separation with a single owner | Two steps: GRANT (structured reason + AP), then a separate explicit APPROVE event; both logged; **no time pad** | **Approved** 2026-10-11 (changed from "≥ 24 h apart") |
-| D7 | Incident auto-open | First occurrence of a CRITICAL finding on an active fund. Shadow first: one cycle logging the incidents it WOULD open (no backlog write), reviewed before enabling | **Proposed**: decided at the start of phase 05, on the shadow log |
+| D7 | Incident auto-open | First occurrence of a CRITICAL finding on an active fund. Shadow first: one cycle logging the incidents it WOULD open (no backlog write), reviewed before enabling | **DECIDED 2026-10-17 by the owner: FIRST occurrence** (replay of 27 runs: p2 36 vs 35, costs 11 vs 11 incidents; first detects one run earlier). Auto-open still behind `AUDIT_INCIDENT_LOOP_ENABLED` |
 | D8 | Cost domain at promotion | Retrospective replay of the persisted `cost_attributes` runs (what would have blocked), then one shadow cycle, then block | **Approved** 2026-10-11 (+ replay) |
 
 ---
