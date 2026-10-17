@@ -146,7 +146,12 @@ Each block exposes `classify_fund(name, kiid_text, ...)` and `get_universe_isins
 > based on Fund_Nature already persisted in the DB (via `resolve_nature_evidence()`). The
 > sequential order above is the fallback dispatch chain for ISINs with no DB record — it does not
 > determine nature for established funds. Single source of classification truth: `classify_utils.py`
-> logic + the block's `classify_fund()` output.
+> logic + the block's `classify_fund()` output. `resolve_nature_evidence` is KIID-primary (calibrated
+> 2026-07-16; symmetric voting measured worse), with one bounded exception (ARB-1, FND-0288): a KIID
+> vote that **no** other signal backs yields to two independent signals (name / KIID benchmark /
+> Morningstar `asset_class`) that agree on another nature, unless the realized volatility fits that
+> nature worse. Explicit-rule natures (Estructurado, Alternativo, Monetario) and the RF Corto/Flexible
+> split are never arbitrated. Any change to a nature rule: measure old-vs-new over the whole universe first.
 
 ### KIID_Status state machine
 

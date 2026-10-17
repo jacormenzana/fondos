@@ -1567,6 +1567,13 @@ def _extract_window(text: str, start: int, end: int) -> str:
     return text[start:end] if len(text) > start else ""
 
 
+# Explicit multi-asset mandate by synonym (FIX-NAT-MULTIASSET-INVERSIONES-1).
+_MULTI_ASSET_CLASSES_RE = re.compile(r"\b(?:diferentes|diversas|varias|distintas)\s+clases\s+de\s+inversi(?:[oó]n|ones)\b")
+
+# "fund of funds" / "funds of funds" / "fonds de fonds", as whole words and never the umbrella phrase "sub-fund of Funds ..."
+_FUND_OF_FUNDS_RE = re.compile(r"(?<!sub-)(?<!sub )\b(?:funds?\s+of\s+funds|fonds\s+de\s+fonds)\b")
+
+
 def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
     """
     Detecta la naturaleza del fondo desde el texto KIID.
@@ -2110,7 +2117,10 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
     # — "materias primas...renta variable": enumeration of commodities + equity
     #   + FI (PIMCO Inflation MA: "instrumentos relacionados con materias primas,
     #   divisas...y renta variable y valores relacionados con la renta variable").
-    if any(k in w for k in [
+    # FIX-NAT-MULTIASSET-INVERSIONES-1 (2026-10-17, FND-0288): "clases de inversiones" is the plain synonym of "clases de activos"
+    # ("el fondo invierte en diferentes clases de inversiones", ACATIS Value Event: stored Renta Fija Flexible because the only asset
+    # words in the objective were a German-government-bond allowance). Measured over the 2,950 active KIIDs: this wording occurs in one.
+    if _MULTI_ASSET_CLASSES_RE.search(w) or any(k in w for k in [
         "fondo de activos mixto", "activos mixtos",
         "diferentes clases de activos",
         "diversas clases de activos",
@@ -2152,7 +2162,10 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
     # Confirmed: LU1099740216 (MS INVGLBARIS CON A USDHDG ACC) — English KID has
     # "fund of funds" in the fund name and "investment funds" + "tactical" in
     # the investment policy section.
-    _fof_en_direct  = "fund of funds" in w or "fonds de fonds" in w
+    # FIX-NAT-FOF-WORDBOUND-1 (2026-10-17, FND-0288): word-bounded. The bare substring "fund of funds" also matches the umbrella
+    # sentence "... is a sub-fund of FUNDSmith SICAV" ("fund of funds|mith"), so every sub-fund of an umbrella whose name starts with
+    # "Funds" (Fundsmith Equity: four share classes, one in PRODUCTION) was voted Mixtos by this rule.
+    _fof_en_direct  = bool(_FUND_OF_FUNDS_RE.search(w))
     _fof_en_inv_fds = "investment funds" in w or "collective investment scheme" in w
     _fof_en_multi   = any(k in w for k in ["tactical", "balanced risk",
                                             "multi-asset", "across asset classes",
@@ -3521,6 +3534,11 @@ _VOL_UNAMBIGUOUS_BANDS: set = {1, 6, 7}
 # None (Restantes). La volatilidad sólo veta/arbitra entre candidatos propuestos.
 
 
+# ARB-1 (FND-0288): naturalezas que el arbitraje por consenso puede mover; el resto sale de reglas explícitas y no se discute.
+_ARB_NATURES = frozenset({"Mixtos", "Renta Variable", "Renta Fija Flexible", "Renta Fija Corto Plazo"})
+_RF_FAMILY = frozenset({"Renta Fija Flexible", "Renta Fija Corto Plazo"})
+
+
 def _vol_consistency_factor(nature: str, band: Optional[int]) -> float:
     """
     Multiplicador de consistencia con la volatilidad realizada.
@@ -3648,6 +3666,27 @@ def resolve_nature_evidence(
         v_bench  if primary_source != "benchmark" else None,
         v_msbench if primary_source != "msbench"  else None,  # FIX-NLC-MSBENCH-1
     ))
+
+    # ── ARB-1: un voto KIID SOLO frente a un consenso independiente (FND-0288) ──
+    # La arquitectura KIID-primary se calibró el 2026-07-16 y se MANTIENE: una mezcla simétrica de fuentes fue inferior (90.6 % frente
+    # a 92.7 %). Pero el voto KIID es un regex sobre texto y una sola frase mal leída lo decide todo; el 2026-10-17 se midió que
+    # 3 de los 4 fondos de PRODUCCIÓN en ALARM de fund_metric_alerts estaban comparados contra pares equivocados por exactamente eso.
+    # Por eso el consenso solo gana en el caso ACOTADO en que el voto KIID es la ÚNICA fuente de su naturaleza (ninguna otra lo
+    # corrobora) y al menos DOS fuentes independientes (nombre, benchmark KIID, Morningstar asset_class) coinciden entre sí en OTRA.
+    # Un consenso donde alguna fuente respalda al KIID no se toca (p. ej. los "Global Income": nombre/benchmark RV pero KIID y
+    # Morningstar Mixtos -> Mixtos se mantiene). Guardas: ni Estructurado/Alternativo/Monetario (reglas explícitas) en ningún
+    # extremo, ni dentro de la familia RF (Corto/Flexible lo decide resolve_rf_subtype), y la naturaleza del consenso no puede ser
+    # menos coherente con la volatilidad realizada que la del KIID (P#6: la volatilidad nunca propone, solo desempata).
+    if primary_source == "kiid" and primary in _ARB_NATURES and corroborators == 0:
+        _others = [v for v in (v_name, v_bench_rf, v_msbench_rf) if v in _ARB_NATURES and v != primary]
+        _top = max(set(_others), key=_others.count) if _others else None
+        if (_top is not None and _others.count(_top) >= 2
+                and not (_top in _RF_FAMILY and primary in _RF_FAMILY)
+                and _vol_consistency_factor(_top, srri_nav_band) >= _vol_consistency_factor(primary, srri_nav_band)):
+            trace["arb1_from"] = primary
+            primary, primary_source = _top, "consensus"
+            trace["primary"], trace["primary_source"] = primary, primary_source
+            corroborators = _others.count(_top)
 
     # ── Veto/ARBITRAJE por volatilidad realizada (P#6-compliant) ─────────────
     # La volatilidad realizada VETA una naturaleza primaria incompatible con la
