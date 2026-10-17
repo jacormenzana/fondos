@@ -46,6 +46,7 @@ sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_P2_SRC.parent))                   # proyecto2/
 
 from shared.db import get_connection, executemany
+from proyecto2.src.discovery.source_chain import extend_series, jsonstat_series, rows_to_values, splice_check
 
 # -- Constantes -----------------------------------------------
 REQUEST_TIMEOUT = 30        # segundos por peticion HTTP
@@ -374,6 +375,42 @@ for _ccy in EUR_FX_CURRENCIES:
         "unit": "ccy_per_eur", "write_inflation": False}
 
 
+# FND-0256: with the Feb-2026 HICP overhaul (ECOICOP v2, 2025=100) the ECB dataset ICP is discontinued (the key above ends 2025-12) and
+# Eurostat moved the index to prc_hicp_minr. Its unit I15 is the same index re-referenced to 2015=100: over 2025-10..12 it equals the old
+# euro-area series to the last decimal, so it continues the series without any re-basing arithmetic. The primary (ICP) always wins where it
+# has data; the fallback only supplies the months after its last one, and only if the splice check over the shared months passes.
+_EUROSTAT_API   = "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data"
+_HICP_EA_SPLICE = {"min_overlap": 3, "abs_tol": 0.1}      # index points (ECB U2 vs Eurostat EA differ by 0.02 in 2025-12)
+
+
+def _fetch_hicp_ea_minr(desde: str) -> dict[str, float]:
+    """{'YYYY-MM-01': index 2015=100} of the euro-area HICP all-items from Eurostat prc_hicp_minr."""
+    data = _get_json(f"{_EUROSTAT_API}/prc_hicp_minr", {
+        "format": "JSON", "lang": "EN", "unit": "I15", "coicop18": "TOTAL", "geo": "EA", "sinceTimePeriod": desde})
+    return jsonstat_series(data)
+
+
+def _apply_ipc_eu_chain(inflation_rows: list[dict], macro_rows: list[dict], desde: str, fetch=None) -> None:
+    """Extend ipc_index/EU past the ECB series' last month with Eurostat prc_hicp_minr (in place). Prints a [CHAIN] line either way,
+    so a fallback that is active (or refused) is visible in the cycle log."""
+    primary = rows_to_values(macro_rows, "ipc_index", "EU")
+    try:
+        fallback = (fetch or _fetch_hicp_ea_minr)(desde)
+    except Exception as e:  # noqa: BLE001 -- a missing fallback must not abort the other ECB series
+        print(f"[CHAIN] ipc_index/EU fallback UNAVAILABLE ({type(e).__name__}); series ends {max(primary) if primary else 'never loaded'}")
+        return
+    res = splice_check(primary, fallback, **_HICP_EA_SPLICE)
+    if not res.ok:
+        print(f"[CHAIN] ipc_index/EU fallback REFUSED ({res.reason})")
+        return
+    new = extend_series(primary, fallback, indicator="ipc_index", geography="EU", unit="index", source="EUROSTAT_MINR")
+    macro_rows.extend(new)
+    inflation_rows.extend({"date": r["date"], "geography": "EU", "ipc_index": r["value"], "source": r["source"]} for r in new)
+    if new:
+        print(f"[CHAIN] ipc_index/EU fallback ACTIVE: {len(new)} month(s) {new[0]['date']}..{new[-1]['date']} from EUROSTAT_MINR "
+              f"(ECB ICP ends {max(primary)}; splice overlap {res.n_overlap} months, max |diff| {res.max_abs_diff:.3f})")
+
+
 def load_bce_series(desde: str = "2000-01", verbose: bool = False) -> tuple[list[dict], list[dict]]:
     """
     Descarga series del BCE Statistical Data Warehouse (SDW).
@@ -492,6 +529,7 @@ def load_bce_series(desde: str = "2000-01", verbose: bool = False) -> tuple[list
         _ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print(f"[{_bi:4d}/{_n_bce:4d}] | {_ts} | [BCE] | [{name}] | {count} | {_dur_ms}")
 
+    _apply_ipc_eu_chain(inflation_rows, macro_rows, desde)       # FND-0256: ECB ICP discontinued, continue with Eurostat
     return inflation_rows, macro_rows
 
 

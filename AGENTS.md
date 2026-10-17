@@ -294,6 +294,7 @@ proyecto2/
     discovery/
       macro_discovery.py
       nav_discovery.py
+      source_chain.py
     pipeline/
       run_pipeline.py
     readers/
@@ -350,6 +351,7 @@ proyecto2/
       test_nav_discovery_writers_pg.py
       test_nav_monthly_write_20260913.py
       test_nav_source_unavailable_rc.py
+      test_source_chain_fnd0256.py
     pipeline/
       test_family_versioning_fnd0236_pg.py
       test_family_versioning_wiring_fnd0236.py
