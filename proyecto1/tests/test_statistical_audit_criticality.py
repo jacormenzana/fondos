@@ -116,8 +116,8 @@ def test_the_runner_check_mode_follows_the_run_domain():
 # --- exit criterion: a positive and a negative case for every CRITICAL catalogue rule -------------------------------------------------
 INVARIANT_CASES = {   # rule_id -> (violating row, passing row), evaluated by the real engine (invariants.check_invariant)
     "ACI_AMORTISATION_ORDER": ({"ACI_RHP": 2.0, "ACI_1Y": 1.0}, {"ACI_RHP": 1.0, "ACI_1Y": 2.0}),
-    "ACI_MUST_AMORTISE": ({"ACI_1Y": 1.5, "ACI_RHP": 1.5, "Cost_RHP_Years": 5, "Entry_Fee_Pct": 0.03},
-                          {"ACI_1Y": 1.5, "ACI_RHP": 1.2, "Cost_RHP_Years": 5, "Entry_Fee_Pct": 0.03}),
+    "ACI_MUST_AMORTISE": ({"ACI_1Y": 1.5, "ACI_RHP": 1.5, "Cost_RHP_Years": 5, "Entry_Fee_Pct": 1.0},
+                          {"ACI_1Y": 1.5, "ACI_RHP": 1.2, "Cost_RHP_Years": 5, "Entry_Fee_Pct": 1.0}),
     "MGMT_LE_TOTAL": ({"Management_Fee_Pct": 2.0, "ACI_RHP": 1.0, "Cost_RHP_Years": 5.0}, {"Management_Fee_Pct": 0.5, "ACI_RHP": 1.0, "Cost_RHP_Years": 5.0}),
     "TXN_LE_TOTAL": ({"Transaction_Cost_Pct": 2.0, "ACI_RHP": 1.0, "Cost_RHP_Years": 5.0}, {"Transaction_Cost_Pct": 0.1, "ACI_RHP": 1.0, "Cost_RHP_Years": 5.0}),
     "ANNUAL_LE_ACCUMULATED": ({"Annual_Impact_Pct": 2.0, "Total_Costs_Pct": 1.0}, {"Annual_Impact_Pct": 1.0, "Total_Costs_Pct": 1.0}),

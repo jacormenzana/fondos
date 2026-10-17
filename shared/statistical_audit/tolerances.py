@@ -49,6 +49,17 @@ from __future__ import annotations
 # regulatory publication format, not an arbitrary proximity heuristic.
 KID_ROUNDING_TOLERANCE_PP = 0.06
 
+# One published unit of the KID's Annual Cost Impact (ACI_1Y, ACI_RHP): both are published with ONE decimal, so each carries up to +-0.05 pp of
+# rounding and a difference of two of them is exact only to 0.10 pp (FND-0276/0277, measured 2026-10-17 over fund_master, 2,852 funds with both
+# ACI: 59 of the 135 ACI_AMORTISATION_ORDER violators differ by exactly 0.1; every one of the 97 ACI_MUST_AMORTISE violators has an entry fee of
+# 0.0525 % or less, whose amortisation moves the ACI by < 0.05 pp, below the grid). The two bounds below add / subtract
+# FLOAT_IDENTITY_TOLERANCE so that a difference of exactly one unit survives floating point (6.5 + 0.1 != 6.6 bit for bit).
+ACI_PUBLISHED_UNIT_PP = 0.10
+# ACI_RHP may exceed ACI_1Y by one published unit (ACI_AMORTISATION_ORDER): ACI_PUBLISHED_UNIT_PP + FLOAT_IDENTITY_TOLERANCE.
+ACI_ORDER_TOLERANCE_PP = 0.1001
+# An entry fee amortises visibly from one published unit (ACI_MUST_AMORTISE): ACI_PUBLISHED_UNIT_PP - FLOAT_IDENTITY_TOLERANCE.
+ACI_AMORTISATION_VISIBLE_PP = 0.0999
+
 # --- Class 2: float-identity comparisons ---
 # OC_NOT_CONTAMINATED, SHARPE_EQUALS_SORTINO, SORTINO_VS_SHARPE_UP, CAPTURE_UP_EQUALS_DOWN (2026-10-07: at the former
 # 0.001 the expected CHANCE matches, ~10 of 2,810 rows, exceeded min_matches),

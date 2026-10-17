@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from ..regime_taxonomy import REGIME_SUFFIX
 from .invariants import InvariantRule
-from .tolerances import FLOAT_IDENTITY_TOLERANCE, IPC_ELIGIBILITY_FLOOR, KID_ROUNDING_TOLERANCE_PP
+from .tolerances import ACI_AMORTISATION_VISIBLE_PP, ACI_ORDER_TOLERANCE_PP, FLOAT_IDENTITY_TOLERANCE, IPC_ELIGIBILITY_FLOOR, KID_ROUNDING_TOLERANCE_PP
 
 P2_INVARIANTS: tuple[InvariantRule, ...] = (
     InvariantRule("MAX_DD_RANGE", "-1 <= max_dd <= 0", bound_type="HARD_INVARIANT",
@@ -130,12 +130,15 @@ P2_INVARIANTS: tuple[InvariantRule, ...] = (
 )
 
 COST_INVARIANTS: tuple[InvariantRule, ...] = (
-    InvariantRule("ACI_AMORTISATION_ORDER", "ACI_RHP <= ACI_1Y", bound_type="HARD_INVARIANT",
+    # FND-0276/0277 (2026-10-17): ACI_1Y and ACI_RHP are published with ONE decimal, so their order and equality are only decidable to
+    # ACI_PUBLISHED_UNIT_PP (tolerances.py: ACI_ORDER_TOLERANCE_PP, ACI_AMORTISATION_VISIBLE_PP). The order rule tolerates one unit; the amortisation rule applies only where the entry fee
+    # would move the ACI by at least one unit: Entry_Fee_Pct * (1 - 1 / Cost_RHP_Years), the fee spread over the holding period.
+    InvariantRule("ACI_AMORTISATION_ORDER", f"ACI_RHP <= ACI_1Y + {ACI_ORDER_TOLERANCE_PP}", bound_type="HARD_INVARIANT",
                   description="Amortisation inverted"),
     InvariantRule(
         "ACI_MUST_AMORTISE", "ACI_1Y != ACI_RHP",
-        when="Cost_RHP_Years > 1 and Entry_Fee_Pct > 0", bound_type="HARD_INVARIANT",
-        description="Entry cost must amortise",
+        when=f"Cost_RHP_Years > 1 and Entry_Fee_Pct * (1 - 1 / Cost_RHP_Years) >= {ACI_AMORTISATION_VISIBLE_PP}",
+        bound_type="HARD_INVARIANT", description="Entry cost must amortise",
     ),
     # FND-0280/0285 (2026-10-17). The components are ANNUAL percentages (management, transaction) published to 2 decimals; ACI_RHP is the cost
     # impact over the HOLDING PERIOD published to 1 decimal. Two consequences, both measured over fund_master (103 MGMT / 33 TXN violators):
