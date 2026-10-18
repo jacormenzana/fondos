@@ -2447,6 +2447,17 @@ def _detect_fund_currency(text: str, language: Optional[str]) -> Optional[str]:
         if result:
             return result
 
+    # FND-0243 (2026-10-18): CELL-LAYOUT cost table -- the "Total costs" label is followed by the "Annual cost impact" label and the amounts sit two lines
+    # below ("Total costs / Annual cost impact (*) / 665 EUR 2,045 EUR"), so `_COSTS_CURR_RE` (currency right after the label) never saw them: three active
+    # Seilern funds (IE00B2NXKW18, IE0031724234, IE00BMPRPP98) kept Fund_Currency NULL and were excluded from the EUR scoring. Same row reader as
+    # `fund_master.KID_Currency` (cost_currency.detect_totals_row_currency, one row = the label line and the next two; a row naming two currencies decides
+    # nothing). Still the KID text: the name suffix keeps priority upstream (a multi-class KID can state the base currency: FUNDCCY_NAME_WINS).
+    _row_ccy = _detect_totals_row_currency(text, _COSTS_TOTALS_LABEL)
+    if _row_ccy:
+        result = _normalize_currency(_row_ccy)
+        if result:
+            return result
+
     # FND-0243 (2026-10-09): PRIIPs investment example ("Example investment: EUR 10,000", "Inversión: 10.000 EUR",
     # "suponiendo que invierta 10.000 EUR", "investment of €10.000") -- the amount is stated in the currency of THIS
     # share class, like the cost table, so it outranks the base-fund fallbacks below. Measured on the active funds:
@@ -2535,6 +2546,18 @@ def _detect_fund_currency(text: str, language: Optional[str]) -> Optional[str]:
                 result = _normalize_currency(val)
                 if result:
                     return result
+
+    # FND-0243 (2026-10-18): LAST RESORT -- the share-class TITLE line. Every rule above is silent for these KIIDs (old UCITS format, no cost-table amounts), yet the first
+    # lines of the document name the class together with its currency: "Algebris Financial Credit Fund Class R EUR", "Templeton Global Total Return Fund Class A(Mdis)USD",
+    # "... - Y EUR", "Class A2 (EUR) acc.", "Acciones de capitalizacion (EUR) <ISIN> Clase 1", "EUR I Accumulating Class". The base currency of a hedged class appears LATER
+    # ("The reference currency of the Fund is USD" at character ~2,500), so only the first 600 characters count, ISO codes only, and exactly ONE distinct code (two codes in
+    # the title decide nothing). Measured on the funds whose NAME carries no currency (stored value from KID rules): 781 of 784 agree at 600 characters (the 3 exceptions
+    # are Fidelity hedged classes the cost-table rule above already resolves, so they never get here); 178 of 178 at 400. It only fills what every other rule left empty.
+    _title_codes = {m.group(1).upper() for m in re.finditer(r"(?<![A-Za-z])(" + "|".join(_ISO_CURRENCY_CODES) + r")(?![A-Za-z])", text[:600])}
+    if len(_title_codes) == 1:
+        result = _normalize_currency(next(iter(_title_codes)))
+        if result:
+            return result
 
     return None
 
@@ -2625,12 +2648,16 @@ try:
     from cost_table_parser import (
         COMPOSITION_VALUE_LEADIN as _COMPOSITION_VALUE_LEADIN,
         COMPOSITION_DESC_MANAGEMENT as _COMPOSITION_DESC_MANAGEMENT,
+        _TOTAL_COSTS_LABEL as _COSTS_TOTALS_LABEL,
     )
+    from cost_currency import CURRENCY_CODES as _ISO_CURRENCY_CODES, detect_totals_row_currency as _detect_totals_row_currency
 except ImportError:                     # entornos aislados (tests sin core en path)
     from core.cost_table_parser import (
         COMPOSITION_VALUE_LEADIN as _COMPOSITION_VALUE_LEADIN,
         COMPOSITION_DESC_MANAGEMENT as _COMPOSITION_DESC_MANAGEMENT,
+        _TOTAL_COSTS_LABEL as _COSTS_TOTALS_LABEL,
     )
+    from core.cost_currency import CURRENCY_CODES as _ISO_CURRENCY_CODES, detect_totals_row_currency as _detect_totals_row_currency
 
 # ── DDF/PRIIPs "Composición de costes" ────────────────────────────────────────
 # Extrae los costes CORRIENTES (gestión + operación) ignorando entrada/salida.

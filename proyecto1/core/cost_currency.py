@@ -51,6 +51,28 @@ def detect_base_currency(text: Optional[str]) -> Optional[str]:
     return hits[0][1] if hits else None
 
 
+def _scan_totals_row(text: str, total_label: "re.Pattern") -> tuple:
+    """(currency of the totals row or None, position of the FIRST totals label or None). The row is the label's line plus the next two; a row naming two currencies
+    decides nothing and ends the scan (later labels are not looked at)."""
+    first = None
+    for m in total_label.finditer(text):
+        block = "\n".join(text[text.rfind("\n", 0, m.start()) + 1:].splitlines()[:3])
+        tokens = {currency_code(t) for t in _TOKEN.findall(block)}
+        if first is None:
+            first = m.start()
+        if len(tokens) == 1:
+            return next(iter(tokens)), first
+        if tokens:
+            break
+    return None, first
+
+
+def detect_totals_row_currency(text: Optional[str], total_label: "re.Pattern") -> Optional[str]:
+    """ISO code of the currency written on the KID's totals row itself ("Total costs 61 EUR 194 EUR"; also the cell layout where the amounts sit two lines below
+    the label, after the "Annual cost impact" label), or None. Only the row: no example-base fallback (that is `detect_cost_currency`)."""
+    return _scan_totals_row(text, total_label)[0] if text else None
+
+
 def detect_cost_currency(text: Optional[str], total_label: "re.Pattern") -> Optional[str]:
     """ISO code of the currency the KID's COST table is written in (`fund_master.KID_Currency`), by evidence order:
     1. the currency of the totals row itself (the label line and the next two): "Total costs 61 EUR 194 EUR" -> EUR; a row naming two currencies decides nothing;
@@ -61,17 +83,10 @@ def detect_cost_currency(text: Optional[str], total_label: "re.Pattern") -> Opti
     3,642). `total_label` is cost_table_parser._TOTAL_COSTS_LABEL, passed in so this module stays free of project imports."""
     if not text:
         return None
+    row, label_pos = _scan_totals_row(text, total_label)
+    if row:
+        return row
     hits = _base_hits(text)
-    label_pos = None                       # the FIRST totals label, whatever its row says
-    for m in total_label.finditer(text):
-        block = "\n".join(text[text.rfind("\n", 0, m.start()) + 1:].splitlines()[:3])
-        tokens = {currency_code(t) for t in _TOKEN.findall(block)}
-        if label_pos is None:
-            label_pos = m.start()
-        if len(tokens) == 1:
-            return next(iter(tokens))
-        if tokens:                         # a row naming two currencies decides nothing: stop looking at later labels
-            break
     if label_pos is not None:
         before = [h for h in hits if h[0] <= label_pos and label_pos - h[0] <= 1500]
         if before:
