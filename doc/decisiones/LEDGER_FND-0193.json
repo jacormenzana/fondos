@@ -1,0 +1,21 @@
+{
+  "N_distinct_strategy_configs": 41,
+  "N_scan_upper": 437,
+  "N_scan_x2": 874,
+  "legacy_root_files_not_in_new_root": [],
+  "n_log_only_runs": 12,
+  "n_run_logs": 24,
+  "n_runs_with_manifest": 12,
+  "n_sharpe_values": 529,
+  "n_total_rows": 689,
+  "rows_by_kind": {
+    "cadence_grid": 120,
+    "cost_sensitivity": 108,
+    "crisis_variants": 28,
+    "hysteresis": 25,
+    "oos_grid": 384,
+    "run": 12,
+    "run_log_only": 12
+  },
+  "var_annualised_sharpe_across_trials": 0.030464852782748793
+}
