@@ -96,6 +96,9 @@ class PortfolioConstraints:
     # Peso maximo (dentro de cada sub-cartera, por tanto tambien en la maestra) de fondos con la columna `fx_exposed` verdadera; None = sin limite
     # (paridad con el Backtester, cuyos candidatos no traen la columna). Ver select_within_exposure.
     max_exposed_weight:  float | None = None
+    # Metodo de ponderacion interna de assign_weights ("score_proportional" = produccion; cualquier otro valor = pesos iguales). Solo la
+    # ablacion A2 de FND-0193 usa otro valor; el defecto deja el constructor en vivo bit a bit igual.
+    weight_method:       str = "score_proportional"
 
 
 DEFAULT_CONSTRAINTS = PortfolioConstraints()
@@ -374,6 +377,7 @@ def assign_weights(
         return df
 
     df = df.copy()
+    method = method if method != "score_proportional" else constraints.weight_method
 
     if method == "score_proportional":
         total_score = df["score_total"].sum()

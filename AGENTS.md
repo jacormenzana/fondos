@@ -504,6 +504,7 @@ python -m proyecto2.src.discovery.macro_discovery --source all
 | `fund_scorer.py` | `proyecto3/src` |
 | `monthly_report.py` | `proyecto3/src` |
 | `pit_backtest.py` | `proyecto3/src` |
+| `pit_baselines.py` | `proyecto3/src` |
 | `pit_cache.py` | `proyecto3/src` |
 | `pit_candidates.py` | `proyecto3/src` |
 | `pit_crisis_variants.py` | `proyecto3/src` |

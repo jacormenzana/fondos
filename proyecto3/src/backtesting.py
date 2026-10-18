@@ -458,6 +458,7 @@ class Backtester:
         hysteresis_band: float = 0.0,
         macro_variant: "str | None" = None,
         macro_workers: int = 1,
+        keep_detail: bool = False,
     ) -> pd.DataFrame:
         """
         Backtest POINT-IN-TIME (FND-0159): en cada fin de mes t el universo se puntua solo con la
@@ -530,7 +531,7 @@ class Backtester:
         print(f"Backtesting PIT | {at[0].date()} -> {at[-1].date()} | {len(at)} meses | {nav.shape[1]} fondos")
         run = compute_pit_scores(inputs, at, hist["regime"], cache, max_stale_days=max_stale_days,
                                  current_universe_only=current_universe_only, macro_variant=macro_variant,
-                                 macro_workers=macro_workers)
+                                 macro_workers=macro_workers, keep_detail=keep_detail)
         self.last_pit_run = run                          # tiempos por etapa, cache hits, cobertura de gates cortos
         self.last_pit_context = dict(inputs=inputs, hist=hist, at=at, max_stale_days=max_stale_days,
                                      tx_cost_bps=tx_cost_bps, entry_sides=entry_sides)

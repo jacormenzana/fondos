@@ -106,6 +106,49 @@ def load_rate_deposit(conn: "psycopg.Connection") -> pd.DataFrame:
     return df
 
 
+SNAPSHOT_DIR = "inputs"
+_SNAPSHOT_FILES = ("nav", "attrs", "rate", "fx_exposed", "regime_hist")
+
+
+def save_inputs_snapshot(run_dir, inputs, regime_hist: pd.DataFrame, target: "pd.Series | None" = None) -> list:
+    """FND-0193: freeze the DB-side inputs of a PIT run next to its scores (<run>/inputs/*.parquet), so an analysis of the
+    saved run reads exactly what the run saw even after a NAV load or a macro refresh moved the database (the 2026-10-17
+    run no longer reproduced: one regime label had changed). Returns the written file names."""
+    d = Path(run_dir) / SNAPSHOT_DIR
+    d.mkdir(parents=True, exist_ok=True)
+    frames = {"nav": inputs.nav, "attrs": inputs.attrs, "rate": inputs.rate if inputs.rate is not None else pd.DataFrame(columns=["date", "rate"]),
+              "regime_hist": regime_hist}
+    if getattr(inputs, "fx_exposed", None) is not None:
+        frames["fx_exposed"] = inputs.fx_exposed.rename("fx_exposed").to_frame()
+    if target is not None:
+        frames["target"] = target.rename("target").to_frame()
+    written = []
+    for name, df in frames.items():
+        out = df.copy()
+        out.columns = [str(c) for c in out.columns]
+        out.to_parquet(d / f"{name}.parquet")
+        written.append(f"{name}.parquet")
+    return written
+
+
+def has_inputs_snapshot(run_dir) -> bool:
+    d = Path(run_dir) / SNAPSHOT_DIR
+    return all((d / f"{n}.parquet").exists() for n in ("nav", "attrs", "rate", "regime_hist"))
+
+
+def load_inputs_snapshot(run_dir) -> "tuple[object, pd.DataFrame, pd.Series | None]":
+    """(PitInputs, regime history, IPC+M3 target or None) from <run>/inputs/. Inverse of save_inputs_snapshot; ipc stays None
+    (the portfolio / return layers do not need it)."""
+    from proyecto3.src.pit_run import PitInputs
+    d = Path(run_dir) / SNAPSHOT_DIR
+    rate = pd.read_parquet(d / "rate.parquet")
+    fx = pd.read_parquet(d / "fx_exposed.parquet")["fx_exposed"].astype(bool) if (d / "fx_exposed.parquet").exists() else None
+    inputs = PitInputs(nav=pd.read_parquet(d / "nav.parquet"), attrs=pd.read_parquet(d / "attrs.parquet"), ipc=None,
+                       rate=rate if len(rate) else None, fx_exposed=fx)
+    target = pd.read_parquet(d / "target.parquet")["target"] if (d / "target.parquet").exists() else None
+    return inputs, pd.read_parquet(d / "regime_hist.parquet").sort_index(), target
+
+
 def iter_daily_chunks(conn: "psycopg.Connection", isins: list, chunk_size: int = 300):
     """Yield long frames [isin, date, nav] of daily NAV for successive ISIN chunks (bounded memory)."""
     isins = sorted(isins)

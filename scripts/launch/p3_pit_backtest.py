@@ -21,6 +21,9 @@ Artifacts (one directory per run, default C:\\data\\fondos\\reports\\pit_backtes
     universe_by_date.csv     funds entering / stale / too young / scored / eligible at every date
     short_gate_coverage.csv  where the short-horizon gates were evaluable (fail-open view)
     scores_long.parquet      every PIT score (as_of, regime, isin, subportfolio, score_final, eligible, ...)
+    scores_detail.parquet    with --keep-detail: every Layer-3 multiplier component and base metric per fund and date (FND-0193 ablation)
+    inputs/*.parquet         snapshot of the DB-side inputs the run saw (NAV panel, attributes, deposit rate, FX flags, regime history,
+                             IPC+M3 target): an analysis of the saved run reads these, not the database, so it reproduces the run exactly
 Log: proyecto3\\log\\log_P3_pitBacktest_<STAMP>.log. Exit codes: 0 ok, 2 nothing to evaluate.
 """
 
@@ -41,6 +44,7 @@ sys.path.insert(0, str(_ROOT))
 from proyecto3.src.backtesting import Backtester
 from proyecto3.src.pit_backtest import COST_GRID_BPS, table_stats
 from proyecto3.src.pit_cache import CODE_VERSION
+from proyecto3.src.pit_inputs import save_inputs_snapshot
 from shared.config import (FUND_DATA_ELIGIBILITY_ENABLED, P3_FUND_NAV_MAX_AGE_DAYS, P3_FUND_NAV_MAX_GAP_RUN_MONTHS,
                            P3_FUND_NAV_MIN_COVERAGE, REGIME_PUBLICATION_LAG_MONTHS)
 from shared.db import get_connection
@@ -90,6 +94,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-cache", action="store_true", help="neither read nor write the parquet cache")
     p.add_argument("--out-dir", default=None, help="artifact directory (default <reports>/pit_backtest/<STAMP>)")
     p.add_argument("--no-scores", action="store_true", help="do not write scores_long.parquet")
+    p.add_argument("--keep-detail", action="store_true",
+                   help="also write scores_detail.parquet (every Layer-3 multiplier component per fund and date; FND-0193 ablation). "
+                        "Bypasses the scores cache (the scoring stage runs cold, about 6 min more)")
     p.add_argument("--dry-run", action="store_true", help="print the plan and exit; computes and writes nothing")
     return p
 
@@ -168,7 +175,15 @@ def write_artifacts(out_dir: Path, table: pd.DataFrame, grid: pd.DataFrame, bt, 
     if run.short_coverage is not None:
         _put("short_gate_coverage.csv", lambda p: run.short_coverage.to_csv(p))
     if save_scores and len(run.scores):
-        _put("scores_long.parquet", lambda p: run.scores.to_parquet(p))
+        scores = run.scores
+        if "detail" in scores.columns:                    # --keep-detail: the nested dicts go to a flat side file (FND-0193 ablation A5)
+            from proyecto3.src.pit_baselines import flatten_score_detail
+            _put("scores_detail.parquet", lambda p: flatten_score_detail(scores).to_parquet(p))
+            scores = scores.drop(columns=["detail"])
+        _put("scores_long.parquet", lambda p: scores.to_parquet(p))
+    ctx = getattr(bt, "last_pit_context", None)
+    if ctx is not None:                                   # FND-0193: the run's DB-side inputs, frozen next to its scores
+        _put("inputs", lambda p: save_inputs_snapshot(out_dir, ctx["inputs"], ctx["hist"], ctx.get("target")))
     _put("timings.json", lambda p: p.write_text(json.dumps(
         {"seconds": run.timings, "cache_hits": run.cache_hits}, indent=2, default=str), encoding="utf-8"))
     manifest = {**manifest, "artifacts": sorted(written) + ["manifest.json"]}
@@ -239,7 +254,7 @@ def main(argv=None, conn=None) -> int:
                        current_universe_only=args.current_universe_only, tx_cost_bps=args.bps_main,
                        entry_sides=args.entry_sides, hysteresis_band=args.hysteresis_band,
                        macro_variant=None if args.macro_variant == "none" else args.macro_variant,
-                       macro_workers=args.macro_workers)
+                       macro_workers=args.macro_workers, keep_detail=args.keep_detail)
     if table is None or table.empty:
         logger.error("nothing to evaluate (no regime history or empty date range)")
         return EXIT_NOTHING_TO_EVALUATE

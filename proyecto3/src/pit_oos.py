@@ -236,7 +236,8 @@ def cadence_report(tables: dict, split, reference_k: int = 1, tolerance: float =
 def load_saved_run(run_dir, conn):
     """(pit_run-like with .scores, PitInputs, regime history, evaluation dates) of a saved p3_pit_backtest run folder.
     Reads scores_long.parquet and pit_backtest_table.csv from the folder and NAV / attributes / deposit rate / regime history
-    from the DB (read-only). ipc is not needed by the portfolio / return layers, so it is left empty."""
+    from the DB (read-only), or from <run>/inputs/ when the run was saved with its input snapshot (preferred: the database moves
+    after a run, a snapshot does not). ipc is not needed by the portfolio / return layers, so it is left empty."""
     from types import SimpleNamespace
     from proyecto3.src.pit_inputs import load_attributes, load_fx_exposed, load_nav_panel, load_rate_deposit
     from proyecto3.src.pit_run import PitInputs
@@ -245,6 +246,10 @@ def load_saved_run(run_dir, conn):
     run = Path(run_dir)
     scores = pd.read_parquet(run / "scores_long.parquet")
     at = pd.DatetimeIndex(pd.read_csv(run / "pit_backtest_table.csv", parse_dates=["date"])["date"])
+    from proyecto3.src.pit_inputs import has_inputs_snapshot, load_inputs_snapshot
+    if has_inputs_snapshot(run):                    # FND-0193: a run saved with its inputs is analysed on exactly what it saw
+        inputs, hist, _ = load_inputs_snapshot(run)
+        return SimpleNamespace(scores=scores), inputs, hist, at
     hist = RegimeClassifier(conn, publication_lags=REGIME_PUBLICATION_LAG_MONTHS).classify_historical().sort_index()
     attrs = load_attributes(conn)
     inputs = PitInputs(nav=load_nav_panel(conn), attrs=attrs, ipc=None, rate=load_rate_deposit(conn),
