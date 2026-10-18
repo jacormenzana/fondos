@@ -124,3 +124,44 @@ def test_row_values_wants_exactly_n_cols():
     zone = "Total costs 208 EUR\nsomething\nelse\n\nTotal costs 208 EUR 1 066 EUR\n"
     assert p._row_values(zone, p._TOTAL_COSTS_LABEL, p._extract_eur_list_from_cell, 2) == [208.0, 1066.0]
     assert p._row_values(zone, p._TOTAL_COSTS_LABEL, p._extract_eur_list_from_cell, 3) == []
+
+
+# ---- the two-column rule and the binding on the rows of either parser (follow-up 3) -------------------------------------------------------------------
+
+def _by_h(out):
+    return {r["Horizon_Years"]: r for r in out["_cost_schedule_rows"]}
+
+
+def test_two_values_and_only_the_recommended_period_found_means_1_year_and_that_period():
+    # IE000NGCG706: "Costes totales 567 EUR 697 EUR" / "5,7% 2,4%" and only "3 anos" in the pdf text; stored 567 at 3 years and no 1-year row
+    from _fnd0279_kid_slices import IE_ONECOL_FED
+    rows = _by_h(pe.extract_priips_costs(text=IE_ONECOL_FED, isin="IE000NGCG706"))
+    assert rows[3.0]["Total_Costs_EUR"] == 697.0 and rows[1.0]["Total_Costs_EUR"] == 567.0
+    assert rows[3.0]["Annual_Impact_Pct"] == 2.4 and rows[1.0]["Annual_Impact_Pct"] == 5.7
+
+
+def test_the_dla2_parser_that_loses_a_total_is_completed_from_the_documents_own_row():
+    # LU0577510026: the DLA2 rows carried the 1-year total only; the KID's row says 302 / 2 350 EUR
+    from _fnd0279_kid_slices import LU_DLA2LOST_FED
+    rows = _by_h(pe.extract_priips_costs(text=LU_DLA2LOST_FED, isin="LU0577510026"))
+    assert rows[1.0]["Total_Costs_EUR"] == 302.0 and rows[7.0]["Total_Costs_EUR"] == 2350.0
+
+
+def test_the_synthetic_one_year_row_needs_a_horizon_longer_than_a_year():
+    zone = "Costes totales 567 EUR 697 EUR\nIncidencia anual de los costes (*)\n5,7% 2,4%\n"
+    res = [_row(1.0, False, None, 0.1)]                                # the single found horizon is one year: not the recommended period
+    assert p._bind_columns_by_label(zone, res)[0]["total_cost_eur"] is None
+
+
+def test_the_synthetic_one_year_row_is_added_with_whatever_the_row_binds():
+    zone = "Costes totales 567 EUR 697 EUR\nIncidencia anual de los costes (*)\n5,7% 2,4%\n"
+    out = p._bind_columns_by_label(zone, [_row(3.0, False, None, None)])
+    by = {e["horizon_years"]: e for e in out}
+    assert by[1.0]["total_cost_eur"] == 567.0 and abs(by[1.0]["aci_pct"] - 0.057) < 1e-9 and by[1.0]["is_rhp"] is False
+    assert by[3.0]["total_cost_eur"] == 697.0 and abs(by[3.0]["aci_pct"] - 0.024) < 1e-9
+
+
+def test_three_values_and_a_single_found_horizon_are_left_alone():
+    zone = "Costes totales 100 EUR 300 EUR 500 EUR\nIncidencia anual de los costes (*)\n5,0% 3,0% 2,0%\n"
+    out = p._bind_columns_by_label(zone, [_row(5.0, True, None, None)])
+    assert len(out) == 1 and out[0]["total_cost_eur"] is None

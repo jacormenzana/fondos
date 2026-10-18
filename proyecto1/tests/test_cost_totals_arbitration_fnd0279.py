@@ -41,19 +41,22 @@ def _row(h, eur, pct, annual):
 
 def test_the_dla2_table_that_truncates_a_digit_no_longer_wins():
     fed = HELIUM_RAW + "\n\n" + HELIUM_DLA2
-    assert _totals(pe.extract_priips_costs(text=fed, isin="LU1734046979")) == [(1.0, 456.0), (3.0, 216.0)]       # the defect, pinned
+    # the DLA2 table text says 216 for "1 216 EUR"; since the label binding runs on the rows of either parser the extractor alone reads the KID's own row (456 / 1 216) ...
+    assert _totals(pe.extract_priips_costs(text=fed, isin="LU1734046979")) == [(1.0, 456.0), (3.0, 1216.0)]
+    # ... and the arbitration, kept as the safety net, finds nothing left to replace
     out, replaced = extract_priips_costs_arbitrated(HELIUM_RAW, fed, "LU1734046979")
     assert _totals(out) == [(1.0, 456.0), (3.0, 1216.0)]
-    assert replaced == [(3.0, 216.0, 1216.0)]
+    assert replaced == []
     assert [r["Total_Costs_Pct"] for r in out["_cost_schedule_rows"]] == [4.56, 12.16]
 
 
 def test_the_dla2_row_that_loses_a_cell_no_longer_loses_the_total():
     fed = VONTOBEL_RAW + "\n\n" + VONTOBEL_DLA2
-    assert _totals(pe.extract_priips_costs(text=fed, isin="LU1683489089"))[-1] == (5.0, None)                    # the defect, pinned
+    # the DLA2 row lost the 5-year cell; the label binding now reads it from the KID's own row, so the extractor alone is right and the arbitration has nothing to replace
+    assert _totals(pe.extract_priips_costs(text=fed, isin="LU1683489089"))[-1] == (5.0, 1141.0)
     out, replaced = extract_priips_costs_arbitrated(VONTOBEL_RAW, fed, "LU1683489089")
     assert _totals(out) == [(1.0, 637.0), (5.0, 1141.0)]
-    assert replaced == [(5.0, None, 1141.0)]
+    assert replaced == []
 
 
 def test_only_the_totals_change_the_rest_of_the_extractor_output_is_the_current_reading():

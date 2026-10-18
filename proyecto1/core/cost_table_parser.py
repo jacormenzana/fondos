@@ -1289,14 +1289,20 @@ def _bind_columns_by_label(zone: str, results: List[dict]) -> List[dict]:
     whatever the fragment search found. A line with a different number of values, totals that fall with the horizon, or impacts that rise with it leave the
     entries untouched (the same guards as `_rebind_duplicate_columns`). `zone` runs from `_LABEL_BIND_BEFORE` characters before the section header to `_LABEL_BIND_SPAN` after it. Mutates and returns `results`. Pure."""
     years = sorted({e['horizon_years'] for e in results if (e.get('horizon_years') or 0) > 0})
-    n_cols = len(years)
-    if n_cols < 2:                  # one column found is not one column printed: a cell layout puts only the FIRST column's amount on the label line
-        return results              # (IE00BD8DY654: "Total Costs 666 EUR" with the 5-year amount in the next cell), so a single column is never bound
+    # PRIIPs prints one column per horizon, the 1-year one first and the recommended-period one last. When a SINGLE horizon longer than a year was found and the label
+    # rows carry exactly two values, the two columns are 1 year and that horizon: the 1-year header is simply not in the pdf text (IE000NGCG706: "Costes totales 567 EUR
+    # 697 EUR" with only "3 anos" found stored 567 at 3 years). A single found column with a one-value row is still never bound: a cell layout puts only the FIRST
+    # column's amount on the label line (IE00BD8DY654: "Total costs 666 EUR" with the 5-year amount in the next cell).
+    synthetic_1y = len(years) == 1 and years[0] > 1
+    columns = [1.0] + years if synthetic_1y else years
+    n_cols = len(columns)
+    if n_cols < 2 or (synthetic_1y and n_cols != 2):
+        return results
 
     def column(e: dict) -> Optional[int]:
         hy = e.get('horizon_years')
         if hy is not None and hy > 0:
-            return years.index(hy)
+            return columns.index(hy)
         return n_cols - 1 if e.get('is_rhp') else None      # the RHP column is the last one of the table
 
     totals = _row_values(zone, _TOTAL_COSTS_LABEL, _extract_eur_list_from_cell, n_cols)
@@ -1311,6 +1317,12 @@ def _bind_columns_by_label(zone: str, results: List[dict]) -> List[dict]:
             i = column(e)
             if i is not None:
                 e['aci_pct'] = acis[i]
+    if synthetic_1y and not any(e.get('horizon_years') == 1.0 for e in results):
+        bound_total = totals[0] if len(totals) == n_cols and all(a <= b for a, b in zip(totals, totals[1:])) else None
+        bound_aci = acis[0] if len(acis) == n_cols and all(a >= b for a, b in zip(acis, acis[1:])) else None
+        if bound_total is not None or bound_aci is not None:
+            results.append({'horizon_label': 'label-bound 1 year', 'horizon_years': 1.0, 'is_rhp': False,
+                            'total_cost_eur': bound_total, 'aci_pct': bound_aci, 'source': 'LABEL_BOUND'})
     return results
 
 
@@ -1625,6 +1637,15 @@ def _parse_composition_plain(text: str) -> dict:
 # API pública
 # ======================================================================
 
+def _bind_rows_by_label_in_text(text: str, results: List[dict]) -> List[dict]:
+    """`_bind_columns_by_label` on the rows of whichever parser produced them (FND-0279): the DLA2 table parser loses cells (a total of the recommended-period
+    column stays None) that the document's own "Costes totales" row still carries. The zone is the one the plain parser uses: around the section caption."""
+    m = COSTS_OVER_TIME_HEADER.search(text)
+    if not m or not results:
+        return results
+    return _bind_columns_by_label(text[max(0, m.start() - _LABEL_BIND_BEFORE):m.start() + _LABEL_BIND_SPAN], results)
+
+
 def parse_costs_over_time(text: str) -> List[dict]:
     """
     Parsea la tabla "Costes a lo largo del tiempo" / "Costs over time".
@@ -1672,7 +1693,7 @@ def parse_costs_over_time(text: str) -> List[dict]:
                 _plain = _parse_costs_over_time_plain(text)
                 if _plain and any(e.get('aci_pct') is not None for e in _plain):
                     results = _plain
-            return results
+            return _bind_rows_by_label_in_text(text, results)
         else:
             return _parse_costs_over_time_plain(text)
     except Exception:
