@@ -106,6 +106,7 @@ from src.calculations.regime_returns import (
 )
 from src.calculations.m2_global_builder import build_m2_global, m2_global_needs_rebuild
 from src.calculations.momentum import compute_momentum, reset_category_returns_cache
+from src.calculations import peer_panel   # FND-0255: per-run peer panel cache (capture, persistence)
 from src.calculations.capture_ratios import compute_capture_ratios
 from src.calculations.persistence import compute_persistence
 from src.calculations.currency_factor import compute_currency_factor
@@ -955,6 +956,9 @@ def run(
 
         assert_release_coupling()   # FND-0243 D4: refuse an inconsistent EUR-view switch state before any connection
         conn = get_connection()
+        # FND-0255: build each nature's peer panel once for this run (capture / persistence) instead of re-reading it per fund; bound to this connection
+        # and released in the `finally` below. No-op while PEER_PANEL_CACHE_ENABLED is off.
+        peer_panel.start_run(conn)
 
         # EFF-1: the OLS cadence columns (last_ols_quarter / last_ols_nav_count / last_ols_calc_version)
         # are defined in db/pg/35_control.sql. Even a no-op ALTER ... IF NOT EXISTS requires table
@@ -1985,6 +1989,7 @@ def run(
             except Exception:
                 pass  # never crash in finally
 
+        peer_panel.reset()
         if conn is not None:
             try:
                 conn.close()

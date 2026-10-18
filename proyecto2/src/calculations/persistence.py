@@ -36,6 +36,11 @@ from shared.config import (
     PERSISTENCE_MIN_WINDOWS as MIN_WINDOWS,
 )
 
+try:                                                   # package import (tests, -m) or plain `src.` import (run_pipeline.py)
+    from . import peer_panel
+except ImportError:                                    # pragma: no cover
+    from src.calculations import peer_panel            # FND-0255
+
 
 
 # ============================================================
@@ -57,6 +62,12 @@ def _category_return_in_window(
     periodo (sesgo al alza: un fondo que cae de 100 a 80 contaba +25%). Con PERSISTENCE_FIRST_LAST_NAV_ENABLED se
     usa el NAV de la primera y de la ultima fecha, como el retorno del propio fondo en compute_persistence.
     """
+    # FND-0255: inside a pipeline run (peer_panel.start_run(conn)) the category panel is built once per run and the window is read from an in-memory slice (same
+    # peers, same first/last NAV and dates, same EUR conversion rule; tests/test_peer_panel_fnd0255_pg.py). Any other caller, the kill-switch off or the legacy
+    # MIN/MAX flag combination takes the SQL path below.
+    if _config.PERSISTENCE_FIRST_LAST_NAV_ENABLED and peer_panel.active_for(conn):
+        return peer_panel.persistence_window_return(conn, fund_nature, exclude_isin, start_date, end_date, WINDOW_MONTHS - 3)
+
     # Postgres migration Stage 9 (found live 2026-09-22): see momentum.py's identical note.
     ph = "%s"
     rows = conn.execute(f"""

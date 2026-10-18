@@ -677,6 +677,10 @@ MACRO_VIF_ITERATIVE_ENABLED: bool = True
 MACRO_FACTOR_CLEAN_ENABLED: bool = True
 PERSISTENCE_FIRST_LAST_NAV_ENABLED: bool = True
 CAPTURE_MONTH_END_ENABLED: bool = True
+# FND-0255: PERFORMANCE ONLY, results are equivalent (capture bit-identical; persistence's category mean in a different summation order). One NAV panel per nature per
+# run instead of a database read + EUR conversion per fund (capture) and per rolling window per fund (persistence). Deliberately NOT in P2_BUNDLE_FLAGS: it must
+# not change any fingerprint, so enabling it recomputes nothing. OFF = the legacy per-fund queries.
+PEER_PANEL_CACHE_ENABLED: bool = True
 P2_BUNDLE_FLAGS: tuple = ("MACRO_VIF_ITERATIVE_ENABLED", "MACRO_FACTOR_CLEAN_ENABLED",
                           "PERSISTENCE_FIRST_LAST_NAV_ENABLED", "CAPTURE_MONTH_END_ENABLED",
                           "ANNUALIZATION_INTERVAL_ENABLED", "DEFLATION_MONTH_ALIGN_ENABLED",

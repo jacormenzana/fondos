@@ -34,6 +34,11 @@ from shared import config as _config
 from shared.eur_nav import apply_eur_view_frame   # FND-0243
 from shared.config import CAPTURE_MIN_PERIODS as MIN_PERIODS  # minimo de periodos positivos/negativos para calcular
 
+try:                                                   # package import (tests, -m) or plain `src.` import (run_pipeline.py)
+    from . import peer_panel
+except ImportError:                                    # pragma: no cover
+    from src.calculations import peer_panel            # FND-0255
+
 
 
 # ============================================================
@@ -51,6 +56,11 @@ def load_peer_benchmark(
 
     Devuelve Series indexada por fecha con retorno mensual medio de la categoria.
     """
+    # FND-0255: inside a pipeline run (peer_panel.start_run(conn)) the category matrix is built once per run and this fund's benchmark is the mean without its
+    # own column -- bit-identical to the query below (tests/test_peer_panel_fnd0255_pg.py); any other caller, or the kill-switch off, takes the legacy path.
+    if _config.CAPTURE_MONTH_END_ENABLED and peer_panel.active_for(conn):
+        return peer_panel.capture_benchmark(conn, fund_nature, exclude_isin)
+
     # Postgres migration Stage 9 (found live 2026-09-22): see momentum.py's identical note —
     # proyecto2/src/calculations/*.py were never in scope for any prior stage's read-path port.
     ph = "%s"
