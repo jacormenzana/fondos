@@ -92,6 +92,7 @@ def pit_scores(
     macro: "dict | None" = None,
     macro_max_stale_days: int = 100,
     nav_gap: "pd.DataFrame | None" = None,
+    log_universe: bool = True,
 ) -> "tuple[pd.DataFrame, pd.DataFrame]":
     """Score the universe as of every date in `at`.
 
@@ -182,7 +183,8 @@ def pit_scores(
 
     universe = pd.DataFrame(rows).set_index("as_of")
     scores = pd.concat(all_scores, ignore_index=True) if all_scores else pd.DataFrame()
-    _log_universe(universe)
+    if log_universe:
+        _log_universe(universe)
     return scores, universe
 
 
@@ -209,3 +211,6 @@ def _log_universe(universe: pd.DataFrame) -> None:
     if len(empty):
         logger.warning("PIT scoring: no scored funds on %d of %d dates (%s .. %s) -- those months have no portfolio",
                        len(empty), len(universe), empty.min().date(), empty.max().date())
+
+
+log_universe_summary = _log_universe          # public name for pit_run, which scores in cached blocks and logs the whole run once

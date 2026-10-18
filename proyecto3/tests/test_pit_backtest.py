@@ -355,10 +355,64 @@ def test_a_nav_outage_excludes_the_fund_after_it_only_with_the_switch_on(chain, 
     assert not before(on)["exclusion_reason"].fillna("").str.startswith("nav_gap:").any()      # nothing observable yet
 
 
-def test_keep_detail_bypasses_the_scoring_cache(chain):
+def test_keep_detail_is_cached_and_flattened(chain):
+    """FND-0193: the nested Layer-3 dicts are flattened into run.detail (m_* factors, x_* metrics) and cached with the block, so a detail run
+    resumes like any other; scores no longer carry the dict column."""
     nav, attrs, regime_hist, inputs, cache, run1 = chain
-    run = compute_pit_scores(inputs, AT, regime_hist["regime"], cache, keep_detail=True)
-    assert run.cache_hits["scoring"] is False and "detail" in run.scores.columns
+    r1 = compute_pit_scores(inputs, AT, regime_hist["regime"], cache, keep_detail=True)
+    r2 = compute_pit_scores(inputs, AT, regime_hist["regime"], cache, keep_detail=True)
+    assert r1.cache_hits["scoring"] is False and r2.cache_hits["scoring"] is True
+    assert "detail" not in r1.scores.columns and r1.detail is not None and {"as_of", "isin"} <= set(r1.detail.columns)
+    assert any(c.startswith("m_") for c in r1.detail.columns) and any(c.startswith("x_") for c in r1.detail.columns)
+    pd.testing.assert_frame_equal(r1.detail.reset_index(drop=True), r2.detail.reset_index(drop=True))
+    pd.testing.assert_frame_equal(r1.scores.reset_index(drop=True), run1.scores.reset_index(drop=True))     # same scores with or without detail
+    assert len(r1.detail) == len(r1.scores)
+    assert run1.detail is None
+
+
+def test_blocked_scoring_is_bit_identical_to_the_single_pass(tmp_path, monkeypatch):
+    """Scoring is cached in blocks of dates (FND-0193); a date's score uses only information at that date, so the concatenation of the
+    blocks must equal the single pass exactly (values, order, dtypes), with and without detail."""
+    from proyecto3.src import pit_run
+    nav, attrs, regime_hist = _world()
+    inputs = _inputs(nav, attrs)
+    off = ParquetCache(Path("."), enabled=False)
+    monkeypatch.setattr(pit_run, "SCORE_BLOCK_DATES", 10_000)
+    single = compute_pit_scores(inputs, AT, regime_hist["regime"], off, keep_detail=True)
+    monkeypatch.setattr(pit_run, "SCORE_BLOCK_DATES", 3)
+    blocked = compute_pit_scores(inputs, AT, regime_hist["regime"], ParquetCache(tmp_path), keep_detail=True)
+    assert blocked.cache_hits["scoring_blocks"] == "0/4" and single.cache_hits["scoring_blocks"] == "0/1"
+    pd.testing.assert_frame_equal(single.scores, blocked.scores, check_exact=True)
+    pd.testing.assert_frame_equal(single.universe, blocked.universe, check_exact=True, check_freq=False)
+    pd.testing.assert_frame_equal(single.detail, blocked.detail, check_exact=True)
+
+
+def test_a_killed_run_resumes_from_the_last_finished_block(tmp_path, monkeypatch):
+    """The memory guard kills the process: the blocks finished before it stay in the cache, the rerun recomputes only the rest and
+    returns exactly what an uninterrupted run returns."""
+    from proyecto3.src import pit_run
+    nav, attrs, regime_hist = _world()
+    inputs = _inputs(nav, attrs)
+    monkeypatch.setattr(pit_run, "SCORE_BLOCK_DATES", 3)
+    reference = compute_pit_scores(inputs, AT, regime_hist["regime"], ParquetCache(tmp_path / "ref"))
+    cache = ParquetCache(tmp_path / "killed")
+    real = pit_run.pit_scores
+    calls = {"n": 0}
+
+    def dying(*a, **k):
+        calls["n"] += 1
+        if calls["n"] == 3:
+            raise KeyboardInterrupt("simulated kill after two finished blocks")
+        return real(*a, **k)
+
+    monkeypatch.setattr(pit_run, "pit_scores", dying)
+    with pytest.raises(KeyboardInterrupt):
+        compute_pit_scores(inputs, AT, regime_hist["regime"], cache)
+    monkeypatch.setattr(pit_run, "pit_scores", real)
+    resumed = compute_pit_scores(inputs, AT, regime_hist["regime"], cache)
+    assert resumed.cache_hits["scoring_blocks"] == "2/4" and resumed.cache_hits["scoring"] is False
+    pd.testing.assert_frame_equal(reference.scores, resumed.scores, check_exact=True)
+    pd.testing.assert_frame_equal(reference.universe, resumed.universe, check_exact=True, check_freq=False)
 
 
 # ---------------- Backtester.run_pit wiring ----------------

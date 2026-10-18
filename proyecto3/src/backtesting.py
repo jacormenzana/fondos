@@ -459,6 +459,7 @@ class Backtester:
         macro_variant: "str | None" = None,
         macro_workers: int = 1,
         keep_detail: bool = False,
+        snap_nav_month_end: bool = False,
     ) -> pd.DataFrame:
         """
         Backtest POINT-IN-TIME (FND-0159): en cada fin de mes t el universo se puntua solo con la
@@ -504,6 +505,9 @@ class Backtester:
         nav = load_nav_panel(self.conn, isins)
         if nav.empty:
             return pd.DataFrame()
+        if snap_nav_month_end:                         # FND-0193 alignment gate (run R4): every NAV date on the calendar month-end
+            from proyecto3.src.pit_inputs import snap_nav_to_month_end
+            nav = snap_nav_to_month_end(nav)
         # FND-0204: el indice del clasificador con retrasos llega 2 meses mas alla del ultimo dato; no se evalua
         # ninguna fecha posterior al ultimo mes que el NAV cubre por completo
         last = min(hist.index.max(), last_complete_month_end(nav.index.max()))

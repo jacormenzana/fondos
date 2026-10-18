@@ -24,7 +24,8 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from proyecto3.src.pit_cache import CODE_VERSION, ParquetCache, cached_frames, content_hash
-from proyecto3.src.pit_candidates import DEFAULT_MAX_STALE_DAYS, pit_scores
+from proyecto3.src.pit_baselines import flatten_score_detail
+from proyecto3.src.pit_candidates import DEFAULT_MAX_STALE_DAYS, log_universe_summary, pit_scores
 from proyecto3.src.pit_metrics import assert_series_cover, expanding_risk_metrics
 from proyecto3.src.scorer_config import SCORER_CONFIG_HASH
 from proyecto3.src.pit_peer_metrics import alpha_persistence, capture_ratios, momentum_rank
@@ -32,6 +33,8 @@ from proyecto3.src.pit_short_horizon import SHORT_GATE_METRICS, log_coverage, sh
 from shared.config import MIN_NAV_ROWS, REGIME_PUBLICATION_LAG_MONTHS
 
 logger = logging.getLogger(__name__)
+
+SCORE_BLOCK_DATES = 12        # evaluation dates per cached scoring block (FND-0193: a killed run resumes at the last finished block)
 
 
 @dataclass
@@ -55,6 +58,7 @@ class PitRun:
     short_coverage: "pd.DataFrame | None" = None     # per date: funds with daily NAV / evaluable windows (fail-open view)
     macro: "dict | None" = None                      # FND-0224 group B frames {metric: dates x isin}, None without group B
     vol_ann: "pd.DataFrame | None" = None            # expanding annualised volatility panel (base-risk control for variants)
+    detail: "pd.DataFrame | None" = None             # keep_detail: Layer-3 components flattened (as_of, isin, m_*, x_*); None otherwise
 
 
 def compute_pit_scores(
@@ -157,33 +161,59 @@ def compute_pit_scores(
     elig_on = bool(getattr(_config, "FUND_DATA_ELIGIBILITY_ENABLED", False))
     elig_params = {"min_coverage": _config.P3_FUND_NAV_MIN_COVERAGE, "max_gap_run": _config.P3_FUND_NAV_MAX_GAP_RUN_MONTHS} if elig_on else None
 
-    def _score():
-        nav_gap = None
-        if elig_on:
-            from shared.nav_continuity import reasons_by_date
-            nav_gap = reasons_by_date(inputs.nav, at, elig_params["min_coverage"], elig_params["max_gap_run"])
-        s, u = pit_scores(
-            at, risk, peers, inputs.attrs, regime_by_date, momentum=momentum, short=short,
-            max_stale_days=max_stale_days, min_obs=min_obs, current_universe_only=current_universe_only,
-            keep_detail=keep_detail, macro=macro, nav_gap=nav_gap,
-        )
-        return {"scores": s, "universe": u}
+    score_key = content_hash(risk_key, peers_key, short_keys, at, regime_by_date, inputs.attrs,
+                             {"stale": max_stale_days, "min_obs": min_obs, "cur": current_universe_only,
+                              "scorer_cfg": SCORER_CONFIG_HASH, "universe_cols": 2},          # FND-0192: a changed scorer value can never hit a stale cache
+                             CODE_VERSION, *macro_key,          # macro_key empty without group B
+                             *([{"nav_continuity": elig_params}] if elig_on else []))     # FND-0254: part of the key only when the rule is ON
 
-    if keep_detail:                                                  # 'detail' holds dicts: not parquet-able
-        t0 = time.perf_counter()
-        frames, hit = _score(), False
-        secs = time.perf_counter() - t0
-    else:
-        score_key = content_hash(risk_key, peers_key, short_keys, at, regime_by_date, inputs.attrs,
-                                 {"stale": max_stale_days, "min_obs": min_obs, "cur": current_universe_only,
-                                  "scorer_cfg": SCORER_CONFIG_HASH, "universe_cols": 2},          # FND-0192: a changed scorer value can never hit a stale cache
-                                 CODE_VERSION, *macro_key,          # macro_key empty without group B
-                                 *([{"nav_continuity": elig_params}] if elig_on else []))     # FND-0254: part of the key only when the rule is ON
-        frames, hit, secs = cached_frames(cache, "scores", score_key, _score)
-    scores, universe = frames["scores"], frames["universe"]
+    # FND-0193 (resumable runs): the dominant cost is scored in blocks of SCORE_BLOCK_DATES evaluation dates and each block is cached as it
+    # finishes, so a run killed by the memory guard (or the owner) loses at most one block. The score of a date uses only information at that
+    # date, so blocks concatenate to exactly the single-pass result (pinned by tests/test_pit_run_blocks.py). With keep_detail the Layer-3
+    # components are flattened into a third cached frame (the nested dicts are not parquet-able).
+    nav_gap_full = None
+
+    def _nav_gap_for(block):
+        nonlocal nav_gap_full
+        if not elig_on:
+            return None
+        if nav_gap_full is None:
+            from shared.nav_continuity import reasons_by_date
+            nav_gap_full = reasons_by_date(inputs.nav, at, elig_params["min_coverage"], elig_params["max_gap_run"])
+        return nav_gap_full.loc[block]
+
+    parts_s, parts_u, parts_d, n_hit = [], [], [], 0
+    t0 = time.perf_counter()
+    blocks = [at[i:i + SCORE_BLOCK_DATES] for i in range(0, len(at), SCORE_BLOCK_DATES)]
+    for block in blocks:
+        def _score_block(block=block):
+            s, u = pit_scores(
+                block, risk, peers, inputs.attrs, regime_by_date, momentum=momentum, short=short,
+                max_stale_days=max_stale_days, min_obs=min_obs, current_universe_only=current_universe_only,
+                keep_detail=keep_detail, macro=macro, nav_gap=_nav_gap_for(block), log_universe=False,
+            )
+            out = {"scores": s.drop(columns=["detail"]) if (keep_detail and "detail" in s.columns) else s, "universe": u}
+            if keep_detail:
+                out["detail"] = flatten_score_detail(s) if len(s) else pd.DataFrame({"as_of": pd.to_datetime([]), "isin": []})
+            return out
+
+        block_key = content_hash(score_key, {"block": [str(block[0]), str(block[-1])], "detail": bool(keep_detail)})
+        frames, hit, _ = cached_frames(cache, "scores", block_key, _score_block)
+        n_hit += bool(hit)
+        parts_s.append(frames["scores"])
+        parts_u.append(frames["universe"])
+        if keep_detail:
+            parts_d.append(frames["detail"])
+    secs = time.perf_counter() - t0
+    nonempty = [p for p in parts_s if len(p)]
+    scores = pd.concat(nonempty, ignore_index=True) if nonempty else pd.DataFrame()
+    universe = pd.concat(parts_u) if parts_u else pd.DataFrame()
     universe.index.name = "as_of"
-    timings["scoring"], hits["scoring"] = secs, hit
+    detail_flat = (pd.concat([p for p in parts_d if len(p)], ignore_index=True) if any(len(p) for p in parts_d) else pd.DataFrame()) if keep_detail else None
+    log_universe_summary(universe)
+    timings["scoring"], hits["scoring"] = secs, bool(blocks) and n_hit == len(blocks)      # True only when EVERY block came from the cache
+    hits["scoring_blocks"] = f"{n_hit}/{len(blocks)}"
     timings["total"] = sum(timings.values())
     logger.info("PIT scoring chain: %s", {k: round(v, 2) for k, v in timings.items()})
     return PitRun(scores=scores, universe=universe, timings=timings, cache_hits=hits, short_coverage=short_coverage,
-                  macro=macro, vol_ann=risk.get("vol_ann"))
+                  macro=macro, vol_ann=risk.get("vol_ann"), detail=detail_flat)

@@ -72,7 +72,21 @@ class Study:
     run_dir: Path
 
 
-def load_study(run_dir, conn=None) -> Study:
+def exclude_funds(study: "Study", isins) -> "Study":
+    """The study without some funds (static-attribute sensitivity, FND-0193 Amendment 2): their score rows (and detail rows) are removed, so
+    neither the model nor any baseline can hold them. Forward returns, cash and the regime history are untouched."""
+    drop = set(isins)
+    pit_run = type(study.pit_run)(scores=study.pit_run.scores[~study.pit_run.scores["isin"].isin(drop)].reset_index(drop=True))
+    detail = None if study.detail is None else study.detail[~study.detail["isin"].isin(drop)].reset_index(drop=True)
+    return dataclasses.replace(study, pit_run=pit_run, detail=detail)
+
+
+def load_study(run_dir, conn=None, exclude_isins=None) -> Study:
+    study = _load_study(run_dir, conn)
+    return exclude_funds(study, exclude_isins) if exclude_isins else study
+
+
+def _load_study(run_dir, conn=None) -> Study:
     run = Path(run_dir)
     pit_run, inputs, hist, at = load_saved_run(run, conn)
     max_stale = 60
@@ -349,6 +363,36 @@ def layer_verdicts(tabs: dict, n_boot: int = 2000, mean_block: float = 6.0) -> p
     return pd.DataFrame(rows).T
 
 
+GATE_TOL = 0.01          # owner decision 2026-10-18 (PREREG amendment 2): |dSharpe| between the raw-date and the month-end-snapped run
+GATE_STRICT = 0.001      # informational tier
+RANKED = (MODEL, *PRIMARY, *SECONDARY)
+
+
+def gate_summary(verdict_: dict, e1: pd.DataFrame, overview: pd.DataFrame) -> dict:
+    """What the alignment gate needs from one evaluated run."""
+    prim = [n for n in PRIMARY if n in e1.index]
+    return {"outcome": verdict_["outcome"],
+            "holm": {n: (bool(e1.loc[n, "holm_M_better"]), bool(e1.loc[n, "holm_B_better"])) for n in prim},
+            "sharpe": {n: float(overview.loc[n, "sharpe"]) for n in RANKED if n in overview.index}}
+
+
+def alignment_gate(raw: dict, snap: dict, tol: float = GATE_TOL, strict: float = GATE_STRICT) -> dict:
+    """PREREG amendment 2, criterion 7. The verdict is VALID only if, between the raw-date run and the month-end-snapped run:
+    (a) the outcome is identical, (b) every Holm decision is identical, (c) the rank order of M and the baselines by Sharpe is identical,
+    (d) |dSharpe| <= tol for M and each primary baseline. Returns {'pass', 'failed': [letters], 'checks', 'deltas', 'strict_ok'}."""
+    names = [n for n in RANKED if n in raw["sharpe"] and n in snap["sharpe"]]
+    rank = lambda s: [n for n, _ in sorted(((n, s[n]) for n in names), key=lambda kv: (-kv[1], kv[0]))]
+    deltas = {n: snap["sharpe"][n] - raw["sharpe"][n] for n in names}
+    core = [n for n in (MODEL, *PRIMARY) if n in deltas]
+    checks = {"a_outcome": raw["outcome"] == snap["outcome"], "b_holm": raw["holm"] == snap["holm"],
+              "c_rank_order": rank(raw["sharpe"]) == rank(snap["sharpe"]),
+              "d_delta_sharpe": all(abs(deltas[n]) <= tol for n in core)}
+    return {"pass": all(checks.values()), "failed": [k for k, v in checks.items() if not v], "checks": checks, "deltas": deltas,
+            "max_abs_delta_core": max((abs(deltas[n]) for n in core), default=float("nan")),
+            "strict_ok": all(abs(deltas[n]) <= strict for n in core), "tol": tol, "raw_outcome": raw["outcome"], "snap_outcome": snap["outcome"],
+            "rank_raw": rank(raw["sharpe"]), "rank_snap": rank(snap["sharpe"])}
+
+
 def e3_dsr(model_table: pd.DataFrame, ledger: dict) -> dict:
     ex = (series_of(model_table) - model_table["cash_ret_1m"]).dropna()
     var = ledger["var_annualised_sharpe_across_trials"]
@@ -397,3 +441,41 @@ def verdict(e1: pd.DataFrame, sub: pd.DataFrame, loeo: pd.DataFrame, wf_vs: pd.D
     replace = bool(len(prim) and e1.loc[prim, "holm_B_better"].any())
     outcome = "KEEP" if keep else ("REPLACE_PROPOSAL" if replace else "SIMPLIFY")
     return {"outcome": outcome, "criteria": c}
+
+
+def evaluate_study(study: Study, ledger: dict, bps: float = 25.0, n_boot: int = 2000, skip_pbo: bool = False,
+                   early_ok: "bool | None" = None, ext_mdd: "float | None" = None, log=print) -> dict:
+    """Everything the pre-registered verdict needs, from one saved run: catalogue, E1-E4, walk-forward, drawdown breaker and verdict().
+    Returned as a dict of frames so the CLI can write them, and so the same function evaluates the raw-date run (R1), the month-end
+    snapped run (R4, alignment gate) and a funds-excluded variant (static-attribute sensitivity)."""
+    cat = build_catalogue(study)
+    tabs = tables(study, cat, bps)
+    log(f"  {len(cat)} strategies built")
+    e1 = e1_full(tabs, n_boot)
+    sub, loeo, reg = e1_subperiods(tabs), e1_loeo(tabs), e1_regimes(tabs)
+    overview = strategy_overview(tabs)
+    layers = layer_verdicts(tabs, n_boot)
+    log("E2 walk-forward band ...")
+    wf = walk_forward_band(study, bps=bps)
+    wf_tab = wf["table"].loc[f"{WF_FIRST_YEAR}-01-01":]
+    wf_vs = {}
+    for n in PRIMARY:
+        r = paired(series_of(wf_tab), series_of(tabs[n]).loc[f"{WF_FIRST_YEAR}-01-01":], wf_tab["cash_ret_1m"], n_boot)
+        wf_vs[n] = {"sharpe_WF": r["sharpe_a"], "sharpe_B": r["sharpe_b"], "diff": r["diff"], "ci_low": r["ci_low"], "ci_high": r["ci_high"]}
+    wf_vs = pd.DataFrame(wf_vs).T
+    wf_stats = stats_row(wf_tab)
+    dsr = e3_dsr(tabs[MODEL], ledger)
+    pbo, mat = {"pbo": float("nan"), "n_configs": 0}, None
+    if not skip_pbo:
+        log("E4 PBO (CSCV) ...")
+        mat = pbo_matrix(study, cat, bps)
+        pbo = cscv_pbo(mat, 16, cash=tabs[MODEL]["cash_ret_1m"])
+    model_dd = stats_row(tabs[MODEL])["max_drawdown"]
+    dd = {"model_max_dd": model_dd, "wf_max_dd": wf_stats["max_drawdown"], "ext_max_dd": ext_mdd,
+          "worst_max_dd": min([model_dd, wf_stats["max_drawdown"]] + ([ext_mdd] if ext_mdd is not None else [])),
+          "model_prob_36m": float(overview.loc[MODEL, "dd_prob_36m_15pct"]), "pool_prob_36m": float(overview.loc["B-POOL", "dd_prob_36m_15pct"])}
+    v = verdict(e1, sub, loeo, wf_vs, dsr, pbo, dd, early_ok)
+    v["provisional"] = early_ok is None
+    return {"cat": cat, "tabs": tabs, "e1": e1, "sub": sub, "loeo": loeo, "reg": reg, "overview": overview, "layers": layers, "wf": wf,
+            "wf_vs": wf_vs, "wf_stats": wf_stats, "dsr": dsr, "pbo": pbo, "pbo_matrix": mat, "dd": dd, "verdict": v,
+            "gate_summary": gate_summary(v, e1, overview)}

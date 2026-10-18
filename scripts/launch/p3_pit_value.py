@@ -1,15 +1,18 @@
 # scripts/launch/p3_pit_value.py
 # -*- coding: utf-8 -*-
 r"""
-Model-value study of P3 on a SAVED PIT run (FND-0193, pre-registered in doc/decisiones/PREREG_FND-0193.md). Read-only; with a run folder
-that holds its input snapshot (inputs/) it does not even open the database.
+Model-value study of P3 on a SAVED PIT run (FND-0193, pre-registered in doc/decisiones/PREREG_FND-0193.md, amendments 1 and 2). Read-only;
+with a run folder that holds its input snapshot (inputs/) it does not even open the database. Launch it under the memory guard:
 
-    C:\data\envs\des\python.exe -X utf8 scripts\launch\p3_pit_value.py --run-dir out\reports\pit_backtest\<STAMP> \
-        [--ext-run-dir <run started 2001-03-31>] [--survivorship-run-dir <run --current-universe-only>]
+    powershell -NoProfile -File C:\desarrollo\fondos\out\audit\guarded_run.ps1 -CommandLine "C:\data\envs\des\python.exe -u -X utf8 scripts\launch\p3_pit_value.py --run-dir <R1> --snapped-run-dir <R4> --ext-run-dir <R2> --survivorship-run-dir <R3>"
 
-It first reproduces the run's own series_stats.json (gate of the pre-registration: 1e-6; exit 3 on failure, nothing else is computed),
-then builds the model, the baselines and the ablations, evaluates E1-E4, applies the pre-registered decision rules and writes, under
-<run>/value_FND-0193/: REPORT.md, verdict.json and one CSV per table. Exit codes: 0 ok, 3 reproduction failed.
+Order of the checks (a failure stops or flags the verdict, never silently passes):
+  1. the trial ledger on disk equals the one committed at tag prereg-fnd0193 (exit 4 otherwise);
+  2. each run reproduces its own series_stats.json (1e-6; exit 3 otherwise);
+  3. the verdict is evaluated on R1 (raw dates) and, with --snapped-run-dir, on R4 (month-end snapped): ALIGNMENT GATE (amendment 2):
+     identical outcome, Holm decisions and Sharpe rank order, |dSharpe| <= 0.01; otherwise the verdict is printed as INVALID;
+  4. with --exclude-isins FILE the verdict is re-evaluated without those funds (static-attribute sensitivity; flagged, not decisive).
+Writes, under <R1>/value_FND-0193/: REPORT.md, verdict.json and one CSV per table. Exit codes: 0 ok, 3 reproduction failed, 4 ledger lock.
 """
 
 import argparse
@@ -35,7 +38,7 @@ DEFAULT_LEDGER = _ROOT / "doc" / "decisiones" / "LEDGER_FND-0193.json"
 BIAS_BLOCK = """\
 ## Biases and limits (fixed block, PREREG section 7)
 - Universe: retired funds are INCLUDED (FND-0198); the retired share per date is in the run's universe_by_date.csv. Survivorship A/B below when a run was supplied.
-- Fund_Nature, Credit_Quality, family and manager are today's values (static-attribute look-ahead, FND-0198 log 540).
+- Fund_Nature, Credit_Quality, family and manager are today's values (static-attribute look-ahead, FND-0198 log 540); see the attribute-sensitivity section when it was run.
 - The PIT replicates P2 including its frozen defects; regime inputs use 2-month publication lags.
 - Costs: 25 bp per unit of turnover on every strategy's own weights; ongoing charges are assumed to be inside the Morningstar total-return NAV.
 - B-CHEAP uses today's Ongoing_Charge (look-ahead) and is secondary. Accepted audit residuals are not modelled (look-ahead). Cash = ECB deposit rate.
@@ -59,11 +62,20 @@ def reproduce(study: pv.Study) -> dict:
     return {"max_abs_diff": worst, "pass": worst < REPRODUCTION_TOL, "model_sharpe": st["portfolio"]["sharpe"], "pool_sharpe": st["benchmark"]["sharpe"]}
 
 
+def _check_reproduction(study: pv.Study, label: str) -> dict:
+    rep = reproduce(study)
+    print(f"reproduction gate {label}: max |diff| = {rep['max_abs_diff']:.3e} -> {'PASS' if rep['pass'] else 'FAIL'} "
+          f"(model Sharpe {rep['model_sharpe']:.4f}, pool {rep['pool_sharpe']:.4f})")
+    return rep
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description="FND-0193 model-value study on a saved PIT run (read-only).")
-    p.add_argument("--run-dir", required=True)
-    p.add_argument("--ext-run-dir", help="PIT run started 2001-03-31 (adds the 'early' sub-period and the extended-window drawdown)")
-    p.add_argument("--survivorship-run-dir", help="PIT run with --current-universe-only, same commit as --run-dir")
+    p.add_argument("--run-dir", required=True, help="R1: the PIT run on raw NAV dates (with --keep-detail)")
+    p.add_argument("--snapped-run-dir", help="R4: the same run with --snap-nav-month-end; enables the ALIGNMENT GATE (amendment 2)")
+    p.add_argument("--ext-run-dir", help="R2: PIT run started 2001-03-31 (adds the 'early' sub-period and the extended-window drawdown)")
+    p.add_argument("--survivorship-run-dir", help="R3: PIT run with --current-universe-only, same commit as --run-dir")
+    p.add_argument("--exclude-isins", help="text file, one ISIN per line: re-evaluate the verdict without those funds (static-attribute sensitivity)")
     p.add_argument("--ledger", default=str(DEFAULT_LEDGER))
     p.add_argument("--bps", type=float, default=25.0)
     p.add_argument("--n-boot", type=int, default=2000)
@@ -75,84 +87,85 @@ def main(argv=None) -> int:
     t0 = time.time()
     run = Path(args.run_dir)
     out = Path(args.out_dir) if args.out_dir else run / "value_FND-0193"
+    try:
+        ledger = pv.load_ledger(args.ledger)                      # verifies the lock at tag prereg-fnd0193
+    except pv.LedgerLockError as e:
+        print(f"STOP: {e}")
+        return 4
     study = pv.load_study(run)
-    rep = reproduce(study)
-    print(f"reproduction gate: max |diff| = {rep['max_abs_diff']:.3e} -> {'PASS' if rep['pass'] else 'FAIL'} "
-          f"(model Sharpe {rep['model_sharpe']:.4f}, pool {rep['pool_sharpe']:.4f})")
-    if not rep["pass"]:
-        print("STOP: the run does not reproduce (pre-registered gate). A run saved before FND-0193 has no input snapshot; use a fresh run.")
+    rep = _check_reproduction(study, "R1")
+    snapped = pv.load_study(args.snapped_run_dir) if args.snapped_run_dir else None
+    rep_snap = _check_reproduction(snapped, "R4") if snapped else None
+    if not rep["pass"] or (rep_snap and not rep_snap["pass"]):
+        print("STOP: a run does not reproduce (pre-registered gate). A run saved before FND-0193 has no input snapshot; use a fresh run.")
         return 3
     if args.reproduce_only:
         return 0
     out.mkdir(parents=True, exist_ok=True)
-    ledger = pv.load_ledger(args.ledger)
     bps = args.bps
 
-    print("building the model, baselines and ablations ...")
-    cat = pv.build_catalogue(study)
-    tabs = pv.tables(study, cat, bps)
-    print(f"  {len(cat)} strategies built in {time.time() - t0:.0f} s")
-
-    e1 = pv.e1_full(tabs, args.n_boot)
-    sub = pv.e1_subperiods(tabs)
-    loeo = pv.e1_loeo(tabs)
-    reg = pv.e1_regimes(tabs)
-    overview = pv.strategy_overview(tabs)
-    layers = pv.layer_verdicts(tabs, args.n_boot)
-
-    print("E2 walk-forward band ...")
-    wf = pv.walk_forward_band(study, bps=bps)
-    wf_tab = wf["table"].loc[f"{pv.WF_FIRST_YEAR}-01-01":]
-    wf_vs = {}
-    for n in pv.PRIMARY:
-        r = pv.paired(pv.series_of(wf_tab), pv.series_of(tabs[n]).loc[f"{pv.WF_FIRST_YEAR}-01-01":], wf_tab["cash_ret_1m"], args.n_boot)
-        wf_vs[n] = {"sharpe_WF": r["sharpe_a"], "sharpe_B": r["sharpe_b"], "diff": r["diff"], "ci_low": r["ci_low"], "ci_high": r["ci_high"]}
-    wf_vs = pd.DataFrame(wf_vs).T
-    wf_stats = pv.stats_row(wf_tab)
-
-    dsr = pv.e3_dsr(tabs[pv.MODEL], ledger)
-
-    pbo = {"pbo": float("nan"), "n_configs": 0}
-    if not args.skip_pbo:
-        print("E4 PBO (CSCV) ...")
-        mat = pv.pbo_matrix(study, cat, bps)
-        from proyecto3.src.backtest_inference import cscv_pbo
-        pbo = cscv_pbo(mat, 16, cash=tabs[pv.MODEL]["cash_ret_1m"])
-        mat.to_csv(out / "e4_pbo_matrix.csv", float_format="%.6g")
-
-    early_ok, ext_mdd, ext_note = None, None, "no extended-window run supplied (verdict is PROVISIONAL on the 'early' sub-period)"
-    ext_sub = None
+    # the extended window (R2) supplies the 'early' sub-period and the extended drawdown to every evaluation
+    early_ok, ext_mdd, ext_sub = None, None, None
+    ext_note = "no extended-window run supplied (verdict is PROVISIONAL on the 'early' sub-period)"
     if args.ext_run_dir:
         print("extended window ...")
         ext = pv.load_study(args.ext_run_dir)
-        ext_cat = pv.build_catalogue(ext, ablations=False, a5=False)
-        ext_tabs = pv.tables(ext, ext_cat, bps)
+        ext_tabs = pv.tables(ext, pv.build_catalogue(ext, ablations=False, a5=False), bps)
         ext_sub = pv.e1_subperiods(ext_tabs, with_early=True)
         early_ok = bool((ext_sub.loc[list(pv.PRIMARY), "early"] > 0).all())
         ext_mdd = pv.stats_row(ext_tabs[pv.MODEL])["max_drawdown"]
         ext_note = f"extended run {Path(args.ext_run_dir).name}: {ext_tabs[pv.MODEL].index.min().date()} .. {ext_tabs[pv.MODEL].index.max().date()}"
 
+    print("evaluating R1 (raw dates) ...")
+    res = pv.evaluate_study(study, ledger, bps, args.n_boot, args.skip_pbo, early_ok, ext_mdd)
+    tabs, verdict = res["tabs"], res["verdict"]
+
+    gate = None
+    if snapped is not None:
+        print("evaluating R4 (month-end snapped) ...")
+        res4 = pv.evaluate_study(snapped, ledger, bps, args.n_boot, args.skip_pbo, early_ok, ext_mdd)
+        gate = pv.alignment_gate(res["gate_summary"], res4["gate_summary"])
+        pd.DataFrame({"raw": res["gate_summary"]["sharpe"], "snapped": res4["gate_summary"]["sharpe"],
+                      "delta": gate["deltas"]}).to_csv(out / "alignment_gate_sharpe.csv", float_format="%.6g")
+    attr = None
+    if args.exclude_isins:
+        print("static-attribute sensitivity: re-evaluating without the unstable funds ...")
+        drop = [x.split("#", 1)[0].strip() for x in Path(args.exclude_isins).read_text(encoding="utf-8").splitlines()]
+        drop = [x for x in drop if x]
+        res_x = pv.evaluate_study(pv.load_study(run, exclude_isins=drop), ledger, bps, args.n_boot, args.skip_pbo, early_ok, ext_mdd)
+        attr = {"n_excluded": len(drop), "outcome_all": verdict["outcome"], "outcome_without": res_x["verdict"]["outcome"],
+                "sensitive": verdict["outcome"] != res_x["verdict"]["outcome"],
+                "sharpe_all": res["gate_summary"]["sharpe"], "sharpe_without": res_x["gate_summary"]["sharpe"]}
+        pd.DataFrame({"all": attr["sharpe_all"], "without_unstable": attr["sharpe_without"]}).to_csv(out / "attribute_sensitivity_sharpe.csv", float_format="%.6g")
+
     surv = None
     if args.survivorship_run_dir:
         print("survivorship A/B ...")
         s3 = pv.load_study(args.survivorship_run_dir)
-        c3 = pv.build_catalogue(s3, ablations=False, a5=False)
-        t3 = pv.tables(s3, c3, bps)
+        t3 = pv.tables(s3, pv.build_catalogue(s3, ablations=False, a5=False), bps)
         surv = pd.DataFrame({n: {**{f"{k}_all": pv.stats_row(tabs[n])[k] for k in ("sharpe", "max_drawdown")},
                                  **{f"{k}_current_only": pv.stats_row(t3[n])[k] for k in ("sharpe", "max_drawdown")}}
                              for n in (pv.MODEL, "B-POOL", "B-STATIC", "B-LOWVOL", "B-6040")}).T
 
-    worst = min([pv.stats_row(tabs[pv.MODEL])["max_drawdown"], wf_stats["max_drawdown"]] + ([ext_mdd] if ext_mdd is not None else []))
-    dd = {"model_max_dd": pv.stats_row(tabs[pv.MODEL])["max_drawdown"], "wf_max_dd": wf_stats["max_drawdown"], "ext_max_dd": ext_mdd,
-          "worst_max_dd": worst, "model_prob_36m": float(overview.loc[pv.MODEL, "dd_prob_36m_15pct"]),
-          "pool_prob_36m": float(overview.loc["B-POOL", "dd_prob_36m_15pct"])}
-    verdict = pv.verdict(e1, sub, loeo, wf_vs, dsr, pbo, dd, early_ok)
-    verdict["provisional"] = early_ok is None
-    verdict["inputs"] = {"run": run.name, "bps": bps, "ledger_N_scan": ledger["N_scan_upper"], "ext": ext_note, "reproduction": rep}
+    if gate is None:
+        validity = "ALIGNMENT GATE NOT RUN (no --snapped-run-dir): the verdict is PROVISIONAL"
+    elif gate["pass"]:
+        validity = f"VALID: alignment gate passed (max |dSharpe| {gate['max_abs_delta_core']:.4f} <= {gate['tol']}; strict tier 0.001 {'met' if gate['strict_ok'] else 'not met'})"
+    else:
+        validity = (f"INVALID — alignment-sensitive: failed {gate['failed']} (outcome raw {gate['raw_outcome']} vs snapped {gate['snap_outcome']}; "
+                    f"max |dSharpe| {gate['max_abs_delta_core']:.4f}). Fix the pipeline alignment before any go-live.")
+    verdict["validity"] = validity
+    verdict["alignment_gate"] = gate
+    verdict["attribute_sensitivity"] = None if attr is None else {k: v for k, v in attr.items() if not k.startswith("sharpe")}
+    verdict["inputs"] = {"run": run.name, "snapped_run": Path(args.snapped_run_dir).name if args.snapped_run_dir else None, "bps": bps,
+                         "ledger_N_scan": ledger["N_scan_upper"], "ledger_locked": True, "ext": ext_note, "reproduction": rep}
 
-    for name, df in (("e1_full", e1), ("e1_subperiods", sub), ("e1_loeo", loeo), ("e1_regimes", reg), ("strategies", overview),
-                     ("ablations", layers), ("e2_walk_forward_vs_primary", wf_vs), ("e2_band_choices", wf["choices"].to_frame())):
+    for name, df in (("e1_full", res["e1"]), ("e1_subperiods", res["sub"]), ("e1_loeo", res["loeo"]), ("e1_regimes", res["reg"]),
+                     ("strategies", res["overview"]), ("ablations", res["layers"]), ("e2_walk_forward_vs_primary", res["wf_vs"]),
+                     ("e2_band_choices", res["wf"]["choices"].to_frame())):
         df.to_csv(out / f"{name}.csv", float_format="%.6g")
+    if res["pbo_matrix"] is not None:
+        res["pbo_matrix"].to_csv(out / "e4_pbo_matrix.csv", float_format="%.6g")
     if surv is not None:
         surv.to_csv(out / "survivorship_ab.csv", float_format="%.6g")
     if ext_sub is not None:
@@ -160,29 +173,38 @@ def main(argv=None) -> int:
     (out / "verdict.json").write_text(json.dumps(verdict, indent=2, default=str), encoding="utf-8")
 
     lines = [f"# FND-0193 model-value study -- run {run.name}", "",
-             f"Pre-registration: doc/decisiones/PREREG_FND-0193.md (tag prereg-fnd0193). {bps:g} bp per unit of turnover on every strategy.",
-             f"Reproduction gate: PASS (max |diff| {rep['max_abs_diff']:.2e}). {ext_note}.", "",
-             f"## VERDICT: {verdict['outcome']}" + ("  (PROVISIONAL: no extended-window run)" if verdict["provisional"] else ""), ""]
+             f"Pre-registration: doc/decisiones/PREREG_FND-0193.md (tag prereg-fnd0193, amendments 1-2). {bps:g} bp per unit of turnover on every strategy.",
+             f"Ledger locked at the tag. Reproduction gate: PASS (max |diff| {rep['max_abs_diff']:.2e}). {ext_note}.", "",
+             f"## VERDICT: {verdict['outcome']}", f"**Validity: {validity}**", ""]
     for k, v in verdict["criteria"].items():
         lines.append(f"- {'PASS' if v['pass'] else 'FAIL'}  {k}")
-    lines += ["", "## E1 -- model (M_h10) vs baselines, full window", "", _fmt(e1), "",
-              "## E1 -- Sharpe difference by sub-period (M minus baseline)", "", _fmt(sub), "",
-              "## E1 -- leave one episode out (M minus baseline)", "", _fmt(loeo), "",
-              "## E1 -- by regime (mean monthly net return)", "", _fmt(reg, 5), "",
-              "## All strategies (full window)", "", _fmt(overview), "",
-              f"## E2 -- walk-forward band (from {pv.WF_FIRST_YEAR}); chosen bands", "", wf["choices"].to_string(), "",
-              f"WF series: {wf_stats}", "", _fmt(wf_vs), "",
-              "## E3 -- deflated Sharpe with the trial ledger", "", json.dumps(dsr, indent=2), "",
-              "## E4 -- probability of backtest overfitting (CSCV)", "", json.dumps(pbo, indent=2), "",
-              "## Drawdown breaker", "", json.dumps(dd, indent=2, default=str), "",
-              "## Ablations: does each layer earn its place?", "", _fmt(layers), ""]
+    if gate is not None:
+        lines += ["", "## Alignment gate (R1 raw dates vs R4 month-end snapped)", "",
+                  json.dumps({k: gate[k] for k in ("pass", "failed", "checks", "max_abs_delta_core", "strict_ok", "rank_raw", "rank_snap")}, indent=2, default=str),
+                  "", _fmt(pd.DataFrame({"raw": res["gate_summary"]["sharpe"], "snapped": res4["gate_summary"]["sharpe"], "delta": gate["deltas"]}))]
+    if attr is not None:
+        lines += ["", f"## Static-attribute sensitivity ({attr['n_excluded']} unstable funds excluded)", "",
+                  f"Outcome with all funds: {attr['outcome_all']} | without the unstable funds: {attr['outcome_without']} | "
+                  f"{'ATTRIBUTE-SENSITIVE (the owner decides)' if attr['sensitive'] else 'not sensitive'}", "",
+                  _fmt(pd.DataFrame({"all": attr["sharpe_all"], "without_unstable": attr["sharpe_without"]}))]
+    lines += ["", "## E1 -- model (M_h10) vs baselines, full window", "", _fmt(res["e1"]), "",
+              "## E1 -- Sharpe difference by sub-period (M minus baseline)", "", _fmt(res["sub"]), "",
+              "## E1 -- leave one episode out (M minus baseline)", "", _fmt(res["loeo"]), "",
+              "## E1 -- by regime (mean monthly net return)", "", _fmt(res["reg"], 5), "",
+              "## All strategies (full window)", "", _fmt(res["overview"]), "",
+              f"## E2 -- walk-forward band (from {pv.WF_FIRST_YEAR}); chosen bands", "", res["wf"]["choices"].to_string(), "",
+              f"WF series: {res['wf_stats']}", "", _fmt(res["wf_vs"]), "",
+              "## E3 -- deflated Sharpe with the trial ledger", "", json.dumps(res["dsr"], indent=2), "",
+              "## E4 -- probability of backtest overfitting (CSCV)", "", json.dumps(res["pbo"], indent=2), "",
+              "## Drawdown breaker", "", json.dumps(res["dd"], indent=2, default=str), "",
+              "## Ablations: does each layer earn its place?", "", _fmt(res["layers"]), ""]
     if surv is not None:
         lines += ["## Survivorship A/B (all funds vs current universe only)", "", _fmt(surv), ""]
     if ext_sub is not None:
         lines += ["## Extended window sub-periods", "", _fmt(ext_sub), ""]
     lines += [BIAS_BLOCK]
     (out / "REPORT.md").write_text("\n".join(lines), encoding="utf-8")
-    print("\n".join(lines[:16]))
+    print("\n".join(lines[:18]))
     print(f"done in {time.time() - t0:.0f} s; artifacts in {out}")
     return 0
 

@@ -160,6 +160,19 @@ def test_engine_default_weighting_is_unchanged_and_weight_method_equalises():
     assert eq.tolist() == pytest.approx([0.125] * 8)
 
 
+def test_snap_nav_to_month_end_collapses_the_two_date_conventions_and_drops_a_partial_last_month():
+    from proyecto3.src.pit_inputs import snap_nav_to_month_end
+    idx = pd.to_datetime(["2026-01-30", "2026-01-31", "2026-02-27", "2026-02-28", "2026-03-31", "2026-04-15"])   # weekday and calendar stamps
+    nav = pd.DataFrame({"A": [100.0, np.nan, 101.0, np.nan, 102.0, 103.0], "B": [np.nan, 50.0, np.nan, 51.0, 52.0, np.nan]}, index=idx)
+    snapped = snap_nav_to_month_end(nav)
+    assert list(snapped.index) == list(pd.to_datetime(["2026-01-31", "2026-02-28", "2026-03-31"]))          # April is partial (15th): dropped
+    assert snapped.loc["2026-01-31"].tolist() == [100.0, 50.0] and snapped.loc["2026-02-28"].tolist() == [101.0, 51.0]
+    assert snapped.index.is_unique and snap_nav_to_month_end(snapped).equals(snapped)                         # idempotent
+    complete = nav.iloc[:5]
+    assert len(snap_nav_to_month_end(complete)) == 3                                                          # last stamp is the month-end: kept
+    assert snap_nav_to_month_end(nav.iloc[:0]).empty
+
+
 def test_input_snapshot_round_trip(tmp_path):
     nav = pd.DataFrame({"AAA": [100.0, 101.0], "BBB": [50.0, np.nan]}, index=pd.to_datetime(["2020-01-31", "2020-02-29"]))
     attrs = pd.DataFrame({"Fund_Nature": ["Mixtos", "Monetario"], "Ongoing_Charge": [1.2, 0.3]}, index=pd.Index(["AAA", "BBB"], name="isin"))

@@ -106,6 +106,24 @@ def load_rate_deposit(conn: "psycopg.Connection") -> pd.DataFrame:
     return df
 
 
+def snap_nav_to_month_end(nav: pd.DataFrame) -> pd.DataFrame:
+    """FND-0193 alignment test (run R4): the wide NAV panel with every raw date moved to the calendar month-end of its month. Funds that
+    report on the last business day and funds that report on the calendar month-end then share one row per month; a fund with two
+    observations in one month keeps the later one (groupby.last skips NaN, so each fund keeps its own value). Idempotent."""
+    if nav.empty:
+        return nav
+    idx = pd.DatetimeIndex(nav.index)
+    out = nav.groupby(idx + pd.offsets.MonthEnd(0)).last()
+    out.index.name = nav.index.name
+    # A trailing PARTIAL month (NAV only up to the 15th) would become a month-end label and be read as a complete month by
+    # last_complete_month_end. Drop it exactly when the raw panel would not count it as complete (more than 5 days before its month-end),
+    # so R4 differs from R1 only by alignment, never by one extra, incomplete month.
+    last_raw = idx.max()
+    if (last_raw + pd.offsets.MonthEnd(0) - last_raw).days > 5:
+        out = out.iloc[:-1]
+    return out
+
+
 SNAPSHOT_DIR = "inputs"
 _SNAPSHOT_FILES = ("nav", "attrs", "rate", "fx_exposed", "regime_hist")
 

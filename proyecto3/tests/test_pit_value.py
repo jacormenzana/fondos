@@ -58,6 +58,50 @@ def test_the_committed_ledger_matches_the_real_tag():
     assert pv.load_ledger(path)["N_scan_upper"] == 437
 
 
+def _summary(outcome="SIMPLIFY", sharpe=None, holm=None):
+    base = {pv.MODEL: 0.68, "B-POOL": 0.71, "B-STATIC": 0.70, "B-LOWVOL": 0.60, "B-6040": 0.55, "B-MOM": 0.52, "B-CHEAP": 0.50}
+    holm = holm or {n: (False, False) for n in pv.PRIMARY}
+    return {"outcome": outcome, "holm": holm, "sharpe": {**base, **(sharpe or {})}}
+
+
+def test_alignment_gate_passes_within_tolerance_and_fails_on_each_condition_once():
+    raw = _summary()
+    ok = pv.alignment_gate(raw, _summary(sharpe={pv.MODEL: 0.675, "B-POOL": 0.712}))                      # moves of 0.005 / 0.002: inside 0.01
+    assert ok["pass"] and ok["failed"] == [] and ok["strict_ok"] is False                                  # strict 0.001 tier not met, informational
+    assert pv.alignment_gate(raw, _summary())["strict_ok"] is True
+    a = pv.alignment_gate(raw, _summary(outcome="KEEP"))
+    assert not a["pass"] and a["failed"] == ["a_outcome"]
+    b = pv.alignment_gate(raw, _summary(holm={**{n: (False, False) for n in pv.PRIMARY}, "B-POOL": (True, False)}))
+    assert not b["pass"] and b["failed"] == ["b_holm"]
+    c = pv.alignment_gate(raw, _summary(sharpe={"B-MOM": 0.505, "B-CHEAP": 0.5051}))                       # secondary pair swaps order; core moves are 0
+    assert not c["pass"] and c["failed"] == ["c_rank_order"] and c["rank_raw"] != c["rank_snap"]
+    assert pv.alignment_gate(raw, _summary(sharpe={"B-MOM": 0.51}))["pass"]                                # a secondary move that keeps the order is fine
+    d = pv.alignment_gate(raw, _summary(sharpe={pv.MODEL: 0.693}))                                         # +0.013 > 0.01, order unchanged
+    assert not d["pass"] and d["failed"] == ["d_delta_sharpe"] and d["max_abs_delta_core"] == pytest.approx(0.013)
+    assert pv.alignment_gate(raw, _summary(sharpe={pv.MODEL: 0.693}), tol=0.02)["pass"]                    # the tolerance is a parameter, the default is the owner's 0.01
+
+
+def test_gate_summary_reads_outcome_holm_and_sharpes():
+    tabs = _tabs(0.012, 0.002)
+    e1, ov = pv.e1_full(tabs, n_boot=300), pv.strategy_overview(tabs, n_boot=200)
+    s = pv.gate_summary({"outcome": "KEEP"}, e1, ov)
+    assert s["outcome"] == "KEEP" and set(s["holm"]) == set(pv.PRIMARY) and s["holm"]["B-POOL"] == (True, False)
+    assert set(s["sharpe"]) == set(pv.RANKED)
+
+
+def test_exclude_funds_removes_score_and_detail_rows_only():
+    from types import SimpleNamespace
+    scores = pd.DataFrame({"as_of": IDX[:4], "isin": ["A", "B", "A", "C"], "score_final": [1.0, 2.0, 3.0, 4.0]})
+    detail = pd.DataFrame({"as_of": IDX[:4], "isin": ["A", "B", "A", "C"], "m_fx_malus": [0.8, np.nan, 0.8, np.nan]})
+    st = pv.Study(pit_run=SimpleNamespace(scores=scores), inputs="inputs", hist="hist", at="at", base="base", detail=detail, target=None,
+                  max_stale_days=60, run_dir=Path("."))
+    out = pv.exclude_funds(st, ["A"])
+    assert out.pit_run.scores["isin"].tolist() == ["B", "C"] and out.detail["isin"].tolist() == ["B", "C"]
+    assert out.inputs == "inputs" and out.hist == "hist" and out.base == "base"                           # nothing else is touched
+    assert st.pit_run.scores["isin"].tolist() == ["A", "B", "A", "C"]                                      # the original study is unchanged
+    assert pv.exclude_funds(st, []).pit_run.scores["isin"].tolist() == ["A", "B", "A", "C"]                # nothing to exclude: same rows
+
+
 def test_family_keys_group_multiplier_components():
     detail = pd.DataFrame({"as_of": [IDX[0]], "isin": ["A"], "m_alpha_persistence_bonus": [1.15], "m_fx_malus": [0.8],
                            "m_regime_return_bonus": [1.1], "m_regime_coverage_damp": [0.5], "m_crisis_mdd_deep_malus": [0.9],

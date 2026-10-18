@@ -94,6 +94,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-cache", action="store_true", help="neither read nor write the parquet cache")
     p.add_argument("--out-dir", default=None, help="artifact directory (default <reports>/pit_backtest/<STAMP>)")
     p.add_argument("--no-scores", action="store_true", help="do not write scores_long.parquet")
+    p.add_argument("--snap-nav-month-end", action="store_true",
+                   help="FND-0193 alignment gate (run R4): move every monthly NAV date to the calendar month-end before scoring, so funds that "
+                        "report on the last business day and funds that report on the month-end share one row per month")
     p.add_argument("--keep-detail", action="store_true",
                    help="also write scores_detail.parquet (every Layer-3 multiplier component per fund and date; FND-0193 ablation). "
                         "Bypasses the scores cache (the scoring stage runs cold, about 6 min more)")
@@ -175,12 +178,9 @@ def write_artifacts(out_dir: Path, table: pd.DataFrame, grid: pd.DataFrame, bt, 
     if run.short_coverage is not None:
         _put("short_gate_coverage.csv", lambda p: run.short_coverage.to_csv(p))
     if save_scores and len(run.scores):
-        scores = run.scores
-        if "detail" in scores.columns:                    # --keep-detail: the nested dicts go to a flat side file (FND-0193 ablation A5)
-            from proyecto3.src.pit_baselines import flatten_score_detail
-            _put("scores_detail.parquet", lambda p: flatten_score_detail(scores).to_parquet(p))
-            scores = scores.drop(columns=["detail"])
-        _put("scores_long.parquet", lambda p: scores.to_parquet(p))
+        if run.detail is not None and len(run.detail):     # --keep-detail: every Layer-3 component, already flattened and cached by block (FND-0193)
+            _put("scores_detail.parquet", lambda p: run.detail.to_parquet(p))
+        _put("scores_long.parquet", lambda p: run.scores.to_parquet(p))
     ctx = getattr(bt, "last_pit_context", None)
     if ctx is not None:                                   # FND-0193: the run's DB-side inputs, frozen next to its scores
         _put("inputs", lambda p: save_inputs_snapshot(out_dir, ctx["inputs"], ctx["hist"], ctx.get("target")))
@@ -254,7 +254,8 @@ def main(argv=None, conn=None) -> int:
                        current_universe_only=args.current_universe_only, tx_cost_bps=args.bps_main,
                        entry_sides=args.entry_sides, hysteresis_band=args.hysteresis_band,
                        macro_variant=None if args.macro_variant == "none" else args.macro_variant,
-                       macro_workers=args.macro_workers, keep_detail=args.keep_detail)
+                       macro_workers=args.macro_workers, keep_detail=args.keep_detail,
+                       snap_nav_month_end=args.snap_nav_month_end)
     if table is None or table.empty:
         logger.error("nothing to evaluate (no regime history or empty date range)")
         return EXIT_NOTHING_TO_EVALUATE
