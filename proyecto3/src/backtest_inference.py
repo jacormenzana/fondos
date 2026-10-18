@@ -131,6 +131,82 @@ def deflated_sharpe_ratio(returns, n_trials: int, var_trial_sharpes: float) -> f
     return probabilistic_sharpe_ratio(returns, expected_max_sharpe(n_trials, var_trial_sharpes))
 
 
+def ledger_deflated_sharpe(excess_returns, n_trials: int, var_annual_sharpes: float) -> float:
+    """FND-0193 (pre-registered): deflated Sharpe of a MONTHLY excess-return series with N taken from the trial ledger of every
+    configuration ever evaluated (not only the grid that produced the chosen one). `var_annual_sharpes` is the cross-trial variance of
+    the ANNUALISED Sharpes recorded in the ledger; it is converted to per-period (monthly) units here (annual Sharpe = monthly * sqrt(12),
+    so its variance is 12 times the monthly one)."""
+    return deflated_sharpe_ratio(excess_returns, n_trials, var_annual_sharpes / 12.0)
+
+
+def holm_stepdown(pvalues: dict, alpha: float = 0.05) -> dict:
+    """Holm step-down over a family of one-sided p-values {name: p}. Returns {name: {'p': p, 'p_adj': Holm-adjusted p, 'reject': bool}}:
+    the i-th smallest p (0-based) is compared with alpha / (m - i) and, once one fails, every larger p fails too. NaN p never rejects."""
+    m = len(pvalues)
+    order = sorted(pvalues, key=lambda k: (np.isnan(pvalues[k]), pvalues[k]))
+    out, running, still = {}, 0.0, True
+    for i, k in enumerate(order):
+        p = pvalues[k]
+        adj = min(1.0, (m - i) * p) if np.isfinite(p) else float("nan")
+        running = max(running, adj) if np.isfinite(adj) else running
+        ok = still and np.isfinite(p) and p <= alpha / (m - i)
+        still = ok
+        out[k] = {"p": float(p), "p_adj": float(running) if np.isfinite(adj) else float("nan"), "reject": bool(ok)}
+    return out
+
+
+def cscv_pbo(returns: pd.DataFrame, n_blocks: int = 16, cash: "pd.Series | None" = None) -> dict:
+    """Probability of backtest overfitting by combinatorially symmetric cross-validation (Bailey, Borwein, Lopez de Prado & Zhu 2015).
+
+    returns: months x configurations (monthly net returns, common index, no NaN after the common-index cut). The history is cut into
+    `n_blocks` equal contiguous blocks (leading months that do not fill a block are dropped). Every way of putting half of the blocks
+    in-sample is evaluated: the configuration with the best in-sample Sharpe is looked up out of sample, where its relative rank
+    w = rank / (N + 1) gives the logit ln(w / (1 - w)). PBO = share of splits with logit <= 0 (the in-sample winner lands at or below the
+    out-of-sample median). Returns {pbo, n_splits, n_configs, months_used, logit_mean, oos_rank_mean}."""
+    from itertools import combinations
+    x = returns.dropna(how="any")
+    if cash is not None:
+        x = x.sub(cash.reindex(x.index).fillna(0.0), axis=0)
+    n_cfg = x.shape[1]
+    block = len(x) // n_blocks
+    if n_cfg < 2 or block < 2 or n_blocks % 2:
+        return {"pbo": float("nan"), "n_splits": 0, "n_configs": n_cfg, "months_used": 0, "logit_mean": float("nan"), "oos_rank_mean": float("nan")}
+    v = x.to_numpy(dtype=float)[len(x) - block * n_blocks:]
+    blocks = v.reshape(n_blocks, block, n_cfg)
+    s1, s2 = blocks.sum(axis=1), (blocks ** 2).sum(axis=1)                       # (n_blocks, n_cfg)
+    splits = np.array([[i in c for i in range(n_blocks)] for c in combinations(range(n_blocks), n_blocks // 2)], dtype=float)
+
+    def _sharpe(sel):                                                             # sel: (n_splits, n_blocks) 0/1
+        n = sel.sum(axis=1)[:, None] * block
+        mean = (sel @ s1) / n
+        var = ((sel @ s2) - n * mean ** 2) / (n - 1)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            return np.where(var > 1e-18, mean / np.sqrt(var), -np.inf)
+
+    sr_is, sr_oos = _sharpe(splits), _sharpe(1.0 - splits)
+    best = np.argmax(sr_is, axis=1)
+    oos_of_best = sr_oos[np.arange(len(best)), best]
+    rank = 1 + (sr_oos < oos_of_best[:, None]).sum(axis=1)                         # 1 = worst, N = best
+    w = rank / (n_cfg + 1.0)
+    logit = np.log(w / (1.0 - w))
+    return {"pbo": float((logit <= 0).mean()), "n_splits": int(len(best)), "n_configs": int(n_cfg), "months_used": int(block * n_blocks),
+            "logit_mean": float(logit.mean()), "oos_rank_mean": float(w.mean())}
+
+
+def drawdown_probability(returns, horizon: int = 36, threshold: float = -0.15, n_boot: int = 5000, mean_block: float = 6.0,
+                         seed: int = 12345) -> float:
+    """Probability that a `horizon`-month path of the strategy breaches `threshold` (max drawdown below it), by stationary bootstrap of
+    its monthly net returns. NaN when the series is shorter than the horizon."""
+    r = np.asarray(returns, dtype=float)
+    r = r[np.isfinite(r)]
+    if len(r) < horizon:
+        return float("nan")
+    paths = r[stationary_bootstrap_indices(len(r), n_boot, mean_block, seed)[:, :horizon]]
+    cum = np.cumprod(1.0 + paths, axis=1)
+    dd = (cum / np.maximum.accumulate(np.concatenate([np.ones((n_boot, 1)), cum], axis=1), axis=1)[:, 1:] - 1.0).min(axis=1)
+    return float((dd < threshold).mean())
+
+
 def effective_sample_size(returns, max_lag: "int | None" = None) -> float:
     """n / (1 + 2 * sum_k (1 - k/(L+1)) rho_k) with Bartlett weights: how many INDEPENDENT observations an autocorrelated
     series is worth (never above n, never below 1). 12-month windows that overlap monthly are worth about n / 12."""
