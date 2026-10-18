@@ -2550,10 +2550,14 @@ def _detect_fund_currency(text: str, language: Optional[str]) -> Optional[str]:
     # FND-0243 (2026-10-18): LAST RESORT -- the share-class TITLE line. Every rule above is silent for these KIIDs (old UCITS format, no cost-table amounts), yet the first
     # lines of the document name the class together with its currency: "Algebris Financial Credit Fund Class R EUR", "Templeton Global Total Return Fund Class A(Mdis)USD",
     # "... - Y EUR", "Class A2 (EUR) acc.", "Acciones de capitalizacion (EUR) <ISIN> Clase 1", "EUR I Accumulating Class". The base currency of a hedged class appears LATER
-    # ("The reference currency of the Fund is USD" at character ~2,500), so only the first 600 characters count, ISO codes only, and exactly ONE distinct code (two codes in
+    # ("The reference currency of the Fund is USD" at character ~2,500), so only the first 600 characters count, ISO codes (plus the word Euro), and exactly ONE distinct code (two codes in
     # the title decide nothing). Measured on the funds whose NAME carries no currency (stored value from KID rules): 781 of 784 agree at 600 characters (the 3 exceptions
     # are Fidelity hedged classes the cost-table rule above already resolves, so they never get here); 178 of 178 at 400. It only fills what every other rule left empty.
-    _title_codes = {m.group(1).upper() for m in re.finditer(r"(?<![A-Za-z])(" + "|".join(_ISO_CURRENCY_CODES) + r")(?![A-Za-z])", text[:600])}
+    # The standalone WORD "Euro" counts too ("BNY MELLON EUROLAND BOND FUND EURO A (ISIN ...)", "Hedged Euro Accumulation R Units"): measured at 808 of 808 agreeing on the funds whose
+    # name carries no currency, and it fills the last three active NULL funds (IE0032722260, IE00B3V93F27, IE00B3MB7B14). "Euroland" / "European" are other words (word boundaries).
+    # The other currency words (Sterling, US Dollar, Yen, Swiss Franc) are NOT accepted: they appear in the prose of the first 600 characters ("U.S. Dollar-denominated high yield").
+    _title_codes = {("EUR" if m.group(1).upper() == "EURO" else m.group(1).upper())
+                    for m in re.finditer(r"(?<![A-Za-z])(" + "|".join(_ISO_CURRENCY_CODES) + r"|Euro)(?![A-Za-z])", text[:600], re.IGNORECASE)}
     if len(_title_codes) == 1:
         result = _normalize_currency(next(iter(_title_codes)))
         if result:

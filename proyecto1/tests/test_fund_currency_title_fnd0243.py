@@ -57,9 +57,23 @@ def test_the_class_currency_of_the_title_line(head, expected):
     assert _detect_fund_currency(head, language) == expected
 
 
-def test_a_title_without_an_iso_code_decides_nothing():
-    assert _detect_fund_currency(HEAD_BNY, "EN") is None                  # "BNY Mellon ... Euroland Bond": no currency in the title
-    assert _detect_fund_currency(HEAD_MUZINICH, "EN") is None             # "Hedged Euro Accumulation R Units": the currency is a word, the base (USD) comes later
+def test_the_word_euro_in_the_title_is_the_euro():
+    assert _detect_fund_currency(HEAD_BNY, "EN") == "EUR"                 # "BNY MELLON EUROLAND BOND FUND EURO A (ISIN: IE0032722260)"
+    assert _detect_fund_currency(HEAD_MUZINICH, "EN") == "EUR"            # "Hedged Euro Accumulation R Units": the base currency (USD) comes much later
+
+
+def test_euroland_and_european_are_not_the_word_euro():
+    assert _detect_fund_currency("Key Investor Information BNY MELLON EUROLAND BOND FUND A (ISIN: IE0032722260) A SUB-FUND", "EN") is None
+    assert _detect_fund_currency("Key Investor Information European Equity Fund Class A (ISIN: IE0000000000)", "EN") is None
+
+
+def test_a_title_without_any_currency_decides_nothing():
+    assert _detect_fund_currency("Key Investor Information Some Fund Class A (ISIN: IE0000000000) A sub-fund of Some Funds plc", "EN") is None
+
+
+def test_the_other_currency_words_are_not_accepted():
+    assert _detect_fund_currency("Key Investor Information Some Fund Sterling Income Class", "EN") is None
+    assert _detect_fund_currency("Key Investor Information invests in U.S. Dollar-denominated high yield debt", "EN") is None
 
 
 def test_two_codes_in_the_title_decide_nothing():
