@@ -165,3 +165,29 @@ def test_three_values_and_a_single_found_horizon_are_left_alone():
     zone = "Costes totales 100 EUR 300 EUR 500 EUR\nIncidencia anual de los costes (*)\n5,0% 3,0% 2,0%\n"
     out = p._bind_columns_by_label(zone, [_row(5.0, True, None, None)])
     assert len(out) == 1 and out[0]["total_cost_eur"] is None
+
+
+# ---- Swiss apostrophe thousands (follow-up 4) ---------------------------------------------------------------------------------------------------------
+
+def test_apostrophe_thousands_are_one_amount():
+    assert p._extract_eur_list_from_cell("Total costs EUR 216 EUR 1'091") == [216.0, 1091.0]
+    assert p._extract_eur_list_from_cell("Costes totales CHF 405 CHF 1'035") == [405.0, 1035.0]
+    assert p._extract_eur_list_from_cell("Total costs USD 285 USD 1’438") == [285.0, 1438.0]          # typographic apostrophe
+
+
+def test_apostrophe_does_not_change_the_other_grammars():
+    assert p._extract_eur_list_from_cell("EUR 712 EUR 1576") == [712.0, 1576.0]
+    assert p._extract_eur_list_from_cell("Total costs EUR 1 216 EUR 1,141") == [1216.0, 1141.0]
+    assert p._extract_eur_list_from_cell("Total costs 10.000 EUR 511,97 EUR") == [10000.0, 511.97]
+
+
+def test_real_kid_with_apostrophe_thousands_reads_both_columns():
+    from _fnd0279_kid_slices import APOSTROPHE_FED
+    rows = _by_h(pe.extract_priips_costs(text=APOSTROPHE_FED, isin="LU0159201655"))
+    assert rows[1.0]["Total_Costs_EUR"] == 216.0 and rows[5.0]["Total_Costs_EUR"] == 1091.0
+
+
+def test_the_document_check_accepts_an_apostrophe_total():
+    from cost_totals_arbitration import total_appears_in_text
+    assert total_appears_in_text(1091.0, "Total costs EUR 216 EUR 1'091\nWhat are the risks")
+    assert not total_appears_in_text(1090.0, "Total costs EUR 216 EUR 1'091\nWhat are the risks")

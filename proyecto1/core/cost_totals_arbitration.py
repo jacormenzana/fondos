@@ -98,14 +98,14 @@ def structural_violations(rows: Sequence[Row]) -> FrozenSet[str]:
     return frozenset(found)
 
 
-_NUMBER_TOKEN = re.compile(r'\d{1,3}(?:[ .,\u00a0\u202f]\d{3})+(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?')
+_NUMBER_TOKEN = re.compile(r'\d{1,3}(?:[ .,\u00a0\u202f\x27\u2019]\d{3})+(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?')
 _LABEL_WINDOW = 260                    # characters after the label, an upper bound on top of the line rule below
 _LABEL_LOOKAHEAD_LINES = 2             # the label's own line plus at most two more (the values of a label-first layout): the window the column binding uses
 
 
 def _readings(token: str) -> List[float]:
     """Valores posibles de un número tal como está escrito: con todos los separadores como miles ('1.141' -> 1141) y con el último [.,] como decimal ('511,97' -> 511.97)."""
-    plain = re.sub(r'[ .,\u00a0\u202f]', '', token)
+    plain = re.sub(r'[ .,\u00a0\u202f\x27\u2019]', '', token)
     out = [float(plain)]
     m = re.match(r'^(.*)[.,](\d{1,2})$', token)
     if m:

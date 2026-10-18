@@ -1233,7 +1233,8 @@ _TOTAL_COSTS_LABEL = re.compile(
 _CURRENCY = r'(?:EUR|USD|GBP|CHF|€|\$|£)'
 # FND-0279: the grouped alternative needs AT LEAST ONE thousands group (`+`, was `*`). With `*` the regex engine took the first alternative that matched, so an UNGROUPED number
 # after a prefix currency was cut at three digits ("EUR 1576" read 157, "EUR 10000" read 100); the plain `\d+` alternative now catches it.
-_AMOUNT = r'\d{1,3}(?:[.,\s  ]\d{3})+(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?'
+# Swiss-style thousands ("EUR 216 EUR 1'091", LU0159201655 / LU0132668087 / LU0690088280): the apostrophe groups thousands like a space does.
+_AMOUNT = r'\d{1,3}(?:[.,\s  \x27\u2019]\d{3})+(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?'
 _EUR_TOKEN = re.compile(r'(?:' + _CURRENCY + r'\s*(' + _AMOUNT + r'))|(?:(' + _AMOUNT + r')\s*' + _CURRENCY + r')', re.IGNORECASE)
 _REBIND_LOOKAHEAD_LINES = 2          # the label's own line, then at most two more (the values of a label-first layout)
 
