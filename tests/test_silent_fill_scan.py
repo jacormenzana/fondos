@@ -86,14 +86,20 @@ _SILENT_FILL_EXEMPT: dict[str, str] = {
     "proyecto3/src/pit_candidates.py::pit_scores":
         "DESIGN: an unknown In_Current_Universe flag counts as 0 (not in the current universe) before the optional "
         "filter; a constant, never another date's value (FND-0228 review 2026-10-04).",
-    "proyecto3/src/pit_metrics.py::aligned_rf":
-        "DESIGN: ffill, then bfill ONLY before the series' first observation (resolve_rf_rate's documented, test-pinned "
-        "contract, FND-0139). PIT-safe because assert_series_cover refuses any evaluation date earlier than the first "
-        "observable month (2000-03 live, evaluations start 2005); FND-0228 review 2026-10-04.",
-    "proyecto3/src/pit_metrics.py::aligned_ipc":
-        "DESIGN: ffill, then bfill ONLY before the lagged IPC's first observation (deflate_nav's contract, FND-0114 "
-        "fix). PIT-safe because assert_series_cover refuses any evaluation date earlier than the first observable "
-        "month; FND-0228 review 2026-10-04.",
+    "proyecto3/src/pit_metrics.py::_asof_filled":
+        "DESIGN: the shared lookup of aligned_rf / aligned_ipc: ffill, then bfill ONLY before the series' first observation "
+        "(resolve_rf_rate's documented, test-pinned contract, FND-0139; deflate_nav's contract, FND-0114 fix). PIT-safe because "
+        "assert_series_cover refuses any evaluation date earlier than the first observable month (2000-03 live, evaluations "
+        "start 2005); FND-0228 review 2026-10-04. Moved here unchanged by FND-0193 so repeated lookup dates are filled once.",
+    "proyecto3/src/backtest_inference.py::cscv_pbo":
+        "DESIGN: fillna(0.0) on the CASH leg only: a month without a cash return counts as 0% accrual (conservative), a "
+        "constant that never borrows another date's value; the strategy returns are dropna-aligned first (FND-0193).",
+    "proyecto3/src/pit_baselines.py::multiplier_variant":
+        "DESIGN: fillna(1.0) on the saved multiplier components: a factor that did not fire for a fund-date is the neutral "
+        "multiplier 1.0, a constant, never another date's value (FND-0193 ablation).",
+    "proyecto3/src/pit_value.py::sharpe_diff_point":
+        "DESIGN: fillna(0.0) on the CASH leg only (0% accrual, conservative) and fillna(False) on the month-selection mask "
+        "(a month outside the mask is not selected): constants, never another date's value (FND-0193).",
     "proyecto3/src/pit_peer_metrics.py::capture_ratios":
         "DESIGN: left join of the fund's own monthly returns onto the category totals; a month without own returns "
         "counts 0 so the category sum minus the fund is unchanged. Constants only (FND-0228 review 2026-10-04).",
