@@ -75,7 +75,9 @@ def main(argv=None) -> int:
     p.add_argument("--snapped-run-dir", help="R4: the same run with --snap-nav-month-end; enables the ALIGNMENT GATE (amendment 2)")
     p.add_argument("--ext-run-dir", help="R2: PIT run started 2001-03-31 (adds the 'early' sub-period and the extended-window drawdown)")
     p.add_argument("--survivorship-run-dir", help="R3: PIT run with --current-universe-only, same commit as --run-dir")
-    p.add_argument("--exclude-isins", help="text file, one ISIN per line: re-evaluate the verdict without those funds (static-attribute sensitivity)")
+    p.add_argument("--exclude-isins", action="append", default=[],
+                   help="text file, one ISIN per line ('#' comments allowed): re-evaluate the verdict without those funds (static-attribute "
+                        "sensitivity). Repeatable; each file is one sensitivity run, labelled by its file name")
     p.add_argument("--ledger", default=str(DEFAULT_LEDGER))
     p.add_argument("--bps", type=float, default=25.0)
     p.add_argument("--n-boot", type=int, default=2000)
@@ -127,16 +129,18 @@ def main(argv=None) -> int:
         gate = pv.alignment_gate(res["gate_summary"], res4["gate_summary"])
         pd.DataFrame({"raw": res["gate_summary"]["sharpe"], "snapped": res4["gate_summary"]["sharpe"],
                       "delta": gate["deltas"]}).to_csv(out / "alignment_gate_sharpe.csv", float_format="%.6g")
-    attr = None
-    if args.exclude_isins:
-        print("static-attribute sensitivity: re-evaluating without the unstable funds ...")
-        drop = [x.split("#", 1)[0].strip() for x in Path(args.exclude_isins).read_text(encoding="utf-8").splitlines()]
+    attrs = []                                          # one entry per --exclude-isins file
+    for fpath in args.exclude_isins:
+        label = Path(fpath).stem
+        print(f"static-attribute sensitivity [{label}]: re-evaluating without the unstable funds ...")
+        drop = [x.split("#", 1)[0].strip() for x in Path(fpath).read_text(encoding="utf-8").splitlines()]
         drop = [x for x in drop if x]
         res_x = pv.evaluate_study(pv.load_study(run, exclude_isins=drop), ledger, bps, args.n_boot, args.skip_pbo, early_ok, ext_mdd)
-        attr = {"n_excluded": len(drop), "outcome_all": verdict["outcome"], "outcome_without": res_x["verdict"]["outcome"],
-                "sensitive": verdict["outcome"] != res_x["verdict"]["outcome"],
-                "sharpe_all": res["gate_summary"]["sharpe"], "sharpe_without": res_x["gate_summary"]["sharpe"]}
-        pd.DataFrame({"all": attr["sharpe_all"], "without_unstable": attr["sharpe_without"]}).to_csv(out / "attribute_sensitivity_sharpe.csv", float_format="%.6g")
+        a = {"label": label, "n_excluded": len(drop), "outcome_all": verdict["outcome"], "outcome_without": res_x["verdict"]["outcome"],
+             "sensitive": verdict["outcome"] != res_x["verdict"]["outcome"],
+             "sharpe_all": res["gate_summary"]["sharpe"], "sharpe_without": res_x["gate_summary"]["sharpe"]}
+        pd.DataFrame({"all": a["sharpe_all"], "without_unstable": a["sharpe_without"]}).to_csv(out / f"attribute_sensitivity_{label}.csv", float_format="%.6g")
+        attrs.append(a)
 
     surv = None
     if args.survivorship_run_dir:
@@ -156,7 +160,9 @@ def main(argv=None) -> int:
                     f"max |dSharpe| {gate['max_abs_delta_core']:.4f}). Fix the pipeline alignment before any go-live.")
     verdict["validity"] = validity
     verdict["alignment_gate"] = gate
-    verdict["attribute_sensitivity"] = None if attr is None else {k: v for k, v in attr.items() if not k.startswith("sharpe")}
+    verdict["attribute_sensitivity"] = [{k: v for k, v in a.items() if not k.startswith("sharpe")} for a in attrs]
+    if any(a["sensitive"] for a in attrs):
+        verdict["validity"] += " | ATTRIBUTE-SENSITIVE (the owner decides): " + ", ".join(a["label"] for a in attrs if a["sensitive"])
     verdict["inputs"] = {"run": run.name, "snapped_run": Path(args.snapped_run_dir).name if args.snapped_run_dir else None, "bps": bps,
                          "ledger_N_scan": ledger["N_scan_upper"], "ledger_locked": True, "ext": ext_note, "reproduction": rep}
 
@@ -182,11 +188,11 @@ def main(argv=None) -> int:
         lines += ["", "## Alignment gate (R1 raw dates vs R4 month-end snapped)", "",
                   json.dumps({k: gate[k] for k in ("pass", "failed", "checks", "max_abs_delta_core", "strict_ok", "rank_raw", "rank_snap")}, indent=2, default=str),
                   "", _fmt(pd.DataFrame({"raw": res["gate_summary"]["sharpe"], "snapped": res4["gate_summary"]["sharpe"], "delta": gate["deltas"]}))]
-    if attr is not None:
-        lines += ["", f"## Static-attribute sensitivity ({attr['n_excluded']} unstable funds excluded)", "",
-                  f"Outcome with all funds: {attr['outcome_all']} | without the unstable funds: {attr['outcome_without']} | "
-                  f"{'ATTRIBUTE-SENSITIVE (the owner decides)' if attr['sensitive'] else 'not sensitive'}", "",
-                  _fmt(pd.DataFrame({"all": attr["sharpe_all"], "without_unstable": attr["sharpe_without"]}))]
+    for a in attrs:
+        lines += ["", f"## Static-attribute sensitivity [{a['label']}] ({a['n_excluded']} unstable funds excluded)", "",
+                  f"Outcome with all funds: {a['outcome_all']} | without the unstable funds: {a['outcome_without']} | "
+                  f"{'ATTRIBUTE-SENSITIVE (the owner decides)' if a['sensitive'] else 'not sensitive'}", "",
+                  _fmt(pd.DataFrame({"all": a["sharpe_all"], "without_unstable": a["sharpe_without"]}))]
     lines += ["", "## E1 -- model (M_h10) vs baselines, full window", "", _fmt(res["e1"]), "",
               "## E1 -- Sharpe difference by sub-period (M minus baseline)", "", _fmt(res["sub"]), "",
               "## E1 -- leave one episode out (M minus baseline)", "", _fmt(res["loeo"]), "",
