@@ -226,7 +226,39 @@ def paired(a: pd.Series, b: pd.Series, cash: pd.Series, n_boot: int = 2000, mean
     return out
 
 
-def load_ledger(path) -> dict:
+PREREG_TAG = "prereg-fnd0193"
+LEDGER_RELPATH = "doc/decisiones/LEDGER_FND-0193.json"
+
+
+class LedgerLockError(RuntimeError):
+    """The trial ledger on disk is not the one committed under the pre-registration tag."""
+
+
+def _git_blob(repo: Path, tag: str, rel: str) -> bytes:
+    import subprocess
+    r = subprocess.run(["git", "-C", str(repo), "show", f"{tag}:{rel}"], capture_output=True, timeout=30)
+    if r.returncode != 0:
+        raise LedgerLockError(f"cannot read {rel} at tag {tag}: {r.stderr.decode('utf-8', 'replace').strip()}")
+    return r.stdout
+
+
+def verify_ledger_lock(path, repo: "Path | None" = None, tag: str = PREREG_TAG, rel: str = LEDGER_RELPATH, blob_reader=None) -> str:
+    """The trial ledger is locked at the pre-registration: its content on disk must equal the blob committed under `tag` (line endings
+    ignored). A retroactive edit (a trial removed to flatter the deflated Sharpe) aborts the run. Returns the SHA-256 of the locked content."""
+    import hashlib
+    reader = blob_reader or (lambda: _git_blob(Path(repo or _ROOT), tag, rel))
+    locked = reader().replace(b"\r\n", b"\n")
+    disk = Path(path).read_bytes().replace(b"\r\n", b"\n")
+    if disk != locked:
+        raise LedgerLockError(f"{path} differs from the ledger committed at tag {tag}: the ledger is locked at the pre-registration "
+                              f"(SHA-256 locked {hashlib.sha256(locked).hexdigest()[:12]}, on disk {hashlib.sha256(disk).hexdigest()[:12]})")
+    return hashlib.sha256(locked).hexdigest()
+
+
+def load_ledger(path, verify_lock: bool = True) -> dict:
+    """The ledger counts (N_scan, 2 x N_scan, trial-Sharpe variance). Verified against the pre-registration tag unless told not to (tests)."""
+    if verify_lock:
+        verify_ledger_lock(path)
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 

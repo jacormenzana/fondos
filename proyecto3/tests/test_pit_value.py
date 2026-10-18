@@ -36,6 +36,28 @@ def _tabs(model_mean, base_mean):
     return tabs
 
 
+def test_ledger_lock_accepts_the_committed_content_and_aborts_on_any_edit(tmp_path):
+    locked = b'{"N_scan_upper": 437,\n "N_scan_x2": 874}\n'
+    f = tmp_path / "ledger.json"
+    f.write_bytes(locked.replace(b"\n", b"\r\n"))                              # Windows line endings are not an edit
+    assert len(pv.verify_ledger_lock(f, blob_reader=lambda: locked)) == 64
+    f.write_bytes(b'{"N_scan_upper": 400,\n "N_scan_x2": 800}\n')               # a trial "removed"
+    with pytest.raises(pv.LedgerLockError, match="locked at the pre-registration"):
+        pv.verify_ledger_lock(f, blob_reader=lambda: locked)
+    with pytest.raises(pv.LedgerLockError, match="cannot read"):
+        pv.verify_ledger_lock(f, repo=tmp_path, tag="no-such-tag")               # a missing tag is a failure, never a pass
+
+
+def test_the_committed_ledger_matches_the_real_tag():
+    import subprocess
+    root = Path(__file__).resolve().parents[2]
+    if subprocess.run(["git", "-C", str(root), "rev-parse", "-q", "--verify", f"refs/tags/{pv.PREREG_TAG}"], capture_output=True).returncode != 0:
+        pytest.skip("the pre-registration tag exists only in the study's repository")
+    path = root / pv.LEDGER_RELPATH
+    assert pv.verify_ledger_lock(path, repo=root)
+    assert pv.load_ledger(path)["N_scan_upper"] == 437
+
+
 def test_family_keys_group_multiplier_components():
     detail = pd.DataFrame({"as_of": [IDX[0]], "isin": ["A"], "m_alpha_persistence_bonus": [1.15], "m_fx_malus": [0.8],
                            "m_regime_return_bonus": [1.1], "m_regime_coverage_damp": [0.5], "m_crisis_mdd_deep_malus": [0.9],
