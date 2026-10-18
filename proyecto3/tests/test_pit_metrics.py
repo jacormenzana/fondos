@@ -46,6 +46,22 @@ def _row_convention(monkeypatch):
     monkeypatch.setattr(_config, "ANNUALIZATION_BY_DATES_ENABLED", False, raising=False)
 
 
+def test_aligned_rf_and_ipc_accept_two_raw_dates_in_one_month():
+    """A NAV panel holds raw dates: funds that report on a weekday and funds that report on the calendar month-end put the same
+    month-end twice in the lookup index (the 2026-10-18 NAV delta load did). The lookup repeats the value; it must not raise, and a
+    panel without repeats must give exactly what it always did."""
+    rf = pd.DataFrame({"date": DATES, "rate": np.linspace(0.01, 0.03, N)})
+    ipc = pd.DataFrame({"date": DATES, "ipc_index": 100.0 * 1.002 ** np.arange(N)})
+    raw = pd.DatetimeIndex(sorted(set(DATES[10:20]) | set(DATES[10:20] - pd.Timedelta(days=2))))      # weekday + calendar month-end
+    lookup = raw + pd.offsets.MonthEnd(0)
+    assert lookup.has_duplicates
+    for fn, arg in ((aligned_rf, rf), (aligned_ipc, ipc)):
+        got = fn(lookup, arg) if fn is aligned_rf else fn(lookup, arg, 2)
+        one_by_one = np.array([(fn(lookup[i:i + 1], arg) if fn is aligned_rf else fn(lookup[i:i + 1], arg, 2))[0] for i in range(len(lookup))])
+        assert np.array_equal(got, one_by_one)
+    assert np.array_equal(aligned_ipc(DATES, ipc, 0), ipc["ipc_index"].to_numpy())                   # unique dates: unchanged
+
+
 def _panel() -> pd.DataFrame:
     rng = np.random.default_rng(7)
     cols = {}

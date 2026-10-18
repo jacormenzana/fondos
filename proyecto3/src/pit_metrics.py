@@ -108,8 +108,17 @@ def aligned_rf(dates: pd.DatetimeIndex, rf: "pd.DataFrame | None", fallback: flo
     s["date"] = _month_end(s["date"])
     s = s.sort_values("date").drop_duplicates("date", keep="last").set_index("date")["rate"].astype(float)
     targets = _month_end(dates)                         # resolve_rf_rate aligns the target date to month-end
-    aligned = s.reindex(s.index.union(targets)).sort_index().ffill().bfill()
-    return aligned.reindex(targets).to_numpy()
+    return _asof_filled(s, targets)
+
+
+def _asof_filled(s: pd.Series, targets: pd.DatetimeIndex) -> np.ndarray:
+    """`s` (unique date index) forward-filled, then back-filled, looked up at `targets`. `targets` may repeat a date: the NAV panel
+    holds raw dates, and two funds that report on different days of the same month (a weekday and the calendar month-end) put
+    the same month-end twice in the lookup index. The fill is computed on the UNIQUE dates, so a repeated target only repeats its value
+    (bit-identical to the plain lookup when the dates are unique)."""
+    unique = pd.DatetimeIndex(targets).unique()
+    filled = s.reindex(s.index.union(unique)).sort_index().ffill().bfill()
+    return filled.reindex(pd.DatetimeIndex(targets)).to_numpy()
 
 
 def first_observable_date(rf: "pd.DataFrame | None", ipc: "pd.DataFrame | None", lag_months: int = 0) -> "pd.Timestamp | None":
@@ -144,8 +153,7 @@ def aligned_ipc(dates: pd.DatetimeIndex, ipc: "pd.DataFrame | None", lag_months:
     if lag_months:
         s["date"] = s["date"] + pd.offsets.MonthEnd(int(lag_months))
     s = s.sort_values("date").drop_duplicates("date", keep="last").set_index("date")["ipc_index"].astype(float)
-    out = s.reindex(s.index.union(dates)).sort_index().ffill().bfill().reindex(dates).to_numpy()
-    return out
+    return _asof_filled(s, pd.DatetimeIndex(dates))
 
 
 def _fund_expanding(x: np.ndarray, rf_t: np.ndarray, ipc_t: "np.ndarray | None", months: "np.ndarray | None" = None) -> dict:
