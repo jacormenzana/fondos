@@ -192,3 +192,18 @@ def test_total_appears_in_text(value, text, expected):
 def test_total_appears_on_the_label_line_or_the_next_two(value, text, expected):
     from cost_totals_arbitration import total_appears_in_text
     assert total_appears_in_text(value, text) is expected
+
+
+# ---------------- the verdict does not depend on the row order ----------------
+
+def test_a_correct_schedule_is_not_decreasing_because_its_rows_come_out_longest_horizon_first():
+    # ES0175414012 comes out of the extractor as 3 years then 1 year (149 / 499 EUR in the KID)
+    rows = [_row(3.0, 499.0, 4.99, 1.5), _row(1.0, 149.0, 1.49, 1.5)]
+    assert structural_violations(rows) == frozenset()
+    assert structural_violations(list(reversed(rows))) == frozenset()
+
+
+def test_a_really_decreasing_schedule_is_still_flagged_in_any_row_order():
+    rows = [_row(1.0, 500.0, 5.0, 5.0), _row(3.0, 200.0, 2.0, 1.5)]
+    assert structural_violations(rows) == frozenset({"EUR_DECREASING"})
+    assert structural_violations(list(reversed(rows))) == frozenset({"EUR_DECREASING"})

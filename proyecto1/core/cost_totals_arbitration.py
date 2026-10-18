@@ -82,6 +82,8 @@ def plausible_total(horizon: Any, total_pct: Optional[float], annual_pct: Option
 def structural_violations(rows: Sequence[Row]) -> FrozenSet[str]:
     """Violaciones estructurales de un calendario de costes (lista de filas con Horizon_Years / Total_Costs_EUR / Total_Costs_Pct / Annual_Impact_Pct)."""
     found = set()
+    # ascending horizon: the extractor does not promise it (ES0175414012 comes out as 3 years then 1 year) and "the total falls with the horizon" only means something in that order
+    rows = sorted(rows, key=lambda r: (r.get('Horizon_Years') is None, r.get('Horizon_Years') or 0.0))
     eur = [r.get('Total_Costs_EUR') for r in rows if r.get('Total_Costs_EUR') is not None]
     for r in rows:
         horizon, pct, annual = r.get('Horizon_Years'), r.get('Total_Costs_Pct'), r.get('Annual_Impact_Pct')
