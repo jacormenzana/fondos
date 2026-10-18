@@ -352,6 +352,7 @@ proyecto2/
       test_nav_discovery_writers_pg.py
       test_nav_monthly_write_20260913.py
       test_nav_source_unavailable_rc.py
+      test_nav_token_renewal_fnd0295.py
       test_source_chain_fnd0256.py
     pipeline/
       test_family_versioning_fnd0236_pg.py

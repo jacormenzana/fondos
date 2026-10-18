@@ -108,6 +108,31 @@ MS_DELAY_LOAD_ERR = (0.1, 0.3)   # pausa tras 401/fallo (no es rate limit, ir ra
 MS_DELAY_RESOLVE  = (0.5, 1.5)   # pausa tras instanciar Funds (llamada al screener)
 NAV_FREQUENCY     = "daily"      # mstarpy 8 solo garantiza daily; resampleamos a mensual
 
+# FND-0295: the Morningstar bearer token works for about 40 MINUTES (measured on the 2026-10-18 load: 40 min twice), not the 45 the loader assumed.
+# Renewing only after 45 min turned minutes 40-45 of every token into "security no accesible" for ~4 min (752 of 3,739 funds got no NAV that night).
+# Renew BEFORE it can expire, and treat an auth error from any token older than a minute as an expired token (renew once, retry once).
+TOKEN_PROACTIVE_RENEW_S    = 30 * 60
+TOKEN_MIN_AUTH_RENEW_AGE_S = 60
+
+
+def token_needs_proactive_renewal(age_s: float) -> bool:
+    """Is the token old enough that it must be renewed BEFORE the next download?"""
+    return age_s >= TOKEN_PROACTIVE_RENEW_S
+
+
+def auth_error_means_expired_token(age_s: float) -> bool:
+    """An auth error from a token older than TOKEN_MIN_AUTH_RENEW_AGE_S is an expired token (renew + retry); from a younger one the security
+    really is not accessible (the caller classifies it no_access without renewing, so a bad ISIN cannot trigger a renewal storm)."""
+    return age_s >= TOKEN_MIN_AUTH_RENEW_AGE_S
+
+
+def renew_bearer(get_token, bearer: str, acquired_at: float, now: float | None = None) -> tuple:
+    """(bearer, acquired_at, lost): a fresh token, or the old one with lost=True when the renewal raised RuntimeError."""
+    try:
+        return get_token(), (time.time() if now is None else now), False
+    except RuntimeError:
+        return bearer, acquired_at, True
+
 # Backoff exponencial para errores de red transitorios (429, timeout, DNS)
 MS_RETRY_MAX      = 3            # intentos maximos por fondo (sal-service / discover)
 # Exit code when the chartservice bearer token cannot be obtained (at start) or renewed (mid-run): the NAV source is unavailable,
@@ -1296,7 +1321,6 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=Non
             return RC_SOURCE_UNAVAILABLE
 
     bearer_acquired_at = time.time()
-    _TOKEN_MAX_AGE_S   = 45 * 60
     token_lost         = False   # renewal failed mid-run -> RC_SOURCE_UNAVAILABLE at the end
 
     if workers > 1:
@@ -1607,25 +1631,26 @@ def run_load(conn, isins, desde, dry_run, verbose, force=False, bearer_token=Non
             eff_desde = desde   # carga completa desde el inicio
 
         # -- Descarga diaria via chartservice --------------------------------
+        # FND-0295: renew BEFORE the token can expire (it lasts ~40 min), not after 45
+        if token_needs_proactive_renewal(time.time() - bearer_acquired_at):
+            print("\n  [token] renovando (preventivo)...", flush=True)
+            bearer, bearer_acquired_at, _lost = renew_bearer(_get_bearer_token, bearer, bearer_acquired_at)
+            token_lost = token_lost or _lost
+            print("  [token] ERROR: no se pudo renovar." if _lost else "  [token] ok.", flush=True)
         nav_rows, err_type, _ = _download_nav_daily(
             ms_id, isin, currency, eff_desde, bearer)
 
         if err_type == "auth":
-            token_age = time.time() - bearer_acquired_at
-            if token_age > _TOKEN_MAX_AGE_S:
-                # Token probablemente caducado — refrescar y reintentar una vez
-                print("\n  [token] renovando (>45 min)...", flush=True)
-                try:
-                    bearer = _get_bearer_token()
-                    bearer_acquired_at = time.time()
-                    print("  [token] ok.", flush=True)
-                except RuntimeError:
-                    token_lost = True
-                    print("  [token] ERROR: no se pudo renovar.", flush=True)
+            if auth_error_means_expired_token(time.time() - bearer_acquired_at):
+                # Token caducado -- refrescar y reintentar UNA vez
+                print("\n  [token] renovando (error de autenticacion)...", flush=True)
+                bearer, bearer_acquired_at, _lost = renew_bearer(_get_bearer_token, bearer, bearer_acquired_at)
+                token_lost = token_lost or _lost
+                print("  [token] ERROR: no se pudo renovar." if _lost else "  [token] ok.", flush=True)
                 nav_rows, err_type, _ = _download_nav_daily(
                     ms_id, isin, currency, eff_desde, bearer)
-            else:
-                # Token reciente -> security no disponible en chartservice
+            if err_type == "auth":
+                # Token recien emitido y aun rechazado -> security no disponible en chartservice
                 err_type = "no_access"
 
         if not nav_rows:
@@ -1820,7 +1845,6 @@ def run_update(conn, dry_run, bearer_token=None, stale_days=3, monthly_grain=Fal
             return RC_SOURCE_UNAVAILABLE
 
     bearer_acquired_at = time.time()
-    _TOKEN_MAX_AGE_S   = 45 * 60
     token_lost         = False   # renewal failed mid-run -> RC_SOURCE_UNAVAILABLE at the end
 
     for idx, (isin, ms_id, last_nav_date) in enumerate(rows, 1):
@@ -1905,20 +1929,20 @@ def run_update(conn, dry_run, bearer_token=None, stale_days=3, monthly_grain=Fal
             desde = _today.replace(day=1).isoformat()
 
         code = ms_id or isin
+        # FND-0295: renew BEFORE the token can expire (it lasts ~40 min), not after 45
+        if token_needs_proactive_renewal(time.time() - bearer_acquired_at):
+            bearer, bearer_acquired_at, _lost = renew_bearer(_get_bearer_token, bearer, bearer_acquired_at)
+            token_lost = token_lost or _lost
         nav_rows, err_type, _ = _download_nav_daily(
             code, isin, currency, desde, bearer)
 
         if err_type == "auth":
-            token_age = time.time() - bearer_acquired_at
-            if token_age > _TOKEN_MAX_AGE_S:
-                try:
-                    bearer = _get_bearer_token()
-                    bearer_acquired_at = time.time()
-                except RuntimeError:
-                    token_lost = True
+            if auth_error_means_expired_token(time.time() - bearer_acquired_at):
+                bearer, bearer_acquired_at, _lost = renew_bearer(_get_bearer_token, bearer, bearer_acquired_at)
+                token_lost = token_lost or _lost
                 nav_rows, err_type, _ = _download_nav_daily(
                     code, isin, currency, desde, bearer)
-            else:
+            if err_type == "auth":
                 err_type = "no_access"
 
         time.sleep(random.uniform(*MS_DELAY_LOAD_OK))
