@@ -48,6 +48,11 @@ import re
 import math
 from typing import List, Optional
 
+try:
+    from core.cost_currency import CODES_ALT, CURRENCY
+except ImportError:                                     # proyecto1/core already on sys.path
+    from cost_currency import CODES_ALT, CURRENCY
+
 
 # ======================================================================
 # Constantes y patrones compilados al nivel de módulo
@@ -59,7 +64,7 @@ DLA2_SEPARATOR = '|||'
 # Importe absoluto en moneda (EUR/USD/etc. explícito o implícito)
 # Grupo 1: la cantidad numérica
 AMOUNT_PATTERN = re.compile(
-    r'(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{1,2})?)\s*(?:EUR|USD|GBP|CHF|SEK|NOK|DKK|PLN|CZK)?',
+    r'(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{1,2})?)\s*(?:' + CODES_ALT + r')?',
     re.IGNORECASE,
 )
 
@@ -582,7 +587,7 @@ def _extract_eur_from_cell(cell: str) -> Optional[float]:
     # de 10.000 (IE0031069275 guardaba 1,0 donde el KID dice "€1 990").
     # Se prueba primero por ser la lectura más específica.
     m = re.search(
-        r'(?:EUR|USD|GBP|CHF|€|\$)\s*'
+        CURRENCY + r'\s*'
         r'(\d{1,3}(?:[\s  ][\d]{3})+(?:[.,]\d{1,2})?)',
         cell, re.IGNORECASE,
     )
@@ -593,7 +598,7 @@ def _extract_eur_from_cell(cell: str) -> Optional[float]:
     m = re.search(
         # FND-0279: without a left boundary re.search could start INSIDE a number ("1576 EUR" matched "576 EUR": LU0671501129 stored 576 at 5 years), and the grouped
         # alternative came before the plain one; now a match cannot start after a digit and an ungrouped number is read whole.
-        r'(?<![\d.,])(\d{1,3}(?:[.,\s  ]\d{3})+(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)\s*(?:EUR|USD|GBP|CHF|€|\$)',
+        r'(?<![\d.,])(\d{1,3}(?:[.,\s  ]\d{3})+(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)\s*' + CURRENCY,
         cell, re.IGNORECASE,
     )
     if m:
@@ -1230,7 +1235,7 @@ def _parse_costs_over_time_plain(text: str) -> List[dict]:
 # cached KIDs with identical totals across explicit horizons the rebinding fixes 1,016). PRIIPs prints the columns in ascending horizon order.
 _TOTAL_COSTS_LABEL = re.compile(
     r'total\s+costs?|costes?\s+totales?|co[uû]ts?\s+totaux|gesamtkosten|costi\s+totali', re.IGNORECASE)
-_CURRENCY = r'(?:EUR|USD|GBP|CHF|€|\$|£)'
+_CURRENCY = CURRENCY                                   # one vocabulary for every cost parser (cost_currency.py)
 # FND-0279: the grouped alternative needs AT LEAST ONE thousands group (`+`, was `*`). With `*` the regex engine took the first alternative that matched, so an UNGROUPED number
 # after a prefix currency was cut at three digits ("EUR 1576" read 157, "EUR 10000" read 100); the plain `\d+` alternative now catches it.
 # Swiss-style thousands ("EUR 216 EUR 1'091", LU0159201655 / LU0132668087 / LU0690088280): the apostrophe groups thousands like a space does.
@@ -1239,13 +1244,24 @@ _EUR_TOKEN = re.compile(r'(?:' + _CURRENCY + r'\s*(' + _AMOUNT + r'))|(?:(' + _A
 _REBIND_LOOKAHEAD_LINES = 2          # the label's own line, then at most two more (the values of a label-first layout)
 
 
+# "Total costs (EUR) 278 1,105": the currency sits in the LABEL and the amounts after it are bare numbers (LU1770034509, LU1139789298, LU1251922891, LU1770914999:
+# the only 4 funds of 3,763 with that layout). Only read when the line carries NO currency-marked amount, and only the numbers that END the line.
+_BARE_NUM = r"\d{1,3}(?:[.,\x27\u2019]\d{3})+(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?"
+_BARE_AFTER_LABEL_CURRENCY = re.compile(r"\(\s*(?:" + CODES_ALT + r")\s*\)\s*((?:" + _BARE_NUM + r")(?:\s+(?:" + _BARE_NUM + r"))*)\s*$", re.IGNORECASE)
+
+
 def _extract_eur_list_from_cell(cell: str) -> List[float]:
-    """Every currency-marked amount of `cell`, in order of appearance ("€914 €1,560" -> [914.0, 1560.0])."""
+    """Every currency-marked amount of `cell`, in order of appearance ("€914 €1,560" -> [914.0, 1560.0]); failing that, the bare numbers that follow a
+    currency written in the label ("Total costs (EUR) 278 1,105" -> [278.0, 1105.0])."""
     out: List[float] = []
     for m in _EUR_TOKEN.finditer(cell):
         v = _normalize_amount(m.group(1) or m.group(2))
         if v is not None:
             out.append(v)
+    if not out:
+        b = _BARE_AFTER_LABEL_CURRENCY.search(cell)
+        if b:
+            out = [v for v in (_normalize_amount(t) for t in re.findall(_BARE_NUM, b.group(1))) if v is not None]
     return out
 
 
@@ -1369,7 +1385,7 @@ def _rebind_duplicate_columns(window: str, results: List[dict]) -> List[dict]:
 # Patterns validated against DWS/UBS/Groupama real KIDs. scripts\diag\
 # audit_investment_base.py imports THIS function (DRY, §Y.1).
 _BASE_NUM = r'(\d{1,3}(?:[ .,]\d{3})+|\d{4,6})'
-_BASE_CUR = r'(?:EUR|USD|GBP|CHF|€|\$|£)'
+_BASE_CUR = CURRENCY
 _BASE_PATTERNS = [
     re.compile(r'se\s+invierten\s+' + _BASE_NUM + r'\s*(' + _BASE_CUR + r')?', re.I),
     # FIX-P1-Y: some KIDs write "Ejemplo de inversión:  3 años 10 000 EUR" where

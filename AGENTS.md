@@ -229,6 +229,7 @@ PDFs and `Raw_KIID_Text` (in `fund_kiid_metadata`) are **never deleted**.
 | `classify_utils.py` | `proyecto1/core` |
 | `cost_arbitration.py` | `proyecto1/core` |
 | `cost_cross_validator.py` | `proyecto1/core` |
+| `cost_currency.py` | `proyecto1/core` |
 | `cost_format_router.py` | `proyecto1/core` |
 | `cost_format_signals.py` | `proyecto1/core` |
 | `cost_pct_anchored.py` | `proyecto1/core` |

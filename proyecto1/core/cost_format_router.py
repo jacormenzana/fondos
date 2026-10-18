@@ -36,6 +36,13 @@ Nota sobre imports / DRY:
 import re
 from typing import Optional
 
+try:
+    from core.cost_currency import detect_cost_currency
+    from core.cost_table_parser import _TOTAL_COSTS_LABEL
+except ImportError:                                     # proyecto1/core already on sys.path
+    from cost_currency import detect_cost_currency
+    from cost_table_parser import _TOTAL_COSTS_LABEL
+
 
 # ======================================================================
 # Patrones de señales KID
@@ -81,17 +88,10 @@ _CAT3_SIGNALS: list = [
 
 # Patrón principal: "10.000 EUR" / "10,000 USD" etc. en tabla de costes PRIIPs
 # Cubre separadores de miles tanto con punto (ES) como con coma (EN).
-_INVESTMENT_BASE_PATTERN = re.compile(
-    r'10[.,]000\s*(EUR|USD|GBP|CHF|SEK|NOK|DKK|PLN|CZK)',
-    re.IGNORECASE,
-)
+# (the investment-base patterns moved to cost_currency: any grouping, currency before or after, JPY included; the currency is read from the totals row first; FND-0279)
 
 # Patrón secundario: "Inversión: 10.000 EUR" o "Investment: 10,000 USD"
 # Usado como fallback cuando el patrón principal no encuentra nada.
-_INVESTMENT_LABEL_PATTERN = re.compile(
-    r'(?:inversi[oó]n|investment)\s*[:\-]?\s*10[.,]000\s*(EUR|USD|GBP|CHF|SEK|NOK|DKK|PLN|CZK)',
-    re.IGNORECASE,
-)
 
 
 # ======================================================================
@@ -178,15 +178,7 @@ def detect_kid_currency(text: str) -> Optional[str]:
     if not text:
         return None
 
-    m = _INVESTMENT_BASE_PATTERN.search(text)
-    if m:
-        return m.group(1).upper()
-
-    m = _INVESTMENT_LABEL_PATTERN.search(text)
-    if m:
-        return m.group(1).upper()
-
-    return None
+    return detect_cost_currency(text, _TOTAL_COSTS_LABEL)
 
 
 def get_format_signals_detail(text: str) -> dict:
