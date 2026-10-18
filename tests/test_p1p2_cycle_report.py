@@ -199,6 +199,7 @@ def _canned():
         cr.Q_OLS_ZERO_BACKFILL: [("P2-20261005_020156-771354",)],
         cr.Q_CLASS_CCY_UNKNOWN: [("IE00B8J38129",)],   # FND-0243
         cr.Q_HEDGING_CANDIDATES: [],        # streamed through a server-side cursor: see tests/test_p1p2_hedging_drift.py
+        cr.Q_NAV_NEWEST: [("LU1", date(2026, 10, 16))],   # read by collect_nav_lag, not collect(): see tests/test_nav_lag_fnd0296.py (FND-0296)
     }
 
 

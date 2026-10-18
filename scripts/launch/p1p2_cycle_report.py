@@ -47,6 +47,12 @@ DEFAULT_OUT_DIR = ROOT / "proyecto1" / "log"
 REPORT_GLOB = "P1_P2_cycle_report_*.json"
 
 NAV_STALE_DAYS = 60              # prices older than this are "stale" (pipelineP1P2Audit, NAV-staleness gate)
+# FND-0295/0296: a PARTIAL NAV load (752 of 3,739 funds without data on 2026-10-18) left ~20% of the funds a week behind the rest and nothing reported it:
+# the NAV_STALE_DAYS line only sees > 60 days. A fund is "lagging" when its newest NAV is more than NAV_LAG_TOLERANCE_DAYS behind the reference date; the
+# tolerance is the statistical audit's cross-section tolerance (snapshot.build_snapshot tolerance_days=5): a lagging fund is held out of every cross-sectional
+# audit block and the promotion gate [GATE:DATA_COVERAGE] can then refuse a scenario that contains it.
+NAV_LAG_TOLERANCE_DAYS = 5
+NAV_LAG_ATTENTION_SHARE = 0.05   # report it when more than this share of the active funds lags
 COVERAGE_DROP_PP = 2.0           # a P3-consumed metric losing more than this many points of coverage
 TOP_N = 12                       # rows shown per ranked list
 HEDGING_DRIFT_BATCH = 200        # rows per server-side cursor fetch (bounded memory: the texts are ~15 kB each)
@@ -128,6 +134,16 @@ Q_NAV_STALE = """
     GROUP BY n.isin
     HAVING MAX(n.date) < %s
     ORDER BY newest, n.isin
+"""
+
+Q_NAV_NEWEST = """
+    SELECT n.isin, MAX(n.date) AS newest
+    FROM fund_nav_monthly n
+    JOIN fund_master fm ON fm.isin = n.isin
+    LEFT JOIN nav_sources ns ON ns.isin = n.isin
+    WHERE fm.in_current_universe = 1
+      AND COALESCE(ns.data_status, 'OK') <> 'STALE_FROZEN'
+    GROUP BY n.isin
 """
 
 Q_NAV_SOURCES = """
@@ -366,6 +382,30 @@ def collect_governance(conn, today: date | None = None) -> dict:
     return out
 
 
+def nav_lag_summary(newest: dict, tolerance_days: int = NAV_LAG_TOLERANCE_DAYS) -> dict:
+    """How many funds are behind the rest. `newest` = {isin: newest monthly NAV date}. The REFERENCE is the 90th-percentile date, not the maximum:
+    a handful of future- or weekend-stamped points must not make every other fund look late. A fund lags when reference - newest > tolerance_days."""
+    if not newest:
+        return {"funds": 0, "reference": None, "lagging": 0, "share": 0.0, "examples": []}
+    dates = sorted(newest.values())
+    reference = dates[int(0.9 * (len(dates) - 1))]
+    lagging = sorted((i for i, d in newest.items() if (reference - d).days > tolerance_days), key=lambda i: (newest[i], i))
+    return {"funds": len(newest), "reference": str(reference), "lagging": len(lagging), "share": len(lagging) / len(newest),
+            "oldest": str(newest[lagging[0]]) if lagging else None, "examples": lagging[:5]}
+
+
+def collect_nav_lag(conn) -> dict:
+    """NAV lag of the active universe (nav_lag_summary). Read-only; never raises (an unreadable source becomes an `error` key)."""
+    try:
+        return nav_lag_summary({r[0]: r[1] for r in conn.execute(Q_NAV_NEWEST).fetchall()})
+    except Exception as exc:                                  # noqa: BLE001
+        try:
+            conn.rollback()
+        except Exception:                                     # noqa: BLE001
+            pass
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
 def collect_macro_freshness(conn, today: date) -> dict:
     """Per-series staleness of series_macro against each series' own limit (shared/macro_freshness.py, FND-0256) and the leg-by-leg state of the
     composite regime inputs (ipc_yoy_avg). Read-only, informational; never raises (an unreadable source becomes an `error` key)."""
@@ -450,6 +490,14 @@ def attention_items(report: dict, previous: dict | None) -> list:
                      f"vigentes hasta que otro lo sustituya: {' | '.join(po['overrides'])[:300]}")
     if gov.get("error"):
         items.append(f"no se pudo evaluar la gobernanza de datos (residuales / overrides): {gov['error']}")
+    nl = report.get("nav_lag") or {}                        # absent in reports written before this check (FND-0295/0296)
+    if nl.get("error"):
+        items.append(f"no se pudo evaluar el desfase de NAV: {nl['error']}")
+    elif nl.get("funds") and nl["share"] > NAV_LAG_ATTENTION_SHARE:
+        items.append(f"{nl['lagging']} de {nl['funds']} fondos activos ({100 * nl['share']:.0f}%) tienen su ultimo NAV mas de {NAV_LAG_TOLERANCE_DAYS} dias por "
+                     f"detras de la fecha de referencia {nl['reference']} (el mas antiguo {nl['oldest']}; p. ej. {', '.join(nl['examples'][:3])}): carga NAV parcial. "
+                     "La auditoria los excluye de los bloques transversales y la puerta [GATE:DATA_COVERAGE] puede rechazar una cartera que los contenga. "
+                     "Revisar 'Fondos sin datos' en el log de la carga y relanzar solo la carga (nav_discovery --mode load)")
     mfr = report.get("macro_freshness") or {}               # absent in reports written before this check (FND-0256)
     items += mfr.get("lines", [])
     if mfr.get("error"):
@@ -538,6 +586,10 @@ def render_text(report: dict, previous: dict | None, items: list) -> str:
                   + (f" [WARN lento: limite {HEDGING_DRIFT_SLOW_S:.0f}s]" if hd.get("slow") else "")]
             if hd.get("isins"):                  # neutral diagnostic: which funds (the first HEDGING_DRIFT_LIST)
                 L += ["    " + ", ".join(hd["isins"])]
+    nl = report.get("nav_lag")
+    if nl and not nl.get("error") and nl.get("funds"):
+        L += [f"Desfase de NAV: {nl['lagging']} de {nl['funds']} fondos activos ({100 * nl['share']:.1f}%) mas de {NAV_LAG_TOLERANCE_DAYS} dias por detras de "
+              f"la referencia {nl['reference']}"]
     mfr = report.get("macro_freshness")
     if mfr and not mfr.get("error"):
         L += [f"Frescura macro: {mfr['series']} series, {len(mfr['stale'])} caducadas"
@@ -594,6 +646,7 @@ def main(argv: list | None = None) -> int:
             report["backlog_links"] = collect_backlog_links()
             report["governance"] = collect_governance(conn, today)
             report["macro_freshness"] = collect_macro_freshness(conn, today)
+            report["nav_lag"] = collect_nav_lag(conn)
         finally:
             conn.close()
     except Exception as exc:

@@ -1000,29 +1000,39 @@ def _overwrite_nav_rows_monthly(conn, isin: str, rows: list[dict], dry_run: bool
 # Modo DISCOVER
 # ============================================================
 
-def run_discover(conn, isins, dry_run, verbose, skip_if_recent: bool = False):
+def _is_resolved(row) -> bool:
+    """Does a nav_sources row (status, source_id) already carry a usable Morningstar code?"""
+    return bool(row) and row[0] == "OK" and bool((row[1] or "").strip())
+
+
+def discover_candidates(isins, existing: dict, force: bool = False) -> list:
+    """ISINs that discover must (re)resolve (FND-0296): those with no nav_sources row, a status other than OK, or no code. `existing` is
+    {isin: (status, source_id)}. force=True resolves everything. A fund whose code is already resolved is NOT re-resolved: the code of a fund
+    almost never changes, and no marker dates a discovery (discovered_at is written only on insert; last_checked is also touched by every load)."""
+    if force:
+        return list(isins)
+    return [i for i in isins if not _is_resolved(existing.get(i))]
+
+
+def run_discover(conn, isins, dry_run, verbose, skip_if_recent: bool = False, force: bool = False):
     """
     Verifica existencia del ISIN en Morningstar y registra el code interno
     en nav_sources. Usa _resolve_isin() (general_search directo) para evitar
     mstarpy.Funds() y el endpoint /data-points/fields que devuelve 202.
 
-    skip_if_recent: si True y >=90% de los ISINs tienen last_checked=hoy,
-        omite la ejecucion (evita re-lanzar los ~2h de discover tras un
-        corte en mid-load). Sobreescribir con --force.
+    skip_if_recent (FND-0296): resuelve SOLO los ISINs sin fila en nav_sources, con status != OK o sin code; los ya resueltos se omiten.
+        Antes era todo-o-nada (omitir solo si >=90% tenian last_checked=hoy): una carga parcial lo desarmaba y el lanzador volvia a
+        recorrer los 3.763 ISINs (~95 min) para refrescar ~750 fondos. Con force=True (--force) se re-resuelven todos.
     """
-    if skip_if_recent and not dry_run:
-        today_s = date.today().isoformat()
-        _ph = "%s"
-        recent  = conn.execute(
-            f"SELECT COUNT(*) FROM nav_sources WHERE last_checked >= {_ph}",
-            (today_s,)
-        ).fetchone()[0]
-        if recent >= len(isins) * 0.90:
-            print(
-                f"[DISCOVER] Omitido — {recent}/{len(isins)} ISINs ya comprobados hoy "
-                f"({today_s}). Usa --force para forzar.", flush=True
-            )
+    if skip_if_recent:
+        existing = {r[0]: (r[1], r[2]) for r in conn.execute("SELECT isin, status, source_id FROM nav_sources").fetchall()}
+        todo = discover_candidates(isins, existing, force=force)
+        print(f"[DISCOVER] --skip-if-recent: {len(todo)} de {len(isins)} ISINs requieren resolucion (nuevos, no OK o sin code); "
+              f"{len(isins) - len(todo)} ya resueltos se omiten. Usa --force para re-resolver todos.", flush=True)
+        if not todo:
+            print("[DISCOVER] Nada que resolver.", flush=True)
             return
+        isins = todo
 
     total     = len(isins)
     found     = 0
@@ -2161,9 +2171,11 @@ def main():
     parser.add_argument("--retry-notfound", action="store_true",
                         help="En modo discover, reprocesa ISINs con status=NOT_FOUND (recuperacion tras fallo masivo)")
     parser.add_argument("--skip-if-recent", action="store_true",
-                        help="En modo discover, omite si >=90%% ISINs ya comprobados hoy (evita re-lanzar ~2h tras corte en load)")
+                        help="En modo discover, resuelve SOLO los ISINs nuevos, con status != OK o sin code (los ya resueltos se omiten; "
+                             "FND-0296). Con --force se re-resuelven todos")
     parser.add_argument("--force", action="store_true",
-                        help="En modo load, descarga aunque el ISIN ya tenga NAV en la BD (sobreescribe)")
+                        help="En modo load, descarga aunque el ISIN ya tenga NAV en la BD (sobreescribe); "
+                             "en modo discover con --skip-if-recent, re-resuelve todos los ISINs")
     parser.add_argument("--ms-prefix", default=None,
                         help="En modo load, solo ISINs cuyo ms_id empiece por este prefijo (ej: F0GBR)")
     parser.add_argument("--dry-run", action="store_true",
@@ -2234,7 +2246,7 @@ def main():
             print(f"Reintentando {len(nf_isins)} ISINs con status=NOT_FOUND...")
             isins = nf_isins
         run_discover(conn, isins, dry_run=args.dry_run, verbose=args.verbose,
-                     skip_if_recent=getattr(args, 'skip_if_recent', False))
+                     skip_if_recent=getattr(args, 'skip_if_recent', False), force=args.force)
     elif args.mode == "load":
         ms_prefix = args.ms_prefix.upper() if args.ms_prefix else None
         if ms_prefix and not args.isin:
