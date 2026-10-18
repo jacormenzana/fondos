@@ -1219,7 +1219,7 @@ def _parse_costs_over_time_plain(text: str) -> List[dict]:
                         'source':         'PLAIN_GLOBAL_FALLBACK',
                     })
 
-    results = _bind_columns_by_label(text[m_hdr.start():m_hdr.start() + _LABEL_BIND_SPAN], results)
+    results = _bind_columns_by_label(text[max(0, m_hdr.start() - _LABEL_BIND_BEFORE):m_hdr.start() + _LABEL_BIND_SPAN], results)
     return _rebind_duplicate_columns(window, results)
 
 
@@ -1262,6 +1262,20 @@ def _values_near_label(window: str, label: 're.Pattern', extractor) -> List[floa
 
 
 _LABEL_BIND_SPAN = 6000                # how far past the section header the row labels are looked for (the window above is only 1,500)
+_LABEL_BIND_BEFORE = 1500              # ... and how far BEFORE it: in some pdf text orders the table body precedes its caption (BE0947854676)
+
+
+def _row_values(zone: str, label: 're.Pattern', extractor, n_cols: int) -> List[float]:
+    """The values of the first occurrence of `label` in `zone` whose line (or the next two) carries EXACTLY `n_cols` values; [] when none does.
+    Unlike `_values_near_label` it looks at every occurrence, so a prose mention of the label ("total costs" in a sentence) cannot hide the row."""
+    for m in label.finditer(zone):
+        for ln in zone[zone.rfind('\n', 0, m.start()) + 1:].splitlines()[:_REBIND_LOOKAHEAD_LINES + 1]:
+            vals = extractor(ln)
+            if vals:
+                if len(vals) == n_cols:
+                    return vals
+                break
+    return []
 
 
 def _bind_columns_by_label(zone: str, results: List[dict]) -> List[dict]:
@@ -1273,7 +1287,7 @@ def _bind_columns_by_label(zone: str, results: List[dict]) -> List[dict]:
     labels "Costes totales 719 USD 1960 USD" was never read. PRIIPs prints one column per horizon in ascending order, so when the "Costes totales" line (and
     the "Incidencia anual" line) carries exactly as many values as there are distinct horizons (at least two), those values ARE the columns: they replace
     whatever the fragment search found. A line with a different number of values, totals that fall with the horizon, or impacts that rise with it leave the
-    entries untouched (the same guards as `_rebind_duplicate_columns`). `zone` starts at the section header. Mutates and returns `results`. Pure."""
+    entries untouched (the same guards as `_rebind_duplicate_columns`). `zone` runs from `_LABEL_BIND_BEFORE` characters before the section header to `_LABEL_BIND_SPAN` after it. Mutates and returns `results`. Pure."""
     years = sorted({e['horizon_years'] for e in results if (e.get('horizon_years') or 0) > 0})
     n_cols = len(years)
     if n_cols < 2:                  # one column found is not one column printed: a cell layout puts only the FIRST column's amount on the label line
@@ -1285,8 +1299,8 @@ def _bind_columns_by_label(zone: str, results: List[dict]) -> List[dict]:
             return years.index(hy)
         return n_cols - 1 if e.get('is_rhp') else None      # the RHP column is the last one of the table
 
-    totals = _values_near_label(zone, _TOTAL_COSTS_LABEL, _extract_eur_list_from_cell)
-    acis = _values_near_label(zone, ACI_ROW, _extract_pct_list_from_cell)
+    totals = _row_values(zone, _TOTAL_COSTS_LABEL, _extract_eur_list_from_cell, n_cols)
+    acis = _row_values(zone, ACI_ROW, _extract_pct_list_from_cell, n_cols)
     if len(totals) == n_cols and all(a <= b for a, b in zip(totals, totals[1:])):
         for e in results:
             i = column(e)

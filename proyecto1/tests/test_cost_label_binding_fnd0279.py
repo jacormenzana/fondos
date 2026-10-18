@@ -18,7 +18,7 @@ for _p in (_CORE, _HERE):
 
 import cost_table_parser as p  # noqa: E402
 import priips_cost_extractor as pe  # noqa: E402
-from _fnd0279_kid_slices import UBS_DLA2, UBS_RAW  # noqa: E402
+from _fnd0279_kid_slices import BE_FED, UBS_DLA2, UBS_RAW  # noqa: E402
 
 
 def _row(hy, rhp=False, eur=None, aci=None):
@@ -98,3 +98,29 @@ def test_no_label_in_the_zone_changes_nothing():
     res = [_row(1.0, False, 5.0, 0.01), _row(5.0, True, 6.0, 0.02)]
     out = p._bind_columns_by_label("sin etiquetas aqui", res)
     assert [e["total_cost_eur"] for e in out] == [5.0, 6.0]
+
+
+# ---- the table body BEFORE its caption (BE0947854676) ---------------------------------------------------------------------------------------------------
+
+def test_a_row_that_precedes_the_caption_is_bound():
+    # pdf text order puts "Total costs 208 EUR 1 066 EUR" ~650 characters before "Costs over time"; the KID says 208 / 1 066 EUR, 2.1 % / 1.3 %
+    out = pe.extract_priips_costs(text=BE_FED, isin="BE0947854676")
+    rows = {r["Horizon_Years"]: r for r in out["_cost_schedule_rows"]}
+    assert rows[1.0]["Total_Costs_EUR"] == 208.0 and rows[6.0]["Total_Costs_EUR"] == 1066.0
+    assert rows[1.0]["Annual_Impact_Pct"] == 2.1 and rows[6.0]["Annual_Impact_Pct"] == 1.3
+
+
+def test_the_risk_scale_digits_are_not_read_as_totals():
+    out = pe.extract_priips_costs(text=BE_FED, isin="BE0947854676")
+    assert {r.get("Total_Costs_EUR") for r in out["_cost_schedule_rows"]}.isdisjoint({1.0, 6.0})
+
+
+def test_row_values_skips_a_prose_mention_of_the_label():
+    zone = "The total costs of the fund are shown below.\nTotal costs 208 EUR 1 066 EUR\nAnnual cost impact (*)\n2.1% 1.3% each year\n"
+    assert p._row_values(zone, p._TOTAL_COSTS_LABEL, p._extract_eur_list_from_cell, 2) == [208.0, 1066.0]
+
+
+def test_row_values_wants_exactly_n_cols():
+    zone = "Total costs 208 EUR\nsomething\nelse\n\nTotal costs 208 EUR 1 066 EUR\n"
+    assert p._row_values(zone, p._TOTAL_COSTS_LABEL, p._extract_eur_list_from_cell, 2) == [208.0, 1066.0]
+    assert p._row_values(zone, p._TOTAL_COSTS_LABEL, p._extract_eur_list_from_cell, 3) == []
