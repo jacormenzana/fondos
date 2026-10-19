@@ -130,6 +130,7 @@ from src.writers.metrics_writer import (
     write_metrics as _write_metrics,
     write_metrics_batch as _write_metrics_batch,
     write_timeseries as _write_timeseries,
+    prune_timeseries as _prune_timeseries,   # FND-0301
     replace_beta_set as _replace_beta_set,
 )
 
@@ -943,6 +944,7 @@ def run(
         return (" fam_run=" + ",".join(f"{f}:{n}" for f, n in fam_run_counts.items())
                 + f" fam_seeded={n_family_seeded}")
     defl_skipped  = 0   # v27 pivot: ISINs where rolling_stats.py couldn't build a real series
+    ts_pruned_total = 0  # FND-0301: stale rolling rows removed (or, with --dry-run, that WOULD be): reconcile it against the read-only preview
     total_written = 0
     total         = 0
     conn          = None
@@ -1617,6 +1619,14 @@ def run(
                                 p2_count="", p2_dur_ms="",
                             )
                         )
+                    # FND-0301: the fund's rolling history is replaced, not only upserted: dates this run no longer computes (provisional
+                    # open-month rows, business-day stamps now on a month-end label) are removed in the same per-fund transaction. With
+                    # --dry-run nothing is deleted and the count is what WOULD go (the pre-flight preview).
+                    ts_pruned = _prune_timeseries(conn, isin, roll_rows, dry_run)
+                    ts_pruned_total += ts_pruned
+                    if ts_pruned:
+                        _log(conn, isin, "ROLLING", "PRUNE", "all_windows",
+                             f"{ts_pruned} filas timeseries rolling {'a podar (dry-run)' if dry_run else 'podadas'}", dry_run)
                     ts_written = _write_timeseries(
                         conn, roll_rows, dry_run,
                         algorithm_version=_algo("rolling"), batch_id=RUN_BATCH_ID,
@@ -1873,7 +1883,7 @@ def run(
         logger.info(
             f"[RUN END] run_id={run_id} status={status} "
             f"processed={n_processed} skipped={n_skipped} errors={n_errors} "
-            f"warnings={n_warnings} defl_skipped={defl_skipped} total_written={total_written} "
+            f"warnings={n_warnings} defl_skipped={defl_skipped} total_written={total_written} ts_pruned={ts_pruned_total} "
             f"quarantined={n_quarantined} ols_funds={n_ols_funds} cond_guard_funds={n_cond_funds} "
             f"betas_nulled={n_beta_nulled} elapsed={elapsed_total:.0f}s{_fam_summary()}{_ccy_summary()}"
         )
@@ -1897,7 +1907,7 @@ def run(
                             f"run_id={run_id} processed={n_processed} "
                             f"skipped={n_skipped} errors={n_errors} "
                             f"warnings={n_warnings} defl_skipped={defl_skipped} "
-                            f"written={total_written} quarantined={n_quarantined} "
+                            f"written={total_written} ts_pruned={ts_pruned_total} quarantined={n_quarantined} "
                             f"ols_funds={n_ols_funds} cond_guard_funds={n_cond_funds} "
                             f"betas_nulled={n_beta_nulled} elapsed={elapsed_total:.0f}s{_fam_summary()}{_ccy_summary()}"
                         ),

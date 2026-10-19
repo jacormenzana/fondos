@@ -281,6 +281,53 @@ def write_timeseries(
         raise
 
 
+# FND-0301: a fund's rolling history is REPLACED, not only upserted. compute_rolling_rows returns the fund's whole series on every run, so a
+# stored date that is no longer in it is stale: a provisional open-month row the NAV table later replaced, or (NAV_MONTH_END_ALIGN_ENABLED) a
+# row dated on the last business day whose month is now labelled with its month-end. Same key shape in both statements so the preview counts
+# exactly what the delete removes. PK prefix (isin, metric, window_label, date): ~4.5 k rows per fund, 0 in steady state.
+_TS_PRUNE_WHERE = """
+    t.isin = %s AND t.window_label = ANY(%s)
+    AND NOT EXISTS (SELECT 1 FROM unnest(%s::text[], %s::text[], %s::date[]) AS k(m, w, d)
+                    WHERE k.m = t.metric AND k.w = t.window_label AND k.d = t.date)
+"""
+_TS_PRUNE_DELETE_PG = "DELETE FROM fund_metric_timeseries t WHERE" + _TS_PRUNE_WHERE
+_TS_PRUNE_COUNT_PG = "SELECT COUNT(*) FROM fund_metric_timeseries t WHERE" + _TS_PRUNE_WHERE
+
+
+def _prune_params(isin: str, rows: list[dict]) -> "tuple | None":
+    """(isin, windows, metrics, windows-per-key, dates) for the keys `rows` computed; None when there is nothing to anchor a prune on."""
+    keys = sorted({(r["metric"], r["window"], r["date"]) for r in rows}, key=lambda k: (k[1], k[0], str(k[2])))
+    if not keys:
+        return None
+    windows = sorted({k[1] for k in keys})
+    return isin, windows, [k[0] for k in keys], [k[1] for k in keys], [k[2] for k in keys]
+
+
+def prune_timeseries(conn: "psycopg.Connection", isin: str, rows: list[dict], dry_run: bool) -> int:
+    """Delete the fund's stored rolling rows that the current computation (`rows`, long format as for write_timeseries) no longer produces.
+
+    Scope, deliberately narrow: only the WINDOWS present in `rows` (a window the run did not compute -- too short, failed -- keeps whatever
+    it had, so a short or failed computation never wipes a series), only this fund. Returns the rows deleted; with `dry_run` nothing is
+    deleted and it returns the rows that WOULD be (the pre-flight preview). Empty `rows` is a no-op (0).
+
+    Runs inside the caller's per-fund transaction when there is one (EFF-2), so the prune and the upsert that follows are atomic."""
+    params = _prune_params(isin, rows) if rows else None
+    if params is None:
+        return 0
+    if dry_run:
+        return int(conn.execute(_TS_PRUNE_COUNT_PG, params).fetchone()[0])
+    if in_transaction(conn):
+        return max(conn.execute(_TS_PRUNE_DELETE_PG, params).rowcount, 0)
+    begin_immediate(conn)
+    try:
+        n = max(conn.execute(_TS_PRUNE_DELETE_PG, params).rowcount, 0)
+        conn.execute("COMMIT")
+        return n
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+
+
 def replace_beta_set(
     conn: "psycopg.Connection",
     isin: str,

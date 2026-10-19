@@ -33,7 +33,7 @@ from __future__ import annotations
 import math
 
 from src.writers.metrics_writer import (
-    replace_beta_set, write_metrics, write_metrics_batch, write_timeseries,
+    prune_timeseries, replace_beta_set, write_metrics, write_metrics_batch, write_timeseries,
 )
 
 
@@ -143,6 +143,62 @@ def test_write_timeseries_upsert_semantics(pg_session_conn, pg_conn_module_schem
     assert write_timeseries(conn, [], dry_run=False, algorithm_version="V1", batch_id="B1") == 0
     assert write_timeseries(conn, [_ts_row(0.99)], dry_run=True,
                              algorithm_version="V1", batch_id="B1") == 0
+
+
+def _ins_ts(conn, isin, window, date, metric="sortino", value=0.1):
+    conn.execute("INSERT INTO fund_metric_timeseries (isin, metric, window_label, date, value_nominal, algorithm_version, batch_id) "
+                 "VALUES (%s, %s, %s, %s, %s, 'OLD', 'B0')", (isin, metric, window, date, value))
+
+
+def _ts_dates(conn, isin, window, metric="sortino"):
+    return [str(r[0]) for r in conn.execute("SELECT date FROM fund_metric_timeseries WHERE isin=%s AND window_label=%s AND metric=%s ORDER BY date",
+                                            (isin, window, metric)).fetchall()]
+
+
+def _pr(isin, window, date, metric="sortino"):
+    return {"isin": isin, "metric": metric, "window": window, "date": date, "value": 0.2, "real_flag": 0, "source_rows": 12}
+
+
+def test_prune_timeseries_replaces_a_funds_rolling_history_and_nothing_else(pg_session_conn, pg_conn_module_schema):
+    """FND-0301: after write + prune the fund's windows hold exactly the computed dates. Stale rows (a business-day stamp whose month is now
+    labelled with its month-end, an orphan provisional row) go; other funds, other metrics' windows and uncomputed windows are untouched."""
+    conn = pg_session_conn
+    conn.execute(f"SET search_path = {pg_conn_module_schema}")
+    _make_fund_metric_timeseries(conn)
+    for d in ("2026-01-30", "2026-02-27", "2026-03-31", "2026-04-18"):          # business-day stamps, one orphan open-month row
+        _ins_ts(conn, "ES0001", "rolling_1y", d)
+    _ins_ts(conn, "ES0001", "rolling_3y", "2026-02-27")                          # a window this run does NOT compute: must survive
+    _ins_ts(conn, "ES0002", "rolling_1y", "2026-02-27")                          # another fund: must survive
+    _ins_ts(conn, "ES0001", "rolling_1y", "2026-02-27", metric="vol_ann")        # a metric the run no longer computes in a computed window: pruned
+    computed = [_pr("ES0001", "rolling_1y", d) for d in ("2026-01-31", "2026-02-28", "2026-03-31")]     # month-end labels now
+
+    assert prune_timeseries(conn, "ES0001", computed, dry_run=True) == 4          # would delete: 01-30, 02-27, 04-18 (sortino) + vol_ann 02-27
+    assert _ts_dates(conn, "ES0001", "rolling_1y") == ["2026-01-30", "2026-02-27", "2026-03-31", "2026-04-18"]   # dry run deleted nothing
+
+    assert prune_timeseries(conn, "ES0001", computed, dry_run=False) == 4
+    write_timeseries(conn, computed, dry_run=False, algorithm_version="V2", batch_id="B2")
+    assert _ts_dates(conn, "ES0001", "rolling_1y") == ["2026-01-31", "2026-02-28", "2026-03-31"]
+    assert _ts_dates(conn, "ES0001", "rolling_1y", metric="vol_ann") == []
+    assert _ts_dates(conn, "ES0001", "rolling_3y") == ["2026-02-27"]                # uncomputed window untouched
+    assert _ts_dates(conn, "ES0002", "rolling_1y") == ["2026-02-27"]                # other fund untouched
+
+    # steady state: a second identical run prunes and writes nothing
+    assert prune_timeseries(conn, "ES0001", computed, dry_run=False) == 0
+    assert write_timeseries(conn, computed, dry_run=False, algorithm_version="V2", batch_id="B2") == 0
+
+
+def test_prune_timeseries_noop_cases_and_caller_transaction(pg_session_conn, pg_conn_module_schema):
+    conn = pg_session_conn
+    conn.execute(f"SET search_path = {pg_conn_module_schema}")
+    _make_fund_metric_timeseries(conn)
+    _ins_ts(conn, "ES0001", "rolling_1y", "2026-02-27")
+    assert prune_timeseries(conn, "ES0001", [], dry_run=False) == 0                  # nothing computed: never wipes a series
+    assert _ts_dates(conn, "ES0001", "rolling_1y") == ["2026-02-27"]
+    # inside the caller's open transaction the delete is part of it (rolled back with it)
+    conn.execute("BEGIN")
+    assert prune_timeseries(conn, "ES0001", [_pr("ES0001", "rolling_1y", "2026-02-28")], dry_run=False) == 1
+    conn.execute("ROLLBACK")
+    assert _ts_dates(conn, "ES0001", "rolling_1y") == ["2026-02-27"]
 
 
 def test_write_timeseries_real_without_nominal_raises(pg_session_conn, pg_conn_module_schema):

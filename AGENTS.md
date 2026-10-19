@@ -365,6 +365,7 @@ proyecto2/
       test_min_nav_rows_clear_fnd0168.py
       test_nav_data_freshness_delta_20260927.py
       test_refresh_matviews_and_update_isin.py
+      test_rolling_prune_wiring_fnd0301.py
       test_run_pipeline_writes_pg.py
     readers/
       test_db_readers_misc_pg.py
