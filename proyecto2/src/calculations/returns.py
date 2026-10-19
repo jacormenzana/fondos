@@ -17,6 +17,18 @@ from shared.sortino_reliability import downside_count_reliable
 _MIN_DOWNSIDE_DEV_ANN: float = 0.001   # 0.1% annualized
 
 
+def trailing_window(nav_df: pd.DataFrame, months: int) -> pd.DataFrame:
+    """The rows of `nav_df` (columns date, nav) inside the trailing `months` calendar months: date > last date - DateOffset(months).
+
+    THE definition of a "rolling_Ny" window (REL-3: date based, because tail(N) can exclude months with a one-off publication delay). The
+    risk family's rolling horizons and the momentum family both call it, so a fund's window is the one its peers' stored rolling_Ny
+    return_ann was computed on (FND-0302). Index reset; an empty frame stays empty."""
+    if nav_df.empty:
+        return nav_df
+    cutoff = nav_df["date"].max() - pd.DateOffset(months=months)
+    return nav_df[nav_df["date"] > cutoff].reset_index(drop=True)
+
+
 def _month_ords(series: pd.Series, dates) -> "np.ndarray | None":
     """Calendar-month ordinals aligned with `series`, or None (= the stored row convention) when ANNUALIZATION_BY_DATES_ENABLED is off,
     no dates were given, or they do not match the series (FND-0253)."""

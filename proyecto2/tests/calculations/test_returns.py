@@ -34,7 +34,21 @@ from src.calculations.returns import (
     annualized_volatility_from_returns,
     sharpe_ratio_from_returns,
     sortino_ratio_from_returns,
+    trailing_window,
 )
+
+
+@pytest.mark.parametrize("months", [12, 24, 36, 60, 120])
+@pytest.mark.parametrize("last", ["2026-09-30", "2026-09-28", "2026-02-27", "2024-02-29"])
+def test_trailing_window_is_the_inline_slice_run_pipeline_used_to_have(months, last):
+    """FND-0302: trailing_window is run_pipeline's former inline `date > max - DateOffset(months)` slice, extracted so momentum shares it."""
+    dates = pd.date_range(end=last, periods=200, freq="ME").to_series().reset_index(drop=True)
+    dates.iloc[-1] = pd.Timestamp(last)                       # the last stamp may be a business day, not the calendar month-end
+    df = pd.DataFrame({"date": dates, "nav": np.linspace(100.0, 150.0, len(dates))})
+    cutoff = df["date"].max() - pd.DateOffset(months=months)
+    expected = df[df["date"] > cutoff].reset_index(drop=True)
+    pd.testing.assert_frame_equal(trailing_window(df, months), expected)
+    assert trailing_window(df.iloc[0:0], months).empty
 
 
 def _nav(navs: list[float], start: str = "2020-01-31") -> pd.Series:

@@ -96,6 +96,7 @@ from src.readers.db_readers import (
     load_latest_rolling_metrics_for_category_snapshot,   # FND-0093 category-refresh fallback
 )
 from src.calculations.short_horizon import compute_short_horizon_metrics
+from src.calculations.returns import trailing_window   # FND-0302
 from src.calculations.risk_metrics import compute_risk_metrics
 from src.calculations.consistency import consistency_metrics
 from src.calculations.macro_sensitivity import (
@@ -1459,8 +1460,7 @@ def run(
                     for horizon_name, months in ROLLING_WINDOWS.items():
                         if horizons_filter and horizon_name not in horizons_filter:
                             continue
-                        _cutoff = nav_df["date"].max() - pd.DateOffset(months=months)
-                        nav_w   = nav_df[nav_df["date"] > _cutoff].reset_index(drop=True)
+                        nav_w = trailing_window(nav_df, months)      # FND-0302: the one definition of a rolling window (momentum shares it)
                         if len(nav_w) < MIN_NAV_ROWS:
                             continue
                         # ipc_df pasado SIN recortar -- ver comentario identico
