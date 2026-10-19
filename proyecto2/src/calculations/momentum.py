@@ -9,18 +9,27 @@ Es uno de los predictores mas robustos documentados empiricamente
 (Carhart 1997, Jegadeesh & Titman 1993).
 
 Metricas generadas:
-    momentum_1y    exceso de rentabilidad vs categoria en los ultimos 12 meses
-    momentum_3y    exceso de rentabilidad vs categoria en los ultimos 36 meses
+    momentum_1y    exceso de rentabilidad ANUALIZADA vs categoria en los ultimos 12 meses (FND-0302)
+    momentum_3y    exceso de rentabilidad ANUALIZADA vs categoria en los ultimos 36 meses (FND-0302)
     momentum_rank  percentil del fondo dentro de su categoria (0=peor, 1=mejor)
 
 Todas con horizon='since_inception' y real_flag=0.
 El calculo requiere que haya al menos MIN_PEERS fondos en la misma categoria.
 """
 
+import math
+
 import numpy as np
 import pandas as pd
 
-from shared.config import MIN_PEERS   # minimo de fondos en la categoria para calcular percentil
+from shared.config import MIN_NAV_ROWS, MIN_PEERS   # minimo de filas de una ventana / de fondos en la categoria para calcular percentil
+from .returns import annualized_return, trailing_window   # FND-0302: la misma ventana y unidades que el rolling_Ny de los pares
+
+
+def _mean(values: "pd.Series") -> float:
+    """Media independiente del orden (FND-0297): suma exacta (math.fsum) sobre los valores ordenados."""
+    v = sorted(float(x) for x in values)
+    return math.fsum(v) / len(v)
 
 
 # ============================================================
@@ -73,7 +82,8 @@ def load_category_returns(
           AND fmet.real_flag = 0
           AND fmet.value    IS NOT NULL
           AND fm.Fund_Nature = {ph}
-    """, (horizon, fund_nature)).fetchall()
+        ORDER BY fmet.isin
+    """, (horizon, fund_nature)).fetchall()      # FND-0297: a fixed row order, so the Series (and every sum over it) is reproducible
 
     result = pd.Series(dtype=float) if not rows else pd.Series({r[0]: float(r[1]) for r in rows})
     _category_returns_cache[key] = result
@@ -104,16 +114,22 @@ def compute_momentum(
     if nav_df.empty or not fund_nature:
         return []
 
-    nav = nav_df.set_index("date")["nav"].sort_index()
+    nav_sorted = nav_df.sort_values("date")
     metrics = []
 
-    # Momentum 1Y y 3Y: rentabilidad del fondo en la ventana
+    # Momentum 1Y y 3Y: exceso de rentabilidad ANUALIZADA sobre la media de la categoria, en la MISMA ventana y las MISMAS unidades.
+    # FND-0302: antes era la rentabilidad ACUMULADA de las ultimas 12/36 FILAS menos la rentabilidad ANUALIZADA rolling_Ny de los pares
+    # (ventana por FECHAS): para 3 anos el 99.6% de los valores guardados estaba sesgado (mediana +0.39 en renta variable, ~0 esperado).
+    # Ahora el fondo usa returns.trailing_window + annualized_return, exactamente lo que run_pipeline guarda como su propio rolling_Ny.
     for label, months in [("momentum_1y", 12), ("momentum_3y", 36)]:
-        if len(nav) < months + 1:
+        window = trailing_window(nav_sorted, months)
+        covers = nav_sorted["date"].min() <= nav_sorted["date"].max() - pd.DateOffset(months=months)   # the history really spans N years
+        if not covers or len(window) < MIN_NAV_ROWS:
             continue
 
-        nav_window = nav.iloc[-months - 1:]
-        ret_fondo  = float(nav_window.iloc[-1] / nav_window.iloc[0] - 1)
+        ret_fondo = annualized_return(window["nav"], 12, dates=window["date"])
+        if not np.isfinite(ret_fondo):
+            continue
 
         # Rentabilidad media de la categoria en el mismo horizonte rolling
         horizon = f"rolling_{months // 12}y"
@@ -122,7 +138,7 @@ def compute_momentum(
         if len(cat_rets) < MIN_PEERS:
             continue
 
-        ret_categoria = float(cat_rets.mean())
+        ret_categoria = _mean(cat_rets)
         exceso        = ret_fondo - ret_categoria
 
         metrics.append((label, exceso, 0))

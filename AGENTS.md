@@ -328,6 +328,7 @@ proyecto2/
       test_fx_eur_view_fnd0235.py
       test_m2_global_builder_pg.py
       test_macro_sensitivity.py
+      test_momentum_units_fnd0302.py
       test_p2_bundle_flags.py
       test_peer_panel_fnd0255_pg.py
       test_regime_returns.py
@@ -414,6 +415,12 @@ bit-identical), weights a k-month return as k months in the vol (`kweighted_std`
 statistics, and is mirrored by `statistical_audit/timeseries.py` and the PIT metrics. It was flipped together with the `CALC_VERSION` bump and
 the recompute of the `risk`, `rolling`, `regime`, `persistence` families (`utils/family_versions.FLAG_FAMILIES`); undoing it needs another
 recompute. The build-time continuity guard (`FUND_DATA_ELIGIBILITY_ENABLED`, `P3_FUND_NAV_MIN_COVERAGE`) stays as defence in depth.
+
+### Momentum and rolling-window conventions (FND-0302, FND-0301)
+
+`momentum_1y` / `momentum_3y` = the fund's ANNUALISED return over `returns.trailing_window(nav, N months)` (the one definition of a rolling window,
+shared with the rolling horizons) minus the mean of its peers' stored `rolling_Ny` `return_ann`: same window, same units. A fund's rolling time series
+is REPLACED on every run (`metrics_writer.prune_timeseries` before `write_timeseries`), so a date the run no longer computes disappears.
 
 ### Idempotency & caching
 
