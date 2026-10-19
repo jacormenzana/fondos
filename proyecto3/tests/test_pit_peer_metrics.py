@@ -141,10 +141,12 @@ def _check_points(panel):
 
 # ---------------- alpha_persistence ----------------
 
+@pytest.mark.parametrize("align", [False, True], ids=["raw_dates", "month_end_align_FND0300"])
 @pytest.mark.parametrize("first_last", [False, True], ids=["min_max_p2_today", "first_last_FND0200_flag"])
-def test_alpha_persistence_matches_p2_at_every_truncation(data, monkeypatch, first_last):
+def test_alpha_persistence_matches_p2_at_every_truncation(data, monkeypatch, first_last, align):
     from shared import config
     monkeypatch.setattr(config, "PERSISTENCE_FIRST_LAST_NAV_ENABLED", first_last)
+    monkeypatch.setattr(config, "NAV_MONTH_END_ALIGN_ENABLED", align)          # FND-0300: both sides share persistence_windows
     panel, nature = data
     res = alpha_persistence(panel, nature)
     dates = panel.index

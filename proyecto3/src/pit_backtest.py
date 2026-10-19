@@ -37,6 +37,7 @@ from proyecto3.src.backtesting import FORWARD_WINDOWS, _blend_to_master
 from proyecto3.src.pit_candidates import DEFAULT_MAX_STALE_DAYS, asof_snapshot
 from proyecto3.src.portfolio_engine import DEFAULT_CONSTRAINTS, cash_weight, select_and_weight
 from proyecto3.src.score_candidates import exposure_constrained
+from shared.nav_month_end import MONTH_CLOSE_TOLERANCE_DAYS   # FND-0300: one "this NAV closes its month" tolerance
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,7 @@ CANDIDATE_COLUMNS = ["isin", "score_total", "fund_name", "fund_nature", "managem
 # Data end
 # ============================================================
 
-def last_complete_month_end(last_nav: pd.Timestamp, tolerance_days: int = 5) -> pd.Timestamp:
+def last_complete_month_end(last_nav: pd.Timestamp, tolerance_days: int = MONTH_CLOSE_TOLERANCE_DAYS) -> pd.Timestamp:
     """Last month-end the NAV data fully covers: the month-end of the last NAV date when that date is within
     `tolerance_days` of it (a fund reporting on the 28th of a 30-day month still closes the month), otherwise the
     PREVIOUS month-end (a last NAV of 2026-10-03 covers up to 2026-09-30 only). Windows ending after it are not

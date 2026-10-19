@@ -62,6 +62,9 @@ FLAG_FAMILIES: dict = {
     "FX_CONTRIBUTION_EUR_VIEW_ENABLED": "fx",
     # FND-0243: the EUR view changes the NAV every family reads (own NAV and peer NAVs), so it stales them all.
     "EUR_NAV_CONVERSION_ENABLED": ALL_FAMILIES,
+    # FND-0300: month-end labels of load_nav move the macro join, the rolling / horizon cut-offs (rolling, risk at rolling horizons) and the
+    # persistence windows; capture, regime and fx already snap to month-end, momentum and short do not read the stamp.
+    "NAV_MONTH_END_ALIGN_ENABLED": ("risk", "macro", "persistence", "rolling"),
 }
 
 

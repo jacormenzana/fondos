@@ -5,7 +5,8 @@ DB readers for the point-in-time backtester -- FND-0159 d3.
 
 Read-only, SQL-scoped by ISIN list (`isins=None` = whole universe) instead of the old unfiltered full-history
 pivot (FND-0191). Literal SQL only (the EXPLAIN sweep verifies it). NAV dates are kept RAW (P2 aligns IPC on
-the raw date; see pit_metrics). Daily NAV is streamed in ISIN chunks: it is ~14M rows for the full universe.
+the raw date; see pit_metrics) while NAV_MONTH_END_ALIGN_ENABLED is off, and carry P2's month-end labels when it is on (FND-0300,
+shared/nav_month_end.py). Daily NAV is streamed in ISIN chunks: it is ~14M rows for the full universe.
 """
 
 import sys
@@ -20,6 +21,7 @@ if str(_ROOT) not in sys.path:
 from proyecto3.src.score_candidates import fx_exposed_map
 from shared.config import REGION_IPC
 from shared.eur_nav import apply_eur_view_frame   # FND-0243
+from shared.nav_month_end import MONTH_CLOSE_TOLERANCE_DAYS, align_nav_long   # FND-0300
 
 ATTRIBUTE_FRAME_COLUMNS = ["ISIN", "Fund_Name", "Fund_Nature", "srri_kiid", "Investment_Focus", "Credit_Quality",
                            "Ongoing_Charge", "SRRI_Quality_Flag", "fund_family_id", "Management_Company",
@@ -40,6 +42,7 @@ def load_nav_panel(conn: "psycopg.Connection", isins: "list | None" = None) -> p
     df["date"] = pd.to_datetime(df["date"])
     df["nav"] = df["nav"].astype(float)
     df = apply_eur_view_frame(conn, df)   # FND-0243: EUR view, identity while the switch is off
+    df = align_nav_long(df, key="isin")   # FND-0300: month-end label of each month-closing NAV (P2 load_nav does the same), identity while off
     if df.empty:
         return pd.DataFrame()
     wide = df.pivot_table(index="date", columns="isin", values="nav", aggfunc="last").sort_index()
@@ -119,7 +122,7 @@ def snap_nav_to_month_end(nav: pd.DataFrame) -> pd.DataFrame:
     # last_complete_month_end. Drop it exactly when the raw panel would not count it as complete (more than 5 days before its month-end),
     # so R4 differs from R1 only by alignment, never by one extra, incomplete month.
     last_raw = idx.max()
-    if (last_raw + pd.offsets.MonthEnd(0) - last_raw).days > 5:
+    if (last_raw + pd.offsets.MonthEnd(0) - last_raw).days > MONTH_CLOSE_TOLERANCE_DAYS:
         out = out.iloc[:-1]
     return out
 

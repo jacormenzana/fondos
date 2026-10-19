@@ -685,7 +685,8 @@ P2_BUNDLE_FLAGS: tuple = ("MACRO_VIF_ITERATIVE_ENABLED", "MACRO_FACTOR_CLEAN_ENA
                           "PERSISTENCE_FIRST_LAST_NAV_ENABLED", "CAPTURE_MONTH_END_ENABLED",
                           "ANNUALIZATION_INTERVAL_ENABLED", "DEFLATION_MONTH_ALIGN_ENABLED",
                           "SORTINO_MIN_DOWNSIDE_COUNT_ENABLED", "FX_CONTRIBUTION_EUR_VIEW_ENABLED",
-                          "EUR_NAV_CONVERSION_ENABLED", "ANNUALIZATION_BY_DATES_ENABLED")
+                          "EUR_NAV_CONVERSION_ENABLED", "ANNUALIZATION_BY_DATES_ENABLED",
+                          "NAV_MONTH_END_ALIGN_ENABLED")
 # FND-0240: annualise a NAV window over its INTERVALS (N points span N - 1 periods) instead of its points. OFF = the stored
 # convention (years = N / 12), bit-for-bit. ON changes the stored return_ann / sharpe / sortino of the risk family and the
 # rolling timeseries: about +0.5 pp on rolling_1y, -1.2 pp on the crisis windows, +0.04 pp since inception -- and nothing in the
@@ -704,6 +705,12 @@ ANNUALIZATION_INTERVAL_ENABLED: bool = True
 # with an internal NAV gap). Rolling back means setting it to False AND recomputing again: the stored values follow the convention they
 # were computed under, and the audit's identities would report the gap until then.
 ANNUALIZATION_BY_DATES_ENABLED: bool = True
+# FND-0300: a monthly NAV dated within 5 days of its calendar month-end (28% of fund_nav_monthly sits on the last BUSINESS day) is labelled
+# with the month-end by every reader that feeds a calculation (shared/nav_month_end.py), and persistence windows count whole calendar months.
+# Fixes the macro OLS join (~30% of months dropped), stamp-dependent persistence windows and PIT stale ages; the FND-0193 alignment gate
+# failed on it (|dSharpe| 0.0126 > 0.01). OFF = the stored raw-date convention, bit-for-bit. FLIP ONLY TOGETHER WITH a CALC_VERSION bump and
+# the recompute of the families it touches (utils/family_versions.FLAG_FAMILIES: risk, macro, persistence, rolling).
+NAV_MONTH_END_ALIGN_ENABLED: bool = False
 # FND-0241: look the CPI up with each MONTHLY NAV's own calendar month-end. OFF = the stored convention (merge_asof backward against
 # a CPI stamped on the calendar month-end), under which the 29% of NAVs dated on the last BUSINESS day took the previous month's CPI
 # and had real monthly return == nominal. ON changes the stored real series: worst_month real up to ~2 pp (18% of funds > 0.1 pp),

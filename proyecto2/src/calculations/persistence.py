@@ -30,6 +30,7 @@ import pandas as pd
 from shared import config as _config
 from shared.annualization import by_dates_enabled, month_ordinals   # FND-0253
 from shared.eur_nav import apply_eur_view_frame   # FND-0243
+from shared.nav_month_end import persistence_windows   # FND-0300
 from shared.config import (
     PERSISTENCE_WINDOW_MONTHS as WINDOW_MONTHS,
     PERSISTENCE_STEP_MONTHS as STEP_MONTHS,
@@ -179,22 +180,17 @@ def compute_persistence(
 
     beats      = 0
     total      = 0
-    window_start = start
 
-    while True:
-        window_end = window_start + pd.DateOffset(months=WINDOW_MONTHS)
-        if window_end > end:
-            break
-
+    # FND-0300: one window definition shared with the PIT (raw-date DateOffset windows while NAV_MONTH_END_ALIGN_ENABLED is off,
+    # whole calendar months when it is on); a row belongs to [window_start, window_end] inclusive.
+    for window_start, window_end in persistence_windows(start, end, WINDOW_MONTHS, STEP_MONTHS):
         # NAV del fondo en la ventana
         nav_w = nav[(nav.index >= window_start) & (nav.index <= window_end)]
         if len(nav_w) < WINDOW_MONTHS - 3:
-            window_start += pd.DateOffset(months=STEP_MONTHS)
             continue
 
         years_w = _points_for_years(nav_w.index[0], nav_w.index[-1], len(nav_w)) / 12
         if years_w <= 0:
-            window_start += pd.DateOffset(months=STEP_MONTHS)
             continue
 
         ret_fondo = (float(nav_w.iloc[-1]) / float(nav_w.iloc[0])) ** (1 / years_w) - 1
@@ -208,8 +204,6 @@ def compute_persistence(
             total += 1
             if ret_fondo > ret_cat:
                 beats += 1
-
-        window_start += pd.DateOffset(months=STEP_MONTHS)
 
     if total < MIN_WINDOWS:
         return []

@@ -161,3 +161,37 @@ def test_layer_verdict_keeps_a_layer_only_when_removing_it_hurts():
     assert bool(out.loc["ABL_noMult", "layer_earns_its_place"]) is True
     assert bool(out.loc["ABL_eqW", "layer_earns_its_place"]) is False
     assert bool(out.loc["ABL_staticMix", "layer_earns_its_place"]) is True and out.loc["ABL_staticMix", "dd_worsens_pp"] > 2.0
+
+
+def _cli():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("p3_pit_value_cli", _ROOT / "scripts" / "launch" / "p3_pit_value.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_run_flags_reads_the_manifest_and_treats_missing_flags_as_off(tmp_path):
+    """FND-0300: the evaluation refuses runs made under different P2 conventions; a flag absent from an older manifest is OFF."""
+    import json
+    cli = _cli()
+    old, new = tmp_path / "old", tmp_path / "new"
+    old.mkdir(), new.mkdir()
+    (old / "manifest.json").write_text(json.dumps({"p2_bundle_flags": {"A_ENABLED": True}}), encoding="utf-8")
+    (new / "manifest.json").write_text(json.dumps({"p2_bundle_flags": {"A_ENABLED": True, "NAV_MONTH_END_ALIGN_ENABLED": False}}),
+                                       encoding="utf-8")
+    assert cli.run_flags(old) == cli.run_flags(new) == {"A_ENABLED": True}
+    (new / "manifest.json").write_text(json.dumps({"p2_bundle_flags": {"A_ENABLED": True, "NAV_MONTH_END_ALIGN_ENABLED": True}}),
+                                       encoding="utf-8")
+    assert cli.run_flags(old) != cli.run_flags(new)
+    assert cli.run_flags(tmp_path / "none") == {}
+
+
+def test_load_prior_reads_outcome_validity_and_strategies(tmp_path):
+    import json
+    cli = _cli()
+    (tmp_path / "verdict.json").write_text(json.dumps({"outcome": "SIMPLIFY", "validity": "INVALID"}), encoding="utf-8")
+    pd.DataFrame({"sharpe": [0.68], "max_drawdown": [-0.14]}, index=["M_h10"]).to_csv(tmp_path / "strategies.csv")
+    prior = cli.load_prior(tmp_path)
+    assert (prior["outcome"], prior["validity"]) == ("SIMPLIFY", "INVALID")
+    assert prior["strategies"].loc["M_h10", "sharpe"] == pytest.approx(0.68)

@@ -11,8 +11,11 @@ Order of the checks (a failure stops or flags the verdict, never silently passes
   2. each run reproduces its own series_stats.json (1e-6; exit 3 otherwise);
   3. the verdict is evaluated on R1 (raw dates) and, with --snapped-run-dir, on R4 (month-end snapped): ALIGNMENT GATE (amendment 2):
      identical outcome, Holm decisions and Sharpe rank order, |dSharpe| <= 0.01; otherwise the verdict is printed as INVALID;
-  4. with --exclude-isins FILE the verdict is re-evaluated without those funds (static-attribute sensitivity; flagged, not decisive).
-Writes, under <R1>/value_FND-0193/: REPORT.md, verdict.json and one CSV per table. Exit codes: 0 ok, 3 reproduction failed, 4 ledger lock.
+  4. with --exclude-isins FILE the verdict is re-evaluated without those funds (static-attribute sensitivity; flagged, not decisive);
+  5. every run must have been made under the same P2 bundle flags as R1 (manifest.json; FND-0300 NAV month-end labels), exit 5 otherwise;
+     --prior-report-dir shows an earlier evaluation this one supersedes (amendment 4).
+Writes, under <R1>/value_FND-0193/: REPORT.md, verdict.json and one CSV per table. Exit codes: 0 ok, 3 reproduction failed, 4 ledger lock,
+5 runs under different P2 bundle flags.
 """
 
 import argparse
@@ -62,6 +65,21 @@ def reproduce(study: pv.Study) -> dict:
     return {"max_abs_diff": worst, "pass": worst < REPRODUCTION_TOL, "model_sharpe": st["portfolio"]["sharpe"], "pool_sharpe": st["benchmark"]["sharpe"]}
 
 
+def run_flags(run_dir) -> dict:
+    """The P2 bundle flags a PIT run was made under (manifest.json); {} when the manifest has none. A flag that did not exist when the run
+    was made counts as OFF, so a run made before FND-0300 compares equal to one made with NAV_MONTH_END_ALIGN_ENABLED off."""
+    m = Path(run_dir) / "manifest.json"
+    flags = json.loads(m.read_text(encoding="utf-8")).get("p2_bundle_flags", {}) if m.exists() else {}
+    return {k: bool(v) for k, v in flags.items() if v}
+
+
+def load_prior(report_dir) -> dict:
+    """Outcome, validity and strategy table of an earlier evaluation folder (amendment 4: reported next to the evaluation that supersedes it)."""
+    d = Path(report_dir)
+    v = json.loads((d / "verdict.json").read_text(encoding="utf-8"))
+    return {"outcome": v.get("outcome"), "validity": v.get("validity"), "strategies": pd.read_csv(d / "strategies.csv", index_col=0)}
+
+
 def _check_reproduction(study: pv.Study, label: str) -> dict:
     rep = reproduce(study)
     print(f"reproduction gate {label}: max |diff| = {rep['max_abs_diff']:.3e} -> {'PASS' if rep['pass'] else 'FAIL'} "
@@ -84,6 +102,8 @@ def main(argv=None) -> int:
     p.add_argument("--out-dir", default=None)
     p.add_argument("--skip-pbo", action="store_true", help="skip E4 (the slowest part)")
     p.add_argument("--reproduce-only", action="store_true")
+    p.add_argument("--prior-report-dir", help="the value_FND-0193 folder of an earlier evaluation that this one supersedes (amendment 4): its "
+                                              "outcome, validity and strategy table are shown next to this one")
     args = p.parse_args(argv)
 
     t0 = time.time()
@@ -94,6 +114,12 @@ def main(argv=None) -> int:
     except pv.LedgerLockError as e:
         print(f"STOP: {e}")
         return 4
+    flags = run_flags(run)
+    mismatch = {Path(d).name: f for d in (args.snapped_run_dir, args.ext_run_dir, args.survivorship_run_dir) if d
+                for f in [run_flags(d)] if f != flags}
+    if mismatch:                                                  # FND-0300: every run of one evaluation under the same P2 conventions
+        print(f"STOP: runs made under different P2 bundle flags than {run.name} ({flags}): {mismatch}")
+        return 5
     study = pv.load_study(run)
     rep = _check_reproduction(study, "R1")
     snapped = pv.load_study(args.snapped_run_dir) if args.snapped_run_dir else None
@@ -164,7 +190,11 @@ def main(argv=None) -> int:
     if any(a["sensitive"] for a in attrs):
         verdict["validity"] += " | ATTRIBUTE-SENSITIVE (the owner decides): " + ", ".join(a["label"] for a in attrs if a["sensitive"])
     verdict["inputs"] = {"run": run.name, "snapped_run": Path(args.snapped_run_dir).name if args.snapped_run_dir else None, "bps": bps,
-                         "ledger_N_scan": ledger["N_scan_upper"], "ledger_locked": True, "ext": ext_note, "reproduction": rep}
+                         "ledger_N_scan": ledger["N_scan_upper"], "ledger_locked": True, "ext": ext_note, "reproduction": rep,
+                         "p2_bundle_flags": flags}
+    prior = load_prior(args.prior_report_dir) if args.prior_report_dir else None
+    if prior is not None:
+        verdict["supersedes"] = {"report": str(args.prior_report_dir), "outcome": prior["outcome"], "validity": prior["validity"]}
 
     for name, df in (("e1_full", res["e1"]), ("e1_subperiods", res["sub"]), ("e1_loeo", res["loeo"]), ("e1_regimes", res["reg"]),
                      ("strategies", res["overview"]), ("ablations", res["layers"]), ("e2_walk_forward_vs_primary", res["wf_vs"]),
@@ -179,11 +209,21 @@ def main(argv=None) -> int:
     (out / "verdict.json").write_text(json.dumps(verdict, indent=2, default=str), encoding="utf-8")
 
     lines = [f"# FND-0193 model-value study -- run {run.name}", "",
-             f"Pre-registration: doc/decisiones/PREREG_FND-0193.md (tag prereg-fnd0193, amendments 1-2). {bps:g} bp per unit of turnover on every strategy.",
-             f"Ledger locked at the tag. Reproduction gate: PASS (max |diff| {rep['max_abs_diff']:.2e}). {ext_note}.", "",
+             f"Pre-registration: doc/decisiones/PREREG_FND-0193.md (tag prereg-fnd0193, amendments 1-4). {bps:g} bp per unit of turnover on every strategy.",
+             f"Ledger locked at the tag. Reproduction gate: PASS (max |diff| {rep['max_abs_diff']:.2e}). {ext_note}.",
+             f"NAV dates: {'month-end labels (NAV_MONTH_END_ALIGN_ENABLED, FND-0300)' if flags.get('NAV_MONTH_END_ALIGN_ENABLED') else 'raw stamps'}; "
+             f"all runs under the same P2 bundle flags.", "",
              f"## VERDICT: {verdict['outcome']}", f"**Validity: {validity}**", ""]
     for k, v in verdict["criteria"].items():
         lines.append(f"- {'PASS' if v['pass'] else 'FAIL'}  {k}")
+    if prior is not None:
+        both = pd.DataFrame({"sharpe_prior": prior["strategies"]["sharpe"], "sharpe_now": res["overview"]["sharpe"],
+                             "max_dd_prior": prior["strategies"]["max_drawdown"], "max_dd_now": res["overview"]["max_drawdown"]})
+        both["sharpe_delta"] = both["sharpe_now"] - both["sharpe_prior"]
+        both.to_csv(out / "supersedes_prior_evaluation.csv", float_format="%.6g")
+        lines += ["", f"## Supersedes the earlier evaluation ({args.prior_report_dir})", "",
+                  f"Earlier: {prior['outcome']} -- {prior['validity']}", f"This one (of record, amendment 4): {verdict['outcome']} -- {validity}", "",
+                  _fmt(both)]
     if gate is not None:
         lines += ["", "## Alignment gate (R1 raw dates vs R4 month-end snapped)", "",
                   json.dumps({k: gate[k] for k in ("pass", "failed", "checks", "max_abs_delta_core", "strict_ok", "rank_raw", "rank_snap")}, indent=2, default=str),

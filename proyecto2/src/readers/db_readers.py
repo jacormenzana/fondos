@@ -34,6 +34,7 @@ Two things worth knowing before touching this file again:
 import pandas as pd
 
 from shared.eur_nav import apply_eur_view   # FND-0243
+from shared.nav_month_end import align_nav_long   # FND-0300
 
 
 # ============================================================
@@ -64,8 +65,9 @@ def load_nav(conn: "psycopg.Connection", isin: str) -> pd.DataFrame:
     df = pd.DataFrame(rows, columns=["date", "nav"])
     df["date"] = pd.to_datetime(df["date"])
     df["nav"]  = df["nav"].astype(float)
-    # FND-0243: EUR view of the class-currency NAV (identity while EUR_NAV_CONVERSION_ENABLED is off)
-    return apply_eur_view(conn, isin, df)
+    # FND-0243: EUR view of the class-currency NAV (identity while EUR_NAV_CONVERSION_ENABLED is off), converted at the real pricing date;
+    # FND-0300: then the month-end label of each month-closing NAV (identity while NAV_MONTH_END_ALIGN_ENABLED is off)
+    return align_nav_long(apply_eur_view(conn, isin, df))
 
 
 def count_isins_with_new_nav(

@@ -131,6 +131,7 @@ from shared.config import (
 )
 from shared.db import get_connection
 from shared.eur_nav import apply_eur_view_frame   # FND-0243: audit the NAV P2 computed on
+from shared.nav_month_end import align_nav_long   # FND-0300: ... on the dates P2 computed on
 from shared.statistical_audit.catalog_cost_columns import COST_COLUMNS
 from shared.statistical_audit.catalog_version import compute_catalog_version
 from shared.statistical_audit.catalog_group_checks import COST_GROUP_CHECKS
@@ -643,6 +644,8 @@ def _load_deflation_inputs(
     nav_isin_filter, nav_isin_params = _isin_filter(conn, isins, "n.ISIN")
     nav_query = _sql(conn, _NAV_DATES_QUERY, isin_filter=nav_isin_filter)
     nav_dates = apply_eur_view_frame(conn, _df(conn, nav_query, nav_isin_params))   # FND-0243 (identity while off)
+    # FND-0300: the month-end labels the producer (db_readers.load_nav) put on the windows it stored (identity while off)
+    nav_dates = align_nav_long(nav_dates, key="isin")
     ipc = build_population(conn, _IPC_QUERY, require_universe_filter=False)
     return nav_dates, ipc
 

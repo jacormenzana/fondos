@@ -6,8 +6,8 @@ Point-in-time peer-relative metrics for the P3 backtester -- FND-0159, Wave B st
 In-memory, expanding-window versions of the P2 metrics that compare a fund with the other funds of its
 Fund_Nature and that P2 computes with per-fund DB queries (so they cannot be called on a truncated
 slice): alpha_persistence, capture_ratio (+ upside/downside) and momentum_rank. Inputs are a wide
-RAW-DATE NAV panel (DatetimeIndex x ISIN, NaN where a fund has no observation; do NOT month-end
-normalize it, see pit_metrics) and a Series isin -> Fund_Nature.
+NAV panel on the dates P2 reads (DatetimeIndex x ISIN, NaN where a fund has no observation: raw dates, or the
+month-end labels of shared/nav_month_end.py with NAV_MONTH_END_ALIGN_ENABLED, FND-0300) and a Series isin -> Fund_Nature.
 
 FIDELITY CHOICE (owner decision 2026-10-03): P2's definitions are replicated EXACTLY, including their
 known defects, so the PIT result can be pinned to P2; each one is a backlog item and the PIT code is
@@ -40,6 +40,7 @@ if str(_ROOT) not in sys.path:
 
 from shared import config as _config
 from shared.annualization import by_dates_enabled as _by_dates_enabled, month_ordinals as _month_ordinals   # FND-0253
+from shared.nav_month_end import persistence_windows   # FND-0300
 from shared.config import (
     CAPTURE_MIN_PERIODS,
     MIN_PEERS,
@@ -308,11 +309,9 @@ def alpha_persistence(
         group = peers_of[nat.iloc[j]]
 
         ends, beat, counted = [], [], []
-        ws = start
-        while True:
-            we = ws + pd.DateOffset(months=window_months)
-            if we > last:
-                break
+        # FND-0300: the same window grid as P2 persistence.compute_persistence (raw-date DateOffset windows, or whole calendar months
+        # with NAV_MONTH_END_ALIGN_ENABLED); `ws` is the inclusive lower bound of the window
+        for ws, we in persistence_windows(start, last, window_months, step_months):
             lo = np.searchsorted(fdates.to_numpy(), ws.to_datetime64(), side="left")
             hi = np.searchsorted(fdates.to_numpy(), we.to_datetime64(), side="right")
             nw = hi - lo
@@ -337,7 +336,6 @@ def alpha_persistence(
                     ends.append(we); counted.append(False); beat.append(False)
             else:
                 ends.append(we); counted.append(False); beat.append(False)
-            ws = ws + pd.DateOffset(months=step_months)
 
         if not ends:
             continue

@@ -94,7 +94,9 @@ def compute_pit_scores(
     timings["risk"], hits["risk"] = secs, hit
 
     # ---- d1b: peer metrics (persistence + capture) ----
-    peer_flags = {n: True for n in ("PERSISTENCE_FIRST_LAST_NAV_ENABLED", "CAPTURE_MONTH_END_ENABLED", "ANNUALIZATION_BY_DATES_ENABLED")
+    # FND-0300: NAV_MONTH_END_ALIGN_ENABLED changes the persistence window grid even for a panel already on month-end dates
+    peer_flags = {n: True for n in ("PERSISTENCE_FIRST_LAST_NAV_ENABLED", "CAPTURE_MONTH_END_ENABLED", "ANNUALIZATION_BY_DATES_ENABLED",
+                                    "NAV_MONTH_END_ALIGN_ENABLED")
                   if getattr(_config, n, False)}
     peers_key = content_hash(inputs.nav, nature, CODE_VERSION, *([peer_flags] if peer_flags else []))
     peers, hit, secs = cached_frames(cache, "peers", peers_key, lambda: {

@@ -76,6 +76,23 @@ def test_load_nav_returns_sorted_series(pg_session_conn, pg_conn_module_schema):
     assert df["date"].iloc[0] == pd.Timestamp("2024-01-31")
 
 
+@pytest.mark.parametrize("align", [False, True], ids=["raw_dates", "month_end_align_FND0300"])
+def test_load_nav_month_end_labels(pg_session_conn, pg_conn_module_schema, monkeypatch, align):
+    """FND-0300: with NAV_MONTH_END_ALIGN_ENABLED a NAV that closes its month (last business day) carries the month-end; the open month
+    (more than 5 days before its month-end) keeps its real date. OFF = the raw dates."""
+    from shared import config as _c
+    monkeypatch.setattr(_c, "NAV_MONTH_END_ALIGN_ENABLED", align)
+    conn = pg_session_conn
+    conn.execute(f"SET search_path = {pg_conn_module_schema}")
+    _make_nav_tables(conn)
+    for d, v in [("2024-01-31", 100.0), ("2024-02-28", 101.0), ("2024-03-29", 102.0), ("2024-04-18", 103.0)]:
+        conn.execute("INSERT INTO fund_nav_monthly VALUES ('X2', %s, %s)", (d, v))
+    df = load_nav(conn, "X2")
+    expected = ["2024-01-31", "2024-02-29", "2024-03-31", "2024-04-18"] if align else ["2024-01-31", "2024-02-28", "2024-03-29", "2024-04-18"]
+    assert list(df["date"]) == [pd.Timestamp(d) for d in expected]
+    assert list(df["nav"]) == [100.0, 101.0, 102.0, 103.0]
+
+
 def test_load_nav_empty_returns_empty_frame(pg_session_conn, pg_conn_module_schema):
     conn = pg_session_conn
     conn.execute(f"SET search_path = {pg_conn_module_schema}")
