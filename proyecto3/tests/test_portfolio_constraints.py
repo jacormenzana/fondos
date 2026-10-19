@@ -246,7 +246,7 @@ def test_hysteresis_uses_score_total_not_effective_score_for_weight_input():
         "score_total": [1.00, 1.03, 1.00, 1.00, 1.00, 1.00],
         "effective_score": [1.05, 1.03, 1.00, 1.00, 1.00, 1.00],  # A has the hysteresis bonus applied
     })
-    weighted = _assign_weights(df)
+    weighted = _assign_weights(df, method="score_proportional")   # the invariant is about score weighting (FND-0193 made "equal" the builder default)
     # B has the higher score_total (1.03 > 1.00) -> B must get the larger weight,
     # even though A ranked first in selection due to effective_score.
     w_a = weighted.loc[weighted["isin"] == "A", "weight"].iloc[0]

@@ -563,12 +563,12 @@ python -m proyecto2.src.discovery.macro_discovery --source all
 | capture_ratio | 5% | 10% | 15% |
 | momentum_rank | 5% | 10% | 10% |
 
-**Layer 3 – Structural multipliers:** fx_contribution_pct > 0.60 → ×0.80; alpha_persistence > 0.60 → ×1.15 (plus the empirical regime-return and crisis-stress multipliers). The macro multipliers (beta_oil, beta_rate_eu, macro_r2, crisis beta_spread_hy / beta_vix) were **retired 2026-10-04** (FND-0225): the oil / VIX / HY legs never fired in production (threshold scale and sign), and the full-universe PIT backtests showed no robust benefit beyond one episode (2008-09). The scorer no longer reads the macro betas; P2 still computes them. Do not reintroduce without out-of-sample validation (FND-0193).
+**Layer 3 – Structural multipliers: NEUTRAL since the FND-0193 SIMPLIFY verdict (2026-10-19).** Every `MULT_*` in `proyecto3/config/scorer_params.yaml` is 1.0, so the final score is the base score: removing the layer changed the out-of-sample Sharpe by −0.0003 (90 % CI −0.058..+0.058) with the same drawdown (`doc/decisiones/SIMPLIFY_RUNBOOK_FND-0193.md`; the previous values — FX ×0.80, alpha ×1.15, empirical regime-return and crisis-stress multipliers — are in the file's previous commit; the code paths go after two stable cycles). Do not re-enable a multiplier without new out-of-sample evidence (FND-0299 checkpoints). The macro multipliers (beta_oil, beta_rate_eu, macro_r2, crisis beta_spread_hy / beta_vix) were **retired 2026-10-04** (FND-0225): the oil / VIX / HY legs never fired in production (threshold scale and sign), and the full-universe PIT backtests showed no robust benefit beyond one episode (2008-09). The scorer no longer reads the macro betas; P2 still computes them. Do not reintroduce without out-of-sample validation (FND-0193).
 
 ### Portfolio construction constraints
 
 Max 10 funds/sub-portfolio · max 20% per fund · max 2 funds per manager (a count, global across sub-portfolios — there is no weight cap per manager) · min 3% per fund · max 5 same Fund_Nature per sub-portfolio.  
-Weight method: `score_proportional`. Sub-portfolio and master weights sum to exactly 1.0000 (largest-remainder rounding, never a weight past
+Weight method: `equal` (FND-0193 SIMPLIFY, 2026-10-19: score weighting did not earn its place out of sample; the score still ranks and selects, hysteresis included; `portfolio_builder.WEIGHT_METHOD`). Sub-portfolio and master weights sum to exactly 1.0000 (largest-remainder rounding, never a weight past
 its bound); the currency budget is a construction constraint too (see "Scenario lifecycle & currency exposure").
 
 ### Monthly report (monthly_report.py)

@@ -151,12 +151,17 @@ def test_flatten_detail_and_multiplier_variant():
     assert full["score_final"].tolist() == pytest.approx(sc["score_final"].tolist())      # all factors back = the model's own score
 
 
-def test_engine_default_weighting_is_unchanged_and_weight_method_equalises():
+def test_engine_default_weighting_follows_production_and_weight_method_selects_it():
+    """FND-0193 SIMPLIFY: the engine default is shared.config.PORTFOLIO_WEIGHT_METHOD (the live builder's), "equal" since the verdict;
+    the study's pre-registered model asks for "score_proportional" explicitly."""
+    from shared.config import PORTFOLIO_WEIGHT_METHOD
+    from proyecto3.src.pit_value import MODEL_WEIGHT_METHOD
     df = pd.DataFrame({"isin": list("ABCDEFGH"), "score_total": [8.0, 7.0, 6.0, 5.0, 4.0, 3.0, 2.0, 1.0]})
-    assert PortfolioConstraints().weight_method == "score_proportional"
-    default = assign_weights(df, DEFAULT_CONSTRAINTS)["weight"]
-    assert default.iloc[0] > default.iloc[-1] and default.sum() == pytest.approx(1.0)      # still score-proportional
-    eq = assign_weights(df, PortfolioConstraints(weight_method="equal"))["weight"]
+    assert PortfolioConstraints().weight_method == DEFAULT_CONSTRAINTS.weight_method == PORTFOLIO_WEIGHT_METHOD == "equal"
+    assert MODEL_WEIGHT_METHOD == "score_proportional"
+    sp = assign_weights(df, PortfolioConstraints(weight_method="score_proportional"))["weight"]
+    assert sp.iloc[0] > sp.iloc[-1] and sp.sum() == pytest.approx(1.0)                     # score-proportional on request
+    eq = assign_weights(df, DEFAULT_CONSTRAINTS)["weight"]
     assert eq.tolist() == pytest.approx([0.125] * 8)
 
 

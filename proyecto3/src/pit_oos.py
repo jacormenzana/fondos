@@ -167,13 +167,15 @@ def oos_report(tables: dict, split, reference=REFERENCE_CELL, tolerance: float =
 def cadence_tables(pit_run, inputs, regime_hist: pd.DataFrame, at: pd.DatetimeIndex, cadences=CADENCES,
                    hysteresis_band: float = 0.0, tx_cost_bps: float = 25.0, entry_sides: int = 1,
                    max_stale_days: int = DEFAULT_MAX_STALE_DAYS, target_annual: "pd.Series | None" = None,
-                   regime_trigger=False) -> dict:
+                   regime_trigger=False, weight_method: "str | None" = None) -> dict:
     """{(k, phase): backtest table} for every cadence k and every phase 0..k-1 (1m window only). Scores, forward returns and
     benchmark are shared; only the held portfolios differ. hysteresis_band > 0 gives the incumbents their bonus at each
     rebalance (the incumbents are the portfolio held at the previous rebalance). regime_trigger: also rebalance at once when
     the regime label changes (True = any change; a collection of regime names = only into / out of those regimes)."""
     base = prepare_pit_backtest(pit_run, inputs, regime_hist, at, (1,), max_stale_days)
     cons = dataclasses.replace(DEFAULT_CONSTRAINTS, hysteresis_band=hysteresis_band) if hysteresis_band else DEFAULT_CONSTRAINTS
+    if weight_method is not None:                      # FND-0193: the study's pre-registered model names its weights (engine default = production)
+        cons = dataclasses.replace(cons, weight_method=weight_method)
     tables = {}
     for k in cadences:
         for phase in range(k):

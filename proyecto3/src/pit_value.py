@@ -42,6 +42,7 @@ SECONDARY = ("B-MOM", "B-CHEAP")
 MODEL = "M_h10"
 MODEL_H0 = "M_h0"
 BAND = 0.10
+MODEL_WEIGHT_METHOD = "score_proportional"   # the pre-registered model's weights (PREREG); explicit since the engine default follows production
 MANDATE_MAX_DD = -0.15
 SUB_PERIODS = (("2005-2010", "2005-01-01", "2010-12-31"), ("2011-2016", "2011-01-01", "2016-12-31"),
                ("2017-2021", "2017-01-01", "2021-12-31"), ("2022-2026", "2022-01-01", "2026-12-31"))
@@ -109,9 +110,11 @@ def table_for(study: Study, W: pd.DataFrame, cash: pd.Series, bps: float = 25.0)
 # ============================================================
 
 def model_weights(study: Study, scores: "pd.DataFrame | None" = None, band: float = BAND, hist: "pd.DataFrame | None" = None,
-                  weight_method: str = "score_proportional") -> "tuple[pd.DataFrame, pd.Series]":
-    cons = dataclasses.replace(DEFAULT_CONSTRAINTS, hysteresis_band=band, weight_method=weight_method) if (band or weight_method != "score_proportional") \
-        else DEFAULT_CONSTRAINTS
+                  weight_method: str = MODEL_WEIGHT_METHOD) -> "tuple[pd.DataFrame, pd.Series]":
+    # the weight method is ALWAYS explicit: the engine default follows production (FND-0193 SIMPLIFY made it "equal"), M does not
+    cons = dataclasses.replace(DEFAULT_CONSTRAINTS, weight_method=weight_method)
+    if band:
+        cons = dataclasses.replace(cons, hysteresis_band=band)
     return build_weights(study.pit_run.scores if scores is None else scores, study.inputs.attrs, study.hist if hist is None else hist,
                          study.at, cons, use_incumbents=band > 0, fx_exposed=getattr(study.inputs, "fx_exposed", None))
 
@@ -409,7 +412,7 @@ def pbo_matrix(study: Study, cat: dict, bps: float = 25.0, cadences=(1, 2, 3, 4,
             cols[f"M_h{b:g}_wb{d:g}"] = series_of(table_for(study, apply_weight_no_trade_band(W, d), c, bps))
     for h in (0.0, BAND):
         ct = cadence_tables(study.pit_run, study.inputs, study.hist, study.at, cadences=cadences, hysteresis_band=h, tx_cost_bps=bps,
-                            max_stale_days=study.max_stale_days)
+                            max_stale_days=study.max_stale_days, weight_method=MODEL_WEIGHT_METHOD)
         for k in cadences:
             cols[f"M_h{h:g}_cad{k}"] = _phase_average(ct, k)[0]
     for n, t in tables(study, cat, bps).items():

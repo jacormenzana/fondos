@@ -61,6 +61,36 @@ def test_scoring_runs_and_is_deterministic_on_a_fixed_universe():
     assert len(a) > 0
 
 
+def test_fnd0193_simplify_layer3_is_neutral_so_the_final_score_is_the_base_score():
+    """FND-0193 SIMPLIFY (verdict of record 2026-10-19): every MULT_* is 1.0, so no Layer-3 rule moves a score; the eligible funds' final
+    score equals their base score (rollback = the previous commit of scorer_params.yaml)."""
+    assert all(v == 1.0 for k, v in load_scorer_params().items() if k.startswith("MULT_"))
+    rng = np.random.default_rng(9)
+    n = 80
+    df = pd.DataFrame({
+        "Fund_Name": [f"F{i}" for i in range(n)],
+        "Fund_Nature": rng.choice(["Renta Variable", "Mixtos", "Monetario", "Renta Fija Flexible"], n),
+        "return_ann_real": rng.normal(0.03, 0.03, n), "sharpe": rng.normal(0.5, 0.4, n), "max_dd": -rng.uniform(0.01, 0.2, n),
+        "srri_nav": rng.integers(1, 7, n).astype(float), "alpha_persistence": rng.uniform(0, 1, n),      # many > 0.60 (old x1.15)
+        "capture_ratio": rng.uniform(0.4, 1.6, n), "momentum_rank": rng.uniform(0, 1, n),
+        "fx_contribution_pct": rng.normal(0, 1.0, n), "fx_contribution_ann": rng.normal(0, 0.05, n),   # many over the old FX malus limit
+        "fund_family_id": [None] * n,
+    }, index=pd.Index([f"ISIN{i:03d}" for i in range(n)], name="isin"))
+    out = fs.score_funds_from_df(df, "Expansion", verbose=False)
+    ok = out[out["eligible"].astype(bool)]
+    assert len(ok) > 10
+    assert (ok["multiplier"] == 1.0).all()
+    assert np.allclose(ok["score_final"], ok["score_base"])
+
+
+def test_fnd0193_simplify_builder_weights_are_equal():
+    from proyecto3.src import portfolio_builder as pb
+    assert pb.WEIGHT_METHOD == "equal"
+    df = pd.DataFrame({"isin": list("ABCDEF"), "score_total": [1.0, 1.3, 0.7, 1.0, 0.9, 1.1]})
+    w = pb._assign_weights(df)["weight"]
+    assert np.allclose(w, 1 / 6, atol=1e-4) and abs(w.sum() - 1.0) < 1e-9     # 4-decimal largest-remainder rounding (sum exactly 1)
+
+
 # ---------------- the inline numbers are really read from the config ----------------
 
 def test_regime_percentile_cutoffs_come_from_the_config(monkeypatch):

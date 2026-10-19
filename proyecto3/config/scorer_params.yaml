@@ -83,12 +83,17 @@ MIN_REAL_RETURN: 0.0
 MAX_SRRI_DEFENSIVE: 5
 
 # ----------------------------------------------------------------------------------------------------
-# Structural multipliers (layer 3). The macro ones were retired 2026-10-04 (FND-0225)
+# Structural multipliers (layer 3). The macro ones were retired 2026-10-04 (FND-0225).
+# FND-0193 SIMPLIFY (verdict of record 2026-10-19, doc/decisiones/SIMPLIFY_RUNBOOK_FND-0193.md): every MULT_* below is NEUTRAL (1.0).
+# The Layer-3 family did not earn its place out of sample (removing it: Sharpe -0.0003, 90% CI -0.058..+0.058, max DD unchanged).
+# Retired by value, not by code: the thresholds stay so a rollback is this file's previous commit; the code paths are deleted after
+# two stable cycles (runbook section 2). Previous values: FX 0.8, alpha 1.15, crisis 1.1/0.8/1.1/0.85, regime 1.2/0.8/1.1/0.9/1.08/0.92/1.1/0.8,
+# slope 1.05/0.95.
 # ----------------------------------------------------------------------------------------------------
 FX_CONTRIBUTION_LIMIT: 0.6
 ALPHA_PERS_THRESHOLD: 0.6
-MULT_FX_MALUS: 0.8
-MULT_ALPHA_BONUS: 1.15
+MULT_FX_MALUS: 1.0
+MULT_ALPHA_BONUS: 1.0
 
 # ----------------------------------------------------------------------------------------------------
 # Crisis-stress multipliers
@@ -97,24 +102,24 @@ CRISIS_MDD_SHALLOW: -0.1
 CRISIS_MDD_DEEP: -0.3
 CRISIS_TTR_FAST: 6.0
 CRISIS_TTR_SLOW: 24.0
-MULT_CRISIS_MDD_BONUS: 1.1
-MULT_CRISIS_MDD_MALUS: 0.8
-MULT_CRISIS_TTR_BONUS: 1.1
-MULT_CRISIS_TTR_MALUS: 0.85
+MULT_CRISIS_MDD_BONUS: 1.0
+MULT_CRISIS_MDD_MALUS: 1.0
+MULT_CRISIS_TTR_BONUS: 1.0
+MULT_CRISIS_TTR_MALUS: 1.0
 
 # ----------------------------------------------------------------------------------------------------
 # Empirical per-regime multipliers and the percentile cut-offs they use
 # ----------------------------------------------------------------------------------------------------
 REGIME_PERCENTILE_LOW: 0.25
 REGIME_PERCENTILE_HIGH: 0.75
-MULT_REGIME_RETURN_BONUS: 1.2
-MULT_REGIME_RETURN_MALUS: 0.8
-MULT_REGIME_SHARPE_BONUS: 1.1
-MULT_REGIME_SHARPE_MALUS: 0.9
-MULT_REGIME_SORTINO_BONUS: 1.08
-MULT_REGIME_SORTINO_MALUS: 0.92
-MULT_REGIME_MAXDD_BONUS: 1.1
-MULT_REGIME_MAXDD_MALUS: 0.8
+MULT_REGIME_RETURN_BONUS: 1.0
+MULT_REGIME_RETURN_MALUS: 1.0
+MULT_REGIME_SHARPE_BONUS: 1.0
+MULT_REGIME_SHARPE_MALUS: 1.0
+MULT_REGIME_SORTINO_BONUS: 1.0
+MULT_REGIME_SORTINO_MALUS: 1.0
+MULT_REGIME_MAXDD_BONUS: 1.0
+MULT_REGIME_MAXDD_MALUS: 1.0
 MIN_OBS_REGIME_SCORING: 12
 REGIME_COVERAGE_MIN: 0.43
 REGIME_COVERAGE_DAMP: 0.5
@@ -124,8 +129,8 @@ REGIME_COVERAGE_DAMP: 0.5
 # ----------------------------------------------------------------------------------------------------
 SLOPE_IMPROVING_THRESHOLD: 0.05
 SLOPE_DETERIORATING_THRESHOLD: -0.05
-MULT_SLOPE_BONUS: 1.05
-MULT_SLOPE_MALUS: 0.95
+MULT_SLOPE_BONUS: 1.0
+MULT_SLOPE_MALUS: 1.0
 
 # ----------------------------------------------------------------------------------------------------
 # Short-horizon gates and weights

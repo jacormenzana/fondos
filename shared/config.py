@@ -250,6 +250,13 @@ PORTFOLIO_HYSTERESIS_ENABLED: bool = False
 # further without a better Sharpe (out/reports/pit_backtest/20261004_*). Single source: portfolio_builder.HYSTERESIS_BAND
 # reads it. Enabling the switch waits for the P2 recompute (portfolios on one CALC_VERSION) and the first uniform P3 build.
 PORTFOLIO_HYSTERESIS_BAND: float = 0.10
+# FND-0193 SIMPLIFY (verdict of record 2026-10-19, doc/decisiones/SIMPLIFY_RUNBOOK_FND-0193.md): weights inside a sub-portfolio are EQUAL among
+# the selected funds; score-proportional weighting did not earn its place out of sample (Sharpe -0.023 without it, 90% CI -0.005..+0.053, max DD
+# not worse). The score still ranks and selects (hysteresis included). ONE source for the live builder (portfolio_builder.WEIGHT_METHOD) and the
+# engine default (portfolio_engine.PortfolioConstraints.weight_method), so the Backtester and the PIT build what production builds
+# (test_backtest_parity). The FND-0193 study names its pre-registered model's method explicitly (pit_value.MODEL_WEIGHT_METHOD =
+# "score_proportional"), so the saved runs keep reproducing. Rollback: "score_proportional".
+PORTFOLIO_WEIGHT_METHOD: str = "equal"
 
 # Kill-switch P3 optimization plan Phase 2d (2026-09-18): activa el filtro
 # de coste de rotación en PortfolioBuilder.build() -- revierte al titular

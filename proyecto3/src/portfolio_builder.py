@@ -57,7 +57,7 @@ from proyecto3.src.portfolio_engine import (
     round_master_weights,
     cash_weight,
 )
-from shared.config import PORTFOLIO_HYSTERESIS_BAND, PORTFOLIO_HYSTERESIS_ENABLED, ROTATION_COST_GATE_ENABLED
+from shared.config import PORTFOLIO_HYSTERESIS_BAND, PORTFOLIO_HYSTERESIS_ENABLED, PORTFOLIO_WEIGHT_METHOD, ROTATION_COST_GATE_ENABLED
 
 
 # ============================================================
@@ -74,7 +74,9 @@ MAX_FUNDS_PER_MGR    = 2      # max fondos de una misma gestora -- conteo, globa
 # Metodo de asignacion de pesos internos
 # "score_proportional": pesos proporcionales al score final
 # "equal":              pesos iguales entre fondos seleccionados
-WEIGHT_METHOD = "score_proportional"
+# FND-0193 SIMPLIFY (verdict of record 2026-10-19): "equal", from shared.config.PORTFOLIO_WEIGHT_METHOD (the PIT engine default reads the same
+# constant). Used for the selection under the FX budget AND the final weights, as the PIT ablation ABL_eqW did.
+WEIGHT_METHOD = PORTFOLIO_WEIGHT_METHOD
 
 # Histeresis: banda minima que un retador debe superar sobre el score del
 # titular para justificar la rotacion. Impide que senales de horizonte corto
@@ -217,6 +219,7 @@ def _select_funds_for_subportfolio(
         max_same_nature=MAX_SAME_NATURE,
         max_funds_per_mgr=MAX_FUNDS_PER_MGR,
         hysteresis_band=HYSTERESIS_BAND,
+        weight_method=WEIGHT_METHOD,      # FND-0193: the exposure loop weighs the candidates the way the final weights will
     ))
     pool = {
         "candidates": int(len(candidates)),
@@ -261,6 +264,7 @@ def _assign_weights(
     constraints = PortfolioConstraints(
         max_weight_per_fund=MAX_WEIGHT_PER_FUND,
         min_weight_per_fund=MIN_WEIGHT_PER_FUND,
+        weight_method=method,             # FND-0193: engine_assign_weights reads the method from the constraints
     )
     return engine_assign_weights(df, constraints, method=method)
 

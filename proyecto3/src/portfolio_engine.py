@@ -34,6 +34,8 @@ from dataclasses import dataclass
 
 import pandas as pd
 
+from shared.config import PORTFOLIO_WEIGHT_METHOD   # FND-0193 SIMPLIFY: one weight method for the live builder and the backtesters
+
 logger = logging.getLogger(__name__)
 
 
@@ -96,9 +98,11 @@ class PortfolioConstraints:
     # Peso maximo (dentro de cada sub-cartera, por tanto tambien en la maestra) de fondos con la columna `fx_exposed` verdadera; None = sin limite
     # (paridad con el Backtester, cuyos candidatos no traen la columna). Ver select_within_exposure.
     max_exposed_weight:  float | None = None
-    # Metodo de ponderacion interna de assign_weights ("score_proportional" = produccion; cualquier otro valor = pesos iguales). Solo la
-    # ablacion A2 de FND-0193 usa otro valor; el defecto deja el constructor en vivo bit a bit igual.
-    weight_method:       str = "score_proportional"
+    # Metodo de ponderacion interna de assign_weights ("score_proportional"; cualquier otro valor = pesos iguales). FND-0193 SIMPLIFY: el
+    # defecto es shared.config.PORTFOLIO_WEIGHT_METHOD ("equal"), la MISMA fuente que el constructor en vivo, para que el Backtester y el PIT
+    # construyan lo que produccion construye (test_backtest_parity). El estudio FND-0193 nombra explicitamente el metodo de su modelo
+    # pre-registrado ("score_proportional", pit_value.MODEL_WEIGHT_METHOD) para que las ejecuciones guardadas se reproduzcan.
+    weight_method:       str = PORTFOLIO_WEIGHT_METHOD
 
 
 DEFAULT_CONSTRAINTS = PortfolioConstraints()
