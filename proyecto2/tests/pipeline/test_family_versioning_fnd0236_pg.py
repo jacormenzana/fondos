@@ -44,7 +44,7 @@ def test_family_state_roundtrip_replace_and_dry_run(pg_session_conn, pg_conn_mod
     assert rp._get_family_hashes(conn, "ES0002") == {}
     token = conn.execute("SELECT family_token, batch_id FROM fund_metric_family_state "
                          "WHERE isin='ES0001' AND family='risk'").fetchone()
-    assert token == (rp.CALC_VERSION, "B1")
+    assert token == (fv.family_token("risk", rp.CALC_VERSION), "B1")        # the live epoch of the family (FND-0300: risk is on 20261019)
 
 
 def test_family_state_joins_the_callers_transaction(pg_session_conn, pg_conn_module_schema):

@@ -37,8 +37,9 @@ def _ipc(n=60):
 
 
 def _hashes(cv=CV, flags=FLAGS, overrides=None, nav=None, ipc=None):
+    # No epochs unless a test asks for them: the baseline must not depend on the live FAMILY_CALC_OVERRIDES (which changes with every deployment).
     fp = data_fingerprint(_nav() if nav is None else nav, _ipc() if ipc is None else ipc)
-    return fv.current_family_hashes(fp, MV, cv, flags, overrides)
+    return fv.current_family_hashes(fp, MV, cv, flags, {} if overrides is None else overrides)
 
 
 # ---------------------------------------------------------------- the legacy hash must not move
@@ -64,10 +65,11 @@ def test_token_with_override_is_suffixed_and_only_for_that_family():
     assert fv.family_token("risk", CV, ov) == CV
 
 
-def test_the_only_live_override_is_the_macro_epoch():
-    # FND-0256 / FND-0293: forces the macro refit after the inflation (20261017) and M2 / China-rate (20261018) series were repaired.
-    # Update this test with any new bump.
-    assert fv.FAMILY_CALC_OVERRIDES == {"macro": "20261018"}
+def test_the_live_overrides_are_the_20261019_epoch_of_the_five_families_it_changed():
+    # FND-0256 / FND-0293 macro refits (20261017, 20261018) superseded by FND-0300 (NAV month-end labels: risk, macro, persistence, rolling)
+    # and FND-0302 (momentum units): one epoch, 20261019. Capture, regime, fx and short are NOT in it. Update this test with any new bump.
+    assert fv.FAMILY_CALC_OVERRIDES == {f: "20261019" for f in ("macro", "risk", "persistence", "rolling", "momentum")}
+    assert all(f not in fv.FAMILY_CALC_OVERRIDES for f in ("capture", "regime", "fx", "short"))
     assert set(fv.FAMILY_CALC_OVERRIDES) <= set(fv.ALL_FAMILIES)
 
 
@@ -138,7 +140,7 @@ def test_same_nature_is_a_cache_hit():
 @pytest.mark.parametrize("peer_key", [None, ""])
 def test_no_peer_key_keeps_the_pre_fnd0292_hashes(peer_key):
     fp = data_fingerprint(_nav(), _ipc())
-    assert fv.current_family_hashes(fp, MV, CV, FLAGS, None, peer_key=peer_key) == _hashes()
+    assert fv.current_family_hashes(fp, MV, CV, FLAGS, {}, peer_key=peer_key) == _hashes()
 
 
 def test_peer_group_families_match_the_registry_families_that_need_a_nature():

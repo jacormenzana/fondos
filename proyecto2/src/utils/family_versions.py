@@ -41,7 +41,12 @@ ALL_FAMILIES: tuple = (
 # the old series until the next quarter. Only the macro family recomputes (a macro-only pass, ~9 min, not the 5 h full run).
 # macro 20261018 (FND-0293 legs 3-5): China / Japan M2 now real (m2_global_yoy rebuilt without CALC_EST) and the China policy rate is the BIS
 # 1-year LPR (d_rate_cn had ~no variance for a decade). Same mechanism: tonight's 20261017 would otherwise count as fresh for this quarter.
-FAMILY_CALC_OVERRIDES: dict = {"macro": "20261018"}
+# risk / macro / persistence / rolling 20261019 (FND-0300): NAV_MONTH_END_ALIGN_ENABLED on -- monthly NAV on month-end labels (the macro OLS keeps the
+# ~30% of months it dropped, persistence windows by calendar month, rolling cut-offs stamp-invariant). The flag alone already stales those four
+# families (family_flags is in the hash); the epoch makes the recomputed rows recognisable in algorithm_version and makes the macro OLS refit (its
+# cadence gate keys on the token). momentum 20261019 (FND-0302): momentum_1y / _3y in consistent units + deterministic peer mean.
+FAMILY_CALC_OVERRIDES: dict = {"macro": "20261019", "risk": "20261019", "persistence": "20261019", "rolling": "20261019",
+                               "momentum": "20261019"}
 
 # shared.config.P2_BUNDLE_FLAGS -> the family (or tuple of families) each flag changes. A test asserts every bundle flag is
 # mapped here, so a new flag cannot silently fall back to "recompute everything" or "recompute nothing".

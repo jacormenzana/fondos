@@ -73,7 +73,23 @@ def _schema(conn, schema):
     """)
 
 
-def test_nav_panel_is_wide_raw_dated_and_sql_scoped(pg_session_conn, pg_conn_module_schema):
+def test_nav_panel_is_wide_month_end_labelled_when_the_flag_is_on(pg_session_conn, pg_conn_module_schema, monkeypatch):
+    """FND-0300: with NAV_MONTH_END_ALIGN_ENABLED a NAV that closes its month carries the month-end, so the weekday-stamped A1 (2020-02-27)
+    and the calendar-stamped B1 (2020-02-29) share ONE row; values and SQL scoping are unchanged."""
+    from shared import config as _c
+    monkeypatch.setattr(_c, "NAV_MONTH_END_ALIGN_ENABLED", True)
+    conn = pg_session_conn
+    _schema(conn, pg_conn_module_schema)
+    full = load_nav_panel(conn)
+    assert date(2020, 2, 27) not in {d.date() for d in full.index} and date(2020, 2, 29) in {d.date() for d in full.index}
+    assert full.loc[pd.Timestamp("2020-02-29"), "A1"] == 101 and full.loc[pd.Timestamp("2020-02-29"), "B1"] == 50.1
+    assert full.index.is_unique and len(full) == 2
+    assert list(load_nav_panel(conn, ["A1", "C1"]).columns) == ["A1", "C1"]
+
+
+def test_nav_panel_is_wide_raw_dated_and_sql_scoped(pg_session_conn, pg_conn_module_schema, monkeypatch):
+    from shared import config as _c
+    monkeypatch.setattr(_c, "NAV_MONTH_END_ALIGN_ENABLED", False)           # the stored raw-date convention (the switch OFF)
     conn = pg_session_conn
     _schema(conn, pg_conn_module_schema)
     full = load_nav_panel(conn)

@@ -715,9 +715,11 @@ ANNUALIZATION_BY_DATES_ENABLED: bool = True
 # FND-0300: a monthly NAV dated within 5 days of its calendar month-end (28% of fund_nav_monthly sits on the last BUSINESS day) is labelled
 # with the month-end by every reader that feeds a calculation (shared/nav_month_end.py), and persistence windows count whole calendar months.
 # Fixes the macro OLS join (~30% of months dropped), stamp-dependent persistence windows and PIT stale ages; the FND-0193 alignment gate
-# failed on it (|dSharpe| 0.0126 > 0.01). OFF = the stored raw-date convention, bit-for-bit. FLIP ONLY TOGETHER WITH a CALC_VERSION bump and
-# the recompute of the families it touches (utils/family_versions.FLAG_FAMILIES: risk, macro, persistence, rolling).
-NAV_MONTH_END_ALIGN_ENABLED: bool = False
+# failed on it (|dSharpe| 0.0126 > 0.01). OFF = the stored raw-date convention, bit-for-bit. ON since 2026-10-19 (owner decision), flipped
+# TOGETHER WITH the family epoch 20261019 (utils/family_versions.FAMILY_CALC_OVERRIDES) and the recompute of the families it touches
+# (FLAG_FAMILIES: risk, macro, persistence, rolling); the rolling rows dated on the old business-day stamps are removed by the run itself
+# (metrics_writer.prune_timeseries, FND-0301). Rolling back means False + another family epoch + recompute.
+NAV_MONTH_END_ALIGN_ENABLED: bool = True
 # FND-0241: look the CPI up with each MONTHLY NAV's own calendar month-end. OFF = the stored convention (merge_asof backward against
 # a CPI stamped on the calendar month-end), under which the 29% of NAVs dated on the last BUSINESS day took the previous month's CPI
 # and had real monthly return == nominal. ON changes the stored real series: worst_month real up to ~2 pp (18% of funds > 0.1 pp),
