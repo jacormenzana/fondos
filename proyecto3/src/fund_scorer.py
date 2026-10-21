@@ -174,6 +174,8 @@ SHORT_VOL_LIMIT_BY_SUB: dict[str, float | None] = _P["SHORT_VOL_LIMIT_BY_SUB"]
 # Umbral de iliquidez: si liquidity_flag > este valor, los gates cortos se omiten
 # (datos no confiables — fondos con NAV diario sintético).
 SHORT_LIQUIDITY_TRUST_THRESHOLD: float = _P["SHORT_LIQUIDITY_TRUST_THRESHOLD"]
+# FND-0303 V2 (PIT experiment only, 0 = off): the live scorer does not read it; the PIT chain reads scorer_config.COMMON_WINDOW_MONTHS.
+COMMON_WINDOW_MONTHS: int = _P["COMMON_WINDOW_MONTHS"]
 
 # Bonus/malus empírico por régimen
 MULT_REGIME_RETURN_BONUS = _P["MULT_REGIME_RETURN_BONUS"]

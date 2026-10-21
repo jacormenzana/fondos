@@ -93,6 +93,9 @@ def _srri_tables():
 
 
 METRICS = ("max_dd", "return_ann", "vol_ann", "sharpe", "return_ann_real", "max_dd_real", "srri_nav", "n_obs")
+# FND-0303 V2: what a common trailing window replaces (PREREG_FND-0303 section 2: return_ann, sharpe, max_dd, and the real / vol versions
+# computed in the same pass). srri_nav and the momentum input (the expanding return_ann) are NOT replaced.
+TRAILING_KEYS = ("return_ann", "return_ann_real", "vol_ann", "sharpe", "max_dd", "max_dd_real")
 
 
 def _month_end(index) -> pd.DatetimeIndex:
@@ -251,4 +254,54 @@ def expanding_risk_metrics(
                                None if month_ords is None else month_ords[pos])
         for k in METRICS:
             arrays[k][pos, j] = fund[k]
+    return {k: pd.DataFrame(a, index=nav_wide.index, columns=nav_wide.columns) for k, a in arrays.items()}
+
+
+def trailing_risk_metrics(
+    nav_wide: pd.DataFrame,
+    ipc: "pd.DataFrame | None" = None,
+    rf: "pd.DataFrame | None" = None,
+    ipc_lag_months: int = 0,
+    rf_fallback: float = RISK_FREE_RATE_ANN,
+    window_months: int = 60,
+) -> dict:
+    """FND-0303 V2: the same risk metrics over a COMMON trailing window instead of the whole history.
+
+    For every fund and every date at which it has a NAV, the window is the fund's observations with date > date - DateOffset(window_months)
+    (the definition of P2 `returns.trailing_window`, so it is the window of the stored `rolling_5y` for 60 months). The metrics of the window
+    are the LAST value of `_fund_expanding` run on the window's own observations: the formulas are the expanding ones by construction (and
+    pinned against P2 by tests/test_pit_trailing_window_fnd0303.py).
+
+    A fund whose window holds fewer than `window_months` observations is not evaluable: its TRAILING_KEYS are NaN (a partial window must never
+    be scored beside full ones -- defect D2) and `n_obs` still reports the count, so the candidate filter can exclude it (min_obs).
+    Returns {metric: DataFrame shaped like nav_wide} for TRAILING_KEYS + n_obs."""
+    dates = pd.DatetimeIndex(nav_wide.index)
+    rf_t = aligned_rf(dates, rf, rf_fallback)
+    ipc_t = aligned_ipc(pd.DatetimeIndex(cpi_lookup_dates(dates)), ipc, ipc_lag_months)
+    keys = TRAILING_KEYS + ("n_obs",)
+    arrays = {k: np.full(nav_wide.shape, np.nan) for k in keys}
+    values = nav_wide.to_numpy(dtype=float)
+    month_ords = month_ordinals(dates) if by_dates_enabled() else None
+    offset = pd.DateOffset(months=int(window_months))
+    for j in range(values.shape[1]):
+        col_vals = values[:, j]
+        mask = np.isfinite(col_vals) & (col_vals > 0)
+        if not mask.any():
+            continue
+        pos = np.flatnonzero(mask)
+        fd = dates[pos]
+        starts = np.searchsorted(fd.to_numpy(), (fd - offset).to_numpy(), side="right")      # first row with date > t - window
+        x, r_t = col_vals[pos], rf_t[pos]
+        i_t = None if ipc_t is None else ipc_t[pos]
+        m_t = None if month_ords is None else month_ords[pos]
+        for i in range(len(pos)):
+            lo = int(starts[i])
+            n = i - lo + 1
+            arrays["n_obs"][pos[i], j] = n
+            if n < window_months:
+                continue
+            w = _fund_expanding(x[lo:i + 1], r_t[lo:i + 1], None if i_t is None else i_t[lo:i + 1],
+                                None if m_t is None else m_t[lo:i + 1])
+            for k in TRAILING_KEYS:
+                arrays[k][pos[i], j] = w[k][-1]
     return {k: pd.DataFrame(a, index=nav_wide.index, columns=nav_wide.columns) for k, a in arrays.items()}

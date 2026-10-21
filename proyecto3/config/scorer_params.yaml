@@ -155,3 +155,6 @@ SHORT_HORIZON_WEIGHTS:
     short_return_cum__rolling_3m: 0.05
     short_return_cum__rolling_6m: 0.05
 
+# FND-0303 V2 (PREREG_FND-0303): common trailing window, in months, for return_ann(+real), sharpe, max_dd(+real), alpha_persistence and
+# capture_ratio in the PIT backtest. 0 = off = V0. Only a PIT overlay sets it (p3_pit_variants.py); the live scorer ignores it.
+COMMON_WINDOW_MONTHS: 0

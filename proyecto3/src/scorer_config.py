@@ -42,6 +42,7 @@ SCALAR_KEYS = (
     "MULT_REGIME_SORTINO_BONUS", "MULT_REGIME_SORTINO_MALUS", "MULT_REGIME_MAXDD_BONUS", "MULT_REGIME_MAXDD_MALUS",
     "MIN_OBS_REGIME_SCORING", "REGIME_COVERAGE_MIN", "REGIME_COVERAGE_DAMP", "SLOPE_IMPROVING_THRESHOLD",
     "SLOPE_DETERIORATING_THRESHOLD", "MULT_SLOPE_BONUS", "MULT_SLOPE_MALUS", "SHORT_LIQUIDITY_TRUST_THRESHOLD",
+    "COMMON_WINDOW_MONTHS",
 )
 REQUIRED_KEYS = DICT_KEYS + SCALAR_KEYS
 SUB_TABLES = ("MAX_DRAWDOWN_BY_SUB", "MIN_REAL_RETURN_BY_SUB", "SHORT_DD_LIMIT_BY_SUB", "SHORT_VOL_LIMIT_BY_SUB",
@@ -61,6 +62,9 @@ def validate_params(params: dict) -> dict:
         v = params[k]
         if isinstance(v, bool) or not isinstance(v, (int, float)):
             raise ValueError(f"scorer params: {k} must be a number, got {v!r}")
+    cw = params["COMMON_WINDOW_MONTHS"]
+    if cw != int(cw) or not (cw == 0 or cw >= 12):
+        raise ValueError(f"scorer params: COMMON_WINDOW_MONTHS must be 0 (off) or a whole number of months >= 12, got {cw!r}")
     for name, w in [("BASE_WEIGHTS", params["BASE_WEIGHTS"])] + [(f"SUBPORTFOLIO_WEIGHTS[{s}]", w)
                                                                  for s, w in params["SUBPORTFOLIO_WEIGHTS"].items()]:
         total = sum(w.values())
@@ -136,3 +140,8 @@ def params_hash(params: dict) -> str:
 
 
 SCORER_CONFIG_HASH = params_hash(load_scorer_params())
+
+# FND-0303 V2: the common trailing window (months) of the five selection metrics in the PIT backtest; 0 = off (the live, expanding
+# since-inception behaviour). Read from the same effective parameters as the hash, so an overlay moves both. The live scorer does not read
+# it: the live implementation is written only if the variant is adopted (PREREG_FND-0303 section 7, amendment A2).
+COMMON_WINDOW_MONTHS = int(load_scorer_params()["COMMON_WINDOW_MONTHS"])

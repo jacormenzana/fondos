@@ -8,6 +8,7 @@
     "return_ann_real": 0.25,
     "sharpe": 0.2
   },
+  "COMMON_WINDOW_MONTHS": 0,
   "CRISIS_MDD_DEEP": -0.3,
   "CRISIS_MDD_SHALLOW": -0.1,
   "CRISIS_TTR_FAST": 6.0,

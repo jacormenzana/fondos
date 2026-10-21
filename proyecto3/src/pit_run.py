@@ -26,8 +26,8 @@ if str(_ROOT) not in sys.path:
 from proyecto3.src.pit_cache import CODE_VERSION, ParquetCache, cached_frames, content_hash
 from proyecto3.src.pit_baselines import flatten_score_detail
 from proyecto3.src.pit_candidates import DEFAULT_MAX_STALE_DAYS, log_universe_summary, pit_scores
-from proyecto3.src.pit_metrics import assert_series_cover, expanding_risk_metrics
-from proyecto3.src.scorer_config import SCORER_CONFIG_HASH
+from proyecto3.src.pit_metrics import TRAILING_KEYS, assert_series_cover, expanding_risk_metrics, trailing_risk_metrics
+from proyecto3.src.scorer_config import COMMON_WINDOW_MONTHS, SCORER_CONFIG_HASH
 from proyecto3.src.pit_peer_metrics import alpha_persistence, capture_ratios, momentum_rank
 from proyecto3.src.pit_short_horizon import SHORT_GATE_METRICS, log_coverage, short_gate_metrics
 from shared.config import MIN_NAV_ROWS, REGIME_PUBLICATION_LAG_MONTHS
@@ -59,6 +59,9 @@ class PitRun:
     macro: "dict | None" = None                      # FND-0224 group B frames {metric: dates x isin}, None without group B
     vol_ann: "pd.DataFrame | None" = None            # expanding annualised volatility panel (base-risk control for variants)
     detail: "pd.DataFrame | None" = None             # keep_detail: Layer-3 components flattened (as_of, isin, m_*, x_*); None otherwise
+
+
+_V2_PEERS_WINDOWED = False        # flipped by the commits that window capture_ratio and alpha_persistence (FND-0303 V2 parts B, C)
 
 
 def compute_pit_scores(
@@ -107,6 +110,19 @@ def compute_pit_scores(
     t0 = time.perf_counter()
     momentum = momentum_rank(risk["return_ann"], nature, at, max_stale_days=max_stale_days)
     timings["momentum"] = time.perf_counter() - t0
+
+    # ---- FND-0303 V2: a common trailing window for the selection metrics (0 = off: the expanding frames above, byte for byte) ----
+    risk_scored, risk_key_scored = risk, risk_key
+    if COMMON_WINDOW_MONTHS:
+        if not _V2_PEERS_WINDOWED:
+            raise NotImplementedError("COMMON_WINDOW_MONTHS > 0 needs the windowed capture / persistence (FND-0303 V2 parts B and C)")
+        risk_key_scored = content_hash(risk_key, {"common_window_months": COMMON_WINDOW_MONTHS})
+        win, hit, secs = cached_frames(cache, "risk_window", risk_key_scored, lambda: trailing_risk_metrics(
+            inputs.nav, inputs.ipc, inputs.rate, ipc_lag_months=lag, window_months=COMMON_WINDOW_MONTHS))
+        timings["risk_window"], hits["risk_window"] = secs, hit
+        # momentum (above) keeps the expanding return_ann and srri_nav stays expanding: the PREREG replaces only the listed metrics
+        risk_scored = {**risk, **{k: win[k] for k in TRAILING_KEYS}, "n_obs": win["n_obs"]}
+        min_obs = max(min_obs, COMMON_WINDOW_MONTHS)           # a fund without a full window is ineligible (the young filter)
 
     # ---- d1c: short gates from daily NAV, in ISIN chunks ----
     short = None
@@ -163,7 +179,7 @@ def compute_pit_scores(
     elig_on = bool(getattr(_config, "FUND_DATA_ELIGIBILITY_ENABLED", False))
     elig_params = {"min_coverage": _config.P3_FUND_NAV_MIN_COVERAGE, "max_gap_run": _config.P3_FUND_NAV_MAX_GAP_RUN_MONTHS} if elig_on else None
 
-    score_key = content_hash(risk_key, peers_key, short_keys, at, regime_by_date, inputs.attrs,
+    score_key = content_hash(risk_key_scored, peers_key, short_keys, at, regime_by_date, inputs.attrs,
                              {"stale": max_stale_days, "min_obs": min_obs, "cur": current_universe_only,
                               "scorer_cfg": SCORER_CONFIG_HASH, "universe_cols": 2},          # FND-0192: a changed scorer value can never hit a stale cache
                              CODE_VERSION, *macro_key,          # macro_key empty without group B
@@ -190,7 +206,7 @@ def compute_pit_scores(
     for block in blocks:
         def _score_block(block=block):
             s, u = pit_scores(
-                block, risk, peers, inputs.attrs, regime_by_date, momentum=momentum, short=short,
+                block, risk_scored, peers, inputs.attrs, regime_by_date, momentum=momentum, short=short,
                 max_stale_days=max_stale_days, min_obs=min_obs, current_universe_only=current_universe_only,
                 keep_detail=keep_detail, macro=macro, nav_gap=_nav_gap_for(block), log_universe=False,
             )
