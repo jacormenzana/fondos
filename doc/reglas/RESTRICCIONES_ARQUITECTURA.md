@@ -141,6 +141,21 @@ python -c "import ast; ast.parse(open('archivo.py').read()); print('AST OK')"
 
 Antes de declarar la edición completa. Si la AST falla, no se acepta el cambio.
 
+### R-9 — Una sola clave de periodo para las series mensuales
+
+Una serie mensual lleva uno de tres sellos para la misma observación: fin de mes natural, último día hábil (28,7 % de `fund_nav_monthly`) o inicio de mes (`series_inflation`, factores del OLS macro). Un sello **no** es una identidad: dos series que describen el mismo mes discrepan en su etiqueta, y cada cruce que lo resolvió a mano copió la convención (diez copias inline de `index + MonthEnd(0)` + `duplicated(keep="last")`) o la perdió (el OLS macro descartaba ~30 % de los meses; FND-0300). La clave de periodo y su helper son la instancia ejecutable de P#11.
+
+1. **Clave canónica.** La clave de periodo es el **último día natural del mes** al que pertenece la observación (`shared/period_key.to_period_key`). Todo sello se mapea a ella.
+2. **Un solo helper.** Ningún módulo calcula la clave ni la etiqueta de mes inline (`+ MonthEnd(0)` sobre las fechas de una serie): llama a `shared/period_key.py`. El caso NAV con interruptor (`NAV_MONTH_END_ALIGN_ENABLED`) vive en `shared/nav_month_end.py`, que se construye sobre `period_key` y no repite su lógica.
+3. **Unir, alinear y reindexar solo sobre la clave.** Dos series de distinto origen se combinan (`merge`, `join`, `reindex`, `concat` por columnas) sobre la clave, preferiblemente contra un índice calendario denso (`period_index`), de modo que un mes ausente sea NaN y no acorte la ventana.
+4. **Ventanas = meses naturales, nunca filas ni `DateOffset` sobre fechas crudas.** Un horizonte de N meses es un tramo de N claves (`period_ordinals`, `months_between`, `returns.trailing_window`); la antigüedad se mide en meses entre claves, no en `(fin - inicio).days`.
+5. **Duplicados dentro de una serie.** Dos filas de una misma serie con la misma clave se colapsan conservando la última, **registrando el recuento una vez** (nivel INFO); nunca en silencio. Dos fondos con el mismo mes no son duplicado (la clave de duplicado incluye el grupo).
+6. **La clave se deriva, no se sobrescribe, y cada serie declara su sello.** `snap_frame` añade la clave junto al sello original. El sello real de cada serie almacenada está declarado en `shared/period_key_contract.py`; la desviación respecto a esa línea base se vigila (control `D-PERIOD-KEY`).
+7. **El mes abierto no es un mes completo.** Un último mes cuyo sello está a más de `PARTIAL_TAIL_DAYS` (5) de su fin de mes sigue abierto: conserva su fecha real, y el cálculo lo conserva (`keep`), lo descarta (`drop`) o lo acepta (`snap`) de forma explícita.
+8. **Las series diarias conservan sus fechas.** R-9 se aplica donde una serie diaria se **agrega** a, o se une con, una mensual; nunca se ajusta una serie diaria a la clave (`short_horizon`, `deflate_nav(align_month_end=False)`).
+
+**Garantías ejecutables:** `tests/test_period_key_scan.py` (guarda estática AST sobre `proyecto2/src/calculations`, `proyecto2/src/readers` y `shared`; excepciones `{archivo::función: motivo}`, las `DESIGN` con fecha de revisión obligatoria y caducable; `proyecto3/src` queda para una segunda pasada), `proyecto2/tests/calculations/test_period_key_invariance_pg.py` (cada familia da el mismo valor con el NAV sellado en día hábil o en fin de mes natural) y la auditoría permanente `scripts/audit/period_key_invariance.py` (control `D-PERIOD-KEY`, `GOBIERNO_CONTROLES.md`). Una familia que deja de ser invariante rompe la compilación; **nunca se silencia editando la aserción**.
+
 ---
 
 ## 3. DOCUMENTOS RELACIONADOS
@@ -160,6 +175,7 @@ Antes de declarar la edición completa. Si la AST falla, no se acepta el cambio.
 Antes de aprobar un cambio:
 
 - [ ] AST OK (R-8)
+- [ ] Si une, alinea o ventanea series mensuales: ¿usa `shared/period_key.py` y no una copia inline de la convención de mes? (R-9)
 - [ ] Tests funcionales escritos y pasando (R-7)
 - [ ] Si afecta atributo persistido: ¿incluye migración SQL o se puede esperar al próximo ciclo? (R-2)
 - [ ] Si añade atributo: ¿se añadió a la query `_v3_row` de pipeline? (R-3)
