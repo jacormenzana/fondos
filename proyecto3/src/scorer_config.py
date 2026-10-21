@@ -16,13 +16,21 @@ Validation on load (a typo must fail loudly, never silently fall back to a defau
 No DB; R-7.
 """
 
+import copy
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import yaml
 
 PARAMS_PATH = Path(__file__).resolve().parents[1] / "config" / "scorer_params.yaml"
+
+# FND-0303: a PIT experiment overlays a few values for THAT process only (one subprocess per variant, scripts/launch/p3_pit_variants.py).
+# The overlay may only change keys that already exist (a typo fails loudly), is merged one level deep for the dict-shaped parameters,
+# and is validated like the base file. It feeds SCORER_CONFIG_HASH, so a variant can never be served another variant's cached scores.
+# Live scripts (p3_build_portfolio, p3_promote_scenario) refuse to run while it is set: assert_no_overlay().
+OVERLAY_ENV = "FONDOS_SCORER_PARAMS_OVERLAY"
 
 DICT_KEYS = ("BASE_WEIGHTS", "SUBPORTFOLIO_WEIGHTS", "SUBPORTFOLIO_MAPPING", "NATURE_PROFILE_BONUS", "MAX_DRAWDOWN_BY_SUB",
              "MIN_REAL_RETURN_BY_SUB", "SHORT_DD_LIMIT_BY_SUB", "SHORT_VOL_LIMIT_BY_SUB", "SHORT_HORIZON_WEIGHTS")
@@ -69,11 +77,48 @@ def validate_params(params: dict) -> dict:
     return params
 
 
+def overlay_path() -> "Path | None":
+    """The overlay file named by the environment, or None (the normal case)."""
+    value = os.environ.get(OVERLAY_ENV, "").strip()
+    return Path(value) if value else None
+
+
+def apply_overlay(base: dict, overlay: dict) -> dict:
+    """`base` with `overlay` merged in: scalars replace, dict-shaped parameters merge key by key. Unknown keys raise."""
+    out = copy.deepcopy(base)
+    for key, value in overlay.items():
+        if key not in out:
+            raise ValueError(f"scorer params overlay: unknown parameter {key!r}")
+        if isinstance(out[key], dict):
+            if not isinstance(value, dict):
+                raise ValueError(f"scorer params overlay: {key} must be a mapping")
+            unknown = set(value) - set(out[key])
+            if unknown:
+                raise ValueError(f"scorer params overlay: {key} has unknown entries {sorted(unknown)}")
+            out[key].update(value)
+        else:
+            out[key] = value
+    return out
+
+
 def load_scorer_params(path=None) -> dict:
-    """Read and validate the YAML (default: proyecto3/config/scorer_params.yaml)."""
+    """Read and validate the YAML (default: proyecto3/config/scorer_params.yaml, plus the overlay named by OVERLAY_ENV, if any;
+    an explicit `path` never takes the overlay)."""
     p = Path(path) if path is not None else PARAMS_PATH
     with open(p, encoding="utf-8") as fh:
-        return validate_params(yaml.safe_load(fh))
+        params = yaml.safe_load(fh)
+    ov = overlay_path() if path is None else None
+    if ov is not None:
+        with open(ov, encoding="utf-8") as fh:
+            params = apply_overlay(params, yaml.safe_load(fh) or {})
+    return validate_params(params)
+
+
+def assert_no_overlay(context: str = "this command") -> None:
+    """Live commands must never score with an experiment's parameters: refuse while the overlay variable is set."""
+    if overlay_path() is not None:
+        raise RuntimeError(f"{context} refuses to run with {OVERLAY_ENV} set ({os.environ[OVERLAY_ENV]}): "
+                           "the parameter overlay is for PIT experiments only (FND-0303)")
 
 
 def params_hash(params: dict) -> str:

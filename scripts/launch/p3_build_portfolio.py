@@ -44,6 +44,8 @@ def _default_scenario_id(regime: str, date=None) -> str:
 def main(scenario_id: str | None = None, dry_run: bool = False, allow_stale: bool = False,
          replace_draft: bool = False) -> int:
     assert_release_coupling()   # FND-0243 D4: EUR view and FND-0235 switches move together
+    from proyecto3.src.scorer_config import assert_no_overlay
+    assert_no_overlay("p3_build_portfolio")   # FND-0303: a PIT experiment's parameter overlay never builds a live portfolio
     conn = get_connection()
     clf  = RegimeClassifier(conn)
 

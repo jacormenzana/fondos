@@ -147,6 +147,8 @@ def main(argv=None) -> int:
     ap.add_argument("--accept-alarms", default=None, metavar="MOTIVO")
     ap.add_argument("--ap", default=None, metavar="FND-nnnn", help="ticket que corrige la causa; obligatorio con --accept-alarms")
     args = ap.parse_args(argv)
+    from proyecto3.src.scorer_config import assert_no_overlay
+    assert_no_overlay("p3_promote_scenario")   # FND-0303: never promote with an experiment's parameter overlay active
 
     from shared.config import (ALARM_WATCH_GATE_ENABLED, ALARM_WATCH_WEIGHT_TOLERANCE, AUDIT_EXCEPTION_EVENTS_ENABLED,
                                AUDIT_RESIDUAL_EXPIRY_WARN_DAYS, CODE_INTEGRITY_GATE_ENABLED, COST_DOMAIN_GATE_ENABLED,
