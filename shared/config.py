@@ -917,9 +917,10 @@ ROLLING_TIMESERIES_METRICS: list[str] = [
 # Parámetros globales P3 — selección y cartera
 # ============================================================
 
-# Objetivo de rentabilidad mínima anual real (IPC + inflación monetaria)
-# Usado como referencia en scoring, NO como hard filter individual de fondo
-MIN_REAL_RETURN_TARGET: float = 0.11   # 11% anual (IPC ~3% + M3 ~4% + margen)
+# Objetivo de la cartera (FND-0303, decision del propietario 2026-10-21): rentabilidad NOMINAL anual >= IPC + M3 + este diferencial,
+# a nivel de CARTERA. Es una aspiracion que se informa (informe mensual, backtest PIT), NO una restriccion de seleccion: en
+# 2005-2026 el modelo rindio 3.44% frente a 6.94% de IPC+M3. Definicion unica en shared/objective.py.
+PORTFOLIO_TARGET_SPREAD: float = 0.02
 
 # Versión de scoring activa
 SCORE_VERSION: str = "v1"

@@ -59,6 +59,10 @@ _FILL_METHODS = {"bfill", "ffill", "fillna"}
 # reason: 'DESIGN: <explanation>' for a reviewed-and-accepted pattern, or 'FND-#### <note>' for a
 # real, open, ticketed finding this scanner surfaced but did not fix.
 _SILENT_FILL_EXEMPT: dict[str, str] = {
+    "shared/objective.py::objective_annual":
+        "DESIGN: fillna(0.0) on the M3 leg only: a month without M3 contributes 0 and the objective falls back to the IPC alone "
+        "(the definition the PIT target always had, FND-0189); a constant that never borrows another date's value, and the "
+        "caller's own forward fill is applied before (FND-0303).",
     "proyecto3/src/backtest_inference.py::paired_sharpe_difference":
         "DESIGN: fillna(0.0) on the CASH leg only: a month without a cash return counts as 0% accrual (conservative), a "
         "constant that never borrows another date's value; the strategy returns themselves are dropna-aligned (FND-0219).",

@@ -53,7 +53,7 @@ from proyecto3.src.portfolio_engine import (
 )
 from proyecto3.src.score_candidates import exposure_constrained, flag_fx_exposed, load_current_candidates
 from shared.eur_nav import apply_eur_view_frame   # FND-0243
-from shared.config import P3_FUND_NAV_MAX_AGE_DAYS, REGIME_PUBLICATION_LAG_MONTHS
+from shared.config import P3_FUND_NAV_MAX_AGE_DAYS, REGIME_PUBLICATION_LAG_MONTHS, PORTFOLIO_TARGET_SPREAD
 
 logger = logging.getLogger(__name__)
 
@@ -773,6 +773,11 @@ class Backtester:
                     v = results[col].dropna()
                     lines.append(f"  objetivo IPC+M3 {w:2d}m: supera en {(v > 0).mean()*100:.0f}% de los meses "
                                  f"(exceso medio {v.mean()*100:+.1f}%)")
+                    # FND-0303: la aspiracion IPC+M3+diferencial se informa junto al objetivo base (no restringe la seleccion)
+                    t_ann = (1.0 + results.loc[v.index, f"target_{w}m"]) ** (12.0 / w) - 1.0
+                    va = v + results.loc[v.index, f"target_{w}m"] - ((1.0 + t_ann + PORTFOLIO_TARGET_SPREAD) ** (w / 12.0) - 1.0)
+                    lines.append(f"  aspiracion IPC+M3+{PORTFOLIO_TARGET_SPREAD*100:.0f}pp {w:2d}m: supera en "
+                                 f"{(va > 0).mean()*100:.0f}% de los meses (exceso medio {va.mean()*100:+.1f}%)")
 
         return "\n".join(lines)
 

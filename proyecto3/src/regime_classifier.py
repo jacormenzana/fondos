@@ -689,9 +689,9 @@ class RegimeClassifier:
         if self._macro.empty or "ipc_yoy_avg" not in self._macro.columns:
             return pd.Series(dtype=float)
         macro = self._macro.ffill()
-        ipc = macro["ipc_yoy_avg"]
-        m3 = macro["m3_yoy"] / 100.0 if "m3_yoy" in macro.columns else pd.Series(0.0, index=macro.index)
-        return (ipc + m3.fillna(0.0)).where(ipc.notna()).rename("target_annual")
+        from shared.objective import objective_annual
+        m3 = macro["m3_yoy"] if "m3_yoy" in macro.columns else None
+        return objective_annual(macro["ipc_yoy_avg"], m3).rename("target_annual")
 
     def persist_history(self, dry_run: bool = False) -> int:
         """Escribe classify_historical() en gold.regime_history (FND-0153). Devuelve filas escritas."""

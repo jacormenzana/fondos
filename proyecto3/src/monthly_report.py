@@ -34,7 +34,7 @@ except ImportError:
 
 from proyecto3.src.regime_classifier import RegimeClassifier
 from proyecto3.src.backtesting import Backtester
-from shared.config import REPORT_DIRS, MAX_NON_EUR_UNHEDGED_WEIGHT, MAX_PORTFOLIO_CASH_WEIGHT
+from shared.config import REPORT_DIRS, MAX_NON_EUR_UNHEDGED_WEIGHT, MAX_PORTFOLIO_CASH_WEIGHT, PORTFOLIO_TARGET_SPREAD
 
 _DEFAULT_REPORTS_DIR = REPORT_DIRS["p3"]          # out/reports/p3 (single source: shared/config.py)
 from proyecto3.src import scenario_lifecycle as _lifecycle
@@ -103,75 +103,54 @@ def _autofit(ws, min_width=8, max_width=40):
 
 def _get_objetivo_ipc_m3(conn: "psycopg.Connection") -> dict:
     """
-    Calcula el objetivo minimo anual de preservacion de patrimonio:
-        objetivo = IPC_yoy + M3_yoy
+    Objetivo de la cartera (FND-0303): definicion unica en shared/objective.py.
+        base       = IPC_yoy + M3_yoy            (preservacion de patrimonio)
+        aspiracion = base + PORTFOLIO_TARGET_SPREAD   (se informa, no restringe la seleccion)
+    IPC = media ES+EU; la base del yoy es el MISMO mes un ano antes, por FECHA (R-9), nunca por desplazamiento de filas.
     Devuelve dict con valores anuales y mensuales equivalentes.
     """
-    # IPC ultimo dato disponible (media ES+EU)
-    ipc_rows = conn.execute("""
-        SELECT geography, value, date
-        FROM series_macro
-        WHERE indicator = 'ipc_index' AND geography IN ('ES','EU')
-        ORDER BY date DESC
-        LIMIT 4
-    """).fetchall()
+    from shared.objective import (aspiration_annual, monthly_equivalent, objective_annual, yoy_from_levels)
+
+    last = conn.execute("""
+        SELECT MAX(date) FROM series_macro WHERE indicator = 'ipc_index' AND geography = 'ES'
+    """).fetchone()[0]
 
     ipc_yoy = None
-    if ipc_rows:
-        df_ipc = {}
-        for geo, val, dt in ipc_rows:
-            if geo not in df_ipc:
-                df_ipc[geo] = (dt, float(val))
+    if last is not None:
+        rows = conn.execute("""
+            SELECT geography, date, value FROM series_macro
+            WHERE indicator = 'ipc_index' AND geography IN ('ES','EU')
+              AND date IN (%s::date, (%s::date - INTERVAL '12 months')::date)
+        """, (last, last)).fetchall()
+        level = {(geo, dt): float(val) for geo, dt, val in rows}
+        ago = (last.replace(year=last.year - 1) if last.month != 2 or last.day != 29
+               else last.replace(year=last.year - 1, day=28))
+        vals = []
+        for geo in ("ES", "EU"):
+            y = yoy_from_levels(level.get((geo, last)), level.get((geo, ago)))
+            if y is not None:
+                vals.append(y)
+        if vals:
+            ipc_yoy = sum(vals) / len(vals)
 
-        # Calcular YoY aproximado desde los ultimos datos disponibles
-        ipc_now = conn.execute("""
-            SELECT geography, value FROM series_macro
-            WHERE indicator='ipc_index' AND geography IN ('ES','EU')
-            AND date = (SELECT MAX(date) FROM series_macro
-                        WHERE indicator='ipc_index' AND geography='ES')
-        """).fetchall()
-        ipc_12m = conn.execute("""
-            SELECT geography, value FROM series_macro
-            WHERE indicator='ipc_index' AND geography IN ('ES','EU')
-            AND date = (
-                SELECT date FROM series_macro
-                WHERE indicator='ipc_index' AND geography='ES'
-                ORDER BY date DESC LIMIT 1 OFFSET 12
-            )
-        """).fetchall()
-
-        if ipc_now and ipc_12m:
-            now_map = {g: v for g, v in ipc_now}
-            ago_map = {g: v for g, v in ipc_12m}
-            vals = []
-            for geo in ['ES', 'EU']:
-                if geo in now_map and geo in ago_map and ago_map[geo] > 0:
-                    vals.append((now_map[geo] - ago_map[geo]) / ago_map[geo])
-            if vals:
-                ipc_yoy = sum(vals) / len(vals)
-
-    # M3 ultimo dato disponible
     m3_row = conn.execute("""
         SELECT value FROM series_macro
         WHERE indicator='m3_yoy'  AND geography='EU'
         ORDER BY date DESC LIMIT 1
     """).fetchone()
-    m3_yoy = float(m3_row[0]) / 100 if m3_row else None
+    m3_pct = float(m3_row[0]) if m3_row else None
+    m3_yoy = m3_pct / 100 if m3_pct is not None else None
 
-    objetivo_anual = None
-    if ipc_yoy is not None and m3_yoy is not None:
-        objetivo_anual = ipc_yoy + m3_yoy
-    elif ipc_yoy is not None:
-        objetivo_anual = ipc_yoy
-
-    objetivo_mensual = ((1 + objetivo_anual) ** (1/12) - 1
-                        if objetivo_anual is not None else None)
+    objetivo_anual = objective_annual(ipc_yoy, m3_pct)
+    aspiracion_anual = aspiration_annual(objetivo_anual)
 
     return {
-        "ipc_yoy":        ipc_yoy,
-        "m3_yoy":         m3_yoy,
-        "objetivo_anual": objetivo_anual,
-        "objetivo_mensual": objetivo_mensual,
+        "ipc_yoy":          ipc_yoy,
+        "m3_yoy":           m3_yoy,
+        "objetivo_anual":   objetivo_anual,
+        "objetivo_mensual": monthly_equivalent(objetivo_anual),
+        "aspiracion_anual": aspiracion_anual,
+        "aspiracion_mensual": monthly_equivalent(aspiracion_anual),
     }
 
 
@@ -249,6 +228,8 @@ def _build_portada(ws, conn, clf, scenario_id, is_production=True):
          f"{obj['objetivo_anual']*100:.1f}% anual / "
          f"{obj['objetivo_mensual']*100:.2f}% mensual"
          if obj['objetivo_anual'] else "N/D"),
+        (f"Aspiracion IPC+M3+{PORTFOLIO_TARGET_SPREAD*100:.0f}pp (se informa, no restringe)",
+         f"{obj['aspiracion_anual']*100:.1f}% anual" if obj['aspiracion_anual'] else "N/D"),
     ]
 
     for i, (label, value) in enumerate(datos_regimen, 3):
