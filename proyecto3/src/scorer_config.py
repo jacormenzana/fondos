@@ -80,7 +80,16 @@ def validate_params(params: dict) -> dict:
 def overlay_path() -> "Path | None":
     """The overlay file named by the environment, or None (the normal case)."""
     value = os.environ.get(OVERLAY_ENV, "").strip()
-    return Path(value) if value else None
+    if not value:
+        return None
+    path = Path(value)
+    # A relative path would depend on the working directory of whoever starts the process; the variable carries a path, never the payload
+    # itself (no quoting or escaping between cmd, PowerShell, git-bash and WSL), and the file is the audit artifact of the exact values.
+    if not path.is_absolute():
+        raise ValueError(f"{OVERLAY_ENV} must be an absolute path to a YAML file, got {value!r}")
+    if not path.is_file():
+        raise FileNotFoundError(f"{OVERLAY_ENV} points to a file that does not exist: {value}")
+    return path
 
 
 def apply_overlay(base: dict, overlay: dict) -> dict:

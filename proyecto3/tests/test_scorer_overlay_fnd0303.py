@@ -66,6 +66,18 @@ def test_an_explicit_path_never_takes_the_overlay(no_env, monkeypatch, tmp_path)
     assert sc.load_scorer_params(sc.PARAMS_PATH)["MAX_DRAWDOWN_BY_SUB"] != V3["MAX_DRAWDOWN_BY_SUB"]
 
 
+def test_the_variable_carries_an_absolute_existing_path_never_the_payload(no_env, monkeypatch, tmp_path):
+    monkeypatch.setenv(sc.OVERLAY_ENV, "MAX_DRAWDOWN_BY_SUB: {Defensiva: -0.1}")        # a pasted payload is not a path
+    with pytest.raises(ValueError, match="absolute path"):
+        sc.load_scorer_params()
+    monkeypatch.setenv(sc.OVERLAY_ENV, "relative/overlay.yaml")
+    with pytest.raises(ValueError, match="absolute path"):
+        sc.overlay_path()
+    monkeypatch.setenv(sc.OVERLAY_ENV, str(tmp_path / "missing.yaml"))
+    with pytest.raises(FileNotFoundError):
+        sc.overlay_path()
+
+
 def test_live_commands_refuse_while_the_overlay_is_set(no_env, monkeypatch, tmp_path):
     monkeypatch.setenv(sc.OVERLAY_ENV, str(_write(tmp_path, V1)))
     with pytest.raises(RuntimeError, match="PIT experiments only"):
