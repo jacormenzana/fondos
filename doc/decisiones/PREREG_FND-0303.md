@@ -1,0 +1,55 @@
+# PREREG — FND-0303: should selection carry an absolute floor, one common window and mandate-aligned filters?
+
+- **Status: DRAFT, not approved.** Becomes binding when the owner writes "Approved: <date>" here and this file is committed (tag `prereg-fnd0303`) BEFORE any variant number is computed. Afterwards only dated amendments at the end, never edits. The numeric tolerances below are business choices the owner confirms by signing.
+- **Objective (owner, 2026-10-21):** nominal return ≥ IPC + M3 + 2 pp **at portfolio level, as an aspiration that is REPORTED** (`shared/objective.py`), never a selection constraint. The binding constraint is capital preservation: max drawdown ≤ 15 %.
+- **Code under test:** `origin/master` at the commit that holds `shared/objective.py` (FND-0303 step 2) + `proyecto3/config/scorer_params.yaml` of d5397af (SIMPLIFY: neutral multipliers, equal weights, hysteresis 10 %). The frozen models of FND-0299 (f07c047, d5397af) are NOT touched; the winner, if any, is a third frozen model.
+- **Numbers seen before this file** (read-only): 2026-10-19 audit of the current PRODUCTION portfolio (4 of 30 funds are EUR money funds with negative real return on `since_inception`, 22 % of weight; 2 Dinámica funds at max DD −29 %); Defensiva pool 853 funds with `since_inception` windows of 13..323 months (median 171, corr(months, max_dd) = −0.44); PIT run 20261019_080808 (pre-SIMPLIFY configuration): model net nominal 3.44 %/yr 2005-2026 vs IPC+M3 6.94 %, M_h0 max DD −16.2 %, M_h10 max DD −14.2 %; the V2 pool pre-check of §3 (2026-10-21, from that run's saved `inputs/`). No variant has been computed.
+
+## 1. Problem statement (FND-0303)
+D1 percentile-within-nature score with no absolute hurdle; D2 `since_inception` windows not comparable; D3 hard filters looser than the 15 % mandate (`MAX_DRAWDOWN_BY_SUB` −20/−30/−40 %, `MIN_REAL_RETURN_BY_SUB` −5/−2/0 %); D4 objective stated in no single frame (closed by `shared/objective.py`).
+
+## 2. Variants (declared now, round numbers, nothing tuned afterwards)
+| Id | Change vs V0 (live d5397af) | Where |
+|---|---|---|
+| **V0** | none — the reference | — |
+| **V1 floor** | `MIN_REAL_RETURN_BY_SUB` = 0 / 0 / 0: real return ≥ 0 on the evaluation window (a fund must beat inflation). **NOT an IPC+M3 floor.** Measured on the V2 window when V2 is on, else on `since_inception` | `scorer_params.yaml` only |
+| **V2 window** | the metrics that feed the filters and the base score (`return_ann`, `sharpe`, `max_dd`, `alpha_persistence`, `capture_ratio`) are read from the **same trailing 60 months** (`rolling_5y`) for every fund; a fund with fewer than 60 monthly NAVs at the date is ineligible. Fixed window, never scaled dynamically (that would recreate D2) | code: `fund_scorer` metric horizon + PIT `pit_metrics`; flag `SELECTION_COMMON_WINDOW_ENABLED` (OFF) |
+| **V3 mandate** | `MAX_DRAWDOWN_BY_SUB` = −10 % Defensiva / −15 % Equilibrada / −20 % Dinámica (on the V2 window when on) | `scorer_params.yaml` only |
+| **V123** | V1 + V2 + V3 | — |
+
+V1 and V3 are parameter changes; the PIT run takes them as an overlay of `scorer_params.yaml` for THAT run only. A pool that cannot fill a sub-portfolio is held as structural cash, as today (FND-0187); `MAX_PORTFOLIO_CASH_WEIGHT` 10 % is a promotion gate (Rule 5). Total new trials: **5 configurations** (the ledger N_scan 437 → 442, 2 × N_scan 884, `scripts/audit/pit_trial_ledger.py`); Rules 6-7 add no trial.
+
+## 3. Data, window, conventions
+- Same as PREREG_FND-0193 §1: primary window 2005-01-31..last PIT month, chained 1-month net returns, 25 bp on real turnover for every variant (0 / 50 bp sensitivities), Sharpe in excess of monthly cash, hysteresis 10 %. **The window is anchored at 2005-01-31 for every variant and is never truncated; no month is dropped from any series.**
+- **V2 eligibility diagnostics** (per PIT month and sub-portfolio, computed on the saved inputs before any run and logged with date and magnitude): eligible funds with ≥ 60 months ≥ 30; ≥ 10 management companies; the largest company ≤ 20 % of the pool. A shortfall month is converted by the builder into structural cash (continuous); a variant with shortfall months in > 10 % of months is flagged "data-starved" in the report (reported, never an automatic failure). Pre-check (run 20261019_080808 inputs, funds with ≥ 60 months observed in the last 3 months): minimum over 2005-2026 of 112 / 283 / 235 funds (Defensiva / Equilibrada / Dinámica); in 2005-01 46 / 71 / 64 management companies, top-1 share 7 / 8 / 7 %; the V2 pool is 41-44 % of the PIT universe in 2005 against ~90 % today.
+- **Determinism gate first:** V0 run twice on the same code and data must give an identical `series_stats.json` (run 20261019_080808 pre-dates SIMPLIFY, so it is context, not a reproduction target); otherwise stop.
+- **Execution:** one orchestrator command (owner-run) starts each variant in its own subprocess (`sys.executable -I`, own overlay file, timeout 90 min, memory guard of `guarded_run.ps1`) and writes one `variant_status.json` per variant (`variant`, `status` success|timeout|failed|oom, `exit_code`, `started`, `ended`, `stderr_path`). The report reads only those files. A failed or timed-out variant is reported FAILED, the run continues, and that variant's verdict is "incomplete" (the owner reruns it); a determinism-gate failure aborts everything.
+
+## 4. Metrics, in order of precedence
+1. **Mandate:** max drawdown ≤ 15 % on the full history and on 2005-10, 2011-16, 2017-21, 2022-26; bootstrap P(max DD over 36 m < −15 %) (stationary bootstrap, block 6, 5,000 resamples, seed 12345) no higher than V0's.
+2. **Objective gap:** net nominal annualised return minus IPC+M3 and minus the +2 pp aspiration per sub-period; share of rolling-12 m windows ≥ each. Reported for every variant.
+3. **Risk-adjusted:** Sharpe vs cash, paired stationary bootstrap (`backtest_inference.paired_sharpe_difference`, mean block 6, 2,000 resamples, seed 12345, 90 % two-sided interval).
+4. **Mandate-compliance metric (reported, never decisive):** weight share of selected funds whose real return is negative on the evaluation window; number of selected funds with max DD below the sub-portfolio limit.
+5. **Stress episodes** (reported per variant: max drawdown, months to recover, cash path): 2008-09..2009-03, 2020-02..2020-03, 2022-01..2022-12. They are dated on a **variant-independent reference**: the B-STATIC mix (Defensiva 0.464286 / Equilibrada 0.364286 / Dinámica 0.171429) applied to equal-weight indices of ALL funds by sub-portfolio nature mapping in the saved `nav.parquet` + `attrs.parquet` (no eligibility, no selection, hashed with the inputs). Trough = minimum of its cumulative value inside the episode window; recovery end = first month it regains its pre-episode peak, capped at trough + 36 months (a censored recovery is flagged).
+6. **Cash:** total structural cash (mean, 95th percentile, share of months > 10 %) and **variant-induced cash** = max(0, cash_variant − cash_V0) per month (V0's own cash is data sparsity of the same months and universe).
+
+## 5. Decision rules (a variant is ADOPTED only if ALL hold versus V0)
+1. Drawdown breaker passes (§4.1) in every evaluation.
+2. **Non-inferior risk-adjusted return:** Sharpe(variant) − Sharpe(V0) point estimate ≥ −0.05 and the 90 % interval's lower bound > −0.15.
+3. **Objective not worse:** annualised net nominal return not lower than V0's by more than 0.5 pp on the full window and in at least 3 of the 4 sub-periods.
+4. Mean monthly turnover not higher than V0's by more than 5 pp of capital.
+5. The live dry-run of the variant on today's data is promotable: all promotion gates pass and structural cash ≤ 10 %.
+6. **Cash timing (all variants, on variant-induced cash):** C1 mean ≤ 5 %; C2 maximum monthly ≤ 20 %; C3 time-weighted mean over each stress [trough, recovery end] ≤ 10 %; C4 the variant's return over each [trough, recovery end] is not below V0's by more than 0.33 pp per month of that window (missed-rebound check).
+If several variants pass, the **simplest** is adopted (fewest changes: V1 < V3 < V2 < V123); ties by higher Sharpe point estimate.
+7. **Fallback (explicit):** if V0 fails Rule 1 and no variant passes Rules 1-6, nothing is promoted automatically, V0 stays in production, the variant with the lowest max drawdown among those passing Rules 2-4 and 6 is proposed for the FND-0223 waiver review, and execution halts for the owner's decision. If V0 passes Rule 1 and no variant passes, V0 stays and the ticket closes with the evidence.
+
+## 6. Limits stated up front
+All evidence is post-2000 and the macro-regime structure may not persist; the early PIT pool is smaller (V2: 41-44 % of the universe in 2005), so early results rest on fewer funds; synthetic scenarios (liquidity dislocation, a persistent inflation spiral) are NOT tested here (Spain CPI reached 10.7 % YoY in 2022-07, inside the window, so a >10 % inflation episode is covered historically); a separate ticket may be opened for them. The only blind test is the forward holdout: checkpoints 2028-10-31 and 2029-10-31 (FND-0299) record the adopted model, V0 = d5397af and f07c047 side by side.
+
+## 7. Implementation order after approval
+(1) overlay mechanism + `SELECTION_COMMON_WINDOW_ENABLED` (OFF) + `scripts/launch/p3_pit_variants.py` (orchestrator only, `variant_status.json`) + tests, no behaviour change; (2) owner-run: the orchestrator command (determinism gate, then V1, V3, V2, V123); (3) report `doc/decisiones/REPORT_FND-0303.md` against §4-§5; (4) if a variant is adopted: parameter / flag flip, rebuild DRAFT, promotion gates, all owner-run.
+
+## 8. Amendments
+Approved: 2026-10-21
+
+A1 (2026-10-21, clerical, claude): the Status line at the top says "DRAFT, not approved" because it was written before signing; the document is binding from the Approved line above. No rule, threshold or variant changed.
