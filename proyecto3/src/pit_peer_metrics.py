@@ -354,3 +354,135 @@ def alpha_persistence(
         "alpha_persistence": pd.DataFrame(out_p, index=nav.index, columns=nav.columns),
         "alpha_persistence_n": pd.DataFrame(out_n, index=nav.index, columns=nav.columns),
     }
+
+
+# ============================================================
+# FND-0303 V2: the same two peer metrics over a COMMON trailing window
+# ============================================================
+
+def trailing_capture_ratios(nav: pd.DataFrame, nature: pd.Series, common_months: int = 60,
+                            min_periods: int = CAPTURE_MIN_PERIODS) -> dict:
+    """Upside / downside capture and capture_ratio over the fund's trailing `common_months` bars instead of its whole history.
+
+    The month-end construction of `_capture_ratios_month_end` (FND-0202), with every cumulative sum replaced by a trailing difference over
+    the `common_months - 1` returns that lie inside a window of `common_months` monthly bars (date > t - common_months): the oracle is that
+    function applied to the NAV rows of the window (tests/test_pit_trailing_window_fnd0303.py). A fund needs a bar in EVERY month of the
+    window, and the same minimum counts as the expanding version, else NaN. PIT-safe: the value at t only uses bars up to t."""
+    if not _config.CAPTURE_MONTH_END_ENABLED:
+        raise NotImplementedError("the V2 window is defined on the month-end capture convention (CAPTURE_MONTH_END_ENABLED, FND-0202)")
+    me = nav.index + pd.offsets.MonthEnd(0)
+    bars = nav.groupby(me).last()
+    grid = pd.date_range(bars.index.min(), bars.index.max(), freq=pd.offsets.MonthEnd())
+    bars = bars.reindex(grid)
+    ret = bars.pct_change(fill_method=None).to_numpy(dtype=float)
+    fin = np.isfinite(ret)
+    rz = np.where(fin, ret, 0.0)
+    nat = nature.reindex(bars.columns).to_numpy(dtype=object)
+    bench = np.full(ret.shape, np.nan)
+    for n in pd.unique(nat[pd.notna(nat)]):
+        idx = np.where(nat == n)[0]
+        cat_sum, cat_n = rz[:, idx].sum(axis=1), fin[:, idx].sum(axis=1)
+        peers_n = cat_n[:, None] - fin[:, idx]
+        peers_sum = cat_sum[:, None] - rz[:, idx]
+        with np.errstate(divide="ignore", invalid="ignore"):
+            bench[:, idx] = np.where(peers_n > 0, peers_sum / peers_n, np.nan)
+    valid = fin & np.isfinite(bench)
+    up, down = valid & (bench > 0), valid & (bench < 0)
+    s = int(common_months) - 1                                    # returns inside a window of `common_months` bars
+
+    def win(a, size=s):
+        """Trailing sum over the last `size` rows (rows g-size+1..g); the first rows hold partial windows, which `ok` below rejects."""
+        c = np.cumsum(a, axis=0, dtype=float)
+        prev = np.zeros_like(c)
+        if len(c) > size:
+            prev[size:] = c[:-size]
+        return c - prev
+
+    bars_n = win(bars.notna().to_numpy(dtype=float), int(common_months))      # bars present in the window of `common_months` months
+    n_ret, m = win(fin), win(valid)
+    up_n, dn_n = win(up), win(down)
+    up_f, up_b = win(np.where(up, ret, 0.0)), win(np.where(up, bench, 0.0))
+    dn_f, dn_b = win(np.where(down, ret, 0.0)), win(np.where(down, bench, 0.0))
+    with np.errstate(divide="ignore", invalid="ignore"):
+        upside = (up_f / up_n) / (up_b / up_n)
+        downside = (dn_f / dn_n) / (dn_b / dn_n)
+        ratio = upside / downside
+    ok = ((bars_n >= common_months) & (n_ret >= min_periods * 2) & (m >= min_periods * 2) & (up_n >= min_periods) & (dn_n >= min_periods)
+          & (np.abs(downside) >= _DOWNSIDE_FLOOR) & bars.notna().to_numpy())
+    out = {}
+    for name, v in (("upside_capture", upside), ("downside_capture", downside), ("capture_ratio", ratio)):
+        vv = np.where(np.isnan(v), np.nan, np.clip(v, -_CLAMP, _CLAMP))
+        out[name] = pd.DataFrame(np.where(ok, vv, np.nan), index=grid, columns=nav.columns)
+    return out
+
+
+def trailing_alpha_persistence(
+    nav: pd.DataFrame,
+    nature: pd.Series,
+    common_months: int = 60,
+    window_months: int = PERSISTENCE_WINDOW_MONTHS,
+    step_months: int = PERSISTENCE_STEP_MONTHS,
+    min_windows: int = PERSISTENCE_MIN_WINDOWS,
+) -> dict:
+    """alpha_persistence over the fund's trailing `common_months` instead of its whole history.
+
+    At every date t at which the fund has a full window (`common_months` observations with date > t - common_months), the rolling
+    `window_months` windows start at the FIRST observation of that trailing window, step `step_months` and are scored exactly as
+    `alpha_persistence` scores them (same peer window returns, same exclusion of the fund itself, same minimums). Oracle: `alpha_persistence`
+    applied to the NAV rows of the window, read at its last row (tests/test_pit_trailing_window_fnd0303.py). With the production
+    parameters (36 / 6 / min 4 windows) a 60-month window holds four or five windows, so at most one may be unscoreable: an expanding
+    history has many more windows, a short common one has few -- a difference to read when comparing V2 with V0."""
+    dates = nav.index.to_numpy()
+    values = nav.to_numpy(dtype=float)
+    min_obs = window_months - 3
+    out_p = np.full(nav.shape, np.nan)
+    out_n = np.full(nav.shape, np.nan)
+    nat = nature.reindex(nav.columns)
+    peers_of = {n: np.flatnonzero((nat == n).to_numpy()) for n in nat.dropna().unique()}
+    window_cache: dict = {}
+    offset = pd.DateOffset(months=int(common_months))
+
+    for j, isin in enumerate(nav.columns):
+        if pd.isna(nat.iloc[j]):
+            continue
+        col = values[:, j]
+        pos = np.flatnonzero(np.isfinite(col))
+        if len(pos) < common_months:
+            continue
+        fdates = nav.index[pos]
+        fvals = col[pos]
+        fd64 = fdates.to_numpy()
+        f_months = _month_ordinals(fdates) if _by_dates_enabled() else None
+        starts = np.searchsorted(fd64, (fdates - offset).to_numpy(), side="right")
+        group = peers_of[nat.iloc[j]]
+        mine = np.where(group == j)[0]
+        for i in range(len(pos)):
+            lo_w = int(starts[i])
+            if i - lo_w + 1 < common_months:
+                continue
+            wins = total = 0
+            for ws, we in persistence_windows(fdates[lo_w], fdates[i], window_months, step_months):
+                lo = np.searchsorted(fd64, ws.to_datetime64(), side="left")
+                hi = np.searchsorted(fd64, we.to_datetime64(), side="right")
+                nw = hi - lo
+                if nw < min_obs:
+                    continue
+                nw_exp = nw if f_months is None else int(f_months[hi - 1] - f_months[lo]) + 1
+                ret_f = (fvals[hi - 1] / fvals[lo]) ** (12.0 / nw_exp) - 1.0
+                key = (nat.iloc[j], ws, we)
+                if key not in window_cache:
+                    window_cache[key] = _peer_window_returns(values[:, group], dates, ws.to_datetime64(), we.to_datetime64(), min_obs)
+                peer_ret = window_cache[key]
+                keep = np.isfinite(peer_ret)
+                if len(mine):
+                    keep[mine] = False                                   # exclude the fund itself
+                if keep.any():
+                    total += 1
+                    wins += int(ret_f > float(peer_ret[keep].mean()))
+            if total >= min_windows:
+                out_p[pos[i], j] = wins / total
+                out_n[pos[i], j] = total
+    return {
+        "alpha_persistence": pd.DataFrame(out_p, index=nav.index, columns=nav.columns),
+        "alpha_persistence_n": pd.DataFrame(out_n, index=nav.index, columns=nav.columns),
+    }

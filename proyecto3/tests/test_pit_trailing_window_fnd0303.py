@@ -118,3 +118,90 @@ def test_the_input_panel_is_not_modified():
     snap = panel.copy()
     trailing_risk_metrics(panel, tpm._ipc(), tpm._rf(), window_months=W)
     pd.testing.assert_frame_equal(panel, snap, check_exact=True)
+
+
+# ------------------------------------------------------------------ parts B and C: capture and persistence
+from proyecto3.src.pit_peer_metrics import (alpha_persistence, capture_ratios, trailing_alpha_persistence,   # noqa: E402
+                                            trailing_capture_ratios)
+
+
+def _peers_panel():
+    rng = np.random.default_rng(31)
+    n, dates = 130, pd.date_range("2008-01-31", periods=130, freq=pd.offsets.MonthEnd())
+    starts = {"A1": 0, "A2": 0, "A3": 12, "A4": 20, "A5": 0, "B1": 0, "B2": 40}
+    cols = {}
+    for name, start in starts.items():
+        s = pd.Series(100.0 * np.cumprod(1.0 + rng.normal(0.004, 0.025, n)), index=dates)
+        s.iloc[:start] = np.nan
+        cols[name] = s
+    panel = pd.DataFrame(cols)
+    panel.loc[dates[70:73], "A5"] = np.nan                              # a 3-month hole: windows containing it are not full
+    nature = pd.Series({c: ("A" if c.startswith("A") else "B") for c in panel.columns})
+    return panel, nature
+
+
+def _slice(panel, t):
+    return panel[(panel.index > t - pd.DateOffset(months=W)) & (panel.index <= t)]
+
+
+def _same(got, exp, msg):
+    if np.isnan(exp):
+        assert np.isnan(got), msg
+    else:
+        assert got == pytest.approx(exp, rel=1e-9, abs=1e-12), (msg, got, exp)
+
+
+def test_trailing_capture_equals_the_expanding_capture_of_the_window_rows():
+    panel, nature = _peers_panel()
+    res = trailing_capture_ratios(panel, nature, W)
+    checked = 0
+    for t in panel.index[W + 2::9]:
+        sl = _slice(panel, t)
+        exp = capture_ratios(sl, nature)
+        for fund in panel.columns:
+            if np.isnan(panel.loc[t, fund]):
+                continue
+            full = sl[fund].notna().sum() == W                              # the V2 rule: a bar in every month of the window
+            for metric in ("upside_capture", "downside_capture", "capture_ratio"):
+                if full:
+                    _same(res[metric].loc[t, fund], exp[metric].loc[t, fund], (metric, fund, t.date()))
+                    checked += 1
+                else:
+                    assert np.isnan(res[metric].loc[t, fund]), (metric, fund, t.date(), "partial window must be NaN")
+    assert checked > 60
+    assert res["capture_ratio"].loc[panel.index[-1], ["A1", "A2", "B1"]].notna().any()
+
+
+def test_trailing_persistence_equals_the_expanding_persistence_of_the_window_rows():
+    panel, nature = _peers_panel()
+    res = trailing_alpha_persistence(panel, nature, W)
+    checked = valid = 0
+    for t in panel.index[W + 2::6]:
+        sl = _slice(panel, t)
+        exp = alpha_persistence(sl, nature)
+        for fund in panel.columns:
+            if np.isnan(panel.loc[t, fund]):
+                continue
+            if sl[fund].notna().sum() == W:                                 # a full window: the oracle applies
+                for metric in ("alpha_persistence", "alpha_persistence_n"):
+                    _same(res[metric].loc[t, fund], exp[metric].loc[t, fund], (metric, fund, t.date()))
+                checked += 1
+                valid += int(not np.isnan(res["alpha_persistence"].loc[t, fund]))
+            else:
+                assert np.isnan(res["alpha_persistence"].loc[t, fund]), (fund, t.date(), "partial window must be NaN")
+    assert checked > 25 and valid > 10, (checked, valid)
+
+
+def test_persistence_values_are_shares_of_four_or_five_windows():
+    panel, nature = _peers_panel()
+    res = trailing_alpha_persistence(panel, nature, W)
+    n = res["alpha_persistence_n"].stack()
+    p = res["alpha_persistence"].stack()
+    assert len(p) > 0 and set(n.unique()) <= {4.0, 5.0}                     # 36 / 6 / min 4: a 60-month window holds 4 or 5 windows
+    assert ((p >= 0) & (p <= 1)).all()
+    assert ((p * n).round(9) % 1 == 0).all()                                # a share of whole windows
+
+
+def test_the_v2_chain_needs_no_guard_flag_any_more():
+    text = (_ROOT / "proyecto3" / "src" / "pit_run.py").read_text(encoding="utf-8")
+    assert "_V2_PEERS_WINDOWED" not in text and "NotImplementedError" not in text

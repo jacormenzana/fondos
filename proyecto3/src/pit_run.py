@@ -28,7 +28,8 @@ from proyecto3.src.pit_baselines import flatten_score_detail
 from proyecto3.src.pit_candidates import DEFAULT_MAX_STALE_DAYS, log_universe_summary, pit_scores
 from proyecto3.src.pit_metrics import TRAILING_KEYS, assert_series_cover, expanding_risk_metrics, trailing_risk_metrics
 from proyecto3.src.scorer_config import COMMON_WINDOW_MONTHS, SCORER_CONFIG_HASH
-from proyecto3.src.pit_peer_metrics import alpha_persistence, capture_ratios, momentum_rank
+from proyecto3.src.pit_peer_metrics import (alpha_persistence, capture_ratios, momentum_rank, trailing_alpha_persistence,
+                                            trailing_capture_ratios)
 from proyecto3.src.pit_short_horizon import SHORT_GATE_METRICS, log_coverage, short_gate_metrics
 from shared.config import MIN_NAV_ROWS, REGIME_PUBLICATION_LAG_MONTHS
 
@@ -59,9 +60,6 @@ class PitRun:
     macro: "dict | None" = None                      # FND-0224 group B frames {metric: dates x isin}, None without group B
     vol_ann: "pd.DataFrame | None" = None            # expanding annualised volatility panel (base-risk control for variants)
     detail: "pd.DataFrame | None" = None             # keep_detail: Layer-3 components flattened (as_of, isin, m_*, x_*); None otherwise
-
-
-_V2_PEERS_WINDOWED = False        # flipped by the commits that window capture_ratio and alpha_persistence (FND-0303 V2 parts B, C)
 
 
 def compute_pit_scores(
@@ -102,8 +100,14 @@ def compute_pit_scores(
                                     "NAV_MONTH_END_ALIGN_ENABLED")
                   if getattr(_config, n, False)}
     peers_key = content_hash(inputs.nav, nature, CODE_VERSION, *([peer_flags] if peer_flags else []))
-    peers, hit, secs = cached_frames(cache, "peers", peers_key, lambda: {
-        **alpha_persistence(inputs.nav, nature), **capture_ratios(inputs.nav, nature)})
+    if COMMON_WINDOW_MONTHS:      # FND-0303 V2: the same two metrics over the common trailing window (the expanding ones are not needed)
+        peers_key = content_hash(peers_key, {"common_window_months": COMMON_WINDOW_MONTHS})
+        peers, hit, secs = cached_frames(cache, "peers_window", peers_key, lambda: {
+            **trailing_alpha_persistence(inputs.nav, nature, COMMON_WINDOW_MONTHS),
+            **trailing_capture_ratios(inputs.nav, nature, COMMON_WINDOW_MONTHS)})
+    else:
+        peers, hit, secs = cached_frames(cache, "peers", peers_key, lambda: {
+            **alpha_persistence(inputs.nav, nature), **capture_ratios(inputs.nav, nature)})
     timings["peers"], hits["peers"] = secs, hit
 
     # ---- momentum rank at the evaluation dates (cheap; depends on `at` and staleness) ----
@@ -114,8 +118,6 @@ def compute_pit_scores(
     # ---- FND-0303 V2: a common trailing window for the selection metrics (0 = off: the expanding frames above, byte for byte) ----
     risk_scored, risk_key_scored = risk, risk_key
     if COMMON_WINDOW_MONTHS:
-        if not _V2_PEERS_WINDOWED:
-            raise NotImplementedError("COMMON_WINDOW_MONTHS > 0 needs the windowed capture / persistence (FND-0303 V2 parts B and C)")
         risk_key_scored = content_hash(risk_key, {"common_window_months": COMMON_WINDOW_MONTHS})
         win, hit, secs = cached_frames(cache, "risk_window", risk_key_scored, lambda: trailing_risk_metrics(
             inputs.nav, inputs.ipc, inputs.rate, ipc_lag_months=lag, window_months=COMMON_WINDOW_MONTHS))

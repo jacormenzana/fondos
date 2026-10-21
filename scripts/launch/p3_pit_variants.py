@@ -44,17 +44,19 @@ RC_OK, RC_VARIANT_FAILED, RC_GATE_FAILED, RC_INCOMPARABLE = 0, 1, 2, 3
 # V0 = the live construction: hysteresis band 10 %, 25 bp (PREREG_FND-0303 section 3). Every variant shares these arguments.
 BASE_ARGS = ["--bps-main", "25", "--hysteresis-band", "0.10", "--hysteresis-grid", "", "--no-scores"]
 
-# PREREG_FND-0303 section 2. V1 / V3 are parameter overlays. V2 / V123 need the common-window code (SELECTION_COMMON_WINDOW_ENABLED),
-# which is not merged yet: they are reported "not_available" and never silently run as V0.
+# PREREG_FND-0303 section 2. All four variants are parameter overlays; V2 / V123 set COMMON_WINDOW_MONTHS (amendment A2). The
+# `needs_v2` / V2_AVAILABLE pair is kept as a guard: if the common-window code is ever withdrawn they report "not_available" and are
+# never silently run as V0.
 VARIANTS: dict = {
     "V0":   {"overlay": {}, "needs_v2": False},
     "V1":   {"overlay": {"MIN_REAL_RETURN_BY_SUB": {"Defensiva": 0.0, "Equilibrada": 0.0, "Dinamica": 0.0}}, "needs_v2": False},
     "V3":   {"overlay": {"MAX_DRAWDOWN_BY_SUB": {"Defensiva": -0.10, "Equilibrada": -0.15, "Dinamica": -0.20}}, "needs_v2": False},
-    "V2":   {"overlay": {}, "needs_v2": True},
+    "V2":   {"overlay": {"COMMON_WINDOW_MONTHS": 60}, "needs_v2": True},
     "V123": {"overlay": {"MIN_REAL_RETURN_BY_SUB": {"Defensiva": 0.0, "Equilibrada": 0.0, "Dinamica": 0.0},
-                         "MAX_DRAWDOWN_BY_SUB": {"Defensiva": -0.10, "Equilibrada": -0.15, "Dinamica": -0.20}}, "needs_v2": True},
+                         "MAX_DRAWDOWN_BY_SUB": {"Defensiva": -0.10, "Equilibrada": -0.15, "Dinamica": -0.20},
+                         "COMMON_WINDOW_MONTHS": 60}, "needs_v2": True},
 }
-V2_AVAILABLE = False          # flipped by the commit that merges the flag-gated common-window code
+V2_AVAILABLE = True           # the common-window code (parts A, B, C) is merged; the guard stays for a withdrawal
 
 
 def sha256_file(path) -> "str | None":
@@ -125,7 +127,7 @@ def run_variant(name: str, out_root: Path, label: str, runner: Path = RUNNER, gu
               "stdout_path": str(variant_dir / "stdout.log"), "git": git_state()}
     if spec["needs_v2"] and not V2_AVAILABLE:
         status["status"] = "not_available"
-        status["reason"] = "the common-window code (SELECTION_COMMON_WINDOW_ENABLED) is not merged yet"
+        status["reason"] = "the common-window code (COMMON_WINDOW_MONTHS) is not available"
         return _finish(variant_dir, status)
 
     ov = write_overlay(variant_dir, overlay)

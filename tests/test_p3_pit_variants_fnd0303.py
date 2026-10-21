@@ -103,8 +103,8 @@ def test_timeout_and_guard_kill_are_distinct_statuses(tmp_path, stub, monkeypatc
     assert pv.run_variant("V0", tmp_path / "t", "V0_g", stub, None, 60)["status"] == "oom"
 
 
-def test_v2_variants_are_not_available_until_the_code_is_merged(tmp_path, stub):
-    assert pv.V2_AVAILABLE is False
+def test_v2_variants_are_not_available_when_the_code_is_withdrawn(tmp_path, stub, monkeypatch):
+    monkeypatch.setattr(pv, "V2_AVAILABLE", False)
     assert _main(tmp_path, stub, "--variants", "V2") == pv.RC_OK
     s = _status(tmp_path, "V2")
     assert s["status"] == "not_available" and "series_stats_sha256" not in s and "reason" in s
@@ -154,3 +154,14 @@ def test_the_real_command_uses_an_isolated_interpreter_and_the_guard():
     assert "guarded_run.ps1" in joined and "-I" in joined and "--hysteresis-band 0.10" in joined and "--cache-dir" in joined
     plain = pv.build_command(Path("C:/x/V1"), pv.RUNNER, guard=None)
     assert plain[1] == "-I" and "--out-dir" in plain and plain[plain.index("--hysteresis-grid") + 1] == ""
+
+
+def test_v2_variants_carry_the_common_window_parameter_in_their_overlay(tmp_path, stub):
+    assert pv.V2_AVAILABLE is True
+    assert _main(tmp_path, stub, "--variants", "V2,V123") == pv.RC_OK
+    for name in ("V2", "V123"):
+        s = _status(tmp_path, name)
+        assert s["status"] == "success"
+        assert "COMMON_WINDOW_MONTHS: 60" in Path(s["overlay_path"]).read_text(encoding="utf-8")
+    assert "MIN_REAL_RETURN_BY_SUB" not in Path(_status(tmp_path, "V2")["overlay_path"]).read_text(encoding="utf-8")
+    assert "MIN_REAL_RETURN_BY_SUB" in Path(_status(tmp_path, "V123")["overlay_path"]).read_text(encoding="utf-8")
