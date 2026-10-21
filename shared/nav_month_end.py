@@ -27,10 +27,14 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from shared.period_key import PARTIAL_TAIL_DAYS, to_period_key
+
+# R-9: the month key and the open-month tolerance are defined once, in shared/period_key.py; this module is the NAV-specific,
+# switch-gated layer on top of them (labels that keep an open month's real date, the long / wide panel alignment, persistence windows).
 # A NAV this close to its calendar month-end closes the month (last business day, Easter / year-end holidays). The widest gap among the
 # month-closing rows of fund_nav_monthly on 2026-10-19 was 5 days (18 rows at 4-5 days of 672,554; the next gaps, 6-14 days, are 38
 # mid-month rows of funds that stopped pricing, and the 3,709 open-month rows).
-MONTH_CLOSE_TOLERANCE_DAYS: int = 5
+MONTH_CLOSE_TOLERANCE_DAYS: int = PARTIAL_TAIL_DAYS
 
 
 def month_end_align_enabled() -> bool:
@@ -42,7 +46,7 @@ def month_end_align_enabled() -> bool:
 def month_end_labels(dates, tolerance_days: int = MONTH_CLOSE_TOLERANCE_DAYS) -> pd.DatetimeIndex:
     """The month-end of each date that closes its month (within `tolerance_days` of it), the date itself otherwise."""
     d = pd.DatetimeIndex(pd.to_datetime(dates))
-    me = d + pd.offsets.MonthEnd(0)
+    me = to_period_key(d)
     closes = (me - d).days <= tolerance_days
     return pd.DatetimeIndex(np.where(closes, me.values, d.values))
 

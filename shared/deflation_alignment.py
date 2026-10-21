@@ -25,8 +25,14 @@ def month_align_enabled() -> bool:
 
 def cpi_lookup_dates(dates, align: "bool | None" = None) -> pd.Series:
     """The dates to look the CPI up with: each NAV date moved to the calendar month-end of its own month when `align`
-    (None reads the switch), unchanged otherwise. Returns a Series positionally aligned to `dates`."""
+    (None reads the switch), unchanged otherwise. Returns a Series positionally aligned to `dates`.
+
+    R-9: the aligned branch is `shared.period_key.to_period_key` -- the one definition of the canonical period key -- so this
+    module states WHEN the CPI lookup uses it (the switch), never HOW the key is computed.
+    """
+    from shared.period_key import to_period_key          # local: period_key must stay importable without this module
+
     s = pd.Series(pd.to_datetime(pd.Series(dates).reset_index(drop=True)))
     if align is None:
         align = month_align_enabled()
-    return (s.dt.normalize() + pd.offsets.MonthEnd(0)) if align else s
+    return pd.Series(to_period_key(s)) if align else s
