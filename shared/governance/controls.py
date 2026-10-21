@@ -189,6 +189,13 @@ CONTROLS = (
     Control("D-RESIDUAL", PILLAR_DATA, "Accepted residual", _OWNER_AUDIT,
             "a defect whose violators are all covered by an active accepted residual (ticket + expiry) is reported, downgraded, never hidden",
             WARN, SOURCE_RULE_CLASS + "ACCEPTED_RESIDUAL", STATUS_ENFORCED),
+    Control("D-PERIOD-KEY", PILLAR_DATA, "Indicators do not depend on the date stamp", "owner (cycle diagnostics)",
+            "R-9: an indicator family predicted invariant to the stamp convention must give the same answer when the NAV is "
+            "snapped to the canonical period key, and every stored series must carry the stamp its contract declares "
+            "(scripts/audit/period_key_invariance.py, shared/period_key_contract.py). A finding is listed in the cycle report; "
+            "the macro and rolling families were the two known violations until FND-0300 (NAV labelled at the reader); a family "
+            "whose declared prediction is 'changes' does not raise an alarm",
+            WARN, SOURCE_CODE + "scripts.audit.period_key_invariance.main", STATUS_ENFORCED, deploy_consequence=WARN),
     Control("D-EXCEPTIONS", PILLAR_DATA, "Accepted residuals are governed", _OWNER_AUDIT,
             "every accepted residual is a GRANT / RENEW plus a separate APPROVE in control.audit_exception_event (decision D6), revoked "
             "with a cause; the gate refuses when that history is unreadable or control.audit_accepted_finding disagrees with it",

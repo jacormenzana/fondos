@@ -331,6 +331,7 @@ proyecto2/
       test_momentum_units_fnd0302.py
       test_p2_bundle_flags.py
       test_peer_panel_fnd0255_pg.py
+      test_period_key_invariance_pg.py
       test_regime_returns.py
       test_returns.py
       test_risk_metrics.py

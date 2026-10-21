@@ -109,6 +109,7 @@ sin código de puerta propio.
 | `D-OUTLIER` | clase `STATISTICAL_ANOMALY` (MAD-Z, IQR): elementos de revisión, nunca defectos | `WARN` | `RULE_CLASS:STATISTICAL_ANOMALY` | enforced |
 | `D-RESIDUAL` | defecto cuyos infractores están todos cubiertos por un residual aceptado vigente: se reporta rebajado, nunca se oculta | `WARN` | `RULE_CLASS:ACCEPTED_RESIDUAL` | enforced |
 | `D-EXCEPTIONS` | todo residual aceptado es un `GRANT` / `RENEW` más un `APPROVE` separado en `control.audit_exception_event` (D6), revocado con causa; la puerta rechaza si ese historial no se puede leer o `control.audit_accepted_finding` no coincide con él (§5) | `BLOCK` | `GATE:EXCEPTIONS` | enforced |
+| `D-PERIOD-KEY` | R-9: una familia de indicadores que se da por invariante a la convención de sello debe dar el mismo valor con el NAV llevado a la clave de periodo canónica, y cada serie almacenada debe llevar el sello que declara su contrato (`scripts/audit/period_key_invariance.py`, `shared/period_key_contract.py`). Un hallazgo se lista en el informe de ciclo; macro y rolling fueron las dos violaciones conocidas hasta FND-0300 (NAV etiquetado en el lector); una familia cuya predicción declarada es «cambia» no levanta alarma | `WARN` | `CODE:scripts.audit.period_key_invariance.main` | enforced |
 
 `D-INVARIANT`, `D-IDENTITY` y `D-TS-DUP` son los tres criterios de `gating.is_blocking`; `D-DATA-SCENARIO`, `D-RESIDUAL-SCENARIO`
 y `D-DATA-UNIVERSE` reparten esos defectos por alcance (sobre la cartera / solo en el universo).

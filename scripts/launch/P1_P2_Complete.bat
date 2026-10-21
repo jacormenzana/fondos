@@ -31,7 +31,7 @@ call "%COMMON%" :utf8_on
 ::             --skip-macro, --workers N (PASO 3) | --force (PASO 4) | -- args (PASO 4, a run_pipeline)
 ::   Harvest:  --no-harvest | --harvest-sync | --harvest-retire | --harvest-limit N |
 ::             --harvest-max-drop-pct N
-::   Opcional: --shadow N | --benchmark-gaps | --dashboard | --diag-cost    (fase posterior)
+::   Opcional: --shadow N | --period-key N | --benchmark-gaps | --dashboard | --diag-cost    (fase posterior)
 ::   Las listas con comas van ENTRE COMILLAS (cmd parte los argumentos por comas).
 ::   Los argumentos desconocidos se rechazan: un error tipografico no debe lanzar un ciclo de horas.
 ::
@@ -663,6 +663,15 @@ if defined OPT_shadow (
     set "AUX_ARGS=--stratified-sample !OPT_shadow!"
     call :aux_py shadow "shadow reconciliation (muestra estratificada de !OPT_shadow! por celda)"
 )
+:: R-9 (FND-0300): invarianza de los indicadores a la convencion de sello de fecha. A peticion, no por defecto:
+:: medido a ~15 s por fondo (12 fondos = 180 s, 2026-10-18), de modo que una muestra util anadiria 15-100 min al ciclo.
+:: El contrato de sellos -- la parte barata y la que detecta un cambio de convencion en origen -- SI se evalua en cada
+:: ciclo, dentro del informe de ciclo. No bloquea nunca: sus hallazgos son lineas [ATENCION].
+if defined OPT_period_key (
+    set AUX_TARGET="%ROOT%\scripts\audit\period_key_invariance.py"
+    set "AUX_ARGS=--n !OPT_period_key!"
+    call :aux_py period_key "invarianza a la clave de periodo (R-9, muestra de !OPT_period_key! fondos)"
+)
 if defined FLAG_benchmark_gaps (
     set AUX_TARGET=-m proyecto1.src.loaders.benchmark_loader
     set "AUX_ARGS=--mode gaps"
@@ -713,6 +722,7 @@ echo   --harvest-limit N        con --harvest-sync: maximo N descargas
 echo   --harvest-max-drop-pct N puerta de calidad del harvest
 echo Diagnosticos opcionales (fase posterior):
 echo   --shadow N               shadow reconciliation, N ISIN por celda (tope 60)
+echo   --period-key N           invarianza a la clave de periodo (R-9), muestra de N fondos (~15 s/fondo)
 echo   --benchmark-gaps         cobertura de benchmarks
 echo   --dashboard              dashboard HTML rolling de P2
 echo   --diag-cost              diagnostico de extraccion de costes (lento)

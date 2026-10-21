@@ -6,5 +6,5 @@
 ::   BOOL_OPTS  opciones sin valor  (--x-y -> FLAG_x_y)
 ::   UINT_OPTS  opciones con un entero positivo (--x-y N -> OPT_x_y)
 set "BOOL_OPTS=--force --no-export --skip-macro --skip-preflight --no-harvest --harvest-sync --harvest-retire --benchmarks-load --benchmark-gaps --dashboard --diag-cost"
-set "UINT_OPTS=--workers --harvest-limit --harvest-max-drop-pct --shadow"
+set "UINT_OPTS=--workers --harvest-limit --harvest-max-drop-pct --shadow --period-key"
 exit /b 0

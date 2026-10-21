@@ -425,6 +425,28 @@ def collect_macro_freshness(conn, today: date) -> dict:
         return {"error": f"{type(exc).__name__}: {exc}"}
 
 
+def collect_period_key_contract(conn) -> dict:
+    """R-9's data contract (FND-0300): which stamp convention each stored series actually carries.
+
+    R-9 tells a calculation to convert every stamp to the canonical period key at its boundary; this is the check that the
+    assumption underneath it still holds -- that we know what each table is stamped with. It catches a source that quietly
+    changes convention (the macro OLS defect's precondition) and a `(isin, month)` duplicate, which turns any period-key join
+    into a silent row collapse. The verdicts come from `shared/period_key_contract.py`, shared with
+    `scripts/audit/period_key_invariance.py --contract-only`, so the cycle report and the standing audit cannot disagree.
+    Read-only, informational; never raises (an unreadable source becomes an `error` key)."""
+    try:
+        sys.path.insert(0, str(ROOT))
+        sys.path.insert(0, str(ROOT / "scripts" / "audit"))       # scripts/audit is not a package (same as backlog_links above)
+        import period_key_invariance
+        return period_key_invariance.contract_check(conn)
+    except Exception as exc:                                  # noqa: BLE001
+        try:
+            conn.rollback()
+        except Exception:                                     # noqa: BLE001
+            pass
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
 def coverage_pct(report: dict) -> dict:
     """Share (0-100) of the active universe that has each P3-consumed metric."""
     active = report.get("universe", {}).get("active", 0)
@@ -502,6 +524,10 @@ def attention_items(report: dict, previous: dict | None) -> list:
     items += mfr.get("lines", [])
     if mfr.get("error"):
         items.append(f"no se pudo evaluar la frescura de las series macro: {mfr['error']}")
+    pkey = report.get("period_key_contract") or {}          # absent in reports written before this check (FND-0300, R-9)
+    items += pkey.get("attention", [])
+    if pkey.get("error"):
+        items.append(f"no se pudo evaluar el contrato de sellos de fecha (R-9): {pkey['error']}")
     # A slow run is NOT an attention item: it is a constant of the corpus (measured 2026-10-08: ~14 s, all in the KIID regexes), so an item would
     # repeat every cycle. It is a WARNING in the log and a marker on the report line; the check stays active (--no-hedging-drift skips it).
     if previous:
@@ -595,6 +621,17 @@ def render_text(report: dict, previous: dict | None, items: list) -> str:
         L += [f"Frescura macro: {mfr['series']} series, {len(mfr['stale'])} caducadas"
               + (f" ({', '.join(mfr['stale'][:6])})" if mfr["stale"] else "")
               + "; entradas de regimen: " + ", ".join(f"{k}={v}" for k, v in mfr["composites"].items())]
+    pk = report.get("period_key_contract")
+    if pk:
+        if pk.get("error"):
+            L += [f"Contrato de sellos de fecha (R-9): no disponible ({pk['error']})"]
+        else:
+            nav, macro = pk["nav"], pk["macro"]
+            L += [f"Contrato de sellos de fecha (R-9): NAV mensual {100 * nav['off_month_end_share']:.1f}% fuera del fin de mes "
+                  f"({100 * nav['off_month_end_drift']:+.1f} pp), {nav['duplicate_months']} meses con dos fechas, "
+                  f"{nav['isin_month_duplicates']} duplicados (isin, mes); series_macro "
+                  f"{sum(1 for m in macro if m['state'] == 'unexpected')} inesperadas y "
+                  f"{sum(1 for m in macro if m['state'] == 'unknown')} sin declarar de {len(macro)}"]
     bl = report.get("backlog_links")
     if bl:
         if bl.get("error"):
@@ -646,6 +683,7 @@ def main(argv: list | None = None) -> int:
             report["backlog_links"] = collect_backlog_links()
             report["governance"] = collect_governance(conn, today)
             report["macro_freshness"] = collect_macro_freshness(conn, today)
+            report["period_key_contract"] = collect_period_key_contract(conn)
             report["nav_lag"] = collect_nav_lag(conn)
         finally:
             conn.close()
