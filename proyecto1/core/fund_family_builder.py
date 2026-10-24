@@ -222,8 +222,11 @@ def _strip_one_class_suffix(s: str) -> str:
 _STRUCTURAL_HETEROGENEITY_SIGNALS = [
     "hedge", "hedged", "long short", "long/short",
     "absolute return", "abs ret", "market neutral",
-    "short ", " short",
 ]
+# FND-0310 (2026-10-25): the bare words "short " / " short" were signals too (meant for long/short funds). Measured over fund_master: of the 51 names
+# containing "short", 41 are duration bond funds ("Euro Short Term Bond", "Short Dur HY"), 10 more are short-term bond funds spelled "Bonds Short" /
+# "Swed. Short-T. Bond", and the only real long/short fund (Candriam Long Short Credit) is covered by "long short". The word protected nothing and made the
+# arbitration SKIP short-duration families (DWS ESG Euro Bonds Short, Fidelity Euro Short Term Bond) instead of deciding them by evidence.
 
 # Pares de naturalezas "adyacentes" — el error puede estar en cualquiera
 _ADJACENT_NATURE_PAIRS = {
