@@ -27,6 +27,12 @@ PERIPHERY = ("IT", "ES")                                # PT and GR are excluded
 CORE = "FR"
 SHOCK_COUNTRIES = ("DE", "US", "GB", "JP")
 
+# How the live feed stores these yields in series_macro (FND-0294 step 2): one indicator, geography = the ISO code used above. The loaders
+# (macro_discovery) and the monitor both derive their country lists from here, so a country added to a rule cannot silently lack a feed.
+YIELD_INDICATOR = "yield_10y_gov"
+EURO_YIELD_COUNTRIES = tuple(dict.fromkeys((BASE,) + PERIPHERY + (CORE,)))                 # ECB IRS 10y convergence-criterion yields
+NON_EURO_YIELD_COUNTRIES = tuple(c for c in SHOCK_COUNTRIES if c not in EURO_YIELD_COUNTRIES)   # FRED / OECD IRLTLT01 10y yields
+
 RULE_PARAMS: dict = {
     "periphery_level_pp": 2.0,                          # R1: IT or ES spread over DE at/above this (state)
     "periphery_widening_pp": 0.5, "widening_months": 3,  # R2: IT or ES spread widened by this in 3 months (event)

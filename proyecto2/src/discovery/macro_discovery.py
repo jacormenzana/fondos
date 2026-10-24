@@ -376,6 +376,15 @@ for _ccy in EUR_FX_CURRENCIES:
         "series_key": f"EXR/D.{_ccy}.EUR.SP00.A", "indicator": EUR_FX_DAILY_INDICATOR, "geography": _ccy,
         "unit": "ccy_per_eur", "write_inflation": False}
 
+# FND-0294 step 2: euro-area 10-year government yields (ECB IRS convergence-criterion series, monthly averages, % p.a.) for the sovereign-stress
+# monitor. Month-start stamp (the default of this loader), like every other monthly-average series of the OLS set. The country list comes from
+# shared.sovereign_stress, the module that owns the rules. MONITOR-ONLY: no factor set, score or gate reads yield_10y_gov.
+from shared.sovereign_stress import EURO_YIELD_COUNTRIES, NON_EURO_YIELD_COUNTRIES, YIELD_INDICATOR  # noqa: E402
+for _cc in EURO_YIELD_COUNTRIES:
+    _BCE_SERIES[f"yield_10y_gov_{_cc}"] = {
+        "series_key": f"IRS/M.{_cc}.L.L40.CI.0000.EUR.N.Z", "indicator": YIELD_INDICATOR, "geography": _cc,
+        "unit": "pct", "write_inflation": False}
+
 
 # FND-0256: with the Feb-2026 HICP overhaul (ECOICOP v2, 2025=100) the ECB dataset ICP is discontinued (the key above ends 2025-12) and
 # Eurostat moved the index to prc_hicp_minr. Its unit I15 is the same index re-referenced to 2015=100: over 2025-10..12 it equals the old
@@ -765,6 +774,13 @@ _FRED_SERIES = {
         "write_inflation": False,
     },
 }
+
+# FND-0294 step 2: 10-year government yields outside the euro area (OECD main economic indicators mirrored by FRED, monthly, % p.a.). Same
+# indicator and geography convention as the ECB legs above, so the monitor reads one shape. An OECD feed has been discontinued before
+# (FND-0293): the freshness limit (shared/macro_freshness.py) is what surfaces it.
+for _cc in NON_EURO_YIELD_COUNTRIES:
+    _FRED_SERIES[f"IRLTLT01{_cc}M156N"] = {
+        "indicator": YIELD_INDICATOR, "geography": _cc, "unit": "pct", "write_inflation": False}
 
 FRED_BASE_URL    = "https://fred.stlouisfed.org/graph/fredgraph.csv"
 FRED_API_BASE    = "https://api.stlouisfed.org/fred/series/observations"

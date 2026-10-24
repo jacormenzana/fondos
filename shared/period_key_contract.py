@@ -48,6 +48,7 @@ EXPECTED_STAMPS: dict[str, str] = {
     "vix": MONTH_START, "term_spread": MONTH_START, "unemployment": MONTH_START,
     "fx_usd_eur": MONTH_START, "fx_jpy_usd": MONTH_START, "fx_usd_gbp": MONTH_START, "fx_cny_usd": MONTH_START,
     "m2_level": MONTH_START, "gdp_nom_eur": MONTH_START, "debt_gdp_pct": MONTH_START, "deficit_gdp_pct": MONTH_START,
+    "yield_10y_gov": MONTH_START,                    # FND-0294: sovereign-stress monitor (monitor-only, not an OLS factor)
     # month END
     "m2_global_yoy": MONTH_END, "fx_eom_eur": MONTH_END,
     # FND-0293 left this one split: EU month-start, CN/JP/US month-end. Recorded as MIXED so the check reports the split

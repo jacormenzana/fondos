@@ -44,6 +44,9 @@ MACRO_TTL_DAYS: dict = {
     ("oil_wti", "*"): 45, ("vix", "*"): 45, ("spread_hy", "*"): 45, ("dxy", "*"): 45,
     ("spread_ig", "*"): 75, ("term_spread", "*"): 75,                   # published as monthly series: the current month appears after it ends
     ("gold", "*"): 110, ("copper", "*"): 140,                           # IMF / LBMA monthly via FRED: 1-2 months
+    # --- sovereign 10y yields, monthly averages stamped on the month START (FND-0294): the feeds carried 2026-09 on 2026-10-24, so the newest stamp is
+    #     about 55 days old when its successor is due and up to ~85 just before it lands ---
+    ("yield_10y_gov", "*"): 95,
     # --- FX ---
     ("fx_usd_eur", "*"): 75, ("fx_usd_gbp", "*"): 75, ("fx_jpy_usd", "*"): 75, ("fx_cny_usd", "*"): 75,    # FRED monthly averages
     ("fx_eom_eur", "*"): 45, ("fx_d_eur", "*"): 14,                     # ECB end-of-month and daily reference rates (NAV conversion)

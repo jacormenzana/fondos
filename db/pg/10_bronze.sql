@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS bronze.series_macro (
     load_ts     timestamptz NOT NULL DEFAULT now(),
     date        date        NOT NULL,
     indicator   text        NOT NULL,   -- normalized code; ~30-entry catalogue, see NORMAS_IMPLEMENTACION.md
-    geography   text        NOT NULL,   -- ES / EU / US / JP / CN / GLOBAL
+    geography   text        NOT NULL,   -- ES / EU / US / JP / CN / GLOBAL; ISO country codes (DE FR IT ES GB US JP) for yield_10y_gov
     unit        text,                   -- ratio / index / pct / usd_bn
     source      text,                   -- BCE / EUROSTAT / INE / FRED / IMF
 
