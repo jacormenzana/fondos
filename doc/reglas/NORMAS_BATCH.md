@@ -185,6 +185,15 @@ fase nueva se añade como previa/posterior, no renumerando. Un fallo de prefligh
 
 ## §14. Auditoría en los orquestadores (PRE congelado, POST con deriva)
 
+**Secuencia maestra y subconjuntos (FND-0309).** El ciclo maestro es `P1P2P3_runCycle.bat` y su secuencia de fases se define UNA vez en
+`scripts/launch/cycle_sequence.py` (`PHASES`: cada fase con los proyectos a los que pertenece). Un orquestador que abarca un conjunto de proyectos ejecuta
+TODAS las fases cuyos proyectos intersecan ese conjunto, en el orden del maestro (la auditoría POST de P2 va tras el último escritor de P2, o tras el DRAFT
+si P3 está en el flujo). `tests/test_cycle_sequence_e2e.py` ejecuta cada orquestador en el árbol simulado, convierte la traza de herramientas en fases y
+exige que coincidan con las esperadas: añadir una fase al maestro sin añadirla a un parcial, o crear un parcial incompleto, hace fallar la prueba (el caso
+que la motivó: `P2P3_runCycle` recalculaba P2 sin refrescar macro + NAV, y sin preflight ni informe de ciclo). Las desviaciones permitidas son opciones
+explícitas y documentadas (`P2P3_runCycle --no-discover`: recálculo puro tras un cambio de código o de flags, sin refrescar datos). Los diagnósticos
+compartidos (`:p3_freshness`, `:cycle_report`) viven en `lib\cyclePhases.bat`. Un orquestador nuevo se añade a `ORCHESTRATORS` con sus proyectos.
+
 **Quién audita.** Solo los orquestadores `*_runCycle`; los lanzadores de paso (`P1_discoverAllFunds`, `P2_calculateIndicators`, …) **no auditan
 por defecto** (opt-in `--audit`, modo report sin persistir; `--no-audit` se acepta por compatibilidad). Un `post` suelto, sin `pre` con el que
 compararlo, no es evidencia.

@@ -15,6 +15,7 @@ call "%COMMON%" :utf8_on
 ::   3. benchmarks                  P1_refreshBenchmarks.bat
 ::   4. pipeline P1                 P1_discoverAllFunds.bat
 ::   5. auditoria P1 POST           P1_audit --persist --run-id post_<sello>_costs --compare-to pre_<sello>_costs (informativa)
+::   6. informe de ciclo            p1p2_cycle_report.py (lineas [ATENCION]; informativo)
 :: Se detiene en el primer paso que falla y devuelve su codigo. NO escribe el estado del ciclo P1+P2 (un ciclo parcial no
 :: puede dar por bueno a P1P2_runCycle.bat --from N ni a P1P2P3_runCycle.bat --only-p3). Comparte el bloqueo de instancia unica.
 ::
@@ -203,6 +204,9 @@ echo --- AUDITORIA P1 POST: post_!POST_STAMP!_costs --compare-to !PRE_ID!_costs 
 call "%PHASES%" :audit_p1 post_!POST_STAMP!_costs !PRE_ID!_costs
 echo --- AUDITORIA P1 POST fin: RC=!AUD_RC! >> "%LOG%"
 if !AUD_RC! NEQ 0 echo [WARN] la auditoria P1 POST no termino bien ^(RC=!AUD_RC!^): no hay deriva objetiva
+
+:: -- 6. Informe de ciclo (informativo: nunca cambia el RC) --------------------------------
+call "%PHASES%" :cycle_report %STAMP%
 
 :finish
 call "%COMMON%" :standby_restore

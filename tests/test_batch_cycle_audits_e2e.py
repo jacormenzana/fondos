@@ -324,7 +324,7 @@ def test_p2_runcycle_is_the_p2_subset_with_pre_and_post_and_a_beta_check(tree):
     assert len(pre_p2) == len(post_p2) == 1 and pre_costs == [] and post_costs == [], _audits(tree)
     ln = tree.lines()
     assert _index_of(tree, pre_p2[0]) < _at(tree, "beta_shift_audit --snapshot") < _at(tree, "nav_discovery") \
-        < _at(tree, "run_pipeline") < _at(tree, "beta_shift_audit --compare") < _index_of(tree, post_p2[0])
+        < _at(tree, "run_pipeline") < _index_of(tree, post_p2[0]) < _at(tree, "beta_shift_audit --compare")   # master order (FND-0309): POST, then betas
     assert _cmp(post_p2[0]) == _rid(pre_p2[0])
     assert not (tree.logs / "P1P2_runCycle.state").exists()
     assert ln and tree.power_calls() == ["0", "45"]                                        # saves and restores the real standby

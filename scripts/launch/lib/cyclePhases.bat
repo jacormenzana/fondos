@@ -7,6 +7,8 @@
 ::   call "%PHASES%" :audit_p1 RUN_ID [COMPARE_TO]   P1_audit.bat (costes + benchmarks B1-B7) persistido; resultado en AUD_RC
 ::   call "%PHASES%" :audit_p2 RUN_ID [COMPARE_TO]   P2_audit.bat (metricas) persistido; resultado en AUD_RC
 ::   call "%PHASES%" :preflight LOG_PATH             p1p2_state.py preflight (BD alcanzable, DSN, disco); PRE_RC (104 = fallo)
+::   call "%PHASES%" :p3_freshness                   p3_freshness_check.py: la puerta de frescura de P3 sobre los datos de ahora (informativa)
+::   call "%PHASES%" :cycle_report STAMP              p1p2_cycle_report.py desde la fecha del STAMP: lineas [ATENCION] (informativa)
 ::   call "%PHASES%" :baseline_verdict RC_P1 RC_P2   veredicto del PRE: BASELINE_RC = 0, o RC_BASELINE (107) si alguno
 ::                                                   de los dos no devolvio 0 (fallo o INCOMPLETA: no es evidencia).
 ::                                                   Con ALLOW_NO_BASELINE definida el fallo se avisa pero no bloquea.
@@ -63,4 +65,20 @@ if defined ALLOW_NO_BASELINE (
     echo [WARN] --allow-no-baseline: se continua SIN baseline valido; la deriva de este ciclo no sera evidencia
     if defined LOG echo [WARN] --allow-no-baseline: se continua SIN baseline valido >> "%LOG%"
 )
+exit /b 0
+
+:p3_freshness
+"%PYTHON%" -X utf8 "%ROOT%\scripts\launch\p3_freshness_check.py"
+set "FRESH_RC=!ERRORLEVEL!"
+if defined LOG echo --- frescura de los datos para P3: RC=!FRESH_RC! >> "%LOG%"
+if !FRESH_RC! NEQ 0 echo [WARN] P3 no aceptaria los datos del ciclo ^(RC=!FRESH_RC!^)
+exit /b 0
+
+:cycle_report
+set "CR_STAMP=%~1"
+set "CR_SINCE=!CR_STAMP:~0,4!-!CR_STAMP:~4,2!-!CR_STAMP:~6,2!"
+"%PYTHON%" -X utf8 "%ROOT%\scripts\launch\p1p2_cycle_report.py" --stamp !CR_STAMP! --since !CR_SINCE!
+set "REPORT_RC=!ERRORLEVEL!"
+if defined LOG echo --- informe de ciclo: RC=!REPORT_RC! >> "%LOG%"
+if !REPORT_RC! NEQ 0 echo [WARN] el informe de ciclo no se genero ^(RC=!REPORT_RC!^)
 exit /b 0

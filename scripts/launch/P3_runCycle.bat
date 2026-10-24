@@ -17,19 +17,20 @@ call "%COMMON%" :utf8_on
 :: bloqueo de instancia unica.
 ::
 :: Uso:  P3_runCycle.bat [opciones]
+::   --skip-preflight    no ejecutar el preflight (BD alcanzable, DSN owner, disco)
 ::   --scenario ID       scenario_id de la cartera (por defecto autogenerado)
 ::   --report-dir DIR    directorio de salida del informe (por defecto out\reports\p3)
 ::   --p3-dry-run        P3 no persiste (debug; sin auditoria ni informe)
 ::   --allow-stale       salta la puerta de frescura de P3 (con criterio)
 ::   -h, --help          esta ayuda
 :: Codigos de salida: 0 OK | 100 argumentos invalidos | 101 interprete no encontrado | 105 otra instancia en ejecucion |
-::   106 driver PostgreSQL bloqueado | 1-99 = RC propagado del paso que fallo (2 = entradas obsoletas).
+::   104 preflight fallido | 106 driver PostgreSQL bloqueado | 1-99 = RC propagado del paso que fallo (2 = entradas obsoletas).
 :: ============================================================
 
 :: -- Configuracion --------------------------------------------------------------
 set "LOG_DIR=%ROOT%\proyecto3\log"
 set "LOCK_FILE=%STATE_DIR%\fondos_cycle.lock"
-set "BOOL_OPTS=--p3-dry-run --allow-stale"
+set "BOOL_OPTS=--skip-preflight --p3-dry-run --allow-stale"
 set "STR_OPTS=--scenario --report-dir"
 
 :: -- Argumentos ------------------------------------------------------------------------
@@ -108,6 +109,19 @@ echo   Log: %LOG%
 set FLAG_ >> "%LOG%" 2>nul
 set OPT_ >> "%LOG%" 2>nul
 
+:: -- 0. Preflight: un fallo no toca nada ----------------------------------------------------
+set "PRE_RC=0"
+if defined FLAG_skip_preflight (
+    echo --- PREFLIGHT: omitido ^(--skip-preflight^) >> "%LOG%"
+) else (
+    call "%PHASES%" :preflight "%LOG_DIR%\log_P3_runCycle_preflight_%STAMP%.log"
+)
+if !PRE_RC! NEQ 0 (
+    echo [ERROR] Preflight fallido ^(RC=!PRE_RC!^). No se ejecuta ningun paso.
+    set "RC=!PRE_RC!"
+    goto :finish
+)
+
 call "%COMMON%" :standby_disable owner
 
 :: -- 1. DRAFT + auditoria P2 posterior ---------------------------------------------------
@@ -165,6 +179,7 @@ endlocal & exit /b 0
 
 :usage_text
 echo Uso: P3_runCycle.bat [opciones]
+echo   --skip-preflight    no ejecutar el preflight
 echo   --scenario ID       scenario_id de la cartera (por defecto autogenerado)
 echo   --report-dir DIR    directorio de salida del informe
 echo   --p3-dry-run        P3 no persiste (sin auditoria ni informe)

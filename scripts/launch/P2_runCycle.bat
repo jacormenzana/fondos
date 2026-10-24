@@ -14,8 +14,9 @@ call "%COMMON%" :utf8_on
 ::   2. snapshot de betas macro     beta_shift_audit.py --snapshot (out\audit\P2; P1P2_AUDIT_DIR cambia la raiz out\audit)
 ::   3. macro + NAV                 P2_discoverLoadMetrics.bat
 ::   4. indicadores P2              P2_calculateIndicators.bat
-::   5. comparacion de betas        beta_shift_audit.py --compare con la CALC_VERSION vigente (informativa: sin P3 no bloquea)
-::   6. auditoria P2 POST           P2_audit --persist --run-id post_<sello>_p2 --compare-to pre_<sello>_p2 (informativa)
+::   5. auditoria P2 POST           P2_audit --persist --run-id post_<sello>_p2 --compare-to pre_<sello>_p2 (informativa)
+::   6. comparacion de betas        beta_shift_audit.py --compare con la CALC_VERSION vigente (informativa: sin P3 no bloquea)
+::   7. diagnosticos                frescura de los datos para P3 + informe de ciclo (informativos)
 :: Se detiene en el primer paso que falla y devuelve su codigo. NO escribe el estado del ciclo P1+P2. Comparte el bloqueo de
 :: instancia unica. Si va a construirse P3 a continuacion usar P2P3_runCycle.bat: hace UNA sola auditoria POST, tras el DRAFT.
 ::
@@ -190,7 +191,15 @@ if !RC! NEQ 0 (
     goto :finish
 )
 
-:: -- 5. Comparacion de betas (informativa) --------------------------------------------------
+:: -- 5. Auditoria P2 POST: informativa -------------------------------------------------------
+call "%COMMON%" :get_time POST_STAMP yyyyMMdd_HHmmss
+echo [AUDITORIA] P2 POST post_!POST_STAMP!_p2 vs !PRE_ID!_p2
+echo --- AUDITORIA P2 POST: post_!POST_STAMP!_p2 --compare-to !PRE_ID!_p2 >> "%LOG%"
+call "%PHASES%" :audit_p2 post_!POST_STAMP!_p2 !PRE_ID!_p2
+echo --- AUDITORIA P2 POST fin: RC=!AUD_RC! >> "%LOG%"
+if !AUD_RC! NEQ 0 echo [WARN] la auditoria P2 POST no termino bien ^(RC=!AUD_RC!^): no hay deriva objetiva
+
+:: -- 6. Comparacion de betas (informativa) --------------------------------------------------
 if exist "!BETA_CSV!" (
     "%PYTHON%" -X utf8 scripts\audit\beta_shift_audit.py --compare "!BETA_CSV!" --version !CALC_VER! --out "%AUDIT_P2_DIR%\beta_shift_outliers_p2_%STAMP%.csv" >> "%LOG%" 2>&1
     set "BC_RC=!ERRORLEVEL!"
@@ -200,13 +209,9 @@ if exist "!BETA_CSV!" (
     echo [WARN] sin snapshot de betas previo: comparacion omitida >> "%LOG%"
 )
 
-:: -- 6. Auditoria P2 POST: informativa -------------------------------------------------------
-call "%COMMON%" :get_time POST_STAMP yyyyMMdd_HHmmss
-echo [AUDITORIA] P2 POST post_!POST_STAMP!_p2 vs !PRE_ID!_p2
-echo --- AUDITORIA P2 POST: post_!POST_STAMP!_p2 --compare-to !PRE_ID!_p2 >> "%LOG%"
-call "%PHASES%" :audit_p2 post_!POST_STAMP!_p2 !PRE_ID!_p2
-echo --- AUDITORIA P2 POST fin: RC=!AUD_RC! >> "%LOG%"
-if !AUD_RC! NEQ 0 echo [WARN] la auditoria P2 POST no termino bien ^(RC=!AUD_RC!^): no hay deriva objetiva
+:: -- 7. Diagnosticos informativos (los del ciclo maestro; nunca cambian el RC) ---------------------
+call "%PHASES%" :p3_freshness
+call "%PHASES%" :cycle_report %STAMP%
 
 :finish
 call "%COMMON%" :standby_restore

@@ -668,7 +668,7 @@ def test_p2_p3_complete_owns_its_cycle_with_every_step(tree, tmp_path):
     assert r.returncode == 0, r.stdout + r.stderr
     ev = _events(fb)
     assert ev[0]["op"] == "cycle_begin" and ev[0]["launcher"] == "P2P3_runCycle" and ev[-1]["status"] == "OK"
-    assert _step_order(ev) == ["BETA_SNAPSHOT", "AUDIT_BASE", "P2_CALC", "BETA_COMPARE", "P3_BUILD", "P3_REPORT"]   # FND-0308: PRE audit
+    assert _step_order(ev) == ["AUDIT_BASE", "BETA_SNAPSHOT", "P2_DISCOVER", "P2_CALC", "BETA_COMPARE", "P3_BUILD", "P3_REPORT"]   # FND-0309: master order
 
 
 def test_p2_p3_complete_failure_keeps_its_rc_and_names_the_step(tree, tmp_path):
