@@ -181,7 +181,7 @@ def evaluate_gate(a: dict, b: dict, expect_v0_hash: "str | None" = None) -> dict
             reasons.append(f"V0 series_stats sha256 {a['series_stats_sha256']} != the expected {expect_v0_hash}")
     return {"status": "PASS" if not reasons else "FAIL", "reasons": reasons, "git": a.get("git"),
             "v0_series_stats_sha256": a.get("series_stats_sha256"), "v0_table_sha256": a.get("table_sha256"),
-            "v0_inputs_sha256": a.get("inputs_sha256"), "expect_v0_hash": expect_v0_hash,
+            "v0_inputs_sha256": a.get("inputs_sha256"), "v0_run_dir": a.get("out_dir"), "expect_v0_hash": expect_v0_hash,
             "decided": datetime.now().isoformat(timespec="seconds")}
 
 
