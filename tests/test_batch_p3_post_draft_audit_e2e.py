@@ -145,7 +145,10 @@ def test_p2_p3_complete_persists_the_audit_after_the_build_and_before_the_report
     a = _idx(ln, "run_statistical_audit", after=b)
     g = _idx(ln, "generate_report", after=b)
     assert b < a < g, ln                                                           # evidence is newer than the DRAFT, then the report
-    assert not any("--persist" in x for x in ln[:b] if x.startswith("run_statistical_audit"))   # P2's own audit stays report-only
+    pre = [x for x in ln[:b] if x.startswith("run_statistical_audit") and "--persist" in x]
+    assert len(pre) == 1 and "--run-id pre_" in pre[0] and "--compare-to" not in pre[0], pre   # FND-0308: the one PRE, taken before P2
+    post = ln[a]
+    assert post.split("--compare-to ")[1].split()[0] == pre[0].split("--run-id ")[1].split()[0]   # and the POST measures drift against it
     assert len(_markers(r)) == 1 and "OK" in _markers(r)[0]
 
 
@@ -167,11 +170,11 @@ def test_p1_p2_p3_persists_the_audit_after_the_build_and_before_the_report(tree)
     assert len(_markers(r)) == 1 and "OK" in _markers(r)[0]
 
 
-def test_p1_p2_p3_with_p3_dry_run_persists_nothing_after_the_build(tree):
+def test_p1_p2_p3_with_p3_dry_run_leaves_p3_without_an_audit_and_the_cycle_makes_the_backup_one(tree):
     r = tree.run("P1P2P3_runCycle", *e2e.P123, "--p3-dry-run")
     assert r.returncode == 0, r.stdout + r.stderr
-    assert _post_build_audits(tree.lines()) == []
-    assert _markers(r) and _markers(r)[0].startswith(f"{MARK} SKIPPED --dry-run")
+    assert _markers(r) and _markers(r)[0].startswith(f"{MARK} SKIPPED --dry-run")        # P3 itself persists nothing...
+    assert len(_post_build_audits(tree.lines())) == 1                                   # ...the cycle owed the deferred P2 POST (FND-0308)
 
 
 def test_p1_p2_p3_survives_a_failing_post_draft_audit(tree):
@@ -181,10 +184,11 @@ def test_p1_p2_p3_survives_a_failing_post_draft_audit(tree):
     assert len(_markers(r)) == 1 and "FAILED rc=7" in _markers(r)[0]
 
 
-def test_p1_p2_p3_does_not_reach_the_audit_when_the_build_fails(tree):
+def test_p1_p2_p3_build_failure_keeps_its_rc_and_the_cycle_still_makes_the_backup_post_audit(tree):
     r = tree.run("P1P2P3_runCycle", *e2e.P123, STUB_RC_P3_BUILD_PORTFOLIO="2")
     assert r.returncode == 2, r.stdout + r.stderr
-    assert _post_build_audits(tree.lines()) == []
+    assert len(_markers(r)) == 1 and "SKIPPED" in _markers(r)[0] and "RC=2" in _markers(r)[0]   # P3's own audit step skipped (no DRAFT)
+    assert len(_post_build_audits(tree.lines())) == 1 and "generate_report" not in tree.tools()   # FND-0308 backup POST
 
 
 # NOT covered here (stated, not claimed): the real P2_audit.bat against a real database and the real `control.audit_run` write (the

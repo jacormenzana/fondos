@@ -10,11 +10,12 @@ call "%COMMON%" :utf8_on
 :: (P2: risk_metrics, macro_sensitivity, regime_returns, rolling, ...)
 ::
 :: Uso:
-::   P2_calculateIndicators.bat                      pipeline + export + auditoria P2
+::   P2_calculateIndicators.bat                      pipeline + export, sin auditoria (la hacen los orquestadores
+::                                                   *_runCycle con baseline y deriva: un `post` suelto no es evidencia)
+::   P2_calculateIndicators.bat --audit              ademas, auditoria P2 de diagnostico (modo report, sin persistir)
 ::   P2_calculateIndicators.bat --force              bypass hash-cache Y gate trimestral OLS
 ::                                                   (tras bump de CALC_VERSION o rediseno de ventana macro)
-::   P2_calculateIndicators.bat --no-audit           sin auditoria P2 (la usa P1P2_runCycle.bat, que
-::                                                   ejecuta P2_audit con baseline/deriva)
+::   P2_calculateIndicators.bat --no-audit           aceptada por compatibilidad: es el valor por defecto
 ::   P2_calculateIndicators.bat --no-export          sin export_metrics
 ::   P2_calculateIndicators.bat --isin "A,B" --no-export ...   cualquier otro argumento se reenvia a run_pipeline
 ::                                                   (listas con comas ENTRE COMILLAS: cmd parte los argumentos por comas)
@@ -41,7 +42,7 @@ for %%A in (%*) do (
 set LOG_DIR=%ROOT%\proyecto2\log
 
 set FORCE_FLAG=
-set RUN_AUDIT=1
+set RUN_AUDIT=0
 set RUN_EXPORT=1
 set PIPE_ARGS=
 
@@ -49,6 +50,11 @@ set PIPE_ARGS=
 if "%~1"=="" goto :parsed
 if /i "%~1"=="--force" (
     set FORCE_FLAG=--force
+    shift
+    goto :parse
+)
+if /i "%~1"=="--audit" (
+    set RUN_AUDIT=1
     shift
     goto :parse
 )
@@ -129,8 +135,8 @@ set RC_AUDIT=0
 echo. >> "%LOG%"
 echo --- AUDIT: P2_audit --mode report ------------------------- >> "%LOG%"
 if "!RUN_AUDIT!"=="0" (
-    echo [%time%] Auditoria omitida (--no-audit^)
-    echo [OMITIDO] Auditoria omitida por --no-audit >> "%LOG%"
+    echo [%time%] Auditoria omitida (sin --audit^)
+    echo [OMITIDO] Auditoria omitida (sin --audit^) >> "%LOG%"
 ) else if !RC! NEQ 0 (
     echo [%time%] Pipeline con errores -- auditoria omitida
     echo [OMITIDO] Auditoria omitida por error en pipeline >> "%LOG%"

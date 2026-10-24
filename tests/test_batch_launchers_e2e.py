@@ -69,6 +69,7 @@ exit /b 0
 _LAUNCHERS = ["_template", "P1P2_runCycle", "P2P3_runCycle", "P1P2P3_runCycle", "P1_refreshBenchmarks", "P1_discoverAllFunds",
               "P2_discoverLoadMetrics", "P2_calculateIndicators", "P1_harvestFunds", "P1_diagCost",
               "P1_audit", "P2_audit", "P1P2_auditStatistical", "P3_buildPortfolio", "P3_generateReport",
+              "P1_runCycle", "P2_runCycle", "P3_runCycle",
               "P1_discoverAllFundsPlusCostDiag", "FND-0246", "FND-0246_V2"]
 
 
@@ -246,7 +247,7 @@ def test_resume_from_the_failed_step_skips_what_ran_and_reuses_baseline_and_snap
     assert "benchmark_loader" not in t and "p1_db_harvest" not in t and "mark_stale" not in t
     assert "nav_discovery" in t and "run_pipeline" in t
     assert any(baseline in ln for ln in tree.lines() if ln.startswith("beta_shift_audit --compare")) or \
-        (tree.audit / f"macro_betas_{baseline}.csv").exists()
+        (tree.audit / "P2" / f"macro_betas_{baseline}.csv").exists()
     assert tree.state()["LAST_RESULT"] == "OK"
 
 
@@ -642,7 +643,7 @@ def test_p1_p2_p3_owns_one_cycle_and_records_audits_beta_gate_and_p3_in_order(tr
     assert ev[0]["op"] == "cycle_begin" and ev[0]["launcher"] == "P1P2P3_runCycle" and ev[-1]["status"] == "OK"
     assert len({e["cycle_id"] for e in ev}) == 1
     order = _step_order(ev)
-    for a, b in (("AUDIT_BASE", "P1_BENCH"), ("P2_CALC", "AUDIT_FINAL"), ("AUDIT_FINAL", "BETA_GATE"), ("BETA_GATE", "P3_BUILD"), ("P3_BUILD", "P3_REPORT")):
+    for a, b in (("AUDIT_BASE", "P1_BENCH"), ("P2_CALC", "BETA_GATE"), ("BETA_GATE", "P3_BUILD"), ("P3_BUILD", "P3_REPORT")):
         assert order.index(a) < order.index(b), (a, b, order)
     assert all(e["rc"] == 0 for e in ev if e["op"] == "step_end")
     assert _step_order(ev, "step_begin").count("P3_BUILD") == 1                                       # the nested P3 launcher did not add its own
@@ -667,7 +668,7 @@ def test_p2_p3_complete_owns_its_cycle_with_every_step(tree, tmp_path):
     assert r.returncode == 0, r.stdout + r.stderr
     ev = _events(fb)
     assert ev[0]["op"] == "cycle_begin" and ev[0]["launcher"] == "P2P3_runCycle" and ev[-1]["status"] == "OK"
-    assert _step_order(ev) == ["BETA_SNAPSHOT", "P2_CALC", "BETA_COMPARE", "P3_BUILD", "P3_REPORT"]
+    assert _step_order(ev) == ["BETA_SNAPSHOT", "AUDIT_BASE", "P2_CALC", "BETA_COMPARE", "P3_BUILD", "P3_REPORT"]   # FND-0308: PRE audit
 
 
 def test_p2_p3_complete_failure_keeps_its_rc_and_names_the_step(tree, tmp_path):

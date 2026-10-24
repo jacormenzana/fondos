@@ -19,7 +19,7 @@
 |-------|---------|----------|
 | Pipeline log | `log_pipeline_*.log` (latest) | `proyecto1/log/` |
 | P1 export | `p1_export_*.xlsx` (latest) | `out/reports/p1/` |
-| Benchmark audit findings | `benchmark_audit_findings.json` (latest) | `out/audit/` |
+| Benchmark audit findings | `benchmark_audit_findings.json` (latest) + `benchmark_audit_<run-id>.json` per audit run | `out/audit/P1/` |
 | Benchmark audit tool | `audit_benchmark_consistency.py` | `proyecto1/tools/` |
 
 **P2 assets:**

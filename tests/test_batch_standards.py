@@ -23,7 +23,8 @@ LIB = LAUNCH / "lib"
 
 BATS = sorted(p for p in [*LAUNCH.glob("*.bat"), *LIB.glob("*.bat")])
 COMMON = LIB / "common.bat"
-TOP_LEVEL_LOCKED = ("P1P2_runCycle.bat", "P2P3_runCycle.bat", "P1P2P3_runCycle.bat", "FND-0246.bat")
+TOP_LEVEL_LOCKED = ("P1P2_runCycle.bat", "P2P3_runCycle.bat", "P1P2P3_runCycle.bat", "P1_runCycle.bat", "P2_runCycle.bat",
+                    "P3_runCycle.bat", "FND-0246.bat")
 IS_LIB = lambda p: p.parent == LIB          # lib files are subroutines / data, not launchers
 
 # {(rule, file name): reason}
@@ -278,10 +279,11 @@ def test_exit_code_constants_match_the_python_helper():
     spec.loader.exec_module(st)
     rc = dict(re.findall(r'^set "(RC_\w+)=(\d+)"', "\n".join(_lines(COMMON)), re.M))
     assert rc == {"RC_USAGE": "100", "RC_ENV": "101", "RC_REFUSED": "102", "RC_STATE": "103",
-                  "RC_PREFLIGHT": "104", "RC_BUSY": "105", "RC_ENV_BLOCKED": "106"}, rc
-    assert (st.RC_BAD_ARGS, st.RC_REFUSED, st.RC_NOT_WRITABLE, st.RC_PREFLIGHT_FAILED, st.RC_ENV_BLOCKED) == (
+                  "RC_PREFLIGHT": "104", "RC_BUSY": "105", "RC_ENV_BLOCKED": "106", "RC_BASELINE": "107"}, rc
+    assert (st.RC_BAD_ARGS, st.RC_REFUSED, st.RC_NOT_WRITABLE, st.RC_PREFLIGHT_FAILED, st.RC_ENV_BLOCKED,
+            st.RC_BASELINE_FAILED) == (
         int(rc["RC_USAGE"]), int(rc["RC_REFUSED"]), int(rc["RC_STATE"]), int(rc["RC_PREFLIGHT"]),
-        int(rc["RC_ENV_BLOCKED"]))
+        int(rc["RC_ENV_BLOCKED"]), int(rc["RC_BASELINE"]))
     spec = importlib.util.spec_from_file_location("env_guard", ROOT / "shared" / "env_guard.py")
     guard = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(guard)

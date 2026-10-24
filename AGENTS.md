@@ -692,10 +692,18 @@ step 1). After a successful cycle, non-blocking diagnostics: final audit with dr
 `[ATENCION]` lines, JSON in `proyecto1/log/`). Step options are forwarded to the sub-launchers (`--no-export`,
 `--skip-macro`, `--workers N`, `--force`, `--benchmarks-load`, `-- <run_pipeline args>`); optional diagnostics:
 `--shadow N`, `--benchmark-gaps`, `--dashboard`, `--diag-cost`. The diagnostics never change the cycle's RC.
+**Audit ownership and launcher names** (`[Prefix]_[camelCase].bat`, `NORMAS_BATCH.md` sections 14-15): the `*_runCycle.bat` orchestrators
+(`P1_`, `P2_`, `P3_`, `P1P2_`, `P2P3_`, `P1P2P3_`) own the audits through `scripts/launch/lib/cyclePhases.bat`: a frozen PRE
+(`pre_<stamp>_p2` / `pre_<stamp>_costs`) before anything writes - invalid or INCOMPLETE means RC 107, `--allow-no-baseline` overrides - and a
+POST with `--compare-to` at each domain's last writer (P1 after step 2; P2 once, after the DRAFT when P3 is in the flow, via
+`P3_buildPortfolio --audit-compare-to`: the same run is the drift and the promotion evidence; `P1P2_runCycle --defer-post-audit`). Step
+launchers (`P1_discoverAllFunds`, `P2_calculateIndicators`) audit only with `--audit`. The partial orchestrators never write the P1+P2 cycle state.
+Audit files live inside the repo, one folder per project: `out/audit/P1/` (benchmark B1-B7 JSON) and `out/audit/P2/` (macro-beta snapshots and
+outliers); `shared.config.AUDIT_DIRS` for Python, `AUDIT_P1_DIR` / `AUDIT_P2_DIR` from `lib/common.bat` for the launchers (never under `C:\data`).
 Every launcher follows `doc/reglas/NORMAS_BATCH.md` (shared `scripts/launch/lib/common.bat`): paths derived from the file's
 own location, no hard-coded versions/dates, the launcher's own exit codes in 100-199 (100 usage, 101 interpreter, 102 resume
 refused, 103 state, 104 preflight, 105 another instance running, 106 PostgreSQL driver blocked by Application Control — checked by `:init` and `shared/env_guard.py`; tool codes 1-99 pass through untouched), single-instance lock
-shared by `P1P2_runCycle.bat`, `P2P3_runCycle.bat` and `P1P2P3_runCycle.bat` (the integrated P1→P2→beta gate→P3 run: `--only-p3`
+shared by every `*_runCycle.bat` (`P1`, `P2`, `P3`, `P1P2`, `P2P3`, `P1P2P3`; the last is the integrated P1→P2→beta gate→P3 run: `--only-p3`
 resumes just the gate + P3 on the last OK cycle), and the real standby timeout saved and restored.
 Postgres SQL validity is checked by an `EXPLAIN` sweep over every statement production code executes — see
 `doc/reglas/NORMAS_IMPLEMENTACION.md` §7 before adding SQL or an allowlist entry.
@@ -805,12 +813,15 @@ UPDATE fund_kiid_metadata SET KIID_Status='FORCE_REFRESH' WHERE ISIN='<isin>' AN
 | `P1_discoverAllFunds.bat` | P1 |
 | `P1_harvestFunds.bat` | P1 |
 | `P1_refreshBenchmarks.bat` | P1 |
+| `P1_runCycle.bat` | P1 |
 | `P2P3_runCycle.bat` | P2+P3 |
 | `P2_audit.bat` | P2 |
 | `P2_calculateIndicators.bat` | P2 |
 | `P2_discoverLoadMetrics.bat` | P2 |
+| `P2_runCycle.bat` | P2 |
 | `P3_buildPortfolio.bat` | P3 |
 | `P3_generateReport.bat` | P3 |
+| `P3_runCycle.bat` | P3 |
 <!-- AUTO:END launchers -->
 
 ---

@@ -507,6 +507,16 @@ REPORT_DIRS: dict[str, Path] = {
 }
 METRICS_DIR:  Path = REPORT_DIRS["p2"]             # compat alias, no callers left
 
+# Audit outputs (the files an audit leaves besides its rows in control.audit_*): one directory per project under out/audit, inside the
+# repo and never under C:\data. Single source for the Python writers; the launchers derive the same two folders in lib/common.bat
+# (AUDIT_P1_DIR / AUDIT_P2_DIR; the P1P2_AUDIT_DIR environment variable moves the root for both):
+#   p1 -> benchmark consistency findings (proyecto1.tools.audit_benchmark_consistency, benchmark_audit_*.json)
+#   p2 -> macro-beta snapshots and shift outliers (scripts/audit/beta_shift_audit.py, macro_betas_*.csv, beta_shift_outliers_*.csv)
+AUDIT_DIRS: dict[str, Path] = {
+    "p1": _ROOT / "out" / "audit" / "P1",
+    "p2": _ROOT / "out" / "audit" / "P2",
+}
+
 # ============================================================
 # Logging
 # ============================================================

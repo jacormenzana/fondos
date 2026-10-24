@@ -10,12 +10,13 @@ call "%COMMON%" :utf8_on
 :: Log generado en: C:\desarrollo\fondos\proyecto1\log\
 :: Excel generado en: C:\desarrollo\fondos\out\reports\p1\
 ::
-:: Pasos: mark_stale -> nature-first -> fund_family_builder -> family-nature-refresh -> export_p1 -> P1_audit
+:: Pasos: mark_stale -> nature-first -> fund_family_builder -> family-nature-refresh -> export_p1 [-> P1_audit con --audit]
 ::
 :: Uso:
-::   P1_discoverAllFunds.bat                  ciclo completo
-::   P1_discoverAllFunds.bat --no-audit       sin auditoria P1 (la usa P1P2_runCycle.bat, que
-::                                            ejecuta P1_audit por su cuenta con baseline/deriva)
+::   P1_discoverAllFunds.bat                  ciclo completo, sin auditoria (la auditan los orquestadores *_runCycle,
+::                                            con baseline y deriva: un `post` suelto no es evidencia)
+::   P1_discoverAllFunds.bat --audit          ademas, auditoria P1 de diagnostico (modo report, sin persistir)
+::   P1_discoverAllFunds.bat --no-audit       aceptada por compatibilidad: es el valor por defecto
 ::   P1_discoverAllFunds.bat --no-export      sin export Excel
 :: La auditoria P1 (P1_audit.bat: estadistica de costes + consistencia de benchmarks) es
 :: diagnostica: va a su propio log (log_P1_audit_<STAMP>.log), no al log del pipeline, para no
@@ -24,11 +25,16 @@ call "%COMMON%" :utf8_on
 
 set LOG_DIR=%ROOT%\proyecto1\log
 
-set RUN_AUDIT=1
+set RUN_AUDIT=0
 set RUN_EXPORT=1
 
 :parse
 if "%~1"=="" goto :parsed
+if /i "%~1"=="--audit" (
+    set RUN_AUDIT=1
+    shift
+    goto :parse
+)
 if /i "%~1"=="--no-audit" (
     set RUN_AUDIT=0
     shift
@@ -42,12 +48,13 @@ if /i "%~1"=="--no-export" (
 if /i "%~1"=="-h"     goto :help
 if /i "%~1"=="--help" goto :help
 echo [ERROR] Argumento desconocido: %~1
-echo Uso: P1_discoverAllFunds.bat [--no-audit] [--no-export] [-h]
+echo Uso: P1_discoverAllFunds.bat [--audit] [--no-audit] [--no-export] [-h]
 call "%COMMON%" :utf8_off
 endlocal & exit /b %RC_USAGE%
 :help
-echo Uso: P1_discoverAllFunds.bat [--no-audit] [--no-export] [-h]
-echo   --no-audit    sin auditoria P1
+echo Uso: P1_discoverAllFunds.bat [--audit] [--no-audit] [--no-export] [-h]
+echo   --audit       auditoria P1 de diagnostico (por defecto: sin auditoria)
+echo   --no-audit    por compatibilidad: es el valor por defecto
 echo   --no-export   sin export Excel
 call "%COMMON%" :utf8_off
 endlocal & exit /b 0
@@ -151,7 +158,7 @@ if "!RUN_AUDIT!"=="1" (
     call "%LAUNCH%\P1_audit.bat" --mode report --log "%AUDIT_LOG%"
     set RC4=!ERRORLEVEL!
 ) else (
-    echo --- AUDIT P1: omitido (--no-audit^) ------------------------ >> "%LOG%"
+    echo --- AUDIT P1: omitido (sin --audit^) ----------------------- >> "%LOG%"
 )
 
 :: FINAL_RC: primer paso con RC != 0 gana (todos los pasos se ejecutan

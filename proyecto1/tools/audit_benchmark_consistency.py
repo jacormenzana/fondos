@@ -758,8 +758,9 @@ if __name__ == "__main__":
 
     out_path = args.out
     if out_path is None:
-        # Default: canonical repo location (see AGENTS.md asset table)
-        out_path = str(_REPO / "out" / "audit" / "benchmark_audit_findings.json")
+        # Default: the P1 audit folder of the registry (shared.config.AUDIT_DIRS)
+        from shared.config import AUDIT_DIRS
+        out_path = str(AUDIT_DIRS["p1"] / "benchmark_audit_findings.json")
 
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as fh:

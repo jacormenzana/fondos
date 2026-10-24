@@ -5,11 +5,11 @@ Beta-shift audit: compare the macro betas of gold.fund_metrics before and after 
 Created for FND-0176 (m2_global_yoy rebuilt; every fund's macro OLS changes because the factor changed).
 
     # 1) BEFORE the full P2 run: freeze the current values
-    python scripts/audit/beta_shift_audit.py --snapshot C:/data/fondos/audit/macro_betas_20260930.csv
+    python scripts/audit/beta_shift_audit.py --snapshot out/audit/P2/macro_betas_20260930.csv
 
     # 2) AFTER the full P2 run: diff live against the snapshot
-    python scripts/audit/beta_shift_audit.py --compare C:/data/fondos/audit/macro_betas_20260930.csv \
-        --version 20261002 [--metric-like beta_m2_global] [--out C:/data/fondos/audit/beta_shift_outliers.csv]
+    python scripts/audit/beta_shift_audit.py --compare out/audit/P2/macro_betas_20260930.csv \
+        --version 20261002 [--metric-like beta_m2_global] [--out out/audit/P2/beta_shift_outliers.csv]
 
 Read-only. Uses FONDOS_PG_DSN (fondos_app or the read-only role); never prints the DSN.
 Reports per metric: funds compared, funds still on an older version, NULL/NaN after, mean / median / max |delta|,

@@ -15,7 +15,7 @@ call "%COMMON%" :utf8_on
 :: Ningun valor de version o de baseline esta escrito aqui (norma: NORMAS_BATCH.md):
 ::   - CALC_VERSION se lee de proyecto2\src\pipeline\run_pipeline.py (p1p2_state.py calc-version).
 ::   - El baseline de betas se toma AHORA, antes del recalculo (macro_betas_p2p3_<STAMP>.csv en
-::     C:\data\fondos\audit; variable P1P2_AUDIT_DIR para cambiarlo), de modo que la comparacion
+::     out\audit\P2; la variable P1P2_AUDIT_DIR cambia la raiz out\audit), de modo que la comparacion
 ::     mide exactamente lo que este recalculo cambia. --baseline CSV usa uno existente (p. ej. el
 ::     macro_betas_pre_*.csv que P1P2_runCycle.bat guarda al empezar un ciclo).
 ::   - El numero de commits pendientes de push se cuenta en el momento (git).
@@ -32,13 +32,12 @@ call "%COMMON%" :utf8_on
 ::   105 otra instancia en ejecucion | 1-99 = RC propagado del paso que fallo.
 :: ============================================================
 
-set "AUDIT_DIR=C:\data\fondos\audit"
-if defined P1P2_AUDIT_DIR set "AUDIT_DIR=%P1P2_AUDIT_DIR%"
 set "LOCK_FILE=%STATE_DIR%\fondos_cycle.lock"
 
 set "BASELINE="
 set "NO_PAUSE="
 set "NO_PROMPTS="
+set "ALLOW_NO_BASELINE="
 
 :parse
 if "%~1"=="" goto :parsed
@@ -59,6 +58,11 @@ if /i "%~1"=="--no-pause" (
 )
 if /i "%~1"=="--no-prompts" (
     set "NO_PROMPTS=1"
+    shift
+    goto :parse
+)
+if /i "%~1"=="--allow-no-baseline" (
+    set "ALLOW_NO_BASELINE=1"
     shift
     goto :parse
 )
@@ -96,7 +100,7 @@ set "FONDOS_CYCLE_LOCK=1"
 set "RC=0"
 cd /d "%ROOT%"
 call "%COMMON%" :get_time STAMP yyyyMMdd_HHmmss
-if not exist "%AUDIT_DIR%" mkdir "%AUDIT_DIR%"
+if not exist "%AUDIT_P2_DIR%" mkdir "%AUDIT_P2_DIR%"
 call "%COMMON%" :standby_disable owner
 
 :: Telemetria de ciclo (opt-in: FONDOS_TELEMETRY=1; mejor esfuerzo, nunca cambia ningun RC). Dueno del ciclo si nadie lo es ya.
@@ -123,7 +127,7 @@ echo ===================================================
 if defined BASELINE (
     echo Usando el baseline indicado: !BASELINE!
 ) else (
-    set "BASELINE=%AUDIT_DIR%\macro_betas_p2p3_!STAMP!.csv"
+    set "BASELINE=%AUDIT_P2_DIR%\macro_betas_p2p3_!STAMP!.csv"
     call "%COMMON%" :telemetry step-begin BETA_SNAPSHOT
     "%PYTHON%" -X utf8 scripts\audit\beta_shift_audit.py --snapshot "!BASELINE!"
     set "BS_RC=!ERRORLEVEL!"
@@ -134,6 +138,25 @@ if defined BASELINE (
         set "TELEM_STEP=BETA_SNAPSHOT"
         goto :finish
     )
+)
+
+:: -- 1b. Auditoria P2 PRE (baseline congelado, antes de tocar nada) -------------------
+echo.
+echo ===================================================
+echo 1b. Auditoria P2 PRE (pre_!STAMP!_p2^)
+echo ===================================================
+set "PRE_ID=pre_!STAMP!_p2"
+call "%COMMON%" :telemetry step-begin AUDIT_BASE
+call "%PHASES%" :audit_p2 !PRE_ID!
+set "PRE_AUD_RC=!AUD_RC!"
+call "%COMMON%" :telemetry step-end AUDIT_BASE !PRE_AUD_RC!
+call "%COMMON%" :telemetry audit-run p2_metrics pre !PRE_ID!
+call "%PHASES%" :baseline_verdict 0 !PRE_AUD_RC!
+if !BASELINE_RC! NEQ 0 (
+    echo [ERROR] la auditoria PRE no es valida ^(RC=!BASELINE_RC!^): no se recalcula nada. Repetir, o --allow-no-baseline.
+    set "RC=!BASELINE_RC!"
+    set "TELEM_STEP=AUDIT_BASE"
+    goto :finish
 )
 
 :: -- 2. Recalculo P2 -------------------------------------------------------------
@@ -158,7 +181,7 @@ echo ===================================================
 echo 3. Beta-shift audit (CALC_VERSION !CALC_VER!)
 echo ===================================================
 call "%COMMON%" :telemetry step-begin BETA_COMPARE
-"%PYTHON%" -X utf8 scripts\audit\beta_shift_audit.py --compare "!BASELINE!" --version !CALC_VER! --out "%AUDIT_DIR%\beta_shift_outliers_!STAMP!.csv"
+"%PYTHON%" -X utf8 scripts\audit\beta_shift_audit.py --compare "!BASELINE!" --version !CALC_VER! --out "%AUDIT_P2_DIR%\beta_shift_outliers_!STAMP!.csv"
 set "BC_RC=!ERRORLEVEL!"
 call "%COMMON%" :telemetry step-end BETA_COMPARE !BC_RC!
 if !BC_RC! NEQ 0 (
@@ -175,7 +198,10 @@ echo ===================================================
 echo 4. Ejecutando P3 (Build Portfolio y Generate Report)
 echo ===================================================
 call "%COMMON%" :telemetry step-begin P3_BUILD
-call "%LAUNCH%\P3_buildPortfolio.bat"
+:: La auditoria P2 POST se hace UNA vez, tras el DRAFT (P3_buildPortfolio): es a la vez la deriva y la evidencia de promocion.
+set "P3_CMP="
+if defined PRE_ID if "!PRE_AUD_RC!"=="0" set "P3_CMP=--audit-compare-to !PRE_ID!"
+call "%LAUNCH%\P3_buildPortfolio.bat" !P3_CMP!
 set "P3B_RC=!ERRORLEVEL!"
 call "%COMMON%" :telemetry step-end P3_BUILD !P3B_RC!
 if !P3B_RC! NEQ 0 (
@@ -280,7 +306,8 @@ call "%COMMON%" :utf8_off
 endlocal & exit /b 0
 
 :usage_text
-echo Uso: P2P3_runCycle.bat [--baseline CSV] [--no-pause] [--no-prompts]
+echo Uso: P2P3_runCycle.bat [--baseline CSV] [--allow-no-baseline] [--no-pause] [--no-prompts]
+echo   --allow-no-baseline  si la auditoria P2 PRE no es valida: avisar y seguir (por defecto RC 107)
 echo   --baseline CSV   comparar las betas contra un snapshot existente (por defecto se toma uno antes del recalculo)
 echo   --no-pause       sin pausa final
 echo   --no-prompts      sin las preguntas finales (push y prueba del loader)

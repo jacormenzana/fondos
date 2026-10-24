@@ -9,16 +9,19 @@ call "%COMMON%" :utf8_on
 ::
 :: FASE PREVIA (solo ciclo nuevo, salvo el preflight):
 ::   P.  preflight                  BD alcanzable, DSN owner, FRED_API_KEY, espacio en disco
-::   0.  auditoria baseline         P1_audit/P2_audit --persist + punto de restauracion
+::   0.  auditoria baseline (PRE)   P1_audit/P2_audit --persist + punto de restauracion; si alguna no es valida, RC 107
+::                                 (--allow-no-baseline lo avisa y sigue)
 ::   0b. snapshot de betas macro    beta_shift_audit.py --snapshot (para comparar tras P2)
 ::   0c. harvest                    P1_harvestFunds.bat: catalogo DB, informe codSus, puerta, delta KIID
 :: PASOS (numeracion estable: la usan --from y el fichero de estado):
 ::   1. P1_refreshBenchmarks.bat    refresh benchmarks Morningstar
-::   2. P1_discoverAllFunds.bat     pipeline P1 (mark_stale + classify + family + export)
+::   2. P1_discoverAllFunds.bat     pipeline P1 (mark_stale + classify + family + export); tras el, auditoria P1 POST
+::                                 con deriva (cada dominio se audita al salir de su ultimo escritor)
 ::   3. P2_discoverLoadMetrics.bat  macro (INE/BCE/FRED/Eurostat) + NAV discover/load
 ::   4. P2_calculateIndicators.bat  metricas cuantitativas P2 + export
 :: FASE POSTERIOR (solo si el ciclo termina OK; nunca cambia el RC ni el estado):
-::   auditoria final con deriva, comparacion de betas, frescura de datos para P3, informe de ciclo
+::   auditoria P2 final con deriva (--defer-post-audit la omite: la hace P3_buildPortfolio tras el DRAFT), comparacion de
+::   betas, frescura de datos para P3, informe de ciclo
 ::   y, a peticion, shadow reconciliation, cobertura de benchmarks, dashboard y diagnostico de costes.
 ::
 :: Aborta en el primer paso que devuelva RC != 0. Cada sub-lanzador escribe su propio log; este
@@ -49,7 +52,7 @@ call "%COMMON%" :utf8_on
 ::
 :: Codigos de salida: 0 OK | 100 argumentos invalidos | 101 interprete no encontrado |
 ::   102 --from rechazado por la guarda | 103 estado no escribible | 104 preflight fallido |
-::   105 otra instancia en ejecucion | 1-99 = RC propagado del paso (o del harvest previo,
+::   105 otra instancia en ejecucion | 107 baseline (auditoria PRE) no valido | 1-99 = RC propagado del paso (o del harvest previo,
 ::   que cuenta como paso 1) que fallo. Los propios nunca coinciden con los de las herramientas.
 :: ============================================================
 
@@ -57,8 +60,6 @@ call "%COMMON%" :utf8_on
 :: CONFIGURACION
 :: ------------------------------------------------------------
 set "LOG_DIR=%STATE_DIR%"
-set "DATA_AUDIT_DIR=C:\data\fondos\audit"
-if defined P1P2_AUDIT_DIR set "DATA_AUDIT_DIR=%P1P2_AUDIT_DIR%"
 set "LOCK_FILE=%STATE_DIR%\fondos_cycle.lock"
 set "STEP_TOTAL=4"
 
@@ -137,6 +138,9 @@ shift
 goto :collect_p2_args
 
 :parsed
+
+set "ALLOW_NO_BASELINE="
+if defined FLAG_allow_no_baseline set "ALLOW_NO_BASELINE=1"
 
 :: Combinaciones sin sentido (mejor un error ahora que un ciclo de horas con otra cosa distinta).
 set "HARVEST_OPTS="
@@ -268,8 +272,17 @@ for %%N in (1 2 3 4) do set "RC%%N=n/a"
 :: ============================================================
 :: PASO 0: auditoria estadistica BASELINE (antes de tocar nada)
 :: ============================================================
+set "BASELINE_RC=0"
 if !FROM_STEP! GTR 1 (call :baseline_reuse) else (call :baseline_create)
-set "BETA_CSV=%DATA_AUDIT_DIR%\macro_betas_!BASELINE_ID!.csv"
+if !BASELINE_RC! NEQ 0 (
+    set "FINAL_RC=!BASELINE_RC!"
+    set "FAILED_STEP=1"
+    echo ABORTADO: baseline no valido -- RC=!BASELINE_RC! >> "%LOG%"
+    echo.
+    echo [ERROR] la auditoria PRE no es valida ^(RC=!BASELINE_RC!^): no se ejecuta ningun paso. Repetir con --from 1, o --allow-no-baseline para seguir sin deriva.
+    goto :fin
+)
+set "BETA_CSV=%AUDIT_P2_DIR%\macro_betas_!BASELINE_ID!.csv"
 
 :: ============================================================
 :: PASO 0b/0c: snapshot de betas y harvest (solo ciclo nuevo)
@@ -309,6 +322,7 @@ if !FAILED_STEP! NEQ 0 goto :fin
 :: (FND-0034: sin PASO 2b. El gasto corriente lo escribe UN solo escritor por pase, asi que ya no hay fondos re-contaminados que reparar.)
 call :run_step 2 P1_discoverAllFunds "log_pipeline_*.log" "%ROOT%\proyecto1\log"
 if !FAILED_STEP! NEQ 0 goto :fin
+call :audit_post_p1
 
 :: -- PASO 3: macro + NAV discover/load -----------------------------------------
 call :run_step 3 P2_discoverLoadMetrics "log_P2_discoverMetrics_*.log" "%ROOT%\proyecto2\log"
@@ -326,7 +340,8 @@ call :run_step 4 P2_calculateIndicators "log_P2_calcIndicators_*.log" "%ROOT%\pr
 if not "!RC4!"=="n/a" if not "!RC4!"=="SALTADO" call "%COMMON%" :telemetry ingest-p2
 
 if !FINAL_RC! EQU 0 (
-    if defined BASELINE_ID call :audit_final
+    if defined BASELINE_ID if not defined FLAG_defer_post_audit call :audit_final
+    if defined FLAG_defer_post_audit echo --- Auditoria P2 final diferida ^(--defer-post-audit^): la hace quien construye el DRAFT >> "%LOG%"
     call :post_diagnostics
 ) else (
     echo. >> "%LOG%"
@@ -555,11 +570,11 @@ echo. >> "%LOG%"
 echo --- PASO 0: auditoria estadistica baseline (run_id=!BASELINE_ID!) ---- >> "%LOG%"
 echo [!STAMP!] PASO 0: auditoria estadistica baseline (!BASELINE_ID!)
 call "%COMMON%" :telemetry step-begin AUDIT_BASE
-call "%LAUNCH%\P2_audit.bat" --mode report --persist --run-id !BASELINE_ID!_p2 --log "%AUDIT_LOG%" > nul
-set "AB_RC2=!ERRORLEVEL!"
+call "%PHASES%" :audit_p2 !BASELINE_ID!_p2
+set "AB_RC2=!AUD_RC!"
 if !AB_RC2! NEQ 0 echo [WARN] P2_audit baseline fallo: no se cuantificara la deriva >> "%LOG%"
-call "%LAUNCH%\P1_audit.bat" --no-benchmark --mode report --persist --run-id !BASELINE_ID!_costs --log "%AUDIT_LOG%" > nul
-set "AB_RC1=!ERRORLEVEL!"
+call "%PHASES%" :audit_p1 !BASELINE_ID!_costs
+set "AB_RC1=!AUD_RC!"
 if !AB_RC1! NEQ 0 echo [WARN] P1_audit baseline fallo: no se cuantificara la deriva >> "%LOG%"
 set "AB_RC=0"
 if !AB_RC2! NEQ 0 set "AB_RC=!AB_RC2!"
@@ -567,6 +582,7 @@ if !AB_RC1! NEQ 0 set "AB_RC=!AB_RC1!"
 call "%COMMON%" :telemetry step-end AUDIT_BASE !AB_RC!
 call "%COMMON%" :telemetry audit-run p2_metrics pre !BASELINE_ID!_p2
 call "%COMMON%" :telemetry audit-run cost_attributes pre !BASELINE_ID!_costs
+call "%PHASES%" :baseline_verdict !AB_RC1! !AB_RC2!
 exit /b 0
 
 :: ------------------------------------------------------------
@@ -582,7 +598,7 @@ exit /b 0
 ::   Un fallo solo deja sin comparacion final (:beta_compare avisa si falta el fichero).
 :: ------------------------------------------------------------
 :beta_snapshot
-if not exist "%DATA_AUDIT_DIR%" mkdir "%DATA_AUDIT_DIR%"
+if not exist "%AUDIT_P2_DIR%" mkdir "%AUDIT_P2_DIR%"
 set AUX_TARGET="%ROOT%\scripts\audit\beta_shift_audit.py"
 set AUX_ARGS=--snapshot "!BETA_CSV!"
 call :aux_py beta_snapshot "PASO 0b snapshot de betas macro"
@@ -604,7 +620,7 @@ if not defined CALC_VER (
     exit /b 0
 )
 set AUX_TARGET="%ROOT%\scripts\audit\beta_shift_audit.py"
-set AUX_ARGS=--compare "!BETA_CSV!" --version !CALC_VER! --out "%DATA_AUDIT_DIR%\beta_shift_outliers_!BASELINE_ID!.csv"
+set AUX_ARGS=--compare "!BETA_CSV!" --version !CALC_VER! --out "%AUDIT_P2_DIR%\beta_shift_outliers_!BASELINE_ID!.csv"
 call :aux_py beta_compare "comparacion de betas macro (CALC_VERSION !CALC_VER!)"
 set "RC_BETA=!AUX_RC!"
 exit /b 0
@@ -615,23 +631,32 @@ exit /b 0
 :audit_final
 call "%COMMON%" :get_time AUDIT_STAMP yyyyMMdd_HHmmss
 echo. >> "%LOG%"
-echo --- Auditoria estadistica final (compare-to !BASELINE_ID!) ---- >> "%LOG%"
-echo [AUDITORIA] deriva vs baseline !BASELINE_ID!
+echo --- Auditoria P2 final (compare-to !BASELINE_ID!_p2) ---- >> "%LOG%"
+echo [AUDITORIA] deriva P2 vs baseline !BASELINE_ID!
 call "%COMMON%" :telemetry step-begin AUDIT_FINAL
-call "%LAUNCH%\P2_audit.bat" --mode report --persist --run-id post_!AUDIT_STAMP!_p2 --compare-to !BASELINE_ID!_p2 --log "%AUDIT_LOG%" > nul
-set "AF_RC2=!ERRORLEVEL!"
-if !AF_RC2! NEQ 0 echo [WARN] P2_audit final fallo >> "%LOG%"
-call "%LAUNCH%\P1_audit.bat" --mode report --persist --run-id post_!AUDIT_STAMP!_costs --compare-to !BASELINE_ID!_costs --log "%AUDIT_LOG%" > nul
-set "AF_RC1=!ERRORLEVEL!"
-if !AF_RC1! NEQ 0 echo [WARN] P1_audit final fallo >> "%LOG%"
-set "AF_RC=0"
-if !AF_RC2! NEQ 0 set "AF_RC=!AF_RC2!"
-if !AF_RC1! NEQ 0 set "AF_RC=!AF_RC1!"
+call "%PHASES%" :audit_p2 post_!AUDIT_STAMP!_p2 !BASELINE_ID!_p2
+set "AF_RC=!AUD_RC!"
+if !AF_RC! NEQ 0 echo [WARN] P2_audit final fallo >> "%LOG%"
 call "%COMMON%" :telemetry step-end AUDIT_FINAL !AF_RC!
 call "%COMMON%" :telemetry audit-run p2_metrics post post_!AUDIT_STAMP!_p2 --baseline !BASELINE_ID!_p2
-call "%COMMON%" :telemetry audit-run cost_attributes post post_!AUDIT_STAMP!_costs --baseline !BASELINE_ID!_costs
 echo   Informe de deriva: %AUDIT_LOG% >> "%LOG%"
 echo   Informe de deriva: %AUDIT_LOG%
+exit /b 0
+
+:: ------------------------------------------------------------
+:: :audit_post_p1 -- auditoria P1 POST con deriva, justo al salir del ultimo escritor de P1 (PASO 2). Solo si el
+::   PASO 2 se ejecuto en esta corrida (una reanudacion desde el 3 la hizo la corrida que lo completo). Informativa.
+:: ------------------------------------------------------------
+:audit_post_p1
+if !FROM_STEP! GTR 2 exit /b 0
+if not defined BASELINE_ID exit /b 0
+call "%COMMON%" :get_time P1POST_STAMP yyyyMMdd_HHmmss
+echo. >> "%LOG%"
+echo --- Auditoria P1 POST (compare-to !BASELINE_ID!_costs) ---- >> "%LOG%"
+echo [AUDITORIA] deriva P1 vs baseline !BASELINE_ID!
+call "%PHASES%" :audit_p1 post_!P1POST_STAMP!_costs !BASELINE_ID!_costs
+if !AUD_RC! NEQ 0 echo [WARN] P1_audit POST fallo ^(RC=!AUD_RC!^) >> "%LOG%"
+call "%COMMON%" :telemetry audit-run cost_attributes post post_!P1POST_STAMP!_costs --baseline !BASELINE_ID!_costs
 exit /b 0
 
 :: ------------------------------------------------------------
@@ -706,6 +731,8 @@ echo Uso: P1P2_runCycle.bat [opciones] [-- argumentos_para_run_pipeline]
 echo Ciclo:
 echo   --from N [--from-any]    reanudar en el paso N (1-4) tras un fallo
 echo   --skip-preflight         no ejecutar el preflight
+echo   --allow-no-baseline      si la auditoria PRE no es valida: avisar y seguir (por defecto RC 107)
+echo   --defer-post-audit       sin la auditoria P2 final: la hace quien construye el DRAFT (P1P2P3_runCycle)
 echo   -h, --help               esta ayuda
 echo Opciones de paso:
 echo   --benchmarks-load        PASO 1: recarga completa de benchmarks (modo load)

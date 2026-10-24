@@ -15,7 +15,7 @@
 ::   - Los argumentos empiezan en %1 (la etiqueta se consume aqui, en el despachador).
 ::
 :: Subrutinas:
-::   :init NOMBRE               ROOT LIB COMMON LAUNCH STATE_DIR PYTHON y las constantes RC_*; comprueba interprete y driver PostgreSQL
+::   :init NOMBRE               ROOT LIB COMMON LAUNCH STATE_DIR AUDIT_P1_DIR AUDIT_P2_DIR PYTHON y las constantes RC_*; comprueba interprete y driver PostgreSQL
 ::   :get_time VAR FORMATO      hora actual con formato .NET en VAR (p. ej. yyyyMMdd_HHmmss)
 ::   :tail FICHERO N            ultimas N lineas de un fichero
 ::   :is_uint VALOR             RC 0 si es un entero positivo
@@ -26,6 +26,7 @@
 ::   :log_open DIR TAG TITULO   fija STAMP, LOG, ERR y escribe la cabecera del log
 ::   :log_close TITULO RC       fija STAMP2 y escribe el pie del log
 ::   :telemetry SUBCMD [args]   telemetria de ciclo (shared/cycle_telemetry.py); nada sin FONDOS_CYCLE_ID
+::   Las fases de auditoria compartidas por los orquestadores viven en lib\cyclePhases.bat (variable PHASES).
 :: ============================================================
 :: `shift` desplaza tambien %0: la ubicacion de la libreria se captura ANTES de consumir la etiqueta.
 set "_HERE=%~dp0"
@@ -59,6 +60,10 @@ for %%I in ("%_HERE%..\..\..") do set "ROOT=%%~fI"
 set "COMMON=%LIB%\common.bat"
 set "LAUNCH=%ROOT%\scripts\launch"
 set "STATE_DIR=%ROOT%\proyecto1\log"
+set "AUDIT_ROOT=%ROOT%\out\audit"
+if defined P1P2_AUDIT_DIR set "AUDIT_ROOT=%P1P2_AUDIT_DIR%"
+set "AUDIT_P1_DIR=%AUDIT_ROOT%\P1"
+set "AUDIT_P2_DIR=%AUDIT_ROOT%\P2"
 set "STANDBY_FILE=%STATE_DIR%\standby_ac.saved"
 set "PYTHON=C:\data\envs\des\python.exe"
 if defined FONDOS_PYTHON set "PYTHON=%FONDOS_PYTHON%"
@@ -72,6 +77,8 @@ set "RC_STATE=103"
 set "RC_PREFLIGHT=104"
 set "RC_BUSY=105"
 set "RC_ENV_BLOCKED=106"
+set "RC_BASELINE=107"
+set "PHASES=%LIB%\cyclePhases.bat"
 if not exist "%PYTHON%" (
     echo [ERROR] Interprete Python no encontrado: %PYTHON%
     exit /b 101

@@ -92,7 +92,7 @@ Prohibido en líneas no comentadas: `C:\desarrollo`, `C:\data\envs`, literales d
 |---|---|---|
 | `0` | éxito | |
 | `1-99` | **la herramienta que falló**, propagada sin tocar | `3` benchmark loader, `5/6` puerta del harvest, `2` frescura de P3 |
-| `100-199` | **el propio lanzador** (constantes `RC_*` de `:init`) | `100` argumentos inválidos, `101` intérprete no encontrado, `102` reanudación rechazada, `103` estado no escribible, `104` preflight fallido, `105` otra instancia en ejecución, `106` driver PostgreSQL bloqueado |
+| `100-199` | **el propio lanzador** (constantes `RC_*` de `:init`) | `100` argumentos inválidos, `101` intérprete no encontrado, `102` reanudación rechazada, `103` estado no escribible, `104` preflight fallido, `105` otra instancia en ejecución, `106` driver PostgreSQL bloqueado, `107` baseline (auditoría PRE) no válido |
 
 Así un código propio **nunca** coincide con el de una herramienta (antes un harvest fallido, RC 5, era
 indistinguible de «intérprete no encontrado»). No se escriben literales 1-99 en `exit /b`. Las constantes de
@@ -120,7 +120,7 @@ existe— y **sin PowerShell**). Ultimas lineas de un log: `:tail FICHERO N`.
 
 ## §9. Instancia única
 
-Los lanzadores de **nivel superior** que escriben estado o recalculan (`P1P2_runCycle`, `P2P3_runCycle`, `P1P2P3_runCycle`, y el de la
+Los lanzadores de **nivel superior** que escriben estado o recalculan (`P1_runCycle`, `P2_runCycle`, `P3_runCycle`, `P1P2_runCycle`, `P2P3_runCycle`, `P1P2P3_runCycle`, y el de la
 release `FND-0246`, que encadena P1 -> P2 -> P3) comparten un
 bloqueo: `call :cycle 9>"%LOCK_FILE%"` mantiene un manejador abierto mientras corre `:cycle`; una segunda instancia no
 puede abrirlo, `:cycle` no se ejecuta (`LOCK_HELD` sin definir) y sale con RC 105. Lo cierra el sistema aunque el proceso
@@ -179,6 +179,54 @@ fase nueva se añade como previa/posterior, no renumerando. Un fallo de prefligh
 - [ ] Efectos globales (standby, codepage) vía librería y restaurados.
 - [ ] Lógica decidible en Python con test; el `.bat` solo la invoca.
 - [ ] `tests/test_batch_standards.py` y `tests/test_batch_launchers_e2e.py` en verde.
+- [ ] Nombre conforme a §15; si es un orquestador, auditorías PRE/POST por `lib\cyclePhases.bat` (§14) y en `tests/test_batch_cycle_audits_e2e.py`.
+
+---
+
+## §14. Auditoría en los orquestadores (PRE congelado, POST con deriva)
+
+**Quién audita.** Solo los orquestadores `*_runCycle`; los lanzadores de paso (`P1_discoverAllFunds`, `P2_calculateIndicators`, …) **no auditan
+por defecto** (opt-in `--audit`, modo report sin persistir; `--no-audit` se acepta por compatibilidad). Un `post` suelto, sin `pre` con el que
+compararlo, no es evidencia.
+
+**Qué y cuándo** (la lógica vive una sola vez en `scripts/launch/lib/cyclePhases.bat`, variable `PHASES`; los orquestadores no copian llamadas a `P1_audit`/`P2_audit`):
+
+| Fase | Auditoría | Corrida |
+|---|---|---|
+| Antes de tocar nada | PRE de cada dominio que el flujo va a escribir (P1: costes + benchmarks B1-B7; P2: métricas) | `pre_<sello>_costs`, `pre_<sello>_p2` |
+| Al salir del último escritor de P1 (paso 2) | POST P1 `--compare-to` su PRE | `post_<sello>_costs` |
+| P2: **una sola vez**. Con P3 en el flujo, tras el DRAFT (`P3_buildPortfolio --audit-compare-to <pre>_p2`): es a la vez la deriva y la evidencia de promoción | POST P2 `--compare-to` su PRE | `post_<sello>_p2` |
+
+- **Una auditoría completa de P2 por ciclo**, no dos: `P1P2_runCycle --defer-post-audit` omite la suya cuando P3 va a hacerla; si P3 no llega a auditar
+  (falla antes, `--p3-dry-run`), `P1P2P3_runCycle` hace una de respaldo al terminar. Nada de esto cambia la puerta de promoción (FND-0306).
+- **PRE válido o nada (RC 107).** Si un PRE falla o sale INCOMPLETO (RC 2: un chequeo obligatorio no pudo ejecutarse) no se ejecuta ningún paso que
+  escriba: `RC_BASELINE = 107`, mismo número en `common.bat` y `p1p2_state.py` (lo comprueba el test). `--allow-no-baseline` lo avisa y sigue (la deriva
+  de ese ciclo no será evidencia). Un POST que falla es informativo: nunca cambia el RC.
+- **El PRE no se repite al reanudar** (`--from N > 1` reutiliza el baseline del ciclo fallido, `p1p2_state.py`); una reanudación desde el paso 3 no repite
+  el POST de P1, que ya hizo la corrida que completó el paso 2. Un fallo del PRE se reanuda con `--from 1` (toma un PRE nuevo).
+- **Dónde quedan los ficheros de una auditoría:** dentro del repo, **una carpeta por proyecto**: `out\audit\P1\` (benchmarks B1-B7) y `out\audit\P2\`
+  (snapshots de betas macro `macro_betas_*.csv` y outliers `beta_shift_outliers_*.csv`). Las define una sola vez `lib\common.bat` (`AUDIT_P1_DIR`,
+  `AUDIT_P2_DIR`; la variable `P1P2_AUDIT_DIR` mueve la raíz `out\audit`, p. ej. en las pruebas) y, para Python, `shared.config.AUDIT_DIRS`. Nunca bajo `C:\data`.
+  Los logs de las auditorías siguen el registro de logs de cada proyecto (`LOG_DIRS`).
+- **Benchmarks B1-B7:** `P1_audit --run-id X` guarda además `out\audit\P1\benchmark_audit_X.json` (pre y post son comparables) y refresca
+  `benchmark_audit_findings.json` (el `latest` que leen las skills).
+- Los orquestadores parciales (`P1_runCycle`, `P2_runCycle`, `P3_runCycle`) **no** escriben el estado del ciclo P1+P2 (`P1P2_runCycle.state`): un ciclo
+  parcial no puede dar por bueno `P1P2_runCycle --from N` ni `P1P2P3_runCycle --only-p3`.
+
+## §15. Nombres
+
+`[Prefijo]_[primeraPalabra][SegundaPalabra]...bat`, camelCase con la primera palabra en minúscula. El prefijo es el proyecto (`P1`, `P2`, `P3`) o la
+**concatenación** de los que abarca el flujo, en orden (`P1P2`, `P2P3`, `P1P2P3`); sin guiones bajos dentro del prefijo.
+
+| Rol | Nombre |
+|---|---|
+| Orquestador (ciclo con auditoría PRE/POST) | `P1_runCycle`, `P2_runCycle`, `P3_runCycle`, `P1P2_runCycle`, `P2P3_runCycle`, `P1P2P3_runCycle` |
+| Auditoría de un dominio | `P1_audit`, `P2_audit` (y `P1P2_auditStatistical` para el lanzador genérico por dominio) |
+| Paso | `P1_harvestFunds`, `P1_refreshBenchmarks`, `P1_discoverAllFunds`, `P2_discoverLoadMetrics`, `P2_calculateIndicators`, `P3_buildPortfolio`, `P3_generateReport` |
+
+Los números de ticket no van en el nombre de un lanzador permanente (los `FND-0246*` son lanzadores puntuales de una release: se retiran al cerrarla).
+Renombrar un lanzador exige actualizar sus referencias en el mismo commit (documentación, pruebas, fichero de estado, etiquetas de log) y regenerar el
+sentinel `launchers` de `AGENTS.md` (`scripts/audit/sync_agents_md.py --write`).
 
 ---
 

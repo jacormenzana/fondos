@@ -11,8 +11,10 @@ call "%COMMON%" :utf8_on
 ::   1. Auditoria estadistica del dominio costs (fund_master / fund_cost_schedule):
 ::      scripts\audit\run_statistical_audit.py --domain costs
 ::   2. Consistencia de benchmarks B1-B7 (proyecto1\tools\audit_benchmark_consistency.py,
-::      solo lectura; JSON en out\audit\benchmark_audit_findings.json)
+::      solo lectura; JSON en out\audit\P1\benchmark_audit_findings.json)
 ::
+:: Con --run-id el JSON de benchmarks se guarda ademas sellado por corrida (out\audit\P1\benchmark_audit_<run-id>.json:
+:: el pre y el post de un ciclo son comparables) y refresca el `latest`.
 :: Es diagnostico: en --mode report (defecto) el paso 1 siempre devuelve 0, asi que un RC != 0
 :: solo significa que el propio script de auditoria se ha roto (o --mode check con hallazgos).
 :: Quien la llama decide si propaga ese RC; P1P2_runCycle.bat nunca aborta por ella.
@@ -39,11 +41,19 @@ set LOG_DIR=%ROOT%\proyecto1\log
 set SHARED_LOG=
 set RUN_BENCH=1
 set STAT_ARGS=
+set RUN_ID=
 
 :parse
 if "%~1"=="" goto :parsed
 if /i "%~1"=="--log" (
     set SHARED_LOG=%~2
+    shift
+    shift
+    goto :parse
+)
+if /i "%~1"=="--run-id" (
+    set RUN_ID=%~2
+    set STAT_ARGS=!STAT_ARGS! --run-id %~2
     shift
     shift
     goto :parse
@@ -84,8 +94,11 @@ if "!RUN_BENCH!"=="1" (
     echo [%time%] Paso 2/2: consistencia de benchmarks B1-B7
     echo. >> "%LOG%"
     echo --- PASO 2: audit_benchmark_consistency ------------------- >> "%LOG%"
-    "%PYTHON%" -u -X utf8 proyecto1\tools\audit_benchmark_consistency.py >> "%LOG%" 2>&1
+    set BENCH_OUT=
+    if defined RUN_ID set BENCH_OUT=--out "%AUDIT_P1_DIR%\benchmark_audit_!RUN_ID!.json"
+    "%PYTHON%" -u -X utf8 proyecto1\tools\audit_benchmark_consistency.py !BENCH_OUT! >> "%LOG%" 2>&1
     set RC2=!ERRORLEVEL!
+    if defined RUN_ID if !RC2! EQU 0 copy /y "%AUDIT_P1_DIR%\benchmark_audit_!RUN_ID!.json" "%AUDIT_P1_DIR%\benchmark_audit_findings.json" > nul
 ) else (
     echo --- PASO 2: omitido (--no-benchmark^) ---------------------- >> "%LOG%"
 )

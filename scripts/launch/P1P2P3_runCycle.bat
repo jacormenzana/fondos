@@ -48,8 +48,6 @@ call "%COMMON%" :utf8_on
 :: CONFIGURACION
 :: ------------------------------------------------------------
 set "LOG_DIR=%STATE_DIR%"
-set "DATA_AUDIT_DIR=C:\data\fondos\audit"
-if defined P1P2_AUDIT_DIR set "DATA_AUDIT_DIR=%P1P2_AUDIT_DIR%"
 set "LOCK_FILE=%STATE_DIR%\fondos_cycle.lock"
 
 :: Opciones del ciclo P1+P2 (BOOL_OPTS / UINT_OPTS): una sola tabla, la de P1P2_runCycle.bat.
@@ -218,13 +216,16 @@ echo ===================================================
 echo A. Ciclo P1+P2 ^(P1P2_runCycle.bat^)
 echo ===================================================
 echo --- FASE A: P1P2_runCycle.bat !CYCLE_ARGS! >> "%LOG%"
-call "%LAUNCH%\P1P2_runCycle.bat" !CYCLE_ARGS!
+:: --defer-post-audit: la auditoria P2 POST la hace P3_buildPortfolio tras el DRAFT (una sola, que ademas es la evidencia de promocion).
+call "%LAUNCH%\P1P2_runCycle.bat" --defer-post-audit !CYCLE_ARGS!
 set "RC=!ERRORLEVEL!"
 echo --- FASE A fin: RC=!RC! >> "%LOG%"
 if !RC! NEQ 0 (
     echo [ERROR] el ciclo P1+P2 fallo ^(RC=!RC!^): no se construye P3.
     goto :finish
 )
+:: El ciclo termino OK y dejo la auditoria P2 POST pendiente: si P3 no llega a hacerla, :finish la hace de respaldo.
+set "DEFERRED_POST=1"
 goto :phase_b
 
 :phase_a_skip
@@ -255,7 +256,7 @@ if defined OPT_baseline (
     set "BETA_CSV=!OPT_baseline!"
 ) else (
     call "%COMMON%" :state_query baseline BASELINE_ID
-    set "BETA_CSV=%DATA_AUDIT_DIR%\macro_betas_!BASELINE_ID!.csv"
+    set "BETA_CSV=%AUDIT_P2_DIR%\macro_betas_!BASELINE_ID!.csv"
 )
 if not exist "!BETA_CSV!" (
     echo [ERROR] no hay snapshot de betas contra el que comparar: !BETA_CSV!
@@ -265,7 +266,7 @@ if not exist "!BETA_CSV!" (
 )
 echo --- FASE B: betas contra !BETA_CSV! ^(CALC_VERSION !CALC_VER!^) >> "%LOG%"
 call "%COMMON%" :telemetry step-begin BETA_GATE
-"%PYTHON%" -X utf8 scripts\audit\beta_shift_audit.py --compare "!BETA_CSV!" --version !CALC_VER! --out "%DATA_AUDIT_DIR%\beta_shift_outliers_gate_!STAMP!.csv"
+"%PYTHON%" -X utf8 scripts\audit\beta_shift_audit.py --compare "!BETA_CSV!" --version !CALC_VER! --out "%AUDIT_P2_DIR%\beta_shift_outliers_gate_!STAMP!.csv"
 set "BG_RC=!ERRORLEVEL!"
 call "%COMMON%" :telemetry step-end BETA_GATE !BG_RC!
 if !BG_RC! NEQ 0 (
@@ -287,6 +288,8 @@ echo C. P3 ^(cartera e informe^)
 echo ===================================================
 set "P3_ARGS="
 if defined OPT_scenario set "P3_ARGS=!OPT_scenario!"
+if not defined BASELINE_ID call "%COMMON%" :state_query baseline BASELINE_ID
+if defined BASELINE_ID set "P3_ARGS=!P3_ARGS! --audit-compare-to !BASELINE_ID!_p2"
 if defined FLAG_p3_dry_run set "P3_ARGS=!P3_ARGS! --dry-run"
 if defined FLAG_allow_stale set "P3_ARGS=!P3_ARGS! --allow-stale"
 echo --- FASE C: P3_buildPortfolio.bat !P3_ARGS! >> "%LOG%"
@@ -299,6 +302,7 @@ if !RC! NEQ 0 (
     set "TELEM_STEP=P3_BUILD"
     goto :finish
 )
+if not defined FLAG_p3_dry_run set "POST_DONE=1"
 
 if defined FLAG_p3_dry_run (
     echo Informe omitido: --p3-dry-run no persiste nada.
@@ -364,6 +368,8 @@ if /i "!LOADER_CHOICE!"=="S" (
 )
 
 :finish
+:: Auditoria P2 POST pendiente (el ciclo la difirio y P3 no la hizo: fallo antes, --p3-dry-run): de respaldo, informativa.
+if defined DEFERRED_POST if not defined POST_DONE call :post_audit_fallback
 call "%COMMON%" :standby_restore
 if defined TELEM_OWNER (
     set "TELEM_STATUS=OK"
@@ -388,6 +394,19 @@ echo ===================================================
 if not defined FLAG_no_pause pause
 exit /b !RC!
 
+
+:: ------------------------------------------------------------
+:: :post_audit_fallback -- auditoria P2 POST contra el baseline del ciclo cuando P3 no la hizo. Nunca cambia RC.
+:: ------------------------------------------------------------
+:post_audit_fallback
+if not defined BASELINE_ID call "%COMMON%" :state_query baseline BASELINE_ID
+if not defined BASELINE_ID exit /b 0
+call "%COMMON%" :get_time FB_STAMP yyyyMMdd_HHmmss
+echo [AUDITORIA] P3 no hizo la auditoria P2 POST: auditoria de respaldo post_!FB_STAMP!_p2 vs !BASELINE_ID!_p2
+echo --- Auditoria P2 POST de respaldo: post_!FB_STAMP!_p2 vs !BASELINE_ID!_p2 >> "%LOG%"
+call "%PHASES%" :audit_p2 post_!FB_STAMP!_p2 !BASELINE_ID!_p2
+echo --- Auditoria P2 POST de respaldo fin: RC=!AUD_RC! >> "%LOG%"
+exit /b 0
 
 :: ------------------------------------------------------------
 :: Salidas de error de argumentos / ayuda

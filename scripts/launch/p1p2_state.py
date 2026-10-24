@@ -54,6 +54,7 @@ STEP_NAMES = {1: "P1_refreshBenchmarks", 2: "P1_discoverAllFunds",
 # of scripts/launch/lib/common.bat (tests/test_batch_standards.py enforces it).
 RC_OK, RC_BAD_ARGS, RC_REFUSED, RC_NOT_WRITABLE, RC_PREFLIGHT_FAILED = 0, 100, 102, 103, 104
 RC_ENV_BLOCKED = 106            # PostgreSQL driver cannot load (Application Control); == shared/env_guard.RC_ENV_BLOCKED
+RC_BASELINE_FAILED = 107        # the PRE audit (frozen baseline) is missing, failed or INCOMPLETE: nothing mutating ran
 
 
 def state_path() -> Path:
