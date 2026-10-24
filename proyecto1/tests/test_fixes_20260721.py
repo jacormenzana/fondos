@@ -229,6 +229,28 @@ def test_do_not_require_capital_guarantee_does_not_trigger_estructurado():
     )
 
 
+# FIX-ESTRUCT-NEGATION-2 (FND-0311): the English PRIIPs sentence of Alken European Opportunities R and Pictet Short-Term Money Market EUR J
+_PRIIPS_NEGATION_3 = _ddf(
+    "The recommended holding period is 5 years. The product does not have any capital guarantee and up to 100% of "
+    "their capital is at risk. The fund invests mainly in European equities."
+)
+
+
+def test_does_not_have_any_capital_guarantee_does_not_trigger_estructurado():
+    """FND-0311: 'the product does not have any capital guarantee' is the same standard boilerplate in another wording."""
+    result = detect_nature_from_kiid(_PRIIPS_NEGATION_3)
+    assert result != "Estructurado", f"FIX-ESTRUCT-NEGATION-2: negated 'does not have any capital guarantee' must not → Estructurado; got {result!r}"
+
+
+def test_a_guarantee_after_an_unrelated_negation_still_triggers_estructurado():
+    """The negation must sit right before the marker (120 chars): a guarantee stated far from any negation stays Estructurado."""
+    kiid = _ddf(
+        "The product does not have any exit fee. " + "The Fund is a note issued by a bank. " * 6 +
+        "It provides a capital guarantee at maturity of 100% of the invested capital."
+    )
+    assert detect_nature_from_kiid(kiid) == "Estructurado"
+
+
 def test_genuine_autocall_still_triggers_estructurado():
     """A fund whose objective contains 'autocall' is a genuine structured product
     → must still return Estructurado (regression guard)."""

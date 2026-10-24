@@ -1652,10 +1652,14 @@ def detect_nature_from_kiid(kiid_text: str) -> Optional[str]:
     # capital-family as defense-in-depth (covers objective text that explicitly
     # says "does not guarantee capital"). Unconditional signals (autocall, barrier,
     # etc.) have no benign negated form — they remain unconditional.
+    # FIX-ESTRUCT-NEGATION-2 (2026-10-25, FND-0311): the English PRIIPs boilerplate reads "the product does NOT HAVE ANY capital guarantee and up to
+    # 100% of their capital is at risk", a negated form the list above did not know: the English KIIDs of Alken European Opportunities R and Pictet
+    # Short-Term Money Market EUR J therefore voted Estructurado while their Spanish-text siblings did not (same sub-fund, two natures in one family).
     _STRUCT_NEG_MARKERS = (
         "does not include", "do not require", "not include any",
         "without a capital", "no incluye", "sin garantía de capital",
         "no capital guarantee", "no require",
+        "does not have any", "do not have any", "not have any",
     )
     # Unconditional structured signals — search objective window (R-6)
     if any(k in w for k in (

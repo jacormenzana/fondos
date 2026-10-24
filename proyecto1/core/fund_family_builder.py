@@ -74,6 +74,9 @@ except ImportError:
 from shared.db import executemany, execute_fail_soft, fail_soft_block
 
 
+# FND-0311: minimum confidence of the reference class to settle NON-ADJACENT natures of an active family whose classes all carry the same official name.
+_NON_ADJACENT_SAME_FUND_MIN_CONF: float = 0.80
+
 # Familias con heterogeneidad de Fund_Nature CONOCIDA, identificadas por su NOMBRE NORMALIZADO (la raiz que produce _normalize_name), nunca
 # por fund_family_id: el builder REASIGNA los FAM_xxxxxx secuencialmente en cada ejecucion (sorted(groups)), asi que una lista por id
 # apuntaba a otras familias en cuanto cambiaba el universo (FND-0244, 2026-10-07: de los 4 ids documentados, 3 ya apuntaban a otro fondo y
@@ -453,7 +456,8 @@ def _reference_sort_key(m: dict) -> tuple:
     )
 
 
-def resolve_family_nature_by_reference(members: list[dict], allow_non_adjacent: bool = False) -> tuple[str | None, list[str], str]:
+def resolve_family_nature_by_reference(members: list[dict], allow_non_adjacent: bool = False,
+                                       non_adjacent_min_conf: float | None = None) -> tuple[str | None, list[str], str]:
     """Rule 4. `members` carry ISIN, Fund_Name, Fund_Nature, fund_currency, nav_n, kiid_text, benchmark_declared, ms_asset_class, srri_band.
 
     `allow_non_adjacent`: arbitrate natures that are NOT adjacent too. The caller passes True only for a family with NO active member (a retired
@@ -461,11 +465,16 @@ def resolve_family_nature_by_reference(members: list[dict], allow_non_adjacent: 
     natures stays flagged, because non-adjacent natures usually mean the family key merged two different funds. The decision is still the
     reference class's own evidence, never a default nature.
 
+    `non_adjacent_min_conf` (FND-0311): the caller passes it only when the family key is the OFFICIAL sub-fund name and every class carries the same one, i.e.
+    "same fund" is established by the strongest signal, not by an abbreviated catalogue name. Non-adjacent natures of an ACTIVE family are then decided by the
+    reference class's evidence too, but only when its confidence reaches this value; below it the family stays flagged. Ignored when `allow_non_adjacent`.
+
     Returns (nature, [ISINs to correct], reason); (None, [], reason) when the family cannot be decided safely."""
     nature_set = {m["Fund_Nature"] for m in members if m.get("Fund_Nature")}
     if len(nature_set) <= 1:
         return None, [], "consistent"
-    if "Restantes" in nature_set or (not allow_non_adjacent and not _is_adjacent_pair(nature_set)):
+    non_adjacent = not allow_non_adjacent and not _is_adjacent_pair(nature_set)
+    if "Restantes" in nature_set or (non_adjacent and non_adjacent_min_conf is None):
         return None, [], "non-adjacent natures: left for review"
     ref = sorted(members, key=_reference_sort_key)[0]
     if not (ref.get("kiid_text") or "").strip():
@@ -475,6 +484,8 @@ def resolve_family_nature_by_reference(members: list[dict], allow_non_adjacent: 
     nature, conf, trace = resolve_nature_evidence((ref["Fund_Name"] or "").lower(), ref["kiid_text"], bench, ref.get("srri_band"), ms)
     if nature is None or nature not in nature_set:
         return None, [], f"reference class {ref['ISIN']} resolves to {nature!r}, not one of the family's natures"
+    if non_adjacent and conf < non_adjacent_min_conf:
+        return None, [], f"non-adjacent natures: reference class {ref['ISIN']} confidence {conf:.2f} < {non_adjacent_min_conf:.2f}, left for review"
     return nature, [m["ISIN"] for m in members if m["Fund_Nature"] != nature],         f"reference class {ref['ISIN']} ({trace.get('reason')}, conf {conf:.2f})"
 
 
@@ -512,19 +523,31 @@ def correct_family_inconsistencies(
 
     Devuelve número de correcciones aplicadas.
     """
+    import shared.config as _cfg
+    use_official = bool(getattr(_cfg, "OFFICIAL_NAME_FAMILY_KEY_ENABLED", False))      # FND-0246 / FND-0311; OFF reads no new column
     # Obtener datos necesarios para la evaluación
-    rows = conn.execute("""
-        SELECT fm.ISIN, fm.Fund_Name, fm.Fund_Nature, fm.fund_family_id,
-               fm.Data_Quality_Flag, fm.SRRI_Quality_Flag, fm.In_Current_Universe
-        FROM fund_master fm
-        WHERE fm.fund_family_id IS NOT NULL
-          AND fm.Fund_Nature IS NOT NULL
-        ORDER BY fm.fund_family_id
-    """).fetchall()
+    if use_official:
+        rows = conn.execute("""
+            SELECT fm.ISIN, fm.Fund_Name, fm.Fund_Nature, fm.fund_family_id,
+                   fm.Data_Quality_Flag, fm.SRRI_Quality_Flag, fm.In_Current_Universe, fm.official_fund_name
+            FROM fund_master fm
+            WHERE fm.fund_family_id IS NOT NULL
+              AND fm.Fund_Nature IS NOT NULL
+            ORDER BY fm.fund_family_id
+        """).fetchall()
+    else:
+        rows = [tuple(r) + (None,) for r in conn.execute("""
+            SELECT fm.ISIN, fm.Fund_Name, fm.Fund_Nature, fm.fund_family_id,
+                   fm.Data_Quality_Flag, fm.SRRI_Quality_Flag, fm.In_Current_Universe
+            FROM fund_master fm
+            WHERE fm.fund_family_id IS NOT NULL
+              AND fm.Fund_Nature IS NOT NULL
+            ORDER BY fm.fund_family_id
+        """).fetchall()]
 
     from collections import defaultdict
     families: dict = defaultdict(list)
-    for isin, name, nature, fam_id, dq, sq, active in rows:
+    for isin, name, nature, fam_id, dq, sq, active, official in rows:
         families[fam_id].append({
             "ISIN": isin,
             "Fund_Name": name,
@@ -532,6 +555,7 @@ def correct_family_inconsistencies(
             "Data_Quality_Flag": dq,
             "SRRI_Quality_Flag": sq,
             "active": bool(active),
+            "official_key": official_name_key(official) if official else "",
         })
 
     corrections = []
@@ -547,9 +571,14 @@ def correct_family_inconsistencies(
         if not correct_nature and not _is_structural_heterogeneity([m["Fund_Name"] for m in members]):
             # FND-0244 part 2: rules 1-3 look only at quality flags; rule 4 decides by the reference class's evidence
             try:
+                # FND-0311: with the official-name key ON and ONE official name for every class, "same fund" is established by the strongest signal,
+                # so a non-adjacent disagreement is decided by the reference class's evidence when it is confident enough (see the function's docstring).
+                _same_official = bool(use_official and members[0]["official_key"]
+                                      and len({m["official_key"] for m in members}) == 1)
                 with fail_soft_block(conn):
                     correct_nature, isins_to_fix, _why = resolve_family_nature_by_reference(
-                        _load_family_evidence(conn, members), allow_non_adjacent=not any(m["active"] for m in members))
+                        _load_family_evidence(conn, members), allow_non_adjacent=not any(m["active"] for m in members),
+                        non_adjacent_min_conf=_NON_ADJACENT_SAME_FUND_MIN_CONF if _same_official else None)
             except Exception as _exc:
                 correct_nature, isins_to_fix = None, []
                 print(f"  [FamilyBuilder] rule 4 skipped for {fam_id}: {type(_exc).__name__}")
