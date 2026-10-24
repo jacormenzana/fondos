@@ -68,7 +68,8 @@ SELECT
        "payoff_profile" AS "Payoff_Profile",
        "asset_currency" AS "Asset_Currency",
        "in_current_universe" AS "In_Current_Universe",
-       "performance_fee_basis" AS "Performance_Fee_Basis"
+       "performance_fee_basis" AS "Performance_Fee_Basis",
+       "official_fund_name" AS "Official_Fund_Name"
 FROM   silver.fund_master;
 GRANT SELECT ON bi_compat.fund_master TO superset_ro;
 

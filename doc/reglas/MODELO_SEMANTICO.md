@@ -596,6 +596,7 @@ rompe `GROUP BY` / `WHERE` queries fragmentando poblaciones.
 | **Español** | `Fund_Nature`, `Profile`, `Geography` |
 | **Inglés** | `Family`, `Investment_Focus`, `Theme`, `Sector_Focus`, `Market_Cap_Focus`, `Style_Profile`, `Exposure_Bias`, `Development_Status`, `Credit_Quality`, `Duration_Profile`, `MMF_Structure`, `Alt_Strategy`, `Hedging_Policy`, `Replication_Method`, `Derivatives_Usage`, `Liquidity_Profile`, `Distribution_Frequency`, `SFDR_Article` |
 | **Código / neutro** | `ISIN`, `Fund_Currency`, `Asset_Currency`, `SRRI`, costes numéricos |
+| **Texto literal (no se traduce)** | `Fund_Name`, `Official_Fund_Name` (el nombre tal como lo imprime el documento, sin normalizar idioma ni mayúsculas) |
 
 **Nota de evolución**: Antes de v20 (2026), `Family` estaba en español ('RV Núcleo',
 'Renta Fija Flexible', 'Retorno Absoluto', etc.). La migración a inglés ('Equity Core',
@@ -623,6 +624,9 @@ Para atributos donde *"diverso/multi-valor intencionalmente"* es semánticamente
 | `Asset_Currency` | `MCY` | El fondo tiene mandato explícito multi-divisa |
 | `Geography` | `Global` | El fondo cubre explícitamente múltiples geografías |
 | `Investment_Focus` | `Broad` | El fondo cubre universo broad (no sector ni temático) |
+
+`Official_Fund_Name` (FND-0246) **no tiene centinela**: `NULL` significa "no descubierto" (la cabecera del KIID no expone el nombre en la
+ventana leída; ~8 % de los fondos activos), nunca "sin nombre por naturaleza". Un `NULL` hace que la clave de familia use `Fund_Name`.
 
 Colapsar diverso-por-diseño y desconocido en el mismo `NULL` destruye información y rompe
 COALESCE (P#1): un centinela correcto no es nulo y sobrescribirá correctamente un valor único

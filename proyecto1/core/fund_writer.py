@@ -531,6 +531,8 @@ def upsert_fund_master(conn: "psycopg.Connection",
         ("MMF_Structure",               record.get("MMF_Structure"),             'co'),
         ("Alt_Strategy",                record.get("Alt_Strategy"),              'co'),
         ("Payoff_Profile",              record.get("Payoff_Profile"),            'co'),
+        # FND-0246: official sub-fund name (family key); NULL = not discovered, COALESCE keeps the stored one (P#1).
+        ("Official_Fund_Name",          record.get("Official_Fund_Name"),        'co'),
     ]
 
     insert_cols = [c for c, _v, _p in spec]

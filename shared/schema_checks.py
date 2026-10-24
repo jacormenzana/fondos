@@ -365,6 +365,16 @@ assert len(EXPECTED_COLUMNS_V23) == 60, (
     f"v23 debe tener 60 columnas en fund_master, tiene {len(EXPECTED_COLUMNS_V23)}"
 )
 
+# FND-0246 (2026-10-24): Official_Fund_Name -- nombre oficial del subfondo leido de la cabecera del KIID (proyecto1/core/kiid_official_name.py),
+# invariante entre clases; NULL = no descubierto. Columna nullable anadida por db/migrations/20261024_fund_master_official_fund_name.sql
+# (la aplica el propietario ANTES de desplegar el codigo). SCHEMA_VERSION no cambia (ninguna columna posterior a la migracion a Postgres la ha cambiado).
+FND0246_FUND_MASTER_NEW: list[str] = ["Official_Fund_Name"]
+FUND_MASTER_COLUMNS_CURRENT: list[str] = FUND_MASTER_COLUMNS_V23 + FND0246_FUND_MASTER_NEW
+FUND_MASTER_COLUMNS_CURRENT_SET: frozenset = frozenset(FUND_MASTER_COLUMNS_CURRENT)
+assert len(FUND_MASTER_COLUMNS_CURRENT_SET) == 61, (
+    f"fund_master debe tener 61 columnas, tiene {len(FUND_MASTER_COLUMNS_CURRENT_SET)}"
+)
+
 # v24 (2026-07-18): fund_nav_monthly + fund_nav_daily incorporadas al schema
 # canónico. fund_nav_daily es nueva: serie diaria para métricas de horizonte
 # corto (rolling_1m / rolling_3m / rolling_6m, metric_version='d1').
@@ -483,7 +493,7 @@ def verify_db_schema(conn, tables=None) -> dict[str, list[str]]:
     missing: dict[str, list[str]] = {}
 
     checks = [
-        ("fund_master",              FUND_MASTER_COLUMNS_V23_SET),
+        ("fund_master",              FUND_MASTER_COLUMNS_CURRENT_SET),
         ("fund_kiid_metadata",       FUND_KIID_METADATA_COLUMNS_SET),
         ("ingestion_log",            INGESTION_LOG_COLUMNS_SET),
         ("fund_benchmarks",          FUND_BENCHMARKS_COLUMNS_SET),
@@ -546,6 +556,7 @@ def assert_schema_alignment(conn, tables=None) -> None:
             lines.append(f"  {table}: faltan {cols}")
         lines.append(
             "Aplica el DDL: db/pg/00_roles_schemas.sql .. 40_matviews.sql (con el rol propietario); "
+            "fund_master.official_fund_name: db/migrations/20261024_fund_master_official_fund_name.sql (con el rol propietario); "
             "fund_metric_state.last_ols_calc_version: scripts/ops/migrate_fund_metric_state_ols_calc_version.py --apply; "
             "fund_metric_family_state (FAMILY_VERSIONING_ENABLED): scripts/ops/migrate_fund_metric_family_state.py --apply"
         )

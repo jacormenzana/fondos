@@ -1392,6 +1392,8 @@ def run_block(
                 "Replication_Method": parsed.get("Replication_Method"),
                 "Derivatives_Usage": parsed.get("Derivatives_Usage"),
                 "Benchmark_Declared": parsed.get("Benchmark_Declared"),
+                # FND-0246: official sub-fund name from the KIID head; None keeps the stored value (COALESCE in upsert_fund_master).
+                "Official_Fund_Name": parsed.get("Official_Fund_Name"),
                 # v19: renombrado a Ongoing_Charge_Recurrent.
                 # El parser sigue produciendo "Ongoing_Charge"; Sprint 2 desambigua
                 # semánticamente (TER puro vs ACI). El valor no cambia en Sprint 1.
@@ -1446,6 +1448,14 @@ def run_block(
                     "FUNDCCY_NAME_WINS", "INFO", "INFO",
                     f"Fund_Currency fijada por sufijo de nombre ({_fundccy_name}); "
                     f"texto KIID indicaba {_fundccy_kiid} (divisa de subfondo base)."
+                ))
+
+            # FND-0246: the KIID head carries no readable official name (UBS / PIMCO / Morgan Stanley / Vontobel layouts, ~8% of the active funds):
+            # NULL = not discovered, and the family key falls back to the catalogue fund_name. INFO only -- it must not degrade Data_Quality_Flag.
+            if kiid_text and not parsed.get("Official_Fund_Name"):
+                _dq_issues.append((
+                    "OFFNAME_NOT_FOUND", "INFO", "INFO",
+                    "Official_Fund_Name no legible en la cabecera del KIID -- la clave de familia usa el nombre de catálogo."
                 ))
 
             _assetccy_mismatch = bool(

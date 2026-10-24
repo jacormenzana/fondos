@@ -248,6 +248,7 @@ columns:
     Asset_Currency: asset_currency
     In_Current_Universe: in_current_universe
     Performance_Fee_Basis: performance_fee_basis
+    Official_Fund_Name: official_fund_name
 
   fund_metric_alerts:
     isin: isin

@@ -71,13 +71,19 @@ without `--force`. P2 asserts the three columns at startup (`shared/schema_check
 **Clave primaria:** `ISIN` (TEXT)  
 **Total columnas:** 42
 
-### Identificación (3 columnas)
+### Identificación (4 columnas)
 
 | Columna | Tipo | Constraint |
 |---------|------|------------|
 | ISIN | TEXT | PRIMARY KEY |
 | Fund_Name | TEXT | - |
 | Management_Company | TEXT | - |
+| Official_Fund_Name | TEXT | NULL = no descubierto (la cabecera del KIID no expone el nombre) |
+
+`Official_Fund_Name` (FND-0246): nombre oficial del subfondo leído de la cabecera del KIID por `proyecto1/core/kiid_official_name.py`
+(reglas genéricas, sin nombres de fondos), invariante entre las clases de un mismo fondo. Se escribe con COALESCE (P#1). Es la clave
+de familia de clases (`fund_family_builder`) cuando `OFFICIAL_NAME_FAMILY_KEY_ENABLED` esté activo; si es NULL, la clave usa `Fund_Name`.
+Migración: `db/migrations/20261024_fund_master_official_fund_name.sql` (la aplica el propietario).
 
 ### Clasificación P1 (12 columnas)
 
@@ -652,6 +658,7 @@ Columnas SIN COALESCE (sobreescriben siempre):
 | v20 | ~2026-05 | Family migrada a inglés (RV Núcleo→Equity Core, etc.); Schema MODIFY #12: Derivatives_Usage binary→purpose-based |
 | v21 | 2026-07-05 | Añade Asset_Currency; elimina Portfolio_Currency |
 | v22 | 2026-07-05 | Añade fund_data_quality_issues; Data_Quality_Flag rollup determinista |
+| (sin cambio de versión) | 2026-10-24 | Añade `fund_master.official_fund_name` (nullable; FND-0246), migración puntual del propietario |
 
 ---
 

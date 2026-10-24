@@ -117,6 +117,21 @@ def test_class_of_rule_reads_the_sub_fund_after_the_class_clause():
     assert extract_official_fund_name(text) == ("Flossbach von Storch - Multiple Opportunities II", "CLASS_OF")
 
 
+def test_parse_kiid_generic_exposes_the_official_name_and_its_trace_tag():
+    from kiid_parser import parse_kiid_generic
+    text, isin = _head("BGF_ES")
+    parsed = parse_kiid_generic(text, isin=isin)
+    assert parsed["Official_Fund_Name"] == "US Dollar Short Duration Bond Fund"
+    assert "OFFICIAL_NAME[LABEL]" in parsed["Inference_Trace"].split("|")
+
+
+def test_parse_kiid_generic_leaves_the_name_none_when_the_head_has_none():
+    from kiid_parser import parse_kiid_generic
+    parsed = parse_kiid_generic("Este documento le proporciona información fundamental sobre este producto de inversión.", isin="LU0000000001")
+    assert parsed["Official_Fund_Name"] is None
+    assert "OFFICIAL_NAME" not in (parsed["Inference_Trace"] or "")
+
+
 def test_the_key_folds_accents_case_and_punctuation():
     assert official_name_key("Fondo Renta Fija – Crédito (EUR)") == "fondo renta fija credito eur"
     assert official_name_key(None) == ""

@@ -476,6 +476,10 @@ try:
     from proyecto1.core.srri_text import extract_srri
 except ImportError:
     from core.srri_text import extract_srri
+try:
+    from proyecto1.core.kiid_official_name import extract_official_fund_name   # FND-0246: the one definition of the official-name rules
+except ImportError:
+    from core.kiid_official_name import extract_official_fund_name
 #from proyecto1.core.srri_v4_geometric import SRRIV4Geometric
 USE_V5 = True
 
@@ -1120,6 +1124,18 @@ def parse_kiid_generic(
             result["Inference_Trace"], f"SUBTYPE_MIX[{_sub_mix}]"
         )
 
+    # -------------------------------------------------
+    # PASO 10l — Official sub-fund name (FND-0246)
+    # The class-invariant key of a fund family. Generic structural rules over the head of the KIID (core/kiid_official_name.py);
+    # None when the head carries no name (the family key then falls back to the catalogue fund_name). Nothing here reads the fund name.
+    # -------------------------------------------------
+    _official_name, _official_rule = extract_official_fund_name(kiid_text, isin)
+    if _official_name:
+        result["Official_Fund_Name"] = _official_name
+        result["Inference_Trace"] = _append_trace(
+            result["Inference_Trace"], f"OFFICIAL_NAME[{_official_rule}]"
+        )
+
     return result
 
 
@@ -1154,6 +1170,7 @@ def _empty_result() -> Dict[str, Optional[str]]:
         "Fee_Known_Flag":         None,   # v17: EXTRACTED | ZERO_CONFIRMED | NOT_FOUND
         "Style_Profile":          None,   # v23 BL-41: Growth | Value | Income (solo RV)
         "Subtype":                None,   # v23 BL-43: LVNAV/VNAV/CNAV | Fixed Band N | Volatility Target
+        "Official_Fund_Name":     None,   # FND-0246: official sub-fund name from the KIID head (class-invariant family key)
         "Inference_Trace":        None,
     }
     return {

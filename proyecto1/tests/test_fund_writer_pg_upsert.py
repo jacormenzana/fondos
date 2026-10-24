@@ -163,6 +163,28 @@ def test_coalesce_preserves_existing_nonnull_values_on_partial_upsert(pg_conn):
     assert after_mgmt != before_mgmt
 
 
+def test_official_fund_name_is_coalesced_fnd0246(pg_conn):
+    """FND-0246: Official_Fund_Name is a 'co' column -- a cycle that finds no name (None) keeps the stored one, a new non-null name replaces it."""
+    pg_conn.execute("SET search_path = gold, silver, bronze, control, public")
+    isin = "ZZ0000000246"
+
+    def stored():
+        return pg_conn.execute("SELECT official_fund_name FROM fund_master WHERE isin = %s", (isin,)).fetchone()[0]
+
+    first = _minimal_partial_record(isin, "Renta Variable", "TEST OFFNAME")
+    first["Official_Fund_Name"] = "Some Official Fund"
+    upsert_fund_master(pg_conn, first)
+    assert stored() == "Some Official Fund"
+
+    upsert_fund_master(pg_conn, _minimal_partial_record(isin, "Renta Variable", "TEST OFFNAME"))     # no name found this cycle
+    assert stored() == "Some Official Fund"
+
+    renamed = _minimal_partial_record(isin, "Renta Variable", "TEST OFFNAME")
+    renamed["Official_Fund_Name"] = "Another Official Fund"
+    upsert_fund_master(pg_conn, renamed)
+    assert stored() == "Another Official Fund"
+
+
 def test_upsert_fund_master_insert_path_creates_new_row(pg_conn):
     """The INSERT branch (a brand-new ISIN, no prior row) must create the row with the values
     given — exercises the 'ins'-policy columns (ISIN, fund_family_id) and confirms the whole
