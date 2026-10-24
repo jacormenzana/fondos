@@ -28,7 +28,7 @@ BOND_ST = PAD + ("Objectives and investment policy. The objective of the investm
 def _tables(conn):
     conn.execute("""CREATE TABLE fund_master (isin TEXT PRIMARY KEY, fund_name TEXT, management_company TEXT, fund_nature TEXT,
         fund_family_id TEXT, data_quality_flag TEXT, srri_quality_flag TEXT, family TEXT, fund_currency TEXT, benchmark_declared TEXT,
-        in_current_universe INTEGER DEFAULT 1)""")
+        in_current_universe INTEGER DEFAULT 1, official_fund_name TEXT)""")
     conn.execute("CREATE TABLE ingestion_log (id SERIAL PRIMARY KEY, isin TEXT, step TEXT, status TEXT, message TEXT, created_at TEXT)")
     conn.execute("CREATE TABLE fund_kiid_metadata (isin TEXT, kiid_class INTEGER, raw_kiid_text TEXT)")
     conn.execute("CREATE TABLE fund_nav_monthly (isin TEXT, date DATE, nav DOUBLE PRECISION)")
@@ -78,7 +78,7 @@ def test_a_missing_evidence_table_does_not_abort_the_transaction(pg_conn_module_
     conn = pg_session_conn
     conn.execute(f"SET search_path = {pg_conn_module_schema}")
     conn.execute("""CREATE TABLE fund_master (isin TEXT PRIMARY KEY, fund_name TEXT, management_company TEXT, fund_nature TEXT,
-        fund_family_id TEXT, data_quality_flag TEXT, srri_quality_flag TEXT, family TEXT, in_current_universe INTEGER DEFAULT 1)""")
+        fund_family_id TEXT, data_quality_flag TEXT, srri_quality_flag TEXT, family TEXT, in_current_universe INTEGER DEFAULT 1, official_fund_name TEXT)""")
     conn.execute("CREATE TABLE ingestion_log (id SERIAL PRIMARY KEY, isin TEXT, step TEXT, status TEXT, message TEXT, created_at TEXT)")
     conn.execute("INSERT INTO fund_master VALUES ('A','X EUR','MC','Mixtos','FAM_000001','OK','HIGH',NULL), "
                  "('B','X USD','MC','Renta Variable','FAM_000001','OK','HIGH',NULL)")

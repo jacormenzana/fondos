@@ -792,7 +792,12 @@ BACKLOG_INCIDENT_AUTO_APPEND_ENABLED: bool = False
 # applied and a P1 pass done (the column is filled), THEN scripts/audit/family_key_switch_diff.py read (merges, nature conflicts, P3 de-duplication and
 # PRODUCTION effect), THEN this flag, THEN P1_discoverAllFunds.bat (builder + --family-nature-refresh), verify_family_refresh.py exit 0, a P3 DRAFT.
 # Rollback = set it back to False and rebuild the families (no DDL). Family ids are re-issued on every builder run either way.
-OFFICIAL_NAME_FAMILY_KEY_ENABLED: bool = False
+# ON since 2026-10-25 (owner decision), after: (1) the paired point-in-time backtest, key OFF vs ON on the full universe (260 months, same cached scores): Sharpe
+# 0.5985 -> 0.6023, max drawdown -15.39% -> -14.93%, turnover +0.7 pp, i.e. neutral out of sample; (2) the read-only replay of the family arbitration under the new
+# key: 11 inconsistent families, 5 of them unresolved -> after FND-0310 (the word "short" is not a structural signal), FND-0311 (English "does not have any capital
+# guarantee" no longer votes Estructurado; non-adjacent natures of a same-official-name family settled by a >= 0.80 reference class) 7 inconsistent, 7 settled, 0 left;
+# (3) scripts/audit/family_key_switch_diff.py read (out/audit/P1/family_key_switch_diff_20261025_001153.*: families 2,880 -> 2,100, 410 merges, 26 splits).
+OFFICIAL_NAME_FAMILY_KEY_ENABLED: bool = True
 BACKLOG_INCIDENT_HIGH_COSINE: float = 0.70
 BACKLOG_INCIDENT_MEDIUM_COSINE: float = 0.45
 # Options of the iterative VIF (used when MACRO_VIF_ITERATIVE_ENABLED, and by the PIT variant "iterative_hy"): keep the two

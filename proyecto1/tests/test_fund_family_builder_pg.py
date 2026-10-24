@@ -43,7 +43,8 @@ def _make_fund_master(conn):
             data_quality_flag TEXT,
             srri_quality_flag TEXT,
             family TEXT,
-            in_current_universe INTEGER DEFAULT 1
+            in_current_universe INTEGER DEFAULT 1,
+            official_fund_name TEXT
         )
     """)
 
@@ -241,7 +242,6 @@ def test_build_fund_families_with_the_official_name_key_on(pg_session_conn, pg_c
     conn = pg_session_conn
     conn.execute(f"SET search_path = {pg_conn_module_schema}")
     _make_fund_master(conn)
-    conn.execute("ALTER TABLE fund_master ADD COLUMN official_fund_name TEXT")
     _make_ingestion_log(conn)
     _make_fund_families(conn)
     conn.execute("""
@@ -264,6 +264,26 @@ def test_build_fund_families_with_the_official_name_key_on(pg_session_conn, pg_c
     assert len(set(fam.values())) == 3
 
 
+def test_build_fund_families_with_the_switch_off_never_reads_the_official_name(pg_session_conn, pg_conn_module_schema, monkeypatch):
+    """FND-0246 rollback path: with OFFICIAL_NAME_FAMILY_KEY_ENABLED = False the builder works on a fund_master WITHOUT the official_fund_name column
+    (a database that has not had the migration, or a rolled-back one) and keys the families on the catalogue name exactly as before."""
+    import shared.config as cfg
+    monkeypatch.setattr(cfg, "OFFICIAL_NAME_FAMILY_KEY_ENABLED", False)
+    conn = pg_session_conn
+    conn.execute(f"SET search_path = {pg_conn_module_schema}")
+    conn.execute("""CREATE TABLE fund_master (isin TEXT PRIMARY KEY, fund_name TEXT, management_company TEXT, fund_nature TEXT, fund_family_id TEXT,
+                    data_quality_flag TEXT, srri_quality_flag TEXT, family TEXT, in_current_universe INTEGER DEFAULT 1)""")
+    _make_ingestion_log(conn)
+    _make_fund_families(conn)
+    conn.execute("""INSERT INTO fund_master (isin, fund_name, management_company, fund_nature, data_quality_flag, srri_quality_flag) VALUES
+        ('E1', 'Global Growth Fund A EUR Acc', 'Acme AM', 'Renta Variable', 'OK', 'HIGH'),
+        ('E2', 'Global Growth Fund A USD Acc', 'Acme AM', 'Renta Variable', 'OK', 'HIGH'),
+        ('E3', 'Other Fund', 'Acme AM', 'Monetario', 'OK', 'HIGH')""")
+    assert build_fund_families(conn, dry_run=False) == 3
+    fam = dict(conn.execute("SELECT isin, fund_family_id FROM fund_master").fetchall())
+    assert fam["E1"] == fam["E2"] and fam["E3"] != fam["E1"]
+
+
 def _make_fund_master_with_family_fk(conn):
     """The real Postgres schema: fund_master.fund_family_id REFERENCES fund_families (db/pg/20_silver.sql).
     The helpers above build both tables WITHOUT that FK, which is why the launcher-level failure
@@ -273,7 +293,8 @@ def _make_fund_master_with_family_fk(conn):
         CREATE TABLE fund_master (
             isin TEXT PRIMARY KEY, fund_name TEXT, management_company TEXT, fund_nature TEXT,
             fund_family_id TEXT REFERENCES fund_families (family_id),
-            data_quality_flag TEXT, srri_quality_flag TEXT, family TEXT, in_current_universe INTEGER DEFAULT 1
+            data_quality_flag TEXT, srri_quality_flag TEXT, family TEXT, in_current_universe INTEGER DEFAULT 1,
+            official_fund_name TEXT
         )
     """)
 

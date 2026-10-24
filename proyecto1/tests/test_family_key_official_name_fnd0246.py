@@ -91,6 +91,7 @@ def test_every_isin_lands_in_exactly_one_family_in_both_modes():
         assert sorted(placed) == sorted(r[0] for r in rows)
 
 
-def test_the_switch_ships_off():
+def test_the_switch_is_a_plain_bool():
+    """ON since 2026-10-25 (owner decision, evidence in the comment of shared/config.py). Rollback = False + a builder run; the OFF path is covered above."""
     import shared.config as cfg
-    assert cfg.OFFICIAL_NAME_FAMILY_KEY_ENABLED is False
+    assert isinstance(cfg.OFFICIAL_NAME_FAMILY_KEY_ENABLED, bool)
