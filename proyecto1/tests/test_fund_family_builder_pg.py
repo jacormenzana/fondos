@@ -232,6 +232,38 @@ def test_build_fund_families_end_to_end_assigns_ids_and_populates(
     assert families[fam_ids["C3"]] == 1
 
 
+def test_build_fund_families_with_the_official_name_key_on(pg_session_conn, pg_conn_module_schema, monkeypatch):
+    """FND-0246: with OFFICIAL_NAME_FAMILY_KEY_ENABLED on the builder reads fund_master.official_fund_name. Two classes whose CATALOGUE names are abbreviated
+    differently (different stems) share a family through the official name; currency sub-funds that the catalogue key merges stay apart; a class with
+    no official name joins the group of its own stem. The OFF path (every test above) never selects the column: its fixture table has none."""
+    import shared.config as cfg
+    monkeypatch.setattr(cfg, "OFFICIAL_NAME_FAMILY_KEY_ENABLED", True)
+    conn = pg_session_conn
+    conn.execute(f"SET search_path = {pg_conn_module_schema}")
+    _make_fund_master(conn)
+    conn.execute("ALTER TABLE fund_master ADD COLUMN official_fund_name TEXT")
+    _make_ingestion_log(conn)
+    _make_fund_families(conn)
+    conn.execute("""
+        INSERT INTO fund_master
+            (isin, fund_name, management_company, fund_nature, data_quality_flag, srri_quality_flag, official_fund_name)
+        VALUES
+            ('D1', 'GG FUND D2 USD ACC',     'Acme AM', 'Renta Variable', 'OK', 'HIGH', 'Global Growth Fund'),
+            ('D2', 'GLOBAL GR FUND D2 EUR',  'Acme AM', 'Renta Variable', 'OK', 'HIGH', 'Global Growth Fund'),
+            ('D3', 'GG FUND D6 USD INC',     'Acme AM', 'Renta Variable', 'OK', 'HIGH', NULL),
+            ('M1', 'ACME MM USD I ACC',      'Acme AM', 'Monetario',      'OK', 'HIGH', 'Acme Money Market USD'),
+            ('M2', 'ACME MM CHF P ACC',      'Acme AM', 'Monetario',      'OK', 'HIGH', 'Acme Money Market CHF')
+    """)
+
+    assert build_fund_families(conn, dry_run=False) == 5
+
+    fam = dict(conn.execute("SELECT isin, fund_family_id FROM fund_master").fetchall())
+    assert fam["D1"] == fam["D2"], "the official name unifies two abbreviation variants of one fund"
+    assert fam["D3"] == fam["D1"], "a class without a name joins the official group of its own catalogue stem (unique)"
+    assert fam["M1"] != fam["M2"], "currency sub-funds stay in different families"
+    assert len(set(fam.values())) == 3
+
+
 def _make_fund_master_with_family_fk(conn):
     """The real Postgres schema: fund_master.fund_family_id REFERENCES fund_families (db/pg/20_silver.sql).
     The helpers above build both tables WITHOUT that FK, which is why the launcher-level failure

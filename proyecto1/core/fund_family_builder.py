@@ -66,6 +66,11 @@ except ImportError:
     from core.classify_utils import RFC_INCOMPATIBLE_FAMILIES, detect_nature_from_kiid, resolve_nature_evidence
     from core.benchmark_normalizer import merge_benchmark_sources
 
+try:
+    from proyecto1.core.kiid_official_name import official_name_key   # FND-0246: the key of the official sub-fund name (keeps currency words)
+except ImportError:
+    from core.kiid_official_name import official_name_key
+
 from shared.db import executemany, execute_fail_soft, fail_soft_block
 
 
@@ -636,6 +641,45 @@ def correct_family_inconsistencies(
     return len(corrections)
 
 
+def compute_family_groups(rows, use_official: bool = False) -> dict:
+    """The one definition of the family key (FND-0246). Pure; used by `build_fund_families` and by scripts/audit/family_key_switch_diff.py.
+
+    rows: iterable of (isin, fund_name, management_company, official_fund_name | None). Returns {(company_key, name_key): [isin, ...]}.
+
+    OFF (`use_official=False`): (management company, `_normalize_name(fund_name)`) -- exactly today's key.
+    ON: a class WITH an official name is keyed (management company, `official_name_key(official)`). A class WITHOUT one (its KIID head carries no readable
+    name) joins the official group of its own catalogue stem only when that stem maps to exactly ONE official group of the same manager; with zero or
+    several it keeps its catalogue key, so a missing extraction never splits a family and a stem that already mixes two funds is never guessed."""
+    groups: dict = {}
+    if not use_official:
+        for isin, name, company, _official in rows:
+            groups.setdefault(((company or "").strip().lower(), _normalize_name(name)), []).append(isin)
+        return groups
+    prepared = []
+    official_keys_of_stem: dict = {}
+    for isin, name, company, official in rows:
+        company_key = (company or "").strip().lower()
+        stem = _normalize_name(name)
+        okey = official_name_key(official) if official else ""
+        prepared.append((isin, company_key, stem, okey))
+        if okey:
+            official_keys_of_stem.setdefault((company_key, stem), set()).add(okey)
+    official_groups = {(company_key, okey) for _isin, company_key, _stem, okey in prepared if okey}
+    for isin, company_key, stem, okey in prepared:
+        if okey:
+            key = (company_key, okey)
+        else:
+            candidates = official_keys_of_stem.get((company_key, stem), ())
+            if len(candidates) == 1:
+                key = (company_key, next(iter(candidates)))
+            elif (company_key, stem) in official_groups:
+                key = (company_key, stem + " [catalogo]")        # an ambiguous stem must not join an official group by the coincidence of equal strings
+            else:
+                key = (company_key, stem)
+        groups.setdefault(key, []).append(isin)
+    return groups
+
+
 def build_fund_families(
     conn: "psycopg.Connection",
     dry_run: bool = False,
@@ -651,22 +695,26 @@ def build_fund_families(
 
     Devuelve numero de filas actualizadas.
     """
-    rows = conn.execute(
-        "SELECT ISIN, Fund_Name, Management_Company FROM fund_master "
-        "WHERE Fund_Name IS NOT NULL ORDER BY Management_Company, Fund_Name"
-    ).fetchall()
+    import shared.config as _cfg
+    use_official = bool(getattr(_cfg, "OFFICIAL_NAME_FAMILY_KEY_ENABLED", False))      # FND-0246; OFF reads no new column
+    if use_official:
+        rows = conn.execute(
+            "SELECT ISIN, Fund_Name, Management_Company, official_fund_name FROM fund_master "
+            "WHERE Fund_Name IS NOT NULL ORDER BY Management_Company, Fund_Name"
+        ).fetchall()
+    else:
+        rows = [(r[0], r[1], r[2], None) for r in conn.execute(
+            "SELECT ISIN, Fund_Name, Management_Company FROM fund_master "
+            "WHERE Fund_Name IS NOT NULL ORDER BY Management_Company, Fund_Name"
+        ).fetchall()]
 
     if not rows:
         print("  [FamilyBuilder] Sin fondos en fund_master")
         return 0
 
-    # Agrupar por (gestora, nombre_normalizado)
-    groups: dict[tuple, list[str]] = {}
-    for isin, name, company in rows:
-        company_key = (company or "").strip().lower()
-        norm        = _normalize_name(name)
-        key         = (company_key, norm)
-        groups.setdefault(key, []).append(isin)
+    # Agrupar por (gestora, clave de familia): nombre de catalogo normalizado u, con el interruptor ON, nombre oficial del KIID
+    print("  [FamilyBuilder] clave de familia: " + ("nombre oficial del KIID (OFFICIAL_NAME_FAMILY_KEY_ENABLED)" if use_official else "nombre de catalogo normalizado"))
+    groups = compute_family_groups(rows, use_official)
 
     # Asignar IDs secuenciales
     # Solo crea familia si hay >1 ISIN en el grupo (singleton no necesita ID)

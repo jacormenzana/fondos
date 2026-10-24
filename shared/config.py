@@ -783,6 +783,16 @@ FAMILY_VERSIONING_ENABLED: bool = True
 # SUGGESTS the related one. Switch-on gate (D-1): `scripts/audit/backlog_links_calibration.py --gate` reports ZERO false merges
 # on the historical replay and the synthetic fixture (tests/fixtures/backlog_incident_cases.json); attach its report to the ticket.
 BACKLOG_INCIDENT_AUTO_APPEND_ENABLED: bool = False
+# FND-0246: the family-of-share-classes key. OFF = today's behaviour: (management company, _normalize_name(fund_name)), a ~30-character catalogue string
+# whose abbreviations differ between classes of the SAME fund (451 pairs measured by FND-0244), so one fund splits into several families and P3 can put two
+# classes of it in one portfolio. ON = (management company, official sub-fund name read from the KIID head, fund_master.official_fund_name); a class whose
+# head carries no name (~15% of the active funds) joins the official group of its own catalogue stem ONLY when that stem maps to exactly one official group
+# of the same manager, otherwise it keeps its catalogue key -- a missing extraction never splits or merges a family by itself. The key keeps currency words
+# (Pictet Short-Term Money Market USD / CHF / JPY are different sub-funds). Switch-on order (owner): migration db/migrations/20261024_fund_master_official_fund_name.sql
+# applied and a P1 pass done (the column is filled), THEN scripts/audit/family_key_switch_diff.py read (merges, nature conflicts, P3 de-duplication and
+# PRODUCTION effect), THEN this flag, THEN P1_discoverAllFunds.bat (builder + --family-nature-refresh), verify_family_refresh.py exit 0, a P3 DRAFT.
+# Rollback = set it back to False and rebuild the families (no DDL). Family ids are re-issued on every builder run either way.
+OFFICIAL_NAME_FAMILY_KEY_ENABLED: bool = False
 BACKLOG_INCIDENT_HIGH_COSINE: float = 0.70
 BACKLOG_INCIDENT_MEDIUM_COSINE: float = 0.45
 # Options of the iterative VIF (used when MACRO_VIF_ITERATIVE_ENABLED, and by the PIT variant "iterative_hy"): keep the two
