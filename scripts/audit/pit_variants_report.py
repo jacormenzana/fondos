@@ -110,7 +110,7 @@ def episode_windows(index: pd.Series, episodes=EPISODES, cap: int = RECOVERY_CAP
 
 
 # ---------------------------------------------------------------------------------------------------- V2 input diagnostics
-def v2_eligibility(nav: pd.DataFrame, attrs: pd.DataFrame, window: int = 60, first: str = "2005-01-31") -> dict:
+def v2_eligibility(nav: pd.DataFrame, attrs: pd.DataFrame, window: int = 60, first: str = "2005-01-31", dates=None) -> dict:
     """Per month and sub-portfolio: funds with a full `window` of observations (and a NAV in the last 3 months), management companies,
     largest company share. Reports the minimum and the months failing the pre-declared gates."""
     cnt = nav.notna().cumsum()
@@ -118,7 +118,11 @@ def v2_eligibility(nav: pd.DataFrame, attrs: pd.DataFrame, window: int = 60, fir
     nat = attrs["Fund_Nature"].reindex(nav.columns)
     mc = attrs["Management_Company"].reindex(nav.columns)
     rows = []
-    for d in nav.index[nav.index >= pd.Timestamp(first)]:
+    # only the PIT evaluation months (the month-ends of the run); the NAV panel also holds mid-month rows of funds that stopped pricing
+    months = nav.index[nav.index >= pd.Timestamp(first)]
+    if dates is not None:
+        months = months.intersection(pd.DatetimeIndex(dates))
+    for d in months:
         ok = (cnt.loc[d] >= window) & recent.loc[d]
         for sub, natures in SUB_NATURES.items():
             m = ok & nat.isin(natures)
@@ -256,7 +260,7 @@ def build(out_root: Path, v0_run: "Path | None" = None, n_boot_sharpe: int = 200
           "dd_prob": drawdown_probability(chained(t0), n_boot=n_boot_dd), "cash_mean": float(t0["cash_weight"].mean()),
           "turnover": float(t0["turnover"].mean()) if "turnover" in t0.columns else float("nan")}
     v0_rule1 = bool(full0["max_drawdown"] >= DD_LIMIT and all(v["max_drawdown"] >= DD_LIMIT for v in v0["subperiods"].values() if v["n_months"] >= 12))
-    v2 = v2_eligibility(nav, attrs) if any(n in results for n in ("V2", "V123")) else None
+    v2 = v2_eligibility(nav, attrs, dates=t0.index) if any(n in results for n in ("V2", "V123")) else None
     return {"gate": gate, "v0": v0, "v0_rule1": v0_rule1, "episodes": [{**e, **({k: str(e[k].date()) for k in ("start", "trough", "recovery_end")}
             if e.get("available") else {})} for e in episodes], "variants": results, "v2_eligibility": v2,
             "decision": decide(results, v0_rule1)}
