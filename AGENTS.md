@@ -245,6 +245,7 @@ PDFs and `Raw_KIID_Text` (in `fund_kiid_metadata`) are **never deleted**.
 | `fund_family_builder.py` | `proyecto1/core` |
 | `fund_writer.py` | `proyecto1/core` |
 | `io.py` | `proyecto1/core` |
+| `kiid_official_name.py` | `proyecto1/core` |
 | `kiid_parser.py` | `proyecto1/core` |
 | `mark_stale.py` | `proyecto1/core` |
 | `oc_resolution.py` | `proyecto1/core` |
