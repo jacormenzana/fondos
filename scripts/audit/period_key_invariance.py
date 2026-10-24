@@ -320,6 +320,17 @@ def family_scoreboard(cmp: pd.DataFrame) -> pd.DataFrame:
 
 
 # ------------------------------------------------------------------ main
+def _persisted_row_counts(conn) -> dict:
+    """Row counts of the tables a run must not write. One literal statement per table, so the EXPLAIN sweep can resolve each."""
+    return {
+        "fund_metrics": conn.execute("SELECT COUNT(*) FROM fund_metrics").fetchone()[0],
+        "fund_metric_timeseries": conn.execute("SELECT COUNT(*) FROM fund_metric_timeseries").fetchone()[0],
+        "ingestion_log": conn.execute("SELECT COUNT(*) FROM ingestion_log").fetchone()[0],
+        "p2_pipeline_log": conn.execute("SELECT COUNT(*) FROM p2_pipeline_log").fetchone()[0],
+        "fund_metric_state": conn.execute("SELECT COUNT(*) FROM fund_metric_state").fetchone()[0],
+    }
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--n", type=int, default=400)
@@ -366,8 +377,7 @@ def main():
     print(f"sample: {len(isins)} funds | by nature {sample['nature'].value_counts().to_dict()} | stamp {sample['stamp'].value_counts().to_dict()} | "
           f"hist {sample['hist'].value_counts().to_dict()}")
 
-    tables = ["fund_metrics", "fund_metric_timeseries", "ingestion_log", "p2_pipeline_log", "fund_metric_state"]
-    counts0 = {t: conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0] for t in tables}
+    counts0 = _persisted_row_counts(conn)
 
     print("raw run ...")
     raw, raw_ts = run_mode("raw", isins)
@@ -397,7 +407,7 @@ def main():
             print("STOP: fidelity below 95%."); return 2
     print("snapped run ...")
     snap, snap_ts = run_mode("snapped", isins)
-    counts1 = {t: conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0] for t in tables}
+    counts1 = _persisted_row_counts(conn)
     (OUT / "control_no_writes.json").write_text(json.dumps({"before": counts0, "after": counts1}), encoding="utf-8")
     if counts0 != counts1:
         print("STOP: persisted row counts changed", counts0, counts1); return 2
