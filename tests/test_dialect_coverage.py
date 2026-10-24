@@ -503,7 +503,7 @@ def test_sqlite_import_rule_flags_both_import_forms_but_not_a_comment():
 
 # ─── Rule 8 — launchers must not pass flags the entry points no longer accept ──────────────────────
 def test_launchers_do_not_pass_the_removed_db_and_backend_flags():
-    """P1_discoverAllFunds.bat (called by P1_P2_Complete.bat) passed `--db "%DB%"` to scripts that
+    """P1_discoverAllFunds.bat (called by P1P2_runCycle.bat) passed `--db "%DB%"` to scripts that
     dropped the flag with the SQLite retirement: argparse would exit 2 and abort the monthly chain."""
     offenders = []
     for bat in sorted((_ROOT / "scripts" / "launch").glob("*.bat")):

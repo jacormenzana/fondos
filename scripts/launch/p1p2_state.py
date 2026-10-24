@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-p1p2_state.py — orchestration state for P1_P2_Complete.bat (resume guard + run telemetry).
+p1p2_state.py — orchestration state for P1P2_runCycle.bat (resume guard + run telemetry).
 
 Why a Python helper: the launcher is a batch file, and batch is a poor place for state logic (it
 cannot be unit-tested, and it is Windows-only). The batch file stays thin and only calls this
@@ -13,7 +13,7 @@ So after a failure the operator fixes the cause and resumes with `--from N`, whi
 IN FULL. That is only safe when N is the step that failed (or an earlier one), never a later one:
 resuming later would skip a step whose output the later ones consume. This module enforces it.
 
-State file (default proyecto1/log/P1_P2_Complete.state, override with env P1P2_STATE_FILE):
+State file (default proyecto1/log/P1P2_runCycle.state, override with env P1P2_STATE_FILE):
     LAST_RESULT=OK|FAILED
     FAILED_STEP=N            (0 when OK)
     STAMP=YYYYMMDD_HHMMSS
@@ -44,7 +44,7 @@ from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_STATE = ROOT / "proyecto1" / "log" / "P1_P2_Complete.state"
+DEFAULT_STATE = ROOT / "proyecto1" / "log" / "P1P2_runCycle.state"
 STEPS = (1, 2, 3, 4)
 STEP_NAMES = {1: "P1_refreshBenchmarks", 2: "P1_discoverAllFunds",
               3: "P2_discoverLoadMetrics", 4: "P2_calculateIndicators"}
@@ -321,7 +321,7 @@ def report_failure(step: int, rc: int, secs: int | None) -> None:
         import shared.config  # noqa: F401  (loads .env, so FONDOS_BACKLOG_PG_DSN is visible)
         from shared.backlog_client import report_incident
         report_incident(
-            object_name=f"P1_P2_Complete.bat PASO {step} ({STEP_NAMES.get(step, '?')})",
+            object_name=f"P1P2_runCycle.bat PASO {step} ({STEP_NAMES.get(step, '?')})",
             scenario_description=(f"PASO {step} ({STEP_NAMES.get(step, '?')}) failed with RC={rc}"
                                   + (f" after {secs}s" if secs is not None else "")
                                   + ". See the step's log under proyecto1/log or proyecto2/log."),

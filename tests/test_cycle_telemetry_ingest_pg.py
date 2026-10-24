@@ -33,7 +33,7 @@ def _iso(minutes=0):
 
 
 def _cycle(conn, cid="20261008_080000"):
-    assert ct.begin_cycle("P1_P2_Complete", {}, cycle_id=cid, conn=conn, ts=_iso()) is True
+    assert ct.begin_cycle("P1P2_runCycle", {}, cycle_id=cid, conn=conn, ts=_iso()) is True
     return cid
 
 

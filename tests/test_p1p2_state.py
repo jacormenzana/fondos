@@ -1,5 +1,5 @@
 """
-tests/test_p1p2_state.py — the resume guard and run telemetry of P1_P2_Complete.bat.
+tests/test_p1p2_state.py — the resume guard and run telemetry of P1P2_runCycle.bat.
 
 The logic lives in scripts/launch/p1p2_state.py precisely so it can be tested here without running
 any real step: pure pytest, no database, runs on any OS. Telemetry is best-effort; the tests prove
@@ -21,7 +21,7 @@ _SPEC.loader.exec_module(st)
 
 @pytest.fixture()
 def path(tmp_path, monkeypatch):
-    p = tmp_path / "sub" / "P1_P2_Complete.state"
+    p = tmp_path / "sub" / "P1P2_runCycle.state"
     monkeypatch.setenv("P1P2_STATE_FILE", str(p))
     return p
 
@@ -448,7 +448,7 @@ def test_cli_calc_version_prints_it_and_never_fails(monkeypatch, capsys):
     assert capsys.readouterr().out.strip() == ""
 
 
-# ─── last-result (P1_P2_P3.bat --only-p3 refuses to build P3 on a cycle that did not finish OK) ─────
+# ─── last-result (P1P2P3_runCycle.bat --only-p3 refuses to build P3 on a cycle that did not finish OK) ─────
 
 def test_last_result_reports_how_the_last_cycle_ended(path, capsys):
     assert st.main(["last-result"]) == st.RC_OK and capsys.readouterr().out.strip() == "NONE"       # no state at all

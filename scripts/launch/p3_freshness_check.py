@@ -8,7 +8,7 @@ outdated: the NAV of the active universe, the regime inputs, the newest harvest,
 P3_MIN_UNIFORM_METRICS_SHARE of the funds on ONE CALC_VERSION. Until now that verdict only appeared when
 someone launched P3, after the cycle that caused it. This runs the very same gate
 (proyecto3/src/data_freshness.py) and prints the same report, writing nothing, so
-P1_P2_Complete.bat can say at the end of the cycle whether it left the data P3-ready.
+P1P2_runCycle.bat can say at the end of the cycle whether it left the data P3-ready.
 
 Exit codes: 0 fresh | P3_EXIT_STALE_INPUTS (2) at least one input is stale | 1 the check itself failed.
 

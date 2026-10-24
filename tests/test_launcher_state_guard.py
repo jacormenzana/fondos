@@ -1,5 +1,5 @@
 """
-tests/test_launcher_state_guard.py — the REFUSAL paths of P1_P2_Complete.bat, end to end (launcher codes 100-105:
+tests/test_launcher_state_guard.py — the REFUSAL paths of P1P2_runCycle.bat, end to end (launcher codes 100-105:
 NORMAS_BATCH.md section 6; the success/failure/resume paths are in tests/test_batch_launchers_e2e.py).
 
 The decisions themselves are tested in tests/test_p1p2_state.py (pure Python, any OS). This file only
@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-BAT = ROOT / "scripts" / "launch" / "P1_P2_Complete.bat"
+BAT = ROOT / "scripts" / "launch" / "P1P2_runCycle.bat"
 PYTHON = Path(r"C:\data\envs\des\python.exe")     # the interpreter the launcher itself hard-codes
 
 pytestmark = pytest.mark.skipif(
@@ -76,11 +76,11 @@ def test_unwritable_state_path_aborts_before_any_step_rc_103(tmp_path):
 
 
 def test_refusals_create_no_log_file(tmp_path):
-    before = set((ROOT / "proyecto1" / "log").glob("log_P1_P2_complete_*.log"))
+    before = set((ROOT / "proyecto1" / "log").glob("log_P1P2_runCycle_*.log"))
     state = tmp_path / "state"
     _seed(state, step=1)
     _run(state, "--from", "4")
-    assert set((ROOT / "proyecto1" / "log").glob("log_P1_P2_complete_*.log")) == before
+    assert set((ROOT / "proyecto1" / "log").glob("log_P1P2_runCycle_*.log")) == before
 
 
 # ─── option parsing: every case exits in the parser, before the state check and before any step ─────

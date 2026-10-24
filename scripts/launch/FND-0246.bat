@@ -12,14 +12,14 @@ call "%COMMON%" :utf8_on
 ::   1. P1_discoverAllFunds   clasificacion; persiste las divisas de clase corregidas
 ::   2. verify_fund_currency  puerta: ninguna Fund_Currency pendiente (si no, P2 convertiria con la divisa vieja)
 ::   3. P2_discoverLoadMetrics macro + NAV (sale con error si el token de Morningstar no esta disponible)
-::   4. FND-0246_V2.bat       comprobacion de nuevo + P2 -> auditoria de betas -> P3 (P2_P3_complete --no-prompts)
+::   4. FND-0246_V2.bat       comprobacion de nuevo + P2 -> auditoria de betas -> P3 (P2P3_runCycle --no-prompts)
 :: Se detiene en el primer paso que falla y devuelve su codigo. Toma el bloqueo de instancia unica del ciclo
-:: (como P1_P2_Complete / P2_P3_complete) y lo hereda a lo que invoca; gestiona la suspension como propietario.
+:: (como P1P2_runCycle / P2P3_runCycle) y lo hereda a lo que invoca; gestiona la suspension como propietario.
 :: Ejecutable desde cualquier directorio (las rutas salen de la ubicacion del propio fichero).
 ::
 :: Uso:
 ::   FND-0246.bat              la secuencia completa
-::   FND-0246.bat --no-pause   sin pausa final de P2_P3_complete
+::   FND-0246.bat --no-pause   sin pausa final de P2P3_runCycle
 ::   FND-0246.bat -h           esta ayuda
 :: Codigos de salida: 0 OK | 100 argumentos invalidos | 101 interprete no encontrado | 105 otra instancia en
 ::   ejecucion | 1-99 = RC propagado del paso que fallo.
@@ -119,6 +119,6 @@ endlocal & exit /b 0
 
 :usage_text
 echo Uso: FND-0246.bat [--no-pause]
-echo   --no-pause   sin pausa final de P2_P3_complete
+echo   --no-pause   sin pausa final de P2P3_runCycle
 echo   -h, --help   esta ayuda
 exit /b 0

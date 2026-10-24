@@ -5,7 +5,7 @@ if %RC_BOOT% NEQ 0 (endlocal & exit /b %RC_BOOT%)
 call "%COMMON%" :utf8_on
 
 :: ============================================================
-:: P2_P3_complete.bat -- Recalculo P2 -> auditoria de betas -> P3 (cartera + informe)
+:: P2P3_runCycle.bat -- Recalculo P2 -> auditoria de betas -> P3 (cartera + informe)
 ::                      -> push opcional -> prueba opcional del loader de benchmarks
 ::
 :: Lanzador de PROPIETARIO (P2 de poblacion completa, ~4 h). Se detiene en el primer paso que falla;
@@ -17,17 +17,17 @@ call "%COMMON%" :utf8_on
 ::   - El baseline de betas se toma AHORA, antes del recalculo (macro_betas_p2p3_<STAMP>.csv en
 ::     C:\data\fondos\audit; variable P1P2_AUDIT_DIR para cambiarlo), de modo que la comparacion
 ::     mide exactamente lo que este recalculo cambia. --baseline CSV usa uno existente (p. ej. el
-::     macro_betas_pre_*.csv que P1_P2_Complete.bat guarda al empezar un ciclo).
+::     macro_betas_pre_*.csv que P1P2_runCycle.bat guarda al empezar un ciclo).
 ::   - El numero de commits pendientes de push se cuenta en el momento (git).
-:: Comparte el bloqueo de instancia unica con P1_P2_Complete.bat (ambos recalculan P2): mientras
+:: Comparte el bloqueo de instancia unica con P1P2_runCycle.bat (ambos recalculan P2): mientras
 :: uno corre, el otro se rechaza con RC 105. La suspension se gestiona como en aquel.
 ::
 :: Uso:
-::   P2_P3_complete.bat                    ciclo completo
-::   P2_P3_complete.bat --baseline CSV     comparar contra un snapshot de betas existente
-::   P2_P3_complete.bat --no-pause         sin pausa final (ejecucion programada)
-::   P2_P3_complete.bat --no-prompts        sin las preguntas finales (push y prueba del loader): ninguna se ejecuta
-::   P2_P3_complete.bat -h                 esta ayuda
+::   P2P3_runCycle.bat                    ciclo completo
+::   P2P3_runCycle.bat --baseline CSV     comparar contra un snapshot de betas existente
+::   P2P3_runCycle.bat --no-pause         sin pausa final (ejecucion programada)
+::   P2P3_runCycle.bat --no-prompts        sin las preguntas finales (push y prueba del loader): ninguna se ejecuta
+::   P2P3_runCycle.bat -h                 esta ayuda
 :: Codigos de salida: 0 OK | 100 argumentos invalidos | 101 interprete no encontrado |
 ::   105 otra instancia en ejecucion | 1-99 = RC propagado del paso que fallo.
 :: ============================================================
@@ -74,7 +74,7 @@ if defined BASELINE if not exist "!BASELINE!" (
     endlocal & exit /b %RC_USAGE%
 )
 
-:: Instancia unica (ver P1_P2_Complete.bat): el manejador 9 vive mientras corre :cycle.
+:: Instancia unica (ver P1P2_runCycle.bat): el manejador 9 vive mientras corre :cycle.
 if not exist "%STATE_DIR%" mkdir "%STATE_DIR%"
 set "LOCK_HELD="
 if defined FONDOS_CYCLE_LOCK (call :cycle) else (call :cycle 9>"%LOCK_FILE%")
@@ -105,7 +105,7 @@ set "TELEM_STEP="
 if "%FONDOS_TELEMETRY%"=="1" if not defined FONDOS_CYCLE_ID (
     set "FONDOS_CYCLE_ID=%STAMP%"
     set "TELEM_OWNER=1"
-    call "%COMMON%" :telemetry begin --launcher P2_P3_complete
+    call "%COMMON%" :telemetry begin --launcher P2P3_runCycle
 )
 
 :: -- CALC_VERSION vigente (nunca escrita a mano) ----------------------------------
@@ -280,7 +280,7 @@ call "%COMMON%" :utf8_off
 endlocal & exit /b 0
 
 :usage_text
-echo Uso: P2_P3_complete.bat [--baseline CSV] [--no-pause] [--no-prompts]
+echo Uso: P2P3_runCycle.bat [--baseline CSV] [--no-pause] [--no-prompts]
 echo   --baseline CSV   comparar las betas contra un snapshot existente (por defecto se toma uno antes del recalculo)
 echo   --no-pause       sin pausa final
 echo   --no-prompts      sin las preguntas finales (push y prueba del loader)

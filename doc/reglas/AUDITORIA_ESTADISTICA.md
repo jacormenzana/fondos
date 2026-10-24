@@ -831,7 +831,7 @@ ya se hace con los residuales de p2.
    creadas en `db/schema_fondos.sql` y aplicadas a la BD en producción; `fund_cost_corrections`
    promovida a schema canónico; `preserve_and_write` (§4 #16) implementado, cerrando la brecha J;
    runner `scripts/audit/run_statistical_audit.py --domain costs|p2 --mode report|check [--persist]
-   [--compare-to <run_id>]`; launcher `scripts/launch/AUDIT_statistical.bat`. Primera ejecución
+   [--compare-to <run_id>]`; launcher `scripts/launch/P1P2_auditStatistical.bat`. Primera ejecución
    real persistida: dominio coste 402 stats / 2.621 findings, dominio P2 12.251 stats / 48.922
    findings. Dos resultados requieren investigación antes de tratarse como defecto confirmado
    (Method Control "decidir qué operando está mal antes de corregir"): `VOL_ANN_EQUALS_SRRI_VOL`

@@ -95,7 +95,7 @@ _SKIP_DIRS = {"tests", ".claude", ".git", "__pycache__", "out", "node_modules", 
 def _constant_prefix(node) -> str | None:
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return node.value
-    if isinstance(node, ast.JoinedStr):                       # f"P1_P2_Complete.bat PASO {step} ..." -> the text before the first {}
+    if isinstance(node, ast.JoinedStr):                       # f"P1P2_runCycle.bat PASO {step} ..." -> the text before the first {}
         head = ""
         for part in node.values:
             if isinstance(part, ast.Constant) and isinstance(part.value, str):

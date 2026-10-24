@@ -1,7 +1,7 @@
 # NORMAS BATCH — Criterio único para los lanzadores `.bat`
 
 **Propósito:** un único criterio, modular y comprobable, para todo `.bat` que se cree o se toque en este repo.
-**Implementación de referencia:** `scripts/launch/lib/common.bat` (subrutinas) y `scripts/launch/P1_P2_Complete.bat`
+**Implementación de referencia:** `scripts/launch/lib/common.bat` (subrutinas) y `scripts/launch/P1P2_runCycle.bat`
 (orquestador). **Plantilla de arranque:** `scripts/launch/_template.bat`. **Cumplimiento:** `tests/test_batch_standards.py`
 (estático, sobre todos los `.bat`) y `tests/test_batch_launchers_e2e.py` (el orquestador ejecutado contra lanzadores simulados).
 **Lectura obligatoria** antes de crear o modificar un `.bat`.
@@ -80,7 +80,7 @@ Prohibido en líneas no comentadas: `C:\desarrollo`, `C:\data\envs`, literales d
 - `-h` / `--help` imprimen el uso y salen con 0. Lo **desconocido se rechaza** (RC 100): un error tipográfico no
   debe lanzar un proceso de horas con otras opciones.
 - Combinaciones sin sentido (`--no-x` con `--x-y`) se rechazan en el parseo, antes de tocar nada.
-- Opciones compartidas entre lanzadores (el ciclo P1+P2 lo es de `P1_P2_Complete` y de `P1_P2_P3`): **una sola tabla** en un fichero de
+- Opciones compartidas entre lanzadores (el ciclo P1+P2 lo es de `P1P2_runCycle` y de `P1P2P3_runCycle`): **una sola tabla** en un fichero de
   datos `lib/p1p2_options.bat`, que ambos incluyen; el integrador las reenvía sin duplicarlas.
 - Reenvío al sub-proceso: `-- args` (todo lo que sigue va tal cual). Se acumula **sin comillas externas**
   (`set EXTRA=!EXTRA! %1`) para que un argumento ya entrecomillado (`"A,B"`) conserve sus comillas.
@@ -120,12 +120,12 @@ existe— y **sin PowerShell**). Ultimas lineas de un log: `:tail FICHERO N`.
 
 ## §9. Instancia única
 
-Los lanzadores de **nivel superior** que escriben estado o recalculan (`P1_P2_Complete`, `P2_P3_complete`, `P1_P2_P3`, y el de la
+Los lanzadores de **nivel superior** que escriben estado o recalculan (`P1P2_runCycle`, `P2P3_runCycle`, `P1P2P3_runCycle`, y el de la
 release `FND-0246`, que encadena P1 -> P2 -> P3) comparten un
 bloqueo: `call :cycle 9>"%LOCK_FILE%"` mantiene un manejador abierto mientras corre `:cycle`; una segunda instancia no
 puede abrirlo, `:cycle` no se ejecuta (`LOCK_HELD` sin definir) y sale con RC 105. Lo cierra el sistema aunque el proceso
 muera: **no hay bloqueos huérfanos que limpiar**. Los sub-lanzadores **no** se bloquean (heredarían el manejador del padre). Un lanzador de nivel superior **anidado** bajo otro
-(`P1_P2_P3` invoca a `P1_P2_Complete`) no vuelve a pedirlo: el externo exporta `FONDOS_CYCLE_LOCK=1` y el interno ejecuta
+(`P1P2P3_runCycle` invoca a `P1P2_runCycle`) no vuelve a pedirlo: el externo exporta `FONDOS_CYCLE_LOCK=1` y el interno ejecuta
 `:cycle` sin la redirección (`if defined FONDOS_CYCLE_LOCK (call :cycle) else (call :cycle 9>"%LOCK_FILE%")`).
 El test estático exige ese patrón en los lanzadores de nivel superior (`TOP_LEVEL_LOCKED` en `tests/test_batch_standards.py`).
 
@@ -182,5 +182,5 @@ fase nueva se añade como previa/posterior, no renumerando. Un fallo de prefligh
 
 ---
 
-*Creado 2026-10-04. Origen: revisión de `P1_P2_Complete.bat` como lanzador de referencia (instancia única, standby real,*
-*códigos de salida sin colisión, rutas derivadas) y de los valores prefijados que `P2_P3_complete.bat` arrastraba.*
+*Creado 2026-10-04. Origen: revisión de `P1P2_runCycle.bat` como lanzador de referencia (instancia única, standby real,*
+*códigos de salida sin colisión, rutas derivadas) y de los valores prefijados que `P2P3_runCycle.bat` arrastraba.*

@@ -26,7 +26,7 @@ call "%COMMON%" :utf8_on
 :: Todos los argumentos se reenvian tal cual a p3_build_portfolio.py, salvo --no-audit (es de este lanzador).
 ::
 :: Auditoria P2 posterior al DRAFT: si la construccion termina con RC 0 y no es --dry-run, se ejecuta
-:: AUDIT_P2.bat --mode report --persist --run-id post_<sello>_p2 (log proyecto3\log\log_P3_auditP2_<sello>.log). La puerta
+:: P2_audit.bat --mode report --persist --run-id post_<sello>_p2 (log proyecto3\log\log_P3_auditP2_<sello>.log). La puerta
 :: de promocion exige una corrida FULL, no INCOMPLETE, mas nueva que el DRAFT: esto solo da el orden temporal (la
 :: identidad del DRAFT frente a la auditoria es otro control) y no cambia ninguna politica de promocion. Su resultado queda
 :: en una linea `[AUDIT_P2_POST_DRAFT] OK|FAILED|SKIPPED ...` (consola y log). Un fallo de la auditoria NO cambia el RC de P3
@@ -78,7 +78,7 @@ echo ============================================================
 echo.
 
 :: Telemetria de ciclo (opt-in: FONDOS_TELEMETRY=1; mejor esfuerzo, nunca cambia el RC). Solo si nadie mas es dueno del ciclo: bajo
-:: P1_P2_P3.bat / P2_P3_complete.bat es el padre quien registra el paso P3_BUILD.
+:: P1P2P3_runCycle.bat / P2P3_runCycle.bat es el padre quien registra el paso P3_BUILD.
 set "TELEM_OWNER="
 if "%FONDOS_TELEMETRY%"=="1" if not defined FONDOS_CYCLE_ID (
     set "FONDOS_CYCLE_ID=%STAMP%"
@@ -110,7 +110,7 @@ if !RC! EQU 0 (
     echo   Log: %LOG%
 ) else if !RC! EQU 2 (
     echo [%STAMP2%] P3 Build Portfolio -- ENTRADAS OBSOLETAS (P3_EXIT_STALE_INPUTS, RC=2^)
-    echo   Nada se ha puntuado ni persistido. Refrescar con P1_P2_Complete.bat y repetir;
+    echo   Nada se ha puntuado ni persistido. Refrescar con P1P2_runCycle.bat y repetir;
     echo   o --allow-stale si se asume el riesgo. Detalle: %LOG%
 ) else (
     echo [%STAMP2%] ERROR rc=!RC! -- ver %ERR%
@@ -129,14 +129,14 @@ set "AUD_ID=post_!AUD_STAMP!_p2"
 set "AUD_LOG=%LOG_DIR%\log_P3_auditP2_!AUD_STAMP!.log"
 echo [!AUD_STAMP!] Auditoria P2 persistida tras el DRAFT, run-id !AUD_ID!
 echo   Log: !AUD_LOG!
-call "%LAUNCH%\AUDIT_P2.bat" --mode report --persist --run-id !AUD_ID! --log "!AUD_LOG!" > nul
+call "%LAUNCH%\P2_audit.bat" --mode report --persist --run-id !AUD_ID! --log "!AUD_LOG!" > nul
 set "AUD_RC=!ERRORLEVEL!"
 if !AUD_RC! EQU 0 goto :audit_ok
 echo [AUDIT_P2_POST_DRAFT] FAILED rc=!AUD_RC! run-id=!AUD_ID! >> "%LOG%"
 echo [AUDIT_P2_POST_DRAFT] FAILED rc=!AUD_RC! run-id=!AUD_ID!
 echo   AVISO: la auditoria P2 posterior al DRAFT no termino bien: NO hay evidencia de promocion valida para este DRAFT
 echo   (una corrida caida o INCOMPLETE no cuenta). El RC de P3 no cambia. Detalle: !AUD_LOG!
-echo   Repetir: scripts\launch\AUDIT_P2.bat --mode report --persist --run-id !AUD_ID!
+echo   Repetir: scripts\launch\P2_audit.bat --mode report --persist --run-id !AUD_ID!
 goto :audit_done
 :audit_ok
 echo [AUDIT_P2_POST_DRAFT] OK run-id=!AUD_ID! >> "%LOG%"

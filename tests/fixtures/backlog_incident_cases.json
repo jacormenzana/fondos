@@ -13,7 +13,7 @@
     "nav_discovery.py",
     "mark_stale.py",
     "P2 NAV quarantine",
-    "P1_P2_Complete.bat PASO",
+    "P1P2_runCycle.bat PASO",
     "audit_incident:"
   ],
   "cases": [
@@ -37,28 +37,28 @@
     },
     {
       "name": "launcher step failed with the same RC",
-      "open": [{"action_point_id": "FND-1003", "title": "[auto] P1_P2_Complete.bat PASO 3 (P2_discoverLoadMetrics)",
-                "object_name": "P1_P2_Complete.bat PASO 3 (P2_discoverLoadMetrics)",
+      "open": [{"action_point_id": "FND-1003", "title": "[auto] P1P2_runCycle.bat PASO 3 (P2_discoverLoadMetrics)",
+                "object_name": "P1P2_runCycle.bat PASO 3 (P2_discoverLoadMetrics)",
                 "scenario_description": "PASO 3 (P2_discoverLoadMetrics) failed with RC=2 after 120s. See the step's log under proyecto1/log or proyecto2/log."}],
-      "incident": {"object_name": "P1_P2_Complete.bat PASO 3 (P2_discoverLoadMetrics)",
+      "incident": {"object_name": "P1P2_runCycle.bat PASO 3 (P2_discoverLoadMetrics)",
                    "scenario": "PASO 3 (P2_discoverLoadMetrics) failed with RC=2 after 4015s. See the step's log under proyecto1/log or proyecto2/log."},
       "expect": "HIGH"
     },
     {
       "name": "launcher step failed with a DIFFERENT RC (never merge)",
-      "open": [{"action_point_id": "FND-1004", "title": "[auto] P1_P2_Complete.bat PASO 3 (P2_discoverLoadMetrics)",
-                "object_name": "P1_P2_Complete.bat PASO 3 (P2_discoverLoadMetrics)",
+      "open": [{"action_point_id": "FND-1004", "title": "[auto] P1P2_runCycle.bat PASO 3 (P2_discoverLoadMetrics)",
+                "object_name": "P1P2_runCycle.bat PASO 3 (P2_discoverLoadMetrics)",
                 "scenario_description": "PASO 3 (P2_discoverLoadMetrics) failed with RC=2 after 120s. See the step's log under proyecto1/log or proyecto2/log."}],
-      "incident": {"object_name": "P1_P2_Complete.bat PASO 3 (P2_discoverLoadMetrics)",
+      "incident": {"object_name": "P1P2_runCycle.bat PASO 3 (P2_discoverLoadMetrics)",
                    "scenario": "PASO 3 (P2_discoverLoadMetrics) failed with RC=101 after 4s. See the step's log under proyecto1/log or proyecto2/log."},
       "never_high": true
     },
     {
       "name": "different launcher step (never merge)",
-      "open": [{"action_point_id": "FND-1005", "title": "[auto] P1_P2_Complete.bat PASO 3 (P2_discoverLoadMetrics)",
-                "object_name": "P1_P2_Complete.bat PASO 3 (P2_discoverLoadMetrics)",
+      "open": [{"action_point_id": "FND-1005", "title": "[auto] P1P2_runCycle.bat PASO 3 (P2_discoverLoadMetrics)",
+                "object_name": "P1P2_runCycle.bat PASO 3 (P2_discoverLoadMetrics)",
                 "scenario_description": "PASO 3 (P2_discoverLoadMetrics) failed with RC=2 after 120s. See the step's log under proyecto1/log or proyecto2/log."}],
-      "incident": {"object_name": "P1_P2_Complete.bat PASO 4 (P2_calculateIndicators)",
+      "incident": {"object_name": "P1P2_runCycle.bat PASO 4 (P2_calculateIndicators)",
                    "scenario": "PASO 4 (P2_calculateIndicators) failed with RC=2 after 900s. See the step's log under proyecto1/log or proyecto2/log."},
       "never_high": true
     },

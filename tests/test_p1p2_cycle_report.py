@@ -1,5 +1,5 @@
 """
-tests/test_p1p2_cycle_report.py -- the post-cycle report of P1_P2_Complete.bat.
+tests/test_p1p2_cycle_report.py -- the post-cycle report of P1P2_runCycle.bat.
 
 The decisions (what deserves attention, the comparison with the previous report, the rendering) are
 pure functions tested here with no database. `collect()` is exercised against a fake connection that

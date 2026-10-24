@@ -17,7 +17,7 @@ per fund (VIF filter, coverage, FND-0208 guard), so no fixed row count is used. 
 run_pipeline._replace_beta_set deletes and re-inserts inside the fund's single transaction. Funds left NULL
 are recomputed once by the next run — correct and small.
 
-Run ORDER (strictly sequential): disable the scheduled task that launches P1_P2_P3.bat / P1_P2_Complete.bat
+Run ORDER (strictly sequential): disable the scheduled task that launches P1P2P3_runCycle.bat / P1P2_runCycle.bat
 -> ANALYZE gold.fund_metrics (after the remediation P2 run) -> this script with --apply -> verify -> ONLY THEN
 deploy the code (P2 asserts the column at startup and aborts if it is missing) -> re-enable the scheduler.
 ROLLBACK: never DROP the column while the new code is deployed (P2 would abort at its startup check);

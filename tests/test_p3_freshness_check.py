@@ -1,5 +1,5 @@
 """
-tests/test_p3_freshness_check.py -- the read-only freshness verdict of P1_P2_Complete.bat.
+tests/test_p3_freshness_check.py -- the read-only freshness verdict of P1P2_runCycle.bat.
 
 The gate itself (proyecto3/src/data_freshness.py) is tested in its own module; this only proves the
 launcher-facing wrapper maps "something is stale" to the exit code P3 itself uses.

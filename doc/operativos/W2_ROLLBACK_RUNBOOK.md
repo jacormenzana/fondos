@@ -15,8 +15,8 @@ then a single-disk failure loses data, dumps and WAL together (FND-0070 stays op
 
 Every write in the four launcher steps is idempotent (upsert / full replace / append-only log;
 enforced by `tests/test_sql_explain_sweep_pg.py`). **The default answer to a failed step is fix the
-cause and resume with `P1_P2_Complete.bat --from N`, not a restore.** The guard refuses a resume past
-the failed step (`proyecto1/log/P1_P2_Complete.state`, `scripts/launch/p1p2_state.py`).
+cause and resume with `P1P2_runCycle.bat --from N`, not a restore.** The guard refuses a resume past
+the failed step (`proyecto1/log/P1P2_runCycle.state`, `scripts/launch/p1p2_state.py`).
 
 Roll back only when data is **wrong**, not merely incomplete:
 - the drift report `proyecto1/log/log_P1_P2_audit_<STAMP>.log` or the P1 cycle summary shows a mass

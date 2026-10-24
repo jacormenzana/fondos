@@ -8,10 +8,10 @@ call "%COMMON%" :utf8_on
 :: FND-0246_V2.bat -- Release EUR (FND-0243/0235/0240/0241/0242): comprobacion de la configuracion -> P2 -> P3.
 ::
 :: Tramo final de la release, desatendido. 1) release_check.py: los interruptores de la release estan a True en
-:: shared/config.py y son coherentes (se leen del CODIGO; un "set X=1" en un .bat no los cambia). 2) P2_P3_complete.bat
+:: shared/config.py y son coherentes (se leen del CODIGO; un "set X=1" en un .bat no los cambia). 2) P2P3_runCycle.bat
 :: --no-prompts: baseline de betas -> P2_calculateIndicators (sin --force: el cambio de interruptores y de CALC_VERSION ya
 :: obliga al recalculo completo) -> auditoria de betas contra CALC_VERSION -> P3 cartera -> P3 informe; sin preguntas.
-:: El bloqueo de instancia unica y la suspension los gestiona P2_P3_complete.bat (o FND-0246.bat si lo invoca).
+:: El bloqueo de instancia unica y la suspension los gestiona P2P3_runCycle.bat (o FND-0246.bat si lo invoca).
 :: Ejecutable desde cualquier directorio (las rutas salen de la ubicacion del propio fichero).
 ::
 :: Uso:
@@ -50,9 +50,9 @@ if !RC! NEQ 0 (
 
 echo.
 echo ===================================================
-echo FND-0246_V2 2/2: P2 -^> auditoria de betas -^> P3 ^(P2_P3_complete.bat^)
+echo FND-0246_V2 2/2: P2 -^> auditoria de betas -^> P3 ^(P2P3_runCycle.bat^)
 echo ===================================================
-call "%LAUNCH%\P2_P3_complete.bat" --no-prompts !NO_PAUSE_ARG!
+call "%LAUNCH%\P2P3_runCycle.bat" --no-prompts !NO_PAUSE_ARG!
 set "RC=!ERRORLEVEL!"
 
 :finish

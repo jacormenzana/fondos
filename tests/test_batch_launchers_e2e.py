@@ -66,9 +66,9 @@ echo %* >> "%STUB_POWERCFG_LOG%"
 exit /b 0
 """
 
-_LAUNCHERS = ["_template", "P1_P2_Complete", "P2_P3_complete", "P1_P2_P3", "P1_refreshBenchmarks", "P1_discoverAllFunds",
+_LAUNCHERS = ["_template", "P1P2_runCycle", "P2P3_runCycle", "P1P2P3_runCycle", "P1_refreshBenchmarks", "P1_discoverAllFunds",
               "P2_discoverLoadMetrics", "P2_calculateIndicators", "P1_harvestFunds", "P1_diagCost",
-              "AUDIT_P1", "AUDIT_P2", "AUDIT_statistical", "P3_buildPortfolio", "P3_generateReport",
+              "P1_audit", "P2_audit", "P1P2_auditStatistical", "P3_buildPortfolio", "P3_generateReport",
               "P1_discoverAllFundsPlusCostDiag", "FND-0246", "FND-0246_V2"]
 
 
@@ -172,7 +172,7 @@ class Tree:
             if self.power.exists() else []
 
     def state(self) -> dict:
-        f = self.logs / "P1_P2_Complete.state"
+        f = self.logs / "P1P2_runCycle.state"
         return dict(ln.split("=", 1) for ln in f.read_text().splitlines() if "=" in ln) if f.exists() else {}
 
 
@@ -187,7 +187,7 @@ CYCLE = ["--skip-preflight"]
 # ─── the happy path ──────────────────────────────────────────────────────────────────────────────
 
 def test_a_normal_cycle_runs_every_phase_in_order_and_exits_0(tree):
-    r = tree.run("P1_P2_Complete", STUB_VERDICT_P3_FRESHNESS_CHECK="P3 aceptaria estos datos")   # preflight included
+    r = tree.run("P1P2_runCycle", STUB_VERDICT_P3_FRESHNESS_CHECK="P3 aceptaria estos datos")   # preflight included
     assert r.returncode == 0, r.stdout + r.stderr
     assert "[preflight] OK   database reachable" in r.stdout
     t = tree.tools()
@@ -201,7 +201,7 @@ def test_a_normal_cycle_runs_every_phase_in_order_and_exits_0(tree):
 
 
 def test_option_forwarding_reaches_the_right_tool(tree):
-    r = tree.run("P1_P2_Complete", *CYCLE, "--benchmarks-load", "--no-export", "--skip-macro", "--workers", "3",
+    r = tree.run("P1P2_runCycle", *CYCLE, "--benchmarks-load", "--no-export", "--skip-macro", "--workers", "3",
                  "--force", "--harvest-sync", "--harvest-limit", "5", "--shadow", "2", "--benchmark-gaps",
                  "--dashboard", "--diag-cost", "--", "--isin", '"A,B"')
     assert r.returncode == 0, r.stdout + r.stderr
@@ -220,7 +220,7 @@ def test_a_directory_with_a_space_in_its_name_is_fine_and_the_real_repo_is_never
     """Every path is derived from the launcher's own location: only the copied tree can run."""
     watched = [REAL / "proyecto1" / "log", REAL / "proyecto2" / "log", REAL / "out"]
     before = {w: sorted(p.name for p in w.glob("*")) if w.exists() else None for w in watched}
-    r = tree.run("P1_P2_Complete", *CYCLE)
+    r = tree.run("P1P2_runCycle", *CYCLE)
     assert r.returncode == 0, r.stdout + r.stderr
     assert str(tree.root) in r.stdout and " " in str(tree.root)
     after = {w: sorted(p.name for p in w.glob("*")) if w.exists() else None for w in watched}
@@ -230,17 +230,17 @@ def test_a_directory_with_a_space_in_its_name_is_fine_and_the_real_repo_is_never
 # ─── failures keep their own code and the resume guard works ────────────────────────────────────
 
 def test_a_step_failure_propagates_its_rc_and_blocks_the_following_steps(tree):
-    r = tree.run("P1_P2_Complete", *CYCLE, STUB_RC_NAV_DISCOVERY="7")
+    r = tree.run("P1P2_runCycle", *CYCLE, STUB_RC_NAV_DISCOVERY="7")
     assert r.returncode == 7, r.stdout + r.stderr
     assert "run_pipeline" not in tree.tools()
     assert tree.state()["LAST_RESULT"] == "FAILED" and tree.state()["FAILED_STEP"] == "3"
 
 
 def test_resume_from_the_failed_step_skips_what_ran_and_reuses_baseline_and_snapshot(tree):
-    assert tree.run("P1_P2_Complete", *CYCLE, STUB_RC_NAV_DISCOVERY="7").returncode == 7
+    assert tree.run("P1P2_runCycle", *CYCLE, STUB_RC_NAV_DISCOVERY="7").returncode == 7
     baseline = tree.state()["BASELINE_RUN_ID"]
     tree.trace.unlink()
-    r = tree.run("P1_P2_Complete", *CYCLE, "--from", "3")
+    r = tree.run("P1P2_runCycle", *CYCLE, "--from", "3")
     assert r.returncode == 0, r.stdout + r.stderr
     t = tree.tools()
     assert "benchmark_loader" not in t and "p1_db_harvest" not in t and "mark_stale" not in t
@@ -252,17 +252,17 @@ def test_resume_from_the_failed_step_skips_what_ran_and_reuses_baseline_and_snap
 
 def test_a_tool_code_is_never_confused_with_a_launcher_code(tree):
     """The harvest gate's RC 5 used to be indistinguishable from 'interpreter not found' (RC 5)."""
-    r = tree.run("P1_P2_Complete", *CYCLE, STUB_RC_HARVEST_GATE="5")
+    r = tree.run("P1P2_runCycle", *CYCLE, STUB_RC_HARVEST_GATE="5")
     assert r.returncode == 5 and not 100 <= r.returncode <= 199
     assert tree.state()["FAILED_STEP"] == "1" and "benchmark_loader" not in tree.tools()
 
 
 def test_the_launchers_own_codes(tree):
-    assert tree.run("P1_P2_Complete", "--frobnicate").returncode == 100
-    assert tree.run("P1_P2_Complete", "--workers", "0").returncode == 100
-    assert tree.run("P1_P2_Complete", "--help").returncode == 0
-    assert tree.run("P1_P2_Complete", "--from", "3").returncode == 102           # no state: refused, fails closed
-    assert tree.run("P1_P2_Complete", *CYCLE, FONDOS_PYTHON=str(tree.root / "no_python.exe")).returncode == 101
+    assert tree.run("P1P2_runCycle", "--frobnicate").returncode == 100
+    assert tree.run("P1P2_runCycle", "--workers", "0").returncode == 100
+    assert tree.run("P1P2_runCycle", "--help").returncode == 0
+    assert tree.run("P1P2_runCycle", "--from", "3").returncode == 102           # no state: refused, fails closed
+    assert tree.run("P1P2_runCycle", *CYCLE, FONDOS_PYTHON=str(tree.root / "no_python.exe")).returncode == 101
     for sub in ("P1_discoverAllFunds", "P2_discoverLoadMetrics", "P1_harvestFunds"):   # P2_calculateIndicators forwards unknown args
         assert tree.run(sub, "--help").returncode == 0, sub
     assert tree.run("P1_discoverAllFunds", "--nope").returncode == 100
@@ -345,7 +345,7 @@ def test_a_blocked_driver_stops_every_launcher_with_106_before_any_tool(tree, na
 
 
 def test_the_interpreter_missing_is_still_101_not_106(tree):
-    r = tree.run("P1_P2_Complete", "--help", FONDOS_PYTHON=str(tree.root / "no_python.exe"), **BLOCKED)
+    r = tree.run("P1P2_runCycle", "--help", FONDOS_PYTHON=str(tree.root / "no_python.exe"), **BLOCKED)
     assert r.returncode == 101
 
 
@@ -371,10 +371,10 @@ def test_the_preflight_reports_106_when_the_driver_is_blocked(tree):
 
 
 def test_a_dead_database_aborts_in_preflight_without_touching_the_resume_state(tree):
-    assert tree.run("P1_P2_Complete", *CYCLE, STUB_RC_NAV_DISCOVERY="7").returncode == 7
+    assert tree.run("P1P2_runCycle", *CYCLE, STUB_RC_NAV_DISCOVERY="7").returncode == 7
     before = tree.state()
     tree.trace.unlink()
-    r = tree.run("P1_P2_Complete", "--from", "3", STUB_DB_DOWN="1")
+    r = tree.run("P1P2_runCycle", "--from", "3", STUB_DB_DOWN="1")
     assert r.returncode == 104, r.stdout + r.stderr
     assert "database unreachable" in r.stdout and tree.tools() == []
     assert tree.state() == before                                                 # the failed step is still resumable
@@ -383,21 +383,21 @@ def test_a_dead_database_aborts_in_preflight_without_touching_the_resume_state(t
 # ─── the suspension is saved and restored, never assumed ────────────────────────────────────────
 
 def test_standby_is_restored_to_the_real_value_not_to_a_hard_coded_30(tree):
-    r = tree.run("P1_P2_Complete", *CYCLE)                                       # the stub reports 45 minutes
+    r = tree.run("P1P2_runCycle", *CYCLE)                                       # the stub reports 45 minutes
     assert r.returncode == 0, r.stdout + r.stderr
     assert tree.power_calls() == ["0", "45"], tree.power_calls()
     assert not (tree.logs / "standby_ac.saved").exists()
 
 
 def test_standby_is_restored_even_when_the_cycle_fails(tree):
-    assert tree.run("P1_P2_Complete", *CYCLE, STUB_RC_NAV_DISCOVERY="7").returncode == 7
+    assert tree.run("P1P2_runCycle", *CYCLE, STUB_RC_NAV_DISCOVERY="7").returncode == 7
     assert tree.power_calls() == ["0", "45"]
 
 
 def test_an_interrupted_run_does_not_make_the_next_one_forget_the_original_value(tree):
     """After Ctrl+C the plan stays at 0 and the saved value stays on disk: the next run must NOT save the 0."""
     (tree.logs / "standby_ac.saved").write_text("45\n")
-    r = tree.run("P1_P2_Complete", *CYCLE, STUB_STANDBY_HEX="00000000")          # the plan currently reads 0
+    r = tree.run("P1P2_runCycle", *CYCLE, STUB_STANDBY_HEX="00000000")          # the plan currently reads 0
     assert r.returncode == 0, r.stdout + r.stderr
     assert tree.power_calls()[-1] == "45"
 
@@ -412,27 +412,27 @@ def test_sub_launchers_leave_the_suspension_alone_under_the_orchestrator_but_man
 # ─── single instance ─────────────────────────────────────────────────────────────────────────────
 
 def test_a_second_cycle_is_refused_while_the_first_runs_and_the_lock_dies_with_the_process(tree):
-    first = tree.popen("P1_P2_Complete", *CYCLE, STUB_SLEEP_BENCHMARK_LOADER="6")
+    first = tree.popen("P1P2_runCycle", *CYCLE, STUB_SLEEP_BENCHMARK_LOADER="6")
     try:
         deadline = time.time() + 60
         while "benchmark_loader" not in tree.tools():
             assert first.poll() is None and time.time() < deadline, "the first cycle did not reach step 1"
             time.sleep(0.3)
-        r = tree.run("P1_P2_Complete", *CYCLE)
+        r = tree.run("P1P2_runCycle", *CYCLE)
         assert r.returncode == 105, r.stdout + r.stderr
         assert "Otra instancia" in r.stdout
-        assert tree.run("P2_P3_complete", "--no-pause").returncode == 105       # shares the lock: both recompute P2
+        assert tree.run("P2P3_runCycle", "--no-pause").returncode == 105       # shares the lock: both recompute P2
     finally:
         out, _ = first.communicate(timeout=240)
     assert first.returncode == 0, out
     assert tree.tools().count("run_pipeline") == 1                               # the refused ones ran nothing
-    assert tree.run("P1_P2_Complete", *CYCLE).returncode == 0                    # nothing left behind to clean up
+    assert tree.run("P1P2_runCycle", *CYCLE).returncode == 0                    # nothing left behind to clean up
 
 
-# ─── P2_P3_complete: nothing preassigned ────────────────────────────────────────────────────────
+# ─── P2P3_runCycle: nothing preassigned ────────────────────────────────────────────────────────
 
 def test_p2_p3_reads_the_version_and_takes_its_own_baseline_before_recalculating(tree):
-    r = tree.run("P2_P3_complete", "--no-pause")
+    r = tree.run("P2P3_runCycle", "--no-pause")
     assert r.returncode == 0, r.stdout + r.stderr
     ln = tree.lines()
     snap = next(i for i, x in enumerate(ln) if x.startswith("beta_shift_audit --snapshot"))
@@ -452,13 +452,13 @@ def test_p2_p3_uses_an_explicit_baseline_and_stops_before_p3_when_the_beta_audit
     base = tree.audit / "mine.csv"
     base.parent.mkdir(parents=True, exist_ok=True)
     base.write_text("x\n")
-    r = tree.run("P2_P3_complete", "--no-pause", "--baseline", str(base), STUB_RC_BETA_SHIFT_AUDIT="1")
+    r = tree.run("P2P3_runCycle", "--no-pause", "--baseline", str(base), STUB_RC_BETA_SHIFT_AUDIT="1")
     assert r.returncode == 1, r.stdout + r.stderr
     ln = tree.lines()
     assert not any(x.startswith("beta_shift_audit --snapshot") for x in ln)
     assert any(str(base) in x for x in ln if x.startswith("beta_shift_audit --compare"))
     assert "p3_build_portfolio" not in tree.tools()
-    assert tree.run("P2_P3_complete", "--no-pause", "--baseline", str(tree.audit / "missing.csv")).returncode == 100
+    assert tree.run("P2P3_runCycle", "--no-pause", "--baseline", str(tree.audit / "missing.csv")).returncode == 100
 
 
 # ─── the template is a working launcher ─────────────────────────────────────────────────────────
@@ -473,16 +473,16 @@ def test_the_template_is_a_working_launcher_that_follows_its_own_rules(tree):
     assert tree.run("_template", "--help").returncode == 0
 
 
-# ─── P1_P2_P3: the two launchers integrated ─────────────────────────────────────────────────────
+# ─── P1P2P3_runCycle: the two launchers integrated ─────────────────────────────────────────────────────
 
 P123 = ["--no-pause", "--no-prompts"]
 
 
 def test_p1_p2_p3_runs_the_cycle_then_the_beta_gate_then_p3_without_repeating_p2(tree):
-    r = tree.run("P1_P2_P3", *P123, STUB_VERDICT_P3_FRESHNESS_CHECK="P3 aceptaria estos datos")
+    r = tree.run("P1P2P3_runCycle", *P123, STUB_VERDICT_P3_FRESHNESS_CHECK="P3 aceptaria estos datos")
     assert r.returncode == 0, r.stdout + r.stderr
     t, ln = tree.tools(), tree.lines()
-    assert t.count("run_pipeline") == 1, "P2 must run once (P2_P3_complete.bat used to repeat it)"
+    assert t.count("run_pipeline") == 1, "P2 must run once (P2P3_runCycle.bat used to repeat it)"
     compares = [x for x in ln if x.startswith("beta_shift_audit --compare")]
     assert len(compares) == 2                                       # the cycle's informational one + the blocking gate
     assert "--version 20991231" in compares[-1] and "outliers_gate_" in compares[-1]
@@ -491,11 +491,11 @@ def test_p1_p2_p3_runs_the_cycle_then_the_beta_gate_then_p3_without_repeating_p2
         ln.index(next(x for x in ln if x.startswith("p3_build_portfolio")))
     assert tree.state()["LAST_RESULT"] == "OK"
     assert tree.power_calls() == ["0", "45"], tree.power_calls()    # ONE disable/restore for the whole run
-    assert list((tree.logs).glob("log_P1_P2_P3_*.log"))
+    assert list((tree.logs).glob("log_P1P2P3_runCycle_*.log"))
 
 
 def test_p1_p2_p3_forwards_the_cycle_options_and_its_own_p3_options(tree):
-    r = tree.run("P1_P2_P3", *P123, "--no-export", "--skip-macro", "--workers", "2", "--no-harvest", "--shadow", "1",
+    r = tree.run("P1P2P3_runCycle", *P123, "--no-export", "--skip-macro", "--workers", "2", "--no-harvest", "--shadow", "1",
                  "--scenario", "esc1", "--allow-stale", "--p3-dry-run", "--", "--isin", '"A,B"')
     assert r.returncode == 0, r.stdout + r.stderr
     ln = "\n".join(tree.lines()).replace("  ", " ")
@@ -507,14 +507,14 @@ def test_p1_p2_p3_forwards_the_cycle_options_and_its_own_p3_options(tree):
 
 
 def test_p1_p2_p3_stops_before_p3_when_the_cycle_fails_and_returns_its_code(tree):
-    r = tree.run("P1_P2_P3", *P123, STUB_RC_NAV_DISCOVERY="7")
+    r = tree.run("P1P2P3_runCycle", *P123, STUB_RC_NAV_DISCOVERY="7")
     assert r.returncode == 7, r.stdout + r.stderr
     assert "p3_build_portfolio" not in tree.tools() and "run_pipeline" not in tree.tools()
     assert tree.power_calls() == ["0", "45"]                                      # still restored
 
 
 def test_p1_p2_p3_stops_before_p3_when_the_beta_gate_fails(tree):
-    r = tree.run("P1_P2_P3", *P123, STUB_RC_BETA_SHIFT_AUDIT="1")
+    r = tree.run("P1P2P3_runCycle", *P123, STUB_RC_BETA_SHIFT_AUDIT="1")
     assert r.returncode == 1, r.stdout + r.stderr
     assert "run_pipeline" in tree.tools() and "p3_build_portfolio" not in tree.tools()
     assert "la puerta de betas fallo" in r.stdout
@@ -524,17 +524,17 @@ def test_p1_p2_p3_explicit_baseline_replaces_the_cycles_snapshot_in_the_gate(tre
     base = tree.audit / "mine.csv"
     base.parent.mkdir(parents=True, exist_ok=True)
     base.write_text("x\n")
-    assert tree.run("P1_P2_P3", *P123, "--baseline", str(base)).returncode == 0
+    assert tree.run("P1P2P3_runCycle", *P123, "--baseline", str(base)).returncode == 0
     assert any(str(base) in x for x in tree.lines() if x.startswith("beta_shift_audit --compare"))
 
 
 def test_only_p3_builds_on_the_last_ok_cycle_and_refuses_otherwise(tree):
-    assert tree.run("P1_P2_P3", *P123, "--only-p3").returncode == 102             # no cycle yet: nothing proves it is OK
-    assert tree.run("P1_P2_P3", *P123, STUB_RC_NAV_DISCOVERY="7").returncode == 7
-    assert tree.run("P1_P2_P3", *P123, "--only-p3").returncode == 102             # the last cycle FAILED
-    assert tree.run("P1_P2_Complete", "--from", "3", "--skip-preflight").returncode == 0     # resume -> OK
+    assert tree.run("P1P2P3_runCycle", *P123, "--only-p3").returncode == 102             # no cycle yet: nothing proves it is OK
+    assert tree.run("P1P2P3_runCycle", *P123, STUB_RC_NAV_DISCOVERY="7").returncode == 7
+    assert tree.run("P1P2P3_runCycle", *P123, "--only-p3").returncode == 102             # the last cycle FAILED
+    assert tree.run("P1P2_runCycle", "--from", "3", "--skip-preflight").returncode == 0     # resume -> OK
     tree.trace.unlink()
-    r = tree.run("P1_P2_P3", *P123, "--only-p3")
+    r = tree.run("P1P2P3_runCycle", *P123, "--only-p3")
     assert r.returncode == 0, r.stdout + r.stderr
     t = tree.tools()
     assert "p3_build_portfolio" in t and "run_pipeline" not in t and "benchmark_loader" not in t
@@ -544,25 +544,25 @@ def test_only_p3_builds_on_the_last_ok_cycle_and_refuses_otherwise(tree):
 def test_p1_p2_p3_argument_errors_are_rc_100_and_run_nothing(tree):
     for args in (["--frobnicate"], ["--workers", "0"], ["--scenario"], ["--scenario", "--no-pause"],
                  ["--baseline", str(tree.audit / "nope.csv")], ["--only-p3", "--force"], ["--scenario", '"a b"']):
-        assert tree.run("P1_P2_P3", *args).returncode == 100, args
-    r = tree.run("P1_P2_P3", "--help")
+        assert tree.run("P1P2P3_runCycle", *args).returncode == 100, args
+    r = tree.run("P1P2P3_runCycle", "--help")
     assert r.returncode == 0 and "--only-p3" in r.stdout and "--harvest-sync" in r.stdout    # own + the cycle's usage
     assert tree.tools() == []
 
 
 def test_the_three_cyclers_exclude_each_other_and_the_nested_one_is_not_refused_by_its_parent(tree):
-    first = tree.popen("P1_P2_P3", *P123, STUB_SLEEP_BENCHMARK_LOADER="6")
+    first = tree.popen("P1P2P3_runCycle", *P123, STUB_SLEEP_BENCHMARK_LOADER="6")
     try:
         deadline = time.time() + 60
         while "benchmark_loader" not in tree.tools():
             assert first.poll() is None and time.time() < deadline, "the first run did not reach step 1"
             time.sleep(0.3)
-        assert tree.run("P1_P2_Complete", "--skip-preflight").returncode == 105
-        assert tree.run("P2_P3_complete", "--no-pause").returncode == 105
-        assert tree.run("P1_P2_P3", *P123).returncode == 105
+        assert tree.run("P1P2_runCycle", "--skip-preflight").returncode == 105
+        assert tree.run("P2P3_runCycle", "--no-pause").returncode == 105
+        assert tree.run("P1P2P3_runCycle", *P123).returncode == 105
     finally:
         out, _ = first.communicate(timeout=240)
-    assert first.returncode == 0, out                  # P1_P2_Complete ran NESTED under it: it did not ask for the lock again
+    assert first.returncode == 0, out                  # P1P2_runCycle ran NESTED under it: it did not ask for the lock again
     assert tree.tools().count("run_pipeline") == 1
 
 
@@ -586,14 +586,14 @@ def _events(fb):
 
 def test_telemetry_off_by_default_writes_nothing(tree, tmp_path):
     fb, _ = _with_telemetry(tree, tmp_path)
-    r = tree.run("P1_P2_Complete", *CYCLE, FONDOS_CYCLE_FALLBACK=str(fb))             # FONDOS_TELEMETRY not set
+    r = tree.run("P1P2_runCycle", *CYCLE, FONDOS_CYCLE_FALLBACK=str(fb))             # FONDOS_TELEMETRY not set
     assert r.returncode == 0, r.stdout + r.stderr
     assert not fb.exists()
 
 
 def test_telemetry_on_records_the_cycle_and_its_steps_in_order_and_the_rc_is_the_same(tree, tmp_path):
     fb, env = _with_telemetry(tree, tmp_path)
-    r = tree.run("P1_P2_Complete", *CYCLE, **env)
+    r = tree.run("P1P2_runCycle", *CYCLE, **env)
     assert r.returncode == 0, r.stdout + r.stderr
     ev = _events(fb)
     ops = [e["op"] for e in ev]
@@ -609,10 +609,10 @@ def test_telemetry_on_records_the_cycle_and_its_steps_in_order_and_the_rc_is_the
 
 
 def test_a_failing_step_is_recorded_as_failed_and_its_rc_is_propagated_untouched(tree, tmp_path):
-    plain = tree.run("P1_P2_Complete", *CYCLE, STUB_RC_RUN_PIPELINE="7")
+    plain = tree.run("P1P2_runCycle", *CYCLE, STUB_RC_RUN_PIPELINE="7")
     assert plain.returncode != 0
     fb, env = _with_telemetry(tree, tmp_path)
-    with_telemetry = tree.run("P1_P2_Complete", *CYCLE, STUB_RC_RUN_PIPELINE="7", **env)
+    with_telemetry = tree.run("P1P2_runCycle", *CYCLE, STUB_RC_RUN_PIPELINE="7", **env)
     assert with_telemetry.returncode == plain.returncode                                # telemetry changes no return code
     ev = _events(fb)
     last = ev[-1]
@@ -622,7 +622,7 @@ def test_a_failing_step_is_recorded_as_failed_and_its_rc_is_propagated_untouched
 
 def test_a_broken_telemetry_tool_cannot_fail_the_cycle(tree, tmp_path):
     fb, env = _with_telemetry(tree, tmp_path, tool_source="import sys\nsys.exit(9)\n")
-    r = tree.run("P1_P2_Complete", *CYCLE, **env)
+    r = tree.run("P1P2_runCycle", *CYCLE, **env)
     assert r.returncode == 0, r.stdout + r.stderr
     assert tree.state()["LAST_RESULT"] == "OK"
 
@@ -635,11 +635,11 @@ def _step_order(ev, op="step_end"):
 
 def test_p1_p2_p3_owns_one_cycle_and_records_audits_beta_gate_and_p3_in_order(tree, tmp_path):
     fb, env = _with_telemetry(tree, tmp_path)
-    r = tree.run("P1_P2_P3", *P123, STUB_VERDICT_P3_FRESHNESS_CHECK="P3 aceptaria estos datos", **env)
+    r = tree.run("P1P2P3_runCycle", *P123, STUB_VERDICT_P3_FRESHNESS_CHECK="P3 aceptaria estos datos", **env)
     assert r.returncode == 0, r.stdout + r.stderr
     ev = _events(fb)
-    assert [e["op"] for e in ev].count("cycle_begin") == 1 and [e["op"] for e in ev].count("cycle_end") == 1      # ONE cycle, owned by P1_P2_P3
-    assert ev[0]["op"] == "cycle_begin" and ev[0]["launcher"] == "P1_P2_P3" and ev[-1]["status"] == "OK"
+    assert [e["op"] for e in ev].count("cycle_begin") == 1 and [e["op"] for e in ev].count("cycle_end") == 1      # ONE cycle, owned by P1P2P3_runCycle
+    assert ev[0]["op"] == "cycle_begin" and ev[0]["launcher"] == "P1P2P3_runCycle" and ev[-1]["status"] == "OK"
     assert len({e["cycle_id"] for e in ev}) == 1
     order = _step_order(ev)
     for a, b in (("AUDIT_BASE", "P1_BENCH"), ("P2_CALC", "AUDIT_FINAL"), ("AUDIT_FINAL", "BETA_GATE"), ("BETA_GATE", "P3_BUILD"), ("P3_BUILD", "P3_REPORT")):
@@ -650,12 +650,12 @@ def test_p1_p2_p3_owns_one_cycle_and_records_audits_beta_gate_and_p3_in_order(tr
 
 def test_a_failing_p3_or_beta_gate_is_the_failed_step_and_the_rc_is_unchanged(tree, tmp_path):
     for stub, step in (("STUB_RC_P3_BUILD_PORTFOLIO", "P3_BUILD"), ("STUB_RC_BETA_SHIFT_AUDIT", "BETA_GATE")):
-        plain = tree.run("P1_P2_P3", *P123, **{stub: "5"})
+        plain = tree.run("P1P2P3_runCycle", *P123, **{stub: "5"})
         assert plain.returncode == 5, plain.stdout + plain.stderr
         fb = tmp_path / f"fb_{step}.jsonl"
         _, env = _with_telemetry(tree, tmp_path)
         env["FONDOS_CYCLE_FALLBACK"] = str(fb)
-        with_t = tree.run("P1_P2_P3", *P123, **{stub: "5"}, **env)
+        with_t = tree.run("P1P2P3_runCycle", *P123, **{stub: "5"}, **env)
         assert with_t.returncode == plain.returncode
         end = _events(fb)[-1]
         assert end["op"] == "cycle_end" and end["status"] == "FAILED" and end["failed_step"] == step and end["rc"] == 5
@@ -663,17 +663,17 @@ def test_a_failing_p3_or_beta_gate_is_the_failed_step_and_the_rc_is_unchanged(tr
 
 def test_p2_p3_complete_owns_its_cycle_with_every_step(tree, tmp_path):
     fb, env = _with_telemetry(tree, tmp_path)
-    r = tree.run("P2_P3_complete", "--no-pause", **env)
+    r = tree.run("P2P3_runCycle", "--no-pause", **env)
     assert r.returncode == 0, r.stdout + r.stderr
     ev = _events(fb)
-    assert ev[0]["op"] == "cycle_begin" and ev[0]["launcher"] == "P2_P3_complete" and ev[-1]["status"] == "OK"
+    assert ev[0]["op"] == "cycle_begin" and ev[0]["launcher"] == "P2P3_runCycle" and ev[-1]["status"] == "OK"
     assert _step_order(ev) == ["BETA_SNAPSHOT", "P2_CALC", "BETA_COMPARE", "P3_BUILD", "P3_REPORT"]
 
 
 def test_p2_p3_complete_failure_keeps_its_rc_and_names_the_step(tree, tmp_path):
-    plain = tree.run("P2_P3_complete", "--no-pause", STUB_RC_RUN_PIPELINE="4")
+    plain = tree.run("P2P3_runCycle", "--no-pause", STUB_RC_RUN_PIPELINE="4")
     fb, env = _with_telemetry(tree, tmp_path)
-    with_t = tree.run("P2_P3_complete", "--no-pause", STUB_RC_RUN_PIPELINE="4", **env)
+    with_t = tree.run("P2P3_runCycle", "--no-pause", STUB_RC_RUN_PIPELINE="4", **env)
     assert with_t.returncode == plain.returncode != 0
     end = _events(fb)[-1]
     assert end["status"] == "FAILED" and end["failed_step"] == "P2_CALC"
@@ -706,7 +706,7 @@ def test_a_standalone_p3_failure_keeps_the_stale_inputs_rc(tree, tmp_path):
 
 def test_telemetry_off_leaves_every_hooked_launcher_silent(tree, tmp_path):
     fb, _ = _with_telemetry(tree, tmp_path)
-    for name, args in (("P1_P2_P3", P123), ("P2_P3_complete", ["--no-pause"]), ("P3_buildPortfolio", []), ("P3_generateReport", [])):
+    for name, args in (("P1P2P3_runCycle", P123), ("P2P3_runCycle", ["--no-pause"]), ("P3_buildPortfolio", []), ("P3_generateReport", [])):
         r = tree.run(name, *args, FONDOS_CYCLE_FALLBACK=str(fb))
         assert r.returncode == 0, (name, r.stdout + r.stderr)
     assert not fb.exists()
@@ -766,21 +766,21 @@ def test_the_release_launchers_work_when_started_from_scripts_launch(tree):
 
 
 def test_the_full_release_shares_the_cycle_lock(tree):
-    first = tree.popen("P1_P2_Complete", *CYCLE, STUB_SLEEP_BENCHMARK_LOADER="6")
+    first = tree.popen("P1P2_runCycle", *CYCLE, STUB_SLEEP_BENCHMARK_LOADER="6")
     try:
         deadline = time.time() + 60
         while "benchmark_loader" not in tree.tools():
             assert first.poll() is None and time.time() < deadline, "the first cycle did not reach step 1"
             time.sleep(0.3)
         assert tree.run("FND-0246", "--no-pause").returncode == 105
-        assert tree.run("FND-0246_V2", "--no-pause").returncode == 105                   # via P2_P3_complete
+        assert tree.run("FND-0246_V2", "--no-pause").returncode == 105                   # via P2P3_runCycle
     finally:
         out, _ = first.communicate(timeout=240)
     assert first.returncode == 0, out
 
 
 def test_p2_p3_no_prompts_skips_the_push_and_the_loader_questions(tree):
-    r = tree.run("P2_P3_complete", "--no-pause", "--no-prompts")
+    r = tree.run("P2P3_runCycle", "--no-pause", "--no-prompts")
     assert r.returncode == 0, r.stdout + r.stderr
     assert "--no-prompts" in r.stdout and "Estas satisfecho" not in r.stdout and "benchmark_loader" not in tree.tools()
 
@@ -824,7 +824,7 @@ def test_report_launcher_draft_without_any_draft_exits_3(tree):
 
 
 def test_the_cycle_launcher_reports_the_draft_it_just_built(tree):
-    r = tree.run("P2_P3_complete", "--no-pause", "--no-prompts")
+    r = tree.run("P2P3_runCycle", "--no-pause", "--no-prompts")
     assert r.returncode == 0, r.stdout + r.stderr
     ln = [x for x in tree.lines() if x.startswith("generate_report")]
     assert len(ln) == 1 and ln[0].endswith(" cartera_stub_b1"), ln          # never the implicit PRODUCTION: nothing is promoted yet

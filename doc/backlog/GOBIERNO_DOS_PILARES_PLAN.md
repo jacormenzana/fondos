@@ -89,7 +89,7 @@ Baseline verified against `master` @ `bbc113c` and live `gestion.backlog` on 202
 | Exit criterion | Each scenario returns its expected state: missing source table, renamed column, an omitted mandatory rule, an empty legitimate population, a query error, a crash mid-persist (no header → run does not exist). |
 | Tests | One positive and one negative case per scenario above, in `run_pg_tests.py`. |
 | Backlog | New ticket. Affects FND-0234 (rule set), FND-0251 (gate reader). |
-| Risks / owner decisions | D4 run scope for the gate (FULL only?). Launcher RC handling of 2 (`P1_P2_Complete.bat` audit steps are diagnostics: they must not change the cycle RC). |
+| Risks / owner decisions | D4 run scope for the gate (FULL only?). Launcher RC handling of 2 (`P1P2_runCycle.bat` audit steps are diagnostics: they must not change the cycle RC). |
 | Kill-switch / migration | `AUDIT_COMPLETENESS_CONTRACT_ENABLED` (OFF); `scripts/ops/migrate_audit_run.py` (owner). |
 
 ### 03: Consolidate quality rules and classification
@@ -177,7 +177,7 @@ It closes G2's worst case: a sample can no longer pass for promotion evidence. C
 |---|---|---|---|
 | D1 | Meaning of "tip" for code integrity | `HEAD == origin/master` + clean tracked tree; untracked files ignored | **Approved** 2026-10-11 |
 | D2 | Σw tolerance at promotion | 5e-5 (half a unit of the 4th decimal); builder unchanged | **Approved** 2026-10-11 |
-| D3 | Where code integrity BLOCKS | **Blocks at PORTFOLIO_PROMOTION only.** Cycle launchers (`P1_P2_Complete`, `P1_P2_P3`, `P2_P3_complete`, `P3_buildPortfolio`) record the code state in the run manifest and WARN; diagnostics are out of scope | **Approved** 2026-10-11 (changed from "launchers block") |
+| D3 | Where code integrity BLOCKS | **Blocks at PORTFOLIO_PROMOTION only.** Cycle launchers (`P1P2_runCycle`, `P1P2P3_runCycle`, `P2P3_runCycle`, `P3_buildPortfolio`) record the code state in the run manifest and WARN; diagnostics are out of scope | **Approved** 2026-10-11 (changed from "launchers block") |
 | D4 | Valid audit evidence | FULL scope + status ≠ INCOMPLETE + newer than the DRAFT. A FAIL run IS valid evidence (it is what blocks); accepting only PASS runs would let the gate skip a FAIL and fall back to an older PASS. Sample runs never count | **Approved** 2026-10-11 (wording corrected) |
 | D5 | Relative tolerances | Only for families whose divergence is proportional to level | **Scheduled**: decided at phase 03's exit, on the per-family divergence measured during phase 03 |
 | D6 | Approver separation with a single owner | Two steps: GRANT (structured reason + AP), then a separate explicit APPROVE event; both logged; **no time pad** | **Approved** 2026-10-11 (changed from "≥ 24 h apart") |
@@ -204,7 +204,7 @@ Four external assessments, each verified against the code. What changed the plan
 |---|---|---|
 | D4 "COMPLETE" as the evidence state | Corrected | COMPLETE is not a state. Evidence = status ≠ INCOMPLETE; a FAIL run counts (§5 D4) |
 | Quick win "exclude `_sample` ids" alone | Incomplete | The runner trusted an explicit `--run-id` under `--isin`. The guard is now two-sided (§4) |
-| Suffixing explicit ids breaks callers | Refuted | Every launcher passes `--run-id` without `--isin` (`P1_P2_Complete.bat` audit calls); `accept_audit_residual.py` never persists. Pinned by test |
+| Suffixing explicit ids breaks callers | Refuted | Every launcher passes `--run-id` without `--isin` (`P1P2_runCycle.bat` audit calls); `accept_audit_residual.py` never persists. Pinned by test |
 | Header-last ≠ atomicity | Already covered | Phase 02 persists header + rows in ONE transaction; the header is the marker, not the mechanism |
 | Code-integrity friction on launchers | Accepted | D3: launchers warn, promotion blocks |
 | 24 h cooling-off adds latency | Accepted | D6: two steps, no time pad |

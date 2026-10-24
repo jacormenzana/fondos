@@ -21,7 +21,7 @@ call "%COMMON%" :utf8_on
 ::   P1_refreshBenchmarks.bat update --sample 40 -> cualquier argumento extra se reenvia
 ::                                                  tal cual a benchmark_loader (p. ej. muestra)
 :: RC 3 = el loader aborto por exceso de fallos de Morningstar (mas de una decima parte o 10
-:: seguidos); P1_P2_Complete.bat detiene el ciclo en ese caso.
+:: seguidos); P1P2_runCycle.bat detiene el ciclo en ese caso.
 :: ============================================================
 
 :: -h / --help: the usage (this header) and out, BEFORE anything runs (NORMAS_BATCH.md section 3). This launcher forwards its arguments to

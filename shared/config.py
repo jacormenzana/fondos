@@ -351,7 +351,7 @@ BENCH_ANOMALY_MIN_SHARE: float = 0.40
 # Network/HTTP failure guard (2026-09-26 rehearsal: an outage made 610 of 687 calls fail and the run
 # still exited 0). The loader stops early after this many CONSECUTIVE failed calls (an outage, not a
 # throttled call), and exits BENCH_EXIT_NETWORK when the failure rate of the calls it made exceeds
-# BENCH_MAX_ERROR_RATE. Errors are never cached, so a re-run simply retries them; P1_P2_Complete.bat
+# BENCH_MAX_ERROR_RATE. Errors are never cached, so a re-run simply retries them; P1P2_runCycle.bat
 # then stops at PASO 1 and is resumed with `--from 1` once the network is back.
 BENCH_CONSECUTIVE_ERROR_LIMIT: int = 10
 BENCH_MAX_ERROR_RATE: float = 0.10

@@ -5,7 +5,7 @@ if %RC_BOOT% NEQ 0 (endlocal & exit /b %RC_BOOT%)
 call "%COMMON%" :utf8_on
 
 :: ============================================================
-:: AUDIT_P1.bat -- Auditoria P1 (clasificacion + costes) en un solo comando
+:: P1_audit.bat -- Auditoria P1 (clasificacion + costes) en un solo comando
 ::
 :: Pasos:
 ::   1. Auditoria estadistica del dominio costs (fund_master / fund_cost_schedule):
@@ -15,14 +15,14 @@ call "%COMMON%" :utf8_on
 ::
 :: Es diagnostico: en --mode report (defecto) el paso 1 siempre devuelve 0, asi que un RC != 0
 :: solo significa que el propio script de auditoria se ha roto (o --mode check con hallazgos).
-:: Quien la llama decide si propaga ese RC; P1_P2_Complete.bat nunca aborta por ella.
+:: Quien la llama decide si propaga ese RC; P1P2_runCycle.bat nunca aborta por ella.
 ::
 :: Uso:
-::   AUDIT_P1.bat                                   informe, sin persistir
-::   AUDIT_P1.bat --persist --run-id pre_X_costs    persiste en control.audit_statistic/finding
-::   AUDIT_P1.bat --persist --run-id post_X_costs --compare-to pre_X_costs   cuantifica deriva
-::   AUDIT_P1.bat --no-benchmark                    solo el paso 1
-::   AUDIT_P1.bat --log C:\ruta\fichero.log         anade la salida a ese log (lo usa el orquestador)
+::   P1_audit.bat                                   informe, sin persistir
+::   P1_audit.bat --persist --run-id pre_X_costs    persiste en control.audit_statistic/finding
+::   P1_audit.bat --persist --run-id post_X_costs --compare-to pre_X_costs   cuantifica deriva
+::   P1_audit.bat --no-benchmark                    solo el paso 1
+::   P1_audit.bat --log C:\ruta\fichero.log         anade la salida a ese log (lo usa el orquestador)
 :: Cualquier otro argumento (--mode, --persist, --run-id, --compare-to, --isin ...) se reenvia
 :: tal cual al paso 1. Listas con comas entre comillas: --isin "A,B" (cmd parte por comas).
 :: ============================================================
@@ -60,7 +60,7 @@ goto :parse
 
 call "%COMMON%" :get_time STAMP yyyyMMdd_HHmmss
 if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
-if defined SHARED_LOG (set LOG=%SHARED_LOG%) else (set LOG=%LOG_DIR%\log_AUDIT_P1_%STAMP%.log)
+if defined SHARED_LOG (set LOG=%SHARED_LOG%) else (set LOG=%LOG_DIR%\log_P1_audit_%STAMP%.log)
 
 echo ============================================================ >> "%LOG%"
 echo  AUDIT P1 -- Inicio: %STAMP%                                  >> "%LOG%"

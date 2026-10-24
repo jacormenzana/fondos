@@ -5,25 +5,25 @@ if %RC_BOOT% NEQ 0 (endlocal & exit /b %RC_BOOT%)
 call "%COMMON%" :utf8_on
 
 :: ============================================================
-:: P1_P2_P3.bat -- Ciclo completo de datos y cartera: P1 -> P2 -> puerta de betas -> P3
+:: P1P2P3_runCycle.bat -- Ciclo completo de datos y cartera: P1 -> P2 -> puerta de betas -> P3
 ::                 (lanzador de PROPIETARIO; norma: doc/reglas/NORMAS_BATCH.md)
 ::
-:: Integra, sin repetir nada, lo que hacian P1_P2_Complete.bat y P2_P3_complete.bat:
-::   FASE A  P1_P2_Complete.bat   TODO el ciclo P1+P2 (preflight, baseline, snapshot de betas, harvest,
+:: Integra, sin repetir nada, lo que hacian P1P2_runCycle.bat y P2P3_runCycle.bat:
+::   FASE A  P1P2_runCycle.bat   TODO el ciclo P1+P2 (preflight, baseline, snapshot de betas, harvest,
 ::                                pasos 1-4, auditoria final, diagnosticos) con TODAS sus opciones.
-::   FASE B  puerta de betas      el beta_shift_audit de P2_P3_complete.bat: bloqueante. Compara las
+::   FASE B  puerta de betas      el beta_shift_audit de P2P3_runCycle.bat: bloqueante. Compara las
 ::                                betas actuales con el snapshot que el ciclo tomo al empezar y con la
 ::                                CALC_VERSION vigente; NULL/NaN, |beta| implausibles o un P2 sin terminar
-::                                detienen el proceso antes de P3. (P1_P2_Complete ya hizo P2: no se
-::                                recalcula, a diferencia de P2_P3_complete.bat, que lo repite.)
+::                                detienen el proceso antes de P3. (P1P2_runCycle ya hizo P2: no se
+::                                recalcula, a diferencia de P2P3_runCycle.bat, que lo repite.)
 ::   FASE C  P3                   P3_buildPortfolio.bat (con su propia puerta de frescura) y
 ::                                P3_generateReport.bat.
 ::   FASE D  confirmaciones       push opcional (cuenta los commits pendientes, siempre con
 ::                                confirmacion) y prueba opcional del loader de benchmarks (FND-0088).
 :: Se detiene en la primera fase que falla y devuelve su codigo tal cual.
 ::
-:: Uso:  P1_P2_P3.bat [opciones del ciclo P1+P2] [opciones de P3] [-- argumentos_para_run_pipeline]
-::   Ciclo P1+P2: todas las de `P1_P2_Complete.bat --help` (--from N, --force, --no-harvest, --shadow N, ...),
+:: Uso:  P1P2P3_runCycle.bat [opciones del ciclo P1+P2] [opciones de P3] [-- argumentos_para_run_pipeline]
+::   Ciclo P1+P2: todas las de `P1P2_runCycle.bat --help` (--from N, --force, --no-harvest, --shadow N, ...),
 ::                que se reenvian tal cual (la tabla vive en lib\p1p2_options.bat).
 ::   --only-p3          solo FASES B-D, sobre el ultimo ciclo P1+P2 si termino OK (reanudar tras un
 ::                      fallo de P3, o construir una cartera nueva sin repetir el ciclo)
@@ -35,13 +35,13 @@ call "%COMMON%" :utf8_on
 ::   --no-prompts       sin las confirmaciones de la FASE D (ejecucion programada)
 ::   --no-pause         sin pausa final
 ::   -h, --help         esta ayuda (incluye la del ciclo)
-:: Comparte el bloqueo de instancia unica con P1_P2_Complete.bat y P2_P3_complete.bat (RC 105).
+:: Comparte el bloqueo de instancia unica con P1P2_runCycle.bat y P2P3_runCycle.bat (RC 105).
 :: La suspension la gestiona este lanzador para TODO el proceso (los que invoca no la tocan).
 ::
 :: Codigos de salida: 0 OK | 100 argumentos invalidos | 101 interprete no encontrado |
 ::   102 --only-p3 rechazado (el ultimo ciclo no termino OK) | 103 sin baseline de betas |
 ::   105 otra instancia en ejecucion | 1-99 = RC propagado de la fase/herramienta que fallo
-::   (P1_P2_Complete propaga los suyos: 100-104 de su guarda llegan tal cual).
+::   (P1P2_runCycle propaga los suyos: 100-104 de su guarda llegan tal cual).
 :: ============================================================
 
 :: ------------------------------------------------------------
@@ -52,7 +52,7 @@ set "DATA_AUDIT_DIR=C:\data\fondos\audit"
 if defined P1P2_AUDIT_DIR set "DATA_AUDIT_DIR=%P1P2_AUDIT_DIR%"
 set "LOCK_FILE=%STATE_DIR%\fondos_cycle.lock"
 
-:: Opciones del ciclo P1+P2 (BOOL_OPTS / UINT_OPTS): una sola tabla, la de P1_P2_Complete.bat.
+:: Opciones del ciclo P1+P2 (BOOL_OPTS / UINT_OPTS): una sola tabla, la de P1P2_runCycle.bat.
 call "%LAUNCH%\lib\p1p2_options.bat"
 :: Opciones propias: sin valor (--x-y -> FLAG_x_y) y con valor de texto (--x-y V -> OPT_x_y).
 set "OWN_BOOL=--only-p3 --no-prompts --no-pause --allow-stale --p3-dry-run"
@@ -141,7 +141,7 @@ shift
 shift
 goto :parse
 
-:: Todo lo que sigue a "--" va a run_pipeline (ver P1_P2_Complete.bat). SIN comillas externas en el set.
+:: Todo lo que sigue a "--" va a run_pipeline (ver P1P2_runCycle.bat). SIN comillas externas en el set.
 :collect_extra
 if "%~1"=="" goto :parsed
 set CYCLE_ARGS=!CYCLE_ARGS! %1
@@ -165,8 +165,8 @@ if defined OPT_baseline if not exist "!OPT_baseline!" (
 )
 
 :: ------------------------------------------------------------
-:: INSTANCIA UNICA (ver P1_P2_Complete.bat): el manejador 9 vive mientras corre :cycle. FONDOS_CYCLE_LOCK
-:: lo heredan los lanzadores de nivel superior que este invoca (P1_P2_Complete.bat), que no vuelven a pedirlo.
+:: INSTANCIA UNICA (ver P1P2_runCycle.bat): el manejador 9 vive mientras corre :cycle. FONDOS_CYCLE_LOCK
+:: lo heredan los lanzadores de nivel superior que este invoca (P1P2_runCycle.bat), que no vuelven a pedirlo.
 :: ------------------------------------------------------------
 if not exist "%STATE_DIR%" mkdir "%STATE_DIR%"
 set "LOCK_HELD="
@@ -188,7 +188,7 @@ set "LOCK_HELD=1"
 set "FONDOS_CYCLE_LOCK=1"
 set "RC=0"
 cd /d "%ROOT%"
-call "%COMMON%" :log_open "%LOG_DIR%" P1_P2_P3 "P1+P2+P3"
+call "%COMMON%" :log_open "%LOG_DIR%" P1P2P3_runCycle "P1+P2+P3"
 echo  Opciones del ciclo: !CYCLE_ARGS! >> "%LOG%"
 echo  Opciones propias: >> "%LOG%"
 set FLAG_ >> "%LOG%" 2>nul
@@ -201,13 +201,13 @@ echo.
 call "%COMMON%" :standby_disable owner
 
 :: Telemetria de ciclo (opt-in: FONDOS_TELEMETRY=1; mejor esfuerzo, nunca cambia ningun RC). Este lanzador es el DUENO del ciclo: exporta
-:: FONDOS_CYCLE_ID y P1_P2_Complete.bat, anidado, solo anade sus pasos; aqui se anaden la puerta de betas y P3.
+:: FONDOS_CYCLE_ID y P1P2_runCycle.bat, anidado, solo anade sus pasos; aqui se anaden la puerta de betas y P3.
 set "TELEM_OWNER="
 set "TELEM_STEP="
 if "%FONDOS_TELEMETRY%"=="1" if not defined FONDOS_CYCLE_ID (
     set "FONDOS_CYCLE_ID=%STAMP%"
     set "TELEM_OWNER=1"
-    call "%COMMON%" :telemetry begin --launcher P1_P2_P3
+    call "%COMMON%" :telemetry begin --launcher P1P2P3_runCycle
 )
 
 :: ============================================================
@@ -215,10 +215,10 @@ if "%FONDOS_TELEMETRY%"=="1" if not defined FONDOS_CYCLE_ID (
 :: ============================================================
 if defined FLAG_only_p3 goto :phase_a_skip
 echo ===================================================
-echo A. Ciclo P1+P2 ^(P1_P2_Complete.bat^)
+echo A. Ciclo P1+P2 ^(P1P2_runCycle.bat^)
 echo ===================================================
-echo --- FASE A: P1_P2_Complete.bat !CYCLE_ARGS! >> "%LOG%"
-call "%LAUNCH%\P1_P2_Complete.bat" !CYCLE_ARGS!
+echo --- FASE A: P1P2_runCycle.bat !CYCLE_ARGS! >> "%LOG%"
+call "%LAUNCH%\P1P2_runCycle.bat" !CYCLE_ARGS!
 set "RC=!ERRORLEVEL!"
 echo --- FASE A fin: RC=!RC! >> "%LOG%"
 if !RC! NEQ 0 (
@@ -232,7 +232,7 @@ call "%COMMON%" :state_query last-result LAST_RES
 echo --- FASE A omitida ^(--only-p3^); resultado del ultimo ciclo: !LAST_RES! >> "%LOG%"
 if /i not "!LAST_RES!"=="OK" (
     echo [ERROR] --only-p3 exige que el ultimo ciclo P1+P2 haya terminado OK ^(resultado: !LAST_RES!^).
-    echo         Ejecutar el ciclo completo o reanudarlo con P1_P2_Complete.bat --from N.
+    echo         Ejecutar el ciclo completo o reanudarlo con P1P2_runCycle.bat --from N.
     set "RC=%RC_REFUSED%"
     goto :finish
 )
@@ -400,13 +400,13 @@ endlocal & exit /b %RC_USAGE%
 :help
 call :usage_text
 echo.
-echo Opciones del ciclo P1+P2 ^(se reenvian a P1_P2_Complete.bat^):
-call "%LAUNCH%\P1_P2_Complete.bat" --help
+echo Opciones del ciclo P1+P2 ^(se reenvian a P1P2_runCycle.bat^):
+call "%LAUNCH%\P1P2_runCycle.bat" --help
 call "%COMMON%" :utf8_off
 endlocal & exit /b 0
 
 :usage_text
-echo Uso: P1_P2_P3.bat [opciones del ciclo P1+P2] [opciones de P3] [-- argumentos_para_run_pipeline]
+echo Uso: P1P2P3_runCycle.bat [opciones del ciclo P1+P2] [opciones de P3] [-- argumentos_para_run_pipeline]
 echo   --only-p3          solo puerta de betas + P3, sobre el ultimo ciclo si termino OK
 echo   --baseline CSV     puerta de betas contra este snapshot (por defecto, el del ciclo)
 echo   --scenario ID      scenario_id de la cartera (por defecto autogenerado)

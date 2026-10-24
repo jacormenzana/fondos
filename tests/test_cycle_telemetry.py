@@ -231,7 +231,7 @@ def test_cli_without_a_cycle_id_does_nothing_and_returns_zero(cli):
 
 def test_cli_carries_the_step_start_between_two_processes(monkeypatch, cli):
     monkeypatch.setenv(ct.ENV_CYCLE_ID, "20261007_120000")
-    assert ct.main(["begin", "--launcher", "P1_P2_P3", "--option", "force=1", "--resume-from", "3"]) == 0
+    assert ct.main(["begin", "--launcher", "P1P2P3_runCycle", "--option", "force=1", "--resume-from", "3"]) == 0
     assert ct.main(["step-begin", "P2_CALC", "--log", "x.log"]) == 0
     assert ct.main(["step-end", "P2_CALC", "0", "--warn", "4", "--error", "0"]) == 0
     assert ct.main(["end", "--status", "OK", "--rc", "0", "--regime", "Expansion"]) == 0

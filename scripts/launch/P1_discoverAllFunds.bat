@@ -10,14 +10,14 @@ call "%COMMON%" :utf8_on
 :: Log generado en: C:\desarrollo\fondos\proyecto1\log\
 :: Excel generado en: C:\desarrollo\fondos\out\reports\p1\
 ::
-:: Pasos: mark_stale -> nature-first -> fund_family_builder -> family-nature-refresh -> export_p1 -> AUDIT_P1
+:: Pasos: mark_stale -> nature-first -> fund_family_builder -> family-nature-refresh -> export_p1 -> P1_audit
 ::
 :: Uso:
 ::   P1_discoverAllFunds.bat                  ciclo completo
-::   P1_discoverAllFunds.bat --no-audit       sin auditoria P1 (la usa P1_P2_Complete.bat, que
-::                                            ejecuta AUDIT_P1 por su cuenta con baseline/deriva)
+::   P1_discoverAllFunds.bat --no-audit       sin auditoria P1 (la usa P1P2_runCycle.bat, que
+::                                            ejecuta P1_audit por su cuenta con baseline/deriva)
 ::   P1_discoverAllFunds.bat --no-export      sin export Excel
-:: La auditoria P1 (AUDIT_P1.bat: estadistica de costes + consistencia de benchmarks) es
+:: La auditoria P1 (P1_audit.bat: estadistica de costes + consistencia de benchmarks) es
 :: diagnostica: va a su propio log (log_P1_audit_<STAMP>.log), no al log del pipeline, para no
 :: mezclar sus [WARN] con el triage del pipeline.
 :: ============================================================
@@ -148,7 +148,7 @@ if "!RUN_AUDIT!"=="1" (
     echo [%time%] AUDIT P1
     echo. >> "%LOG%"
     echo --- AUDIT P1 (log: %AUDIT_LOG%^) --------------------------- >> "%LOG%"
-    call "%LAUNCH%\AUDIT_P1.bat" --mode report --log "%AUDIT_LOG%"
+    call "%LAUNCH%\P1_audit.bat" --mode report --log "%AUDIT_LOG%"
     set RC4=!ERRORLEVEL!
 ) else (
     echo --- AUDIT P1: omitido (--no-audit^) ------------------------ >> "%LOG%"

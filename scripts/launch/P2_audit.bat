@@ -5,7 +5,7 @@ if %RC_BOOT% NEQ 0 (endlocal & exit /b %RC_BOOT%)
 call "%COMMON%" :utf8_on
 
 :: ============================================================
-:: AUDIT_P2.bat -- Auditoria P2 (metricas cuantitativas) en un solo comando
+:: P2_audit.bat -- Auditoria P2 (metricas cuantitativas) en un solo comando
 ::
 :: Auditoria estadistica del dominio p2 (fund_metrics / fund_metric_timeseries):
 ::   scripts\audit\run_statistical_audit.py --domain p2
@@ -13,13 +13,13 @@ call "%COMMON%" :utf8_on
 :: Es diagnostico: en --mode report (defecto) devuelve 0 salvo RC 2 = auditoria INCOMPLETA (un chequeo obligatorio
 :: no pudo ejecutarse: no es evidencia de promocion, AUDITORIA_ESTADISTICA.md 6.4); --mode check devuelve 1 con
 :: hallazgos bloqueantes. Cualquier otro RC != 0 significa que el propio script de auditoria se ha roto.
-:: Quien la llama decide si propaga ese RC; P1_P2_Complete.bat nunca aborta por ella.
+:: Quien la llama decide si propaga ese RC; P1P2_runCycle.bat nunca aborta por ella.
 ::
 :: Uso:
-::   AUDIT_P2.bat                                   informe, sin persistir
-::   AUDIT_P2.bat --persist --run-id pre_X_p2       persiste en control.audit_statistic/finding
-::   AUDIT_P2.bat --persist --run-id post_X_p2 --compare-to pre_X_p2   cuantifica deriva
-::   AUDIT_P2.bat --log C:\ruta\fichero.log         anade la salida a ese log (lo usa el orquestador)
+::   P2_audit.bat                                   informe, sin persistir
+::   P2_audit.bat --persist --run-id pre_X_p2       persiste en control.audit_statistic/finding
+::   P2_audit.bat --persist --run-id post_X_p2 --compare-to pre_X_p2   cuantifica deriva
+::   P2_audit.bat --log C:\ruta\fichero.log         anade la salida a ese log (lo usa el orquestador)
 :: Cualquier otro argumento (--mode, --persist, --run-id, --compare-to, --isin ...) se reenvia
 :: tal cual a run_statistical_audit.py. Listas con comas entre comillas: --isin "A,B" (cmd parte por comas).
 :: ============================================================
@@ -51,7 +51,7 @@ goto :parse
 
 call "%COMMON%" :get_time STAMP yyyyMMdd_HHmmss
 if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
-if defined SHARED_LOG (set LOG=%SHARED_LOG%) else (set LOG=%LOG_DIR%\log_AUDIT_P2_%STAMP%.log)
+if defined SHARED_LOG (set LOG=%SHARED_LOG%) else (set LOG=%LOG_DIR%\log_P2_audit_%STAMP%.log)
 
 echo ============================================================ >> "%LOG%"
 echo  AUDIT P2 -- Inicio: %STAMP%                                  >> "%LOG%"

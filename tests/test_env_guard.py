@@ -92,12 +92,12 @@ def test_batch_check_ok_writes_the_marker(tmp_path, monkeypatch):
 
 def test_batch_check_blocked_returns_106_records_and_never_caches(tmp_path, blocked, capsys):
     g.write_marker(tmp_path, now=1.0)                                  # a stale marker from an earlier good run
-    assert g.batch_check(tmp_path, "P1_P2_Complete.bat", now=1.0 + g.MARKER_TTL_S + 5) == g.RC_ENV_BLOCKED
+    assert g.batch_check(tmp_path, "P1P2_runCycle.bat", now=1.0 + g.MARKER_TTL_S + 5) == g.RC_ENV_BLOCKED
     assert not (tmp_path / g.MARKER_NAME).exists()                     # a blocked environment is never cached
     err = capsys.readouterr().err
     assert "RC 106" in err and "Do not work around it" in err
     line = (tmp_path / g.BLOCKED_LOG_NAME).read_text()
-    assert "launcher=P1_P2_Complete.bat" in line and "ModuleNotFoundError" in line
+    assert "launcher=P1P2_runCycle.bat" in line and "ModuleNotFoundError" in line
 
 
 def test_batch_check_fresh_marker_skips_the_import(tmp_path, blocked):

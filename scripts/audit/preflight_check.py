@@ -40,7 +40,7 @@ if str(ROOT) not in sys.path:
 KNOWN_UNOWNED_PREFIXES = ("db/oper/",)
 # command-line fragments of the processes whose presence means "someone is running a long job"
 PROCESS_PATTERNS = (
-    "run_pipeline", "P2_calculate", "P2_discover", "P1_P2", "P2_P3", "P3_build", "P3_generate", "p3_build_portfolio",
+    "run_pipeline", "P2_calculate", "P2_discover", "P1_P2", "P2_P3", "runCycle", "P3_build", "P3_generate", "p3_build_portfolio",
     "p3_pit_backtest", "run_statistical_audit", "nav_discovery", "macro_discovery", "run_block", "run_pg_tests", "pytest",
     "migrate_",
 )

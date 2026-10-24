@@ -55,7 +55,7 @@ on one `CALC_VERSION` again (its freshness gate).
   (about 306 before; expect several times more).
 - No infinite or implausible betas: none above `MACRO_BETA_PLAUSIBLE_MAX` (the FND-0208 guard logs them).
 - `alpha_persistence`: distribution moved up; coverage unchanged or higher.
-- Statistical audit drift report (`AUDIT_P2.bat`) and the FND-0208 counters in `control.p2_pipeline_log`.
+- Statistical audit drift report (`P2_audit.bat`) and the FND-0208 counters in `control.p2_pipeline_log`.
 
 ## Roll back
 Set the flags back to `False` and bump `CALC_VERSION` again (another full run), or restore the pre-run base backup with the

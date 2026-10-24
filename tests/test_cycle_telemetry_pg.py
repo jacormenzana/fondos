@@ -33,7 +33,7 @@ def _iso(minutes=0):
     return (T0 + timedelta(minutes=minutes)).isoformat()
 
 
-def _cycle(conn, cid, launcher="P1_P2_P3"):
+def _cycle(conn, cid, launcher="P1P2P3_runCycle"):
     assert ct.begin_cycle(launcher, {"force": True}, cycle_id=cid, conn=conn, ts=_iso()) is True
 
 
@@ -81,8 +81,8 @@ def test_a_lost_begin_event_leaves_a_stub_cycle_that_a_late_begin_completes(pg_c
     cid = "20261007_090000"
     ct._apply(pg_conn, {"op": "metric", "cycle_id": cid, "ts": _iso(), "step_code": "P2_CALC", "metric_code": "p2_errors", "value_num": 3.0})
     assert pg_conn.execute("SELECT launcher FROM control.cycle_run WHERE cycle_id = %s", (cid,)).fetchone()[0] == "UNKNOWN"
-    ct._apply(pg_conn, {"op": "cycle_begin", "cycle_id": cid, "ts": _iso(), "launcher": "P1_P2_Complete", "options": {}})
-    assert pg_conn.execute("SELECT launcher FROM control.cycle_run WHERE cycle_id = %s", (cid,)).fetchone()[0] == "P1_P2_Complete"
+    ct._apply(pg_conn, {"op": "cycle_begin", "cycle_id": cid, "ts": _iso(), "launcher": "P1P2_runCycle", "options": {}})
+    assert pg_conn.execute("SELECT launcher FROM control.cycle_run WHERE cycle_id = %s", (cid,)).fetchone()[0] == "P1P2_runCycle"
 
 
 def test_a_late_step_begin_replay_does_not_regress_a_finished_step(pg_conn):

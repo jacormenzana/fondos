@@ -932,7 +932,7 @@ def main() -> int:
     if verdict:
         print(f"\n  [ERROR] [BENCH-NETWORK] {verdict}")
         print("  Los errores no se cachean: al volver la red basta relanzar el paso "
-              "(P1_P2_Complete.bat --from 1).")
+              "(P1P2_runCycle.bat --from 1).")
         return BENCH_EXIT_NETWORK
     return 0
 

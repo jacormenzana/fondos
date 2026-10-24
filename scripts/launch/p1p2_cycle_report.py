@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-p1p2_cycle_report.py -- post-cycle diagnostic report of P1_P2_Complete.bat (read-only).
+p1p2_cycle_report.py -- post-cycle diagnostic report of P1P2_runCycle.bat (read-only).
 
 Why: the operational-reliability checks of a P1->P2 cycle (the SQL in the pipelineP1P2Audit skill) were
 only ever run by hand, after the fact, so a cycle could end "OK" while leaving funds silently stale or a

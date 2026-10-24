@@ -21,7 +21,7 @@ Not retired by this runbook: hard filters and construction constraints (20 % cap
 
 1. **PRODUCTION does not change** until the owner promotes a new DRAFT. The existing PRODUCTION scenario keeps being reported by `P3_generateReport.bat`.
 2. Commit the configuration change in the worktree (rows above), full hermetic gate green.
-3. After the owner publishes it, run the normal cycle or `P1_P2_P3.bat --only-p3`: it builds a **DRAFT** under the simplified configuration.
+3. After the owner publishes it, run the normal cycle or `P1P2P3_runCycle.bat --only-p3`: it builds a **DRAFT** under the simplified configuration.
 4. Compare the DRAFT with PRODUCTION: turnover (rotation cost), funds kept/dropped, currency exposure (limit 30 %), alarm watch, data-coverage gate — all gates unchanged. The rotation plan in the report (`4_Rotacion`) lists the trades.
 5. The owner promotes with `p3_promote_scenario.py <id>`. The previous PRODUCTION becomes ARCHIVED and stays restorable (a DRAFT can be rebuilt from the previous commit).
 6. Monitor two consecutive cycles (uniform `CALC_VERSION`) before deleting dead code.

@@ -15,7 +15,7 @@ for their respective domains; this file must not duplicate their content — it 
 | `PROVENANCE_DATOS_MACRO.md` | *where macro data comes from* | Macro-series sourcing, data-source provenance, API keys, refresh cadence |
 | `P4_BI_CHARTER.md` | *how BI sync works* | P4 Postgres/Superset charter (ETL, ports, DDL, datasets) |
 | `AUDITORIA_ESTADISTICA.md` | *how statistical distribution audits work* | 7-block model evaluation, indicator catalog, generic function/config catalog for the cost-attribute and P2-metrics statistical audits |
-| `NORMAS_BATCH.md` | *how to write a `.bat` launcher* | The single criterion for every `.bat`: skeleton, no hard-coded paths/versions, own exit codes 100-199, single instance, standby/codepage restore, `cmd.exe` pitfalls; reference implementation `scripts/launch/lib/common.bat` + `P1_P2_Complete.bat`, template `_template.bat` |
+| `NORMAS_BATCH.md` | *how to write a `.bat` launcher* | The single criterion for every `.bat`: skeleton, no hard-coded paths/versions, own exit codes 100-199, single instance, standby/codepage restore, `cmd.exe` pitfalls; reference implementation `scripts/launch/lib/common.bat` + `P1P2_runCycle.bat`, template `_template.bat` |
 | `NORMAS_BACKLOG.md` | *how action points are recorded and related* | `gestion.backlog` domains and state machine, the relationship vocabulary (DEPENDS_ON / OVERLAPS / ...), the create/start/close procedure, the Scope Absorption Protocol, link discovery and review (`scripts/audit/backlog_links.py`), the automatic-incident overlap policy and its calibration gate |
 | `GOBIERNO_CONTROLES.md` | *which controls gate a deployment or a promotion* | The two-pillar control catalogue (`T-*` technical, `D-*` data, `G-*` orchestration: owner, criterion, consequence), the PASS / PASS_WITH_WARNINGS / FAIL / INCOMPLETE states, the CODE_DEPLOY vs PORTFOLIO_PROMOTION decision matrix and the precision policy; machine mirror `shared/governance/controls.py` |
 
@@ -187,7 +187,7 @@ HTTP policy: 3 retries (1s/2s/4s backoff), timeout 15s. 429 does NOT retry.
 
 **Launcher:** `scripts\launch\P1_harvestFunds.bat` runs this flow (steps 1–3 + a shrink gate
 `harvest_gate.py` between the report and any download/archive; `--sync`, `--retire-orphans`, `--full`
-opt in to the mutating phases — default is read-only on the PDFs). Audits: `AUDIT_P1.bat`, `AUDIT_P2.bat`.
+opt in to the mutating phases — default is read-only on the PDFs). Audits: `P1_audit.bat`, `P2_audit.bat`.
 
 **Storage:**
 Active: `C:\data\fondos\kiid\{ISIN}.pdf` · Retired: `C:\data\fondos\kiid_retired\YYYYMMDD\{ISIN}.pdf`
@@ -612,8 +612,8 @@ and why); the gate requires weights + declared cash = 1 with cash ≤ `MAX_PORTF
 writes one `P3_SCENARIO_PROMOTION_BLOCKED` row to `ingestion_log`. The report and the rotation plan read PRODUCTION; with
 none (or before the owner applies `scripts/ops/migrate_portfolio_scenario_status.py`) the report fails closed (RC 3) unless `--scenario ID` or `--draft`
 (the newest DRAFT) is given, in which case it is marked NO PRODUCCION and written under its own file name in the `borradores\` subfolder of the
-output directory, never next to the official report. The cycle launchers (`P2_P3_complete.bat`,
-`P1_P2_P3.bat`) report the DRAFT they just built with `--draft`; the official report is the owner's `P3_generateReport.bat` after promotion. Cover sheet
+output directory, never next to the official report. The cycle launchers (`P2P3_runCycle.bat`,
+`P1P2P3_runCycle.bat`) report the DRAFT they just built with `--draft`; the official report is the owner's `P3_generateReport.bat` after promotion. Cover sheet
 shows the scenario and its currency exposure. The limit is also a **construction constraint** (`FX_EXPOSURE_CONSTRAINT_ENABLED`,
 `portfolio_engine.select_within_exposure`): each sub-portfolio drops its lowest-scored exposed fund and re-selects until its exposed weight is within
 the budget, so a DRAFT is promotable by construction (a residue the non-exposed pool cannot absorb is held as cash). It is the safety net under the
@@ -668,21 +668,21 @@ All commands: activate Conda env `des` first.
 **Full P1 + P2 cycle (recommended for monthly runs):**
 ```batch
 cd C:\desarrollo\fondos\scripts\launch
-P1_P2_Complete.bat
+P1P2_runCycle.bat
 ```
 Runs sequentially: P1_refreshBenchmarks → P1_discoverAllFunds → P2_discoverLoadMetrics → P2_calculateIndicators.
-Aborts on the first step that fails. Log: `proyecto1/log/log_P1_P2_complete_YYYYMMDD_HHMMSS.log`.
+Aborts on the first step that fails. Log: `proyecto1/log/log_P1P2_runCycle_YYYYMMDD_HHMMSS.log`.
 
-**Resume after a failure:** `P1_P2_Complete.bat --from N` re-runs step N in full and the steps after it.
+**Resume after a failure:** `P1P2_runCycle.bat --from N` re-runs step N in full and the steps after it.
 Safe because every write in the four steps is idempotent (enforced by `tests/test_sql_explain_sweep_pg.py`);
-allowed only when the last run failed at step N or later (state in `proyecto1/log/P1_P2_Complete.state`,
+allowed only when the last run failed at step N or later (state in `proyecto1/log/P1P2_runCycle.state`,
 logic in `scripts/launch/p1p2_state.py`); `--from-any` overrides the guard and is recorded in `ingestion_log`.
 The launcher also runs the statistical audits (`p2`, `costs`) with `--persist` before PASO 1 and again with
 `--compare-to` after a successful run, writing the drift report to `proyecto1/log/log_P1_P2_audit_<STAMP>.log`. (There is
 no repair step after PASO 2 any more: `Ongoing_Charge_Recurrent` has a single writer, `cost_scale.resolve_ongoing_charge`, FND-0034.)
 The benchmark loader exits 3 (stopping PASO 1) when more than a tenth of its Morningstar calls fail or 10 fail in a row.
 
-**Cycle phases around the four steps** (steps keep their numbers; `P1_P2_Complete.bat --help` lists every option):
+**Cycle phases around the four steps** (steps keep their numbers; `P1P2_runCycle.bat --help` lists every option):
 a preflight (`p1p2_state.py preflight`: DB reachable, owner DSN, `FRED_API_KEY`, disk; a dead DB aborts with RC 104
 without touching the resume state), then the baseline audit and a macro-beta snapshot, then the harvest
 (`P1_harvestFunds.bat`, read-only on PDFs unless `--harvest-sync` / `--harvest-retire`; a failed harvest counts as
@@ -695,7 +695,7 @@ step 1). After a successful cycle, non-blocking diagnostics: final audit with dr
 Every launcher follows `doc/reglas/NORMAS_BATCH.md` (shared `scripts/launch/lib/common.bat`): paths derived from the file's
 own location, no hard-coded versions/dates, the launcher's own exit codes in 100-199 (100 usage, 101 interpreter, 102 resume
 refused, 103 state, 104 preflight, 105 another instance running, 106 PostgreSQL driver blocked by Application Control — checked by `:init` and `shared/env_guard.py`; tool codes 1-99 pass through untouched), single-instance lock
-shared by `P1_P2_Complete.bat`, `P2_P3_complete.bat` and `P1_P2_P3.bat` (the integrated P1→P2→beta gate→P3 run: `--only-p3`
+shared by `P1P2_runCycle.bat`, `P2P3_runCycle.bat` and `P1P2P3_runCycle.bat` (the integrated P1→P2→beta gate→P3 run: `--only-p3`
 resumes just the gate + P3 on the last OK cycle), and the real standby timeout saved and restored.
 Postgres SQL validity is checked by an `EXPLAIN` sweep over every statement production code executes — see
 `doc/reglas/NORMAS_IMPLEMENTACION.md` §7 before adding SQL or an allowlist entry.
@@ -795,19 +795,18 @@ UPDATE fund_kiid_metadata SET KIID_Status='FORCE_REFRESH' WHERE ISIN='<isin>' AN
 <!-- AUTO:BEGIN launchers -->
 | Script | Domain |
 |--------|--------|
-| `AUDIT_P1.bat` | — |
-| `AUDIT_P2.bat` | — |
-| `AUDIT_statistical.bat` | — |
 | `FND-0246.bat` | — |
 | `FND-0246_V2.bat` | — |
-| `P1_P2_Complete.bat` | P1 |
-| `P1_P2_P3.bat` | P1 |
+| `P1P2P3_runCycle.bat` | P1+P2+P3 |
+| `P1P2_auditStatistical.bat` | P1+P2 |
+| `P1P2_runCycle.bat` | P1+P2 |
+| `P1_audit.bat` | P1 |
 | `P1_diagCost.bat` | P1 |
 | `P1_discoverAllFunds.bat` | P1 |
-| `P1_discoverAllFundsPlusCostDiag.bat` | P1 |
 | `P1_harvestFunds.bat` | P1 |
 | `P1_refreshBenchmarks.bat` | P1 |
-| `P2_P3_complete.bat` | P2 |
+| `P2P3_runCycle.bat` | P2+P3 |
+| `P2_audit.bat` | P2 |
 | `P2_calculateIndicators.bat` | P2 |
 | `P2_discoverLoadMetrics.bat` | P2 |
 | `P3_buildPortfolio.bat` | P3 |

@@ -5,7 +5,7 @@ if %RC_BOOT% NEQ 0 (endlocal & exit /b %RC_BOOT%)
 call "%COMMON%" :utf8_on
 
 :: ============================================================
-:: P2_calculateIndicators.bat  (v30 -- AUDIT_P2 launcher, flags, orchestrator-aware standby)
+:: P2_calculateIndicators.bat  (v30 -- P2_audit launcher, flags, orchestrator-aware standby)
 :: Ejecucion del pipeline de calculo de indicadores cuantitativos
 :: (P2: risk_metrics, macro_sensitivity, regime_returns, rolling, ...)
 ::
@@ -13,17 +13,17 @@ call "%COMMON%" :utf8_on
 ::   P2_calculateIndicators.bat                      pipeline + export + auditoria P2
 ::   P2_calculateIndicators.bat --force              bypass hash-cache Y gate trimestral OLS
 ::                                                   (tras bump de CALC_VERSION o rediseno de ventana macro)
-::   P2_calculateIndicators.bat --no-audit           sin auditoria P2 (la usa P1_P2_Complete.bat, que
-::                                                   ejecuta AUDIT_P2 con baseline/deriva)
+::   P2_calculateIndicators.bat --no-audit           sin auditoria P2 (la usa P1P2_runCycle.bat, que
+::                                                   ejecuta P2_audit con baseline/deriva)
 ::   P2_calculateIndicators.bat --no-export          sin export_metrics
 ::   P2_calculateIndicators.bat --isin "A,B" --no-export ...   cualquier otro argumento se reenvia a run_pipeline
 ::                                                   (listas con comas ENTRE COMILLAS: cmd parte los argumentos por comas)
 ::
 :: v30 changes:
-::   - La auditoria P2 pasa por AUDIT_P2.bat (antes AUDIT_statistical.bat p2): mismo motor,
+::   - La auditoria P2 pasa por P2_audit.bat (antes P1P2_auditStatistical.bat p2): mismo motor,
 ::     log propio y misma interfaz --persist/--run-id/--compare-to que usa el orquestador
 ::   - --no-audit / --no-export / argumentos libres hacia run_pipeline (p. ej. --isin, --max-new-per-run)
-::   - Bajo P1_P2_Complete.bat (FONDOS_ORCH=1) NO se toca powercfg: antes este script restauraba el
+::   - Bajo P1P2_runCycle.bat (FONDOS_ORCH=1) NO se toca powercfg: antes este script restauraba el
 ::     standby a 30 min al terminar el PASO 4, pero tambien lo hacia en solitario mientras el
 ::     orquestador aun tenia que ejecutar las auditorias finales
 ::   - v29: AUDIT --mode report tras export OK (diagnostico, no gate hasta promover a --mode check)
@@ -127,7 +127,7 @@ if "!RUN_EXPORT!"=="0" (
 :: -- AUDIT (solo si pipeline y export OK) -- report mode, no bloquea --------------
 set RC_AUDIT=0
 echo. >> "%LOG%"
-echo --- AUDIT: AUDIT_P2 --mode report ------------------------- >> "%LOG%"
+echo --- AUDIT: P2_audit --mode report ------------------------- >> "%LOG%"
 if "!RUN_AUDIT!"=="0" (
     echo [%time%] Auditoria omitida (--no-audit^)
     echo [OMITIDO] Auditoria omitida por --no-audit >> "%LOG%"
@@ -140,7 +140,7 @@ if "!RUN_AUDIT!"=="0" (
 ) else (
     echo [%time%] Ejecutando auditoria P2 (modo report^)
     echo   log de auditoria: %AUDIT_LOG% >> "%LOG%"
-    call "%LAUNCH%\AUDIT_P2.bat" --mode report --log "%AUDIT_LOG%"
+    call "%LAUNCH%\P2_audit.bat" --mode report --log "%AUDIT_LOG%"
     set RC_AUDIT=!ERRORLEVEL!
 )
 

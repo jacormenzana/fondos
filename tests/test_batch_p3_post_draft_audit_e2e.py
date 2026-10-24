@@ -137,7 +137,7 @@ def test_help_still_runs_nothing_and_documents_the_new_option(tree, flag):
 # ---------------------------------------------------------------- every cycle path that builds a DRAFT
 
 def test_p2_p3_complete_persists_the_audit_after_the_build_and_before_the_report(tree):
-    r = tree.run("P2_P3_complete", "--no-pause")
+    r = tree.run("P2P3_runCycle", "--no-pause")
     assert r.returncode == 0, r.stdout + r.stderr
     ln = tree.lines()
     b = _idx(ln, "p3_build_portfolio")
@@ -150,14 +150,14 @@ def test_p2_p3_complete_persists_the_audit_after_the_build_and_before_the_report
 
 
 def test_p2_p3_complete_survives_a_failing_post_draft_audit(tree):
-    r = tree.run("P2_P3_complete", "--no-pause", STUB_FAIL_POST_BUILD_AUDIT="2")
+    r = tree.run("P2P3_runCycle", "--no-pause", STUB_FAIL_POST_BUILD_AUDIT="2")
     assert r.returncode == 0, r.stdout + r.stderr
     assert "generate_report" in tree.tools()                                       # the cycle went on to the report
     assert len(_markers(r)) == 1 and "FAILED rc=2" in _markers(r)[0]
 
 
 def test_p1_p2_p3_persists_the_audit_after_the_build_and_before_the_report(tree):
-    r = tree.run("P1_P2_P3", *e2e.P123)
+    r = tree.run("P1P2P3_runCycle", *e2e.P123)
     assert r.returncode == 0, r.stdout + r.stderr
     ln = tree.lines()
     b = _idx(ln, "p3_build_portfolio")
@@ -168,26 +168,26 @@ def test_p1_p2_p3_persists_the_audit_after_the_build_and_before_the_report(tree)
 
 
 def test_p1_p2_p3_with_p3_dry_run_persists_nothing_after_the_build(tree):
-    r = tree.run("P1_P2_P3", *e2e.P123, "--p3-dry-run")
+    r = tree.run("P1P2P3_runCycle", *e2e.P123, "--p3-dry-run")
     assert r.returncode == 0, r.stdout + r.stderr
     assert _post_build_audits(tree.lines()) == []
     assert _markers(r) and _markers(r)[0].startswith(f"{MARK} SKIPPED --dry-run")
 
 
 def test_p1_p2_p3_survives_a_failing_post_draft_audit(tree):
-    r = tree.run("P1_P2_P3", *e2e.P123, STUB_FAIL_POST_BUILD_AUDIT="7")
+    r = tree.run("P1P2P3_runCycle", *e2e.P123, STUB_FAIL_POST_BUILD_AUDIT="7")
     assert r.returncode == 0, r.stdout + r.stderr
     assert "generate_report" in tree.tools()
     assert len(_markers(r)) == 1 and "FAILED rc=7" in _markers(r)[0]
 
 
 def test_p1_p2_p3_does_not_reach_the_audit_when_the_build_fails(tree):
-    r = tree.run("P1_P2_P3", *e2e.P123, STUB_RC_P3_BUILD_PORTFOLIO="2")
+    r = tree.run("P1P2P3_runCycle", *e2e.P123, STUB_RC_P3_BUILD_PORTFOLIO="2")
     assert r.returncode == 2, r.stdout + r.stderr
     assert _post_build_audits(tree.lines()) == []
 
 
-# NOT covered here (stated, not claimed): the real AUDIT_P2.bat against a real database and the real `control.audit_run` write (the
-# persistence itself is tested in the statistical-audit suites); the opt-out THROUGH the cycle launchers (P2_P3_complete and P1_P2_P3
+# NOT covered here (stated, not claimed): the real P2_audit.bat against a real database and the real `control.audit_run` write (the
+# persistence itself is tested in the statistical-audit suites); the opt-out THROUGH the cycle launchers (P2P3_runCycle and P1P2P3_runCycle
 # have no option that forwards --no-audit: it is available on P3_buildPortfolio.bat only); the costs-domain audit (the cost gate has
 # its own evidence); the promotion gate, which this step does not change.

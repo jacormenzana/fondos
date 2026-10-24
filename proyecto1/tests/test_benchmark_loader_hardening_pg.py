@@ -3,7 +3,7 @@
 """
 Regression + hardening tests for src.loaders.benchmark_loader (2026-09-26 post-cutover incident).
 
-Incident: P1_P2_Complete.bat aborted in PASO 1 because run_gap_analysis() selected a non-aggregated
+Incident: P1P2_runCycle.bat aborted in PASO 1 because run_gap_analysis() selected a non-aggregated
 column with GROUP BY (SQLite tolerates it, Postgres raises GroupingError). The loader was then
 hardened: payload-shape validation (pydantic) separate from junk-string detection, a Postgres-only
 negative cache with backoff, an anomaly circuit-breaker, an endpoint probe, and telemetry rows in

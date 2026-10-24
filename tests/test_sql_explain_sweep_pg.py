@@ -2,7 +2,7 @@
 tests/test_sql_explain_sweep_pg.py — every SQL statement production code executes is checked by
 Postgres itself, plus three static guards over the same statement inventory.
 
-Background (2026-09-26): the first post-cutover P1_P2_Complete.bat aborted because
+Background (2026-09-26): the first post-cutover P1P2_runCycle.bat aborted because
 `run_gap_analysis()` used a non-aggregated column with GROUP BY, which SQLite tolerates and Postgres
 rejects (GroupingError). The statement sat in a diagnostic tail that only runs after a real load,
 so no rehearsal ever executed it. No amount of regex can decide whether SQL is valid; the Postgres
@@ -19,7 +19,7 @@ What is enforced here (statements come from tests/_sql_sites.py, an AST extracti
   3. SQLite-only syntax (PRAGMA, INSERT OR REPLACE, datetime('now'), julianday ...) must live in a
      function that forks on the dialect.
   4. Every INSERT on the Postgres path must be idempotent (ON CONFLICT ...) unless its table is an
-     append-only log. P1_P2_Complete.bat's `--from N` re-runs a step in full, which is only safe if
+     append-only log. P1P2_runCycle.bat's `--from N` re-runs a step in full, which is only safe if
      re-running a write cannot duplicate rows.
 
 Allowlist protocol (applies to every dict below): each entry is `{key: reason}` and the reason must

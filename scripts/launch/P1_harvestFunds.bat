@@ -33,7 +33,7 @@ call "%COMMON%" :utf8_on
 ::   P1_harvestFunds.bat --skip-harvest --sync    reutiliza el ultimo harvest (reanudar tras fallo)
 ::   P1_harvestFunds.bat --max-drop-pct 5         puerta mas estricta
 ::
-:: Tras un --sync con descargas, ejecutar P1_discoverAllFunds.bat (o P1_P2_Complete.bat) para que el
+:: Tras un --sync con descargas, ejecutar P1_discoverAllFunds.bat (o P1P2_runCycle.bat) para que el
 :: pase nature-first clasifique los fondos nuevos.
 :: Log: proyecto1\log\log_harvest_<STAMP>.log
 :: Codigos de salida: 4 = argumentos invalidos, 5 = puerta fallida, 6 = puerta no evaluable;

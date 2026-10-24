@@ -5,11 +5,11 @@ if %RC_BOOT% NEQ 0 (endlocal & exit /b %RC_BOOT%)
 call "%COMMON%" :utf8_on
 
 :: ============================================================
-:: P1_P2_Complete.bat -- Ciclo completo P1 + P2 (lanzador de REFERENCIA: ver NORMAS_BATCH.md)
+:: P1P2_runCycle.bat -- Ciclo completo P1 + P2 (lanzador de REFERENCIA: ver NORMAS_BATCH.md)
 ::
 :: FASE PREVIA (solo ciclo nuevo, salvo el preflight):
 ::   P.  preflight                  BD alcanzable, DSN owner, FRED_API_KEY, espacio en disco
-::   0.  auditoria baseline         AUDIT_P1/AUDIT_P2 --persist + punto de restauracion
+::   0.  auditoria baseline         P1_audit/P2_audit --persist + punto de restauracion
 ::   0b. snapshot de betas macro    beta_shift_audit.py --snapshot (para comparar tras P2)
 ::   0c. harvest                    P1_harvestFunds.bat: catalogo DB, informe codSus, puerta, delta KIID
 :: PASOS (numeracion estable: la usan --from y el fichero de estado):
@@ -24,7 +24,7 @@ call "%COMMON%" :utf8_on
 :: Aborta en el primer paso que devuelva RC != 0. Cada sub-lanzador escribe su propio log; este
 :: escribe el log de orquestacion (RC y log de detalle de cada paso).
 ::
-:: Uso:  P1_P2_Complete.bat [opciones] [-- argumentos_para_run_pipeline]      (-h / --help: lista completa)
+:: Uso:  P1P2_runCycle.bat [opciones] [-- argumentos_para_run_pipeline]      (-h / --help: lista completa)
 ::   --from N [--from-any]  reanudar en el paso N (1-4) tras un fallo; --from-any anula la guarda
 ::   --skip-preflight       no ejecutar el preflight
 ::   Pasos:    --benchmarks-load (PASO 1: recarga completa) | --no-export (PASO 2 y 4) |
@@ -41,7 +41,7 @@ call "%COMMON%" :utf8_on
 ::   - Reanudacion: la guarda y el estado viven en p1p2_state.py (testeable); --from N solo se
 ::     permite si el ultimo ciclo fallo en N o despues; sin estado legible se rechaza.
 ::   - Baseline y snapshot de betas se reutilizan al reanudar (--from N > 1).
-::   - Instancia unica: un segundo ciclo (o P2_P3_complete.bat) se rechaza con RC 105 mientras
+::   - Instancia unica: un segundo ciclo (o P2P3_runCycle.bat) se rechaza con RC 105 mientras
 ::     otro corre; el bloqueo es un manejador abierto, asi que lo libera el sistema aunque el
 ::     proceso muera.
 ::   - Suspension: se guarda y restaura el valor REAL (lib\common.bat :standby_*).
@@ -62,7 +62,7 @@ if defined P1P2_AUDIT_DIR set "DATA_AUDIT_DIR=%P1P2_AUDIT_DIR%"
 set "LOCK_FILE=%STATE_DIR%\fondos_cycle.lock"
 set "STEP_TOTAL=4"
 
-:: Tabla de opciones (BOOL_OPTS / UINT_OPTS): compartida con P1_P2_P3.bat, que las reenvia.
+:: Tabla de opciones (BOOL_OPTS / UINT_OPTS): compartida con P1P2P3_runCycle.bat, que las reenvia.
 call "%LAUNCH%\lib\p1p2_options.bat"
 
 :: ------------------------------------------------------------
@@ -188,7 +188,7 @@ if !CHK_RC! NEQ 0 goto :abort_check
 :: INSTANCIA UNICA: el manejador 9 queda abierto mientras corre :cycle; una segunda instancia no
 :: puede abrirlo y :cycle no llega a ejecutarse (LOCK_HELD sin definir). Al morir el proceso, por
 :: la causa que sea, el sistema lo cierra: no existe un bloqueo huerfano que limpiar a mano.
-:: Anidado (lo invoca P1_P2_P3.bat, que ya lo tiene y lo hereda): FONDOS_CYCLE_LOCK evita pedirlo otra vez.
+:: Anidado (lo invoca P1P2P3_runCycle.bat, que ya lo tiene y lo hereda): FONDOS_CYCLE_LOCK evita pedirlo otra vez.
 :: ------------------------------------------------------------
 if not exist "%STATE_DIR%" mkdir "%STATE_DIR%"
 set "LOCK_HELD="
@@ -209,7 +209,7 @@ endlocal & exit /b %RC%
 set "LOCK_HELD=1"
 set "FONDOS_CYCLE_LOCK=1"
 
-call "%COMMON%" :log_open "%LOG_DIR%" P1_P2_complete "P1+P2 Complete"
+call "%COMMON%" :log_open "%LOG_DIR%" P1P2_runCycle "P1+P2 Complete"
 set "AUDIT_LOG=%LOG_DIR%\log_P1_P2_audit_%STAMP%.log"
 
 echo  ROOT:      %ROOT% >> "%LOG%"
@@ -244,13 +244,13 @@ if !PRE_RC! NEQ 0 (
     exit /b !PRE_RC!
 )
 
-:: Telemetria de ciclo (opt-in: FONDOS_TELEMETRY=1; mejor esfuerzo, nunca cambia ningun RC). Bajo P1_P2_P3.bat el ciclo
+:: Telemetria de ciclo (opt-in: FONDOS_TELEMETRY=1; mejor esfuerzo, nunca cambia ningun RC). Bajo P1P2P3_runCycle.bat el ciclo
 :: ya existe (FONDOS_CYCLE_ID heredado) y este lanzador solo anade sus pasos.
 set "TELEM_OWNER="
 if "%FONDOS_TELEMETRY%"=="1" if not defined FONDOS_CYCLE_ID (
     set "FONDOS_CYCLE_ID=%STAMP%"
     set "TELEM_OWNER=1"
-    call "%COMMON%" :telemetry begin --launcher P1_P2_Complete --resume-from !FROM_STEP!
+    call "%COMMON%" :telemetry begin --launcher P1P2_runCycle --resume-from !FROM_STEP!
 )
 
 :: Prevenir suspension/hibernacion durante la ejecucion (~30-90 min); owner = este lanzador la
@@ -289,7 +289,7 @@ if !AUX_RC! NEQ 0 (
     set "FAILED_STEP=1"
     echo ABORTADO en el harvest previo -- RC=!AUX_RC! >> "%LOG%"
     echo.
-    echo [ERROR] el harvest fallo ^(RC=!AUX_RC!^). Ciclo abortado antes de tocar nada mas. Reanudar: P1_P2_Complete.bat --from 1 ^(--no-harvest reutiliza el ultimo harvest^)
+    echo [ERROR] el harvest fallo ^(RC=!AUX_RC!^). Ciclo abortado antes de tocar nada mas. Reanudar: P1P2_runCycle.bat --from 1 ^(--no-harvest reutiliza el ultimo harvest^)
     goto :fin
 )
 :previous_done
@@ -334,7 +334,7 @@ if !FINAL_RC! EQU 0 (
 )
 
 :: Restaura la suspension AC al valor REAL guardado al empezar (si este lanzador la gestiono: bajo
-:: P1_P2_P3.bat lo hace el), DESPUES de los diagnosticos.
+:: P1P2P3_runCycle.bat lo hace el), DESPUES de los diagnosticos.
 call "%COMMON%" :standby_restore
 
 :: Sello de fin real: las auditorias y diagnosticos finales pueden tardar unos minutos.
@@ -507,7 +507,7 @@ if !STEP_RC! NEQ 0 (
     set "FAILED_STEP=%~1"
     echo ABORTADO en PASO %~1 -- RC=!STEP_RC! >> "%LOG%"
     echo.
-    echo [ERROR] PASO %~1 fallo ^(RC=!STEP_RC!^). Ciclo abortado. Reanudar: P1_P2_Complete.bat --from %~1
+    echo [ERROR] PASO %~1 fallo ^(RC=!STEP_RC!^). Ciclo abortado. Reanudar: P1P2_runCycle.bat --from %~1
 )
 exit /b 0
 
@@ -555,12 +555,12 @@ echo. >> "%LOG%"
 echo --- PASO 0: auditoria estadistica baseline (run_id=!BASELINE_ID!) ---- >> "%LOG%"
 echo [!STAMP!] PASO 0: auditoria estadistica baseline (!BASELINE_ID!)
 call "%COMMON%" :telemetry step-begin AUDIT_BASE
-call "%LAUNCH%\AUDIT_P2.bat" --mode report --persist --run-id !BASELINE_ID!_p2 --log "%AUDIT_LOG%" > nul
+call "%LAUNCH%\P2_audit.bat" --mode report --persist --run-id !BASELINE_ID!_p2 --log "%AUDIT_LOG%" > nul
 set "AB_RC2=!ERRORLEVEL!"
-if !AB_RC2! NEQ 0 echo [WARN] AUDIT_P2 baseline fallo: no se cuantificara la deriva >> "%LOG%"
-call "%LAUNCH%\AUDIT_P1.bat" --no-benchmark --mode report --persist --run-id !BASELINE_ID!_costs --log "%AUDIT_LOG%" > nul
+if !AB_RC2! NEQ 0 echo [WARN] P2_audit baseline fallo: no se cuantificara la deriva >> "%LOG%"
+call "%LAUNCH%\P1_audit.bat" --no-benchmark --mode report --persist --run-id !BASELINE_ID!_costs --log "%AUDIT_LOG%" > nul
 set "AB_RC1=!ERRORLEVEL!"
-if !AB_RC1! NEQ 0 echo [WARN] AUDIT_P1 baseline fallo: no se cuantificara la deriva >> "%LOG%"
+if !AB_RC1! NEQ 0 echo [WARN] P1_audit baseline fallo: no se cuantificara la deriva >> "%LOG%"
 set "AB_RC=0"
 if !AB_RC2! NEQ 0 set "AB_RC=!AB_RC2!"
 if !AB_RC1! NEQ 0 set "AB_RC=!AB_RC1!"
@@ -618,12 +618,12 @@ echo. >> "%LOG%"
 echo --- Auditoria estadistica final (compare-to !BASELINE_ID!) ---- >> "%LOG%"
 echo [AUDITORIA] deriva vs baseline !BASELINE_ID!
 call "%COMMON%" :telemetry step-begin AUDIT_FINAL
-call "%LAUNCH%\AUDIT_P2.bat" --mode report --persist --run-id post_!AUDIT_STAMP!_p2 --compare-to !BASELINE_ID!_p2 --log "%AUDIT_LOG%" > nul
+call "%LAUNCH%\P2_audit.bat" --mode report --persist --run-id post_!AUDIT_STAMP!_p2 --compare-to !BASELINE_ID!_p2 --log "%AUDIT_LOG%" > nul
 set "AF_RC2=!ERRORLEVEL!"
-if !AF_RC2! NEQ 0 echo [WARN] AUDIT_P2 final fallo >> "%LOG%"
-call "%LAUNCH%\AUDIT_P1.bat" --mode report --persist --run-id post_!AUDIT_STAMP!_costs --compare-to !BASELINE_ID!_costs --log "%AUDIT_LOG%" > nul
+if !AF_RC2! NEQ 0 echo [WARN] P2_audit final fallo >> "%LOG%"
+call "%LAUNCH%\P1_audit.bat" --mode report --persist --run-id post_!AUDIT_STAMP!_costs --compare-to !BASELINE_ID!_costs --log "%AUDIT_LOG%" > nul
 set "AF_RC1=!ERRORLEVEL!"
-if !AF_RC1! NEQ 0 echo [WARN] AUDIT_P1 final fallo >> "%LOG%"
+if !AF_RC1! NEQ 0 echo [WARN] P1_audit final fallo >> "%LOG%"
 set "AF_RC=0"
 if !AF_RC2! NEQ 0 set "AF_RC=!AF_RC2!"
 if !AF_RC1! NEQ 0 set "AF_RC=!AF_RC1!"
@@ -702,7 +702,7 @@ call "%COMMON%" :utf8_off
 endlocal & exit /b 0
 
 :usage_text
-echo Uso: P1_P2_Complete.bat [opciones] [-- argumentos_para_run_pipeline]
+echo Uso: P1P2_runCycle.bat [opciones] [-- argumentos_para_run_pipeline]
 echo Ciclo:
 echo   --from N [--from-any]    reanudar en el paso N (1-4) tras un fallo
 echo   --skip-preflight         no ejecutar el preflight

@@ -23,7 +23,7 @@ LIB = LAUNCH / "lib"
 
 BATS = sorted(p for p in [*LAUNCH.glob("*.bat"), *LIB.glob("*.bat")])
 COMMON = LIB / "common.bat"
-TOP_LEVEL_LOCKED = ("P1_P2_Complete.bat", "P2_P3_complete.bat", "P1_P2_P3.bat", "FND-0246.bat")
+TOP_LEVEL_LOCKED = ("P1P2_runCycle.bat", "P2P3_runCycle.bat", "P1P2P3_runCycle.bat", "FND-0246.bat")
 IS_LIB = lambda p: p.parent == LIB          # lib files are subroutines / data, not launchers
 
 # {(rule, file name): reason}
@@ -316,7 +316,7 @@ def test_find_is_windows_find_by_explicit_path():
 def test_the_cycle_options_have_a_single_source_shared_by_both_cyclers():
     opts = "\n".join(_lines(LIB / "p1p2_options.bat"))
     assert 'set "BOOL_OPTS=' in opts and 'set "UINT_OPTS=' in opts
-    for name in ("P1_P2_Complete.bat", "P1_P2_P3.bat"):
+    for name in ("P1P2_runCycle.bat", "P1P2P3_runCycle.bat"):
         text = "\n".join(_lines(LAUNCH / name))
         assert 'call "%LAUNCH%\\lib\\p1p2_options.bat"' in text, name
         assert 'set "BOOL_OPTS=' not in text and 'set "UINT_OPTS=' not in text, f"{name} must not redefine the shared table"

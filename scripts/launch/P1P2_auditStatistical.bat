@@ -5,15 +5,15 @@ if %RC_BOOT% NEQ 0 (endlocal & exit /b %RC_BOOT%)
 call "%COMMON%" :utf8_on
 
 :: ============================================================
-:: AUDIT_statistical.bat
+:: P1P2_auditStatistical.bat
 :: Ejecucion del motor de auditoria estadistica de distribuciones
 :: (doc/reglas/AUDITORIA_ESTADISTICA.md) sobre un dominio: costs (P1
 :: fund_master/fund_cost_schedule) o p2 (P2 fund_metrics).
 ::
 :: Uso:
-::   AUDIT_statistical.bat costs
-::   AUDIT_statistical.bat p2 --mode check
-::   AUDIT_statistical.bat costs --persist
+::   P1P2_auditStatistical.bat costs
+::   P1P2_auditStatistical.bat p2 --mode check
+::   P1P2_auditStatistical.bat costs --persist
 :: %1 = dominio (costs|p2), obligatorio. Argumentos adicionales (%2, %3, ...)
 :: se reenvian tal cual a run_statistical_audit.py (--mode, --persist, --run-id).
 :: ============================================================
@@ -24,7 +24,7 @@ if /i "%~1"=="-h"     goto :help
 if /i "%~1"=="--help" goto :help
 set DOMAIN=%~1
 if "%DOMAIN%"=="" (
-    echo Uso: AUDIT_statistical.bat costs^|p2 [--mode check] [--persist]
+    echo Uso: P1P2_auditStatistical.bat costs^|p2 [--mode check] [--persist]
     call "%COMMON%" :utf8_off
     endlocal & exit /b %RC_USAGE%
 )
@@ -103,7 +103,7 @@ call "%COMMON%" :utf8_off
 endlocal & exit /b %RC%
 
 :help
-echo Uso: AUDIT_statistical.bat costs^|p2 [--mode check] [--persist] [-h]
+echo Uso: P1P2_auditStatistical.bat costs^|p2 [--mode check] [--persist] [-h]
 echo   dominio obligatorio (costs o p2); el resto se reenvia a run_statistical_audit.py
 call "%COMMON%" :utf8_off
 endlocal & exit /b 0

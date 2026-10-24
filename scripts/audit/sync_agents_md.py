@@ -400,9 +400,9 @@ def gen_launchers() -> str:
     )
 
     def _domain(name: str) -> str:
-        for prefix in ("P1_", "P2_", "P3_", "P4_"):
-            if name.startswith(prefix):
-                return prefix.rstrip("_")
+        m = re.match(r"((?:P\d)+)_", name)          # P1_x, P1P2_x, P1P2P3_x: the project prefix of the naming standard
+        if m:
+            return "+".join(re.findall(r"P\d", m.group(1)))
         return "—"
 
     header = "| Script | Domain |\n|--------|--------|"

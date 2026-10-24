@@ -150,9 +150,9 @@ def test_audit_launchers_route_to_owning_project():
     by = {}
     for name, var, value in _launcher_dirs():
         by.setdefault(name, []).append(_resolve(value))
-    assert by["AUDIT_P1.bat"] == [cfg.LOG_DIRS["p1"]]
-    assert by["AUDIT_P2.bat"] == [cfg.LOG_DIRS["p2"]]
-    assert by["AUDIT_statistical.bat"] == [cfg.LOG_DIRS["p1"], cfg.LOG_DIRS["p2"]]   # costs default, p2 override
+    assert by["P1_audit.bat"] == [cfg.LOG_DIRS["p1"]]
+    assert by["P2_audit.bat"] == [cfg.LOG_DIRS["p2"]]
+    assert by["P1P2_auditStatistical.bat"] == [cfg.LOG_DIRS["p1"], cfg.LOG_DIRS["p2"]]   # costs default, p2 override
 
 
 def test_launcher_state_dir_is_p1_log():

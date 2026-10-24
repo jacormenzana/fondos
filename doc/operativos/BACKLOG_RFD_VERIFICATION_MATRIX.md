@@ -20,8 +20,8 @@ condition is the `SPEC` table at the top of the script (one line per ticket).
 
 1. `python scripts/audit/rfd_matrix_probe.py --md out/backlog/rfd_matrix_<date>.md`: the matrix, with nothing changed.
 2. For each **READY** ticket, run its end-to-end check and keep the output as the closing evidence:
-   - FND-0181 / 0196 / 0226: `pytest proyecto2/tests/calculations/test_macro_sensitivity.py` + `scripts/audit/beta_shift_audit.py --compare <snapshot> --version <CALC_VERSION>` (the P1_P2_P3 beta gate) must pass.
-   - FND-0200 / 0202: `pytest proyecto2/tests/calculations -k "persistence or capture"` + the statistical audit of the P2 metrics (`AUDIT_P2.bat --mode report`) with no new ALARM against the pre-recompute baseline.
+   - FND-0181 / 0196 / 0226: `pytest proyecto2/tests/calculations/test_macro_sensitivity.py` + `scripts/audit/beta_shift_audit.py --compare <snapshot> --version <CALC_VERSION>` (the P1P2P3_runCycle beta gate) must pass.
+   - FND-0200 / 0202: `pytest proyecto2/tests/calculations -k "persistence or capture"` + the statistical audit of the P2 metrics (`P2_audit.bat --mode report`) with no new ALARM against the pre-recompute baseline.
    - FND-0229: `pytest proyecto2/tests/pipeline -k ols` and a P2 RUN_SUMMARY with `ols_funds > 0` after the bump (the probe).
    - FND-0201: `pytest proyecto2/tests/readers` and the 7 STALE_FROZEN funds skipped in the next P2 RUN_SUMMARY.
    - FND-0225: `pytest proyecto3/tests` (scorer) and the probe (no code reference to the retired betas).
