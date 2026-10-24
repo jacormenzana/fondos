@@ -406,6 +406,24 @@ def collect_nav_lag(conn) -> dict:
         return {"error": f"{type(exc).__name__}: {exc}"}
 
 
+def collect_sovereign_stress(conn) -> dict:
+    """State of the sovereign-stress rules over the 10y government yields in series_macro (shared/sovereign_stress.py, FND-0294 step 5).
+    MONITOR-ONLY and read-only; never raises (an unreadable source becomes an `error` key). `lines` are the [ATENCION] items, `status` the report line."""
+    try:
+        sys.path.insert(0, str(ROOT))
+        from shared import sovereign_stress as ss
+        rows = conn.execute("SELECT date, geography, value FROM series_macro WHERE indicator = %s", (ss.YIELD_INDICATOR,)).fetchall()
+        res = ss.monitor(ss.yields_from_rows(rows))
+        return {"state": res["state"], "month": res["month"], "rules": res["rules"], "readings": res["readings"], "missing": res["missing"],
+                "status": ss.status_line(res), "lines": ss.attention_lines(res)}
+    except Exception as exc:                                  # noqa: BLE001
+        try:
+            conn.rollback()
+        except Exception:                                     # noqa: BLE001
+            pass
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
 def collect_macro_freshness(conn, today: date) -> dict:
     """Per-series staleness of series_macro against each series' own limit (shared/macro_freshness.py, FND-0256) and the leg-by-leg state of the
     composite regime inputs (ipc_yoy_avg). Read-only, informational; never raises (an unreadable source becomes an `error` key)."""
@@ -524,6 +542,10 @@ def attention_items(report: dict, previous: dict | None) -> list:
     items += mfr.get("lines", [])
     if mfr.get("error"):
         items.append(f"no se pudo evaluar la frescura de las series macro: {mfr['error']}")
+    sst = report.get("sovereign_stress") or {}              # absent in reports written before this check (FND-0294)
+    items += sst.get("lines", [])
+    if sst.get("error"):
+        items.append(f"no se pudo evaluar el monitor de estres soberano (FND-0294): {sst['error']}")
     pkey = report.get("period_key_contract") or {}          # absent in reports written before this check (FND-0300, R-9)
     items += pkey.get("attention", [])
     if pkey.get("error"):
@@ -621,6 +643,9 @@ def render_text(report: dict, previous: dict | None, items: list) -> str:
         L += [f"Frescura macro: {mfr['series']} series, {len(mfr['stale'])} caducadas"
               + (f" ({', '.join(mfr['stale'][:6])})" if mfr["stale"] else "")
               + "; entradas de regimen: " + ", ".join(f"{k}={v}" for k, v in mfr["composites"].items())]
+    sst = report.get("sovereign_stress")
+    if sst and not sst.get("error"):
+        L += [sst["status"]]
     pk = report.get("period_key_contract")
     if pk:
         if pk.get("error"):
@@ -683,6 +708,7 @@ def main(argv: list | None = None) -> int:
             report["backlog_links"] = collect_backlog_links()
             report["governance"] = collect_governance(conn, today)
             report["macro_freshness"] = collect_macro_freshness(conn, today)
+            report["sovereign_stress"] = collect_sovereign_stress(conn)
             report["period_key_contract"] = collect_period_key_contract(conn)
             report["nav_lag"] = collect_nav_lag(conn)
         finally:

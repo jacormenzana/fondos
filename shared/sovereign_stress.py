@@ -145,3 +145,75 @@ def evaluate(y: Mapping[str, Mapping[str, float]], p: Mapping | None = None, sta
         flags = set(flagged_months(fn, months))
         out[rid] = {"label": label, "kind": kind, "score": score(flags, months), "now": bool(months) and months[-1] in flags}
     return {"months": months, "rules": out}
+
+
+# ---------------------------------------------------------------------------------------------------- live monitor (FND-0294 step 5)
+# MONITOR-ONLY and informational: the lines below go to the cycle report ([ATENCION], owner decision 2026-10-24) and nothing else reads them.
+# No threshold lives here: the rules are build_rules over RULE_PARAMS, exactly the ones the evidence run scored.
+REQUIRED_COUNTRIES = tuple(dict.fromkeys((BASE,) + PERIPHERY + (CORE,) + SHOCK_COUNTRIES))
+
+
+def yields_from_rows(rows) -> dict:
+    """[(date, geography, value)] of series_macro yield_10y_gov (month-start stamps) -> {country: {'YYYY-MM': percent}}."""
+    y: dict = {}
+    for d, geo, value in rows:
+        if value is not None:
+            y.setdefault(geo, {})[str(d)[:7]] = float(value)
+    return y
+
+
+def monitor(y: Mapping[str, Mapping[str, float]], p: Mapping | None = None) -> dict:
+    """State of every rule in the newest month for which ALL required countries have a yield.
+
+    {'state': 'OK'|'INCOMPLETE'|'NO_DATA', 'month', 'rules': {id: bool}, 'labels': {id: text}, 'readings': {...}, 'missing': [countries]}.
+    Missing data is a state of its own, never a silent 'all clear': with no series, or without a country a rule needs, nothing is evaluated."""
+    missing = [c for c in REQUIRED_COUNTRIES if not y.get(c)]
+    if missing:
+        return {"state": "NO_DATA" if len(missing) == len(REQUIRED_COUNTRIES) else "INCOMPLETE", "month": None, "missing": missing,
+                "rules": {}, "labels": {}, "readings": {}}
+    month = min(max(y[c]) for c in REQUIRED_COUNTRIES)
+    rules = build_rules(y, p)
+    k = (RULE_PARAMS if p is None else p)["shock_months"]
+    shocks = [x for c in SHOCK_COUNTRIES if (x := _shock(y, c, month, k)) is not None]
+    return {"state": "OK", "month": month, "missing": [],
+            "rules": {rid: bool(pred(month)) for rid, (_, _, pred) in rules.items()},
+            "labels": {rid: label for rid, (label, _, _) in rules.items()},
+            "readings": {"IT-DE": _spread(y, "IT", month), "ES-DE": _spread(y, "ES", month), "FR-DE": _spread(y, CORE, month),
+                         "max_shock_3m": max(shocks) if shocks else None}}
+
+
+def _pp(x) -> str:
+    return "n/d" if x is None else f"{x:.2f}pp"
+
+
+def status_line(res: Mapping) -> str:
+    """One line for the report body: the month and every rule on/off with the readings behind them."""
+    if res.get("state") != "OK":
+        return f"Estres soberano (FND-0294, solo monitor): {res.get('state')}"
+    r = res["readings"]
+    on = " ".join(f"{rid}={'ON' if v else 'off'}" for rid, v in res["rules"].items())
+    return (f"Estres soberano (FND-0294, solo monitor) {res['month']}: {on}; IT-DE {_pp(r['IT-DE'])} ES-DE {_pp(r['ES-DE'])} "
+            f"FR-DE {_pp(r['FR-DE'])}; mayor subida 10y en 3 meses {_pp(r['max_shock_3m'])}")
+
+
+def attention_lines(res: Mapping) -> list:
+    """[ATENCION] sentences: missing data, and every rule that is on (R3 as WATCH: it has no validated precedent, 1/6 episodes)."""
+    tail = "Solo monitor: ninguna ponderacion ni puerta depende de esto (FND-0294, hasta la validacion FND-0193)"
+    state = res.get("state")
+    if state == "NO_DATA":
+        return ["Estres soberano (FND-0294): no hay series yield_10y_gov en series_macro; cargarlas con macro_discovery --source bce y "
+                "--source fred. El monitor no evalua nada hasta entonces"]
+    if state == "INCOMPLETE":
+        return [f"Estres soberano (FND-0294): faltan los rendimientos de {', '.join(res['missing'])}: el monitor no puede evaluar las reglas"]
+    out = []
+    r = res["readings"]
+    for rid, on in res["rules"].items():
+        if not on:
+            continue
+        if rid == "R3":
+            out.append(f"VIGILANCIA estres soberano R3 ({res['month']}): FR-DE {_pp(r['FR-DE'])} en su decil superior de 10 anos y ampliandose; "
+                       f"sin precedente validado (1 de 6 episodios del backtest). {tail}")
+        else:
+            out.append(f"ESTRES SOBERANO {rid} activa ({res['month']}): {res['labels'][rid]}. IT-DE {_pp(r['IT-DE'])}, ES-DE {_pp(r['ES-DE'])}, "
+                       f"mayor subida 10y en 3 meses {_pp(r['max_shock_3m'])}. {tail}")
+    return out
