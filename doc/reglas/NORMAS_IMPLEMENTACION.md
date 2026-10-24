@@ -215,6 +215,23 @@ inicio de sesión interactivo: solo corren con la sesión del operador abierta; 
 (`StartWhenAvailable`), es un retraso, no una omisión. Guardas estáticas: `tests/test_log_paths.py`,
 `tests/test_maintenance_log_routing.py`.
 
+### §4.10 Retención de artefactos fuera del registro de logs (FND-0268)
+
+Los datos y evidencias que §4.9 deja fuera de `log/` (regla 2) tienen ciclo de vida propio. Los parámetros viven en un solo sitio,
+`RETENTION` en `scripts/audit/artifact_retention.py` (informe de solo lectura: **nunca borra, mueve ni edita**); borrar es una decisión del operador
+sobre la lista que el informe imprime (`--list`).
+
+| Artefacto | Regla | Por qué |
+|---|---|---|
+| `harvest_raw_*.jsonl` (`proyecto1/harvest/` y los sueltos de `proyecto1/`) | Se conservan todos los de menos de 90 días; después, solo el **último de cada mes natural**; el más reciente nunca es candidato | Es la salida cruda de la cosecha (P1 spec: "raw output first"); el dato vive en `db_document_catalogue` y ningún código los relee |
+| `out/incident_*` | Candidata a los 180 días de la fecha del nombre de carpeta, salvo que contenga un fichero más reciente | Evidencia de incidentes; si su ticket sigue abierto, no se retira |
+| `out/diag/*.csv` | `_tmp_*` a los 30 días; el resto a los 365 (por fecha de modificación) | Los `_tmp_*` son restos de depuración; los diagnósticos fechados sirven de comparación histórica |
+
+Fuera de esta regla y **nunca borrados**: los PDF de KIID, `Raw_KIID_Text`, los informes oficiales de `out/reports/` y los artefactos de un backtest PIT con
+veredicto registrado (`out/reports/pit_backtest`, `out/reports/pit_variants`). Los umbrales son una propuesta del 2026-10-24 y los cambia el propietario
+editando `RETENTION` (la prueba `tests/test_artifact_retention.py` fija el comportamiento, no los números). Un artefacto nuevo fuera del registro de logs
+declara aquí su regla y su entrada en `RETENTION`.
+
 ## §5. Convenciones de codificación DQ (`check_code`)
 
 Los códigos en `fund_data_quality_issues.check_code` siguen estas convenciones.
