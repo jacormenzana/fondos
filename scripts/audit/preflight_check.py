@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import ntpath
 import os
 import re
 import subprocess
@@ -132,8 +133,11 @@ def expected_interpreter() -> str:
 
 
 def same_interpreter(a: str, b: str) -> bool:
-    """Windows paths differ in case and in slash direction without being different files."""
-    return os.path.normcase(os.path.normpath(a or "")) == os.path.normcase(os.path.normpath(b or ""))
+    """Windows paths differ in case and in slash direction without being different files.
+
+    ntpath, not os.path: os.path only folds case and backslashes on Windows, so the same comparison was False on Linux (FND-0313).
+    """
+    return ntpath.normcase(ntpath.normpath(a or "")) == ntpath.normcase(ntpath.normpath(b or ""))
 
 
 def summarize_driver(import_ok: bool, detail: str, sac: Optional[str], events: list, interpreter: str,

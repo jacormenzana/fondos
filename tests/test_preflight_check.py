@@ -3,6 +3,7 @@
 """scripts/audit/preflight_check.py: the pure parsers and the verdict matrix, plus the git reader on a throwaway repository (R-7: no DB)."""
 import json
 import os
+import posixpath
 import subprocess
 import sys
 import time
@@ -78,6 +79,14 @@ def test_parse_driver_probe_on_empty_or_garbled_text_is_quiet():
 def test_same_interpreter_ignores_case_and_slash_direction():
     assert pf.same_interpreter(r"C:\data\envs\des\python.exe", "c:/data/envs/des/python.exe")
     assert not pf.same_interpreter(r"C:\data\envs\des\python.exe", r"C:\Users\jacor\.conda\envs\des\python.exe")
+
+
+def test_same_interpreter_gives_the_windows_answer_on_a_posix_host(monkeypatch):
+    """The comparison is about Windows paths whatever the host: os.path on Linux CI answered False (FND-0313)."""
+    with monkeypatch.context() as m:
+        m.setattr(os, "path", posixpath)
+        assert pf.same_interpreter(r"C:\data\envs\des\python.exe", "c:/data/envs/des/python.exe")
+        assert not pf.same_interpreter(r"C:\data\envs\des\python.exe", r"C:\Users\jacor\.conda\envs\des\python.exe")
 
 
 def test_summarize_driver_ok_with_no_recent_blocks():
