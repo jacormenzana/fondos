@@ -422,6 +422,69 @@ def _apply_ipc_eu_chain(inflation_rows: list[dict], macro_rows: list[dict], desd
               f"(ECB ICP ends {max(primary)}; splice overlap {res.n_overlap} months, max |diff| {res.max_abs_diff:.3f})")
 
 
+# FND-0317: fallback legs for the sovereign 10y yields (monitor-only), the same contract as the HICP / JP CPI / M2 chains: the primary always wins
+# where it has data, the fallback supplies only the months AFTER the primary's last one, and only if the splice check over the shared months passes.
+# Measured 2026-10-25 on the live series: ECB IRS vs the FRED/OECD mirror max |diff| over the last 24 months DE 0.003, FR 0.055, IT 0.000, ES 0.009 pp;
+# US IRLTLT01 vs the DGS10 monthly mean 0.005 pp over all 321 shared months. abs_tol 0.10pp with the strict default (every shared month inside it);
+# the tolerance is never widened while a stress rule is ON. Limits, stated: the euro mirror is only a PARTLY independent source (IT is identical to
+# the digit); the chain compares against the rows fetched in the SAME run, so it covers a series that ends early, not a run whose primary fetch failed
+# (the freshness TTL and the monitor lag warning cover that). GB and JP have no verified free alternative and get none.
+_YIELD_SPLICE = {"min_overlap": 3, "abs_tol": 0.10}
+
+
+def _extend_yield(macro_rows: list[dict], geography: str, fetch, source: str) -> None:
+    """Extend yield_10y_gov/<geography> past the primary's last month with `fetch()` -> {'YYYY-MM-01': pct} (in place). Prints a [CHAIN] line
+    either way, so an active, refused or unavailable fallback is visible in the cycle log; a missing fallback never aborts the loader."""
+    primary = rows_to_values(macro_rows, YIELD_INDICATOR, geography)
+    label = f"{YIELD_INDICATOR}/{geography}"
+    try:
+        fallback = fetch()
+    except Exception as e:  # noqa: BLE001
+        print(f"[CHAIN] {label} fallback UNAVAILABLE ({type(e).__name__}); series ends {max(primary) if primary else 'never loaded'}")
+        return
+    res = splice_check(primary, fallback, **_YIELD_SPLICE)
+    if not res.ok:
+        print(f"[CHAIN] {label} fallback REFUSED ({res.reason})")
+        return
+    new = extend_series(primary, fallback, indicator=YIELD_INDICATOR, geography=geography, unit="pct", source=source)
+    macro_rows.extend(new)
+    if new:
+        print(f"[CHAIN] {label} fallback ACTIVE: {len(new)} month(s) {new[0]['date']}..{new[-1]['date']} from {source} "
+              f"(primary ends {max(primary)}; splice overlap {res.n_overlap} months, max |diff| {res.max_abs_diff:.3f}pp)")
+
+
+def _fred_monthly_values(series_id: str, desde: str, api_key: str | None) -> dict[str, float]:
+    df = _fred_fetch(series_id, desde, api_key)
+    return {} if df is None else {d.strftime("%Y-%m-%d"): float(v) for d, v in zip(df["date"], df["value"])}
+
+
+def _dgs10_monthly_mean(daily, today=None) -> dict[str, float]:
+    """{'YYYY-MM-01': mean of the daily DGS10} for COMPLETED months only: a partial mean of the month in progress is not a month."""
+    from datetime import date as _date
+    today = today or _date.today()
+    if daily is None or daily.empty:
+        return {}
+    s = daily.set_index("date")["value"].resample("MS").mean().dropna()
+    first_open = f"{today.year:04d}-{today.month:02d}-01"
+    return {d.strftime("%Y-%m-%d"): float(v) for d, v in s.items() if d.strftime("%Y-%m-%d") < first_open}
+
+
+def _apply_euro_yield_chain(macro_rows: list[dict], desde: str, api_key: str | None = None, fetch=None) -> None:
+    """Euro-area yields (ECB IRS primary) continued with the FRED/OECD mirror IRLTLT01<cc>M156N, source FRED_OECD."""
+    import os
+    key = api_key or os.environ.get("FRED_API_KEY") or None
+    getter = fetch or (lambda cc, d, k: _fred_monthly_values(f"IRLTLT01{cc}M156N", d, k))
+    for cc in EURO_YIELD_COUNTRIES:
+        _extend_yield(macro_rows, cc, lambda cc=cc: getter(cc, desde, key), "FRED_OECD")
+
+
+def _apply_us_yield_chain(macro_rows: list[dict], desde: str, api_key: str | None, fetch=None) -> None:
+    """US yield (FRED IRLTLT01US primary) continued with the Fed H.15 daily DGS10 averaged per completed month, source FRED_DGS10: the one
+    fallback that does not depend on the OECD mirror (the OECD MEI feeds mirrored by FRED have been discontinued before, FND-0293)."""
+    getter = fetch or (lambda d, k: _dgs10_monthly_mean(_fred_fetch("DGS10", d, k)))
+    _extend_yield(macro_rows, "US", lambda: getter(desde, api_key), "FRED_DGS10")
+
+
 def load_bce_series(desde: str = "2000-01", verbose: bool = False) -> tuple[list[dict], list[dict]]:
     """
     Descarga series del BCE Statistical Data Warehouse (SDW).
@@ -541,6 +604,7 @@ def load_bce_series(desde: str = "2000-01", verbose: bool = False) -> tuple[list
         print(f"[{_bi:4d}/{_n_bce:4d}] | {_ts} | [BCE] | [{name}] | {count} | {_dur_ms}")
 
     _apply_ipc_eu_chain(inflation_rows, macro_rows, desde)       # FND-0256: ECB ICP discontinued, continue with Eurostat
+    _apply_euro_yield_chain(macro_rows, desde)                   # FND-0317: ECB IRS yields continued with the FRED/OECD mirror (monitor-only)
     return inflation_rows, macro_rows
 
 
@@ -1100,6 +1164,7 @@ def load_fred_series(
     _apply_oecd_cpi_chain(macro_rows, desde, api_key)             # FND-0293: JP continued, CN replaced (OECD MEI feed discontinued)
     _apply_m2_chain(macro_rows, desde)                            # FND-0293: M2 CN / JP continued (FRED/IMF series stopped 2019 / 2017)
     _apply_cn_policy_rate(macro_rows, desde)                      # FND-0293: China policy rate = BIS 1-year LPR (definition correction)
+    _apply_us_yield_chain(macro_rows, desde, api_key)             # FND-0317: US 10y continued with DGS10 if the OECD mirror ends (monitor-only)
     return inflation_rows, macro_rows
 
 

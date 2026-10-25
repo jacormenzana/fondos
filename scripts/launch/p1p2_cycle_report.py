@@ -413,10 +413,25 @@ def collect_sovereign_stress(conn) -> dict:
         sys.path.insert(0, str(ROOT))
         from shared import sovereign_stress as ss
         rows = conn.execute("SELECT date, geography, value FROM series_macro WHERE indicator = %s", (ss.YIELD_INDICATOR,)).fetchall()
-        res = ss.monitor(ss.yields_from_rows(rows))
-        return {"state": res["state"], "month": res["month"], "rules": res["rules"], "readings": res["readings"], "missing": res["missing"],
-                "headroom": res.get("headroom", {}), "lagging": res.get("lagging", {}), "unreachable": res.get("unreachable", []),
-                "status": ss.status_line(res), "lines": ss.attention_lines(res)}
+        y = ss.yields_from_rows(rows)
+        res = ss.monitor(y)
+        out = {"state": res["state"], "month": res["month"], "rules": res["rules"], "readings": res["readings"], "missing": res["missing"],
+               "headroom": res.get("headroom", {}), "lagging": res.get("lagging", {}), "unreachable": res.get("unreachable", []),
+               "status": ss.status_line(res), "lines": ss.attention_lines(res)}
+        if res["state"] == "OK":                              # FND-0317: context readings (no thresholds); a failure here never hides the monitor
+            try:
+                ipc = ss.ipc_from_rows(conn.execute("SELECT date, geography, value FROM series_macro WHERE indicator = %s", ("ipc_index",)).fetchall())
+                debt = ss.debt_from_rows(conn.execute("SELECT date, geography, value FROM series_macro WHERE indicator = %s", ("debt_gdp_pct",)).fetchall())
+                ctx = ss.context_readings(y, ipc, debt, res["month"])
+                out["context"] = ss.context_line(ctx)
+                out["context_data"] = {"real_yield": ctx["real_yield"], "debt_gdp": {g: list(v) for g, v in ctx["debt_gdp"].items()}}
+            except Exception as exc:                          # noqa: BLE001
+                try:
+                    conn.rollback()
+                except Exception:                             # noqa: BLE001
+                    pass
+                out["context_error"] = f"{type(exc).__name__}: {exc}"
+        return out
     except Exception as exc:                                  # noqa: BLE001
         try:
             conn.rollback()
@@ -647,6 +662,8 @@ def render_text(report: dict, previous: dict | None, items: list) -> str:
     sst = report.get("sovereign_stress")
     if sst and not sst.get("error"):
         L += [sst["status"]]
+        if sst.get("context"):
+            L += [sst["context"]]                             # FND-0317: readings only, never an [ATENCION] item
     pk = report.get("period_key_contract")
     if pk:
         if pk.get("error"):

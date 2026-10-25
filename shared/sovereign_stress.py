@@ -228,6 +228,63 @@ def monitor(y: Mapping[str, Mapping[str, float]], p: Mapping | None = None) -> d
             "reach_assessed": assessed, "reach_months": len(history["months"]), "unreachable": unreachable}
 
 
+# ---------------------------------------------------------------- context readings (FND-0317)
+# READINGS ONLY: no threshold, no rule, never an [ATENCION] item. They give the yield moves a context from series already in series_macro.
+CONTEXT_INFLATION = {"DE": "EU", "US": "US", "JP": "JP"}    # 10y country -> ipc_index geography (the Bund is read against euro-area HICP)
+CONTEXT_MAX_CPI_LAG_MONTHS = 3                              # a longer CPI gap is "n/d", never a stale number presented as current
+
+
+def ipc_from_rows(rows) -> dict:
+    """[(date, geography, value)] of series_macro ipc_index -> {geography: {'YYYY-MM': index}} (nulls dropped)."""
+    out: dict = {}
+    for d, geo, value in rows:
+        if value is not None:
+            out.setdefault(geo, {})[str(d)[:7]] = float(value)
+    return out
+
+
+def debt_from_rows(rows) -> dict:
+    """[(date, geography, value)] of series_macro debt_gdp_pct (annual) -> {geography: {'YYYY': percent of GDP}}."""
+    out: dict = {}
+    for d, geo, value in rows:
+        if value is not None:
+            out.setdefault(geo, {})[str(d)[:4]] = float(value)
+    return out
+
+
+def _yoy_pct(series: Mapping[str, float], month: str):
+    a, b = series.get(month), series.get(back(month, 12))
+    return None if a is None or not b else 100.0 * (a / b - 1.0)
+
+
+def context_readings(y: Mapping, ipc: Mapping, debt: Mapping, month: str) -> dict:
+    """{'month', 'real_yield': {cc: {'month','nominal','inflation','real'} | None}, 'debt_gdp': {geo: (year, pct)}}.
+
+    Real yield = nominal 10y - 12-month CPI/HICP inflation, taken at the latest month <= `month` (at most CONTEXT_MAX_CPI_LAG_MONTHS back) where both
+    exist, and the month used is reported. Debt/GDP is the latest published year. Pure; no rule reads this."""
+    real: dict = {}
+    for cc, geo in CONTEXT_INFLATION.items():
+        real[cc] = None
+        for k in range(CONTEXT_MAX_CPI_LAG_MONTHS + 1):
+            t = back(month, k)
+            infl, nominal = _yoy_pct(ipc.get(geo, {}), t), y.get(cc, {}).get(t)
+            if infl is not None and nominal is not None:
+                real[cc] = {"month": t, "nominal": nominal, "inflation": infl, "real": nominal - infl}
+                break
+    return {"month": month, "real_yield": real, "debt_gdp": {geo: (max(s), s[max(s)]) for geo, s in debt.items() if s}}
+
+
+def context_line(ctx: Mapping) -> str:
+    """One report line for the context readings (Spanish like the rest of the report)."""
+    parts = []
+    for cc in CONTEXT_INFLATION:
+        r = ctx["real_yield"].get(cc)
+        parts.append(f"{cc} n/d" if r is None else
+                     f"{cc} {r['real']:+.2f}% (10y {r['nominal']:.2f} - IPC {r['inflation']:.1f}%, {r['month']})")
+    debt = ", ".join(f"{geo} {pct:.1f}% ({yr})" for geo, (yr, pct) in sorted(ctx["debt_gdp"].items())) or "n/d"
+    return f"Contexto soberano (FND-0317, solo lectura, sin umbrales) {ctx['month']}: rendimiento real 10y {'; '.join(parts)}; deuda/PIB {debt}"
+
+
 def _pp(x) -> str:
     return "n/d" if x is None else f"{x:.2f}pp"
 

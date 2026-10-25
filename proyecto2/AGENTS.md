@@ -97,6 +97,7 @@ proyecto2/
       test_nav_source_unavailable_rc.py
       test_nav_token_renewal_fnd0295.py
       test_source_chain_fnd0256.py
+      test_sovereign_yield_chain_fnd0317.py
       test_sovereign_yield_series_fnd0294.py
     pipeline/
       test_family_versioning_fnd0236_pg.py
