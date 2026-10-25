@@ -11,7 +11,7 @@ Implemented sentinels (fully regenerated from code — all enforced at commit):
   AGENTS.md:
     schema-version          shared/config.py  SCHEMA_VERSION
     kill-switches-line      shared/config.py  all *_ENABLED bool constants (source order)
-    skills-table            .claude/skills/*.md  names + extracted description (alpha order)
+    skills-table            .claude/skills/{*.md,*/SKILL.md}  names + extracted description (alpha order)
     p1-module-map           proyecto1/{core,blocks}/*.py  canonical source modules
     p2-module-map           proyecto2/src/**/*.py + tests/**/*.py  canonical modules + tests
     p3-module-map           proyecto3/src/*.py  canonical source modules
@@ -40,6 +40,11 @@ Usage:
 
 Multi-file enforcement: drift in any governed file (AGENTS.md or SCHEMA_REFERENCE.md)
 fails --check with exit code 1.
+
+Structure is enforced too (FND-0312): a registered sentinel must occur exactly once, as a well-formed
+BEGIN/END pair, in the file it is registered for; a sentinel in a governed file with no generator for that
+file, and a generator that raises, are failures as well (--check and --write exit 1; --write then writes
+nothing). Before this, a missing or malformed pair was skipped and --check still exited 0.
 
 Pre-commit hook installer: scripts/audit/pre-commit.sh
 """
@@ -274,10 +279,21 @@ def gen_kill_switches_line() -> str:
     )
 
 
-def gen_skills_table() -> str:
+def _skill_files() -> list[tuple[str, Path]]:
+    """(name, file) of every repo skill, in either layout: flat `<name>.md` or registered `<name>/SKILL.md`."""
     skills_dir = ROOT / ".claude/skills"
+    found = [(f.stem, f) for f in skills_dir.glob("*.md")]
+    found += [(f.parent.name, f) for f in skills_dir.glob("*/SKILL.md")]
+    names = [n for n, _ in found]
+    dup = sorted({n for n in names if names.count(n) > 1})
+    if dup:
+        raise ValueError(f"skill defined in both layouts (flat .md and <name>/SKILL.md): {', '.join(dup)}")
+    return found
+
+
+def gen_skills_table() -> str:
     skills = sorted(
-        [(f.stem, _skill_description(f)) for f in skills_dir.glob("*.md")],
+        [(name, _skill_description(f)) for name, f in _skill_files()],
         key=lambda x: x[0].lower(),
     )
     header = "| Skill | Purpose |\n|-------|---------|"
@@ -497,11 +513,33 @@ def _advisory_checks(agents_text: str) -> list[str]:
 
 # ── Core sync logic ───────────────────────────────────────────────────────────
 
+def _structure_errors(text: str, gens: dict, target_name: str) -> list[str]:
+    """Problems that would make a sentinel pass vacuously (the substitution skips what it cannot match)."""
+    errs: list[str] = []
+    begins = re.findall(r"<!-- AUTO:BEGIN (\S+) -->", text)
+    ends   = re.findall(r"<!-- AUTO:END (\S+) -->", text)
+    paired = [m.group(1) for m in _SENTINEL_RE.finditer(text)]
+    for name in sorted(set(begins) | set(ends)):
+        b, e, p = begins.count(name), ends.count(name), paired.count(name)
+        if not (b == e == p):
+            errs.append(f"[{name}] ({target_name}): BEGIN/END markers unbalanced or malformed "
+                        f"({b} BEGIN, {e} END, {p} well-formed pair(s))")
+        elif b > 1:
+            errs.append(f"[{name}] ({target_name}): sentinel occurs {b} times, expected exactly once")
+        if name not in gens:
+            errs.append(f"[{name}] ({target_name}): sentinel present but no generator is registered for this file")
+    for name in sorted(gens):
+        if name not in begins and name not in ends:
+            errs.append(f"[{name}] ({target_name}): registered sentinel is missing from the file")
+    return errs
+
+
 def _make_replacer(
     gens: dict,
     drift_accumulator: list,
     mode: str,
     target_name: str,
+    error_accumulator: list,
 ):
     """Return a re.sub callback that replaces sentinel blocks using the given generators."""
     def _replacer(m: re.Match) -> str:
@@ -514,6 +552,7 @@ def _make_replacer(
             fresh = gen()
         except Exception as exc:
             print(f"  ERROR generating [{name}]: {exc}", file=sys.stderr)
+            error_accumulator.append(f"[{name}] ({target_name}): generator raised {type(exc).__name__}: {exc}")
             return m.group(0)
         if fresh.rstrip() != current.rstrip():
             drift_accumulator.append(name)
@@ -528,8 +567,9 @@ def _make_replacer(
 def sync(mode: str) -> int:
     """
     mode: 'report' | 'check' | 'write'
-    Processes all governed files (AGENTS.md + SCHEMA_REFERENCE.md).
-    Returns: 0 = in sync (or write/report), 1 = drift detected (check mode only), 2 = file missing.
+    Processes all governed files (every target in GENERATORS).
+    Returns: 0 = in sync (or report), 1 = drift (check) or a structural/generator error (check and write; write then
+    writes nothing), 2 = file missing.
     """
     # Group generators by target file
     by_target: dict = {}
@@ -541,6 +581,8 @@ def sync(mode: str) -> int:
         by_target.setdefault(target, {})[name] = fn
 
     all_drift: list[str] = []
+    all_errors: list[str] = []
+    pending: list[tuple[Path, str, list[str]]] = []
 
     for target, gens in by_target.items():
         if not target.exists():
@@ -549,12 +591,25 @@ def sync(mode: str) -> int:
 
         text     = target.read_text(encoding="utf-8")
         drift_names: list[str] = []
-        replacer = _make_replacer(gens, drift_names, mode, target.name)
+        all_errors.extend(_structure_errors(text, gens, target.name))
+        replacer = _make_replacer(gens, drift_names, mode, target.name, all_errors)
         new_text = _SENTINEL_RE.sub(replacer, text)
 
         all_drift.extend(drift_names)
+        if drift_names:
+            pending.append((target, new_text, drift_names))
 
-        if mode == "write" and drift_names:
+    if all_errors:
+        print("\nSTRUCTURE ERRORS (a sentinel that cannot be checked is a failure, not a pass):", file=sys.stderr)
+        for err in all_errors:
+            print(f"  ! {err}", file=sys.stderr)
+        if mode in ("check", "write"):
+            if mode == "write":
+                print("Nothing written: fix the structure first.", file=sys.stderr)
+            return 1
+
+    if mode == "write":
+        for target, new_text, drift_names in pending:
             target.write_text(new_text, encoding="utf-8")
             print(f"\n{target.name} updated. Sentinel(s) refreshed: {', '.join(drift_names)}")
 
