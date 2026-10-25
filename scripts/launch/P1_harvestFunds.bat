@@ -7,7 +7,7 @@ call "%COMMON%" :utf8_on
 :: ============================================================
 :: P1_harvestFunds.bat -- Proceso de harvest completo (descubrimiento + ciclo de vida KIID)
 ::
-:: Industrializa el flujo de 5 fases de proyecto1\harvest\ (ver AGENTS.md):
+:: Industrializa el flujo de 5 fases de proyecto1\harvest\ (ver proyecto1/AGENTS.md):
 ::   1. p1_db_harvest.py --harvest        catalogo.xml Deutsche Bank -> db_document_catalogue
 ::   2. p1_db_harvest.py --report-codsus  informe de calidad: fondos nuevos / candidatos a baja
 ::   3. harvest_gate.py                   PUERTA: el catalogo no puede haberse encogido (ver abajo)
@@ -16,7 +16,7 @@ call "%COMMON%" :utf8_on
 ::   6. p1_kiid_sync.py --retire-orphans  archiva PDFs huerfanos           (solo con --retire-orphans)
 ::
 :: Por defecto (sin flags) NO descarga ni archiva nada: ejecuta 1-4 y deja el delta en el log para
-:: revisarlo (AGENTS.md exige revisar el informe antes de sincronizar).
+:: revisarlo (proyecto1/AGENTS.md exige revisar el informe antes de sincronizar).
 ::
 :: PUERTA (paso 3): los scripts de harvest salen con RC 0 aunque el catalogo cargado sea erroneo, y
 :: --retire-orphans trata como baja cualquier KIID local ausente del ULTIMO harvest: un catalogo

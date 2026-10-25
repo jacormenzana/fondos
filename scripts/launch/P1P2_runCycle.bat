@@ -38,7 +38,7 @@ call "%COMMON%" :utf8_on
 ::   Las listas con comas van ENTRE COMILLAS (cmd parte los argumentos por comas).
 ::   Los argumentos desconocidos se rechazan: un error tipografico no debe lanzar un ciclo de horas.
 ::
-:: Diseno (detalle y motivos: AGENTS.md, "Cycle phases around the four steps"):
+:: Diseno (detalle y motivos: scripts/launch/AGENTS.md, "Cycle phases around the four steps"):
 ::   - Preflight: un fallo de BD aborta SIN escribir estado (no debe pisar el paso fallido que se
 ::     quiere reanudar). Un fallo del harvest cuenta como fallo del paso 1.
 ::   - Reanudacion: la guarda y el estado viven en p1p2_state.py (testeable); --from N solo se
