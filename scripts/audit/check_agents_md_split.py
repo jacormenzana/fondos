@@ -120,4 +120,6 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    for _stream in (sys.stdout, sys.stderr):    # a redirected Windows stream is cp1252: a line with an arrow or a dash would crash the report
+        _stream.reconfigure(encoding="utf-8")
     sys.exit(main())

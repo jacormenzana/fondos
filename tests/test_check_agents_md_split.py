@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """scripts/audit/check_agents_md_split.py: calibration on throwaway git repositories (FND-0312, R-7: no DB)."""
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -119,6 +120,22 @@ def test_ledger_entry_without_a_reason_is_an_error(repo):
 
 def test_5_unchanged_source_reports_nothing_removed(repo):
     assert _run(repo, [])["removed"] == 0
+
+
+def test_cli_prints_utf8_when_the_windows_streams_are_cp1252(repo):
+    """Redirected output on Windows is cp1252: an arrow in a reported line crashed the report with a traceback (FND-0312)."""
+    _w(repo, "AGENTS.md", "# Title\nalpha rule\nbeta → rule\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "arrow")
+    _split(repo, root_keeps="# Title\nalpha rule\n", sub="")
+    (repo / "ledger.txt").write_text("unused → entry ||| reason\n", encoding="utf-8")
+    env = {**os.environ, "PYTHONIOENCODING": "cp1252"}
+    r = subprocess.run([sys.executable, str(SCRIPT), "--repo", str(repo), "--receivers", "sub/AGENTS.md", "--ledger", str(repo / "ledger.txt")],
+                       capture_output=True, env=env, timeout=60)
+    assert r.returncode == 1, r.stderr.decode("utf-8", "replace")
+    assert b"Traceback" not in r.stderr
+    assert "unused → entry".encode("utf-8") in r.stdout               # the stdout warning that used to crash
+    assert "UNACCOUNTED x1: beta → rule".encode("utf-8") in r.stderr  # and the stderr line, no longer a \\u2192 escape
 
 
 def test_cli_exit_codes(repo):
