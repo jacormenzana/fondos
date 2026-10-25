@@ -7,7 +7,7 @@ emit_findings, preserve_and_write). This module is used by scripts/audit/run_sta
 (and, until its 2026-09-26 retirement, scripts/diag/diag_cost_duplication_reconcile.py), backing the
 auditStatisticalDataDistributionCostAttributes/P2Metrics skills — genuinely shared across the P1
 cost-attribute audit and the P2 metrics audit (audit_statistic/audit_finding are tagged "P1/P2" in
-AGENTS.md's table roster), so it is the first module ported in this phase rather than under either
+SCHEMA_REFERENCE.md's table roster), so it is the first module ported in this phase rather than under either
 project's own P1/P2/P3 write-path tranche.
 
 All three functions commit (or rollback) internally, so every test here uses

@@ -37,7 +37,7 @@ def on(monkeypatch):
 
 
 def test_the_documented_default_of_the_switch_is_on_since_2026_10_11():
-    """Pins the DOCUMENTED default (shared/config.py, AGENTS.md): flipping it either way is a reviewed commit that changes this test.
+    """Pins the DOCUMENTED default (shared/config.py, proyecto3/AGENTS.md): flipping it either way is a reviewed commit that changes this test.
     Every other test in this module states the value it needs explicitly (monkeypatch), so none inherits the default."""
     import ast
     src = (_ROOT / "shared" / "config.py").read_text(encoding="utf-8")

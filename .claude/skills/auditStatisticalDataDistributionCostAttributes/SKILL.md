@@ -1,3 +1,8 @@
+---
+name: auditStatisticalDataDistributionCostAttributes
+description: Statistical distribution audit of every cost attribute in `fund_master` and `fund_cost_schedule` — distributions, cross-component equality, shape moments, robust outliers, structural invariants and plausibility bounds. Detects systemic extraction failures that per-column inspection cannot surface. Produces evidence-gated root-cause fixes, never value patches.
+---
+
 # Skill: auditStatisticalDataDistributionCostAttributes
 **Description:** Statistical distribution audit of every cost attribute in `fund_master` and `fund_cost_schedule` — distributions, cross-component equality, shape moments, robust outliers, structural invariants and plausibility bounds. Detects systemic extraction failures that per-column inspection cannot surface. Produces evidence-gated root-cause fixes, never value patches.
 

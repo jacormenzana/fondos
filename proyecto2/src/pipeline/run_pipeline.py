@@ -821,7 +821,7 @@ def _new_batch_id() -> str:
 
 # P3-consumed metric surface — used by [COVERAGE] observability line to baseline
 # distinct-ISIN coverage across runs. Update this tuple whenever P3's scoring
-# model adds or removes a consumed metric. Source of truth: AGENTS.md §P3 Layer 2.
+# model adds or removes a consumed metric. Source of truth: proyecto3/AGENTS.md, Scoring Layer 2.
 #
 # NOTE: P3 fund_scorer loads return_ann with real_flag=1 and renames it to
 # return_ann_real internally.  coverage_snapshot() queries by DB metric name;

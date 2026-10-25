@@ -1,3 +1,8 @@
+---
+name: pipelineP1P2Audit
+description: Full-cycle diagnostic audit of a P1→P2 pipeline run — classification log triage, DQ analysis, benchmark-consistency (B1–B7), quantitative-metrics reliability, process-efficiency, P2↔P3 regime-interface alignment, cross-project gap analysis, root-cause fixes, and backlog maintenance. Covers both domains in one pass. Also invoked as `pipelineP1P2Audit`.
+---
+
 # Skill: pipelineP1P2Audit
 **Description:** Full-cycle diagnostic audit of a P1→P2 pipeline run — classification log triage, DQ analysis, benchmark-consistency (B1–B7), quantitative-metrics reliability, process-efficiency, P2↔P3 regime-interface alignment, cross-project gap analysis, root-cause fixes, and backlog maintenance. Covers both domains in one pass. Also invoked as `pipelineP1P2Audit`.
 

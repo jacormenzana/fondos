@@ -1,7 +1,7 @@
 """
 check_audit_skill_sync.py — Advisory drift checker between the statistical-audit catalogs
 (shared/statistical_audit/) and the two skill .md files that describe them
-(.claude/skills/auditStatisticalDataDistribution{P2Metrics,CostAttributes}.md).
+(.claude/skills/auditStatisticalDataDistribution{P2Metrics,CostAttributes}/SKILL.md).
 
 C3 (FND-0132, 2026-09-28, audit-skill-alignment plan Wave 3).
 
@@ -48,8 +48,8 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-P2_SKILL = ROOT / ".claude" / "skills" / "auditStatisticalDataDistributionP2Metrics.md"
-COST_SKILL = ROOT / ".claude" / "skills" / "auditStatisticalDataDistributionCostAttributes.md"
+P2_SKILL = ROOT / ".claude" / "skills" / "auditStatisticalDataDistributionP2Metrics" / "SKILL.md"
+COST_SKILL = ROOT / ".claude" / "skills" / "auditStatisticalDataDistributionCostAttributes" / "SKILL.md"
 
 from shared.statistical_audit.catalog_cost_columns import COST_COLUMNS
 from shared.statistical_audit.catalog_group_checks import COST_GROUP_CHECKS

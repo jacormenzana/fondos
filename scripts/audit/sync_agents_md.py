@@ -8,20 +8,29 @@ Sentinel format:
     <!-- AUTO:END <name> -->
 
 Implemented sentinels (fully regenerated from code — all enforced at commit):
-  AGENTS.md:
+  AGENTS.md (root):
     schema-version          shared/config.py  SCHEMA_VERSION
-    kill-switches-line      shared/config.py  all *_ENABLED bool constants (source order)
     skills-table            .claude/skills/{*.md,*/SKILL.md}  names + extracted description (alpha order)
+
+  proyecto1/AGENTS.md:
     p1-module-map           proyecto1/{core,blocks}/*.py  canonical source modules
+
+  proyecto2/AGENTS.md:
     p2-module-map           proyecto2/src/**/*.py + tests/**/*.py  canonical modules + tests
-    p3-module-map           proyecto3/src/*.py  canonical source modules
-    db-tables               db/schema_fondos.sql  all CREATE TABLE declarations, bucketed by domain
-    launchers               scripts/launch/*.bat  canonical operational launchers
     macro-factors           proyecto2/src/calculations/macro_sensitivity.py  _FACTOR_TO_METRIC
     data-sources            proyecto2/src/discovery/macro_discovery.py  SOURCES registry
 
+  proyecto3/AGENTS.md:
+    p3-module-map           proyecto3/src/*.py  canonical source modules
+
+  scripts/launch/AGENTS.md:
+    launchers               scripts/launch/*.bat  canonical operational launchers
+
+  doc/reglas/NORMAS_IMPLEMENTACION.md:
+    kill-switches-line      shared/config.py  all *_ENABLED bool constants (source order)
+
   doc/reglas/SCHEMA_REFERENCE.md:
-    schema-reference-tables db/schema_fondos.sql  same table roster as db-tables
+    schema-reference-tables db/schema_fondos.sql  all CREATE TABLE declarations, bucketed by domain
 
 Advisory checks (warn only — non-blocking):
   calc-version        CALC_VERSION in run_pipeline.py vs mention in AGENTS.md
@@ -56,6 +65,11 @@ from pathlib import Path
 ROOT             = Path(__file__).resolve().parents[2]
 AGENTS           = ROOT / "AGENTS.md"
 SCHEMA_REFERENCE = ROOT / "doc/reglas/SCHEMA_REFERENCE.md"
+NORMAS_IMPL      = ROOT / "doc/reglas/NORMAS_IMPLEMENTACION.md"
+P1_GUIDE         = ROOT / "proyecto1/AGENTS.md"
+P2_GUIDE         = ROOT / "proyecto2/AGENTS.md"
+P3_GUIDE         = ROOT / "proyecto3/AGENTS.md"
+LAUNCH_GUIDE     = ROOT / "scripts/launch/AGENTS.md"
 
 _SENTINEL_RE = re.compile(
     r"<!-- AUTO:BEGIN (\S+) -->\n(.*?)\n<!-- AUTO:END \1 -->",
@@ -459,18 +473,18 @@ def gen_schema_reference_tables() -> str:
 # Values are either a plain callable (target = AGENTS) or a (callable, Path) tuple.
 
 GENERATORS: dict = {
-    # AGENTS.md sentinels (10)
+    # AGENTS.md (root) sentinels
     "schema-version":           gen_schema_version,
-    "kill-switches-line":       gen_kill_switches_line,
     "skills-table":             gen_skills_table,
-    "p1-module-map":            gen_p1_module_map,
-    "p2-module-map":            gen_p2_module_map,
-    "p3-module-map":            gen_p3_module_map,
-    "db-tables":                gen_db_tables,
-    "launchers":                gen_launchers,
-    "macro-factors":            gen_macro_factors,
-    "data-sources":             gen_data_sources,
-    # doc/reglas/SCHEMA_REFERENCE.md sentinels (1)
+    # area guides (FND-0312): each block lives next to the prose that uses it
+    "p1-module-map":            (gen_p1_module_map, P1_GUIDE),
+    "p2-module-map":            (gen_p2_module_map, P2_GUIDE),
+    "macro-factors":            (gen_macro_factors, P2_GUIDE),
+    "data-sources":             (gen_data_sources, P2_GUIDE),
+    "p3-module-map":            (gen_p3_module_map, P3_GUIDE),
+    "launchers":                (gen_launchers, LAUNCH_GUIDE),
+    # doc/reglas sentinels
+    "kill-switches-line":       (gen_kill_switches_line, NORMAS_IMPL),
     "schema-reference-tables":  (gen_schema_reference_tables, SCHEMA_REFERENCE),
 }
 

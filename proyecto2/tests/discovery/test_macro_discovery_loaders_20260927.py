@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 FND-0066 (2026-09-27): macro_discovery.py's 4 registered source loaders (load_ine_ipc,
-load_bce_series, load_fred_series, load_eurostat_series -- AGENTS.md's "Registered macro data
+load_bce_series, load_fred_series, load_eurostat_series -- proyecto2/AGENTS.md's "Registered macro data
 sources" table) had zero test coverage. test_eurostat.py/test_fred_es.py/test_fred_es2.py in this
 same directory are NOT pytest tests despite the name: no `def test_*`, no assertions, top-level
 `requests.get(...)` calls made as a side effect of collection alone -- exploratory scratch scripts

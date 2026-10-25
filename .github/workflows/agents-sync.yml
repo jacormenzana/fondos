@@ -22,7 +22,8 @@ jobs:
 
       - name: Run sentinel sync check
         # No project dependencies needed — sync_agents_md.py is pure stdlib (ast, re, pathlib).
-        # Any drift in AGENTS.md or doc/reglas/SCHEMA_REFERENCE.md sentinels fails this step.
+        # Any drift, missing/duplicated/malformed sentinel or generator error in the governed files (root and area AGENTS.md,
+        # doc/reglas/NORMAS_IMPLEMENTACION.md, doc/reglas/SCHEMA_REFERENCE.md) fails this step.
         run: python scripts/audit/sync_agents_md.py --check
 
       - name: Show fix command on failure

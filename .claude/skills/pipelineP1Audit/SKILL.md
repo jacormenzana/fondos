@@ -1,3 +1,8 @@
+---
+name: pipelineP1Audit
+description: Full diagnostic audit of a P1 classification pipeline run — log triage, DQ issue analysis, process-efficiency pass, benchmark-consistency audit (B1–B7), root-cause fixes, and regression tests. Produces permanent code-level fixes (never symptomatic patches). Also invoked as `pipelineP1Audit`.
+---
+
 # Skill: pipelineP1Audit
 **Description:** Full diagnostic audit of a P1 classification pipeline run — log triage, DQ issue analysis, process-efficiency pass, benchmark-consistency audit (B1–B7), root-cause fixes, and regression tests. Produces permanent code-level fixes (never symptomatic patches). Also invoked as `pipelineP1Audit`.
 

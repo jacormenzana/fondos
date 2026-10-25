@@ -1,3 +1,8 @@
+---
+name: costP1AuditPipelineAndDiagCost
+description: Diagnostic and auditing workflow for troubleshooting pipeline cost extraction failures and generating code-level fixes.
+---
+
 # Skill: costP1AuditProcess
 **Description:** Diagnostic and auditing workflow for troubleshooting pipeline cost extraction failures and generating code-level fixes.
 

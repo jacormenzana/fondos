@@ -1,3 +1,8 @@
+---
+name: pipelineP2Audit
+description: Deep-dive audit of a P2 quantitative-metrics run (`P2_calculateIndicators.bat`) — log triage, process-efficiency & redundancy analysis, data-reliability assessment, P2↔P3 regime-interface alignment (5-vs-7 scenario flag), gap analysis, and backlog maintenance. Produces a short, ultra-executive Metrics Audit Report. Also invoked as `pipelineP2Audit`.
+---
+
 # Skill: pipelineP2Audit
 **Description:** Deep-dive audit of a P2 quantitative-metrics run (`P2_calculateIndicators.bat`) — log triage, process-efficiency & redundancy analysis, data-reliability assessment, P2↔P3 regime-interface alignment (5-vs-7 scenario flag), gap analysis, and backlog maintenance. Produces a short, ultra-executive Metrics Audit Report. Also invoked as `pipelineP2Audit`.
 

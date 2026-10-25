@@ -1,3 +1,8 @@
+---
+name: auditStatisticalDataDistributionP2Metrics
+description: Statistical distribution audit of every quantitative metric and indicator in `fund_metrics` and `fund_metric_timeseries` — distributions, cross-series equality, shape moments, robust outliers, structural invariants, and plausibility bounds. Detects systemic calculation and binding failures that per-metric range checks cannot surface. Produces evidence-gated root-cause fixes + forced recompute, never ad-hoc value patches.
+---
+
 # Skill: auditStatisticalDataDistributionP2Metrics
 **Description:** Statistical distribution audit of every quantitative metric and indicator in `fund_metrics` and `fund_metric_timeseries` — distributions, cross-series equality, shape moments, robust outliers, structural invariants, and plausibility bounds. Detects systemic calculation and binding failures that per-metric range checks cannot surface. Produces evidence-gated root-cause fixes + forced recompute, never ad-hoc value patches.
 
