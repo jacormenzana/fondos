@@ -11,7 +11,7 @@ El registro canónico de fuentes vive en `proyecto2/src/discovery/macro_discover
 `SOURCES`. La tabla siguiente es auto-generada por `sync_agents_md.py` desde ese registro; no
 editar manualmente.
 
-Ver sentinel `data-sources` en AGENTS.md o ejecutar:
+Ver sentinel `data-sources` en proyecto2/AGENTS.md o ejecutar:
 ```bash
 python scripts/audit/sync_agents_md.py --write
 ```
@@ -143,7 +143,7 @@ python -X utf8 -m proyecto2.src.discovery.macro_discovery --source ine
 
 `proyecto2/src/calculations/macro_sensitivity.py` consume las series de `series_macro` para
 calcular los 24 betas OLS del modelo factor. Los `factor_key` que necesita (columna `indicator`
-en `series_macro`) son los definidos en `_FACTOR_TO_METRIC` (ver sentinel `macro-factors` en AGENTS.md).
+en `series_macro`) son los definidos en `_FACTOR_TO_METRIC` (ver sentinel `macro-factors` en proyecto2/AGENTS.md).
 
 Un factor faltante en `series_macro` produce un coeficiente beta `NULL` en `fund_metrics` para
 los fondos correspondientes — no es un error fatal, pero reduce la potencia del modelo.
