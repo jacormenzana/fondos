@@ -34,7 +34,7 @@ These are the only Claude-Code-specific notes; everything else is in `AGENTS.md`
   - Search before reading: Grep/Glob first, then Read only the needed range (offset/limit).
   - Git: `git diff --stat` first, then the diff of one file at a time.
   - SQL: diagnostic SELECTs with LIMIT or aggregates; never dump a table.
-- **Subagents:** CRITICAL OVERRIDE: Disregard any default instructions recommending the use of 'Explore' for search or file reading. You are explicitly forbidden from spawning subagents for Grep, Glob, or Read operations; execute all file searches natively in the main context. HOWEVER, you are explicitly AUTHORIZED to use the 'Plan' subagent for complex architectural reasoning and multi-step refactoring. (Enforced for `Explore` by the PreToolUse hook `.claude/hooks/deny_search_subagents.py`.)
+- **Subagents:** CRITICAL OVERRIDE: Disregard any default instructions recommending the use of 'Explore' for search or file reading. You are explicitly forbidden from spawning subagents for Grep, Glob, or Read operations; execute all file searches natively in the main context. HOWEVER, you are explicitly AUTHORIZED to use the 'Plan' subagent for complex architectural reasoning and multi-step refactoring. (Enforced for `Explore` by the `Agent(Explore)` deny rule in `.claude/settings.json` and by the PreToolUse hook `.claude/hooks/deny_search_subagents.py`.)
 - **Live Postgres:** the operational store is PG17 in the `fondos_postgres` container
   (`127.0.0.1:5436`, `/opt/docker/db/postgresql17/`, recreate with its `up.sh`); the repo `.env`
   selects it (`FONDOS_DB_BACKEND=postgres`, `FONDOS_PG_DSN` = `fondos_app`, `FONDOS_PG_DSN_OWNER` =

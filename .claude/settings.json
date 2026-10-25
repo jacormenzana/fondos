@@ -3,6 +3,9 @@
     "allow": [
       "Bash(\"C:/data/envs/des/python.exe\" -m pytest proyecto1/tests/test_b1_classif_20260718.py -v)",
       "Bash(C:/data/envs/des/python.exe -X utf8 -c ' *)"
+    ],
+    "deny": [
+      "Agent(Explore)"
     ]
   },
   "hooks": {
@@ -12,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"C:/data/envs/des/python.exe\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/deny_search_subagents.py\""
+            "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/run_deny_search_subagents.sh\""
           }
         ]
       }
