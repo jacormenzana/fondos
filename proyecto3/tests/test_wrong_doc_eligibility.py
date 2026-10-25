@@ -52,11 +52,12 @@ def on(monkeypatch):
 
 # ---- the shared reason --------------------------------------------------------------------------------------------------------------
 
-def test_the_documented_default_of_the_switch_is_off():
-    """Pins the DOCUMENTED default (shared/config.py, proyecto3/AGENTS.md): flipping it is a reviewed commit that changes this test."""
+def test_the_documented_default_of_the_switch_is_on_since_2026_10_25():
+    """Pins the DOCUMENTED default (shared/config.py, proyecto3/AGENTS.md): flipping it is a reviewed commit that changes this test.
+    Every other test here states the value it needs explicitly (monkeypatch), so none inherits the default."""
     src = (_ROOT / "shared" / "config.py").read_text(encoding="utf-8")
     node = next(n for n in ast.parse(src).body if isinstance(n, ast.AnnAssign) and getattr(n.target, "id", "") == "P3_WRONG_DOC_EXCLUSION_ENABLED")
-    assert node.value.value is False
+    assert node.value.value is True
 
 
 def test_the_reason_has_a_stable_code_prefix_and_names_the_status():

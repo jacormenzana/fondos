@@ -13,6 +13,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 
 _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
@@ -22,6 +23,13 @@ import shared.config as cfg  # noqa: E402
 from proyecto3.src import fund_scorer as fs  # noqa: E402
 
 AS_OF = date(2026, 10, 11)
+
+
+@pytest.fixture(autouse=True)
+def _pin_the_document_rule_off(monkeypatch):
+    """FND-0323 D1: this module's toy schema has no fund_kiid_metadata and tests the data rule; the document rule has its own tests
+    (test_wrong_doc_eligibility_pg.py), so it is stated OFF here instead of inherited from the default."""
+    monkeypatch.setattr(cfg, "P3_WRONG_DOC_EXCLUSION_ENABLED", False)
 
 
 def _world(conn, schema, with_residuals=True):

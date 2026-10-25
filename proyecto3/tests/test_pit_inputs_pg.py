@@ -32,6 +32,8 @@ def _pin_switches_to_this_module_s_fixtures(monkeypatch):
     their dedicated tests."""
     from shared import config as _c
     monkeypatch.setattr(_c, "EUR_NAV_CONVERSION_ENABLED", False, raising=False)
+    # FND-0323 D1: toy schema without fund_kiid_metadata; the document rule has its own tests (test_wrong_doc_eligibility_pg.py)
+    monkeypatch.setattr(_c, "P3_WRONG_DOC_EXCLUSION_ENABLED", False, raising=False)
 
 
 
