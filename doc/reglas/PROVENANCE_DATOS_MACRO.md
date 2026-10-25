@@ -44,8 +44,15 @@ Series definidas en `_BCE_SERIES` en `macro_discovery.py`:
 | `m2_level_EU` | `m2_level` | EU | `series_macro` |
 | `m3_level_EU` | `m3_level` | EU | `series_macro` |
 | `rate_refi_EU` | `rate_policy` | EU | `series_macro` |
+| `yield_10y_gov_{DE,FR,IT,ES}` | `yield_10y_gov` | DE, FR, IT, ES | `series_macro` |
 
 API pública sin clave. Rate limit: ~5 req/s.
+
+`yield_10y_gov` (FND-0294): rendimiento del bono público a 10 años, media mensual, % anual. Clave ECB
+`IRS/M.{cc}.L.L40.CI.0000.EUR.N.Z` (*Interest Rate Statistics*, criterio de convergencia de Maastricht: deuda
+pública, **no** swaps). Fecha = primer día del mes (`MONTH_START`); TTL 95 días (`shared/macro_freshness.py`). Alimenta
+solo el monitor de estrés soberano (`shared/sovereign_stress.py`): no es un factor OLS y ninguna ponderación,
+puntuación o puerta lo lee antes de la validación FND-0193.
 
 ### Fed FRED
 Series definidas en `_FRED_SERIES` en `macro_discovery.py` (~25 series). Selección destacada:
@@ -62,6 +69,7 @@ Series definidas en `_FRED_SERIES` en `macro_discovery.py` (~25 series). Selecci
 | `VIXCLS` | `vix` | GLOBAL | — |
 | `T10Y2Y` | `term_spread` | US | 10Y − 2Y UST |
 | `DEXJPUS`, `DEXUSUK`, `DEXCHUS` | `eur_jpy`, `eur_gbp`, `eur_cny` | GLOBAL | Tipos de cambio |
+| `IRLTLT01{US,GB,JP}M156N` | `yield_10y_gov` | US, GB, JP | Rendimiento público 10 años (OECD vía FRED), mensual, % anual. Solo monitor de estrés soberano (FND-0294); TTL 95 días. Mismo indicador y medida que las 4 series del BCE: en los meses compartidos difieren ≤ 0,06 pp (DE 0,006; FR 0,055; IT 0,000; ES 0,040), útil como respaldo vía `source_chain.splice_check` |
 
 ### Eurostat
 - `nama_10_gdp` — PIB nominal Eurozona (Q, interpolado a mensual).
@@ -147,6 +155,9 @@ en `series_macro`) son los definidos en `_FACTOR_TO_METRIC` (ver sentinel `macro
 
 Un factor faltante en `series_macro` produce un coeficiente beta `NULL` en `fund_metrics` para
 los fondos correspondientes — no es un error fatal, pero reduce la potencia del modelo.
+
+No todo indicador de `series_macro` es un factor: `yield_10y_gov` (FND-0294) se carga solo para el monitor de
+estrés soberano y no figura en `_FACTOR_TO_METRIC`, por lo que no genera betas.
 
 ---
 
