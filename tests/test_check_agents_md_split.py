@@ -99,6 +99,18 @@ def test_unused_ledger_entry_is_reported(repo):
     assert _run(repo, ["sub/AGENTS.md"], repo / "ledger.txt")["unused_ledger"] == ["never existed"]
 
 
+def test_ledger_entry_may_start_with_a_hash_and_comments_are_still_skipped(repo):
+    """Regression (found in use): a heading entry '### X' was dropped as a comment, leaving its line 'unaccounted'."""
+    _w(repo, "AGENTS.md", "### Old heading\nkeep\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "heading")
+    _w(repo, "AGENTS.md", "keep\n")
+    _w(repo, "ledger.txt", "# a comment, no separator\n\n### Old heading ||| replaced by a pointer\n")
+    assert cs.load_ledger(repo / "ledger.txt") == {"### Old heading": 1}
+    r = _run(repo, [], repo / "ledger.txt")
+    assert r["unaccounted"] == [] and r["ledgered"] == 1
+
+
 def test_ledger_entry_without_a_reason_is_an_error(repo):
     _w(repo, "ledger.txt", "gamma rule\n")
     with pytest.raises(ValueError, match="ledger entry"):

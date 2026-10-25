@@ -11,7 +11,8 @@ Each receiver line and each ledger line covers one occurrence. Markup-only lines
 such as sentinel markers) are counted and listed separately, never silently skipped, and never fail the check.
 A plain line-count comparison is not used: counts can match while content is lost.
 
-Ledger format (UTF-8): one entry per line, `<exact line> ||| <reason or canonical home>`; blank lines and `#` lines ignored.
+Ledger format (UTF-8): one entry per line, `<exact line> ||| <reason or canonical home>`; blank lines and `#` lines that do not
+contain the ` ||| ` separator are comments (an entry may itself start with `#`, e.g. a markdown heading).
 
 Usage:
   python scripts/audit/check_agents_md_split.py --base HEAD --receivers proyecto1/AGENTS.md proyecto2/AGENTS.md \
@@ -44,7 +45,8 @@ def _git_show(repo: Path, ref: str, path: str) -> str:
 def load_ledger(path: Path) -> Counter:
     entries: Counter = Counter()
     for n, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        if not raw.strip() or raw.lstrip().startswith("#"):
+        # A comment is a blank line or a `#` line WITHOUT the separator: an entry may itself start with `#` (a markdown heading).
+        if not raw.strip() or (raw.lstrip().startswith("#") and LEDGER_SEP not in raw):
             continue
         line, sep, reason = raw.rpartition(LEDGER_SEP)
         if not sep or not line.strip() or not reason.strip():
