@@ -46,7 +46,7 @@ from proyecto3.src.pit_backtest import COST_GRID_BPS, table_stats
 from proyecto3.src.pit_cache import CODE_VERSION
 from proyecto3.src.pit_inputs import save_inputs_snapshot
 from shared.config import (FUND_DATA_ELIGIBILITY_ENABLED, P3_FUND_NAV_MAX_AGE_DAYS, P3_FUND_NAV_MAX_GAP_RUN_MONTHS,
-                           P3_FUND_NAV_MIN_COVERAGE, REGIME_PUBLICATION_LAG_MONTHS)
+                           P3_FUND_NAV_MIN_COVERAGE, P3_WRONG_DOC_EXCLUSION_ENABLED, REGIME_PUBLICATION_LAG_MONTHS)
 from shared.db import get_connection
 from shared.eur_nav import assert_release_coupling   # FND-0243 D4
 
@@ -147,6 +147,9 @@ def _git_commit() -> str:
 NOT_MODELLED_NOTICE = ("accepted audit residuals of the live build-time data eligibility (FUND_DATA_ELIGIBILITY_ENABLED) are NOT modelled in "
                        "this point-in-time run: they are today's governance decisions, applying them in the past would be look-ahead "
                        "(FND-0254); stale NAV and NAV continuity ARE modelled when the switch is ON")
+# FND-0323 D1: KIID_Status has no history, so with P3_WRONG_DOC_EXCLUSION_ENABLED ON today's WRONG_DOC status is applied at EVERY date.
+WRONG_DOC_NOTICE = ("P3_WRONG_DOC_EXCLUSION_ENABLED is ON: funds whose KIID_Status is WRONG_DOC today are ineligible at every date of this run "
+                    "(the status has no history; same documented look-ahead as every static attribute of the PIT universe, FND-0323)")
 
 
 def write_artifacts(out_dir: Path, table: pd.DataFrame, grid: pd.DataFrame, bt, summary: str, manifest: dict,
@@ -272,7 +275,8 @@ def main(argv=None, conn=None) -> int:
         "regime_publication_lags_months": REGIME_PUBLICATION_LAG_MONTHS,
         "dates": [str(table.index.min().date()), str(table.index.max().date()), int(len(table))],
         "python": sys.version.split()[0], "pandas": pd.__version__, "log": str(log_path),
-        "not_modelled": [NOT_MODELLED_NOTICE],
+        "not_modelled": [NOT_MODELLED_NOTICE] + ([WRONG_DOC_NOTICE] if P3_WRONG_DOC_EXCLUSION_ENABLED else []),
+        "wrong_doc_exclusion": {"enabled": bool(P3_WRONG_DOC_EXCLUSION_ENABLED)},      # FND-0323 D1: the rule this run applied
         # FND-0254: the build-time eligibility settings this run applied (the live rule when the switch is ON), auditable from the artifact
         "data_eligibility": {"enabled": bool(FUND_DATA_ELIGIBILITY_ENABLED), "stale_nav_days": int(args.max_stale_days),
                              "live_stale_nav_days": int(P3_FUND_NAV_MAX_AGE_DAYS),

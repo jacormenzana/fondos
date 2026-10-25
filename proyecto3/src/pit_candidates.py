@@ -150,6 +150,8 @@ def pit_scores(
             isins = isins[in_universe.reindex(isins).fillna(0).astype(int).to_numpy() == 1]
         frame = attrs.loc[isins, list(ATTRIBUTE_COLUMNS)].copy()
         frame.index.name = "isin"
+        if "doc_status_reason" in attrs.columns:                # FND-0323 D1: present only when the switch was ON at load time
+            frame["doc_status_reason"] = attrs.loc[isins, "doc_status_reason"]
         for name, s in snaps.items():
             frame[name] = s.iloc[i].reindex(isins)
         if momentum is not None and t in momentum.index:

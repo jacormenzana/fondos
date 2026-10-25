@@ -122,6 +122,12 @@ regime-evidence FX neutralisation, which stays dormant until its PIT validation.
 constraint (`score_candidates.exposure_constrained`; flags in `PitInputs.fx_exposed`, loaded by `pit_inputs.load_fx_exposed`, deliberately not a column
 of `attrs`, which feeds the PIT score cache keys), so a PIT run evaluates the model production runs.
 
+**Valid-document eligibility (FND-0323 D1, `P3_WRONG_DOC_EXCLUSION_ENABLED`):** an ISIN whose `KIID_Status` is `WRONG_DOC` has no valid document, so with the switch ON it is
+ineligible in P3 (`exclusion_reason` `wrong_doc: ...`, score 0) -- P3 eligibility only: P1 already drops it from every block and P2 keeps computing its metrics. One predicate and
+one reason text for both paths (`shared/doc_eligibility.py`); live it is a `doc_status_reason` column added by `fund_scorer.load_fund_metrics_for_scoring` and read first by
+`check_hard_filters`; the PIT backtest gets the same column from `pit_inputs.load_attributes` (it is part of the score cache key because scores depend on it) and applies today's
+status at every date (`KIID_Status` has no history; the run manifest says so). Validate with `scripts/audit/wrong_doc_switch_diff.py` (read-only, 40-ISIN sample, live and PIT).
+
 ### Data-freshness gate (`data_freshness.py`)
 
 `scripts/launch/p3_build_portfolio.py` checks input freshness **before** scoring or persisting and

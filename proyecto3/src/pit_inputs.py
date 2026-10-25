@@ -19,7 +19,9 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from proyecto3.src.score_candidates import fx_exposed_map
+from shared import config as _config
 from shared.config import REGION_IPC
+from shared.doc_eligibility import wrong_doc_reasons   # FND-0323 D1
 from shared.eur_nav import apply_eur_view_frame   # FND-0243
 from shared.nav_month_end import MONTH_CLOSE_TOLERANCE_DAYS, align_nav_long   # FND-0300
 
@@ -69,6 +71,11 @@ def load_attributes(conn: "psycopg.Connection", isins: "list | None" = None) -> 
         """, (list(isins),)).fetchall()
     df = pd.DataFrame([tuple(r) for r in rows], columns=ATTRIBUTE_FRAME_COLUMNS).set_index("ISIN")
     df.index.name = "isin"
+    if _config.P3_WRONG_DOC_EXCLUSION_ENABLED:
+        # FND-0323 D1: the scorer reads this column (check_hard_filters), so unlike a currency flag it MUST be part of the score cache key, which hashes
+        # this frame. Only with the switch ON: OFF the frame is exactly what it was. KIID_Status has no history: today's status at every date.
+        reasons = wrong_doc_reasons(conn)
+        df["doc_status_reason"] = pd.Series([reasons.get(i) for i in df.index], index=df.index, dtype=object)
     return df
 
 

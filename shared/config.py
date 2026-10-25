@@ -431,6 +431,13 @@ P3_FUND_NAV_MAX_AGE_DAYS: int = 60        # same threshold as NAV_STALE_DAYS of 
 # 0 in PRODUCTION; no quarterly reporter exists in the active universe.
 P3_FUND_NAV_MIN_COVERAGE: float = 0.80
 P3_FUND_NAV_MAX_GAP_RUN_MONTHS: int = 6
+# FND-0323 D1 (owner decision 2026-10-25, option a): an ISIN whose KIID_Status is WRONG_DOC has no valid document, so every attribute that is only
+# discoverable from the KIID cannot be trusted for it; with the switch ON such a fund is INELIGIBLE in P3 (exclusion_reason 'wrong_doc: ...', score 0).
+# Scope: P3 eligibility ONLY -- P1 already drops WRONG_DOC from every block and P2 keeps computing their metrics. The PIT backtest applies the SAME
+# rule through the scorer's check_hard_filters (parity, as FND-0254): the status has no history, so today's status is applied at every date
+# (documented look-ahead, like every static attribute of the PIT universe). Ships OFF; the owner turns it on after
+# scripts/audit/wrong_doc_switch_diff.py (40-ISIN sample, live + PIT). Rollback = False: nothing is written, no DDL.
+P3_WRONG_DOC_EXCLUSION_ENABLED: bool = False
 # FND-0289 (owner directive 2026-10-17), PRODUCTION alarm watch at promotion (scenario_lifecycle.GATE_ALARM_WATCH, control D-ALARM-WATCH): a fund
 # of the PRODUCTION scenario that carries a current ALARM row in fund_metric_alerts for one of ALARM_WATCH_RULES may not get a HIGHER master
 # weight in the promoted DRAFT (tolerance ALARM_WATCH_WEIGHT_TOLERANCE, one unit of the 4th decimal: largest-remainder rounding). Holding or

@@ -78,6 +78,7 @@ from shared.config import (
     ROLLING_PCTILE_P3_ENABLED,
 )
 from shared.db import executemany
+from shared.doc_eligibility import wrong_doc_reasons
 from shared.nav_continuity import gap_reason
 
 
@@ -396,6 +397,9 @@ def load_fund_metrics_for_scoring(
     out = wide.join(fm, how="inner")
     if _shared_config.FUND_DATA_ELIGIBILITY_ENABLED:             # FND-0251 Commit B: OFF = no extra query, no extra column
         out = out.join(load_eligibility_inputs(conn)[ELIGIBILITY_COLUMNS], how="left")
+    if _shared_config.P3_WRONG_DOC_EXCLUSION_ENABLED:            # FND-0323 D1: OFF = no extra query, no extra column
+        reasons = wrong_doc_reasons(conn)
+        out["doc_status_reason"] = pd.Series([reasons.get(i) for i in out.index], index=out.index, dtype=object)
     return out
 
 
@@ -755,7 +759,13 @@ def check_hard_filters(
     FND-0251 (Commit B, FUND_DATA_ELIGIBILITY_ENABLED, OFF por defecto): antes que nada, un fondo con NAV mensual
     mas antiguo que P3_FUND_NAV_MAX_AGE_DAYS o con un residual de auditoria aceptado vigente no es elegible.
     Las columnas ausentes (frames point-in-time) o NaN no excluyen: fail-open, como el resto de filtros.
+    FND-0323 D1 (P3_WRONG_DOC_EXCLUSION_ENABLED, OFF por defecto): un fondo con KIID_Status = WRONG_DOC no tiene documento valido y no es
+    elegible; es lo primero que se comprueba. El mismo texto de motivo lo usa el backtest PIT (shared/doc_eligibility.py).
     """
+    if _shared_config.P3_WRONG_DOC_EXCLUSION_ENABLED:
+        doc = row.get("doc_status_reason")
+        if isinstance(doc, str) and doc:
+            return doc
     if _shared_config.FUND_DATA_ELIGIBILITY_ENABLED:
         age = row.get("nav_age_days", np.nan)
         limit = _shared_config.P3_FUND_NAV_MAX_AGE_DAYS
