@@ -211,12 +211,15 @@ Q_ALERTS = """
 
 # FND-0243: active funds with NAV whose share-class currency is unknown. With EUR_NAV_CONVERSION_ENABLED they are EXCLUDED from
 # EUR scoring (never assumed EUR); while it is off they are scored on their stored NAV as if it were EUR.
+# FND-0323 S5 (owner rule 2026-10-25): ISINs with KIID_Status = WRONG_DOC are out of scope -- no valid document, so what only the KIID gives cannot be
+# discovered for them -- and they are ineligible in P3 (P3_WRONG_DOC_EXCLUSION_ENABLED); listing them here raised a standing [ATENCION] nobody can act on.
 Q_CLASS_CCY_UNKNOWN = """
     SELECT fm.isin
     FROM fund_master fm
     WHERE fm.in_current_universe = 1
       AND fm.fund_currency IS NULL
       AND EXISTS (SELECT 1 FROM fund_nav_monthly n WHERE n.isin = fm.isin)
+      AND NOT EXISTS (SELECT 1 FROM fund_kiid_metadata k WHERE k.isin = fm.isin AND k.kiid_status = 'WRONG_DOC')
     ORDER BY fm.isin
 """
 

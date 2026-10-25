@@ -407,8 +407,9 @@ P3_EXIT_STALE_INPUTS: int = 2
 MAX_NON_EUR_UNHEDGED_WEIGHT: float = 0.30
 # Owner decision 2026-10-11: the budget is also a CONSTRUCTION constraint (portfolio_engine.select_within_exposure): each sub-portfolio is built so
 # its exposed weight stays within the budget, hence so does the master portfolio -- the October DRAFT must be promotable by construction, not by
-# luck. It is the safety net under the regime-evidence FX-neutralisation (REGIME_EVIDENCE_FX_NEUTRAL, dormant until its PIT validation), not a
-# substitute for it. False restores the unconstrained build (the promotion gate still blocks an over-budget scenario).
+# luck. It was written as the safety net under a regime-evidence FX-neutralisation that was never built (FND-0258, closed as moot 2026-10-25: every
+# MULT_* is 1.0 since the FND-0193 SIMPLIFY configuration); it stays as the build-time guard on non-EUR exposure and as the net to keep if a regime
+# multiplier is ever reinstated. False restores the unconstrained build (the promotion gate still blocks an over-budget scenario).
 FX_EXPOSURE_CONSTRAINT_ENABLED: bool = True
 # Largest structural cash residue (share of the MASTER portfolio) a scenario may DECLARE and still be promoted (owner decision 2026-10-11).
 # Cash appears only when a sub-portfolio has too few eligible non-exposed funds to reach 100% under the per-fund cap (FND-0187); the build
