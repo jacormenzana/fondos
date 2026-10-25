@@ -81,9 +81,37 @@ entonces las herramientas funcionan en solo lectura y avisan «almacén sin apli
 | **Antes de abrir** un ticket | Mirar los 3 tickets abiertos más cercanos al texto. Es un **ranking, no un veredicto**: añadir al existente o abrir uno enlazado | `backlog_links.py --new "<texto>"` |
 | **Al empezar** un ticket | Listar vecinos y candidatas; **sale con 1** mientras un `DEPENDS_ON` confirmado tenga el prerrequisito abierto. Escribir en el primer log `afecta / afectado por / puede absorber` y, en el plan, qué alcance relacionado se absorbe, cuál se deja deliberadamente y la interfaz que el otro debe respetar | `backlog_links.py --for FND-nnnn` |
 | **Durante** el trabajo | Un hallazgo fuera de alcance se anota en el log del ticket relacionado existente; no se abre ticket nuevo ni se descarta | — |
-| **Al cerrar** | El log dice qué queda (alcance absorbido cumplido, o lo que pasa al otro ticket) | — |
+| **Al cerrar** | El log dice qué queda (alcance absorbido cumplido, o lo que pasa al otro ticket) y sigue la higiene de §4.1 | — |
 | **Cada sesión de revisión** | Barrido: `--all`, revisar candidatas por lotes, aplicar | §6 |
 | **Cada ciclo P1+P2** | Una línea en el informe de ciclo (`Relaciones del backlog`) y un `[ATENCION]` si hay tickets en curso con prerrequisito `DEPENDS_ON` abierto | `p1p2_cycle_report.py` |
+
+### §4.1. Higiene del registro (origen: FND-0323)
+
+Un ticket deja de ser fiable cuando su texto, su estado o sus cifras divergen del sistema. Reglas de procedimiento:
+
+1. **Condición de cierre → entrada de salida.** Cuando un log declara una condición de cierre («cerrar tras el próximo ciclo con deriva
+   0», «sigue abierto hasta que el pase P1 escriba los 14»), la entrada que la cumple se escribe **en la misma sesión que la
+   observa**, con el recuento y su fecha. Todo recuento en un log lleva **fecha y población**.
+2. **Estado sincronizado.** Un `BLOCKED` por instrucción del propietario nombra la condición que lo levanta; al cumplirse (p. ej.
+   la liberación) el estado se mueve en esa sesión. Los tickets `RELEASE_WITH` o acoplados en código se cierran como **una sola
+   acción**. Una decisión pendiente del propietario se registra como «DECISION PENDIENTE» con fecha, para que la revisión periódica
+   la liste.
+3. **Premisa vigente.** En cada liberación o promoción se listan los tickets abiertos que citan los interruptores o parámetros
+   cambiados (la señal S3 de §6 ya extrae ese vocabulario); cada uno recibe un log «premisa cambiada» (con qué hay que volver a
+   medir) o se cierra como obsoleto (`REJECTED`) citando el ticket que lo supera.
+4. **Relaciones declaradas en el código.** Si un comentario o un módulo dice que un ticket protege o depende de otro, el enlace se
+   registra en la siguiente revisión (§6); `--review-out` solo propone lo que ve en el texto de los tickets.
+5. **Población declarada.** Todo recuento nombra su población. Por defecto el alcance **excluye** los ISIN con
+   `KIID_Status = WRONG_DOC` (regla del propietario, 2026-10-25: sin documento válido no se descubren los atributos que salen del
+   KIID) y los retirados, salvo que el ticket trate precisamente de ellos.
+6. **Cifras reproducibles.** La evidencia numérica nombra su definición (consulta, patrón, fuente de datos) o la ruta del script que
+   la produce; sin ella la cifra no se puede volver a medir ni comparar.
+7. **Cierre y referencias.** Al cerrar se busca el id del ticket y sus interruptores en comentarios de código y documentos; cada
+   hallazgo se actualiza o se lista en el log de cierre.
+
+Estado de aplicación: son reglas de procedimiento. Las herramientas que las verifican (revisión de caducidad de estados y de
+decisiones pendientes, barrido de premisas en cada liberación, filtro de población en el informe de ciclo) están pendientes en
+FND-0323; hasta entonces las comprueba quien abre, empieza o cierra el ticket.
 
 ## §5. Protocolo de absorción de alcance
 
@@ -166,6 +194,13 @@ formato de error/log:
 Cambio en `backlog_links.py`: tests puros (`tests/test_backlog_links_signals.py`) y `--evaluate` sobre datos vivos informado en el
 log del ticket; el SQL de `gestion` vive **solo** en `shared/backlog_client.py` (el barrido EXPLAIN lo exime con motivo
 `DESIGN`).
+
+Al cerrar o actualizar un ticket (§4.1):
+
+- [ ] la entrada que cumple su condición de cierre está escrita y lleva fecha y población;
+- [ ] el estado refleja la realidad (nada `BLOCKED` tras la liberación que lo levantaba; los `RELEASE_WITH` cerrados juntos);
+- [ ] las cifras citadas nombran su definición o su script, y excluyen `WRONG_DOC` salvo que el ticket trate de ellos;
+- [ ] el id y los interruptores del ticket se han buscado en código y documentos, y lo encontrado está actualizado o listado.
 
 ## §9. Operación
 
