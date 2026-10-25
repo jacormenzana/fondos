@@ -40,6 +40,12 @@ RULE_PARAMS: dict = {
     "shock_strict_pp": 1.0, "shock_pp": 0.75, "shock_months": 3,                                            # R4 / R5: any 10y rises this in 3 months
 }
 
+# Monitor v2 (FND-0317): reporting aids only, NOT rules. A feed one month behind is normal publication lag (both feeds carried the newest month ~24 days
+# after its end), so the lag warning starts at two. Reachability needs a history long enough to have seen a stress episode (20 years); a shorter one is
+# "not assessed" rather than a false alarm.
+MONITOR_LAG_WARN_MONTHS = 2
+REACHABILITY_MIN_MONTHS = 240
+
 # Labelled from history (not from the data); windows are scored with +-3 months of slack.
 EPISODES: dict = {
     "euro sovereign crisis": ("2010-05", "2012-09"),
@@ -162,24 +168,64 @@ def yields_from_rows(rows) -> dict:
     return y
 
 
+def _month_index(month: str) -> int:
+    return int(month[:4]) * 12 + int(month[5:7]) - 1
+
+
+def headroom(y: Mapping[str, Mapping[str, float]], month: str, p: Mapping | None = None) -> dict:
+    """How far, in percentage points, each rule is from firing at `month`: {rule id: pp still missing}.
+
+    0.0 exactly when the rule is ON; None when it cannot be expressed in pp (inputs missing, or R3 whose percentile leg is off: widening alone cannot
+    switch it on). The distance is measured on the rule's own metric against the SAME pinned threshold, so it adds no threshold. Reporting only."""
+    p = RULE_PARAMS if p is None else p
+    k_w, k_s = p["widening_months"], p["shock_months"]
+
+    def gap(threshold, values):
+        vals = [v for v in values if v is not None]
+        return None if not vals else round(max(0.0, threshold - max(vals)), 4)
+
+    out = {
+        "R1": gap(p["periphery_level_pp"], [_spread(y, c, month) for c in PERIPHERY]),
+        "R2": gap(p["periphery_widening_pp"], [_spread_change(y, c, month, k_w) for c in PERIPHERY]),
+        "R4": gap(p["shock_strict_pp"], [_shock(y, c, month, k_s) for c in SHOCK_COUNTRIES]),
+        "R5": gap(p["shock_pp"], [_shock(y, c, month, k_s) for c in SHOCK_COUNTRIES]),
+        "R3": None,
+    }
+    core = {m: _spread(y, CORE, m) for m in y.get(CORE, {}) if _spread(y, CORE, m) is not None}
+    if month in core and back(month, k_w) in core and len([m for m in core if m <= month]) >= p["core_min_months"]:
+        if percentile_rank(month, core, p["core_percentile_years"]) >= p["core_percentile"]:
+            out["R3"] = gap(p["core_widening_pp"], [core[month] - core[back(month, k_w)]])
+    return out
+
+
 def monitor(y: Mapping[str, Mapping[str, float]], p: Mapping | None = None) -> dict:
     """State of every rule in the newest month for which ALL required countries have a yield.
 
-    {'state': 'OK'|'INCOMPLETE'|'NO_DATA', 'month', 'rules': {id: bool}, 'labels': {id: text}, 'readings': {...}, 'missing': [countries]}.
-    Missing data is a state of its own, never a silent 'all clear': with no series, or without a country a rule needs, nothing is evaluated."""
+    {'state': 'OK'|'INCOMPLETE'|'NO_DATA', 'month', 'rules': {id: bool}, 'labels': {id: text}, 'readings': {...}, 'missing': [countries],
+     'headroom': {id: pp}, 'lagging': {country: months behind the newest feed}, 'reach_assessed': bool, 'reach_months': int, 'unreachable': [ids]}.
+    Missing data is a state of its own, never a silent 'all clear': with no series, or without a country a rule needs, nothing is evaluated.
+    The v2 fields (FND-0317) are reporting aids: they read the rules, they never change them."""
     missing = [c for c in REQUIRED_COUNTRIES if not y.get(c)]
     if missing:
         return {"state": "NO_DATA" if len(missing) == len(REQUIRED_COUNTRIES) else "INCOMPLETE", "month": None, "missing": missing,
-                "rules": {}, "labels": {}, "readings": {}}
+                "rules": {}, "labels": {}, "readings": {}, "headroom": {}, "lagging": {}, "reach_assessed": False, "reach_months": 0,
+                "unreachable": []}
     month = min(max(y[c]) for c in REQUIRED_COUNTRIES)
+    newest = max(max(y[c]) for c in REQUIRED_COUNTRIES)
+    lagging = {c: _month_index(newest) - _month_index(max(y[c])) for c in REQUIRED_COUNTRIES if max(y[c]) < newest}
     rules = build_rules(y, p)
     k = (RULE_PARAMS if p is None else p)["shock_months"]
     shocks = [x for c in SHOCK_COUNTRIES if (x := _shock(y, c, month, k)) is not None]
+    history = evaluate(y, p)
+    assessed = len(history["months"]) >= REACHABILITY_MIN_MONTHS
+    unreachable = [rid for rid, r in history["rules"].items() if r["score"]["flagged"] == 0] if assessed else []
     return {"state": "OK", "month": month, "missing": [],
             "rules": {rid: bool(pred(month)) for rid, (_, _, pred) in rules.items()},
             "labels": {rid: label for rid, (label, _, _) in rules.items()},
             "readings": {"IT-DE": _spread(y, "IT", month), "ES-DE": _spread(y, "ES", month), "FR-DE": _spread(y, CORE, month),
-                         "max_shock_3m": max(shocks) if shocks else None}}
+                         "max_shock_3m": max(shocks) if shocks else None},
+            "headroom": headroom(y, month, p), "lagging": lagging, "newest_month": newest,
+            "reach_assessed": assessed, "reach_months": len(history["months"]), "unreachable": unreachable}
 
 
 def _pp(x) -> str:
@@ -192,8 +238,10 @@ def status_line(res: Mapping) -> str:
         return f"Estres soberano (FND-0294, solo monitor): {res.get('state')}"
     r = res["readings"]
     on = " ".join(f"{rid}={'ON' if v else 'off'}" for rid, v in res["rules"].items())
+    room = " ".join(f"{rid} +{h:.2f}pp" for rid, h in (res.get("headroom") or {}).items() if h is not None and h > 0 and not res["rules"].get(rid))
+    margin = f"; margen hasta activarse: {room}" if room else ""
     return (f"Estres soberano (FND-0294, solo monitor) {res['month']}: {on}; IT-DE {_pp(r['IT-DE'])} ES-DE {_pp(r['ES-DE'])} "
-            f"FR-DE {_pp(r['FR-DE'])}; mayor subida 10y en 3 meses {_pp(r['max_shock_3m'])}")
+            f"FR-DE {_pp(r['FR-DE'])}; mayor subida 10y en 3 meses {_pp(r['max_shock_3m'])}{margin}")
 
 
 def attention_lines(res: Mapping) -> list:
@@ -216,4 +264,13 @@ def attention_lines(res: Mapping) -> list:
         else:
             out.append(f"ESTRES SOBERANO {rid} activa ({res['month']}): {res['labels'][rid]}. IT-DE {_pp(r['IT-DE'])}, ES-DE {_pp(r['ES-DE'])}, "
                        f"mayor subida 10y en 3 meses {_pp(r['max_shock_3m'])}. {tail}")
+    late = {c: n for c, n in (res.get("lagging") or {}).items() if n >= MONITOR_LAG_WARN_MONTHS}
+    if late:
+        who = ", ".join(f"{c} ({n} meses)" for c, n in sorted(late.items()))
+        out.append(f"Estres soberano (FND-0294): el mes de evaluacion {res['month']} lo retiene la fuente de {who}; el dato mas reciente es "
+                   f"{res.get('newest_month')}. Revisar la carga de esa serie (macro_discovery) antes de fiarse de las reglas")
+    if res.get("unreachable"):
+        out.append(f"Estres soberano (FND-0294): las reglas {', '.join(res['unreachable'])} nunca se activaron en {res['reach_months']} meses de "
+                   f"historia: su umbral podria ser inalcanzable con estos datos. Solo informativo; no se cambia ningun umbral sin una nueva "
+                   f"corrida de evidencia")
     return out

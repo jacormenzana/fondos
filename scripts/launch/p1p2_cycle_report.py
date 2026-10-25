@@ -415,6 +415,7 @@ def collect_sovereign_stress(conn) -> dict:
         rows = conn.execute("SELECT date, geography, value FROM series_macro WHERE indicator = %s", (ss.YIELD_INDICATOR,)).fetchall()
         res = ss.monitor(ss.yields_from_rows(rows))
         return {"state": res["state"], "month": res["month"], "rules": res["rules"], "readings": res["readings"], "missing": res["missing"],
+                "headroom": res.get("headroom", {}), "lagging": res.get("lagging", {}), "unreachable": res.get("unreachable", []),
                 "status": ss.status_line(res), "lines": ss.attention_lines(res)}
     except Exception as exc:                                  # noqa: BLE001
         try:
