@@ -109,9 +109,14 @@ Un ticket deja de ser fiable cuando su texto, su estado o sus cifras divergen de
 7. **Cierre y referencias.** Al cerrar se busca el id del ticket y sus interruptores en comentarios de código y documentos; cada
    hallazgo se actualiza o se lista en el log de cierre.
 
-Estado de aplicación: son reglas de procedimiento. Las herramientas que las verifican (revisión de caducidad de estados y de
-decisiones pendientes, barrido de premisas en cada liberación, filtro de población en el informe de ciclo) están pendientes en
-FND-0323; hasta entonces las comprueba quien abre, empieza o cierra el ticket.
+Estado de aplicación: son reglas de procedimiento y las comprueba quien abre, empieza o cierra el ticket. Herramientas (FND-0323), todas
+**bajo demanda y de solo lectura**, elegidas por medición y no integradas en ningún ciclo: `scripts/audit/backlog_hygiene.py
+--premise-sweep` (regla 3; encuentra los tickets que citan un identificador cambiado, **no** los que no citan ninguno) y
+`--stale-status` (regla 2; señal débil: encuentra lo que nadie toca, no lo que ya está hecho); y el filtro de población (regla 5) en la
+línea «sin divisa de clase» del informe de ciclo. **No existe** detección automática de decisiones pendientes: un marcador de texto
+libre acertó en torno a 1-2 de 5 y sería ruido; la etiqueta estructurada «DECISION PENDIENTE» de la regla 2 es la vía, y se
+automatizará solo si aparecen entradas que lo justifiquen. El barrido de premisas no se ejecuta solo en cada liberación: lo lanza quien
+libera.
 
 ## §5. Protocolo de absorción de alcance
 
@@ -211,6 +216,7 @@ Al cerrar o actualizar un ticket (§4.1):
 | Antes de abrir / al empezar | `--new "<texto>"` · `--for FND-nnnn` |
 | Revisión | `--review-out` → rellenar CSV → `--apply-review F.csv` → `--confirm` |
 | Gráfico | `--mermaid [--with-candidates]` |
+| Higiene del registro (§4.1) | `python scripts/audit/backlog_hygiene.py --premise-sweep "<rev>^..<rev>"` · `--stale-status [--days N]` |
 | Puerta de la política automática | `python scripts/audit/backlog_links_calibration.py --gate` |
 
 Salidas en `out/reports/backlog_links/` (ignorado por git). Tests: puros (`test_backlog_links_*.py`, `test_backlog_overlap.py`,
