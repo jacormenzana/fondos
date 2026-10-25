@@ -69,6 +69,7 @@ Series definidas en `_FRED_SERIES` en `macro_discovery.py` (~25 series). Selecci
 | `VIXCLS` | `vix` | GLOBAL | — |
 | `T10Y2Y` | `term_spread` | US | 10Y − 2Y UST |
 | `DEXJPUS`, `DEXUSUK`, `DEXCHUS` | `eur_jpy`, `eur_gbp`, `eur_cny` | GLOBAL | Tipos de cambio |
+| `PPICMM` | `gold` | GLOBAL | **No es el precio del oro**: es el PPI de EE. UU. de metales primarios (oro, plata, platino, otros), porque FRED retiró los precios spot públicos del oro. Puede subir en una expansión, así que no es un activo refugio, y `beta_gold` (factor `gold_yoy`) es una beta de metales. Sin renombrar: un cambio de clave del factor obliga a recalcular la familia macro de P2 (FND-0320). Precio real de oro verificado como fuente aparte: World Bank Pink Sheet, USD/onza troy, mensual (no cargado) |
 | `IRLTLT01{US,GB,JP}M156N` | `yield_10y_gov` | US, GB, JP | Rendimiento público 10 años (OECD vía FRED), mensual, % anual. Solo monitor de estrés soberano (FND-0294); TTL 95 días. Mismo indicador y medida que las 4 series del BCE: en los meses compartidos difieren ≤ 0,06 pp (DE 0,006; FR 0,055; IT 0,000; ES 0,040), útil como respaldo vía `source_chain.splice_check` |
 
 ### Eurostat

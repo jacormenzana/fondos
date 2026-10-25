@@ -206,6 +206,8 @@ touches one of the nine families recompute only that family: add it to `FAMILY_C
 2 additional derived metrics (computed at runtime, not in `_FACTOR_TO_METRIC`): `energy_sensitivity_pct`, `hy_spread_sensitivity_pct`.  
 VIF filter applied; factors with VIF > 10 excluded.
 
+**`gold_yoy` / `beta_gold` is a metals beta, not a gold beta** (FND-0320): the `gold` indicator is FRED `PPICMM`, the US PPI for primary metals, not a gold price. It is deliberately not renamed (a factor-key change forces a P2 macro recompute); see `doc/reglas/PROVENANCE_DATOS_MACRO.md` §2.
+
 ### Data discovery (run before pipeline)
 
 #### Registered macro data sources (machine-verified)
