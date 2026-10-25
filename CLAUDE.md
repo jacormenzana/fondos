@@ -27,6 +27,14 @@ These are the only Claude-Code-specific notes; everything else is in `AGENTS.md`
 - **AST validation after every Python edit** (P#3 / R-8):
   `python -c "import ast; ast.parse(open('archivo.py').read()); print('AST OK')"`
 - Use the session scratchpad directory for temporary files, not the project tree.
+- **Memory index:** When updating MEMORY.md, strictly limit entries to one line of ≤ 150 characters. Do not duplicate repository data.
+- **Tool output (cost control):**
+  - Tests: `pytest -q --tb=short`; suites over ~2 min run in background.
+  - Logs: never read a whole log; Grep for the pattern or read the last ~100 lines.
+  - Search before reading: Grep/Glob first, then Read only the needed range (offset/limit).
+  - Git: `git diff --stat` first, then the diff of one file at a time.
+  - SQL: diagnostic SELECTs with LIMIT or aggregates; never dump a table.
+- **Subagents:** CRITICAL OVERRIDE: Disregard any default instructions recommending the use of 'Explore' for search or file reading. You are explicitly forbidden from spawning subagents for Grep, Glob, or Read operations; execute all file searches natively in the main context. HOWEVER, you are explicitly AUTHORIZED to use the 'Plan' subagent for complex architectural reasoning and multi-step refactoring. (Enforced for `Explore` by the PreToolUse hook `.claude/hooks/deny_search_subagents.py`.)
 - **Live Postgres:** the operational store is PG17 in the `fondos_postgres` container
   (`127.0.0.1:5436`, `/opt/docker/db/postgresql17/`, recreate with its `up.sh`); the repo `.env`
   selects it (`FONDOS_DB_BACKEND=postgres`, `FONDOS_PG_DSN` = `fondos_app`, `FONDOS_PG_DSN_OWNER` =
