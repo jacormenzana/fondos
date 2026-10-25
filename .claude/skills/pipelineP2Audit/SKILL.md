@@ -14,6 +14,8 @@ description: Deep-dive audit of a P2 quantitative-metrics run (`P2_calculateIndi
 **Language:** English. **Tone:** Ultra-executive, concise, direct. **Format:** Bold headers, bullet points, structured tables. Zero filler.
 **Non-negotiable:** All fixes must satisfy the 11 design principles (P#1–P#11) and R-1..R-8 in `doc/reglas/`. Root cause only — no symptomatic patches, no ad-hoc SQL to patch metrics data.
 
+**DB queries:** follow `doc/reglas/NORMAS_SQL_TOKENS.md` — aggregates first, ordered samples ≤ 50 rows, never LIMIT an exhaustive calculation, full exception lists to a file. This skill's report format takes precedence over the 3-example cap, which applies to ad-hoc output.
+
 ---
 
 ## 2. Assets — locate LATEST by timestamp (YYYYMMDD_HHMMSS) on invocation

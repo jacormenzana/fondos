@@ -14,6 +14,8 @@ description: Statistical distribution audit of every cost attribute in `fund_mas
 **Language:** English. **Tone:** Ultra-executive. **Format:** Bold headers, tables, key metrics. Zero filler.
 **Non-negotiable:** P#1–P#11 and R-1..R-8 in `doc/reglas/`. Root cause only. Every correction is evidence-gated and preserved in `fund_cost_corrections` before the write — no cost datum is ever lost.
 
+**DB queries:** follow `doc/reglas/NORMAS_SQL_TOKENS.md` — aggregates first, ordered samples ≤ 50 rows, never LIMIT an exhaustive calculation, full exception lists to a file. This skill's report format takes precedence over the 3-example cap, which applies to ad-hoc output.
+
 ---
 
 ## 2. Scope

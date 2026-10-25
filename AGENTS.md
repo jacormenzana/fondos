@@ -13,6 +13,7 @@ for their respective domains; this file must not duplicate their content — it 
 | `MODELO_SEMANTICO.md` | *what values mean* | Attribute semantics + SC-A1..SC-F4 consistency rules |
 | `SCHEMA_REFERENCE.md` | *where data lives* | Full DB table/column reference (P1/P2/P3) |
 | `PROVENANCE_DATOS_MACRO.md` | *where macro data comes from* | Macro-series sourcing, data-source provenance, API keys, refresh cadence |
+| `NORMAS_SQL_TOKENS.md` | *how to limit db outputs* | Token-efficiency constraints, mandatory limits for SQL outputs, and exploratory queries |
 | `P4_BI_CHARTER.md` | *how BI sync works* | P4 Postgres/Superset charter (ETL, ports, DDL, datasets) |
 | `AUDITORIA_ESTADISTICA.md` | *how statistical distribution audits work* | 7-block model evaluation, indicator catalog, generic function/config catalog for the cost-attribute and P2-metrics statistical audits |
 | `NORMAS_BATCH.md` | *how to write a `.bat` launcher* | The single criterion for every `.bat`: skeleton, no hard-coded paths/versions, own exit codes 100-199, single instance, standby/codepage restore, `cmd.exe` pitfalls; reference implementation `scripts/launch/lib/common.bat` + `P1P2_runCycle.bat`, template `_template.bat` |

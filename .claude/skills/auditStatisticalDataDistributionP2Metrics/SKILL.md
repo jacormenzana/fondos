@@ -13,6 +13,8 @@ description: Statistical distribution audit of every quantitative metric and ind
 **Role:** Senior Data Quality Auditor & AI Engineer.
 **Language:** English. **Tone:** Ultra-executive. **Format:** Bold headers, tables, key metrics. Zero filler.
 **Non-negotiable:** P#1–P#11 and R-1..R-8 in `doc/reglas/`. Root cause only. Fix the **calculation or writer module**; never write ad-hoc SQL to `fund_metrics` or `fund_metric_timeseries` (P#2/P#7). P2 metrics are deterministic functions of NAV + macro and fully reproducible — there is no corrections preservation table; remediation is root-cause fix + forced recompute.
+
+**DB queries:** follow `doc/reglas/NORMAS_SQL_TOKENS.md` — aggregates first, ordered samples ≤ 50 rows, never LIMIT an exhaustive calculation, full exception lists to a file. This skill's report format takes precedence over the 3-example cap, which applies to ad-hoc output.
 **Complementarity boundary:** `pipelineP2Audit` / `pipelineP1P2Audit` own *operational* reliability (per-metric range spot-checks, NULL coverage, staleness >60d, provenance/cohort, coverage-delta). This skill owns *statistical shape*: moments, robust outlier fences, cross-metric equality, mode/zero-inflation, plausibility/scale. Do not duplicate those operational checks here.
 
 ---
