@@ -185,6 +185,7 @@ Antes de aprobar un cambio:
 - [ ] No se han creado mapas duplicados en múltiples módulos? (R-1)
 - [ ] Cabecera del módulo actualizada con versión y descripción del cambio?
 - [ ] El cambio resuelve la causa raíz, no solo el síntoma? (Principio #1 del proyecto)
+- [ ] Publicación (FND-0336, O-5): `master` no admite `git push` directo; rama desde `origin/master` → pull request → las cuatro comprobaciones CI obligatorias en verde (lista y excepción de emergencia en `AGENTS.md`)
 
 ---
 
