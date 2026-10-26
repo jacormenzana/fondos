@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sys
 import traceback
 from contextlib import contextmanager
@@ -482,6 +483,102 @@ def record_link_event(*, from_id: str, to_id: str, link_type: str, status: str, 
     }], conn=conn)[0]
 
 
+# --- Actor identity (db/pg_backlog/25_actor_alias.sql; FND-0330) ----------------------------------------------------------
+# Logs and link events are append-only, so their raw `username` is never rewritten: `backlog.actor_alias` maps each raw spelling to
+# one canonical identity and the views read through it. New writes carry the canonical form directly, taken from FONDOS_ACTOR.
+
+ACTOR_PATTERN = re.compile(r"^(human|agent|system):[A-Za-z0-9._-]+$")     # == the CHECK of backlog.actor_alias (tests keep them equal)
+_ACTOR_ENV_VAR = "FONDOS_ACTOR"
+
+
+class ActorUnknown(ValueError):
+    """No canonical actor could be established. Raised instead of guessing: the OS login is the owner's for every session that runs
+    under their account, so it cannot tell the owner from an agent."""
+
+
+def current_actor(environ: Optional[dict] = None) -> str:
+    """The canonical identity of whoever is writing, from FONDOS_ACTOR (e.g. `agent:claude-opus-5-5`, `human:jacor`). Raises ActorUnknown
+    when it is unset or not in canonical form; it never falls back to the OS user."""
+    env = os.environ if environ is None else environ
+    value = (env.get(_ACTOR_ENV_VAR) or "").strip()
+    if not value:
+        raise ActorUnknown(f"{_ACTOR_ENV_VAR} is not set (expected human:<login> | agent:<model> | system:<name>)")
+    if not ACTOR_PATTERN.match(value):
+        raise ActorUnknown(f"{_ACTOR_ENV_VAR}={value!r} is not canonical (expected human:<login> | agent:<model> | system:<name>)")
+    return value
+
+
+def canonical_actor(raw: str, aliases: dict) -> str:
+    """Canonical identity of a stored author string: its alias, itself when already canonical, else 'unmapped:<raw>'. Pure; `aliases`
+    is the {raw_name: canonical} dict of list_actor_aliases()."""
+    if raw in aliases:
+        return aliases[raw]
+    return raw if ACTOR_PATTERN.match(raw or "") else f"unmapped:{raw}"
+
+
+def actor_store_present(*, conn=None) -> bool:
+    """True when db/pg_backlog/25_actor_alias.sql has been applied (the coverage view exists)."""
+    with _session(conn) as c:
+        (reg,) = c.execute("SELECT to_regclass('backlog.v_actor_unmapped') IS NOT NULL").fetchone()
+    return bool(reg)
+
+
+def list_actor_aliases(*, conn=None) -> dict:
+    """{raw_name: canonical} of backlog.actor_alias."""
+    with _session(conn) as c:
+        return {r["raw_name"]: r["canonical"] for r in _rows(c, "SELECT raw_name, canonical FROM backlog.actor_alias")}
+
+
+def unmapped_actors(*, conn=None) -> list[dict]:
+    """Author strings of logs and link events that have no alias and are not canonical (empty = covered). Fail-loud like the rest of
+    the read API: an unreachable backlog or a store not applied must never read as "covered"."""
+    with _session(conn) as c:
+        return _rows(c, "SELECT raw_actor, n_rows, first_ts, last_ts FROM backlog.v_actor_unmapped ORDER BY raw_actor")
+
+
+def history_fingerprint(*, max_log_id: Optional[int] = None, max_event_id: Optional[int] = None, conn=None) -> dict:
+    """Count and md5 of the append-only history (progress logs and link events) up to the given ids (default: the current maxima).
+    History is never rewritten, so the same bounds always give the same answer; rows appended later have higher ids and do not move
+    it. Used to prove that a DDL phase left the history untouched (FND-0330 acceptance). Timestamps are rendered in UTC so the value
+    does not depend on the session time zone."""
+    with _session(conn) as c:
+        if max_log_id is None:
+            (max_log_id,) = c.execute("SELECT coalesce(max(log_id), 0) FROM backlog.BACKLOG_LOGS").fetchone()
+        if max_event_id is None:
+            (max_event_id,) = c.execute("SELECT coalesce(max(event_id), 0) FROM backlog.backlog_link_event").fetchone()
+        n_logs, logs_md5 = c.execute(
+            "SELECT count(*), md5(coalesce(string_agg(concat_ws('|', log_id, action_point_id, log_ts AT TIME ZONE 'UTC', username, comment), "
+            "E'\\n' ORDER BY log_id), '')) FROM backlog.BACKLOG_LOGS WHERE log_id <= %s", (max_log_id,)).fetchone()
+        n_events, events_md5 = c.execute(
+            "SELECT count(*), md5(coalesce(string_agg(concat_ws('|', event_id, from_id, to_id, link_type, status, evidence, absorbs, username, "
+            "event_ts AT TIME ZONE 'UTC'), E'\\n' ORDER BY event_id), '')) FROM backlog.backlog_link_event WHERE event_id <= %s",
+            (max_event_id,)).fetchone()
+    return {"max_log_id": int(max_log_id), "logs": int(n_logs), "logs_md5": logs_md5,
+            "max_event_id": int(max_event_id), "events": int(n_events), "events_md5": events_md5}
+
+
+def check_actors(verbose: bool = True) -> bool:
+    """Read-only coverage check for the acceptance of FND-0330: True iff the alias store is applied and every author string is mapped."""
+    def _line(ok: bool, msg: str) -> None:
+        if verbose:
+            print(f"{'OK' if ok else 'FAIL'} - {msg}")
+
+    try:
+        if not actor_store_present():
+            _line(False, "backlog.actor_alias is not applied (db/pg_backlog/25_actor_alias.sql; owner runs scripts/ops/migrate_backlog_v2.py --phase alias)")
+            return False
+        missing = unmapped_actors()
+        if missing:
+            for m in missing:
+                _line(False, f"author string {m['raw_actor']!r} has no alias ({m['n_rows']} rows, {m['first_ts']:%Y-%m-%d}..{m['last_ts']:%Y-%m-%d})")
+            return False
+        _line(True, f"every author string of logs and link events is mapped ({len(list_actor_aliases())} aliases)")
+        return True
+    except Exception as exc:
+        _line(False, f"{type(exc).__name__}: {exc}")
+        return False
+
+
 def check_dsn(verbose: bool = True) -> bool:
     """
     Read-only diagnostic: verifies FONDOS_BACKLOG_PG_DSN is set, psycopg3 is installed, the
@@ -522,14 +619,25 @@ if __name__ == "__main__":
     import argparse
     import sys as _sys
 
+    try:
+        import shared.config  # noqa: F401  (loads the repo .env so FONDOS_BACKLOG_PG_DSN is visible; run as `python -m shared.backlog_client`)
+    except Exception:         # run as a bare script, or the config cannot load: the checks below then report the DSN as unset
+        pass
     _parser = argparse.ArgumentParser(description=__doc__)
     _parser.add_argument(
         "--check-dsn", action="store_true",
         help=f"Read-only connectivity/permissions check against {_DSN_ENV_VAR} — exits "
              "non-zero on any failure. Does not create or modify any row.",
     )
+    _parser.add_argument(
+        "--check-actors", action="store_true",
+        help="Read-only coverage check of the actor alias store (FND-0330) — exits non-zero when it is not applied or an author "
+             "string has no alias.",
+    )
     _args = _parser.parse_args()
     if _args.check_dsn:
         _sys.exit(0 if check_dsn(verbose=True) else 1)
+    elif _args.check_actors:
+        _sys.exit(0 if check_actors(verbose=True) else 1)
     else:
         _parser.print_help()
