@@ -14,6 +14,8 @@ backlog and fondos are different databases, so no SQL constraint can express thi
 After the commit, the closed tickets' CERTIFIED / ACCEPTED incidents are marked CLOSED in fondos (best effort, reported).
 
 Nothing here closes a ticket as REJECTED / DUPLICATED / WORKAROUND without a deployment: that is a plain, logged status change.
+Backlog v2 Phase A (FND-0331): once db/pg_backlog/30_transitions.sql is applied, the move to READY_FOR_DEPLOY goes through backlog.sp_transition and the
+closing through the rebuilt backlog.sp_close_release, with the identity given by --actor (or FONDOS_ACTOR); before that, the previous statements run unchanged.
 Exit codes: 0 ok (or dry run), 1 refused by a check (message says which), 2 usage or connection error.
 """
 from __future__ import annotations
@@ -77,7 +79,9 @@ def main(argv: "list | None" = None) -> int:
     ap.add_argument("--release", required=True)
     ap.add_argument("--tickets", required=True, help="comma-separated, e.g. FND-0264,FND-0275")
     ap.add_argument("--log", required=True)
-    ap.add_argument("--user", default=None, help="backlog username (default: the OS user)")
+    ap.add_argument("--user", default=None, help="backlog username (default: the OS user); used only while the Backlog v2 Phase A routines are not applied")
+    ap.add_argument("--actor", default=None, help="canonical identity (agent:<model> | human:<login> | system:<name>) used once Phase A is applied; "
+                                                  "default FONDOS_ACTOR; never guessed from the OS user")
     ap.add_argument("--apply", action="store_true")
     args = ap.parse_args(argv)
     tickets = [t.strip().upper() for t in args.tickets.split(",") if t.strip()]
@@ -90,6 +94,7 @@ def main(argv: "list | None" = None) -> int:
     import getpass
 
     import shared.config as cfg  # (loads the repo .env)
+    from shared import backlog_client as bc
     from shared.db import get_connection
     from shared.statistical_audit import incidents as inc
     from shared.statistical_audit import persistence as ps
@@ -117,6 +122,15 @@ def main(argv: "list | None" = None) -> int:
 
     with psycopg.connect(dsn) as conn:
         cur = conn.cursor()
+        a1 = bc.transitions_store_present(conn=conn)             # Backlog v2 Phase A applied? (else the legacy statements below)
+        actor = None
+        if a1:
+            try:
+                actor = bc.resolve_actor(args.actor)             # explicit identity; FONDOS_ACTOR as the validated alternative; never guessed
+            except bc.ActorUnknown as exc:
+                print(f"error: {exc}; pass --actor agent:<model> or human:<login>", file=sys.stderr)
+                conn.rollback()
+                return RC_USAGE
         rows = {r[0]: (r[1], r[2]) for r in cur.execute(
             "SELECT action_point_id, status, release_version FROM backlog.backlog WHERE action_point_id = ANY(%s)", (tickets,)).fetchall()}
         why = check_tickets(rows, tickets)
@@ -129,12 +143,28 @@ def main(argv: "list | None" = None) -> int:
                 print(f"  - {r}")
             conn.rollback()
             return RC_REFUSED
-        for t in tickets:
-            cur.execute("INSERT INTO backlog.backlog_logs (action_point_id, username, comment) VALUES (%s, %s, %s)",
-                        (t, user, f"Release {args.release}: {args.log.strip()} Closed through backlog.sp_close_release."))
-            cur.execute("UPDATE backlog.backlog SET status = 'READY_FOR_DEPLOY', release_version = %s WHERE action_point_id = %s",
-                        (args.release, t))
-        cur.execute("CALL backlog.sp_close_release(%s, %s)", (args.release, user))
+        note = f"Release {args.release}: {args.log.strip()} Closed through backlog.sp_close_release."
+        if a1:
+            # Backlog v2 Phase A: the move to READY_FOR_DEPLOY (with the release label) goes through sp_transition, with an explicit canonical actor.
+            try:
+                for t in tickets:
+                    bc.transition(t, "READY_FOR_DEPLOY", session_id=bc.make_session_id("RELEASE", "SYNC"), comment=note, actor=actor,
+                                  release_version=args.release, conn=conn)
+            except psycopg.Error as exc:
+                conn.rollback()
+                print(f"REFUSED by the backlog routine: {exc}")
+                return RC_REFUSED
+        else:                                    # the A-1 routines are not applied yet: exactly the previous behaviour
+            for t in tickets:
+                cur.execute("INSERT INTO backlog.backlog_logs (action_point_id, username, comment) VALUES (%s, %s, %s)", (t, user, note))
+                cur.execute("UPDATE backlog.backlog SET status = 'READY_FOR_DEPLOY', release_version = %s WHERE action_point_id = %s",
+                            (args.release, t))
+        try:
+            cur.execute("CALL backlog.sp_close_release(%s, %s)", (args.release, actor if a1 else user))
+        except psycopg.Error as exc:
+            conn.rollback()
+            print(f"REFUSED by the backlog routine: {exc}")
+            return RC_REFUSED
         closed = cur.execute("SELECT action_point_id, status, solution_type FROM backlog.backlog WHERE release_version = %s ORDER BY 1",
                              (args.release,)).fetchall()
         print("closed by the release:", [tuple(c) for c in closed])

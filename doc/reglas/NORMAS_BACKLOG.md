@@ -35,14 +35,36 @@ Dominios categóricos, **todos con `CHECK` en BD** — nunca inventar un valor f
 
 - **Sesión:** confirmar al empezar `[PROYECTO]_[YYYYMMDD]_[TIPO_SESION]_[TEMA_CORTO]` (`TIPO_SESION` ∈ `WKSH` `DEV` `REVB`
   `SYNC` `ANL`).
-- **Id:** `FND-NNNN`, acuñado con `SELECT 'FND-' || LPAD(nextval('backlog.seq_backlog_fnd')::text, 4, '0')`; nunca a mano.
-- **Alta:** `INSERT` en `BACKLOG` con `status='OPEN'` (`schema_name`/`object_name` = nombres físicos reales) y un segundo `INSERT`
-  en `BACKLOG_LOGS` que justifica la creación.
+- **Id:** `FND-NNNN`, acuñado por `backlog.sp_open_ticket` (a mano, con la forma heredada `SELECT 'FND-' || LPAD(nextval('backlog.seq_backlog_fnd')::text, 4, '0')`,
+  solo mientras la Fase A no esté aplicada, ver abajo); nunca inventado.
+- **Alta:** `shared.backlog_client.open_ticket()` (función `backlog.sp_open_ticket`): crea el ticket `OPEN` con reportero canónico, sesión en el formato de la norma,
+  su primer log y su primer evento de estado en una sola llamada (`schema_name`/`object_name` = nombres físicos reales). Forma heredada: `INSERT` en `BACKLOG` con
+  `status='OPEN'` y un segundo `INSERT` en `BACKLOG_LOGS` que justifica la creación.
 - **Flujo normativo:** `OPEN` → `TODO` → `IN_PROGRESS` (↔ `BLOCKED`) → `READY_FOR_DEPLOY` → `CLOSED`; se retrocede si falla QA.
   Empezar a trabajar o comentar pasa a `IN_PROGRESS`. **Nunca sobrescribir progreso previo:** cada avance es un `INSERT` en
   `BACKLOG_LOGS`; `update_ts` lo mantiene un trigger.
 - **Cierre:** desarrollado y no desplegado → `READY_FOR_DEPLOY`. Terminado (desplegado, rechazado o duplicado) → `CLOSED` con
   `closure_ts` y `solution_type` obligatorios; en despliegue real, además `deployment_ts` y `release_version`.
+- **Movimientos (Fase A):** `shared.backlog_client.transition()` (función `backlog.sp_transition`) es la única vía para cambiar estado, campos de cierre, versión de
+  release y responsable; escribe el log (el comentario, literal) y el evento de estado (`backlog.status_event`) en una transacción. Reglas: solo los movimientos legales
+  del flujo anterior (reabrir un `CLOSED` y cualquier atajo exigen `p_force` y un motivo de 40+ caracteres, y quedan marcados); un cierre de entrega (`CODE_FIX`,
+  `DATA_FIX`, `WORKAROUND`) viene de `READY_FOR_DEPLOY` y exige etiqueta `R<aaaa>.<mm>-<TAG>` (el procedimiento fija `closure_ts` y `deployment_ts`); `WORKAROUND`
+  cita su ticket de seguimiento o abre uno `OPT`; `REJECTED` cita el ticket que lo sustituye; `DUPLICATED` cita el que se conserva y registra el enlace `DUPLICATES`;
+  `BLOCKED` nombra su bloqueo (un ticket, con su `DEPENDS_ON` garantizado, o una condición escrita) y `DEFERRED` su fecha o suceso de revisión (`backlog.wait_event`).
+  `scripts/ops/close_release.py` (dry run primero) sigue siendo la vía de los cierres de release.
+- **Identidad (FND-0330, D5):** todo actor es canónico: `human:<login>` · `agent:<modelo>` · `system:<nombre>`. Se indica de forma explícita (`actor=`) o por
+  `FONDOS_ACTOR`, y nunca se deduce del usuario del sistema operativo (una sesión de agente corre bajo el login del propietario). Los nombres históricos de
+  `BACKLOG_LOGS` no se reescriben: `backlog.actor_alias` los traduce (`python -m shared.backlog_client --check-actors` debe dar 0).
+- **Estado de aplicación de la Fase A (FND-0331):** el propietario aplica el DDL por pasos, cada uno con simulacro y acuerdo expreso. **A-1** (`30_transitions.sql`,
+  `migrate_backlog_v2.py --phase transitions`) es aditivo: crea el rol `backlog_owner` (sin superusuario ni login) como propietario de las rutinas privilegiadas
+  (`SECURITY DEFINER`, `search_path` fijado), las tablas de auditoría y el disparador de la etapa de sombra, que **registra sin bloquear** (V-00) toda escritura directa en
+  una columna gobernada. **A-2** (`31_revoke_raw_update.sql`, `--phase revoke`) retira al escritor el `INSERT` y el `UPDATE` directos, y el script **se niega** a aplicarlo
+  salvo que haya 50 transiciones consecutivas no sistémicas sin V-00 (`backlog.v_shadow_stage`). Mientras A-1 no esté aplicado el cliente detecta su ausencia
+  (`transitions_store_present()`) y se mantienen las formas heredadas de estas normas; las funciones de escritura del cliente fallan en voz alta.
+- **Excepciones de escritura directa tras A-2 (D3, enumeradas y justificadas):** **E1** `INSERT` en `BACKLOG_LOGS` (notas de progreso, solo añadir; el autor debe ser
+  canónico o tener alias); **E2** `INSERT` en `backlog_link_event` (solo añadir, con FK y `CHECK`; la Fase B lo lleva a una rutina; mismo control de autor); **E3**
+  `UPDATE` de `title`, `nature`, `schema_name`, `object_type`, `object_name`, `priority`, `session_id` y `scenario_description` (atributos descriptivos y de triaje; `update_ts`
+  registra que cambió algo pero no qué: laguna de auditoría conocida). Todo lo demás pasa por rutinas.
 - **Cierre de tickets vinculados a un defecto de auditoría (FND-0264):** un ticket enlazado a un incidente de `control.audit_incident` no se cierra hasta que el incidente esté `CERTIFIED` (re-auditoría posterior y completa) o `ACCEPTED` (residuales vigentes). `scripts/ops/close_release.py` (envoltorio de `sp_close_release`) lo aplica; ver `GOBIERNO_CONTROLES.md` §9.
 - **Captura automática** (`report_incident()`, `capture_exceptions()`, `install_excepthook()`): ante una excepción sin tratar abre
   un ticket `OPEN`/`BUG`/`HIGH`/`SYSTEM_AUTODETECT` o, si ya hay uno abierto con el mismo `(project_code, object_name)` en 24 h,

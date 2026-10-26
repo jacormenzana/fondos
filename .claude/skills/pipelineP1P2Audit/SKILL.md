@@ -45,12 +45,12 @@ description: Full-cycle diagnostic audit of a P1→P2 pipeline run — classific
 | Asset | Pattern | Location |
 |-------|---------|----------|
 | DB | `fondos.sqlite` | `db/` |
-| Backlog artifact | integrated incident-backlog | ask user if path unclear |
+| Backlog | `gestion.backlog` (PostgreSQL, `FONDOS_BACKLOG_PG_DSN`) | rules in `doc/reglas/NORMAS_BACKLOG.md` |
 
 Python: `C:\data\envs\des\python.exe`.
 If any asset is missing, report immediately before proceeding.
 
-**Pre-flight — backlog scope:** Read the live backlog artifact before starting §3. Extract all currently open P1 and P2 items. Scope every investigation step to open items only; skip confirmed findings. Known confirmed-closed: P2-03 regime gap is data-driven (Recalentamiento/Recalentamiento_Tardio n_obs=0 confirmed 2026-08-14) — only action remaining is docstring in `fund_scorer.py`. Re-flag only if a new run produces `n_obs_recalentamiento > 0`.
+**Pre-flight — backlog scope:** Read the live backlog in `gestion.backlog` before starting §3 (the HTML artifact was retired on 2026-09-21): `C:\data\envs\des\python.exe scripts/audit/backlog_links.py --all`, or `shared.backlog_client.list_tickets(open_only=True)`. Extract all currently open P1 and P2 items. Scope every investigation step to open items only; skip confirmed findings. Known confirmed-closed: P2-03 regime gap is data-driven (Recalentamiento/Recalentamiento_Tardio n_obs=0 confirmed 2026-08-14) — only action remaining is docstring in `fund_scorer.py`. Re-flag only if a new run produces `n_obs_recalentamiento > 0`.
 
 **Pre-flight — memory recall:** Before §3, read `MEMORY.md` at `C:\Users\jacor\.claude\projects\c--desarrollo-fondos\memory\MEMORY.md`. Load every entry whose description hook matches this audit's domain keywords (P1 classification, FORCE_REFRESH, cost extraction, ACI_RHP, B1–B7 benchmark, DQ issue, regime attribution, OLS/VIF, NAV staleness, fingerprint, CALC_VERSION). Treat recalled entries as prior findings — do not re-investigate what is already confirmed on record.
 
@@ -355,15 +355,15 @@ Emit in this order, short and table-driven:
 
 ---
 
-## 8. Backlog Artifact Maintenance
+## 8. Backlog Maintenance (`gestion.backlog`)
 
-**Objective:** single reconciliation pass across P1 and P2 items — keep the integrated incident-backlog artifact current as an automatic by-product of every audit.
+**Objective:** single reconciliation pass across P1 and P2 items — keep the action-point backlog current as an automatic by-product of every audit. The system of record is the PostgreSQL backlog (`gestion.backlog`, rules in `doc/reglas/NORMAS_BACKLOG.md`); the HTML artifact was retired on 2026-09-21 and must not be edited.
 
-- **Reconcile against session findings.** Advance in-progress items (status + evidence); add newly discovered items (root-cause hypothesis, owning module, severity, ISIN count); close resolved items, linking fix commit/tag.
-- **Refresh ancillary sections** — open/closed rollups, summary counts, next-action recommendations, absolute dates.
-- **Preserve structure and history.** Append or annotate in place. Never rewrite, reorder, or drop prior entries.
-
-If the artifact path is ambiguous, ask the user before writing.
+- **Check before you write.** New finding: `python scripts/audit/backlog_links.py --new "<text>"` (add to the existing ticket when one is close). Starting a ticket: `--for FND-nnnn`.
+- **Write through the single door, with an explicit actor.** Open with `shared.backlog_client.open_ticket(...)` and move with `transition(...)` (identity `agent:<model>` passed explicitly, or `FONDOS_ACTOR`; session id from `make_session_id("<topic>", "ANL")`); progress notes with `append_log(...)`; deployed work is closed with `scripts/ops/close_release.py` (dry run first). Never write `INSERT` / `UPDATE` on `backlog.backlog` by hand.
+- **Reconcile against session findings.** Advance in-progress items (status + evidence in the log); add newly discovered items (root-cause hypothesis, owning module, severity, ISIN count); close resolved items with the right solution type and a release label for delivered work. `REJECTED` and `DUPLICATED` cite the ticket that supersedes or keeps the work.
+- **Preserve history.** Logs are append-only: correct a past entry with a new log, never rewrite it. A finding outside the audit's scope goes in the log of the related existing ticket.
+- **Until the Phase A routines are applied** (`shared.backlog_client.transitions_store_present()` is False) the write functions fail loudly: use the statement forms of `NORMAS_BACKLOG.md` §2 and say so in the ticket log.
 
 ---
 

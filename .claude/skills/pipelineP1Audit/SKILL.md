@@ -31,7 +31,7 @@ description: Full diagnostic audit of a P1 classification pipeline run — log t
 Python: `C:\data\envs\des\python.exe`.
 If any asset is missing, report immediately before proceeding.
 
-**Pre-flight — backlog scope:** Read the live backlog artifact before starting §3. List currently open P1 items. Focus all log-triage, DQ-analysis, and benchmark-audit steps on open items only — skip re-investigation of findings already Confirmed with evidence on record.
+**Pre-flight — backlog scope:** Read the live backlog in `gestion.backlog` before starting §3 (the HTML artifact was retired on 2026-09-21): `C:\data\envs\des\python.exe scripts/audit/backlog_links.py --all`, or `shared.backlog_client.list_tickets(open_only=True)`. List currently open P1 items. Focus all log-triage, DQ-analysis, and benchmark-audit steps on open items only — skip re-investigation of findings already Confirmed with evidence on record.
 
 **Pre-flight — memory recall:** Before §3, read `MEMORY.md` at `C:\Users\jacor\.claude\projects\c--desarrollo-fondos\memory\MEMORY.md`. Load every entry whose description hook matches P1 domain keywords (P1 classification, FORCE_REFRESH, cost extraction, ACI_RHP, B1–B7 benchmark, DQ issue, KIID parser, INTER rule, block logic). Treat recalled entries as prior findings — do not re-investigate what is already confirmed on record.
 
@@ -238,15 +238,15 @@ Emit in this order, short and table-driven:
 
 ---
 
-## 8. Backlog Artifact Maintenance
+## 8. Backlog Maintenance (`gestion.backlog`)
 
-**Objective:** keep the shared integrated incident-backlog artifact current as an automatic by-product of every audit.
+**Objective:** keep the action-point backlog current as an automatic by-product of every audit. The system of record is the PostgreSQL backlog (`gestion.backlog`, rules in `doc/reglas/NORMAS_BACKLOG.md`); the HTML artifact was retired on 2026-09-21 and must not be edited.
 
-- **Reconcile against session findings.** Advance in-progress items (status + evidence); add newly discovered items (root-cause hypothesis, owning module, severity, ISIN count); close resolved items, linking fix commit/tag.
-- **Refresh ancillary sections** — open/closed rollups, summary counts, next-action recommendations, absolute dates.
-- **Preserve structure and history.** Append or annotate in place. Never rewrite, reorder, or drop prior entries.
-
-If the artifact path is ambiguous, ask the user before writing.
+- **Check before you write.** New finding: `python scripts/audit/backlog_links.py --new "<text>"` (add to the existing ticket when one is close). Starting a ticket: `--for FND-nnnn`.
+- **Write through the single door, with an explicit actor.** Open with `shared.backlog_client.open_ticket(...)` and move with `transition(...)` (identity `agent:<model>` passed explicitly, or `FONDOS_ACTOR`; session id from `make_session_id("<topic>", "ANL")`); progress notes with `append_log(...)`; deployed work is closed with `scripts/ops/close_release.py` (dry run first). Never write `INSERT` / `UPDATE` on `backlog.backlog` by hand.
+- **Reconcile against session findings.** Advance in-progress items (status + evidence in the log); add newly discovered items (root-cause hypothesis, owning module, severity, ISIN count); close resolved items with the right solution type and a release label for delivered work. `REJECTED` and `DUPLICATED` cite the ticket that supersedes or keeps the work.
+- **Preserve history.** Logs are append-only: correct a past entry with a new log, never rewrite it. A finding outside the audit's scope goes in the log of the related existing ticket.
+- **Until the Phase A routines are applied** (`shared.backlog_client.transitions_store_present()` is False) the write functions fail loudly: use the statement forms of `NORMAS_BACKLOG.md` §2 and say so in the ticket log.
 
 ---
 

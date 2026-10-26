@@ -190,32 +190,40 @@ def report_incident(
                     return apid
                 suggestion = policy if policy and policy["tier"] == "MEDIUM" else None
 
-                cur.execute(
-                    "SELECT 'FND-' || LPAD(nextval('backlog.seq_backlog_fnd')::text, 4, '0')"
-                )
-                apid = cur.fetchone()[0]
-                cur.execute(
-                    """
-                    INSERT INTO backlog.BACKLOG
-                        (action_point_id, title, project_code, nature, schema_name, object_type,
-                         object_name, status, priority, reporter, scenario_description)
-                    VALUES (%s, %s, %s, 'BUG', %s, %s, %s, 'OPEN', 'HIGH', 'SYSTEM_AUTODETECT', %s)
-                    """,
-                    (
-                        apid,
-                        title or f"[auto] {object_name}: {scenario_description[:100]}",
-                        project_code, schema_name, object_type, object_name, scenario_description,
-                    ),
-                )
-                cur.execute(
-                    """
-                    INSERT INTO backlog.BACKLOG_LOGS (action_point_id, username, comment)
-                    VALUES (%s, 'SYSTEM_AUTODETECT', %s)
-                    """,
-                    (apid, f"Auto-opened: {scenario_description}"
-                           + (f"\n\nPossibly related (NOT merged): {suggestion['ticket']} -- {suggestion['reason']}"
-                              if suggestion else "")),
-                )
+                first_log = (f"Auto-opened: {scenario_description}"
+                             + (f"\n\nPossibly related (NOT merged): {suggestion['ticket']} -- {suggestion['reason']}"
+                                if suggestion else ""))
+                new_title = title or f"[auto] {object_name}: {scenario_description[:100]}"
+                if _transitions_present(cur):
+                    # Backlog v2 Phase A (FND-0331): ONE routine opens the ticket, its first log and its first status event, with a canonical reporter.
+                    cur.execute(
+                        "SELECT backlog.sp_open_ticket(p_title => %s, p_nature => 'BUG', p_object_type => %s, p_object_name => %s, p_priority => 'HIGH', "
+                        "p_actor => %s, p_session_id => %s, p_description => %s, p_first_log => %s, p_schema_name => %s, p_project_code => %s)",
+                        (new_title, object_type, object_name, _AUTODETECT_ACTOR, make_session_id("AUTODETECT", "REVB"),
+                         scenario_description, first_log, schema_name, project_code),
+                    )
+                    apid = cur.fetchone()[0]
+                else:                                   # the A-1 routines are not applied yet (the owner applies the DDL): the legacy statements
+                    cur.execute(
+                        "SELECT 'FND-' || LPAD(nextval('backlog.seq_backlog_fnd')::text, 4, '0')"
+                    )
+                    apid = cur.fetchone()[0]
+                    cur.execute(
+                        """
+                        INSERT INTO backlog.BACKLOG
+                            (action_point_id, title, project_code, nature, schema_name, object_type,
+                             object_name, status, priority, reporter, scenario_description)
+                        VALUES (%s, %s, %s, 'BUG', %s, %s, %s, 'OPEN', 'HIGH', 'SYSTEM_AUTODETECT', %s)
+                        """,
+                        (apid, new_title, project_code, schema_name, object_type, object_name, scenario_description),
+                    )
+                    cur.execute(
+                        """
+                        INSERT INTO backlog.BACKLOG_LOGS (action_point_id, username, comment)
+                        VALUES (%s, 'SYSTEM_AUTODETECT', %s)
+                        """,
+                        (apid, first_log),
+                    )
                 conn.commit()
                 logger.warning("[BACKLOG-AUTOLOG] New incident opened: %s (%s)", apid, object_name)
                 return apid
@@ -555,6 +563,125 @@ def history_fingerprint(*, max_log_id: Optional[int] = None, max_event_id: Optio
             (max_event_id,)).fetchone()
     return {"max_log_id": int(max_log_id), "logs": int(n_logs), "logs_md5": logs_md5,
             "max_event_id": int(max_event_id), "events": int(n_events), "events_md5": events_md5}
+
+
+# --- Transition kernel (db/pg_backlog/30_transitions.sql; FND-0331, Backlog v2 Phase A) -------------------------------------------------------
+# Tickets are opened and moved through ONE door: sp_open_ticket and sp_transition. The SQL of those calls lives here and only here
+# (tests/test_backlog_single_door.py enforces it). Fail-loud like the rest of the read/write API; only report_incident() degrades quietly.
+# The identity of the writer is explicit (D5): pass `actor=` (human:<login> | agent:<model> | system:<name>) or set FONDOS_ACTOR; nothing is guessed.
+
+_AUTODETECT_ACTOR = "system:autodetect"
+_SIG_OPEN = "backlog.sp_open_ticket(text,text,text,text,text,text,text,text,text,text,text)"
+_SIG_TRANSITION = "backlog.sp_transition(text,text,text,text,text,text,text,text,text,date,text,text,text,boolean)"
+SESSION_TYPES = ("WKSH", "DEV", "REVB", "SYNC", "ANL")
+
+
+def make_session_id(topic: str, kind: str = "DEV", *, project: str = "FND", today: Optional[datetime] = None) -> str:
+    """`FND_20261026_DEV_TOPIC`: the session id of the norm (NORMAS_BACKLOG section 2). The topic is upper-cased and reduced to [A-Z0-9_-]."""
+    if kind not in SESSION_TYPES:
+        raise ValueError(f"session type must be one of {SESSION_TYPES}, got {kind!r}")
+    clean = re.sub(r"[^A-Za-z0-9_-]+", "_", str(topic or "").strip()).strip("_").upper()
+    if not clean:
+        raise ValueError("a session topic is required")
+    return f"{project}_{(today or datetime.now(timezone.utc)):%Y%m%d}_{kind}_{clean}"
+
+
+def resolve_actor(actor: Optional[str] = None, environ: Optional[dict] = None) -> str:
+    """The canonical identity to write with: the explicit `actor` when given (validated), else FONDOS_ACTOR (validated). Raises ActorUnknown."""
+    if actor is not None:
+        value = str(actor).strip()
+        if not ACTOR_PATTERN.match(value):
+            raise ActorUnknown(f"actor {value!r} is not canonical (expected human:<login> | agent:<model> | system:<name>)")
+        return value
+    return current_actor(environ)
+
+
+def _transitions_present(cur) -> bool:
+    """True when the A-1 routines exist. Takes a cursor (report_incident runs on one) so it adds no connection."""
+    cur.execute("SELECT to_regprocedure(%s) IS NOT NULL AND to_regprocedure(%s) IS NOT NULL", (_SIG_OPEN, _SIG_TRANSITION))
+    return bool(cur.fetchone()[0])
+
+
+def transitions_store_present(*, conn=None) -> bool:
+    """True when db/pg_backlog/30_transitions.sql (step A-1) has been applied. Lets callers keep the legacy path until the owner applies it."""
+    with _session(conn) as c:
+        with c.cursor() as cur:
+            return _transitions_present(cur)
+
+
+def open_ticket(*, title: str, nature: str, object_type: str, priority: str, session_id: str, description: str, first_log: str,
+                actor: Optional[str] = None, object_name: Optional[str] = None, schema_name: Optional[str] = None,
+                project_code: str = "FND", conn=None) -> str:
+    """Open a ticket through backlog.sp_open_ticket: id from the sequence, status OPEN, reporter = the canonical actor, the first log and the first
+    status event, in one call. Returns the id. Raises on any refusal (bad actor, bad session id, a domain CHECK) and when A-1 is not applied."""
+    who = resolve_actor(actor)
+    with _session(conn) as c:
+        (apid,) = c.execute(
+            "SELECT backlog.sp_open_ticket(p_title => %s, p_nature => %s, p_object_type => %s, p_object_name => %s, p_priority => %s, "
+            "p_actor => %s, p_session_id => %s, p_description => %s, p_first_log => %s, p_schema_name => %s, p_project_code => %s)",
+            (title, nature, object_type, object_name, priority, who, session_id, description, first_log, schema_name, project_code)).fetchone()
+    return apid
+
+
+def transition(ap_id: str, to_status: str, *, session_id: str, comment: str, actor: Optional[str] = None,
+               solution_type: Optional[str] = None, release_version: Optional[str] = None, blocker: Optional[str] = None,
+               condition: Optional[str] = None, revisit_by=None, revisit_on_event: Optional[str] = None,
+               followup: Optional[str] = None, assignee: Optional[str] = None, force: bool = False, conn=None) -> int:
+    """Move a ticket through backlog.sp_transition (legality, closure rules, waiting states, log and status event in one transaction).
+    `comment` becomes the progress log verbatim. Returns the status_event id. Raises on any refusal; never swallows."""
+    who = resolve_actor(actor)
+    with _session(conn) as c:
+        (event_id,) = c.execute(
+            "SELECT backlog.sp_transition(p_ap_id => %s, p_to => %s, p_actor => %s, p_session_id => %s, p_comment => %s, p_solution_type => %s, "
+            "p_release_version => %s, p_blocker => %s, p_condition => %s, p_revisit_by => %s, p_revisit_on_event => %s, p_followup => %s, "
+            "p_assignee => %s, p_force => %s)",
+            (ap_id, to_status, who, session_id, comment, solution_type, release_version, blocker, condition, revisit_by, revisit_on_event,
+             followup, assignee, bool(force))).fetchone()
+    return int(event_id)
+
+
+def shadow_progress(*, conn=None) -> dict:
+    """{'last_v00_ts', 'v00_total', 'live_non_system_since_last_v00'}: how far the shadow stage is from the A-2 gate (50 non-system transitions
+    since the last direct write). Raises when A-1 is not applied."""
+    with _session(conn) as c:
+        return _rows(c, "SELECT last_v00_ts, v00_total, live_non_system_since_last_v00 FROM backlog.v_shadow_stage")[0]
+
+
+def phase_a_catalog(*, conn=None) -> dict:
+    """Read-only facts the Phase A acceptance check needs (FND-0331): the owner role, the routines and their hardening, who owns the audit tables, what
+    backlog_writer may do, the guard triggers, and the ticket / backfill counts. Never raises on a store that is not applied: absent things are just absent."""
+    with _session(conn) as c:
+        role = c.execute("SELECT rolsuper, rolcanlogin FROM pg_roles WHERE rolname = 'backlog_owner'").fetchone()
+        routines = _rows(c, "SELECT p.proname AS name, p.prosecdef AS secdef, pg_get_userbyid(p.proowner) AS owner, p.proconfig AS config FROM pg_proc p "
+                            "WHERE p.pronamespace = 'backlog'::regnamespace AND p.proname IN ('sp_open_ticket', 'sp_transition', 'sp_close_release', "
+                            "'trg_governed_writes', 'trg_actor_known') ORDER BY 1")
+        tables = {r[0]: r[1] for r in c.execute("SELECT c.relname, pg_get_userbyid(c.relowner) FROM pg_class c WHERE c.relnamespace = 'backlog'::regnamespace "
+                                                "AND c.relname IN ('status_event', 'wait_event', 'raw_update_event') ORDER BY 1").fetchall()}
+        has_writer = c.execute("SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'backlog_writer')").fetchone()[0]
+        writer = None
+        if has_writer:
+            def priv(sql):
+                return bool(c.execute(sql).fetchone()[0])
+            writer = {
+                "can_update_status": priv("SELECT has_column_privilege('backlog_writer', 'backlog.backlog', 'status', 'UPDATE')"),
+                "can_update_release_version": priv("SELECT has_column_privilege('backlog_writer', 'backlog.backlog', 'release_version', 'UPDATE')"),
+                "can_update_assignee": priv("SELECT has_column_privilege('backlog_writer', 'backlog.backlog', 'assignee', 'UPDATE')"),
+                "can_update_title": priv("SELECT has_column_privilege('backlog_writer', 'backlog.backlog', 'title', 'UPDATE')"),
+                "can_insert_ticket": priv("SELECT has_table_privilege('backlog_writer', 'backlog.backlog', 'INSERT')"),
+                "can_insert_log": priv("SELECT has_table_privilege('backlog_writer', 'backlog.backlog_logs', 'INSERT')"),
+                "can_insert_link_event": priv("SELECT has_table_privilege('backlog_writer', 'backlog.backlog_link_event', 'INSERT')"),
+                "can_write_audit_tables": priv("SELECT COALESCE(bool_or(CASE WHEN to_regclass('backlog.' || t) IS NULL THEN false "
+                                               "ELSE has_table_privilege('backlog_writer', 'backlog.' || t, 'INSERT') END), false) "
+                                               "FROM unnest(ARRAY['status_event', 'wait_event', 'raw_update_event']) AS t"),
+                "can_execute_transition": priv("SELECT has_function_privilege('backlog_writer', to_regprocedure(%s)::oid, 'EXECUTE')" % ("'" + _SIG_TRANSITION + "'")),
+            }
+        triggers = sorted(r[0] for r in c.execute("SELECT t.tgname FROM pg_trigger t WHERE NOT t.tgisinternal AND t.tgrelid IN "
+                                                  "('backlog.backlog'::regclass, 'backlog.backlog_logs'::regclass, 'backlog.backlog_link_event'::regclass)").fetchall())
+        tickets, max_id = c.execute("SELECT count(*), max(action_point_id) FROM backlog.BACKLOG").fetchone()
+        has_events = c.execute("SELECT to_regclass('backlog.status_event') IS NOT NULL").fetchone()[0]
+        backfill = c.execute("SELECT count(*) FROM backlog.status_event WHERE origin = 'BACKFILL'").fetchone()[0] if has_events else None
+    return {"owner_role": None if role is None else {"superuser": role[0], "can_login": role[1]}, "routines": routines, "audit_table_owners": tables,
+            "writer": writer, "triggers": triggers, "tickets": int(tickets), "max_ticket_id": max_id, "backfill_events": backfill}
 
 
 def check_actors(verbose: bool = True) -> bool:

@@ -25,7 +25,7 @@ condition is the `SPEC` table at the top of the script (one line per ticket).
    - FND-0229: `pytest proyecto2/tests/pipeline -k ols` and a P2 RUN_SUMMARY with `ols_funds > 0` after the bump (the probe).
    - FND-0201: `pytest proyecto2/tests/readers` and the 7 STALE_FROZEN funds skipped in the next P2 RUN_SUMMARY.
    - FND-0225: `pytest proyecto3/tests` (scorer) and the probe (no code reference to the retired betas).
-3. Close it with the evidence in its log: `status = CLOSED`, `closure_ts`, `solution_type = CODE_FIX`, and `deployment_ts` + `release_version` (AGENTS.md section 4); one `BACKLOG_LOGS` row per ticket. One ticket per transaction.
+3. Close it with the evidence in its log, through `python scripts/ops/close_release.py --release R<yyyy>.<mm>-<TAG> --tickets FND-nnnn --log "<what was deployed, where verified>" --actor agent:<model>` (dry run first, then `--apply`): it sets `status = CLOSED`, `closure_ts`, `solution_type = CODE_FIX`, `deployment_ts` and `release_version`, and writes one `BACKLOG_LOGS` row per ticket (NORMAS_BACKLOG.md section 2; no hand-written `UPDATE`). One ticket per transaction.
 4. **BLOCKED** tickets get no status change; they get the named precondition in a log row, and the probe is re-run after the owner action.
 5. After the owner's recalculation batch (flags 0240 / 0241 / 0242 / 0235 on): re-run the probe and the post-recompute statistical audit; close those four only with a clean audit.
 6. `backlog.vw_backlog_kpis` shows the burn-down; the target is the number of tickets whose probes pass, not a number fixed in advance.

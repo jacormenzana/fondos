@@ -22,6 +22,8 @@ GROUP BY project_code, nature, priority, status;
 -- preview exactly which tickets a release-version tag would close before it mutates anything —
 -- closes the "accidental bulk release closure" risk flagged in code review (two unrelated
 -- tickets sharing a release tag would otherwise be closed together with no way to see it coming).
+-- BEGIN backlog_sp_close_release
+-- (markers added with Backlog v2 Phase A: the rollback of 30_transitions.sql restores exactly this legacy procedure from this block)
 DROP PROCEDURE IF EXISTS backlog.sp_close_release(TEXT, TEXT);
 
 CREATE OR REPLACE PROCEDURE backlog.sp_close_release(
@@ -80,3 +82,4 @@ BEGIN
     RAISE NOTICE 'sp_close_release(%): % ticket(s) closed', p_release_version, n;
 END;
 $$;
+-- END backlog_sp_close_release

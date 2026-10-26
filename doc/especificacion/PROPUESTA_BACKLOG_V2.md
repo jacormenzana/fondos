@@ -118,29 +118,41 @@ Out of scope by owner decision: a `ticket_object` registry and switch-flip flags
 
 **FND-0330 — `backlog.actor_alias(raw, canonical, kind)`.** Maps every raw author spelling to `human:<login>`, `agent:<model>` or `system:<name>`. Logs are append-only, so history is not rewritten: read views and the backfill use the canonical form. `backlog_client.current_actor()` returns the canonical form for new writes. Acceptance: every distinct author string in `backlog_logs` has an alias row, and a test fails when a new spelling has none. Prerequisite of the Phase A backfill.
 
-**FND-0331 — new objects** (`db/pg_backlog/30_transitions.sql`):
+**FND-0331 — owner decisions of 2026-10-26, now part of the design.** D1: the privileged routines belong to a new **non-superuser** role `backlog_owner` (no login), and every routine pins `search_path`. D2: Phase A ships in two owner-approved steps, **A-1** (additive) and **A-2** (revocation); A-2 is conditioned on 50 consecutive non-system transitions without a direct update and the migration script refuses to run it otherwise. D3: writes on state, closure, release, identity and audit go through controlled routines; the direct-write exceptions are enumerated and justified before the revocation (below). D4: the three stale audit skills are rewritten in the same change. D5: the actor is explicit (`actor=`), with `FONDOS_ACTOR` as a validated alternative and no guessing. D6: `sp_open_ticket` and `sp_transition` are functions.
+
+**FND-0331 — objects of step A-1** (`db/pg_backlog/30_transitions.sql`, rollback `down/30_transitions_down.sql`):
 
 | Object | Content |
 |---|---|
-| `backlog.status_event` | append-only: `event_id, ap_id, from_status, to_status, actor, session_id, reason, forced, origin ∈ {LIVE, BACKFILL}, event_ts` |
-| `backlog.wait_event` | append-only record behind `BLOCKED` and `DEFERRED`: `ap_id, kind, blocker_ref` (a ticket id) or `condition_text`, `revisit_by` or `revisit_on_event`, `revisit_basis ∈ {DECLARED, DEFAULT_90D}`, `actor, event_ts` |
-| `backlog.sp_open_ticket(...)` | id from `seq_backlog_fnd`, mandatory session id in the norm's format, first log, returns the id |
-| `backlog.sp_transition(p_ap_id, p_to, p_actor, p_session_id, p_comment, p_solution_type, p_release_version, p_blocker, p_revisit_by, p_followup, p_force)` | one transaction: legal-transition check, field rules, status event, log row |
+| role `backlog_owner` | `NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE`; owns the routines and the three audit tables below; holds only the table privileges they need. Created inside the A-1 block, so it is part of the owner's A-1 approval |
+| `backlog.status_event` | append-only: `event_id, action_point_id, from_status, to_status, actor, session_id, reason, forced, origin ∈ {LIVE, BACKFILL}, detail (jsonb: the closure fields before a reopening, the follow-up, the blocker), event_ts` (clock time, so events of one transaction stay ordered) |
+| `backlog.wait_event` | append-only record behind `BLOCKED` and `DEFERRED`: `kind, blocker_ref` (a ticket) or `condition_text`, `revisit_by` or `revisit_on_event`, `revisit_basis ∈ {DECLARED, DEFAULT_90D}`, `actor, event_ts`, with `CHECK`s that make the blocker or the revisit mandatory |
+| `backlog.raw_update_event` | the V-00 record: a direct write to a governed column (op, old and new values, database user, application) — written only by the shadow trigger |
+| `backlog.sp_open_ticket(...)` | **function**; id from `seq_backlog_fnd`, canonical reporter, session id in the norm's format, first log and first status event; returns the id |
+| `backlog.sp_transition(p_ap_id, p_to, p_actor, p_session_id, p_comment, p_solution_type, p_release_version, p_blocker, p_condition, p_revisit_by, p_revisit_on_event, p_followup, p_assignee, p_force)` | **function**; one transaction: legal-transition check, closure rules, waiting states, ticket update, log row (the comment, verbatim), status event; returns the event id |
+| `backlog.sp_close_release` | the existing procedure **rebuilt on `sp_transition`**, same name, signature, dry-run behaviour and log text; the user name is resolved through `actor_alias` |
+| `backlog.v_shadow_stage` | non-system status changes recorded after the last V-00: the gate of A-2 |
+| trigger `governed_writes` | records (never blocks) a direct `INSERT` or a change of `status`, `closure_ts`, `solution_type`, `deployment_ts`, `release_version`, `reporter`, `assignee`, `action_point_id`, `project_code` or `creation_ts` made outside the routines |
 
 **`sp_transition` rules.**
 
 - Legal moves: the flow of `NORMAS_BACKLOG.md` §2 (`OPEN → TODO → IN_PROGRESS ⇄ BLOCKED → READY_FOR_DEPLOY → CLOSED`, back one step when QA fails, `DEFERRED` from any pending state). Reopening a `CLOSED` ticket needs `p_force` and a reason, and writes a reopen event.
-- Closing: `closure_ts` and `solution_type` required; `CODE_FIX`/`DATA_FIX` also `deployment_ts` and a `release_version` of the form `R<yyyy>.<mm>-<TAG>`; `REJECTED`/`DUPLICATED` must cite the ticket that supersedes them, and `DUPLICATED` also needs a `DUPLICATES` link (created in the same call when absent); `WORKAROUND` needs `p_followup` or opens an `OPT` ticket.
+- Closing: `solution_type` required, and the routine sets `closure_ts`. A **delivery closure** (`CODE_FIX`, `DATA_FIX`, `WORKAROUND`) comes from `READY_FOR_DEPLOY`, needs a release label of the form `R<yyyy>.<mm>-<TAG>` and gets `deployment_ts`; `WORKAROUND` needs `p_followup` or opens an `OPT` ticket linked `SPLIT_FROM`. `REJECTED` cites the ticket that supersedes it (`p_followup`) and `DUPLICATED` the ticket that is kept, with its `DUPLICATES` link created in the same call when absent. Any shortcut (a delivery closure from another status, `REJECTED` with no ticket, an illegal move, reopening) needs `p_force` and a reason of 40+ characters, and is recorded as forced.
+- Same-status calls are allowed only to assign a responsible (`p_assignee`) or to attach the release label of a `READY_FOR_DEPLOY` ticket; the closure fields of a closed ticket are never touched by them.
 - `BLOCKED` requires `p_blocker` (a ticket id, which also guarantees a `DEPENDS_ON` link, or a named condition); `DEFERRED` requires `revisit_by` or `revisit_on_event`.
 - The gate of Phase B is applied here.
 
 **Backfill.** One `BACKFILL` event per existing ticket from its current state (`event_ts` = `closure_ts` or `update_ts`). Lead time keeps using the recorded `creation_ts`/`closure_ts`; cycle time and RFD-wait exclude `BACKFILL` events, so no metric is computed on invented timestamps.
 
-**Client.** `backlog_client.open_ticket()`, `transition()`, `current_actor()`; `report_incident()` opens tickets through `sp_open_ticket`. `sp_close_release` and `close_release.py` are rebuilt on `sp_transition`; the audit-incident gate of FND-0264 stays in `close_release.py`.
+**Client.** `backlog_client.open_ticket()`, `transition()`, `resolve_actor()` (explicit actor first, `FONDOS_ACTOR` second, never the OS user), `make_session_id()`, `shadow_progress()`; `report_incident()` opens tickets through `sp_open_ticket` (reporter `system:autodetect`). `sp_close_release` and `close_release.py` are rebuilt on `sp_transition`; the audit-incident gate of FND-0264 stays in `close_release.py`.
 
-**Shadow stage, then revoke.** The procedures set `SET LOCAL backlog.via_proc = 'on'`. A `BEFORE UPDATE OF status, closure_ts, solution_type, deployment_ts, release_version` trigger records any such update made without it as `V-00` and does not block it. After **50 consecutive** procedure transitions by non-`system:` actors with zero `V-00`, the owner revokes those column grants from `backlog_writer` (the procedures run `SECURITY DEFINER`). The count has no time floor: the single-door test already proves that no repository code writes raw SQL, so the remaining raw path is ad hoc session SQL, which the count covers.
+**Shadow stage (A-1), then revoke (A-2).** Each routine carries a function-level `SET backlog.via_proc = 'on'`, which Postgres restores when the routine returns (a first draft used a transaction-wide setting and a hermetic test showed it let a raw write slip through after any routine call in the same transaction). The `governed_writes` trigger records a write made without it as V-00 and never blocks it. The setting is not a security boundary (any session can set it): the shadow stage measures habits and accidents, and the enforcement is the revocation. Step A-2 (`31_revoke_raw_update.sql`) removes `INSERT` and `UPDATE` on `backlog.BACKLOG` from `backlog_writer`, grants back only the descriptive columns, and adds the author check on logs and link events; `migrate_backlog_v2.py --phase revoke --apply` **refuses** unless `v_shadow_stage` shows **50** non-system status changes since the last V-00 (no time floor).
 
-**One change, not two.** Phase A ships as one branch: client API, `close_release.py`, `report_incident`, `AGENTS.md`, `NORMAS_BACKLOG.md` §2 and every `.claude/skills/*` entry that writes tickets. The owner applies the additive DDL first and the branch merges the same day; otherwise agents keep teaching the raw path and the shadow stage records only noise.
+**Direct-write exceptions after A-2 (D3, enumerated before the revocation).** E1: `INSERT` into `BACKLOG_LOGS`, append-only notes, the author must be canonical or have an alias. E2: `INSERT` into `backlog_link_event`, append-only with `FK` and `CHECK`, same author rule; Phase B moves it behind a routine. E3: `UPDATE` of `title`, `nature`, `schema_name`, `object_type`, `object_name`, `priority`, `session_id` and `scenario_description`, which are descriptive and triage attributes; `update_ts` records that something changed but not what, a known audit gap (risk 10) and a Phase D candidate. Everything else is closed to the writer.
+
+**Identity limit, stated plainly.** The actor is a parameter: every session holding the shared DSN can claim any canonical identity. The database refuses anything that is not canonical and records who claimed what, but it cannot authenticate which agent is behind the DSN.
+
+**One change, not two.** Phase A ships as one change: client API, `close_release.py`, `report_incident`, `AGENTS.md`, `NORMAS_BACKLOG.md` §2, `BACKLOG_RFD_VERIFICATION_MATRIX.md` and the three audit skills (`pipelineP1Audit`, `pipelineP2Audit`, `pipelineP1P2Audit`, whose §8 and pre-flight line still pointed at the HTML artifact retired on 2026-09-21), so agents do not keep teaching the raw path. **The working tree is what the pipelines run**, so the client detects whether A-1 exists (`transitions_store_present()`): until the owner applies it, `report_incident` and `close_release.py` keep their previous statements and the new write functions fail loudly; the legacy statements are the only allowlisted raw SQL of `tests/test_backlog_single_door.py` and are removed once A-2 is accepted.
 
 ### 6.3 Phase B — relationship semantics (FND-0333)
 
@@ -271,7 +283,8 @@ Sessions never apply DDL or create credentials. Each phase's ticket lists the ac
 | O-5 | Confirm or set branch protection on `master` requiring `backlog-gate` (this session could not read the repository settings) | Phase C |
 | O-6 | Optional: a read-only fine-grained GitHub token for the protection check, held outside the repository | Phase C |
 | O-7 | Run the step-0 manifest (dry run, then `--apply`) | after Phase B |
-| O-8 | Phase A cutover: apply the additive DDL first, merge the same day | Phase A |
+| O-8 | Phase A step A-1: review the commit, dry run `migrate_backlog_v2.py --phase transitions`, apply (it creates the role `backlog_owner`, so the approval covers it), run `scripts/audit/backlog_phase_a_acceptance.py --baseline` before and `--verify a1` after | Phase A |
+| O-9 | Phase A step A-2: only when the A-2 dry run shows the shadow stage open (50 non-system transitions since the last V-00) and the enumerated exceptions E1–E3 are accepted; then `--phase revoke --apply` and `--verify a2` | Phase A |
 
 ## 9. Rollout and rollback
 
@@ -300,7 +313,7 @@ Order: FND-0330 → Phase A (shadow stage, then revoke) → Phase B (with step 0
 | Phase / ticket | Done when |
 |---|---|
 | FND-0330 | every author string in `backlog_logs` has an alias; a test fails on a new one |
-| FND-0331 | the single-door test passes; `status_event` backfilled (origin `BACKFILL`); `close_release.py` dry run equals today's result; shadow stage reports `V-00`; the revoke follows 50 consecutive non-system transitions with zero `V-00`; the documents of §13 are changed in the same release |
+| FND-0331 | **A-1 accepted** when `backlog_phase_a_acceptance.py --verify a1` gives `ACCEPTED`: migration exit code 0; `backlog_owner` exists, is not a superuser and cannot log in; the routines are `SECURITY DEFINER`, owned by `backlog_owner`, with a pinned `search_path`; the audit tables belong to `backlog_owner`; every ticket of the baseline has a `BACKFILL` event; the history up to the baseline ids is identical; the writer lost nothing and cannot write the audit tables; the shadow trigger exists. **A-2 accepted** when `--verify a2` gives `ACCEPTED`: exit code 0 (and the script refused before 50 transitions); the writer cannot update the governed columns, insert tickets or write the audit tables, and keeps exactly E1–E3 and the routines; the author-check triggers exist; history identical. **Phase A complete** only when, besides both steps: the single-door test passes; the `close_release.py` dry run on a live `READY_FOR_DEPLOY` ticket equals today's result; the documents and the three skills of §6.2 are changed in the same release and the AGENTS.md sentinel and split checks are clean; every test of the phase is green (hermetic and pure); evidence of each step is in the FND-0331 log |
 | FND-0333 | the gate replay refuses exactly the delivery closures with an open prerequisite on that day; the flag replay has median ≤ 2 per closure; step 0 dry run lists every row of §6.6 and changes nothing reversible |
 | FND-0332 | `ap_status_read_ts` populated for new snapshots; `V-STALE-READ` and the closure-reaction check appear in the cycle report |
 | FND-0334 | hooks install and fail open; the attestation verifies in CI with the owner's key; `AUDIT` runs 14 days; the calibrator and retirement are covered by replay tests; `scripts/audit/backlog_gate_replay.py` reproduces Appendix C |
@@ -383,6 +396,13 @@ Where a later row disagrees with an earlier one, the later row wins.
 | 6 | Historical data debt in step 0 | Accepted, append-only; corrected facts: FND-0029 does name its blocker |
 | 7 | `V-GATE-UNPROTECTED` | Accepted through the GitHub API only; local git configuration cannot see remote protection; `V-GATE-UNVERIFIED` added |
 | 7 | FND-0041 → `TODO`; uniform 90-day revisit for six `DEFERRED` | Accepted; the 90-day rows are marked `DEFAULT_90D` |
+| 8 | D1: a non-superuser `backlog_owner` owns the privileged routines; `search_path` pinned | Accepted. Found in the live catalogue: every backlog object is owned by `fondos_owner`, a superuser, and `sp_close_release` ran as its caller, so the revocation would have broken `close_release.py` unless it is rebuilt as a definer routine first |
+| 8 | D2: A-1 (additive) apart from A-2 (revocation), A-2 after 50 non-system transitions without a direct update | Accepted; the migration script itself refuses A-2 until `v_shadow_stage` shows 50 |
+| 8 | D3: writes on state, closure, release, identity and audit through controlled routines; exceptions enumerated and justified before the revocation | Accepted: E1 logs, E2 link events, E3 descriptive columns (§6.2) |
+| 8 | D4: update the three obsolete audit skills in the same change | Accepted; their §8 and pre-flight line pointed at the HTML artifact retired on 2026-09-21 |
+| 8 | D5: explicit actor, `FONDOS_ACTOR` as a validated alternative | Accepted; never guessed from the OS user |
+| 8 | D6: `sp_open_ticket` and `sp_transition` as functions | Accepted |
+| 8 | Found while building A-1 | The first draft marked the routines' writes with a transaction-wide setting, so a raw write after any routine call in the same transaction escaped the shadow stage; fixed with a function-level `SET`, with a regression test. Event timestamps use the clock, not the transaction start, so events of one transaction stay ordered |
 
 **Errata of the analysis, recorded for the reader:** the link-event total is 265 (an earlier draft said 277); the number of past-gate delivery closures is 1, not 6; FND-0203 is not stale (its blocker is still open); FND-0029 does name its blocker; the agent author spellings are 13 strings, not 12.
 

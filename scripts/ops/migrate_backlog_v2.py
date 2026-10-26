@@ -9,6 +9,10 @@ migrate_backlog_v2.py -- apply (or roll back) ONE phase of the Backlog v2 store 
     python scripts/ops/migrate_backlog_v2.py --phase alias --down              # DRY RUN of the staged rollback
     python scripts/ops/migrate_backlog_v2.py --phase alias --down --apply      # rollback in ONE transaction
 
+Phases: `alias` (FND-0330), `transitions` (FND-0331 step A-1, additive: creates the non-superuser role backlog_owner, the audit tables, sp_open_ticket,
+sp_transition, the rebuilt sp_close_release and the shadow-stage trigger; revokes nothing) and `revoke` (step A-2: removes the direct INSERT/UPDATE
+privileges of backlog_writer and adds the author check; --apply is REFUSED unless the shadow stage shows 50 non-system transitions since the last V-00).
+
 One phase per transaction (Postgres DDL is transactional: a failure rolls back whole). The DDL is NOT duplicated here: it is the block
 between `-- BEGIN <name>` and `-- END <name>` in the phase's file under db/pg_backlog/ (single source of truth, P#11); the rollback is
 the block of its file under db/pg_backlog/down/. Every phase is idempotent. Target, DSN handling and exit codes are those of
@@ -41,13 +45,51 @@ PHASES: dict = {
         "views": ("v_backlog_log_actor", "v_actor_unmapped"),
         "requires": ("backlog", "backlog_logs", "backlog_link_event"),
     },
+    # Phase A step A-1 (additive). Its rollback first restores the LEGACY sp_close_release from 10_kpis_and_release.sql, then runs its own block.
+    "transitions": {
+        "up": ("30_transitions.sql", "backlog_transitions"),
+        "down": [("10_kpis_and_release.sql", "backlog_sp_close_release"), ("down/30_transitions_down.sql", "backlog_transitions_down")],
+        "tables": ("status_event", "wait_event", "raw_update_event"),
+        "views": ("v_shadow_stage",),
+        "routines": ("sp_open_ticket", "sp_transition", "fn_actor_ok", "fn_transition_legal", "trg_governed_writes"),
+        "requires": ("backlog", "backlog_logs", "backlog_link_event", "actor_alias", "v_backlog_link"),
+    },
+    # Phase A step A-2 (revoke). REFUSED unless the shadow stage shows SHADOW_REQUIRED non-system status changes since the last V-00.
+    "revoke": {
+        "up": ("31_revoke_raw_update.sql", "backlog_revoke_raw_update"),
+        "down": ("down/31_revoke_raw_update_down.sql", "backlog_revoke_raw_update_down"),
+        "tables": (),
+        "views": (),
+        "routines": ("trg_actor_known",),
+        "requires": ("status_event", "wait_event", "raw_update_event", "v_shadow_stage"),
+        "gate": "shadow",
+    },
 }
+SHADOW_REQUIRED = 50          # owner decision D2 (2026-10-26): 50 consecutive non-system transitions with no direct update
+
+
+def _blocks(entry) -> list:
+    """A phase entry is one (file, block) pair or a list of them; always a list."""
+    return [entry] if isinstance(entry[0], str) else list(entry)
 
 
 def ddl_block(phase: str, down: bool = False) -> str:
-    """The DDL (or rollback) block of `phase` exactly as written in its file, markers included."""
-    fname, name = PHASES[phase]["down" if down else "up"]
-    return base.ddl_block(DDL_DIR / fname, name)
+    """The DDL (or rollback) block(s) of `phase` exactly as written in their files, markers included, in execution order."""
+    return "\n".join(base.ddl_block(DDL_DIR / fname, name) for fname, name in _blocks(PHASES[phase]["down" if down else "up"]))
+
+
+def shadow_stage(conn) -> dict:
+    """{'last_v00_ts', 'v00_total', 'live_non_system_since_last_v00'} from backlog.v_shadow_stage (A-1 must be applied)."""
+    row = conn.execute("SELECT last_v00_ts, v00_total, live_non_system_since_last_v00 FROM backlog.v_shadow_stage").fetchone()
+    return {"last_v00_ts": row[0], "v00_total": int(row[1]), "live_non_system_since_last_v00": int(row[2])}
+
+
+def revoke_gate(stage: dict, required: int = SHADOW_REQUIRED) -> tuple:
+    """(allowed, message): the A-2 revoke needs `required` non-system status changes since the last direct write (V-00). Pure."""
+    n = stage["live_non_system_since_last_v00"]
+    msg = (f"{n} of {required} required non-system transitions since the last V-00 "
+           f"(V-00 total {stage['v00_total']}, last {stage['last_v00_ts'] or 'never'})")
+    return n >= required, msg
 
 
 _SEED_ROW = re.compile(r"\(\s*'([^']+)'\s*,\s*'([^']+)'\s*,\s*(?:NULL|'[^']*')\s*\)")
@@ -65,11 +107,19 @@ def existing(conn, phase: str) -> dict:
     rows = conn.execute("SELECT table_name, table_type FROM information_schema.tables WHERE table_schema = 'backlog' "
                         "AND table_name = ANY(%s)", ([n.lower() for n in names],)).fetchall()
     have = {r[0].lower() for r in rows}
-    return {
+    out = {
         "tables": sorted(t for t in spec["tables"] if t in have),
         "views": sorted(v for v in spec["views"] if v in have),
         "missing_requires": [r for r in spec["requires"] if r not in have],
     }
+    if "routines" in spec:                       # phases that create routines also report them (the alias phase keeps its exact shape)
+        procs = {r[0] for r in conn.execute("SELECT proname FROM pg_proc WHERE pronamespace = 'backlog'::regnamespace").fetchall()}
+        out["routines"] = sorted(r for r in spec["routines"] if r in procs)
+    if phase == "revoke":
+        can = conn.execute("SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'backlog_writer') "
+                           "THEN has_column_privilege('backlog_writer', 'backlog.backlog', 'status', 'UPDATE') END").fetchone()[0]
+        out["writer_can_update_status"] = can
+    return out
 
 
 def migrate(conn, phase: str, down: bool = False, lock_timeout: str = base.LOCK_TIMEOUT) -> None:
@@ -113,12 +163,22 @@ def main(argv: list | None = None) -> int:
     try:
         have = existing(conn, args.phase)
         conn.rollback()
+        extra = {k: v for k, v in have.items() if k not in ("tables", "views", "missing_requires")}
         print(f"{what}: tables present {have['tables']} of {list(PHASES[args.phase]['tables'])}; "
               f"views present {have['views']} of {list(PHASES[args.phase]['views'])}; "
-              f"missing prerequisites {have['missing_requires']}")
+              f"missing prerequisites {have['missing_requires']}" + (f"; {extra}" if extra else ""))
+        files = ", ".join(f for f, _ in _blocks(PHASES[args.phase]["down" if args.down else "up"]))
+        gate_msg = None
+        if PHASES[args.phase].get("gate") == "shadow" and not args.down and not have["missing_requires"]:
+            allowed, gate_msg = revoke_gate(shadow_stage(conn))
+            conn.rollback()
+            print(f"shadow stage: {gate_msg} -> {'OPEN' if allowed else 'CLOSED'}")
+            if args.apply and not allowed:
+                print("REFUSED: the A-2 revoke is conditioned on the shadow stage (owner decision D2). Nothing was changed.", file=sys.stderr)
+                return RC_FAILED
         if not args.apply:
-            print(f"\nDRY RUN: nothing changed. --apply would run the {len(ddl_block(args.phase, args.down).splitlines())}-line block "
-                  f"of {PHASES[args.phase]['down' if args.down else 'up'][0]} in one transaction.")
+            print(f"\nDRY RUN: nothing changed. --apply would run the {len(ddl_block(args.phase, args.down).splitlines())}-line block(s) "
+                  f"of {files} in one transaction.")
             return RC_OK
         try:
             migrate(conn, args.phase, args.down)
@@ -129,7 +189,9 @@ def main(argv: list | None = None) -> int:
             return RC_FAILED
         after = existing(conn, args.phase)
         conn.rollback()
-        print(f"\nAPPLIED ({what}): tables {after['tables']}; views {after['views']}. Record it in the phase ticket log.")
+        extra = {k: v for k, v in after.items() if k not in ("tables", "views", "missing_requires")}
+        print(f"\nAPPLIED ({what}): tables {after['tables']}; views {after['views']}" + (f"; {extra}" if extra else "")
+              + ". Record it in the phase ticket log.")
         return RC_OK
     finally:
         conn.close()
