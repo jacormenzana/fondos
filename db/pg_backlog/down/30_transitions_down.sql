@@ -24,6 +24,7 @@ DROP FUNCTION IF EXISTS backlog.sp_transition(text, text, text, text, text, text
 DROP FUNCTION IF EXISTS backlog.sp_open_ticket(text, text, text, text, text, text, text, text, text, text, text);
 DROP FUNCTION IF EXISTS backlog.trg_governed_writes();
 DROP FUNCTION IF EXISTS backlog.fn_transition_legal(text, text);
+DROP FUNCTION IF EXISTS backlog.fn_actor_authorized(text);
 DROP FUNCTION IF EXISTS backlog.fn_actor_ok(text);
 DROP TABLE IF EXISTS backlog.raw_update_event;
 DROP TABLE IF EXISTS backlog.wait_event;

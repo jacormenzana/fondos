@@ -37,6 +37,19 @@ CREATE OR REPLACE FUNCTION backlog.fn_actor_ok(p_actor text) RETURNS boolean
 LANGUAGE sql IMMUTABLE AS
 $$ SELECT p_actor IS NOT NULL AND p_actor ~ '^(human|agent|system):[A-Za-z0-9._-]+$' $$;
 
+-- Who may write AS this actor from THIS connection (owner decision 2026-10-27, FND-0337). human:* only through the owner-only role backlog_human (a member of it, or a
+-- superuser); the generic placeholder of the history, agent:claude, is refused for new writes (an agent names its model). Human identities are NOT enforced while the role
+-- does not exist yet: the owner creates it with step 32 (migrate_backlog_v2.py --phase human) and only then does the rule bind. It looks at session_user (who logged in),
+-- never at current_user (inside a SECURITY DEFINER routine that is the routine's owner).
+CREATE OR REPLACE FUNCTION backlog.fn_actor_authorized(p_actor text) RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, backlog AS
+$$ SELECT CASE
+       WHEN p_actor IS NULL OR NOT backlog.fn_actor_ok(p_actor) THEN false
+       WHEN p_actor = 'agent:claude' THEN false
+       WHEN p_actor LIKE 'human:%' THEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'backlog_human')
+                                        OR pg_has_role(session_user, 'backlog_human', 'MEMBER')
+       ELSE true END $$;
+
 -- Legal moves between two DIFFERENT statuses (NORMAS_BACKLOG section 2). CLOSED as a source (reopening) and delivery closures are
 -- checked in sp_transition because they depend on more than the pair.
 CREATE OR REPLACE FUNCTION backlog.fn_transition_legal(p_from text, p_to text) RETURNS boolean
@@ -161,6 +174,9 @@ BEGIN
     IF NOT backlog.fn_actor_ok(p_actor) THEN
         RAISE EXCEPTION 'sp_open_ticket: actor % is not canonical (human:<login> | agent:<model> | system:<name>)', p_actor USING ERRCODE = '22023';
     END IF;
+    IF NOT backlog.fn_actor_authorized(p_actor) THEN
+        RAISE EXCEPTION 'sp_open_ticket: actor % is not authorized from this connection (human identities write only through the owner-only role; an agent names its model, not agent:claude)', p_actor USING ERRCODE = '42501';
+    END IF;
     IF p_session_id IS NULL OR p_session_id !~ '^[A-Z0-9]+_[0-9]{8}_(WKSH|DEV|REVB|SYNC|ANL)_[A-Za-z0-9_-]+$' THEN
         RAISE EXCEPTION 'sp_open_ticket: session id % must look like FND_20261026_DEV_TOPIC (types WKSH DEV REVB SYNC ANL)', p_session_id USING ERRCODE = '22023';
     END IF;
@@ -208,6 +224,9 @@ DECLARE
 BEGIN
     IF NOT backlog.fn_actor_ok(p_actor) THEN
         RAISE EXCEPTION 'sp_transition: actor % is not canonical (human:<login> | agent:<model> | system:<name>)', p_actor USING ERRCODE = '22023';
+    END IF;
+    IF NOT backlog.fn_actor_authorized(p_actor) THEN
+        RAISE EXCEPTION 'sp_transition: actor % is not authorized from this connection (human identities write only through the owner-only role; an agent names its model, not agent:claude)', p_actor USING ERRCODE = '42501';
     END IF;
     IF p_session_id IS NULL OR p_session_id !~ c_session THEN
         RAISE EXCEPTION 'sp_transition: session id % must look like FND_20261026_DEV_TOPIC', p_session_id USING ERRCODE = '22023';
@@ -446,7 +465,7 @@ DECLARE r record;
 BEGIN
     FOR r IN SELECT p.oid::regprocedure AS sig, p.prokind FROM pg_proc p
              WHERE p.pronamespace = 'backlog'::regnamespace
-               AND p.proname IN ('sp_open_ticket', 'sp_transition', 'sp_close_release', 'trg_governed_writes', 'fn_actor_ok', 'fn_transition_legal')
+               AND p.proname IN ('sp_open_ticket', 'sp_transition', 'sp_close_release', 'trg_governed_writes', 'fn_actor_ok', 'fn_actor_authorized', 'fn_transition_legal')
     LOOP
         EXECUTE format('ALTER %s %s OWNER TO backlog_owner', CASE r.prokind WHEN 'p' THEN 'PROCEDURE' ELSE 'FUNCTION' END, r.sig);
     END LOOP;

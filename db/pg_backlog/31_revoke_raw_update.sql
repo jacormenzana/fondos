@@ -35,6 +35,12 @@ BEGIN
         RAISE EXCEPTION '% is not a known author: use human:<login> | agent:<model> | system:<name>, or have the owner add the raw name to backlog.actor_alias', NEW.username
             USING ERRCODE = '22023';
     END IF;
+    -- FND-0337 (owner decision 2026-10-27): the same authorization rule as the routines, on the identity the name resolves to: human identities only through the
+    -- owner-only role, and the generic agent:claude (what the raw names claude, claude-code, CLAUDE_SESSION... resolve to) refused for new writes.
+    IF NOT backlog.fn_actor_authorized(COALESCE((SELECT a.canonical FROM backlog.actor_alias a WHERE a.raw_name = NEW.username), NEW.username)) THEN
+        RAISE EXCEPTION '% may not write from this connection: human identities write only through the owner-only role; an agent names its model (agent:<model>), not claude or agent:claude', NEW.username
+            USING ERRCODE = '42501';
+    END IF;
     RETURN NEW;
 END;
 $$;

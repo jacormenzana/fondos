@@ -105,6 +105,13 @@ def main(argv: "list | None" = None) -> int:
         print("error: FONDOS_BACKLOG_PG_DSN is not set", file=sys.stderr)
         return RC_USAGE
     user = args.user or getpass.getuser()
+    try:             # a human actor writes through the owner-only connection (FND-0337); everyone else through the shared one
+        dsn = bc.dsn_for_actor(bc.resolve_actor(args.actor)) or dsn
+    except bc.ActorUnknown:
+        pass         # no actor given: reported below only if the Phase A routines need one
+    except bc.HumanDsnMissing as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return RC_USAGE
 
     fconn = get_connection()
     try:
