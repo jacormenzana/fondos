@@ -11,7 +11,9 @@ migrate_backlog_v2.py -- apply (or roll back) ONE phase of the Backlog v2 store 
 
 Phases: `alias` (FND-0330), `transitions` (FND-0331 step A-1, additive: creates the non-superuser role backlog_owner, the audit tables, sp_open_ticket,
 sp_transition, the rebuilt sp_close_release and the shadow-stage trigger; revokes nothing) and `revoke` (step A-2: removes the direct INSERT/UPDATE
-privileges of backlog_writer and adds the author check; --apply is REFUSED unless the shadow stage shows 50 non-system transitions since the last V-00).
+privileges of backlog_writer and adds the author check; --apply is REFUSED unless the shadow stage shows 50 non-system transitions since the last V-00),
+`human` (FND-0337, owner-only role backlog_human for human actors; created WITHOUT a password: the owner sets it in his own session and keeps its DSN out of .env) and `history`
+(FND-0338, append-only history of the eight descriptive columns). `human` and `history` need step A-1 re-applied with FND-0337 (the routines they use).
 
 One phase per transaction (Postgres DDL is transactional: a failure rolls back whole). The DDL is NOT duplicated here: it is the block
 between `-- BEGIN <name>` and `-- END <name>` in the phase's file under db/pg_backlog/ (single source of truth, P#11); the rollback is
@@ -51,7 +53,7 @@ PHASES: dict = {
         "down": [("10_kpis_and_release.sql", "backlog_sp_close_release"), ("down/30_transitions_down.sql", "backlog_transitions_down")],
         "tables": ("status_event", "wait_event", "raw_update_event"),
         "views": ("v_shadow_stage",),
-        "routines": ("sp_open_ticket", "sp_transition", "fn_actor_ok", "fn_transition_legal", "trg_governed_writes"),
+        "routines": ("sp_open_ticket", "sp_transition", "fn_actor_ok", "fn_actor_authorized", "fn_transition_legal", "trg_governed_writes"),
         "requires": ("backlog", "backlog_logs", "backlog_link_event", "actor_alias", "v_backlog_link"),
     },
     # Phase A step A-2 (revoke). REFUSED unless the shadow stage shows SHADOW_REQUIRED non-system status changes since the last V-00.
@@ -63,6 +65,27 @@ PHASES: dict = {
         "routines": ("trg_actor_known",),
         "requires": ("status_event", "wait_event", "raw_update_event", "v_shadow_stage"),
         "gate": "shadow",
+    },
+    # Identity (FND-0337): the owner-only role for human actors. Needs step A-1 re-applied with FND-0337 (fn_actor_authorized). The owner sets the role's password himself.
+    "human": {
+        "up": ("32_human_role.sql", "backlog_human_role"),
+        "down": ("down/32_human_role_down.sql", "backlog_human_role_down"),
+        "tables": (),
+        "views": (),
+        "routines": ("fn_actor_authorized",),
+        "requires": ("status_event",),
+        "requires_routines": ("fn_actor_authorized",),
+        "roles": ("backlog_human",),
+    },
+    # Descriptive change history (FND-0338): append-only trigger on the eight E3 columns. Needs A-1 re-applied with FND-0337 (trg_append_only, fn_actor_authorized).
+    "history": {
+        "up": ("33_descriptive_history.sql", "backlog_descriptive_history"),
+        "down": ("down/33_descriptive_history_down.sql", "backlog_descriptive_history_down"),
+        "tables": ("field_change_event",),
+        "views": ("v_field_change_attribution",),
+        "routines": ("trg_field_changes",),
+        "requires": ("backlog", "status_event"),
+        "requires_routines": ("trg_append_only", "fn_actor_ok", "fn_actor_authorized"),
     },
 }
 SHADOW_REQUIRED = 50          # owner decision D2 (2026-10-26): 50 consecutive non-system transitions with no direct update
@@ -112,9 +135,13 @@ def existing(conn, phase: str) -> dict:
         "views": sorted(v for v in spec["views"] if v in have),
         "missing_requires": [r for r in spec["requires"] if r not in have],
     }
-    if "routines" in spec:                       # phases that create routines also report them (the alias phase keeps its exact shape)
+    if "routines" in spec or "requires_routines" in spec:       # phases that create or need routines also report them (the alias phase keeps its exact shape)
         procs = {r[0] for r in conn.execute("SELECT proname FROM pg_proc WHERE pronamespace = 'backlog'::regnamespace").fetchall()}
-        out["routines"] = sorted(r for r in spec["routines"] if r in procs)
+        out["routines"] = sorted(r for r in spec.get("routines", ()) if r in procs)
+        out["missing_requires"] += [r for r in spec.get("requires_routines", ()) if r not in procs]
+    if "roles" in spec:
+        present = {r[0] for r in conn.execute("SELECT rolname FROM pg_roles WHERE rolname = ANY(%s)", (list(spec["roles"]),)).fetchall()}
+        out["roles"] = sorted(present)
     if phase == "revoke":
         can = conn.execute("SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'backlog_writer') "
                            "THEN has_column_privilege('backlog_writer', 'backlog.backlog', 'status', 'UPDATE') END").fetchone()[0]
@@ -127,7 +154,7 @@ def migrate(conn, phase: str, down: bool = False, lock_timeout: str = base.LOCK_
     if not down:
         missing = existing(conn, phase)["missing_requires"]
         if missing:
-            raise RuntimeError(f"phase {phase!r} needs backlog.{', backlog.'.join(missing)} first (apply 00_schema.sql / 20_links.sql)")
+            raise RuntimeError(f"phase {phase!r} needs backlog.{', backlog.'.join(missing)} first (apply the earlier steps; for the routines re-apply step A-1 as updated by FND-0337)")
     conn.execute(f"SET LOCAL lock_timeout = '{lock_timeout}'")
     conn.execute(ddl_block(phase, down))
 

@@ -25,7 +25,8 @@ _RAW = re.compile(r"\b(?:INSERT\s+INTO|UPDATE)\s+backlog\.backlog\b(?!_)", re.IG
 ALLOWED: dict = {
     "shared/backlog_client.py":
         "FND-0331 report_incident keeps the legacy INSERT only for the window in which the A-1 routines are not applied (_transitions_present); "
-        "it is removed once A-2 is accepted",
+        "it is removed once A-2 is accepted. FND-0338 update_attributes() is the one UPDATE of the descriptive columns of exception E3 (a whitelist of eight columns), "
+        "and stays",
     "scripts/ops/close_release.py":
         "FND-0331 the legacy UPDATE to READY_FOR_DEPLOY runs only while the A-1 routines are not applied (transitions_store_present); "
         "removed once A-2 is accepted",

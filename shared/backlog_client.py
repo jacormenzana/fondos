@@ -41,6 +41,7 @@ from typing import Iterator, Optional
 logger = logging.getLogger(__name__)
 
 _DSN_ENV_VAR = "FONDOS_BACKLOG_PG_DSN"
+_HUMAN_DSN_ENV_VAR = "FONDOS_BACKLOG_PG_DSN_HUMAN"          # the owner-only role (FND-0337); deliberately NOT in .env
 _FALLBACK_LOG_ENV_VAR = "FONDOS_BACKLOG_FALLBACK_LOG"
 _DEFAULT_FALLBACK_LOG = Path(__file__).resolve().parent / "log" / "backlog_autolog_fallback.jsonl"   # == LOG_DIRS["shared"]
 
@@ -352,12 +353,28 @@ class BacklogUnavailable(RuntimeError):
     """The backlog cannot be reached (no DSN, no driver). Raised instead of returning an empty answer."""
 
 
+class HumanDsnMissing(BacklogUnavailable):
+    """A human actor writes only through the owner-only role (FND-0337) and its connection string is not available (FONDOS_BACKLOG_PG_DSN_HUMAN). Raised instead of
+    falling back to the shared writer connection, which the database would refuse anyway once the role exists."""
+
+
+def dsn_for_actor(actor: Optional[str]) -> Optional[str]:
+    """The connection string an actor must write with: the owner-only one (FONDOS_BACKLOG_PG_DSN_HUMAN, kept outside .env and outside the environment agents inherit) for
+    human:*, the shared writer one for everyone else. Raises HumanDsnMissing for a human actor when it is not set; never falls back."""
+    if str(actor or "").startswith("human:"):
+        dsn = os.environ.get(_HUMAN_DSN_ENV_VAR)
+        if not dsn:
+            raise HumanDsnMissing(f"{_HUMAN_DSN_ENV_VAR} is not set: the human actor {actor} writes only through the owner-only role (type it in your own terminal; never put it in .env)")
+        return dsn
+    return _dsn()
+
+
 @contextmanager
-def _session(conn=None):
+def _session(conn=None, *, human: bool = False):
     if conn is not None:
         yield conn
         return
-    dsn = _dsn()
+    dsn = dsn_for_actor("human:x") if human else _dsn()
     if not dsn:
         raise BacklogUnavailable(f"{_DSN_ENV_VAR} is not set")
     if psycopg is None:
@@ -445,7 +462,7 @@ def append_log(action_point_id: str, username: str, comment: str, *, conn=None) 
     prior progress"). Does NOT touch the ticket's status. Fail-loud; returns the new log_id."""
     if not str(action_point_id or "").strip() or not str(username or "").strip() or not str(comment or "").strip():
         raise ValueError("action_point_id, username and comment are all required")
-    with _session(conn) as c:
+    with _session(conn, human=str(username).startswith("human:")) as c:
         (log_id,) = c.execute(
             "INSERT INTO backlog.BACKLOG_LOGS (action_point_id, username, comment) VALUES (%s, %s, %s) RETURNING log_id",
             (action_point_id, username, comment),
@@ -472,7 +489,7 @@ def record_link_events(events: list[dict], *, conn=None) -> list[int]:
         checked.append((ev["from_id"], ev["to_id"], ev["link_type"], ev["status"], ev["evidence"], ev.get("absorbs"),
                         ev["username"]))
     ids: list[int] = []
-    with _session(conn) as c:
+    with _session(conn, human=any(str(ev["username"]).startswith("human:") for ev in events)) as c:
         for row in checked:
             (event_id,) = c.execute(
                 "INSERT INTO backlog.backlog_link_event (from_id, to_id, link_type, status, evidence, absorbs, username) "
@@ -615,7 +632,7 @@ def open_ticket(*, title: str, nature: str, object_type: str, priority: str, ses
     """Open a ticket through backlog.sp_open_ticket: id from the sequence, status OPEN, reporter = the canonical actor, the first log and the first
     status event, in one call. Returns the id. Raises on any refusal (bad actor, bad session id, a domain CHECK) and when A-1 is not applied."""
     who = resolve_actor(actor)
-    with _session(conn) as c:
+    with _session(conn, human=who.startswith("human:")) as c:
         (apid,) = c.execute(
             "SELECT backlog.sp_open_ticket(p_title => %s, p_nature => %s, p_object_type => %s, p_object_name => %s, p_priority => %s, "
             "p_actor => %s, p_session_id => %s, p_description => %s, p_first_log => %s, p_schema_name => %s, p_project_code => %s)",
@@ -630,7 +647,7 @@ def transition(ap_id: str, to_status: str, *, session_id: str, comment: str, act
     """Move a ticket through backlog.sp_transition (legality, closure rules, waiting states, log and status event in one transaction).
     `comment` becomes the progress log verbatim. Returns the status_event id. Raises on any refusal; never swallows."""
     who = resolve_actor(actor)
-    with _session(conn) as c:
+    with _session(conn, human=who.startswith("human:")) as c:
         (event_id,) = c.execute(
             "SELECT backlog.sp_transition(p_ap_id => %s, p_to => %s, p_actor => %s, p_session_id => %s, p_comment => %s, p_solution_type => %s, "
             "p_release_version => %s, p_blocker => %s, p_condition => %s, p_revisit_by => %s, p_revisit_on_event => %s, p_followup => %s, "
@@ -638,6 +655,26 @@ def transition(ap_id: str, to_status: str, *, session_id: str, comment: str, act
             (ap_id, to_status, who, session_id, comment, solution_type, release_version, blocker, condition, revisit_by, revisit_on_event,
              followup, assignee, bool(force))).fetchone()
     return int(event_id)
+
+
+DESCRIPTIVE_FIELDS = ("title", "nature", "schema_name", "object_type", "object_name", "priority", "session_id", "scenario_description")   # exception E3
+
+
+def update_attributes(ap_id: str, *, actor: Optional[str] = None, conn=None, **fields) -> int:
+    """Change descriptive attributes of a ticket (exception E3: title, nature, schema_name, object_type, object_name, priority, session_id, scenario_description) and nothing
+    else, declaring WHO does it for the transaction so the append-only history (backlog.field_change_event, FND-0338) records the actor next to the old and new value.
+    Works before the history step is applied (the change is made, nothing is recorded). Returns the number of tickets changed (0 or 1). Raises ValueError for any other field,
+    ActorUnknown without an actor, and the driver's error for a value the CHECKs refuse."""
+    bad = sorted(set(fields) - set(DESCRIPTIVE_FIELDS))
+    if bad or not fields:
+        raise ValueError(f"update_attributes changes only {DESCRIPTIVE_FIELDS}; got {sorted(fields)}" if bad else "no field to change")
+    who = resolve_actor(actor)
+    sets = ", ".join(f"{name} = %s" for name in fields)
+    with _session(conn, human=who.startswith("human:")) as c:
+        c.execute("SELECT set_config('backlog.actor', %s, true)", (who,))
+        n = c.execute(f"UPDATE backlog.backlog SET {sets} WHERE action_point_id = %s", (*fields.values(), ap_id)).rowcount
+        c.execute("SELECT set_config('backlog.actor', '', true)")          # the declaration covers this change only, not later statements of a borrowed transaction
+    return int(n)
 
 
 def shadow_progress(*, conn=None) -> dict:
@@ -654,7 +691,7 @@ def phase_a_catalog(*, conn=None) -> dict:
         role = c.execute("SELECT rolsuper, rolcanlogin FROM pg_roles WHERE rolname = 'backlog_owner'").fetchone()
         routines = _rows(c, "SELECT p.proname AS name, p.prosecdef AS secdef, pg_get_userbyid(p.proowner) AS owner, p.proconfig AS config FROM pg_proc p "
                             "WHERE p.pronamespace = 'backlog'::regnamespace AND p.proname IN ('sp_open_ticket', 'sp_transition', 'sp_close_release', "
-                            "'trg_governed_writes', 'trg_actor_known') ORDER BY 1")
+                            "'trg_governed_writes', 'trg_actor_known', 'fn_actor_authorized') ORDER BY 1")
         tables = {r[0]: r[1] for r in c.execute("SELECT c.relname, pg_get_userbyid(c.relowner) FROM pg_class c WHERE c.relnamespace = 'backlog'::regnamespace "
                                                 "AND c.relname IN ('status_event', 'wait_event', 'raw_update_event') ORDER BY 1").fetchall()}
         has_writer = c.execute("SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'backlog_writer')").fetchone()[0]
@@ -680,8 +717,42 @@ def phase_a_catalog(*, conn=None) -> dict:
         tickets, max_id = c.execute("SELECT count(*), max(action_point_id) FROM backlog.BACKLOG").fetchone()
         has_events = c.execute("SELECT to_regclass('backlog.status_event') IS NOT NULL").fetchone()[0]
         backfill = c.execute("SELECT count(*) FROM backlog.status_event WHERE origin = 'BACKFILL'").fetchone()[0] if has_events else None
+        without_event = c.execute("SELECT count(*) FROM backlog.BACKLOG b WHERE NOT EXISTS (SELECT 1 FROM backlog.status_event e WHERE e.action_point_id = b.action_point_id)"
+                                  ).fetchone()[0] if has_events else None
     return {"owner_role": None if role is None else {"superuser": role[0], "can_login": role[1]}, "routines": routines, "audit_table_owners": tables,
-            "writer": writer, "triggers": triggers, "tickets": int(tickets), "max_ticket_id": max_id, "backfill_events": backfill}
+            "writer": writer, "triggers": triggers, "tickets": int(tickets), "max_ticket_id": max_id, "backfill_events": backfill,
+            "tickets_without_status_event": None if without_event is None else int(without_event)}
+
+
+def identity_history_catalog(*, conn=None) -> dict:
+    """Read-only facts for the acceptance of the identity constraints (FND-0337) and the descriptive history (FND-0338): the owner-only role, whether the routines and the author
+    trigger call the authorization rule, and the history table, its trigger (with the columns it watches) and what the writer may do with it. Absent things are just absent."""
+    with _session(conn) as c:
+        role = c.execute("SELECT r.rolsuper, r.rolcanlogin, CASE WHEN EXISTS (SELECT 1 FROM pg_roles w WHERE w.rolname = 'backlog_writer') "
+                         "THEN pg_has_role('backlog_human', 'backlog_writer', 'MEMBER') END FROM pg_roles r WHERE r.rolname = 'backlog_human'").fetchone()
+        fn = bool(c.execute("SELECT to_regprocedure('backlog.fn_actor_authorized(text)') IS NOT NULL").fetchone()[0])
+        uses = {r[0]: bool(r[1]) for r in c.execute("SELECT p.proname, pg_get_functiondef(p.oid) LIKE '%fn_actor_authorized%' FROM pg_proc p "
+                                                     "WHERE p.pronamespace = 'backlog'::regnamespace AND p.proname IN ('sp_open_ticket', 'sp_transition', 'trg_actor_known')").fetchall()}
+        hist = None
+        if c.execute("SELECT to_regclass('backlog.field_change_event') IS NOT NULL").fetchone()[0]:
+            writer = c.execute("SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'backlog_writer')").fetchone()[0]
+            trig = c.execute("SELECT pg_get_triggerdef(oid) FROM pg_trigger WHERE tgname = 'field_changes' AND tgrelid = 'backlog.backlog'::regclass AND NOT tgisinternal").fetchone()
+            hist = {
+                "owner": c.execute("SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid = 'backlog.field_change_event'::regclass").fetchone()[0],
+                "trigger_def": trig[0] if trig else None,
+                "append_only": bool(c.execute("SELECT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'append_only' AND NOT tgisinternal "
+                                              "AND tgrelid = 'backlog.field_change_event'::regclass)").fetchone()[0]),
+                "writer_can_insert": bool(writer and c.execute("SELECT has_table_privilege('backlog_writer', 'backlog.field_change_event', 'INSERT')").fetchone()[0]),
+                "view": bool(c.execute("SELECT to_regclass('backlog.v_field_change_attribution') IS NOT NULL").fetchone()[0]),
+            }
+    return {"human_role": None if role is None else {"superuser": role[0], "can_login": role[1], "member_of_writer": role[2]},
+            "authorization_function": fn, "calls_authorization": uses, "history": hist}
+
+
+def field_change_attribution(*, conn=None) -> list:
+    """Effectiveness of the descriptive history (FND-0338): per field and for ALL, how many recorded changes carry an actor. Raises when the history step is not applied."""
+    with _session(conn) as c:
+        return _rows(c, "SELECT field, n_changes, n_with_actor, pct_with_actor FROM backlog.v_field_change_attribution ORDER BY (field = 'ALL'), field")
 
 
 def check_actors(verbose: bool = True) -> bool:

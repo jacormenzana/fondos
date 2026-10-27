@@ -65,6 +65,19 @@ Dominios categóricos, **todos con `CHECK` en BD** — nunca inventar un valor f
   canónico o tener alias); **E2** `INSERT` en `backlog_link_event` (solo añadir, con FK y `CHECK`; la Fase B lo lleva a una rutina; mismo control de autor); **E3**
   `UPDATE` de `title`, `nature`, `schema_name`, `object_type`, `object_name`, `priority`, `session_id` y `scenario_description` (atributos descriptivos y de triaje; `update_ts`
   registra que cambió algo pero no qué: laguna de auditoría conocida). Todo lo demás pasa por rutinas.
+- **Identidad: humanos solo por el rol del propietario; agentes con su modelo (FND-0337, decisión del propietario 2026-10-27).** Un actor `human:*` solo se acepta desde una
+  conexión cuyo *login* es `backlog_human` (o miembro suyo; un superusuario pasa): lo exigen `sp_open_ticket` y `sp_transition` (y por ellas `sp_close_release`) mediante
+  `backlog.fn_actor_authorized`, que mira `session_user` y no `current_user` (un `SET ROLE` no convierte una sesión del escritor compartido en la del propietario), y, tras A-2,
+  el disparador de autor de logs y eventos de enlace. La identidad genérica `agent:claude` (a la que resuelven `claude`, `claude-code`, `CLAUDE_SESSION`...) se rechaza en toda
+  escritura nueva: un agente nombra su modelo. Asignar trabajo a una persona sigue permitido (no es escribir *como* ella). El rol se crea con el paso 32
+  (`migrate_backlog_v2.py --phase human`) **sin contraseña**: la fija el propietario en su propia sesión y su cadena de conexión (`FONDOS_BACKLOG_PG_DSN_HUMAN`) vive fuera de
+  `.env` y del entorno que heredan los agentes; el cliente la usa solo para actores humanos y falla en voz alta si falta (`HumanDsnMissing`), sin volver al escritor compartido.
+  Mientras el rol no exista, las identidades humanas no se imponen (nada se rompe antes de aplicarlo). Los agentes siguen siendo declarativos entre sí.
+- **Historial de cambios descriptivos (FND-0338, decisión del propietario 2026-10-27):** `backlog.field_change_event` (solo añadir, propiedad de `backlog_owner`) registra, mediante
+  un disparador, cada cambio de las ocho columnas de la excepción E3 (valor anterior y nuevo, actor declarado, login, aplicación). El actor lo declara el cliente por transacción
+  (`backlog.actor`; `backlog_client.update_attributes()` lo hace); una declaración no canónica o no permitida desde esa conexión se registra como actor `NULL`, de modo que la
+  proporción de cambios sin atribuir se mide (`v_field_change_attribution`). Paso 33 (`--phase history`). La limitación E3 solo se da por resuelta cuando hay cambios reales
+  registrados y esa proporción se ha medido y anotado en el ticket.
 - **Cierre de tickets vinculados a un defecto de auditoría (FND-0264):** un ticket enlazado a un incidente de `control.audit_incident` no se cierra hasta que el incidente esté `CERTIFIED` (re-auditoría posterior y completa) o `ACCEPTED` (residuales vigentes). `scripts/ops/close_release.py` (envoltorio de `sp_close_release`) lo aplica; ver `GOBIERNO_CONTROLES.md` §9.
 - **Captura automática** (`report_incident()`, `capture_exceptions()`, `install_excepthook()`): ante una excepción sin tratar abre
   un ticket `OPEN`/`BUG`/`HIGH`/`SYSTEM_AUTODETECT` o, si ya hay uno abierto con el mismo `(project_code, object_name)` en 24 h,

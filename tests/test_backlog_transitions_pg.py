@@ -562,8 +562,10 @@ def test_a2_checks_the_author_of_logs_and_link_events(db2):
         refused(db2, "not a known author", lambda c, w=who: c.execute("INSERT INTO backlog.BACKLOG_LOGS (action_point_id, username, comment) VALUES (%s, %s, 'x')", (ap, w)))
         refused(db2, "not a known author", lambda c, w=who: c.execute("INSERT INTO backlog.backlog_link_event (from_id, to_id, link_type, status, evidence, username) "
                                                                      "VALUES (%s, %s, 'RELATED', 'PROPOSED', 'e', %s)", (ap, other, w)))
-    for who in ("agent:claude-opus-5-5", "claude", "SYSTEM_RELEASE"):                                              # canonical, or aliased raw names
+    for who in ("agent:claude-opus-5-5", "SYSTEM_RELEASE", "jacor"):                                               # canonical, or aliased raw names ('jacor' is not enforced: no owner-only role yet)
         db2.execute("INSERT INTO backlog.BACKLOG_LOGS (action_point_id, username, comment) VALUES (%s, %s, 'x')", (ap, who))
+    for who in ("claude", "claude-code", "agent:claude"):                                                          # FND-0337: the generic agent identity is refused for new writes
+        refused(db2, "not write from this connection", lambda c, w=who: c.execute("INSERT INTO backlog.BACKLOG_LOGS (action_point_id, username, comment) VALUES (%s, %s, 'x')", (ap, w)))
 
 
 def test_a2_is_idempotent_and_its_rollback_restores_the_privileges(db2):

@@ -34,7 +34,8 @@ def _catalog_a1(**over):
          "writer": {"can_update_status": True, "can_update_release_version": True, "can_update_assignee": True, "can_update_title": True,
                     "can_insert_ticket": True, "can_insert_log": True, "can_insert_link_event": True, "can_write_audit_tables": False,
                     "can_execute_transition": True},
-         "triggers": ["governed_writes", "set_update_ts"], "tickets": 301, "max_ticket_id": "FND-0336", "backfill_events": 301}
+         "triggers": ["governed_writes", "set_update_ts"], "tickets": 301, "max_ticket_id": "FND-0336", "backfill_events": 301,
+         "tickets_without_status_event": 0}
     c.update(over)
     return c
 
@@ -60,7 +61,11 @@ def test_a1_each_criterion_can_fail_on_its_own():
     assert ev(catalog=_catalog_a1(owner_role={"superuser": True, "can_login": False})) == ["backlog_owner exists, is not a superuser and cannot log in"]
     assert ev(catalog=_catalog_a1(owner_role={"superuser": False, "can_login": True})) == ["backlog_owner exists, is not a superuser and cannot log in"]
     assert ev(catalog=_catalog_a1(owner_role=None)) == ["backlog_owner exists, is not a superuser and cannot log in"]
-    assert ev(catalog=_catalog_a1(backfill_events=300)) == ["every baseline ticket has a BACKFILL status event"]
+    name = "every ticket has a status event (BACKFILL for those that pre-date A-1, LIVE for later ones)"
+    assert ev(catalog=_catalog_a1(tickets_without_status_event=2)) == [name]
+    assert ev(catalog=_catalog_a1(tickets_without_status_event=None)) == [name]                  # the audit table is absent
+    assert ev(catalog=_catalog_a1(backfill_events=0)) == [name]                                  # nothing was ever backfilled
+    assert ev(catalog=_catalog_a1(backfill_events=300, tickets=305)) == []                       # tickets opened later carry LIVE events: more tickets than backfill rows is fine
     assert ev(after=dict(FP, logs_md5="c" * 32)) == ["history up to the baseline ids is identical"]
     assert ev(after=dict(FP, events=299)) == ["history up to the baseline ids is identical"]
     assert ev(catalog=_catalog_a1(triggers=["set_update_ts"])) == ["the shadow-stage trigger exists"]
@@ -117,3 +122,50 @@ def test_the_evaluators_do_not_mutate_their_inputs():
 def test_verify_without_its_arguments_is_a_usage_error():
     assert acc.main(["--verify", "a1"]) == acc.RC_USAGE
     assert acc.main(["--verify", "a2", "--baseline-file", "x.json"]) == acc.RC_USAGE
+    assert acc.main(["--verify", "human"]) == acc.RC_USAGE and acc.main(["--verify", "history", "--baseline-file", "x.json"]) == acc.RC_USAGE
+
+
+# --- FND-0337 (owner-only role) and FND-0338 (descriptive history) ---------------------------------------------------------------------------------
+
+def _ident(**over):
+    i = {"human_role": {"superuser": False, "can_login": True, "member_of_writer": True}, "authorization_function": True,
+         "calls_authorization": {"sp_open_ticket": True, "sp_transition": True, "trg_actor_known": False},
+         "history": {"owner": "backlog_owner", "trigger_def": "CREATE TRIGGER field_changes AFTER UPDATE OF " + ", ".join(acc.DESCRIPTIVE_FIELDS) + " ON backlog.backlog",
+                     "append_only": True, "writer_can_insert": False, "view": True}}
+    i.update(over)
+    return i
+
+
+def test_the_descriptive_columns_of_the_acceptance_are_the_client_whitelist():
+    from shared import backlog_client as bc
+    assert acc.DESCRIPTIVE_FIELDS == bc.DESCRIPTIVE_FIELDS
+
+
+def test_human_step_complete_state_is_accepted_and_each_criterion_can_fail():
+    ok = lambda **kw: failed(acc.evaluate_human(kw.pop("rc", 0), BASE, kw.pop("after", dict(FP)), kw.pop("catalog", _catalog_a1()), kw.pop("ident", _ident())))
+    assert ok() == []
+    assert ok(rc=1) == ["migration exit code is 0"]
+    for bad in (None, {"superuser": True, "can_login": True, "member_of_writer": True}, {"superuser": False, "can_login": False, "member_of_writer": True},
+                {"superuser": False, "can_login": True, "member_of_writer": False}, {"superuser": False, "can_login": True, "member_of_writer": None}):
+        assert len(ok(ident=_ident(human_role=bad))) == 1, bad
+    assert len(ok(ident=_ident(authorization_function=False))) == 1
+    assert len(ok(ident=_ident(calls_authorization={"sp_open_ticket": True, "sp_transition": False}))) == 1
+    locked = _catalog_a1()
+    locked["writer"]["can_execute_transition"] = False
+    assert len(ok(catalog=locked)) == 1
+    assert ok(after=dict(FP, logs=1)) == ["history up to the baseline ids is identical"]
+
+
+def test_history_step_complete_state_is_accepted_and_coverage_is_checked_column_by_column():
+    ok = lambda **kw: failed(acc.evaluate_history(kw.pop("rc", 0), BASE, kw.pop("after", dict(FP)), _catalog_a1(), kw.pop("ident", _ident())))
+    assert ok() == []
+    assert ok(rc=3) == ["migration exit code is 0"]
+    for col in acc.DESCRIPTIVE_FIELDS:                                                          # a trigger that misses ANY one column fails the coverage check
+        h = dict(_ident()["history"])
+        h["trigger_def"] = h["trigger_def"].replace(col, "other_column", 1) if col != "title" else h["trigger_def"].replace("OF title,", "OF")
+        assert ok(ident=_ident(history=h)) == ["the trigger watches all eight descriptive columns (coverage)"], col
+    for key, val in (("owner", "fondos_owner"), ("append_only", False)):
+        assert len(ok(ident=_ident(history=dict(_ident()["history"], **{key: val})))) == 1, key
+    assert len(ok(ident=_ident(history=dict(_ident()["history"], view=False)))) == 1
+    assert len(ok(ident=_ident(history=dict(_ident()["history"], writer_can_insert=True)))) == 1
+    assert len(ok(ident=_ident(history=None))) >= 4                                             # not applied: rejected on every count

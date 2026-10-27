@@ -6,6 +6,7 @@ backlog_phase_a_acceptance.py -- acceptance checks of Backlog v2 Phase A (FND-03
     python scripts/audit/backlog_phase_a_acceptance.py --baseline                                     # BEFORE the owner applies a step
     python scripts/audit/backlog_phase_a_acceptance.py --verify a1 --baseline-file F --migration-rc 0   # AFTER step A-1 (30_transitions.sql)
     python scripts/audit/backlog_phase_a_acceptance.py --verify a2 --baseline-file F --migration-rc 0   # AFTER step A-2 (31_revoke_raw_update.sql)
+    python scripts/audit/backlog_phase_a_acceptance.py --verify human|history --baseline-file F --migration-rc 0   # AFTER step 32 (FND-0337) / step 33 (FND-0338)
 
 --baseline fingerprints the append-only history (count + md5 of every log and link event up to the current maximum ids) and the number of tickets, and
 writes out/audit/fnd0331_baseline_<UTC>.json. --verify a1 requires ALL of: the migration exited 0; backlog_owner exists and is NOT a superuser and cannot log in;
@@ -29,7 +30,8 @@ OUT_DIR = ROOT / "out" / "audit"
 RC_OK, RC_FAIL, RC_USAGE = 0, 1, 2
 SEARCH_PATH = "search_path=pg_catalog,backlog"
 WRITING_ROUTINES = ("sp_open_ticket", "sp_transition")
-HARDENED = ("sp_open_ticket", "sp_transition", "sp_close_release", "trg_governed_writes")
+HARDENED = ("sp_open_ticket", "sp_transition", "sp_close_release", "trg_governed_writes", "fn_actor_authorized")
+DESCRIPTIVE_FIELDS = ("title", "nature", "schema_name", "object_type", "object_name", "priority", "session_id", "scenario_description")      # exception E3 (tests tie it to the client)
 
 
 def _norm(cfg) -> list:
@@ -60,8 +62,9 @@ def evaluate_a1(migration_rc: int, baseline: dict, after: dict, catalog: dict) -
         ("backlog_owner exists, is not a superuser and cannot log in", bool(role) and not role["superuser"] and not role["can_login"], f"{role}"),
         ("routines are SECURITY DEFINER, owned by backlog_owner, search_path pinned", not bad_routines, f"not conforming: {bad_routines}"),
         ("the three audit tables belong to backlog_owner", owners == {"raw_update_event": "backlog_owner", "status_event": "backlog_owner", "wait_event": "backlog_owner"}, f"{owners}"),
-        ("every baseline ticket has a BACKFILL status event", (catalog["backfill_events"] or 0) >= baseline.get("tickets", 10 ** 9),
-         f"backfill events {catalog['backfill_events']}, baseline tickets {baseline.get('tickets')}"),
+        ("every ticket has a status event (BACKFILL for those that pre-date A-1, LIVE for later ones)",
+         catalog.get("tickets_without_status_event") == 0 and (catalog["backfill_events"] or 0) > 0,
+         f"tickets without a status event {catalog.get('tickets_without_status_event')}, backfill events {catalog['backfill_events']}, tickets {catalog['tickets']}"),
         ("history up to the baseline ids is identical", history_ok, history_detail),
         ("A-1 is additive: the writer lost nothing and cannot write the audit tables",
          bool(writer) and writer["can_update_status"] and writer["can_insert_ticket"] and writer["can_insert_log"] and writer["can_execute_transition"]
@@ -86,6 +89,37 @@ def evaluate_a2(migration_rc: int, baseline: dict, after: dict, catalog: dict) -
     ]
 
 
+def evaluate_human(migration_rc: int, baseline: dict, after: dict, catalog: dict, ident: dict) -> list:
+    """[(check, passed, detail)] for the owner-only role of FND-0337 (step 32 plus the re-applied A-1 routines). Pure."""
+    role, w, uses = ident["human_role"], catalog["writer"] or {}, ident["calls_authorization"]
+    history_ok, history_detail = _same_history(baseline, after)
+    return [
+        ("migration exit code is 0", migration_rc == 0, f"reported rc={migration_rc}"),
+        ("backlog_human exists, is not a superuser, can log in and inherits the writer's privileges",
+         bool(role) and not role["superuser"] and role["can_login"] and role["member_of_writer"] is True, f"{role}"),
+        ("the authorization rule exists and sp_open_ticket and sp_transition call it", ident["authorization_function"] and bool(uses.get("sp_open_ticket")) and bool(uses.get("sp_transition")),
+         f"function={ident['authorization_function']}, calls={uses}"),
+        ("the shared writer can still execute the routines (agents are not locked out)", bool(w) and w["can_execute_transition"], f"{w}"),
+        ("history up to the baseline ids is identical", history_ok, history_detail),
+    ]
+
+
+def evaluate_history(migration_rc: int, baseline: dict, after: dict, catalog: dict, ident: dict) -> list:
+    """[(check, passed, detail)] for the descriptive history of FND-0338 (step 33): COVERAGE of the eight columns, append-only, ownership, closed to the writer. Pure."""
+    h = ident["history"] or {}
+    trig = h.get("trigger_def") or ""
+    missing = [c for c in DESCRIPTIVE_FIELDS if c not in trig]
+    history_ok, history_detail = _same_history(baseline, after)
+    return [
+        ("migration exit code is 0", migration_rc == 0, f"reported rc={migration_rc}"),
+        ("the history table exists, belongs to backlog_owner and is append-only", bool(h) and h.get("owner") == "backlog_owner" and h.get("append_only") is True, f"{h}"),
+        ("the trigger watches all eight descriptive columns (coverage)", bool(trig) and not missing and "AFTER UPDATE OF" in trig, f"missing columns {missing}"),
+        ("the attribution view exists (the measure of effectiveness)", bool(h) and h.get("view") is True, f"view={h.get('view')}"),
+        ("the shared writer cannot write the history", bool(h) and h.get("writer_can_insert") is False, f"writer_can_insert={h.get('writer_can_insert')}"),
+        ("history up to the baseline ids is identical", history_ok, history_detail),
+    ]
+
+
 def _stamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
@@ -94,7 +128,7 @@ def main(argv: "list | None" = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--baseline", action="store_true")
-    g.add_argument("--verify", choices=("a1", "a2"))
+    g.add_argument("--verify", choices=("a1", "a2", "human", "history"))
     ap.add_argument("--baseline-file", help="--verify: the JSON written by --baseline")
     ap.add_argument("--migration-rc", type=int, help="--verify: exit code the owner saw from migrate_backlog_v2.py --apply")
     args = ap.parse_args(argv)
@@ -118,8 +152,16 @@ def main(argv: "list | None" = None) -> int:
         baseline = json.loads(Path(args.baseline_file).read_text(encoding="utf-8"))
         after = bc.history_fingerprint(max_log_id=baseline["max_log_id"], max_event_id=baseline["max_event_id"])
         catalog = bc.phase_a_catalog()
-        results = (evaluate_a1 if args.verify == "a1" else evaluate_a2)(args.migration_rc, baseline, after, catalog)
+        if args.verify in ("human", "history"):
+            ident = bc.identity_history_catalog()
+            results = (evaluate_human if args.verify == "human" else evaluate_history)(args.migration_rc, baseline, after, catalog, ident)
+        else:
+            results = (evaluate_a1 if args.verify == "a1" else evaluate_a2)(args.migration_rc, baseline, after, catalog)
         info = []
+        if args.verify == "history" and ident["history"] and ident["history"].get("view"):
+            att = {r["field"]: r for r in bc.field_change_attribution()}["ALL"]
+            info.append(f"INFO - effectiveness today: {att['n_with_actor']} of {att['n_changes']} recorded descriptive changes carry an actor ({att['pct_with_actor']} %); "
+                        "the limitation is resolved only when real edits have been recorded and this share has been measured and logged")
         if bc.transitions_store_present():
             sp = bc.shadow_progress()
             info.append(f"INFO - shadow stage: {sp['live_non_system_since_last_v00']} of 50 non-system transitions since the last V-00 "

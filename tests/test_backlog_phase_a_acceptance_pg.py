@@ -83,6 +83,61 @@ def test_the_checker_detects_a_rewritten_log(pre):
     assert "history up to the baseline ids is identical" in _failed(_verify(pre, base, "a1"))
 
 
+def _verify_new(conn, baseline, step, rc=0):
+    after = bc.history_fingerprint(max_log_id=baseline["max_log_id"], max_event_id=baseline["max_event_id"], conn=conn)
+    ev = acc.evaluate_human if step == "human" else acc.evaluate_history
+    return ev(rc, baseline, after, bc.phase_a_catalog(conn=conn), bc.identity_history_catalog(conn=conn))
+
+
+def test_a1_still_verifies_after_tickets_were_opened_through_the_routines(pre):
+    """Found by the live rehearsal: tickets opened AFTER A-1 carry a LIVE event, not a BACKFILL one; re-verifying A-1 (as after its re-application) must not fail for that."""
+    base = _baseline(pre)
+    mig.migrate(pre, "transitions")
+    for _ in range(2):
+        bc.open_ticket(title="later", nature="BUG", object_type="N/A", priority="LOW", session_id="FND_20261027_DEV_TEST", description="d", first_log="first log", actor="agent:claude-opus-5-5", conn=pre)
+    cat = bc.phase_a_catalog(conn=pre)
+    assert cat["tickets"] == 5 and cat["backfill_events"] == 3 and cat["tickets_without_status_event"] == 0
+    assert _failed(_verify(pre, base, "a1")) == []
+
+
+def test_the_checker_accepts_the_owner_role_step_after_it_and_rejects_the_state_before(pre):
+    base = _baseline(pre)
+    mig.migrate(pre, "transitions")
+    assert _failed(_verify(pre, base, "a1")) == []                                              # A-1 as re-applied with FND-0337 still passes, now with fn_actor_authorized hardened
+    assert len(_failed(_verify_new(pre, base, "human"))) >= 1                                   # no role yet
+    mig.migrate(pre, "human")
+    assert _failed(_verify_new(pre, base, "human")) == []
+    assert _failed(_verify_new(pre, base, "human", rc=1)) == ["migration exit code is 0"]
+
+
+def test_the_checker_accepts_the_history_step_after_it_and_rejects_the_state_before(pre):
+    base = _baseline(pre)
+    mig.migrate(pre, "transitions")
+    assert len(_failed(_verify_new(pre, base, "history"))) >= 4                                 # nothing applied
+    mig.migrate(pre, "history")
+    assert _failed(_verify_new(pre, base, "history")) == []
+    pre.execute("UPDATE backlog.BACKLOG_LOGS SET comment = 'rewritten' WHERE action_point_id = 'FND-9001'")
+    assert "history up to the baseline ids is identical" in _failed(_verify_new(pre, base, "history"))
+
+
+def test_the_identity_catalog_reports_what_the_checks_rely_on(pre):
+    mig.migrate(pre, "transitions")
+    mig.migrate(pre, "human")
+    mig.migrate(pre, "history")
+    mig.migrate(pre, "revoke")
+    ident = bc.identity_history_catalog(conn=pre)
+    assert ident["human_role"] == {"superuser": False, "can_login": True, "member_of_writer": True} and ident["authorization_function"] is True
+    assert ident["calls_authorization"] == {"sp_open_ticket": True, "sp_transition": True, "trg_actor_known": True}     # the A-2 author trigger carries the rule too
+    h = ident["history"]
+    assert h["owner"] == "backlog_owner" and h["append_only"] is True and h["view"] is True and h["writer_can_insert"] is False
+    assert all(col in h["trigger_def"] for col in bc.DESCRIPTIVE_FIELDS)
+
+
+def test_the_identity_catalog_is_empty_but_safe_before_the_steps(pre):
+    ident = bc.identity_history_catalog(conn=pre)
+    assert ident["human_role"] is None and ident["authorization_function"] is False and ident["history"] is None and ident["calls_authorization"] == {}
+
+
 def test_the_catalog_reports_the_hardening_the_checker_relies_on(pre):
     mig.migrate(pre, "transitions")
     cat = bc.phase_a_catalog(conn=pre)
