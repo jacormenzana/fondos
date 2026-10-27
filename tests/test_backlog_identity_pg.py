@@ -81,7 +81,8 @@ def test_once_the_role_exists_human_actors_need_it(dbh):
     assert authorized(dbh, "backlog_human", HUMAN) is True                                      # the owner-only login can
     assert authorized(dbh, "backlog_human", ME) is True                                         # and it may also act as an agent identity
     assert authorized(dbh, "backlog_writer", ME) is True and authorized(dbh, "backlog_writer", "system:release") is True
-    assert authorized(dbh, "postgres", HUMAN) is True                                           # a superuser (the DDL role) passes
+    superuser = dbh.execute("SELECT session_user").fetchone()[0]                                # the test login is the cluster superuser (postgres here, fondos_test in CI)
+    assert authorized(dbh, superuser, HUMAN) is True                                            # a superuser (the DDL role) passes
     assert authorized(dbh, "backlog_writer", "agent:claude") is False and authorized(dbh, "backlog_human", "agent:claude") is False
 
 
