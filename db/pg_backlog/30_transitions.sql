@@ -58,7 +58,7 @@ $$ SELECT CASE p_from
         WHEN 'OPEN'             THEN p_to IN ('TODO', 'IN_PROGRESS', 'DEFERRED', 'CLOSED')
         WHEN 'TODO'             THEN p_to IN ('OPEN', 'IN_PROGRESS', 'DEFERRED', 'CLOSED')
         WHEN 'IN_PROGRESS'      THEN p_to IN ('TODO', 'BLOCKED', 'READY_FOR_DEPLOY', 'DEFERRED', 'CLOSED')
-        WHEN 'BLOCKED'          THEN p_to IN ('IN_PROGRESS', 'DEFERRED', 'CLOSED')
+        WHEN 'BLOCKED'          THEN p_to IN ('IN_PROGRESS', 'TODO', 'DEFERRED', 'CLOSED')
         WHEN 'READY_FOR_DEPLOY' THEN p_to IN ('IN_PROGRESS', 'CLOSED')
         WHEN 'DEFERRED'         THEN p_to IN ('OPEN', 'TODO', 'IN_PROGRESS', 'CLOSED')
         ELSE false END $$;
@@ -201,7 +201,31 @@ $$;
 --    REJECTED needs the superseding ticket (p_followup); DUPLICATED needs the kept ticket (p_followup) and records the DUPLICATES link.
 --    BLOCKED needs p_blocker (a ticket; the DEPENDS_ON link is guaranteed) or p_condition; DEFERRED needs p_revisit_by or p_revisit_on_event.
 --    Reopening a CLOSED ticket, an illegal move and the REJECTED/closure shortcuts need p_force and a reason of 40+ characters; the use is recorded.
---    The Phase B gate (open DEPENDS_ON prerequisite, holds, review flags) is added there; this step has none.
+--    The Phase B gate (open DEPENDS_ON prerequisite, holds, unacknowledged review flags: FND-0333) has a MODE, read from fn_gate_mode: OFF (nothing happens), AUDIT
+--    (the blockers are computed and logged by fn_gate_record, the move is NOT refused) or ENFORCE (the move is refused unless p_force). It is evaluated for
+--    READY_FOR_DEPLOY and for delivery closures; review flags are raised by fn_raise_review_flags after the move. Until Phase B is applied the four functions
+--    are the stubs below (mode OFF, no blocker, no flag, no record). The stubs are created ONLY when absent, so re-applying this step after Phase B never
+--    overwrites the real functions (and Phase B applies this step first, in the same transaction).
+DO $$
+BEGIN
+    IF to_regprocedure('backlog.fn_gate_mode(text)') IS NULL THEN
+        CREATE FUNCTION backlog.fn_gate_mode(p_gate text) RETURNS text
+        LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, backlog AS $f$ SELECT 'OFF'::text $f$;
+    END IF;
+    IF to_regprocedure('backlog.fn_gate_record(text,text,boolean,jsonb,text,text,boolean)') IS NULL THEN
+        CREATE FUNCTION backlog.fn_gate_record(p_ap_id text, p_to text, p_delivery boolean, p_blockers jsonb, p_mode text, p_actor text, p_forced boolean) RETURNS void
+        LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, backlog AS $f$ BEGIN RETURN; END $f$;
+    END IF;
+    IF to_regprocedure('backlog.fn_gate_blockers(text,text,boolean)') IS NULL THEN
+        CREATE FUNCTION backlog.fn_gate_blockers(p_ap_id text, p_to text, p_delivery boolean) RETURNS jsonb
+        LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, backlog AS $f$ SELECT '[]'::jsonb $f$;
+    END IF;
+    IF to_regprocedure('backlog.fn_raise_review_flags(text,text,text)') IS NULL THEN
+        CREATE FUNCTION backlog.fn_raise_review_flags(p_ap_id text, p_to text, p_actor text) RETURNS integer
+        LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, backlog AS $f$ SELECT 0 $f$;
+    END IF;
+END $$;
+
 CREATE OR REPLACE FUNCTION backlog.sp_transition(
     p_ap_id text, p_to text, p_actor text, p_session_id text, p_comment text,
     p_solution_type text DEFAULT NULL, p_release_version text DEFAULT NULL,
@@ -219,6 +243,8 @@ DECLARE
     v_rel      text;
     v_follow   text;
     v_detail   jsonb;
+    v_gate     jsonb := '[]'::jsonb;
+    v_mode     text;
     c_session  constant text := '^[A-Z0-9]+_[0-9]{8}_(WKSH|DEV|REVB|SYNC|ANL)_[A-Za-z0-9_-]+$';
     c_release  constant text := '^R[0-9]{4}[.][0-9]{2}-[A-Z0-9][A-Z0-9-]*$';
 BEGIN
@@ -340,6 +366,23 @@ BEGIN
         RAISE EXCEPTION 'sp_transition: solution_type only applies when closing' USING ERRCODE = '22023';
     END IF;
 
+    -- Delivery gate (FND-0333): READY_FOR_DEPLOY and CODE_FIX / DATA_FIX / WORKAROUND closures are evaluated against the open confirmed DEPENDS_ON prerequisites, the open
+    -- holds and the unacknowledged review flags. REJECTED and DUPLICATED are never gated. In mode ENFORCE a blocker refuses the move unless p_force with a reason of 40+
+    -- characters (the overridden blockers are kept in the status event, forced = true, counted as V-FORCED); in mode AUDIT the blockers are only logged (status event detail
+    -- gate_audit and backlog.gate_audit_event) and the move goes through; in mode OFF nothing is evaluated.
+    IF p_to = 'READY_FOR_DEPLOY' OR v_delivery THEN
+        v_mode := backlog.fn_gate_mode('DELIVERY');
+        IF v_mode <> 'OFF' THEN
+            v_gate := backlog.fn_gate_blockers(p_ap_id, p_to, v_delivery);
+            IF v_mode = 'ENFORCE' AND jsonb_array_length(v_gate) > 0 THEN
+                IF NOT p_force THEN
+                    RAISE EXCEPTION 'sp_transition: % -> % is refused by the delivery gate: % (override only with p_force and a reason of 40+ characters)', v_from, p_to, v_gate::text USING ERRCODE = '22023';
+                END IF;
+                v_forced := true;
+            END IF;
+        END IF;
+    END IF;
+
     -- Waiting states.
     IF p_to = 'BLOCKED' THEN
         IF p_blocker IS NOT NULL THEN
@@ -385,8 +428,14 @@ BEGIN
     INSERT INTO backlog.status_event (action_point_id, from_status, to_status, actor, session_id, reason, forced, detail)
     VALUES (p_ap_id, v_from, p_to, p_actor, p_session_id, left(p_comment, 500), v_forced,
             v_detail || jsonb_build_object('solution_type', p_solution_type, 'release_version', v_rel, 'followup', v_follow,
-                                           'blocker', p_blocker, 'assignee', p_assignee))
+                                           'blocker', p_blocker, 'assignee', p_assignee)
+                     || CASE WHEN jsonb_array_length(v_gate) > 0
+                             THEN jsonb_build_object(CASE WHEN v_mode = 'ENFORCE' THEN 'gate_override' ELSE 'gate_audit' END, v_gate) ELSE '{}'::jsonb END)
     RETURNING event_id INTO v_event;
+    IF v_mode IS NOT NULL AND v_mode <> 'OFF' THEN
+        PERFORM backlog.fn_gate_record(p_ap_id, p_to, v_delivery, v_gate, v_mode, p_actor, v_forced);
+    END IF;
+    PERFORM backlog.fn_raise_review_flags(p_ap_id, p_to, p_actor);
     RETURN v_event;
 END;
 $$;
@@ -465,7 +514,7 @@ DECLARE r record;
 BEGIN
     FOR r IN SELECT p.oid::regprocedure AS sig, p.prokind FROM pg_proc p
              WHERE p.pronamespace = 'backlog'::regnamespace
-               AND p.proname IN ('sp_open_ticket', 'sp_transition', 'sp_close_release', 'trg_governed_writes', 'fn_actor_ok', 'fn_actor_authorized', 'fn_transition_legal')
+               AND p.proname IN ('sp_open_ticket', 'sp_transition', 'sp_close_release', 'trg_governed_writes', 'fn_actor_ok', 'fn_actor_authorized', 'fn_transition_legal', 'fn_gate_blockers', 'fn_raise_review_flags', 'fn_gate_mode', 'fn_gate_record')
     LOOP
         EXECUTE format('ALTER %s %s OWNER TO backlog_owner', CASE r.prokind WHEN 'p' THEN 'PROCEDURE' ELSE 'FUNCTION' END, r.sig);
     END LOOP;

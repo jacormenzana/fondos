@@ -145,3 +145,39 @@ def test_the_catalog_reports_the_hardening_the_checker_relies_on(pre):
     assert {r["name"] for r in cat["routines"]} >= set(acc.HARDENED)
     assert cat["backfill_events"] == 3 and cat["tickets"] == 3 and cat["max_ticket_id"] == "FND-9003"
     assert "governed_writes" in cat["triggers"] and cat["writer"]["can_execute_transition"] is True
+
+
+def _verify_rel(conn, baseline, rc=0):
+    after = bc.history_fingerprint(max_log_id=baseline["max_log_id"], max_event_id=baseline["max_event_id"], conn=conn)
+    return acc.evaluate_relations(rc, baseline, after, bc.phase_b_catalog(conn=conn))
+
+
+def test_the_checker_accepts_phase_b_after_it_and_rejects_the_state_before(pre):
+    base = _baseline(pre)
+    mig.migrate(pre, "transitions")
+    assert len(_failed(_verify_rel(pre, base))) >= 5                                            # A-1 only: no tables, no guard, vocabulary and origin missing
+    mig.migrate(pre, "relations")
+    assert _failed(_verify_rel(pre, base)) == []
+    assert _failed(_verify_rel(pre, base, rc=1)) == ["migration exit code is 0"]
+
+
+def test_the_checker_detects_a_gate_that_was_switched_off_or_a_writable_table_or_a_rewritten_log(pre):
+    base = _baseline(pre)
+    mig.migrate(pre, "transitions")
+    mig.migrate(pre, "relations")
+    pre.execute("SELECT backlog.sp_set_gate('DELIVERY', 'OFF', 'human:jacor', 'switched off in a test of the checker')")
+    assert _failed(_verify_rel(pre, base)) == ["the delivery gate is in AUDIT mode (the rollout default) or ENFORCE, not OFF"]
+    pre.execute("SELECT backlog.sp_set_gate('DELIVERY', 'AUDIT', 'human:jacor', 'switched back to audit in the same test')")
+    pre.execute("GRANT INSERT ON backlog.hold_event TO backlog_writer")
+    assert _failed(_verify_rel(pre, base)) == ["the shared writer can execute the gate but cannot write the new tables"]
+    pre.execute("REVOKE INSERT ON backlog.hold_event FROM backlog_writer")
+    pre.execute("UPDATE backlog.BACKLOG_LOGS SET comment = 'rewritten' WHERE action_point_id = 'FND-9001'")
+    assert "history up to the baseline ids is identical" in _failed(_verify_rel(pre, base))
+
+
+def test_the_checker_detects_a_missing_cycle_guard_and_an_unhooked_transition(pre):
+    base = _baseline(pre)
+    mig.migrate(pre, "transitions")
+    mig.migrate(pre, "relations")
+    pre.execute("DROP TRIGGER link_cycle ON backlog.backlog_link_event")
+    assert _failed(_verify_rel(pre, base)) == ["the DEPENDS_ON cycle guard is installed and no cycle exists today"]

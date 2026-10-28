@@ -202,10 +202,10 @@ def test_open_ticket_refuses_bad_input(db, kw, match):
 # --- sp_transition: legality, closure, waiting states ----------------------------------------------------------------------------------------
 
 LEGAL = [("OPEN", "TODO"), ("OPEN", "IN_PROGRESS"), ("OPEN", "DEFERRED"), ("TODO", "OPEN"), ("TODO", "IN_PROGRESS"), ("IN_PROGRESS", "TODO"),
-         ("IN_PROGRESS", "BLOCKED"), ("IN_PROGRESS", "READY_FOR_DEPLOY"), ("BLOCKED", "IN_PROGRESS"), ("READY_FOR_DEPLOY", "IN_PROGRESS"),
-         ("DEFERRED", "OPEN"), ("DEFERRED", "IN_PROGRESS")]
+         ("IN_PROGRESS", "BLOCKED"), ("IN_PROGRESS", "READY_FOR_DEPLOY"), ("BLOCKED", "IN_PROGRESS"), ("BLOCKED", "TODO"), ("READY_FOR_DEPLOY", "IN_PROGRESS"),
+         ("DEFERRED", "OPEN"), ("DEFERRED", "IN_PROGRESS")]            # BLOCKED -> TODO added by the owner's mitigation of 2026-10-28 (a ticket whose blocker turned out not to exist goes back to the queue)
 ILLEGAL = [("OPEN", "READY_FOR_DEPLOY"), ("OPEN", "BLOCKED"), ("TODO", "READY_FOR_DEPLOY"), ("BLOCKED", "READY_FOR_DEPLOY"),
-           ("BLOCKED", "TODO"), ("READY_FOR_DEPLOY", "BLOCKED"), ("READY_FOR_DEPLOY", "DEFERRED"), ("DEFERRED", "READY_FOR_DEPLOY"),
+           ("READY_FOR_DEPLOY", "BLOCKED"), ("READY_FOR_DEPLOY", "DEFERRED"), ("DEFERRED", "READY_FOR_DEPLOY"),
            ("IN_PROGRESS", "OPEN")]
 
 

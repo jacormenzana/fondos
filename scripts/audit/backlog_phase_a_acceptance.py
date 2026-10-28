@@ -7,6 +7,7 @@ backlog_phase_a_acceptance.py -- acceptance checks of Backlog v2 Phase A (FND-03
     python scripts/audit/backlog_phase_a_acceptance.py --verify a1 --baseline-file F --migration-rc 0   # AFTER step A-1 (30_transitions.sql)
     python scripts/audit/backlog_phase_a_acceptance.py --verify a2 --baseline-file F --migration-rc 0   # AFTER step A-2 (31_revoke_raw_update.sql)
     python scripts/audit/backlog_phase_a_acceptance.py --verify human|history --baseline-file F --migration-rc 0   # AFTER step 32 (FND-0337) / step 33 (FND-0338)
+    python scripts/audit/backlog_phase_a_acceptance.py --verify relations --baseline-file F --migration-rc 0         # AFTER Phase B (40_relations_v2.sql, FND-0333)
 
 --baseline fingerprints the append-only history (count + md5 of every log and link event up to the current maximum ids) and the number of tickets, and
 writes out/audit/fnd0331_baseline_<UTC>.json. --verify a1 requires ALL of: the migration exited 0; backlog_owner exists and is NOT a superuser and cannot log in;
@@ -120,6 +121,32 @@ def evaluate_history(migration_rc: int, baseline: dict, after: dict, catalog: di
     ]
 
 
+PHASE_B_TABLES = {"gate_audit_event": "backlog_owner", "gate_switch": "backlog_owner", "hold_event": "backlog_owner", "review_flag": "backlog_owner"}
+
+
+def evaluate_relations(migration_rc: int, baseline: dict, after: dict, cat: dict) -> list:
+    """[(check, passed, detail)] for Phase B (FND-0333, 40_relations_v2.sql): the objects and their hardening, append-only tables, the link vocabulary and the cycle
+    guard, the hook in sp_transition, the writer's rights, the gate being enabled, and the history untouched. The replay over real history is a separate
+    artefact (backlog_phase_b_replay.py --check). Pure."""
+    from shared.backlog_client import PHASE_B_ROUTINES
+    routines = {r["name"]: r for r in cat["routines"]}
+    bad = [n for n in PHASE_B_ROUTINES if not (n in routines and routines[n]["secdef"] and routines[n]["owner"] == "backlog_owner" and SEARCH_PATH in _norm(routines[n]["config"]))]
+    check = cat.get("link_type_check") or ""
+    history_ok, history_detail = _same_history(baseline, after)
+    writer = cat.get("writer") or {}
+    return [
+        ("migration exit code is 0", migration_rc == 0, f"reported rc={migration_rc}"),
+        ("the Phase B routines exist, SECURITY DEFINER, owned by backlog_owner, search_path pinned", not bad, f"not conforming: {bad}"),
+        ("the new tables belong to backlog_owner and are append-only", cat["table_owners"] == PHASE_B_TABLES and cat["append_only"] == sorted(PHASE_B_TABLES), f"owners {cat['table_owners']}, append-only {cat['append_only']}"),
+        ("the link vocabulary accepts IMPACTS and SUPERSEDES and the column origin exists", "IMPACTS" in check and "SUPERSEDES" in check and cat["origin_column"] is True, f"origin column {cat['origin_column']}"),
+        ("the DEPENDS_ON cycle guard is installed and no cycle exists today", cat["cycle_guard"] is True and cat["existing_depends_on_cycles"] == 0, f"guard {cat['cycle_guard']}, cycles {cat['existing_depends_on_cycles']}"),
+        ("sp_transition calls the delivery gate", cat["sp_transition_calls_gate"] is True, f"{cat['sp_transition_calls_gate']}"),
+        ("the shared writer can execute the gate but cannot write the new tables", bool(writer) and writer["can_execute_gate"] and not writer["can_write_new_tables"], f"{writer}"),
+        ("the delivery gate is in AUDIT mode (the rollout default) or ENFORCE, not OFF", cat["gate_mode"] in ("AUDIT", "ENFORCE"), f"gate_mode {cat['gate_mode']}"),
+        ("history up to the baseline ids is identical", history_ok, history_detail),
+    ]
+
+
 def _stamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
@@ -128,7 +155,7 @@ def main(argv: "list | None" = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--baseline", action="store_true")
-    g.add_argument("--verify", choices=("a1", "a2", "human", "history"))
+    g.add_argument("--verify", choices=("a1", "a2", "human", "history", "relations"))
     ap.add_argument("--baseline-file", help="--verify: the JSON written by --baseline")
     ap.add_argument("--migration-rc", type=int, help="--verify: exit code the owner saw from migrate_backlog_v2.py --apply")
     args = ap.parse_args(argv)
@@ -152,7 +179,9 @@ def main(argv: "list | None" = None) -> int:
         baseline = json.loads(Path(args.baseline_file).read_text(encoding="utf-8"))
         after = bc.history_fingerprint(max_log_id=baseline["max_log_id"], max_event_id=baseline["max_event_id"])
         catalog = bc.phase_a_catalog()
-        if args.verify in ("human", "history"):
+        if args.verify == "relations":
+            results = evaluate_relations(args.migration_rc, baseline, after, bc.phase_b_catalog())
+        elif args.verify in ("human", "history"):
             ident = bc.identity_history_catalog()
             results = (evaluate_human if args.verify == "human" else evaluate_history)(args.migration_rc, baseline, after, catalog, ident)
         else:
@@ -162,6 +191,11 @@ def main(argv: "list | None" = None) -> int:
             att = {r["field"]: r for r in bc.field_change_attribution()}["ALL"]
             info.append(f"INFO - effectiveness today: {att['n_with_actor']} of {att['n_changes']} recorded descriptive changes carry an actor ({att['pct_with_actor']} %); "
                         "the limitation is resolved only when real edits have been recorded and this share has been measured and logged")
+        if args.verify == "relations" and bc.phase_b_catalog()["audit_window"]:
+            w = bc.phase_b_catalog()["audit_window"]
+            hours = "-" if w["hours_in_audit"] is None else f"{float(w['hours_in_audit']):.1f}"
+            info.append(f"INFO - gate audit window: mode {w['mode']}, {hours} h in audit, {w['evaluated']} gated moves evaluated, {w['tickets_48h']} of {w['required_tickets']} required different tickets moved in the last 48 h, "
+                        f"{w['violations_since']} violations logged ({w['violations_48h']} in the last 48 h); enforcement needs 48 h, {w['required_tickets']} different tickets and 0 violations (clear = {w['clear']})")
         if bc.transitions_store_present():
             sp = bc.shadow_progress()
             info.append(f"INFO - shadow stage: {sp['live_non_system_since_last_v00']} of 50 non-system transitions since the last V-00 "

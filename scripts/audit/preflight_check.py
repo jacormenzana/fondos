@@ -393,6 +393,18 @@ def read_memory(explicit: Optional[str], recent_hours: float) -> dict:
     return {"dir": str(d), "newest": rows[:6], "recent": [r["file"] for r in rows if r["recent"]], "recent_hours": recent_hours}
 
 
+def gate_line(g: dict) -> str:
+    """One line on the Phase B delivery gate (FND-0333) so that an AUDIT window that is clear, or one that has stalled, is seen at every pre-flight and not forgotten. Pure."""
+    if not g:
+        return ""
+    hours = "-" if g.get("hours_in_audit") is None else f"{float(g['hours_in_audit']):.1f}"
+    line = (f"delivery gate: mode {g.get('mode')}, {hours} h in audit, {g.get('tickets_48h')} of {g.get('required_tickets')} different tickets moved in the last 48 h, "
+            f"{g.get('violations_48h')} violation(s) in them")
+    if g.get("mode") == "AUDIT":
+        line += " -> ENFORCE CAN BE AUTHORIZED (window clear)" if g.get("clear") else " -> window not clear yet"
+    return line
+
+
 def read_backlog(since_hours: float) -> dict:
     if not os.environ.get("FONDOS_BACKLOG_PG_DSN") and not (ROOT / ".env").exists():
         return {"error": "skipped", "new": [], "since_hours": since_hours}
@@ -410,7 +422,12 @@ def read_backlog(since_hours: float) -> dict:
             ts = ts if getattr(ts, "tzinfo", None) else ts.replace(tzinfo=timezone.utc)
             if ts >= cutoff:
                 new.append({"id": t["action_point_id"], "status": t["status"], "title": str(t.get("title"))[:80]})
-    return {"open": sum(1 for t in tickets if t.get("status") != "CLOSED"), "new": new, "since_hours": since_hours}
+    gate = None
+    try:                                                       # Phase B may not be applied: then there is simply no gate line
+        gate = bc.gate_audit_window() if bc.relations_store_present() else None
+    except Exception:                                          # noqa: BLE001
+        gate = None
+    return {"open": sum(1 for t in tickets if t.get("status") != "CLOSED"), "new": new, "since_hours": since_hours, "gate": gate}
 
 
 # ---------------------------------------------------------------- report
@@ -473,6 +490,8 @@ def render(r: dict) -> str:
     L.append("[5] backlog: " + (b.get("error") or f"{b.get('open', '?')} open; {len(b.get('new', []))} opened in the last {b.get('since_hours', 0):g} h"))
     for t in b.get("new", [])[:6]:
         L.append(f"      {t['id']} [{t['status']}] {t['title']}")
+    if gate_line(b.get("gate") or {}):
+        L.append("      " + gate_line(b["gate"]))
     v = r["verdict"]
     L.append(f"VERDICT: {v['level']}")
     L += [f"  CAUTION: {c}" for c in v["cautions"]] + [f"  note: {n}" for n in v["notes"]]

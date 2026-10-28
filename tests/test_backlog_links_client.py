@@ -29,6 +29,18 @@ def test_link_vocabulary_is_the_ddl_check_list():
     assert bc.LINK_STATUSES == _check_values("status")
 
 
+def test_link_origin_vocabulary_is_the_ddl_check_list_and_is_documented():
+    """The fourth origin value SOURCE (owner mitigation 3, 2026-10-28) is formalized: the CHECK of 40_relations_v2.sql, backlog_client.LINK_ORIGINS and the data dictionary
+    in NORMAS_BACKLOG section 3 name exactly the same values, so no consumer meets a value that is not written down."""
+    ddl = (Path(__file__).resolve().parents[1] / "db" / "pg_backlog" / "40_relations_v2.sql").read_text(encoding="utf-8")
+    m = re.search(r"backlog_link_event_origin_check CHECK \(origin IN \(([^)]*)\)\)", ddl)
+    assert m, "origin CHECK not found in 40_relations_v2.sql"
+    assert bc.LINK_ORIGINS == tuple(v.strip().strip("'") for v in m.group(1).split(","))
+    normas = (Path(__file__).resolve().parents[1] / "doc" / "reglas" / "NORMAS_BACKLOG.md").read_text(encoding="utf-8")
+    for value in bc.LINK_ORIGINS:
+        assert f"| `{value}` |" in normas, f"origin {value} is not in the data dictionary table of NORMAS_BACKLOG section 3"
+
+
 @pytest.mark.parametrize("call", [
     lambda: bc.list_tickets(),
     lambda: bc.list_logs(),

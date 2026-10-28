@@ -264,3 +264,12 @@ def test_the_cycle_lock_is_held_only_when_the_repos_own_predicate_says_so(monkey
     assert pf.cycle_lock_held() is False                      # no file
     lock.write_text("")
     assert pf.cycle_lock_held() is False                      # a stale file nobody holds open is NOT a held lock
+
+
+def test_gate_line_shows_the_audit_window_and_says_when_enforce_can_be_authorized():
+    import preflight_check as pf
+    base = {"mode": "AUDIT", "hours_in_audit": 12.34, "tickets_48h": 2, "required_tickets": 5, "violations_48h": 0, "clear": False}
+    assert pf.gate_line({}) == "" and pf.gate_line(None) == ""
+    assert pf.gate_line(base) == "delivery gate: mode AUDIT, 12.3 h in audit, 2 of 5 different tickets moved in the last 48 h, 0 violation(s) in them -> window not clear yet"
+    assert pf.gate_line(dict(base, hours_in_audit=50.0, tickets_48h=6, clear=True)).endswith("-> ENFORCE CAN BE AUTHORIZED (window clear)")
+    assert "->" not in pf.gate_line(dict(base, mode="ENFORCE", hours_in_audit=None))

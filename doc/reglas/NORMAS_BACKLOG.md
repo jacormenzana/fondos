@@ -40,7 +40,8 @@ Dominios categóricos, **todos con `CHECK` en BD** — nunca inventar un valor f
 - **Alta:** `shared.backlog_client.open_ticket()` (función `backlog.sp_open_ticket`): crea el ticket `OPEN` con reportero canónico, sesión en el formato de la norma,
   su primer log y su primer evento de estado en una sola llamada (`schema_name`/`object_name` = nombres físicos reales). Forma heredada: `INSERT` en `BACKLOG` con
   `status='OPEN'` y un segundo `INSERT` en `BACKLOG_LOGS` que justifica la creación.
-- **Flujo normativo:** `OPEN` → `TODO` → `IN_PROGRESS` (↔ `BLOCKED`) → `READY_FOR_DEPLOY` → `CLOSED`; se retrocede si falla QA.
+- **Flujo normativo:** `OPEN` → `TODO` → `IN_PROGRESS` (↔ `BLOCKED`) → `READY_FOR_DEPLOY` → `CLOSED`; se retrocede si falla QA. Un `BLOCKED` cuyo bloqueo resulta inexistente vuelve a `TODO`
+  (`BLOCKED` → `TODO` es un movimiento legal de la matriz desde la decisión del propietario del 2026-10-28; antes solo salía a `IN_PROGRESS`, `DEFERRED` o `CLOSED`).
   Empezar a trabajar o comentar pasa a `IN_PROGRESS`. **Nunca sobrescribir progreso previo:** cada avance es un `INSERT` en
   `BACKLOG_LOGS`; `update_ts` lo mantiene un trigger.
 - **Cierre:** desarrollado y no desplegado → `READY_FOR_DEPLOY`. Terminado (desplegado, rechazado o duplicado) → `CLOSED` con
@@ -78,6 +79,19 @@ Dominios categóricos, **todos con `CHECK` en BD** — nunca inventar un valor f
   (`backlog.actor`; `backlog_client.update_attributes()` lo hace); una declaración no canónica o no permitida desde esa conexión se registra como actor `NULL`, de modo que la
   proporción de cambios sin atribuir se mide (`v_field_change_attribution`). Paso 33 (`--phase history`). La limitación E3 solo se da por resuelta cuando hay cambios reales
   registrados y esa proporción se ha medido y anotado en el ticket.
+- **Compuerta de entrega, banderas de revisión y retenciones (FND-0333, Fase B; autorizada por el propietario el 2026-10-28; DDL `40_relations_v2.sql`, `--phase relations`).**
+  `READY_FOR_DEPLOY` y los cierres de entrega (`CODE_FIX`, `DATA_FIX`, `WORKAROUND`) se evalúan contra los prerrequisitos `DEPENDS_ON` **confirmados** aún abiertos, las retenciones abiertas y las
+  banderas de revisión sin reconocer. `REJECTED` y `DUPLICATED` **nunca** pasan por la compuerta. **Despliegue por fases (decisión del propietario, 2026-10-28):** la compuerta tiene un **modo**
+  (`backlog.gate_switch`, solo añadir; el despliegue siembra `AUDIT`): en `AUDIT` cada movimiento evaluado se **registra** (`backlog.gate_audit_event`, `v_gate_audit_violation`; el evento de estado
+  lleva `detail.gate_audit`) y **no se rechaza nada**; en `ENFORCE` un bloqueo rechaza el movimiento (el error lista los bloqueos) salvo `p_force` con motivo de 40+ caracteres, que queda en el
+  evento de estado (`forced`, `detail.gate_override`) y se cuenta (`V-FORCED`); `OFF` no evalúa. **Solo un actor humano** (el rol del propietario) cambia el modo con `backlog.sp_set_gate`, y
+  `ENFORCE` se rechaza hasta que la ventana de auditoría esté limpia (`v_gate_audit_window.clear`): 48 horas o más en `AUDIT`, ninguna violación registrada en las últimas 48 horas y movimientos
+  evaluados en esas 48 horas sobre **al menos cinco tickets distintos** (decisión del propietario, 2026-10-28: un solo movimiento trivial no prueba la lógica bajo carga real); volver a `AUDIT` abre
+  una ventana nueva. Una **bandera** (`backlog.review_flag`) se levanta en el
+  otro extremo de un enlace `IMPACTS`, o de un `OVERLAPS` que lleve `absorbs`, cuando un ticket llega a `READY_FOR_DEPLOY` o se cierra; se reconoce con `backlog_client.ack_review()`.
+  Una **retención** (`backlog.hold_event`) la levanta cualquiera (`raise_hold`) y **solo un humano la libera** (`release_hold`). `SUPERSEDES` solo sugiere cerrar el ticket sustituido
+  (`v_supersede_suggestion`). **`deployment_ts` es hora del sistema** (limitación L1 de `doc/especificacion/LIMITACIONES_CONOCIDAS_BACKLOG_V2.md`): las rutinas lo sellan con la hora del cierre y **no existe ninguna rutina que lo corrija** (la única corrección, la de FND-0193, es el evento de estado 353; el propietario retiró la rutina el 2026-10-28). Un `UPDATE` suelto es una escritura directa (V-00) y reinicia el contador del paso A-2. `open_ticket()` propone como `PROPOSED RELATED` (origen `SOURCE`) los `FND-nnnn` citados en el texto. El paso 0 (`scripts/ops/backlog_step0.py` y su manifiesto) lo
+  ejecuta el propietario tras desplegar la fase: añadir-solo, idempotente, sin revertir ningún cierre ni enlace.
 - **Cierre de tickets vinculados a un defecto de auditoría (FND-0264):** un ticket enlazado a un incidente de `control.audit_incident` no se cierra hasta que el incidente esté `CERTIFIED` (re-auditoría posterior y completa) o `ACCEPTED` (residuales vigentes). `scripts/ops/close_release.py` (envoltorio de `sp_close_release`) lo aplica; ver `GOBIERNO_CONTROLES.md` §9.
 - **Captura automática** (`report_incident()`, `capture_exceptions()`, `install_excepthook()`): ante una excepción sin tratar abre
   un ticket `OPEN`/`BUG`/`HIGH`/`SYSTEM_AUTODETECT` o, si ya hay uno abierto con el mismo `(project_code, object_name)` en 24 h,
@@ -88,7 +102,7 @@ Dominios categóricos, **todos con `CHECK` en BD** — nunca inventar un valor f
 
 ## §3. Relaciones entre tickets
 
-Un enlace va **de → a** (una dirección por par), con uno de seis tipos:
+Un enlace va **de → a** (una dirección por par), con uno de los tipos de la tabla:
 
 | Tipo | Significa |
 |---|---|
@@ -98,16 +112,31 @@ Un enlace va **de → a** (una dirección por par), con uno de seis tipos:
 | `DUPLICATES` | `from` duplica a `to` (`to` es el que se conserva) |
 | `SPLIT_FROM` | `from` se separó de `to` |
 | `RELATED` | solo contexto |
+| `IMPACTS` | un cambio en `from` cambia `to` (Fase B: levanta una bandera de revisión en `to` cuando `from` llega a `READY_FOR_DEPLOY` o se cierra) |
+| `SUPERSEDES` | `from` sustituye a `to` (Fase B: solo sugiere cerrar `to`) |
 
 **Almacén:** una tabla **append-only** `backlog.backlog_link_event` — cada propuesta, confirmación, rechazo o recalificación es
 una fila nueva (quién, cuándo, evidencia, `absorbs`); nada se actualiza ni se borra. Estados de evento: `PROPOSED`, `CONFIRMED`,
 `REJECTED`. El estado **vigente** de un par es su último evento: vista `backlog.v_backlog_link`
 (`ORDER BY event_ts DESC, event_id DESC`, desempate determinista — salvaguarda S-3). `backlog.v_open_link_graph` lista los
 enlaces confirmados que tocan algún ticket abierto y marca `blocked_by_open` (un `DEPENDS_ON` cuyo prerrequisito sigue abierto).
-No hay trigger que bloquee cambios de estado: pasar de `BLOCKED` a `IN_PROGRESS` es una decisión deliberada, la herramienta solo avisa.
+Hasta la Fase B no hay trigger que bloquee cambios de estado: pasar de `BLOCKED` a `IN_PROGRESS` es una decisión deliberada, la herramienta solo avisa. **Desde la Fase B** (§2, compuerta de entrega) un
+`DEPENDS_ON` confirmado y abierto sí impide `READY_FOR_DEPLOY` y los cierres de entrega (con `p_force` y motivo como única salida contada); el resto de cambios de estado sigue sin bloqueo. Un
+`DEPENDS_ON` nuevo (`PROPOSED` o `CONFIRMED`) que cerraría un ciclo se rechaza al registrarlo. La tabla gana la columna `origin` (diccionario abajo). Un enlace se
+retira con un evento `REJECTED` nuevo (nunca se edita): así se hizo con `FND-0333 → FND-0331` el 2026-10-28, porque la Fase B necesita el paso A-1 (vivo y aceptado) y no el A-2.
 
 El DDL **lo aplica el propietario** (`python scripts/ops/migrate_backlog_links.py --apply`; simulacro por defecto). Hasta
 entonces las herramientas funcionan en solo lectura y avisan «almacén sin aplicar».
+
+**Diccionario de datos: `backlog.backlog_link_event.origin`** (columna nueva de la Fase B; valores fijados por un `CHECK`, por `backlog_client.LINK_ORIGINS` y por esta tabla — un test exige que
+los tres coincidan; ningún consumidor existente lee la columna ni la vista `v_backlog_link` la expone):
+
+| Valor | Cómo nació el evento |
+|---|---|
+| `REVIEW` | la revisión fuera de línea de `backlog_links.py` (valor por defecto: todo evento anterior a la Fase B) |
+| `GATE` | registrado por una compuerta (reservado para la Fase C) |
+| `STEP0` | las correcciones históricas de `scripts/ops/backlog_step0.py` |
+| `SOURCE` | propuesto por `backlog_client.open_ticket()` a partir de los `FND-nnnn` citados en el texto de un ticket nuevo (siempre `PROPOSED` / `RELATED`) |
 
 ## §4. Procedimiento
 

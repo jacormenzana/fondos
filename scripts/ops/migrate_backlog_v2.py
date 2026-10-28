@@ -53,7 +53,7 @@ PHASES: dict = {
         "down": [("10_kpis_and_release.sql", "backlog_sp_close_release"), ("down/30_transitions_down.sql", "backlog_transitions_down")],
         "tables": ("status_event", "wait_event", "raw_update_event"),
         "views": ("v_shadow_stage",),
-        "routines": ("sp_open_ticket", "sp_transition", "fn_actor_ok", "fn_actor_authorized", "fn_transition_legal", "trg_governed_writes"),
+        "routines": ("sp_open_ticket", "sp_transition", "fn_actor_ok", "fn_actor_authorized", "fn_transition_legal", "trg_governed_writes", "fn_gate_blockers", "fn_raise_review_flags", "fn_gate_mode", "fn_gate_record"),
         "requires": ("backlog", "backlog_logs", "backlog_link_event", "actor_alias", "v_backlog_link"),
     },
     # Phase A step A-2 (revoke). REFUSED unless the shadow stage shows SHADOW_REQUIRED non-system status changes since the last V-00.
@@ -86,6 +86,17 @@ PHASES: dict = {
         "routines": ("trg_field_changes",),
         "requires": ("backlog", "status_event"),
         "requires_routines": ("trg_append_only", "fn_actor_ok", "fn_actor_authorized"),
+    },
+    # Phase B (FND-0333): relationship semantics and the delivery gate (deployed in AUDIT mode). ONE command, ONE transaction: the block of step A-1 first (idempotent: it carries
+    # the gate hooks of sp_transition and the transition matrix) and then Phase B, so there is no separate "re-apply A-1" step and a failure in either changes nothing.
+    # Step human is not required. Its rollback goes back to step A-1 (the hooks become no-op stubs).
+    "relations": {
+        "up": [("30_transitions.sql", "backlog_transitions"), ("40_relations_v2.sql", "backlog_relations_v2")],
+        "down": ("down/40_relations_v2_down.sql", "backlog_relations_v2_down"),
+        "tables": ("review_flag", "hold_event", "gate_switch", "gate_audit_event"),
+        "views": ("v_open_review_flag", "v_open_hold", "v_supersede_suggestion", "v_gate_audit_violation", "v_gate_audit_window"),
+        "routines": ("trg_link_cycle", "fn_gate_mode", "fn_gate_record", "fn_gate_blockers", "fn_raise_review_flags", "sp_ack_review", "sp_raise_hold", "sp_release_hold", "sp_set_gate", "sp_annotate_wait"),
+        "requires": ("backlog", "backlog_logs", "backlog_link_event", "actor_alias", "v_backlog_link"),      # those of step A-1, which this phase applies itself
     },
 }
 SHADOW_REQUIRED = 50          # owner decision D2 (2026-10-26): 50 consecutive non-system transitions with no direct update
