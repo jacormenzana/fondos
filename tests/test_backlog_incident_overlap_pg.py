@@ -16,9 +16,12 @@ from types import SimpleNamespace
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops")):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
+import migrate_backlog_links as links  # noqa: E402
+import migrate_backlog_v2 as mig  # noqa: E402
 from shared import backlog_client as bc  # noqa: E402
 
 SCHEMA_SQL = (_ROOT / "db" / "pg_backlog" / "00_schema.sql").read_text(encoding="utf-8")
@@ -46,8 +49,13 @@ class _Borrowed:
 
 
 @pytest.fixture
-def db(pg_conn, monkeypatch):
+def db(pg_conn, monkeypatch, tmp_path):
+    """Production as it is: step A-1 applied (the legacy raw INSERTs of report_incident were removed on the owner's order of 2026-10-28). The fallback log is a temporary file, never the repository's."""
     pg_conn.execute(SCHEMA_SQL)
+    links.migrate(pg_conn)
+    mig.migrate(pg_conn, "alias")
+    mig.migrate(pg_conn, "transitions")
+    monkeypatch.setenv("FONDOS_BACKLOG_FALLBACK_LOG", str(tmp_path / "fallback.jsonl"))
     pg_conn.execute(
         "INSERT INTO backlog.BACKLOG (action_point_id, title, project_code, nature, object_type, object_name, status, priority, "
         "creation_ts, scenario_description) VALUES ('FND-9001', 'writer fails', 'FND', 'BUG', 'JOB', 'run_pipeline.py', 'OPEN', "

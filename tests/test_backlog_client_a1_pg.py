@@ -198,13 +198,16 @@ def test_report_incident_reincidence_and_the_suggestion_text_are_unchanged(incid
         "SELECT comment FROM backlog.BACKLOG_LOGS WHERE action_point_id = %s ORDER BY log_id LIMIT 1", (related,)).fetchone()[0]
 
 
-def test_report_incident_still_works_without_a1_and_with_the_legacy_reporter(pre, monkeypatch):
+def test_report_incident_without_a1_writes_nothing_and_goes_to_the_local_fallback(pre, monkeypatch, tmp_path):
+    """The legacy raw INSERTs were removed (owner order 2026-10-28): with step A-1 absent the incident is NOT written to the backlog, the pipeline is unharmed and it lands in the fallback log."""
     monkeypatch.setenv("FONDOS_BACKLOG_PG_DSN", "postgresql://unused")
+    monkeypatch.setenv("FONDOS_BACKLOG_FALLBACK_LOG", str(tmp_path / "fallback.jsonl"))
     monkeypatch.setattr(bc, "psycopg", SimpleNamespace(connect=lambda *a, **k: _Borrowed(pre)))
     monkeypatch.setattr(bc, "_overlap_settings", lambda: None)
-    apid = bc.report_incident(object_name="run_pipeline.py", scenario_description="ValueError: boom")
-    assert pre.execute("SELECT reporter, status FROM backlog.BACKLOG WHERE action_point_id = %s", (apid,)).fetchone() == ("SYSTEM_AUTODETECT", "OPEN")
-    assert pre.execute("SELECT to_regclass('backlog.status_event')").fetchone()[0] is None                       # nothing of A-1 was needed
+    n_before = pre.execute("SELECT count(*) FROM backlog.BACKLOG").fetchone()[0]
+    assert bc.report_incident(object_name="run_pipeline.py", scenario_description="ValueError: boom") is None
+    assert pre.execute("SELECT count(*) FROM backlog.BACKLOG").fetchone()[0] == n_before                          # nothing was written
+    assert (tmp_path / "fallback.jsonl").exists() and "ValueError: boom" in (tmp_path / "fallback.jsonl").read_text(encoding="utf-8")
 
 
 def test_report_incident_never_raises_when_the_routine_itself_fails(incident_db, monkeypatch, tmp_path):

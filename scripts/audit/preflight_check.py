@@ -405,6 +405,20 @@ def gate_line(g: dict) -> str:
     return line
 
 
+def a2_line(sp: dict, actors: list, required: int = 50) -> str:
+    """One line on the A-2 gate (FND-0331): non-system transitions counted since the last direct write (V-00), who made them, and a warning when ONE actor did them all (the owner asks
+    for several actors before the revoke). Pure."""
+    if not sp:
+        return ""
+    n = int(sp.get("live_non_system_since_last_v00") or 0)
+    line = f"A-2 gate: {n} of {required} real transitions since the last V-00 (V-00 total {sp.get('v00_total', 0)})"
+    if actors:
+        line += "; by " + ", ".join(f"{a} x{c}" for a, c in actors[:4]) + f" ({len(actors)} distinct actor(s))"
+        if len(actors) < 3:
+            line += " -> NEEDS MORE ACTORS before the revoke"
+    return line
+
+
 def read_backlog(since_hours: float) -> dict:
     if not os.environ.get("FONDOS_BACKLOG_PG_DSN") and not (ROOT / ".env").exists():
         return {"error": "skipped", "new": [], "since_hours": since_hours}
@@ -427,7 +441,13 @@ def read_backlog(since_hours: float) -> dict:
         gate = bc.gate_audit_window() if bc.relations_store_present() else None
     except Exception:                                          # noqa: BLE001
         gate = None
-    return {"open": sum(1 for t in tickets if t.get("status") != "CLOSED"), "new": new, "since_hours": since_hours, "gate": gate}
+    a2, actors = None, []
+    try:                                                       # step A-1 may not be applied: then there is no A-2 line
+        a2, actors = bc.shadow_progress(), bc.shadow_actors()
+    except Exception:                                          # noqa: BLE001
+        a2, actors = None, []
+    return {"open": sum(1 for t in tickets if t.get("status") != "CLOSED"), "new": new, "since_hours": since_hours, "gate": gate,
+            "a2": a2, "a2_actors": actors, "a2_required": getattr(bc, "SHADOW_REQUIRED", 50)}
 
 
 # ---------------------------------------------------------------- report
@@ -492,6 +512,8 @@ def render(r: dict) -> str:
         L.append(f"      {t['id']} [{t['status']}] {t['title']}")
     if gate_line(b.get("gate") or {}):
         L.append("      " + gate_line(b["gate"]))
+    if a2_line(b.get("a2") or {}, b.get("a2_actors") or [], b.get("a2_required", 50)):
+        L.append("      " + a2_line(b["a2"], b.get("a2_actors") or [], b.get("a2_required", 50)))
     v = r["verdict"]
     L.append(f"VERDICT: {v['level']}")
     L += [f"  CAUTION: {c}" for c in v["cautions"]] + [f"  note: {n}" for n in v["notes"]]

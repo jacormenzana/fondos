@@ -273,3 +273,14 @@ def test_gate_line_shows_the_audit_window_and_says_when_enforce_can_be_authorize
     assert pf.gate_line(base) == "delivery gate: mode AUDIT, 12.3 h in audit, 2 of 5 different tickets moved in the last 48 h, 0 violation(s) in them -> window not clear yet"
     assert pf.gate_line(dict(base, hours_in_audit=50.0, tickets_48h=6, clear=True)).endswith("-> ENFORCE CAN BE AUTHORIZED (window clear)")
     assert "->" not in pf.gate_line(dict(base, mode="ENFORCE", hours_in_audit=None))
+
+
+def test_a2_line_shows_progress_actors_and_asks_for_more_actors_when_there_are_few():
+    import preflight_check as pf
+    sp = {"live_non_system_since_last_v00": 10, "v00_total": 0}
+    assert pf.a2_line({}, []) == ""
+    one = pf.a2_line(sp, [("agent:a", 10)])
+    assert one == "A-2 gate: 10 of 50 real transitions since the last V-00 (V-00 total 0); by agent:a x10 (1 distinct actor(s)) -> NEEDS MORE ACTORS before the revoke"
+    three = pf.a2_line(sp, [("agent:a", 6), ("human:x", 3), ("human:y", 1)])
+    assert three.endswith("(3 distinct actor(s))") and "NEEDS MORE" not in three
+    assert pf.a2_line(dict(sp, live_non_system_since_last_v00=0), []) == "A-2 gate: 0 of 50 real transitions since the last V-00 (V-00 total 0)"

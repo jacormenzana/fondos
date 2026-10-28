@@ -204,27 +204,8 @@ def report_incident(
                          scenario_description, first_log, schema_name, project_code),
                     )
                     apid = cur.fetchone()[0]
-                else:                                   # the A-1 routines are not applied yet (the owner applies the DDL): the legacy statements
-                    cur.execute(
-                        "SELECT 'FND-' || LPAD(nextval('backlog.seq_backlog_fnd')::text, 4, '0')"
-                    )
-                    apid = cur.fetchone()[0]
-                    cur.execute(
-                        """
-                        INSERT INTO backlog.BACKLOG
-                            (action_point_id, title, project_code, nature, schema_name, object_type,
-                             object_name, status, priority, reporter, scenario_description)
-                        VALUES (%s, %s, %s, 'BUG', %s, %s, %s, 'OPEN', 'HIGH', 'SYSTEM_AUTODETECT', %s)
-                        """,
-                        (apid, new_title, project_code, schema_name, object_type, object_name, scenario_description),
-                    )
-                    cur.execute(
-                        """
-                        INSERT INTO backlog.BACKLOG_LOGS (action_point_id, username, comment)
-                        VALUES (%s, 'SYSTEM_AUTODETECT', %s)
-                        """,
-                        (apid, first_log),
-                    )
+                else:                                   # step A-1 is applied in production; without it NOTHING writes a ticket: the legacy raw INSERTs were removed (owner order 2026-10-28)
+                    raise BacklogUnavailable("Backlog v2 step A-1 (backlog.sp_open_ticket) is not applied: the incident goes to the local fallback log, not to the backlog")
                 conn.commit()
                 logger.warning("[BACKLOG-AUTOLOG] New incident opened: %s (%s)", apid, object_name)
                 return apid
@@ -839,6 +820,19 @@ def update_attributes(ap_id: str, *, actor: Optional[str] = None, conn=None, **f
         n = c.execute(f"UPDATE backlog.backlog SET {sets} WHERE action_point_id = %s", (*fields.values(), ap_id)).rowcount
         c.execute("SELECT set_config('backlog.actor', '', true)")          # the declaration covers this change only, not later statements of a borrowed transaction
     return int(n)
+
+
+SHADOW_REQUIRED = 50          # the A-2 gate (owner decision D2, 2026-10-26): non-system transitions since the last direct write; scripts/ops/migrate_backlog_v2.py keeps a pinned twin
+
+
+def shadow_actors(*, conn=None) -> list:
+    """[(actor, transitions)] of the transitions the A-2 counter has counted (LIVE, non-system, a real change of status, since the last V-00), most active first: who has exercised the
+    routines. The sum equals live_non_system_since_last_v00 (a test pins it). Needs step A-1."""
+    with _session(conn) as c:
+        return [(r[0], int(r[1])) for r in c.execute(
+            "SELECT e.actor, count(*) FROM backlog.status_event e WHERE e.origin = 'LIVE' AND e.from_status IS NOT NULL AND e.from_status <> e.to_status "
+            "AND e.actor NOT LIKE 'system:%' AND e.event_ts > COALESCE((SELECT max(r.event_ts) FROM backlog.raw_update_event r), '-infinity'::timestamptz) "
+            "GROUP BY e.actor ORDER BY 2 DESC, 1").fetchall()]
 
 
 def shadow_progress(*, conn=None) -> dict:
