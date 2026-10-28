@@ -340,7 +340,7 @@ def get_action_point_status(ap_id: str) -> str:
 
 LINK_TYPES = ("DEPENDS_ON", "RELEASE_WITH", "OVERLAPS", "DUPLICATES", "SPLIT_FROM", "RELATED", "IMPACTS", "SUPERSEDES")
 LINK_STATUSES = ("PROPOSED", "CONFIRMED", "REJECTED")
-PHASE_B_ROUTINES = ("trg_link_cycle", "fn_gate_mode", "fn_gate_record", "fn_gate_blockers", "fn_raise_review_flags", "sp_ack_review", "sp_raise_hold", "sp_release_hold", "sp_set_gate", "sp_annotate_wait")
+PHASE_B_ROUTINES = ("trg_link_cycle", "fn_gate_mode", "fn_gate_record", "fn_gate_blockers", "fn_raise_review_flags", "sp_ack_review", "sp_raise_hold", "sp_release_hold", "sp_set_gate", "sp_annotate_wait", "sp_correct_deployment_ts")
 GATE_MODES = ("OFF", "AUDIT", "ENFORCE")                         # the delivery gate: Phase B deploys in AUDIT (evaluate and log, never refuse); ENFORCE needs a clear 48-hour audit on 5+ tickets
 LINK_ORIGINS = ("REVIEW", "GATE", "STEP0", "SOURCE")                 # the column origin of backlog_link_event (Phase B); REVIEW is the default
 _ANALYSIS_OPTIONS = "-c statement_timeout=30000"
@@ -769,6 +769,15 @@ def gate_audit_violations(*, conn=None) -> list:
     """What the gate would have refused (AUDIT) or did refuse and was forced (ENFORCE): event_id, action_point_id, to_status, delivery, blockers, mode, actor, forced, event_ts."""
     with _session(conn) as c:
         return _rows(c, "SELECT event_id, action_point_id, to_status, delivery, blockers, mode, actor, forced, event_ts FROM backlog.v_gate_audit_violation ORDER BY event_id")
+
+
+def correct_deployment_ts(ap_id: str, deployed_at, reason: str, *, session_id: str, actor: Optional[str] = None, conn=None) -> int:
+    """Correct the deployment_ts of a CLOSED delivery ticket whose deployment happened before its formal closure (the routines stamp the time of the closing). `deployed_at` must
+    lie between the creation and the closure of the ticket; `reason` (40+ characters) says where the true date comes from. Appends a log and a status event with the before and after;
+    closure_ts is never touched. Returns the status_event id. Needs Phase B."""
+    who = resolve_actor(actor)
+    with _session(conn, human=who.startswith("human:")) as c:
+        return int(c.execute("SELECT backlog.sp_correct_deployment_ts(%s, %s, %s, %s, %s)", (ap_id, deployed_at, who, session_id, reason)).fetchone()[0])
 
 
 def list_wait_events(ids: Optional[list] = None, *, conn=None) -> list:
