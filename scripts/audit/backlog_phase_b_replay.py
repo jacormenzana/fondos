@@ -34,6 +34,55 @@ REPLAY_ACTOR = "system:replay"
 REPLAY_RELEASE = "R2026.10-REPLAY"
 
 
+# --- the scratch-database guard (owner mitigation 2026-10-28: a programmatic environment check, not a naming convention) ----------------------------------------------------
+
+SCRATCH_DBNAMES = ("fondos_test",)                 # the throwaway database of the hermetic container (scripts/ops/run_pg_tests.py)
+SCRATCH_DBPREFIXES = ("backlog_staging_",)         # the staging databases of FND-0351
+_LOCAL = {"localhost", "127.0.0.1", "::1", ""}
+
+
+def _norm_host(h: str) -> str:
+    h = (h or "").strip().lower()
+    return "local" if h in _LOCAL else h
+
+
+def live_targets(environ: dict) -> set:
+    """{(host, port, dbname)} of every live database this repository knows from its environment: the backlog (gestion) and the fondos store, read from the DSNs. Never prints a DSN."""
+    from psycopg.conninfo import conninfo_to_dict
+    out = set()
+    for var in ("FONDOS_BACKLOG_PG_DSN", "FONDOS_BACKLOG_PG_DSN_HUMAN", "FONDOS_PG_DSN", "FONDOS_PG_DSN_OWNER"):
+        dsn = environ.get(var)
+        if not dsn:
+            continue
+        d = conninfo_to_dict(dsn)
+        names = {d.get("dbname") or ""}
+        if var == "FONDOS_PG_DSN_OWNER":                      # the owner DSN is pointed at `gestion` for the backlog: both names are live
+            names.add("gestion")
+        for name in names:
+            out.add((_norm_host(d.get("host", "")), str(d.get("port") or "5432"), name))
+    return out
+
+
+def scratch_verdict(host: str, port, dbname: str, live: set) -> tuple:
+    """(ok, why): a database is a scratch one only if it is NOT a live target (host, port, name; localhost aliases equal) AND its name is on the allow-list (a positive identification:
+    'not named production' is not enough, the live backlog is called gestion). Pure."""
+    key = (_norm_host(host), str(port), dbname or "")
+    if key in live or any(k[1] == key[1] and k[2] == key[2] for k in live):
+        return False, f"{dbname!r} on port {port} is a LIVE database of this environment"
+    if dbname in SCRATCH_DBNAMES or any((dbname or "").startswith(p) for p in SCRATCH_DBPREFIXES):
+        return True, "scratch"
+    return False, f"{dbname!r} is not an allow-listed scratch database name {SCRATCH_DBNAMES + tuple(p + '*' for p in SCRATCH_DBPREFIXES)}"
+
+
+def assert_scratch(conn, environ: dict | None = None) -> None:
+    """Refuse to go on unless `conn` is a scratch database: this module's loops UPDATE tickets and call the real routines, which is only ever acceptable on a throwaway copy."""
+    import os
+    info = conn.info
+    ok, why = scratch_verdict(info.host or "", info.port, info.dbname, live_targets(dict(os.environ) if environ is None else environ))
+    if not ok:
+        raise RuntimeError(f"backlog_phase_b_replay refuses to run: {why}")
+
+
 # --- snapshot (read-only on the live backlog) --------------------------------------------------------------------------------------------
 
 def export_snapshot(conn) -> dict:
@@ -49,6 +98,7 @@ def export_snapshot(conn) -> dict:
 
 def load_snapshot(conn, snap: dict) -> None:
     """Insert the snapshot into a scratch database that already has the DDL. Tickets first (foreign keys), then the link events with their ids and timestamps."""
+    assert_scratch(conn)
     conn.execute("SELECT set_config('backlog.via_proc', 'on', true)")          # loading is not a direct write (V-00)
     have = {r[0] for r in conn.execute("SELECT column_name FROM information_schema.columns WHERE table_schema = 'backlog' AND table_name = 'backlog'").fetchall()}
     for t in snap["tickets"]:
@@ -90,6 +140,7 @@ def _try_close(conn, ticket: str, solution: str, other: str, keep: bool = False)
 def replay(conn, *, links_as_of_closure: bool = False, mode: str = "ENFORCE") -> dict:
     """The gate replay over every delivery closure and the flag replay over every closure, on a scratch database loaded with `load_snapshot`. `mode` is the gate mode in the
     scratch database: ENFORCE (the gate refuses: `refused`) or AUDIT (the deployment default: it never refuses and logs what it WOULD refuse: `audited`)."""
+    assert_scratch(conn)
     closed = conn.execute("SELECT action_point_id, solution_type, closure_ts, release_version FROM backlog.BACKLOG WHERE status = 'CLOSED' AND closure_ts IS NOT NULL "
                           "ORDER BY closure_ts, action_point_id").fetchall()
     any_other = conn.execute("SELECT action_point_id FROM backlog.BACKLOG ORDER BY action_point_id LIMIT 1").fetchone()[0]

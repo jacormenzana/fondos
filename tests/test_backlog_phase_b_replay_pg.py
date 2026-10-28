@@ -138,3 +138,46 @@ def test_replay_of_the_real_history(scratch):
     if out:
         Path(out).write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
     assert all(p for _, p, _ in rp.evaluate(report)), rp.evaluate(report)
+
+
+# --- the scratch-database guard: a programmatic check, not a convention on names (owner mitigation of 2026-10-28) ---------------------------------------------------------------
+
+LIVE = {("local", "5436", "gestion"), ("local", "5436", "fondos")}
+
+
+@pytest.mark.parametrize("host,port,db,ok", [
+    ("127.0.0.1", 5497, "fondos_test", True),                  # the hermetic container
+    ("localhost", "5481", "backlog_staging_20261028", True),   # a staging database on another port
+    ("127.0.0.1", 5436, "gestion", False),                     # the live backlog
+    ("localhost", 5436, "gestion", False),                     # ... through the other name of the same machine
+    ("::1", 5436, "fondos", False),                            # the live fondos store
+    ("db.example.com", 5436, "gestion", False),                # the same port and name on a remote host: still refused (port + name is the identity)
+    ("127.0.0.1", 5497, "gestion", False),                     # the live NAME on a scratch port: refused (the name alone is enough to refuse)
+    ("127.0.0.1", 5497, "production", False),                  # not on the allow-list: refused even though it is not live
+    ("127.0.0.1", 5497, "", False),
+    ("127.0.0.1", 5497, "fondos_test_copy", False),            # the allow-list is exact, not a prefix
+])
+def test_scratch_verdict_is_a_positive_identification(host, port, db, ok):
+    assert rp.scratch_verdict(host, port, db, LIVE)[0] is ok
+
+
+def test_live_targets_are_read_from_the_environment_and_the_owner_dsn_counts_as_the_backlog_too():
+    env = {"FONDOS_BACKLOG_PG_DSN": "postgresql://w:pw@127.0.0.1:5436/gestion", "FONDOS_PG_DSN": "postgresql://a:pw@127.0.0.1:5436/fondos",
+           "FONDOS_PG_DSN_OWNER": "postgresql://o:pw@localhost:5436/fondos", "UNRELATED": "x"}
+    live = rp.live_targets(env)
+    assert ("local", "5436", "gestion") in live and ("local", "5436", "fondos") in live and len(live) == 2
+    assert rp.live_targets({}) == set()
+
+
+def test_the_replay_refuses_a_connection_to_a_live_target(scratch, monkeypatch):
+    """The scratch fixture is allowed; the same code pointed at a database that the environment names as live is refused before it executes anything."""
+    info = scratch.info
+    rp.assert_scratch(scratch, {})                              # no live target known: the allow-listed name passes
+    monkeypatch.setenv("FONDOS_BACKLOG_PG_DSN", f"postgresql://x@{info.host or '127.0.0.1'}:{info.port}/{info.dbname}")      # the environment now says: this port and name are LIVE
+    with pytest.raises(RuntimeError, match="LIVE database"):
+        rp.assert_scratch(scratch)
+    with pytest.raises(RuntimeError, match="refuses to run"):
+        rp.load_snapshot(scratch, {"tickets": [], "link_events": []})
+    with pytest.raises(RuntimeError, match="refuses to run"):
+        rp.replay(scratch)
+    assert scratch.execute("SELECT count(*) FROM backlog.BACKLOG").fetchone()[0] == 0                                         # it touched nothing

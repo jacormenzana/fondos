@@ -714,3 +714,22 @@ def test_a_raw_update_of_the_deployment_ts_is_a_v00_and_resets_the_a2_counter(db
     dba.execute("UPDATE backlog.BACKLOG SET deployment_ts = deployment_ts - interval '1 day' WHERE action_point_id = %s", (ap,))
     assert dba.execute("SELECT count(*) FROM backlog.raw_update_event").fetchone()[0] == 1
     assert bc.shadow_progress(conn=dba)["live_non_system_since_last_v00"] == 0
+
+
+# --- the A-2 progress the pre-flight shows (owner mitigation of 2026-10-28) --------------------------------------------------------------------------------------------------
+
+def test_the_a2_limit_has_one_value_in_the_client_and_in_the_migration_tool():
+    assert bc.SHADOW_REQUIRED == mig.SHADOW_REQUIRED == 50
+
+
+def test_shadow_actors_add_up_to_the_counter_and_show_who_made_the_transitions(dba):
+    a, b, c = _mk(dba, "IN_PROGRESS"), _mk(dba, "IN_PROGRESS"), _mk(dba, "IN_PROGRESS")
+    tr(dba, a, "BLOCKED", condition="waiting for the vendor to answer", actor="agent:claude-sonnet-5-5")
+    tr(dba, a, "IN_PROGRESS", actor="agent:claude-sonnet-5-5")
+    tr(dba, b, "BLOCKED", condition="waiting for the vendor to answer", actor=ME)
+    tr(dba, c, "BLOCKED", condition="waiting for the vendor to answer", actor="system:sync")                  # a system actor is never counted
+    actors = bc.shadow_actors(conn=dba)
+    assert actors == [("agent:claude-sonnet-5-5", 2), (ME, 1)]
+    assert sum(n for _, n in actors) == bc.shadow_progress(conn=dba)["live_non_system_since_last_v00"] == 3
+    dba.execute("UPDATE backlog.BACKLOG SET status = 'TODO' WHERE action_point_id = %s", (a,))                # a direct write: a V-00, the counter restarts
+    assert bc.shadow_actors(conn=dba) == [] and bc.shadow_progress(conn=dba)["live_non_system_since_last_v00"] == 0

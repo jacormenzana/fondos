@@ -35,11 +35,9 @@ Dominios categóricos, **todos con `CHECK` en BD** — nunca inventar un valor f
 
 - **Sesión:** confirmar al empezar `[PROYECTO]_[YYYYMMDD]_[TIPO_SESION]_[TEMA_CORTO]` (`TIPO_SESION` ∈ `WKSH` `DEV` `REVB`
   `SYNC` `ANL`).
-- **Id:** `FND-NNNN`, acuñado por `backlog.sp_open_ticket` (a mano, con la forma heredada `SELECT 'FND-' || LPAD(nextval('backlog.seq_backlog_fnd')::text, 4, '0')`,
-  solo mientras la Fase A no esté aplicada, ver abajo); nunca inventado.
+- **Id:** `FND-NNNN`, acuñado por `backlog.sp_open_ticket` (la forma manual heredada con `nextval` se retiró el 2026-10-28); nunca inventado.
 - **Alta:** `shared.backlog_client.open_ticket()` (función `backlog.sp_open_ticket`): crea el ticket `OPEN` con reportero canónico, sesión en el formato de la norma,
-  su primer log y su primer evento de estado en una sola llamada (`schema_name`/`object_name` = nombres físicos reales). Forma heredada: `INSERT` en `BACKLOG` con
-  `status='OPEN'` y un segundo `INSERT` en `BACKLOG_LOGS` que justifica la creación.
+  su primer log y su primer evento de estado en una sola llamada (`schema_name`/`object_name` = nombres físicos reales). Ya no existe forma heredada con `INSERT` en `BACKLOG` (retirada el 2026-10-28).
 - **Flujo normativo:** `OPEN` → `TODO` → `IN_PROGRESS` (↔ `BLOCKED`) → `READY_FOR_DEPLOY` → `CLOSED`; se retrocede si falla QA. Un `BLOCKED` cuyo bloqueo resulta inexistente vuelve a `TODO`
   (`BLOCKED` → `TODO` es un movimiento legal de la matriz desde la decisión del propietario del 2026-10-28; antes solo salía a `IN_PROGRESS`, `DEFERRED` o `CLOSED`).
   Empezar a trabajar o comentar pasa a `IN_PROGRESS`. **Nunca sobrescribir progreso previo:** cada avance es un `INSERT` en
@@ -60,8 +58,8 @@ Dominios categóricos, **todos con `CHECK` en BD** — nunca inventar un valor f
   `migrate_backlog_v2.py --phase transitions`) es aditivo: crea el rol `backlog_owner` (sin superusuario ni login) como propietario de las rutinas privilegiadas
   (`SECURITY DEFINER`, `search_path` fijado), las tablas de auditoría y el disparador de la etapa de sombra, que **registra sin bloquear** (V-00) toda escritura directa en
   una columna gobernada. **A-2** (`31_revoke_raw_update.sql`, `--phase revoke`) retira al escritor el `INSERT` y el `UPDATE` directos, y el script **se niega** a aplicarlo
-  salvo que haya 50 transiciones consecutivas no sistémicas sin V-00 (`backlog.v_shadow_stage`). Mientras A-1 no esté aplicado el cliente detecta su ausencia
-  (`transitions_store_present()`) y se mantienen las formas heredadas de estas normas; las funciones de escritura del cliente fallan en voz alta.
+  salvo que haya 50 transiciones consecutivas no sistémicas sin V-00 (`backlog.v_shadow_stage`). A-1 está aplicado y las formas heredadas de escritura directa se retiraron del código (orden del propietario, 2026-10-28):
+  sin A-1 las funciones de escritura del cliente y `close_release.py` fallan en voz alta y no escriben nada; `report_incident` deja la incidencia en el registro local de reserva.
 - **Excepciones de escritura directa tras A-2 (D3, enumeradas y justificadas):** **E1** `INSERT` en `BACKLOG_LOGS` (notas de progreso, solo añadir; el autor debe ser
   canónico o tener alias); **E2** `INSERT` en `backlog_link_event` (solo añadir, con FK y `CHECK`; la Fase B lo lleva a una rutina; mismo control de autor); **E3**
   `UPDATE` de `title`, `nature`, `schema_name`, `object_type`, `object_name`, `priority`, `session_id` y `scenario_description` (atributos descriptivos y de triaje; `update_ts`
