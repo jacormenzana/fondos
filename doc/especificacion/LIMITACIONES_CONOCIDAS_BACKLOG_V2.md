@@ -39,3 +39,10 @@ Companion documents: `PROPUESTA_BACKLOG_V2.md` (design and decision log), `EVALU
 
 - **What.** It acts when a ticket is moved. Commits, switch flips and releases still do not write to the backlog (Phase C, deferred), so work done without moving its ticket is invisible to it.
 - **Mitigation.** Review sweeps and `backlog_links.py --for`. **Would remove it:** Phase C (FND-0334), deferred by the owner.
+
+## L7. The ticket numbering has a gap (FND-0339 to FND-0349) that is not missing data
+
+- **What.** The ids FND-0339 to FND-0349 were consumed by two synthetic gate-validation runs on the live schema on 2026-10-28, each inside a transaction that was rolled back (the audit-mode load: FND-0339 to FND-0345; the ENFORCE check: FND-0346 to FND-0349). The ticket id comes from the sequence `backlog.seq_backlog_fnd`, and a sequence is not transactional in PostgreSQL, so an id stays consumed after a rollback. **No ticket, log, event, link or audit row of those runs exists** (the row counts were identical before and after both runs). The last ticket before the gap is FND-0338 and the first after it is FND-0350. Log and event ids have smaller gaps for the same reason (those runs and the rehearsals of 2026-10-27).
+- **Affects.** Anything that expects contiguous ids (a reconciliation, a "missing ticket" check): FND-0339 to FND-0349 are intentionally skipped, not lost.
+- **Mitigation.** This entry; the logs of FND-0333 and FND-0352; and the owner's ban (2026-10-28) on synthetic tests against the live backlog (FND-0351: state-machine and gate verification runs on a staging container loaded with a production snapshot, so no live id is consumed).
+- **Would remove it.** Nothing: a sequence is never rewound (rewinding it would risk duplicate ids).

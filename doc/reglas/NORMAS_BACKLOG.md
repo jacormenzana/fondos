@@ -286,3 +286,5 @@ Al cerrar o actualizar un ticket (§4.1):
 Salidas en `out/reports/backlog_links/` (ignorado por git). Tests: puros (`test_backlog_links_*.py`, `test_backlog_overlap.py`,
 `test_backlog_links_calibration.py`) y herméticos PG (`python scripts/ops/run_pg_tests.py -- tests/test_backlog_links_ddl_pg.py
 tests/test_backlog_links_client_pg.py tests/test_backlog_incident_overlap_pg.py`).
+
+**Huecos en la numeración (2026-10-28):** los ids `FND-0339` a `FND-0349` los consumieron dos pruebas sintéticas de la compuerta ejecutadas dentro de transacciones revertidas; la secuencia `seq_backlog_fnd` no es transaccional, así que no existen tickets, logs ni eventos de esas pruebas: no es información perdida (detalle: `doc/especificacion/LIMITACIONES_CONOCIDAS_BACKLOG_V2.md`, L7). Desde esa fecha están prohibidas las pruebas sintéticas contra el backlog en vivo: se verifican en un contenedor de preparación con una copia de producción (FND-0351).
