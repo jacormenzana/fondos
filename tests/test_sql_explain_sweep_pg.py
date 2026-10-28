@@ -45,6 +45,9 @@ from _allowlist import bad_reasons, check_reason
 _FILE_EXEMPT: dict[str, str] = {
     "shared/backlog_client.py":
         "DESIGN: talks to the separate `gestion` database (backlog schema), not the fondos schema this sweep loads",
+    "scripts/audit/backlog_phase_b_replay.py":
+        "DESIGN: talks to the `gestion` backlog schema (a read-only export) and to a scratch database loaded with a snapshot of it, not to the fondos schema this sweep loads; "
+        "its behaviour is covered by tests/test_backlog_phase_b_replay_pg.py",
     "shared/testing/pg_fixtures.py":
         "DESIGN: test harness; issues SAVEPOINT/CREATE SCHEMA against a throwaway database",
 }

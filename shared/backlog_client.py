@@ -338,8 +338,11 @@ def get_action_point_status(ap_id: str) -> str:
 # takes an optional `conn` (a caller-owned psycopg connection, never committed here) so the hermetic tests and a multi-step
 # caller share one transaction; without it each call opens its own short-lived connection under FONDOS_BACKLOG_PG_DSN.
 
-LINK_TYPES = ("DEPENDS_ON", "RELEASE_WITH", "OVERLAPS", "DUPLICATES", "SPLIT_FROM", "RELATED")
+LINK_TYPES = ("DEPENDS_ON", "RELEASE_WITH", "OVERLAPS", "DUPLICATES", "SPLIT_FROM", "RELATED", "IMPACTS", "SUPERSEDES")
 LINK_STATUSES = ("PROPOSED", "CONFIRMED", "REJECTED")
+PHASE_B_ROUTINES = ("trg_link_cycle", "fn_gate_mode", "fn_gate_record", "fn_gate_blockers", "fn_raise_review_flags", "sp_ack_review", "sp_raise_hold", "sp_release_hold", "sp_set_gate", "sp_annotate_wait")
+GATE_MODES = ("OFF", "AUDIT", "ENFORCE")                         # the delivery gate: Phase B deploys in AUDIT (evaluate and log, never refuse); ENFORCE needs a clear 48-hour audit
+LINK_ORIGINS = ("REVIEW", "GATE", "STEP0", "SOURCE")                 # the column origin of backlog_link_event (Phase B); REVIEW is the default
 _ANALYSIS_OPTIONS = "-c statement_timeout=30000"
 
 _TICKET_COLS = (
@@ -486,25 +489,31 @@ def record_link_events(events: list[dict], *, conn=None) -> list[int]:
             raise ValueError(f"status must be one of {LINK_STATUSES}, got {ev['status']!r}")
         if ev["from_id"] == ev["to_id"]:
             raise ValueError(f"a ticket cannot be linked to itself ({ev['from_id']})")
+        if ev.get("origin") not in (None, *LINK_ORIGINS):
+            raise ValueError(f"origin must be one of {LINK_ORIGINS}, got {ev['origin']!r}")
         checked.append((ev["from_id"], ev["to_id"], ev["link_type"], ev["status"], ev["evidence"], ev.get("absorbs"),
-                        ev["username"]))
+                        ev["username"], ev.get("origin")))
     ids: list[int] = []
     with _session(conn, human=any(str(ev["username"]).startswith("human:") for ev in events)) as c:
         for row in checked:
-            (event_id,) = c.execute(
-                "INSERT INTO backlog.backlog_link_event (from_id, to_id, link_type, status, evidence, absorbs, username) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING event_id", row,
-            ).fetchone()
+            if row[7] is None:                                   # the column origin exists only after Phase B (40_relations_v2.sql): name it only when asked
+                sql = ("INSERT INTO backlog.backlog_link_event (from_id, to_id, link_type, status, evidence, absorbs, username) "
+                       "VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING event_id")
+                row = row[:7]
+            else:
+                sql = ("INSERT INTO backlog.backlog_link_event (from_id, to_id, link_type, status, evidence, absorbs, username, origin) "
+                       "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING event_id")
+            (event_id,) = c.execute(sql, row).fetchone()
             ids.append(event_id)
     return ids
 
 
 def record_link_event(*, from_id: str, to_id: str, link_type: str, status: str, evidence: str, username: str,
-                      absorbs: Optional[str] = None, conn=None) -> int:
+                      absorbs: Optional[str] = None, origin: Optional[str] = None, conn=None) -> int:
     """One-event form of record_link_events()."""
     return record_link_events([{
         "from_id": from_id, "to_id": to_id, "link_type": link_type, "status": status,
-        "evidence": evidence, "absorbs": absorbs, "username": username,
+        "evidence": evidence, "absorbs": absorbs, "username": username, "origin": origin,
     }], conn=conn)[0]
 
 
@@ -626,18 +635,58 @@ def transitions_store_present(*, conn=None) -> bool:
             return _transitions_present(cur)
 
 
+_MENTION = re.compile(r"\bFND-\d{4}\b")
+
+
+class TicketOpened(str):
+    """The id returned by open_ticket(): a plain str, plus `.mentions`, the FND-nnnn ids named in the text, and `.linked`, those recorded as PROPOSED RELATED links."""
+    mentions: tuple = ()
+    linked: tuple = ()
+
+
+def mentioned_ids(*texts: Optional[str]) -> list:
+    """The distinct FND-nnnn ids named in the texts, in order of appearance. Pure."""
+    seen: list = []
+    for text in texts:
+        for m in _MENTION.findall(text or ""):
+            if m not in seen:
+                seen.append(m)
+    return seen
+
+
+def relations_store_present(*, conn=None) -> bool:
+    """True when db/pg_backlog/40_relations_v2.sql (Phase B) has been applied (the column origin of backlog_link_event exists)."""
+    with _session(conn) as c:
+        return bool(c.execute("SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'backlog' AND table_name = 'backlog_link_event' "
+                              "AND column_name = 'origin')").fetchone()[0])
+
+
 def open_ticket(*, title: str, nature: str, object_type: str, priority: str, session_id: str, description: str, first_log: str,
                 actor: Optional[str] = None, object_name: Optional[str] = None, schema_name: Optional[str] = None,
-                project_code: str = "FND", conn=None) -> str:
+                project_code: str = "FND", link_mentions: bool = True, conn=None) -> str:
     """Open a ticket through backlog.sp_open_ticket: id from the sequence, status OPEN, reporter = the canonical actor, the first log and the first
-    status event, in one call. Returns the id. Raises on any refusal (bad actor, bad session id, a domain CHECK) and when A-1 is not applied."""
+    status event, in one call. Returns the id (a TicketOpened: a str that also carries `.mentions`). Raises on any refusal (bad actor, bad session id, a
+    domain CHECK) and when A-1 is not applied. Phase B (FND-0333): once applied, every other existing ticket named in the title, description or first log
+    is recorded as a PROPOSED RELATED link (origin SOURCE) unless the pair already has any link event, so linking no longer waits for the next review."""
     who = resolve_actor(actor)
     with _session(conn, human=who.startswith("human:")) as c:
         (apid,) = c.execute(
             "SELECT backlog.sp_open_ticket(p_title => %s, p_nature => %s, p_object_type => %s, p_object_name => %s, p_priority => %s, "
             "p_actor => %s, p_session_id => %s, p_description => %s, p_first_log => %s, p_schema_name => %s, p_project_code => %s)",
             (title, nature, object_type, object_name, priority, who, session_id, description, first_log, schema_name, project_code)).fetchone()
-    return apid
+        out = TicketOpened(apid)
+        found = [i for i in mentioned_ids(title, description, first_log) if i != apid]
+        out.mentions = tuple(found)
+        if link_mentions and found and relations_store_present(conn=c):
+            known = {r[0] for r in c.execute("SELECT action_point_id FROM backlog.BACKLOG WHERE action_point_id = ANY(%s)", (found,)).fetchall()}
+            paired = {r[0] for r in c.execute("SELECT DISTINCT CASE WHEN from_id = %s THEN to_id ELSE from_id END FROM backlog.backlog_link_event "
+                                              "WHERE from_id = %s OR to_id = %s", (apid, apid, apid)).fetchall()}
+            todo = [i for i in found if i in known and i not in paired]
+            if todo:
+                record_link_events([dict(from_id=apid, to_id=i, link_type="RELATED", status="PROPOSED", origin="SOURCE", username=who,
+                                         evidence=f"named in the text of {apid} when it was opened (S1 mention)") for i in todo], conn=c)
+            out.linked = tuple(todo)
+    return out
 
 
 def transition(ap_id: str, to_status: str, *, session_id: str, comment: str, actor: Optional[str] = None,
@@ -655,6 +704,120 @@ def transition(ap_id: str, to_status: str, *, session_id: str, comment: str, act
             (ap_id, to_status, who, session_id, comment, solution_type, release_version, blocker, condition, revisit_by, revisit_on_event,
              followup, assignee, bool(force))).fetchone()
     return int(event_id)
+
+
+# --- Phase B (FND-0333): the delivery gate, review flags, holds, the gate switch, structured waits ------------------------------------------
+
+def gate_blockers(ap_id: str, to_status: str = "READY_FOR_DEPLOY", delivery: bool = False, *, conn=None) -> list:
+    """What would block `ap_id` from READY_FOR_DEPLOY (or, with delivery=True, from a CODE_FIX / DATA_FIX / WORKAROUND closure): a list of dicts, empty = nothing.
+    Read-only; the same function sp_transition calls. Needs Phase B applied (before it, A-1 has a stub that returns [])."""
+    with _session(conn) as c:
+        return list(c.execute("SELECT backlog.fn_gate_blockers(%s, %s, %s)", (ap_id, to_status, bool(delivery))).fetchone()[0])
+
+
+def open_review_flags(ap_id: Optional[str] = None, *, conn=None) -> list:
+    """Unacknowledged review flags (all, or those on `ap_id`): flag_id, action_point_id (who must review), source_id, link_type, event_ts."""
+    with _session(conn) as c:
+        return _rows(c, "SELECT flag_id, action_point_id, source_id, link_type, event_ts FROM backlog.v_open_review_flag "
+                        "WHERE %s::text IS NULL OR action_point_id = %s ORDER BY flag_id", (ap_id, ap_id))
+
+
+def ack_review(flag_id: int, comment: str, *, actor: Optional[str] = None, conn=None) -> int:
+    """Acknowledge a review flag through backlog.sp_ack_review (what was reviewed, 10+ characters). Returns the ACK id."""
+    who = resolve_actor(actor)
+    with _session(conn, human=who.startswith("human:")) as c:
+        return int(c.execute("SELECT backlog.sp_ack_review(%s, %s, %s)", (flag_id, who, comment)).fetchone()[0])
+
+
+def raise_hold(ap_id: str, reason: str, *, code: Optional[str] = None, actor: Optional[str] = None, conn=None) -> int:
+    """Raise a hold on a ticket (it cannot reach READY_FOR_DEPLOY or a delivery closure until a human releases it). Returns the hold id."""
+    who = resolve_actor(actor)
+    with _session(conn, human=who.startswith("human:")) as c:
+        return int(c.execute("SELECT backlog.sp_raise_hold(%s, %s, %s, %s)", (ap_id, reason, code, who)).fetchone()[0])
+
+
+def release_hold(hold_id: int, reason: str, *, actor: str, conn=None) -> int:
+    """Release a hold. Only a human actor can (through FONDOS_BACKLOG_PG_DSN_HUMAN, the owner-only role)."""
+    with _session(conn, human=True) as c:
+        return int(c.execute("SELECT backlog.sp_release_hold(%s, %s, %s)", (hold_id, actor, reason)).fetchone()[0])
+
+
+def set_gate(mode: str, reason: str, *, actor: str, gate: str = "DELIVERY", conn=None) -> int:
+    """Set the delivery gate mode: OFF, AUDIT (evaluate and log, never refuse) or ENFORCE (refuse; only after a clear 48-hour audit window). Only a human actor can (the
+    owner-only role); the switch is append-only and the deployment seeds AUDIT."""
+    if mode not in GATE_MODES:
+        raise ValueError(f"mode must be one of {GATE_MODES}, got {mode!r}")
+    with _session(conn, human=True) as c:
+        return int(c.execute("SELECT backlog.sp_set_gate(%s, %s, %s, %s)", (gate, mode, actor, reason)).fetchone()[0])
+
+
+def gate_mode(gate: str = "DELIVERY", *, conn=None) -> str:
+    """The current mode of the gate: OFF, AUDIT or ENFORCE (before Phase B the A-1 stub answers OFF)."""
+    with _session(conn) as c:
+        return str(c.execute("SELECT backlog.fn_gate_mode(%s)", (gate,)).fetchone()[0])
+
+
+def gate_audit_window(*, conn=None) -> dict:
+    """The audit window the owner reads before authorizing enforcement: mode, since_ts, hours_in_audit, evaluated, violations_since, violations_48h and `clear`
+    (48+ hours of audit, 1+ moves evaluated, no violation in the last 48 hours: the DB-side condition of ENFORCE). Needs Phase B."""
+    with _session(conn) as c:
+        return _rows(c, "SELECT mode, since_ts, hours_in_audit, evaluated, violations_since, violations_48h, clear FROM backlog.v_gate_audit_window")[0]
+
+
+def gate_audit_violations(*, conn=None) -> list:
+    """What the gate would have refused (AUDIT) or did refuse and was forced (ENFORCE): event_id, action_point_id, to_status, delivery, blockers, mode, actor, forced, event_ts."""
+    with _session(conn) as c:
+        return _rows(c, "SELECT event_id, action_point_id, to_status, delivery, blockers, mode, actor, forced, event_ts FROM backlog.v_gate_audit_violation ORDER BY event_id")
+
+
+def list_wait_events(ids: Optional[list] = None, *, conn=None) -> list:
+    """The structured waits (BLOCKED / DEFERRED) of the given tickets (all when `ids` is None), oldest first: wait_id, action_point_id, kind, blocker_ref,
+    condition_text, revisit_by, revisit_on_event, revisit_basis, actor, event_ts. Needs step A-1."""
+    with _session(conn) as c:
+        return _rows(c, "SELECT wait_id, action_point_id, kind, blocker_ref, condition_text, revisit_by, revisit_on_event, revisit_basis, actor, event_ts "
+                        "FROM backlog.wait_event WHERE %s::text[] IS NULL OR action_point_id = ANY(%s) ORDER BY wait_id", (ids, ids))
+
+
+def annotate_wait(ap_id: str, comment: str, *, blocker: Optional[str] = None, condition: Optional[str] = None, revisit_by=None,
+                  revisit_on_event: Optional[str] = None, basis: str = "DECLARED", actor: Optional[str] = None, conn=None) -> int:
+    """Record the structured blocker or revisit date of a ticket that is ALREADY BLOCKED or DEFERRED (no status change). Returns the wait_event id."""
+    who = resolve_actor(actor)
+    with _session(conn, human=who.startswith("human:")) as c:
+        return int(c.execute("SELECT backlog.sp_annotate_wait(%s, %s, %s, %s, %s, %s, %s, %s)",
+                             (ap_id, who, comment, blocker, condition, revisit_by, revisit_on_event, basis)).fetchone()[0])
+
+
+def phase_b_catalog(*, conn=None) -> dict:
+    """Read-only facts the Phase B acceptance check needs: the objects of 40_relations_v2.sql, their owner and hardening, the link vocabulary the table accepts,
+    whether the cycle guard is installed, whether sp_transition calls the gate, the state of the switch, and what the writer may do. Absent things are just absent."""
+    names = PHASE_B_ROUTINES
+    with _session(conn) as c:
+        routines = _rows(c, "SELECT p.proname AS name, p.prosecdef AS secdef, pg_get_userbyid(p.proowner) AS owner, p.proconfig AS config, "
+                            "pg_get_functiondef(p.oid) AS body FROM pg_proc p WHERE p.pronamespace = 'backlog'::regnamespace AND p.proname = ANY(%s) ORDER BY 1", (list(names),))
+        tables = {r[0]: r[1] for r in c.execute("SELECT c.relname, pg_get_userbyid(c.relowner) FROM pg_class c WHERE c.relnamespace = 'backlog'::regnamespace "
+                                                "AND c.relname IN ('review_flag', 'hold_event', 'gate_switch', 'gate_audit_event') ORDER BY 1").fetchall()}
+        append_only = sorted(r[0] for r in c.execute("SELECT c.relname FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid WHERE t.tgname = 'append_only' AND NOT t.tgisinternal "
+                                                     "AND c.relnamespace = 'backlog'::regnamespace AND c.relname IN ('review_flag', 'hold_event', 'gate_switch', 'gate_audit_event')").fetchall())
+        cycle_guard = bool(c.execute("SELECT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'link_cycle' AND NOT tgisinternal "
+                                     "AND tgrelid = 'backlog.backlog_link_event'::regclass)").fetchone()[0])
+        check = c.execute("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid = 'backlog.backlog_link_event'::regclass AND conname = 'backlog_link_event_link_type_check'").fetchone()
+        origin = bool(c.execute("SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'backlog' AND table_name = 'backlog_link_event' AND column_name = 'origin')").fetchone()[0])
+        gate_hook = c.execute("SELECT pg_get_functiondef(p.oid) LIKE '%fn_gate_blockers%' FROM pg_proc p WHERE p.pronamespace = 'backlog'::regnamespace AND p.proname = 'sp_transition'").fetchone()
+        mode = str(c.execute("SELECT backlog.fn_gate_mode('DELIVERY')").fetchone()[0]) if any(r["name"] == "fn_gate_mode" for r in routines) else None
+        window = None
+        if c.execute("SELECT to_regclass('backlog.v_gate_audit_window') IS NOT NULL").fetchone()[0]:
+            window = _rows(c, "SELECT mode, since_ts, hours_in_audit, evaluated, violations_since, violations_48h, clear FROM backlog.v_gate_audit_window")[0]
+        writer = None
+        if c.execute("SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'backlog_writer')").fetchone()[0]:
+            writer = {"can_write_new_tables": bool(c.execute("SELECT COALESCE(bool_or(CASE WHEN to_regclass('backlog.' || t) IS NULL THEN false ELSE has_table_privilege('backlog_writer', 'backlog.' || t, 'INSERT') END), false) "
+                                                             "FROM unnest(ARRAY['review_flag', 'hold_event', 'gate_switch', 'gate_audit_event']) AS t").fetchone()[0]),
+                      "can_execute_gate": bool(c.execute("SELECT COALESCE(has_function_privilege('backlog_writer', to_regprocedure('backlog.fn_gate_blockers(text,text,boolean)')::oid, 'EXECUTE'), false)").fetchone()[0])}
+        cycles = c.execute("WITH RECURSIVE e AS (SELECT from_id a, to_id b FROM backlog.v_backlog_link WHERE link_type = 'DEPENDS_ON' AND status IN ('PROPOSED', 'CONFIRMED')), "
+                           "walk(root, id, depth) AS (SELECT a, b, 1 FROM e UNION SELECT w.root, e.b, w.depth + 1 FROM walk w JOIN e ON e.a = w.id WHERE w.depth < 50) "
+                           "SELECT count(DISTINCT root) FROM walk WHERE id = root").fetchone()[0]
+    return {"routines": routines, "table_owners": tables, "append_only": append_only, "cycle_guard": cycle_guard,
+            "link_type_check": check[0] if check else None, "origin_column": origin, "sp_transition_calls_gate": bool(gate_hook and gate_hook[0]),
+            "gate_mode": mode, "audit_window": window, "writer": writer, "existing_depends_on_cycles": int(cycles)}
 
 
 DESCRIPTIVE_FIELDS = ("title", "nature", "schema_name", "object_type", "object_name", "priority", "session_id", "scenario_description")   # exception E3

@@ -1,0 +1,57 @@
+# Step 0 of Backlog v2 (FND-0333; spec doc/especificacion/PROPUESTA_BACKLOG_V2.md section 6.6): the historical data debt, as a FIXED, versioned list.
+# Run by scripts/ops/backlog_step0.py: dry run by default, idempotent, append-only (everything goes through backlog_client: link events, wait annotations, transitions
+# and logs; no row of this file rewrites a log or a ticket, and none reverses a link or a closure). Applied by the OWNER after Phase B is deployed.
+version: 1
+revisit_days: 90                       # the placeholder revisit date of a DEFERRED ticket = the day step 0 is applied + this many days (revisit_basis DEFAULT_90D)
+rows:
+  - id: S0-01
+    ticket: FND-0203
+    action: link
+    from: FND-0203
+    to: FND-0236
+    type: DEPENDS_ON
+    status: CONFIRMED
+    basis: "its own log: it closes together with FND-0236 (a RELEASE_WITH link exists); FND-0236 is IN_PROGRESS"
+  - id: S0-02
+    ticket: FND-0203
+    action: annotate_blocker
+    blocker: FND-0236
+    basis: "structured blocker for a ticket that is BLOCKED and named none"
+  - id: S0-03
+    ticket: FND-0029
+    action: annotate_blocker
+    condition: "external source (Deutsche Bank catalogue); re-check after each harvest"
+    basis: "the condition is already in its last log; its population is WRONG_DOC; the status stays BLOCKED"
+  - id: S0-04
+    ticket: FND-0041
+    action: transition
+    from_status: BLOCKED
+    to_status: TODO                    # a legal move since the matrix gained BLOCKED -> TODO (owner mitigation 2026-10-28); no override
+    basis: "two logs, none names a blocker (rule 2 of NORMAS_BACKLOG 4.1); related OVERLAPS FND-0233 and FND-0250 are OPEN"
+  - id: S0-05
+    ticket: FND-0223
+    action: record_exception
+    marker: "STEP0-PAST-GATE-EXCEPTION"
+    basis: "the one delivery closure (CODE_FIX, 2026-10-24) that passed an open DEPENDS_ON prerequisite (FND-0193, IN_PROGRESS); recorded, never reversed"
+  - id: S0-06
+    ticket: FND-0022
+    action: link
+    from: FND-0022
+    to: FND-0015
+    type: DUPLICATES
+    status: CONFIRMED
+    basis: "closed as DUPLICATED; its log: 'already covered by P2-12'; FND-0015 is P2-12"
+  - id: S0-07
+    ticket: FND-0038
+    action: link
+    from: FND-0038
+    to: FND-0046
+    type: DUPLICATES
+    status: CONFIRMED
+    basis: "closed as DUPLICATED; its title: 'duplicate of P1-03 scope'; FND-0046 is P1-03"
+  - {id: S0-08, ticket: FND-0033, action: annotate_revisit, basis: "DEFERRED without a revisit condition: uniform placeholder, the owner may replace the date"}
+  - {id: S0-09, ticket: FND-0035, action: annotate_revisit, basis: "DEFERRED without a revisit condition: uniform placeholder, the owner may replace the date"}
+  - {id: S0-10, ticket: FND-0078, action: annotate_revisit, basis: "DEFERRED without a revisit condition: uniform placeholder, the owner may replace the date"}
+  - {id: S0-11, ticket: FND-0167, action: annotate_revisit, basis: "DEFERRED without a revisit condition: uniform placeholder, the owner may replace the date"}
+  - {id: S0-12, ticket: FND-0185, action: annotate_revisit, basis: "DEFERRED without a revisit condition: uniform placeholder, the owner may replace the date"}
+  - {id: S0-13, ticket: FND-0209, action: annotate_revisit, basis: "DEFERRED without a revisit condition: uniform placeholder, the owner may replace the date"}

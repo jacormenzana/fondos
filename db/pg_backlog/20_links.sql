@@ -13,6 +13,9 @@
 --   DUPLICATES    from duplicates to (to is the one kept)
 --   SPLIT_FROM    from was carved out of to
 --   RELATED       context only
+--   IMPACTS       a change in from changes to (Phase B, FND-0333: raises a review flag on to when from reaches READY_FOR_DEPLOY or CLOSED)
+--   SUPERSEDES    from replaces to (Phase B: only suggests closing to)
+--   The live table gets the two Phase B types, and the column origin, from 40_relations_v2.sql; this CHECK is the shape of a NEW install.
 
 -- BEGIN backlog_links
 CREATE TABLE IF NOT EXISTS backlog.backlog_link_event (
@@ -20,7 +23,7 @@ CREATE TABLE IF NOT EXISTS backlog.backlog_link_event (
     from_id     TEXT NOT NULL REFERENCES backlog.BACKLOG(action_point_id) ON DELETE CASCADE,
     to_id       TEXT NOT NULL REFERENCES backlog.BACKLOG(action_point_id) ON DELETE CASCADE,
     link_type   TEXT NOT NULL
-                CHECK (link_type IN ('DEPENDS_ON','RELEASE_WITH','OVERLAPS','DUPLICATES','SPLIT_FROM','RELATED')),
+                CHECK (link_type IN ('DEPENDS_ON','RELEASE_WITH','OVERLAPS','DUPLICATES','SPLIT_FROM','RELATED','IMPACTS','SUPERSEDES')),
     status      TEXT NOT NULL
                 CHECK (status IN ('PROPOSED','CONFIRMED','REJECTED')),
     evidence    TEXT NOT NULL,

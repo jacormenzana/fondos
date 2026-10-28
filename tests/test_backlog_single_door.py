@@ -27,6 +27,9 @@ ALLOWED: dict = {
         "FND-0331 report_incident keeps the legacy INSERT only for the window in which the A-1 routines are not applied (_transitions_present); "
         "it is removed once A-2 is accepted. FND-0338 update_attributes() is the one UPDATE of the descriptive columns of exception E3 (a whitelist of eight columns), "
         "and stays",
+    "scripts/audit/backlog_phase_b_replay.py":
+        "FND-0333 the replay loads a snapshot of the backlog into a THROWAWAY scratch database (the hermetic test container) and moves tickets there to the state they had "
+        "at each historical closure; it never connects to the live backlog for anything but a read-only export",
     "scripts/ops/close_release.py":
         "FND-0331 the legacy UPDATE to READY_FOR_DEPLOY runs only while the A-1 routines are not applied (transitions_store_present); "
         "removed once A-2 is accepted",
