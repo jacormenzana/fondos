@@ -194,8 +194,8 @@ def main(argv: "list | None" = None) -> int:
         if args.verify == "relations" and bc.phase_b_catalog()["audit_window"]:
             w = bc.phase_b_catalog()["audit_window"]
             hours = "-" if w["hours_in_audit"] is None else f"{float(w['hours_in_audit']):.1f}"
-            info.append(f"INFO - gate audit window: mode {w['mode']}, {hours} h in audit, {w['evaluated']} moves evaluated, {w['violations_since']} violations logged "
-                        f"({w['violations_48h']} in the last 48 h); enforcement needs 48 h, 1+ moves and 0 violations (clear = {w['clear']})")
+            info.append(f"INFO - gate audit window: mode {w['mode']}, {hours} h in audit, {w['evaluated']} gated moves evaluated, {w['tickets_48h']} of {w['required_tickets']} required different tickets moved in the last 48 h, "
+                        f"{w['violations_since']} violations logged ({w['violations_48h']} in the last 48 h); enforcement needs 48 h, {w['required_tickets']} different tickets and 0 violations (clear = {w['clear']})")
         if bc.transitions_store_present():
             sp = bc.shadow_progress()
             info.append(f"INFO - shadow stage: {sp['live_non_system_since_last_v00']} of 50 non-system transitions since the last V-00 "

@@ -13,7 +13,8 @@
 --   5. The delivery gate itself: backlog.fn_gate_blockers (called by sp_transition for READY_FOR_DEPLOY and for CODE_FIX / DATA_FIX / WORKAROUND closures) and its MODE
 --      (owner mitigation 2026-10-28, phased rollout): backlog.gate_switch (append-only) holds OFF / AUDIT / ENFORCE; the deployment seeds AUDIT, in which every gated move is
 --      EVALUATED and LOGGED (backlog.gate_audit_event) but never refused. Only a human actor changes the mode (backlog.sp_set_gate), and ENFORCE is refused until the audit
---      has run for 48 hours with no violation logged in them and at least one move evaluated (view v_gate_audit_window).
+--      has run for 48 hours, with no violation logged in the last 48 hours and gated moves on at least FIVE DIFFERENT tickets in them (view v_gate_audit_window; owner
+--      decision 2026-10-28: one trivial move must not stand for a stress test of the logic under real load).
 --   6. backlog.sp_annotate_wait: the structured blocker / revisit date of a ticket that is ALREADY BLOCKED or DEFERRED (used by step 0, scripts/ops/backlog_step0.py).
 
 -- BEGIN backlog_relations_v2
@@ -129,7 +130,8 @@ SELECT h.hold_id, h.action_point_id, h.violation_code, h.reason, h.actor, h.even
  WHERE h.kind = 'RAISE' AND NOT EXISTS (SELECT 1 FROM backlog.hold_event x WHERE x.kind = 'RELEASE' AND x.raise_id = h.hold_id);
 
 -- The audit log of the gate: what would have been (AUDIT) or was (ENFORCE) refused, and the window the owner reads before authorizing enforcement. `clear` is the DB-side condition
--- of sp_set_gate(ENFORCE): audit running for 48 hours or more, no violation logged in the last 48 hours, and at least one move evaluated since the audit began.
+-- of sp_set_gate(ENFORCE): audit running for 48 hours or more, no violation logged in the last 48 hours, and gated moves evaluated in those 48 hours on at least
+-- required_tickets (five) DIFFERENT tickets.
 CREATE OR REPLACE VIEW backlog.v_gate_audit_violation AS
 SELECT event_id, action_point_id, to_status, delivery, blockers, mode, actor, forced, event_ts
   FROM backlog.gate_audit_event WHERE jsonb_array_length(blockers) > 0;
@@ -140,12 +142,16 @@ SELECT COALESCE((SELECT mode FROM cur), 'AUDIT') AS mode,
        (SELECT event_ts FROM cur) AS since_ts,
        CASE WHEN COALESCE((SELECT mode FROM cur), 'AUDIT') = 'AUDIT' THEN extract(epoch FROM clock_timestamp() - (SELECT event_ts FROM cur)) / 3600.0 END AS hours_in_audit,
        (SELECT count(*) FROM backlog.gate_audit_event e WHERE e.event_ts >= (SELECT event_ts FROM cur)) AS evaluated,
+       (SELECT count(DISTINCT e.action_point_id) FROM backlog.gate_audit_event e WHERE e.event_ts >= (SELECT event_ts FROM cur)
+           AND e.event_ts > clock_timestamp() - interval '48 hours') AS tickets_48h,
+       5 AS required_tickets,
        (SELECT count(*) FROM backlog.gate_audit_event e WHERE jsonb_array_length(e.blockers) > 0 AND e.event_ts >= (SELECT event_ts FROM cur)) AS violations_since,
        (SELECT count(*) FROM backlog.gate_audit_event e WHERE jsonb_array_length(e.blockers) > 0 AND e.event_ts >= (SELECT event_ts FROM cur)
            AND e.event_ts > clock_timestamp() - interval '48 hours') AS violations_48h,
        COALESCE((SELECT mode FROM cur), 'AUDIT') = 'AUDIT'
          AND COALESCE(extract(epoch FROM clock_timestamp() - (SELECT event_ts FROM cur)) / 3600.0, 0) >= 48
-         AND (SELECT count(*) FROM backlog.gate_audit_event e WHERE e.event_ts >= (SELECT event_ts FROM cur)) >= 1
+         AND (SELECT count(DISTINCT e.action_point_id) FROM backlog.gate_audit_event e WHERE e.event_ts >= (SELECT event_ts FROM cur)
+                 AND e.event_ts > clock_timestamp() - interval '48 hours') >= 5
          AND (SELECT count(*) FROM backlog.gate_audit_event e WHERE jsonb_array_length(e.blockers) > 0 AND e.event_ts >= (SELECT event_ts FROM cur)
                  AND e.event_ts > clock_timestamp() - interval '48 hours') = 0 AS clear;
 
@@ -284,7 +290,7 @@ END;
 $$;
 
 -- Only a human actor changes the gate mode (an agent can never loosen the control that binds it). ENFORCE additionally needs the audit window to be clear: audit
--- running for 48 hours, no violation logged in them, at least one move evaluated (v_gate_audit_window.clear). Going back to AUDIT or OFF is always possible; a new AUDIT
+-- running for 48 hours, no violation logged in the last 48 hours, gated moves on at least five different tickets in them (v_gate_audit_window.clear). Going back to AUDIT or OFF is always possible; a new AUDIT
 -- row starts a new window.
 CREATE OR REPLACE FUNCTION backlog.sp_set_gate(p_gate text, p_mode text, p_actor text, p_reason text) RETURNS bigint
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, backlog AS $$
@@ -299,8 +305,8 @@ BEGIN
     IF p_mode = 'ENFORCE' THEN
         SELECT * INTO w FROM backlog.v_gate_audit_window;
         IF NOT COALESCE(w.clear, false) THEN
-            RAISE EXCEPTION 'sp_set_gate: ENFORCE needs a clear audit window (mode %, % hours in audit, % moves evaluated, % violations in the last 48 hours; needs 48 hours, 1+ moves, 0 violations)',
-                w.mode, round(COALESCE(w.hours_in_audit, 0)::numeric, 1), w.evaluated, w.violations_48h USING ERRCODE = '22023';
+            RAISE EXCEPTION 'sp_set_gate: ENFORCE needs a clear audit window (mode %, % hours in audit, gated moves on % different tickets in the last 48 hours, % violations in them; needs 48 hours, % different tickets, 0 violations)',
+                w.mode, round(COALESCE(w.hours_in_audit, 0)::numeric, 1), w.tickets_48h, w.violations_48h, w.required_tickets USING ERRCODE = '22023';
         END IF;
     END IF;
     INSERT INTO backlog.gate_switch (gate, mode, actor, reason) VALUES (p_gate, p_mode, p_actor, p_reason) RETURNING event_id INTO v_id;

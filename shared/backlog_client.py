@@ -341,7 +341,7 @@ def get_action_point_status(ap_id: str) -> str:
 LINK_TYPES = ("DEPENDS_ON", "RELEASE_WITH", "OVERLAPS", "DUPLICATES", "SPLIT_FROM", "RELATED", "IMPACTS", "SUPERSEDES")
 LINK_STATUSES = ("PROPOSED", "CONFIRMED", "REJECTED")
 PHASE_B_ROUTINES = ("trg_link_cycle", "fn_gate_mode", "fn_gate_record", "fn_gate_blockers", "fn_raise_review_flags", "sp_ack_review", "sp_raise_hold", "sp_release_hold", "sp_set_gate", "sp_annotate_wait")
-GATE_MODES = ("OFF", "AUDIT", "ENFORCE")                         # the delivery gate: Phase B deploys in AUDIT (evaluate and log, never refuse); ENFORCE needs a clear 48-hour audit
+GATE_MODES = ("OFF", "AUDIT", "ENFORCE")                         # the delivery gate: Phase B deploys in AUDIT (evaluate and log, never refuse); ENFORCE needs a clear 48-hour audit on 5+ tickets
 LINK_ORIGINS = ("REVIEW", "GATE", "STEP0", "SOURCE")                 # the column origin of backlog_link_event (Phase B); REVIEW is the default
 _ANALYSIS_OPTIONS = "-c statement_timeout=30000"
 
@@ -758,10 +758,11 @@ def gate_mode(gate: str = "DELIVERY", *, conn=None) -> str:
 
 
 def gate_audit_window(*, conn=None) -> dict:
-    """The audit window the owner reads before authorizing enforcement: mode, since_ts, hours_in_audit, evaluated, violations_since, violations_48h and `clear`
-    (48+ hours of audit, 1+ moves evaluated, no violation in the last 48 hours: the DB-side condition of ENFORCE). Needs Phase B."""
+    """The audit window the owner reads before authorizing enforcement: mode, since_ts, hours_in_audit, evaluated, tickets_48h (different tickets with a gated move in the last
+    48 hours), required_tickets (5), violations_since, violations_48h and `clear` (48+ hours of audit, gated moves on 5+ different tickets in the last 48 hours, no violation in
+    them: the DB-side condition of ENFORCE). Needs Phase B."""
     with _session(conn) as c:
-        return _rows(c, "SELECT mode, since_ts, hours_in_audit, evaluated, violations_since, violations_48h, clear FROM backlog.v_gate_audit_window")[0]
+        return _rows(c, "SELECT mode, since_ts, hours_in_audit, evaluated, tickets_48h, required_tickets, violations_since, violations_48h, clear FROM backlog.v_gate_audit_window")[0]
 
 
 def gate_audit_violations(*, conn=None) -> list:
@@ -806,7 +807,7 @@ def phase_b_catalog(*, conn=None) -> dict:
         mode = str(c.execute("SELECT backlog.fn_gate_mode('DELIVERY')").fetchone()[0]) if any(r["name"] == "fn_gate_mode" for r in routines) else None
         window = None
         if c.execute("SELECT to_regclass('backlog.v_gate_audit_window') IS NOT NULL").fetchone()[0]:
-            window = _rows(c, "SELECT mode, since_ts, hours_in_audit, evaluated, violations_since, violations_48h, clear FROM backlog.v_gate_audit_window")[0]
+            window = _rows(c, "SELECT mode, since_ts, hours_in_audit, evaluated, tickets_48h, required_tickets, violations_since, violations_48h, clear FROM backlog.v_gate_audit_window")[0]
         writer = None
         if c.execute("SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'backlog_writer')").fetchone()[0]:
             writer = {"can_write_new_tables": bool(c.execute("SELECT COALESCE(bool_or(CASE WHEN to_regclass('backlog.' || t) IS NULL THEN false ELSE has_table_privilege('backlog_writer', 'backlog.' || t, 'INSERT') END), false) "

@@ -85,8 +85,9 @@ Dominios categóricos, **todos con `CHECK` en BD** — nunca inventar un valor f
   (`backlog.gate_switch`, solo añadir; el despliegue siembra `AUDIT`): en `AUDIT` cada movimiento evaluado se **registra** (`backlog.gate_audit_event`, `v_gate_audit_violation`; el evento de estado
   lleva `detail.gate_audit`) y **no se rechaza nada**; en `ENFORCE` un bloqueo rechaza el movimiento (el error lista los bloqueos) salvo `p_force` con motivo de 40+ caracteres, que queda en el
   evento de estado (`forced`, `detail.gate_override`) y se cuenta (`V-FORCED`); `OFF` no evalúa. **Solo un actor humano** (el rol del propietario) cambia el modo con `backlog.sp_set_gate`, y
-  `ENFORCE` se rechaza hasta que la ventana de auditoría esté limpia (`v_gate_audit_window.clear`): 48 horas o más en `AUDIT`, ninguna violación registrada en las últimas 48 horas y al menos un
-  movimiento evaluado; volver a `AUDIT` abre una ventana nueva. Una **bandera** (`backlog.review_flag`) se levanta en el
+  `ENFORCE` se rechaza hasta que la ventana de auditoría esté limpia (`v_gate_audit_window.clear`): 48 horas o más en `AUDIT`, ninguna violación registrada en las últimas 48 horas y movimientos
+  evaluados en esas 48 horas sobre **al menos cinco tickets distintos** (decisión del propietario, 2026-10-28: un solo movimiento trivial no prueba la lógica bajo carga real); volver a `AUDIT` abre
+  una ventana nueva. Una **bandera** (`backlog.review_flag`) se levanta en el
   otro extremo de un enlace `IMPACTS`, o de un `OVERLAPS` que lleve `absorbs`, cuando un ticket llega a `READY_FOR_DEPLOY` o se cierra; se reconoce con `backlog_client.ack_review()`.
   Una **retención** (`backlog.hold_event`) la levanta cualquiera (`raise_hold`) y **solo un humano la libera** (`release_hold`). `SUPERSEDES` solo sugiere cerrar el ticket sustituido
   (`v_supersede_suggestion`). `open_ticket()` propone como `PROPOSED RELATED` (origen `SOURCE`) los `FND-nnnn` citados en el texto. El paso 0 (`scripts/ops/backlog_step0.py` y su manifiesto) lo

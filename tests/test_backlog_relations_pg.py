@@ -586,32 +586,53 @@ def test_moves_that_are_not_gated_leave_no_audit_row(dba):
     assert dba.execute("SELECT count(*) FROM backlog.gate_audit_event").fetchone()[0] == 0
 
 
-def test_enforce_is_refused_until_the_audit_has_run_for_48_hours_with_a_clear_log(dba):
+def _age(conn, hours, events=False):
+    """Make the audit window look `hours` old by moving the switch row back in time (and, with events=True, the audit rows too): a test-only edit as the owner connection, which the
+    append-only trigger would refuse, so it is lifted for these statements."""
+    tables = ["gate_switch"] + (["gate_audit_event"] if events else [])
+    for tb in tables:
+        conn.execute(f"ALTER TABLE backlog.{tb} DISABLE TRIGGER append_only")
+        conn.execute(f"UPDATE backlog.{tb} SET event_ts = event_ts - make_interval(hours => %s)", (hours,))
+        conn.execute(f"ALTER TABLE backlog.{tb} ENABLE TRIGGER append_only")
+
+
+def _moves_on_different_tickets(conn, n, link_first_to_open=False):
+    """n gated moves (READY_FOR_DEPLOY) on n DIFFERENT tickets; with link_first_to_open the first one has an open prerequisite (a violation in AUDIT)."""
+    ids = [_mk(conn, "IN_PROGRESS") for _ in range(n)]
+    if link_first_to_open:
+        link(conn, ids[0], _mk(conn, "IN_PROGRESS"), "DEPENDS_ON")
+    for ap in ids:
+        rfd(conn, ap)
+    return ids
+
+
+def test_enforce_is_refused_until_the_audit_has_run_for_48_hours_on_five_different_tickets(dba):
     refused(dba, "needs a clear audit window", lambda c: c.execute("SELECT backlog.sp_set_gate('DELIVERY', 'ENFORCE', %s, 'trying to enforce on the first day')", (OWNER,)))
-    a = _mk(dba, "IN_PROGRESS")
-    rfd(dba, a)                                                           # one clean move: still only minutes of audit
+    _moves_on_different_tickets(dba, 1)                                   # one clean move: still only minutes of audit
     w = bc.gate_audit_window(conn=dba)
-    assert w["mode"] == "AUDIT" and w["evaluated"] == 1 and w["violations_48h"] == 0 and w["clear"] is False and float(w["hours_in_audit"]) < 1
+    assert w["mode"] == "AUDIT" and w["evaluated"] == 1 and w["tickets_48h"] == 1 and w["required_tickets"] == 5 and w["violations_48h"] == 0 and w["clear"] is False
+    assert float(w["hours_in_audit"]) < 1
     refused(dba, "needs a clear audit window", lambda c: c.execute("SELECT backlog.sp_set_gate('DELIVERY', 'ENFORCE', %s, 'still the first day of the audit')", (OWNER,)))
 
 
-def _age_the_audit(conn, hours):
-    """Make the audit window look `hours` old: the switch row and the audit rows are moved back in time (a test-only edit as the owner connection, which the append-only trigger would
-    refuse, so it is lifted for these statements)."""
-    conn.execute("ALTER TABLE backlog.gate_switch DISABLE TRIGGER append_only")
-    conn.execute("ALTER TABLE backlog.gate_audit_event DISABLE TRIGGER append_only")
-    conn.execute("UPDATE backlog.gate_switch SET event_ts = event_ts - make_interval(hours => %s)", (hours,))
-    conn.execute("UPDATE backlog.gate_audit_event SET event_ts = event_ts - make_interval(hours => %s)", (hours,))
-    conn.execute("ALTER TABLE backlog.gate_switch ENABLE TRIGGER append_only")
-    conn.execute("ALTER TABLE backlog.gate_audit_event ENABLE TRIGGER append_only")
-
-
-def test_enforce_is_accepted_after_48_clear_hours_and_binds_from_then_on(dba):
-    a = _mk(dba, "IN_PROGRESS")
-    rfd(dba, a)
-    _age_the_audit(dba, 49)
+def test_one_trivial_move_or_four_tickets_do_not_open_enforce_even_after_48_hours(dba):
+    _age(dba, 49)                                                         # the audit has now been running for 49 hours
+    assert bc.gate_audit_window(conn=dba)["clear"] is False               # no move at all
+    a = _moves_on_different_tickets(dba, 1)[0]
+    close(dba, a)                                                         # a second move, on the SAME ticket
     w = bc.gate_audit_window(conn=dba)
-    assert w["clear"] is True and float(w["hours_in_audit"]) >= 48
+    assert w["evaluated"] == 2 and w["tickets_48h"] == 1 and w["clear"] is False
+    _moves_on_different_tickets(dba, 3)                                   # four different tickets in all
+    w = bc.gate_audit_window(conn=dba)
+    assert w["tickets_48h"] == 4 and w["clear"] is False
+    refused(dba, "needs a clear audit window", lambda c: c.execute("SELECT backlog.sp_set_gate('DELIVERY', 'ENFORCE', %s, 'four tickets are not enough')", (OWNER,)))
+
+
+def test_enforce_is_accepted_after_48_clear_hours_on_five_tickets_and_binds_from_then_on(dba):
+    _age(dba, 49)
+    _moves_on_different_tickets(dba, 5)
+    w = bc.gate_audit_window(conn=dba)
+    assert w["clear"] is True and float(w["hours_in_audit"]) >= 48 and w["tickets_48h"] == 5 and w["violations_48h"] == 0
     bc.set_gate("ENFORCE", "the owner enforces after a clear 48-hour audit window", actor=OWNER, conn=dba)
     assert bc.gate_mode(conn=dba) == "ENFORCE" and bc.gate_audit_window(conn=dba)["clear"] is False       # no longer in audit
     b, c = _mk(dba, "IN_PROGRESS"), _mk(dba, "IN_PROGRESS")
@@ -619,37 +640,32 @@ def test_enforce_is_accepted_after_48_clear_hours_and_binds_from_then_on(dba):
     refused(dba, "delivery gate", rfd, b)
 
 
-def test_a_violation_inside_the_last_48_hours_keeps_enforce_closed_and_an_old_one_does_not(dba):
-    a, b, c = _mk(dba, "IN_PROGRESS"), _mk(dba, "IN_PROGRESS"), _mk(dba, "IN_PROGRESS")
-    link(dba, a, b, "DEPENDS_ON")
-    rfd(dba, a)                                                           # a violation
-    rfd(dba, c)                                                           # and a clean move
-    _age_the_audit(dba, 49)                                               # everything is 49 hours old
-    assert bc.gate_audit_window(conn=dba)["violations_since"] == 1 and bc.gate_audit_window(conn=dba)["violations_48h"] == 1 or True
+def test_a_violation_inside_the_last_48_hours_keeps_enforce_closed_and_an_older_one_does_not(dba):
+    _moves_on_different_tickets(dba, 2, link_first_to_open=True)         # a violation and a clean move ...
+    _age(dba, 49, events=True)                                            # ... that are now 49 hours old
+    _moves_on_different_tickets(dba, 5)                                   # five clean moves inside the last 48 hours
     w = bc.gate_audit_window(conn=dba)
-    assert w["violations_48h"] == 0 and w["clear"] is True               # the violation is older than 48 hours: the window is clear again
-    d, e = _mk(dba, "IN_PROGRESS"), _mk(dba, "IN_PROGRESS")
-    link(dba, d, e, "DEPENDS_ON")
-    rfd(dba, d)                                                           # a NEW violation now
+    assert w["violations_since"] == 1 and w["violations_48h"] == 0 and w["tickets_48h"] == 5 and w["clear"] is True      # the old violation no longer counts
+    _moves_on_different_tickets(dba, 1, link_first_to_open=True)         # a NEW violation now
     w = bc.gate_audit_window(conn=dba)
     assert w["violations_48h"] == 1 and w["clear"] is False
     refused(dba, "needs a clear audit window", lambda c_: c_.execute("SELECT backlog.sp_set_gate('DELIVERY', 'ENFORCE', %s, 'a violation was logged an hour ago')", (OWNER,)))
 
 
-def test_an_audit_with_no_move_evaluated_is_not_clear(dba):
-    _age_the_audit(dba, 100)
+def test_moves_older_than_48_hours_do_not_count_toward_the_five_tickets(dba):
+    _moves_on_different_tickets(dba, 5)
+    _age(dba, 100, events=True)                                           # all five moves are 100 hours old, the audit has run 100 hours
     w = bc.gate_audit_window(conn=dba)
-    assert float(w["hours_in_audit"]) >= 48 and w["evaluated"] == 0 and w["clear"] is False
+    assert float(w["hours_in_audit"]) >= 48 and w["evaluated"] == 5 and w["tickets_48h"] == 0 and w["clear"] is False
 
 
 def test_going_back_to_audit_starts_a_new_window(dba):
-    a = _mk(dba, "IN_PROGRESS")
-    rfd(dba, a)
-    _age_the_audit(dba, 49)
+    _age(dba, 49)
+    _moves_on_different_tickets(dba, 5)
     bc.set_gate("ENFORCE", "enforced after a clear window in this test", actor=OWNER, conn=dba)
     bc.set_gate("AUDIT", "back to audit after an incident in this test", actor=OWNER, conn=dba)
     w = bc.gate_audit_window(conn=dba)
-    assert w["mode"] == "AUDIT" and float(w["hours_in_audit"]) < 1 and w["evaluated"] == 0 and w["clear"] is False
+    assert w["mode"] == "AUDIT" and float(w["hours_in_audit"]) < 1 and w["evaluated"] == 0 and w["tickets_48h"] == 0 and w["clear"] is False
 
 
 def test_enforce_logs_a_forced_override_in_the_audit_table_too(dbb):

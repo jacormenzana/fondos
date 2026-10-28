@@ -31,6 +31,8 @@ Not retired by this runbook: hard filters and construction constraints (20 % cap
 - Close **REJECTED** with the evidence log: FND-0160, FND-0161, FND-0162, FND-0163 (regime axes, fuzzy weights, soft filters, semáforo band). FND-0258 is decided after the per-multiplier ablation (A5): close MOOT if the empirical regime multiplier is retired. FND-0222 is reduced to its data-freshness triggers. FND-0223 (waiver) only if the surviving configuration's maximum drawdown exceeds 15 %.
 - Update `AGENTS.md` (scoring and regime sections), the P3 module docs and the golden-params note; add a memory note with the verdict and the evidence folder.
 - FND-0193 stays IN_PROGRESS until the forward-holdout checkpoints (2028-10 and 2029-10) are recorded.
+  **Amended 2026-10-28 (owner directive):** FND-0193 was formally CLOSED on 2026-10-28 (status events 351 and 352, release R2026.10-P3VALUE-02) because the study itself concluded on 2026-10-19; the forward-holdout
+  checkpoints are carried by FND-0299 alone (OPEN, split from FND-0193, schedule in its description). The line above is the rule that held until that date.
 
 ## 4. Who does what
 
