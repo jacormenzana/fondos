@@ -682,88 +682,35 @@ def test_the_transition_matrix_has_blocked_to_todo(dba):
     assert status(dba, a) == "TODO" and dba.execute("SELECT forced FROM backlog.status_event WHERE event_id = %s", (ev,)).fetchone()[0] is False
 
 
-# --- the audited correction of deployment_ts (owner directive 2026-10-28, case FND-0193) ---------------------------------------------------
+# --- no routine edits deployment_ts (owner order of 2026-10-28: the one-off correction routine of FND-0193 is removed) -----------------------------------------------
 
-def _closed_delivery(conn):
-    """A ticket created 10 days ago, delivered through the routines (so deployment_ts and closure_ts are 'now'): the case of a closure that came after the deployment."""
-    ap = _mk(conn, "IN_PROGRESS")
-    conn.execute("SELECT set_config('backlog.via_proc', 'on', true)")
-    conn.execute("UPDATE backlog.BACKLOG SET creation_ts = now() - interval '10 days' WHERE action_point_id = %s", (ap,))
-    conn.execute("SELECT set_config('backlog.via_proc', 'off', true)")
-    rfd(conn, ap)
-    close(conn, ap)
-    return ap
+def test_the_final_schema_has_no_routine_that_edits_deployment_ts(dba):
+    names = {r[0] for r in dba.execute("SELECT proname FROM pg_proc WHERE pronamespace = 'backlog'::regnamespace").fetchall()}
+    assert not [n for n in names if "deployment" in n] and "sp_correct_deployment_ts" not in names
+    assert "sp_correct_deployment_ts" not in bc.PHASE_B_ROUTINES and not hasattr(bc, "correct_deployment_ts")
+    assert "sp_correct_deployment_ts" not in mig.PHASES["relations"]["routines"]
 
 
-WHY = "the deployment happened on 2026-10-19 (published and promoted that day, logs of the sibling tickets of the same release)"
+def test_a_database_that_applied_the_earlier_text_loses_the_routine_when_the_phase_is_applied_again(dba):
+    """The live database ran an earlier text of this phase that created the routine: applying the final text must drop it, and leave its history alone."""
+    dba.execute("""CREATE FUNCTION backlog.sp_correct_deployment_ts(p_ap_id text, p_deployment_ts timestamptz, p_actor text, p_session_id text, p_reason text) RETURNS bigint
+                   LANGUAGE sql AS $$ SELECT 1::bigint $$""")
+    ap = _mk(dba, "IN_PROGRESS")
+    dba.execute("INSERT INTO backlog.status_event (action_point_id, from_status, to_status, actor, session_id, reason, detail) VALUES (%s, 'IN_PROGRESS', 'IN_PROGRESS', %s, %s, 'an old correction', '{\"kind\": \"deployment_ts_correction\"}')", (ap, ME, SESSION))
+    fp = bc.history_fingerprint(conn=dba)
+    mig.migrate(dba, "relations")
+    assert dba.execute("SELECT to_regprocedure('backlog.sp_correct_deployment_ts(text,timestamptz,text,text,text)') IS NULL").fetchone()[0] is True
+    assert dba.execute("SELECT count(*) FROM backlog.status_event WHERE detail ->> 'kind' = 'deployment_ts_correction'").fetchone()[0] == 1       # its history stays
+    assert bc.history_fingerprint(max_log_id=fp["max_log_id"], max_event_id=fp["max_event_id"], conn=dba) == fp
+    mig.migrate(dba, "relations")                                         # idempotent: nothing left to drop, nothing fails
 
 
-def test_the_deployment_ts_is_corrected_with_a_trace_and_without_a_direct_write_record(dba):
-    ap = _closed_delivery(dba)
-    before = dba.execute("SELECT deployment_ts, closure_ts FROM backlog.BACKLOG WHERE action_point_id = %s", (ap,)).fetchone()
-    v00, shadow = dba.execute("SELECT count(*) FROM backlog.raw_update_event").fetchone()[0], bc.shadow_progress(conn=dba)["live_non_system_since_last_v00"]
-    when = dba.execute("SELECT now() - interval '9 days'").fetchone()[0]
-    ev = bc.correct_deployment_ts(ap, when, WHY, session_id=SESSION, actor=ME, conn=dba)
-    dep, clo = dba.execute("SELECT deployment_ts, closure_ts FROM backlog.BACKLOG WHERE action_point_id = %s", (ap,)).fetchone()
-    assert dep == when and clo == before[1]                                         # the deployment moved, the closure did not
-    detail, frm, to = dba.execute("SELECT detail, from_status, to_status FROM backlog.status_event WHERE event_id = %s", (ev,)).fetchone()
-    assert (frm, to, detail["kind"]) == ("CLOSED", "CLOSED", "deployment_ts_correction") and detail["after"] is not None and detail["before"] is not None
-    assert dba.execute("SELECT count(*) FROM backlog.BACKLOG_LOGS WHERE action_point_id = %s AND comment LIKE 'deployment_ts corrected from%%'", (ap,)).fetchone()[0] == 1
-    assert dba.execute("SELECT count(*) FROM backlog.raw_update_event").fetchone()[0] == v00                      # not a V-00 (a raw UPDATE would have been)
-    assert bc.shadow_progress(conn=dba)["live_non_system_since_last_v00"] == shadow                                # and the A-2 counter did not move
-    assert dba.execute("SELECT status, solution_type FROM backlog.BACKLOG WHERE action_point_id = %s", (ap,)).fetchone() == ("CLOSED", "CODE_FIX")
-
-
-def test_a_raw_update_of_the_deployment_ts_would_have_been_a_v00_and_the_routine_is_not(dba):
-    """Why a one-off SQL patch is the wrong tool: it is recorded as the first direct write and resets the counter of step A-2."""
-    ap = _closed_delivery(dba)
+def test_a_raw_update_of_the_deployment_ts_is_a_v00_and_resets_the_a2_counter(dba):
+    """The reason no routine exists for it: the only way to change it is a direct write, which the shadow stage records as a V-00 (owner decision: it is never done silently)."""
+    ap = _mk(dba, "IN_PROGRESS")
+    rfd(dba, ap)
+    close(dba, ap)
     assert dba.execute("SELECT count(*) FROM backlog.raw_update_event").fetchone()[0] == 0
     dba.execute("UPDATE backlog.BACKLOG SET deployment_ts = deployment_ts - interval '1 day' WHERE action_point_id = %s", (ap,))
     assert dba.execute("SELECT count(*) FROM backlog.raw_update_event").fetchone()[0] == 1
     assert bc.shadow_progress(conn=dba)["live_non_system_since_last_v00"] == 0
-
-
-@pytest.mark.parametrize("what", ["not_closed", "rejected", "after_closure", "before_creation", "future", "same_value", "short_reason", "bad_session", "bad_actor", "unknown_ticket", "null_ts"])
-def test_the_correction_refuses_what_is_not_a_plain_delivery_ticket_or_not_credible(dba, what):
-    ap = _closed_delivery(dba)
-    when = dba.execute("SELECT now() - interval '9 days'").fetchone()[0]
-    kw = dict(ap=ap, when=when, reason=WHY, session=SESSION, actor=ME)
-    if what == "not_closed":
-        kw["ap"] = _mk(dba, "IN_PROGRESS")
-    elif what == "rejected":
-        k, r_ = _mk(dba, "OPEN"), _mk(dba, "IN_PROGRESS")
-        tr(dba, r_, "CLOSED", solution_type="REJECTED", followup=k)
-        kw["ap"] = r_
-    elif what == "after_closure":
-        kw["when"] = dba.execute("SELECT now() + interval '1 hour'").fetchone()[0]
-    elif what == "before_creation":
-        kw["when"] = dba.execute("SELECT now() - interval '20 days'").fetchone()[0]
-    elif what == "future":
-        kw["when"] = dba.execute("SELECT clock_timestamp() + interval '1 day'").fetchone()[0]
-    elif what == "same_value":
-        kw["when"] = dba.execute("SELECT deployment_ts FROM backlog.BACKLOG WHERE action_point_id = %s", (ap,)).fetchone()[0]
-    elif what == "short_reason":
-        kw["reason"] = "too short"
-    elif what == "bad_session":
-        kw["session"] = "not a session"
-    elif what == "bad_actor":
-        kw["actor"] = "agent:claude"
-    elif what == "unknown_ticket":
-        kw["ap"] = "FND-0"
-    elif what == "null_ts":
-        kw["when"] = None
-    with pytest.raises(psycopg.errors.Error):
-        with dba.transaction():
-            dba.execute("SELECT backlog.sp_correct_deployment_ts(%s, %s, %s, %s, %s)", (kw["ap"], kw["when"], kw["actor"], kw["session"], kw["reason"]))
-    assert dba.execute("SELECT count(*) FROM backlog.status_event WHERE detail ->> 'kind' = 'deployment_ts_correction'").fetchone()[0] == 0
-
-
-def test_the_shared_writer_can_run_the_correction_but_only_through_the_routine(dba):
-    ap = _closed_delivery(dba)
-    when = dba.execute("SELECT now() - interval '9 days'").fetchone()[0]
-    dba.execute("SET LOCAL ROLE backlog_writer")
-    try:
-        bc.correct_deployment_ts(ap, when, WHY, session_id=SESSION, actor=ME, conn=dba)
-    finally:
-        dba.execute("RESET ROLE")
-    assert dba.execute("SELECT deployment_ts FROM backlog.BACKLOG WHERE action_point_id = %s", (ap,)).fetchone()[0] == when

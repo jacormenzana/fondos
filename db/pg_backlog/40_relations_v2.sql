@@ -16,9 +16,6 @@
 --      has run for 48 hours, with no violation logged in the last 48 hours and gated moves on at least FIVE DIFFERENT tickets in them (view v_gate_audit_window; owner
 --      decision 2026-10-28: one trivial move must not stand for a stress test of the logic under real load).
 --   6. backlog.sp_annotate_wait: the structured blocker / revisit date of a ticket that is ALREADY BLOCKED or DEFERRED (used by step 0, scripts/ops/backlog_step0.py).
---   7. backlog.sp_correct_deployment_ts (owner directive 2026-10-28, case FND-0193): the routines stamp deployment_ts with the time of the closing, so a ticket closed AFTER its
---      deployment carries system time, not business time. This routine corrects it, with a reason, a log and a status event that keeps the before and after; it is the audited
---      alternative to a raw UPDATE of a governed column (which would be recorded as the first V-00 and reset the A-2 gate counter).
 
 -- BEGIN backlog_relations_v2
 -- 1. Vocabulary.
@@ -358,48 +355,10 @@ BEGIN
 END;
 $$;
 
--- Correct the deployment_ts of a CLOSED delivery ticket whose deployment happened before its formal closure. The new value must lie between the creation and the closure of the
--- ticket and not in the future; the reason (40+ characters) must say where the true date comes from. closure_ts is never touched. One status event (same status) keeps the
--- before and after in detail.kind = 'deployment_ts_correction'; the routine carries the via_proc marker, so it is NOT a V-00 and does not move the A-2 shadow counter.
-CREATE OR REPLACE FUNCTION backlog.sp_correct_deployment_ts(p_ap_id text, p_deployment_ts timestamptz, p_actor text, p_session_id text, p_reason text) RETURNS bigint
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, backlog SET backlog.via_proc = 'on' AS $$
-DECLARE t backlog.BACKLOG%ROWTYPE; v_event bigint;
-BEGIN
-    IF NOT backlog.fn_actor_ok(p_actor) THEN
-        RAISE EXCEPTION 'sp_correct_deployment_ts: actor % is not canonical', p_actor USING ERRCODE = '22023';
-    END IF;
-    IF NOT backlog.fn_actor_authorized(p_actor) THEN
-        RAISE EXCEPTION 'sp_correct_deployment_ts: actor % is not authorized from this connection', p_actor USING ERRCODE = '42501';
-    END IF;
-    IF p_session_id IS NULL OR p_session_id !~ '^[A-Z0-9]+_[0-9]{8}_(WKSH|DEV|REVB|SYNC|ANL)_[A-Za-z0-9_-]+$' THEN
-        RAISE EXCEPTION 'sp_correct_deployment_ts: session id % must look like FND_20261026_DEV_TOPIC', p_session_id USING ERRCODE = '22023';
-    END IF;
-    IF p_reason IS NULL OR length(btrim(p_reason)) < 40 THEN
-        RAISE EXCEPTION 'sp_correct_deployment_ts: a reason of 40+ characters is required (say where the true deployment date comes from)' USING ERRCODE = '22023';
-    END IF;
-    SELECT * INTO t FROM backlog.BACKLOG WHERE action_point_id = p_ap_id FOR UPDATE;
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'sp_correct_deployment_ts: ticket % does not exist', p_ap_id USING ERRCODE = '22023';
-    END IF;
-    IF t.status <> 'CLOSED' OR t.solution_type NOT IN ('CODE_FIX', 'DATA_FIX', 'WORKAROUND') OR t.deployment_ts IS NULL THEN
-        RAISE EXCEPTION 'sp_correct_deployment_ts: % is not a CLOSED delivery ticket with a deployment_ts (status %, solution %)', p_ap_id, t.status, t.solution_type USING ERRCODE = '22023';
-    END IF;
-    IF p_deployment_ts IS NULL OR p_deployment_ts < t.creation_ts OR p_deployment_ts > t.closure_ts OR p_deployment_ts > clock_timestamp() THEN
-        RAISE EXCEPTION 'sp_correct_deployment_ts: the deployment time must lie between the creation (%) and the closure (%) of %', t.creation_ts, t.closure_ts, p_ap_id USING ERRCODE = '22023';
-    END IF;
-    IF p_deployment_ts = t.deployment_ts THEN
-        RAISE EXCEPTION 'sp_correct_deployment_ts: % already has that deployment_ts', p_ap_id USING ERRCODE = '22023';
-    END IF;
-    UPDATE backlog.BACKLOG SET deployment_ts = p_deployment_ts WHERE action_point_id = p_ap_id;
-    INSERT INTO backlog.BACKLOG_LOGS (action_point_id, username, comment)
-    VALUES (p_ap_id, p_actor, 'deployment_ts corrected from ' || t.deployment_ts::text || ' (system time of the closing) to ' || p_deployment_ts::text || ' (business time): ' || p_reason);
-    INSERT INTO backlog.status_event (action_point_id, from_status, to_status, actor, session_id, reason, detail)
-    VALUES (p_ap_id, 'CLOSED', 'CLOSED', p_actor, p_session_id, left(p_reason, 500),
-            jsonb_build_object('kind', 'deployment_ts_correction', 'before', t.deployment_ts, 'after', p_deployment_ts, 'closure_ts', t.closure_ts))
-    RETURNING event_id INTO v_event;
-    RETURN v_event;
-END;
-$$;
+-- REMOVED by the owner's order of 2026-10-28: a routine that corrects deployment_ts is not part of the schema. An earlier text of this phase created
+-- backlog.sp_correct_deployment_ts (used once, for FND-0193: status event 353); applying this block drops it wherever it still exists, so a database that applied
+-- the earlier text ends in the same final state as one that never had it. The history it wrote (status event 353, log 1584) is append-only and stays.
+DROP FUNCTION IF EXISTS backlog.sp_correct_deployment_ts(text, timestamptz, text, text, text);
 
 -- Ownership and privileges, as in step A-1: the objects belong to the non-superuser backlog_owner; backlog_writer may only EXECUTE the routines and read.
 DO $$
@@ -407,7 +366,7 @@ DECLARE r record;
 BEGIN
     FOR r IN SELECT p.oid::regprocedure AS sig FROM pg_proc p
              WHERE p.pronamespace = 'backlog'::regnamespace
-               AND p.proname IN ('trg_link_cycle', 'fn_gate_mode', 'fn_gate_record', 'fn_gate_blockers', 'fn_raise_review_flags', 'sp_ack_review', 'sp_raise_hold', 'sp_release_hold', 'sp_set_gate', 'sp_annotate_wait', 'sp_correct_deployment_ts')
+               AND p.proname IN ('trg_link_cycle', 'fn_gate_mode', 'fn_gate_record', 'fn_gate_blockers', 'fn_raise_review_flags', 'sp_ack_review', 'sp_raise_hold', 'sp_release_hold', 'sp_set_gate', 'sp_annotate_wait')
     LOOP
         EXECUTE format('ALTER FUNCTION %s OWNER TO backlog_owner', r.sig);
     END LOOP;

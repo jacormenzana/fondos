@@ -95,7 +95,7 @@ PHASES: dict = {
         "down": ("down/40_relations_v2_down.sql", "backlog_relations_v2_down"),
         "tables": ("review_flag", "hold_event", "gate_switch", "gate_audit_event"),
         "views": ("v_open_review_flag", "v_open_hold", "v_supersede_suggestion", "v_gate_audit_violation", "v_gate_audit_window"),
-        "routines": ("trg_link_cycle", "fn_gate_mode", "fn_gate_record", "fn_gate_blockers", "fn_raise_review_flags", "sp_ack_review", "sp_raise_hold", "sp_release_hold", "sp_set_gate", "sp_annotate_wait", "sp_correct_deployment_ts"),
+        "routines": ("trg_link_cycle", "fn_gate_mode", "fn_gate_record", "fn_gate_blockers", "fn_raise_review_flags", "sp_ack_review", "sp_raise_hold", "sp_release_hold", "sp_set_gate", "sp_annotate_wait"),
         "requires": ("backlog", "backlog_logs", "backlog_link_event", "actor_alias", "v_backlog_link"),      # those of step A-1, which this phase applies itself
     },
 }
