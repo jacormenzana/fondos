@@ -732,16 +732,17 @@ def release_hold(hold_id: int, reason: str, *, actor: Optional[str] = None, conn
         return int(c.execute("SELECT backlog.sp_release_hold(%s, %s, %s)", (hold_id, who, reason)).fetchone()[0])
 
 
-def set_gate(mode: str, reason: str, *, actor: Optional[str] = None, gate: str = "DELIVERY", conn=None) -> int:
+def set_gate(mode: str, reason: str, *, executive_override: bool = False, actor: Optional[str] = None, gate: str = "DELIVERY", conn=None) -> int:
     """Set the delivery gate mode: OFF, AUDIT (evaluate and log, never refuse) or ENFORCE (refuse; only after a clear 48-hour audit window). Only a human actor can (the
-    owner-only role); the switch is append-only and the deployment seeds AUDIT."""
+    owner-only role); the switch is append-only and the deployment seeds AUDIT. `executive_override=True` (FND-0350) skips only the audit-window condition of ENFORCE, needs a reason of 80+
+    characters citing the written directive, and is recorded as such (v_gate_override_event); an agent can never pass it: the owner runs it in his own session."""
     if mode not in GATE_MODES:
         raise ValueError(f"mode must be one of {GATE_MODES}, got {mode!r}")
     who = resolve_actor(actor)
     if not who.startswith("human:"):
         raise ActorUnknown(f"only a human actor changes the gate (FONDOS_ACTOR={who!r})")
     with _session(conn, human=True) as c:
-        return int(c.execute("SELECT backlog.sp_set_gate(%s, %s, %s, %s)", (gate, mode, who, reason)).fetchone()[0])
+        return int(c.execute("SELECT backlog.sp_set_gate(%s, %s, %s, %s, %s)", (gate, mode, who, reason, bool(executive_override))).fetchone()[0])
 
 
 def gate_mode(gate: str = "DELIVERY", *, conn=None) -> str:
@@ -755,7 +756,7 @@ def gate_audit_window(*, conn=None) -> dict:
     48 hours), required_tickets (5), violations_since, violations_48h and `clear` (48+ hours of audit, gated moves on 5+ different tickets in the last 48 hours, no violation in
     them: the DB-side condition of ENFORCE). Needs Phase B."""
     with _session(conn) as c:
-        return _rows(c, "SELECT mode, since_ts, hours_in_audit, evaluated, tickets_48h, required_tickets, violations_since, violations_48h, clear FROM backlog.v_gate_audit_window")[0]
+        return _rows(c, "SELECT mode, since_ts, hours_in_audit, evaluated, tickets_48h, required_tickets, violations_since, violations_48h, clear, last_override_ts FROM backlog.v_gate_audit_window")[0]
 
 
 def gate_audit_violations(*, conn=None) -> list:
@@ -800,7 +801,8 @@ def phase_b_catalog(*, conn=None) -> dict:
         mode = str(c.execute("SELECT backlog.fn_gate_mode('DELIVERY')").fetchone()[0]) if any(r["name"] == "fn_gate_mode" for r in routines) else None
         window = None
         if c.execute("SELECT to_regclass('backlog.v_gate_audit_window') IS NOT NULL").fetchone()[0]:
-            window = _rows(c, "SELECT mode, since_ts, hours_in_audit, evaluated, tickets_48h, required_tickets, violations_since, violations_48h, clear FROM backlog.v_gate_audit_window")[0]
+            window = _rows(c, "SELECT mode, since_ts, hours_in_audit, evaluated, tickets_48h, required_tickets, violations_since, violations_48h, clear, last_override_ts FROM backlog.v_gate_audit_window")[0]
+        override_col = bool(c.execute("SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'backlog' AND table_name = 'gate_switch' AND column_name = 'override')").fetchone()[0])
         writer = None
         if c.execute("SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'backlog_writer')").fetchone()[0]:
             writer = {"can_write_new_tables": bool(c.execute("SELECT COALESCE(bool_or(CASE WHEN to_regclass('backlog.' || t) IS NULL THEN false ELSE has_table_privilege('backlog_writer', 'backlog.' || t, 'INSERT') END), false) "
@@ -811,7 +813,7 @@ def phase_b_catalog(*, conn=None) -> dict:
                            "SELECT count(DISTINCT root) FROM walk WHERE id = root").fetchone()[0]
     return {"routines": routines, "table_owners": tables, "append_only": append_only, "cycle_guard": cycle_guard,
             "link_type_check": check[0] if check else None, "origin_column": origin, "sp_transition_calls_gate": bool(gate_hook and gate_hook[0]),
-            "gate_mode": mode, "audit_window": window, "writer": writer, "existing_depends_on_cycles": int(cycles)}
+            "gate_mode": mode, "audit_window": window, "override_column": override_col, "writer": writer, "existing_depends_on_cycles": int(cycles)}
 
 
 DESCRIPTIVE_FIELDS = ("title", "nature", "schema_name", "object_type", "object_name", "priority", "session_id", "scenario_description")   # exception E3

@@ -39,3 +39,9 @@ Companion documents: `PROPUESTA_BACKLOG_V2.md` (design and decision log), `EVALU
 
 - **What.** It acts when a ticket is moved. Commits, switch flips and releases still do not write to the backlog (Phase C, deferred), so work done without moving its ticket is invisible to it.
 - **Mitigation.** Review sweeps and `backlog_links.py --for`. **Would remove it:** Phase C (FND-0334), deferred by the owner.
+
+## L8. One direct row in `gate_switch` precedes the governed executive override
+
+- **What.** On 2026-10-28 the delivery gate went from AUDIT to ENFORCE by ONE direct row in the append-only `backlog.gate_switch` (event 2, actor `system:owner-waiver`), written with the owner role by an agent session on the owner's written directive, because `sp_set_gate` then had no way to waive the audit window. The row cites the directive and the evidence; it does not impersonate the owner.
+- **Affects.** Reading the history of the gate: that row is the only mode change not made through `sp_set_gate`, and its `override` column reads false (the column did not exist yet).
+- **Mitigation.** FND-0350: `sp_set_gate(..., p_executive_override => true)`, human-only, reason of 80+ characters, flagged and listed (`v_gate_override_event`); a repository test fails on any new raw insert. **Would remove it:** nothing (history is append-only); the precedent stays documented here.

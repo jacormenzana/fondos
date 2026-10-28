@@ -284,3 +284,10 @@ def test_a2_line_shows_progress_actors_and_asks_for_more_actors_when_there_are_f
     three = pf.a2_line(sp, [("agent:a", 6), ("human:x", 3), ("human:y", 1)])
     assert three.endswith("(3 distinct actor(s))") and "NEEDS MORE" not in three
     assert pf.a2_line(dict(sp, live_non_system_since_last_v00=0), []) == "A-2 gate: 0 of 50 real transitions since the last V-00 (V-00 total 0)"
+
+
+def test_gate_line_mentions_a_recorded_executive_override():
+    import preflight_check as pf
+    base = {"mode": "ENFORCE", "hours_in_audit": None, "tickets_48h": 0, "required_tickets": 5, "violations_48h": 0, "clear": False, "last_override_ts": None}
+    assert "override" not in pf.gate_line(base)
+    assert pf.gate_line(dict(base, last_override_ts="2026-10-29 01:02:03+01:00")).endswith("[executive override recorded 2026-10-29 01:02]")
