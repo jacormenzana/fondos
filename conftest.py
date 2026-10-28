@@ -13,4 +13,4 @@ mere presence — `pg_conn` et al. are new, opt-in fixtures. A test that doesn't
 completely unaffected.
 """
 
-pytest_plugins = ["shared.testing.pg_fixtures"]
+pytest_plugins = ["shared.testing.pg_fixtures", "shared.testing.sandbox"]

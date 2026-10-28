@@ -13,4 +13,4 @@ test_p1_kiid_sync_pg.py, etc.) with "fixture 'pg_conn' not found" — a regressi
 to whatever change actually added the pytest.ini. This file closes that gap before it can happen.
 """
 
-pytest_plugins = ["shared.testing.pg_fixtures"]
+pytest_plugins = ["shared.testing.pg_fixtures", "shared.testing.sandbox"]

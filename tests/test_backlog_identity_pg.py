@@ -22,6 +22,7 @@ for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops"), str(Path(__file__).resolv
         sys.path.insert(0, _p)
 
 import migrate_backlog_v2 as mig  # noqa: E402
+from shared.testing.sandbox import acting_as  # noqa: E402
 from shared import backlog_client as bc  # noqa: E402
 from test_backlog_transitions_pg import ME, SESSION, _base, _mk, open_, tr  # noqa: E402
 
@@ -209,7 +210,8 @@ def test_a_human_write_without_the_owner_dsn_fails_loudly_before_touching_anythi
     monkeypatch.setenv("FONDOS_BACKLOG_PG_DSN", "postgresql://writer@h/gestion")
     monkeypatch.delenv("FONDOS_BACKLOG_PG_DSN_HUMAN", raising=False)
     with pytest.raises(bc.HumanDsnMissing):
-        bc.open_ticket(title="t", nature="BUG", object_type="N/A", priority="LOW", session_id=SESSION, description="d", first_log="first log", actor=HUMAN)
+        with acting_as(HUMAN):
+            bc.open_ticket(title="t", nature="BUG", object_type="N/A", priority="LOW", session_id=SESSION, description="d", first_log="first log", actor=HUMAN)
     with pytest.raises(bc.HumanDsnMissing):
         bc.append_log("FND-0001", HUMAN, "a note")
     with pytest.raises(bc.HumanDsnMissing):
@@ -217,5 +219,6 @@ def test_a_human_write_without_the_owner_dsn_fails_loudly_before_touching_anythi
 
 
 def test_a_borrowed_connection_is_used_as_given_whatever_the_actor(db):
-    ap = bc.open_ticket(title="t", nature="BUG", object_type="N/A", priority="LOW", session_id=SESSION, description="d", first_log="first log", actor=HUMAN, conn=db)
+    with acting_as(HUMAN):
+        ap = bc.open_ticket(title="t", nature="BUG", object_type="N/A", priority="LOW", session_id=SESSION, description="d", first_log="first log", actor=HUMAN, conn=db)
     assert db.execute("SELECT reporter FROM backlog.backlog WHERE action_point_id = %s", (ap,)).fetchone()[0] == HUMAN   # the caller owns the connection and its authority

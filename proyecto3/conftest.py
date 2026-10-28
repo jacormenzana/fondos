@@ -6,4 +6,4 @@ proyecto2/conftest.py: proyecto3/pytest.ini pins rootdir here when tests are inv
 above rootdir — so the repo-root conftest.py alone is not enough.
 """
 
-pytest_plugins = ["shared.testing.pg_fixtures"]
+pytest_plugins = ["shared.testing.pg_fixtures", "shared.testing.sandbox"]

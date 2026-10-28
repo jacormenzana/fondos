@@ -24,6 +24,7 @@ for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops")):
 
 import migrate_backlog_links as links  # noqa: E402
 import migrate_backlog_v2 as mig  # noqa: E402
+from shared.testing.sandbox import acting_as  # noqa: E402
 from shared import backlog_client as bc  # noqa: E402
 
 SCHEMA_SQL = (_ROOT / "db" / "pg_backlog" / "00_schema.sql").read_text(encoding="utf-8")
@@ -96,15 +97,19 @@ def test_make_session_id_follows_the_norm_and_cleans_the_topic():
             bc.make_session_id(*bad, today=day)
 
 
-def test_resolve_actor_is_explicit_first_then_the_environment_and_never_a_guess(monkeypatch):
+def test_resolve_actor_comes_from_the_environment_and_an_explicit_one_must_equal_it(monkeypatch):
     monkeypatch.setenv("FONDOS_ACTOR", "human:jacor")
-    assert bc.resolve_actor("agent:claude-opus-5-5") == "agent:claude-opus-5-5"            # the explicit one wins
-    assert bc.resolve_actor() == "human:jacor"                                              # the validated alternative
+    assert bc.resolve_actor() == "human:jacor"                                              # the identity of the process
+    assert bc.resolve_actor("human:jacor") == "human:jacor"                                 # an explicit one that equals it is fine
+    with pytest.raises(bc.ActorUnknown, match="differs from FONDOS_ACTOR"):
+        bc.resolve_actor("agent:claude-opus-5-5")                                           # a different explicit identity can no longer be typed
     with pytest.raises(bc.ActorUnknown):
         bc.resolve_actor("claude")                                                           # an explicit bad one is not rescued by the environment
     monkeypatch.delenv("FONDOS_ACTOR")
-    with pytest.raises(bc.ActorUnknown):
+    with pytest.raises(bc.ActorUnknown, match="not set"):
         bc.resolve_actor()
+    with pytest.raises(bc.ActorUnknown, match="not set"):
+        bc.resolve_actor("agent:claude-opus-5-5")                                           # and an explicit one does not replace a missing environment
 
 
 def test_sp_signatures_the_client_probes_match_the_ddl():
@@ -132,7 +137,8 @@ def test_the_write_api_fails_loudly_before_a1(pre):
 def test_open_ticket_and_transition_round_trip_with_an_explicit_actor(db):
     ap = _open(db, title="a ticket", nature="REQ")
     assert db.execute("SELECT reporter, status FROM backlog.BACKLOG WHERE action_point_id = %s", (ap,)).fetchone() == (ME, "OPEN")
-    ev = bc.transition(ap, "IN_PROGRESS", session_id=SESSION, comment="starting the work now", actor="human:jacor", assignee=ME, conn=db)
+    with acting_as("human:jacor"):
+        ev = bc.transition(ap, "IN_PROGRESS", session_id=SESSION, comment="starting the work now", actor="human:jacor", assignee=ME, conn=db)
     assert isinstance(ev, int)
     assert db.execute("SELECT status, assignee FROM backlog.BACKLOG WHERE action_point_id = %s", (ap,)).fetchone() == ("IN_PROGRESS", ME)
     assert db.execute("SELECT actor FROM backlog.status_event WHERE event_id = %s", (ev,)).fetchone()[0] == "human:jacor"
@@ -166,7 +172,8 @@ def test_the_database_refusals_surface_as_exceptions(db):
 def test_shadow_progress_reads_the_stage(db):
     assert bc.shadow_progress(conn=db) == {"last_v00_ts": None, "v00_total": 0, "live_non_system_since_last_v00": 0}
     ap = _open(db)
-    bc.transition(ap, "TODO", session_id=SESSION, comment="triaged by the owner", actor="human:jacor", conn=db)
+    with acting_as("human:jacor"):
+        bc.transition(ap, "TODO", session_id=SESSION, comment="triaged by the owner", actor="human:jacor", conn=db)
     assert bc.shadow_progress(conn=db)["live_non_system_since_last_v00"] == 1
 
 
