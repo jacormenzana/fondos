@@ -76,7 +76,7 @@ def test_the_phase_refuses_to_run_before_step_a1_has_the_hook(pg_conn):
 
 def test_the_rollback_removes_everything_and_puts_the_hook_back_to_the_stub(db):
     ap = _mk(db)
-    bind(db, "backlog_logger", "agent:%", "claude", "AGENT")
+    bind(db, "backlog_logger", "agent:%", "non-human", "AGENT")
     mig.migrate(db, "iam", down=True)
     have = mig.existing(db, "iam")
     assert have["roles"] == [] and have["tables"] == [] and have["views"] == [] and "sp_append_log" not in have["routines"] and "fn_actor_bound" in have["routines"]
@@ -188,7 +188,7 @@ def test_nothing_is_enforced_while_no_login_is_bound(db):
 
 def test_a_bound_login_writes_only_as_its_identity(db):
     ap = _mk(db)
-    bind(db, "backlog_logger", "agent:claude-sonnet-5-5", "claude", "AGENT")
+    bind(db, "backlog_logger", "agent:claude-sonnet-5-5", "non-human", "AGENT")
     appended = lambda c, who: c.execute("SELECT backlog.sp_append_log(%s, %s, 'a note')", (ap, who)).fetchone()[0]       # noqa: E731
     assert as_login(db, "backlog_logger", appended, "agent:claude-sonnet-5-5") > 0
     denied(db, "backlog_logger", appended, "agent:claude-opus-5-5", match="not authorized")                          # another model: refused
@@ -198,25 +198,25 @@ def test_a_bound_login_writes_only_as_its_identity(db):
 
 def test_an_agent_binding_may_use_a_wildcard_and_a_human_one_may_not(db):
     ap = _mk(db)
-    bind(db, "backlog_logger", "agent:%", "claude", "AGENT")
+    bind(db, "backlog_logger", "agent:%", "non-human", "AGENT")
     note = lambda c, who: c.execute("SELECT backlog.sp_append_log(%s, %s, 'a note')", (ap, who)).fetchone()[0]              # noqa: E731
     assert as_login(db, "backlog_logger", note, "agent:claude-opus-5-5") > 0 and as_login(db, "backlog_logger", note, "agent:claude-sonnet-5-5") > 0
     denied(db, "backlog_logger", note, "system:release", match="not authorized")
     mk_login(db, DEVOPS_LOGIN)
     with pytest.raises(psycopg.errors.CheckViolation):
         with db.transaction():
-            bind(db, DEVOPS_LOGIN, "human:%", "a.gomez", "HUMAN")
+            bind(db, DEVOPS_LOGIN, "human:%", "human:a.gomez", "HUMAN")
     with pytest.raises(psycopg.errors.CheckViolation):                                                                    # the kind must match the identity
         with db.transaction():
-            bind(db, DEVOPS_LOGIN, "agent:x", "a.gomez", "HUMAN")
+            bind(db, DEVOPS_LOGIN, "agent:x", "human:a.gomez", "HUMAN")
 
 
 def test_a_human_identity_is_accepted_only_from_the_login_bound_to_it(db):
     for login in (OWNER_LOGIN, DATA_LOGIN, DEVOPS_LOGIN):
         mk_login(db, login, member_of=("backlog_human",))
-    bind(db, OWNER_LOGIN, OWNER, "j.cormenzana", "HUMAN")
-    bind(db, DATA_LOGIN, DATA, "j.cormenzana", "HUMAN")
-    bind(db, DEVOPS_LOGIN, DEVOPS, "a.gomez", "HUMAN")
+    bind(db, OWNER_LOGIN, OWNER, "human:j.cormenzana", "HUMAN")
+    bind(db, DATA_LOGIN, DATA, "human:j.cormenzana", "HUMAN")
+    bind(db, DEVOPS_LOGIN, DEVOPS, "human:a.gomez", "HUMAN")
     auth = lambda c, who: c.execute("SELECT backlog.fn_actor_authorized(%s)", (who,)).fetchone()[0]                        # noqa: E731
     assert as_login(db, OWNER_LOGIN, auth, OWNER) is True and as_login(db, DATA_LOGIN, auth, DATA) is True and as_login(db, DEVOPS_LOGIN, auth, DEVOPS) is True
     assert as_login(db, OWNER_LOGIN, auth, DATA) is False                                                                   # one login, one identity, even for the same person
@@ -227,25 +227,52 @@ def test_a_human_identity_is_accepted_only_from_the_login_bound_to_it(db):
 
 
 def test_the_old_owner_login_keeps_working_when_it_is_bound_to_its_historical_identity(db):
-    bind(db, "backlog_human", "human:jacor", "j.cormenzana", "HUMAN")
+    bind(db, "backlog_human", "human:jacor", "human:j.cormenzana", "HUMAN")
     assert as_login(db, "backlog_human", lambda c: c.execute("SELECT backlog.fn_actor_authorized('human:jacor')").fetchone()[0]) is True
+
+
+def test_the_person_is_a_canonical_value_and_a_typo_is_rejected_by_the_database(db):
+    mk_login(db, DEVOPS_LOGIN)
+    for typo in ("a.gomez", "human:a.gomez_", "human:a.gómez", "human:A.Gomez", "human:j.cormenzana", " human:a.gomez", "jacor", "human:jacor", "", "non-human"):
+        with pytest.raises(psycopg.errors.CheckViolation):
+            with db.transaction():
+                bind(db, DEVOPS_LOGIN, DEVOPS, typo, "HUMAN")                              # the last two belong to nobody / to the wrong kind; j.cormenzana does not own a.gomez_devops
+    bind(db, DEVOPS_LOGIN, DEVOPS, "human:a.gomez", "HUMAN")                                # the exact canonical value works
+    for person in ("human:a.gomez", "human:m.ruiz", "claude", ""):
+        with pytest.raises(psycopg.errors.CheckViolation):
+            with db.transaction():
+                bind(db, "backlog_logger", "agent:%", person, "AGENT")                    # a non-human login has no person but the literal non-human
+    bind(db, "backlog_logger", "agent:%", "non-human", "AGENT")
+
+
+def test_a_person_can_only_be_bound_to_his_own_identities(db):
+    for login in (OWNER_LOGIN, DATA_LOGIN, DEVOPS_LOGIN, "iam_qa"):
+        mk_login(db, login)
+    bind(db, OWNER_LOGIN, OWNER, "human:j.cormenzana", "HUMAN")
+    bind(db, DATA_LOGIN, DATA, "human:j.cormenzana", "HUMAN")
+    bind(db, "backlog_human", "human:jacor", "human:j.cormenzana", "HUMAN")                 # the historical alias belongs to the owner
+    bind(db, "iam_qa", "human:m.ruiz_qa", "human:m.ruiz", "HUMAN")
+    for actor, person in ((DEVOPS, "human:j.cormenzana"), (OWNER, "human:a.gomez"), ("human:jacor", "human:m.ruiz"), ("human:m.ruiz_qa", "human:a.gomez"), ("human:x", "human:m.ruiz")):
+        with pytest.raises(psycopg.errors.CheckViolation):
+            with db.transaction():
+                bind(db, DEVOPS_LOGIN, actor, person, "HUMAN")                                # three logins of one person spelled as two persons cannot be built either
 
 
 def test_only_the_owner_binds_logins(db):
     mk_login(db, DEVOPS_LOGIN)
     for role in ("backlog_logger", "backlog_incident", "backlog_reader", "backlog_writer", DEVOPS_LOGIN):
-        denied(db, role, lambda c: bind(c, DEVOPS_LOGIN, DEVOPS, "a.gomez", "HUMAN"), match="permission denied|only the owner")
+        denied(db, role, lambda c: bind(c, DEVOPS_LOGIN, DEVOPS, "human:a.gomez", "HUMAN"), match="permission denied|only the owner")
     mk_login(db, OWNER_LOGIN, member_of=("backlog_human",))
-    as_login(db, OWNER_LOGIN, lambda c: bind(c, DEVOPS_LOGIN, DEVOPS, "a.gomez", "HUMAN"))
+    as_login(db, OWNER_LOGIN, lambda c: bind(c, DEVOPS_LOGIN, DEVOPS, "human:a.gomez", "HUMAN"))
     with pytest.raises(psycopg.errors.Error, match="not a login role"):
         with db.transaction():
-            bind(db, "no_such_login", DEVOPS, "a.gomez", "HUMAN")
+            bind(db, "no_such_login", DEVOPS, "human:a.gomez", "HUMAN")
 
 
 def test_a_revocation_is_a_new_event_and_the_history_is_append_only(db):
     ap = _mk(db)
-    bind(db, "backlog_logger", "agent:claude-sonnet-5-5", "claude", "AGENT")
-    bind(db, "backlog_logger", "agent:claude-sonnet-5-5", "claude", "AGENT", active=False)
+    bind(db, "backlog_logger", "agent:claude-sonnet-5-5", "non-human", "AGENT")
+    bind(db, "backlog_logger", "agent:claude-sonnet-5-5", "non-human", "AGENT", active=False)
     assert db.execute("SELECT active FROM backlog.v_actor_login WHERE login_name = 'backlog_logger'").fetchone()[0] is False
     assert db.execute("SELECT count(*) FROM backlog.actor_login_event WHERE login_name = 'backlog_logger'").fetchone()[0] == 2
     assert as_login(db, "backlog_logger", lambda c: c.execute("SELECT backlog.sp_append_log(%s, 'system:release', 'unbound again')", (ap,)).fetchone()[0]) > 0      # nothing active: not enforced
@@ -257,7 +284,7 @@ def test_a_revocation_is_a_new_event_and_the_history_is_append_only(db):
 
 def test_the_shared_writer_can_be_bound_like_any_other_login(db):
     mk_login(db, "shared_writer", member_of=("backlog_writer",))
-    bind(db, "shared_writer", "agent:claude-sonnet-5-5", "claude", "AGENT")
+    bind(db, "shared_writer", "agent:claude-sonnet-5-5", "non-human", "AGENT")
     auth = lambda c, who: c.execute("SELECT backlog.fn_actor_authorized(%s)", (who,)).fetchone()[0]                        # noqa: E731
     assert as_login(db, "shared_writer", auth, "agent:claude-opus-5-5") is False
     assert as_login(db, "shared_writer", auth, "agent:claude-sonnet-5-5") is True
@@ -268,18 +295,18 @@ def test_the_shared_writer_can_be_bound_like_any_other_login(db):
 def test_two_logins_of_one_person_count_as_one_person_and_agents_are_not_persons(db):
     for login in (OWNER_LOGIN, DATA_LOGIN, DEVOPS_LOGIN):
         mk_login(db, login, member_of=("backlog_human",))
-    bind(db, OWNER_LOGIN, OWNER, "j.cormenzana", "HUMAN")
-    bind(db, DATA_LOGIN, DATA, "j.cormenzana", "HUMAN")
-    bind(db, DEVOPS_LOGIN, DEVOPS, "a.gomez", "HUMAN")
-    bind(db, "backlog_logger", "agent:%", "claude", "AGENT")
+    bind(db, OWNER_LOGIN, OWNER, "human:j.cormenzana", "HUMAN")
+    bind(db, DATA_LOGIN, DATA, "human:j.cormenzana", "HUMAN")
+    bind(db, DEVOPS_LOGIN, DEVOPS, "human:a.gomez", "HUMAN")
+    bind(db, "backlog_logger", "agent:%", "non-human", "AGENT")
     cat = bc.iam_catalog(conn=db)
-    assert cat["active_logins"] == 4 and cat["active_persons"] == ["a.gomez", "j.cormenzana"]
+    assert cat["active_logins"] == 4 and cat["active_persons"] == ["human:a.gomez", "human:j.cormenzana"]
 
 
 def test_the_catalog_lists_every_login_that_can_still_write_and_whether_it_is_bound(db):
     mk_login(db, "shared_writer", member_of=("backlog_writer",))
     mk_login(db, OWNER_LOGIN, member_of=("backlog_writer", "backlog_human"))
-    bind(db, OWNER_LOGIN, OWNER, "j.cormenzana", "HUMAN")
+    bind(db, OWNER_LOGIN, OWNER, "human:j.cormenzana", "HUMAN")
     cat = bc.iam_catalog(conn=db)
     writers = {w["login"]: w["bound"] for w in cat["writers"]}
     assert writers["shared_writer"] is False and writers[OWNER_LOGIN] is True
@@ -296,19 +323,19 @@ def test_transitions_are_counted_per_person_only_when_made_by_a_bound_human_iden
         mk_login(db, login, member_of=("backlog_human", "backlog_writer"))
     ap1, ap2, ap3, ap4 = _mk(db), _mk(db), _mk(db), _mk(db)
     tr(db, ap4, "TODO", actor=OWNER)                                                      # a human identity BEFORE any binding: never counted for that login
-    bind(db, OWNER_LOGIN, OWNER, "j.cormenzana", "HUMAN")
-    bind(db, DATA_LOGIN, DATA, "j.cormenzana", "HUMAN")
-    bind(db, DEVOPS_LOGIN, DEVOPS, "a.gomez", "HUMAN")
-    bind(db, "iam_qa", "human:m.ruiz_qa", "m.ruiz", "HUMAN")
+    bind(db, OWNER_LOGIN, OWNER, "human:j.cormenzana", "HUMAN")
+    bind(db, DATA_LOGIN, DATA, "human:j.cormenzana", "HUMAN")
+    bind(db, DEVOPS_LOGIN, DEVOPS, "human:a.gomez", "HUMAN")
+    bind(db, "iam_qa", "human:m.ruiz_qa", "human:m.ruiz", "HUMAN")
     assert bc.iam_catalog(conn=db)["transition_persons"] == []
     as_login(db, OWNER_LOGIN, lambda c: tr(c, ap1, "TODO", actor=OWNER))
     as_login(db, DATA_LOGIN, lambda c: tr(c, ap2, "TODO", actor=DATA))                    # the same person through a second login: still one person
     cat = bc.iam_catalog(conn=db)
-    assert cat["transitions_by_person"] == {"j.cormenzana": 2} and cat["transition_persons"] == ["j.cormenzana"]
+    assert cat["transitions_by_person"] == {"human:j.cormenzana": 2} and cat["transition_persons"] == ["human:j.cormenzana"]
     as_login(db, DEVOPS_LOGIN, lambda c: tr(c, ap3, "TODO", actor=DEVOPS))
     as_login(db, "iam_qa", lambda c: tr(c, ap3, "IN_PROGRESS", actor="human:m.ruiz_qa"))
     tr(db, ap1, "IN_PROGRESS", actor=ME)                                                  # an agent never counts
     cat = bc.iam_catalog(conn=db)
-    assert cat["transitions_by_person"] == {"j.cormenzana": 2, "a.gomez": 1, "m.ruiz": 1} and cat["transition_persons"] == ["a.gomez", "j.cormenzana", "m.ruiz"]
-    bind(db, "iam_qa", "human:m.ruiz_qa", "m.ruiz", "HUMAN", active=False)               # a revoked binding no longer backs the transitions
-    assert "m.ruiz" not in bc.iam_catalog(conn=db)["transition_persons"]
+    assert cat["transitions_by_person"] == {"human:j.cormenzana": 2, "human:a.gomez": 1, "human:m.ruiz": 1} and cat["transition_persons"] == ["human:a.gomez", "human:j.cormenzana", "human:m.ruiz"]
+    bind(db, "iam_qa", "human:m.ruiz_qa", "human:m.ruiz", "HUMAN", active=False)               # a revoked binding no longer backs the transitions
+    assert "human:m.ruiz" not in bc.iam_catalog(conn=db)["transition_persons"]

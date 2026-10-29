@@ -33,18 +33,22 @@ BEGIN
 END $$;
 
 -- 1. Which database login writes as which identity. Append-only: a revocation is a new row with active = false. `actor` may use LIKE wildcards ONLY for agents
---    (agent:% = any model from this login); a human or system identity is exact. `person` is the human behind it: several logins of one person count as ONE person.
+--    (agent:% = any model from this login); a human or system identity is exact. `person` is the human behind it, one of three canonical values (a CHECK, not free text): several logins of one person count as ONE person.
 CREATE TABLE IF NOT EXISTS backlog.actor_login_event (
     event_id   BIGSERIAL PRIMARY KEY,
     login_name TEXT NOT NULL,
     actor      TEXT NOT NULL CHECK (actor ~ '^(human|agent|system):[A-Za-z0-9._%-]+$' AND (actor NOT LIKE '%\%%' OR actor LIKE 'agent:%')),
-    person     TEXT NOT NULL CHECK (btrim(person) <> ''),
+    person     TEXT NOT NULL,
     kind       TEXT NOT NULL CHECK (kind IN ('HUMAN', 'AGENT', 'SYSTEM')),
     active     BOOLEAN NOT NULL,
     reason     TEXT NOT NULL CHECK (length(btrim(reason)) >= 10),
     set_by     TEXT NOT NULL DEFAULT session_user,
     event_ts   TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
-    CHECK ((kind = 'HUMAN') = (actor LIKE 'human:%') AND (kind = 'AGENT') = (actor LIKE 'agent:%') AND (kind = 'SYSTEM') = (actor LIKE 'system:%'))
+    CHECK ((kind = 'HUMAN') = (actor LIKE 'human:%') AND (kind = 'AGENT') = (actor LIKE 'agent:%') AND (kind = 'SYSTEM') = (actor LIKE 'system:%')),
+    -- The person is NOT free text (owner decision 2026-10-29: a typo must not make one human count as two): a human is exactly one of the three canonical persons, and the identity he is
+    -- bound to must be his own (his canonical name followed by a role suffix, or the historical alias); an agent or system login has no person.
+    CONSTRAINT actor_login_person_canonical CHECK ((kind = 'HUMAN' AND person IN ('human:a.gomez', 'human:j.cormenzana', 'human:m.ruiz')) OR (kind <> 'HUMAN' AND person = 'non-human')),
+    CONSTRAINT actor_login_person_owns_actor CHECK (kind <> 'HUMAN' OR actor = person OR actor LIKE person || '\_%' OR (person = 'human:j.cormenzana' AND actor = 'human:jacor'))
 );
 CREATE INDEX IF NOT EXISTS idx_actor_login_event_login ON backlog.actor_login_event (login_name, event_id);
 DROP TRIGGER IF EXISTS append_only ON backlog.actor_login_event;

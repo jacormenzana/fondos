@@ -59,7 +59,7 @@ actor: agent:claude-sonnet-5-5
 date: 2026-10-29
 source: owner review of 2026-10-29 (mitigation 1)
 
-Owner decision: three logins across two people is not enough. A third distinct human operator joins the required pool: `human:m.ruiz_qa` (Maria Ruiz, QA Lead; actor name "Maria Ruiz (QA)"). `--verify retire` must validate transitions from three distinct bound human identities, not just three logins. Implemented as: at least three distinct bound human PERSONS (a.gomez, j.cormenzana, m.ruiz; the two Cormenzana logins are one person) and transitions actually made by that many, counted only after each login was bound to its identity. Agents never count. The `person` value is typed by the owner when binding, so the same spelling must be used for the same person.
+Owner decision: three logins across two people is not enough. A third distinct human operator joins the required pool: `human:m.ruiz_qa` (Maria Ruiz, QA Lead; actor name "Maria Ruiz (QA)"). `--verify retire` must validate transitions from three distinct bound human identities, not just three logins. Implemented as: at least three distinct bound human PERSONS (`human:a.gomez`, `human:j.cormenzana`, `human:m.ruiz`; the two Cormenzana logins are one person) and transitions actually made by that many, counted only after each login was bound to its identity. Agents never count. The `person` value is not free text: a database CHECK accepts exactly `human:a.gomez`, `human:j.cormenzana` and `human:m.ruiz` for a human login (and `non-human` for the others), and the identity bound must belong to that person, so a typo cannot make one human count as two (owner decision 2026-10-29).
 
 ### FND-0354 / 06 - Process decisions: no stacking, merge order, SLA
 actor: agent:claude-sonnet-5-5
@@ -71,7 +71,6 @@ Owner decisions:
 - The owner opens the pull requests and merges them in that order; the local tree is not synced until the owner gives the clear.
 - The runbook sequence (steps 1 to 5) is approved. The owner applies `--phase relations`, then `--phase iam`, with an ephemeral owner connection string immediately after the merges.
 - DevOps TLS delivery by 2026-11-03 is an executive-backed SLA owned by the owner.
-- Facts recorded by the session: on 2026-10-29 the public API showed no PR for actor-env, gate-override or live-guard and `origin/master` at 0979d80; the owner's claim that PR #7 was merged did not match, and the owner then stated that the remote would be force-synced and the PRs opened.
 
 ## FND-0331
 

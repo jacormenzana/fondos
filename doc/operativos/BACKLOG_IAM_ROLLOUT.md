@@ -10,7 +10,7 @@ Written for: the owner and the DevOps lead who provision the per-identity logins
 | `backlog_incident` | pipelines | automatic incident capture (`sp_report_incident`), insert-only | `FONDOS_BACKLOG_PG_DSN_INCIDENT` |
 | one login per operator | `human:a.gomez_devops`, `human:j.cormenzana_data`, `human:j.cormenzana_owner`, `human:m.ruiz_qa` (Maria Ruiz, QA lead) | open, move, link (as the bound human) | `FONDOS_BACKLOG_PG_DSN_HUMAN`, typed in the operator's own terminal, never in `.env` |
 
-Several logins of one person count as one person (`person` column): the A-2 pool needs THREE distinct persons (a.gomez, j.cormenzana, m.ruiz; owner decision 2026-10-29). An agent is never an operator. `human:jacor` stays an alias of the history.
+Several logins of one person count as one person (`person` column, a database CHECK: exactly `human:a.gomez`, `human:j.cormenzana` or `human:m.ruiz` for a human login, `non-human` for the others; the identity bound must be the person's own): the A-2 pool needs THREE distinct persons (owner decision 2026-10-29). An agent is never an operator. `human:jacor` stays an alias of the history.
 
 ## Order (the owner applies every DDL; nothing here is applied by a session)
 1. Re-apply step A-1 with the hook and apply the IAM step in the owner's terminal (owner DSN typed for the session, never stored):
@@ -18,7 +18,7 @@ Several logins of one person count as one person (`person` column): the A-2 pool
 2. Passwords or certificates: the roles are created WITHOUT a password (like `backlog_human`). Set them in the owner's psql session. For the cryptographic binding, DevOps configures TLS on the server and
    `pg_hba.conf` (`hostssl gestion <role> <cidr> cert` or `scram-sha-256 clientcert=verify-full`) and issues one client certificate per login, including the non-human ones. The server is `ssl=off` today.
 3. Create one login per operator, each a member of `backlog_human` (so it may be a human identity) and of `backlog_writer` (same privileges as today), then bind (owner session):
-   `SELECT backlog.sp_bind_login('<login>', 'human:j.cormenzana_owner', 'j.cormenzana', 'HUMAN', true, '<reason>');`
+   `SELECT backlog.sp_bind_login('<login>', 'human:j.cormenzana_owner', 'human:j.cormenzana', 'HUMAN', true, '<reason>');` (agents and system logins: person `non-human`)
    Bind the old `backlog_human` login to `human:jacor` while it exists. Bind `backlog_logger` to `agent:%` and `backlog_incident` to `system:autodetect`.
 4. Connection strings carry the standard libpq parameters, e.g. `postgresql://backlog_logger@127.0.0.1:5436/gestion?sslmode=verify-full&sslcert=...&sslkey=...&sslrootcert=...`; the client passes them untouched.
 5. Put the three agent strings in `.env`; remove the generic writer string. Verify with the pre-flight (`IAM:` line).
