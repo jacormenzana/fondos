@@ -425,29 +425,53 @@ def test_the_cycle_guard_also_runs_for_the_shared_writer(dbb):
         dbb.execute("RESET ROLE")
 
 
-def test_the_rollback_restores_the_stubs_and_keeps_used_vocabulary(dbb):
+def _phase_b_rows(conn):
+    return {t: conn.execute(f"SELECT count(*), md5(string_agg(t::text, '|' ORDER BY 1)) FROM backlog.{t} t").fetchone() for t in ("review_flag", "hold_event", "gate_switch", "gate_audit_event")}
+
+
+def test_the_rollback_disables_phase_b_and_keeps_every_row(dbb):
+    """Owner order 2026-10-29: the native rollback never drops an append-only history table and never deletes a row. The gate stops binding at once; a re-apply brings it back as it was."""
     a, b = _mk(dbb, "IN_PROGRESS"), _mk(dbb, "IN_PROGRESS")
     link(dbb, a, b, "DEPENDS_ON")
     link(dbb, a, b, "IMPACTS")                                            # the history now uses a Phase B type: it must survive the rollback
-    before = bc.history_fingerprint(conn=dbb)
+    dbb.execute("SELECT backlog.sp_raise_hold(%s, 'raised so there is a row to protect', NULL, %s)", (a, ME))
+    assert len(blockers(dbb, a)) >= 1                                     # gate ENFORCE: the hold and the dependency block it
+    before, rows = bc.history_fingerprint(conn=dbb), _phase_b_rows(dbb)
+    assert rows["gate_switch"][0] >= 1 and rows["hold_event"][0] == 1
     mig.migrate(dbb, "relations", down=True)
-    assert mig.existing(dbb, "relations")["tables"] == []
+    assert mig.existing(dbb, "relations")["tables"] == sorted(("review_flag", "hold_event", "gate_switch", "gate_audit_event"))      # no table dropped
+    assert _phase_b_rows(dbb) == rows                                     # not one row changed (count and content)
     assert bc.history_fingerprint(max_log_id=before["max_log_id"], max_event_id=before["max_event_id"], conn=dbb) == before     # the rollback rewrote no history
-    rfd(dbb, a)                                                           # the gate no longer binds; sp_transition still works
+    assert dbb.execute("SELECT backlog.fn_gate_mode('DELIVERY')").fetchone()[0] == "OFF"                                      # the stubs: the gate no longer binds
+    rfd(dbb, a)                                                           # sp_transition still works, the hold and the dependency no longer refuse it
     assert status(dbb, a) == "READY_FOR_DEPLOY"
     assert dbb.execute("SELECT count(*) FROM backlog.backlog_link_event WHERE link_type = 'IMPACTS'").fetchone()[0] == 1
-    mig.migrate(dbb, "relations")                                         # and it can be applied again
-    assert len(blockers(dbb, a, to="CLOSED", delivery=True)) == 1
+    gone = dbb.execute("SELECT count(*) FROM pg_proc WHERE pronamespace = 'backlog'::regnamespace AND proname IN ('sp_set_gate', 'sp_raise_hold', 'sp_release_hold', 'sp_ack_review', 'sp_annotate_wait', 'trg_link_cycle')").fetchone()[0]
+    assert gone == 0
+    views = dbb.execute("SELECT count(*) FROM pg_class WHERE relnamespace = 'backlog'::regnamespace AND relname IN ('v_open_hold', 'v_open_review_flag', 'v_gate_audit_window', 'v_gate_audit_violation', 'v_supersede_suggestion')").fetchone()[0]
+    assert views == 0
+    mig.migrate(dbb, "relations")                                         # and it can be applied again, on top of the kept tables
+    assert dbb.execute("SELECT backlog.fn_gate_mode('DELIVERY')").fetchone()[0] == "ENFORCE"      # the last gate row says ENFORCE: it is ENFORCE again, no re-seeding
+    assert _phase_b_rows(dbb) == rows
+    assert len(blockers(dbb, a, to="CLOSED", delivery=True)) >= 1
 
 
-def test_the_rollback_of_an_unused_vocabulary_restores_the_old_shape(dbb):
+def test_the_rollback_is_idempotent_and_keeps_the_vocabulary_even_when_unused(dbb):
     mig.migrate(dbb, "relations", down=True)
+    mig.migrate(dbb, "relations", down=True)                              # a second run changes nothing and does not fail
     cols = {r[0] for r in dbb.execute("SELECT column_name FROM information_schema.columns WHERE table_schema = 'backlog' AND table_name = 'backlog_link_event'").fetchall()}
-    assert "origin" not in cols
+    assert "origin" in cols                                               # the link table is never altered by the rollback
     a, b = _mk(dbb), _mk(dbb)
-    with pytest.raises(psycopg.errors.CheckViolation):
-        with dbb.transaction():
-            dbb.execute("INSERT INTO backlog.backlog_link_event (from_id, to_id, link_type, status, evidence, username) VALUES (%s, %s, 'IMPACTS', 'PROPOSED', 'e', 'u')", (a, b))
+    link(dbb, a, b, "IMPACTS", "PROPOSED")                                # the vocabulary stays
+    assert dbb.execute("SELECT count(*) FROM backlog.backlog_link_event WHERE link_type = 'IMPACTS'").fetchone()[0] == 1
+
+
+def test_the_rollback_never_issues_a_drop_table_or_a_delete():
+    """Static: the down script of Phase B has no DROP TABLE, DELETE, TRUNCATE or ALTER TABLE ... DROP: the history is out of its reach."""
+    import re
+    text = (_ROOT / "db" / "pg_backlog" / "down" / "40_relations_v2_down.sql").read_text(encoding="utf-8")
+    body = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("--"))
+    assert not re.search(r"\bDROP\s+TABLE\b|\bDELETE\b|\bTRUNCATE\b|\bALTER\s+TABLE\b|\bDROP\s+COLUMN\b|\bUPDATE\b", body, re.I), body
 
 
 def test_origin_is_constrained_and_defaults_to_review(dbb):
