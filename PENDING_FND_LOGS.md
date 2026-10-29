@@ -86,6 +86,13 @@ source: owner review of 2026-10-29
 
 Owner orders: the native rollback must not drop the append-only history tables or delete gate rows, and it must be atomic and self-contained, with no window in which the gate is off. `--phase relations --down` now returns Phase B to the definitions of the previous release in one transaction: it removes the five-argument `sp_set_gate`, `v_gate_override_event` and the column `last_override_ts` of the window view, restores the four-argument setter and the view with their ownership and privileges, and never touches the gate engine (`fn_gate_mode`, `fn_gate_blockers`, the holds, the review flags, the cycle trigger). It reads the gate mode first and ends by checking that the mode and every row of `review_flag`, `hold_event`, `gate_switch` and `gate_audit_event` are what it found; otherwise it raises and the whole rollback is undone. A watcher session sampling the gate mode during a rollback by the real command-line tool saw only ENFORCE. A static test forbids `DROP TABLE`, `DELETE`, `TRUNCATE`, `ALTER TABLE` and `UPDATE` in the script. Switching the gate off is a governed decision of the owner (`sp_set_gate`), not part of a rollback. The rollback playbook is `doc/operativos/BACKLOG_IAM_ROLLBACK_PLAYBOOK.md`.
 
+### FND-0354 / 09 - The IAM rollback keeps the binding and window history
+actor: agent:claude-sonnet-5-5
+date: 2026-10-29
+source: owner review of 2026-10-29
+
+Owner order: rollback scripts never drop append-only history tables. `--phase iam --down` now disables the IAM step (roles, routines and views removed, the hook back to the stub that allows everything) and keeps `actor_login_event` and `binding_window_event` with every row, still append-only; it checks the row counts at the end of its single transaction and undoes itself otherwise. Applying `--phase iam` again resumes with the history and enforcement. A static test forbids `DROP TABLE`, `DELETE`, `TRUNCATE`, `ALTER TABLE`, `DROP COLUMN` and `UPDATE` in the script.
+
 ## FND-0331
 
 ### FND-0331 / 01 - Hard fail for non-interactive live writes (mitigation 1)

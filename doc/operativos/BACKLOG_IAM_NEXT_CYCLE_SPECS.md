@@ -20,5 +20,5 @@ Stated limit: a superuser connection can declare any human identity, because the
 3. The catalog and the pre-flight report bound logins and transitions per subject; the A-2 pool still counts only HUMAN persons.
 4. Acceptance: a login cannot be bound under a subject that does not own its identity; adding a subject is a reviewed migration, never free text.
 
-## S3. Rollback of the IAM step keeps its history (recommendation, not yet ordered)
-`--phase iam --down` drops `actor_login_event`, `binding_window_event` and their views, as the first Phase B rollback dropped its tables. Apply the same principle: drop the roles, routines and views, keep the tables and their rows, so a later `--phase iam` resumes with the history intact. Same static test as for Phase B. Needs the owner's decision before it is written.
+## S3. Rollback of the IAM step keeps its history. IMPLEMENTED (owner order 2026-10-29)
+`--phase iam --down` drops the roles, routines and views and keeps `actor_login_event` and `binding_window_event` with every row, in one transaction that checks the row counts at its end and undoes itself otherwise. A static test forbids `DROP TABLE`, `DELETE`, `TRUNCATE`, `ALTER TABLE`, `DROP COLUMN` and `UPDATE` in the script. A later `--phase iam` resumes with the history and enforcement.

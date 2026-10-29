@@ -74,15 +74,64 @@ def test_the_phase_refuses_to_run_before_step_a1_has_the_hook(pg_conn):
         mig.migrate(pg_conn, "iam")
 
 
-def test_the_rollback_removes_everything_and_puts_the_hook_back_to_the_stub(db):
+def test_the_rollback_disables_iam_and_keeps_the_binding_and_window_history(db):
+    """Owner order 2026-10-29: a rollback never drops an append-only history table. The behavior goes, the history stays, and applying the step again resumes with it."""
     ap = _mk(db)
-    bind(db, "backlog_logger", "agent:%", "non-human", "AGENT")
+    mk_login(db, OWNER_LOGIN, member_of=("backlog_human",))
+    mk_login(db, DEVOPS_LOGIN, member_of=("backlog_human",))                                  # never bound: used to see enforcement come back
+    first = bind(db, OWNER_LOGIN, OWNER, "human:j.cormenzana", "HUMAN")
+    window = bind_window(db, "UTC", [1, 2, 3, 4, 5], "07:00", "19:00")
+    before = db.execute("SELECT md5(string_agg(e::text, '|' ORDER BY event_id)) FROM backlog.actor_login_event e").fetchone()[0]
+    before_w = db.execute("SELECT md5(string_agg(e::text, '|' ORDER BY event_id)) FROM backlog.binding_window_event e").fetchone()[0]
     mig.migrate(db, "iam", down=True)
     have = mig.existing(db, "iam")
-    assert have["roles"] == [] and have["tables"] == [] and have["views"] == [] and "sp_append_log" not in have["routines"] and "fn_actor_bound" in have["routines"]
-    assert db.execute("SELECT backlog.fn_actor_bound('human:anyone')").fetchone()[0] is True        # the stub allows everything again
+    assert have["roles"] == [] and have["views"] == [] and have["tables"] == ["actor_login_event", "binding_window_event"]       # roles and views go, both tables stay
+    assert "sp_append_log" not in have["routines"] and "sp_bind_login" not in have["routines"] and "fn_actor_bound" in have["routines"]
+    assert db.execute("SELECT md5(string_agg(e::text, '|' ORDER BY event_id)) FROM backlog.actor_login_event e").fetchone()[0] == before          # not one row changed
+    assert db.execute("SELECT md5(string_agg(e::text, '|' ORDER BY event_id)) FROM backlog.binding_window_event e").fetchone()[0] == before_w
+    assert as_login(db, DEVOPS_LOGIN, lambda c: c.execute("SELECT backlog.fn_actor_authorized(%s)", (DEVOPS,)).fetchone()[0]) is True    # the stub allows everything again: nothing is enforced
+    for sql in ("UPDATE backlog.actor_login_event SET active = false", "DELETE FROM backlog.binding_window_event"):
+        with pytest.raises(psycopg.errors.Error, match="append-only"):                             # the tables are still append-only
+            with db.transaction():
+                db.execute(sql)
     assert db.execute("SELECT status FROM backlog.backlog WHERE action_point_id = %s", (ap,)).fetchone()[0] == "OPEN"     # tickets untouched
-    mig.migrate(db, "iam")                                                                    # and it can be applied again
+    mig.migrate(db, "iam")                                                                    # and it resumes with the history intact
+    assert {r["event_id"] for r in bc.binding_audit(conn=db)} == {first}
+    assert db.execute("SELECT event_id FROM backlog.binding_window_event").fetchone()[0] == window
+    auth = lambda c, who: c.execute("SELECT backlog.fn_actor_authorized(%s)", (who,)).fetchone()[0]                       # noqa: E731
+    assert as_login(db, DEVOPS_LOGIN, auth, DEVOPS) is False and as_login(db, OWNER_LOGIN, auth, OWNER) is True       # enforcement is back with the history
+
+
+def test_the_iam_rollback_is_idempotent_and_refuses_nothing_when_the_step_was_never_applied(pg_conn):
+    _base(pg_conn)
+    mig.migrate(pg_conn, "transitions")
+    mig.migrate(pg_conn, "iam", down=True)                                                    # never applied: a no-op, not an error
+    mig.migrate(pg_conn, "iam")
+    mig.migrate(pg_conn, "iam", down=True)
+    mig.migrate(pg_conn, "iam", down=True)                                                    # twice in a row
+    assert mig.existing(pg_conn, "iam")["tables"] == ["actor_login_event", "binding_window_event"]
+
+
+def test_an_iam_rollback_that_would_change_the_history_undoes_itself_completely(db):
+    mk_login(db, OWNER_LOGIN, member_of=("backlog_human",))
+    bind(db, OWNER_LOGIN, OWNER, "human:j.cormenzana", "HUMAN")
+    sql = mig.ddl_block("iam", down=True)
+    assert sql.count("-- history invariant") == 1
+    sabotage = "INSERT INTO backlog.binding_window_event (tz, days, start_time, end_time, reason, declared_by) VALUES ('UTC', ARRAY[1]::smallint[], '08:00', '09:00', 'a sabotage row from a test', 'human:x');"
+    with pytest.raises(psycopg.errors.Error, match="rollback aborted"):
+        with db.transaction():
+            db.execute(sql.replace("-- history invariant", sabotage + " -- history invariant"))
+    have = mig.existing(db, "iam")
+    assert have["roles"] == ["backlog_incident", "backlog_logger", "backlog_reader"] and "sp_bind_login" in have["routines"]         # the whole rollback was undone
+    assert db.execute("SELECT count(*) FROM backlog.binding_window_event").fetchone()[0] == 0
+
+
+def test_the_iam_rollback_never_issues_a_drop_table_or_a_delete():
+    """Static: like the Phase B one, the IAM down script is out of reach of the history (no DROP TABLE, DELETE, TRUNCATE, ALTER TABLE, DROP COLUMN, UPDATE)."""
+    import re
+    text = (_ROOT / "db" / "pg_backlog" / "down" / "50_iam_down.sql").read_text(encoding="utf-8")
+    body = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("--"))
+    assert not re.search(r"\bDROP\s+TABLE\b|\bDELETE\b|\bTRUNCATE\b|\bALTER\s+TABLE\b|\bDROP\s+COLUMN\b|\bUPDATE\b", body, re.I), body
 
 
 def test_reapplying_step_a1_after_iam_does_not_overwrite_the_real_hook(db):

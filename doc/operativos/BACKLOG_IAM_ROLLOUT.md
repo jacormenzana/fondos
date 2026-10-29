@@ -26,4 +26,4 @@ Several logins of one person count as one person (`person` column, a database CH
    The role `backlog_writer` stays as the privilege group; `fondos_app` is not touched.
 
 ## Rollback
-`python scripts/ops/migrate_backlog_v2.py --phase iam --down --apply` removes the roles, the routines and the binding history (the hook goes back to a stub that allows everything). Tickets, logs and events are not touched.
+`python scripts/ops/migrate_backlog_v2.py --phase iam --down --apply` disables the IAM step and KEEPS its history: it removes the roles, the routines and the views (the hook goes back to a stub that allows everything, so no binding is enforced), and never drops `actor_login_event` or `binding_window_event`; applying `--phase iam` again resumes with every binding and window row. Tickets, logs and events are not touched. `--phase relations --down` is likewise atomic and keeps the gate (see the rollback playbook).
