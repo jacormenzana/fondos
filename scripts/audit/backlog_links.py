@@ -695,6 +695,9 @@ def mode_apply_review(path: Path, confirm: bool, forced: set[tuple], username: s
     if not confirm:
         print("DRY RUN: nothing written (add --confirm to insert the events)")
         return 0
+    rc_live = bc.require_live_write_cli()                      # owner order 2026-10-29: no scripted write to the live backlog; exit code 1, nothing inserted, the review stays where it is
+    if rc_live:
+        return rc_live
     ids = bc.record_link_events(events)
     arch = path.parent / "archived"
     arch.mkdir(exist_ok=True)

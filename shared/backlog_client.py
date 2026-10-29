@@ -361,28 +361,64 @@ class LiveWriteNotConfirmed(BacklogUnavailable):
     """A person at a terminal did not type the confirmation phrase before a write to the LIVE backlog."""
 
 
+class LiveWriteForbidden(BacklogUnavailable):
+    """A NON-interactive process (an agent's shell tool, a script, a pipeline, a hook) tried to write to the LIVE backlog. Hard fail, no exception (owner order 2026-10-29)."""
+
+
+LIVE_WRITE_EXIT_CODE = 1
+
+
+def _is_console(stream) -> bool:
+    """True only for a REAL terminal. `isatty()` alone is wrong on Windows: it answers True for the NUL device (what a tool shell gets as stdin) and a pipe answers False, so on Windows the handle
+    must also be a console input handle (GetConsoleMode succeeds only for a console). A missing stream (pythonw) is not a console."""
+    try:
+        if stream is None or not stream.isatty():
+            return False
+        if os.name == "nt":
+            import ctypes
+            import msvcrt
+            mode = ctypes.c_uint32()
+            return bool(ctypes.windll.kernel32.GetConsoleMode(msvcrt.get_osfhandle(stream.fileno()), ctypes.byref(mode)))
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def confirm_live_write(target: str, *, interactive: Optional[bool] = None, ask=input, environ: Optional[dict] = None) -> bool:
-    """Friction against a synthetic test reaching the live backlog by habit (owner order 2026-10-28). When a write is about to open its OWN connection to the live backlog (every `conn=None`
-    write helper does) AND a person is at a terminal, he must type the phrase exactly once per process; anything else raises LiveWriteNotConfirmed and nothing is written.
-    NOT covered, by design and stated: a NON-interactive process (an agent's shell tool, a pipeline, a hook) has nobody to answer, so it is never prompted: for those the controls are
-    the tests (which cannot see the live DSN: shared/testing/sandbox.py), the positive scratch-database guard of the harnesses, and the rule itself. Under pytest it never prompts."""
+    """The gate on every write that opens ITS OWN connection to the live backlog (owner orders 2026-10-28 and 2026-10-29):
+    * a NON-interactive process (no terminal: an agent's shell tool, a script, a pipeline, a hook) is REFUSED with LiveWriteForbidden: autonomous or scripted writes to the live production
+      backlog are banned outside authorized, signed CI/CD deployments, and there is no exception in this code (an authorization mechanism, if the owner wants one, is a decision of his: see FND-0351);
+    * a person at a terminal must type exactly LIVE_WRITE_PHRASE, once per process, else LiveWriteNotConfirmed and nothing is written.
+    Never asked and never refused: pytest (tests cannot see the live DSN: shared/testing/sandbox.py) and callers that own their connection (tests, staging). The automatic incident capture
+    (report_incident) does not go through here: it never writes a ticket without step A-1 and its status under this ban is the owner's decision (FND-0331)."""
     global _live_write_confirmed
     env = os.environ if environ is None else environ
     if _live_write_confirmed or env.get("PYTEST_CURRENT_TEST"):
         return True
     if interactive is None:
-        interactive = bool(getattr(sys.stdin, "isatty", lambda: False)())
-    if not interactive:
-        return True
+        interactive = _is_console(sys.stdin)
     try:
         who = current_actor(env)
     except ActorUnknown:
         who = "(FONDOS_ACTOR is not set)"
+    if not interactive:
+        raise LiveWriteForbidden(f"live write REFUSED (exit code {LIVE_WRITE_EXIT_CODE}): a non-interactive process may not write to the LIVE backlog ({target}) as {who}; only a person at a terminal can, after confirming. "
+                                 "Nothing was written. (To test, use the staging container: FND-0351.)")
     answer = ask(f"\nYou are about to WRITE to the LIVE backlog ({target}) as {who}.\nType exactly: {LIVE_WRITE_PHRASE}\n> ")
     if str(answer).strip() != LIVE_WRITE_PHRASE:
         raise LiveWriteNotConfirmed("live write not confirmed: nothing was written (to test, use the staging container: FND-0351)")
     _live_write_confirmed = True
     return True
+
+
+def require_live_write_cli(dsn: Optional[str] = None, *, environ: Optional[dict] = None, interactive: Optional[bool] = None, ask=input) -> Optional[int]:
+    """For the command-line tools that write: None when the write may go on; otherwise the message is printed on stderr and the process exit code to return (LIVE_WRITE_EXIT_CODE = 1)."""
+    try:
+        confirm_live_write(_target_of(dsn or _dsn() or ""), environ=environ, interactive=interactive, ask=ask)
+        return None
+    except (LiveWriteForbidden, LiveWriteNotConfirmed) as exc:
+        print(f"REFUSED: {exc}", file=sys.stderr)
+        return LIVE_WRITE_EXIT_CODE
 
 
 def _target_of(dsn: str) -> str:
