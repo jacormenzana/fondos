@@ -62,8 +62,8 @@ def mk_login(conn, name, member_of=()):
 
 def test_the_phase_creates_the_roles_the_binding_store_and_the_routines_and_is_idempotent(db):
     have = mig.existing(db, "iam")
-    assert have["roles"] == ["backlog_incident", "backlog_logger", "backlog_reader"] and have["tables"] == ["actor_login_event"] and have["views"] == ["v_actor_login"]
-    assert set(have["routines"]) == {"fn_actor_bound", "sp_bind_login", "sp_append_log", "sp_report_incident"} and not have["missing_requires"]
+    assert have["roles"] == ["backlog_incident", "backlog_logger", "backlog_reader"] and have["tables"] == ["actor_login_event", "binding_window_event"] and have["views"] == ["v_actor_login", "v_binding_audit", "v_binding_window"]
+    assert set(have["routines"]) == {"fn_actor_bound", "sp_bind_login", "sp_set_binding_window", "fn_off_hours", "sp_append_log", "sp_report_incident"} and not have["missing_requires"]
     mig.migrate(db, "iam")                                                                    # a second apply changes nothing and does not fail
     assert db.execute("SELECT count(*) FROM backlog.actor_login_event").fetchone()[0] == 0
 
@@ -371,6 +371,7 @@ def test_the_audit_view_flags_what_needs_attention(db):
         mk_login(db, login, member_of=("backlog_human",))
     first = bind(db, OWNER_LOGIN, OWNER, "human:j.cormenzana", "HUMAN")                              # superuser, declares the identity it binds, nobody bound yet
     second = as_login(db, OWNER_LOGIN, lambda c: bind(c, DEVOPS_LOGIN, DEVOPS, "human:a.gomez", "HUMAN", declared=OWNER))
+    bind_window(db, "UTC", [1, 2, 3, 4, 5, 6, 7], "00:00", "23:59:59")                                  # every moment is inside the window: the test does not depend on the clock
     audit = {r["event_id"]: r for r in bc.binding_audit(conn=db)}
     assert set(audit[first]["flags"]) == {"SELF_BINDING", "DECLARER_NOT_BOUND_TO_SET_BY", "RECENT"}
     assert audit[first]["declared_by"] == OWNER and audit[first]["set_by"] == db.execute("SELECT session_user").fetchone()[0]
@@ -382,7 +383,7 @@ def test_events_written_before_the_audit_stay_as_legacy_and_new_ones_must_name_a
     legacy = bind(db, DEVOPS_LOGIN, DEVOPS, "human:a.gomez", "HUMAN")
     # an earlier version of this step had no declared_by: simulate the table as it was, then upgrade it by re-applying the step
     db.execute("ALTER TABLE backlog.actor_login_event DROP COLUMN declared_by CASCADE")
-    assert mig.existing(db, "iam")["views"] == []                                                      # the dependent views went with the column
+    assert mig.existing(db, "iam")["views"] == ["v_binding_window"]                                    # the views that read the column went with it
     mig.migrate(db, "iam")
     assert db.execute("SELECT declared_by FROM backlog.actor_login_event WHERE event_id = %s", (legacy,)).fetchone()[0] is None      # not rewritten (append-only)
     audit = {r["event_id"]: r for r in bc.binding_audit(conn=db)}
@@ -393,7 +394,7 @@ def test_events_written_before_the_audit_stay_as_legacy_and_new_ones_must_name_a
     new = bind(db, DEVOPS_LOGIN, DEVOPS, "human:a.gomez", "HUMAN", active=False)
     assert db.execute("SELECT declared_by FROM backlog.actor_login_event WHERE event_id = %s", (new,)).fetchone()[0] == OWNER
     cat = bc.iam_catalog(conn=db)
-    assert cat["binding_store"] == {"declared_by_column": True, "declared_by_constraint": True, "audit_view": True}
+    assert cat["binding_store"] == {"declared_by_column": True, "declared_by_constraint": True, "audit_view": True, "window_view": True}
     assert [b["login_name"] for b in cat["bindings"] if b["declared_by"] is None] == []             # the latest event of the login names a declarer
 
 
@@ -402,3 +403,85 @@ def test_the_audit_view_is_readable_by_the_reader_and_the_declarer_travels_in_th
     bind(db, DEVOPS_LOGIN, DEVOPS, "human:a.gomez", "HUMAN")
     assert as_login(db, "backlog_reader", lambda c: c.execute("SELECT count(*) FROM backlog.v_binding_audit").fetchone()[0]) == 1
     assert db.execute("SELECT declared_by FROM backlog.v_actor_login WHERE login_name = %s", (DEVOPS_LOGIN,)).fetchone()[0] == OWNER
+
+
+# --- the off-hours flag: the operational window of the binding audit (owner order 2026-10-29) -----------------------------------------------------
+
+def at(db, iso):
+    """The off-hours verdict for a timestamp written in UTC (the session is UTC so the default window is read in UTC too)."""
+    db.execute("SET LOCAL TimeZone = 'UTC'")
+    return db.execute("SELECT backlog.fn_off_hours(%s::timestamptz)", (iso + "+00",)).fetchone()[0]
+
+
+def test_the_default_window_is_monday_to_friday_seven_to_nineteen_in_server_time(db):
+    assert db.execute("SELECT is_default FROM backlog.v_binding_window").fetchone()[0] is True
+    # 2026-11-02 is a Monday
+    assert at(db, "2026-11-02 10:00:00") is False and at(db, "2026-11-02 07:00:00") is False and at(db, "2026-11-06 18:59:59") is False           # inside (Friday 18:59)
+    assert at(db, "2026-11-02 06:59:59") is True and at(db, "2026-11-02 19:00:00") is True and at(db, "2026-11-02 23:30:00") is True               # before, at the (excluded) end, after
+    assert at(db, "2026-11-07 10:00:00") is True and at(db, "2026-11-08 10:00:00") is True                                                         # Saturday, Sunday
+
+
+def test_the_owner_configures_the_window_and_the_latest_row_wins(db):
+    mk_login(db, OWNER_LOGIN, member_of=("backlog_human",))
+    bind(db, OWNER_LOGIN, OWNER, "human:j.cormenzana", "HUMAN")
+    first = as_login(db, OWNER_LOGIN, lambda c: c.execute("SELECT backlog.sp_set_binding_window('Europe/Madrid', ARRAY[1,2,3,4,5,6]::smallint[], '08:00', '20:00', 'owner window for the rollout weeks', %s)", (OWNER,)).fetchone()[0])
+    cfg = db.execute("SELECT tz, days, start_time, end_time, is_default FROM backlog.v_binding_window").fetchone()
+    assert cfg[0] == "Europe/Madrid" and cfg[1] == [1, 2, 3, 4, 5, 6] and str(cfg[2]) == "08:00:00" and str(cfg[3]) == "20:00:00" and cfg[4] is False
+    # Saturday 2026-11-07 10:00 UTC = 11:00 in Madrid (CET): inside; Monday 06:30 UTC = 07:30 Madrid: before 08:00
+    assert at(db, "2026-11-07 10:00:00") is False and at(db, "2026-11-02 06:30:00") is True and at(db, "2026-11-08 10:00:00") is True
+    second = bind_window(db, "UTC", [1, 2, 3, 4, 5, 6, 7], "00:00", "23:59:59")
+    assert second > first and at(db, "2026-11-08 03:00:00") is False                                       # a later row replaces it: every day, all day
+    assert db.execute("SELECT count(*) FROM backlog.binding_window_event").fetchone()[0] == 2
+    for sql in ("UPDATE backlog.binding_window_event SET tz = 'UTC'", "DELETE FROM backlog.binding_window_event"):
+        with pytest.raises(psycopg.errors.Error, match="append-only"):
+            with db.transaction():
+                db.execute(sql)
+
+
+def bind_window(db, tz, days, start, end, declared=OWNER, reason="a window set by a test of the guardrail"):
+    return db.execute("SELECT backlog.sp_set_binding_window(%s, %s::smallint[], %s::time, %s::time, %s, %s)", (tz, days, start, end, reason, declared)).fetchone()[0]
+
+
+def test_the_window_setter_is_owner_only_and_validates_everything(db):
+    for role in ("backlog_logger", "backlog_incident", "backlog_reader"):
+        denied(db, role, lambda c: bind_window(c, "UTC", [1], "08:00", "09:00"), match="permission denied")
+    mk_login(db, DEVOPS_LOGIN)
+    denied(db, DEVOPS_LOGIN, lambda c: bind_window(c, "UTC", [1], "08:00", "09:00"), match="permission denied|only the owner")
+    for args, match in ((("Mars/Olympus", [1], "08:00", "09:00"), "time zone"), (("UTC", [1], "09:00", "08:00"), "start_time"), (("UTC", [8], "08:00", "09:00"), "days"),
+                        (("UTC", [], "08:00", "09:00"), "days")):
+        with pytest.raises(psycopg.errors.Error, match=match):
+            with db.transaction():
+                bind_window(db, *args)
+    for declared in (None, "agent:x", "claude"):
+        with pytest.raises(psycopg.errors.Error, match="canonical human"):
+            with db.transaction():
+                bind_window(db, "UTC", [1], "08:00", "09:00", declared=declared)
+    with pytest.raises(psycopg.errors.CheckViolation):                                                          # a reason of ten characters at least
+        with db.transaction():
+            bind_window(db, "UTC", [1], "08:00", "09:00", reason="short")
+    assert db.execute("SELECT count(*) FROM backlog.binding_window_event").fetchone()[0] == 0
+
+
+def test_a_binding_written_outside_the_window_carries_the_off_hours_flag(db):
+    mk_login(db, DEVOPS_LOGIN)
+    inside = bind(db, DEVOPS_LOGIN, DEVOPS, "human:a.gomez", "HUMAN")
+    bind_window(db, "UTC", [1, 2, 3, 4, 5, 6, 7], "00:00", "23:59:59")                                          # every moment is inside: nothing is off hours
+    assert "OFF_HOURS" not in {r["event_id"]: r for r in bc.binding_audit(conn=db)}[inside]["flags"]
+    # a window that excludes TODAY (the weekday after the database's today, one hour long)
+    today = db.execute("SELECT extract(isodow FROM clock_timestamp() AT TIME ZONE 'UTC')::int").fetchone()[0]
+    bind_window(db, "UTC", [today % 7 + 1], "10:00", "11:00")
+    outside = bind(db, DEVOPS_LOGIN, DEVOPS, "human:a.gomez", "HUMAN", active=False)
+    audit = {r["event_id"]: r for r in bc.binding_audit(conn=db)}
+    assert "OFF_HOURS" in audit[outside]["flags"] and "OFF_HOURS" in audit[inside]["flags"]                      # the flag is read against the window in force NOW for every event
+    bind_window(db, "UTC", [1, 2, 3, 4, 5, 6, 7], "00:00", "23:59:59")
+    assert "OFF_HOURS" not in {r["event_id"]: r for r in bc.binding_audit(conn=db)}[outside]["flags"]
+    assert bc.iam_catalog(conn=db)["binding_window"]["is_default"] is False
+
+
+def test_the_window_objects_belong_to_the_step_and_the_reader_can_read_them(db):
+    assert as_login(db, "backlog_reader", lambda c: c.execute("SELECT count(*) FROM backlog.v_binding_window").fetchone()[0]) == 1
+    assert as_login(db, "backlog_reader", lambda c: c.execute("SELECT backlog.fn_off_hours('2026-11-02 10:00:00+00')").fetchone()[0]) in (True, False)      # the pure helper the audit view calls
+    assert as_login(db, "backlog_reader", lambda c: c.execute("SELECT count(*) FROM backlog.binding_window_event").fetchone()[0]) == 0
+    assert bc.iam_catalog(conn=db)["binding_window"]["is_default"] is True
+    r = bc.iam_catalog(conn=db)["roles"]
+    assert all("sp_set_binding_window" not in r[name]["executes"] for name in r)

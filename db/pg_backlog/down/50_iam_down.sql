@@ -10,6 +10,10 @@ DROP FUNCTION IF EXISTS backlog.sp_append_log(text, text, text);
 DROP FUNCTION IF EXISTS backlog.sp_bind_login(text, text, text, text, boolean, text, text);
 DROP FUNCTION IF EXISTS backlog.sp_bind_login(text, text, text, text, boolean, text);
 DROP VIEW IF EXISTS backlog.v_binding_audit;
+DROP FUNCTION IF EXISTS backlog.sp_set_binding_window(text, smallint[], time, time, text, text);
+DROP FUNCTION IF EXISTS backlog.fn_off_hours(timestamptz);
+DROP VIEW IF EXISTS backlog.v_binding_window;
+DROP TABLE IF EXISTS backlog.binding_window_event;
 DROP VIEW IF EXISTS backlog.v_actor_login;
 DROP TABLE IF EXISTS backlog.actor_login_event;
 DO $$

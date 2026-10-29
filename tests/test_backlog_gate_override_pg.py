@@ -119,10 +119,15 @@ def test_applying_the_phase_again_adds_the_column_with_false_for_the_rows_writte
     assert dba.execute("SELECT count(*) FROM backlog.v_gate_override_event").fetchone()[0] == 0
 
 
-def test_the_rollback_removes_the_function_and_the_view(dba):
+def test_the_rollback_removes_the_override_and_restores_the_previous_setter(dba):
+    """The rollback (atomic, owner order 2026-10-29) takes the override back out and leaves the previous release's four-argument setter, with the gate and the rows untouched."""
+    mode = dba.execute("SELECT backlog.fn_gate_mode('DELIVERY')").fetchone()[0]
+    rows = dba.execute("SELECT count(*) FROM backlog.gate_switch").fetchone()[0]
     mig.migrate(dba, "relations", down=True)
-    assert dba.execute("SELECT count(*) FROM pg_proc WHERE pronamespace = 'backlog'::regnamespace AND proname = 'sp_set_gate'").fetchone()[0] == 0
+    assert [r[0] for r in dba.execute("SELECT p.oid::regprocedure::text FROM pg_proc p WHERE p.pronamespace = 'backlog'::regnamespace AND p.proname = 'sp_set_gate'").fetchall()] == ["backlog.sp_set_gate(text,text,text,text)"]
     assert dba.execute("SELECT to_regclass('backlog.v_gate_override_event') IS NULL").fetchone()[0] is True
+    assert dba.execute("SELECT backlog.fn_gate_mode('DELIVERY')").fetchone()[0] == mode
+    assert dba.execute("SELECT count(*) FROM backlog.gate_switch").fetchone()[0] == rows
 
 
 def test_the_shared_writer_can_execute_the_function_but_an_agent_identity_is_refused_inside_it(dba):
@@ -145,6 +150,7 @@ def test_the_client_passes_the_flag_for_a_human_and_refuses_it_for_an_agent_befo
 
 
 def test_the_catalog_and_the_acceptance_know_the_override_column(dba):
+    sys.path.insert(0, str(_ROOT / "scripts" / "audit"))          # the module lives in scripts/audit: do not depend on another test module having put it on the path
     import backlog_phase_a_acceptance as acc
     assert bc.phase_b_catalog(conn=dba)["override_column"] is True
     after = bc.history_fingerprint(conn=dba)

@@ -430,49 +430,89 @@ def _phase_b_rows(conn):
     return {t: conn.execute(f"SELECT count(*), md5(string_agg(t::text, '|' ORDER BY 1)) FROM backlog.{t} t").fetchone() for t in ("review_flag", "hold_event", "gate_switch", "gate_audit_event")}
 
 
-def test_the_rollback_disables_phase_b_and_keeps_every_row(dbb):
-    """Owner order 2026-10-29: the native rollback never drops an append-only history table and never deletes a row. The gate stops binding at once; a re-apply brings it back as it was."""
+def _sigs(conn, name):
+    return sorted(r[0] for r in conn.execute("SELECT p.oid::regprocedure::text FROM pg_proc p WHERE p.pronamespace = 'backlog'::regnamespace AND p.proname = %s", (name,)).fetchall())
+
+
+def _gate_mode(conn):
+    return conn.execute("SELECT backlog.fn_gate_mode('DELIVERY')").fetchone()[0]
+
+
+def test_the_rollback_returns_phase_b_to_the_previous_release_and_the_gate_never_leaves_its_mode(dbb):
+    """Owner order 2026-10-29: the rollback is atomic and self-contained. It never tears the gate down, never touches a row, and ends in the mode it found."""
     a, b = _mk(dbb, "IN_PROGRESS"), _mk(dbb, "IN_PROGRESS")
     link(dbb, a, b, "DEPENDS_ON")
-    link(dbb, a, b, "IMPACTS")                                            # the history now uses a Phase B type: it must survive the rollback
+    link(dbb, a, b, "IMPACTS")
     dbb.execute("SELECT backlog.sp_raise_hold(%s, 'raised so there is a row to protect', NULL, %s)", (a, ME))
-    assert len(blockers(dbb, a)) >= 1                                     # gate ENFORCE: the hold and the dependency block it
     before, rows = bc.history_fingerprint(conn=dbb), _phase_b_rows(dbb)
-    assert rows["gate_switch"][0] >= 1 and rows["hold_event"][0] == 1
+    assert _gate_mode(dbb) == "ENFORCE" and len(blockers(dbb, a)) >= 1 and rows["hold_event"][0] == 1
+    assert _sigs(dbb, "sp_set_gate") == ["backlog.sp_set_gate(text,text,text,text,boolean)"]
     mig.migrate(dbb, "relations", down=True)
+    # the gate: same mode, still the real engine, still refusing
+    assert _gate_mode(dbb) == "ENFORCE"
+    assert len(blockers(dbb, a)) >= 1
+    refused(dbb, "delivery gate", rfd, a)
+    # the previous release shape
+    assert _sigs(dbb, "sp_set_gate") == ["backlog.sp_set_gate(text,text,text,text)"]
+    assert dbb.execute("SELECT to_regclass('backlog.v_gate_override_event')").fetchone()[0] is None
+    window_cols = {r[0] for r in dbb.execute("SELECT column_name FROM information_schema.columns WHERE table_schema = 'backlog' AND table_name = 'v_gate_audit_window'").fetchall()}
+    assert "last_override_ts" not in window_cols and {"mode", "clear", "required_tickets"} <= window_cols
     assert mig.existing(dbb, "relations")["tables"] == sorted(("review_flag", "hold_event", "gate_switch", "gate_audit_event"))      # no table dropped
     assert _phase_b_rows(dbb) == rows                                     # not one row changed (count and content)
-    assert bc.history_fingerprint(max_log_id=before["max_log_id"], max_event_id=before["max_event_id"], conn=dbb) == before     # the rollback rewrote no history
-    assert dbb.execute("SELECT backlog.fn_gate_mode('DELIVERY')").fetchone()[0] == "OFF"                                      # the stubs: the gate no longer binds
-    rfd(dbb, a)                                                           # sp_transition still works, the hold and the dependency no longer refuse it
-    assert status(dbb, a) == "READY_FOR_DEPLOY"
-    assert dbb.execute("SELECT count(*) FROM backlog.backlog_link_event WHERE link_type = 'IMPACTS'").fetchone()[0] == 1
-    gone = dbb.execute("SELECT count(*) FROM pg_proc WHERE pronamespace = 'backlog'::regnamespace AND proname IN ('sp_set_gate', 'sp_raise_hold', 'sp_release_hold', 'sp_ack_review', 'sp_annotate_wait', 'trg_link_cycle')").fetchone()[0]
-    assert gone == 0
-    views = dbb.execute("SELECT count(*) FROM pg_class WHERE relnamespace = 'backlog'::regnamespace AND relname IN ('v_open_hold', 'v_open_review_flag', 'v_gate_audit_window', 'v_gate_audit_violation', 'v_supersede_suggestion')").fetchone()[0]
-    assert views == 0
-    mig.migrate(dbb, "relations")                                         # and it can be applied again, on top of the kept tables
-    assert dbb.execute("SELECT backlog.fn_gate_mode('DELIVERY')").fetchone()[0] == "ENFORCE"      # the last gate row says ENFORCE: it is ENFORCE again, no re-seeding
-    assert _phase_b_rows(dbb) == rows
-    assert len(blockers(dbb, a, to="CLOSED", delivery=True)) >= 1
+    assert bc.history_fingerprint(max_log_id=before["max_log_id"], max_event_id=before["max_event_id"], conn=dbb) == before
+    # the previous release's setter works, and re-applying the current release brings the override back without touching a row
+    assert dbb.execute("SELECT backlog.sp_set_gate('DELIVERY', 'AUDIT', 'human:jacor', 'back to audit by the previous setter')").fetchone()[0] > 0
+    assert _gate_mode(dbb) == "AUDIT"
+    mig.migrate(dbb, "relations")
+    assert _sigs(dbb, "sp_set_gate") == ["backlog.sp_set_gate(text,text,text,text,boolean)"]
+    assert _gate_mode(dbb) == "AUDIT"
 
 
-def test_the_rollback_is_idempotent_and_keeps_the_vocabulary_even_when_unused(dbb):
+def test_the_rollback_is_idempotent_and_keeps_the_link_vocabulary(dbb):
+    rows = _phase_b_rows(dbb)
     mig.migrate(dbb, "relations", down=True)
     mig.migrate(dbb, "relations", down=True)                              # a second run changes nothing and does not fail
+    assert _gate_mode(dbb) == "ENFORCE" and _phase_b_rows(dbb) == rows
     cols = {r[0] for r in dbb.execute("SELECT column_name FROM information_schema.columns WHERE table_schema = 'backlog' AND table_name = 'backlog_link_event'").fetchall()}
     assert "origin" in cols                                               # the link table is never altered by the rollback
     a, b = _mk(dbb), _mk(dbb)
-    link(dbb, a, b, "IMPACTS", "PROPOSED")                                # the vocabulary stays
+    link(dbb, a, b, "IMPACTS", "PROPOSED")
     assert dbb.execute("SELECT count(*) FROM backlog.backlog_link_event WHERE link_type = 'IMPACTS'").fetchone()[0] == 1
+    with pytest.raises(psycopg.errors.CheckViolation, match="cycle"):      # the cycle guard was never removed
+        with dbb.transaction():
+            link(dbb, a, b, "DEPENDS_ON")
+            link(dbb, b, a, "DEPENDS_ON")
+
+
+def test_a_rollback_that_would_change_the_gate_or_a_row_undoes_itself_completely(dbb):
+    """The invariant at the end of the script: sabotage it from inside the transaction and check that NOTHING of the rollback remains."""
+    rows = _phase_b_rows(dbb)
+    sql = mig.ddl_block("relations", down=True)
+    assert sql.count("-- gate invariant") == 1
+    for sabotage, match in (("INSERT INTO backlog.gate_switch (gate, mode, actor, reason) VALUES ('DELIVERY', 'OFF', 'human:x', 'sabotage inserted by a test');", "gate mode would change"),
+                            ("INSERT INTO backlog.hold_event (kind, action_point_id, reason, actor) SELECT 'RAISE', action_point_id, 'a sabotage row', 'agent:x' FROM backlog.backlog LIMIT 1;", "rows of the Phase B tables")):
+        _mk(dbb)
+        with pytest.raises(psycopg.errors.Error, match="rollback aborted.*" + match.split()[0]):
+            with dbb.transaction():
+                dbb.execute(sql.replace("-- gate invariant", sabotage + " -- gate invariant"))
+        assert _gate_mode(dbb) == "ENFORCE"
+        assert _sigs(dbb, "sp_set_gate") == ["backlog.sp_set_gate(text,text,text,text,boolean)"]      # the override setter is still there: the whole rollback was undone
+        assert _phase_b_rows(dbb) == rows
+
+
+def test_the_rollback_refuses_when_phase_b_is_not_applied(db):
+    with pytest.raises(psycopg.errors.InvalidParameterValue, match="nothing to roll back"):
+        with db.transaction():
+            db.execute(mig.ddl_block("relations", down=True))
 
 
 def test_the_rollback_never_issues_a_drop_table_or_a_delete():
-    """Static: the down script of Phase B has no DROP TABLE, DELETE, TRUNCATE or ALTER TABLE ... DROP: the history is out of its reach."""
+    """Static: the down script of Phase B has no DROP TABLE, DELETE, TRUNCATE, ALTER TABLE or UPDATE: the history is out of its reach."""
     import re
     text = (_ROOT / "db" / "pg_backlog" / "down" / "40_relations_v2_down.sql").read_text(encoding="utf-8")
     body = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("--"))
     assert not re.search(r"\bDROP\s+TABLE\b|\bDELETE\b|\bTRUNCATE\b|\bALTER\s+TABLE\b|\bDROP\s+COLUMN\b|\bUPDATE\b", body, re.I), body
+    assert "-- gate invariant" in body or "-- gate invariant" in text
 
 
 def test_origin_is_constrained_and_defaults_to_review(dbb):

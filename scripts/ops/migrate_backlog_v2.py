@@ -81,9 +81,9 @@ PHASES: dict = {
     "iam": {
         "up": ("50_iam.sql", "backlog_iam"),
         "down": ("down/50_iam_down.sql", "backlog_iam_down"),
-        "tables": ("actor_login_event",),
-        "views": ("v_actor_login",),
-        "routines": ("fn_actor_bound", "sp_bind_login", "sp_append_log", "sp_report_incident"),
+        "tables": ("actor_login_event", "binding_window_event"),
+        "views": ("v_actor_login", "v_binding_audit", "v_binding_window"),
+        "routines": ("fn_actor_bound", "sp_bind_login", "sp_set_binding_window", "fn_off_hours", "sp_append_log", "sp_report_incident"),
         "requires": ("status_event",),
         "requires_routines": ("fn_actor_authorized", "fn_actor_bound", "trg_append_only", "sp_open_ticket"),
         "roles": ("backlog_reader", "backlog_logger", "backlog_incident"),

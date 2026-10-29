@@ -176,9 +176,9 @@ def test_history_step_complete_state_is_accepted_and_coverage_is_checked_column_
 def _iam(**over):
     role = lambda ex: {"can_login": True, "superuser": False, "select_all": True, "write_tables": [], "executes": ex}      # noqa: E731
     c = {"roles": {"backlog_reader": role([]), "backlog_logger": role(["sp_append_log"]), "backlog_incident": role(["sp_report_incident"])},
-         "routines": {"fn_actor_bound": True, "sp_bind_login": True, "sp_append_log": True, "sp_report_incident": True},
+         "routines": {"fn_actor_bound": True, "sp_bind_login": True, "sp_set_binding_window": True, "fn_off_hours": True, "sp_append_log": True, "sp_report_incident": True},
          "bindings": [], "active_logins": 0, "active_persons": [], "writers": [], "unbound_writers": [],
-         "binding_store": {"declared_by_column": True, "declared_by_constraint": True, "audit_view": True}}
+         "binding_store": {"declared_by_column": True, "declared_by_constraint": True, "audit_view": True, "window_view": True}}
     c.update(over)
     return c
 
@@ -188,10 +188,12 @@ def test_iam_step_is_accepted_when_each_role_has_exactly_its_scope_and_each_crit
     assert all(ok for _, ok, _ in results) and len(results) == 7
     broken = {
         "migration rc": (1, _iam()),
-        "a routine is missing": (0, _iam(routines={"fn_actor_bound": True, "sp_bind_login": True, "sp_append_log": False, "sp_report_incident": True})),
-        "no declared_by column": (0, _iam(binding_store={"declared_by_column": False, "declared_by_constraint": True, "audit_view": True})),
-        "no declared_by constraint": (0, _iam(binding_store={"declared_by_column": True, "declared_by_constraint": False, "audit_view": True})),
-        "no audit view": (0, _iam(binding_store={"declared_by_column": True, "declared_by_constraint": True, "audit_view": False})),
+        "a routine is missing": (0, _iam(routines={"fn_actor_bound": True, "sp_bind_login": True, "sp_set_binding_window": True, "fn_off_hours": True, "sp_append_log": False, "sp_report_incident": True})),
+        "no operational window": (0, _iam(binding_store={"declared_by_column": True, "declared_by_constraint": True, "audit_view": True, "window_view": False})),
+        "the window routines are missing": (0, _iam(routines={"fn_actor_bound": True, "sp_bind_login": True, "sp_append_log": True, "sp_report_incident": True})),
+        "no declared_by column": (0, _iam(binding_store={"declared_by_column": False, "declared_by_constraint": True, "audit_view": True, "window_view": True})),
+        "no declared_by constraint": (0, _iam(binding_store={"declared_by_column": True, "declared_by_constraint": False, "audit_view": True, "window_view": True})),
+        "no audit view": (0, _iam(binding_store={"declared_by_column": True, "declared_by_constraint": True, "audit_view": False, "window_view": True})),
         "store not reported": (0, _iam(binding_store=None)),
     }
     for name, (rc, cat) in broken.items():

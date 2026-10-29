@@ -313,6 +313,12 @@ def test_binding_attention_lists_only_what_was_written_in_the_last_24_hours():
     assert "REVOKED" in lines[1] and "(nobody: legacy)" in lines[1]
 
 
+def test_the_off_hours_flag_is_shown_on_the_attention_line():
+    import preflight_check as pf
+    lines = pf.binding_lines([_binding(5, ["OFF_HOURS", "RECENT"])])
+    assert len(lines) == 1 and lines[0].endswith("[OFF_HOURS]")
+
+
 def test_a_recent_binding_makes_the_verdict_a_caution_and_an_old_flagged_one_only_adds_a_count():
     import preflight_check as pf
     base = {"git": {"changed": [], "unowned": []}, "processes": {"running": []}, "memory": {}, "db": {"error": "skipped"}}

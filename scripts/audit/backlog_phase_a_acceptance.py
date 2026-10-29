@@ -117,11 +117,11 @@ def evaluate_iam(migration_rc: int, baseline: dict, after: dict, cat: dict) -> l
 
     return [
         ("migration exit code is 0", migration_rc == 0, f"reported rc={migration_rc}"),
-        ("the routines exist (hook, bind, scoped append, scoped incident)", all(rt.get(n) for n in ("fn_actor_bound", "sp_bind_login", "sp_append_log", "sp_report_incident")), f"{rt}"),
+        ("the routines exist (hook, bind, scoped append, scoped incident)", all(rt.get(n) for n in ("fn_actor_bound", "sp_bind_login", "sp_set_binding_window", "fn_off_hours", "sp_append_log", "sp_report_incident")), f"{rt}"),
         ("backlog_reader reads everything and can execute nothing, write nothing", scoped("backlog_reader", []), f"{roles.get('backlog_reader')}"),
         ("backlog_logger can only execute sp_append_log and writes no table", scoped("backlog_logger", ["sp_append_log"]), f"{roles.get('backlog_logger')}"),
         ("backlog_incident can only execute sp_report_incident and writes no table", scoped("backlog_incident", ["sp_report_incident"]), f"{roles.get('backlog_incident')}"),
-        ("the binding audit exists: declared_by column, its constraint and the audit view", bool(store.get("declared_by_column")) and bool(store.get("declared_by_constraint")) and bool(store.get("audit_view")), f"{store}"),
+        ("the binding audit exists: declared_by column, its constraint, the audit view and the operational window", bool(store.get("declared_by_column")) and bool(store.get("declared_by_constraint")) and bool(store.get("audit_view")) and bool(store.get("window_view")), f"{store}"),
         ("history up to the baseline ids is identical", history_ok, history_detail),
     ]
 

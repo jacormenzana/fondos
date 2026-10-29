@@ -72,10 +72,45 @@ FROM backlog.actor_login_event
 ORDER BY login_name, event_id DESC;
 GRANT SELECT ON backlog.actor_login_event, backlog.v_actor_login TO backlog_owner;
 
+-- The operational window of the binding audit (owner order 2026-10-29): a binding written outside it is flagged OFF_HOURS. The DEFAULT is restrictive and hardcoded: Monday to Friday,
+-- 07:00 to 19:00 (end excluded) in the server's time zone ("system time"). The owner changes it with backlog.sp_set_binding_window; every change is an append-only row and the latest wins.
+CREATE TABLE IF NOT EXISTS backlog.binding_window_event (
+    event_id   BIGSERIAL PRIMARY KEY,
+    tz         TEXT NOT NULL,
+    days       SMALLINT[] NOT NULL CHECK (cardinality(days) BETWEEN 1 AND 7 AND days <@ ARRAY[1, 2, 3, 4, 5, 6, 7]::smallint[]),     -- ISO weekdays, 1 = Monday
+    start_time TIME NOT NULL,
+    end_time   TIME NOT NULL,
+    reason     TEXT NOT NULL CHECK (length(btrim(reason)) >= 10),
+    declared_by TEXT NOT NULL CHECK (declared_by ~ '^human:[A-Za-z0-9._-]+$'),
+    set_by     TEXT NOT NULL DEFAULT session_user,
+    event_ts   TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    CHECK (start_time < end_time)
+);
+DROP TRIGGER IF EXISTS append_only ON backlog.binding_window_event;
+CREATE TRIGGER append_only BEFORE UPDATE OR DELETE ON backlog.binding_window_event FOR EACH ROW EXECUTE FUNCTION backlog.trg_append_only();
+ALTER TABLE backlog.binding_window_event OWNER TO backlog_owner;
+GRANT SELECT ON backlog.binding_window_event TO backlog_owner;
+
+CREATE OR REPLACE VIEW backlog.v_binding_window AS
+SELECT COALESCE(w.tz, current_setting('TimeZone')) AS tz,
+       COALESCE(w.days, ARRAY[1, 2, 3, 4, 5]::smallint[]) AS days,
+       COALESCE(w.start_time, TIME '07:00') AS start_time,
+       COALESCE(w.end_time, TIME '19:00') AS end_time,
+       (w.event_id IS NULL) AS is_default
+FROM (SELECT 1) one LEFT JOIN LATERAL (SELECT * FROM backlog.binding_window_event ORDER BY event_id DESC LIMIT 1) w ON true;
+
+CREATE OR REPLACE FUNCTION backlog.fn_off_hours(p_ts timestamptz) RETURNS boolean
+LANGUAGE sql STABLE AS
+$$ SELECT NOT (extract(isodow FROM p_ts AT TIME ZONE v.tz)::smallint = ANY (v.days)
+               AND (p_ts AT TIME ZONE v.tz)::time >= v.start_time AND (p_ts AT TIME ZONE v.tz)::time < v.end_time)
+   FROM backlog.v_binding_window v $$;
+ALTER FUNCTION backlog.fn_off_hours(timestamptz) OWNER TO backlog_owner;
+
 -- The binding audit: one row per binding event with the flags that need a person's attention. Computed against the bindings in force WHEN the event was written.
 --   LEGACY_NO_DECLARER            the event predates the audit and names no declarer
 --   SELF_BINDING                  the declared identity is the one being bound (legitimate only for the very first binding)
 --   DECLARER_NOT_BOUND_TO_SET_BY  the database login that ran the call (set_by) was not bound to the declared identity at that moment (always the case for a superuser)
+--   OFF_HOURS                     written outside the operational window (default Monday to Friday 07:00-19:00 server time; see v_binding_window)
 --   RECENT                        written in the last 24 hours
 CREATE OR REPLACE VIEW backlog.v_binding_audit AS
 SELECT e.event_id, e.login_name, e.actor AS bound_actor, e.person, e.active, e.declared_by, e.set_by, e.reason, e.event_ts,
@@ -86,6 +121,7 @@ SELECT e.event_id, e.login_name, e.actor AS bound_actor, e.person, e.active, e.d
                     SELECT 1 FROM (SELECT DISTINCT ON (b.login_name) b.actor, b.active FROM backlog.actor_login_event b
                                    WHERE b.login_name = e.set_by AND b.event_id < e.event_id ORDER BY b.login_name, b.event_id DESC) x
                     WHERE x.active AND e.declared_by LIKE x.actor) THEN 'DECLARER_NOT_BOUND_TO_SET_BY' END,
+           CASE WHEN backlog.fn_off_hours(e.event_ts) THEN 'OFF_HOURS' END,
            CASE WHEN e.event_ts > clock_timestamp() - interval '24 hours' THEN 'RECENT' END], NULL) AS flags
 FROM backlog.actor_login_event e;
 
@@ -131,6 +167,32 @@ END $$;
 ALTER FUNCTION backlog.sp_bind_login(text, text, text, text, boolean, text, text) OWNER TO backlog_owner;
 GRANT INSERT ON backlog.actor_login_event TO backlog_owner;
 GRANT USAGE ON SEQUENCE backlog.actor_login_event_event_id_seq TO backlog_owner;
+
+-- 3b. Configure the operational window. Same rule as sp_bind_login: only the owner, declaring a canonical human identity. The time zone must exist; the window must be a valid interval.
+CREATE OR REPLACE FUNCTION backlog.sp_set_binding_window(p_tz text, p_days smallint[], p_start time, p_end time, p_reason text, p_declared_by text) RETURNS bigint
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, backlog AS $$
+DECLARE
+    v_id bigint;
+BEGIN
+    IF NOT (COALESCE((SELECT rolsuper FROM pg_roles WHERE rolname = session_user), false)
+            OR (EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'backlog_human') AND pg_has_role(session_user, 'backlog_human', 'MEMBER'))) THEN
+        RAISE EXCEPTION 'sp_set_binding_window: only the owner (superuser or backlog_human) sets the window' USING ERRCODE = '42501';
+    END IF;
+    IF p_declared_by IS NULL OR NOT backlog.fn_actor_ok(p_declared_by) OR p_declared_by NOT LIKE 'human:%' THEN
+        RAISE EXCEPTION 'sp_set_binding_window: the declaring identity % must be a canonical human:<login>', p_declared_by USING ERRCODE = '22023';
+    END IF;
+    IF NOT backlog.fn_actor_authorized(p_declared_by) THEN
+        RAISE EXCEPTION 'sp_set_binding_window: % may not declare from this connection', p_declared_by USING ERRCODE = '42501';
+    END IF;
+    IF p_tz IS NULL OR NOT EXISTS (SELECT 1 FROM pg_timezone_names WHERE name = p_tz) THEN
+        RAISE EXCEPTION 'sp_set_binding_window: % is not a known time zone name', p_tz USING ERRCODE = '22023';
+    END IF;
+    INSERT INTO backlog.binding_window_event (tz, days, start_time, end_time, reason, declared_by) VALUES (p_tz, p_days, p_start, p_end, p_reason, p_declared_by) RETURNING event_id INTO v_id;
+    RETURN v_id;
+END $$;
+ALTER FUNCTION backlog.sp_set_binding_window(text, smallint[], time, time, text, text) OWNER TO backlog_owner;
+GRANT INSERT ON backlog.binding_window_event TO backlog_owner;
+GRANT USAGE ON SEQUENCE backlog.binding_window_event_event_id_seq TO backlog_owner;
 
 -- 4. The agent bookkeeping path (owner decision 2026-10-29): append a note to an EXISTING ticket. Agent and system identities only (a human appends through his own role).
 CREATE OR REPLACE FUNCTION backlog.sp_append_log(p_ap_id text, p_actor text, p_comment text) RETURNS bigint
@@ -196,10 +258,13 @@ ALTER FUNCTION backlog.sp_report_incident(text, text, text, text, text, text, in
 -- 6. Privileges. A new function is executable by PUBLIC in Postgres: revoke it first, then grant exactly what each role needs.
 REVOKE EXECUTE ON FUNCTION backlog.fn_actor_bound(text) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION backlog.sp_bind_login(text, text, text, text, boolean, text, text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION backlog.sp_set_binding_window(text, smallint[], time, time, text, text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION backlog.fn_off_hours(timestamptz) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION backlog.sp_append_log(text, text, text) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION backlog.sp_report_incident(text, text, text, text, text, text, interval, text, text, text, text) FROM PUBLIC;
 GRANT USAGE ON SCHEMA backlog TO backlog_reader;
 GRANT SELECT ON ALL TABLES IN SCHEMA backlog TO backlog_reader;
+GRANT EXECUTE ON FUNCTION backlog.fn_off_hours(timestamptz) TO backlog_reader;      -- a pure read helper that v_binding_audit calls: a function inside a view is checked against the INVOKER, not the view owner
 GRANT EXECUTE ON FUNCTION backlog.sp_append_log(text, text, text) TO backlog_logger;
 GRANT EXECUTE ON FUNCTION backlog.sp_report_incident(text, text, text, text, text, text, interval, text, text, text, text) TO backlog_incident;
 DO $$
@@ -207,10 +272,12 @@ BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'backlog_writer') THEN
         GRANT EXECUTE ON FUNCTION backlog.sp_append_log(text, text, text) TO backlog_writer;                 -- the shared writer keeps working until it retires
         GRANT EXECUTE ON FUNCTION backlog.sp_report_incident(text, text, text, text, text, text, interval, text, text, text, text) TO backlog_writer;
+        GRANT EXECUTE ON FUNCTION backlog.sp_set_binding_window(text, smallint[], time, time, text, text) TO backlog_writer;
         GRANT EXECUTE ON FUNCTION backlog.sp_bind_login(text, text, text, text, boolean, text, text) TO backlog_writer;   -- the routine itself refuses anyone but the owner
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'backlog_human') THEN
         GRANT EXECUTE ON FUNCTION backlog.sp_bind_login(text, text, text, text, boolean, text, text) TO backlog_human;
+        GRANT EXECUTE ON FUNCTION backlog.sp_set_binding_window(text, smallint[], time, time, text, text) TO backlog_human;
     END IF;
 END $$;
 -- END backlog_iam

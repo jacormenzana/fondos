@@ -894,12 +894,18 @@ def gate_mode(gate: str = "DELIVERY", *, conn=None) -> str:
         return str(c.execute("SELECT backlog.fn_gate_mode(%s)", (gate,)).fetchone()[0])
 
 
+def _override_col(c) -> str:
+    """`last_override_ts` when the window view has it (the current release) else a NULL of the same name (the previous release, after the Phase B rollback): readers never break on a rollback."""
+    has = c.execute("SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'backlog' AND table_name = 'v_gate_audit_window' AND column_name = 'last_override_ts')").fetchone()[0]
+    return "last_override_ts" if has else "NULL::timestamptz AS last_override_ts"
+
+
 def gate_audit_window(*, conn=None) -> dict:
     """The audit window the owner reads before authorizing enforcement: mode, since_ts, hours_in_audit, evaluated, tickets_48h (different tickets with a gated move in the last
     48 hours), required_tickets (5), violations_since, violations_48h and `clear` (48+ hours of audit, gated moves on 5+ different tickets in the last 48 hours, no violation in
     them: the DB-side condition of ENFORCE). Needs Phase B."""
     with _session(conn) as c:
-        return _rows(c, "SELECT mode, since_ts, hours_in_audit, evaluated, tickets_48h, required_tickets, violations_since, violations_48h, clear, last_override_ts FROM backlog.v_gate_audit_window")[0]
+        return _rows(c, f"SELECT mode, since_ts, hours_in_audit, evaluated, tickets_48h, required_tickets, violations_since, violations_48h, clear, {_override_col(c)} FROM backlog.v_gate_audit_window")[0]
 
 
 def gate_audit_violations(*, conn=None) -> list:
@@ -944,7 +950,7 @@ def phase_b_catalog(*, conn=None) -> dict:
         mode = str(c.execute("SELECT backlog.fn_gate_mode('DELIVERY')").fetchone()[0]) if any(r["name"] == "fn_gate_mode" for r in routines) else None
         window = None
         if c.execute("SELECT to_regclass('backlog.v_gate_audit_window') IS NOT NULL").fetchone()[0]:
-            window = _rows(c, "SELECT mode, since_ts, hours_in_audit, evaluated, tickets_48h, required_tickets, violations_since, violations_48h, clear, last_override_ts FROM backlog.v_gate_audit_window")[0]
+            window = _rows(c, f"SELECT mode, since_ts, hours_in_audit, evaluated, tickets_48h, required_tickets, violations_since, violations_48h, clear, {_override_col(c)} FROM backlog.v_gate_audit_window")[0]
         override_col = bool(c.execute("SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'backlog' AND table_name = 'gate_switch' AND column_name = 'override')").fetchone()[0])
         writer = None
         if c.execute("SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'backlog_writer')").fetchone()[0]:
@@ -1066,7 +1072,8 @@ def identity_history_catalog(*, conn=None) -> dict:
 
 _IAM_ROLES = ("backlog_reader", "backlog_logger", "backlog_incident")
 _IAM_TABLES = ("backlog", "backlog_logs", "backlog_link_event", "status_event", "actor_login_event")
-_IAM_SIGS = {"sp_append_log": "backlog.sp_append_log(text,text,text)", "sp_bind_login": "backlog.sp_bind_login(text,text,text,text,boolean,text,text)",
+_READ_HELPERS = ("fn_off_hours",)         # pure read functions the reader may execute (the binding audit view calls them): not a privilege to write or to act
+_IAM_SIGS = {"sp_append_log": "backlog.sp_append_log(text,text,text)", "sp_bind_login": "backlog.sp_bind_login(text,text,text,text,boolean,text,text)", "sp_set_binding_window": "backlog.sp_set_binding_window(text,smallint[],time,time,text,text)", "fn_off_hours": "backlog.fn_off_hours(timestamptz)",
              "sp_report_incident": "backlog.sp_report_incident(text,text,text,text,text,text,interval,text,text,text,text)", "fn_actor_bound": "backlog.fn_actor_bound(text)",
              "sp_open_ticket": _SIG_OPEN, "sp_transition": _SIG_TRANSITION}
 
@@ -1087,13 +1094,15 @@ def iam_catalog(*, conn=None) -> dict:
                 "select_all": all(c.execute("SELECT has_table_privilege(%s, %s, 'SELECT')", (role, f"backlog.{t}")).fetchone()[0] for t in tables),
                 "write_tables": [t for t in tables for priv in ("INSERT", "UPDATE", "DELETE")
                                  if c.execute("SELECT has_table_privilege(%s, %s, %s)", (role, f"backlog.{t}", priv)).fetchone()[0]],
-                "executes": sorted(n for n, present in routines.items() if present
+                "executes": sorted(n for n, present in routines.items() if present and n not in _READ_HELPERS
                                    and c.execute("SELECT has_function_privilege(%s, %s::regprocedure, 'EXECUTE')", (role, _IAM_SIGS[n])).fetchone()[0]),
             }
         bindings, writers, by_person, audit = [], [], {}, []
         store = {"declared_by_column": bool(c.execute("SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'backlog' AND table_name = 'actor_login_event' AND column_name = 'declared_by')").fetchone()[0]),
                  "declared_by_constraint": bool(c.execute("SELECT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'actor_login_declared_by')").fetchone()[0]),
-                 "audit_view": bool(c.execute("SELECT to_regclass('backlog.v_binding_audit') IS NOT NULL").fetchone()[0])}
+                 "audit_view": bool(c.execute("SELECT to_regclass('backlog.v_binding_audit') IS NOT NULL").fetchone()[0]),
+                 "window_view": bool(c.execute("SELECT to_regclass('backlog.v_binding_window') IS NOT NULL").fetchone()[0])}
+        window = _rows(c, "SELECT tz, days, start_time, end_time, is_default FROM backlog.v_binding_window")[0] if store["window_view"] else None
         if c.execute("SELECT to_regclass('backlog.v_actor_login') IS NOT NULL").fetchone()[0]:
             has_declarer = bool(c.execute("SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'backlog' AND table_name = 'v_actor_login' AND column_name = 'declared_by')").fetchone()[0])
             bindings = _rows(c, "SELECT login_name, actor, person, kind, active, set_by, event_ts, " + ("declared_by" if has_declarer else "NULL::text AS declared_by") + " FROM backlog.v_actor_login ORDER BY login_name")
@@ -1117,7 +1126,7 @@ def iam_catalog(*, conn=None) -> dict:
     return {"roles": roles, "routines": routines, "bindings": bindings, "binding_audit": audit,
             "active_logins": len(active), "active_persons": sorted({b["person"] for b in active if b["kind"] == "HUMAN"}),
             "writers": writers, "unbound_writers": [w["login"] for w in writers if not w["bound"]],
-            "transitions_by_person": by_person, "transition_persons": sorted(by_person), "binding_store": store}
+            "transitions_by_person": by_person, "transition_persons": sorted(by_person), "binding_store": store, "binding_window": window}
 
 
 def binding_audit(*, conn=None) -> list:
