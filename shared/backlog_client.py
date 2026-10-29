@@ -1066,7 +1066,7 @@ def identity_history_catalog(*, conn=None) -> dict:
 
 _IAM_ROLES = ("backlog_reader", "backlog_logger", "backlog_incident")
 _IAM_TABLES = ("backlog", "backlog_logs", "backlog_link_event", "status_event", "actor_login_event")
-_IAM_SIGS = {"sp_append_log": "backlog.sp_append_log(text,text,text)", "sp_bind_login": "backlog.sp_bind_login(text,text,text,text,boolean,text)",
+_IAM_SIGS = {"sp_append_log": "backlog.sp_append_log(text,text,text)", "sp_bind_login": "backlog.sp_bind_login(text,text,text,text,boolean,text,text)",
              "sp_report_incident": "backlog.sp_report_incident(text,text,text,text,text,text,interval,text,text,text,text)", "fn_actor_bound": "backlog.fn_actor_bound(text)",
              "sp_open_ticket": _SIG_OPEN, "sp_transition": _SIG_TRANSITION}
 
@@ -1090,9 +1090,15 @@ def iam_catalog(*, conn=None) -> dict:
                 "executes": sorted(n for n, present in routines.items() if present
                                    and c.execute("SELECT has_function_privilege(%s, %s::regprocedure, 'EXECUTE')", (role, _IAM_SIGS[n])).fetchone()[0]),
             }
-        bindings, writers, by_person = [], [], {}
+        bindings, writers, by_person, audit = [], [], {}, []
+        store = {"declared_by_column": bool(c.execute("SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'backlog' AND table_name = 'actor_login_event' AND column_name = 'declared_by')").fetchone()[0]),
+                 "declared_by_constraint": bool(c.execute("SELECT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'actor_login_declared_by')").fetchone()[0]),
+                 "audit_view": bool(c.execute("SELECT to_regclass('backlog.v_binding_audit') IS NOT NULL").fetchone()[0])}
         if c.execute("SELECT to_regclass('backlog.v_actor_login') IS NOT NULL").fetchone()[0]:
-            bindings = _rows(c, "SELECT login_name, actor, person, kind, active, set_by, event_ts FROM backlog.v_actor_login ORDER BY login_name")
+            has_declarer = bool(c.execute("SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'backlog' AND table_name = 'v_actor_login' AND column_name = 'declared_by')").fetchone()[0])
+            bindings = _rows(c, "SELECT login_name, actor, person, kind, active, set_by, event_ts, " + ("declared_by" if has_declarer else "NULL::text AS declared_by") + " FROM backlog.v_actor_login ORDER BY login_name")
+            if c.execute("SELECT to_regclass('backlog.v_binding_audit') IS NOT NULL").fetchone()[0]:
+                audit = _rows(c, "SELECT event_id, login_name, bound_actor, person, active, declared_by, set_by, event_ts, flags FROM backlog.v_binding_audit ORDER BY event_id")
             if routines["sp_transition"]:
                 # The transitions the A-2 counter counts (LIVE, a real change of status, since the last V-00) made by a HUMAN identity that is bound NOW, and made after that login was first bound
                 # to it: per distinct PERSON (two logins of one person count once). status_event does not record the login; the binding makes it unforgeable from the moment it exists.
@@ -1108,10 +1114,19 @@ def iam_catalog(*, conn=None) -> dict:
                                      "AND has_function_privilege(r.oid, %s::regprocedure, 'EXECUTE') ORDER BY 1", (_SIG_OPEN,)).fetchall():
                 writers.append({"login": name, "bound": name in bound})
     active = [b for b in bindings if b["active"]]
-    return {"roles": roles, "routines": routines, "bindings": bindings,
+    return {"roles": roles, "routines": routines, "bindings": bindings, "binding_audit": audit,
             "active_logins": len(active), "active_persons": sorted({b["person"] for b in active if b["kind"] == "HUMAN"}),
             "writers": writers, "unbound_writers": [w["login"] for w in writers if not w["bound"]],
-            "transitions_by_person": by_person, "transition_persons": sorted(by_person)}
+            "transitions_by_person": by_person, "transition_persons": sorted(by_person), "binding_store": store}
+
+
+def binding_audit(*, conn=None) -> list:
+    """The binding audit (FND-0354, owner order 2026-10-29): one row per login binding with who declared it and the flags that need attention (LEGACY_NO_DECLARER, SELF_BINDING,
+    DECLARER_NOT_BOUND_TO_SET_BY, RECENT). [] while step iam is not applied."""
+    with _session(conn) as c:
+        if not c.execute("SELECT to_regclass('backlog.v_binding_audit') IS NOT NULL").fetchone()[0]:
+            return []
+        return _rows(c, "SELECT event_id, login_name, bound_actor, person, active, declared_by, set_by, event_ts, flags FROM backlog.v_binding_audit ORDER BY event_id")
 
 
 def field_change_attribution(*, conn=None) -> list:

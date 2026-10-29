@@ -41,8 +41,8 @@ def db(pg_conn):
     return pg_conn
 
 
-def bind(conn, login, actor, person, kind, active=True):
-    return conn.execute("SELECT backlog.sp_bind_login(%s, %s, %s, %s, %s, %s)", (login, actor, person, kind, active, REASON)).fetchone()[0]
+def bind(conn, login, actor, person, kind, active=True, declared=OWNER):
+    return conn.execute("SELECT backlog.sp_bind_login(%s, %s, %s, %s, %s, %s, %s)", (login, actor, person, kind, active, REASON, declared)).fetchone()[0]
 
 
 def invalid(conn, role, fn, *a, match, **kw):
@@ -339,3 +339,66 @@ def test_transitions_are_counted_per_person_only_when_made_by_a_bound_human_iden
     assert cat["transitions_by_person"] == {"human:j.cormenzana": 2, "human:a.gomez": 1, "human:m.ruiz": 1} and cat["transition_persons"] == ["human:a.gomez", "human:j.cormenzana", "human:m.ruiz"]
     bind(db, "iam_qa", "human:m.ruiz_qa", "human:m.ruiz", "HUMAN", active=False)               # a revoked binding no longer backs the transitions
     assert "human:m.ruiz" not in bc.iam_catalog(conn=db)["transition_persons"]
+
+
+# --- the binding audit: the declared human identity (owner order 2026-10-29) ---------------------------------------------------------------------
+
+def test_a_binding_must_name_a_canonical_human_declarer(db):
+    mk_login(db, DEVOPS_LOGIN)
+    with pytest.raises(psycopg.errors.UndefinedFunction):                                           # the old six-argument form no longer exists
+        with db.transaction():
+            db.execute("SELECT backlog.sp_bind_login(%s, %s, %s, %s, %s, %s)", (DEVOPS_LOGIN, DEVOPS, "human:a.gomez", "HUMAN", True, REASON))
+    for declared in (None, "", "agent:claude-sonnet-5-5", "system:release", "claude", "human:", "human: x", "human:%"):
+        with pytest.raises(psycopg.errors.Error, match="canonical human"):
+            with db.transaction():
+                bind(db, DEVOPS_LOGIN, DEVOPS, "human:a.gomez", "HUMAN", declared=declared)
+    event = bind(db, DEVOPS_LOGIN, DEVOPS, "human:a.gomez", "HUMAN", declared=OWNER)
+    assert db.execute("SELECT declared_by FROM backlog.actor_login_event WHERE event_id = %s", (event,)).fetchone()[0] == OWNER
+
+
+def test_once_bindings_exist_a_bound_login_declares_only_its_own_identity(db):
+    for login in (OWNER_LOGIN, DEVOPS_LOGIN):
+        mk_login(db, login, member_of=("backlog_human",))
+    bind(db, OWNER_LOGIN, OWNER, "human:j.cormenzana", "HUMAN")                                     # the bootstrap, by the superuser
+    as_login(db, OWNER_LOGIN, lambda c: bind(c, DEVOPS_LOGIN, DEVOPS, "human:a.gomez", "HUMAN", declared=OWNER))             # its own identity: accepted
+    for declared in (DATA, DEVOPS, "human:m.ruiz_qa"):
+        denied(db, OWNER_LOGIN, lambda c, d=declared: bind(c, DEVOPS_LOGIN, DEVOPS, "human:a.gomez", "HUMAN", active=False, declared=d), match="may not declare")
+    assert db.execute("SELECT count(*) FROM backlog.actor_login_event").fetchone()[0] == 2        # the refused ones wrote nothing
+
+
+def test_the_audit_view_flags_what_needs_attention(db):
+    for login in (OWNER_LOGIN, DEVOPS_LOGIN):
+        mk_login(db, login, member_of=("backlog_human",))
+    first = bind(db, OWNER_LOGIN, OWNER, "human:j.cormenzana", "HUMAN")                              # superuser, declares the identity it binds, nobody bound yet
+    second = as_login(db, OWNER_LOGIN, lambda c: bind(c, DEVOPS_LOGIN, DEVOPS, "human:a.gomez", "HUMAN", declared=OWNER))
+    audit = {r["event_id"]: r for r in bc.binding_audit(conn=db)}
+    assert set(audit[first]["flags"]) == {"SELF_BINDING", "DECLARER_NOT_BOUND_TO_SET_BY", "RECENT"}
+    assert audit[first]["declared_by"] == OWNER and audit[first]["set_by"] == db.execute("SELECT session_user").fetchone()[0]
+    assert audit[second]["flags"] == ["RECENT"] and audit[second]["set_by"] == OWNER_LOGIN and audit[second]["bound_actor"] == DEVOPS
+
+
+def test_events_written_before_the_audit_stay_as_legacy_and_new_ones_must_name_a_declarer(db):
+    mk_login(db, DEVOPS_LOGIN)
+    legacy = bind(db, DEVOPS_LOGIN, DEVOPS, "human:a.gomez", "HUMAN")
+    # an earlier version of this step had no declared_by: simulate the table as it was, then upgrade it by re-applying the step
+    db.execute("ALTER TABLE backlog.actor_login_event DROP COLUMN declared_by CASCADE")
+    assert mig.existing(db, "iam")["views"] == []                                                      # the dependent views went with the column
+    mig.migrate(db, "iam")
+    assert db.execute("SELECT declared_by FROM backlog.actor_login_event WHERE event_id = %s", (legacy,)).fetchone()[0] is None      # not rewritten (append-only)
+    audit = {r["event_id"]: r for r in bc.binding_audit(conn=db)}
+    assert "LEGACY_NO_DECLARER" in audit[legacy]["flags"] and "DECLARER_NOT_BOUND_TO_SET_BY" not in audit[legacy]["flags"]
+    with pytest.raises(psycopg.errors.CheckViolation):                                                  # the constraint is NOT VALID: it skips the old row but binds every new one
+        with db.transaction():
+            db.execute("INSERT INTO backlog.actor_login_event (login_name, actor, person, kind, active, reason) VALUES (%s, %s, 'human:a.gomez', 'HUMAN', true, 'a direct insert without a declarer')", (DEVOPS_LOGIN, DEVOPS))
+    new = bind(db, DEVOPS_LOGIN, DEVOPS, "human:a.gomez", "HUMAN", active=False)
+    assert db.execute("SELECT declared_by FROM backlog.actor_login_event WHERE event_id = %s", (new,)).fetchone()[0] == OWNER
+    cat = bc.iam_catalog(conn=db)
+    assert cat["binding_store"] == {"declared_by_column": True, "declared_by_constraint": True, "audit_view": True}
+    assert [b["login_name"] for b in cat["bindings"] if b["declared_by"] is None] == []             # the latest event of the login names a declarer
+
+
+def test_the_audit_view_is_readable_by_the_reader_and_the_declarer_travels_in_the_binding_view(db):
+    mk_login(db, DEVOPS_LOGIN)
+    bind(db, DEVOPS_LOGIN, DEVOPS, "human:a.gomez", "HUMAN")
+    assert as_login(db, "backlog_reader", lambda c: c.execute("SELECT count(*) FROM backlog.v_binding_audit").fetchone()[0]) == 1
+    assert db.execute("SELECT declared_by FROM backlog.v_actor_login WHERE login_name = %s", (DEVOPS_LOGIN,)).fetchone()[0] == OWNER

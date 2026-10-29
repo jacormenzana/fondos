@@ -72,6 +72,20 @@ Owner decisions:
 - The runbook sequence (steps 1 to 5) is approved. The owner applies `--phase relations`, then `--phase iam`, with an ephemeral owner connection string immediately after the merges.
 - DevOps TLS delivery by 2026-11-03 is an executive-backed SLA owned by the owner.
 
+### FND-0354 / 07 - Binding audit implemented in this deployment
+actor: agent:claude-sonnet-5-5
+date: 2026-10-29
+source: owner review of 2026-10-29
+
+Owner decision: the identity traceability gap is closed in this deployment, not deferred. Implemented: `sp_bind_login` takes a mandatory `p_declared_by` (a canonical `human:*` identity checked with `fn_actor_authorized`: once bindings exist a bound login can declare only its own identity), stored in the append-only `actor_login_event.declared_by`; the view `v_binding_audit` flags `SELF_BINDING`, `DECLARER_NOT_BOUND_TO_SET_BY`, `LEGACY_NO_DECLARER` and `RECENT`; the pre-flight prints an `[ATENCION]` line and a CAUTION for every binding of the last 24 hours; `--verify iam` checks the audit exists and `--verify retire` requires every active binding to name its declarer. Stated limit: a superuser connection can declare any human identity; the audit makes it visible, it does not prevent it.
+
+### FND-0354 / 08 - Native rollback of Phase B keeps the history
+actor: agent:claude-sonnet-5-5
+date: 2026-10-29
+source: owner review of 2026-10-29
+
+Owner order: the native rollback must not drop the append-only history tables or delete gate rows. `--phase relations --down` now disables Phase B (routines, views and the cycle trigger go; the gate hooks return to stubs) and keeps `review_flag`, `hold_event`, `gate_switch`, `gate_audit_event`, the link vocabulary and the column `origin` with every row; a static test forbids `DROP TABLE`, `DELETE`, `TRUNCATE`, `ALTER TABLE` and `UPDATE` in the script. Backing out only an upgrade of Phase B is that rollback followed by the previous code's `--phase relations --apply`. The rollback playbook is `doc/operativos/BACKLOG_IAM_ROLLBACK_PLAYBOOK.md`.
+
 ## FND-0331
 
 ### FND-0331 / 01 - Hard fail for non-interactive live writes (mitigation 1)

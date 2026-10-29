@@ -7,7 +7,9 @@ CREATE OR REPLACE FUNCTION backlog.fn_actor_bound(p_actor text) RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, backlog AS $$ SELECT true $$;
 DROP FUNCTION IF EXISTS backlog.sp_report_incident(text, text, text, text, text, text, interval, text, text, text, text);
 DROP FUNCTION IF EXISTS backlog.sp_append_log(text, text, text);
+DROP FUNCTION IF EXISTS backlog.sp_bind_login(text, text, text, text, boolean, text, text);
 DROP FUNCTION IF EXISTS backlog.sp_bind_login(text, text, text, text, boolean, text);
+DROP VIEW IF EXISTS backlog.v_binding_audit;
 DROP VIEW IF EXISTS backlog.v_actor_login;
 DROP TABLE IF EXISTS backlog.actor_login_event;
 DO $$

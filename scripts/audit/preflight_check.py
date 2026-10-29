@@ -223,6 +223,9 @@ def verdict(report: dict, audit_max_age_days: float = 3.0) -> dict:
     if m.get("recent"):
         notes.append(f"{len(m['recent'])} memory file(s) touched in the last {m.get('recent_hours')} h: read them before acting")
     b = report.get("backlog", {})
+    recent_bindings = binding_attention((b.get("iam") or {}).get("binding_audit"))
+    if recent_bindings:
+        cautions.append(f"{len(recent_bindings)} login binding(s) written in the last 24 h: confirm each one with the person it names (backlog.v_binding_audit)")
     if b.get("new"):
         notes.append(f"{len(b['new'])} ticket(s) opened in the last {b.get('since_hours')} h: scan them before creating similar ones")
     return {"level": "CAUTION" if cautions else "CLEAR", "cautions": cautions, "notes": notes}
@@ -411,6 +414,21 @@ def _like(pattern: str, actor: str) -> bool:
     return re.fullmatch(re.escape(pattern).replace("%", ".*"), actor) is not None
 
 
+def binding_attention(audit: list) -> list:
+    """The binding events that need a person's attention NOW: written in the last 24 hours (flag RECENT). Pure."""
+    return [r for r in (audit or []) if "RECENT" in (r.get("flags") or [])]
+
+
+def binding_lines(audit: list) -> list:
+    """One [ATENCION] line per recent binding: who declared it, from which database login, and the other flags. Pure."""
+    out = []
+    for r in binding_attention(audit):
+        other = [f for f in r["flags"] if f != "RECENT"]
+        out.append(f"[ATENCION] binding #{r['event_id']}: login {r['login_name']} -> {r['bound_actor']} ({r['person']}, {'active' if r['active'] else 'REVOKED'}), "
+                   f"declared by {r.get('declared_by') or '(nobody: legacy)'} through database login {r['set_by']}" + (f" [{', '.join(other)}]" if other else ""))
+    return out
+
+
 def iam_line(cat: dict) -> str:
     """One line on the IAM step (FND-0354): not applied, or how many logins are bound to how many PERSONS (several logins of one person count once), and which logins can still open or
     move a ticket without being bound. Pure."""
@@ -424,6 +442,9 @@ def iam_line(cat: dict) -> str:
         line += "; UNBOUND logins that can still open or move a ticket: " + ", ".join(cat["unbound_writers"])
     elif cat.get("writers"):
         line += "; every writing login is bound"
+    old = [r for r in cat.get("binding_audit") or [] if r.get("flags") and "RECENT" not in r["flags"]]
+    if old:
+        line += f"; {len(old)} older binding(s) carry audit flags (backlog.v_binding_audit)"
     return line
 
 
@@ -547,6 +568,7 @@ def render(r: dict) -> str:
         L.append("      " + a2_line(b["a2"], b.get("a2_actors") or [], b.get("a2_required", 50), bindings))
     if iam_line(b.get("iam")):
         L.append("      " + iam_line(b["iam"]))
+    L += ["      " + line for line in binding_lines((b.get("iam") or {}).get("binding_audit"))]
     v = r["verdict"]
     L.append(f"VERDICT: {v['level']}")
     L += [f"  CAUTION: {c}" for c in v["cautions"]] + [f"  note: {n}" for n in v["notes"]]

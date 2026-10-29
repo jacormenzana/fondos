@@ -177,17 +177,22 @@ def _iam(**over):
     role = lambda ex: {"can_login": True, "superuser": False, "select_all": True, "write_tables": [], "executes": ex}      # noqa: E731
     c = {"roles": {"backlog_reader": role([]), "backlog_logger": role(["sp_append_log"]), "backlog_incident": role(["sp_report_incident"])},
          "routines": {"fn_actor_bound": True, "sp_bind_login": True, "sp_append_log": True, "sp_report_incident": True},
-         "bindings": [], "active_logins": 0, "active_persons": [], "writers": [], "unbound_writers": []}
+         "bindings": [], "active_logins": 0, "active_persons": [], "writers": [], "unbound_writers": [],
+         "binding_store": {"declared_by_column": True, "declared_by_constraint": True, "audit_view": True}}
     c.update(over)
     return c
 
 
 def test_iam_step_is_accepted_when_each_role_has_exactly_its_scope_and_each_criterion_can_fail():
     results = acc.evaluate_iam(0, FP, FP, _iam())
-    assert all(ok for _, ok, _ in results) and len(results) == 6
+    assert all(ok for _, ok, _ in results) and len(results) == 7
     broken = {
         "migration rc": (1, _iam()),
         "a routine is missing": (0, _iam(routines={"fn_actor_bound": True, "sp_bind_login": True, "sp_append_log": False, "sp_report_incident": True})),
+        "no declared_by column": (0, _iam(binding_store={"declared_by_column": False, "declared_by_constraint": True, "audit_view": True})),
+        "no declared_by constraint": (0, _iam(binding_store={"declared_by_column": True, "declared_by_constraint": False, "audit_view": True})),
+        "no audit view": (0, _iam(binding_store={"declared_by_column": True, "declared_by_constraint": True, "audit_view": False})),
+        "store not reported": (0, _iam(binding_store=None)),
     }
     for name, (rc, cat) in broken.items():
         assert not all(ok for _, ok, _ in acc.evaluate_iam(rc, FP, FP, cat)), name
@@ -203,17 +208,20 @@ def test_iam_step_is_accepted_when_each_role_has_exactly_its_scope_and_each_crit
 
 
 def test_retire_needs_no_unbound_writer_and_three_distinct_persons_who_have_made_transitions():
-    human = lambda n, person: {"login_name": n, "actor": f"human:{n}", "person": person, "kind": "HUMAN", "active": True}      # noqa: E731
+    human = lambda n, person: {"login_name": n, "actor": f"human:{n}", "person": person, "kind": "HUMAN", "active": True, "declared_by": "human:j.cormenzana_owner"}      # noqa: E731
     three = [human("a", "a.gomez"), human("b", "j.cormenzana"), human("c", "m.ruiz")]
     moved = {"a.gomez": 4, "j.cormenzana": 9, "m.ruiz": 2}
     ok = _iam(bindings=three, writers=[{"login": "a", "bound": True}], transitions_by_person=moved, transition_persons=sorted(moved))
-    assert all(r[1] for r in acc.evaluate_retire(0, FP, FP, ok)) and len(acc.evaluate_retire(0, FP, FP, ok)) == 5
+    assert all(r[1] for r in acc.evaluate_retire(0, FP, FP, ok)) and len(acc.evaluate_retire(0, FP, FP, ok)) == 6
     assert acc.REQUIRED_OPERATOR_PERSONS == 3
     two_persons = [human("a", "a.gomez"), human("b", "j.cormenzana"), human("c", "j.cormenzana")]                           # three logins, two people: NOT enough
     assert not all(r[1] for r in acc.evaluate_retire(0, FP, FP, dict(ok, bindings=two_persons)))
     assert not all(r[1] for r in acc.evaluate_retire(0, FP, FP, dict(ok, transitions_by_person={"a.gomez": 4}, transition_persons=["a.gomez"])))   # bound, but only one has moved a ticket
     assert not all(r[1] for r in acc.evaluate_retire(0, FP, FP, _iam(bindings=three)))                                       # nobody has moved anything
     assert not all(r[1] for r in acc.evaluate_retire(0, FP, FP, dict(ok, unbound_writers=["fondos_writer"])))
+    undeclared = [dict(three[0], declared_by=None)] + three[1:]
+    assert not all(r[1] for r in acc.evaluate_retire(0, FP, FP, dict(ok, bindings=undeclared)))                               # every active binding must name its declarer
+    assert all(r[1] for r in acc.evaluate_retire(0, FP, FP, dict(ok, bindings=three + [dict(three[0], login_name="old", active=False, declared_by=None)])))     # a revoked legacy one does not count
     agent = {"login_name": "x", "actor": "agent:%", "person": "claude", "kind": "AGENT", "active": True}
     assert not all(r[1] for r in acc.evaluate_retire(0, FP, FP, dict(ok, bindings=three[:2] + [agent])))                    # agents never count as operators
     revoked = dict(three[2], active=False)

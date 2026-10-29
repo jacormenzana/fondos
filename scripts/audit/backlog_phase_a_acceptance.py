@@ -108,7 +108,7 @@ def evaluate_human(migration_rc: int, baseline: dict, after: dict, catalog: dict
 def evaluate_iam(migration_rc: int, baseline: dict, after: dict, cat: dict) -> list:
     """[(check, passed, detail)] for the IAM step of FND-0354 (50_iam.sql): the three roles and exactly what each can do. Bindings and the retirement of the shared writer are NOT criteria
     of this step (the owner does them afterwards, see evaluate_retire). Pure."""
-    roles, rt = cat["roles"], cat["routines"]
+    roles, rt, store = cat["roles"], cat["routines"], cat.get("binding_store") or {}
     history_ok, history_detail = _same_history(baseline, after)
 
     def scoped(name, executes):
@@ -121,6 +121,7 @@ def evaluate_iam(migration_rc: int, baseline: dict, after: dict, cat: dict) -> l
         ("backlog_reader reads everything and can execute nothing, write nothing", scoped("backlog_reader", []), f"{roles.get('backlog_reader')}"),
         ("backlog_logger can only execute sp_append_log and writes no table", scoped("backlog_logger", ["sp_append_log"]), f"{roles.get('backlog_logger')}"),
         ("backlog_incident can only execute sp_report_incident and writes no table", scoped("backlog_incident", ["sp_report_incident"]), f"{roles.get('backlog_incident')}"),
+        ("the binding audit exists: declared_by column, its constraint and the audit view", bool(store.get("declared_by_column")) and bool(store.get("declared_by_constraint")) and bool(store.get("audit_view")), f"{store}"),
         ("history up to the baseline ids is identical", history_ok, history_detail),
     ]
 
@@ -143,6 +144,8 @@ def evaluate_retire(migration_rc: int, baseline: dict, after: dict, cat: dict) -
          f"{len(persons)} person(s) {persons} through {[(b['login_name'], b['actor']) for b in humans]}"),
         (f"transitions were made by at least {REQUIRED_OPERATOR_PERSONS} distinct bound human persons", len(moved) >= REQUIRED_OPERATOR_PERSONS,
          f"{len(moved)} person(s) {cat.get('transitions_by_person') or {}}"),
+        ("every active binding names the human identity that declared it", all(b.get("declared_by") for b in cat["bindings"] if b["active"]),
+         f"without a declarer: {[b['login_name'] for b in cat['bindings'] if b['active'] and not b.get('declared_by')]}"),
         ("history up to the baseline ids is identical", history_ok, history_detail),
     ]
 

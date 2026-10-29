@@ -10,7 +10,8 @@
 --                          FONDOS_BACKLOG_PG_DSN_INCIDENT.
 --   2. backlog.actor_login_event (append-only) and backlog.v_actor_login: which database login may write as which identity. backlog.fn_actor_bound (the hook of
 --      fn_actor_authorized) enforces it: a bound login writes ONLY as its bound identity; a human identity is refused from a login that is not bound to it. Nothing is enforced
---      while no binding exists (like backlog_human before step 32). The owner binds with backlog.sp_bind_login (superuser or backlog_human only).
+--      while no binding exists (like backlog_human before step 32). The owner binds with backlog.sp_bind_login (superuser or backlog_human only), which REQUIRES the canonical human
+--      identity declaring the binding (p_declared_by, stored as declared_by): the binding audit (owner order 2026-10-29). backlog.v_binding_audit flags what needs attention.
 --   3. The shared writer retires by the owner's decision (no DDL here: ALTER ROLE ... NOLOGIN / DROP ROLE in his session, after the per-identity logins work); the acceptance check
 --      lists every login that can still write and is not bound.
 -- The "cryptographic" part is the TLS client certificate each login presents (pg_hba.conf: hostssl ... cert / clientcert=verify-full), which is DevOps' to configure; this file binds
@@ -43,6 +44,7 @@ CREATE TABLE IF NOT EXISTS backlog.actor_login_event (
     active     BOOLEAN NOT NULL,
     reason     TEXT NOT NULL CHECK (length(btrim(reason)) >= 10),
     set_by     TEXT NOT NULL DEFAULT session_user,
+    declared_by TEXT,                           -- the canonical human identity that declared the binding (sp_bind_login writes it; rows from before the audit have none)
     event_ts   TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     CHECK ((kind = 'HUMAN') = (actor LIKE 'human:%') AND (kind = 'AGENT') = (actor LIKE 'agent:%') AND (kind = 'SYSTEM') = (actor LIKE 'system:%')),
     -- The person is NOT free text (owner decision 2026-10-29: a typo must not make one human count as two): a human is exactly one of the three canonical persons, and the identity he is
@@ -54,12 +56,38 @@ CREATE INDEX IF NOT EXISTS idx_actor_login_event_login ON backlog.actor_login_ev
 DROP TRIGGER IF EXISTS append_only ON backlog.actor_login_event;
 CREATE TRIGGER append_only BEFORE UPDATE OR DELETE ON backlog.actor_login_event FOR EACH ROW EXECUTE FUNCTION backlog.trg_append_only();
 ALTER TABLE backlog.actor_login_event OWNER TO backlog_owner;
+-- A table created by an earlier version of this step gets the column here; its old rows keep NULL (append-only: they are not rewritten) and the constraint is NOT VALID so that only NEW
+-- rows must name a canonical human declarer.
+ALTER TABLE backlog.actor_login_event ADD COLUMN IF NOT EXISTS declared_by TEXT;
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'actor_login_declared_by' AND conrelid = 'backlog.actor_login_event'::regclass) THEN
+        ALTER TABLE backlog.actor_login_event ADD CONSTRAINT actor_login_declared_by CHECK (declared_by IS NOT NULL AND declared_by ~ '^human:[A-Za-z0-9._-]+$') NOT VALID;
+    END IF;
+END $$;
 
 CREATE OR REPLACE VIEW backlog.v_actor_login AS
-SELECT DISTINCT ON (login_name) login_name, actor, person, kind, active, reason, set_by, event_ts, event_id
+SELECT DISTINCT ON (login_name) login_name, actor, person, kind, active, reason, set_by, event_ts, event_id, declared_by
 FROM backlog.actor_login_event
 ORDER BY login_name, event_id DESC;
 GRANT SELECT ON backlog.actor_login_event, backlog.v_actor_login TO backlog_owner;
+
+-- The binding audit: one row per binding event with the flags that need a person's attention. Computed against the bindings in force WHEN the event was written.
+--   LEGACY_NO_DECLARER            the event predates the audit and names no declarer
+--   SELF_BINDING                  the declared identity is the one being bound (legitimate only for the very first binding)
+--   DECLARER_NOT_BOUND_TO_SET_BY  the database login that ran the call (set_by) was not bound to the declared identity at that moment (always the case for a superuser)
+--   RECENT                        written in the last 24 hours
+CREATE OR REPLACE VIEW backlog.v_binding_audit AS
+SELECT e.event_id, e.login_name, e.actor AS bound_actor, e.person, e.active, e.declared_by, e.set_by, e.reason, e.event_ts,
+       array_remove(ARRAY[
+           CASE WHEN e.declared_by IS NULL THEN 'LEGACY_NO_DECLARER' END,
+           CASE WHEN e.declared_by = e.actor THEN 'SELF_BINDING' END,
+           CASE WHEN e.declared_by IS NOT NULL AND NOT EXISTS (
+                    SELECT 1 FROM (SELECT DISTINCT ON (b.login_name) b.actor, b.active FROM backlog.actor_login_event b
+                                   WHERE b.login_name = e.set_by AND b.event_id < e.event_id ORDER BY b.login_name, b.event_id DESC) x
+                    WHERE x.active AND e.declared_by LIKE x.actor) THEN 'DECLARER_NOT_BOUND_TO_SET_BY' END,
+           CASE WHEN e.event_ts > clock_timestamp() - interval '24 hours' THEN 'RECENT' END], NULL) AS flags
+FROM backlog.actor_login_event e;
 
 -- 2. The hook of fn_actor_authorized. Looks at session_user (who logged in), never at current_user.
 CREATE OR REPLACE FUNCTION backlog.fn_actor_bound(p_actor text) RETURNS boolean
@@ -74,8 +102,11 @@ $$ SELECT CASE
        END $$;
 ALTER FUNCTION backlog.fn_actor_bound(text) OWNER TO backlog_owner;
 
--- 3. Bind (or unbind) a login. Only a superuser or a member of backlog_human (the owner) may.
-CREATE OR REPLACE FUNCTION backlog.sp_bind_login(p_login text, p_actor text, p_person text, p_kind text, p_active boolean, p_reason text) RETURNS bigint
+-- 3. Bind (or unbind) a login. Only a superuser or a member of backlog_human (the owner) may, and the call must name the canonical HUMAN identity that declares it (p_declared_by):
+--    it is checked with fn_actor_authorized, so once bindings exist a bound login can declare only its own identity, and it is stored in the append-only event (declared_by). The old
+--    six-argument form is dropped: a call that does not say who declares fails.
+DROP FUNCTION IF EXISTS backlog.sp_bind_login(text, text, text, text, boolean, text);
+CREATE OR REPLACE FUNCTION backlog.sp_bind_login(p_login text, p_actor text, p_person text, p_kind text, p_active boolean, p_reason text, p_declared_by text) RETURNS bigint
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, backlog AS $$
 DECLARE
     v_id bigint;
@@ -84,14 +115,20 @@ BEGIN
             OR (EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'backlog_human') AND pg_has_role(session_user, 'backlog_human', 'MEMBER'))) THEN
         RAISE EXCEPTION 'sp_bind_login: only the owner (superuser or backlog_human) binds logins to identities' USING ERRCODE = '42501';
     END IF;
+    IF p_declared_by IS NULL OR NOT backlog.fn_actor_ok(p_declared_by) OR p_declared_by NOT LIKE 'human:%' THEN
+        RAISE EXCEPTION 'sp_bind_login: the declaring identity % must be a canonical human:<login>', p_declared_by USING ERRCODE = '22023';
+    END IF;
+    IF NOT backlog.fn_actor_authorized(p_declared_by) THEN
+        RAISE EXCEPTION 'sp_bind_login: % may not declare a binding from this connection (a bound login declares only its own identity)', p_declared_by USING ERRCODE = '42501';
+    END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = p_login AND rolcanlogin) THEN
         RAISE EXCEPTION 'sp_bind_login: % is not a login role', p_login USING ERRCODE = '22023';
     END IF;
-    INSERT INTO backlog.actor_login_event (login_name, actor, person, kind, active, reason) VALUES (p_login, p_actor, p_person, p_kind, p_active, p_reason)
+    INSERT INTO backlog.actor_login_event (login_name, actor, person, kind, active, reason, declared_by) VALUES (p_login, p_actor, p_person, p_kind, p_active, p_reason, p_declared_by)
     RETURNING event_id INTO v_id;
     RETURN v_id;
 END $$;
-ALTER FUNCTION backlog.sp_bind_login(text, text, text, text, boolean, text) OWNER TO backlog_owner;
+ALTER FUNCTION backlog.sp_bind_login(text, text, text, text, boolean, text, text) OWNER TO backlog_owner;
 GRANT INSERT ON backlog.actor_login_event TO backlog_owner;
 GRANT USAGE ON SEQUENCE backlog.actor_login_event_event_id_seq TO backlog_owner;
 
@@ -158,7 +195,7 @@ ALTER FUNCTION backlog.sp_report_incident(text, text, text, text, text, text, in
 
 -- 6. Privileges. A new function is executable by PUBLIC in Postgres: revoke it first, then grant exactly what each role needs.
 REVOKE EXECUTE ON FUNCTION backlog.fn_actor_bound(text) FROM PUBLIC;
-REVOKE EXECUTE ON FUNCTION backlog.sp_bind_login(text, text, text, text, boolean, text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION backlog.sp_bind_login(text, text, text, text, boolean, text, text) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION backlog.sp_append_log(text, text, text) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION backlog.sp_report_incident(text, text, text, text, text, text, interval, text, text, text, text) FROM PUBLIC;
 GRANT USAGE ON SCHEMA backlog TO backlog_reader;
@@ -170,10 +207,10 @@ BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'backlog_writer') THEN
         GRANT EXECUTE ON FUNCTION backlog.sp_append_log(text, text, text) TO backlog_writer;                 -- the shared writer keeps working until it retires
         GRANT EXECUTE ON FUNCTION backlog.sp_report_incident(text, text, text, text, text, text, interval, text, text, text, text) TO backlog_writer;
-        GRANT EXECUTE ON FUNCTION backlog.sp_bind_login(text, text, text, text, boolean, text) TO backlog_writer;   -- the routine itself refuses anyone but the owner
+        GRANT EXECUTE ON FUNCTION backlog.sp_bind_login(text, text, text, text, boolean, text, text) TO backlog_writer;   -- the routine itself refuses anyone but the owner
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'backlog_human') THEN
-        GRANT EXECUTE ON FUNCTION backlog.sp_bind_login(text, text, text, text, boolean, text) TO backlog_human;
+        GRANT EXECUTE ON FUNCTION backlog.sp_bind_login(text, text, text, text, boolean, text, text) TO backlog_human;
     END IF;
 END $$;
 -- END backlog_iam

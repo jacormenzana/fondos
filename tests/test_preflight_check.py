@@ -296,6 +296,33 @@ def test_iam_line_says_not_applied_or_counts_logins_and_persons_and_names_unboun
     assert pf.iam_line(dict(applied, unbound_writers=["fondos_writer"])).endswith("UNBOUND logins that can still open or move a ticket: fondos_writer")
 
 
+def _binding(event_id=1, flags=("RECENT",), **kw):
+    row = {"event_id": event_id, "login_name": "iam_qa", "bound_actor": "human:m.ruiz_qa", "person": "human:m.ruiz", "active": True, "declared_by": "human:j.cormenzana_owner",
+           "set_by": "fondos_owner", "flags": list(flags)}
+    row.update(kw)
+    return row
+
+
+def test_binding_attention_lists_only_what_was_written_in_the_last_24_hours():
+    import preflight_check as pf
+    audit = [_binding(1, ["SELF_BINDING"]), _binding(2, ["RECENT", "DECLARER_NOT_BOUND_TO_SET_BY"]), _binding(3, ["RECENT"], active=False, declared_by=None)]
+    assert [r["event_id"] for r in pf.binding_attention(audit)] == [2, 3] and pf.binding_attention(None) == [] and pf.binding_attention([]) == []
+    lines = pf.binding_lines(audit)
+    assert len(lines) == 2 and all(line.startswith("[ATENCION] binding #") for line in lines)
+    assert "declared by human:j.cormenzana_owner through database login fondos_owner [DECLARER_NOT_BOUND_TO_SET_BY]" in lines[0]
+    assert "REVOKED" in lines[1] and "(nobody: legacy)" in lines[1]
+
+
+def test_a_recent_binding_makes_the_verdict_a_caution_and_an_old_flagged_one_only_adds_a_count():
+    import preflight_check as pf
+    base = {"git": {"changed": [], "unowned": []}, "processes": {"running": []}, "memory": {}, "db": {"error": "skipped"}}
+    recent = pf.verdict(dict(base, backlog={"iam": {"binding_audit": [_binding(1)]}}))
+    assert recent["level"] == "CAUTION" and any("login binding(s) written in the last 24 h" in c for c in recent["cautions"])
+    assert "login binding" not in " ".join(pf.verdict(dict(base, backlog={"iam": {"binding_audit": [_binding(1, ["SELF_BINDING"])]}}))["cautions"])
+    cat = {"routines": {"sp_append_log": True}, "active_logins": 1, "active_persons": ["human:m.ruiz"], "writers": [], "unbound_writers": [], "binding_audit": [_binding(1, ["SELF_BINDING"])]}
+    assert pf.iam_line(cat).endswith("; 1 older binding(s) carry audit flags (backlog.v_binding_audit)")
+
+
 def test_a2_line_marks_actors_no_bound_login_backs_only_once_iam_exists():
     import preflight_check as pf
     sp = {"live_non_system_since_last_v00": 5, "v00_total": 0}
