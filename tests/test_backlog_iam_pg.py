@@ -287,3 +287,28 @@ def test_the_catalog_lists_every_login_that_can_still_write_and_whether_it_is_bo
     assert "backlog_logger" not in writers and "backlog_reader" not in writers                       # they cannot open or move a ticket
     db.execute("ALTER ROLE shared_writer NOLOGIN")                                                   # the retirement of the shared login
     assert "shared_writer" not in bc.iam_catalog(conn=db)["unbound_writers"]
+
+
+# --- A-2 pool: transitions made by distinct bound persons -------------------------------------------------------------------------------------
+
+def test_transitions_are_counted_per_person_only_when_made_by_a_bound_human_identity_after_it_was_bound(db):
+    for login in (OWNER_LOGIN, DATA_LOGIN, DEVOPS_LOGIN, "iam_qa"):
+        mk_login(db, login, member_of=("backlog_human", "backlog_writer"))
+    ap1, ap2, ap3, ap4 = _mk(db), _mk(db), _mk(db), _mk(db)
+    tr(db, ap4, "TODO", actor=OWNER)                                                      # a human identity BEFORE any binding: never counted for that login
+    bind(db, OWNER_LOGIN, OWNER, "j.cormenzana", "HUMAN")
+    bind(db, DATA_LOGIN, DATA, "j.cormenzana", "HUMAN")
+    bind(db, DEVOPS_LOGIN, DEVOPS, "a.gomez", "HUMAN")
+    bind(db, "iam_qa", "human:m.ruiz_qa", "m.ruiz", "HUMAN")
+    assert bc.iam_catalog(conn=db)["transition_persons"] == []
+    as_login(db, OWNER_LOGIN, lambda c: tr(c, ap1, "TODO", actor=OWNER))
+    as_login(db, DATA_LOGIN, lambda c: tr(c, ap2, "TODO", actor=DATA))                    # the same person through a second login: still one person
+    cat = bc.iam_catalog(conn=db)
+    assert cat["transitions_by_person"] == {"j.cormenzana": 2} and cat["transition_persons"] == ["j.cormenzana"]
+    as_login(db, DEVOPS_LOGIN, lambda c: tr(c, ap3, "TODO", actor=DEVOPS))
+    as_login(db, "iam_qa", lambda c: tr(c, ap3, "IN_PROGRESS", actor="human:m.ruiz_qa"))
+    tr(db, ap1, "IN_PROGRESS", actor=ME)                                                  # an agent never counts
+    cat = bc.iam_catalog(conn=db)
+    assert cat["transitions_by_person"] == {"j.cormenzana": 2, "a.gomez": 1, "m.ruiz": 1} and cat["transition_persons"] == ["a.gomez", "j.cormenzana", "m.ruiz"]
+    bind(db, "iam_qa", "human:m.ruiz_qa", "m.ruiz", "HUMAN", active=False)               # a revoked binding no longer backs the transitions
+    assert "m.ruiz" not in bc.iam_catalog(conn=db)["transition_persons"]

@@ -125,15 +125,24 @@ def evaluate_iam(migration_rc: int, baseline: dict, after: dict, cat: dict) -> l
     ]
 
 
+REQUIRED_OPERATOR_PERSONS = 3          # owner decision 2026-10-29: three distinct HUMAN persons (the two Cormenzana logins are one person; the third is the QA lead)
+
+
 def evaluate_retire(migration_rc: int, baseline: dict, after: dict, cat: dict) -> list:
-    """[(check, passed, detail)] for the retirement of the shared writer login (FND-0354, owner target 2026-11-06): no login can still open or move a ticket unless it is bound to an
-    identity, and at least three operator (human) logins are bound. The number of PERSONS behind them is reported by the caller, not judged here (the owner counts logins of one person once). Pure."""
+    """[(check, passed, detail)] for the retirement of the shared writer login and the A-2 validation pool (FND-0354, owner decisions 2026-10-29): no login can still open or move a ticket
+    unless it is bound to an identity; at least REQUIRED_OPERATOR_PERSONS distinct PERSONS are bound to human identities (several logins of one person count once; agents never count);
+    and transitions have actually been made by that many distinct bound persons (not just logins that exist). Pure."""
     humans = [b for b in cat["bindings"] if b["active"] and b["kind"] == "HUMAN"]
+    persons = sorted({b["person"] for b in humans})
+    moved = cat.get("transition_persons") or []
     history_ok, history_detail = _same_history(baseline, after)
     return [
         ("migration exit code is 0", migration_rc == 0, f"reported rc={migration_rc}"),
         ("no login that can open or move a ticket is unbound", cat["unbound_writers"] == [], f"unbound writers: {cat['unbound_writers']}"),
-        ("at least three operator logins are bound to human identities", len(humans) >= 3, f"{[(b['login_name'], b['actor']) for b in humans]}"),
+        (f"at least {REQUIRED_OPERATOR_PERSONS} distinct persons are bound to human identities", len(persons) >= REQUIRED_OPERATOR_PERSONS,
+         f"{len(persons)} person(s) {persons} through {[(b['login_name'], b['actor']) for b in humans]}"),
+        (f"transitions were made by at least {REQUIRED_OPERATOR_PERSONS} distinct bound human persons", len(moved) >= REQUIRED_OPERATOR_PERSONS,
+         f"{len(moved)} person(s) {cat.get('transitions_by_person') or {}}"),
         ("history up to the baseline ids is identical", history_ok, history_detail),
     ]
 

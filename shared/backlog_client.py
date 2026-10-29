@@ -1090,9 +1090,18 @@ def iam_catalog(*, conn=None) -> dict:
                 "executes": sorted(n for n, present in routines.items() if present
                                    and c.execute("SELECT has_function_privilege(%s, %s::regprocedure, 'EXECUTE')", (role, _IAM_SIGS[n])).fetchone()[0]),
             }
-        bindings, writers = [], []
+        bindings, writers, by_person = [], [], {}
         if c.execute("SELECT to_regclass('backlog.v_actor_login') IS NOT NULL").fetchone()[0]:
             bindings = _rows(c, "SELECT login_name, actor, person, kind, active, set_by, event_ts FROM backlog.v_actor_login ORDER BY login_name")
+            if routines["sp_transition"]:
+                # The transitions the A-2 counter counts (LIVE, a real change of status, since the last V-00) made by a HUMAN identity that is bound NOW, and made after that login was first bound
+                # to it: per distinct PERSON (two logins of one person count once). status_event does not record the login; the binding makes it unforgeable from the moment it exists.
+                by_person = {r[0]: int(r[1]) for r in c.execute(
+                    "SELECT l.person, count(*) FROM backlog.status_event e JOIN backlog.v_actor_login l ON l.kind = 'HUMAN' AND l.active AND e.actor = l.actor "
+                    "WHERE e.origin = 'LIVE' AND e.from_status IS NOT NULL AND e.from_status <> e.to_status "
+                    "AND e.event_ts > COALESCE((SELECT max(r.event_ts) FROM backlog.raw_update_event r), '-infinity'::timestamptz) "
+                    "AND e.event_ts >= (SELECT min(b.event_ts) FROM backlog.actor_login_event b WHERE b.login_name = l.login_name AND b.actor = l.actor AND b.active) "
+                    "GROUP BY l.person ORDER BY 2 DESC, 1").fetchall()}
         if routines["sp_open_ticket"]:
             bound = {b["login_name"] for b in bindings if b["active"]}
             for (name,) in c.execute("SELECT r.rolname FROM pg_roles r WHERE r.rolcanlogin AND NOT r.rolsuper AND r.rolname !~ '^pg_' "
@@ -1101,7 +1110,8 @@ def iam_catalog(*, conn=None) -> dict:
     active = [b for b in bindings if b["active"]]
     return {"roles": roles, "routines": routines, "bindings": bindings,
             "active_logins": len(active), "active_persons": sorted({b["person"] for b in active if b["kind"] == "HUMAN"}),
-            "writers": writers, "unbound_writers": [w["login"] for w in writers if not w["bound"]]}
+            "writers": writers, "unbound_writers": [w["login"] for w in writers if not w["bound"]],
+            "transitions_by_person": by_person, "transition_persons": sorted(by_person)}
 
 
 def field_change_attribution(*, conn=None) -> list:

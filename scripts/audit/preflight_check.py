@@ -418,6 +418,8 @@ def iam_line(cat: dict) -> str:
         return "IAM: step iam not applied (no per-identity logins; agents write through the shared writer or not at all)" if cat is not None else ""
     persons = cat.get("active_persons") or []
     line = f"IAM: {cat.get('active_logins', 0)} bound login(s), {len(persons)} distinct human person(s)"
+    if "transition_persons" in cat:
+        line += f", transitions made by {len(cat['transition_persons'])} of them"
     if cat.get("unbound_writers"):
         line += "; UNBOUND logins that can still open or move a ticket: " + ", ".join(cat["unbound_writers"])
     elif cat.get("writers"):

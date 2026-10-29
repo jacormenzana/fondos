@@ -8,9 +8,9 @@ Written for: the owner and the DevOps lead who provision the per-identity logins
 | `backlog_reader` | agent sessions | read the whole `backlog` schema | `FONDOS_BACKLOG_PG_DSN` (replaces the generic writer in `.env`) |
 | `backlog_logger` | agent sessions | append a note to an EXISTING ticket (`sp_append_log`), nothing else | `FONDOS_BACKLOG_PG_DSN_LOGGER` |
 | `backlog_incident` | pipelines | automatic incident capture (`sp_report_incident`), insert-only | `FONDOS_BACKLOG_PG_DSN_INCIDENT` |
-| one login per operator | `human:a.gomez_devops`, `human:j.cormenzana_data`, `human:j.cormenzana_owner` | open, move, link (as the bound human) | `FONDOS_BACKLOG_PG_DSN_HUMAN`, typed in the operator's own terminal, never in `.env` |
+| one login per operator | `human:a.gomez_devops`, `human:j.cormenzana_data`, `human:j.cormenzana_owner`, `human:m.ruiz_qa` (Maria Ruiz, QA lead) | open, move, link (as the bound human) | `FONDOS_BACKLOG_PG_DSN_HUMAN`, typed in the operator's own terminal, never in `.env` |
 
-Several logins of one person count as one person (`person` column). An agent is never an operator. `human:jacor` stays an alias of the history.
+Several logins of one person count as one person (`person` column): the A-2 pool needs THREE distinct persons (a.gomez, j.cormenzana, m.ruiz; owner decision 2026-10-29). An agent is never an operator. `human:jacor` stays an alias of the history.
 
 ## Order (the owner applies every DDL; nothing here is applied by a session)
 1. Re-apply step A-1 with the hook and apply the IAM step in the owner's terminal (owner DSN typed for the session, never stored):
@@ -22,7 +22,7 @@ Several logins of one person count as one person (`person` column). An agent is 
    Bind the old `backlog_human` login to `human:jacor` while it exists. Bind `backlog_logger` to `agent:%` and `backlog_incident` to `system:autodetect`.
 4. Connection strings carry the standard libpq parameters, e.g. `postgresql://backlog_logger@127.0.0.1:5436/gestion?sslmode=verify-full&sslcert=...&sslkey=...&sslrootcert=...`; the client passes them untouched.
 5. Put the three agent strings in `.env`; remove the generic writer string. Verify with the pre-flight (`IAM:` line).
-6. Retire the shared writer: `ALTER ROLE <shared login> NOLOGIN` (then `DROP ROLE` when nothing uses it). `--verify retire` must pass (no unbound login can open or move a ticket; at least three bound operator logins).
+6. Retire the shared writer: `ALTER ROLE <shared login> NOLOGIN` (then `DROP ROLE` when nothing uses it). `--verify retire` must pass (no unbound login can open or move a ticket; at least three distinct bound human PERSONS, and transitions actually made by that many).
    The role `backlog_writer` stays as the privilege group; `fondos_app` is not touched.
 
 ## Rollback

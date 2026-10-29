@@ -202,13 +202,20 @@ def test_iam_step_is_accepted_when_each_role_has_exactly_its_scope_and_each_crit
     assert not all(ok for _, ok, _ in acc.evaluate_iam(0, FP, dict(FP, logs=1301), _iam()))                             # history must not move
 
 
-def test_retire_needs_no_unbound_writer_and_three_bound_operator_logins():
-    human = lambda n: {"login_name": n, "actor": f"human:{n}", "kind": "HUMAN", "active": True}                          # noqa: E731
-    ok = _iam(bindings=[human("a"), human("b"), human("c")], writers=[{"login": "a", "bound": True}])
-    assert all(r[1] for r in acc.evaluate_retire(0, FP, FP, ok))
-    assert not all(r[1] for r in acc.evaluate_retire(0, FP, FP, _iam(bindings=[human("a"), human("b")])))                # two logins are not three
+def test_retire_needs_no_unbound_writer_and_three_distinct_persons_who_have_made_transitions():
+    human = lambda n, person: {"login_name": n, "actor": f"human:{n}", "person": person, "kind": "HUMAN", "active": True}      # noqa: E731
+    three = [human("a", "a.gomez"), human("b", "j.cormenzana"), human("c", "m.ruiz")]
+    moved = {"a.gomez": 4, "j.cormenzana": 9, "m.ruiz": 2}
+    ok = _iam(bindings=three, writers=[{"login": "a", "bound": True}], transitions_by_person=moved, transition_persons=sorted(moved))
+    assert all(r[1] for r in acc.evaluate_retire(0, FP, FP, ok)) and len(acc.evaluate_retire(0, FP, FP, ok)) == 5
+    assert acc.REQUIRED_OPERATOR_PERSONS == 3
+    two_persons = [human("a", "a.gomez"), human("b", "j.cormenzana"), human("c", "j.cormenzana")]                           # three logins, two people: NOT enough
+    assert not all(r[1] for r in acc.evaluate_retire(0, FP, FP, dict(ok, bindings=two_persons)))
+    assert not all(r[1] for r in acc.evaluate_retire(0, FP, FP, dict(ok, transitions_by_person={"a.gomez": 4}, transition_persons=["a.gomez"])))   # bound, but only one has moved a ticket
+    assert not all(r[1] for r in acc.evaluate_retire(0, FP, FP, _iam(bindings=three)))                                       # nobody has moved anything
     assert not all(r[1] for r in acc.evaluate_retire(0, FP, FP, dict(ok, unbound_writers=["fondos_writer"])))
-    agent = {"login_name": "x", "actor": "agent:%", "kind": "AGENT", "active": True}
-    assert not all(r[1] for r in acc.evaluate_retire(0, FP, FP, _iam(bindings=[human("a"), human("b"), agent])))         # agents never count as operators
-    revoked = dict(human("c"), active=False)
-    assert not all(r[1] for r in acc.evaluate_retire(0, FP, FP, _iam(bindings=[human("a"), human("b"), revoked])))
+    agent = {"login_name": "x", "actor": "agent:%", "person": "claude", "kind": "AGENT", "active": True}
+    assert not all(r[1] for r in acc.evaluate_retire(0, FP, FP, dict(ok, bindings=three[:2] + [agent])))                    # agents never count as operators
+    revoked = dict(three[2], active=False)
+    assert not all(r[1] for r in acc.evaluate_retire(0, FP, FP, dict(ok, bindings=three[:2] + [revoked])))
+    assert not all(r[1] for r in acc.evaluate_retire(1, FP, FP, ok))
