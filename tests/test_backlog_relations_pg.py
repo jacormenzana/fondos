@@ -24,6 +24,7 @@ for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops"), str(Path(__file__).resolv
         sys.path.insert(0, _p)
 
 import migrate_backlog_v2 as mig  # noqa: E402
+from shared.testing.sandbox import acting_as  # noqa: E402
 from shared import backlog_client as bc  # noqa: E402
 from test_backlog_transitions_pg import (FORCE_REASON, ME, OWNER, SESSION, _base, _mk, open_, refused, status, tr)  # noqa: E402
 
@@ -529,12 +530,15 @@ def test_the_client_helpers_drive_the_gate_flags_and_holds(dbb):
     assert bc.open_review_flags(conn=dbb) == [] and bc.gate_blockers(y, conn=dbb) == []
     h = bc.raise_hold(y, "raised by a test of the client helpers", code="V-HOOK-BYPASS", actor=ME, conn=dbb)
     assert bc.gate_blockers(y, conn=dbb)[0]["kind"] == "HOLD"
-    bc.release_hold(h, "released by the owner in a test", actor=OWNER, conn=dbb)
+    with acting_as(OWNER):
+        bc.release_hold(h, "released by the owner in a test", actor=OWNER, conn=dbb)
     assert bc.gate_blockers(y, conn=dbb) == []
-    bc.set_gate("OFF", "switched off by a test of the client", actor=OWNER, conn=dbb)
+    with acting_as(OWNER):
+        bc.set_gate("OFF", "switched off by a test of the client", actor=OWNER, conn=dbb)
     assert bc.phase_b_catalog(conn=dbb)["gate_mode"] == "OFF" and bc.gate_mode(conn=dbb) == "OFF"
     with pytest.raises(ValueError, match="mode"):
-        bc.set_gate("MAYBE", "a made up mode for the test", actor=OWNER, conn=dbb)
+        with acting_as(OWNER):
+            bc.set_gate("MAYBE", "a made up mode for the test", actor=OWNER, conn=dbb)
 
 
 def test_the_catalog_reports_what_the_acceptance_relies_on(dba):
@@ -633,7 +637,8 @@ def test_enforce_is_accepted_after_48_clear_hours_on_five_tickets_and_binds_from
     _moves_on_different_tickets(dba, 5)
     w = bc.gate_audit_window(conn=dba)
     assert w["clear"] is True and float(w["hours_in_audit"]) >= 48 and w["tickets_48h"] == 5 and w["violations_48h"] == 0
-    bc.set_gate("ENFORCE", "the owner enforces after a clear 48-hour audit window", actor=OWNER, conn=dba)
+    with acting_as(OWNER):
+        bc.set_gate("ENFORCE", "the owner enforces after a clear 48-hour audit window", actor=OWNER, conn=dba)
     assert bc.gate_mode(conn=dba) == "ENFORCE" and bc.gate_audit_window(conn=dba)["clear"] is False       # no longer in audit
     b, c = _mk(dba, "IN_PROGRESS"), _mk(dba, "IN_PROGRESS")
     link(dba, b, c, "DEPENDS_ON")
@@ -662,8 +667,10 @@ def test_moves_older_than_48_hours_do_not_count_toward_the_five_tickets(dba):
 def test_going_back_to_audit_starts_a_new_window(dba):
     _age(dba, 49)
     _moves_on_different_tickets(dba, 5)
-    bc.set_gate("ENFORCE", "enforced after a clear window in this test", actor=OWNER, conn=dba)
-    bc.set_gate("AUDIT", "back to audit after an incident in this test", actor=OWNER, conn=dba)
+    with acting_as(OWNER):
+        bc.set_gate("ENFORCE", "enforced after a clear window in this test", actor=OWNER, conn=dba)
+    with acting_as(OWNER):
+        bc.set_gate("AUDIT", "back to audit after an incident in this test", actor=OWNER, conn=dba)
     w = bc.gate_audit_window(conn=dba)
     assert w["mode"] == "AUDIT" and float(w["hours_in_audit"]) < 1 and w["evaluated"] == 0 and w["tickets_48h"] == 0 and w["clear"] is False
 

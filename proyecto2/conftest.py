@@ -12,4 +12,4 @@ proyecto2 test ported onto the PG fixture (plan §5c) would fail with "fixture '
 found" the moment someone runs tests the documented way, not the repo-root way.
 """
 
-pytest_plugins = ["shared.testing.pg_fixtures"]
+pytest_plugins = ["shared.testing.pg_fixtures", "shared.testing.sandbox"]

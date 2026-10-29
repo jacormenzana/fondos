@@ -22,8 +22,8 @@ Companion documents: `PROPUESTA_BACKLOG_V2.md` (design and decision log), `EVALU
 
 ## L3. Agents are declarative among themselves
 
-- **What.** Any session can write as any `agent:<model>`; the database only refuses the generic `agent:claude` and refuses `human:*` from every connection except the owner-only role.
-- **Mitigation.** The human actor is protected; agent identities are accountable by session id and model name. **Would remove it:** one database role per agent, which is a credential-management decision.
+- **What.** Any session can write as any `agent:<model>`; the database only refuses the generic `agent:claude` and refuses `human:*` from every connection except the owner-only role. The client now takes the identity from `FONDOS_ACTOR` only (required, canonical, one per process; an explicit `actor` must equal it), which removes typing mistakes such as the `agent:claude-opus-5-5` labels written by a session that ran as Sonnet on 2026-10-28, but it cannot prove which model is running: the harness exposes none to child processes, and under `"model": "opusplan"` the planning (read-only) and the executing models differ.
+- **Mitigation.** The human actor is protected; agent identities are accountable by session id and model name; the variable is set in `.claude/settings.local.json` and must be changed together with the configured model. **Would remove it:** one database role per agent and per operator (FND-0354), which is a credential-management decision.
 
 ## L4. Direct writes of logs and link events stay open until step A-2
 

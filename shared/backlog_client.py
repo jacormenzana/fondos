@@ -594,13 +594,19 @@ def make_session_id(topic: str, kind: str = "DEV", *, project: str = "FND", toda
 
 
 def resolve_actor(actor: Optional[str] = None, environ: Optional[dict] = None) -> str:
-    """The canonical identity to write with: the explicit `actor` when given (validated), else FONDOS_ACTOR (validated). Raises ActorUnknown."""
+    """The canonical identity to write with, ALWAYS taken from FONDOS_ACTOR (owner order 2026-10-28: one process, one identity, set by the environment, never typed per call).
+    Raises ActorUnknown (a hard fail: nothing is written) when FONDOS_ACTOR is unset or not canonical, and when an explicit `actor` is given that is malformed or DIFFERS
+    from it. Passing the explicit `actor` that equals the environment stays allowed (scripts print it); a different one is refused, so a caller cannot type another identity.
+    What this guarantees is presence, format and consistency; it cannot prove WHICH model is running (the harness exposes none to child processes): that is set by whoever configures
+    the session (.claude/settings.local.json env for an agent session, the shell for a human one) and stays declarative among agents (limitation L3)."""
+    env_value = current_actor(environ)                     # raises when unset or malformed
     if actor is not None:
         value = str(actor).strip()
         if not ACTOR_PATTERN.match(value):
             raise ActorUnknown(f"actor {value!r} is not canonical (expected human:<login> | agent:<model> | system:<name>)")
-        return value
-    return current_actor(environ)
+        if value != env_value:
+            raise ActorUnknown(f"explicit actor {value!r} differs from {_ACTOR_ENV_VAR}={env_value!r}: one process writes as one identity, the one the environment declares")
+    return env_value
 
 
 def _transitions_present(cur) -> bool:
@@ -717,19 +723,25 @@ def raise_hold(ap_id: str, reason: str, *, code: Optional[str] = None, actor: Op
         return int(c.execute("SELECT backlog.sp_raise_hold(%s, %s, %s, %s)", (ap_id, reason, code, who)).fetchone()[0])
 
 
-def release_hold(hold_id: int, reason: str, *, actor: str, conn=None) -> int:
-    """Release a hold. Only a human actor can (through FONDOS_BACKLOG_PG_DSN_HUMAN, the owner-only role)."""
+def release_hold(hold_id: int, reason: str, *, actor: Optional[str] = None, conn=None) -> int:
+    """Release a hold. Only a human actor can (through FONDOS_BACKLOG_PG_DSN_HUMAN, the owner-only role); the identity is FONDOS_ACTOR (see resolve_actor)."""
+    who = resolve_actor(actor)
+    if not who.startswith("human:"):
+        raise ActorUnknown(f"only a human actor releases a hold (FONDOS_ACTOR={who!r})")
     with _session(conn, human=True) as c:
-        return int(c.execute("SELECT backlog.sp_release_hold(%s, %s, %s)", (hold_id, actor, reason)).fetchone()[0])
+        return int(c.execute("SELECT backlog.sp_release_hold(%s, %s, %s)", (hold_id, who, reason)).fetchone()[0])
 
 
-def set_gate(mode: str, reason: str, *, actor: str, gate: str = "DELIVERY", conn=None) -> int:
+def set_gate(mode: str, reason: str, *, actor: Optional[str] = None, gate: str = "DELIVERY", conn=None) -> int:
     """Set the delivery gate mode: OFF, AUDIT (evaluate and log, never refuse) or ENFORCE (refuse; only after a clear 48-hour audit window). Only a human actor can (the
     owner-only role); the switch is append-only and the deployment seeds AUDIT."""
     if mode not in GATE_MODES:
         raise ValueError(f"mode must be one of {GATE_MODES}, got {mode!r}")
+    who = resolve_actor(actor)
+    if not who.startswith("human:"):
+        raise ActorUnknown(f"only a human actor changes the gate (FONDOS_ACTOR={who!r})")
     with _session(conn, human=True) as c:
-        return int(c.execute("SELECT backlog.sp_set_gate(%s, %s, %s, %s)", (gate, mode, actor, reason)).fetchone()[0])
+        return int(c.execute("SELECT backlog.sp_set_gate(%s, %s, %s, %s)", (gate, mode, who, reason)).fetchone()[0])
 
 
 def gate_mode(gate: str = "DELIVERY", *, conn=None) -> str:
