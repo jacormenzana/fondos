@@ -402,6 +402,8 @@ def gate_line(g: dict) -> str:
             f"{g.get('violations_48h')} violation(s) in them")
     if g.get("mode") == "AUDIT":
         line += " -> ENFORCE CAN BE AUTHORIZED (window clear)" if g.get("clear") else " -> window not clear yet"
+    if g.get("last_override_ts") is not None:
+        line += f" [executive override recorded {str(g['last_override_ts'])[:16]}]"
     return line
 
 

@@ -143,6 +143,7 @@ def evaluate_relations(migration_rc: int, baseline: dict, after: dict, cat: dict
         ("sp_transition calls the delivery gate", cat["sp_transition_calls_gate"] is True, f"{cat['sp_transition_calls_gate']}"),
         ("the shared writer can execute the gate but cannot write the new tables", bool(writer) and writer["can_execute_gate"] and not writer["can_write_new_tables"], f"{writer}"),
         ("the delivery gate is in AUDIT mode (the rollout default) or ENFORCE, not OFF", cat["gate_mode"] in ("AUDIT", "ENFORCE"), f"gate_mode {cat['gate_mode']}"),
+        ("gate_switch has the executive-override column (FND-0350)", cat.get("override_column") is True, f"override column {cat.get('override_column')}"),
         ("history up to the baseline ids is identical", history_ok, history_detail),
     ]
 

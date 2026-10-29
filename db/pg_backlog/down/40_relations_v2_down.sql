@@ -22,8 +22,9 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, backlog AS $f$ B
 DROP FUNCTION IF EXISTS backlog.sp_ack_review(bigint, text, text);
 DROP FUNCTION IF EXISTS backlog.sp_raise_hold(text, text, text, text);
 DROP FUNCTION IF EXISTS backlog.sp_release_hold(bigint, text, text);
-DROP FUNCTION IF EXISTS backlog.sp_set_gate(text, text, text, text);
+DROP FUNCTION IF EXISTS backlog.sp_set_gate(text, text, text, text, boolean);
 DROP FUNCTION IF EXISTS backlog.sp_annotate_wait(text, text, text, text, text, date, text, text);
+DROP VIEW IF EXISTS backlog.v_gate_override_event;
 DROP VIEW IF EXISTS backlog.v_gate_audit_window;
 DROP VIEW IF EXISTS backlog.v_gate_audit_violation;
 DROP VIEW IF EXISTS backlog.v_supersede_suggestion;

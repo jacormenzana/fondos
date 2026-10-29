@@ -46,3 +46,8 @@ Companion documents: `PROPUESTA_BACKLOG_V2.md` (design and decision log), `EVALU
 - **Affects.** Anything that expects contiguous ids (a reconciliation, a "missing ticket" check): FND-0339 to FND-0349 are intentionally skipped, not lost.
 - **Mitigation.** This entry; the logs of FND-0333 and FND-0352; and the owner's ban (2026-10-28) on synthetic tests against the live backlog (FND-0351: state-machine and gate verification runs on a staging container loaded with a production snapshot, so no live id is consumed).
 - **Would remove it.** Nothing: a sequence is never rewound (rewinding it would risk duplicate ids).
+## L8. One direct row in `gate_switch` precedes the governed executive override
+
+- **What.** On 2026-10-28 the delivery gate went from AUDIT to ENFORCE by ONE direct row in the append-only `backlog.gate_switch` (event 2, actor `system:owner-waiver`), written with the owner role by an agent session on the owner's written directive, because `sp_set_gate` then had no way to waive the audit window. The row cites the directive and the evidence; it does not impersonate the owner.
+- **Affects.** Reading the history of the gate: that row is the only mode change not made through `sp_set_gate`, and its `override` column reads false (the column did not exist yet).
+- **Mitigation.** FND-0350: `sp_set_gate(..., p_executive_override => true)`, human-only, reason of 80+ characters, flagged and listed (`v_gate_override_event`); a repository test fails on any new raw insert. **Would remove it:** nothing (history is append-only); the precedent stays documented here.

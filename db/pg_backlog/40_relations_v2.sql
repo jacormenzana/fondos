@@ -105,6 +105,9 @@ CREATE TABLE IF NOT EXISTS backlog.gate_audit_event (
     event_ts        TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
 );
 CREATE INDEX IF NOT EXISTS idx_gate_audit_event_ts ON backlog.gate_audit_event (event_ts);
+-- FND-0350 (owner-approved specification, 2026-10-28): a governed executive override is a ROW of this table like any mode change, flagged here. Rows written before it read false; the only direct
+-- insert ever made (event 2, actor system:owner-waiver, 2026-10-28) stays as that precedent and is documented in LIMITACIONES_CONOCIDAS_BACKLOG_V2.md (L8).
+ALTER TABLE backlog.gate_switch ADD COLUMN IF NOT EXISTS override BOOLEAN NOT NULL DEFAULT false;
 INSERT INTO backlog.gate_switch (gate, mode, actor, reason)
 SELECT 'DELIVERY', 'AUDIT', 'system:deploy', 'Phase B deployed in AUDIT mode: violations are evaluated and logged, nothing is refused (owner decision 2026-10-28)'
  WHERE NOT EXISTS (SELECT 1 FROM backlog.gate_switch WHERE gate = 'DELIVERY');
@@ -153,7 +156,12 @@ SELECT COALESCE((SELECT mode FROM cur), 'AUDIT') AS mode,
          AND (SELECT count(DISTINCT e.action_point_id) FROM backlog.gate_audit_event e WHERE e.event_ts >= (SELECT event_ts FROM cur)
                  AND e.event_ts > clock_timestamp() - interval '48 hours') >= 5
          AND (SELECT count(*) FROM backlog.gate_audit_event e WHERE jsonb_array_length(e.blockers) > 0 AND e.event_ts >= (SELECT event_ts FROM cur)
-                 AND e.event_ts > clock_timestamp() - interval '48 hours') = 0 AS clear;
+                 AND e.event_ts > clock_timestamp() - interval '48 hours') = 0 AS clear,
+       (SELECT max(s.event_ts) FROM backlog.gate_switch s WHERE s.gate = 'DELIVERY' AND s.override) AS last_override_ts;
+
+-- Every executive override ever recorded (violation code V-GATE-OVERRIDE: counted, never blocking).
+CREATE OR REPLACE VIEW backlog.v_gate_override_event AS
+SELECT event_id, gate, mode, actor, reason, event_ts FROM backlog.gate_switch WHERE override;
 
 -- SUPERSEDES: `from` supersedes `to`. It only SUGGESTS closing the superseded ticket (DUPLICATED or CODE_FIX); nothing is forced.
 CREATE OR REPLACE VIEW backlog.v_supersede_suggestion AS
@@ -290,11 +298,16 @@ END;
 $$;
 
 -- Only a human actor changes the gate mode (an agent can never loosen the control that binds it). ENFORCE additionally needs the audit window to be clear: audit
--- running for 48 hours, no violation logged in the last 48 hours, gated moves on at least five different tickets in them (v_gate_audit_window.clear). Going back to AUDIT or OFF is always possible; a new AUDIT
--- row starts a new window.
-CREATE OR REPLACE FUNCTION backlog.sp_set_gate(p_gate text, p_mode text, p_actor text, p_reason text) RETURNS bigint
+-- running for 48 hours, no violation logged in the last 48 hours, gated moves on at least five different tickets in them (v_gate_audit_window.clear). Going back to AUDIT or OFF is always possible;
+-- a new AUDIT row starts a new window.
+-- EXECUTIVE OVERRIDE (FND-0350, specification approved by the owner 2026-10-28): p_executive_override = true skips ONLY that window condition. It is accepted only for ENFORCE, only from a human
+-- actor on the owner-only connection (the check above: an agent can NEVER pass it, so the executor of an executive override is the owner himself, in his own session) and only with a reason of 80+
+-- characters that cites the written directive. The row is flagged override = true, shown by v_gate_audit_window.last_override_ts and listed by v_gate_override_event. No raw insert is needed any more.
+-- The four-argument form is dropped: with a default on the fifth argument both could match a four-argument call.
+DROP FUNCTION IF EXISTS backlog.sp_set_gate(text, text, text, text);
+CREATE OR REPLACE FUNCTION backlog.sp_set_gate(p_gate text, p_mode text, p_actor text, p_reason text, p_executive_override boolean DEFAULT false) RETURNS bigint
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, backlog AS $$
-DECLARE v_id bigint; w record;
+DECLARE v_id bigint; w record; v_override boolean := COALESCE(p_executive_override, false);
 BEGIN
     IF p_actor IS NULL OR p_actor NOT LIKE 'human:%' OR NOT backlog.fn_actor_ok(p_actor) OR NOT backlog.fn_actor_authorized(p_actor) THEN
         RAISE EXCEPTION 'sp_set_gate: only a human actor, through the owner-only connection, changes a gate (got %)', p_actor USING ERRCODE = '42501';
@@ -302,14 +315,21 @@ BEGIN
     IF p_mode IS NULL OR p_mode NOT IN ('OFF', 'AUDIT', 'ENFORCE') THEN
         RAISE EXCEPTION 'sp_set_gate: mode must be OFF, AUDIT or ENFORCE (got %)', p_mode USING ERRCODE = '22023';
     END IF;
-    IF p_mode = 'ENFORCE' THEN
+    IF v_override THEN
+        IF p_mode <> 'ENFORCE' THEN
+            RAISE EXCEPTION 'sp_set_gate: an executive override applies only to ENFORCE (got %)', p_mode USING ERRCODE = '22023';
+        END IF;
+        IF p_reason IS NULL OR length(btrim(p_reason)) < 80 THEN
+            RAISE EXCEPTION 'sp_set_gate: an executive override needs a reason of 80+ characters that cites the written directive' USING ERRCODE = '22023';
+        END IF;
+    ELSIF p_mode = 'ENFORCE' THEN
         SELECT * INTO w FROM backlog.v_gate_audit_window;
         IF NOT COALESCE(w.clear, false) THEN
-            RAISE EXCEPTION 'sp_set_gate: ENFORCE needs a clear audit window (mode %, % hours in audit, gated moves on % different tickets in the last 48 hours, % violations in them; needs 48 hours, % different tickets, 0 violations)',
+            RAISE EXCEPTION 'sp_set_gate: ENFORCE needs a clear audit window (mode %, % hours in audit, gated moves on % different tickets in the last 48 hours, % violations in them; needs 48 hours, % different tickets, 0 violations; or an executive override)',
                 w.mode, round(COALESCE(w.hours_in_audit, 0)::numeric, 1), w.tickets_48h, w.violations_48h, w.required_tickets USING ERRCODE = '22023';
         END IF;
     END IF;
-    INSERT INTO backlog.gate_switch (gate, mode, actor, reason) VALUES (p_gate, p_mode, p_actor, p_reason) RETURNING event_id INTO v_id;
+    INSERT INTO backlog.gate_switch (gate, mode, actor, reason, override) VALUES (p_gate, p_mode, p_actor, p_reason, v_override) RETURNING event_id INTO v_id;
     RETURN v_id;
 END;
 $$;
@@ -377,6 +397,7 @@ ALTER TABLE backlog.gate_switch OWNER TO backlog_owner;
 ALTER TABLE backlog.gate_audit_event OWNER TO backlog_owner;
 ALTER VIEW backlog.v_gate_audit_violation OWNER TO backlog_owner;
 ALTER VIEW backlog.v_gate_audit_window OWNER TO backlog_owner;
+ALTER VIEW backlog.v_gate_override_event OWNER TO backlog_owner;
 ALTER VIEW backlog.v_open_review_flag    OWNER TO backlog_owner;       -- the gate (owned by backlog_owner) reads these views; they read tables the same role owns
 ALTER VIEW backlog.v_open_hold           OWNER TO backlog_owner;
 ALTER VIEW backlog.v_supersede_suggestion OWNER TO backlog_owner;
@@ -386,7 +407,7 @@ BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'backlog_writer') THEN
         GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA backlog TO backlog_writer;
         GRANT SELECT ON backlog.review_flag, backlog.hold_event, backlog.gate_switch, backlog.gate_audit_event, backlog.v_open_review_flag, backlog.v_open_hold,
-                         backlog.v_supersede_suggestion, backlog.v_gate_audit_violation, backlog.v_gate_audit_window TO backlog_writer;
+                         backlog.v_supersede_suggestion, backlog.v_gate_audit_violation, backlog.v_gate_audit_window, backlog.v_gate_override_event TO backlog_writer;
     END IF;
 END $$;
 -- END backlog_relations_v2
