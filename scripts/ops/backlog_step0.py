@@ -118,6 +118,10 @@ def main(argv: list | None = None) -> int:
     sys.path.insert(0, str(ROOT))
     import shared.config  # noqa: F401  (loads .env: FONDOS_BACKLOG_PG_DSN)
     from shared import backlog_client as bc
+    if args.apply:                                             # the dry run only reads; applying writes, which only a person at a terminal may do on the live backlog
+        rc_live = bc.require_live_write_cli()
+        if rc_live:
+            return rc_live
     try:
         data = load_manifest()
         rows = data["rows"]

@@ -111,6 +111,10 @@ def main(argv: "list | None" = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return RC_USAGE
 
+    rc_live = bc.require_live_write_cli(dsn)          # a dry run writes and rolls back (it burns ids): the same gate applies; exit code 1, nothing touched
+    if rc_live:
+        return rc_live
+
     fconn = get_connection()
     try:
         present = ps.incident_table_exists(fconn)

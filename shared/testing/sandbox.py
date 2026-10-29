@@ -7,6 +7,7 @@ shared/testing/sandbox.py -- pytest plugin registered by every conftest.py of th
   that file in the working tree.
 * FONDOS_ACTOR is set for every test to TEST_ACTOR, because the backlog client now refuses to write without a valid identity from the environment (shared.backlog_client.resolve_actor).
   TEST_ACTOR is a canonical agent identity used by the tests; it is NOT a statement about the model that runs them. A test that needs another identity uses acting_as().
+* The connection strings of the LIVE backlog (FONDOS_BACKLOG_PG_DSN, ..._HUMAN) are removed from the process for the whole session, so no test can reach it even by accident.
 * At the end of the session the plugin checks that the repository's real fallback log was not modified during it; if it was (a test escaped the sandbox, or a real pipeline wrote
   to it meanwhile) the run is reported as failed with the reason, so a footprint is never silent.
 """
@@ -57,15 +58,26 @@ def pytest_sessionfinish(session, exitstatus):
         session.exitstatus = int(pytest.ExitCode.TESTS_FAILED)
 
 
+_LIVE_BACKLOG_DSNS = ("FONDOS_BACKLOG_PG_DSN", "FONDOS_BACKLOG_PG_DSN_HUMAN")
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _fondos_test_sandbox():
     tmp = tempfile.mkdtemp(prefix="fondos-tests-")
     previous = os.environ.get(_ENV_FALLBACK)
     if previous is None:
         os.environ[_ENV_FALLBACK] = str(Path(tmp) / "backlog_autolog_fallback.jsonl")
+    # A test run must never SEE the live backlog: its connection strings are removed from the process for the whole session (a test that needs one sets its own with monkeypatch). The documented
+    # switch FONDOS_TESTS_ALLOW_LIVE_BACKLOG=1 exists for a deliberate, supervised read-only check and is never set by CI.
+    hidden = {}
+    if not os.environ.get("FONDOS_TESTS_ALLOW_LIVE_BACKLOG"):
+        for name in _LIVE_BACKLOG_DSNS:
+            if name in os.environ:
+                hidden[name] = os.environ.pop(name)
     try:
         yield tmp
     finally:
+        os.environ.update(hidden)
         if previous is None:
             os.environ.pop(_ENV_FALLBACK, None)
         shutil.rmtree(tmp, ignore_errors=True)
@@ -74,4 +86,5 @@ def _fondos_test_sandbox():
 @pytest.fixture(autouse=True)
 def _fondos_test_actor(monkeypatch):
     monkeypatch.setenv(_ENV_ACTOR, TEST_ACTOR)
+    monkeypatch.delenv("FONDOS_AGENT_ACTOR", raising=False)         # the agent default of an interactive session must not leak into a test that expects a missing identity
     yield

@@ -353,8 +353,86 @@ def dsn_for_actor(actor: Optional[str]) -> Optional[str]:
     return _dsn()
 
 
+LIVE_WRITE_PHRASE = "I CONFIRM THIS IS NOT A SYNTHETIC TEST"
+_live_write_confirmed = False
+
+
+class LiveWriteNotConfirmed(BacklogUnavailable):
+    """A person at a terminal did not type the confirmation phrase before a write to the LIVE backlog."""
+
+
+class LiveWriteForbidden(BacklogUnavailable):
+    """A NON-interactive process (an agent's shell tool, a script, a pipeline, a hook) tried to write to the LIVE backlog. Hard fail, no exception (owner order 2026-10-29)."""
+
+
+LIVE_WRITE_EXIT_CODE = 1
+
+
+def _is_console(stream) -> bool:
+    """True only for a REAL terminal. `isatty()` alone is wrong on Windows: it answers True for the NUL device (what a tool shell gets as stdin) and a pipe answers False, so on Windows the handle
+    must also be a console input handle (GetConsoleMode succeeds only for a console). A missing stream (pythonw) is not a console."""
+    try:
+        if stream is None or not stream.isatty():
+            return False
+        if os.name == "nt":
+            import ctypes
+            import msvcrt
+            mode = ctypes.c_uint32()
+            return bool(ctypes.windll.kernel32.GetConsoleMode(msvcrt.get_osfhandle(stream.fileno()), ctypes.byref(mode)))
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def confirm_live_write(target: str, *, interactive: Optional[bool] = None, ask=input, environ: Optional[dict] = None) -> bool:
+    """The gate on every write that opens ITS OWN connection to the live backlog (owner orders 2026-10-28 and 2026-10-29):
+    * a NON-interactive process (no terminal: an agent's shell tool, a script, a pipeline, a hook) is REFUSED with LiveWriteForbidden: autonomous or scripted writes to the live production
+      backlog are banned outside authorized, signed CI/CD deployments, and there is no exception in this code (an authorization mechanism, if the owner wants one, is a decision of his: see FND-0351);
+    * a person at a terminal must type exactly LIVE_WRITE_PHRASE, once per process, else LiveWriteNotConfirmed and nothing is written.
+    Never asked and never refused: pytest (tests cannot see the live DSN: shared/testing/sandbox.py) and callers that own their connection (tests, staging). The automatic incident capture
+    (report_incident) does not go through here: it never writes a ticket without step A-1 and its status under this ban is the owner's decision (FND-0331)."""
+    global _live_write_confirmed
+    env = os.environ if environ is None else environ
+    if _live_write_confirmed or env.get("PYTEST_CURRENT_TEST"):
+        return True
+    if interactive is None:
+        interactive = _is_console(sys.stdin)
+    try:
+        who = current_actor(env)
+    except ActorUnknown:
+        who = "(FONDOS_ACTOR is not set)"
+    if not interactive:
+        raise LiveWriteForbidden(f"live write REFUSED (exit code {LIVE_WRITE_EXIT_CODE}): a non-interactive process may not write to the LIVE backlog ({target}) as {who}; only a person at a terminal can, after confirming. "
+                                 "Nothing was written. (To test, use the staging container: FND-0351.)")
+    answer = ask(f"\nYou are about to WRITE to the LIVE backlog ({target}) as {who}.\nType exactly: {LIVE_WRITE_PHRASE}\n> ")
+    if str(answer).strip() != LIVE_WRITE_PHRASE:
+        raise LiveWriteNotConfirmed("live write not confirmed: nothing was written (to test, use the staging container: FND-0351)")
+    _live_write_confirmed = True
+    return True
+
+
+def require_live_write_cli(dsn: Optional[str] = None, *, environ: Optional[dict] = None, interactive: Optional[bool] = None, ask=input) -> Optional[int]:
+    """For the command-line tools that write: None when the write may go on; otherwise the message is printed on stderr and the process exit code to return (LIVE_WRITE_EXIT_CODE = 1)."""
+    try:
+        confirm_live_write(_target_of(dsn or _dsn() or ""), environ=environ, interactive=interactive, ask=ask)
+        return None
+    except (LiveWriteForbidden, LiveWriteNotConfirmed) as exc:
+        print(f"REFUSED: {exc}", file=sys.stderr)
+        return LIVE_WRITE_EXIT_CODE
+
+
+def _target_of(dsn: str) -> str:
+    """host:port/dbname of a DSN, never its credentials."""
+    try:
+        from psycopg.conninfo import conninfo_to_dict
+        d = conninfo_to_dict(dsn)
+        return f"{d.get('host') or 'local'}:{d.get('port') or '5432'}/{d.get('dbname') or '?'}"
+    except Exception:  # noqa: BLE001
+        return "the configured backlog"
+
+
 @contextmanager
-def _session(conn=None, *, human: bool = False):
+def _session(conn=None, *, human: bool = False, write: bool = False):
     if conn is not None:
         yield conn
         return
@@ -363,6 +441,8 @@ def _session(conn=None, *, human: bool = False):
         raise BacklogUnavailable(f"{_DSN_ENV_VAR} is not set")
     if psycopg is None:
         raise BacklogUnavailable("psycopg3 is not installed (pip install 'psycopg[binary]')")
+    if write:
+        confirm_live_write(_target_of(dsn))
     # `with` commits on a normal exit and rolls back on an exception, then closes.
     with psycopg.connect(dsn, connect_timeout=5, options=_ANALYSIS_OPTIONS) as own:
         yield own
@@ -446,7 +526,7 @@ def append_log(action_point_id: str, username: str, comment: str, *, conn=None) 
     prior progress"). Does NOT touch the ticket's status. Fail-loud; returns the new log_id."""
     if not str(action_point_id or "").strip() or not str(username or "").strip() or not str(comment or "").strip():
         raise ValueError("action_point_id, username and comment are all required")
-    with _session(conn, human=str(username).startswith("human:")) as c:
+    with _session(conn, human=str(username).startswith("human:"), write=True) as c:
         (log_id,) = c.execute(
             "INSERT INTO backlog.BACKLOG_LOGS (action_point_id, username, comment) VALUES (%s, %s, %s) RETURNING log_id",
             (action_point_id, username, comment),
@@ -475,7 +555,7 @@ def record_link_events(events: list[dict], *, conn=None) -> list[int]:
         checked.append((ev["from_id"], ev["to_id"], ev["link_type"], ev["status"], ev["evidence"], ev.get("absorbs"),
                         ev["username"], ev.get("origin")))
     ids: list[int] = []
-    with _session(conn, human=any(str(ev["username"]).startswith("human:") for ev in events)) as c:
+    with _session(conn, human=any(str(ev["username"]).startswith("human:") for ev in events), write=True) as c:
         for row in checked:
             if row[7] is None:                                   # the column origin exists only after Phase B (40_relations_v2.sql): name it only when asked
                 sql = ("INSERT INTO backlog.backlog_link_event (from_id, to_id, link_type, status, evidence, absorbs, username) "
@@ -504,6 +584,7 @@ def record_link_event(*, from_id: str, to_id: str, link_type: str, status: str, 
 
 ACTOR_PATTERN = re.compile(r"^(human|agent|system):[A-Za-z0-9._-]+$")     # == the CHECK of backlog.actor_alias (tests keep them equal)
 _ACTOR_ENV_VAR = "FONDOS_ACTOR"
+_AGENT_ACTOR_ENV_VAR = "FONDOS_AGENT_ACTOR"          # agent sessions only (see current_actor); lives in the git-ignored .env, never in a tracked file
 
 
 class ActorUnknown(ValueError):
@@ -516,8 +597,12 @@ def current_actor(environ: Optional[dict] = None) -> str:
     when it is unset or not in canonical form; it never falls back to the OS user."""
     env = os.environ if environ is None else environ
     value = (env.get(_ACTOR_ENV_VAR) or "").strip()
+    if not value and str(env.get("CLAUDECODE") or "").strip() == "1":
+        # Inside a Claude Code session ONLY (the harness sets CLAUDECODE=1; a person's terminal does not), the agent identity may come from FONDOS_AGENT_ACTOR, a key of the git-ignored .env that
+        # shared.config loads. A person's shell never inherits it, so his commands cannot be labelled as the agent's; FONDOS_ACTOR, when set, always wins.
+        value = (env.get(_AGENT_ACTOR_ENV_VAR) or "").strip()
     if not value:
-        raise ActorUnknown(f"{_ACTOR_ENV_VAR} is not set (expected human:<login> | agent:<model> | system:<name>)")
+        raise ActorUnknown(f"{_ACTOR_ENV_VAR} is not set (expected human:<login> | agent:<model> | system:<name>; an agent session may declare {_AGENT_ACTOR_ENV_VAR} in the git-ignored .env)")
     if not ACTOR_PATTERN.match(value):
         raise ActorUnknown(f"{_ACTOR_ENV_VAR}={value!r} is not canonical (expected human:<login> | agent:<model> | system:<name>)")
     return value
@@ -656,7 +741,7 @@ def open_ticket(*, title: str, nature: str, object_type: str, priority: str, ses
     domain CHECK) and when A-1 is not applied. Phase B (FND-0333): once applied, every other existing ticket named in the title, description or first log
     is recorded as a PROPOSED RELATED link (origin SOURCE) unless the pair already has any link event, so linking no longer waits for the next review."""
     who = resolve_actor(actor)
-    with _session(conn, human=who.startswith("human:")) as c:
+    with _session(conn, human=who.startswith("human:"), write=True) as c:
         (apid,) = c.execute(
             "SELECT backlog.sp_open_ticket(p_title => %s, p_nature => %s, p_object_type => %s, p_object_name => %s, p_priority => %s, "
             "p_actor => %s, p_session_id => %s, p_description => %s, p_first_log => %s, p_schema_name => %s, p_project_code => %s)",
@@ -683,7 +768,7 @@ def transition(ap_id: str, to_status: str, *, session_id: str, comment: str, act
     """Move a ticket through backlog.sp_transition (legality, closure rules, waiting states, log and status event in one transaction).
     `comment` becomes the progress log verbatim. Returns the status_event id. Raises on any refusal; never swallows."""
     who = resolve_actor(actor)
-    with _session(conn, human=who.startswith("human:")) as c:
+    with _session(conn, human=who.startswith("human:"), write=True) as c:
         (event_id,) = c.execute(
             "SELECT backlog.sp_transition(p_ap_id => %s, p_to => %s, p_actor => %s, p_session_id => %s, p_comment => %s, p_solution_type => %s, "
             "p_release_version => %s, p_blocker => %s, p_condition => %s, p_revisit_by => %s, p_revisit_on_event => %s, p_followup => %s, "
@@ -712,14 +797,14 @@ def open_review_flags(ap_id: Optional[str] = None, *, conn=None) -> list:
 def ack_review(flag_id: int, comment: str, *, actor: Optional[str] = None, conn=None) -> int:
     """Acknowledge a review flag through backlog.sp_ack_review (what was reviewed, 10+ characters). Returns the ACK id."""
     who = resolve_actor(actor)
-    with _session(conn, human=who.startswith("human:")) as c:
+    with _session(conn, human=who.startswith("human:"), write=True) as c:
         return int(c.execute("SELECT backlog.sp_ack_review(%s, %s, %s)", (flag_id, who, comment)).fetchone()[0])
 
 
 def raise_hold(ap_id: str, reason: str, *, code: Optional[str] = None, actor: Optional[str] = None, conn=None) -> int:
     """Raise a hold on a ticket (it cannot reach READY_FOR_DEPLOY or a delivery closure until a human releases it). Returns the hold id."""
     who = resolve_actor(actor)
-    with _session(conn, human=who.startswith("human:")) as c:
+    with _session(conn, human=who.startswith("human:"), write=True) as c:
         return int(c.execute("SELECT backlog.sp_raise_hold(%s, %s, %s, %s)", (ap_id, reason, code, who)).fetchone()[0])
 
 
@@ -728,7 +813,7 @@ def release_hold(hold_id: int, reason: str, *, actor: Optional[str] = None, conn
     who = resolve_actor(actor)
     if not who.startswith("human:"):
         raise ActorUnknown(f"only a human actor releases a hold (FONDOS_ACTOR={who!r})")
-    with _session(conn, human=True) as c:
+    with _session(conn, human=True, write=True) as c:
         return int(c.execute("SELECT backlog.sp_release_hold(%s, %s, %s)", (hold_id, who, reason)).fetchone()[0])
 
 
@@ -741,7 +826,7 @@ def set_gate(mode: str, reason: str, *, executive_override: bool = False, actor:
     who = resolve_actor(actor)
     if not who.startswith("human:"):
         raise ActorUnknown(f"only a human actor changes the gate (FONDOS_ACTOR={who!r})")
-    with _session(conn, human=True) as c:
+    with _session(conn, human=True, write=True) as c:
         return int(c.execute("SELECT backlog.sp_set_gate(%s, %s, %s, %s, %s)", (gate, mode, who, reason, bool(executive_override))).fetchone()[0])
 
 
@@ -777,7 +862,7 @@ def annotate_wait(ap_id: str, comment: str, *, blocker: Optional[str] = None, co
                   revisit_on_event: Optional[str] = None, basis: str = "DECLARED", actor: Optional[str] = None, conn=None) -> int:
     """Record the structured blocker or revisit date of a ticket that is ALREADY BLOCKED or DEFERRED (no status change). Returns the wait_event id."""
     who = resolve_actor(actor)
-    with _session(conn, human=who.startswith("human:")) as c:
+    with _session(conn, human=who.startswith("human:"), write=True) as c:
         return int(c.execute("SELECT backlog.sp_annotate_wait(%s, %s, %s, %s, %s, %s, %s, %s)",
                              (ap_id, who, comment, blocker, condition, revisit_by, revisit_on_event, basis)).fetchone()[0])
 
@@ -829,7 +914,7 @@ def update_attributes(ap_id: str, *, actor: Optional[str] = None, conn=None, **f
         raise ValueError(f"update_attributes changes only {DESCRIPTIVE_FIELDS}; got {sorted(fields)}" if bad else "no field to change")
     who = resolve_actor(actor)
     sets = ", ".join(f"{name} = %s" for name in fields)
-    with _session(conn, human=who.startswith("human:")) as c:
+    with _session(conn, human=who.startswith("human:"), write=True) as c:
         c.execute("SELECT set_config('backlog.actor', %s, true)", (who,))
         n = c.execute(f"UPDATE backlog.backlog SET {sets} WHERE action_point_id = %s", (*fields.values(), ap_id)).rowcount
         c.execute("SELECT set_config('backlog.actor', '', true)")          # the declaration covers this change only, not later statements of a borrowed transaction
