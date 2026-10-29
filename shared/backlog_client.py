@@ -42,6 +42,9 @@ logger = logging.getLogger(__name__)
 
 _DSN_ENV_VAR = "FONDOS_BACKLOG_PG_DSN"
 _HUMAN_DSN_ENV_VAR = "FONDOS_BACKLOG_PG_DSN_HUMAN"          # the owner-only role (FND-0337); deliberately NOT in .env
+_LOGGER_DSN_ENV_VAR = "FONDOS_BACKLOG_PG_DSN_LOGGER"        # role backlog_logger (FND-0354): appends notes to EXISTING tickets, nothing else; lives in the git-ignored .env
+_INCIDENT_DSN_ENV_VAR = "FONDOS_BACKLOG_PG_DSN_INCIDENT"    # role backlog_incident (FND-0354): the automatic incident capture, insert-only; lives in the git-ignored .env
+NON_INTERACTIVE_OPERATIONS = ("agent_log", "incident")      # the ONLY writes a non-interactive process may make (owner decision 2026-10-29); anything else is refused by confirm_live_write
 _FALLBACK_LOG_ENV_VAR = "FONDOS_BACKLOG_FALLBACK_LOG"
 _DEFAULT_FALLBACK_LOG = Path(__file__).resolve().parent / "log" / "backlog_autolog_fallback.jsonl"   # == LOG_DIRS["shared"]
 
@@ -127,11 +130,11 @@ def report_incident(
     an existing one). Returns the action_point_id touched, or None if the write could not be
     made for any reason — callers should not, and do not need to, branch on the return value.
     """
-    dsn = _dsn()
+    dsn = dsn_for_operation("incident")
     if not dsn:
         logger.info(
             "[BACKLOG-AUTOLOG] disabled — %s not set — skipping incident capture for %s",
-            _DSN_ENV_VAR, object_name,
+            _INCIDENT_DSN_ENV_VAR, object_name,
         )
         return None
     if psycopg is None:
@@ -145,11 +148,28 @@ def report_incident(
         # connect_timeout only bounds the TCP/auth handshake, not query execution — this code
         # runs inside the exception handler of an already-crashing pipeline, so a hung/locked
         # server must not add its own indefinite delay on top. statement_timeout covers that.
-        with psycopg.connect(
-            dsn, autocommit=False, connect_timeout=5,
+        with _connect_allowlisted(
+            "incident", dsn, autocommit=False, connect_timeout=5,
             options="-c statement_timeout=5000",
         ) as conn:
             with conn.cursor() as cur:
+                if _routine_present(cur, "sp_report_incident"):
+                    # FND-0354: the insert-only routine does the dedup, the reincidence note and the ticket; the client only reads (overlap) and passes the result.
+                    cur.execute(
+                        "SELECT 1 FROM backlog.BACKLOG WHERE project_code = %s AND object_name = %s AND status IN ('OPEN','TODO','IN_PROGRESS','BLOCKED') "
+                        "AND creation_ts >= now() - %s::interval LIMIT 1", (project_code, object_name, dedup_window))
+                    policy = None if cur.fetchone() else _overlap_policy(cur, object_name, scenario_description)
+                    high = policy if policy and policy["tier"] == "HIGH" else None
+                    medium = policy if policy and policy["tier"] == "MEDIUM" else None
+                    cur.execute(
+                        "SELECT backlog.sp_report_incident(p_object_name => %s, p_description => %s, p_project_code => %s, p_schema_name => %s, p_object_type => %s, p_title => %s, "
+                        "p_dedup => %s::interval, p_overlap_ticket => %s, p_overlap_reason => %s, p_suggest_ticket => %s, p_suggest_reason => %s)",
+                        (object_name, scenario_description, project_code, schema_name, object_type, title, dedup_window,
+                         high["ticket"] if high else None, high["reason"] if high else None, medium["ticket"] if medium else None, medium["reason"] if medium else None))
+                    apid = cur.fetchone()[0]
+                    conn.commit()
+                    logger.warning("[BACKLOG-AUTOLOG] Incident recorded on %s (%s)", apid, object_name)
+                    return apid
                 cur.execute(
                     """
                     SELECT action_point_id FROM backlog.BACKLOG
@@ -353,6 +373,28 @@ def dsn_for_actor(actor: Optional[str]) -> Optional[str]:
     return _dsn()
 
 
+def dsn_for_operation(operation: str) -> Optional[str]:
+    """The connection string of an allow-listed non-interactive operation: its own login (FONDOS_BACKLOG_PG_DSN_LOGGER / _INCIDENT), else the general one (transition period, until the
+    shared writer retires: with a reader login in FONDOS_BACKLOG_PG_DSN the database refuses the write, which is the point). libpq parameters in the string (sslmode, sslcert, sslkey,
+    sslrootcert) are passed to the driver untouched."""
+    if operation not in NON_INTERACTIVE_OPERATIONS:
+        raise ValueError(f"operation {operation!r} is not allow-listed for non-interactive writes: {NON_INTERACTIVE_OPERATIONS}")
+    return os.environ.get(_LOGGER_DSN_ENV_VAR if operation == "agent_log" else _INCIDENT_DSN_ENV_VAR) or _dsn()
+
+
+def _connect_allowlisted(operation: str, dsn: str, **kw):
+    """THE connection factory of the non-interactive writes: it checks the allow-list, then opens the connection. Raises ValueError for an operation that is not allow-listed."""
+    confirm_live_write(_target_of(dsn), operation=operation)
+    if psycopg is None:
+        raise BacklogUnavailable("psycopg3 is not installed (pip install 'psycopg[binary]')")
+    return psycopg.connect(dsn, **kw)
+
+
+def _routine_present(cur, name: str) -> bool:
+    cur.execute("SELECT EXISTS (SELECT 1 FROM pg_proc WHERE pronamespace = 'backlog'::regnamespace AND proname = %s)", (name,))
+    return bool(cur.fetchone()[0])
+
+
 LIVE_WRITE_PHRASE = "I CONFIRM THIS IS NOT A SYNTHETIC TEST"
 _live_write_confirmed = False
 
@@ -384,15 +426,20 @@ def _is_console(stream) -> bool:
         return False
 
 
-def confirm_live_write(target: str, *, interactive: Optional[bool] = None, ask=input, environ: Optional[dict] = None) -> bool:
+def confirm_live_write(target: str, *, interactive: Optional[bool] = None, ask=input, environ: Optional[dict] = None, operation: Optional[str] = None) -> bool:
     """The gate on every write that opens ITS OWN connection to the live backlog (owner orders 2026-10-28 and 2026-10-29):
     * a NON-interactive process (no terminal: an agent's shell tool, a script, a pipeline, a hook) is REFUSED with LiveWriteForbidden: autonomous or scripted writes to the live production
       backlog are banned outside authorized, signed CI/CD deployments, and there is no exception in this code (an authorization mechanism, if the owner wants one, is a decision of his: see FND-0351);
     * a person at a terminal must type exactly LIVE_WRITE_PHRASE, once per process, else LiveWriteNotConfirmed and nothing is written.
-    Never asked and never refused: pytest (tests cannot see the live DSN: shared/testing/sandbox.py) and callers that own their connection (tests, staging). The automatic incident capture
-    (report_incident) does not go through here: it never writes a ticket without step A-1 and its status under this ban is the owner's decision (FND-0331)."""
+    Allow-list (owner decision 2026-10-29): the two operations in NON_INTERACTIVE_OPERATIONS pass without a terminal because the DATABASE scopes them (backlog_logger can only append a note to an
+    existing ticket, backlog_incident can only run the insert-only incident routine); any other `operation` is a programming error. Never asked and never refused: pytest (tests cannot see the
+    live DSN: shared/testing/sandbox.py) and callers that own their connection (tests, staging)."""
     global _live_write_confirmed
     env = os.environ if environ is None else environ
+    if operation is not None:
+        if operation not in NON_INTERACTIVE_OPERATIONS:
+            raise ValueError(f"operation {operation!r} is not allow-listed for non-interactive writes: {NON_INTERACTIVE_OPERATIONS}")
+        return True
     if _live_write_confirmed or env.get("PYTEST_CURRENT_TEST"):
         return True
     if interactive is None:
@@ -432,17 +479,17 @@ def _target_of(dsn: str) -> str:
 
 
 @contextmanager
-def _session(conn=None, *, human: bool = False, write: bool = False):
+def _session(conn=None, *, human: bool = False, write: bool = False, operation: Optional[str] = None):
     if conn is not None:
         yield conn
         return
-    dsn = dsn_for_actor("human:x") if human else _dsn()
+    dsn = dsn_for_actor("human:x") if human else (dsn_for_operation(operation) if operation else _dsn())
     if not dsn:
         raise BacklogUnavailable(f"{_DSN_ENV_VAR} is not set")
     if psycopg is None:
         raise BacklogUnavailable("psycopg3 is not installed (pip install 'psycopg[binary]')")
     if write:
-        confirm_live_write(_target_of(dsn))
+        confirm_live_write(_target_of(dsn), operation=operation)
     # `with` commits on a normal exit and rolls back on an exception, then closes.
     with psycopg.connect(dsn, connect_timeout=5, options=_ANALYSIS_OPTIONS) as own:
         yield own
@@ -521,11 +568,22 @@ def list_links(*, history: bool = False, status: Optional[str] = None, ids: Opti
         return _rows(c, sql + " ORDER BY from_id, to_id, link_type, event_ts, event_id", tuple(params))
 
 
+_AGENT_LOG_ACTOR = re.compile(r"^(agent|system):[A-Za-z0-9._-]+$")
+
+
 def append_log(action_point_id: str, username: str, comment: str, *, conn=None) -> int:
     """Append one progress note to `backlog.BACKLOG_LOGS` (insert-only, like every progress record: AGENTS.md "never overwrite
     prior progress"). Does NOT touch the ticket's status. Fail-loud; returns the new log_id."""
     if not str(action_point_id or "").strip() or not str(username or "").strip() or not str(comment or "").strip():
         raise ValueError("action_point_id, username and comment are all required")
+    if conn is None and _AGENT_LOG_ACTOR.match(str(username)):
+        # FND-0354 (owner decision 2026-10-29): an agent or system identity appends through the scoped routine with its own login; the allow-list lets it run without a terminal.
+        with _session(None, write=True, operation="agent_log") as c:
+            with c.cursor() as cur:
+                if not _routine_present(cur, "sp_append_log"):
+                    raise BacklogUnavailable("backlog.sp_append_log is missing: the owner applies migrate_backlog_v2.py --phase iam first (until then an agent's notes wait)")
+                cur.execute("SELECT backlog.sp_append_log(%s, %s, %s)", (action_point_id, username, comment))
+                return cur.fetchone()[0]
     with _session(conn, human=str(username).startswith("human:"), write=True) as c:
         (log_id,) = c.execute(
             "INSERT INTO backlog.BACKLOG_LOGS (action_point_id, username, comment) VALUES (%s, %s, %s) RETURNING log_id",
@@ -1004,6 +1062,46 @@ def identity_history_catalog(*, conn=None) -> dict:
             }
     return {"human_role": None if role is None else {"superuser": role[0], "can_login": role[1], "member_of_writer": role[2]},
             "authorization_function": fn, "calls_authorization": uses, "history": hist}
+
+
+_IAM_ROLES = ("backlog_reader", "backlog_logger", "backlog_incident")
+_IAM_TABLES = ("backlog", "backlog_logs", "backlog_link_event", "status_event", "actor_login_event")
+_IAM_SIGS = {"sp_append_log": "backlog.sp_append_log(text,text,text)", "sp_bind_login": "backlog.sp_bind_login(text,text,text,text,boolean,text)",
+             "sp_report_incident": "backlog.sp_report_incident(text,text,text,text,text,text,interval,text,text,text,text)", "fn_actor_bound": "backlog.fn_actor_bound(text)",
+             "sp_open_ticket": _SIG_OPEN, "sp_transition": _SIG_TRANSITION}
+
+
+def iam_catalog(*, conn=None) -> dict:
+    """Read-only facts for the acceptance of the IAM step (FND-0354): the three roles, what each can do (table privileges, routine privileges), the bindings (latest event per login,
+    and the distinct PERSONS behind the active ones), and every login that can still write (EXECUTE on sp_open_ticket) with whether it is bound. Absent things are just absent."""
+    with _session(conn) as c:
+        have = {r[0]: r[1:] for r in c.execute("SELECT rolname, rolcanlogin, rolsuper FROM pg_roles WHERE rolname = ANY(%s)", (list(_IAM_ROLES),)).fetchall()}
+        routines = {n: bool(c.execute("SELECT to_regprocedure(%s) IS NOT NULL", (sig,)).fetchone()[0]) for n, sig in _IAM_SIGS.items()}
+        roles = {}
+        for role in _IAM_ROLES:
+            if role not in have:
+                continue
+            tables = [t for t in _IAM_TABLES if c.execute("SELECT to_regclass(%s) IS NOT NULL", (f"backlog.{t}",)).fetchone()[0]]
+            roles[role] = {
+                "can_login": have[role][0], "superuser": have[role][1],
+                "select_all": all(c.execute("SELECT has_table_privilege(%s, %s, 'SELECT')", (role, f"backlog.{t}")).fetchone()[0] for t in tables),
+                "write_tables": [t for t in tables for priv in ("INSERT", "UPDATE", "DELETE")
+                                 if c.execute("SELECT has_table_privilege(%s, %s, %s)", (role, f"backlog.{t}", priv)).fetchone()[0]],
+                "executes": sorted(n for n, present in routines.items() if present
+                                   and c.execute("SELECT has_function_privilege(%s, %s::regprocedure, 'EXECUTE')", (role, _IAM_SIGS[n])).fetchone()[0]),
+            }
+        bindings, writers = [], []
+        if c.execute("SELECT to_regclass('backlog.v_actor_login') IS NOT NULL").fetchone()[0]:
+            bindings = _rows(c, "SELECT login_name, actor, person, kind, active, set_by, event_ts FROM backlog.v_actor_login ORDER BY login_name")
+        if routines["sp_open_ticket"]:
+            bound = {b["login_name"] for b in bindings if b["active"]}
+            for (name,) in c.execute("SELECT r.rolname FROM pg_roles r WHERE r.rolcanlogin AND NOT r.rolsuper AND r.rolname !~ '^pg_' "
+                                     "AND has_function_privilege(r.oid, %s::regprocedure, 'EXECUTE') ORDER BY 1", (_SIG_OPEN,)).fetchall():
+                writers.append({"login": name, "bound": name in bound})
+    active = [b for b in bindings if b["active"]]
+    return {"roles": roles, "routines": routines, "bindings": bindings,
+            "active_logins": len(active), "active_persons": sorted({b["person"] for b in active if b["kind"] == "HUMAN"}),
+            "writers": writers, "unbound_writers": [w["login"] for w in writers if not w["bound"]]}
 
 
 def field_change_attribution(*, conn=None) -> list:

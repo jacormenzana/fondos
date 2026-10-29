@@ -169,3 +169,46 @@ def test_history_step_complete_state_is_accepted_and_coverage_is_checked_column_
     assert len(ok(ident=_ident(history=dict(_ident()["history"], view=False)))) == 1
     assert len(ok(ident=_ident(history=dict(_ident()["history"], writer_can_insert=True)))) == 1
     assert len(ok(ident=_ident(history=None))) >= 4                                             # not applied: rejected on every count
+
+
+# --- IAM (FND-0354) -------------------------------------------------------------------------------------------------------------------------
+
+def _iam(**over):
+    role = lambda ex: {"can_login": True, "superuser": False, "select_all": True, "write_tables": [], "executes": ex}      # noqa: E731
+    c = {"roles": {"backlog_reader": role([]), "backlog_logger": role(["sp_append_log"]), "backlog_incident": role(["sp_report_incident"])},
+         "routines": {"fn_actor_bound": True, "sp_bind_login": True, "sp_append_log": True, "sp_report_incident": True},
+         "bindings": [], "active_logins": 0, "active_persons": [], "writers": [], "unbound_writers": []}
+    c.update(over)
+    return c
+
+
+def test_iam_step_is_accepted_when_each_role_has_exactly_its_scope_and_each_criterion_can_fail():
+    results = acc.evaluate_iam(0, FP, FP, _iam())
+    assert all(ok for _, ok, _ in results) and len(results) == 6
+    broken = {
+        "migration rc": (1, _iam()),
+        "a routine is missing": (0, _iam(routines={"fn_actor_bound": True, "sp_bind_login": True, "sp_append_log": False, "sp_report_incident": True})),
+    }
+    for name, (rc, cat) in broken.items():
+        assert not all(ok for _, ok, _ in acc.evaluate_iam(rc, FP, FP, cat)), name
+    for role, field, value in (("backlog_reader", "executes", ["sp_append_log"]), ("backlog_logger", "executes", ["sp_append_log", "sp_report_incident"]),
+                               ("backlog_incident", "write_tables", ["backlog_logs"]), ("backlog_logger", "superuser", True), ("backlog_reader", "select_all", False)):
+        cat = copy.deepcopy(_iam())
+        cat["roles"][role][field] = value
+        assert not all(ok for _, ok, _ in acc.evaluate_iam(0, FP, FP, cat)), (role, field)
+    gone = _iam()
+    del gone["roles"]["backlog_logger"]
+    assert not all(ok for _, ok, _ in acc.evaluate_iam(0, FP, FP, gone))
+    assert not all(ok for _, ok, _ in acc.evaluate_iam(0, FP, dict(FP, logs=1301), _iam()))                             # history must not move
+
+
+def test_retire_needs_no_unbound_writer_and_three_bound_operator_logins():
+    human = lambda n: {"login_name": n, "actor": f"human:{n}", "kind": "HUMAN", "active": True}                          # noqa: E731
+    ok = _iam(bindings=[human("a"), human("b"), human("c")], writers=[{"login": "a", "bound": True}])
+    assert all(r[1] for r in acc.evaluate_retire(0, FP, FP, ok))
+    assert not all(r[1] for r in acc.evaluate_retire(0, FP, FP, _iam(bindings=[human("a"), human("b")])))                # two logins are not three
+    assert not all(r[1] for r in acc.evaluate_retire(0, FP, FP, dict(ok, unbound_writers=["fondos_writer"])))
+    agent = {"login_name": "x", "actor": "agent:%", "kind": "AGENT", "active": True}
+    assert not all(r[1] for r in acc.evaluate_retire(0, FP, FP, _iam(bindings=[human("a"), human("b"), agent])))         # agents never count as operators
+    revoked = dict(human("c"), active=False)
+    assert not all(r[1] for r in acc.evaluate_retire(0, FP, FP, _iam(bindings=[human("a"), human("b"), revoked])))

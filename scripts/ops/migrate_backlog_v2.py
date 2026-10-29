@@ -77,6 +77,17 @@ PHASES: dict = {
         "requires_routines": ("fn_actor_authorized",),
         "roles": ("backlog_human",),
     },
+    # IAM (FND-0354): per-identity logins (reader, logger, incident), login-to-identity binding, the scoped append-log and incident routines. Needs A-1 re-applied with FND-0354 (the hook).
+    "iam": {
+        "up": ("50_iam.sql", "backlog_iam"),
+        "down": ("down/50_iam_down.sql", "backlog_iam_down"),
+        "tables": ("actor_login_event",),
+        "views": ("v_actor_login",),
+        "routines": ("fn_actor_bound", "sp_bind_login", "sp_append_log", "sp_report_incident"),
+        "requires": ("status_event",),
+        "requires_routines": ("fn_actor_authorized", "fn_actor_bound", "trg_append_only", "sp_open_ticket"),
+        "roles": ("backlog_reader", "backlog_logger", "backlog_incident"),
+    },
     # Descriptive change history (FND-0338): append-only trigger on the eight E3 columns. Needs A-1 re-applied with FND-0337 (trg_append_only, fn_actor_authorized).
     "history": {
         "up": ("33_descriptive_history.sql", "backlog_descriptive_history"),

@@ -7,7 +7,7 @@ shared/testing/sandbox.py -- pytest plugin registered by every conftest.py of th
   that file in the working tree.
 * FONDOS_ACTOR is set for every test to TEST_ACTOR, because the backlog client now refuses to write without a valid identity from the environment (shared.backlog_client.resolve_actor).
   TEST_ACTOR is a canonical agent identity used by the tests; it is NOT a statement about the model that runs them. A test that needs another identity uses acting_as().
-* The connection strings of the LIVE backlog (FONDOS_BACKLOG_PG_DSN, ..._HUMAN) are removed from the process for the whole session, so no test can reach it even by accident.
+* The connection strings of the LIVE backlog (FONDOS_BACKLOG_PG_DSN, ..._HUMAN, ..._LOGGER, ..._INCIDENT) are removed from the process for the whole session, so no test can reach it even by accident.
 * At the end of the session the plugin checks that the repository's real fallback log was not modified during it; if it was (a test escaped the sandbox, or a real pipeline wrote
   to it meanwhile) the run is reported as failed with the reason, so a footprint is never silent.
 """
@@ -58,7 +58,7 @@ def pytest_sessionfinish(session, exitstatus):
         session.exitstatus = int(pytest.ExitCode.TESTS_FAILED)
 
 
-_LIVE_BACKLOG_DSNS = ("FONDOS_BACKLOG_PG_DSN", "FONDOS_BACKLOG_PG_DSN_HUMAN")
+_LIVE_BACKLOG_DSNS = ("FONDOS_BACKLOG_PG_DSN", "FONDOS_BACKLOG_PG_DSN_HUMAN", "FONDOS_BACKLOG_PG_DSN_LOGGER", "FONDOS_BACKLOG_PG_DSN_INCIDENT")
 
 
 @pytest.fixture(scope="session", autouse=True)
