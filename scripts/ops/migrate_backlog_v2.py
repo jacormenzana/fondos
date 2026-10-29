@@ -100,7 +100,7 @@ PHASES: dict = {
     },
     # Phase B (FND-0333): relationship semantics and the delivery gate (deployed in AUDIT mode). ONE command, ONE transaction: the block of step A-1 first (idempotent: it carries
     # the gate hooks of sp_transition and the transition matrix) and then Phase B, so there is no separate "re-apply A-1" step and a failure in either changes nothing.
-    # Step human is not required. Its rollback goes back to step A-1 (the hooks become no-op stubs).
+    # Step human is not required. Its rollback DISABLES Phase B (the hooks become no-op stubs, the routines and views go) and KEEPS every table and row (owner order 2026-10-29).
     "relations": {
         "up": [("30_transitions.sql", "backlog_transitions"), ("40_relations_v2.sql", "backlog_relations_v2")],
         "down": ("down/40_relations_v2_down.sql", "backlog_relations_v2_down"),

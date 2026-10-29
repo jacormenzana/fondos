@@ -1,10 +1,14 @@
--- ROLLBACK of db/pg_backlog/40_relations_v2.sql (FND-0333, Phase B). Run by scripts/ops/migrate_backlog_v2.py --phase relations --down --apply
--- (dry run without --apply).
+-- ROLLBACK of db/pg_backlog/40_relations_v2.sql (FND-0333, Phase B). Run by scripts/ops/migrate_backlog_v2.py --phase relations --down --apply (dry run without --apply).
 --
--- What is lost: the review_flag, hold_event, gate_switch and gate_audit_event rows (export first if they matter). Tickets, logs, status events, wait events and link events are
--- never touched. sp_transition (step A-1) keeps working: fn_gate_blockers, fn_raise_review_flags, fn_gate_mode and fn_gate_record go back to their no-op stubs (mode OFF),
--- so the delivery gate stops evaluating and recording the moment this rollback commits. The link vocabulary (IMPACTS, SUPERSEDES) and the column `origin` are kept, with a NOTICE, when any link event
--- already uses them (link events are append-only history); otherwise they are restored to the pre-Phase-B shape.
+-- DISABLES Phase B and KEEPS EVERY ROW (owner order 2026-10-29: the native rollback must never drop the append-only history). It removes the behavior (routines, views, the cycle trigger) and
+-- puts the delivery-gate hooks of sp_transition back to their no-op stubs; it never drops a table and never touches a row:
+--   kept: review_flag, hold_event, gate_switch, gate_audit_event (with their append-only triggers, ownership and privileges), the column gate_switch.override, the link vocabulary
+--         (IMPACTS, SUPERSEDES) and the column backlog_link_event.origin. Tickets, logs, status events, wait events and link events are never touched.
+--   removed: sp_ack_review, sp_raise_hold, sp_release_hold, sp_set_gate (both the four- and the five-argument form), sp_annotate_wait, the views over the Phase B tables, the DEPENDS_ON cycle trigger.
+--   effect: sp_transition keeps working but the delivery gate stops evaluating and recording at once (fn_gate_mode answers OFF), and a DEPENDS_ON cycle is no longer refused.
+-- Applying `--phase relations` again re-creates the routines and views on top of the kept tables: the gate comes back in the mode its last row says (ENFORCE stays ENFORCE).
+-- Backing out ONLY an upgrade of Phase B (for example the executive override of FND-0350): run this, check out the previous code, run its `--phase relations --apply`. No row is lost on the way.
+-- There is deliberately NO script that drops the Phase B tables: removing history is a decision of the owner, made by hand after exporting them.
 
 -- BEGIN backlog_relations_v2_down
 DROP TRIGGER IF EXISTS link_cycle ON backlog.backlog_link_event;
@@ -22,6 +26,7 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, backlog AS $f$ B
 DROP FUNCTION IF EXISTS backlog.sp_ack_review(bigint, text, text);
 DROP FUNCTION IF EXISTS backlog.sp_raise_hold(text, text, text, text);
 DROP FUNCTION IF EXISTS backlog.sp_release_hold(bigint, text, text);
+DROP FUNCTION IF EXISTS backlog.sp_set_gate(text, text, text, text);
 DROP FUNCTION IF EXISTS backlog.sp_set_gate(text, text, text, text, boolean);
 DROP FUNCTION IF EXISTS backlog.sp_annotate_wait(text, text, text, text, text, date, text, text);
 DROP VIEW IF EXISTS backlog.v_gate_override_event;
@@ -30,21 +35,9 @@ DROP VIEW IF EXISTS backlog.v_gate_audit_violation;
 DROP VIEW IF EXISTS backlog.v_supersede_suggestion;
 DROP VIEW IF EXISTS backlog.v_open_hold;
 DROP VIEW IF EXISTS backlog.v_open_review_flag;
-DROP TABLE IF EXISTS backlog.gate_audit_event;
-DROP TABLE IF EXISTS backlog.gate_switch;
-DROP TABLE IF EXISTS backlog.hold_event;
-DROP TABLE IF EXISTS backlog.review_flag;
 
 DO $$
 BEGIN
-    IF EXISTS (SELECT 1 FROM backlog.backlog_link_event WHERE link_type IN ('IMPACTS', 'SUPERSEDES') OR origin <> 'REVIEW') THEN
-        RAISE NOTICE 'link events already use IMPACTS / SUPERSEDES or an origin other than REVIEW: the vocabulary and the column origin are KEPT (append-only history)';
-    ELSE
-        ALTER TABLE backlog.backlog_link_event DROP CONSTRAINT IF EXISTS backlog_link_event_link_type_check;
-        ALTER TABLE backlog.backlog_link_event ADD CONSTRAINT backlog_link_event_link_type_check
-            CHECK (link_type IN ('DEPENDS_ON','RELEASE_WITH','OVERLAPS','DUPLICATES','SPLIT_FROM','RELATED'));
-        ALTER TABLE backlog.backlog_link_event DROP CONSTRAINT IF EXISTS backlog_link_event_origin_check;
-        ALTER TABLE backlog.backlog_link_event DROP COLUMN IF EXISTS origin;
-    END IF;
+    RAISE NOTICE 'Phase B is disabled: the tables review_flag, hold_event, gate_switch and gate_audit_event, the link vocabulary and the column origin are KEPT with all their rows (append-only history)';
 END $$;
 -- END backlog_relations_v2_down
