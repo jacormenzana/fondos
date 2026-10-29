@@ -29,6 +29,7 @@ DROP FUNCTION IF EXISTS backlog.fn_gate_record(text, text, boolean, jsonb, text,
 DROP FUNCTION IF EXISTS backlog.fn_raise_review_flags(text, text, text);
 DROP FUNCTION IF EXISTS backlog.fn_transition_legal(text, text);
 DROP FUNCTION IF EXISTS backlog.fn_actor_authorized(text);
+DROP FUNCTION IF EXISTS backlog.fn_actor_bound(text);
 DROP FUNCTION IF EXISTS backlog.fn_actor_ok(text);
 DROP TABLE IF EXISTS backlog.raw_update_event;
 DROP TABLE IF EXISTS backlog.wait_event;

@@ -286,6 +286,26 @@ def test_a2_line_shows_progress_actors_and_asks_for_more_actors_when_there_are_f
     assert pf.a2_line(dict(sp, live_non_system_since_last_v00=0), []) == "A-2 gate: 0 of 50 real transitions since the last V-00 (V-00 total 0)"
 
 
+def test_iam_line_says_not_applied_or_counts_logins_and_persons_and_names_unbound_writers():
+    import preflight_check as pf
+    assert pf.iam_line(None) == ""
+    assert pf.iam_line({"routines": {"sp_append_log": False}}).startswith("IAM: step iam not applied")
+    applied = {"routines": {"sp_append_log": True}, "active_logins": 3, "active_persons": ["a.gomez", "j.cormenzana"], "writers": [], "unbound_writers": []}
+    assert pf.iam_line(applied) == "IAM: 3 bound login(s), 2 distinct human person(s)"
+    assert pf.iam_line(dict(applied, writers=[{"login": "w", "bound": True}])).endswith("every writing login is bound")
+    assert pf.iam_line(dict(applied, unbound_writers=["fondos_writer"])).endswith("UNBOUND logins that can still open or move a ticket: fondos_writer")
+
+
+def test_a2_line_marks_actors_no_bound_login_backs_only_once_iam_exists():
+    import preflight_check as pf
+    sp = {"live_non_system_since_last_v00": 5, "v00_total": 0}
+    actors = [("agent:claude-sonnet-5-5", 4), ("human:jacor", 1)]
+    assert "UNBOUND" not in pf.a2_line(sp, actors)                                                                           # no IAM: lines are unchanged
+    line = pf.a2_line(sp, actors, bindings=[{"actor": "agent:%", "active": True}, {"actor": "human:j.cormenzana_owner", "active": True}])
+    assert "agent:claude-sonnet-5-5 x4" in line and "human:jacor [UNBOUND] x1" in line
+    assert "UNBOUND" in pf.a2_line(sp, actors, bindings=[{"actor": "agent:%", "active": False}])
+
+
 def test_gate_line_mentions_a_recorded_executive_override():
     import preflight_check as pf
     base = {"mode": "ENFORCE", "hours_in_audit": None, "tickets_48h": 0, "required_tickets": 5, "violations_48h": 0, "clear": False, "last_override_ts": None}

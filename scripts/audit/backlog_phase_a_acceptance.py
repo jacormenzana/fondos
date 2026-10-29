@@ -105,6 +105,48 @@ def evaluate_human(migration_rc: int, baseline: dict, after: dict, catalog: dict
     ]
 
 
+def evaluate_iam(migration_rc: int, baseline: dict, after: dict, cat: dict) -> list:
+    """[(check, passed, detail)] for the IAM step of FND-0354 (50_iam.sql): the three roles and exactly what each can do. Bindings and the retirement of the shared writer are NOT criteria
+    of this step (the owner does them afterwards, see evaluate_retire). Pure."""
+    roles, rt = cat["roles"], cat["routines"]
+    history_ok, history_detail = _same_history(baseline, after)
+
+    def scoped(name, executes):
+        r = roles.get(name)
+        return bool(r) and r["can_login"] is not None and not r["superuser"] and r["select_all"] and r["write_tables"] == [] and r["executes"] == executes
+
+    return [
+        ("migration exit code is 0", migration_rc == 0, f"reported rc={migration_rc}"),
+        ("the routines exist (hook, bind, scoped append, scoped incident)", all(rt.get(n) for n in ("fn_actor_bound", "sp_bind_login", "sp_append_log", "sp_report_incident")), f"{rt}"),
+        ("backlog_reader reads everything and can execute nothing, write nothing", scoped("backlog_reader", []), f"{roles.get('backlog_reader')}"),
+        ("backlog_logger can only execute sp_append_log and writes no table", scoped("backlog_logger", ["sp_append_log"]), f"{roles.get('backlog_logger')}"),
+        ("backlog_incident can only execute sp_report_incident and writes no table", scoped("backlog_incident", ["sp_report_incident"]), f"{roles.get('backlog_incident')}"),
+        ("history up to the baseline ids is identical", history_ok, history_detail),
+    ]
+
+
+REQUIRED_OPERATOR_PERSONS = 3          # owner decision 2026-10-29: three distinct HUMAN persons (the two Cormenzana logins are one person; the third is the QA lead)
+
+
+def evaluate_retire(migration_rc: int, baseline: dict, after: dict, cat: dict) -> list:
+    """[(check, passed, detail)] for the retirement of the shared writer login and the A-2 validation pool (FND-0354, owner decisions 2026-10-29): no login can still open or move a ticket
+    unless it is bound to an identity; at least REQUIRED_OPERATOR_PERSONS distinct PERSONS are bound to human identities (several logins of one person count once; agents never count);
+    and transitions have actually been made by that many distinct bound persons (not just logins that exist). Pure."""
+    humans = [b for b in cat["bindings"] if b["active"] and b["kind"] == "HUMAN"]
+    persons = sorted({b["person"] for b in humans})
+    moved = cat.get("transition_persons") or []
+    history_ok, history_detail = _same_history(baseline, after)
+    return [
+        ("migration exit code is 0", migration_rc == 0, f"reported rc={migration_rc}"),
+        ("no login that can open or move a ticket is unbound", cat["unbound_writers"] == [], f"unbound writers: {cat['unbound_writers']}"),
+        (f"at least {REQUIRED_OPERATOR_PERSONS} distinct persons are bound to human identities", len(persons) >= REQUIRED_OPERATOR_PERSONS,
+         f"{len(persons)} person(s) {persons} through {[(b['login_name'], b['actor']) for b in humans]}"),
+        (f"transitions were made by at least {REQUIRED_OPERATOR_PERSONS} distinct bound human persons", len(moved) >= REQUIRED_OPERATOR_PERSONS,
+         f"{len(moved)} person(s) {cat.get('transitions_by_person') or {}}"),
+        ("history up to the baseline ids is identical", history_ok, history_detail),
+    ]
+
+
 def evaluate_history(migration_rc: int, baseline: dict, after: dict, catalog: dict, ident: dict) -> list:
     """[(check, passed, detail)] for the descriptive history of FND-0338 (step 33): COVERAGE of the eight columns, append-only, ownership, closed to the writer. Pure."""
     h = ident["history"] or {}
@@ -156,7 +198,7 @@ def main(argv: "list | None" = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--baseline", action="store_true")
-    g.add_argument("--verify", choices=("a1", "a2", "human", "history", "relations"))
+    g.add_argument("--verify", choices=("a1", "a2", "human", "history", "relations", "iam", "retire"))
     ap.add_argument("--baseline-file", help="--verify: the JSON written by --baseline")
     ap.add_argument("--migration-rc", type=int, help="--verify: exit code the owner saw from migrate_backlog_v2.py --apply")
     args = ap.parse_args(argv)
@@ -182,6 +224,9 @@ def main(argv: "list | None" = None) -> int:
         catalog = bc.phase_a_catalog()
         if args.verify == "relations":
             results = evaluate_relations(args.migration_rc, baseline, after, bc.phase_b_catalog())
+        elif args.verify in ("iam", "retire"):
+            iam = bc.iam_catalog()
+            results = (evaluate_iam if args.verify == "iam" else evaluate_retire)(args.migration_rc, baseline, after, iam)
         elif args.verify in ("human", "history"):
             ident = bc.identity_history_catalog()
             results = (evaluate_human if args.verify == "human" else evaluate_history)(args.migration_rc, baseline, after, catalog, ident)
@@ -197,6 +242,9 @@ def main(argv: "list | None" = None) -> int:
             hours = "-" if w["hours_in_audit"] is None else f"{float(w['hours_in_audit']):.1f}"
             info.append(f"INFO - gate audit window: mode {w['mode']}, {hours} h in audit, {w['evaluated']} gated moves evaluated, {w['tickets_48h']} of {w['required_tickets']} required different tickets moved in the last 48 h, "
                         f"{w['violations_since']} violations logged ({w['violations_48h']} in the last 48 h); enforcement needs 48 h, {w['required_tickets']} different tickets and 0 violations (clear = {w['clear']})")
+        if args.verify in ("iam", "retire"):
+            info.append(f"INFO - bindings: {iam['active_logins']} active login(s), {len(iam['active_persons'])} distinct human person(s) {iam['active_persons']}; "
+                        f"logins that can still open or move a ticket: {[w['login'] + (' (bound)' if w['bound'] else ' (UNBOUND)') for w in iam['writers']]}")
         if bc.transitions_store_present():
             sp = bc.shadow_progress()
             info.append(f"INFO - shadow stage: {sp['live_non_system_since_last_v00']} of 50 non-system transitions since the last V-00 "

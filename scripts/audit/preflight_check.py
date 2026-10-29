@@ -407,7 +407,27 @@ def gate_line(g: dict) -> str:
     return line
 
 
-def a2_line(sp: dict, actors: list, required: int = 50) -> str:
+def _like(pattern: str, actor: str) -> bool:
+    return re.fullmatch(re.escape(pattern).replace("%", ".*"), actor) is not None
+
+
+def iam_line(cat: dict) -> str:
+    """One line on the IAM step (FND-0354): not applied, or how many logins are bound to how many PERSONS (several logins of one person count once), and which logins can still open or
+    move a ticket without being bound. Pure."""
+    if not cat or not (cat.get("routines") or {}).get("sp_append_log"):
+        return "IAM: step iam not applied (no per-identity logins; agents write through the shared writer or not at all)" if cat is not None else ""
+    persons = cat.get("active_persons") or []
+    line = f"IAM: {cat.get('active_logins', 0)} bound login(s), {len(persons)} distinct human person(s)"
+    if "transition_persons" in cat:
+        line += f", transitions made by {len(cat['transition_persons'])} of them"
+    if cat.get("unbound_writers"):
+        line += "; UNBOUND logins that can still open or move a ticket: " + ", ".join(cat["unbound_writers"])
+    elif cat.get("writers"):
+        line += "; every writing login is bound"
+    return line
+
+
+def a2_line(sp: dict, actors: list, required: int = 50, bindings: "list | None" = None) -> str:
     """One line on the A-2 gate (FND-0331): non-system transitions counted since the last direct write (V-00), who made them, and a warning when ONE actor did them all (the owner asks
     for several actors before the revoke). Pure."""
     if not sp:
@@ -415,6 +435,9 @@ def a2_line(sp: dict, actors: list, required: int = 50) -> str:
     n = int(sp.get("live_non_system_since_last_v00") or 0)
     line = f"A-2 gate: {n} of {required} real transitions since the last V-00 (V-00 total {sp.get('v00_total', 0)})"
     if actors:
+        if bindings:                                           # IAM applied: say which of these identities no bound login backs (a claim, not a proof)
+            patterns = [b["actor"] for b in bindings if b.get("active")]
+            actors = [(a + ("" if any(_like(p, a) for p in patterns) else " [UNBOUND]"), c) for a, c in actors]
         line += "; by " + ", ".join(f"{a} x{c}" for a, c in actors[:4]) + f" ({len(actors)} distinct actor(s))"
         if len(actors) < 3:
             line += " -> NEEDS MORE ACTORS before the revoke"
@@ -448,8 +471,13 @@ def read_backlog(since_hours: float) -> dict:
         a2, actors = bc.shadow_progress(), bc.shadow_actors()
     except Exception:                                          # noqa: BLE001
         a2, actors = None, []
+    iam = None
+    try:                                                       # step iam may not be applied: then the line says so
+        iam = bc.iam_catalog()
+    except Exception:                                          # noqa: BLE001
+        iam = None
     return {"open": sum(1 for t in tickets if t.get("status") != "CLOSED"), "new": new, "since_hours": since_hours, "gate": gate,
-            "a2": a2, "a2_actors": actors, "a2_required": getattr(bc, "SHADOW_REQUIRED", 50)}
+            "a2": a2, "a2_actors": actors, "a2_required": getattr(bc, "SHADOW_REQUIRED", 50), "iam": iam}
 
 
 # ---------------------------------------------------------------- report
@@ -514,8 +542,11 @@ def render(r: dict) -> str:
         L.append(f"      {t['id']} [{t['status']}] {t['title']}")
     if gate_line(b.get("gate") or {}):
         L.append("      " + gate_line(b["gate"]))
-    if a2_line(b.get("a2") or {}, b.get("a2_actors") or [], b.get("a2_required", 50)):
-        L.append("      " + a2_line(b["a2"], b.get("a2_actors") or [], b.get("a2_required", 50)))
+    bindings = (b.get("iam") or {}).get("bindings") or None
+    if a2_line(b.get("a2") or {}, b.get("a2_actors") or [], b.get("a2_required", 50), bindings):
+        L.append("      " + a2_line(b["a2"], b.get("a2_actors") or [], b.get("a2_required", 50), bindings))
+    if iam_line(b.get("iam")):
+        L.append("      " + iam_line(b["iam"]))
     v = r["verdict"]
     L.append(f"VERDICT: {v['level']}")
     L += [f"  CAUTION: {c}" for c in v["cautions"]] + [f"  note: {n}" for n in v["notes"]]

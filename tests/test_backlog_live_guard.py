@@ -115,13 +115,14 @@ def _fake_connect():
 
 def test_a_non_interactive_write_helper_on_its_own_connection_is_refused_before_any_connection_is_opened(monkeypatch):
     monkeypatch.setenv("FONDOS_BACKLOG_PG_DSN", "postgresql://w:pw@127.0.0.1:5436/gestion")
+    monkeypatch.setenv("FONDOS_BACKLOG_PG_DSN_HUMAN", "postgresql://h:pw@127.0.0.1:5436/gestion")
     monkeypatch.setattr(bc, "psycopg", SimpleNamespace(connect=lambda *a, **k: (_ for _ in ()).throw(AssertionError("a connection was opened"))))
     monkeypatch.setattr(bc.sys.stdin, "isatty", lambda: False, raising=False)
     monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)        # pytest is the one context that is exempt: take it away to exercise the real rule
     with pytest.raises(bc.LiveWriteForbidden):
         bc.open_ticket(title="t", nature="BUG", object_type="N/A", priority="LOW", session_id="FND_20261029_DEV_X", description="d", first_log="l")
     with pytest.raises(bc.LiveWriteForbidden):
-        bc.append_log("FND-0001", "agent:x", "a note")
+        bc.append_log("FND-0001", "human:x", "a note")      # a human note is not exempt; an agent note is (tests/test_backlog_iam_client.py)
     with pytest.raises(bc.LiveWriteForbidden):
         bc.record_link_event(from_id="FND-0001", to_id="FND-0002", link_type="RELATED", status="PROPOSED", evidence="e", username="agent:x")
 

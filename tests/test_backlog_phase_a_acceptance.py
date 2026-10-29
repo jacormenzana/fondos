@@ -169,3 +169,53 @@ def test_history_step_complete_state_is_accepted_and_coverage_is_checked_column_
     assert len(ok(ident=_ident(history=dict(_ident()["history"], view=False)))) == 1
     assert len(ok(ident=_ident(history=dict(_ident()["history"], writer_can_insert=True)))) == 1
     assert len(ok(ident=_ident(history=None))) >= 4                                             # not applied: rejected on every count
+
+
+# --- IAM (FND-0354) -------------------------------------------------------------------------------------------------------------------------
+
+def _iam(**over):
+    role = lambda ex: {"can_login": True, "superuser": False, "select_all": True, "write_tables": [], "executes": ex}      # noqa: E731
+    c = {"roles": {"backlog_reader": role([]), "backlog_logger": role(["sp_append_log"]), "backlog_incident": role(["sp_report_incident"])},
+         "routines": {"fn_actor_bound": True, "sp_bind_login": True, "sp_append_log": True, "sp_report_incident": True},
+         "bindings": [], "active_logins": 0, "active_persons": [], "writers": [], "unbound_writers": []}
+    c.update(over)
+    return c
+
+
+def test_iam_step_is_accepted_when_each_role_has_exactly_its_scope_and_each_criterion_can_fail():
+    results = acc.evaluate_iam(0, FP, FP, _iam())
+    assert all(ok for _, ok, _ in results) and len(results) == 6
+    broken = {
+        "migration rc": (1, _iam()),
+        "a routine is missing": (0, _iam(routines={"fn_actor_bound": True, "sp_bind_login": True, "sp_append_log": False, "sp_report_incident": True})),
+    }
+    for name, (rc, cat) in broken.items():
+        assert not all(ok for _, ok, _ in acc.evaluate_iam(rc, FP, FP, cat)), name
+    for role, field, value in (("backlog_reader", "executes", ["sp_append_log"]), ("backlog_logger", "executes", ["sp_append_log", "sp_report_incident"]),
+                               ("backlog_incident", "write_tables", ["backlog_logs"]), ("backlog_logger", "superuser", True), ("backlog_reader", "select_all", False)):
+        cat = copy.deepcopy(_iam())
+        cat["roles"][role][field] = value
+        assert not all(ok for _, ok, _ in acc.evaluate_iam(0, FP, FP, cat)), (role, field)
+    gone = _iam()
+    del gone["roles"]["backlog_logger"]
+    assert not all(ok for _, ok, _ in acc.evaluate_iam(0, FP, FP, gone))
+    assert not all(ok for _, ok, _ in acc.evaluate_iam(0, FP, dict(FP, logs=1301), _iam()))                             # history must not move
+
+
+def test_retire_needs_no_unbound_writer_and_three_distinct_persons_who_have_made_transitions():
+    human = lambda n, person: {"login_name": n, "actor": f"human:{n}", "person": person, "kind": "HUMAN", "active": True}      # noqa: E731
+    three = [human("a", "a.gomez"), human("b", "j.cormenzana"), human("c", "m.ruiz")]
+    moved = {"a.gomez": 4, "j.cormenzana": 9, "m.ruiz": 2}
+    ok = _iam(bindings=three, writers=[{"login": "a", "bound": True}], transitions_by_person=moved, transition_persons=sorted(moved))
+    assert all(r[1] for r in acc.evaluate_retire(0, FP, FP, ok)) and len(acc.evaluate_retire(0, FP, FP, ok)) == 5
+    assert acc.REQUIRED_OPERATOR_PERSONS == 3
+    two_persons = [human("a", "a.gomez"), human("b", "j.cormenzana"), human("c", "j.cormenzana")]                           # three logins, two people: NOT enough
+    assert not all(r[1] for r in acc.evaluate_retire(0, FP, FP, dict(ok, bindings=two_persons)))
+    assert not all(r[1] for r in acc.evaluate_retire(0, FP, FP, dict(ok, transitions_by_person={"a.gomez": 4}, transition_persons=["a.gomez"])))   # bound, but only one has moved a ticket
+    assert not all(r[1] for r in acc.evaluate_retire(0, FP, FP, _iam(bindings=three)))                                       # nobody has moved anything
+    assert not all(r[1] for r in acc.evaluate_retire(0, FP, FP, dict(ok, unbound_writers=["fondos_writer"])))
+    agent = {"login_name": "x", "actor": "agent:%", "person": "claude", "kind": "AGENT", "active": True}
+    assert not all(r[1] for r in acc.evaluate_retire(0, FP, FP, dict(ok, bindings=three[:2] + [agent])))                    # agents never count as operators
+    revoked = dict(three[2], active=False)
+    assert not all(r[1] for r in acc.evaluate_retire(0, FP, FP, dict(ok, bindings=three[:2] + [revoked])))
+    assert not all(r[1] for r in acc.evaluate_retire(1, FP, FP, ok))

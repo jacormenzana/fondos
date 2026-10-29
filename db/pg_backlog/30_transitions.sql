@@ -41,14 +41,25 @@ $$ SELECT p_actor IS NOT NULL AND p_actor ~ '^(human|agent|system):[A-Za-z0-9._-
 -- superuser); the generic placeholder of the history, agent:claude, is refused for new writes (an agent names its model). Human identities are NOT enforced while the role
 -- does not exist yet: the owner creates it with step 32 (migrate_backlog_v2.py --phase human) and only then does the rule bind. It looks at session_user (who logged in),
 -- never at current_user (inside a SECURITY DEFINER routine that is the routine's owner).
+-- FND-0354: a login may be BOUND to an identity (backlog.fn_actor_bound, step iam). Until step iam is applied the hook below is a stub that allows everything; the stub is created
+-- ONLY when absent, so re-applying this step after step iam never overwrites the real function.
+DO $$
+BEGIN
+    IF to_regprocedure('backlog.fn_actor_bound(text)') IS NULL THEN
+        CREATE FUNCTION backlog.fn_actor_bound(p_actor text) RETURNS boolean
+        LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, backlog AS $f$ SELECT true $f$;
+    END IF;
+END $$;
+
 CREATE OR REPLACE FUNCTION backlog.fn_actor_authorized(p_actor text) RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, backlog AS
 $$ SELECT CASE
        WHEN p_actor IS NULL OR NOT backlog.fn_actor_ok(p_actor) THEN false
        WHEN p_actor = 'agent:claude' THEN false
-       WHEN p_actor LIKE 'human:%' THEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'backlog_human')
-                                        OR pg_has_role(session_user, 'backlog_human', 'MEMBER')
-       ELSE true END $$;
+       WHEN p_actor LIKE 'human:%' THEN (NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'backlog_human')
+                                         OR pg_has_role(session_user, 'backlog_human', 'MEMBER'))
+                                        AND backlog.fn_actor_bound(p_actor)
+       ELSE backlog.fn_actor_bound(p_actor) END $$;
 
 -- Legal moves between two DIFFERENT statuses (NORMAS_BACKLOG section 2). CLOSED as a source (reopening) and delivery closures are
 -- checked in sp_transition because they depend on more than the pair.
@@ -514,7 +525,7 @@ DECLARE r record;
 BEGIN
     FOR r IN SELECT p.oid::regprocedure AS sig, p.prokind FROM pg_proc p
              WHERE p.pronamespace = 'backlog'::regnamespace
-               AND p.proname IN ('sp_open_ticket', 'sp_transition', 'sp_close_release', 'trg_governed_writes', 'fn_actor_ok', 'fn_actor_authorized', 'fn_transition_legal', 'fn_gate_blockers', 'fn_raise_review_flags', 'fn_gate_mode', 'fn_gate_record')
+               AND p.proname IN ('sp_open_ticket', 'sp_transition', 'sp_close_release', 'trg_governed_writes', 'fn_actor_ok', 'fn_actor_authorized', 'fn_actor_bound', 'fn_transition_legal', 'fn_gate_blockers', 'fn_raise_review_flags', 'fn_gate_mode', 'fn_gate_record')
     LOOP
         EXECUTE format('ALTER %s %s OWNER TO backlog_owner', CASE r.prokind WHEN 'p' THEN 'PROCEDURE' ELSE 'FUNCTION' END, r.sig);
     END LOOP;
