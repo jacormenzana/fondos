@@ -1,16 +1,15 @@
-# Backlog v2 IAM: specifications for the next cycle (FND-0354 follow-ups)
+# Backlog v2 IAM: follow-ups (FND-0354)
 
-Written for: the owner, who decides what enters the next cycle. Nothing here is implemented; the ban on new feature code until the stack is merged and verified on staging stands (owner, 2026-10-29).
+Written for: the owner, who decides what enters the next cycle.
 
-## S1. Binding audit: the declared human actor in every binding
-**Gap.** `backlog.actor_login_event` already stores the bound identity (`actor`), the person, the reason and `set_by`, which is `session_user`: the database LOGIN that ran `sp_bind_login`, not the canonical identity of the person behind it. After the logins `human:j.cormenzana_data` and `human:j.cormenzana_owner` exist, "who bound whom" is readable only by translating a login name.
-
-**Specification.**
-1. `sp_bind_login` takes a mandatory `p_declared_by` (a canonical `human:*` identity). It is refused unless `fn_actor_authorized(p_declared_by)` is true from the calling connection (so it must be a human identity bound to the calling login, once bindings exist) and the caller is the owner role (as today).
-2. New column `actor_login_event.declared_by NOT NULL` (CHECK canonical `human:*`), written by the routine only; the table stays append-only. Rows written before the change keep `declared_by = 'human:j.cormenzana_owner'` by the one-time migration, which is the only person who could bind.
-3. View `v_binding_audit(event_id, login_name, bound_actor, person, declared_by, set_by, reason, event_ts, flags)` with the flags `SELF_BINDING` (declared_by equals the bound actor), `DECLARER_NOT_BOUND_TO_SET_BY` (the declared identity is not the one bound to the login that ran the call), `OFF_HOURS` (outside the owner's configured window) and `RECENT` (last 24 h).
-4. Alert: the pre-flight prints an `[ATENCION]` line for any binding in the last 24 h or with a flag, and exits non-zero in `--strict`. No trigger: a trigger cannot know more than the routine, and the routine is the only writer (the table has no direct INSERT privilege for anyone but `backlog_owner`).
-5. Acceptance: hermetic tests for each flag; a binding with a missing or unauthorized `p_declared_by` is rejected; the history before the change is unchanged; `--verify` gains a criterion "every active binding has a declared_by".
+## S1. Binding audit: the declared human actor in every binding. IMPLEMENTED in the deployment payload (owner order 2026-10-29)
+Not deferred: the owner ordered it into this deployment. What was built (`50_iam.sql`, hermetic tests, rehearsed with the real tools):
+1. `sp_bind_login` takes a mandatory seventh argument `p_declared_by`, a canonical `human:*` identity checked with `fn_actor_authorized` (once bindings exist a bound login can declare only its own identity). The old six-argument form is dropped.
+2. `actor_login_event.declared_by`, written by the routine only. A table created by an earlier version is upgraded by re-applying the step: old rows keep NULL (append-only) and are flagged `LEGACY_NO_DECLARER`; the constraint is NOT VALID, so only new rows must name a declarer.
+3. `v_binding_audit` flags `SELF_BINDING`, `DECLARER_NOT_BOUND_TO_SET_BY`, `LEGACY_NO_DECLARER`, `OFF_HOURS` and `RECENT`.
+4. `OFF_HOURS`: a binding written outside the operational window. The default is restrictive and hardcoded: Monday to Friday, 07:00 to 19:00 (end excluded) in the server's time zone. The owner changes it with `sp_set_binding_window` (same rule as `sp_bind_login`: owner only, a declared human identity, a valid time zone and interval); every change is an append-only row and the latest wins (`v_binding_window`).
+5. The pre-flight prints an `[ATENCION]` line and a CAUTION for every binding of the last 24 hours; `--verify iam` checks that the column, the constraint, the audit view and the window exist; `--verify retire` requires every active binding to name its declarer.
+Stated limit: a superuser connection can declare any human identity, because the database cannot know who sits behind it. The audit makes this visible (`DECLARER_NOT_BOUND_TO_SET_BY` is always raised for it); it does not prevent it.
 
 ## S2. Granular non-human identities
 **Gap.** Agent, system and incident logins all carry `person = 'non-human'`, so no metric can tell an autonomous agent from a CI pipeline or the incident webhook.
@@ -21,5 +20,5 @@ Written for: the owner, who decides what enters the next cycle. Nothing here is 
 3. The catalog and the pre-flight report bound logins and transitions per subject; the A-2 pool still counts only HUMAN persons.
 4. Acceptance: a login cannot be bound under a subject that does not own its identity; adding a subject is a reviewed migration, never free text.
 
-## S3. Rollback of the IAM step keeps the binding history (recommendation, not yet ordered)
-`--phase iam --down` currently drops `actor_login_event` and its view, as the first Phase B rollback dropped its tables. Apply the same principle: drop the roles, routines and the view, keep the table and its rows, so a later `--phase iam` resumes with the history intact. Same static test as for Phase B (no `DROP TABLE`, `DELETE`, `TRUNCATE`, `ALTER TABLE`, `UPDATE`). Needs the owner's decision before it is written.
+## S3. Rollback of the IAM step keeps its history (recommendation, not yet ordered)
+`--phase iam --down` drops `actor_login_event`, `binding_window_event` and their views, as the first Phase B rollback dropped its tables. Apply the same principle: drop the roles, routines and views, keep the tables and their rows, so a later `--phase iam` resumes with the history intact. Same static test as for Phase B. Needs the owner's decision before it is written.
