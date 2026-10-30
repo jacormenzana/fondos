@@ -15,6 +15,8 @@ Design (the three review rounds of the 2026-10-05 plan):
     (cycle_step_def.hard_max_s) apply from the first cycle and stay as a backstop.
   * BACKLOG LINK AT WRITE TIME. A flag's ap_status is read from gestion.backlog with the same 3 s limits and is one of a real status,
     NOT_FOUND (reachable, no such AP) or LOOKUP_FAILED (outage: never counted as an orphan, retried by refresh_unverified_flags()).
+    The read time is stored with it (ap_status_read_ts, FND-0332) once the owner adds that column; stale_reads() finds the copies read
+    before the ticket last moved (V-STALE-READ).
 
 The pure functions (median_baseline, ratio_of, judge) take no connection (R-7). Never prints a DSN.
 """
@@ -222,7 +224,7 @@ def _apply(conn, ev: dict) -> None:
                 (ev["cycle_id"], ev["domain"], ev["phase"], ev["run_id"], ev.get("n_alarm"), ev.get("n_warn"), ev.get("n_info"),
                  ev.get("n_new"), ev.get("n_resolved"), ev.get("n_unchanged"), ev.get("n_stagnant")))
         elif op == "flag":
-            ap_id, ap_status = ev.get("ap_id"), ev.get("ap_status")
+            ap_id, ap_status, read_ts = ev.get("ap_id"), ev.get("ap_status"), ev.get("ap_status_read_ts")
             if ap_id is None:                       # a standing ack (the zero-entropy policy) supplies the AP when the caller has none
                 ack = conn.execute(
                     "SELECT ap_id FROM control.cycle_flag_ack WHERE flag_code = %s AND scope IN (%s, '') "
@@ -230,12 +232,16 @@ def _apply(conn, ev: dict) -> None:
                     (ev["flag_code"], ev.get("scope", ""))).fetchone()
                 ap_id = ack[0] if ack else None
                 ap_status = "LOOKUP_FAILED" if ack else None       # not resolved yet: refresh_unverified_flags() reads the backlog
+                read_ts = None
+            cols, vals = ["cycle_id", "flag_code", "scope", "severity", "detail", "evidence", "ap_id", "ap_status"], \
+                [ev["cycle_id"], ev["flag_code"], ev.get("scope", ""), ev["severity"], ev.get("detail"), ev.get("evidence"), ap_id, ap_status]
+            if _has_read_ts(conn):                  # FND-0332: the read time travels with the snapshot (the event keeps it through the fallback)
+                cols.append("ap_status_read_ts")
+                vals.append(read_ts)
             conn.execute(
-                "INSERT INTO control.cycle_flag (cycle_id, flag_code, scope, severity, detail, evidence, ap_id, ap_status) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (cycle_id, flag_code, scope) DO UPDATE SET "
-                "severity = EXCLUDED.severity, detail = EXCLUDED.detail, evidence = EXCLUDED.evidence, ap_id = EXCLUDED.ap_id, "
-                "ap_status = EXCLUDED.ap_status",
-                (ev["cycle_id"], ev["flag_code"], ev.get("scope", ""), ev["severity"], ev.get("detail"), ev.get("evidence"), ap_id, ap_status))
+                f"INSERT INTO control.cycle_flag ({', '.join(cols)}) VALUES ({', '.join(['%s'] * len(cols))}) "
+                "ON CONFLICT (cycle_id, flag_code, scope) DO UPDATE SET "
+                + ", ".join(f"{c} = EXCLUDED.{c}" for c in cols[3:]), vals)
         else:
             raise ValueError(f"unknown telemetry op {op!r}")
 
@@ -306,17 +312,50 @@ def lookup_ap_status(ap_id: str) -> str:
         return "LOOKUP_FAILED"
 
 
+def stale_reads(flags: Sequence[dict], latest: dict) -> dict:
+    """V-STALE-READ (FND-0332), pure: which stored ticket statuses were read before the ticket last moved.
+    `flags`: rows with ap_id, ap_status, ap_status_read_ts (datetime or None); `latest`: backlog_client.latest_status_events().
+    Returns {'checked', 'stale': [{ap_id, stored, current, read_ts, event_ts}], 'no_read_ts', 'gone'}: a snapshot with no read time
+    (written before the column existed) is counted apart, never called stale or fresh; 'gone' = the ticket no longer exists.
+    A BACKFILL event is not a move (its time is the state when status_event was introduced), so it never makes a read stale."""
+    out: dict = {"checked": 0, "stale": [], "no_read_ts": 0, "gone": 0}
+    for f in flags:
+        ap, stored, read_ts = f.get("ap_id"), f.get("ap_status"), f.get("ap_status_read_ts")
+        if not ap or stored in (None, "NOT_FOUND", "LOOKUP_FAILED"):
+            continue
+        cur = latest.get(ap)
+        if cur is None:
+            out["gone"] += 1
+            continue
+        if read_ts is None:
+            out["no_read_ts"] += 1
+            continue
+        out["checked"] += 1
+        ev = cur.get("event_ts")
+        if ev is not None and cur.get("origin") != "BACKFILL" and read_ts < ev:
+            out["stale"].append({"ap_id": ap, "stored": stored, "current": cur.get("status"), "read_ts": read_ts, "event_ts": ev})
+    return out
+
+
+def _has_read_ts(conn) -> bool:
+    """True once the owner applied the cycle_flag_read_ts block (FND-0332); until then flags are written exactly as before."""
+    return conn.execute("SELECT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('control.cycle_flag') "
+                        "AND attname = 'ap_status_read_ts' AND NOT attisdropped)").fetchone()[0]
+
+
 def refresh_unverified_flags(conn, lookup=lookup_ap_status) -> int:
-    """Re-resolve the flags whose backlog lookup failed at write time; returns how many were resolved. Never raises."""
+    """Re-resolve the flags whose backlog lookup failed at write time (and stamp the read time, FND-0332); returns how many were resolved.
+    Never raises."""
     try:
         with conn.transaction():          # its own SAVEPOINT: a failed statement is rolled back here, the caller's transaction is not poisoned
             rows = conn.execute("SELECT cycle_id, flag_code, scope, ap_id FROM control.cycle_flag "
                                 "WHERE ap_status = 'LOOKUP_FAILED' AND ap_id IS NOT NULL").fetchall()
+            stamp = ", ap_status_read_ts = clock_timestamp()" if _has_read_ts(conn) else ""
             n = 0
             for cycle_id, flag_code, scope, ap_id in rows:
                 st = lookup(ap_id)
                 if st != "LOOKUP_FAILED":
-                    conn.execute("UPDATE control.cycle_flag SET ap_status = %s WHERE cycle_id = %s AND flag_code = %s AND scope = %s",
+                    conn.execute(f"UPDATE control.cycle_flag SET ap_status = %s{stamp} WHERE cycle_id = %s AND flag_code = %s AND scope = %s",
                                  (st, cycle_id, flag_code, scope))
                     n += 1
         return n
@@ -376,13 +415,15 @@ def record_audit_run(domain: str, phase: str, run_id: str, *, cycle_id: Optional
 def raise_flag(flag_code: str, severity: str, *, scope: str = "", detail: Optional[str] = None, evidence: Optional[float] = None,
                ap_id: Optional[str] = None, cycle_id: Optional[str] = None, conn=None, lookup=lookup_ap_status,
                ts: Optional[str] = None) -> bool:
-    """Records a flag; when `ap_id` is given its backlog status is read now (real status / NOT_FOUND / LOOKUP_FAILED)."""
+    """Records a flag; when `ap_id` is given its backlog status is read now (real status / NOT_FOUND / LOOKUP_FAILED) and the read time
+    is kept with it (FND-0332: a stored copy of a status says when it was read; none when the lookup failed)."""
     try:
         ap_status = lookup(ap_id) if ap_id else None
     except Exception:
         ap_status = "LOOKUP_FAILED" if ap_id else None
+    read_ts = _now() if ap_status not in (None, "LOOKUP_FAILED") else None
     return _send("flag", cycle_id, conn, flag_code=flag_code, severity=severity, scope=scope, detail=detail, evidence=evidence,
-                 ap_id=ap_id, ap_status=ap_status, ts=ts)
+                 ap_id=ap_id, ap_status=ap_status, ap_status_read_ts=read_ts, ts=ts)
 
 
 # --------------------------------------------------------------------------------------------- command line (what the .bat launchers call)

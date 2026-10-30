@@ -542,6 +542,14 @@ LEFT JOIN stp USING (cycle_id) LEFT JOIN met USING (cycle_id)
 LEFT JOIN aud USING (cycle_id) LEFT JOIN fl USING (cycle_id);
 -- END cycle_telemetry
 
+-- BEGIN cycle_flag_read_ts (FND-0332) -- decision-time read rule: a stored copy of a backlog status carries its read time
+-- Owner migration: scripts/ops/migrate_cycle_flag_read_ts.py (dry run by default). Idempotent; one nullable column, no rewrite, no default.
+-- ap_status_read_ts = when ap_status was read from gestion.backlog (NULL: written before this block, no ticket, or the lookup failed). The cycle report
+-- compares it with the ticket's latest status event (V-STALE-READ: the snapshot was read before the ticket last moved). Nothing caches a status in
+-- gestion; a status is read at the point of decision and any stored copy says when it was read.
+ALTER TABLE control.cycle_flag ADD COLUMN IF NOT EXISTS ap_status_read_ts timestamptz;
+-- END cycle_flag_read_ts
+
 -- =============================================================================
 -- Migration bookkeeping (new in PG — no SQLite analog)
 -- =============================================================================

@@ -145,7 +145,7 @@ los tres coincidan; ningún consumidor existente lee la columna ni la vista `v_b
 | **Durante** el trabajo | Un hallazgo fuera de alcance se anota en el log del ticket relacionado existente; no se abre ticket nuevo ni se descarta | — |
 | **Al cerrar** | El log dice qué queda (alcance absorbido cumplido, o lo que pasa al otro ticket) y sigue la higiene de §4.1 | — |
 | **Cada sesión de revisión** | Barrido: `--all`, revisar candidatas por lotes, aplicar | §6 |
-| **Cada ciclo P1+P2** | Una línea en el informe de ciclo (`Relaciones del backlog`) y un `[ATENCION]` si hay tickets en curso con prerrequisito `DEPENDS_ON` abierto; otra (`Violaciones del backlog`) con el total y los 3 códigos principales de §4.2 | `p1p2_cycle_report.py` |
+| **Cada ciclo P1+P2** | Una línea en el informe de ciclo (`Relaciones del backlog`) y un `[ATENCION]` si hay tickets en curso con prerrequisito `DEPENDS_ON` abierto; otra (`Violaciones del backlog`) con el total y los 3 códigos principales de §4.2, y otra (`Lecturas de estado del backlog`) con las copias de estado leídas antes del último cambio del ticket (§4.3) | `p1p2_cycle_report.py` |
 
 ### §4.1. Higiene del registro (origen: FND-0323)
 
@@ -205,6 +205,17 @@ por defecto; reversión `--down`, que conserva los grupos). Especificación: `PR
 - **Cierre de impacto.** `v_impact_closure`: desde cada ticket, los tickets **abiertos** a los que llega un cambio por enlaces
   confirmados, hasta 5 niveles. `IMPACTS` va de origen a destino; `DEPENDS_ON` del prerrequisito al dependiente; `OVERLAPS` y
   `RELEASE_WITH` en ambos sentidos; `RELATED`, `SPLIT_FROM`, `DUPLICATES` y `SUPERSEDES` no propagan.
+
+### §4.3. Lectura del estado en el momento de decidir (FND-0332)
+
+El estado de un ticket se lee **en el punto de decisión** (promoción P3, residuales aceptados, informe de ciclo:
+`shared.backlog_client.get_action_point_status()`); `gestion` no guarda copias para nadie. Toda copia guardada en `fondos` lleva **la hora
+en que se leyó**: `control.cycle_flag.ap_status_read_ts` (bloque `cycle_flag_read_ts` de `db/pg/35_control.sql`, aplicado por el
+propietario con `scripts/ops/migrate_cycle_flag_read_ts.py`; NULL si la lectura falló o la fila es anterior). El informe de ciclo compara
+cada copia del último ciclo con el último evento de estado del ticket (`backlog_client.latest_status_events()`): una copia leída antes
+de que el ticket se moviera es `V-STALE-READ` (línea `Lecturas de estado del backlog` y un `[ATENCION]` con los tickets); un evento
+`BACKFILL` no cuenta como movimiento. La reacción al cierre ya existe: un residual aceptado bajo un ticket `CLOSED` sale como
+`[ATENCION]` (`accepted_residuals.attention_lines`). No hace falta ningún proceso periódico.
 
 ## §5. Protocolo de absorción de alcance
 
