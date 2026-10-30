@@ -124,3 +124,26 @@ date: 2026-10-29
 source: owner reviews of 2026-10-29
 
 The programmatic guard asked for in this ticket exists as the hard fail and the allow-list (FND-0331 / 01 and FND-0354 / 03, FND-0354 / 04). The staging harness (a container plus a snapshot, so that tests of the live-backlog tools never touch the live database) is NOT started; it remains the way to test anything that needs the real backlog. Under the owner's ban on net-new feature code until the stack is merged and verified on staging (FND-0354 / 06), it stays unstarted. Signed CI/CD deployments are the only non-interactive writes the owner has mentioned beyond the two allow-listed operations; no mechanism for them exists in the code.
+
+### FND-0353 / 01 - Acceptance check 5 (external log sink) waived by the owner, conditionally
+actor: agent:claude-sonnet-5-5
+date: 2026-10-30
+source: owner decision of 2026-10-30
+
+The owner waived acceptance check 5 and the external-sink requirement of spec section 7 (decision D6) for the initial deployment. Interim telemetry: the local Security log of CAJADEPANDORA (audit rule on the key directory; events 4656, 4663, 4660, 4670). The external Windows Event Forwarding collector, the CA and certificates, and the immutable store are deferred to a post-deployment DevOps sprint; no date was given.
+Stated consequences, not decided by the owner: (1) a holder of SYSTEM can clear or stop the local log and no remote copy exists, so tampering is detectable only on the machine; (2) the provisioning scripts do not raise the Security log to the 256 MB of spec section 7, because that step lives in provision_log_sink.ps1, which will not be run; unless the owner sets it (wevtutil sl Security /ms:268435456, elevated) the Windows default ring of about 20 MB with overwrite applies and key-access events can be overwritten; (3) the local alert task of section 7 (alerts\key_access.log) is not built yet.
+provision_log_sink.ps1 (commit 9a8f1b00, blob 873ef363) and LOG_SINK_RUNBOOK.md (608f440) stay in the repository, unexecuted. Acceptance 5 is WAIVED, not passed, and must not be reported as passed.
+
+### FND-0353 / 02 - Provisioning receipts of 2026-10-30 not corroborated; restart on a verified host
+actor: agent:claude-sonnet-5-5
+date: 2026-10-30
+source: read-only checks in the agent session of 2026-10-30 and the owner's acknowledgement
+
+The receipts the owner pasted as executed against runbook b63f5f9 did not match the machine (CAJADEPANDORA), read-only: neither fondos_ci_runner nor fondos_db_owner existed; C:\ProgramData\fondos did not exist (no MANIFEST.sha256, no key_staging, no boundary receipt in deployments/); the pasted manifest SHA-256 e3b0c44298fc1c14... is the SHA-256 of empty input; the pasted runtime count 1477 differs from the 1478 the real check computes on this environment. The owner acknowledged the receipts came from a disconnected environment and will re-run the runbook on a verified session. Nothing was recorded as evidence in deployments/. Same pattern as the earlier claims about the merge and the DDL, which origin and the production database did not show.
+
+### FND-0353 / 03 - Specification-first pull-request pipeline built; nothing deployed
+actor: agent:claude-sonnet-5-5
+date: 2026-10-30
+source: branch chore/ci-credential-spec-final, commits 7547668 and 608f440
+
+At the owner's order the interface contract (OPEN_PR_INTERFACE_CONTRACT.md), the locked request and receipt schemas (pinned by SHA-256) and the acceptance tests were written before the code; then open_pr_schema.py (strict JSON, validator of the locked keyword subset), open_pr.py (runner) and open_pr_request.py (agent side). The runner's only third-party package is cryptography; jsonschema, PyJWT and requests are not used. Decision D8 added to the spec: before the inbox is opened the runner checks that the token GitHub issued carries exactly pull_requests write, checks read, metadata read, on the single repository (the permissions come from the token-creation response; GET /installation/repositories carries none). 162 tests pass (including the provisioning scripts' tests); 12 deliberate mutations of the code were all caught by the tests. Not built, by order or because they need the real machine: the runner's deploy script, config.json, the scheduled tasks fondos_open_pr and the alert task, acceptance 2, 4, 5 (waived) and 15.
