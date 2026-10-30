@@ -28,6 +28,8 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 # ---------------------------------------------------------------------------
 # Path setup — allow `from shared.config import DB_PATH`
@@ -81,6 +83,8 @@ CREATE INDEX IF NOT EXISTS ix_cat_isin   ON db_document_catalogue(isin);
 """
 
 RATE_LIMIT_S = 1.0  # §7 Phase 1: ≥ 1.0 s between page requests
+HTTP_RETRIES   = 4    # retries after the first attempt (5 attempts total)
+HTTP_BACKOFF_S = 5    # urllib3 backoff_factor -> sleeps ~0s, 10s, 20s, 40s
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -96,9 +100,29 @@ log = logging.getLogger("p1_db_harvest")
 # ---------------------------------------------------------------------------
 # Shared HTTP helper
 # ---------------------------------------------------------------------------
+def _retrying_session() -> requests.Session:
+    """Session that retries transient connection failures (DNS blip, reset, connect timeout)
+    and 5xx with exponential backoff (~0s, 10s, 20s, 40s). One blip must not abort the cycle:
+    P1_harvestFunds aborts the whole P1 cycle on RC!=0 (2026-10-26 NameResolutionError)."""
+    s = requests.Session()
+    retries = Retry(
+        total=HTTP_RETRIES,
+        connect=HTTP_RETRIES,
+        read=HTTP_RETRIES,
+        backoff_factor=HTTP_BACKOFF_S,
+        status_forcelist=(500, 502, 503, 504),
+        allowed_methods=("GET",),
+        raise_on_status=False,
+    )
+    s.mount("https://", HTTPAdapter(max_retries=retries))
+    s.mount("http://", HTTPAdapter(max_retries=retries))
+    return s
+
+
 def _get(url: str, timeout: int = 60) -> requests.Response:
-    """GET with shared headers. Raises on non-2xx."""
-    resp = requests.get(url, headers=HEADERS, timeout=timeout)
+    """GET with shared headers and bounded retry. Raises on non-2xx."""
+    with _retrying_session() as s:
+        resp = s.get(url, headers=HEADERS, timeout=timeout)
     resp.raise_for_status()
     return resp
 
