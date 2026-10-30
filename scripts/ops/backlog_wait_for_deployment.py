@@ -11,6 +11,10 @@ the verification would fail and the notes could not be appended: so ALL FOUR mus
 Then, in order, it runs backlog_verify_deployment.py (zero-input) and, ONLY if every criterion passes, backlog_ingest_pending_logs.py --apply. A failed verification is retried every
 --retry seconds (default 60, up to --attempts, default 30: the owner may still be binding logins) and never ingests. Nothing is written until the verification has passed. A connection
 error is a not-ready poll, never a crash. Exit 0 = deployed, verified and ingested; 1 = verification never passed or the ingestion failed; 2 = timed out waiting, or usage.
+PERSISTENCE (owner order 2026-10-30): the records go straight to the repository's own deployments/ directory (--repo, --record-dir; never a temporary directory) and are COMMITTED on
+--branch (git add + git commit of exactly the new files, hooks included) right after each verification attempt, BEFORE anything is ingested; if that commit fails, nothing is ingested.
+After the ingestion its record is committed too, together with the removal of PENDING_FND_LOGS.md when the ingestion is complete. A push of the branch is then attempted (a failure is logged,
+the commit stands). Run it from an immutable copy of the code (a git archive) with --repo pointing at the working tree that is on --branch.
 """
 from __future__ import annotations
 
@@ -63,8 +67,49 @@ def wait(probe_fn, *, interval: float, timeout_s: float, stable: int = 2, sleep=
         sleep(interval)
 
 
-def run(wait_fn, verify_fn, ingest_fn, *, attempts: int, retry_s: float, sleep=time.sleep, log=print) -> int:
-    """wait -> verify (retried) -> ingest only after a passed verification."""
+class RecordError(RuntimeError):
+    """A deployment record could not be made persistent (committed): the next phase must not start."""
+
+
+def listing(directory: Path) -> set:
+    return {p.name for p in Path(directory).glob("*")} if Path(directory).is_dir() else set()
+
+
+def persist(repo: Path, record_dir: Path, before: set, message: str, *, branch: str, remove=(), push: bool = True, run_git=None, log=print) -> str:
+    """Make the records written since `before` PERSISTENT, immediately: `git add` and `git commit` of exactly those files (a pathspec commit: nothing else in the index or the tree is
+    included) on `branch`, in the repository's own working tree (never a temporary directory). `remove` lists tracked files deleted in the same commit (the pending-notes outbox after a
+    complete ingestion). Refuses unless HEAD is `branch` and a record exists; the repository's hooks run (never --no-verify). A push is attempted afterwards and its failure is only logged:
+    the commit is what makes the record persistent. Returns the commit id. Raises RecordError."""
+    import subprocess
+    git = run_git or (lambda *a, inp=None: subprocess.run(["git", "-C", str(repo), *a], input=inp, capture_output=True, text=True, encoding="utf-8"))
+    head = git("symbolic-ref", "--short", "HEAD")
+    if head.returncode or head.stdout.strip() != branch:
+        raise RecordError(f"the working tree is on {head.stdout.strip() or '(detached)'}, not on {branch}: records are committed there only")
+    rel_dir = Path(record_dir).resolve().relative_to(Path(repo).resolve()).as_posix()
+    new = sorted(f"{rel_dir}/{name}" for name in listing(record_dir) - before)
+    if not new:
+        raise RecordError(f"no record was produced in {rel_dir}")
+    paths = new + [str(Path(r).as_posix()) for r in remove]
+    for step in (("add", "--", *new), *((("rm", "-q", "--", *remove),) if remove else ())):
+        res = git(*step)
+        if res.returncode:
+            raise RecordError(f"git {step[0]} failed: {res.stderr.strip()[:300]}")
+    res = git("commit", "-F", "-", "--", *paths, inp=message)
+    if res.returncode:
+        raise RecordError(f"git commit failed (hooks included): {(res.stderr.strip() or res.stdout.strip())[:400]}")
+    commit = git("rev-parse", "--short", "HEAD").stdout.strip()
+    log(f"record committed on {branch}: {commit} ({', '.join(paths)})")
+    if push:
+        pushed = git("push", "origin", branch)
+        log("record pushed" if pushed.returncode == 0 else f"push failed (the commit stands): {pushed.stderr.strip()[:200]}")
+    return commit
+
+
+def run(wait_fn, verify_fn, ingest_fn, *, attempts: int, retry_s: float, persist_verify=None, persist_ingest=None, sleep=time.sleep, log=print) -> int:
+    """wait -> verify (retried; each attempt's record is committed before anything else) -> ingest only after a passed verification AND a committed record; the ingestion record is committed
+    too (and the outbox removed only after a complete ingestion). A failure to persist stops the sequence before the next write."""
+    persist_verify = persist_verify or (lambda attempt, rc: None)
+    persist_ingest = persist_ingest or (lambda rc: None)
     if not wait_fn():
         log("timed out waiting for the deployment to become visible")
         return RC_TIMEOUT
@@ -72,6 +117,11 @@ def run(wait_fn, verify_fn, ingest_fn, *, attempts: int, retry_s: float, sleep=t
     for attempt in range(1, attempts + 1):
         rc = verify_fn()
         log(f"verification attempt {attempt}/{attempts}: exit code {rc}")
+        try:
+            persist_verify(attempt, rc)
+        except RecordError as exc:
+            log(f"STOP: the verification record could not be committed ({exc}); nothing was ingested")
+            return RC_FAIL
         if rc == 0:
             break
         if attempt < attempts:
@@ -81,6 +131,11 @@ def run(wait_fn, verify_fn, ingest_fn, *, attempts: int, retry_s: float, sleep=t
         return RC_FAIL
     rc = ingest_fn()
     log(f"ingestion exit code {rc}")
+    try:
+        persist_ingest(rc)
+    except RecordError as exc:
+        log(f"the ingestion record could not be committed ({exc}); it is in the working tree, uncommitted")
+        return RC_FAIL
     return RC_OK if rc == 0 else RC_FAIL
 
 
@@ -93,6 +148,9 @@ def main(argv: "list | None" = None) -> int:
     ap.add_argument("--baseline-dir", default=str(ROOT / "out" / "audit"))
     ap.add_argument("--record-dir", default=str(ROOT / "deployments"))
     ap.add_argument("--pending-file", default=str(ROOT / "PENDING_FND_LOGS.md"))
+    ap.add_argument("--repo", default=str(ROOT), help="the repository whose working tree receives the records (default: the one this script is in)")
+    ap.add_argument("--branch", default="chore/deployment-records-final", help="the branch the working tree must be on; the records are committed there")
+    ap.add_argument("--no-push", action="store_true", help="commit only (default: also try to push the branch; a failed push never stops the run)")
     args = ap.parse_args(argv)
 
     sys.path.insert(0, str(ROOT))
@@ -110,11 +168,32 @@ def main(argv: "list | None" = None) -> int:
         with bc._session() as conn:
             return probe(conn)
 
-    stamped(f"waiting for {bc._target_of(bc._dsn() or '')} every {args.interval:g} s (read-only), for at most {args.timeout_hours:g} h")
-    return run(lambda: wait(one_probe, interval=args.interval, timeout_s=args.timeout_hours * 3600, log=stamped),
-               lambda: vd.main(["--baseline-dir", args.baseline_dir, "--record-dir", args.record_dir]),
-               lambda: ing.main(["--apply", "--file", args.pending_file, "--record-dir", args.record_dir]),
-               attempts=args.attempts, retry_s=args.retry, log=stamped)
+    repo, record_dir = Path(args.repo), Path(args.record_dir)
+    state = {"before": listing(record_dir)}
+
+    def verify() -> int:
+        state["before"] = listing(record_dir)
+        return vd.main(["--baseline-dir", args.baseline_dir, "--record-dir", str(record_dir)])
+
+    def persist_verify(attempt: int, rc: int) -> None:
+        persist(repo, record_dir, state["before"], f"docs(ops): FND-0354 - deployment verification record, attempt {attempt} ({'VERIFIED' if rc == 0 else 'NOT VERIFIED'})\n\n"
+                f"Written by backlog_wait_for_deployment.py right after backlog_verify_deployment.py (exit code {rc}); committed before any note is ingested.\n\n"
+                "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>\n", branch=args.branch, push=not args.no_push, log=stamped)
+
+    def ingest() -> int:
+        state["before"] = listing(record_dir)
+        return ing.main(["--apply", "--file", args.pending_file, "--record-dir", str(record_dir)])
+
+    def persist_ingest(rc: int) -> None:
+        pending = Path(args.pending_file)
+        remove = [pending.resolve().relative_to(repo.resolve()).as_posix()] if rc == 0 and pending.exists() else []
+        persist(repo, record_dir, state["before"], "docs(ops): FND-0354 - ingestion record of PENDING_FND_LOGS.md" + (" and removal of the outbox" if remove else " (INCOMPLETE: the outbox stays)") +
+                f"\n\nbacklog_ingest_pending_logs.py exit code {rc}. The record lists every note appended with its log id" + ("; the outbox is removed in the same change, as its header says." if remove else ".") +
+                "\n\nCo-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>\n", branch=args.branch, remove=remove, push=not args.no_push, log=stamped)
+
+    stamped(f"waiting for {bc._target_of(bc._dsn() or '')} every {args.interval:g} s (read-only), for at most {args.timeout_hours:g} h; records are committed on {args.branch} in {repo}")
+    return run(lambda: wait(one_probe, interval=args.interval, timeout_s=args.timeout_hours * 3600, log=stamped), verify, ingest,
+               attempts=args.attempts, retry_s=args.retry, persist_verify=persist_verify, persist_ingest=persist_ingest, log=stamped)
 
 
 if __name__ == "__main__":
