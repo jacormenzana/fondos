@@ -15,6 +15,10 @@ PERSISTENCE (owner order 2026-10-30): the records go straight to the repository'
 --branch (git add + git commit of exactly the new files, hooks included) right after each verification attempt, BEFORE anything is ingested; if that commit fails, nothing is ingested.
 After the ingestion its record is committed too, together with the removal of PENDING_FND_LOGS.md when the ingestion is complete. A push of the branch is then attempted (a failure is logged,
 the commit stands). Run it from an immutable copy of the code (a git archive) with --repo pointing at the working tree that is on --branch.
+MISFIRE DETECTOR (owner order 2026-10-30; the first two attempts applied the DDL to the staging replica 127.0.0.1:5433/des instead of production): if FONDOS_BACKLOG_PG_DSN_STAGING_PROBE holds
+a READ-ONLY connection string of that replica, every poll also reads what any login can see there (the four facts, the newest row version of the backlog routines, the binding events
+inserted). The first read is the baseline; if the replica CHANGES while production is still not deployed, the log says `CRITICAL: DDL MISFIRE DETECTED ON STAGING PORT 5433.` and a record is
+committed. Without that variable the detector says once that it is OFF. It never affects the production wait.
 """
 from __future__ import annotations
 
@@ -29,12 +33,21 @@ RC_OK, RC_FAIL, RC_TIMEOUT = 0, 1, 2
 IAM_ROLES = ("backlog_reader", "backlog_logger", "backlog_incident")
 
 
+STAGING_ENV = "FONDOS_BACKLOG_PG_DSN_STAGING_PROBE"      # a READ-ONLY connection string of the staging replica 127.0.0.1:5433/des, supplied by the owner; never stored in the repository
+STAGING_TARGET = "127.0.0.1:5433/des"
+MISFIRE_ALERT = "DDL MISFIRE DETECTED ON STAGING PORT 5433."
+
+
 def probe(conn) -> dict:
-    """The four facts, read from `conn` (a backlog_client session). Reads only."""
+    """The four facts, read from `conn` (a backlog_client session). Reads only, and from joins over pg_class / pg_proc / pg_namespace, which every login can read: neither
+    information_schema (it hides columns of tables the login cannot read) nor to_regclass / to_regprocedure with a schema-qualified name (they need USAGE on the schema) would work for a
+    login with no privilege at all, the staging probe."""
     return {
-        "override_column": bool(conn.execute("SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'backlog' AND table_name = 'gate_switch' AND column_name = 'override')").fetchone()[0]),
-        "actor_login_event": bool(conn.execute("SELECT to_regclass('backlog.actor_login_event') IS NOT NULL").fetchone()[0]),
-        "sp_append_log": bool(conn.execute("SELECT to_regprocedure('backlog.sp_append_log(text,text,text)') IS NOT NULL").fetchone()[0]),
+        "override_column": bool(conn.execute("SELECT EXISTS (SELECT 1 FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace "
+                                             "WHERE n.nspname = 'backlog' AND c.relname = 'gate_switch' AND a.attname = 'override' AND a.attnum > 0 AND NOT a.attisdropped)").fetchone()[0]),
+        "actor_login_event": bool(conn.execute("SELECT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+                                               "WHERE n.nspname = 'backlog' AND c.relname = 'actor_login_event' AND c.relkind = 'r')").fetchone()[0]),
+        "sp_append_log": bool(conn.execute("SELECT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'backlog' AND p.proname = 'sp_append_log')").fetchone()[0]),
         "iam_roles": conn.execute("SELECT count(*) FROM pg_roles WHERE rolname = ANY(%s)", (list(IAM_ROLES),)).fetchone()[0] == len(IAM_ROLES),
     }
 
@@ -47,8 +60,26 @@ def ready(flags: dict) -> bool:
     return all(flags.get(k) is True for k in REQUIRED)
 
 
-def wait(probe_fn, *, interval: float, timeout_s: float, stable: int = 2, sleep=time.sleep, clock=time.monotonic, log=print) -> bool:
-    """Poll until `ready(probe_fn())` holds on `stable` consecutive polls; False on timeout. A probe that raises counts as not ready."""
+def staging_signature(conn) -> dict:
+    """What can be seen of the staging replica without any privilege on its tables: the four facts, the newest catalog row version of the backlog routines (a `CREATE OR REPLACE`, so even an
+    idempotent re-application, rewrites its row: its xmin moves) and how many binding events were ever inserted (pg_stat, readable by every login)."""
+    sig = dict(probe(conn))
+    sig["routine_rows_xmin"] = conn.execute("SELECT max(p.xmin::text::bigint) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'backlog'").fetchone()[0]
+    row = conn.execute("SELECT n_tup_ins FROM pg_stat_all_tables WHERE schemaname = 'backlog' AND relname = 'actor_login_event'").fetchone()
+    sig["binding_events_inserted"] = int(row[0]) if row else None
+    return sig
+
+
+def misfire(production_flags: dict, staging_now: dict, staging_start: dict) -> bool:
+    """True when the DDL is NOT on production and the staging replica CHANGED while this poller was watching, and carries some of it (the replica already held the payload from the first
+    attempt, so its mere presence is not news: a change is). Pure."""
+    carries = any(staging_now.get(k) is True for k in REQUIRED) or (staging_now.get("binding_events_inserted") or 0) > 0
+    return (not ready(production_flags)) and bool(staging_start) and staging_now != staging_start and carries
+
+
+def wait(probe_fn, *, interval: float, timeout_s: float, stable: int = 2, sleep=time.sleep, clock=time.monotonic, log=print, on_poll=None) -> bool:
+    """Poll until `ready(probe_fn())` holds on `stable` consecutive polls; False on timeout. A probe that raises counts as not ready. `on_poll(flags)` runs after every poll (the staging
+    watch): whatever it raises is logged and never stops the wait."""
     start, streak, last, polls = clock(), 0, None, 0
     while True:
         polls += 1
@@ -56,6 +87,11 @@ def wait(probe_fn, *, interval: float, timeout_s: float, stable: int = 2, sleep=
             flags = probe_fn()
         except Exception as exc:  # noqa: BLE001 -- the database may be restarting: not ready, keep going
             flags = {"error": type(exc).__name__}
+        if on_poll is not None:
+            try:
+                on_poll(flags)
+            except Exception as exc:  # noqa: BLE001 -- a diagnostic must never stop the wait for the real deployment
+                log(f"watch error (ignored): {type(exc).__name__}: {str(exc)[:120]}")
         streak = streak + 1 if ready(flags) else 0
         if flags != last or polls % 4 == 0:
             log(f"poll {polls}: {flags} (stable {streak}/{stable})")
@@ -65,6 +101,47 @@ def wait(probe_fn, *, interval: float, timeout_s: float, stable: int = 2, sleep=
         if clock() - start >= timeout_s:
             return False
         sleep(interval)
+
+
+class StagingNotConfigured(RuntimeError):
+    """No read-only connection string for the staging replica was supplied: the misfire detector cannot look there."""
+
+
+class StagingWatch:
+    """The misfire detector (owner order 2026-10-30): watches the staging replica while production is polled. The first read is the baseline (the replica already held the payload from the
+    first attempt); a CHANGE on staging while production is still not ready is a CRITICAL alert, logged and handed to `alert_fn(now, start)` (which commits a record). Whatever goes wrong
+    reading staging is logged once per kind and never touches the production poll."""
+
+    def __init__(self, signature_fn, alert_fn, log=print):
+        self.signature_fn, self.alert_fn, self.log = signature_fn, alert_fn, log
+        self.start, self.alerted, self._said = None, None, set()
+
+    def _once(self, key: str, message: str) -> None:
+        if key not in self._said:
+            self._said.add(key)
+            self.log(message)
+
+    def __call__(self, production_flags: dict) -> None:
+        try:
+            now = self.signature_fn()
+        except StagingNotConfigured:
+            self._once("off", f"staging watch OFF: {STAGING_ENV} is not set; a misfire on {STAGING_TARGET} cannot be detected (supply a READ-ONLY connection string of that replica and restart the poller)")
+            return
+        except Exception as exc:  # noqa: BLE001
+            self._once(f"err:{type(exc).__name__}", f"staging watch: cannot read {STAGING_TARGET} ({type(exc).__name__}); will keep trying")
+            return
+        if self.start is None:
+            self.start = now
+            self.log(f"staging watch ON: baseline of {STAGING_TARGET} taken {now}" + ("; it already carries the payload from an earlier attempt" if ready(now) else ""))
+            return
+        if misfire(production_flags, now, self.start) and now != self.alerted:
+            self.alerted = now
+            changed = sorted(k for k in now if now.get(k) != self.start.get(k))
+            self.log(f"CRITICAL: {MISFIRE_ALERT} It changed while watching ({changed}: {[self.start.get(k) for k in changed]} -> {[now.get(k) for k in changed]}) and production 127.0.0.1:5436/gestion is still not deployed.")
+            try:
+                self.alert_fn(now, self.start)
+            except Exception as exc:  # noqa: BLE001
+                self.log(f"the alert record could not be committed ({type(exc).__name__}: {str(exc)[:160]}); the alert above stands")
 
 
 class RecordError(RuntimeError):
@@ -191,8 +268,28 @@ def main(argv: "list | None" = None) -> int:
                 f"\n\nbacklog_ingest_pending_logs.py exit code {rc}. The record lists every note appended with its log id" + ("; the outbox is removed in the same change, as its header says." if remove else ".") +
                 "\n\nCo-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>\n", branch=args.branch, remove=remove, push=not args.no_push, log=stamped)
 
+    def staging_sig() -> dict:
+        import os
+        dsn = os.environ.get(STAGING_ENV)
+        if not dsn:
+            raise StagingNotConfigured(STAGING_ENV)
+        with bc.psycopg.connect(dsn, connect_timeout=5, options="-c default_transaction_read_only=on -c statement_timeout=5000") as conn:
+            return staging_signature(conn)
+
+    def staging_alert(now: dict, start: dict) -> None:
+        before = listing(record_dir)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        record_dir.mkdir(parents=True, exist_ok=True)
+        (record_dir / f"{stamp[:4]}-{stamp[4:6]}-{stamp[6:8]}_ALERT_staging_misfire_{stamp}.txt").write_text(
+            f"CRITICAL ALERT {stamp}: {MISFIRE_ALERT}\n\nThe staging replica {STAGING_TARGET} CHANGED while the poller was waiting for production 127.0.0.1:5436/gestion, which is still not deployed.\n"
+            f"baseline: {start}\nnow:      {now}\n\nMost likely the DDL (--phase relations / --phase iam) was applied to the wrong server. Check the first line of the tool output: it must read "
+            "`target: host=127.0.0.1 port=5436 dbname=gestion`.\n", encoding="utf-8")
+        persist(repo, record_dir, before, f"docs(ops): FND-0354 - CRITICAL ALERT: DDL misfire detected on the staging port 5433\n\nRecorded by backlog_wait_for_deployment.py.\n\n"
+                "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>\n", branch=args.branch, push=not args.no_push, log=stamped)
+
+    watch = StagingWatch(staging_sig, staging_alert, log=stamped)
     stamped(f"waiting for {bc._target_of(bc._dsn() or '')} every {args.interval:g} s (read-only), for at most {args.timeout_hours:g} h; records are committed on {args.branch} in {repo}")
-    return run(lambda: wait(one_probe, interval=args.interval, timeout_s=args.timeout_hours * 3600, log=stamped), verify, ingest,
+    return run(lambda: wait(one_probe, interval=args.interval, timeout_s=args.timeout_hours * 3600, log=stamped, on_poll=watch), verify, ingest,
                attempts=args.attempts, retry_s=args.retry, persist_verify=persist_verify, persist_ingest=persist_ingest, log=stamped)
 
 

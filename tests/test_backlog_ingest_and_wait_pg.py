@@ -89,3 +89,33 @@ def test_an_entry_for_a_ticket_that_does_not_exist_is_reported_not_written(db):
     ids = {t["action_point_id"] for t in bc.list_tickets(ids=["FND-9001", "FND-9002"], conn=db)}
     out = ing.ingest(entries, ticket_ids=ids, existing_comments={}, append=lambda *a: pytest.fail("must not append"), apply=True)
     assert [s for _, s, _ in out] == ["MISSING_TICKET", "MISSING_TICKET"]
+
+
+def test_the_probe_reads_pg_catalog_so_a_login_without_table_privileges_still_sees_the_column(db):
+    """The staging watch uses a READ-ONLY login: information_schema would hide gate_switch.override from a login with no privilege on the table."""
+    mig.migrate(db, "transitions")
+    mig.migrate(db, "relations")
+    db.execute("CREATE ROLE staging_probe_ro LOGIN")
+    db.execute("SET SESSION AUTHORIZATION staging_probe_ro")
+    try:
+        assert db.execute("SELECT count(*) FROM information_schema.columns WHERE table_schema = 'backlog' AND table_name = 'gate_switch'").fetchone()[0] == 0     # hidden from this login
+        assert wf.probe(db)["override_column"] is True                                                                                                        # but not from the probe
+        sig = wf.staging_signature(db)
+        assert set(sig) == set(wf.REQUIRED) | {"routine_rows_xmin", "binding_events_inserted"} and isinstance(sig["routine_rows_xmin"], int)
+    finally:
+        db.execute("RESET SESSION AUTHORIZATION")
+
+
+def test_reapplying_the_ddl_changes_the_signature_even_when_nothing_else_does(db):
+    """CREATE OR REPLACE rewrites the routines' catalog rows: an idempotent re-application on the staging replica is visible without any privilege."""
+    mig.migrate(db, "transitions")
+    mig.migrate(db, "relations")
+    mig.migrate(db, "iam")
+    with db.transaction():
+        db.execute("SELECT 1")
+    first = wf.staging_signature(db)["routine_rows_xmin"]
+    with db.transaction():
+        mig.migrate(db, "iam")                      # the same step again: no object is new
+    second = wf.staging_signature(db)["routine_rows_xmin"]
+    assert second != first
+    assert wf.misfire({k: False for k in wf.REQUIRED}, wf.staging_signature(db), dict(wf.staging_signature(db), routine_rows_xmin=first)) is True
