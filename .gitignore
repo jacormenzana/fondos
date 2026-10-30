@@ -44,3 +44,7 @@ passwords.txt
 
 # P3 point-in-time backtest parquet cache (regenerable)
 proyecto3/cache/
+
+# GitHub App private key (FND-0353): never tracked
+*.pem
+github_app_keys/
