@@ -26,6 +26,10 @@ The first line of each pair is the dry run: it changes nothing. Capture `%ERRORL
 Expected after `relations`: gate mode still ENFORCE, gate rows unchanged, `sp_set_gate` has ONE form, five arguments. Expected after `iam`: three roles, tables `actor_login_event` and `binding_window_event`, the binding audit and window views, the routines.
 Then bind the logins with `sp_bind_login(..., '<declaring human identity>')` (the last argument is mandatory) and, if the default window (Monday to Friday 07:00-19:00, server time) is not yours, set it with `sp_set_binding_window`; both are in `BACKLOG_IAM_ROLLOUT.md`.
 
+**Zero-input verification (no exit code needed).** After both phases, run, on any machine that has the production backlog connection in `.env`:
+`C:\data\envs\des\python.exe scripts\audit\backlog_verify_deployment.py`
+It reads the schema itself and judges it with the criteria of `--verify relations` and `--verify iam` (their "migration exit code" criterion becomes "not needed"), checks that the connection is `127.0.0.1:5436/gestion`, that the gate is in ENFORCE with its rows, and that the history equals the newest baseline in `out\audit`. It writes a record to `deployments\` (version-controlled) and exits 0 only when everything passes. Use `--expect-target`, `--expect-gate` and `--baseline-file` for anything other than production.
+
 ## 2. A phase fails in the middle: nothing to roll back
 Output: `FAILED, rolled back (nothing committed)`, exit code 1. DDL, roles and grants are transactional in PostgreSQL. Rehearsed with the real tool: a session holding a lock made `--phase relations --apply` fail after the 5-second `lock_timeout`, and the catalog and the row counts were identical afterwards. Read the error, fix, run the same command again.
 
