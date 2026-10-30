@@ -15,6 +15,7 @@ An agent session can build a branch and push it, but it cannot open the pull req
 | D5 | **The database ticket log is written only after the runner has produced a success receipt that GitHub itself confirms.** | The system of record never records an action that did not happen (section 6). |
 | D6 | **Every read attempt on the key file leaves a Windows Security event, and those events are forwarded to an external immutable store.** | Local logs alone can be wiped by an attacker with SYSTEM (section 7). |
 | D7 | **No credential is ever cached or stored by the Windows Credential Manager.** The installation token is generated in memory by `open_pr.py` at each run and discarded as soon as the API call completes (owner, 2026-10-30; supersedes the earlier optional token cache). | No state to manage, no lingering credential, no cache invalidation: the token exchange is one API call per run (section 8). |
+| D8 | **The runner validates the permissions and repositories of the token GitHub issued before it opens the inbox** (section 5, startup check). | A mis-configured App fails at initialization with a distinct code, never mid-request. |
 
 ## 3. The App
 - Name `fondos-pr-opener`, installed on the single repository `jacormenzana/fondos` only (never "all repositories", never an organisation scope).
@@ -44,6 +45,12 @@ Exactly those three principals; **the owner's user is not listed**. `BUILTIN\Adm
 
 ## 5. The inbox request is untrusted input (D4)
 The agent never runs `open_pr.py`. `scripts/ops/open_pr_request.py` (agent side, no secret) writes a request file and starts the task with `schtasks /Run /TN fondos_open_pr`; the task runs `open_pr.py --process-inbox`.
+
+**Startup check (D8), before the inbox is opened.** Every run begins with: the manifest check (section 4), the key-file ACL check, a JWT, and the installation token (requested down-scoped, section 3). The runner then validates what GitHub actually issued, and exits with a distinct code and a line in `alerts\security.log` BEFORE it opens a single request file if anything differs:
+- the `permissions` object of the token response (`POST /app/installations/{id}/access_tokens`) is exactly `{"pull_requests": "write", "checks": "read", "metadata": "read"}`: no extra key, no other level (the permissions of an installation are reported there and by `GET /app/installations/{id}`; `GET /installation/repositories` does not carry them);
+- `repository_selection` is `selected`, and the `repositories` of the response are exactly `jacormenzana/fondos`;
+- `GET /installation/repositories` with the issued token returns `total_count` 1 and `full_name` `jacormenzana/fondos`.
+A mistake in the GitHub UI (a permission added, the App installed on all repositories) therefore stops the runner at initialization, not in the middle of a request.
 
 **Directories.** Inbox `C:\ProgramData\fondos\ci_runner\inbox\`: the owner's user *Modify*, the runner *Modify*. Outbox `...\outbox\`: the runner *Modify*, the owner's user *Read* ONLY (the agent cannot forge a receipt). Quarantine `...\quarantine\` and alerts `...\alerts\`: the runner *Modify*, the owner's user *Read*.
 
@@ -98,7 +105,7 @@ The runner holds no database credential, so the agent side writes the ticket log
 
 ## 10. Defaults
 1. The runner requests a review from the owner on every pull request it opens.
-2. The pull-request-only regime starts when acceptance criterion 14 passes, not on a calendar date; from then on the bridgehead pattern is retired and any new bridgehead needs a written owner exception in `deployments/`.
+2. The pull-request-only regime starts when acceptance criterion 15 passes, not on a calendar date; from then on the bridgehead pattern is retired and any new bridgehead needs a written owner exception in `deployments/`.
 3. The first real pull request is a docs-only change.
 
 ## 11. Provisioning steps (owner and DevOps, in order)
@@ -124,7 +131,8 @@ The runner holds no database credential, so the agent side writes the ticket log
 11. A fake-API test shows that the key, the JWT and the token appear in no request body, no log, no result file and no output.
 12. The static tests pass: only `open_pr.py` refers to the key file; no tracked file contains a private-key header; `.gitignore` covers `*.pem`; `open_pr.py` contains no process-call or dynamic-execution construct and no Credential Manager or token-cache construct (section 8).
 13. The schema file and the manifest hashes are pinned: changing the schema without redeploying makes the runner exit.
-14. One real, docs-only pull request is opened through the inbox by an agent session under the owner's supervision and merged by the owner: it shows the App's identity, the agent session never held the key, the ticket log appears only after GitHub confirms the pull request, and the owner's merge is the only manual step.
+14. **Startup check (D8)**: against a fake API, each of these makes the runner exit with its distinct code and an alert line before the inbox is opened (a request file placed in the inbox stays unread): an extra permission (`contents: write`), a missing one, `pull_requests` at `read`, an extra key, `repository_selection` = `all`, a second repository, another repository, `total_count` 2 from `/installation/repositories`. The exact permission set and one repository pass.
+15. One real, docs-only pull request is opened through the inbox by an agent session under the owner's supervision and merged by the owner: it shows the App's identity, the agent session never held the key, the ticket log appears only after GitHub confirms the pull request, and the owner's merge is the only manual step.
 
 ## 13. Creating the App in the GitHub UI, field by field (provisioning step 1)
 Prerequisites. Signed in to GitHub as `jacormenzana` (the owner of the repository) with two-factor authentication on; the repository `jacormenzana/fondos` exists and `master` carries the protection of `AGENTS.md`. Nothing else is needed: no organisation, no webhook endpoint, no server.
@@ -146,7 +154,7 @@ Prerequisites. Signed in to GitHub as `jacormenzana` (the owner of the repositor
 10. *Subscribe to events*: nothing is available without a webhook; leave all unchecked.
 11. **Where can this GitHub App be installed?** *Only on this account*.
 12. Click *Create GitHub App* (GitHub asks for the password or a passkey). On the *About* page note the **App ID** (a number), which is not a secret.
-13. *Private keys* > *Generate a private key*: the browser downloads one `.pem`. Generate it exactly once; two keys are never active together except during a rotation. Move it straight to the key directory of section 4 and delete the browser's copy (`del` and empty the recycle bin); do not open it, paste it or upload it anywhere.
+13. *Private keys* > *Generate a private key*: the browser downloads one `.pem`. Generate it exactly once; two keys are never active together except during a rotation. Save it **into `C:\ProgramData\fondos\key_staging`** (browser: *Settings* > *Downloads* > *Ask where to save each file before downloading* ON), never into Downloads (which can be synced or indexed). `provision_ci_runner.ps1 -Stage` creates that folder with an audit rule first; the main run reads the Security audit trail of the file and refuses the key if any process other than the browser, Windows Defender or the script itself touched it, then overwrites and deletes it. Do not open it, paste it or upload it anywhere.
 14. Left sidebar > *Install App* > *Install* next to `jacormenzana` > *Only select repositories* > `jacormenzana/fondos` > *Install*. Never choose *All repositories*.
 15. The address after installing is `https://github.com/settings/installations/<number>`: that number is the **installation id** (not a secret). Record App id, installation id and the bot login in `config`, never the key.
 16. Verification. *Settings* > *Applications* > *Installed GitHub Apps* > *Configure*: *Repository access* lists only `jacormenzana/fondos`, and *Permissions* lists exactly `Pull requests: Read and write`, `Checks: Read-only`, `Metadata: Read-only`. Any additional line means the form was filled wrongly: delete the App and start again from step 1. Record the check in `deployments/` with the date.
