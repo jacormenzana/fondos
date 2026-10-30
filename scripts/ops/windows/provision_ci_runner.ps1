@@ -3,12 +3,15 @@
    the isolated account fondos_ci_runner (not an administrator; no interactive, Remote Desktop or network logon; allowed only to log on as a batch job),
    the tree C:\ProgramData\fondos\ci_runner\ with every ACL of doc/operativos/CICD_SERVICE_ACCOUNT_SPEC.md sections 4 and 5, the audit policy and the SACL on the key directory,
    and the App's private key moved into github_app_keys\ (validated as one unmodified RSA PEM, the downloaded copy overwritten and deleted last).
- Run it IN MEMORY from the pushed commit, after checking the blob hash (doc/operativos/PROVISIONING_RUNBOOK.md), so the file in the working tree is never executed:
-   & ([scriptblock]::Create($text)) -KeySource <path of the .pem GitHub downloaded>
+ TWO calls, both IN MEMORY from the pushed commit, after checking the blob hash (doc/operativos/PROVISIONING_RUNBOOK.md), so the file in the working tree is never executed:
+   & ([scriptblock]::Create($text)) -Stage                      creates and audits C:\ProgramData\fondos\key_staging (the only place the browser saves the key; outside Downloads, OneDrive and Search)
+   & ([scriptblock]::Create($text)) -KeySource <the .pem in key_staging>
+ The main run also reads the Security audit trail of the staged file and REFUSES the key if any process other than the browser, Windows Defender or this script touched it.
  It never prints the key or the password. It does NOT deploy open_pr.py or create the scheduled tasks: that code does not exist yet (spec section 11, steps 4 to 6).
 #>
 param(
-    [Parameter(Mandatory)][string]$KeySource
+    [string]$KeySource = '',
+    [switch]$Stage
 )
 $ErrorActionPreference = 'Stop'
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Run this in an elevated PowerShell (Run as administrator).' }
@@ -18,6 +21,8 @@ $parent = 'C:\ProgramData\fondos'
 $root   = Join-Path $parent 'ci_runner'
 $keyDir = Join-Path $root 'github_app_keys'
 $keyDst = Join-Path $keyDir 'fondos-pr-opener.pem'
+$staging = Join-Path $parent 'key_staging'
+$allowedReaders = @('chrome.exe', 'msedge.exe', 'firefox.exe', 'brave.exe', 'vivaldi.exe', 'opera.exe', 'MsMpEng.exe', 'powershell.exe', 'pwsh.exe')
 $tmp    = Join-Path $root '_tmp'
 $sys32  = Join-Path $env:SystemRoot 'System32'
 $sid = @{ System = 'S-1-5-18'; Everyone = 'S-1-1-0'; Admins = 'S-1-5-32-544'; Users = 'S-1-5-32-545'; Rdp = 'S-1-5-32-555' }
@@ -42,6 +47,36 @@ function Test-AppKey {
     if ($der.Length -lt 1150 -or $der.Length -gt 1250) { return "the key body is $($der.Length) bytes: not a 2048-bit RSA key" }
     return $null
 }
+function Resolve-DailyUser {
+    # the logged-on session's user (correct even when the elevation used another administrator's credentials), shown and correctable
+    $console = (Get-CimInstance Win32_ComputerSystem).UserName
+    $daily = if ($console) { $console } else { "$env:COMPUTERNAME\$env:USERNAME" }
+    $typed = Read-Host "Daily user [$daily] (Enter accepts, or type DOMAIN\user)"
+    if ($typed) { $daily = $typed }
+    $s = (New-Object Security.Principal.NTAccount($daily)).Translate([Security.Principal.SecurityIdentifier])
+    if ($s.Value -in @($sid.System, $sid.Admins, $sid.Everyone, $sid.Users)) { throw "$daily is a built-in principal, not a user." }
+    Write-Host "Daily user: $daily ($($s.Value))"
+    return [pscustomobject]@{ Name = $daily; Sid = $s }
+}
+function Get-ForeignKeyAccess {
+    # From Security events 4663 (as XML): {Relevant = number of data/delete/permission accesses to $Path, Foreign = 'process (user)' of every one whose process is not in $Allowed}
+    param([string[]]$EventXml, [string]$Path, [string[]]$Allowed)
+    $foreign = New-Object System.Collections.Generic.HashSet[string]
+    $relevant = 0
+    foreach ($x in $EventXml) {
+        $e = [xml]$x
+        $d = @{}
+        foreach ($n in $e.Event.EventData.Data) { $d[$n.Name] = $n.'#text' }
+        if (-not $d.ContainsKey('ObjectName') -or $d['ObjectName'] -ne $Path) { continue }
+        $mask = 0
+        if ($d['AccessMask']) { $mask = [Convert]::ToInt32($d['AccessMask'].Replace('0x', ''), 16) }
+        if (-not ($mask -band 0xD0007)) { continue }      # ReadData/WriteData/AppendData, DELETE, WRITE_DAC, WRITE_OWNER; attribute reads (the shell, the file dialog) are not access to the content
+        $relevant++
+        $leaf = [IO.Path]::GetFileName([string]$d['ProcessName'])
+        if ($Allowed -notcontains $leaf) { [void]$foreign.Add("$leaf ($($d['SubjectUserName']))") }
+    }
+    return [pscustomobject]@{ Relevant = $relevant; Foreign = @($foreign) }
+}
 function Get-UserRights {
     param([string]$Cfg)
     Invoke-Native (Join-Path $sys32 'secedit.exe') @('/export', '/cfg', $Cfg, '/areas', 'USER_RIGHTS', '/quiet')
@@ -58,11 +93,39 @@ function Set-UserRight {
     Invoke-Native (Join-Path $sys32 'secedit.exe') @('/configure', '/db', (Join-Path $tmp 'rights.sdb'), '/cfg', $inf, '/areas', 'USER_RIGHTS', '/quiet')
 }
 
+if ($Stage) {
+    $createdStaging = $false
+    try {
+        if (Test-Path $staging) { throw "$staging already exists: stop and review it by hand (it may hold a key)." }
+        $du = Resolve-DailyUser
+        if (-not (Test-Path $parent)) { New-Item -ItemType Directory -Path $parent | Out-Null }
+        if ((Get-Acl $parent).GetOwner([Security.Principal.SecurityIdentifier]) -eq $du.Sid) { throw "${parent} is owned by $($du.Name): an agent could swap what is inside. Delete it (after checking it) and run again." }
+        New-Item -ItemType Directory -Path $staging | Out-Null; $createdStaging = $true
+        Invoke-Native 'auditpol.exe' @('/set', '/subcategory:{0CCE921D-69AE-11D9-BED3-505054503030}', '/success:enable', '/failure:enable')
+        $audRights = [Security.AccessControl.FileSystemRights]'ReadData, WriteData, AppendData, Delete, ChangePermissions, TakeOwnership'
+        $acl = Get-Acl -Path $staging -Audit
+        $acl.AddAuditRule((New-Object Security.AccessControl.FileSystemAuditRule($sidOf.Everyone, $audRights, 'ContainerInherit, ObjectInherit', 'None', 'Success, Failure')))
+        Set-Acl -Path $staging -AclObject $acl
+        Set-Icacls $staging @('/inheritance:r', '/grant:r', "*$($du.Sid.Value):(OI)(CI)(M)", "*$($sid.Admins):(OI)(CI)(F)", "*$($sid.System):(OI)(CI)(RX)")
+        Write-Host "STAGING READY: $staging"
+        Write-Host 'In the browser: Settings > Downloads > turn ON "Ask where to save each file before downloading", then save the App key INTO that folder. Do not open it. Then run the main step.'
+    }
+    catch {
+        Write-Host "FAILED: $($_.Exception.Message)" -ForegroundColor Red
+        if ($createdStaging -and (Test-Path $staging)) { Remove-Item $staging -Recurse -Force -ErrorAction SilentlyContinue }
+        $global:LASTEXITCODE = 1
+    }
+    return
+}
+if (-not $KeySource) { throw 'Give -KeySource <the .pem inside key_staging>, or run with -Stage first.' }
+
 try {
     # --- 0. Preconditions ---------------------------------------------------------------------------------------------------------------
     if (Test-Path $root) { throw "$root already exists: stop and review it by hand (remove it only after reading it)." }
     if (Get-LocalUser -Name $acct -ErrorAction SilentlyContinue) { throw "$acct already exists: stop and review it by hand." }
     if (-not (Test-Path -LiteralPath $KeySource -PathType Leaf)) { throw "KeySource not found: $KeySource" }
+    $KeySource = (Resolve-Path -LiteralPath $KeySource).Path
+    if ((Split-Path -Parent $KeySource) -ne $staging) { throw "KeySource must be a file directly inside $staging (run -Stage first and save the download there, not in Downloads)." }
     if ((Get-Item -LiteralPath $KeySource).Length -gt 8192) { throw 'KeySource is larger than 8 KB: not an App key.' }
     $keyText = [IO.File]::ReadAllText($KeySource)
     $why = Test-AppKey $keyText
@@ -70,13 +133,8 @@ try {
     if ($why) { throw "KeySource rejected: $why." }
 
     # --- 1. The daily user, from the logged-on session ------------------------------------------------------------------------------------
-    $console = (Get-CimInstance Win32_ComputerSystem).UserName
-    $daily = if ($console) { $console } else { "$env:COMPUTERNAME\$env:USERNAME" }
-    $typed = Read-Host "Daily user (inbox write, outbox read) [$daily] (Enter accepts, or type DOMAIN\user)"
-    if ($typed) { $daily = $typed }
-    $dailySid = (New-Object Security.Principal.NTAccount($daily)).Translate([Security.Principal.SecurityIdentifier])
-    if ($dailySid.Value -in @($sid.System, $sid.Admins, $sid.Everyone, $sid.Users)) { throw "$daily is a built-in principal, not a user." }
-    Write-Host "Daily user: $daily ($($dailySid.Value))"
+    $du = Resolve-DailyUser
+    $daily = $du.Name; $dailySid = $du.Sid
 
     # --- 2. UAC on the secure desktop -----------------------------------------------------------------------------------------------------
     $pol = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
@@ -130,6 +188,14 @@ try {
     Copy-Item -LiteralPath $KeySource -Destination $keyDst
     $why = Test-AppKey ([IO.File]::ReadAllText($keyDst))
     if ($why) { throw "the copy in $keyDir is not valid: $why." }
+    # the staged file's audit trail: nothing but the browser, Defender and this script may have touched its content
+    Start-Sleep -Seconds 2
+    try { $xml = @(Get-WinEvent -FilterHashtable @{ LogName = 'Security'; Id = 4663; StartTime = (Get-Item -LiteralPath $staging).CreationTime } -ErrorAction Stop | ForEach-Object { $_.ToXml() }) }
+    catch { if ($_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*') { $xml = @() } else { throw } }
+    $acc = Get-ForeignKeyAccess $xml $KeySource $allowedReaders
+    if ($acc.Relevant -eq 0) { throw 'ASSERT: the Security log holds no access event for the staged key, so auditing is not working and the key cannot be proven unread. Delete the key in GitHub and generate another after running -Stage again.' }
+    if ($acc.Foreign.Count -gt 0) { throw ("ASSERT: the staged key was accessed by " + ($acc.Foreign -join ', ') + ". Delete the key in GitHub, remove key_staging by hand and generate another.") }
+    Write-Host "Staged key audit: $($acc.Relevant) access event(s), all by the browser, Defender or this script."
 
     # --- 7. Assertions: any failure undoes the whole run (the downloaded key is still untouched) -------------------------------------------
     $a = Get-Acl -Path $keyDir
@@ -162,6 +228,7 @@ try {
     [IO.File]::WriteAllBytes($KeySource, (New-Object byte[] $len))
     Remove-Item -LiteralPath $KeySource -Force
     Remove-Item -LiteralPath $tmp -Recurse -Force
+    Remove-Item -LiteralPath $staging -Recurse -Force
     Write-Host "PROVISIONED OK. Account $me; key in $keyDir (not printed). The downloaded key file was overwritten and deleted."
     Write-Host 'Next: install the App on the repository (CICD spec section 13, steps 14 to 16). open_pr.py and the scheduled tasks are not part of this run.'
     icacls $keyDir

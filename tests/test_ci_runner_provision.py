@@ -64,3 +64,50 @@ def test_the_script_keeps_its_isolation_promises_in_text():
     assert "SeDenyInteractiveLogonRight" in s and "SeDenyRemoteInteractiveLogonRight" in s and "SeBatchLogonRight" in s
     assert "Credential" not in s.replace("NetworkCredential", "")        # the Credential Manager is not used (spec D7)
     assert "/savecred" not in s
+
+
+# --- the audit trail of the staged key ----------------------------------------------------------------------------------------------------------
+
+STAGED = r"C:\ProgramData\fondos\key_staging\fondos-pr-opener.2026-10-30.private-key.pem"
+
+
+def ev(process: str, mask: str, obj: str = STAGED, user: str = "jacor") -> str:
+    return ('<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event"><System><EventID>4663</EventID></System><EventData>'
+            f'<Data Name="SubjectUserName">{user}</Data><Data Name="ObjectName">{obj}</Data><Data Name="ProcessName">{process}</Data><Data Name="AccessMask">{mask}</Data></EventData></Event>')
+
+
+def access(tmp_path, events):
+    src = SCRIPT.read_text(encoding="utf-8")
+    fn = re.search(r"(function Get-ForeignKeyAccess \{.*?\n\}\n)", src, re.S).group(1)
+    allowed = re.search(r"\$allowedReaders = (@\(.*?\))\n", src).group(1)
+    xml = "@(\n" + ",\n".join("@'\n" + e + "\n'@" for e in events) + "\n)" if events else "@()"
+    ps = tmp_path / "a.ps1"
+    ps.write_text(f"{fn}\n$allowedReaders = {allowed}\n$x = {xml}\n$r = Get-ForeignKeyAccess $x '{STAGED}' $allowedReaders\n'RELEVANT ' + $r.Relevant\n$r.Foreign | ForEach-Object {{ 'FOREIGN ' + $_ }}\n",
+                  encoding="utf-8-sig")
+    done = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(ps)], capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr
+    return done.stdout.splitlines()
+
+
+def test_only_the_browser_defender_and_the_script_may_touch_the_staged_key(tmp_path):
+    out = access(tmp_path, [ev(r"C:\Program Files\Google\Chrome\Application\chrome.exe", "0x2"), ev(r"C:\ProgramData\Microsoft\Windows Defender\Platform\4.18\MsMpEng.exe", "0x1", user="SYSTEM"),
+                            ev(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe", "0x1", user="admin")])
+    assert out == ["RELEVANT 3"]
+
+
+def test_any_other_process_reading_the_staged_key_is_named(tmp_path):
+    out = access(tmp_path, [ev(r"C:\Program Files\Google\Chrome\Application\chrome.exe", "0x2"), ev(r"C:\Users\jacor\AppData\Local\Temp\updater.exe", "0x1"),
+                            ev(r"C:\Windows\explorer.exe", "0x80"),                                   # attribute read only: not the content
+                            ev(r"C:\Users\jacor\x\other.exe", "0x1", obj=r"C:\ProgramData\fondos\key_staging\another-file.txt"),   # another object
+                            ev(r"C:\Users\jacor\y\deleter.exe", "0x10000")])
+    assert out[0] == "RELEVANT 3" and sorted(out[1:]) == ["FOREIGN deleter.exe (jacor)", "FOREIGN updater.exe (jacor)"]
+
+
+def test_no_event_at_all_is_reported_as_zero_relevant_so_the_main_run_fails_closed(tmp_path):
+    assert access(tmp_path, []) == ["RELEVANT 0"]
+
+
+def test_the_script_has_a_stage_mode_and_requires_the_key_inside_it():
+    s = SCRIPT.read_text(encoding="utf-8")
+    assert "[switch]$Stage" in s and "KeySource must be a file directly inside $staging" in s and "Remove-Item -LiteralPath $staging" in s
+    assert "Downloads" in s                                      # the message that names the folder the key must NOT be in
