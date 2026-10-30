@@ -10,7 +10,7 @@
 param(
     [Parameter(Mandatory)][ValidatePattern('^[0-9a-f]{40}$')][string]$Commit,
     [string]$Repo = 'C:\desarrollo\fondos',
-    [string]$PythonHome = 'C:\data\envs\des'
+    [string]$PythonHome = ''    # empty = <daily user's profile>\.conda\envs\des
 )
 $ErrorActionPreference = 'Stop'
 $Commit = $Commit.ToLowerInvariant()
@@ -97,7 +97,6 @@ try {
     Write-Host ("Deploying: " + (& $gitExe @git log -1 --format='%h %s' $Commit))
     if (Test-Path $root) { throw "$root already exists: stop and review it by hand (remove it only after reading it)." }
     if (Get-LocalUser -Name $acct -ErrorAction SilentlyContinue) { throw "$acct already exists: stop and review it by hand." }
-    if (-not (Test-Path (Join-Path $PythonHome 'python.exe')) -or -not (Test-Path (Join-Path $PythonHome 'Lib\site-packages\psycopg'))) { throw "$PythonHome is not the project environment (python.exe or psycopg missing)." }
 
     # --- 1. The daily user, resolved from the logged-on session (not from the elevated token, which may be another administrator) ----------
     $console = (Get-CimInstance Win32_ComputerSystem).UserName
@@ -107,6 +106,13 @@ try {
     $dailySid = (New-Object Security.Principal.NTAccount($daily)).Translate([Security.Principal.SecurityIdentifier])
     if ($dailySid.Value -in @($sid.System, $sid.Admins, $sid.Everyone, $sid.Users)) { throw "$daily is a built-in principal, not a user." }
     Write-Host "Daily user: $daily ($($dailySid.Value))"
+    # the project environment is the daily user's only `des` env (C:\data\envs\des was deleted on 2026-10-30): resolve it from that user's profile, never from the elevated token's
+    if (-not $PythonHome) {
+        $profileDir = (Get-ItemProperty -LiteralPath "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$($dailySid.Value)" -ErrorAction Stop).ProfileImagePath
+        $PythonHome = Join-Path $profileDir '.conda\envs\des'
+    }
+    Write-Host "Python environment: $PythonHome"
+    if (-not (Test-Path (Join-Path $PythonHome 'python.exe')) -or -not (Test-Path (Join-Path $PythonHome 'Lib\site-packages\psycopg'))) { throw "$PythonHome is not the project environment (python.exe or psycopg missing)." }
 
     # --- 2. UAC on the secure desktop ---------------------------------------------------------------------------------------------------
     $pol = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'

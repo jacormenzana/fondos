@@ -207,7 +207,7 @@ def test_bad_arguments_are_usage_errors(tmp_path):
 
 # --- runtime integrity (the interpreter copied into runtime\) -----------------------------------------------------------------------------------
 
-ENV_DIR = Path(r"C:\data\envs\des")
+ENV_DIR = Path.home() / ".conda" / "envs" / "des"
 
 
 def _functions(*names):
