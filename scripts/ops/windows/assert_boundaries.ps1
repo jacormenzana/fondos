@@ -3,7 +3,8 @@
  and writes a structured receipt: deployments/<utc date>_boundary-assertions_<computer>.json (+ .sha256, + .sig when -SshKey is given).
  A check passes only on the specific outcome: "denied" means .NET raised UnauthorizedAccessException (Win32 error 5). A missing path, a sharing violation or any other error is a FAIL,
  never a pass, so a mistyped path or an unprovisioned machine cannot produce a green receipt.
- Exit 0 = every check passed, 1 = at least one failed, 2 = refused to run (elevated token).
+ Run it IN MEMORY from the pinned commit (doc/operativos/PROVISIONING_RUNBOOK.md): -ScriptBlob is then the git blob id the launcher verified, and is written into the receipt.
+ Result code (exit code under -File, $LASTEXITCODE when run in memory): 0 = every check passed, 1 = at least one failed, 2 = refused to run (elevated token).
  What the receipt is and is not: it is a repeatable, machine-readable record of what a non-elevated process of this user could and could not do, with the token facts and the script's own
  hash. It is evidence, not a proof of isolation: anything running as this user could also produce a file of this shape, which is why the receipt is committed to the repository
  (reviewed, versioned) and why the owner's signature (-SshKey, ssh-keygen -Y sign, namespace fondos-boundaries) is optional, not a security boundary.
@@ -14,14 +15,15 @@ param(
     [string]$RepoRoot = 'C:\desarrollo\fondos',
     [string]$EnvFile  = '',
     [string]$OutDir   = '',
-    [string]$SshKey   = ''
+    [string]$SshKey   = '',
+    [string]$ScriptBlob = ''
 )
 $ErrorActionPreference = 'Stop'
 if (-not $EnvFile) { $EnvFile = Join-Path $RepoRoot '.env' }
 if (-not $OutDir)  { $OutDir  = Join-Path $RepoRoot 'deployments' }
 $identity  = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = New-Object Security.Principal.WindowsPrincipal($identity)
-if ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { Write-Host 'REFUSED: this token is elevated. Run it from a normal (non-elevated) terminal: the point is to test what an unprivileged process can do.'; exit 2 }
+if ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { Write-Host 'REFUSED: this token is elevated. Run it from a normal (non-elevated) terminal: the point is to test what an unprivileged process can do.'; if ($MyInvocation.MyCommand.Path) { exit 2 } else { $global:LASTEXITCODE = 2; return } }
 
 function Get-Outcome {
     # runs $Action and classifies the result: OK, DENIED (UnauthorizedAccessException) or the name of any other exception
@@ -64,7 +66,8 @@ $results.Add([pscustomobject][ordered]@{ id = 'B10'; check = 'no owner DSN key i
 
 $allPass = (@($results | Where-Object { -not $_.pass }).Count -eq 0)
 $overall = if ($allPass) { 'PASS' } else { 'FAIL' }
-$scriptHash = (Get-FileHash -LiteralPath $MyInvocation.MyCommand.Path -Algorithm SHA256).Hash.ToLowerInvariant()
+$scriptHash = 'in-memory'
+if ($MyInvocation.MyCommand.Path) { $scriptHash = (Get-FileHash -LiteralPath $MyInvocation.MyCommand.Path -Algorithm SHA256).Hash.ToLowerInvariant() }
 $head = ''
 try { $head = (& git -C $RepoRoot rev-parse HEAD 2>$null) } catch { $head = '' }
 $receipt = [ordered]@{
@@ -74,6 +77,7 @@ $receipt = [ordered]@{
     user_sid    = $identity.User.Value
     elevated    = $false
     script_sha256 = $scriptHash
+    script_blob = $ScriptBlob
     repo_head   = "$head"
     overall     = $overall
     results     = $results.ToArray()
@@ -91,4 +95,5 @@ if ($SshKey) {
 }
 foreach ($r in $results) { '{0}  {1,-4}  {2,-62} expected {3,-7} observed {4}' -f $(if ($r.pass) { 'PASS' } else { 'FAIL' }), $r.id, $r.check, $r.expected, $r.observed }
 Write-Host "OVERALL: $($receipt.overall)  receipt: $file  sha256: $hash"
-if ($allPass) { exit 0 } else { exit 1 }
+$rc = if ($allPass) { 0 } else { 1 }
+if ($MyInvocation.MyCommand.Path) { exit $rc } else { $global:LASTEXITCODE = $rc }

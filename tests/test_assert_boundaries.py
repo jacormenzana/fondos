@@ -79,3 +79,15 @@ def test_the_receipt_has_a_matching_sha256_sidecar_and_the_hash_of_the_script(tm
 def test_the_script_refuses_an_elevated_token_in_text():
     s = SCRIPT.read_text(encoding="utf-8")
     assert "IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {" in s and "exit 2" in s
+
+
+def test_run_in_memory_it_records_the_blob_id_and_reports_through_lastexitcode(tmp_path):
+    out = tmp_path / "out"
+    cmd = (f"$t = Get-Content -Raw -LiteralPath '{SCRIPT}'; & ([scriptblock]::Create($t)) -CiRoot '{tmp_path / 'ci'}' -DbRoot '{tmp_path / 'db'}' -RepoRoot '{tmp_path}' "
+           f"-EnvFile '{tmp_path / '.env'}' -OutDir '{out}' -ScriptBlob 'deadbeef' | Out-Null; 'RC=' + $LASTEXITCODE")
+    done = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cmd], capture_output=True, text=True)
+    if "RC=2" in done.stdout:
+        pytest.skip("the test session itself is elevated")
+    assert "RC=1" in done.stdout, done.stdout + done.stderr
+    r = json.loads(next(out.glob("*_boundary-assertions_*.json")).read_text(encoding="utf-8"))
+    assert r["script_sha256"] == "in-memory" and r["script_blob"] == "deadbeef"
