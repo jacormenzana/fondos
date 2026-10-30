@@ -12,6 +12,7 @@ Conventions: repo root `C:\desarrollo\fondos` with the stack checked out; interp
 2. Restore point (the live `gestion` database is included): `wsl -d Ubuntu -e bash /mnt/c/desarrollo/fondos/scripts/ops/backup_live_pg.sh`
 3. Baseline of the history: `C:\data\envs\des\python.exe scripts\audit\backlog_phase_a_acceptance.py --baseline` (keep the file name it prints).
 4. Today's gate state, to compare after: `SELECT backlog.fn_gate_mode('DELIVERY'); SELECT count(*) FROM backlog.gate_switch; SELECT count(*) FROM backlog.hold_event;`
+5. **Confirm the TARGET before any `--apply`** (the first deployment attempt of 2026-10-29 went to a staging replica, `127.0.0.1:5433/des`, and production stayed unchanged). The owner DSN you type decides the server: the tool only swaps the database name to `gestion`. Every command of section 1 prints, as its first line, `target: host=... port=... dbname=... user=...`. **For production it must read exactly `host=127.0.0.1 port=5436 dbname=gestion`.** Any other port or database: stop and fix the DSN; do not apply. The dry run prints the same line, so the check costs nothing.
 
 ## 1. Apply (each phase is ONE transaction)
 ```
@@ -23,7 +24,7 @@ C:\data\envs\des\python.exe scripts\ops\migrate_backlog_v2.py --phase iam --appl
 C:\data\envs\des\python.exe scripts\audit\backlog_phase_a_acceptance.py --verify iam --baseline-file <file> --migration-rc %ERRORLEVEL%
 ```
 The first line of each pair is the dry run: it changes nothing. Capture `%ERRORLEVEL%` right after the `--apply` line, before running anything else.
-Expected after `relations`: gate mode still ENFORCE, gate rows unchanged, `sp_set_gate` has ONE form, five arguments. Expected after `iam`: three roles, tables `actor_login_event` and `binding_window_event`, the binding audit and window views, the routines.
+Right after each `--apply`, confirm on the production connection that it landed there (section 4, first block). Expected after `relations`: gate mode still ENFORCE, gate rows unchanged, `sp_set_gate` has ONE form, five arguments. Expected after `iam`: three roles, tables `actor_login_event` and `binding_window_event`, the binding audit and window views, the routines.
 Then bind the logins with `sp_bind_login(..., '<declaring human identity>')` (the last argument is mandatory) and, if the default window (Monday to Friday 07:00-19:00, server time) is not yours, set it with `sp_set_binding_window`; both are in `BACKLOG_IAM_ROLLOUT.md`.
 
 **Zero-input verification (no exit code needed).** After both phases, run, on any machine that has the production backlog connection in `.env`:
@@ -48,6 +49,7 @@ After L1 or L2, revert the code in the reverse order of the merges (`git revert 
 
 ## 4. Checks after any level
 ```
+SELECT current_database(), inet_server_port();                             -- gestion; the production container (the port seen from your side is 5436)
 SELECT backlog.fn_gate_mode('DELIVERY');                                   -- ENFORCE after L1 and L2 (unless you ran L3)
 SELECT count(*) FROM backlog.gate_switch;                                  -- same as section 0, always
 SELECT count(*) FROM backlog.hold_event;                                   -- same as section 0, always
