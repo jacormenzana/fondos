@@ -5,9 +5,9 @@ Point-in-time backtest of the P3 portfolio (FND-0159): scores the universe at ev
 information available then, builds the portfolio with the live engine, evaluates 1/3/12-month forward returns
 (costs, cash leg, IPC+M3 target, Sharpe) and writes an auditable set of artifacts. READ-ONLY on the database.
 
-    C:\\data\\envs\\des\\python.exe scripts\\launch\\p3_pit_backtest.py --dry-run
-    C:\\data\\envs\\des\\python.exe scripts\\launch\\p3_pit_backtest.py --sample-per-nature 4          (40-ISIN style sample)
-    C:\\data\\envs\\des\\python.exe scripts\\launch\\p3_pit_backtest.py                                (FULL universe, owner-run)
+    C:\\Users\\jacor\\.conda\\envs\\des\\python.exe scripts\\launch\\p3_pit_backtest.py --dry-run
+    C:\\Users\\jacor\\.conda\\envs\\des\\python.exe scripts\\launch\\p3_pit_backtest.py --sample-per-nature 4          (40-ISIN style sample)
+    C:\\Users\\jacor\\.conda\\envs\\des\\python.exe scripts\\launch\\p3_pit_backtest.py                                (FULL universe, owner-run)
 
 Artifacts (one directory per run, default C:\\data\\fondos\\reports\\pit_backtest\\<STAMP>):
     manifest.json            arguments, git commit, versions, lags, universe size, durations

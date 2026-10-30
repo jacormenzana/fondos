@@ -11,7 +11,7 @@ the rule (the doc points here).
   out/diag              diagnostic CSVs: `_tmp_*` removable after `tmp_days`, the rest after `keep_days`, by modification time.
 
 PDFs and Raw_KIID_Text are never deleted (separate rule). Usage:
-    C:\\data\\envs\\des\\python.exe scripts\\audit\\artifact_retention.py [--root DIR] [--today YYYY-MM-DD] [--list]
+    C:\\Users\\jacor\\.conda\\envs\\des\\python.exe scripts\\audit\\artifact_retention.py [--root DIR] [--today YYYY-MM-DD] [--list]
 Exit code is always 0 (it is a report, not a gate).
 """
 from __future__ import annotations

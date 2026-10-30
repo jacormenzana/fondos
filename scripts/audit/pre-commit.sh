@@ -21,7 +21,7 @@ cat > "$HOOK" <<'EOF'
 # Drift blocks the commit; fix with: python scripts/audit/sync_agents_md.py --write, then stage the file.
 
 # Resolve interpreter: prefer Conda 'des' env, fall back to system python.
-CONDA_PYTHON="/c/data/envs/des/python.exe"
+CONDA_PYTHON="$HOME/.conda/envs/des/python.exe"
 if [ -f "$CONDA_PYTHON" ]; then
     PYTHON="$CONDA_PYTHON"
 elif command -v python3 >/dev/null 2>&1; then

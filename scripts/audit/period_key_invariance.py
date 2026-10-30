@@ -18,9 +18,9 @@ NON-BLOCKING by contract (`shared/governance/controls.py`: T-PERIOD-KEY-INVARIAN
 family that is predicted invariant and is not becomes an `[ATENCION]` line in the cycle report. Exit codes: 0 nothing to report, 1 a finding
 (a prediction did not hold), 2 a control failed so the run proves nothing.
 
-    C:\\data\\envs\\des\\python.exe -X utf8 scripts/audit/period_key_invariance.py --contract-only     # the data contract, seconds
-    C:\\data\\envs\\des\\python.exe -X utf8 scripts/audit/period_key_invariance.py --n 120             # cycle diagnostic
-    C:\\data\\envs\\des\\python.exe -X utf8 scripts/audit/period_key_invariance.py --n 400             # the study's own sample size
+    C:\\Users\\jacor\\.conda\\envs\\des\\python.exe -X utf8 scripts/audit/period_key_invariance.py --contract-only     # the data contract, seconds
+    C:\\Users\\jacor\\.conda\\envs\\des\\python.exe -X utf8 scripts/audit/period_key_invariance.py --n 120             # cycle diagnostic
+    C:\\Users\\jacor\\.conda\\envs\\des\\python.exe -X utf8 scripts/audit/period_key_invariance.py --n 400             # the study's own sample size
 """
 import argparse
 import json

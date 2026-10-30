@@ -4,7 +4,7 @@ r"""
 Model-value study of P3 on a SAVED PIT run (FND-0193, pre-registered in doc/decisiones/PREREG_FND-0193.md, amendments 1 and 2). Read-only;
 with a run folder that holds its input snapshot (inputs/) it does not even open the database. Launch it under the memory guard:
 
-    powershell -NoProfile -File C:\desarrollo\fondos\out\audit\guarded_run.ps1 -CommandLine "C:\data\envs\des\python.exe -u -X utf8 scripts\launch\p3_pit_value.py --run-dir <R1> --snapped-run-dir <R4> --ext-run-dir <R2> --survivorship-run-dir <R3>"
+    powershell -NoProfile -File C:\desarrollo\fondos\out\audit\guarded_run.ps1 -CommandLine "C:\Users\jacor\.conda\envs\des\python.exe -u -X utf8 scripts\launch\p3_pit_value.py --run-dir <R1> --snapped-run-dir <R4> --ext-run-dir <R2> --survivorship-run-dir <R3>"
 
 Order of the checks (a failure stops or flags the verdict, never silently passes):
   1. the trial ledger on disk equals the one committed at tag prereg-fnd0193 (exit 4 otherwise);

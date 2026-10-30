@@ -46,10 +46,10 @@ PROCESS_PATTERNS = (
     "migrate_",
 )
 LOCK_FILE = ROOT / "proyecto1" / "log" / "fondos_cycle.lock"
-# the interpreter every repo command is meant to run under. Two conda envs named `des` exist on the owner's machine
-# (C:\data\envs\des and C:\Users\jacor\.conda\envs\des, so `conda ... -n des` targets the WRONG one): a mismatch is
-# reported, never fatal -- Linux CI, the hermetic PG suite and any other host must keep working. FONDOS_PYTHON overrides.
-DEFAULT_INTERPRETER = r"C:\data\envs\des\python.exe"
+# the interpreter every repo command is meant to run under: the owner's only `des` env (C:\data\envs\des was deleted on
+# 2026-10-30). A mismatch is reported, never fatal -- Linux CI, the hermetic PG suite and any other host must keep
+# working. FONDOS_PYTHON overrides.
+DEFAULT_INTERPRETER = r"C:\Users\jacor\.conda\envs\des\python.exe"
 CI_LOOKBACK_HOURS = 6.0                 # how far back the CodeIntegrity 3077 query looks (bounded: the check stays fast)
 
 

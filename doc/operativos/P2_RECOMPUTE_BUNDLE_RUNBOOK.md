@@ -40,7 +40,7 @@ Expected change of the VALUES on that sample (flags off vs on, same data): `alph
 portfolio will shift** after the recompute. `capture_ratio` changes for all funds (mean +0.04), coverage 30 -> 31; `beta_spread_hy`
 3 -> 27 funds, `beta_vix` 26 -> 27; `macro_r2` +0.03 on average. The CN CPI factor is unusable either way (series ends 2024-03).
 **Recommended before the 4-hour run** (about 15 min, owner-run, P2 paused, containers up):
-`C:\data\envs\des\python.exe -X utf8 scripts\launch\p3_pit_backtest.py --hysteresis-grid ""` and compare with the baseline run
+`C:\Users\jacor\.conda\envs\des\python.exe -X utf8 scripts\launch\p3_pit_backtest.py --hysteresis-grid ""` and compare with the baseline run
 20261003_234917 (same code path with the flags off): it shows what the corrected persistence and capture do to the portfolio before
 production metrics change. The same recompute also carries the FND-0208 macro OLS guards, whose counters (`cond_guard_funds`,
 `ols_funds`) settle the condition-index limit decision.

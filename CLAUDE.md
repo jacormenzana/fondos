@@ -12,18 +12,18 @@ the index to the five specification documents in `doc/reglas/`). **Read it first
 
 These are the only Claude-Code-specific notes; everything else is in `AGENTS.md`.
 
-- **Python interpreter:** use `C:\data\envs\des\python.exe` explicitly.
+- **Python interpreter:** use `C:\Users\jacor\.conda\envs\des\python.exe` explicitly.
   A bare `python` may resolve to the wrong interpreter (WindowsApps shim) → "Permission denied".
-- **Two conda envs are both named `des`:** `C:\data\envs\des` (the repo's env) and
-  `C:\Users\jacor\.conda\envs\des` (a different one). `conda ... -n des` resolves to the **wrong**
-  one. Always address the repo env by explicit prefix: `conda ... -p C:\data\envs\des` (or the
-  PowerShell profile helper `fondos-conda`, which injects it and refuses to run without it).
+- **One conda env, `des`:** `C:\Users\jacor\.conda\envs\des` is the repo's only env (the former
+  `C:\data\envs\des` was deleted on 2026-10-30). Keep addressing it by explicit prefix:
+  `conda ... -p C:\Users\jacor\.conda\envs\des` (or the PowerShell profile helper `fondos-conda`,
+  which injects it and refuses to run without it). The project root is `C:\desarrollo\fondos`.
 - **A blocked PostgreSQL driver (RC 106) may be transient**, not a policy decision: Windows Smart
   App Control can block an unsigned DLL on first load and clear it once it resolves the file's
   reputation (observed once, 2026-10-12, ~32 min on psycopg's bundled libcrypto). Diagnose with
   `python scripts/audit/preflight_check.py` (section `[0]`) before escalating; still never retry,
   copy a DLL, or edit the registry — `shared/env_guard.py` fails fast by design.
-- **Run P1 tests:** `C:\data\envs\des\python.exe -m pytest proyecto1/tests/`
+- **Run P1 tests:** `C:\Users\jacor\.conda\envs\des\python.exe -m pytest proyecto1/tests/`
 - **AST validation after every Python edit** (P#3 / R-8):
   `python -c "import ast; ast.parse(open('archivo.py').read()); print('AST OK')"`
 - Use the session scratchpad directory for temporary files, not the project tree.
@@ -39,7 +39,7 @@ These are the only Claude-Code-specific notes; everything else is in `AGENTS.md`
   (`127.0.0.1:5436`, `/opt/docker/db/postgresql17/`, recreate with its `up.sh`); the repo `.env`
   selects it (`FONDOS_DB_BACKEND=postgres`, `FONDOS_PG_DSN` = `fondos_app`, `FONDOS_PG_DSN_OWNER` =
   `fondos_owner`). `pg-server` (`:5432`) is the disposable dev/test server. Ops scripts are in
-  `scripts/ops/`; hermetic tests: `C:\data\envs\des\python.exe scripts/ops/run_pg_tests.py`. Never
+  `scripts/ops/`; hermetic tests: `C:\Users\jacor\.conda\envs\des\python.exe scripts/ops/run_pg_tests.py`. Never
   print DSN passwords, and never stop/recreate the live container from a session (ask the user to
   run the script). Backlog: `gestion.backlog` (same server, dbname `gestion`).
 - **WSL2-hosted Postgres (dev/rehearsal containers `pg-server`, `fondos_postgres`):** WSL2

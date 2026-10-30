@@ -30,10 +30,10 @@ description: Deep-dive audit of a P2 quantitative-metrics run (`P2_calculateIndi
 | Regime source of truth | `_REGIME_SUFFIX` (7 regimes) | `proyecto2/src/calculations/regime_returns.py` |
 | Backlog | `gestion.backlog` (PostgreSQL, `FONDOS_BACKLOG_PG_DSN`) | rules in `doc/reglas/NORMAS_BACKLOG.md` |
 
-Python: `C:\data\envs\des\python.exe`.
+Python: `C:\Users\jacor\.conda\envs\des\python.exe`.
 If any asset is missing, report immediately before proceeding.
 
-**Pre-flight — backlog scope:** Read the live backlog in `gestion.backlog` before starting §3 (the HTML artifact was retired on 2026-09-21): `C:\data\envs\des\python.exe scripts/audit/backlog_links.py --all`, or `shared.backlog_client.list_tickets(open_only=True)`. List currently open P2 items. Scope triage, reliability, and efficiency steps to open items only. Note: P2-03 (regime gap) is confirmed data-driven as of 2026-08-14 — only remaining action is a docstring in `fund_scorer.py`; do not re-investigate unless `n_obs_recalentamiento > 0` appears in a new run.
+**Pre-flight — backlog scope:** Read the live backlog in `gestion.backlog` before starting §3 (the HTML artifact was retired on 2026-09-21): `C:\Users\jacor\.conda\envs\des\python.exe scripts/audit/backlog_links.py --all`, or `shared.backlog_client.list_tickets(open_only=True)`. List currently open P2 items. Scope triage, reliability, and efficiency steps to open items only. Note: P2-03 (regime gap) is confirmed data-driven as of 2026-08-14 — only remaining action is a docstring in `fund_scorer.py`; do not re-investigate unless `n_obs_recalentamiento > 0` appears in a new run.
 
 **Pre-flight — memory recall:** Before §3, read `MEMORY.md` at `C:\Users\jacor\.claude\projects\c--desarrollo-fondos\memory\MEMORY.md`. Load every entry whose description hook matches P2 domain keywords (NAV staleness, fingerprint, CALC_VERSION, OLS/VIF, regime attribution, metrics writer, rolling stats, SRRI_nav, fund_metric_state). Treat recalled entries as prior findings — do not re-investigate what is already confirmed on record.
 
@@ -197,11 +197,11 @@ Emit in this order, short and table-driven:
 - **Fix in the correct module (P#7).** Metric-calc bug → `proyecto2/src/calculations/<module>.py`; write-path bug → `run_pipeline.py` write helpers (`_write_metrics` / `_write_timeseries` / `_write_metric_alerts` / `_replace_beta_set`); `writers/metrics_writer.py` is a **legacy stub — do not edit**; regime mapping → `regime_returns.py`. SQL only for diagnostic SELECTs.
 - **AST validate after every Python edit (R-8):**
   ```
-  C:\data\envs\des\python.exe -c "import ast; ast.parse(open('file.py', encoding='utf-8').read()); print('AST OK')"
+  C:\Users\jacor\.conda\envs\des\python.exe -c "import ast; ast.parse(open('file.py', encoding='utf-8').read()); print('AST OK')"
   ```
 - **Tests must stay green (R-7 — no `run_pipeline` / `core.io` imports in tests):**
   ```
-  cd proyecto2 && C:\data\envs\des\python.exe -m pytest tests/ -q
+  cd proyecto2 && C:\Users\jacor\.conda\envs\des\python.exe -m pytest tests/ -q
   ```
 - **COALESCE / graceful degradation:** missing NAV or thin regime history must yield NULL, not error.
 - **Write-on-correction (verified only):** If the user corrects any finding, factual claim, or reasoning during this audit, verify the correction first (read the code, query the DB, check the canonical doc). If confirmed correct, persist it to memory before the session ends. If wrong, explain and do not write. If unverifiable in context, flag it explicitly — do not persist unverified claims.

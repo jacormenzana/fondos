@@ -15,7 +15,7 @@ paso reproducible.
 
 Invocado por scripts/launch/P3_buildPortfolio.bat. Tambien ejecutable
 directamente para debug:
-    C:\\data\\envs\\des\\python.exe scripts\\launch\\p3_build_portfolio.py [scenario_id]
+    C:\\Users\\jacor\\.conda\\envs\\des\\python.exe scripts\\launch\\p3_build_portfolio.py [scenario_id]
 """
 
 import sys

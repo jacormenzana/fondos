@@ -1,8 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(/c/data/envs/des/python.exe *)",
-      "PowerShell(& \"C:\\\\data\\\\envs\\\\des\\\\python.exe\" *)"
+      "Bash(/c/Users/jacor/.conda/envs/des/python.exe *)",
+      "PowerShell(& \"C:\\\\Users\\\\jacor\\\\.conda\\\\envs\\\\des\\\\python.exe\" *)"
     ]
   },
   "model": "opusplan",

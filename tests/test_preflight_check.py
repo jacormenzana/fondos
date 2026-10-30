@@ -77,20 +77,20 @@ def test_parse_driver_probe_on_empty_or_garbled_text_is_quiet():
 
 
 def test_same_interpreter_ignores_case_and_slash_direction():
-    assert pf.same_interpreter(r"C:\data\envs\des\python.exe", "c:/data/envs/des/python.exe")
-    assert not pf.same_interpreter(r"C:\data\envs\des\python.exe", r"C:\Users\jacor\.conda\envs\des\python.exe")
+    assert pf.same_interpreter(r"C:\Users\jacor\.conda\envs\des\python.exe", "c:/users/jacor/.conda/envs/des/python.exe")
+    assert not pf.same_interpreter(r"C:\Users\jacor\.conda\envs\des\python.exe", r"C:\data\envs\des\python.exe")
 
 
 def test_same_interpreter_gives_the_windows_answer_on_a_posix_host(monkeypatch):
     """The comparison is about Windows paths whatever the host: os.path on Linux CI answered False (FND-0313)."""
     with monkeypatch.context() as m:
         m.setattr(os, "path", posixpath)
-        assert pf.same_interpreter(r"C:\data\envs\des\python.exe", "c:/data/envs/des/python.exe")
-        assert not pf.same_interpreter(r"C:\data\envs\des\python.exe", r"C:\Users\jacor\.conda\envs\des\python.exe")
+        assert pf.same_interpreter(r"C:\Users\jacor\.conda\envs\des\python.exe", "c:/users/jacor/.conda/envs/des/python.exe")
+        assert not pf.same_interpreter(r"C:\Users\jacor\.conda\envs\des\python.exe", r"C:\data\envs\des\python.exe")
 
 
 def test_summarize_driver_ok_with_no_recent_blocks():
-    s = pf.summarize_driver(True, "", "0", [], r"C:\data\envs\des\python.exe", r"C:\data\envs\des\python.exe")
+    s = pf.summarize_driver(True, "", "0", [], r"C:\Users\jacor\.conda\envs\des\python.exe", r"C:\Users\jacor\.conda\envs\des\python.exe")
     assert s["import_ok"] and s["blocks"] == 0 and s["newest_block"] is None and s["interpreter_ok"]
 
 
@@ -103,7 +103,7 @@ def test_summarize_driver_blocked_dedupes_files_and_keeps_order():
 
 
 def test_summarize_driver_flags_the_wrong_conda_env():
-    s = pf.summarize_driver(True, "", "0", [], r"C:\Users\jacor\.conda\envs\des\python.exe", r"C:\data\envs\des\python.exe")
+    s = pf.summarize_driver(True, "", "0", [], r"C:\data\envs\des\python.exe", r"C:\Users\jacor\.conda\envs\des\python.exe")
     assert not s["interpreter_ok"]
 
 
@@ -176,7 +176,7 @@ def test_driver_loads_but_recent_blocks_exist_is_a_note_not_a_caution():
 
 
 def test_a_mismatched_interpreter_is_a_note_never_a_hard_failure_cross_platform():
-    v = pf.verdict(_report(driver={"interpreter_ok": False, "interpreter": "/usr/bin/python3", "expected_interpreter": r"C:\data\envs\des\python.exe"}))
+    v = pf.verdict(_report(driver={"interpreter_ok": False, "interpreter": "/usr/bin/python3", "expected_interpreter": r"C:\Users\jacor\.conda\envs\des\python.exe"}))
     assert v["level"] == "CLEAR"
     assert any("-n des" in n for n in v["notes"])
 
@@ -192,7 +192,7 @@ def test_no_driver_section_at_all_changes_nothing_backward_compat():
 def test_render_shows_the_driver_section_first_and_lists_blocked_files():
     r = _report(driver={"import_ok": False, "detail": "OSError: blocked", "sac_state": "1", "blocks": 2,
                         "newest_block": "2026-10-12 14:10:42", "blocked_files": ["libssl.dll", "libcrypto.dll"],
-                        "interpreter_ok": False, "interpreter": "/usr/bin/python3", "expected_interpreter": r"C:\data\envs\des\python.exe"})
+                        "interpreter_ok": False, "interpreter": "/usr/bin/python3", "expected_interpreter": r"C:\Users\jacor\.conda\envs\des\python.exe"})
     r["verdict"] = pf.verdict(r)
     out = pf.render(r)
     lines = out.splitlines()

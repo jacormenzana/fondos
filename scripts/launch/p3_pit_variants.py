@@ -3,10 +3,10 @@
 """
 p3_pit_variants.py -- the FND-0303 orchestrator (PREREG_FND-0303 sections 3 and 7). Owner-run; read-only on the database.
 
-    C:\\data\\envs\\des\\python.exe scripts\\launch\\p3_pit_variants.py --dry-run
-    C:\\data\\envs\\des\\python.exe scripts\\launch\\p3_pit_variants.py --gate-only                  # V0 twice: the determinism gate
-    C:\\data\\envs\\des\\python.exe scripts\\launch\\p3_pit_variants.py --gate-only --expect-v0-hash <sha>   # proves V0 did not move
-    C:\\data\\envs\\des\\python.exe scripts\\launch\\p3_pit_variants.py --variants V1,V3                  # gate first, then the variants
+    C:\\Users\\jacor\\.conda\\envs\\des\\python.exe scripts\\launch\\p3_pit_variants.py --dry-run
+    C:\\Users\\jacor\\.conda\\envs\\des\\python.exe scripts\\launch\\p3_pit_variants.py --gate-only                  # V0 twice: the determinism gate
+    C:\\Users\\jacor\\.conda\\envs\\des\\python.exe scripts\\launch\\p3_pit_variants.py --gate-only --expect-v0-hash <sha>   # proves V0 did not move
+    C:\\Users\\jacor\\.conda\\envs\\des\\python.exe scripts\\launch\\p3_pit_variants.py --variants V1,V3                  # gate first, then the variants
 
 What it does, and nothing else (it is an ORCHESTRATOR, not an analysis):
   * every run is its own fresh interpreter (`python -I`), with its own parameter overlay FILE (FONDOS_SCORER_PARAMS_OVERLAY = an absolute

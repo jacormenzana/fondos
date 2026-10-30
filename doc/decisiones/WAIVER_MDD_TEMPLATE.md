@@ -53,7 +53,7 @@ State each one (rule, what was done instead, why). An undisclosed deviation void
 
 ```bat
 cd C:\desarrollo\fondos
-C:\data\envs\des\python.exe -c "from shared.backlog_client import append_log; print(append_log('FND-nnnn', 'owner', 'WAIVER-MDD WVR-YYYYMMDD-NN SIGNED: accepted max DD __.__ pct, scope ___, review YYYY-MM-DD, note doc/decisiones/WAIVER_MDD_WVR-YYYYMMDD-NN.md'))"
+C:\Users\jacor\.conda\envs\des\python.exe -c "from shared.backlog_client import append_log; print(append_log('FND-nnnn', 'owner', 'WAIVER-MDD WVR-YYYYMMDD-NN SIGNED: accepted max DD __.__ pct, scope ___, review YYYY-MM-DD, note doc/decisiones/WAIVER_MDD_WVR-YYYYMMDD-NN.md'))"
 ```
 
    Keep Windows paths out of the comment text or write them with forward slashes: a backslash followed by `n`, `t` or `u` is an escape and corrupts the text.
