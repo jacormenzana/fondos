@@ -68,6 +68,14 @@ Success ends with `PROVISIONED OK` and the key directory's `icacls` listing: exa
 ## Step 4. Install the App (browser)
 App page > *Install App* > *Install* next to `jacormenzana` > *Only select repositories* > `jacormenzana/fondos` > *Install*. The address afterwards is `https://github.com/settings/installations/<number>`: write down the **installation id**. Then *Settings* > *Applications* > *Installed GitHub Apps* > *Configure*: repository access lists only `jacormenzana/fondos`; permissions list exactly `Pull requests: Read and write`, `Checks: Read-only`, `Metadata: Read-only`. Anything more: delete the App and redo Step 2. (The runner repeats this check by itself at every start, spec D8, once it exists.)
 
+## Step 4a. Interim log hardening (elevated PowerShell) - amendment by the owner, 2026-10-30
+The external log sink is waived (acceptance 5), so the local Security log is the only telemetry store and the Windows default of about 20 MB with overwrite would let key-access events disappear within days. In the same elevated session, right after Step 4, run once (idempotent):
+```
+wevtutil sl Security /ms:268435456
+wevtutil gl Security
+```
+The second command must print `maxSize: 268435456` (256 MB). Report that line in Step 8. Group Policy that sets a smaller size would override it: if the line differs, report it and do not continue.
+
 ## Step 5. Owner DSN vault and DDL tool (elevated PowerShell)
 Paste as one block. Prompts, in order: daily user (Enter), the `fondos_db_owner` password twice, the owner DSN (`postgresql://<role>:<password>@127.0.0.1:5436/gestion`, no echo).
 ```powershell
@@ -105,7 +113,7 @@ C:\ProgramData\fondos\db_owner\app\scripts\ops\windows\run_db_owner.cmd --check
 `runas` asks for the `fondos_db_owner` password and opens a console that prints, in this order: `target: host=127.0.0.1 port=5436 dbname=gestion`; the deployed commit with `manifest verified`; `server verified: system_identifier 7688429679929688102, database gestion oid 34094, PostgreSQL 17`; the receipt path. A `HARD STOP` line is a failure.
 
 ## Step 8. Record and report
-Results only, never a key, DSN or password: both `PROVISIONED OK` blocks and `icacls` listings (Steps 3 and 5), the `Runtime: N files...` line, the SHA-256 of `MANIFEST.sha256`, the App ID and installation id, the path and `OVERALL` line of the boundary receipt, the lines of Step 7. Copy the DDL launcher receipt from `C:\ProgramData\fondos\db_owner\receipts\` to `deployments/`. Then restart the agent session: its first action is the read-only pre-flight and a check of the results above.
+Results only, never a key, DSN or password: both `PROVISIONED OK` blocks and `icacls` listings (Steps 3 and 5), the `Runtime: N files...` line, the `maxSize` line of Step 4a, the SHA-256 of `MANIFEST.sha256`, the App ID and installation id, the path and `OVERALL` line of the boundary receipt, the lines of Step 7. Copy the DDL launcher receipt from `C:\ProgramData\fondos\db_owner\receipts\` to `deployments/`. Then restart the agent session: its first action is the read-only pre-flight and a check of the results above.
 
 ## Step 9. What happens next (no action now)
 1. Build `open_pr.py` (including the D8 startup check of the issued token's permissions), `open_pr_request.py`, the locked schema, the deploy script and the scheduled tasks, and run acceptance 1 to 15 of `CICD_SERVICE_ACCOUNT_SPEC.md`. Step 2 is validated only when they pass.
