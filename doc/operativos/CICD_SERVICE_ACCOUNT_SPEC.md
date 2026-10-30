@@ -34,7 +34,7 @@ mkdir "C:\ProgramData\fondos\ci_runner\github_app_keys"
 icacls "C:\ProgramData\fondos\ci_runner\github_app_keys" /inheritance:r /grant:r "%COMPUTERNAME%\fondos_ci_runner:(OI)(CI)(R)" "NT AUTHORITY\SYSTEM:(OI)(CI)(F)" "BUILTIN\Administrators:(OI)(CI)(F)"
 icacls "C:\ProgramData\fondos\ci_runner\github_app_keys\fondos-pr-opener.pem"
 ```
-Exactly those three principals; **the owner's user is not listed**. `BUILTIN\Administrators` stays for rotation and recovery: UAC strips that group from a non-elevated token, so a non-elevated agent session has zero access even if the owner's user is an administrator. **Agent sessions must never run elevated** (a requirement, tested); any elevated read is an audited event (section 7). `open_pr.py` checks the ACL before it reads the key and exits with a distinct code if anything else can read it, or if the file is missing, empty, not a single PEM or not an RSA private key. `open_pr.py --check-key` runs only that check and prints no key material. The key is never in `.env`, never in the repository (`*.pem` and `github_app_keys/` in `.gitignore`; a static test fails the build if any tracked file contains a private-key header), never in an environment variable, never printed or logged.
+Exactly those three principals; **the owner's user is not listed**. `BUILTIN\Administrators` stays for rotation and recovery: UAC strips that group from a non-elevated token, so a non-elevated agent session has zero access even if the owner's user is an administrator. **Elevation is technically gated**: UAC is fixed at *Prompt for credentials on the secure desktop* (`EnableLUA` = 1, `ConsentPromptBehaviorAdmin` = 1, `PromptOnSecureDesktop` = 1). An agent process cannot obtain an elevated token, because that needs an administrator password typed on the secure desktop, which no process can reach or answer; acceptance 2 asserts the three values. Every elevated read is an audited event (section 7). `open_pr.py` checks the ACL before it reads the key and exits with a distinct code if anything else can read it, or if the file is missing, empty, not a single PEM or not an RSA private key. `open_pr.py --check-key` runs only that check and prints no key material. The key is never in `.env`, never in the repository (`*.pem` and `github_app_keys/` in `.gitignore`; a static test fails the build if any tracked file contains a private-key header), never in an environment variable, never printed or logged.
 
 **The code the runner executes is not in the owner's checkout.** If the task ran `scripts\ops\open_pr.py` from the working tree, an agent session could edit the script and run arbitrary code as the runner. So:
 - The task runs a **deployed, read-only copy** in `C:\ProgramData\fondos\ci_runner\app\` (ACL: `fondos_ci_runner` read and execute, `Administrators` full, the owner's user read only), produced from a reviewed commit by the owner or DevOps with a documented deploy step that also writes a `MANIFEST.sha256` (hash of every file plus the commit SHA).
@@ -102,7 +102,7 @@ The runner holds no database credential, so the agent side writes the ticket log
 3. The first real pull request is a docs-only change.
 
 ## 11. Provisioning steps (owner and DevOps, in order)
-1. Create the App `fondos-pr-opener` (section 3); install it on `jacormenzana/fondos` only; generate one private key (RSA 2048); note the App id and the installation id.
+1. Create the App `fondos-pr-opener` (section 3) with the exact form of section 13; install it on `jacormenzana/fondos` only; generate one private key (RSA 2048); note the App id and the installation id.
 2. Create the account `fondos_ci_runner` with the logon restrictions of section 4.
 3. Create the key directory with its ACL, copy the PEM in, delete the downloaded copy, run `open_pr.py --check-key` as the runner.
 4. Deploy the read-only app copy and the virtual environment (section 4) from a reviewed commit; check the manifest.
@@ -112,7 +112,7 @@ The runner holds no database credential, so the agent side writes the ticket log
 
 ## 12. Acceptance
 1. With the key file absent the runner writes a distinct failure and opens nothing.
-2. **The agent context cannot read the key**: from a NON-ELEVATED process of the owner's user, reading the key file and listing its directory fail with "Access is denied" and `icacls` does not list the owner's user. `open_pr_request.py --check-isolation` makes that attempt and reports PASS only on "denied".
+2. **The agent context cannot read the key**: from a NON-ELEVATED process of the owner's user, reading the key file and listing its directory fail with "Access is denied" and `icacls` does not list the owner's user. `open_pr_request.py --check-isolation` makes that attempt, reads the three UAC values above, and reports PASS only on "denied" with all three values set.
 3. **The agent context cannot change the runner's code**: writing to `app\` or `venv\` from the owner's user fails; altering a deployed file makes the runner exit at the manifest check.
 4. Telemetry: the denied attempt produces a 4656 failure event; a read by the runner produces a 4663 success event; a permission change produces 4670; the alert task writes a line for the denied attempt and none for the runner.
 5. **External forwarding**: the same events reach the external sink within 60 seconds; on a test machine, `wevtutil cl Security` produces event 1102 at the sink; stopping the forwarder raises the heartbeat alert.
@@ -125,3 +125,28 @@ The runner holds no database credential, so the agent side writes the ticket log
 12. The static tests pass: only `open_pr.py` refers to the key file; no tracked file contains a private-key header; `.gitignore` covers `*.pem`; `open_pr.py` contains no process-call or dynamic-execution construct and no Credential Manager or token-cache construct (section 8).
 13. The schema file and the manifest hashes are pinned: changing the schema without redeploying makes the runner exit.
 14. One real, docs-only pull request is opened through the inbox by an agent session under the owner's supervision and merged by the owner: it shows the App's identity, the agent session never held the key, the ticket log appears only after GitHub confirms the pull request, and the owner's merge is the only manual step.
+
+## 13. Creating the App in the GitHub UI, field by field (provisioning step 1)
+Prerequisites. Signed in to GitHub as `jacormenzana` (the owner of the repository) with two-factor authentication on; the repository `jacormenzana/fondos` exists and `master` carries the protection of `AGENTS.md`. Nothing else is needed: no organisation, no webhook endpoint, no server.
+
+1. Open *Settings* (profile menu) > *Developer settings* > *GitHub Apps* > *New GitHub App*.
+2. **GitHub App name:** `fondos-pr-opener`. The name is global; if GitHub reports it taken, stop and choose `fondos-pr-opener-jacormenzana`, then replace the bot login in section 6 (`fondos-pr-opener[bot]`) with the login GitHub shows for the new name before anything is deployed.
+3. **Description:** `Opens pull requests for jacormenzana/fondos. Cannot merge.`
+4. **Homepage URL:** `https://github.com/jacormenzana/fondos` (required by the form, not used).
+5. *Identifying and authorizing users*: **Callback URL** empty; **Expire user authorization tokens** unchecked; **Request user authorization (OAuth) during installation** unchecked; **Enable Device Flow** unchecked.
+6. *Post installation*: **Setup URL** empty; **Redirect on update** unchecked.
+7. *Webhook*: **Active** unchecked (no URL, no secret).
+8. *Permissions*, **Repository permissions**: set exactly these three and leave every other row at *No access*:
+   | Row | Level |
+   |---|---|
+   | Pull requests | Read and write |
+   | Checks | Read-only |
+   | Metadata | Read-only (preselected, cannot be removed) |
+9. *Permissions*, **Account permissions** and **Organization permissions**: every row *No access*.
+10. *Subscribe to events*: nothing is available without a webhook; leave all unchecked.
+11. **Where can this GitHub App be installed?** *Only on this account*.
+12. Click *Create GitHub App* (GitHub asks for the password or a passkey). On the *About* page note the **App ID** (a number), which is not a secret.
+13. *Private keys* > *Generate a private key*: the browser downloads one `.pem`. Generate it exactly once; two keys are never active together except during a rotation. Move it straight to the key directory of section 4 and delete the browser's copy (`del` and empty the recycle bin); do not open it, paste it or upload it anywhere.
+14. Left sidebar > *Install App* > *Install* next to `jacormenzana` > *Only select repositories* > `jacormenzana/fondos` > *Install*. Never choose *All repositories*.
+15. The address after installing is `https://github.com/settings/installations/<number>`: that number is the **installation id** (not a secret). Record App id, installation id and the bot login in `config`, never the key.
+16. Verification. *Settings* > *Applications* > *Installed GitHub Apps* > *Configure*: *Repository access* lists only `jacormenzana/fondos`, and *Permissions* lists exactly `Pull requests: Read and write`, `Checks: Read-only`, `Metadata: Read-only`. Any additional line means the form was filled wrongly: delete the App and start again from step 1. Record the check in `deployments/` with the date.
