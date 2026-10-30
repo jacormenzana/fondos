@@ -14,7 +14,7 @@ An agent session can build a branch and push it, but it cannot open the pull req
 | D4 | **The request that crosses from the agent to the runner is untrusted input and is validated against a locked schema before it is used.** | No injection or path-traversal vector (section 5). |
 | D5 | **The database ticket log is written only after the runner has produced a success receipt that GitHub itself confirms.** | The system of record never records an action that did not happen (section 6). |
 | D6 | **Every read attempt on the key file leaves a Windows Security event, and those events are forwarded to an external immutable store.** | Local logs alone can be wiped by an attacker with SYSTEM (section 7). |
-| D7 | **The Windows Credential Manager is used only for the short-lived installation token, and only if caching is ever required; never for the private key.** | By default there is no cache. |
+| D7 | **No credential is ever cached or stored by the Windows Credential Manager.** The installation token is generated in memory by `open_pr.py` at each run and discarded as soon as the API call completes (owner, 2026-10-30; supersedes the earlier optional token cache). | No state to manage, no lingering credential, no cache invalidation: the token exchange is one API call per run (section 8). |
 
 ## 3. The App
 - Name `fondos-pr-opener`, installed on the single repository `jacormenzana/fondos` only (never "all repositories", never an organisation scope).
@@ -80,8 +80,12 @@ The runner holds no database credential, so the agent side writes the ticket log
 - Latency: an event is at the sink within 60 seconds. A heartbeat from the forwarder every minute; a silent forwarder for more than 5 minutes raises an alert at the sink (an attacker stopping the forwarder is itself detected).
 - The product is DevOps' choice (NXLog Community Edition, Winlogbeat or Windows Event Forwarding to a collector that relays by syslog), under the constraints above; the sink must not be a service on the same machine or on the same WSL2 distribution.
 
-## 8. The installation token and the Credential Manager (D7)
-Default: **no cache**; the token is requested at each run and discarded. If a cache is ever required, only the installation token (about 40 characters) and its expiry may be kept in the Windows Credential Manager under the runner account (target `fondos-pr-opener-token`); an entry with less than five minutes left is ignored. The private key and the JWT are never stored there.
+## 8. The installation token is ephemeral (D7)
+**Token caching is banned.** The Windows Credential Manager is not used at all, for the key, the JWT or the token.
+- `open_pr.py` builds the 10-minute JWT, exchanges it for the down-scoped installation token (section 3) and keeps both **in process memory only**, in local variables.
+- The token is used for the API calls of the one request being processed and dropped (the reference is deleted and the HTTP session closed) as soon as the last call returns, on success and on every error path (`try`/`finally`). It is never written to disk, an environment variable, a result file, a log line or any store, and it is not reused by the next request or the next run.
+- Cost: one extra `POST /app/installations/{id}/access_tokens` per run. A run opens a pull request, so the volume is a handful a day, far below any GitHub limit; there is no case for a cache.
+- Static test (acceptance 12): `open_pr.py` and its deployed copy contain no reference to the Credential Manager (`cmdkey`, `CredWrite`, `CredRead`, `keyring`, `win32cred`) and no write of a token or JWT to any file.
 
 ## 9. Controls
 | Control | Rule |
@@ -118,6 +122,6 @@ Default: **no cache**; the token is requested at each run and discarded. If a ca
 9. Each ordinary rule of section 5 step 4 has a test: `master` as head, no commits ahead, a branch not on origin, the kill switch off.
 10. **Receipts (D5)**: with a fake runner, the agent side writes NO database log for `REFUSED`, `REJECTED_SECURITY`, `FAILED`, a timeout, a malformed receipt, or a receipt whose pull request GitHub does not confirm (wrong `head.sha`, closed, other author, other URL); it writes exactly one for a confirmed `PR_OPENED`; a second run does not duplicate it; `--reconcile` writes the missing log after a simulated crash.
 11. A fake-API test shows that the key, the JWT and the token appear in no request body, no log, no result file and no output.
-12. The static tests pass: only `open_pr.py` refers to the key file; no tracked file contains a private-key header; `.gitignore` covers `*.pem`; `open_pr.py` contains no process-call or dynamic-execution construct.
+12. The static tests pass: only `open_pr.py` refers to the key file; no tracked file contains a private-key header; `.gitignore` covers `*.pem`; `open_pr.py` contains no process-call or dynamic-execution construct and no Credential Manager or token-cache construct (section 8).
 13. The schema file and the manifest hashes are pinned: changing the schema without redeploying makes the runner exit.
 14. One real, docs-only pull request is opened through the inbox by an agent session under the owner's supervision and merged by the owner: it shows the App's identity, the agent session never held the key, the ticket log appears only after GitHub confirms the pull request, and the owner's merge is the only manual step.
