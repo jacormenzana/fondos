@@ -37,6 +37,53 @@ function Invoke-Native {
 }
 function Set-Icacls { param([string]$Path, [string[]]$Rest) Invoke-Native 'icacls.exe' (@($Path) + $Rest) }
 
+function Get-RecordedHashes {
+    # {lowercase relative path with '/': sha256 hex} from the install-time records of the environment: conda-meta (sha256_in_prefix when the file was relocated) and the RECORD of the pip packages we copy
+    param([string]$EnvDir)
+    Add-Type -AssemblyName System.Web.Extensions
+    $js = New-Object System.Web.Script.Serialization.JavaScriptSerializer
+    $js.MaxJsonLength = [int]::MaxValue
+    $js.RecursionLimit = 200
+    $map = @{}
+    foreach ($f in (Get-ChildItem -LiteralPath (Join-Path $EnvDir 'conda-meta') -Filter '*.json' -File)) {
+        $d = $js.DeserializeObject([IO.File]::ReadAllText($f.FullName))
+        if (-not $d.ContainsKey('paths_data')) { continue }
+        foreach ($p in $d['paths_data']['paths']) {
+            $h = if ($p.ContainsKey('sha256_in_prefix')) { $p['sha256_in_prefix'] } elseif ($p.ContainsKey('sha256')) { $p['sha256'] } else { $null }
+            if ($h) { $map[$p['_path'].Replace('\', '/').ToLowerInvariant()] = $h.ToLowerInvariant() }
+        }
+    }
+    $sp = Join-Path $EnvDir 'Lib\site-packages'
+    foreach ($pkg in 'psycopg', 'psycopg_binary', 'typing_extensions', 'tzdata') {
+        foreach ($dist in (Get-ChildItem -LiteralPath $sp -Directory -Filter "$pkg-*.dist-info")) {
+            foreach ($line in [IO.File]::ReadAllLines((Join-Path $dist.FullName 'RECORD'))) {
+                $c = $line.Split(',')
+                if ($c.Length -lt 3 -or -not $c[$c.Length - 2].StartsWith('sha256=')) { continue }
+                $b64 = $c[$c.Length - 2].Substring(7).Replace('-', '+').Replace('_', '/')
+                $b64 = $b64.PadRight($b64.Length + ((4 - $b64.Length % 4) % 4), '=')
+                $name = ($c[0..($c.Length - 3)] -join ',').Replace('\', '/')
+                $map[('lib/site-packages/' + $name).ToLowerInvariant()] = ([BitConverter]::ToString([Convert]::FromBase64String($b64))).Replace('-', '').ToLowerInvariant()
+            }
+        }
+    }
+    return $map
+}
+function Test-RuntimeIntegrity {
+    # Every file of the COPY must (1) match the hash recorded when it was installed and (2) not be bytecode, a .pth pointer or a startup hook. Returns {Verified, Problems}.
+    param([string]$EnvDir, [string]$Copy)
+    $rec = Get-RecordedHashes $EnvDir
+    $problems = New-Object System.Collections.Generic.List[string]
+    $verified = 0
+    foreach ($f in (Get-ChildItem -LiteralPath $Copy -Recurse -File -Force)) {
+        $rel = $f.FullName.Substring($Copy.Length + 1).Replace('\', '/').ToLowerInvariant()
+        if ($rel -match '(^|/)__pycache__(/|$)|\.(pyc|pyo|pth|egg-link)$|(^|/)(sitecustomize|usercustomize)\.py$') { $problems.Add("FORBIDDEN $rel"); continue }
+        if (-not $rec.ContainsKey($rel)) { $problems.Add("UNRECORDED $rel"); continue }
+        if ((Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash.ToLowerInvariant() -ne $rec[$rel]) { $problems.Add("MISMATCH $rel"); continue }
+        $verified++
+    }
+    return [pscustomobject]@{ Verified = $verified; Problems = $problems }
+}
+
 try {
     # --- 0. Preconditions -------------------------------------------------------------------------------------------------------------
     $gitExe = (Get-Command git.exe -ErrorAction Stop).Source
@@ -119,6 +166,9 @@ try {
         $p = if ($need.StartsWith('app')) { Join-Path $root $need } else { Join-Path $rt $need }
         if (-not (Test-Path $p)) { throw "tree incomplete: $need" }
     }
+    $integrity = Test-RuntimeIntegrity $PythonHome $rt
+    if ($integrity.Problems.Count -gt 0) { throw ("runtime integrity: $($integrity.Problems.Count) problem(s), first: " + (($integrity.Problems | Select-Object -First 10) -join '; ')) }
+    Write-Host "Runtime: $($integrity.Verified) files match their install-time hashes (conda-meta, pip RECORD); no bytecode, .pth pointer or startup hook."
 
     # --- 7. MANIFEST.sha256 over app\ and runtime\ (format read by db_owner_manifest.py) ---------------------------------------------
     $lines = Get-ChildItem -Path $root -Recurse -File -Force | ForEach-Object {

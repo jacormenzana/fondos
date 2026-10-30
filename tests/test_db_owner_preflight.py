@@ -203,3 +203,44 @@ def test_bad_arguments_are_usage_errors(tmp_path):
         with pytest.raises(SystemExit) as e:
             go(root, argv)
         assert e.value.code == 2
+
+
+# --- runtime integrity (the interpreter copied into runtime\) -----------------------------------------------------------------------------------
+
+ENV_DIR = Path(r"C:\data\envs\des")
+
+
+def _functions(*names):
+    src = (_OPS / "windows" / "provision_db_owner.ps1").read_text(encoding="utf-8")
+    return "\n".join(re.search(r"(function " + n + r" \{.*?\n\}\n)", src, re.S).group(1) for n in names)
+
+
+@pytest.mark.skipif(shutil.which("powershell") is None or not (ENV_DIR / "conda-meta").is_dir(), reason="PowerShell or the project environment not available")
+def test_the_copied_interpreter_is_checked_against_its_install_time_hashes(tmp_path):
+    rt = tmp_path / "runtime"
+    sp = ENV_DIR / "Lib" / "site-packages"
+    rc = ["/NJH", "/NJS", "/NP", "/NFL", "/NDL", "/R:1", "/W:1"]
+    steps = [[str(ENV_DIR), str(rt), "python.exe", "*.dll"], [str(ENV_DIR / "DLLs"), str(rt / "DLLs"), "/E"], [str(ENV_DIR / "Library" / "bin"), str(rt / "Library" / "bin"), "/E"],
+             [str(ENV_DIR / "Lib"), str(rt / "Lib"), "/E", "/XD", "site-packages", "__pycache__", "test", "tests", "idlelib", "turtledemo"]]
+    steps += [[str(sp / p), str(rt / "Lib" / "site-packages" / p), "/E", "/XD", "__pycache__"] for p in ("psycopg", "psycopg_binary", "psycopg_binary.libs", "tzdata")]
+    for s in steps:
+        assert subprocess.run(["robocopy", *s, *rc], capture_output=True).returncode < 8
+    shutil.copy(sp / "typing_extensions.py", rt / "Lib" / "site-packages" / "typing_extensions.py")
+
+    def check():
+        ps = tmp_path / "chk.ps1"
+        ps.write_text(_functions("Get-RecordedHashes", "Test-RuntimeIntegrity") + f"\n$r = Test-RuntimeIntegrity '{ENV_DIR}' '{rt}'\n'VERIFIED ' + $r.Verified\n$r.Problems\n", encoding="utf-8-sig")
+        done = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(ps)], capture_output=True, text=True)
+        assert done.returncode == 0, done.stderr
+        return done.stdout.splitlines()
+
+    clean = check()
+    assert clean[0].startswith("VERIFIED ") and int(clean[0].split()[1]) > 1000 and len(clean) == 1
+    (rt / "Lib" / "os.py").write_text("import evil\n", encoding="utf-8")
+    (rt / "Lib" / "site-packages" / "evil.pth").write_text("import evil\n", encoding="utf-8")
+    (rt / "Lib" / "extra.py").write_text("x = 1\n", encoding="utf-8")
+    (rt / "Lib" / "__pycache__").mkdir()
+    (rt / "Lib" / "__pycache__" / "os.cpython-313.pyc").write_bytes(b"\x00")
+    bad = check()[1:]
+    assert "MISMATCH lib/os.py" in bad and "FORBIDDEN lib/site-packages/evil.pth" in bad and "UNRECORDED lib/extra.py" in bad
+    assert "FORBIDDEN lib/__pycache__/os.cpython-313.pyc" in bad
