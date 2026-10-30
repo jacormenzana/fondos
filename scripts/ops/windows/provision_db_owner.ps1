@@ -3,8 +3,8 @@
  FND-0354, Step 3. ONE elevated run that creates, in this order and atomically (any failure removes what this run created):
    the isolated account fondos_db_owner, the vault with the owner DSN, the read-only tool tree (app\ + runtime\) extracted from ONE pushed commit,
    MANIFEST.sha256, every ACL, the audit rules, and the final assertions.
- Run it from a copy fetched from the commit it deploys and compare the blob hash first (see doc/operativos/OWNER_DSN_VAULT.md section 3):
-   powershell -NoProfile -ExecutionPolicy Bypass -File provision_db_owner.ps1 -Commit <40-hex SHA>
+ Run it IN MEMORY from the pushed commit it deploys, after checking the blob hash (doc/operativos/OWNER_DSN_VAULT.md section 3), so the file in the working tree is never executed:
+   & ([scriptblock]::Create($text)) -Commit <40-hex SHA>
  It never prints the DSN, writes it to a command line, or leaves it in a variable after use.
 #>
 param(
@@ -14,6 +14,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $Commit = $Commit.ToLowerInvariant()
+if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Run this in an elevated PowerShell (Run as administrator).' }
 $acct  = 'fondos_db_owner'
 $me    = "$env:COMPUTERNAME\$acct"
 $parent = 'C:\ProgramData\fondos'
@@ -167,5 +168,6 @@ catch {
             Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue
         }
     } catch { Write-Host "Cleanup incomplete: $($_.Exception.Message). Review $root and the account $acct by hand." -ForegroundColor Red }
-    exit 1
+    $global:LASTEXITCODE = 1
+    return
 }
