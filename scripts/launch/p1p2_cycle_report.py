@@ -351,6 +351,16 @@ def collect_backlog_links() -> dict:
         return {"error": f"{type(exc).__name__}: {exc}"}
 
 
+def collect_backlog_violations() -> dict:
+    """Violation count and top 3 codes of the backlog (Phase D, FND-0335: backlog.v_backlog_violations). Never raises, like collect_backlog_links."""
+    try:
+        sys.path.insert(0, str(ROOT))
+        from shared import backlog_client
+        return backlog_client.violation_summary(top=3)
+    except Exception as exc:
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
 def collect_governance(conn, today: date | None = None) -> dict:
     """Data-governance facts of the cycle (FND-0251): accepted audit residuals about to lapse (or whose AP is already CLOSED) and the
     reasoned overrides the PRODUCTION scenario was promoted with. Read-only; never raises (an unreadable source becomes an `error` key,
@@ -689,6 +699,15 @@ def render_text(report: dict, previous: dict | None, items: list) -> str:
             L += [f"Relaciones del backlog: {bl['links_confirmed']} confirmadas, {bl['open_depends_on']} DEPENDS_ON entre abiertos, "
                   f"{bl['candidates_unreviewed']} candidatas sin revisar ({bl['candidates_stated']} citadas en texto), "
                   f"{bl['clusters']} grupos (mayor {bl['largest_cluster']})"]
+    bv = report.get("backlog_violations")
+    if bv:
+        if bv.get("error"):
+            L += [f"Violaciones del backlog: no disponible ({bv['error']})"]
+        elif not bv.get("applied"):
+            L += ["Violaciones del backlog: fase D sin aplicar (migrate_backlog_v2.py --phase groups)"]
+        else:
+            top = ", ".join(f"{r['code']} x{r['n']}" for r in bv["top"]) or "ninguna"
+            L += [f"Violaciones del backlog: {bv['total']} (principales: {top})"]
     L += ["-" * 60]
     L += [f"[ATENCION] {i}" for i in items] if items else ["Sin puntos de atencion."]
     return "\n".join(L)
@@ -727,6 +746,7 @@ def main(argv: list | None = None) -> int:
             report = collect(conn, since, today)
             report["hedging_drift"] = collect_hedging_drift(conn) if args.hedging_drift else {"skipped": True}
             report["backlog_links"] = collect_backlog_links()
+            report["backlog_violations"] = collect_backlog_violations()
             report["governance"] = collect_governance(conn, today)
             report["macro_freshness"] = collect_macro_freshness(conn, today)
             report["sovereign_stress"] = collect_sovereign_stress(conn)
