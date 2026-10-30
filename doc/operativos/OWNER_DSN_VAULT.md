@@ -19,32 +19,19 @@ Written for: the repository owner, who runs the elevated block of section 3 once
 `C:\ProgramData\fondos\db_owner\vault\owner_dsn.conf`, UTF-8 without BOM, exactly one line: `FONDOS_PG_DSN_OWNER=postgresql://<role>:<password>@127.0.0.1:5436/gestion`. The script and the launcher both refuse any other host, port or database. A password that contains `@`, `:`, `/` or `%` is percent-encoded.
 
 ## 3. Provision (elevated PowerShell, once)
-Reviewed commit: `7d7061461ea6cb22d9a06a13806fe87b21f4d909` on `origin/chore/deployment-records-final`. The script's blob hash in that commit is `96f964ff17b7698ffd6e9d379fa8962b023b400f`. The block below reads the script out of the git object store (never from the working tree, which an agent can edit), refuses it if the hash differs and runs it in memory.
+The commands and the pinned commit and blob hashes live in ONE place, `PROVISIONING_RUNBOOK.md` (Step 5, with the CI runner steps around it); they are not repeated here so they cannot drift. The block reads the script out of the git object store (never from the working tree, which an agent can edit), refuses it if its blob hash differs from the pinned one and runs it in memory.
 
-Open *Windows PowerShell* with *Run as administrator* (UAC asks for the administrator password) and paste:
-```powershell
-$c    = '7d7061461ea6cb22d9a06a13806fe87b21f4d909'
-$blob = '96f964ff17b7698ffd6e9d379fa8962b023b400f'
-$repo = 'C:\desarrollo\fondos'
-$path = 'scripts/ops/windows/provision_db_owner.ps1'
-$git  = (Get-Command git.exe).Source
-if (-not $git.StartsWith($env:ProgramFiles, [StringComparison]::OrdinalIgnoreCase)) { throw "git is $git, outside Program Files" }
-$g = @('-c', "safe.directory=$repo", '-C', $repo)
-if ((& $git @g rev-parse "${c}:${path}") -ne $blob) { throw 'The script in that commit is not the reviewed one: stop.' }
-$text = (& $git @g show "${c}:${path}") -join "`n"
-& ([scriptblock]::Create($text)) -Commit $c
-```
 What the script does, in this order (any failure undoes what the run created and prints `FAILED`):
 1. Checks that git is under Program Files and the commit exists on an `origin` branch.
 2. Resolves the daily user from the logged-on session (`Win32_ComputerSystem.UserName`, which is correct even when the elevation used another administrator's credentials), shows it and lets you correct it (`DOMAIN\user`). Nothing is hard-coded.
 3. Fixes UAC on the secure desktop; locks the root `C:\ProgramData\fondos\db_owner` to administrators before anything is staged in it.
 4. Creates `fondos_db_owner` (password typed twice, no echo), not an administrator, hidden from sign-in.
 5. Writes the vault from the DSN you type (no echo, never a command line), turns on the audit policy and the SACL, locks the vault.
-6. Extracts `shared/`, `db/pg_backlog/`, `migrate_backlog_links.py`, `migrate_backlog_v2.py`, `db_owner_preflight.py`, `db_owner_manifest.py` and `run_db_owner.cmd` from the commit into `app\` (git archive and tar) and copies the Python interpreter with `psycopg` and its libraries into `runtime\` (about 84 MB).
+6. Extracts `shared/`, `db/pg_backlog/`, `migrate_backlog_links.py`, `migrate_backlog_v2.py`, `db_owner_preflight.py`, `db_owner_manifest.py` and `run_db_owner.cmd` from the commit into `app\` (git archive and tar) and copies the Python interpreter with `psycopg` and its libraries into `runtime\` (about 84 MB), then checks every copied file against the hash recorded when it was installed (conda-meta, pip RECORD) and refuses bytecode, `.pth` pointers, startup hooks and unrecorded files.
 7. Writes `MANIFEST.sha256`, sets the final ACLs (the account reads and executes; the daily user reads and executes; `receipts\` is the only place the account can write) and asserts them.
 8. Prints the SHA-256 of `MANIFEST.sha256`: record it in `deployments/`.
 
-Stated limit: the interpreter is copied from the project environment (`C:\data\envs\des`) at this moment, so it is as clean as that directory is now. Run the block when no agent session is running and, if in doubt, reinstall the environment first. After the copy the tree is immutable for every non-elevated process and any later change is caught by the manifest.
+Stated limit: the install-time records live in the same environment directory, so the check proves the copy equals what was installed and catches added or edited files; it does not stop an attacker who rewrote both a file and its record. Run the block after a restart with no agent session running. After the copy the tree is immutable for every non-elevated process and any later change is caught by the manifest.
 
 ## 4. Verify (owner's normal, non-elevated cmd.exe)
 ```
