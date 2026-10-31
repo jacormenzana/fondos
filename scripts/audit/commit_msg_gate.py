@@ -7,7 +7,8 @@ Installed by `bash scripts/audit/commit-msg.sh` as .git/hooks/commit-msg; git ca
 In order, for a commit whose subject or `Refs:` trailer cites a ticket (a commit that cites none is left alone, with no database call):
   1. tokens: a malformed id (`fnd0193`, `FND_0193`, `FND-193`) is REJECTED (exit 1, nothing else happens: it is a typing mistake that fixes itself); an id that is not in the
      backlog is WARNED on stderr;
-  2. collision check: a stub until slice 3 (PROPUESTA 6.4.2);
+  2. collision check (PROPUESTA 6.4.2, only when BACKLOG_COLLISION_GATE_MODE is AUDIT or BLOCK): the staged code files against the text and logs of the other tickets in progress;
+     pairs found are recorded as undecided and WARNED, never blocking the commit (a pre-push hook is the gate in BLOCK mode); it runs after step 4 so the evidence can name the nonce;
   3. a `Refs: FND-nnnn` trailer on a ticket in OPEN or TODO moves it to IN_PROGRESS as system:gate (switch BACKLOG_AUTO_FORWARD_ENABLED); never from BLOCKED or DEFERRED,
      never backward, never from a mention in the subject;
   4. a backlog.gate_check row (sp_gate_check) and the trailer `Backlog-Gate: <nonce>`, the nonce bound to the staged tree (`git write-tree`; an old trailer, as after
@@ -33,15 +34,11 @@ ROOT = Path(__file__).resolve().parents[2]
 ACTOR = "system:gate"
 BUDGET_S = 3.0
 FORWARD_FROM = ("OPEN", "TODO")
+REJECTED_RC = 3                                        # the ONLY exit code the installed shim turns into a refusal: a crash of this script (syntax, import) must never block a commit
 
 
 class GateOffline(Exception):
     """The backlog could not be reached or may not be written from here: the commit gets `Backlog-Gate: offline`."""
-
-
-def collision_check(msg, tree: str) -> list:
-    """Slice 3 (PROPUESTA 6.4.2): the pairs this commit would collide on. A stub until then: no pair."""
-    return []
 
 
 class LiveStore:
@@ -75,6 +72,9 @@ class LiveStore:
     def gate_check(self, tree: str, ap_ids: list) -> str:
         return self._guard(self.bc.gate_check, tree, list(ap_ids), actor=ACTOR)
 
+    def collision(self, files: list, ap_ids: list, ceiling: str, nonce: str) -> dict:
+        return self._guard(self.bc.gate_collision, list(files), list(ap_ids), ceiling, nonce, actor=ACTOR)
+
 
 def staged_tree() -> str:
     """The tree git is about to commit (honours GIT_INDEX_FILE, so `git commit -a` / `-- paths` are covered)."""
@@ -96,6 +96,29 @@ def write_trailer(path: Path, line: str) -> None:
         path.write_text(f"{body}\n{line}\n" if g._trailer_block(body.split("\n")) else f"{body}\n\n{line}\n", encoding="utf-8")
 
 
+def staged_files() -> list:
+    """The paths git is about to commit (honours GIT_INDEX_FILE, like git write-tree); added, changed and renamed files, deletions excluded."""
+    r = subprocess.run(["git", "diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z"], capture_output=True, text=True, encoding="utf-8", timeout=2)
+    if r.returncode != 0:
+        raise GateOffline("git diff --cached failed")
+    return [p for p in r.stdout.split("\0") if p]
+
+
+def collision_lines(res: dict) -> list:
+    """The warnings the hook prints for one evaluation of the collision rule (never blocks the commit). Pure."""
+    if not res or res.get("mode") in (None, "OFF"):
+        return []
+    new = {(p["a"], p["b"]): p.get("shared", []) for p in res.get("new", [])}
+    out = []
+    for p in res.get("undecided", []):
+        shared = new.get((p["a"], p["b"]))
+        out.append(f"commit-msg gate [{res['mode']} {res['tier']}]: {p['a']} and {p['b']} " + (f"collide on {', '.join(shared)} (new pair)" if shared else "have an undecided collision pair")
+                   + "; the owner adjudicates it (scripts/audit/gate_adjudicate.py)")
+    if res.get("held"):
+        out.append("commit-msg gate [BLOCK]: a hold was raised on " + ", ".join(res["held"]) + " (it cannot reach READY_FOR_DEPLOY until the pair is adjudicated) and `git push` will be refused while it is undecided")
+    return out
+
+
 def git_context() -> tuple:
     """(current branch, merge in progress) for the strict-traceability exemptions; ("", False) when git cannot say."""
     try:
@@ -106,9 +129,10 @@ def git_context() -> tuple:
         return "", False
 
 
-def run(msg_path: str, *, store_factory=LiveStore, tree_fn=staged_tree, budget: float = BUDGET_S, err=None, require_ticket: bool = False, context_fn=git_context) -> int:
+def run(msg_path: str, *, store_factory=LiveStore, tree_fn=staged_tree, budget: float = BUDGET_S, err=None, require_ticket: bool = False, context_fn=git_context,
+        ceiling: str = "OFF", files_fn=staged_files) -> int:
     """The hook. Returns the process exit code: 1 for a malformed ticket token, or (switch BACKLOG_REQUIRE_TICKET_ENABLED) for a commit that cites no ticket and is not
-    exempt; otherwise 0."""
+    exempt; otherwise 0. `ceiling` is BACKLOG_COLLISION_GATE_MODE: with OFF the collision rule is not evaluated and the database is not asked for it."""
     from shared import backlog_gate as g
     err = err or sys.stderr
     path = Path(msg_path)
@@ -116,12 +140,12 @@ def run(msg_path: str, *, store_factory=LiveStore, tree_fn=staged_tree, budget: 
     if msg.malformed:
         print("commit-msg gate: REJECTED. Ticket token(s) not in the form FND-nnnn (four digits): "
               + ", ".join(msg.malformed) + ". Fix the message and commit again.", file=err)
-        return 1
+        return REJECTED_RC
     if not msg.mentions:
         if require_ticket and g.ticket_exemption(msg.subject, *context_fn()) is None:
             print("commit-msg gate: REJECTED. No ticket cited (BACKLOG_REQUIRE_TICKET_ENABLED is on): put FND-nnnn in the subject or a `Refs: FND-nnnn` trailer. "
                   "Exempt: merge, revert, `chore:` commits and `chore/` branches.", file=err)
-            return 1
+            return REJECTED_RC
         return 0
     box: dict = {}
 
@@ -131,13 +155,17 @@ def run(msg_path: str, *, store_factory=LiveStore, tree_fn=staged_tree, budget: 
             store = store_factory()
             statuses = store.statuses(msg.mentions)
             box["unknown"] = [a for a in msg.mentions if a not in statuses]
-            box["pairs"] = collision_check(msg, tree)
             if store.forward_enabled:
                 for ap in msg.refs:
                     if statuses.get(ap) in FORWARD_FROM:
                         store.forward(ap, f"commit-msg gate: work started (Refs: trailer) - {msg.subject[:160]}")
                         box.setdefault("moved", []).append(ap)
             box["nonce"] = store.gate_check(tree, msg.mentions)
+            if ceiling != "OFF":                           # step 2 of the spec, after the nonce so that the pair's evidence can name the commit; a failure here never costs the nonce
+                try:
+                    box["collision"] = store.collision(files_fn(), msg.mentions, ceiling, box["nonce"])
+                except BaseException as exc:               # noqa: BLE001
+                    box["collision_error"] = exc
         except BaseException as exc:                   # noqa: BLE001  (fail open, whatever it was)
             box["error"] = exc
 
@@ -151,6 +179,10 @@ def run(msg_path: str, *, store_factory=LiveStore, tree_fn=staged_tree, budget: 
         print(f"commit-msg gate: offline ({type(box['error']).__name__}); backlog_sync.py catches up.", file=err)
     if box.get("unknown") and nonce:
         print("commit-msg gate: not in the backlog: " + ", ".join(box["unknown"]), file=err)
+    for line in collision_lines(box.get("collision") or {}) if nonce else []:
+        print(line, file=err)
+    if box.get("collision_error") and nonce:
+        print(f"commit-msg gate: the collision rule could not be evaluated ({type(box['collision_error']).__name__}); the commit is not affected.", file=err)
     try:
         write_trailer(path, g.trailer_for(nonce))
     except Exception as exc:                           # noqa: BLE001  (never block on the trailer itself)
@@ -170,9 +202,10 @@ def main(argv: list | None = None) -> int:
         try:
             import shared.config as cfg
             require = bool(cfg.BACKLOG_REQUIRE_TICKET_ENABLED)
-        except Exception:                              # noqa: BLE001  (no config: the strict switch is off)
-            require = False
-        return run(argv[0], require_ticket=require)
+            ceiling = cfg.BACKLOG_COLLISION_GATE_MODE if cfg.BACKLOG_COLLISION_GATE_MODE in ("OFF", "AUDIT", "BLOCK") else "OFF"
+        except Exception:                              # noqa: BLE001  (no config: the strict switch is off and so is the collision gate)
+            require, ceiling = False, "OFF"
+        return run(argv[0], require_ticket=require, ceiling=ceiling)
     except Exception as exc:                          # noqa: BLE001
         print(f"commit-msg gate: internal error ({type(exc).__name__}); commit allowed.", file=sys.stderr)
         return 0

@@ -229,7 +229,7 @@ def test_the_step_0_dry_run_only_reads_and_is_not_refused_by_the_write_gate(tmp_
 def test_every_command_line_tool_that_calls_a_write_helper_goes_through_the_live_write_gate():
     """A new script that writes must not forget the gate: any file under scripts/ that calls a state-changing helper has to call require_live_write_cli() or handle LiveWriteForbidden."""
     import re
-    writes = re.compile(r"\bbc\.(open_ticket|transition|raise_hold|ack_review|release_hold|set_gate|annotate_wait|update_attributes|append_log|record_link_events?)\(")
+    writes = re.compile(r"\bbc\.(open_ticket|transition|raise_hold|ack_review|release_hold|set_gate|annotate_wait|update_attributes|append_log|record_link_events?|adjudicate_overlap|set_collision_mode)\(")
     offenders = []
     for path in (_ROOT / "scripts").rglob("*.py"):
         text = path.read_text(encoding="utf-8", errors="replace")

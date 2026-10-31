@@ -34,7 +34,7 @@ import re
 import sys
 import traceback
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator, Optional
 
@@ -45,6 +45,7 @@ _HUMAN_DSN_ENV_VAR = "FONDOS_BACKLOG_PG_DSN_HUMAN"          # the owner-only rol
 _LOGGER_DSN_ENV_VAR = "FONDOS_BACKLOG_PG_DSN_LOGGER"        # role backlog_logger (FND-0354): appends notes to EXISTING tickets, nothing else; lives in the git-ignored .env
 _INCIDENT_DSN_ENV_VAR = "FONDOS_BACKLOG_PG_DSN_INCIDENT"    # role backlog_incident (FND-0354): the automatic incident capture, insert-only; lives in the git-ignored .env
 _GATE_DSN_ENV_VAR = "FONDOS_BACKLOG_PG_DSN_GATE"            # role backlog_gate (FND-0334 C2): the commit-msg hook's login, three routines and nothing else; lives in the git-ignored .env; NO fallback to another login
+_ADJUDICATOR_DSN_ENV_VAR = "FONDOS_BACKLOG_PG_DSN_ADJUDICATOR"   # role backlog_adjudicator (FND-0334 C3): decides collision pairs; created by the owner, kept OUTSIDE .env (typed in his own terminal)
 NON_INTERACTIVE_OPERATIONS = ("agent_log", "incident", "gate")   # the ONLY writes a non-interactive process may make (owner decisions 2026-10-29: agent_log, incident; 2026-10-31: gate); anything else is refused by confirm_live_write
 _FALLBACK_LOG_ENV_VAR = "FONDOS_BACKLOG_FALLBACK_LOG"
 _DEFAULT_FALLBACK_LOG = Path(__file__).resolve().parent / "log" / "backlog_autolog_fallback.jsonl"   # == LOG_DIRS["shared"]
@@ -482,11 +483,16 @@ def _target_of(dsn: str) -> str:
 
 
 @contextmanager
-def _session(conn=None, *, human: bool = False, write: bool = False, operation: Optional[str] = None):
+def _session(conn=None, *, human: bool = False, write: bool = False, operation: Optional[str] = None, adjudicator: bool = False):
     if conn is not None:
         yield conn
         return
-    dsn = dsn_for_actor("human:x") if human else (dsn_for_operation(operation) if operation else _dsn())
+    if adjudicator:                                        # a person at a terminal, with the login only the owner holds; never an allow-listed (non-interactive) operation
+        dsn = os.environ.get(_ADJUDICATOR_DSN_ENV_VAR)
+        if not dsn:
+            raise BacklogUnavailable(f"{_ADJUDICATOR_DSN_ENV_VAR} is not set: the adjudicator login is the owner's, typed in his own terminal and never kept in .env")
+    else:
+        dsn = dsn_for_actor("human:x") if human else (dsn_for_operation(operation) if operation else _dsn())
     if not dsn:
         raise BacklogUnavailable(f"{_GATE_DSN_ENV_VAR if operation == 'gate' else _DSN_ENV_VAR} is not set")
     if psycopg is None:
@@ -1144,6 +1150,94 @@ def record_hook_bypass(sha: str, ap_id: str, reason: str, fact_ts: datetime, *, 
     who = resolve_actor(actor)
     with _session(conn, human=who.startswith("human:"), write=True) as c:
         return bool(c.execute("SELECT backlog.sp_record_hook_bypass(%s, %s, %s, %s, %s)", (sha, ap_id, reason, fact_ts, who)).fetchone()[0])
+
+
+COLLISION_MODES = ("OFF", "AUDIT", "BLOCK")             # Phase C slice 3 (FND-0334): db/pg_backlog/90_collision.sql
+COLLISION_DECISIONS = ("OVERLAPS", "RELATED", "DEPENDS_ON", "NONE", "REVERT")
+
+
+def collision_store_present(*, conn=None) -> bool:
+    """True when the owner has applied Phase C slice 3 (the collision rule, the modes and the adjudication)."""
+    with _session(conn) as c:
+        return bool(c.execute("SELECT to_regclass('backlog.gate_state') IS NOT NULL AND to_regprocedure('backlog.sp_gate_collision(text[],text[],text,text,text)') IS NOT NULL").fetchone()[0])
+
+
+def gate_collision(files: list, ap_ids: list, ceiling: str, nonce: str, *, actor: Optional[str] = None, conn=None) -> dict:
+    """The commit-msg hook's evaluation of the collision rule (backlog.sp_gate_collision): {mode, tier, new: [{a, b, shared}], undecided: [{a, b}], held: [ticket]}. Without `conn` through the
+    scoped login of the hook."""
+    if ceiling not in COLLISION_MODES:
+        raise ValueError(f"ceiling must be one of {COLLISION_MODES}, got {ceiling!r}")
+    who = resolve_actor(actor)
+    with _session(conn, human=who.startswith("human:"), write=True, operation=None if conn is not None else "gate") as c:
+        return c.execute("SELECT backlog.sp_gate_collision(%s::text[], %s::text[], %s, %s, %s)", (list(files), list(ap_ids), ceiling, nonce, who)).fetchone()[0]
+
+
+def collision_state(ceiling: str, *, conn=None, scoped: bool = False) -> dict:
+    """{'mode', 'tier', 'state_event'}: the effective mode (the lower of `ceiling` and the latest gate_state event) and the rule tier. `scoped` = through the hook's scoped login."""
+    if ceiling not in COLLISION_MODES:
+        raise ValueError(f"ceiling must be one of {COLLISION_MODES}, got {ceiling!r}")
+    with _session(conn, operation="gate" if scoped and conn is None else None) as c:
+        row = c.execute("SELECT mode, tier, state_event FROM backlog.fn_collision_state(%s)", (ceiling,)).fetchone()
+    return {"mode": row[0], "tier": row[1], "state_event": row[2]}
+
+
+def gate_undecided(ap_ids: list, *, conn=None, scoped: bool = False) -> list:
+    """[{a, b, age_hours}]: the undecided collision pairs that touch any of the tickets (what the pre-push hook reads; `scoped` = through the hook's login)."""
+    with _session(conn, operation="gate" if scoped and conn is None else None) as c:
+        return _rows(c, "SELECT a, b, age_hours FROM backlog.fn_gate_undecided(%s::text[])", (list(ap_ids),))
+
+
+def gate_queue(*, conn=None) -> list:
+    """[{a, b, evidence, proposed_ts, age_hours, level}]: every undecided collision pair, oldest first (level OK / ATENCION at 48 h / ALERTA at 96 h)."""
+    with _session(conn) as c:
+        if c.execute("SELECT to_regclass('backlog.v_gate_queue') IS NULL").fetchone()[0]:
+            return []
+        return _rows(c, "SELECT a, b, evidence, proposed_ts, age_hours, level FROM backlog.v_gate_queue ORDER BY proposed_ts")
+
+
+def gate_measurements(ceiling: str, *, conn=None) -> dict:
+    """Everything the calibrator and the mode tool read, in one place (read-only): {'now', 'state': {'mode', 'tier'}, 'audit_start', 'anchor', 'share_3d', 'window': {...}}.
+    `anchor` is the time of the latest gate_state event (None before any). The window counts run from the anchor, or the audit start, to now and never reach back more than 42 days:
+    `adjudicated` / `positive` (decided OVERLAPS, DEPENDS_ON or REVERT) pairs of gate_adjudication; `confirmed`: distinct pairs whose OVERLAPS a person confirmed by another route (an
+    origin other than GATE: the gate's own adjudications would make the recall circular); `flagged`: of those, the pairs the gate had already proposed."""
+    if ceiling not in COLLISION_MODES:
+        raise ValueError(f"ceiling must be one of {COLLISION_MODES}, got {ceiling!r}")
+    with _session(conn) as c:
+        now = c.execute("SELECT clock_timestamp()").fetchone()[0]
+        mode, tier, _ = c.execute("SELECT mode, tier, state_event FROM backlog.fn_collision_state(%s)", (ceiling,)).fetchone()
+        audit_start = c.execute("SELECT backlog.fn_audit_start()").fetchone()[0]
+        anchor = c.execute("SELECT max(event_ts) FROM backlog.gate_state").fetchone()[0]
+        share = c.execute("SELECT backlog.fn_gate_share(3)").fetchone()[0]
+        since = max([t for t in (anchor or audit_start, now - timedelta(days=42)) if t is not None])
+        adjudicated, positive = c.execute("SELECT count(*), count(*) FILTER (WHERE decision IN ('OVERLAPS', 'DEPENDS_ON', 'REVERT')) FROM backlog.gate_adjudication WHERE event_ts >= %s",
+                                          (since,)).fetchone()
+        confirmed, flagged = c.execute(
+            "WITH conf AS (SELECT DISTINCT least(from_id, to_id) AS a, greatest(from_id, to_id) AS b FROM backlog.backlog_link_event "
+            "              WHERE link_type = 'OVERLAPS' AND status = 'CONFIRMED' AND origin <> 'GATE' AND event_ts >= %s) "
+            "SELECT count(*), count(*) FILTER (WHERE EXISTS (SELECT 1 FROM backlog.backlog_link_event g WHERE g.link_type = 'OVERLAPS' AND g.status = 'PROPOSED' AND g.origin = 'GATE' "
+            "                                                  AND least(g.from_id, g.to_id) = conf.a AND greatest(g.from_id, g.to_id) = conf.b)) FROM conf", (since,)).fetchone()
+    return {"now": now, "state": {"mode": mode, "tier": tier}, "audit_start": audit_start, "anchor": anchor, "share_3d": None if share is None else float(share),
+            "window": {"adjudicated": int(adjudicated), "positive": int(positive), "confirmed": int(confirmed), "flagged": int(flagged)}}
+
+
+def adjudicate_overlap(a: str, b: str, decision: str, reason: str, *, absorbs: Optional[str] = None, actor: Optional[str] = None, conn=None) -> int:
+    """Decide one undecided collision pair (backlog.sp_adjudicate_overlap). Only through the owner's adjudicator login (FONDOS_BACKLOG_PG_DSN_ADJUDICATOR), by a person at a terminal, with a
+    human identity in FONDOS_ACTOR. Returns the adjudication id."""
+    if decision not in COLLISION_DECISIONS:
+        raise ValueError(f"decision must be one of {COLLISION_DECISIONS}, got {decision!r}")
+    who = resolve_actor(actor)
+    with _session(conn, write=True, adjudicator=conn is None) as c:
+        return int(c.execute("SELECT backlog.sp_adjudicate_overlap(%s, %s, %s, %s, %s, %s)", (a, b, decision, absorbs, reason, who)).fetchone()[0])
+
+
+def set_collision_mode(mode: str, tier: str, reason: str, ceiling: str, *, evidence: Optional[dict] = None, actor: Optional[str] = None, conn=None) -> int:
+    """Append a gate_state event (backlog.sp_set_collision_mode). A person (human actor, the owner-only login) sets any mode, BLOCK only after 14 days of AUDIT and a share of 10 % or less;
+    system:calibrator may only retire the gate (OFF) or tighten T0 to T1. Returns the event id."""
+    if mode not in COLLISION_MODES or tier not in ("T0", "T1"):
+        raise ValueError(f"mode must be one of {COLLISION_MODES} and tier T0 or T1, got {mode!r} / {tier!r}")
+    who = resolve_actor(actor)
+    with _session(conn, human=who.startswith("human:"), write=True) as c:
+        return int(c.execute("SELECT backlog.sp_set_collision_mode(%s, %s, %s, %s, %s, %s::jsonb)", (mode, tier, who, reason, ceiling, json.dumps(evidence or {}))).fetchone()[0])
 
 
 def add_close_condition(ap_id: str, probe_kind: str, args: list, reason: str, *, actor: Optional[str] = None, conn=None) -> int:

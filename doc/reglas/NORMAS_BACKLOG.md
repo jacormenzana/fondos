@@ -288,6 +288,57 @@ Lectura común del mensaje (gancho y sincronización): `shared/backlog_gate.py`.
   la historia anterior nunca se juzga. Un reordenamiento (`rebase`) que cambie el árbol de un commit lo hace parecer una elusión
   (`TREE_MISMATCH`): límite aceptado por la especificación; el propietario lo resuelve con la liberación del bloqueo.
 
+### §4.6. La regla de colisión, la adjudicación y los modos (fase C, tramo 3, FND-0334)
+
+DDL `db/pg_backlog/90_collision.sql`, aplicado por el propietario con `migrate_backlog_v2.py --phase collision` (necesita el tramo 2; la reversión conserva
+`gate_state`, `gate_collision` y `gate_adjudication`, y los enlaces y bloqueos que el gancho ya creó). Especificación: `PROPUESTA_BACKLOG_V2.md` §6.4.2 a §6.4.5.
+
+- **Apagado por defecto.** El techo es `BACKLOG_COLLISION_GATE_MODE` en `shared/config.py` (`OFF`, `AUDIT`, `BLOCK`). Con `OFF` el gancho ni siquiera pregunta a la base.
+  El modo efectivo es el **menor** entre el techo y el último evento de `backlog.gate_state`; sin evento, el techo y el nivel `T0`.
+- **La regla** (`fn_collision_pairs`). **T0:** el commit toca un fichero de código (no `.md` ni `.txt`) cuya ruta completa aparece en el texto o los logs de **otro** ticket
+  `IN_PROGRESS`; los ficheros citados por 5 o más tickets abiertos se ignoran; se omiten las parejas con un enlace `CONFIRMED` y las ya adjudicadas. **T1:** T0 y al menos 2
+  ficheros compartidos. La búsqueda ignora mayúsculas. «Coincidencia a nivel de función» no es un nivel.
+- **Qué hace el gancho `commit-msg`** (paso 2 de §4.5, tras obtener el nonce para que la evidencia lo nombre): `sp_gate_collision` registra cada pareja nueva como un evento
+  `OVERLAPS` `PROPOSED` con `origin = 'GATE'` (orden canónico: el id menor primero), apunta una fila en `gate_collision` y **avisa por stderr; nunca bloquea el commit**. Una
+  pareja es *no decidida* mientras su último evento sea esa propuesta. En `BLOCK` levanta además un bloqueo (`V-COLLISION`) sobre el ticket que hace el commit, una sola vez;
+  en `AUDIT` no hay bloqueo. Un fallo de la regla nunca cuesta el nonce.
+- **Adjudicación** (`sp_adjudicate_overlap(a, b, decisión, absorbs, razón, actor)`). Solo la ejecuta el rol `backlog_adjudicator` (o un miembro): se comprueba `session_user`,
+  no un parámetro, porque una rutina `SECURITY DEFINER` corre como su propietario. **El rol y su cadena de conexión los crea el propietario y viven fuera de `.env`**
+  (`FONDOS_BACKLOG_PG_DSN_ADJUDICATOR`, que se teclea en su terminal); hasta entonces nadie adjudica, que es el estado seguro. El actor es una identidad `human:<login>`.
+  Decisiones: `OVERLAPS` (enlace `CONFIRMED`, con `absorbs`), `RELATED` y `DEPENDS_ON` (se rechaza la propuesta y se confirma ese enlace), `NONE` (se rechaza) y `REVERT` (como
+  `OVERLAPS`; la razón debe llevar el sha de 40 caracteres del revert). Cada decisión escribe un log en ambos tickets, queda en `gate_adjudication` y libera los bloqueos
+  `V-COLLISION` del ticket que se queda sin parejas no decididas. Una pareja decidida no se vuelve a proponer. La herramienta es `scripts/audit/gate_adjudicate.py`
+  (`--list`, `--queue-out` / `--apply-decisions` con un CSV, `--decide`; simulacro por defecto en el CSV).
+- **Cola.** `v_gate_queue`: parejas no decididas con su edad; 48 h `[ATENCION]` y 96 h `[ALERTA]`. El pre-vuelo (`preflight_check.py`) imprime el `[ALERTA]` como **primera línea**
+  y sale con código 2; nada se relaja porque la cola envejezca.
+- **Modos** (`sp_set_collision_mode`, solo añade): una persona fija cualquier modo; **`BLOCK` solo tras 14 días de `AUDIT` y con una proporción de commits que introducen una
+  pareja de 10 % o menos** (`fn_gate_share(3)`, medida en `gate_collision`), comprobado por la base; `system:calibrator` solo puede retirar la puerta (`OFF`) o apretar `T0` a
+  `T1` en el modo vigente: nunca baja `BLOCK` a `AUDIT`, nunca afloja. Rehabilitar es un evento de una persona con razón. El propietario lo hace con
+  `scripts/audit/gate_mode.py` (`--show` lee el reloj de la auditoría y lo que aún le falta a `BLOCK`; `--set MODO --reason ...` apunta el evento, con identidad `human:*`, el acceso
+  solo del propietario y la confirmación escrita). Poner la puerta en marcha exige **las dos cosas**: subir el techo en `shared/config.py` (cambio revisado) y ese evento.
+- **Qué acceso usa cada pieza** (fijado por `tests/test_backlog_gate_rbac.py`): los dos ganchos usan **solo** el acceso acotado `backlog_gate` (`FONDOS_BACKLOG_PG_DSN_GATE`, sin
+  volver al general) y solo estas funciones del cliente: `gate_statuses`, `gate_forward`, `gate_check`, `gate_collision`, `collision_state(scoped=True)` y `gate_undecided(scoped=True)`;
+  `gate_adjudicate.py` escribe solo con `backlog_adjudicator`; el calibrador (`system:calibrator`) y `gate_mode.py` escriben solo `sp_set_collision_mode`, el calibrador por el acceso
+  compartido (no hay otro acotado) y siempre con una persona delante, `gate_mode.py` por el acceso solo del propietario; ninguno usa el de adjudicación.
+- **`pre-push`** (`scripts/audit/pre_push_gate.py`, lo instala `commit-msg.sh`). En `BLOCK` se niega a publicar commits cuyos tickets tengan una pareja no decidida y escribe los
+  shas y las parejas exactas; en `AUDIT` avisa; con la puerta apagada no hace nada. Se borra una rama sin problema. Base inaccesible o error del script: el push pasa con un
+  aviso (la atestación del tramo 4 repite la comprobación).
+- **Un fallo de un gancho nunca bloquea.** Los dos ganchos solo convierten en rechazo el estado de salida **3** del script; una caída (sintaxis, importación) deja pasar. Quien
+  ya instaló el gancho debe **volver a ejecutar `bash scripts/audit/commit-msg.sh`** para tener esta versión.
+- **Decisiones de diseño que se apartan de la letra de la especificación**, todas hacia lo más seguro: el apretado `T0 → T1` y la retirada se apuntan como eventos de
+  `gate_state` (no de `ops_event`, cuyo `ticket` es obligatorio); un ticket solo recibe el bloqueo en `BLOCK` (en `AUDIT` «no se bloquea nada»); una pareja ya adjudicada
+  `NONE` no se vuelve a proponer.
+- **Calibrador y retirada** (`scripts/audit/gate_calibrator.py`; simulacro por defecto, `--apply` pide la confirmación escrita; identidad del proceso `system:calibrator`). Solo
+  **aprieta** y retira: (1) *apretado*: desde el día 10 de `AUDIT`, si la proporción de commits de los últimos 3 días que introdujeron una pareja nueva supera el 10 %, pasa
+  `T0 → T1`, una sola vez; (2) *retirada*: las ventanas empiezan en el último evento de `gate_state` (inicio de la auditoría, un apretado, una rehabilitación) y necesitan 14
+  días; un veredicto exige al menos **15 parejas adjudicadas y 10 OVERLAPS confirmados nuevos** (la ventana se alarga hasta 42 días; pasado eso informa «datos insuficientes» y
+  **no retira nada**); con muestra, una *precisión* (parejas decididas `OVERLAPS`, `DEPENDS_ON` o `REVERT` sobre las adjudicadas) por debajo del 30 % o un *suelo de cobertura*
+  por debajo del 5 % ponen la puerta en `OFF`, con los números como evidencia y un `[ALERTA]` en la primera línea; vale en `AUDIT` y en `BLOCK`. **Suelo de cobertura:** de los
+  `OVERLAPS` que una persona confirma por otra vía (no por la propia puerta: sería circular), qué parte había propuesto ya la puerta. La retirada se evalúa antes que el apretado.
+  Nunca baja `BLOCK` a `AUDIT` ni afloja un nivel; reactivar es un evento de una persona con razón. Sale con código 3 cuando decide una retirada.
+- **Pendiente del tramo 3:** la comprobación por la sincronización del sha de `REVERT`, el uso de la tabla CSV de `backlog_links.py --apply-review` (hoy la herramienta propia
+  `gate_adjudicate.py` lleva su CSV) y la línea de la cola en el informe de ciclo.
+
 ## §5. Protocolo de absorción de alcance
 
 Cuando un enlace `OVERLAPS` lleva nota `absorbs`, el ticket que absorbe **debe**:

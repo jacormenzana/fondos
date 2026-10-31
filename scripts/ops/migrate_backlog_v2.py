@@ -16,7 +16,8 @@ privileges of backlog_writer and adds the author check; --apply is REFUSED unles
 (FND-0338, append-only history of the eight descriptive columns). `human` and `history` need step A-1 re-applied with FND-0337 (the routines they use).
 `relations` (FND-0333, Phase B: link semantics and the delivery gate) and `groups` (FND-0335, Phase D: groups, the violation view, lean metrics, impact
 closure; needs steps A-1 and B) and `sync` (FND-0334, Phase C slice 1: commit events, closing conditions, the status feed; needs `groups`) and `hook`
-(FND-0334, Phase C slice 2: the commit-msg gate, nonces and bypassed commits; needs `sync`).
+(FND-0334, Phase C slice 2: the commit-msg gate, nonces and bypassed commits; needs `sync`) and `collision` (FND-0334, Phase C slice 3: the collision rule, adjudication and
+the gate modes; needs `hook`).
 
 One phase per transaction (Postgres DDL is transactional: a failure rolls back whole). The DDL is NOT duplicated here: it is the block
 between `-- BEGIN <name>` and `-- END <name>` in the phase's file under db/pg_backlog/ (single source of truth, P#11); the rollback is
@@ -145,6 +146,19 @@ PHASES: dict = {
         "requires": ("backlog", "hold_event", "v_violations_c"),
         "requires_routines": ("trg_append_only", "fn_actor_authorized", "fn_rebuild_violations", "sp_raise_hold", "sp_transition"),
         "roles": ("backlog_gate",),
+    },
+    # Phase C slice 3 (FND-0334): the collision rule (T0 / T1), the pairs as PROPOSED OVERLAPS events of origin GATE, the modes (gate_state), the adjudication procedure and the queue.
+    # Needs slice 2 (gate_check, sp_gate_check, the role backlog_gate) and Phase B (holds). The role backlog_adjudicator is NOT created here: the owner creates it and keeps its DSN outside .env.
+    # Its rollback KEEPS gate_state, gate_collision and gate_adjudication.
+    "collision": {
+        "up": ("90_collision.sql", "backlog_collision"),
+        "down": ("down/90_collision_down.sql", "backlog_collision_down"),
+        "tables": ("gate_state", "gate_collision", "gate_adjudication"),
+        "views": ("v_gate_pair", "v_gate_queue"),
+        "routines": ("fn_mode_rank", "fn_collision_state", "fn_gate_share", "fn_audit_start", "sp_set_collision_mode", "fn_collision_pairs", "sp_gate_collision", "fn_gate_undecided",
+                     "sp_adjudicate_overlap"),
+        "requires": ("backlog", "backlog_link_event", "v_backlog_link", "hold_event", "v_open_hold", "gate_check"),
+        "requires_routines": ("trg_append_only", "fn_actor_ok", "fn_actor_authorized", "sp_raise_hold", "sp_gate_check"),
     },
 }
 SHADOW_REQUIRED = 50          # owner decision D2 (2026-10-26): 50 consecutive non-system transitions with no direct update

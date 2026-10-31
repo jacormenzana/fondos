@@ -189,7 +189,7 @@ def test_hook_fails_open_with_offline(tmp_path, store):
 def test_hook_rejects_a_malformed_token_and_leaves_the_message_alone(tmp_path):
     store = FakeStore({"FND-0001": "TODO"})
     rc, text, err = run_hook(tmp_path, "fix: fnd0193 broke it\n", store)
-    assert rc == 1 and "fnd0193" in err and text == "fix: fnd0193 broke it\n" and store.checks == []
+    assert rc == hook.REJECTED_RC and "fnd0193" in err and text == "fix: fnd0193 broke it\n" and store.checks == []
 
 
 def test_hook_leaves_a_commit_without_a_ticket_alone_and_never_calls_the_backlog(tmp_path):
@@ -310,7 +310,7 @@ def run_strict(tmp_path, message, branch="master", merging=False, require=True):
 
 def test_strict_mode_rejects_a_commit_without_a_ticket_unless_exempt(tmp_path):
     rc, text, err = run_strict(tmp_path, "feat: no ticket here\n")
-    assert rc == 1 and "No ticket cited" in err and text == "feat: no ticket here\n"
+    assert rc == hook.REJECTED_RC and "No ticket cited" in err and text == "feat: no ticket here\n"
     assert run_strict(tmp_path, "chore: bump\n")[0] == 0
     assert run_strict(tmp_path, "Merge branch 'x'\n")[0] == 0
     assert run_strict(tmp_path, 'Revert "feat: y"\n')[0] == 0
