@@ -180,11 +180,11 @@ PHASES: dict = {
         "down": ("down/97_autonomy_down.sql", "backlog_autonomy_down"),
         "tables": (),
         "views": (),
-        "routines": ("sp_agent_transition", "sp_record_link", "sp_append_log"),
-        "requires": ("backlog", "backlog_link_event", "actor_alias", "backlog_logs"),
+        "routines": ("sp_agent_transition", "sp_record_link", "sp_append_log", "sp_auto_transition"),
+        "requires": ("backlog", "backlog_link_event", "actor_alias", "backlog_logs", "ops_event", "v_close_condition"),
         "requires_routines": ("trg_append_only", "fn_actor_ok", "fn_actor_authorized", "sp_open_ticket", "sp_transition", "sp_annotate_wait", "sp_create_group", "sp_group_member",
-                              "sp_add_close_condition", "sp_retire_close_condition"),
-        "roles": ("backlog_agent",),
+                              "sp_add_close_condition", "sp_retire_close_condition", "sp_record_ops_event", "fn_gate_blockers"),
+        "roles": ("backlog_agent", "backlog_autopilot"),
     },
 }
 SHADOW_REQUIRED = 50          # owner decision D2 (2026-10-26): 50 consecutive non-system transitions with no direct update

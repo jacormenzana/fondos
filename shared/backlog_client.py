@@ -47,8 +47,10 @@ _INCIDENT_DSN_ENV_VAR = "FONDOS_BACKLOG_PG_DSN_INCIDENT"    # role backlog_incid
 _GATE_DSN_ENV_VAR = "FONDOS_BACKLOG_PG_DSN_GATE"            # role backlog_gate (FND-0334 C2): the commit-msg hook's login, three routines and nothing else; lives in the git-ignored .env; NO fallback to another login
 _ADJUDICATOR_DSN_ENV_VAR = "FONDOS_BACKLOG_PG_DSN_ADJUDICATOR"   # role backlog_adjudicator (FND-0334 C3): decides collision pairs; created by the owner, kept OUTSIDE .env (typed in his own terminal)
 _AGENT_DSN_ENV_VAR = "FONDOS_BACKLOG_PG_DSN_AGENT"          # role backlog_agent (Backlog v3 W2, FND-0357): an agent opens and moves tickets through a short list of routines; lives in the git-ignored .env; NO fallback to another login
-NON_INTERACTIVE_OPERATIONS = ("agent_log", "incident", "gate", "agent")   # the ONLY writes a non-interactive process may make (owner decisions 2026-10-29: agent_log, incident; 2026-10-31: gate, agent); anything else is refused by confirm_live_write
-_SCOPED_DSN_ENV = {"gate": _GATE_DSN_ENV_VAR, "agent": _AGENT_DSN_ENV_VAR}   # operations that use their own login EXCLUSIVELY: without its DSN there is no live write
+_AUTOPILOT_DSN_ENV_VAR = "FONDOS_BACKLOG_PG_DSN_AUTOPILOT"  # role backlog_autopilot (Backlog v3 W3, FND-0358): records facts, appends notes and makes the two evidence-backed moves; lives in the git-ignored .env; NO fallback to another login
+AUTOPILOT_ACTOR = "system:autopilot"                         # the one identity of the autopilot process (scripts/audit/backlog_autopilot.py sets FONDOS_ACTOR to it); sp_auto_transition fixes it in the database too
+NON_INTERACTIVE_OPERATIONS = ("agent_log", "incident", "gate", "agent", "autopilot")   # the ONLY writes a non-interactive process may make (owner decisions 2026-10-29: agent_log, incident; 2026-10-31: gate, agent, autopilot); anything else is refused by confirm_live_write
+_SCOPED_DSN_ENV = {"gate": _GATE_DSN_ENV_VAR, "agent": _AGENT_DSN_ENV_VAR, "autopilot": _AUTOPILOT_DSN_ENV_VAR}   # operations that use their own login EXCLUSIVELY: without its DSN there is no live write
 _FALLBACK_LOG_ENV_VAR = "FONDOS_BACKLOG_FALLBACK_LOG"
 _DEFAULT_FALLBACK_LOG = Path(__file__).resolve().parent / "log" / "backlog_autolog_fallback.jsonl"   # == LOG_DIRS["shared"]
 
@@ -403,6 +405,12 @@ def agent_operation(who: str) -> Optional[str]:
     return "agent"
 
 
+def autopilot_operation(who: str) -> Optional[str]:
+    """'autopilot' when `who` is system:autopilot and its scoped login is configured (FONDOS_BACKLOG_PG_DSN_AUTOPILOT); otherwise None (the console path, exactly as before). Only the
+    helpers the autopilot may use call it: record_ops_event, append_log and auto_transition."""
+    return "autopilot" if str(who) == AUTOPILOT_ACTOR and os.environ.get(_AUTOPILOT_DSN_ENV_VAR) else None
+
+
 def _connect_allowlisted(operation: str, dsn: str, **kw):
     """THE connection factory of the non-interactive writes: it checks the allow-list, then opens the connection. Raises ValueError for an operation that is not allow-listed."""
     confirm_live_write(_target_of(dsn), operation=operation)
@@ -604,7 +612,7 @@ def append_log(action_point_id: str, username: str, comment: str, *, conn=None) 
         raise ValueError("action_point_id, username and comment are all required")
     if conn is None and _AGENT_LOG_ACTOR.match(str(username)):
         # FND-0354 (owner decision 2026-10-29): an agent or system identity appends through the scoped routine with its own login; the allow-list lets it run without a terminal.
-        with _session(None, write=True, operation="agent_log") as c:
+        with _session(None, write=True, operation=autopilot_operation(username) or "agent_log") as c:
             with c.cursor() as cur:
                 if not _routine_present(cur, "sp_append_log"):
                     raise BacklogUnavailable("backlog.sp_append_log is missing: the owner applies migrate_backlog_v2.py --phase iam first (until then an agent's notes wait)")
@@ -859,6 +867,8 @@ def transition(ap_id: str, to_status: str, *, session_id: str, comment: str, act
     An agent (agent:<model>, with its scoped login configured: agent_operation) moves tickets through backlog.sp_agent_transition, which has no `force`, never reopens a CLOSED
     ticket and makes no delivery closure (Backlog v3 W2): `force=True` from an agent is refused here, before any connection."""
     who = resolve_actor(actor)
+    if who == AUTOPILOT_ACTOR:
+        raise ValueError("the autopilot moves tickets only through auto_transition(): two evidence-backed edges, never forced")
     op = agent_operation(who)
     if op and force:
         raise ValueError("an agent cannot force a transition (p_force is a person's override): ask the owner, or record the request as a note")
@@ -1093,7 +1103,7 @@ def violation_summary(*, top: int = 3, conn=None) -> dict:
     return {"applied": True, "total": sum(r["n"] for r in by_code), "by_code": by_code, "top": by_code[:top]}
 
 
-OPS_KINDS = ("COMMIT", "RELEASE", "PROMOTION", "CYCLE_FLAG", "AUDIT_INCIDENT")     # Phase C (FND-0334): db/pg_backlog/70_sync.sql
+OPS_KINDS = ("COMMIT", "RELEASE", "PROMOTION", "CYCLE_FLAG", "AUDIT_INCIDENT", "MERGE", "DEPLOY", "CYCLE")     # Phase C (FND-0334): db/pg_backlog/70_sync.sql; MERGE, DEPLOY, CYCLE: 97_autonomy.sql (W3)
 OPS_SOURCES = ("REFS", "SUBJECT", "OTHER")
 
 
@@ -1110,9 +1120,25 @@ def record_ops_event(kind: str, ref: str, ap_id: str, source: str, payload: dict
     if kind not in OPS_KINDS or source not in OPS_SOURCES:
         raise ValueError(f"kind must be one of {OPS_KINDS} and source one of {OPS_SOURCES}, got {kind!r} / {source!r}")
     who = resolve_actor(actor)
-    with _session(conn, human=who.startswith("human:")) as c:
+    with _session(conn, human=who.startswith("human:"), write=True, operation=autopilot_operation(who)) as c:       # write=True: a fact is a write (the autopilot has its own login)
         return bool(c.execute("SELECT backlog.sp_record_ops_event(%s, %s, %s, %s, %s::jsonb, %s, %s)",
                               (kind, ref, ap_id, source, json.dumps(payload or {}), fact_ts, who)).fetchone()[0])
+
+
+def auto_transition(ap_id: str, to_status: str, *, evidence_ref: str, session_id: str, comment: str, solution_type: Optional[str] = None,
+                    release_version: Optional[str] = None, conn=None) -> int:
+    """The autopilot's one move (backlog.sp_auto_transition, Backlog v3 W3): IN_PROGRESS -> READY_FOR_DEPLOY, or READY_FOR_DEPLOY -> CLOSED as CODE_FIX / DATA_FIX with a release label,
+    on the MERGE event `evidence_ref` recorded for that ticket. Only the process whose identity is system:autopilot may call it; the database fixes the actor and never forces. Returns
+    the status_event id; raises on any refusal (the gates of Phase B included), never swallows."""
+    who = resolve_actor(None)
+    if who != AUTOPILOT_ACTOR:
+        raise ActorUnknown(f"auto_transition is the autopilot's: FONDOS_ACTOR must be {AUTOPILOT_ACTOR}, got {who!r}")
+    with _session(conn, write=True, operation=autopilot_operation(who)) as c:
+        (event_id,) = c.execute(
+            "SELECT backlog.sp_auto_transition(p_ap_id => %s, p_to => %s, p_evidence_kind => 'MERGE', p_evidence_ref => %s, p_session_id => %s, p_comment => %s, "
+            "p_solution_type => %s, p_release_version => %s)",
+            (ap_id, to_status, evidence_ref, session_id, comment, solution_type, release_version)).fetchone()
+    return int(event_id)
 
 
 def ops_event_keys(kind: str = "COMMIT", *, conn=None) -> set:

@@ -19,7 +19,10 @@
 --   5. The grants of backlog_agent: USAGE on the schema, SELECT on the tables and views (reads inside the same connection), and EXECUTE on exactly these routines: sp_open_ticket,
 --      sp_agent_transition, sp_record_link, sp_append_log, sp_annotate_wait, sp_create_group, sp_group_member, sp_add_close_condition, sp_retire_close_condition. No table INSERT or
 --      UPDATE, no gate / mode / hold / adjudication routine.
--- The role backlog_autopilot of W3 is created by the W3 block of this same phase, not here (no unused credential).
+--   6. Backlog v3 W3 (FND-0358), section 5 below: the autopilot. The fact kinds MERGE (a merge on master that delivers a ticket), DEPLOY (its DDL is live) and CYCLE (a cycle ran
+--      after the merge); the scoped login backlog_autopilot (no password: the owner sets it; DSN FONDOS_BACKLOG_PG_DSN_AUTOPILOT); and sp_auto_transition, the autopilot's ONLY way to
+--      move a ticket: it accepts two edges (IN_PROGRESS -> READY_FOR_DEPLOY and READY_FOR_DEPLOY -> CLOSED as CODE_FIX / DATA_FIX), always as system:autopilot, never forced, and only when
+--      the MERGE event it cites is recorded for that ticket (and, for a closure, the DEPLOY / CYCLE / closing-condition facts the delivery needs). The gates of Phase B still apply inside.
 
 -- BEGIN backlog_autonomy
 -- 0. The scoped login. No password (the owner sets it), no membership of backlog_writer: it holds ONLY the grants at the end of this block.
@@ -148,6 +151,103 @@ BEGIN
                                  'sp_add_close_condition', 'sp_retire_close_condition')
     LOOP
         EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO backlog_agent', r.sig);
+    END LOOP;
+END $$;
+
+-- 5. Backlog v3 W3 (FND-0358): the autopilot.
+-- 5.0 The kinds of operational fact: a merge that delivers a ticket, a DDL deploy, a cycle that ran. The constraint is widened only when it does not know MERGE yet (idempotent);
+--     the rollback leaves it widened (ops_event is append-only and may hold such rows).
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'backlog.ops_event'::regclass AND contype = 'c' AND pg_get_constraintdef(oid) LIKE '%''MERGE''%') THEN
+        ALTER TABLE backlog.ops_event DROP CONSTRAINT IF EXISTS ops_event_kind_check;
+        ALTER TABLE backlog.ops_event ADD CONSTRAINT ops_event_kind_check
+            CHECK (kind IN ('COMMIT', 'RELEASE', 'PROMOTION', 'CYCLE_FLAG', 'AUDIT_INCIDENT', 'MERGE', 'DEPLOY', 'CYCLE'));
+    END IF;
+END $$;
+
+-- 5.1 The scoped login of the autopilot. No password (the owner sets it), no membership of backlog_writer.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'backlog_autopilot') THEN
+        CREATE ROLE backlog_autopilot LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 4;
+    END IF;
+    ALTER ROLE backlog_autopilot SET statement_timeout = '10s';
+    ALTER ROLE backlog_autopilot SET idle_in_transaction_session_timeout = '15s';
+END $$;
+
+-- 5.2 The autopilot's one move. The evidence is a MERGE event recorded for this very ticket; a claim without it is refused. system:autopilot is fixed, p_force is never passed.
+CREATE OR REPLACE FUNCTION backlog.sp_auto_transition(
+    p_ap_id text, p_to text, p_evidence_kind text, p_evidence_ref text, p_session_id text, p_comment text,
+    p_solution_type text DEFAULT NULL, p_release_version text DEFAULT NULL)
+RETURNS bigint
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, backlog AS $$
+DECLARE
+    c_actor constant text := 'system:autopilot';
+    v_status text;
+    v_ev     backlog.ops_event%ROWTYPE;
+    v_db     boolean;
+BEGIN
+    IF NOT backlog.fn_actor_authorized(c_actor) THEN
+        RAISE EXCEPTION 'sp_auto_transition: % is not authorized from this connection', c_actor USING ERRCODE = '42501';
+    END IF;
+    SELECT status INTO v_status FROM backlog.BACKLOG WHERE action_point_id = p_ap_id FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'sp_auto_transition: ticket % does not exist', p_ap_id USING ERRCODE = '22023';
+    END IF;
+    IF p_evidence_kind IS DISTINCT FROM 'MERGE' THEN
+        RAISE EXCEPTION 'sp_auto_transition: the evidence of a move is a MERGE event (got %)', p_evidence_kind USING ERRCODE = '22023';
+    END IF;
+    SELECT * INTO v_ev FROM backlog.ops_event WHERE kind = 'MERGE' AND ref = p_evidence_ref AND action_point_id = p_ap_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'sp_auto_transition: no MERGE event % is recorded for %: the move has no evidence', p_evidence_ref, p_ap_id USING ERRCODE = '42501';
+    END IF;
+    IF v_status = 'IN_PROGRESS' AND p_to = 'READY_FOR_DEPLOY' THEN
+        IF p_solution_type IS NOT NULL OR p_release_version IS NOT NULL THEN
+            RAISE EXCEPTION 'sp_auto_transition: the move to READY_FOR_DEPLOY carries neither a solution nor a release label' USING ERRCODE = '22023';
+        END IF;
+    ELSIF v_status = 'READY_FOR_DEPLOY' AND p_to = 'CLOSED' THEN
+        IF p_solution_type IS NULL OR p_solution_type NOT IN ('CODE_FIX', 'DATA_FIX') THEN
+            RAISE EXCEPTION 'sp_auto_transition: only CODE_FIX and DATA_FIX close automatically (got %); a person closes the rest', p_solution_type USING ERRCODE = '42501';
+        END IF;
+        IF p_release_version IS NULL THEN
+            RAISE EXCEPTION 'sp_auto_transition: a delivery closure needs its release label' USING ERRCODE = '22023';
+        END IF;
+        v_db := EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(v_ev.payload -> 'paths', '[]'::jsonb)) AS p(path) WHERE p.path LIKE 'db/%');
+        IF v_db AND NOT EXISTS (SELECT 1 FROM backlog.ops_event WHERE kind = 'DEPLOY' AND action_point_id = p_ap_id) THEN
+            RAISE EXCEPTION 'sp_auto_transition: the merge changes db/**; % is not live until its DDL is applied (no DEPLOY event)', p_ap_id USING ERRCODE = '42501';
+        END IF;
+        IF p_solution_type = 'DATA_FIX' THEN
+            IF NOT EXISTS (SELECT 1 FROM backlog.ops_event WHERE kind = 'CYCLE' AND action_point_id = p_ap_id AND fact_ts >= v_ev.fact_ts) THEN
+                RAISE EXCEPTION 'sp_auto_transition: DATA_FIX needs a CYCLE event after the merge' USING ERRCODE = '42501';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM backlog.v_close_condition WHERE action_point_id = p_ap_id) THEN
+                RAISE EXCEPTION 'sp_auto_transition: DATA_FIX needs at least one active closing condition' USING ERRCODE = '42501';
+            END IF;
+        END IF;
+    ELSE
+        RAISE EXCEPTION 'sp_auto_transition: % -> % is not an automatic move (only IN_PROGRESS -> READY_FOR_DEPLOY and READY_FOR_DEPLOY -> CLOSED)', v_status, p_to USING ERRCODE = '42501';
+    END IF;
+    RETURN backlog.sp_transition(p_ap_id => p_ap_id, p_to => p_to, p_actor => c_actor, p_session_id => p_session_id, p_comment => p_comment,
+                                 p_solution_type => p_solution_type, p_release_version => p_release_version, p_force => false);
+END;
+$$;
+
+-- 5.3 Ownership and privileges. The autopilot may record facts, append notes, read the gate verdicts and make the move above: nothing else, and no table write.
+DO $$
+DECLARE r record;
+BEGIN
+    FOR r IN SELECT p.oid::regprocedure AS sig FROM pg_proc p WHERE p.pronamespace = 'backlog'::regnamespace AND p.proname = 'sp_auto_transition'
+    LOOP
+        EXECUTE format('ALTER FUNCTION %s OWNER TO backlog_owner', r.sig);
+        EXECUTE format('REVOKE EXECUTE ON FUNCTION %s FROM PUBLIC', r.sig);
+    END LOOP;
+    GRANT USAGE ON SCHEMA backlog TO backlog_autopilot;
+    GRANT SELECT ON ALL TABLES IN SCHEMA backlog TO backlog_autopilot;
+    FOR r IN SELECT p.oid::regprocedure AS sig FROM pg_proc p
+             WHERE p.pronamespace = 'backlog'::regnamespace AND p.proname IN ('sp_auto_transition', 'sp_record_ops_event', 'sp_append_log', 'fn_gate_blockers')
+    LOOP
+        EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO backlog_autopilot', r.sig);
     END LOOP;
 END $$;
 -- END backlog_autonomy

@@ -69,6 +69,16 @@ Dominios categóricos, **todos con `CHECK` en BD** — nunca inventar un valor f
   **persona** (`CONFIRMED` o `REJECTED` de un `human:*`) no lo toca un agente: el enlace lo decide una persona y el propietario siempre puede rechazar después (solo añadir). Las transiciones del
   agente cuentan para la reserva A-2 (`v_shadow_stage`). Hallazgo corregido en el mismo cambio: `create_group`, `group_member`, `add_close_condition` y `retire_close_condition` escribían sin
   pasar por la compuerta de escritura en vivo de la orden del 2026-10-29 (les faltaba `write=True`); ahora la pasan.
+- **El autopiloto (Backlog v3 W3, FND-0358; decisión del propietario, 2026-10-31; el bloque W3 de `97_autonomy.sql`, misma fase `autonomy`).** Un ticket se mueve por **evidencia que el sistema registró**,
+  no por una declaración. Los tipos de hecho de `ops_event` suman `MERGE` (una fusión en `master` que entrega el ticket: contiene un commit con `Closes: FND-nnnn`), `DEPLOY` (su DDL está aplicado) y
+  `CYCLE` (corrió un ciclo tras la fusión). El login `backlog_autopilot` (sin contraseña: la fija el propietario; cadena `FONDOS_BACKLOG_PG_DSN_AUTOPILOT`, **sin retroceso a otro login**; operación
+  `autopilot` de la lista blanca) solo ejecuta `sp_record_ops_event`, `sp_append_log` y `sp_auto_transition`, lee `fn_gate_blockers` y no escribe ninguna tabla. **`sp_auto_transition`** es su única
+  forma de mover un ticket: fija el actor `system:autopilot`, nunca pasa `p_force` y acepta SOLO dos aristas, siempre citando un evento `MERGE` registrado para ese mismo ticket (sin él, rechaza):
+  `IN_PROGRESS` → `READY_FOR_DEPLOY`, y `READY_FOR_DEPLOY` → `CLOSED` como `CODE_FIX` o `DATA_FIX` con etiqueta de release. Para cerrar, la base de datos vuelve a comprobar lo que puede: si la fusión
+  toca `db/**` debe existir el `DEPLOY` del ticket; un `DATA_FIX` necesita un `CYCLE` posterior a la fusión y una condición de cierre activa. Las compuertas de la Fase B siguen aplicándose dentro. La
+  compuerta de incidentes de auditoría (FND-0264) no puede imponerla la base de datos (lee `fondos`): la aplica el motor de reglas (`shared/backlog_autopilot.py`, puro, probado arista a arista) con la
+  regla compartida de `shared/backlog_release.py`, la misma que usa `close_release.py`. `WORKAROUND`, `REJECTED`, `DUPLICATED` y reabrir **nunca** son automáticos. Un commit declara la entrega con
+  los tráileres `Closes: FND-nnnn` (cuenta también como `Refs:`) y, solo si no es `CODE_FIX`, `Solution: DATA_FIX`; un valor desconocido no cierra nada.
 - **Estado de aplicación de la Fase A (FND-0331):** el propietario aplica el DDL por pasos, cada uno con simulacro y acuerdo expreso. **A-1** (`30_transitions.sql`,
   `migrate_backlog_v2.py --phase transitions`) es aditivo: crea el rol `backlog_owner` (sin superusuario ni login) como propietario de las rutinas privilegiadas
   (`SECURITY DEFINER`, `search_path` fijado), las tablas de auditoría y el disparador de la etapa de sombra, que **registra sin bloquear** (V-00) toda escritura directa en
