@@ -486,9 +486,29 @@ Al cerrar o actualizar un ticket (§4.1):
 | Gráfico | `--mermaid [--with-candidates]` |
 | Higiene del registro (§4.1) | `python scripts/audit/backlog_hygiene.py --premise-sweep "<rev>^..<rev>"` · `--stale-status [--days N]` |
 | Puerta de la política automática | `python scripts/audit/backlog_links_calibration.py --gate` |
+| Verificar el estado y la puerta sin tocar el vivo (§9.1) | `python scripts/ops/backlog_staging.py` · `--scenario a2_revoke` · `--synthetic` |
 
 Salidas en `out/reports/backlog_links/` (ignorado por git). Tests: puros (`test_backlog_links_*.py`, `test_backlog_overlap.py`,
 `test_backlog_links_calibration.py`) y herméticos PG (`python scripts/ops/run_pg_tests.py -- tests/test_backlog_links_ddl_pg.py
 tests/test_backlog_links_client_pg.py tests/test_backlog_incident_overlap_pg.py`).
+
+### §9.1. Regla de pruebas: nada sintético contra el backlog vivo (FND-0351)
+
+**Regla (mandato del propietario, 2026-10-28):** está **prohibido** probar con datos sintéticos que consumen ids de producción (secuencias de tickets, logs y eventos). Toda verificación de la
+máquina de estados o de la lógica de la puerta se hace en un **contenedor de preparación aislado** cargado con una instantánea del backlog, nunca en el vivo. Leer el vivo en solo lectura (una
+exportación) sigue permitido. Esto incluye las transacciones con retroceso que consumieron `FND-0339` a `FND-0349` (ver abajo).
+
+- **Un solo comando:** `python scripts/ops/backlog_staging.py` exporta una instantánea nueva (solo lectura), levanta el contenedor desechable de `run_pg_tests.py`, aplica el DDL real de las fases
+  elegidas (`--phases`, por defecto `transitions,relations`), ejecuta los escenarios y lo destruye. **Demuestra** que no dejó rastro: lee los valores de las secuencias vivas antes y después y deben
+  ser idénticos (`live sequences after the run: UNCHANGED`). `--synthetic` o `--snapshot FILE` no tocan el vivo en absoluto.
+- **Escenarios** (`tests/test_backlog_staging_pg.py`): `gate_clean`, `gate_blocked`, `gate_forced` (el camino excepcional con motivo de 40+ caracteres, contado), `gate_audit_window` (en AUDIT no se
+  rechaza nada y se registra lo que habría bloqueado), `a2_revoke` (el paso pendiente `--phase revoke` ensayado sobre la población real: cerrado con menos de 50 transiciones reales, abierto con 50,
+  y tras la revocación el acceso compartido ya no actualiza las columnas gobernadas mientras las rutinas siguen funcionando) y `replay` (la historia real por la puerta real; requiere instantánea real).
+- **Guarda programática** (`shared/backlog_scratch.py`, `assert_scratch(conn, who=...)`): todo guion que altere estado para simular carga o reproducir historia la llama **antes de su primera
+  sentencia**. Se niega salvo que la conexión **no** sea un objetivo vivo del entorno (host, puerto y nombre de `FONDOS_BACKLOG_PG_DSN`, `..._HUMAN`, `FONDOS_PG_DSN` y el DSN del propietario, con los
+  alias de localhost iguales), **no** esté en el mismo **servidor** (host y puerto) que un objetivo vivo, y su nombre esté en una lista exacta (`fondos_test`, `backlog_staging_*`). La identificación es
+  positiva: el backlog vivo se llama `gestion`, así que «el nombre no es producción» no sirve. La idea de proteger por convención sobre los títulos de los tickets queda **rechazada**: una convención se
+  olvida y un error tipográfico la salta.
+- **Qué no sustituye:** un guion en preparación prueba la lógica; solo el uso vivo prueba la realidad operativa, por eso la aceptación de A-2 conserva su solape VIVO de tres operadores reales (FND-0354).
 
 **Huecos en la numeración (2026-10-28):** los ids `FND-0339` a `FND-0349` los consumieron dos pruebas sintéticas de la compuerta ejecutadas dentro de transacciones revertidas; la secuencia `seq_backlog_fnd` no es transaccional, así que no existen tickets, logs ni eventos de esas pruebas: no es información perdida (detalle: `doc/especificacion/LIMITACIONES_CONOCIDAS_BACKLOG_V2.md`, L7). Desde esa fecha están prohibidas las pruebas sintéticas contra el backlog en vivo: se verifican en un contenedor de preparación con una copia de producción (FND-0351).
