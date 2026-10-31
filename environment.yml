@@ -133,4 +133,4 @@ dependencies:
       - websocket-client==1.9.0
       - wsproto==1.3.2
       - xlsxwriter==3.2.9
-prefix: C:\data\envs\des
+prefix: C:\Users\jacor\.conda\envs\des

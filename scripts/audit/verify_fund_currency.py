@@ -5,7 +5,7 @@ Exit 0 when every active fund's stored Fund_Currency equals what a P1 pass would
 exit 1 with the full list when some still differ -- run the P1 pass (P1_discoverAllFunds.bat, owner) first. The EUR view
 (EUR_NAV_CONVERSION_ENABLED + FX_CONTRIBUTION_EUR_VIEW_ENABLED) may be switched on only after this exits 0. Exit 4 = DB unreadable.
 
-    C:\\data\\envs\\des\\python.exe -X utf8 scripts\\audit\\verify_fund_currency.py
+    C:\\Users\\jacor\\.conda\\envs\\des\\python.exe -X utf8 scripts\\audit\\verify_fund_currency.py
 """
 from __future__ import annotations
 

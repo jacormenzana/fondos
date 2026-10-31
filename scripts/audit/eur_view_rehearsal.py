@@ -15,7 +15,7 @@ and EUR funds as the control group (their metrics must not move).
 Prerequisite: the ECB rates in series_macro (`python -X utf8 -m proyecto2.src.discovery.macro_discovery --source bce`,
 owner-run). Without them every non-EUR fund is excluded and the script says so and exits 3.
 
-    C:\\data\\envs\\des\\python.exe -X utf8 scripts\\audit\\eur_view_rehearsal.py --sample [--csv out.csv]
+    C:\\Users\\jacor\\.conda\\envs\\des\\python.exe -X utf8 scripts\\audit\\eur_view_rehearsal.py --sample [--csv out.csv]
 """
 from __future__ import annotations
 

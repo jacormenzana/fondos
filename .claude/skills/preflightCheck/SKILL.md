@@ -25,7 +25,7 @@ Use this skill **first**, before reading the plan again, whenever:
 ## 2. Procedure
 
 ```
-C:\data\envs\des\python.exe -X utf8 scripts\audit\preflight_check.py --mine <paths you changed this session>
+C:\Users\jacor\.conda\envs\des\python.exe -X utf8 scripts\audit\preflight_check.py --mine <paths you changed this session>
 ```
 
 `--mine` takes the files/prefixes *you* edited: they are listed apart and do not raise the caution (the script cannot tell them from

@@ -19,7 +19,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 BAT = ROOT / "scripts" / "launch" / "P1P2_runCycle.bat"
-PYTHON = Path(r"C:\data\envs\des\python.exe")     # the interpreter the launcher itself hard-codes
+PYTHON = Path.home() / ".conda" / "envs" / "des" / "python.exe"     # the interpreter the launcher itself resolves (%USERPROFILE%)
 
 pytestmark = pytest.mark.skipif(
     sys.platform != "win32" or not PYTHON.exists(),

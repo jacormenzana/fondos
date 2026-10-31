@@ -12,7 +12,7 @@ A table that is not in the DDL at all is a deliberate toy (reported separately, 
 f-string placeholder cannot be parsed statically and is skipped (reported). Deliberate extras are an explicit allowlist in the test that owns the
 gate, each with a reason (tests/test_fixture_schema_lint.py).
 
-Usage:  C:\\data\\envs\\des\\python.exe scripts\\audit\\fixture_schema_lint.py [--root DIR]    (exit 1 when there are findings)
+Usage:  C:\\Users\\jacor\\.conda\\envs\\des\\python.exe scripts\\audit\\fixture_schema_lint.py [--root DIR]    (exit 1 when there are findings)
 """
 from __future__ import annotations
 

@@ -47,10 +47,10 @@ description: Full-cycle diagnostic audit of a P1→P2 pipeline run — classific
 | DB | `fondos.sqlite` | `db/` |
 | Backlog | `gestion.backlog` (PostgreSQL, `FONDOS_BACKLOG_PG_DSN`) | rules in `doc/reglas/NORMAS_BACKLOG.md` |
 
-Python: `C:\data\envs\des\python.exe`.
+Python: `C:\Users\jacor\.conda\envs\des\python.exe`.
 If any asset is missing, report immediately before proceeding.
 
-**Pre-flight — backlog scope:** Read the live backlog in `gestion.backlog` before starting §3 (the HTML artifact was retired on 2026-09-21): `C:\data\envs\des\python.exe scripts/audit/backlog_links.py --all`, or `shared.backlog_client.list_tickets(open_only=True)`. Extract all currently open P1 and P2 items. Scope every investigation step to open items only; skip confirmed findings. Known confirmed-closed: P2-03 regime gap is data-driven (Recalentamiento/Recalentamiento_Tardio n_obs=0 confirmed 2026-08-14) — only action remaining is docstring in `fund_scorer.py`. Re-flag only if a new run produces `n_obs_recalentamiento > 0`.
+**Pre-flight — backlog scope:** Read the live backlog in `gestion.backlog` before starting §3 (the HTML artifact was retired on 2026-09-21): `C:\Users\jacor\.conda\envs\des\python.exe scripts/audit/backlog_links.py --all`, or `shared.backlog_client.list_tickets(open_only=True)`. Extract all currently open P1 and P2 items. Scope every investigation step to open items only; skip confirmed findings. Known confirmed-closed: P2-03 regime gap is data-driven (Recalentamiento/Recalentamiento_Tardio n_obs=0 confirmed 2026-08-14) — only action remaining is docstring in `fund_scorer.py`. Re-flag only if a new run produces `n_obs_recalentamiento > 0`.
 
 **Pre-flight — memory recall:** Before §3, read `MEMORY.md` at `C:\Users\jacor\.claude\projects\c--desarrollo-fondos\memory\MEMORY.md`. Load every entry whose description hook matches this audit's domain keywords (P1 classification, FORCE_REFRESH, cost extraction, ACI_RHP, B1–B7 benchmark, DQ issue, regime attribution, OLS/VIF, NAV staleness, fingerprint, CALC_VERSION). Treat recalled entries as prior findings — do not re-investigate what is already confirmed on record.
 
@@ -281,7 +281,7 @@ For each confirmed root-cause bug (from Steps 1–6 and §4 findings):
 
 Run the audit tool (regenerates `benchmark_audit_findings.json`):
 ```batch
-C:\data\envs\des\python.exe -X utf8 proyecto1/tools/audit_benchmark_consistency.py
+C:\Users\jacor\.conda\envs\des\python.exe -X utf8 proyecto1/tools/audit_benchmark_consistency.py
 ```
 
 | Code | Check | Action threshold |
@@ -373,14 +373,14 @@ Emit in this order, short and table-driven:
 - **Fix in the correct module (P#7).** See Step 7 module map. P2 write-path bug → `run_pipeline.py` write helpers; `writers/metrics_writer.py` is a **legacy stub — do not edit**. SQL only for diagnostic SELECTs and FORCE_REFRESH triggers.
 - **AST validate after every Python edit (R-8):**
   ```
-  C:\data\envs\des\python.exe -c "import ast; ast.parse(open('file.py', encoding='utf-8').read()); print('AST OK')"
+  C:\Users\jacor\.conda\envs\des\python.exe -c "import ast; ast.parse(open('file.py', encoding='utf-8').read()); print('AST OK')"
   ```
 - **Tests must stay green (R-7):**
   ```
   :: P1
-  C:\data\envs\des\python.exe -m pytest proyecto1/tests/ -q
+  C:\Users\jacor\.conda\envs\des\python.exe -m pytest proyecto1/tests/ -q
   :: P2
-  cd proyecto2 && C:\data\envs\des\python.exe -m pytest tests/ -q
+  cd proyecto2 && C:\Users\jacor\.conda\envs\des\python.exe -m pytest tests/ -q
   ```
 - **COALESCE / graceful degradation:** missing data must yield NULL or a correct sentinel, not an error.
 - **Write-on-correction (verified only):** If the user corrects any finding, factual claim, or reasoning during this audit, verify the correction first (read the code, query the DB, check the canonical doc). If confirmed correct, persist it to memory before the session ends. If wrong, explain and do not write. If unverifiable in context, flag it explicitly — do not persist unverified claims.

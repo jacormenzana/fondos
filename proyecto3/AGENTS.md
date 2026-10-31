@@ -156,9 +156,9 @@ scripts\launch\P3_generateReport.bat
 
 **P3 point-in-time backtest (read-only on the DB; full universe is owner-run, ~20-25 min cold / <1 min warm cache):**
 ```batch
-C:\data\envs\des\python.exe -X utf8 scripts\launch\p3_pit_backtest.py --dry-run
-C:\data\envs\des\python.exe -X utf8 scripts\launch\p3_pit_backtest.py --sample-per-nature 4
-C:\data\envs\des\python.exe -X utf8 scripts\launch\p3_pit_backtest.py
+C:\Users\jacor\.conda\envs\des\python.exe -X utf8 scripts\launch\p3_pit_backtest.py --dry-run
+C:\Users\jacor\.conda\envs\des\python.exe -X utf8 scripts\launch\p3_pit_backtest.py --sample-per-nature 4
+C:\Users\jacor\.conda\envs\des\python.exe -X utf8 scripts\launch\p3_pit_backtest.py
 ```
 Artifacts per run in `out\reports\pit_backtest\<STAMP>\` (inside the project; `--out-dir` overrides) (manifest, timings, summary, monthly table,
 cost sensitivity 0/25/50 bp, hysteresis/turnover experiment, series stats, universe/short-gate coverage, all PIT scores); log in

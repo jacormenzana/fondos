@@ -3,7 +3,7 @@
 """
 pit_variants_report.py -- evaluates the FND-0303 variants against PREREG_FND-0303 (read-only; writes REPORT_FND-0303.md + report_data.json).
 
-    C:\\data\\envs\\des\\python.exe scripts\\audit\\pit_variants_report.py --out-root out\\reports\\pit_variants\\FND-0303_<STAMP>
+    C:\\Users\\jacor\\.conda\\envs\\des\\python.exe scripts\\audit\\pit_variants_report.py --out-root out\\reports\\pit_variants\\FND-0303_<STAMP>
 
 It reads ONLY what the orchestrator left in the out-root: gate.json, variant_status.json per variant, and each run's pit_backtest_table.csv,
 series_stats.json and inputs/*.parquet (never the logs, never the database). Every number is computed by the rules written in the
