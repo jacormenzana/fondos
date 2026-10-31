@@ -12,3 +12,4 @@
 #      for the NEXT range, never for the one that carries it.
 # Key loss or rotation: the emergency protocol of PROPUESTA_BACKLOG_V2.md 6.4.7 (generate a new key within 48 h, commit its public part here,
 # sign a catch-up attestation, re-run the check with workflow_dispatch).
+backlog-gate-owner namespaces="backlog-gate" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICJJI2Mr4WgDaK7/ncZl5Z2becVsufGxd+v1UzzjHWTQ
