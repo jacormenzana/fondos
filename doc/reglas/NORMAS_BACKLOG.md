@@ -254,6 +254,10 @@ Lectura común del mensaje (gancho y sincronización): `shared/backlog_gate.py`.
 
 - **Instalación.** `bash scripts/audit/commit-msg.sh`, una vez por clon (mismo patrón que `pre-commit.sh`). Instala `commit-msg`, que
   ejecuta `scripts/audit/commit_msg_gate.py`, y `pre-rebase`, que se niega a reorganizar `master`. Un `git commit --no-verify` se salta ambos.
+  El instalador puede ejecutarse desde Windows (Git Bash) o desde WSL: ambos escriben en el mismo `.git/hooks`. **Pero el gancho usa el intérprete del
+  `git` que hace el commit:** con Git de Windows encuentra `%USERPROFILE%\.conda\envs\des\python.exe`; con el `git` de WSL cae en el `python3` de la
+  distribución, que no tiene los paquetes del proyecto, y el commit sale con `Backlog-Gate: offline` (sin penalización; `backlog_sync.py` lo ve como pendiente).
+  Para obtener un nonce, hacer el commit con Git de Windows.
 - **Qué hace el gancho**, solo en un commit cuyo asunto o tráiler `Refs:` cita un ticket (los demás no tocan la base de datos):
   (1) un token mal formado (`fnd0193`, `FND_0193`, `FND-193`) **rechaza el commit** —es un error de escritura que se corrige solo— y un id
   que no existe en el backlog se avisa; (2) comprobación de colisión: hueco hasta el tramo 3; (3) un tráiler `Refs:` sobre un ticket en
