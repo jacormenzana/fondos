@@ -92,7 +92,7 @@ def driver(monkeypatch):
 # --- the allow-list --------------------------------------------------------------------------------------------------------------------------
 
 def test_the_allow_list_is_exactly_the_operations_the_owner_named():
-    assert bc.NON_INTERACTIVE_OPERATIONS == ("agent_log", "incident", "gate", "agent")      # gate: owner authorization of 2026-10-31 (the commit-msg hook, FND-0334); agent: the same day (Backlog v3 W2, FND-0357)
+    assert bc.NON_INTERACTIVE_OPERATIONS == ("agent_log", "incident", "gate", "agent", "autopilot")      # gate: owner authorization of 2026-10-31 (the commit-msg hook, FND-0334); agent: agent and autopilot: the same day (Backlog v3 W2 and W3, FND-0357 and FND-0358)
 
 
 @pytest.mark.parametrize("operation", bc.NON_INTERACTIVE_OPERATIONS)
@@ -261,14 +261,14 @@ def test_no_code_outside_the_client_names_an_allow_listed_operation():
 
 def test_only_report_incident_and_append_log_use_the_allow_listed_factory():
     text = (_ROOT / "shared" / "backlog_client.py").read_text(encoding="utf-8")
-    users = re.findall(r"(?:_connect_allowlisted\(\s*\"|operation=\"|operation=None if conn is not None else \")(\w+)\"", text)
+    users = re.findall(r"(?:_connect_allowlisted\(\s*\"|operation=\"|operation=None if conn is not None else \"|operation=autopilot_operation\(username\) or \")(\w+)\"", text)
     assert sorted(set(users)) == ["agent_log", "gate", "incident"], users
 
 
 def test_the_test_sandbox_hides_every_live_connection_string_the_client_knows():
     """A new DSN variable that the sandbox does not hide would let a test reach the live backlog."""
     from shared.testing import sandbox
-    known = {bc._DSN_ENV_VAR, bc._HUMAN_DSN_ENV_VAR, bc._LOGGER_DSN_ENV_VAR, bc._INCIDENT_DSN_ENV_VAR, bc._GATE_DSN_ENV_VAR, bc._ADJUDICATOR_DSN_ENV_VAR, bc._AGENT_DSN_ENV_VAR}
+    known = {bc._DSN_ENV_VAR, bc._HUMAN_DSN_ENV_VAR, bc._LOGGER_DSN_ENV_VAR, bc._INCIDENT_DSN_ENV_VAR, bc._GATE_DSN_ENV_VAR, bc._ADJUDICATOR_DSN_ENV_VAR, bc._AGENT_DSN_ENV_VAR, bc._AUTOPILOT_DSN_ENV_VAR}
     assert set(sandbox._LIVE_BACKLOG_DSNS) == known
     declared = set(re.findall(r'^_\w*DSN\w*ENV_VAR = "(FONDOS_BACKLOG_PG_DSN\w*)"', (_ROOT / "shared" / "backlog_client.py").read_text(encoding="utf-8"), re.M))
     assert declared == known

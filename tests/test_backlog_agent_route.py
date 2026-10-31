@@ -133,3 +133,85 @@ def test_the_four_group_and_close_condition_helpers_are_writes_and_pass_the_live
     for name in ("create_group", "group_member", "add_close_condition", "retire_close_condition", "annotate_wait", "open_ticket", "transition"):
         src = inspect.getsource(getattr(bc, name))
         assert "write=True" in src and "operation=agent_operation(who)" in src.replace("op,", "agent_operation(who),") or "operation=op" in src, name
+
+
+# ---------------------------------------------------------------- Backlog v3 W3 (FND-0358): the autopilot's own login and its one move
+
+AUTOPILOT = "system:autopilot"
+AUTOPILOT_DSN = "postgresql://backlog_autopilot@127.0.0.1:1/gestion"
+
+
+def test_the_autopilot_operation_is_allow_listed_with_its_own_dsn_and_no_fallback(monkeypatch):
+    assert "autopilot" in bc.NON_INTERACTIVE_OPERATIONS
+    monkeypatch.setenv(bc._DSN_ENV_VAR, "postgresql://backlog_writer@127.0.0.1:1/gestion")
+    monkeypatch.delenv(bc._AUTOPILOT_DSN_ENV_VAR, raising=False)
+    assert bc.dsn_for_operation("autopilot") is None                   # never the general writer
+    monkeypatch.setenv(bc._AUTOPILOT_DSN_ENV_VAR, AUTOPILOT_DSN)
+    assert bc.dsn_for_operation("autopilot") == AUTOPILOT_DSN
+
+
+def test_only_system_autopilot_with_its_login_configured_takes_the_autopilot_route(monkeypatch):
+    monkeypatch.delenv(bc._AUTOPILOT_DSN_ENV_VAR, raising=False)
+    assert bc.autopilot_operation(AUTOPILOT) is None
+    monkeypatch.setenv(bc._AUTOPILOT_DSN_ENV_VAR, AUTOPILOT_DSN)
+    assert bc.autopilot_operation(AUTOPILOT) == "autopilot"
+    assert bc.autopilot_operation(AGENT) is None and bc.autopilot_operation(SYSTEM) is None and bc.autopilot_operation(HUMAN) is None
+
+
+def test_the_fact_kinds_of_the_autopilot_are_known_to_the_client():
+    assert {"MERGE", "DEPLOY", "CYCLE"} <= set(bc.OPS_KINDS)
+
+
+def test_the_autopilot_cannot_use_the_general_transition(monkeypatch):
+    monkeypatch.setenv("FONDOS_ACTOR", AUTOPILOT)
+    conn = FakeConn()
+    with pytest.raises(ValueError, match="only through auto_transition"):
+        bc.transition("FND-0001", "IN_PROGRESS", session_id="FND_20261101_SYNC_TEST", comment="x" * 50, conn=conn)
+    assert conn.calls == []
+
+
+def test_auto_transition_calls_the_routine_with_a_merge_as_evidence_and_only_as_the_autopilot(monkeypatch):
+    monkeypatch.setenv("FONDOS_ACTOR", AUTOPILOT)
+    conn = FakeConn((21,))
+    out = bc.auto_transition("FND-0001", "CLOSED", evidence_ref=SHA40, session_id="FND_20261101_SYNC_TEST", comment="closed on evidence", solution_type="CODE_FIX",
+                             release_version="R2026.11-PR17", conn=conn)
+    assert out == 21 and "sp_auto_transition" in conn.sqls() and "p_evidence_kind => 'MERGE'" in conn.sqls() and "p_force" not in conn.sqls()
+    assert conn.calls[0][1] == ("FND-0001", "CLOSED", SHA40, "FND_20261101_SYNC_TEST", "closed on evidence", "CODE_FIX", "R2026.11-PR17")
+    monkeypatch.setenv("FONDOS_ACTOR", AGENT)
+    with pytest.raises(bc.ActorUnknown, match="auto_transition is the autopilot's"):
+        bc.auto_transition("FND-0001", "CLOSED", evidence_ref=SHA40, session_id="FND_20261101_SYNC_TEST", comment="x", conn=FakeConn())
+
+
+SHA40 = "0123456789abcdef0123456789abcdef01234567"
+
+
+class _Session:
+    """Replaces backlog_client._session to record which operation each write asks for, and hands back a fake connection."""
+
+    def __init__(self, monkeypatch, conn):
+        self.calls = []
+        from contextlib import contextmanager
+
+        @contextmanager
+        def fake(c=None, **kw):
+            self.calls.append(kw)
+            yield conn
+        monkeypatch.setattr(bc, "_session", fake)
+
+
+def test_the_autopilot_records_facts_and_notes_through_its_own_login(monkeypatch):
+    from datetime import datetime, timezone
+    monkeypatch.setenv("FONDOS_ACTOR", AUTOPILOT)
+    monkeypatch.setenv(bc._AUTOPILOT_DSN_ENV_VAR, AUTOPILOT_DSN)
+    seen = _Session(monkeypatch, FakeConn((True,)))
+    assert bc.record_ops_event("MERGE", SHA40, "FND-0001", "REFS", {"paths": ["a.py"]}, datetime(2026, 11, 1, tzinfo=timezone.utc)) is True
+    assert seen.calls[-1]["operation"] == "autopilot" and seen.calls[-1]["write"] is True
+
+
+def test_an_ordinary_actor_recording_a_fact_keeps_the_console_path_but_now_asks_for_a_write_session(monkeypatch):
+    from datetime import datetime, timezone
+    monkeypatch.setenv("FONDOS_ACTOR", SYSTEM)
+    monkeypatch.setenv(bc._AUTOPILOT_DSN_ENV_VAR, AUTOPILOT_DSN)
+    seen = _Session(monkeypatch, FakeConn((True,)))
+    bc.record_ops_event("COMMIT", SHA40, "FND-0001", "REFS", {}, datetime(2026, 11, 1, tzinfo=timezone.utc))
+    assert seen.calls[-1]["operation"] is None and seen.calls[-1]["write"] is True

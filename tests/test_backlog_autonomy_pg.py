@@ -62,7 +62,7 @@ def latest(conn, a, b, type_="RELATED"):
 # ---------------------------------------------------------------- the login and its privileges
 
 def test_the_role_is_a_scoped_login_without_password_or_membership_and_holds_exactly_the_listed_routines(db):
-    assert mig.existing(db, "autonomy")["roles"] == ["backlog_agent"]
+    assert mig.existing(db, "autonomy")["roles"] == ["backlog_agent", "backlog_autopilot"]
     assert db.execute("SELECT rolcanlogin, rolsuper, rolcreaterole, rolcreatedb FROM pg_roles WHERE rolname = 'backlog_agent'").fetchone() == (True, False, False, False)
     assert db.execute("SELECT rolpassword IS NULL FROM pg_authid WHERE rolname = 'backlog_agent'").fetchone()[0] is True              # the owner sets the password
     assert db.execute("SELECT pg_has_role('backlog_agent', 'backlog_writer', 'MEMBER')").fetchone()[0] is False
@@ -209,10 +209,10 @@ def test_the_phase_is_idempotent_and_the_rollback_keeps_the_role_and_every_event
     as_owner(db)
     mig.migrate(db, "autonomy")                                                              # idempotent
     have, spec = mig.existing(db, "autonomy"), mig.PHASES["autonomy"]
-    assert have["routines"] == sorted(spec["routines"]) and have["roles"] == ["backlog_agent"]
+    assert have["routines"] == sorted(spec["routines"]) and have["roles"] == ["backlog_agent", "backlog_autopilot"]
     mig.migrate(db, "autonomy", down=True)
     have = mig.existing(db, "autonomy")
-    assert "sp_agent_transition" not in have["routines"] and "sp_record_link" not in have["routines"] and have["roles"] == ["backlog_agent"]
+    assert "sp_agent_transition" not in have["routines"] and "sp_record_link" not in have["routines"] and have["roles"] == ["backlog_agent", "backlog_autopilot"]
     assert latest(db, a, b) == ("PROPOSED", ME)                                               # the history stays
     assert db.execute("SELECT has_function_privilege('backlog_agent', 'backlog.sp_open_ticket(text,text,text,text,text,text,text,text,text,text,text)', 'EXECUTE')").fetchone()[0] is False
     mig.migrate(db, "autonomy")                                                              # applying it again resumes
