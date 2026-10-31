@@ -1125,6 +1125,13 @@ def record_ops_event(kind: str, ref: str, ap_id: str, source: str, payload: dict
                               (kind, ref, ap_id, source, json.dumps(payload or {}), fact_ts, who)).fetchone()[0])
 
 
+def autonomy_store_present(*, conn=None) -> bool:
+    """True when the owner has applied the W3 block of db/pg_backlog/97_autonomy.sql (sp_auto_transition exists and ops_event accepts the MERGE kind)."""
+    with _session(conn) as c:
+        return bool(c.execute("SELECT to_regprocedure('backlog.sp_auto_transition(text,text,text,text,text,text,text,text)') IS NOT NULL AND EXISTS ("
+                              "SELECT 1 FROM pg_constraint WHERE conrelid = 'backlog.ops_event'::regclass AND contype = 'c' AND pg_get_constraintdef(oid) LIKE '%MERGE%')").fetchone()[0])
+
+
 def auto_transition(ap_id: str, to_status: str, *, evidence_ref: str, session_id: str, comment: str, solution_type: Optional[str] = None,
                     release_version: Optional[str] = None, conn=None) -> int:
     """The autopilot's one move (backlog.sp_auto_transition, Backlog v3 W3): IN_PROGRESS -> READY_FOR_DEPLOY, or READY_FOR_DEPLOY -> CLOSED as CODE_FIX / DATA_FIX with a release label,

@@ -248,10 +248,13 @@ Run them in the order of the "When" column. Each step says what to do, how to kn
 4. Done when `C:\Users\jacor\.conda\envs\des\python.exe scripts\ops\backlog_drift.py` prints `no drift` (it fingerprints master's DDL against the live catalog). The session then checks the role's privileges read-only (an acceptance script for this phase is a follow-up of W2; it is not built yet).
 5. Rollback if needed: `--phase autonomy --down` (dry run first). It drops the three routines (`sp_agent_transition`, `sp_record_link`, `sp_auto_transition`) and the grants, and keeps both roles, the widened fact kinds and everything written through them.
 
-**O-V3-4 — Switch the autopilot on** (after W3)
-1. Read the 20 "would move X to Y, evidence e" notes the autopilot wrote in SHADOW mode.
-2. If they match your judgement, change `BACKLOG_AUTOPILOT_MODE` to `"ON"` in `shared/config.py` (a normal PR, merged automatically).
-3. If a decision was wrong, say which one: the rule is corrected and the 20 are run again.
+**O-V3-4 — Install the trigger and switch the autopilot on** (W3 is built; this needs O-V3-3 first)
+1. Optional, once per clone: `bash scripts/audit/reference-transaction.sh`. It starts the autopilot in the background whenever a fetch moves `origin/master`, and never blocks git. Without it, run `C:\Users\jacor\.conda\envs\des\python.exe scripts\audit\backlog_autopilot.py --apply` by hand, or let a session do it (it needs no terminal once its login exists).
+2. A commit delivers a ticket with the trailer `Closes: FND-nnnn` (in the same final paragraph as `Co-Authored-By`; `Solution: DATA_FIX` only for a data fix). Nothing is delivered by a `Refs:` alone.
+3. The autopilot ships in SHADOW: for each delivery it writes ONE note on the ticket ("[autopilot SHADOW] MOVE FND-x: IN_PROGRESS -> READY_FOR_DEPLOY ... evidence MERGE abc123"). Read the first 20 notes (a log of each ticket, or the dry run of the script, which prints the same decisions).
+4. If they match your judgement, change `BACKLOG_AUTOPILOT_MODE` to `"ON"` in `shared/config.py` (a normal pull request, merged automatically).
+5. If a decision was wrong, say which one: the rule is corrected and the notes are written again under the new evidence.
+6. Limits to know: a merge that changes `db/**` waits until a DEPLOY fact is recorded (your migration run, W5), and a DATA_FIX waits for a CYCLE fact; the autopilot never records those itself.
 
 **O-V3-5 — Already open from v2**
 1. `FND-0350` / drift: dry run, then `migrate_backlog_v2.py --phase relations --apply`, then `backlog_drift.py` must print `no drift`.
