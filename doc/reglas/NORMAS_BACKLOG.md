@@ -219,6 +219,33 @@ de que el ticket se moviera es `V-STALE-READ` (línea `Lecturas de estado del ba
 `BACKFILL` no cuenta como movimiento. La reacción al cierre ya existe: un residual aceptado bajo un ticket `CLOSED` sale como
 `[ATENCION]` (`accepted_residuals.attention_lines`). No hace falta ningún proceso periódico.
 
+### §4.4. Sincronización con el sistema: commits, condiciones de cierre y estado (fase C, tramo 1, FND-0334)
+
+DDL `db/pg_backlog/70_sync.sql`, aplicado por el propietario con `migrate_backlog_v2.py --phase sync` (necesita la fase D; la reversión
+conserva `ops_event` y `close_condition`). Especificación: `PROPUESTA_BACKLOG_V2.md` §6.4.8.
+
+- **Hechos operativos.** `scripts/audit/backlog_sync.py` lee `git log origin/master` y registra en `backlog.ops_event` un evento `COMMIT` por
+  (commit, ticket), con la hora de autor, como `system:sync`. Es idempotente (recorre toda la historia cada vez; no hay marca de agua que
+  perder). Simulación por defecto; `--apply` escribe. El id se cita de dos formas: el tráiler `Refs: FND-nnnn` (origen `REFS`: «este
+  commit es trabajo en el ticket») o el asunto (origen `SUBJECT`: una mención, que no distingue trabajo de referencia). Los ids que no
+  existen en el backlog (el hueco FND-0339..FND-0349) y los tokens mal formados (`fnd0193`, `FND_0193`) se informan y se omiten.
+- **Avance automático** (interruptor `BACKLOG_AUTO_FORWARD_ENABLED`, activado). Solo para un commit registrado **por primera vez** cuyo
+  tráiler `Refs:` cita un ticket en `OPEN` o `TODO`: pasa a `IN_PROGRESS` como `system:sync`, con el commit como evidencia. Nunca desde
+  `BLOCKED` ni `DEFERRED`, nunca hacia atrás, nunca por una mención en el asunto y nunca otra vez por un commit ya registrado: un ticket
+  que una persona devolvió a `TODO` se queda donde lo puso. Los cierres siguen siendo manuales. Con el interruptor apagado se registran
+  los hechos y las violaciones y no se mueve nada.
+- **Violaciones** (`v_violations_c`, unidas a `v_backlog_violations`): `V-RETRO` (el primer commit que cita el ticket es anterior a su
+  `creation_ts`: el trabajo se hizo antes de que el ticket existiera) y `V-WORK-ON-CLOSED` (un commit que cita un ticket `CLOSED`, posterior
+  a su cierre; si se reabre, deja de contar).
+- **Condiciones de cierre.** `backlog.close_condition` (alta y baja solo de inserción) sustituye al diccionario `SPEC` de
+  `rfd_matrix_probe.py`: añadir un ticket a la matriz ya no es un cambio de código (`backlog_client.add_close_condition()` /
+  `retire_close_condition()`). `rfd_matrix_probe.py --seed` copia `SPEC` una vez (solo tickets aún en `READY_FOR_DEPLOY`); `--close-ready` lista
+  los tickets cuyas sondas pasan todas (cerrar sigue siendo una decisión). Hasta aplicar la fase, la sonda usa `SPEC`.
+- **Flujo de estado.** `v_status_feed`: cada evento de estado con su hora, para los consumidores de `fondos` (lectura desde una marca:
+  `event_id > n`).
+- **Pendiente de los tramos 2 a 4:** el gancho `commit-msg` (validación de ids, avance en el momento del commit, sello `Backlog-Gate`,
+  `V-HOOK-BYPASS`), la regla de colisión con adjudicación y modos, la atestación firmada y el CI.
+
 ## §5. Protocolo de absorción de alcance
 
 Cuando un enlace `OVERLAPS` lleva nota `absorbs`, el ticket que absorbe **debe**:

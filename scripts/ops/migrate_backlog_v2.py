@@ -15,7 +15,7 @@ privileges of backlog_writer and adds the author check; --apply is REFUSED unles
 `human` (FND-0337, owner-only role backlog_human for human actors; created WITHOUT a password: the owner sets it in his own session and keeps its DSN out of .env) and `history`
 (FND-0338, append-only history of the eight descriptive columns). `human` and `history` need step A-1 re-applied with FND-0337 (the routines they use).
 `relations` (FND-0333, Phase B: link semantics and the delivery gate) and `groups` (FND-0335, Phase D: groups, the violation view, lean metrics, impact
-closure; needs steps A-1 and B).
+closure; needs steps A-1 and B) and `sync` (FND-0334, Phase C slice 1: commit events, closing conditions, the status feed; needs `groups`).
 
 One phase per transaction (Postgres DDL is transactional: a failure rolls back whole). The DDL is NOT duplicated here: it is the block
 between `-- BEGIN <name>` and `-- END <name>` in the phase's file under db/pg_backlog/ (single source of truth, P#11); the rollback is
@@ -117,10 +117,21 @@ PHASES: dict = {
         "up": ("60_groups_violations.sql", "backlog_groups_violations"),
         "down": ("down/60_groups_violations_down.sql", "backlog_groups_violations_down"),
         "tables": ("group_tag", "group_member"),
-        "views": ("v_group_member", "v_group_status", "v_backlog_violations", "v_backlog_lean_metrics", "v_impact_closure"),
-        "routines": ("sp_create_group", "sp_group_member"),
+        "views": ("v_group_member", "v_group_status", "v_violations_d", "v_backlog_violations", "v_backlog_lean_metrics", "v_impact_closure"),
+        "routines": ("sp_create_group", "sp_group_member", "fn_rebuild_violations"),
         "requires": ("backlog", "status_event", "wait_event", "raw_update_event", "hold_event", "v_open_hold", "v_backlog_link"),
         "requires_routines": ("trg_append_only", "fn_actor_authorized"),
+    },
+    # Phase C slice 1 (FND-0334): operational facts (commit events from backlog_sync.py), closing conditions, the status feed and the V-RETRO /
+    # V-WORK-ON-CLOSED violations. Needs Phase D (fn_rebuild_violations). Its rollback KEEPS ops_event and close_condition.
+    "sync": {
+        "up": ("70_sync.sql", "backlog_sync"),
+        "down": ("down/70_sync_down.sql", "backlog_sync_down"),
+        "tables": ("ops_event", "close_condition"),
+        "views": ("v_close_condition", "v_status_feed", "v_violations_c"),
+        "routines": ("sp_record_ops_event", "sp_add_close_condition", "sp_retire_close_condition"),
+        "requires": ("backlog", "status_event", "v_violations_d"),
+        "requires_routines": ("trg_append_only", "fn_actor_authorized", "fn_rebuild_violations"),
     },
 }
 SHADOW_REQUIRED = 50          # owner decision D2 (2026-10-26): 50 consecutive non-system transitions with no direct update

@@ -1050,6 +1050,62 @@ def violation_summary(*, top: int = 3, conn=None) -> dict:
     return {"applied": True, "total": sum(r["n"] for r in by_code), "by_code": by_code, "top": by_code[:top]}
 
 
+OPS_KINDS = ("COMMIT", "RELEASE", "PROMOTION", "CYCLE_FLAG", "AUDIT_INCIDENT")     # Phase C (FND-0334): db/pg_backlog/70_sync.sql
+OPS_SOURCES = ("REFS", "SUBJECT", "OTHER")
+
+
+def sync_store_present(*, conn=None) -> bool:
+    """True when the owner has applied Phase C slice 1 (backlog.ops_event and the routines)."""
+    with _session(conn) as c:
+        return bool(c.execute("SELECT to_regclass('backlog.ops_event') IS NOT NULL "
+                              "AND to_regprocedure('backlog.sp_record_ops_event(text,text,text,text,jsonb,timestamptz,text)') IS NOT NULL").fetchone()[0])
+
+
+def record_ops_event(kind: str, ref: str, ap_id: str, source: str, payload: dict, fact_ts: datetime, *, actor: Optional[str] = None,
+                     conn=None) -> bool:
+    """Record one operational fact that cites a ticket (backlog.sp_record_ops_event). True when it was new, False when already recorded."""
+    if kind not in OPS_KINDS or source not in OPS_SOURCES:
+        raise ValueError(f"kind must be one of {OPS_KINDS} and source one of {OPS_SOURCES}, got {kind!r} / {source!r}")
+    who = resolve_actor(actor)
+    with _session(conn, human=who.startswith("human:")) as c:
+        return bool(c.execute("SELECT backlog.sp_record_ops_event(%s, %s, %s, %s, %s::jsonb, %s, %s)",
+                              (kind, ref, ap_id, source, json.dumps(payload or {}), fact_ts, who)).fetchone()[0])
+
+
+def ops_event_keys(kind: str = "COMMIT", *, conn=None) -> set:
+    """{(ref, ap_id)} already recorded for `kind`: what backlog_sync.py does not record (or forward) again."""
+    with _session(conn) as c:
+        return {(r[0], r[1]) for r in c.execute("SELECT ref, action_point_id FROM backlog.ops_event WHERE kind = %s", (kind,)).fetchall()}
+
+
+def close_conditions(*, conn=None) -> Optional[dict]:
+    """{ap_id: [(probe_kind, *args), ...]} of the active closing conditions (backlog.v_close_condition), in the shape of rfd_matrix_probe.SPEC;
+    None while the owner has not applied Phase C slice 1."""
+    with _session(conn) as c:
+        if c.execute("SELECT to_regclass('backlog.v_close_condition') IS NULL").fetchone()[0]:
+            return None
+        out: dict = {}
+        for ap, kind, args in c.execute("SELECT action_point_id, probe_kind, args FROM backlog.v_close_condition "
+                                        "ORDER BY action_point_id, condition_id").fetchall():
+            out.setdefault(ap, []).append((kind, *args))
+        return out
+
+
+def add_close_condition(ap_id: str, probe_kind: str, args: list, reason: str, *, actor: Optional[str] = None, conn=None) -> int:
+    """Add one executable closing condition to a ticket (append-only; refused when the same condition is already active)."""
+    who = resolve_actor(actor)
+    with _session(conn, human=who.startswith("human:")) as c:
+        return c.execute("SELECT backlog.sp_add_close_condition(%s, %s, %s::jsonb, %s, %s)",
+                         (ap_id, probe_kind, json.dumps(list(args)), reason, who)).fetchone()[0]
+
+
+def retire_close_condition(condition_id: int, reason: str, *, actor: Optional[str] = None, conn=None) -> int:
+    """Retire an active closing condition (append-only RETIRE row)."""
+    who = resolve_actor(actor)
+    with _session(conn, human=who.startswith("human:")) as c:
+        return c.execute("SELECT backlog.sp_retire_close_condition(%s, %s, %s)", (condition_id, reason, who)).fetchone()[0]
+
+
 def phase_a_catalog(*, conn=None) -> dict:
     """Read-only facts the Phase A acceptance check needs (FND-0331): the owner role, the routines and their hardening, who owns the audit tables, what
     backlog_writer may do, the guard triggers, and the ticket / backfill counts. Never raises on a store that is not applied: absent things are just absent."""
