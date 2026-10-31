@@ -45,6 +45,8 @@ class Message:
     mentions: list = field(default_factory=list)      # refs + ids of the subject
     malformed: list = field(default_factory=list)
     gate: Optional[str] = None                        # value of the Backlog-Gate trailer, if any
+    closes: list = field(default_factory=list)        # ids of the Closes: trailer(s): this commit delivers them (Backlog v3 W3); they are ALSO in `refs` (finishing a ticket is work on it)
+    solution: Optional[str] = None                    # the value of the Solution: trailer upper-cased (CODE_FIX | DATA_FIX are the only automatic ones; anything else is kept raw so the autopilot can refuse it)
 
 
 def _trailer_block(lines: list) -> list:
@@ -61,21 +63,26 @@ def _trailer_block(lines: list) -> list:
 
 
 def parse_message(text: str) -> Message:
-    """Subject, Refs and Backlog-Gate trailers of a commit message file. Comment lines (`#`) are ignored; the body is not read for ids."""
+    """Subject, Refs, Closes, Solution and Backlog-Gate trailers of a commit message file. Comment lines (`#`) are ignored; the body is not read for ids."""
     lines = [ln.rstrip("\r") for ln in text.split("\n") if not ln.startswith("#")]
     while lines and not lines[0].strip():
         lines.pop(0)
     subject = lines[0] if lines else ""
-    refs_text, gate = "", None
+    refs_text, closes_text, gate, solution = "", "", None, None
     for ln in _trailer_block(lines):
         key, value = _TRAILER_LINE.match(ln).groups()
         if key.lower() == "refs":
             refs_text += f" {value}"
+        elif key.lower() == "closes":
+            closes_text += f" {value}"
+        elif key.lower() == "solution":
+            solution = value.strip().upper() or None
         elif key.lower() == GATE_KEY.lower():
             gate = value.strip() or None
-    refs = well_formed(refs_text)
+    closes = well_formed(closes_text)
+    refs = sorted(set(well_formed(refs_text)) | set(closes))
     return Message(subject=subject, refs=refs, mentions=sorted(set(refs) | set(well_formed(subject))),
-                   malformed=sorted(set(malformed(subject)) | set(malformed(refs_text))), gate=gate)
+                   malformed=sorted(set(malformed(subject)) | set(malformed(refs_text)) | set(malformed(closes_text))), gate=gate, closes=closes, solution=solution)
 
 
 def classify(gate: Optional[str], tree: str, parents: int, nonces: dict) -> tuple:
