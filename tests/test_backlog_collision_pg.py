@@ -410,3 +410,18 @@ def test_the_show_lines_say_what_block_still_needs(db):
     lines = gate_mode.show_lines("BLOCK", {**m, "state": {"mode": "AUDIT", "tier": "T0"}}, [{"level": "ALERTA"}, {"level": "ATENCION"}, {"level": "OK"}])
     assert "undecided pairs: 3 (1 over 96 h, 1 over 48 h)" in lines[2] and "the database would accept it" in lines[-1]
     assert not gate_mode.show_lines("BLOCK", {**m, "state": {"mode": "BLOCK", "tier": "T0"}}, [])[-1].startswith("  BLOCK needs")
+
+
+def test_gate_reverts_lists_the_revert_adjudications_oldest_first(db):
+    import shared.backlog_client as bc
+    a, b = collide(db)
+    as_adjudicator(db)
+    adjudicate(db, a, b, "REVERT", "the commit was reverted by " + "d" * 40)
+    reset(db)
+    got = bc.gate_reverts(conn=db)
+    assert [(r["a"], r["b"]) for r in got] == [(a, b)] and "d" * 40 in got[0]["reason"]
+    c, d = collide(db)
+    as_adjudicator(db)
+    adjudicate(db, c, d, "NONE")                                                              # not a REVERT: not listed
+    reset(db)
+    assert len(bc.gate_reverts(conn=db)) == 1

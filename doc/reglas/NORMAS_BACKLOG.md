@@ -336,8 +336,11 @@ DDL `db/pg_backlog/90_collision.sql`, aplicado por el propietario con `migrate_b
   por debajo del 5 % ponen la puerta en `OFF`, con los números como evidencia y un `[ALERTA]` en la primera línea; vale en `AUDIT` y en `BLOCK`. **Suelo de cobertura:** de los
   `OVERLAPS` que una persona confirma por otra vía (no por la propia puerta: sería circular), qué parte había propuesto ya la puerta. La retirada se evalúa antes que el apretado.
   Nunca baja `BLOCK` a `AUDIT` ni afloja un nivel; reactivar es un evento de una persona con razón. Sale con código 3 cuando decide una retirada.
-- **Pendiente del tramo 3:** la comprobación por la sincronización del sha de `REVERT`, el uso de la tabla CSV de `backlog_links.py --apply-review` (hoy la herramienta propia
-  `gate_adjudicate.py` lleva su CSV) y la línea de la cola en el informe de ciclo.
+- **Verificación de `REVERT` y línea del informe de ciclo.** `backlog_sync.py` comprueba cada pareja adjudicada `REVERT`: el sha de 40 caracteres de la razón debe estar en la historia
+  inspeccionada y ser un revert (su asunto empieza por `Revert` o dice `This reverts commit`); si no, imprime una línea `[ATENCION] REVERT adjudication ... is not verified` (sin sha,
+  sha ausente o que no es un revert). Solo informa: no registra ni bloquea nada. El informe de ciclo (`p1p2_cycle_report.py`) lleva la línea «Cola de colisiones», un punto de atención a
+  las 48 h y un `[ALERTA]` como **primera línea** a las 96 h.
+- **Pendiente del tramo 3:** conectar la tabla CSV de `backlog_links.py --apply-review` (hoy la herramienta propia `gate_adjudicate.py` lleva su CSV).
 
 ### §4.7. Atestación firmada, CI y protección de la rama (fase C, tramo 4, FND-0334)
 
