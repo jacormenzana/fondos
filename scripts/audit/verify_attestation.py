@@ -16,7 +16,11 @@ passes with a loud warning, so nothing is silently "green" (owner action: genera
 commits that cite no ticket are not required. A range with no commit that cites a ticket passes with no attestation.
 Stated limit: CI proves that the owner's key signed a statement; it cannot check the database.
 
-Exit codes: 0 pass (or not enforced), 1 fail, 2 usage or git error.
+Advisory mode (`--advisory`, Backlog v3 W1, owner decision 2026-10-31): publication no longer waits for a per-push signature. A missing attestation and the problems of a present one (a commit not covered,
+a differing tree hash, an undecided pair) are reported as `::warning::` and the job passes; a signature that does NOT verify, or an attestation that is not JSON, still fails (somebody
+tampered with it, which is not a missing chore).
+
+Exit codes: 0 pass (or not enforced, or only warnings in advisory mode), 1 fail, 2 usage or git error.
 """
 from __future__ import annotations
 
@@ -60,7 +64,10 @@ def main(argv: list | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--base", required=True, help="the base of the range (the commit the push or the pull request starts from)")
     ap.add_argument("--head", default="HEAD")
+    ap.add_argument("--advisory", action="store_true", help="a missing attestation and uncovered / undecided findings are warnings (exit 0); a signature that does not verify still fails")
     args = ap.parse_args(argv)
+    level = "warning" if args.advisory else "error"
+    soft = 0 if args.advisory else 1
     try:
         base = git("rev-parse", "--verify", f"{args.base}^{{commit}}").strip()
         head = git("rev-parse", "--verify", f"{args.head}^{{commit}}").strip()
@@ -81,8 +88,8 @@ def main(argv: list | None = None) -> int:
     doc_text = git("show", f"{head}:{att.ATTEST_FILE}", check=False)
     sig_text = git("show", f"{head}:{att.SIG_FILE}", check=False)
     if not doc_text or not sig_text:
-        print(f"::error::the range has {len(citing)} commit(s) that cite a ticket and {head[:12]} carries no signed attestation ({att.ATTEST_FILE} and {att.SIG_FILE}): run `backlog_sync.py --attest`.")
-        return 1
+        print(f"::{level}::the range has {len(citing)} commit(s) that cite a ticket and {head[:12]} carries no signed attestation ({att.ATTEST_FILE} and {att.SIG_FILE}): run `backlog_sync.py --attest`.")
+        return soft
     with tempfile.TemporaryDirectory() as tmp:
         d, s, a = Path(tmp) / "attestation.json", Path(tmp) / "attestation.json.sig", Path(tmp) / "allowed_signers"
         d.write_text(doc_text, encoding="utf-8", newline="")
@@ -99,9 +106,9 @@ def main(argv: list | None = None) -> int:
         return 1
     bad = att.problems(doc, commits)
     for p in bad:
-        print(f"::error::{p}")
+        print(f"::{level}::{p}")
     if bad:
-        return 1
+        return soft
     print(f"attestation OK: {len(citing)} commit(s) covered, every collision pair decided, signature verified")
     return 0
 

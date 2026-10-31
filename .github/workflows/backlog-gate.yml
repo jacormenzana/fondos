@@ -6,8 +6,9 @@ name: Backlog gate attestation
 # .github/backlog_gate_allowed_signers AS IT IS IN THE BASE of the range, so a change cannot bring its own key. While that file lists no key the job
 # passes with a warning ("NOT ENFORCED"). CI proves that the owner's key signed a statement; it cannot check the database.
 #
-# An Action on a push cannot block that push: it blocks only if `backlog-gate` is a REQUIRED status check of `master` (owner action O-5; see
-# scripts/ops/github_protect_master.py). Publish with a `publish/<date>` branch, wait for green, then fast-forward master.
+# ADVISORY since Backlog v3 W1 (owner decision 2026-10-31): the job runs verify_attestation.py with --advisory, so a missing attestation, an uncovered commit or an undecided pair is an
+# annotation (warning), not a failure, and nobody signs on every push. A signature that does not verify still fails. `backlog-gate` is not a required check of `master`
+# (github_protect_master.py --with-backlog-gate is deprecated); publication is the auto-PR flow of .github/workflows/auto-pr.yml.
 
 on:
   push:
@@ -61,4 +62,4 @@ jobs:
 
       - name: Verify the signed attestation
         # Pure stdlib + git + ssh-keygen (already on the runner): no installation.
-        run: python scripts/audit/verify_attestation.py --base "${{ steps.base.outputs.base }}" --head "${{ github.sha }}"
+        run: python scripts/audit/verify_attestation.py --advisory --base "${{ steps.base.outputs.base }}" --head "${{ github.sha }}"

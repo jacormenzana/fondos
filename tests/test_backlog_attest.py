@@ -200,6 +200,27 @@ def test_ci_fails_for_a_missing_attestation_a_bad_signature_a_missing_commit_a_t
 
 
 @needs_keys
+def test_advisory_mode_turns_a_missing_attestation_and_every_coverage_finding_into_warnings_but_a_bad_signature_still_fails(repo, capsys):
+    """Backlog v3 W1: nobody signs on every push, so `--advisory` reports what the strict mode fails on and exits 0, except a signature that does not verify."""
+    repo.commit("a.py", "a", "feat: FND-0001 first\n\nBacklog-Gate: " + NONCE)
+    assert va.main(["--base", repo.base, "--advisory"]) == 0
+    out = capsys.readouterr().out
+    assert "::warning::the range has 1 commit(s)" in out and "::error::" not in out                                  # no attestation at all
+    repo.sign_range(repo.base, pairs=[{"a": "FND-0001", "b": "FND-0003", "decided": False}])
+    assert va.main(["--base", repo.base, "--advisory"]) == 0
+    out = capsys.readouterr().out
+    assert "::warning::" in out and "is undecided" in out and "::error::" not in out                                 # an undecided pair
+    repo.git("reset", "-q", "--hard", "HEAD~1")
+    repo.sign_range(repo.base, mutate=lambda d: d["commits"][-1].update(tree="e" * 40))
+    assert va.main(["--base", repo.base, "--advisory"]) == 0 and "tree hash" in capsys.readouterr().out               # a differing tree hash
+    sig = repo.root / att.SIG_FILE
+    sig.write_text(sig.read_text(encoding="utf-8").replace("A", "B", 3), encoding="utf-8", newline="")
+    repo.git("add", att.ATTEST_DIR)
+    repo.git("commit", "-q", "-m", "chore: damage the signature")
+    assert va.main(["--base", repo.base, "--advisory"]) == 1 and "::error::the signature" in capsys.readouterr().out  # tampering is not a chore
+
+
+@needs_keys
 def test_a_change_cannot_bring_its_own_key(repo, capsys, tmp_path):
     other, other_line = make_key(tmp_path, "attacker")
     repo.commit("a.py", "a", "feat: FND-0001 first\n\nBacklog-Gate: " + NONCE)

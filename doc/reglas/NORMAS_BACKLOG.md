@@ -347,6 +347,16 @@ DDL `db/pg_backlog/90_collision.sql`, aplicado por el propietario con `migrate_b
 DDL `db/pg_backlog/95_attest.sql`, aplicado por el propietario con `migrate_backlog_v2.py --phase attest` (necesita el tramo 2; la reversión conserva
 `gate_protection_event`). Especificación: `PROPUESTA_BACKLOG_V2.md` §6.4.6 y §6.4.7. El flujo de publicación completo, de principio a fin:
 
+**Backlog v3, W1 (decisión del propietario, 2026-10-31): la publicación es automática y la atestación es consultiva.** (a) Un push a una rama `feat/**`, `fix/**`, `chore/**` o `docs/**`
+dispara `.github/workflows/auto-pr.yml`: abre el pull request contra `master` si no hay uno abierto y activa la fusión automática, de modo que GitHub fusiona cuando pasan las comprobaciones
+obligatorias de la protección (que no cambia). El propietario conserva el veto: cierra el pull request o desactiva la fusión automática. Un pull request que modifica `.github/workflows/**`
+no puede fusionarse con el `GITHUB_TOKEN` integrado: recibe la etiqueta `needs-owner` y **no** se activa la fusión automática. Las ramas `publish/**` no se tratan aquí. Ajustes únicos del
+repositorio (acción O-2): permitir que Actions cree pull requests, permitir la fusión automática y borrar las ramas fusionadas. (b) `backlog-gate` ejecuta `verify_attestation.py --advisory`:
+una atestación ausente, un commit no cubierto, un hash de árbol distinto o una pareja sin decidir son **avisos** (`::warning::`), no fallos, y nadie firma en cada push; una firma que **no
+verifica** sigue fallando. `backlog-gate` no es una comprobación obligatoria de `master` (`github_protect_master.py --with-backlog-gate` queda obsoleto). La garantía descansa en la detección
+dentro de una sincronización y en la retención (*hold*) del ticket (`PROPUESTA` §10.1: «detectado y retenido», nunca «aplicado»). Las viñetas siguientes describen el mecanismo firmado, que
+sigue disponible cuando el propietario lo ejecuta a mano (`--attest`).
+
 - **Atestación** (`backlog_sync.py --attest --key <clave privada>`, la ejecuta el propietario al publicar). Escribe `backlog_gate/attestation.json` para los commits de
   `origin/master..HEAD` y lo firma con `ssh-keygen -Y sign -n backlog-gate` (`backlog_gate/attestation.json.sig`). Por cada commit que cita un ticket: sha, hash del árbol, nonce y las
   parejas de colisión de sus tickets, decididas o no. **Solo identificadores: ni títulos ni texto** (el remoto es GitHub). Solo lee la base de datos. **La clave privada nunca está en el
