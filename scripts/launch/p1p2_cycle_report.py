@@ -361,6 +361,34 @@ def collect_backlog_violations() -> dict:
         return {"error": f"{type(exc).__name__}: {exc}"}
 
 
+def collect_stale_reads(conn) -> dict:
+    """V-STALE-READ (FND-0332): the ticket statuses stored with the flags of the latest telemetry cycle that were read before the ticket last
+    moved. {'applied': False} until the owner adds control.cycle_flag.ap_status_read_ts. Read-only; never raises."""
+    try:
+        sys.path.insert(0, str(ROOT))
+        from shared import backlog_client
+        from shared.cycle_telemetry import stale_reads
+        has_col = conn.execute("SELECT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('control.cycle_flag') "
+                               "AND attname = 'ap_status_read_ts' AND NOT attisdropped)").fetchone()[0]
+        if not has_col:
+            return {"applied": False}
+        cols = ("ap_id", "ap_status", "ap_status_read_ts")
+        rows = conn.execute("SELECT ap_id, ap_status, ap_status_read_ts FROM control.cycle_flag WHERE ap_id IS NOT NULL AND cycle_id = "
+                            "(SELECT cycle_id FROM control.cycle_run ORDER BY started_at DESC LIMIT 1)").fetchall()
+        flags = [dict(zip(cols, r)) for r in rows]
+        out = stale_reads(flags, backlog_client.latest_status_events(sorted({f["ap_id"] for f in flags})))
+        for s in out["stale"]:                                    # the report is written as JSON
+            s["read_ts"], s["event_ts"] = s["read_ts"].isoformat(), s["event_ts"].isoformat()
+        out["applied"] = True
+        return out
+    except Exception as exc:                                      # noqa: BLE001 -- the backlog is another database: its outage must not cost the report
+        try:
+            conn.rollback()
+        except Exception:                                         # noqa: BLE001
+            pass
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
 def collect_governance(conn, today: date | None = None) -> dict:
     """Data-governance facts of the cycle (FND-0251): accepted audit residuals about to lapse (or whose AP is already CLOSED) and the
     reasoned overrides the PRODUCTION scenario was promoted with. Read-only; never raises (an unreadable source becomes an `error` key,
@@ -550,6 +578,11 @@ def attention_items(report: dict, previous: dict | None) -> list:
     if bl.get("blocked_in_progress"):
         items.append(f"{len(bl['blocked_in_progress'])} tickets en curso con un prerequisito DEPENDS_ON sin cerrar "
                      f"({', '.join(bl['blocked_in_progress'][:6])}): backlog_links.py --for <id>")
+    sr = report.get("stale_reads") or {}                    # absent in reports written before this check (FND-0332)
+    if sr.get("stale"):
+        ex = ", ".join(f"{s['ap_id']} guardado {s['stored']}, ahora {s['current']}" for s in sr["stale"][:3])
+        items.append(f"V-STALE-READ: {len(sr['stale'])} estado(s) de ticket guardados con los flags del ciclo se leyeron antes del ultimo "
+                     f"cambio del ticket ({ex}); decidir con el estado actual del backlog, no con la copia")
     gov = report.get("governance") or {}                    # absent in reports written before this check (FND-0251)
     for line in gov.get("residual_attention", []):
         items.append(line)
@@ -708,6 +741,15 @@ def render_text(report: dict, previous: dict | None, items: list) -> str:
         else:
             top = ", ".join(f"{r['code']} x{r['n']}" for r in bv["top"]) or "ninguna"
             L += [f"Violaciones del backlog: {bv['total']} (principales: {top})"]
+    sr = report.get("stale_reads")
+    if sr:
+        if sr.get("error"):
+            L += [f"Lecturas de estado del backlog: no disponible ({sr['error']})"]
+        elif not sr.get("applied"):
+            L += ["Lecturas de estado del backlog: sin hora de lectura (migrate_cycle_flag_read_ts.py sin aplicar)"]
+        else:
+            L += [f"Lecturas de estado del backlog: {len(sr['stale'])} de {sr['checked']} leidas antes del ultimo cambio del ticket "
+                  f"(V-STALE-READ); {sr['no_read_ts']} sin hora de lectura, {sr['gone']} tickets inexistentes"]
     L += ["-" * 60]
     L += [f"[ATENCION] {i}" for i in items] if items else ["Sin puntos de atencion."]
     return "\n".join(L)
@@ -747,6 +789,7 @@ def main(argv: list | None = None) -> int:
             report["hedging_drift"] = collect_hedging_drift(conn) if args.hedging_drift else {"skipped": True}
             report["backlog_links"] = collect_backlog_links()
             report["backlog_violations"] = collect_backlog_violations()
+            report["stale_reads"] = collect_stale_reads(conn)
             report["governance"] = collect_governance(conn, today)
             report["macro_freshness"] = collect_macro_freshness(conn, today)
             report["sovereign_stress"] = collect_sovereign_stress(conn)

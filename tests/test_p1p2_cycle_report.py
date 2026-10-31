@@ -313,6 +313,31 @@ def test_collect_backlog_violations_never_raises(monkeypatch):
     assert cr.collect_backlog_violations() == {"error": "RuntimeError: down"}
 
 
+def test_stale_read_line_and_attention_item():
+    """FND-0332: V-STALE-READ in the cycle report."""
+    st = [{"ap_id": "FND-0001", "stored": "OPEN", "current": "CLOSED", "read_ts": "x", "event_ts": "y"}]
+    rep = _report(stale_reads={"applied": True, "checked": 5, "stale": st, "no_read_ts": 2, "gone": 0})
+    text = cr.render_text(rep, None, [])
+    assert "Lecturas de estado del backlog: 1 de 5 leidas antes del ultimo cambio del ticket (V-STALE-READ); 2 sin hora de lectura" in text
+    items = cr.attention_items(rep, None)
+    assert any(i.startswith("V-STALE-READ: 1 ") and "FND-0001 guardado OPEN, ahora CLOSED" in i for i in items)
+    assert not any("V-STALE-READ" in i for i in cr.attention_items(_report(stale_reads={"applied": True, "checked": 5, "stale": [],
+                                                                                          "no_read_ts": 0, "gone": 0}), None))
+    assert "migrate_cycle_flag_read_ts.py sin aplicar" in cr.render_text(_report(stale_reads={"applied": False}), None, [])
+    assert "Lecturas de estado del backlog: no disponible" in cr.render_text(_report(stale_reads={"error": "X: y"}), None, [])
+    assert "Lecturas de estado" not in cr.render_text(_report(), None, [])
+
+
+def test_collect_stale_reads_never_raises():
+    class Broken:
+        def execute(self, *a, **k):
+            raise RuntimeError("db down")
+
+        def rollback(self):
+            raise RuntimeError("still down")
+    assert cr.collect_stale_reads(Broken()) == {"error": "RuntimeError: db down"}
+
+
 def test_collect_backlog_links_never_raises(monkeypatch):
     import sys
     monkeypatch.setitem(sys.modules, "backlog_links", None)               # import fails -> the error is reported, not raised

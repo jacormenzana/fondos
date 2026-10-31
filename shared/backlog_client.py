@@ -1005,6 +1005,19 @@ def shadow_progress(*, conn=None) -> dict:
         return _rows(c, "SELECT last_v00_ts, v00_total, live_non_system_since_last_v00 FROM backlog.v_shadow_stage")[0]
 
 
+def latest_status_events(ids: list[str], *, conn=None) -> dict:
+    """{ap_id: {'status', 'event_ts', 'origin'}}: each ticket's current status and the time of its latest status event (step A-1), for the
+    decision-time read rule (FND-0332): a stored status snapshot read before `event_ts` is stale (V-STALE-READ). Ids with no ticket are absent.
+    Fail-loud (callers wrap it). Read-only."""
+    if not ids:
+        return {}
+    with _session(conn) as c:
+        rows = _rows(c, "SELECT b.action_point_id, b.status, e.event_ts, e.origin FROM backlog.BACKLOG b "
+                        "LEFT JOIN LATERAL (SELECT event_ts, origin FROM backlog.status_event s WHERE s.action_point_id = b.action_point_id "
+                        "ORDER BY s.event_id DESC LIMIT 1) e ON true WHERE b.action_point_id = ANY(%s)", (list(ids),))
+    return {r["action_point_id"]: {"status": r["status"], "event_ts": r["event_ts"], "origin": r["origin"]} for r in rows}
+
+
 GROUP_KINDS = ("TRAIN", "THEME", "DECISION")      # Phase D (FND-0335): db/pg_backlog/60_groups_violations.sql, CHECK of backlog.group_tag.kind
 
 

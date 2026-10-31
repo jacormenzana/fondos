@@ -194,6 +194,9 @@ def test_refresh_resolves_only_the_unverified_flags(monkeypatch):
             class R:
                 def fetchall(s):
                     return [("c1", "A", "", "FND-1"), ("c1", "B", "", "FND-2")]
+
+                def fetchone(s):                    # the ap_status_read_ts column check (FND-0332): absent here
+                    return (False,)
             if sql.startswith("UPDATE"):
                 updates.append(params)
             return R()
@@ -252,3 +255,26 @@ def test_cli_never_fails_the_launcher(monkeypatch, cli):
 def test_cli_pending_reports_the_fallback_size(monkeypatch, _isolated, capsys):
     _isolated.write_text("x" * 12, encoding="utf-8")
     assert ct.main(["pending"]) == 0 and capsys.readouterr().out.strip() == "12"
+
+
+# ---------------------------------------------------------------- FND-0332: V-STALE-READ (pure)
+def test_stale_reads_classifies_each_stored_status():
+    from datetime import datetime, timedelta, timezone
+    t = datetime(2026, 10, 30, 12, 0, tzinfo=timezone.utc)
+    flags = [
+        {"ap_id": "FND-1", "ap_status": "OPEN", "ap_status_read_ts": t},                 # moved after the read -> stale
+        {"ap_id": "FND-2", "ap_status": "OPEN", "ap_status_read_ts": t},                 # last moved before the read -> fresh
+        {"ap_id": "FND-3", "ap_status": "OPEN", "ap_status_read_ts": None},              # written before the column existed
+        {"ap_id": "FND-4", "ap_status": "OPEN", "ap_status_read_ts": t},                 # no such ticket any more
+        {"ap_id": "FND-5", "ap_status": "LOOKUP_FAILED", "ap_status_read_ts": None},     # never a snapshot: skipped
+        {"ap_id": None, "ap_status": None, "ap_status_read_ts": None},                    # untracked flag: skipped
+        {"ap_id": "FND-6", "ap_status": "OPEN", "ap_status_read_ts": t},                 # only a BACKFILL event, later: not a move
+    ]
+    latest = {"FND-1": {"status": "CLOSED", "event_ts": t + timedelta(seconds=1), "origin": "LIVE"},
+              "FND-2": {"status": "OPEN", "event_ts": t - timedelta(days=1), "origin": "LIVE"},
+              "FND-3": {"status": "OPEN", "event_ts": t, "origin": "LIVE"},
+              "FND-6": {"status": "OPEN", "event_ts": t + timedelta(days=1), "origin": "BACKFILL"}}
+    out = ct.stale_reads(flags, latest)
+    assert out["checked"] == 3 and out["no_read_ts"] == 1 and out["gone"] == 1
+    assert out["stale"] == [{"ap_id": "FND-1", "stored": "OPEN", "current": "CLOSED", "read_ts": t, "event_ts": t + timedelta(seconds=1)}]
+    assert ct.stale_reads([], {}) == {"checked": 0, "stale": [], "no_read_ts": 0, "gone": 0}
