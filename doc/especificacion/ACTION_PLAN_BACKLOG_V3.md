@@ -229,8 +229,8 @@ Run them in the order of the "When" column. Each step says what to do, how to kn
 1. Settings → Actions → General → "Workflow permissions": tick **Allow GitHub Actions to create and approve pull requests**, then Save.
 2. Settings → General → "Pull Requests": tick **Allow auto-merge**.
 3. Same place: tick **Automatically delete head branches** (optional housekeeping).
-4. Check the two General settings without any token: the repository's public API object shows `"allow_auto_merge": true` and `"delete_branch_on_merge": true` (`GET /repos/<owner>/<repo>`). The first setting needs admin rights to read, so confirm it by the test in step 5.
-5. Test: after the owner pushes a `docs/` or `chore/` branch, the Actions tab shows an "Auto PR" run, a PR exists, and its merge box says "Auto-merge enabled".
+4. None of the three settings can be read without an admin token (the public API returns `null` for `allow_auto_merge` and `delete_branch_on_merge`, measured 2026-10-31), so the test in step 5 is the check.
+5. Test: re-run the failed "Auto PR" job of the pushed branch (Actions tab → the run → "Re-run failed jobs"), or push another commit to the branch. Expected: the run is green, a PR exists, and its merge box says "Auto-merge enabled" (for a branch that does not touch `.github/workflows`; the first PR gets the `needs-owner` label instead, see step 6). Until step 1 is done the "Auto PR" run is expected to fail, most likely at `gh pr create` (its first run on 2026-10-31 failed with the setting off; the log itself is only readable when logged in to GitHub): that failure is the signal that the setting is off.
 6. The first PR, the one that adds `auto-pr.yml`, changes `.github/workflows/**`, so it gets the `needs-owner` label and no auto-merge: merge that one by hand once its four checks are green. Every later PR that does not touch the workflows merges by itself.
 7. If skipped: with setting 1 off, no PR is opened; with setting 2 off, the PR opens but the run warns "could not enable auto-merge" and you merge by hand, as today.
 8. Veto at any time: close the PR, or press "Disable auto-merge" on it.
