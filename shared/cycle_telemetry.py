@@ -233,15 +233,20 @@ def _apply(conn, ev: dict) -> None:
                 ap_id = ack[0] if ack else None
                 ap_status = "LOOKUP_FAILED" if ack else None       # not resolved yet: refresh_unverified_flags() reads the backlog
                 read_ts = None
-            cols, vals = ["cycle_id", "flag_code", "scope", "severity", "detail", "evidence", "ap_id", "ap_status"], \
-                [ev["cycle_id"], ev["flag_code"], ev.get("scope", ""), ev["severity"], ev.get("detail"), ev.get("evidence"), ap_id, ap_status]
+            vals = [ev["cycle_id"], ev["flag_code"], ev.get("scope", ""), ev["severity"], ev.get("detail"), ev.get("evidence"), ap_id, ap_status]
             if _has_read_ts(conn):                  # FND-0332: the read time travels with the snapshot (the event keeps it through the fallback)
-                cols.append("ap_status_read_ts")
-                vals.append(read_ts)
-            conn.execute(
-                f"INSERT INTO control.cycle_flag ({', '.join(cols)}) VALUES ({', '.join(['%s'] * len(cols))}) "
-                "ON CONFLICT (cycle_id, flag_code, scope) DO UPDATE SET "
-                + ", ".join(f"{c} = EXCLUDED.{c}" for c in cols[3:]), vals)
+                conn.execute(
+                    "INSERT INTO control.cycle_flag (cycle_id, flag_code, scope, severity, detail, evidence, ap_id, ap_status, ap_status_read_ts) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                    "ON CONFLICT (cycle_id, flag_code, scope) DO UPDATE SET severity = EXCLUDED.severity, detail = EXCLUDED.detail, "
+                    "evidence = EXCLUDED.evidence, ap_id = EXCLUDED.ap_id, ap_status = EXCLUDED.ap_status, "
+                    "ap_status_read_ts = EXCLUDED.ap_status_read_ts", vals + [read_ts])
+            else:                                   # the column is not applied yet (owner step): the same statement without it
+                conn.execute(
+                    "INSERT INTO control.cycle_flag (cycle_id, flag_code, scope, severity, detail, evidence, ap_id, ap_status) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) "
+                    "ON CONFLICT (cycle_id, flag_code, scope) DO UPDATE SET severity = EXCLUDED.severity, detail = EXCLUDED.detail, "
+                    "evidence = EXCLUDED.evidence, ap_id = EXCLUDED.ap_id, ap_status = EXCLUDED.ap_status", vals)
         else:
             raise ValueError(f"unknown telemetry op {op!r}")
 
