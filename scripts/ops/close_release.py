@@ -30,6 +30,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
+from shared import backlog_release as rel  # noqa: E402
+
 AP_RE = re.compile(r"^FND-\d{4}$")
 RELEASE_RE = re.compile(r"^R\d{4}\.\d{2}-[A-Z0-9][A-Z0-9-]*$")
 CLOSABLE_STATUSES = ("IN_PROGRESS", "READY_FOR_DEPLOY")
@@ -50,29 +52,13 @@ def validate_args(release: str, tickets: list, log: str) -> list:
 
 
 def check_tickets(rows: dict, tickets: list) -> list:
-    """Reasons a ticket cannot be closed by a release. `rows` = {ap_id: (status, release_version)}. Pure."""
-    why = []
-    for t in tickets:
-        if t not in rows:
-            why.append(f"{t} does not exist")
-            continue
-        status, release = rows[t]
-        if status not in CLOSABLE_STATUSES:
-            why.append(f"{t} is {status}; a release closes IN_PROGRESS or READY_FOR_DEPLOY tickets")
-        if release:
-            why.append(f"{t} already carries release {release}")
-    return why
+    """Reasons a ticket cannot be closed by a release. `rows` = {ap_id: (status, release_version)}. Pure (the rule lives in shared/backlog_release.py, shared with the autopilot)."""
+    return rel.closable_by_release(rows, tickets, closable_statuses=CLOSABLE_STATUSES)
 
 
 def incident_gate(tickets: list, incidents: list, table_present: bool, loop_enabled: bool) -> list:
-    """Reasons the incident gate refuses. Fail closed: with the loop switch ON the store must exist. Pure."""
-    from shared.statistical_audit.incidents import closable
-    if not table_present:
-        return ["AUDIT_INCIDENT_LOOP_ENABLED is on and control.audit_incident does not exist (fail closed)"] if loop_enabled else []
-    why = []
-    for t in tickets:
-        why += [f"{t}: {r}" for r in closable(t, incidents).reasons]
-    return why
+    """Reasons the incident gate refuses. Fail closed: with the loop switch ON the store must exist. Pure (shared/backlog_release.py)."""
+    return rel.incident_gate(tickets, incidents, table_present, loop_enabled)
 
 
 def main(argv: "list | None" = None) -> int:
@@ -115,13 +101,7 @@ def main(argv: "list | None" = None) -> int:
     if rc_live:
         return rc_live
 
-    fconn = get_connection()
-    try:
-        present = ps.incident_table_exists(fconn)
-        incidents = inc.load_incidents(fconn) if present else []
-        fconn.rollback()
-    finally:
-        fconn.close()
+    present, incidents = rel.read_incident_facts()
     refusal = incident_gate(tickets, incidents, present, cfg.AUDIT_INCIDENT_LOOP_ENABLED)
     if refusal:
         print("REFUSED by the incident gate:")
