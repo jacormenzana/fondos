@@ -465,6 +465,22 @@ def a2_line(sp: dict, actors: list, required: int = 50, bindings: "list | None" 
     return line
 
 
+def queue_lines(rows: list) -> tuple:
+    """([lines], alerta) for the collision queue (Backlog v2 Phase C slice 3): `rows` = backlog_client.gate_queue(). A pair undecided for 48 h or more is an [ATENCION] line; for 96 h or more an
+    [ALERTA] one, and `alerta` is True (the report puts it FIRST and the exit code is non-zero). Nothing relaxes when the queue ages. Pure."""
+    alerta = [r for r in rows if r.get("level") == "ALERTA"]
+    atencion = [r for r in rows if r.get("level") == "ATENCION"]
+    lines = []
+    if alerta:
+        lines.append(f"[ALERTA] {len(alerta)} collision pair(s) undecided for 96 h or more (oldest {alerta[0]['a']} / {alerta[0]['b']}, {alerta[0]['age_hours']} h): "
+                     "python scripts/audit/gate_adjudicate.py --list")
+    if atencion:
+        lines.append(f"[ATENCION] {len(atencion)} collision pair(s) undecided for 48 h or more (oldest {atencion[0]['a']} / {atencion[0]['b']}, {atencion[0]['age_hours']} h)")
+    if rows and not (alerta or atencion):
+        lines.append(f"collision queue: {len(rows)} undecided pair(s), none older than 48 h")
+    return lines, bool(alerta)
+
+
 def read_backlog(since_hours: float) -> dict:
     if not os.environ.get("FONDOS_BACKLOG_PG_DSN") and not (ROOT / ".env").exists():
         return {"error": "skipped", "new": [], "since_hours": since_hours}
@@ -492,13 +508,18 @@ def read_backlog(since_hours: float) -> dict:
         a2, actors = bc.shadow_progress(), bc.shadow_actors()
     except Exception:                                          # noqa: BLE001
         a2, actors = None, []
+    queue = []
+    try:                                                       # slice 3 may not be applied: then the queue is empty
+        queue = bc.gate_queue()
+    except Exception:                                          # noqa: BLE001
+        queue = []
     iam = None
     try:                                                       # step iam may not be applied: then the line says so
         iam = bc.iam_catalog()
     except Exception:                                          # noqa: BLE001
         iam = None
     return {"open": sum(1 for t in tickets if t.get("status") != "CLOSED"), "new": new, "since_hours": since_hours, "gate": gate,
-            "a2": a2, "a2_actors": actors, "a2_required": getattr(bc, "SHADOW_REQUIRED", 50), "iam": iam}
+            "a2": a2, "a2_actors": actors, "a2_required": getattr(bc, "SHADOW_REQUIRED", 50), "iam": iam, "queue": queue}
 
 
 # ---------------------------------------------------------------- report
@@ -520,7 +541,9 @@ def build_report(args) -> dict:
 
 
 def render(r: dict) -> str:
-    L = ["=== PRE-FLIGHT (read-only) ==="]
+    q_lines, q_alerta = queue_lines((r.get("backlog") or {}).get("queue") or [])
+    L = [q_lines[0]] if q_alerta else []                       # an [ALERTA] is the first line of the report
+    L.append("=== PRE-FLIGHT (read-only) ===")
     dr = r.get("driver") or {}
     if dr:
         L.append(f"[0] driver: import {'OK' if dr.get('import_ok') else 'BLOCKED (' + dr.get('detail', '')[:60] + ')'}"
@@ -563,6 +586,7 @@ def render(r: dict) -> str:
         L.append(f"      {t['id']} [{t['status']}] {t['title']}")
     if gate_line(b.get("gate") or {}):
         L.append("      " + gate_line(b["gate"]))
+    L += ["      " + line for line in (q_lines[1:] if q_alerta else q_lines)]
     bindings = (b.get("iam") or {}).get("bindings") or None
     if a2_line(b.get("a2") or {}, b.get("a2_actors") or [], b.get("a2_required", 50), bindings):
         L.append("      " + a2_line(b["a2"], b.get("a2_actors") or [], b.get("a2_required", 50), bindings))
@@ -589,6 +613,8 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
     report = build_report(args)
     print(json.dumps(report, indent=2, default=str) if args.json else render(report))
+    if queue_lines((report.get("backlog") or {}).get("queue") or [])[1]:      # a pair undecided for 96 h: a non-zero exit, whatever the verdict
+        return 2
     return 1 if (args.strict and report["verdict"]["level"] == "CAUTION") else 0
 
 

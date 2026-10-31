@@ -823,6 +823,14 @@ BACKLOG_HOOK_EPOCH: str = ""
 # `FND-nnnn`, except a merge, a revert, a `chore` commit (`chore:` / `chore(x):`) and any commit on a `chore/` branch (NORMAS_BACKLOG.md 4.5). OFF = such a commit goes through
 # (only a malformed token is rejected). Rollback = set it back to False.
 BACKLOG_REQUIRE_TICKET_ENABLED: bool = False
+# Backlog v2 Phase C slice 3 (FND-0334; PROPUESTA_BACKLOG_V2.md 6.4.2 to 6.4.5): the CEILING of the collision gate: "OFF" (not evaluated: the default until the owner arms it), "AUDIT" (the commit-msg
+# hook records the pairs of commits that touch a code file cited by another ticket in progress, warns, blocks nothing) or "BLOCK" (also a hold on the ticket, and the pre-push hook refuses to publish
+# while a pair of the pushed commits is undecided). The EFFECTIVE mode is the lower of this and the latest backlog.gate_state event, so a retirement by the calibrator (an appended event) lowers it
+# without editing this file; raising it again is a person's event with a reason. BLOCK needs 14 days of AUDIT and a share of commits that introduce a pair of 10 % or less (checked by the database).
+# AUDIT since 2026-10-31 (owner decision): the DDL `--phase collision` is applied, the role backlog_adjudicator exists, and the owner wrote the gate_state event AUDIT (event 1, human:jacor,
+# 2026-10-31 12:42) with gate_mode.py. The 14-day audit counts from that event. Rollback = set it back to "OFF" (the hook then does not even ask the database); the effective mode also drops to
+# OFF if the calibrator retires the gate (an appended event, no edit of this file).
+BACKLOG_COLLISION_GATE_MODE: str = "AUDIT"
 # Options of the iterative VIF (used when MACRO_VIF_ITERATIVE_ENABLED, and by the PIT variant "iterative_hy"): keep the two
 # crisis factors, drop spread_ig (the near-duplicate of spread_hy), and at most n_obs / 10 factors per fund.
 MACRO_ITERATIVE_VIF: dict = {

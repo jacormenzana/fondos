@@ -268,7 +268,7 @@ def test_only_report_incident_and_append_log_use_the_allow_listed_factory():
 def test_the_test_sandbox_hides_every_live_connection_string_the_client_knows():
     """A new DSN variable that the sandbox does not hide would let a test reach the live backlog."""
     from shared.testing import sandbox
-    known = {bc._DSN_ENV_VAR, bc._HUMAN_DSN_ENV_VAR, bc._LOGGER_DSN_ENV_VAR, bc._INCIDENT_DSN_ENV_VAR, bc._GATE_DSN_ENV_VAR}
+    known = {bc._DSN_ENV_VAR, bc._HUMAN_DSN_ENV_VAR, bc._LOGGER_DSN_ENV_VAR, bc._INCIDENT_DSN_ENV_VAR, bc._GATE_DSN_ENV_VAR, bc._ADJUDICATOR_DSN_ENV_VAR}
     assert set(sandbox._LIVE_BACKLOG_DSNS) == known
     declared = set(re.findall(r'^_\w*DSN\w*ENV_VAR = "(FONDOS_BACKLOG_PG_DSN\w*)"', (_ROOT / "shared" / "backlog_client.py").read_text(encoding="utf-8"), re.M))
     assert declared == known
