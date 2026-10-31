@@ -36,7 +36,7 @@ def test_the_scoped_client_functions_go_through_the_gate_operation_with_no_fallb
     for fn in ("collision_state", "gate_undecided"):                    # the hooks ask for them with scoped=True
         body = client.split(f"def {fn}(", 1)[1].split("\ndef ", 1)[0]
         assert 'operation="gate" if scoped and conn is None else None' in body, fn
-    assert 'if operation == "gate":' in client and "return os.environ.get(_GATE_DSN_ENV_VAR) or None" in client      # no fallback to FONDOS_BACKLOG_PG_DSN
+    assert '_SCOPED_DSN_ENV = {"gate": _GATE_DSN_ENV_VAR' in client and "return os.environ.get(scoped) or None" in client      # gate (and agent) use their login EXCLUSIVELY: no fallback to FONDOS_BACKLOG_PG_DSN
     for call in ("collision_state", "gate_undecided"):                  # the pre-push hook passes scoped=True
         assert re.search(re.escape(call) + r"\([^)]*scoped=True", (AUDIT / "pre_push_gate.py").read_text(encoding="utf-8")), call
 

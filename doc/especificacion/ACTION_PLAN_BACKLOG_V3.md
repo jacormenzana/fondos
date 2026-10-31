@@ -241,11 +241,12 @@ Run them in the order of the "When" column. Each step says what to do, how to kn
 7. If skipped: with setting 1 off, no PR is opened; with setting 2 off, the PR opens but the run warns "could not enable auto-merge" and you merge by hand, as today.
 8. Veto at any time: close the PR, or press "Disable auto-merge" on it.
 
-**O-V3-3 — Apply the autonomy DDL** (available when W2 ships)
-1. Review the commit, then run `migrate_backlog_v2.py --phase autonomy` as a dry run from the owner terminal.
-2. Run it with `--apply`. It creates the roles `backlog_agent` and `backlog_autopilot` without passwords.
-3. Set a password for each role, and put the two DSNs in the git-ignored `.env` as `FONDOS_BACKLOG_PG_DSN_AGENT` and `FONDOS_BACKLOG_PG_DSN_AUTOPILOT`.
-4. Done when `python scripts/ops/backlog_drift.py` prints `no drift` and `backlog_phase_a_acceptance.py --verify autonomy` gives `ACCEPTED`.
+**O-V3-3 — Apply the autonomy DDL** (W2: built and tested; W3 adds the second role to the same phase later)
+1. Merge the W2 PR, then in your own terminal (your owner DSN, a real console) dry run it: `C:\Users\jacor\.conda\envs\des\python.exe scripts\ops\migrate_backlog_v2.py --phase autonomy`. It lists the objects and changes nothing.
+2. Run it with `--apply`. W2 creates the role `backlog_agent` WITHOUT a password and nine EXECUTE grants; the role `backlog_autopilot` comes with W3.
+3. Set the password of `backlog_agent` in your own session (`ALTER ROLE backlog_agent PASSWORD '...'`), then put its connection string in the git-ignored `.env` as `FONDOS_BACKLOG_PG_DSN_AGENT`. Without that line, agents keep writing through the console exactly as before: nothing changes until you add it.
+4. Done when `C:\Users\jacor\.conda\envs\des\python.exe scripts\ops\backlog_drift.py` prints `no drift` (it fingerprints master's DDL against the live catalog). The session then checks the role's privileges read-only (an acceptance script for this phase is a follow-up of W2; it is not built yet).
+5. Rollback if needed: `--phase autonomy --down` (dry run first). It drops the two wrappers and the grants and keeps the role and everything written through it.
 
 **O-V3-4 — Switch the autopilot on** (after W3)
 1. Read the 20 "would move X to Y, evidence e" notes the autopilot wrote in SHADOW mode.

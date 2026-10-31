@@ -814,6 +814,10 @@ BACKLOG_INCIDENT_MEDIUM_COSINE: float = 0.45
 # from BLOCKED or DEFERRED, never backward, never from a mention in the subject; closures stay manual. Owner decision 2026-10-26: forward moves are
 # automatic. OFF = the sync still records the commit events and the violations, and moves nothing.
 BACKLOG_AUTO_FORWARD_ENABLED: bool = True
+# Backlog v3 W2 (FND-0357; owner decision 2026-10-31, doc/especificacion/ACTION_PLAN_BACKLOG_V3.md): an agent:<model> identity opens tickets, moves them (never forcing, reopening or making a
+# delivery closure), records links and notes through its OWN database login (role backlog_agent, DSN FONDOS_BACKLOG_PG_DSN_AGENT in the git-ignored .env) with no terminal. The DSN is the real
+# gate: without it, or with this switch OFF, every agent write takes the console path exactly as before (a person types the confirmation phrase). Rollback = set it back to False.
+BACKLOG_AGENT_WRITES_ENABLED: bool = True
 # Backlog v2 Phase C slice 2 (FND-0334; PROPUESTA_BACKLOG_V2.md 6.4.1 / 6.4.6): the instant from which scripts/audit/backlog_sync.py judges a commit that cites a ticket
 # by its `Backlog-Gate:` trailer (an ISO timestamp WITH offset, e.g. "2026-11-02T09:00:00+01:00"). "" = the gate is NOT ARMED: the sync reports the trailers it sees and
 # records no bypass, raises no hold. The owner arms it once the commit-msg hook is installed (bash scripts/audit/commit-msg.sh) and hook_bypass exists (migrate --phase hook);
