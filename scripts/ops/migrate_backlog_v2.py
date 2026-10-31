@@ -172,6 +172,20 @@ PHASES: dict = {
         "requires": ("backlog", "v_violations_c2"),
         "requires_routines": ("trg_append_only", "fn_actor_ok", "fn_actor_authorized", "fn_rebuild_violations"),
     },
+    # Backlog v3 W2 (FND-0357; owner decisions of 2026-10-31): the scoped login backlog_agent and the wrappers sp_agent_transition (no force, no reopening, no delivery closure) and
+    # sp_record_link (a person's decision on a pair is not overwritten). No table is created. Needs A-1, Phase B (waits), Phase D (groups) and the sync slice (close conditions). Its
+    # rollback drops the two wrappers and the grants and KEEPS the role, sp_append_log and everything written through it. The password of the role is the owner's (never in a file).
+    "autonomy": {
+        "up": ("97_autonomy.sql", "backlog_autonomy"),
+        "down": ("down/97_autonomy_down.sql", "backlog_autonomy_down"),
+        "tables": (),
+        "views": (),
+        "routines": ("sp_agent_transition", "sp_record_link", "sp_append_log"),
+        "requires": ("backlog", "backlog_link_event", "actor_alias", "backlog_logs"),
+        "requires_routines": ("trg_append_only", "fn_actor_ok", "fn_actor_authorized", "sp_open_ticket", "sp_transition", "sp_annotate_wait", "sp_create_group", "sp_group_member",
+                              "sp_add_close_condition", "sp_retire_close_condition"),
+        "roles": ("backlog_agent",),
+    },
 }
 SHADOW_REQUIRED = 50          # owner decision D2 (2026-10-26): 50 consecutive non-system transitions with no direct update
 

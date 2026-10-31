@@ -46,7 +46,9 @@ _LOGGER_DSN_ENV_VAR = "FONDOS_BACKLOG_PG_DSN_LOGGER"        # role backlog_logge
 _INCIDENT_DSN_ENV_VAR = "FONDOS_BACKLOG_PG_DSN_INCIDENT"    # role backlog_incident (FND-0354): the automatic incident capture, insert-only; lives in the git-ignored .env
 _GATE_DSN_ENV_VAR = "FONDOS_BACKLOG_PG_DSN_GATE"            # role backlog_gate (FND-0334 C2): the commit-msg hook's login, three routines and nothing else; lives in the git-ignored .env; NO fallback to another login
 _ADJUDICATOR_DSN_ENV_VAR = "FONDOS_BACKLOG_PG_DSN_ADJUDICATOR"   # role backlog_adjudicator (FND-0334 C3): decides collision pairs; created by the owner, kept OUTSIDE .env (typed in his own terminal)
-NON_INTERACTIVE_OPERATIONS = ("agent_log", "incident", "gate")   # the ONLY writes a non-interactive process may make (owner decisions 2026-10-29: agent_log, incident; 2026-10-31: gate); anything else is refused by confirm_live_write
+_AGENT_DSN_ENV_VAR = "FONDOS_BACKLOG_PG_DSN_AGENT"          # role backlog_agent (Backlog v3 W2, FND-0357): an agent opens and moves tickets through a short list of routines; lives in the git-ignored .env; NO fallback to another login
+NON_INTERACTIVE_OPERATIONS = ("agent_log", "incident", "gate", "agent")   # the ONLY writes a non-interactive process may make (owner decisions 2026-10-29: agent_log, incident; 2026-10-31: gate, agent); anything else is refused by confirm_live_write
+_SCOPED_DSN_ENV = {"gate": _GATE_DSN_ENV_VAR, "agent": _AGENT_DSN_ENV_VAR}   # operations that use their own login EXCLUSIVELY: without its DSN there is no live write
 _FALLBACK_LOG_ENV_VAR = "FONDOS_BACKLOG_FALLBACK_LOG"
 _DEFAULT_FALLBACK_LOG = Path(__file__).resolve().parent / "log" / "backlog_autolog_fallback.jsonl"   # == LOG_DIRS["shared"]
 
@@ -381,9 +383,24 @@ def dsn_for_operation(operation: str) -> Optional[str]:
     sslrootcert) are passed to the driver untouched."""
     if operation not in NON_INTERACTIVE_OPERATIONS:
         raise ValueError(f"operation {operation!r} is not allow-listed for non-interactive writes: {NON_INTERACTIVE_OPERATIONS}")
-    if operation == "gate":                                         # the hook uses its scoped login EXCLUSIVELY: without it there is no live write (the hook stamps `offline`), never the general writer
-        return os.environ.get(_GATE_DSN_ENV_VAR) or None
+    scoped = _SCOPED_DSN_ENV.get(operation)
+    if scoped:                                                      # the hook (gate) and the agent use their scoped login EXCLUSIVELY: without it there is no live write, never the general writer
+        return os.environ.get(scoped) or None
     return os.environ.get(_LOGGER_DSN_ENV_VAR if operation == "agent_log" else _INCIDENT_DSN_ENV_VAR) or _dsn()
+
+
+def agent_operation(who: str) -> Optional[str]:
+    """'agent' when `who` is an agent:<model> identity, the scoped agent login is configured (FONDOS_BACKLOG_PG_DSN_AGENT) and the switch BACKLOG_AGENT_WRITES_ENABLED is on: its writes go through
+    backlog_agent (owner decision 2026-10-31, Backlog v3 W2) and need no terminal. Otherwise None, and the caller takes the console path exactly as before. A system:* or human:* actor never routes here."""
+    if not str(who).startswith("agent:") or not os.environ.get(_AGENT_DSN_ENV_VAR):
+        return None
+    try:
+        from shared import config
+        if not getattr(config, "BACKLOG_AGENT_WRITES_ENABLED", True):
+            return None
+    except Exception:  # noqa: BLE001 -- a broken config must not turn the route on or off by accident; the DSN decides
+        pass
+    return "agent"
 
 
 def _connect_allowlisted(operation: str, dsn: str, **kw):
@@ -494,7 +511,7 @@ def _session(conn=None, *, human: bool = False, write: bool = False, operation: 
     else:
         dsn = dsn_for_actor("human:x") if human else (dsn_for_operation(operation) if operation else _dsn())
     if not dsn:
-        raise BacklogUnavailable(f"{_GATE_DSN_ENV_VAR if operation == 'gate' else _DSN_ENV_VAR} is not set")
+        raise BacklogUnavailable(f"{_SCOPED_DSN_ENV.get(operation, _DSN_ENV_VAR)} is not set")
     if psycopg is None:
         raise BacklogUnavailable("psycopg3 is not installed (pip install 'psycopg[binary]')")
     if write:
@@ -622,8 +639,13 @@ def record_link_events(events: list[dict], *, conn=None) -> list[int]:
         checked.append((ev["from_id"], ev["to_id"], ev["link_type"], ev["status"], ev["evidence"], ev.get("absorbs"),
                         ev["username"], ev.get("origin")))
     ids: list[int] = []
-    with _session(conn, human=any(str(ev["username"]).startswith("human:") for ev in events), write=True) as c:
+    op = agent_operation(checked[0][6]) if checked and all(str(row[6]).startswith("agent:") for row in checked) else None      # an agent writes through the routine of its scoped login
+    with _session(conn, human=any(str(ev["username"]).startswith("human:") for ev in events), write=True, operation=op) as c:
         for row in checked:
+            if op:
+                (event_id,) = c.execute("SELECT backlog.sp_record_link(%s, %s, %s, %s, %s, %s, %s, %s)", row).fetchone()
+                ids.append(event_id)
+                continue
             if row[7] is None:                                   # the column origin exists only after Phase B (40_relations_v2.sql): name it only when asked
                 sql = ("INSERT INTO backlog.backlog_link_event (from_id, to_id, link_type, status, evidence, absorbs, username) "
                        "VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING event_id")
@@ -808,7 +830,7 @@ def open_ticket(*, title: str, nature: str, object_type: str, priority: str, ses
     domain CHECK) and when A-1 is not applied. Phase B (FND-0333): once applied, every other existing ticket named in the title, description or first log
     is recorded as a PROPOSED RELATED link (origin SOURCE) unless the pair already has any link event, so linking no longer waits for the next review."""
     who = resolve_actor(actor)
-    with _session(conn, human=who.startswith("human:"), write=True) as c:
+    with _session(conn, human=who.startswith("human:"), write=True, operation=agent_operation(who)) as c:
         (apid,) = c.execute(
             "SELECT backlog.sp_open_ticket(p_title => %s, p_nature => %s, p_object_type => %s, p_object_name => %s, p_priority => %s, "
             "p_actor => %s, p_session_id => %s, p_description => %s, p_first_log => %s, p_schema_name => %s, p_project_code => %s)",
@@ -833,9 +855,21 @@ def transition(ap_id: str, to_status: str, *, session_id: str, comment: str, act
                condition: Optional[str] = None, revisit_by=None, revisit_on_event: Optional[str] = None,
                followup: Optional[str] = None, assignee: Optional[str] = None, force: bool = False, conn=None) -> int:
     """Move a ticket through backlog.sp_transition (legality, closure rules, waiting states, log and status event in one transaction).
-    `comment` becomes the progress log verbatim. Returns the status_event id. Raises on any refusal; never swallows."""
+    `comment` becomes the progress log verbatim. Returns the status_event id. Raises on any refusal; never swallows.
+    An agent (agent:<model>, with its scoped login configured: agent_operation) moves tickets through backlog.sp_agent_transition, which has no `force`, never reopens a CLOSED
+    ticket and makes no delivery closure (Backlog v3 W2): `force=True` from an agent is refused here, before any connection."""
     who = resolve_actor(actor)
-    with _session(conn, human=who.startswith("human:"), write=True) as c:
+    op = agent_operation(who)
+    if op and force:
+        raise ValueError("an agent cannot force a transition (p_force is a person's override): ask the owner, or record the request as a note")
+    with _session(conn, human=who.startswith("human:"), write=True, operation=op) as c:
+        if op:
+            (event_id,) = c.execute(
+                "SELECT backlog.sp_agent_transition(p_ap_id => %s, p_to => %s, p_actor => %s, p_session_id => %s, p_comment => %s, p_solution_type => %s, "
+                "p_release_version => %s, p_blocker => %s, p_condition => %s, p_revisit_by => %s, p_revisit_on_event => %s, p_followup => %s, p_assignee => %s)",
+                (ap_id, to_status, who, session_id, comment, solution_type, release_version, blocker, condition, revisit_by, revisit_on_event,
+                 followup, assignee)).fetchone()
+            return int(event_id)
         (event_id,) = c.execute(
             "SELECT backlog.sp_transition(p_ap_id => %s, p_to => %s, p_actor => %s, p_session_id => %s, p_comment => %s, p_solution_type => %s, "
             "p_release_version => %s, p_blocker => %s, p_condition => %s, p_revisit_by => %s, p_revisit_on_event => %s, p_followup => %s, "
@@ -935,7 +969,7 @@ def annotate_wait(ap_id: str, comment: str, *, blocker: Optional[str] = None, co
                   revisit_on_event: Optional[str] = None, basis: str = "DECLARED", actor: Optional[str] = None, conn=None) -> int:
     """Record the structured blocker or revisit date of a ticket that is ALREADY BLOCKED or DEFERRED (no status change). Returns the wait_event id."""
     who = resolve_actor(actor)
-    with _session(conn, human=who.startswith("human:"), write=True) as c:
+    with _session(conn, human=who.startswith("human:"), write=True, operation=agent_operation(who)) as c:
         return int(c.execute("SELECT backlog.sp_annotate_wait(%s, %s, %s, %s, %s, %s, %s, %s)",
                              (ap_id, who, comment, blocker, condition, revisit_by, revisit_on_event, basis)).fetchone()[0])
 
@@ -1036,7 +1070,7 @@ def create_group(name: str, kind: str, description: str, *, actor: Optional[str]
     if kind not in GROUP_KINDS:
         raise ValueError(f"group kind must be one of {GROUP_KINDS}, got {kind!r}")
     who = resolve_actor(actor)
-    with _session(conn, human=who.startswith("human:")) as c:
+    with _session(conn, human=who.startswith("human:"), write=True, operation=agent_operation(who)) as c:      # write=True: a group is a write (it skipped the live-write gate before Backlog v3 W2)
         return c.execute("SELECT backlog.sp_create_group(%s, %s, %s, %s)", (name, kind, description, who)).fetchone()[0]
 
 
@@ -1045,7 +1079,7 @@ def group_member(group: str, ap_id: str, op: str, reason: str, *, actor: Optiona
     if op not in ("ADD", "REMOVE"):
         raise ValueError(f"op must be ADD or REMOVE, got {op!r}")
     who = resolve_actor(actor)
-    with _session(conn, human=who.startswith("human:")) as c:
+    with _session(conn, human=who.startswith("human:"), write=True, operation=agent_operation(who)) as c:
         return c.execute("SELECT backlog.sp_group_member(%s, %s, %s, %s, %s)", (group, ap_id, op, reason, who)).fetchone()[0]
 
 
@@ -1329,7 +1363,7 @@ def set_collision_mode(mode: str, tier: str, reason: str, ceiling: str, *, evide
 def add_close_condition(ap_id: str, probe_kind: str, args: list, reason: str, *, actor: Optional[str] = None, conn=None) -> int:
     """Add one executable closing condition to a ticket (append-only; refused when the same condition is already active)."""
     who = resolve_actor(actor)
-    with _session(conn, human=who.startswith("human:")) as c:
+    with _session(conn, human=who.startswith("human:"), write=True, operation=agent_operation(who)) as c:
         return c.execute("SELECT backlog.sp_add_close_condition(%s, %s, %s::jsonb, %s, %s)",
                          (ap_id, probe_kind, json.dumps(list(args)), reason, who)).fetchone()[0]
 
@@ -1337,7 +1371,7 @@ def add_close_condition(ap_id: str, probe_kind: str, args: list, reason: str, *,
 def retire_close_condition(condition_id: int, reason: str, *, actor: Optional[str] = None, conn=None) -> int:
     """Retire an active closing condition (append-only RETIRE row)."""
     who = resolve_actor(actor)
-    with _session(conn, human=who.startswith("human:")) as c:
+    with _session(conn, human=who.startswith("human:"), write=True, operation=agent_operation(who)) as c:
         return c.execute("SELECT backlog.sp_retire_close_condition(%s, %s, %s)", (condition_id, reason, who)).fetchone()[0]
 
 
