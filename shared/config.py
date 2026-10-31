@@ -814,6 +814,15 @@ BACKLOG_INCIDENT_MEDIUM_COSINE: float = 0.45
 # from BLOCKED or DEFERRED, never backward, never from a mention in the subject; closures stay manual. Owner decision 2026-10-26: forward moves are
 # automatic. OFF = the sync still records the commit events and the violations, and moves nothing.
 BACKLOG_AUTO_FORWARD_ENABLED: bool = True
+# Backlog v2 Phase C slice 2 (FND-0334; PROPUESTA_BACKLOG_V2.md 6.4.1 / 6.4.6): the instant from which scripts/audit/backlog_sync.py judges a commit that cites a ticket
+# by its `Backlog-Gate:` trailer (an ISO timestamp WITH offset, e.g. "2026-11-02T09:00:00+01:00"). "" = the gate is NOT ARMED: the sync reports the trailers it sees and
+# records no bypass, raises no hold. The owner arms it once the commit-msg hook is installed (bash scripts/audit/commit-msg.sh) and hook_bypass exists (migrate --phase hook);
+# an earlier commit is never judged (history has no trailers). To disarm, set it back to "": the rows already recorded stay (append-only).
+BACKLOG_HOOK_EPOCH: str = ""
+# Strict traceability of the commit-msg hook (owner decision 2026-10-31: built, OFF for now). ON = the hook also REJECTS a commit whose subject and `Refs:` trailer cite no
+# `FND-nnnn`, except a merge, a revert, a `chore` commit (`chore:` / `chore(x):`) and any commit on a `chore/` branch (NORMAS_BACKLOG.md 4.5). OFF = such a commit goes through
+# (only a malformed token is rejected). Rollback = set it back to False.
+BACKLOG_REQUIRE_TICKET_ENABLED: bool = False
 # Options of the iterative VIF (used when MACRO_VIF_ITERATIVE_ENABLED, and by the PIT variant "iterative_hy"): keep the two
 # crisis factors, drop spread_ig (the near-duplicate of spread_hy), and at most n_obs / 10 factors per fund.
 MACRO_ITERATIVE_VIF: dict = {

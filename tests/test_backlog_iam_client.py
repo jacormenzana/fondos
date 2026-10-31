@@ -91,8 +91,8 @@ def driver(monkeypatch):
 
 # --- the allow-list --------------------------------------------------------------------------------------------------------------------------
 
-def test_the_allow_list_is_exactly_the_two_operations_the_owner_named():
-    assert bc.NON_INTERACTIVE_OPERATIONS == ("agent_log", "incident")
+def test_the_allow_list_is_exactly_the_operations_the_owner_named():
+    assert bc.NON_INTERACTIVE_OPERATIONS == ("agent_log", "incident", "gate")      # gate: owner authorization of 2026-10-31 (the commit-msg hook, FND-0334)
 
 
 @pytest.mark.parametrize("operation", bc.NON_INTERACTIVE_OPERATIONS)
@@ -117,6 +117,18 @@ def test_each_operation_uses_its_own_login_and_falls_back_to_the_general_one(mon
     monkeypatch.setenv(bc._LOGGER_DSN_ENV_VAR, LOGGER_DSN)
     monkeypatch.setenv(bc._INCIDENT_DSN_ENV_VAR, INCIDENT_DSN)
     assert bc.dsn_for_operation("agent_log") == LOGGER_DSN and bc.dsn_for_operation("incident") == INCIDENT_DSN
+
+
+def test_the_gate_operation_uses_its_own_login_and_never_falls_back(monkeypatch):
+    monkeypatch.setenv(bc._DSN_ENV_VAR, READER_DSN)
+    monkeypatch.delenv(bc._GATE_DSN_ENV_VAR, raising=False)
+    assert bc.dsn_for_operation("gate") is None                      # the general writer is NEVER used by the hook: without its own login there is no live write
+    monkeypatch.setenv(bc._GATE_DSN_ENV_VAR, "postgresql://backlog_gate@127.0.0.1:1/gestion")
+    assert bc.dsn_for_operation("gate") == "postgresql://backlog_gate@127.0.0.1:1/gestion"
+    monkeypatch.delenv(bc._GATE_DSN_ENV_VAR)
+    with pytest.raises(bc.BacklogUnavailable, match="FONDOS_BACKLOG_PG_DSN_GATE"):
+        with bc._session(write=True, operation="gate"):
+            pass
 
 
 # --- the agent bookkeeping path --------------------------------------------------------------------------------------------------------------
@@ -242,21 +254,21 @@ def test_no_code_outside_the_client_names_an_allow_listed_operation():
             if rel in ("shared/backlog_client.py",) or "/tests/" in rel or rel.startswith("shared/testing/"):
                 continue
             text = path.read_text(encoding="utf-8", errors="replace")
-            if re.search(r"operation\s*=\s*[\"'](agent_log|incident)[\"']|_connect_allowlisted|NON_INTERACTIVE_OPERATIONS", text):
+            if re.search(r"operation\s*=\s*[\"'](agent_log|incident|gate)[\"']|_connect_allowlisted|NON_INTERACTIVE_OPERATIONS", text):
                 offenders.append(rel)
     assert not offenders, offenders
 
 
 def test_only_report_incident_and_append_log_use_the_allow_listed_factory():
     text = (_ROOT / "shared" / "backlog_client.py").read_text(encoding="utf-8")
-    users = re.findall(r"(?:_connect_allowlisted\(\s*\"|operation=\")(\w+)\"", text)
-    assert sorted(set(users)) == ["agent_log", "incident"], users
+    users = re.findall(r"(?:_connect_allowlisted\(\s*\"|operation=\"|operation=None if conn is not None else \")(\w+)\"", text)
+    assert sorted(set(users)) == ["agent_log", "gate", "incident"], users
 
 
 def test_the_test_sandbox_hides_every_live_connection_string_the_client_knows():
     """A new DSN variable that the sandbox does not hide would let a test reach the live backlog."""
     from shared.testing import sandbox
-    known = {bc._DSN_ENV_VAR, bc._HUMAN_DSN_ENV_VAR, bc._LOGGER_DSN_ENV_VAR, bc._INCIDENT_DSN_ENV_VAR}
+    known = {bc._DSN_ENV_VAR, bc._HUMAN_DSN_ENV_VAR, bc._LOGGER_DSN_ENV_VAR, bc._INCIDENT_DSN_ENV_VAR, bc._GATE_DSN_ENV_VAR}
     assert set(sandbox._LIVE_BACKLOG_DSNS) == known
     declared = set(re.findall(r'^_\w*DSN\w*ENV_VAR = "(FONDOS_BACKLOG_PG_DSN\w*)"', (_ROOT / "shared" / "backlog_client.py").read_text(encoding="utf-8"), re.M))
     assert declared == known

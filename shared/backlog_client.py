@@ -44,7 +44,8 @@ _DSN_ENV_VAR = "FONDOS_BACKLOG_PG_DSN"
 _HUMAN_DSN_ENV_VAR = "FONDOS_BACKLOG_PG_DSN_HUMAN"          # the owner-only role (FND-0337); deliberately NOT in .env
 _LOGGER_DSN_ENV_VAR = "FONDOS_BACKLOG_PG_DSN_LOGGER"        # role backlog_logger (FND-0354): appends notes to EXISTING tickets, nothing else; lives in the git-ignored .env
 _INCIDENT_DSN_ENV_VAR = "FONDOS_BACKLOG_PG_DSN_INCIDENT"    # role backlog_incident (FND-0354): the automatic incident capture, insert-only; lives in the git-ignored .env
-NON_INTERACTIVE_OPERATIONS = ("agent_log", "incident")      # the ONLY writes a non-interactive process may make (owner decision 2026-10-29); anything else is refused by confirm_live_write
+_GATE_DSN_ENV_VAR = "FONDOS_BACKLOG_PG_DSN_GATE"            # role backlog_gate (FND-0334 C2): the commit-msg hook's login, three routines and nothing else; lives in the git-ignored .env; NO fallback to another login
+NON_INTERACTIVE_OPERATIONS = ("agent_log", "incident", "gate")   # the ONLY writes a non-interactive process may make (owner decisions 2026-10-29: agent_log, incident; 2026-10-31: gate); anything else is refused by confirm_live_write
 _FALLBACK_LOG_ENV_VAR = "FONDOS_BACKLOG_FALLBACK_LOG"
 _DEFAULT_FALLBACK_LOG = Path(__file__).resolve().parent / "log" / "backlog_autolog_fallback.jsonl"   # == LOG_DIRS["shared"]
 
@@ -379,6 +380,8 @@ def dsn_for_operation(operation: str) -> Optional[str]:
     sslrootcert) are passed to the driver untouched."""
     if operation not in NON_INTERACTIVE_OPERATIONS:
         raise ValueError(f"operation {operation!r} is not allow-listed for non-interactive writes: {NON_INTERACTIVE_OPERATIONS}")
+    if operation == "gate":                                         # the hook uses its scoped login EXCLUSIVELY: without it there is no live write (the hook stamps `offline`), never the general writer
+        return os.environ.get(_GATE_DSN_ENV_VAR) or None
     return os.environ.get(_LOGGER_DSN_ENV_VAR if operation == "agent_log" else _INCIDENT_DSN_ENV_VAR) or _dsn()
 
 
@@ -485,7 +488,7 @@ def _session(conn=None, *, human: bool = False, write: bool = False, operation: 
         return
     dsn = dsn_for_actor("human:x") if human else (dsn_for_operation(operation) if operation else _dsn())
     if not dsn:
-        raise BacklogUnavailable(f"{_DSN_ENV_VAR} is not set")
+        raise BacklogUnavailable(f"{_GATE_DSN_ENV_VAR if operation == 'gate' else _DSN_ENV_VAR} is not set")
     if psycopg is None:
         raise BacklogUnavailable("psycopg3 is not installed (pip install 'psycopg[binary]')")
     if write:
@@ -1089,6 +1092,58 @@ def close_conditions(*, conn=None) -> Optional[dict]:
                                         "ORDER BY action_point_id, condition_id").fetchall():
             out.setdefault(ap, []).append((kind, *args))
         return out
+
+
+HOOK_REASONS = ("TRAILER_MISSING", "UNKNOWN_NONCE", "TREE_MISMATCH")     # Phase C slice 2 (FND-0334): db/pg_backlog/80_hook.sql
+
+
+def hook_store_present(*, conn=None) -> bool:
+    """True when the owner has applied Phase C slice 2 (backlog.gate_check, backlog.hook_bypass and the routines)."""
+    with _session(conn) as c:
+        return bool(c.execute("SELECT to_regclass('backlog.gate_check') IS NOT NULL AND to_regclass('backlog.hook_bypass') IS NOT NULL "
+                              "AND to_regprocedure('backlog.sp_gate_check(text,text[],text)') IS NOT NULL "
+                              "AND to_regprocedure('backlog.sp_record_hook_bypass(text,text,text,timestamptz,text)') IS NOT NULL").fetchone()[0])
+
+
+def gate_check(tree_hash: str, ap_ids: list, *, actor: Optional[str] = None, conn=None) -> str:
+    """One run of the commit-msg hook that reached the backlog (backlog.sp_gate_check): returns the nonce bound to `tree_hash`. Without `conn` it connects with the
+    scoped login of the hook (FONDOS_BACKLOG_PG_DSN_GATE, allow-listed operation `gate`, no terminal needed, no fallback)."""
+    who = resolve_actor(actor)
+    with _session(conn, human=who.startswith("human:"), write=True, operation=None if conn is not None else "gate") as c:
+        return str(c.execute("SELECT backlog.sp_gate_check(%s, %s::text[], %s)", (tree_hash, list(ap_ids), who)).fetchone()[0])
+
+
+def gate_statuses(ap_ids: list, *, conn=None) -> dict:
+    """{ticket: status} of the cited tickets that exist (backlog.fn_gate_statuses), for the commit-msg hook; without `conn` through its scoped login."""
+    with _session(conn, operation=None if conn is not None else "gate") as c:
+        return {r[0]: r[1] for r in c.execute("SELECT action_point_id, status FROM backlog.fn_gate_statuses(%s::text[])", (list(ap_ids),)).fetchall()}
+
+
+def gate_forward(ap_id: str, session_id: str, comment: str, *, actor: Optional[str] = None, conn=None) -> Optional[int]:
+    """The hook's one write on a ticket (backlog.sp_gate_forward): OPEN/TODO -> IN_PROGRESS as system:gate. The status event id, or None when the ticket was in any other
+    status (left alone). Without `conn` through the scoped login of the hook."""
+    who = resolve_actor(actor)
+    with _session(conn, human=who.startswith("human:"), write=True, operation=None if conn is not None else "gate") as c:
+        row = c.execute("SELECT backlog.sp_gate_forward(%s, %s, %s, %s)", (ap_id, session_id, comment, who)).fetchone()[0]
+    return None if row is None else int(row)
+
+
+def gate_checks(nonces: list, *, conn=None) -> dict:
+    """{nonce: tree_hash} of the given nonces that exist in backlog.gate_check (what backlog_sync.py compares a commit's trailer with)."""
+    if not nonces:
+        return {}
+    with _session(conn) as c:
+        return {r[0]: r[1] for r in c.execute("SELECT nonce, tree_hash FROM backlog.gate_check WHERE nonce = ANY(%s)", (list(nonces),)).fetchall()}
+
+
+def record_hook_bypass(sha: str, ap_id: str, reason: str, fact_ts: datetime, *, actor: Optional[str] = None, conn=None) -> bool:
+    """Record a commit that cites `ap_id` without a valid gate trailer (backlog.sp_record_hook_bypass); a new one raises a hold on the ticket unless it is CLOSED.
+    True when it was new, False when already recorded."""
+    if reason not in HOOK_REASONS:
+        raise ValueError(f"reason must be one of {HOOK_REASONS}, got {reason!r}")
+    who = resolve_actor(actor)
+    with _session(conn, human=who.startswith("human:"), write=True) as c:
+        return bool(c.execute("SELECT backlog.sp_record_hook_bypass(%s, %s, %s, %s, %s)", (sha, ap_id, reason, fact_ts, who)).fetchone()[0])
 
 
 def add_close_condition(ap_id: str, probe_kind: str, args: list, reason: str, *, actor: Optional[str] = None, conn=None) -> int:

@@ -21,6 +21,7 @@ for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops"), str(_ROOT / "scripts" / "
 import backlog_sync as bs  # noqa: E402
 import migrate_backlog_v2 as mig  # noqa: E402
 from shared import backlog_client as bc  # noqa: E402
+from shared.testing.sandbox import acting_as  # noqa: E402
 from test_backlog_groups_pg import as_proc, violations  # noqa: E402
 from test_backlog_transitions_pg import FORCE_REASON, ME, _base, _mk, refused, tr  # noqa: E402
 
@@ -40,7 +41,8 @@ def now(conn):
 
 
 def commit(conn, ap, sha, minutes_from_now=0, source="SUBJECT"):
-    return bc.record_ops_event("COMMIT", sha, ap, source, {"subject": "s"}, now(conn) + timedelta(minutes=minutes_from_now), actor=SYNC, conn=conn)
+    with acting_as(SYNC):
+        return bc.record_ops_event("COMMIT", sha, ap, source, {"subject": "s"}, now(conn) + timedelta(minutes=minutes_from_now), actor=SYNC, conn=conn)
 
 
 # ---------------------------------------------------------------- migration
@@ -157,7 +159,8 @@ def test_sync_plan_records_and_forwards_through_the_routines(db):
     log = (f"{'f1' * 20}\x1f{ts}\x1fwork: {mention}\x1f{todo},{blocked}\x1e\n")
     statuses = {t["action_point_id"]: t["status"] for t in bc.list_tickets(conn=db)}
     p = bs.plan(bs.parse_log(log), statuses, bc.ops_event_keys(conn=db))
-    done = bs.apply_plan(p, {"written": 0, "moved": 0}, conn=db)
+    with acting_as(SYNC):
+        done = bs.apply_plan(p, {"written": 0, "moved": 0}, conn=db)
     assert done == {"written": 3, "moved": 1}
     st = {t["action_point_id"]: t["status"] for t in bc.list_tickets(ids=[todo, blocked, mention], conn=db)}
     assert st == {todo: "IN_PROGRESS", blocked: "BLOCKED", mention: "OPEN"}
