@@ -219,11 +219,17 @@ The labels carry the `V3` prefix because `PROPUESTA_BACKLOG_V2.md` §8 already u
 
 Run them in the order of the "When" column. Each step says what to do, how to know it worked, and what happens if it is skipped.
 
-**O-V3-1 — Ticket bootstrap** (the script is not written yet; the session will provide it and say so)
-1. In your own terminal (a real console), set `FONDOS_ACTOR=human:<your login>` and `FONDOS_BACKLOG_PG_DSN_HUMAN`.
-2. Run the script as a dry run, read the list of tickets and links it would create, then run it with `--apply` and type the live-write confirmation phrase.
-3. Done when: `python scripts/audit/backlog_links.py --for <epic id>` lists the six workstream tickets.
-4. If skipped: W1 still works, but the work is not registered in the backlog.
+**O-V3-1 — Ticket bootstrap** (`scripts/mig/backlog_v3_bootstrap.py` and `scripts/mig/backlog_v3_manifest.yaml`: 8 tickets, 13 links; written and tested, dry run verified read-only on 2026-10-31)
+1. In your own terminal (a real console, `cmd.exe`), from `C:\desarrollo\fondos`, set your identity and the owner-only connection string (never in `.env`):
+   `set FONDOS_ACTOR=human:<your canonical login>` and `set FONDOS_BACKLOG_PG_DSN_HUMAN=<the connection string of the role backlog_human>`.
+2. Dry run, and read the list of tickets and links it would create (links show CONFIRMED for a human actor):
+   `C:\Users\jacor\.conda\envs\des\python.exe scripts\mig\backlog_v3_bootstrap.py`
+3. Apply it, and type the live-write confirmation phrase when asked:
+   `C:\Users\jacor\.conda\envs\des\python.exe scripts\mig\backlog_v3_bootstrap.py --apply`
+   It opens the 8 tickets (the database mints the ids), records the 13 links, and prints each id. It is safe to run twice: a ticket whose exact title exists is reused, and a link already in place is skipped.
+4. Done when the dry run prints `0 ticket(s) and 0 link(s) to do.` and `backlog_links.py --for <epic id>` lists the six workstream tickets.
+5. Then review the `PROPOSED RELATED` links that the texts created towards existing tickets (FND-0264, FND-0331, FND-0334, FND-0350, FND-0351) in the next link review: they are proposals until a person decides.
+6. If skipped: W1 still works, but the work is not registered in the backlog and no agent can open the W2 to W6 tickets.
 
 **O-V3-2 — GitHub settings** (repository admin, in the GitHub web UI)
 1. Settings → Actions → General → "Workflow permissions": tick **Allow GitHub Actions to create and approve pull requests**, then Save.

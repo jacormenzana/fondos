@@ -1,0 +1,151 @@
+# Backlog v3 bootstrap manifest (O-V3-1 of doc/especificacion/ACTION_PLAN_BACKLOG_V3.md): the epic and its six workstreams, as tickets, and the links among them.
+# Read by scripts/mig/backlog_v3_bootstrap.py. Fixed and versioned: a change to a ticket text after it was applied is a log on the ticket, never an edit of this file.
+#
+# `key` is local to this file; the database mints the real FND-nnnn id. A link endpoint is a key of this file (or an existing FND-nnnn id).
+# Existing tickets named in a text (FND-0331, FND-0334...) become PROPOSED RELATED links by themselves when the ticket is opened (backlog_client.open_ticket,
+# origin SOURCE), so this file does not repeat them. Link statuses below are what the person who runs the script confirms; for a non-human actor the script
+# records them as PROPOSED (a link is decided by a person).
+version: 1
+session_topic: BACKLOG-V3-BOOTSTRAP
+
+tickets:
+  - key: EPIC
+    title: "Backlog v3: automation by default, human by exception (epic)"
+    nature: CHG
+    object_type: N/A
+    schema_name: backlog
+    priority: HIGH
+    description: >-
+      Epic of Backlog v3 (plan: doc/especificacion/ACTION_PLAN_BACKLOG_V3.md, approved by the owner on 2026-10-31). Backlog v2 delivered correlation, traceability and a governed
+      state machine, but made the owner the relay for every write and every publication (live 2026-10-31: 3 status events in 3 days, 17 of 21 IN_PROGRESS tickets idle for more than
+      5 days, 0 close_condition rows, 26 hand-made merges and 6 attestation commits since 2026-10-26, the A-2 counter stuck at 20 of 50, see FND-0331). Owner decisions: broad agent
+      autonomy (human only: force, reopen, gate/mode/waiver decisions, collision adjudication); GitHub Actions opens the PR and enables auto-merge; the signed attestation becomes
+      advisory; closure is automatic on deploy evidence; tickets are clustered by the module whose logic will change. Phase C artifacts it builds on: FND-0334. Child tickets: W1..W6.
+    first_log: >-
+      Opened by the Backlog v3 bootstrap (scripts/mig/backlog_v3_bootstrap.py) from doc/especificacion/ACTION_PLAN_BACKLOG_V3.md. Children are linked SPLIT_FROM this epic and the
+      DEPENDS_ON links among them are the delivery order: W2 first, then W3, then W4, W4b, W5 and W6 (W1 is already delivered). Close the epic only when every child is CLOSED.
+
+  - key: W1
+    title: "Backlog v3 W1: auto-PR with auto-merge and advisory attestation (GitHub Actions)"
+    nature: CHG
+    object_type: JOB
+    object_name: ".github/workflows/auto-pr.yml"
+    schema_name: backlog
+    priority: HIGH
+    description: >-
+      A push to a feat/, fix/, chore/ or docs/ branch opens the pull request against master and enables auto-merge, so it merges once the four required checks are green; a PR
+      that changes .github/workflows/** is labelled needs-owner and is merged by the owner. The backlog-gate job runs verify_attestation.py --advisory: nobody signs on each push.
+      Delivered in PR #14 (merge b10b4cf, 2026-10-31: commits 55822db, 54dfb13, e5d8bde). Owner action O-V3-2 (three GitHub settings) done 2026-10-31.
+    first_log: >-
+      Opened by the Backlog v3 bootstrap for a workstream that is already delivered: PR #14 merged on 2026-10-31 (merge commit b10b4cf). Still to verify end to end: the first branch
+      that does not touch .github/workflows must open its PR and merge by itself (the first run failed only because the owner setting "Allow GitHub Actions to create and approve
+      pull requests" was off; the bootstrap branch itself is that test). Close through scripts/ops/close_release.py once verified.
+
+  - key: W2
+    title: "Backlog v3 W2: agent write authority (scoped logins backlog_agent and backlog_autopilot, sp_record_link, database-enforced limits)"
+    nature: REQ
+    object_type: SCHEMA
+    schema_name: backlog
+    priority: HIGH
+    description: >-
+      DDL phase autonomy (db/pg_backlog/97_autonomy.sql, applied by the owner): roles backlog_agent and backlog_autopilot created without a password, EXECUTE only on the routines
+      each needs (sp_open_ticket, sp_transition, a new append-only sp_record_link, groups, waits, close conditions, sp_append_log); sp_transition refuses p_force and reopening for
+      agent:* and system:* inside the database; the client (shared/backlog_client.py) routes agent and autopilot operations to their own DSN with no fallback and extends
+      NON_INTERACTIVE_OPERATIONS. Agent transitions count toward the A-2 shadow-stage counter of FND-0331. Rewrites NORMAS_BACKLOG section 3 ("decided by a person or an agent with evidence").
+    first_log: >-
+      Opened by the Backlog v3 bootstrap. Blocks W3, W4, W4b and W5 (DEPENDS_ON). Until this is live agents cannot open or move tickets without a person at a console (the 2026-10-29
+      live-write order); that is why the first eight v3 tickets were opened by the owner. Acceptance: hermetic tests (agent cannot force, reopen or call gate routines), drift check
+      clean, backlog_phase_a_acceptance.py --verify autonomy ACCEPTED.
+
+  - key: W3
+    title: "Backlog v3 W3: autopilot - tickets move on commit, merge and deploy evidence; Closes: trailer; automatic closure"
+    nature: REQ
+    object_type: SCHEMA
+    schema_name: backlog
+    priority: HIGH
+    description: >-
+      Extends scripts/audit/backlog_sync.py (FND-0334): new ops_event kinds MERGE, DEPLOY and CYCLE, a Closes: FND-nnnn trailer validated by the commit-msg hook, and a routine
+      sp_auto_transition that accepts only the evidence-backed edges (OPEN/TODO to IN_PROGRESS on a Refs: commit; to READY_FOR_DEPLOY on a merge that carries Closes:; to CLOSED
+      when merged, close_condition probes pass, the delivery and incident gates (FND-0264) are clear and, for a change under db/, the drift check is clean). The incident gate of
+      close_release.py moves to shared/backlog_release.py so both use one rule. Triggered by a reference-transaction hook, preflight and the cycle report; SHADOW mode for the
+      first 20 decisions, then ON.
+    first_log: >-
+      Opened by the Backlog v3 bootstrap. Depends on W2 (the scoped logins). Acceptance: rule-table tests for every edge (evidence present, missing, gate refused), replay on the staging
+      snapshot (zero closures past an open prerequisite, except the one known past-gate closure in the history), 20 SHADOW decisions reviewed by the owner before BACKLOG_AUTOPILOT_MODE is set to ON.
+
+  - key: W4
+    title: "Backlog v3 W4: correlation automation - a merge puts the tickets it may affect on review"
+    nature: REQ
+    object_type: SCHEMA
+    schema_name: backlog
+    priority: MEDIUM
+    description: >-
+      On each MERGE event, compute the changed files and the open tickets they may affect (links through v_impact_closure; path citations through the collision rule T0), raise a
+      review_flag and append one impact note per ticket; an absorbed ticket (SUPERSEDES / absorbs) may be closed by the agent after verifying it. Tickets co-changed in at least two
+      merges become an auto-proposed TRAIN group. Fatigue guard: a replay of the October merges must give a median of at most 2 notes per merge, else the hub threshold rises.
+    first_log: >-
+      Opened by the Backlog v3 bootstrap. Depends on W2 (agent logins) and W3 (it consumes the MERGE events the autopilot records).
+
+  - key: W4B
+    title: "Backlog v3 W4b: cluster tickets by the module whose logic will change (ticket_module_event, MODULE groups, explainable signals)"
+    nature: REQ
+    object_type: SCHEMA
+    schema_name: backlog
+    priority: MEDIUM
+    description: >-
+      Append-only ticket_module_event registry, derived automatically (declared TARGET modules and symbols, files touched by Refs:/Closes: commits, text citations, the data object
+      table.column) with the role of each module (TARGET, TOUCHED, CITED). Clusters are the connected components of a weighted, explainable score after hub and test-file
+      normalisation; MODULE is a new group kind. Uses: show the module mates before work starts (absorb, sequence, batch or independent), rank clusters by open members, re-run the
+      close_condition probes of members after a merge on the module, feed the collision rule T0 (recall was 12-15 percent on text paths, see FND-0334). A CODE_FIX ticket needs a
+      TARGET to enter IN_PROGRESS. Overrides the 2026-10-26 rejection of a hand-kept ticket_object registry: this one is derived, never maintained by hand.
+    first_log: >-
+      Opened by the Backlog v3 bootstrap. Live baseline 2026-10-31: 40 of 69 open tickets cite a module path in their text; 11 modules are shared by 2 or more open tickets, the largest
+      scripts/audit/audit_incident.py (9 tickets). Acceptance before go-live: precision of at least 70 percent and recall clearly above the text baseline, measured on the 72 confirmed
+      and 37 rejected OVERLAPS. Depends on W2.
+
+  - key: W5
+    title: "Backlog v3 W5: owner decision inbox and one-command pending DDL (backlog_inbox.py, migrate --pending)"
+    nature: REQ
+    object_type: JOB
+    object_name: "scripts/audit/backlog_inbox.py"
+    schema_name: backlog
+    priority: MEDIUM
+    description: >-
+      scripts/audit/backlog_inbox.py lists everything only a human may decide (collision adjudications with the agent's recommendation, reopen requests, force requests filed by
+      agents, holds, gate and waiver events due, stale tickets) as one CSV that the owner applies in a batch after one confirmation, reusing the review-CSV pattern of
+      backlog_links.py. migrate_backlog_v2.py --pending uses the fingerprints of backlog_drift.py (FND-0351) to find the DDL phases that are on master but not live, dry-runs them
+      all, applies them after one confirmation and records a DEPLOY event, so a merged phase can no longer stay unapplied unnoticed (FND-0350 did).
+    first_log: >-
+      Opened by the Backlog v3 bootstrap. Depends on W2. Preflight prints the inbox count and the age of the oldest item.
+
+  - key: W6
+    title: "Backlog v3 W6: automation metrics and the quality signals of the autonomy (V-AUTO-REFUSED, V-AGENT-CLOSE-REVERTED)"
+    nature: REQ
+    object_type: VW
+    object_name: v_backlog_lean_metrics
+    schema_name: backlog
+    priority: LOW
+    description: >-
+      v_backlog_lean_metrics gains the automation ratio (status changes by system:* and agent:* against human:*), the median idle time of IN_PROGRESS tickets, RFD wait and inbox
+      age. New violation codes: V-AUTO-REFUSED (the autopilot was refused by a gate, so the ticket stays visible) and V-AGENT-CLOSE-REVERTED (an agent closure that a human later
+      reopened: the quality signal of the autonomy). Updates AGENTS.md, NORMAS_BACKLOG sections 2, 3, 4.4, 4.7 and 9, NORMAS_IMPLEMENTACION section 8 and the PROPUESTA decision log.
+    first_log: >-
+      Opened by the Backlog v3 bootstrap. Depends on W3. One-week targets from the plan: automation ratio at least 80 percent, IN_PROGRESS tickets idle for more than 5 days down from
+      17 to at most 5, V-AGENT-CLOSE-REVERTED at most 5 percent.
+
+links:
+  # every workstream is split from the epic
+  - {from: W1,  to: EPIC, type: SPLIT_FROM, status: CONFIRMED, evidence: "W1 is a workstream of the Backlog v3 epic (ACTION_PLAN_BACKLOG_V3.md)"}
+  - {from: W2,  to: EPIC, type: SPLIT_FROM, status: CONFIRMED, evidence: "W2 is a workstream of the Backlog v3 epic (ACTION_PLAN_BACKLOG_V3.md)"}
+  - {from: W3,  to: EPIC, type: SPLIT_FROM, status: CONFIRMED, evidence: "W3 is a workstream of the Backlog v3 epic (ACTION_PLAN_BACKLOG_V3.md)"}
+  - {from: W4,  to: EPIC, type: SPLIT_FROM, status: CONFIRMED, evidence: "W4 is a workstream of the Backlog v3 epic (ACTION_PLAN_BACKLOG_V3.md)"}
+  - {from: W4B, to: EPIC, type: SPLIT_FROM, status: CONFIRMED, evidence: "W4b is a workstream of the Backlog v3 epic (ACTION_PLAN_BACKLOG_V3.md)"}
+  - {from: W5,  to: EPIC, type: SPLIT_FROM, status: CONFIRMED, evidence: "W5 is a workstream of the Backlog v3 epic (ACTION_PLAN_BACKLOG_V3.md)"}
+  - {from: W6,  to: EPIC, type: SPLIT_FROM, status: CONFIRMED, evidence: "W6 is a workstream of the Backlog v3 epic (ACTION_PLAN_BACKLOG_V3.md)"}
+  # the delivery order
+  - {from: W3,  to: W2, type: DEPENDS_ON, status: CONFIRMED, evidence: "the autopilot writes through the scoped logins and routines that W2 creates"}
+  - {from: W4,  to: W2, type: DEPENDS_ON, status: CONFIRMED, evidence: "review flags and notes are written by an agent login created in W2"}
+  - {from: W4,  to: W3, type: DEPENDS_ON, status: CONFIRMED, evidence: "W4 consumes the MERGE events that the W3 autopilot records"}
+  - {from: W4B, to: W2, type: DEPENDS_ON, status: CONFIRMED, evidence: "the module registry is written by agent and autopilot logins created in W2"}
+  - {from: W5,  to: W2, type: DEPENDS_ON, status: CONFIRMED, evidence: "the inbox applies decisions and the pending-DDL command records events through the W2 authority model"}
+  - {from: W6,  to: W3, type: DEPENDS_ON, status: CONFIRMED, evidence: "the automation ratio and V-AUTO-REFUSED are computed from the autopilot's events"}

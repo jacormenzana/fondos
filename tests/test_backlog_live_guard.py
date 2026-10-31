@@ -214,7 +214,8 @@ def _run(args, tmp_path):
     ["scripts/ops/close_release.py", "--release", "R2026.10-GUARD-01", "--tickets", "FND-0001", "--log", "a closing log long enough to pass the argument validation of the tool", "--actor", "agent:claude-sonnet-5-5", "--apply"],
     ["scripts/ops/close_release.py", "--release", "R2026.10-GUARD-01", "--tickets", "FND-0001", "--log", "a closing log long enough to pass the argument validation of the tool", "--actor", "agent:claude-sonnet-5-5"],
     ["scripts/ops/backlog_step0.py", "--apply", "--actor", "agent:claude-sonnet-5-5"],
-], ids=["close_release --apply", "close_release dry run (it writes and rolls back)", "step 0 --apply"])
+    ["scripts/mig/backlog_v3_bootstrap.py", "--apply", "--actor", "agent:claude-sonnet-5-5"],
+], ids=["close_release --apply", "close_release dry run (it writes and rolls back)", "step 0 --apply", "v3 bootstrap --apply"])
 def test_the_writing_tools_exit_with_code_one_before_opening_any_connection(args, tmp_path):
     r = _run(args, tmp_path)
     assert r.returncode == 1, (r.returncode, r.stderr[-400:])
