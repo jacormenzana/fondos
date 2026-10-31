@@ -121,6 +121,23 @@ def verdicts(commits: list, nonces: dict, epoch: Optional[datetime], known: set)
     return out
 
 
+_CHORE = re.compile(r"^chore(\([^)]*\))?!?:", re.I)
+
+
+def ticket_exemption(subject: str, branch: str = "", merging: bool = False) -> Optional[str]:
+    """Why a commit may carry no ticket when BACKLOG_REQUIRE_TICKET_ENABLED is on (NORMAS_BACKLOG.md 4.5, owner policy 2026-10-31): a merge, a revert, a `chore` commit
+    (conventional subject `chore:` / `chore(scope):`) or any commit on a `chore/` branch. None = not exempt."""
+    if merging or subject.startswith("Merge "):
+        return "merge"
+    if subject.startswith("Revert "):
+        return "revert"
+    if _CHORE.match(subject):
+        return "chore"
+    if branch.startswith("chore/"):
+        return "chore branch"
+    return None
+
+
 def trailer_for(nonce: Optional[str]) -> str:
     """The trailer line the hook appends: the nonce, or `offline` when there is none."""
     return f"{GATE_KEY}: {nonce if nonce else OFFLINE}"

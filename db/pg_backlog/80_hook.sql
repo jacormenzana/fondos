@@ -10,8 +10,23 @@
 --      clone, a forged trailer). Written by scripts/audit/backlog_sync.py through sp_record_hook_bypass, which also raises a HOLD on the cited ticket (once per commit and
 --      ticket; none on a CLOSED ticket, which V-WORK-ON-CLOSED already reports).
 --   3. backlog.v_violations_c2: V-HOOK-BYPASS, joined into v_backlog_violations by fn_rebuild_violations().
+--   4. The scoped login of the hook (owner authorization of 2026-10-31, an exception to the 2026-10-29 order, on the same terms as backlog_logger / backlog_incident): the role
+--      backlog_gate, created WITHOUT a password and WITHOUT membership of backlog_writer, that can only execute three routines: fn_gate_statuses (read the status of the tickets a
+--      commit cites), sp_gate_forward (OPEN/TODO -> IN_PROGRESS as system:gate, nothing else) and sp_gate_check. The owner sets its password in his own session:
+--          ALTER ROLE backlog_gate PASSWORD '<chosen by the owner>';
+--      and puts the connection string in FONDOS_BACKLOG_PG_DSN_GATE. Until then the hook stamps `Backlog-Gate: offline`.
 
 -- BEGIN backlog_hook
+-- 0. The scoped login of the hook. No password (the owner sets it), no membership of backlog_writer: it holds ONLY the grants at the end of this block.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'backlog_gate') THEN
+        CREATE ROLE backlog_gate LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 8;
+    END IF;
+    ALTER ROLE backlog_gate SET statement_timeout = '2500ms';           -- the hook has a 3 s budget in total
+    ALTER ROLE backlog_gate SET idle_in_transaction_session_timeout = '5s';
+END $$;
+
 -- 1. The nonces.
 CREATE TABLE IF NOT EXISTS backlog.gate_check (
     check_id    BIGSERIAL PRIMARY KEY,
@@ -53,9 +68,37 @@ BEGIN
     IF NOT backlog.fn_actor_authorized(p_actor) THEN
         RAISE EXCEPTION 'sp_gate_check: actor % is not canonical or not authorized here', p_actor USING ERRCODE = '42501';
     END IF;
+    IF session_user = 'backlog_gate' AND p_actor <> 'system:gate' THEN
+        RAISE EXCEPTION 'sp_gate_check: the backlog_gate login writes only as system:gate (got %)', p_actor USING ERRCODE = '42501';
+    END IF;
     v_nonce := replace(gen_random_uuid()::text, '-', '');
     INSERT INTO backlog.gate_check (nonce, tree_hash, tickets, actor) VALUES (v_nonce, p_tree, COALESCE(p_tickets, '{}'), p_actor);
     RETURN v_nonce;
+END;
+$$;
+
+-- The hook's read: {ticket: status} for the ids it cites (only the ids asked for; an unknown id is simply absent).
+CREATE OR REPLACE FUNCTION backlog.fn_gate_statuses(p_ids text[]) RETURNS TABLE (action_point_id text, status text)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, backlog AS
+$$ SELECT b.action_point_id::text, b.status::text FROM backlog.BACKLOG b WHERE b.action_point_id = ANY(p_ids) $$;
+
+-- The hook's one write on a ticket: a ticket in OPEN or TODO goes to IN_PROGRESS as system:gate through sp_transition (legality, log and status event in one transaction).
+-- Any other status is left alone and the answer is NULL (never BLOCKED / DEFERRED, never backward). The actor is fixed: whoever calls, it is system:gate.
+CREATE OR REPLACE FUNCTION backlog.sp_gate_forward(p_ap_id text, p_session_id text, p_comment text, p_actor text) RETURNS bigint
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, backlog AS $$
+DECLARE v_status text;
+BEGIN
+    IF p_actor IS DISTINCT FROM 'system:gate' THEN
+        RAISE EXCEPTION 'sp_gate_forward: only system:gate moves a ticket here (got %)', p_actor USING ERRCODE = '42501';
+    END IF;
+    IF NOT backlog.fn_actor_authorized(p_actor) THEN
+        RAISE EXCEPTION 'sp_gate_forward: actor % is not authorized from this connection', p_actor USING ERRCODE = '42501';
+    END IF;
+    SELECT status INTO v_status FROM backlog.BACKLOG WHERE action_point_id = p_ap_id FOR UPDATE;
+    IF NOT FOUND OR v_status NOT IN ('OPEN', 'TODO') THEN
+        RETURN NULL;
+    END IF;
+    RETURN backlog.sp_transition(p_ap_id => p_ap_id, p_to => 'IN_PROGRESS', p_actor => p_actor, p_session_id => p_session_id, p_comment => p_comment);
 END;
 $$;
 
@@ -97,7 +140,7 @@ DO $$
 DECLARE r record;
 BEGIN
     FOR r IN SELECT p.oid::regprocedure AS sig FROM pg_proc p
-             WHERE p.pronamespace = 'backlog'::regnamespace AND p.proname IN ('sp_gate_check', 'sp_record_hook_bypass')
+             WHERE p.pronamespace = 'backlog'::regnamespace AND p.proname IN ('sp_gate_check', 'sp_record_hook_bypass', 'sp_gate_forward', 'fn_gate_statuses')
     LOOP
         EXECUTE format('ALTER FUNCTION %s OWNER TO backlog_owner', r.sig);
         EXECUTE format('REVOKE EXECUTE ON FUNCTION %s FROM PUBLIC', r.sig);
@@ -105,6 +148,9 @@ BEGIN
             EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO backlog_writer', r.sig);
         END IF;
     END LOOP;
+    -- the scoped login: three routines and nothing else
+    GRANT USAGE ON SCHEMA backlog TO backlog_gate;
+    GRANT EXECUTE ON FUNCTION backlog.sp_gate_check(text, text[], text), backlog.sp_gate_forward(text, text, text, text), backlog.fn_gate_statuses(text[]) TO backlog_gate;
 END $$;
 ALTER TABLE backlog.gate_check  OWNER TO backlog_owner;
 ALTER TABLE backlog.hook_bypass OWNER TO backlog_owner;

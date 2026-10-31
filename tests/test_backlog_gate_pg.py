@@ -210,3 +210,87 @@ def test_the_report_line(db):
     assert "NOT ARMED" in bs.gate_report(g.verdicts(commits, {}, None, {"FND-9001"}), None, True)
     line = bs.gate_report(g.verdicts(commits, {}, g.parse_epoch((t0 - timedelta(hours=1)).isoformat()), {"FND-9001"}), g.parse_epoch((t0 - timedelta(hours=1)).isoformat()), False)
     assert "BYPASS 1" in line and "not applied" in line
+
+
+# ---------------------------------------------------------------- the scoped login of the hook (owner authorization 2026-10-31)
+
+def forward(ap, conn, actor="system:gate"):
+    return conn.execute("SELECT backlog.sp_gate_forward(%s, 'FND_20261031_DEV_GATE', 'commit-msg gate: work started (Refs: trailer) - test', %s)", (ap, actor)).fetchone()[0]
+
+
+def as_login(conn):
+    """The statements that follow run as the backlog_gate login would (session_user and current_user both backlog_gate)."""
+    conn.execute("SET LOCAL SESSION AUTHORIZATION backlog_gate")
+
+
+def test_the_role_exists_without_membership_and_holds_only_three_routines(db):
+    assert mig.existing(db, "hook")["roles"] == ["backlog_gate"]
+    assert db.execute("SELECT rolcanlogin, rolsuper, rolcreaterole FROM pg_roles WHERE rolname = 'backlog_gate'").fetchone() == (True, False, False)
+    assert db.execute("SELECT rolpassword IS NULL FROM pg_authid WHERE rolname = 'backlog_gate'").fetchone()[0] is True       # the owner sets the password
+    assert db.execute("SELECT pg_has_role('backlog_gate', 'backlog_writer', 'MEMBER')").fetchone()[0] is False
+    for sig in ("backlog.sp_gate_check(text,text[],text)", "backlog.sp_gate_forward(text,text,text,text)", "backlog.fn_gate_statuses(text[])"):
+        assert db.execute("SELECT has_function_privilege('backlog_gate', %s, 'EXECUTE')", (sig,)).fetchone()[0] is True
+    for sig in ("backlog.sp_transition(text,text,text,text,text,text,text,text,text,date,text,text,text,boolean)", "backlog.sp_record_hook_bypass(text,text,text,timestamptz,text)",
+                "backlog.sp_raise_hold(text,text,text,text)", "backlog.sp_open_ticket(text,text,text,text,text,text,text,text,text,text,text,text,text)"):
+        ok = db.execute("SELECT to_regprocedure(%s) IS NULL OR NOT has_function_privilege('backlog_gate', %s, 'EXECUTE')", (sig, sig)).fetchone()[0]
+        assert ok, sig
+    for t in ("BACKLOG", "BACKLOG_LOGS", "status_event", "gate_check", "hook_bypass", "hold_event"):
+        for priv in ("SELECT", "INSERT", "UPDATE", "DELETE"):
+            assert db.execute("SELECT has_table_privilege('backlog_gate', %s, %s)", (f"backlog.{t}", priv)).fetchone()[0] is False, (t, priv)
+
+
+def test_gate_forward_moves_only_open_and_todo_and_only_as_system_gate(db):
+    opn, todo, wip, blocked, deferred = _mk(db), _mk(db, "TODO"), _mk(db), _mk(db), _mk(db)
+    tr(db, wip, "IN_PROGRESS")
+    tr(db, blocked, "IN_PROGRESS")
+    tr(db, blocked, "BLOCKED", blocker=wip)
+    assert forward(opn, db) is not None and forward(todo, db) is not None
+    assert [forward(a, db) for a in (wip, blocked)] == [None, None]                    # in progress already / BLOCKED: left alone
+    assert forward("FND-0001", db) is None                                              # unknown ticket: nothing
+    st = {a: db.execute("SELECT status FROM backlog.BACKLOG WHERE action_point_id = %s", (a,)).fetchone()[0] for a in (opn, todo, wip, blocked)}
+    assert st == {opn: "IN_PROGRESS", todo: "IN_PROGRESS", wip: "IN_PROGRESS", blocked: "BLOCKED"}
+    ev = db.execute("SELECT actor, to_status FROM backlog.status_event WHERE action_point_id = %s ORDER BY event_id DESC LIMIT 1", (opn,)).fetchone()
+    assert ev == ("system:gate", "IN_PROGRESS")
+    refused(db, "only system:gate", lambda c: forward(_mk(c), c, actor=ME))
+    refused(db, "only system:gate", lambda c: forward(_mk(c), c, actor="system:sync"))
+
+
+def test_gate_statuses_answers_only_the_ids_asked(db):
+    a, b = _mk(db), _mk(db, "TODO")
+    assert bc.gate_statuses([a, b, "FND-0001"], conn=db) == {a: "OPEN", b: "TODO"}
+    assert bc.gate_statuses([], conn=db) == {}
+
+
+def test_the_client_functions_of_the_hook_run_on_the_scoped_routines(db):
+    a = _mk(db)
+    with acting_as(GATE):
+        sid = bc.make_session_id("BACKLOG_GATE", "SYNC")
+        assert bc.gate_forward(a, sid, "commit-msg gate: work started - test", conn=db) is not None
+        assert bc.gate_forward(a, sid, "commit-msg gate: work started - test", conn=db) is None        # already IN_PROGRESS
+        nonce = bc.gate_check(TREE, [a], conn=db)
+    assert bc.gate_checks([nonce], conn=db) == {nonce: TREE}
+
+
+def test_the_login_can_do_its_three_things_and_nothing_else(db):
+    a, b = _mk(db), _mk(db)
+    as_login(db)
+    assert db.execute("SELECT count(*) FROM backlog.fn_gate_statuses(ARRAY[%s])", (a,)).fetchone()[0] == 1
+    assert forward(a, db) is not None
+    nonce = db.execute("SELECT backlog.sp_gate_check(%s, ARRAY[%s], 'system:gate')", (TREE, a)).fetchone()[0]
+    assert g.NONCE.match(nonce)
+    refused(db, "backlog_gate login writes only as system:gate", lambda c: c.execute("SELECT backlog.sp_gate_check(%s, '{}', %s)", (TREE, ME)))
+    refused(db, "only system:gate", lambda c: forward(b, c, actor=ME))
+    refused(db, "permission denied", lambda c: c.execute("SELECT * FROM backlog.BACKLOG"))
+    refused(db, "permission denied", lambda c: c.execute("INSERT INTO backlog.gate_check (nonce, tree_hash, actor) VALUES (%s, %s, 'system:gate')", ("ab" * 16, TREE)))
+    refused(db, "permission denied", lambda c: tr(c, b, "IN_PROGRESS", actor="system:gate"))             # no sp_transition of its own
+    refused(db, "permission denied", lambda c: c.execute("SELECT backlog.sp_record_hook_bypass(%s, %s, 'TRAILER_MISSING', now(), 'system:gate')", ("c" * 40, b)))
+    refused(db, "permission denied", lambda c: c.execute("SELECT backlog.sp_raise_hold(%s, 'a hold raised by the gate login', 'V-X', 'system:gate')", (b,)))
+    db.execute("RESET SESSION AUTHORIZATION")
+
+
+def test_rollback_drops_the_new_routines_and_keeps_the_role(db):
+    mig.migrate(db, "hook", down=True)
+    have = mig.existing(db, "hook")
+    assert have["routines"] == [] and have["roles"] == ["backlog_gate"]
+    mig.migrate(db, "hook")
+    assert mig.existing(db, "hook")["routines"] == sorted(mig.PHASES["hook"]["routines"])

@@ -13,10 +13,13 @@ In order, for a commit whose subject or `Refs:` trailer cites a ticket (a commit
   4. a backlog.gate_check row (sp_gate_check) and the trailer `Backlog-Gate: <nonce>`, the nonce bound to the staged tree (`git write-tree`; an old trailer, as after
      `git commit --amend`, is replaced).
 
-The hook never blocks a commit except for step 1. Backlog unreachable, more than BUDGET_S seconds, any error: FAIL OPEN with `Backlog-Gate: offline`; backlog_sync.py does the move
-and the check later (pending, no penalty). The hook is NON-INTERACTIVE by design (owner order 2026-10-29: no scripted write to the live backlog may prompt or go through): it
-detaches stdin, so shared.backlog_client.confirm_live_write refuses a live write and the commit carries `offline`. Writes at commit time begin only if the owner allow-lists a
-scoped operation for the hook (a decision of his: NORMAS_BACKLOG.md 4.5).
+The hook never blocks a commit except for step 1 and, when the switch BACKLOG_REQUIRE_TICKET_ENABLED is on (off by default), a commit that cites no ticket and is not a merge, a
+revert, a `chore` commit or on a `chore/` branch. Backlog unreachable, more than BUDGET_S seconds, any error: FAIL OPEN with `Backlog-Gate: offline`; backlog_sync.py does the
+move and the check later (pending, no penalty).
+
+Live writes. The hook is non-interactive (it detaches stdin, so nothing ever prompts) and writes ONLY through its scoped login (owner authorization of 2026-10-31, the allow-listed
+operation `gate`): FONDOS_BACKLOG_PG_DSN_GATE, the role backlog_gate, which can execute fn_gate_statuses, sp_gate_forward and sp_gate_check and nothing else. Without that
+variable there is no fallback to another login: the commit simply carries `offline`.
 """
 from __future__ import annotations
 
@@ -64,10 +67,10 @@ class LiveStore:
             raise
 
     def statuses(self, ids: list) -> dict:
-        return {t["action_point_id"]: t["status"] for t in self._guard(self.bc.list_tickets, ids=list(ids))}
+        return self._guard(self.bc.gate_statuses, list(ids))
 
     def forward(self, ap_id: str, comment: str) -> None:
-        self._guard(self.bc.transition, ap_id, "IN_PROGRESS", session_id=self.bc.make_session_id("BACKLOG_GATE", "COMMIT-MSG"), actor=ACTOR, comment=comment)
+        self._guard(self.bc.gate_forward, ap_id, self.bc.make_session_id("BACKLOG_GATE", "SYNC"), comment, actor=ACTOR)
 
     def gate_check(self, tree: str, ap_ids: list) -> str:
         return self._guard(self.bc.gate_check, tree, list(ap_ids), actor=ACTOR)
@@ -93,8 +96,19 @@ def write_trailer(path: Path, line: str) -> None:
         path.write_text(f"{body}\n{line}\n" if g._trailer_block(body.split("\n")) else f"{body}\n\n{line}\n", encoding="utf-8")
 
 
-def run(msg_path: str, *, store_factory=LiveStore, tree_fn=staged_tree, budget: float = BUDGET_S, err=None) -> int:
-    """The hook. Returns the process exit code: 1 only for a malformed ticket token, otherwise 0."""
+def git_context() -> tuple:
+    """(current branch, merge in progress) for the strict-traceability exemptions; ("", False) when git cannot say."""
+    try:
+        b = subprocess.run(["git", "symbolic-ref", "--short", "-q", "HEAD"], capture_output=True, text=True, encoding="utf-8", timeout=2)
+        m = subprocess.run(["git", "rev-parse", "-q", "--verify", "MERGE_HEAD"], capture_output=True, text=True, encoding="utf-8", timeout=2)
+        return b.stdout.strip(), m.returncode == 0
+    except Exception:                                  # noqa: BLE001
+        return "", False
+
+
+def run(msg_path: str, *, store_factory=LiveStore, tree_fn=staged_tree, budget: float = BUDGET_S, err=None, require_ticket: bool = False, context_fn=git_context) -> int:
+    """The hook. Returns the process exit code: 1 for a malformed ticket token, or (switch BACKLOG_REQUIRE_TICKET_ENABLED) for a commit that cites no ticket and is not
+    exempt; otherwise 0."""
     from shared import backlog_gate as g
     err = err or sys.stderr
     path = Path(msg_path)
@@ -104,6 +118,10 @@ def run(msg_path: str, *, store_factory=LiveStore, tree_fn=staged_tree, budget: 
               + ", ".join(msg.malformed) + ". Fix the message and commit again.", file=err)
         return 1
     if not msg.mentions:
+        if require_ticket and g.ticket_exemption(msg.subject, *context_fn()) is None:
+            print("commit-msg gate: REJECTED. No ticket cited (BACKLOG_REQUIRE_TICKET_ENABLED is on): put FND-nnnn in the subject or a `Refs: FND-nnnn` trailer. "
+                  "Exempt: merge, revert, `chore:` commits and `chore/` branches.", file=err)
+            return 1
         return 0
     box: dict = {}
 
@@ -149,8 +167,13 @@ def main(argv: list | None = None) -> int:
     os.environ["FONDOS_ACTOR"] = ACTOR                 # one process, one identity (owner order 2026-10-28): this process IS the gate
     sys.stdin = None                                   # non-interactive: a live write is refused, never prompted (see the module doc)
     try:
-        return run(argv[0])
-    except Exception as exc:                           # noqa: BLE001
+        try:
+            import shared.config as cfg
+            require = bool(cfg.BACKLOG_REQUIRE_TICKET_ENABLED)
+        except Exception:                              # noqa: BLE001  (no config: the strict switch is off)
+            require = False
+        return run(argv[0], require_ticket=require)
+    except Exception as exc:                          # noqa: BLE001
         print(f"commit-msg gate: internal error ({type(exc).__name__}); commit allowed.", file=sys.stderr)
         return 0
 

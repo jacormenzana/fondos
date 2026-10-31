@@ -260,13 +260,23 @@ Lectura común del mensaje (gancho y sincronización): `shared/backlog_gate.py`.
   `OPEN`/`TODO` lo pasa a `IN_PROGRESS` como `system:gate` (interruptor `BACKLOG_AUTO_FORWARD_ENABLED`; nunca desde `BLOCKED`/`DEFERRED`,
   nunca por una mención en el asunto); (4) escribe una fila en `backlog.gate_check` (`sp_gate_check`) y añade el tráiler
   `Backlog-Gate: <nonce>`, con el nonce ligado al árbol preparado (`git write-tree`); un tráiler anterior (un `--amend`) se sustituye.
-- **Nunca bloquea, salvo el punto 1.** Base no alcanzable, más de 3 s o cualquier error: el commit sale con `Backlog-Gate: offline` y
+- **Nunca bloquea, salvo el punto 1** (y la trazabilidad estricta, si el propietario la activa: ver abajo). Base no alcanzable, más de 3 s o cualquier error: el commit sale con `Backlog-Gate: offline` y
   `backlog_sync.py` hace después el movimiento y la comprobación, sin penalización.
-- **El gancho no es interactivo y no escribe en la base viva** (orden del propietario, 2026-10-29: ningún proceso sin terminal puede escribir
-  en el backlog vivo; un gancho figura en esa orden). Por eso corta la entrada estándar: `confirm_live_write` rechaza la escritura y el commit
-  sale con `offline`; el movimiento hacia delante lo hace entonces `backlog_sync.py --apply` (persona en terminal). Que el gancho escriba en
-  el momento del commit exige que el propietario añada a la lista permitida una operación acotada por la base (rol propio que solo pueda
-  ejecutar `sp_gate_check` y el avance de `Refs:`), como hizo con `agent_log` e `incident`: **decisión suya, no construida**.
+- **El gancho es no interactivo y escribe con su propio acceso acotado** (autorización del propietario, 2026-10-31, excepción a la orden del
+  2026-10-29, en los mismos términos que `agent_log` e `incident`: la operación permitida es `gate`). Corta la entrada estándar (nada pide
+  nunca una confirmación) y solo escribe por el rol `backlog_gate`, que **ejecuta tres rutinas y nada más**: `fn_gate_statuses` (estado de los
+  tickets citados), `sp_gate_forward` (`OPEN`/`TODO` → `IN_PROGRESS` como `system:gate` mediante `sp_transition`; cualquier otro estado queda
+  como está y el actor está fijado) y `sp_gate_check`. No tiene permiso sobre ninguna tabla, ni sobre `sp_transition`, bloqueos o aperturas.
+  Lo crea el DDL de la fase `hook` **sin contraseña** y sin pertenecer a `backlog_writer`; el propietario fija la contraseña en su sesión
+  (`ALTER ROLE backlog_gate PASSWORD '...'`) y pone la cadena de conexión en `FONDOS_BACKLOG_PG_DSN_GATE` (`.env`, ignorado por git). **Sin
+  esa variable no hay escritura viva y nunca se cae al acceso general:** el commit sale con `Backlog-Gate: offline` y `backlog_sync.py
+  --apply` hace el movimiento. `offline` solo ocurre, pues, si el acceso no está provisionado, la base no responde o se agota el
+  presupuesto de 3 s; no es el camino por defecto. Riesgo aceptado: cualquier sesión que lea `.env` puede usar ese acceso, cuyo alcance es
+  mover un ticket abierto a en curso como `system:gate` y escribir nonces.
+- **Trazabilidad estricta** (interruptor `BACKLOG_REQUIRE_TICKET_ENABLED`, **desactivado** por decisión del propietario, 2026-10-31).
+  Activado, el gancho **rechaza** también el commit cuyo asunto y tráiler `Refs:` no citan ningún `FND-nnnn`. **Quedan exentos y no necesitan
+  ticket:** los commits de fusión (`Merge ...` o con una fusión en curso), los de reversión (`Revert ...`), los de tipo `chore` (asunto
+  `chore:` o `chore(ámbito):`) y cualquier commit en una rama `chore/`. Con el interruptor apagado solo se rechaza un token mal formado.
 - **Detección de elusión** (`backlog_sync.py`). Cada commit posterior a `BACKLOG_HOOK_EPOCH` que cita un ticket se juzga por su tráiler:
   *comprobado* (el nonce está en `gate_check` y su árbol es el del commit), *pendiente* (`offline`, sin penalización) o **elusión**
   (`TRAILER_MISSING`, `UNKNOWN_NONCE`, `TREE_MISMATCH`: `--no-verify`, otro clon, un tráiler falsificado). Los commits de fusión están

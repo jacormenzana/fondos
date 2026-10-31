@@ -134,16 +134,17 @@ PHASES: dict = {
         "requires": ("backlog", "status_event", "v_violations_d"),
         "requires_routines": ("trg_append_only", "fn_actor_authorized", "fn_rebuild_violations"),
     },
-    # Phase C slice 2 (FND-0334): the commit-msg gate: nonces (gate_check), bypassed commits (hook_bypass, with a hold on the ticket) and V-HOOK-BYPASS. Needs slice 1
-    # (v_violations_c) and Phase B (sp_raise_hold). Its rollback KEEPS gate_check and hook_bypass.
+    # Phase C slice 2 (FND-0334): the commit-msg gate: nonces (gate_check), bypassed commits (hook_bypass, with a hold on the ticket), V-HOOK-BYPASS and the scoped login
+    # backlog_gate of the hook (created WITHOUT a password: the owner sets it). Needs slice 1 (v_violations_c) and Phase B (sp_raise_hold). Its rollback KEEPS gate_check and hook_bypass.
     "hook": {
         "up": ("80_hook.sql", "backlog_hook"),
         "down": ("down/80_hook_down.sql", "backlog_hook_down"),
         "tables": ("gate_check", "hook_bypass"),
         "views": ("v_violations_c2",),
-        "routines": ("sp_gate_check", "sp_record_hook_bypass"),
+        "routines": ("sp_gate_check", "sp_record_hook_bypass", "sp_gate_forward", "fn_gate_statuses"),
         "requires": ("backlog", "hold_event", "v_violations_c"),
-        "requires_routines": ("trg_append_only", "fn_actor_authorized", "fn_rebuild_violations", "sp_raise_hold"),
+        "requires_routines": ("trg_append_only", "fn_actor_authorized", "fn_rebuild_violations", "sp_raise_hold", "sp_transition"),
+        "roles": ("backlog_gate",),
     },
 }
 SHADOW_REQUIRED = 50          # owner decision D2 (2026-10-26): 50 consecutive non-system transitions with no direct update

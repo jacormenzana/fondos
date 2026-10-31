@@ -5,6 +5,7 @@ backlog) and the installed hooks in a throwaway git repository (commit-msg, pre-
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -276,3 +277,74 @@ def test_pre_rebase_refuses_master_and_allows_a_branch(repo):
     git("checkout", "-q", "master")
     git("rebase", "work", ok=False)                                                  # master does not
     git("rebase", "master", "work")                                                  # rebasing the branch from master is fine
+
+
+# ---------------------------------------------------------------- strict traceability (BACKLOG_REQUIRE_TICKET_ENABLED, off by default)
+
+@pytest.mark.parametrize("subject, branch, merging, why", [
+    ("Merge branch 'feat/x'", "master", False, "merge"),
+    ("fix: something", "master", True, "merge"),
+    ('Revert "feat: FND-0001 x"', "master", False, "revert"),
+    ("chore: bump the pin", "master", False, "chore"),
+    ("chore(deps)!: drop python 3.12", "master", False, "chore"),
+    ("Chore: capitalised", "master", False, "chore"),
+    ("docs: a normal commit on a chore branch", "chore/env-path-des", False, "chore branch"),
+    ("feat: a normal commit", "feat/x", False, None),
+    ("chorex: not a chore", "master", False, None),
+    ("fix: chore: inside the subject", "master", False, None),
+])
+def test_ticket_exemptions(subject, branch, merging, why):
+    assert g.ticket_exemption(subject, branch, merging) == why
+
+
+def run_strict(tmp_path, message, branch="master", merging=False, require=True):
+    f = tmp_path / "MSG"
+    f.write_text(message, encoding="utf-8")
+    err = Err()
+
+    def boom():
+        raise AssertionError("no ticket cited: the backlog must not be touched")
+    rc = hook.run(str(f), store_factory=boom, tree_fn=boom, err=err, require_ticket=require, context_fn=lambda: (branch, merging))
+    return rc, f.read_text(encoding="utf-8"), err.text
+
+
+def test_strict_mode_rejects_a_commit_without_a_ticket_unless_exempt(tmp_path):
+    rc, text, err = run_strict(tmp_path, "feat: no ticket here\n")
+    assert rc == 1 and "No ticket cited" in err and text == "feat: no ticket here\n"
+    assert run_strict(tmp_path, "chore: bump\n")[0] == 0
+    assert run_strict(tmp_path, "Merge branch 'x'\n")[0] == 0
+    assert run_strict(tmp_path, 'Revert "feat: y"\n')[0] == 0
+    assert run_strict(tmp_path, "docs: z\n", branch="chore/x")[0] == 0
+    assert run_strict(tmp_path, "fix: z\n", merging=True)[0] == 0
+
+
+def test_strict_mode_is_off_by_default_and_never_touches_a_commit_that_cites_a_ticket(tmp_path):
+    assert run_strict(tmp_path, "feat: no ticket here\n", require=False)[0] == 0
+    import shared.config as cfg
+    assert cfg.BACKLOG_REQUIRE_TICKET_ENABLED is False
+    rc, text, _ = run_hook(tmp_path, "feat: FND-0001 cited\n", FakeStore({"FND-0001": "IN_PROGRESS"}), require_ticket=True)
+    assert rc == 0 and NONCE in text
+
+
+# ---------------------------------------------------------------- the live store (no database: the client is replaced)
+
+def test_live_store_without_its_scoped_login_is_offline_never_the_general_writer(monkeypatch):
+    store = hook.LiveStore()
+    monkeypatch.setenv("FONDOS_ACTOR", hook.ACTOR)
+    monkeypatch.delenv("FONDOS_BACKLOG_PG_DSN_GATE", raising=False)
+    monkeypatch.setenv("FONDOS_BACKLOG_PG_DSN", "postgresql://writer@127.0.0.1:1/gestion")      # the general login must NOT be used
+    for call in (lambda: store.statuses(["FND-0001"]), lambda: store.gate_check(TREE, ["FND-0001"]), lambda: store.forward("FND-0001", "a comment long enough")):
+        with pytest.raises(hook.GateOffline):
+            call()
+
+
+def test_live_store_passes_valid_arguments_to_the_scoped_client_functions(monkeypatch):
+    store = hook.LiveStore()
+    seen = {}
+    monkeypatch.setattr(store.bc, "gate_forward", lambda ap, sid, comment, actor=None, conn=None: seen.update(ap=ap, sid=sid, actor=actor) or 1)
+    monkeypatch.setattr(store.bc, "gate_check", lambda tree, aps, actor=None, conn=None: seen.update(tree=tree, aps=aps, actor2=actor) or NONCE)
+    monkeypatch.setattr(store.bc, "gate_statuses", lambda ids, conn=None: {i: "OPEN" for i in ids})
+    store.forward("FND-0001", "commit-msg gate: work started")
+    assert seen["ap"] == "FND-0001" and re.fullmatch(r"FND_\d{8}_SYNC_BACKLOG_GATE", seen["sid"]) and seen["actor"] == "system:gate"       # a real session id: the first version raised ValueError here
+    assert store.gate_check(TREE, ["FND-0001"]) == NONCE and seen["actor2"] == "system:gate"
+    assert store.statuses(["FND-0001"]) == {"FND-0001": "OPEN"}
