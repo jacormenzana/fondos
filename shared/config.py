@@ -809,6 +809,11 @@ BACKLOG_INCIDENT_AUTO_APPEND_ENABLED: bool = False
 OFFICIAL_NAME_FAMILY_KEY_ENABLED: bool = True
 BACKLOG_INCIDENT_HIGH_COSINE: float = 0.70
 BACKLOG_INCIDENT_MEDIUM_COSINE: float = 0.45
+# Backlog v2 Phase C (FND-0334; PROPUESTA_BACKLOG_V2.md 6.4.1 / 6.4.8): a commit whose `Refs: FND-nnnn` trailer cites a ticket in OPEN or TODO moves it
+# to IN_PROGRESS (actor system:sync, the commit as evidence) when scripts/audit/backlog_sync.py --apply records that commit for the first time. Never
+# from BLOCKED or DEFERRED, never backward, never from a mention in the subject; closures stay manual. Owner decision 2026-10-26: forward moves are
+# automatic. OFF = the sync still records the commit events and the violations, and moves nothing.
+BACKLOG_AUTO_FORWARD_ENABLED: bool = True
 # Options of the iterative VIF (used when MACRO_VIF_ITERATIVE_ENABLED, and by the PIT variant "iterative_hy"): keep the two
 # crisis factors, drop spread_ig (the near-duplicate of spread_hy), and at most n_obs / 10 factors per fund.
 MACRO_ITERATIVE_VIF: dict = {

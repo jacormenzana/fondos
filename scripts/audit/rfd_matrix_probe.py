@@ -20,6 +20,12 @@ MANUAL (machine probes pass but an owner action remains). The workflow is in doc
 
     python scripts/audit/rfd_matrix_probe.py            # prints the matrix; exit 0
     python scripts/audit/rfd_matrix_probe.py --md FILE  # also writes it as markdown
+    python scripts/audit/rfd_matrix_probe.py --close-ready        # only the tickets whose every probe passes
+    python scripts/audit/rfd_matrix_probe.py --seed [--apply]     # copy SPEC into backlog.close_condition (tickets still READY_FOR_DEPLOY)
+
+Source of the conditions (FND-0334, Phase C slice 1): backlog.close_condition once the owner applied `migrate_backlog_v2.py --phase sync` (added with
+shared.backlog_client.add_close_condition(), retired with retire_close_condition(): adding a ticket is no longer a code change); until then the SPEC
+dictionary below. After the seed, SPEC is only the fallback for a database without the store.
 """
 from __future__ import annotations
 
@@ -74,6 +80,29 @@ def render_markdown(rows: list) -> str:
 
 def spec_problems(spec: dict = SPEC) -> list:
     return [f"{t}: unknown probe {p[0]!r}" for t, probes in spec.items() for p in probes if p[0] not in PROBE_KINDS]
+
+
+def choose_spec(stored) -> tuple:
+    """(spec, source): the closing conditions in backlog.close_condition once the owner applied Phase C slice 1 (FND-0334), else the SPEC
+    dictionary above. `stored` is backlog_client.close_conditions() (None = store not applied)."""
+    if stored is None:
+        return SPEC, "SPEC dictionary (backlog.close_condition not applied)"
+    return stored, "backlog.close_condition"
+
+
+def seed_rows(spec: dict, statuses: dict, stored: dict) -> tuple:
+    """(to_add, skipped) for seeding backlog.close_condition from `spec`: only tickets still READY_FOR_DEPLOY, never a condition already active.
+    to_add = [(ticket, kind, [args])]; skipped = [(ticket, reason)]."""
+    to_add, skipped = [], []
+    for tid, probes in spec.items():
+        if statuses.get(tid) != "READY_FOR_DEPLOY":
+            skipped.append((tid, f"status {statuses.get(tid, 'NOT_FOUND')}"))
+            continue
+        have = {tuple(p) for p in stored.get(tid, [])}
+        for p in probes:
+            if tuple(p) not in have:
+                to_add.append((tid, p[0], list(p[1:])))
+    return to_add, skipped
 
 
 # ── probes (read-only) ────────────────────────────────────────────────────────────────────────────
@@ -181,11 +210,47 @@ def evaluate(spec: dict = SPEC) -> list:
     return rows
 
 
+def seed(apply: bool) -> int:
+    """Copy the SPEC conditions of tickets still READY_FOR_DEPLOY into backlog.close_condition (append-only; needs FONDOS_ACTOR). Dry run by default."""
+    sys.path.insert(0, str(ROOT))
+    import shared.config  # noqa: F401  (loads .env)
+    from shared import backlog_client as bc
+    stored = bc.close_conditions()
+    if stored is None:
+        print("backlog.close_condition is not applied (owner: python scripts/ops/migrate_backlog_v2.py --phase sync).", file=sys.stderr)
+        return 2
+    to_add, skipped = seed_rows(SPEC, {t["action_point_id"]: t["status"] for t in bc.list_tickets()}, stored)
+    for tid, why in skipped:
+        print(f"skip {tid}: {why}")
+    for tid, kind, args in to_add:
+        print(f"{'add' if apply else 'would add'} {tid}: {kind}{tuple(args)}")
+        if apply:
+            bc.add_close_condition(tid, kind, args, "seeded from rfd_matrix_probe.SPEC (FND-0334)")
+    print(f"\n{len(to_add)} condition(s) {'added' if apply else 'to add (DRY RUN: --apply writes them)'}, {len(skipped)} ticket(s) skipped.")
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--md", help="also write the matrix as markdown to this file")
+    ap.add_argument("--close-ready", action="store_true", help="list only the tickets whose every probe passes (closing them stays a decision)")
+    ap.add_argument("--seed", action="store_true", help="copy SPEC into backlog.close_condition for tickets still READY_FOR_DEPLOY (dry run)")
+    ap.add_argument("--apply", action="store_true", help="with --seed: write the conditions")
     args = ap.parse_args(argv)
-    rows = evaluate()
+    if args.seed:
+        return seed(args.apply)
+    sys.path.insert(0, str(ROOT))
+    try:
+        import shared.config  # noqa: F401  (loads .env)
+        from shared import backlog_client as bc
+        stored = bc.close_conditions()
+    except Exception:                                        # the backlog is another database: without it the SPEC dictionary still works
+        stored = None
+    spec, source = choose_spec(stored)
+    print(f"closing conditions: {source}")
+    rows = evaluate(spec)
+    if args.close_ready:
+        rows = [r for r in rows if r[1] == "READY"]
     md = render_markdown(rows)
     print(md)
     counts = {v: sum(1 for _, x, _ in rows if x == v) for v in ("READY", "MANUAL", "BLOCKED")}

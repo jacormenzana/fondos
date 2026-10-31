@@ -8,7 +8,8 @@
 --      sp_create_group and sp_group_member; v_group_member (current members) and v_group_status (READY_TO_CLOSE when every member is CLOSED).
 --      A DECISION group replaces the free-text "DECISION PENDIENTE" label; the CONFIRMED RELEASE_WITH links are migrated ONCE into TRAIN groups (one per
 --      connected component, named TRAIN-<lowest id>; the link type stays). A group that already exists is never touched again by a re-apply.
---   2. backlog.v_backlog_violations: one row per violation, with the codes of section 7 whose source exists in this database today (phases A, B and D).
+--   2. backlog.v_backlog_violations: one row per violation, with the codes of section 7 whose source exists in this database today (phases A, B and D:
+--      view v_violations_d; a later phase adds its own v_violations_<phase> and fn_rebuild_violations() unions them).
 --      The Phase C codes (V-RETRO, V-WORK-ON-CLOSED, V-HOOK-BYPASS, V-GATE-*) join the view with Phase C; V-STALE-READ lives in `fondos` (FND-0332).
 --   3. backlog.v_backlog_lean_metrics: lead time from the recorded columns; cycle time and RFD wait from LIVE status events only (BACKFILL excluded).
 --   4. backlog.v_impact_closure: which OPEN tickets a change in a ticket can reach, through confirmed links, up to 5 levels.
@@ -134,7 +135,9 @@ SELECT m.group_id, c.node, 'ADD', 'member of the RELEASE_WITH component migrated
   FROM made m JOIN comp c ON 'TRAIN-' || c.root = m.name;
 
 -- 2. Violations: one row per violation. Every source below exists after steps A-1 and B; each code is the one of section 7 of the specification.
-CREATE OR REPLACE VIEW backlog.v_backlog_violations AS
+-- Each phase owns one view named v_violations_<phase> with the columns (code, phase, action_point_id, detail, event_ts); backlog.v_backlog_violations
+-- is their UNION ALL, rebuilt by backlog.fn_rebuild_violations() whenever a phase adds or removes its view (so no phase copies another's SQL).
+CREATE OR REPLACE VIEW backlog.v_violations_d AS
 -- V-00: a direct write of a governed column outside the routines (the shadow trigger of step A-1).
 SELECT 'V-00'::text AS code, 'A'::text AS phase, r.action_point_id,
        format('direct %s by %s (%s)', r.op, r.db_user, COALESCE(r.app_name, 'no application name')) AS detail, r.event_ts
@@ -202,6 +205,30 @@ SELECT 'V-HOLD-OPEN', 'D', h.action_point_id,
   FROM backlog.v_open_hold h
  WHERE h.event_ts < clock_timestamp() - interval '48 hours';
 
+-- The catalogue view: the union of every backlog.v_violations_* present, in name order, except `p_exclude` (a rollback rebuilds the union without its
+-- own view before dropping it). Run by the owner's DDL (not SECURITY DEFINER, not granted).
+CREATE OR REPLACE FUNCTION backlog.fn_rebuild_violations(p_exclude text DEFAULT NULL) RETURNS void
+LANGUAGE plpgsql SET search_path = pg_catalog, backlog AS $$
+DECLARE v_sql text;
+BEGIN
+    SELECT string_agg(format('SELECT code, phase, action_point_id, detail, event_ts FROM backlog.%I', c.relname), ' UNION ALL ' ORDER BY c.relname)
+      INTO v_sql
+      FROM pg_class c
+     WHERE c.relnamespace = 'backlog'::regnamespace AND c.relkind = 'v' AND c.relname LIKE 'v\_violations\_%'
+       AND c.relname IS DISTINCT FROM p_exclude;
+    IF v_sql IS NULL THEN
+        DROP VIEW IF EXISTS backlog.v_backlog_violations;
+        RETURN;
+    END IF;
+    EXECUTE 'CREATE OR REPLACE VIEW backlog.v_backlog_violations AS ' || v_sql;
+    ALTER VIEW backlog.v_backlog_violations OWNER TO backlog_owner;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'backlog_writer') THEN
+        GRANT SELECT ON backlog.v_backlog_violations TO backlog_writer;
+    END IF;
+END;
+$$;
+REVOKE EXECUTE ON FUNCTION backlog.fn_rebuild_violations(text) FROM PUBLIC;
+
 -- 3. Lean metrics, one row per ticket, in hours. Lead time uses the recorded creation_ts / closure_ts (valid for history). Cycle time (first move to
 -- IN_PROGRESS to the last closure) and RFD wait (last READY_FOR_DEPLOY to the last closure) use LIVE status events only: a BACKFILL event carries
 -- the last known state, not the time of a transition, so a ticket with no LIVE events gets NULL rather than an invented number.
@@ -254,15 +281,16 @@ ALTER TABLE backlog.group_tag    OWNER TO backlog_owner;
 ALTER TABLE backlog.group_member OWNER TO backlog_owner;
 ALTER VIEW backlog.v_group_member         OWNER TO backlog_owner;
 ALTER VIEW backlog.v_group_status         OWNER TO backlog_owner;
-ALTER VIEW backlog.v_backlog_violations   OWNER TO backlog_owner;
+ALTER VIEW backlog.v_violations_d         OWNER TO backlog_owner;
 ALTER VIEW backlog.v_backlog_lean_metrics OWNER TO backlog_owner;
 ALTER VIEW backlog.v_impact_closure       OWNER TO backlog_owner;
+SELECT backlog.fn_rebuild_violations();                 -- v_backlog_violations = v_violations_d (plus any later phase's view already present)
 REVOKE EXECUTE ON FUNCTION backlog.sp_create_group(text, text, text, text), backlog.sp_group_member(text, text, text, text, text) FROM PUBLIC;
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'backlog_writer') THEN
         GRANT EXECUTE ON FUNCTION backlog.sp_create_group(text, text, text, text), backlog.sp_group_member(text, text, text, text, text) TO backlog_writer;
-        GRANT SELECT ON backlog.group_tag, backlog.group_member, backlog.v_group_member, backlog.v_group_status, backlog.v_backlog_violations,
+        GRANT SELECT ON backlog.group_tag, backlog.group_member, backlog.v_group_member, backlog.v_group_status, backlog.v_violations_d,
                          backlog.v_backlog_lean_metrics, backlog.v_impact_closure TO backlog_writer;
     END IF;
 END $$;
