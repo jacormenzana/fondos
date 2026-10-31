@@ -7,8 +7,8 @@ name: Auto PR
 # A pull request that changes .github/workflows/** cannot be merged with the built-in GITHUB_TOKEN (GitHub forbids it), so it gets the label `needs-owner` and NO auto-merge.
 # `publish/**` branches are not handled here (the owner's own flow). Untrusted values (branch name, commit text) reach the script through the environment or git, never through ${{ }} in `run:`.
 #
-# One-time repository settings (owner action O-2): Settings > Actions > General > "Allow GitHub Actions to create and approve pull requests";
-# Settings > General > "Allow auto-merge" and "Automatically delete head branches".
+# One-time repository settings (owner action O-V3-2, steps in doc/especificacion/ACTION_PLAN_BACKLOG_V3.md): Settings > Actions > General > "Allow GitHub Actions to create and approve
+# pull requests"; Settings > General > "Allow auto-merge" and "Automatically delete head branches".
 
 on:
   push:

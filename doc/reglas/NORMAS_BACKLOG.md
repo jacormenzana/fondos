@@ -351,7 +351,7 @@ DDL `db/pg_backlog/95_attest.sql`, aplicado por el propietario con `migrate_back
 dispara `.github/workflows/auto-pr.yml`: abre el pull request contra `master` si no hay uno abierto y activa la fusión automática, de modo que GitHub fusiona cuando pasan las comprobaciones
 obligatorias de la protección (que no cambia). El propietario conserva el veto: cierra el pull request o desactiva la fusión automática. Un pull request que modifica `.github/workflows/**`
 no puede fusionarse con el `GITHUB_TOKEN` integrado: recibe la etiqueta `needs-owner` y **no** se activa la fusión automática. Las ramas `publish/**` no se tratan aquí. Ajustes únicos del
-repositorio (acción O-2): permitir que Actions cree pull requests, permitir la fusión automática y borrar las ramas fusionadas. (b) `backlog-gate` ejecuta `verify_attestation.py --advisory`:
+repositorio (acción O-V3-2, pasos en `ACTION_PLAN_BACKLOG_V3.md`): permitir que Actions cree pull requests, permitir la fusión automática y borrar las ramas fusionadas. (b) `backlog-gate` ejecuta `verify_attestation.py --advisory`:
 una atestación ausente, un commit no cubierto, un hash de árbol distinto o una pareja sin decidir son **avisos** (`::warning::`), no fallos, y nadie firma en cada push; una firma que **no
 verifica** sigue fallando. `backlog-gate` no es una comprobación obligatoria de `master` (`github_protect_master.py --with-backlog-gate` queda obsoleto). La garantía descansa en la detección
 dentro de una sincronización y en la retención (*hold*) del ticket (`PROPUESTA` §10.1: «detectado y retenido», nunca «aplicado»). Las viñetas siguientes describen el mecanismo firmado, que

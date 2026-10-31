@@ -205,11 +205,50 @@ The view `v_ticket_module` gives the current set.
 ## Owner actions (the only manual steps left)
 | # | Action | When |
 |---|---|---|
-| O-1 | Run the ticket bootstrap script | before W1 |
-| O-2 | GitHub settings: Actions may create PRs; allow auto-merge; delete merged branches | W1 |
-| O-3 | Apply `--phase autonomy` (dry run, then apply) and set the passwords for `backlog_agent` / `backlog_autopilot` plus their `.env` DSNs | W2/W3 |
-| O-4 | Review the 20 SHADOW decisions, then set `BACKLOG_AUTOPILOT_MODE="ON"` (merged automatically like any PR) | W3 |
-| O-5 | Pending, already open: `--phase relations` (FND-0350 drift), A-2 when the counter reaches 50 | any time |
+The labels carry the `V3` prefix because `PROPUESTA_BACKLOG_V2.md` §8 already uses `O-1`..`O-9` for other actions.
+
+| # | Action | When |
+|---|---|---|
+| O-V3-1 | Run the ticket bootstrap script | before W1 |
+| O-V3-2 | GitHub settings: Actions may create PRs; allow auto-merge; delete merged branches | W1 |
+| O-V3-3 | Apply `--phase autonomy` (dry run, then apply) and set the passwords for `backlog_agent` / `backlog_autopilot` plus their `.env` DSNs | W2/W3 |
+| O-V3-4 | Review the 20 SHADOW decisions, then set `BACKLOG_AUTOPILOT_MODE="ON"` (merged automatically like any PR) | W3 |
+| O-V3-5 | Pending, already open: `--phase relations` (FND-0350 drift), A-2 when the counter reaches 50 | any time |
+
+### Step by step
+
+Run them in the order of the "When" column. Each step says what to do, how to know it worked, and what happens if it is skipped.
+
+**O-V3-1 — Ticket bootstrap** (the script is not written yet; the session will provide it and say so)
+1. In your own terminal (a real console), set `FONDOS_ACTOR=human:<your login>` and `FONDOS_BACKLOG_PG_DSN_HUMAN`.
+2. Run the script as a dry run, read the list of tickets and links it would create, then run it with `--apply` and type the live-write confirmation phrase.
+3. Done when: `python scripts/audit/backlog_links.py --for <epic id>` lists the six workstream tickets.
+4. If skipped: W1 still works, but the work is not registered in the backlog.
+
+**O-V3-2 — GitHub settings** (repository admin, in the GitHub web UI)
+1. Settings → Actions → General → "Workflow permissions": tick **Allow GitHub Actions to create and approve pull requests**, then Save.
+2. Settings → General → "Pull Requests": tick **Allow auto-merge**.
+3. Same place: tick **Automatically delete head branches** (optional housekeeping).
+4. Check the two General settings without any token: the repository's public API object shows `"allow_auto_merge": true` and `"delete_branch_on_merge": true` (`GET /repos/<owner>/<repo>`). The first setting needs admin rights to read, so confirm it by the test in step 5.
+5. Test: after the owner pushes a `docs/` or `chore/` branch, the Actions tab shows an "Auto PR" run, a PR exists, and its merge box says "Auto-merge enabled".
+6. The first PR, the one that adds `auto-pr.yml`, changes `.github/workflows/**`, so it gets the `needs-owner` label and no auto-merge: merge that one by hand once its four checks are green. Every later PR that does not touch the workflows merges by itself.
+7. If skipped: with setting 1 off, no PR is opened; with setting 2 off, the PR opens but the run warns "could not enable auto-merge" and you merge by hand, as today.
+8. Veto at any time: close the PR, or press "Disable auto-merge" on it.
+
+**O-V3-3 — Apply the autonomy DDL** (available when W2 ships)
+1. Review the commit, then run `migrate_backlog_v2.py --phase autonomy` as a dry run from the owner terminal.
+2. Run it with `--apply`. It creates the roles `backlog_agent` and `backlog_autopilot` without passwords.
+3. Set a password for each role, and put the two DSNs in the git-ignored `.env` as `FONDOS_BACKLOG_PG_DSN_AGENT` and `FONDOS_BACKLOG_PG_DSN_AUTOPILOT`.
+4. Done when `python scripts/ops/backlog_drift.py` prints `no drift` and `backlog_phase_a_acceptance.py --verify autonomy` gives `ACCEPTED`.
+
+**O-V3-4 — Switch the autopilot on** (after W3)
+1. Read the 20 "would move X to Y, evidence e" notes the autopilot wrote in SHADOW mode.
+2. If they match your judgement, change `BACKLOG_AUTOPILOT_MODE` to `"ON"` in `shared/config.py` (a normal PR, merged automatically).
+3. If a decision was wrong, say which one: the rule is corrected and the 20 are run again.
+
+**O-V3-5 — Already open from v2**
+1. `FND-0350` / drift: dry run, then `migrate_backlog_v2.py --phase relations --apply`, then `backlog_drift.py` must print `no drift`.
+2. A-2: only when the counter reaches 50 (20 now): `--phase revoke`.
 
 ## Critical files
 - `shared/backlog_client.py`: allow-list, `dsn_for_operation`, routing by actor kind.
