@@ -361,6 +361,28 @@ def collect_backlog_violations() -> dict:
         return {"error": f"{type(exc).__name__}: {exc}"}
 
 
+def collect_collision_queue() -> dict:
+    """The collision gate's undecided pairs (Backlog v2 Phase C slice 3, FND-0334; NORMAS_BACKLOG.md 4.6): {'applied': False} until the owner applies `--phase collision`, else
+    {'applied': True, 'pairs': [{a, b, age_hours, level}]} oldest first. Read-only; never raises (the backlog is another database: its outage must not cost the report)."""
+    try:
+        sys.path.insert(0, str(ROOT))
+        from shared import backlog_client
+        if not backlog_client.collision_store_present():
+            return {"applied": False}
+        rows = backlog_client.gate_queue()
+        return {"applied": True, "pairs": [{"a": r["a"], "b": r["b"], "age_hours": float(r["age_hours"]), "level": r["level"]} for r in rows]}
+    except Exception as exc:                                      # noqa: BLE001
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
+def collision_alerta_line(cq: dict) -> str:
+    """The [ALERTA] line that heads the report when a collision pair has been undecided for 96 hours or more (nothing relaxes when the queue ages), else ''. Pure."""
+    old = [p for p in (cq or {}).get("pairs", []) if p.get("level") == "ALERTA"]
+    if not old:
+        return ""
+    return f"[ALERTA] {len(old)} pareja(s) de colision sin decidir desde hace 96 h o mas (la mas antigua {old[0]['a']} / {old[0]['b']}, {old[0]['age_hours']:.0f} h): gate_adjudicate.py --list"
+
+
 def collect_stale_reads(conn) -> dict:
     """V-STALE-READ (FND-0332): the ticket statuses stored with the flags of the latest telemetry cycle that were read before the ticket last
     moved. {'applied': False} until the owner adds control.cycle_flag.ap_status_read_ts. Read-only; never raises."""
@@ -583,6 +605,11 @@ def attention_items(report: dict, previous: dict | None) -> list:
         ex = ", ".join(f"{s['ap_id']} guardado {s['stored']}, ahora {s['current']}" for s in sr["stale"][:3])
         items.append(f"V-STALE-READ: {len(sr['stale'])} estado(s) de ticket guardados con los flags del ciclo se leyeron antes del ultimo "
                      f"cambio del ticket ({ex}); decidir con el estado actual del backlog, no con la copia")
+    cq = report.get("collision_queue") or {}                # absent in reports written before this check (FND-0334)
+    aten = [p for p in cq.get("pairs", []) if p["level"] in ("ATENCION", "ALERTA")]
+    if aten:
+        items.append(f"{len(aten)} pareja(s) de colision sin decidir desde hace 48 h o mas (la mas antigua {aten[0]['a']} / {aten[0]['b']}, "
+                     f"{aten[0]['age_hours']:.0f} h): el propietario las decide con gate_adjudicate.py --list")
     gov = report.get("governance") or {}                    # absent in reports written before this check (FND-0251)
     for line in gov.get("residual_attention", []):
         items.append(line)
@@ -750,9 +777,20 @@ def render_text(report: dict, previous: dict | None, items: list) -> str:
         else:
             L += [f"Lecturas de estado del backlog: {len(sr['stale'])} de {sr['checked']} leidas antes del ultimo cambio del ticket "
                   f"(V-STALE-READ); {sr['no_read_ts']} sin hora de lectura, {sr['gone']} tickets inexistentes"]
+    cq = report.get("collision_queue")
+    if cq:
+        if cq.get("error"):
+            L += [f"Cola de colisiones: no disponible ({cq['error']})"]
+        elif not cq.get("applied"):
+            L += ["Cola de colisiones: tramo 3 sin aplicar (migrate_backlog_v2.py --phase collision)"]
+        else:
+            n = cq["pairs"]
+            L += [f"Cola de colisiones: {len(n)} pareja(s) sin decidir ({sum(1 for p in n if p['level'] == 'ATENCION')} de 48 h o mas, "
+                  f"{sum(1 for p in n if p['level'] == 'ALERTA')} de 96 h o mas)"]
     L += ["-" * 60]
     L += [f"[ATENCION] {i}" for i in items] if items else ["Sin puntos de atencion."]
-    return "\n".join(L)
+    alerta = collision_alerta_line(cq or {})
+    return "\n".join(([alerta] if alerta else []) + L)                 # an [ALERTA] is the FIRST line of the report
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────────────────────────
@@ -790,6 +828,7 @@ def main(argv: list | None = None) -> int:
             report["backlog_links"] = collect_backlog_links()
             report["backlog_violations"] = collect_backlog_violations()
             report["stale_reads"] = collect_stale_reads(conn)
+            report["collision_queue"] = collect_collision_queue()
             report["governance"] = collect_governance(conn, today)
             report["macro_freshness"] = collect_macro_freshness(conn, today)
             report["sovereign_stress"] = collect_sovereign_stress(conn)

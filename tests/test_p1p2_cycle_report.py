@@ -313,6 +313,39 @@ def test_collect_backlog_violations_never_raises(monkeypatch):
     assert cr.collect_backlog_violations() == {"error": "RuntimeError: down"}
 
 
+def test_collision_queue_lines_attention_and_the_alerta_first_line():
+    """FND-0334 slice 3: the undecided collision pairs in the cycle report."""
+    pairs = [{"a": "FND-0001", "b": "FND-0002", "age_hours": 100.0, "level": "ALERTA"}, {"a": "FND-0003", "b": "FND-0004", "age_hours": 50.0, "level": "ATENCION"},
+             {"a": "FND-0005", "b": "FND-0006", "age_hours": 3.0, "level": "OK"}]
+    rep = _report(collision_queue={"applied": True, "pairs": pairs})
+    text = cr.render_text(rep, None, [])
+    assert text.splitlines()[0].startswith("[ALERTA] 1 pareja(s) de colision sin decidir desde hace 96 h o mas (la mas antigua FND-0001 / FND-0002, 100 h)")      # the first line
+    assert "Cola de colisiones: 3 pareja(s) sin decidir (1 de 48 h o mas, 1 de 96 h o mas)" in text
+    items = cr.attention_items(rep, None)
+    assert any(i.startswith("2 pareja(s) de colision sin decidir desde hace 48 h o mas") for i in items)
+    quiet = _report(collision_queue={"applied": True, "pairs": [pairs[2]]})
+    assert not cr.render_text(quiet, None, []).startswith("[ALERTA]") and not any("colision" in i for i in cr.attention_items(quiet, None))
+    assert "Cola de colisiones: 1 pareja(s) sin decidir (0 de 48 h o mas, 0 de 96 h o mas)" in cr.render_text(quiet, None, [])
+    assert "Cola de colisiones: tramo 3 sin aplicar" in cr.render_text(_report(collision_queue={"applied": False}), None, [])
+    assert "Cola de colisiones: no disponible (X: y)" in cr.render_text(_report(collision_queue={"error": "X: y"}), None, [])
+    assert "Cola de colisiones" not in cr.render_text(_report(), None, [])                         # old reports without the key are tolerated
+    assert cr.collision_alerta_line({}) == "" and cr.collision_alerta_line({"applied": False}) == ""
+
+
+def test_collect_collision_queue_never_raises_and_reports_an_unapplied_store(monkeypatch):
+    from shared import backlog_client
+    monkeypatch.setattr(backlog_client, "collision_store_present", lambda **_k: False)
+    assert cr.collect_collision_queue() == {"applied": False}
+    monkeypatch.setattr(backlog_client, "collision_store_present", lambda **_k: True)
+    monkeypatch.setattr(backlog_client, "gate_queue", lambda **_k: [{"a": "A", "b": "B", "age_hours": 5, "level": "OK", "evidence": "e", "proposed_ts": None}])
+    assert cr.collect_collision_queue() == {"applied": True, "pairs": [{"a": "A", "b": "B", "age_hours": 5.0, "level": "OK"}]}
+
+    def boom(**_k):
+        raise RuntimeError("down")
+    monkeypatch.setattr(backlog_client, "collision_store_present", boom)
+    assert cr.collect_collision_queue() == {"error": "RuntimeError: down"}
+
+
 def test_stale_read_line_and_attention_item():
     """FND-0332: V-STALE-READ in the cycle report."""
     st = [{"ap_id": "FND-0001", "stored": "OPEN", "current": "CLOSED", "read_ts": "x", "event_ts": "y"}]
