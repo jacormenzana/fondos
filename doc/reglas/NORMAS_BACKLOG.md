@@ -371,6 +371,18 @@ DDL `db/pg_backlog/95_attest.sql`, aplicado por el propietario con `migrate_back
   solo lectura y exportarlo solo en su terminal; (4) tras el primer push con CI verde, añadir `backlog-gate` a las comprobaciones obligatorias de `master`
   (`scripts/ops/github_protect_master.py` describe y verifica el resto de la regla); (5) aplicar `--phase attest`.
 
+### §4.8. Verificación de aceptación de la fase C (FND-0334)
+
+`python scripts/audit/backlog_phase_c_acceptance.py --verify hook|collision|attest|all` comprueba, **solo con lectura**, que lo que el propietario aplicó es exactamente lo diseñado, y deja
+la evidencia en `out/audit/fnd0334_acceptance_<fase>_<UTC>.txt` (sale con 0 si todo pasa, 1 si algo falla, 2 si no hay conexión). Úsese tras cada `--phase hook|collision|attest --apply`.
+Para cada fase: existen las tablas, vistas y rutinas (las listas son las de `migrate_backlog_v2.py`: una sola fuente); cada tabla es de `backlog_owner` y lleva el disparador de solo-añadir
+**habilitado** (uno deshabilitado es un fallo); cada rutina privilegiada es `SECURITY DEFINER`, de `backlog_owner`, con `search_path` fijo y no ejecutable por `PUBLIC`. Los accesos acotados
+son acotados: `backlog_gate` puede entrar, no es superusuario, no crea roles ni bases, tiene su límite de conexiones y de tiempo, no pertenece a otro rol, **no tiene ningún privilegio sobre
+ninguna tabla o vista de todo el esquema `backlog`** y ejecuta exactamente sus rutinas y ninguna de las privilegiadas; `backlog_adjudicator` (el rol lo crea el propietario, no esta
+herramienta) no es superusuario, ejecuta solo la adjudicación y la lectura de las parejas sin decidir, y no escribe en ninguna tabla; el acceso compartido lee y no escribe directamente,
+puede fijar un modo y **no** adjudicar. Una fase sin aplicar falla sus comprobaciones de existencia: nunca pasa en silencio. La contraseña de un rol no es legible sin ser superusuario: que
+el propietario la fijó lo demuestra que `gate_mode.py` o `gate_adjudicate.py` se conecten.
+
 ## §5. Protocolo de absorción de alcance
 
 Cuando un enlace `OVERLAPS` lleva nota `absorbs`, el ticket que absorbe **debe**:
