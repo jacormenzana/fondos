@@ -21,12 +21,18 @@ Auto-forward (switch BACKLOG_AUTO_FORWARD_ENABLED). For a commit recorded for th
 IN_PROGRESS through shared.backlog_client.transition() as system:sync, the commit as evidence. Never from BLOCKED or DEFERRED, never backward, never
 from a SUBJECT mention, never again for a commit already recorded (a ticket a person moved back stays where they put it). Closures stay manual.
 
+Commit-msg gate (slice 2, NORMAS_BACKLOG.md 4.5). Each commit made after BACKLOG_HOOK_EPOCH that cites a ticket is judged by its `Backlog-Gate:` trailer (shared/backlog_gate.py):
+checked (the nonce is in backlog.gate_check and names the commit's tree), pending (`offline`: the hook could not reach the backlog, no penalty) or BYPASS (trailer missing, unknown
+nonce, tree mismatch). A new bypass is recorded in backlog.hook_bypass (violation V-HOOK-BYPASS) and raises a hold on the ticket. With the epoch empty the gate is not armed:
+the run only reports the trailers it sees. Merge commits are exempt.
+
 Exit codes: 0 ok (or dry run), 1 a write failed (what was written before it stays: every write is idempotent), 2 usage error (git failed, no backlog DSN,
 or --apply before the owner applied `migrate_backlog_v2.py --phase sync`).
 """
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess
 import sys
@@ -38,25 +44,30 @@ ACTOR = "system:sync"
 RC_OK, RC_FAILED, RC_USAGE = 0, 1, 2
 FORWARD_FROM = ("OPEN", "TODO")
 
-_ID = re.compile(r"\bFND-(\d{4})\b")
-_LOOSE = re.compile(r"(?i)\bfnd[-_ ]?\d{1,5}\b")
-_FMT = "%H%x1f%aI%x1f%s%x1f%(trailers:key=Refs,valueonly,separator=%x2C)%x1e"
+sys.path.insert(0, str(ROOT))
+from shared import backlog_gate as gate  # noqa: E402  (the pure half of the commit-msg gate: one reading of a commit message for the hook and for this sync)
+
+_ID, _LOOSE = gate.ID, gate.LOOSE
+_FMT = ("%H%x1f%aI%x1f%s%x1f%(trailers:key=Refs,valueonly,separator=%x2C)%x1f%T%x1f%P%x1f"
+        "%(trailers:key=Backlog-Gate,valueonly,separator=%x2C)%x1e")
 
 
 # ── pure ──────────────────────────────────────────────────────────────────────────────────────────
 
 def parse_log(text: str) -> list:
-    """Commits of `git log --format=_FMT` output: [{'sha', 'author_ts', 'subject', 'refs', 'mentions', 'malformed'}] (newest first, as git prints)."""
+    """Commits of `git log --format=_FMT` output: [{'sha', 'author_ts', 'subject', 'refs', 'mentions', 'malformed', 'tree', 'parents', 'gate'}] (newest first, as git prints).
+    'gate' is the value of the last Backlog-Gate trailer (None = absent); 'parents' is the number of parents."""
     out = []
     for rec in text.split("\x1e"):
         rec = rec.strip("\r\n")
         if not rec:
             continue
-        sha, ts, subject, refs = (rec.split("\x1f") + ["", "", "", ""])[:4]
+        sha, ts, subject, refs, tree, parents, gates = (rec.split("\x1f") + [""] * 7)[:7]
         well = {f"FND-{m}" for m in _ID.findall(refs)} | {f"FND-{m}" for m in _ID.findall(subject)}
         malformed = sorted({t for t in _LOOSE.findall(f"{subject} {refs}") if not re.fullmatch(r"FND-\d{4}", t)})
         out.append({"sha": sha.strip(), "author_ts": datetime.fromisoformat(ts.strip()), "subject": subject,
-                    "refs": sorted({f"FND-{m}" for m in _ID.findall(refs)}), "mentions": sorted(well), "malformed": malformed})
+                    "refs": sorted({f"FND-{m}" for m in _ID.findall(refs)}), "mentions": sorted(well), "malformed": malformed,
+                    "tree": tree.strip(), "parents": len(parents.split()), "gate": gates.split(",")[-1].strip() or None})
     return out
 
 
@@ -102,6 +113,7 @@ def main(argv: list | None = None) -> int:
     ap.add_argument("--apply", action="store_true", help="record the events and run the auto-forward (default: dry run)")
     args = ap.parse_args(argv)
     sys.path.insert(0, str(ROOT))
+    os.environ["FONDOS_ACTOR"] = ACTOR      # one process, one identity (owner order 2026-10-28): this process IS the system sync, whoever started it
     import shared.config as cfg  # noqa: F401  (loads .env: FONDOS_BACKLOG_PG_DSN)
     from shared import backlog_client as bc
 
@@ -118,6 +130,15 @@ def main(argv: list | None = None) -> int:
         print(f"backlog unreachable: {type(exc).__name__}", file=sys.stderr)
         return RC_USAGE
     p = plan(commits, statuses, recorded, cfg.BACKLOG_AUTO_FORWARD_ENABLED)
+    try:
+        epoch = gate.parse_epoch(cfg.BACKLOG_HOOK_EPOCH)
+        hook_applied = bc.hook_store_present()
+        wanted = [c["gate"] for c in commits if c["gate"] and c["gate"] != gate.OFFLINE]
+        vs = gate.verdicts(commits, bc.gate_checks(wanted) if hook_applied else {}, epoch, set(statuses))
+    except Exception as exc:                                        # a bad epoch, an unreachable store
+        print(f"commit-msg gate: {type(exc).__name__}: {str(exc)[:200]}", file=sys.stderr)
+        return RC_USAGE
+    p["bypass"] = [(c, ap, why) for c, ap, v, why in vs if v == gate.BYPASS] if hook_applied else []
     n_refs = sum(1 for _, _, s in p["new"] if s == "REFS")
     print(f"{args.rev}: {len(commits)} commits, {sum(1 for c in commits if c['mentions'])} cite a ticket; "
           f"new events {len(p['new'])} ({n_refs} REFS, {len(p['new']) - n_refs} SUBJECT), already recorded {p['already']}")
@@ -127,22 +148,42 @@ def main(argv: list | None = None) -> int:
         print(f"malformed ticket tokens: {len(p['malformed'])} (e.g. {', '.join(f'{s[:8]} {t!r}' for s, t in p['malformed'][:5])})")
     print(f"auto-forward ({'ON' if cfg.BACKLOG_AUTO_FORWARD_ENABLED else 'OFF'}): "
           + (", ".join(f"{a} {statuses[a]} -> IN_PROGRESS by {c['sha'][:8]}" for a, c in p["forward"]) or "nothing to move"))
+    print(gate_report(vs, epoch, hook_applied))
     if not applied:
         print("the sync store is not applied (owner: python scripts/ops/migrate_backlog_v2.py --phase sync): every event above is new.")
     if not args.apply:
-        print("\nDRY RUN: nothing written. --apply records the events and runs the auto-forward.")
+        print("\nDRY RUN: nothing written. --apply records the events, runs the auto-forward and records the bypassed commits (hold on the ticket).")
         return RC_OK
     if not applied:
         print("REFUSED: --apply needs the sync store (migrate_backlog_v2.py --phase sync). Nothing was written.", file=sys.stderr)
         return RC_USAGE
-    done = {"written": 0, "moved": 0}
+    refusal = bc.require_live_write_cli()                           # owner order 2026-10-29: only a person at a terminal writes to the live backlog; nothing is written before this
+    if refusal is not None:
+        return refusal
+    done = {"written": 0, "moved": 0, "bypass": 0}
     try:
         apply_plan(p, done)
     except Exception as exc:
-        print(f"FAILED after {done['written']} event(s) and {done['moved']} move(s): {type(exc).__name__}: {str(exc)[:300]}", file=sys.stderr)
+        print(f"FAILED after {done['written']} event(s), {done['moved']} move(s) and {done['bypass']} bypass(es): {type(exc).__name__}: {str(exc)[:300]}", file=sys.stderr)
         return RC_FAILED
-    print(f"\nAPPLIED: {done['written']} event(s) recorded, {done['moved']} ticket(s) moved to IN_PROGRESS.")
+    print(f"\nAPPLIED: {done['written']} event(s) recorded, {done['moved']} ticket(s) moved to IN_PROGRESS, {done['bypass']} new bypass(es) recorded.")
     return RC_OK
+
+
+def gate_report(vs: list, epoch, hook_applied: bool) -> str:
+    """One line on the commit-msg gate: the verdicts per commit (a commit citing several tickets counts once, by its worst verdict)."""
+    if epoch is None:
+        seen = sum(1 for c in {c["sha"]: c for c, _, _, _ in vs}.values() if c.get("gate"))
+        return f"commit-msg gate: NOT ARMED (BACKLOG_HOOK_EPOCH is empty): {seen} commit(s) carry a Backlog-Gate trailer; no bypass is recorded."
+    worst: dict = {}
+    order = {gate.EXEMPT: 0, gate.CHECKED: 1, gate.PENDING: 2, gate.BYPASS: 3}
+    for c, _, v, _ in vs:
+        if order[v] >= order.get(worst.get(c["sha"]), -1):
+            worst[c["sha"]] = v
+    n = {v: sum(1 for x in worst.values() if x == v) for v in order}
+    tail = "" if hook_applied else " -- the hook store is not applied (owner: migrate_backlog_v2.py --phase hook): nothing is recorded"
+    return (f"commit-msg gate (armed since {epoch.isoformat()}): checked {n[gate.CHECKED]}, pending (offline) {n[gate.PENDING]}, "
+            f"BYPASS {n[gate.BYPASS]}, exempt {n[gate.EXEMPT]}{tail}")
 
 
 def apply_plan(p: dict, done: dict, conn=None) -> dict:
@@ -156,6 +197,8 @@ def apply_plan(p: dict, done: dict, conn=None) -> dict:
         bc.transition(ap_id, "IN_PROGRESS", session_id=session, actor=ACTOR, conn=conn,
                       comment=f"auto-forward: commit {c['sha'][:12]} cites this ticket in a Refs: trailer ({c['subject'][:160]})")
         done["moved"] += 1
+    for c, ap_id, reason in p.get("bypass", []):                    # a new one raises a hold on the ticket (sp_record_hook_bypass)
+        done["bypass"] = done.get("bypass", 0) + bc.record_hook_bypass(c["sha"], ap_id, reason, c["author_ts"], actor=ACTOR, conn=conn)
     return done
 
 

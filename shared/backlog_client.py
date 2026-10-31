@@ -1091,6 +1091,42 @@ def close_conditions(*, conn=None) -> Optional[dict]:
         return out
 
 
+HOOK_REASONS = ("TRAILER_MISSING", "UNKNOWN_NONCE", "TREE_MISMATCH")     # Phase C slice 2 (FND-0334): db/pg_backlog/80_hook.sql
+
+
+def hook_store_present(*, conn=None) -> bool:
+    """True when the owner has applied Phase C slice 2 (backlog.gate_check, backlog.hook_bypass and the routines)."""
+    with _session(conn) as c:
+        return bool(c.execute("SELECT to_regclass('backlog.gate_check') IS NOT NULL AND to_regclass('backlog.hook_bypass') IS NOT NULL "
+                              "AND to_regprocedure('backlog.sp_gate_check(text,text[],text)') IS NOT NULL "
+                              "AND to_regprocedure('backlog.sp_record_hook_bypass(text,text,text,timestamptz,text)') IS NOT NULL").fetchone()[0])
+
+
+def gate_check(tree_hash: str, ap_ids: list, *, actor: Optional[str] = None, conn=None) -> str:
+    """One run of the commit-msg hook that reached the backlog (backlog.sp_gate_check): returns the nonce bound to `tree_hash`."""
+    who = resolve_actor(actor)
+    with _session(conn, human=who.startswith("human:"), write=True) as c:
+        return str(c.execute("SELECT backlog.sp_gate_check(%s, %s::text[], %s)", (tree_hash, list(ap_ids), who)).fetchone()[0])
+
+
+def gate_checks(nonces: list, *, conn=None) -> dict:
+    """{nonce: tree_hash} of the given nonces that exist in backlog.gate_check (what backlog_sync.py compares a commit's trailer with)."""
+    if not nonces:
+        return {}
+    with _session(conn) as c:
+        return {r[0]: r[1] for r in c.execute("SELECT nonce, tree_hash FROM backlog.gate_check WHERE nonce = ANY(%s)", (list(nonces),)).fetchall()}
+
+
+def record_hook_bypass(sha: str, ap_id: str, reason: str, fact_ts: datetime, *, actor: Optional[str] = None, conn=None) -> bool:
+    """Record a commit that cites `ap_id` without a valid gate trailer (backlog.sp_record_hook_bypass); a new one raises a hold on the ticket unless it is CLOSED.
+    True when it was new, False when already recorded."""
+    if reason not in HOOK_REASONS:
+        raise ValueError(f"reason must be one of {HOOK_REASONS}, got {reason!r}")
+    who = resolve_actor(actor)
+    with _session(conn, human=who.startswith("human:"), write=True) as c:
+        return bool(c.execute("SELECT backlog.sp_record_hook_bypass(%s, %s, %s, %s, %s)", (sha, ap_id, reason, fact_ts, who)).fetchone()[0])
+
+
 def add_close_condition(ap_id: str, probe_kind: str, args: list, reason: str, *, actor: Optional[str] = None, conn=None) -> int:
     """Add one executable closing condition to a ticket (append-only; refused when the same condition is already active)."""
     who = resolve_actor(actor)

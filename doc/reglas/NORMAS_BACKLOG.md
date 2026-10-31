@@ -243,8 +243,40 @@ conserva `ops_event` y `close_condition`). Especificación: `PROPUESTA_BACKLOG_V
   los tickets cuyas sondas pasan todas (cerrar sigue siendo una decisión). Hasta aplicar la fase, la sonda usa `SPEC`.
 - **Flujo de estado.** `v_status_feed`: cada evento de estado con su hora, para los consumidores de `fondos` (lectura desde una marca:
   `event_id > n`).
-- **Pendiente de los tramos 2 a 4:** el gancho `commit-msg` (validación de ids, avance en el momento del commit, sello `Backlog-Gate`,
-  `V-HOOK-BYPASS`), la regla de colisión con adjudicación y modos, la atestación firmada y el CI.
+- **Pendiente de los tramos 3 y 4:** la regla de colisión con adjudicación y modos, la atestación firmada y el CI. El gancho `commit-msg`
+  (tramo 2) está en §4.5.
+
+### §4.5. El gancho `commit-msg` y la detección de elusión (fase C, tramo 2, FND-0334)
+
+DDL `db/pg_backlog/80_hook.sql`, aplicado por el propietario con `migrate_backlog_v2.py --phase hook` (necesita el tramo 1 y la fase B; la
+reversión conserva `gate_check` y `hook_bypass` y **no libera** ningún bloqueo). Especificación: `PROPUESTA_BACKLOG_V2.md` §6.4.1 y §6.4.6.
+Lectura común del mensaje (gancho y sincronización): `shared/backlog_gate.py`.
+
+- **Instalación.** `bash scripts/audit/commit-msg.sh`, una vez por clon (mismo patrón que `pre-commit.sh`). Instala `commit-msg`, que
+  ejecuta `scripts/audit/commit_msg_gate.py`, y `pre-rebase`, que se niega a reorganizar `master`. Un `git commit --no-verify` se salta ambos.
+- **Qué hace el gancho**, solo en un commit cuyo asunto o tráiler `Refs:` cita un ticket (los demás no tocan la base de datos):
+  (1) un token mal formado (`fnd0193`, `FND_0193`, `FND-193`) **rechaza el commit** —es un error de escritura que se corrige solo— y un id
+  que no existe en el backlog se avisa; (2) comprobación de colisión: hueco hasta el tramo 3; (3) un tráiler `Refs:` sobre un ticket en
+  `OPEN`/`TODO` lo pasa a `IN_PROGRESS` como `system:gate` (interruptor `BACKLOG_AUTO_FORWARD_ENABLED`; nunca desde `BLOCKED`/`DEFERRED`,
+  nunca por una mención en el asunto); (4) escribe una fila en `backlog.gate_check` (`sp_gate_check`) y añade el tráiler
+  `Backlog-Gate: <nonce>`, con el nonce ligado al árbol preparado (`git write-tree`); un tráiler anterior (un `--amend`) se sustituye.
+- **Nunca bloquea, salvo el punto 1.** Base no alcanzable, más de 3 s o cualquier error: el commit sale con `Backlog-Gate: offline` y
+  `backlog_sync.py` hace después el movimiento y la comprobación, sin penalización.
+- **El gancho no es interactivo y no escribe en la base viva** (orden del propietario, 2026-10-29: ningún proceso sin terminal puede escribir
+  en el backlog vivo; un gancho figura en esa orden). Por eso corta la entrada estándar: `confirm_live_write` rechaza la escritura y el commit
+  sale con `offline`; el movimiento hacia delante lo hace entonces `backlog_sync.py --apply` (persona en terminal). Que el gancho escriba en
+  el momento del commit exige que el propietario añada a la lista permitida una operación acotada por la base (rol propio que solo pueda
+  ejecutar `sp_gate_check` y el avance de `Refs:`), como hizo con `agent_log` e `incident`: **decisión suya, no construida**.
+- **Detección de elusión** (`backlog_sync.py`). Cada commit posterior a `BACKLOG_HOOK_EPOCH` que cita un ticket se juzga por su tráiler:
+  *comprobado* (el nonce está en `gate_check` y su árbol es el del commit), *pendiente* (`offline`, sin penalización) o **elusión**
+  (`TRAILER_MISSING`, `UNKNOWN_NONCE`, `TREE_MISMATCH`: `--no-verify`, otro clon, un tráiler falsificado). Los commits de fusión están
+  exentos. Una elusión nueva se registra en `backlog.hook_bypass` (violación `V-HOOK-BYPASS`, vista `v_violations_c2`) y levanta un
+  **bloqueo** (`hold_event`, código `V-HOOK-BYPASS`) sobre el ticket citado, una sola vez por commit y ticket; en un ticket `CLOSED` se
+  registra sin bloqueo (ya lo cubre `V-WORK-ON-CLOSED`). El bloqueo lo libera una persona (`sp_release_hold`).
+- **Armado.** `BACKLOG_HOOK_EPOCH` (ISO con desfase, p. ej. `2026-11-02T09:00:00+01:00`) vacío = **no armado**: la sincronización solo informa
+  de los tráilers que ve y no registra ni bloquea nada. Lo arma el propietario cuando el gancho está instalado y la fase `hook` aplicada;
+  la historia anterior nunca se juzga. Un reordenamiento (`rebase`) que cambie el árbol de un commit lo hace parecer una elusión
+  (`TREE_MISMATCH`): límite aceptado por la especificación; el propietario lo resuelve con la liberación del bloqueo.
 
 ## §5. Protocolo de absorción de alcance
 
