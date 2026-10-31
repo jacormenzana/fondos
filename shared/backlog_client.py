@@ -1212,6 +1212,51 @@ def gate_protection_state(*, conn=None) -> dict:
     return {"api": tuple(api) if api else None, "verified": ver, "emergencies": int(emg)}
 
 
+def phase_c_catalog(tables: list, views: list, routines: list, roles: list, *, conn=None) -> dict:
+    """Read-only facts for the acceptance of Phase C (scripts/audit/backlog_phase_c_acceptance.py): what exists, who owns it and who can do what. Absent things are just absent.
+    {'tables': {name: {owner, append_only (the trigger exists AND is enabled), select/insert/update/delete: {role: bool}}}, 'views': {name: bool},
+     'scoped': {role: {'read': [relations of the whole backlog schema it can SELECT], 'write': [relations it can INSERT / UPDATE / DELETE]}} for backlog_gate and backlog_adjudicator,
+     'routines': {name: {owner, secdef, search_path_pinned, public, executes: [roles]}},
+     'roles': {role: {login, super, createrole, createdb, connlimit, config, member_of: [roles]}}, 'violations_view': text of backlog.v_backlog_violations or None}.
+    `routines` are names; every overload of a name is read (the answer is the strictest: all overloads must hold)."""
+    with _session(conn) as c:
+        have_roles = {r[0]: r[1:] for r in c.execute("SELECT rolname, rolcanlogin, rolsuper, rolcreaterole, rolcreatedb, rolconnlimit, rolconfig FROM pg_roles WHERE rolname = ANY(%s)", (list(roles),)).fetchall()}
+        out_roles = {}
+        for role, (login, sup, crole, cdb, lim, cfg) in have_roles.items():
+            member = [r for r in roles if r != role and r in have_roles and c.execute("SELECT pg_has_role(%s, %s, 'MEMBER')", (role, r)).fetchone()[0]]
+            out_roles[role] = {"login": login, "super": sup, "createrole": crole, "createdb": cdb, "connlimit": lim, "config": list(cfg or []), "member_of": member}
+        out_tables = {}
+        for t in tables:
+            if not c.execute("SELECT to_regclass(%s) IS NOT NULL", (f"backlog.{t}",)).fetchone()[0]:
+                continue
+            owner = c.execute("SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid = %s::regclass", (f"backlog.{t}",)).fetchone()[0]
+            trig = c.execute("SELECT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = %s::regclass AND tgname = 'append_only' AND NOT tgisinternal AND tgenabled <> 'D')", (f"backlog.{t}",)).fetchone()[0]
+            privs = {priv.lower(): {r: bool(c.execute("SELECT has_table_privilege(%s, %s, %s)", (r, f"backlog.{t}", priv)).fetchone()[0]) for r in have_roles} for priv in ("SELECT", "INSERT", "UPDATE", "DELETE")}
+            out_tables[t] = {"owner": owner, "append_only": bool(trig), **privs}
+        out_views = {v: bool(c.execute("SELECT to_regclass(%s) IS NOT NULL", (f"backlog.{v}",)).fetchone()[0]) for v in views}
+        scoped = {}
+        for role in ("backlog_gate", "backlog_adjudicator"):
+            if role not in have_roles:
+                continue
+            rows = c.execute("SELECT c.relname, has_table_privilege(%s, c.oid, 'SELECT'), has_table_privilege(%s, c.oid, 'INSERT') OR has_table_privilege(%s, c.oid, 'UPDATE') "
+                             "OR has_table_privilege(%s, c.oid, 'DELETE') FROM pg_class c WHERE c.relnamespace = 'backlog'::regnamespace AND c.relkind IN ('r', 'v', 'm', 'p') ORDER BY 1",
+                             (role, role, role, role)).fetchall()
+            scoped[role] = {"read": [r[0] for r in rows if r[1]], "write": [r[0] for r in rows if r[2]]}
+        out_routines = {}
+        for name in routines:
+            rows = c.execute("SELECT p.oid::regprocedure::text, pg_get_userbyid(p.proowner), p.prosecdef, p.proconfig FROM pg_proc p WHERE p.pronamespace = 'backlog'::regnamespace AND p.proname = %s",
+                             (name,)).fetchall()
+            if not rows:
+                continue
+            execs = [r for r in have_roles if all(c.execute("SELECT has_function_privilege(%s, %s::regprocedure, 'EXECUTE')", (r, sig)).fetchone()[0] for sig, *_ in rows)]
+            out_routines[name] = {"owner": sorted({r[1] for r in rows})[0] if len({r[1] for r in rows}) == 1 else "MIXED", "secdef": all(r[2] for r in rows),
+                                  "search_path_pinned": all(any(str(x).replace(" ", "").startswith("search_path=pg_catalog,backlog") for x in (r[3] or [])) for r in rows),
+                                  "public": any(c.execute("SELECT has_function_privilege('public', %s::regprocedure, 'EXECUTE')", (sig,)).fetchone()[0] for sig, *_ in rows),
+                                  "executes": sorted(execs)}
+        view = c.execute("SELECT pg_get_viewdef('backlog.v_backlog_violations'::regclass)").fetchone()[0] if c.execute("SELECT to_regclass('backlog.v_backlog_violations') IS NOT NULL").fetchone()[0] else None
+    return {"tables": out_tables, "views": out_views, "scoped": scoped, "routines": out_routines, "roles": out_roles, "violations_view": view}
+
+
 def gate_reverts(*, conn=None) -> list:
     """[{a, b, reason, event_ts}]: the collision pairs adjudicated REVERT, oldest first (the reason carries the 40-character sha of the revert commit). Read-only; [] before slice 3."""
     with _session(conn) as c:
