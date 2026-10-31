@@ -1,0 +1,14 @@
+# Allowed signers of the collision gate's attestation (Backlog v2 Phase C slice 4, FND-0334; NORMAS_BACKLOG.md 4.7).
+# Format of `ssh-keygen -Y verify`:  <principal> namespaces="backlog-gate" <key type> <public key>
+# The principal MUST be: backlog-gate-owner
+#
+# OWNER ACTION (nothing is enforced while this file lists no key; the CI job passes with a warning):
+#   1. In your own terminal, generate a key that never touches the repository or .env, e.g.
+#        ssh-keygen -t ed25519 -C "backlog-gate-owner" -f %USERPROFILE%\.ssh\backlog_gate_ed25519
+#      (use a passphrase; keep the private key only on your machine).
+#   2. Put the PUBLIC key here as one line, for example:
+#        backlog-gate-owner namespaces="backlog-gate" ssh-ed25519 AAAAC3Nza...your-public-key...
+#   3. Commit this file through a reviewed change. CI reads it AS IT IS IN THE BASE of each range, so a change to this file takes effect
+#      for the NEXT range, never for the one that carries it.
+# Key loss or rotation: the emergency protocol of PROPUESTA_BACKLOG_V2.md 6.4.7 (generate a new key within 48 h, commit its public part here,
+# sign a catch-up attestation, re-run the check with workflow_dispatch).

@@ -7,6 +7,7 @@ work on it has started (Backlog v2 Phase C slice 1, FND-0334; PROPUESTA_BACKLOG_
     python scripts/audit/backlog_sync.py                     # DRY RUN over origin/master: what would be recorded and moved; writes nothing
     python scripts/audit/backlog_sync.py --apply             # records the new commit events (idempotent) and runs the auto-forward
     python scripts/audit/backlog_sync.py --rev HEAD --apply  # another revision (default origin/master: the published history)
+    python scripts/audit/backlog_sync.py --attest --key <private key>   # the owner, at push time: write and SIGN backlog_gate/attestation.json for origin/master..HEAD
 
 Citations. A `Refs: FND-nnnn` trailer (several ids may be comma separated, several trailers allowed) is source REFS: the commit says it is work on the
 ticket. An id in the subject line is source SUBJECT: a mention (it cannot tell work from a reference). The body is not read. Ids that are not in the
@@ -25,6 +26,11 @@ Commit-msg gate (slice 2, NORMAS_BACKLOG.md 4.5). Each commit made after BACKLOG
 checked (the nonce is in backlog.gate_check and names the commit's tree), pending (`offline`: the hook could not reach the backlog, no penalty) or BYPASS (trailer missing, unknown
 nonce, tree mismatch). A new bypass is recorded in backlog.hook_bypass (violation V-HOOK-BYPASS) and raises a hold on the ticket. With the epoch empty the gate is not armed:
 the run only reports the trailers it sees. Merge commits are exempt.
+
+Attestation (slice 4, NORMAS_BACKLOG.md 4.7). `--attest` writes `backlog_gate/attestation.json` for the commits of `<base>..HEAD` (`--base`, default origin/master) and signs it with the
+owner's SSH private key (`--key`, or the environment variable BACKLOG_GATE_SIGNING_KEY; the key must NOT be inside the repository): for each commit that cites a ticket, its sha, tree hash, gate
+nonce and the collision pairs of its tickets with decided / undecided -- ticket ids only, no title or text (the remote is GitHub). It reads the database and writes only those two files; commit them
+(the attestation commit is excluded from the range) and push. CI (.github/workflows/backlog-gate.yml) fails on a commit that is not covered, a differing tree hash or an undecided pair.
 
 Exit codes: 0 ok (or dry run), 1 a write failed (what was written before it stays: every write is idempotent), 2 usage error (git failed, no backlog DSN,
 or --apply before the owner applied `migrate_backlog_v2.py --phase sync`).
@@ -111,11 +117,17 @@ def main(argv: list | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--rev", default="origin/master", help="revision whose history is read (default origin/master)")
     ap.add_argument("--apply", action="store_true", help="record the events and run the auto-forward (default: dry run)")
+    ap.add_argument("--attest", action="store_true", help="write and sign backlog_gate/attestation.json for <base>..HEAD (the owner, at push time)")
+    ap.add_argument("--base", default="origin/master", help="with --attest: the base of the range (default origin/master)")
+    ap.add_argument("--key", help="with --attest: the owner's SSH private key (or BACKLOG_GATE_SIGNING_KEY); never inside the repository")
     args = ap.parse_args(argv)
     sys.path.insert(0, str(ROOT))
     os.environ["FONDOS_ACTOR"] = ACTOR      # one process, one identity (owner order 2026-10-28): this process IS the system sync, whoever started it
     import shared.config as cfg  # noqa: F401  (loads .env: FONDOS_BACKLOG_PG_DSN)
     from shared import backlog_client as bc
+
+    if args.attest:
+        return attest(args.base, args.key or os.environ.get("BACKLOG_GATE_SIGNING_KEY"), bc)
 
     try:
         commits = parse_log(git_log(args.rev))
@@ -149,6 +161,9 @@ def main(argv: list | None = None) -> int:
     print(f"auto-forward ({'ON' if cfg.BACKLOG_AUTO_FORWARD_ENABLED else 'OFF'}): "
           + (", ".join(f"{a} {statuses[a]} -> IN_PROGRESS by {c['sha'][:8]}" for a, c in p["forward"]) or "nothing to move"))
     print(gate_report(vs, epoch, hook_applied))
+    from shared import backlog_protection as prot
+    p_kind, p_detail = prot.read_protection(cfg.BACKLOG_GATE_GITHUB_REPO, cfg.BACKLOG_GATE_GITHUB_BRANCH, os.environ.get("BACKLOG_GATE_GITHUB_TOKEN"))
+    print(protection_line(p_kind, p_detail))
     if not applied:
         print("the sync store is not applied (owner: python scripts/ops/migrate_backlog_v2.py --phase sync): every event above is new.")
     if not args.apply:
@@ -167,6 +182,82 @@ def main(argv: list | None = None) -> int:
         print(f"FAILED after {done['written']} event(s), {done['moved']} move(s) and {done['bypass']} bypass(es): {type(exc).__name__}: {str(exc)[:300]}", file=sys.stderr)
         return RC_FAILED
     print(f"\nAPPLIED: {done['written']} event(s) recorded, {done['moved']} ticket(s) moved to IN_PROGRESS, {done['bypass']} new bypass(es) recorded.")
+    try:
+        if bc.attest_store_present():
+            print("branch protection: " + ("recorded" if bc.record_gate_protection(p_kind, p_detail, actor=ACTOR) else "unchanged since the last reading (not recorded again)"))
+        else:
+            print("branch protection: not recorded (owner: python scripts/ops/migrate_backlog_v2.py --phase attest)")
+    except Exception as exc:                                        # the commit facts above stay: every write is idempotent
+        print(f"branch protection NOT recorded: {type(exc).__name__}: {str(exc)[:200]}", file=sys.stderr)
+        return RC_FAILED
+    return RC_OK
+
+
+def protection_line(kind: str, detail: str) -> str:
+    """The line the sync prints about the protection of the branch: an [ALERTA] when `backlog-gate` is not a required check, so a missing control never reads as green. Pure."""
+    if kind == "PROTECTED":
+        return f"branch protection: PROTECTED ({detail})"
+    if kind == "UNPROTECTED":
+        return f"[ALERTA] branch protection: UNPROTECTED -- {detail}. V-GATE-UNPROTECTED: without `backlog-gate` as a required check the CI is detective only (owner action O-5)."
+    return f"branch protection: UNVERIFIED -- {detail}. V-GATE-UNVERIFIED until an owner verification (gate_protection.py --verified) or a readable token."
+
+
+def range_commits(base: str) -> list:
+    """The commits of `<base>..HEAD`, oldest first, as the attestation wants them: [{'sha', 'tree', 'gate', 'tickets', 'paths'}] (the changed paths exclude the attestation commit)."""
+    commits = parse_log(git_log(f"{base}..HEAD"))
+    out = []
+    for c in reversed(commits):                                     # git prints newest first
+        paths = subprocess.run(["git", "diff-tree", "--root", "--no-commit-id", "--name-only", "-r", "-m", "--first-parent", c["sha"]], cwd=ROOT, capture_output=True,
+                               text=True, encoding="utf-8").stdout.split()
+        out.append({"sha": c["sha"], "tree": c["tree"], "gate": c["gate"], "tickets": c["mentions"], "paths": paths})
+    return out
+
+
+def attest(base: str, key, bc) -> int:
+    """`--attest`: build, write and sign the attestation. Returns the exit code."""
+    from datetime import timezone
+    from shared import backlog_attest as att
+    if not key:
+        print("--attest needs the owner's private key: --key <path> or BACKLOG_GATE_SIGNING_KEY (outside the repository, never in .env)", file=sys.stderr)
+        return RC_USAGE
+    key = Path(key).expanduser()
+    if not key.is_file():
+        print(f"the signing key {key} does not exist", file=sys.stderr)
+        return RC_USAGE
+    if att.inside(key, ROOT):
+        print("REFUSED: the signing key is inside the repository; keep it outside (and never in .env)", file=sys.stderr)
+        return RC_USAGE
+    problem = att.ssh_keygen_available()
+    if problem:
+        print(problem, file=sys.stderr)
+        return RC_USAGE
+    try:
+        commits = range_commits(base)
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True, encoding="utf-8").stdout.strip()
+        base_sha = subprocess.run(["git", "rev-parse", base], cwd=ROOT, capture_output=True, text=True, encoding="utf-8").stdout.strip()
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return RC_USAGE
+    tickets = sorted({t for c in commits if c["tickets"] and not att.is_attestation_commit(c["paths"]) for t in c["tickets"]})
+    try:
+        pairs = bc.gate_pairs(tickets) if tickets and bc.collision_store_present() else []
+    except Exception as exc:                                        # never echo a DSN
+        print(f"backlog unreachable: {type(exc).__name__}", file=sys.stderr)
+        return RC_USAGE
+    doc = att.build(base_sha, head, commits, pairs, datetime.now(timezone.utc).isoformat(timespec="seconds"))
+    out = ROOT / att.ATTEST_FILE
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(att.dumps(doc), encoding="utf-8", newline="")
+    try:
+        sig = att.sign(out, key)
+    except RuntimeError as exc:
+        print(f"FAILED: {exc}", file=sys.stderr)
+        return RC_FAILED
+    undecided = sorted({(p["a"], p["b"]) for e in doc["commits"] for p in e["pairs"] if not p["decided"]})      # a pair appears once for each commit that touches it
+    print(f"attested {len(doc['commits'])} commit(s) of {base_sha[:12]}..{head[:12]} citing {len(tickets)} ticket(s); wrote {out.relative_to(ROOT)} and {sig.relative_to(ROOT)}")
+    if undecided:
+        print(f"WARNING: {len(undecided)} collision pair(s) are undecided; CI will fail until the owner adjudicates them (scripts/audit/gate_adjudicate.py --list) and the attestation is made again.")
+    print("commit the two files together (this commit is excluded from the range) and push.")
     return RC_OK
 
 

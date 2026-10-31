@@ -339,6 +339,38 @@ DDL `db/pg_backlog/90_collision.sql`, aplicado por el propietario con `migrate_b
 - **Pendiente del tramo 3:** la comprobación por la sincronización del sha de `REVERT`, el uso de la tabla CSV de `backlog_links.py --apply-review` (hoy la herramienta propia
   `gate_adjudicate.py` lleva su CSV) y la línea de la cola en el informe de ciclo.
 
+### §4.7. Atestación firmada, CI y protección de la rama (fase C, tramo 4, FND-0334)
+
+DDL `db/pg_backlog/95_attest.sql`, aplicado por el propietario con `migrate_backlog_v2.py --phase attest` (necesita el tramo 2; la reversión conserva
+`gate_protection_event`). Especificación: `PROPUESTA_BACKLOG_V2.md` §6.4.6 y §6.4.7. El flujo de publicación completo, de principio a fin:
+
+- **Atestación** (`backlog_sync.py --attest --key <clave privada>`, la ejecuta el propietario al publicar). Escribe `backlog_gate/attestation.json` para los commits de
+  `origin/master..HEAD` y lo firma con `ssh-keygen -Y sign -n backlog-gate` (`backlog_gate/attestation.json.sig`). Por cada commit que cita un ticket: sha, hash del árbol, nonce y las
+  parejas de colisión de sus tickets, decididas o no. **Solo identificadores: ni títulos ni texto** (el remoto es GitHub). Solo lee la base de datos. **La clave privada nunca está en el
+  repositorio ni en `.env`**: el script se niega si está dentro del árbol. El commit de la atestación (todos sus cambios bajo `backlog_gate/`) queda fuera del rango: se commitean los dos
+  ficheros juntos y se publica.
+- **CI** (`.github/workflows/backlog-gate.yml`, tarea `backlog-gate`, que es el contexto que debe exigir la rama). `scripts/audit/verify_attestation.py` falla si un commit del rango que
+  cita un ticket falta en la atestación o su hash de árbol o su nonce difieren, si alguna pareja está sin decidir, o si la firma no verifica. **Verifica con el `allowed_signers` de la BASE del
+  rango**, así un cambio no puede traer su propia clave. Mientras ese fichero no liste ninguna clave la puerta **no se aplica** y el trabajo pasa con un aviso `NOT ENFORCED` (nunca un verde
+  silencioso). Límite declarado: la CI prueba que la clave del propietario firmó una declaración; no puede comprobar la base de datos.
+- **Protección de la rama.** Una Action sobre un push no puede bloquearlo: solo bloquea si `master` está protegida y `backlog-gate` es una comprobación **obligatoria** (acción del
+  propietario O-5; con ella se publica con una rama `publish/<fecha>`, se espera al verde y se avanza `master`). `backlog_sync.py` lo lee de la API de GitHub con un token de **solo lectura**
+  de grano fino que se guarda **fuera del repositorio** (`BACKLOG_GATE_GITHUB_TOKEN`, que se teclea en su terminal, nunca en `.env`); el repositorio y la rama son
+  `BACKLOG_GATE_GITHUB_REPO` y `BACKLOG_GATE_GITHUB_BRANCH`. Tres lecturas: `PROTECTED`; `UNPROTECTED` (`V-GATE-UNPROTECTED` y un `[ALERTA]`); `UNVERIFIED` (sin token, la API no responde,
+  permiso insuficiente o una respuesta que no permite decidir: `V-GATE-UNVERIFIED`, de modo que un token ausente nunca pasa en silencio). La configuración local de git no ve la protección
+  remota y no es una fuente. **El token es opcional mientras el repositorio sea público:** sin token se lee el objeto público de la rama
+  (`GET /repos/{repo}/branches/{rama}`, que lista las comprobaciones obligatorias y su nivel de aplicación) y la respuesta es igual de concluyente; solo si tampoco se puede leer
+  (sin red, o repositorio privado sin token) la lectura es `UNVERIFIED`. Con token se usa antes el punto de administración. Un nivel de aplicación `off` no cuenta como obligatoria. Con `--apply` la lectura se apunta en `gate_protection_event` (solo si cambia o tiene más de 24 h).
+- **Eventos del propietario** (`scripts/audit/gate_protection.py`, con identidad `human:*` y el acceso solo del propietario): `--verified "razón"` (ha mirado él mismo los ajustes del
+  repositorio) despeja `V-GATE-UNVERIFIED` durante **30 días**, pero nunca `V-GATE-UNPROTECTED`; `--emergency "razón"` registra un push de emergencia (`V-GATE-EMERGENCY`, que queda en el
+  historial). Protocolo de emergencia (`PROPUESTA` §6.4.7): el propietario como administrador salta la regla, registra el evento el mismo día y **en 48 h** genera una clave nueva, commitea
+  su parte pública en `.github/backlog_gate_allowed_signers`, firma una atestación de recuperación del rango y relanza la comprobación con `workflow_dispatch` (campo `base`). La pérdida o la
+  rotación de la clave siguen el mismo camino.
+- **Acciones del propietario, en orden:** (1) generar la clave (`ssh-keygen -t ed25519 -C backlog-gate-owner`, con frase de paso, fuera del repositorio); (2) commitear la línea pública
+  `backlog-gate-owner namespaces="backlog-gate" ssh-ed25519 AAAA...` en `.github/backlog_gate_allowed_signers` con un cambio revisado (vale para el rango SIGUIENTE); (3) crear el token de
+  solo lectura y exportarlo solo en su terminal; (4) tras el primer push con CI verde, añadir `backlog-gate` a las comprobaciones obligatorias de `master`
+  (`scripts/ops/github_protect_master.py` describe y verifica el resto de la regla); (5) aplicar `--phase attest`.
+
 ## §5. Protocolo de absorción de alcance
 
 Cuando un enlace `OVERLAPS` lleva nota `absorbs`, el ticket que absorbe **debe**:

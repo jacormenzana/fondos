@@ -91,15 +91,28 @@ def test_recording_is_idempotent_and_append_only(db):
         bc.record_ops_event("PUSH", "x", a, "REFS", {}, now(db), actor=SYNC, conn=db)
 
 
+def commit_at(conn, ap, sha, ts, source="SUBJECT"):
+    with acting_as(SYNC):
+        return bc.record_ops_event("COMMIT", sha, ap, source, {"subject": "s"}, ts, actor=SYNC, conn=conn)
+
+
+def stamp(conn, ap, column):
+    """A ticket's creation_ts / closure_ts. They come from now(), the start of the (long) test transaction, NOT from clock_timestamp(): a commit time must be placed relative to THEM, or the test
+    depends on how long the suite has been running (it failed in the full CI run and passed in a short one)."""
+    return conn.execute(f"SELECT {column} FROM backlog.BACKLOG WHERE action_point_id = %s", (ap,)).fetchone()[0]
+
+
 def test_retro_and_work_on_closed(db):
     early, on_time, closed = _mk(db), _mk(db), _mk(db)
-    commit(db, early, "e1" * 20, minutes_from_now=-90)
-    commit(db, early, "e2" * 20, minutes_from_now=+5)                   # only the FIRST commit counts for V-RETRO
-    commit(db, on_time, "o1" * 20, minutes_from_now=+5)
+    created = stamp(db, early, "creation_ts")
+    commit_at(db, early, "e1" * 20, created - timedelta(minutes=90))
+    commit_at(db, early, "e2" * 20, created + timedelta(minutes=5))      # only the FIRST commit counts for V-RETRO
+    commit_at(db, on_time, "o1" * 20, stamp(db, on_time, "creation_ts") + timedelta(minutes=5))
     tr(db, closed, "CLOSED", solution_type="REJECTED", force=True, comment=FORCE_REASON)
-    commit(db, closed, "w0" * 20, minutes_from_now=-1)                  # before the closure: not work-on-closed
-    commit(db, closed, "w1" * 20, minutes_from_now=+60)
-    commit(db, closed, "w2" * 20, minutes_from_now=+120)
+    closure = stamp(db, closed, "closure_ts")
+    commit_at(db, closed, "w0" * 20, closure - timedelta(minutes=1))     # before the closure: not work-on-closed
+    commit_at(db, closed, "w1" * 20, closure + timedelta(minutes=60))
+    commit_at(db, closed, "w2" * 20, closure + timedelta(minutes=120))
     assert violations(db, "V-RETRO", early) == [("V-RETRO", early)] and not violations(db, "V-RETRO", on_time)
     assert violations(db, "V-WORK-ON-CLOSED") == [("V-WORK-ON-CLOSED", closed)] * 2
     tr(db, closed, "IN_PROGRESS", force=True, comment=FORCE_REASON)     # reopened: the later commits are legitimate work again

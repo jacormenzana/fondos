@@ -29,8 +29,17 @@ def _workflow_job_names() -> list:
     return names
 
 
-def test_required_checks_are_exactly_the_workflow_job_names():
-    assert sorted(gpm.REQUIRED_CHECKS) == sorted(_workflow_job_names())
+def test_required_checks_are_the_workflow_job_names_except_the_gate_job_that_the_owner_enables_later():
+    assert sorted(gpm.REQUIRED_CHECKS + (gpm.GATE_CHECK,)) == sorted(_workflow_job_names())          # every job is either required now, or is backlog-gate (required once the key is committed)
+    assert gpm.GATE_CHECK not in gpm.REQUIRED_CHECKS and gpm.checks(True) == gpm.REQUIRED_CHECKS + ("backlog-gate",)
+
+
+def test_backlog_gate_is_required_only_when_asked_for_and_then_it_is_mandatory():
+    assert gpm.protection_payload()["required_status_checks"]["contexts"] == list(gpm.REQUIRED_CHECKS)
+    assert gpm.protection_payload(True)["required_status_checks"]["contexts"] == list(gpm.REQUIRED_CHECKS) + ["backlog-gate"]
+    four, five = list(gpm.REQUIRED_CHECKS), list(gpm.REQUIRED_CHECKS) + ["backlog-gate"]
+    for with_gate, contexts, expected in ((False, four, True), (False, five, True), (True, five, True), (True, four, False), (False, four[:3], False), (True, five[:4] + ["x"], False)):
+        assert gpm._contexts_ok(contexts, with_gate) is expected, (with_gate, contexts)
 
 
 def test_both_workflows_run_on_pull_requests():
@@ -61,9 +70,9 @@ def _failed(results):
 def test_public_evaluation_accepts_only_the_specified_state():
     assert _failed(gpm.evaluate_public(_public())) == []
     assert _failed(gpm.evaluate_public(_public(protected=False, level="off", contexts=[]))) == [
-        "branch is protected", "the four required checks are exactly the CI jobs", "the checks are enforced for everyone, administrators included"]
+        "branch is protected", "the required checks are exactly the CI jobs (plus backlog-gate once enabled)", "the checks are enforced for everyone, administrators included"]
     assert _failed(gpm.evaluate_public(_public(level="non_admins"))) == ["the checks are enforced for everyone, administrators included"]
-    assert _failed(gpm.evaluate_public(_public(contexts=list(gpm.REQUIRED_CHECKS)[:3]))) == ["the four required checks are exactly the CI jobs"]
+    assert _failed(gpm.evaluate_public(_public(contexts=list(gpm.REQUIRED_CHECKS)[:3]))) == ["the required checks are exactly the CI jobs (plus backlog-gate once enabled)"]
     assert _failed(gpm.evaluate_public({"protected": True, "protection": {"enabled": True, "required_status_checks": {
         "enforcement_level": "everyone", "contexts": [], "checks": [{"context": c} for c in gpm.REQUIRED_CHECKS]}}})) == []   # the `checks` form is read too
 
@@ -82,7 +91,7 @@ def test_admin_evaluation_flags_each_missing_rule():
     assert _failed(gpm.evaluate_admin(_admin(enforce_admins={"enabled": False}))) == ["administrators are included"]
     assert _failed(gpm.evaluate_admin(_admin(allow_force_pushes={"enabled": True}))) == ["force pushes are refused"]
     assert _failed(gpm.evaluate_admin(_admin(allow_deletions={"enabled": True}))) == ["deletions are refused"]
-    assert _failed(gpm.evaluate_admin(_admin(required_status_checks={"contexts": []}))) == ["the four checks are required"]
+    assert _failed(gpm.evaluate_admin(_admin(required_status_checks={"contexts": []}))) == ["the checks are required"]
 
 
 def test_apply_without_a_token_is_a_usage_error_and_dry_run_touches_nothing(monkeypatch):
