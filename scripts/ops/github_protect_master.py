@@ -124,7 +124,7 @@ def main(argv: "list | None" = None) -> int:
     ap.add_argument("--apply", action="store_true", help="execute (default: dry run)")
     ap.add_argument("--verify", action="store_true", help="read-only check of the effective rules")
     ap.add_argument("--remove", action="store_true", help="EMERGENCY: remove the protection (needs --apply)")
-    ap.add_argument("--with-backlog-gate", action="store_true", help="also require the `backlog-gate` check (the owner, once the signing key is committed)")
+    ap.add_argument("--with-backlog-gate", action="store_true", help="DEPRECATED (Backlog v3 W1: backlog-gate is advisory, publication is .github/workflows/auto-pr.yml): also require the `backlog-gate` check")
     args = ap.parse_args(argv)
     token = os.environ.get("GITHUB_ADMIN_TOKEN") or None
     path = f"/repos/{REPO}/branches/{BRANCH}"

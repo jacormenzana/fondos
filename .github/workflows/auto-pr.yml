@@ -1,0 +1,64 @@
+name: Auto PR
+
+# Backlog v3 W1 (owner decision 2026-10-31): publication is no longer a manual relay. A push to a feat/, fix/, chore/ or docs/ branch opens the pull request against master (when none is
+# open) and turns on auto-merge, so GitHub merges it once the required checks of master are green (the protection of scripts/ops/github_protect_master.py is untouched: nothing is merged
+# around it). The owner keeps the veto: close the pull request, or turn auto-merge off on it.
+#
+# A pull request that changes .github/workflows/** cannot be merged with the built-in GITHUB_TOKEN (GitHub forbids it), so it gets the label `needs-owner` and NO auto-merge.
+# `publish/**` branches are not handled here (the owner's own flow). Untrusted values (branch name, commit text) reach the script through the environment or git, never through ${{ }} in `run:`.
+#
+# One-time repository settings (owner action O-V3-2, steps in doc/especificacion/ACTION_PLAN_BACKLOG_V3.md): Settings > Actions > General > "Allow GitHub Actions to create and approve
+# pull requests"; Settings > General > "Allow auto-merge" and "Automatically delete head branches".
+
+on:
+  push:
+    branches: ["feat/**", "fix/**", "chore/**", "docs/**"]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: auto-pr-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  auto-pr:
+    name: Open the pull request and enable auto-merge
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository, full history because the diff against master needs it
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Open the pull request, then label it or enable auto-merge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin master:refs/remotes/origin/master
+          if [ "$(git rev-list --count origin/master..HEAD)" = "0" ]; then
+            echo "::notice::$BRANCH has nothing that master lacks: no pull request"
+            exit 0
+          fi
+
+          number="$(gh pr list --head "$BRANCH" --base master --state open --json number --jq '.[0].number // empty')"
+          if [ -z "$number" ]; then
+            title="$(git log -1 --format=%s)"
+            git log --reverse --format='- %s' origin/master..HEAD > "$RUNNER_TEMP/pr_body.md"
+            number="$(gh pr create --base master --head "$BRANCH" --title "$title" --body-file "$RUNNER_TEMP/pr_body.md" | grep -o '[0-9]*$')"
+            echo "opened pull request #$number"
+          else
+            echo "pull request #$number is already open"
+          fi
+
+          if git diff --name-only origin/master...HEAD | grep -q '^\.github/workflows/'; then
+            gh label create needs-owner --color B60205 --description "touches .github/workflows: GITHUB_TOKEN cannot merge it, the owner does" --force
+            gh pr edit "$number" --add-label needs-owner
+            echo "::warning::#$number changes .github/workflows: labelled needs-owner, auto-merge NOT enabled"
+          else
+            gh pr merge "$number" --auto --merge || echo "::warning::could not enable auto-merge on #$number (is 'Allow auto-merge' on in the repository settings?)"
+          fi

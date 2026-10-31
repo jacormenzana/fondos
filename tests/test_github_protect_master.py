@@ -19,10 +19,17 @@ for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops")):
 import github_protect_master as gpm  # noqa: E402
 
 
+PUBLISHER_WORKFLOWS = ("auto-pr.yml",)          # Backlog v3 W1: opens the pull request and enables auto-merge; it reports no check that master could require
+
+
+def _check_workflows() -> list:
+    return [f for f in sorted((_ROOT / ".github" / "workflows").glob("*.yml")) if f.name not in PUBLISHER_WORKFLOWS]
+
+
 def _workflow_job_names() -> list:
     yaml = pytest.importorskip("yaml")
     names = []
-    for f in sorted((_ROOT / ".github" / "workflows").glob("*.yml")):
+    for f in _check_workflows():
         doc = yaml.safe_load(f.read_text(encoding="utf-8"))
         for job_id, job in (doc.get("jobs") or {}).items():
             names.append(job.get("name") or job_id)
@@ -42,9 +49,9 @@ def test_backlog_gate_is_required_only_when_asked_for_and_then_it_is_mandatory()
         assert gpm._contexts_ok(contexts, with_gate) is expected, (with_gate, contexts)
 
 
-def test_both_workflows_run_on_pull_requests():
+def test_every_check_workflow_runs_on_pull_requests():
     yaml = pytest.importorskip("yaml")
-    for f in sorted((_ROOT / ".github" / "workflows").glob("*.yml")):
+    for f in _check_workflows():
         doc = yaml.safe_load(f.read_text(encoding="utf-8"))
         triggers = doc.get("on") if "on" in doc else doc.get(True)          # YAML 1.1 reads the key `on` as True
         assert "pull_request" in triggers, f"{f.name} does not run on pull requests: its checks could never be required"
