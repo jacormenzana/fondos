@@ -1257,6 +1257,14 @@ def phase_c_catalog(tables: list, views: list, routines: list, roles: list, *, c
     return {"tables": out_tables, "views": out_views, "scoped": scoped, "routines": out_routines, "roles": out_roles, "violations_view": view}
 
 
+def gate_reverts(*, conn=None) -> list:
+    """[{a, b, reason, event_ts}]: the collision pairs adjudicated REVERT, oldest first (the reason carries the 40-character sha of the revert commit). Read-only; [] before slice 3."""
+    with _session(conn) as c:
+        if c.execute("SELECT to_regclass('backlog.gate_adjudication') IS NULL").fetchone()[0]:
+            return []
+        return _rows(c, "SELECT a, b, reason, event_ts FROM backlog.gate_adjudication WHERE decision = 'REVERT' ORDER BY adjudication_id")
+
+
 def gate_pairs(ap_ids: list, *, conn=None) -> list:
     """[{a, b, decided}]: the collision pairs that touch any of the tickets, undecided (in the queue) and decided (adjudicated). Ticket ids only: it is what the signed attestation carries."""
     with _session(conn) as c:

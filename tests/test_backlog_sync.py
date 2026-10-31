@@ -83,3 +83,22 @@ def test_store_probe_kinds_match_the_probe():
     block = ddl.split("probe_kind       TEXT NOT NULL CHECK (probe_kind IN (", 1)[1].split("))", 1)[0]
     import re
     assert set(re.findall(r"'([a-z_]+)'", block)) == rfd.PROBE_KINDS
+
+
+# ---------------------------------------------------------------- REVERT adjudications verified by the sync (FND-0334 slice 3)
+
+def test_revert_checks_verify_the_sha_named_in_the_reason():
+    sha_ok, sha_plain, sha_gone = "a" * 40, "b" * 40, "c" * 40
+    reverts = [{"a": "FND-0001", "b": "FND-0002", "reason": f"the colliding commit was reverted by {sha_ok}"},
+               {"a": "FND-0003", "b": "FND-0004", "reason": f"reverted by {sha_plain}, see the thread"},
+               {"a": "FND-0005", "b": "FND-0006", "reason": f"reverted by {sha_gone}"},
+               {"a": "FND-0007", "b": "FND-0008", "reason": "reverted, but no sha is written here"},
+               {"a": "FND-0009", "b": "FND-0010", "reason": f"short sha {sha_ok[:12]} is not enough"}]
+    messages = {sha_ok: 'Revert "feat: FND-0001 the colliding work"', sha_plain: "feat: FND-0003 a normal commit"}
+    got = bs.revert_checks(reverts, messages)
+    assert [(a, v) for a, _, _, v in got] == [("FND-0001", "OK"), ("FND-0003", "NOT_A_REVERT"), ("FND-0005", "NOT_FOUND"), ("FND-0007", "NO_SHA"), ("FND-0009", "NO_SHA")]
+    assert bs.revert_checks([{"a": "A", "b": "B", "reason": f"x {sha_plain}"}], {sha_plain: "chore: This reverts commit 123"})[0][3] == "OK"       # git's own wording also counts
+    lines = bs.revert_lines(got)
+    assert len(lines) == 4 and all(l.startswith("[ATENCION] REVERT adjudication") for l in lines)
+    assert "not a revert" in lines[0] and "not in the history" in lines[1] and "names no 40-character sha" in lines[2]
+    assert bs.revert_lines(bs.revert_checks(reverts[:1], messages)) == []                                  # a verified one prints nothing

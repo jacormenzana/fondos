@@ -164,6 +164,14 @@ def main(argv: list | None = None) -> int:
     from shared import backlog_protection as prot
     p_kind, p_detail = prot.read_protection(cfg.BACKLOG_GATE_GITHUB_REPO, cfg.BACKLOG_GATE_GITHUB_BRANCH, os.environ.get("BACKLOG_GATE_GITHUB_TOKEN"))
     print(protection_line(p_kind, p_detail))
+    try:
+        reverts = bc.gate_reverts()
+        wanted = {m for r in reverts for m in _REVERT_SHA.findall(r["reason"])[:1]}
+        messages = {c["sha"]: c["subject"] for c in commits if c["sha"] in wanted}
+        for line in revert_lines(revert_checks(reverts, messages)):
+            print(line)
+    except Exception as exc:                                        # noqa: BLE001  (informational: never costs the sync)
+        print(f"REVERT adjudications not checked: {type(exc).__name__}", file=sys.stderr)
     if not applied:
         print("the sync store is not applied (owner: python scripts/ops/migrate_backlog_v2.py --phase sync): every event above is new.")
     if not args.apply:
@@ -191,6 +199,36 @@ def main(argv: list | None = None) -> int:
         print(f"branch protection NOT recorded: {type(exc).__name__}: {str(exc)[:200]}", file=sys.stderr)
         return RC_FAILED
     return RC_OK
+
+
+_REVERT_SHA = re.compile(r"\b[0-9a-f]{40}\b")
+
+
+def revert_checks(reverts: list, messages: dict) -> list:
+    """[(a, b, sha, verdict)] for the pairs adjudicated REVERT: the owner names the revert commit's sha in the reason (spec 6.4.7) and the sync verifies it. `messages`: {sha: commit message} of the
+    commits of the inspected history. Verdicts: OK (the sha is in the history and is a revert: its message starts with `Revert` or says `This reverts commit`); NOT_A_REVERT (it is in the history
+    but is no revert); NOT_FOUND (it is not in the history inspected: a typo, or a commit not published yet); NO_SHA (the reason names no 40-hex sha). Pure."""
+    out = []
+    for r in reverts:
+        found = _REVERT_SHA.findall(r["reason"])
+        if not found:
+            out.append((r["a"], r["b"], "", "NO_SHA"))
+            continue
+        sha = found[0]
+        msg = messages.get(sha)
+        if msg is None:
+            out.append((r["a"], r["b"], sha, "NOT_FOUND"))
+        elif msg.lstrip().lower().startswith("revert") or "this reverts commit" in msg.lower():
+            out.append((r["a"], r["b"], sha, "OK"))
+        else:
+            out.append((r["a"], r["b"], sha, "NOT_A_REVERT"))
+    return out
+
+
+def revert_lines(checks: list) -> list:
+    """What the sync prints about the REVERT adjudications: nothing when all verify, an [ATENCION] line for each that does not. Pure."""
+    why = {"NO_SHA": "its reason names no 40-character sha", "NOT_FOUND": "the sha is not in the history inspected", "NOT_A_REVERT": "that commit is not a revert (its message does not start with Revert)"}
+    return [f"[ATENCION] REVERT adjudication {a} / {b} is not verified: {why[v]}" + (f" ({sha[:12]})" if sha else "") for a, b, sha, v in checks if v != "OK"]
 
 
 def protection_line(kind: str, detail: str) -> str:
