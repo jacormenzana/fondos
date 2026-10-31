@@ -9,7 +9,7 @@ work on it has started (Backlog v2 Phase C slice 1, FND-0334; PROPUESTA_BACKLOG_
     python scripts/audit/backlog_sync.py --rev HEAD --apply  # another revision (default origin/master: the published history)
     python scripts/audit/backlog_sync.py --attest --key <private key>   # the owner, at push time: write and SIGN backlog_gate/attestation.json for origin/master..HEAD
 
-Citations. A `Refs: FND-nnnn` trailer (several ids may be comma separated, several trailers allowed) is source REFS: the commit says it is work on the
+Citations. A `Refs: FND-nnnn` or `Closes: FND-nnnn` trailer (a Closes id is also a Refs id; several ids may be comma separated, several trailers allowed) is source REFS: the commit says it is work on the
 ticket. An id in the subject line is source SUBJECT: a mention (it cannot tell work from a reference). The body is not read. Ids that are not in the
 backlog (e.g. the documented gap FND-0339..FND-0349) are reported and skipped; malformed tokens (`fnd0193`, `FND_0193`, `FND-193`) are reported (the
 commit-msg hook of slice 2 rejects them at commit time).
@@ -54,7 +54,7 @@ sys.path.insert(0, str(ROOT))
 from shared import backlog_gate as gate  # noqa: E402  (the pure half of the commit-msg gate: one reading of a commit message for the hook and for this sync)
 
 _ID, _LOOSE = gate.ID, gate.LOOSE
-_FMT = ("%H%x1f%aI%x1f%s%x1f%(trailers:key=Refs,valueonly,separator=%x2C)%x1f%T%x1f%P%x1f"
+_FMT = ("%H%x1f%aI%x1f%s%x1f%(trailers:key=Refs,key=Closes,valueonly,separator=%x2C)%x1f%T%x1f%P%x1f"
         "%(trailers:key=Backlog-Gate,valueonly,separator=%x2C)%x1e")
 
 

@@ -78,7 +78,16 @@ Dominios categóricos, **todos con `CHECK` en BD** — nunca inventar un valor f
   toca `db/**` debe existir el `DEPLOY` del ticket; un `DATA_FIX` necesita un `CYCLE` posterior a la fusión y una condición de cierre activa. Las compuertas de la Fase B siguen aplicándose dentro. La
   compuerta de incidentes de auditoría (FND-0264) no puede imponerla la base de datos (lee `fondos`): la aplica el motor de reglas (`shared/backlog_autopilot.py`, puro, probado arista a arista) con la
   regla compartida de `shared/backlog_release.py`, la misma que usa `close_release.py`. `WORKAROUND`, `REJECTED`, `DUPLICATED` y reabrir **nunca** son automáticos. Un commit declara la entrega con
-  los tráileres `Closes: FND-nnnn` (cuenta también como `Refs:`) y, solo si no es `CODE_FIX`, `Solution: DATA_FIX`; un valor desconocido no cierra nada.
+  los tráileres `Closes: FND-nnnn` (cuenta también como `Refs:`) y, solo si no es `CODE_FIX`, `Solution: DATA_FIX`; un valor desconocido no cierra nada. **El proceso** es
+  `scripts/audit/backlog_autopilot.py` (identidad `system:autopilot`, un proceso, una identidad): lee los merges de `origin/master` de los últimos 45 días, toma como entrega cada merge cuya rama trae un
+  commit con `Closes:`, registra un hecho `MERGE` por (merge, ticket) con el número de PR, los ficheros cambiados y el `Solution:`, reúne los veredictos de las compuertas (la de entrega de la Fase B, las
+  condiciones de cierre de `rfd_matrix_probe.py`, la de incidentes de `fondos`; **lo que no se puede leer es un motivo para esperar, nunca un pase**) y aplica el motor. Sin `--apply` solo imprime. El
+  **modo** (`BACKLOG_AUTOPILOT_MODE` en `shared/config.py`, un techo que `--mode` solo puede bajar): `OFF` imprime; `SHADOW` (el de salida) registra los hechos y escribe **una nota por decisión** en el
+  ticket («movería X a Y, evidencia ...») sin mover nada, para que el propietario revise las 20 primeras (O-V3-4); `ON` hace además los dos movimientos mediante `auto_transition`, y un movimiento que la
+  base de datos rechaza (una compuerta, un hecho que falta) pasa a ser una nota de espera, una sola vez. Solo escribe con su login (`FONDOS_BACKLOG_PG_DSN_AUTOPILOT`): sin él, o sin el DDL, `--apply` se
+  niega con código 2 y no escribe nada; nunca cae a otro login ni pide terminal. **No fabrica `DEPLOY` ni `CYCLE`** (no puede dar fe de su propio cierre): un ticket cuyo merge toca `db/**` espera a que
+  la migración del propietario registre el `DEPLOY`, y un `DATA_FIX` a que se registre un `CYCLE`. El gancho `reference-transaction` (`bash scripts/audit/reference-transaction.sh`, lo instala el
+  propietario porque se dispara con **cada** actualización de referencia del clon) lanza el proceso en segundo plano cuando un `fetch` mueve `refs/remotes/origin/master`; no bloquea nunca git.
 - **Estado de aplicación de la Fase A (FND-0331):** el propietario aplica el DDL por pasos, cada uno con simulacro y acuerdo expreso. **A-1** (`30_transitions.sql`,
   `migrate_backlog_v2.py --phase transitions`) es aditivo: crea el rol `backlog_owner` (sin superusuario ni login) como propietario de las rutinas privilegiadas
   (`SECURITY DEFINER`, `search_path` fijado), las tablas de auditoría y el disparador de la etapa de sombra, que **registra sin bloquear** (V-00) toda escritura directa en
