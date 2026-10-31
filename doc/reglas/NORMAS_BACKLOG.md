@@ -147,7 +147,7 @@ los tres coincidan; ningún consumidor existente lee la columna ni la vista `v_b
 | **Durante** el trabajo | Un hallazgo fuera de alcance se anota en el log del ticket relacionado existente; no se abre ticket nuevo ni se descarta | — |
 | **Al cerrar** | El log dice qué queda (alcance absorbido cumplido, o lo que pasa al otro ticket) y sigue la higiene de §4.1 | — |
 | **Cada sesión de revisión** | Barrido: `--all`, revisar candidatas por lotes, aplicar | §6 |
-| **Cada ciclo P1+P2** | Una línea en el informe de ciclo (`Relaciones del backlog`) y un `[ATENCION]` si hay tickets en curso con prerrequisito `DEPENDS_ON` abierto | `p1p2_cycle_report.py` |
+| **Cada ciclo P1+P2** | Una línea en el informe de ciclo (`Relaciones del backlog`) y un `[ATENCION]` si hay tickets en curso con prerrequisito `DEPENDS_ON` abierto; otra (`Violaciones del backlog`) con el total y los 3 códigos principales de §4.2 | `p1p2_cycle_report.py` |
 
 ### §4.1. Higiene del registro (origen: FND-0323)
 
@@ -158,8 +158,8 @@ Un ticket deja de ser fiable cuando su texto, su estado o sus cifras divergen de
    observa**, con el recuento y su fecha. Todo recuento en un log lleva **fecha y población**.
 2. **Estado sincronizado.** Un `BLOCKED` por instrucción del propietario nombra la condición que lo levanta; al cumplirse (p. ej.
    la liberación) el estado se mueve en esa sesión. Los tickets `RELEASE_WITH` o acoplados en código se cierran como **una sola
-   acción**. Una decisión pendiente del propietario se registra como «DECISION PENDIENTE» con fecha, para que la revisión periódica
-   la liste.
+   acción** (con la fase D, un grupo `TRAIN`, §4.2). Una decisión pendiente del propietario se registra como grupo `DECISION` (§4.2;
+   sustituye a la etiqueta de texto «DECISION PENDIENTE» mientras la fase D no esté aplicada), para que la revisión periódica la liste.
 3. **Premisa vigente.** En cada liberación o promoción se listan los tickets abiertos que citan los interruptores o parámetros
    cambiados (la señal S3 de §6 ya extrae ese vocabulario); cada uno recibe un log «premisa cambiada» (con qué hay que volver a
    medir) o se cierra como obsoleto (`REJECTED`) citando el ticket que lo supera.
@@ -181,6 +181,32 @@ línea «sin divisa de clase» del informe de ciclo. **No existe** detección au
 libre acertó en torno a 1-2 de 5 y sería ruido; la etiqueta estructurada «DECISION PENDIENTE» de la regla 2 es la vía, y se
 automatizará solo si aparecen entradas que lo justifiquen. El barrido de premisas no se ejecuta solo en cada liberación: lo lanza quien
 libera.
+
+Reglas que la fase D (§4.2) ya comprueba con un código de `backlog.v_backlog_violations`: regla 2, `BLOCKED` sin bloqueador estructurado
+(`V-BLOCKED-NO-BLOCKER`), `DEFERRED` sin revisión (`V-DEFERRED-NO-REVISIT`) o con la fecha de revisión vencida (`V-REVISIT-EXPIRED`);
+la apertura retroactiva de §4 «Antes de abrir» (`V-FAST`). Las reglas 1 y 3 a 7 siguen siendo de procedimiento.
+
+### §4.2. Grupos, violaciones y métricas (fase D, FND-0335)
+
+DDL `db/pg_backlog/60_groups_violations.sql`, aplicado por el propietario con `scripts/ops/migrate_backlog_v2.py --phase groups` (simulación
+por defecto; reversión `--down`, que conserva los grupos). Especificación: `PROPUESTA_BACKLOG_V2.md` §6.5 y §7.
+
+- **Grupos.** `backlog.group_tag` con `kind` ∈ {`TRAIN`, `THEME`, `DECISION`} y altas y bajas solo de inserción (`group_member`), siempre
+  por `shared.backlog_client.create_group()` / `group_member()`. `v_group_status` da `EMPTY`, `OPEN` o `READY_TO_CLOSE` (todos los
+  miembros `CLOSED`: una persona decide lo que sigue; nada se cierra solo). Al aplicar la fase, los enlaces `RELEASE_WITH` confirmados
+  pasan **una vez** a grupos `TRAIN-<id menor>` (el tipo de enlace se mantiene); una baja hecha después no se deshace al reaplicar.
+- **Violaciones.** `v_backlog_violations`, una fila por violación: `V-00`, `V-FORCED`, `V-FAST` (`CODE_FIX`/`DATA_FIX` creado y cerrado
+  en menos de 1 h, por las columnas registradas, así que cuenta la historia), `V-BLOCKED-NO-BLOCKER`, `V-DEFERRED-NO-REVISIT`,
+  `V-REVISIT-EXPIRED` (se lista; nada transita solo), `V-WORKAROUND-NO-OPT` (sin seguimiento registrado por `sp_transition` ni enlace
+  a un ticket `OPT`), `V-DUP-NO-LINK`, `V-HOLD-OPEN` (retención abierta más de 48 h: `ATENCION`; más de 96 h: `ALERTA`). Los códigos
+  de la fase C (`V-RETRO`, `V-WORK-ON-CLOSED`, `V-HOOK-BYPASS`, `V-GATE-*`) se añaden con ella y `V-STALE-READ` vive en `fondos`
+  (FND-0332); `tests/test_backlog_violation_catalogue.py` falla si un código del catálogo no está en ninguna de las dos listas.
+- **Métricas lean.** `v_backlog_lean_metrics`, en horas: plazo total (`creation_ts` → `closure_ts`, vale para la historia); tiempo de
+  ciclo (primer `IN_PROGRESS` → último cierre) y espera en `READY_FOR_DEPLOY`, solo con eventos `LIVE`: un ticket sin ellos da NULL, no
+  una cifra inventada con el `BACKFILL`.
+- **Cierre de impacto.** `v_impact_closure`: desde cada ticket, los tickets **abiertos** a los que llega un cambio por enlaces
+  confirmados, hasta 5 niveles. `IMPACTS` va de origen a destino; `DEPENDS_ON` del prerrequisito al dependiente; `OVERLAPS` y
+  `RELEASE_WITH` en ambos sentidos; `RELATED`, `SPLIT_FROM`, `DUPLICATES` y `SUPERSEDES` no propagan.
 
 ## §5. Protocolo de absorción de alcance
 

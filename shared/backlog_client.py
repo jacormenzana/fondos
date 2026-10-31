@@ -1005,6 +1005,38 @@ def shadow_progress(*, conn=None) -> dict:
         return _rows(c, "SELECT last_v00_ts, v00_total, live_non_system_since_last_v00 FROM backlog.v_shadow_stage")[0]
 
 
+GROUP_KINDS = ("TRAIN", "THEME", "DECISION")      # Phase D (FND-0335): db/pg_backlog/60_groups_violations.sql, CHECK of backlog.group_tag.kind
+
+
+def create_group(name: str, kind: str, description: str, *, actor: Optional[str] = None, conn=None) -> int:
+    """Create a group of tickets through backlog.sp_create_group (Phase D): a TRAIN released together, a THEME, or a DECISION that is pending (it
+    replaces the free-text "DECISION PENDIENTE" label). The name is upper-cased by the routine. Returns the group id; raises on any refusal."""
+    if kind not in GROUP_KINDS:
+        raise ValueError(f"group kind must be one of {GROUP_KINDS}, got {kind!r}")
+    who = resolve_actor(actor)
+    with _session(conn, human=who.startswith("human:")) as c:
+        return c.execute("SELECT backlog.sp_create_group(%s, %s, %s, %s)", (name, kind, description, who)).fetchone()[0]
+
+
+def group_member(group: str, ap_id: str, op: str, reason: str, *, actor: Optional[str] = None, conn=None) -> int:
+    """ADD a ticket to a group or REMOVE it (backlog.sp_group_member; append-only events). Returns the event id; raises when the move changes nothing."""
+    if op not in ("ADD", "REMOVE"):
+        raise ValueError(f"op must be ADD or REMOVE, got {op!r}")
+    who = resolve_actor(actor)
+    with _session(conn, human=who.startswith("human:")) as c:
+        return c.execute("SELECT backlog.sp_group_member(%s, %s, %s, %s, %s)", (group, ap_id, op, reason, who)).fetchone()[0]
+
+
+def violation_summary(*, top: int = 3, conn=None) -> dict:
+    """{'applied', 'total', 'by_code': [{'code', 'n'}] (largest first), 'top': the first `top` of them}: the count the cycle report prints
+    (Phase D, backlog.v_backlog_violations). 'applied' is False, with no counts, while the owner has not applied the phase."""
+    with _session(conn) as c:
+        if not c.execute("SELECT to_regclass('backlog.v_backlog_violations') IS NOT NULL").fetchone()[0]:
+            return {"applied": False, "total": None, "by_code": [], "top": []}
+        by_code = _rows(c, "SELECT code, count(*) AS n FROM backlog.v_backlog_violations GROUP BY code ORDER BY count(*) DESC, code")
+    return {"applied": True, "total": sum(r["n"] for r in by_code), "by_code": by_code, "top": by_code[:top]}
+
+
 def phase_a_catalog(*, conn=None) -> dict:
     """Read-only facts the Phase A acceptance check needs (FND-0331): the owner role, the routines and their hardening, who owns the audit tables, what
     backlog_writer may do, the guard triggers, and the ticket / backfill counts. Never raises on a store that is not applied: absent things are just absent."""

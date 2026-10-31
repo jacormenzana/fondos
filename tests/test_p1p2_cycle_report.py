@@ -291,6 +291,28 @@ def test_backlog_links_line_renders_unavailable_unapplied_and_applied_states():
     assert "9 confirmadas" in text and "almacen sin aplicar" not in text
 
 
+def test_backlog_violations_line_renders_unavailable_unapplied_and_applied_states():
+    """Phase D (FND-0335): the violation count and the top 3 codes."""
+    text = cr.render_text(_report(backlog_violations={"error": "BacklogUnavailable: no dsn"}), None, [])
+    assert "Violaciones del backlog: no disponible" in text
+    text = cr.render_text(_report(backlog_violations={"applied": False, "total": None, "by_code": [], "top": []}), None, [])
+    assert "fase D sin aplicar" in text
+    top = [{"code": "V-FAST", "n": 79}, {"code": "V-WORKAROUND-NO-OPT", "n": 2}]
+    text = cr.render_text(_report(backlog_violations={"applied": True, "total": 81, "by_code": top, "top": top}), None, [])
+    assert "Violaciones del backlog: 81 (principales: V-FAST x79, V-WORKAROUND-NO-OPT x2)" in text
+    text = cr.render_text(_report(backlog_violations={"applied": True, "total": 0, "by_code": [], "top": []}), None, [])
+    assert "Violaciones del backlog: 0 (principales: ninguna)" in text
+    assert "Violaciones del backlog" not in cr.render_text(_report(), None, [])     # old reports without the key are tolerated
+
+
+def test_collect_backlog_violations_never_raises(monkeypatch):
+    from shared import backlog_client
+    def boom(**_kw):
+        raise RuntimeError("down")
+    monkeypatch.setattr(backlog_client, "violation_summary", boom)
+    assert cr.collect_backlog_violations() == {"error": "RuntimeError: down"}
+
+
 def test_collect_backlog_links_never_raises(monkeypatch):
     import sys
     monkeypatch.setitem(sys.modules, "backlog_links", None)               # import fails -> the error is reported, not raised

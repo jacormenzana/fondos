@@ -14,6 +14,8 @@ sp_transition, the rebuilt sp_close_release and the shadow-stage trigger; revoke
 privileges of backlog_writer and adds the author check; --apply is REFUSED unless the shadow stage shows 50 non-system transitions since the last V-00),
 `human` (FND-0337, owner-only role backlog_human for human actors; created WITHOUT a password: the owner sets it in his own session and keeps its DSN out of .env) and `history`
 (FND-0338, append-only history of the eight descriptive columns). `human` and `history` need step A-1 re-applied with FND-0337 (the routines they use).
+`relations` (FND-0333, Phase B: link semantics and the delivery gate) and `groups` (FND-0335, Phase D: groups, the violation view, lean metrics, impact
+closure; needs steps A-1 and B).
 
 One phase per transaction (Postgres DDL is transactional: a failure rolls back whole). The DDL is NOT duplicated here: it is the block
 between `-- BEGIN <name>` and `-- END <name>` in the phase's file under db/pg_backlog/ (single source of truth, P#11); the rollback is
@@ -108,6 +110,17 @@ PHASES: dict = {
         "views": ("v_open_review_flag", "v_open_hold", "v_supersede_suggestion", "v_gate_audit_violation", "v_gate_audit_window", "v_gate_override_event"),
         "routines": ("trg_link_cycle", "fn_gate_mode", "fn_gate_record", "fn_gate_blockers", "fn_raise_review_flags", "sp_ack_review", "sp_raise_hold", "sp_release_hold", "sp_set_gate", "sp_annotate_wait"),
         "requires": ("backlog", "backlog_logs", "backlog_link_event", "actor_alias", "v_backlog_link"),      # those of step A-1, which this phase applies itself
+    },
+    # Phase D (FND-0335): groups, the violation catalogue, lean metrics and impact closure. Needs steps A-1 and B. Its rollback drops the views and the routines
+    # and KEEPS group_tag / group_member (append-only history).
+    "groups": {
+        "up": ("60_groups_violations.sql", "backlog_groups_violations"),
+        "down": ("down/60_groups_violations_down.sql", "backlog_groups_violations_down"),
+        "tables": ("group_tag", "group_member"),
+        "views": ("v_group_member", "v_group_status", "v_backlog_violations", "v_backlog_lean_metrics", "v_impact_closure"),
+        "routines": ("sp_create_group", "sp_group_member"),
+        "requires": ("backlog", "status_event", "wait_event", "raw_update_event", "hold_event", "v_open_hold", "v_backlog_link"),
+        "requires_routines": ("trg_append_only", "fn_actor_authorized"),
     },
 }
 SHADOW_REQUIRED = 50          # owner decision D2 (2026-10-26): 50 consecutive non-system transitions with no direct update
