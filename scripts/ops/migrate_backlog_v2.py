@@ -17,7 +17,8 @@ privileges of backlog_writer and adds the author check; --apply is REFUSED unles
 `relations` (FND-0333, Phase B: link semantics and the delivery gate) and `groups` (FND-0335, Phase D: groups, the violation view, lean metrics, impact
 closure; needs steps A-1 and B) and `sync` (FND-0334, Phase C slice 1: commit events, closing conditions, the status feed; needs `groups`) and `hook`
 (FND-0334, Phase C slice 2: the commit-msg gate, nonces and bypassed commits; needs `sync`) and `collision` (FND-0334, Phase C slice 3: the collision rule, adjudication and
-the gate modes; needs `hook`).
+the gate modes; needs `hook`) and `attest` (FND-0334, Phase C slice 4: branch-protection facts and
+the V-GATE-* violations; needs `hook`).
 
 One phase per transaction (Postgres DDL is transactional: a failure rolls back whole). The DDL is NOT duplicated here: it is the block
 between `-- BEGIN <name>` and `-- END <name>` in the phase's file under db/pg_backlog/ (single source of truth, P#11); the rollback is
@@ -159,6 +160,17 @@ PHASES: dict = {
                      "sp_adjudicate_overlap"),
         "requires": ("backlog", "backlog_link_event", "v_backlog_link", "hold_event", "v_open_hold", "gate_check"),
         "requires_routines": ("trg_append_only", "fn_actor_ok", "fn_actor_authorized", "sp_raise_hold", "sp_gate_check"),
+    },
+    # Phase C slice 4 (FND-0334): the branch-protection facts of the gate (read from the GitHub API by backlog_sync.py, or written by the owner) and the violations V-GATE-UNPROTECTED,
+    # V-GATE-UNVERIFIED and V-GATE-EMERGENCY. Needs slice 2 (the catalogue). Its rollback KEEPS gate_protection_event.
+    "attest": {
+        "up": ("95_attest.sql", "backlog_attest"),
+        "down": ("down/95_attest_down.sql", "backlog_attest_down"),
+        "tables": ("gate_protection_event",),
+        "views": ("v_violations_c3",),
+        "routines": ("sp_record_gate_protection",),
+        "requires": ("backlog", "v_violations_c2"),
+        "requires_routines": ("trg_append_only", "fn_actor_ok", "fn_actor_authorized", "fn_rebuild_violations"),
     },
 }
 SHADOW_REQUIRED = 50          # owner decision D2 (2026-10-26): 50 consecutive non-system transitions with no direct update

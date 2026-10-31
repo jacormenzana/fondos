@@ -7,6 +7,7 @@ github_protect_master.py -- protection of the `master` branch of the repository 
     python scripts/ops/github_protect_master.py --apply         # applies them (needs GITHUB_ADMIN_TOKEN), then reads the result back
     python scripts/ops/github_protect_master.py --verify        # read-only check of the effective rules (public API; full detail too when GITHUB_ADMIN_TOKEN is set)
     python scripts/ops/github_protect_master.py --remove --apply  # EMERGENCY ONLY (owner): removes the protection; log V-GATE-EMERGENCY in FND-0336 and restore it within 48 h
+    python scripts/ops/github_protect_master.py --with-backlog-gate --apply   # the owner, once the signing key is committed: ALSO require `backlog-gate` (FND-0334 slice 4)
 
 The settings (owner decision of 2026-10-26): a pull request is required before merging (0 required approvals: the owner is the only reviewer); the four CI checks below
 are required; branches need not be up to date (parallel pull requests are not serialised); ADMINISTRATORS ARE INCLUDED (every session publishes with the owner's own account,
@@ -36,13 +37,19 @@ REQUIRED_CHECKS = (
     "Verify all AUTO sentinels are in sync",
     "Verify statistical-audit catalog consistency",
 )
+GATE_CHECK = "backlog-gate"          # the signed-attestation job of .github/workflows/backlog-gate.yml: required only once the owner commits the signing key (FND-0334 slice 4, NORMAS_BACKLOG 4.7)
 RC_OK, RC_FAIL, RC_USAGE = 0, 1, 2
 
 
-def protection_payload() -> dict:
+def checks(with_gate: bool = False) -> tuple:
+    """The required status checks: the four CI jobs, plus `backlog-gate` when the owner asks for it. Pure."""
+    return REQUIRED_CHECKS + ((GATE_CHECK,) if with_gate else ())
+
+
+def protection_payload(with_gate: bool = False) -> dict:
     """The body of PUT /repos/{repo}/branches/{branch}/protection. Pure."""
     return {
-        "required_status_checks": {"strict": False, "contexts": list(REQUIRED_CHECKS)},
+        "required_status_checks": {"strict": False, "contexts": list(checks(with_gate))},
         "enforce_admins": True,
         "required_pull_request_reviews": {"required_approving_review_count": 0, "dismiss_stale_reviews": False,
                                           "require_code_owner_reviews": False},
@@ -55,20 +62,25 @@ def protection_payload() -> dict:
     }
 
 
-def evaluate_public(branch: dict) -> list:
+def _contexts_ok(contexts: list, with_gate: bool) -> bool:
+    """Exactly the four CI jobs, or those plus `backlog-gate` once it is enabled; with `with_gate` (the owner asked for it) the fifth is REQUIRED. Pure."""
+    return sorted(contexts) == sorted(checks(True)) if with_gate else sorted(contexts) in (sorted(checks(False)), sorted(checks(True)))
+
+
+def evaluate_public(branch: dict, with_gate: bool = False) -> list:
     """[(check, passed, detail)] from the PUBLIC branch object (GET /branches/{branch}). Pure."""
     prot = branch.get("protection") or {}
     rsc = prot.get("required_status_checks") or {}
     contexts = sorted(rsc.get("contexts") or [c.get("context") for c in rsc.get("checks") or []])
     return [
         ("branch is protected", branch.get("protected") is True and prot.get("enabled") is True, f"protected={branch.get('protected')}"),
-        ("the four required checks are exactly the CI jobs", contexts == sorted(REQUIRED_CHECKS), f"contexts={contexts}"),
+        ("the required checks are exactly the CI jobs (plus backlog-gate once enabled)", _contexts_ok(contexts, with_gate), f"contexts={contexts}"),
         ("the checks are enforced for everyone, administrators included", rsc.get("enforcement_level") == "everyone",
          f"enforcement_level={rsc.get('enforcement_level')}"),
     ]
 
 
-def evaluate_admin(p: dict) -> list:
+def evaluate_admin(p: dict, with_gate: bool = False) -> list:
     """[(check, passed, detail)] from the full protection object (GET /branches/{branch}/protection, administrator token). Pure."""
     rsc = p.get("required_status_checks") or {}
     pr = p.get("required_pull_request_reviews")
@@ -77,7 +89,7 @@ def evaluate_admin(p: dict) -> list:
         ("administrators are included", (p.get("enforce_admins") or {}).get("enabled") is True, f"enforce_admins={p.get('enforce_admins')}"),
         ("force pushes are refused", (p.get("allow_force_pushes") or {}).get("enabled") is False, f"allow_force_pushes={p.get('allow_force_pushes')}"),
         ("deletions are refused", (p.get("allow_deletions") or {}).get("enabled") is False, f"allow_deletions={p.get('allow_deletions')}"),
-        ("the four checks are required", sorted(rsc.get("contexts") or []) == sorted(REQUIRED_CHECKS), f"contexts={rsc.get('contexts')}"),
+        ("the checks are required", _contexts_ok(list(rsc.get("contexts") or []), with_gate), f"contexts={rsc.get('contexts')}"),
     ]
 
 
@@ -112,6 +124,7 @@ def main(argv: "list | None" = None) -> int:
     ap.add_argument("--apply", action="store_true", help="execute (default: dry run)")
     ap.add_argument("--verify", action="store_true", help="read-only check of the effective rules")
     ap.add_argument("--remove", action="store_true", help="EMERGENCY: remove the protection (needs --apply)")
+    ap.add_argument("--with-backlog-gate", action="store_true", help="also require the `backlog-gate` check (the owner, once the signing key is committed)")
     args = ap.parse_args(argv)
     token = os.environ.get("GITHUB_ADMIN_TOKEN") or None
     path = f"/repos/{REPO}/branches/{BRANCH}"
@@ -129,23 +142,23 @@ def main(argv: "list | None" = None) -> int:
         return RC_OK if status in (200, 204) else RC_FAIL
 
     if args.apply:
-        status, body = _call("PUT", f"{path}/protection", token, protection_payload())
+        status, body = _call("PUT", f"{path}/protection", token, protection_payload(args.with_backlog_gate))
         if status != 200:
             print(f"REFUSED: HTTP {status} {body.get('message')}", file=sys.stderr)
             return RC_FAIL
         print("applied: HTTP 200")
     elif not args.verify:
-        print(f"DRY RUN: nothing changed. --apply would PUT this to {path}/protection:\n{json.dumps(protection_payload(), indent=2)}")
+        print(f"DRY RUN: nothing changed. --apply would PUT this to {path}/protection:\n{json.dumps(protection_payload(args.with_backlog_gate), indent=2)}")
 
     status, branch = _call("GET", path)
     if status != 200:
         print(f"cannot read the branch: HTTP {status} {branch.get('message')}", file=sys.stderr)
         return RC_FAIL
-    ok = _report(evaluate_public(branch))
+    ok = _report(evaluate_public(branch, args.with_backlog_gate))
     if token:
         status, full = _call("GET", f"{path}/protection", token)
         if status == 200:
-            ok = _report(evaluate_admin(full)) and ok
+            ok = _report(evaluate_admin(full, args.with_backlog_gate)) and ok
         else:
             print(f"FAIL - full protection read: HTTP {status} {full.get('message')}")
             ok = False

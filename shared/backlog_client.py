@@ -1187,6 +1187,39 @@ def gate_undecided(ap_ids: list, *, conn=None, scoped: bool = False) -> list:
         return _rows(c, "SELECT a, b, age_hours FROM backlog.fn_gate_undecided(%s::text[])", (list(ap_ids),))
 
 
+def attest_store_present(*, conn=None) -> bool:
+    """True when the owner has applied Phase C slice 4 (the branch-protection facts and the V-GATE-* violations)."""
+    with _session(conn) as c:
+        return bool(c.execute("SELECT to_regclass('backlog.gate_protection_event') IS NOT NULL AND to_regprocedure('backlog.sp_record_gate_protection(text,text,text)') IS NOT NULL").fetchone()[0])
+
+
+def record_gate_protection(kind: str, reason: str, *, actor: Optional[str] = None, conn=None) -> bool:
+    """Record one branch-protection fact (backlog.sp_record_gate_protection): an API reading (PROTECTED / UNPROTECTED / UNVERIFIED, by a system actor: recorded only when it changes or the latest is
+    older than 24 h) or an owner event (VERIFIED, which clears V-GATE-UNVERIFIED for 30 days, or EMERGENCY: by a person, through the owner-only login). True when it was recorded."""
+    if kind not in ("PROTECTED", "UNPROTECTED", "UNVERIFIED", "VERIFIED", "EMERGENCY"):
+        raise ValueError(f"kind must be PROTECTED, UNPROTECTED, UNVERIFIED, VERIFIED or EMERGENCY, got {kind!r}")
+    who = resolve_actor(actor)
+    with _session(conn, human=who.startswith("human:"), write=True) as c:
+        return bool(c.execute("SELECT backlog.sp_record_gate_protection(%s, %s, %s)", (kind, reason, who)).fetchone()[0])
+
+
+def gate_protection_state(*, conn=None) -> dict:
+    """{'api': (kind, detail, ts) of the latest API reading or None, 'verified': ts of the latest owner VERIFIED event of the last 30 days or None, 'emergencies': n}."""
+    with _session(conn) as c:
+        api = c.execute("SELECT kind, reason, event_ts FROM backlog.gate_protection_event WHERE source = 'API' ORDER BY event_id DESC LIMIT 1").fetchone()
+        ver = c.execute("SELECT max(event_ts) FROM backlog.gate_protection_event WHERE kind = 'VERIFIED' AND event_ts > clock_timestamp() - interval '30 days'").fetchone()[0]
+        emg = c.execute("SELECT count(*) FROM backlog.gate_protection_event WHERE kind = 'EMERGENCY'").fetchone()[0]
+    return {"api": tuple(api) if api else None, "verified": ver, "emergencies": int(emg)}
+
+
+def gate_pairs(ap_ids: list, *, conn=None) -> list:
+    """[{a, b, decided}]: the collision pairs that touch any of the tickets, undecided (in the queue) and decided (adjudicated). Ticket ids only: it is what the signed attestation carries."""
+    with _session(conn) as c:
+        return _rows(c, "SELECT a, b, false AS decided FROM backlog.v_gate_queue WHERE a = ANY(%s::text[]) OR b = ANY(%s::text[]) "
+                        "UNION ALL SELECT a, b, true FROM backlog.gate_adjudication WHERE a = ANY(%s::text[]) OR b = ANY(%s::text[]) ORDER BY 1, 2",
+                     (list(ap_ids),) * 4)
+
+
 def gate_queue(*, conn=None) -> list:
     """[{a, b, evidence, proposed_ts, age_hours, level}]: every undecided collision pair, oldest first (level OK / ATENCION at 48 h / ALERTA at 96 h)."""
     with _session(conn) as c:

@@ -831,6 +831,10 @@ BACKLOG_REQUIRE_TICKET_ENABLED: bool = False
 # 2026-10-31 12:42) with gate_mode.py. The 14-day audit counts from that event. Rollback = set it back to "OFF" (the hook then does not even ask the database); the effective mode also drops to
 # OFF if the calibrator retires the gate (an appended event, no edit of this file).
 BACKLOG_COLLISION_GATE_MODE: str = "AUDIT"
+# Backlog v2 Phase C slice 4 (FND-0334; PROPUESTA_BACKLOG_V2.md 6.4.6): where scripts/audit/backlog_sync.py reads whether `backlog-gate` is a REQUIRED status check of the branch (GitHub API). The
+# token is NOT a setting: it is the environment variable BACKLOG_GATE_GITHUB_TOKEN (a fine-grained, read-only token held outside the repository and .env, typed in the owner's terminal).
+BACKLOG_GATE_GITHUB_REPO: str = "jacormenzana/fondos"
+BACKLOG_GATE_GITHUB_BRANCH: str = "master"
 # Options of the iterative VIF (used when MACRO_VIF_ITERATIVE_ENABLED, and by the PIT variant "iterative_hy"): keep the two
 # crisis factors, drop spread_ig (the near-duplicate of spread_hy), and at most n_obs / 10 factors per fund.
 MACRO_ITERATIVE_VIF: dict = {

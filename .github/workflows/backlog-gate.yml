@@ -1,0 +1,64 @@
+name: Backlog gate attestation
+
+# Backlog v2 Phase C slice 4 (FND-0334; doc/especificacion/PROPUESTA_BACKLOG_V2.md 6.4.6, doc/reglas/NORMAS_BACKLOG.md 4.7).
+# Every commit that cites a ticket (FND-nnnn) must be covered by the owner's SIGNED attestation (backlog_gate/attestation.json + .sig, written by
+# `python scripts/audit/backlog_sync.py --attest`), with every collision pair decided. The signature is checked against
+# .github/backlog_gate_allowed_signers AS IT IS IN THE BASE of the range, so a change cannot bring its own key. While that file lists no key the job
+# passes with a warning ("NOT ENFORCED"). CI proves that the owner's key signed a statement; it cannot check the database.
+#
+# An Action on a push cannot block that push: it blocks only if `backlog-gate` is a REQUIRED status check of `master` (owner action O-5; see
+# scripts/ops/github_protect_master.py). Publish with a `publish/<date>` branch, wait for green, then fast-forward master.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+  workflow_dispatch:
+    inputs:
+      base:
+        description: "Base revision of the range (default: the merge base with origin/master); used to re-run after an emergency push"
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  backlog-gate:
+    name: backlog-gate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository, full history because the range needs it
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Choose the base of the range
+        id: base
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          DISPATCH_BASE: ${{ github.event.inputs.base }}
+        run: |
+          set -e
+          base=""
+          if [ "$EVENT" = "pull_request" ]; then base="$PR_BASE"; fi
+          if [ "$EVENT" = "push" ] && [ -n "$PUSH_BEFORE" ] && [ "$PUSH_BEFORE" != "0000000000000000000000000000000000000000" ]; then base="$PUSH_BEFORE"; fi
+          if [ "$EVENT" = "workflow_dispatch" ] && [ -n "$DISPATCH_BASE" ]; then base="$DISPATCH_BASE"; fi
+          if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            git fetch --no-tags origin master:refs/remotes/origin/master 2>/dev/null || true
+            base="$(git merge-base origin/master HEAD || git rev-list --max-parents=0 HEAD | tail -n 1)"
+          fi
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "range base: $base"
+
+      - name: Verify the signed attestation
+        # Pure stdlib + git + ssh-keygen (already on the runner): no installation.
+        run: python scripts/audit/verify_attestation.py --base "${{ steps.base.outputs.base }}" --head "${{ github.sha }}"
