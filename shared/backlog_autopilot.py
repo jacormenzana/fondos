@@ -217,6 +217,64 @@ def already_noted(d: Decision, notes: list) -> bool:
     return any(note_key(n) == want for n in notes)
 
 
+PROMOTE_AFTER = 20          # SHADOW decisions (since the last mode event) with none contradicted, before the autopilot switches itself ON
+DEMOTE_AFTER = 2            # autopilot closures reopened within the window, and the autopilot switches itself back to SHADOW
+DEMOTE_WINDOW_DAYS = 30
+
+
+def mode_change(current: str, decisions: int, contradicted: int, reopened_closures: int) -> Optional[tuple]:
+    """(new mode, reason) when the autopilot's own track record moves it between SHADOW and ON, else None. It never touches OFF (a person's setting). Pure.
+    decisions = SHADOW decisions to act (move, close, reopen, unblock, undefer; not waits) noted since the last mode event; contradicted = how many of them were followed by a reopening of
+    their ticket; reopened_closures = reopenings, in the last DEMOTE_WINDOW_DAYS days, of tickets whose latest closure was the autopilot's. Promotion needs fresh evidence after every demotion
+    (the count restarts at each mode event) and no reopened closure in the window, so a demoted autopilot cannot switch itself back on until its record is clean again."""
+    if current == "SHADOW" and decisions >= PROMOTE_AFTER and contradicted == 0 and reopened_closures == 0:
+        return "ON", f"promoted: {decisions} SHADOW decisions since the last mode event, none followed by a reopening, no autopilot closure reopened in {DEMOTE_WINDOW_DAYS} days"
+    if current == "ON" and reopened_closures >= DEMOTE_AFTER:
+        return "SHADOW", f"demoted: {reopened_closures} autopilot closures reopened in the last {DEMOTE_WINDOW_DAYS} days"
+    return None
+
+
+# The state machine as events. Every legal edge (backlog.fn_transition_legal, 30_transitions.sql) is either a RULE -- the system makes the move when the evidence exists -- or an EVENT -- an actor
+# (a person, an agent or the hook) records it. No edge is an approval: nobody signs off a transition, so no queue exists for one. tests/test_backlog_edges.py ties this table to the DDL, to the
+# engine's decisions and to the table printed in NORMAS_BACKLOG.md section 2.
+RULE, EVENT = "RULE", "EVENT"
+EDGES: dict = {
+    ("OPEN", "TODO"): (EVENT, "planned by whoever picks the ticket up"),
+    ("OPEN", "IN_PROGRESS"): (RULE, "a commit with `Refs:` on the ticket (commit-msg hook, as system:gate)"),
+    ("OPEN", "DEFERRED"): (EVENT, "deferred with a revisit date or event"),
+    ("OPEN", "CLOSED"): (EVENT, "closed with its solution (REJECTED / DUPLICATED cite the follow-up ticket)"),
+    ("TODO", "OPEN"): (EVENT, "returned to the pool"),
+    ("TODO", "IN_PROGRESS"): (RULE, "a commit with `Refs:` on the ticket (commit-msg hook, as system:gate)"),
+    ("TODO", "DEFERRED"): (EVENT, "deferred with a revisit date or event"),
+    ("TODO", "CLOSED"): (EVENT, "closed with its solution (REJECTED / DUPLICATED cite the follow-up ticket)"),
+    ("IN_PROGRESS", "TODO"): (EVENT, "put back by whoever holds it"),
+    ("IN_PROGRESS", "BLOCKED"): (EVENT, "blocked on a ticket (structured) or a named condition"),
+    ("IN_PROGRESS", "READY_FOR_DEPLOY"): (RULE, "a merge on master whose branch carries `Closes:` for the ticket (MERGE fact)"),
+    ("IN_PROGRESS", "DEFERRED"): (EVENT, "deferred with a revisit date or event"),
+    ("IN_PROGRESS", "CLOSED"): (EVENT, "closed with its solution (a delivery closes through READY_FOR_DEPLOY)"),
+    ("BLOCKED", "IN_PROGRESS"): (RULE, "the ticket it is blocked on is CLOSED (UNBLOCK)"),
+    ("BLOCKED", "TODO"): (EVENT, "put back by whoever holds it"),
+    ("BLOCKED", "DEFERRED"): (EVENT, "deferred with a revisit date or event"),
+    ("BLOCKED", "CLOSED"): (EVENT, "closed with its solution"),
+    ("READY_FOR_DEPLOY", "IN_PROGRESS"): (EVENT, "the delivery was not complete: back to work"),
+    ("READY_FOR_DEPLOY", "CLOSED"): (RULE, "every closing condition holds and, for db/** changes, the DEPLOY fact exists (CLOSE)"),
+    ("DEFERRED", "OPEN"): (EVENT, "returned to the pool"),
+    ("DEFERRED", "TODO"): (RULE, "the revisit date has been reached (UNDEFER)"),
+    ("DEFERRED", "IN_PROGRESS"): (EVENT, "taken up before its revisit date"),
+    ("DEFERRED", "CLOSED"): (EVENT, "closed with its solution"),
+    ("CLOSED", "OPEN"): (EVENT, "reopened with a cause (any actor; the reopening is the rejection of the delivery)"),
+    ("CLOSED", "TODO"): (EVENT, "reopened with a cause (any actor; the reopening is the rejection of the delivery)"),
+    ("CLOSED", "IN_PROGRESS"): (RULE, "a later merge cites the ticket and changes code or tests (REOPEN, cause INCOMPLETE_FIX); any actor may also record it"),
+}
+
+
+def edge_table_markdown() -> str:
+    """The table of EDGES as it is printed in NORMAS_BACKLOG.md section 2 (a test keeps the document equal to it). Pure."""
+    rows = ["| From | To | Made by | Trigger |", "|---|---|---|---|"]
+    rows += [f"| {a} | {b} | {kind} | {why} |" for (a, b), (kind, why) in EDGES.items()]
+    return "\n".join(rows)
+
+
 def stale_in_progress(last_activity: dict, today: date, days: int = 14) -> list:
     """[(ap, idle_days)] of the IN_PROGRESS tickets with no activity (commit, log or status event) for `days` or more, most idle first. `last_activity` = {ap: date}. Pure."""
     out = [(ap, (today - d).days) for ap, d in last_activity.items() if (today - d).days >= days]

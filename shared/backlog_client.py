@@ -1213,6 +1213,30 @@ def autopilot_mode(*, conn=None) -> str:
         return str(c.execute("SELECT backlog.fn_autopilot_mode()").fetchone()[0])
 
 
+_SHADOW_NOTE = r"^\[autopilot SHADOW\] (MOVE|CLOSE|REOPEN|UNBLOCK|UNDEFER) FND-"        # a SHADOW note that says "would act" (a WAIT note is not a decision)
+_LIVE_REOPEN = ("kind = 'REOPEN' AND NOT EXISTS (SELECT 1 FROM backlog.reopen_event x WHERE x.action_point_id = r.action_point_id AND x.kind = 'RESCIND' AND x.reopen_id > r.reopen_id)")
+
+
+def autopilot_track_record(window_days: int = 30, *, conn=None) -> dict:
+    """What shared.backlog_autopilot.mode_change decides from: {'mode', 'decisions', 'contradicted', 'reopened_closures'}. `decisions` = the distinct SHADOW decisions (to act, not to wait) noted by
+    system:autopilot since the latest mode event; `contradicted` = how many of them were followed by a (not rescinded) reopening of their ticket; `reopened_closures` = the (not rescinded) reopenings
+    of the last `window_days` days of tickets whose latest closure before the reopening was made by system:autopilot. Read-only; needs the `events` DDL."""
+    with _session(conn) as c:
+        mode = c.execute("SELECT backlog.fn_autopilot_mode()").fetchone()[0]
+        decisions, contradicted = c.execute(
+            "WITH since AS (SELECT COALESCE(max(event_ts), '-infinity'::timestamptz) AS ts FROM backlog.autopilot_mode_event), "
+            "notes AS (SELECT DISTINCT ON (l.action_point_id, substring(l.comment from '\\(key [^)]*\\)')) l.action_point_id, l.log_ts "
+            "          FROM backlog.BACKLOG_LOGS l, since s WHERE l.username = %s AND l.comment ~ %s AND l.log_ts > s.ts "
+            "          ORDER BY l.action_point_id, substring(l.comment from '\\(key [^)]*\\)'), l.log_id) "
+            "SELECT count(*), count(*) FILTER (WHERE EXISTS (SELECT 1 FROM backlog.reopen_event r WHERE r.action_point_id = n.action_point_id AND r.event_ts > n.log_ts AND " + _LIVE_REOPEN + ")) FROM notes n",
+            (AUTOPILOT_ACTOR, _SHADOW_NOTE)).fetchone()
+        (reopened,) = c.execute(
+            "SELECT count(*) FROM backlog.reopen_event r WHERE " + _LIVE_REOPEN + " AND r.event_ts >= now() - make_interval(days => %s) "
+            "AND (SELECT s.actor FROM backlog.status_event s WHERE s.action_point_id = r.action_point_id AND s.to_status = 'CLOSED' AND s.event_ts < r.event_ts ORDER BY s.event_id DESC LIMIT 1) = %s",
+            (int(window_days), AUTOPILOT_ACTOR)).fetchone()
+    return {"mode": str(mode), "decisions": int(decisions), "contradicted": int(contradicted), "reopened_closures": int(reopened)}
+
+
 def set_autopilot_mode(mode: str, reason: str, *, actor: Optional[str] = None, conn=None) -> int:
     """Append an autopilot_mode_event (backlog.sp_set_autopilot_mode). The autopilot itself may only move SHADOW <-> ON; a person sets any mode. Returns the event id."""
     if mode not in AUTOPILOT_MODES:

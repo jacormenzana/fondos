@@ -103,12 +103,51 @@ Dominios categóricos, **todos con `CHECK` en BD** — nunca inventar un valor f
   - **El modo del autopiloto es un evento** (`backlog.autopilot_mode_event`, `fn_autopilot_mode`, `sp_set_autopilot_mode`), no una edición de fichero: una persona fija cualquier modo; el autopiloto solo se mueve
     entre `SHADOW` y `ON` (nunca se apaga ni levanta un `OFF` que puso una persona). `BACKLOG_AUTOPILOT_MODE` queda como techo en `ON` y el modo efectivo de una ejecución es el **más bajo** de ese techo, de `--mode` y del
     modo de la base de datos (por defecto `SHADOW`); si ese modo no se puede leer (el DDL `events` no está aplicado) la ejecución se limita a `SHADOW`, de modo que un evento de modo ausente nunca enciende el autopiloto.
+    **El modo sigue el historial del propio autopiloto, sin revisión humana** (`shared.backlog_autopilot.mode_change`, evaluado al final de cada `--apply` sin `--mode`): `SHADOW -> ON` tras 20 decisiones `SHADOW`
+    «de actuar» (no esperas) anotadas desde el último evento de modo, ninguna seguida de una reapertura de su ticket y ningún cierre del autopiloto reabierto en 30 días; `ON -> SHADOW` cuando dos cierres suyos se
+    reabren en 30 días. El recuento de decisiones empieza de cero en cada evento de modo, así que un autopiloto degradado no vuelve a encenderse hasta tener un historial limpio y fresco. `OFF` solo lo cambia una persona.
   - **Tres eventos sin disparador ahora lo tienen** (el motor puro de `shared/backlog_autopilot.py`, la ejecución en `scripts/audit/backlog_autopilot.py`; en `SHADOW` solo escriben una nota):
     - `CLOSED -> IN_PROGRESS` (**REOPEN**, causa `INCOMPLETE_FIX`): un merge **posterior al cierre** cuya rama trae un commit que cita el ticket (`Refs:` o `Closes:`, fecha de autor del último commit que lo cita) y
       cambia código o tests (no `doc/`, `docs/`, `out/`, `deployments/`, `backlog_gate/` ni `.md`/`.txt`/`.rst`) reabre el ticket. Solo un cierre de entrega (`CODE_FIX`, `DATA_FIX`, `WORKAROUND`); un `REJECTED` o `DUPLICATED` no se «entregó».
     - `BLOCKED -> IN_PROGRESS` (**UNBLOCK**, evidencia `BLOCKER`): el ticket del que depende (la última espera estructurada `BLOCKED`) está `CLOSED`. Un bloqueo por condición o texto libre no lo levanta el sistema.
     - `DEFERRED -> TODO` (**UNDEFER**, evidencia `REVISIT`): la fecha `revisit_by` de la última espera `DEFERRED` ya llegó. `sp_auto_transition` verifica las dos evidencias con sus propios registros, no con un hecho que alguien anotó.
     Cada ejecución con `--apply` en modo `ON` libera además las retenciones del sistema cuya causa desapareció (`fn_auto_release_holds`).
+
+**Tabla de eventos de la máquina de estados (cada arista legal de `fn_transition_legal`, más la reapertura).** `RULE` = el sistema hace el movimiento cuando existe la evidencia; `EVENT` = lo registra un
+actor (persona, agente o gancho). Ninguna arista es una aprobación: nadie firma una transición, así que no existe una cola para ellas. `tests/test_backlog_edges.py` mantiene esta tabla igual al DDL, al
+motor de reglas (`shared/backlog_autopilot.py`, `EDGES`) y a este texto; el texto de las columnas está en inglés porque se genera desde el código.
+
+<!-- EDGES:BEGIN -->
+| From | To | Made by | Trigger |
+|---|---|---|---|
+| OPEN | TODO | EVENT | planned by whoever picks the ticket up |
+| OPEN | IN_PROGRESS | RULE | a commit with `Refs:` on the ticket (commit-msg hook, as system:gate) |
+| OPEN | DEFERRED | EVENT | deferred with a revisit date or event |
+| OPEN | CLOSED | EVENT | closed with its solution (REJECTED / DUPLICATED cite the follow-up ticket) |
+| TODO | OPEN | EVENT | returned to the pool |
+| TODO | IN_PROGRESS | RULE | a commit with `Refs:` on the ticket (commit-msg hook, as system:gate) |
+| TODO | DEFERRED | EVENT | deferred with a revisit date or event |
+| TODO | CLOSED | EVENT | closed with its solution (REJECTED / DUPLICATED cite the follow-up ticket) |
+| IN_PROGRESS | TODO | EVENT | put back by whoever holds it |
+| IN_PROGRESS | BLOCKED | EVENT | blocked on a ticket (structured) or a named condition |
+| IN_PROGRESS | READY_FOR_DEPLOY | RULE | a merge on master whose branch carries `Closes:` for the ticket (MERGE fact) |
+| IN_PROGRESS | DEFERRED | EVENT | deferred with a revisit date or event |
+| IN_PROGRESS | CLOSED | EVENT | closed with its solution (a delivery closes through READY_FOR_DEPLOY) |
+| BLOCKED | IN_PROGRESS | RULE | the ticket it is blocked on is CLOSED (UNBLOCK) |
+| BLOCKED | TODO | EVENT | put back by whoever holds it |
+| BLOCKED | DEFERRED | EVENT | deferred with a revisit date or event |
+| BLOCKED | CLOSED | EVENT | closed with its solution |
+| READY_FOR_DEPLOY | IN_PROGRESS | EVENT | the delivery was not complete: back to work |
+| READY_FOR_DEPLOY | CLOSED | RULE | every closing condition holds and, for db/** changes, the DEPLOY fact exists (CLOSE) |
+| DEFERRED | OPEN | EVENT | returned to the pool |
+| DEFERRED | TODO | RULE | the revisit date has been reached (UNDEFER) |
+| DEFERRED | IN_PROGRESS | EVENT | taken up before its revisit date |
+| DEFERRED | CLOSED | EVENT | closed with its solution |
+| CLOSED | OPEN | EVENT | reopened with a cause (any actor; the reopening is the rejection of the delivery) |
+| CLOSED | TODO | EVENT | reopened with a cause (any actor; the reopening is the rejection of the delivery) |
+| CLOSED | IN_PROGRESS | RULE | a later merge cites the ticket and changes code or tests (REOPEN, cause INCOMPLETE_FIX); any actor may also record it |
+<!-- EDGES:END -->
+
   - **El hecho `DEPLOY` no se puede falsificar.** Lo registra solo el login acotado `backlog_facts` (sin contraseña: la fija el propietario; su cadena va al vault del propietario) mediante `sp_record_fact`
     (actor `system:deploy`), y un disparador de `ops_event` rechaza una fila `DEPLOY` de cualquier otro login que no sea superusuario (una migración o un relleno). Es lo que permite al autopiloto cerrar por sí solo
     los tickets cuyo merge toca `db/`.
