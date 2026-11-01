@@ -150,8 +150,17 @@ def fake_git(parents_line, rc=0):
 
 def test_the_probe_reads_the_ci_on_the_second_parent_of_the_delivering_merge():
     got = []
-    out = probe.probe_tests_pass("FND-1", evidence={"FND-1": "m" * 40}, git=fake_git(f"{'m' * 40} {'1' * 40} {'2' * 40}"), read=lambda repo, branch, sha, token: got.append((repo, branch, sha)) or (True, "all green"))
+    out = probe.probe_tests_pass("FND-1", evidence={"FND-1": "m" * 40}, git=fake_git(f"{'m' * 40} {'1' * 40} {'2' * 40}"), read=lambda repo, branch, sha, token: got.append((repo, branch, sha, token)) or (True, "all green"))
     assert out == (True, "tests_pass: all green") and got[0][2] == "2" * 40 and got[0][0] and got[0][1]
+    assert got[0][3] is None                                                                  # the autopilot holds no secret: the read is unauthenticated, whatever the environment has
+
+
+def test_the_probe_never_reads_a_vault_variable_even_when_the_environment_has_one(monkeypatch):
+    monkeypatch.setenv("BACKLOG_GATE_GITHUB_TOKEN", "ghp_SHOULD_NEVER_BE_USED")
+    seen = []
+    probe.probe_tests_pass("FND-1", evidence={"FND-1": "c" * 40}, git=fake_git(f"{'c' * 40}"), read=lambda repo, branch, sha, token: seen.append(token) or (True, "ok"))
+    assert seen == [None]
+    assert "BACKLOG_GATE_GITHUB_TOKEN" not in (_ROOT / "scripts" / "audit" / "rfd_matrix_probe.py").read_text(encoding="utf-8").replace("BACKLOG_GATE_GITHUB_REPO", "").replace("BACKLOG_GATE_GITHUB_BRANCH", "")
 
 
 def test_a_plain_commit_or_an_unresolvable_one_is_read_as_itself_and_an_explicit_sha_wins():

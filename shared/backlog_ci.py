@@ -3,8 +3,9 @@
 backlog_ci.py -- is the CI of a change green? The evidence behind the closing condition `tests_pass` (Backlog v3 W4, FND-0359; scripts/audit/rfd_matrix_probe.py).
 
 `verdict` and `evidence_commit` are pure. `read_ci` makes the HTTPS calls (the same stdlib helper as shared/backlog_protection.py) and NEVER raises: whatever it cannot read is "unverifiable" (None), which the
-autopilot treats as "not yet" and asks again on its next run, never as a pass. The repository is public, so GitHub's check runs and the protection of the branch need NO secret; the read-only token
-BACKLOG_GATE_GITHUB_TOKEN, when the environment has one, only raises the rate limit (60 -> 5000 requests an hour) and never appears in a detail.
+autopilot treats as "not yet" and asks again on its next run, never as a pass. The repository is public, so GitHub's check runs and the protection of the branch need NO secret, and the autopilot
+passes none: it is a session process, and no session reads a vault variable (tests/test_owner_vault.py). The `token` parameter exists for an owner tool that holds one; it only raises the rate limit
+(60 -> 5000 requests an hour), goes only in the Authorization header and never appears in a detail.
 
 Where the evidence is: a pull request merged with "Create a merge commit" leaves the merge commit on the branch and the commit the checks ran on as its SECOND PARENT; the merge commit itself has
 no check runs. So the checks of a delivery are read on the second parent (`evidence_commit`), and the checks that count are the ones the branch REQUIRES (read from the branch's own protection,
@@ -65,7 +66,7 @@ def read_ci(repo: str, branch: str, sha: str, token=None, opener=None, timeout: 
         return None, f"GitHub could not be reached to read the check runs of {sha[:12]}"
     status, body = got
     if status == 403:
-        return None, "GitHub refused the read (HTTP 403: most likely the unauthenticated rate limit; BACKLOG_GATE_GITHUB_TOKEN raises it)"
+        return None, "GitHub refused the read (HTTP 403: most likely the unauthenticated rate limit of 60 requests an hour, which clears by itself)"
     if status != 200 or not isinstance(body, dict):
         return None, f"GitHub answered HTTP {status} for the check runs of {sha[:12]}"
     runs = body.get("check_runs") or []

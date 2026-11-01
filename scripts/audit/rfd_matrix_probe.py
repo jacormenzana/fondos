@@ -155,13 +155,14 @@ def probe_tests_pass(tid: str, sha: str = None, evidence: dict = None, read=None
         return False, f"{tid}: no delivering merge on record yet, so there is no CI to read"
     sys.path.insert(0, str(ROOT))
     from shared import backlog_ci as ci
-    import os
     import shared.config as cfg
     run_git = git or _run
     rc, out = run_git(["git", "-C", str(ROOT), "rev-list", "--parents", "-n", "1", commit])
     parents = out.split()[1:] if rc == 0 and out else []
     head = ci.evidence_commit(commit, parents)
-    ok, detail = (read or ci.read_ci)(cfg.BACKLOG_GATE_GITHUB_REPO, cfg.BACKLOG_GATE_GITHUB_BRANCH, head, os.environ.get("BACKLOG_GATE_GITHUB_TOKEN"))
+    # NO secret: the repository is public, and this runs inside the autopilot, a session process that must never read a vault variable (tests/test_owner_vault.py). The unauthenticated limit (60 an hour)
+    # is enough for the handful of delivering merges it reads; an exhausted limit is "unverifiable", the autopilot asks again on its next run.
+    ok, detail = (read or ci.read_ci)(cfg.BACKLOG_GATE_GITHUB_REPO, cfg.BACKLOG_GATE_GITHUB_BRANCH, head, None)
     return ok, f"tests_pass: {detail}"
 
 
