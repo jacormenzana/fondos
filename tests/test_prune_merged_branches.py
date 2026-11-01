@@ -1,6 +1,6 @@
 # tests/test_prune_merged_branches.py
 # -*- coding: utf-8 -*-
-"""scripts/ops/prune_merged_branches.py and .github/workflows/branch-cleanup.yml (Backlog v3.1 housekeeping): the selection rules (pure), and the deletion against a real throwaway repository with a
+"""scripts/ops/prune_merged_branches.py (Backlog v3.1 housekeeping, FND-0371): the selection rules (pure), and the deletion against a real throwaway repository with a
 real bare remote. No network, no GitHub, no database (R-7)."""
 from __future__ import annotations
 
@@ -188,36 +188,92 @@ def test_the_local_scope_keeps_the_branch_that_is_checked_out_even_when_it_is_me
     assert sorted(l.strip("* ").strip() for l in r.git("branch").splitlines()) == ["feat/done", "master"]
 
 
-# ---------------------------------------------------------------- the workflow is pinned by reading it
-
-WORKFLOW = _ROOT / ".github" / "workflows" / "branch-cleanup.yml"
-
-
-def load():
-    yaml = pytest.importorskip("yaml")
-    return yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
-
-
-def test_the_workflow_has_exactly_the_permissions_it_needs_and_three_triggers_and_never_a_pull_request_one():
-    wf = load()
-    assert wf["permissions"] == {"contents": "write", "pull-requests": "read"}
-    on = wf.get("on", wf.get(True))
-    assert set(on) == {"push", "schedule", "workflow_dispatch"} and on["push"] == {"branches": ["master"]}
-    assert "pull_request" not in on and "pull_request_target" not in on
-
-
-def test_the_workflow_runs_the_pr_rule_with_the_workflow_token_and_nothing_else():
-    wf = load()
-    steps = wf["jobs"]["prune"]["steps"]
-    assert steps[0]["uses"].startswith("actions/checkout@") and steps[0]["with"] == {"fetch-depth": 0}                 # the whole history, or "contained in master" cannot be known
-    run = steps[1]
-    assert run["run"] == "python3 scripts/ops/prune_merged_branches.py --rule pr --apply" and run["env"] == {"GH_TOKEN": "${{ secrets.GITHUB_TOKEN }}"}
-    assert len(steps) == 2 and "ancestor" not in WORKFLOW.read_text(encoding="utf-8").split("jobs:")[1]
-    assert wf["concurrency"]["cancel-in-progress"] is False
-
-
 def test_the_script_never_deletes_the_protected_names_by_construction():
     assert {"master", "main"} <= set(pm.NEVER) and pm.PREFIXES == ("feat/", "fix/", "chore/", "docs/")
     src = (_ROOT / "scripts" / "ops" / "prune_merged_branches.py").read_text(encoding="utf-8")
     assert src.count('"push", "origin", "--delete"') == 1 and "--force" not in src
     assert src.count('"branch", "-D"') == 1 and '"--merged", "origin/master"' in src                 # -D only ever follows the --merged origin/master listing
+
+
+# ---------------------------------------------------------------- FND-0371: stacked branches, --no-fetch, the lock, the hook that starts it
+
+def test_stacked_bases_are_the_merged_branches_an_unmerged_branch_was_cut_from():
+    tips = {"feat/base": "b1", "feat/other": "o1", "feat/unmerged": "u1", "master": "m1"}
+    assert pm.stacked_bases(tips, {"feat/base", "feat/other", "master"}, {"b1", "zz"}) == {"feat/base"}
+    assert pm.stacked_bases(tips, {"feat/base"}, {"u1"}) == set()                          # a base that is itself unmerged is not "merged": nothing to protect
+    assert pm.stacked_bases(tips, {"feat/base"}, set()) == set()
+
+
+@needs_git
+def test_the_ancestor_rule_keeps_a_merged_branch_that_a_stacked_unmerged_branch_was_cut_from(tmp_path):
+    r = Rig(tmp_path)
+    r.merged_branch("feat/base")
+    r.merged_branch("feat/alone")
+    r.git("checkout", "-q", "-b", "feat/stacked", "origin/feat/base")                   # a stacked pull request: its base is feat/base
+    r.commit("stacked", "s", "work on the stack")
+    r.git("push", "-q", "origin", "feat/stacked")
+    r.git("checkout", "-q", "master")
+    assert r.run(["--rule", "ancestor", "--apply"]) == 0
+    assert r.remote_branches() == ["feat/base", "feat/stacked", "master"]               # feat/alone went; deleting feat/base would close the stacked pull request
+
+
+@needs_git
+def test_a_branch_with_no_common_history_with_master_does_not_stop_the_run(tmp_path):
+    r = Rig(tmp_path)
+    r.merged_branch("feat/done")
+    r.git("checkout", "-q", "--orphan", "feat/orphan")
+    r.commit("orphan", "o", "unrelated history")
+    r.git("push", "-q", "origin", "feat/orphan")
+    r.git("checkout", "-q", "master")
+    assert r.run(["--rule", "ancestor", "--apply"]) == 0                                 # `git merge-base` exits 1 for it: not an error of the run
+    assert r.remote_branches() == ["feat/orphan", "master"]
+
+
+@needs_git
+def test_no_fetch_skips_the_fetch_and_the_default_still_fetches(tmp_path):
+    r = Rig(tmp_path)
+    r.merged_branch("feat/done")
+    seen = []
+
+    def spy(cmd):
+        seen.append(cmd[:2])
+        return subprocess.run(cmd, cwd=r.work, capture_output=True, text=True, encoding="utf-8", env=r.env, check=True).stdout
+
+    assert pm.main(["--rule", "ancestor", "--no-fetch"], cwd=r.work, run=spy) == 0
+    assert ["git", "fetch"] not in seen
+    assert pm.main(["--rule", "ancestor"], cwd=r.work, run=spy) == 0
+    assert ["git", "fetch"] in seen
+
+
+def test_the_lock_is_taken_once_and_a_dead_runs_lock_is_taken_over(tmp_path):
+    lock = tmp_path / "out" / "audit" / "x.lock"
+    assert pm.acquire_lock(lock) is True and lock.exists()
+    assert pm.acquire_lock(lock) is False                                               # a second run while one holds it
+    assert pm.acquire_lock(lock, now=lock.stat().st_mtime + pm.LOCK_STALE_S - 1) is False
+    assert pm.acquire_lock(lock, now=lock.stat().st_mtime + pm.LOCK_STALE_S + 1) is True      # older than the limit: the run that made it is dead
+
+
+@needs_git
+def test_apply_does_nothing_while_another_run_holds_the_lock_and_releases_it_afterwards(tmp_path, capsys):
+    r = Rig(tmp_path)
+    r.merged_branch("feat/done")
+    lock = r.work / pm.LOCK_REL
+    assert pm.acquire_lock(lock)
+    assert r.run(["--rule", "ancestor", "--apply"]) == 0
+    assert r.remote_branches() == ["feat/done", "master"] and "another prune holds" in capsys.readouterr().out
+    lock.unlink()
+    assert r.run(["--rule", "ancestor", "--apply"]) == 0
+    assert r.remote_branches() == ["master"] and not lock.exists()                      # done, and the lock is gone
+    assert r.run(["--rule", "ancestor"]) == 0 and not lock.exists()                     # a dry run never takes it
+
+
+@needs_git
+def test_a_failed_run_still_releases_the_lock(tmp_path):
+    r = Rig(tmp_path)
+    r.merged_branch("feat/done")
+
+    def boom(cmd):
+        raise RuntimeError("git for-each-ref failed")
+
+    assert pm.main(["--rule", "ancestor", "--apply", "--no-fetch"], cwd=r.work, run=boom) == pm.RC_ENV
+    assert not (r.work / pm.LOCK_REL).exists()

@@ -295,6 +295,8 @@ def test_the_hook_installer_only_reacts_to_origin_master_never_blocks_and_runs_d
     assert "--apply --quiet" in text and ") >/dev/null 2>&1 &" in text and text.count("exit 0") >= 4
     assert "exit 1" not in text and "exit 3" not in text                                                    # it can never refuse a reference update
     assert "git diff --quiet origin/master -- shared scripts" in text and "merge --ff-only" in text         # FND-0369: the merged code or nothing, and only a fast-forward
+    assert '"$PRUNE" --rule ancestor --apply --no-fetch' in text                                            # FND-0371: the branch prune runs from the same event, and it does not fetch again
+    assert text.index('"$PRUNE" --rule ancestor') < text.index('"$PYTHON" "$AUTOPILOT"')                    # ... before the autopilot guard, so a feature-branch clone still prunes
 
 
 # ---------------------------------------------------------------- FND-0369: the hook runs the merged code or it does not run
@@ -439,6 +441,54 @@ def test_a_master_with_its_own_commit_is_never_merged_or_run(tmp_path):
     local = r.git("rev-parse", "HEAD")
     r.fetch(merged)
     assert r.skipped() is True and r.git("rev-parse", "master") == local                                     # nothing was merged, nothing ran
+
+
+@needs_git
+@needs_sh
+def test_the_hook_also_runs_the_branch_prune_next_to_the_autopilot_on_a_clean_master(tmp_path):
+    """FND-0371: the same fetch that starts the autopilot runs prune_merged_branches.py (ancestor rule, no fetch)."""
+    r = HookRepo(tmp_path)
+    prune_marker = r.root / "prune.txt"
+    r.commit("scripts/ops/prune_merged_branches.py", autopilot_source(prune_marker, "P1"), "the prune P1")
+    r.fetch()
+    assert r.ran() == ["V1 --apply --quiet"]
+    assert prune_marker.read_text(encoding="utf-8").strip() == "P1 --rule ancestor --apply --no-fetch"
+
+
+@needs_git
+@needs_sh
+def test_the_prune_still_runs_when_the_guard_stops_the_autopilot_because_it_writes_nothing_to_the_backlog(tmp_path):
+    r = HookRepo(tmp_path)
+    prune_marker = r.root / "prune.txt"
+    r.commit("scripts/ops/prune_merged_branches.py", autopilot_source(prune_marker, "P1"), "the prune P1")
+    r.git("checkout", "-q", "-b", "feat/under-review")
+    r.commit("shared/lib.py", "x = 2\n", "unreviewed change")                                              # not the merged code: the autopilot must not start
+    r.fetch(r.git("rev-parse", "master"))
+    assert r.skipped() is True                                                                              # the autopilot was refused, with its line in the log
+    for _ in range(50):
+        if prune_marker.exists():
+            break
+        time.sleep(0.2)
+    assert prune_marker.read_text(encoding="utf-8").strip() == "P1 --rule ancestor --apply --no-fetch"      # ... and the prune ran from the feature branch all the same
+
+
+@needs_git
+@needs_sh
+def test_a_clone_with_only_the_prune_script_runs_it_and_an_unrelated_reference_starts_nothing(tmp_path):
+    r = Repo(tmp_path)
+    prune_marker = r.root / "prune.txt"
+    r.commit("scripts/ops/prune_merged_branches.py", autopilot_source(prune_marker, "P1"), "the prune P1")      # NO autopilot script in this clone
+    inst = subprocess.run(["sh", str(_ROOT / "scripts" / "audit" / "reference-transaction.sh")], cwd=r.root, capture_output=True, text=True, env=r.env, timeout=60)
+    assert inst.returncode == 0, inst.stderr
+    r.git("update-ref", "refs/remotes/origin/other", r.git("rev-parse", "HEAD"))                           # not origin/master: nothing starts
+    time.sleep(1.0)
+    assert not prune_marker.exists()
+    r.git("update-ref", "refs/remotes/origin/master", r.git("rev-parse", "HEAD"))
+    for _ in range(50):
+        if prune_marker.exists():
+            break
+        time.sleep(0.2)
+    assert prune_marker.read_text(encoding="utf-8").strip() == "P1 --rule ancestor --apply --no-fetch"
 
 
 # ---------------------------------------------------------------- the process: no login, no write
