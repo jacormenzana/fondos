@@ -53,6 +53,7 @@ class Merge:
     year: int
     month: int
     solution: Optional[str] = None     # the Solution: trailer of the delivering commit, upper-cased; None = CODE_FIX
+    ts: Optional[datetime] = None      # the merge's author time (aware); None = unknown, which counts as newer than any rejection
 
 
 @dataclass(frozen=True)
@@ -77,6 +78,7 @@ class Facts:
     closed_at: dict = field(default_factory=dict)          # {ap: datetime}: closure_ts of the CLOSED tickets (aware)
     blockers: dict = field(default_factory=dict)           # {ap: blocker ap}: the structured blocker of a BLOCKED ticket (its latest wait)
     revisits: dict = field(default_factory=dict)           # {ap: date}: the revisit_by of a DEFERRED ticket (its latest wait)
+    reworked: dict = field(default_factory=dict)           # {ap: datetime}: the last time the ticket was put back to work from READY_FOR_DEPLOY or CLOSED (aware): the rejection of its delivery
     today: Optional[date] = None
 
 
@@ -117,7 +119,8 @@ def _touches_db(m: Merge) -> bool:
 def decide_one(ap: str, facts: Facts) -> Optional[Decision]:
     """The decision for one ticket, or None when no rule applies. Pure."""
     t = facts.tickets.get(ap)
-    merges = facts.merges.get(ap) or []
+    rejected = facts.reworked.get(ap)
+    merges = [x for x in (facts.merges.get(ap) or []) if rejected is None or x.ts is None or x.ts > rejected]      # a delivery that was rejected is not delivered again by its own old merge
     if not t or not merges:
         return None
     status, m = t["status"], merges[-1]                 # the latest merge is the delivery that counts
