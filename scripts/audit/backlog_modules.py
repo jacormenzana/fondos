@@ -86,13 +86,13 @@ def gather(bc, git=_git) -> dict:
 
 def as_rows(desired: dict) -> list:
     """The facts of `gather`, in the shape of the rows of backlog.v_ticket_module. Pure."""
-    return [{"action_point_id": ap, "module_path": f["module"], "role": f["role"], "symbol": None, "source": f["source"]} for ap, fs in desired.items() for f in fs]
+    return [{"action_point_id": ap, "module_path": f["module"], "role": f["role"], "symbol": None, "source": f["source"], "evidence": f["evidence"]} for ap, fs in desired.items() for f in fs]
 
 
 # ---------------------------------------------------------------- the facts
 
-def facts_step(bc, apply: bool, git, out) -> dict:
-    desired = gather(bc, git)
+def facts_step(bc, apply: bool, git, out, desired: dict = None) -> dict:
+    desired = gather(bc, git) if desired is None else desired
     current = {(r["action_point_id"], r["module_path"], r["symbol"], r["role"], r["source"]) for r in bc.list_ticket_modules()}
     new = bm.new_facts(desired, current)
     res = {"present": True, "desired": sum(len(v) for v in desired.values()), "new": len(new), "recorded": 0, "unchanged": 0}
@@ -162,7 +162,7 @@ def _config_mode() -> str:
 
 # ---------------------------------------------------------------- the clusters
 
-def cluster_step(bc, apply: bool, git=_git, out=print, mode: str = None, cache: Path = None) -> dict:
+def cluster_step(bc, apply: bool, git=_git, out=print, mode: str = None, cache: Path = None, desired: dict = None) -> dict:
     """Keep the MODULE groups equal to the clusters of the OPEN tickets, while the mode allows it. Returns {'active', 'why', 'clusters', 'planned', 'written', 'refused'}."""
     mode = (mode or _config_mode()).upper()
     on, why = cl.active(mode, proof(bc, git, cache) if mode == "AUTO" else None)
@@ -173,7 +173,8 @@ def cluster_step(bc, apply: bool, git=_git, out=print, mode: str = None, cache: 
     tickets = {t["action_point_id"]: t for t in bc.list_tickets()}
     status = {a: t["status"] for a, t in tickets.items()}
     open_ids = {a for a, s in status.items() if s != "CLOSED"}
-    clusters = cl.derive(bc.list_ticket_modules(), open_ids, open_ids=open_ids)
+    rows = bm.refresh_evidence(bc.list_ticket_modules(), gather(bc, git) if desired is None else desired)
+    clusters = cl.derive(rows, open_ids, open_ids=open_ids)
     groups, current, rejected = cl.group_state(bc.list_module_group_events(), status)
     ops = cl.plan_memberships(cl.assign_identity(clusters, groups), current, rejected, status)
     res.update(clusters=len(clusters), planned=len(ops))
@@ -205,10 +206,11 @@ def run(bc, apply: bool = False, git=_git, out=print, clusters: bool = False, mo
     if not bc.modules_store_present():
         out("the modules phase is not deployed yet: nothing to do")
         return {"present": False, "desired": 0, "new": 0, "recorded": 0, "unchanged": 0}
-    res = facts_step(bc, apply, git, out)
+    desired = gather(bc, git)
+    res = facts_step(bc, apply, git, out, desired)
     if clusters:
         try:
-            res["clusters"] = cluster_step(bc, apply, git, out, mode, cache)
+            res["clusters"] = cluster_step(bc, apply, git, out, mode, cache, desired)
         except Exception as exc:                                             # noqa: BLE001 -- the clusters never take the facts down with them
             out(f"clusters: not kept ({type(exc).__name__})")
             res["clusters"] = {"active": False, "why": f"error {type(exc).__name__}"}
@@ -221,7 +223,8 @@ def show_clusters(bc, git=_git, out=print, top: int = 15) -> None:
     """The clusters of the open tickets from the recorded facts (or from the sources when the phase is not deployed), the biggest unit of work first."""
     tickets = {t["action_point_id"]: t for t in bc.list_tickets(open_only=True)}
     open_ids = set(tickets)
-    rows = bc.list_ticket_modules() if bc.modules_store_present() else as_rows(gather(bc, git))
+    desired = gather(bc, git)
+    rows = bm.refresh_evidence(bc.list_ticket_modules(), desired) if bc.modules_store_present() else as_rows(desired)
     for c, opens, weight in cl.rank(cl.derive(rows, open_ids, open_ids=open_ids), tickets)[:top]:
         out(f"{c['principal']}: {len(opens)} open ticket(s), weight {weight}{', HOTSPOT' if c['hotspot'] else ''}, {len(c['modules'])} shared module(s)")
         for a in opens:
