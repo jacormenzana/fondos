@@ -154,7 +154,7 @@ def test_list_check_and_remove_print_names_and_verdicts_only(vault, capsys):
     vault.set(OWNER, VALUE)
     assert cli.main(["list"], vault=vault, console=False) == 0 and cli.main(["check"], vault=vault, console=False) == 0
     out = capsys.readouterr().out
-    assert OWNER in out and "stored" in out and "ok" in out and VALUE not in out and "throwaway" not in out
+    assert OWNER in out and "stored" in out and "ok" in out and VALUE not in out and "not-a-real-password" not in out        # the shape is shown, never the password
     vault.path.write_text('{"version": 1, "entries": {"%s": "bm90IGEgYmxvYg=="}}' % OWNER, encoding="utf-8")
     assert cli.main(["check"], vault=vault, console=False) == 1                      # a value this user cannot decrypt is reported
     assert cli.main(["remove", OWNER], vault=vault, console=False) == 0 and vault.names() == []
@@ -176,3 +176,33 @@ def test_a_real_owner_tool_started_without_a_console_does_not_receive_the_string
     r = subprocess.run([sys.executable, "-X", "utf8", str(tool), str(_ROOT)], env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", timeout=120)
     assert r.stdout.strip() == "UNSET", (r.stdout, r.stderr[-300:])
     assert VALUE not in r.stdout + r.stderr
+
+
+# ---------------------------------------------------------------- the shape of a connection string (a wrong one used to surface inside a migration)
+
+@pytest.mark.parametrize("value", ['"' + VALUE + '"', "'" + VALUE + "'", OWNER + "=" + VALUE, "not-a-connection-string", "just-a-password", "postgresql://user:pw@/db", "host=127.0.0.1 port=5436",
+                                   "postgresql://:pw@127.0.0.1:5436/db"])
+def test_set_refuses_a_connection_string_that_does_not_parse_and_says_why_without_the_value(vault, capsys, value):
+    assert cli.main(["set", OWNER], vault=vault, console=True, ask=lambda _: value) == 2 and vault.names() == []
+    err = capsys.readouterr().err
+    assert "not a usable connection string" in err and "pw" not in err.replace("percent-encoded", "") and "just-a-password" not in err
+
+
+@pytest.mark.parametrize("value", [VALUE, "host=127.0.0.1 port=5436 dbname=fondos user=fondos_owner password=x", "postgresql://fondos_owner:p%40ss@127.0.0.1:5436/fondos"])
+def test_set_accepts_both_forms_of_connection_string(vault, value):
+    assert cli.main(["set", OWNER], vault=vault, console=True, ask=lambda _: value) == 0 and vault.get(OWNER) == value
+
+
+def test_a_token_is_not_checked_for_the_shape_of_a_connection_string(vault):
+    assert cli.dsn_problem("GITHUB_ADMIN_TOKEN", "ghp_whatever") is None and cli.main(["set", GHA], vault=vault, console=True, ask=lambda _: "ghp_whatever") == 0
+
+
+def test_check_reports_a_stored_value_of_the_wrong_shape_and_shows_where_a_good_one_points(vault, capsys):
+    vault.set(OWNER, '"' + VALUE + '"')                                                # stored by an older version, before the shape was checked
+    vault.set(HUMAN, "postgresql://backlog_human:secret-pw@127.0.0.1:5436/gestion")
+    assert cli.main(["check"], vault=vault, console=False) == 1
+    out = capsys.readouterr().out
+    assert "WRONG SHAPE" in out and "wrapped in quotes" in out and "owner_vault.py set " + OWNER in out
+    assert "backlog_human@127.0.0.1:5436/gestion" in out and "secret-pw" not in out and "not-a-real-password" not in out
+    vault.set(OWNER, VALUE)
+    assert cli.main(["check"], vault=vault, console=False) == 0

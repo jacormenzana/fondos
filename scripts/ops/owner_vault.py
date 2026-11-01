@@ -29,6 +29,35 @@ def tools_for(name: str) -> list:
     return sorted(t for t, names in ov.OWNER_TOOLS.items() if name in names)
 
 
+def dsn_problem(name: str, value: str):
+    """Why `value` cannot be the connection string `name` stands for, or None when it parses (or `name` is not a connection string). The reason never contains the value. A wrong shape used to be
+    stored without complaint and surface later, inside a migration, as `missing "=" after ...`. Pure."""
+    if "DSN" not in name:
+        return None
+    if value[:1] in ('"', "'") or value[-1:] in ('"', "'"):
+        return "it is wrapped in quotes: store the bare value, without quotes"
+    if value.upper().startswith(name.upper() + "="):
+        return f"it starts with '{name}=': store only the value after the equals sign"
+    try:
+        from psycopg.conninfo import conninfo_to_dict
+        parts = conninfo_to_dict(value)
+    except Exception:  # noqa: BLE001
+        return ("it is not a PostgreSQL connection string: use postgresql://USER:PASSWORD@HOST:PORT/DBNAME (a password containing @ : / # ? or % must be percent-encoded) "
+                "or key=value pairs")
+    if not (parts.get("host") or parts.get("hostaddr")):
+        return "it has no host"
+    if not parts.get("user"):
+        return "it has no user"
+    return None
+
+
+def dsn_summary(value: str) -> str:
+    """user@host:port/dbname of a valid connection string, without the password. Pure."""
+    from psycopg.conninfo import conninfo_to_dict
+    d = conninfo_to_dict(value)
+    return f"{d.get('user')}@{d.get('host') or d.get('hostaddr')}:{d.get('port') or '5432'}/{d.get('dbname') or d.get('user')}" + ("" if d.get("password") else "  (NO password in it)")
+
+
 def main(argv: list | None = None, *, vault: "ov.Vault | None" = None, console: bool | None = None, ask=getpass.getpass) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -51,6 +80,10 @@ def main(argv: list | None = None, *, vault: "ov.Vault | None" = None, console: 
             if not value or value != again:
                 print("REFUSED: the two entries are empty or differ. Nothing was stored.", file=sys.stderr)
                 return 2
+            problem = dsn_problem(args.name, value)
+            if problem:
+                print(f"REFUSED: {args.name} is not a usable connection string: {problem}. Nothing was stored.", file=sys.stderr)
+                return 2
             v.set(args.name, value)
             print(f"{args.name} stored for this Windows user. Tools that receive it: {', '.join(tools_for(args.name)) or '(none)'}")
             return 0
@@ -63,9 +96,18 @@ def main(argv: list | None = None, *, vault: "ov.Vault | None" = None, console: 
                 print(f"  {n:36} {'stored' if n in names else 'not stored'}   -> {len(tools_for(n))} tool(s)")
             return 0
         bad = [n for n in names if _fails(v, n)]                                  # check
+        malformed = []
         for n in names:
-            print(f"  {n:36} {'CANNOT be decrypted by this user' if n in bad else 'ok'}")
-        return 1 if bad else 0
+            if n in bad:
+                print(f"  {n:36} CANNOT be decrypted by this user")
+                continue
+            problem = dsn_problem(n, v.get(n))
+            if problem:
+                malformed.append(n)
+                print(f"  {n:36} WRONG SHAPE: {problem}  (store it again: owner_vault.py set {n})")
+            else:
+                print(f"  {n:36} ok" + (f"  -> {dsn_summary(v.get(n))}" if "DSN" in n else ""))
+        return 1 if (bad or malformed) else 0
     except ov.VaultError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
