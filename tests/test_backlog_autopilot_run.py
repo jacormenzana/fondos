@@ -292,29 +292,153 @@ def test_the_sync_now_counts_a_closes_trailer_as_a_refs_one(tmp_path, monkeypatc
 def test_the_hook_installer_only_reacts_to_origin_master_never_blocks_and_runs_detached():
     text = (_ROOT / "scripts" / "audit" / "reference-transaction.sh").read_text(encoding="utf-8")
     assert 'REF" = "refs/remotes/origin/master"' in text and '"$STATE" = "committed"' in text
-    assert "--apply --quiet" in text and "& ) >/dev/null 2>&1" in text and text.count("exit 0") >= 4
+    assert "--apply --quiet" in text and ") >/dev/null 2>&1 &" in text and text.count("exit 0") >= 4
     assert "exit 1" not in text and "exit 3" not in text                                                    # it can never refuse a reference update
+    assert "git diff --quiet origin/master -- shared scripts" in text and "merge --ff-only" in text         # FND-0369: the merged code or nothing, and only a fast-forward
+
+
+# ---------------------------------------------------------------- FND-0369: the hook runs the merged code or it does not run
+
+def autopilot_source(marker, version):
+    return f"import sys\nopen(r'{marker}', 'a').write('{version} ' + ' '.join(sys.argv[1:]) + '\\n')\n"
+
+
+class HookRepo(Repo):
+    """A throwaway repository with a committed fake autopilot that records which version of itself ran, and the real installed hook."""
+
+    def __init__(self, tmp_path):
+        super().__init__(tmp_path)
+        self.marker = self.root / "ran.txt"
+        self.log = self.root / "out" / "audit" / "backlog_autopilot_hook.log"
+        self.commit("scripts/audit/backlog_autopilot.py", autopilot_source(self.marker, "V1"), "the autopilot V1")
+        self.commit("shared/lib.py", "x = 1\n", "a shared module")
+        inst = subprocess.run(["sh", str(_ROOT / "scripts" / "audit" / "reference-transaction.sh")], cwd=self.root, capture_output=True, text=True, env=self.env, timeout=60)
+        assert inst.returncode == 0, inst.stderr
+
+    def fetch(self, sha=None):
+        """What a fetch does: origin/master moves."""
+        self.git("update-ref", "refs/remotes/origin/master", sha or self.git("rev-parse", "master"))
+
+    def ran(self, wait=10.0):
+        end = time.time() + wait
+        while time.time() < end:
+            if self.marker.exists():
+                time.sleep(0.3)
+                return self.marker.read_text(encoding="utf-8").strip().splitlines()
+            time.sleep(0.2)
+        return []
+
+    def skipped(self, wait=3.0):
+        end = time.time() + wait
+        while time.time() < end:
+            if self.log.exists() and "NOT started" in self.log.read_text(encoding="utf-8"):
+                time.sleep(0.3)
+                return not self.marker.exists()
+            time.sleep(0.2)
+        return False
+
+
+needs_sh = pytest.mark.skipif(shutil.which("sh") is None, reason="sh is needed")
 
 
 @needs_git
-@pytest.mark.skipif(shutil.which("sh") is None, reason="sh is needed")
+@needs_sh
 def test_installed_hook_starts_the_autopilot_in_the_background_only_when_origin_master_moves(tmp_path):
-    r = Repo(tmp_path)
-    (r.root / "scripts" / "audit").mkdir(parents=True)
-    marker = r.root / "ran.txt"
-    (r.root / "scripts" / "audit" / "backlog_autopilot.py").write_text(f"import sys\nopen(r'{marker}', 'a').write(' '.join(sys.argv[1:]) + '\\n')\n", encoding="utf-8")
-    inst = subprocess.run(["sh", str(_ROOT / "scripts" / "audit" / "reference-transaction.sh")], cwd=r.root, capture_output=True, text=True, env=r.env, timeout=60)
-    assert inst.returncode == 0, inst.stderr
-    head = r.git("rev-parse", "HEAD")
-    r.git("update-ref", "refs/heads/other", head)                                                          # an unrelated reference: nothing starts
+    r = HookRepo(tmp_path)
+    r.git("update-ref", "refs/heads/other", r.git("rev-parse", "HEAD"))                                    # an unrelated reference: nothing starts
     time.sleep(1.0)
-    assert not marker.exists()
-    r.git("update-ref", "refs/remotes/origin/master", head)                                                # what a fetch does
-    for _ in range(50):
-        if marker.exists():
-            break
-        time.sleep(0.2)
-    assert marker.exists() and marker.read_text(encoding="utf-8").strip() == "--apply --quiet"
+    assert not r.marker.exists()
+    r.fetch()
+    assert r.ran() == ["V1 --apply --quiet"]
+
+
+@needs_git
+@needs_sh
+def test_another_branch_with_different_code_is_not_run_and_the_log_says_why(tmp_path):
+    r = HookRepo(tmp_path)
+    r.git("checkout", "-q", "-b", "feat/under-review")
+    r.commit("shared/lib.py", "x = 2\n", "unreviewed change")                                              # code that is not on origin/master
+    r.fetch(r.git("rev-parse", "master"))
+    assert r.skipped() is True
+    assert "feat/under-review" in r.log.read_text(encoding="utf-8")
+
+
+@needs_git
+@needs_sh
+def test_an_edit_or_an_untracked_file_in_the_code_directories_stops_it_and_a_change_elsewhere_does_not(tmp_path):
+    r = HookRepo(tmp_path)
+    (r.root / "shared" / "lib.py").write_text("x = 99\n", encoding="utf-8")                              # an uncommitted edit
+    r.fetch()
+    assert r.skipped() is True
+    r.git("checkout", "-q", "--", "shared/lib.py")
+    r.marker.unlink(missing_ok=True)
+    r.log.unlink()
+    (r.root / "scripts" / "audit" / "scratch.py").write_text("print(1)\n", encoding="utf-8")             # an untracked file where the code is imported from
+    r.fetch()
+    assert r.skipped() is True
+    (r.root / "scripts" / "audit" / "scratch.py").unlink()
+    r.marker.unlink(missing_ok=True)
+    r.log.unlink()
+    (r.root / "notes.md").write_text("outside the code directories\n", encoding="utf-8")                 # not shared/ nor scripts/: it does not matter
+    r.fetch()
+    assert r.ran() == ["V1 --apply --quiet"]
+
+
+@needs_git
+@needs_sh
+def test_a_branch_whose_code_is_the_merged_code_runs_even_though_it_is_not_master(tmp_path):
+    r = HookRepo(tmp_path)
+    r.git("checkout", "-q", "-b", "docs/only-docs")
+    r.commit("doc/guide.md", "words\n", "docs only")                                                      # shared/ and scripts/ are identical to origin/master
+    r.fetch(r.git("rev-parse", "master"))
+    assert r.ran() == ["V1 --apply --quiet"]
+
+
+@needs_git
+@needs_sh
+def test_a_clean_master_that_is_only_behind_is_brought_forward_and_the_NEW_code_runs(tmp_path):
+    r = HookRepo(tmp_path)
+    r.git("checkout", "-q", "-b", "merged")
+    r.commit("scripts/audit/backlog_autopilot.py", autopilot_source(r.marker, "V2"), "the autopilot V2, merged on GitHub")
+    merged = r.git("rev-parse", "HEAD")
+    r.git("checkout", "-q", "master")
+    assert r.git("rev-parse", "HEAD") != merged
+    r.fetch(merged)                                                                                         # origin/master is ahead; the clone's master is behind and clean
+    assert r.ran() == ["V2 --apply --quiet"]
+    assert r.git("rev-parse", "master") == merged and r.git("branch", "--show-current") == "master"
+
+
+@needs_git
+@needs_sh
+def test_only_a_clean_master_is_ever_brought_forward_never_a_feature_branch_and_never_a_tree_with_edits(tmp_path):
+    r = HookRepo(tmp_path)
+    r.git("checkout", "-q", "-b", "merged")
+    r.commit("scripts/audit/backlog_autopilot.py", autopilot_source(r.marker, "V2"), "merged on GitHub")
+    merged = r.git("rev-parse", "HEAD")
+    r.git("checkout", "-q", "master")
+    r.git("checkout", "-q", "-b", "feat/behind")
+    behind = r.git("rev-parse", "HEAD")
+    r.fetch(merged)                                                                                         # a clean feature branch that is behind origin/master
+    assert r.skipped() is True and r.git("rev-parse", "HEAD") == behind                                      # it was not moved: the branch is someone's work
+    r.git("checkout", "-q", "master")
+    (r.root / "README").write_text("an edit that is not committed\n", encoding="utf-8")
+    r.log.unlink()
+    r.fetch(merged)
+    assert r.skipped() is True and r.git("rev-parse", "master") != merged                                    # a tree with edits is never touched by the hook
+
+
+@needs_git
+@needs_sh
+def test_a_master_with_its_own_commit_is_never_merged_or_run(tmp_path):
+    r = HookRepo(tmp_path)
+    r.git("checkout", "-q", "-b", "merged")
+    r.commit("shared/lib.py", "x = 3\n", "merged on GitHub")
+    merged = r.git("rev-parse", "HEAD")
+    r.git("checkout", "-q", "master")
+    r.commit("shared/lib.py", "x = 4\n", "a local commit that is not on origin/master")                     # diverged: a fast-forward is impossible
+    local = r.git("rev-parse", "HEAD")
+    r.fetch(merged)
+    assert r.skipped() is True and r.git("rev-parse", "master") == local                                     # nothing was merged, nothing ran
 
 
 # ---------------------------------------------------------------- the process: no login, no write

@@ -88,6 +88,11 @@ Dominios categóricos, **todos con `CHECK` en BD** — nunca inventar un valor f
   niega con código 2 y no escribe nada; nunca cae a otro login ni pide terminal. **No fabrica `DEPLOY` ni `CYCLE`** (no puede dar fe de su propio cierre): un ticket cuyo merge toca `db/**` espera a que
   la migración del propietario registre el `DEPLOY`, y un `DATA_FIX` a que se registre un `CYCLE`. El gancho `reference-transaction` (`bash scripts/audit/reference-transaction.sh`, lo instala el
   propietario porque se dispara con **cada** actualización de referencia del clon) lanza el proceso en segundo plano cuando un `fetch` mueve `refs/remotes/origin/master`; no bloquea nunca git.
+  **El autopiloto ejecuta el código fusionado o no se ejecuta (FND-0369):** escribe en el backlog vivo y corre desde el árbol de trabajo, que puede estar en cualquier rama o con ediciones sin confirmar. Antes de arrancarlo el gancho
+  comprueba con git simple una sola cosa: que `shared/` y `scripts/` sean idénticos byte a byte a los de `origin/master` (`git diff --quiet origin/master -- shared scripts` y ningún fichero sin seguimiento ahí). Un `master` limpio que
+  solo va por detrás se adelanta antes (`merge --ff-only`, nunca una fusión), de modo que el caso normal no necesita a nadie; cualquier otro (otra rama con código distinto, una edición, un fichero sin seguimiento, un `master` divergente)
+  **no arranca** y deja una línea en `out/audit/backlog_autopilot_hook.log` con el motivo y la rama. Nunca mueve una rama de trabajo ni un árbol con ediciones. La lógica vive en el gancho instalado, fuera del árbol, así que ninguna rama
+  puede cambiarla; hay que reinstalarlo (`bash scripts/audit/reference-transaction.sh`) para que un cambio de este fichero surta efecto.
 - **Fase `events` (Backlog v3.1, directiva del propietario del 2026-11-01: quitar las tareas administrativas; `98_events.sql`, `migrate_backlog_v2.py --phase events`).** Principio: cada transición tiene un
   disparador automático y una persona aparece solo como **evento** (un ticket nuevo, una prioridad, una reapertura), nunca como aprobadora.
   - **Reabrir es un evento normal.** `backlog.sp_reopen(ticket, causa, motivo, actor, sesión)` lo puede registrar **cualquier actor** (reabrir es el sentido seguro: añade trabajo y no oculta nada; solo
