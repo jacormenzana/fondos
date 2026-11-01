@@ -344,3 +344,16 @@ def test_gate_line_mentions_a_recorded_executive_override():
     base = {"mode": "ENFORCE", "hours_in_audit": None, "tickets_48h": 0, "required_tickets": 5, "violations_48h": 0, "clear": False, "last_override_ts": None}
     assert "override" not in pf.gate_line(base)
     assert pf.gate_line(dict(base, last_override_ts="2026-10-29 01:02:03+01:00")).endswith("[executive override recorded 2026-10-29 01:02]")
+
+
+def test_an_owner_secret_in_the_env_file_is_a_caution_that_names_it_and_never_shows_a_value():
+    v = pf.verdict(_report(secrets=["FONDOS_PG_DSN_OWNER"]))
+    assert len(v["cautions"]) == 1 and "FONDOS_PG_DSN_OWNER" in v["cautions"][0] and "owner_vault.py set" in v["cautions"][0]
+    assert not [c for c in pf.verdict(_report(secrets=[]))["cautions"] if "owner-only" in c]
+
+
+def test_read_env_secrets_reports_names_only(tmp_path, monkeypatch):
+    f = tmp_path / "x.env"
+    f.write_text("FONDOS_PG_DSN_OWNER=postgresql://u:topsecret@h/db\nFONDOS_BACKLOG_PG_DSN_AGENT=scoped\n", encoding="utf-8")
+    monkeypatch.setenv("FONDOS_ENV_FILE", str(f))
+    assert pf.read_env_secrets() == ["FONDOS_PG_DSN_OWNER"]                      # the scoped agent string belongs in .env and is not reported

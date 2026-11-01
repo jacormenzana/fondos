@@ -77,8 +77,7 @@ def main(argv: list | None = None) -> int:
 
     owner = os.environ.get("FONDOS_PG_DSN_OWNER")
     if not owner:
-        print("FONDOS_PG_DSN_OWNER is not set: DDL needs the owner role. It is deliberately NOT kept in .env: set it in your own terminal for this session "
-              '(cmd: set "FONDOS_PG_DSN_OWNER=postgresql://fondos_owner:<password>@127.0.0.1:5436/gestion"), run the migration, then clear it (set "FONDOS_PG_DSN_OWNER=").', file=sys.stderr)
+        print("FONDOS_PG_DSN_OWNER is not set: DDL needs the owner role. Owner strings are deliberately NOT kept in .env. Store it ONCE in the owner vault: `python scripts/ops/owner_vault.py set FONDOS_PG_DSN_OWNER` (hidden input); after that this tool finds it by itself whenever you run it at a real console (or, for one session, `set \"FONDOS_PG_DSN_OWNER=...\"` in cmd).", file=sys.stderr)
         return RC_USAGE
     dsn = gestion_dsn(owner)
     d = conninfo_to_dict(dsn)
