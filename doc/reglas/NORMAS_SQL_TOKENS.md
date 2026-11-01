@@ -31,3 +31,9 @@ A DB task is complete ONLY when:
 1. The exact question is answered.
 2. The output payload contains zero redundant tokens.
 3. No join-multiplication (cartesian products) skewed the aggregates.
+
+## 6. Acceptance record (FND-0322)
+- **Delivered:** commit 2516cd6 (2026-10-25): this document, its index row in `AGENTS.md`, the SQL bullet in `CLAUDE.md` and the one-line pointer in the five audit skills.
+- **What was never measured:** the expected saving (about 2-4 % of tokens overall and 3-8 % in DB-heavy audit sessions) was an ESTIMATE. No measured figure exists in any record of this project, and none is claimed here.
+- **Closure:** FND-0322 is closed on delivery (2026-11-01) by the agent to which the owner delegated the decision. The delivery is the document and its pointers; the claim about the saving is not lost: it is tracked in FND-0372, with its method (compare input + cache-creation + cache-read tokens of comparable sessions with and without these limits, at least 3 sessions per model, never bytes as tokens).
+- **Feedback:** if the measurement shows less than 3 %, reopen FND-0322 (cause `COVERAGE_GAP` or `WRONG_ROOT_CAUSE`) or amend this document.
