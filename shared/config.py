@@ -833,7 +833,7 @@ BACKLOG_AGENT_WRITES_ENABLED: bool = True
 BACKLOG_AUTOPILOT_MODE: str = "ON"
 # Backlog v3 W4b slice 2 (FND-0360; owner rule 2026-11-01): whether the autopilot keeps the MODULE groups, the clusters of tickets that change the same module (scripts/audit/backlog_modules.py, rules in
 # shared/backlog_clusters.py). "OFF" = never; "ON" = always; "AUTO" = only while the clusters prove themselves against the OVERLAPS decisions already on record (at least 20 decided pairs inside the clusters,
-# precision at least 70 %, recall above the text baseline), measured at most once a day. With a sample too small to prove it, AUTO stays off and writes nothing: the system turns itself on once the data
+# precision at least 70 %; recall is reported but never a bar), measured at most once a day. With a sample too small to prove it, AUTO stays off and writes nothing: the system turns itself on once the data
 # proves it, with no person involved. Only a person edits this constant. Rollback = set it to "OFF" (the memberships already written are append-only history and stay).
 BACKLOG_MODULE_CLUSTERS_MODE: str = "AUTO"
 # Backlog v3.1 (FND-0355; owner decision 2026-11-01, "no console, no click"): how the deploy watcher (scripts/ops/owner_deploy.py) applies the backlog DDL that master brings. "AUTO" = with no window,

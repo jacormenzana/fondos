@@ -219,7 +219,7 @@ def test_precision_recall_and_the_text_baseline_are_measured_on_the_decided_pair
 
 @pytest.mark.parametrize("n_pos, n_neg, text, ok", [
     (10, 0, 0, False),             # sample too small: unproven, so off
-    (20, 0, 20, False),            # no better than the text baseline
+    (20, 0, 20, True),             # no better than the text baseline: recall is reported, never a bar (owner directive 2026-11-01)
     (14, 6, 0, True),              # 70 % exactly on 20 pairs
     (13, 7, 0, False)])            # 65 %
 def test_the_proof_needs_the_sample_the_precision_and_a_gain_over_the_text(n_pos, n_neg, text, ok):
@@ -247,6 +247,23 @@ def test_the_t0_simulation_counts_the_pairs_only_the_facts_find_and_how_many_are
     sim = bc.simulate_t0(commits, cited, held, {"U1", "U2", "U3"}, {frozenset(("T1", "U3"))}, {frozenset(("T1", "U2"))})
     assert sim["text_pairs"] == 1 and sim["fact_pairs"] == 3 and sim["added"] == 2
     assert (sim["added_confirmed"], sim["added_rejected"], sim["added_undecided"]) == (1, 1, 0)
+
+
+def test_the_proof_ignores_recall_so_a_worse_recall_than_the_text_never_blocks_the_switch():
+    ev = {"sample": 25, "precision": 0.8, "recall": 0.05, "recall_text": 0.9, "positives": 100}
+    assert bc.proves(ev) is True and bc.active("AUTO", ev)[0] is True and "recall" not in bc.active("AUTO", ev)[1]
+    assert bc.active("AUTO", {**ev, "precision": 0.6})[0] is False
+
+
+@pytest.mark.parametrize("confirmed, rejected, undecided, ready", [
+    (5, 0, 279, False),            # today's real figures: 5 decided of 284 added pairs; undecided is unknown, not wrong
+    (14, 6, 300, True),            # 70 % of 20 decided
+    (13, 7, 0, False),             # 65 %
+    (19, 0, 0, False)])            # a perfect share on too small a sample
+def test_t0_is_touched_only_when_the_pairs_the_facts_add_are_mostly_confirmed_among_the_decided(confirmed, rejected, undecided, ready):
+    sim = {"added": confirmed + rejected + undecided, "added_confirmed": confirmed, "added_rejected": rejected, "added_undecided": undecided}
+    on, why = bc.t0_ready(sim)
+    assert on is ready and why.startswith("T0 ")
 
 
 def test_the_t0_simulation_keeps_the_hub_rule_of_the_text_rule():

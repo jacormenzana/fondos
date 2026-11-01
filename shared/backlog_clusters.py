@@ -320,9 +320,9 @@ def evaluate(clusters: list, text_clusters: list, positives: set, negatives: set
 
 
 def proves(ev: dict) -> bool:
-    """True when the sample is big enough, the precision reaches MIN_PRECISION and the recall is above the text baseline. Pure."""
-    return bool(ev["sample"] >= MIN_SAMPLE and ev["precision"] is not None and ev["precision"] >= MIN_PRECISION
-                and ev["recall"] is not None and ev["recall"] > (ev["recall_text"] or 0.0))
+    """True when the sample is big enough and the precision reaches MIN_PRECISION. Precision is the only bar (owner directive 2026-11-01): it is what prevents false "module mates"; the recall and the text
+    baseline are reported but never gate, because the confirmed OVERLAPS were themselves found from ticket text, so that comparison favours text. Pure."""
+    return bool(ev["sample"] >= MIN_SAMPLE and ev["precision"] is not None and ev["precision"] >= MIN_PRECISION)
 
 
 def active(mode: str, ev: Optional[dict]) -> tuple:
@@ -336,8 +336,20 @@ def active(mode: str, ev: Optional[dict]) -> tuple:
     if ev["sample"] < MIN_SAMPLE:
         return False, f"auto: sample {ev['sample']} of {MIN_SAMPLE} decided pairs; precision unproven"
     if not proves(ev):
-        return False, f"auto: precision {ev['precision']:.0%} / recall {ev['recall']:.0%} vs text {(ev['recall_text'] or 0):.0%} does not meet the bar"
-    return True, f"auto: precision {ev['precision']:.0%} on {ev['sample']} decided pairs, recall {ev['recall']:.0%} vs text {(ev['recall_text'] or 0):.0%}"
+        return False, f"auto: precision {ev['precision']:.0%} on {ev['sample']} decided pairs is under the {MIN_PRECISION:.0%} bar"
+    return True, f"auto: precision {ev['precision']:.0%} on {ev['sample']} decided pairs"
+
+
+def t0_ready(sim: dict) -> tuple:
+    """(ready?, why): whether the facts are good enough to change the collision rule T0. They are only when the pairs the facts ADD to the text rule, among those already decided, are mostly CONFIRMED
+    OVERLAPS (at least MIN_SAMPLE decided and MIN_PRECISION confirmed): undecided pairs are unknown, not wrong, and a gate that fires on them would only add noise. Until then T0 is not touched. Pure."""
+    decided = sim["added_confirmed"] + sim["added_rejected"]
+    if decided < MIN_SAMPLE:
+        return False, f"T0 stays as it is: {decided} of {MIN_SAMPLE} decided added pairs ({sim['added_undecided']} undecided)"
+    share = sim["added_confirmed"] / decided
+    if share < MIN_PRECISION:
+        return False, f"T0 stays as it is: {share:.0%} of {decided} decided added pairs are confirmed, under the {MIN_PRECISION:.0%} bar"
+    return True, f"T0 could take the facts: {share:.0%} of {decided} decided added pairs are confirmed"
 
 
 # ---------------------------------------------------------------- what the T0 collision rule would gain (simulation only)

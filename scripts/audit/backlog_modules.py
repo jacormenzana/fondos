@@ -15,8 +15,8 @@ The autopilot run (scripts/audit/backlog_autopilot.py --apply) calls this at the
 refuses to write again a proposal that an agent or a person retracted. It writes ONLY through FONDOS_BACKLOG_PG_DSN_AUTOPILOT (role backlog_autopilot) and does nothing, with exit 0, before the
 `modules` phase is deployed.
 
-The clusters follow BACKLOG_MODULE_CLUSTERS_MODE (shared/config.py): OFF never, ON always, AUTO only while the clusters prove themselves (>= 20 decided pairs, precision >= 70 %, recall above the
-text baseline), measured at most once a day and cached in out/backlog_modules/proof.json. Until the proof holds nothing is written and no "module mates" appear.
+The clusters follow BACKLOG_MODULE_CLUSTERS_MODE (shared/config.py): OFF never, ON always, AUTO only while the clusters prove themselves (>= 20 decided pairs, precision >= 70 %; recall is reported, never a bar),
+measured at most once a day and cached in out/backlog_modules/proof.json. Until the proof holds nothing is written and no "module mates" appear.
 Exit codes: 0 ok, 2 git or the backlog could not be read.
 """
 from __future__ import annotations
@@ -242,6 +242,7 @@ def show_measure(bc, git=_git, out=print) -> dict:
         out(f"    {len(c['members'])} ticket(s), {opens} open, on {c['principal']}{' (hotspot)' if c['hotspot'] else ''}: {', '.join(c['members'][:6])}{' ...' if len(c['members']) > 6 else ''}")
     out(f"T0 simulation over {sim['commits']} recorded commit(s) against the tickets in progress now: the text rule finds {sim['text_pairs']} pair(s), the facts {sim['fact_pairs']}; "
         f"{sim['added']} only the facts find ({sim['added_confirmed']} confirmed OVERLAPS, {sim['added_rejected']} rejected, {sim['added_undecided']} undecided)")
+    out(cl.t0_ready(sim)[1])
     return res
 
 
