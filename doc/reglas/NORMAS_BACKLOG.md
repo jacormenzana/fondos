@@ -151,6 +151,15 @@ motor de reglas (`shared/backlog_autopilot.py`, `EDGES`) y a este texto; el text
   - **El hecho `DEPLOY` no se puede falsificar.** Lo registra solo el login acotado `backlog_facts` (sin contraseña: la fija el propietario; su cadena va al vault del propietario) mediante `sp_record_fact`
     (actor `system:deploy`), y un disparador de `ops_event` rechaza una fila `DEPLOY` de cualquier otro login que no sea superusuario (una migración o un relleno). Es lo que permite al autopiloto cerrar por sí solo
     los tickets cuyo merge toca `db/`.
+- **Fase `modules` (Backlog v3 W4b, FND-0360; `99_modules.sql`, `migrate_backlog_v2.py --phase modules`): qué módulos toca cada ticket, derivado.** Registro **derivado y nunca mantenido a mano** (decisión del propietario del
+  2026-10-31, que sustituye el rechazo del antiguo «C2» `ticket_object`). `backlog.ticket_module_event` (solo añadir): `(ticket, módulo, símbolo opcional, rol, fuente, actor, evidencia, retractado)`. **Rol:** `TARGET` (su lógica va a
+  cambiar; lo declara un agente o una persona), `TOUCHED` (un commit que cita el ticket cambió el fichero; se deriva de git, porque los hechos `COMMIT` solo guardan el asunto), `CITED` (el texto o el `object_name` lo mencionan: solo
+  una **propuesta**, nunca forma un cluster; el 2026-11-01 el 70 de 81 tickets abiertos citaban un fichero y los más citados eran herramientas y registros como `backlog_links.py` o `AGENTS.md`). `v_ticket_module` es el conjunto vigente
+  (la última fila de cada clave salvo que sea una retractación). `sp_record_module` es la única puerta: idempotente, los hechos derivados (`COMMIT`, `TEXT`, `OBJECT_NAME`) solo los escribe un actor `system:*`, `DECLARED` solo un agente
+  o una persona, y **una propuesta que un agente o una persona retractó no la vuelve a escribir la derivación** (un rechazo se mantiene). Reglas puras en `shared/backlog_modules.py`: el módulo es un fichero rastreado; un test es el módulo
+  que prueba (`tests/test_x.py` -> el único `x.py`); los registros, la documentación y la configuración (`AGENTS.md`, `doc/`, `shared/config.py`, `migrate_backlog_v2.py`, `.github/`, `*.md`, `*.yml`...) no cuentan. El corredor
+  `scripts/audit/backlog_modules.py` lo ejecuta el autopiloto al final de cada `--apply` (nadie lo lanza) y es idempotente. **No es una puerta:** ninguna transición exige un `TARGET` (el plan original lo pedía con `p_force` como escape;
+  un `p_force` es un permiso humano, justo lo que esta serie eliminó), y nadie aprueba una pertenencia. `group_tag.kind` admite `MODULE`; los clusters (grupos `MOD.<ruta>` mantenidos por el autopiloto) son el siguiente tramo.
 - **Estado de aplicación de la Fase A (FND-0331):** el propietario aplica el DDL por pasos, cada uno con simulacro y acuerdo expreso. **A-1** (`30_transitions.sql`,
   `migrate_backlog_v2.py --phase transitions`) es aditivo: crea el rol `backlog_owner` (sin superusuario ni login) como propietario de las rutinas privilegiadas
   (`SECURITY DEFINER`, `search_path` fijado), las tablas de auditoría y el disparador de la etapa de sombra, que **registra sin bloquear** (V-00) toda escritura directa en

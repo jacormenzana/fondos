@@ -1072,7 +1072,7 @@ def latest_status_events(ids: list[str], *, conn=None) -> dict:
     return {r["action_point_id"]: {"status": r["status"], "event_ts": r["event_ts"], "origin": r["origin"]} for r in rows}
 
 
-GROUP_KINDS = ("TRAIN", "THEME", "DECISION")      # Phase D (FND-0335): db/pg_backlog/60_groups_violations.sql, CHECK of backlog.group_tag.kind
+GROUP_KINDS = ("TRAIN", "THEME", "DECISION", "MODULE")      # Phase D (FND-0335): db/pg_backlog/60_groups_violations.sql, CHECK of backlog.group_tag; MODULE (W4b, FND-0360): 99_modules.sql.kind
 
 
 def create_group(name: str, kind: str, description: str, *, actor: Optional[str] = None, conn=None) -> int:
@@ -1236,6 +1236,42 @@ def autopilot_track_record(window_days: int = 30, *, conn=None) -> dict:
             "AND (SELECT s.actor FROM backlog.status_event s WHERE s.action_point_id = r.action_point_id AND s.to_status = 'CLOSED' AND s.event_ts < r.event_ts ORDER BY s.event_id DESC LIMIT 1) = %s",
             (int(window_days), AUTOPILOT_ACTOR)).fetchone()
     return {"mode": str(mode), "decisions": int(decisions), "contradicted": int(contradicted), "reopened_closures": int(reopened)}
+
+
+# --- Backlog v3 W4b (FND-0360): db/pg_backlog/99_modules.sql -- which modules a ticket targets, touched or cites -----------------------------------------------------------------------
+MODULE_ROLES = ("TARGET", "TOUCHED", "CITED")
+MODULE_SOURCES = ("DECLARED", "COMMIT", "TEXT", "OBJECT_NAME")
+_SIG_RECORD_MODULE = "backlog.sp_record_module(text,text,text,text,text,text,text,boolean)"
+
+
+def modules_store_present(*, conn=None) -> bool:
+    """True when the deploy has applied db/pg_backlog/99_modules.sql (sp_record_module and v_ticket_module exist)."""
+    with _session(conn) as c:
+        return bool(c.execute("SELECT to_regprocedure(%s) IS NOT NULL AND to_regclass('backlog.v_ticket_module') IS NOT NULL", (_SIG_RECORD_MODULE,)).fetchone()[0])
+
+
+def list_ticket_modules(ids: Optional[list] = None, *, conn=None) -> list:
+    """The current set of v_ticket_module: [{action_point_id, module_path, symbol, role, source, actor, evidence, event_ts}] for the given tickets (all when `ids` is None)."""
+    with _session(conn) as c:
+        return _rows(c, "SELECT action_point_id, module_path, symbol, role, source, actor, evidence, event_ts FROM backlog.v_ticket_module "
+                        "WHERE %s::text[] IS NULL OR action_point_id = ANY(%s) ORDER BY action_point_id, module_path, symbol NULLS FIRST, role, source", (ids, ids))
+
+
+def record_modules(facts: list, *, actor: Optional[str] = None, conn=None) -> dict:
+    """Record facts through backlog.sp_record_module in ONE session: [{ap_id, module, role, source, evidence, symbol (optional), retracted (optional)}]. A derived fact (COMMIT, TEXT, OBJECT_NAME) needs a
+    system:* actor, a DECLARED one an agent or a person; the autopilot and the agent write through their scoped logins. Returns {'recorded': n, 'unchanged': m}: the database answers NULL for a fact
+    that is already current, a retraction of nothing, and a derived fact over the rejection of an agent or a person (it stays rejected)."""
+    who = resolve_actor(actor)
+    for f in facts:
+        if f["role"] not in MODULE_ROLES or f["source"] not in MODULE_SOURCES:
+            raise ValueError(f"role must be one of {MODULE_ROLES} and source one of {MODULE_SOURCES}, got {f['role']!r} / {f['source']!r}")
+    recorded = unchanged = 0
+    with _session(conn, human=who.startswith("human:"), write=True, operation=_scoped_operation(who)) as c:
+        for f in facts:
+            row = c.execute("SELECT backlog.sp_record_module(%s, %s, %s, %s, %s, %s, %s, %s)",
+                            (f["ap_id"], f["module"], f.get("symbol"), f["role"], f["source"], f.get("evidence"), who, bool(f.get("retracted")))).fetchone()[0]
+            recorded, unchanged = (recorded + 1, unchanged) if row is not None else (recorded, unchanged + 1)
+    return {"recorded": recorded, "unchanged": unchanged}
 
 
 def raw_update_privilege_live(role: str = "backlog_writer", *, conn=None) -> bool:

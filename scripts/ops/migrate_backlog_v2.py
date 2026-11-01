@@ -199,6 +199,17 @@ PHASES: dict = {
         "requires_routines": ("trg_append_only", "fn_actor_ok", "fn_actor_authorized", "sp_transition", "fn_adjudicate_core", "sp_set_gate", "sp_auto_transition"),
         "roles": ("backlog_facts",),
     },
+    # Backlog v3 W4b (FND-0360): which modules a ticket changes or is about (derived, append-only), the current set, its one door, and the MODULE group kind. Needs the groups phase (group_tag, the
+    # group routines) and the autonomy phase (the roles it grants). Its rollback KEEPS ticket_module_event and the widened group kind.
+    "modules": {
+        "up": ("99_modules.sql", "backlog_modules"),
+        "down": ("down/99_modules_down.sql", "backlog_modules_down"),
+        "tables": ("ticket_module_event",),
+        "views": ("v_ticket_module",),
+        "routines": ("sp_record_module",),
+        "requires": ("backlog", "group_tag", "group_member", "v_group_member"),
+        "requires_routines": ("trg_append_only", "fn_actor_ok", "fn_actor_authorized", "sp_create_group", "sp_group_member", "sp_auto_transition"),
+    },
 }
 SHADOW_REQUIRED = 50          # owner decision D2 (2026-10-26): 50 consecutive non-system transitions with no direct update
 
