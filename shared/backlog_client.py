@@ -48,9 +48,10 @@ _GATE_DSN_ENV_VAR = "FONDOS_BACKLOG_PG_DSN_GATE"            # role backlog_gate 
 _ADJUDICATOR_DSN_ENV_VAR = "FONDOS_BACKLOG_PG_DSN_ADJUDICATOR"   # role backlog_adjudicator (FND-0334 C3): decides collision pairs; created by the owner, kept OUTSIDE .env (typed in his own terminal)
 _AGENT_DSN_ENV_VAR = "FONDOS_BACKLOG_PG_DSN_AGENT"          # role backlog_agent (Backlog v3 W2, FND-0357): an agent opens and moves tickets through a short list of routines; lives in the git-ignored .env; NO fallback to another login
 _AUTOPILOT_DSN_ENV_VAR = "FONDOS_BACKLOG_PG_DSN_AUTOPILOT"  # role backlog_autopilot (Backlog v3 W3, FND-0358): records facts, appends notes and makes the two evidence-backed moves; lives in the git-ignored .env; NO fallback to another login
+_FACTS_DSN_ENV_VAR = "FONDOS_BACKLOG_PG_DSN_FACTS"           # role backlog_facts (Backlog v3.1, FND-0355): records the DEPLOY fact and nothing else; kept in the OWNER VAULT (the deploy watcher reads it), never in .env; NO fallback to another login
 AUTOPILOT_ACTOR = "system:autopilot"                         # the one identity of the autopilot process (scripts/audit/backlog_autopilot.py sets FONDOS_ACTOR to it); sp_auto_transition fixes it in the database too
-NON_INTERACTIVE_OPERATIONS = ("agent_log", "incident", "gate", "agent", "autopilot")   # the ONLY writes a non-interactive process may make (owner decisions 2026-10-29: agent_log, incident; 2026-10-31: gate, agent, autopilot); anything else is refused by confirm_live_write
-_SCOPED_DSN_ENV = {"gate": _GATE_DSN_ENV_VAR, "agent": _AGENT_DSN_ENV_VAR, "autopilot": _AUTOPILOT_DSN_ENV_VAR}   # operations that use their own login EXCLUSIVELY: without its DSN there is no live write
+NON_INTERACTIVE_OPERATIONS = ("agent_log", "incident", "gate", "agent", "autopilot", "facts")   # the ONLY writes a non-interactive process may make (owner decisions 2026-10-29: agent_log, incident; 2026-10-31: gate, agent, autopilot; 2026-11-01, plan v3.1: facts); anything else is refused by confirm_live_write
+_SCOPED_DSN_ENV = {"gate": _GATE_DSN_ENV_VAR, "agent": _AGENT_DSN_ENV_VAR, "autopilot": _AUTOPILOT_DSN_ENV_VAR, "facts": _FACTS_DSN_ENV_VAR}   # operations that use their own login EXCLUSIVELY: without its DSN there is no live write
 _FALLBACK_LOG_ENV_VAR = "FONDOS_BACKLOG_FALLBACK_LOG"
 _DEFAULT_FALLBACK_LOG = Path(__file__).resolve().parent / "log" / "backlog_autolog_fallback.jsonl"   # == LOG_DIRS["shared"]
 
@@ -1235,6 +1236,14 @@ def autopilot_track_record(window_days: int = 30, *, conn=None) -> dict:
             "AND (SELECT s.actor FROM backlog.status_event s WHERE s.action_point_id = r.action_point_id AND s.to_status = 'CLOSED' AND s.event_ts < r.event_ts ORDER BY s.event_id DESC LIMIT 1) = %s",
             (int(window_days), AUTOPILOT_ACTOR)).fetchone()
     return {"mode": str(mode), "decisions": int(decisions), "contradicted": int(contradicted), "reopened_closures": int(reopened)}
+
+
+def record_deploy_fact(ref: str, ap_id: str, payload: dict, fact_ts: datetime, *, conn=None) -> bool:
+    """Record that the DDL a ticket's merge brought is LIVE (backlog.sp_record_fact, kind DEPLOY, actor system:deploy fixed by the database). Only the scoped login backlog_facts can make it
+    (FONDOS_BACKLOG_PG_DSN_FACTS, from the owner vault, set by the deploy watcher for this one call): a trigger refuses a DEPLOY row from any other login, so no agent can claim that DDL is live.
+    Idempotent per (ref, ticket): returns True when the fact is new."""
+    with _session(conn, write=True, operation="facts") as c:
+        return bool(c.execute("SELECT backlog.sp_record_fact('DEPLOY', %s, %s, %s::jsonb, %s)", (ref, ap_id, json.dumps(payload), fact_ts)).fetchone()[0])
 
 
 def set_autopilot_mode(mode: str, reason: str, *, actor: Optional[str] = None, conn=None) -> int:

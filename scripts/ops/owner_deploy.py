@@ -12,13 +12,19 @@ owner_deploy.py -- applies the pending backlog DDL on the owner's CLICK, with no
 What the window shows. The commits since the last deployed master, the phases to apply, and THE DDL DIFF itself (db/pg_backlog), because what you approve runs with the owner role and came through
 an automatic merge: a click on a bare question would be a rubber stamp. Buttons: Apply now / Remind me in 4 h / Ignore this version.
 
-What "Apply now" does. Exports origin/master to a temporary folder (never your working tree), runs each pending phase of scripts/ops/migrate_backlog_v2.py --apply in order with the owner string taken
+What "Apply now" does (the same steps as AUTO, without the restore point and the rollback). Exports origin/master to a temporary folder (never your working tree), runs each pending phase of scripts/ops/migrate_backlog_v2.py --apply in order with the owner string taken
 from the owner vault (shared/owner_vault.py) into THAT child process only, then runs the drift tool (scripts/ops/backlog_drift.py): only `no drift` counts as success and only then is the commit
 remembered. Each phase is one transaction, so a failing phase leaves nothing half-applied; a later phase is not attempted after a failure. A receipt (no secrets) is kept in
 %LOCALAPPDATA%\\fondos\\deploy_receipts. Phases that need a decision of yours (`revoke`, `iam`) are never offered here.
 
-There is deliberately NO option that answers the window by itself: nothing is applied without a click. Honest limit: a guard, not a security boundary (NORMAS_BACKLOG 9.2 and 9.3): code running
-as your Windows user could read the vault and run the migration without this window.
+AUTO mode (Backlog v3.1, owner decision 2026-11-01: "no console, no click"; switch BACKLOG_AUTO_DEPLOY_MODE in shared/config.py, AUTO | ASK, default AUTO). The window above is the ASK mode and the
+fallback. In AUTO a pending phase is applied with no window, behind gates that are all automatic: master only carries what the required CI checks passed (hermetic migration and rollback tests);
+a restore point is created first (pg_create_restore_point; if it cannot be, nothing is applied and the window asks); each phase is one transaction; the drift tool must say `no drift`; on a
+phase failure or on drift, the phases applied in this run are rolled back (`--down --apply`, newest first), an incident ticket is opened (shared.backlog_client.report_incident) and the window
+asks for that version from then on. A success is a self-closing notice and a receipt. The DEPLOY fact (what lets the autopilot close tickets whose merge changed db/**) is recorded for the tickets
+of the DDL commits through the scoped login backlog_facts (FONDOS_BACKLOG_PG_DSN_FACTS, owner vault). A change that the tests cannot see (a valid but wrong additive DDL) is NOT caught here: that
+is the accepted risk of AUTO, and `ASK` is the switch back.
+Honest limit: a guard, not a security boundary (NORMAS_BACKLOG 9.2 and 9.3): code running as your Windows user could read the vault and run the migration without this tool.
 Exit codes: 0 ok / nothing pending, 1 pending (check) or drift remains (init), 2 an apply failed, 3 usage or environment error.
 """
 from __future__ import annotations
@@ -46,6 +52,11 @@ from shared import owner_vault as ov  # noqa: E402
 
 RC_OK, RC_PENDING, RC_FAILED, RC_USAGE = 0, 1, 2, 3
 OWNER_VAR = "FONDOS_PG_DSN_OWNER"
+FACTS_VAR = "FONDOS_BACKLOG_PG_DSN_FACTS"
+# Creates the restore point in a CHILD process that holds the owner string (pg_create_restore_point needs the owner role; the name is argv[1], the string never appears on a command line).
+RESTORE_POINT_CODE = ("import os, sys, psycopg\n"
+                      "c = psycopg.connect(os.environ[" + repr(OWNER_VAR) + "], connect_timeout=10, autocommit=True)\n"      # built from the constant: this process never reads the string from its own environment
+                      "print('RESTORE_POINT', c.execute('SELECT pg_create_restore_point(%s)', (sys.argv[1],)).fetchone()[0])\n")
 SNOOZE_HOURS = 4
 DIFF_MAX_LINES = 400
 DDL_DIR = "db/pg_backlog/"
@@ -80,8 +91,9 @@ def state_path(environ: Optional[dict] = None) -> Path:
 
 
 def read_state(path: Path) -> dict:
-    """{'deployed_ref': sha | None, 'snoozed_until': {sha: iso}, 'ignored': [sha]}; a missing or damaged file is the empty state."""
-    base = {"deployed_ref": None, "snoozed_until": {}, "ignored": []}
+    """{'deployed_ref': sha | None, 'snoozed_until': {sha: iso}, 'ignored': [sha], 'auto_failed': [sha]}; a missing or damaged file is the empty state. `auto_failed` = the versions whose
+    automatic apply failed: they are offered in the window from then on, never retried by themselves."""
+    base = {"deployed_ref": None, "snoozed_until": {}, "ignored": [], "auto_failed": []}
     try:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
         return {**base, **{k: data[k] for k in base if k in data}}
@@ -123,6 +135,27 @@ def summary(head: str, deployed: Optional[str], pending: list, commits: list, di
         lines.append(f"... {len(body) - DIFF_MAX_LINES} more lines: `git diff {(deployed or '')[:10]} {head[:10]} -- db/pg_backlog`")
     lines += ["", "Apply now runs each phase as one transaction with the owner role, then verifies with the drift tool."]
     return "\n".join(lines)
+
+
+def deploy_mode(value) -> str:
+    """AUTO or ASK from the configured BACKLOG_AUTO_DEPLOY_MODE; anything else (a typo, a missing value) is ASK, the safe one: a person decides. Pure."""
+    v = str(value).strip().upper()
+    return v if v in ("AUTO", "ASK") else "ASK"
+
+
+def restore_point_name(head: str, now: datetime) -> str:
+    """The name of the restore point of a deployment (a PostgreSQL name is at most 63 bytes). Pure."""
+    return f"backlog_deploy_{head[:10]}_{now.strftime('%Y%m%dT%H%M%SZ')}"
+
+
+def ddl_tickets(log_text: str) -> list:
+    """The tickets (`Refs:` / `Closes:` trailers) of the commits in `log_text` (git log --format=%B%x1e of the DDL commits), sorted. These are the tickets whose DDL is live after a deployment. Pure."""
+    from shared import backlog_gate as gate
+    found = set()
+    for msg in log_text.split("\x1e"):
+        if msg.strip():
+            found |= set(gate.parse_message(msg).refs)
+    return sorted(found)
 
 
 def scrub(text: str, secrets: list) -> str:
@@ -172,6 +205,11 @@ def git_diff(a: str, b: str) -> str:
     return _git("diff", a, b, "--", "db/pg_backlog")
 
 
+def git_ddl_log(a: str, b: str) -> str:
+    """The full messages (separated by \\x1e) of the commits between a and b that touch the backlog DDL."""
+    return _git("log", f"{a}..{b}", "--format=%B%x1e", "--", "db/pg_backlog")
+
+
 def git_fetch() -> None:
     _git("fetch", "-q", "origin", timeout=90)
 
@@ -203,49 +241,80 @@ def python_exe() -> str:
 @dataclass
 class Outcome:
     ok: bool
-    stage: str                                   # "applied", a phase name, "drift", "vault", "export"
+    stage: str                                   # "applied", a phase name, "drift", "vault", "export", "restore_point"
     applied: list = field(default_factory=list)
     detail: str = ""
+    rolled_back: list = field(default_factory=list)   # AUTO: the phases undone after a failure
+    fallback: bool = False                       # AUTO: nothing was applied and a person should be asked (no restore point, no vault string)
+    auto: bool = False
+    facts: str = ""                              # AUTO: what happened with the DEPLOY facts
+
+
+def _roll_back(applied: list, python: str, tree: Path, env: dict, run: Callable, log: list, secret: str) -> list:
+    """Undo the phases applied in this run, newest first (`--down --apply`, one transaction each). Stops at the first rollback that fails and returns the phases actually undone."""
+    undone: list = []
+    for ph in reversed(applied):
+        rc, tail = run([python, str(tree / "scripts" / "ops" / "migrate_backlog_v2.py"), "--phase", ph, "--down", "--apply"], env, tree)
+        log.append({"step": f"rollback {ph}", "rc": rc, "tail": scrub(tail, [secret])})
+        if rc != 0:
+            break
+        undone.append(ph)
+    return undone
 
 
 def apply_pending(head: str, pending: list, *, vault, state_file: Path, run: Callable = run_cmd, export: Callable = export_tree, python: Optional[str] = None,
-                  env_file: Optional[Path] = None, receipts_dir: Optional[Path] = None, now: Callable = lambda: datetime.now(timezone.utc)) -> Outcome:
+                  env_file: Optional[Path] = None, receipts_dir: Optional[Path] = None, now: Callable = lambda: datetime.now(timezone.utc), auto: bool = False) -> Outcome:
     """Apply `pending` phases of `head` in order and verify with the drift tool. Success only when the drift tool says `no drift`; only then the state remembers `head`. The owner string goes into the
-    environment of the migration children only (never the drift child, never this process's environment) and is scrubbed from any output kept."""
+    environment of the migration children only (never the drift child, never this process's environment) and is scrubbed from any output kept.
+    auto=True (AUTO mode) adds the automatic gates: a restore point before anything is applied (if it cannot be created NOTHING is applied and the Outcome asks for a person: fallback=True), and, when a
+    phase fails or the drift tool reports drift, the rollback of the phases applied in this run. If the drift tool could not read the live backlog the apply is NOT rolled back (it cannot be judged
+    wrong): it is reported as unverified and the version is not remembered."""
     python = python or python_exe()
     try:
         secret = vault.get(OWNER_VAR)
     except ov.VaultError as exc:
-        return Outcome(False, "vault", detail=str(exc))
+        return Outcome(False, "vault", detail=str(exc), fallback=auto, auto=auto)
     if not secret:
-        return Outcome(False, "vault", detail=f"{OWNER_VAR} is not in the owner vault. Store it once: python scripts/ops/owner_vault.py set {OWNER_VAR}")
+        return Outcome(False, "vault", detail=f"{OWNER_VAR} is not in the owner vault. Store it once: python scripts/ops/owner_vault.py set {OWNER_VAR}", fallback=auto, auto=auto)
     base_env = {**os.environ, "FONDOS_ENV_FILE": str(env_file or (ROOT / ".env")), "PYTHONIOENCODING": "utf-8"}
     base_env.pop(OWNER_VAR, None)
+    owner_env = {**base_env, OWNER_VAR: secret}
     applied: list = []
+    rolled: list = []
     with tempfile.TemporaryDirectory(prefix="fondos_deploy_") as tmp:
         tree = Path(tmp)
         try:
             export(head, tree)
         except Exception as exc:                                              # noqa: BLE001
-            return Outcome(False, "export", detail=f"{type(exc).__name__}: {str(exc)[:200]}")
+            return Outcome(False, "export", detail=f"{type(exc).__name__}: {str(exc)[:200]}", auto=auto)
         log: list = []
-        for ph in pending:
-            rc, tail = run([python, str(tree / "scripts" / "ops" / "migrate_backlog_v2.py"), "--phase", ph, "--apply"], {**base_env, OWNER_VAR: secret}, tree)
-            log.append({"step": f"apply {ph}", "rc": rc, "tail": scrub(tail, [secret])})
+        if auto:
+            rc, tail = run([python, "-c", RESTORE_POINT_CODE, restore_point_name(head, now())], owner_env, tree)
+            log.append({"step": "restore point", "rc": rc, "tail": scrub(tail, [secret])})
             if rc != 0:
                 _receipt(receipts_dir, now, head, pending, applied, log, False)
-                return Outcome(False, ph, applied, scrub(tail, [secret]))
+                return Outcome(False, "restore_point", detail=scrub(tail, [secret]), fallback=True, auto=True)
+        for ph in pending:
+            rc, tail = run([python, str(tree / "scripts" / "ops" / "migrate_backlog_v2.py"), "--phase", ph, "--apply"], owner_env, tree)
+            log.append({"step": f"apply {ph}", "rc": rc, "tail": scrub(tail, [secret])})
+            if rc != 0:
+                if auto:
+                    rolled = _roll_back(applied, python, tree, owner_env, run, log, secret)
+                _receipt(receipts_dir, now, head, pending, applied, log, False)
+                return Outcome(False, ph, applied, scrub(tail, [secret]), rolled_back=rolled, auto=auto)
             applied.append(ph)
         rc, tail = run([python, str(tree / "scripts" / "ops" / "backlog_drift.py")], base_env, tree)
         log.append({"step": "drift", "rc": rc, "tail": scrub(tail, [secret])})
+        if rc == 1 and auto:                                                  # drift present after the apply: the apply is wrong, undo it
+            rolled = _roll_back(applied, python, tree, owner_env, run, log, secret)
     ok = rc == 0
     _receipt(receipts_dir, now, head, pending, applied, log, ok)
     if not ok:
-        return Outcome(False, "drift", applied, scrub(tail, [secret]))
+        return Outcome(False, "drift", applied, scrub(tail, [secret]), rolled_back=rolled, auto=auto)
     state = read_state(state_file)
-    state.update(deployed_ref=head, snoozed_until={}, ignored=[])
+    state.update(deployed_ref=head, snoozed_until={}, ignored=[], auto_failed=[])
     write_state(state_file, state)
-    return Outcome(True, "applied", applied, scrub(tail, [secret]))
+    return Outcome(True, "applied", applied, scrub(tail, [secret]), auto=auto)
 
 
 def _receipt(receipts_dir, now, head, pending, applied, log, ok) -> None:
@@ -269,6 +338,57 @@ def verify_now(head: str, *, run: Callable = run_cmd, export: Callable = export_
         return run([python, str(Path(tmp) / "scripts" / "ops" / "backlog_drift.py")], env, Path(tmp))
 
 
+def record_facts(head: str, deployed: Optional[str], applied: list, *, vault, ddl_log: Callable, record: Callable, environ=None, now: Callable = lambda: datetime.now(timezone.utc)) -> str:
+    """Record the DEPLOY fact of every ticket cited by the DDL commits between `deployed` and `head`, through the scoped login (FACTS_VAR from the owner vault, put into `environ` for these calls
+    only). It returns one line for the receipt and never raises: a missing string or a failed write leaves the autopilot waiting for the fact, which is visible and harmless."""
+    environ = os.environ if environ is None else environ
+    if not deployed:
+        return "DEPLOY facts not recorded: no previously deployed commit to list the DDL tickets from"
+    try:
+        tickets = ddl_tickets(ddl_log(deployed, head))
+        dsn = vault.get(FACTS_VAR)
+    except Exception as exc:                                                   # noqa: BLE001
+        return f"DEPLOY facts not recorded: {type(exc).__name__}: {str(exc)[:120]}"
+    if not tickets:
+        return "DEPLOY facts: no ticket cites the DDL commits"
+    if not dsn:
+        return f"DEPLOY facts NOT recorded for {', '.join(tickets)}: {FACTS_VAR} is not in the owner vault (once: python scripts/ops/owner_vault.py set {FACTS_VAR})"
+    from shared import backlog_client as bc
+    new, failed = 0, []
+    previous = environ.get(bc._FACTS_DSN_ENV_VAR)
+    environ[bc._FACTS_DSN_ENV_VAR] = dsn
+    try:
+        for t in tickets:
+            try:
+                new += bool(record(f"deploy-{head[:12]}", t, {"head": head, "phases": applied}, now()))
+            except Exception as exc:                                           # noqa: BLE001
+                failed.append(f"{t} ({type(exc).__name__})")
+    finally:
+        if previous is None:
+            environ.pop(bc._FACTS_DSN_ENV_VAR, None)
+        else:
+            environ[bc._FACTS_DSN_ENV_VAR] = previous
+    return f"DEPLOY facts: {new} new for {len(tickets)} ticket(s)" + (f"; FAILED for {', '.join(failed)}" if failed else "")
+
+
+def report_failure(o: "Outcome", head: str, report: Callable) -> Optional[str]:
+    """Open (or add to) an incident ticket for a failed AUTOMATIC deployment, so the failure has an owner in the backlog and nobody has to notice a window. Never raises. Returns the ticket id."""
+    text = (f"The automatic backlog DDL deployment of master {head[:10]} failed at {o.stage}. Applied in this run: {', '.join(o.applied) or 'nothing'}. Rolled back: "
+            f"{', '.join(o.rolled_back) or 'nothing'}. The version is offered in the approval window from now on (it is not retried by itself). Output: {o.detail[:700]}")
+    try:
+        return report(object_name="scripts/ops/owner_deploy.py", scenario_description=text, object_type="JOB", title=f"Automatic backlog DDL deploy failed at {o.stage} ({head[:10]})")
+    except Exception:                                                          # noqa: BLE001
+        return None
+
+
+def auto_deploy(head: str, pending: list, deployed: Optional[str], *, vault, state_file: Path, ddl_log: Callable, record: Callable, apply: Callable = apply_pending, **kw) -> Outcome:
+    """The whole AUTO deployment: the gated apply (restore point, phases, drift, rollback) and, after a verified success, the DEPLOY facts. Returns the Outcome (`facts` carries the facts line)."""
+    o = apply(head, pending, vault=vault, state_file=state_file, auto=True, **kw)
+    if o.ok:
+        o.facts = record_facts(head, deployed, o.applied, vault=vault, ddl_log=ddl_log, record=record)
+    return o
+
+
 # ── the watcher ───────────────────────────────────────────────────────────────
 
 def decide_pending(state: dict, head: str, *, changed: Callable, drift: Callable) -> tuple:
@@ -283,8 +403,11 @@ def decide_pending(state: dict, head: str, *, changed: Callable, drift: Callable
 
 
 def watch_once(*, state_file: Path, fetch: Callable, head_fn: Callable, changed: Callable, commits: Callable, diff: Callable, drift: Callable, ask: Callable,
-               apply: Callable, notify: Callable, now: Callable = lambda: datetime.now(timezone.utc)) -> str:
-    """One pass of the watcher. Returns what happened: none | wait | later | ignored | applied | failed | error. `ask(text)` must return 'apply' | 'later' | 'ignore' from a PERSON."""
+               apply: Callable, notify: Callable, now: Callable = lambda: datetime.now(timezone.utc), mode: str = "ASK", apply_auto: Optional[Callable] = None,
+               report: Optional[Callable] = None) -> str:
+    """One pass of the watcher. Returns what happened: none | wait | later | ignored | applied | failed | error. `ask(text)` must return 'apply' | 'later' | 'ignore' from a PERSON.
+    mode AUTO (with `apply_auto(head, pending, deployed)` -> Outcome): a pending version is applied with no window; a failure is reported (`report`, an incident), remembered in the state
+    (`auto_failed`) and the version is offered in the window from then on; an Outcome with fallback=True (no restore point, no vault string) applied nothing and goes straight to the window."""
     try:
         fetch()
         head = head_fn()
@@ -301,6 +424,18 @@ def watch_once(*, state_file: Path, fetch: Callable, head_fn: Callable, changed:
         return "none"
     if action == "WAIT":
         return "wait"
+    if mode == "AUTO" and apply_auto is not None and head not in state.get("auto_failed", []):
+        outcome = apply_auto(head, pending, deployed)
+        if not outcome.fallback:
+            if not outcome.ok:
+                state = read_state(state_file)
+                state["auto_failed"] = sorted(set(state.get("auto_failed", [])) | {head})
+                write_state(state_file, state)
+                if report is not None:
+                    report_failure(outcome, head, report)
+            notify(outcome)
+            return "applied" if outcome.ok else "failed"
+        drift_text = f"THE AUTOMATIC DEPLOYMENT DID NOT RUN ({outcome.stage}): {outcome.detail}\n\n" + drift_text      # the window says why a person is asked
     answer = ask(summary(head, deployed, pending, commits(deployed, head) if deployed else [], diff(deployed, head) if deployed else "", drift_text))
     if answer == "ignore":
         state["ignored"] = sorted(set(state.get("ignored", [])) | {head})
@@ -385,12 +520,26 @@ def result_window(o: "Outcome") -> None:
     root.geometry("820x420")
     root.attributes("-topmost", True)
     head = (f"Applied: {', '.join(o.applied) or 'nothing'}.\nThe live backlog matches master (no drift)." if o.ok
-            else f"FAILED at {o.stage}. Applied before the failure: {', '.join(o.applied) or 'nothing'}.\nEach phase is one transaction, so nothing is half-applied. Output:")
+            else f"FAILED at {o.stage}. Applied before the failure: {', '.join(o.applied) or 'nothing'}."
+                 + (f"\nRolled back automatically: {', '.join(o.rolled_back) or 'nothing'}. An incident ticket was opened; this version is offered in the approval window from now on." if o.auto else "")
+                 + "\nEach phase is one transaction, so nothing is half-applied. Output:")
     box = scrolledtext.ScrolledText(root, wrap="word", font=("Consolas", 9))
     box.insert("1.0", head + "\n\n" + o.detail)
     box.configure(state="disabled")
     box.pack(fill="both", expand=True)
     tk.Button(root, text="OK", width=12, command=root.destroy).pack(pady=8)
+    root.mainloop()
+
+
+def toast_window(o: "Outcome", seconds: int = 20) -> None:
+    """A small notice that closes by itself: the automatic deployment succeeded and nobody has to do anything."""
+    import tkinter as tk
+    root = tk.Tk()
+    root.title("Fondos: backlog DDL applied automatically")
+    root.geometry("520x150+40+40")
+    root.attributes("-topmost", True)
+    tk.Label(root, text=f"Applied: {', '.join(o.applied) or 'nothing'}.\nThe live backlog matches master (no drift).\n{o.facts}", justify="left", wraplength=480, pady=14).pack()
+    root.after(seconds * 1000, root.destroy)
     root.mainloop()
 
 
@@ -494,19 +643,31 @@ def main(argv: list | None = None) -> int:
         return RC_USAGE
     ask = ask_console if args.console else ask_window
     vault = ov.Vault()
+    from shared import config as cfg                                           # also loads .env (the incident DSN) -- after the lock and the git checks, never for `check` or `init`
+    from shared import backlog_client as bc
+    mode = deploy_mode(getattr(cfg, "BACKLOG_AUTO_DEPLOY_MODE", "ASK"))
 
     def do_apply(h: str, pend: list) -> Outcome:
         job = lambda: apply_pending(h, pend, vault=vault, state_file=sf)       # noqa: E731
         return job() if args.console else work_window(job)
 
+    def do_apply_auto(h: str, pend: list, deployed: Optional[str]) -> Outcome:
+        return auto_deploy(h, pend, deployed, vault=vault, state_file=sf, ddl_log=git_ddl_log, record=bc.record_deploy_fact)
+
     def notify(o: Outcome) -> None:
-        print(("APPLIED: " + ", ".join(o.applied)) if o.ok else f"FAILED at {o.stage}: {o.detail}")
-        if not args.console:
+        extra = f" | rolled back: {', '.join(o.rolled_back)}" if o.rolled_back else ""
+        print((("APPLIED: " + ", ".join(o.applied) + (f" | {o.facts}" if o.facts else "")) if o.ok else f"FAILED at {o.stage}: {o.detail}{extra}"))
+        if args.console:
+            return
+        if o.ok and o.auto:
+            toast_window(o)                                                    # an unattended success closes by itself: nothing to click
+        else:
             result_window(o)
 
+    print(f"owner_deploy watcher: mode {mode}")
     while True:
         res = watch_once(state_file=sf, fetch=git_fetch, head_fn=git_head, changed=git_changed, commits=git_commits, diff=git_diff, drift=lambda h: verify_now(h),
-                         ask=ask, apply=do_apply, notify=notify)
+                         ask=ask, apply=do_apply, notify=notify, mode=mode, apply_auto=do_apply_auto, report=bc.report_incident)
         if args.once:
             print(res)
             return RC_FAILED if res == "failed" else RC_OK

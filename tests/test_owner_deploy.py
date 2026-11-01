@@ -63,7 +63,7 @@ def test_the_phases_to_apply_are_read_from_the_drift_tools_own_advice():
 
 def test_the_state_round_trips_and_a_missing_or_damaged_file_is_the_empty_state(tmp_path):
     f = tmp_path / "s.json"
-    assert od.read_state(f) == {"deployed_ref": None, "snoozed_until": {}, "ignored": []}
+    assert od.read_state(f) == {"deployed_ref": None, "snoozed_until": {}, "ignored": [], "auto_failed": []}
     od.write_state(f, {"deployed_ref": OLD, "snoozed_until": {HEAD: NOW.isoformat()}, "ignored": [OLD]})
     assert od.read_state(f)["deployed_ref"] == OLD and od.read_state(f)["ignored"] == [OLD]
     f.write_text("{not json", encoding="utf-8")
@@ -108,8 +108,9 @@ def test_install_and_remove_startup_touch_only_the_startup_folder(tmp_path, monk
     assert od.main(["remove-startup"]) == 0
 
 
-def test_there_is_no_way_to_answer_the_window_by_itself():
-    """Nothing is applied without a click: the command line has no auto-approve switch and the only askers are the window and a console prompt."""
+def test_there_is_no_command_line_way_to_answer_the_window_by_itself():
+    """The command line has no auto-approve switch and the only askers are the window and a console prompt. The one unattended path is the AUTO mode of shared/config.py (owner decision
+    2026-11-01), tested below: an apply without a window happens only through `mode == "AUTO"` and its gates, never by an argument."""
     import re
     src = (_ROOT / "scripts" / "ops" / "owner_deploy.py").read_text(encoding="utf-8")
     declared = re.findall(r"add_argument\(\s*[\"'](--[\w-]+)", src) + re.findall(r"add_parser\(\s*[\"']([\w-]+)", src)
@@ -258,3 +259,204 @@ def test_one_watcher_at_a_time_and_a_dead_ones_lock_is_taken_over(tmp_path):
     assert od.acquire_lock(lock, pid=100, alive=lambda p: True)                                                   # the same process again
     assert not od.acquire_lock(lock, pid=200, alive=lambda p: p == 100)                                           # another live watcher holds it
     assert od.acquire_lock(lock, pid=200, alive=lambda p: False) and lock.read_text(encoding="utf-8") == "200"     # the holder died: taken over
+
+
+# ---------------------------------------------------------------- Backlog v3.1: the AUTO mode (no window, automatic gates)
+
+class AutoRunner(Runner):
+    """Like Runner, and it knows the restore point (python -c ...) and the rollbacks (--down)."""
+
+    def __call__(self, cmd, env, cwd):
+        if cmd[1] == "-c":
+            key = "restore"
+        elif "--down" in cmd:
+            key = "down:" + cmd[cmd.index("--phase") + 1]
+        else:
+            key = "drift" if cmd[1].endswith("backlog_drift.py") else cmd[cmd.index("--phase") + 1]
+        self.calls.append((key, dict(env), list(cmd)))
+        return self.rcs.get(key, 0), self.tails.get(key, f"{key} done")
+
+
+def auto_apply(tmp_path, runner, pending=("relations", "autonomy"), vault=None):
+    return od.apply_pending(HEAD, list(pending), vault=vault or FakeVault(), state_file=tmp_path / "s.json", run=runner, export=lambda ref, dest: None, python="py",
+                            env_file=tmp_path / ".env", receipts_dir=tmp_path / "receipts", now=lambda: NOW, auto=True)
+
+
+def keys(r):
+    return [c[0] for c in r.calls]
+
+
+def test_the_mode_is_auto_or_ask_and_anything_else_is_ask():
+    assert [od.deploy_mode(v) for v in ("AUTO", "auto", " ASK ", "ASK", "", None, "yes", "ON")] == ["AUTO", "AUTO", "ASK", "ASK", "ASK", "ASK", "ASK", "ASK"]
+    from shared import config
+    assert od.deploy_mode(config.BACKLOG_AUTO_DEPLOY_MODE) in ("AUTO", "ASK")
+
+
+def test_an_auto_apply_creates_a_restore_point_first_then_phases_in_order_then_verifies(tmp_path):
+    r = AutoRunner()
+    out = auto_apply(tmp_path, r)
+    assert out.ok and out.auto and out.applied == ["relations", "autonomy"] and out.rolled_back == [] and not out.fallback
+    assert keys(r) == ["restore", "relations", "autonomy", "drift"]
+    restore = r.calls[0]
+    assert restore[1][od.OWNER_VAR] == SECRET and restore[2][2] == od.RESTORE_POINT_CODE and restore[2][3].startswith("backlog_deploy_bbbbbbbbbb_20261101T120000Z")
+    assert SECRET not in " ".join(restore[2]) and len(restore[2][3]) <= 63                                       # the string never rides on a command line; a restore point name is 63 bytes at most
+    assert od.OWNER_VAR not in r.calls[-1][1] and od.read_state(tmp_path / "s.json")["deployed_ref"] == HEAD
+
+
+def test_without_a_restore_point_nothing_is_applied_and_a_person_is_asked(tmp_path):
+    r = AutoRunner(rcs={"restore": 1}, tails={"restore": f"permission denied for function pg_create_restore_point ({SECRET})"})
+    out = auto_apply(tmp_path, r)
+    assert not out.ok and out.stage == "restore_point" and out.fallback and out.applied == [] and SECRET not in out.detail
+    assert keys(r) == ["restore"] and od.read_state(tmp_path / "s.json")["deployed_ref"] is None
+
+
+def test_a_missing_vault_string_in_auto_mode_asks_a_person_instead_of_failing_silently(tmp_path):
+    out = auto_apply(tmp_path, AutoRunner(), vault=FakeVault(value=None))
+    assert not out.ok and out.stage == "vault" and out.fallback and "owner_vault.py set" in out.detail
+
+
+def test_a_failing_phase_rolls_back_what_this_run_applied_newest_first(tmp_path):
+    r = AutoRunner(rcs={"attest": 1})
+    out = auto_apply(tmp_path, r, pending=["relations", "autonomy", "attest"])
+    assert not out.ok and out.stage == "attest" and out.applied == ["relations", "autonomy"] and out.rolled_back == ["autonomy", "relations"] and not out.fallback
+    assert keys(r) == ["restore", "relations", "autonomy", "attest", "down:autonomy", "down:relations"]
+    assert all("--apply" in c[2] for c in r.calls if c[0].startswith("down:")) and od.read_state(tmp_path / "s.json")["deployed_ref"] is None
+
+
+def test_drift_after_the_apply_rolls_it_back_but_an_unreadable_drift_check_does_not(tmp_path):
+    r = AutoRunner(rcs={"drift": 1})
+    out = auto_apply(tmp_path, r)
+    assert not out.ok and out.stage == "drift" and out.rolled_back == ["autonomy", "relations"] and keys(r)[-2:] == ["down:autonomy", "down:relations"]
+    r2 = AutoRunner(rcs={"drift": 2})
+    out2 = auto_apply(tmp_path, r2)
+    assert not out2.ok and out2.stage == "drift" and out2.rolled_back == [] and not any(k.startswith("down:") for k in keys(r2))      # cannot verify: not judged wrong, not undone
+
+
+def test_a_rollback_that_fails_stops_the_rollback_and_says_what_was_actually_undone(tmp_path):
+    r = AutoRunner(rcs={"drift": 1, "down:autonomy": 1})
+    out = auto_apply(tmp_path, r)
+    assert out.rolled_back == [] and keys(r)[-1] == "down:autonomy"                                              # relations is left alone: the order matters and a person must look
+    r2 = AutoRunner(rcs={"drift": 1, "down:relations": 1})
+    assert auto_apply(tmp_path, r2).rolled_back == ["autonomy"]
+
+
+def test_the_click_path_neither_creates_a_restore_point_nor_rolls_back(tmp_path):
+    r = AutoRunner(rcs={"autonomy": 1})
+    out = apply(tmp_path, r)                                                                                     # auto is False by default
+    assert not out.ok and out.rolled_back == [] and not out.auto and keys(r) == ["relations", "autonomy"]
+
+
+# -- the DEPLOY facts and the incident
+
+LOG = ("feat(backlog): a\n\nRefs: FND-0355\nCo-Authored-By: t <t@t>\n\x1e" "feat(backlog): b\n\nCloses: FND-0358\nCo-Authored-By: t <t@t>\n\x1e" "chore: c\n\nno trailer\n\x1e")
+
+
+class FactsVault:
+    def __init__(self, facts="postgresql://backlog_facts@127.0.0.1:1/gestion"):
+        self.facts = facts
+
+    def get(self, name):
+        return {od.FACTS_VAR: self.facts, od.OWNER_VAR: SECRET}.get(name)
+
+
+def test_the_tickets_of_the_ddl_commits_come_from_their_trailers():
+    assert od.ddl_tickets(LOG) == ["FND-0355", "FND-0358"] and od.ddl_tickets("") == []
+
+
+def test_deploy_facts_are_recorded_per_ticket_with_the_scoped_string_only_during_the_calls(tmp_path):
+    seen, env = [], {}
+
+    def record(ref, ap, payload, ts):
+        seen.append((ref, ap, payload, env.get("FONDOS_BACKLOG_PG_DSN_FACTS")))
+        return ap != "FND-0358"                                                                                  # the second one was recorded before: not new
+
+    line = od.record_facts(HEAD, OLD, ["autonomy"], vault=FactsVault(), ddl_log=lambda a, b: LOG, record=record, environ=env, now=lambda: NOW)
+    assert [(r, a) for r, a, _p, _d in seen] == [("deploy-" + HEAD[:12], "FND-0355"), ("deploy-" + HEAD[:12], "FND-0358")] and all(d.endswith("/gestion") for *_x, d in seen)
+    assert seen[0][2] == {"head": HEAD, "phases": ["autonomy"]} and "1 new for 2 ticket(s)" in line and "FAILED" not in line
+    assert "FONDOS_BACKLOG_PG_DSN_FACTS" not in env                                                              # the string does not stay in the environment
+
+
+def test_a_failed_fact_is_reported_and_never_raises_and_a_missing_string_says_what_to_do():
+    def record(ref, ap, payload, ts):
+        raise RuntimeError("permission denied")
+
+    env = {"FONDOS_BACKLOG_PG_DSN_FACTS": "previous"}
+    line = od.record_facts(HEAD, OLD, [], vault=FactsVault(), ddl_log=lambda a, b: LOG, record=record, environ=env)
+    assert "FAILED for FND-0355 (RuntimeError), FND-0358 (RuntimeError)" in line and env["FONDOS_BACKLOG_PG_DSN_FACTS"] == "previous"
+    none = od.record_facts(HEAD, OLD, [], vault=FactsVault(facts=None), ddl_log=lambda a, b: LOG, record=record, environ={})
+    assert "NOT recorded" in none and "owner_vault.py set FONDOS_BACKLOG_PG_DSN_FACTS" in none
+    assert "no previously deployed" in od.record_facts(HEAD, None, [], vault=FactsVault(), ddl_log=lambda a, b: LOG, record=record, environ={})
+    assert "no ticket cites" in od.record_facts(HEAD, OLD, [], vault=FactsVault(), ddl_log=lambda a, b: "chore\n\x1e", record=record, environ={})
+    assert "not recorded" in od.record_facts(HEAD, OLD, [], vault=FactsVault(), ddl_log=lambda a, b: (_ for _ in ()).throw(RuntimeError("git")), record=record, environ={})
+
+
+def test_auto_deploy_records_the_facts_only_after_a_verified_success(tmp_path):
+    calls = []
+    ok = od.auto_deploy(HEAD, ["autonomy"], OLD, vault=FactsVault(), state_file=tmp_path / "s.json", ddl_log=lambda a, b: LOG, record=lambda *a: calls.append(a) or True,
+                        apply=lambda *a, **kw: od.Outcome(True, "applied", ["autonomy"], "no drift", auto=True))
+    assert ok.ok and "2 new" in ok.facts and len(calls) == 2
+    calls.clear()
+    bad = od.auto_deploy(HEAD, ["autonomy"], OLD, vault=FactsVault(), state_file=tmp_path / "s.json", ddl_log=lambda a, b: LOG, record=lambda *a: calls.append(a) or True,
+                         apply=lambda *a, **kw: od.Outcome(False, "drift", ["autonomy"], "DRIFT", auto=True))
+    assert not bad.ok and bad.facts == "" and calls == []                                                        # a deployment that did not verify declares nothing live
+
+
+def test_the_incident_names_the_failure_and_never_raises():
+    got = {}
+    o = od.Outcome(False, "autonomy", ["relations"], "boom", rolled_back=["relations"], auto=True)
+    ticket = od.report_failure(o, HEAD, lambda **kw: got.update(kw) or "FND-0400")
+    assert ticket == "FND-0400" and "failed at autonomy" in got["title"] and "Rolled back: relations" in got["scenario_description"] and got["object_type"] == "JOB"
+    assert od.report_failure(o, HEAD, lambda **kw: (_ for _ in ()).throw(RuntimeError("no db"))) is None
+
+
+# -- the watcher in AUTO mode
+
+class AutoWatch(Watch):
+    def __init__(self, tmp_path, outcome, **kw):
+        super().__init__(tmp_path, **kw)
+        self.outcome, self.auto_calls, self.reports = outcome, [], []
+
+    def once(self, now=NOW, mode="AUTO"):
+        def apply_auto(h, pend, deployed):
+            self.auto_calls.append((h, list(pend), deployed))
+            return self.outcome
+
+        return od.watch_once(state_file=self.state_file, fetch=lambda: None, head_fn=lambda: HEAD, changed=lambda a, b: self.changed, commits=lambda a, b: [], diff=lambda a, b: "+ddl line",
+                             drift=lambda h: self.drift, ask=lambda t: self.asked.append(t) or self.answer, apply=lambda h, p: pytest.fail("the click path must not run"),
+                             notify=self.notified.append, now=lambda: now, mode=mode, apply_auto=apply_auto, report=lambda **kw: self.reports.append(kw) or "FND-0400")
+
+
+def test_in_auto_mode_a_pending_version_is_applied_with_no_window_and_notified(tmp_path):
+    w = AutoWatch(tmp_path, od.Outcome(True, "applied", ["autonomy"], "no drift", auto=True), state={"deployed_ref": OLD})
+    assert w.once() == "applied" and w.auto_calls == [(HEAD, ["autonomy"], OLD)] and w.asked == [] and len(w.notified) == 1 and w.reports == []
+
+
+def test_in_ask_mode_the_auto_path_is_never_taken(tmp_path):
+    w = AutoWatch(tmp_path, od.Outcome(True, "applied", ["autonomy"], "", auto=True), state={"deployed_ref": OLD}, answer="later")
+    assert w.once(mode="ASK") == "later" and w.auto_calls == [] and len(w.asked) == 1
+
+
+def test_a_failed_automatic_apply_opens_an_incident_remembers_the_failure_and_the_next_pass_asks_a_person(tmp_path):
+    bad = od.Outcome(False, "autonomy", ["relations"], "boom", rolled_back=["relations"], auto=True)
+    w = AutoWatch(tmp_path, bad, state={"deployed_ref": OLD}, answer="later")
+    assert w.once() == "failed" and len(w.reports) == 1 and "failed at autonomy" in w.reports[0]["title"] and w.notified == [bad]
+    assert HEAD in od.read_state(w.state_file)["auto_failed"]
+    assert w.once() == "later" and len(w.auto_calls) == 1 and len(w.asked) == 1                                  # not retried by itself: the window asks, once
+
+
+def test_without_a_restore_point_the_window_asks_and_says_why(tmp_path):
+    w = AutoWatch(tmp_path, od.Outcome(False, "restore_point", [], "permission denied for pg_create_restore_point", fallback=True, auto=True), state={"deployed_ref": OLD}, answer="later")
+    assert w.once() == "later" and len(w.asked) == 1 and "DID NOT RUN (restore_point)" in w.asked[0] and "permission denied" in w.asked[0]
+    assert w.reports == [] and w.notified == [] and HEAD not in od.read_state(w.state_file).get("auto_failed", [])        # nothing was applied: not a failure, not an incident
+
+
+def test_an_ignored_version_is_not_applied_automatically(tmp_path):
+    ignored = AutoWatch(tmp_path, od.Outcome(True, "applied", [], "", auto=True), state={"deployed_ref": OLD, "ignored": [HEAD]})
+    assert ignored.once() == "none" and ignored.auto_calls == []
+
+
+def test_the_auto_branch_is_reached_only_through_the_mode_and_the_config_default_is_documented():
+    src = (_ROOT / "scripts" / "ops" / "owner_deploy.py").read_text(encoding="utf-8")
+    assert src.count('mode == "AUTO"') == 1 and "deploy_mode(getattr(cfg" in src
+    cfg = (_ROOT / "shared" / "config.py").read_text(encoding="utf-8")
+    assert "BACKLOG_AUTO_DEPLOY_MODE: str =" in cfg and "Rollback of this decision" in cfg
