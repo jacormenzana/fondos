@@ -124,7 +124,9 @@ def test_the_agent_may_block_defer_reject_and_move_back_but_not_force_reopen_or_
     assert status(db, ap) == "READY_FOR_DEPLOY"
     agent_tr(db, other, "CLOSED", solution_type="REJECTED", followup=keep)                 # REJECTED cites the ticket that supersedes it: legal
     assert row(db, other)[0] == "CLOSED" and row(db, other)[2] == "REJECTED"
-    refused(db, "reopening is a person", agent_tr, other, "IN_PROGRESS")                    # a CLOSED ticket stays closed for an agent
+    agent_tr(db, other, "IN_PROGRESS")                                                      # Backlog v3.1: reopening is a normal event any actor may record (the safe direction)
+    assert status(db, other) == "IN_PROGRESS"
+    agent_tr(db, other, "CLOSED", solution_type="REJECTED", followup=keep)                  # and it can close again with evidence
     refused(db, "(?s)illegal|not a legal|cannot|p_force", agent_tr, keep, "READY_FOR_DEPLOY")   # an illegal move needs p_force, which the wrapper never passes
     assert status(db, keep) == "OPEN"
 

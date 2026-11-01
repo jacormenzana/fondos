@@ -46,7 +46,7 @@ Dominios categóricos, **todos con `CHECK` en BD** — nunca inventar un valor f
   `closure_ts` y `solution_type` obligatorios; en despliegue real, además `deployment_ts` y `release_version`.
 - **Movimientos (Fase A):** `shared.backlog_client.transition()` (función `backlog.sp_transition`) es la única vía para cambiar estado, campos de cierre, versión de
   release y responsable; escribe el log (el comentario, literal) y el evento de estado (`backlog.status_event`) en una transacción. Reglas: solo los movimientos legales
-  del flujo anterior (reabrir un `CLOSED` y cualquier atajo exigen `p_force` y un motivo de 40+ caracteres, y quedan marcados); un cierre de entrega (`CODE_FIX`,
+  del flujo anterior (cualquier atajo exige `p_force` y un motivo de 40+ caracteres, y queda marcado; **reabrir un `CLOSED` ya no es un atajo**: es un evento normal, ver la fase `events` más abajo); un cierre de entrega (`CODE_FIX`,
   `DATA_FIX`, `WORKAROUND`) viene de `READY_FOR_DEPLOY` y exige etiqueta `R<aaaa>.<mm>-<TAG>` (el procedimiento fija `closure_ts` y `deployment_ts`); `WORKAROUND`
   cita su ticket de seguimiento o abre uno `OPT`; `REJECTED` cita el ticket que lo sustituye; `DUPLICATED` cita el que se conserva y registra el enlace `DUPLICATES`;
   `BLOCKED` nombra su bloqueo (un ticket, con su `DEPENDS_ON` garantizado, o una condición escrita) y `DEFERRED` su fecha o suceso de revisión (`backlog.wait_event`).
@@ -88,6 +88,23 @@ Dominios categóricos, **todos con `CHECK` en BD** — nunca inventar un valor f
   niega con código 2 y no escribe nada; nunca cae a otro login ni pide terminal. **No fabrica `DEPLOY` ni `CYCLE`** (no puede dar fe de su propio cierre): un ticket cuyo merge toca `db/**` espera a que
   la migración del propietario registre el `DEPLOY`, y un `DATA_FIX` a que se registre un `CYCLE`. El gancho `reference-transaction` (`bash scripts/audit/reference-transaction.sh`, lo instala el
   propietario porque se dispara con **cada** actualización de referencia del clon) lanza el proceso en segundo plano cuando un `fetch` mueve `refs/remotes/origin/master`; no bloquea nunca git.
+- **Fase `events` (Backlog v3.1, directiva del propietario del 2026-11-01: quitar las tareas administrativas; `98_events.sql`, `migrate_backlog_v2.py --phase events`).** Principio: cada transición tiene un
+  disparador automático y una persona aparece solo como **evento** (un ticket nuevo, una prioridad, una reapertura), nunca como aprobadora.
+  - **Reabrir es un evento normal.** `backlog.sp_reopen(ticket, causa, motivo, actor, sesión)` lo puede registrar **cualquier actor** (reabrir es el sentido seguro: añade trabajo y no oculta nada; solo
+    cerrar exige evidencia). No lleva `p_force`, no es una infracción (`V-FORCED` ya no cuenta las reaperturas) y `sp_transition` ya no lo exige. La causa queda en `backlog.reopen_event` (solo añadir):
+    `REGRESSION`, `INCOMPLETE_FIX`, `COVERAGE_GAP`, `WRONG_ROOT_CAUSE`, `DOWNSTREAM_EFFECT`, `ENVIRONMENT`, `SCOPE_CHANGE`, `OTHER` (una reapertura por `sp_transition` directo queda como `OTHER`), junto con los campos
+    de cierre que se limpiaron. **El mismo actor puede retirarla en la hora siguiente** (`sp_rescind_reopen`), siempre que el ticket no se haya movido: el cierre vuelve como estaba y la historia conserva los dos
+    movimientos. Aún no se analiza nada: el dato queda para la fase de aprendizaje, que es posterior.
+  - **Las retenciones del sistema se liberan solas.** `backlog.fn_auto_release_holds` libera las retenciones `V-COLLISION` y `V-HOOK-BYPASS` de un ticket cuando ya no queda ningún par de colisión suyo sin decidir
+    (la ejecutan el autopiloto y los agentes); una retención de otro código, o puesta por una persona, sigue siendo de una persona (`sp_release_hold`).
+  - **Los agentes deciden los pares de colisión** con evidencia escrita de 40+ caracteres (`sp_agent_adjudicate_overlap`; `OVERLAPS`, `RELATED`, `DEPENDS_ON` o `NONE`, nunca `REVERT`, que necesita una persona y el sha
+    de un commit de reversión). El efecto es el mismo que el de la rutina de la persona porque ambas llaman a `fn_adjudicate_core` (90_collision.sql); un par ya decidido no se vuelve a decidir, así que una decisión
+    previa de una persona nunca se pisa. El modo de la puerta de colisión se queda en `AUDIT` para siempre: `BLOCK` y el bloqueo en el `pre-push` quedan retirados.
+  - **El modo del autopiloto es un evento** (`backlog.autopilot_mode_event`, `fn_autopilot_mode`, `sp_set_autopilot_mode`), no una edición de fichero: una persona fija cualquier modo; el autopiloto solo se mueve
+    entre `SHADOW` y `ON` (nunca se apaga ni levanta un `OFF` que puso una persona).
+  - **El hecho `DEPLOY` no se puede falsificar.** Lo registra solo el login acotado `backlog_facts` (sin contraseña: la fija el propietario; su cadena va al vault del propietario) mediante `sp_record_fact`
+    (actor `system:deploy`), y un disparador de `ops_event` rechaza una fila `DEPLOY` de cualquier otro login que no sea superusuario (una migración o un relleno). Es lo que permite al autopiloto cerrar por sí solo
+    los tickets cuyo merge toca `db/`.
 - **Estado de aplicación de la Fase A (FND-0331):** el propietario aplica el DDL por pasos, cada uno con simulacro y acuerdo expreso. **A-1** (`30_transitions.sql`,
   `migrate_backlog_v2.py --phase transitions`) es aditivo: crea el rol `backlog_owner` (sin superusuario ni login) como propietario de las rutinas privilegiadas
   (`SECURITY DEFINER`, `search_path` fijado), las tablas de auditoría y el disparador de la etapa de sombra, que **registra sin bloquear** (V-00) toda escritura directa en

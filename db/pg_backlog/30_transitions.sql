@@ -311,13 +311,10 @@ BEGIN
 
     -- Legality.
     IF v_from = 'CLOSED' THEN
-        IF NOT p_force THEN
-            RAISE EXCEPTION 'sp_transition: % is CLOSED; reopening needs p_force and a reason', p_ap_id USING ERRCODE = '22023';
-        END IF;
+        -- Backlog v3.1: a reopening is the rejection of a delivery, a NORMAL event of the state machine (any actor, no p_force, never a violation). backlog.sp_reopen records its cause.
         IF p_to NOT IN ('OPEN', 'TODO', 'IN_PROGRESS') THEN
             RAISE EXCEPTION 'sp_transition: a CLOSED ticket reopens to OPEN, TODO or IN_PROGRESS, not %', p_to USING ERRCODE = '22023';
         END IF;
-        v_forced := true;
     ELSIF NOT backlog.fn_transition_legal(v_from, p_to) THEN
         IF NOT p_force THEN
             RAISE EXCEPTION 'sp_transition: % -> % is not a legal move', v_from, p_to USING ERRCODE = '22023';
@@ -443,6 +440,10 @@ BEGIN
                      || CASE WHEN jsonb_array_length(v_gate) > 0
                              THEN jsonb_build_object(CASE WHEN v_mode = 'ENFORCE' THEN 'gate_override' ELSE 'gate_audit' END, v_gate) ELSE '{}'::jsonb END)
     RETURNING event_id INTO v_event;
+    IF v_from = 'CLOSED' AND to_regclass('backlog.reopen_event') IS NOT NULL THEN          -- the reopening and its cause (the table belongs to phase events; dynamic so this block never depends on it)
+        EXECUTE 'INSERT INTO backlog.reopen_event (action_point_id, kind, actor, cause, reason, prior, status_event_id) VALUES ($1, ''REOPEN'', $2, $3, $4, $5, $6)'
+          USING p_ap_id, p_actor, COALESCE(NULLIF(current_setting('backlog.reopen_cause', true), ''), 'OTHER'), left(p_comment, 500), v_detail -> 'before', v_event;
+    END IF;
     IF v_mode IS NOT NULL AND v_mode <> 'OFF' THEN
         PERFORM backlog.fn_gate_record(p_ap_id, p_to, v_delivery, v_gate, v_mode, p_actor, v_forced);
     END IF;

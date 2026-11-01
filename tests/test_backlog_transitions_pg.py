@@ -344,15 +344,15 @@ def test_deferred_needs_a_revisit_date_in_the_future_or_an_event(db):
         "DEFERRED", dt.date.today() + dt.timedelta(days=30), "DECLARED")
 
 
-def test_reopening_a_closed_ticket_needs_force_and_clears_the_closure_but_keeps_the_history(db):
+def test_reopening_a_closed_ticket_is_a_normal_event_clears_the_closure_but_keeps_the_history(db):
+    """Backlog v3.1: a reopening is the rejection of a delivery, not a forced exception: no p_force, no 40-character reason, never counted as forced."""
     ap = _mk(db, "READY_FOR_DEPLOY")
     tr(db, ap, "CLOSED", solution_type="CODE_FIX", release_version="R2026.10-TEST-05")
-    refused(db, "reopening needs p_force", tr, ap, "IN_PROGRESS")
-    refused(db, "reopens to", tr, ap, "BLOCKED", force=True, comment=FORCE_REASON, condition="waiting for the vendor to answer")
-    ev = tr(db, ap, "IN_PROGRESS", force=True, comment=FORCE_REASON)
+    refused(db, "reopens to", tr, ap, "BLOCKED", condition="waiting for the vendor to answer")                  # a CLOSED ticket reopens only to OPEN, TODO or IN_PROGRESS
+    ev = tr(db, ap, "IN_PROGRESS")
     assert row(db, ap)[:5] == ("IN_PROGRESS", None, None, None, None)
     d = db.execute("SELECT forced, detail->'before'->>'solution_type', detail->'before'->>'release_version' FROM backlog.status_event WHERE event_id = %s", (ev,)).fetchone()
-    assert d == (True, "CODE_FIX", "R2026.10-TEST-05")                                                        # what the closure said is in the event
+    assert d == (False, "CODE_FIX", "R2026.10-TEST-05")                                                       # not forced; what the closure said is in the event
     assert db.execute("SELECT count(*) FROM backlog.status_event WHERE action_point_id = %s", (ap,)).fetchone()[0] == 2     # the closure and the reopening (_mk is a raw ticket: no 'opened' event)
 
 
