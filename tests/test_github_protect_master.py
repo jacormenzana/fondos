@@ -19,7 +19,7 @@ for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops")):
 import github_protect_master as gpm  # noqa: E402
 
 
-PUBLISHER_WORKFLOWS = ("auto-pr.yml",)          # Backlog v3 W1: opens the pull request and enables auto-merge; it reports no check that master could require
+PUBLISHER_WORKFLOWS = ("auto-pr.yml", "branch-cleanup.yml")          # Backlog v3 W1: auto-pr opens the pull request and enables auto-merge; branch-cleanup (v3.1) deletes merged branches; neither reports a check that master could require
 
 
 def _check_workflows() -> list:
