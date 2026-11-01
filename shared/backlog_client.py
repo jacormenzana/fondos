@@ -1132,20 +1132,94 @@ def autonomy_store_present(*, conn=None) -> bool:
                               "SELECT 1 FROM pg_constraint WHERE conrelid = 'backlog.ops_event'::regclass AND contype = 'c' AND pg_get_constraintdef(oid) LIKE '%MERGE%')").fetchone()[0])
 
 
+AUTO_EVIDENCE_KINDS = ("MERGE", "BLOCKER", "REVISIT")      # the evidence sp_auto_transition accepts: a merge (delivery), a CLOSED blocker (unblock), a revisit date reached (undefer)
+
+
 def auto_transition(ap_id: str, to_status: str, *, evidence_ref: str, session_id: str, comment: str, solution_type: Optional[str] = None,
-                    release_version: Optional[str] = None, conn=None) -> int:
-    """The autopilot's one move (backlog.sp_auto_transition, Backlog v3 W3): IN_PROGRESS -> READY_FOR_DEPLOY, or READY_FOR_DEPLOY -> CLOSED as CODE_FIX / DATA_FIX with a release label,
-    on the MERGE event `evidence_ref` recorded for that ticket. Only the process whose identity is system:autopilot may call it; the database fixes the actor and never forces. Returns
-    the status_event id; raises on any refusal (the gates of Phase B included), never swallows."""
+                    release_version: Optional[str] = None, evidence_kind: str = "MERGE", conn=None) -> int:
+    """The autopilot's evidence-backed move (backlog.sp_auto_transition, Backlog v3 W3 and v3.1): IN_PROGRESS -> READY_FOR_DEPLOY, or READY_FOR_DEPLOY -> CLOSED as CODE_FIX / DATA_FIX with a
+    release label, on the MERGE event `evidence_ref` recorded for that ticket; BLOCKED -> IN_PROGRESS on evidence_kind 'BLOCKER' (the closed blocker's id); DEFERRED -> TODO on 'REVISIT' (the
+    revisit date). Only the process whose identity is system:autopilot may call it; the database fixes the actor, verifies the evidence from its own records and never forces. Returns the
+    status_event id; raises on any refusal (the gates of Phase B included), never swallows."""
+    if evidence_kind not in AUTO_EVIDENCE_KINDS:
+        raise ValueError(f"evidence_kind must be one of {AUTO_EVIDENCE_KINDS}, got {evidence_kind!r}")
     who = resolve_actor(None)
     if who != AUTOPILOT_ACTOR:
         raise ActorUnknown(f"auto_transition is the autopilot's: FONDOS_ACTOR must be {AUTOPILOT_ACTOR}, got {who!r}")
     with _session(conn, write=True, operation=autopilot_operation(who)) as c:
         (event_id,) = c.execute(
-            "SELECT backlog.sp_auto_transition(p_ap_id => %s, p_to => %s, p_evidence_kind => 'MERGE', p_evidence_ref => %s, p_session_id => %s, p_comment => %s, "
+            "SELECT backlog.sp_auto_transition(p_ap_id => %s, p_to => %s, p_evidence_kind => %s, p_evidence_ref => %s, p_session_id => %s, p_comment => %s, "
             "p_solution_type => %s, p_release_version => %s)",
-            (ap_id, to_status, evidence_ref, session_id, comment, solution_type, release_version)).fetchone()
+            (ap_id, to_status, evidence_kind, evidence_ref, session_id, comment, solution_type, release_version)).fetchone()
     return int(event_id)
+
+
+# --- Backlog v3.1 (FND-0355): db/pg_backlog/98_events.sql -- reopening as an event, self-releasing holds, agent adjudication, the autopilot's mode ------------------------------
+REOPEN_CAUSES = ("REGRESSION", "INCOMPLETE_FIX", "COVERAGE_GAP", "WRONG_ROOT_CAUSE", "DOWNSTREAM_EFFECT", "ENVIRONMENT", "SCOPE_CHANGE", "OTHER")     # == the CHECK of backlog.reopen_event.cause
+AUTOPILOT_MODES = ("OFF", "SHADOW", "ON")
+
+
+def events_store_present(*, conn=None) -> bool:
+    """True when the owner's deploy has applied db/pg_backlog/98_events.sql (sp_reopen exists and the reopen_event table is there)."""
+    with _session(conn) as c:
+        return bool(c.execute("SELECT to_regclass('backlog.reopen_event') IS NOT NULL AND EXISTS (SELECT 1 FROM pg_proc WHERE pronamespace = 'backlog'::regnamespace AND proname = 'sp_reopen')").fetchone()[0])
+
+
+def _scoped_operation(who: str) -> Optional[str]:
+    """The allow-listed operation an agent or the autopilot writes with (its scoped login), else None (the console path)."""
+    return autopilot_operation(who) or agent_operation(who)
+
+
+def reopen(ap_id: str, cause: str, reason: str, *, session_id: str, actor: Optional[str] = None, to_status: str = "IN_PROGRESS", conn=None) -> int:
+    """Reopen a CLOSED ticket (backlog.sp_reopen): a normal event any actor may record, never forced and never counted as a violation; the cause is kept. The reopening of a delivered
+    ticket IS the rejection of its delivery. Returns the status_event id."""
+    if cause not in REOPEN_CAUSES:
+        raise ValueError(f"cause must be one of {REOPEN_CAUSES}, got {cause!r}")
+    who = resolve_actor(actor)
+    with _session(conn, human=who.startswith("human:"), write=True, operation=_scoped_operation(who)) as c:
+        return int(c.execute("SELECT backlog.sp_reopen(%s, %s, %s, %s, %s, %s)", (ap_id, cause, reason, who, session_id, to_status)).fetchone()[0])
+
+
+def rescind_reopen(ap_id: str, *, session_id: str, actor: Optional[str] = None, conn=None) -> int:
+    """Undo a reopening by the same actor within one hour of it (backlog.sp_rescind_reopen): the closure fields come back. Returns the status_event id."""
+    who = resolve_actor(actor)
+    with _session(conn, human=who.startswith("human:"), write=True, operation=_scoped_operation(who)) as c:
+        return int(c.execute("SELECT backlog.sp_rescind_reopen(%s, %s, %s)", (ap_id, who, session_id)).fetchone()[0])
+
+
+def auto_release_holds(*, actor: Optional[str] = None, conn=None) -> int:
+    """Release the holds of system codes (V-COLLISION, V-HOOK-BYPASS) whose cause has cleared (backlog.fn_auto_release_holds); a hold of another code, or a person's, stays. For an agent or
+    system:* actor only (the database refuses a human). Returns how many were released."""
+    who = resolve_actor(actor)
+    with _session(conn, write=True, operation=_scoped_operation(who)) as c:
+        return int(c.execute("SELECT backlog.fn_auto_release_holds(%s)", (who,)).fetchone()[0])
+
+
+def agent_adjudicate_overlap(a: str, b: str, decision: str, reason: str, *, absorbs: Optional[str] = None, actor: Optional[str] = None, conn=None) -> int:
+    """An agent decides one undecided collision pair with stated evidence (backlog.sp_agent_adjudicate_overlap): never REVERT, at least 40 characters of reason, and never a pair that is
+    already decided, so a person's earlier decision is never overwritten. Returns the adjudication id."""
+    if decision not in COLLISION_DECISIONS or decision == "REVERT":
+        raise ValueError(f"decision must be one of {tuple(d for d in COLLISION_DECISIONS if d != 'REVERT')}, got {decision!r}")
+    who = resolve_actor(actor)
+    if not who.startswith("agent:"):
+        raise ValueError(f"agent_adjudicate_overlap is for an agent:<model> identity, got {who!r} (a person uses adjudicate_overlap)")
+    with _session(conn, write=True, operation=agent_operation(who)) as c:
+        return int(c.execute("SELECT backlog.sp_agent_adjudicate_overlap(%s, %s, %s, %s, %s, %s)", (a, b, decision, absorbs, reason, who)).fetchone()[0])
+
+
+def autopilot_mode(*, conn=None) -> str:
+    """The autopilot's current mode, the latest autopilot_mode_event (backlog.fn_autopilot_mode)."""
+    with _session(conn) as c:
+        return str(c.execute("SELECT backlog.fn_autopilot_mode()").fetchone()[0])
+
+
+def set_autopilot_mode(mode: str, reason: str, *, actor: Optional[str] = None, conn=None) -> int:
+    """Append an autopilot_mode_event (backlog.sp_set_autopilot_mode). The autopilot itself may only move SHADOW <-> ON; a person sets any mode. Returns the event id."""
+    if mode not in AUTOPILOT_MODES:
+        raise ValueError(f"mode must be one of {AUTOPILOT_MODES}, got {mode!r}")
+    who = resolve_actor(actor)
+    with _session(conn, human=who.startswith("human:"), write=True, operation=autopilot_operation(who)) as c:
+        return int(c.execute("SELECT backlog.sp_set_autopilot_mode(%s, %s, %s)", (mode, reason, who)).fetchone()[0])
 
 
 def ops_event_keys(kind: str = "COMMIT", *, conn=None) -> set:

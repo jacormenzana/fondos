@@ -117,7 +117,7 @@ def test_a_move_without_evidence_is_refused(db):
     as_autopilot(db)
     refused(db, "has no evidence", auto, ap, "READY_FOR_DEPLOY")
     refused(db, "has no evidence", auto, ap, "READY_FOR_DEPLOY", ref="c" * 40)
-    refused(db, "evidence of a move is a MERGE", auto, other, "READY_FOR_DEPLOY", kind="COMMIT")
+    refused(db, "evidence of a delivery move is a MERGE", auto, other, "READY_FOR_DEPLOY", kind="COMMIT")
     refused(db, "does not exist", auto, "FND-9999", "READY_FOR_DEPLOY")
     assert status(db, ap) == "IN_PROGRESS" and status(db, other) == "IN_PROGRESS"
 
@@ -241,3 +241,77 @@ def test_the_phase_is_idempotent_and_the_rollback_keeps_the_roles_the_widened_ki
     assert db.execute("SELECT count(*) FROM backlog.status_event WHERE action_point_id = %s AND actor = %s", (ap, AUTO)).fetchone()[0] == 1
     mig.migrate(db, "autonomy")
     assert db.execute("SELECT has_function_privilege('backlog_autopilot', p.oid, 'EXECUTE') FROM pg_proc p WHERE p.proname = 'sp_auto_transition'").fetchone()[0] is True
+
+
+# ---------------------------------------------------------------- Backlog v3.1: BLOCKED -> IN_PROGRESS and DEFERRED -> TODO on the database's own facts
+
+def blocked_on(conn, blocker_status="IN_PROGRESS"):
+    """(blocked ticket, its structured blocker): the first is BLOCKED on the second, declared the way a person does it."""
+    blocker = _mk(conn, blocker_status)
+    ap = _mk(conn, "IN_PROGRESS")
+    conn.execute("SELECT backlog.sp_transition(p_ap_id => %s, p_to => 'BLOCKED', p_actor => %s, p_session_id => %s, p_comment => 'waiting for the blocker to close', p_blocker => %s)", (ap, ME, SESSION, blocker))
+    return ap, blocker
+
+
+def close_as_rejected(conn, ap):
+    successor = _mk(conn, "OPEN")
+    conn.execute("SELECT backlog.sp_transition(p_ap_id => %s, p_to => 'CLOSED', p_actor => %s, p_session_id => %s, p_comment => 'closed as not needed, for a test', p_solution_type => 'REJECTED', p_followup => %s)",
+                 (ap, ME, SESSION, successor))
+
+
+def test_a_blocked_ticket_goes_back_to_in_progress_when_its_blocker_is_closed_as_the_autopilot_never_forced(db):
+    ap, blocker = blocked_on(db)
+    close_as_rejected(db, blocker)
+    as_autopilot(db)
+    event = auto(db, ap, "IN_PROGRESS", ref=blocker, kind="BLOCKER")
+    as_owner(db)
+    assert status(db, ap) == "IN_PROGRESS"
+    assert db.execute("SELECT actor, forced, from_status, to_status FROM backlog.status_event WHERE event_id = %s", (event,)).fetchone() == (AUTO, False, "BLOCKED", "IN_PROGRESS")
+
+
+def test_an_unblock_needs_the_blocker_closed_the_right_evidence_and_no_delivery_fields(db):
+    ap, blocker = blocked_on(db)
+    other = _mk(db, "IN_PROGRESS")
+    as_autopilot(db)
+    refused(db, "not blocked on a CLOSED ticket", auto, ap, "IN_PROGRESS", ref=blocker, kind="BLOCKER")               # the blocker is still open
+    as_owner(db)
+    close_as_rejected(db, blocker)
+    close_as_rejected(db, other)
+    as_autopilot(db)
+    refused(db, "not blocked on a CLOSED ticket", auto, ap, "IN_PROGRESS", ref=other, kind="BLOCKER")                # a closed ticket that is NOT its blocker
+    refused(db, "evidenced by BLOCKER", auto, ap, "IN_PROGRESS", ref=blocker, kind="MERGE")
+    refused(db, "evidenced by BLOCKER", auto, ap, "IN_PROGRESS", ref=blocker, kind="BLOCKER", release=RELEASE)
+    as_owner(db)
+    assert status(db, ap) == "BLOCKED"
+
+
+def test_a_block_on_a_named_condition_is_never_lifted_by_the_autopilot(db):
+    ap = _mk(db, "IN_PROGRESS")
+    closed = _mk(db, "IN_PROGRESS")
+    close_as_rejected(db, closed)
+    db.execute("SELECT backlog.sp_transition(p_ap_id => %s, p_to => 'BLOCKED', p_actor => %s, p_session_id => %s, p_comment => 'waiting for a decision', p_condition => 'the owner decides the scope')", (ap, ME, SESSION))
+    as_autopilot(db)
+    refused(db, "not blocked on a CLOSED ticket", auto, ap, "IN_PROGRESS", ref=closed, kind="BLOCKER")
+    as_owner(db)
+    assert status(db, ap) == "BLOCKED"
+
+
+def deferred_until(conn, days):
+    """A DEFERRED ticket whose latest wait carries revisit_by = today + days (written directly: a date in the past cannot be declared through the routine)."""
+    ap = _mk(conn, "DEFERRED")
+    conn.execute("INSERT INTO backlog.wait_event (action_point_id, kind, condition_text, revisit_by, actor) VALUES (%s, 'DEFERRED', 'revisit later', current_date + %s, %s)", (ap, days, ME))
+    return ap, conn.execute("SELECT (current_date + %s)::text", (days,)).fetchone()[0]
+
+
+def test_a_deferred_ticket_returns_to_todo_on_its_revisit_date_and_not_before(db):
+    ap, when = deferred_until(db, -1)
+    early, early_when = deferred_until(db, 3)
+    as_autopilot(db)
+    refused(db, "has not been reached", auto, early, "TODO", ref=early_when, kind="REVISIT")
+    refused(db, "has not been reached", auto, ap, "TODO", ref="2001-01-01", kind="REVISIT")                         # a date that is not its latest wait's
+    refused(db, "evidenced by REVISIT", auto, ap, "TODO", ref=when, kind="MERGE")
+    refused(db, "evidenced by REVISIT", auto, ap, "TODO", ref=when, kind="REVISIT", solution="CODE_FIX")
+    event = auto(db, ap, "TODO", ref=when, kind="REVISIT")
+    as_owner(db)
+    assert status(db, ap) == "TODO" and status(db, early) == "DEFERRED"
+    assert db.execute("SELECT actor, forced, from_status, to_status FROM backlog.status_event WHERE event_id = %s", (event,)).fetchone() == (AUTO, False, "DEFERRED", "TODO")

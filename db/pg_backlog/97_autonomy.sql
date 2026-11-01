@@ -21,7 +21,8 @@
 --      UPDATE, no gate / mode / hold / adjudication routine.
 --   6. Backlog v3 W3 (FND-0358), section 5 below: the autopilot. The fact kinds MERGE (a merge on master that delivers a ticket), DEPLOY (its DDL is live) and CYCLE (a cycle ran
 --      after the merge); the scoped login backlog_autopilot (no password: the owner sets it; DSN FONDOS_BACKLOG_PG_DSN_AUTOPILOT); and sp_auto_transition, the autopilot's ONLY way to
---      move a ticket: it accepts two edges (IN_PROGRESS -> READY_FOR_DEPLOY and READY_FOR_DEPLOY -> CLOSED as CODE_FIX / DATA_FIX), always as system:autopilot, never forced, and only when
+--      move a ticket: it accepts four edges (IN_PROGRESS -> READY_FOR_DEPLOY and READY_FOR_DEPLOY -> CLOSED as CODE_FIX / DATA_FIX on a delivery; BLOCKED -> IN_PROGRESS when its blocker is CLOSED and
+--      DEFERRED -> TODO when its revisit date is reached, Backlog v3.1), always as system:autopilot, never forced, and only when
 --      the MERGE event it cites is recorded for that ticket (and, for a closure, the DEPLOY / CYCLE / closing-condition facts the delivery needs). The gates of Phase B still apply inside.
 
 -- BEGIN backlog_autonomy
@@ -192,8 +193,32 @@ BEGIN
     IF NOT FOUND THEN
         RAISE EXCEPTION 'sp_auto_transition: ticket % does not exist', p_ap_id USING ERRCODE = '22023';
     END IF;
+    -- Backlog v3.1: the two moves that need no delivery. The evidence is the database's own fact, read here (not an event somebody recorded):
+    --   BLOCKED -> IN_PROGRESS when the ticket it is structurally blocked on (its latest BLOCKED wait) is CLOSED;
+    --   DEFERRED -> TODO when the revisit date of its latest DEFERRED wait has been reached.
+    IF v_status = 'BLOCKED' AND p_to = 'IN_PROGRESS' THEN
+        IF p_evidence_kind IS DISTINCT FROM 'BLOCKER' OR p_solution_type IS NOT NULL OR p_release_version IS NOT NULL THEN
+            RAISE EXCEPTION 'sp_auto_transition: an unblock is evidenced by BLOCKER (the closed blocking ticket) and carries neither a solution nor a release label' USING ERRCODE = '22023';
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM backlog.wait_event w JOIN backlog.BACKLOG b ON b.action_point_id = w.blocker_ref
+                        WHERE w.action_point_id = p_ap_id AND w.kind = 'BLOCKED' AND w.blocker_ref = p_evidence_ref AND b.status = 'CLOSED'
+                          AND w.wait_id = (SELECT max(w2.wait_id) FROM backlog.wait_event w2 WHERE w2.action_point_id = p_ap_id AND w2.kind = 'BLOCKED')) THEN
+            RAISE EXCEPTION 'sp_auto_transition: % is not blocked on a CLOSED ticket %', p_ap_id, p_evidence_ref USING ERRCODE = '42501';
+        END IF;
+        RETURN backlog.sp_transition(p_ap_id => p_ap_id, p_to => p_to, p_actor => c_actor, p_session_id => p_session_id, p_comment => p_comment, p_force => false);
+    ELSIF v_status = 'DEFERRED' AND p_to = 'TODO' THEN
+        IF p_evidence_kind IS DISTINCT FROM 'REVISIT' OR p_solution_type IS NOT NULL OR p_release_version IS NOT NULL THEN
+            RAISE EXCEPTION 'sp_auto_transition: an undefer is evidenced by REVISIT (the date reached) and carries neither a solution nor a release label' USING ERRCODE = '22023';
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM backlog.wait_event w
+                        WHERE w.action_point_id = p_ap_id AND w.kind = 'DEFERRED' AND w.revisit_by IS NOT NULL AND w.revisit_by <= current_date AND w.revisit_by::text = p_evidence_ref
+                          AND w.wait_id = (SELECT max(w2.wait_id) FROM backlog.wait_event w2 WHERE w2.action_point_id = p_ap_id AND w2.kind = 'DEFERRED')) THEN
+            RAISE EXCEPTION 'sp_auto_transition: the revisit date % of % has not been reached (or is not its latest)', p_evidence_ref, p_ap_id USING ERRCODE = '42501';
+        END IF;
+        RETURN backlog.sp_transition(p_ap_id => p_ap_id, p_to => p_to, p_actor => c_actor, p_session_id => p_session_id, p_comment => p_comment, p_force => false);
+    END IF;
     IF p_evidence_kind IS DISTINCT FROM 'MERGE' THEN
-        RAISE EXCEPTION 'sp_auto_transition: the evidence of a move is a MERGE event (got %)', p_evidence_kind USING ERRCODE = '22023';
+        RAISE EXCEPTION 'sp_auto_transition: the evidence of a delivery move is a MERGE event (got %)', p_evidence_kind USING ERRCODE = '22023';
     END IF;
     SELECT * INTO v_ev FROM backlog.ops_event WHERE kind = 'MERGE' AND ref = p_evidence_ref AND action_point_id = p_ap_id;
     IF NOT FOUND THEN
@@ -223,7 +248,7 @@ BEGIN
             END IF;
         END IF;
     ELSE
-        RAISE EXCEPTION 'sp_auto_transition: % -> % is not an automatic move (only IN_PROGRESS -> READY_FOR_DEPLOY and READY_FOR_DEPLOY -> CLOSED)', v_status, p_to USING ERRCODE = '42501';
+        RAISE EXCEPTION 'sp_auto_transition: % -> % is not an automatic move (only IN_PROGRESS -> READY_FOR_DEPLOY, READY_FOR_DEPLOY -> CLOSED, BLOCKED -> IN_PROGRESS and DEFERRED -> TODO)', v_status, p_to USING ERRCODE = '42501';
     END IF;
     RETURN backlog.sp_transition(p_ap_id => p_ap_id, p_to => p_to, p_actor => c_actor, p_session_id => p_session_id, p_comment => p_comment,
                                  p_solution_type => p_solution_type, p_release_version => p_release_version, p_force => false);
