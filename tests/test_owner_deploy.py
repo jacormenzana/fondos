@@ -114,7 +114,7 @@ def test_there_is_no_command_line_way_to_answer_the_window_by_itself():
     import re
     src = (_ROOT / "scripts" / "ops" / "owner_deploy.py").read_text(encoding="utf-8")
     declared = re.findall(r"add_argument\(\s*[\"'](--[\w-]+)", src) + re.findall(r"add_parser\(\s*[\"']([\w-]+)", src)
-    assert sorted(declared) == sorted(["--interval-min", "--once", "--console", "check", "init", "watch", "install-startup", "remove-startup"]), declared       # no --yes / --answer / --apply / apply
+    assert sorted(declared) == sorted(["--interval-min", "--once", "--console", "check", "init", "watch", "install-startup", "remove-startup", "facts", "--from", "--to"]), declared       # no --yes / --answer / --apply / apply
     assert "ask_window" in src and "ask_console" in src
     assert "def apply_pending" in src and "ask(" in src.split("def watch_once")[1].split("apply(head, pending)")[0]       # the apply in the watcher is reached only after ask() returned
 
@@ -532,3 +532,35 @@ def test_a_revoke_apply_does_not_remember_master_as_deployed(tmp_path):
     out = od.apply_pending(HEAD, ["revoke"], vault=FakeVault(), state_file=state_file, run=AutoRunner(), export=lambda ref, dest: None, python="py", env_file=tmp_path / ".env",
                            receipts_dir=tmp_path / "receipts", now=lambda: NOW, auto=True, remember=False)
     assert out.ok and od.read_state(state_file)["deployed_ref"] == OLD                                # the other DDL of master is not deployed because revoke was
+
+
+# -- `facts`: the DEPLOY facts of a deployment that already happened
+
+def test_the_facts_command_records_the_tickets_of_the_ddl_commits_between_two_commits(tmp_path, monkeypatch, capsys):
+    calls = {}
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setattr(od, "git_fetch", lambda: None)
+    monkeypatch.setattr(od, "git_head", lambda ref="origin/master": {"a1": OLD, "b2": HEAD, "origin/master": HEAD}.get(ref, ref))
+    monkeypatch.setattr(od, "git_ddl_log", lambda a, b: calls.update(range=(a, b)) or LOG)
+    monkeypatch.setattr(od.ov, "Vault", lambda *a, **k: FactsVault())
+    from shared import backlog_client as bc
+    monkeypatch.setattr(bc, "record_deploy_fact", lambda ref, ap, payload, ts: calls.setdefault("facts", []).append((ref, ap)) or True)
+    od.write_state(od.state_path(), {"deployed_ref": HEAD})
+    assert od.main(["facts", "--from", "a1"]) == 0                                                            # --to defaults to the remembered deployed commit
+    assert calls["range"] == (OLD, HEAD) and calls["facts"] == [("deploy-" + HEAD[:12], "FND-0355"), ("deploy-" + HEAD[:12], "FND-0358")]
+    assert "2 new for 2 ticket(s)" in capsys.readouterr().out
+
+
+def test_the_facts_command_fails_loudly_without_a_deployed_commit_or_a_vault_string(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setattr(od, "git_fetch", lambda: None)
+    monkeypatch.setattr(od, "git_head", lambda ref="origin/master": ref)
+    assert od.main(["facts", "--from", "a1"]) == od.RC_USAGE and "no deployed commit remembered" in capsys.readouterr().err
+    monkeypatch.setattr(od, "git_ddl_log", lambda a, b: LOG)
+    monkeypatch.setattr(od.ov, "Vault", lambda *a, **k: FactsVault(facts=None))
+    assert od.main(["facts", "--from", "a1", "--to", "b2"]) == od.RC_FAILED and "NOT recorded" in capsys.readouterr().out
+
+
+def test_the_a2_switch_is_on_by_the_owners_decision_of_2026_11_01():
+    from shared import config
+    assert config.BACKLOG_AUTO_REVOKE_ENABLED is True
