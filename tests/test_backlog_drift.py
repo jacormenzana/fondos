@@ -80,3 +80,14 @@ def test_phases_in_order_are_all_real_phases():
     for ph in bd.PHASES_IN_ORDER:
         assert ph in mig.PHASES, ph
     assert "iam" not in bd.PHASES_IN_ORDER and "revoke" not in bd.PHASES_IN_ORDER
+
+
+def test_every_applied_phase_that_creates_objects_is_in_the_order_so_the_tool_is_never_blind_to_it():
+    """The tool attributes a live-only object to no phase and cannot detect drift of a phase it does not list: the autonomy phase (W2 and W3) was missing once."""
+    import migrate_backlog_v2 as mig
+    assert "autonomy" in bd.PHASES_IN_ORDER
+    order = {ph: i for i, ph in enumerate(bd.PHASES_IN_ORDER)}
+    for needed in mig.PHASES["autonomy"].get("requires_routines", ()):
+        owner = next((ph for ph in bd.PHASES_IN_ORDER if ph != "autonomy" and needed in mig.PHASES[ph].get("routines", ())), None)
+        assert owner is None or order[owner] < order["autonomy"], (needed, owner)       # whatever autonomy needs is applied before it
+    assert all(order[p] < order["autonomy"] for p in ("relations", "groups", "sync"))

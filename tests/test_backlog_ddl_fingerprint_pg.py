@@ -35,8 +35,8 @@ def test_the_fingerprint_is_stable_and_covers_every_phase(pg_conn):
     assert len(fp["funcs"]) > 30 and len(fp["cols"]) > 30 and len(fp["views"]) > 15
     again = bd.fingerprint(pg_conn)
     assert again == fp                                                                     # reading the catalog twice gives the same answer
-    for fn in ("sp_transition", "sp_gate_check", "sp_gate_collision", "sp_record_gate_protection", "sp_set_gate"):
-        assert any(k.startswith(fn + "(") for k in fp["funcs"]), fn                       # a routine of each of A-1, hook, collision, attest, Phase B
+    for fn in ("sp_transition", "sp_gate_check", "sp_gate_collision", "sp_record_gate_protection", "sp_set_gate", "sp_agent_transition", "sp_auto_transition"):
+        assert any(k.startswith(fn + "(") for k in fp["funcs"]), fn                       # a routine of each of A-1, hook, collision, attest, Phase B, autonomy (W2 and W3)
     out = os.environ.get("FONDOS_DRIFT_OUT")
     if out:
         Path(out).write_text(json.dumps(fp, sort_keys=True), encoding="utf-8")

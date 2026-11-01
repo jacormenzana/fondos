@@ -77,7 +77,8 @@ def main(argv: list | None = None) -> int:
 
     owner = os.environ.get("FONDOS_PG_DSN_OWNER")
     if not owner:
-        print("FONDOS_PG_DSN_OWNER is not set (it is in .env); DDL needs the owner role.", file=sys.stderr)
+        print("FONDOS_PG_DSN_OWNER is not set: DDL needs the owner role. It is deliberately NOT kept in .env: set it in your own terminal for this session "
+              '(cmd: set "FONDOS_PG_DSN_OWNER=postgresql://fondos_owner:<password>@127.0.0.1:5436/gestion"), run the migration, then clear it (set "FONDOS_PG_DSN_OWNER=").', file=sys.stderr)
         return RC_USAGE
     dsn = gestion_dsn(owner)
     d = conninfo_to_dict(dsn)
