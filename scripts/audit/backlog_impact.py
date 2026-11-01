@@ -58,6 +58,27 @@ def _inputs(bc, git, mode, cache, desired):
     return open_ids, links, rows, facts_ok
 
 
+def _invalidate(bc, affected: list, apply: bool, out) -> int:
+    """Invalidate the probe status of every ticket a merge may affect (backlog.sp_record_probe_event, kind INVALIDATED, ref = the merge key): its delivery closure is then blocked until its closing
+    conditions are re-run and pass AFTER this. Only a ticket that is IN_PROGRESS or READY_FOR_DEPLOY is written (the database decides; any other stays an informational note). Idempotent per ticket
+    and merge. Needs the `probes` phase: before it, or without a login, nothing is written and the notes go on. Returns how many facts were new."""
+    if not apply or not affected:
+        return 0
+    try:
+        if not bc.probes_store_present():
+            return 0
+    except Exception:                                                        # noqa: BLE001 -- an unreadable store is "not applied"
+        return 0
+    n = 0
+    for m, t in affected:
+        try:
+            n += bool(bc.record_probe_event(t, "INVALIDATED", None, ib.key_of(m["sha"]), actor=ACTOR))
+        except bc.BacklogUnavailable as exc:                                 # no login, no connection or the live-write guard (LiveWriteForbidden): nothing more is written
+            out(f"impact: probes not invalidated ({type(exc).__name__})")
+            break
+    return n
+
+
 def run(bc, cited: dict, apply: bool = False, git=_git, out=print, now: datetime = None, enabled: bool = None, desired: dict = None, mode: str = None, cache: Path = None) -> dict:
     """Note the open tickets that the merges in `cited` ({ticket: [Citation]}) may affect. Returns {'enabled', 'present', 'merges', 'planned', 'written', 'skipped'}."""
     res = {"enabled": _enabled() if enabled is None else enabled, "present": True, "merges": 0, "planned": 0, "written": 0, "skipped": 0}
@@ -73,10 +94,12 @@ def run(bc, cited: dict, apply: bool = False, git=_git, out=print, now: datetime
         return res
     open_ids, links, rows, facts_ok = _inputs(bc, git, mode, cache, desired)
     tracked, by_base = bm.index_tracked(git("ls-files").splitlines())
-    plans = []
+    plans, affected = [], []
     for m in merges:
         mods = ib.merge_modules(m["paths"], tracked, by_base)
         plans += [(m, mods, t, sig, ev) for t, sig, ev, _held in ib.plan_notes(m, mods, open_ids, links, rows, facts_ok)]
+        affected += [(m, t) for t, _s, _e, _h in ib.plan_notes(m, mods, open_ids, links, rows, facts_ok, max_notes=None, weak_limit=None)]     # the invalidation is not capped like the notes
+    res["invalidated"] = _invalidate(bc, affected, apply, out)
     by_ticket: dict = {}
     for m, mods, t, sig, ev in plans:
         by_ticket.setdefault(t, []).append((m, mods, sig, ev))

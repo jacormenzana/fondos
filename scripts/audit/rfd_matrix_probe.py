@@ -13,6 +13,7 @@ per ticket, the predicates that decide it and evaluates the ones a machine can e
     metric_absent(metric)  no row of a retired metric             absent_in(file, text) the source no longer contains the text
     ols_ran()              a P2 RUN_SUMMARY with ols_funds > 0 exists after the CALC_VERSION bump
     ticket_closed(id)      another ticket this one closes with        task_ok(name)  last result 0 of a Windows scheduled task
+    tests_pass([sha])      CI green: every check run of the change that delivers the ticket (the second parent of its merge, or `sha`) passed, and every check the branch requires has run
     manual(text)           an owner action no script can see
 
 Verdict per ticket: READY (every probe passes: closing is a decision with evidence), BLOCKED (a probe fails: a named precondition is missing),
@@ -56,7 +57,7 @@ SPEC = {
     "FND-0241": [("pushed", "929ceed"), ("flag", "DEFLATION_MONTH_ALIGN_ENABLED", True), ("manual", "risk + rolling recompute done and the audit clean afterwards")],
     "FND-0242": [("pushed", "d304ba6"), ("flag", "SORTINO_MIN_DOWNSIDE_COUNT_ENABLED", True), ("manual", "risk + rolling recompute done and the audit clean afterwards")],
 }
-PROBE_KINDS = {"pushed", "flag", "calc_share", "metric_absent", "absent_in", "absent_re_in", "ols_ran", "ticket_closed", "task_ok", "manual"}
+PROBE_KINDS = {"pushed", "flag", "calc_share", "metric_absent", "absent_in", "absent_re_in", "ols_ran", "ticket_closed", "task_ok", "tests_pass", "manual"}
 
 
 # ── pure ──────────────────────────────────────────────────────────────────────────────────────────
@@ -145,6 +146,25 @@ def probe_task_ok(name: str) -> tuple:
     return (m.group(1) == "0"), f"task {name!r} last result = {m.group(1)}"
 
 
+def probe_tests_pass(tid: str, sha: str = None, evidence: dict = None, read=None, git=None) -> tuple:
+    """CI green (Backlog v3 W4, FND-0359): (True | False | None, text). The commit is `sha` when the condition names one, else the delivering merge the autopilot knows for the ticket (`evidence` =
+    {ticket: merge sha}); the checks are read on the PULL REQUEST'S HEAD, the second parent of a merge (shared.backlog_ci.evidence_commit). No delivering change yet is False ("not yet"); an unreadable
+    GitHub is None (unverifiable): neither is a pass, and the autopilot asks again on its next run. `read` and `git` are injectable for the tests."""
+    commit = sha or (evidence or {}).get(tid)
+    if not commit:
+        return False, f"{tid}: no delivering merge on record yet, so there is no CI to read"
+    sys.path.insert(0, str(ROOT))
+    from shared import backlog_ci as ci
+    import os
+    import shared.config as cfg
+    run_git = git or _run
+    rc, out = run_git(["git", "-C", str(ROOT), "rev-list", "--parents", "-n", "1", commit])
+    parents = out.split()[1:] if rc == 0 and out else []
+    head = ci.evidence_commit(commit, parents)
+    ok, detail = (read or ci.read_ci)(cfg.BACKLOG_GATE_GITHUB_REPO, cfg.BACKLOG_GATE_GITHUB_BRANCH, head, os.environ.get("BACKLOG_GATE_GITHUB_TOKEN"))
+    return ok, f"tests_pass: {detail}"
+
+
 def probe_db(conn, kind: str, *args) -> tuple:
     if kind == "calc_share":
         src = (ROOT / "proyecto2/src/pipeline/run_pipeline.py").read_text(encoding="utf-8")
@@ -173,7 +193,8 @@ def probe_ticket_closed(tid: str, lookup=None) -> tuple:
     return st == "CLOSED", f"{tid} is {st}"
 
 
-def evaluate(spec: dict = SPEC) -> list:
+def evaluate(spec: dict = SPEC, evidence: dict = None) -> list:
+    """[(ticket, verdict, results)] for the conditions in `spec`. `evidence` = {ticket: the sha of the merge that delivers it} (the autopilot's delivery facts), which `tests_pass` reads the CI of."""
     sys.path.insert(0, str(ROOT))
     from shared.env_guard import require_db_driver
     require_db_driver("rfd_matrix_probe.py")
@@ -198,6 +219,8 @@ def evaluate(spec: dict = SPEC) -> list:
                     results.append(probe_task_ok(*args))
                 elif kind == "ticket_closed":
                     results.append(probe_ticket_closed(*args))
+                elif kind == "tests_pass":
+                    results.append(probe_tests_pass(tid, *args, evidence=evidence))
                 elif kind == "manual":
                     results.append((None, args[0]))
                 else:

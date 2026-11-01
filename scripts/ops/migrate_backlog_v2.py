@@ -111,7 +111,7 @@ PHASES: dict = {
         "down": ("down/40_relations_v2_down.sql", "backlog_relations_v2_down"),
         "tables": ("review_flag", "hold_event", "gate_switch", "gate_audit_event"),
         "views": ("v_open_review_flag", "v_open_hold", "v_supersede_suggestion", "v_gate_audit_violation", "v_gate_audit_window", "v_gate_override_event"),
-        "routines": ("trg_link_cycle", "fn_gate_mode", "fn_gate_record", "fn_gate_blockers", "fn_raise_review_flags", "sp_ack_review", "sp_raise_hold", "sp_release_hold", "sp_set_gate", "sp_annotate_wait"),
+        "routines": ("trg_link_cycle", "fn_gate_mode", "fn_gate_record", "fn_gate_blockers", "fn_probe_blockers", "fn_raise_review_flags", "sp_ack_review", "sp_raise_hold", "sp_release_hold", "sp_set_gate", "sp_annotate_wait"),
         "requires": ("backlog", "backlog_logs", "backlog_link_event", "actor_alias", "v_backlog_link"),      # those of step A-1, which this phase applies itself
     },
     # Phase D (FND-0335): groups, the violation catalogue, lean metrics and impact closure. Needs steps A-1 and B. Its rollback drops the views and the routines
@@ -209,6 +209,18 @@ PHASES: dict = {
         "routines": ("sp_record_module",),
         "requires": ("backlog", "group_tag", "group_member", "v_group_member"),
         "requires_routines": ("trg_append_only", "fn_actor_ok", "fn_actor_authorized", "sp_create_group", "sp_group_member", "sp_auto_transition"),
+    },
+    # Backlog v3 W4 (FND-0359): probe invalidation. An [impact] note on a ticket that is IN_PROGRESS or READY_FOR_DEPLOY invalidates its probe status, and the delivery gate blocks its delivery closure until
+    # its closing conditions are re-run and pass after the note. Replaces the stub fn_probe_blockers of the relations phase; needs the sync phase (close_condition) and the autonomy phase (the roles it
+    # grants). Its rollback restores the stub and KEEPS probe_event.
+    "probes": {
+        "up": ("99_probes.sql", "backlog_probes"),
+        "down": ("down/99_probes_down.sql", "backlog_probes_down"),
+        "tables": ("probe_event",),
+        "views": ("v_probe_status",),
+        "routines": ("sp_record_probe_event", "fn_probe_blockers"),
+        "requires": ("backlog", "close_condition", "v_close_condition", "gate_switch"),
+        "requires_routines": ("trg_append_only", "fn_actor_ok", "fn_actor_authorized", "fn_gate_blockers", "fn_probe_blockers", "sp_auto_transition"),
     },
 }
 SHADOW_REQUIRED = 50          # owner decision D2 (2026-10-26): 50 consecutive non-system transitions with no direct update

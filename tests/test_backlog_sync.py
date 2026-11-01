@@ -79,10 +79,14 @@ def test_rfd_seed_copies_only_ready_tickets_and_never_duplicates():
 
 
 def test_store_probe_kinds_match_the_probe():
+    """The kinds the table accepts are those of the sync phase plus the ones a later phase adds (`tests_pass`, 99_probes.sql widens the check); together they are exactly the kinds the probe runs."""
+    import re
     ddl = (ROOT / "db" / "pg_backlog" / "70_sync.sql").read_text(encoding="utf-8")
     block = ddl.split("probe_kind       TEXT NOT NULL CHECK (probe_kind IN (", 1)[1].split("))", 1)[0]
-    import re
-    assert set(re.findall(r"'([a-z_]+)'", block)) == rfd.PROBE_KINDS
+    original = set(re.findall(r"'([a-z_]+)'", block))
+    later = (ROOT / "db" / "pg_backlog" / "99_probes.sql").read_text(encoding="utf-8")
+    widened = set(re.findall(r"'([a-z_]+)'", later.split("CHECK (probe_kind IN (", 1)[1].split("))", 1)[0]))
+    assert widened == rfd.PROBE_KINDS and original < widened and widened - original == {"tests_pass"}
 
 
 # ---------------------------------------------------------------- REVERT adjudications verified by the sync (FND-0334 slice 3)

@@ -59,9 +59,11 @@ def already(sha: str, logs: list) -> bool:
     return any(k in (t or "") for t in logs)
 
 
-def plan_notes(merge: dict, modules: set, open_ids: set, links: list, rows: list, facts_ok: bool, max_notes: int = MAX_NOTES_PER_MERGE) -> list:
-    """[(ticket, signal, evidence, changed modules it holds)] the open tickets a merge may affect, strongest first, at most `max_notes`. `links` = [(from, to, type)] confirmed; `rows` = the current
-    module facts. The tickets the merge cites are never noted, and neither are closed ones. Pure."""
+def plan_notes(merge: dict, modules: set, open_ids: set, links: list, rows: list, facts_ok: bool, max_notes: Optional[int] = MAX_NOTES_PER_MERGE,
+               weak_limit: Optional[int] = MAX_WEAK_NOTES_PER_MERGE) -> list:
+    """[(ticket, signal, evidence, changed modules it holds)] the open tickets a merge may affect, strongest first, at most `max_notes` and at most `weak_limit` of them on the weakest signal (None =
+    no limit: the invalidation of probes must reach EVERY affected ticket, whatever the note caps). `links` = [(from, to, type)] confirmed; `rows` = the current module facts. The tickets the merge
+    cites are never noted, and neither are closed ones. Pure."""
     if not modules or len(modules) > MERGE_SWEEP_MODULES:
         return []
     own = set(merge["tickets"])
@@ -99,10 +101,10 @@ def plan_notes(merge: dict, modules: set, open_ids: set, links: list, rows: list
     ranked = sorted(cand.items(), key=lambda kv: (-SCORE[kv[1]["signal"]], -len(kv[1]["mods"]), kv[0]))
     out, weak = [], 0
     for t, v in ranked:
-        if len(out) >= max_notes:
+        if max_notes is not None and len(out) >= max_notes:
             break
         if v["signal"] == "TOUCHED":                                         # the weakest signal fills at most MAX_WEAK_NOTES_PER_MERGE places: it is the one that would flood
-            if weak >= MAX_WEAK_NOTES_PER_MERGE:
+            if weak_limit is not None and weak >= weak_limit:
                 continue
             weak += 1
         out.append((t, v["signal"], v["evidence"], sorted(v["mods"])))
