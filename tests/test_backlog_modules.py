@@ -69,10 +69,18 @@ def test_text_proposes_only_cited_with_its_source_and_where_it_was_first_seen():
     assert all(f["role"] == "CITED" for f in facts)                                                       # a mention never makes a member
 
 
-def test_commits_make_touched_per_module_with_the_first_commit_as_evidence_and_tests_fold_into_their_module():
+def test_commits_make_touched_per_module_with_the_most_focused_commit_and_its_breadth_as_evidence_and_tests_fold_into_their_module():
     files = {"bbbbbbbbbbbbbbbb": ["shared/backlog_client.py", "doc/reglas/NORMAS_BACKLOG.md", "AGENTS.md"], "aaaaaaaaaaaaaaaa": ["tests/test_backlog_client.py", "scripts/audit/audit_incident.py", "tests/test_pipeline.py"]}
     got = {f["module"]: (f["role"], f["source"], f["evidence"]) for f in bm.commit_facts(files, TRACKED, BY_BASE)}
-    assert got == {"shared/backlog_client.py": ("TOUCHED", "COMMIT", "commit aaaaaaaaaaaa"), "scripts/audit/audit_incident.py": ("TOUCHED", "COMMIT", "commit aaaaaaaaaaaa")}
+    assert got == {"shared/backlog_client.py": ("TOUCHED", "COMMIT", "commit bbbbbbbbbbbb, 1 module"),           # b changed 1 module, a changed 2: the module's evidence is the more focused commit
+                   "scripts/audit/audit_incident.py": ("TOUCHED", "COMMIT", "commit aaaaaaaaaaaa, 2 modules")}
+
+
+def test_equally_focused_commits_give_the_lowest_sha_as_evidence_and_a_more_focused_one_wins_whatever_its_sha():
+    same = {"bbbbbbbbbbbbbbbb": ["shared/backlog_client.py"], "aaaaaaaaaaaaaaaa": ["shared/backlog_client.py"]}
+    assert [f["evidence"] for f in bm.commit_facts(same, TRACKED, BY_BASE)] == ["commit aaaaaaaaaaaa, 1 module"]
+    mixed = {"aaaaaaaaaaaaaaaa": ["shared/backlog_client.py", "scripts/audit/audit_incident.py"], "bbbbbbbbbbbbbbbb": ["shared/backlog_client.py"]}
+    assert {f["module"]: f["evidence"] for f in bm.commit_facts(mixed, TRACKED, BY_BASE)}["shared/backlog_client.py"] == "commit bbbbbbbbbbbb, 1 module"
 
 
 def test_only_what_is_not_current_is_sent():

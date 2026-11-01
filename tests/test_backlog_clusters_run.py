@@ -15,6 +15,7 @@ for _p in (str(_ROOT), str(_ROOT / "scripts" / "audit")):
 
 import backlog_modules as run  # noqa: E402
 from shared import backlog_clusters as cl  # noqa: E402
+from shared import backlog_modules as bm  # noqa: E402
 
 FILES = ["shared/backlog_client.py", "shared/other.py", "tests/test_backlog_client.py"]
 C, D = "c" * 40, "d" * 40
@@ -89,6 +90,17 @@ def test_mode_on_creates_the_group_and_adds_the_open_tickets_as_the_autopilot_an
                         ("ADD", "MOD.SHARED.BACKLOG_CLIENT", "FND-2", "system:autopilot")]
     again = run.cluster_step(bc, apply=True, out=quiet, mode="ON")
     assert again["planned"] == 0 and again["written"] == 0 and len(bc.calls) == 3
+
+
+def test_the_breadth_is_refreshed_from_git_every_run_so_a_stale_recorded_breadth_never_decides():
+    stale = [{**trow("FND-1", "shared/backlog_client.py"), "evidence": "commit cccccccccccc, 40 modules"},
+             {**trow("FND-2", "shared/backlog_client.py"), "evidence": "commit dddddddddddd, 40 modules"}]       # recorded when only a sweeping commit had touched them
+    res = run.cluster_step(FakeBc(modules=stale), apply=False, git=fake_git, out=quiet, mode="ON")
+    assert res["clusters"] == 1 and res["planned"] == 3                                    # git says the commits changed 1 module each: the fresh breadth wins
+    fresh = {"FND-1": [{"module": "shared/backlog_client.py", "role": "TOUCHED", "source": "COMMIT", "evidence": "commit cccccccccccc, 9 modules"}]}
+    text_row = {**trow("FND-1", "shared/backlog_client.py"), "role": "CITED", "source": "TEXT"}               # the same ticket and module, but a proposal from the text: no commit behind it
+    rows = bm.refresh_evidence([trow("FND-1", "shared/backlog_client.py"), trow("FND-1", "shared/other.py"), text_row], fresh)
+    assert [r.get("evidence") for r in rows] == ["commit cccccccccccc, 9 modules", None, None]            # only the COMMIT fact that git still reports is refreshed
 
 
 def test_a_dry_run_plans_and_writes_nothing():

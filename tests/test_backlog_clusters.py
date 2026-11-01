@@ -14,6 +14,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from shared import backlog_clusters as bc  # noqa: E402
+from shared import backlog_modules as bm  # noqa: E402
 
 NAME_RX = re.compile(r"^[A-Z0-9][A-Z0-9._-]{2,63}$")
 
@@ -40,6 +41,42 @@ def test_the_signals_are_weighted_and_the_strongest_is_the_score():
     e = bc.build_edges(bc.holdings(rows, set("ABCDEF")), set())
     assert e[("A", "B")]["score"] == 1.0 and e[("A", "B")]["modules"] == {"m.py": 1.0, "n.py": 0.8}
     assert e[("C", "D")]["score"] == 0.7 and e[("E", "F")]["score"] == 0.6
+
+
+def trow_n(ap, module, n, role="TOUCHED"):
+    """A TOUCHED fact whose best commit changed n modules."""
+    return {**row(ap, module, role), "evidence": bm.breadth_evidence("c" * 40, n)}
+
+
+def test_the_breadth_of_a_commit_is_written_and_read_in_one_format_and_unknown_counts_as_focused():
+    assert bm.breadth_evidence("a" * 40, 1) == "commit aaaaaaaaaaaa, 1 module" and bm.breadth_evidence("a" * 40, 7) == "commit aaaaaaaaaaaa, 7 modules"
+    assert bm.breadth_of("commit aaaaaaaaaaaa, 7 modules") == 7 and bm.breadth_of("commit aaaaaaaaaaaa, 1 module") == 1
+    assert bm.breadth_of("commit aaaaaaaaaaaa") is None and bm.breadth_of(None) is None and bm.breadth_of("named in a log, 9 times") is None
+
+
+@pytest.mark.parametrize("n, dropped", [(1, False), (5, False), (6, True), (54, True)])
+def test_a_touched_fact_from_a_sweeping_commit_makes_no_edge_and_the_threshold_is_strict(n, dropped):
+    rows = [trow_n("A", "m.py", n), trow_n("B", "m.py", n)]
+    assert (bc.derive(rows, {"A", "B"}) == []) is dropped
+    assert bc.derive(rows, {"A", "B"}, sweep=None) != []                                  # with the rule off the same facts link the tickets
+
+
+def test_one_sweeping_side_is_enough_to_drop_the_edge_but_a_declared_target_is_never_discounted():
+    assert bc.derive([trow_n("A", "m.py", 2), trow_n("B", "m.py", 40)], {"A", "B"}) == []
+    declared = [{**row("A", "m.py", "TARGET"), "evidence": bm.breadth_evidence("c" * 40, 40)}, trow_n("B", "m.py", 2)]
+    assert len(bc.derive(declared, {"A", "B"})) == 1                                      # TARGET carries no commit: breadth never applies to it
+    legacy = [row("A", "m.py"), row("B", "m.py")]                                         # evidence without a breadth (recorded before it was kept) counts as focused
+    assert len(bc.derive(legacy, {"A", "B"})) == 1
+
+
+def test_the_sweeping_rule_cuts_the_incidental_bridge_but_keeps_the_focused_cluster():
+    a, b = ids("A", 4), ids("B", 4)
+    rows = ([trow_n(x, "ma.py", 2) for x in a] + [trow_n(x, "mb.py", 2) for x in b]
+            + [trow_n("A-0001", "util.bat", 30), trow_n("B-0001", "util.bat", 30)])      # the only link between the halves is a module both touched in a 30-module sweep
+    cl = bc.derive(rows, set(a + b) | set(ids("G", 90)))
+    assert sorted(c["members"] for c in cl) == [tuple(a), tuple(b)]
+    joined = bc.derive(rows, set(a + b) | set(ids("G", 90)), sweep=None)
+    assert [len(c["members"]) for c in joined] == [8]
 
 
 def test_a_cited_module_never_makes_an_edge_and_only_target_and_touched_count():

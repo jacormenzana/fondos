@@ -22,6 +22,10 @@ from collections import Counter, defaultdict
 from itertools import combinations
 from typing import Optional
 
+from shared import backlog_modules as bm
+
+SWEEP_MODULES = 5                 # a commit that changed MORE modules than this is sweeping: its TOUCHED facts make no edge (owner directive 2026-11-01; calibrated by --measure)
+
 # Signal weights (the strongest signal of a pair is its score). Calibrated by scripts/audit/backlog_modules.py --measure (NORMAS_BACKLOG.md section 6 rule).
 W_SYMBOL, W_TARGET, W_MIXED, W_TOUCHED = 1.0, 0.8, 0.7, 0.6
 EDGE_MIN = 0.6                    # an edge below this score does not link two tickets
@@ -39,13 +43,20 @@ SYSTEM = "system:"
 
 # ---------------------------------------------------------------- the facts a ticket holds
 
-def holdings(rows: list, universe: set, roles: tuple = ("TARGET", "TOUCHED")) -> dict:
+def sweeping(row: dict, sweep: Optional[int] = SWEEP_MODULES) -> bool:
+    """True for a TOUCHED fact whose best commit changed more than `sweep` modules: a sweeping commit is tangled and proves nothing about one module (a fact whose evidence does not say is focused). Pure."""
+    n = bm.breadth_of(row.get("evidence"))
+    return bool(sweep is not None and row["role"] == "TOUCHED" and n is not None and n > sweep)
+
+
+def holdings(rows: list, universe: set, roles: tuple = ("TARGET", "TOUCHED"), sweep: Optional[int] = SWEEP_MODULES) -> dict:
     """{ticket: {module: {'role': 'TARGET'|'TOUCHED', 'symbols': set}}} from the current module facts of the tickets in `universe`. Only the given roles count; any role other than
-    TARGET is held as TOUCHED, so the text baseline (roles=('CITED',)) runs through the same rules. Symbols come from TARGET rows only. Pure."""
+    TARGET is held as TOUCHED, so the text baseline (roles=('CITED',)) runs through the same rules. Symbols come from TARGET rows only. A TOUCHED fact from a sweeping commit is dropped
+    (see `sweeping`; `sweep=None` keeps every one). Pure."""
     out: dict = defaultdict(dict)
     for r in rows:
         ap, role = r["action_point_id"], r["role"]
-        if ap not in universe or role not in roles:
+        if ap not in universe or role not in roles or sweeping(r, sweep):
             continue
         cur = out[ap].setdefault(r["module_path"], {"role": "TOUCHED", "symbols": set()})
         if role == "TARGET":
@@ -212,9 +223,9 @@ def make_cluster(members: set, hotspot: bool, edges: dict) -> dict:
     return {"members": tuple(sorted(members)), "hotspot": hotspot, "principal": ranked[0][0], "modules": ranked, "why": why}
 
 
-def derive(rows: list, universe: set, roles: tuple = ("TARGET", "TOUCHED"), edge_min: float = EDGE_MIN, open_ids: Optional[set] = None) -> list:
-    """The clusters of the tickets in `universe`, largest first. `open_ids` = which of them are open for the size rule (None: all of them). Pure."""
-    held = holdings(rows, universe, roles)
+def derive(rows: list, universe: set, roles: tuple = ("TARGET", "TOUCHED"), edge_min: float = EDGE_MIN, open_ids: Optional[set] = None, sweep: Optional[int] = SWEEP_MODULES) -> list:
+    """The clusters of the tickets in `universe`, largest first. `open_ids` = which of them are open for the size rule (None: all of them); `sweep` = see `holdings`. Pure."""
+    held = holdings(rows, universe, roles, sweep)
     edges = build_edges(held, hub_modules(held, len(universe)), edge_min)
     out = []
     for comp in components({n for e in edges for n in e}, edges):

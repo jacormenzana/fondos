@@ -103,15 +103,37 @@ def text_facts(ticket: dict, logs: list, tracked: set, by_base: dict) -> list:
     return [{"module": m, "role": "CITED", "source": s, "evidence": why} for (m, s), why in sorted(seen.items())]
 
 
+_BREADTH = re.compile(r", (\d+) modules?$")
+
+
+def breadth_evidence(sha: str, n: int) -> str:
+    """The evidence of a TOUCHED fact: the commit and how many distinct modules it changed (its breadth). The one place that writes the format; breadth_of reads it. Pure."""
+    return f"commit {sha[:12]}, {n} module{'' if n == 1 else 's'}"
+
+
+def breadth_of(evidence: Optional[str]) -> Optional[int]:
+    """How many modules the commit behind a TOUCHED fact changed, or None when the evidence does not say (a fact recorded before the breadth was kept counts as focused). Pure."""
+    m = _BREADTH.search(evidence or "")
+    return int(m.group(1)) if m else None
+
+
 def commit_facts(files_by_commit: dict, tracked: set, by_base: dict) -> list:
-    """[{module, role, source, evidence}] one TOUCHED per module changed by the commits of ONE ticket. `files_by_commit` = {sha: [paths]}; the evidence names the first commit that touched it. Pure."""
-    seen: dict = {}
-    for sha in sorted(files_by_commit):
-        for path in files_by_commit[sha]:
-            mod = logical_module(path, tracked, by_base)
-            if mod:
-                seen.setdefault(mod, f"commit {sha[:12]}")
-    return [{"module": m, "role": "TOUCHED", "source": "COMMIT", "evidence": why} for m, why in sorted(seen.items())]
+    """[{module, role, source, evidence}] one TOUCHED per module changed by the commits of ONE ticket. `files_by_commit` = {sha: [paths]}. The evidence is the MOST FOCUSED commit that touched the module
+    (the one that changed the fewest modules; ties: the lowest sha) with its breadth, because a sweeping commit says little about any one module it passes through. Pure."""
+    mods_of = {sha: {m for p in files_by_commit[sha] if (m := logical_module(p, tracked, by_base))} for sha in sorted(files_by_commit)}
+    best: dict = {}
+    for sha, mods in mods_of.items():
+        for m in mods:
+            if m not in best or len(mods) < best[m][0]:
+                best[m] = (len(mods), sha)
+    return [{"module": m, "role": "TOUCHED", "source": "COMMIT", "evidence": breadth_evidence(sha, n)} for m, (n, sha) in sorted(best.items())]
+
+
+def refresh_evidence(rows: list, desired: dict) -> list:
+    """`rows` (the current set of v_ticket_module) with the evidence of each TOUCHED fact replaced by what the commits say NOW: the breadth of a fact recorded earlier can be out of date once a more
+    focused commit lands, and the database keeps the first evidence. `desired` = {ticket: [fact]} from the sources. Pure."""
+    fresh = {(ap, f["module"]): f["evidence"] for ap, fs in desired.items() for f in fs if f["source"] == "COMMIT"}
+    return [dict(r, evidence=fresh[(r["action_point_id"], r["module_path"])]) if r["source"] == "COMMIT" and (r["action_point_id"], r["module_path"]) in fresh else r for r in rows]
 
 
 def new_facts(desired: dict, current: set) -> list:
