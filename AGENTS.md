@@ -60,7 +60,8 @@ Every finding, error, or improvement identified during a session must be registe
   **Which module a ticket is about is derived, not typed** (phase `modules`, `NORMAS_BACKLOG.md` §2): the autopilot records `TOUCHED` from the files of the commits that cite the ticket and `CITED` proposals from its text; an agent may declare
   `TARGET` (`backlog_client.record_modules`, source `DECLARED`) and may retract a wrong proposal. Registries and documents never count as modules.
   Tickets that change the same module are clustered into `MOD.<path>` groups kept by the autopilot, only while the clusters prove their precision against the recorded decisions (`BACKLOG_MODULE_CLUSTERS_MODE`, `AUTO` by default;
-  `python scripts/audit/backlog_modules.py --clusters` / `--measure` are read-only; `NORMAS_BACKLOG.md` §2).
+  `python scripts/audit/backlog_modules.py --clusters` / `--measure` are read-only; `NORMAS_BACKLOG.md` §2). A merge that cites tickets puts the open tickets it may affect on notice with ONE `[impact]` note each, as the
+  autopilot (`BACKLOG_IMPACT_NOTES_ENABLED`; a note, never a review flag, because a flag blocks delivery until someone acknowledges it).
 
 ---
 

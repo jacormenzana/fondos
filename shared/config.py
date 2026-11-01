@@ -836,6 +836,12 @@ BACKLOG_AUTOPILOT_MODE: str = "ON"
 # precision at least 70 %; recall is reported but never a bar), measured at most once a day. With a sample too small to prove it, AUTO stays off and writes nothing: the system turns itself on once the data
 # proves it, with no person involved. Only a person edits this constant. Rollback = set it to "OFF" (the memberships already written are append-only history and stay).
 BACKLOG_MODULE_CLUSTERS_MODE: str = "AUTO"
+# Backlog v3 W4 (FND-0359; doc/especificacion/ACTION_PLAN_BACKLOG_V3.md): whether a merge that cites tickets puts the OPEN tickets it may affect on notice, with ONE note each appended as the autopilot
+# (scripts/audit/backlog_impact.py, rules in shared/backlog_impact.py). A NOTE, never a review flag: a flag blocks the ticket's delivery until acknowledged, which would be an approval queue. Signals:
+# a confirmed IMPACTS / OVERLAPS link, a text citation of a changed module, and (only while BACKLOG_MODULE_CLUSTERS_MODE has proved the facts) TARGET / TOUCHED. Fatigue guard, replayed on the last 45 days:
+# a median of 1 note per merge (2 with the facts on), at most 5 tickets per merge, 1 on the weakest signal, ONE note per ticket per run and per 24 h (merges are coalesced), 25 tickets per run, merges older
+# than 2 days never. Rollback = set it to False.
+BACKLOG_IMPACT_NOTES_ENABLED: bool = True
 # Backlog v3.1 (FND-0355; owner decision 2026-11-01, "no console, no click"): how the deploy watcher (scripts/ops/owner_deploy.py) applies the backlog DDL that master brings. "AUTO" = with no window,
 # behind automatic gates (restore point, one transaction per phase, the drift tool must say `no drift`, automatic rollback and an incident ticket on failure; a failure or a missing restore point falls back
 # to the approval window for that version). "ASK" = the approval window for every version (the previous behaviour). An unknown value is read as ASK. Rollback of this decision = set it to "ASK".
