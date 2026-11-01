@@ -59,6 +59,8 @@ Every finding, error, or improvement identified during a session must be registe
   (`scripts/ops/owner_vault.py set NAME --password-only [--window]`, `check --connect`), never in `.env`.
   **Which module a ticket is about is derived, not typed** (phase `modules`, `NORMAS_BACKLOG.md` §2): the autopilot records `TOUCHED` from the files of the commits that cite the ticket and `CITED` proposals from its text; an agent may declare
   `TARGET` (`backlog_client.record_modules`, source `DECLARED`) and may retract a wrong proposal. Registries and documents never count as modules.
+  Tickets that change the same module are clustered into `MOD.<path>` groups kept by the autopilot, only while the clusters prove their precision against the recorded decisions (`BACKLOG_MODULE_CLUSTERS_MODE`, `AUTO` by default;
+  `python scripts/audit/backlog_modules.py --clusters` / `--measure` are read-only; `NORMAS_BACKLOG.md` §2).
 
 ---
 

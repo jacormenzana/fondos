@@ -1257,6 +1257,13 @@ def list_ticket_modules(ids: Optional[list] = None, *, conn=None) -> list:
                         "WHERE %s::text[] IS NULL OR action_point_id = ANY(%s) ORDER BY action_point_id, module_path, symbol NULLS FIRST, role, source", (ids, ids))
 
 
+def list_module_group_events(*, conn=None) -> list:
+    """The events of the MODULE groups (W4b slice 2), in event order: [{group_id, name, action_point_id, op, actor}]; a group with no event yet has one row with action_point_id None."""
+    with _session(conn) as c:
+        return _rows(c, "SELECT g.group_id, g.name, m.action_point_id, m.op, m.actor FROM backlog.group_tag g LEFT JOIN backlog.group_member m ON m.group_id = g.group_id "
+                        "WHERE g.kind = 'MODULE' ORDER BY g.group_id, m.member_event_id")
+
+
 def record_modules(facts: list, *, actor: Optional[str] = None, conn=None) -> dict:
     """Record facts through backlog.sp_record_module in ONE session: [{ap_id, module, role, source, evidence, symbol (optional), retracted (optional)}]. A derived fact (COMMIT, TEXT, OBJECT_NAME) needs a
     system:* actor, a DECLARED one an agent or a person; the autopilot and the agent write through their scoped logins. Returns {'recorded': n, 'unchanged': m}: the database answers NULL for a fact
