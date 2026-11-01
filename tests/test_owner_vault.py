@@ -180,7 +180,7 @@ def test_a_real_owner_tool_started_without_a_console_does_not_receive_the_string
 
 # ---------------------------------------------------------------- the shape of a connection string (a wrong one used to surface inside a migration)
 
-@pytest.mark.parametrize("value", ['"' + VALUE + '"', "'" + VALUE + "'", OWNER + "=" + VALUE, "not-a-connection-string", "just-a-password", "postgresql://user:pw@/db", "host=127.0.0.1 port=5436",
+@pytest.mark.parametrize("value", ['"' + VALUE + '"', "'" + VALUE + "'", VALUE + "'", OWNER + "=" + VALUE, "not-a-connection-string", "just-a-password", "postgresql://user:pw@/db", "host=127.0.0.1 port=5436",
                                    "postgresql://:pw@127.0.0.1:5436/db"])
 def test_set_refuses_a_connection_string_that_does_not_parse_and_says_why_without_the_value(vault, capsys, value):
     assert cli.main(["set", OWNER], vault=vault, console=True, ask=lambda _: value) == 2 and vault.names() == []
@@ -228,3 +228,64 @@ def test_check_shows_the_same_structure_for_a_stored_value_of_the_wrong_shape(va
     assert cli.main(["check"], vault=vault, console=False) == 1
     out = capsys.readouterr().out
     assert "WRONG SHAPE" in out and "'%' signs not followed by two hex digits: 1" in out and "abc" not in out
+
+
+# ---------------------------------------------------------------- only the password is typed (--password-only) and a window accepts a paste (--window)
+
+LIVE_ENV = {"FONDOS_PG_DSN": "postgresql://fondos_app:app-pw@127.0.0.1:5436/fondos"}
+HARD = "p@ss/w#rd?%:'" + chr(92) + " with space"                                                  # every character that breaks a URI or a key=value pair
+
+
+def test_the_builder_fills_role_database_host_and_port_and_the_driver_quotes_any_password():
+    from psycopg.conninfo import conninfo_to_dict
+    d = conninfo_to_dict(cli.build_dsn(OWNER, HARD, environ=LIVE_ENV))
+    assert (d["user"], d["dbname"], d["host"], d["port"], d["password"]) == ("fondos_owner", "fondos", "127.0.0.1", "5436", HARD)
+    h = conninfo_to_dict(cli.build_dsn(HUMAN, "x", environ={"FONDOS_BACKLOG_PG_DSN": "postgresql://w:w@10.0.0.9:6000/gestion", **LIVE_ENV}))
+    assert (h["user"], h["dbname"], h["host"], h["port"]) == ("backlog_human", "gestion", "10.0.0.9", "6000")           # the backlog string is preferred, and it is the same server
+    assert conninfo_to_dict(cli.build_dsn(OWNER, "x", environ={}))["host"] == "127.0.0.1"                                  # nothing in the environment: the live server
+    assert conninfo_to_dict(cli.build_dsn(OWNER, "x", environ={"FONDOS_PG_DSN": "garbage"}))["port"] == "5436"
+    o = conninfo_to_dict(cli.build_dsn(OWNER, "x", user="other", dbname="other_db", host="h", port="1", environ=LIVE_ENV))
+    assert (o["user"], o["dbname"], o["host"], o["port"]) == ("other", "other_db", "h", "1")
+    with pytest.raises(ValueError):
+        cli.build_dsn("GITHUB_ADMIN_TOKEN", "x", environ={})
+
+
+def test_every_connection_string_of_the_vault_has_a_default_role():
+    assert {n for n in ov.VAULT_VARIABLES if "DSN" in n} == set(cli.ROLE_DEFAULTS)
+
+
+def test_password_only_asks_for_nothing_but_the_password_and_stores_a_string_that_parses(vault, capsys):
+    from psycopg.conninfo import conninfo_to_dict
+    questions = []
+
+    def ask(prompt):
+        questions.append(prompt)
+        return HARD
+
+    assert cli.main(["set", OWNER, "--password-only"], vault=vault, console=True, ask=ask, environ=LIVE_ENV) == 0
+    stored = conninfo_to_dict(vault.get(OWNER))
+    assert stored["password"] == HARD and stored["user"] == "fondos_owner" and stored["dbname"] == "fondos"
+    assert len(questions) == 2 and all("password" in q or "again" in q for q in questions)
+    out = capsys.readouterr()
+    assert "fondos_owner@127.0.0.1:5436/fondos" in out.out and HARD not in out.out + out.err
+    assert cli.main(["check"], vault=vault, console=False) == 0
+
+
+def test_password_only_refuses_empty_or_different_entries_tokens_and_a_missing_console(vault):
+    answers = iter(["one", "two"])
+    assert cli.main(["set", OWNER, "--password-only"], vault=vault, console=True, ask=lambda _: next(answers), environ=LIVE_ENV) == 2
+    assert cli.main(["set", OWNER, "--password-only"], vault=vault, console=True, ask=lambda _: "", environ=LIVE_ENV) == 2
+    assert cli.main(["set", GHA, "--password-only"], vault=vault, console=True, ask=lambda _: "x", environ=LIVE_ENV) == 2
+    assert cli.main(["set", OWNER, "--password-only"], vault=vault, console=False, ask=lambda _: "x", environ=LIVE_ENV) == 2
+    assert vault.names() == []
+
+
+def test_window_uses_the_window_for_both_entries_and_still_needs_a_console(vault, monkeypatch):
+    seen = []
+    monkeypatch.setattr(cli, "ask_window", lambda prompt: seen.append(prompt) or VALUE)
+    assert cli.main(["set", OWNER, "--window"], vault=vault, console=True, ask=lambda _: pytest.fail("the console prompt must not be used"), environ=LIVE_ENV) == 0
+    assert len(seen) == 2 and vault.get(OWNER) == VALUE
+    assert cli.main(["set", HUMAN, "--window"], vault=vault, console=False, environ=LIVE_ENV) == 2            # an agent's shell cannot fill it, window or not
+    monkeypatch.setattr(cli, "ask_window", lambda prompt: "p1" if "again" not in prompt else "p1")
+    assert cli.main(["set", ADJ, "--window", "--password-only"], vault=vault, console=True, environ=LIVE_ENV) == 0
+    assert vault.get(ADJ) and "backlog_adjudicator" in vault.get(ADJ)
