@@ -831,6 +831,10 @@ BACKLOG_AGENT_WRITES_ENABLED: bool = True
 # the effective mode is the lowest of the two, and when the database mode cannot be read (the `events` DDL is not applied) the run is capped at SHADOW. Nothing is written without the login
 # backlog_autopilot (FONDOS_BACKLOG_PG_DSN_AUTOPILOT). Rollback = set it back to "SHADOW".
 BACKLOG_AUTOPILOT_MODE: str = "ON"
+# Backlog v3.1 (FND-0355; owner decision 2026-11-01, "no console, no click"): how the deploy watcher (scripts/ops/owner_deploy.py) applies the backlog DDL that master brings. "AUTO" = with no window,
+# behind automatic gates (restore point, one transaction per phase, the drift tool must say `no drift`, automatic rollback and an incident ticket on failure; a failure or a missing restore point falls back
+# to the approval window for that version). "ASK" = the approval window for every version (the previous behaviour). An unknown value is read as ASK. Rollback of this decision = set it to "ASK".
+BACKLOG_AUTO_DEPLOY_MODE: str = "AUTO"
 # Backlog v2 Phase C slice 2 (FND-0334; PROPUESTA_BACKLOG_V2.md 6.4.1 / 6.4.6): the instant from which scripts/audit/backlog_sync.py judges a commit that cites a ticket
 # by its `Backlog-Gate:` trailer (an ISO timestamp WITH offset, e.g. "2026-11-02T09:00:00+01:00"). "" = the gate is NOT ARMED: the sync reports the trailers it sees and
 # records no bypass, raises no hold. The owner arms it once the commit-msg hook is installed (bash scripts/audit/commit-msg.sh) and hook_bypass exists (migrate --phase hook);

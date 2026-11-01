@@ -645,7 +645,7 @@ código escrito a propósito para leer el fichero y llamar a `CryptUnprotectData
 del propietario) y saca todos los secretos de los ficheros y entornos que cargan las sesiones. La frontera real sería una cuenta de Windows aparte (descartada el 2026-10-30 por desproporcionada). Una
 herramienta del propietario que llame a una función de escritura sigue pasando además por la guarda de escritura en vivo (§2).
 
-### §9.3. Despliegue del DDL pendiente con un clic, sin consola (2026-11-01)
+### §9.3. Despliegue del DDL pendiente sin consola: con un clic (`ASK`) o solo (`AUTO`) (2026-11-01)
 
 **Objetivo (propietario, 2026-11-01):** reducir las tareas administrativas y evitar la consola. El vault (§9.2) quitó teclear la cadena; esto quita ejecutar la migración.
 
@@ -659,10 +659,22 @@ automática, así que un clic sobre una pregunta sin contenido sería un sello d
   cuenta como éxito** y solo entonces se recuerda el commit. Cada fase es una transacción: un fallo no deja nada a medias y no se intenta la siguiente. Se guarda un recibo sin secretos en
   `%LOCALAPPDATA%\fondos\deploy_receipts`. **Recordármelo en 4 h** y **Ignorar esta versión** hacen lo que dicen (una versión posterior vuelve a preguntar).
 - **No se ofrece** `revoke` (A-2) ni `iam`: requieren decisión del propietario.
-- **No hay forma de contestar la ventana sin una persona:** la línea de órdenes no tiene ningún conmutador de aprobación automática (lo comprueba un test) y la aplicación solo se alcanza después de que
-  `ask()` devuelva «aplicar». Sin la cadena en el vault no se ejecuta nada y el mensaje dice cómo guardarla.
-- **Pendiente (siguiente tramo):** el hecho `DEPLOY` que permite al autopiloto cerrar tickets cuyo merge toca `db/`. Necesita un login acotado propio (`sp_record_deploy`) y que `sp_record_ops_event` rechace
-  `DEPLOY` desde cualquier otro login, para que ningún agente pueda falsificarlo; hasta entonces esos tickets esperan, como ya documenta §2.
+- **La ventana es el modo `ASK` y el respaldo.** La línea de órdenes no tiene ningún conmutador de aprobación automática (lo comprueba un test): lo único que evita la ventana es el modo `AUTO` de
+  `shared/config.py` (abajo). Sin la cadena en el vault no se ejecuta nada y el mensaje dice cómo guardarla.
+
+**Modo `AUTO` (Backlog v3.1, decisión del propietario del 2026-11-01: «sin consola, sin clic»; `BACKLOG_AUTO_DEPLOY_MODE` = `AUTO` | `ASK`, por defecto `AUTO`, un valor desconocido se lee como `ASK`).** Una versión
+pendiente se aplica **sin ventana**, detrás de puertas automáticas, todas ya existentes o verificables:
+1. **CI.** `master` solo contiene lo que pasó los cuatro controles obligatorios (incluidas las pruebas herméticas de migración y de reversión de las fases).
+2. **Punto de restauración** (`pg_create_restore_point('backlog_deploy_<sha>_<hora>')`, en un proceso hijo con la cadena del propietario). Si no se puede crear **no se aplica nada** y se abre la ventana, que dice por qué.
+3. **Una transacción por fase**, en orden, y la herramienta de deriva debe decir `no drift`.
+4. **Reversión automática.** Si una fase falla, o la deriva sigue ahí tras aplicar, se deshacen las fases aplicadas en esa ejecución (`--down --apply`, la más reciente primero; se detiene en la primera reversión
+   que falla y el resultado dice lo que se deshizo). Si la herramienta de deriva **no pudo leer** el vivo, no se revierte (no se puede juzgar mal aplicado): queda como «sin verificar» y la versión no se recuerda.
+5. **Incidente.** Un fallo abre (o amplía) un ticket de incidente con `report_incident` y la versión se ofrece en la ventana a partir de entonces (`auto_failed` en el estado): no se reintenta sola.
+Un éxito es un aviso que se cierra solo (20 s) y un recibo; no hay nada que pulsar. **Hechos `DEPLOY`:** tras un éxito verificado se registran, para cada ticket citado por los commits que tocaron el DDL desde el último
+despliegue, con el login acotado `backlog_facts` (`FONDOS_BACKLOG_PG_DSN_FACTS`, en el vault; el vigilante la lee con `vault.get` y la pone en su entorno solo durante esas llamadas): `sp_record_fact` solo
+admite `DEPLOY` y un disparador de `ops_event` rechaza cualquier otro login. Con ellos el autopiloto cierra por sí solo los tickets cuyo merge toca `db/`; sin la cadena en el vault esos tickets esperan, y el
+resultado lo dice. **Riesgo aceptado:** un DDL válido pero equivocado que las pruebas no detectan (no hay ensayo sobre una copia de producción) llega al vivo; el respaldo es el punto de restauración y `ASK` es el
+interruptor para volver atrás. `revoke` (A-2) e `iam` siguen fuera de esta vía.
 
 **Límite reconocido:** igual que §9.2, es una guarda y no una frontera: código ejecutado con el mismo usuario de Windows podría leer el vault y lanzar la migración sin pasar por la ventana. Lo que garantiza
 es que ningún flujo normal (un agente, una tubería, una fusión automática) aplica DDL sin que una persona lo haya visto y aprobado.

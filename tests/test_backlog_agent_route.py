@@ -278,3 +278,25 @@ def test_rescind_and_mode_reads_call_their_routines(agent_env):
     assert bc.rescind_reopen("FND-0001", session_id=SESSION, conn=conn) == 11 and "sp_rescind_reopen" in conn.sqls()
     assert conn.calls[0][1] == ("FND-0001", AGENT, SESSION)
     assert bc.autopilot_mode(conn=FakeConn(("SHADOW",))) == "SHADOW"
+
+
+# ---------------------------------------------------------------- Backlog v3.1: the DEPLOY fact goes through its own login, with no fallback
+
+def test_the_facts_operation_is_allow_listed_and_uses_its_own_string_exclusively(monkeypatch):
+    assert "facts" in bc.NON_INTERACTIVE_OPERATIONS and bc._SCOPED_DSN_ENV["facts"] == "FONDOS_BACKLOG_PG_DSN_FACTS"
+    monkeypatch.setenv(bc._DSN_ENV_VAR, "postgresql://backlog_writer@127.0.0.1:1/gestion")
+    monkeypatch.setenv(bc._AUTOPILOT_DSN_ENV_VAR, AUTOPILOT_DSN)
+    monkeypatch.delenv(bc._FACTS_DSN_ENV_VAR, raising=False)
+    assert bc.dsn_for_operation("facts") is None                                    # neither the general writer nor the autopilot's login can stand in for it
+    monkeypatch.setenv(bc._FACTS_DSN_ENV_VAR, "postgresql://backlog_facts@127.0.0.1:1/gestion")
+    assert bc.dsn_for_operation("facts") == "postgresql://backlog_facts@127.0.0.1:1/gestion"
+
+
+def test_record_deploy_fact_calls_the_fact_routine_for_deploy_only_through_the_facts_operation(monkeypatch):
+    from datetime import datetime, timezone
+    conn = FakeConn((True,))
+    seen = _Session(monkeypatch, conn)
+    ts = datetime(2026, 11, 1, 12, 0, tzinfo=timezone.utc)
+    assert bc.record_deploy_fact("deploy-abc", "FND-0355", {"head": "x"}, ts) is True
+    assert seen.calls[-1]["operation"] == "facts" and seen.calls[-1]["write"] is True
+    assert "sp_record_fact('DEPLOY'" in conn.sqls() and conn.calls[0][1] == ("deploy-abc", "FND-0355", '{"head": "x"}', ts)
