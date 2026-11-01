@@ -186,6 +186,19 @@ PHASES: dict = {
                               "sp_add_close_condition", "sp_retire_close_condition", "sp_record_ops_event", "fn_gate_blockers"),
         "roles": ("backlog_agent", "backlog_autopilot"),
     },
+    # Backlog v3.1 (owner directive 2026-11-01, remove the administrative tasks): reopening as a normal event with its cause, holds that release by themselves, agents deciding collision pairs, the autopilot
+    # mode as an event, and the DEPLOY fact only from the scoped login backlog_facts. Needs the autonomy phase (roles) and the collision phase (v_gate_queue, fn_adjudicate_core). Its rollback KEEPS the
+    # tables, the role and the history.
+    "events": {
+        "up": ("98_events.sql", "backlog_events"),
+        "down": ("down/98_events_down.sql", "backlog_events_down"),
+        "tables": ("reopen_event", "autopilot_mode_event"),
+        "views": (),
+        "routines": ("sp_reopen", "sp_rescind_reopen", "fn_auto_release_holds", "sp_agent_adjudicate_overlap", "fn_autopilot_mode", "sp_set_autopilot_mode", "sp_record_fact", "trg_deploy_fact_guard"),
+        "requires": ("backlog", "ops_event", "gate_adjudication", "v_gate_queue", "v_open_hold"),
+        "requires_routines": ("trg_append_only", "fn_actor_ok", "fn_actor_authorized", "sp_transition", "fn_adjudicate_core", "sp_set_gate", "sp_auto_transition"),
+        "roles": ("backlog_facts",),
+    },
 }
 SHADOW_REQUIRED = 50          # owner decision D2 (2026-10-26): 50 consecutive non-system transitions with no direct update
 

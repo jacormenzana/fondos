@@ -57,9 +57,6 @@ BEGIN
     IF NOT FOUND THEN
         RAISE EXCEPTION 'sp_agent_transition: ticket % does not exist', p_ap_id USING ERRCODE = '22023';
     END IF;
-    IF v_status = 'CLOSED' THEN
-        RAISE EXCEPTION 'sp_agent_transition: % is CLOSED; reopening is a person''s decision (it needs p_force and a reason)', p_ap_id USING ERRCODE = '42501';
-    END IF;
     IF p_to = 'CLOSED' AND p_solution_type IN ('CODE_FIX', 'DATA_FIX', 'WORKAROUND') THEN
         RAISE EXCEPTION 'sp_agent_transition: a delivery closure (%) is made by scripts/ops/close_release.py or, from Backlog v3 W3, by the autopilot, which carries the audit-incident gate of FND-0264', p_solution_type USING ERRCODE = '42501';
     END IF;

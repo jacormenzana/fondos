@@ -147,7 +147,7 @@ UNION ALL
 SELECT 'V-FORCED', 'A', e.action_point_id,
        format('forced %s -> %s by %s: %s', COALESCE(e.from_status, '-'), e.to_status, e.actor, left(COALESCE(e.reason, ''), 120)), e.event_ts
   FROM backlog.status_event e
- WHERE e.forced
+ WHERE e.forced AND e.from_status IS DISTINCT FROM 'CLOSED'          -- Backlog v3.1: a reopening is a normal event, not a forced move
 UNION ALL
 -- V-FAST: a CODE_FIX / DATA_FIX ticket created and closed within one hour (registered after the work). Recorded columns, so the history counts too.
 SELECT 'V-FAST', 'D', b.action_point_id,

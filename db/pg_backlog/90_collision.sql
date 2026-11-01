@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS backlog.gate_adjudication (
     decision         TEXT NOT NULL CHECK (decision IN ('OVERLAPS', 'RELATED', 'DEPENDS_ON', 'NONE', 'REVERT')),
     absorbs          TEXT,
     reason           TEXT NOT NULL CHECK (length(btrim(reason)) >= 10),
-    actor            TEXT NOT NULL CHECK (actor ~ '^human:[A-Za-z0-9._-]+$'),
+    actor            TEXT NOT NULL CHECK (actor ~ '^(human|agent):[A-Za-z0-9._-]+$'),     -- agents decide pairs too (Backlog v3.1)
     event_ts         TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     CHECK (a < b)
 );
@@ -227,29 +227,15 @@ CREATE OR REPLACE FUNCTION backlog.fn_gate_undecided(p_tickets text[]) RETURNS T
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, backlog AS $$
     SELECT q.a, q.b, q.age_hours FROM backlog.v_gate_queue q WHERE q.a = ANY (p_tickets) OR q.b = ANY (p_tickets) ORDER BY q.a, q.b $$;
 
--- 7. Adjudication. The check is on the SESSION user (a SECURITY DEFINER routine runs as its owner, so current_user would always be the owner).
-CREATE OR REPLACE FUNCTION backlog.sp_adjudicate_overlap(p_a text, p_b text, p_decision text, p_absorbs text, p_reason text, p_actor text) RETURNS bigint
+-- The effect of a decision on an undecided pair (the proposal is closed, the decision adds its link, the log lines, the release of the collision holds). ONE implementation for the person's routine
+-- below and the agent's routine of phase events (Backlog v3.1): not granted to any login, only the two SECURITY DEFINER routines call it.
+CREATE OR REPLACE FUNCTION backlog.fn_adjudicate_core(p_a text, p_b text, p_decision text, p_absorbs text, p_reason text, p_actor text) RETURNS bigint
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, backlog AS $$
 DECLARE
     v_a text := least(p_a, p_b); v_b text := greatest(p_a, p_b); v_id bigint; tk text; v_hold record;
 BEGIN
-    IF NOT (EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'backlog_adjudicator') AND pg_has_role(session_user, 'backlog_adjudicator', 'MEMBER')) THEN
-        RAISE EXCEPTION 'sp_adjudicate_overlap: only the role backlog_adjudicator adjudicates (session user %)', session_user USING ERRCODE = '42501';
-    END IF;
-    IF p_actor IS NULL OR p_actor NOT LIKE 'human:%' OR NOT backlog.fn_actor_ok(p_actor) THEN
-        RAISE EXCEPTION 'sp_adjudicate_overlap: the deciding identity must be a canonical human:<login> (got %)', p_actor USING ERRCODE = '42501';
-    END IF;
-    IF p_decision NOT IN ('OVERLAPS', 'RELATED', 'DEPENDS_ON', 'NONE', 'REVERT') THEN
-        RAISE EXCEPTION 'sp_adjudicate_overlap: decision % is not OVERLAPS, RELATED, DEPENDS_ON, NONE or REVERT', p_decision USING ERRCODE = '22023';
-    END IF;
-    IF p_reason IS NULL OR length(btrim(p_reason)) < 10 THEN
-        RAISE EXCEPTION 'sp_adjudicate_overlap: a reason of 10 or more characters is required' USING ERRCODE = '22023';
-    END IF;
-    IF p_decision = 'REVERT' AND p_reason !~ '[0-9a-f]{40}' THEN
-        RAISE EXCEPTION 'sp_adjudicate_overlap: REVERT needs the sha of the revert commit (40 hex characters) in the reason' USING ERRCODE = '22023';
-    END IF;
     IF NOT EXISTS (SELECT 1 FROM backlog.v_gate_queue q WHERE q.a = v_a AND q.b = v_b) THEN
-        RAISE EXCEPTION 'sp_adjudicate_overlap: the pair % / % is not undecided', v_a, v_b USING ERRCODE = '22023';
+        RAISE EXCEPTION 'fn_adjudicate_core: the pair % / % is not undecided', v_a, v_b USING ERRCODE = '22023';
     END IF;
     -- the effect on the links: the proposal is always closed; the decision adds its own confirmed link
     IF p_decision IN ('OVERLAPS', 'REVERT') THEN
@@ -278,13 +264,38 @@ BEGIN
 END;
 $$;
 
+-- 7. Adjudication. The check is on the SESSION user (a SECURITY DEFINER routine runs as its owner, so current_user would always be the owner).
+CREATE OR REPLACE FUNCTION backlog.sp_adjudicate_overlap(p_a text, p_b text, p_decision text, p_absorbs text, p_reason text, p_actor text) RETURNS bigint
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, backlog AS $$
+DECLARE
+    v_a text := least(p_a, p_b); v_b text := greatest(p_a, p_b); v_id bigint; tk text; v_hold record;
+BEGIN
+    IF NOT (EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'backlog_adjudicator') AND pg_has_role(session_user, 'backlog_adjudicator', 'MEMBER')) THEN
+        RAISE EXCEPTION 'sp_adjudicate_overlap: only the role backlog_adjudicator adjudicates (session user %)', session_user USING ERRCODE = '42501';
+    END IF;
+    IF p_actor IS NULL OR p_actor NOT LIKE 'human:%' OR NOT backlog.fn_actor_ok(p_actor) THEN
+        RAISE EXCEPTION 'sp_adjudicate_overlap: the deciding identity must be a canonical human:<login> (got %)', p_actor USING ERRCODE = '42501';
+    END IF;
+    IF p_decision NOT IN ('OVERLAPS', 'RELATED', 'DEPENDS_ON', 'NONE', 'REVERT') THEN
+        RAISE EXCEPTION 'sp_adjudicate_overlap: decision % is not OVERLAPS, RELATED, DEPENDS_ON, NONE or REVERT', p_decision USING ERRCODE = '22023';
+    END IF;
+    IF p_reason IS NULL OR length(btrim(p_reason)) < 10 THEN
+        RAISE EXCEPTION 'sp_adjudicate_overlap: a reason of 10 or more characters is required' USING ERRCODE = '22023';
+    END IF;
+    IF p_decision = 'REVERT' AND p_reason !~ '[0-9a-f]{40}' THEN
+        RAISE EXCEPTION 'sp_adjudicate_overlap: REVERT needs the sha of the revert commit (40 hex characters) in the reason' USING ERRCODE = '22023';
+    END IF;
+    RETURN backlog.fn_adjudicate_core(v_a, v_b, p_decision, p_absorbs, p_reason, p_actor);
+END;
+$$;
+
 -- Ownership and privileges, as in the earlier phases.
 DO $$
 DECLARE r record;
 BEGIN
     FOR r IN SELECT p.oid::regprocedure AS sig, p.proname FROM pg_proc p
              WHERE p.pronamespace = 'backlog'::regnamespace
-               AND p.proname IN ('fn_mode_rank', 'fn_collision_state', 'fn_gate_share', 'fn_audit_start', 'sp_set_collision_mode', 'fn_collision_pairs', 'sp_gate_collision', 'fn_gate_undecided', 'sp_adjudicate_overlap')
+               AND p.proname IN ('fn_mode_rank', 'fn_collision_state', 'fn_gate_share', 'fn_audit_start', 'sp_set_collision_mode', 'fn_collision_pairs', 'sp_gate_collision', 'fn_gate_undecided', 'fn_adjudicate_core', 'sp_adjudicate_overlap')
     LOOP
         EXECUTE format('ALTER FUNCTION %s OWNER TO backlog_owner', r.sig);
         EXECUTE format('REVOKE EXECUTE ON FUNCTION %s FROM PUBLIC', r.sig);
