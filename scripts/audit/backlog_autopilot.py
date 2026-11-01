@@ -374,6 +374,12 @@ def main(argv: list | None = None) -> int:
     summary = (f"autopilot {mode}: moved {res['moved']}, closed {res['closed']}, reopened {res['reopened']}, unblocked {res['unblocked']}, undeferred {res['undeferred']}, "
                f"holds released {released}, noted {res['noted']}, already noted {res['skipped']}, refused by the database {res['refused']}; "
                f"{len(stale)} IN_PROGRESS ticket(s) idle for 14 days or more{promoted}")
+    try:                                                                         # the weekly read-only digest, once per ISO week; it is a local file and never fails the run
+        import backlog_digest
+        written = backlog_digest.write_if_due(lambda: backlog_digest.build_text(bc, date.today()), date.today())
+        summary += f"; digest {written.name} written" if written else ""
+    except Exception:                                                        # noqa: BLE001
+        pass
     print(summary)
     return RC_OK
 

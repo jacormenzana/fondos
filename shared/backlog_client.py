@@ -1238,6 +1238,39 @@ def autopilot_track_record(window_days: int = 30, *, conn=None) -> dict:
     return {"mode": str(mode), "decisions": int(decisions), "contradicted": int(contradicted), "reopened_closures": int(reopened)}
 
 
+def raw_update_privilege_live(role: str = "backlog_writer", *, conn=None) -> bool:
+    """True while `role` still holds the direct UPDATE privilege on backlog.backlog, i.e. while step A-2 (`revoke`) has NOT been applied. Read-only; raises when the table does not exist."""
+    with _session(conn) as c:
+        return bool(c.execute("SELECT has_table_privilege(%s, 'backlog.backlog', 'UPDATE')", (role,)).fetchone()[0])
+
+
+def digest_facts(days: int = 7, *, conn=None) -> dict:
+    """The numbers of the weekly digest (scripts/audit/backlog_digest.py), read-only. Each block is read on its own and a missing object leaves that block None, so the digest still works before every
+    phase is applied. {'by_status', 'moves_by_actor_kind' (live status events of the last `days` days: {kind: {'n', 'forced'}}), 'reopens_by_cause', 'open_holds', 'idle_in_progress' (14 days or more),
+    'deploy_facts', 'undecided_pairs'}."""
+    def safe(c, sql, params=()):
+        try:
+            with c.transaction():
+                return _rows(c, sql, params)
+        except Exception:  # noqa: BLE001 -- an object of a phase that is not applied: that block is simply absent
+            return None
+
+    with _session(conn) as c:
+        by_status = safe(c, "SELECT status, count(*) AS n FROM backlog.BACKLOG GROUP BY status ORDER BY status")
+        moves = safe(c, "SELECT split_part(actor, ':', 1) AS kind, count(*) AS n, count(*) FILTER (WHERE forced) AS forced FROM backlog.status_event "
+                        "WHERE origin = 'LIVE' AND event_ts >= now() - make_interval(days => %s) GROUP BY 1", (int(days),))
+        reopens = safe(c, "SELECT cause, count(*) AS n FROM backlog.reopen_event WHERE kind = 'REOPEN' AND event_ts >= now() - make_interval(days => %s) GROUP BY cause ORDER BY cause", (int(days),))
+        holds = safe(c, "SELECT count(*) AS n FROM backlog.v_open_hold")
+        idle = safe(c, "SELECT count(*) AS n FROM backlog.BACKLOG WHERE status = 'IN_PROGRESS' AND update_ts < now() - interval '14 days'")
+        deploys = safe(c, "SELECT count(*) AS n FROM backlog.ops_event WHERE kind = 'DEPLOY' AND fact_ts >= now() - make_interval(days => %s)", (int(days),))
+        pairs = safe(c, "SELECT count(*) AS n FROM backlog.v_gate_queue")
+    return {"by_status": {r["status"]: r["n"] for r in by_status} if by_status is not None else None,
+            "moves_by_actor_kind": {r["kind"]: {"n": r["n"], "forced": r["forced"]} for r in moves} if moves is not None else None,
+            "reopens_by_cause": {r["cause"]: r["n"] for r in reopens} if reopens is not None else None,
+            "open_holds": holds[0]["n"] if holds else None, "idle_in_progress": idle[0]["n"] if idle else None,
+            "deploy_facts": deploys[0]["n"] if deploys else None, "undecided_pairs": pairs[0]["n"] if pairs else None}
+
+
 def record_deploy_fact(ref: str, ap_id: str, payload: dict, fact_ts: datetime, *, conn=None) -> bool:
     """Record that the DDL a ticket's merge brought is LIVE (backlog.sp_record_fact, kind DEPLOY, actor system:deploy fixed by the database). Only the scoped login backlog_facts can make it
     (FONDOS_BACKLOG_PG_DSN_FACTS, from the owner vault, set by the deploy watcher for this one call): a trigger refuses a DEPLOY row from any other login, so no agent can claim that DDL is live.

@@ -24,6 +24,9 @@ phase failure or on drift, the phases applied in this run are rolled back (`--do
 asks for that version from then on. A success is a self-closing notice and a receipt. The DEPLOY fact (what lets the autopilot close tickets whose merge changed db/**) is recorded for the tickets
 of the DDL commits through the scoped login backlog_facts (FONDOS_BACKLOG_PG_DSN_FACTS, owner vault). A change that the tests cannot see (a valid but wrong additive DDL) is NOT caught here: that
 is the accepted risk of AUTO, and `ASK` is the switch back.
+Step A-2 (`revoke`, which removes the direct write privileges of backlog_writer) is NOT part of the pending phases above. With BACKLOG_AUTO_REVOKE_ENABLED = True (off by default: it is the owner's
+decision) the watcher also applies it, alone, through the same gates, once the shadow stage shows 50 non-system transitions since the last direct write, nothing else is pending and the privilege
+is still live; a failed attempt is reported as an incident and never repeated by itself (`revoke_failed` in the state).
 Honest limit: a guard, not a security boundary (NORMAS_BACKLOG 9.2 and 9.3): code running as your Windows user could read the vault and run the migration without this tool.
 Exit codes: 0 ok / nothing pending, 1 pending (check) or drift remains (init), 2 an apply failed, 3 usage or environment error.
 """
@@ -93,7 +96,7 @@ def state_path(environ: Optional[dict] = None) -> Path:
 def read_state(path: Path) -> dict:
     """{'deployed_ref': sha | None, 'snoozed_until': {sha: iso}, 'ignored': [sha], 'auto_failed': [sha]}; a missing or damaged file is the empty state. `auto_failed` = the versions whose
     automatic apply failed: they are offered in the window from then on, never retried by themselves."""
-    base = {"deployed_ref": None, "snoozed_until": {}, "ignored": [], "auto_failed": []}
+    base = {"deployed_ref": None, "snoozed_until": {}, "ignored": [], "auto_failed": [], "revoke_failed": False}
     try:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
         return {**base, **{k: data[k] for k in base if k in data}}
@@ -263,7 +266,8 @@ def _roll_back(applied: list, python: str, tree: Path, env: dict, run: Callable,
 
 
 def apply_pending(head: str, pending: list, *, vault, state_file: Path, run: Callable = run_cmd, export: Callable = export_tree, python: Optional[str] = None,
-                  env_file: Optional[Path] = None, receipts_dir: Optional[Path] = None, now: Callable = lambda: datetime.now(timezone.utc), auto: bool = False) -> Outcome:
+                  env_file: Optional[Path] = None, receipts_dir: Optional[Path] = None, now: Callable = lambda: datetime.now(timezone.utc), auto: bool = False,
+                  remember: bool = True) -> Outcome:
     """Apply `pending` phases of `head` in order and verify with the drift tool. Success only when the drift tool says `no drift`; only then the state remembers `head`. The owner string goes into the
     environment of the migration children only (never the drift child, never this process's environment) and is scrubbed from any output kept.
     auto=True (AUTO mode) adds the automatic gates: a restore point before anything is applied (if it cannot be created NOTHING is applied and the Outcome asks for a person: fallback=True), and, when a
@@ -311,9 +315,10 @@ def apply_pending(head: str, pending: list, *, vault, state_file: Path, run: Cal
     _receipt(receipts_dir, now, head, pending, applied, log, ok)
     if not ok:
         return Outcome(False, "drift", applied, scrub(tail, [secret]), rolled_back=rolled, auto=auto)
-    state = read_state(state_file)
-    state.update(deployed_ref=head, snoozed_until={}, ignored=[], auto_failed=[])
-    write_state(state_file, state)
+    if remember:                                                               # a phase applied on its own (revoke) says nothing about the rest of master
+        state = read_state(state_file)
+        state.update(deployed_ref=head, snoozed_until={}, ignored=[], auto_failed=[])
+        write_state(state_file, state)
     return Outcome(True, "applied", applied, scrub(tail, [secret]), auto=auto)
 
 
@@ -387,6 +392,51 @@ def auto_deploy(head: str, pending: list, deployed: Optional[str], *, vault, sta
     if o.ok:
         o.facts = record_facts(head, deployed, o.applied, vault=vault, ddl_log=ddl_log, record=record)
     return o
+
+
+REVOKE_PHASE = "revoke"
+
+
+def revoke_due(enabled: bool, progress, privilege_live, deployed_ref, head: str, required: int = 50) -> tuple:
+    """(due, why) for step A-2 (`revoke`) in AUTO mode. Due only when the switch is on, everything else is deployed (the remembered commit is master's), the writer still holds the direct UPDATE
+    privilege (so it is not applied yet) and the shadow stage shows `required` non-system transitions since the last direct write (the migrate tool refuses it before that anyway). Pure."""
+    if not enabled:
+        return False, "BACKLOG_AUTO_REVOKE_ENABLED is off"
+    if deployed_ref != head:
+        return False, "other DDL of master is not deployed yet: revoke waits so the drift check judges only itself"
+    if privilege_live is not True:
+        return False, "the direct write privilege is already revoked (or unknown)"
+    done = (progress or {}).get("live_non_system_since_last_v00")
+    if done is None or done < required:
+        return False, f"the shadow stage shows {done} of {required} non-system transitions"
+    return True, f"the shadow stage shows {done} of {required} non-system transitions and nothing else is pending"
+
+
+def revoke_pass(*, state_file: Path, enabled: bool, head_fn: Callable, progress_fn: Callable, privilege_fn: Callable, apply: Callable, notify: Callable, report: Optional[Callable] = None) -> str:
+    """One pass of the A-2 trigger of the watcher: none | skipped | applied | failed | error. A failed attempt is remembered (`revoke_failed`) and never repeated by itself: a person looks at it."""
+    if not enabled:
+        return "none"
+    state = read_state(state_file)
+    if state.get("revoke_failed"):
+        return "skipped"
+    try:
+        head = head_fn()
+        due, _why = revoke_due(enabled, progress_fn(), privilege_fn(), state.get("deployed_ref"), head)
+    except Exception as exc:                                                   # noqa: BLE001 -- unreadable state is not a reason to revoke anything
+        return f"error: {type(exc).__name__}"
+    if not due:
+        return "none"
+    outcome = apply(head, [REVOKE_PHASE])
+    if not outcome.ok and not outcome.fallback:
+        state = read_state(state_file)
+        state["revoke_failed"] = True
+        write_state(state_file, state)
+        if report is not None:
+            report_failure(outcome, head, report)
+    if outcome.fallback:                                                       # no restore point, no vault string: nothing was applied, try again next pass
+        return "skipped"
+    notify(outcome)
+    return "applied" if outcome.ok else "failed"
 
 
 # ── the watcher ───────────────────────────────────────────────────────────────
@@ -664,10 +714,20 @@ def main(argv: list | None = None) -> int:
         else:
             result_window(o)
 
-    print(f"owner_deploy watcher: mode {mode}")
+    revoke_enabled = mode == "AUTO" and bool(getattr(cfg, "BACKLOG_AUTO_REVOKE_ENABLED", False))
+
+    def do_apply_revoke(h: str, pend: list) -> Outcome:
+        return apply_pending(h, pend, vault=vault, state_file=sf, auto=True, remember=False)
+
+    print(f"owner_deploy watcher: mode {mode}" + ("; A-2 revoke will be applied by itself when its gate holds" if revoke_enabled else ""))
     while True:
         res = watch_once(state_file=sf, fetch=git_fetch, head_fn=git_head, changed=git_changed, commits=git_commits, diff=git_diff, drift=lambda h: verify_now(h),
                          ask=ask, apply=do_apply, notify=notify, mode=mode, apply_auto=do_apply_auto, report=bc.report_incident)
+        if revoke_enabled and res in ("none", "applied"):
+            rres = revoke_pass(state_file=sf, enabled=True, head_fn=git_head, progress_fn=bc.shadow_progress, privilege_fn=bc.raw_update_privilege_live, apply=do_apply_revoke, notify=notify,
+                               report=bc.report_incident)
+            if rres not in ("none", "skipped"):
+                print(f"revoke: {rres}")
         if args.once:
             print(res)
             return RC_FAILED if res == "failed" else RC_OK

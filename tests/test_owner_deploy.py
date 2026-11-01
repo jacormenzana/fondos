@@ -63,7 +63,7 @@ def test_the_phases_to_apply_are_read_from_the_drift_tools_own_advice():
 
 def test_the_state_round_trips_and_a_missing_or_damaged_file_is_the_empty_state(tmp_path):
     f = tmp_path / "s.json"
-    assert od.read_state(f) == {"deployed_ref": None, "snoozed_until": {}, "ignored": [], "auto_failed": []}
+    assert od.read_state(f) == {"deployed_ref": None, "snoozed_until": {}, "ignored": [], "auto_failed": [], "revoke_failed": False}
     od.write_state(f, {"deployed_ref": OLD, "snoozed_until": {HEAD: NOW.isoformat()}, "ignored": [OLD]})
     assert od.read_state(f)["deployed_ref"] == OLD and od.read_state(f)["ignored"] == [OLD]
     f.write_text("{not json", encoding="utf-8")
@@ -457,6 +457,78 @@ def test_an_ignored_version_is_not_applied_automatically(tmp_path):
 
 def test_the_auto_branch_is_reached_only_through_the_mode_and_the_config_default_is_documented():
     src = (_ROOT / "scripts" / "ops" / "owner_deploy.py").read_text(encoding="utf-8")
-    assert src.count('mode == "AUTO"') == 1 and "deploy_mode(getattr(cfg" in src
+    assert src.split("def watch_once")[1].split("# ── windows")[0].count('mode == "AUTO"') == 1 and "deploy_mode(getattr(cfg" in src       # the apply path of watch_once
+    assert src.count('mode == "AUTO"') == 2 and 'revoke_enabled = mode == "AUTO" and bool(getattr(cfg, "BACKLOG_AUTO_REVOKE_ENABLED", False))' in src      # the other one is the A-2 switch, which is also off by default
     cfg = (_ROOT / "shared" / "config.py").read_text(encoding="utf-8")
     assert "BACKLOG_AUTO_DEPLOY_MODE: str =" in cfg and "Rollback of this decision" in cfg
+
+
+# -- step A-2 (`revoke`) applied by the watcher when its gate holds (BACKLOG_AUTO_REVOKE_ENABLED, off by default)
+
+PROGRESS_OK = {"live_non_system_since_last_v00": 50, "v00_total": 0, "last_v00_ts": None}
+
+
+@pytest.mark.parametrize("enabled, progress, live, deployed, expected", [
+    (True, PROGRESS_OK, True, HEAD, True), (True, {**PROGRESS_OK, "live_non_system_since_last_v00": 61}, True, HEAD, True),
+    (False, PROGRESS_OK, True, HEAD, False),                                                         # the switch
+    (True, {**PROGRESS_OK, "live_non_system_since_last_v00": 49}, True, HEAD, False),                # the gate: 49 of 50
+    (True, None, True, HEAD, False), (True, {"live_non_system_since_last_v00": None}, True, HEAD, False),
+    (True, PROGRESS_OK, False, HEAD, False), (True, PROGRESS_OK, None, HEAD, False),                  # already revoked, or unknown
+    (True, PROGRESS_OK, True, OLD, False), (True, PROGRESS_OK, True, None, False)])                    # other DDL of master still pending: the drift check could not judge revoke alone
+def test_revoke_is_due_only_with_the_switch_on_the_gate_met_the_privilege_live_and_nothing_else_pending(enabled, progress, live, deployed, expected):
+    due, why = od.revoke_due(enabled, progress, live, deployed, HEAD)
+    assert due is expected and why
+
+
+class RevokeRig:
+    def __init__(self, tmp_path, *, enabled=True, progress=PROGRESS_OK, live=True, state=None, outcome=None, raises=False):
+        self.sf = tmp_path / "s.json"
+        od.write_state(self.sf, state if state is not None else {"deployed_ref": HEAD})
+        self.kw = dict(enabled=enabled)
+        self.progress, self.live, self.raises = progress, live, raises
+        self.outcome = outcome or od.Outcome(True, "applied", ["revoke"], "no drift", auto=True)
+        self.applied, self.notified, self.reports = [], [], []
+
+    def run(self):
+        def progress():
+            if self.raises:
+                raise RuntimeError("v_shadow_stage does not exist")
+            return self.progress
+
+        return od.revoke_pass(state_file=self.sf, enabled=self.kw["enabled"], head_fn=lambda: HEAD, progress_fn=progress, privilege_fn=lambda: self.live,
+                              apply=lambda h, p: self.applied.append((h, list(p))) or self.outcome, notify=self.notified.append, report=lambda **kw: self.reports.append(kw) or "FND-0400")
+
+
+def test_a_due_revoke_is_applied_alone_with_the_automatic_gates_and_reported(tmp_path):
+    r = RevokeRig(tmp_path)
+    assert r.run() == "applied" and r.applied == [(HEAD, ["revoke"])] and len(r.notified) == 1 and r.reports == []
+
+
+def test_nothing_happens_when_the_switch_is_off_the_gate_is_short_or_the_state_cannot_be_read(tmp_path):
+    for rig in (RevokeRig(tmp_path / "a", enabled=False), RevokeRig(tmp_path / "b", progress={"live_non_system_since_last_v00": 20}), RevokeRig(tmp_path / "c", live=False),
+                RevokeRig(tmp_path / "d", state={"deployed_ref": OLD})):
+        (tmp_path / rig.sf.parent.name).mkdir(exist_ok=True)
+        assert rig.run() == "none" and rig.applied == []
+    bad = RevokeRig(tmp_path / "e", raises=True)
+    assert bad.run().startswith("error:") and bad.applied == []
+
+
+def test_a_failed_revoke_opens_an_incident_is_remembered_and_never_retried_by_itself(tmp_path):
+    failed = od.Outcome(False, "drift", ["revoke"], "DRIFT", rolled_back=["revoke"], auto=True)
+    r = RevokeRig(tmp_path, outcome=failed)
+    assert r.run() == "failed" and len(r.reports) == 1 and "failed at drift" in r.reports[0]["title"] and r.notified == [failed]
+    assert od.read_state(r.sf)["revoke_failed"] is True
+    assert r.run() == "skipped" and len(r.applied) == 1                                              # the second pass does not touch it
+
+
+def test_without_a_restore_point_revoke_is_not_applied_nor_marked_failed(tmp_path):
+    r = RevokeRig(tmp_path, outcome=od.Outcome(False, "restore_point", [], "denied", fallback=True, auto=True))
+    assert r.run() == "skipped" and od.read_state(r.sf)["revoke_failed"] is False and r.reports == [] and r.notified == []
+
+
+def test_a_revoke_apply_does_not_remember_master_as_deployed(tmp_path):
+    state_file = tmp_path / "s.json"
+    od.write_state(state_file, {"deployed_ref": OLD})
+    out = od.apply_pending(HEAD, ["revoke"], vault=FakeVault(), state_file=state_file, run=AutoRunner(), export=lambda ref, dest: None, python="py", env_file=tmp_path / ".env",
+                           receipts_dir=tmp_path / "receipts", now=lambda: NOW, auto=True, remember=False)
+    assert out.ok and od.read_state(state_file)["deployed_ref"] == OLD                                # the other DDL of master is not deployed because revoke was
