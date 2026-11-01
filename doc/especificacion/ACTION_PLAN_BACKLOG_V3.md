@@ -27,6 +27,13 @@ Backlog v2 delivered correlation (links, gate, review flags, holds, groups, impa
 - The incident gate (FND-0264).
 - The no-synthetic-writes-on-live rule (staging only, FND-0351).
 
+## Delivery status (2026-11-01)
+W1, W2 and W3 are delivered and live. This section is the delivery record that closes FND-0356, FND-0357 and FND-0358 through the autopilot. W4 (FND-0359) and W4b (FND-0360) are in progress, W5 and W6 are to be reassessed. Evidence read on 2026-11-01:
+- **W1 (FND-0356), auto-PR:** the merge commit of PR #35 is authored by `github-actions[bot]`, so the workflow opened the pull request and auto-merge landed it after the required checks. The same holds for the earlier pull requests recorded in the branch-cleanup notes.
+- **W2 (FND-0357), agent write authority:** `scripts/ops/backlog_drift.py` reports only the `modules` phase of W4b as missing in the live backlog, so every routine and login of the `autonomy` phase is present there.
+- **W3 (FND-0358), autopilot:** `scripts/audit/autopilot_mode.py` reports ceiling ON, database mode ON and effective ON, with 0 autopilot closures reopened in the last 30 days.
+- Not verified here: the first automatic closure on a real delivery. This record is that delivery, so the closure of the three tickets is its test.
+
 ## Design principles
 1. **Authority comes from the database, not the console.** Each automated actor gets a scoped login with EXECUTE on specific routines only. The routines check the actor kind and the evidence. This reuses the pattern the owner already accepted for `backlog_gate` / `backlog_logger` (`dsn_for_operation`, `_connect_allowlisted`, no fallback DSN).
 2. **Evidence, not declarations.** An automatic move cites a recorded `ops_event` (commit, merge, deploy, cycle). The routine verifies that the event exists.
