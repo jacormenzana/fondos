@@ -14,13 +14,21 @@ The edges (a ticket in any other status is never moved here; BLOCKED and DEFERRE
                                       clear; the delivery gate for a closure is clear; the release label is valid.
 
 Anything short of that is a WAIT with the reasons, so the ticket stays visible (V-AUTO-REFUSED, W6) and nothing is closed on a hunch. REJECTED, DUPLICATED and WORKAROUND are never
-automatic, and neither is reopening: those stay with a person.
+automatic.
+
+Backlog v3.1 (owner directive 2026-11-01, remove the administrative tasks) adds the events that had no trigger, so nobody has to move these tickets by hand:
+
+    BLOCKED -> IN_PROGRESS            the ticket it is structurally blocked on is CLOSED (UNBLOCK).
+    DEFERRED -> TODO                  its revisit date has been reached (UNDEFER).
+    CLOSED -> IN_PROGRESS (REOPEN)    a merge on master AFTER the closure carries a commit that cites the ticket (`Refs:` or `Closes:`) and changes code or test files: more work was needed, so the
+                                      delivery was incomplete. Only a delivery closure (CODE_FIX, DATA_FIX, WORKAROUND) reopens: a REJECTED or DUPLICATED ticket is not "delivered".
+Reopening is the one move that is safe in every direction (it adds work and hides nothing), which is why a rule, an agent or a person may all record it.
 """
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from typing import Optional
 
 from shared import backlog_release as rel
@@ -29,6 +37,10 @@ MODES = ("OFF", "SHADOW", "ON")
 AUTOMATIC_SOLUTIONS = ("CODE_FIX", "DATA_FIX")
 DB_PREFIXES = ("db/",)                 # a change under these paths is not live until its DDL is applied: the closure waits for a DEPLOY event
 MOVE, CLOSE, WAIT = "MOVE", "CLOSE", "WAIT"
+REOPEN, UNBLOCK, UNDEFER = "REOPEN", "UNBLOCK", "UNDEFER"
+DELIVERY_SOLUTIONS = ("CODE_FIX", "DATA_FIX", "WORKAROUND")
+NON_CODE_PREFIXES = ("doc/", "docs/", "out/", "deployments/", "backlog_gate/")       # a change that touches only these (or a .md/.txt/.rst file) is not more work on the code
+NON_CODE_SUFFIXES = (".md", ".txt", ".rst")
 _PR = re.compile(r"^Merge pull request #(\d+)\b")
 
 
@@ -43,6 +55,14 @@ class Merge:
     solution: Optional[str] = None     # the Solution: trailer of the delivering commit, upper-cased; None = CODE_FIX
 
 
+@dataclass(frozen=True)
+class Citation:
+    """A merge on master whose branch has a commit citing a ticket (`Refs:` or `Closes:`): when it happened and which files it changed."""
+    ref: str                           # the merge commit sha
+    ts: datetime                       # the merge's author time (aware)
+    paths: tuple                       # the files the merge changed
+
+
 @dataclass
 class Facts:
     tickets: dict                                        # {ap: {"status": str, "release_version": Optional[str]}}
@@ -53,6 +73,11 @@ class Facts:
     incident: dict = field(default_factory=dict)         # {ap: [reason]}: the audit-incident gate (shared.backlog_release.incident_reasons)
     rfd_blockers: dict = field(default_factory=dict)     # {ap: [str]}: what stops READY_FOR_DEPLOY (backlog_client.gate_blockers)
     delivery_blockers: dict = field(default_factory=dict)  # {ap: [str]}: what stops a delivery closure
+    citations: dict = field(default_factory=dict)          # {ap: [Citation, ...]}: merges that cite the ticket (any status): the facts a reopening is decided from
+    closed_at: dict = field(default_factory=dict)          # {ap: datetime}: closure_ts of the CLOSED tickets (aware)
+    blockers: dict = field(default_factory=dict)           # {ap: blocker ap}: the structured blocker of a BLOCKED ticket (its latest wait)
+    revisits: dict = field(default_factory=dict)           # {ap: date}: the revisit_by of a DEFERRED ticket (its latest wait)
+    today: Optional[date] = None
 
 
 @dataclass(frozen=True)
@@ -128,9 +153,45 @@ def decide_one(ap: str, facts: Facts) -> Optional[Decision]:
     return Decision(action=CLOSE, to_status="CLOSED", **base, solution_type=solution, release=release)
 
 
+def is_code_path(path: str) -> bool:
+    """True for a file whose change is more work on the code or its tests (not documentation, reports or the attestation). Pure."""
+    p = str(path).replace("\\", "/")
+    return not (p.startswith(NON_CODE_PREFIXES) or p.lower().endswith(NON_CODE_SUFFIXES))
+
+
+def decide_event(ap: str, facts: Facts) -> Optional[Decision]:
+    """The decision of a ticket that is not being delivered: REOPEN, UNBLOCK or UNDEFER, or None. Pure."""
+    t = facts.tickets.get(ap)
+    if not t:
+        return None
+    status = t["status"]
+    if status == "CLOSED":
+        closed = facts.closed_at.get(ap)
+        later = [c for c in facts.citations.get(ap, []) if closed and c.ts > closed and any(is_code_path(p) for p in c.paths)]
+        if later and t.get("solution_type") in DELIVERY_SOLUTIONS:
+            c = max(later, key=lambda x: x.ts)
+            return Decision(ap=ap, action=REOPEN, from_status="CLOSED", to_status="IN_PROGRESS", evidence_kind="COMMIT", evidence_ref=c.ref)
+        return None
+    if status == "BLOCKED":
+        blocker = facts.blockers.get(ap)
+        if blocker and (facts.tickets.get(blocker) or {}).get("status") == "CLOSED":
+            return Decision(ap=ap, action=UNBLOCK, from_status="BLOCKED", to_status="IN_PROGRESS", evidence_kind="BLOCKER", evidence_ref=blocker)
+        return None
+    if status == "DEFERRED":
+        when = facts.revisits.get(ap)
+        if when and facts.today and when <= facts.today:
+            return Decision(ap=ap, action=UNDEFER, from_status="DEFERRED", to_status="TODO", evidence_kind="REVISIT", evidence_ref=when.isoformat())
+    return None
+
+
 def decide(facts: Facts) -> list:
-    """Every decision of a run, ordered by ticket id. Pure."""
-    out = [d for ap in sorted(facts.merges) if (d := decide_one(ap, facts)) is not None]
+    """Every decision of a run (a delivery, or a reopen / unblock / undefer), ordered by ticket id. Pure."""
+    aps = sorted(set(facts.merges) | set(facts.citations) | set(facts.blockers) | set(facts.revisits))
+    out = []
+    for ap in aps:
+        d = decide_one(ap, facts) or decide_event(ap, facts)
+        if d is not None:
+            out.append(d)
     return out
 
 
@@ -146,7 +207,7 @@ def shadow_note(d: Decision, mode: str = "SHADOW") -> str:
 
 def note_key(text: str) -> Optional[tuple]:
     """The (action, to_status, evidence ref prefix) of a note written by shadow_note, or None. Pure."""
-    m = re.search(r"\(key (\w+):(\w+|None):([0-9a-f]{1,12})\)", text or "")
+    m = re.search(r"\(key (\w+):(\w+|None):([^)\s]+)\)", text or "")
     return (m.group(1), m.group(2), m.group(3)) if m else None
 
 

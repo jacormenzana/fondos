@@ -826,9 +826,11 @@ BACKLOG_AUTO_FORWARD_ENABLED: bool = True
 BACKLOG_AGENT_WRITES_ENABLED: bool = True
 # Backlog v3 W3 (FND-0358; doc/especificacion/ACTION_PLAN_BACKLOG_V3.md): the CEILING of the autopilot (scripts/audit/backlog_autopilot.py). "OFF" = it only prints what it would do; "SHADOW" = it
 # records the MERGE facts and writes ONE note per decision ("would move X to Y, evidence ...") and moves nothing; "ON" = it also makes the two evidence-backed moves through its own database login
-# (IN_PROGRESS -> READY_FOR_DEPLOY on a merge that carries `Closes:`, READY_FOR_DEPLOY -> CLOSED as CODE_FIX / DATA_FIX when every condition holds). A run can only LOWER this with --mode. SHADOW
-# until the owner has reviewed the first 20 decisions (O-V3-4), then "ON" in a normal pull request. Nothing is written without the login backlog_autopilot (FONDOS_BACKLOG_PG_DSN_AUTOPILOT).
-BACKLOG_AUTOPILOT_MODE: str = "SHADOW"
+# (IN_PROGRESS -> READY_FOR_DEPLOY on a merge that carries `Closes:`, READY_FOR_DEPLOY -> CLOSED as CODE_FIX / DATA_FIX when every condition holds; v3.1 adds REOPEN, UNBLOCK and UNDEFER). A run can
+# only LOWER this with --mode. Backlog v3.1 (FND-0355): the ceiling is "ON" and the REAL switch is the database's own mode event (backlog.fn_autopilot_mode(), default SHADOW, set by sp_set_autopilot_mode):
+# the effective mode is the lowest of the two, and when the database mode cannot be read (the `events` DDL is not applied) the run is capped at SHADOW. Nothing is written without the login
+# backlog_autopilot (FONDOS_BACKLOG_PG_DSN_AUTOPILOT). Rollback = set it back to "SHADOW".
+BACKLOG_AUTOPILOT_MODE: str = "ON"
 # Backlog v2 Phase C slice 2 (FND-0334; PROPUESTA_BACKLOG_V2.md 6.4.1 / 6.4.6): the instant from which scripts/audit/backlog_sync.py judges a commit that cites a ticket
 # by its `Backlog-Gate:` trailer (an ISO timestamp WITH offset, e.g. "2026-11-02T09:00:00+01:00"). "" = the gate is NOT ARMED: the sync reports the trailers it sees and
 # records no bypass, raises no hold. The owner arms it once the commit-msg hook is installed (bash scripts/audit/commit-msg.sh) and hook_bypass exists (migrate --phase hook);

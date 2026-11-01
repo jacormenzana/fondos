@@ -9,7 +9,7 @@ import shutil
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -41,9 +41,13 @@ def test_the_actor_constant_equals_the_clients_and_the_modes_can_only_be_lowered
         run.effective_mode("ON", "FULL")
 
 
-def test_the_configured_ceiling_is_a_known_mode_and_ships_as_shadow():
+def test_the_configured_ceiling_is_a_known_mode_and_the_database_mode_is_the_real_switch():
     from shared import config
-    assert config.BACKLOG_AUTOPILOT_MODE == "SHADOW" and config.BACKLOG_AUTOPILOT_MODE in ("OFF", "SHADOW", "ON")
+    assert config.BACKLOG_AUTOPILOT_MODE in ("OFF", "SHADOW", "ON")
+    # the ceiling is ON only because the stored mode lowers it, and an unreadable stored mode caps the run at SHADOW (a missing mode event never switches the autopilot on)
+    assert run.resolve_mode("ON", None, None) == "SHADOW" and run.resolve_mode("ON", None, "bogus") == "SHADOW"
+    assert run.resolve_mode("ON", None, "SHADOW") == "SHADOW" and run.resolve_mode("ON", None, "ON") == "ON" and run.resolve_mode("ON", None, "OFF") == "OFF"
+    assert run.resolve_mode("SHADOW", None, "ON") == "SHADOW" and run.resolve_mode("ON", "SHADOW", "ON") == "SHADOW" and run.resolve_mode("OFF", None, None) == "OFF"
 
 
 def test_merge_log_parsing_keeps_only_real_merges_and_orders_nothing_by_itself():
@@ -89,6 +93,14 @@ class FakeBc:
         self.moves.append((ap, to, kw))
         return 99
 
+    def reopen(self, ap, cause, reason, **kw):
+        if self.down:
+            raise real.BacklogUnavailable("FONDOS_BACKLOG_PG_DSN_AUTOPILOT is not set")
+        if self.refuse:
+            raise RuntimeError(self.refuse)
+        self.reopens = getattr(self, "reopens", []) + [(ap, cause, reason, kw)]
+        return 98
+
     def append_log(self, ap, username, text):
         self.notes.append((ap, username, text))
         return 1
@@ -131,6 +143,56 @@ def test_on_notes_a_wait_instead_of_acting_and_a_refusal_of_the_database_becomes
 def test_a_missing_login_is_a_configuration_problem_not_a_refusal_so_it_raises():
     with pytest.raises(real.BacklogUnavailable):
         run.act([decision()], "ON", FakeBc(down=True), {}, "S", out=lambda *_: None)
+
+
+# ---------------------------------------------------------------- v3.1 events in act(): REOPEN, UNBLOCK, UNDEFER
+
+def test_on_reopens_with_the_incomplete_fix_cause_and_unblocks_and_undefers_with_their_own_evidence():
+    bc = FakeBc()
+    res = run.act([decision(action=ap_mod.REOPEN, to="IN_PROGRESS", frm="CLOSED", ref="c" * 40),
+                   ap_mod.Decision(ap="FND-0002", action=ap_mod.UNBLOCK, from_status="BLOCKED", to_status="IN_PROGRESS", evidence_kind="BLOCKER", evidence_ref="FND-0009"),
+                   ap_mod.Decision(ap="FND-0003", action=ap_mod.UNDEFER, from_status="DEFERRED", to_status="TODO", evidence_kind="REVISIT", evidence_ref="2026-11-01")],
+                  "ON", bc, {}, "S", out=lambda *_: None)
+    assert (res["reopened"], res["unblocked"], res["undeferred"], res["moved"]) == (1, 1, 1, 0) and bc.notes == []
+    (rap, cause, reason, kw), = bc.reopens
+    assert (rap, cause, kw["actor"]) == ("FND-0001", "INCOMPLETE_FIX", "system:autopilot") and reason.startswith("[autopilot ON] REOPEN FND-0001")
+    (_a, _t, kw_unblock), (_b, _u, kw_undefer) = bc.moves
+    assert (kw_unblock["evidence_kind"], kw_unblock["evidence_ref"], kw_unblock["release_version"]) == ("BLOCKER", "FND-0009", None)
+    assert (kw_undefer["evidence_kind"], kw_undefer["evidence_ref"]) == ("REVISIT", "2026-11-01")
+
+
+def test_in_shadow_an_event_is_only_a_note_and_a_refused_reopen_becomes_a_wait_note():
+    bc = FakeBc()
+    run.act([decision(action=ap_mod.REOPEN, to="IN_PROGRESS", frm="CLOSED")], "SHADOW", bc, {}, "S", out=lambda *_: None)
+    assert getattr(bc, "reopens", []) == [] and bc.moves == [] and "[autopilot SHADOW] REOPEN FND-0001" in bc.notes[0][2]
+    bc2 = FakeBc(refuse="sp_reopen: FND-0001 is IN_PROGRESS, not CLOSED")
+    res = run.act([decision(action=ap_mod.REOPEN, to="IN_PROGRESS", frm="CLOSED")], "ON", bc2, {}, "S", out=lambda *_: None)
+    assert res["refused"] == 1 and res["reopened"] == 0 and "refused by the database: sp_reopen" in bc2.notes[0][2]
+
+
+# ---------------------------------------------------------------- v3.1 pure helpers: the database mode, the waits, the branch log
+
+def test_wait_facts_take_the_latest_matching_wait_and_only_a_ticket_id_counts_as_a_blocker():
+    tickets = {"FND-0001": {"status": "BLOCKED"}, "FND-0002": {"status": "BLOCKED"}, "FND-0003": {"status": "DEFERRED"}, "FND-0004": {"status": "IN_PROGRESS"}, "FND-0005": {"status": "DEFERRED"}}
+    rows = [dict(action_point_id="FND-0001", kind="BLOCKED", blocker_ref="FND-0008", revisit_by=None),
+            dict(action_point_id="FND-0001", kind="BLOCKED", blocker_ref="FND-0009", revisit_by=None),               # the latest wins
+            dict(action_point_id="FND-0002", kind="BLOCKED", blocker_ref="the owner", revisit_by=None),               # free text: no fact
+            dict(action_point_id="FND-0003", kind="DEFERRED", blocker_ref=None, revisit_by=date(2026, 11, 1)),
+            dict(action_point_id="FND-0004", kind="BLOCKED", blocker_ref="FND-0008", revisit_by=None),               # no longer blocked
+            dict(action_point_id="FND-0005", kind="DEFERRED", blocker_ref=None, revisit_by=None)]                    # deferred on an event, not a date
+    assert run.wait_facts(rows, tickets) == ({"FND-0001": "FND-0009"}, {"FND-0003": date(2026, 11, 1)})
+
+
+def test_an_aware_time_stays_and_a_naive_one_is_read_as_utc():
+    assert run.aware(None) is None and run.aware(datetime(2026, 11, 1)).tzinfo == timezone.utc and run.aware(NOW) is NOW
+
+
+def test_the_branch_log_gives_the_latest_author_time_that_cites_each_ticket():
+    text = ("2026-11-01T10:00:00+00:00\x1ffeat: a\n\nRefs: FND-0001\nCo-Authored-By: t <t@t>\n\x1e"
+            "2026-11-02T10:00:00+00:00\x1ffeat: b\n\nCloses: FND-0001\nCo-Authored-By: t <t@t>\n\x1e"
+            "2026-11-03T10:00:00+00:00\x1fchore: c, cites nothing\n\x1e")
+    commits = run.parse_branch_log(text)
+    assert len(commits) == 3 and run.citations_of(commits) == {"FND-0001": datetime(2026, 11, 2, 10, 0, tzinfo=timezone.utc)}
 
 
 # ---------------------------------------------------------------- git: a real throwaway repository
@@ -181,6 +243,19 @@ def test_the_merges_of_a_real_history_become_facts_for_the_tickets_their_commits
     assert (mo1.pr, mo1.paths, mo1.solution, mo1.ref) == (5, ("shared/a.py",), None, m1["sha"])
     (_m2, mo2), = got["FND-0002"]
     assert (mo2.pr, mo2.paths, mo2.solution) == (6, ("db/b.sql", "tests/b.py"), "DATA_FIX")
+
+
+@needs_git
+def test_every_merge_that_cites_a_ticket_is_a_citation_with_its_files_even_when_it_delivers_nothing(tmp_path):
+    r = Repo(tmp_path)
+    r.pull_request(5, "feat/a", ["shared/a.py"], "feat: do a\n\nCloses: FND-0001\nCo-Authored-By: t <t@t>")
+    r.pull_request(7, "docs/c", ["doc/c.md"], "docs: only refs\n\nRefs: FND-0003\nCo-Authored-By: t <t@t>")
+    r.pull_request(8, "fix/d", ["shared/d.py", "tests/d.py"], "fix: more work\n\nRefs: FND-0001\nCo-Authored-By: t <t@t>")
+    delivered, cited = run.scan_merges("master", 365, cwd=r.root)
+    assert sorted(delivered) == ["FND-0001"] and sorted(cited) == ["FND-0001", "FND-0003"]
+    first, second = cited["FND-0001"]
+    assert first.paths == ("shared/a.py",) and second.paths == ("shared/d.py", "tests/d.py") and first.ts.tzinfo is not None and second.ts >= first.ts
+    assert cited["FND-0003"][0].paths == ("doc/c.md",) and not any(ap_mod.is_code_path(p) for p in cited["FND-0003"][0].paths)
 
 
 @needs_git

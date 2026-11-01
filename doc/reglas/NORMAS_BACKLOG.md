@@ -83,7 +83,7 @@ Dominios categóricos, **todos con `CHECK` en BD** — nunca inventar un valor f
   commit con `Closes:`, registra un hecho `MERGE` por (merge, ticket) con el número de PR, los ficheros cambiados y el `Solution:`, reúne los veredictos de las compuertas (la de entrega de la Fase B, las
   condiciones de cierre de `rfd_matrix_probe.py`, la de incidentes de `fondos`; **lo que no se puede leer es un motivo para esperar, nunca un pase**) y aplica el motor. Sin `--apply` solo imprime. El
   **modo** (`BACKLOG_AUTOPILOT_MODE` en `shared/config.py`, un techo que `--mode` solo puede bajar): `OFF` imprime; `SHADOW` (el de salida) registra los hechos y escribe **una nota por decisión** en el
-  ticket («movería X a Y, evidencia ...») sin mover nada, para que el propietario revise las 20 primeras (O-V3-4); `ON` hace además los dos movimientos mediante `auto_transition`, y un movimiento que la
+  ticket («movería X a Y, evidencia ...») sin mover nada (desde la fase `events` el modo es un evento de la base de datos, más abajo); `ON` hace además los movimientos mediante `auto_transition`, y un movimiento que la
   base de datos rechaza (una compuerta, un hecho que falta) pasa a ser una nota de espera, una sola vez. Solo escribe con su login (`FONDOS_BACKLOG_PG_DSN_AUTOPILOT`): sin él, o sin el DDL, `--apply` se
   niega con código 2 y no escribe nada; nunca cae a otro login ni pide terminal. **No fabrica `DEPLOY` ni `CYCLE`** (no puede dar fe de su propio cierre): un ticket cuyo merge toca `db/**` espera a que
   la migración del propietario registre el `DEPLOY`, y un `DATA_FIX` a que se registre un `CYCLE`. El gancho `reference-transaction` (`bash scripts/audit/reference-transaction.sh`, lo instala el
@@ -101,7 +101,14 @@ Dominios categóricos, **todos con `CHECK` en BD** — nunca inventar un valor f
     de un commit de reversión). El efecto es el mismo que el de la rutina de la persona porque ambas llaman a `fn_adjudicate_core` (90_collision.sql); un par ya decidido no se vuelve a decidir, así que una decisión
     previa de una persona nunca se pisa. El modo de la puerta de colisión se queda en `AUDIT` para siempre: `BLOCK` y el bloqueo en el `pre-push` quedan retirados.
   - **El modo del autopiloto es un evento** (`backlog.autopilot_mode_event`, `fn_autopilot_mode`, `sp_set_autopilot_mode`), no una edición de fichero: una persona fija cualquier modo; el autopiloto solo se mueve
-    entre `SHADOW` y `ON` (nunca se apaga ni levanta un `OFF` que puso una persona).
+    entre `SHADOW` y `ON` (nunca se apaga ni levanta un `OFF` que puso una persona). `BACKLOG_AUTOPILOT_MODE` queda como techo en `ON` y el modo efectivo de una ejecución es el **más bajo** de ese techo, de `--mode` y del
+    modo de la base de datos (por defecto `SHADOW`); si ese modo no se puede leer (el DDL `events` no está aplicado) la ejecución se limita a `SHADOW`, de modo que un evento de modo ausente nunca enciende el autopiloto.
+  - **Tres eventos sin disparador ahora lo tienen** (el motor puro de `shared/backlog_autopilot.py`, la ejecución en `scripts/audit/backlog_autopilot.py`; en `SHADOW` solo escriben una nota):
+    - `CLOSED -> IN_PROGRESS` (**REOPEN**, causa `INCOMPLETE_FIX`): un merge **posterior al cierre** cuya rama trae un commit que cita el ticket (`Refs:` o `Closes:`, fecha de autor del último commit que lo cita) y
+      cambia código o tests (no `doc/`, `docs/`, `out/`, `deployments/`, `backlog_gate/` ni `.md`/`.txt`/`.rst`) reabre el ticket. Solo un cierre de entrega (`CODE_FIX`, `DATA_FIX`, `WORKAROUND`); un `REJECTED` o `DUPLICATED` no se «entregó».
+    - `BLOCKED -> IN_PROGRESS` (**UNBLOCK**, evidencia `BLOCKER`): el ticket del que depende (la última espera estructurada `BLOCKED`) está `CLOSED`. Un bloqueo por condición o texto libre no lo levanta el sistema.
+    - `DEFERRED -> TODO` (**UNDEFER**, evidencia `REVISIT`): la fecha `revisit_by` de la última espera `DEFERRED` ya llegó. `sp_auto_transition` verifica las dos evidencias con sus propios registros, no con un hecho que alguien anotó.
+    Cada ejecución con `--apply` en modo `ON` libera además las retenciones del sistema cuya causa desapareció (`fn_auto_release_holds`).
   - **El hecho `DEPLOY` no se puede falsificar.** Lo registra solo el login acotado `backlog_facts` (sin contraseña: la fija el propietario; su cadena va al vault del propietario) mediante `sp_record_fact`
     (actor `system:deploy`), y un disparador de `ops_event` rechaza una fila `DEPLOY` de cualquier otro login que no sea superusuario (una migración o un relleno). Es lo que permite al autopiloto cerrar por sí solo
     los tickets cuyo merge toca `db/`.

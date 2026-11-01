@@ -175,8 +175,13 @@ def test_auto_transition_calls_the_routine_with_a_merge_as_evidence_and_only_as_
     conn = FakeConn((21,))
     out = bc.auto_transition("FND-0001", "CLOSED", evidence_ref=SHA40, session_id="FND_20261101_SYNC_TEST", comment="closed on evidence", solution_type="CODE_FIX",
                              release_version="R2026.11-PR17", conn=conn)
-    assert out == 21 and "sp_auto_transition" in conn.sqls() and "p_evidence_kind => 'MERGE'" in conn.sqls() and "p_force" not in conn.sqls()
-    assert conn.calls[0][1] == ("FND-0001", "CLOSED", SHA40, "FND_20261101_SYNC_TEST", "closed on evidence", "CODE_FIX", "R2026.11-PR17")
+    assert out == 21 and "sp_auto_transition" in conn.sqls() and "p_force" not in conn.sqls()
+    assert conn.calls[0][1] == ("FND-0001", "CLOSED", "MERGE", SHA40, "FND_20261101_SYNC_TEST", "closed on evidence", "CODE_FIX", "R2026.11-PR17")      # MERGE is the default evidence
+    conn2 = FakeConn((22,))
+    bc.auto_transition("FND-0002", "IN_PROGRESS", evidence_ref="FND-0001", evidence_kind="BLOCKER", session_id="FND_20261101_SYNC_TEST", comment="blocker closed", conn=conn2)
+    assert conn2.calls[0][1][:4] == ("FND-0002", "IN_PROGRESS", "BLOCKER", "FND-0001")
+    with pytest.raises(ValueError, match="evidence_kind"):
+        bc.auto_transition("FND-0002", "IN_PROGRESS", evidence_ref="x", evidence_kind="HUNCH", session_id="FND_20261101_SYNC_TEST", comment="x", conn=FakeConn())
     monkeypatch.setenv("FONDOS_ACTOR", AGENT)
     with pytest.raises(bc.ActorUnknown, match="auto_transition is the autopilot's"):
         bc.auto_transition("FND-0001", "CLOSED", evidence_ref=SHA40, session_id="FND_20261101_SYNC_TEST", comment="x", conn=FakeConn())
@@ -215,3 +220,61 @@ def test_an_ordinary_actor_recording_a_fact_keeps_the_console_path_but_now_asks_
     seen = _Session(monkeypatch, FakeConn((True,)))
     bc.record_ops_event("COMMIT", SHA40, "FND-0001", "REFS", {}, datetime(2026, 11, 1, tzinfo=timezone.utc))
     assert seen.calls[-1]["operation"] is None and seen.calls[-1]["write"] is True
+
+
+# ---------------------------------------------------------------- Backlog v3.1 (FND-0355): the event functions route by actor and check their arguments before any connection
+
+SESSION = "FND_20261101_SYNC_TEST"
+
+
+def test_reopen_routes_an_agent_through_its_login_a_person_through_the_owner_only_one_and_records_the_cause(agent_env):
+    conn = FakeConn((31,))
+    seen = _Session(agent_env, conn)
+    assert bc.reopen("FND-0001", "COVERAGE_GAP", "a reason long enough to be a reason", session_id=SESSION) == 31
+    assert seen.calls[-1]["operation"] == "agent" and seen.calls[-1]["write"] is True and seen.calls[-1]["human"] is False
+    assert "sp_reopen" in conn.sqls() and "p_force" not in conn.sqls() and conn.calls[0][1] == ("FND-0001", "COVERAGE_GAP", "a reason long enough to be a reason", AGENT, SESSION, "IN_PROGRESS")
+    agent_env.setenv("FONDOS_ACTOR", "human:owner")
+    bc.reopen("FND-0001", "SCOPE_CHANGE", "x" * 40, session_id=SESSION)
+    assert seen.calls[-1]["human"] is True and seen.calls[-1]["operation"] is None
+
+
+def test_reopen_refuses_an_unknown_cause_before_any_connection(agent_env):
+    conn = FakeConn()
+    with pytest.raises(ValueError, match="cause"):
+        bc.reopen("FND-0001", "BECAUSE", "x" * 40, session_id=SESSION, conn=conn)
+    assert conn.calls == []
+
+
+def test_the_autopilot_reopens_and_sets_its_mode_through_its_own_login(monkeypatch):
+    monkeypatch.setenv("FONDOS_ACTOR", AUTOPILOT)
+    monkeypatch.setenv(bc._AUTOPILOT_DSN_ENV_VAR, AUTOPILOT_DSN)
+    seen = _Session(monkeypatch, FakeConn((5,)))
+    bc.reopen("FND-0001", "INCOMPLETE_FIX", "a later merge changed code", session_id=SESSION)
+    assert seen.calls[-1]["operation"] == "autopilot"
+    bc.set_autopilot_mode("ON", "20 decisions, none contradicted")
+    assert seen.calls[-1]["operation"] == "autopilot" and seen.calls[-1]["write"] is True
+    bc.auto_release_holds()
+    assert seen.calls[-1]["operation"] == "autopilot"
+    with pytest.raises(ValueError, match="mode"):
+        bc.set_autopilot_mode("MAYBE", "x")
+
+
+def test_an_agent_adjudication_needs_an_agent_identity_and_never_a_revert(agent_env):
+    conn = FakeConn((9,))
+    seen = _Session(agent_env, conn)
+    for bad in ("REVERT", "WHATEVER"):
+        with pytest.raises(ValueError, match="decision"):
+            bc.agent_adjudicate_overlap("FND-0001", "FND-0002", bad, "y" * 40)
+    assert conn.calls == [] and seen.calls == []
+    assert bc.agent_adjudicate_overlap("FND-0001", "FND-0002", "RELATED", "y" * 40) == 9 and seen.calls[-1]["operation"] == "agent"
+    assert "sp_agent_adjudicate_overlap" in conn.sqls() and conn.calls[0][1] == ("FND-0001", "FND-0002", "RELATED", None, "y" * 40, AGENT)
+    agent_env.setenv("FONDOS_ACTOR", "human:owner")
+    with pytest.raises(ValueError, match="agent"):
+        bc.agent_adjudicate_overlap("FND-0001", "FND-0002", "RELATED", "y" * 40)
+
+
+def test_rescind_and_mode_reads_call_their_routines(agent_env):
+    conn = FakeConn((11,))
+    assert bc.rescind_reopen("FND-0001", session_id=SESSION, conn=conn) == 11 and "sp_rescind_reopen" in conn.sqls()
+    assert conn.calls[0][1] == ("FND-0001", AGENT, SESSION)
+    assert bc.autopilot_mode(conn=FakeConn(("SHADOW",))) == "SHADOW"

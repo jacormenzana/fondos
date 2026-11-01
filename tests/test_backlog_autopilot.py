@@ -4,7 +4,7 @@
 shared/backlog_gate.py. No database, no git, no network (R-7)."""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 
 import pytest
 
@@ -109,6 +109,82 @@ def test_decide_orders_by_ticket_and_returns_one_decision_per_ticket():
     f = ap.Facts(tickets={"FND-0002": {"status": "IN_PROGRESS", "release_version": None}, "FND-0001": {"status": "READY_FOR_DEPLOY", "release_version": None}},
                  merges={"FND-0002": [merge()], "FND-0001": [merge()]})
     assert [(d.ap, d.action) for d in ap.decide(f)] == [("FND-0001", ap.CLOSE), ("FND-0002", ap.MOVE)]
+
+
+# ---------------------------------------------------------------- v3.1 events: REOPEN, UNBLOCK, UNDEFER
+
+CLOSED_AT = datetime(2026, 10, 30, 12, 0, tzinfo=timezone.utc)
+AFTER = datetime(2026, 10, 31, 9, 0, tzinfo=timezone.utc)
+BEFORE = datetime(2026, 10, 29, 9, 0, tzinfo=timezone.utc)
+
+
+def cite(ts=AFTER, paths=("shared/x.py",), ref=SHA):
+    return ap.Citation(ref=ref, ts=ts, paths=tuple(paths))
+
+
+def closed(solution="CODE_FIX", citations=None):
+    t = {"FND-0001": {"status": "CLOSED", "release_version": "R1", "solution_type": solution}}
+    return ap.Facts(tickets=t, citations={"FND-0001": citations if citations is not None else [cite()]}, closed_at={"FND-0001": CLOSED_AT})
+
+
+def event(f, a="FND-0001"):
+    return ap.decide_event(a, f)
+
+
+def test_a_code_merge_citing_a_ticket_after_its_closure_reopens_it_as_the_commit_evidence():
+    d = event(closed())
+    assert (d.action, d.from_status, d.to_status, d.evidence_kind, d.evidence_ref) == (ap.REOPEN, "CLOSED", "IN_PROGRESS", "COMMIT", SHA)
+
+
+@pytest.mark.parametrize("citations", [[], [cite(ts=BEFORE)], [cite(paths=("doc/reglas/X.md",))], [cite(paths=("README.md", "out/report.txt"))]])
+def test_a_citation_before_the_closure_or_one_that_touches_no_code_never_reopens(citations):
+    assert event(closed(citations=citations)) is None
+
+
+@pytest.mark.parametrize("solution", ["REJECTED", "DUPLICATED", None])
+def test_only_a_delivery_closure_reopens(solution):
+    assert event(closed(solution=solution)) is None
+
+
+def test_the_newest_qualifying_citation_is_the_evidence_and_a_doc_only_one_is_skipped():
+    f = closed(citations=[cite(ref="a" * 40), cite(ts=AFTER.replace(day=1, month=11), ref="b" * 40), cite(ts=AFTER.replace(day=2, month=11), paths=("doc/x.md",), ref="c" * 40)])
+    assert event(f).evidence_ref == "b" * 40
+
+
+def test_a_blocked_ticket_is_unblocked_when_its_blocker_is_closed_and_not_before():
+    t = {"FND-0001": {"status": "BLOCKED"}, "FND-0002": {"status": "CLOSED"}}
+    d = event(ap.Facts(tickets=t, blockers={"FND-0001": "FND-0002"}))
+    assert (d.action, d.to_status, d.evidence_kind, d.evidence_ref) == (ap.UNBLOCK, "IN_PROGRESS", "BLOCKER", "FND-0002")
+    t["FND-0002"] = {"status": "IN_PROGRESS"}
+    assert event(ap.Facts(tickets=t, blockers={"FND-0001": "FND-0002"})) is None
+    assert event(ap.Facts(tickets=t)) is None                                       # no structured blocker: a person's block, left alone
+
+
+def test_a_deferred_ticket_returns_to_todo_on_its_revisit_date_and_not_before():
+    t = {"FND-0001": {"status": "DEFERRED"}}
+    d = event(ap.Facts(tickets=t, revisits={"FND-0001": date(2026, 11, 1)}, today=date(2026, 11, 1)))
+    assert (d.action, d.to_status, d.evidence_kind, d.evidence_ref) == (ap.UNDEFER, "TODO", "REVISIT", "2026-11-01")
+    assert event(ap.Facts(tickets=t, revisits={"FND-0001": date(2026, 11, 2)}, today=date(2026, 11, 1))) is None
+    assert event(ap.Facts(tickets=t, today=date(2026, 11, 1))) is None
+
+
+def test_decide_includes_the_events_and_a_delivery_wins_over_an_event_for_the_same_ticket():
+    t = {"FND-0001": {"status": "CLOSED", "solution_type": "CODE_FIX"}, "FND-0002": {"status": "DEFERRED"}, "FND-0003": {"status": "IN_PROGRESS", "release_version": None}}
+    f = ap.Facts(tickets=t, citations={"FND-0001": [cite()]}, closed_at={"FND-0001": CLOSED_AT}, revisits={"FND-0002": date(2026, 10, 1)}, today=date(2026, 11, 1),
+                 merges={"FND-0003": [merge()]})
+    assert [(d.ap, d.action) for d in ap.decide(f)] == [("FND-0001", ap.REOPEN), ("FND-0002", ap.UNDEFER), ("FND-0003", ap.MOVE)]
+
+
+def test_an_event_note_is_recognised_on_the_next_run_even_when_the_evidence_is_a_date_or_a_ticket():
+    d = event(ap.Facts(tickets={"FND-0001": {"status": "DEFERRED"}}, revisits={"FND-0001": date(2026, 11, 1)}, today=date(2026, 11, 1)))
+    text = ap.shadow_note(d)
+    assert ap.note_key(text) == ("UNDEFER", "TODO", "2026-11-01") and ap.already_noted(d, [text])
+
+
+@pytest.mark.parametrize("path,expected", [("shared/x.py", True), ("tests/test_x.py", True), ("db/pg_backlog/98_events.sql", True), (".github/workflows/ci.yml", True),
+                                           ("doc/reglas/X.md", False), ("README.md", False), ("out/r.txt", False), ("deployments/x.yaml", False)])
+def test_what_counts_as_a_change_to_the_code(path, expected):
+    assert ap.is_code_path(path) is expected
 
 
 # ---------------------------------------------------------------- notes (SHADOW mode) and staleness
