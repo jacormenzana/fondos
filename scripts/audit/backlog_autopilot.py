@@ -376,8 +376,10 @@ def main(argv: list | None = None) -> int:
                f"{len(stale)} IN_PROGRESS ticket(s) idle for 14 days or more{promoted}")
     try:                                                                         # which modules each open ticket is about (W4b): derived facts only, never a move, never fails the run
         import backlog_modules as modules_run
-        mres = modules_run.run(bc, apply=True, out=lambda *_: None)
+        mres = modules_run.run(bc, apply=True, out=lambda *_: None, clusters=True)
         summary += f"; modules {mres['recorded']} new" if mres["recorded"] else ""
+        kept = mres.get("clusters") or {}
+        summary += f"; module clusters {kept['written']} event(s)" if kept.get("written") else ""
     except Exception:                                                        # noqa: BLE001
         pass
     try:                                                                         # the weekly read-only digest, once per ISO week; it is a local file and never fails the run
