@@ -98,6 +98,25 @@ def test_the_latest_merge_is_the_delivery_that_counts():
     assert d.action == ap.CLOSE and d.evidence_ref == "b" * 40 and d.release == "R2026.11-PR9"
 
 
+def dm(ref, hour):
+    return ap.Merge(ref=ref * 40, pr=1, paths=("shared/x.py",), year=2026, month=11, ts=datetime(2026, 11, 1, hour, 0, tzinfo=timezone.utc))
+
+
+def test_a_delivery_that_was_rejected_is_not_delivered_again_by_its_own_old_merge():
+    rejected = datetime(2026, 11, 1, 12, 0, tzinfo=timezone.utc)
+    for status in ("IN_PROGRESS", "READY_FOR_DEPLOY"):
+        assert one(facts(status, merges=[dm("a", 10)], reworked={"FND-0001": rejected})) is None            # the merge is older than the rejection: no move, no closure
+    d = one(facts("IN_PROGRESS", merges=[dm("a", 10), dm("b", 14)], reworked={"FND-0001": rejected}))
+    assert d.action == ap.MOVE and d.evidence_ref == "b" * 40                                               # a merge AFTER the rejection is a new delivery
+
+
+def test_a_merge_at_the_instant_of_the_rejection_is_not_newer_and_an_unknown_time_counts_as_newer():
+    rejected = datetime(2026, 11, 1, 12, 0, tzinfo=timezone.utc)
+    assert one(facts("IN_PROGRESS", merges=[dm("a", 12)], reworked={"FND-0001": rejected})) is None
+    assert one(facts("IN_PROGRESS", merges=[merge()], reworked={"FND-0001": rejected})).action == ap.MOVE   # a Merge without a time (built before this field) behaves as before
+    assert one(facts("IN_PROGRESS", merges=[dm("a", 10)], reworked={"FND-0002": rejected})).action == ap.MOVE   # another ticket's rejection changes nothing
+
+
 def test_a_release_label_already_on_the_ticket_is_kept_and_a_merge_that_is_no_pull_request_gets_a_sha_tag():
     assert one(facts(release_version="R2026.10-GOV-05")).release == "R2026.10-GOV-05"
     assert one(facts(merges=[merge(pr=None)])).release == "R2026.11-M0123456"

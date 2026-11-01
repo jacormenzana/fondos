@@ -1331,6 +1331,15 @@ def set_autopilot_mode(mode: str, reason: str, *, actor: Optional[str] = None, c
         return int(c.execute("SELECT backlog.sp_set_autopilot_mode(%s, %s, %s)", (mode, reason, who)).fetchone()[0])
 
 
+def rework_times(*, conn=None) -> dict:
+    """{ticket: the time of its latest LIVE move out of READY_FOR_DEPLOY or CLOSED back to OPEN, TODO or IN_PROGRESS}: the rejection of its delivery (a reopening, or the back-to-work move). The autopilot
+    ignores the delivery merges older than it (FND-0368). Read-only."""
+    with _session(conn) as c:
+        rows = _rows(c, "SELECT action_point_id, max(event_ts) AS ts FROM backlog.status_event WHERE origin = 'LIVE' AND from_status IN ('READY_FOR_DEPLOY', 'CLOSED') "
+                        "AND to_status IN ('OPEN', 'TODO', 'IN_PROGRESS') GROUP BY action_point_id")
+    return {r["action_point_id"]: r["ts"] for r in rows}
+
+
 def ops_event_keys(kind: str = "COMMIT", *, conn=None) -> set:
     """{(ref, ap_id)} already recorded for `kind`: what backlog_sync.py does not record (or forward) again."""
     with _session(conn) as c:

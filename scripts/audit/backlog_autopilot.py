@@ -105,7 +105,7 @@ def deliveries(messages: list) -> dict:
 def merge_object(merge: dict, solution: str | None, paths: list) -> "ap_mod.Merge":
     """The rule engine's Merge for one merge commit and one ticket it delivers. The release month is the merge's, in UTC. Pure."""
     when = merge["author_ts"].astimezone(timezone.utc)
-    return ap_mod.Merge(ref=merge["sha"], pr=ap_mod.pr_number(merge["subject"]), paths=tuple(sorted(paths)), year=when.year, month=when.month, solution=solution)
+    return ap_mod.Merge(ref=merge["sha"], pr=ap_mod.pr_number(merge["subject"]), paths=tuple(sorted(paths)), year=when.year, month=when.month, solution=solution, ts=when)
 
 
 def wait_facts(rows: list, tickets: dict) -> tuple:
@@ -304,6 +304,10 @@ def main(argv: list | None = None) -> int:
         if args.ticket:
             blockers = {t: v for t, v in blockers.items() if t in only}
             revisits = {t: v for t, v in revisits.items() if t in only}
+        try:
+            reworked = {a: aware(ts) for a, ts in bc.rework_times().items()}
+        except Exception:                                                    # noqa: BLE001 -- unreadable: no delivery is treated as rejected (the behaviour before FND-0368), the rest goes on
+            reworked = {}
     except Exception as exc:                                                 # noqa: BLE001 -- git, no login, an unreachable backlog: a configuration / connection error (exit 2), never a traceback
         print(f"error: {type(exc).__name__}: {str(exc)[:200]}", file=sys.stderr)
         return RC_USAGE
@@ -323,7 +327,7 @@ def main(argv: list | None = None) -> int:
     event_aps = {a for a in cited if tickets.get(a, {}).get("status") == "CLOSED"}
     facts = ap_mod.Facts(tickets=tickets, merges={t: [mo for _m, mo in v] for t, v in candidates.items()}, deploys=deploys, cycles=cycles, probes=probes, incident=incident,
                          rfd_blockers=rfd_b, delivery_blockers=del_b, citations={a: cited[a] for a in event_aps}, closed_at=closed_at, blockers=blockers, revisits=revisits,
-                         today=date.today())
+                         reworked=reworked, today=date.today())
     decisions = ap_mod.decide(facts) if events_ready else [d for d in ap_mod.decide(facts) if d.action not in (ap_mod.REOPEN, ap_mod.UNBLOCK, ap_mod.UNDEFER)]
     for d in decisions:
         out(f"  {d.ap}: {d.action} {d.from_status} -> {d.to_status} ({d.evidence_kind} {d.evidence_ref[:12]})" + (f"  WAITS: {'; '.join(d.reasons)}" if d.reasons else ""))

@@ -72,6 +72,13 @@ def test_the_merge_object_takes_the_release_month_in_utc_and_the_pull_request_fr
     assert ap_mod.merge_release(mo) == "R2026.12-PR17"
 
 
+def test_the_merge_carries_its_author_time_in_utc_so_a_rejection_can_be_compared_with_it_and_the_run_hands_the_rework_times_to_the_engine():
+    m = {"sha": "a" * 40, "subject": "Merge pull request #17 from x/y", "author_ts": datetime.fromisoformat("2026-11-30T23:30:00-05:00")}
+    assert run.merge_object(m, None, ["z.py"]).ts == datetime(2026, 12, 1, 4, 30, tzinfo=timezone.utc)
+    src = (_ROOT / "scripts" / "audit" / "backlog_autopilot.py").read_text(encoding="utf-8")
+    assert "bc.rework_times()" in src and "reworked=reworked" in src                                  # FND-0368: without these two the engine never learns that a delivery was rejected
+
+
 def test_blockers_are_rendered_as_one_readable_line():
     assert run.blocker_text({"kind": "DEPENDS_ON", "ticket": "FND-0009", "note": None}) == "kind=DEPENDS_ON, ticket=FND-0009" and run.blocker_text("a hold") == "a hold"
 

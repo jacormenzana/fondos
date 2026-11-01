@@ -109,6 +109,9 @@ Dominios categóricos, **todos con `CHECK` en BD** — nunca inventar un valor f
   - **Tres eventos sin disparador ahora lo tienen** (el motor puro de `shared/backlog_autopilot.py`, la ejecución en `scripts/audit/backlog_autopilot.py`; en `SHADOW` solo escriben una nota):
     - `CLOSED -> IN_PROGRESS` (**REOPEN**, causa `INCOMPLETE_FIX`): un merge **posterior al cierre** cuya rama trae un commit que cita el ticket (`Refs:` o `Closes:`, fecha de autor del último commit que lo cita) y
       cambia código o tests (no `doc/`, `docs/`, `out/`, `deployments/`, `backlog_gate/` ni `.md`/`.txt`/`.rst`) reabre el ticket. Solo un cierre de entrega (`CODE_FIX`, `DATA_FIX`, `WORKAROUND`); un `REJECTED` o `DUPLICATED` no se «entregó».
+    - **Un rechazo de la entrega es duradero (FND-0368):** una entrega (el merge con `Closes:`) solo cuenta si es **posterior** al último momento en que el ticket volvió al trabajo desde `READY_FOR_DEPLOY` o `CLOSED`
+      (`status_event` en vivo hacia `OPEN`, `TODO` o `IN_PROGRESS`; el merge lleva su fecha de autor). Sin esta regla el autopiloto volvía a mover y a cerrar un ticket rechazado con su propio merge antiguo, durante los 45 días que
+      escanea; ahora hace falta un merge nuevo con `Closes:` para entregarlo de nuevo.
     - `BLOCKED -> IN_PROGRESS` (**UNBLOCK**, evidencia `BLOCKER`): el ticket del que depende (la última espera estructurada `BLOCKED`) está `CLOSED`. Un bloqueo por condición o texto libre no lo levanta el sistema.
     - `DEFERRED -> TODO` (**UNDEFER**, evidencia `REVISIT`): la fecha `revisit_by` de la última espera `DEFERRED` ya llegó. `sp_auto_transition` verifica las dos evidencias con sus propios registros, no con un hecho que alguien anotó.
     Cada ejecución con `--apply` en modo `ON` libera además las retenciones del sistema cuya causa desapareció (`fn_auto_release_holds`).
