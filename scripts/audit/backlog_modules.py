@@ -208,6 +208,7 @@ def run(bc, apply: bool = False, git=_git, out=print, clusters: bool = False, mo
         return {"present": False, "desired": 0, "new": 0, "recorded": 0, "unchanged": 0}
     desired = gather(bc, git)
     res = facts_step(bc, apply, git, out, desired)
+    res["_desired"] = desired                                                # for the caller's next step (the impact notes read the same fresh breadth); not a count
     if clusters:
         try:
             res["clusters"] = cluster_step(bc, apply, git, out, mode, cache, desired)

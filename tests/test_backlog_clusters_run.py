@@ -151,6 +151,15 @@ def test_run_keeps_the_clusters_only_when_asked_and_the_facts_step_is_unchanged(
     assert res["clusters"]["planned"] == 3 and bc.calls == []
 
 
+def test_run_hands_the_fresh_facts_to_the_next_step_so_the_impact_notes_read_the_same_breadth():
+    res = run.run(FakeBc(), apply=False, git=fake_git, out=quiet)
+    assert set(res["_desired"]) == {"FND-1", "FND-2"} and all(f["evidence"].startswith("commit ") for fs in res["_desired"].values() for f in fs if f["source"] == "COMMIT")
+    class Early(FakeBc):
+        def modules_store_present(self):
+            return False
+    assert "_desired" not in run.run(Early(), apply=False, git=fake_git, out=quiet)                       # before the phase there is nothing to hand over
+
+
 def test_a_failing_cluster_step_never_takes_the_facts_down_with_it():
     class Broken(FakeBc):
         def list_module_group_events(self):
