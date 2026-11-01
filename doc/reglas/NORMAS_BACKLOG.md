@@ -581,3 +581,25 @@ propietario, 2026-11-01: «debe ser transparente y automático»).
 código escrito a propósito para leer el fichero y llamar a `CryptUnprotectData` lo conseguiría. Lo que impide es el uso accidental o automático (el comando normal de un agente ya no alcanza una cadena
 del propietario) y saca todos los secretos de los ficheros y entornos que cargan las sesiones. La frontera real sería una cuenta de Windows aparte (descartada el 2026-10-30 por desproporcionada). Una
 herramienta del propietario que llame a una función de escritura sigue pasando además por la guarda de escritura en vivo (§2).
+
+### §9.3. Despliegue del DDL pendiente con un clic, sin consola (2026-11-01)
+
+**Objetivo (propietario, 2026-11-01):** reducir las tareas administrativas y evitar la consola. El vault (§9.2) quitó teclear la cadena; esto quita ejecutar la migración.
+
+**`scripts/ops/owner_deploy.py`.** Un vigilante local, en la sesión de Windows del propietario (`install-startup` deja un lanzador en su carpeta Inicio, sin permisos de administrador; `remove-startup` lo
+quita): cada 10 minutos hace `git fetch` y compara `origin/master` con el último commit desplegado (`init` lo fija una vez, tras comprobar con la herramienta de deriva que el vivo coincide con master). Si
+cambió el DDL de `db/pg_backlog`, calcula **qué fases** están pendientes (cada fase se corresponde con sus ficheros de DDL, en el orden de aplicación; un cambio solo de la herramienta, de la documentación o de
+un script de reversión no es DDL que aplicar) y **abre una ventana** con los commits, las fases y **el diff del DDL**: lo que se aprueba se ejecuta con el rol del propietario y llegó por una fusión
+automática, así que un clic sobre una pregunta sin contenido sería un sello de goma.
+- **Aplicar ahora:** exporta `origin/master` a una carpeta temporal (nunca el árbol de trabajo), ejecuta cada fase con `migrate_backlog_v2.py --phase X --apply` **en orden** tomando la cadena del
+  propietario del vault y poniéndola **solo en el entorno de ese proceso hijo** (nunca en el vigilante ni en el hijo de la verificación), y al final ejecuta la herramienta de deriva: **solo `no drift`
+  cuenta como éxito** y solo entonces se recuerda el commit. Cada fase es una transacción: un fallo no deja nada a medias y no se intenta la siguiente. Se guarda un recibo sin secretos en
+  `%LOCALAPPDATA%\fondos\deploy_receipts`. **Recordármelo en 4 h** y **Ignorar esta versión** hacen lo que dicen (una versión posterior vuelve a preguntar).
+- **No se ofrece** `revoke` (A-2) ni `iam`: requieren decisión del propietario.
+- **No hay forma de contestar la ventana sin una persona:** la línea de órdenes no tiene ningún conmutador de aprobación automática (lo comprueba un test) y la aplicación solo se alcanza después de que
+  `ask()` devuelva «aplicar». Sin la cadena en el vault no se ejecuta nada y el mensaje dice cómo guardarla.
+- **Pendiente (siguiente tramo):** el hecho `DEPLOY` que permite al autopiloto cerrar tickets cuyo merge toca `db/`. Necesita un login acotado propio (`sp_record_deploy`) y que `sp_record_ops_event` rechace
+  `DEPLOY` desde cualquier otro login, para que ningún agente pueda falsificarlo; hasta entonces esos tickets esperan, como ya documenta §2.
+
+**Límite reconocido:** igual que §9.2, es una guarda y no una frontera: código ejecutado con el mismo usuario de Windows podría leer el vault y lanzar la migración sin pasar por la ventana. Lo que garantiza
+es que ningún flujo normal (un agente, una tubería, una fusión automática) aplica DDL sin que una persona lo haya visto y aprobado.
