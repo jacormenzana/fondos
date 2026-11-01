@@ -30,7 +30,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts" / "ops"))
 RC_OK, RC_DRIFT, RC_USAGE = 0, 1, 2
-PHASES_IN_ORDER = ("transitions", "human", "history", "relations", "groups", "sync", "hook", "collision", "attest", "autonomy", "events")   # autonomy (Backlog v3 W2 / W3, FND-0357 / FND-0358) needs relations, groups and sync before it
+PHASES_IN_ORDER = ("transitions", "human", "history", "relations", "groups", "sync", "hook", "collision", "attest", "autonomy", "events", "modules")   # autonomy (Backlog v3 W2 / W3, FND-0357 / FND-0358) needs relations, groups and sync before it
 LIVE_ONLY_OK = ("vw_backlog_kpis",)               # legacy analytics view of 10_kpis_and_release.sql: live, not part of the phases compared
 
 

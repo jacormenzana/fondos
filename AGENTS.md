@@ -57,6 +57,8 @@ Every finding, error, or improvement identified during a session must be registe
   **Agents** write through their scoped login (`FONDOS_BACKLOG_PG_DSN_AGENT`) and decide collision pairs with written evidence (`agent_adjudicate_overlap`); an agent never sets the autopilot mode, uses a vault string or applies DDL.
   **DDL** reaches the live backlog by itself: `scripts/ops/owner_deploy.py` (the owner's watcher, `BACKLOG_AUTO_DEPLOY_MODE` = `AUTO` | `ASK`) applies each pending phase behind a restore point, the drift check and an automatic rollback (`NORMAS_BACKLOG.md` §9.3). Owner strings live in the vault
   (`scripts/ops/owner_vault.py set NAME --password-only [--window]`, `check --connect`), never in `.env`.
+  **Which module a ticket is about is derived, not typed** (phase `modules`, `NORMAS_BACKLOG.md` §2): the autopilot records `TOUCHED` from the files of the commits that cite the ticket and `CITED` proposals from its text; an agent may declare
+  `TARGET` (`backlog_client.record_modules`, source `DECLARED`) and may retract a wrong proposal. Registries and documents never count as modules.
 
 ---
 
