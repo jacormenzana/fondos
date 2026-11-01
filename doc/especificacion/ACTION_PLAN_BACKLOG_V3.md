@@ -213,7 +213,8 @@ The labels carry the `V3` prefix because `PROPUESTA_BACKLOG_V2.md` §8 already u
 | O-V3-2 | GitHub settings: Actions may create PRs; allow auto-merge; delete merged branches | W1 |
 | O-V3-3 | Apply `--phase autonomy` (dry run, then apply) and set the passwords for `backlog_agent` / `backlog_autopilot` plus their `.env` DSNs | W2/W3 |
 | O-V3-4 | Review the 20 SHADOW decisions, then set `BACKLOG_AUTOPILOT_MODE="ON"` (merged automatically like any PR) | W3 |
-| O-V3-5 | Pending, already open: `--phase relations` (FND-0350 drift), A-2 when the counter reaches 50 | any time |
+| O-V3-5 | `relations` (FND-0350 drift) is applied (2026-11-01); A-2 when the counter reaches 50 | any time |
+| O-V3-6 | Store the owner strings in the vault once, `init` and install the deploy watcher once: from then on pending DDL needs a click in a window, not a console (owner decision 2026-11-01) | after the vault and watcher PRs merge |
 
 ### Step by step
 
@@ -259,6 +260,14 @@ Run them in the order of the "When" column. Each step says what to do, how to kn
 **O-V3-5 — Already open from v2**
 1. `FND-0350` / drift: dry run, then `migrate_backlog_v2.py --phase relations --apply`, then `backlog_drift.py` must print `no drift`.
 2. A-2: only when the counter reaches 50 (20 now): `--phase revoke`.
+
+**O-V3-6 — No console for pending DDL** (owner request 2026-11-01: "reduce the administrative tasks, no console"). Once, in your own terminal, after the PRs of the vault and the watcher are merged and your tree is on `master`:
+1. Store the owner strings (hidden prompt; skip the ones you do not use): `C:\Users\jacor\.conda\envs\des\python.exe scripts\ops\owner_vault.py set FONDOS_PG_DSN_OWNER`, then `... set FONDOS_BACKLOG_PG_DSN_HUMAN` and `... set FONDOS_BACKLOG_PG_DSN_ADJUDICATOR`; check with `... owner_vault.py check`.
+2. Remember that the live backlog matches `master` now (read-only drift check, about two minutes): `C:\Users\jacor\.conda\envs\des\python.exe scripts\ops\owner_deploy.py init`. It must end with "remembered".
+3. Start the watcher at every Windows logon: `C:\Users\jacor\.conda\envs\des\python.exe scripts\ops\owner_deploy.py install-startup` (a launcher in your Startup folder, no admin rights; `remove-startup` undoes it). Start it for this session with `... owner_deploy.py watch`.
+4. From then on, whenever `master` brings DDL under `db/pg_backlog`, a window opens by itself with the commits, the phases and the DDL diff. **Apply now** runs each phase as one transaction with the owner string from the vault, verifies with the drift tool and remembers the commit; **Remind me in 4 h** and **Ignore this version** do what they say. Nothing is applied without your click.
+5. What is not offered here, on purpose: `revoke` (A-2) and `iam`: they need your decision.
+6. Not yet built (next slice): the DEPLOY fact that lets the autopilot close tickets whose merge changes `db/` (it needs a scoped login of its own so that no agent can forge it).
 
 ## Critical files
 - `shared/backlog_client.py`: allow-list, `dsn_for_operation`, routing by actor kind.
