@@ -289,3 +289,41 @@ def test_window_uses_the_window_for_both_entries_and_still_needs_a_console(vault
     monkeypatch.setattr(cli, "ask_window", lambda prompt: "p1" if "again" not in prompt else "p1")
     assert cli.main(["set", ADJ, "--window", "--password-only"], vault=vault, console=True, environ=LIVE_ENV) == 0
     assert vault.get(ADJ) and "backlog_adjudicator" in vault.get(ADJ)
+
+
+# ---------------------------------------------------------------- check --connect: a wrong password is found when the string is stored, not inside a deployment
+
+class Conn:
+    def close(self):
+        pass
+
+
+def test_check_connect_logs_in_with_each_connection_string_and_reports_only_the_verdict(vault, capsys):
+    vault.set(OWNER, "host=127.0.0.1 port=5436 dbname=fondos user=fondos_owner password=good-pw")
+    vault.set(HUMAN, "host=127.0.0.1 port=5436 dbname=gestion user=backlog_human password=wrong-pw")
+    vault.set(GHA, "ghp_token_not_a_dsn")
+    tried = []
+
+    def connect(dsn):
+        tried.append(dsn)
+        if "wrong-pw" in dsn:
+            raise RuntimeError('connection failed: FATAL:  password authentication failed for user "backlog_human" (wrong-pw)')
+        return Conn()
+
+    assert cli.main(["check", "--connect"], vault=vault, console=False, connect=connect) == 1
+    out = capsys.readouterr().out
+    assert len(tried) == 2 and "login: OK" in out and "login: FAILED" in out and "password authentication failed for user" in out       # the token is not a connection string: never tried
+    assert "good-pw" not in out and "wrong-pw" not in out and "ghp_token" not in out
+
+
+def test_check_without_connect_never_connects_and_an_all_good_vault_exits_zero(vault, capsys):
+    vault.set(OWNER, VALUE)
+    assert cli.main(["check"], vault=vault, console=False, connect=lambda dsn: pytest.fail("no login without --connect")) == 0
+    assert cli.main(["check", "--connect"], vault=vault, console=False, connect=lambda dsn: Conn()) == 0
+    assert "login: OK" in capsys.readouterr().out
+
+
+def test_try_connect_removes_the_string_and_its_password_from_any_message():
+    dsn = "host=h port=1 dbname=d user=u password=sekret-pw"
+    why = cli.try_connect(dsn, lambda d: (_ for _ in ()).throw(RuntimeError(f"bad {d} and sekret-pw")))
+    assert why.startswith("RuntimeError:") and "sekret-pw" not in why and dsn not in why

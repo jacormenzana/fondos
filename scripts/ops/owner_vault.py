@@ -7,7 +7,7 @@ owner_vault.py -- one-time setup of the owner vault (shared/owner_vault.py). Run
     python scripts/ops/owner_vault.py set FONDOS_PG_DSN_OWNER --password-only   # types ONLY the password: role, database, host and port are filled in
     python scripts/ops/owner_vault.py set FONDOS_PG_DSN_OWNER --window          # the value (or the password) in a small window whose field accepts a PASTE
     python scripts/ops/owner_vault.py list                         # the NAMES stored (never a value) and which tools receive each
-    python scripts/ops/owner_vault.py check                        # every stored value decrypts for this user (never prints one)
+    python scripts/ops/owner_vault.py check [--connect]            # every stored value decrypts for this user and points where it should (never prints one); --connect also logs in once with each
     python scripts/ops/owner_vault.py remove FONDOS_PG_DSN_OWNER
 
 The values are never printed, logged or passed on the command line. The file is %LOCALAPPDATA%\\fondos\\owner_vault.json, outside the repository. `set` refuses to run without a real console, so an
@@ -147,7 +147,25 @@ def ask_window(prompt: str) -> str:
         root.destroy()
 
 
-def main(argv: list | None = None, *, vault: "ov.Vault | None" = None, console: bool | None = None, ask=getpass.getpass, environ=None) -> int:
+def try_connect(value: str, connect=None) -> str | None:
+    """None when a login with `value` works, else one line saying why, with the string and its password removed from the message. Opens and closes one connection. Not pure: it connects."""
+    from psycopg.conninfo import conninfo_to_dict
+    try:
+        if connect is None:
+            import psycopg
+            connect = lambda dsn: psycopg.connect(dsn, connect_timeout=5)       # noqa: E731
+        connect(value).close()
+        return None
+    except Exception as exc:  # noqa: BLE001
+        text = str(exc).strip().splitlines()[-1] if str(exc).strip() else type(exc).__name__
+        secrets = [value, conninfo_to_dict(value).get("password") or ""]
+        for secret in secrets:
+            if secret:
+                text = text.replace(secret, "***")
+        return f"{type(exc).__name__}: {text[:200]}"
+
+
+def main(argv: list | None = None, *, vault: "ov.Vault | None" = None, console: bool | None = None, ask=getpass.getpass, environ=None, connect=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("set")
@@ -158,7 +176,7 @@ def main(argv: list | None = None, *, vault: "ov.Vault | None" = None, console: 
         s.add_argument(opt, help="with --password-only: override the default")
     sub.add_parser("remove").add_argument("name", choices=ov.VAULT_VARIABLES)
     sub.add_parser("list")
-    sub.add_parser("check")
+    sub.add_parser("check").add_argument("--connect", action="store_true", help="also log in once with each stored connection string (a wrong password is found now, not inside a deployment)")
     args = ap.parse_args(argv)
     v = vault or ov.Vault()
     if console is None:
@@ -217,6 +235,7 @@ def main(argv: list | None = None, *, vault: "ov.Vault | None" = None, console: 
             return 0
         bad = [n for n in names if _fails(v, n)]                                  # check
         malformed = []
+        unreachable = []
         for n in names:
             if n in bad:
                 print(f"  {n:36} CANNOT be decrypted by this user")
@@ -229,7 +248,12 @@ def main(argv: list | None = None, *, vault: "ov.Vault | None" = None, console: 
                     print(f"      - {hint}")
             else:
                 print(f"  {n:36} ok" + (f"  -> {dsn_summary(v.get(n))}" if "DSN" in n else ""))
-        return 1 if (bad or malformed) else 0
+                if args.connect and "DSN" in n:
+                    why = try_connect(v.get(n), connect)
+                    if why:
+                        unreachable.append(n)
+                    print(f"      login: {'OK' if not why else 'FAILED -- ' + why}")
+        return 1 if (bad or malformed or unreachable) else 0
     except ov.VaultError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
