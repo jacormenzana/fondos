@@ -38,7 +38,7 @@ Dominios categóricos, **todos con `CHECK` en BD** — nunca inventar un valor f
 - **Id:** `FND-NNNN`, acuñado por `backlog.sp_open_ticket` (la forma manual heredada con `nextval` se retiró el 2026-10-28); nunca inventado.
 - **Alta:** `shared.backlog_client.open_ticket()` (función `backlog.sp_open_ticket`): crea el ticket `OPEN` con reportero canónico, sesión en el formato de la norma,
   su primer log y su primer evento de estado en una sola llamada (`schema_name`/`object_name` = nombres físicos reales). Ya no existe forma heredada con `INSERT` en `BACKLOG` (retirada el 2026-10-28).
-- **Flujo normativo:** `OPEN` → `TODO` → `IN_PROGRESS` (↔ `BLOCKED`) → `READY_FOR_DEPLOY` → `CLOSED`; se retrocede si falla QA. Un `BLOCKED` cuyo bloqueo resulta inexistente vuelve a `TODO`
+- **Flujo normativo:** `OPEN` → `TODO` → `IN_PROGRESS` (↔ `BLOCKED`) → `READY_FOR_DEPLOY` → `CLOSED`; se retrocede si falla QA. **`TODO` es un paso opcional** (Backlog v3.1): un ticket pasa de `OPEN` a `IN_PROGRESS` sin él, y el gancho de commit lo hace solo con un `Refs:`; `TODO` sirve para marcar «planificado» y es el destino automático de un `DEFERRED` cuya fecha llegó. Un `BLOCKED` cuyo bloqueo resulta inexistente vuelve a `TODO`
   (`BLOCKED` → `TODO` es un movimiento legal de la matriz desde la decisión del propietario del 2026-10-28; antes solo salía a `IN_PROGRESS`, `DEFERRED` o `CLOSED`).
   Empezar a trabajar o comentar pasa a `IN_PROGRESS`. **Nunca sobrescribir progreso previo:** cada avance es un `INSERT` en
   `BACKLOG_LOGS`; `update_ts` lo mantiene un trigger.
@@ -674,7 +674,12 @@ Un éxito es un aviso que se cierra solo (20 s) y un recibo; no hay nada que pul
 despliegue, con el login acotado `backlog_facts` (`FONDOS_BACKLOG_PG_DSN_FACTS`, en el vault; el vigilante la lee con `vault.get` y la pone en su entorno solo durante esas llamadas): `sp_record_fact` solo
 admite `DEPLOY` y un disparador de `ops_event` rechaza cualquier otro login. Con ellos el autopiloto cierra por sí solo los tickets cuyo merge toca `db/`; sin la cadena en el vault esos tickets esperan, y el
 resultado lo dice. **Riesgo aceptado:** un DDL válido pero equivocado que las pruebas no detectan (no hay ensayo sobre una copia de producción) llega al vivo; el respaldo es el punto de restauración y `ASK` es el
-interruptor para volver atrás. `revoke` (A-2) e `iam` siguen fuera de esta vía.
+interruptor para volver atrás. `iam` sigue fuera de esta vía.
+**`revoke` (A-2) por el vigilante, desactivado por defecto** (`BACKLOG_AUTO_REVOKE_ENABLED`, FND-0363): cambia la postura de seguridad del backlog y la decisión de cuándo es del propietario. Con el interruptor en `True`, el vigilante en `AUTO`
+aplica `revoke` **solo** (con las mismas puertas: punto de restauración, deriva, reversión automática, incidente) cuando se cumplen a la vez: la etapa en sombra muestra 50 transiciones de no sistema desde la última escritura directa (la
+herramienta de migración lo rechaza antes de eso), el resto del DDL de `master` ya está desplegado (para que la comprobación de deriva juzgue solo a `revoke`) y el privilegio de escritura directa sigue vivo. Un intento fallido se registra
+(`revoke_failed`) y no se repite solo. **Resumen semanal de solo lectura** (`scripts/audit/backlog_digest.py`, lo escribe el autopiloto una vez por semana ISO en `out/backlog_digest/`): cuántas transiciones hizo una persona de las de la semana
+(la medida de la carga administrativa), reaperturas por causa, el registro del autopiloto y lo que merece una mirada; no pide nada.
 
 **Límite reconocido:** igual que §9.2, es una guarda y no una frontera: código ejecutado con el mismo usuario de Windows podría leer el vault y lanzar la migración sin pasar por la ventana. Lo que garantiza
 es que ningún flujo normal (un agente, una tubería, una fusión automática) aplica DDL sin que una persona lo haya visto y aprobado.
