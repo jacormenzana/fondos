@@ -529,6 +529,7 @@ Al cerrar o actualizar un ticket (§4.1):
 | Higiene del registro (§4.1) | `python scripts/audit/backlog_hygiene.py --premise-sweep "<rev>^..<rev>"` · `--stale-status [--days N]` |
 | Puerta de la política automática | `python scripts/audit/backlog_links_calibration.py --gate` |
 | Verificar el estado y la puerta sin tocar el vivo (§9.1) | `python scripts/ops/backlog_staging.py` · `--scenario a2_revoke` · `--synthetic` |
+| ¿El vivo tiene todo el DDL de master? (§9.1, solo lectura) | `python scripts/ops/backlog_drift.py` |
 
 Salidas en `out/reports/backlog_links/` (ignorado por git). Tests: puros (`test_backlog_links_*.py`, `test_backlog_overlap.py`,
 `test_backlog_links_calibration.py`) y herméticos PG (`python scripts/ops/run_pg_tests.py -- tests/test_backlog_links_ddl_pg.py
@@ -551,6 +552,10 @@ exportación) sigue permitido. Esto incluye las transacciones con retroceso que 
   alias de localhost iguales), **no** esté en el mismo **servidor** (host y puerto) que un objetivo vivo, y su nombre esté en una lista exacta (`fondos_test`, `backlog_staging_*`). La identificación es
   positiva: el backlog vivo se llama `gestion`, así que «el nombre no es producción» no sirve. La idea de proteger por convención sobre los títulos de los tickets queda **rechazada**: una convención se
   olvida y un error tipográfico la salta.
+- **Deriva entre master y el vivo (solo lectura):** `python scripts/ops/backlog_drift.py` aplica las fases de `migrate_backlog_v2.py` (en el orden en que las recibió el vivo; sin `iam` ni `revoke`) al contenedor
+  desechable, toma una huella (md5 de cada rutina y vista, columnas de cada relación del esquema `backlog`) y la compara con el catálogo vivo, que solo lee. Por cada diferencia nombra la fase que define el
+  objeto, es decir, el comando que el propietario debe ejecutar (primero en seco). Códigos: 0 sin deriva, 1 deriva, 2 no se pudo leer el vivo o construir master. Una fase fusionada y no aplicada (caso FND-0350)
+  no la detecta nada más en el repositorio. Conviene ejecutarlo tras cada fusión que toque `db/pg_backlog/`.
 - **Qué no sustituye:** un guion en preparación prueba la lógica; solo el uso vivo prueba la realidad operativa, por eso la aceptación de A-2 conserva su solape VIVO de tres operadores reales (FND-0354).
 
 **Huecos en la numeración (2026-10-28):** los ids `FND-0339` a `FND-0349` los consumieron dos pruebas sintéticas de la compuerta ejecutadas dentro de transacciones revertidas; la secuencia `seq_backlog_fnd` no es transaccional, así que no existen tickets, logs ni eventos de esas pruebas: no es información perdida (detalle: `doc/especificacion/LIMITACIONES_CONOCIDAS_BACKLOG_V2.md`, L7). Desde esa fecha están prohibidas las pruebas sintéticas contra el backlog en vivo: se verifican en un contenedor de preparación con una copia de producción (FND-0351).
