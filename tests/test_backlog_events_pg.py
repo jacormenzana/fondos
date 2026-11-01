@@ -342,3 +342,70 @@ def test_the_rollback_drops_the_routines_and_the_guard_and_keeps_the_history_the
     assert len(reopen_rows(db, ap)) == 1 and db.execute("SELECT count(*) FROM backlog.ops_event WHERE kind = 'DEPLOY'").fetchone()[0] == 1
     mig.migrate(db, "events")                                                                   # applying it again resumes
     assert mig.existing(db, "events")["routines"] == sorted(mig.PHASES["events"]["routines"])
+
+
+# ---------------------------------------------------------------- the autopilot's track record (Backlog v3.1 mode promotion and demotion)
+
+def note(conn, ap, action="MOVE", ref="a" * 40, text=None, mode="SHADOW"):
+    """A note written by the autopilot through its own routine, exactly as the runner writes it."""
+    from shared import backlog_autopilot as ap_mod
+    d = ap_mod.Decision(ap=ap, action=action, from_status="IN_PROGRESS", to_status="READY_FOR_DEPLOY", evidence_ref=ref)
+    # written with the clock's time: in production every note is its own transaction, here a whole test is one and now() would stand still
+    conn.execute("INSERT INTO backlog.BACKLOG_LOGS (action_point_id, username, comment, log_ts) VALUES (%s, %s, %s, clock_timestamp())", (ap, AUTO, text or ap_mod.shadow_note(d, mode)))
+
+
+def record(conn, window_days=30):
+    from shared import backlog_client as bc
+    return bc.autopilot_track_record(window_days, conn=conn)
+
+
+def autopilot_closed(conn, days_ago=0):
+    """A ticket whose LATEST closure before any reopening is the autopilot's (its closure event is added `days_ago` days back, as the autopilot's own would be)."""
+    ap = closed(conn)
+    conn.execute("INSERT INTO backlog.status_event (action_point_id, from_status, to_status, actor, reason, event_ts) VALUES (%s, 'READY_FOR_DEPLOY', 'CLOSED', %s, 'closed by the autopilot on evidence', "
+                 "clock_timestamp() - make_interval(days => %s))", (ap, AUTO, days_ago))
+    return ap
+
+
+def test_the_track_record_counts_distinct_shadow_decisions_to_act_and_never_waits(db):
+    a, b = _mk(db, "IN_PROGRESS"), _mk(db, "IN_PROGRESS")
+    note(db, a)
+    note(db, a, ref="b" * 40)                                                                    # another merge is another decision
+    note(db, b, action="WAIT")                                                                   # a wait is not a decision to act
+    note(db, b, mode="ON")                                                                       # an applied decision is not a SHADOW one
+    assert record(db) == {"mode": "SHADOW", "decisions": 2, "contradicted": 0, "reopened_closures": 0}
+
+
+def test_the_decision_count_restarts_at_every_mode_event(db):
+    a = _mk(db, "IN_PROGRESS")
+    note(db, a)
+    assert record(db)["decisions"] == 1
+    set_mode(db, "ON", OWNER)
+    assert record(db)["decisions"] == 0 and record(db)["mode"] == "ON"
+    note(db, a, ref="c" * 40)
+    assert record(db)["decisions"] == 1
+
+
+def test_a_decision_followed_by_a_reopening_of_its_ticket_is_contradicted_unless_the_reopening_is_rescinded(db):
+    a = closed(db)
+    note(db, a)
+    assert record(db)["contradicted"] == 0
+    reopen(db, a)
+    assert record(db)["contradicted"] == 1
+    rescind(db, a)
+    assert record(db)["contradicted"] == 0 and record(db)["decisions"] == 1
+
+
+def test_only_reopened_autopilot_closures_inside_the_window_count_and_a_rescinded_reopening_does_not(db):
+    by_person = closed(db)
+    reopen(db, by_person)                                                                        # a person's closure: not the autopilot's record
+    old = autopilot_closed(db, days_ago=50)
+    db.execute("INSERT INTO backlog.reopen_event (action_point_id, kind, actor, cause, reason, event_ts) VALUES (%s, 'REOPEN', %s, 'OTHER', 'reopened long ago, written by a test', "
+               "clock_timestamp() - interval '40 days')", (old, ME))
+    assert record(db)["reopened_closures"] == 0 and record(db, window_days=60)["reopened_closures"] == 1          # outside a 30-day window, inside a 60-day one
+    mine = autopilot_closed(db)
+    assert record(db)["reopened_closures"] == 0                                                  # closed, not reopened
+    reopen(db, mine)
+    assert record(db)["reopened_closures"] == 1
+    rescind(db, mine)
+    assert record(db)["reopened_closures"] == 0

@@ -16,6 +16,8 @@ DEPLOY / CYCLE facts. Anything short of a clear closure is a WAIT with its reaso
 Backlog v3.1 adds the events that had no trigger (shared/backlog_autopilot.py): a CLOSED delivery ticket that a later merge cites with code changes is REOPENED (cause INCOMPLETE_FIX), a BLOCKED
 ticket whose structured blocker is CLOSED goes back to IN_PROGRESS, a DEFERRED one whose revisit date has come goes to TODO. Each run also releases the system holds whose cause cleared
 (backlog.fn_auto_release_holds). Nothing here is an approval: the ticket moves because the fact happened.
+The mode itself follows the autopilot's track record (shared.backlog_autopilot.mode_change): SHADOW -> ON after 20 SHADOW decisions with none followed by a reopening, ON -> SHADOW when two of its
+closures are reopened within 30 days. A run lowered by --mode never changes the stored mode.
 
 Modes (the ceiling is BACKLOG_AUTOPILOT_MODE; --mode can only lower it; the DATABASE's own mode, backlog.fn_autopilot_mode(), can lower it too, and when it cannot be read the run is capped at SHADOW):
   OFF     prints only.
@@ -358,10 +360,20 @@ def main(argv: list | None = None) -> int:
     except Exception as exc:                                                 # noqa: BLE001
         print(f"FAILED: {type(exc).__name__}: {str(exc)[:300]}", file=sys.stderr)
         return RC_FAILED
+    promoted = ""
+    if events_ready and stored in ("SHADOW", "ON") and mode != "OFF" and args.mode is None:        # a run lowered by hand never changes the stored mode
+        try:
+            rec = bc.autopilot_track_record()
+            change = ap_mod.mode_change(stored, rec["decisions"], rec["contradicted"], rec["reopened_closures"])
+            if change:
+                bc.set_autopilot_mode(change[0], change[1], actor=ACTOR)
+                promoted = f"; MODE {stored} -> {change[0]} ({change[1]})"
+        except Exception as exc:                                                 # noqa: BLE001 -- the mode stays as it is; the next run looks again
+            promoted = f"; mode check failed ({type(exc).__name__}: {str(exc)[:120]})"
     stale = ap_mod.stale_in_progress({t["action_point_id"]: t["update_ts"].date() for t in bc.list_tickets(open_only=True) if t["status"] == "IN_PROGRESS" and t.get("update_ts")}, date.today())
     summary = (f"autopilot {mode}: moved {res['moved']}, closed {res['closed']}, reopened {res['reopened']}, unblocked {res['unblocked']}, undeferred {res['undeferred']}, "
                f"holds released {released}, noted {res['noted']}, already noted {res['skipped']}, refused by the database {res['refused']}; "
-               f"{len(stale)} IN_PROGRESS ticket(s) idle for 14 days or more")
+               f"{len(stale)} IN_PROGRESS ticket(s) idle for 14 days or more{promoted}")
     print(summary)
     return RC_OK
 
