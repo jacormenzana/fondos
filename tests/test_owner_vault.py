@@ -188,7 +188,8 @@ def test_set_refuses_a_connection_string_that_does_not_parse_and_says_why_withou
     assert "not a usable connection string" in err and "pw" not in err.replace("percent-encoded", "") and "just-a-password" not in err
 
 
-@pytest.mark.parametrize("value", [VALUE, "host=127.0.0.1 port=5436 dbname=fondos user=fondos_owner password=x", "postgresql://fondos_owner:p%40ss@127.0.0.1:5436/fondos"])
+@pytest.mark.parametrize("value", [VALUE, "host=127.0.0.1 port=5436 dbname=fondos user=fondos_owner password=x", "postgresql://fondos_owner:p%40ss@127.0.0.1:5436/fondos",
+                                   "postgresql://fondos_owner:abc@127.0.0.1", "host=127.0.0.1 port=5436 dbname=fondos user=fondos_owner password=p@ss/w#rd?%"])
 def test_set_accepts_both_forms_of_connection_string(vault, value):
     assert cli.main(["set", OWNER], vault=vault, console=True, ask=lambda _: value) == 0 and vault.get(OWNER) == value
 
@@ -206,3 +207,24 @@ def test_check_reports_a_stored_value_of_the_wrong_shape_and_shows_where_a_good_
     assert "backlog_human@127.0.0.1:5436/gestion" in out and "secret-pw" not in out and "not-a-real-password" not in out
     vault.set(OWNER, VALUE)
     assert cli.main(["check"], vault=vault, console=False) == 0
+
+
+@pytest.mark.parametrize("value, expect", [
+    ("postgresql://fondos_owner:abc%zz@127.0.0.1:5436/db", "'%' signs not followed by two hex digits: 1"),
+    ("postgresql://fondos_owner:ab/cd@127.0.0.1:5436/db", "a '/' or '?' appears before the '@'"),
+    ("postgresql://fondos_owner:abc@127.0.0.1:5436/db\x16", "control characters: 1"),
+    ("fondos_owner:abc@127.0.0.1:5436/db", "does not start with postgresql:// or postgres://"),
+    ("postgresql://fondos_owner:abc@127.0.0.1:5436/db extra", "whitespace characters: 1")])
+def test_the_refusal_describes_the_structure_of_the_entry_and_never_shows_any_of_it(vault, capsys, value, expect):
+    assert cli.main(["set", OWNER], vault=vault, console=True, ask=lambda _: value) == 2 and vault.names() == []
+    err = capsys.readouterr().err
+    assert expect in err and f"length {len(value)} characters" in err
+    for fragment in ("fondos_owner", "abc", "127.0.0.1", "5436", "extra"):                 # no piece of the value is echoed (the suggested form uses a placeholder user and password)
+        assert fragment not in err.replace("user=fondos_owner password=YOURPASSWORD", "").replace("host=127.0.0.1 port=5436", ""), fragment
+
+
+def test_check_shows_the_same_structure_for_a_stored_value_of_the_wrong_shape(vault, capsys):
+    vault.set(OWNER, "postgresql://fondos_owner:abc%zz@127.0.0.1:5436/db")
+    assert cli.main(["check"], vault=vault, console=False) == 1
+    out = capsys.readouterr().out
+    assert "WRONG SHAPE" in out and "'%' signs not followed by two hex digits: 1" in out and "abc" not in out
