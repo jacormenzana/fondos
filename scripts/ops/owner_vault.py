@@ -4,6 +4,8 @@
 owner_vault.py -- one-time setup of the owner vault (shared/owner_vault.py). Run it in YOUR terminal, once per string; after that the owner tools find their strings by themselves.
 
     python scripts/ops/owner_vault.py set FONDOS_PG_DSN_OWNER      # asks for the value with hidden input (a real console is required); stores it encrypted (Windows DPAPI)
+    python scripts/ops/owner_vault.py set FONDOS_PG_DSN_OWNER --password-only   # types ONLY the password: role, database, host and port are filled in
+    python scripts/ops/owner_vault.py set FONDOS_PG_DSN_OWNER --window          # the value (or the password) in a small window whose field accepts a PASTE
     python scripts/ops/owner_vault.py list                         # the NAMES stored (never a value) and which tools receive each
     python scripts/ops/owner_vault.py check                        # every stored value decrypts for this user (never prints one)
     python scripts/ops/owner_vault.py remove FONDOS_PG_DSN_OWNER
@@ -34,7 +36,8 @@ def dsn_problem(name: str, value: str):
     stored without complaint and surface later, inside a migration, as `missing "=" after ...`. Pure."""
     if "DSN" not in name:
         return None
-    if value[:1] in ('"', "'") or value[-1:] in ('"', "'"):
+    uri = value.lower().startswith(("postgresql://", "postgres://"))
+    if value[:1] in ('"', "'") or (uri and value[-1:] in ('"', "'")):         # a key=value string may end in a quote (the driver quotes a value), but never starts with one
         return "it is wrapped in quotes: store the bare value, without quotes"
     if any(ord(c) < 32 or ord(c) == 127 for c in value):
         return "it contains a control character (a paste with Ctrl+V can insert one in the hidden prompt: paste with a right-click, or type the value)"
@@ -100,11 +103,60 @@ def dsn_summary(value: str) -> str:
     return f"{d.get('user')}@{d.get('host') or d.get('hostaddr')}:{d.get('port') or '5432'}/{d.get('dbname') or d.get('user')}" + ("" if d.get("password") else "  (NO password in it)")
 
 
-def main(argv: list | None = None, *, vault: "ov.Vault | None" = None, console: bool | None = None, ask=getpass.getpass) -> int:
+# (role, database) behind each connection string of the vault: with these only the PASSWORD is unknown, so `set NAME --password-only` asks for nothing else. The backlog roles live in `gestion`; the owner
+# role's string points at `fondos` (the backlog tools swap the database themselves). Host and port come from the strings already in .env (the same server).
+ROLE_DEFAULTS = {
+    "FONDOS_PG_DSN_OWNER": ("fondos_owner", "fondos"),
+    "FONDOS_BACKLOG_PG_DSN_HUMAN": ("backlog_human", "gestion"),
+    "FONDOS_BACKLOG_PG_DSN_ADJUDICATOR": ("backlog_adjudicator", "gestion"),
+    "FONDOS_BACKLOG_PG_DSN_FACTS": ("backlog_facts", "gestion"),
+}
+DEFAULT_HOST, DEFAULT_PORT = "127.0.0.1", "5436"
+
+
+def build_dsn(name: str, password: str, *, user: str | None = None, host: str | None = None, port: str | None = None, dbname: str | None = None, environ=None) -> str:
+    """The key=value connection string of `name` from a password and the facts that are not secret: the role and database (ROLE_DEFAULTS, or the options), the host and port of the strings already in
+    the environment (FONDOS_BACKLOG_PG_DSN, then FONDOS_PG_DSN), else the live server. The driver quotes whatever the password contains. Raises ValueError for a name with no known role. Pure."""
+    import os
+    from psycopg.conninfo import conninfo_to_dict, make_conninfo
+    if name not in ROLE_DEFAULTS and not (user and dbname):
+        raise ValueError(f"{name} has no default role: give --user and --dbname")
+    role, db = ROLE_DEFAULTS.get(name, (None, None))
+    env = os.environ if environ is None else environ
+    known = {}
+    for var in ("FONDOS_BACKLOG_PG_DSN", "FONDOS_PG_DSN"):
+        try:
+            if env.get(var):
+                known = conninfo_to_dict(env[var])
+                break
+        except Exception:  # noqa: BLE001 -- an unreadable string in the environment is not a source of host and port
+            continue
+    return make_conninfo(host=host or known.get("host") or DEFAULT_HOST, port=port or known.get("port") or DEFAULT_PORT, dbname=dbname or db, user=user or role, password=password)
+
+
+def ask_window(prompt: str) -> str:
+    """The same question in a small window whose field accepts a PASTE (the hidden console prompt does not), masked with asterisks."""
+    import tkinter as tk
+    from tkinter import simpledialog
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+    try:
+        return simpledialog.askstring("Fondos owner vault", prompt, show="*", parent=root) or ""
+    finally:
+        root.destroy()
+
+
+def main(argv: list | None = None, *, vault: "ov.Vault | None" = None, console: bool | None = None, ask=getpass.getpass, environ=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for cmd in ("set", "remove"):
-        sub.add_parser(cmd).add_argument("name", choices=ov.VAULT_VARIABLES)
+    s = sub.add_parser("set")
+    s.add_argument("name", choices=ov.VAULT_VARIABLES)
+    s.add_argument("--window", action="store_true", help="ask in a small window whose field accepts a paste (the hidden console prompt does not)")
+    s.add_argument("--password-only", action="store_true", help="a connection string: ask ONLY for the password; role, database, host and port are filled in (see ROLE_DEFAULTS)")
+    for opt in ("--user", "--host", "--port", "--dbname"):
+        s.add_argument(opt, help="with --password-only: override the default")
+    sub.add_parser("remove").add_argument("name", choices=ov.VAULT_VARIABLES)
     sub.add_parser("list")
     sub.add_parser("check")
     args = ap.parse_args(argv)
@@ -117,11 +169,32 @@ def main(argv: list | None = None, *, vault: "ov.Vault | None" = None, console: 
             if not console:
                 print("REFUSED: the vault is filled only by a person at a real console (hidden input). Nothing was stored.", file=sys.stderr)
                 return 2
-            value = ask(f"value of {args.name} (hidden): ").strip()
-            again = ask("again (hidden): ").strip()
-            if not value or value != again:
-                print("REFUSED: the two entries are empty or differ. Nothing was stored.", file=sys.stderr)
-                return 2
+            reader = ask_window if args.window else ask
+            if args.password_only:
+                if "DSN" not in args.name:
+                    print(f"REFUSED: --password-only is for connection strings; {args.name} is a token. Nothing was stored.", file=sys.stderr)
+                    return 2
+                password = reader(f"password of the role behind {args.name} (hidden): ").rstrip("\r\n")
+                again = reader("again (hidden): ").rstrip("\r\n")
+                if not password or password != again:
+                    print("REFUSED: the two entries are empty or differ. Nothing was stored.", file=sys.stderr)
+                    return 2
+                if environ is None:
+                    try:
+                        import shared.config  # noqa: F401 -- loads the repo .env, where the host and port of the live server already are
+                    except Exception:  # noqa: BLE001
+                        pass
+                try:
+                    value = build_dsn(args.name, password, user=args.user, host=args.host, port=args.port, dbname=args.dbname, environ=environ)
+                except ValueError as exc:
+                    print(f"REFUSED: {exc}. Nothing was stored.", file=sys.stderr)
+                    return 2
+            else:
+                value = reader(f"value of {args.name} (hidden): ").strip()
+                again = reader("again (hidden): ").strip()
+                if not value or value != again:
+                    print("REFUSED: the two entries are empty or differ. Nothing was stored.", file=sys.stderr)
+                    return 2
             problem = dsn_problem(args.name, value)
             if problem:
                 print(f"REFUSED: {args.name} is not a usable connection string: {problem}. Nothing was stored.", file=sys.stderr)
@@ -132,7 +205,7 @@ def main(argv: list | None = None, *, vault: "ov.Vault | None" = None, console: 
                     print("Easiest form that needs no encoding of the password: host=127.0.0.1 port=5436 dbname=fondos user=fondos_owner password=YOURPASSWORD", file=sys.stderr)
                 return 2
             v.set(args.name, value)
-            print(f"{args.name} stored for this Windows user. Tools that receive it: {', '.join(tools_for(args.name)) or '(none)'}")
+            print(f"{args.name} stored for this Windows user" + (f", pointing at {dsn_summary(value)}" if "DSN" in args.name else "") + f". Tools that receive it: {', '.join(tools_for(args.name)) or '(none)'}")
             return 0
         if args.cmd == "remove":
             print(f"{args.name}: {'removed' if v.remove(args.name) else 'was not stored'}")
