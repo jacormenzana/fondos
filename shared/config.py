@@ -836,9 +836,10 @@ BACKLOG_AUTOPILOT_MODE: str = "ON"
 # to the approval window for that version). "ASK" = the approval window for every version (the previous behaviour). An unknown value is read as ASK. Rollback of this decision = set it to "ASK".
 BACKLOG_AUTO_DEPLOY_MODE: str = "AUTO"
 # Backlog v3.1 (FND-0363): whether the deploy watcher in AUTO mode also applies step A-2 (`revoke`: removes the direct INSERT/UPDATE privileges of backlog_writer) by itself. OFF by default because it
-# changes the security posture of the backlog and the owner decides when: set it to True to let the watcher apply it, with the usual restore point, drift check, rollback and incident, as soon as the
-# shadow stage shows 50 non-system transitions since the last direct write (the migrate tool refuses it before that) and nothing else is pending. A failed attempt switches itself off in the watcher's state.
-BACKLOG_AUTO_REVOKE_ENABLED: bool = False
+# changes the security posture of the backlog. ON by the owner's decision of 2026-11-01 (FND-0363): the watcher applies it, with the usual restore point, drift check, rollback and incident, as soon as the
+# shadow stage shows 50 non-system transitions since the last direct write (the migrate tool refuses it before that) and nothing else is pending. A failed attempt latches itself off in the watcher's state
+# (`revoke_failed`). Rollback of this decision = set it back to False (after the revoke is applied, `migrate_backlog_v2.py --phase revoke --down --apply` gives the privileges back).
+BACKLOG_AUTO_REVOKE_ENABLED: bool = True
 # Backlog v2 Phase C slice 2 (FND-0334; PROPUESTA_BACKLOG_V2.md 6.4.1 / 6.4.6): the instant from which scripts/audit/backlog_sync.py judges a commit that cites a ticket
 # by its `Backlog-Gate:` trailer (an ISO timestamp WITH offset, e.g. "2026-11-02T09:00:00+01:00"). "" = the gate is NOT ARMED: the sync reports the trailers it sees and
 # records no bypass, raises no hold. The owner arms it once the commit-msg hook is installed (bash scripts/audit/commit-msg.sh) and hook_bypass exists (migrate --phase hook);

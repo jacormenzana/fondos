@@ -6,6 +6,7 @@ owner_deploy.py -- applies the pending backlog DDL on the owner's CLICK, with no
     python scripts/ops/owner_deploy.py check              # is any DDL phase of master not live? prints the phases; exit 0 none, 1 pending
     python scripts/ops/owner_deploy.py init               # once: verify that the live backlog matches master NOW (the drift tool) and remember that commit
     python scripts/ops/owner_deploy.py watch              # the watcher: every N minutes fetch origin; when master brings DDL, show a window and ask
+    python scripts/ops/owner_deploy.py facts --from <sha>  # record the DEPLOY facts of a deployment that already happened (default --to: the commit remembered as deployed)
     python scripts/ops/owner_deploy.py install-startup    # run the watcher at your Windows logon (a .cmd in your Startup folder, no admin rights)
     python scripts/ops/owner_deploy.py remove-startup
 
@@ -24,8 +25,8 @@ phase failure or on drift, the phases applied in this run are rolled back (`--do
 asks for that version from then on. A success is a self-closing notice and a receipt. The DEPLOY fact (what lets the autopilot close tickets whose merge changed db/**) is recorded for the tickets
 of the DDL commits through the scoped login backlog_facts (FONDOS_BACKLOG_PG_DSN_FACTS, owner vault). A change that the tests cannot see (a valid but wrong additive DDL) is NOT caught here: that
 is the accepted risk of AUTO, and `ASK` is the switch back.
-Step A-2 (`revoke`, which removes the direct write privileges of backlog_writer) is NOT part of the pending phases above. With BACKLOG_AUTO_REVOKE_ENABLED = True (off by default: it is the owner's
-decision) the watcher also applies it, alone, through the same gates, once the shadow stage shows 50 non-system transitions since the last direct write, nothing else is pending and the privilege
+Step A-2 (`revoke`, which removes the direct write privileges of backlog_writer) is NOT part of the pending phases above. With BACKLOG_AUTO_REVOKE_ENABLED = True (on since the owner's
+decision of 2026-11-01; False turns it off) the watcher also applies it, alone, through the same gates, once the shadow stage shows 50 non-system transitions since the last direct write, nothing else is pending and the privilege
 is still live; a failed attempt is reported as an incident and never repeated by itself (`revoke_failed` in the state).
 Honest limit: a guard, not a security boundary (NORMAS_BACKLOG 9.2 and 9.3): code running as your Windows user could read the vault and run the migration without this tool.
 Exit codes: 0 ok / nothing pending, 1 pending (check) or drift remains (init), 2 an apply failed, 3 usage or environment error.
@@ -641,6 +642,9 @@ def main(argv: list | None = None) -> int:
     w.add_argument("--console", action="store_true", help="ask in this console instead of a window")
     sub.add_parser("install-startup")
     sub.add_parser("remove-startup")
+    fa = sub.add_parser("facts", help="record the DEPLOY facts of a deployment that already happened (the first automatic one had no previous commit to list tickets from)")
+    fa.add_argument("--from", dest="from_ref", required=True, help="the commit that was live BEFORE that deployment")
+    fa.add_argument("--to", dest="to_ref", help="the commit that was deployed (default: the one the watcher remembers as deployed)")
     args = ap.parse_args(argv)
     sf = state_path()
 
@@ -667,6 +671,20 @@ def main(argv: list | None = None) -> int:
         print(f"error: {type(exc).__name__}: {str(exc)[:200]}", file=sys.stderr)
         return RC_USAGE
 
+    if args.cmd == "facts":
+        from shared import config as cfg  # noqa: F401 -- loads .env
+        from shared import backlog_client as bc
+        try:
+            to_ref = args.to_ref or read_state(sf).get("deployed_ref")
+            if not to_ref:
+                print("no deployed commit remembered: pass --to", file=sys.stderr)
+                return RC_USAGE
+            line = record_facts(git_head(to_ref), git_head(args.from_ref), [], vault=ov.Vault(), ddl_log=git_ddl_log, record=bc.record_deploy_fact)
+        except Exception as exc:                                               # noqa: BLE001
+            print(f"error: {type(exc).__name__}: {str(exc)[:200]}", file=sys.stderr)
+            return RC_USAGE
+        print(line)
+        return RC_FAILED if "FAILED" in line or "NOT recorded" in line else RC_OK
     if args.cmd == "init":
         rc, text = verify_now(head)
         print(text)
