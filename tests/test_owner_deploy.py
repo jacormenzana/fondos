@@ -564,3 +564,96 @@ def test_the_facts_command_fails_loudly_without_a_deployed_commit_or_a_vault_str
 def test_the_a2_switch_is_on_by_the_owners_decision_of_2026_11_01():
     from shared import config
     assert config.BACKLOG_AUTO_REVOKE_ENABLED is True
+
+
+# -- the watcher reads the phase list from MASTER on every pass, and starts itself again when its own code changes (the first `modules` deployment was invisible to a watcher started before it)
+
+def _read(rel):
+    return (_ROOT / rel).read_text(encoding="utf-8")
+
+
+def test_the_registry_read_from_the_source_text_is_exactly_the_imported_one():
+    import backlog_drift as bd
+    import migrate_backlog_v2 as mig
+    phases, order = od.registry_from_sources(_read("scripts/ops/migrate_backlog_v2.py"), _read("scripts/ops/backlog_drift.py"))
+    assert phases == mig.PHASES and order == tuple(bd.PHASES_IN_ORDER)
+    for ph, entry in phases.items():                                                   # the file rule is the migrate tool's own
+        for key in ("up", "down"):
+            assert od._blocks_of(entry[key]) == mig._blocks(mig.PHASES[ph][key]), (ph, key)
+
+
+def test_the_literal_reader_takes_plain_and_annotated_assignments_and_refuses_anything_else():
+    assert od._literal("X = (1, 2)\n", "X") == (1, 2) and od._literal("X: dict = {'a': ('f.sql', 'b')}\n", "X") == {"a": ("f.sql", "b")}
+    for bad in ("Y = 1\n", "X = some_call()\n", "X: int\n"):
+        with pytest.raises(ValueError):
+            od._literal(bad, "X")
+
+
+def test_a_phase_that_only_master_knows_is_pending_from_its_files_and_in_master_order():
+    reg = ({"old": {"up": ("10_old.sql", "b1")}, "new": {"up": [("20_new.sql", "b2"), ("21_more.sql", "b3")]}}, ("old", "new"))
+    assert od.pending_phases(["db/pg_backlog/21_more.sql"], reg) == ["new"] and od.pending_phases(["db/pg_backlog/10_old.sql", "db/pg_backlog/20_new.sql"], reg) == ["old", "new"]
+    assert od.pending_phases(["doc/x.md", "db/pg_backlog/down/20_new_down.sql"], reg) == []
+    assert od.phases_from_drift_output("-> --phase new\n-> --phase old\n-> --phase ghost", ("old", "new")) == ["old", "new"]
+
+
+def test_a_watcher_started_before_a_phase_existed_still_sees_it_because_it_reads_master(tmp_path, monkeypatch):
+    import backlog_drift as bd
+    monkeypatch.setattr(bd, "PHASES_IN_ORDER", tuple(p for p in bd.PHASES_IN_ORDER if p != "modules"))        # what the running process had imported
+    state = tmp_path / "s.json"
+    od.write_state(state, {"deployed_ref": OLD})
+    seen = []
+    master = od.registry_from_sources(_read("scripts/ops/migrate_backlog_v2.py"), _read("scripts/ops/backlog_drift.py"))
+
+    def once(registry):
+        return od.watch_once(state_file=state, fetch=lambda: None, head_fn=lambda: HEAD, changed=lambda a, b: ["db/pg_backlog/99_modules.sql"], commits=lambda a, b: [], diff=lambda a, b: "",
+                             drift=lambda h: (0, ""), ask=lambda t: "later", apply=lambda h, p: pytest.fail("no click"), notify=lambda o: None, mode="AUTO", registry=registry,
+                             apply_auto=lambda h, p, d: seen.append(list(p)) or od.Outcome(True, "applied", list(p), "", auto=True))
+
+    assert once(None) == "none" and seen == []                                                  # the old behaviour: blind
+    assert once(lambda head: master) == "applied" and seen == [["modules"]]                     # reading master's own sources: the phase is deployed
+
+
+def test_unreadable_sources_fall_back_to_the_imported_phase_list_instead_of_breaking_the_pass(tmp_path):
+    state = tmp_path / "s.json"
+    od.write_state(state, {"deployed_ref": OLD})
+
+    def boom(head):
+        raise RuntimeError("git show failed")
+
+    res = od.watch_once(state_file=state, fetch=lambda: None, head_fn=lambda: HEAD, changed=lambda a, b: ["db/pg_backlog/97_autonomy.sql"], commits=lambda a, b: [], diff=lambda a, b: "",
+                        drift=lambda h: (0, ""), ask=lambda t: "later", apply=lambda h, p: None, notify=lambda o: None, mode="ASK", registry=boom)
+    assert res == "later"                                                                       # it still found the autonomy phase and asked
+
+
+def test_the_code_fingerprint_changes_with_any_watched_file_and_every_watched_file_exists(tmp_path):
+    files = ("a.py", "b.py")
+    (tmp_path / "a.py").write_text("one", encoding="utf-8")
+    (tmp_path / "b.py").write_text("two", encoding="utf-8")
+    first = od.code_fingerprint(tmp_path, files)
+    assert od.code_fingerprint(tmp_path, files) == first
+    (tmp_path / "b.py").write_text("two changed", encoding="utf-8")
+    assert od.code_fingerprint(tmp_path, files) != first
+    (tmp_path / "b.py").unlink()
+    assert od.code_fingerprint(tmp_path, files) not in (first,) and od.code_fingerprint(tmp_path, files + ("missing.py",)) != od.code_fingerprint(tmp_path, files)
+    assert all((_ROOT / f).is_file() for f in od.WATCH_CODE), [f for f in od.WATCH_CODE if not (_ROOT / f).is_file()]
+    assert {"scripts/ops/owner_deploy.py", "scripts/ops/migrate_backlog_v2.py", "scripts/ops/backlog_drift.py", "shared/config.py"} <= set(od.WATCH_CODE)
+
+
+def test_reloading_releases_the_lock_then_starts_the_same_command_again_and_keeps_going_if_it_cannot(tmp_path):
+    lock = tmp_path / "w.lock"
+    lock.write_text("123", encoding="utf-8")
+    calls = []
+    assert od.reload_self(lock, execv=lambda exe, argv: calls.append((exe, argv)), python="py.exe", argv=["owner_deploy.py", "watch"]) is True
+    assert calls == [("py.exe", ["py.exe", "owner_deploy.py", "watch"])] and not lock.exists()           # free for the new process
+
+    def refuse(exe, argv):
+        raise OSError("cannot start")
+
+    assert od.reload_self(lock, execv=refuse, python="py.exe", argv=["x"]) is False and lock.read_text(encoding="utf-8").strip() == str(os.getpid())
+
+
+def test_the_loop_reads_master_and_reloads_only_when_its_code_changed_and_not_on_a_single_pass():
+    src = (_ROOT / "scripts" / "ops" / "owner_deploy.py").read_text(encoding="utf-8")
+    assert "registry=git_registry" in src and "git_registry(head)" in src
+    loop = src.split("started_with = code_fingerprint()")[1]
+    assert "if not args.once and code_fingerprint() != started_with:" in loop and "reload_self(lock)" in loop

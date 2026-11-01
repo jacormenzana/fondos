@@ -34,6 +34,8 @@ Exit codes: 0 ok / nothing pending, 1 pending (check) or drift remains (init), 2
 from __future__ import annotations
 
 import argparse
+import ast
+import hashlib
 import json
 import os
 import re
@@ -70,21 +72,63 @@ _NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
 # ── pure ────────────────────────────────────────────────────────────────────────
 
-def files_by_phase() -> dict:
-    """{phase: {repo path of each DDL file}} for the phases the drift tool compares (the ones a click may apply). Pure."""
-    return {ph: {DDL_DIR + f for f, _ in mig._blocks(mig.PHASES[ph]["up"])} for ph in bd.PHASES_IN_ORDER}
+def _literal(source: str, name: str):
+    """The value of the module-level assignment `name = <literal>` (or `name: type = <literal>`) in `source`, read from the syntax tree: nothing is imported or executed. Pure."""
+    for node in ast.parse(source).body:
+        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == name for t in node.targets):
+            return ast.literal_eval(node.value)
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.target.id == name and node.value is not None:
+            return ast.literal_eval(node.value)
+    raise ValueError(f"{name} is not assigned a literal in the source")
 
 
-def pending_phases(changed_files: list) -> list:
+def registry_from_sources(migrate_source: str, drift_source: str) -> tuple:
+    """(PHASES, PHASES_IN_ORDER) as written in the sources of scripts/ops/migrate_backlog_v2.py and scripts/ops/backlog_drift.py. The watcher reads them from MASTER on every pass: the copies it
+    imported when it started go stale the moment a phase is added (the first `modules` deployment was invisible to it for exactly that reason). Pure."""
+    return _literal(migrate_source, "PHASES"), tuple(_literal(drift_source, "PHASES_IN_ORDER"))
+
+
+def _blocks_of(entry) -> list:
+    """A phase entry is one (file, block) pair or a list of them; always a list (the rule of migrate_backlog_v2._blocks). Pure."""
+    return [entry] if isinstance(entry[0], str) else list(entry)
+
+
+def files_by_phase(registry: Optional[tuple] = None) -> dict:
+    """{phase: {repo path of each DDL file}} for the phases the drift tool compares (the ones a click may apply), from `registry` (PHASES, PHASES_IN_ORDER; default: the imported ones). Pure."""
+    phases, order = registry or (mig.PHASES, bd.PHASES_IN_ORDER)
+    return {ph: {DDL_DIR + f for f, _ in _blocks_of(phases[ph]["up"])} for ph in order}
+
+
+def pending_phases(changed_files: list, registry: Optional[tuple] = None) -> list:
     """The phases (in application order) whose DDL files are among `changed_files`. A change to the migration tool alone is not DDL. Pure."""
     changed = set(changed_files)
-    return [ph for ph in bd.PHASES_IN_ORDER if files_by_phase()[ph] & changed]
+    order = (registry or (None, bd.PHASES_IN_ORDER))[1]
+    by_phase = files_by_phase(registry)
+    return [ph for ph in order if by_phase[ph] & changed]
 
 
-def phases_from_drift_output(text: str) -> list:
+def phases_from_drift_output(text: str, order: Optional[tuple] = None) -> list:
     """The phases the drift tool tells the owner to re-apply (`--phase X`), in application order, without duplicates. Pure."""
     found = set(_PHASE_IN_DRIFT.findall(text or ""))
-    return [ph for ph in bd.PHASES_IN_ORDER if ph in found]
+    return [ph for ph in (order or bd.PHASES_IN_ORDER) if ph in found]
+
+
+# What the running watcher imported: when any of these changes on disk it starts itself again (reload_self), so a changed rule or switch never waits for a person to restart it.
+WATCH_CODE = ("scripts/ops/owner_deploy.py", "scripts/ops/migrate_backlog_v2.py", "scripts/ops/migrate_backlog_links.py", "scripts/ops/backlog_drift.py", "shared/config.py",
+              "shared/owner_vault.py", "shared/backlog_client.py", "shared/backlog_gate.py")
+
+
+def code_fingerprint(root: Optional[Path] = None, files: tuple = WATCH_CODE, read: Callable = lambda p: p.read_bytes()) -> str:
+    """A hash of the files the watcher runs on (a missing file counts as missing, not as an error). Pure apart from reading them."""
+    base = Path(root) if root else ROOT
+    h = hashlib.sha256()
+    for rel in files:
+        h.update(rel.encode("utf-8"))
+        try:
+            h.update(read(base / rel))
+        except OSError:
+            h.update(b"<missing>")
+    return h.hexdigest()
 
 
 def state_path(environ: Optional[dict] = None) -> Path:
@@ -203,6 +247,11 @@ def git_changed(a: str, b: str) -> list:
 def git_commits(a: str, b: str) -> list:
     out = _git("log", f"{a}..{b}", "--format=%H%x1f%s%x1f%an", "--", "db/pg_backlog")
     return [tuple(line.split("\x1f")) for line in out.splitlines() if line.count("\x1f") == 2]
+
+
+def git_registry(head: str) -> tuple:
+    """(PHASES, PHASES_IN_ORDER) as written in `head`'s own migrate and drift tools (git show + syntax tree: nothing of `head` is imported or run)."""
+    return registry_from_sources(_git("show", f"{head}:scripts/ops/migrate_backlog_v2.py"), _git("show", f"{head}:scripts/ops/backlog_drift.py"))
 
 
 def git_diff(a: str, b: str) -> str:
@@ -442,28 +491,33 @@ def revoke_pass(*, state_file: Path, enabled: bool, head_fn: Callable, progress_
 
 # ── the watcher ───────────────────────────────────────────────────────────────
 
-def decide_pending(state: dict, head: str, *, changed: Callable, drift: Callable) -> tuple:
-    """(pending phases, drift text, deployed ref). With a remembered deployed commit the phases are the DDL files that changed since it; without one the drift tool is the judge (read-only)."""
+def decide_pending(state: dict, head: str, *, changed: Callable, drift: Callable, registry: Optional[tuple] = None) -> tuple:
+    """(pending phases, drift text, deployed ref). With a remembered deployed commit the phases are the DDL files that changed since it; without one the drift tool is the judge (read-only).
+    `registry` = (PHASES, PHASES_IN_ORDER) of `head` itself (see registry_from_sources)."""
     deployed = state.get("deployed_ref")
     if deployed:
-        return pending_phases(changed(deployed, head)), "", deployed
+        return pending_phases(changed(deployed, head), registry), "", deployed
     rc, text = drift(head)
     if rc == 0:
         return [], "", None                                                    # live matches master: the caller remembers `head`
-    return phases_from_drift_output(text), text, None
+    return phases_from_drift_output(text, registry[1] if registry else None), text, None
 
 
 def watch_once(*, state_file: Path, fetch: Callable, head_fn: Callable, changed: Callable, commits: Callable, diff: Callable, drift: Callable, ask: Callable,
                apply: Callable, notify: Callable, now: Callable = lambda: datetime.now(timezone.utc), mode: str = "ASK", apply_auto: Optional[Callable] = None,
-               report: Optional[Callable] = None) -> str:
-    """One pass of the watcher. Returns what happened: none | wait | later | ignored | applied | failed | error. `ask(text)` must return 'apply' | 'later' | 'ignore' from a PERSON.
+               report: Optional[Callable] = None, registry: Optional[Callable] = None) -> str:
+    """One pass of the watcher. `registry(head)` -> (PHASES, PHASES_IN_ORDER) as written in master's own sources; when it fails the imported ones are used. Returns what happened: none | wait | later | ignored | applied | failed | error. `ask(text)` must return 'apply' | 'later' | 'ignore' from a PERSON.
     mode AUTO (with `apply_auto(head, pending, deployed)` -> Outcome): a pending version is applied with no window; a failure is reported (`report`, an incident), remembered in the state
     (`auto_failed`) and the version is offered in the window from then on; an Outcome with fallback=True (no restore point, no vault string) applied nothing and goes straight to the window."""
     try:
         fetch()
         head = head_fn()
         state = read_state(state_file)
-        pending, drift_text, deployed = decide_pending(state, head, changed=changed, drift=drift)
+        try:
+            reg = registry(head) if registry else None
+        except Exception:                                                      # noqa: BLE001 -- unreadable sources: fall back to the phase list this process imported
+            reg = None
+        pending, drift_text, deployed = decide_pending(state, head, changed=changed, drift=drift, registry=reg)
         if not deployed and not pending:
             state.update(deployed_ref=head)
             write_state(state_file, state)
@@ -614,6 +668,22 @@ def _pid_alive(pid: int) -> bool:
         return False
 
 
+def reload_self(lock: Path, *, execv: Callable = os.execv, python: Optional[str] = None, argv: Optional[list] = None) -> bool:
+    """Start this watcher again with the same command line and stop this process: the lock is released first so the new one can take it. Returns False (and takes the lock back) when the new
+    process could not be started; on success the old process does not come back. Not pure: it replaces the process."""
+    exe = python or sys.executable
+    try:
+        Path(lock).unlink(missing_ok=True)
+    except OSError:
+        pass
+    try:
+        execv(exe, [exe, *(argv if argv is not None else sys.argv)])
+    except OSError:
+        acquire_lock(Path(lock))
+        return False
+    return True
+
+
 def acquire_lock(path: Path, pid: Optional[int] = None, alive: Callable = _pid_alive) -> bool:
     """True when this process now holds the watcher lock; False when another live watcher does. A lock of a dead process is taken over."""
     path = Path(path)
@@ -701,7 +771,7 @@ def main(argv: list | None = None) -> int:
         if not st.get("deployed_ref"):
             print("no deployed commit remembered yet: run `python scripts/ops/owner_deploy.py init` once.")
             return RC_USAGE
-        pend = pending_phases(git_changed(st["deployed_ref"], head))
+        pend = pending_phases(git_changed(st["deployed_ref"], head), git_registry(head))
         print(f"deployed {st['deployed_ref'][:10]}, master {head[:10]}: " + (f"PENDING phases: {', '.join(pend)}" if pend else "nothing pending"))
         return RC_PENDING if pend else RC_OK
 
@@ -737,10 +807,15 @@ def main(argv: list | None = None) -> int:
     def do_apply_revoke(h: str, pend: list) -> Outcome:
         return apply_pending(h, pend, vault=vault, state_file=sf, auto=True, remember=False)
 
+    started_with = code_fingerprint()
     print(f"owner_deploy watcher: mode {mode}" + ("; A-2 revoke will be applied by itself when its gate holds" if revoke_enabled else ""))
     while True:
+        if not args.once and code_fingerprint() != started_with:               # its own code or switches changed on disk: start again with them, nobody has to restart it
+            print("owner_deploy watcher: its code changed on disk, starting again")
+            if reload_self(lock):
+                return RC_OK
         res = watch_once(state_file=sf, fetch=git_fetch, head_fn=git_head, changed=git_changed, commits=git_commits, diff=git_diff, drift=lambda h: verify_now(h),
-                         ask=ask, apply=do_apply, notify=notify, mode=mode, apply_auto=do_apply_auto, report=bc.report_incident)
+                         ask=ask, apply=do_apply, notify=notify, mode=mode, apply_auto=do_apply_auto, report=bc.report_incident, registry=git_registry)
         if revoke_enabled and res in ("none", "applied"):
             rres = revoke_pass(state_file=sf, enabled=True, head_fn=git_head, progress_fn=bc.shadow_progress, privilege_fn=bc.raw_update_privilege_live, apply=do_apply_revoke, notify=notify,
                                report=bc.report_incident)
