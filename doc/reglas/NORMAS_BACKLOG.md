@@ -559,3 +559,25 @@ exportación) sigue permitido. Esto incluye las transacciones con retroceso que 
 - **Qué no sustituye:** un guion en preparación prueba la lógica; solo el uso vivo prueba la realidad operativa, por eso la aceptación de A-2 conserva su solape VIVO de tres operadores reales (FND-0354).
 
 **Huecos en la numeración (2026-10-28):** los ids `FND-0339` a `FND-0349` los consumieron dos pruebas sintéticas de la compuerta ejecutadas dentro de transacciones revertidas; la secuencia `seq_backlog_fnd` no es transaccional, así que no existen tickets, logs ni eventos de esas pruebas: no es información perdida (detalle: `doc/especificacion/LIMITACIONES_CONOCIDAS_BACKLOG_V2.md`, L7). Desde esa fecha están prohibidas las pruebas sintéticas contra el backlog en vivo: se verifican en un contenedor de preparación con una copia de producción (FND-0351).
+
+### §9.2. El vault del propietario: cadenas solo del propietario, sin escribirlas ni borrarlas (2026-11-01)
+
+**Problema.** Las cadenas que dan DDL o escritura con el rol del propietario (`FONDOS_PG_DSN_OWNER`, `FONDOS_BACKLOG_PG_DSN_HUMAN`, `FONDOS_BACKLOG_PG_DSN_ADJUDICATOR`, `GITHUB_ADMIN_TOKEN`,
+`BACKLOG_GATE_GITHUB_TOKEN`) no pueden estar en `.env`: lo carga cada sesión de agente (orden del propietario, 2026-10-29). Escribirlas y borrarlas en cada terminal es ineficiente (decisión del
+propietario, 2026-11-01: «debe ser transparente y automático»).
+
+**Solución.** `shared/owner_vault.py` y `scripts/ops/owner_vault.py`:
+- **Alta, una sola vez por cadena:** `python scripts/ops/owner_vault.py set FONDOS_PG_DSN_OWNER` (entrada oculta, dos veces; exige una consola real). Se guarda cifrada con DPAPI de Windows para el usuario
+  actual en `%LOCALAPPDATA%\fondos\owner_vault.json`, **fuera del repositorio**. `list` muestra solo nombres, `check` comprueba que cada valor se descifra, `remove` borra una.
+- **Uso, sin ningún paso del operador:** una herramienta del propietario (la lista `OWNER_TOOLS`: las migraciones, `close_release.py`, `backlog_v3_bootstrap.py`, `gate_adjudicate.py`, `gate_mode.py`,
+  `github_protect_master.py`, el estado de ciclo de los lanzadores...) recibe **solo sus variables**, en **su propio proceso**, cuando una persona la ejecuta en una **consola real** (la misma
+  definición que la guarda de escritura en vivo). Al terminar el proceso desaparecen: no hay nada que borrar. Escribe en stderr los NOMBRES inyectados, nunca un valor.
+- **Sin consola** (la herramienta de shell de un agente, un script, una tubería, una tarea programada) no se inyecta nada y la herramienta dice que la variable no está definida. Bajo pytest nunca.
+- **Completitud:** `tests/test_owner_vault.py` falla si un script de `scripts/` lee una variable del vault y no figura en `OWNER_TOOLS`. Las cadenas `FONDOS_BACKLOG_PG_DSN_AGENT` y `_AUTOPILOT` son de
+  alcance limitado, **sí** van en `.env` y no son del vault.
+- **El preflight avisa** (`CAUTION`, solo los nombres) si el `.env` contiene alguna variable del vault: así se detecta una cadena que se ha colado en el fichero que cargan los agentes.
+
+**Límite reconocido, dicho sin adornos.** Es una **guarda, no una frontera de seguridad**: las sesiones de agente corren con el mismo usuario de Windows y DPAPI descifra para ese usuario, de modo que un
+código escrito a propósito para leer el fichero y llamar a `CryptUnprotectData` lo conseguiría. Lo que impide es el uso accidental o automático (el comando normal de un agente ya no alcanza una cadena
+del propietario) y saca todos los secretos de los ficheros y entornos que cargan las sesiones. La frontera real sería una cuenta de Windows aparte (descartada el 2026-10-30 por desproporcionada). Una
+herramienta del propietario que llame a una función de escritura sigue pasando además por la guarda de escritura en vivo (§2).

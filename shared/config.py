@@ -149,6 +149,12 @@ def _autoload_env_file() -> None:
     if "pytest" in sys.modules:
         return
     load_env_file(os.environ.get("FONDOS_ENV_FILE") or (_ROOT / ".env"))
+    # Owner tools (and only they, only at a real console) receive their owner-only strings from the vault, in this process only: shared/owner_vault.py. Never from .env.
+    try:
+        from shared import owner_vault
+        owner_vault.inject_for_current_tool()
+    except Exception:                                  # noqa: BLE001 -- the vault must never break a tool that does not need it
+        pass
 
 
 _autoload_env_file()

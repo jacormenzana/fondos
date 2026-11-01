@@ -184,6 +184,10 @@ def verdict(report: dict, audit_max_age_days: float = 3.0) -> dict:
         if not dr.get("interpreter_ok"):
             notes.append(f"running under {dr.get('interpreter')}, not the expected {dr.get('expected_interpreter')}: two conda envs are "
                          f"named `des` on the owner's machine, so address the env by explicit prefix (`-p <env dir>`), never `-n des`")
+    leaked = report.get("secrets") or []
+    if leaked:
+        cautions.append(f"owner-only string(s) in the .env file that every agent session loads: {', '.join(leaked)} (names only). Move them to the owner vault "
+                        f"(`python scripts/ops/owner_vault.py set <NAME>`, once) and delete the line: owner tools then find them by themselves at a real console")
     g = report.get("git", {})
     d = g.get("dirty", {})
     if d.get("tracked") or d.get("untracked"):
@@ -524,6 +528,12 @@ def read_backlog(since_hours: float) -> dict:
 
 # ---------------------------------------------------------------- report
 
+def read_env_secrets() -> list:
+    """The owner-only variables (shared/owner_vault.py VAULT_VARIABLES) that the .env file of this repo (or FONDOS_ENV_FILE) defines: NAMES only, never a value."""
+    from shared import owner_vault
+    return owner_vault.env_file_secret_names(Path(os.environ.get("FONDOS_ENV_FILE") or (ROOT / ".env")))
+
+
 def build_report(args) -> dict:
     mine = tuple(args.mine or ())
     src = (ROOT / "proyecto2" / "src" / "pipeline" / "run_pipeline.py")
@@ -535,6 +545,7 @@ def build_report(args) -> dict:
         "memory": read_memory(args.memory_dir, args.recent_hours),
         "backlog": {"error": "skipped", "new": [], "since_hours": args.since_hours} if args.no_db else read_backlog(args.since_hours),
         "calc_version": code_calc_version(src.read_text(encoding="utf-8", errors="replace")) if src.exists() else None,
+        "secrets": read_env_secrets(),
     }
     report["verdict"] = verdict(report, args.audit_max_age_days)
     return report
