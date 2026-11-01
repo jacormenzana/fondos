@@ -184,6 +184,16 @@ BEGIN
 END;
 $$;
 
+-- The hook of the probe invalidation (Backlog v3 W4, FND-0359; phase `probes`): the blockers that come from a ticket's closing conditions going stale. Until that phase is applied it is this stub (no
+-- blocker). The stub is created ONLY when absent, so re-applying this phase never overwrites the real function (the same pattern as the gate hooks of step A-1).
+DO $$
+BEGIN
+    IF to_regprocedure('backlog.fn_probe_blockers(text,text,boolean)') IS NULL THEN
+        CREATE FUNCTION backlog.fn_probe_blockers(p_ap_id text, p_to text, p_delivery boolean) RETURNS jsonb
+        LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, backlog AS $f$ SELECT '[]'::jsonb $f$;
+    END IF;
+END $$;
+
 -- The gate: what blocks `p_ap_id` from READY_FOR_DEPLOY or from a delivery closure. Returns a jsonb array (empty = nothing blocks).
 CREATE OR REPLACE FUNCTION backlog.fn_gate_blockers(p_ap_id text, p_to text, p_delivery boolean) RETURNS jsonb
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, backlog AS $$
@@ -197,7 +207,9 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, backlog AS $$
               FROM backlog.v_open_hold h WHERE h.action_point_id = p_ap_id
             UNION ALL
             SELECT 3, jsonb_build_object('kind', 'REVIEW_FLAG', 'flag_id', f.flag_id, 'source', f.source_id, 'link_type', f.link_type)
-              FROM backlog.v_open_review_flag f WHERE f.action_point_id = p_ap_id) q), '[]'::jsonb) END $$;
+              FROM backlog.v_open_review_flag f WHERE f.action_point_id = p_ap_id
+            UNION ALL
+            SELECT 4, pb FROM jsonb_array_elements(backlog.fn_probe_blockers(p_ap_id, p_to, p_delivery)) pb) q), '[]'::jsonb) END $$;
 
 -- Flags raised when `p_ap_id` reaches READY_FOR_DEPLOY or CLOSED: one RAISE on the far end of every confirmed IMPACTS link (from -> to) and of every confirmed
 -- OVERLAPS link that carries `absorbs` (both directions), if that far end is not closed and was not flagged by this ticket before. Returns how many.
@@ -386,7 +398,7 @@ DECLARE r record;
 BEGIN
     FOR r IN SELECT p.oid::regprocedure AS sig FROM pg_proc p
              WHERE p.pronamespace = 'backlog'::regnamespace
-               AND p.proname IN ('trg_link_cycle', 'fn_gate_mode', 'fn_gate_record', 'fn_gate_blockers', 'fn_raise_review_flags', 'sp_ack_review', 'sp_raise_hold', 'sp_release_hold', 'sp_set_gate', 'sp_annotate_wait')
+               AND p.proname IN ('trg_link_cycle', 'fn_gate_mode', 'fn_gate_record', 'fn_gate_blockers', 'fn_probe_blockers', 'fn_raise_review_flags', 'sp_ack_review', 'sp_raise_hold', 'sp_release_hold', 'sp_set_gate', 'sp_annotate_wait')
     LOOP
         EXECUTE format('ALTER FUNCTION %s OWNER TO backlog_owner', r.sig);
     END LOOP;

@@ -236,7 +236,7 @@ def collect_merges(rev: str, since_days: int, *, cwd: Path | None = None) -> dic
     return scan_merges(rev, since_days, cwd=cwd)[0]
 
 
-def _gather_gates(candidates: dict, tickets: dict, bc, cfg) -> tuple:
+def _gather_gates(candidates: dict, tickets: dict, bc, cfg, record: bool = False) -> tuple:
     """(probes, incident, rfd_blockers, delivery_blockers): the gate verdicts for the candidate tickets. A verdict that cannot be read becomes a REASON (the move waits), never a pass."""
     probes, incident, rfd_b, del_b = {}, {}, {}, {}
     in_progress = [a for a in candidates if tickets[a]["status"] == "IN_PROGRESS"]
@@ -247,11 +247,6 @@ def _gather_gates(candidates: dict, tickets: dict, bc, cfg) -> tuple:
         except Exception as exc:                                             # noqa: BLE001
             rfd_b[a] = [f"the delivery gate could not be read ({type(exc).__name__})"]
     if ready:
-        for a in ready:
-            try:
-                del_b[a] = [blocker_text(b) for b in bc.gate_blockers(a, "CLOSED", True)]
-            except Exception as exc:                                         # noqa: BLE001
-                del_b[a] = [f"the delivery gate could not be read ({type(exc).__name__})"]
         try:
             present, incidents = rel.read_incident_facts()
             incident = rel.incident_reasons(ready, incidents, present, bool(cfg.AUDIT_INCIDENT_LOOP_ENABLED))
@@ -262,11 +257,35 @@ def _gather_gates(candidates: dict, tickets: dict, bc, cfg) -> tuple:
         if wanted:
             try:
                 import rfd_matrix_probe as probe
-                for tid, _verdict, results in probe.evaluate(wanted):
+                for tid, _verdict, results in probe.evaluate(wanted, evidence={a: candidates[a][-1][1].ref for a in wanted if candidates.get(a)}):
                     probes[tid] = [(ok is True, d) for ok, d in results]       # a manual condition (None) is not a pass: a person closes that ticket
+                if record and probes:                                        # W4 (FND-0359): the re-run is a fact; a ticket whose probe status an [impact] note invalidated is blocked until a RUN that passed comes AFTER the note
+                    _record_probe_runs(probes, bc)
             except Exception as exc:                                         # noqa: BLE001
                 probes = {a: [(False, f"the closing conditions could not be evaluated ({type(exc).__name__})")] for a in wanted}
+        for a in ready:                                                       # read AFTER the re-run was recorded: a stale probe that has just passed no longer blocks the closure of this very run
+            try:
+                del_b[a] = [blocker_text(b) for b in bc.gate_blockers(a, "CLOSED", True)]
+            except Exception as exc:                                         # noqa: BLE001
+                del_b[a] = [f"the delivery gate could not be read ({type(exc).__name__})"]
     return probes, incident, rfd_b, del_b
+
+
+def _record_probe_runs(probes: dict, bc) -> int:
+    """Record one RUN fact per ticket whose closing conditions were just evaluated: passed = every condition held (a manual one does not count). Best effort: before the `probes` phase is applied, or if the
+    login is missing, nothing is recorded and a ticket that an impact note invalidated simply stays blocked. Returns how many RUN facts were new."""
+    try:
+        if not bc.probes_store_present():
+            return 0
+    except Exception:                                                        # noqa: BLE001 -- an unreadable store is "not applied": the verdicts of the probes stay what they are
+        return 0
+    n = 0
+    for tid, results in probes.items():
+        try:
+            n += bool(bc.record_probe_event(tid, "RUN", bool(results) and all(ok for ok, _d in results), f"the autopilot re-ran {len(results)} closing condition(s)", actor=bc.AUTOPILOT_ACTOR))
+        except Exception:                                                    # noqa: BLE001 -- not recorded = still blocked: the safe side
+            continue
+    return n
 
 
 def main(argv: list | None = None) -> int:
@@ -320,7 +339,7 @@ def main(argv: list | None = None) -> int:
     try:
         deploys = {r for _ref, r in bc.ops_event_keys("DEPLOY")} if bc.autonomy_store_present() else set()
         cycles = {r for _ref, r in bc.ops_event_keys("CYCLE")} if bc.autonomy_store_present() else set()
-        probes, incident, rfd_b, del_b = _gather_gates(candidates, tickets, bc, cfg)
+        probes, incident, rfd_b, del_b = _gather_gates(candidates, tickets, bc, cfg, record=bool(args.apply and mode != "OFF"))
     except Exception as exc:                                                 # noqa: BLE001
         print(f"error: could not read the facts: {type(exc).__name__}: {str(exc)[:200]}", file=sys.stderr)
         return RC_USAGE

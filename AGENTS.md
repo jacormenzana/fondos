@@ -61,7 +61,10 @@ Every finding, error, or improvement identified during a session must be registe
   `TARGET` (`backlog_client.record_modules`, source `DECLARED`) and may retract a wrong proposal. Registries and documents never count as modules.
   Tickets that change the same module are clustered into `MOD.<path>` groups kept by the autopilot, only while the clusters prove their precision against the recorded decisions (`BACKLOG_MODULE_CLUSTERS_MODE`, `AUTO` by default;
   `python scripts/audit/backlog_modules.py --clusters` / `--measure` are read-only; `NORMAS_BACKLOG.md` §2). A merge that cites tickets puts the open tickets it may affect on notice with ONE `[impact]` note each, as the
-  autopilot (`BACKLOG_IMPACT_NOTES_ENABLED`; a note, never a review flag, because a flag blocks delivery until someone acknowledges it).
+  autopilot (`BACKLOG_IMPACT_NOTES_ENABLED`) and invalidates the probe status of those in progress.
+  **A delivery closes only against a probe:** define the ticket's closing condition when you open or start it (`backlog_client.add_close_condition(ap, kind, args, reason)`); a ticket with none cannot reach `CLOSED` as `CODE_FIX` /
+  `DATA_FIX` / `WORKAROUND` (gate blocker `NO_PROBES`), and one whose conditions an impact note invalidated waits until the autopilot re-runs them and they pass (`STALE_PROBES`, `NORMAS_BACKLOG.md` §2).
+  The in-flight work got the default `tests_pass` (CI green on the change that delivers the ticket, read from GitHub with no secret) when the gate was deployed; the autopilot closes a ticket whose probes pass with nobody's help.
 
 ---
 

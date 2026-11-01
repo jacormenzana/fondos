@@ -1281,6 +1281,34 @@ def record_modules(facts: list, *, actor: Optional[str] = None, conn=None) -> di
     return {"recorded": recorded, "unchanged": unchanged}
 
 
+# --- Backlog v3 W4 (FND-0359): db/pg_backlog/99_probes.sql -- an [impact] note invalidates a ticket's probe status; its delivery closure waits for the closing conditions to pass again --------------
+PROBE_KINDS = ("INVALIDATED", "RUN")
+_SIG_RECORD_PROBE = "backlog.sp_record_probe_event(text,text,boolean,text,text)"
+
+
+def probes_store_present(*, conn=None) -> bool:
+    """True when the deploy has applied db/pg_backlog/99_probes.sql (sp_record_probe_event and v_probe_status exist)."""
+    with _session(conn) as c:
+        return bool(c.execute("SELECT to_regprocedure(%s) IS NOT NULL AND to_regclass('backlog.v_probe_status') IS NOT NULL", (_SIG_RECORD_PROBE,)).fetchone()[0])
+
+
+def record_probe_event(ap_id: str, kind: str, passed: Optional[bool], ref: str, *, actor: Optional[str] = None, conn=None) -> Optional[int]:
+    """Record a probe fact through backlog.sp_record_probe_event: INVALIDATED (`passed` None; ref = the merge key) or RUN (`passed` says whether every closing condition held). Only a system:* actor can
+    (the autopilot, through its scoped login). Returns the event id, or None when nothing was written (the ticket is not IN_PROGRESS / READY_FOR_DEPLOY, or the fact is already there)."""
+    if kind not in PROBE_KINDS:
+        raise ValueError(f"kind must be one of {PROBE_KINDS}, got {kind!r}")
+    who = resolve_actor(actor)
+    with _session(conn, human=who.startswith("human:"), write=True, operation=_scoped_operation(who)) as c:
+        return c.execute("SELECT backlog.sp_record_probe_event(%s, %s, %s, %s, %s)", (ap_id, kind, passed, ref, who)).fetchone()[0]
+
+
+def probe_status(ids: Optional[list] = None, *, conn=None) -> list:
+    """backlog.v_probe_status: [{action_point_id, last_invalidated, last_run_passed, last_run_ts, conditions, state}] with state STALE | FRESH | UNPROBED, for the tickets that were ever invalidated."""
+    with _session(conn) as c:
+        return _rows(c, "SELECT action_point_id, last_invalidated, last_run_passed, last_run_ts, conditions, state FROM backlog.v_probe_status "
+                        "WHERE %s::text[] IS NULL OR action_point_id = ANY(%s) ORDER BY action_point_id", (ids, ids))
+
+
 def raw_update_privilege_live(role: str = "backlog_writer", *, conn=None) -> bool:
     """True while `role` still holds the direct UPDATE privilege on backlog.backlog, i.e. while step A-2 (`revoke`) has NOT been applied. Read-only; raises when the table does not exist."""
     with _session(conn) as c:
