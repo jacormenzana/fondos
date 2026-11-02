@@ -20,3 +20,14 @@ def export_tree(ref: str, dest: Path, root: Path, timeout: int = 180) -> None:
         raise RuntimeError(f"git archive failed: {r.stderr.decode('utf-8', 'replace')[:200]}")
     with tarfile.open(fileobj=io.BytesIO(r.stdout)) as tar:
         tar.extractall(dest, filter="fully_trusted")
+
+
+def checkout_tree(ref: str, dest: Path, root: Path, timeout: int = 180) -> None:
+    """A real git repository at `dest` (empty or new): an independent clone of the repository at `root` (no hardlinks) checked out DETACHED at the commit `ref`, so `git rev-parse HEAD` is that very sha and
+    `git ls-files` lists exactly its files. Tests that call git need this; `export_tree` gives only the files. Line endings are kept as stored (core.autocrlf=false), the same bytes `git archive` writes.
+    Raises RuntimeError when git refuses."""
+    for name, cmd in (("clone", ["git", "-c", "core.autocrlf=false", "clone", "-q", "--no-hardlinks", "--no-checkout", str(root), str(dest)]),
+                      ("checkout", ["git", "-c", "core.autocrlf=false", "-C", str(dest), "checkout", "-q", "--detach", ref])):
+        r = subprocess.run(cmd, capture_output=True, timeout=timeout, creationflags=_NO_WINDOW)
+        if r.returncode != 0:
+            raise RuntimeError(f"git {name} failed: {r.stderr.decode('utf-8', 'replace')[:200]}")

@@ -192,6 +192,8 @@ class Runner:
 
     def __call__(self, scope, selected, export_dir):
         self.calls.append((scope, list(selected), sorted(p.name for p in Path(export_dir).iterdir())))
+        self.checked_out = git(export_dir, "rev-parse", "HEAD")                            # the directory is a real repository at the commit being vouched for
+        self.tracked = git(export_dir, "ls-files").splitlines()
         if self.boom:
             raise OSError("container did not start")
         return self.rc, self.text, 0.2, [["pytest", *selected]]
@@ -212,13 +214,15 @@ def test_a_code_change_runs_its_area_tests_and_leaves_a_verifiable_receipt(repo)
     assert da.verify(repo, sha[:12], repo / "out" / "receipts.jsonl")[0] is None
 
 
-def test_the_tests_run_on_an_export_never_on_the_working_tree(repo):
-    commit(repo, {"scripts/tool.py": "x = 2\n"})
+def test_the_tests_run_on_a_clean_clone_at_the_exact_commit_never_on_the_working_tree(repo):
+    sha = commit(repo, {"scripts/tool.py": "x = 2\n"})
     (repo / "dirty_untracked.txt").write_text("another session's edit", encoding="utf-8")
     (repo / "scripts" / "tool.py").write_text("x = 999  # uncommitted\n", encoding="utf-8")
     runner = Runner()
     run(repo, runner)
-    assert "dirty_untracked.txt" not in runner.calls[0][2]
+    assert "dirty_untracked.txt" not in runner.calls[0][2] and "dirty_untracked.txt" not in runner.tracked
+    assert runner.checked_out == sha and "scripts/tool.py" in runner.tracked                  # a real git repository (tests that call git need one), at the very commit
+    assert runner.calls[0][2].count(".git") == 1
 
 
 def test_a_receipt_covers_every_commit_not_yet_on_origin(repo):

@@ -8,7 +8,8 @@ push and nothing refuses a push; the deliverer runs this after committing (rule 
     python scripts/audit/delivery_attest.py --scope full     # the whole suite (scripts/ops/run_pg_tests.py, hermetic throwaway Postgres); always allowed, covers anything
     python scripts/audit/delivery_attest.py --verify <sha>   # re-reads the receipts and says whether the full 40-character sha has a passing, intact receipt (exit 0 yes, 1 no, 3 unverifiable)
 
-What it does. It exports HEAD with `git archive` into a temporary directory (the working tree, and another session's edits in it, never enter) and runs pytest THERE; the live database and its connection
+What it does. It makes a clone of the repository checked out DETACHED at the exact commit in a temporary directory (a real git repository, because some tests call git; the working tree, and another
+session's edits in it, never enter: an archive without .git failed five tests in the baseline run of 2026-11-02) and runs pytest THERE; the live database and its connection
 strings never reach the run (the suite uses a throwaway container on a random free port). The receipt line in out/audit/delivery_receipts.jsonl holds the full sha, the tree sha, every commit it covers
 (origin/master..HEAD), the files and counts, the exit code and a sha-256 digest. Scope: `docs_only` when no code changed, `full` when runtime code changed (shared/, proyecto*/), `area` (the tests named
 for each changed module) otherwise; an area run with a changed code file no test covers is `no_tests_cover` and the deliverer runs `--scope full`.
@@ -33,7 +34,7 @@ from typing import Callable, Optional
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from shared import delivery_receipt as dr  # noqa: E402
-from shared.git_export import export_tree  # noqa: E402
+from shared.git_export import checkout_tree  # noqa: E402
 
 RC_PASS, RC_FAIL, RC_USAGE, RC_INCONCLUSIVE, RC_COALESCED = 0, 1, 2, 3, 4
 RECEIPTS = ROOT / "out" / "audit" / "delivery_receipts.jsonl"
@@ -166,7 +167,7 @@ def attest(root: Path, head: str, scope: Optional[str], *, runner: Callable, rec
     if run_scope != "docs_only":
         tmp = Path(tempfile.mkdtemp(prefix="delivery_attest_"))
         try:
-            export_tree(chg["sha"], tmp, root)
+            checkout_tree(chg["sha"], tmp, root)                             # a real repository at the exact commit: some tests call git (a plain archive failed 5 of them)
             if run_scope == "area":
                 selected, uncovered = dr.select_tests(chg["changed"], available_tests(tmp))
                 if not selected and not uncovered:
