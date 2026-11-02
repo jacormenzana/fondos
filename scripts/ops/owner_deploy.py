@@ -41,7 +41,6 @@ import os
 import re
 import subprocess
 import sys
-import tarfile
 import tempfile
 import time
 from dataclasses import dataclass, field
@@ -269,12 +268,8 @@ def git_fetch() -> None:
 
 def export_tree(ref: str, dest: Path) -> None:
     """`git archive` of `ref` extracted into `dest`: the migration runs from a clean copy of master, never from the working tree (which may be on any branch or dirty)."""
-    r = subprocess.run(["git", "archive", "--format=tar", ref], cwd=ROOT, capture_output=True, timeout=180, creationflags=_NO_WINDOW)
-    if r.returncode != 0:
-        raise RuntimeError(f"git archive failed: {r.stderr.decode('utf-8', 'replace')[:200]}")
-    import io
-    with tarfile.open(fileobj=io.BytesIO(r.stdout)) as tar:
-        tar.extractall(dest)
+    from shared.git_export import export_tree as _export                      # the one place that exports a commit (P#11), shared with scripts/audit/delivery_attest.py
+    _export(ref, dest, ROOT)
 
 
 def run_cmd(cmd: list, env: dict, cwd: Path) -> tuple:
