@@ -24,6 +24,13 @@ REQUIRED = ["Full test suite", "PG fixture smoke test"]
 SHA = "a" * 40
 
 
+@pytest.fixture(autouse=True)
+def github_evidence_on(monkeypatch):
+    """These tests are about the GitHub path of `tests_pass`; the shipped default is the local receipt (BACKLOG_GITHUB_EVIDENCE_ENABLED False, FND-0375, tests/test_backlog_local_delivery.py)."""
+    from shared import config as cfg
+    monkeypatch.setattr(cfg, "BACKLOG_GITHUB_EVIDENCE_ENABLED", True)
+
+
 def run(name, status="completed", conclusion="success"):
     return {"name": name, "status": status, "conclusion": conclusion}
 

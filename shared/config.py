@@ -852,6 +852,15 @@ BACKLOG_AUTO_DEPLOY_MODE: str = "ASK"
 # shadow stage shows 50 non-system transitions since the last direct write (the migrate tool refuses it before that) and nothing else is pending. A failed attempt latches itself off in the watcher's state
 # (`revoke_failed`). Rollback of this decision = set it back to False (after the revoke is applied, `migrate_backlog_v2.py --phase revoke --down --apply` gives the privileges back).
 BACKLOG_AUTO_REVOKE_ENABLED: bool = True
+# Local delivery evidence (plan ACTION_PLAN_BACKLOG_REFACTORING, Revision 2; FND-0375; owner decision 2026-11-02: GitHub is out of the daily loop, no CI, tests run locally). False = a delivery is recognised from a
+# PLAIN commit on the first-parent history of master (no merge commit, no pull request) dated at or after BACKLOG_LOCAL_DELIVERY_SINCE, and the `tests_pass` closing condition reads the local test receipt
+# (scripts/audit/delivery_attest.py, shared/delivery_receipt.py) instead of GitHub check runs. True = the GitHub path of Backlog v3 (merge commits; the check runs of the pull request). Restoring GitHub = set it
+# to True, re-enable Actions and re-apply the protection of master. Merge commits are read either way.
+BACKLOG_GITHUB_EVIDENCE_ENABLED: bool = False
+# The instant (ISO, with offset) from which a plain commit counts as a delivery while BACKLOG_GITHUB_EVIDENCE_ENABLED is False: one second after the commit that took GitHub out of the loop (7bf169e, which cites
+# the closed FND-0336 for the record and must not reopen it). An older direct commit is never read as a delivery or a citation. An empty or malformed value is an error (the autopilot refuses to run), never
+# "everything counts". Note the rule this makes visible: a plain commit that cites a CLOSED delivery ticket and changes code reopens it (cause INCOMPLETE_FIX), exactly as a merge did.
+BACKLOG_LOCAL_DELIVERY_SINCE: str = "2026-11-02T22:22:44+01:00"
 # Backlog v2 Phase C slice 2 (FND-0334; PROPUESTA_BACKLOG_V2.md 6.4.1 / 6.4.6): the instant from which scripts/audit/backlog_sync.py judges a commit that cites a ticket
 # by its `Backlog-Gate:` trailer (an ISO timestamp WITH offset, e.g. "2026-11-02T09:00:00+01:00"). "" = the gate is NOT ARMED: the sync reports the trailers it sees and
 # records no bypass, raises no hold. The owner arms it once the commit-msg hook is installed (bash scripts/audit/commit-msg.sh) and hook_bypass exists (migrate --phase hook);

@@ -146,16 +146,23 @@ def probe_task_ok(name: str) -> tuple:
     return (m.group(1) == "0"), f"task {name!r} last result = {m.group(1)}"
 
 
-def probe_tests_pass(tid: str, sha: str = None, evidence: dict = None, read=None, git=None) -> tuple:
-    """CI green (Backlog v3 W4, FND-0359): (True | False | None, text). The commit is `sha` when the condition names one, else the delivering merge the autopilot knows for the ticket (`evidence` =
-    {ticket: merge sha}); the checks are read on the PULL REQUEST'S HEAD, the second parent of a merge (shared.backlog_ci.evidence_commit). No delivering change yet is False ("not yet"); an unreadable
-    GitHub is None (unverifiable): neither is a pass, and the autopilot asks again on its next run. `read` and `git` are injectable for the tests."""
+def probe_tests_pass(tid: str, sha: str = None, evidence: dict = None, read=None, git=None, local=None) -> tuple:
+    """`tests_pass` (Backlog v3 W4, FND-0359): (True | False | None, text). The commit is `sha` when the condition names one, else the delivering commit the autopilot knows for the ticket (`evidence` =
+    {ticket: sha}). No delivering commit yet is False ("not yet"). With BACKLOG_GITHUB_EVIDENCE_ENABLED False (local delivery mode, FND-0375) it is true only when a local test receipt names that exact full sha,
+    is intact, and its tests really ran and passed at a sufficient scope (shared/delivery_receipt.py; scripts/audit/delivery_attest.py leaves the receipt); otherwise CI green as before: the checks are read on
+    the PULL REQUEST'S HEAD, the second parent of a merge (shared.backlog_ci.evidence_commit), and an unreadable GitHub is None (unverifiable). Neither is a pass, and the autopilot asks again on its next run.
+    `read`, `git` and `local` (a replacement for delivery_attest.verify) are injectable for the tests."""
     commit = sha or (evidence or {}).get(tid)
     if not commit:
-        return False, f"{tid}: no delivering merge on record yet, so there is no CI to read"
+        return False, f"{tid}: no delivering commit on record yet, so there is no test evidence to read"
     sys.path.insert(0, str(ROOT))
-    from shared import backlog_ci as ci
     import shared.config as cfg
+    if not cfg.BACKLOG_GITHUB_EVIDENCE_ENABLED:
+        sys.path.insert(0, str(ROOT / "scripts" / "audit"))
+        import delivery_attest as da
+        ok, detail = (local or da.verify)(ROOT, commit, da.RECEIPTS)
+        return ok, f"tests_pass: {detail}"
+    from shared import backlog_ci as ci
     run_git = git or _run
     rc, out = run_git(["git", "-C", str(ROOT), "rev-list", "--parents", "-n", "1", commit])
     parents = out.split()[1:] if rc == 0 and out else []

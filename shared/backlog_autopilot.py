@@ -252,7 +252,7 @@ EDGES: dict = {
     ("TODO", "CLOSED"): (EVENT, "closed with its solution (REJECTED / DUPLICATED cite the follow-up ticket)"),
     ("IN_PROGRESS", "TODO"): (EVENT, "put back by whoever holds it"),
     ("IN_PROGRESS", "BLOCKED"): (EVENT, "blocked on a ticket (structured) or a named condition"),
-    ("IN_PROGRESS", "READY_FOR_DEPLOY"): (RULE, "a merge on master whose branch carries `Closes:` for the ticket (MERGE fact)"),
+    ("IN_PROGRESS", "READY_FOR_DEPLOY"): (RULE, "a delivery on master that carries `Closes:` for the ticket: a merge, or a plain commit while GitHub evidence is off (MERGE fact)"),
     ("IN_PROGRESS", "DEFERRED"): (EVENT, "deferred with a revisit date or event"),
     ("IN_PROGRESS", "CLOSED"): (EVENT, "closed with its solution (a delivery closes through READY_FOR_DEPLOY)"),
     ("BLOCKED", "IN_PROGRESS"): (RULE, "the ticket it is blocked on is CLOSED (UNBLOCK)"),
@@ -267,7 +267,7 @@ EDGES: dict = {
     ("DEFERRED", "CLOSED"): (EVENT, "closed with its solution"),
     ("CLOSED", "OPEN"): (EVENT, "reopened with a cause (any actor; the reopening is the rejection of the delivery)"),
     ("CLOSED", "TODO"): (EVENT, "reopened with a cause (any actor; the reopening is the rejection of the delivery)"),
-    ("CLOSED", "IN_PROGRESS"): (RULE, "a later merge cites the ticket and changes code or tests (REOPEN, cause INCOMPLETE_FIX); any actor may also record it"),
+    ("CLOSED", "IN_PROGRESS"): (RULE, "a later merge or plain commit cites the ticket and changes code or tests (REOPEN, cause INCOMPLETE_FIX); any actor may also record it"),
 }
 
 

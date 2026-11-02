@@ -51,6 +51,7 @@ RC_OK, RC_FAILED, RC_USAGE = 0, 1, 2
 _MODE_RANK = {"OFF": 0, "SHADOW": 1, "ON": 2}
 _MERGE_FMT = "%H%x1f%P%x1f%aI%x1f%s%x1e"
 _BRANCH_FMT = "%aI%x1f%B%x1e"
+_PLAIN_FMT = "%H%x1f%P%x1f%aI%x1f%s%x1f%B%x1e"
 
 
 # ── pure ────────────────────────────────────────────────────────────────────────
@@ -85,6 +86,26 @@ def parse_merges(text: str) -> list:
         if len(ps) >= 2:
             out.append({"sha": sha.strip(), "parents": ps, "author_ts": datetime.fromisoformat(ts.strip()), "subject": subject})
     return out
+
+
+def parse_plain(text: str) -> list:
+    """The single-parent commits of `git log --first-parent --no-merges --format=_PLAIN_FMT`: [{'sha', 'parents', 'author_ts', 'subject', 'message'}], newest first as git prints them. Pure."""
+    out = []
+    for rec in text.split("\x1e"):
+        rec = rec.strip("\r\n")
+        if not rec:
+            continue
+        sha, parents, ts, subject, message = (rec.split("\x1f") + [""] * 5)[:5]
+        out.append({"sha": sha.strip(), "parents": parents.split(), "author_ts": datetime.fromisoformat(ts.strip()), "subject": subject, "message": message})
+    return out
+
+
+def local_since(cfg) -> datetime | None:
+    """The instant from which a plain commit on master counts as a delivery, or None while the GitHub path is on (BACKLOG_GITHUB_EVIDENCE_ENABLED: merge commits only). A malformed or empty cutover raises
+    ValueError, so a misconfiguration is loud and never reads the whole history as deliveries. Pure."""
+    if cfg.BACKLOG_GITHUB_EVIDENCE_ENABLED:
+        return None
+    return aware(datetime.fromisoformat(str(cfg.BACKLOG_LOCAL_DELIVERY_SINCE).strip()))
 
 
 def deliveries(messages: list) -> dict:
@@ -143,7 +164,7 @@ def blocker_text(b) -> str:
     return str(b)
 
 
-def act(decisions: list, mode: str, bc, notes: dict, session: str, out=print) -> dict:
+def act(decisions: list, mode: str, bc, notes: dict, session: str, out=print, proof: dict | None = None) -> dict:
     """Carry out `decisions` in `mode` through `bc` (the client). SHADOW and WAIT write ONE note per decision (the key of a decision already noted on the ticket is skipped); ON also makes the
     MOVE and CLOSE moves; a move the database refuses (a gate, a missing fact) is noted once as a WAIT with the refusal and is not an error. A problem of the login or the connection raises.
     `notes` = {ticket: [existing log texts]}, extended as notes are written. Returns {'moved','closed','noted','skipped','refused'}. Not pure: it calls `bc`."""
@@ -159,6 +180,11 @@ def act(decisions: list, mode: str, bc, notes: dict, session: str, out=print) ->
                                        solution_type=d.solution_type, release_version=d.release if d.action == ap_mod.CLOSE else None)
                 res[counter[d.action]] += 1
                 out(f"  {d.ap}: {d.from_status} -> {d.to_status} DONE ({d.evidence_kind} {d.evidence_ref[:12]})")
+                if d.action == ap_mod.CLOSE and (proof or {}).get(d.ap):          # the closure's evidence stays on the ticket (the local receipt: sha, tests, digest); a failed note never undoes a closure
+                    try:
+                        bc.append_log(d.ap, bc.AUTOPILOT_ACTOR, "closing evidence: " + "; ".join(proof[d.ap])[:900])
+                    except Exception:                                            # noqa: BLE001
+                        pass
                 continue
             except bc.BacklogUnavailable:
                 raise                                                         # no login / no connection / the live-write guard: a configuration problem, never a refusal of a gate
@@ -208,10 +234,11 @@ def citations_of(commits: list) -> dict:
     return out
 
 
-def scan_merges(rev: str, since_days: int, *, cwd: Path | None = None) -> tuple:
+def scan_merges(rev: str, since_days: int, *, cwd: Path | None = None, plain_since: datetime | None = None) -> tuple:
     """(deliveries, citations) read from the merge commits of `rev` newer than `since_days`, one pass over git.
     deliveries = {ticket: [(merge dict, Merge)]} oldest first, for the merges whose branch carries `Closes:`;
-    citations  = {ticket: [Citation]} oldest first, for the merges whose branch cites the ticket in any way (`Refs:` / `Closes:`): the facts a reopening is decided from. Reads git only."""
+    citations  = {ticket: [Citation]} oldest first, for the merges whose branch cites the ticket in any way (`Refs:` / `Closes:`): the facts a reopening is decided from.
+    `plain_since` (local delivery mode, BACKLOG_GITHUB_EVIDENCE_ENABLED False): the plain commits of the first-parent history dated at or after it are read as well, each as its own delivery. Reads git only."""
     since = (datetime.now(timezone.utc) - timedelta(days=since_days)).strftime("%Y-%m-%d")
     merges = parse_merges(_git("log", "--first-parent", "--merges", f"--since={since}", rev, f"--format={_MERGE_FMT}", cwd=cwd))
     delivered_by: dict = {}
@@ -228,7 +255,47 @@ def scan_merges(rev: str, since_days: int, *, cwd: Path | None = None) -> tuple:
             delivered_by.setdefault(t, []).append((m, merge_object(m, solution, paths)))
         for t, ts in cites.items():
             cited_by.setdefault(t, []).append(ap_mod.Citation(ref=m["sha"], ts=ts.astimezone(timezone.utc), paths=tuple(sorted(paths))))
+    if plain_since is not None:
+        scan_plain(rev, plain_since, delivered_by, cited_by, cwd=cwd)
     return delivered_by, cited_by
+
+
+def plain_deliveries(commits: list, since: datetime, paths_of) -> tuple:
+    """(delivered, cited) for the PLAIN commits (oldest first, `commits` as parse_plain gives them) dated at or after `since`. Local delivery mode: with no merge commit, a commit whose message says `Closes: FND-nnnn`
+    is itself the delivery, its full sha is the evidence, and `Solution:` works as in a merge. Its `paths` are the union of the files of every commit since `since` that cites that ticket (Refs: or Closes:), so a
+    db/** change made earlier on the way still waits for its DEPLOY fact. `paths_of(sha)` returns the files of one commit. delivered = {ticket: [(commit dict, Merge)]}; cited = {ticket: [Citation]}. Pure given `paths_of`."""
+    delivered: dict = {}
+    cited: dict = {}
+    seen_paths: dict = {}
+    for c in commits:
+        if c["author_ts"] < since:
+            continue
+        refs = gate.parse_message(c["message"]).refs
+        if not refs:
+            continue
+        files = [p for p in paths_of(c["sha"]) if p]
+        for t in refs:
+            seen_paths.setdefault(t, set()).update(files)
+            cited.setdefault(t, []).append(ap_mod.Citation(ref=c["sha"], ts=c["author_ts"].astimezone(timezone.utc), paths=tuple(sorted(files))))
+        meta = {"sha": c["sha"], "parents": c["parents"], "author_ts": c["author_ts"], "subject": c["subject"]}
+        for t, solution in deliveries([c["message"]]).items():
+            delivered.setdefault(t, []).append((meta, merge_object(meta, solution, sorted(seen_paths[t]))))
+    return delivered, cited
+
+
+def scan_plain(rev: str, since: datetime, delivered_by: dict, cited_by: dict, *, cwd: Path | None = None) -> None:
+    """Add the plain commits of the first-parent history of `rev` dated at or after `since` to `delivered_by` and `cited_by` (see plain_deliveries), keeping each list oldest first. Reads git only."""
+    horizon = (since - timedelta(days=2)).strftime("%Y-%m-%d")            # git filters on the committer date; the exact cutoff is applied on the author date below
+    commits = parse_plain(_git("log", "--first-parent", "--no-merges", f"--since={horizon}", rev, f"--format={_PLAIN_FMT}", cwd=cwd))
+    commits.reverse()                                                         # git lists the newest first: reversed first, so commits of the same second stay oldest first (the stable sort keeps them)
+    commits.sort(key=lambda c: c["author_ts"])
+    delivered, cited = plain_deliveries(commits, since, lambda sha: _git("diff-tree", "--no-commit-id", "--name-only", "-r", "--root", sha, cwd=cwd).splitlines())
+    for t, rows in delivered.items():
+        delivered_by.setdefault(t, []).extend(rows)
+        delivered_by[t].sort(key=lambda r: r[0]["author_ts"])
+    for t, rows in cited.items():
+        cited_by.setdefault(t, []).extend(rows)
+        cited_by[t].sort(key=lambda r: r.ts)
 
 
 def collect_merges(rev: str, since_days: int, *, cwd: Path | None = None) -> dict:
@@ -289,7 +356,9 @@ def _record_probe_runs(probes: dict, bc) -> int:
 
 
 def main(argv: list | None = None) -> int:
+    raw = list(sys.argv[1:] if argv is None else argv)
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--pass2", action="store_true", help=argparse.SUPPRESS)           # internal: the second look of one invocation (see the end of main)
     ap.add_argument("--apply", action="store_true", help="record the MERGE facts and act according to the mode (default: dry run)")
     ap.add_argument("--rev", default="origin/master", help="the history whose merges are read (default origin/master)")
     ap.add_argument("--since-days", type=int, default=45, help="how far back the merges are read (default 45)")
@@ -308,7 +377,7 @@ def main(argv: list | None = None) -> int:
         events_ready, stored = False, None
     mode = resolve_mode(cfg.BACKLOG_AUTOPILOT_MODE, args.mode, stored)
     try:
-        by_ticket, cited = scan_merges(args.rev, args.since_days)
+        by_ticket, cited = scan_merges(args.rev, args.since_days, plain_since=local_since(cfg))
         if args.ticket:
             only = set(args.ticket)
             by_ticket = {t: v for t, v in by_ticket.items() if t in only}
@@ -376,7 +445,8 @@ def main(argv: list | None = None) -> int:
         for d in decisions:
             if d.ap not in notes:
                 notes[d.ap] = [r["comment"] for r in bc.list_logs(ids=[d.ap])]
-        res = act(decisions, mode, bc, notes, bc.make_session_id("AUTOPILOT", "SYNC"), out=out)
+        proof = {t: [detail for _ok, detail in results] for t, results in probes.items()}
+        res = act(decisions, mode, bc, notes, bc.make_session_id("AUTOPILOT", "SYNC"), out=out, proof=proof)
     except bc.BacklogUnavailable as exc:                                     # includes LiveWriteForbidden: no login, no connection
         print(f"REFUSED: {type(exc).__name__}: {str(exc)[:240]}. Nothing more was written.", file=sys.stderr)
         return RC_USAGE
@@ -419,6 +489,8 @@ def main(argv: list | None = None) -> int:
     except Exception:                                                        # noqa: BLE001
         pass
     print(summary)
+    if mode == "ON" and res["moved"] and not args.pass2:                       # FND-0374: the move to READY_FOR_DEPLOY and the closure are one delivery; the closure is judged on the ticket's NEW status, so look once more now instead of waiting for the next fetch of a quiet repository
+        return main([*raw, "--pass2"])
     return RC_OK
 
 

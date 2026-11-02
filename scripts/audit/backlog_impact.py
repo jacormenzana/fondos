@@ -161,11 +161,11 @@ def main(argv: list | None = None) -> int:
     ap.add_argument("--days", type=int, default=45, help="how far back the merges are read (default 45)")
     args = ap.parse_args(argv)
     os.environ.setdefault("FONDOS_ACTOR", ACTOR)
-    import shared.config  # noqa: F401 -- loads .env
+    import shared.config as cfg  # also loads .env
     from shared import backlog_client as bc
     try:
         import backlog_autopilot as autopilot
-        _delivered, cited = autopilot.scan_merges("origin/master", args.days)
+        _delivered, cited = autopilot.scan_merges("origin/master", args.days, plain_since=autopilot.local_since(cfg))
         replay(bc, cited)
     except Exception as exc:                                  # noqa: BLE001 -- never echo a DSN
         print(f"error: {type(exc).__name__}: {str(exc)[:200]}", file=sys.stderr)

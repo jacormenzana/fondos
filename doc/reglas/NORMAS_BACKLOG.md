@@ -121,6 +121,16 @@ Dominios categóricos, **todos con `CHECK` en BD** — nunca inventar un valor f
     - `DEFERRED -> TODO` (**UNDEFER**, evidencia `REVISIT`): la fecha `revisit_by` de la última espera `DEFERRED` ya llegó. `sp_auto_transition` verifica las dos evidencias con sus propios registros, no con un hecho que alguien anotó.
     Cada ejecución con `--apply` en modo `ON` libera además las retenciones del sistema cuya causa desapareció (`fn_auto_release_holds`).
 
+- **Modo de entrega local (FND-0375; decisión del propietario del 2026-11-02: GitHub fuera del ciclo diario, sin CI, las pruebas se ejecutan en local).** Con `BACKLOG_GITHUB_EVIDENCE_ENABLED = False` (`shared/config.py`), una **entrega** es también un commit
+  **simple** del historial `--first-parent` de `master` cuyo mensaje diga `Closes: FND-nnnn`, con fecha de autor en o después de `BACKLOG_LOCAL_DELIVERY_SINCE`: su sha completo es la evidencia (hecho `MERGE`, etiqueta de release `R<aaaa>.<mm>-M<sha7>`) y sus ficheros son la
+  unión de los de todos los commits desde el corte que citan el ticket (`Refs:` o `Closes:`), de modo que un cambio en `db/**` hecho antes sigue esperando su `DEPLOY`. Los merges se siguen leyendo. Un commit simple que cita un ticket `CLOSED` y cambia código lo reabre, igual que un merge
+  (por eso el corte se fijó un segundo después del commit que sacó GitHub del ciclo, que cita el ticket cerrado FND-0336 solo para dejar constancia). **`tests_pass` significa entonces** que existe un **recibo local** (`scripts/audit/delivery_attest.py`, reglas puras en `shared/delivery_receipt.py`,
+  fichero `out/audit/delivery_receipts.jsonl`) que nombra el sha completo de la entrega, cuyo digest sha-256 y cuyo árbol coinciden con los de git, y cuyas pruebas se ejecutaron de verdad y pasaron: código de salida 0, al menos una pasó, ninguna falló ni dio error y el alcance basta
+  (`docs_only` si no cambió código, `area` si cambió código fuera de `shared/` y `proyecto*/`, `full` si cambió código de ellos). Sin recibo es «aún no»; un recibo que no pudo arrancar (contenedor caído, intérprete muerto) es «no verificable» y nunca un fallo de prueba. Las pruebas corren sobre una
+  exportación `git archive` del commit exacto, nunca sobre el árbol de trabajo, en un contenedor Postgres desechable de puerto libre aleatorio: no tocan la base viva ni sus cadenas de conexión. Al cerrar, el autopiloto deja en el ticket una línea `closing evidence: ...` con el sha, el recuento y
+  el digest. Una invocación mueve y cierra: tras mover un ticket a `READY_FOR_DEPLOY` mira una segunda vez (FND-0374), de modo que un repositorio quieto no espera al siguiente `fetch`. **Límite:** mismo usuario y fichero local: una guarda, no una frontera de seguridad. Volver a GitHub = poner el
+  interruptor en `True`.
+
 **Tabla de eventos de la máquina de estados (cada arista legal de `fn_transition_legal`, más la reapertura).** `RULE` = el sistema hace el movimiento cuando existe la evidencia; `EVENT` = lo registra un
 actor (persona, agente o gancho). Ninguna arista es una aprobación: nadie firma una transición, así que no existe una cola para ellas. `tests/test_backlog_edges.py` mantiene esta tabla igual al DDL, al
 motor de reglas (`shared/backlog_autopilot.py`, `EDGES`) y a este texto; el texto de las columnas está en inglés porque se genera desde el código.
@@ -138,7 +148,7 @@ motor de reglas (`shared/backlog_autopilot.py`, `EDGES`) y a este texto; el text
 | TODO | CLOSED | EVENT | closed with its solution (REJECTED / DUPLICATED cite the follow-up ticket) |
 | IN_PROGRESS | TODO | EVENT | put back by whoever holds it |
 | IN_PROGRESS | BLOCKED | EVENT | blocked on a ticket (structured) or a named condition |
-| IN_PROGRESS | READY_FOR_DEPLOY | RULE | a merge on master whose branch carries `Closes:` for the ticket (MERGE fact) |
+| IN_PROGRESS | READY_FOR_DEPLOY | RULE | a delivery on master that carries `Closes:` for the ticket: a merge, or a plain commit while GitHub evidence is off (MERGE fact) |
 | IN_PROGRESS | DEFERRED | EVENT | deferred with a revisit date or event |
 | IN_PROGRESS | CLOSED | EVENT | closed with its solution (a delivery closes through READY_FOR_DEPLOY) |
 | BLOCKED | IN_PROGRESS | RULE | the ticket it is blocked on is CLOSED (UNBLOCK) |
@@ -153,7 +163,7 @@ motor de reglas (`shared/backlog_autopilot.py`, `EDGES`) y a este texto; el text
 | DEFERRED | CLOSED | EVENT | closed with its solution |
 | CLOSED | OPEN | EVENT | reopened with a cause (any actor; the reopening is the rejection of the delivery) |
 | CLOSED | TODO | EVENT | reopened with a cause (any actor; the reopening is the rejection of the delivery) |
-| CLOSED | IN_PROGRESS | RULE | a later merge cites the ticket and changes code or tests (REOPEN, cause INCOMPLETE_FIX); any actor may also record it |
+| CLOSED | IN_PROGRESS | RULE | a later merge or plain commit cites the ticket and changes code or tests (REOPEN, cause INCOMPLETE_FIX); any actor may also record it |
 <!-- EDGES:END -->
 
   - **El hecho `DEPLOY` no se puede falsificar.** Lo registra solo el login acotado `backlog_facts` (sin contraseña: la fija el propietario; su cadena va al vault del propietario) mediante `sp_record_fact`
