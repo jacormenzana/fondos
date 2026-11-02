@@ -46,8 +46,8 @@ def required_scope(changed: list) -> str:
 
 
 def select_tests(changed: list, available: list) -> tuple:
-    """(tests to run, code files no test covers) for an `area` run. A changed test file runs itself; a changed module `x.py` runs every available test named `test_x*.py`; any other changed code file
-    (a script, a .sql, a .sh) with no such test is uncovered, and an uncovered file means the area run cannot vouch for the change: the deliverer runs `full`. Pure."""
+    """(tests to run, code files no test covers) for an `area` run. A changed test file runs itself; a changed module `x.py` (or script `x-y.sh` / `x.bat`, hyphens read as underscores) runs every available
+    test named `test_x*.py`; any other changed code file (a .sql, a .yml, a script with no such test) is uncovered, and an uncovered file means the area run cannot vouch for the change: the deliverer runs `full`. Pure."""
     avail = [str(a).replace("\\", "/") for a in available]
     selected: set = set()
     uncovered: set = set()
@@ -60,7 +60,7 @@ def select_tests(changed: list, available: list) -> tuple:
             if p in avail:                                                  # a deleted test is nothing to run and nothing uncovered
                 selected.add(p)
             continue
-        stem = name.rsplit(".", 1)[0] if p.endswith(".py") else ""
+        stem = name.rsplit(".", 1)[0].replace("-", "_") if p.endswith((".py", ".sh", ".bat")) else ""         # `post-commit.sh` is covered by tests/test_post_commit*.py
         hits = [t for t in avail if stem and t.rsplit("/", 1)[-1].startswith(f"test_{stem}")]
         if hits:
             selected.update(hits)

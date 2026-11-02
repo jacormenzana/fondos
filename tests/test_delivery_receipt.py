@@ -52,6 +52,13 @@ def test_select_tests_maps_modules_and_runs_changed_tests():
     assert unc == []
 
 
+def test_select_tests_covers_shell_and_batch_scripts_by_name_with_hyphens_as_underscores():
+    avail = ["tests/test_post_commit.py", "tests/test_launcher_x.py", "tests/test_a.py"]
+    assert dr.select_tests(["scripts/audit/post-commit.sh"], avail) == (["tests/test_post_commit.py"], [])
+    assert dr.select_tests(["scripts/launch/launcher_x.bat"], avail) == (["tests/test_launcher_x.py"], [])
+    assert dr.select_tests(["db/pg/x.sql", "scripts/audit/pre-commit.sh"], avail) == ([], ["db/pg/x.sql", "scripts/audit/pre-commit.sh"])
+
+
 def test_select_tests_reports_code_no_test_covers():
     sel, unc = dr.select_tests(["scripts/ops/new_tool.py", "scripts/audit/pre-commit.sh", "db/pg/x.sql", "conftest.py"], ["tests/test_a.py"])
     assert sel == []

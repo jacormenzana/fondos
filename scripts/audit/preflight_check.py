@@ -195,7 +195,12 @@ def verdict(report: dict, audit_max_age_days: float = 3.0) -> dict:
         cautions.append(f"{n} modified/new file(s) in the working tree that are not a known-unowned path: another session's work in flight "
                         f"-- do not edit, stage, test over or revert them")
     if g.get("ahead"):
-        notes.append(f"{g['ahead']} local commit(s) not on origin (as of the last fetch): who pushes them?")
+        old = g.get("oldest_unpublished_min")
+        if old is not None and old >= 30:
+            cautions.append(f"UNPUBLISHED: {g['ahead']} local commit(s) not on origin, the oldest {old} min: the automatic publication is not keeping up "
+                            f"-- `python scripts/audit/auto_publish.py --status` (a hotfix: `--now`)")
+        else:
+            notes.append(f"{g['ahead']} local commit(s) not on origin (as of the last fetch): the automatic publication pushes them (scripts/audit/auto_publish.py)")
     if g.get("behind"):
         notes.append(f"{g['behind']} commit(s) on origin not in HEAD: fetch/rebase decision before committing")
     if g.get("stashes"):
@@ -275,7 +280,16 @@ def read_git(mine=()) -> dict:
     if status is None:
         return {"error": "git not available / not a repository"}
     lr = parse_left_right(_run(["git", "rev-list", "--left-right", "--count", "origin/master...HEAD"]) or "")
+    oldest = None
+    if lr and lr[1]:                                           # minutes since the oldest commit that is not on origin: a publication that stays behind is an alert, not a note
+        times = [t for t in (_run(["git", "log", "--format=%aI", "origin/master..HEAD"]) or "").split() if t]
+        if times:
+            try:
+                oldest = int((datetime.now(timezone.utc) - datetime.fromisoformat(times[-1])).total_seconds() // 60)
+            except ValueError:
+                oldest = None
     return {
+        "oldest_unpublished_min": oldest,
         "branch": (_run(["git", "branch", "--show-current"]) or "").strip(),
         "head": (_run(["git", "log", "--oneline", "-3"]) or "").strip().splitlines(),
         "behind": lr[0] if lr else None, "ahead": lr[1] if lr else None,

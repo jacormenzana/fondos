@@ -631,6 +631,26 @@ def result_window(o: "Outcome") -> None:
     root.mainloop()
 
 
+def alert_window(text: str) -> None:
+    """A persistent notice that stays until it is closed: master is not being published, or a delivery is stuck (scripts/audit/auto_publish.py). Never silent: an incident was opened as well."""
+    import tkinter as tk
+    root = tk.Tk()
+    root.title("Fondos: publication needs attention")
+    root.geometry("720x240+40+40")
+    root.attributes("-topmost", True)
+    tk.Label(root, text=text, wraplength=680, justify="left", font=("Segoe UI", 10)).pack(fill="both", expand=True, padx=14, pady=14)
+    tk.Button(root, text="OK", width=12, command=root.destroy).pack(pady=8)
+    root.mainloop()
+
+
+def publish_pass() -> Optional[str]:
+    """One pass of the automatic publication of master (scripts/audit/auto_publish.py): the watcher retries a failed push on every pass, so a reboot or a killed process never leaves a commit stuck.
+    Returns the alert text when one is newly due, else None."""
+    sys.path.insert(0, str(ROOT / "scripts" / "audit"))
+    import auto_publish
+    return auto_publish.watcher_pass(ROOT)
+
+
 def toast_window(o: "Outcome", seconds: int = 20) -> None:
     """A small notice that closes by itself: the automatic deployment succeeded and nobody has to do anything."""
     import tkinter as tk
@@ -816,6 +836,14 @@ def main(argv: list | None = None) -> int:
                                report=bc.report_incident)
             if rres not in ("none", "skipped"):
                 print(f"revoke: {rres}")
+        try:                                                                   # FND-0376: retry a failed publication of master; an alert is shown, never swallowed
+            alert = publish_pass()
+            if alert:
+                print(f"publication: {alert}")
+                if not args.console:
+                    alert_window(alert)
+        except Exception as exc:                                               # noqa: BLE001 -- the watcher's real job goes on; the next pass tries again
+            print(f"publication pass failed: {type(exc).__name__}: {str(exc)[:160]}")
         if args.once:
             print(res)
             return RC_FAILED if res == "failed" else RC_OK

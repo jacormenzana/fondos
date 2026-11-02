@@ -261,6 +261,13 @@ def main(argv: Optional[list] = None) -> int:
             head = wanted
     finally:
         release(LOCK)
+    if code == RC_PASS:                                                      # a delivery that waited for this receipt is published now (scripts/audit/auto_publish.py decides; it never forces)
+        try:
+            sys.path.insert(0, str(ROOT / "scripts" / "audit"))
+            import auto_publish
+            auto_publish.spawn_detached(ROOT)
+        except Exception:                                                    # noqa: BLE001 -- the receipt stands; the watcher and the next commit publish too
+            pass
     return code
 
 

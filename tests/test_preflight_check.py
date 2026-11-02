@@ -149,6 +149,15 @@ def test_notes_do_not_turn_the_verdict_into_caution():
         assert frag in text
 
 
+def test_commits_that_stay_off_origin_for_thirty_minutes_are_a_caution_not_a_note():
+    fresh = pf.verdict(_report(git={"ahead": 2, "behind": 0, "stashes": 0, "worktrees": ["a"], "oldest_unpublished_min": 5}))
+    assert fresh["level"] == "CLEAR" and any("automatic publication pushes them" in n for n in fresh["notes"])
+    stale = pf.verdict(_report(git={"ahead": 2, "behind": 0, "stashes": 0, "worktrees": ["a"], "oldest_unpublished_min": 45}))
+    assert stale["level"] == "CAUTION" and any("UNPUBLISHED: 2 local commit(s)" in c and "auto_publish.py --status" in c for c in stale["cautions"])
+    unreadable = pf.verdict(_report(git={"ahead": 2, "behind": 0, "stashes": 0, "worktrees": ["a"], "oldest_unpublished_min": None}))
+    assert unreadable["level"] == "CLEAR"
+
+
 def test_an_unreadable_database_is_a_note_not_silence():
     v = pf.verdict(_report(db={"error": "cannot connect: OperationalError"}))
     assert any("database section not read" in n for n in v["notes"])
