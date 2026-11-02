@@ -6,23 +6,32 @@ prune_merged_branches.py -- deletes the branches whose work is already part of m
     python scripts/ops/prune_merged_branches.py                        # DRY RUN: lists what the rule would delete from the remote; deletes nothing
     python scripts/ops/prune_merged_branches.py --apply                # deletes them (git push origin --delete)
     python scripts/ops/prune_merged_branches.py --scope local --apply  # the same for this clone's own branches, never the checked-out one (git branch -D, only on branches this tool found in origin/master)
+    python scripts/ops/prune_merged_branches.py --rule ancestor --apply --no-fetch   # what the reference-transaction hook runs right after a fetch moved origin/master (FND-0371)
 
 Why. GitHub's "Automatically delete head branches" is on, yet the branches of the pull requests that the auto-PR workflow opens and the auto-merge lands stay: the PR history shows `auto_merge_enabled`,
-`merged`, `closed` and no `head_ref_deleted` event. This tool deletes them from a workflow (.github/workflows/branch-cleanup.yml, on every push to master, daily, and by hand).
+`merged`, `closed` and no `head_ref_deleted` event. A workflow cannot fix it: the auto-merge is made with GITHUB_TOKEN and GitHub starts no workflow from an event that token causes, so a `push: master`
+trigger never fires. The trigger is therefore the clone itself: scripts/audit/reference-transaction.sh starts this tool, detached, when a fetch moves refs/remotes/origin/master.
+The workflow .github/workflows/branch-cleanup.yml (rule pr, daily cron) is left in place only as a backstop: removing it touches .github/workflows/** and so cannot auto-merge; that is a separate, optional change.
 
 Two rules, both of which require the branch tip to be CONTAINED IN master, so nothing can be lost (the commits are in master and a branch is recreated from its SHA):
-  --rule pr        (the workflow's) the branch also has a MERGED pull request whose last commit is exactly the tip: this very state of the branch was merged. A branch pushed again after
+  --rule pr        the branch also has a MERGED pull request whose last commit is exactly the tip: this very state of the branch was merged. A branch pushed again after
                    its merge, or one that never had a pull request, is left alone. Needs the `gh` CLI and GH_TOKEN.
-  --rule ancestor  (a person's one-off clean-up) the tip being in master is enough; --keep protects names, --prefix widens the prefixes (default feat/ fix/ chore/ docs/).
-Never deleted, whatever the rule: master, main, a branch with an OPEN pull request, a name outside the prefixes. If `gh` fails the `pr` rule deletes nothing (exit 3).
-Exit codes: 0 ok (also when there is nothing to delete), 3 git or gh failed.
+  --rule ancestor  (the hook's, and a person's one-off clean-up) the tip being in master is enough; needs only git. --keep protects names, --prefix widens the prefixes (default feat/ fix/ chore/ docs/).
+                   Without `gh` it cannot see a stacked pull request, so it also keeps a merged branch that another, unmerged branch was cut from (its merge-base with master IS that tip):
+                   deleting it would close the pull request stacked on it.
+Never deleted, whatever the rule: master, main, a branch with an OPEN pull request (rule pr), a name outside the prefixes. If `gh` fails the `pr` rule deletes nothing (exit 3).
+--apply takes a lock file (out/audit/prune_merged_branches.lock, stale after 10 minutes): a second run while one is deleting does nothing and exits 0.
+--no-fetch skips the `git fetch --prune`: the hook has just fetched, and a second fetch could move origin/master again and start the hook again.
+Exit codes: 0 ok (also when there is nothing to delete or another run holds the lock), 3 git or gh failed.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -30,6 +39,8 @@ PREFIXES = ("feat/", "fix/", "chore/", "docs/")
 NEVER = ("master", "main", "HEAD")
 CHUNK = 20
 RC_OK, RC_ENV = 0, 3
+LOCK_REL = Path("out") / "audit" / "prune_merged_branches.lock"
+LOCK_STALE_S = 600
 
 
 # ── pure ────────────────────────────────────────────────────────────────────────
@@ -53,6 +64,12 @@ def select_branches(tips: dict, *, rule: str, merged: set, merged_pr_tips: dict,
         else:
             out.append((name, "its tip is contained in master"))
     return out
+
+
+def stacked_bases(tips: dict, merged: set, bases: set) -> set:
+    """The merged branches that an unmerged branch was cut from: their tip is the merge-base (with master) of some unmerged branch. `bases` = {those merge-base shas}. Deleting such a branch would
+    close the pull request stacked on it, which the ancestor rule cannot see without `gh`. Pure."""
+    return {name for name, tip in tips.items() if name in merged and tip in bases}
 
 
 def chunks(items: list, size: int = CHUNK) -> list:
@@ -91,9 +108,31 @@ def _run(cmd: list, cwd: Path) -> str:
     return r.stdout
 
 
+def acquire_lock(path: Path, now: float | None = None) -> bool:
+    """Create the lock file atomically; True when this run holds it. A lock older than LOCK_STALE_S is a dead run's and is taken over."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    for _attempt in range(2):
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            try:
+                age = (now if now is not None else time.time()) - path.stat().st_mtime
+            except FileNotFoundError:
+                continue                                                           # released between the two calls: try again
+            if age <= LOCK_STALE_S:
+                return False
+            path.unlink(missing_ok=True)
+            continue
+        with os.fdopen(fd, "w") as fh:
+            fh.write(str(os.getpid()))
+        return True
+    return False
+
+
 def main(argv: list | None = None, cwd: Path | None = None, run=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--apply", action="store_true", help="delete (default: only list)")
+    ap.add_argument("--no-fetch", action="store_true", help="do not run `git fetch --prune` first (the reference-transaction hook has just fetched)")
     ap.add_argument("--rule", choices=("pr", "ancestor"), default="pr")
     ap.add_argument("--scope", choices=("remote", "local"), default="remote")
     ap.add_argument("--prefix", action="append", default=[], help="an extra branch-name prefix to prune (repeatable)")
@@ -102,8 +141,13 @@ def main(argv: list | None = None, cwd: Path | None = None, run=None) -> int:
     where = cwd or ROOT
     do = run or (lambda cmd: _run(cmd, where))
     prefixes = tuple(PREFIXES) + tuple(args.prefix)
+    lock = where / LOCK_REL
+    if args.apply and not acquire_lock(lock):
+        print(f"another prune holds {LOCK_REL.as_posix()} (younger than {LOCK_STALE_S // 60} min): nothing to do")
+        return RC_OK
     try:
-        do(["git", "fetch", "--prune", "-q", "origin"])
+        if not args.no_fetch:
+            do(["git", "fetch", "--prune", "-q", "origin"])
         if args.scope == "local":
             current = do(["git", "branch", "--show-current"]).strip()
             names = [n.strip() for n in do(["git", "branch", "--merged", "origin/master", "--format=%(refname:short)"]).splitlines() if n.strip()]
@@ -116,7 +160,18 @@ def main(argv: list | None = None, cwd: Path | None = None, run=None) -> int:
             if args.rule == "pr":
                 open_heads, merged_prs = parse_pr_lists(do(["gh", "pr", "list", "--state", "open", "--json", "headRefName,baseRefName", "--limit", "1000"]),
                                                         do(["gh", "pr", "list", "--state", "merged", "--json", "headRefName,headRefOid", "--limit", "1000"]))
-            picked = select_branches(tips, rule=args.rule, merged=merged, merged_pr_tips=merged_prs, open_heads=open_heads, prefixes=prefixes, keep=tuple(args.keep))
+            keep = set(args.keep)
+            if args.rule == "ancestor":                                  # no gh here, so no open pull requests: protect the branches an unmerged branch was cut from
+                bases = set()
+                for n in sorted(tips):
+                    if n in merged or n in NEVER:
+                        continue
+                    try:
+                        bases.add(do(["git", "merge-base", f"origin/{n}", "origin/master"]).strip())
+                    except RuntimeError:
+                        pass                                             # no common history with master (exit 1): it cannot be stacked on a merged branch
+                keep |= stacked_bases(tips, merged, bases)
+            picked = select_branches(tips, rule=args.rule, merged=merged, merged_pr_tips=merged_prs, open_heads=open_heads, prefixes=prefixes, keep=tuple(keep))
             doomed = [n for n, _why in picked]
             reason = dict(picked)
         print(f"{args.scope} branches the {args.rule} rule selects: {len(doomed)}" + ("" if args.apply else "  (DRY RUN: nothing deleted; --apply deletes them)"))
@@ -132,6 +187,9 @@ def main(argv: list | None = None, cwd: Path | None = None, run=None) -> int:
     except RuntimeError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return RC_ENV
+    finally:
+        if args.apply:
+            lock.unlink(missing_ok=True)
     return RC_OK
 
 
