@@ -2,7 +2,50 @@
 
 **Propósito:** Reglas fundamentales que guían todas las decisiones técnicas del proyecto  
 **Aplicación:** Obligatoria en todo desarrollo, debugging, y refactorización  
-**Consecuencia de violación:** Fix rechazado, requiere rediseño
+**Consecuencia de violación:** Fix rechazado, requiere rediseño  
+**Orden de prioridad:** Directriz Principal D-0 → Principios P#1–P#11 → Restricciones R-* (`RESTRICCIONES_ARQUITECTURA.md`)
+
+---
+
+## DIRECTRIZ PRINCIPAL D-0: Automatización máxima (rango superior)
+
+**Rango:**  
+Es la instrucción de más alto rango del proyecto: rige todo diseño, análisis, propuesta y respuesta,
+de personas o de agentes. No deroga P#1–P#11, que fijan **cómo** se automatiza: una automatización
+que viole un principio no es válida (p. ej. un autocorrector que silencie una inconsistencia viola
+P#9; un parche automático de datos viola P#2/P#7). Lo que se automatiza es la solución correcta.
+
+**Regla:**  
+Minimizar el trabajo administrativo y las operaciones manuales. Todo flujo de trabajo que se diseñe
+o analice debe alcanzar el mayor nivel de automatización tecnológicamente posible.
+
+**Reglas de ejecución:**
+1. **Automatización máxima** — ningún flujo se da por terminado con pasos manuales que una máquina
+   pueda ejecutar.
+2. **Zero-Touch primero** — integraciones, scripts, APIs, hooks de git, disparadores por evento y
+   vigilantes (watchers) antes que cualquier intervención humana en tareas repetitivas.
+3. **Alerta de carga manual** — si una solución requiere carga administrativa continua, se advierte
+   de forma explícita (`[CARGA MANUAL]` + qué paso, quién, con qué frecuencia) y **en la misma
+   respuesta** se propone la alternativa automatizada. Si esa alternativa no entra en el mismo
+   cambio, se registra como ticket en `gestion.backlog` (`NORMAS_BACKLOG.md`).
+4. **Eficiencia a largo plazo > facilidad inicial** — el coste de una solución incluye todas sus
+   intervenciones humanas futuras; entre una solución rápida con pasos manuales recurrentes y otra
+   más costosa de construir pero desatendida, se elige la desatendida.
+
+**Intervención humana admitida — solo como evento:**  
+Una persona interviene únicamente en actos únicos o de autoridad y seguridad: identidad y
+credenciales (vault del propietario), veto o merge de cambios en `.github/workflows/**`, ruta de
+emergencia y decisiones de negocio. Incluso entonces la herramienta lo prepara todo y la persona
+solo decide o lanza un único comando; nunca una secuencia repetitiva. Las salvaguardas de
+despliegue (kill-switch `*_ENABLED`, dry run, punto de restauración — `NORMAS_IMPLEMENTACION.md` §8)
+forman parte de la automatización, no son carga administrativa.
+
+**Instancias vigentes:** autopilot del backlog (`Closes: FND-nnnn`), `owner_deploy.py` (DDL),
+`auto-pr.yml` (pull request + auto-merge), `sync_agents_md.py` (centinelas), captura automática de
+incidencias (`backlog_client.capture_exceptions()`).
+
+**Validación:** ¿El cambio añade o deja un paso manual recurrente? Si sí: ¿está advertido, con su
+alternativa automatizada propuesta y, si no se implementa ya, con ticket abierto?
 
 ---
 
@@ -489,6 +532,7 @@ reglas anti-duplicación, cobertura mínima por módulo, despliegue incremental)
 
 | Principio | Se aplica en | Validación |
 |-----------|--------------|------------|
+| **D-0 Automatización máxima** (rango superior) | Todo diseño, análisis, propuesta y respuesta | ¿Queda algún paso manual recurrente sin advertir, sin alternativa automatizada o sin ticket? |
 | #1 COALESCE | `fund_writer.py`, cualquier INSERT/UPDATE | ¿ON CONFLICT usa COALESCE? |
 | #2 Root cause | Todo debugging, fix de bug | ¿Se eliminó la causa o solo el síntoma? |
 | #3 Verificar ficheros | Modificación de código | ¿Leíste el archivo antes de modificar? |
@@ -516,4 +560,5 @@ Si una propuesta de solución viola alguno de estos principios:
 
 **FIN PRINCIPIOS DE DISEÑO**
 
-*Última actualización: 2026-07-12 — Añadidos P#8 (Homogeneidad lingüística), P#9 (Consistencia semántica), P#10 (Centinela vs NULL), P#11 (Escalabilidad y DRY — elevado desde R-1 / instrucciones fundacionales). Normativa logging movida a `NORMAS_IMPLEMENTACION.md` §4.*  
+*Última actualización: 2026-11-02 — Añadida la Directriz Principal D-0 (Automatización máxima), de rango superior a P#1–P#11.*  
+*2026-07-12 — Añadidos P#8 (Homogeneidad lingüística), P#9 (Consistencia semántica), P#10 (Centinela vs NULL), P#11 (Escalabilidad y DRY — elevado desde R-1 / instrucciones fundacionales). Normativa logging movida a `NORMAS_IMPLEMENTACION.md` §4.*  

@@ -162,7 +162,7 @@ Una serie mensual lleva uno de tres sellos para la misma observación: fin de me
 
 | Documento | Contenido |
 |-----------|-----------|
-| `PRINCIPIOS_DISENO.md` | P#1–P#11: por qué se diseñó así el sistema (R-1 = instancia enforced de P#11 DRY) |
+| `PRINCIPIOS_DISENO.md` | D-0 (Automatización máxima, rango superior) y P#1–P#11: por qué se diseñó así el sistema (R-1 = instancia enforced de P#11 DRY) |
 | `AGENTS.md` (raíz repo) | Single source of truth: orientación de proyecto + índice a los 5 docs |
 | `NORMAS_IMPLEMENTACION.md` | Proceso de diagnóstico, minimización de cambios, logging, DQ check_code, smoke tests, coordinación LLM, catálogo de regresiones |
 | `MODELO_SEMANTICO.md` | Semántica de atributos y catálogo de reglas SC-A1..SC-F4 |
@@ -174,6 +174,7 @@ Una serie mensual lleva uno de tres sellos para la misma observación: fin de me
 
 Antes de aprobar un cambio:
 
+- [ ] ¿Añade o deja algún paso manual recurrente? Si sí: advertido (`[CARGA MANUAL]`), alternativa automatizada propuesta y, si no se implementa en este cambio, ticket abierto (Directriz D-0, `PRINCIPIOS_DISENO.md`)
 - [ ] AST OK (R-8)
 - [ ] Si une, alinea o ventanea series mensuales: ¿usa `shared/period_key.py` y no una copia inline de la convención de mes? (R-9)
 - [ ] Tests funcionales escritos y pasando (R-7)

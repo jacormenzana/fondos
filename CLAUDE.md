@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 The canonical guidance for this repository lives in **`AGENTS.md`** — the single source of truth
-(project context, P1/P2/P3 architecture, commands, the 11 non-negotiable design principles, and
+(project context, P1/P2/P3 architecture, commands, Directive D-0 (maximum automation, highest rank), the 11 non-negotiable design principles, and
 the index to the five specification documents in `doc/reglas/`). **Read it first.**
 
 @AGENTS.md

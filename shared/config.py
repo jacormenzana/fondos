@@ -846,7 +846,7 @@ BACKLOG_IMPACT_NOTES_ENABLED: bool = True
 # Backlog v3.1 (FND-0355; owner decision 2026-11-01, "no console, no click"): how the deploy watcher (scripts/ops/owner_deploy.py) applies the backlog DDL that master brings. "AUTO" = with no window,
 # behind automatic gates (restore point, one transaction per phase, the drift tool must say `no drift`, automatic rollback and an incident ticket on failure; a failure or a missing restore point falls back
 # to the approval window for that version). "ASK" = the approval window for every version (the previous behaviour). An unknown value is read as ASK. Rollback of this decision = set it to "ASK".
-BACKLOG_AUTO_DEPLOY_MODE: str = "AUTO"
+BACKLOG_AUTO_DEPLOY_MODE: str = "ASK"
 # Backlog v3.1 (FND-0363): whether the deploy watcher in AUTO mode also applies step A-2 (`revoke`: removes the direct INSERT/UPDATE privileges of backlog_writer) by itself. OFF by default because it
 # changes the security posture of the backlog. ON by the owner's decision of 2026-11-01 (FND-0363): the watcher applies it, with the usual restore point, drift check, rollback and incident, as soon as the
 # shadow stage shows 50 non-system transitions since the last direct write (the migrate tool refuses it before that) and nothing else is pending. A failed attempt latches itself off in the watcher's state
