@@ -10,7 +10,8 @@ prune_merged_branches.py -- deletes the branches whose work is already part of m
 
 Why. GitHub's "Automatically delete head branches" is on, yet the branches of the pull requests that the auto-PR workflow opens and the auto-merge lands stay: the PR history shows `auto_merge_enabled`,
 `merged`, `closed` and no `head_ref_deleted` event. A workflow cannot fix it: the auto-merge is made with GITHUB_TOKEN and GitHub starts no workflow from an event that token causes, so a `push: master`
-trigger never fires. The trigger is therefore the clone itself: scripts/audit/reference-transaction.sh starts this tool, detached, when a fetch moves refs/remotes/origin/master. No cron, no workflow.
+trigger never fires. The trigger is therefore the clone itself: scripts/audit/reference-transaction.sh starts this tool, detached, when a fetch moves refs/remotes/origin/master.
+The workflow .github/workflows/branch-cleanup.yml (rule pr, daily cron) is left in place only as a backstop: removing it touches .github/workflows/** and so cannot auto-merge; that is a separate, optional change.
 
 Two rules, both of which require the branch tip to be CONTAINED IN master, so nothing can be lost (the commits are in master and a branch is recreated from its SHA):
   --rule pr        the branch also has a MERGED pull request whose last commit is exactly the tip: this very state of the branch was merged. A branch pushed again after

@@ -1,6 +1,6 @@
 # tests/test_prune_merged_branches.py
 # -*- coding: utf-8 -*-
-"""scripts/ops/prune_merged_branches.py (Backlog v3.1 housekeeping, FND-0371): the selection rules (pure), and the deletion against a real throwaway repository with a
+"""scripts/ops/prune_merged_branches.py and .github/workflows/branch-cleanup.yml (Backlog v3.1 housekeeping, FND-0371): the selection rules (pure), and the deletion against a real throwaway repository with a
 real bare remote. No network, no GitHub, no database (R-7)."""
 from __future__ import annotations
 
@@ -186,6 +186,34 @@ def test_the_local_scope_keeps_the_branch_that_is_checked_out_even_when_it_is_me
     r.git("checkout", "-q", "feat/done")                                              # merged AND checked out
     assert r.run(["--scope", "local", "--apply"]) == 0                                # git would refuse it anyway; the tool must not even try (a refusal would be exit 3)
     assert sorted(l.strip("* ").strip() for l in r.git("branch").splitlines()) == ["feat/done", "master"]
+
+
+# ---------------------------------------------------------------- the workflow is pinned by reading it
+
+WORKFLOW = _ROOT / ".github" / "workflows" / "branch-cleanup.yml"
+
+
+def load():
+    yaml = pytest.importorskip("yaml")
+    return yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+
+
+def test_the_workflow_has_exactly_the_permissions_it_needs_and_three_triggers_and_never_a_pull_request_one():
+    wf = load()
+    assert wf["permissions"] == {"contents": "write", "pull-requests": "read"}
+    on = wf.get("on", wf.get(True))
+    assert set(on) == {"push", "schedule", "workflow_dispatch"} and on["push"] == {"branches": ["master"]}
+    assert "pull_request" not in on and "pull_request_target" not in on
+
+
+def test_the_workflow_runs_the_pr_rule_with_the_workflow_token_and_nothing_else():
+    wf = load()
+    steps = wf["jobs"]["prune"]["steps"]
+    assert steps[0]["uses"].startswith("actions/checkout@") and steps[0]["with"] == {"fetch-depth": 0}                 # the whole history, or "contained in master" cannot be known
+    run = steps[1]
+    assert run["run"] == "python3 scripts/ops/prune_merged_branches.py --rule pr --apply" and run["env"] == {"GH_TOKEN": "${{ secrets.GITHUB_TOKEN }}"}
+    assert len(steps) == 2 and "ancestor" not in WORKFLOW.read_text(encoding="utf-8").split("jobs:")[1]
+    assert wf["concurrency"]["cancel-in-progress"] is False
 
 
 def test_the_script_never_deletes_the_protected_names_by_construction():

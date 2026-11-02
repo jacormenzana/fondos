@@ -1,0 +1,37 @@
+name: Prune merged branches
+
+# Backlog v3.1 housekeeping (2026-11-01). GitHub's "Automatically delete head branches" is on, but the branches of the pull requests that auto-pr.yml opens and the auto-merge lands stay (their
+# history has no `head_ref_deleted` event). This job deletes a branch only when its tip is contained in master AND a MERGED pull request of that branch ended on exactly that commit (never master,
+# main, a branch with an open pull request, or a name outside feat/ fix/ chore/ docs/); see scripts/ops/prune_merged_branches.py. Nothing is lost: the commits are in master.
+#
+# It runs on every push to master, daily, and by hand: events caused by the workflow token do not always start push workflows, so the schedule is the one that cannot be missed. It is a publisher
+# like auto-pr.yml (it reports no check that master could require), so tests/test_github_protect_master.py lists it in PUBLISHER_WORKFLOWS.
+
+on:
+  push:
+    branches: [master]
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: read
+
+concurrency:
+  group: branch-cleanup
+  cancel-in-progress: false
+
+jobs:
+  prune:
+    name: Delete merged head branches
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Delete the branches whose merged pull request ended on their tip
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/ops/prune_merged_branches.py --rule pr --apply
