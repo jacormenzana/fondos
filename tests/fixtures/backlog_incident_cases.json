@@ -14,7 +14,8 @@
     "mark_stale.py",
     "P2 NAV quarantine",
     "P1P2_runCycle.bat PASO",
-    "audit_incident:"
+    "audit_incident:",
+    "auto_publish.py"
   ],
   "cases": [
     {
@@ -113,6 +114,30 @@
       "incident": {"object_name": "audit_incident:cost_attributes|MGMT_LE_TOTAL|MGMT_LE_TOTAL",
                    "scenario": "CRITICAL finding MGMT_LE_TOTAL / MGMT_LE_TOTAL in cost_attributes (run audit_20261012T184300Z): 73/2836 applicable rows violate across 73 ISINs. Affected: 73 ISIN(s). Close only on a certifying re-audit (scripts/audit/audit_incident.py --certify) or an active accepted residual."},
       "expect": "HIGH"
+    },
+    {
+      "name": "auto_publish: the same publication failure re-reported (append, not duplicate)",
+      "open": [{"action_point_id": "FND-1103", "title": "auto_publish: master is not being published", "object_name": "auto_publish.py",
+                "scenario_description": "master is NOT published: 3 attempt(s) since 2026-11-03T08:00:00, network: fatal: unable to access 'https://github.com/jacormenzana/fondos.git/': Could not resolve host: github.com; it keeps retrying. After fixing the cause run: python scripts/audit/auto_publish.py --now"}],
+      "incident": {"object_name": "auto_publish.py",
+                   "scenario": "master is NOT published: 3 attempt(s) since 2026-11-03T08:00:00, network: fatal: unable to access 'https://github.com/jacormenzana/fondos.git/': Could not resolve host: github.com; it keeps retrying. After fixing the cause run: python scripts/audit/auto_publish.py --now"},
+      "expect": "HIGH"
+    },
+    {
+      "name": "auto_publish: a diverged history is not the network failure (never merge)",
+      "open": [{"action_point_id": "FND-1104", "title": "auto_publish: master is not being published", "object_name": "auto_publish.py",
+                "scenario_description": "master is NOT published: 3 attempt(s) since 2026-11-03T08:00:00, network: fatal: unable to access 'https://github.com/jacormenzana/fondos.git/': Could not resolve host: github.com; it keeps retrying. After fixing the cause run: python scripts/audit/auto_publish.py --now"}],
+      "incident": {"object_name": "auto_publish.py",
+                   "scenario": "master is NOT published: 1 attempt(s) since 2026-11-03T10:30:00, diverged: origin/master has commits this master lacks and this master has its own: the history diverged (nothing is forced); a person must act (nothing is forced). After fixing the cause run: python scripts/audit/auto_publish.py --now"},
+      "never_high": true
+    },
+    {
+      "name": "auto_publish: a stuck delivery is not a failed push (never merge)",
+      "open": [{"action_point_id": "FND-1105", "title": "auto_publish: master is not being published", "object_name": "auto_publish.py",
+                "scenario_description": "master is NOT published: 3 attempt(s) since 2026-11-03T08:00:00, network: fatal: unable to access 'https://github.com/jacormenzana/fondos.git/': Could not resolve host: github.com; it keeps retrying. After fixing the cause run: python scripts/audit/auto_publish.py --now"}],
+      "incident": {"object_name": "auto_publish.py",
+                   "scenario": "a delivery is stuck: commit 29406bb5bd1c (Closes:) has waited 45 minutes for a local test receipt, so it is not published and its ticket is not closed. Run: python scripts/audit/delivery_attest.py"},
+      "never_high": true
     }
   ]
 }

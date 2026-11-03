@@ -89,6 +89,19 @@ def parse_counts(text: str) -> tuple:
     return counts, summaries
 
 
+_FAILED_LINE = re.compile(r"^(?:FAILED|ERROR) (\S+)")
+
+
+def failed_tests(text: str, limit: int = 5) -> list:
+    """The ids of the tests pytest lists as FAILED or ERROR in its short summary (the first `limit`, in order, without repeats). Without them a failed receipt says only "1 failed". Pure."""
+    seen: list = []
+    for line in str(text or "").splitlines():
+        m = _FAILED_LINE.match(line.strip())
+        if m and m.group(1) not in seen:
+            seen.append(m.group(1))
+    return seen[:limit]
+
+
 def judge(run_scope: str, required: str, counts: dict, summaries: int, rc: int, uncovered: list) -> tuple:
     """(result, detail) of a run. `insufficient_scope`: the scope run is weaker than the change needs. `no_tests_cover`: an area run with uncovered code files. `inconclusive`: no pytest summary was
     produced (infrastructure, never a failure of a test). `fail`: a non-zero exit code, a failure or error, or no test passed. `pass` only when tests really ran and passed. Pure."""

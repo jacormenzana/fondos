@@ -221,7 +221,7 @@ def raise_alert(text: str) -> None:
     try:
         import shared.config  # noqa: F401  (loads .env)
         from shared import backlog_client as bc
-        bc.report_incident(object_name="scripts/audit/auto_publish.py", scenario_description=text[:900], title="auto_publish: master is not being published")
+        bc.report_incident(object_name="auto_publish.py", scenario_description=text[:900], title="auto_publish: master is not being published")
     except Exception:                                                                       # noqa: BLE001
         pass
 

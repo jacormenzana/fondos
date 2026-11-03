@@ -185,7 +185,13 @@ def attest(root: Path, head: str, scope: Optional[str], *, runner: Callable, rec
             shutil.rmtree(tmp, ignore_errors=True)
     result, detail = dr.judge(run_scope, required, counts, summaries, rc, uncovered)
     if result in ("fail", "inconclusive") and text.strip():
-        detail += " | " + " / ".join(text.strip().splitlines()[-3:])[:300]
+        ids = dr.failed_tests(text)
+        detail += (" | failed: " + ", ".join(ids) if ids else "") + " | " + " / ".join(text.strip().splitlines()[-3:])[:300]
+        try:                                                                 # the whole output of the run that did not pass, for whoever has to fix it (overwritten by the next failure)
+            receipts_path.parent.mkdir(parents=True, exist_ok=True)
+            (receipts_path.parent / "delivery_attest_last_failure.log").write_text(text[-60000:], encoding="utf-8")
+        except OSError:
+            pass
     rec = dr.build_receipt(sha=chg["sha"], tree=chg["tree"], base=chg["base"], covers=chg["covers"], changed=chg["changed"], required=required, run_scope=run_scope,
                            files=selected, counts=counts, rc=rc, seconds=seconds, python=python or sys.executable, command=[" ".join(c) for c in commands],
                            result=result, detail=detail, ts=now().isoformat(timespec="seconds"))

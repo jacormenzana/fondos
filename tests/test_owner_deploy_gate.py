@@ -78,6 +78,11 @@ def test_a_failed_test_is_a_failure_and_everything_skipped_or_nothing_collected_
     assert gate(GateRunner(text="34 passed in 1.0s\n", rc=1))[0] == "fail"                                    # a non-zero exit code beats a clean count
 
 
+def test_a_failed_gate_names_the_failing_test():
+    kind, detail = gate(GateRunner(text="FAILED tests/test_backlog_gate_pg.py::test_x - boom\n1 failed, 33 passed in 9.0s\n", rc=1))
+    assert kind == "fail" and "failed: tests/test_backlog_gate_pg.py::test_x" in detail
+
+
 def test_infrastructure_trouble_is_cannot_run_never_a_failed_test_and_never_a_pass():
     assert gate(GateRunner(text="[pg-test] 127.0.0.1:5440 is not reachable from the host\n", rc=1))[0] == "cannot_run"     # no pytest summary: the container never got to the tests
     assert gate(GateRunner(boom=subprocess.TimeoutExpired("x", 1)))[0] == "cannot_run"

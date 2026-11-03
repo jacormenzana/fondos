@@ -355,7 +355,8 @@ def ddl_gate(head: str, *, python: Optional[str] = None, checkout: Optional[Call
             return "cannot_run", f"the DDL tests could not start: {type(exc).__name__}: {str(exc)[:160]}"
     counts, summaries = dr.parse_counts(text)
     result, detail = dr.judge("area", "area", counts, summaries, rc, [])
-    tail = " / ".join(text.strip().splitlines()[-3:])[:300]
+    ids = dr.failed_tests(text)
+    tail = (f"failed: {', '.join(ids)} | " if ids else "") + " / ".join(text.strip().splitlines()[-3:])[:300]
     if result == "pass":
         return "pass", f"{counts['passed']} hermetic DDL, migration and rollback tests passed ({len(files)} files) on {head[:10]}"
     return ("cannot_run" if result == "inconclusive" else "fail"), f"{detail} | {tail}"

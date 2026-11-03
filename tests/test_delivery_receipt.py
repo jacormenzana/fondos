@@ -264,6 +264,21 @@ def test_code_no_test_covers_is_not_a_pass_and_nothing_runs(repo):
     assert run(repo, Runner(), scope="full")["result"] == "pass"                          # a full run vouches for anything
 
 
+def test_failed_tests_are_named_in_order_without_repeats_and_capped():
+    text = "FAILED tests/a.py::test_x - assert 1 == 2\nERROR tests/b.py::test_y\nFAILED tests/a.py::test_x - again\nnoise FAILED not at the start\n"
+    assert dr.failed_tests(text) == ["tests/a.py::test_x", "tests/b.py::test_y"]
+    assert len(dr.failed_tests("\n".join(f"FAILED tests/t.py::test_{i}" for i in range(20)))) == 5
+    assert dr.failed_tests("") == [] and dr.failed_tests("12 passed in 1s") == []
+
+
+def test_a_failed_receipt_names_the_failing_test_and_keeps_the_output(repo):
+    commit(repo, {"scripts/tool.py": "x = 2\n"})
+    out = "..F\nFAILED tests/test_tool.py::test_a - assert 1 == 2\n1 failed, 2 passed in 0.1s\n"
+    rec = run(repo, Runner(text=out, rc=1))
+    assert rec["result"] == "fail" and "failed: tests/test_tool.py::test_a" in rec["detail"]
+    assert "tests/test_tool.py::test_a" in (repo / "out" / "delivery_attest_last_failure.log").read_text(encoding="utf-8")
+
+
 def test_a_failing_run_is_a_failure(repo):
     commit(repo, {"scripts/tool.py": "x = 2\n"})
     rec = run(repo, Runner(text="1 failed, 1 passed in 0.1s\n", rc=1))
