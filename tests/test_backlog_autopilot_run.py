@@ -287,22 +287,26 @@ def test_the_sync_now_counts_a_closes_trailer_as_a_refs_one(tmp_path, monkeypatc
     assert sync.citations(top) == [("FND-0001", "REFS")]
 
 
-# ---------------------------------------------------------------- the hook and the installer
+# ---------------------------------------------------------------- the hook and the installer (FND-0379: the autopilot runs from a clean clone of origin/master)
 
 def test_the_hook_installer_only_reacts_to_origin_master_never_blocks_and_runs_detached():
     text = (_ROOT / "scripts" / "audit" / "reference-transaction.sh").read_text(encoding="utf-8")
     assert 'REF" = "refs/remotes/origin/master"' in text and '"$STATE" = "committed"' in text
     assert "--apply --quiet" in text and ") >/dev/null 2>&1 &" in text and text.count("exit 0") >= 4
     assert "exit 1" not in text and "exit 3" not in text                                                    # it can never refuse a reference update
-    assert "git diff --quiet origin/master -- shared scripts" in text and "merge --ff-only" in text         # FND-0369: the merged code or nothing, and only a fast-forward
+    assert "git diff --quiet origin/master -- shared scripts" not in text and "merge --ff-only" not in text  # FND-0379: no guard on the working tree, and the hook never moves a working branch
+    assert "out/autopilot_clone" in text and "checkout -q -f --detach" in text and "--no-hardlinks" in text   # the clean clone, forced to origin/master
+    assert 'FONDOS_ENV_FILE="$ROOT/.env" FONDOS_OUT_DIR="$ROOT/out"' in text                                # it uses the MAIN tree's .env and out/
     assert '"$PRUNE" --rule ancestor --apply --no-fetch' in text                                            # FND-0371: the branch prune runs from the same event, and it does not fetch again
-    assert text.index('"$PRUNE" --rule ancestor') < text.index('"$PYTHON" "$AUTOPILOT"')                    # ... before the autopilot guard, so a feature-branch clone still prunes
+    assert text.index('"$PRUNE" --rule ancestor') < text.index('"$PYTHON" "$AUTOPILOT"')                    # ... before the autopilot, which can take a while
 
 
-# ---------------------------------------------------------------- FND-0369: the hook runs the merged code or it does not run
-
-def autopilot_source(marker, version):
-    return f"import sys\nopen(r'{marker}', 'a').write('{version} ' + ' '.join(sys.argv[1:]) + '\\n')\n"
+def autopilot_source(marker, version, sleep=0.0):
+    """A fake autopilot that records which version of itself ran, with its arguments, the two paths it was given and where the running copy lives."""
+    return ("import os, sys, time\n"
+            f"open(r'{marker}.started', 'a').write('1')\n"
+            f"time.sleep({sleep})\n"
+            f"open(r'{marker}', 'a').write('{version} ' + ' '.join(sys.argv[1:]) + ' | ' + os.environ.get('FONDOS_ENV_FILE', '') + ' | ' + os.environ.get('FONDOS_OUT_DIR', '') + ' | ' + os.path.abspath(__file__) + '\\n')\n")
 
 
 class HookRepo(Repo):
@@ -318,26 +322,40 @@ class HookRepo(Repo):
         assert inst.returncode == 0, inst.stderr
 
     def fetch(self, sha=None):
-        """What a fetch does: origin/master moves."""
+        """What a fetch or a push does: origin/master moves."""
         self.git("update-ref", "refs/remotes/origin/master", sha or self.git("rev-parse", "master"))
 
-    def ran(self, wait=10.0):
+    def runs(self, count=1, wait=15.0):
+        """The lines the fake autopilot wrote, once at least `count` of them exist (the hook runs detached)."""
         end = time.time() + wait
         while time.time() < end:
             if self.marker.exists():
-                time.sleep(0.3)
-                return self.marker.read_text(encoding="utf-8").strip().splitlines()
+                lines = self.marker.read_text(encoding="utf-8").strip().splitlines()
+                if len(lines) >= count:
+                    time.sleep(0.3)
+                    return self.marker.read_text(encoding="utf-8").strip().splitlines()
             time.sleep(0.2)
-        return []
+        return self.marker.read_text(encoding="utf-8").strip().splitlines() if self.marker.exists() else []
 
-    def skipped(self, wait=3.0):
+    def versions(self, count=1, wait=15.0):
+        return [ln.split(" ", 1)[0] for ln in self.runs(count, wait)]
+
+    def logged(self, text, wait=8.0):
         end = time.time() + wait
         while time.time() < end:
-            if self.log.exists() and "NOT started" in self.log.read_text(encoding="utf-8"):
-                time.sleep(0.3)
-                return not self.marker.exists()
+            if self.log.exists() and text in self.log.read_text(encoding="utf-8"):
+                return True
             time.sleep(0.2)
         return False
+
+    def branch_with(self, name, path, content, message):
+        """A commit on another branch (the working tree goes back to where it was): returns its sha."""
+        here = self.git("rev-parse", "--abbrev-ref", "HEAD")
+        self.git("checkout", "-q", "-b", name)
+        self.commit(path, content, message)
+        sha = self.git("rev-parse", "HEAD")
+        self.git("checkout", "-q", here)
+        return sha
 
 
 needs_sh = pytest.mark.skipif(shutil.which("sh") is None, reason="sh is needed")
@@ -348,128 +366,142 @@ needs_sh = pytest.mark.skipif(shutil.which("sh") is None, reason="sh is needed")
 def test_installed_hook_starts_the_autopilot_in_the_background_only_when_origin_master_moves(tmp_path):
     r = HookRepo(tmp_path)
     r.git("update-ref", "refs/heads/other", r.git("rev-parse", "HEAD"))                                    # an unrelated reference: nothing starts
+    r.git("update-ref", "refs/remotes/origin/other", r.git("rev-parse", "HEAD"))
     time.sleep(1.0)
     assert not r.marker.exists()
     r.fetch()
-    assert r.ran() == ["V1 --apply --quiet"]
+    assert r.versions() == ["V1"] and r.runs()[0].startswith("V1 --apply --quiet")
 
 
 @needs_git
 @needs_sh
-def test_another_branch_with_different_code_is_not_run_and_the_log_says_why(tmp_path):
+def test_the_autopilot_runs_the_code_of_origin_master_from_a_clean_clone_whatever_the_working_tree_holds(tmp_path):
     r = HookRepo(tmp_path)
     r.git("checkout", "-q", "-b", "feat/under-review")
-    r.commit("shared/lib.py", "x = 2\n", "unreviewed change")                                              # code that is not on origin/master
-    r.fetch(r.git("rev-parse", "master"))
-    assert r.skipped() is True
-    assert "feat/under-review" in r.log.read_text(encoding="utf-8")
-
-
-@needs_git
-@needs_sh
-def test_an_edit_or_an_untracked_file_in_the_code_directories_stops_it_and_a_change_elsewhere_does_not(tmp_path):
-    r = HookRepo(tmp_path)
-    (r.root / "shared" / "lib.py").write_text("x = 99\n", encoding="utf-8")                              # an uncommitted edit
-    r.fetch()
-    assert r.skipped() is True
-    r.git("checkout", "-q", "--", "shared/lib.py")
-    r.marker.unlink(missing_ok=True)
-    r.log.unlink()
+    r.commit("scripts/audit/backlog_autopilot.py", autopilot_source(r.marker, "V3-UNREVIEWED"), "unreviewed autopilot on a feature branch")
+    (r.root / "shared" / "lib.py").write_text("x = 99  # an uncommitted edit\n", encoding="utf-8")
     (r.root / "scripts" / "audit" / "scratch.py").write_text("print(1)\n", encoding="utf-8")             # an untracked file where the code is imported from
+    r.fetch(r.git("rev-parse", "master"))                                                                   # origin/master is the merged V1
+    lines = r.runs()
+    assert [ln.split(" ", 1)[0] for ln in lines] == ["V1"]                                                  # the merged code ran, never the branch's, never the edit
+    version, env_file, out_dir, script = [p.strip() for p in lines[0].split("|")]
+    assert script.replace("\\", "/").endswith("out/autopilot_clone/scripts/audit/backlog_autopilot.py")      # ... from the clean clone under out/
+    assert env_file.replace("\\", "/").endswith("/.env") and out_dir.replace("\\", "/").endswith("/out")    # ... reading the MAIN tree's .env and writing to the MAIN tree's out/
+    assert r.git("rev-parse", "--abbrev-ref", "HEAD") == "feat/under-review" and (r.root / "shared" / "lib.py").read_text(encoding="utf-8").endswith("an uncommitted edit\n")   # the tree was not touched
+
+
+@needs_git
+@needs_sh
+def test_a_master_that_is_behind_or_has_its_own_commit_does_not_matter_and_is_never_moved(tmp_path):
+    r = HookRepo(tmp_path)
+    merged = r.branch_with("merged", "scripts/audit/backlog_autopilot.py", autopilot_source(r.marker, "V2"), "the autopilot V2, merged on GitHub")
+    r.commit("shared/lib.py", "x = 4\n", "a local commit that is not on origin/master")
+    mine_sha = r.git("rev-parse", "HEAD")
+    r.fetch(merged)                                                                                         # origin/master is the merged V2; this master has diverged from it
+    assert r.versions() == ["V2"]
+    assert r.git("rev-parse", "master") == mine_sha and r.git("branch", "--show-current") == "master"      # the working branch is never merged, fast-forwarded or reset by the hook
+
+
+@needs_git
+@needs_sh
+def test_the_clone_is_made_once_and_brought_forward_on_each_event(tmp_path):
+    r = HookRepo(tmp_path)
     r.fetch()
-    assert r.skipped() is True
-    (r.root / "scripts" / "audit" / "scratch.py").unlink()
-    r.marker.unlink(missing_ok=True)
-    r.log.unlink()
-    (r.root / "notes.md").write_text("outside the code directories\n", encoding="utf-8")                 # not shared/ nor scripts/: it does not matter
+    assert r.versions() == ["V1"]
+    clone = r.root / "out" / "autopilot_clone"
+    (clone / "SENTINEL").write_text("the first clone\n", encoding="utf-8")                                  # survives only if the clone is reused (git clean touches only shared/ and scripts/)
+    v2 =r.branch_with("v2", "scripts/audit/backlog_autopilot.py", autopilot_source(r.marker, "V2"), "V2")
+    r.fetch(v2)
+    assert r.versions(2) == ["V1", "V2"]
+    v3 = r.branch_with("v3", "scripts/audit/backlog_autopilot.py", autopilot_source(r.marker, "V3"), "V3")
+    r.fetch(v3)
+    assert r.versions(3) == ["V1", "V2", "V3"]
+    assert (clone / "SENTINEL").exists()                                                                    # the same clone, not a new one each time
+    assert r.git("-C", str(clone), "rev-parse", "HEAD") == v3
+
+
+@needs_git
+@needs_sh
+def test_a_push_that_lands_while_a_run_is_in_progress_is_picked_up_by_that_runs_next_turn(tmp_path):
+    r = HookRepo(tmp_path)
+    r.commit("scripts/audit/backlog_autopilot.py", autopilot_source(r.marker, "V1", sleep=3.0), "a slow autopilot V1")
     r.fetch()
-    assert r.ran() == ["V1 --apply --quiet"]
-
-
-@needs_git
-@needs_sh
-def test_a_branch_whose_code_is_the_merged_code_runs_even_though_it_is_not_master(tmp_path):
-    r = HookRepo(tmp_path)
-    r.git("checkout", "-q", "-b", "docs/only-docs")
-    r.commit("doc/guide.md", "words\n", "docs only")                                                      # shared/ and scripts/ are identical to origin/master
-    r.fetch(r.git("rev-parse", "master"))
-    assert r.ran() == ["V1 --apply --quiet"]
-
-
-@needs_git
-@needs_sh
-def test_a_clean_master_that_is_only_behind_is_brought_forward_and_the_NEW_code_runs(tmp_path):
-    r = HookRepo(tmp_path)
-    r.git("checkout", "-q", "-b", "merged")
-    r.commit("scripts/audit/backlog_autopilot.py", autopilot_source(r.marker, "V2"), "the autopilot V2, merged on GitHub")
-    merged = r.git("rev-parse", "HEAD")
-    r.git("checkout", "-q", "master")
-    assert r.git("rev-parse", "HEAD") != merged
-    r.fetch(merged)                                                                                         # origin/master is ahead; the clone's master is behind and clean
-    assert r.ran() == ["V2 --apply --quiet"]
-    assert r.git("rev-parse", "master") == merged and r.git("branch", "--show-current") == "master"
-
-
-@needs_git
-@needs_sh
-def test_only_a_clean_master_is_ever_brought_forward_never_a_feature_branch_and_never_a_tree_with_edits(tmp_path):
-    r = HookRepo(tmp_path)
-    r.git("checkout", "-q", "-b", "merged")
-    r.commit("scripts/audit/backlog_autopilot.py", autopilot_source(r.marker, "V2"), "merged on GitHub")
-    merged = r.git("rev-parse", "HEAD")
-    r.git("checkout", "-q", "master")
-    r.git("checkout", "-q", "-b", "feat/behind")
-    behind = r.git("rev-parse", "HEAD")
-    r.fetch(merged)                                                                                         # a clean feature branch that is behind origin/master
-    assert r.skipped() is True and r.git("rev-parse", "HEAD") == behind                                      # it was not moved: the branch is someone's work
-    r.git("checkout", "-q", "master")
-    (r.root / "README").write_text("an edit that is not committed\n", encoding="utf-8")
-    r.log.unlink()
-    r.fetch(merged)
-    assert r.skipped() is True and r.git("rev-parse", "master") != merged                                    # a tree with edits is never touched by the hook
-
-
-@needs_git
-@needs_sh
-def test_a_master_with_its_own_commit_is_never_merged_or_run(tmp_path):
-    r = HookRepo(tmp_path)
-    r.git("checkout", "-q", "-b", "merged")
-    r.commit("shared/lib.py", "x = 3\n", "merged on GitHub")
-    merged = r.git("rev-parse", "HEAD")
-    r.git("checkout", "-q", "master")
-    r.commit("shared/lib.py", "x = 4\n", "a local commit that is not on origin/master")                     # diverged: a fast-forward is impossible
-    local = r.git("rev-parse", "HEAD")
-    r.fetch(merged)
-    assert r.skipped() is True and r.git("rev-parse", "master") == local                                     # nothing was merged, nothing ran
-
-
-@needs_git
-@needs_sh
-def test_the_hook_also_runs_the_branch_prune_next_to_the_autopilot_on_a_clean_master(tmp_path):
-    """FND-0371: the same fetch that starts the autopilot runs prune_merged_branches.py (ancestor rule, no fetch)."""
-    r = HookRepo(tmp_path)
-    prune_marker = r.root / "prune.txt"
-    r.commit("scripts/ops/prune_merged_branches.py", autopilot_source(prune_marker, "P1"), "the prune P1")
-    r.fetch()
-    assert r.ran() == ["V1 --apply --quiet"]
-    assert prune_marker.read_text(encoding="utf-8").strip() == "P1 --rule ancestor --apply --no-fetch"
-
-
-@needs_git
-@needs_sh
-def test_the_prune_still_runs_when_the_guard_stops_the_autopilot_because_it_writes_nothing_to_the_backlog(tmp_path):
-    r = HookRepo(tmp_path)
-    prune_marker = r.root / "prune.txt"
-    r.commit("scripts/ops/prune_merged_branches.py", autopilot_source(prune_marker, "P1"), "the prune P1")
-    r.git("checkout", "-q", "-b", "feat/under-review")
-    r.commit("shared/lib.py", "x = 2\n", "unreviewed change")                                              # not the merged code: the autopilot must not start
-    r.fetch(r.git("rev-parse", "master"))
-    assert r.skipped() is True                                                                              # the autopilot was refused, with its line in the log
-    for _ in range(50):
-        if prune_marker.exists():
+    started = Path(str(r.marker) + ".started")
+    for _ in range(100):                                                                                    # wait until the first run is really running (and so holds the lock)
+        if started.exists():
             break
         time.sleep(0.2)
-    assert prune_marker.read_text(encoding="utf-8").strip() == "P1 --rule ancestor --apply --no-fetch"      # ... and the prune ran from the feature branch all the same
+    assert started.exists()
+    v2 = r.branch_with("v2", "scripts/audit/backlog_autopilot.py", autopilot_source(r.marker, "V2"), "V2")
+    r.fetch(v2)                                                                                             # a second event: its hook finds the lock taken and leaves
+    assert r.versions(2, wait=25.0) == ["V1", "V2"]                                                         # ... and the running loop runs again for the newer commit
+
+
+@needs_git
+@needs_sh
+def test_a_fresh_lock_means_a_run_is_in_progress_and_a_stale_lock_is_taken_over(tmp_path):
+    r = HookRepo(tmp_path)
+    lock = r.root / "out" / "autopilot_clone.lock"
+    lock.mkdir(parents=True)
+    r.fetch()
+    time.sleep(2.0)
+    assert not r.marker.exists() and lock.exists()                                                          # another run holds it: this event leaves it alone
+    old = time.time() - 3 * 3600
+    os.utime(lock, (old, old))                                                                              # nobody touched it for hours: its run is dead
+    r.fetch(r.branch_with("again", "shared/lib.py", "x = 5\n", "another commit"))
+    assert r.versions() == ["V1"] and not lock.exists()                                                     # the hook released its own lock when it was done
+
+
+@needs_git
+@needs_sh
+def test_an_origin_master_without_the_autopilot_runs_nothing_and_says_so(tmp_path):
+    r = Repo(tmp_path)
+    inst = subprocess.run(["sh", str(_ROOT / "scripts" / "audit" / "reference-transaction.sh")], cwd=r.root, capture_output=True, text=True, env=r.env, timeout=60)
+    assert inst.returncode == 0, inst.stderr
+    r.git("update-ref", "refs/remotes/origin/master", r.git("rev-parse", "HEAD"))
+    log = r.root / "out" / "audit" / "backlog_autopilot_hook.log"
+    for _ in range(60):
+        if log.exists() and "has no scripts/audit/backlog_autopilot.py" in log.read_text(encoding="utf-8"):
+            break
+        time.sleep(0.2)
+    assert "has no scripts/audit/backlog_autopilot.py" in log.read_text(encoding="utf-8")
+
+
+@needs_git
+@needs_sh
+def test_the_hook_also_runs_the_branch_prune_next_to_the_autopilot(tmp_path):
+    """FND-0371: the same event that starts the autopilot runs prune_merged_branches.py (ancestor rule, no fetch)."""
+    r = HookRepo(tmp_path)
+    prune_marker = r.root / "prune.txt"
+    r.commit("scripts/ops/prune_merged_branches.py", autopilot_source(prune_marker, "P1"), "the prune P1")
+    r.fetch()
+    assert r.versions() == ["V1"]
+    assert prune_marker.read_text(encoding="utf-8").split("|")[0].strip() == "P1 --rule ancestor --apply --no-fetch"
+
+
+@needs_git
+@needs_sh
+def test_a_damaged_clone_is_rebuilt_and_the_main_tree_is_never_touched(tmp_path):
+    """The dangerous case: an empty or corrupt out/autopilot_clone/.git makes a plain `git -C` walk up to the MAIN repository, where `checkout -f` would destroy uncommitted work. Every git call of the hook names
+    the clone's git directory, and a clone that is not a valid repository is deleted and made again."""
+    r = HookRepo(tmp_path)
+    (r.root / "shared" / "lib.py").write_text("x = 99  # uncommitted work that must survive\n", encoding="utf-8")
+    head_before = r.git("rev-parse", "HEAD")
+    (r.root / "out" / "autopilot_clone" / ".git").mkdir(parents=True)                                       # an empty .git inside the main repository
+    r.fetch()
+    assert r.versions() == ["V1"]                                                                           # the clone was rebuilt and the autopilot ran from it
+    assert (r.root / "shared" / "lib.py").read_text(encoding="utf-8").endswith("must survive\n")            # the main tree kept its uncommitted edit ...
+    assert r.git("rev-parse", "HEAD") == head_before and "M shared/lib.py" in r.git("status", "--porcelain")   # ... and its branch
+
+
+@needs_git
+@needs_sh
+def test_a_file_where_the_clone_should_be_is_replaced_and_the_run_goes_on(tmp_path):
+    r = HookRepo(tmp_path)
+    (r.root / "out").mkdir(exist_ok=True)
+    (r.root / "out" / "autopilot_clone").write_text("a file where the clone should be\n", encoding="utf-8")
+    r.fetch()
+    assert r.versions() == ["V1"] and (r.root / "out" / "autopilot_clone").is_dir()
 
 
 @needs_git
@@ -488,7 +520,7 @@ def test_a_clone_with_only_the_prune_script_runs_it_and_an_unrelated_reference_s
         if prune_marker.exists():
             break
         time.sleep(0.2)
-    assert prune_marker.read_text(encoding="utf-8").strip() == "P1 --rule ancestor --apply --no-fetch"
+    assert prune_marker.read_text(encoding="utf-8").split("|")[0].strip() == "P1 --rule ancestor --apply --no-fetch"
 
 
 # ---------------------------------------------------------------- the process: no login, no write

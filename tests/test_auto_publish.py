@@ -4,9 +4,11 @@
 repository standing in for `origin` (pushes, a delivery that waits for its receipt, a diverged history that is never forced, a failed push that is retried by itself and alerted). R-7: no database, no network."""
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -85,6 +87,34 @@ def test_a_delivery_waiting_thirty_minutes_for_its_receipt_alerts_once_per_head(
     assert ap.stuck_delivery_alert(stuck, T0, stuck[-1]["sha"]) is None
     assert ap.stuck_delivery_alert([commit_info(closes=True, minutes_ago=29)], T0, None) is None
     assert ap.stuck_delivery_alert([commit_info(minutes_ago=300)], T0, None) is None              # a plain commit is never "stuck": it is published
+
+
+def test_a_running_or_passing_receipt_is_not_a_stuck_delivery_and_a_failed_one_says_so_with_its_reason():
+    stuck = [commit_info(closes=True, minutes_ago=39)]
+    assert ap.stuck_delivery_alert(stuck, T0, None, "running") is None                             # the receipt takes about half an hour: nothing is stuck while it runs
+    assert ap.stuck_delivery_alert(stuck, T0, None, "pass") is None                                # a pass is about to publish
+    failed = ap.stuck_delivery_alert(stuck, T0, None, "failed: 1 failed | failed: tests/test_x.py::test_y")
+    assert "cannot be published" in failed and "FAILED" in failed and "tests/test_x.py::test_y" in failed and "delivery_attest_last_failure.log" in failed
+    assert "Run: python scripts/audit/delivery_attest.py" not in failed                              # running it again is pointless: the fix is a new commit
+    assert "Run: python scripts/audit/delivery_attest.py" in ap.stuck_delivery_alert(stuck, T0, None, "none")
+    assert ap.stuck_delivery_alert(stuck, T0, stuck[-1]["sha"], "failed: x") is None                # still once per head
+
+
+def test_receipt_state_reads_the_lock_and_the_newest_receipt_for_that_commit(tmp_path):
+    import json
+    head, other = "a" * 40, "b" * 40
+    path, lock = tmp_path / "r.jsonl", tmp_path / "attest.lock"
+    assert ap.receipt_state(head, receipts_path=path, lock=lock) == "none"
+    path.write_text("\n".join(json.dumps(x) for x in ({"sha": other, "result": "pass"}, {"sha": head, "result": "fail", "detail": "1 failed | failed: tests/t.py::x"})) + "\n", encoding="utf-8")
+    assert ap.receipt_state(head, receipts_path=path, lock=lock) == "failed: 1 failed | failed: tests/t.py::x"
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps({"sha": head, "result": "pass", "detail": "ok"}) + "\n")
+    assert ap.receipt_state(head, receipts_path=path, lock=lock) == "pass"                          # the newest receipt for the commit wins
+    lock.write_text("1\n", encoding="utf-8")
+    assert ap.receipt_state(head, receipts_path=path, lock=lock) == "running"                       # a fresh lock beats everything: a run is in progress
+    old = time.time() - 6 * 3600
+    os.utime(lock, (old, old))
+    assert ap.receipt_state(head, receipts_path=path, lock=lock) == "pass"                          # a lock of a dead run is ignored
 
 
 def test_a_success_clears_the_failure_and_a_failure_counts_attempts_from_its_first_time():
@@ -272,8 +302,13 @@ def test_a_stuck_delivery_alerts_once_and_the_watcher_pass_is_silent_while_the_l
     bare, work = world
     commit(work, "a.py", "feat\n\nCloses: FND-0001" + TRAILER)
     alerts = []
+    state = {"receipt": "none"}
     kw = dict(state_path=tmp_path / "state.json", now=lambda: datetime.now(timezone.utc) + timedelta(minutes=45), alert=alerts.append,
-              verify=lambda r, s, p: (False, "no receipt"), receipts_path=work / "r.jsonl")
+              verify=lambda r, s, p: (False, "no receipt"), receipts_path=work / "r.jsonl", receipt_fn=lambda head: state["receipt"])
+    state["receipt"] = "running"
+    _r, quiet = ap.attempt(work, **{**kw, "state_path": tmp_path / "q.json"})
+    assert quiet is None and alerts == []                                                              # a receipt that is running is not a stuck delivery
+    state["receipt"] = "none"
     _r, text = ap.attempt(work, **kw)
     assert text and "delivery is stuck" in text
     _r, again = ap.attempt(work, **kw)

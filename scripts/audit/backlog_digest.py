@@ -19,7 +19,10 @@ from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-OUT_DIR = ROOT / "out" / "backlog_digest"
+sys.path.insert(0, str(ROOT))
+from shared.out_dir import out_root  # noqa: E402
+
+OUT_DIR = out_root(ROOT) / "backlog_digest"                      # FND-0379: the autopilot's clean clone writes into the MAIN tree's out/
 RC_OK, RC_USAGE = 0, 2
 
 

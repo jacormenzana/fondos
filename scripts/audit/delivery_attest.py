@@ -35,11 +35,12 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from shared import delivery_receipt as dr  # noqa: E402
 from shared.git_export import checkout_tree  # noqa: E402
+from shared.out_dir import out_root  # noqa: E402
 
 RC_PASS, RC_FAIL, RC_USAGE, RC_INCONCLUSIVE, RC_COALESCED = 0, 1, 2, 3, 4
-RECEIPTS = ROOT / "out" / "audit" / "delivery_receipts.jsonl"
-LOCK = ROOT / "out" / "audit" / "delivery_attest.lock"
-WANTED = ROOT / "out" / "audit" / "delivery_attest.wanted"
+RECEIPTS = out_root(ROOT) / "audit" / "delivery_receipts.jsonl"      # FND-0379: the autopilot runs from a clean clone and must read the MAIN tree's receipts
+LOCK = out_root(ROOT) / "audit" / "delivery_attest.lock"
+WANTED = out_root(ROOT) / "audit" / "delivery_attest.wanted"
 EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 LOCK_STALE_S = 4 * 3600
 TIMEOUT_S = {"area": 20 * 60, "full": 90 * 60}

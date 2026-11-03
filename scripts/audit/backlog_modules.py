@@ -34,10 +34,11 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from shared import backlog_clusters as cl  # noqa: E402
 from shared import backlog_modules as bm  # noqa: E402
+from shared.out_dir import out_root  # noqa: E402
 
 ACTOR = "system:autopilot"
 RC_OK, RC_USAGE = 0, 2
-PROOF_CACHE = ROOT / "out" / "backlog_modules" / "proof.json"
+PROOF_CACHE = out_root(ROOT) / "backlog_modules" / "proof.json"     # FND-0379: the autopilot's clean clone shares the MAIN tree's cache
 
 
 def _git(*args, cwd: Path = ROOT) -> str:

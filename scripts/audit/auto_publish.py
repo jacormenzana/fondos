@@ -31,10 +31,11 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from shared import backlog_gate as gate  # noqa: E402
+from shared.out_dir import out_root  # noqa: E402
 
 RC_OK, RC_FAILED, RC_PERSON = 0, 1, 2
-STATE = ROOT / "out" / "audit" / "auto_publish_state.json"
-LOCK = ROOT / "out" / "audit" / "auto_publish.lock"
+STATE = out_root(ROOT) / "audit" / "auto_publish_state.json"
+LOCK = out_root(ROOT) / "audit" / "auto_publish.lock"
 BACKOFF_S = (60, 120, 300, 600, 900)                      # then every 15 minutes
 GIVE_UP_S = 24 * 3600
 ALERT_AFTER_S = 15 * 60
@@ -97,13 +98,34 @@ def failure_alert(state: dict, now: datetime) -> Optional[str]:
             f"After fixing the cause run: python scripts/audit/auto_publish.py --now")
 
 
-def stuck_delivery_alert(ahead: list, now: datetime, already: Optional[str]) -> Optional[str]:
-    """The alert text for a delivery (a `Closes:` commit) that has waited STUCK_AFTER_S for its test receipt, once per head. Pure."""
+def stuck_delivery_alert(ahead: list, now: datetime, already: Optional[str], receipt: str = "none") -> Optional[str]:
+    """The alert text for a delivery (a `Closes:` commit) that has waited STUCK_AFTER_S for its test receipt, once per head. `receipt` is what the receipt command is doing for HEAD (see receipt_state):
+    `running` or `pass` means nothing is stuck (a run takes about half an hour, and a pass is about to publish), so no alert; `failed: ...` says that the receipt FAILED and why (running it again is pointless:
+    the fix is a new commit); `none` means nobody has run it. Pure."""
     old = [c for c in ahead if c["closes"] and (now - c["ts"]).total_seconds() >= STUCK_AFTER_S]
-    if not old or (ahead and ahead[-1]["sha"] == already):
+    if not old or (ahead and ahead[-1]["sha"] == already) or receipt in ("running", "pass"):
         return None
-    return (f"a delivery is stuck: commit {old[0]['sha'][:12]} (Closes:) has waited {int((now - old[0]['ts']).total_seconds() // 60)} minutes for a local test receipt, so it is not published and its "
+    minutes = int((now - old[0]["ts"]).total_seconds() // 60)
+    if receipt.startswith("failed"):
+        return (f"a delivery cannot be published: commit {old[0]['sha'][:12]} (Closes:) has waited {minutes} minutes and the local test receipt for HEAD FAILED ({receipt[len('failed: '):][:240]}). "
+                f"Fix it and commit again: the new receipt covers the earlier commits. The output of the run is in out/audit/delivery_attest_last_failure.log")
+    return (f"a delivery is stuck: commit {old[0]['sha'][:12]} (Closes:) has waited {minutes} minutes for a local test receipt, so it is not published and its "
             f"ticket is not closed. Run: python scripts/audit/delivery_attest.py")
+
+
+def receipt_state(head: str, *, receipts_path: Optional[Path] = None, lock: Optional[Path] = None) -> str:
+    """What the receipt command is doing for `head`: `running` (its lock is fresh), `pass`, `failed: <detail>` (the newest receipt for that sha did not pass) or `none`. Reads two local files."""
+    import delivery_attest as da
+    lock = lock or da.LOCK
+    try:
+        if time.time() - lock.stat().st_mtime <= da.LOCK_STALE_S:
+            return "running"
+    except OSError:
+        pass
+    for r in reversed(da.read_receipts(receipts_path or da.RECEIPTS)):
+        if r.get("sha") == head:
+            return "pass" if r.get("result") == "pass" else f"failed: {str(r.get('detail'))[:240]}"
+    return "none"
 
 
 # ── git ─────────────────────────────────────────────────────────────────────────
@@ -226,7 +248,8 @@ def raise_alert(text: str) -> None:
         pass
 
 
-def attempt(root: Path, *, state_path: Path = STATE, force: bool = False, now: Callable = lambda: datetime.now(timezone.utc), try_fn: Callable = try_publish, alert: Callable = raise_alert, **kw) -> tuple:
+def attempt(root: Path, *, state_path: Path = STATE, force: bool = False, now: Callable = lambda: datetime.now(timezone.utc), try_fn: Callable = try_publish, alert: Callable = raise_alert,
+            receipt_fn: Callable = receipt_state, **kw) -> tuple:
     """One attempt with its bookkeeping: (result, alert text or None). Updates the state file; opens the incident when an alert is newly due."""
     res = try_fn(root, force=force, **kw)
     t = now()
@@ -238,7 +261,7 @@ def attempt(root: Path, *, state_path: Path = STATE, force: bool = False, now: C
         if text:
             state["alerted"] = True
     elif res["status"] == "waiting":
-        text = stuck_delivery_alert(res.get("ahead", []), t, state.get("stuck_alerted_for"))
+        text = stuck_delivery_alert(res.get("ahead", []), t, state.get("stuck_alerted_for"), receipt_fn(head))
         if text:
             state["stuck_alerted_for"] = res["ahead"][-1]["sha"]
     write_state(state, state_path)

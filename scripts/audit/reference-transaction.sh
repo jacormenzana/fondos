@@ -1,19 +1,20 @@
 #!/bin/sh
-# reference-transaction.sh -- Portable installer for the autopilot trigger (Backlog v3 W3, FND-0358).
+# reference-transaction.sh -- Portable installer for the autopilot trigger (Backlog v3 W3, FND-0358; clean copy since FND-0379).
 #
-# Usage (run once from repo root, in each clone, by the owner: this hook fires on EVERY reference update of the clone):
+# Usage (run once from repo root, in each clone, by the owner: this hook fires on EVERY reference update of the clone; re-run it after changing the hook):
 #   bash scripts/audit/reference-transaction.sh
 #
 # Installs .git/hooks/reference-transaction. Git calls it around every reference update with the state ($1: prepared | committed | aborted) and the updates on stdin
-# (`<old> <new> <ref>`). Only the `committed` state of refs/remotes/origin/master matters: when a fetch moves it, the hook starts
-# scripts/audit/backlog_autopilot.py --apply --quiet DETACHED (output in out/audit/backlog_autopilot_hook.log) and returns at once.
-# FND-0369: it starts the autopilot only if shared/ and scripts/ are byte for byte what origin/master has (a clean master that is only behind is fast-forwarded first); otherwise it
-# writes one line to the log saying why and does not start it. Re-run this installer after changing the hook.
+# (`<old> <new> <ref>`). Only the `committed` state of refs/remotes/origin/master matters: when a fetch or a push moves it, the hook starts the autopilot DETACHED (output in
+# out/audit/backlog_autopilot_hook.log) and returns at once.
+# FND-0379 (replaces the FND-0369 guard): the autopilot writes to the live backlog, so it must run the MERGED code. It no longer runs from the working tree and no longer needs the tree to equal
+# origin/master: the hook keeps a CLEAN CLONE under out/autopilot_clone, checks origin/master out in it (detached, forced) and runs scripts/audit/backlog_autopilot.py FROM THERE, so the code is the
+# merged code by construction and whatever the working tree holds (another branch, edits, untracked files, another session's work) is irrelevant. The copy reads the MAIN tree's .env and writes to the
+# MAIN tree's out/ (FONDOS_ENV_FILE, FONDOS_OUT_DIR). One run at a time (a lock directory); a push that lands while a run is in progress is picked up by that run's next turn.
 # FND-0371: the same event also runs scripts/ops/prune_merged_branches.py --rule ancestor --apply --no-fetch (output in out/audit/prune_merged_branches_hook.log): it deletes the remote branches
-# whose tip is already in origin/master. It writes nothing to the backlog, so the FND-0369 guard does not gate it: a clone that sits on a feature branch still prunes. Each of the two
-# is skipped on its own when its script is missing.
-# It NEVER blocks git: it always exits 0, runs the autopilot in the background, and does nothing if the script is missing (an old branch). What the autopilot may do is decided by
-# BACKLOG_AUTOPILOT_MODE in shared/config.py and by its own database login; without FONDOS_BACKLOG_PG_DSN_AUTOPILOT it writes nothing.
+# whose tip is already in origin/master. It writes nothing to the backlog and runs from the working tree. Each of the two is skipped on its own when its script is missing.
+# It NEVER blocks git: it always exits 0, runs everything in the background, and does nothing if there is nothing to run (an old origin/master without the autopilot). What the autopilot may do
+# is decided by BACKLOG_AUTOPILOT_MODE in shared/config.py and by its own database login; without FONDOS_BACKLOG_PG_DSN_AUTOPILOT it writes nothing.
 
 set -e
 
@@ -21,7 +22,7 @@ HOOK="$(git rev-parse --git-path hooks/reference-transaction)"
 
 cat > "$HOOK" <<'EOF'
 #!/bin/sh
-# Auto-installed by scripts/audit/reference-transaction.sh (FND-0358) -- starts the Backlog v3 autopilot when origin/master moves. Never blocks git.
+# Auto-installed by scripts/audit/reference-transaction.sh (FND-0358, FND-0379) -- starts the Backlog v3 autopilot from a clean clone of origin/master when origin/master moves. Never blocks git.
 STATE="$1"
 FIRE=0
 while read -r OLD NEW REF; do
@@ -43,31 +44,41 @@ fi
 
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
 mkdir -p "$ROOT/out/audit" 2>/dev/null
-AUTOPILOT="$ROOT/scripts/audit/backlog_autopilot.py"
 PRUNE="$ROOT/scripts/ops/prune_merged_branches.py"
-[ -f "$AUTOPILOT" ] || [ -f "$PRUNE" ] || exit 0
-# FND-0369: the autopilot writes to the live backlog, so it runs the MERGED code or it does not run. It runs from this working tree, which may be on any branch or hold uncommitted edits, so
-# before it starts the hook checks one thing with plain git: that shared/ and scripts/ are byte for byte what origin/master has. A clean master that is only BEHIND is brought forward first
-# (fast-forward only, never a merge), so the normal case needs nobody; anything else (another branch with different code, an edit, an untracked file) is skipped with one line in the log.
-# This logic lives in this installed hook, outside the working tree, so no branch can change it.
-# FND-0371: the branches of auto-merged pull requests stay on GitHub (the merge is made with GITHUB_TOKEN, which starts no workflow), so this clone deletes them: only branches whose tip is
-# already in origin/master, with plain git and no cron. It runs BEFORE the guard (it writes nothing to the backlog, and a clone on a feature branch must still prune) and takes seconds, so it
-# does not wait for the autopilot. --no-fetch: this hook runs because a fetch just moved origin/master; fetching again could start it again.
 (
     cd "$ROOT" || exit 0
     LOG="$ROOT/out/audit/backlog_autopilot_hook.log"
-    if [ "$(git branch --show-current 2>/dev/null)" = "master" ] && git diff --quiet HEAD -- 2>/dev/null; then
-        git merge --ff-only -q origin/master >/dev/null 2>&1
-    fi
+    stamp() { date '+%Y-%m-%d %H:%M:%S'; }
     if [ -f "$PRUNE" ]; then
         "$PYTHON" "$PRUNE" --rule ancestor --apply --no-fetch >> "$ROOT/out/audit/prune_merged_branches_hook.log" 2>&1
     fi
-    [ -f "$AUTOPILOT" ] || exit 0
-    if ! git diff --quiet origin/master -- shared scripts 2>/dev/null || [ -n "$(git ls-files --others --exclude-standard -- shared scripts 2>/dev/null)" ]; then
-        echo "$(date '+%Y-%m-%d %H:%M:%S') autopilot NOT started: shared/ and scripts/ are not the merged code of origin/master (branch '$(git branch --show-current 2>/dev/null)'); switch to a clean master" >> "$LOG"
-        exit 0
-    fi
-    "$PYTHON" "$AUTOPILOT" --apply --quiet >> "$LOG" 2>&1
+    CLEAN="$ROOT/out/autopilot_clone"
+    LOCK="$ROOT/out/autopilot_clone.lock"
+    # one run at a time; a lock directory nobody has touched for 30 minutes belongs to a dead run
+    if [ -d "$LOCK" ] && [ -n "$(find "$LOCK" -maxdepth 0 -mmin +30 2>/dev/null)" ]; then rmdir "$LOCK" 2>/dev/null; fi
+    mkdir "$LOCK" 2>/dev/null || exit 0
+    trap 'rmdir "$LOCK" 2>/dev/null' EXIT
+    # EVERY git command on the clone names its git directory and work tree explicitly: if the clone is ever damaged (an empty or corrupt .git), git must fail, never walk up and operate on the
+    # MAIN repository, where `checkout -f` would destroy uncommitted work. A clone that is not a valid repository is deleted and made again.
+    cg() { git --git-dir="$CLEAN/.git" --work-tree="$CLEAN" -c core.autocrlf=false "$@"; }
+    DONE=""
+    for ROUND in 1 2 3; do
+        # the commit the run is FOR: read at the start of each turn, so a push that lands during a run is picked up by the next turn
+        SHA="$(git rev-parse -q --verify refs/remotes/origin/master 2>/dev/null)" || break
+        [ "$SHA" = "$DONE" ] && break
+        if [ ! -d "$CLEAN/.git" ] || ! cg rev-parse --git-dir >/dev/null 2>&1; then
+            rm -rf "$CLEAN"
+            git -c core.autocrlf=false clone -q --no-hardlinks --no-checkout "$ROOT" "$CLEAN" >> "$LOG" 2>&1 || { echo "$(stamp) autopilot NOT started: the clean clone could not be created" >> "$LOG"; break; }
+        fi
+        cg fetch -q "$ROOT" "+refs/remotes/origin/master:refs/remotes/origin/master" >> "$LOG" 2>&1 \
+            && cg checkout -q -f --detach "$SHA" >> "$LOG" 2>&1 \
+            || { echo "$(stamp) autopilot NOT started: the clean clone could not be brought to origin/master ${SHA}" >> "$LOG"; break; }
+        cg clean -fdxq -- shared scripts >> "$LOG" 2>&1
+        AUTOPILOT="$CLEAN/scripts/audit/backlog_autopilot.py"
+        if [ ! -f "$AUTOPILOT" ]; then echo "$(stamp) autopilot not run: origin/master ${SHA} has no scripts/audit/backlog_autopilot.py" >> "$LOG"; break; fi
+        PYTHONDONTWRITEBYTECODE=1 FONDOS_ENV_FILE="$ROOT/.env" FONDOS_OUT_DIR="$ROOT/out" "$PYTHON" "$AUTOPILOT" --apply --quiet >> "$LOG" 2>&1
+        DONE="$SHA"
+    done
 ) >/dev/null 2>&1 &
 exit 0
 EOF
