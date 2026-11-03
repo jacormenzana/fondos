@@ -237,11 +237,18 @@ def cluster_step(bc, apply: bool, git=_git, out=print, mode: str = None, cache: 
             res["written"] += 1
         except Exception as exc:                                             # noqa: BLE001 -- never echo a DSN; a refused event leaves the rest running
             res["refused"] += 1
+            res.setdefault("error", why_refused(exc))
             out(f"clusters: {op[0]} {op[1]} refused ({type(exc).__name__})")
             if op[0] == "CREATE":
                 skipped.add(op[1])
     out(f"clusters: wrote {res['written']}, refused {res['refused']}")
     return res
+
+
+def why_refused(exc: Exception) -> str:
+    """The error class and, only when the database itself refused (the routine's own message, which never carries a connection string), its first line: so the hook log says why a group was refused. Pure."""
+    msg = getattr(getattr(exc, "diag", None), "message_primary", None)
+    return f"{type(exc).__name__}: {str(msg).splitlines()[0][:140]}" if msg else type(exc).__name__
 
 
 def cluster_note(kept: dict) -> str:
@@ -250,6 +257,7 @@ def cluster_note(kept: dict) -> str:
     note = f"; module clusters {kept['written']} event(s)" if kept.get("written") else ""
     if kept.get("refused"):
         note += f"; module clusters REFUSED {kept['refused']} event(s)" + (" (plan beyond its caps)" if kept.get("breaches") else "")
+        note += f" first error: {kept['error']}" if kept.get("error") else ""
     why = str(kept.get("why") or "")
     if why.startswith("error"):
         note += f"; module clusters {why}"

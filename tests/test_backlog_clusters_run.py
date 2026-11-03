@@ -289,3 +289,24 @@ def test_the_summary_fragment_names_what_was_written_and_never_hides_a_refusal_o
 def test_the_autopilot_summary_uses_the_fragment():
     src = (Path(__file__).resolve().parents[1] / "scripts" / "audit" / "backlog_autopilot.py").read_text(encoding="utf-8")
     assert "summary += modules_run.cluster_note(kept)" in src
+
+
+class _Diag:
+    message_primary = "sp_create_group: actor system:autopilot is not canonical or not authorized here\nDETAIL: x"
+
+
+class _DbRefusal(Exception):
+    diag = _Diag()
+
+
+def test_a_refusal_by_the_database_gives_its_message_and_any_other_error_only_its_class():
+    assert run.why_refused(_DbRefusal("postgresql://secret@host failed")) == "_DbRefusal: sp_create_group: actor system:autopilot is not canonical or not authorized here"
+    assert run.why_refused(RuntimeError("postgresql://secret@host refused")) == "RuntimeError"
+    assert run.cluster_note({"refused": 2, "error": "_DbRefusal: x"}) == "; module clusters REFUSED 2 event(s) first error: _DbRefusal: x"
+
+
+def test_the_first_refusal_is_kept_on_the_result_without_a_connection_string():
+    bc = FakeBc()
+    bc.refuse = {"MOD.SHARED.BACKLOG_CLIENT"}
+    res = run.cluster_step(bc, apply=True, out=quiet, mode="ON")
+    assert res["refused"] == 1 and res["error"] == "RuntimeError" and "secret" not in str(res)
