@@ -234,6 +234,51 @@ def derive(rows: list, universe: set, roles: tuple = ("TARGET", "TOUCHED"), edge
     return sorted(out, key=lambda c: (-len(c["members"]), c["principal"], c["members"]))
 
 
+def derive_by_module(rows: list, universe: set, roles: tuple = ("TARGET", "TOUCHED"), edge_min: float = EDGE_MIN, open_ids: Optional[set] = None, sweep: Optional[int] = SWEEP_MODULES) -> list:
+    """The groups of the tickets in `universe` BY MODULE (FND-0381, owner directive 2026-11-03): one group per module, holding every ticket that changes that module, so two tickets are grouped only when
+    they DIRECTLY share a module. This replaces the connected components of `derive`, which chain: a ticket that shares one file with a second which shares another with a third put the first and the third
+    together, and the largest component grew to 70 tickets. Measured on the 132 decisions on record (2026-11-03), components were right for 14 of 22 decided pairs inside them (64 %, under the bar), a direct
+    shared module for 29 of 37 (78 %, and twice the recall). A ticket may sit in several groups (one per module it changes); the weight of a shared module is the same signal as in `derive` (a TARGET both
+    0.8, mixed 0.7, TOUCHED both 0.6, a hub only on a shared symbol); a TOUCHED fact from a sweeping commit makes no edge. More than MAX_OPEN_MEMBERS OPEN members is a hotspot, kept whole (one unit of work).
+    Same shape as `derive` ({'members', 'hotspot', 'principal', 'modules', 'why'}), largest first. Pure."""
+    held = holdings(rows, universe, roles, sweep)
+    hubs = hub_modules(held, len(universe))
+    by_module: dict = defaultdict(list)
+    for ap, mods in held.items():
+        for m in mods:
+            by_module[m].append(ap)
+    out = []
+    for m, aps in by_module.items():
+        if len(aps) < 2:
+            continue
+        members: set = set()
+        for a, b in combinations(sorted(aps), 2):
+            w = signal(held[a][m], held[b][m], m in hubs)
+            if w is not None and w >= edge_min:
+                members |= {a, b}
+        if len(members) < 2:
+            continue
+        opens = len(members & open_ids) if open_ids is not None else len(members)
+        ordered = sorted(members)
+        why = {ap: f"changes {m} together with {next(o for o in ordered if o != ap)}" + (f" (+{len(ordered) - 2} more)" if len(ordered) > 2 else "") for ap in ordered}
+        out.append({"members": tuple(ordered), "hotspot": opens > MAX_OPEN_MEMBERS, "principal": m, "modules": [(m, len(ordered) * (len(ordered) - 1) // 2)], "why": why})
+    return sorted(out, key=lambda c: (-len(c["members"]), c["principal"], c["members"]))
+
+
+def assign_identity_by_module(clusters: list, groups: dict) -> list:
+    """[(cluster, group name, is_new)] for module groups: the name is the module's (`group_name`), so a module keeps its group for ever and nothing is inherited by overlap (groups overlap by design). A name
+    that two modules of one run would share (a truncated long path) gets a hash of its members; `groups` = {name: {...}} are the groups that exist. Pure."""
+    used: set = set()                                                          # the names given in THIS run (an existing group is no collision: it is the module's own)
+    out = []
+    for c in clusters:
+        name = group_name(c["principal"])
+        if name in used:
+            name = group_name(c["principal"], salt=",".join(c["members"]))
+        used.add(name)
+        out.append((c, name, name not in groups))
+    return out
+
+
 def rank(clusters: list, info: dict) -> list:
     """[(cluster, open members, weight)] by open members times priority, the biggest unit of work first. `info` = {ticket: {'status', 'priority'}}. Pure."""
     out = []

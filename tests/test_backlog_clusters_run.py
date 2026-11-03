@@ -207,3 +207,54 @@ def test_the_reports_print_and_write_nothing():
     lines.clear()
     run.show_clusters(bc, fake_git, lines.append)
     assert lines[0].startswith("shared/backlog_client.py: 2 open ticket(s)") and any("FND-1 [IN_PROGRESS]" in s for s in lines) and bc.calls == []
+
+
+# ---------------------------------------------------------------- the unit of a group and the caps of a run (FND-0381)
+
+def test_the_unit_is_a_config_constant_and_selects_the_derivation():
+    from shared import config
+    assert str(config.BACKLOG_CLUSTER_UNIT).upper() in ("MODULE", "COMPONENT") and run._config_unit() == str(config.BACKLOG_CLUSTER_UNIT).upper()
+    rows = [trow("A", "m1.py"), trow("B", "m1.py"), trow("B", "m2.py"), trow("C", "m2.py")]
+    u = {"A", "B", "C"}
+    assert [c["members"] for c in run.derive(rows, u, unit="COMPONENT")] == [("A", "B", "C")]
+    assert sorted(c["members"] for c in run.derive(rows, u, unit="MODULE")) == [("A", "B"), ("B", "C")]
+    clusters = run.derive(rows, u, unit="MODULE")
+    held = {"MOD.OLD": {"id": 1, "open": {"A", "B"}}}                                         # the old unit inherits a group by overlap, the new one names it after its module
+    assert [(o[1], o[2]) for o in run.identify(clusters, held, unit="MODULE")] == [("MOD.M1", True), ("MOD.M2", True)]
+    assert run.identify(run.derive(rows, u, unit="COMPONENT"), held, unit="COMPONENT")[0][1] == "MOD.OLD"
+
+
+def test_a_plan_within_the_caps_is_measured_and_written_and_the_measures_are_returned():
+    bc = FakeBc()
+    res = run.cluster_step(bc, apply=True, out=quiet, mode="ON")
+    assert res["volume"] == 3 and res["busiest"] == 1 and res["duplicates"] == 0 and res["breaches"] == [] and res["written"] == 3
+
+
+def test_a_plan_beyond_the_caps_is_refused_whole_and_nothing_is_written():
+    mods = [trow(a, f"shared/m{i}.py") for i in range(7) for a in ("FND-1", "FND-2")]          # two tickets sharing seven modules: seven groups, each ticket in all of them
+    bc, lines = FakeBc(modules=mods), []
+    res = run.cluster_step(bc, apply=True, git=fake_git, out=lines.append, mode="ON")
+    assert res["breaches"] and res["written"] == 0 and res["refused"] == res["planned"] and bc.calls == []
+    assert any("REFUSED the plan" in s and "CONCENTRATION" in s for s in lines)
+    dry = run.cluster_step(FakeBc(modules=mods), apply=False, git=fake_git, out=quiet, mode="ON")
+    assert dry["breaches"] and dry["volume"] >= 21                                              # the dry run shows the refusal too
+
+
+def test_the_guard_counts_repeats_volume_and_the_busiest_ticket():
+    ops = [("CREATE", "MOD.A", "tickets that change a.py"), ("ADD", "MOD.A", "FND-1", "changes a.py together with FND-2"), ("ADD", "MOD.A", "FND-1", "changes a.py together with FND-2")]
+    m, broken = run.guard(ops)
+    assert m["total"] == 3 and m["duplicates"] == 1 and any(b.startswith("DUPLICATION") for b in broken)
+    assert run.guard([])[1] == []
+    assert [w.kind for w in run.plan_writes(ops)] == ["GROUP"] * 3 and run.plan_writes(ops)[0].ticket == "MOD.A" and run.plan_writes(ops)[1].ticket == "FND-1"
+    assert len({w.key for w in run.plan_writes(ops[1:2] + [("ADD", "MOD.B", "FND-1", "changes b.py together with FND-2")])}) == 2
+
+
+def adds(n, ticket=None):
+    return [("ADD", f"MOD.G{i}", ticket or f"FND-{i}", "changes a module together with another") for i in range(n)]
+
+
+def test_the_caps_of_a_run_are_pinned_at_their_numbers():
+    assert run.guard(adds(150))[1] == [] and any(b.startswith("VOLUME") for b in run.guard(adds(151))[1])       # 150 writes in a run, no more
+    one_ticket_among_many = adds(6, "FND-9000") + adds(40)[6:]                                                       # a ticket in 6 groups is fine, in 7 is not, while no ticket dominates the run
+    assert run.guard(one_ticket_among_many)[1] == []
+    assert any("CONCENTRATION" in b for b in run.guard(adds(7, "FND-9000") + adds(60)[7:])[1])

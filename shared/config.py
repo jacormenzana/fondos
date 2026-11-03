@@ -836,6 +836,10 @@ BACKLOG_AUTOPILOT_MODE: str = "ON"
 # precision at least 70 %; recall is reported but never a bar), measured at most once a day. With a sample too small to prove it, AUTO stays off and writes nothing: the system turns itself on once the data
 # proves it, with no person involved. Only a person edits this constant. Rollback = set it to "OFF" (the memberships already written are append-only history and stay).
 BACKLOG_MODULE_CLUSTERS_MODE: str = "AUTO"
+# Backlog v3 O3 (FND-0381): what one MODULE group is. "MODULE" = one group per module, holding the tickets that change it (a ticket sits in as many groups as modules it shares with another; measured 78 % precision
+# on 37 decided pairs, 39 % recall); "COMPONENT" = the old unit, the connected components of the shared-module graph, which chain unrelated work into one group (64 % on 22 pairs, the largest group 70 tickets).
+# The precision bar above applies to whichever unit is set. Rollback = "COMPONENT" (the memberships already written are append-only history and stay).
+BACKLOG_CLUSTER_UNIT: str = "MODULE"
 # Backlog v3 W4 (FND-0359; doc/especificacion/ACTION_PLAN_BACKLOG_V3.md): whether a merge that cites tickets puts the OPEN tickets it may affect on notice, with ONE note each appended as the autopilot
 # (scripts/audit/backlog_impact.py, rules in shared/backlog_impact.py). Signals: a confirmed IMPACTS / OVERLAPS link, a text citation of a changed module, and (only while BACKLOG_MODULE_CLUSTERS_MODE has
 # proved the facts) TARGET / TOUCHED. Fatigue guard of the NOTES, replayed on the last 45 days: a median of 1 note per merge (2 with the facts on), at most 5 tickets per merge, 1 on the weakest signal, ONE

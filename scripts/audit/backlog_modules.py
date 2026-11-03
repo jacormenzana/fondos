@@ -34,6 +34,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from shared import backlog_clusters as cl  # noqa: E402
 from shared import backlog_modules as bm  # noqa: E402
+from shared import backlog_writers as bw  # noqa: E402
 from shared.out_dir import out_root  # noqa: E402
 
 ACTOR = "system:autopilot"
@@ -116,8 +117,8 @@ def measure(bc, git=_git) -> dict:
     if bc.modules_store_present():
         rows += [r for r in bc.list_ticket_modules() if r["source"] == "DECLARED"]
     universe = set(tickets)
-    clusters = cl.derive(rows, universe, open_ids=open_ids)
-    text = cl.derive(rows, universe, roles=("CITED",), open_ids=open_ids)
+    clusters = derive(rows, universe, open_ids=open_ids)
+    text = derive(rows, universe, roles=("CITED",), open_ids=open_ids)
     links = bc.list_links()
     pos = {frozenset((l["from_id"], l["to_id"])) for l in links if l["link_type"] == "OVERLAPS" and l["status"] == "CONFIRMED"}
     neg = {frozenset((l["from_id"], l["to_id"])) for l in links if l["link_type"] == "OVERLAPS" and l["status"] == "REJECTED"}
@@ -153,6 +154,23 @@ def proof(bc, git=_git, cache: Path = None) -> dict:
     return ev
 
 
+def _config_unit() -> str:
+    try:
+        from shared import config
+        return str(getattr(config, "BACKLOG_CLUSTER_UNIT", "COMPONENT")).upper()
+    except Exception:                                                        # noqa: BLE001 -- no configuration, the old unit
+        return "COMPONENT"
+
+
+def derive(rows, universe, unit: str = None, **kw) -> list:
+    """The clusters under the configured unit (BACKLOG_CLUSTER_UNIT): one per module, or the connected components."""
+    return (cl.derive_by_module if (unit or _config_unit()) == "MODULE" else cl.derive)(rows, universe, **kw)
+
+
+def identify(clusters, groups, unit: str = None) -> list:
+    return (cl.assign_identity_by_module if (unit or _config_unit()) == "MODULE" else cl.assign_identity)(clusters, groups)
+
+
 def _config_mode() -> str:
     try:
         from shared import config
@@ -162,6 +180,22 @@ def _config_mode() -> str:
 
 
 # ---------------------------------------------------------------- the clusters
+
+# What one run of the group keeper may write (the owner's measures, FND-0370 / FND-0381): the first fill puts a ticket in as many groups as modules it shares (4 at most on the live data, 74 writes in all), a
+# steady run writes a few. A plan beyond these caps is an anomaly (a mis-derived cluster, a unit switch) and is refused whole, not trimmed.
+GROUP_CAPS = bw.Caps(max_writes_per_run=150, max_writes_per_ticket=6, max_top_ticket_share=0.25, min_writes_for_share=8, max_duplicates=0)
+
+
+def plan_writes(ops: list) -> list:
+    """The group events of a plan as writes: a CREATE is about its group, an ADD / REMOVE about its ticket. Pure."""
+    return [bw.Write(o[1] if o[0] == "CREATE" else o[2], "GROUP", f"{o[0]}:{o[1]}", o[-1]) for o in ops]
+
+
+def guard(ops: list, caps: bw.Caps = GROUP_CAPS) -> tuple:
+    """(metrics, breaches) of a plan against the caps: volume, concentration per ticket, duplications. Pure."""
+    m = bw.metrics(plan_writes(ops))
+    return m, bw.breaches(m, caps)
+
 
 def cluster_step(bc, apply: bool, git=_git, out=print, mode: str = None, cache: Path = None, desired: dict = None) -> dict:
     """Keep the MODULE groups equal to the clusters of the OPEN tickets, while the mode allows it. Returns {'active', 'why', 'clusters', 'planned', 'written', 'refused'}."""
@@ -175,11 +209,19 @@ def cluster_step(bc, apply: bool, git=_git, out=print, mode: str = None, cache: 
     status = {a: t["status"] for a, t in tickets.items()}
     open_ids = {a for a, s in status.items() if s != "CLOSED"}
     rows = bm.refresh_evidence(bc.list_ticket_modules(), gather(bc, git) if desired is None else desired)
-    clusters = cl.derive(rows, open_ids, open_ids=open_ids)
+    clusters = derive(rows, open_ids, open_ids=open_ids)
     groups, current, rejected = cl.group_state(bc.list_module_group_events(), status)
-    ops = cl.plan_memberships(cl.assign_identity(clusters, groups), current, rejected, status)
+    ops = cl.plan_memberships(identify(clusters, groups), current, rejected, status)
     res.update(clusters=len(clusters), planned=len(ops))
     out(f"clusters: {len(clusters)} cluster(s) of open tickets; {len(ops)} group event(s) planned")
+    m, broken = guard(ops)
+    res.update(volume=m["total"], busiest=m["max_per_ticket"], duplicates=m["duplicates"], breaches=broken)
+    out(f"clusters: volume {m['total']}, tickets {m['tickets']}, busiest {m['busiest_ticket']} x{m['max_per_ticket']} ({m['top_share']:.0%}), duplicates {m['duplicates']}")
+    if broken:
+        for line in broken:
+            out(f"clusters: REFUSED the plan -- {line}")
+        res["refused"] = len(ops)
+        return res
     if not apply:
         return res
     skipped: set = set()
@@ -227,7 +269,7 @@ def show_clusters(bc, git=_git, out=print, top: int = 15) -> None:
     open_ids = set(tickets)
     desired = gather(bc, git)
     rows = bm.refresh_evidence(bc.list_ticket_modules(), desired) if bc.modules_store_present() else as_rows(desired)
-    for c, opens, weight in cl.rank(cl.derive(rows, open_ids, open_ids=open_ids), tickets)[:top]:
+    for c, opens, weight in cl.rank(derive(rows, open_ids, open_ids=open_ids), tickets)[:top]:
         out(f"{c['principal']}: {len(opens)} open ticket(s), weight {weight}{', HOTSPOT' if c['hotspot'] else ''}, {len(c['modules'])} shared module(s)")
         for a in opens:
             out(f"    {a} [{tickets[a]['status']}] {str(tickets[a]['title'])[:60]} -- {c['why'][a]}")

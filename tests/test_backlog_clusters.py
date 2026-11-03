@@ -231,6 +231,72 @@ def test_a_rerun_with_everything_in_place_plans_nothing():
     assert bc.plan_memberships([(c, "MOD.M", False)], {"MOD.M": {"A-0001", "A-0002"}}, set(), {}) == []
 
 
+# ---------------------------------------------------------------- the unit of a group: one module (FND-0381)
+
+def test_a_chain_of_shared_modules_is_one_component_but_two_module_groups_that_never_join_its_ends():
+    rows = [row("A", "m1.py"), row("B", "m1.py"), row("B", "m2.py"), row("C", "m2.py")]
+    u = {"A", "B", "C"}
+    assert [c["members"] for c in bc.derive(rows, u)] == [("A", "B", "C")]                  # the old unit chains A to C through B
+    by = bc.derive_by_module(rows, u)
+    assert sorted((c["principal"], c["members"]) for c in by) == [("m1.py", ("A", "B")), ("m2.py", ("B", "C"))]
+    assert not any({"A", "C"} <= set(c["members"]) for c in by)
+
+
+def test_a_module_held_by_one_ticket_makes_no_group_and_a_ticket_may_sit_in_several():
+    rows = [row("A", "solo.py"), row("A", "m1.py"), row("B", "m1.py"), row("A", "m2.py"), row("C", "m2.py")]
+    by = bc.derive_by_module(rows, {"A", "B", "C"})
+    assert sorted(c["principal"] for c in by) == ["m1.py", "m2.py"] and sum("A" in c["members"] for c in by) == 2
+
+
+def test_module_groups_use_the_same_signals_as_components_sweep_floor_cited_and_hub():
+    assert bc.derive_by_module([trow_n("A", "m.py", 6), trow_n("B", "m.py", 6)], {"A", "B"}) == []                       # a sweeping commit makes no edge
+    assert len(bc.derive_by_module([trow_n("A", "m.py", 5), trow_n("B", "m.py", 5)], {"A", "B"})) == 1
+    assert bc.derive_by_module([row("A", "m.py"), row("B", "m.py")], {"A", "B"}, edge_min=0.7) == []                       # the edge floor
+    assert bc.derive_by_module([row("A", "m.py", "CITED"), row("B", "m.py", "CITED")], {"A", "B"}) == []                   # a mention is no edge
+    assert len(bc.derive_by_module([row("A", "m.py", "CITED"), row("B", "m.py", "CITED")], {"A", "B"}, roles=("CITED",))) == 1
+    hub = [row(a, "hub.py") for a in ids("S", 6)] + [row("S-0001", "hub.py", "TARGET", "f"), row("S-0002", "hub.py", "TARGET", "f")]
+    assert [c["members"] for c in bc.derive_by_module(hub, set(ids("S", 20)))] == [("S-0001", "S-0002")]                    # a hub links only through a shared symbol
+
+
+def test_module_groups_have_the_shape_of_clusters_and_a_hotspot_counts_only_the_open_members():
+    t = ids("F", 9)
+    rows = [row(a, "scripts/audit/x.py") for a in t]
+    c = bc.derive_by_module(rows, set(t) | set(ids("G", 90)), open_ids=set(t))[0]
+    assert set(c) == {"members", "hotspot", "principal", "modules", "why"} and c["hotspot"] is True and len(c["members"]) == 9
+    assert c["why"]["F-0001"].startswith("changes scripts/audit/x.py together with F-0002 (+7 more)")
+    assert bc.derive_by_module(rows, set(t) | set(ids("G", 90)), open_ids={"F-0001", "F-0002"})[0]["hotspot"] is False   # closed tickets do not make a hotspot
+
+
+def test_module_groups_are_largest_first_and_deterministic():
+    rows = [row(a, "big.py") for a in ids("B", 3)] + [row(a, "small.py") for a in ids("S", 2)]
+    first = bc.derive_by_module(rows, set(ids("B", 3) + ids("S", 2)))
+    assert [c["principal"] for c in first] == ["big.py", "small.py"] and first == bc.derive_by_module(list(reversed(rows)), set(ids("B", 3) + ids("S", 2)))
+
+
+def test_a_module_group_is_named_after_its_module_keeps_it_for_ever_and_nothing_is_inherited():
+    c1, c2 = cluster_of(["A-0001", "A-0002"], "shared/a.py"), cluster_of(["A-0002", "A-0003"], "shared/b.py")
+    out = bc.assign_identity_by_module([c1, c2], {})
+    assert [(o[1], o[2]) for o in out] == [("MOD.SHARED.A", True), ("MOD.SHARED.B", True)]
+    held = {"MOD.SHARED.A": {"id": 1, "open": {"A-0001", "A-0002"}}}
+    out = bc.assign_identity_by_module([c1, c2], held)
+    assert [(o[1], o[2]) for o in out] == [("MOD.SHARED.A", False), ("MOD.SHARED.B", True)]                               # an existing group is the module's own, not a collision
+
+
+def test_two_modules_with_one_name_in_one_run_get_distinct_names():
+    c1, c2 = cluster_of(["A-0001", "A-0002"], "shared/x.py"), cluster_of(["A-0003", "A-0004"], "shared/x.bat")       # the extension is not part of the name: the same one twice
+    assert bc.group_name("shared/x.py") == bc.group_name("shared/x.bat")
+    names = [o[1] for o in bc.assign_identity_by_module([c1, c2], {})]
+    assert names[0] == "MOD.SHARED.X" and names[1] != names[0] and NAME_RX.match(names[1])
+
+
+def test_module_groups_plan_with_the_same_membership_rules():
+    c = bc.derive_by_module([row("A-0001", "m.py"), row("A-0002", "m.py")], {"A-0001", "A-0002"})[0]
+    ops = bc.plan_memberships(bc.assign_identity_by_module([c], {}), {}, set(), {})
+    assert [o[:3] for o in ops] == [("CREATE", "MOD.M", ops[0][2]), ("ADD", "MOD.M", "A-0001"), ("ADD", "MOD.M", "A-0002")]
+    held = {"MOD.M": {"A-0001", "A-0002"}}
+    assert bc.plan_memberships(bc.assign_identity_by_module([c], {"MOD.M": {"id": 1, "open": set(held["MOD.M"])}}), held, set(), {}) == []
+
+
 # ---------------------------------------------------------------- proof and switch
 
 def clusters_of_pairs(n):
