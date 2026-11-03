@@ -473,7 +473,7 @@ def main(argv: list | None = None) -> int:
         mres = modules_run.run(bc, apply=True, out=lambda *_: None, clusters=True)
         summary += f"; modules {mres['recorded']} new" if mres["recorded"] else ""
         kept = mres.get("clusters") or {}
-        summary += f"; module clusters {kept['written']} event(s)" if kept.get("written") else ""
+        summary += modules_run.cluster_note(kept)
     except Exception:                                                        # noqa: BLE001
         pass
     try:                                                                         # W4 (FND-0359): the open tickets a merge may affect get ONE note each; a note, never a flag, never a move

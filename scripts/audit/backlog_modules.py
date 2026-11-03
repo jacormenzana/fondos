@@ -244,6 +244,18 @@ def cluster_step(bc, apply: bool, git=_git, out=print, mode: str = None, cache: 
     return res
 
 
+def cluster_note(kept: dict) -> str:
+    """The fragment of the autopilot's summary line about the module groups: what was written, and (so a failure is never silent) what was refused or why the step failed. Pure."""
+    kept = kept or {}
+    note = f"; module clusters {kept['written']} event(s)" if kept.get("written") else ""
+    if kept.get("refused"):
+        note += f"; module clusters REFUSED {kept['refused']} event(s)" + (" (plan beyond its caps)" if kept.get("breaches") else "")
+    why = str(kept.get("why") or "")
+    if why.startswith("error"):
+        note += f"; module clusters {why}"
+    return note
+
+
 def run(bc, apply: bool = False, git=_git, out=print, clusters: bool = False, mode: str = None, cache: Path = None) -> dict:
     """Gather, subtract what is current and (with apply) record the rest; with `clusters`, then keep the MODULE groups. Returns {'present', 'desired', 'new', 'recorded', 'unchanged'} and, with
     `clusters`, 'clusters' (see cluster_step); 'present' is False before the phase is deployed."""

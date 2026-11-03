@@ -276,3 +276,16 @@ def test_the_caps_of_a_run_are_pinned_at_their_numbers():
     one_ticket_among_many = adds(6, "FND-9000") + adds(40)[6:]                                                       # a ticket in 6 groups is fine, in 7 is not, while no ticket dominates the run
     assert run.guard(one_ticket_among_many)[1] == []
     assert any("CONCENTRATION" in b for b in run.guard(adds(7, "FND-9000") + adds(60)[7:])[1])
+
+
+def test_the_summary_fragment_names_what_was_written_and_never_hides_a_refusal_or_a_failure():
+    assert run.cluster_note({}) == "" and run.cluster_note(None) == "" and run.cluster_note({"active": False, "why": "unproven: 4 decided pairs"}) == ""
+    assert run.cluster_note({"written": 74, "refused": 0}) == "; module clusters 74 event(s)"
+    assert "REFUSED 3 event(s)" in run.cluster_note({"written": 5, "refused": 3}) and "caps" not in run.cluster_note({"refused": 3})
+    assert "plan beyond its caps" in run.cluster_note({"written": 0, "refused": 74, "breaches": ["VOLUME: ..."]})
+    assert run.cluster_note({"active": False, "why": "error OperationalError"}) == "; module clusters error OperationalError"
+
+
+def test_the_autopilot_summary_uses_the_fragment():
+    src = (Path(__file__).resolve().parents[1] / "scripts" / "audit" / "backlog_autopilot.py").read_text(encoding="utf-8")
+    assert "summary += modules_run.cluster_note(kept)" in src
