@@ -48,6 +48,9 @@ _FILE_EXEMPT: dict[str, str] = {
     "scripts/audit/backlog_phase_b_replay.py":
         "DESIGN: talks to the `gestion` backlog schema (a read-only export) and to a scratch database loaded with a snapshot of it, not to the fondos schema this sweep loads; "
         "its behaviour is covered by tests/test_backlog_phase_b_replay_pg.py",
+    "shared/backlog_writer_proof.py":
+        "DESIGN: the proof harness of an automatic backlog writer (FND-0370): it loads a snapshot of the `gestion` backlog into a SCRATCH database (shared/backlog_scratch.assert_scratch refuses a live target) "
+        "and counts rows there, over a closed set of backlog tables; it never touches the fondos schema this sweep loads; its behaviour is covered by tests/test_backlog_writer_proof_pg.py",
     "shared/testing/pg_fixtures.py":
         "DESIGN: test harness; issues SAVEPOINT/CREATE SCHEMA against a throwaway database",
 }
