@@ -136,19 +136,20 @@ def measure(bc, git=_git) -> dict:
 
 
 def proof(bc, git=_git, cache: Path = None) -> dict:
-    """The evidence of `measure`, at most once a day (cached in out/backlog_modules/proof.json): the cost is one `git diff-tree` per commit on record. A broken cache is measured again."""
+    """The evidence of `measure`, at most once a day and per unit (cached in out/backlog_modules/proof.json): the cost is one `git diff-tree` per commit on record. A broken cache, or one measured under another
+    unit (BACKLOG_CLUSTER_UNIT), is measured again: a proof of the old unit never switches the new one on or keeps it off."""
     cache = cache or PROOF_CACHE
-    today = date.today().isoformat()
+    today, unit = date.today().isoformat(), _config_unit()
     try:
         c = json.loads(cache.read_text(encoding="utf-8"))
-        if c.get("day") == today:
+        if c.get("day") == today and c.get("unit") == unit:
             return c["ev"]
     except (OSError, ValueError, KeyError):
         pass
     ev = measure(bc, git)["ev"]
     try:
         cache.parent.mkdir(parents=True, exist_ok=True)
-        cache.write_text(json.dumps({"day": today, "ev": ev}), encoding="utf-8")
+        cache.write_text(json.dumps({"day": today, "unit": unit, "ev": ev}), encoding="utf-8")
     except OSError:
         pass
     return ev

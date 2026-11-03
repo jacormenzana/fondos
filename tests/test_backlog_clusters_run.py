@@ -188,6 +188,24 @@ def test_the_proof_is_measured_once_a_day_and_a_broken_cache_is_measured_again(t
     assert run.proof(None, cache=cache) == GOOD and len(calls) == 3
 
 
+def test_a_proof_measured_under_another_unit_is_never_reused(tmp_path, monkeypatch):
+    import json
+    calls = []
+    monkeypatch.setattr(run, "measure", lambda bc, git=None: calls.append(1) or {"ev": GOOD})
+    cache = tmp_path / "proof.json"
+    monkeypatch.setattr(run, "_config_unit", lambda: "COMPONENT")
+    run.proof(None, cache=cache)
+    assert json.loads(cache.read_text(encoding="utf-8"))["unit"] == "COMPONENT" and len(calls) == 1
+    monkeypatch.setattr(run, "_config_unit", lambda: "MODULE")
+    run.proof(None, cache=cache)                                                                 # the day is the same, the unit is not: measured again, and recorded under the new unit
+    assert len(calls) == 2 and json.loads(cache.read_text(encoding="utf-8"))["unit"] == "MODULE"
+    run.proof(None, cache=cache)
+    assert len(calls) == 2
+    cache.write_text(json.dumps({"day": __import__("datetime").date.today().isoformat(), "ev": GOOD}), encoding="utf-8")   # a cache written before the unit existed
+    run.proof(None, cache=cache)
+    assert len(calls) == 3
+
+
 def test_measure_scores_the_clusters_against_the_decisions_on_record_and_never_writes():
     links = [{"from_id": "FND-1", "to_id": "FND-2", "link_type": "OVERLAPS", "status": "CONFIRMED"},
              {"from_id": "FND-1", "to_id": "FND-3", "link_type": "OVERLAPS", "status": "REJECTED"},
