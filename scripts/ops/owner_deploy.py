@@ -19,7 +19,8 @@ remembered. Each phase is one transaction, so a failing phase leaves nothing hal
 %LOCALAPPDATA%\\fondos\\deploy_receipts. Phases that need a decision of yours (`revoke`, `iam`) are never offered here.
 
 AUTO mode (Backlog v3.1, owner decision 2026-11-01: "no console, no click"; switch BACKLOG_AUTO_DEPLOY_MODE in shared/config.py, AUTO | ASK, default AUTO). The window above is the ASK mode and the
-fallback. In AUTO a pending phase is applied with no window, behind gates that are all automatic: master only carries what the required CI checks passed (hermetic migration and rollback tests);
+fallback. In AUTO a pending phase is applied with no window, behind gates that are all automatic: the LOCAL DDL GATE first (FND-0377; GitHub CI is out of the loop): the backlog's hermetic migration, rollback and acceptance tests run on a clean clone of the
+commit in a throwaway Postgres container and must really run and pass (a failure applies nothing and opens an incident; a gate that cannot run, a container down for instance, applies nothing and asks a person, as for a missing restore point);
 a restore point is created first (pg_create_restore_point; if it cannot be, nothing is applied and the window asks); each phase is one transaction; the drift tool must say `no drift`; on a
 phase failure or on drift, the phases applied in this run are rolled back (`--down --apply`, newest first), an incident ticket is opened (shared.backlog_client.report_incident) and the window
 asks for that version from then on. A success is a self-closing notice and a receipt. The DEPLOY fact (what lets the autopilot close tickets whose merge changed db/**) is recorded for the tickets
@@ -65,6 +66,10 @@ RESTORE_POINT_CODE = ("import os, sys, psycopg\n"
 SNOOZE_HOURS = 4
 DIFF_MAX_LINES = 400
 DDL_DIR = "db/pg_backlog/"
+# FND-0377 (plan Revision 2, owner decision G8: automatic is the imperative, so the controls are implemented): GitHub CI used to be the gate "master only carries what the hermetic migration and rollback tests
+# passed". With GitHub out of the loop the watcher runs those same tests itself, on a clean clone of the commit it is about to apply, before it touches the live backlog.
+DDL_GATE_GLOBS = ("tests/test_backlog_*_pg.py", "tests/test_owner_deploy_pg.py")
+GATE_TIMEOUT_S = 40 * 60
 _PHASE_IN_DRIFT = re.compile(r"--phase (\w+)")
 _NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
@@ -296,6 +301,7 @@ class Outcome:
     fallback: bool = False                       # AUTO: nothing was applied and a person should be asked (no restore point, no vault string)
     auto: bool = False
     facts: str = ""                              # AUTO: what happened with the DEPLOY facts
+    gate: str = ""                               # AUTO: the verdict of the local DDL test gate (FND-0377), shown in the receipt and the notice
 
 
 def _roll_back(applied: list, python: str, tree: Path, env: dict, run: Callable, log: list, secret: str) -> list:
@@ -310,9 +316,54 @@ def _roll_back(applied: list, python: str, tree: Path, env: dict, run: Callable,
     return undone
 
 
+def _gate_env() -> dict:
+    """The environment of the gate's tests: no connection string of any kind (the owner's, the facts login's, FONDOS_*DSN*) reaches them; they use a throwaway container."""
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONDONTWRITEBYTECODE": "1"}
+    for k in [k for k in env if k in (OWNER_VAR, FACTS_VAR) or (k.startswith("FONDOS_") and "DSN" in k)]:
+        env.pop(k)
+    return env
+
+
+def _run_gate(cmd: list, env: dict, cwd: Path, timeout: int) -> tuple:
+    r = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout, stdin=subprocess.DEVNULL, creationflags=_NO_WINDOW)
+    return r.returncode, (r.stdout or "") + "\n" + (r.stderr or "")
+
+
+def ddl_gate(head: str, *, python: Optional[str] = None, checkout: Optional[Callable] = None, runner: Optional[Callable] = None, timeout: int = GATE_TIMEOUT_S) -> tuple:
+    """(kind, detail) of the local DDL gate: `pass` | `fail` | `cannot_run`. Checks `head` out into a clean clone (never the working tree), runs the backlog's hermetic migration, rollback and acceptance
+    tests there (DDL_GATE_GLOBS, scripts/ops/run_pg_tests.py: a throwaway Postgres container, no live connection string) and judges the output with the receipt rules (shared/delivery_receipt.py): a pass needs
+    tests that really ran and passed. `fail` = a test failed (nothing is applied and an incident is opened); `cannot_run` = the container, the clone or the interpreter did not work, which says nothing about the
+    DDL (nothing is applied and a person is asked, as for a missing restore point). `checkout` and `runner` are injectable for the tests."""
+    from shared import delivery_receipt as dr
+    from shared.git_export import checkout_tree
+    py = python or python_exe()
+    with tempfile.TemporaryDirectory(prefix="fondos_gate_", ignore_cleanup_errors=True) as tmp:
+        tree = Path(tmp) / "tree"
+        tree.mkdir()
+        try:
+            (checkout or checkout_tree)(head, tree, ROOT)
+        except Exception as exc:                                              # noqa: BLE001
+            return "cannot_run", f"the gate could not check out {head[:10]}: {type(exc).__name__}: {str(exc)[:160]}"
+        files = sorted({p.relative_to(tree).as_posix() for g in DDL_GATE_GLOBS for p in tree.glob(g)})
+        if not files:
+            return "cannot_run", f"no DDL test file ({', '.join(DDL_GATE_GLOBS)}) in {head[:10]}"
+        try:
+            rc, text = (runner or _run_gate)([py, "scripts/ops/run_pg_tests.py", "--image", "postgres:17", *files], _gate_env(), tree, timeout)
+        except subprocess.TimeoutExpired:
+            return "cannot_run", f"the DDL tests did not finish within {timeout // 60} minutes"
+        except Exception as exc:                                              # noqa: BLE001
+            return "cannot_run", f"the DDL tests could not start: {type(exc).__name__}: {str(exc)[:160]}"
+    counts, summaries = dr.parse_counts(text)
+    result, detail = dr.judge("area", "area", counts, summaries, rc, [])
+    tail = " / ".join(text.strip().splitlines()[-3:])[:300]
+    if result == "pass":
+        return "pass", f"{counts['passed']} hermetic DDL, migration and rollback tests passed ({len(files)} files) on {head[:10]}"
+    return ("cannot_run" if result == "inconclusive" else "fail"), f"{detail} | {tail}"
+
+
 def apply_pending(head: str, pending: list, *, vault, state_file: Path, run: Callable = run_cmd, export: Callable = export_tree, python: Optional[str] = None,
                   env_file: Optional[Path] = None, receipts_dir: Optional[Path] = None, now: Callable = lambda: datetime.now(timezone.utc), auto: bool = False,
-                  remember: bool = True) -> Outcome:
+                  remember: bool = True, gate: Optional[Callable] = None, ddl_diff: str = "") -> Outcome:
     """Apply `pending` phases of `head` in order and verify with the drift tool. Success only when the drift tool says `no drift`; only then the state remembers `head`. The owner string goes into the
     environment of the migration children only (never the drift child, never this process's environment) and is scrubbed from any output kept.
     auto=True (AUTO mode) adds the automatic gates: a restore point before anything is applied (if it cannot be created NOTHING is applied and the Outcome asks for a person: fallback=True), and, when a
@@ -325,6 +376,13 @@ def apply_pending(head: str, pending: list, *, vault, state_file: Path, run: Cal
         return Outcome(False, "vault", detail=str(exc), fallback=auto, auto=auto)
     if not secret:
         return Outcome(False, "vault", detail=f"{OWNER_VAR} is not in the owner vault. Store it once: python scripts/ops/owner_vault.py set {OWNER_VAR}", fallback=auto, auto=auto)
+    gate_line = ""
+    if auto and gate is not None:                                              # FND-0377: the local DDL tests replace the CI gate; they run BEFORE the live backlog is touched and before any restore point
+        kind, gdetail = gate(head)
+        gate_line = f"local gate {kind}: {gdetail}"
+        if kind != "pass":
+            _receipt(receipts_dir, now, head, pending, [], [{"step": "local gate", "result": gate_line}], False)
+            return Outcome(False, "local_gate", detail=gdetail, fallback=(kind == "cannot_run"), auto=True, gate=gate_line)
     base_env = {**os.environ, "FONDOS_ENV_FILE": str(env_file or (ROOT / ".env")), "PYTHONIOENCODING": "utf-8"}
     base_env.pop(OWNER_VAR, None)
     owner_env = {**base_env, OWNER_VAR: secret}
@@ -335,14 +393,16 @@ def apply_pending(head: str, pending: list, *, vault, state_file: Path, run: Cal
         try:
             export(head, tree)
         except Exception as exc:                                              # noqa: BLE001
-            return Outcome(False, "export", detail=f"{type(exc).__name__}: {str(exc)[:200]}", auto=auto)
-        log: list = []
+            return Outcome(False, "export", detail=f"{type(exc).__name__}: {str(exc)[:200]}", auto=auto, gate=gate_line)
+        log: list = [{"step": "local gate", "result": gate_line}] if gate_line else []
+        if ddl_diff:
+            log.append({"step": "ddl diff", "tail": ddl_diff[:6000]})          # what was applied, in the receipt: the owner's "present the change"
         if auto:
             rc, tail = run([python, "-c", RESTORE_POINT_CODE, restore_point_name(head, now())], owner_env, tree)
             log.append({"step": "restore point", "rc": rc, "tail": scrub(tail, [secret])})
             if rc != 0:
                 _receipt(receipts_dir, now, head, pending, applied, log, False)
-                return Outcome(False, "restore_point", detail=scrub(tail, [secret]), fallback=True, auto=True)
+                return Outcome(False, "restore_point", detail=scrub(tail, [secret]), fallback=True, auto=True, gate=gate_line)
         for ph in pending:
             rc, tail = run([python, str(tree / "scripts" / "ops" / "migrate_backlog_v2.py"), "--phase", ph, "--apply"], owner_env, tree)
             log.append({"step": f"apply {ph}", "rc": rc, "tail": scrub(tail, [secret])})
@@ -350,7 +410,7 @@ def apply_pending(head: str, pending: list, *, vault, state_file: Path, run: Cal
                 if auto:
                     rolled = _roll_back(applied, python, tree, owner_env, run, log, secret)
                 _receipt(receipts_dir, now, head, pending, applied, log, False)
-                return Outcome(False, ph, applied, scrub(tail, [secret]), rolled_back=rolled, auto=auto)
+                return Outcome(False, ph, applied, scrub(tail, [secret]), rolled_back=rolled, auto=auto, gate=gate_line)
             applied.append(ph)
         rc, tail = run([python, str(tree / "scripts" / "ops" / "backlog_drift.py")], base_env, tree)
         log.append({"step": "drift", "rc": rc, "tail": scrub(tail, [secret])})
@@ -359,12 +419,12 @@ def apply_pending(head: str, pending: list, *, vault, state_file: Path, run: Cal
     ok = rc == 0
     _receipt(receipts_dir, now, head, pending, applied, log, ok)
     if not ok:
-        return Outcome(False, "drift", applied, scrub(tail, [secret]), rolled_back=rolled, auto=auto)
+        return Outcome(False, "drift", applied, scrub(tail, [secret]), rolled_back=rolled, auto=auto, gate=gate_line)
     if remember:                                                               # a phase applied on its own (revoke) says nothing about the rest of master
         state = read_state(state_file)
         state.update(deployed_ref=head, snoozed_until={}, ignored=[], auto_failed=[])
         write_state(state_file, state)
-    return Outcome(True, "applied", applied, scrub(tail, [secret]), auto=auto)
+    return Outcome(True, "applied", applied, scrub(tail, [secret]), auto=auto, gate=gate_line)
 
 
 def _receipt(receipts_dir, now, head, pending, applied, log, ok) -> None:
@@ -656,9 +716,9 @@ def toast_window(o: "Outcome", seconds: int = 20) -> None:
     import tkinter as tk
     root = tk.Tk()
     root.title("Fondos: backlog DDL applied automatically")
-    root.geometry("520x150+40+40")
+    root.geometry("520x190+40+40")
     root.attributes("-topmost", True)
-    tk.Label(root, text=f"Applied: {', '.join(o.applied) or 'nothing'}.\nThe live backlog matches master (no drift).\n{o.facts}", justify="left", wraplength=480, pady=14).pack()
+    tk.Label(root, text=f"Applied:{', '.join(o.applied) or 'nothing'}.\nThe live backlog matches master (no drift).\n{o.gate}\n{o.facts}", justify="left", wraplength=480, pady=14).pack()
     root.after(seconds * 1000, root.destroy)
     root.mainloop()
 
@@ -805,11 +865,15 @@ def main(argv: list | None = None) -> int:
         return job() if args.console else work_window(job)
 
     def do_apply_auto(h: str, pend: list, deployed: Optional[str]) -> Outcome:
-        return auto_deploy(h, pend, deployed, vault=vault, state_file=sf, ddl_log=git_ddl_log, record=bc.record_deploy_fact)
+        try:
+            shown = git_diff(deployed, h) if deployed else ""                  # the change itself goes into the receipt: what was applied, not only that it was
+        except Exception:                                                      # noqa: BLE001
+            shown = ""
+        return auto_deploy(h, pend, deployed, vault=vault, state_file=sf, ddl_log=git_ddl_log, record=bc.record_deploy_fact, gate=ddl_gate, ddl_diff=shown)
 
     def notify(o: Outcome) -> None:
         extra = f" | rolled back: {', '.join(o.rolled_back)}" if o.rolled_back else ""
-        print((("APPLIED: " + ", ".join(o.applied) + (f" | {o.facts}" if o.facts else "")) if o.ok else f"FAILED at {o.stage}: {o.detail}{extra}"))
+        print((("APPLIED: " + ", ".join(o.applied) + (f" | {o.facts}" if o.facts else "") + (f" | {o.gate}" if o.gate else "")) if o.ok else f"FAILED at {o.stage}: {o.detail}{extra}"))
         if args.console:
             return
         if o.ok and o.auto:
@@ -820,7 +884,7 @@ def main(argv: list | None = None) -> int:
     revoke_enabled = mode == "AUTO" and bool(getattr(cfg, "BACKLOG_AUTO_REVOKE_ENABLED", False))
 
     def do_apply_revoke(h: str, pend: list) -> Outcome:
-        return apply_pending(h, pend, vault=vault, state_file=sf, auto=True, remember=False)
+        return apply_pending(h, pend, vault=vault, state_file=sf, auto=True, remember=False, gate=ddl_gate)       # the revoke goes through the same local gate
 
     started_with = code_fingerprint()
     print(f"owner_deploy watcher: mode {mode}" + ("; A-2 revoke will be applied by itself when its gate holds" if revoke_enabled else ""))
