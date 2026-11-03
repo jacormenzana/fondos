@@ -1150,7 +1150,7 @@ def create_group(name: str, kind: str, description: str, *, actor: Optional[str]
     if kind not in GROUP_KINDS:
         raise ValueError(f"group kind must be one of {GROUP_KINDS}, got {kind!r}")
     who = resolve_actor(actor)
-    with _session(conn, human=who.startswith("human:"), write=True, operation=agent_operation(who)) as c:      # write=True: a group is a write (it skipped the live-write gate before Backlog v3 W2)
+    with _session(conn, human=who.startswith("human:"), write=True, operation=_scoped_operation(who)) as c:      # write=True: a group is a write (it skipped the live-write gate before Backlog v3 W2)
         return c.execute("SELECT backlog.sp_create_group(%s, %s, %s, %s)", (name, kind, description, who)).fetchone()[0]
 
 
@@ -1159,7 +1159,7 @@ def group_member(group: str, ap_id: str, op: str, reason: str, *, actor: Optiona
     if op not in ("ADD", "REMOVE"):
         raise ValueError(f"op must be ADD or REMOVE, got {op!r}")
     who = resolve_actor(actor)
-    with _session(conn, human=who.startswith("human:"), write=True, operation=agent_operation(who)) as c:
+    with _session(conn, human=who.startswith("human:"), write=True, operation=_scoped_operation(who)) as c:
         return c.execute("SELECT backlog.sp_group_member(%s, %s, %s, %s, %s)", (group, ap_id, op, reason, who)).fetchone()[0]
 
 

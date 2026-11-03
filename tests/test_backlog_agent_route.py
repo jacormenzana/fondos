@@ -4,6 +4,7 @@
 everything else keeps the console path. No database, no network: the connection is a fake that records the SQL (R-7)."""
 from __future__ import annotations
 
+import contextlib
 import inspect
 import re
 
@@ -132,7 +133,36 @@ def test_the_four_group_and_close_condition_helpers_are_writes_and_pass_the_live
     """They called _session without write=True, which skipped the live-write gate of the owner's 2026-10-29 order; each is now a write and routes by actor kind."""
     for name in ("create_group", "group_member", "add_close_condition", "retire_close_condition", "annotate_wait", "open_ticket", "transition"):
         src = inspect.getsource(getattr(bc, name))
-        assert "write=True" in src and "operation=agent_operation(who)" in src.replace("op,", "agent_operation(who),") or "operation=op" in src, name
+        assert "write=True" in src and ("operation=agent_operation(who)" in src.replace("op,", "agent_operation(who),") or "operation=_scoped_operation(who)" in src) or "operation=op" in src, name
+
+
+def test_the_autopilot_creates_groups_and_adds_members_with_its_scoped_login_not_the_console_path(monkeypatch):
+    """FND-0381: the group helpers asked only for the AGENT operation, so system:autopilot took the console path and every group write was refused (LiveWriteForbidden): 19 groups refused on the first live run."""
+    seen = []
+
+    class Conn:
+        def execute(self, sql, params=()):
+            return self
+
+        def fetchone(self):
+            return (1,)
+
+    @contextlib.contextmanager
+    def spy(conn=None, **kw):
+        seen.append(kw.get("operation"))
+        yield Conn()
+
+    monkeypatch.setattr(bc, "_session", spy)
+    monkeypatch.setenv(bc._AUTOPILOT_DSN_ENV_VAR, "postgresql://backlog_autopilot@127.0.0.1:1/gestion")
+    monkeypatch.setenv("FONDOS_ACTOR", "system:autopilot")
+    bc.create_group("MOD.X.Y", "MODULE", "tickets that change x.y", actor="system:autopilot")
+    bc.group_member("MOD.X.Y", "FND-0001", "ADD", "changes x.y together with FND-0002", actor="system:autopilot")
+    assert seen == ["autopilot", "autopilot"]
+    seen.clear()
+    monkeypatch.delenv(bc._AUTOPILOT_DSN_ENV_VAR)
+    monkeypatch.setenv("FONDOS_ACTOR", "human:jacor")
+    bc.create_group("MOD.X.Y", "MODULE", "tickets that change x.y", actor="human:jacor")
+    assert seen == [None]                                                                          # a person keeps the console path
 
 
 # ---------------------------------------------------------------- Backlog v3 W3 (FND-0358): the autopilot's own login and its one move
