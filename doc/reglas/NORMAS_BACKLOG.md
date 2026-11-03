@@ -567,6 +567,29 @@ herramienta) no es superusuario, ejecuta solo la adjudicación y la lectura de l
 puede fijar un modo y **no** adjudicar. Una fase sin aplicar falla sus comprobaciones de existencia: nunca pasa en silencio. La contraseña de un rol no es legible sin ser superusuario: que
 el propietario la fijó lo demuestra que `gate_mode.py` o `gate_adjudicate.py` se conecten.
 
+### §4.9. Escritores automáticos: registro, simulacro que mide y prueba con datos reales (FND-0370; requisitos del propietario, 2026-11-03)
+
+Un **escritor automático** es un proceso que escribe en el backlog con una identidad `system:<nombre>` (el autopiloto, la puerta del commit-msg, el vigilante de despliegue...). Dos requisitos, en palabras del propietario: (1) el simulacro de un escritor
+**no puede limitarse a comprobar que el proceso termina**: debe revisar también las **duplicaciones**, el **volumen** de operaciones de escritura y la **concentración de cambios por ticket**; (2) **ningún escritor automático nuevo puede modificar el backlog hasta que se haya
+demostrado, con pruebas reproducibles sobre datos reales, que funciona correctamente y que sus mecanismos de protección están operativos.**
+
+- **El registro** (`shared/backlog_writers.py`, `REGISTRY`): cada escritor con su identidad, lo que escribe (`LOG`, `LINK`, `TRANSITION`, `FACT`, `MODULE`, `PROBE`, `GROUP`, `TICKET`), su **interruptor** en `shared/config.py`, sus **topes** (`Caps`: escrituras por ejecución, por ticket,
+  cuota del ticket más cargado, duplicaciones = 0), los ficheros que forman su código y su módulo de entrada. Los escritores que ya estaban vivos el 2026-11-03 (autopiloto, puerta, sync, deploy, autodetect, calibrador, replay y los históricos backfill, migration, owner-waiver) están
+  `GRANDFATHERED`: figuran, no se les pide prueba. **Todo lo demás es nuevo por construcción:** `tests/test_backlog_writers.py` recorre el código buscando cada literal `system:<nombre>` y falla si alguno no está registrado, de modo que un escritor no puede llegar sin entrada.
+- **Un escritor nuevo nace `REGISTERED` y APAGADO** (su interruptor en `False` / `"OFF"`; la comprobación estática lo exige) y **no escribe nada** hasta tener una prueba `PASS` registrada para el **resumen actual** (sha-256) de sus ficheros: cualquier cambio de su código la invalida. La puerta es
+  `backlog_writers.assert_may_write`, llamada por `backlog_client` antes de toda escritura contra una conexión real (`_session(write=True)` con la identidad que declara el proceso, `append_log` y `record_link_events` con la que reciben): un `system:*` no registrado o sin prueba vigente recibe
+  `WriterRefused` sin haber escrito nada; una persona o un agente no se juzgan aquí; una conexión inyectada (las suites herméticas) tampoco. Es una guarda del proceso que llama al cliente, no una frontera de seguridad (el mismo límite que el vault).
+- **El módulo de entrada** de un escritor ofrece `plan(bc, ahora)` (qué escribiría: solo lee), `apply(bc, plan, *, caps, enabled)` (escribe por el cliente y devuelve exactamente lo que escribió; con `enabled=False` no escribe; se detiene en los topes) y, opcionalmente, `protections(bc)` (comprobaciones de
+  sus propias protecciones, por ejemplo «nunca pisa la decisión de una persona»). `bc` es el cliente atado a una conexión (`BoundClient`), así que la misma entrada corre contra el backlog vivo **solo en lectura** y contra una base desechable.
+- **`python scripts/audit/writer_proof.py --writer NOMBRE`** hace la prueba entera. (a) **Simulacro con datos reales** (`--dry-run-only` lo deja ahí): el plan sobre el backlog vivo en una transacción de solo lectura, **medido**: duplicaciones, volumen y concentración por ticket frente a los topes; un
+  incumplimiento falla. (b) **Prueba sobre una base desechable cargada desde una instantánea real** (de solo lectura; el mismo mecanismo que los escenarios de staging, FND-0351; `shared/backlog_scratch.py` rechaza cualquier destino vivo antes de nada): el escritor corre DE VERDAD allí y se comprueba que
+  su **interruptor apagado no escribe nada**, que los **topes lo detienen**, que lo que declara haber hecho **es lo que la base contó**, que escribe **solo los tipos que declara**, que sus escrituras reales respetan los topes y **que una segunda ejecución no escribe nada** (idempotente); un plan con menos de dos
+  escrituras no prueba nada y falla. El resultado (escritor, resumen del código, resumen de la instantánea, medidas, veredicto y motivos) se añade a `out/audit/writer_proofs.jsonl`; es reproducible con `--snapshot` y el mismo código. `--list` muestra el estado de cada escritor; `--verify NOMBRE`, si está PROBADO para el código actual.
+- **El propio arnés está probado** (`tests/test_backlog_writer_proof_pg.py`, sobre un Postgres desechable con el DDL real): un escritor de muestra bueno pasa, y cada uno de siete malos (ignora el interruptor, ignora los topes, no es idempotente, escribe notas distintas en cada ejecución, concentra en un ticket, duplica,
+  escribe un tipo no declarado) falla por la razón correcta.
+- **Para añadir un escritor:** (1) darle entrada en el registro como `REGISTERED` con topes, interruptor apagado, ficheros y entrada; (2) escribir su `plan`/`apply`; (3) `writer_proof.py --writer NOMBRE` hasta `PASS`; (4) solo entonces encender su interruptor (un evento del propietario, `shared/config.py`). El primero que pasa por aquí es el del ciclo de vida de relaciones
+  y grupos (FND-0381).
+
 ## §5. Protocolo de absorción de alcance
 
 Cuando un enlace `OVERLAPS` lleva nota `absorbs`, el ticket que absorbe **debe**:

@@ -525,6 +525,7 @@ def _session(conn=None, *, human: bool = False, write: bool = False, operation: 
         raise BacklogUnavailable("psycopg3 is not installed (pip install 'psycopg[binary]')")
     if write:
         confirm_live_write(_target_of(dsn), operation=operation)
+        _guard_writer(_process_actor())                                            # FND-0370: the process writes as ONE identity (FONDOS_ACTOR); a system:* one must be a registered, proven writer
     # `with` commits on a normal exit and rolls back on an exception, then closes.
     with psycopg.connect(dsn, connect_timeout=5, options=_ANALYSIS_OPTIONS) as own:
         yield own
@@ -606,11 +607,28 @@ def list_links(*, history: bool = False, status: Optional[str] = None, ids: Opti
 _AGENT_LOG_ACTOR = re.compile(r"^(agent|system):[A-Za-z0-9._-]+$")
 
 
+def _process_actor() -> Optional[str]:
+    """The identity this process declares (FONDOS_ACTOR), or None when it declares none or a malformed one (the call that needs it raises its own error)."""
+    try:
+        return current_actor()
+    except ActorUnknown:
+        return None
+
+
+def _guard_writer(actor: Optional[str]) -> None:
+    """FND-0370 (owner requirement 2026-11-03): a `system:*` identity may write to a real connection only if it is a registered automatic writer and, when it is new, has a proof on real data for its current
+    code (shared/backlog_writers.py). A person's or an agent's write is not judged here. Raises shared.backlog_writers.WriterRefused; nothing has been written when it does."""
+    from shared import backlog_writers as bw
+    bw.assert_may_write(actor)
+
+
 def append_log(action_point_id: str, username: str, comment: str, *, conn=None) -> int:
     """Append one progress note to `backlog.BACKLOG_LOGS` (insert-only, like every progress record: AGENTS.md "never overwrite
     prior progress"). Does NOT touch the ticket's status. Fail-loud; returns the new log_id."""
     if not str(action_point_id or "").strip() or not str(username or "").strip() or not str(comment or "").strip():
         raise ValueError("action_point_id, username and comment are all required")
+    if conn is None:
+        _guard_writer(username)                                                    # FND-0370: a system:* identity that is not a registered, proven writer writes nothing
     if conn is None and _AGENT_LOG_ACTOR.match(str(username)):
         # FND-0354 (owner decision 2026-10-29): an agent or system identity appends through the scoped routine with its own login; the allow-list lets it run without a terminal.
         with _session(None, write=True, operation=autopilot_operation(username) or "agent_log") as c:
@@ -648,6 +666,9 @@ def record_link_events(events: list[dict], *, conn=None) -> list[int]:
         checked.append((ev["from_id"], ev["to_id"], ev["link_type"], ev["status"], ev["evidence"], ev.get("absorbs"),
                         ev["username"], ev.get("origin")))
     ids: list[int] = []
+    if conn is None:
+        for who in {row[6] for row in checked}:
+            _guard_writer(who)                                                                                   # FND-0370
     op = agent_operation(checked[0][6]) if checked and all(str(row[6]).startswith("agent:") for row in checked) else None      # an agent writes through the routine of its scoped login
     with _session(conn, human=any(str(ev["username"]).startswith("human:") for ev in events), write=True, operation=op) as c:
         for row in checked:

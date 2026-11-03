@@ -148,7 +148,7 @@ def test_a_system_identity_also_uses_the_scoped_path(driver, monkeypatch):
     driver.real()
     monkeypatch.setenv(bc._LOGGER_DSN_ENV_VAR, LOGGER_DSN)
     driver.script = [(True,), (5,)]
-    assert bc.append_log("FND-0354", "system:release", "released") == 5
+    assert bc.append_log("FND-0354", "system:sync", "released") == 5                                       # a REGISTERED system writer (FND-0370: an unregistered one is refused before any connection)
 
 
 def test_the_note_waits_with_a_clear_error_while_the_iam_step_is_not_applied(driver, monkeypatch):
