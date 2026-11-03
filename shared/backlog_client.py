@@ -809,9 +809,15 @@ _MENTION = re.compile(r"\bFND-\d{4}\b")
 
 
 class TicketOpened(str):
-    """The id returned by open_ticket(): a plain str, plus `.mentions`, the FND-nnnn ids named in the text, and `.linked`, those recorded as PROPOSED RELATED links."""
+    """The id returned by open_ticket(): a plain str, plus `.mentions`, the FND-nnnn ids named in the text, and `.linked`, those recorded as PROPOSED RELATED links.
+    FND-0378: `.neighbours` ([(score, id, status, title)]: the closest open tickets by text), `.modules` (the modules its text cites), `.same_module` (open tickets that change those modules) and
+    `.proposal_note` (the line written on the ticket) are what opening proposes; all are information and empty when nothing could be computed."""
     mentions: tuple = ()
     linked: tuple = ()
+    neighbours: tuple = ()
+    modules: tuple = ()
+    same_module: tuple = ()
+    proposal_note: Optional[str] = None
 
 
 def mentioned_ids(*texts: Optional[str]) -> list:
@@ -833,11 +839,14 @@ def relations_store_present(*, conn=None) -> bool:
 
 def open_ticket(*, title: str, nature: str, object_type: str, priority: str, session_id: str, description: str, first_log: str,
                 actor: Optional[str] = None, object_name: Optional[str] = None, schema_name: Optional[str] = None,
-                project_code: str = "FND", link_mentions: bool = True, conn=None) -> str:
+                project_code: str = "FND", link_mentions: bool = True, conn=None, proposals=None) -> str:
     """Open a ticket through backlog.sp_open_ticket: id from the sequence, status OPEN, reporter = the canonical actor, the first log and the first
     status event, in one call. Returns the id (a TicketOpened: a str that also carries `.mentions`). Raises on any refusal (bad actor, bad session id, a
     domain CHECK) and when A-1 is not applied. Phase B (FND-0333): once applied, every other existing ticket named in the title, description or first log
-    is recorded as a PROPOSED RELATED link (origin SOURCE) unless the pair already has any link event, so linking no longer waits for the next review."""
+    is recorded as a PROPOSED RELATED link (origin SOURCE) unless the pair already has any link event, so linking no longer waits for the next review.
+    FND-0378 (plan step 2.8a): after the ticket is committed, a call with no injected connection also PROPOSES relationships and groupings in the same call: the closest open tickets by text, the modules the
+    text cites and the open tickets that change them, returned on the result and written as ONE log line (agent and system actors; a person's call writes nothing extra). It is information, never a gate and
+    never a link; any failure is swallowed (the ticket is already open). `proposals` = a callable `(text, ticket id) -> dict` replacing the default, or False to turn it off."""
     who = resolve_actor(actor)
     with _session(conn, human=who.startswith("human:"), write=True, operation=agent_operation(who)) as c:
         (apid,) = c.execute(
@@ -856,7 +865,46 @@ def open_ticket(*, title: str, nature: str, object_type: str, priority: str, ses
                 record_link_events([dict(from_id=apid, to_id=i, link_type="RELATED", status="PROPOSED", origin="SOURCE", username=who,
                                          evidence=f"named in the text of {apid} when it was opened (S1 mention)") for i in todo], conn=c)
             out.linked = tuple(todo)
+    if conn is None and proposals is not False:
+        _propose_on_open(out, who, "\n".join(x for x in (title, description, first_log) if x), proposals)
     return out
+
+
+def default_proposals(text: str, apid: str) -> dict:
+    """The default proposals of open_ticket (FND-0378): {'neighbours', 'modules', 'same_module'}. Reads only: the ranking of scripts/audit/backlog_links.py, the module derivation of shared/backlog_modules.py
+    over `git ls-files`, and the current module facts of the open tickets. Raises on any problem (open_ticket swallows it)."""
+    import subprocess
+    root = Path(__file__).resolve().parents[1]
+    audit = str(root / "scripts" / "audit")
+    if audit not in sys.path:
+        sys.path.insert(0, audit)
+    import backlog_links                                              # the one ranking of "closest open tickets" (also behind `backlog_links.py --new`)
+    from shared import backlog_modules as bm
+    from shared import backlog_proposals as bp
+    neighbours = backlog_links.neighbours(text, exclude=apid)
+    tracked = subprocess.run(["git", "ls-files"], cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30).stdout.splitlines()
+    paths, by_base = bm.index_tracked(tracked)
+    modules = sorted(bm.extract_citations(text, paths, by_base))
+    same: list = []
+    if modules:
+        open_ids = {t["action_point_id"] for t in list_tickets(open_only=True)}
+        same = bp.same_module_tickets(set(modules), list_ticket_modules(), open_ids, exclude=apid)
+    return {"neighbours": neighbours, "modules": modules, "same_module": same}
+
+
+def _propose_on_open(out: "TicketOpened", who: str, text: str, proposals) -> None:
+    """Attach the proposals to a ticket that was just opened and, for an agent or system actor, write the one note. Never raises."""
+    try:
+        from shared import backlog_proposals as bp
+        got = (proposals or default_proposals)(text, str(out))
+        out.neighbours = tuple(got.get("neighbours") or ())
+        out.modules = tuple(got.get("modules") or ())
+        out.same_module = tuple(got.get("same_module") or ())
+        out.proposal_note = bp.note_text(list(out.neighbours), list(out.modules), list(out.same_module))
+        if out.proposal_note and who.startswith(("agent:", "system:")):
+            append_log(str(out), who, out.proposal_note)
+    except Exception:                                                  # noqa: BLE001 -- the ticket is open; a proposal that cannot be computed is simply absent
+        logging.getLogger(__name__).debug("open_ticket proposals unavailable", exc_info=True)
 
 
 def transition(ap_id: str, to_status: str, *, session_id: str, comment: str, actor: Optional[str] = None,

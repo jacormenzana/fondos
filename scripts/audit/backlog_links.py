@@ -580,11 +580,23 @@ def new_overlaps(an: Analysis, new_id: str = "NEW") -> list[tuple]:
     return sorted(rows, reverse=True)
 
 
+def neighbour_rows(text: str, top: int = NEW_TOP, exclude: Optional[str] = None) -> tuple:
+    """(Analysis, [(score, ticket id, signals, evidence)]) of the open tickets closest to `text`, best first. `exclude` drops one ticket (the one just opened from that very text). Shared by `--new` and by
+    shared.backlog_client.open_ticket (FND-0378), so the ranking exists once."""
+    an = _load(extra_docs={"NEW": text}, max_df_share=0.35)
+    return an, [r for r in new_overlaps(an) if r[0] >= NEW_FLOOR and r[1] != exclude][:min(top, NEW_TOP)]
+
+
+def neighbours(text: str, top: int = NEW_TOP, exclude: Optional[str] = None) -> list:
+    """[(score, ticket id, status, short title)] for open_ticket's proposals."""
+    an, rows = neighbour_rows(text, top, exclude)
+    return [(score, tid, an.tickets[tid]["status"], _short(an.tickets[tid], 60)) for score, tid, _sig, _ev in rows]
+
+
 def mode_new(text: str, top: int) -> int:
     """Pre-filing check: the open tickets closest to a text that is about to become a ticket. Informational (exit 0): the
     operator reads their logs and decides between appending to one and opening a new ticket linked to it."""
-    an = _load(extra_docs={"NEW": text}, max_df_share=0.35)
-    rows = [r for r in new_overlaps(an) if r[0] >= NEW_FLOOR][:min(top, NEW_TOP)]
+    an, rows = neighbour_rows(text, top)
     if not rows:
         print("no open ticket resembles this text")
         return 0
