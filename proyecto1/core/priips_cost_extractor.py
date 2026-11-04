@@ -133,13 +133,13 @@ _SCHEDULE_ANNUAL_CEILING_PCT = 25.0
 # redondeo ordinario como defecto y sobrescribía 227 impactos anuales correctos.
 _SCHEDULE_RECONCILE_TOL_PP = 1.5
 
-# FIX-SCHEDULE-TOTAL-ANNUAL-COHERENCE (2026-11-04): cociente admisible Total_Costs_Pct / (Annual_Impact_Pct * Horizon_Years) de UNA fila del schedule.
-# El total acumulado de h anos con un impacto anual a es aproximadamente a*h (algo mas con crecimiento del capital). Medido el 2026-11-04 sobre 2.610 filas
-# del universo activo con total e impacto anual: p1 0,75 | p5 0,95 | p50 1,00 | p95 1,58 | p99 1,87. Fuera de [0,4; 2,5] caen 54 filas de 46 fondos, y son tres
-# defectos de lectura del mismo origen (columna del texto plano heredada o desplazada): el total de 1 ano copiado a la fila RHP (cociente 1/h: 295 EUR a 1 y 5
-# anos con anual 2,95 %), el total de RHP escrito en la fila de 1 ano (ES0143559005: 1.504 EUR con anual 3,3 %, cociente 4,6) y totales de 0-5 EUR leidos de
-# otra casilla (LU2232093869: 3, 1 y 5 EUR con anual 3,54 %). En todos el lado equivocado es el total (el anual lo respalda su etiqueta): se omite, NULL = "no
-# descubierto" (P#10), nunca un coste falso. Las filas dentro de la banda (incluidas las del convenio KID a 1 ano, 0,9 a 1,25) no se tocan.
+# FIX-SCHEDULE-TOTAL-ANNUAL-COHERENCE (2026-11-04): cociente admisible Total_Costs_Pct / (Annual_Impact_Pct * Horizon_Years) de UNA fila del schedule, usado SOLO PARA DETECTAR.
+# El total acumulado de h anos con un impacto anual a es aproximadamente a*h (algo mas con crecimiento del capital). Medido el 2026-11-04 sobre 2.610 filas del universo
+# activo con total e impacto anual: p1 0,75 | p5 0,95 | p50 1,00 | p95 1,58 | p99 1,87. Fuera de [0,4; 2,5] caian 54 filas de 46 fondos: defectos de LECTURA (columna del
+# texto plano heredada o desplazada, celda de comision de entrada, cifra de la base), que se corrigen en el parser (cost_table_parser: etiqueta "Gastos totales", importe sin
+# agrupar, total igual a la base, total 0 bajo un anual positivo). El 2026-11-04 el propietario ordeno NO anular valores por esta banda: la banda ya no borra nada, marca la
+# fila ([DQ-SCHEDULE-TOTAL-ANNUAL], P#9) y la auditoria estadistica la cuenta. Ojo: cuando el lado equivocado es el ANUAL (LU3085135567: total 2.235 EUR correcto, anual 0,1 %
+# erroneo) anular el total habria destruido el dato valido.
 _SCHEDULE_TOTAL_ANNUAL_RATIO_MIN = 0.4
 _SCHEDULE_TOTAL_ANNUAL_RATIO_MAX = 2.5
 
@@ -574,30 +574,33 @@ def _matches_return_projection(text: str, aci_pct: Optional[float]) -> bool:
 
 
 def _total_fits_annual(annual_pct: float, total_pct: float, horizon_years: float) -> bool:
-    """FIX-SCHEDULE-TOTAL-ANNUAL-COHERENCE: does the accumulated total of a schedule row fit the annual impact of the SAME row? At one year they are the same cost, so the
-    KID's own band applies (shared.statistical_audit.tolerances: rounding 0.06 pp or annual/total in [0.9, 1.25], the definition the audit uses: P#11); from two years on the
-    total is about annual x years (measured ratio p1 0.75 .. p99 1.87) and the band is [_SCHEDULE_TOTAL_ANNUAL_RATIO_MIN, _MAX]. Pure."""
+    """FIX-SCHEDULE-TOTAL-ANNUAL-COHERENCE: does the accumulated total of a schedule row fit the annual impact of the SAME row? Detection only (see _flag_incoherent_totals).
+    At one year they are the same cost, so the KID's own band applies (shared.statistical_audit.tolerances: rounding 0.06 pp or annual/total in [0.9, 1.25], the definition the
+    audit uses: P#11). Below one year the annual impact is a per-year rate and one-off costs weigh more: total/annual in [0.4 x years, 1.25]. From two years on the total is
+    about annual x years (measured ratio p1 0.75 .. p99 1.87) and the band is [_SCHEDULE_TOTAL_ANNUAL_RATIO_MIN, _MAX]. Pure."""
     if annual_pct is None or total_pct is None or annual_pct <= 0:
         return True                                           # nothing to compare: no claim
     if abs(horizon_years - 1.0) <= 0.01:
         from shared.statistical_audit.tolerances import KID_ONE_YEAR_RATIO_MAX, KID_ONE_YEAR_RATIO_MIN, KID_ROUNDING_TOLERANCE_PP
         return abs(annual_pct - total_pct) < KID_ROUNDING_TOLERANCE_PP or KID_ONE_YEAR_RATIO_MIN * total_pct <= annual_pct <= KID_ONE_YEAR_RATIO_MAX * total_pct
+    if horizon_years < 1.0:
+        return _SCHEDULE_TOTAL_ANNUAL_RATIO_MIN * horizon_years <= total_pct / annual_pct <= 1.25
     ratio = total_pct / (annual_pct * horizon_years)
     return _SCHEDULE_TOTAL_ANNUAL_RATIO_MIN <= ratio <= _SCHEDULE_TOTAL_ANNUAL_RATIO_MAX
 
 
-def _drop_incoherent_totals(rows: List[dict], isin: str) -> None:
-    """FIX-SCHEDULE-TOTAL-ANNUAL-COHERENCE (2026-11-04): omit Total_Costs_EUR / Total_Costs_Pct of a row whose total does not fit its own annual impact (see
-    _SCHEDULE_TOTAL_ANNUAL_RATIO_MIN). The annual is the side the KID's label vouches for; NULL = "not discovered" (P#10), never a false cost. Mutates `rows`."""
+def _flag_incoherent_totals(rows: List[dict], isin: str) -> list:
+    """FIX-SCHEDULE-TOTAL-ANNUAL-COHERENCE (2026-11-04, owner directive: no value is destroyed by a heuristic band): MARK the rows whose total does not fit their own annual impact
+    with a [DQ-SCHEDULE-TOTAL-ANNUAL] WARNING (P#9: flagged, never silenced) and return [(horizon, total_pct, annual_pct)]. Nothing is removed or changed; the readings that
+    produced these rows are fixed in cost_table_parser, and the statistical audit counts what is left."""
+    flagged = []
     for r in rows:
         ann, tot, hy = r.get('Annual_Impact_Pct'), r.get('Total_Costs_Pct'), r.get('Horizon_Years')
         if tot is None or ann is None or hy is None or _total_fits_annual(ann, tot, hy):
             continue
-        _log.info(
-            "[FIX-SCHEDULE-TOTAL-ANNUAL-COHERENCE] %s: horizonte %.2fa total %.2f%% omitido (no cabe en su anual %.2f%%)", isin, hy, tot, ann,
-        )
-        r.pop('Total_Costs_Pct', None)
-        r.pop('Total_Costs_EUR', None)
+        flagged.append((hy, tot, ann))
+        _log.warning("[DQ-SCHEDULE-TOTAL-ANNUAL] %s: horizonte %.2fa total %.2f%% no cabe en su anual %.2f%% (se conserva; revisar la lectura del KID)", isin, hy, tot, ann)
+    return flagged
 
 
 def _build_schedule_rows(
@@ -815,7 +818,7 @@ def _build_schedule_rows(
 
     # Validación defensiva de Source (P-7): descartar filas con Source no permitido
     valid_rows = [r for r in by_horizon.values() if r['Source'] in _SCHEDULE_SOURCE_ALLOWED]
-    _drop_incoherent_totals(valid_rows, isin)     # after the PK merge: the annual of a row may arrive from its merged twin
+    _flag_incoherent_totals(valid_rows, isin)     # after the PK merge: the annual of a row may arrive from its merged twin
     discarded  = len(by_horizon) - len(valid_rows)
     if discarded:
         _log.warning(
@@ -1805,8 +1808,8 @@ def extract_priips_costs(
                             isin, _old_pct, out['ACI_RHP'],
                         )
 
-        # FIX-SCHEDULE-TOTAL-ANNUAL-COHERENCE (2026-11-04): last word on the schedule, after the ACI injection / RHP repair above wrote annuals that were not there when the rows were built.
-        _drop_incoherent_totals(out['_cost_schedule_rows'], isin)
+        # FIX-SCHEDULE-TOTAL-ANNUAL-COHERENCE (2026-11-04): last look at the schedule (detect-only), after the ACI injection / RHP repair above wrote annuals that were not there when the rows were built.
+        _flag_incoherent_totals(out['_cost_schedule_rows'], isin)
 
         # --- G. Calidad (§3) ---
         out['Cost_Extraction_Quality'] = _assess_quality(

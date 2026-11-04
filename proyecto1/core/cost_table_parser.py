@@ -63,8 +63,11 @@ DLA2_SEPARATOR = '|||'
 
 # Importe absoluto en moneda (EUR/USD/etc. explícito o implícito)
 # Grupo 1: la cantidad numérica
+# FIX-AMOUNT-UNGROUPED (2026-11-04, FND-0278 family): the old `\d{1,3}(?:[.,]\d{3})*` stopped an UNGROUPED number at three digits, so the bare-number
+# fallback of _extract_eur_from_cell read "1198" as 119 (LU1883841451: RHP total 119 under an annual 3.1 %) and "10000" as 100. A grouped alternative
+# (at least one thousands group) comes first, then the plain number whole; a match cannot start inside a number (same shape as FND-0279's _AMOUNT).
 AMOUNT_PATTERN = re.compile(
-    r'(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{1,2})?)\s*(?:' + CODES_ALT + r')?',
+    r'(?<![\d.,])(\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)\s*(?:' + CODES_ALT + r')?',
     re.IGNORECASE,
 )
 
@@ -130,7 +133,7 @@ COMPOSITION_HEADER = re.compile(
 # (recordatorio: el bucle de selección usa first-match-wins en L452).
 # La cola [*().:\d\s]* tolera marcadores ("*", "(*)") y dígitos pegados.
 TOTAL_COSTS_ROW = re.compile(
-    r'^\s*(?:costes?\s*totales?|costes?|total\s*costs?)\s*[*().:\d\s]*$',
+    r'^\s*(?:costes?\s*totales?|gastos?\s*totales?|costes?|total\s*costs?)\s*[*().:\d\s]*$',
     re.IGNORECASE,
 )
 
@@ -1234,7 +1237,7 @@ def _parse_costs_over_time_plain(text: str) -> List[dict]:
 # the RHP row too (audit: TOTAL_COSTS_*_CONSTANT_ACROSS_HORIZONS 335 funds, ANNUAL_EQUALS_TOTAL_AT_1Y 265, ANNUAL_LE_ACCUMULATED 223; of 1,304
 # cached KIDs with identical totals across explicit horizons the rebinding fixes 1,016). PRIIPs prints the columns in ascending horizon order.
 _TOTAL_COSTS_LABEL = re.compile(
-    r'total\s+costs?|costes?\s+totales?|co[uû]ts?\s+totaux|gesamtkosten|costi\s+totali', re.IGNORECASE)
+    r'total\s+costs?|costes?\s+totales?|gastos?\s+totales?|co[uû]ts?\s+totaux|gesamtkosten|costi\s+totali', re.IGNORECASE)   # FND-0278: "Gastos totales 295 EUR 2,063 EUR" (LU0524465977)
 _CURRENCY = CURRENCY                                   # one vocabulary for every cost parser (cost_currency.py)
 # FND-0279: the grouped alternative needs AT LEAST ONE thousands group (`+`, was `*`). With `*` the regex engine took the first alternative that matched, so an UNGROUPED number
 # after a prefix currency was cut at three digits ("EUR 1576" read 157, "EUR 10000" read 100); the plain `\d+` alternative now catches it.
@@ -1311,7 +1314,12 @@ def _bind_columns_by_label(zone: str, results: List[dict]) -> List[dict]:
     # 697 EUR" with only "3 anos" found stored 567 at 3 years). A single found column with a one-value row is still never bound: a cell layout puts only the FIRST
     # column's amount on the label line (IE00BD8DY654: "Total costs 666 EUR" with the 5-year amount in the next cell).
     synthetic_1y = len(years) == 1 and years[0] > 1
-    columns = [1.0] + years if synthetic_1y else years
+    # FIX-COST-RHP-COLUMN (2026-11-04): "1 ano" + an RHP entry whose year is unresolved (-1, the "RHP" header of a DLA2 table) are TWO columns, the RHP one last. Without it there
+    # was one positive year, hence fewer than two columns, and the row the document labels "Costes totales 13 USD 110 USD" was never read (IE0002639668 stored 3 and 110: the "1"
+    # glued to the label cell by the DLA2 serialisation). ONLY with the 1-year column: "5 anos" + RHP is usually the SAME column printed twice (LU0055631609), and binding two
+    # values to it mis-bound hundreds of funds in the first attempt of this fix.
+    rhp_column = years == [1.0] and any(e.get('is_rhp') and not (e.get('horizon_years') or 0) > 0 for e in results)
+    columns = [1.0] + years if synthetic_1y else years + ([None] if rhp_column else [])
     n_cols = len(columns)
     if n_cols < 2 or (synthetic_1y and n_cols != 2):
         return results
@@ -1323,7 +1331,10 @@ def _bind_columns_by_label(zone: str, results: List[dict]) -> List[dict]:
         return n_cols - 1 if e.get('is_rhp') else None      # the RHP column is the last one of the table
 
     totals = _row_values(zone, _TOTAL_COSTS_LABEL, _extract_eur_list_from_cell, n_cols)
-    acis = _row_values(zone, ACI_ROW, _extract_pct_list_from_cell, n_cols)
+    # FIX-COST-ACI-LABEL-BIND (2026-11-04): the label vocabulary of THIS binder is the documented superset ACI_LABEL_ANCHOR ("Incidencia sobre el rendimiento (reduccion del rendimiento)
+    # por ano" of the M&G cluster, "Impacto del coste anual", "Impact on return"), not ACI_ROW, which stays intact on purpose (widening it moved the global fallback cascade: ACT-06).
+    # M&G's "Costes totales 714 EUR 1.569 EUR" / "7,20% 3,40%" kept the RHP annual (3.4 %) on the 1-year row because only the totals row was recognised.
+    acis = _row_values(zone, ACI_LABEL_ANCHOR, _extract_pct_list_from_cell, n_cols)
     if len(totals) == n_cols and all(a <= b for a, b in zip(totals, totals[1:])):
         for e in results:
             i = column(e)
@@ -1395,6 +1406,10 @@ _BASE_PATTERNS = [
                r'(?:' + _BASE_CUR + r'\s*)?' + _BASE_NUM, re.I),
     re.compile(r'para\s+una\s+inversi[oó]n\s+de\s*:?\s*' + _BASE_NUM, re.I),
     re.compile(r'invest(?:ment)?\s+(?:of\s+)?(?:' + _BASE_CUR + r'\s*)?' + _BASE_NUM, re.I),
+    # FND-0278 (2026-11-04): "hemos asumido ... que inviertes EUR 10,000" and "basados en una inversion de, por ejemplo EUR 10,000" (NO0013528356): neither phrasing was
+    # read, so the base fell back to the default and the example amount, found next to a horizon label, was stored as a 5-year total (100 %).
+    re.compile(r'inviert(?:e|es|a|o)\s+(?:' + _BASE_CUR + r'\s*)?' + _BASE_NUM, re.I),
+    re.compile(r'inversi[oó]n\s+de,?\s+por\s+ejemplo\s*(?:' + _BASE_CUR + r'\s*)?' + _BASE_NUM, re.I),
 ]
 
 
@@ -1663,6 +1678,24 @@ def _bind_rows_by_label_in_text(text: str, results: List[dict]) -> List[dict]:
     return _bind_columns_by_label(text[max(0, m.start() - _LABEL_BIND_BEFORE):m.start() + _LABEL_BIND_SPAN], results)
 
 
+def _drop_impossible_totals(text: str, results: List[dict]) -> List[dict]:
+    """FIX-COST-BASE-BLEED / FIX-COST-ZERO-TOTAL (2026-11-04, FND-0278 family): two totals no KID can print. (1) The per-horizon fragment search takes the first amount after a horizon
+    label, and next to the label sits the example-investment sentence ("Se invierten 10.000 EUR"): IE00BDGV0290 and NO0013528356 stored a total of 10,000 (100 % of the base) at 5
+    years; a cumulative cost equal to the whole example investment is not a cost. (2) A total of 0 under an annual impact of 0.01 % or more: the "0 EUR" is the entry-fee cell
+    that follows the label (14 funds, e.g. LU0842209222: annual 0.46 %); a fund whose annual impact is 0 / unknown keeps its 0 (7 money-market style rows). The entry keeps no total
+    (None = "not discovered", P#10). Mutates and returns `results`. Pure."""
+    base = parse_investment_base(text) if results else None
+    for e in results:
+        t = e.get('total_cost_eur')
+        if t is None:
+            continue
+        if base and abs(float(t) - float(base)) < 0.5:
+            e['total_cost_eur'] = None
+        elif float(t) == 0.0 and (e.get('aci_pct') or 0.0) >= 0.0001:
+            e['total_cost_eur'] = None
+    return results
+
+
 def parse_costs_over_time(text: str) -> List[dict]:
     """
     Parsea la tabla "Costes a lo largo del tiempo" / "Costs over time".
@@ -1710,9 +1743,9 @@ def parse_costs_over_time(text: str) -> List[dict]:
                 _plain = _parse_costs_over_time_plain(text)
                 if _plain and any(e.get('aci_pct') is not None for e in _plain):
                     results = _plain
-            return _bind_rows_by_label_in_text(text, results)
+            return _drop_impossible_totals(text, _bind_rows_by_label_in_text(text, results))
         else:
-            return _parse_costs_over_time_plain(text)
+            return _drop_impossible_totals(text, _parse_costs_over_time_plain(text))
     except Exception:
         return []
 

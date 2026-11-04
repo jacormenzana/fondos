@@ -1315,7 +1315,7 @@ def test_perf_fee_mechanics_regex_matches_outperformance():
 
 
 # ---------------------------------------------------------------------------
-# FIX-SCHEDULE-TOTAL-ANNUAL-COHERENCE (2026-11-04, FND-0278 residual): a total that does not fit the annual impact of its OWN row is omitted
+# FND-0278 residual (2026-11-04): the coherence band only DETECTS (nothing is removed); the readings behind the incoherent rows are fixed in cost_table_parser
 # ---------------------------------------------------------------------------
 
 def _sched(rows, rhp_years):
@@ -1327,60 +1327,84 @@ def _ot(h, eur, aci, rhp=False):
     return {'horizon_years': h, 'is_rhp': rhp, 'total_cost_eur': eur, 'aci_pct': aci}
 
 
-def test_the_first_column_copied_to_the_rhp_row_loses_its_total_and_keeps_its_annual():
-    """LU0524465977: 295 EUR at 1 and 5 years with annual 2.95 % on both: the 5-year total is the 1-year column (ratio 1/h = 0.2)."""
-    out = _sched([_ot(1.0, 295.0, 0.0295), _ot(5.0, 295.0, 0.0295, rhp=True)], 5.0)
-    assert out[1.0]['Total_Costs_EUR'] == 295.0 and out[1.0]['Total_Costs_Pct'] == pytest.approx(2.95)
-    assert 'Total_Costs_EUR' not in out[5.0] and 'Total_Costs_Pct' not in out[5.0] and out[5.0]['Annual_Impact_Pct'] == pytest.approx(2.95)
+def test_an_incoherent_total_is_flagged_with_a_dq_warning_and_kept(caplog):
+    """The owner's rule: a heuristic band must not destroy a value. LU3085135567: total 2,235 EUR is right and the annual (0.1 %) is the wrong side."""
+    import logging
+    with caplog.at_level(logging.WARNING):
+        out = _sched([_ot(5.0, 2235.0, 0.001, rhp=True)], 5.0)
+    assert out[5.0]['Total_Costs_EUR'] == 2235.0 and out[5.0]['Total_Costs_Pct'] == pytest.approx(22.35)
+    assert any('[DQ-SCHEDULE-TOTAL-ANNUAL]' in r.getMessage() for r in caplog.records)
 
 
-def test_the_rhp_total_written_on_the_one_year_row_is_omitted_there_and_kept_on_the_rhp_row():
-    """ES0143559005: 1,504 EUR on both rows; with annual 3.3 % at 1 year the ratio is 4.6, with annual 3.1 % at 5 years it is 0.97."""
-    out = _sched([_ot(1.0, 1504.0, 0.033), _ot(5.0, 1504.0, 0.031, rhp=True)], 5.0)
-    assert 'Total_Costs_EUR' not in out[1.0] and out[1.0]['Annual_Impact_Pct'] == pytest.approx(3.3)
-    assert out[5.0]['Total_Costs_EUR'] == 1504.0 and out[5.0]['Total_Costs_Pct'] == pytest.approx(15.04)
+def test_a_coherent_row_is_neither_changed_nor_flagged(caplog):
+    import logging
+    with caplog.at_level(logging.WARNING):
+        out = _sched([_ot(1.0, 330.0, 0.033), _ot(5.0, 1600.0, 0.031, rhp=True), _ot(10.0, 4000.0, 0.03)], 5.0)
+    assert out[1.0]['Total_Costs_EUR'] == 330.0 and out[5.0]['Total_Costs_EUR'] == 1600.0 and out[10.0]['Total_Costs_EUR'] == 4000.0
+    assert not any('[DQ-SCHEDULE-TOTAL-ANNUAL]' in r.getMessage() for r in caplog.records)
 
 
-def test_a_zero_or_tiny_total_over_a_positive_annual_impact_is_not_published_as_a_cost():
-    """FI0008810908 (0 EUR at 7 years over 1.62 %) and LU2232093869 (3, 1 and 5 EUR over 3.54 %): the total came from another cell."""
-    out = _sched([_ot(7.0, 0.0, 0.0162, rhp=True)], 7.0)
-    assert 'Total_Costs_EUR' not in out[7.0] and out[7.0]['Annual_Impact_Pct'] == pytest.approx(1.62)
-    out = _sched([_ot(1.0, 3.0, 0.0354), _ot(5.0, 1.0, 0.0354), _ot(10.0, 5.0, 0.0354, rhp=True)], 10.0)
-    assert all('Total_Costs_EUR' not in r and 'Total_Costs_Pct' not in r and r['Annual_Impact_Pct'] == pytest.approx(3.54) for r in out.values())
+def test_flag_returns_the_rows_it_marks_and_never_mutates_them():
+    """LU2867168655: the RHP row was built with a total and no annual; the ACI recovered later gave it 3.9 % and the total (0.31 % over 8 years) no longer fits."""
+    from priips_cost_extractor import _flag_incoherent_totals
+    rows = [{'Horizon_Years': 8.0, 'Is_RHP': 1, 'Total_Costs_EUR': 3108.0, 'Total_Costs_Pct': 0.3108, 'Annual_Impact_Pct': 3.9},
+            {'Horizon_Years': 1.0, 'Is_RHP': 0, 'Total_Costs_EUR': 390.0, 'Total_Costs_Pct': 3.9, 'Annual_Impact_Pct': 3.9}]
+    before = [dict(r) for r in rows]
+    assert _flag_incoherent_totals(rows, 'TEST') == [(8.0, 0.3108, 3.9)]
+    assert rows == before
 
 
-def test_a_coherent_total_is_kept_whatever_the_horizon_and_the_band_edges_are_inclusive():
-    out = _sched([_ot(1.0, 330.0, 0.033), _ot(5.0, 1600.0, 0.031, rhp=True), _ot(10.0, 4000.0, 0.03)], 5.0)
-    assert out[1.0]['Total_Costs_EUR'] == 330.0 and out[5.0]['Total_Costs_EUR'] == 1600.0 and out[10.0]['Total_Costs_EUR'] == 4000.0      # ratios 1.0, 1.03, 1.33
-    edge_lo = _sched([_ot(5.0, 600.0, 0.03, rhp=True)], 5.0)          # 6.00 / (3 * 5) = 0.40
-    edge_hi = _sched([_ot(2.0, 1500.0, 0.03, rhp=True)], 2.0)         # 15.00 / (3 * 2) = 2.50
-    assert 'Total_Costs_EUR' in edge_lo[5.0] and 'Total_Costs_EUR' in edge_hi[2.0]
-    just_out = _sched([_ot(5.0, 590.0, 0.03, rhp=True)], 5.0)         # 0.393
-    assert 'Total_Costs_EUR' not in just_out[5.0]
-
-
-def test_a_row_without_a_total_or_without_an_annual_impact_is_never_touched_by_the_coherence_guard():
-    out = _sched([_ot(5.0, None, 0.031, rhp=True)], 5.0)
-    assert 'Total_Costs_EUR' not in out[5.0] and out[5.0]['Annual_Impact_Pct'] == pytest.approx(3.1)
-    out = _sched([_ot(5.0, 1500.0, None, rhp=True)], 5.0)
-    assert out[5.0]['Total_Costs_EUR'] == 1500.0
-
-
-def test_the_one_year_band_is_the_audits_own_and_the_longer_bands_are_the_measured_ones():
+def test_the_band_edges_the_one_year_band_and_the_sub_year_band():
     from priips_cost_extractor import _total_fits_annual
     assert _total_fits_annual(5.87, 5.7812, 1.0)                      # KID convention at 1 year (annual / total = 1.015)
     assert not _total_fits_annual(2.7, 5.31, 1.0)                     # ES0179692001: annual / total = 0.51 at one year
     assert _total_fits_annual(3.1, 11.98, 4.0)                        # 0.97: the annual falls with the horizon while the total accumulates
     assert not _total_fits_annual(2.95, 2.95, 5.0)                    # the 1-year column copied to the 5-year row (0.20)
     assert not _total_fits_annual(1.0, 30.0, 5.0) and _total_fits_annual(1.0, 12.5, 5.0)     # 6.0 is out, 2.5 (the edge) is in
+    assert _total_fits_annual(0.54, 0.54, 0.25) and _total_fits_annual(0.1, 0.08, 0.25) and _total_fits_annual(1.0, 1.0, 0.004)   # short holding: one-off costs weigh more
+    assert not _total_fits_annual(1.0, 2.0, 0.25)                     # ... but never more than 1.25 x a year of costs
     assert _total_fits_annual(None, 5.0, 5.0) and _total_fits_annual(2.0, None, 5.0) and _total_fits_annual(0.0, 5.0, 5.0)    # nothing to compare: no claim
 
 
-def test_the_last_pass_catches_an_annual_that_arrived_after_the_rows_were_built():
-    """LU2867168655: the RHP row was built with a total and no annual; the ACI recovered later gave it 3.9 % and the total (0.31 % over 8 years) no longer fits."""
-    from priips_cost_extractor import _drop_incoherent_totals
-    rows = [{'Horizon_Years': 8.0, 'Is_RHP': 1, 'Total_Costs_EUR': 3108.0, 'Total_Costs_Pct': 0.3108, 'Annual_Impact_Pct': 3.9},
-            {'Horizon_Years': 1.0, 'Is_RHP': 0, 'Total_Costs_EUR': 390.0, 'Total_Costs_Pct': 3.9, 'Annual_Impact_Pct': 3.9}]
-    _drop_incoherent_totals(rows, 'TEST')
-    assert 'Total_Costs_EUR' not in rows[0] and 'Total_Costs_Pct' not in rows[0] and rows[0]['Annual_Impact_Pct'] == 3.9
-    assert rows[1]['Total_Costs_EUR'] == 390.0
+# --- parser regressions behind the incoherent rows (real KID wording) ---
+
+def test_a_bare_four_digit_amount_is_read_whole_not_cut_at_three_digits():
+    """LU1883841451: the RHP total "1198" was stored as 119 (AMOUNT_PATTERN stopped an ungrouped number at 3 digits); 10000 was read as 100."""
+    from cost_table_parser import _extract_eur_from_cell
+    assert _extract_eur_from_cell('1198') == 1198.0 and _extract_eur_from_cell('10000') == 10000.0
+    assert _extract_eur_from_cell('1.198') == 1198.0 and _extract_eur_from_cell('1,198.50') == 1198.5 and _extract_eur_from_cell('45') == 45.0
+    assert _extract_eur_from_cell('0.007%') is None                   # a percentage is still not an amount
+
+
+def test_gastos_totales_binds_each_amount_to_its_own_horizon():
+    """LU0524465977 "Gastos totales 295 EUR 2,063 EUR": the vocabulary gap left 295 on both horizons."""
+    from cost_table_parser import parse_costs_over_time
+    text = ("Costes a lo largo del tiempo\nSi sale después de 1 año Si sale después de 5 años\n"
+            "Gastos totales 295 EUR 2,063 EUR\nImpacto en la rentabilidad anual*\n2.95% 3.04%\n")
+    rows = {r['horizon_years']: r for r in parse_costs_over_time(text) if r['horizon_years'] > 0}
+    assert rows[1.0]['total_cost_eur'] == 295.0 and rows[5.0]['total_cost_eur'] == 2063.0
+
+
+def test_one_year_plus_unresolved_rhp_columns_are_bound_from_the_label_row_but_five_years_plus_rhp_are_not():
+    """IE0002639668: DLA2 "Costes totales 1|||3 USD ... 110" (the 13 split by the serialisation) while the text row says "Costes totales 13 USD 110 USD". "5 anos" + RHP is the SAME
+    column (LU0055631609): binding two values to it mis-bound hundreds of funds in the first attempt."""
+    from cost_table_parser import _bind_columns_by_label
+    zone = "Costes totales 13 USD 110 USD\nIncidencia anual de los costes (*)\n0.1% 0.1% cada año\n"
+    one_rhp = [{'horizon_label': '1 año', 'horizon_years': 1.0, 'is_rhp': False, 'total_cost_eur': 3.0, 'aci_pct': 0.001},
+               {'horizon_label': 'RHP', 'horizon_years': -1.0, 'is_rhp': True, 'total_cost_eur': 110.0, 'aci_pct': 0.001}]
+    out = _bind_columns_by_label(zone, [dict(r) for r in one_rhp])
+    assert out[0]['total_cost_eur'] == 13.0 and out[1]['total_cost_eur'] == 110.0
+    same_column = [{'horizon_label': '5 años', 'horizon_years': 5.0, 'is_rhp': False, 'total_cost_eur': 2421.0, 'aci_pct': 0.038},
+                   {'horizon_label': 'periodo recomendado', 'horizon_years': -1.0, 'is_rhp': True, 'total_cost_eur': 2421.0, 'aci_pct': 0.038}]
+    out2 = _bind_columns_by_label("Costes totales 756 EUR 2421 EUR\n", [dict(r) for r in same_column])      # the pre-existing synthetic 1-year path: 756 is the 1-year column
+    assert [r['total_cost_eur'] for r in out2 if r['horizon_years'] in (5.0, -1.0)] == [2421.0, 2421.0]
+
+
+def test_a_total_equal_to_the_example_investment_or_zero_under_a_positive_annual_is_not_a_cost():
+    """IE00BDGV0290 / NO0013528356: "Se invierten 10.000 EUR" read as a 5-year total (100 %). LU0842209222: "0 EUR" (entry-fee cell) under an annual 0.46 %."""
+    from cost_table_parser import _drop_impossible_totals
+    text = "Costes a lo largo del tiempo. Se invierten 10.000 EUR."
+    rows = [{'total_cost_eur': 10000.0, 'aci_pct': 0.05}, {'total_cost_eur': 0.0, 'aci_pct': 0.0046}, {'total_cost_eur': 0.0, 'aci_pct': 0.0},
+            {'total_cost_eur': 0.0, 'aci_pct': None}, {'total_cost_eur': 756.0, 'aci_pct': 0.038}]
+    out = _drop_impossible_totals(text, rows)
+    assert [r['total_cost_eur'] for r in out] == [None, None, 0.0, 0.0, 756.0]           # a fund with a zero / unknown annual keeps its 0
