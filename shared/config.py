@@ -455,6 +455,11 @@ P3_WRONG_DOC_EXCLUSION_ENABLED: bool = True
 UNIVERSE_NAV_QUARANTINE_ENABLED: bool = True
 UNIVERSE_NAV_QUARANTINE_DAYS: int = 180
 UNIVERSE_NAV_QUARANTINE_RECENT_CHECK_DAYS: int = 30
+# Unattended cost recompute (owner directive 2026-11-04, Directive D-0): scripts/launch/p1_cost_recompute.py --if-changed OLD NEW, the call the owner's deploy watcher makes for
+# every origin/master move, runs run_block --recompute-costs, the costs audit (--persist) and certifies the OPEN cost incidents by itself when OLD..NEW touched the cost
+# extraction code and NEW was not processed yet. It is a 12-minute WRITE job on the live store, so it ships OFF: the owner flips it once after reading one dry run
+# (`p1_cost_recompute.py --dry-run`). A direct run of the script is the owner's explicit order and ignores this switch. Rollback = False: nothing else changes.
+COST_RECOMPUTE_AUTO_ENABLED: bool = False
 # FND-0289 (owner directive 2026-10-17), PRODUCTION alarm watch at promotion (scenario_lifecycle.GATE_ALARM_WATCH, control D-ALARM-WATCH): a fund
 # of the PRODUCTION scenario that carries a current ALARM row in fund_metric_alerts for one of ALARM_WATCH_RULES may not get a HIGHER master
 # weight in the promoted DRAFT (tolerance ALARM_WATCH_WEIGHT_TOLERANCE, one unit of the 4th decimal: largest-remainder rounding). Holding or

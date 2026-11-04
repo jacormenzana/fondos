@@ -49,6 +49,11 @@ resumes just the gate + P3 on the last OK cycle), and the real standby timeout s
 Postgres SQL validity is checked by an `EXPLAIN` sweep over every statement production code executes — see
 `doc/reglas/NORMAS_IMPLEMENTACION.md` §7 before adding SQL or an allowlist entry.
 
+**Unattended cost recompute (not a `.bat`):** `python scripts/launch/p1_cost_recompute.py` = preflight -> `run_block.py --nature-first --master-db --recompute-costs` (log in `out/logs/`, RC and log tail parsed)
+-> costs audit `--persist` (run id `post_<stamp>_costs`) -> `audit_incident.py --certify` for every OPEN cost incident -> receipt line in `out/audit/cost_recompute_receipts.jsonl`. Exit codes 101 busy,
+102 preflight refused, 110 recompute failed, 111 log reports errors or published nothing, 120 audit failed, 130 an incident is not certifiable yet, 140 nothing to do. `--dry-run` only checks;
+`--if-changed OLD NEW` (the owner's deploy watcher) runs only when that range touched the cost extraction code and NEW was not processed yet, and only with `COST_RECOMPUTE_AUTO_ENABLED` (ships OFF).
+
 ### Canonical launchers (machine-verified)
 
 <!-- AUTO:BEGIN launchers -->
