@@ -7,7 +7,7 @@ Until now the owner ran `run_block.py --nature-first --master-db --recompute-cos
 the incidents. This module is that whole sequence as ONE native sub-process chain, with the exit code of every step captured and the log tail parsed:
 
     1. preflight   no launcher cycle lock, no other pipeline / audit job running, no other instance of this script
-    2. recompute   python proyecto1/run_block.py --nature-first --master-db --recompute-costs   (stdout/stderr -> out/logs/cost_recompute_<stamp>.log)
+    2. recompute   python proyecto1/run_block.py --nature-first --master-db --recompute-costs   (stdout/stderr -> the P1 log directory, cost_recompute_<stamp>.log)
     3. log tail    RC 0 AND "Registros publicados: N" with N > 0 AND no Traceback / [ERROR line in the log, else the run stops here (RC 111)
     4. audit       python scripts/audit/run_statistical_audit.py --domain costs --mode report --persist --run-id post_<stamp>_costs   (FULL, complete)
     5. certify     for every OPEN cost incident: python scripts/audit/audit_incident.py --certify ID --run <that run> --apply
@@ -175,7 +175,10 @@ def mark_processed(state_path: Path, sha: str) -> None:
 
 def sequence(python: str, stamp: str, run: Callable = run_cmd, log_dir: Optional[Path] = None) -> dict:
     """Steps 2-5. Returns the receipt dict (always), with 'exit' = the process exit code. `run(cmd, log_path=None)` -> (rc, output)."""
-    log_dir = log_dir or (ROOT / "out" / "logs")
+    if log_dir is None:
+        sys.path.insert(0, str(ROOT))
+        from shared.config import get_log_dir
+        log_dir = get_log_dir("p1")                      # the registered P1 log directory (tests/test_log_paths.py)
     log_path = log_dir / f"cost_recompute_{stamp}.log"
     run_id = f"post_{stamp}_costs"
     rec: dict = {"stamp": stamp, "audit_run_id": run_id, "steps": {}}
