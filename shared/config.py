@@ -446,6 +446,15 @@ P3_FUND_NAV_MAX_GAP_RUN_MONTHS: int = 6
 # scripts/audit/wrong_doc_switch_diff.py passed on the 40-ISIN sample (live + PIT, 7/7) and the hermetic gate was green; PRODUCTION and the latest drafts
 # hold 0 WRONG_DOC funds. Rollback = False: nothing is written, no DDL.
 P3_WRONG_DOC_EXCLUSION_ENABLED: bool = True
+# Universe quarantine of funds whose NAV source is dead (owner directive 2026-11-04, pre-registered rule; FND-0233 / FND-0383). reconcile_universe_membership (P1, every
+# nature-first pass) sets In_Current_Universe=0 for an ISIN whose nav_sources row is STALE_FROZEN (no new NAV in > 365 d while still being checked: the Russia / Eastern
+# Europe cohort frozen since 2022-02-28) OR whose last NAV is older than UNIVERSE_NAV_QUARANTINE_DAYS while the source was checked in the last
+# UNIVERSE_NAV_QUARANTINE_RECENT_CHECK_DAYS (the provider publishes nothing: two share classes with one NAV of 2025-12-31 and one with 2026-03-12 on 2026-11-04). Measured
+# 2026-11-04 on the 2,935 in-universe funds with a NAV: lag <= 60 d for 2,926, none between 61 and 180 d, so the cut is not borderline. Reversible by itself: the next pass
+# re-opens a fund whose NAV resumes. Data is kept (history, audit); only the membership flag changes. Rollback = False: nothing is written, no DDL.
+UNIVERSE_NAV_QUARANTINE_ENABLED: bool = True
+UNIVERSE_NAV_QUARANTINE_DAYS: int = 180
+UNIVERSE_NAV_QUARANTINE_RECENT_CHECK_DAYS: int = 30
 # FND-0289 (owner directive 2026-10-17), PRODUCTION alarm watch at promotion (scenario_lifecycle.GATE_ALARM_WATCH, control D-ALARM-WATCH): a fund
 # of the PRODUCTION scenario that carries a current ALARM row in fund_metric_alerts for one of ALARM_WATCH_RULES may not get a HIGHER master
 # weight in the promoted DRAFT (tolerance ALARM_WATCH_WEIGHT_TOLERANCE, one unit of the 4th decimal: largest-remainder rounding). Holding or

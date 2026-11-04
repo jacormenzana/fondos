@@ -1133,6 +1133,61 @@ def upsert_cost_schedule(
 _SQLITE_IN_CHUNK = 900   # safe margin below the 999 SQLite variable limit
 
 
+def classify_nav_quarantine(data_status, last_nav_date, last_checked, today, max_lag_days, recent_check_days):
+    """Pure rule of the NAV quarantine (owner directive 2026-11-04; config.UNIVERSE_NAV_QUARANTINE_*). Returns the reason, or None when the fund stays.
+
+    * data_status 'STALE_FROZEN' (nav_discovery froze the source: no new NAV in > 365 d while still being checked) -> 'STALE_FROZEN'.
+    * last NAV older than `max_lag_days` while the source was checked within `recent_check_days` (the provider publishes nothing; a source nobody has looked at
+      for longer is OUR gap, not the fund's) -> 'NAV_STALE_<n>d'.
+    Dates may be `date` objects or ISO strings. No ISIN is named anywhere (P#5)."""
+    def _d(v):
+        if v is None or isinstance(v, datetime.date):
+            return v
+        return datetime.date.fromisoformat(str(v)[:10])
+    if data_status == "STALE_FROZEN":
+        return "STALE_FROZEN"
+    nav, chk = _d(last_nav_date), _d(last_checked)
+    if nav is None or chk is None:
+        return None
+    lag = (today - nav).days
+    if lag > max_lag_days and (today - chk).days <= recent_check_days:
+        return f"NAV_STALE_{lag}d"
+    return None
+
+
+def universe_nav_exclusions(conn, today=None) -> dict:
+    """{isin: reason} of the funds whose NAV source is dead (see classify_nav_quarantine). {} when UNIVERSE_NAV_QUARANTINE_ENABLED is off. Read-only: nav_sources is
+    P2's table, read here as the second bounded P1<-P2 dependency (AGENTS.md, next to `srri_nav`); it degrades gracefully (no row -> the fund stays)."""
+    try:
+        from shared import config as _cfg
+    except ModuleNotFoundError:            # pragma: no cover  (entrypoint without the repo root on sys.path)
+        return {}
+    if not _cfg.UNIVERSE_NAV_QUARANTINE_ENABLED:
+        return {}
+    today = today or datetime.date.today()
+    rows = conn.execute(
+        "SELECT isin, data_status, last_nav_date, last_checked FROM control.nav_sources "
+        "WHERE status = 'OK' AND (data_status = 'STALE_FROZEN' OR last_nav_date IS NOT NULL)"
+    ).fetchall()
+    out = {}
+    for r in rows:
+        why = classify_nav_quarantine(r[1], r[2], r[3], today, _cfg.UNIVERSE_NAV_QUARANTINE_DAYS, _cfg.UNIVERSE_NAV_QUARANTINE_RECENT_CHECK_DAYS)
+        if why:
+            out[r[0]] = (why, r[2])
+    return out
+
+
+def _quarantine_dead_nav_funds(conn, current_isins) -> int:
+    """Flag In_Current_Universe=0 for the members of `current_isins` that universe_nav_exclusions() names; one [UNIVERSE-QUARANTINE] line each. Returns the count."""
+    excl = universe_nav_exclusions(conn)
+    hit = sorted(i for i in excl if i in current_isins)
+    if hit:
+        conn.execute("UPDATE fund_master SET In_Current_Universe = 0 WHERE ISIN = ANY(%s)", (hit,))
+        for i in hit:
+            print(f"[UNIVERSE-QUARANTINE] {i} {excl[i][0]} last_nav={excl[i][1]}")
+    return len(hit)
+
+
 def reconcile_universe_membership(
     conn: "psycopg.Connection",
     current_isins: list[str],
@@ -1169,6 +1224,9 @@ def reconcile_universe_membership(
             chunk,
         )
 
+    # 3. NAV quarantine (owner directive 2026-11-04): a fund whose NAV source is dead leaves the universe by rule, every pass, and returns by itself when its NAV resumes.
+    quarantined = _quarantine_dead_nav_funds(conn, set(isins))
+
     in_u = conn.execute(
         "SELECT COUNT(*) FROM fund_master WHERE In_Current_Universe = 1"
     ).fetchone()[0]
@@ -1178,6 +1236,6 @@ def reconcile_universe_membership(
 
     print(
         f"[UNIVERSE-RECON] {in_u} en universo actual, "
-        f"{orphans} huérfanos (fuera del harvest)"
+        f"{orphans} huérfanos (fuera del harvest; {quarantined} en cuarentena por NAV)"
     )
     return in_u, orphans

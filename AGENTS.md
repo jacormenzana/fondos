@@ -125,6 +125,11 @@ deliberate, bounded feedback, not a cycle to "fix": it **degrades gracefully** (
 NULL → ex-ante-only classification, no error) and **converges** (classification moves toward realized
 behaviour as P2 coverage grows). Ordering: run P2 before the P1 nature-first pass for freshest data.
 
+**Second bounded P1 ← P2 read — NAV quarantine (2026-11-04, owner directive):** `reconcile_universe_membership` (P1, every nature-first pass) reads `control.nav_sources` and sets
+`In_Current_Universe=0` for a fund whose NAV source is dead: `data_status='STALE_FROZEN'`, or last NAV older than `UNIVERSE_NAV_QUARANTINE_DAYS` (180) while the source was checked in the last
+`UNIVERSE_NAV_QUARANTINE_RECENT_CHECK_DAYS` (30). Generic (no ISIN named), reversible by itself (a resumed NAV re-opens the fund on the next pass), data kept, kill switch
+`UNIVERSE_NAV_QUARANTINE_ENABLED`. It never derives a classification; it only decides membership, so the P#6 scope is untouched.
+
 ---
 ## Area guides
 
