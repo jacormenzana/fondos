@@ -1312,3 +1312,75 @@ def test_perf_fee_mechanics_regex_matches_outperformance():
         assert _PERF_FEE_MECHANICS.search(text) is not None, (
             f"Mechanics text not detected in: '{text[:60]}'"
         )
+
+
+# ---------------------------------------------------------------------------
+# FIX-SCHEDULE-TOTAL-ANNUAL-COHERENCE (2026-11-04, FND-0278 residual): a total that does not fit the annual impact of its OWN row is omitted
+# ---------------------------------------------------------------------------
+
+def _sched(rows, rhp_years):
+    from priips_cost_extractor import _build_schedule_rows
+    return {r['Horizon_Years']: r for r in _build_schedule_rows(rows, rhp_years, 'TEST00000000')}
+
+
+def _ot(h, eur, aci, rhp=False):
+    return {'horizon_years': h, 'is_rhp': rhp, 'total_cost_eur': eur, 'aci_pct': aci}
+
+
+def test_the_first_column_copied_to_the_rhp_row_loses_its_total_and_keeps_its_annual():
+    """LU0524465977: 295 EUR at 1 and 5 years with annual 2.95 % on both: the 5-year total is the 1-year column (ratio 1/h = 0.2)."""
+    out = _sched([_ot(1.0, 295.0, 0.0295), _ot(5.0, 295.0, 0.0295, rhp=True)], 5.0)
+    assert out[1.0]['Total_Costs_EUR'] == 295.0 and out[1.0]['Total_Costs_Pct'] == pytest.approx(2.95)
+    assert 'Total_Costs_EUR' not in out[5.0] and 'Total_Costs_Pct' not in out[5.0] and out[5.0]['Annual_Impact_Pct'] == pytest.approx(2.95)
+
+
+def test_the_rhp_total_written_on_the_one_year_row_is_omitted_there_and_kept_on_the_rhp_row():
+    """ES0143559005: 1,504 EUR on both rows; with annual 3.3 % at 1 year the ratio is 4.6, with annual 3.1 % at 5 years it is 0.97."""
+    out = _sched([_ot(1.0, 1504.0, 0.033), _ot(5.0, 1504.0, 0.031, rhp=True)], 5.0)
+    assert 'Total_Costs_EUR' not in out[1.0] and out[1.0]['Annual_Impact_Pct'] == pytest.approx(3.3)
+    assert out[5.0]['Total_Costs_EUR'] == 1504.0 and out[5.0]['Total_Costs_Pct'] == pytest.approx(15.04)
+
+
+def test_a_zero_or_tiny_total_over_a_positive_annual_impact_is_not_published_as_a_cost():
+    """FI0008810908 (0 EUR at 7 years over 1.62 %) and LU2232093869 (3, 1 and 5 EUR over 3.54 %): the total came from another cell."""
+    out = _sched([_ot(7.0, 0.0, 0.0162, rhp=True)], 7.0)
+    assert 'Total_Costs_EUR' not in out[7.0] and out[7.0]['Annual_Impact_Pct'] == pytest.approx(1.62)
+    out = _sched([_ot(1.0, 3.0, 0.0354), _ot(5.0, 1.0, 0.0354), _ot(10.0, 5.0, 0.0354, rhp=True)], 10.0)
+    assert all('Total_Costs_EUR' not in r and 'Total_Costs_Pct' not in r and r['Annual_Impact_Pct'] == pytest.approx(3.54) for r in out.values())
+
+
+def test_a_coherent_total_is_kept_whatever_the_horizon_and_the_band_edges_are_inclusive():
+    out = _sched([_ot(1.0, 330.0, 0.033), _ot(5.0, 1600.0, 0.031, rhp=True), _ot(10.0, 4000.0, 0.03)], 5.0)
+    assert out[1.0]['Total_Costs_EUR'] == 330.0 and out[5.0]['Total_Costs_EUR'] == 1600.0 and out[10.0]['Total_Costs_EUR'] == 4000.0      # ratios 1.0, 1.03, 1.33
+    edge_lo = _sched([_ot(5.0, 600.0, 0.03, rhp=True)], 5.0)          # 6.00 / (3 * 5) = 0.40
+    edge_hi = _sched([_ot(2.0, 1500.0, 0.03, rhp=True)], 2.0)         # 15.00 / (3 * 2) = 2.50
+    assert 'Total_Costs_EUR' in edge_lo[5.0] and 'Total_Costs_EUR' in edge_hi[2.0]
+    just_out = _sched([_ot(5.0, 590.0, 0.03, rhp=True)], 5.0)         # 0.393
+    assert 'Total_Costs_EUR' not in just_out[5.0]
+
+
+def test_a_row_without_a_total_or_without_an_annual_impact_is_never_touched_by_the_coherence_guard():
+    out = _sched([_ot(5.0, None, 0.031, rhp=True)], 5.0)
+    assert 'Total_Costs_EUR' not in out[5.0] and out[5.0]['Annual_Impact_Pct'] == pytest.approx(3.1)
+    out = _sched([_ot(5.0, 1500.0, None, rhp=True)], 5.0)
+    assert out[5.0]['Total_Costs_EUR'] == 1500.0
+
+
+def test_the_one_year_band_is_the_audits_own_and_the_longer_bands_are_the_measured_ones():
+    from priips_cost_extractor import _total_fits_annual
+    assert _total_fits_annual(5.87, 5.7812, 1.0)                      # KID convention at 1 year (annual / total = 1.015)
+    assert not _total_fits_annual(2.7, 5.31, 1.0)                     # ES0179692001: annual / total = 0.51 at one year
+    assert _total_fits_annual(3.1, 11.98, 4.0)                        # 0.97: the annual falls with the horizon while the total accumulates
+    assert not _total_fits_annual(2.95, 2.95, 5.0)                    # the 1-year column copied to the 5-year row (0.20)
+    assert not _total_fits_annual(1.0, 30.0, 5.0) and _total_fits_annual(1.0, 12.5, 5.0)     # 6.0 is out, 2.5 (the edge) is in
+    assert _total_fits_annual(None, 5.0, 5.0) and _total_fits_annual(2.0, None, 5.0) and _total_fits_annual(0.0, 5.0, 5.0)    # nothing to compare: no claim
+
+
+def test_the_last_pass_catches_an_annual_that_arrived_after_the_rows_were_built():
+    """LU2867168655: the RHP row was built with a total and no annual; the ACI recovered later gave it 3.9 % and the total (0.31 % over 8 years) no longer fits."""
+    from priips_cost_extractor import _drop_incoherent_totals
+    rows = [{'Horizon_Years': 8.0, 'Is_RHP': 1, 'Total_Costs_EUR': 3108.0, 'Total_Costs_Pct': 0.3108, 'Annual_Impact_Pct': 3.9},
+            {'Horizon_Years': 1.0, 'Is_RHP': 0, 'Total_Costs_EUR': 390.0, 'Total_Costs_Pct': 3.9, 'Annual_Impact_Pct': 3.9}]
+    _drop_incoherent_totals(rows, 'TEST')
+    assert 'Total_Costs_EUR' not in rows[0] and 'Total_Costs_Pct' not in rows[0] and rows[0]['Annual_Impact_Pct'] == 3.9
+    assert rows[1]['Total_Costs_EUR'] == 390.0

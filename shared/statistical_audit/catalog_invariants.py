@@ -171,7 +171,10 @@ COST_INVARIANTS: tuple[InvariantRule, ...] = (
     InvariantRule("ANNUAL_LE_ACCUMULATED",
                   f"(Annual_Impact_Pct <= Total_Costs_Pct + {KID_ROUNDING_TOLERANCE_PP}) | "
                   f"((Horizon_Years == 1) & (Annual_Impact_Pct <= Total_Costs_Pct * {KID_ONE_YEAR_RATIO_MAX}))",
-                  bound_type="HARD_INVARIANT", description="Annual exceeds accumulated"),
+                  when="Horizon_Years >= 1", bound_type="HARD_INVARIANT",
+                  # FND-0278 (2026-11-04): below one year the annual impact is a per-YEAR rate and the accumulated total covers only the holding period, so annual > total is the correct
+                  # arithmetic (LU-class money fund with a 3-month RHP: annual 0.13 %, accumulated 0.03 % = 0.13 % * 0.25). The relation is defined from one year on.
+                  description="Annual exceeds accumulated (from a one-year horizon)"),
     InvariantRule(
         "ANNUAL_EQUALS_TOTAL_AT_1Y",
         f"(abs(Annual_Impact_Pct - Total_Costs_Pct) < {KID_ROUNDING_TOLERANCE_PP}) | "

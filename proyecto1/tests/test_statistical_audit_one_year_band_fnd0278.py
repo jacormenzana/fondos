@@ -68,3 +68,14 @@ def test_the_accumulated_rule_uses_the_band_only_at_one_year():
 def test_a_lower_annual_impact_than_the_total_is_fine_for_the_accumulated_rule():
     assert _violations("ANNUAL_LE_ACCUMULATED", 1.0, 5.0, 1) == 0
     assert _violations("ANNUAL_LE_ACCUMULATED", 1.0, 5.0, 5) == 0
+
+
+def test_annual_le_accumulated_does_not_apply_below_one_year():
+    """2026-11-04: a 3-month RHP has annual 0.13 % and accumulated 0.03 % (= 0.13 % x 0.25): correct arithmetic, not an extraction defect; from one year on the rule bites as before."""
+    import pandas as pd
+    from shared.statistical_audit.catalog_invariants import COST_INVARIANTS
+    from shared.statistical_audit.invariants import check_invariant
+    rule = next(r for r in COST_INVARIANTS if r.rule_id == "ANNUAL_LE_ACCUMULATED")
+    df = pd.DataFrame({"Horizon_Years": [0.25, 5.0, 5.0], "Annual_Impact_Pct": [0.13, 3.0, 3.0], "Total_Costs_Pct": [0.03, 0.0, 15.0]})
+    r = check_invariant(df, rule)
+    assert r.n_applicable == 2 and r.n_violations == 1                 # the 0.25-year row is out of scope, the zero total at 5 years still violates

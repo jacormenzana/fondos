@@ -144,10 +144,12 @@ def test_schedule_keeps_plausible_total():
 # ===========================================================================
 
 def test_schedule_uses_declared_investment_base():
-    """LU2867168812: base 100.000 → 3.308 EUR son 3,308 %, no 33,08 %."""
+    """LU2867168812: base 100.000 → 3.308 EUR son 3,308 %, no 33,08 %.
+    2026-11-04: el caso original (8 anos, anual 4,15 %) tenia un total incompatible con su propio anual (cociente 0,10: el total de 1 ano copiado a la fila RHP) y
+    FIX-SCHEDULE-TOTAL-ANNUAL-COHERENCE lo omite; el test comprueba la BASE, asi que usa un horizonte y un anual coherentes con el total (1 ano, 3,31 %)."""
     text = 'Ejemplo de inversión: 100.000 EUR'
-    rows = [{'horizon_years': 8.0, 'total_cost_eur': 3308.0, 'aci_pct': 0.0415}]
-    out = _build_schedule_rows(rows, 8.0, 'TEST_BASE', text)
+    rows = [{'horizon_years': 1.0, 'total_cost_eur': 3308.0, 'aci_pct': 0.0331}]
+    out = _build_schedule_rows(rows, 1.0, 'TEST_BASE', text)
     assert out[0]['Total_Costs_Pct'] == 3.308
 
 
