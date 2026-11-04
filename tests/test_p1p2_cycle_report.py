@@ -84,6 +84,8 @@ def test_frozen_navs_are_expected_but_other_stale_navs_are_flagged():
                              {"isin": "B", "newest": "2026-03-12", "data_status": "OK"}])
     items = cr.attention_items(cur, None)
     assert len(items) == 1 and "1 fondos activos" in items[0]
+    assert "In_Current_Universe" in items[0] and "decidir en P1" in items[0]      # FND-0233: the stale fund below the automatic freeze is a universe decision, not a loader retry
+    assert "revisar nav_discovery" not in items[0]
 
 
 def test_real_nominal_pairing_gaps_are_flagged_with_the_metric_names():

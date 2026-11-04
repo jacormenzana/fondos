@@ -573,7 +573,8 @@ def attention_items(report: dict, previous: dict | None) -> list:
     stale = [r for r in report["nav_stale"] if r["data_status"] != "STALE_FROZEN"]
     if stale:
         items.append(f"{len(stale)} fondos activos con NAV mensual de mas de {NAV_STALE_DAYS} dias sin estar "
-                     "marcados STALE_FROZEN (revisar nav_discovery --mode update)")
+                     "marcados STALE_FROZEN: el proveedor no publica NAV nuevo y aun no han pasado los dias del congelado automatico; "
+                     "decidir en P1 si siguen en el universo (fund_master.In_Current_Universe); nav_discovery --mode update solo vuelve a consultar")
     orphans = sum(report["real_orphans"].values())
     if orphans:
         items.append(f"{orphans} metricas nominales sin su par real (hueco silencioso de deflacion): "
