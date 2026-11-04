@@ -150,48 +150,58 @@ def test_only_global_refresh_replaces_degenerate_series_and_leaves_m2_yoy(pg_ses
     assert m2_global_needs_rebuild(conn)[0] is False
 
 
-def test_m2_estimates_precede_observed_rule():
+def test_m2_estimates_exist_rule():
     from datetime import date
-    from src.calculations.m2_global_builder import m2_estimates_precede_observed
-    # FRED stopped: levels end 2019-08, estimates start 2019-09 -> consistent
-    assert m2_estimates_precede_observed({"CN": date(2019, 8, 1)}, {"CN": date(2019, 9, 30)}) == (False, "")
-    # the OECD chain loaded real levels to 2026-07: the stored estimates from 2019-09 are now stale
-    stale = m2_estimates_precede_observed({"CN": date(2026, 7, 1)}, {"CN": date(2019, 9, 30)})
-    assert stale[0] is True and stale[1].startswith("CALC_EST") and "CN" in stale[1] and "2026-07" in stale[1]
-    # after the rebuild the estimates start after the observed end (the last fx months): consistent again
-    assert m2_estimates_precede_observed({"CN": date(2026, 7, 1)}, {"CN": date(2026, 8, 31)}) == (False, "")
-    # same month counts as overlapping (month-end estimate vs month-start level); missing geographies are ignored
-    assert m2_estimates_precede_observed({"JP": date(2026, 9, 1)}, {"JP": date(2026, 9, 30)})[0] is True
-    assert m2_estimates_precede_observed({"JP": date(2026, 9, 1)}, {}) == (False, "")
-    assert m2_estimates_precede_observed({}, {"CN": date(2019, 9, 30)}) == (False, "")
+    from src.calculations.m2_global_builder import m2_estimates_exist
+    assert m2_estimates_exist({}) == (False, "")
+    assert m2_estimates_exist({"CN": None}) == (False, "")
+    need, why = m2_estimates_exist({"JP": date(2026, 10, 31), "CN": date(2026, 9, 30)})
+    assert need is True and why.startswith("CALC_EST") and "CN" in why and "2026-09" in why       # sorted geographies: the first one is named
 
 
-def test_real_cn_m2_makes_the_stored_estimates_stale_until_a_full_rebuild(pg_session_conn, pg_conn_module_schema):
-    """FND-0293 end to end: estimated tail -> real levels arrive -> needs_rebuild says so -> a FULL build (only_global=False) replaces the estimates
-    -> needs_rebuild is quiet again (idempotent, so the trigger cannot fire on every run)."""
+def _seed_four_components(conn, n_months, cn_months):
+    """US / EU / JP / fx for `n_months` consecutive month-ends from 2023-01 and CN for the first `cn_months` only, every level growing 1 % a month."""
+    import pandas as pd
+    dates = [d.strftime("%Y-%m-%d") for d in pd.date_range("2023-01-31", periods=n_months, freq="ME")]
+    for i, d in enumerate(dates):
+        g = 1.01 ** i
+        rows = [("m2_level", "US", 21000.0 * g), ("m2_level", "EU", 15_000_000.0 * g), ("m2_level", "JP", 9.0e14 * g),
+                ("fx_usd_eur", "GLOBAL", 1.08), ("fx_cny_usd", "GLOBAL", 7.0), ("fx_jpy_usd", "GLOBAL", 150.0)]
+        if i < cn_months:
+            rows.append(("m2_level", "CN", 2.0e14 * g))
+        for ind, geo, val in rows:
+            conn.execute("INSERT INTO series_macro (date, indicator, geography, value, unit, source) VALUES (%s,%s,%s,%s,'x','TEST')", (d, ind, geo, val))
+    return dates
+
+
+def test_nothing_is_estimated_and_the_global_series_ends_with_the_most_lagging_component(pg_session_conn, pg_conn_module_schema):
+    """Owner directive 2026-11-04: China M2 stops at month 20 of 26 -> no CALC_EST row, no carried-forward value, m2_global_yoy ends at month 20."""
+    conn = pg_session_conn
+    conn.execute(f"SET search_path = {pg_conn_module_schema}")
+    _make_series_macro(conn)
+    dates = _seed_four_components(conn, n_months=26, cn_months=20)
+    build_m2_global(conn, dry_run=False, only_global=False)
+    assert conn.execute("SELECT COUNT(*) FROM series_macro WHERE source = 'CALC_EST'").fetchone()[0] == 0
+    last_global = conn.execute("SELECT MAX(date) FROM series_macro WHERE indicator='m2_global_yoy' AND geography='GLOBAL'").fetchone()[0]
+    last_cn = conn.execute("SELECT MAX(date) FROM series_macro WHERE indicator='m2_yoy' AND geography='CN'").fetchone()[0]
+    assert str(last_global) == dates[19] and str(last_cn) == dates[19]
+    assert {r[0] for r in conn.execute("SELECT DISTINCT source FROM series_macro WHERE indicator='m2_yoy' AND geography IN ('CN','JP')").fetchall()} == {"CALC"}
+    from src.calculations.m2_global_builder import m2_global_needs_rebuild
+    assert m2_global_needs_rebuild(conn) == (False, "")                    # the lag is measured against the same component: no rebuild loop
+
+
+def test_legacy_estimated_rows_trigger_one_full_rebuild_that_deletes_them(pg_session_conn, pg_conn_module_schema):
     from src.calculations.m2_global_builder import m2_global_needs_rebuild
     conn = pg_session_conn
     conn.execute(f"SET search_path = {pg_conn_module_schema}")
     _make_series_macro(conn)
-    _seed_minimal_m2_inputs(conn)                                             # US + EU + fx_usd_eur, 2024-01..2025-02
-    dates = ["2024-01-31", "2024-02-29", "2024-03-31", "2024-04-30", "2024-05-31", "2024-06-30", "2024-07-31", "2024-08-31", "2024-09-30",
-             "2024-10-31", "2024-11-30", "2024-12-31", "2025-01-31", "2025-02-28"]
-    for i, d in enumerate(dates):
-        conn.execute("INSERT INTO series_macro (date, indicator, geography, value, unit, source) VALUES (%s,'fx_cny_usd','GLOBAL',7.2,'ratio','FRED')", (d,))
-        if i < 8:                                                             # the FRED level stops early (as in 2019)
-            conn.execute("INSERT INTO series_macro (date, indicator, geography, value, unit, source) VALUES (%s,'m2_level','CN',%s,'cny','FRED')",
-                         (d[:8] + "01", 2.0e14 + i * 1e12))
-    build_m2_global(conn, dry_run=False, only_global=False)                   # persists CALC_EST m2_yoy CN from the first extended month
-    assert conn.execute("SELECT COUNT(*) FROM series_macro WHERE indicator='m2_yoy' AND geography='CN' AND source='CALC_EST'").fetchone()[0] > 0
-    assert m2_global_needs_rebuild(conn) == (False, "")
-
-    for i, d in enumerate(dates[8:], start=8):                                # the chain now supplies real levels for the rest
-        conn.execute("INSERT INTO series_macro (date, indicator, geography, value, unit, source) VALUES (%s,'m2_level','CN',%s,'cny','OECD_MONAGG')",
-                     (d[:8] + "01", 2.0e14 + i * 1e12))
+    _seed_four_components(conn, n_months=26, cn_months=26)
+    build_m2_global(conn, dry_run=False, only_global=False)
+    conn.execute("INSERT INTO series_macro (date, indicator, geography, value, unit, source) VALUES ('2025-03-31','m2_yoy','CN',8.5,'pct','CALC_EST')")
     need, why = m2_global_needs_rebuild(conn)
     assert need is True and why.startswith("CALC_EST")
-
     build_m2_global(conn, dry_run=False, only_global=False)
+    assert conn.execute("SELECT COUNT(*) FROM series_macro WHERE source = 'CALC_EST'").fetchone()[0] == 0
     assert m2_global_needs_rebuild(conn) == (False, "")
 
 

@@ -962,7 +962,7 @@ def _apply_oecd_cpi_chain(macro_rows: list[dict], desde: str, api_key: str | Non
 
 
 # FND-0293: M2 for China and Japan. The FRED series (IMF data) stopped in 2019-08 / 2017-02 and m2_global_builder has been extending them with
-# hard-coded growth rates (source CALC_EST). The OECD monetary-aggregates dataset (CN) and the Bank of Japan time-series API (JP; no key) carry the
+# hard-coded growth rates (source CALC_EST; that extension was removed on 2026-11-04). The OECD monetary-aggregates dataset (CN) and the Bank of Japan time-series API (JP; no key) carry the
 # same M2 to 2026; over the shared months FRED/OECD CN has a median ratio of 1.0000000 and FRED/BoJ JP of 1.00000 (worst month 0.22%).
 _BOJ_API         = "https://www.stat-search.boj.or.jp/api/v1/getDataCode"
 _BIS_API         = "https://stats.bis.org/api/v2/data/dataflow/BIS"
@@ -1011,7 +1011,7 @@ def _fetch_boj_m2_jp(desde: str) -> dict[str, float]:
 
 def _apply_m2_chain(macro_rows: list[dict], desde: str, fetch_cn=None, fetch_jp=None) -> None:
     """Continue m2_level CN / JP past the last month of the FRED series with the OECD / BoJ one, once the splice over the shared months passes.
-    Prints a [CHAIN] line per series; a refused or unavailable fallback loads nothing (m2_global_builder then keeps its CALC_EST extension)."""
+    Prints a [CHAIN] line per series; a refused or unavailable fallback loads nothing (since 2026-11-04 m2_global_builder estimates nothing: m2_global_yoy then ends at the lagging component)."""
     for geo, unit, source, fetch in (("CN", "cny", "OECD_MONAGG", fetch_cn or _fetch_oecd_m2_cn),
                                      ("JP", "jpy", "BOJ", fetch_jp or _fetch_boj_m2_jp)):
         primary = rows_to_values(macro_rows, "m2_level", geo)

@@ -17,20 +17,15 @@ Resultados almacenados en series_macro:
     indicator='m2_yoy', geography='US', unit='pct', source='CALC'
         YoY calculado desde M2SL (FRED) en USD. Datos 100% observados.
 
-    indicator='m2_yoy', geography='CN', unit='pct', source='CALC' | 'CALC_EST'
-        YoY calculado desde MYAGM2CNM189N (CNY).
-        source='CALC'     hasta ago-2019 (ultimo dato FRED disponible).
-        source='CALC_EST' desde sep-2019 (nivel extendido con YoY estimados PBoC).
-
-    indicator='m2_yoy', geography='JP', unit='pct', source='CALC' | 'CALC_EST'
-        YoY calculado desde MYAGM2JPM189N (JPY).
-        source='CALC'     hasta dic-2017 (ultimo dato FRED disponible).
-        source='CALC_EST' desde ene-2018 (nivel extendido con YoY estimados BoJ).
+    indicator='m2_yoy', geography='CN' | 'JP', unit='pct', source='CALC'
+        YoY calculado desde los niveles OBSERVADOS en moneda local (FRED + OECD para CN, FRED + BoJ para JP).
 
 NOTA: m2_yoy EU no se toca -- ya existe como serie observada del BCE.
-Los tramos CALC_EST NO deben usarse como datos de referencia primarios.
-Se persisten para completitud y consistencia de la BD, pero deben
-interpretarse con cautela en analisis que dependan de CN o JP post-2017.
+
+2026-11-04 (directiva del propietario, FND-0293): NO se estima nada. Hasta entonces el constructor extendia CN y JP con YoY anuales fijos (PBoC / BoJ, source='CALC_EST')
+y arrastraba (ffill) el ultimo valor de un componente; con niveles reales de CN (OECD) y JP (BoJ) esa extension solo producia los ultimos 1-2 meses de datos
+inventados. Ahora m2_global_yoy existe solo para los meses en que los CUATRO componentes estan observados (el ultimo mes lo marca el componente mas atrasado) y las
+filas CALC_EST heredadas se borran en la primera reconstruccion completa (m2_global_needs_rebuild las detecta).
 """
 
 import pandas as pd
@@ -90,41 +85,40 @@ def m2_global_is_degenerate(dates, values, latest_input_date,
 ESTIMATE_REASON_PREFIX = "CALC_EST"      # run_pipeline refreshes the individual m2_yoy rows too (not only m2_global_yoy) for this reason
 
 
-def m2_estimates_precede_observed(observed_last: dict, estimate_first: dict):
-    """FND-0293: once real CN / JP M2 levels exist for months the stored m2_yoy still ESTIMATES (source 'CALC_EST', built when the FRED
-    series stopped in 2019 / 2017), the stored m2_global_yoy and the individual m2_yoy rows are built on estimates and must be rebuilt.
-    `observed_last[geo]` = newest m2_level month of that geography, `estimate_first[geo]` = first CALC_EST m2_yoy month (either may be
-    missing). Compared by (year, month): estimates are month-end dated, levels month-start. Returns (needs_rebuild, reason)."""
-    for geo in sorted(set(observed_last) & set(estimate_first)):
-        o, e = observed_last[geo], estimate_first[geo]
-        if o is not None and e is not None and (e.year, e.month) <= (o.year, o.month):
-            return True, (f"{ESTIMATE_REASON_PREFIX}: m2_yoy {geo} is estimated from {e:%Y-%m} but observed M2 now reaches {o:%Y-%m}")
+def m2_estimates_exist(estimate_first: dict):
+    """FND-0293 / owner directive 2026-11-04: no M2 value is estimated any more, so any stored m2_yoy row with source 'CALC_EST' (built by earlier versions of this
+    module, when the FRED series stopped in 2019 / 2017) is legacy that the next FULL build deletes, together with the m2_global_yoy months that rested on it.
+    `estimate_first[geo]` = first CALC_EST m2_yoy month of that geography (missing = none). Returns (needs_rebuild, reason)."""
+    for geo in sorted(estimate_first):
+        e = estimate_first[geo]
+        if e is not None:
+            return True, f"{ESTIMATE_REASON_PREFIX}: m2_yoy {geo} still holds estimated rows from {e:%Y-%m} (estimates are no longer produced)"
     return False, ""
 
 
 def m2_global_needs_rebuild(conn: "psycopg.Connection"):
-    """Reads the stored series and its inputs and applies m2_global_is_degenerate() and m2_estimates_precede_observed()."""
+    """Reads the stored series and its inputs and applies m2_global_is_degenerate() and m2_estimates_exist(). The staleness reference is the most lagging of the four
+    components (the global series cannot run past it, since nothing is estimated or carried forward)."""
     rows = conn.execute("""
         SELECT date, value FROM series_macro
         WHERE indicator='m2_global_yoy' AND geography='GLOBAL' ORDER BY date
     """).fetchall()
     latest = conn.execute("""
-        SELECT MAX(date) FROM series_macro
-        WHERE indicator='m2_level' AND geography IN ('US','EU')
+        SELECT MIN(m) FROM (
+            SELECT MAX(date) AS m FROM series_macro
+            WHERE indicator='m2_level' AND geography IN ('US','EU','CN','JP') GROUP BY geography
+        ) t
     """).fetchone()[0]
     if latest is None:
         return False, "sin entradas M2"
     degenerate = m2_global_is_degenerate([r[0] for r in rows], [r[1] for r in rows], latest)
     if degenerate[0]:
         return degenerate
-    observed = dict(conn.execute("""
-        SELECT geography, MAX(date) FROM series_macro WHERE indicator='m2_level' AND geography IN ('CN','JP') GROUP BY geography
-    """).fetchall())
     estimated = dict(conn.execute("""
         SELECT geography, MIN(date) FROM series_macro
         WHERE indicator='m2_yoy' AND geography IN ('CN','JP') AND source='CALC_EST' GROUP BY geography
     """).fetchall())
-    return m2_estimates_precede_observed(observed, estimated)
+    return m2_estimates_exist(estimated)
 
 
 def build_m2_global(conn: "psycopg.Connection",
@@ -199,60 +193,17 @@ def build_m2_global(conn: "psycopg.Connection",
                         level_us.iloc[i] = nxt
             result["m2_us"] = level_us
 
-    # M2 CN: MYAGM2CNM189N viene en CNY corrientes (no millones)
-    # Solo llega hasta ago-2019 -- extender con YoY conocidos del PBoC
-    # last_valid_cn se guarda para distinguir CALC vs CALC_EST al persistir
-    last_valid_cn = None
+    # M2 CN: MYAGM2CNM189N (FRED, hasta ago-2019) + OECD_MONAGG (desde sep-2019) vienen en CNY corrientes (no millones). Solo datos OBSERVADOS (2026-11-04).
     cn_level_local = None   # nivel en CNY -- para calcular m2_yoy CN en moneda local
     if "m2_level_CN" in wide.columns and "fx_cny_usd_GLOBAL" in wide.columns:
         cn_level = wide["m2_level_CN"].copy()
-
-        # YoY mensuales conocidos del PBoC para extender desde sep-2019
-        # Fuente: PBoC press releases (valores aproximados mensuales)
-        # NOTA: tramos post last_valid_cn son estimaciones (source='CALC_EST')
-        pboc_yoy = {
-            "2019": 0.085, "2020": 0.100, "2021": 0.090,
-            "2022": 0.115, "2023": 0.095, "2024": 0.085, "2025": 0.080,
-        }
-
-        last_valid_cn = cn_level.last_valid_index()
-        if last_valid_cn is not None:
-            all_dates = wide.index
-            extend_dates = all_dates[all_dates > last_valid_cn]
-            for dt in extend_dates:
-                yoy = pboc_yoy.get(str(dt.year), 0.085)
-                prev = cn_level.get(dt - pd.offsets.MonthEnd(1))   # FND-0176: month-end label (DateOffset(months=1) never matched)
-                if prev is not None and not np.isnan(prev):
-                    cn_level[dt] = prev * (1 + yoy / 12)
-
         cn_level_local = cn_level.copy()   # guardar en CNY antes de convertir
         result["m2_cn_usd"] = (cn_level / wide["fx_cny_usd_GLOBAL"]) / 1_000_000_000
 
-    # M2 JP: MYAGM2JPM189N viene en millones JPY, llega hasta dic-2017
-    # Extender con YoY conocidos del BoJ
-    # last_valid_jp se guarda para distinguir CALC vs CALC_EST al persistir
-    last_valid_jp = None
-    jp_level_local = None   # nivel en JPY (millones) -- para m2_yoy JP en moneda local
+    # M2 JP: MYAGM2JPM189N (FRED, hasta feb-2017) + BOJ (desde mar-2017). Solo datos OBSERVADOS (2026-11-04).
+    jp_level_local = None   # nivel en JPY -- para m2_yoy JP en moneda local
     if "m2_level_JP" in wide.columns and "fx_jpy_usd_GLOBAL" in wide.columns:
         jp_level = wide["m2_level_JP"].copy()
-
-        # YoY anuales conocidos del BoJ para extender
-        # NOTA: tramos post last_valid_jp son estimaciones (source='CALC_EST')
-        boj_yoy = {
-            "2018": 0.030, "2019": 0.025, "2020": 0.075, "2021": 0.040,
-            "2022": 0.035, "2023": 0.030, "2024": 0.028, "2025": 0.025,
-        }
-
-        last_valid_jp = jp_level.last_valid_index()
-        if last_valid_jp is not None:
-            all_dates = wide.index
-            extend_dates = all_dates[all_dates > last_valid_jp]
-            for dt in extend_dates:
-                yoy = boj_yoy.get(str(dt.year), 0.025)
-                prev = jp_level.get(dt - pd.offsets.MonthEnd(1))   # FND-0176
-                if prev is not None and not np.isnan(prev):
-                    jp_level[dt] = prev * (1 + yoy / 12)
-
         jp_level_local = jp_level.copy()   # guardar en JPY antes de convertir
         # FND-0176: MYAGM2JPM189N is in plain JPY (6e14-1e15), despite the "jpy_mn" unit label; dividing by 1_000
         # made Japan ~8.5e9 "bn USD" and swamped the other three components (the global YoY became ~0 once
@@ -285,15 +236,13 @@ def build_m2_global(conn: "psycopg.Connection",
         print("  [M2_Global] Insuficientes componentes")
         return 0
 
-    # Forward-fill componentes con datos parciales (CN llega hasta 2019, JP hasta 2017)
-    # para evitar saltos bruscos en la suma cuando un componente desaparece
-    result_ffill = result[m2_cols].ffill()
+    # 2026-11-04: sin forward-fill ni extension estimada. Los cuatro niveles son observados desde 2000 (CN: FRED + OECD; JP: FRED + BoJ), asi que el M2 Global de un mes
+    # existe solo si TODOS los componentes lo tienen (min_count); el ultimo mes lo marca el componente mas atrasado.
+    # Exigir ademas que US y EU esten siempre presentes (componentes principales)
+    core_cols = [c for c in ["m2_us", "m2_eu_usd"] if c in result.columns]
+    valid_mask = result[core_cols].notna().all(axis=1)
 
-    # Exigir que US y EU esten siempre presentes (componentes principales)
-    core_cols = [c for c in ["m2_us", "m2_eu_usd"] if c in result_ffill.columns]
-    valid_mask = result_ffill[core_cols].notna().all(axis=1)
-
-    result["m2_global"] = result_ffill[m2_cols].sum(axis=1, min_count=len(m2_cols))
+    result["m2_global"] = result[m2_cols].sum(axis=1, min_count=len(m2_cols))
     result.loc[~valid_mask, "m2_global"] = np.nan
 
     # YoY del M2 Global
@@ -348,8 +297,7 @@ def build_m2_global(conn: "psycopg.Connection",
     # Persistir m2_yoy individuales calculados desde niveles en moneda local
     #
     # US: 100% datos observados FRED (M2SL) -> source='CALC'
-    # CN: observado hasta last_valid_cn, estimado desde ahi -> CALC / CALC_EST
-    # JP: observado hasta last_valid_jp, estimado desde ahi -> CALC / CALC_EST
+    # CN / JP: niveles observados (FRED + OECD / BoJ) -> CALC; nunca se estima (2026-11-04)
     # EU: ya existe como serie BCE observada -- NO se sobreescribe
     # ----------------------------------------------------------------
     _INDIVIDUAL_YOY = []
@@ -373,46 +321,34 @@ def build_m2_global(conn: "psycopg.Connection",
     if cn_level_local is not None:
         cn_yoy = cn_level_local.pct_change(12, fill_method=None) * 100
         cn_yoy = cn_yoy.dropna()
-        n_calc = n_est = 0
         for date, val in cn_yoy.items():
-            src = "CALC" if (last_valid_cn is None or date <= last_valid_cn) else "CALC_EST"
             _INDIVIDUAL_YOY.append({
                 "date":      date.strftime("%Y-%m-%d"),
                 "indicator": "m2_yoy",
                 "geography": "CN",
                 "value":     round(float(val), 4),
                 "unit":      "pct",
-                "source":    src,
+                "source":    "CALC",
             })
-            if src == "CALC":
-                n_calc += 1
-            else:
-                n_est += 1
-        print(f"  [M2_Global] {n_calc} CALC + {n_est} CALC_EST registros (m2_yoy CN)")
+        print(f"  [M2_Global] {len(cn_yoy)} registros calculados (m2_yoy CN, CALC)")
 
     # -- JP ----------------------------------------------------------
     if jp_level_local is not None:
         jp_yoy = jp_level_local.pct_change(12, fill_method=None) * 100
         jp_yoy = jp_yoy.dropna()
-        n_calc = n_est = 0
         for date, val in jp_yoy.items():
-            src = "CALC" if (last_valid_jp is None or date <= last_valid_jp) else "CALC_EST"
             _INDIVIDUAL_YOY.append({
                 "date":      date.strftime("%Y-%m-%d"),
                 "indicator": "m2_yoy",
                 "geography": "JP",
                 "value":     round(float(val), 4),
                 "unit":      "pct",
-                "source":    src,
+                "source":    "CALC",
             })
-            if src == "CALC":
-                n_calc += 1
-            else:
-                n_est += 1
-        print(f"  [M2_Global] {n_calc} CALC + {n_est} CALC_EST registros (m2_yoy JP)")
+        print(f"  [M2_Global] {len(jp_yoy)} registros calculados (m2_yoy JP, CALC)")
 
     if _INDIVIDUAL_YOY:
-        # Borrar solo las filas calculadas (CALC y CALC_EST) para no tocar las BCE
+        # Borrar solo las filas calculadas (CALC, y CALC_EST heredadas de versiones anteriores) para no tocar las BCE
         conn.execute("""
             DELETE FROM series_macro
             WHERE indicator = 'm2_yoy'
