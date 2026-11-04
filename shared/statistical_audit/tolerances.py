@@ -109,6 +109,13 @@ IPC_ELIGIBILITY_FLOOR = 0.001
 # numerically indistinguishable from zero.
 RATIO_ELIGIBILITY_FLOOR = 0.01
 
+# --- Class 3c: volatility floor under which a Sharpe ratio is a property of the denominator, not a defect (FND-0383, 2026-11-04) ---
+# SHARPE_BOUND (|sharpe| < 10) exists to catch a wrong risk-free rate or a wrong volatility. Measured on the live store after the 2026-11-04 recompute: all 37 stored
+# Sharpe values at or beyond 10 (31 funds, 26 of them Monetario) belong to funds whose volatility in that very window is between 0.05 % and 0.30 % a year (median 0.13 %,
+# max 0.30 %); a money-market fund earning 1-3 % over a 0.1 % volatility has a Sharpe of 10-20 by arithmetic. None of the 37 has a volatility of 0.5 % or more. A volatility
+# near zero from a frozen NAV is a different defect and keeps its own rule (FROZEN_NAV_ZERO_VOL). 0.005 = the lower edge of SRRI class 1 (volatility below 0.5 %).
+SHARPE_VOL_FLOOR = 0.005
+
 # --- Class 1b: published precision of a cost percentage compared with another one (FND-0262) ---
 # The cost columns of the X__EQUALS__Y pairs (fees, ACI) are percentages the KID publishes with 2 decimals, so two components "hold the
 # same value" when they agree within HALF a unit of that last published decimal: 0.005 percentage points. Same class as

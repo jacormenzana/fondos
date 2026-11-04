@@ -23,6 +23,12 @@ RCA_E = "RCA-E"
 RCA_E_PREFIX = f"{RCA_E}:"
 
 
+def comparable_version(v: Any) -> bool:
+    """True for a real algorithm_version (starts with a digit: '20261011', '20261011.20261019'). The sentinels the backfill writes ('PRE_V26_UNKNOWN') are not versions: compared as text they sort AFTER every
+    date-like version, which made every fund look 'older than the newest' and tagged real defects RCA-E (2026-11-04: SHARPE_BOUND). Pure."""
+    return v is not None and str(v)[:1].isdigit()
+
+
 def stale_states(nav_last: Mapping[str, Any], algo_by_isin: Mapping[str, Optional[str]], current_version: Optional[str],
                  as_of: date, max_age_days: int) -> dict:
     """{isin: mechanical reason} for the funds in a stale state. Pure. A fund with no NAV row (or no metrics row) makes no claim:
@@ -31,9 +37,9 @@ def stale_states(nav_last: Mapping[str, Any], algo_by_isin: Mapping[str, Optiona
     for isin, last in nav_last.items():
         if last is not None and (as_of - last).days > max_age_days:
             out[isin] = f"NAV {(as_of - last).days} d old (limit {max_age_days} d)"
-    if current_version:
+    if comparable_version(current_version):
         for isin, version in algo_by_isin.items():
-            if version is not None and str(version) < str(current_version) and isin not in out:
+            if comparable_version(version) and str(version) < str(current_version) and isin not in out:
                 out[isin] = f"metrics at algorithm_version {version} < {current_version}"
     return out
 
@@ -65,6 +71,6 @@ def load_stale_states(conn, isins: Iterable[str], max_age_days: int, as_of: Opti
     nav_last = {r[0]: r[1] for r in conn.execute(
         "SELECT isin, MAX(date) FROM fund_nav_monthly WHERE isin = ANY(%s) GROUP BY isin", (isins,)).fetchall()}
     algo = {r[0]: r[1] for r in conn.execute(
-        "SELECT isin, MAX(algorithm_version) FROM fund_metrics WHERE isin = ANY(%s) GROUP BY isin", (isins,)).fetchall()}
-    current = conn.execute("SELECT MAX(algorithm_version) FROM fund_metrics").fetchone()[0]
+        "SELECT isin, MAX(algorithm_version) FROM fund_metrics WHERE isin = ANY(%s) AND algorithm_version ~ '^[0-9]' GROUP BY isin", (isins,)).fetchall()}
+    current = conn.execute("SELECT MAX(algorithm_version) FROM fund_metrics WHERE algorithm_version ~ '^[0-9]'").fetchone()[0]
     return stale_states(nav_last, algo, current, as_of, max_age_days)

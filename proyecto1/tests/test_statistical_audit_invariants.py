@@ -95,6 +95,31 @@ class TestSortinoVsSharpeCorrection:
         assert r.n_violations == 1
 
 
+class TestSharpeBoundVolatilityFloor:
+    """FND-0383 (2026-11-04): a |Sharpe| >= 10 over a near-zero volatility is the arithmetic of a money-market fund, not a denominator defect; above the floor the bound still bites."""
+
+    def _rule(self):
+        from shared.statistical_audit.catalog_invariants import P2_INVARIANTS
+        return next(r for r in P2_INVARIANTS if r.rule_id == "SHARPE_BOUND")
+
+    def test_a_money_market_ratio_over_a_tiny_volatility_is_not_flagged(self):
+        df = pd.DataFrame({"sharpe": [13.4, -15.7], "vol_ann": [0.0019, 0.0011]})
+        r = check_invariant(df, self._rule())
+        assert r.n_applicable == 0 and r.n_violations == 0
+
+    def test_the_bound_still_catches_an_extreme_ratio_over_a_real_volatility(self):
+        df = pd.DataFrame({"sharpe": [13.4, 3.0, -15.7], "vol_ann": [0.02, 0.02, 0.012]})
+        r = check_invariant(df, self._rule())
+        assert r.n_applicable == 3 and r.n_violations == 2
+
+    def test_the_floor_is_the_edge_of_srri_class_one_and_inclusive(self):
+        from shared.statistical_audit.tolerances import SHARPE_VOL_FLOOR
+        assert SHARPE_VOL_FLOOR == 0.005
+        df = pd.DataFrame({"sharpe": [20.0, 20.0], "vol_ann": [0.005, 0.00499]})
+        r = check_invariant(df, self._rule())
+        assert r.n_applicable == 1 and r.n_violations == 1
+
+
 class TestFrozenNavCorrection:
     """§2.4: vol_ann==0 does not by itself imply a frozen NAV — a flat,
     identical nonzero periodic return legitimately produces vol_ann==0. The

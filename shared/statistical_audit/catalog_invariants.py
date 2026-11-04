@@ -14,7 +14,7 @@ from __future__ import annotations
 from ..regime_taxonomy import REGIME_SUFFIX
 from .invariants import InvariantRule
 from .tolerances import (ACI_AMORTISATION_VISIBLE_PP, ACI_ORDER_TOLERANCE_PP, FLOAT_IDENTITY_TOLERANCE, IPC_ELIGIBILITY_FLOOR, KID_ONE_YEAR_RATIO_MAX,
-                         KID_ONE_YEAR_RATIO_MIN, KID_ROUNDING_TOLERANCE_PP)
+                         KID_ONE_YEAR_RATIO_MIN, KID_ROUNDING_TOLERANCE_PP, SHARPE_VOL_FLOOR)
 
 P2_INVARIANTS: tuple[InvariantRule, ...] = (
     InvariantRule("MAX_DD_RANGE", "-1 <= max_dd <= 0", bound_type="HARD_INVARIANT",
@@ -69,8 +69,8 @@ P2_INVARIANTS: tuple[InvariantRule, ...] = (
         when=f"window_cpi_ann > {IPC_ELIGIBILITY_FLOOR}", bound_type="HARD_INVARIANT",
         description="Deflation inverted over a window with positive CPI change",
     ),
-    InvariantRule("SHARPE_BOUND", "abs(sharpe) < 10", bound_type="PLAUSIBILITY",
-                  description="Risk-free or vol denominator defect"),
+    InvariantRule("SHARPE_BOUND", "abs(sharpe) < 10", when=f"vol_ann >= {SHARPE_VOL_FLOOR}", bound_type="PLAUSIBILITY",
+                  description="Risk-free or vol denominator defect (applies from SHARPE_VOL_FLOOR: below it a large ratio is the arithmetic of a near-zero volatility, as in a money-market fund)"),
     InvariantRule("SORTINO_BOUND", "abs(sortino) < 10", bound_type="PLAUSIBILITY",
                   description="Risk-free or vol denominator defect"),
     InvariantRule(

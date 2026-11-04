@@ -112,6 +112,22 @@ def test_loader_combines_nav_age_and_version_and_is_read_only():
     assert conn.sql and all(s.startswith("SELECT") for s in conn.sql)
 
 
+def test_a_sentinel_that_is_not_a_version_is_never_the_newest_and_never_a_stale_state():
+    """2026-11-04: MAX(algorithm_version) over the text column returned the backfill sentinel 'PRE_V26_UNKNOWN' (letters sort after digits), so EVERY real version looked older and
+    real findings (SHARPE_BOUND, 24 funds) were tagged RCA-E 'stale metric version'."""
+    got = stale_states({}, {"A": "20261011.20261019", "B": "20261003", "S": "PRE_V26_UNKNOWN"}, "PRE_V26_UNKNOWN", AS_OF, 60)
+    assert got == {}                                          # a non-version current makes no claim, a sentinel fund makes no claim
+    got = stale_states({}, {"A": "20261011.20261019", "B": "20261003", "S": "PRE_V26_UNKNOWN"}, "20261011.20261019", AS_OF, 60)
+    assert set(got) == {"B"}                                  # only the real older version is stale; the sentinel is not a state
+
+
+def test_the_loader_asks_only_for_real_versions():
+    conn = _Conn({}, {"A": "20261011"}, "20261011")
+    load_stale_states(conn, ["A"], 60, AS_OF)
+    versions = [s for s in conn.sql if "algorithm_version" in s]
+    assert versions and all("'^[0-9]'" in s for s in versions)
+
+
 def test_loader_with_no_isins_asks_nothing():
     conn = _Conn({}, {}, "20261010")
     assert load_stale_states(conn, [], 60, AS_OF) == {} and conn.sql == []
