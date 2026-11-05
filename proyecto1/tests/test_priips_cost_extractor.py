@@ -1408,3 +1408,18 @@ def test_a_total_equal_to_the_example_investment_or_zero_under_a_positive_annual
             {'total_cost_eur': 0.0, 'aci_pct': None}, {'total_cost_eur': 756.0, 'aci_pct': 0.038}]
     out = _drop_impossible_totals(text, rows)
     assert [r['total_cost_eur'] for r in out] == [None, None, 0.0, 0.0, 756.0]           # a fund with a zero / unknown annual keeps its 0
+
+
+def test_a_dla2_table_with_only_the_one_year_header_gets_its_rhp_column_from_the_label_rows():
+    """LU0217138725: the DLA2 header exposes only "1 ano"; the document's rows say "Costes totales 680 EUR 2,840 EUR" / "6.8% 3.7% cada ano". The 3.7 % was stored as the 1-year annual
+    and no total was read (22 funds of this layout violated ANNUAL_EQUALS_TOTAL_AT_1Y after the 2026-11-05 recompute). A one-value row never adds a column."""
+    from cost_table_parser import _bind_columns_by_label
+    only_1y = [{'horizon_label': '1 año', 'horizon_years': 1.0, 'is_rhp': False, 'total_cost_eur': None, 'aci_pct': 0.037, 'source': 'DLA2'}]
+    zone = "Costes totales 680 EUR 2,840 EUR\nIncidencia anual de los costes (*)\n6.8% 3.7% cada año\n"
+    out = _bind_columns_by_label(zone, [dict(r) for r in only_1y])
+    assert (out[0]['horizon_years'], out[0]['total_cost_eur'], out[0]['aci_pct']) == (1.0, 680.0, 0.068)
+    assert (out[1]['is_rhp'], out[1]['horizon_years'], out[1]['total_cost_eur'], out[1]['aci_pct']) == (True, -1.0, 2840.0, 0.037)
+    one_value = _bind_columns_by_label("Costes totales 680 EUR\nIncidencia anual de los costes (*)\n6.8%\n", [dict(r) for r in only_1y])
+    assert len(one_value) == 1 and one_value[0]['total_cost_eur'] is None
+    rising = _bind_columns_by_label("Costes totales 2,840 EUR 680 EUR\n", [dict(r) for r in only_1y])        # totals that fall with the horizon are never bound
+    assert len(rising) == 1 and rising[0]['total_cost_eur'] is None

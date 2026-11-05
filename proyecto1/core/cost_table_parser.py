@@ -1319,7 +1319,11 @@ def _bind_columns_by_label(zone: str, results: List[dict]) -> List[dict]:
     # glued to the label cell by the DLA2 serialisation). ONLY with the 1-year column: "5 anos" + RHP is usually the SAME column printed twice (LU0055631609), and binding two
     # values to it mis-bound hundreds of funds in the first attempt of this fix.
     rhp_column = years == [1.0] and any(e.get('is_rhp') and not (e.get('horizon_years') or 0) > 0 for e in results)
-    columns = [1.0] + years if synthetic_1y else years + ([None] if rhp_column else [])
+    # FIX-COST-MISSING-RHP-COLUMN (2026-11-05): a DLA2 table that exposes ONLY the "1 ano" header (no RHP column at all) leaves a single entry; when the document's own rows carry exactly two
+    # values the second one IS the recommended-period column (LU0217138725: "Costes totales 680 EUR 2,840 EUR" / "6.8% 3.7% cada ano" stored 3.7 % as the 1-year annual and no totals;
+    # 22 funds of the same layout were left violating ANNUAL_EQUALS_TOTAL_AT_1Y after the 2026-11-05 recompute). The RHP entry is added, as the synthetic 1-year one is below.
+    add_rhp = years == [1.0] and not any(e.get('is_rhp') for e in results)
+    columns = [1.0] + years if synthetic_1y else years + ([None] if (rhp_column or add_rhp) else [])
     n_cols = len(columns)
     if n_cols < 2 or (synthetic_1y and n_cols != 2):
         return results
@@ -1350,6 +1354,12 @@ def _bind_columns_by_label(zone: str, results: List[dict]) -> List[dict]:
         bound_aci = acis[0] if len(acis) == n_cols and all(a >= b for a, b in zip(acis, acis[1:])) else None
         if bound_total is not None or bound_aci is not None:
             results.append({'horizon_label': 'label-bound 1 year', 'horizon_years': 1.0, 'is_rhp': False,
+                            'total_cost_eur': bound_total, 'aci_pct': bound_aci, 'source': 'LABEL_BOUND'})
+    if add_rhp:
+        bound_total = totals[1] if len(totals) == n_cols and all(a <= b for a, b in zip(totals, totals[1:])) else None
+        bound_aci = acis[1] if len(acis) == n_cols and all(a >= b for a, b in zip(acis, acis[1:])) else None
+        if bound_total is not None or bound_aci is not None:
+            results.append({'horizon_label': 'label-bound RHP', 'horizon_years': -1.0, 'is_rhp': True,
                             'total_cost_eur': bound_total, 'aci_pct': bound_aci, 'source': 'LABEL_BOUND'})
     return results
 
