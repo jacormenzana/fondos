@@ -1471,3 +1471,13 @@ def test_a_late_table_reading_is_kept_only_when_every_column_is_complete_monoton
     assert not _complete_columns([{'horizon_years': 1.0, 'total_cost_eur': 689.0, 'aci_pct': 0.031}, {'horizon_years': 5.0, 'total_cost_eur': 1956.0, 'aci_pct': 0.069}])    # annuals that rise
     # LU0917670407: right numbers, wrong labels ("5 anos" first, then an inferred RHP) -> not trusted
     assert not _complete_columns([{'horizon_years': 5.0, 'total_cost_eur': 727.0, 'aci_pct': 0.073}, {'horizon_years': -1.0, 'total_cost_eur': 1610.0, 'aci_pct': 0.033}])
+
+
+def test_a_minimum_subscription_is_not_the_example_investment_of_the_cost_tables():
+    """LU2867168812 "The shares have a minimum investment of EUR 100,000" (costs on 10,000: its composition table has 211 EUR = 2.11 %) and LU2867168655 "... EUR 1,000,000":
+    the minimum subscription was read as the base, so 3,308 EUR became 3.308 % instead of 33.08 %."""
+    from cost_table_parser import parse_investment_base
+    assert parse_investment_base("The shares have a minimum investment of EUR 100,000. What are the risks") is None
+    assert parse_investment_base("minimum initial investment of EUR 1,000,000.") is None
+    assert parse_investment_base("importe mínimo de inversión: 100.000 EUR. Se invierten 10.000 EUR.") == 10000       # the real statement after the minimum still wins
+    assert parse_investment_base("Se invierten 10.000 EUR") == 10000 and parse_investment_base("Investment EUR 100,000 per year") == 100000

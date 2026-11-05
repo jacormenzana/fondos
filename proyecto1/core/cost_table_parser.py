@@ -1457,6 +1457,10 @@ _BASE_PATTERNS = [
 ]
 
 
+# "minimum" (EN) / "minimo" (ES, IT) / "mindest" (DE) / "min." up to two words before the matched investment phrase, within the same sentence (no full stop in between).
+_MINIMUM_BEFORE = re.compile(r'(?:minim\w*|m[í]nim\w*|mindest\w*|min\.)\s+(?:[^\W\d_]+\s+){0,2}$', re.IGNORECASE)
+
+
 def parse_investment_base(text: str) -> Optional[int]:
     """Return the PRIIPS example-investment base (e.g. 10000) or None.
     Bounded, pure. None when no base statement is found — callers must NOT
@@ -1464,8 +1468,11 @@ def parse_investment_base(text: str) -> Optional[int]:
     if not text:
         return None
     for pat in _BASE_PATTERNS:
-        m = pat.search(text)
-        if m:
+        for m in pat.finditer(text):
+            # FIX-BASE-NOT-MINIMUM (2026-11-05): "The shares have a MINIMUM investment of EUR 100,000" is the minimum subscription, not the example investment of the cost tables
+            # (LU2867168812: costs on 10,000 as its composition table proves, 211 EUR = 2.11 %; LU2867168655 said EUR 1,000,000). Skip a match that follows "minimum" in the same sentence.
+            if _MINIMUM_BEFORE.search(text[max(0, m.start() - 60):m.start()]):
+                continue
             digits = re.sub(r'[ .,]', '', m.group(1))
             try:
                 val = int(digits)
@@ -1473,6 +1480,7 @@ def parse_investment_base(text: str) -> Optional[int]:
                     return val
             except ValueError:
                 pass
+            break
     return None
 
 
