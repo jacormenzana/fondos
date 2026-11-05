@@ -1332,6 +1332,42 @@ def _row_values(zone: str, label: 're.Pattern', extractor, n_cols: int) -> List[
     return []
 
 
+# FIX-COST-NA-LAYOUT (2026-11-05): the "Reduction in Yield" layout of the Partners Group ELTIFs (LU2232093869, LU2232093604): the horizons are printed DESCENDING ("after 10 years / 5 years /
+# 1 year"), the value lines follow in the same order with "n.a." for a column that does not exist and the row label comes LAST ("3'881 n.a. n.a. Total costs", then "3.54% n.a. n.a." and
+# "Impact on return (RIY)"). The fragment search stored 3, 1 and 5 EUR (digits of the labels); the KID has ONE populated column, 10 years: 3,881 and 3.54 %.
+_NA_TOKEN = re.compile(r"^n\.?\s?a\.?$", re.IGNORECASE)
+_NA_AMOUNT = re.compile(r"^\d{1,3}(?:['\u2019.,\u202f]?\d{3})*(?:[.,]\d{1,2})?$|^\d+(?:[.,]\d{1,2})?$")
+_NA_PCT = re.compile(r"^-?\d{1,3}(?:[.,]\d{1,2})?\s*%$")
+_NA_HORIZON = re.compile(r"(?:after|despu[e\u00e9]s\s+de|apr[e\u00e8]s)\s+(\d+(?:[.,]\d+)?)\s*(?:years?|a[\u00f1n]os?|ans?)", re.IGNORECASE)
+
+
+def _na_layout_rows(zone: str) -> Optional[List[dict]]:
+    """Rows of the "n.a." layout, or None when the zone does not have it: a line "<v> <v> ... Total costs" whose values are amounts or "n.a." (at least one of each), the next line the
+    same number of percentages or "n.a.", and exactly that many horizons printed just before the line, in the SAME order as the values. A column that is "n.a." gets no row. Pure."""
+    lines = zone.splitlines()
+    for i, ln in enumerate(lines[:-1]):
+        m = re.match(r"^\s*(.+?)\s+(?:total\s+costs?|costes?\s+totales?)\s*$", ln, re.IGNORECASE)
+        if not m:
+            continue
+        tot = m.group(1).split()
+        pct = lines[i + 1].split()
+        if (len(tot) < 2 or len(tot) != len(pct) or not any(_NA_TOKEN.match(t) for t in tot)
+                or not all(_NA_TOKEN.match(t) or _NA_AMOUNT.match(t) for t in tot) or not all(_NA_TOKEN.match(t) or _NA_PCT.match(t) for t in pct)):
+            continue
+        years = [float(y.replace(',', '.')) for y in _NA_HORIZON.findall("\n".join(lines[max(0, i - 12):i]))][-len(tot):]
+        if len(years) != len(tot):
+            continue
+        rows = []
+        for y, t, a in zip(years, tot, pct):
+            if _NA_TOKEN.match(t) and _NA_TOKEN.match(a):
+                continue
+            rows.append({'horizon_label': f'label-bound {y:g} years', 'horizon_years': y, 'is_rhp': False,
+                         'total_cost_eur': None if _NA_TOKEN.match(t) else _normalize_amount(t),
+                         'aci_pct': None if _NA_TOKEN.match(a) else (_extract_pct_from_cell(a)), 'source': 'LABEL_BOUND_NA'})
+        return rows or None
+    return None
+
+
 def _bind_columns_by_label(zone: str, results: List[dict]) -> List[dict]:
     """The row labels are the evidence, the horizon labels are not (FND-0279, LU0617149793).
 
@@ -1342,6 +1378,9 @@ def _bind_columns_by_label(zone: str, results: List[dict]) -> List[dict]:
     the "Incidencia anual" line) carries exactly as many values as there are distinct horizons (at least two), those values ARE the columns: they replace
     whatever the fragment search found. A line with a different number of values, totals that fall with the horizon, or impacts that rise with it leave the
     entries untouched (the same guards as `_rebind_duplicate_columns`). `zone` runs from `_LABEL_BIND_BEFORE` characters before the section header to `_LABEL_BIND_SPAN` after it. Mutates and returns `results`. Pure."""
+    na_rows = _na_layout_rows(zone)
+    if na_rows is not None:
+        return na_rows
     years = sorted({e['horizon_years'] for e in results if (e.get('horizon_years') or 0) > 0})
     # PRIIPs prints one column per horizon, the 1-year one first and the recommended-period one last. When a SINGLE horizon longer than a year was found and the label
     # rows carry exactly two values, the two columns are 1 year and that horizon: the 1-year header is simply not in the pdf text (IE000NGCG706: "Costes totales 567 EUR

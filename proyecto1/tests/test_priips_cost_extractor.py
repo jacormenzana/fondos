@@ -1481,3 +1481,21 @@ def test_a_minimum_subscription_is_not_the_example_investment_of_the_cost_tables
     assert parse_investment_base("minimum initial investment of EUR 1,000,000.") is None
     assert parse_investment_base("importe mínimo de inversión: 100.000 EUR. Se invierten 10.000 EUR.") == 10000       # the real statement after the minimum still wins
     assert parse_investment_base("Se invierten 10.000 EUR") == 10000 and parse_investment_base("Investment EUR 100,000 per year") == 100000
+
+
+def test_the_na_layout_binds_in_header_order_and_gives_no_row_to_an_na_column():
+    """LU2232093869 (Partners Group ELTIF): horizons printed 10 / 5 / 1 years, "3'881 n.a. n.a. Total costs", "3.54% n.a. n.a.", "Impact on return (RIY)". The KID has ONE populated column;
+    the fragment search had stored 3, 1 and 5 EUR (digits of the labels)."""
+    from cost_table_parser import _na_layout_rows, _bind_columns_by_label
+    zone = ("Cost over time\nInvestment EUR 10'000\nIf you cash in after 10 years\nIf you cash in after 5 years\nIf you cash in after 1 year\n"
+            "3'881 n.a. n.a. Total costs\n3.54% n.a. n.a.\nImpact on return (RIY)\nper year\n")
+    rows = _na_layout_rows(zone)
+    assert [(r['horizon_years'], r['total_cost_eur'], r['aci_pct']) for r in rows] == [(10.0, 3881.0, 0.0354)]
+    assert _bind_columns_by_label(zone, [{'horizon_years': 5.0, 'total_cost_eur': 1.0, 'aci_pct': 0.0354, 'is_rhp': False}]) == rows    # the garbage entries are replaced
+    # the same line with the horizons in ASCENDING order binds by position too; a populated 1-year column keeps its row
+    asc = "after 1 year\nafter 5 years\nafter 10 years\n300 n.a. 3'000 Total costs\n3.0% n.a. 2.5%\n"
+    assert [(r['horizon_years'], r['total_cost_eur']) for r in _na_layout_rows(asc)] == [(1.0, 300.0), (10.0, 3000.0)]
+    # not this layout: no "n.a.", a different count, or no horizons printed before it
+    assert _na_layout_rows("after 1 year\nafter 5 years\n300 1,500 Total costs\n3.0% 2.5%\n") is None
+    assert _na_layout_rows("after 1 year\nafter 5 years\n300 n.a. Total costs\n3.0% n.a. 2.0%\n") is None
+    assert _na_layout_rows("300 n.a. Total costs\n3.0% n.a.\n") is None
