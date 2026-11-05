@@ -150,7 +150,12 @@ def test_the_dla2_parser_that_loses_a_total_is_completed_from_the_documents_own_
 def test_the_synthetic_one_year_row_needs_a_horizon_longer_than_a_year():
     zone = "Costes totales 567 EUR 697 EUR\nIncidencia anual de los costes (*)\n5,7% 2,4%\n"
     res = [_row(1.0, False, None, 0.1)]                                # the single found horizon is one year: not the recommended period
-    assert p._bind_columns_by_label(zone, res)[0]["total_cost_eur"] is None
+    out = p._bind_columns_by_label(zone, res)
+    # No SYNTHETIC 1-year row is ever created for it (the found entry IS the 1-year column). 2026-11-05: with no RHP entry at all the second value is the recommended-period
+    # column (FIX-COST-MISSING-RHP-COLUMN; measured on the 2,943 in-universe funds: 119 change, 0 totals altered), so the entry binds and an RHP entry is added.
+    assert [e for e in out if e["horizon_years"] == 1.0 and e.get("source") == "LABEL_BOUND"] == []
+    assert out[0]["total_cost_eur"] == 567.0 and abs(out[0]["aci_pct"] - 0.057) < 1e-9
+    assert out[1]["is_rhp"] is True and out[1]["total_cost_eur"] == 697.0
 
 
 def test_the_synthetic_one_year_row_is_added_with_whatever_the_row_binds():
