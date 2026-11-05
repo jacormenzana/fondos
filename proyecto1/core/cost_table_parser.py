@@ -640,7 +640,13 @@ def _split_dla2_row(row: str) -> List[str]:
     return [c.strip() for c in cells]
 
 
-def _parse_costs_over_time_dla2(text: str) -> List[dict]:
+# FIX-DLA2-ACI-ROW-WORDING (2026-11-05): the DLA2 ROW matcher knows ONE wording more than ACI_ROW: GVC Gaesco "Impacto del coste anual (*)" (ES0143559005). The whole superset
+# ACI_LABEL_ANCHOR was tried and rejected by the census: it made the weaker DLA2 parser win on "Impacto sobre la reduccion del rendimiento por ano" (LU0794123256, 1-year row lost) and on
+# "Incidencia sobre el rendimiento ... 0,51% 7,21%" in one cell (LU1665237613: the 1-year annual went from 7.21 to 0.51).
+_ACI_ROW_DLA2 = re.compile(ACI_ROW.pattern + r"|impacto\s*del\s*coste\s*anual", re.IGNORECASE)
+
+
+def _parse_costs_over_time_dla2(text: str, late: bool = False) -> List[dict]:
     """
     Parser para formato DLA2 de la tabla "Costes a lo largo del tiempo".
 
@@ -671,6 +677,20 @@ def _parse_costs_over_time_dla2(text: str) -> List[dict]:
 
     # Tomar un bloque razonable de líneas tras el encabezado (máx. 15)
     section_lines = dla2_lines[section_start: section_start + 15]
+
+    # FIX-DLA2-LATE-TABLE (2026-11-05): some serialisations print the section caption at the TOP of the page and the table itself 60 lines later (ES0143559005: caption at line 5,
+    # "despues de 1 ano|||despues de 5 anos" and "Costes totales|||327 EUR|||1.537 EUR" at lines 66-67). Nothing of the table is inside the 15-line window, the DLA2 result was empty and
+    # the plain-text fallback read a scenario payout (1.504 EUR) as the total. Only when the window holds NO total-costs row AND the caller asks for it (`late`, see
+    # parse_costs_over_time: only when the normal parse read no value at all, and only a COMPLETE result is kept): re-centre it on the first later row whose label cell is "Costes totales"
+    # and that carries values. Used unconditionally it overrode correct plain-text readings with DLA2 cells that the serialiser had split ("1|||956 EUR": IE000JMRXFF8).
+    def _is_total_row(_ln):
+        _c = _split_dla2_row(_ln)
+        return bool(_c) and bool(TOTAL_COSTS_ROW.search(_c[0])) and any(x.strip() for x in _c[1:])
+    if late and not any(_is_total_row(_ln) for _ln in section_lines):
+        for _k in range(section_start + 15, len(dla2_lines)):
+            if _is_total_row(dla2_lines[_k]):
+                section_lines = dla2_lines[max(section_start, _k - 4): _k + 6]
+                break
 
     # FIX-P1-J: label-split fragmentation. pdfplumber can insert a stray |||
     # INSIDE the label cell, e.g. "Incidencia anual de|||los costes (*)|||...".
@@ -735,7 +755,7 @@ def _parse_costs_over_time_dla2(text: str) -> List[dict]:
         _first_data_idx = None
         for _i, _ln in enumerate(section_lines):
             _c = _split_dla2_row(_ln)
-            _m1, _ = _match_with_join(_c, ACI_ROW)
+            _m1, _ = _match_with_join(_c, _ACI_ROW_DLA2)
             _m2, _ = _match_with_join(_c, TOTAL_COSTS_ROW)
             if _m1 or _m2:
                 _first_data_idx = _i
@@ -801,7 +821,8 @@ def _parse_costs_over_time_dla2(text: str) -> List[dict]:
     total_row:  Optional[List[str]] = None
     aci_row:    Optional[List[str]] = None
 
-    for ln in section_lines[header_row_idx + 1:]:
+    _data_lines = section_lines[header_row_idx + 1:]
+    for _li, ln in enumerate(_data_lines):
         cells = _split_dla2_row(ln)
         if not cells:
             continue
@@ -815,7 +836,16 @@ def _parse_costs_over_time_dla2(text: str) -> List[dict]:
                 total_row = _norm
                 continue
         if aci_row is None:
-            _m, _norm = _match_with_join(cells, ACI_ROW)
+            # FIX-DLA2-ACI-ROW-WORDING (2026-11-05): ACI_ROW plus ONE wording (see _ACI_ROW_DLA2; ACI_ROW itself stays intact on purpose: widening it moved the global fallback
+            # cascade, ACT-06). Row context only: a short label cell, first match after the header. GVC Gaesco "Impacto del cos|||te anual (*)|||3,3%|||3,1% cada ano"
+            # (ES0143559005) matched nothing, the DLA2 result was thrown away (no annual) and the plain-text fallback read the "Tension" scenario payout, 1.504 EUR, as the total.
+            _m, _norm = _match_with_join(cells, _ACI_ROW_DLA2)
+            if not _m and len(cells) >= 2 and _li + 1 < len(_data_lines):
+                # A label split over TWO table rows: "Incidencia anual|||8,2 %|||4,2 % cada ano" followed by the continuation row "de los costes (*)" with no values (DWS, LU3085135567:
+                # the 0.1 % of the transaction-cost line was stored as the annual impact instead).
+                _nx = _split_dla2_row(_data_lines[_li + 1])
+                if _nx and not any(c.strip() for c in _nx[1:]) and _ACI_ROW_DLA2.search(cells[0].strip() + ' ' + _nx[0].strip()):
+                    _m, _norm = True, [cells[0].strip() + ' ' + _nx[0].strip()] + cells[1:]
             if _m and len(_norm[0]) < 150:
                 aci_row = _norm
                 continue
@@ -875,9 +905,13 @@ def _parse_costs_over_time_dla2(text: str) -> List[dict]:
     # inflate n_cols and break compact-value pairing. Keep a cell only if it
     # has a year/month/RHP signal, contains a digit, or is ≥7 chars (long
     # enough to be a meaningful phrase rather than a word fragment).
+    # FIX-DLA2-CONNECTOR-FRAGMENT (2026-11-05): a header cell that is ONLY the connector of "despues de N anos" / "after N years" is a fragment, not a column: the serialiser splits
+    # "despues|||de 1 ano" and the 7-character "despues" passed the length test below, giving 3 columns for 2 values (ES0143559005: no total could be paired).
+    _CONNECTOR_ONLY = re.compile(r'^\s*(?:despu[eé]s|after|tras|si\s+sale|en\s+caso\s+de\s+salida)\s*(?:de)?\s*$', re.I)
     _label_idx = [
         i for i, lbl in enumerate(horizon_labels)
         if lbl.strip()
+        and not _CONNECTOR_ONLY.search(lbl)
         and not _BASE_CELL_RE.search(lbl)
         and (
             HORIZON_YEARS_PATTERN.search(lbl)
@@ -1688,6 +1722,21 @@ def _bind_rows_by_label_in_text(text: str, results: List[dict]) -> List[dict]:
     return _bind_columns_by_label(text[max(0, m.start() - _LABEL_BIND_BEFORE):m.start() + _LABEL_BIND_SPAN], results)
 
 
+def _complete_columns(rows: List[dict]) -> bool:
+    """FIX-DLA2-LATE-TABLE: a DLA2 reading taken from a re-centred window is kept only when it is a whole table: at least two columns, every column with a total AND an annual impact, the
+    totals not falling and the annual impacts not rising with the column order (the guards of the label binder), and resolved ascending horizons. Pure."""
+    if len(rows) < 2 or any(r.get('total_cost_eur') is None or r.get('aci_pct') is None for r in rows):
+        return False
+    # Every horizon read from the header itself and strictly ascending: an INFERRED "RHP" column or a first column labelled "5 anos" means the header was fragmented and the columns are
+    # mislabelled even when the numbers are right (LU0917670407: 727 EUR / 7.3 % labelled 5 years, 1.610 EUR / 3.3 % labelled RHP).
+    years = [r.get('horizon_years') for r in rows]
+    if any(y is None or y <= 0 for y in years) or any(a >= b for a, b in zip(years, years[1:])):
+        return False
+    totals = [r['total_cost_eur'] for r in rows]
+    acis = [r['aci_pct'] for r in rows]
+    return all(a <= b for a, b in zip(totals, totals[1:])) and all(a >= b for a, b in zip(acis, acis[1:]))
+
+
 def _drop_impossible_totals(text: str, results: List[dict]) -> List[dict]:
     """FIX-COST-BASE-BLEED / FIX-COST-ZERO-TOTAL (2026-11-04, FND-0278 family): two totals no KID can print. (1) The per-horizon fragment search takes the first amount after a horizon
     label, and next to the label sits the example-investment sentence ("Se invierten 10.000 EUR"): IE00BDGV0290 and NO0013528356 stored a total of 10,000 (100 % of the base) at 5
@@ -1749,7 +1798,14 @@ def parse_costs_over_time(text: str) -> List[dict]:
             # text which may find ACI in the raw prose. Only replace if plain
             # text yields at least one entry with a non-None aci_pct — prevents
             # regressing funds where plain text also extracts nothing.
-            if not results or all(e.get('aci_pct') is None for e in results):
+            # FIX-DLA2-LATE-TABLE (2026-11-05): BEFORE that fallback, a table printed far below its caption is looked for in the DLA2 text itself (ES0143559005: the normal window gives
+            # three empty columns and the plain-text fallback then read the 'Tension' scenario payout, 1.504 EUR, as the total). Kept only when it is a whole table (_complete_columns).
+            _late_ok = False
+            if not results or all(r.get('total_cost_eur') is None and r.get('aci_pct') is None for r in results):
+                _late = _parse_costs_over_time_dla2(text, late=True)
+                if _complete_columns(_late):
+                    results, _late_ok = _late, True
+            if not _late_ok and (not results or all(e.get('aci_pct') is None for e in results)):
                 _plain = _parse_costs_over_time_plain(text)
                 if _plain and any(e.get('aci_pct') is not None for e in _plain):
                     results = _plain

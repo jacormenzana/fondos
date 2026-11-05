@@ -1423,3 +1423,51 @@ def test_a_dla2_table_with_only_the_one_year_header_gets_its_rhp_column_from_the
     assert len(one_value) == 1 and one_value[0]['total_cost_eur'] is None
     rising = _bind_columns_by_label("Costes totales 2,840 EUR 680 EUR\n", [dict(r) for r in only_1y])        # totals that fall with the horizon are never bound
     assert len(rising) == 1 and rising[0]['total_cost_eur'] is None
+
+
+# --- DLA2 annual-row recognition (2026-11-05, read from the KID images of ES0143559005 and LU3085135567) ---
+
+def _dla2_filler(n):
+    return "\n".join(f"|||Linea de relleno {i}|||texto|||" for i in range(n))
+
+
+def test_a_dla2_annual_row_labelled_impacto_del_coste_anual_and_a_table_far_below_its_caption_are_read():
+    """ES0143559005 (GVC Gaesco): the caption is at the top of the page, the table 60 lines later, the header is split ("despues|||de 1 ano") and the annual row reads
+    "Impacto del cos|||te anual (*)". The KID prints 327 EUR / 1.537 EUR and 3,3 % / 3,1 %; the plain-text fallback read the 'Tension' scenario payout (1.504 EUR) as the total."""
+    from cost_table_parser import parse_costs_over_time
+    dla2 = ("|||Costes a lo largo del tiempo|||\n" + _dla2_filler(40) + "\n"
+            "|||En caso d|||e salida||||||En caso de salida|||\n|||Inversión 10.000|||EUR|||\n"
+            "|||después|||de 1 año||||||después de 5 años|||\n"
+            "|||Costes totales|||||||||327 €||||||1.537 €|||\n"
+            "|||Impacto del cos|||te anual (*)|||||||3,3%||||||3,1% cada año|||\n")
+    rows = {r['horizon_years']: r for r in parse_costs_over_time(dla2)}
+    assert (rows[1.0]['total_cost_eur'], rows[1.0]['aci_pct']) == (327.0, 0.033) and (rows[5.0]['total_cost_eur'], rows[5.0]['aci_pct']) == (1537.0, 0.031)
+    assert len(rows) == 2                                                     # the connector fragment "despues" is not a third column
+
+
+def test_an_annual_row_label_split_over_two_table_rows_is_one_row():
+    """LU3085135567 (DWS): "Incidencia anual|||8,2 %|||4,2 % cada ano" followed by the value-less continuation row "de los costes (*)"; the 0.1 % of the transaction-cost line was stored as the annual impact."""
+    from cost_table_parser import _parse_costs_over_time_dla2
+    dla2 = ("|||Costes a lo largo del tiempo|||\n||||||En caso de salida después de 1 año5|||En caso de salida después de 5 años|||\n"
+            "|||Costes totales|||819 EUR|||2.235 EUR|||\n|||Incidencia anual|||8,2 %|||4,2 % cada año|||\n|||de los costes (*)|||||||||\n")
+    rows = {r['horizon_years']: r for r in _parse_costs_over_time_dla2(dla2)}
+    assert (rows[1.0]['total_cost_eur'], rows[1.0]['aci_pct']) == (819.0, 0.082) and (rows[5.0]['total_cost_eur'], rows[5.0]['aci_pct']) == (2235.0, 0.042)
+
+
+def test_the_late_table_window_does_not_move_a_table_that_is_already_inside_it():
+    from cost_table_parser import _parse_costs_over_time_dla2
+    dla2 = ("|||Costes a lo largo del tiempo|||\n||||||En caso de salida después de 1 año|||En caso de salida después de 5 años|||\n|||Costes totales|||300 €|||1.500 €|||\n"
+            "|||Incidencia anual de los costes|||3,0%|||3,0% cada año|||\n" + _dla2_filler(40) + "\n|||Costes totales|||999 €|||9.999 €|||\n")
+    rows = {r['horizon_years']: r for r in _parse_costs_over_time_dla2(dla2)}
+    assert rows[1.0]['total_cost_eur'] == 300.0 and rows[5.0]['total_cost_eur'] == 1500.0
+
+
+def test_a_late_table_reading_is_kept_only_when_every_column_is_complete_monotone_and_labelled():
+    from cost_table_parser import _complete_columns
+    ok = [{'horizon_years': 1.0, 'total_cost_eur': 327.0, 'aci_pct': 0.033}, {'horizon_years': 5.0, 'total_cost_eur': 1537.0, 'aci_pct': 0.031}]
+    assert _complete_columns(ok)
+    assert not _complete_columns(ok[:1]) and not _complete_columns([ok[0], {'horizon_years': 5.0, 'total_cost_eur': None, 'aci_pct': 0.031}])
+    assert not _complete_columns([ok[1], ok[0]])                              # totals that fall with the horizon
+    assert not _complete_columns([{'horizon_years': 1.0, 'total_cost_eur': 689.0, 'aci_pct': 0.031}, {'horizon_years': 5.0, 'total_cost_eur': 1956.0, 'aci_pct': 0.069}])    # annuals that rise
+    # LU0917670407: right numbers, wrong labels ("5 anos" first, then an inferred RHP) -> not trusted
+    assert not _complete_columns([{'horizon_years': 5.0, 'total_cost_eur': 727.0, 'aci_pct': 0.073}, {'horizon_years': -1.0, 'total_cost_eur': 1610.0, 'aci_pct': 0.033}])
