@@ -56,6 +56,7 @@ from cost_table_parser    import (
     parse_investment_base,
 )
 from cost_cross_validator import validate_pct_eur, ValidationResult
+from cost_table_parser import _total_fits_annual, _SCHEDULE_TOTAL_ANNUAL_RATIO_MIN, _SCHEDULE_TOTAL_ANNUAL_RATIO_MAX   # noqa: F401  (the coherence band: one definition, P#11)
 
 # ---------------------------------------------------------------------------
 # Config con fallback aislado (mismo patrón que cost_cross_validator.py)
@@ -140,8 +141,7 @@ _SCHEDULE_RECONCILE_TOL_PP = 1.5
 # agrupar, total igual a la base, total 0 bajo un anual positivo). El 2026-11-04 el propietario ordeno NO anular valores por esta banda: la banda ya no borra nada, marca la
 # fila ([DQ-SCHEDULE-TOTAL-ANNUAL], P#9) y la auditoria estadistica la cuenta. Ojo: cuando el lado equivocado es el ANUAL (LU3085135567: total 2.235 EUR correcto, anual 0,1 %
 # erroneo) anular el total habria destruido el dato valido.
-_SCHEDULE_TOTAL_ANNUAL_RATIO_MIN = 0.4
-_SCHEDULE_TOTAL_ANNUAL_RATIO_MAX = 2.5
+# _SCHEDULE_TOTAL_ANNUAL_RATIO_MIN / _MAX and _total_fits_annual live in cost_table_parser (P#11: the label binder and the extractor use ONE band).
 
 
 # ===========================================================================
@@ -571,22 +571,6 @@ def _matches_return_projection(text: str, aci_pct: Optional[float]) -> bool:
             except ValueError:                 # token no numérico → ignorar
                 continue
     return False
-
-
-def _total_fits_annual(annual_pct: float, total_pct: float, horizon_years: float) -> bool:
-    """FIX-SCHEDULE-TOTAL-ANNUAL-COHERENCE: does the accumulated total of a schedule row fit the annual impact of the SAME row? Detection only (see _flag_incoherent_totals).
-    At one year they are the same cost, so the KID's own band applies (shared.statistical_audit.tolerances: rounding 0.06 pp or annual/total in [0.9, 1.25], the definition the
-    audit uses: P#11). Below one year the annual impact is a per-year rate and one-off costs weigh more: total/annual in [0.4 x years, 1.25]. From two years on the total is
-    about annual x years (measured ratio p1 0.75 .. p99 1.87) and the band is [_SCHEDULE_TOTAL_ANNUAL_RATIO_MIN, _MAX]. Pure."""
-    if annual_pct is None or total_pct is None or annual_pct <= 0:
-        return True                                           # nothing to compare: no claim
-    if abs(horizon_years - 1.0) <= 0.01:
-        from shared.statistical_audit.tolerances import KID_ONE_YEAR_RATIO_MAX, KID_ONE_YEAR_RATIO_MIN, KID_ROUNDING_TOLERANCE_PP
-        return abs(annual_pct - total_pct) < KID_ROUNDING_TOLERANCE_PP or KID_ONE_YEAR_RATIO_MIN * total_pct <= annual_pct <= KID_ONE_YEAR_RATIO_MAX * total_pct
-    if horizon_years < 1.0:
-        return _SCHEDULE_TOTAL_ANNUAL_RATIO_MIN * horizon_years <= total_pct / annual_pct <= 1.25
-    ratio = total_pct / (annual_pct * horizon_years)
-    return _SCHEDULE_TOTAL_ANNUAL_RATIO_MIN <= ratio <= _SCHEDULE_TOTAL_ANNUAL_RATIO_MAX
 
 
 def _flag_incoherent_totals(rows: List[dict], isin: str) -> list:

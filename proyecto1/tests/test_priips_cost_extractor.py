@@ -978,12 +978,11 @@ def test_label_anchor_is_fill_only_for_resolved_funds():
         "Costes de entrada 0%\n"
     )
     out = extract_priips_costs(text, "LABEL_ANCHOR_FILLONLY")
-    # The parser's own pick (1,5%) stands. The anchor would have offered 1,6%
-    # for the RHP column, so this asserts the fill-only contract: a resolved
-    # ACI_RHP is never overwritten by the anchor.
-    assert out.get("ACI_RHP") == 1.5, (
-        f"ACI_RHP={out.get('ACI_RHP')}: anchor must not override a value the "
-        "parser already resolved"
+    # 2026-11-05 (FIX-COST-RISING-ANNUAL): this KID prints a RISING pair, "1,5% 1,6%". The old label binder refused rising annuals and left the 1-year value (1,5%) copied onto the RHP,
+    # which this test then pinned as "the parser's own pick". The binder now binds a rising pair when the totals row bound cleanly and each annual fits its own total (800 EUR over 5
+    # years against 1,6%: ratio 2.0), so the parser itself resolves the RHP column to what the KID says, 1,6%, and the anchor has nothing to fill or override.
+    assert out.get("ACI_1Y") == 1.5 and out.get("ACI_RHP") == 1.6, (
+        f"ACI_1Y={out.get('ACI_1Y')} ACI_RHP={out.get('ACI_RHP')}: the rising pair printed by the KID must be bound column by column"
     )
 
 
@@ -1499,3 +1498,15 @@ def test_the_na_layout_binds_in_header_order_and_gives_no_row_to_an_na_column():
     assert _na_layout_rows("after 1 year\nafter 5 years\n300 1,500 Total costs\n3.0% 2.5%\n") is None
     assert _na_layout_rows("after 1 year\nafter 5 years\n300 n.a. Total costs\n3.0% n.a. 2.0%\n") is None
     assert _na_layout_rows("300 n.a. Total costs\n3.0% n.a.\n") is None
+
+
+def test_a_rising_annual_pair_is_bound_only_when_each_annual_fits_its_own_total():
+    """LU0549547510 "Total Costs 84 EUR 528 EUR / 0.8 % 0.9 % each year" and IE00BM8QS764 "137 EUR 1,027 EUR / 1.4% 1.5%": real KIDs whose annual impact rises with the horizon. The reversed
+    pair of the FND-0279 case ("719 / 1960" over "3,0% 7,2%": the 1-year annual must be about 7.2 %) stays unbound."""
+    from cost_table_parser import _bind_columns_by_label
+    def rows():
+        return [{'horizon_years': 1.0, 'is_rhp': False, 'total_cost_eur': None, 'aci_pct': 0.0061}, {'horizon_years': 5.0, 'is_rhp': False, 'total_cost_eur': None, 'aci_pct': 0.0061}]
+    out = _bind_columns_by_label("Total Costs 84 € 528 €\nAnnual Cost Impact (*)\n0.8 % 0.9 % each year\n", rows())
+    assert [(e['total_cost_eur'], e['aci_pct']) for e in out if e['horizon_years'] > 0] == [(84.0, 0.008), (528.0, 0.009)]
+    rev = _bind_columns_by_label("Costes totales 719 USD 1960 USD\nIncidencia anual de los costes (*)\n3,0% 7,2%\n", rows())
+    assert [e['aci_pct'] for e in rev if e['horizon_years'] > 0] == [0.0061, 0.0061]

@@ -1315,8 +1315,28 @@ def _values_near_label(window: str, label: 're.Pattern', extractor) -> List[floa
     return []
 
 
+_SCHEDULE_TOTAL_ANNUAL_RATIO_MIN = 0.4
+_SCHEDULE_TOTAL_ANNUAL_RATIO_MAX = 2.5
+
+
+def _total_fits_annual(annual_pct: float, total_pct: float, horizon_years: float) -> bool:
+    """FIX-SCHEDULE-TOTAL-ANNUAL-COHERENCE: does the accumulated total of a schedule row fit the annual impact of the SAME row? Detection only (see _flag_incoherent_totals).
+    At one year they are the same cost, so the KID's own band applies (shared.statistical_audit.tolerances: rounding 0.06 pp or annual/total in [0.9, 1.25], the definition the
+    audit uses: P#11). Below one year the annual impact is a per-year rate and one-off costs weigh more: total/annual in [0.4 x years, 1.25]. From two years on the total is
+    about annual x years (measured ratio p1 0.75 .. p99 1.87) and the band is [_SCHEDULE_TOTAL_ANNUAL_RATIO_MIN, _MAX]. Pure."""
+    if annual_pct is None or total_pct is None or annual_pct <= 0:
+        return True                                           # nothing to compare: no claim
+    if abs(horizon_years - 1.0) <= 0.01:
+        from shared.statistical_audit.tolerances import KID_ONE_YEAR_RATIO_MAX, KID_ONE_YEAR_RATIO_MIN, KID_ROUNDING_TOLERANCE_PP
+        return abs(annual_pct - total_pct) < KID_ROUNDING_TOLERANCE_PP or KID_ONE_YEAR_RATIO_MIN * total_pct <= annual_pct <= KID_ONE_YEAR_RATIO_MAX * total_pct
+    if horizon_years < 1.0:
+        return _SCHEDULE_TOTAL_ANNUAL_RATIO_MIN * horizon_years <= total_pct / annual_pct <= 1.25
+    ratio = total_pct / (annual_pct * horizon_years)
+    return _SCHEDULE_TOTAL_ANNUAL_RATIO_MIN <= ratio <= _SCHEDULE_TOTAL_ANNUAL_RATIO_MAX
+
+
 _LABEL_BIND_SPAN = 6000                # how far past the section header the row labels are looked for (the window above is only 1,500)
-_LABEL_BIND_BEFORE = 1500              # ... and how far BEFORE it: in some pdf text orders the table body precedes its caption (BE0947854676)
+_LABEL_BIND_BEFORE = 2500              # ... and how far BEFORE it: in some pdf text orders the table body precedes its caption (BE0947854676; 2026-11-05: 1500 -> 2500, IE00BM8QS764 prints "Total costs" ~1,700 characters before its heading and stored the 90 EUR management-fee cell as the 5-year total)
 
 
 def _row_values(zone: str, label: 're.Pattern', extractor, n_cols: int) -> List[float]:
@@ -1368,6 +1388,12 @@ def _na_layout_rows(zone: str) -> Optional[List[dict]]:
     return None
 
 
+def _annuals_fit_totals(totals: list, acis: list, columns: list, base: float) -> bool:
+    """Does the annual impact of EVERY column fit that column's own total (the coherence band, one definition)? `columns` = the horizon of each column (None = unresolved: cannot be
+    checked, so no). totals in currency, acis as ratios, `base` the example investment. Pure."""
+    return all(y is not None and _total_fits_annual(a * 100.0, t / base * 100.0, y) for t, a, y in zip(totals, acis, columns))
+
+
 def _bind_columns_by_label(zone: str, results: List[dict]) -> List[dict]:
     """The row labels are the evidence, the horizon labels are not (FND-0279, LU0617149793).
 
@@ -1412,25 +1438,30 @@ def _bind_columns_by_label(zone: str, results: List[dict]) -> List[dict]:
     # por ano" of the M&G cluster, "Impacto del coste anual", "Impact on return"), not ACI_ROW, which stays intact on purpose (widening it moved the global fallback cascade: ACT-06).
     # M&G's "Costes totales 714 EUR 1.569 EUR" / "7,20% 3,40%" kept the RHP annual (3.4 %) on the 1-year row because only the totals row was recognised.
     acis = _row_values(zone, ACI_LABEL_ANCHOR, _extract_pct_list_from_cell, n_cols)
-    if len(totals) == n_cols and all(a <= b for a, b in zip(totals, totals[1:])):
+    totals_ok = len(totals) == n_cols and all(a <= b for a, b in zip(totals, totals[1:]))
+    # FIX-COST-RISING-ANNUAL (2026-11-05): the annual impact is not always falling with the horizon: LU0549547510 prints "0.8 % 0.9 % each year", IE00BM8QS764 "1.4% 1.5% each year" (no entry
+    # fee to amortise), and the "must not rise" guard kept the garbage annual next to a correct total. A rising pair is bound when the totals row bound cleanly (the columns are validated) AND every
+    # annual fits its OWN column total with the band the extractor uses (`_total_fits_annual`): "3,0% 7,2%" over totals 719 / 1960 stays unbound (reversed values: the 1-year annual must be ~7.2 %).
+    acis_ok = len(acis) == n_cols and (all(a >= b for a, b in zip(acis, acis[1:])) or (totals_ok and _annuals_fit_totals(totals, acis, columns, parse_investment_base(zone) or 10000)))
+    if totals_ok:
         for e in results:
             i = column(e)
             if i is not None:
                 e['total_cost_eur'] = totals[i]
-    if len(acis) == n_cols and all(a >= b for a, b in zip(acis, acis[1:])):
+    if acis_ok:
         for e in results:
             i = column(e)
             if i is not None:
                 e['aci_pct'] = acis[i]
     if synthetic_1y and not any(e.get('horizon_years') == 1.0 for e in results):
-        bound_total = totals[0] if len(totals) == n_cols and all(a <= b for a, b in zip(totals, totals[1:])) else None
-        bound_aci = acis[0] if len(acis) == n_cols and all(a >= b for a, b in zip(acis, acis[1:])) else None
+        bound_total = totals[0] if totals_ok else None
+        bound_aci = acis[0] if acis_ok else None
         if bound_total is not None or bound_aci is not None:
             results.append({'horizon_label': 'label-bound 1 year', 'horizon_years': 1.0, 'is_rhp': False,
                             'total_cost_eur': bound_total, 'aci_pct': bound_aci, 'source': 'LABEL_BOUND'})
     if add_rhp:
-        bound_total = totals[1] if len(totals) == n_cols and all(a <= b for a, b in zip(totals, totals[1:])) else None
-        bound_aci = acis[1] if len(acis) == n_cols and all(a >= b for a, b in zip(acis, acis[1:])) else None
+        bound_total = totals[1] if totals_ok else None
+        bound_aci = acis[1] if acis_ok else None
         if bound_total is not None or bound_aci is not None:
             results.append({'horizon_label': 'label-bound RHP', 'horizon_years': -1.0, 'is_rhp': True,
                             'total_cost_eur': bound_total, 'aci_pct': bound_aci, 'source': 'LABEL_BOUND'})
@@ -1769,10 +1800,10 @@ def _bind_rows_by_label_in_text(text: str, results: List[dict]) -> List[dict]:
     return _bind_columns_by_label(text[max(0, m.start() - _LABEL_BIND_BEFORE):m.start() + _LABEL_BIND_SPAN], results)
 
 
-def _complete_columns(rows: List[dict]) -> bool:
+def _complete_columns(rows: List[dict], need_aci: bool = True) -> bool:
     """FIX-DLA2-LATE-TABLE: a DLA2 reading taken from a re-centred window is kept only when it is a whole table: at least two columns, every column with a total AND an annual impact, the
     totals not falling and the annual impacts not rising with the column order (the guards of the label binder), and resolved ascending horizons. Pure."""
-    if len(rows) < 2 or any(r.get('total_cost_eur') is None or r.get('aci_pct') is None for r in rows):
+    if len(rows) < 2 or any(r.get('total_cost_eur') is None or (need_aci and r.get('aci_pct') is None) for r in rows):
         return False
     # Every horizon read from the header itself and strictly ascending: an INFERRED "RHP" column or a first column labelled "5 anos" means the header was fragmented and the columns are
     # mislabelled even when the numbers are right (LU0917670407: 727 EUR / 7.3 % labelled 5 years, 1.610 EUR / 3.3 % labelled RHP).
@@ -1780,7 +1811,7 @@ def _complete_columns(rows: List[dict]) -> bool:
     if any(y is None or y <= 0 for y in years) or any(a >= b for a, b in zip(years, years[1:])):
         return False
     totals = [r['total_cost_eur'] for r in rows]
-    acis = [r['aci_pct'] for r in rows]
+    acis = [r['aci_pct'] for r in rows if r.get('aci_pct') is not None]
     return all(a <= b for a, b in zip(totals, totals[1:])) and all(a >= b for a, b in zip(acis, acis[1:]))
 
 
@@ -1850,8 +1881,11 @@ def parse_costs_over_time(text: str) -> List[dict]:
             _late_ok = False
             if not results or all(r.get('total_cost_eur') is None and r.get('aci_pct') is None for r in results):
                 _late = _parse_costs_over_time_dla2(text, late=True)
-                if _complete_columns(_late):
-                    results, _late_ok = _late, True
+                if _complete_columns(_late, need_aci=False):
+                    # the annual row may sit on the NEXT page (ES0179692001: "2/3" footer, then "Impacto del coste anual (*) / 2,7% 2,5% cada ano" only in the plain text): bind it from the label row
+                    _late = _bind_rows_by_label_in_text(text, [dict(r) for r in _late])
+                    if _complete_columns(_late):
+                        results, _late_ok = _late, True
             if not _late_ok and (not results or all(e.get('aci_pct') is None for e in results)):
                 _plain = _parse_costs_over_time_plain(text)
                 if _plain and any(e.get('aci_pct') is not None for e in _plain):
