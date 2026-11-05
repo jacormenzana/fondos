@@ -1510,3 +1510,16 @@ def test_a_rising_annual_pair_is_bound_only_when_each_annual_fits_its_own_total(
     assert [(e['total_cost_eur'], e['aci_pct']) for e in out if e['horizon_years'] > 0] == [(84.0, 0.008), (528.0, 0.009)]
     rev = _bind_columns_by_label("Costes totales 719 USD 1960 USD\nIncidencia anual de los costes (*)\n3,0% 7,2%\n", rows())
     assert [e['aci_pct'] for e in rev if e['horizon_years'] > 0] == [0.0061, 0.0061]
+
+
+def test_label_less_value_lines_are_read_only_when_every_annual_fits_its_own_total():
+    """Adepa KIDs (LU1481479811, LU2357235493): "If you exit after 3 years / after 1 year", then "180 EUR 577 EUR" and "1.8 % 1.8 %" with no label; the printed horizon order is not the amounts'
+    order, so the ASCENDING assignment is validated by coherence. Scenario lines ("10,190 EUR 10,770 EUR" / "2.5 % 1.9 %") are 102 % of the base and never qualify."""
+    from cost_table_parser import _detached_rows
+    window = ("Moderate\n10,190 EUR\n10,770 EUR\n2.5 % 1.9 %\n12,110 EUR 12,600 EUR\n21.1 % 8.1 %\nIf you exit after 3 years\nIf you exit after 1 year\n"
+              "180 EUR 577 EUR\n1.8 % 1.8 %\nPage 2/3\n")
+    assert _detached_rows(window, [1.0, 3.0]) == ([180.0, 577.0], [0.018, 0.018])
+    assert _detached_rows("12,110 EUR 12,600 EUR\n21.1 % 8.1 %\n", [1.0, 3.0]) is None                      # payouts: not coherent with their percentages
+    assert _detached_rows("180 EUR 577 EUR\n1.8 % 9.0 %\n", [1.0, 3.0]) is None                              # 3-year annual 9.0 % against 5.77 %: not coherent
+    assert _detached_rows("577 EUR 180 EUR\n1.8 % 1.8 %\n", [1.0, 3.0]) is None                              # totals that fall
+    assert _detached_rows("180 EUR 577 EUR\n1.8 % 1.8 %\n", [1.0, 3.0, 5.0]) is None                         # wrong number of columns

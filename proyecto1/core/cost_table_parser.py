@@ -1494,7 +1494,39 @@ def _rebind_duplicate_columns(window: str, results: List[dict]) -> List[dict]:
             e['aci_pct'] = v
         for e in rhp_dup:
             e['aci_pct'] = acis[-1]
+    # FIX-COST-DETACHED-ROWS (2026-11-05): when the label rows gave nothing, the values may sit on LABEL-LESS lines ("If you exit after 3 years / after 1 year", then "180 EUR 577 EUR" and
+    # "1.8 % 1.8 %": the Adepa KIDs, LU1481479811 / LU2357235493 / LU2357235576, which stored the 1-year total on both columns). The order of the printed horizons is not reliable there (3 years
+    # BEFORE 1 year while the amounts keep the visual order), so the ASCENDING assignment is validated instead: see _detached_rows.
+    if len({(e.get('total_cost_eur'), e.get('aci_pct')) for e in dup}) == 1:
+        got = _detached_rows(window, [e['horizon_years'] for e in dup])
+        if got is not None:
+            for e, t, a in zip(dup, got[0], got[1]):
+                e['total_cost_eur'], e['aci_pct'] = t, a
+            for e in rhp_dup:
+                e['total_cost_eur'], e['aci_pct'] = got[0][-1], got[1][-1]
     return results
+
+
+def _detached_rows(window: str, years: list):
+    """(totals, annuals) of the first label-less pair of lines in `window` that is a cost table: a line made ONLY of exactly len(years) currency amounts, not falling, followed by a line of the same
+    number of positive percentages, such that EVERY annual fits its own column total (`_total_fits_annual`, the band the extractor uses) when the amounts are assigned to `years` in ascending
+    order. The coherence is what tells the cost line from a scenario line ("10,190 EUR 10,770 EUR" / "2.5 % 1.9 %" is a payout of 102 % of the base). None when no pair qualifies. Pure."""
+    k = len(years)
+    lines = window.splitlines()
+    base = parse_investment_base(window) or 10000
+    for i, ln in enumerate(lines[:-1]):
+        if not ln.strip() or _EUR_TOKEN.sub('', ln).strip():
+            continue                                                  # anything besides amounts on the line: not a values-only line
+        amts = _extract_eur_list_from_cell(ln)
+        if len(amts) != k or any(a > b for a, b in zip(amts, amts[1:])):
+            continue
+        nxt = lines[i + 1]
+        pcts = _extract_pct_list_from_cell(nxt)
+        if len(pcts) != k or any(p <= 0 for p in pcts) or re.sub(r'(?i)-?\d+[.,]?\d*\s*%|each\s+year|cada\s+a[ñn]o|per\s+year|p\.a\.', '', nxt).strip():
+            continue
+        if _annuals_fit_totals(amts, pcts, sorted(years), base):
+            return amts, pcts
+    return None
 
 
 # ======================================================================
