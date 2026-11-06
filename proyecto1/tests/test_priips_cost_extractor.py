@@ -1535,3 +1535,15 @@ def test_a_percentage_after_another_cost_rows_name_is_not_adjacent_to_the_aci_la
     text = ("Costes totales 819 EUR 2.235 EUR\nIncidencia anual de los costes (*)\n \nCostes de entrada \nCostes corrientes detraidos cada año\n"
             "Costes de operación 0,1 % del valor de su inversión al año.\n10 EUR\n4 Véase la nota 3 arriba.\n8,2 % 4,2 % cada año\nHasta 500 EUR\n")
     assert _recover_aci_from_label(text) == (8.2, 4.2)
+
+
+def test_the_recommended_period_is_read_from_the_sentence_form_but_not_from_a_footnote():
+    """M&G Lux (49 funds, Cost_RHP_Years NULL -> no RHP schedule row -> SCHEDULE_ACI_RHP_ORPHAN): "El periodo de mantenimiento recomendado de este Fondo es de 5 anos"."""
+    from priips_cost_extractor import _extract_rhp_years
+    assert _extract_rhp_years("¿Cuánto tiempo debo mantener la inversión?\nEl período de mantenimiento recomendado de este Fondo es de 5 años. El periodo...") == 5.0
+    assert _extract_rhp_years("The recommended holding period of this fund is 7 years.") == 7.0
+    assert _extract_rhp_years("The recommended holding period is 10 years") == 10.0
+    assert _extract_rhp_years("Período de mantenimiento recomendado: 3 años") == 3.0 and _extract_rhp_years("recommended holding period: 18 months") == 1.5
+    # a footnote that merely mentions the period, and a sentence with no figure after it, are not holding periods
+    assert _extract_rhp_years("en caso de salida al término del período de mantenimiento recomendado, el rendimiento medio que se prevé será del\n9,42 % antes de deducir") is None
+    assert _extract_rhp_years("El periodo de mantenimiento recomendado se seleccionó de acuerdo con el objetivo del Fondo. Es de 3 años") is None

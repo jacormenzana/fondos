@@ -93,9 +93,12 @@ _SCHEDULE_SOURCE_ALLOWED = ('PRIIPS_COSTS_OVER_TIME', 'UCITS_DERIVED', 'MANUAL')
 # Patrón RHP numérico (R-5 word boundary, R-6 ventana lazy acotada).
 # Captura el número y la unidad tras "período de mantenimiento recomendado: X años/meses"
 # y la variante inglesa. Busca en una ventana de 60 chars tras la etiqueta.
+# FIX-RHP-ES-DE (2026-11-06): the sentence form "El periodo de mantenimiento recomendado DE ESTE FONDO ES DE 5 anos" / "The recommended holding period OF THIS FUND IS 5 years" (M&G Lux:
+# 49 funds had Cost_RHP_Years NULL, so their RHP schedule row could not be built and ACI_RHP was an orphan). The gap between the label and "es de" / "is" is short, digit-free and on
+# one line, so the footnote "... recomendado, el rendimiento medio ... sera del 9,42 %" cannot be read as a holding period.
 _RHP_VALUE_PATTERN = re.compile(
     r'(?:per[ií]odo\s+de\s+mantenimiento\s+recomendado|recommended\s+holding\s+period)'
-    r'\s*[:\-]?\s*'
+    r'(?:\s*[:\-]?\s*|[^\d\n]{0,40}?\b(?:es\s+de|is(?:\s+of)?)\s+)'
     r'(\d+)\s*(a[ñn]os?|years?|mes(?:es)?|months?)\b',
     re.IGNORECASE,
 )
