@@ -1523,3 +1523,15 @@ def test_label_less_value_lines_are_read_only_when_every_annual_fits_its_own_tot
     assert _detached_rows("180 EUR 577 EUR\n1.8 % 9.0 %\n", [1.0, 3.0]) is None                              # 3-year annual 9.0 % against 5.77 %: not coherent
     assert _detached_rows("577 EUR 180 EUR\n1.8 % 1.8 %\n", [1.0, 3.0]) is None                              # totals that fall
     assert _detached_rows("180 EUR 577 EUR\n1.8 % 1.8 %\n", [1.0, 3.0, 5.0]) is None                         # wrong number of columns
+
+
+def test_a_percentage_after_another_cost_rows_name_is_not_adjacent_to_the_aci_label():
+    """DWS (LU3085135567): the annual-impact values are printed after the page footnotes ("8,2 % 4,2 % cada ano") and the composition rows come right after the label, so the 0,1 % of
+    "Costes de operacion 0,1 % del valor..." was read as the annual impact and overrode the correct 4,2 % (FIX-ACI-RHP-OVER-LABEL: 4.20 -> 0.10)."""
+    from priips_cost_extractor import _adjacent_pcts, _recover_aci_from_label
+    assert _adjacent_pcts(" (*)\n \nCostes de entrada \nComisiones de gestion y otros costes\nCostes de operacion 0,1 % del valor de su inversion") == []
+    assert _adjacent_pcts(" (*)\n2,7% 2,5% cada año\n") == [2.7, 2.5]
+    assert _adjacent_pcts("\nEn caso de salida despues de 1 año 7,2% 3,3% cada año") == [7.2, 3.3]       # words of a table HEADER before the values are fine
+    text = ("Costes totales 819 EUR 2.235 EUR\nIncidencia anual de los costes (*)\n \nCostes de entrada \nCostes corrientes detraidos cada año\n"
+            "Costes de operación 0,1 % del valor de su inversión al año.\n10 EUR\n4 Véase la nota 3 arriba.\n8,2 % 4,2 % cada año\nHasta 500 EUR\n")
+    assert _recover_aci_from_label(text) == (8.2, 4.2)

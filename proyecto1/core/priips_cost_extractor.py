@@ -387,6 +387,31 @@ def _pct_token_to_float(token: str) -> float:
     return float(token.replace(',', '.'))
 
 
+_ROW_WORD = re.compile(r'^\s*(?:cost\w*|gastos?|comisi\w+|fees?|management|transaction|entry|exit|ongoing|performance|frais|kosten)\b', re.IGNORECASE)   # a line that STARTS with a cost-line name
+_ROW_FILLER = re.compile(r'(?i)cada\s+a[ñn]o|each\s+year|por\s+a[ñn]o|per\s+year|p\.a\.')
+
+
+def _adjacent_pcts(head: str) -> List[float]:
+    """The (at most two) positive percentages that follow an ACI label DIRECTLY, in `head` (the text after it, cut at the footnote). FIX-ACI-ADJACENT-OWN-ROW (2026-11-06): a percentage is not
+    adjacent to the label when a cost-line NAME stands before it on its own line ("Costes de operacion 0,1 % del valor ..."): it belongs to that row. The DWS layout prints the annual-impact
+    values only after the page footnotes and the composition rows right after the label, so LU3085135567 / LU3085135641 / LU3085135724 took the 0.1 % transaction cost as the annual impact and
+    overrode the correct 4.2 % (FIX-ACI-RHP-OVER-LABEL: "ACI_RHP 4.20% -> 0.10%"). Stops at the first negative (a scenario table), implausible or foreign-row value. Pure."""
+    out: List[float] = []
+    for pct in _ACI_PCT_TOKEN.finditer(head):
+        if pct.group(1) is not None:
+            break                                        # negative -> scenario table
+        prefix = head[head.rfind('\n', 0, pct.start()) + 1:pct.start()]
+        if _ROW_WORD.search(_ROW_FILLER.sub('', prefix)):
+            break                                        # another row's name before the value
+        value = _pct_token_to_float(pct.group(2))
+        if not (0 < value <= _ACI_ANCHOR_MAX_PCT):
+            break
+        out.append(value)
+        if len(out) == 2:
+            break
+    return out
+
+
 def _recover_aci_from_label(text: str) -> tuple:
     """
     FIX-ACI-LABEL-ANCHOR — recupera (ACI_1Y, ACI_RHP) en % entero anclando en la
@@ -430,16 +455,7 @@ def _recover_aci_from_label(text: str) -> tuple:
         adjacent = text[m.end(): m.end() + _ACI_ANCHOR_WINDOW_ADJACENT]
         stop = ACI_FOOTNOTE_STOP.search(adjacent)
         head = adjacent[:stop.start()] if stop else adjacent
-        values: List[float] = []
-        for pct in _ACI_PCT_TOKEN.finditer(head):
-            if pct.group(1) is not None:
-                break                          # % negativo → tabla de escenarios
-            value = _pct_token_to_float(pct.group(2))
-            if not (0 < value <= _ACI_ANCHOR_MAX_PCT):
-                break
-            values.append(value)
-            if len(values) == 2:
-                break
+        values = _adjacent_pcts(head)
         if values:
             return (values[0], values[0]) if len(values) == 1 else (values[0], values[1])
 
@@ -487,17 +503,8 @@ def _label_vouched_values(text: str) -> set:
         # —incluida la propia proyección de rentabilidad—, con lo que el valor
         # espurio quedaba "respaldado por la etiqueta" y la corrección no se
         # disparaba (LU0106831901: avalaba 14,8 además de 7,6 y 4,1).
-        _taken = 0
-        for pct in _ACI_PCT_TOKEN.finditer(head):
-            if pct.group(1) is not None:
-                break
-            value = _pct_token_to_float(pct.group(2))
-            if not (0 < value <= _ACI_ANCHOR_MAX_PCT):
-                break
+        for value in _adjacent_pcts(head):
             vouched.add(round(value, 2))
-            _taken += 1
-            if _taken == 2:
-                break
 
         window = text[m.end(): m.end() + _ACI_ANCHOR_WINDOW]
         for tail in ACI_ROW_TAIL.finditer(window):
