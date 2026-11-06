@@ -17,6 +17,7 @@ the current-state projection of the append-only history control.audit_exception_
 """
 from __future__ import annotations
 
+import re
 from datetime import date
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -25,20 +26,88 @@ ACCEPTED_CLASS = "ACCEPTED_RESIDUAL"
 # {rule_id: {isin: (ap_id, expires_at)}}
 Accepted = Mapping[str, Mapping[str, tuple]]
 
+# ---- standing acceptances (owner decision 2026-11-06, replaces the 90-day clock for defects of the DOCUMENT) --------------------------------------
+# A violation that comes from what the publisher PRINTED (PUBLISHER_DEFECT: a KID whose own figures contradict each other) or from a layout the
+# extractor cannot read (EXTRACTION_LIMIT) does not get better by waiting, so a calendar expiry only creates a renewal chore. A standing
+# acceptance has no calendar expiry (expires_at = STANDING_UNTIL); instead it is bound to its EVIDENCE: the reason carries a fingerprint of each
+# fund's stored KID text, and load_accepted re-derives that fingerprint on every read. While the document is the one the owner decided on, the
+# acceptance stands; the day the publisher issues a new KID the fingerprint changes, the acceptance lapses by itself, the finding is an ALARM
+# again and attention_lines says why. Costs domain only: the evidence is the KID text (fund_kiid_metadata.raw_kiid_text).
+STANDING_CLASSES = ("PUBLISHER_DEFECT", "EXTRACTION_LIMIT")
+STANDING_UNTIL = date(2099, 12, 31)
+_STANDING_RE = re.compile(r"\[STANDING:(" + "|".join(STANDING_CLASSES) + r")\|([^\]]*)\]")
+FINGERPRINT_SQL = "left(md5(coalesce(raw_kiid_text, '')), 12)"
+
+
+def standing_marker(cls: str, fingerprints: Mapping[str, str]) -> str:
+    """The suffix of a standing grant's reason: class and the evidence fingerprint of every ISIN. Pure."""
+    if cls not in STANDING_CLASSES:
+        raise ValueError(f"class must be one of {STANDING_CLASSES}")
+    return f"[STANDING:{cls}|" + ";".join(f"{i}={fp}" for i, fp in sorted(fingerprints.items())) + "]"
+
+
+def parse_standing(reason: str | None):
+    """(class, {isin: fingerprint}) of a standing reason, or None when the reason is not a standing one. Pure."""
+    m = _STANDING_RE.search(reason or "")
+    if m is None:
+        return None
+    return m.group(1), dict(p.split("=", 1) for p in m.group(2).split(";") if "=" in p)
+
+
+def current_fingerprints(conn: "psycopg.Connection", isins: Iterable[str]) -> dict:
+    """{isin: fingerprint of its stored KID text} (the same function at grant time and at every read). Read-only."""
+    isins = sorted(set(isins))
+    if not isins:
+        return {}
+    rows = conn.execute(f"SELECT isin, {FINGERPRINT_SQL} FROM fund_kiid_metadata WHERE isin = ANY(%s)", (isins,)).fetchall()
+    return {r[0]: r[1] for r in rows}
+
+
+def standing_status(rows: Iterable[tuple], current: Mapping[str, str]) -> tuple:
+    """(valid_keys, lapsed) of the STANDING rows (rule_id, isin, ap_id, reason): a row is valid while the fingerprint recorded for its ISIN equals
+    `current[isin]`. `lapsed` = [(rule_id, isin, ap_id)] whose document changed (or is gone). Rows that are not standing are ignored. Pure."""
+    valid, lapsed = set(), []
+    for rule_id, isin, ap_id, reason in rows:
+        st = parse_standing(reason)
+        if st is None:
+            continue
+        if st[1].get(isin) is not None and current.get(isin) == st[1][isin]:
+            valid.add((rule_id, isin))
+        else:
+            lapsed.append((rule_id, isin, ap_id))
+    return valid, lapsed
+
+
+def _standing_rows(conn: "psycopg.Connection", domain: str, today: date) -> list:
+    rows = conn.execute(
+        "SELECT rule_id, isin, ap_id, reason FROM audit_accepted_finding WHERE domain = %s AND expires_at >= %s AND reason LIKE %s",
+        (domain, today, "%[STANDING:%")).fetchall()
+    return [tuple(r) for r in rows]
+
 
 def load_accepted(conn: "psycopg.Connection", domain: str, today: date | None = None) -> dict:
     """Active (not expired) acceptances for `domain`. Read-only. Raises if the table is missing: the caller decides
-    whether that means "nothing accepted" (see run_statistical_audit._apply_accepted_residuals)."""
+    whether that means "nothing accepted" (see run_statistical_audit._apply_accepted_residuals). A STANDING acceptance is active only while the
+    fingerprint of its fund's KID text equals the one recorded at the decision (see STANDING_CLASSES)."""
     today = today or date.today()
     rows = conn.execute(
         "SELECT rule_id, isin, ap_id, expires_at FROM audit_accepted_finding "
         "WHERE domain = %s AND expires_at >= %s",
         (domain, today),
     ).fetchall()
+    standing = _standing_rows(conn, domain, today)
+    valid, _lapsed = standing_status(standing, current_fingerprints(conn, {r[1] for r in standing})) if standing else (set(), [])
+    standing_keys = {(r[0], r[1]) for r in standing}
     out: dict = {}
     for rule_id, isin, ap_id, expires_at in rows:
+        if (rule_id, isin) in standing_keys and (rule_id, isin) not in valid:
+            continue                                            # the document changed since the decision: it counts as not accepted
         out.setdefault(rule_id, {})[isin] = (ap_id, expires_at)
     return out
+
+
+def _until_text(until: date) -> str:
+    return "standing, evidence-validated" if until >= STANDING_UNTIL else f"until {until}"
 
 
 def apply_accepted(findings: Sequence[Mapping[str, Any]], accepted: Accepted) -> tuple:
@@ -61,9 +130,9 @@ def apply_accepted(findings: Sequence[Mapping[str, Any]], accepted: Accepted) ->
             g["severity"] = "INFO"
             g["accepted_from_class"] = f.get("rule_class")      # control.audit_finding's CHECK has no ACCEPTED_RESIDUAL class
             g["rule_class"] = ACCEPTED_CLASS
-            g["evidence"] = (f"ACCEPTED RESIDUAL ({', '.join(aps)}, until {until}): {len(hit)}/{len(isins)} ISINs; "
+            g["evidence"] = (f"ACCEPTED RESIDUAL ({', '.join(aps)}, {_until_text(until)}): {len(hit)}/{len(isins)} ISINs; "
                              f"was: {f.get('evidence')}")
-            notes.append(f"{f['rule_id']}: {len(hit)} ISINs accepted ({', '.join(aps)}, until {until}) -> INFO")
+            notes.append(f"{f['rule_id']}: {len(hit)} ISINs accepted ({', '.join(aps)}, {_until_text(until)}) -> INFO")
         else:
             g["violating_isins"] = tuple(remaining)
             g["distance"] = float(len(remaining))
@@ -97,6 +166,12 @@ def attention_lines(conn: "psycopg.Connection", domain: str, within_days: int = 
     try:
         if conn.execute("SELECT to_regclass('audit_accepted_finding')").fetchone()[0] is None:
             return lines                                        # migration not applied: nothing is accepted, nothing can lapse
+        standing = _standing_rows(conn, domain, today)
+        if standing:
+            _valid, lapsed = standing_status(standing, current_fingerprints(conn, {r[1] for r in standing}))
+            for rule_id, isin, ap_id in sorted(lapsed):
+                lines.append(f"aceptacion permanente {rule_id} de {isin} ({ap_id}) CADUCADA: el KID almacenado cambio desde la decision del propietario; "
+                             "la violacion vuelve a ser ALARM hasta decidir de nuevo")
         for rule_id, ap_id, expires_at, n in expiring_soon(conn, domain, within_days, today):
             lines.append(f"residual aceptado {rule_id} ({n} ISINs, {ap_id}) caduca el {expires_at} "
                          f"({(expires_at - today).days} dias): renovar con accept_audit_residual.py o corregir la causa antes")

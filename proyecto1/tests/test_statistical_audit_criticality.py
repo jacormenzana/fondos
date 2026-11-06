@@ -115,7 +115,7 @@ def test_the_runner_check_mode_follows_the_run_domain():
 
 # --- exit criterion: a positive and a negative case for every CRITICAL catalogue rule -------------------------------------------------
 INVARIANT_CASES = {   # rule_id -> (violating row, passing row), evaluated by the real engine (invariants.check_invariant)
-    "ACI_AMORTISATION_ORDER": ({"ACI_RHP": 2.0, "ACI_1Y": 1.0}, {"ACI_RHP": 1.0, "ACI_1Y": 2.0}),
+    "ACI_AMORTISATION_ORDER": ({"ACI_RHP": 2.0, "ACI_1Y": 1.0, "ACI_Rise_Printed": False}, {"ACI_RHP": 1.0, "ACI_1Y": 2.0, "ACI_Rise_Printed": False}),
     "ACI_MUST_AMORTISE": ({"ACI_1Y": 1.5, "ACI_RHP": 1.5, "Cost_RHP_Years": 5, "Entry_Fee_Pct": 1.0},
                           {"ACI_1Y": 1.5, "ACI_RHP": 1.2, "Cost_RHP_Years": 5, "Entry_Fee_Pct": 1.0}),
     "MGMT_LE_TOTAL": ({"Management_Fee_Pct": 2.0, "ACI_RHP": 1.0, "Cost_RHP_Years": 5.0}, {"Management_Fee_Pct": 0.5, "ACI_RHP": 1.0, "Cost_RHP_Years": 5.0}),

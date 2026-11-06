@@ -170,7 +170,8 @@ from shared.statistical_audit.reconcile import reconcile_with_alerts
 from shared.statistical_audit.recompute_gate import assert_recompute_happened, capture_state
 from shared.statistical_audit.snapshot import build_population, build_snapshot
 from shared.statistical_audit.timeseries import build_window_deflation_frame, scalar_window_cpi
-from shared.statistical_audit.tolerances import IPC_ELIGIBILITY_FLOOR, KID_ROUNDING_TOLERANCE_PP
+from shared.statistical_audit.tolerances import ACI_ORDER_TOLERANCE_PP, IPC_ELIGIBILITY_FLOOR, KID_ROUNDING_TOLERANCE_PP
+from shared.statistical_audit.text_evidence import aci_pair_printed
 
 MIN_PEERS = 5
 
@@ -382,6 +383,22 @@ def _run_cost_schedule_integrity(run: "AuditRun", master: pd.DataFrame, schedule
         })
 
 
+def _mark_printed_rises(conn: "psycopg.Connection", master: "pd.DataFrame") -> None:
+    """Add the boolean column ACI_Rise_Printed to the fund_master frame, in place (owner decision 2026-11-06, FND-0276): True where ACI_RHP rises above ACI_1Y (beyond the
+    published unit) AND the stored KID text prints exactly that pair next to an annual-impact wording (shared.statistical_audit.text_evidence: independent of the extractor).
+    ACI_AMORTISATION_ORDER does not apply to such a fund: its rising pair is faithful to the document. Only the rising funds are looked up (a few dozen texts)."""
+    master["ACI_Rise_Printed"] = False
+    if master.empty or not {"ISIN", "ACI_1Y", "ACI_RHP"} <= set(master.columns):
+        return
+    rising = master[master["ACI_1Y"].notna() & master["ACI_RHP"].notna() & (master["ACI_RHP"] > master["ACI_1Y"] + ACI_ORDER_TOLERANCE_PP)]
+    if rising.empty:
+        return
+    texts = {r[0]: r[1] for r in conn.execute("SELECT isin, raw_kiid_text FROM fund_kiid_metadata WHERE isin = ANY(%s)",
+                                              (sorted(rising["ISIN"].tolist()),)).fetchall()}
+    printed = {row.ISIN for row in rising.itertuples() if aci_pair_printed(texts.get(row.ISIN), float(row.ACI_1Y), float(row.ACI_RHP))}
+    master.loc[master["ISIN"].isin(printed), "ACI_Rise_Printed"] = True
+
+
 def run_cost_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = None) -> "AuditRun":
     master_filter, master_params = _isin_filter(conn, isins, "ISIN")
     schedule_filter, schedule_params = _isin_filter(conn, isins, "s.ISIN")
@@ -389,6 +406,7 @@ def run_cost_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = Non
     schedule_query = _COST_SCHEDULE_QUERY.replace("{isin_filter}", schedule_filter)
     master = _restore_case(build_population(conn, master_query, master_params), _COST_MASTER_COLS)
     schedule = _restore_case(build_population(conn, schedule_query, schedule_params), _COST_SCHEDULE_COLS)
+    _mark_printed_rises(conn, master)
     frames_by_table = {"fund_master": master, "fund_cost_schedule": schedule}
 
     run = AuditRun(domain="cost_attributes")

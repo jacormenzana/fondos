@@ -134,8 +134,11 @@ COST_INVARIANTS: tuple[InvariantRule, ...] = (
     # FND-0276/0277 (2026-10-17): ACI_1Y and ACI_RHP are published with ONE decimal, so their order and equality are only decidable to
     # ACI_PUBLISHED_UNIT_PP (tolerances.py: ACI_ORDER_TOLERANCE_PP, ACI_AMORTISATION_VISIBLE_PP). The order rule tolerates one unit; the amortisation rule applies only where the entry fee
     # would move the ACI by at least one unit: Entry_Fee_Pct * (1 - 1 / Cost_RHP_Years), the fee spread over the holding period.
-    InvariantRule("ACI_AMORTISATION_ORDER", f"ACI_RHP <= ACI_1Y + {ACI_ORDER_TOLERANCE_PP}", bound_type="HARD_INVARIANT",
-                  description="Amortisation inverted"),
+    # 2026-11-06 (owner decision, FND-0276): a rising pair is TOLERATED when the stored KID text itself prints exactly that pair next to an annual-impact wording
+    # (ACI_Rise_Printed, set by run_statistical_audit._mark_printed_rises with shared.statistical_audit.text_evidence: independent of the extractor). The 73 funds the rule
+    # flagged after the 2026-11-06 recompute all print their pair (no entry fee to amortise, costs that grow); a rising pair the document does NOT print stays an ALARM.
+    InvariantRule("ACI_AMORTISATION_ORDER", f"ACI_RHP <= ACI_1Y + {ACI_ORDER_TOLERANCE_PP}", when="not ACI_Rise_Printed", bound_type="HARD_INVARIANT",
+                  description="Amortisation inverted (not printed by the document)"),
     InvariantRule(
         "ACI_MUST_AMORTISE", "ACI_1Y != ACI_RHP",
         when=f"Cost_RHP_Years > 1 and Entry_Fee_Pct * (1 - 1 / Cost_RHP_Years) >= {ACI_AMORTISATION_VISIBLE_PP}",

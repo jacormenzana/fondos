@@ -677,6 +677,27 @@ Corrección asociada: los marcos de costes nombran la columna `ISIN` y la búsqu
 infractores era en minúsculas, así que todos los ALARM de costes decían "0 ISINs"; ahora se busca sin
 distinguir mayúsculas.
 
+### 6.1.1 Aceptación permanente de un defecto del documento (decisión del propietario, 2026-11-06)
+
+Un residual cuya causa es lo que el EMISOR imprimió (`PUBLISHER_DEFECT`: un KID cuyas cifras se contradicen, p. ej. un coste de gestión del 3,27 % frente a un impacto anual del
+3,1 % a 5 años, o una fila "Incidencia anual" que en realidad es el rendimiento tras costes) o un diseño que el extractor no sabe leer (`EXTRACTION_LIMIT`, un fondo con un diseño
+propio) **no mejora con el tiempo**: la caducidad de 90 días solo crea una tarea de renovación. Por eso `accept_audit_residual.py --domain costs --class PUBLISHER_DEFECT|EXTRACTION_LIMIT`
+concede una aceptación **permanente** (sin caducidad de calendario; `STANDING_UNTIL`) ligada a su **evidencia**: el motivo lleva la huella (`md5` del `raw_kiid_text` almacenado, 12
+caracteres) de cada ISIN, y `accepted_residuals.load_accepted` la vuelve a derivar en CADA lectura (auditoría, scorer, puerta de promoción, certificación de incidentes):
+
+- el KID almacenado es el sobre el que decidió el propietario → la aceptación sigue en pie, sin renovarla nunca;
+- el emisor publica un KID nuevo (la huella cambia) → la aceptación caduca sola, el hallazgo vuelve a ser ALARM y `attention_lines` lo dice ("aceptacion permanente ... CADUCADA");
+- la violación desaparece → no hay nada que aceptar.
+
+La decisión del propietario sigue siendo un acto único en dos pasos (alta y aprobación); lo que desaparece es la tarea recurrente. Solo el dominio `costs` (la evidencia es el texto del KID).
+No hace falta DDL: la clase y las huellas viajan en `reason`.
+
+**Residuales de diseño del propio documento — `ACI_AMORTISATION_ORDER` (FND-0276).** La regla supone que el impacto anual cae con el horizonte porque la comisión de entrada se
+amortiza. Un KID sin comisión de entrada puede imprimir un par que SUBE ("0,8 % 0,9 % cada año"): el dato almacenado es fiel al documento. La regla solo se aplica donde el texto
+almacenado **no** imprime exactamente el par `<ACI_1Y>% <ACI_RHP>%` junto a una expresión de impacto anual (columna derivada `ACI_Rise_Printed`, calculada solo para los fondos cuyo par sube,
+con `shared/statistical_audit/text_evidence.py`, **independiente del extractor** para que la auditoría no se avale con las funciones que audita). Un par que sube y que el documento NO
+imprime sigue siendo ALARM.
+
 ### 6.2 ISIN de cada hallazgo y deriva de infractores (FND-0234(d))
 
 `audit_finding` guarda **una fila agregada** por invariante o regla de grupo ("88/2809 filas

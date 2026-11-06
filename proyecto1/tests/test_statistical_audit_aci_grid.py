@@ -20,6 +20,7 @@ RULES = {r.rule_id: r for r in COST_INVARIANTS}
 
 
 def _violations(rule_id: str, **row) -> int:
+    row.setdefault("ACI_Rise_Printed", False)          # 2026-11-06: ACI_AMORTISATION_ORDER is tolerated only where the KID text prints the rising pair (run_statistical_audit._mark_printed_rises)
     return len(check_invariant(pd.DataFrame([row]), RULES[rule_id]).violations)
 
 

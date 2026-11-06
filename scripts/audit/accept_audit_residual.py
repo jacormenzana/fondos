@@ -13,6 +13,10 @@ two-step decision (FND-0263, decision D6).
     python scripts/audit/accept_audit_residual.py --revoke 17 --cause RESOLVED --reason "fixed by FND-0034, re-audit clean"
     # the decision log of a domain (optionally one rule)
     python scripts/audit/accept_audit_residual.py --history --domain costs [--rule OC_NOT_CONTAMINATED]
+    # STANDING grant (owner decision 2026-11-06): a defect of the DOCUMENT does not heal with time, so no 90-day chore. --class PUBLISHER_DEFECT (the KID's own
+    # figures contradict each other) or EXTRACTION_LIMIT (a layout the extractor cannot read), costs domain only: the grant has no calendar expiry and is bound
+    # to the fingerprint of each fund's stored KID text, re-derived at every audit; a new KID makes it lapse by itself (accepted_residuals.STANDING_CLASSES)
+    python scripts/audit/accept_audit_residual.py --domain costs --rule MGMT_LE_TOTAL --ap FND-0280 --class PUBLISHER_DEFECT --reason "..."
     ... --apply        # every write needs it: without it, DRY RUN, nothing is written
 
 The grant runs the audit for the domain in memory (read-only, no persist) and takes the ISINs that violate `--rule` right now. Each
@@ -41,6 +45,7 @@ MIN_REASON_CHARS = 20
 DOMAINS = ("costs", "p2")
 AUDIT_DOMAIN = {"costs": "cost_attributes", "p2": "p2_metrics"}     # CLI name -> audit_finding.domain
 REVOKE_CAUSES = ("OWNER", "AP_CLOSED", "RESOLVED")                  # == accepted_residuals.REVOKE_CAUSES (asserted by the tests)
+STANDING_CLASSES = ("PUBLISHER_DEFECT", "EXTRACTION_LIMIT")           # == accepted_residuals.STANDING_CLASSES (asserted by the tests)
 
 
 def _load_runner():
@@ -97,7 +102,10 @@ def mode_of(args) -> tuple:
     missing = [f"--{n}" for n in ("domain", "rule", "ap", "reason") if not getattr(args, n)]
     if missing:
         return None, [f"a grant needs {', '.join(missing)}"]
-    return "grant", validate(args.ap, args.reason, args.days)
+    problems = validate(args.ap, args.reason, args.days)
+    if getattr(args, "cls", None) and args.domain != "costs":
+        problems.append("--class needs --domain costs: the evidence of a standing acceptance is the KID text")
+    return "grant", problems
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -108,6 +116,8 @@ def _parser() -> argparse.ArgumentParser:
     ap.add_argument("--reason")
     ap.add_argument("--days", type=int, default=90, help="validity in days (default 90; values above 90 are capped at 90)")
     ap.add_argument("--by", default=None, help="who decides (default: the OS user)")
+    ap.add_argument("--class", dest="cls", default=None, choices=STANDING_CLASSES,
+                    help="STANDING grant: no calendar expiry, bound to the KID text fingerprint of every ISIN (costs domain only; --days is ignored)")
     ap.add_argument("--isin", default=None, help="comma-separated: grant only these (they must violate now) / revoke only these")
     ap.add_argument("--renew", action="store_true", help="record the grant as a RENEW of an existing acceptance")
     ap.add_argument("--approve", type=int, default=None, metavar="EVENT_ID", help="approve a pending GRANT / RENEW")
@@ -195,15 +205,25 @@ def main(argv: "list | None" = None) -> int:
             print(f"error: the finding for {args.rule} carries no violating ISINs"
                   + (" in the --isin selection" if only else " (the rule does not report ISINs)"), file=sys.stderr)
             return 2
-        expires = ar.expiry_after(args.days)
+        reason = args.reason.strip()
+        if args.cls:
+            fps = ar.current_fingerprints(conn, isins)
+            no_text = sorted(set(isins) - set(fps))
+            if no_text:
+                print(f"error: no stored KID text for {', '.join(no_text[:5])}: a standing acceptance needs its evidence", file=sys.stderr)
+                return 2
+            reason = f"{args.cls}: {reason} {ar.standing_marker(args.cls, fps)}"
+            expires = ar.STANDING_UNTIL
+        else:
+            expires = ar.expiry_after(args.days)
         kind = "RENEW" if args.renew else "GRANT"
-        print(f"{kind}: domain={run.domain} rule={args.rule} ap={args.ap} expires={expires} by={by}")
+        print(f"{kind}: domain={run.domain} rule={args.rule} ap={args.ap} " + (f"STANDING {args.cls} (evidence-bound)" if args.cls else f"expires={expires}") + f" by={by}")
         print(f"{len(isins)} ISINs violate the rule now; first 10: {', '.join(isins[:10])}")
         if not args.apply:
             print("\nDRY RUN: nothing written. Add --apply to record the grant.")
             return 0
         if has_events:
-            event_id = ps.grant_exception(conn, run.domain, args.rule, isins, args.ap, args.reason.strip(), expires, by,
+            event_id = ps.grant_exception(conn, run.domain, args.rule, isins, args.ap, reason, expires, by,
                                           renew=args.renew)
             print(f"\n{kind} RECORDED as event #{event_id}: PENDING, nothing is accepted yet. Approve it as a separate decision:\n"
                   f"  python scripts/audit/accept_audit_residual.py --approve {event_id} --apply\n"
@@ -217,7 +237,7 @@ def main(argv: "list | None" = None) -> int:
             print("error: control.audit_accepted_finding does not exist; run "
                   "scripts/ops/migrate_audit_accepted_finding.py --apply first", file=sys.stderr)
             return 2
-        n = ps.emit_accepted_residuals(conn, run.domain, args.rule, isins, args.ap, args.reason.strip(), expires, by)
+        n = ps.emit_accepted_residuals(conn, run.domain, args.rule, isins, args.ap, reason, expires, by)
         print(f"\nACCEPTED (legacy direct write, no history: apply scripts/ops/migrate_audit_governance.py): {n} ISINs for "
               f"{args.rule} until {expires}. Record it on {args.ap} in gestion.backlog.")
         return 0
