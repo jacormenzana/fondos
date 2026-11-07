@@ -145,6 +145,7 @@ def main() -> int:
     ap.add_argument("--image", default="postgres:15")
     ap.add_argument("--distro", default="Ubuntu")
     ap.add_argument("--suite-files", metavar="JSON", help="run only the listed tests, grouped by suite (see above)")
+    ap.add_argument("--junit-dir", metavar="DIR", help="also write one JUnit XML per pytest run into DIR (per-test verdicts and durations)")
     ap.add_argument("pytest_args", nargs="*", help="passed to a single pytest run from the repo root")
     args = ap.parse_args()
     suite_plan = None
@@ -205,10 +206,14 @@ def main() -> int:
         else:
             runs = default_runs(ROOT)
         rc = 0
-        for cwd, targets in runs:
+        junit_dir = Path(args.junit_dir).resolve() if args.junit_dir else None
+        if junit_dir:
+            junit_dir.mkdir(parents=True, exist_ok=True)
+        for n, (cwd, targets) in enumerate(runs):
+            extra = [f"--junitxml={junit_dir / f'run{n}_{cwd.name}.xml'}"] if junit_dir else []      # per-test verdicts and durations (FND-0385: baseline, F5 data, order-dependence comparison)
             # stdin=DEVNULL: a child that inherits the caller's stdin (a tool/CI pipe) can block forever waiting on it
             # (found 2026-09-26: identical runs hung with an inherited stdin and passed with /dev/null).
-            rc |= subprocess.run([sys.executable, "-m", "pytest", "-q", *targets], cwd=cwd, env=env,
+            rc |= subprocess.run([sys.executable, "-m", "pytest", "-q", *targets, *extra], cwd=cwd, env=env,
                                  stdin=subprocess.DEVNULL).returncode
         return rc
     finally:
