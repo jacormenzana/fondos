@@ -383,6 +383,7 @@ NOT_POLICY = {
     "tests/test_batch_p3_post_draft_audit_e2e.py": "DESIGN: end to end on a stub tree; its globs read the logs the launcher it runs produced, not the repository sources.",
     "tests/test_launcher_state_guard.py": "DESIGN: end to end refusal paths of P1P2_runCycle.bat; its globs compare the log directory before and after a run, not the repository sources.",
     "tests/test_github_protect_master.py": "DESIGN: reads .github/workflows; GitHub is out of the loop (AGENTS.md, since 2026-11-02) and its checks come back with it, not with a code change.",
+    "tests/test_test_impact.py": "DESIGN: self-test of the impact selector (FND-0385); it reads the tree to prove the selector's own claims (the 336daff8 regression, each NARROW_LOADERS entry), not a convention of the code. A change to the selector is a full receipt (F2).",
 }
 
 

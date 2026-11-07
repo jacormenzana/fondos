@@ -6,6 +6,10 @@ shared test server or live data.
     python scripts/ops/run_pg_tests.py                      # P1 + P3 + root + P2 suites
     python scripts/ops/run_pg_tests.py -k statistical_audit # extra args go to one pytest run (repo root)
     python scripts/ops/run_pg_tests.py --port 5440 --image postgres:17
+    python scripts/ops/run_pg_tests.py --suite-files plan.json  # the SAME container, DDL and four runs, each restricted to the files of its suite (FND-0385)
+
+`--suite-files` takes a JSON object {"proyecto1"|"proyecto3"|"tests"|"proyecto2": ["repo-relative test path[::test]", ...]}; a suite without entries is skipped, the proyecto2 paths lose their
+`proyecto2/` prefix because that run starts in proyecto2/. Without the flag nothing changes.
 
 The port defaults to the first free one from 5437 up (a port left half-open by a killed run is
 skipped), stale `pg-test-*` containers from earlier killed runs are removed before starting, and the
@@ -19,6 +23,7 @@ distro idle-shuts-down and kills containers unless a wsl process stays attached,
 from __future__ import annotations
 
 import argparse
+import json
 import random
 import shutil
 import signal
@@ -109,13 +114,51 @@ def _wait_ready(docker: list[str], name: str, timeout_s: int = 60) -> None:
     raise SystemExit(f"Postgres in {name} not ready after {timeout_s}s")
 
 
+def default_runs(root: Path) -> list:
+    """The four pytest runs of a full suite: (cwd, targets). test_historia needs the network."""
+    return [(root, ["proyecto1/tests"]), (root, ["proyecto3/tests"]), (root, ["tests"]),
+            (root / "proyecto2", ["tests", "--ignore=tests/discovery/test_historia.py"])]
+
+
+def suite_runs(plan: dict, root: Path) -> list:
+    """The same runs as `default_runs`, in the same order, restricted to the entries of `plan` ({suite: [path or path::test]}). A suite with no entries is skipped; proyecto2 entries are made relative to
+    proyecto2/ (its run starts there). An unknown suite name is an error: a typo must never silently run less. Pure."""
+    known = ("proyecto1", "proyecto3", "tests", "proyecto2")
+    unknown = sorted(set(plan) - set(known))
+    if unknown:
+        raise ValueError(f"unknown suite(s) in the suite file: {unknown}; expected a subset of {list(known)}")
+    runs = []
+    for suite in known:
+        entries = [str(e).replace("\\", "/") for e in plan.get(suite) or []]
+        if not entries:
+            continue
+        if suite == "proyecto2":
+            runs.append((root / "proyecto2", [e[len("proyecto2/"):] if e.startswith("proyecto2/") else e for e in entries]))
+        else:
+            runs.append((root, entries))
+    return runs
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--port", type=int, default=0, help="default: first free port from 5437")
     ap.add_argument("--image", default="postgres:15")
     ap.add_argument("--distro", default="Ubuntu")
+    ap.add_argument("--suite-files", metavar="JSON", help="run only the listed tests, grouped by suite (see above)")
     ap.add_argument("pytest_args", nargs="*", help="passed to a single pytest run from the repo root")
     args = ap.parse_args()
+    suite_plan = None
+    if args.suite_files:
+        if args.pytest_args:
+            ap.error("--suite-files and pytest arguments are mutually exclusive")
+        try:
+            suite_plan = suite_runs(json.loads(Path(args.suite_files).read_text(encoding="utf-8")), ROOT)
+        except (OSError, ValueError) as exc:                    # before any docker work: a bad plan must not start a container
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        if not suite_plan:
+            print("error: the suite file selects no test", file=sys.stderr)
+            return 2
 
     sys.path.insert(0, str(ROOT))
     from shared.env_guard import require_db_driver
@@ -157,9 +200,10 @@ def main() -> int:
                    PGCONNECT_TIMEOUT="10")           # a dead forward must fail, not hang
         if args.pytest_args:
             runs = [(ROOT, args.pytest_args)]
+        elif suite_plan is not None:
+            runs = suite_plan
         else:
-            runs = [(ROOT, ["proyecto1/tests"]), (ROOT, ["proyecto3/tests"]), (ROOT, ["tests"]),
-                    (ROOT / "proyecto2", ["tests", "--ignore=tests/discovery/test_historia.py"])]  # test_historia needs the network
+            runs = default_runs(ROOT)
         rc = 0
         for cwd, targets in runs:
             # stdin=DEVNULL: a child that inherits the caller's stdin (a tool/CI pipe) can block forever waiting on it

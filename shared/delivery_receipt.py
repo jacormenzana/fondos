@@ -15,7 +15,7 @@ from typing import Callable, Optional
 
 from shared.backlog_autopilot import is_code_path
 
-SCOPES = ("docs_only", "area", "full")                                  # in increasing strength
+SCOPES = ("docs_only", "area", "impact", "full")                        # in increasing strength; `impact` (FND-0385) = the tests the dependency analysis of shared/test_impact.py selects, always with the policy set
 RUNTIME_PREFIXES = ("shared/", "proyecto1/", "proyecto2/", "proyecto3/")  # a change here needs the full suite (rule R2)
 RESULTS = ("pass", "fail", "inconclusive", "no_tests_cover", "insufficient_scope")
 _FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -125,14 +125,14 @@ def parse_counts(text: str) -> tuple:
 _FAILED_LINE = re.compile(r"^(?:FAILED|ERROR) (\S+)")
 
 
-def failed_tests(text: str, limit: int = 5) -> list:
-    """The ids of the tests pytest lists as FAILED or ERROR in its short summary (the first `limit`, in order, without repeats). Without them a failed receipt says only "1 failed". Pure."""
+def failed_tests(text: str, limit: Optional[int] = 5) -> list:
+    """The ids of the tests pytest lists as FAILED or ERROR in its short summary (the first `limit`, in order, without repeats; `None` = all). Without them a failed receipt says only "1 failed". Pure."""
     seen: list = []
     for line in str(text or "").splitlines():
         m = _FAILED_LINE.match(line.strip())
         if m and m.group(1) not in seen:
             seen.append(m.group(1))
-    return seen[:limit]
+    return seen if limit is None else seen[:limit]
 
 
 def judge(run_scope: str, required: str, counts: dict, summaries: int, rc: int, uncovered: list) -> tuple:
@@ -160,11 +160,15 @@ def digest_of(receipt: dict) -> str:
 
 
 def build_receipt(*, sha: str, tree: str, base: str, covers: list, changed: list, required: str, run_scope: str, files: list, counts: dict,
-                  rc: int, seconds: float, python: str, command: list, result: str, detail: str, ts: str) -> dict:
-    """One receipt line, with its digest. Pure."""
+                  rc: int, seconds: float, python: str, command: list, result: str, detail: str, ts: str, selection: Optional[dict] = None) -> dict:
+    """One receipt line, with its digest. `selection` (FND-0385) is the impact-selection block (algo version, mode, decision, escapes); a receipt that carries it is version 2, one without it is
+    byte-for-byte the version 1 line it always was. Pure."""
     rec = {"v": 1, "ts": ts, "sha": sha, "tree": tree, "base": base, "covers": list(covers), "changed": list(changed)[:200], "required": required,
            "scope": run_scope, "files": list(files)[:200], "counts": dict(counts), "rc": rc, "seconds": round(float(seconds), 1), "python": python,
            "command": list(command), "result": result, "detail": detail}
+    if selection is not None:
+        rec["v"] = 2
+        rec["selection"] = selection
     rec["digest"] = digest_of(rec)
     return rec
 

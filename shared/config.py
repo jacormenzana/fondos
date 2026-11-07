@@ -881,6 +881,13 @@ BACKLOG_GITHUB_EVIDENCE_ENABLED: bool = False
 # the closed FND-0336 for the record and must not reopen it). An older direct commit is never read as a delivery or a citation. An empty or malformed value is an error (the autopilot refuses to run), never
 # "everything counts". Note the rule this makes visible: a plain commit that cites a CLOSED delivery ticket and changes code reopens it (cause INCOMPLETE_FIX), exactly as a merge did.
 BACKLOG_LOCAL_DELIVERY_SINCE: str = "2026-11-02T22:22:44+01:00"
+# Impact-based test selection for delivery receipts (FND-0385; owner-accepted plan 2026-11-07; shared/test_impact.py, scripts/audit/delivery_attest.py). A change under shared/ or proyecto*/ used to need the
+# full suite (about 27 min). With the selector ON, a runtime change whose dependency analysis (imports, string, launcher and data edges, dynamic loaders) reaches a small, fully-known set of tests may be vouched
+# for by an `impact` receipt (that set + the whole-tree policy tests); every case the analysis cannot establish (fallback rules F1..F8 of the module) stays `full`. ENABLED is the kill switch: False = exactly the
+# behaviour before this ticket, no analysis at all. MODE is a CEILING, not the state: "OFF" | "SHADOW" (the selection is computed and recorded on every full run, nothing is skipped) | "AUTO" (SHADOW, and the
+# receipts promote it to ENFORCE by themselves once they hold the evidence and a clean streak, and demote it on the first escape: shared/test_impact.py::effective_mode). Nobody flips the effective mode.
+DELIVERY_IMPACT_SELECTION_ENABLED: bool = True
+DELIVERY_IMPACT_SELECTION_MODE: str = "AUTO"
 # Backlog v2 Phase C slice 2 (FND-0334; PROPUESTA_BACKLOG_V2.md 6.4.1 / 6.4.6): the instant from which scripts/audit/backlog_sync.py judges a commit that cites a ticket
 # by its `Backlog-Gate:` trailer (an ISO timestamp WITH offset, e.g. "2026-11-02T09:00:00+01:00"). "" = the gate is NOT ARMED: the sync reports the trailers it sees and
 # records no bypass, raises no hold. The owner arms it once the commit-msg hook is installed (bash scripts/audit/commit-msg.sh) and hook_bypass exists (migrate --phase hook);
