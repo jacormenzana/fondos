@@ -111,8 +111,8 @@ def _write_sitecustomize() -> None:
 
 # ── pytest hooks (only meaningful in the main process) ──────────────────────────
 
-try:
-    import pytest
+if "pytest" in sys.modules:                                 # only inside the pytest process. A traced CHILD must never import pytest: shared/config.py turns the .env autoload off when "pytest" is in
+    import pytest                                           # sys.modules, so an instrument that imported it would change the behaviour it measures (A10, found by the first traced full run)
 
     def pytest_configure(config):
         if _OUT:
@@ -143,5 +143,3 @@ try:
             return Path(path).resolve().relative_to(_ROOT).as_posix()
         except (ValueError, OSError):
             return str(path)
-except ImportError:                                         # imported by a sitecustomize without pytest on the path: only start_child() is used
-    pass

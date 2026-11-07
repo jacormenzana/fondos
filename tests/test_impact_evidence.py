@@ -136,7 +136,7 @@ def test_the_tracer_attributes_code_imports_and_subprocesses_to_the_test_file_an
     (proj / "pkg").mkdir(parents=True)
     (proj / "pkg" / "lib.py").write_text("def f():\n    return 1\n", encoding="utf-8")
     (proj / "pkg" / "other.py").write_text("def g():\n    return 2\n", encoding="utf-8")
-    (proj / "child_script.py").write_text("import pkg.other\npkg.other.g()\n", encoding="utf-8")
+    (proj / "child_script.py").write_text("import sys\nopen('child_state.txt', 'w').write(str('pytest' in sys.modules))\nimport pkg.other\npkg.other.g()\n", encoding="utf-8")
     (proj / "test_one.py").write_text("from pkg import lib\n\ndef test_one():\n    assert lib.f() == 1\n", encoding="utf-8")
     (proj / "test_two.py").write_text("import subprocess, sys\n\ndef test_two():\n    subprocess.run([sys.executable, 'child_script.py'], check=True)\n\ndef test_fails():\n    assert False\n", encoding="utf-8")
     out = tmp_path / "trace"
@@ -147,6 +147,7 @@ def test_the_tracer_attributes_code_imports_and_subprocesses_to_the_test_file_an
     assert "pkg/lib.py" in traced["test_one.py"] and "pkg/other.py" not in traced["test_one.py"]
     assert "child_script.py" in traced["test_two.py"] and "pkg/other.py" in traced["test_two.py"]      # the python subprocess it started is followed
     assert "pkg/lib.py" not in traced["test_two.py"]
+    assert (proj / "child_state.txt").read_text(encoding="utf-8") == "False"       # A10: the instrument must not make a child look like a pytest process (shared/config.py turns the .env autoload off then)
 
 
 def test_the_tracer_is_off_without_its_environment(tmp_path):

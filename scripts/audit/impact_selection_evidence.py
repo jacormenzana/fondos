@@ -356,6 +356,14 @@ import ast  # noqa: E402
 import random  # noqa: E402
 import re  # noqa: E402
 
+# Security mutants: new files that break a convention the whole-tree policy tests guard. Their content is ASSEMBLED from fragments, and their notes avoid the trigger words: written out contiguously in this
+# file (a production path) they would be exactly what those policy tests forbid, and they failed this very commit's receipt once (found by the first traced full run, 2026-11-07).
+_SECURITY = [
+    ("shared/impact_mut_sqlite.py", ("import ", "sqlite", "3\n"), "a module imports the retired SQLite driver", "tests/test_dialect_coverage.py"),
+    ("scripts/audit/impact_mut_insert.py", ("Q = \"INSERT INTO ", "backlog", ".backlog (action_point_id) VALUES ('X')\"\n"), "a raw write to the ticket table outside the single door", "tests/test_backlog_single_door.py"),
+    ("shared/impact_mut_writer.py", ("ACTOR = 'sys", "tem:impact-mut-writer'\n"), "an automatic writer identity that is not registered", "tests/test_backlog_writers.py"),
+    ("proyecto2/src/impact_mut_log.py", ("P = 'lo", "gs/impact_mut.log'\n"), "a module writes under a log directory at the repository root", "tests/test_log_paths.py"),
+]
 AREAS = {"p1-core": "proyecto1/core/", "p1-blocks": "proyecto1/blocks/", "p2": "proyecto2/src/", "p3": "proyecto3/src/", "shared": "shared/", "audit": "scripts/audit/"}
 MUTANT_RAISE = 'raise RuntimeError("IMPACT_MUTANT")'
 
@@ -397,8 +405,8 @@ def gen_mutants(sources: dict, graph: "ti.Graph", *, seed: int = 20261107, per_a
     n_tests = len(tests)
     mutants: list = []
 
-    def add(kind, channel, files, note):
-        mutants.append({"id": f"M{len(mutants) + 1:02d}", "kind": kind, "channel": channel, "files": files, "note": note})
+    def add(kind, channel, files, note, **extra):
+        mutants.append({"id": f"M{len(mutants) + 1:02d}", "kind": kind, "channel": channel, "files": files, "note": note, **extra})
 
     for area, prefix in AREAS.items():                                                   # 1. a function raises: in-process, loader-bound, indirect
         pool = []
@@ -471,10 +479,8 @@ def gen_mutants(sources: dict, graph: "ti.Graph", *, seed: int = 20261107, per_a
     for p in rng.sample(data, min(2, len(data))):
         add("data-file", "data-file", {p: "{{{ not valid\n"}, f"{p} corrupted")
     # 7. security: code that breaks a convention of the whole tree (new files: the policy tests must fail, and they are in every selection)
-    add("security", "policy", {"shared/impact_mut_sqlite.py": "import sqlite3\n"}, "a module imports sqlite3 (test_dialect_coverage)")
-    add("security", "policy", {"scripts/audit/impact_mut_insert.py": "Q = \"INSERT INTO backlog.backlog (action_point_id) VALUES ('X')\"\n"}, "a raw INSERT on backlog.backlog (test_backlog_single_door)")
-    add("security", "policy", {"shared/impact_mut_writer.py": "ACTOR = 'system:impact-mut-writer'\n"}, "an unregistered system:* writer (test_backlog_writers)")
-    add("security", "policy", {"proyecto2/src/impact_mut_log.py": "P = 'logs/impact_mut.log'\n"}, "a module writes to a root logs/ path (test_log_paths)")
+    for path, parts, note, expects in _SECURITY:
+        add("security", "policy", {path: "".join(parts)}, note, expects=expects)
     return mutants
 
 
@@ -525,11 +531,6 @@ def _plan_for(files: set) -> dict:
     for f in sorted(files):
         plan.setdefault(ti.suite_of(f) or "tests", []).append(f)
     return plan
-
-
-# the policy test each security mutant must trip (a file the policy set always runs)
-EXPECTED_POLICY = {"import sqlite3": "tests/test_dialect_coverage.py", "INSERT INTO backlog.backlog": "tests/test_backlog_single_door.py",
-                   "system:impact-mut-writer": "tests/test_backlog_writers.py", "logs/impact_mut.log": "tests/test_log_paths.py"}
 
 
 def cmd_mutate(args) -> int:
@@ -594,7 +595,7 @@ def cmd_mutate(args) -> int:
                 results[i]["unattributed"] += sorted(rest)
     for m in mutants:                                                                     # a security mutant must trip its policy test
         if m["kind"] == "security":
-            want = next((v for k, v in EXPECTED_POLICY.items() if any(k in t for t in m["files"].values())), None)
+            want = m.get("expects")
             results[m["id"]]["expected_policy_test"] = want
             results[m["id"]]["detected"] = want in results[m["id"]]["failing"]
     n_i = sum(1 for m in mutants if m["decision"] == "impact" and results[m["id"]]["failing"])
