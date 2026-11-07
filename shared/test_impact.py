@@ -31,7 +31,7 @@ from typing import Callable, Iterable, Optional
 from shared.backlog_autopilot import is_code_path
 from shared.delivery_receipt import digest_of, is_test_path
 
-ALGO_VERSION = 1                                    # bump whenever the graph or a rule changes: the evidence and the shadow streak start again (effective_mode)
+ALGO_VERSION = 2                                    # bump whenever the graph or a rule changes: the evidence and the shadow streak start again (effective_mode). 2: stub names, creation criterion, dynamic loads in tests, test package chain
 EXCLUDED_PREFIXES = ("upload/", "out/", ".git/")    # never collected by the full run
 SUITE_ROOTS = (("proyecto1", "proyecto1/tests/"), ("proyecto3", "proyecto3/tests/"), ("tests", "tests/"), ("proyecto2", "proyecto2/tests/"))   # run_pg_tests.py's four runs
 SUITE_EXCLUDE = frozenset({"proyecto2/tests/discovery/test_historia.py"})                 # needs the network; the full run ignores it
