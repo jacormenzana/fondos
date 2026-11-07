@@ -70,6 +70,9 @@ class Graph:
     narrowed: list = field(default_factory=list)         # loader files covered by NARROW_LOADERS
     blind_tests: set = field(default_factory=set)        # tests that start a subprocess a tracer cannot see (or build its command dynamically)
     scanners: set = field(default_factory=set)           # tests that walk the repository tree
+    dynamic_tests: set = field(default_factory=set)      # tests that load a module whose name comes from data (a non-literal import_module / spec_from_file_location)
+    stubbed: dict = field(default_factory=dict)          # test path -> files it only creates STUBS for: a .bat / .sh it reaches does not lead through the real file (see fwd)
+    _fwd: dict = field(default_factory=dict)             # cache of fwd()
     unresolved: dict = field(default_factory=dict)       # test path -> top-level import names that resolve to nothing
 
 
@@ -176,10 +179,89 @@ def _fstring_prefix(node: ast.AST) -> str:
     return ""
 
 
-def _strings(tree: ast.AST) -> Iterable[str]:
+def _strings(tree: ast.AST, skip: frozenset = frozenset()) -> Iterable[str]:
     for n in ast.walk(tree):
-        if isinstance(n, ast.Constant) and isinstance(n.value, str) and 0 < len(n.value) < 300:
+        if isinstance(n, ast.Constant) and isinstance(n.value, str) and 0 < len(n.value) < 300 and id(n) not in skip:
             yield n.value
+
+
+_WRITE_ATTRS = frozenset({"write_text", "write_bytes", "touch", "mkdir"})
+
+
+def _created_paths(tree: ast.AST) -> set:
+    """ids of the `a / b / c` expressions a test WRITES to: the receiver of write_text / write_bytes / touch / mkdir (also through `.parent`), directly or through a name it was assigned to. A path
+    something is created at is the name of a new file, not a read of the file that has that path in the repository. Pure."""
+    assigned: dict = {}
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name) and isinstance(n.value, ast.BinOp) and isinstance(n.value.op, ast.Div):
+            assigned.setdefault(n.targets[0].id, []).append(n.value)
+    created: set = set()
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr in _WRITE_ATTRS:
+            r = n.func.value
+            while isinstance(r, ast.Attribute) and r.attr == "parent":
+                r = r.value
+            if isinstance(r, ast.BinOp) and isinstance(r.op, ast.Div):
+                created.add(id(r))
+            elif isinstance(r, ast.Name):
+                created |= {id(b) for b in assigned.get(r.id, [])}
+    return created
+
+
+def _chain_parts(node: ast.AST) -> list:
+    """The operands of an `a / b / c` chain, left to right (a non-chain operand is returned as itself)."""
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+        return _chain_parts(node.left) + _chain_parts(node.right)
+    return [node]
+
+
+def _created_constants(tree: ast.AST, rooted: set) -> tuple:
+    """(constant nodes, repo-relative paths) of the string operands of chains the test writes to, when the chain does not start at a repository-rooted name:
+    `(tree.root / "proyecto1" / "tools" / "x.py").write_text(stub)` names a file of the test's own tree. Pure."""
+    created = _created_paths(tree)
+    consts: list = []
+    paths: list = []
+    for n in ast.walk(tree):
+        if isinstance(n, ast.BinOp) and id(n) in created and _leftmost_name(n.left) not in rooted:
+            parts = _chain_parts(n)
+            strs = [p for p in parts if isinstance(p, ast.Constant) and isinstance(p.value, str)]
+            consts.extend(strs)
+            if strs and len(strs) == len(parts) - 1 and not isinstance(parts[0], ast.Constant):         # one root, then only constants: the path below the root is exactly their join
+                paths.append("/".join(p.value for p in strs).replace("\\", "/"))
+    return consts, paths
+
+
+def _stub_lists(tree: ast.AST, rooted: set) -> list:
+    """The constant nodes of module-level lists / tuples of strings that a test uses ONLY to create stubs: every use of the list is `for v in LIST:` and every use of `v` in the loop is `<root> / v` with
+    a root that does not lead back to the repository (`self.root / rel`, `tmp / rel`) AND that path is written to (see _created_paths). Such a name is the name of a file in a tree the test builds itself,
+    not a dependency on the real file of that path (the launcher end-to-end tests: `for rel in _PY_TOOLS: (self.root / rel).write_text(_PY_STUB)`). Any other use of the list, or of the variable, makes
+    the list ordinary and keeps its edges. Pure."""
+    parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+    created = _created_paths(tree)
+    lists: dict = {}
+    for n in getattr(tree, "body", []):
+        if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name) and isinstance(n.value, (ast.List, ast.Tuple, ast.Set)):
+            elts = n.value.elts
+            if elts and all(isinstance(e, ast.Constant) and isinstance(e.value, str) for e in elts):
+                lists[n.targets[0].id] = elts
+    out: list = []
+    for name, elts in lists.items():
+        loads = [x for x in ast.walk(tree) if isinstance(x, ast.Name) and x.id == name and isinstance(x.ctx, ast.Load)]
+        fors = [parents[x] for x in loads if isinstance(parents.get(x), ast.For) and parents[x].iter is x and isinstance(parents[x].target, ast.Name)]
+        if not loads or len(fors) != len(loads):
+            continue
+        ok = True
+        for fr in fors:
+            v = fr.target.id
+            for stmt in fr.body:
+                for u in ast.walk(stmt):
+                    if isinstance(u, ast.Name) and u.id == v and isinstance(u.ctx, ast.Load):
+                        p = parents.get(u)
+                        if not (isinstance(p, ast.BinOp) and isinstance(p.op, ast.Div) and p.right is u and _leftmost_name(p.left) not in rooted and _leftmost_name(p.left) != v and id(p) in created):
+                            ok = False
+        if ok:
+            out.extend(elts)
+    return out
 
 
 def _environ_names(tree: ast.AST) -> set:
@@ -330,7 +412,14 @@ def build_graph(sources: dict, *, third_party: Callable = installed, extra_edges
                 continue
         test = is_test_path(f)
         derived = _environ_names(tree) if test else set()
-        file_strings = list(_strings(tree))
+        stub_consts, stub_paths = [], set()
+        if test:
+            rooted_names = _file_rooted_names(tree)
+            stub_consts = _stub_lists(tree, rooted_names)
+            created_consts, created_paths = _created_constants(tree, rooted_names)
+            stub_paths = {c.value.replace("\\", "/") for c in stub_consts if c.value.replace("\\", "/") in py_set} | {p for p in created_paths if p in py_set}
+            stub_consts = stub_consts + created_consts
+        file_strings = list(_strings(tree, frozenset(id(c) for c in stub_consts)))                 # names of files the test creates are not dependencies; every other string is
         unresolved_tops: set = set()
         for n in ast.walk(tree):
             if isinstance(n, ast.Import):
@@ -356,6 +445,11 @@ def build_graph(sources: dict, *, third_party: Callable = installed, extra_edges
                 name, _recv = _call_name(n)
                 if test and _is_blind_call(n, derived):
                     g.blind_tests.add(f)
+                if test and name in _LOADERS and n.args:
+                    if isinstance(n.args[0], ast.Constant) and isinstance(n.args[0].value, str):
+                        add(f, _resolve(n.args[0].value, keys))                                     # import_module("monetarios"): a literal handed to a loader is a plain dependency, dotted or not
+                    elif not isinstance(n.args[0], ast.Constant):
+                        g.dynamic_tests.add(f)                                                      # the module comes from data (names stored in another file): it can reach anything, so the test always runs
                 if not test and name in (_LOADERS | _SPAWNERS):
                     arg0 = n.args[0] if n.args else None
                     found: set = set()
@@ -379,8 +473,14 @@ def build_graph(sources: dict, *, third_party: Callable = installed, extra_edges
             tops = {f.split("/")[0]} | {s for s in file_strings if s in _TOP_DIRS}               # top-level directory the file names
             add(f, {p for p in py if is_runtime_code(p) and p.split("/")[0] in tops})
         if test:
+            deps[f] |= _ancestor_inits(f, py_set)                                                  # pytest imports a test module through its package chain: the __init__.py files above it run too
             for s in file_strings:
                 add(f, str_targets(s, modules=True, py_files=True, data=True))
+            if stub_paths:                                                                         # cut only what is provably a stub in THIS test: never a file the test also reaches or names otherwise
+                named = {s.replace("\\", "/").rsplit("/", 1)[-1] for s in file_strings}
+                cut = {p for p in stub_paths if p not in deps[f] and p.rsplit("/", 1)[-1] not in named}
+                if cut:
+                    g.stubbed[f] = cut
             if scans_repository(files[f]):
                 g.scanners.add(f)
             if unresolved_tops:
@@ -430,9 +530,29 @@ def closure(graph: Graph, seeds: Iterable) -> set:
     return seen
 
 
+def fwd(graph: Graph, test: str) -> set:
+    """Everything a test depends on, directly or through other files. For a test that builds a stub tree, a launcher (.bat / .sh) it reaches does not lead on to a file the test only creates a stub
+    for: in that test the launcher runs the stub. Import edges are never cut. Cached. Pure."""
+    hit = graph._fwd.get(test)
+    if hit is not None:
+        return hit
+    cuts = graph.stubbed.get(test, frozenset())
+    seen, stack = set(), [test]
+    while stack:
+        x = stack.pop()
+        if x in seen:
+            continue
+        seen.add(x)
+        launcher = x.endswith((".bat", ".sh"))
+        stack.extend(y for y in graph.deps.get(x, ()) if not (launcher and y in cuts))
+    graph._fwd[test] = seen
+    return seen
+
+
 def graph_digest(graph: Graph, extra: str = "") -> str:
     edges = sorted((a, b) for a, bs in graph.deps.items() for b in bs)
-    return hashlib.sha256(json.dumps([ALGO_VERSION, edges, extra], separators=(",", ":")).encode("utf-8")).hexdigest()
+    cuts = sorted((t, sorted(c)) for t, c in graph.stubbed.items())
+    return hashlib.sha256(json.dumps([ALGO_VERSION, edges, cuts, extra], separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
 # ── the decision ────────────────────────────────────────────────────────────────
@@ -453,7 +573,7 @@ def group_by_suite(tests: Iterable) -> dict:
 def always_run(graph: Graph, tests: Iterable) -> set:
     """Tests that run in every impact receipt: repository scanners, tests whose imports do not resolve and tests that start subprocesses the tracer cannot follow. Computed, never listed by hand."""
     ts = set(tests)
-    return (graph.scanners | graph.blind_tests | set(graph.unresolved)) & ts
+    return (graph.scanners | graph.blind_tests | graph.dynamic_tests | set(graph.unresolved)) & ts
 
 
 def decide(changed: Iterable, sources_head: dict, sources_base: Optional[dict] = None, *, policy_tests: Iterable = (), enabled: bool = True,
@@ -491,12 +611,12 @@ def decide(changed: Iterable, sources_head: dict, sources_base: Optional[dict] =
     if len(runtime) > MAX_RUNTIME_FILES:
         return full(f"F6 {len(runtime)} runtime files changed (limit {MAX_RUNTIME_FILES})")
     test_set = set(all_tests)
+    forward = {t: fwd(graph, t) for t in all_tests}                                              # per test, because a stub tree changes what a launcher reaches in THAT test
     selected: set = set()
     hubs: list = []
     uncovered: list = []
     for c in code:
-        reach = closure(graph, [c])
-        hits = reach & test_set
+        hits = {t for t, reachable in forward.items() if c in reachable}
         if is_test_path(c) and suite_of(c):
             selected |= {c} & test_set                                                           # a changed test runs itself (a deleted one is nothing to run)
             selected |= hits

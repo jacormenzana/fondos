@@ -38,6 +38,16 @@ def test_a_bare_module_name_and_a_relative_import_resolve():
     assert d.scope == "impact" and "proyecto1/tests/test_mid.py" in d.selected["proyecto1"]
 
 
+def test_a_bare_literal_handed_to_a_loader_in_a_test_is_a_dependency_and_so_is_the_package_chain_of_a_test():
+    files = {"proyecto1/blocks/monetarios.py": "X = 1\n", "proyecto1/tests/__init__.py": "",
+             "proyecto1/tests/test_bl.py": "import importlib\n\ndef test_x():\n    importlib.import_module('monetarios')\n",
+             "proyecto2/tests/sub/__init__.py": "", "proyecto2/tests/__init__.py": "", "proyecto2/tests/sub/test_deep.py": "def test_y():\n    pass\n"}
+    assert "proyecto1/tests/test_bl.py" in _decide(["proyecto1/blocks/monetarios.py"], files).selected["proyecto1"]
+    d = _decide(["proyecto2/tests/__init__.py"], files)
+    assert d.scope == "impact" and "proyecto2/tests/sub/test_deep.py" in d.selected["proyecto2"]            # changing a package's __init__ selects the tests collected through it
+    assert _decide(["proyecto1/tests/__init__.py"], files).scope == "impact"
+
+
 def test_a_mock_patch_target_string_is_an_edge():
     files = {"shared/thing.py": "def f():\n    pass\n", "tests/test_patch.py": "def test_x(mocker):\n    mocker.patch('shared.thing.f')\n"}
     assert "tests/test_patch.py" in _decide(["shared/thing.py"], files).selected["tests"]
@@ -109,6 +119,53 @@ def test_a_test_that_starts_a_blind_subprocess_runs_always_and_one_with_a_derive
     files = {"shared/b.py": "X = 1\n", "tests/test_b.py": "from shared import b\n", "tests/test_blind.py": blind, "tests/test_derived.py": derived, "tests/test_dynamic.py": dynamic}
     sel = _decide(["shared/b.py"], files).selected["tests"]
     assert "tests/test_blind.py" in sel and "tests/test_dynamic.py" in sel and "tests/test_derived.py" not in sel
+
+
+def test_a_test_that_loads_a_module_whose_name_comes_from_data_runs_always_and_one_with_a_literal_does_not():
+    dyn = "import importlib\n\ndef test_x(names):\n    for n in names:\n        importlib.import_module(n)\n"
+    lit = "import importlib\n\ndef test_y():\n    importlib.import_module('shared.b')\n"
+    files = {"shared/b.py": "X = 1\n", "shared/c.py": "Y = 1\n", "tests/test_c.py": "from shared import c\n", "tests/test_dyn.py": dyn, "tests/test_lit.py": lit}
+    sel = _decide(["shared/c.py"], files).selected["tests"]
+    assert "tests/test_dyn.py" in sel and "tests/test_lit.py" not in sel and "tests/test_c.py" in sel
+
+
+STUB_E2E = ("import shutil\nfrom pathlib import Path\nREAL = Path(__file__).resolve().parents[1]\n\n_TOOLS = ['scripts/launch/tool_a.py', 'proyecto1/tools/tool_b.py']\n\n"
+            "class Tree:\n    def __init__(self, root):\n        self.root = root\n        shutil.copy(REAL / 'scripts' / 'launch' / 'run.bat', root)\n"
+            "        shutil.copy(REAL / 'scripts' / 'launch' / 'helper.py', root)\n        for rel in _TOOLS:\n            p = self.root / rel\n            p.write_text('stub')\n\n"
+            "def test_it(tmp_path):\n    Tree(tmp_path)\n")
+STUB_FILES = {"scripts/launch/run.bat": "python scripts\\launch\\tool_a.py\npython proyecto1\\tools\\tool_b.py\npython scripts\\launch\\helper.py\n",
+              "scripts/launch/tool_a.py": "X = 1\n", "proyecto1/tools/tool_b.py": "Y = 1\n", "scripts/launch/helper.py": "Z = 1\n", "tests/test_e2e_stub.py": STUB_E2E}
+
+
+def test_the_names_of_stubs_a_test_creates_are_not_dependencies_but_the_real_files_it_copies_are():
+    assert _decide(["proyecto1/tools/tool_b.py"], STUB_FILES).reasons[0].startswith("F4")                 # only a stub of it exists in the test: no test reaches the real file
+    assert _decide(["scripts/launch/tool_a.py"], STUB_FILES).reasons[0].startswith("F4")
+    assert "tests/test_e2e_stub.py" in _decide(["scripts/launch/helper.py"], STUB_FILES).selected["tests"]   # copied from the real tree (REAL / ...): a real dependency
+    assert "tests/test_e2e_stub.py" in _decide(["scripts/launch/run.bat"], STUB_FILES).selected["tests"]     # so is the launcher it copies and runs
+
+
+def test_a_stub_name_stays_a_dependency_when_the_test_also_reaches_the_real_file_another_way():
+    for extra in ("\nfrom proyecto1.tools import tool_b\n",                                               # a real import
+                  "\nOTHER = REAL / 'proyecto1' / 'tools' / 'tool_b.py'\n",                               # a real, repo-rooted path to the same file
+                  "\nprint(_TOOLS)\n"):                                                                    # the list is used for something other than building stubs
+        files = {**STUB_FILES, "tests/test_e2e_stub.py": STUB_E2E + extra}
+        assert "tests/test_e2e_stub.py" in _decide(["proyecto1/tools/tool_b.py"], files).selected["tests"], extra
+    loop_uses_it_for_real = STUB_E2E.replace("p = self.root / rel", "p = REAL / rel")
+    assert "tests/test_e2e_stub.py" in _decide(["proyecto1/tools/tool_b.py"], {**STUB_FILES, "tests/test_e2e_stub.py": loop_uses_it_for_real}).selected["tests"]
+
+
+def test_a_path_the_test_writes_to_is_a_new_file_not_a_dependency_and_a_read_is_not_cut():
+    direct = ("import shutil\nfrom pathlib import Path\nREAL = Path(__file__).resolve().parents[1]\n\ndef test_it(t):\n"
+              "    shutil.copy(REAL / 'scripts' / 'launch' / 'run.bat', t.root)\n    (t.root / 'proyecto1' / 'tools' / 'tool_b.py').write_text('stub')\n")
+    files = {**STUB_FILES, "tests/test_e2e_stub.py": direct}
+    assert _decide(["proyecto1/tools/tool_b.py"], files).reasons[0].startswith("F4")                       # created in the test's own tree: no test reaches the real file
+    assert "tests/test_e2e_stub.py" in _decide(["scripts/launch/run.bat"], files).selected["tests"]
+    read_it = direct.replace(".write_text('stub')", ".read_text()")                                           # the same path READ: it may be the repository, so it stays a dependency
+    assert "tests/test_e2e_stub.py" in _decide(["proyecto1/tools/tool_b.py"], {**STUB_FILES, "tests/test_e2e_stub.py": read_it}).selected["tests"]
+    into_repo = direct.replace("(t.root /", "(REAL /")                                                       # a write rooted at the repository is not a stub tree: never cut
+    assert "tests/test_e2e_stub.py" in _decide(["proyecto1/tools/tool_b.py"], {**STUB_FILES, "tests/test_e2e_stub.py": into_repo}).selected["tests"]
+    no_write = STUB_E2E.replace("            p.write_text('stub')\n", "            print(p)\n")                                      # a loop that never writes: not proven to create anything
+    assert "tests/test_e2e_stub.py" in _decide(["proyecto1/tools/tool_b.py"], {**STUB_FILES, "tests/test_e2e_stub.py": no_write}).selected["tests"]
 
 
 def test_a_test_whose_import_resolves_to_nothing_runs_always():

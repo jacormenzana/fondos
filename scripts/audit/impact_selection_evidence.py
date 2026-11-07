@@ -144,17 +144,18 @@ def forward_closure(graph: "ti.Graph", start: str) -> set:
 def compare_trace(sources: dict, dynamic: dict) -> dict:
     """The holes of the static graph: for every test file, the repo files that ran while it ran and are NOT in its static closure (infrastructure and the test file itself excluded). Pure."""
     graph = ti.build_graph(sources)
+    always = ti.always_run(graph, [t for t in sources if ti.suite_of(t)])                  # these run in EVERY impact receipt: whatever they execute is covered without the graph
     holes: dict = {}
     checked = 0
     for test, ran in sorted(dynamic.items()):
-        if not ti.suite_of(test):
+        if not ti.suite_of(test) or test in always:
             continue
         checked += 1
-        reach = forward_closure(graph, test)
-        extra = sorted(f for f in ran if f != test and f not in reach and f.endswith(".py") and not ti.is_infra(f) and not ti.is_excluded(f))
+        reach = ti.fwd(graph, test)                                                          # the same per-test closure the selector uses (a stub tree cuts launcher edges)
+        extra = sorted(f for f in ran if f != test and f not in reach and f in sources and f.endswith(".py") and not ti.is_infra(f) and not ti.is_excluded(f))      # `f in sources`: a file a test creates and deletes at run time is in no commit, so it can never be a changed file
         if extra:
             holes[test] = extra
-    return {"tests_checked": checked, "tests_with_holes": len(holes), "holes": holes}
+    return {"tests_checked": checked, "tests_with_holes": len(holes), "holes": holes, "always_run_exempt": len(always & {t for t in dynamic})}
 
 
 def load_trace(trace_dir: Path) -> dict:
@@ -526,11 +527,47 @@ def _failed_files(tests: dict) -> set:
     return {t.split("::", 1)[0] for t, (o, _s) in tests.items() if o in ("failed", "error")}
 
 
-def _plan_for(files: set) -> dict:
+def _plan_for(files) -> dict:
+    """{suite: [entries]} for run_pg_tests.py --suite-files; an entry may carry `::test` (a policy entry)."""
     plan: dict = {}
     for f in sorted(files):
-        plan.setdefault(ti.suite_of(f) or "tests", []).append(f)
+        plan.setdefault(ti.suite_of(f.split("::", 1)[0]) or "tests", []).append(f)
     return plan
+
+
+def cmd_selective(args) -> int:
+    """E3 second half and the calibration of E5: run the SELECTED tests of a historical full receipt's commit in a scratch clone, and compare with what the full run said. The verdict must match
+    (the same failing test files), and the seconds are the real cost of an impact run, container and all."""
+    work = Path(args.work) / f"selective_{args.sha[:8]}"
+    receipts = da.read_receipts(da.RECEIPTS)
+    rec = next((r for r in reversed(receipts) if r.get("scope") == "full" and r.get("sha", "").startswith(args.sha)), None)
+    if not rec:
+        print(f"[E3s] no full receipt for {args.sha}", file=sys.stderr)
+        return 2
+    clone = work / "clone"
+    shutil.rmtree(clone, ignore_errors=True)
+    work.mkdir(parents=True, exist_ok=True)
+    checkout_tree(rec["sha"], clone, ROOT)
+    shutil.copy(ROOT / "scripts" / "ops" / "run_pg_tests.py", clone / "scripts" / "ops" / "run_pg_tests.py")      # the ORCHESTRATOR (container, DDL, --suite-files, --junit-dir) of today; the code under test is the commit's
+    base = None
+    if any(not (clone / c).exists() for c in rec["changed"]) and rec.get("base") and rec["base"] != da.EMPTY_TREE:
+        btmp = work / "base"
+        shutil.rmtree(btmp, ignore_errors=True)
+        export_tree(rec["base"], btmp, ROOT)
+        base = da.read_sources(btmp)
+    d = ti.decide(rec["changed"], da.read_sources(clone), base, policy_tests=dr.POLICY_TESTS)
+    if d.scope != "impact":
+        print(f"[E3s] {args.sha[:8]}: the selector says full ({d.reasons[0][:100]}); nothing to compare")
+        return 2
+    res = run_clone(clone, work / "run", plan=_plan_for(d.files()))
+    failed = sorted(_failed_files(res["tests"]))
+    recorded = sorted({i.split("::", 1)[0] for i in (rec.get("detail", "").split("| failed: ", 1)[1].split(" | ", 1)[0].split(", ") if "| failed: " in rec.get("detail", "") else [])})
+    same = (rec["result"] == "pass") == (not failed) and (not recorded or set(recorded) <= set(failed))
+    out = {"sha": rec["sha"], "recorded_result": rec["result"], "recorded_failed_files": recorded, "selected_files": d.selected_count, "policy_entries": len(d.policy),
+           "selective_rc": res["rc"], "selective_failed_files": failed, "selective_seconds": res["seconds"], "full_seconds_recorded": rec["seconds"], "same_verdict": same}
+    (Path(args.work) / f"selective_{args.sha[:8]}.json").write_text(json.dumps(out, indent=1, sort_keys=True), encoding="utf-8")
+    print(f"[E3s] {args.sha[:8]}: recorded {rec['result']}, selective {'fail' if failed else 'pass'} {failed}; {res['seconds']} s vs {rec['seconds']} s full; same verdict: {same}")
+    return 0 if same else 1
 
 
 def cmd_mutate(args) -> int:
@@ -629,6 +666,9 @@ def main(argv: Optional[list] = None) -> int:
     p = sub.add_parser("replay")
     p.add_argument("--limit", type=int, default=0)
     p.add_argument("--work", help="also save replay.json here (input of saving / finalize)")
+    p = sub.add_parser("selective")
+    p.add_argument("--work", required=True)
+    p.add_argument("--sha", required=True, help="a commit with a recorded full receipt (at least 8 characters)")
     p = sub.add_parser("saving")
     p.add_argument("--work", required=True)
     p.add_argument("--overhead", type=float, default=90.0, help="seconds an impact run costs before its first test (container, DDL); calibrate it with a real selective run")
@@ -640,7 +680,7 @@ def main(argv: Optional[list] = None) -> int:
     if getattr(args, "work", None) and Path(args.work).resolve().is_relative_to(ROOT):
         print("error: --work must be outside the repository", file=sys.stderr)
         return 2
-    return {"baseline": cmd_baseline, "trace": cmd_trace, "compare": cmd_compare, "replay": cmd_replay, "mutate": cmd_mutate, "saving": cmd_saving, "finalize": cmd_finalize}[args.cmd](args)
+    return {"baseline": cmd_baseline, "trace": cmd_trace, "compare": cmd_compare, "replay": cmd_replay, "mutate": cmd_mutate, "selective": cmd_selective, "saving": cmd_saving, "finalize": cmd_finalize}[args.cmd](args)
 
 
 if __name__ == "__main__":

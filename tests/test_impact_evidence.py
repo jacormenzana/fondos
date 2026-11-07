@@ -39,6 +39,11 @@ def test_the_comparison_reports_only_files_that_ran_and_are_outside_the_static_c
                "tests/test_u.py": {"tests/test_u.py"}, "(collection)": {"shared/hidden.py"}}                                              # not a test file: ignored
     res = ev.compare_trace(sources, dynamic)
     assert res["tests_checked"] == 2 and res["holes"] == {"tests/test_t.py": ["shared/hidden.py"]}          # infrastructure files never count as holes
+    dynamic["tests/test_t.py"].add("config.py")                                                              # a file a test creates at run time is in no commit: never a hole
+    assert ev.compare_trace(sources, dynamic)["holes"] == {"tests/test_t.py": ["shared/hidden.py"]}
+    sources["tests/test_t.py"] += "import importlib\n\ndef test_t(n):\n    importlib.import_module(n)\n"      # it now loads by data: it runs in every impact receipt, so the graph need not cover it
+    res = ev.compare_trace(sources, dynamic)
+    assert res["holes"] == {} and res["tests_checked"] == 1 and res["always_run_exempt"] == 1
 
 
 def test_the_replay_flags_a_failure_the_selection_would_have_missed_and_nothing_else():
