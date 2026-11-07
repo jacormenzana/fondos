@@ -287,23 +287,51 @@ def evaluate_evidence(work: Path, *, min_killed: int = 30, max_escape_bound: flo
     return {"checks": checks, "pass": all(checks.values()), "sha": (base or {}).get("sha")}
 
 
+def build_evidence_line(*, result: str, checks: dict, selector: str, ref: Optional[str], ts: str) -> dict:
+    """The line that is appended to the receipts file: `pass` carries the checks and is bound to the selector's source digest and to the commit the results were gathered with; `fail` revokes. Pure."""
+    line = {"kind": "impact_evidence", "algo": ti.ALGO_VERSION, "result": result, "selector_digest": selector, "evidence_ref": ref, "ts": ts, "checks": checks}
+    line["digest"] = dr.digest_of(line)
+    return line
+
+
+def _digest_at(ref: str) -> str:
+    """sha-256 (line endings normalised) of shared/test_impact.py as committed at `ref`."""
+    import hashlib
+    blob = subprocess.run(["git", "show", f"{ref}:shared/test_impact.py"], cwd=ROOT, capture_output=True, check=True).stdout
+    return hashlib.sha256(blob.replace(b"\r\n", b"\n")).hexdigest()
+
+
 def cmd_finalize(args) -> int:
-    ev = evaluate_evidence(Path(args.work), min_killed=args.min_killed)
-    for name, ok in ev["checks"].items():
-        print(f"[final] {'PASS' if ok else 'FAIL'}  {name}")
-    if not ev["pass"]:
-        print("[final] NOT all checks pass: no evidence line is written")
-        return 1
-    if not args.write:
-        print("[final] all checks pass; run again with --write to append the evidence line (it lets the receipts promote the selector once their own streak is clean)")
-        return 0
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    here = da.selector_digest()
+    if args.revoke:
+        line = build_evidence_line(result="fail", checks={"revoked by hand": False}, selector=here, ref=None, ts=now)
+        if not args.write:
+            print("[final] would append a revoking line for the selector now in the tree; add --write")
+            return 0
+    else:
+        ev = evaluate_evidence(Path(args.work), min_killed=args.min_killed)
+        for name, ok in ev["checks"].items():
+            print(f"[final] {'PASS' if ok else 'FAIL'}  {name}")
+        if not ev["pass"]:
+            print("[final] NOT all checks pass: no evidence line is written")
+            return 1
+        if not args.write:
+            print("[final] all checks pass; run again with --write --selector-ref <commit> to append the evidence line (it lets the receipts promote the selector once their own streak is clean)")
+            return 0
+        if not args.selector_ref:
+            print("[final] --selector-ref <commit> is required: the commit whose shared/test_impact.py every result file was gathered with", file=sys.stderr)
+            return 2
+        gathered = _digest_at(args.selector_ref)
+        if gathered != here:
+            print(f"[final] REFUSED: shared/test_impact.py at {args.selector_ref} differs from the one in the tree ({gathered[:12]} vs {here[:12]}): the evidence was gathered with other code", file=sys.stderr)
+            return 1
+        line = build_evidence_line(result="pass", checks=ev["checks"], selector=here, ref=args.selector_ref, ts=now)
     if not da.acquire(da.LOCK):
         print("[final] a delivery attest is running; try again afterwards", file=sys.stderr)
         return 3
     try:
-        from datetime import datetime, timezone
-        line = {"kind": "impact_evidence", "algo": ti.ALGO_VERSION, "result": "pass", "sha": ev["sha"], "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"), "checks": ev["checks"]}
-        line["digest"] = dr.digest_of(line)
         da.RECEIPTS.parent.mkdir(parents=True, exist_ok=True)
         with open(da.RECEIPTS, "a", encoding="utf-8", newline="\n") as f:
             f.write(json.dumps(line, sort_keys=True) + "\n")
@@ -311,9 +339,10 @@ def cmd_finalize(args) -> int:
             os.fsync(f.fileno())
     finally:
         da.release(da.LOCK)
-    print(f"[final] evidence line for algorithm {ti.ALGO_VERSION} appended to {da.RECEIPTS}")
-    base = json.loads((Path(args.work) / "baseline.json").read_text(encoding="utf-8"))               # the measured seconds per test file: the selector's time rule (F5) reads them
-    da.DURATIONS.write_text(json.dumps({"sha": base["sha"], "per_file_seconds": base["per_file_seconds"]}, sort_keys=True), encoding="utf-8")
+    print(f"[final] {line['result'].upper()} evidence line for algorithm {ti.ALGO_VERSION}, selector {here[:12]}, appended to {da.RECEIPTS}")
+    if line["result"] == "pass":
+        base = json.loads((Path(args.work) / "baseline.json").read_text(encoding="utf-8"))           # the measured seconds per test file: the selector's time rule (F5) reads them
+        da.DURATIONS.write_text(json.dumps({"sha": base["sha"], "per_file_seconds": base["per_file_seconds"]}, sort_keys=True), encoding="utf-8")
     return 0
 
 
@@ -711,6 +740,8 @@ def main(argv: Optional[list] = None) -> int:
     p.add_argument("--work", required=True)
     p.add_argument("--min-killed", type=int, default=30)
     p.add_argument("--write", action="store_true", help="append the evidence line to the receipts file (only when every check passes)")
+    p.add_argument("--selector-ref", help="the commit whose shared/test_impact.py all the result files were gathered with; refused unless it is identical to the file in the tree")
+    p.add_argument("--revoke", action="store_true", help="append a `fail` line for the selector in the tree: the receipts fall back to SHADOW")
     args = ap.parse_args(argv)
     if getattr(args, "work", None) and Path(args.work).resolve().is_relative_to(ROOT):
         print("error: --work must be outside the repository", file=sys.stderr)

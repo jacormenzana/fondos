@@ -191,12 +191,34 @@ def confirm_escapes(outside: list, runner: Callable, tree: Path) -> tuple:
     return alone, [f for f in outside if f not in alone]
 
 
+def selector_digest(path: Optional[Path] = None) -> str:
+    """sha-256 of the selector's source (shared/test_impact.py, line endings normalised). The evidence and the shadow streak are bound to it, so any edit of the selector, with or without a version bump,
+    leaves the old evidence behind and sends the mode back to SHADOW by itself. Pure on the file."""
+    import hashlib
+    return hashlib.sha256((path or ROOT / "shared" / "test_impact.py").read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+
+
+def scoped_receipts(receipts: list, digest: str) -> list:
+    """The receipts that count as evidence for the selector whose source digest is `digest`: shadow receipts recorded by that very code, and the LATEST evidence line written for it (a later `fail`
+    line revokes an earlier `pass`). Receipts that carry no selection block are kept as they are; anything recorded by other selector code is dropped. Pure."""
+    out, latest = [], None
+    for r in receipts:
+        if r.get("kind") == "impact_evidence":
+            if r.get("selector_digest") == digest and r.get("algo") == ti.ALGO_VERSION:
+                latest = r
+            continue
+        if r.get("selection") is not None and r["selection"].get("selector") != digest:
+            continue
+        out.append(r)
+    return out + ([latest] if latest else [])
+
+
 def current_impact_mode(receipts_path: Path) -> str:
-    """OFF | SHADOW | ENFORCE for the next receipt: the switches of shared/config.py and the receipts file (shared/test_impact.py::effective_mode). Never raises: any doubt is SHADOW, and OFF when the
-    configuration cannot be read."""
+    """OFF | SHADOW | ENFORCE for the next receipt: the switches of shared/config.py and the receipts file (shared/test_impact.py::effective_mode), counting only evidence and shadow receipts bound to
+    the exact selector code that is running (selector_digest). Never raises: any doubt is SHADOW, and OFF when the configuration cannot be read."""
     try:
         from shared import config as cfg
-        return ti.effective_mode(read_receipts(receipts_path), ti.ALGO_VERSION, ceiling=cfg.DELIVERY_IMPACT_SELECTION_MODE, enabled=cfg.DELIVERY_IMPACT_SELECTION_ENABLED)
+        return ti.effective_mode(scoped_receipts(read_receipts(receipts_path), selector_digest()), ti.ALGO_VERSION, ceiling=cfg.DELIVERY_IMPACT_SELECTION_MODE, enabled=cfg.DELIVERY_IMPACT_SELECTION_ENABLED)
     except Exception:                                                        # noqa: BLE001 -- a selector that cannot be configured is off, never a reason to run less
         return "OFF"
 
@@ -327,7 +349,7 @@ def attest(root: Path, head: str, scope: Optional[str], *, runner: Callable, rec
                     if summaries:
                         break
             if decision is not None or impact_error:                         # what the selector decided, and whether a failing test escaped it (only a full run can reveal that)
-                selection = {"algo": ti.ALGO_VERSION, "mode": impact_mode, "ran": run_scope, "freshness": fresh_reason, "error": impact_error, "escapes": []}
+                selection = {"algo": ti.ALGO_VERSION, "selector": selector_digest(), "mode": impact_mode, "ran": run_scope, "freshness": fresh_reason, "error": impact_error, "escapes": []}
                 if decision is not None:
                     selection["decision"] = decision.as_dict()
                     if run_scope == "full" and decision.scope == "impact" and text:

@@ -119,6 +119,61 @@ def test_a_failure_outside_the_selection_that_also_fails_alone_is_an_escape_and_
     assert rec2["selection"]["escapes"] == ["tests/test_b.py"]
 
 
+def _with_selector(rec, digest):
+    rec = {**rec, "selection": {**rec["selection"], "selector": digest}}
+    rec["digest"] = dr.digest_of({k: v for k, v in rec.items() if k != "digest"})
+    return rec
+
+
+def _evidence_line(digest, result="pass", algo=None, ts="2026-11-08T00:00:00+00:00"):
+    line = {"kind": "impact_evidence", "algo": algo or ti.ALGO_VERSION, "result": result, "selector_digest": digest, "ts": ts}
+    line["digest"] = dr.digest_of(line)
+    return line
+
+
+def test_evidence_and_shadow_receipts_count_only_for_the_selector_code_they_were_made_with():
+    mine, other = "a" * 64, "b" * 64
+    streak = [_shadow_rec(i, mine) for i in range(10)]
+    both = [_evidence_line(mine), *streak]
+    assert ti.effective_mode(da.scoped_receipts(both, mine), ti.ALGO_VERSION) == "ENFORCE"
+    assert ti.effective_mode(da.scoped_receipts(both, other), ti.ALGO_VERSION) == "SHADOW"                  # the selector was edited: the evidence and the streak stay behind
+    assert ti.effective_mode(da.scoped_receipts([_evidence_line(other), *streak], mine), ti.ALGO_VERSION) == "SHADOW"       # evidence for other code does not count
+    assert ti.effective_mode(da.scoped_receipts([_evidence_line(mine), *[_shadow_rec(i, other) for i in range(10)]], mine), ti.ALGO_VERSION) == "SHADOW"    # nor a streak made by other code
+    assert ti.effective_mode(da.scoped_receipts([_evidence_line(mine, algo=1), *streak], mine), ti.ALGO_VERSION) == "SHADOW"   # nor evidence of another algorithm version
+
+
+def test_the_latest_evidence_line_decides_so_a_fail_line_revokes_and_a_new_pass_restores():
+    d = "c" * 64
+    streak = [_shadow_rec(i, d) for i in range(10)]
+    revoked = [_evidence_line(d, ts="2026-11-08T00:00:00+00:00"), *streak, _evidence_line(d, result="fail", ts="2026-11-20T00:00:00+00:00")]
+    assert ti.effective_mode(da.scoped_receipts(revoked, d), ti.ALGO_VERSION) == "SHADOW"
+    restored = revoked + [_evidence_line(d, ts="2026-11-21T00:00:00+00:00")]
+    assert ti.effective_mode(da.scoped_receipts(restored, d), ti.ALGO_VERSION) == "ENFORCE"
+
+
+def test_the_selector_digest_ignores_line_endings_and_follows_every_other_edit(tmp_path):
+    a, b = tmp_path / "a.py", tmp_path / "b.py"
+    a.write_bytes(b"x = 1\ny = 2\n")
+    b.write_bytes(b"x = 1\r\ny = 2\r\n")
+    assert da.selector_digest(a) == da.selector_digest(b)
+    b.write_bytes(b"x = 1\r\ny = 3\r\n")
+    assert da.selector_digest(a) != da.selector_digest(b)
+    assert len(da.selector_digest()) == 64                                                                    # the real file
+
+
+def test_a_shadow_receipt_records_the_digest_of_the_selector_that_made_the_decision(repo):
+    commit(repo, {"shared/lib_a.py": "A = 2\n"})
+    rec = run(repo, Runner(), mode="SHADOW")
+    assert rec["selection"]["selector"] == da.selector_digest()
+
+
+def _shadow_rec(i, digest):
+    r = {"v": 2, "sha": f"{i:040x}", "scope": "full", "result": "pass", "ts": f"2026-11-{1 + i:02d}T10:00:00+00:00", "covers": [f"{i:040x}"],
+         "selection": {"algo": ti.ALGO_VERSION, "selector": digest, "mode": "SHADOW", "escapes": [], "decision": {"scope": "impact"}}}
+    r["digest"] = dr.digest_of(r)
+    return r
+
+
 def test_a_failure_inside_the_selection_is_not_an_escape(repo):
     commit(repo, {"shared/lib_a.py": "A = 2\n"})
     rec = run(repo, Runner(text=failing("tests/test_a.py::test_a"), rc=1), mode="SHADOW")

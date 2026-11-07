@@ -147,6 +147,13 @@ def test_a_partial_mutation_rerun_replaces_what_it_ran_keeps_the_rest_and_accept
     assert ev.merge_mutation(None, {"M01": {}}, []) == ({"M01": {}}, [])
 
 
+def test_the_evidence_line_is_bound_to_the_selector_digest_and_is_digest_protected():
+    line = ev.build_evidence_line(result="pass", checks={"x": True}, selector="d" * 64, ref="031759f", ts="2026-11-08T00:00:00+00:00")
+    assert line["kind"] == "impact_evidence" and line["selector_digest"] == "d" * 64 and line["evidence_ref"] == "031759f" and line["algo"] == ti.ALGO_VERSION
+    assert line["digest"] == ev.dr.digest_of(line)
+    assert ev.build_evidence_line(result="fail", checks={}, selector="d" * 64, ref=None, ts="t")["result"] == "fail"
+
+
 def test_the_tracer_attributes_code_imports_and_subprocesses_to_the_test_file_and_never_changes_the_verdict(tmp_path):
     proj = tmp_path / "proj"
     (proj / "pkg").mkdir(parents=True)
