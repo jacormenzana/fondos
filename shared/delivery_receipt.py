@@ -80,6 +80,8 @@ POLICY_TESTS = (
     "tests/test_backlog_live_guard.py",                                                # every state-changing helper / command-line tool goes through the live-write gate
     "tests/test_backlog_writers.py",                                                   # every system:* identity in the code is registered (a new automatic writer cannot land unregistered)
     "tests/test_backlog_staging.py::test_every_script_that_calls_the_real_routines_on_a_snapshot_calls_the_guard",
+    "tests/test_backlog_iam_client.py::test_no_code_outside_the_client_names_an_allow_listed_operation",   # the live-write exemption lives in ONE place
+    "tests/test_backlog_gate_override_pg.py::test_no_repository_code_inserts_into_gate_switch_outside_the_ddl_the_scratch_replay_and_the_tests",   # sp_set_gate is the only door
     "tests/test_dialect_coverage.py",                                                  # no sqlite3 / dialect anti-patterns in production code
     "tests/test_log_paths.py",                                                         # every log goes to a registered directory (get_log_dir)
     "tests/test_maintenance_log_routing.py",

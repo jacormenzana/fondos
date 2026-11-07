@@ -374,4 +374,47 @@ def test_the_policy_set_does_not_turn_uncovered_code_into_a_pass(repo):
 def test_the_postgres_policy_test_goes_to_the_postgres_runner_and_the_rest_to_plain_pytest():
     plain = [t for t in dr.POLICY_TESTS if "_pg" not in t.rsplit("/", 1)[-1]]
     pg = [t for t in dr.POLICY_TESTS if "_pg" in t.rsplit("/", 1)[-1]]
-    assert pg == ["tests/test_sql_explain_sweep_pg.py"] and len(plain) == len(dr.POLICY_TESTS) - 1
+    assert sorted(p.split("::")[0] for p in pg) == ["tests/test_backlog_gate_override_pg.py", "tests/test_sql_explain_sweep_pg.py"] and len(plain) == len(dr.POLICY_TESTS) - 2
+
+
+# The detector: a NEW test that scans the repository tree for a convention must join POLICY_TESTS (or be classified here), so the set is not a list somebody has to remember (Directive D-0).
+NOT_POLICY = {
+    "tests/test_batch_cycle_audits_e2e.py": "DESIGN: end to end on a stub tree; its globs read the logs and audit files the launchers it runs produced, not the repository sources.",
+    "tests/test_batch_p3_post_draft_audit_e2e.py": "DESIGN: end to end on a stub tree; its globs read the logs the launcher it runs produced, not the repository sources.",
+    "tests/test_launcher_state_guard.py": "DESIGN: end to end refusal paths of P1P2_runCycle.bat; its globs compare the log directory before and after a run, not the repository sources.",
+    "tests/test_github_protect_master.py": "DESIGN: reads .github/workflows; GitHub is out of the loop (AGENTS.md, since 2026-11-02) and its checks come back with it, not with a code change.",
+}
+
+
+def _scans_the_repository(path) -> bool:
+    """True when the test file walks (rglob / walk / glob / iglob) something named after a repository root (shared, scripts, proyecto1..3, ROOT / REPO). Static, no import."""
+    import ast
+    import re as _re
+    roots = ("shared", "scripts", "proyecto1", "proyecto2", "proyecto3")
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    for n in ast.walk(tree):
+        if not isinstance(n, ast.Call):
+            continue
+        f = n.func
+        name = f.attr if isinstance(f, ast.Attribute) else (f.id if isinstance(f, ast.Name) else "")
+        if name not in ("rglob", "walk", "glob", "iglob"):
+            continue
+        recv = ast.unparse(f.value) if isinstance(f, ast.Attribute) else ""
+        text = ast.unparse(n)
+        if any(f'"{r}"' in text or f"'{r}'" in text for r in roots) or _re.search(r"\b(ROOT|REPO|_ROOT)\b", recv):
+            return True
+    return False
+
+
+def test_every_test_that_scans_the_repository_is_in_the_policy_set_or_classified_with_a_reason():
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from _allowlist import bad_reasons
+    root = Path(__file__).resolve().parents[1]
+    in_set = {e.split("::")[0] for e in dr.POLICY_TESTS}
+    scanners = {p.relative_to(root).as_posix() for p in sorted((root / "tests").glob("test_*.py")) if _scans_the_repository(p)}
+    unclassified = sorted(scanners - in_set - set(NOT_POLICY))
+    assert not unclassified, ("a test that scans the repository tree must run in every area receipt: add it to POLICY_TESTS (shared/delivery_receipt.py, one `file::test` entry when "
+                              f"the file also holds module tests) or to NOT_POLICY with a reason: {unclassified}")
+    assert not bad_reasons(NOT_POLICY), bad_reasons(NOT_POLICY)
+    stale = sorted(k for k in NOT_POLICY if k not in scanners)
+    assert not stale, f"NOT_POLICY entries that no longer scan the repository (remove them): {stale}"
