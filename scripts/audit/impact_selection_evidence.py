@@ -578,6 +578,14 @@ def cmd_selective(args) -> int:
     return 0 if same else 1
 
 
+def merge_mutation(prior: Optional[dict], results: dict, cascades: list) -> tuple:
+    """(all results, all cascade records) after a rerun of some mutants: the rerun replaces what it ran and keeps the rest. A prior file written by an older version of this harness has no `cascades`
+    key (the first rerun of 2026-11-07 crashed on exactly that, after an hour of test runs, so it is a tested case). Pure."""
+    prior = prior or {}
+    kept = [c for c in prior.get("cascades", []) if not (set(c.get("mutants", [])) & set(results))]
+    return {**prior.get("results", {}), **results}, kept + cascades
+
+
 def cmd_mutate(args) -> int:
     work = Path(args.work) / "mutate"
     sha = da._git("rev-parse", "--verify", f"{args.sha}^{{commit}}", cwd=ROOT).strip()
@@ -608,11 +616,12 @@ def cmd_mutate(args) -> int:
     results = {m["id"]: {"kind": m["kind"], "channel": m["channel"], "note": m["note"], "decision": m["decision"], "failing": [], "escapes": []} for m in mutants}
     by_id = {m["id"]: m for m in mutants}
     cascades: list = []
+    tag = "rerun" if args.only else "batch"                                               # a partial rerun must not overwrite the folders (and the evidence) of the full run
     for bi, batch in enumerate(mutant_batches(mutants, args.batch)):
         ids = [m["id"] for m in batch]
         _reset(clone)
         _apply(clone, batch)
-        res = run_clone(clone, work / f"batch{bi}", keep_going=True)
+        res = run_clone(clone, work / f"{tag}{bi}", keep_going=True)
         failed = _failed_files(res["tests"]) - baseline_failed
         print(f"[E4] batch {bi} {ids}: {res['seconds']} s, {len(failed)} failing test files", flush=True)
         plan = plan_attribution(sorted(failed), {i: selections[i] for i in ids})
@@ -625,7 +634,7 @@ def cmd_mutate(args) -> int:
             if cands:                                                                     # rerun the group's files with only the mutants whose selection contains them
                 _reset(clone)
                 _apply(clone, [by_id[i] for i in cands])
-                rerun = run_clone(clone, work / f"batch{bi}_g{gi}c", plan=_plan_for(files), keep_going=True)
+                rerun = run_clone(clone, work / f"{tag}{bi}_g{gi}c", plan=_plan_for(files), keep_going=True)
                 explained = _failed_files(rerun["tests"]) & files
                 for i in cands:
                     results[i]["failing"] += sorted(explained)
@@ -633,7 +642,7 @@ def cmd_mutate(args) -> int:
             if rest and others:                                                           # still unexplained: do the mutants whose selection lacks them break them? then it is an escape
                 _reset(clone)
                 _apply(clone, [by_id[i] for i in others])
-                rerun = run_clone(clone, work / f"batch{bi}_g{gi}o", plan=_plan_for(rest), keep_going=True)
+                rerun = run_clone(clone, work / f"{tag}{bi}_g{gi}o", plan=_plan_for(rest), keep_going=True)
                 escaped = _failed_files(rerun["tests"]) & rest
                 for i in others:
                     results[i]["escapes"] += sorted(escaped)
@@ -641,7 +650,7 @@ def cmd_mutate(args) -> int:
             if rest:                                                                      # fails in the batch run but alone under neither group: with ALL the batch's mutants together (an interaction)?
                 _reset(clone)
                 _apply(clone, batch)
-                rerun = run_clone(clone, work / f"batch{bi}_g{gi}a", plan=_plan_for(rest), keep_going=True)
+                rerun = run_clone(clone, work / f"{tag}{bi}_g{gi}a", plan=_plan_for(rest), keep_going=True)
                 together = _failed_files(rerun["tests"]) & rest
                 for i in (cands if cands else others):                                    # an interaction explains a file some mutant selects; one nobody selects is an escape
                     (results[i]["failing"] if cands else results[i]["escapes"]).extend(sorted(together))
@@ -651,6 +660,7 @@ def cmd_mutate(args) -> int:
         causes = sum(len(r["failing"]) for i, r in results.items() if i in ids)
         cascades.append({"batch": bi, "mutants": ids, "cascade_files": sorted(set(cascade)), "explained_failures": causes})
         print(f"[E4] batch {bi}: {causes} explained failing files; cascade victims {len(set(cascade))}", flush=True)
+        (Path(args.work) / f"mutation_{tag}_partial.json").write_text(json.dumps({"results": results, "cascades": cascades}, sort_keys=True), encoding="utf-8")      # nothing the batches learned is lost to a later bug
     for m in mutants:                                                                     # a security mutant must trip its policy test
         if m["kind"] == "security":
             want = m.get("expects")
@@ -658,8 +668,7 @@ def cmd_mutate(args) -> int:
             results[m["id"]]["detected"] = want in results[m["id"]]["failing"]
     out = Path(args.work) / "mutation.json"
     prior = json.loads(out.read_text(encoding="utf-8")) if (args.only and out.exists()) else None          # a partial rerun replaces only the mutants it ran
-    all_results = {**(prior["results"] if prior else {}), **results}
-    all_cascades = [c for c in (prior["cascades"] if prior else []) if not (set(c["mutants"]) & set(results))] + cascades
+    all_results, all_cascades = merge_mutation(prior, results, cascades)
     n_i = sum(1 for r in all_results.values() if r["decision"] == "impact" and r["failing"])
     esc = sum(len(r["escapes"]) for r in all_results.values())
     unexplained = [c["batch"] for c in all_cascades if c["cascade_files"] and not c["explained_failures"]]    # failures with no cause in their batch: neither a mutant effect nor a cascade

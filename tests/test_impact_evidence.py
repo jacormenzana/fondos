@@ -137,6 +137,16 @@ def test_the_evidence_line_needs_every_check_and_a_missing_file_fails_its_check(
     assert ev.evaluate_evidence(tmp_path)["pass"] is True
 
 
+def test_a_partial_mutation_rerun_replaces_what_it_ran_keeps_the_rest_and_accepts_an_old_format_file():
+    prior_old = {"results": {"M01": {"failing": ["a"]}, "M02": {"failing": ["b"]}}}                    # written by the first version: no `cascades` key (the rerun of 2026-11-07 crashed on this)
+    results, casc = ev.merge_mutation(prior_old, {"M02": {"failing": ["c"]}, "M03": {"failing": []}}, [{"batch": 0, "mutants": ["M02", "M03"], "cascade_files": [], "explained_failures": 1}])
+    assert results == {"M01": {"failing": ["a"]}, "M02": {"failing": ["c"]}, "M03": {"failing": []}} and [c["mutants"] for c in casc] == [["M02", "M03"]]
+    prior = {"results": {"M01": {}, "M02": {}}, "cascades": [{"batch": 0, "mutants": ["M01"], "cascade_files": ["x"], "explained_failures": 2}, {"batch": 1, "mutants": ["M02"], "cascade_files": [], "explained_failures": 1}]}
+    _r, casc2 = ev.merge_mutation(prior, {"M02": {}}, [{"batch": 0, "mutants": ["M02"], "cascade_files": [], "explained_failures": 3}])
+    assert [c["mutants"] for c in casc2] == [["M01"], ["M02"]] and casc2[1]["explained_failures"] == 3      # the stale record of a rerun mutant is dropped, the others kept
+    assert ev.merge_mutation(None, {"M01": {}}, []) == ({"M01": {}}, [])
+
+
 def test_the_tracer_attributes_code_imports_and_subprocesses_to_the_test_file_and_never_changes_the_verdict(tmp_path):
     proj = tmp_path / "proj"
     (proj / "pkg").mkdir(parents=True)
