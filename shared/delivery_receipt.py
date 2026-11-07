@@ -69,6 +69,37 @@ def select_tests(changed: list, available: list) -> tuple:
     return sorted(selected), sorted(uncovered)
 
 
+# FND-0380 (2026-11-07): the tests that scan the WHOLE tree for a convention have no module of their own, so `select_tests` never picks them: scripts/audit/auto_publish.py (it reports
+# incidents) passed its area run with its own 29 tests and failed the full suite on test_every_incident_reporter_has_a_fixture_case; a change confined to scripts/ or tests/ would have been
+# published and its tickets closed with that defect. An `area` run therefore ALWAYS adds this fixed POLICY SET to the tests named after the changed modules. Measured 2026-11-07: about 37 s
+# of plain pytest plus the SQL sweep on Postgres. A path may carry a `::node` to run ONE test of a file that also holds module tests. A stale entry (the file is gone) is a failing test
+# (tests/test_delivery_receipt.py), so the set cannot rot.
+POLICY_TESTS = (
+    "tests/test_backlog_overlap.py::test_every_incident_reporter_has_a_fixture_case",   # every component that calls report_incident needs a calibration case (the FND-0380 incident)
+    "tests/test_backlog_single_door.py",                                               # no raw INSERT / UPDATE on backlog.backlog outside the single door
+    "tests/test_backlog_live_guard.py",                                                # every state-changing helper / command-line tool goes through the live-write gate
+    "tests/test_backlog_writers.py",                                                   # every system:* identity in the code is registered (a new automatic writer cannot land unregistered)
+    "tests/test_backlog_staging.py::test_every_script_that_calls_the_real_routines_on_a_snapshot_calls_the_guard",
+    "tests/test_dialect_coverage.py",                                                  # no sqlite3 / dialect anti-patterns in production code
+    "tests/test_log_paths.py",                                                         # every log goes to a registered directory (get_log_dir)
+    "tests/test_maintenance_log_routing.py",
+    "tests/test_report_dirs.py",
+    "tests/test_silent_fill_scan.py",                                                  # no silent .fillna() / .ffill() imputation
+    "tests/test_period_key_scan.py",                                                   # one period key (R-9)
+    "tests/test_owner_vault.py",                                                       # owner-only strings never reach a session process
+    "tests/test_batch_standards.py",                                                   # every launcher documents its usage and answers --help
+    "tests/test_batch_helpers.py::test_every_real_launcher_has_a_printable_usage",
+    "tests/test_entrypoints_smoke.py",                                                 # every entry point starts and parses its arguments
+    "tests/test_sql_explain_sweep_pg.py",                                              # every SQL statement production code executes is valid on Postgres (runs in the PG container)
+)
+
+
+def with_policy(selected: list, available: list) -> list:
+    """`selected` plus the POLICY_TESTS whose file exists in the exported tree (`available`, repo-relative paths), sorted, without repeats. Pure."""
+    avail = {str(a).replace("\\", "/") for a in available}
+    return sorted(set(selected) | {t for t in POLICY_TESTS if t.split("::", 1)[0] in avail})
+
+
 def parse_counts(text: str) -> tuple:
     """(counts, summaries) from the output of one or more pytest runs: the pytest `-q` final lines ("12 passed, 1 failed in 3.4s") are summed. `summaries` is how many such lines there were: zero means no
     pytest run reached its summary (the container did not start, the interpreter died), which is not a failed test. Pure."""

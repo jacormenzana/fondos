@@ -329,3 +329,49 @@ def test_one_run_at_a_time_and_a_stale_lock_is_taken_over(tmp_path):
     assert da.acquire(lock) is True
     assert da.acquire(lock, stale_s=-1) is True                                          # older than "stale": belongs to a dead process
     da.release(lock)
+
+
+# ── FND-0380: the whole-tree policy tests run in EVERY area receipt ─────────────
+
+def test_with_policy_adds_only_the_policy_tests_the_tree_has_and_keeps_the_selection():
+    avail = ["tests/test_log_paths.py", "tests/test_backlog_overlap.py", "tests/test_tool.py", "tests/test_other.py"]
+    got = dr.with_policy(["tests/test_tool.py"], avail)
+    assert got == sorted({"tests/test_tool.py", "tests/test_log_paths.py", "tests/test_backlog_overlap.py::test_every_incident_reporter_has_a_fixture_case"})
+    assert "tests/test_other.py" not in got                                           # not a policy test: only selected when a module is changed
+    assert dr.with_policy([], []) == [] and dr.with_policy(["tests/test_tool.py"], ["tests/test_tool.py"]) == ["tests/test_tool.py"]
+    assert dr.with_policy(["tests/test_log_paths.py"], avail).count("tests/test_log_paths.py") == 1       # no repeats
+
+
+def test_every_policy_test_exists_so_the_set_cannot_rot():
+    root = Path(__file__).resolve().parents[1]
+    assert len(set(dr.POLICY_TESTS)) == len(dr.POLICY_TESTS)
+    for entry in dr.POLICY_TESTS:
+        path, _, node = entry.partition("::")
+        f = root / path
+        assert f.is_file(), f"stale policy entry {entry}: the file is gone"
+        if node:
+            assert f"def {node}(" in f.read_text(encoding="utf-8"), f"stale policy entry {entry}: no such test"
+
+
+def test_an_area_run_hands_the_policy_tests_to_the_runner_and_the_receipt_records_them(repo):
+    commit(repo, {"tests/test_log_paths.py": "def test_p():\n    pass\n", "tests/test_sql_explain_sweep_pg.py": "def test_q():\n    pass\n"})
+    sha = commit(repo, {"scripts/tool.py": "x = 2\n"})
+    runner = Runner()
+    rec = run(repo, runner)
+    scope, selected, _ = runner.calls[0]
+    assert scope == "area" and selected == ["tests/test_log_paths.py", "tests/test_sql_explain_sweep_pg.py", "tests/test_tool.py"]
+    assert rec["files"] == selected and rec["result"] == "pass" and da.verify(repo, sha, repo / "out" / "receipts.jsonl")[0] is True
+
+
+def test_the_policy_set_does_not_turn_uncovered_code_into_a_pass(repo):
+    commit(repo, {"tests/test_log_paths.py": "def test_p():\n    pass\n"})
+    commit(repo, {"scripts/brand_new.py": "z = 1\n"})                                  # no test is named after it
+    runner = Runner()
+    rec = run(repo, runner)
+    assert rec["result"] == "no_tests_cover" and runner.calls == []
+
+
+def test_the_postgres_policy_test_goes_to_the_postgres_runner_and_the_rest_to_plain_pytest():
+    plain = [t for t in dr.POLICY_TESTS if "_pg" not in t.rsplit("/", 1)[-1]]
+    pg = [t for t in dr.POLICY_TESTS if "_pg" in t.rsplit("/", 1)[-1]]
+    assert pg == ["tests/test_sql_explain_sweep_pg.py"] and len(plain) == len(dr.POLICY_TESTS) - 1

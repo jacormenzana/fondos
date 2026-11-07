@@ -170,9 +170,11 @@ def attest(root: Path, head: str, scope: Optional[str], *, runner: Callable, rec
         try:
             checkout_tree(chg["sha"], tmp, root)                             # a real repository at the exact commit: some tests call git (a plain archive failed 5 of them)
             if run_scope == "area":
-                selected, uncovered = dr.select_tests(chg["changed"], available_tests(tmp))
+                avail = available_tests(tmp)
+                selected, uncovered = dr.select_tests(chg["changed"], avail)
                 if not selected and not uncovered:
                     uncovered = ["(no test selected for this change)"]
+                selected = dr.with_policy(selected, avail)                  # FND-0380: the whole-tree policy tests run in EVERY area receipt
             if not uncovered:
                 for _attempt in range(2):                                    # a run that never reaches pytest's summary is infrastructure: retried once
                     try:
