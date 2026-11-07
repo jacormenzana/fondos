@@ -173,6 +173,24 @@ def impact_decision(root: Path, chg: dict, tree: Path, receipts: list, *, use_du
     return decision, reason
 
 
+def confirm_escapes(outside: list, runner: Callable, tree: Path) -> tuple:
+    """(escapes, cascade) from the failing test files a full run reported OUTSIDE the selection. A failure that does not reproduce when its file runs alone is a cascade (an earlier failing test left shared
+    state broken, which a selective run of the same tests would not suffer: the mutation runs of 2026-11-07 showed ten such victims) and is no escape; one that fails alone is a real escape. If the isolated
+    run cannot be made or says nothing (no pytest summary), every file stays an escape: a doubt demotes the mode, it never keeps it. Pure given `runner`."""
+    if not outside:
+        return [], []
+    try:
+        rc, text, _s, _c = runner("impact", sorted(outside), tree)
+    except Exception:                                                        # noqa: BLE001
+        return list(outside), []
+    _counts, summaries = dr.parse_counts(text)
+    if not summaries:
+        return list(outside), []
+    ids = [i.split("::", 1)[0] for i in dr.failed_tests(text, limit=None)]
+    alone = [f for f in outside if f in ids or (f.startswith("proyecto2/") and f[len("proyecto2/"):] in ids)]
+    return alone, [f for f in outside if f not in alone]
+
+
 def current_impact_mode(receipts_path: Path) -> str:
     """OFF | SHADOW | ENFORCE for the next receipt: the switches of shared/config.py and the receipts file (shared/test_impact.py::effective_mode). Never raises: any doubt is SHADOW, and OFF when the
     configuration cannot be read."""
@@ -313,7 +331,8 @@ def attest(root: Path, head: str, scope: Optional[str], *, runner: Callable, rec
                 if decision is not None:
                     selection["decision"] = decision.as_dict()
                     if run_scope == "full" and decision.scope == "impact" and text:
-                        selection["escapes"] = ti.find_escapes(dr.failed_tests(text, limit=None), decision.files(), available_tests(tmp))
+                        outside = ti.find_escapes(dr.failed_tests(text, limit=None), decision.files(), available_tests(tmp))
+                        selection["escapes"], selection["cascade"] = confirm_escapes(outside, runner, tmp)
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
     result, detail = dr.judge(run_scope, required, counts, summaries, rc, uncovered)

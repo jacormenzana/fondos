@@ -91,6 +91,34 @@ def test_shadow_records_an_escape_when_a_failing_test_was_outside_the_selection(
     assert mode == "SHADOW"
 
 
+class TwoPhaseRunner:
+    """The full run fails on `first`; the isolated rerun of the files outside the selection says `second`."""
+    def __init__(self, first, second):
+        self.texts, self.calls = [first, second], []
+
+    def __call__(self, scope, selected, export_dir):
+        self.calls.append((scope, list(selected)))
+        text = self.texts[min(len(self.calls) - 1, 1)]
+        return (1 if "failed" in text else 0), text, 0.1, [["pytest"]]
+
+
+def test_a_failure_outside_the_selection_that_passes_alone_is_a_cascade_not_an_escape(repo):
+    commit(repo, {"shared/lib_a.py": "A = 2\n"})
+    runner = TwoPhaseRunner(failing("tests/test_b.py::test_b"), OK_TEXT)                   # alone it passes: an earlier failure left shared state broken
+    rec = run(repo, runner, mode="SHADOW")
+    assert runner.calls[1] == ("impact", ["tests/test_b.py"])                                 # only the outside file was rerun
+    assert rec["selection"]["escapes"] == [] and rec["selection"]["cascade"] == ["tests/test_b.py"] and "ESCAPE" not in rec["detail"]
+    assert ti.effective_mode([rec], ti.ALGO_VERSION) == "SHADOW"
+
+
+def test_a_failure_outside_the_selection_that_also_fails_alone_is_an_escape_and_so_is_a_doubt(repo):
+    commit(repo, {"shared/lib_a.py": "A = 2\n"})
+    rec = run(repo, TwoPhaseRunner(failing("tests/test_b.py::test_b"), failing("tests/test_b.py::test_b")), mode="SHADOW")
+    assert rec["selection"]["escapes"] == ["tests/test_b.py"] and rec["selection"]["cascade"] == [] and "ESCAPE" in rec["detail"]
+    rec2 = run(repo, TwoPhaseRunner(failing("tests/test_b.py::test_b"), "container did not start\n"), mode="SHADOW")        # the rerun produced no pytest summary
+    assert rec2["selection"]["escapes"] == ["tests/test_b.py"]
+
+
 def test_a_failure_inside_the_selection_is_not_an_escape(repo):
     commit(repo, {"shared/lib_a.py": "A = 2\n"})
     rec = run(repo, Runner(text=failing("tests/test_a.py::test_a"), rc=1), mode="SHADOW")

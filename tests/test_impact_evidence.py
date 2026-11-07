@@ -119,13 +119,14 @@ def test_the_evidence_line_needs_every_check_and_a_missing_file_fails_its_check(
     write("baseline.json", {"sha": "a" * 40, "runs": [{"rc": 0}, {"rc": 0}], "failed_in_first_run": [], "flaky": []})
     write("trace_vs_graph.json", {"tests_checked": 400, "tests_with_holes": 0, "a10": {"count": 0}})
     write("replay.json", {"rows": [{"sha": "x"}], "missed": 0})
-    write("mutation.json", {"impact_decided_and_killed": 31, "escapes": 0, "escape_rate_upper_95": 0.097, "security_detected": [True] * 4})
+    write("mutation.json", {"impact_decided_and_killed": 31, "escapes": 0, "escape_rate_upper_95": 0.097, "security_detected": [True] * 4, "batches_with_unexplained_failures": 0})
     write("saving.json", {"net_saving": 0.27})
     good = ev.evaluate_evidence(tmp_path)
     assert good["pass"] is True and good["sha"] == "a" * 40
     for name, change, check in [("baseline.json", {"flaky": ["tests/test_x.py::t"]}, "E1 no flaky test"), ("trace_vs_graph.json", {"tests_with_holes": 1}, "E2 no file ran outside the static closure"),
                                 ("trace_vs_graph.json", {"a10": {"count": 2}}, "A10 the tracer changed no verdict"), ("replay.json", {"missed": 1}, "E3 no recorded failure falls outside its selection"),
-                                ("mutation.json", {"escapes": 1}, "E4 zero escapes"), ("mutation.json", {"impact_decided_and_killed": 29}, "E4 at least 30 impact-decided mutants killed"),
+                                ("mutation.json", {"escapes": 1}, "E4 zero escapes"),
+                                ("mutation.json", {"batches_with_unexplained_failures": 1}, "E4 every failure has a cause (cascade victims only in batches with an explained failure)"), ("mutation.json", {"impact_decided_and_killed": 29}, "E4 at least 30 impact-decided mutants killed"),
                                 ("mutation.json", {"escape_rate_upper_95": 0.2}, "E4 escape-rate 95% upper bound <= 0.1"), ("mutation.json", {"security_detected": [True, True, False, True]}, "E4 every security mutant trips its policy test"),
                                 ("saving.json", {"net_saving": 0.19}, "A8 projected net saving >= 20%")]:
         original = json.loads((tmp_path / name).read_text(encoding="utf-8"))

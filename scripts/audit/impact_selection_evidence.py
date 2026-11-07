@@ -44,6 +44,10 @@ def parse_junit(junit_dir: Path, test_files: set) -> dict:
     for xml in sorted(Path(junit_dir).glob("run*.xml")):
         prefix = "proyecto2/" if xml.stem.endswith("_proyecto2") else ""
         for case in ET.parse(xml).getroot().iter("testcase"):
+            if not case.get("classname") and (case.get("name") or "").endswith(".py"):               # a collection error: pytest leaves the class empty and puts the module path in the name
+                file = prefix + case.get("name").replace("\\", "/")
+                out[f"{file}::(collection)"] = ("error", float(case.get("time") or 0.0))
+                continue
             parts = (case.get("classname") or "").split(".")
             file = None
             for i in range(len(parts), 0, -1):
@@ -66,13 +70,16 @@ def per_file(tests: dict) -> dict:
     return {k: round(v, 2) for k, v in sorted(acc.items())}
 
 
-def run_clone(clone: Path, label_dir: Path, *, traced: bool = False, plan: Optional[dict] = None) -> dict:
+def run_clone(clone: Path, label_dir: Path, *, traced: bool = False, plan: Optional[dict] = None, keep_going: bool = False) -> dict:
     """One run of the tests in an existing scratch `clone` (hermetic Postgres, clean environment): the whole suite, or only `plan` ({suite: [path or path::test]}) through run_pg_tests.py --suite-files.
+    `keep_going` = pytest continues past collection errors: a mutant that breaks an import would otherwise abort a whole suite and hide every failure behind it (found in the first mutation run, 2026-11-07).
     Returns {rc, seconds, tests, clone, log}. Never touches the repository tree."""
     label_dir.mkdir(parents=True, exist_ok=True)
     junit = label_dir / "junit"
     shutil.rmtree(junit, ignore_errors=True)
     env = da._clean_env()
+    if keep_going:
+        env["PYTEST_ADDOPTS"] = (env.get("PYTEST_ADDOPTS", "") + " --continue-on-collection-errors").strip()
     if traced:
         trace_dir = label_dir / "trace"
         shutil.rmtree(trace_dir, ignore_errors=True)
@@ -272,6 +279,7 @@ def evaluate_evidence(work: Path, *, min_killed: int = 30, max_escape_bound: flo
         "E3 no recorded failure falls outside its selection": bool(replay) and replay["missed"] == 0 and replay["rows"] != [],
         f"E4 at least {min_killed} impact-decided mutants killed": bool(mut) and mut["impact_decided_and_killed"] >= min_killed,
         "E4 zero escapes": bool(mut) and mut["escapes"] == 0,
+        "E4 every failure has a cause (cascade victims only in batches with an explained failure)": bool(mut) and mut.get("batches_with_unexplained_failures") == 0,
         f"E4 escape-rate 95% upper bound <= {max_escape_bound}": bool(mut) and mut["escape_rate_upper_95"] is not None and mut["escape_rate_upper_95"] <= max_escape_bound,
         "E4 every security mutant trips its policy test": bool(mut) and bool(mut["security_detected"]) and all(mut["security_detected"]),
         f"A8 projected net saving >= {min_saving:.0%}": bool(sav) and sav["net_saving"] >= min_saving,
@@ -597,16 +605,18 @@ def cmd_mutate(args) -> int:
         m["selection"] = d.files() if d.scope == "impact" else None
         selections[m["id"]] = None if d.scope == "full" else {f.split("::", 1)[0] for f in d.files()}
     print(f"[E4] {len(mutants)} mutants; {sum(1 for m in mutants if m['decision'] == 'impact')} decided impact", flush=True)
-    results = {m["id"]: {"kind": m["kind"], "channel": m["channel"], "note": m["note"], "decision": m["decision"], "failing": [], "escapes": [], "unattributed": []} for m in mutants}
+    results = {m["id"]: {"kind": m["kind"], "channel": m["channel"], "note": m["note"], "decision": m["decision"], "failing": [], "escapes": []} for m in mutants}
     by_id = {m["id"]: m for m in mutants}
+    cascades: list = []
     for bi, batch in enumerate(mutant_batches(mutants, args.batch)):
         ids = [m["id"] for m in batch]
         _reset(clone)
         _apply(clone, batch)
-        res = run_clone(clone, work / f"batch{bi}")
+        res = run_clone(clone, work / f"batch{bi}", keep_going=True)
         failed = _failed_files(res["tests"]) - baseline_failed
         print(f"[E4] batch {bi} {ids}: {res['seconds']} s, {len(failed)} failing test files", flush=True)
         plan = plan_attribution(sorted(failed), {i: selections[i] for i in ids})
+        cascade: list = []
         groups: dict = {}
         for t, p in plan.items():
             groups.setdefault((tuple(p["candidates"]), tuple(p["others"])), set()).add(t)
@@ -615,7 +625,7 @@ def cmd_mutate(args) -> int:
             if cands:                                                                     # rerun the group's files with only the mutants whose selection contains them
                 _reset(clone)
                 _apply(clone, [by_id[i] for i in cands])
-                rerun = run_clone(clone, work / f"batch{bi}_g{gi}c", plan=_plan_for(files))
+                rerun = run_clone(clone, work / f"batch{bi}_g{gi}c", plan=_plan_for(files), keep_going=True)
                 explained = _failed_files(rerun["tests"]) & files
                 for i in cands:
                     results[i]["failing"] += sorted(explained)
@@ -623,27 +633,43 @@ def cmd_mutate(args) -> int:
             if rest and others:                                                           # still unexplained: do the mutants whose selection lacks them break them? then it is an escape
                 _reset(clone)
                 _apply(clone, [by_id[i] for i in others])
-                rerun = run_clone(clone, work / f"batch{bi}_g{gi}o", plan=_plan_for(rest))
+                rerun = run_clone(clone, work / f"batch{bi}_g{gi}o", plan=_plan_for(rest), keep_going=True)
                 escaped = _failed_files(rerun["tests"]) & rest
                 for i in others:
                     results[i]["escapes"] += sorted(escaped)
                 rest = rest - escaped
-            for i in cands + others:
-                results[i]["unattributed"] += sorted(rest)
+            if rest:                                                                      # fails in the batch run but alone under neither group: with ALL the batch's mutants together (an interaction)?
+                _reset(clone)
+                _apply(clone, batch)
+                rerun = run_clone(clone, work / f"batch{bi}_g{gi}a", plan=_plan_for(rest), keep_going=True)
+                together = _failed_files(rerun["tests"]) & rest
+                for i in (cands if cands else others):                                    # an interaction explains a file some mutant selects; one nobody selects is an escape
+                    (results[i]["failing"] if cands else results[i]["escapes"]).extend(sorted(together))
+                rest = rest - together
+            if rest:                                                                      # passes alone with every mutant applied: it does not depend on any mutant's code. A cascade (an earlier failing
+                cascade.extend(sorted(rest))                                              # test left shared state broken) or a flake; allowed only in a batch that has a cause (checked below)
+        causes = sum(len(r["failing"]) for i, r in results.items() if i in ids)
+        cascades.append({"batch": bi, "mutants": ids, "cascade_files": sorted(set(cascade)), "explained_failures": causes})
+        print(f"[E4] batch {bi}: {causes} explained failing files; cascade victims {len(set(cascade))}", flush=True)
     for m in mutants:                                                                     # a security mutant must trip its policy test
         if m["kind"] == "security":
             want = m.get("expects")
             results[m["id"]]["expected_policy_test"] = want
             results[m["id"]]["detected"] = want in results[m["id"]]["failing"]
-    n_i = sum(1 for m in mutants if m["decision"] == "impact" and results[m["id"]]["failing"])
-    esc = sum(len(r["escapes"]) for r in results.values())
-    summary = {"sha": sha, "seed": args.seed, "mutants": len(mutants), "killed": sum(1 for r in results.values() if r["failing"]), "impact_decided_and_killed": n_i,
-               "escapes": esc, "escape_rate_upper_95": None if not n_i else round(min(1.0, 3 / n_i), 3),
-               "security_detected": [r.get("detected") for r in results.values() if r["kind"] == "security"], "results": results}
     out = Path(args.work) / "mutation.json"
+    prior = json.loads(out.read_text(encoding="utf-8")) if (args.only and out.exists()) else None          # a partial rerun replaces only the mutants it ran
+    all_results = {**(prior["results"] if prior else {}), **results}
+    all_cascades = [c for c in (prior["cascades"] if prior else []) if not (set(c["mutants"]) & set(results))] + cascades
+    n_i = sum(1 for r in all_results.values() if r["decision"] == "impact" and r["failing"])
+    esc = sum(len(r["escapes"]) for r in all_results.values())
+    unexplained = [c["batch"] for c in all_cascades if c["cascade_files"] and not c["explained_failures"]]    # failures with no cause in their batch: neither a mutant effect nor a cascade
+    summary = {"sha": sha, "seed": args.seed, "mutants": len(all_results), "killed": sum(1 for r in all_results.values() if r["failing"]), "impact_decided_and_killed": n_i,
+               "escapes": esc, "escape_rate_upper_95": None if not n_i else round(min(1.0, 3 / n_i), 3), "cascades": all_cascades, "batches_with_unexplained_failures": len(unexplained),
+               "security_detected": [r.get("detected") for r in all_results.values() if r["kind"] == "security"], "results": all_results}
     out.write_text(json.dumps(summary, indent=1, sort_keys=True), encoding="utf-8")
-    print(f"[E4] killed {summary['killed']}/{summary['mutants']}; impact-decided and killed {n_i}; ESCAPES {esc}; 95% upper bound on the escape rate {summary['escape_rate_upper_95']}; wrote {out}")
-    return 1 if esc else 0
+    print(f"[E4] killed {summary['killed']}/{summary['mutants']}; impact-decided and killed {n_i}; ESCAPES {esc}; cascade victims {sum(len(c['cascade_files']) for c in all_cascades)} "
+          f"(batches with failures but no cause: {len(unexplained)}); 95% upper bound on the escape rate {summary['escape_rate_upper_95']}; wrote {out}")
+    return 1 if (esc or unexplained) else 0
 
 
 def main(argv: Optional[list] = None) -> int:
