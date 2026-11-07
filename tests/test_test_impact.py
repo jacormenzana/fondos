@@ -116,6 +116,25 @@ def test_a_test_whose_import_resolves_to_nothing_runs_always():
     assert "tests/test_ghost.py" in _decide(["shared/b.py"], files).selected["tests"]
 
 
+def test_a_glob_over_a_stub_tree_is_not_a_repository_scan_but_one_rooted_at_the_repository_is():
+    stub = "def test_a(tree, tmp_path):\n    list((tree.root / 'proyecto3' / 'log').glob('*.log'))\n    list(tmp_path.rglob('*.py'))\n    names = [n for n in ast.walk(ast.parse('x'))]\n"
+    assert ti.scans_repository(stub) is False                     # the launcher e2e shape: a tree the test built itself, and ast.walk is not os.walk
+    real = "from pathlib import Path\n_ROOT = Path(__file__).resolve().parents[1]\n_LAUNCH = _ROOT / 'scripts' / 'launch'\n\ndef test_b():\n    list(_LAUNCH.glob('*.bat'))\n"
+    assert ti.scans_repository(real) is True                      # a name derived from __file__ through another derived name
+    assert ti.scans_repository("import os\n\ndef test_c():\n    list(os.walk('shared'))\n") is True
+    assert ti.scans_repository("from pathlib import Path\n\ndef test_d():\n    list(Path('.').joinpath('shared').rglob('*.py'))\n") is True
+    assert ti.scans_repository("def broken(:\n") is True          # cannot tell: it runs always
+
+
+def test_a_subprocess_env_built_from_os_environ_in_a_helper_is_not_blind_but_a_hand_built_one_is():
+    helper = ("import os, subprocess\n\nclass Tree:\n    def __init__(self):\n        self.env = {**os.environ, 'A': '1'}\n\n    def env2(self, **x):\n        return {k: v for k, v in os.environ.items()}\n\n"
+              "def test_a(tree):\n    subprocess.run(['x'], env=tree.env)\n    subprocess.run(['x'], env=tree.env2(B='2'))\n")
+    hand = "import subprocess\n\ndef test_b():\n    subprocess.run(['x'], env={'PATH': '/bin'})\n"
+    files = {"shared/b.py": "X = 1\n", "tests/test_b.py": "from shared import b\n", "tests/test_helper_env.py": helper, "tests/test_hand_env.py": hand}
+    g = ti.build_graph({**_noise(), **files}, third_party=TP)
+    assert "tests/test_hand_env.py" in g.blind_tests and "tests/test_helper_env.py" not in g.blind_tests
+
+
 # ── every fallback rule forces full ──────────────────────────────────────────────
 
 def test_F1_a_changed_file_that_does_not_parse_is_full_but_an_unrelated_broken_file_is_not():

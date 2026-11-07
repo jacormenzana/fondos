@@ -47,6 +47,7 @@ RC_PASS, RC_FAIL, RC_USAGE, RC_INCONCLUSIVE, RC_COALESCED = 0, 1, 2, 3, 4
 RECEIPTS = out_root(ROOT) / "audit" / "delivery_receipts.jsonl"      # FND-0379: the autopilot runs from a clean clone and must read the MAIN tree's receipts
 LOCK = out_root(ROOT) / "audit" / "delivery_attest.lock"
 WANTED = out_root(ROOT) / "audit" / "delivery_attest.wanted"
+DURATIONS = out_root(ROOT) / "audit" / "test_durations.json"        # FND-0385: measured seconds per test file, published by the evidence harness; the selector's time rule (F5) reads it
 EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 LOCK_STALE_S = 4 * 3600
 TIMEOUT_S = {"area": 20 * 60, "impact": 45 * 60, "full": 90 * 60}
@@ -142,7 +143,18 @@ def _hours_between(root: Path, a: str, b: str) -> Optional[float]:
     return abs(tb - ta) / 3600.0
 
 
-def impact_decision(root: Path, chg: dict, tree: Path, receipts: list) -> tuple:
+def _time_inputs(receipts: list) -> tuple:
+    """(seconds per test file | None, median seconds of the last passing full receipts | None): the data of the selector's time rule. Missing or unreadable = None (the rule then does not apply, which
+    can only keep a decision wider than it could be, never narrower)."""
+    try:
+        per_file = json.loads(DURATIONS.read_text(encoding="utf-8")).get("per_file_seconds") or None
+    except (OSError, ValueError):
+        per_file = None
+    secs = [float(r["seconds"]) for r in receipts if r.get("scope") == "full" and r.get("result") == "pass" and float(r.get("seconds") or 0) > 0][-10:]
+    return per_file, (sorted(secs)[len(secs) // 2] if secs else None)
+
+
+def impact_decision(root: Path, chg: dict, tree: Path, receipts: list, *, use_durations: bool = True) -> tuple:
     """(Decision, F7 reason | None) for the change `chg` whose commit is checked out in `tree`. The base tree is exported only when a changed file was deleted or renamed away (the base graph is the only
     one that still knows who imported it). Reads git and files; decides nothing about the mode."""
     head_sources = read_sources(tree)
@@ -154,7 +166,8 @@ def impact_decision(root: Path, chg: dict, tree: Path, receipts: list) -> tuple:
             base_sources = read_sources(btmp)
         finally:
             shutil.rmtree(btmp, ignore_errors=True)
-    decision = ti.decide(chg["changed"], head_sources, base_sources, policy_tests=dr.POLICY_TESTS)
+    durations, median_full = _time_inputs(receipts) if use_durations else (None, None)
+    decision = ti.decide(chg["changed"], head_sources, base_sources, policy_tests=dr.POLICY_TESTS, durations=durations, median_full_seconds=median_full)
     reason, _anchor = ti.freshness_reason(chg["sha"], receipts, is_ancestor=lambda a, b: _is_ancestor(a, b, root),
                                           code_commits_between=lambda a, b: _code_commits_between(root, a, b), hours_between=lambda a, b: _hours_between(root, a, b))
     return decision, reason
@@ -178,7 +191,7 @@ def recompute_impact(root: Path, rec: dict) -> "ti.Decision":
     try:
         checkout_tree(rec["sha"], tmp, root)
         chg = {"sha": rec["sha"], "base": rec["base"], "changed": [p for p in _git("diff", "--name-only", rec["base"], rec["sha"], cwd=root).splitlines() if p]}
-        return impact_decision(root, chg, tmp, [])[0]
+        return impact_decision(root, chg, tmp, [], use_durations=False)[0]          # time can only widen a decision: a recomputation without it is the strictest check of "what must have run"
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

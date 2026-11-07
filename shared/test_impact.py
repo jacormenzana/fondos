@@ -183,12 +183,28 @@ def _strings(tree: ast.AST) -> Iterable[str]:
 
 
 def _environ_names(tree: ast.AST) -> set:
-    """Names assigned from an expression that mentions `environ` (so `env=env` after `env = dict(os.environ, ...)` is derived from the parent environment)."""
+    """Identifiers whose value is derived from the parent environment: a name or an attribute assigned from an expression that mentions `environ` (`env = dict(os.environ, ...)`, `self.env = {**os.environ}`),
+    and the name of a function or method whose body mentions it (`def env(self): return {... os.environ ...}`). So `env=env`, `env=self.env` and `env=tree.env(**x)` are recognised as inheriting PYTHONPATH."""
     out = set()
     for n in ast.walk(tree):
-        if isinstance(n, ast.Assign) and "environ" in ast.unparse(n.value):
-            out.update(t.id for t in n.targets if isinstance(t, ast.Name))
+        if isinstance(n, (ast.Assign, ast.AnnAssign)) and n.value is not None and "environ" in ast.unparse(n.value):
+            for t in (n.targets if isinstance(n, ast.Assign) else [n.target]):
+                if isinstance(t, ast.Name):
+                    out.add(t.id)
+                elif isinstance(t, ast.Attribute):
+                    out.add(t.attr)
+        elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and "environ" in ast.unparse(n):
+            out.add(n.name)
     return out
+
+
+def _derived_from_environ(value: ast.AST, derived: set) -> bool:
+    if "environ" in ast.unparse(value):
+        return True
+    for x in ast.walk(value):
+        if (isinstance(x, ast.Name) and x.id in derived) or (isinstance(x, ast.Attribute) and x.attr in derived):
+            return True
+    return False
 
 
 def _is_blind_call(call: ast.Call, derived: set) -> bool:
@@ -202,26 +218,62 @@ def _is_blind_call(call: ast.Call, derived: set) -> bool:
     if first is not None and any(isinstance(x, ast.Constant) and x.value in ("-I", "-S") for x in ast.walk(first)):
         return True
     for k in call.keywords:
-        if k.arg == "env" and not ("environ" in ast.unparse(k.value) or (isinstance(k.value, ast.Name) and k.value.id in derived)):
+        if k.arg == "env" and not _derived_from_environ(k.value, derived):
             return True
     return False
 
 
+_REPO_ROOT_NAMES = frozenset({"ROOT", "REPO", "_ROOT", "REPO_ROOT", "_REPO", "PROJECT_ROOT"})
+_SOURCE_ROOTS = ("shared", "scripts", "proyecto1", "proyecto2", "proyecto3", "db")
+
+
+def _leftmost_name(node: ast.AST) -> str:
+    while True:
+        if isinstance(node, ast.Name):
+            return node.id
+        node = getattr(node, "value", None) or getattr(node, "func", None) or getattr(node, "left", None)
+        if node is None:
+            return ""
+
+
+def _file_rooted_names(tree: ast.AST) -> set:
+    """Names that lead back to the repository: assigned (transitively) from an expression that mentions `__file__` (`_ROOT = Path(__file__).resolve().parents[1]`, `_LAUNCH = _ROOT / "scripts"`)."""
+    names = set(_REPO_ROOT_NAMES)
+    assigns = [(t.id, n.value) for n in ast.walk(tree) if isinstance(n, (ast.Assign, ast.AnnAssign)) and n.value is not None
+               for t in (n.targets if isinstance(n, ast.Assign) else [n.target]) if isinstance(t, ast.Name)]
+    changed = True
+    while changed:
+        changed = False
+        for name, value in assigns:
+            if name not in names and ("__file__" in ast.unparse(value) or any(isinstance(x, ast.Name) and x.id in names for x in ast.walk(value))):
+                names.add(name)
+                changed = True
+    return names
+
+
 def scans_repository(source: str) -> bool:
-    """True when a test walks (rglob / walk / glob / iglob) something named after a repository root, or the repo root itself. Static, no import. The detector of tests/test_delivery_receipt.py, kept here for every suite."""
-    roots = ("shared", "scripts", "proyecto1", "proyecto2", "proyecto3")
+    """True when a test walks (rglob / walk / glob / iglob) the REAL repository: the receiver (or an argument) leads back to a repository root, i.e. a name derived from `__file__`, or one of the root
+    directories is named as a path. A glob over a stub tree the test builds itself (`(tree.root / "proyecto3" / "log").glob(...)`, `tmp_path.rglob(...)`) is not a scan of the repository sources, which
+    is what the owner classified by hand for the launcher end-to-end files (NOT_POLICY in tests/test_delivery_receipt.py). Static, no import. Unparseable = True (it then runs always)."""
     try:
         tree = ast.parse(source)
     except (SyntaxError, ValueError, RecursionError):
-        return True                                                     # cannot tell: treat as a scanner (runs always)
+        return True
+    rooted = _file_rooted_names(tree)
     for n in ast.walk(tree):
         if not isinstance(n, ast.Call):
             continue
         name, recv = _call_name(n)
         if name not in ("rglob", "walk", "glob", "iglob"):
             continue
-        text = ast.unparse(n)
-        if any(f'"{r}"' in text or f"'{r}'" in text for r in roots) or re.search(r"\b(ROOT|REPO|_ROOT)\b", recv):
+        fn = n.func
+        subject = fn.value if isinstance(fn, ast.Attribute) and recv not in ("os", "glob", "fnmatch") else (n.args[0] if n.args else None)
+        if subject is None:
+            continue
+        if _leftmost_name(subject) in rooted:
+            return True
+        strings = [x.value for x in ast.walk(subject) if isinstance(x, ast.Constant) and isinstance(x.value, str)]
+        if _leftmost_name(subject) in ("Path", "") and any(s == "." or s.split("/")[0] in _SOURCE_ROOTS for s in strings):      # `Path(".").joinpath("shared").rglob(...)`, `os.walk("shared")`
             return True
     return False
 
