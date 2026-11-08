@@ -68,12 +68,12 @@ def test_unknown_source_rows_count_as_adequate_not_as_small():
 
 
 def test_integrity_needs_enough_distinct_adequate_metrics_and_never_applies_to_money_market():
-    many, few = list(range(9)), list(range(3))
+    many, few = list(range(9)), list(range(config.DATA_SUSPECT_MIN_FLAGGED_METRICS - 1))     # one metric short of the configured threshold
     panel = pd.concat([_panel({"MANY": {"metrics": many, "source_rows": 100}, "FEW": {"metrics": few, "source_rows": 100}}),
                        _panel({"MMF": {"metrics": many, "source_rows": 100, "nature": "Monetario"}}, nature="Monetario", seed=12)], ignore_index=True)
     by = {x.representative: x for x in find_suspects(panel)}
     assert KIND_INTEGRITY in by["MANY"].kinds and by["MANY"].n_metrics == 9
-    assert by["FEW"].kinds == (KIND_DEVIATION,)                                      # 3 metrics: a deviation, not an integrity case
+    assert by["FEW"].kinds == (KIND_DEVIATION,)                                      # below the threshold: a deviation, not an integrity case
     assert by["MMF"].kinds == (KIND_DEVIATION,)                                      # structurally extreme ratios: never INTEGRITY
 
 
@@ -116,7 +116,7 @@ def test_an_empty_or_malformed_panel_is_handled_not_guessed():
 
 def test_defaults_come_from_the_config_and_the_selection_switch_ships_off():
     assert config.DATA_SUSPECT_ENABLED is False                                      # nothing reads it yet: the selection effect is WS2's later step, behind this switch
-    assert (config.DATA_SUSPECT_MIN_DEV, config.DATA_SUSPECT_MIN_FLAGGED_METRICS) == (50.0, 4)
+    assert (config.DATA_SUSPECT_MIN_DEV, config.DATA_SUSPECT_MIN_FLAGGED_METRICS) == (50.0, 2)
     assert (config.DATA_SUSPECT_SMALL_SAMPLE_PERCENTILE, config.DATA_SUSPECT_SMALL_SAMPLE_FRACTION) == (10.0, 0.5)
     panel = _panel({"X": {"metrics": [0], "source_rows": 100}})
     assert find_suspects(panel, min_dev=1000.0) == []                                # an explicit parameter beats the default

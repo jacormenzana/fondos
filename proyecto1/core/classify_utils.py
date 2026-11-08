@@ -488,9 +488,6 @@ NAME_SIGNALS_RF_CORTO: list = [
     "ult sh term", "ul sh cor", "ul sh tr",
     "ult st t bd", "ul shor fix in",
     "invesco ult sh",
-    # FND-0397: generic abbreviations of "short duration" / "ultra short" in catalogue names (truncated to 30 characters). Without them the funds below lost their
-    # only RF_Corto signal once the boilerplate "fecha de vencimiento" false positive was removed (AXA IM ... SHORT DUR HY, MUZINICH SHOR DUR HY, OSTRUM CR UL SH PLUS).
-    "short dur", "shor dur", "ul sh", "ult sh",
     # Bonos flotantes
     "float rate notes", "float rate nt",
     # Covered bonds
@@ -1185,6 +1182,22 @@ def _name_match(name_l: str, signals: list) -> bool:
     return any(s in name_l for s in signals)
 
 
+# FND-0397 (2026-11-08): generic abbreviations of "short duration" / "ultra short" in catalogue names (truncated to 30 characters). They are the companion of the open-ended-boilerplate guard below: without them
+# the funds they name (AXA IM ... SHORT DUR HY, MUZINICH SHOR DUR HY, OSTRUM CR UL SH PLUS) lose their only RF_Corto signal once the boilerplate false positive is removed.
+NAME_SIGNALS_RF_CORTO_ABBREV: list = ["short dur", "shor dur", "ul sh", "ult sh"]
+
+
+def _rf_open_ended_guard_on() -> bool:
+    """FND-0397 switch `RF_OPEN_ENDED_ARTICLE_GUARD_ENABLED` (shared/config.py, default False: owner NO GO 2026-11-08, the fix would move 44 in-universe funds out of Corto Plazo). Read at call time; absent config = OFF."""
+    return bool(getattr(_cfg_catalog, "RF_OPEN_ENDED_ARTICLE_GUARD_ENABLED", False)) if _cfg_catalog is not None else False
+
+
+def _rf_corto_name_signals(enabled: Optional[bool] = None) -> list:
+    """NAME_SIGNALS_RF_CORTO, plus the FND-0397 abbreviations only while the guard is ON. Pure when `enabled` is given."""
+    on = _rf_open_ended_guard_on() if enabled is None else enabled
+    return NAME_SIGNALS_RF_CORTO + NAME_SIGNALS_RF_CORTO_ABBREV if on else NAME_SIGNALS_RF_CORTO
+
+
 
 # ============================================================
 # detect_nature_from_kiid — ventana correcta 1200-4500
@@ -1228,7 +1241,7 @@ def detect_nature_from_name(name_l: str) -> Optional[str]:
         return "Alternativo"
     if _name_match(name_l, NAME_SIGNALS_MONETARIO):
         return "Monetario"
-    if _name_match(name_l, NAME_SIGNALS_RF_CORTO):
+    if _name_match(name_l, _rf_corto_name_signals()):
         return "RF_Corto"
     if _name_match(name_l, NAME_SIGNALS_MIXTO):
         return "Mixtos"
@@ -3144,8 +3157,10 @@ def resolve_rf_subtype(name_l: str, kiid_text: str) -> str:
     # FND-0397 (2026-11-08): the article is optional. "el fondo no tiene UNA fecha de vencimiento fija" (the same open-ended boilerplate, Man Dynamic Income and
     # 66 more RF funds) slipped past the guard above, so the bare substring "fecha de vencimient" read it as a target-maturity signal and sent the fund to
     # RF_Corto. Replay on the 978 RF funds with a pending KIID vote: 67 subtype changes (66 Corto -> Flexible), none without a stated duration cap.
+    # SWITCH (owner NO GO 2026-11-08): the optional article is active only while RF_OPEN_ENDED_ARTICLE_GUARD_ENABLED is True; OFF = the guard as it was before this ticket.
+    _venc_article = r'(?:una?\s+)?' if _rf_open_ended_guard_on() else ''
     _vencimiento_negated = bool(re.search(
-        r'(?:no\s+tiene|sin|no\s+tendr[aá])\s+(?:una?\s+)?fecha\s+de\s+vencimient'
+        r'(?:no\s+tiene|sin|no\s+tendr[aá])\s+' + _venc_article + r'fecha\s+de\s+vencimient'
         r'|does\s+not\s+have\s+a\s+fixed\s+maturit'
         r'|has\s+no\s+fixed\s+maturit'
         r'|no\s+fixed\s+maturit',
@@ -3200,7 +3215,7 @@ def resolve_rf_subtype(name_l: str, kiid_text: str) -> str:
         return "RF_Corto"
 
     # Señales en nombre
-    if _name_match(name_l, NAME_SIGNALS_RF_CORTO):
+    if _name_match(name_l, _rf_corto_name_signals()):
         return "RF_Corto"
 
     # SRRI muy bajo (1/7) — último recurso cuando ninguna señal textual de

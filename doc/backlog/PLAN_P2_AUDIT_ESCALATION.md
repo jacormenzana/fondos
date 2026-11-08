@@ -539,3 +539,20 @@ Explained by the definition: of the 1,194 in-universe funds without a valid 1-ye
 ## A8.4 WS3: integrity threshold recalibrated
 `DATA_SUSPECT_MIN_FLAGGED_METRICS` 8 -> 4. Evidence: the current panel has at most 5 adequate-sample extreme metrics per fund (>= 4: 2 funds, >= 3: 2); after the cleanup the maximum is 2 (both current hits, LU1663960000 and LU0232465467, are driven by stale rows). 4 is PROVISIONAL: metric keys over-count correlated quantities, and the owner's 3 would flag the same 2 funds today.
 WS2 stays OFF (`DATA_SUSPECT_ENABLED` = False, nothing reads it) until the monitors show a green light: D1 canaries, the labelled precision of FND-0395, the exemption registry.
+
+---
+
+# Amendment A9 (2026-11-08, late night): owner orders after the batch-3 report
+
+Precedence: A9 > A8 on the points below.
+
+1. **FND-0397: definitive NO GO in production.** No FORCE_REFRESH, no P1 pass for the 44 funds; the simulated drop in Sharpe (0.686 -> 0.552) and return (5.41% -> 4.90%) is unacceptable. The fix stays isolated until a mitigation for the selection engine is designed.
+   *Verified gap in the isolation:* the fix was already in the published classifier (`d42aed4`) and the P1 nature-first loop calls `resolve_nature_evidence` for every ISIN of the catalogue, cached ones included (`proyecto1/core/pipeline.py`, "nuevos, CACHED, cualquier bloque"), so the next P1 pass would probably have re-classified
+   the 44 funds without any FORCE_REFRESH (inferred from the code, not run: tests on the live store are forbidden). Fix: switch `RF_OPEN_ENDED_ARTICLE_GUARD_ENABLED` = False (`shared/config.py`, read at call time by `classify_utils`): OFF = the optional article and the four short-duration name abbreviations are inactive, byte-for-byte the pre-ticket
+   behaviour (net diff against `d42aed4^` checked). The 13 tests run with the switch ON; new tests pin the OFF behaviour. Lifting it needs a mitigation and the owner.
+2. **FND-0401 cleanup APPLIED** on the live store (`clean_stale_metric_rows.py --apply`): 11,812 regime rows and 162 slope rows deleted, identical to the dry run; a new dry run shows 0. `REGIME_MIN_OBS` stays 12.
+   Panel after the cleanup: only 2 funds keep an adequate extreme metric (ES0116848013 with 2 keys, IE00B3L10570 with 1); LU1663960000, LU0922333322 and LU0232465467 have none. The audit findings of those funds disappear at the next audit run.
+3. **WS3 threshold:** `DATA_SUSPECT_MIN_FLAGGED_METRICS` 4 -> 2 (4 would be dead code on the cleaned panel). Provisional: the 2 keys of ES0116848013 are the nominal and real variants of one quantity (sortino|crisis_2022), so the key count over-counts; FND-0395 refines the unit to a quantity.
+   WS2 stays OFF and nothing reads the predicate.
+4. **ES0116848013:** manual audit ticket **FND-0403** (INV, HIGH): cross-check its 2022 NAV (+75.8% implied) and sortino against the manager's documents; verdict GENUINE / SOURCE_ERROR / INCONCLUSIVE. State today: in the universe, NAV status OK, in no scenario. No automated action decides on the fund (NAV guard in SHADOW, predicate OFF);
+   there is NO exclusion mechanism that keeps it out of the next P3 build: if the owner wants it excluded before the verdict, that is a separate decision (accepted-residual style, with ticket and expiry).

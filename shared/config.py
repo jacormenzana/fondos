@@ -652,11 +652,16 @@ NAV_UNSHARED_JUMP_MAX_PEER_SHARE: float = 0.05
 # with |MAD-Z| >= 50 on 2026-11-08 (FND-0393): MIN_DEV 50 is the extreme set's own cut; a fund needs MIN_FLAGGED_METRICS distinct ADEQUATE-sample metrics at that deviation to be an INTEGRITY suspect; a metric's sample is
 # "small" when its source_rows is below the SMALL_SAMPLE_PERCENTILE of its Fund_Nature AND below SMALL_SAMPLE_FRACTION of that nature's median (16 of the 22 were small-sample artifacts, e.g. 3 points where 36 is the norm).
 DATA_SUSPECT_ENABLED: bool = False
+# FND-0397 (2026-11-08): the classifier fix for the open-ended-fund boilerplate ("no tiene UNA fecha de vencimiento", optional article in the negation guard + the short-duration name abbreviations). OFF by owner order
+# (definitive NO GO): replayed on the live store it moves 44 in-universe funds out of Corto Plazo and lowers the simulated portfolio Sharpe 0.686 -> 0.552 (scripts/audit/nature_move_impact.py). Turn it ON only with a
+# mitigation for the selection engine; the code path is otherwise inert. A kill switch in the registry sense: it is read at call time by classify_utils.
+RF_OPEN_ENDED_ARTICLE_GUARD_ENABLED: bool = False
 DATA_SUSPECT_MIN_DEV: float = 50.0
-# MIN_FLAGGED_METRICS 8 -> 4 (owner order 2026-11-08, WS3 recalibration). The 8 came from raw alarm counts; measured on the live panel with ADEQUATE samples only, the most any fund has is 5 (a fund with >= 4: 2, with >= 3: 2, with >= 8: 0),
-# so 8 never fired. 4 is PROVISIONAL, not a measured precision: both funds it would flag today are driven by regime rows left behind below REGIME_MIN_OBS (FND-0401); on the panel without those rows no fund has more than 2.
-# Counting distinct metric KEYS also over-counts one quantity (vol_ann in four regimes is one signal): WS3 (FND-0395) refines the unit of evidence and labels the precision before the rule can open an incident.
-DATA_SUSPECT_MIN_FLAGGED_METRICS: int = 4
+# MIN_FLAGGED_METRICS 8 -> 4 -> 2 (owner orders 2026-11-08, WS3 recalibration). The 8 came from raw alarm counts; measured on the live panel with ADEQUATE samples only, the most any fund had was 5, so 8 never fired.
+# The 4 was set while stale regime rows were still stored; after the FND-0401 cleanup (applied 2026-11-08) the live panel has 2 funds with an adequate extreme metric: ES0116848013 with 2 and IE00B3L10570 with 1, so 4 would be dead code.
+# 2 is PROVISIONAL, not a measured precision: the 2 metrics of ES0116848013 are the nominal and the real variant of ONE quantity (sortino in crisis_2022), so the key count over-counts. WS3 (FND-0395) refines the unit of
+# evidence (a quantity, not a key) and labels the precision before the rule can open an incident. Nothing reads the predicate while DATA_SUSPECT_ENABLED is False.
+DATA_SUSPECT_MIN_FLAGGED_METRICS: int = 2
 DATA_SUSPECT_SMALL_SAMPLE_PERCENTILE: float = 10.0
 DATA_SUSPECT_SMALL_SAMPLE_FRACTION: float = 0.5
 # Mínimo de observaciones para métricas de persistencia del alpha (≥7 años)
