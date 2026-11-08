@@ -107,15 +107,17 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, backlog AS $$
 
 -- A new kind of closing condition: tests_pass (CI green: every check run of the change that delivers the ticket passed, and every check the branch requires has run; scripts/audit/rfd_matrix_probe.py,
 -- shared/backlog_ci.py). It takes no argument (the delivering merge is the autopilot's fact) or the sha of a commit. Widen the check of close_condition.probe_kind (the list of the sync phase).
+-- A second kind, audit_isins_clear (FND-0384, owner directive 2026-11-08): args = [domain, isin, ...]; it holds when the latest finished run of that statistical-audit domain persists no violation for
+-- any of the funds (scripts/audit/rfd_matrix_probe.py). The same block widens the check again, and runs again on a database that only has the first widening.
 DO $$
 DECLARE c record;
 BEGIN
     FOR c IN SELECT conname FROM pg_constraint
-              WHERE conrelid = 'backlog.close_condition'::regclass AND contype = 'c' AND pg_get_constraintdef(oid) LIKE '%probe_kind%' AND pg_get_constraintdef(oid) NOT LIKE '%tests_pass%'
+              WHERE conrelid = 'backlog.close_condition'::regclass AND contype = 'c' AND pg_get_constraintdef(oid) LIKE '%probe_kind%' AND pg_get_constraintdef(oid) NOT LIKE '%audit_isins_clear%'
     LOOP
         EXECUTE format('ALTER TABLE backlog.close_condition DROP CONSTRAINT %I', c.conname);
         ALTER TABLE backlog.close_condition ADD CONSTRAINT close_condition_probe_kind_check
-            CHECK (probe_kind IN ('pushed', 'flag', 'calc_share', 'metric_absent', 'absent_in', 'absent_re_in', 'ols_ran', 'ticket_closed', 'task_ok', 'manual', 'tests_pass'));
+            CHECK (probe_kind IN ('pushed', 'flag', 'calc_share', 'metric_absent', 'absent_in', 'absent_re_in', 'ols_ran', 'ticket_closed', 'task_ok', 'manual', 'tests_pass', 'audit_isins_clear'));
     END LOOP;
 END $$;
 

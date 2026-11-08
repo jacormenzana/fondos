@@ -57,7 +57,8 @@ SPEC = {
     "FND-0241": [("pushed", "929ceed"), ("flag", "DEFLATION_MONTH_ALIGN_ENABLED", True), ("manual", "risk + rolling recompute done and the audit clean afterwards")],
     "FND-0242": [("pushed", "d304ba6"), ("flag", "SORTINO_MIN_DOWNSIDE_COUNT_ENABLED", True), ("manual", "risk + rolling recompute done and the audit clean afterwards")],
 }
-PROBE_KINDS = {"pushed", "flag", "calc_share", "metric_absent", "absent_in", "absent_re_in", "ols_ran", "ticket_closed", "task_ok", "tests_pass", "manual"}
+PROBE_KINDS = {"pushed", "flag", "calc_share", "metric_absent", "absent_in", "absent_re_in", "ols_ran", "ticket_closed", "task_ok", "tests_pass", "audit_isins_clear", "manual"}
+AUDIT_FINISHED = ("PASS", "PASS_WITH_WARNINGS", "FAIL")                   # the verdicts of a finished run of the statistical audit (an INCOMPLETE run proves nothing)
 
 
 # ── pure ──────────────────────────────────────────────────────────────────────────────────────────
@@ -186,6 +187,17 @@ def probe_db(conn, kind: str, *args) -> tuple:
     if kind == "ols_ran":
         n = conn.execute("SELECT COUNT(*) FROM p2_pipeline_log WHERE step = 'RUN_SUMMARY' AND message !~ 'ols_funds=0( |$)' AND message ~ 'ols_funds=[1-9]'").fetchone()[0]
         return n > 0, f"{n} P2 RUN_SUMMARY rows with ols_funds > 0"
+    if kind == "audit_isins_clear":
+        # args = (domain, isin, isin, ...): the most recent FINISHED run of that statistical-audit domain has no persisted violation for any of them. The persisted findings include the ones an
+        # acceptance covers (audit_finding_isin is written before the acceptance is applied), so an accepted-but-still-violating fund is NOT clear: only a resolved one is (FND-0384).
+        domain, isins = args[0], list(args[1:])
+        if not isins:
+            raise ValueError("audit_isins_clear needs a domain and at least one ISIN")
+        run = conn.execute("SELECT run_id FROM audit_run WHERE domain = %s AND finished_at IS NOT NULL AND status = ANY(%s) ORDER BY started_at DESC LIMIT 1", (domain, list(AUDIT_FINISHED))).fetchone()
+        if not run:
+            return None, f"no finished audit run of domain {domain}: cannot tell"
+        hit = [r[0] for r in conn.execute("SELECT DISTINCT isin FROM audit_finding_isin WHERE run_id = %s AND domain = %s AND isin = ANY(%s) ORDER BY 1", (run[0], domain, isins)).fetchall()]
+        return not hit, (f"run {run[0]}: all {len(isins)} fund(s) are clear" if not hit else f"run {run[0]}: {len(hit)} of {len(isins)} fund(s) still have a persisted violation ({', '.join(hit[:8])})")
     raise ValueError(kind)
 
 

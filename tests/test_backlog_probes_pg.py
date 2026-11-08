@@ -107,6 +107,15 @@ def test_the_phase_accepts_the_kind_tests_pass_and_still_refuses_an_unknown_one(
     assert len(active(db, b)) == 1
 
 
+def test_the_phase_accepts_the_kind_audit_isins_clear_with_a_domain_and_funds(db):
+    """FND-0384: the closing condition "these funds have no persisted audit violation" is a kind of its own, accepted by the check and kept by a re-apply."""
+    a = _mk(db, "IN_PROGRESS")
+    args = json.dumps(["cost_attributes", "LU0000000001", "LU0000000002"])
+    db.execute("SELECT backlog.sp_add_close_condition(%s, 'audit_isins_clear', %s::jsonb, 'the funds accepted as a residual are cleared by a later audit run', %s)", (a, args, ME))
+    mig.migrate(db, "probes")
+    assert active(db, a) == [("audit_isins_clear", '["cost_attributes", "LU0000000001", "LU0000000002"]', ME)]
+
+
 def test_the_work_in_flight_gets_the_default_condition_in_the_same_transaction_as_the_gate(pre):
     ip, ready_, opened, todo = _mk(pre, "IN_PROGRESS"), _mk(pre, "READY_FOR_DEPLOY"), _mk(pre, "OPEN"), _mk(pre, "TODO")
     own, retired = _mk(pre, "IN_PROGRESS"), _mk(pre, "IN_PROGRESS")

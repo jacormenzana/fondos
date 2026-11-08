@@ -65,3 +65,37 @@ def test_ticket_closed_probe_reads_through_the_backlog_client_and_never_passes_o
 def test_the_module_holds_no_sql_on_the_backlog_database():
     src = (_ROOT / "scripts" / "audit" / "rfd_matrix_probe.py").read_text(encoding="utf-8")
     assert "backlog.backlog" not in src and "psycopg" not in src
+
+
+# ---------------------------------------------------------------- audit_isins_clear (FND-0384): a standing-accepted fund is cleared only when the audit no longer finds it
+
+class _FakeAuditConn:
+    """Just enough of a connection for the two queries of the probe: the latest finished run, then the funds with a persisted violation in it."""
+    def __init__(self, run=("post_run",), violating=()):
+        self.run, self.violating, self.sql = run, list(violating), []
+
+    def execute(self, sql, params=()):
+        self.sql.append((sql, params))
+        rows = [self.run] if (self.run and "FROM audit_run" in sql) else ([(i,) for i in self.violating if i in params[2]] if "FROM audit_finding_isin" in sql else [])
+        return type("R", (), {"fetchone": lambda s: rows[0] if rows else None, "fetchall": lambda s: rows})()
+
+
+def test_the_audit_clear_probe_fails_while_any_fund_is_still_violating_and_names_them():
+    conn = _FakeAuditConn(violating=["LU1665237613", "ES0143559005"])
+    ok, text = m.probe_db(conn, "audit_isins_clear", "cost_attributes", "LU1665237613", "LU1665237704", "ES0143559005")
+    assert ok is False and "2 of 3" in text and "ES0143559005" in text and "post_run" in text
+
+
+def test_the_audit_clear_probe_passes_when_the_latest_finished_run_persists_none_of_them():
+    conn = _FakeAuditConn(violating=["LU9999999999"])                       # another fund violating is not this ticket's business
+    ok, text = m.probe_db(conn, "audit_isins_clear", "cost_attributes", "LU1665237613", "LU1665237704")
+    assert ok is True and "all 2" in text
+    assert conn.sql[0][1][1] == list(m.AUDIT_FINISHED) and "finished_at IS NOT NULL" in conn.sql[0][0]       # an unfinished or INCOMPLETE run proves nothing
+
+
+def test_the_audit_clear_probe_cannot_tell_without_a_finished_run_and_refuses_an_empty_list():
+    assert m.probe_db(_FakeAuditConn(run=None), "audit_isins_clear", "cost_attributes", "LU1665237613")[0] is None      # unverifiable, never a pass
+    import pytest
+    with pytest.raises(ValueError):
+        m.probe_db(_FakeAuditConn(), "audit_isins_clear", "cost_attributes")
+    assert "audit_isins_clear" in m.PROBE_KINDS and m.spec_problems({"FND-1": [("audit_isins_clear", "cost_attributes", "X")]}) == []
