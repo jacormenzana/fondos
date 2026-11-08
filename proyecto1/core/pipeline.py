@@ -273,12 +273,14 @@ try:
     from core.cost_totals_arbitration import extract_priips_costs_arbitrated   # FND-0279: totales del calendario, texto plano vs texto + DLA2
     from core.ucits_cost_extractor  import extract_ucits_costs
     from core.oc_resolution import resolve_fund_oc as _resolve_fund_oc   # FND-0034: el único escritor de Ongoing_Charge_Recurrent
+    from core.oc_resolution import refine_fund_aci as _refine_fund_aci   # FND-0034 (2026-11-08): ACI exacto cuando el redondeo de la publicación lo iguala al OC
     import core.priips_cost_extractor as _priips_ext_mod  # para leer kill-switch en runtime
     _COST_EXTRACTORS_AVAILABLE = True
 except ImportError as _e_cost_import:
     _COST_EXTRACTORS_AVAILABLE = False
     _priips_ext_mod = None
     _resolve_fund_oc = None          # sin el módulo no hay candidato limpio: Ongoing_Charge_Recurrent queda como está (COALESCE)
+    _refine_fund_aci = None
     print(f"[BL-COST-4c] ImportError: {_e_cost_import}")
 
 # Nota: PRIIPS_COST_EXTRACTION_ENABLED se lee en runtime desde _priips_ext_mod
@@ -3097,10 +3099,21 @@ def run_block(
             _oc_value, _oc_source = None, "none"
             if _resolve_fund_oc is not None:
                 _oc_stored = conn.execute(
-                    "SELECT Management_Fee_Pct, ACI_RHP, ACI_1Y FROM fund_master WHERE ISIN=%s", (isin,)).fetchone() or (None, None, None)
+                    "SELECT Management_Fee_Pct, ACI_RHP, ACI_1Y, Transaction_Cost_Pct, Entry_Fee_Pct_Max, Exit_Fee_Pct_Max, Performance_Fee_Pct, Ongoing_Charge_Recurrent "
+                    "FROM fund_master WHERE ISIN=%s", (isin,)).fetchone() or (None,) * 8
                 _oc_value, _oc_source, _ = _resolve_fund_oc(
-                    kiid_meta.get("Fed_Text_For_Cost") or kiid_text, parsed.get("Ongoing_Charge"), fund_master_record, _oc_stored)
+                    kiid_meta.get("Fed_Text_For_Cost") or kiid_text, parsed.get("Ongoing_Charge"), fund_master_record, _oc_stored[:7])
             fund_master_record["Ongoing_Charge_Recurrent"] = _oc_value
+            # FND-0034 (decisión del propietario 2026-11-08): el ACI se imprime con un decimal. Si el ACI guardado es igual al OC solo por ese redondeo (gestión + operación, sin comisiones
+            # de entrada, salida ni de éxito), se guarda el valor exacto de dos decimales (0,3 impreso -> 0,34). Corre en CADA pase, también CACHED, con los valores efectivos (R-4).
+            if _refine_fund_aci is not None and _resolve_fund_oc is not None:
+                _oc_effective = _oc_value if _oc_value is not None else _oc_stored[7]
+                for _aci_col, _aci_exact in _refine_fund_aci(
+                        _oc_effective, fund_master_record, (_oc_stored[1], _oc_stored[2]) + tuple(_oc_stored[3:7])).items():
+                    _aci_printed = fund_master_record.get(_aci_col) if fund_master_record.get(_aci_col) is not None else (_oc_stored[1] if _aci_col == "ACI_RHP" else _oc_stored[2])
+                    fund_master_record[_aci_col] = _aci_exact
+                    log_ingestion(conn, isin, "NORM_ACI_REFINE", "INFO",
+                                  f"[NORM-ACI-REFINE] {_aci_col} {_aci_printed} -> {_aci_exact} (OC {round(_oc_effective * 100, 4)} + operacion {fund_master_record.get('Transaction_Cost_Pct') if fund_master_record.get('Transaction_Cost_Pct') is not None else _oc_stored[3]}; el redondeo de la publicacion iguala el ACI al OC)")
             if _oc_mismatch:
                 # el extractor PRIIPs ya no repara (FND-0034): solo avisa; la reparación la hizo el resolutor o no hay candidato limpio
                 log_ingestion(conn, isin, "BL_COST_4C_OC_ACI_MISMATCH", "FIX" if _oc_value is not None else "WARN",

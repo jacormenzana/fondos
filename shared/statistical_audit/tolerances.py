@@ -65,7 +65,7 @@ KID_ONE_YEAR_RATIO_MAX = 1.25
 # ACI: 59 of the 135 ACI_AMORTISATION_ORDER violators differ by exactly 0.1; every one of the 97 ACI_MUST_AMORTISE violators has an entry fee of
 # 0.0525 % or less, whose amortisation moves the ACI by < 0.05 pp, below the grid). The two bounds below add / subtract
 # FLOAT_IDENTITY_TOLERANCE so that a difference of exactly one unit survives floating point (6.5 + 0.1 != 6.6 bit for bit).
-ACI_PUBLISHED_UNIT_PP = 0.10
+from shared.cost_rounding import ACI_PUBLISHED_UNIT_PP      # noqa: E402 -- ONE definition (0.10), shared with P1's cost_scale and the OC_NOT_CONTAMINATED rounding exemption
 # ACI_RHP may exceed ACI_1Y by one published unit (ACI_AMORTISATION_ORDER): ACI_PUBLISHED_UNIT_PP + FLOAT_IDENTITY_TOLERANCE.
 ACI_ORDER_TOLERANCE_PP = 0.1001
 # An entry fee amortises visibly from one published unit (ACI_MUST_AMORTISE): ACI_PUBLISHED_UNIT_PP - FLOAT_IDENTITY_TOLERANCE.

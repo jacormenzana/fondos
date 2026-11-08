@@ -45,6 +45,8 @@ Módulo puro y sin dependencias del pipeline (R-7).
 
 from typing import Optional, Tuple
 
+from shared.cost_rounding import aci_rounding_explained
+
 __all__ = [
     'OC_RATIO_MAX',
     'OC_ACI_TOLERANCE_PP',
@@ -52,6 +54,7 @@ __all__ = [
     'ratio_to_pct',
     'is_plausible_oc_ratio',
     'equals_aci',
+    'contaminated_by_aci',
     'resolve_ongoing_charge',
 ]
 
@@ -107,6 +110,24 @@ def equals_aci(oc_ratio: Optional[float], aci_rhp_pct: Optional[float], aci_1y_p
     return any(a is not None and abs(oc_ratio * 100.0 - a) <= tol_pp for a in (aci_rhp_pct, aci_1y_pct))
 
 
+def contaminated_by_aci(oc_ratio: Optional[float], aci_rhp_pct: Optional[float], aci_1y_pct: Optional[float],
+                        transaction_cost_pct: Optional[float] = None, entry_fee_pct: Optional[float] = None, exit_fee_pct: Optional[float] = None,
+                        performance_fee_pct: Optional[float] = None, tol_pp: float = OC_ACI_TOLERANCE_PP) -> bool:
+    """
+    ¿Es el gasto corriente (RATIO) el ACI copiado? `equals_aci` SALVO que el redondeo de la publicación lo explique (FND-0034, decisión del propietario 2026-11-08): el ACI se imprime con
+    UN decimal, y un fondo cuyo ACI es gestión + operación (sin comisiones de entrada, salida ni de éxito) imprime el gasto corriente si la operación es < media unidad
+    (gestión 0,30 + operación 0,04 = 0,34, impreso "0,3"). La definición es la de `shared.cost_rounding`, la misma que usa la auditoría. Sin los componentes (operación None) no explica nada.
+    """
+    if oc_ratio is None:
+        return False
+    oc_pct = oc_ratio * 100.0
+    for aci in (aci_rhp_pct, aci_1y_pct):
+        if aci is not None and abs(oc_pct - aci) <= tol_pp \
+                and not aci_rounding_explained(oc_pct, aci, transaction_cost_pct, entry_fee_pct, exit_fee_pct, performance_fee_pct):
+            return True
+    return False
+
+
 def resolve_ongoing_charge(
     kid_format: Optional[str],
     management_fee_pct: Optional[float],
@@ -114,6 +135,10 @@ def resolve_ongoing_charge(
     parser_oc_ratio: Optional[float],
     aci_rhp_pct: Optional[float],
     aci_1y_pct: Optional[float],
+    transaction_cost_pct: Optional[float] = None,
+    entry_fee_pct: Optional[float] = None,
+    exit_fee_pct: Optional[float] = None,
+    performance_fee_pct: Optional[float] = None,
 ) -> Tuple[Optional[float], str]:
     """
     FND-0034: el ÚNICO valor de `Ongoing_Charge_Recurrent` que un pase de P1 puede escribir. Devuelve (ratio | None, fuente).
@@ -138,7 +163,7 @@ def resolve_ongoing_charge(
     for source, value in order:
         if value is None or not (0.0 <= value <= OC_RATIO_MAX) or value == 0.0:
             continue
-        if equals_aci(value, aci_rhp_pct, aci_1y_pct):
+        if contaminated_by_aci(value, aci_rhp_pct, aci_1y_pct, transaction_cost_pct, entry_fee_pct, exit_fee_pct, performance_fee_pct):
             continue
         return value, source
     return None, 'none'

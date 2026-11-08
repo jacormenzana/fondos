@@ -190,7 +190,10 @@ COST_INVARIANTS: tuple[InvariantRule, ...] = (
     # plateau, confirming this is an identity test (OC and ACI_RHP are either the same number by
     # extraction defect or genuinely different) and 0.0001 is already the correct value, not an
     # unaudited default.
+    # 2026-11-08 (owner decision, FND-0034): the ACI is printed with ONE decimal, so an OC equal to it is the publisher's rounding when ACI = OC + transaction costs and nothing else is charged
+    # (LU2132880597: management 0,30 + transaction 0,04 = 0,34, printed "0,3"). The column is set by the runner from shared.cost_rounding, the definition P1 uses to accept the OC.
     InvariantRule("OC_NOT_CONTAMINATED",
                   f"abs(Ongoing_Charge_Recurrent * 100 - ACI_RHP) > {FLOAT_IDENTITY_TOLERANCE}",
+                  when="not OC_ACI_Rounding_Explained",
                   bound_type="HARD_INVARIANT", description="OC contaminated with the ACI"),
 )

@@ -705,6 +705,13 @@ almacenado **no** imprime exactamente el par `<ACI_1Y>% <ACI_RHP>%` junto a una 
 con `shared/statistical_audit/text_evidence.py`, **independiente del extractor** para que la auditoría no se avale con las funciones que audita). Un par que sube y que el documento NO
 imprime sigue siendo ALARM.
 
+**Redondeo de la publicación — `OC_NOT_CONTAMINATED` (FND-0034, decisión del propietario 2026-11-08).** El ACI se imprime con UN decimal; la fila de gestión y la de operación llevan dos. Un fondo
+cuyo ACI es gestión + operación (sin comisiones de entrada, salida ni de éxito) imprime el gasto corriente cuando la operación es menor que media unidad (gestión 0,30 + operación 0,04 = 0,34,
+impreso "0,3"): la igualdad OC = ACI es el redondeo del editor, no la copia de FND-0034. La regla no se aplica a esos fondos (columna derivada `OC_ACI_Rounding_Explained`, calculada por el
+lanzador con `shared/cost_rounding.aci_rounding_explained`, la MISMA definición que usa P1 para aceptar el OC). Medido el 2026-11-08 sobre 70 infractores: 39 explicados, 31 siguen siendo ALARM
+(operación >= 0,05, comisión de entrada, o sin operación registrada). Además P1 guarda el ACI exacto de dos decimales (gestión + operación, 0,3 impreso -> 0,34) cuando el guardado iguala el OC
+por ese redondeo (`oc_resolution.refine_fund_aci`, en cada pase, también CACHED; traza `[NORM-ACI-REFINE]` en `ingestion_log`).
+
 ### 6.2 ISIN de cada hallazgo y deriva de infractores (FND-0234(d))
 
 `audit_finding` guarda **una fila agregada** por invariante o regla de grupo ("88/2809 filas

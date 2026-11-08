@@ -125,6 +125,7 @@ if str(_ROOT) not in sys.path:
 
 import pandas as pd
 
+from shared.cost_rounding import aci_rounding_explained   # FND-0034 (2026-11-08): one definition with P1
 from shared.config import (
     AUDIT_COMPLETENESS_CONTRACT_ENABLED, AUDIT_RESIDUAL_EXPIRY_WARN_DAYS, CRISIS_WINDOWS, MIN_NAV_ROWS, P3_FUND_NAV_MAX_AGE_DAYS,
     P3_MIN_UNIFORM_METRICS_SHARE, ROLLING_WINDOWS,
@@ -400,6 +401,23 @@ def _mark_printed_rises(conn: "psycopg.Connection", master: "pd.DataFrame") -> N
     master.loc[master["ISIN"].isin(printed), "ACI_Rise_Printed"] = True
 
 
+def _mark_oc_rounding(master: "pd.DataFrame") -> None:
+    """Add the boolean column OC_ACI_Rounding_Explained to the fund_master frame, in place (owner decision 2026-11-08, FND-0034): True where ACI_RHP equals nothing but OC + transaction
+    costs rounded to the published unit (shared.cost_rounding, the SAME definition P1 uses to accept the OC and to store the exact ACI): no entry, exit or performance fee, and
+    |OC x 100 + Transaction_Cost_Pct - ACI_RHP| under half a unit. OC_NOT_CONTAMINATED does not apply to such a fund: the equality is the publisher's rounding, not a copy."""
+    master["OC_ACI_Rounding_Explained"] = False
+    need = {"Ongoing_Charge_Recurrent", "ACI_RHP", "Transaction_Cost_Pct"}
+    if master.empty or not need <= set(master.columns):
+        return
+    for col in ("Entry_Fee_Pct_Max", "Exit_Fee_Pct_Max", "Performance_Fee_Pct"):
+        if col not in master.columns:
+            master[col] = None
+    master["OC_ACI_Rounding_Explained"] = [
+        bool(aci_rounding_explained(None if pd.isna(oc) else float(oc) * 100.0, aci, tc, entry, exit_, perf))
+        for oc, aci, tc, entry, exit_, perf in zip(master["Ongoing_Charge_Recurrent"], master["ACI_RHP"], master["Transaction_Cost_Pct"],
+                                                  master["Entry_Fee_Pct_Max"], master["Exit_Fee_Pct_Max"], master["Performance_Fee_Pct"])]
+
+
 def run_cost_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = None) -> "AuditRun":
     master_filter, master_params = _isin_filter(conn, isins, "ISIN")
     schedule_filter, schedule_params = _isin_filter(conn, isins, "s.ISIN")
@@ -408,6 +426,7 @@ def run_cost_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = Non
     master = _restore_case(build_population(conn, master_query, master_params), _COST_MASTER_COLS)
     schedule = _restore_case(build_population(conn, schedule_query, schedule_params), _COST_SCHEDULE_COLS)
     _mark_printed_rises(conn, master)
+    _mark_oc_rounding(master)
     frames_by_table = {"fund_master": master, "fund_cost_schedule": schedule}
 
     run = AuditRun(domain="cost_attributes")
