@@ -70,13 +70,21 @@ def test_the_module_holds_no_sql_on_the_backlog_database():
 # ---------------------------------------------------------------- audit_isins_clear (FND-0384): a standing-accepted fund is cleared only when the audit no longer finds it
 
 class _FakeAuditConn:
-    """Just enough of a connection for the two queries of the probe: the latest finished run, then the funds with a persisted violation in it."""
-    def __init__(self, run=("post_run",), violating=()):
-        self.run, self.violating, self.sql = run, list(violating), []
+    """Just enough of a connection for the three queries of the probe: the latest finished run, the funds with a persisted violation in it, and the rules that hold an acceptance for the funds
+    and carry a non-INFO finding in the run (the ones that can hide an accepted fund)."""
+    def __init__(self, run=("post_run",), violating=(), hiding_rules=()):
+        self.run, self.violating, self.hiding, self.sql = run, list(violating), list(hiding_rules), []
 
     def execute(self, sql, params=()):
         self.sql.append((sql, params))
-        rows = [self.run] if (self.run and "FROM audit_run" in sql) else ([(i,) for i in self.violating if i in params[2]] if "FROM audit_finding_isin" in sql else [])
+        if "FROM audit_run" in sql:
+            rows = [self.run] if self.run else []
+        elif "FROM audit_finding_isin" in sql:
+            rows = [(i,) for i in self.violating if i in params[2]]
+        elif "FROM audit_accepted_finding" in sql:
+            rows = [(r,) for r in self.hiding]
+        else:
+            rows = []
         return type("R", (), {"fetchone": lambda s: rows[0] if rows else None, "fetchall": lambda s: rows})()
 
 
@@ -99,3 +107,12 @@ def test_the_audit_clear_probe_cannot_tell_without_a_finished_run_and_refuses_an
     with pytest.raises(ValueError):
         m.probe_db(_FakeAuditConn(), "audit_isins_clear", "cost_attributes")
     assert "audit_isins_clear" in m.PROBE_KINDS and m.spec_problems({"FND-1": [("audit_isins_clear", "cost_attributes", "X")]}) == []
+
+
+def test_a_partly_accepted_rule_hides_the_accepted_funds_so_the_probe_cannot_pass_on_their_absence():
+    """The 2026-11-07 case: OC_NOT_CONTAMINATED had 1 new violator and 69 accepted; the finding kept only the new one, so an accepted fund was missing from the persisted rows without being clear."""
+    conn = _FakeAuditConn(violating=[], hiding_rules=["ANNUAL_LE_ACCUMULATED"])
+    ok, text = m.probe_db(conn, "audit_isins_clear", "cost_attributes", "LU1665237613", "LU1665237704")
+    assert ok is None and "cannot tell" in text and "ANNUAL_LE_ACCUMULATED" in text
+    assert "severity <> 'INFO'" in conn.sql[-1][0] and "expires_at >= CURRENT_DATE" in conn.sql[-1][0]       # only an active acceptance next to a non-INFO finding hides anything
+    assert m.probe_db(_FakeAuditConn(violating=["LU1665237613"], hiding_rules=["X"]), "audit_isins_clear", "cost_attributes", "LU1665237613")[0] is False       # a persisted violation stays a definite False

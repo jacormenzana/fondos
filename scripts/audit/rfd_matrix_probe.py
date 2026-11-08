@@ -197,7 +197,17 @@ def probe_db(conn, kind: str, *args) -> tuple:
         if not run:
             return None, f"no finished audit run of domain {domain}: cannot tell"
         hit = [r[0] for r in conn.execute("SELECT DISTINCT isin FROM audit_finding_isin WHERE run_id = %s AND domain = %s AND isin = ANY(%s) ORDER BY 1", (run[0], domain, isins)).fetchall()]
-        return not hit, (f"run {run[0]}: all {len(isins)} fund(s) are clear" if not hit else f"run {run[0]}: {len(hit)} of {len(isins)} fund(s) still have a persisted violation ({', '.join(hit[:8])})")
+        if hit:
+            return False, f"run {run[0]}: {len(hit)} of {len(isins)} fund(s) still have a persisted violation ({', '.join(hit[:8])})"
+        # Absence is not evidence when an acceptance can hide the fund: a rule that is only PARTLY accepted keeps just the unaccepted funds in its finding (accepted_residuals.apply_accepted), so
+        # the accepted ones vanish from audit_finding_isin although they still violate (seen 2026-11-07: OC_NOT_CONTAMINATED, 1 new fund and 69 accepted). A rule that holds an active acceptance for
+        # one of these funds and carries a non-INFO finding in the run therefore cannot say anything about them: unverifiable, never a pass.
+        hidden = [r[0] for r in conn.execute(
+            "SELECT DISTINCT a.rule_id FROM audit_accepted_finding a JOIN audit_finding f ON f.run_id = %s AND f.domain = a.domain AND f.rule_id = a.rule_id AND f.severity <> 'INFO' "
+            "WHERE a.domain = %s AND a.isin = ANY(%s) AND a.expires_at >= CURRENT_DATE ORDER BY 1", (run[0], domain, isins)).fetchall()]
+        if hidden:
+            return None, f"run {run[0]}: cannot tell, rule(s) {', '.join(hidden)} hold an acceptance for these funds and have unaccepted violators, which hides the accepted ones"
+        return True, f"run {run[0]}: all {len(isins)} fund(s) are clear"
     raise ValueError(kind)
 
 
