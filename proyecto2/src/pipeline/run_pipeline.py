@@ -111,7 +111,7 @@ from src.calculations import peer_panel   # FND-0255: per-run peer panel cache (
 from src.calculations.capture_ratios import compute_capture_ratios
 from src.calculations.persistence import compute_persistence
 from src.calculations.currency_factor import compute_currency_factor
-from src.utils.validators import validate_nav, validate_ipc
+from src.utils.validators import validate_nav, validate_nav_stale_flat, validate_ipc
 from src.utils.time_windows import slice_window
 from src.calculations.rolling_stats import (
     compute_rolling_rows,
@@ -1297,6 +1297,8 @@ def run(
                     continue
 
                 ok, err = validate_nav(nav_df)
+                if ok:
+                    ok, err = validate_nav_stale_flat(nav_df)               # FND-0383: monthly series only (the daily window below keeps validate_nav alone)
                 if not ok:
                     n_warnings += 1
                     logger.warning(

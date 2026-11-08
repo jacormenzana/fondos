@@ -358,6 +358,26 @@ def test_replace_beta_set_drops_orphans_and_spares_other_metrics(pg_session_conn
     assert sharpe == 0.5
 
 
+def test_an_empty_ols_result_removes_the_stale_macro_set_and_spares_every_other_metric(pg_session_conn, pg_conn_module_schema):
+    """FND-0383: LU0232465467 kept 9 betas from 2026-07-16 because an empty OLS result returned before the DELETE while the pipeline marked the OLS as run."""
+    conn = pg_session_conn
+    conn.execute(f"SET search_path = {pg_conn_module_schema}")
+    _make_fund_metrics(conn)
+    kw = dict(algorithm_version="V1", batch_id="B1", metric_version="v1")
+    write_metrics(conn, "ES0009", [{"metric": "sharpe", "value": 0.5, "real_flag": 0, "source_rows": 12}], "since_inception", dry_run=False, **kw)
+    write_metrics(conn, "ES0010", [{"metric": "beta_oil", "value": 0.7, "real_flag": 0, "source_rows": 60}], "since_inception", dry_run=False, **kw)      # another fund
+    stale = [{"metric": m, "value": 0.1, "real_flag": 0, "source_rows": 36}
+             for m in ("beta_rate_eu", "beta_oil", "macro_r2", "macro_alpha", "macro_n_obs", "energy_sensitivity_pct", "hy_spread_sensitivity_pct")]
+    replace_beta_set(conn, "ES0009", stale, "since_inception", dry_run=False, **kw)
+    left = lambda iz: sorted(r[0] for r in conn.execute("SELECT metric FROM fund_metrics WHERE isin=%s", (iz,)).fetchall())          # noqa: E731
+    assert len(left("ES0009")) == 8
+
+    assert replace_beta_set(conn, "ES0009", [], "since_inception", dry_run=True, **kw) == 0 and len(left("ES0009")) == 8              # a dry run touches nothing
+    assert replace_beta_set(conn, "ES0009", [], "since_inception", dry_run=False, **kw) == 0
+    assert left("ES0009") == ["sharpe"]                                                                                               # the whole macro set is gone, the rest is not
+    assert left("ES0010") == ["beta_oil"]                                                                                             # another fund is untouched
+
+
 # ---- FND-0092: one-transaction batch writer for the whole-universe rolling category write -----------
 
 _KW = dict(algorithm_version="V1", batch_id="B1", metric_version="v1")

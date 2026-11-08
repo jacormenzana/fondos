@@ -621,6 +621,15 @@ MIN_NAV_ROWS: int = 12
 MIN_NAV_MACRO: int = 36
 # FND-0164: a P2 run that quarantines more funds than this (validate_nav failures) opens a backlog ticket.
 P2_QUARANTINE_ALERT_THRESHOLD: int = 10
+# FND-0383 (owner go 2026-11-08): a MONTHLY NAV series that sits on one identical value for NAV_STALE_FLAT_MIN_RUN consecutive months and then moves by more than NAV_STALE_FLAT_MIN_JUMP
+# in one month is a stale carry-forward followed by a catch-up, not a traded price: validate_nav's 8x test misses it (LU0987206850: 61.27 for 23 months, then +70 %, which put a Sortino of 54.9 on
+# the books). The fund is quarantined like any other validate_nav failure (metrics cleared, nav_sources INVALID_NAV) and re-opens by itself when the series is repaired. Measured 2026-11-08 on
+# the 3,750 series of fund_nav_monthly (677,329 rows): runs of 12+ months followed by a 40 %+ move exist in 2 series (1 in the universe), both of which pass validate_nav; runs of 5-9 months in 2022 belong to the Eastern Europe funds
+# whose dealing was suspended and which were re-priced for real (4 in the universe), which is why the run length is 12 and not 3. Monthly series only: a daily window has flat runs by nature.
+# Rollback = False: validate_nav alone decides again, nothing is written.
+NAV_STALE_FLAT_ENABLED: bool = True
+NAV_STALE_FLAT_MIN_RUN: int = 12
+NAV_STALE_FLAT_MIN_JUMP: float = 0.40
 # Mínimo de observaciones para métricas de persistencia del alpha (≥7 años)
 MIN_NAV_PERSIST: int = 84
 

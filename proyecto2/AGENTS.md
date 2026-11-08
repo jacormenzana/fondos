@@ -122,6 +122,7 @@ proyecto2/
       test_family_versions.py
       test_fingerprint.py
       test_logger_structured.py
+      test_validate_nav_stale_flat_20261108.py
     writers/
       test_metrics_writer_pg.py
 ```
@@ -173,6 +174,11 @@ also forces it (the fingerprint includes the flags), but bump `CALC_VERSION` wit
 `CALC_VERSION` is the *global* epoch. Per-metric-family versions (FND-0236, `proyecto2/src/utils/family_versions.py`, behind
 `FAMILY_VERSIONING_ENABLED`, off until the owner applies `scripts/ops/migrate_fund_metric_family_state.py`) let a change that
 touches one of the nine families recompute only that family: add it to `FAMILY_CALC_OVERRIDES` instead of bumping `CALC_VERSION`.
+
+**NAV validation runs before the cache, on every fund, every run** (`validators.validate_nav`: nulls, order, non-positive, a >8x step). On the MONTHLY series only, `validate_nav_stale_flat`
+(FND-0383, `NAV_STALE_FLAT_ENABLED`, 12 identical months then a >40% move) rejects a stale carry-forward followed by a catch-up. A rejected fund is quarantined (metrics cleared, `nav_sources.data_status=INVALID_NAV`)
+and re-opens by itself when its series is repaired; the daily short-horizon window keeps `validate_nav` alone. When the macro OLS has no fit for a fund (fewer than `MACRO_OLS_MIN_OBS` overlapping months), `replace_beta_set`
+now deletes the betas and the other OLS outputs the fund still held from an older rule instead of leaving them behind.
 
 ### Macro factors (OLS model — machine-verified)
 

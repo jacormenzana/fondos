@@ -328,6 +328,10 @@ def prune_timeseries(conn: "psycopg.Connection", isin: str, rows: list[dict], dr
         raise
 
 
+# The outputs of compute_macro_sensitivity that are not named beta_*: they come from the same regression and go stale with it (FND-0383).
+OLS_NON_BETA_METRICS = ("macro_r2", "macro_alpha", "macro_n_obs", "energy_sensitivity_pct", "hy_spread_sensitivity_pct")
+
+
 def replace_beta_set(
     conn: "psycopg.Connection",
     isin: str,
@@ -353,7 +357,27 @@ def replace_beta_set(
     The delete+insert pair is still atomic because both DML statements run in
     the same (caller-owned) transaction.
     """
-    if not metrics or dry_run:
+    if dry_run:
+        return 0
+    if not metrics:
+        # FND-0383: the OLS ran and has no fit for this fund today (fewer overlapping months than MACRO_OLS_MIN_OBS, no usable factor...). The set it wrote under an
+        # older rule is no longer supported by the current one, and leaving it behind kept 9 betas 111 days old on a live fund while the OLS state said "fresh". An empty
+        # result replaces the full set with nothing: NULL means "not discovered" (P#10), a stale value labelled current does not.
+        _del_empty = (
+            "DELETE FROM fund_metrics WHERE isin=%s AND horizon=%s AND metric_version=%s "
+            "AND (metric LIKE 'beta_%%' OR metric = ANY(%s))"
+        )
+        _params = (isin, horizon, metric_version, list(OLS_NON_BETA_METRICS))
+        if in_transaction(conn):
+            conn.execute(_del_empty, _params)
+            return 0
+        begin_immediate(conn)
+        try:
+            conn.execute(_del_empty, _params)
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
         return 0
 
     today = date.today().isoformat()
