@@ -116,7 +116,7 @@ def test_an_empty_or_malformed_panel_is_handled_not_guessed():
 
 def test_defaults_come_from_the_config_and_the_selection_switch_ships_off():
     assert config.DATA_SUSPECT_ENABLED is False                                      # nothing reads it yet: the selection effect is WS2's later step, behind this switch
-    assert (config.DATA_SUSPECT_MIN_DEV, config.DATA_SUSPECT_MIN_FLAGGED_METRICS) == (50.0, 8)
+    assert (config.DATA_SUSPECT_MIN_DEV, config.DATA_SUSPECT_MIN_FLAGGED_METRICS) == (50.0, 4)
     assert (config.DATA_SUSPECT_SMALL_SAMPLE_PERCENTILE, config.DATA_SUSPECT_SMALL_SAMPLE_FRACTION) == (10.0, 0.5)
     panel = _panel({"X": {"metrics": [0], "source_rows": 100}})
     assert find_suspects(panel, min_dev=1000.0) == []                                # an explicit parameter beats the default

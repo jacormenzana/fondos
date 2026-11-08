@@ -513,3 +513,29 @@ Explained by the definition: of the 1,194 in-universe funds without a valid 1-ye
 
 ## A7.6 Administration
 25 proposed RELATED links of FND-0391..0398 and 6 of FND-0401/0402 were CONFIRMED on the owner's written order (append-only events, no DEPENDS_ON added). The missing restore point of the P2 cycle is recorded in `deployments/20261108_P2_cycle_no_restore_point.md` (what was written, why it is recomputable, what is NOT verified: whether WAL archiving and the off-box dump are current).
+
+---
+
+# Amendment A8 (2026-11-08, night): owner order "FND-0397 NO GO, floor, three-fund review, integrity threshold"
+
+## A8.1 FND-0397: simulated impact before any live change (owner: NO GO for FORCE_REFRESH / P1 cycle)
+`scripts/audit/nature_move_impact.py` (read-only; imports the P3 builder, writes nothing; output `out/audit/P1/nature_move_impact.json`). Regime Shock_Energetico, weights Defensiva .55 / Equilibrada .35 / Dinamica .10. Fidelity: the rebuilt baseline equals PRODUCTION on 30 of 30 funds.
+- 44 in-universe funds move (43 Corto -> Flexible, 1 Flexible -> Corto in-universe). Defensiva peers that did not move: max |score change| 0.0395; 18 of the top-30 unmoved funds change rank. Equilibrada gains 22 candidacies.
+- Selection turnover 14.5% (6 funds). The held IE00008TZ2E8 leaves (family dedup keeps its USD sibling IE000W4DU5G7, which misses the cut). IE000MI53C66 (rank 11 -> 31) and IE00B3Q8M574 (7 -> 27) stay selected. ES0175414012 joins Defensiva; JPM GBP Liquidity LU1873128927 joins and Amundi Cash USD LU0987193777 leaves.
+  Manager-cap cascade in Equilibrada: JPM US Select Equity LU0672672143 out, Amundi S&P500 Screened LU0996179429 in.
+- Weighted portfolio: return_ann_real 5.41% -> 4.90%, sharpe 0.686 -> 0.552, max drawdown -9.70% -> -9.81%, srri 3.67 -> 3.615. Credit_Quality re-derived to "Mixed" for 36 moved funds.
+- NOT modelled: P2 peer-dependent metrics, the P1 family consensus, further moves. **Decision stays with the owner; live data unchanged.**
+
+## A8.2 FND-0401: minimum sample floor (built, uncommitted until the receipt of d42aed4 ended; delivered with this batch)
+- Cause: the slope was published from n_obs >= 3 (hard-coded) while `pctile_self` needs 12; the regime floor (`REGIME_MIN_OBS` = 12) was enforced in code but never removed rows already stored (1,870 of the 1,891 funds with n_obs_expansion < 12 still held return_ann_expansion).
+- Fix: `ROLLING_SLOPE_MIN_OBS` = 12; `delete_unproduced` after each family write (owned set = `regime_owned_metrics()`, 37 names); one-shot `scripts/ops/clean_stale_metric_rows.py` (dry run: 11,812 regime rows / 2,373 funds, of which 9,308 / 1,871 in the universe; 162 slope rows / 20 funds). `--apply` is owner-only.
+- Counterfactual on the cleaned panel: extreme funds 22 -> 7, no new extremes. With `REGIME_MIN_OBS` = 24 (26,824 rows) only DE000DWS3LN1 and ES0116848013 remain. 24 is an owner policy decision, not implemented.
+
+## A8.3 WS1: the three review funds (`scripts/audit/fund_dossier.py`, output `out/audit/P2/fund_dossier.md`)
+- LU1663960000: all 6 anomalous rows are STALE_REGIME (0-5 months in the regime). LU0922333322: one anomaly, sortino_expansion on 11 months, stale. Both disappear with the floor and the cleanup. NAV healthy (LU1663960000 has only 36 rows over 8.7 years: sparse).
+- ES0116848013 (Global Allocation FI I, Renta 4): the only genuine case. sortino|crisis_2022 = 37-45 on an adequate 12-month sample (5 months below the risk-free rate, downside deviation 0.0093 a month, mean excess 5.2% a month). The stored NAV implies calendar 2022 +75.8% (+16.2% in 2022-06 against peers -4.7%), then -0.7 / -6.4 / +2.3 / -11.6%.
+  The validators pass. **Needs a human check against the publisher figures** (KIID has no yearly figures; annex www.renta4gestora.com/fondos-de-inversion/fondos/es0116848013).
+
+## A8.4 WS3: integrity threshold recalibrated
+`DATA_SUSPECT_MIN_FLAGGED_METRICS` 8 -> 4. Evidence: the current panel has at most 5 adequate-sample extreme metrics per fund (>= 4: 2 funds, >= 3: 2); after the cleanup the maximum is 2 (both current hits, LU1663960000 and LU0232465467, are driven by stale rows). 4 is PROVISIONAL: metric keys over-count correlated quantities, and the owner's 3 would flag the same 2 funds today.
+WS2 stays OFF (`DATA_SUSPECT_ENABLED` = False, nothing reads it) until the monitors show a green light: D1 canaries, the labelled precision of FND-0395, the exemption registry.

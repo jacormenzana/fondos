@@ -613,11 +613,17 @@ def _linear_slope_normalized(y: np.ndarray) -> float:
     return b / std_y
 
 
+def slope_metric_keys() -> list:
+    """The (metric, real_flag) pairs of the slope snapshots this module publishes, e.g. ('sharpe_slope', 0). Pure. FND-0401: the pipeline deletes the ones a run no longer produces."""
+    return sorted((f"{m}_slope", int(rf)) for m, rf in _SLOPE_TARGETS)
+
+
 def compute_timeseries_snapshots(
     timeseries_df: pd.DataFrame,
     category_df: pd.DataFrame | None = None,
     min_self_obs: int = 12,
     slope_n_points: int = 36,
+    min_slope_obs: int | None = None,
 ) -> list[dict]:
     """
     Extrae señales derivadas de fund_metric_timeseries para escribir en fund_metrics
@@ -631,11 +637,16 @@ def compute_timeseries_snapshots(
 
     slope_n_points: número máximo de observaciones recientes para el cálculo de pendiente.
                     Por defecto 36 (3 años de datos mensuales).
+    min_slope_obs:  observaciones mínimas para publicar la pendiente (FND-0401). Por defecto shared.config.ROLLING_SLOPE_MIN_OBS (12): una pendiente de 3-7
+                    puntos junto a la norma de 36 de los demás fondos se lee como una desviación de 50-400 y no describe una tendencia.
 
     Devuelve dicts con {isin, metric, window, value, real_flag, source_rows}.
     """
     if timeseries_df is None or timeseries_df.empty:
         return []
+
+    from shared import config as _cfg
+    _slope_floor = _cfg.ROLLING_SLOPE_MIN_OBS if min_slope_obs is None else int(min_slope_obs)    # FND-0401
 
     df = timeseries_df.copy()
     df["date"] = pd.to_datetime(df["date"])
@@ -673,7 +684,7 @@ def compute_timeseries_snapshots(
             })
 
         # slope: tendencia normalizada para métricas en _SLOPE_TARGETS
-        if (metric, int(real_flag)) in _SLOPE_TARGETS and n_obs >= 3:
+        if (metric, int(real_flag)) in _SLOPE_TARGETS and n_obs >= max(3, _slope_floor):
             y_slope = vals.to_numpy(dtype=float)[-slope_n_points:]
             slope_val = _linear_slope_normalized(y_slope)
             if not math.isnan(slope_val):

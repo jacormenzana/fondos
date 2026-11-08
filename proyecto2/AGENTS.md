@@ -63,6 +63,7 @@ proyecto2/
       test_deflation_month_align_fnd0241.py
       test_drawdown.py
       test_eur_view_coupling_fnd0243.py
+      test_floor_and_stale_rows_fnd0401.py
       test_fx_eur_view_fnd0235.py
       test_m2_global_builder_pg.py
       test_macro_sensitivity.py
@@ -123,6 +124,7 @@ proyecto2/
       test_family_versions.py
       test_fault_injection_fnd0392.py
       test_fingerprint.py
+      test_fund_dossier_fnd0393.py
       test_logger_structured.py
       test_nav_forensics_fnd0393.py
       test_validate_nav_stale_flat_20261108.py
@@ -190,6 +192,12 @@ now deletes the betas and the other OLS outputs the fund still held from an olde
 quarantines like any `validate_nav` failure. The thresholds are not calibrated on the whole universe yet (WS1, FND-0393). Measure the validators with `python scripts/audit/fault_injection_run.py` (hermetic: it injects known corruption classes,
 `shared/fault_injection.py`, into the fixture `tests/fixtures/fault_injection/`, rebuilt read-only by `fault_injection_fixture.py`; `--min-recall 0.95` is the gate). Every audit run also stores, per rule, `n_applicable` / `n_violating`
 (`control.audit_statistic`, population `INVARIANT`, `shared/statistical_audit/applicability.py`), so a clean rule leaves a trace; `shared/family_scope.py` reduces per-ISIN flags to per-family ones.
+
+**Minimum sample before publishing (FND-0401):** a regime statistic (return_ann / vol_ann / sharpe / sortino / max_dd of a regime, the two `crisis_stress_score_*`) is published only when the fund has `REGIME_MIN_OBS` (12) months in that regime, and a rolling slope
+(`sharpe_slope`, `return_ann_slope`) only from `ROLLING_SLOPE_MIN_OBS` (12) points. A family run now DELETES the owned statistics it did not produce (`metrics_writer.delete_unproduced`; the owned set is `regime_returns.regime_owned_metrics()`), so a fund that falls below the floor
+loses the old row instead of keeping it. A fund served from the cache keeps its rows until its inputs change; the one-shot catch-up is `scripts/ops/clean_stale_metric_rows.py` (dry run by default, `--apply` is owner-only). Raising the regime floor (24 would leave 2 of the 22 extreme
+funds) is a policy decision, not a default. Read-only investigation tools: `scripts/audit/nav_forensics.py` (verdict per extreme fund), `scripts/audit/fund_dossier.py` (one fund: anomalous rows with a STALE_REGIME / SMALL_SLOPE / SMALL_SAMPLE flag, calendar returns, downside drill-down),
+`scripts/audit/nature_move_impact.py` (simulates a `Fund_Nature` change through the P3 builder without writing).
 
 ### Macro factors (OLS model — machine-verified)
 

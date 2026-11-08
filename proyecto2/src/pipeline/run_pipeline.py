@@ -104,7 +104,7 @@ from src.calculations.macro_sensitivity import (
     load_macro_factors, compute_macro_sensitivity, vif_options_from_config
 )
 from src.calculations.regime_returns import (
-    load_regime_history, compute_regime_returns
+    load_regime_history, compute_regime_returns, regime_owned_metrics   # FND-0401
 )
 from src.calculations.m2_global_builder import ESTIMATE_REASON_PREFIX, build_m2_global, m2_global_needs_rebuild
 from src.calculations.momentum import compute_momentum, reset_category_returns_cache
@@ -119,6 +119,7 @@ from src.calculations.rolling_stats import (
     compute_category_snapshot,
     compute_alerts,
     compute_timeseries_snapshots,
+    slope_metric_keys,                 # FND-0401
     cat_signals_from_snapshot,
     resolve_rf_rate,
 )
@@ -134,6 +135,7 @@ from src.writers.metrics_writer import (
     write_timeseries as _write_timeseries,
     prune_timeseries as _prune_timeseries,   # FND-0301
     replace_beta_set as _replace_beta_set,
+    delete_unproduced as _delete_unproduced,   # FND-0401
 )
 
 
@@ -424,6 +426,9 @@ class MetricFamilySpec:
     requires_has_macro: bool = False
     requires_nonempty_regime: bool = False
     writer: Callable[..., int] = _write_metrics
+    # FND-0401: the (metric, real_flag) pairs the family OWNS and only publishes while its sample is large enough. After a run the owned pairs it did not produce are deleted, so a statistic
+    # skipped below its minimum sample does not stay behind from the time the sample was larger. None = the family replaces nothing (every other family).
+    owned: Callable[[], list] | None = None
 
 
 _PER_FUND_METRIC_FAMILIES: list[MetricFamilySpec] = [
@@ -453,6 +458,7 @@ _PER_FUND_METRIC_FAMILIES: list[MetricFamilySpec] = [
         "regime",
         lambda ctx: compute_regime_returns(ctx.nav_df, ctx.regime_df),
         min_obs=REGIME_MIN_NAV_TOTAL, requires_nonempty_regime=True,
+        owned=regime_owned_metrics,
     ),
 ]
 
@@ -477,10 +483,13 @@ def _run_metric_family(
         return 0
     result = spec.fn(ctx)
     rows = _rows_from_metric_tuples(result, len(ctx.nav_df))
-    return spec.writer(
+    written = spec.writer(
         ctx.conn, ctx.isin, rows, spec.horizon, dry_run,
         algorithm_version=_algo(spec.name), batch_id=RUN_BATCH_ID, metric_version=METRIC_VERSION,
     )
+    if spec.owned is not None:                                  # FND-0401: what the family owns and did not produce today must not stay behind
+        _delete_unproduced(ctx.conn, ctx.isin, spec.horizon, spec.owned(), [(r["metric"], r["real_flag"]) for r in rows], dry_run, metric_version=METRIC_VERSION)
+    return written
 
 
 def _write_metric_alerts(
@@ -1694,6 +1703,10 @@ def run(
                                 algorithm_version=_algo("rolling"), batch_id=RUN_BATCH_ID,
                                 metric_version=METRIC_VERSION,
                             )
+                        # FND-0401: a slope the run no longer produces (fewer than ROLLING_SLOPE_MIN_OBS points) is removed, not left from the time the window held more
+                        for w_name in sorted(set(fund_ts_df["window"].dropna().unique()) | set(self_by)):
+                            _delete_unproduced(conn, isin, w_name, slope_metric_keys(),
+                                               [(r["metric"], r["real_flag"]) for r in self_by.get(w_name, [])], dry_run, metric_version=METRIC_VERSION)
 
                 # v25: consumir flag RECALCULATE_METRICS (inside per-fund txn)
                 if isin_written > 0 and not dry_run:

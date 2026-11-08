@@ -427,3 +427,42 @@ def replace_beta_set(
         conn.execute("ROLLBACK")
         raise
     return len(rows)
+
+
+def unproduced_pairs(owned, produced) -> list:
+    """The (metric, real_flag) pairs a family OWNS that a run did NOT produce: what must not stay behind. Sorted, duplicates ignored. Pure."""
+    return sorted(set((m, int(rf)) for m, rf in owned) - set((m, int(rf)) for m, rf in produced))
+
+
+def delete_unproduced(
+    conn: "psycopg.Connection",
+    isin: str,
+    horizon: str,
+    owned,
+    produced,
+    dry_run: bool,
+    *,
+    metric_version: str,
+) -> int:
+    """FND-0401: delete from fund_metrics the rows a family owns (`owned` = (metric, real_flag) pairs) that this run did not produce, for one fund and horizon.
+
+    A family that skips a statistic below its minimum sample (a regime with fewer than REGIME_MIN_OBS months, a slope on fewer than ROLLING_SLOPE_MIN_OBS points) used to leave
+    the row it published when the sample was larger; the stale value then looked current and, being computed on a different sample, read as an extreme outlier. NULL means
+    "not discovered" (P#10); a stale value labelled current does not. Same atomicity as replace_beta_set (own transaction unless the caller already has one open).
+    Only the owned pairs are touched, never another family's rows. Returns the number of rows deleted (0 on a dry run)."""
+    stale = unproduced_pairs(owned, produced)
+    if dry_run or not stale:
+        return 0
+    sql = ("DELETE FROM fund_metrics WHERE isin = %s AND horizon = %s AND metric_version = %s "
+           "AND (metric, real_flag) IN (SELECT * FROM unnest(%s::text[], %s::smallint[]))")
+    params = (isin, horizon, metric_version, [m for m, _ in stale], [rf for _, rf in stale])
+    if in_transaction(conn):
+        return int(conn.execute(sql, params).rowcount or 0)
+    begin_immediate(conn)
+    try:
+        n = int(conn.execute(sql, params).rowcount or 0)
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    return n

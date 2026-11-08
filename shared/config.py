@@ -653,7 +653,10 @@ NAV_UNSHARED_JUMP_MAX_PEER_SHARE: float = 0.05
 # "small" when its source_rows is below the SMALL_SAMPLE_PERCENTILE of its Fund_Nature AND below SMALL_SAMPLE_FRACTION of that nature's median (16 of the 22 were small-sample artifacts, e.g. 3 points where 36 is the norm).
 DATA_SUSPECT_ENABLED: bool = False
 DATA_SUSPECT_MIN_DEV: float = 50.0
-DATA_SUSPECT_MIN_FLAGGED_METRICS: int = 8
+# MIN_FLAGGED_METRICS 8 -> 4 (owner order 2026-11-08, WS3 recalibration). The 8 came from raw alarm counts; measured on the live panel with ADEQUATE samples only, the most any fund has is 5 (a fund with >= 4: 2, with >= 3: 2, with >= 8: 0),
+# so 8 never fired. 4 is PROVISIONAL, not a measured precision: both funds it would flag today are driven by regime rows left behind below REGIME_MIN_OBS (FND-0401); on the panel without those rows no fund has more than 2.
+# Counting distinct metric KEYS also over-counts one quantity (vol_ann in four regimes is one signal): WS3 (FND-0395) refines the unit of evidence and labels the precision before the rule can open an incident.
+DATA_SUSPECT_MIN_FLAGGED_METRICS: int = 4
 DATA_SUSPECT_SMALL_SAMPLE_PERCENTILE: float = 10.0
 DATA_SUSPECT_SMALL_SAMPLE_FRACTION: float = 0.5
 # Mínimo de observaciones para métricas de persistencia del alpha (≥7 años)
@@ -982,6 +985,10 @@ CAPTURE_MIN_PERIODS: int = 12  # mínimo de periodos positivos/negativos vs benc
 REGIME_MIN_NAV_TOTAL: int = 36            # mínimo meses totales de NAV para stats por régimen
 REGIME_MIN_OBS: int = 12                  # mínimo meses en un régimen para calcular estadísticas
 REGIME_MIN_OBS_SORTINO_DOWNSIDE: int = 2  # mínimo retornos negativos para downside deviation
+# FND-0401 (2026-11-08): the rolling-window SLOPE snapshots (`sharpe_slope`, `return_ann_slope`) were published from 3 observations (n_obs >= 3, hard-coded) while their sibling `pctile_self` needs 12. A slope of a 3-7 point
+# window sits next to the 36-point norm of every other fund and reads as a 50-400 robust deviation: 11 of the 22 funds with |MAD-Z| >= 50 on 2026-11-08 were exactly that (`sharpe_slope|rolling_3y`, source_rows 3-7, nature norm
+# 35-36). Measured on the stored rows: 146 of 28,860 slope rows (0.5%, 17 funds) rest on fewer than 12 observations; 392 under 18; 612 under 24. 12 = the pctile_self floor and a third of the 36-point window.
+ROLLING_SLOPE_MIN_OBS: int = 12
 
 # ============================================================
 # v26 — Reglas del motor WARN/ALARM (fund_metric_alerts)

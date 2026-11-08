@@ -358,6 +358,36 @@ def test_replace_beta_set_drops_orphans_and_spares_other_metrics(pg_session_conn
     assert sharpe == 0.5
 
 
+def test_delete_unproduced_removes_only_the_owned_pairs_the_run_did_not_produce(pg_session_conn, pg_conn_module_schema):
+    """FND-0401: a regime statistic skipped below its minimum sample used to stay behind from the time the sample was larger (1,870 of 1,891 funds with fewer than 12 expansion months still
+    carried a return_ann_expansion). Only the OWNED pairs the run did not produce go; what the run produced, other families, other horizons, versions and funds stay."""
+    from src.writers.metrics_writer import delete_unproduced
+    conn = pg_session_conn
+    conn.execute(f"SET search_path = {pg_conn_module_schema}")
+    _make_fund_metrics(conn)
+    kw = dict(algorithm_version="V1", batch_id="B1")
+    row = lambda m, rf=0: {"metric": m, "value": 1.5, "real_flag": rf, "source_rows": 36}          # noqa: E731
+    write_metrics(conn, "ES0001", [row("return_ann_expansion"), row("vol_ann_expansion"), row("sharpe_contraccion"), row("momentum_1y"), row("sharpe_slope"), row("return_ann_slope", 1)],
+                  "since_inception", dry_run=False, metric_version="v1", **kw)
+    write_metrics(conn, "ES0001", [row("return_ann_expansion")], "rolling_3y", dry_run=False, metric_version="v1", **kw)          # another horizon
+    write_metrics(conn, "ES0001", [row("return_ann_expansion")], "since_inception", dry_run=False, metric_version="v2", **kw)      # another metric version
+    write_metrics(conn, "ES0002", [row("return_ann_expansion")], "since_inception", dry_run=False, metric_version="v1", **kw)      # another fund
+    owned = [("return_ann_expansion", 0), ("vol_ann_expansion", 0), ("sharpe_contraccion", 0)]
+    produced = [("sharpe_contraccion", 0)]
+    kept = lambda iz, h="since_inception", v="v1": sorted(r[0] for r in conn.execute("SELECT metric FROM fund_metrics WHERE isin=%s AND horizon=%s AND metric_version=%s", (iz, h, v)).fetchall())   # noqa: E731
+
+    assert delete_unproduced(conn, "ES0001", "since_inception", owned, produced, dry_run=True, metric_version="v1") == 0           # a dry run deletes nothing
+    assert "return_ann_expansion" in kept("ES0001")
+    assert delete_unproduced(conn, "ES0001", "since_inception", owned, produced, dry_run=False, metric_version="v1") == 2
+    assert kept("ES0001") == ["momentum_1y", "return_ann_slope", "sharpe_contraccion", "sharpe_slope"]          # produced + not owned: untouched
+    assert kept("ES0001", "rolling_3y") == ["return_ann_expansion"] and kept("ES0001", v="v2") == ["return_ann_expansion"] and kept("ES0002") == ["return_ann_expansion"]
+    assert delete_unproduced(conn, "ES0001", "since_inception", owned, produced, dry_run=False, metric_version="v1") == 0           # idempotent
+    assert delete_unproduced(conn, "ES0001", "since_inception", [], [], dry_run=False, metric_version="v1") == 0                    # nothing owned: nothing deleted
+    # the slope pair is keyed by real_flag too: producing sharpe_slope (nominal) must not protect return_ann_slope (real)
+    assert delete_unproduced(conn, "ES0001", "since_inception", [("sharpe_slope", 0), ("return_ann_slope", 1)], [("sharpe_slope", 0)], dry_run=False, metric_version="v1") == 1
+    assert kept("ES0001") == ["momentum_1y", "sharpe_contraccion", "sharpe_slope"]
+
+
 def test_an_empty_ols_result_removes_the_stale_macro_set_and_spares_every_other_metric(pg_session_conn, pg_conn_module_schema):
     """FND-0383: LU0232465467 kept 9 betas from 2026-07-16 because an empty OLS result returned before the DELETE while the pipeline marked the OLS as run."""
     conn = pg_session_conn

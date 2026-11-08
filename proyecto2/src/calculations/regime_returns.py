@@ -156,6 +156,20 @@ def _sortino(monthly_returns: np.ndarray) -> float | None:
     return None if np.isnan(value) else float(value)
 
 
+REGIME_STAT_BASES = ("return_ann", "vol_ann", "sharpe", "sortino", "max_dd")
+CRISIS_STAT_NAMES = ("crisis_stress_score_mdd", "crisis_stress_score_ttr")
+
+
+def regime_owned_metrics() -> list:
+    """The (metric, real_flag) pairs compute_regime_returns may publish and that only exist while their regime has at least REGIME_MIN_OBS months: the five per-regime statistics of every
+    regime in the taxonomy plus the two crisis-stress scores. `n_obs_*` and `regime_coverage_ratio` are NOT owned: they are written on every run. FND-0401: the code skips a regime below the
+    floor but used to leave the rows it had published when the regime was larger, so 1,870 of the 1,891 funds with fewer than 12 expansion months still carried a return_ann_expansion.
+    The pipeline deletes the owned pairs a run does not produce. Pure; derived from the taxonomy, so it cannot drift from the compute function."""
+    names = [(f"{base}_{suffix}", 0) for suffix in _REGIME_SUFFIX.values() for base in REGIME_STAT_BASES]
+    names += [(n, 0) for n in CRISIS_STAT_NAMES]
+    return sorted(names)
+
+
 def compute_regime_returns(
     nav_df:    pd.DataFrame,
     regime_df: pd.DataFrame,
