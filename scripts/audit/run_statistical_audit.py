@@ -132,6 +132,7 @@ from shared.config import (
 from shared.db import get_connection
 from shared.eur_nav import apply_eur_view_frame   # FND-0243: audit the NAV P2 computed on
 from shared.nav_month_end import align_nav_long   # FND-0300: ... on the dates P2 computed on
+from shared.statistical_audit.applicability import APPLICABILITY_POPULATION, applicability_entry   # D1 (FND-0392)
 from shared.statistical_audit.catalog_cost_columns import COST_COLUMNS
 from shared.statistical_audit.catalog_version import compute_catalog_version
 from shared.statistical_audit.catalog_group_checks import COST_GROUP_CHECKS
@@ -732,6 +733,7 @@ def _run_timeseries_integrity(
     """
     isin_filter, isin_params = _isin_filter(conn, isins, "isin")
     summary_query = _sql(conn, _TS_SERIES_SUMMARY_QUERY, isin_filter=isin_filter)
+    dup_applicable = dup_violating = 0           # D1 (FND-0392): series examined / series with n_rows > n_distinct_dates, over every (metric, window)
     for metric in _SCALAR_TIMESERIES_METRICS:
         for window in _SCALAR_TIMESERIES_WINDOWS:
             rows = conn.execute(summary_query, (MIN_NAV_ROWS, metric, window, *isin_params)).fetchall()
@@ -744,6 +746,8 @@ def _run_timeseries_integrity(
             # structurally impossible for a fixed (metric, window) -- this is
             # a paranoia check for a schema/migration defect, not a data issue.
             n_dup_series = sum(1 for row in rows if row[5] > row[4])
+            dup_applicable += len(rows)
+            dup_violating += n_dup_series
             if n_dup_series:
                 run.findings.append({
                     "block": "BLOCK5", "rule_id": "TIMESERIES_DUPLICATE",
@@ -812,6 +816,8 @@ def _run_timeseries_integrity(
                                              "that window, or MIN_NAV_ROWS was raised after these rows "
                                              "were written",
                 })
+    if dup_applicable:
+        run.record_applicability("TIMESERIES_DUPLICATE", dup_applicable, dup_violating)
 
 
 def _periodic_return_variance(conn: "psycopg.Connection", isins: list[str]) -> pd.DataFrame:
@@ -1465,6 +1471,11 @@ class AuditRun:
         self.skips.append(Skip(check, kind, message))
         self.skipped.append(message)
 
+    def record_applicability(self, rule_id: str, n_applicable: int, n_violating: int) -> None:
+        """D1 (FND-0392): what a rule tested in this run, persisted with the other statistics (population INVARIANT, shared.statistical_audit.applicability).
+        Call it for every rule that ran, violated or not: a clean rule writes no finding, so without this its history is empty."""
+        self.statistics.append(applicability_entry(rule_id, n_applicable, n_violating))
+
 
 def _block1(
     run: AuditRun, group_key: str, series: pd.Series, n_expected: int,
@@ -1615,6 +1626,7 @@ def _run_invariants(run: AuditRun, rules, frames: list[pd.DataFrame], block: str
             continue
 
         result = check_invariant(frame, rule)
+        run.record_applicability(rule.rule_id, result.n_applicable, result.n_violations)     # D1 (FND-0392): also when it is clean
         if result.n_violations == 0:
             continue
         # FND-0114 (2026-09-29): when the violating rows carry an isin column (the per-window
@@ -1832,7 +1844,8 @@ def _print_completeness(run: "AuditRun", scope: str, status: str) -> None:
 def _print_report(run: "AuditRun", run_id: str) -> None:
     print(f"=== Statistical audit — domain={run.domain} run_id={run_id} ===")
     print(f"Universe size: {run.universe_size}")
-    print(f"Groups/columns profiled: {len(run.statistics)}")
+    n_rules = sum(1 for s in run.statistics if s[0] == APPLICABILITY_POPULATION)
+    print(f"Groups/columns profiled: {len(run.statistics) - n_rules}" + (f" | rules with stored applicability: {n_rules}" if n_rules else ""))
     # B3 (FND-0125, 2026-09-28): printed only when non-empty -- always present on AuditRun but
     # only run_p2_audit ever populates it (fund_metric_timeseries has no cost-domain equivalent).
     if run.snapshot_held_out:

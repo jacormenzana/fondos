@@ -619,6 +619,13 @@ nivel de población, no de fondo. Se proponen dos tablas nuevas, append-only, in
 Separar ambas tablas permite reevaluar umbrales sin recalcular distribuciones, y convierte
 `compare_runs` (§4 #13) en una consulta sobre `audit_statistic`, no en un mecanismo aparte.
 
+**Aplicabilidad por regla (FND-0392, D1).** Cada invariante que se evalúa deja en `audit_statistic` dos filas, también cuando no encuentra nada: población `INVARIANT`,
+`group_key` = `rule_id`, estadísticos `n_applicable` (filas que la regla pudo juzgar) y `n_violating`, con `n` = `n_applicable`; `TIMESERIES_DUPLICATE` deja el total de series examinadas
+y de series con duplicados. Una regla que no pudo correr (faltan columnas, tabla vacía) no deja fila: consta en `skips` de la cabecera (§6.4). `compare_runs` solo lee los estadísticos de
+perfil (`DRIFT_STATS`), así que estas filas no entran en el informe de deriva. Lector: `shared/statistical_audit/applicability.load_applicability_history`. Motivo: `n_applicable` solo
+existía en la evidencia de un hallazgo que violaba; al salir del universo los 6 fondos de FND-0250 no había forma de saber si el detector seguía evaluando filas reales (medido a
+posteriori en la evidencia: `WINDOW_FISHER_IDENTITY` evaluó 2.466.681 filas el 2026-11-04 y 2.465.360 el 2026-11-08, es decir −1.321 filas netas, −0,05 %; las 40 filas que violaban eran de esos 6 fondos y ya no violan).
+
 Ambas tablas llevan `catalog_version` (2026-09-25): hash de contenido (SHA-1, 12 hex) de
 `catalog_*.py` + `tolerances.py`, calculado por `catalog_version.compute_catalog_version()` en cada
 `--persist`. Permite atribuir un hallazgo al conjunto exacto de reglas/umbrales que lo produjo.

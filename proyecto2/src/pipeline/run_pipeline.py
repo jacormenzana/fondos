@@ -94,6 +94,7 @@ from src.readers.db_readers import (
     count_stale_nav_funds,           # observability: NAV-staleness gate
     coverage_snapshot,               # observability: P3-consumed metric coverage
     load_latest_rolling_metrics_for_category_snapshot,   # FND-0093 category-refresh fallback
+    load_peer_returns,               # FND-0392: one-month return panel by Fund_Nature (unshared NAV jump test)
 )
 from src.calculations.short_horizon import compute_short_horizon_metrics
 from src.calculations.returns import trailing_window   # FND-0302
@@ -111,7 +112,7 @@ from src.calculations import peer_panel   # FND-0255: per-run peer panel cache (
 from src.calculations.capture_ratios import compute_capture_ratios
 from src.calculations.persistence import compute_persistence
 from src.calculations.currency_factor import compute_currency_factor
-from src.utils.validators import validate_nav, validate_nav_stale_flat, validate_ipc
+from src.utils.validators import validate_nav, validate_nav_stale_flat, validate_nav_unshared_jump, validate_ipc
 from src.utils.time_windows import slice_window
 from src.calculations.rolling_stats import (
     compute_rolling_rows,
@@ -1245,6 +1246,18 @@ def run(
             f"IPC={'SI' if ipc_df is not None else 'NO'}"
         )
 
+        # FND-0392 (WS0.5 of FND-0391): the peer panel the unshared one-month NAV jump test judges a series against. Loaded once and only while the mode is not OFF; a failed read never
+        # stops the run, the test is then simply not evaluated (as with the mode OFF).
+        _jump_mode = str(getattr(shared_config, "NAV_UNSHARED_JUMP_MODE", "OFF")).upper()
+        _peer_returns = None
+        if _jump_mode in ("SHADOW", "ON"):
+            try:
+                _peer_returns = load_peer_returns(conn)
+                logger.info(f"[NAV-JUMP] modo {_jump_mode}: panel de pares cargado ({_peer_returns.n_funds()} fondos)")
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"[NAV-JUMP] no se pudo cargar el panel de pares ({type(exc).__name__}: {exc}); la prueba no se evalua en esta ejecucion")
+                _jump_mode = "OFF"
+
         # ================================================================
         # Per-fund loop
         # ================================================================
@@ -1299,6 +1312,17 @@ def run(
                 ok, err = validate_nav(nav_df)
                 if ok:
                     ok, err = validate_nav_stale_flat(nav_df)               # FND-0383: monthly series only (the daily window below keeps validate_nav alone)
+                if ok and _peer_returns is not None:                         # FND-0392: a one-month move the fund's peers did not make (SHADOW logs it, ON quarantines)
+                    try:
+                        ok_j, err_j = validate_nav_unshared_jump(nav_df, _peer_returns, isin)
+                    except Exception as exc:  # noqa: BLE001 -- a defect of this test must never stop the run
+                        ok_j, err_j = True, None
+                        logger.warning(f"[NAV-JUMP] {isin}: la prueba fallo ({type(exc).__name__}: {exc}); se ignora")
+                    if not ok_j:
+                        if _jump_mode == "ON":
+                            ok, err = False, err_j
+                        else:
+                            _log(conn, isin, "NAV_JUMP_SHADOW", "WARN", None, err_j, dry_run)
                 if not ok:
                     n_warnings += 1
                     logger.warning(

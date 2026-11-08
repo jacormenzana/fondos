@@ -70,6 +70,26 @@ def load_nav(conn: "psycopg.Connection", isin: str) -> pd.DataFrame:
     return align_nav_long(apply_eur_view(conn, isin, df))
 
 
+def load_peer_returns(conn: "psycopg.Connection"):
+    """FND-0392: the one-month return panel of the in-universe funds, by Fund_Nature (src.utils.peer_returns.PeerReturns), for the unshared-jump test of validators.
+
+    One set-based read of fund_nav_monthly (the stored class-currency NAV: a peer's FX move is a few percent, the test looks for 50 %+ moves, so the EUR view would not change a verdict
+    and would cost one query per fund). Keyed by the canonical period key inside build_peer_returns. Read-only."""
+    from src.utils.peer_returns import build_peer_returns
+    rows = conn.execute("""
+        SELECT n.ISIN, f.Fund_Nature, n.Date, n.NAV
+        FROM fund_nav_monthly n
+        JOIN fund_master f ON f.ISIN = n.ISIN
+        WHERE f.In_Current_Universe = 1 AND f.Fund_Nature IS NOT NULL AND n.NAV > 0
+    """).fetchall()
+    df = pd.DataFrame(rows, columns=["isin", "nature", "date", "nav"])
+    if df.empty:
+        return build_peer_returns(df)
+    df["date"] = pd.to_datetime(df["date"])
+    df["nav"] = df["nav"].astype(float)
+    return build_peer_returns(df)
+
+
 def count_isins_with_new_nav(
     conn: "psycopg.Connection",
     metric_version: str,

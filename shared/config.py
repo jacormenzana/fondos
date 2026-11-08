@@ -630,6 +630,20 @@ P2_QUARANTINE_ALERT_THRESHOLD: int = 10
 NAV_STALE_FLAT_ENABLED: bool = True
 NAV_STALE_FLAT_MIN_RUN: int = 12
 NAV_STALE_FLAT_MIN_JUMP: float = 0.40
+# FND-0392 (WS0.5 of the P2 audit escalation epic FND-0391, plan amendment A5): a MONTHLY NAV that moves by NAV_UNSHARED_JUMP_MIN_ABS_RET or more in ONE calendar month while the funds of its
+# Fund_Nature did not is a level shift, not a traded price (DE000DWS3LN1: 565 -> 1,090 in 2026-08, +92.9 %, which put momentum_1y at +2,264 %; validate_nav's 8x test and the stale-flat rule both pass it).
+# "Not shared" = at least NAV_UNSHARED_JUMP_MIN_PEERS peers report that month AND at most NAV_UNSHARED_JUMP_MAX_PEER_SHARE of them moved the same way by at least half as much AND the fund's move differs from
+# the peer median by NAV_UNSHARED_JUMP_MIN_ABS_RET or more. Only consecutive calendar months are compared (a multi-month gap is not a one-month move). The thresholds are NOT calibrated yet: the fault-injection
+# harness (scripts/audit/fault_injection_run.py) measures recall and the false-positive count, and WS1 (FND-0393) sets them before any mode above SHADOW. First evidence (2026-11-08, hermetic fixture of 285 funds /
+# 52,459 monthly rows, tests/fixtures/fault_injection): cuts of 0.30 to 0.50 flag ONE fund, the real defect; 0.25 adds one more (a +28 % month that looks like a real rally). Recall on injected one-month shifts of
+# +50 %: 0.47 at a cut of 0.50 and 0.94 at 0.40 (a true month of -7 % pulls a +50 % shift under the line); at 0.35 every shift of 50-150 % is caught (>= 0.95, `fault_injection_run.py --min-recall 0.95` exits 0).
+# 285 of ~3,750 series: the universe-wide false-positive count is WS1's measurement.
+# MODE: "OFF" = not evaluated; "SHADOW" = evaluated, a NAV_JUMP_SHADOW row in p2_pipeline_log names the month and nothing is quarantined; "ON" = quarantined like any validate_nav failure
+# (metrics cleared, nav_sources INVALID_NAV, re-opens by itself when the series is repaired). Rollback = "OFF": validate_nav and the stale-flat rule decide alone.
+NAV_UNSHARED_JUMP_MODE: str = "OFF"
+NAV_UNSHARED_JUMP_MIN_ABS_RET: float = 0.35
+NAV_UNSHARED_JUMP_MIN_PEERS: int = 10
+NAV_UNSHARED_JUMP_MAX_PEER_SHARE: float = 0.05
 # Mínimo de observaciones para métricas de persistencia del alpha (≥7 años)
 MIN_NAV_PERSIST: int = 84
 

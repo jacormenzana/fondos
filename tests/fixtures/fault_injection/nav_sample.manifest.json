@@ -1,0 +1,34 @@
+{
+ "built_at": "2026-11-08T10:04:56Z",
+ "code_commit": "972b0b1",
+ "min_rows": 48,
+ "peers_per_nature": 40,
+ "quotas": {
+  "Renta Variable": 11,
+  "Renta Fija Flexible": 7,
+  "Mixtos": 6,
+  "Renta Fija Corto Plazo": 6,
+  "Monetario": 3,
+  "Alternativo": 4,
+  "Estructurado": 3
+ },
+ "real_positives": [
+  "DE000DWS3LN1"
+ ],
+ "rule": "in-universe, nature set, >= min_rows monthly NAV rows; ordered by md5(isin) inside nature; first quota = sample, next peers_per_nature = peers",
+ "funds": {
+  "sample": 39,
+  "real_positive": 1,
+  "peer": 245
+ },
+ "rows": 52459,
+ "natures": {
+  "Renta Variable": 51,
+  "Renta Fija Flexible": 47,
+  "Mixtos": 46,
+  "Renta Fija Corto Plazo": 46,
+  "Monetario": 43,
+  "Alternativo": 42,
+  "Estructurado": 10
+ }
+}
