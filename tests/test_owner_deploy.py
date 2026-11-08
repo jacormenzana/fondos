@@ -480,8 +480,20 @@ def test_revoke_is_due_only_with_the_switch_on_the_gate_met_the_privilege_live_a
     assert due is expected and why
 
 
+@pytest.mark.parametrize("deployed, other_pending, expected", [
+    (OLD, [], True),                                                   # master moved on commits that carry no DDL: nothing else is pending, so revoke is due (the 2026-11-08 defect: it waited forever)
+    (OLD, ["links"], False),                                           # other DDL of master is pending: revoke waits so the drift check judges only itself
+    (OLD, None, False),                                                # the pending set could not be worked out: no judgement, no revoke
+    (None, [], False),                                                 # no remembered deployed commit: the drift tool decides first
+    (HEAD, None, True)])                                               # equal refs need no pending set
+def test_revoke_with_the_remembered_commit_behind_master_waits_only_for_pending_ddl(deployed, other_pending, expected):
+    due, why = od.revoke_due(True, PROGRESS_OK, True, deployed, HEAD, other_pending=other_pending)
+    assert due is expected and why
+
+
 class RevokeRig:
-    def __init__(self, tmp_path, *, enabled=True, progress=PROGRESS_OK, live=True, state=None, outcome=None, raises=False):
+    def __init__(self, tmp_path, *, enabled=True, progress=PROGRESS_OK, live=True, state=None, outcome=None, raises=False, changed=None):
+        self.changed = changed
         self.sf = tmp_path / "s.json"
         od.write_state(self.sf, state if state is not None else {"deployed_ref": HEAD})
         self.kw = dict(enabled=enabled)
@@ -496,12 +508,25 @@ class RevokeRig:
             return self.progress
 
         return od.revoke_pass(state_file=self.sf, enabled=self.kw["enabled"], head_fn=lambda: HEAD, progress_fn=progress, privilege_fn=lambda: self.live,
-                              apply=lambda h, p: self.applied.append((h, list(p))) or self.outcome, notify=self.notified.append, report=lambda **kw: self.reports.append(kw) or "FND-0400")
+                              apply=lambda h, p: self.applied.append((h, list(p))) or self.outcome, notify=self.notified.append, report=lambda **kw: self.reports.append(kw) or "FND-0400",
+                              changed=self.changed)
 
 
 def test_a_due_revoke_is_applied_alone_with_the_automatic_gates_and_reported(tmp_path):
     r = RevokeRig(tmp_path)
     assert r.run() == "applied" and r.applied == [(HEAD, ["revoke"])] and len(r.notified) == 1 and r.reports == []
+
+
+def test_a_revoke_is_applied_when_master_is_ahead_of_the_deployed_commit_by_commits_without_ddl(tmp_path):
+    """The 2026-11-08 defect: deployed cb9a634, master ee734f6, no DDL file changed between them, nothing pending -> the trigger never fired."""
+    r = RevokeRig(tmp_path, state={"deployed_ref": OLD}, changed=lambda a, b: ["shared/config.py", "tests/test_x.py", "doc/reglas/NORMAS_BACKLOG.md"])
+    assert r.run() == "applied" and r.applied == [(HEAD, ["revoke"])]
+
+
+def test_a_revoke_waits_while_other_ddl_between_the_deployed_commit_and_master_is_pending(tmp_path):
+    other_ddl = sorted(next(files for ph, files in od.files_by_phase().items() if ph != od.REVOKE_PHASE and files))[0]
+    r = RevokeRig(tmp_path, state={"deployed_ref": OLD}, changed=lambda a, b: [other_ddl])
+    assert r.run() == "none" and r.applied == []
 
 
 def test_nothing_happens_when_the_switch_is_off_the_gate_is_short_or_the_state_cannot_be_read(tmp_path):

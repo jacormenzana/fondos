@@ -503,13 +503,18 @@ def auto_deploy(head: str, pending: list, deployed: Optional[str], *, vault, sta
 REVOKE_PHASE = "revoke"
 
 
-def revoke_due(enabled: bool, progress, privilege_live, deployed_ref, head: str, required: int = 50) -> tuple:
-    """(due, why) for step A-2 (`revoke`) in AUTO mode. Due only when the switch is on, everything else is deployed (the remembered commit is master's), the writer still holds the direct UPDATE
-    privilege (so it is not applied yet) and the shadow stage shows `required` non-system transitions since the last direct write (the migrate tool refuses it before that anyway). Pure."""
+def revoke_due(enabled: bool, progress, privilege_live, deployed_ref, head: str, required: int = 50, other_pending: Optional[list] = None) -> tuple:
+    """(due, why) for step A-2 (`revoke`) in AUTO mode. Due only when the switch is on, no other DDL of master is waiting (the remembered commit is master's, or `other_pending` -- the phases other
+    than revoke whose DDL changed between the remembered commit and master -- is empty), the writer still holds the direct UPDATE privilege (so it is not applied yet) and the shadow stage shows
+    `required` non-system transitions since the last direct write (the migrate tool refuses it before that anyway). The remembered commit only advances when DDL is applied, so master moves ahead of it
+    on every commit without DDL: comparing the two refs alone made the trigger unreachable (2026-11-08); an unknown pending set (None) judges nothing. Pure."""
     if not enabled:
         return False, "BACKLOG_AUTO_REVOKE_ENABLED is off"
     if deployed_ref != head:
-        return False, "other DDL of master is not deployed yet: revoke waits so the drift check judges only itself"
+        if not deployed_ref or other_pending is None:
+            return False, "no remembered deployed commit, or the pending DDL could not be worked out: nothing is judged"
+        if other_pending:
+            return False, f"other DDL of master is not deployed yet ({', '.join(other_pending)}): revoke waits so the drift check judges only itself"
     if privilege_live is not True:
         return False, "the direct write privilege is already revoked (or unknown)"
     done = (progress or {}).get("live_non_system_since_last_v00")
@@ -518,8 +523,10 @@ def revoke_due(enabled: bool, progress, privilege_live, deployed_ref, head: str,
     return True, f"the shadow stage shows {done} of {required} non-system transitions and nothing else is pending"
 
 
-def revoke_pass(*, state_file: Path, enabled: bool, head_fn: Callable, progress_fn: Callable, privilege_fn: Callable, apply: Callable, notify: Callable, report: Optional[Callable] = None) -> str:
-    """One pass of the A-2 trigger of the watcher: none | skipped | applied | failed | error. A failed attempt is remembered (`revoke_failed`) and never repeated by itself: a person looks at it."""
+def revoke_pass(*, state_file: Path, enabled: bool, head_fn: Callable, progress_fn: Callable, privilege_fn: Callable, apply: Callable, notify: Callable, report: Optional[Callable] = None,
+                changed: Optional[Callable] = None, registry: Optional[Callable] = None) -> str:
+    """One pass of the A-2 trigger of the watcher: none | skipped | applied | failed | error. A failed attempt is remembered (`revoke_failed`) and never repeated by itself: a person looks at it.
+    `changed(a, b)` (files changed between two commits) and `registry(head)` (the phases as written in master's sources) work out the other pending phases when the remembered commit is behind master."""
     if not enabled:
         return "none"
     state = read_state(state_file)
@@ -527,7 +534,15 @@ def revoke_pass(*, state_file: Path, enabled: bool, head_fn: Callable, progress_
         return "skipped"
     try:
         head = head_fn()
-        due, _why = revoke_due(enabled, progress_fn(), privilege_fn(), state.get("deployed_ref"), head)
+        deployed = state.get("deployed_ref")
+        other = None
+        if deployed and deployed != head and changed is not None:
+            try:
+                reg = registry(head) if registry else None
+            except Exception:                                                  # noqa: BLE001 -- unreadable sources: fall back to the phase list this process imported
+                reg = None
+            other = [ph for ph in pending_phases(changed(deployed, head), reg) if ph != REVOKE_PHASE]
+        due, _why = revoke_due(enabled, progress_fn(), privilege_fn(), deployed, head, other_pending=other)
     except Exception as exc:                                                   # noqa: BLE001 -- unreadable state is not a reason to revoke anything
         return f"error: {type(exc).__name__}"
     if not due:
@@ -898,7 +913,7 @@ def main(argv: list | None = None) -> int:
                          ask=ask, apply=do_apply, notify=notify, mode=mode, apply_auto=do_apply_auto, report=bc.report_incident, registry=git_registry)
         if revoke_enabled and res in ("none", "applied"):
             rres = revoke_pass(state_file=sf, enabled=True, head_fn=git_head, progress_fn=bc.shadow_progress, privilege_fn=bc.raw_update_privilege_live, apply=do_apply_revoke, notify=notify,
-                               report=bc.report_incident)
+                               report=bc.report_incident, changed=git_changed, registry=git_registry)
             if rres not in ("none", "skipped"):
                 print(f"revoke: {rres}")
         try:                                                                   # FND-0376: retry a failed publication of master; an alert is shown, never swallowed
