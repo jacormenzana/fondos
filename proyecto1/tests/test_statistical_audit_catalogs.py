@@ -136,13 +136,13 @@ class TestInvariantsCatalogAgainstEngine:
 
     def test_catalog_oc_contamination_rule_fires_on_known_pattern(self):
         rule = next(r for r in COST_INVARIANTS if r.rule_id == "OC_NOT_CONTAMINATED")
-        df = pd.DataFrame({"Ongoing_Charge_Recurrent": [0.0272], "ACI_RHP": [2.72]})
+        df = pd.DataFrame({"Ongoing_Charge_Recurrent": [0.0272], "ACI_RHP": [2.72], "OC_ACI_Rounding_Explained": [False]})   # the runner adds the column (FND-0034, _mark_oc_rounding); False = judge the row
         result = check_invariant(df, rule)
         assert result.n_violations == 1
 
     def test_catalog_oc_contamination_rule_silent_on_clean_data(self):
         rule = next(r for r in COST_INVARIANTS if r.rule_id == "OC_NOT_CONTAMINATED")
-        df = pd.DataFrame({"Ongoing_Charge_Recurrent": [0.0272], "ACI_RHP": [5.10]})
+        df = pd.DataFrame({"Ongoing_Charge_Recurrent": [0.0272], "ACI_RHP": [5.10], "OC_ACI_Rounding_Explained": [False]})
         result = check_invariant(df, rule)
         assert result.n_violations == 0
 
