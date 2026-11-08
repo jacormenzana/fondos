@@ -105,6 +105,36 @@ def test_attention_lines_announce_the_lapse_and_a_closed_ap_and_never_a_failed_l
     assert "FND-0001, que esta CLOSED" not in text                               # an unanswered lookup is never read as closed
 
 
+def test_a_standing_acceptance_may_outlive_its_closed_ticket_but_a_time_limited_one_may_not(pg_session_conn, pg_conn_module_schema):
+    """FND-0280: 71 of 73 funds were fixed and the ticket closed; the other 2 are a PUBLISHER_DEFECT (the KID contradicts itself) accepted as STANDING, with no calendar expiry. The attention line
+    'accepted under a CLOSED ticket' is for time-limited acceptances; a standing one is bound to its evidence and is meant to outlive the ticket."""
+    from shared.statistical_audit.accepted_residuals import FINGERPRINT_SQL, STANDING_UNTIL, attention_lines, standing_marker
+    conn = pg_session_conn
+    conn.execute(f"SET search_path = {pg_conn_module_schema}")
+    _make_table(conn)
+    conn.execute("CREATE TABLE fund_kiid_metadata (isin varchar(12) PRIMARY KEY, raw_kiid_text text)")
+    conn.execute("INSERT INTO fund_kiid_metadata VALUES ('STAND1', 'the kid text'), ('STAND2', 'another kid text')")
+    fps = dict(conn.execute(f"SELECT isin, {FINGERPRINT_SQL} FROM fund_kiid_metadata").fetchall())
+    marker = standing_marker("PUBLISHER_DEFECT", {"STAND1": fps["STAND1"]})
+    ins = ("INSERT INTO audit_accepted_finding (domain, rule_id, isin, ap_id, reason, accepted_at, expires_at) VALUES (%s, %s, %s, %s, %s, current_date - 1, %s)")
+    conn.execute(ins, (DOMAIN, "MGMT_LE_TOTAL", "STAND1", "FND-0280", "PUBLISHER_DEFECT: the KID contradicts itself " + marker, STANDING_UNTIL))   # standing, evidence unchanged
+    conn.execute(ins, (DOMAIN, "MGMT_LE_TOTAL", "TIMED1", "FND-0280", "known residual", date.today() + timedelta(days=200)))                       # time-limited under the SAME closed ticket
+    conn.execute(ins, (DOMAIN, RULE, "TIMED2", "FND-0555", "known residual", date.today() + timedelta(days=200)))
+    conn.commit()
+    closed = lambda ap: "CLOSED" if ap in ("FND-0280", "FND-0555") else "OPEN"
+    text = "\n".join(attention_lines(conn, DOMAIN, 30, ap_status=closed))
+    assert "FND-0280, que esta CLOSED" in text and "FND-0555, que esta CLOSED" in text           # the time-limited ones are still reported
+    # only the standing acceptance under a closed ticket: silent
+    conn.execute("DELETE FROM audit_accepted_finding WHERE isin IN ('TIMED1', 'TIMED2')")
+    conn.commit()
+    assert attention_lines(conn, DOMAIN, 30, ap_status=closed) == []
+    # the document of the standing acceptance changes: it is announced as lapsed (by its own line), not as a closed-ticket inconsistency
+    conn.execute("UPDATE fund_kiid_metadata SET raw_kiid_text = 'a revised kid text' WHERE isin = 'STAND1'")
+    conn.commit()
+    text = "\n".join(attention_lines(conn, DOMAIN, 30, ap_status=closed))
+    assert "CADUCADA" in text and "STAND1" in text and "que esta CLOSED" not in text
+
+
 def test_attention_lines_are_silent_when_the_table_is_missing(pg_session_conn, pg_conn_module_schema):
     from shared.statistical_audit.accepted_residuals import attention_lines
     conn = pg_session_conn

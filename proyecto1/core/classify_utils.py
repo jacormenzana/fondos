@@ -488,6 +488,9 @@ NAME_SIGNALS_RF_CORTO: list = [
     "ult sh term", "ul sh cor", "ul sh tr",
     "ult st t bd", "ul shor fix in",
     "invesco ult sh",
+    # FND-0397: generic abbreviations of "short duration" / "ultra short" in catalogue names (truncated to 30 characters). Without them the funds below lost their
+    # only RF_Corto signal once the boilerplate "fecha de vencimiento" false positive was removed (AXA IM ... SHORT DUR HY, MUZINICH SHOR DUR HY, OSTRUM CR UL SH PLUS).
+    "short dur", "shor dur", "ul sh", "ult sh",
     # Bonos flotantes
     "float rate notes", "float rate nt",
     # Covered bonds
@@ -3138,8 +3141,11 @@ def resolve_rf_subtype(name_l: str, kiid_text: str) -> str:
     # but "fixed maturity" alone triggered _has_vencimiento_signal=True and
     # _vencimiento_negated=False (guard was ES-only) → spurious RF_Corto for
     # EN-KIID bond funds (e.g. MS INV FD EMERG DEBT, LU0057132697).
+    # FND-0397 (2026-11-08): the article is optional. "el fondo no tiene UNA fecha de vencimiento fija" (the same open-ended boilerplate, Man Dynamic Income and
+    # 66 more RF funds) slipped past the guard above, so the bare substring "fecha de vencimient" read it as a target-maturity signal and sent the fund to
+    # RF_Corto. Replay on the 978 RF funds with a pending KIID vote: 67 subtype changes (66 Corto -> Flexible), none without a stated duration cap.
     _vencimiento_negated = bool(re.search(
-        r'(?:no\s+tiene|sin|no\s+tendr[aá])\s+fecha\s+de\s+vencimient'
+        r'(?:no\s+tiene|sin|no\s+tendr[aá])\s+(?:una?\s+)?fecha\s+de\s+vencimient'
         r'|does\s+not\s+have\s+a\s+fixed\s+maturit'
         r'|has\s+no\s+fixed\s+maturit'
         r'|no\s+fixed\s+maturit',

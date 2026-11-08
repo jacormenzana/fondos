@@ -38,6 +38,7 @@ for _p in (_ROOT, _ROOT / "proyecto2"):
         sys.path.insert(0, str(_p))
 
 from shared import config as _cfg                                                     # noqa: E402
+from shared.data_suspect import robust_z                                              # noqa: E402,F401  (P#11: one definition, shared with the predicate)
 from shared.db import get_connection                                                  # noqa: E402
 from shared.family_scope import load_family_map                                       # noqa: E402
 from src.readers.db_readers import load_nav, load_peer_returns                        # noqa: E402
@@ -45,17 +46,6 @@ from src.utils.peer_returns import one_month_returns                            
 from src.utils.validators import find_unshared_jumps, validate_nav, validate_nav_stale_flat   # noqa: E402
 
 WITHIN_NATURE_MAX = 20.0
-MAD_SCALE = 0.6745            # modified z = 0.6745 * (x - median) / MAD
-
-
-def robust_z(x: float, values) -> "float | None":
-    """Modified z of x against `values` (median / MAD). None when it cannot be computed (fewer than 5 values or MAD = 0)."""
-    v = np.asarray([a for a in values if a is not None and np.isfinite(a)], dtype=float)
-    if len(v) < 5:
-        return None
-    med = float(np.median(v))
-    mad = float(np.median(np.abs(v - med)))
-    return None if mad == 0 else MAD_SCALE * (x - med) / mad
 
 
 def longest_flat_run(nav_df: pd.DataFrame) -> dict:

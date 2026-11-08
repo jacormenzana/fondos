@@ -647,6 +647,15 @@ NAV_UNSHARED_JUMP_MODE: str = "SHADOW"
 NAV_UNSHARED_JUMP_MIN_ABS_RET: float = 0.35
 NAV_UNSHARED_JUMP_MIN_PEERS: int = 10
 NAV_UNSHARED_JUMP_MAX_PEER_SHARE: float = 0.05
+# FND-0394 (WS2 of FND-0391): shared.data_suspect, the one predicate for "this fund's published numbers cannot be trusted as they stand". DATA_SUSPECT_ENABLED is the kill switch of its SELECTION effect (build
+# eligibility, promotion gate, PIT): it ships OFF and nothing reads it yet; the predicate itself is pure and used by the forensics and, later, the audit's incident rules. Defaults from the forensics of the 22 funds
+# with |MAD-Z| >= 50 on 2026-11-08 (FND-0393): MIN_DEV 50 is the extreme set's own cut; a fund needs MIN_FLAGGED_METRICS distinct ADEQUATE-sample metrics at that deviation to be an INTEGRITY suspect; a metric's sample is
+# "small" when its source_rows is below the SMALL_SAMPLE_PERCENTILE of its Fund_Nature AND below SMALL_SAMPLE_FRACTION of that nature's median (16 of the 22 were small-sample artifacts, e.g. 3 points where 36 is the norm).
+DATA_SUSPECT_ENABLED: bool = False
+DATA_SUSPECT_MIN_DEV: float = 50.0
+DATA_SUSPECT_MIN_FLAGGED_METRICS: int = 8
+DATA_SUSPECT_SMALL_SAMPLE_PERCENTILE: float = 10.0
+DATA_SUSPECT_SMALL_SAMPLE_FRACTION: float = 0.5
 # Mínimo de observaciones para métricas de persistencia del alpha (≥7 años)
 MIN_NAV_PERSIST: int = 84
 

@@ -474,3 +474,42 @@ FND-0398 (Leverage_Used saturated, LOW). Links to the epic and to the tickets na
 
 ## A6.4 Still open in WS0.5 / next
 Delivery receipt of the WS0.5 commit (`delivery_attest.py --scope full`), then FND-0392 closes by itself on the receipt. Next: WS1 (FND-0393) — it needs a FULL P2 run on the new code first (owner-run); D1 canaries are its hard gate for WS2.
+
+---
+
+# Amendment A7 (2026-11-08, evening): owner order "WS1 now, start WS2, review the held fund, clear the noise, align administration"
+
+## A7.1 WS1 first slice: what the evidence says (FND-0393)
+- **Full P2 pass done** (`P2_runCycle`, 14:33 to 17:38, run `20261108_155048`, 0 errors, 3 quarantined) and its POST audit `post_20261108_173304_p2`. The extreme set (|MAD-Z| >= 50) is 21 -> 22: **the existing guards explain none of the 21** (A1 hypothesis refuted).
+- **Forensics of the 22** (`scripts/audit/nav_forensics.py`, read-only, generic): **1 NAV defect** (DE000DWS3LN1, +92.9% in one month, 0 of 1,620 peers moved), **16 SMALL_SAMPLE_METRIC** (11 are `sharpe_slope|rolling_3y` on 3-7 observations where the nature's norm is 36; 5 are regime/since-inception metrics on about half the usual history),
+  **2 LOW_VOLATILITY_RATIO** (incl. the money-market fund), **3 REVIEW** (LU1663960000, ES0116848013, LU0922333322: adequate samples, extreme in their own right).
+- **G-03 is REFUTED.** Plan item "split baselines by Fund_Nature first (denoise before calibrating)" assumed baseline pollution. Measured: judged inside their own nature, 21 of 22 funds are as extreme or MORE (e.g. 436 against 157); only one falls (-153 to -69) and none below 20. **L1 (nature-split baselines) is demoted; the lever is the sample size.**
+  Root-cause ticket **FND-0401** (P2 publishes slope/regime metrics on 3-7 observations: a minimum-observation floor is missing).
+- **Validator universe census** (2,928 funds, 522,609 one-month returns): at the 0.35 cut 17 jump-months in 16 funds, 2 in the last 12 months; most older flags look like genuine single-region re-pricings (NOT verified). `NAV_UNSHARED_JUMP_MODE` = **SHADOW** (commit `2cfe877`, published). **Not ready for ON**: needs a recency window,
+  the verified-genuine exemption (FND-0394) and a labelled precision (FND-0395), because it looks at the whole history and would quarantine a fund for good over a real one-off event.
+- **Still open in WS1:** D1 detector canaries (hard gate before the selection effect of WS2 is switched on), G-06 closing condition for the extreme-fund tickets, the jump-cluster-by-source signal, the three REVIEW funds and LU0232465467 (four adequate-sample extreme metrics).
+  **Confirming SHADOW in production** needs one P2 pass: its first `NAV_JUMP_SHADOW` rows in `p2_pipeline_log` are the proof (not yet run).
+
+## A7.2 FND-0397: the held fund's nature (classifier fix built, live data NOT changed)
+- **Review (read-only):** Man Dynamic Income family (3 classes, one held at 5.5% Defensiva). Replay of `resolve_nature_evidence` reproduces the stored nature; the KIID vote is `_RF_pending` and `resolve_rf_subtype` returns RF_Corto **because the substring "fecha de vencimient" fires on the open-ended boilerplate "el fondo no tiene UNA
+  fecha de vencimiento fija"**: the negation guard (FIX-P1-RFC2) knows "no tiene fecha de vencimiento" but not the article. The KIID has no duration wording at all; `Duration_Profile = Short` and `Credit_Quality = Investment Grade` are DERIVED from the nature and name tokens (`derive_duration_profile` / `derive_credit_quality`), so they confirm nothing (ticket **FND-0402**).
+- **Fix** (`classify_utils.py`): optional article in the negation guard + generic short-duration name abbreviations (`short dur`, `shor dur`, `ul sh`, `ult sh`) so genuine short-duration funds keep their only signal. Tests discriminate (the defect reproduces on the old code).
+- **Census before any live change** (978 RF funds with a pending KIID vote): the fix changes 67 subtypes (44 in the universe): 66 Corto -> Flexible, 1 Flexible -> Corto; none of the five named short-duration funds flips. Examples that leave `Corto Plazo` (and Defensiva's peer group): AB American/European Income and High Yield, MFS Emerging Markets Debt, UBS convertibles and China bond, GAM Credit Opportunities, AXA Strategic Bonds.
+- **NOT done, owner decision (R-2 step 3):** the live data still says Corto Plazo. Applying it = FORCE_REFRESH of the affected ISINs and a P1 nature-first pass; the held position and every scenario are unchanged. Impact on selection if the 44 funds move is NOT assessed.
+
+## A7.3 FND-0280: the "closed ticket, accepted residual" alert was a false positive
+`accepted_residuals.attention_lines` flagged ANY accepted residual whose ticket is CLOSED, including STANDING ones (owner design 2026-11-06: defects of the document, no calendar expiry, bound to the KID evidence). FND-0280 fixed 71 of 73 funds; the other 2 (GVC Gaesco Columbus, classes A and P) are a PUBLISHER_DEFECT: the KID prints a management fee of 3.27% above
+its own 3.1% annual cost impact and the extracted values equal the printed ones. **Resolution: the acceptance stays, FND-0280 stays CLOSED, the alert now skips standing acceptances** (a time-limited one under a closed ticket is still reported; a standing one whose document changed still appears as CADUCADA). Live check: 0 attention lines in both domains.
+Side observation: FND-0280 closed with the evidence "tests_pass: local receipt: 0 passed ... scope docs_only" (logged on FND-0388).
+
+## A7.4 The six COVERAGE_CLIFF warnings (`time_to_recovery`, -2.1% to -4.6% n_valid)
+Explained by the definition: of the 1,194 in-universe funds without a valid 1-year `time_to_recovery`, 1,192 recompute to NaN ("never recovers inside the window") on today's NAV, after a -1.4% median month in 2026-09. The exact PRE-to-POST delta of 36 funds is not individually attributable (no stored PRE state). Two funds recompute to a number (LU1663960000, LU2334589889): not explained.
+
+## A7.5 WS2 started: `shared/data_suspect.py` (pure, switch OFF, no consumer wired)
+`find_suspects(panel, nav_flags, family_of)`: tiers NAV_JUMP (the validator's flag, input), DEVIATION (an ADEQUATE-sample metric at |z| >= 50), INTEGRITY (>= N adequate metrics, money market excluded); share classes collapse to one suspect. A metric counts only when its `source_rows` is not both below its nature's p10 and below half its median.
+**Live run** (1,240,360 metric rows, 2,904 funds, 485 metric keys; 2.6 s after a 6.1 s load): 6 suspects, all DEVIATION: the 3 REVIEW funds, the 2 LOW_VOLATILITY_RATIO funds and LU0232465467; **15 of the 16 small-sample funds are correctly not flagged**.
+**Finding for WS3:** no fund has more than 5 adequate-sample metrics at |z| >= 50, so the INTEGRITY threshold of 8 (taken from raw alarm counts) would never fire; it must be recalibrated on adequate-sample counts. Not yet built: the loader of the NAV flags, build-time eligibility (`fund_scorer`), the `D-DATA-SUSPECT` control, the exemption registry (with the 7-day warning and one-build grace), PIT evaluation, the selection-impact KPIs.
+**Gate decision:** A4 #1 said WS2 does not start before the D1 canaries are green; the owner then ordered WS2 to begin. WS2 is built behind `DATA_SUSPECT_ENABLED = False` and NOTHING reads it: its selection effect stays off until the canaries are green.
+
+## A7.6 Administration
+25 proposed RELATED links of FND-0391..0398 and 6 of FND-0401/0402 were CONFIRMED on the owner's written order (append-only events, no DEPENDS_ON added). The missing restore point of the P2 cycle is recorded in `deployments/20261108_P2_cycle_no_restore_point.md` (what was written, why it is recomputable, what is NOT verified: whether WAL archiving and the off-box dump are current).

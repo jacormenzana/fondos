@@ -176,9 +176,13 @@ def attention_lines(conn: "psycopg.Connection", domain: str, within_days: int = 
             lines.append(f"residual aceptado {rule_id} ({n} ISINs, {ap_id}) caduca el {expires_at} "
                          f"({(expires_at - today).days} dias): renovar con accept_audit_residual.py o corregir la causa antes")
         if ap_status is not None:
-            aps = conn.execute("SELECT DISTINCT ap_id FROM audit_accepted_finding WHERE domain = %s AND expires_at >= %s ORDER BY 1",
+            # FND-0280 (2026-11-08): a STANDING acceptance (a defect of the DOCUMENT: PUBLISHER_DEFECT / EXTRACTION_LIMIT) has no calendar expiry and is bound to its evidence, so it is MEANT to outlive
+            # the ticket that fixed everything else (FND-0280: 71 of 73 funds fixed, 2 KIDs that contradict themselves, no fix exists). Only a time-limited acceptance under a CLOSED ticket is the
+            # inconsistency this line reports ("the fix was declared done yet the violation is still accepted"); a standing one whose document changed is already announced above as CADUCADA.
+            acc = conn.execute("SELECT ap_id, reason FROM audit_accepted_finding WHERE domain = %s AND expires_at >= %s ORDER BY 1",
                                (domain, today)).fetchall()
-            for (ap_id,) in aps:
+            aps = sorted({row[0] for row in acc if parse_standing(row[1]) is None})
+            for ap_id in aps:
                 if ap_status(ap_id) == "CLOSED":
                     lines.append(f"residual aceptado bajo {ap_id}, que esta CLOSED: la correccion se dio por hecha pero la "
                                  "violacion sigue aceptada; revocar la aceptacion o reabrir el ticket")
