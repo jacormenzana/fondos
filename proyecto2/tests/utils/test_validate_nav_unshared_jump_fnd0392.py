@@ -129,7 +129,7 @@ def test_one_month_returns_skip_gaps_and_keep_the_last_row_of_a_month():
 
 def test_the_kill_switch_defaults_and_the_pipeline_wiring():
     from shared import config
-    assert config.NAV_UNSHARED_JUMP_MODE == "OFF"                     # ships OFF: WS1 (FND-0393) calibrates the thresholds before SHADOW
+    assert config.NAV_UNSHARED_JUMP_MODE == "SHADOW"                  # SHADOW since 2026-11-08 (FND-0393: universe census, 16 funds flagged in the whole history); "ON" needs a recency window, the exemption and a labelled precision
     assert (config.NAV_UNSHARED_JUMP_MIN_ABS_RET, config.NAV_UNSHARED_JUMP_MIN_PEERS, config.NAV_UNSHARED_JUMP_MAX_PEER_SHARE) == (0.35, 10, 0.05)
     src = (_ROOT / "proyecto2" / "src" / "pipeline" / "run_pipeline.py").read_text(encoding="utf-8")
     assert src.count("validate_nav_unshared_jump(") == 1 and "NAV_JUMP_SHADOW" in src             # one call, on the monthly series only

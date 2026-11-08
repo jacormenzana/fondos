@@ -124,6 +124,7 @@ proyecto2/
       test_fault_injection_fnd0392.py
       test_fingerprint.py
       test_logger_structured.py
+      test_nav_forensics_fnd0393.py
       test_validate_nav_stale_flat_20261108.py
       test_validate_nav_unshared_jump_fnd0392.py
     writers/
@@ -183,7 +184,7 @@ touches one of the nine families recompute only that family: add it to `FAMILY_C
 and re-opens by itself when its series is repaired; the daily short-horizon window keeps `validate_nav` alone. When the macro OLS has no fit for a fund (fewer than `MACRO_OLS_MIN_OBS` overlapping months), `replace_beta_set`
 now deletes the betas and the other OLS outputs the fund still held from an older rule instead of leaving them behind.
 
-**Unshared one-month jump (FND-0392, `NAV_UNSHARED_JUMP_MODE`, ships `OFF`):** `validate_nav_unshared_jump` flags a monthly NAV that moves `NAV_UNSHARED_JUMP_MIN_ABS_RET` (35%) or more in ONE calendar month while its `Fund_Nature` peers did not
+**Unshared one-month jump (FND-0392, `NAV_UNSHARED_JUMP_MODE`, `SHADOW` since 2026-11-08, FND-0393):** `validate_nav_unshared_jump` flags a monthly NAV that moves `NAV_UNSHARED_JUMP_MIN_ABS_RET` (35%) or more in ONE calendar month while its `Fund_Nature` peers did not
 (at least `NAV_UNSHARED_JUMP_MIN_PEERS` report that month and at most `NAV_UNSHARED_JUMP_MAX_PEER_SHARE` moved the same way): the level shift that passes both rules above (a +92.9% month, momentum_1y +2,264%). The peer panel is
 `utils/peer_returns.py` (canonical period key, consecutive months only, the fund never its own peer), read once per run by `db_readers.load_peer_returns`. `SHADOW` writes a `NAV_JUMP_SHADOW` row to `p2_pipeline_log` and quarantines nothing; `ON`
 quarantines like any `validate_nav` failure. The thresholds are not calibrated on the whole universe yet (WS1, FND-0393). Measure the validators with `python scripts/audit/fault_injection_run.py` (hermetic: it injects known corruption classes,

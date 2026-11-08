@@ -637,10 +637,13 @@ NAV_STALE_FLAT_MIN_JUMP: float = 0.40
 # harness (scripts/audit/fault_injection_run.py) measures recall and the false-positive count, and WS1 (FND-0393) sets them before any mode above SHADOW. First evidence (2026-11-08, hermetic fixture of 285 funds /
 # 52,459 monthly rows, tests/fixtures/fault_injection): cuts of 0.30 to 0.50 flag ONE fund, the real defect; 0.25 adds one more (a +28 % month that looks like a real rally). Recall on injected one-month shifts of
 # +50 %: 0.47 at a cut of 0.50 and 0.94 at 0.40 (a true month of -7 % pulls a +50 % shift under the line); at 0.35 every shift of 50-150 % is caught (>= 0.95, `fault_injection_run.py --min-recall 0.95` exits 0).
-# 285 of ~3,750 series: the universe-wide false-positive count is WS1's measurement.
+# Universe census (2026-11-08, FND-0393, read-only, 2,928 in-universe funds, 522,609 one-month returns, whole history): at a cut of 0.35 the test flags 17 jump-months in 16 funds (0.50: 5 in 5; 0.30: 46 in 31; 0.25: 85 in 48),
+# only 2 of them in the last 12 months (the real defect and the stale-flat fund the other rule already quarantines). Most older flags are 2022 moves of single-region equity funds that look like genuine re-pricings (NOT verified), so the
+# rule is SAFE TO MEASURE in SHADOW (about 16 rows per P2 pass) but NOT READY FOR "ON": it looks at the whole history and would quarantine a fund for good over a real one-off event (same scope question as the stale-flat rule).
+# Before "ON": a recency window, the verified-genuine exemption (FND-0394) and a labelled precision (FND-0395).
 # MODE: "OFF" = not evaluated; "SHADOW" = evaluated, a NAV_JUMP_SHADOW row in p2_pipeline_log names the month and nothing is quarantined; "ON" = quarantined like any validate_nav failure
 # (metrics cleared, nav_sources INVALID_NAV, re-opens by itself when the series is repaired). Rollback = "OFF": validate_nav and the stale-flat rule decide alone.
-NAV_UNSHARED_JUMP_MODE: str = "OFF"
+NAV_UNSHARED_JUMP_MODE: str = "SHADOW"
 NAV_UNSHARED_JUMP_MIN_ABS_RET: float = 0.35
 NAV_UNSHARED_JUMP_MIN_PEERS: int = 10
 NAV_UNSHARED_JUMP_MAX_PEER_SHARE: float = 0.05
