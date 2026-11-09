@@ -120,3 +120,35 @@ def test_defaults_come_from_the_config_and_the_selection_switch_ships_off():
     assert (config.DATA_SUSPECT_SMALL_SAMPLE_PERCENTILE, config.DATA_SUSPECT_SMALL_SAMPLE_FRACTION) == (10.0, 0.5)
     panel = _panel({"X": {"metrics": [0], "source_rows": 100}})
     assert find_suspects(panel, min_dev=1000.0) == []                                # an explicit parameter beats the default
+
+
+def test_quantity_of_merges_the_nominal_and_real_variants_and_the_versions_of_one_metric_and_horizon():
+    from shared.data_suspect import quantity_of
+    assert quantity_of("sortino|crisis_2022|0|v1") == quantity_of("sortino|crisis_2022|1|v1") == quantity_of("sortino|crisis_2022|1|v2") == "sortino|crisis_2022"
+    assert quantity_of("sortino|crisis_2022|0|v1") != quantity_of("sortino|since_inception|0|v1")          # another horizon is another quantity
+    assert quantity_of("sortino|crisis_2022|0|v1") != quantity_of("sharpe|crisis_2022|0|v1")                # another metric is another quantity
+    assert quantity_of("metric3") == "metric3"                                                              # not the four-part form: its own quantity
+
+
+def _variant_panel(extreme_keys, isin="X"):
+    """60 healthy funds x the four keys of two quantities (A and B, each nominal and real); `isin` is 80 modified-z away on `extreme_keys` only."""
+    rng = np.random.default_rng(5)
+    keys = ["a|h|0|v1", "a|h|1|v1", "b|h|0|v1", "b|h|1|v1"]
+    rows = []
+    for k in keys:
+        vals = rng.normal(0, 1, N_FUNDS)
+        med, mad = float(np.median(vals)), float(np.median(np.abs(vals - np.median(vals))))
+        rows += [(f"H{i:03d}", "N1", k, float(v), 100) for i, v in enumerate(vals)]
+        rows.append((isin, "N1", k, med + 80.0 / 0.6745 * mad if k in extreme_keys else float(rng.normal(0, 1)), 100))
+    return pd.DataFrame(rows, columns=["isin", "nature", "metric", "value", "source_rows"])
+
+
+def test_the_two_variants_of_one_quantity_do_not_build_an_integrity_case():
+    one_quantity = find_suspects(_variant_panel({"a|h|0|v1", "a|h|1|v1"}), min_metrics=2)
+    assert [s.representative for s in one_quantity] == ["X"] and one_quantity[0].n_metrics == 1
+    assert one_quantity[0].kinds == (KIND_DEVIATION,)                                                       # the nominal and the real key of ONE quantity: a deviation, not an integrity case
+
+
+def test_two_different_quantities_do_build_an_integrity_case_at_the_threshold_of_two():
+    two_quantities = find_suspects(_variant_panel({"a|h|0|v1", "b|h|1|v1"}), min_metrics=2)
+    assert two_quantities[0].n_metrics == 2 and KIND_INTEGRITY in two_quantities[0].kinds

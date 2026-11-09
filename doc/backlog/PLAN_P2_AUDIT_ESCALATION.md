@@ -556,3 +556,25 @@ Precedence: A9 > A8 on the points below.
    WS2 stays OFF and nothing reads the predicate.
 4. **ES0116848013:** manual audit ticket **FND-0403** (INV, HIGH): cross-check its 2022 NAV (+75.8% implied) and sortino against the manager's documents; verdict GENUINE / SOURCE_ERROR / INCONCLUSIVE. State today: in the universe, NAV status OK, in no scenario. No automated action decides on the fund (NAV guard in SHADOW, predicate OFF);
    there is NO exclusion mechanism that keeps it out of the next P3 build: if the owner wants it excluded before the verdict, that is a separate decision (accepted-residual style, with ticket and expiry).
+
+---
+
+# Amendment A10 (2026-11-08, end of day): owner orders after d51ef1d
+
+1. **ES0116848013 held out of P3** until FND-0403 has a verdict: `shared/data_hold.py` + `P3_DATA_HOLDS` / `P3_DATA_HOLD_ENABLED` in `shared/config.py` (entry: ticket FND-0403, 2026-11-08 -> 2027-02-06, at most 90 days, lapses by itself).
+   `fund_scorer.load_fund_metrics_for_scoring` adds `data_hold_reason`; `check_hard_filters` returns it right after the wrong-doc check, independent of `FUND_DATA_ELIGIBILITY_ENABLED`. Why not an accepted residual: it hides the alarms under review and needs a rule finding to point at.
+   Verified read-only on the live store: only ES0116848013 is held and all three sub-portfolios exclude it. It acts at the next scoring run; the PIT backtest does not carry the column. Release = delete the entry. **[CARGA MANUAL]** one-off removal when the verdict arrives (bounded by the expiry).
+2. **WS3 double counting fixed:** the unit of INTEGRITY is a quantity (`data_suspect.quantity_of`: metric + horizon; nominal/real variants and versions merged). Live panel at threshold 2: ES0116848013 is 1 quantity, DEVIATION only; no INTEGRITY suspect. Sharpe/Sortino of one horizon still count apart (FND-0395).
+3. **FND-0403:** BLOCKED by human validation (named condition). The backlog has no team queue: an assignee must be a canonical `agent:` / `human:` identity, so the ticket has no assignee until the owner names a login.
+4. **Close of day:** these changes are in the working tree, tested, NOT committed: the owner's "stop deployments for today" applies once the receipt of `d51ef1d` is green, and a commit would be published within minutes by the watcher without its own receipt.
+
+---
+
+# Amendment A11 (2026-11-08, night): ES0116848013 verdict GENUINE, hold lifted, exemption next
+
+Precedence: A11 > A10 on the points below.
+1. **Evidence:** Morningstar, Finect and the manager's own web (Renta 4) all show the stored series: 2022 = +75.7% (stored 20.822 -> 36.594), last NAV 30.786 on 2026-11-05, YTD -11.6%. The manager's page is independent of Morningstar, so the independent check of FND-0403 is met.
+2. **FND-0403 CLOSED** (owner order): verdict GENUINE (actual performance verified); solution_type REJECTED (the data-defect hypothesis is rejected; no code or data change), follow-up FND-0394; assignee human:jacor.
+3. **Hold lifted:** `shared.config.P3_DATA_HOLDS` ships EMPTY; the generic mechanism (`shared/data_hold.py`, `P3_DATA_HOLD_ENABLED`, the scorer column) ships with tomorrow's commit. Live read-only check: nothing held; ES0116848013 passes the hard filters of Dinamica and is excluded by its own drawdown rules in Defensiva (-0.23) and Equilibrada (6-month -0.16).
+4. **Next (FND-0394, programming not started):** the verified-genuine exemption, with ES0116848013 as the foundational case (ticket + expiry, 7-day warning, one-build grace, per plan A3 G-08 / A4 #4). `DATA_SUSPECT_ENABLED` stays OFF until it exists.
+5. **Tomorrow, in this order:** commit the generic hold mechanism (empty registry) + per-quantity counting + docs (`Refs: FND-0394`; FND-0403 is CLOSED, do not cite it), then `delivery_attest.py --scope full`, then standby. Nothing is pushed on 2026-11-08.

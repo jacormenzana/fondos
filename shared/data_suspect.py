@@ -11,8 +11,9 @@ What the 2026-11-08 forensics of the 22 funds with |MAD-Z| >= 50 taught, and wha
     would flag them all and drown the real cases. So a metric COUNTS only when its sample is adequate: not both below the nature's 10th percentile AND below half its median of `source_rows`.
   * Judging a fund inside its own Fund_Nature did NOT remove the extremes (21 of 22 were as extreme or more), so the baseline here is the universe, as the audit uses; the nature enters only through the
     sample-size reference, where it matters.
-Tiers (a fund is a suspect when any applies): NAV_JUMP (caller-supplied flag), DEVIATION (one adequate-sample metric with |z| >= min_dev), INTEGRITY (>= min_metrics distinct adequate-sample metrics at
-|z| >= min_dev; money-market funds excluded, they are structurally extreme on ratio metrics). Findings are reduced to FAMILIES (`shared.family_scope`), so three share classes are one suspect.
+Tiers (a fund is a suspect when any applies): NAV_JUMP (caller-supplied flag), DEVIATION (one adequate-sample metric with |z| >= min_dev), INTEGRITY (>= min_metrics distinct adequate-sample QUANTITIES at
+|z| >= min_dev, where the nominal and real variants of one metric and horizon are one quantity (`quantity_of`); money-market funds excluded, they are structurally extreme on ratio metrics). Correlated
+quantities that differ in name (a Sharpe and a Sortino of one horizon) still count apart: WS3 (FND-0395) refines the unit further. Findings are reduced to FAMILIES (`shared.family_scope`), so three share classes are one suspect.
 """
 from __future__ import annotations
 
@@ -38,6 +39,14 @@ def robust_z(x: float, values) -> Optional[float]:
     med = float(np.median(v))
     mad = float(np.median(np.abs(v - med)))
     return None if mad == 0 else MAD_SCALE * (x - med) / mad
+
+
+def quantity_of(metric_key) -> str:
+    """The QUANTITY a stored metric key measures: 'metric|horizon' of a key 'metric|horizon|real_flag|version'. The nominal (real_flag 0) and the real (real_flag 1) variants, and any metric_version, of the
+    same metric and horizon are ONE quantity (owner order 2026-11-08: ES0116848013's two keys were the nominal and real sortino of crisis_2022, counted twice). A key that is not in the four-part
+    form is its own quantity. Pure."""
+    parts = str(metric_key).split("|")
+    return "|".join(parts[:2]) if len(parts) >= 4 else str(metric_key)
 
 
 def score_panel(panel: pd.DataFrame, small_sample_percentile: Optional[float] = None, small_sample_fraction: Optional[float] = None) -> pd.DataFrame:
@@ -86,7 +95,8 @@ def find_suspects(panel: pd.DataFrame, nav_flags: Optional[Mapping[str, str]] = 
     nav_flags, family_of = dict(nav_flags or {}), dict(family_of or {})
     scored = score_panel(panel, small_sample_percentile, small_sample_fraction)
     hit = scored[(scored["z"].abs() >= min_dev) & scored["adequate"]]
-    per_fund = hit.groupby("isin").agg(n_metrics=("metric", "nunique"), max_abs_z=("z", lambda s: float(s.abs().max())))
+    hit = hit.assign(quantity=hit["metric"].map(quantity_of))
+    per_fund = hit.groupby("isin").agg(n_metrics=("quantity", "nunique"), max_abs_z=("z", lambda s: float(s.abs().max())))   # n_metrics = distinct QUANTITIES, not keys
     nature_of = scored.drop_duplicates("isin").set_index("isin")["nature"].to_dict()
     kinds: dict = {}
     for isin in nav_flags:

@@ -446,6 +446,13 @@ P3_FUND_NAV_MAX_GAP_RUN_MONTHS: int = 6
 # scripts/audit/wrong_doc_switch_diff.py passed on the 40-ISIN sample (live + PIT, 7/7) and the hermetic gate was green; PRODUCTION and the latest drafts
 # hold 0 WRONG_DOC funds. Rollback = False: nothing is written, no DDL.
 P3_WRONG_DOC_EXCLUSION_ENABLED: bool = True
+# Temporary ticket-bound hold (owner order 2026-11-08, shared/data_hold.py): a fund under human review is INELIGIBLE in P3 (exclusion_reason 'data_hold: <ticket> until <date> (...)') while its hold is active. Each entry
+# needs the owning ticket, since/until (at most 90 days: it lapses by itself) and a reason; the evidence stays visible in the audit (unlike an accepted residual). Release early = delete the entry once the ticket has its
+# verdict. Scope: P3 build/scoring only; the PIT backtest does not carry the column. Rollback = P3_DATA_HOLD_ENABLED False: nothing is written, no DDL.
+P3_DATA_HOLD_ENABLED: bool = True
+# The registry ships EMPTY (owner order 2026-11-08): the first hold, ES0116848013 (FND-0403), was lifted the same day once the manager's own web confirmed the +75.7% year of 2022 as real (verdict GENUINE).
+# Entry shape: "ISIN": {"ap": "FND-nnnn", "since": "YYYY-MM-DD", "until": "YYYY-MM-DD", "reason": "..."}.
+P3_DATA_HOLDS: dict = {}
 # Universe quarantine of funds whose NAV source is dead (owner directive 2026-11-04, pre-registered rule; FND-0233 / FND-0383). reconcile_universe_membership (P1, every
 # nature-first pass) sets In_Current_Universe=0 for an ISIN whose nav_sources row is STALE_FROZEN (no new NAV in > 365 d while still being checked: the Russia / Eastern
 # Europe cohort frozen since 2022-02-28) OR whose last NAV is older than UNIVERSE_NAV_QUARANTINE_DAYS while the source was checked in the last
@@ -659,8 +666,9 @@ RF_OPEN_ENDED_ARTICLE_GUARD_ENABLED: bool = False
 DATA_SUSPECT_MIN_DEV: float = 50.0
 # MIN_FLAGGED_METRICS 8 -> 4 -> 2 (owner orders 2026-11-08, WS3 recalibration). The 8 came from raw alarm counts; measured on the live panel with ADEQUATE samples only, the most any fund had was 5, so 8 never fired.
 # The 4 was set while stale regime rows were still stored; after the FND-0401 cleanup (applied 2026-11-08) the live panel has 2 funds with an adequate extreme metric: ES0116848013 with 2 and IE00B3L10570 with 1, so 4 would be dead code.
-# 2 is PROVISIONAL, not a measured precision: the 2 metrics of ES0116848013 are the nominal and the real variant of ONE quantity (sortino in crisis_2022), so the key count over-counts. WS3 (FND-0395) refines the unit of
-# evidence (a quantity, not a key) and labels the precision before the rule can open an incident. Nothing reads the predicate while DATA_SUSPECT_ENABLED is False.
+# 2 is PROVISIONAL, not a measured precision. The unit counted is a QUANTITY (metric + horizon; the nominal and real variants and the versions are one, `data_suspect.quantity_of`, owner order 2026-11-08: the two keys of
+# ES0116848013 were the nominal and real sortino of crisis_2022). Correlated quantities with different names (Sharpe and Sortino of one horizon) still count apart: WS3 (FND-0395) refines that and labels the precision
+# before the rule can open an incident. Nothing reads the predicate while DATA_SUSPECT_ENABLED is False.
 DATA_SUSPECT_MIN_FLAGGED_METRICS: int = 2
 DATA_SUSPECT_SMALL_SAMPLE_PERCENTILE: float = 10.0
 DATA_SUSPECT_SMALL_SAMPLE_FRACTION: float = 0.5

@@ -400,6 +400,10 @@ def load_fund_metrics_for_scoring(
     if _shared_config.P3_WRONG_DOC_EXCLUSION_ENABLED:            # FND-0323 D1: OFF = no extra query, no extra column
         reasons = wrong_doc_reasons(conn)
         out["doc_status_reason"] = pd.Series([reasons.get(i) for i in out.index], index=out.index, dtype=object)
+    if _shared_config.P3_DATA_HOLD_ENABLED:                      # owner order 2026-11-08 (FND-0403): OFF = no extra column; no query either way (the registry is config)
+        from shared.data_hold import hold_reasons
+        holds = hold_reasons(_shared_config.P3_DATA_HOLDS, date.today())
+        out["data_hold_reason"] = pd.Series([holds.get(i) for i in out.index], index=out.index, dtype=object)
     return out
 
 
@@ -766,6 +770,10 @@ def check_hard_filters(
         doc = row.get("doc_status_reason")
         if isinstance(doc, str) and doc:
             return doc
+    if _shared_config.P3_DATA_HOLD_ENABLED:                       # a fund under human review (shared/data_hold.py, FND-0403); an absent column (PIT frames) or None does not exclude
+        hold = row.get("data_hold_reason")
+        if isinstance(hold, str) and hold:
+            return hold
     if _shared_config.FUND_DATA_ELIGIBILITY_ENABLED:
         age = row.get("nav_age_days", np.nan)
         limit = _shared_config.P3_FUND_NAV_MAX_AGE_DAYS

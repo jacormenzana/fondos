@@ -128,6 +128,11 @@ one reason text for both paths (`shared/doc_eligibility.py`); live it is a `doc_
 `check_hard_filters`; the PIT backtest gets the same column from `pit_inputs.load_attributes` (it is part of the score cache key because scores depend on it) and applies today's
 status at every date (`KIID_Status` has no history; the run manifest says so). Validate with `scripts/audit/wrong_doc_switch_diff.py` (read-only, 40-ISIN sample, live and PIT).
 
+**Data hold (owner order 2026-11-08, `P3_DATA_HOLD_ENABLED`, ON):** a fund under human review is ineligible in P3 (`exclusion_reason` `data_hold: <ticket> until <date> (<why>)`, score 0) while its entry in `shared.config.P3_DATA_HOLDS`
+is active. Each entry carries its ticket, `since` / `until` (at most 90 days: it lapses by itself, `shared/data_hold.py`) and a reason; the audit evidence stays visible, unlike an accepted residual. It is a `data_hold_reason` column added by
+`load_fund_metrics_for_scoring` and read second by `check_hard_filters`, independent of `FUND_DATA_ELIGIBILITY_ENABLED`; the PIT backtest does not carry it. Release early by deleting the entry once the ticket has its verdict. It acts at the
+next scoring run (a stored `fund_scores` row is not rewritten by the config change).
+
 ### Data-freshness gate (`data_freshness.py`)
 
 `scripts/launch/p3_build_portfolio.py` checks input freshness **before** scoring or persisting and
