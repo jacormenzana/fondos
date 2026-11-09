@@ -590,3 +590,15 @@ Owner order 2026-11-09: build the exemption list with ES0116848013 as the founda
 - `data_suspect.find_suspects(..., exemptions=)`, `exempted_hits` (every withdrawn row stays visible), `load_effective_exemptions(conn)` (one place, so no consumer can disagree, P#11).
 - First case ES0116848013, `sortino|crisis_2022`, ticket FND-0403, 2026-11-08 -> 2027-05-07. Live read-only report (`scripts/audit/data_suspect_report.py`): suspects without exemptions 2 (IE00B3L10570, ES0116848013), withdrawn rows 2 (the nominal and real sortino), suspects with exemptions 1 (IE00B3L10570). IE00B3L10570 (sharpe in crisis_financiera, z -153) is NOT reviewed.
 - NOT built (WS2 proper, after the owner's authorisation): the build-time exclusion `data_suspect: ...` in the scorer, the `D-DATA-SUSPECT` gate, PIT evaluation, the `exemption_grace` column in the P3 notes and the selection-impact KPIs (the helper `grace_isins` is ready for them).
+
+---
+
+# Amendment A13 (2026-11-09): FND-0394 phase 2 built locally (the operational barriers), not committed
+
+Owner order 2026-11-09: after the phase 1 receipt (`fb87cae`, 6,819 passed) build the exclusion in the scorer, the promotion gate, the PIT evaluation and the `exemption_grace` indicator; WS2 stays OFF until the owner authorises it.
+- **Shared helpers** (`shared/data_suspect.py`): `suspect_reason` (one wording for every consumer), `reasons_by_isin` (every share class), `load_suspect_reasons(conn)` (live), `pit_panel` / `pit_exemptions` / `pit_suspect_reasons` (point in time). `data_exemption.effective_exemptions(include_grace=False)` for the PIT.
+- **Scorer:** `load_fund_metrics_for_scoring` adds `data_suspect_reason` and `exemption_grace` only when `DATA_SUSPECT_ENABLED`; `check_hard_filters` excludes with the reason (after the data hold); the grace flag is a result column, a `score_detail` key and a `notes` suffix ONLY for the fund in grace, so every other persisted row is unchanged.
+- **Gate:** `GATE_DATA_SUSPECT` in `scenario_lifecycle` (overridable with `--accept-alarms` + `--ap`, fail closed on an unreadable panel), control `D-DATA-SUSPECT` (`dormant:DATA_SUSPECT_ENABLED`) + its row in `GOBIERNO_CONTROLES.md`, evaluated in `p3_promote_scenario.py` only when the switch is ON.
+- **PIT:** `pit_scores(data_suspect=)` evaluates the predicate at each date from the frame of that date (G-02), `pit_run` passes it and puts it in the cache key only when ON.
+- **Live validation (read-only):** with the exemption the scorer flags only IE00B3L10570 (already held by FND-0404); without it also ES0116848013; with the hold in place switching the rule ON loses no eligible fund (1,472 both ways, regime Shock_Energetico).
+- **Left for the owner's authorisation:** switching `DATA_SUSPECT_ENABLED` on. Design question still open for FND-0404: a generic rule for constant-NAV / near-zero-volatility funds, so a Monetario fund does not need a per-fund exemption.

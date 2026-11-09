@@ -181,11 +181,26 @@ def compute_pit_scores(
     elig_on = bool(getattr(_config, "FUND_DATA_ELIGIBILITY_ENABLED", False))
     elig_params = {"min_coverage": _config.P3_FUND_NAV_MIN_COVERAGE, "max_gap_run": _config.P3_FUND_NAV_MAX_GAP_RUN_MONTHS} if elig_on else None
 
+    # FND-0394 phase 2: the shared suspicion predicate, evaluated at each date from the data observable then (plan G-02); only the exemption registry is today's decision. It follows the live switch
+    # (ships OFF = rule absent) and is part of the cache key only when ON, with every parameter that can change its answer.
+    suspect_on = bool(getattr(_config, "DATA_SUSPECT_ENABLED", False))
+    suspect_run = None
+    if suspect_on:
+        from datetime import date as _date
+        from shared.data_exemption import effective_exemptions
+        exempt = {i: sorted(q) for i, q in effective_exemptions(_config.DATA_SUSPECT_EXEMPTIONS, _date.today(), (),
+                                                                _config.DATA_SUSPECT_EXEMPTION_WARN_DAYS, include_grace=False).items()}
+        family_of = inputs.attrs["fund_family_id"].dropna().to_dict() if "fund_family_id" in inputs.attrs.columns else {}
+        suspect_run = {"family_of": family_of, "exemptions": {i: set(q) for i, q in exempt.items()}}
+        suspect_params = {"min_dev": _config.DATA_SUSPECT_MIN_DEV, "min_metrics": _config.DATA_SUSPECT_MIN_FLAGGED_METRICS,
+                          "pct": _config.DATA_SUSPECT_SMALL_SAMPLE_PERCENTILE, "frac": _config.DATA_SUSPECT_SMALL_SAMPLE_FRACTION, "exempt": exempt}
+
     score_key = content_hash(risk_key_scored, peers_key, short_keys, at, regime_by_date, inputs.attrs,
                              {"stale": max_stale_days, "min_obs": min_obs, "cur": current_universe_only,
                               "scorer_cfg": SCORER_CONFIG_HASH, "universe_cols": 2},          # FND-0192: a changed scorer value can never hit a stale cache
                              CODE_VERSION, *macro_key,          # macro_key empty without group B
-                             *([{"nav_continuity": elig_params}] if elig_on else []))     # FND-0254: part of the key only when the rule is ON
+                             *([{"nav_continuity": elig_params}] if elig_on else []),     # FND-0254: part of the key only when the rule is ON
+                             *([{"data_suspect": suspect_params}] if suspect_on else []))  # FND-0394: idem
 
     # FND-0193 (resumable runs): the dominant cost is scored in blocks of SCORE_BLOCK_DATES evaluation dates and each block is cached as it
     # finishes, so a run killed by the memory guard (or the owner) loses at most one block. The score of a date uses only information at that
@@ -210,7 +225,7 @@ def compute_pit_scores(
             s, u = pit_scores(
                 block, risk_scored, peers, inputs.attrs, regime_by_date, momentum=momentum, short=short,
                 max_stale_days=max_stale_days, min_obs=min_obs, current_universe_only=current_universe_only,
-                keep_detail=keep_detail, macro=macro, nav_gap=_nav_gap_for(block), log_universe=False,
+                keep_detail=keep_detail, macro=macro, nav_gap=_nav_gap_for(block), log_universe=False, data_suspect=suspect_run,
             )
             out = {"scores": s.drop(columns=["detail"]) if (keep_detail and "detail" in s.columns) else s, "universe": u}
             if keep_detail:

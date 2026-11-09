@@ -93,6 +93,7 @@ def pit_scores(
     macro_max_stale_days: int = 100,
     nav_gap: "pd.DataFrame | None" = None,
     log_universe: bool = True,
+    data_suspect: "dict | None" = None,
 ) -> "tuple[pd.DataFrame, pd.DataFrame]":
     """Score the universe as of every date in `at`.
 
@@ -107,6 +108,10 @@ def pit_scores(
              fund AS OF each date, fed to the scorer's own `check_hard_filters` through the `nav_gap_reason` column (FND-0254: the
              live rule, not a second one). None = the rule is not applied. Accepted audit residuals are deliberately NOT modelled:
              they are today's governance decisions, applying them in the past would be look-ahead.
+    data_suspect: FND-0394 phase 2, {"family_of": {isin: family id}, "exemptions": {isin: {'metric|horizon'}}} (None = the rule is not applied):
+             at EACH date the shared suspicion predicate (shared.data_suspect.pit_suspect_reasons) judges the metrics observable then, with the months of
+             NAV of each fund as the sample size, and feeds its reason to the scorer's own `check_hard_filters` through the `data_suspect_reason` column
+             (the live rule, not a second one: plan G-02, no look-ahead). Only the exemption registry is today's decision, as for the accepted residuals.
     Returns (scores, universe): scores is long (as_of, regime, isin, subportfolio, ..., score_final, eligible,
     exclusion_reason[, detail]); universe has per-date counts (entered, stale, young, scored, eligible)."""
     at = pd.DatetimeIndex(at)
@@ -164,6 +169,10 @@ def pit_scores(
             frame[name] = snap.iloc[i].reindex(isins)
         if nav_gap is not None:
             frame["nav_gap_reason"] = nav_gap.iloc[i].reindex(isins)
+        if data_suspect is not None and len(frame):
+            from shared.data_suspect import pit_suspect_reasons
+            reasons = pit_suspect_reasons(frame, n_obs_fresh.iloc[i], data_suspect.get("family_of"), data_suspect.get("exemptions"))
+            frame["data_suspect_reason"] = pd.Series(reasons, dtype=object).reindex(frame.index)
 
         res = score_funds_from_df(frame, regime, verbose=False) if len(frame) else pd.DataFrame()
         n_scored = len(res)

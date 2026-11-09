@@ -30,11 +30,18 @@ def _row(**kw):
     return pd.Series(base)
 
 
-def test_the_shipped_registry_is_well_formed_and_ships_empty():
+def test_the_shipped_registry_is_well_formed():
     assert validate_holds(cfg.P3_DATA_HOLDS) == []                               # whatever it holds must be valid (ticket, dates within 90 days, a reason)
     assert cfg.P3_DATA_HOLD_ENABLED is True
-    assert cfg.P3_DATA_HOLDS == {}                                               # the first hold (ES0116848013, FND-0403) was lifted on 2026-11-08: the mechanism ships without an entry
-    assert hold_reasons(cfg.P3_DATA_HOLDS, date(2026, 11, 8)) == {}
+    assert "ES0116848013" not in cfg.P3_DATA_HOLDS                               # the first hold (FND-0403) was lifted on 2026-11-08 once the verdict was GENUINE
+    assert "ES0116848013" not in hold_reasons(cfg.P3_DATA_HOLDS, date(2026, 11, 9))
+
+
+def test_the_second_hold_names_its_ticket_and_acts_from_the_day_it_was_ordered():
+    h = cfg.P3_DATA_HOLDS["IE00B3L10570"]
+    assert h["ap"] == "FND-0404" and h["since"] == "2026-11-09"
+    assert "IE00B3L10570" not in hold_reasons(cfg.P3_DATA_HOLDS, date(2026, 11, 8))
+    assert hold_reasons(cfg.P3_DATA_HOLDS, date(2026, 11, 9))["IE00B3L10570"].startswith("data_hold: FND-0404 until 2027-02-07 (")
 
 
 def test_a_hold_is_active_between_since_and_until_inclusive_and_lapses_by_itself():

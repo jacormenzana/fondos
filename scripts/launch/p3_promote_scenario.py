@@ -126,6 +126,18 @@ def _alarm_watch(conn, scenario_id: str) -> tuple:
         return [], f"{type(exc).__name__}: {str(exc).splitlines()[0][:160]}"
 
 
+def _data_suspects(conn, isins) -> tuple:
+    """(suspects, problem) of the scenario's funds for the D-DATA-SUSPECT gate (FND-0394): [(isin, reason)] the shared suspicion predicate flags and no verified-genuine exemption covers,
+    or the reason the panel could not be read (the gate then fails closed)."""
+    from shared.data_suspect import load_suspect_reasons
+    try:
+        reasons = load_suspect_reasons(conn)
+        return sorted((i, reasons[i]) for i in isins if i in reasons), None
+    except Exception as exc:                                     # noqa: BLE001 -- the gate fails closed on an unreadable panel
+        conn.rollback()
+        return None, f"{type(exc).__name__}: {str(exc).splitlines()[0][:160]}"
+
+
 def _built_at(conn, scenario_id: str):
     row = conn.execute("SELECT built_at FROM portfolio_scenarios WHERE scenario_id = %s", (scenario_id,)).fetchone()
     return row[0] if row else None
@@ -150,7 +162,7 @@ def main(argv=None) -> int:
     from proyecto3.src.scorer_config import assert_no_overlay
     assert_no_overlay("p3_promote_scenario")   # FND-0303: never promote with an experiment's parameter overlay active
 
-    from shared.config import (ALARM_WATCH_GATE_ENABLED, ALARM_WATCH_WEIGHT_TOLERANCE, AUDIT_EXCEPTION_EVENTS_ENABLED,
+    from shared.config import (ALARM_WATCH_GATE_ENABLED, ALARM_WATCH_WEIGHT_TOLERANCE, AUDIT_EXCEPTION_EVENTS_ENABLED, DATA_SUSPECT_ENABLED,
                                AUDIT_RESIDUAL_EXPIRY_WARN_DAYS, CODE_INTEGRITY_GATE_ENABLED, COST_DOMAIN_GATE_ENABLED,
                                GOVERNANCE_ORCHESTRATOR_ENABLED, MAX_NON_EUR_UNHEDGED_WEIGHT, MAX_PORTFOLIO_CASH_WEIGHT)
     from shared.governance import orchestrator
@@ -246,6 +258,13 @@ def main(argv=None) -> int:
                        exceptions_problem=exceptions_problem)
         if ALARM_WATCH_GATE_ENABLED:
             gate_kw.update(alarm_watch=watch, alarm_watch_problem=watch_problem, alarm_watch_tolerance=ALARM_WATCH_WEIGHT_TOLERANCE)
+        if DATA_SUSPECT_ENABLED:                                 # FND-0394 (ships OFF): nothing is read or printed while the switch is off
+            suspects, suspect_problem = _data_suspects(conn, weights.keys())
+            print("Sospecha de datos en la cartera (D-DATA-SUSPECT): "
+                  + (f"NO LEGIBLE ({suspect_problem})" if suspect_problem else f"{len(suspects)} fondo(s) sospechoso(s) sin exencion de genuino verificado"))
+            for isin, why in (suspects or []):
+                print(f"    {isin}: {why}")
+            gate_kw.update(data_suspects=suspects, data_suspect_problem=suspect_problem)
         legacy = lc.evaluate_promotion(**gate_kw)
         # FND-0265: the two-pillar verdict is always computed and printed; it DECIDES only with GOVERNANCE_ORCHESTRATOR_ENABLED (else shadow)
         tight = lc.evaluate_promotion(**gate_kw, weight_tolerance=lc.WEIGHT_TOLERANCE)                     # decision D2

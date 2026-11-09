@@ -1,13 +1,15 @@
 # -*- coding: utf-8 -*-
 """Read-only report of the data-suspicion predicate on the live store, with and without the verified-genuine exemptions (FND-0394).
 
-    python scripts/audit/data_suspect_report.py
+    python scripts/audit/data_suspect_report.py [--diff]
 
 Prints: the suspects WITHOUT exemptions, the exemptions in force and their state, the rows the exemptions withdraw, the suspects WITH them, and the exemption warnings. It writes nothing (the session is read-only) and nothing in the selection
 reads the predicate while `shared.config.DATA_SUSPECT_ENABLED` is False: this is the diff to read BEFORE anyone proposes switching it on (like eligibility_switch_diff.py for FND-0251).
+`--diff` adds the eligible-set diff of the live scorer with the switch OFF and ON (in memory, nothing persisted): which funds lose eligibility, per sub-portfolio, and which of them are in PRODUCTION.
 """
 from __future__ import annotations
 
+import argparse
 import sys
 from datetime import date
 from pathlib import Path
@@ -28,7 +30,37 @@ def _line(s) -> str:
     return f"  {s.representative} ({'+'.join(s.kinds)}; {s.n_metrics} quantity/ies; max|z| {s.max_abs_z}): {top}"
 
 
+def selection_diff(conn) -> None:
+    """The live scorer's eligible set with DATA_SUSPECT_ENABLED OFF versus ON, on the stored metrics of today, for the regime of the PRODUCTION scenario. Read-only: scores are computed in memory."""
+    from proyecto3.src import fund_scorer as fs
+    row = conn.execute("SELECT s.scenario_id, s.macro_regime FROM gold.portfolio_scenarios s WHERE s.status = 'PRODUCTION' ORDER BY s.created_at DESC LIMIT 1").fetchone()
+    regime = row[1] if row else "Expansion"
+    prod = {r[0] for r in conn.execute("SELECT isin FROM gold.portfolio_weights WHERE scenario_id = %s", (row[0],)).fetchall()} if row else set()
+    saved = _cfg.DATA_SUSPECT_ENABLED
+    try:
+        _cfg.DATA_SUSPECT_ENABLED = False
+        off = fs.score_funds_from_df(fs.load_fund_metrics_for_scoring(conn, regime=regime), regime, verbose=False)
+        _cfg.DATA_SUSPECT_ENABLED = True
+        on_frame = fs.load_fund_metrics_for_scoring(conn, regime=regime)
+        on = fs.score_funds_from_df(on_frame, regime, verbose=False)
+    finally:
+        _cfg.DATA_SUSPECT_ENABLED = saved
+    key = ["isin", "subportfolio"]
+    m = off.merge(on, on=key, suffixes=("_off", "_on"))
+    lost = m[m["eligible_off"] & ~m["eligible_on"]]
+    gained = m[~m["eligible_off"] & m["eligible_on"]]
+    print(f"\nELIGIBLE-SET DIFF (regime {regime}; PRODUCTION {row[0] if row else '-'}): OFF eligible {int(off['eligible'].sum())}, ON eligible {int(on['eligible'].sum())}; "
+          f"lose {len(lost)}, gain {len(gained)}")
+    for r in lost.itertuples():
+        print(f"  loses {r.isin} in {r.subportfolio}{'  << IN PRODUCTION' if r.isin in prod else ''}: {str(r.exclusion_reason_on)[:140]}")
+    graced = on_frame["exemption_grace"].dropna() if "exemption_grace" in on_frame.columns else []
+    print(f"funds in exemption grace: {len(graced)}")
+
+
 def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[1])
+    ap.add_argument("--diff", action="store_true", help="also print the eligible-set diff of the live scorer, switch OFF versus ON")
+    args = ap.parse_args()
     conn = get_connection()
     conn.read_only = True
     today = date.today()
@@ -58,6 +90,8 @@ def main() -> int:
     print(f"\nno longer suspect: {gone}")
     for line in attention_lines(_cfg.DATA_SUSPECT_EXEMPTIONS, today, builds, _cfg.DATA_SUSPECT_EXEMPTION_WARN_DAYS):
         print("WARNING:", line)
+    if args.diff:
+        selection_diff(conn)
     return 0
 
 

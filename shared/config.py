@@ -452,7 +452,10 @@ P3_WRONG_DOC_EXCLUSION_ENABLED: bool = True
 P3_DATA_HOLD_ENABLED: bool = True
 # The registry ships EMPTY (owner order 2026-11-08): the first hold, ES0116848013 (FND-0403), was lifted the same day once the manager's own web confirmed the +75.7% year of 2022 as real (verdict GENUINE).
 # Entry shape: "ISIN": {"ap": "FND-nnnn", "since": "YYYY-MM-DD", "until": "YYYY-MM-DD", "reason": "..."}.
-P3_DATA_HOLDS: dict = {}
+P3_DATA_HOLDS: dict = {
+    "IE00B3L10570": {"ap": "FND-0404", "since": "2026-11-09", "until": "2027-02-07",
+                     "reason": "anomalous Sharpe ratio (sharpe crisis_financiera -66, z -153) on a flat-NAV money-market class: held until the manual audit explains it"},
+}
 # Universe quarantine of funds whose NAV source is dead (owner directive 2026-11-04, pre-registered rule; FND-0233 / FND-0383). reconcile_universe_membership (P1, every
 # nature-first pass) sets In_Current_Universe=0 for an ISIN whose nav_sources row is STALE_FROZEN (no new NAV in > 365 d while still being checked: the Russia / Eastern
 # Europe cohort frozen since 2022-02-28) OR whose last NAV is older than UNIVERSE_NAV_QUARANTINE_DAYS while the source was checked in the last

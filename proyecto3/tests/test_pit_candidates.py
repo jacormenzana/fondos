@@ -246,3 +246,29 @@ def test_nav_gap_none_is_identical_to_not_passing_it(world):
     b, ub = _run(world, nav_gap=None)
     pd.testing.assert_frame_equal(a, b)
     pd.testing.assert_frame_equal(ua, ub)
+
+
+# ---------------- FND-0394 phase 2: the shared suspicion predicate, point in time ----------------
+
+def test_data_suspect_none_is_identical_to_not_passing_it(world):
+    a, ua = _run(world)
+    b, ub = _run(world, data_suspect=None)
+    pd.testing.assert_frame_equal(a, b)
+    pd.testing.assert_frame_equal(ua, ub)
+
+
+def test_data_suspect_excludes_through_the_scorers_own_filter_and_an_exemption_lifts_it(world, monkeypatch):
+    import shared.config as cfg
+    monkeypatch.setattr(cfg, "DATA_SUSPECT_ENABLED", True)
+    monkeypatch.setattr(cfg, "DATA_SUSPECT_MIN_DEV", 3.0)                      # the synthetic universe has no 50-sigma fund: a low bar exercises the path
+    base, _ = _run(world)
+    got, _ = _run(world, data_suspect={"family_of": {}, "exemptions": {}})
+    hit = got[got["exclusion_reason"].fillna("").str.startswith("data_suspect:")]
+    assert len(hit) and not hit["eligible"].any() and (hit["score_final"] == 0.0).all()      # the scorer's hard-filter path, not a second one
+    cmp = base.merge(got, on=["as_of", "isin", "subportfolio"], suffixes=("_base", "_ds"))
+    assert (cmp["eligible_base"] | ~cmp["eligible_ds"]).all()                  # the rule only ever REMOVES eligibility
+    import shared.data_suspect as ds
+    quantities = {f"{m}|since_inception" for m in ds.PIT_METRICS}
+    lifted, _ = _run(world, data_suspect={"family_of": {}, "exemptions": {i: quantities for i in hit["isin"].unique()}})
+    still = lifted[lifted["exclusion_reason"].fillna("").str.startswith("data_suspect:") & lifted["isin"].isin(hit["isin"].unique())]
+    assert len(still) < len(hit)                                               # a verified-genuine exemption (today's registry) stops counting in the past too

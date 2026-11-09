@@ -67,11 +67,13 @@ def exemption_state(entry: Mapping, as_of: date, build_dates: Iterable[date] = (
     return "LAPSED" if any(until < d < as_of for d in build_dates) else "GRACE"
 
 
-def effective_exemptions(registry: Mapping, as_of: date, build_dates: Iterable[date] = (), warn_days: int = 7) -> dict:
-    """{isin: frozenset(quantities)} of the entries that exempt on `as_of` (ACTIVE, EXPIRING or GRACE). Entries in any other state exempt nothing."""
+def effective_exemptions(registry: Mapping, as_of: date, build_dates: Iterable[date] = (), warn_days: int = 7, include_grace: bool = True) -> dict:
+    """{isin: frozenset(quantities)} of the entries that exempt on `as_of` (ACTIVE, EXPIRING or GRACE). Entries in any other state exempt nothing.
+    `include_grace=False` (the point-in-time backtest, which has no build to be the grace of) keeps only ACTIVE and EXPIRING."""
     build_dates = list(build_dates)
+    states = STATES_THAT_EXEMPT if include_grace else ("ACTIVE", "EXPIRING")
     return {str(isin): frozenset(e.get("quantities") or ()) for isin, e in registry.items()
-            if exemption_state(e, as_of, build_dates, warn_days) in STATES_THAT_EXEMPT}
+            if exemption_state(e, as_of, build_dates, warn_days) in states}
 
 
 def grace_isins(registry: Mapping, as_of: date, build_dates: Iterable[date] = (), warn_days: int = 7) -> dict:

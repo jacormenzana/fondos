@@ -189,6 +189,7 @@ GATE_CODE = "CODE"                             # HEAD is not origin/master, or t
 GATE_MANIFEST = "MANIFEST"                     # the evidence audit run does not identify its code, configuration and data
 GATE_COST = "COST"                             # an open hard defect of the cost_attributes audit on a fund of the scenario (decision D8)
 GATE_ALARM_WATCH = "ALARM_WATCH"               # FND-0289: a PRODUCTION fund on a watched ALARM gets a higher weight in the DRAFT
+GATE_DATA_SUSPECT = "DATA_SUSPECT"             # FND-0394: a fund of the scenario that the shared suspicion predicate flags and no verified-genuine exemption covers
 # Sum of weights + declared cash must be 1 within this tolerance. The builder rounds to 4 dp by largest remainder, so the exact contract is
 # 1.0000; decision D2 sets the promotion tolerance to half a unit of the 4th decimal, applied by the orchestrator. The legacy gate keeps 1e-3.
 WEIGHT_TOLERANCE = 5e-5
@@ -202,7 +203,7 @@ AP_RE = re.compile(r"^FND-\d{4}$")
 # Gates a reasoned override (--accept-alarms "motivo" --ap FND-nnnn) may cover: defects ON the scenario, the audit's blind spots and the
 # alarm watch (FND-0289). Everything else is hard: exposure, cash, weights, freshness, a stale audit, and universe-only defects (their way out
 # is an accepted residual with its own AP and expiry, not a promotion flag).
-OVERRIDABLE_GATES = frozenset({GATE_DATA_SCENARIO, GATE_RESIDUAL_SCENARIO, GATE_DATA_COVERAGE, GATE_ALARM_WATCH})
+OVERRIDABLE_GATES = frozenset({GATE_DATA_SCENARIO, GATE_RESIDUAL_SCENARIO, GATE_DATA_COVERAGE, GATE_ALARM_WATCH, GATE_DATA_SUSPECT})
 
 
 def _names(items, limit: int = 6) -> str:
@@ -225,6 +226,7 @@ def evaluate_promotion(*, status: Optional[str], n_funds: int, weight_sum: float
                        exceptions_problem: Optional[str] = None,
                        alarm_watch: Optional[list] = None, alarm_watch_problem: Optional[str] = None,
                        alarm_watch_tolerance: float = 1e-4,
+                       data_suspects: Optional[list] = None, data_suspect_problem: Optional[str] = None,
                        weight_tolerance: float = WEIGHT_TOLERANCE_LEGACY) -> PromotionVerdict:
     """Pure: why a scenario may not be promoted (empty `blockers` = promotable) and which gates a reasoned override covered.
 
@@ -252,7 +254,12 @@ def evaluate_promotion(*, status: Optional[str], n_funds: int, weight_sum: float
 
     `alarm_watch` (FND-0289, only with shared.config.ALARM_WATCH_GATE_ENABLED; None = not evaluated): the AlarmWatchRow list of
     load_alarm_watch. ALARM_WATCH, reasoned override with an AP, for every watched fund whose DRAFT weight exceeds its PRODUCTION weight
-    by more than `alarm_watch_tolerance`; `alarm_watch_problem` (the alerts could not be read) refuses under the same code (fail closed)."""
+    by more than `alarm_watch_tolerance`; `alarm_watch_problem` (the alerts could not be read) refuses under the same code (fail closed).
+
+    `data_suspects` (FND-0394, only with shared.config.DATA_SUSPECT_ENABLED; None = not evaluated): [(isin, reason)] of the funds of the scenario that the shared
+    suspicion predicate flags and no verified-genuine exemption covers. DATA_SUSPECT, reasoned override with an AP (the way out of a genuine extreme performer is an
+    exemption with its own ticket and expiry, not a promotion flag, but a person may knowingly promote); `data_suspect_problem` (the panel could not be read) refuses
+    under the same code (fail closed)."""
     if max_cash is None:
         from shared.config import MAX_PORTFOLIO_CASH_WEIGHT as max_cash
     hard: list = []
@@ -318,6 +325,13 @@ def evaluate_promotion(*, status: Optional[str], n_funds: int, weight_sum: float
     for r in alarm_watch_increases(alarm_watch or [], alarm_watch_tolerance):
         soft.append((GATE_ALARM_WATCH, g(GATE_ALARM_WATCH, f"{r.isin} en ALARM ({r.rules}) sube de {r.prod_weight:.4f} en PRODUCCION a "
                      f"{r.draft_weight:.4f} en el DRAFT: un fondo en alarma no gana peso")))
+
+    # --- data suspicion on the scenario's funds (FND-0394) --------------------------------------------------------------------
+    if data_suspect_problem:
+        soft.append((GATE_DATA_SUSPECT, g(GATE_DATA_SUSPECT, f"no se pudo evaluar la sospecha de datos de los fondos de la cartera ({data_suspect_problem}): "
+                    "no se puede comprobar")))
+    for isin, reason in (data_suspects or []):
+        soft.append((GATE_DATA_SUSPECT, g(GATE_DATA_SUSPECT, f"{isin} es sospechoso y esta en la cartera: {reason}")))
 
     verdict = PromotionVerdict(blockers=hard)
     if not soft:

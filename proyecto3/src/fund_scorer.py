@@ -191,7 +191,7 @@ SUBPORTFOLIO_MAPPING = _P["SUBPORTFOLIO_MAPPING"]
 # Dataclasses
 # ============================================================
 
-def _build_score_notes(regime: str, exclusion_reason: str | None) -> str:
+def _build_score_notes(regime: str, exclusion_reason: str | None, exemption_grace: str | None = None) -> str:
     """Construye el campo `notes` persistido en fund_scores.
 
     Fase 1i (P#11): esta expresion estaba duplicada verbatim entre
@@ -204,6 +204,8 @@ def _build_score_notes(regime: str, exclusion_reason: str | None) -> str:
     notes = f"regime={regime}"
     if exclusion_reason:
         notes += f" | excluido: {exclusion_reason}"
+    if isinstance(exemption_grace, str) and exemption_grace:     # FND-0394 (a NaN from a frame where only some rows are in grace is not a note): an expired verified-genuine exemption still counts for THIS build only
+        notes += f" | {exemption_grace}"
     return notes
 
 
@@ -400,6 +402,13 @@ def load_fund_metrics_for_scoring(
     if _shared_config.P3_WRONG_DOC_EXCLUSION_ENABLED:            # FND-0323 D1: OFF = no extra query, no extra column
         reasons = wrong_doc_reasons(conn)
         out["doc_status_reason"] = pd.Series([reasons.get(i) for i in out.index], index=out.index, dtype=object)
+    if _shared_config.DATA_SUSPECT_ENABLED:                      # FND-0394 phase 2 (ships OFF): the shared suspicion predicate; OFF = no extra query, no extra column
+        from shared.data_exemption import grace_isins, load_build_dates
+        from shared.data_suspect import load_suspect_reasons
+        suspects = load_suspect_reasons(conn)
+        graces = grace_isins(_shared_config.DATA_SUSPECT_EXEMPTIONS, date.today(), load_build_dates(conn), _shared_config.DATA_SUSPECT_EXEMPTION_WARN_DAYS)
+        out["data_suspect_reason"] = pd.Series([suspects.get(i) for i in out.index], index=out.index, dtype=object)
+        out["exemption_grace"] = pd.Series([graces.get(i) for i in out.index], index=out.index, dtype=object)
     if _shared_config.P3_DATA_HOLD_ENABLED:                      # owner order 2026-11-08 (FND-0403): OFF = no extra column; no query either way (the registry is config)
         from shared.data_hold import hold_reasons
         holds = hold_reasons(_shared_config.P3_DATA_HOLDS, date.today())
@@ -774,6 +783,10 @@ def check_hard_filters(
         hold = row.get("data_hold_reason")
         if isinstance(hold, str) and hold:
             return hold
+    if _shared_config.DATA_SUSPECT_ENABLED:                       # FND-0394 phase 2: a fund the shared predicate flags and no verified-genuine exemption covers; absent column (PIT without it) or None never excludes
+        suspect = row.get("data_suspect_reason")
+        if isinstance(suspect, str) and suspect:
+            return suspect
     if _shared_config.FUND_DATA_ELIGIBILITY_ENABLED:
         age = row.get("nav_age_days", np.nan)
         limit = _shared_config.P3_FUND_NAV_MAX_AGE_DAYS
@@ -963,6 +976,8 @@ def score_funds_from_df(df: pd.DataFrame, regime: str, verbose: bool = True) -> 
             score_base = float(sub_scores.get(isin, 0.0))
 
             excl = check_hard_filters(row, nature)
+            grace = row.get("exemption_grace")                  # FND-0394: a str only while an expired exemption is in its one grace build
+            grace = grace if isinstance(grace, str) and grace else None
 
             mult, mult_detail = compute_regime_multiplier(row, regime, **regime_pct)
 
@@ -981,8 +996,10 @@ def score_funds_from_df(df: pd.DataFrame, regime: str, verbose: bool = True) -> 
                     "srri":              _safe_int(row.get("srri_nav")),
                 },
             }
+            if grace:
+                detail["exemption_grace"] = grace               # only when set: the persisted detail of every other fund is unchanged
 
-            results.append({
+            result_row = {
                 "isin":             isin,
                 "fund_name":        row.get("Fund_Name", ""),
                 "fund_nature":      row.get("Fund_Nature", ""),
@@ -994,7 +1011,10 @@ def score_funds_from_df(df: pd.DataFrame, regime: str, verbose: bool = True) -> 
                 "eligible":         excl is None,
                 "exclusion_reason": excl,
                 "detail":           detail,
-            })
+            }
+            if grace:
+                result_row["exemption_grace"] = grace           # a column of the result only when a fund is in grace: with no grace the frame is exactly what it was
+            results.append(result_row)
 
     df_results = pd.DataFrame(results)
 
@@ -1116,7 +1136,7 @@ def _persist_scores(
             1 if r["eligible"] else 0,
             r["exclusion_reason"],
             today,
-            _build_score_notes(regime, r["exclusion_reason"]),
+            _build_score_notes(regime, r["exclusion_reason"], r.get("exemption_grace")),
         ))
     if not rows:
         return   # nunca borrar la ejecucion existente por una entrada vacia

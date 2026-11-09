@@ -166,3 +166,63 @@ def load_panel(conn: "psycopg.Connection") -> pd.DataFrame:
         "SELECT m.isin, f.fund_nature, m.metric || '|' || m.horizon || '|' || m.real_flag || '|' || m.metric_version, m.value, m.source_rows "
         "FROM fund_metrics m JOIN fund_master f ON f.isin = m.isin WHERE f.in_current_universe = 1 AND f.fund_nature IS NOT NULL AND m.value IS NOT NULL").fetchall()
     return pd.DataFrame([tuple(r) for r in rows], columns=list(PANEL_COLUMNS))
+
+
+# ---- consumers: the live scorer, the promotion gate and the point-in-time backtest (FND-0394 phase 2) -----------------------------------------------------------------------
+# One reason text, one function per input shape; every consumer behind `shared.config.DATA_SUSPECT_ENABLED` (ships OFF: nothing calls these while it is False).
+
+def suspect_reason(s: Suspect) -> str:
+    """The `exclusion_reason` / gate text of one suspect (the same wording in the scorer, the promotion gate and the PIT run): kinds, the quantity count, the strongest metric and how to clear it."""
+    top = s.detail["top_metrics"][0] if s.detail.get("top_metrics") else None
+    where = f"; strongest {top[0]} z {top[1]}" if top else ""
+    nav = f"; NAV flag: {'; '.join(s.detail['nav_flag'].values())}" if s.detail.get("nav_flag") else ""
+    return (f"data_suspect: {'+'.join(s.kinds)}, {s.n_metrics} quantity/ies at |z| >= {_cfg.DATA_SUSPECT_MIN_DEV:g}{where}{nav}; "
+            "verify it, then record a verified-genuine exemption (shared.config.DATA_SUSPECT_EXEMPTIONS)")
+
+
+def reasons_by_isin(suspects: Iterable[Suspect]) -> dict:
+    """{isin: reason} for every ISIN of every suspect family (share classes are one suspect, all of them are held back). Pure."""
+    return {isin: suspect_reason(s) for s in suspects for isin in s.isins}
+
+
+def load_suspect_reasons(conn: "psycopg.Connection", as_of=None) -> dict:
+    """{isin: reason} of the live suspects today: the stored in-universe panel, the family map and the exemptions in force (`load_effective_exemptions`). Read-only; ~10 s on the whole universe.
+    NAV-level flags are not loaded here (the NAV validators quarantine on their own when `NAV_UNSHARED_JUMP_MODE` is ON)."""
+    from shared.family_scope import load_family_map
+    panel = load_panel(conn)
+    if panel.empty:
+        return {}
+    return reasons_by_isin(find_suspects(panel, None, load_family_map(conn), exemptions=load_effective_exemptions(conn, as_of)))
+
+
+PIT_METRICS = ("max_dd", "return_ann_real", "sharpe", "srri_nav", "alpha_persistence", "capture_ratio")      # the columns a point-in-time frame carries that the stored panel also has
+
+
+def pit_panel(frame: pd.DataFrame, n_obs: pd.Series, metrics: Iterable[str] = PIT_METRICS) -> pd.DataFrame:
+    """A point-in-time frame (index isin, `Fund_Nature` and the metric columns observable at one date) as the long panel `find_suspects` reads: one row per fund and metric, `source_rows` = the months of NAV the
+    fund had at that date (`n_obs`, the sample size of every risk metric), the metric key in the stored four-part form so `quantity_of` gives `<metric>|pit`. Pure."""
+    parts = []
+    for m in metrics:
+        if m not in frame.columns:
+            continue
+        v = pd.to_numeric(frame[m], errors="coerce")
+        parts.append(pd.DataFrame({"isin": frame.index, "nature": frame["Fund_Nature"].to_numpy(), "metric": f"{m}|pit|0|v1", "value": v.to_numpy(),
+                                   "source_rows": n_obs.reindex(frame.index).to_numpy(dtype=float)}))
+    if not parts:
+        return pd.DataFrame(columns=list(PANEL_COLUMNS))
+    out = pd.concat(parts, ignore_index=True)
+    return out[out["nature"].notna() & out["value"].notna()]
+
+
+def pit_exemptions(exemptions: Optional[Mapping]) -> dict:
+    """The live exemptions ({isin: {'metric|horizon'}}) in the point-in-time naming: a verified-genuine metric of a fund is exempt in the past too (the registry is today's decision: the run manifest says so), so each
+    exempt metric name `m` becomes `m|pit`. Pure."""
+    return {isin: {f"{q.split('|')[0]}|pit" for q in qs} for isin, qs in (exemptions or {}).items()}
+
+
+def pit_suspect_reasons(frame: pd.DataFrame, n_obs: pd.Series, family_of: Optional[Mapping] = None, exemptions: Optional[Mapping] = None) -> dict:
+    """{isin: reason} of the suspects AT ONE DATE of a point-in-time run, from the data observable then (plan G-02: the same predicate as production, no look-ahead; only the exemption registry is today's). Pure."""
+    panel = pit_panel(frame, n_obs)
+    if panel.empty or panel["isin"].nunique() < 5:
+        return {}
+    return reasons_by_isin(find_suspects(panel, None, family_of, exemptions=pit_exemptions(exemptions)))
