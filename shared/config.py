@@ -670,6 +670,16 @@ DATA_SUSPECT_MIN_DEV: float = 50.0
 # ES0116848013 were the nominal and real sortino of crisis_2022). Correlated quantities with different names (Sharpe and Sortino of one horizon) still count apart: WS3 (FND-0395) refines that and labels the precision
 # before the rule can open an incident. Nothing reads the predicate while DATA_SUSPECT_ENABLED is False.
 DATA_SUSPECT_MIN_FLAGGED_METRICS: int = 2
+# Verified-genuine exemptions of the suspicion predicate (FND-0394, plan G-08 / A4 #4, owner order 2026-11-09; shared/data_exemption.py). An entry withdraws the SUSPICION of named quantities ('metric|horizon') of one fund and its
+# family after a human verified them as real: ticket with the evidence, since/until (at most 180 days), reason, evidence. It warns DATA_SUSPECT_EXEMPTION_WARN_DAYS before it expires, then exempts ONE more P3 build (exemption_grace),
+# then lapses. NAV-level flags are never exempted. Nothing reads the predicate while DATA_SUSPECT_ENABLED is False.
+DATA_SUSPECT_EXEMPTION_WARN_DAYS: int = 7
+DATA_SUSPECT_EXEMPTIONS: dict = {
+    "ES0116848013": {"ap": "FND-0403", "since": "2026-11-08", "until": "2027-05-07",
+                     "quantities": ["sortino|crisis_2022"],
+                     "reason": "a real +75.7% year in 2022 (verified GENUINE), so its crisis_2022 risk-adjusted ratios are extreme without being a defect",
+                     "evidence": "FND-0403: Morningstar, Finect and the manager's own web (renta4gestora.com) show the stored NAV: 20.822 -> 36.594 in 2022 (+75.7%), last NAV 30.786 on 2026-11-05, YTD -11.6%"},
+}
 DATA_SUSPECT_SMALL_SAMPLE_PERCENTILE: float = 10.0
 DATA_SUSPECT_SMALL_SAMPLE_FRACTION: float = 0.5
 # Mínimo de observaciones para métricas de persistencia del alpha (≥7 años)

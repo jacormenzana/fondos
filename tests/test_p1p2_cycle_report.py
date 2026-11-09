@@ -407,3 +407,22 @@ def test_collect_governance_never_raises_and_reports_the_error(monkeypatch):
     assert "error" in out and out["production_overrides"] == {}
     items = cr.attention_items(_report(governance=out), None)
     assert any("no se pudo evaluar la gobernanza" in i for i in items)
+
+
+def test_collect_governance_adds_the_verified_genuine_exemption_warnings(monkeypatch):
+    """FND-0394: an exemption in its last days, or in its grace build, reaches the cycle report next to the residuals (informative, never an error)."""
+    import shared.config as cfg
+
+    class _Boom:
+        def execute(self, *a, **k):
+            raise RuntimeError("db gone")
+
+        def rollback(self):
+            pass
+    entry = {"ap": "FND-0403", "since": "2026-11-08", "until": "2027-05-07", "quantities": ["sortino|crisis_2022"],
+             "reason": "a real +75.7% year (verified genuine)", "evidence": "FND-0403: three publishers agree with the stored NAV"}
+    monkeypatch.setattr(cfg, "DATA_SUSPECT_EXEMPTIONS", {"ES0116848013": entry})
+    expiring = cr.collect_governance(_Boom(), date(2027, 5, 4))
+    assert any(l.startswith("[data_suspect]") and "expires on 2027-05-07 (3 days)" in l for l in expiring["residual_attention"])
+    assert any("[data_suspect]" in l and "EXPIRED" in l for l in cr.collect_governance(_Boom(), date(2027, 5, 9))["residual_attention"])      # unreadable scenario dates keep the grace, never lapse unseen
+    assert not any("[data_suspect]" in l for l in cr.collect_governance(_Boom(), date(2027, 1, 1))["residual_attention"])                   # quiet while far from the expiry

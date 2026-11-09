@@ -28,6 +28,9 @@ def _day(value) -> Optional[date]:
         return None
 
 
+parse_day = _day          # public alias: shared/data_exemption.py reads dates the same way (P#11)
+
+
 def validate_holds(holds: Mapping) -> list:
     """Problems with the registry (empty list = fine): a malformed ISIN or ticket id, a reason shorter than 20 characters, dates that are not ISO dates, until not after since, or a hold longer than HOLD_MAX_DAYS."""
     problems = []

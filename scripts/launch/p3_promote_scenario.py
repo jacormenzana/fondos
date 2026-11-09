@@ -214,6 +214,14 @@ def main(argv=None) -> int:
         for line in accepted_residuals.attention_lines(conn, AUDIT_DOMAIN, AUDIT_RESIDUAL_EXPIRY_WARN_DAYS,
                                                        ap_status=backlog_client.get_action_point_status):
             print(f"AVISO: {line}")
+        try:                                                     # FND-0394: verified-genuine exemptions about to expire / in their grace build / lapsed (informative, never blocks)
+            from datetime import date as _date
+            from shared import config as _cfg_ex
+            from shared.data_exemption import attention_lines as _exemption_lines, load_build_dates
+            for line in _exemption_lines(_cfg_ex.DATA_SUSPECT_EXEMPTIONS, _date.today(), load_build_dates(conn), _cfg_ex.DATA_SUSPECT_EXEMPTION_WARN_DAYS):
+                print(f"AVISO: {line}")
+        except Exception as exc:                                 # noqa: BLE001
+            print(f"AVISO: no se pudieron leer las exenciones verificadas ({type(exc).__name__}: {exc})")
 
         reason = (args.accept_alarms or "").strip()
         ap_id = (args.ap or "").strip().upper()

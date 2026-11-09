@@ -425,6 +425,10 @@ def collect_governance(conn, today: date | None = None) -> dict:
             out["residual_attention"] += [f"[{domain}] {line}" for line in
                                           attention_lines(conn, domain, AUDIT_RESIDUAL_EXPIRY_WARN_DAYS, today,
                                                           ap_status=get_action_point_status)]
+        from shared import config as _cfg_ex                      # FND-0394: verified-genuine exemptions about to expire / in their grace build / lapsed
+        from shared.data_exemption import attention_lines as exemption_lines, load_build_dates
+        out["residual_attention"] += [f"[data_suspect] {line}" for line in
+                                      exemption_lines(_cfg_ex.DATA_SUSPECT_EXEMPTIONS, today or date.today(), load_build_dates(conn), _cfg_ex.DATA_SUSPECT_EXEMPTION_WARN_DAYS)]
     except Exception as exc:                                      # noqa: BLE001
         out["error"] = f"{type(exc).__name__}: {exc}"
     try:

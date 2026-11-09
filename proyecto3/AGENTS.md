@@ -133,6 +133,11 @@ is active. Each entry carries its ticket, `since` / `until` (at most 90 days: it
 `load_fund_metrics_for_scoring` and read second by `check_hard_filters`, independent of `FUND_DATA_ELIGIBILITY_ENABLED`; the PIT backtest does not carry it. Release early by deleting the entry once the ticket has its verdict. It acts at the
 next scoring run (a stored `fund_scores` row is not rewritten by the config change).
 
+**Verified-genuine exemptions (FND-0394, `shared/data_exemption.py`, `shared.config.DATA_SUSPECT_EXEMPTIONS`):** the data-suspicion predicate (`shared/data_suspect.py`, `DATA_SUSPECT_ENABLED` OFF, nothing in selection reads it) flags statistical extremes; an exemption records that a human
+verified named QUANTITIES (`metric|horizon`) of one fund and its family as real (ticket with the evidence, `since` / `until` at most 180 days, reason, evidence), so they stop counting for the DEVIATION and INTEGRITY tiers; a NAV-level flag is never exempted. It warns
+`DATA_SUSPECT_EXEMPTION_WARN_DAYS` (7) before `until` (cycle report and promotion output), then exempts exactly ONE more P3 build (`exemption_grace`: the first scenario created after `until`, derived from `gold.portfolio_scenarios`, no stored state), then lapses.
+Consumers pass `load_effective_exemptions(conn)` to `find_suspects`; `scripts/audit/data_suspect_report.py` (read-only) prints the suspects with and without them. First case: ES0116848013 (`sortino|crisis_2022`, FND-0403).
+
 ### Data-freshness gate (`data_freshness.py`)
 
 `scripts/launch/p3_build_portfolio.py` checks input freshness **before** scoring or persisting and

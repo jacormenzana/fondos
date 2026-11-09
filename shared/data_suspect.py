@@ -85,17 +85,59 @@ class Suspect:
     detail: dict = field(default_factory=dict)
 
 
+def _expand_exemptions(exemptions: Optional[Mapping], family_of: Mapping, isins: Iterable[str]) -> dict:
+    """{isin: set(quantities)} of the exempt ISINs AND of every other ISIN of their fund families (share classes carry the same series). Pure."""
+    ex = {str(i): set(q) for i, q in (exemptions or {}).items()}
+    by_family: dict = {}
+    for i, q in ex.items():
+        fam = family_of.get(i)
+        if fam is not None and not (isinstance(fam, float) and np.isnan(fam)):
+            by_family.setdefault(fam, set()).update(q)
+    for i in isins:
+        fam = family_of.get(i)
+        if fam in by_family:
+            ex.setdefault(i, set()).update(by_family[fam])
+    return ex
+
+
+def _split_hits(scored: pd.DataFrame, min_dev: float, exemptions: Optional[Mapping], family_of: Mapping):
+    """(kept, exempted): the adequate-sample rows at |z| >= min_dev with a `quantity` column, split by the verified-genuine exemptions (an exemption covers a quantity, never a whole fund)."""
+    hit = scored[(scored["z"].abs() >= min_dev) & scored["adequate"]]
+    hit = hit.assign(quantity=hit["metric"].map(quantity_of))
+    ex = _expand_exemptions(exemptions, family_of, hit["isin"].unique()) if exemptions else {}
+    if not ex:
+        return hit, hit.iloc[0:0]
+    covered = pd.Series([q in ex.get(i, ()) for i, q in zip(hit["isin"], hit["quantity"])], index=hit.index, dtype=bool)
+    return hit[~covered], hit[covered]
+
+
+def exempted_hits(panel: pd.DataFrame, exemptions: Mapping, family_of: Optional[Mapping] = None, *, min_dev: Optional[float] = None,
+                  small_sample_percentile: Optional[float] = None, small_sample_fraction: Optional[float] = None) -> pd.DataFrame:
+    """The rows the exemptions withdrew (columns of `score_panel` plus `quantity`): what `find_suspects` would have counted without them. Keeps every exemption visible (no silent exemption). Pure."""
+    min_dev = _cfg.DATA_SUSPECT_MIN_DEV if min_dev is None else min_dev
+    scored = score_panel(panel, small_sample_percentile, small_sample_fraction)
+    return _split_hits(scored, min_dev, exemptions, dict(family_of or {}))[1]
+
+
+def load_effective_exemptions(conn: "psycopg.Connection", as_of=None) -> dict:
+    """{isin: set(quantities)} of the verified-genuine exemptions in force today (`shared.config.DATA_SUSPECT_EXEMPTIONS`, states ACTIVE / EXPIRING / GRACE of `shared.data_exemption`). Every consumer of `find_suspects`
+    passes this, so the audit, the P3 build and the cycle report cannot disagree about who is exempt (P#11). Read-only (one query for the scenario dates)."""
+    from datetime import date
+    from shared.data_exemption import effective_exemptions, load_build_dates
+    return {i: set(q) for i, q in effective_exemptions(_cfg.DATA_SUSPECT_EXEMPTIONS, as_of or date.today(), load_build_dates(conn), _cfg.DATA_SUSPECT_EXEMPTION_WARN_DAYS).items()}
+
+
 def find_suspects(panel: pd.DataFrame, nav_flags: Optional[Mapping[str, str]] = None, family_of: Optional[Mapping] = None, *, min_dev: Optional[float] = None,
                   min_metrics: Optional[int] = None, exclude_natures: Iterable[str] = ("Monetario",), small_sample_percentile: Optional[float] = None,
-                  small_sample_fraction: Optional[float] = None) -> list:
+                  small_sample_fraction: Optional[float] = None, exemptions: Optional[Mapping] = None) -> list:
     """The suspects of a panel, one per fund family, most extreme first. `nav_flags` = {isin: reason} from the NAV-level validators (e.g. the unshared one-month jump); `family_of` = {isin: family id}
-    (an ISIN without one is a family of one). Deterministic and independent of row order."""
+    (an ISIN without one is a family of one). `exemptions` = {isin: quantities} verified as genuine (`load_effective_exemptions`): those quantities do not count for the DEVIATION or INTEGRITY tier, for the ISIN
+    and its family; NAV-level flags are never exempted. Deterministic and independent of row order."""
     min_dev = _cfg.DATA_SUSPECT_MIN_DEV if min_dev is None else min_dev
     min_metrics = _cfg.DATA_SUSPECT_MIN_FLAGGED_METRICS if min_metrics is None else min_metrics
     nav_flags, family_of = dict(nav_flags or {}), dict(family_of or {})
     scored = score_panel(panel, small_sample_percentile, small_sample_fraction)
-    hit = scored[(scored["z"].abs() >= min_dev) & scored["adequate"]]
-    hit = hit.assign(quantity=hit["metric"].map(quantity_of))
+    hit, _exempted = _split_hits(scored, min_dev, exemptions, family_of)
     per_fund = hit.groupby("isin").agg(n_metrics=("quantity", "nunique"), max_abs_z=("z", lambda s: float(s.abs().max())))   # n_metrics = distinct QUANTITIES, not keys
     nature_of = scored.drop_duplicates("isin").set_index("isin")["nature"].to_dict()
     kinds: dict = {}

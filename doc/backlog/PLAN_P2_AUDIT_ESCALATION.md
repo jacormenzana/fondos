@@ -578,3 +578,15 @@ Precedence: A11 > A10 on the points below.
 3. **Hold lifted:** `shared.config.P3_DATA_HOLDS` ships EMPTY; the generic mechanism (`shared/data_hold.py`, `P3_DATA_HOLD_ENABLED`, the scorer column) ships with tomorrow's commit. Live read-only check: nothing held; ES0116848013 passes the hard filters of Dinamica and is excluded by its own drawdown rules in Defensiva (-0.23) and Equilibrada (6-month -0.16).
 4. **Next (FND-0394, programming not started):** the verified-genuine exemption, with ES0116848013 as the foundational case (ticket + expiry, 7-day warning, one-build grace, per plan A3 G-08 / A4 #4). `DATA_SUSPECT_ENABLED` stays OFF until it exists.
 5. **Tomorrow, in this order:** commit the generic hold mechanism (empty registry) + per-quantity counting + docs (`Refs: FND-0394`; FND-0403 is CLOSED, do not cite it), then `delivery_attest.py --scope full`, then standby. Nothing is pushed on 2026-11-08.
+
+---
+
+# Amendment A12 (2026-11-09): verified-genuine exemption list built (FND-0394), local, not committed
+
+Owner order 2026-11-09: build the exemption list with ES0116848013 as the foundational case; WS2 (the selection effect) stays OFF until the list is built, tested AND the owner authorises it; report before any commit.
+- `shared/data_exemption.py`: registry validation, the state machine (NOT_STARTED / ACTIVE / EXPIRING / GRACE / LAPSED), `effective_exemptions`, `grace_isins`, `attention_lines`, `load_build_dates`. Registry `shared.config.DATA_SUSPECT_EXEMPTIONS` (ticket, since/until <= 180 days, quantities, reason, evidence), warn days 7.
+- Scope: SCOPED to named quantities (`metric|horizon`: the nominal and real variants and versions are one quantity), covers the fund FAMILY, never a NAV-level flag, never a whole fund.
+- Expiry guard (A4 #4): warning from T-7 in the cycle report (`collect_governance`) and the promotion output; after `until` exactly one more build (the first scenario created after `until`, derived from `gold.portfolio_scenarios`) is `exemption_grace`; then LAPSED. An unreadable scenario table keeps the grace rather than lapsing unseen.
+- `data_suspect.find_suspects(..., exemptions=)`, `exempted_hits` (every withdrawn row stays visible), `load_effective_exemptions(conn)` (one place, so no consumer can disagree, P#11).
+- First case ES0116848013, `sortino|crisis_2022`, ticket FND-0403, 2026-11-08 -> 2027-05-07. Live read-only report (`scripts/audit/data_suspect_report.py`): suspects without exemptions 2 (IE00B3L10570, ES0116848013), withdrawn rows 2 (the nominal and real sortino), suspects with exemptions 1 (IE00B3L10570). IE00B3L10570 (sharpe in crisis_financiera, z -153) is NOT reviewed.
+- NOT built (WS2 proper, after the owner's authorisation): the build-time exclusion `data_suspect: ...` in the scorer, the `D-DATA-SUSPECT` gate, PIT evaluation, the `exemption_grace` column in the P3 notes and the selection-impact KPIs (the helper `grace_isins` is ready for them).
