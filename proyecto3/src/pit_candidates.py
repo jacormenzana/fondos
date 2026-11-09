@@ -130,6 +130,8 @@ def pit_scores(
         for name, frame_m in macro.items():
             macro_snaps[name], _ = asof_snapshot(frame_m, at, macro_max_stale_days)
 
+    vol_snap = asof_snapshot(risk["vol_ann"], at, max_stale_days)[0] if (data_suspect is not None and "vol_ann" in risk) else None   # the denominator of the Sharpe (degenerate-ratio rule)
+
     attrs = attrs.copy()
     in_universe = attrs["In_Current_Universe"] if "In_Current_Universe" in attrs.columns else None
     all_scores, rows = [], []
@@ -171,7 +173,8 @@ def pit_scores(
             frame["nav_gap_reason"] = nav_gap.iloc[i].reindex(isins)
         if data_suspect is not None and len(frame):
             from shared.data_suspect import pit_suspect_reasons
-            reasons = pit_suspect_reasons(frame, n_obs_fresh.iloc[i], data_suspect.get("family_of"), data_suspect.get("exemptions"))
+            reasons = pit_suspect_reasons(frame, n_obs_fresh.iloc[i], data_suspect.get("family_of"), data_suspect.get("exemptions"),
+                                          vol=vol_snap.iloc[i] if vol_snap is not None else None)
             frame["data_suspect_reason"] = pd.Series(reasons, dtype=object).reindex(frame.index)
 
         res = score_funds_from_df(frame, regime, verbose=False) if len(frame) else pd.DataFrame()

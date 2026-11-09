@@ -17,6 +17,7 @@ quantities that differ in name (a Sharpe and a Sortino of one horizon) still cou
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Iterable, Mapping, Optional
 
@@ -100,23 +101,64 @@ def _expand_exemptions(exemptions: Optional[Mapping], family_of: Mapping, isins:
     return ex
 
 
-def _split_hits(scored: pd.DataFrame, min_dev: float, exemptions: Optional[Mapping], family_of: Mapping):
-    """(kept, exempted): the adequate-sample rows at |z| >= min_dev with a `quantity` column, split by the verified-genuine exemptions (an exemption covers a quantity, never a whole fund)."""
+_RATIO_RE = re.compile(r"^(?:sharpe|sortino)(?P<regime>_(?:contraccion|crisis_financiera|estanflacion|expansion|shock_energetico))?$|^ret_vol_simple$")
+
+
+def volatility_quantity_of(quantity: str) -> Optional[str]:
+    """The volatility quantity that is the DENOMINATOR of a ratio quantity (`metric|horizon`): sharpe / sortino of a horizon over `vol_ann|horizon`, of a regime over `vol_ann_<regime>|horizon`, `ret_vol_simple` over
+    `vol_ann|horizon`; None for any quantity that is not such a ratio (the Sortino's downside deviation is not stored: volatility is its proxy, a fund with ~0 volatility has ~0 downside deviation). Pure."""
+    name, _, horizon = str(quantity).partition("|")
+    m = _RATIO_RE.match(name)
+    if not m or not horizon:
+        return None
+    return f"vol_ann{m.group('regime') or ''}|{horizon}"
+
+
+def degenerate_mask(scored: pd.DataFrame, hit: pd.DataFrame, floor: float) -> pd.Series:
+    """True for the rows of `hit` that are ratios whose own volatility denominator (same fund, same horizon / regime; the smallest across nominal and real variants) is below `floor`: arithmetic on a
+    near-zero denominator. A ratio whose denominator is not in the panel is NOT degenerate (unknown is not degenerate). floor <= 0 = off. Pure."""
+    if floor <= 0 or hit.empty:
+        return pd.Series(False, index=hit.index)
+    vols = scored[scored["metric"].str.startswith("vol_ann")][["isin", "metric", "value"]]
+    vol_min = vols.assign(q=vols["metric"].map(quantity_of)).groupby(["isin", "q"])["value"].min()
+    out = []
+    for isin, q in zip(hit["isin"], hit["quantity"]):
+        vq = volatility_quantity_of(q)
+        v = vol_min.get((isin, vq)) if vq is not None else None
+        out.append(bool(v is not None and np.isfinite(v) and v < floor))
+    return pd.Series(out, index=hit.index, dtype=bool)
+
+
+def _split_hits(scored: pd.DataFrame, min_dev: float, exemptions: Optional[Mapping], family_of: Mapping, low_vol_floor: float = 0.0):
+    """(kept, exempted, degenerate): the adequate-sample rows at |z| >= min_dev with a `quantity` column. `degenerate` = ratios on a near-zero volatility denominator (`degenerate_mask`), withdrawn first;
+    the rest is split by the verified-genuine exemptions (an exemption covers a quantity, never a whole fund)."""
     hit = scored[(scored["z"].abs() >= min_dev) & scored["adequate"]]
     hit = hit.assign(quantity=hit["metric"].map(quantity_of))
+    deg = degenerate_mask(scored, hit, low_vol_floor)
+    degenerate, hit = hit[deg], hit[~deg]
     ex = _expand_exemptions(exemptions, family_of, hit["isin"].unique()) if exemptions else {}
     if not ex:
-        return hit, hit.iloc[0:0]
+        return hit, hit.iloc[0:0], degenerate
     covered = pd.Series([q in ex.get(i, ()) for i, q in zip(hit["isin"], hit["quantity"])], index=hit.index, dtype=bool)
-    return hit[~covered], hit[covered]
+    return hit[~covered], hit[covered], degenerate
 
 
 def exempted_hits(panel: pd.DataFrame, exemptions: Mapping, family_of: Optional[Mapping] = None, *, min_dev: Optional[float] = None,
-                  small_sample_percentile: Optional[float] = None, small_sample_fraction: Optional[float] = None) -> pd.DataFrame:
+                  small_sample_percentile: Optional[float] = None, small_sample_fraction: Optional[float] = None, low_vol_floor: Optional[float] = None) -> pd.DataFrame:
     """The rows the exemptions withdrew (columns of `score_panel` plus `quantity`): what `find_suspects` would have counted without them. Keeps every exemption visible (no silent exemption). Pure."""
     min_dev = _cfg.DATA_SUSPECT_MIN_DEV if min_dev is None else min_dev
+    low_vol_floor = _cfg.DATA_SUSPECT_LOW_VOL_FLOOR if low_vol_floor is None else low_vol_floor
     scored = score_panel(panel, small_sample_percentile, small_sample_fraction)
-    return _split_hits(scored, min_dev, exemptions, dict(family_of or {}))[1]
+    return _split_hits(scored, min_dev, exemptions, dict(family_of or {}), low_vol_floor)[1]
+
+
+def degenerate_hits(panel: pd.DataFrame, *, min_dev: Optional[float] = None, small_sample_percentile: Optional[float] = None, small_sample_fraction: Optional[float] = None,
+                    low_vol_floor: Optional[float] = None) -> pd.DataFrame:
+    """The rows the degenerate-ratio rule withdrew (columns of `score_panel` plus `quantity`): extreme ratios on a near-zero volatility denominator. No silent rule: the report lists them. Pure."""
+    min_dev = _cfg.DATA_SUSPECT_MIN_DEV if min_dev is None else min_dev
+    low_vol_floor = _cfg.DATA_SUSPECT_LOW_VOL_FLOOR if low_vol_floor is None else low_vol_floor
+    scored = score_panel(panel, small_sample_percentile, small_sample_fraction)
+    return _split_hits(scored, min_dev, None, {}, low_vol_floor)[2]
 
 
 def load_effective_exemptions(conn: "psycopg.Connection", as_of=None) -> dict:
@@ -129,15 +171,17 @@ def load_effective_exemptions(conn: "psycopg.Connection", as_of=None) -> dict:
 
 def find_suspects(panel: pd.DataFrame, nav_flags: Optional[Mapping[str, str]] = None, family_of: Optional[Mapping] = None, *, min_dev: Optional[float] = None,
                   min_metrics: Optional[int] = None, exclude_natures: Iterable[str] = ("Monetario",), small_sample_percentile: Optional[float] = None,
-                  small_sample_fraction: Optional[float] = None, exemptions: Optional[Mapping] = None) -> list:
+                  small_sample_fraction: Optional[float] = None, exemptions: Optional[Mapping] = None, low_vol_floor: Optional[float] = None) -> list:
     """The suspects of a panel, one per fund family, most extreme first. `nav_flags` = {isin: reason} from the NAV-level validators (e.g. the unshared one-month jump); `family_of` = {isin: family id}
     (an ISIN without one is a family of one). `exemptions` = {isin: quantities} verified as genuine (`load_effective_exemptions`): those quantities do not count for the DEVIATION or INTEGRITY tier, for the ISIN
-    and its family; NAV-level flags are never exempted. Deterministic and independent of row order."""
+    and its family; NAV-level flags are never exempted. `low_vol_floor` (default `DATA_SUSPECT_LOW_VOL_FLOOR`; 0 = off): a Sharpe / Sortino / return-to-volatility row whose own volatility is
+    below it is arithmetic on a near-zero denominator and does not count (the structural rule for money-market and constant-NAV funds). Deterministic and independent of row order."""
     min_dev = _cfg.DATA_SUSPECT_MIN_DEV if min_dev is None else min_dev
     min_metrics = _cfg.DATA_SUSPECT_MIN_FLAGGED_METRICS if min_metrics is None else min_metrics
     nav_flags, family_of = dict(nav_flags or {}), dict(family_of or {})
     scored = score_panel(panel, small_sample_percentile, small_sample_fraction)
-    hit, _exempted = _split_hits(scored, min_dev, exemptions, family_of)
+    low_vol_floor = _cfg.DATA_SUSPECT_LOW_VOL_FLOOR if low_vol_floor is None else low_vol_floor
+    hit, _exempted, _degenerate = _split_hits(scored, min_dev, exemptions, family_of, low_vol_floor)
     per_fund = hit.groupby("isin").agg(n_metrics=("quantity", "nunique"), max_abs_z=("z", lambda s: float(s.abs().max())))   # n_metrics = distinct QUANTITIES, not keys
     nature_of = scored.drop_duplicates("isin").set_index("isin")["nature"].to_dict()
     kinds: dict = {}
@@ -198,10 +242,14 @@ def load_suspect_reasons(conn: "psycopg.Connection", as_of=None) -> dict:
 PIT_METRICS = ("max_dd", "return_ann_real", "sharpe", "srri_nav", "alpha_persistence", "capture_ratio")      # the columns a point-in-time frame carries that the stored panel also has
 
 
-def pit_panel(frame: pd.DataFrame, n_obs: pd.Series, metrics: Iterable[str] = PIT_METRICS) -> pd.DataFrame:
+def pit_panel(frame: pd.DataFrame, n_obs: pd.Series, metrics: Iterable[str] = PIT_METRICS, vol: Optional[pd.Series] = None) -> pd.DataFrame:
     """A point-in-time frame (index isin, `Fund_Nature` and the metric columns observable at one date) as the long panel `find_suspects` reads: one row per fund and metric, `source_rows` = the months of NAV the
-    fund had at that date (`n_obs`, the sample size of every risk metric), the metric key in the stored four-part form so `quantity_of` gives `<metric>|pit`. Pure."""
+    fund had at that date (`n_obs`, the sample size of every risk metric), the metric key in the stored four-part form so `quantity_of` gives `<metric>|pit`. `vol` (the annualised volatility observable at
+    the date, `pit_metrics` vol_ann) adds the `vol_ann|pit` rows that are the denominator of the Sharpe, so the degenerate-ratio rule applies point in time too. Pure."""
     parts = []
+    if vol is not None:
+        frame = frame.assign(vol_ann=pd.to_numeric(vol.reindex(frame.index), errors="coerce"))
+        metrics = (*metrics, "vol_ann")
     for m in metrics:
         if m not in frame.columns:
             continue
@@ -220,9 +268,10 @@ def pit_exemptions(exemptions: Optional[Mapping]) -> dict:
     return {isin: {f"{q.split('|')[0]}|pit" for q in qs} for isin, qs in (exemptions or {}).items()}
 
 
-def pit_suspect_reasons(frame: pd.DataFrame, n_obs: pd.Series, family_of: Optional[Mapping] = None, exemptions: Optional[Mapping] = None) -> dict:
+def pit_suspect_reasons(frame: pd.DataFrame, n_obs: pd.Series, family_of: Optional[Mapping] = None, exemptions: Optional[Mapping] = None,
+                        vol: Optional[pd.Series] = None) -> dict:
     """{isin: reason} of the suspects AT ONE DATE of a point-in-time run, from the data observable then (plan G-02: the same predicate as production, no look-ahead; only the exemption registry is today's). Pure."""
-    panel = pit_panel(frame, n_obs)
+    panel = pit_panel(frame, n_obs, vol=vol)
     if panel.empty or panel["isin"].nunique() < 5:
         return {}
     return reasons_by_isin(find_suspects(panel, None, family_of, exemptions=pit_exemptions(exemptions)))

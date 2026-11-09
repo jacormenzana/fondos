@@ -20,7 +20,7 @@ if str(_ROOT) not in sys.path:
 
 from shared import config as _cfg                                                       # noqa: E402
 from shared.data_exemption import attention_lines, exemption_state, load_build_dates, validate_exemptions   # noqa: E402
-from shared.data_suspect import exempted_hits, find_suspects, load_effective_exemptions, load_panel         # noqa: E402
+from shared.data_suspect import degenerate_hits, exempted_hits, find_suspects, load_effective_exemptions, load_panel   # noqa: E402
 from shared.db import get_connection                                                    # noqa: E402
 from shared.family_scope import load_family_map                                         # noqa: E402
 
@@ -71,6 +71,10 @@ def main() -> int:
     exemptions = load_effective_exemptions(conn, today)
     print(f"panel: {len(panel)} rows, {panel['isin'].nunique()} funds; thresholds: |z| >= {_cfg.DATA_SUSPECT_MIN_DEV}, integrity >= {_cfg.DATA_SUSPECT_MIN_FLAGGED_METRICS} quantities; DATA_SUSPECT_ENABLED = {_cfg.DATA_SUSPECT_ENABLED}")
     print("registry problems:", problems or "none")
+    deg = degenerate_hits(panel)
+    print(f"\nDEGENERATE RATIOS withdrawn (volatility denominator < {_cfg.DATA_SUSPECT_LOW_VOL_FLOOR}): {len(deg)} adequate row(s) at |z| >= {_cfg.DATA_SUSPECT_MIN_DEV:g} on {deg['isin'].nunique()} fund(s)")
+    for r in deg.sort_values("z", key=abs, ascending=False).head(10).itertuples():
+        print(f"  {r.isin} {r.metric} z={round(float(r.z), 1)}")
     before = find_suspects(panel, None, family_of)
     print(f"\nSUSPECTS WITHOUT exemptions ({len(before)}):")
     for s in before:

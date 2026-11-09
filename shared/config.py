@@ -676,6 +676,11 @@ DATA_SUSPECT_MIN_FLAGGED_METRICS: int = 2
 # Verified-genuine exemptions of the suspicion predicate (FND-0394, plan G-08 / A4 #4, owner order 2026-11-09; shared/data_exemption.py). An entry withdraws the SUSPICION of named quantities ('metric|horizon') of one fund and its
 # family after a human verified them as real: ticket with the evidence, since/until (at most 180 days), reason, evidence. It warns DATA_SUSPECT_EXEMPTION_WARN_DAYS before it expires, then exempts ONE more P3 build (exemption_grace),
 # then lapses. NAV-level flags are never exempted. Nothing reads the predicate while DATA_SUSPECT_ENABLED is False.
+# Degenerate ratios (owner order 2026-11-09, FND-0404 / FND-0394; shared/data_suspect.py `degenerate_mask`): a Sharpe / Sortino / return-to-volatility figure whose OWN volatility denominator is below this floor (annualised) is arithmetic on a near-zero
+# denominator, not evidence of a data defect, so it does not count for the DEVIATION or INTEGRITY tier. Generic: it reads the denominator the fund actually has, never the fund's nature or name. 0.005 = the first ESMA/SRRI boundary of
+# proyecto2/src/calculations/srri.py (volatility < 0.5% is risk class 1), the volatility under which a risk class cannot even tell funds apart. Measured on the live panel 2026-11-09: of the 153 adequate ratio rows at |z| >= 20, 150 sit under
+# this floor (Monetario 41 funds, short-term bond 11, flexible bond 3, mixed 2); the 3 above it are ES0116848013 (genuine, exempt) and one flexible-bond row. 0 = the rule is off.
+DATA_SUSPECT_LOW_VOL_FLOOR: float = 0.005
 DATA_SUSPECT_EXEMPTION_WARN_DAYS: int = 7
 DATA_SUSPECT_EXEMPTIONS: dict = {
     "ES0116848013": {"ap": "FND-0403", "since": "2026-11-08", "until": "2027-05-07",

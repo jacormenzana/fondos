@@ -192,7 +192,7 @@ def compute_pit_scores(
                                                                 _config.DATA_SUSPECT_EXEMPTION_WARN_DAYS, include_grace=False).items()}
         family_of = inputs.attrs["fund_family_id"].dropna().to_dict() if "fund_family_id" in inputs.attrs.columns else {}
         suspect_run = {"family_of": family_of, "exemptions": {i: set(q) for i, q in exempt.items()}}
-        suspect_params = {"min_dev": _config.DATA_SUSPECT_MIN_DEV, "min_metrics": _config.DATA_SUSPECT_MIN_FLAGGED_METRICS,
+        suspect_params = {"min_dev": _config.DATA_SUSPECT_MIN_DEV, "min_metrics": _config.DATA_SUSPECT_MIN_FLAGGED_METRICS, "low_vol_floor": _config.DATA_SUSPECT_LOW_VOL_FLOOR,
                           "pct": _config.DATA_SUSPECT_SMALL_SAMPLE_PERCENTILE, "frac": _config.DATA_SUSPECT_SMALL_SAMPLE_FRACTION, "exempt": exempt}
 
     score_key = content_hash(risk_key_scored, peers_key, short_keys, at, regime_by_date, inputs.attrs,

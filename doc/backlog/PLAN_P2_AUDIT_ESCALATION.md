@@ -602,3 +602,15 @@ Owner order 2026-11-09: after the phase 1 receipt (`fb87cae`, 6,819 passed) buil
 - **PIT:** `pit_scores(data_suspect=)` evaluates the predicate at each date from the frame of that date (G-02), `pit_run` passes it and puts it in the cache key only when ON.
 - **Live validation (read-only):** with the exemption the scorer flags only IE00B3L10570 (already held by FND-0404); without it also ES0116848013; with the hold in place switching the rule ON loses no eligible fund (1,472 both ways, regime Shock_Energetico).
 - **Left for the owner's authorisation:** switching `DATA_SUSPECT_ENABLED` on. Design question still open for FND-0404: a generic rule for constant-NAV / near-zero-volatility funds, so a Monetario fund does not need a per-fund exemption.
+
+---
+
+# Amendment A14 (2026-11-09): structural rule for near-zero-volatility funds (FND-0404 / FND-0394), built locally, not committed
+
+Owner order 2026-11-09: resolve the IE00B3L10570 class with a generic rule for money-market / constant-NAV funds, not a manual exemption; `DATA_SUSPECT_ENABLED` stays OFF until the structural solution exists.
+- **Evidence (read-only census of the live panel):** of 153 adequate ratio rows (Sharpe / Sortino / return-to-volatility, regimes included) at |z| >= 20, 150 sit on a volatility below 0.5% a year (Monetario 41 funds, short-term bond 11, flexible bond 3, mixed 2). The 3 above it: ES0116848013 (genuine, exempt) and one flexible-bond Sortino row.
+  The floor 0.005 is the first SRRI boundary (`proyecto2/src/calculations/srri.py`: volatility < 0.5% is risk class 1); a test pins the two constants together.
+- **Rule:** `shared/data_suspect.py` `volatility_quantity_of` / `degenerate_mask` / `degenerate_hits`; `find_suspects(low_vol_floor=)` defaults to `DATA_SUSPECT_LOW_VOL_FLOOR` (0 = off). Generic (reads the denominator, not the nature or the name), unknown denominator is not degenerate, the other metrics of the fund still count, every withdrawn row is listed
+  by `data_suspect_report.py`. Point in time: `pit_panel(vol=)` adds `vol_ann|pit`, `pit_candidates` snapshots `risk["vol_ann"]` per date; the floor is part of the PIT cache key.
+- **Live result:** suspects with the exemptions: 0 (IE00B3L10570 is covered by the rule with no entry; ES0116848013 by its exemption). The FND-0404 hold stays until its manual audit has a verdict: the rule explains the figure, a person confirms it.
+- **Not done (separate decisions):** (a) the P2 root cause: P2 still PUBLISHES a Sharpe of -66 on a 0.37% volatility; a publishing floor would change stored metrics and P3 scores, so it needs an impact simulation first (like FND-0397); (b) `DATA_SUSPECT_ENABLED` stays OFF.
