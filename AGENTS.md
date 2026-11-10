@@ -72,6 +72,21 @@ Every finding, error, or improvement identified during a session must be registe
 
 ---
 
+## Working method — outcome packages (owner directive 2026-11-10; precedence below D-0 and the principles, above any habit)
+
+**Why.** A previous backlog system had to be refactored for its own complexity. Here the same risk showed (2026-11-10: 75 active tickets, ~35 created and ~30 closed a week, ~80% by agents, 11 tickets about the tooling itself, 12 full receipts and 14 plan amendments for one epic). Speed never buys
+less rigor: tests, policy scanners, verified facts and the receipt stay. What goes is the ceremony around them. Priorities, in this order: efficiency, reliability, productivity, control, quality.
+
+- **Work in packages, not in tickets.** The active backlog is grouped in root-cause clusters (A..G, `doc/backlog/PKG_*.md`); one cluster is worked at a time, in the owner's order, until its exit metric is met, then the next. A package has ONE exit metric, a time box (a few sessions), and one decision record: ONE page, rewritten in place,
+  never amended (no `PLAN_*` amendment trails). A package is closed when its exit metric is measured, not when its tickets are tidy.
+- **Tickets only for what outlives the package** (a defect, a decision the owner must take, work deferred with a review date). Analysis notes, follow-ups and intermediate results go in the package's decision record and the cluster ticket's log. Before opening one: `backlog_links.py --new`; prefer widening an existing ticket.
+- **Close on recorded evidence.** A ticket whose log says "closing criterion met" is closed in the same session (`close_release.py`, dry run first). LOW items without recorded impact are DEFERRED with a review date, not carried. Do not build governance for a single-owner reality (per-operator logins, multi-actor validation).
+- **One full receipt per package delivery**, started in the background on the last commit of the slice and waited for while working on the next slice. Between commits: AST check, the targeted tests, the policy scanners. Commits are published by the owner's watcher within minutes: a commit never carries behaviour that is not safe to run without its receipt.
+- **Lead every report with the decision needed** (what runs, ETA, what the owner must do), then the evidence. Ultra-short; English.
+- **Run the next package from a clean handoff**, not from a long session: a session that has grown heavy ends with a handoff prompt (`doc/backlog/HANDOFF_*.md`) that carries state, standing orders and the next package, so the next session starts from verified facts (preflight first).
+
+---
+
 ## Context
 
 ~3,200 European investment funds. Goal: capital preservation relative to IPC+M3 (~6–7% annual, max drawdown 15%, 3–5 year horizon).  
