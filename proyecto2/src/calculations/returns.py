@@ -10,6 +10,7 @@ import pandas as pd
 from shared.annualization import (
     by_dates_enabled, dense_equivalent_points, gap_months, kweighted_std, month_ordinals, standardised_shortfalls, years_spanned,
 )
+from shared.ratio_floor import vol_is_degenerate        # FND-0405: no ratio on a near-zero volatility denominator
 from shared.sortino_reliability import downside_count_reliable
 
 # FND-0075: floor below which an annualized downside deviation is treated as a numerical artifact
@@ -107,7 +108,7 @@ def sharpe_ratio(
     ret  = annualized_return(series, periods_per_year, dates)
     vol  = annualized_volatility(series, periods_per_year, dates)
 
-    if np.isnan(ret) or np.isnan(vol) or vol == 0:
+    if np.isnan(ret) or np.isnan(vol) or vol == 0 or vol_is_degenerate(vol):     # FND-0405: below RATIO_MIN_VOL_ANN the quotient is arithmetic on a near-zero denominator
         return np.nan
 
     return float((ret - risk_free_rate_ann) / vol)
@@ -230,7 +231,7 @@ def sharpe_ratio_from_returns(
     ret = annualized_return_from_returns(rets, periods_per_year)
     vol = annualized_volatility_from_returns(rets, periods_per_year)
 
-    if np.isnan(ret) or np.isnan(vol) or vol == 0:
+    if np.isnan(ret) or np.isnan(vol) or vol == 0 or vol_is_degenerate(vol):     # FND-0405
         return np.nan
 
     return float((ret - risk_free_rate_ann) / vol)
@@ -265,7 +266,7 @@ def ret_vol_simple(series: pd.Series, periods_per_year: int = 12, dates=None) ->
     ret = annualized_return(series, periods_per_year, dates)
     vol = annualized_volatility(series, periods_per_year, dates)
 
-    if np.isnan(ret) or np.isnan(vol) or vol == 0:
+    if np.isnan(ret) or np.isnan(vol) or vol == 0 or vol_is_degenerate(vol):     # FND-0405
         return np.nan
 
     return float(ret / vol)

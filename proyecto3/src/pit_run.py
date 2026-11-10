@@ -62,6 +62,16 @@ class PitRun:
     detail: "pd.DataFrame | None" = None             # keep_detail: Layer-3 components flattened (as_of, isin, m_*, x_*); None otherwise
 
 
+def risk_cache_flags(_config) -> dict:
+    """The behaviour switches that change the expanding / trailing risk metrics, as they enter the PIT risk cache key WHEN ON (an OFF run keeps today's keys: the warm cache stays valid).
+    FND-0253: the by-dates annualisation; FND-0405: the production volatility floor (its VALUE: a different floor is a different Sharpe, and a stale cache would keep serving the artifact). Pure."""
+    from shared.ratio_floor import ratio_vol_floor
+    flags = {n: True for n in ("ANNUALIZATION_BY_DATES_ENABLED",) if getattr(_config, n, False)}
+    if ratio_vol_floor() > 0:
+        flags["ratio_vol_floor"] = ratio_vol_floor()
+    return flags
+
+
 def compute_pit_scores(
     inputs: PitInputs,
     at: pd.DatetimeIndex,
@@ -86,7 +96,7 @@ def compute_pit_scores(
     from shared import config as _config
     # FND-0253: the by-dates annualisation changes the expanding return / vol of funds with NAV gaps, so it is part of the key WHEN ON
     # (an OFF run keeps today's keys: the warm cache stays valid).
-    risk_flags = {n: True for n in ("ANNUALIZATION_BY_DATES_ENABLED",) if getattr(_config, n, False)}
+    risk_flags = risk_cache_flags(_config)
     risk_key = content_hash(inputs.nav, inputs.ipc if inputs.ipc is not None else "no-ipc",
                             inputs.rate if inputs.rate is not None else "no-rate", {"lag": lag}, CODE_VERSION,
                             *([risk_flags] if risk_flags else []))

@@ -52,6 +52,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from shared.config import RISK_FREE_RATE_ANN
+from shared.ratio_floor import degenerate_vol_mask   # FND-0405: the same floor as P2 (parity: the backtest evaluates the production model)
 from shared.annualization import by_dates_enabled, month_ordinals, years_spanned   # FND-0240 / FND-0253: the producers' conventions, read at call time
 from shared.deflation_alignment import cpi_lookup_dates   # FND-0241: which CPI month a NAV date belongs to
 
@@ -201,7 +202,7 @@ def _fund_expanding(x: np.ndarray, rf_t: np.ndarray, ipc_t: "np.ndarray | None",
             out["vol_ann"][1:] = vol
 
             sharpe = (out["return_ann"] - rf_t) / out["vol_ann"]
-            sharpe[~np.isfinite(sharpe) | (out["vol_ann"] == 0)] = np.nan
+            sharpe[~np.isfinite(sharpe) | (out["vol_ann"] == 0) | degenerate_vol_mask(out["vol_ann"])] = np.nan     # FND-0405: the production floor, same constants
             out["sharpe"] = sharpe
 
             edges, buckets, cap = _srri_tables()

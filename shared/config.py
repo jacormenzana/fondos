@@ -1020,6 +1020,14 @@ REGIME_MIN_OBS_SORTINO_DOWNSIDE: int = 2  # mínimo retornos negativos para down
 # window sits next to the 36-point norm of every other fund and reads as a 50-400 robust deviation: 11 of the 22 funds with |MAD-Z| >= 50 on 2026-11-08 were exactly that (`sharpe_slope|rolling_3y`, source_rows 3-7, nature norm
 # 35-36). Measured on the stored rows: 146 of 28,860 slope rows (0.5%, 17 funds) rest on fewer than 12 observations; 392 under 18; 612 under 24. 12 = the pctile_self floor and a third of the 36-point window.
 ROLLING_SLOPE_MIN_OBS: int = 12
+# FND-0405 (owner decision 2026-11-10): P2 does not publish a Sharpe / return-to-volatility ratio whose own annualised VOLATILITY is below RATIO_MIN_VOL_ANN (shared/ratio_floor.py): arithmetic on a near-zero denominator
+# (live: a Sharpe of -66 on a 0.37% volatility, IE00B3L10570). 0.001 (0.1% a year) is the same number as the Sortino's guard on its downside deviation (FND-0075) and, measured by the read-only simulation
+# scripts/audit/p2_vol_floor_impact.py, withdraws 129 of 155,377 stored ratio rows (26 funds) with ZERO effect on the P3 selection (the since-inception Sharpe of no selected fund is under it); higher floors
+# (0.003 / 0.005) moved 22-24% of the selection and need a P3 treatment of a missing Sharpe first. Applied in returns.sharpe_ratio / sharpe_ratio_from_returns / ret_vol_simple, rolling_stats._roll_sharpe and the PIT
+# backtest (pit_metrics) with the same two constants, read at call time. It reaches the STORED rows only through a P2 recompute (the owner's CALC_VERSION bump); NaN is written as a NULL row, never a stale value.
+# Rollback = RATIO_VOL_FLOOR_ENABLED False. NOT the audit predicate's DATA_SUSPECT_LOW_VOL_FLOOR (0.005), which removes nothing from the store.
+RATIO_VOL_FLOOR_ENABLED: bool = True
+RATIO_MIN_VOL_ANN: float = 0.001
 
 # ============================================================
 # v26 — Reglas del motor WARN/ALARM (fund_metric_alerts)

@@ -39,6 +39,7 @@ from shared.annualization import (
 )
 from shared.sortino_reliability import downside_count_reliable
 from shared.config import MIN_PEERS as _MIN_PEERS_DEFAULT
+from shared.ratio_floor import vol_is_degenerate        # FND-0405: no ratio on a near-zero volatility denominator
 
 
 # ============================================================
@@ -151,13 +152,13 @@ def _roll_sharpe(
 ) -> float:
     """Ratio Sharpe rolling = (return_ann - rfr) / vol_ann.
 
-    Returns NaN if vol_ann = 0 or < 3 observations.
+    Returns NaN if vol_ann = 0, below the FND-0405 floor (shared.ratio_floor) or < 3 observations.
     """
     if len(nav_window) < 3:
         return math.nan
     ret_ann = _roll_return_ann(nav_window, periods_per_year, months)
     vol_ann = _roll_vol_ann(nav_window, periods_per_year, months)
-    if math.isnan(ret_ann) or math.isnan(vol_ann) or vol_ann == 0.0:
+    if math.isnan(ret_ann) or math.isnan(vol_ann) or vol_ann == 0.0 or vol_is_degenerate(vol_ann):
         return math.nan
     return float((ret_ann - risk_free_rate_ann) / vol_ann)
 

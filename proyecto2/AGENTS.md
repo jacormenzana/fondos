@@ -71,6 +71,7 @@ proyecto2/
       test_p2_bundle_flags.py
       test_peer_panel_fnd0255_pg.py
       test_period_key_invariance_pg.py
+      test_ratio_vol_floor_fnd0405.py
       test_regime_returns.py
       test_returns.py
       test_risk_metrics.py
@@ -198,6 +199,11 @@ quarantines like any `validate_nav` failure. The thresholds are not calibrated o
 loses the old row instead of keeping it. A fund served from the cache keeps its rows until its inputs change; the one-shot catch-up is `scripts/ops/clean_stale_metric_rows.py` (dry run by default, `--apply` is owner-only). Raising the regime floor (24 would leave 2 of the 22 extreme
 funds) is a policy decision, not a default. Read-only investigation tools: `scripts/audit/nav_forensics.py` (verdict per extreme fund), `scripts/audit/fund_dossier.py` (one fund: anomalous rows with a STALE_REGIME / SMALL_SLOPE / SMALL_SAMPLE flag, calendar returns, downside drill-down),
 `scripts/audit/nature_move_impact.py` (simulates a `Fund_Nature` change through the P3 builder without writing).
+
+**Volatility floor for the ratios (FND-0405, `RATIO_VOL_FLOOR_ENABLED` ON, `RATIO_MIN_VOL_ANN` = 0.001, `shared/ratio_floor.py`):** P2 does not publish a Sharpe, a per-regime Sharpe or a `ret_vol_simple` whose own annualised volatility is below 0.1% a year (`returns.sharpe_ratio`,
+`sharpe_ratio_from_returns`, `ret_vol_simple`, `rolling_stats._roll_sharpe`): arithmetic on a near-zero denominator (a Sharpe of -66 on a 0.37% volatility). The ratio is NaN, which the writer stores as a NULL row (`value = excluded.value`, never a stale value). Same number as the Sortino's guard on the downside
+deviation (FND-0075, unchanged). The PIT backtest applies the same floor from the same constants and the floor is part of its risk cache key (`pit_run.risk_cache_flags`). Measured by the read-only `scripts/audit/p2_vol_floor_impact.py`: 129 of 155,377 stored ratio rows (26 funds) and no effect on the P3 selection; higher floors (0.003 / 0.005) moved 22-24%
+of the selection because P3 reads a missing metric as 0 of its weight, so they need a P3 treatment first. It reaches the STORED rows only through a P2 recompute (the owner's `CALC_VERSION` bump); rollback = switch OFF. Not the audit predicate's `DATA_SUSPECT_LOW_VOL_FLOOR` (0.005), which removes nothing from the store.
 
 ### Macro factors (OLS model — machine-verified)
 

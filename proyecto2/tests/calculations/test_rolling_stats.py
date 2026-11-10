@@ -119,16 +119,32 @@ class TestRollReturnAnn:
 class TestRollSharpe:
     """Tests para _roll_sharpe (v29)."""
 
+    @staticmethod
+    def _noisy_nav(n: int = 24) -> np.ndarray:
+        """+0.5% a month with +-1% alternating noise: an annualised volatility of ~3.5%, far above the FND-0405 floor. (A pure geometric series has a volatility of
+        floating-point noise, ~1e-17: exactly the degenerate denominator the floor withdraws, so it cannot stand in for 'vol > 0'.)"""
+        r = 0.005 + 0.01 * np.where(np.arange(n - 1) % 2 == 0, 1.0, -1.0)
+        return 100.0 * np.concatenate([[1.0], np.cumprod(1.0 + r)])
+
     def test_positive_return_zero_rfr(self):
         """Serie con retorno positivo y vol > 0 → Sharpe positivo."""
-        nav = np.array([100.0 * (1.005 ** i) for i in range(24)])
+        nav = self._noisy_nav()
         s = _roll_sharpe(nav, periods_per_year=12, risk_free_rate_ann=0.0)
         assert not math.isnan(s)
         assert s > 0.0
 
+    def test_a_perfectly_smooth_series_has_no_sharpe_under_the_volatility_floor(self, monkeypatch):
+        """FND-0405: a constant-growth series has a volatility of ~1e-17; its Sharpe is arithmetic on a near-zero denominator, so it is not published."""
+        from shared import config
+        smooth = np.array([100.0 * (1.005 ** i) for i in range(24)])
+        monkeypatch.setattr(config, "RATIO_VOL_FLOOR_ENABLED", True)
+        assert math.isnan(_roll_sharpe(smooth, periods_per_year=12, risk_free_rate_ann=0.0))
+        monkeypatch.setattr(config, "RATIO_VOL_FLOOR_ENABLED", False)                 # the rollback switch restores the previous behaviour
+        assert not math.isnan(_roll_sharpe(smooth, periods_per_year=12, risk_free_rate_ann=0.0))
+
     def test_rfr_reduces_sharpe(self):
         """Sharpe con rfr > 0 debe ser menor que con rfr = 0."""
-        nav = np.array([100.0 * (1.005 ** i) for i in range(24)])
+        nav = self._noisy_nav()
         s0 = _roll_sharpe(nav, 12, risk_free_rate_ann=0.0)
         s4 = _roll_sharpe(nav, 12, risk_free_rate_ann=0.04)
         assert s4 < s0
@@ -935,7 +951,8 @@ class TestRfSeriesAlignment:
         # RF series ends 6 months before NAV ends
         nav_dates = pd.date_range("2023-01-31", periods=18, freq="ME")
         rf_dates  = nav_dates[:12]  # RF only covers first 12 months
-        nav = pd.DataFrame({"date": nav_dates, "nav": np.cumprod(1 + np.full(18, 0.005)) * 100})
+        noise = 0.005 + 0.01 * np.where(np.arange(18) % 2 == 0, 1.0, -1.0)           # a realistic volatility: a smooth series has no Sharpe under the FND-0405 floor
+        nav = pd.DataFrame({"date": nav_dates, "nav": np.cumprod(1 + noise) * 100})
         rf  = pd.DataFrame({"date": rf_dates,  "rate": np.full(12, 0.03)})
         rows = compute_rolling_rows("X", nav, {"rolling_1y": 12},
                                     risk_free_rate=0.0, rf_series=rf)

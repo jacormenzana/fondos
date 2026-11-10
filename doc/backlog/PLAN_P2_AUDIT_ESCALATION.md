@@ -614,3 +614,18 @@ Owner order 2026-11-09: resolve the IE00B3L10570 class with a generic rule for m
   by `data_suspect_report.py`. Point in time: `pit_panel(vol=)` adds `vol_ann|pit`, `pit_candidates` snapshots `risk["vol_ann"]` per date; the floor is part of the PIT cache key.
 - **Live result:** suspects with the exemptions: 0 (IE00B3L10570 is covered by the rule with no entry; ES0116848013 by its exemption). The FND-0404 hold stays until its manual audit has a verdict: the rule explains the figure, a person confirms it.
 - **Not done (separate decisions):** (a) the P2 root cause: P2 still PUBLISHES a Sharpe of -66 on a 0.37% volatility; a publishing floor would change stored metrics and P3 scores, so it needs an impact simulation first (like FND-0397); (b) `DATA_SUSPECT_ENABLED` stays OFF.
+
+---
+
+# Amendment A15 (2026-11-10): P2 volatility floor 0.001 approved and built (FND-0405)
+
+Owner decision 2026-11-10, after the read-only impact simulation (`scripts/audit/p2_vol_floor_impact.py`, report `out/audit/P2/p2_vol_floor_impact.md`): option (a), a floor of 0.001 in P2 AND the PIT backtest. Commit + receipt; strict standby (no P1/P2/P3);
+`DATA_SUSPECT_ENABLED` OFF; the IE00B3L10570 hold and `redireccion` unchanged. The massive P2 recompute (`CALC_VERSION` bump) and the P3 build are a SEPARATE order, only after the receipt is green.
+- **Where:** `shared/ratio_floor.py` (one pure helper, config read at call time) used by `returns.sharpe_ratio`, `sharpe_ratio_from_returns` (the per-regime Sharpe), `ret_vol_simple`, `rolling_stats._roll_sharpe` and `pit_metrics` (vectorised). `RATIO_VOL_FLOOR_ENABLED` True, `RATIO_MIN_VOL_ANN` 0.001 (= the Sortino's FND-0075 number).
+- **Stored rows:** a withdrawn ratio is NaN and the writer stores NULL (`value = excluded.value`): no stale value survives a recompute, so no cleanup tool is needed (unlike FND-0401).
+- **PIT:** `pit_run.risk_cache_flags` puts the floor value in the risk cache key while it is ON, so a stale cache cannot serve the artifact.
+- **Existing tests:** three tests in `test_rolling_stats.py` used constant-growth NAV (volatility ~1e-17) as their "vol > 0" fixture; they now use realistic noise, and a new test pins that a perfectly smooth series has no Sharpe under the floor and that the switch restores the old value.
+- **Expected effect of the recompute** (simulation, floor 0.001): 129 of 155,377 ratio rows withdrawn on 26 funds (22 Monetario), 30 of the 1,541 audit alarm rows, ZERO change to the P3 selection (the since-inception Sharpe of no selected fund is under it).
+- **IE00B3L10570, checked on the stored rows:** the Sharpe of -66 divides by `vol_ann_crisis_financiera` = 0.00062, under 0.001, so this floor DOES withdraw that exact row on the recompute (an earlier note on FND-0405 said it would not: wrong, corrected there). The fund's other two figures stay:
+  `sharpe_contraccion` -11.0 (vol 0.0033) and the since-inception Sharpe -5.3 (vol 0.0037).
+- **Not changed:** the Sortino (own guard), the audit predicate's 0.005 rule (still needed: it covers the volatilities between 0.001 and 0.005 such as those two), the P3 treatment of a missing metric.
