@@ -37,6 +37,7 @@ from typing import Callable, Optional
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
+from shared import config as _cfg  # noqa: E402
 from shared import delivery_receipt as dr  # noqa: E402
 from shared import test_impact as ti  # noqa: E402
 from shared.backlog_autopilot import is_code_path  # noqa: E402
@@ -263,6 +264,8 @@ def run_tests(scope: str, selected: list, export_dir: Path, python: Optional[str
     if scope == "full":
         _wait_for_cycle(wait_min)
         cmds = [[py, "scripts/ops/run_pg_tests.py", "--image", "postgres:17"]]
+        if _cfg.DELIVERY_SHARDED_RUN_ENABLED:                                # FND-0386: the same suite as concurrent shards (one pytest process per suite per shard), balanced by the recorded per-file seconds
+            cmds = [[py, "scripts/ops/run_pg_tests.py", "--image", "postgres:17", "--shards", "auto", *(["--durations", str(DURATIONS)] if DURATIONS.exists() else [])]]
     elif scope == "impact":                                                  # the same container, DDL and four runs as `full`, each restricted to the selected entries of its suite
         plan: dict = {}
         for entry in selected:

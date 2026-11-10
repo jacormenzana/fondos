@@ -25,6 +25,13 @@ BASE_FILES = {"README.md": "x\n", "shared/lib_a.py": "A = 1\n", "shared/lib_b.py
               **{f"tests/test_n{i}.py": "def test_x():\n    pass\n" for i in range(10)}}
 
 
+@pytest.fixture(autouse=True)
+def _no_recorded_durations(monkeypatch, tmp_path):
+    """Hermetic: the selector reads the per-file seconds the real repository recorded (out/audit/test_durations.json, FND-0385). That file exists in a working tree but not in the receipt's clean clone, so these tests
+    passed in every receipt and failed in a working tree that had it (found 2026-11-10 by the sharded run, FND-0386). A synthetic repository has no recorded durations."""
+    monkeypatch.setattr(da, "DURATIONS", tmp_path / "no_recorded_durations.json")
+
+
 @pytest.fixture
 def repo(tmp_path):
     r = tmp_path / "r"
@@ -306,3 +313,36 @@ def test_the_suite_plan_keeps_the_four_runs_and_their_order_and_the_default_is_u
     assert rpt.suite_runs({"tests": []}, tmp_path) == []
     with pytest.raises(ValueError):
         rpt.suite_runs({"tess": ["tests/test_a.py"]}, tmp_path)                 # a typo must never silently run less
+
+
+def _fake_full_run(monkeypatch, seen):
+    class R:
+        returncode, stdout, stderr = 0, "3 passed in 1s\n", ""
+
+    def fake_run(cmd, **kw):
+        seen["cmd"] = cmd
+        return R()
+    monkeypatch.setattr(da.subprocess, "run", fake_run)
+    monkeypatch.setattr(da, "_wait_for_cycle", lambda minutes: None)
+
+
+def test_a_full_receipt_runs_the_sharded_suite_with_the_recorded_durations_while_the_switch_is_on(monkeypatch, tmp_path):
+    """FND-0386: one command, `--shards auto`, balanced by the real repository's recorded per-file seconds (the clean clone has no out/ directory)."""
+    seen = {}
+    _fake_full_run(monkeypatch, seen)
+    durations = tmp_path / "test_durations.json"
+    durations.write_text('{"per_file_seconds": {"tests/test_a.py": 1.0}}', encoding="utf-8")
+    monkeypatch.setattr(da, "DURATIONS", durations)
+    monkeypatch.setattr(da._cfg, "DELIVERY_SHARDED_RUN_ENABLED", True)
+    rc, _text, _s, cmds = da.run_tests("full", [], tmp_path, python="py")
+    assert rc == 0 and cmds == [["py", "scripts/ops/run_pg_tests.py", "--image", "postgres:17", "--shards", "auto", "--durations", str(durations)]]
+
+
+def test_a_full_receipt_without_recorded_durations_still_shards_and_the_switch_off_is_the_sequential_runs(monkeypatch, tmp_path):
+    seen = {}
+    _fake_full_run(monkeypatch, seen)
+    monkeypatch.setattr(da, "DURATIONS", tmp_path / "absent.json")
+    monkeypatch.setattr(da._cfg, "DELIVERY_SHARDED_RUN_ENABLED", True)
+    assert da.run_tests("full", [], tmp_path, python="py")[3] == [["py", "scripts/ops/run_pg_tests.py", "--image", "postgres:17", "--shards", "auto"]]
+    monkeypatch.setattr(da._cfg, "DELIVERY_SHARDED_RUN_ENABLED", False)
+    assert da.run_tests("full", [], tmp_path, python="py")[3] == [["py", "scripts/ops/run_pg_tests.py", "--image", "postgres:17"]]            # rollback: exactly the previous command

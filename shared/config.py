@@ -956,6 +956,9 @@ BACKLOG_LOCAL_DELIVERY_SINCE: str = "2026-11-02T22:22:44+01:00"
 # behaviour before this ticket, no analysis at all. MODE is a CEILING, not the state: "OFF" | "SHADOW" (the selection is computed and recorded on every full run, nothing is skipped) | "AUTO" (SHADOW, and the
 # receipts promote it to ENFORCE by themselves once they hold the evidence and a clean streak, and demote it on the first escape: shared/test_impact.py::effective_mode). Nobody flips the effective mode.
 DELIVERY_IMPACT_SELECTION_ENABLED: bool = True
+# FND-0386 (owner order 2026-11-10): a `full` receipt runs the suite as concurrent pytest shards (scripts/ops/run_pg_tests.py --shards auto: one process per suite per shard, balanced by the recorded per-file seconds) instead of
+# four sequential runs: the same tests, measured 28 min -> ~8.5 min on 6 CPUs. A failing file is re-run alone to classify it (real or parallel-only); BOTH fail the receipt. Rollback = False (the sequential runs).
+DELIVERY_SHARDED_RUN_ENABLED: bool = True
 DELIVERY_IMPACT_SELECTION_MODE: str = "AUTO"
 # Backlog v2 Phase C slice 2 (FND-0334; PROPUESTA_BACKLOG_V2.md 6.4.1 / 6.4.6): the instant from which scripts/audit/backlog_sync.py judges a commit that cites a ticket
 # by its `Backlog-Gate:` trailer (an ISO timestamp WITH offset, e.g. "2026-11-02T09:00:00+01:00"). "" = the gate is NOT ARMED: the sync reports the trailers it sees and

@@ -7,6 +7,7 @@ shared test server or live data.
     python scripts/ops/run_pg_tests.py -k statistical_audit # extra args go to one pytest run (repo root)
     python scripts/ops/run_pg_tests.py --port 5440 --image postgres:17
     python scripts/ops/run_pg_tests.py --suite-files plan.json  # the SAME container, DDL and four runs, each restricted to the files of its suite (FND-0385)
+    python scripts/ops/run_pg_tests.py --shards auto            # the SAME container and DDL, the full suite as concurrent pytest shards balanced by the stored per-file times (FND-0386)
 
 `--suite-files` takes a JSON object {"proyecto1"|"proyecto3"|"tests"|"proyecto2": ["repo-relative test path[::test]", ...]}; a suite without entries is skipped, the proyecto2 paths lose their
 `proyecto2/` prefix because that run starts in proyecto2/. Without the flag nothing changes.
@@ -120,6 +121,127 @@ def default_runs(root: Path) -> list:
             (root / "proyecto2", ["tests", "--ignore=tests/discovery/test_historia.py"])]
 
 
+SHARD_DURATIONS = Path("out") / "audit" / "test_durations.json"       # {"per_file_seconds": {repo-relative posix path: seconds}} written by the FND-0385 baseline
+DEFAULT_FILE_SECONDS = 1.0                                              # a file with no recorded time weighs one second
+
+
+def collect_test_files(root: Path) -> list:
+    """Every test file of the four default runs as (cwd, path relative to that cwd, path relative to the repo root), in a stable order; the same files `default_runs` collects
+    (test_historia needs the network and is left out). Pure apart from reading the directory tree."""
+    out = []
+    for cwd, rel in ((root, "proyecto1/tests"), (root, "proyecto3/tests"), (root, "tests"), (root / "proyecto2", "tests")):
+        base = cwd / rel
+        files = sorted(set(base.rglob("test_*.py")) | set(base.rglob("*_test.py")))
+        for f in files:
+            if "__pycache__" in f.parts or f.name == "test_historia.py":
+                continue
+            out.append((cwd, f.relative_to(cwd).as_posix(), f.relative_to(root).as_posix()))
+    return out
+
+
+def suite_of(cwd: Path, rel: str) -> str:
+    """The suite a test file belongs to: proyecto1 / proyecto3 / tests (all from the repo root) or proyecto2 (its own cwd). The suites cannot share a pytest process: proyecto2 and proyecto3 each have their
+    own `src` package and the root conftest differs, so a shard runs ONE process per suite it holds (run 1 of 2026-11-10 mixed them: 1,800 collection errors). Pure."""
+    return cwd.name if cwd.name == "proyecto2" else rel.split("/", 1)[0]
+
+
+def shard_plan(weights: dict, n: int) -> list:
+    """Longest-processing-time-first balancing: {item: seconds} -> at most `n` lists of items whose planned seconds are as even as a greedy split allows. The heaviest item sets a floor
+    (one file cannot be split). Deterministic. Pure."""
+    n = max(1, int(n))
+    bins = [[0.0, []] for _ in range(n)]
+    for item, w in sorted(weights.items(), key=lambda kv: (-kv[1], str(kv[0]))):
+        target = min(bins, key=lambda b: b[0])
+        target[0] += float(w)
+        target[1].append(item)
+    return [b[1] for b in bins if b[1]]
+
+
+def auto_shards(cpu_count: int | None = None) -> int:
+    """One shard per CPU but one, at most 5 (the hermetic Postgres is shared by the shards and the launcher end-to-end files are subprocess-heavy). Pure."""
+    return max(1, min(5, (cpu_count or 2) - 1))
+
+
+def build_shards(root: Path, n: int, durations: dict | None = None) -> list:
+    """The full suite as `n` shards, each a list of (cwd, relative path) grouped per cwd by the caller. `durations` = {repo-relative path: seconds}."""
+    durations = durations or {}
+    files = collect_test_files(root)
+    weights = {(cwd, rel): float(durations.get(rr, DEFAULT_FILE_SECONDS)) for cwd, rel, rr in files}
+    return shard_plan(weights, n)
+
+
+def load_durations(root: Path, path: Path | None = None) -> dict:
+    """{repo-relative path: seconds} used only to BALANCE the shards (never to select or skip a test). `path` = the file to read (a clean clone has no out/ directory: the receipt passes the real repository's
+    out/audit/test_durations.json); default root/out/audit/test_durations.json. A missing or unreadable file means every file weighs one second: a worse balance, the same tests."""
+    try:
+        return {str(k).replace("\\", "/"): float(v) for k, v in json.loads((path or root / SHARD_DURATIONS).read_text(encoding="utf-8"))["per_file_seconds"].items()}
+    except (OSError, ValueError, KeyError):
+        return {}
+
+
+def _pytest_once(cwd: Path, files: list, env: dict, extra: list | None = None):
+    return subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", *files, *(extra or [])], cwd=cwd, env=env, stdin=subprocess.DEVNULL,
+                          capture_output=True, text=True, encoding="utf-8", errors="replace")
+
+
+def _failed_files(text: str) -> list:
+    """The test FILES named by the FAILED / ERROR lines of a pytest -q output (first occurrence order). Pure."""
+    seen, out = set(), []
+    for line in str(text).splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[0] in ("FAILED", "ERROR"):
+            f = parts[1].split("::")[0].replace("\\", "/")
+            if f not in seen:
+                seen.add(f)
+                out.append(f)
+    return out
+
+
+def run_sharded(root: Path, n: int, env: dict, durations_path: Path | None = None) -> int:
+    """FND-0386: the full suite as `n` concurrent pytest processes against the one hermetic container (each module has its own schema). Output is printed per shard, in order, so the receipt
+    parser sums the pytest summaries exactly as for the four sequential runs. A file that FAILS under parallelism is re-run ALONE, sequentially (the owner's one exception to batching: error isolation),
+    to CLASSIFY the failure: still failing alone = a real failure; passing alone = a parallel-only failure (a test-isolation defect). Both fail the run (rc 1): a parallel-only failure is never excused,
+    it is a defect of the test or of the runner to fix before the sharded run is trusted."""
+    from concurrent.futures import ThreadPoolExecutor
+    shards = build_shards(root, n, load_durations(root, durations_path))
+    print(f"[pg-test] sharded run: {sum(len(s) for s in shards)} test files in {len(shards)} concurrent shards", flush=True)
+
+    def work(shard):
+        groups: dict = {}                                   # (suite, cwd) -> files: one pytest process per suite
+        for cwd, rel in shard:
+            groups.setdefault((suite_of(cwd, rel), cwd), []).append(rel)
+        text, rc = "", 0
+        for (_suite, cwd), files in groups.items():
+            p = _pytest_once(cwd, files, env)
+            text += p.stdout + (p.stderr or "")
+            rc |= p.returncode
+        return rc, text, {cwd: files for (_s, cwd), files in groups.items()}
+
+    started = time.time()
+    with ThreadPoolExecutor(max_workers=len(shards)) as pool:
+        results = list(pool.map(work, shards))
+    rc = 0
+    for i, (src, text, _groups) in enumerate(results):
+        print(f"===== shard {i + 1}/{len(results)} (rc {src}) =====", flush=True)
+        print(text, flush=True)
+        rc |= src
+    print(f"[pg-test] shards finished in {time.time() - started:.0f}s", flush=True)
+    if rc:
+        for i, (src, text, groups) in enumerate(results):
+            if not src:
+                continue
+            for f in _failed_files(text):
+                cwd = next((c for c in groups if (c / f).exists() or (c / f.split("/", 1)[-1]).exists()), root)
+                rel = f if (cwd / f).exists() else f.split("/", 1)[-1]
+                alone = _pytest_once(cwd, [rel], env)
+                tail = alone.stdout.strip().splitlines()[-1] if alone.stdout.strip() else ""
+                if alone.returncode == 0:
+                    print(f"[pg-test] PARALLEL-ONLY failure: {f} fails in a shard but passes alone ({tail}); a test-isolation defect, the run FAILS", flush=True)
+                else:
+                    print(f"[pg-test] CONFIRMED failure alone: {f} ({tail})\n{alone.stdout}", flush=True)
+    return rc
+
+
 def suite_runs(plan: dict, root: Path) -> list:
     """The same runs as `default_runs`, in the same order, restricted to the entries of `plan` ({suite: [path or path::test]}). A suite with no entries is skipped; proyecto2 entries are made relative to
     proyecto2/ (its run starts there). An unknown suite name is an error: a typo must never silently run less. Pure."""
@@ -146,9 +268,17 @@ def main() -> int:
     ap.add_argument("--distro", default="Ubuntu")
     ap.add_argument("--suite-files", metavar="JSON", help="run only the listed tests, grouped by suite (see above)")
     ap.add_argument("--junit-dir", metavar="DIR", help="also write one JUnit XML per pytest run into DIR (per-test verdicts and durations)")
+    ap.add_argument("--durations", metavar="JSON", help="with --shards: the per-file seconds used to balance the shards (default out/audit/test_durations.json of this tree)")
+    ap.add_argument("--shards", metavar="N|auto", help="run the full suite as N concurrent pytest shards (FND-0386); not combined with --suite-files or pytest arguments")
     ap.add_argument("pytest_args", nargs="*", help="passed to a single pytest run from the repo root")
     args = ap.parse_args()
     suite_plan = None
+    n_shards = 1
+    if args.shards:
+        if args.suite_files or args.pytest_args or args.junit_dir:
+            ap.error("--shards runs the whole suite: it is not combined with --suite-files, --junit-dir or pytest arguments")
+        import os as _os
+        n_shards = auto_shards(_os.cpu_count()) if args.shards == "auto" else max(1, int(args.shards))
     if args.suite_files:
         if args.pytest_args:
             ap.error("--suite-files and pytest arguments are mutually exclusive")
@@ -199,6 +329,8 @@ def main() -> int:
         import os
         env = dict(os.environ, FONDOS_TEST_PG_DSN=f"postgresql://postgres@127.0.0.1:{args.port}/{DB_NAME}",
                    PGCONNECT_TIMEOUT="10")           # a dead forward must fail, not hang
+        if n_shards > 1:
+            return run_sharded(ROOT, n_shards, env, Path(args.durations) if args.durations else None)
         if args.pytest_args:
             runs = [(ROOT, args.pytest_args)]
         elif suite_plan is not None:
