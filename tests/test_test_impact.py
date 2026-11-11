@@ -422,3 +422,117 @@ def test_narrowed_loaders_are_still_true():
         if entry:
             module = entry.split(":")[0]
             assert any(p.startswith(ti.NARROW_LOADERS["shared/backlog_writer_proof.py"]) for p in ti._resolve(module, keys)), f"writer {spec.name} has its entry outside scripts/audit: {entry}"
+
+
+# ── FND-0387: a hub bounded by the symbols it changes ────────────────────────────
+
+_HUB = "shared/config.py"
+_HUB_BASE = "A_ENABLED = False\nB_LIMIT = 3\nFLAGS = ('A_ENABLED',)\n\ndef limit():\n    return B_LIMIT\n"
+
+
+def _hub_world(readers=None, n_readers=30):
+    """A hub imported by 30 tests (so F3 applies) plus a few specific readers."""
+    files = {_HUB: _HUB_BASE, **{f"tests/test_hub_{i}.py": "from shared import config\n\ndef test_x():\n    assert config is not None\n" for i in range(n_readers)}}
+    files.update(readers or {})
+    return files
+
+
+def _hub_decide(head, files=None, **kw):
+    files = dict(files or _hub_world())
+    files[_HUB] = head
+    return _decide([_HUB], files, base_texts={_HUB: _HUB_BASE}, **kw)
+
+
+def test_a_hub_without_its_base_text_stays_a_hub_and_with_it_a_new_constant_selects_only_what_names_or_enumerates():
+    files = _hub_world(readers={"tests/test_reader.py": "from shared import config\n\ndef test_r():\n    assert config.B_LIMIT == 3\n"})
+    full = _decide([_HUB], {**files, _HUB: _HUB_BASE + "NEW_ENABLED = False\n"})
+    assert full.scope == "full" and full.reasons[0].startswith("F3")                                  # no base text: unchanged behaviour
+    d = _hub_decide(_HUB_BASE + "NEW_ENABLED = False\n", files)
+    assert d.scope == "impact" and "tests/test_reader.py" not in d.files()                           # nothing names NEW_ENABLED and nothing enumerates the module
+    assert any("bounded by its changed symbols" in n for n in d.reasons)
+
+
+def test_an_edited_constant_selects_the_files_that_name_it_and_those_that_use_what_uses_it():
+    files = _hub_world(readers={"shared/user.py": "from shared import config\n\ndef lim():\n    return config.B_LIMIT\n",
+                                "tests/test_user.py": "from shared import user\n\ndef test_u():\n    assert user.lim()\n",
+                                "tests/test_other.py": "from shared import user\n\ndef test_o():\n    assert True\n",
+                                "tests/test_unrelated.py": "from shared import config\n\ndef test_z():\n    assert config.A_ENABLED is False\n"})
+    d = _hub_decide(_HUB_BASE.replace("B_LIMIT = 3", "B_LIMIT = 4"), files)
+    assert d.scope == "impact"
+    got = set(d.files())
+    assert "tests/test_user.py" in got and "tests/test_unrelated.py" not in got
+    assert "tests/test_other.py" not in got                                                           # imports user.py but never names `lim`
+
+
+def test_a_function_of_the_hub_that_uses_a_changed_constant_is_changed_too():
+    files = _hub_world(readers={"tests/test_lim.py": "from shared import config\n\ndef test_l():\n    assert config.limit() == 3\n"})
+    d = _hub_decide(_HUB_BASE.replace("B_LIMIT = 3", "B_LIMIT = 4"), files)
+    assert "tests/test_lim.py" in d.files()
+
+
+def test_a_name_inside_a_literal_list_of_the_hub_counts_as_a_reference():
+    base = "FLAGS = ('LATER_ENABLED',)\n"
+    files = {_HUB: base, **{f"tests/test_hub_{i}.py": "from shared import config\n" for i in range(30)},
+             "tests/test_flags.py": "from shared import config\n\ndef test_f():\n    assert config.FLAGS\n"}
+    d = _decide([_HUB], {**files, _HUB: base + "LATER_ENABLED = True\n"}, base_texts={_HUB: base})
+    assert d.scope == "impact" and "tests/test_flags.py" in d.files()                                 # FLAGS lists the name that now exists
+
+
+def test_a_reader_that_enumerates_or_probes_by_a_computed_name_or_reads_the_file_is_affected_by_any_change():
+    readers = {"tests/test_enum.py": "from shared import config\n\ndef test_e():\n    assert [n for n in dir(config) if n.isupper()]\n",
+               "tests/test_computed.py": "from shared import config\n\ndef test_c(kind):\n    assert getattr(config, kind + '_ENABLED', None) is None\n",
+               "tests/test_text.py": "from pathlib import Path\n\ndef test_t():\n    assert 'ENABLED' in (Path('shared') / 'config.py').read_text()\n",
+               "tests/test_passed.py": "from shared import config\nfrom tests import helper\n\ndef test_p():\n    helper.run(config)\n",
+               "tests/helper.py": "def run(m):\n    return m\n",
+               "tests/test_star.py": "from shared.config import *\n\ndef test_s():\n    assert True\n"}
+    d = _hub_decide(_HUB_BASE + "NEW_ENABLED = False\n", _hub_world(readers=readers))
+    assert d.scope == "impact", d.reasons
+    assert {"tests/test_enum.py", "tests/test_computed.py", "tests/test_text.py", "tests/test_passed.py", "tests/test_star.py"} <= set(d.files())
+
+
+def test_a_probe_by_a_name_from_a_literal_list_or_from_a_hub_list_and_a_literal_getattr_are_not_hazards():
+    readers = {"tests/test_lit.py": "from shared import config\n\ndef test_l():\n    assert [n for n in ('A_ENABLED',) if getattr(config, n, False)] == []\n",
+               "tests/test_hublist.py": "from shared import config\n\ndef test_h():\n    assert [n for n in config.FLAGS if getattr(config, n, False)] == []\n",
+               "tests/test_literal.py": "from shared import config\n\ndef test_g():\n    assert getattr(config, 'B_LIMIT', 0) == 3\n"}
+    d = _hub_decide(_HUB_BASE + "NEW_ENABLED = False\n", _hub_world(readers=readers))
+    assert d.scope == "impact" and not ({"tests/test_lit.py", "tests/test_hublist.py", "tests/test_literal.py"} & set(d.files()))
+
+
+def test_module_level_code_that_uses_a_changed_name_makes_the_hub_unbounded_and_so_does_a_changed_anonymous_statement():
+    anon_base = _HUB_BASE + "if A_ENABLED:\n    pass\n"
+    files = _hub_world()
+    changed_ref = _decide([_HUB], {**files, _HUB: anon_base.replace("A_ENABLED = False", "A_ENABLED = True")}, base_texts={_HUB: anon_base})
+    assert changed_ref.scope == "full" and "F3" in changed_ref.reasons[0]
+    changed_stmt = _decide([_HUB], {**files, _HUB: anon_base.replace("pass", "print(1)")}, base_texts={_HUB: anon_base})
+    assert changed_stmt.scope == "full"
+    assert _decide([_HUB], {**files, _HUB: anon_base + "# a comment\n"}, base_texts={_HUB: anon_base}).scope == "impact"      # formatting and comments change no symbol
+
+
+def test_a_module_getattr_a_new_hub_and_an_unparsable_hub_are_unbounded():
+    for head, base in (("def __getattr__(n):\n    return 1\n", _HUB_BASE), (_HUB_BASE, None), ("def broken(:\n", _HUB_BASE)):
+        files = {**_hub_world(), _HUB: head}
+        assert _decide([_HUB], files, base_texts={_HUB: base}).scope == "full"
+
+
+def test_an_affected_conftest_or_test_infrastructure_makes_the_hub_unbounded():
+    files = _hub_world(readers={"conftest.py": "from shared import config\n\ndef pytest_configure():\n    config.B_LIMIT\n"})
+    d = _hub_decide(_HUB_BASE.replace("B_LIMIT = 3", "B_LIMIT = 4"), files)
+    assert d.scope == "full" and "infrastructure" in d.reasons[0]
+
+
+def test_a_script_main_block_is_reached_only_by_a_run_of_the_script_not_by_importing_it():
+    readers = {"scripts/tool.py": "from shared import config\n\ndef main():\n    return config.B_LIMIT\n\nif __name__ == '__main__':\n    main()\n",
+               "tests/test_runs_tool.py": "import subprocess\n\ndef test_r():\n    subprocess.run(['python', 'scripts/tool.py'], env={})\n",
+               "tests/test_imports_tool.py": "from scripts import tool\n\ndef test_i():\n    assert tool\n"}
+    d = _hub_decide(_HUB_BASE.replace("B_LIMIT = 3", "B_LIMIT = 4"), _hub_world(readers=readers))
+    assert d.scope == "impact" and "tests/test_runs_tool.py" in d.files()
+
+
+def test_the_real_config_bounded_by_symbols_a_new_constant_is_impact_and_every_test_naming_an_edited_one_is_selected():
+    src = dict(_real_sources())
+    base = src["shared/config.py"]
+    new = ti.decide(["shared/config.py"], {**src, "shared/config.py": base + "\nA_BRAND_NEW_FLAG_ENABLED: bool = False\n"}, base_texts={"shared/config.py": base}, policy_tests=dr.POLICY_TESTS)
+    assert new.scope == "impact" and new.selected_count < 0.4 * new.suite_total, (new.scope, new.reasons, new.selected_count)
+    edit = ti.decide(["shared/config.py"], {**src, "shared/config.py": base.replace('SCHEMA_VERSION: str = "v27"', 'SCHEMA_VERSION: str = "v28"')}, base_texts={"shared/config.py": base}, policy_tests=dr.POLICY_TESTS)
+    users = [t for t, text in src.items() if t.endswith(".py") and ti.suite_of(t) and "SCHEMA_VERSION" in text]
+    assert edit.scope == "full" or set(users) <= set(edit.files()), "every test that names SCHEMA_VERSION must be selected"

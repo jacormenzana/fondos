@@ -155,6 +155,25 @@ def _time_inputs(receipts: list) -> tuple:
     return per_file, (sorted(secs)[len(secs) // 2] if secs else None)
 
 
+def _hub_base_texts(root: Path, chg: dict) -> dict:
+    """{path: its text at the base commit, None when it is new} for the changed files the selector bounds by symbol (shared/test_impact.py::SYMBOL_HUBS, FND-0387). A file whose base text cannot be read is left
+    out, which keeps it a plain hub (full)."""
+    out: dict = {}
+    for c in chg["changed"]:
+        if c in ti.SYMBOL_HUBS:
+            if chg["base"] == EMPTY_TREE:
+                out[c] = None
+                continue
+            try:
+                out[c] = _git("show", f"{chg['base']}:{c}", cwd=root)
+            except RuntimeError:
+                try:
+                    _git("cat-file", "-e", f"{chg['base']}:{c}", cwd=root)
+                except RuntimeError:
+                    out[c] = None                                   # it did not exist at the base: a new file (changed_symbols then cannot bound it)
+    return out
+
+
 def impact_decision(root: Path, chg: dict, tree: Path, receipts: list, *, use_durations: bool = True) -> tuple:
     """(Decision, F7 reason | None) for the change `chg` whose commit is checked out in `tree`. The base tree is exported only when a changed file was deleted or renamed away (the base graph is the only
     one that still knows who imported it). Reads git and files; decides nothing about the mode."""
@@ -168,7 +187,7 @@ def impact_decision(root: Path, chg: dict, tree: Path, receipts: list, *, use_du
         finally:
             shutil.rmtree(btmp, ignore_errors=True)
     durations, median_full = _time_inputs(receipts) if use_durations else (None, None)
-    decision = ti.decide(chg["changed"], head_sources, base_sources, policy_tests=dr.POLICY_TESTS, durations=durations, median_full_seconds=median_full)
+    decision = ti.decide(chg["changed"], head_sources, base_sources, policy_tests=dr.POLICY_TESTS, durations=durations, median_full_seconds=median_full, base_texts=_hub_base_texts(root, chg))
     reason, _anchor = ti.freshness_reason(chg["sha"], receipts, is_ancestor=lambda a, b: _is_ancestor(a, b, root),
                                           code_commits_between=lambda a, b: _code_commits_between(root, a, b), hours_between=lambda a, b: _hours_between(root, a, b))
     return decision, reason
