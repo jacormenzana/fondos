@@ -169,7 +169,7 @@ CONTROLS = (
             "no fund of the scenario is flagged by the shared suspicion predicate (shared/data_suspect.py: a NAV-level flag, an adequate-sample metric at |z| >= DATA_SUSPECT_MIN_DEV, or "
             "DATA_SUSPECT_MIN_FLAGGED_METRICS quantities) unless a verified-genuine exemption covers it (shared/data_exemption.py: ticket + expiry, one grace build); an unreadable panel "
             "refuses (fail closed); FND-0394",
-            BLOCK_UNLESS_OVERRIDE, SOURCE_GATE + "DATA_SUSPECT", "dormant:DATA_SUSPECT_ENABLED"),
+            BLOCK_UNLESS_OVERRIDE, SOURCE_GATE + "DATA_SUSPECT", STATUS_ENFORCED),
     Control("D-DATA-UNIVERSE", PILLAR_DATA, "No unaccepted hard defect in the universe", _OWNER_AUDIT,
             "an open hard defect outside the scenario needs an active accepted residual (accept_audit_residual.py: ticket + expiry); "
             "there is no promotion-time override",

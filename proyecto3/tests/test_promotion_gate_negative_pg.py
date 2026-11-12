@@ -68,6 +68,8 @@ def world(db, monkeypatch):
                  "'robust z 6', %s)", (RUN, FUNDS[0], AUDITED))          # a statistical anomaly ON the scenario: must never block
     conn.commit()
 
+    import shared.config as _cfg
+    monkeypatch.setattr(_cfg, "DATA_SUSPECT_ENABLED", False)     # FND-0394: this world has no fund_metrics (D-DATA-SUSPECT would fail closed, correctly); these tests are about the other controls
     import shared.db
     import shared.backlog_client as bc
     import proyecto3.src.data_freshness as df

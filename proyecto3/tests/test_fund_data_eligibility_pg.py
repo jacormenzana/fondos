@@ -30,6 +30,7 @@ def _pin_the_document_rule_off(monkeypatch):
     """FND-0323 D1: this module's toy schema has no fund_kiid_metadata and tests the data rule; the document rule has its own tests
     (test_wrong_doc_eligibility_pg.py), so it is stated OFF here instead of inherited from the default."""
     monkeypatch.setattr(cfg, "P3_WRONG_DOC_EXCLUSION_ENABLED", False)
+    monkeypatch.setattr(cfg, "DATA_SUSPECT_ENABLED", False)           # FND-0394: this toy schema has no fund_metrics.source_rows; the suspicion rule has its own tests
 
 
 def _world(conn, schema, with_residuals=True):

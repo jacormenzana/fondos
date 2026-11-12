@@ -10,6 +10,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
@@ -19,6 +21,12 @@ from proyecto3.src import fund_scorer as fs  # noqa: E402
 from shared import doc_eligibility as de  # noqa: E402
 
 ISINS = ("GOOD1", "GOOD2", "BADDOC", "NODOC")
+
+
+@pytest.fixture(autouse=True)
+def _pin_the_suspicion_rule_off(monkeypatch):
+    """FND-0394: this module's toy schema has no fund_metrics.source_rows and tests the document rule; the suspicion rule has its own tests, so it is stated OFF here instead of inherited from the default."""
+    monkeypatch.setattr(cfg, "DATA_SUSPECT_ENABLED", False)
 
 
 def _world(conn, schema):

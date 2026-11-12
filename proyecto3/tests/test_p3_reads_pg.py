@@ -44,6 +44,7 @@ def test_load_fund_metrics_for_scoring_returns_mixed_case_columns(
     import shared.config as _cfg
     monkeypatch.setattr(_cfg, "FUND_DATA_ELIGIBILITY_ENABLED", False)
     monkeypatch.setattr(_cfg, "P3_WRONG_DOC_EXCLUSION_ENABLED", False)     # FND-0323 D1: no fund_kiid_metadata in this toy schema (own tests: test_wrong_doc_eligibility_pg.py)
+    monkeypatch.setattr(_cfg, "DATA_SUSPECT_ENABLED", False)               # FND-0394: the suspicion panel needs fund_metrics.source_rows, which this toy schema does not have (own tests: test_data_suspect_*)
     conn = pg_session_conn
     conn.execute(f"SET search_path = {pg_conn_module_schema}")
     conn.execute("""

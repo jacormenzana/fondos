@@ -19,7 +19,14 @@ for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops")):
         sys.path.insert(0, _p)
 
 from shared import owner_vault as ov  # noqa: E402
-import owner_vault as cli  # noqa: E402
+import importlib.util  # noqa: E402
+
+# The CLI is loaded BY PATH under its own name: `import owner_vault` resolves to shared/owner_vault.py (no `main`) in a process where another test already put `shared/` on sys.path or
+# registered that name, which made 32 tests fail in some shard compositions only (receipt of 96cd9bb, 2026-11-12).
+_spec = importlib.util.spec_from_file_location("owner_vault_cli_under_test", _ROOT / "scripts" / "ops" / "owner_vault.py")
+cli = importlib.util.module_from_spec(_spec)
+sys.modules["owner_vault_cli_under_test"] = cli
+_spec.loader.exec_module(cli)
 
 OWNER, HUMAN, ADJ, GHA = "FONDOS_PG_DSN_OWNER", "FONDOS_BACKLOG_PG_DSN_HUMAN", "FONDOS_BACKLOG_PG_DSN_ADJUDICATOR", "GITHUB_ADMIN_TOKEN"
 VALUE = "postgresql://throwaway:not-a-real-password@127.0.0.1:1/none"
