@@ -770,7 +770,8 @@ def _covers_all_families(metrics_filter: "list[str] | None") -> bool:
 
 # Bump this string whenever the calculation logic changes to force a
 # cache-miss in fund_metric_state even when NAV/IPC inputs are unchanged.
-CALC_VERSION: str = "20261011"  # v42 (FND-0253, 2026-10-11): annualise by DATES, not by NAV rows (ANNUALIZATION_BY_DATES_ENABLED on): risk, rolling, regime and
+CALC_VERSION: str = "20261112"  # v43 (FND-0405 + FND-0401, 2026-11-12): volatility floor 0.001 on the Sharpe / Sortino / return-to-volatility ratios (RATIO_VOL_FLOOR_ENABLED), minimum-sample floors for slopes and regime statistics;
+# the bump makes algorithm_version tell the rows recomputed with the floor from the 20261011 ones (expected: 129 of 155,377 ratio rows withdrawn on 26 funds, selection unchanged). v42 (FND-0253, 2026-10-11): annualise by DATES, not by NAV rows (ANNUALIZATION_BY_DATES_ENABLED on): risk, rolling, regime and
 # persistence families; only the 5 funds with an internal NAV gap change value, the bump makes algorithm_version tell recomputed rows from the
 # 20261010 ones. v41 (FND-0243 + FND-0235 + FND-0240/0241/0242 release, 2026-10-10): EUR view of every NAV, FX view on the EUR
 # investor, interval annualization, month-aligned CPI lookup, Sortino downside-count guard. The fingerprint already changes with the
