@@ -114,8 +114,8 @@ def test_an_empty_or_malformed_panel_is_handled_not_guessed():
         score_panel(pd.DataFrame({"isin": ["A"], "value": [1.0]}))
 
 
-def test_defaults_come_from_the_config_and_the_selection_switch_ships_off():
-    assert config.DATA_SUSPECT_ENABLED is False                                      # nothing reads it yet: the selection effect is WS2's later step, behind this switch
+def test_defaults_come_from_the_config_and_the_selection_switch_is_on():
+    assert config.DATA_SUSPECT_ENABLED is True                                       # on since 2026-11-12 (owner decision); the thresholds below are unchanged
     assert (config.DATA_SUSPECT_MIN_DEV, config.DATA_SUSPECT_MIN_FLAGGED_METRICS) == (50.0, 2)
     assert (config.DATA_SUSPECT_SMALL_SAMPLE_PERCENTILE, config.DATA_SUSPECT_SMALL_SAMPLE_FRACTION) == (10.0, 0.5)
     panel = _panel({"X": {"metrics": [0], "source_rows": 100}})

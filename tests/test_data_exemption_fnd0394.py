@@ -36,8 +36,8 @@ def test_the_shipped_registry_is_well_formed_and_holds_the_foundational_case():
     assert effective_exemptions(config.DATA_SUSPECT_EXEMPTIONS, date(2026, 11, 9)) == {"ES0116848013": frozenset({"sortino|crisis_2022"})}
 
 
-def test_the_selection_rule_stays_off_while_the_exemptions_exist():
-    assert config.DATA_SUSPECT_ENABLED is False                                   # owner order 2026-11-09: off until the exemption system is tested AND the owner authorises it
+def test_the_selection_rule_is_on_with_the_exemptions_in_place():
+    assert config.DATA_SUSPECT_ENABLED is True                                    # owner order 2026-11-12: on after the exemption system was tested, the recompute and the eligible-set diff (0 lost, 0 gained)
 
 
 @pytest.mark.parametrize("change, fragment", [

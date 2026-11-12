@@ -34,8 +34,8 @@ REASON = "data_suspect: DEVIATION, 1 quantity/ies at |z| >= 50; strongest sharpe
 
 # ---- the switch ------------------------------------------------------------------------------------------------------------------------------------------------------
 
-def test_the_selection_effect_ships_off():
-    assert cfg.DATA_SUSPECT_ENABLED is False
+def test_the_selection_effect_is_on_since_2026_11_12():
+    assert cfg.DATA_SUSPECT_ENABLED is True
 
 
 def test_off_a_suspect_column_changes_nothing(monkeypatch):

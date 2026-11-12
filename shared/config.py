@@ -667,7 +667,9 @@ NAV_UNSHARED_JUMP_MAX_PEER_SHARE: float = 0.05
 # eligibility, promotion gate, PIT): it ships OFF and nothing reads it yet; the predicate itself is pure and used by the forensics and, later, the audit's incident rules. Defaults from the forensics of the 22 funds
 # with |MAD-Z| >= 50 on 2026-11-08 (FND-0393): MIN_DEV 50 is the extreme set's own cut; a fund needs MIN_FLAGGED_METRICS distinct ADEQUATE-sample metrics at that deviation to be an INTEGRITY suspect; a metric's sample is
 # "small" when its source_rows is below the SMALL_SAMPLE_PERCENTILE of its Fund_Nature AND below SMALL_SAMPLE_FRACTION of that nature's median (16 of the 22 were small-sample artifacts, e.g. 3 points where 36 is the norm).
-DATA_SUSPECT_ENABLED: bool = False
+# ON since 2026-11-12 (owner decision, standalone commit): after the recompute with the 0.001 floor the report (scripts/audit/data_suspect_report.py --diff) shows the eligible set of the PRODUCTION regime unchanged (1,472 -> 1,472, lose 0, gain 0),
+# the only suspect (ES0116848013) is under an active exemption until 2027-05-07 (FND-0403), and the detector-liveness canaries (FND-0393) fired 20 of 20 in the audit after the recompute. Rollback = False.
+DATA_SUSPECT_ENABLED: bool = True
 # FND-0397 (2026-11-08): the classifier fix for the open-ended-fund boilerplate ("no tiene UNA fecha de vencimiento", optional article in the negation guard + the short-duration name abbreviations). OFF by owner order
 # (definitive NO GO): replayed on the live store it moves 44 in-universe funds out of Corto Plazo and lowers the simulated portfolio Sharpe 0.686 -> 0.552 (scripts/audit/nature_move_impact.py). Turn it ON only with a
 # mitigation for the selection engine; the code path is otherwise inert. A kill switch in the registry sense: it is read at call time by classify_utils.
