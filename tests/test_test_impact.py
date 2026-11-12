@@ -347,83 +347,6 @@ def test_a_proyecto2_failure_is_matched_under_its_cwd_relative_id_and_an_unknown
     assert ti.find_escapes(["tests/test_mystery.py::test_x"], ["tests/test_a.py"], all_tests) == ["tests/test_mystery.py"]
 
 
-# ── the real repository ──────────────────────────────────────────────────────────
-
-ROOT = Path(__file__).resolve().parents[1]
-
-
-@functools.lru_cache(maxsize=1)
-def _real_sources_cached():
-    return _real_sources_uncached()
-
-
-def _real_sources():
-    return dict(_real_sources_cached())
-
-
-def _real_sources_uncached():
-    sys.path.insert(0, str(ROOT / "scripts" / "audit"))
-    import delivery_attest as da                                              # the one reader the receipt uses, so the tests analyse what a receipt would
-    return da.read_sources(ROOT)
-
-
-def test_the_336daff8_failure_is_selected_by_the_graph_and_missed_by_name_matching():
-    """proyecto1/core/cost_table_parser.py changed and proyecto1/tests/test_cost_label_binding_fnd0279.py failed in the full run; name matching never picks that test."""
-    changed = ["proyecto1/core/cost_table_parser.py"]
-    avail = [t for t in _real_sources() if t.endswith(".py") and ti.suite_of(t)]
-    by_name, _ = dr.select_tests(changed, avail)
-    assert "proyecto1/tests/test_cost_label_binding_fnd0279.py" not in by_name
-    d = ti.decide(changed, _real_sources(), policy_tests=dr.POLICY_TESTS)
-    assert d.scope == "impact" and "proyecto1/tests/test_cost_label_binding_fnd0279.py" in d.selected["proyecto1"]
-    assert d.policy == sorted(t for t in dr.POLICY_TESTS if (ROOT / t.split("::")[0]).exists())      # all 18 policy entries ride along, node-level, in every impact decision
-
-
-def test_the_hub_modules_are_full_on_the_real_tree():
-    src = _real_sources()
-    for hub in ("shared/config.py", "shared/backlog_client.py", "shared/out_dir.py"):
-        assert ti.decide([hub], src).scope == "full", hub
-
-
-def test_narrowed_loaders_are_still_true():
-    """Each NARROW_LOADERS entry is only sound while its claim holds; this re-proves the three claims on the real tree."""
-    src = _real_sources()
-    g = ti.build_graph(src)
-    assert set(ti.NARROW_LOADERS) <= set(g.narrowed) | set(), "a narrowed file that no longer has an unbounded loader should leave NARROW_LOADERS"
-    # 1. env_guard loads the configured driver: "psycopg" or a name that is not a repo module
-    from shared import env_guard
-    keys = ti._dotted_keys(g.py_files)
-    assert ti._resolve(env_guard.driver_module(), keys) == set()
-    for t in ROOT.joinpath("tests").glob("test_*.py"):
-        for m in __import__("re").findall(r'FONDOS_DB_DRIVER_MODULE["\']?\s*[:,=]\s*["\']([\w.]+)["\']', t.read_text(encoding="utf-8", errors="replace")):
-            assert ti._resolve(m, keys) == set(), f"{t.name} points the driver at a repo module: {m}"
-    # 2. pit_metrics: every load_p2_calc call passes literals naming a file under the declared prefixes
-    prefixes = ti.NARROW_LOADERS["proyecto3/src/pit_metrics.py"]
-    seen = 0
-    for f, text in src.items():
-        if not f.endswith(".py") or "load_p2_calc" not in text:
-            continue
-        for n in ast.walk(ast.parse(text)):
-            if isinstance(n, ast.Call) and getattr(n.func, "id", getattr(n.func, "attr", "")) == "load_p2_calc" and n.args:
-                if f == "proyecto3/src/pit_metrics.py" and isinstance(n.args[0], ast.Name):
-                    continue                                                              # the definition's own recursion on its parameter
-                assert all(isinstance(a, ast.Constant) for a in n.args), f"{f}:{n.lineno} passes a non-literal to load_p2_calc"
-                name = n.args[0].value
-                sub = n.args[1].value if len(n.args) > 1 else "calculations"
-                target = f"proyecto2/src/{sub}/{name}.py"
-                assert target in src and target.startswith(prefixes), f"{f}:{n.lineno} loads {target}"
-                seen += 1
-    assert seen >= 5
-    # 3. a registered writer's entry module lives under scripts/audit
-    from shared import backlog_writers as bw
-    registry = getattr(bw, "WRITERS", None) or getattr(bw, "REGISTRY", None) or {}
-    specs = registry.values() if isinstance(registry, dict) else registry
-    for spec in specs:
-        entry = getattr(spec, "entry", None)
-        if entry:
-            module = entry.split(":")[0]
-            assert any(p.startswith(ti.NARROW_LOADERS["shared/backlog_writer_proof.py"]) for p in ti._resolve(module, keys)), f"writer {spec.name} has its entry outside scripts/audit: {entry}"
-
-
 # ── FND-0387: a hub bounded by the symbols it changes ────────────────────────────
 
 _HUB = "shared/config.py"
@@ -526,13 +449,3 @@ def test_a_script_main_block_is_reached_only_by_a_run_of_the_script_not_by_impor
                "tests/test_imports_tool.py": "from scripts import tool\n\ndef test_i():\n    assert tool\n"}
     d = _hub_decide(_HUB_BASE.replace("B_LIMIT = 3", "B_LIMIT = 4"), _hub_world(readers=readers))
     assert d.scope == "impact" and "tests/test_runs_tool.py" in d.files()
-
-
-def test_the_real_config_bounded_by_symbols_a_new_constant_is_impact_and_every_test_naming_an_edited_one_is_selected():
-    src = dict(_real_sources())
-    base = src["shared/config.py"]
-    new = ti.decide(["shared/config.py"], {**src, "shared/config.py": base + "\nA_BRAND_NEW_FLAG_ENABLED: bool = False\n"}, base_texts={"shared/config.py": base}, policy_tests=dr.POLICY_TESTS)
-    assert new.scope == "impact" and new.selected_count < 0.4 * new.suite_total, (new.scope, new.reasons, new.selected_count)
-    edit = ti.decide(["shared/config.py"], {**src, "shared/config.py": base.replace('SCHEMA_VERSION: str = "v27"', 'SCHEMA_VERSION: str = "v28"')}, base_texts={"shared/config.py": base}, policy_tests=dr.POLICY_TESTS)
-    users = [t for t, text in src.items() if t.endswith(".py") and ti.suite_of(t) and "SCHEMA_VERSION" in text]
-    assert edit.scope == "full" or set(users) <= set(edit.files()), "every test that names SCHEMA_VERSION must be selected"

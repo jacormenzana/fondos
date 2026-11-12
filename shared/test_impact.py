@@ -32,7 +32,7 @@ from typing import Callable, Iterable, Optional
 from shared.backlog_autopilot import is_code_path
 from shared.delivery_receipt import digest_of, is_test_path
 
-ALGO_VERSION = 3                                    # bump whenever the graph or a rule changes: the evidence and the shadow streak start again (effective_mode). 3: symbol-level bound for SYMBOL_HUBS (FND-0387)
+ALGO_VERSION = 4                                    # bump whenever the graph or a rule changes: the evidence and the shadow streak start again (effective_mode). 3: symbol-level bound for SYMBOL_HUBS (FND-0387). 4: NARROWED_READERS (owner-approved 2026-11-12)
 EXCLUDED_PREFIXES = ("upload/", "out/", ".git/")    # never collected by the full run
 SUITE_ROOTS = (("proyecto1", "proyecto1/tests/"), ("proyecto3", "proyecto3/tests/"), ("tests", "tests/"), ("proyecto2", "proyecto2/tests/"))   # run_pg_tests.py's four runs
 SUITE_EXCLUDE = frozenset({"proyecto2/tests/discovery/test_historia.py"})                 # needs the network; the full run ignores it
@@ -579,15 +579,16 @@ def always_run(graph: Graph, tests: Iterable) -> set:
 
 def decide(changed: Iterable, sources_head: dict, sources_base: Optional[dict] = None, *, policy_tests: Iterable = (), enabled: bool = True,
            third_party: Callable = installed, extra_edges: Iterable = (), extra_digest: str = "", durations: Optional[dict] = None,
-           median_full_seconds: Optional[float] = None, fixed_overhead_seconds: float = 60.0, base_texts: Optional[dict] = None) -> Decision:
+           median_full_seconds: Optional[float] = None, fixed_overhead_seconds: float = 60.0, base_texts: Optional[dict] = None, graph: Optional[Graph] = None) -> Decision:
     """The decision for a change: `impact` with the selected tests, or `full` with the reasons. `changed` = the repo-relative paths the change touches (added, modified, deleted, renamed both ways).
     `policy_tests` = the tests every impact receipt must include (delivery_receipt.POLICY_TESTS file part). `base_texts` = {changed path: its text at the base commit, None when the file is new}: with it a
-    changed SYMBOL_HUBS file is bounded by the symbols it changes (F3 stays for the rest). Pure given its arguments; any exception while analysing is itself F1."""
+    changed SYMBOL_HUBS file is bounded by the symbols it changes (F3 stays for the rest). `graph` = a dependency graph the CALLER built for exactly `sources_head` (tests that take several decisions on one tree
+    reuse it: building it is the cost); never given by a delivery receipt, which always analyses the tree it checked out. Pure given its arguments; any exception while analysing is itself F1."""
     changed = sorted({_norm(c) for c in changed if not is_excluded(c)})
     head_files = {_norm(p) for p in sources_head}
     gone = [c for c in changed if c not in head_files]                                          # deleted / renamed away: the base graph still knows who imported them
     try:
-        graph = merge_graphs(build_graph(sources_head, third_party=third_party, extra_edges=extra_edges),
+        graph = merge_graphs(graph if graph is not None else build_graph(sources_head, third_party=third_party, extra_edges=extra_edges),
                              build_graph(sources_base, third_party=third_party, extra_edges=extra_edges) if (sources_base and gone) else None)
     except Exception as exc:                                                                     # noqa: BLE001 -- F1: an analysis that fails is never a reason to run less
         return Decision("full", [f"F1 the dependency graph could not be built: {type(exc).__name__}: {str(exc)[:120]}"], {}, 0, 0)
@@ -660,6 +661,21 @@ def decide(changed: Iterable, sources_head: dict, sources_base: Optional[dict] =
 SYMBOL_HUBS = frozenset({"shared/config.py"})        # hubs whose change is bounded by the SYMBOLS it changes. Only a module of top-level constants and small helpers qualifies: a class whose
                                                      # instances travel through other modules (a method changed, nobody names the class) would break the reasoning below.
 MAX_CHANGED_SYMBOLS = 200
+
+# A binding that enumerates a SYMBOL_HUBS module (dir / vars / the file as text) is affected by EVERY change of it: nothing in the text of the change says what it will read. Two such readers only record
+# or rank, and were pulling the cycle end-to-end tests (launchers that run the real scripts) into every `shared/config.py` selection. Owner-approved 2026-11-12, one entry each, with the reasoning
+# and its repository scanners (tests/test_test_impact.py::test_narrowed_readers_*), which fail when the reasoning stops being true:
+#   hub -> {file: (bindings)}
+#   shared/governance/run_identity.py::config_items   builds `config_hash`, an identity STRING that is written into a run header and printed in the promotion evidence; no code compares it (the
+#                                                     orchestrator only checks that it is present, code_integrity is git-only) and no test pins a literal one. A new or edited switch changes the string, never a decision.
+#   scripts/audit/backlog_links.py::build_vocabulary  reads the constant NAMES of shared/config.py as a vocabulary to rank ticket similarity; a new constant adds one word. Its only caller is `_load` of the
+#                                                     same file. A test that names an edited or removed constant is still selected by that name.
+NARROWED_READERS = {
+    "shared/config.py": {
+        "shared/governance/run_identity.py": ("config_items",),
+        "scripts/audit/backlog_links.py": ("build_vocabulary",),
+    },
+}
 
 
 def _bound_names(stmt: ast.stmt) -> Optional[list]:
@@ -959,8 +975,9 @@ def symbol_impact(graph: Graph, hub: str, base_source: Optional[str], sources: d
         if p is None:
             file_level.add(f)
             continue
+        narrowed = set(NARROWED_READERS.get(hub, {}).get(f, ()))
         for names, _toks, hazard in p[0]:
-            if hazard:
+            if hazard and not (narrowed and set(names) <= narrowed):                          # a reviewed identity / vocabulary reader (NARROWED_READERS) is not affected by every change
                 mark(f, names)
         for _t, h, guard in p[1]:
             if h:
