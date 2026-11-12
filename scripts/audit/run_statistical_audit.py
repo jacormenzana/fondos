@@ -127,7 +127,7 @@ import pandas as pd
 
 from shared.cost_rounding import aci_rounding_explained   # FND-0034 (2026-11-08): one definition with P1
 from shared.config import (
-    AUDIT_COMPLETENESS_CONTRACT_ENABLED, AUDIT_RESIDUAL_EXPIRY_WARN_DAYS, CRISIS_WINDOWS, MIN_NAV_ROWS, P3_FUND_NAV_MAX_AGE_DAYS,
+    AUDIT_CANARIES_ENABLED, AUDIT_COMPLETENESS_CONTRACT_ENABLED, AUDIT_RESIDUAL_EXPIRY_WARN_DAYS, CRISIS_WINDOWS, MIN_NAV_ROWS, P3_FUND_NAV_MAX_AGE_DAYS,
     P3_MIN_UNIFORM_METRICS_SHARE, ROLLING_WINDOWS,
 )
 from shared.db import get_connection
@@ -150,6 +150,8 @@ from shared.statistical_audit.distributions import (
     profile_moments,
 )
 from shared.statistical_audit.group_checks import check_group_constancy
+from shared.statistical_audit import canaries as cn
+from shared.statistical_audit.catalog_group_checks import COST_GROUP_CHECKS as _CANARY_GROUP_RULES
 from shared.statistical_audit.invariants import (
     BoundRule,
     check_bounds,
@@ -729,6 +731,25 @@ def _month_span(min_date: str, max_date: str) -> int:
     return (y2 - y1) * 12 + (m2 - m1) + 1
 
 
+def _timeseries_duplicate_finding(rows, group_key: str) -> "dict | None":
+    """The TIMESERIES_DUPLICATE finding of one (metric, window) combo from the series summary rows (isin, real_flag, min_date, max_date, n_distinct_dates, n_rows, ...), None when no series has
+    n_rows > n_distinct_dates. One definition for the run and for its liveness canary (FND-0393)."""
+    n_dup_series = sum(1 for row in rows if row[5] > row[4])
+    if not n_dup_series:
+        return None
+    return {
+        "block": "BLOCK5", "rule_id": "TIMESERIES_DUPLICATE",
+        "rule_class": "HARD_INVARIANT", "severity": "ALARM",
+        "group_key": group_key, "value": None, "reference_value": None, "threshold": None,
+        "distance": float(n_dup_series),
+        "evidence": f"{n_dup_series} (isin,real_flag) series have n_rows > n_distinct_dates "
+                    f"-- the PK should make this impossible",
+        # FND-0262: a CRITICAL finding names its funds, or the promotion gate must assume it touches every scenario
+        "violating_isins": tuple(sorted({row[0] for row in rows if row[5] > row[4]})),
+        "root_cause_candidate": "Schema/migration defect, not a calculation issue",
+    }
+
+
 def _run_timeseries_integrity(
     run: "AuditRun", conn: "psycopg.Connection", isins: Sequence[str] | None = None,
 ) -> None:
@@ -767,18 +788,9 @@ def _run_timeseries_integrity(
             n_dup_series = sum(1 for row in rows if row[5] > row[4])
             dup_applicable += len(rows)
             dup_violating += n_dup_series
-            if n_dup_series:
-                run.findings.append({
-                    "block": "BLOCK5", "rule_id": "TIMESERIES_DUPLICATE",
-                    "rule_class": "HARD_INVARIANT", "severity": "ALARM",
-                    "group_key": group_key, "value": None, "reference_value": None, "threshold": None,
-                    "distance": float(n_dup_series),
-                    "evidence": f"{n_dup_series} (isin,real_flag) series have n_rows > n_distinct_dates "
-                                f"-- the PK should make this impossible",
-                    # FND-0262: a CRITICAL finding names its funds, or the promotion gate must assume it touches every scenario
-                    "violating_isins": tuple(sorted({row[0] for row in rows if row[5] > row[4]})),
-                    "root_cause_candidate": "Schema/migration defect, not a calculation issue",
-                })
+            dup_finding = _timeseries_duplicate_finding(rows, group_key)
+            if dup_finding is not None:
+                run.findings.append(dup_finding)
 
             n_series_with_gaps = 0
             n_gap_months = 0
@@ -1483,6 +1495,7 @@ class AuditRun:
         self.persisted_isin_rows: int = 0
         self.persisted_header: bool = False       # FND-0261: control.audit_run row written by _persist
         self.scope_isins: tuple | None = None     # FND-0264: the ISINs of an --isin run, recorded in the manifest so it can certify them
+        self.canaries: dict = {}                  # FND-0393: the liveness canaries of a FULL run (canaries.summarize), recorded in the manifest
 
     def skip(self, check: str, kind: str, message: str) -> None:
         """Record a check that did not run: `check` is a key of completeness.CHECKS, `kind` MISSING / EMPTY / NOT_APPLICABLE
@@ -1631,6 +1644,43 @@ def _run_group_checks(run: AuditRun, rules, frame: pd.DataFrame, block: str = "B
 def _isin_column(df: pd.DataFrame) -> "str | None":
     """The column of `df` holding the ISIN, whatever its case (cost frames: ISIN, P2 frames: isin), else None."""
     return next((c for c in df.columns if str(c).lower() == "isin"), None)
+
+
+def run_canaries(run: AuditRun) -> dict:
+    """FND-0393 (plan D1): every hard detector of the run's domain is fed a KNOWN-BAD fixture through the very functions the run uses (`_run_invariants`, `_run_group_checks`,
+    `_timeseries_duplicate_finding`) on a SCRATCH run that is discarded: nothing a canary produces reaches audit_finding. A detector that does not fire is recorded as a skip of the required
+    check CANARY (kind MISSING), which makes the run INCOMPLETE (never promotion evidence). A rule no fixture can violate is `unbuildable`: reported, never a failure. Returns the summary
+    also stored on `run.canaries` (and in the manifest)."""
+    results: dict = {}
+    families = []
+    if run.domain == "p2_metrics":
+        families.append(("row", [r for r in P2_INVARIANTS if r.bound_type == "HARD_INVARIANT"]))
+        families.append(("dup", [None]))
+    else:
+        families.append(("row", [r for r in COST_INVARIANTS if r.bound_type == "HARD_INVARIANT"]))
+        families.append(("group", list(_CANARY_GROUP_RULES)))
+    for family, rules in families:
+        for rule in rules:
+            if family == "dup":
+                rule_id = "TIMESERIES_DUPLICATE"
+                fired = _timeseries_duplicate_finding(cn.duplicate_series_rows(), "canary|canary") is not None
+            else:
+                rule_id = rule.rule_id
+                scratch = AuditRun(domain=run.domain)
+                if family == "row":
+                    frame = cn.invariant_fixture(rule)
+                    if frame is None:
+                        results[rule_id] = "unbuildable"
+                        continue
+                    _run_invariants(scratch, [rule], [frame], block="CANARY")
+                else:
+                    _run_group_checks(scratch, [rule], cn.group_fixture(rule), block="CANARY")
+                fired = cn.fired(scratch.findings, rule_id)
+            results[rule_id] = "fired" if fired else "failed"
+            if not fired:
+                run.skip("CANARY", KIND_MISSING, f"CANARY {rule_id}: the detector did not fire on its known-bad fixture (it may no longer be evaluating live rows)")
+    run.canaries = cn.summarize(results)
+    return run.canaries
 
 
 def _run_invariants(run: AuditRun, rules, frames: list[pd.DataFrame], block: str) -> None:
@@ -1825,6 +1875,8 @@ def _run_manifest(conn: "psycopg.Connection", run: "AuditRun") -> dict:
                 "snapshot_held_out": len(run.snapshot_held_out)}
     if run.scope_isins:                                       # FND-0264: a sample run says WHICH funds it covered
         manifest["scope_isins"] = sorted(run.scope_isins)
+    if run.canaries:                                          # FND-0393: which hard detectors proved themselves alive in this run
+        manifest["canaries"] = run.canaries
     try:
         from proyecto3.src.data_freshness import load_freshness_inputs
         nav_dates, harvest, versions = load_freshness_inputs(conn)
@@ -2165,6 +2217,8 @@ def main() -> int:
         run.scope_isins = tuple(isins) if isins else None
         _apply_accepted_residuals(conn, run)
         _apply_rca_e(conn, run)
+        if scope == cpl.SCOPE_FULL and AUDIT_CANARIES_ENABLED:          # FND-0393: a FULL run proves its hard detectors alive before it can certify anything
+            run_canaries(run)
     finally:
         if not keep_open:
             conn.close()

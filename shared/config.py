@@ -504,6 +504,12 @@ AUDIT_COMPLETENESS_CONTRACT_ENABLED: bool = True
 # fondos_app); shadow on the live data: the gate's history check returns no problem for the PRODUCTION scenario with the switch OFF and ON.
 # Rollback = False (no DDL to undo; the history stays and keeps being written).
 AUDIT_EXCEPTION_EVENTS_ENABLED: bool = True
+# FND-0393 (plan D1, PLAN_P2_AUDIT_ESCALATION.md): detector-liveness canaries. Every FULL audit run feeds each hard detector a known-bad fixture
+# (shared/statistical_audit/canaries.py, run through the run's own functions on a scratch run that is discarded) and records a skip of the required check
+# CANARY for each one that does not fire, which makes the run INCOMPLETE (never promotion evidence). Pure and in-process: no database, no write.
+# ON from the start: the 26 hard row invariants, the group rules and the duplicate-series detector fire on the live catalogs (tests/test_audit_canaries_fnd0393.py).
+# Rollback = False (a FULL run then certifies without proving its detectors alive, as before).
+AUDIT_CANARIES_ENABLED: bool = True
 # FND-0265 (GOV-06), two-pillar orchestrator (shared/governance/orchestrator.py). The promotion always computes and prints its verdict (each
 # pillar PASS / PASS_WITH_WARNINGS / FAIL / INCOMPLETE and the decision); these switches decide what it may refuse:
 #   GOVERNANCE_ORCHESTRATOR_ENABLED  the verdict DECIDES the promotion (OFF: shadow, the legacy gate decides): weights tolerance 5e-5 (D2) and
