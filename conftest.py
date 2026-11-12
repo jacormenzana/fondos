@@ -13,7 +13,7 @@ mere presence — `pg_conn` et al. are new, opt-in fixtures. A test that doesn't
 completely unaffected.
 """
 
-pytest_plugins = ["shared.testing.pg_fixtures", "shared.testing.sandbox"]
+pytest_plugins = ["shared.testing.pg_fixtures", "shared.testing.sandbox", "shared.testing.import_hygiene"]
 
 # FND-0379: out/ holds generated files and a clean CLONE of origin/master for the autopilot hook (out/autopilot_clone, with its own copy of the test suite); a bare `pytest` from the repo root must
 # never collect it (duplicate test modules).
