@@ -233,12 +233,39 @@ def scoped_receipts(receipts: list, digest: str) -> list:
     return out + ([latest] if latest else [])
 
 
+def evidence_waives_streak(scoped: list, algo: int = ti.ALGO_VERSION) -> bool:
+    """True when the latest evidence line of the (already scoped) receipts is an intact PASS of this algorithm that carries a recorded `streak` waiver (the owner accepted the evidence in place of the shadow
+    streak) AND no intact receipt written after it records an escape. The waiver is part of the line's digest, belongs to one selector digest (scoped_receipts) and one algorithm version, so the next edit
+    of the selector drops it; one escape revokes it, exactly as it empties the streak. Pure."""
+    evidence = [r for r in scoped if r.get("kind") == "impact_evidence"]
+    if not evidence:
+        return False
+    line = evidence[-1]
+    if line.get("result") != "pass" or line.get("algo") != algo or not ti._intact(line) or not any(w.get("what") == "streak" for w in line.get("waivers") or []):
+        return False
+    since = ti._parse_ts(line.get("ts"))
+    if since is None:
+        return False
+    for r in scoped:
+        sel = r.get("selection") or {}
+        if r.get("kind") == "impact_evidence" or sel.get("algo") != algo or not ti._intact(r) or not sel.get("escapes"):
+            continue
+        when = ti._parse_ts(r.get("ts"))
+        if when is None or when >= since:
+            return False
+    return True
+
+
 def current_impact_mode(receipts_path: Path) -> str:
     """OFF | SHADOW | ENFORCE for the next receipt: the switches of shared/config.py and the receipts file (shared/test_impact.py::effective_mode), counting only evidence and shadow receipts bound to
     the exact selector code that is running (selector_digest). Never raises: any doubt is SHADOW, and OFF when the configuration cannot be read."""
     try:
         from shared import config as cfg
-        return ti.effective_mode(scoped_receipts(read_receipts(receipts_path), selector_digest()), ti.ALGO_VERSION, ceiling=cfg.DELIVERY_IMPACT_SELECTION_MODE, enabled=cfg.DELIVERY_IMPACT_SELECTION_ENABLED)
+        scoped = scoped_receipts(read_receipts(receipts_path), selector_digest())
+        mode = ti.effective_mode(scoped, ti.ALGO_VERSION, ceiling=cfg.DELIVERY_IMPACT_SELECTION_MODE, enabled=cfg.DELIVERY_IMPACT_SELECTION_ENABLED)
+        if mode == "SHADOW" and cfg.DELIVERY_IMPACT_SELECTION_ENABLED and cfg.DELIVERY_IMPACT_SELECTION_MODE == "AUTO" and evidence_waives_streak(scoped):
+            return "ENFORCE"                                                  # the owner accepted the evidence in place of the streak (a recorded waiver bound to this selector digest)
+        return mode
     except Exception:                                                        # noqa: BLE001 -- a selector that cannot be configured is off, never a reason to run less
         return "OFF"
 
@@ -294,6 +321,8 @@ def run_tests(scope: str, selected: list, export_dir: Path, python: Optional[str
         plan_file = Path(name)
         plan_file.write_text(json.dumps(plan, sort_keys=True), encoding="utf-8")
         cmds = [[py, "scripts/ops/run_pg_tests.py", "--image", "postgres:17", "--suite-files", str(plan_file)]]
+        if _cfg.DELIVERY_SHARDED_RUN_ENABLED:                                # the same shards as `full`: an impact run that stays sequential loses to a sharded full run once the selection is a third of the suite
+            cmds[0] += ["--shards", "auto", *(["--durations", str(DURATIONS)] if DURATIONS.exists() else [])]
     else:
         pg = [f for f in selected if "_pg" in f.rsplit("/", 1)[-1]]
         plain = [f for f in selected if f not in pg]

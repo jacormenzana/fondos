@@ -346,3 +346,122 @@ def test_a_full_receipt_without_recorded_durations_still_shards_and_the_switch_o
     assert da.run_tests("full", [], tmp_path, python="py")[3] == [["py", "scripts/ops/run_pg_tests.py", "--image", "postgres:17", "--shards", "auto"]]
     monkeypatch.setattr(da._cfg, "DELIVERY_SHARDED_RUN_ENABLED", False)
     assert da.run_tests("full", [], tmp_path, python="py")[3] == [["py", "scripts/ops/run_pg_tests.py", "--image", "postgres:17"]]            # rollback: exactly the previous command
+
+
+# ── owner waiver of the evidence gate (2026-11-12) and sharded impact runs ───────
+
+def _waived_line(digest, ts="2026-11-12T10:00:00+00:00", what=("A8", "streak"), result="pass", algo=None):
+    line = {"kind": "impact_evidence", "algo": algo or ti.ALGO_VERSION, "result": result, "selector_digest": digest, "ts": ts,
+            "waivers": [{"what": w, "authorized_by": "owner", "reason": "test", "ts": ts} for w in what]}
+    line["digest"] = dr.digest_of(line)
+    return line
+
+
+def _escape_rec(digest, day):
+    r = {"v": 2, "sha": f"{day:040x}", "scope": "full", "result": "pass", "ts": f"2026-11-{day:02d}T10:00:00+00:00", "covers": [f"{day:040x}"],
+         "selection": {"algo": ti.ALGO_VERSION, "selector": digest, "mode": "SHADOW", "escapes": ["tests/test_x.py"], "decision": {"scope": "impact"}}}
+    r["digest"] = dr.digest_of(r)
+    return r
+
+
+def test_a_recorded_streak_waiver_lets_the_evidence_stand_in_for_the_streak_until_an_escape_or_a_selector_edit():
+    d = "e" * 64
+    assert da.evidence_waives_streak(da.scoped_receipts([_waived_line(d)], d)) is True
+    assert da.evidence_waives_streak(da.scoped_receipts([_waived_line(d, what=("A8",))], d)) is False          # an A8-only waiver is not a streak waiver
+    assert da.evidence_waives_streak(da.scoped_receipts([_evidence_line(d)], d)) is False                      # no waiver recorded: the streak is still needed
+    assert da.evidence_waives_streak(da.scoped_receipts([_waived_line(d)], "f" * 64)) is False                 # the selector was edited: the waiver stays behind
+    assert da.evidence_waives_streak(da.scoped_receipts([_waived_line(d, algo=1)], d)) is False                # another algorithm version
+    assert da.evidence_waives_streak(da.scoped_receipts([_waived_line(d), _waived_line(d, ts="2026-11-13T00:00:00+00:00", result="fail")], d)) is False      # a later fail line revokes
+    assert da.evidence_waives_streak(da.scoped_receipts([_escape_rec(d, 5), _waived_line(d)], d)) is True         # an escape BEFORE the evidence is the history the evidence answers
+    assert da.evidence_waives_streak(da.scoped_receipts([_waived_line(d), _escape_rec(d, 20)], d)) is False       # one escape after it revokes, as it empties the streak
+    forged = _waived_line(d)
+    forged["waivers"].append({"what": "streak"})
+    assert da.evidence_waives_streak(da.scoped_receipts([_evidence_line(d), forged], d)) is False               # a waiver added after the digest was taken does not count
+
+
+def test_the_mode_is_enforce_on_a_waived_evidence_line_and_the_global_thresholds_are_untouched(tmp_path, monkeypatch):
+    d = "9" * 64
+    monkeypatch.setattr(da, "selector_digest", lambda path=None: d)
+    f = tmp_path / "receipts.jsonl"
+    f.write_text(json.dumps(_waived_line(d), sort_keys=True) + "\n", encoding="utf-8")
+    assert da.current_impact_mode(f) == "ENFORCE"
+    f.write_text(json.dumps(_evidence_line(d), sort_keys=True) + "\n", encoding="utf-8")
+    assert da.current_impact_mode(f) == "SHADOW"                                                              # the same evidence without the waiver: no streak, no enforcement
+    f.write_text(json.dumps(_waived_line(d), sort_keys=True) + "\n" + json.dumps(_escape_rec(d, 20), sort_keys=True) + "\n", encoding="utf-8")
+    assert da.current_impact_mode(f) == "SHADOW"
+    monkeypatch.setattr(da._cfg, "DELIVERY_IMPACT_SELECTION_MODE", "SHADOW")
+    f.write_text(json.dumps(_waived_line(d), sort_keys=True) + "\n", encoding="utf-8")
+    assert da.current_impact_mode(f) == "SHADOW"                                                              # the ceiling still wins
+    import inspect
+    sig = inspect.signature(ti.effective_mode)
+    assert sig.parameters["min_receipts"].default == 10 and sig.parameters["min_days"].default == 7.0         # nobody lowered the global streak
+
+
+def test_an_impact_run_goes_through_the_shards_and_the_rollback_switch_keeps_it_sequential(tmp_path, monkeypatch):
+    monkeypatch.setattr(da, "DURATIONS", tmp_path / "absent.json")
+    monkeypatch.setattr(da._cfg, "DELIVERY_SHARDED_RUN_ENABLED", True)
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        seen.setdefault("cmds", []).append(cmd)
+
+        class R:
+            returncode, stdout, stderr = 0, "1 passed in 0.1s\n", ""
+        return R()
+
+    monkeypatch.setattr(da.subprocess, "run", fake_run)
+    da.run_tests("impact", ["tests/test_a.py"], tmp_path, python="py")
+    assert "--shards" in seen["cmds"][0] and "--suite-files" in seen["cmds"][0]
+    monkeypatch.setattr(da._cfg, "DELIVERY_SHARDED_RUN_ENABLED", False)
+    seen.clear()
+    da.run_tests("impact", ["tests/test_a.py"], tmp_path, python="py")
+    assert "--shards" not in seen["cmds"][0]
+
+
+def test_an_impact_plan_is_balanced_into_shards_with_every_entry_in_exactly_one(tmp_path):
+    plan = [(tmp_path, ["tests/a.py", "tests/b.py", "tests/c.py::test_x", "proyecto1/tests/d.py"]), (tmp_path / "proyecto2", ["tests/e.py"])]
+    secs = {"tests/a.py": 300.0, "tests/b.py": 100.0, "proyecto1/tests/d.py": 120.0, "proyecto2/tests/e.py": 90.0}
+    shards = rpt.build_plan_shards(plan, tmp_path, 3, secs)
+    flat = [item for s in shards for item in s]
+    assert sorted(flat, key=str) == sorted([(c, e) for c, es in plan for e in es], key=str) and len(flat) == 5
+    assert any(len(s) == 1 and s[0][1] == "tests/a.py" for s in shards)                                       # the heaviest file sits alone: a file cannot be split
+    assert len(rpt.build_plan_shards(plan, tmp_path, 1, secs)) == 1
+
+
+def test_finalize_records_a_waiver_only_with_who_and_why_and_never_waives_a_safety_check(tmp_path, monkeypatch):
+    import argparse
+    import impact_selection_evidence as ev
+    work = tmp_path / "work"
+    work.mkdir()
+
+    def write(name, obj):
+        (work / name).write_text(json.dumps(obj), encoding="utf-8")
+
+    write("baseline.json", {"sha": "a" * 40, "runs": [{"rc": 0}], "failed_in_first_run": [], "flaky": [], "per_file_seconds": {"tests/test_a.py": 1.0}})
+    write("trace_vs_graph.json", {"tests_checked": 400, "tests_with_holes": 0, "a10": {"count": 0}})
+    write("replay.json", {"rows": [{"sha": "x"}], "missed": 0})
+    write("mutation.json", {"impact_decided_and_killed": 33, "escapes": 0, "escape_rate_upper_95": 0.09, "security_detected": [True], "batches_with_unexplained_failures": 0})
+    write("saving.json", {"net_saving": 0.16})
+    receipts = tmp_path / "receipts.jsonl"
+    monkeypatch.setattr(ev.da, "RECEIPTS", receipts)
+    monkeypatch.setattr(ev.da, "LOCK", tmp_path / "lock")
+    monkeypatch.setattr(ev.da, "DURATIONS", tmp_path / "durations.json")
+    monkeypatch.setattr(ev.da, "selector_digest", lambda path=None: "d" * 64)
+    monkeypatch.setattr(ev, "_digest_at", lambda ref: "d" * 64)
+
+    def args(**kw):
+        base = dict(work=str(work), min_killed=30, write=True, selector_ref="abc1234", revoke=False, waive_check=None, waive_streak=False, authorized_by=None, reason=None)
+        base.update(kw)
+        return argparse.Namespace(**base)
+
+    assert ev.cmd_finalize(args()) == 1 and not receipts.exists()                                              # A8 fails and nothing waives it
+    assert ev.cmd_finalize(args(waive_check=["A8"])) == 2 and not receipts.exists()                            # a waiver without who and why is refused
+    write("mutation.json", {"impact_decided_and_killed": 33, "escapes": 1, "escape_rate_upper_95": 0.09, "security_detected": [True], "batches_with_unexplained_failures": 0})
+    assert ev.cmd_finalize(args(waive_check=["A8"], waive_streak=True, authorized_by="owner 2026-11-12", reason="x")) == 1      # an escape is not waivable by an A8 waiver
+    assert not receipts.exists()
+    write("mutation.json", {"impact_decided_and_killed": 33, "escapes": 0, "escape_rate_upper_95": 0.09, "security_detected": [True], "batches_with_unexplained_failures": 0})
+    assert ev.cmd_finalize(args(waive_check=["A8"], waive_streak=True, authorized_by="owner 2026-11-12", reason="saving is capped by qualification volume")) == 0
+    line = json.loads(receipts.read_text(encoding="utf-8").splitlines()[-1])
+    assert line["result"] == "pass" and line["checks"]["A8 projected net saving >= 20%"] is False
+    assert [w["what"] for w in line["waivers"]] == ["A8", "streak"] and all(w["authorized_by"] == "owner 2026-11-12" for w in line["waivers"])
+    assert line["digest"] == ev.dr.digest_of(line)

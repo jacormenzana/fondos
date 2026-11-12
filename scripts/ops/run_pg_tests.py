@@ -170,6 +170,19 @@ def build_shards(root: Path, n: int, durations: dict | None = None) -> list:
     return shard_plan(weights, n)
 
 
+def build_plan_shards(plan_runs: list, root: Path, n: int, durations: dict | None = None) -> list:
+    """An IMPACT run (`--suite-files`) as `n` shards: each entry of the plan (a test file or a `file::test` node) is a unit weighing the recorded seconds of its file (a node weighs one second), balanced
+    like the full suite. `plan_runs` = suite_runs(...) = [(cwd, [entry])]. Returns shards of (cwd, entry); every entry lands in exactly one. Pure. FND-0387 follow-up: an impact run was sequential, so a
+    selection that is a third of the suite cost more than the sharded full run."""
+    durations = durations or {}
+    weights = {}
+    for cwd, entries in plan_runs:
+        for e in entries:
+            repo_rel = (cwd.relative_to(root).as_posix() + "/" if cwd != root else "") + e.split("::", 1)[0]
+            weights[(cwd, e)] = DEFAULT_FILE_SECONDS if "::" in e else float(durations.get(repo_rel, DEFAULT_FILE_SECONDS))
+    return shard_plan(weights, n)
+
+
 def load_durations(root: Path, path: Path | None = None) -> dict:
     """{repo-relative path: seconds} used only to BALANCE the shards (never to select or skip a test). `path` = the file to read (a clean clone has no out/ directory: the receipt passes the real repository's
     out/audit/test_durations.json); default root/out/audit/test_durations.json. A missing or unreadable file means every file weighs one second: a worse balance, the same tests."""
@@ -197,14 +210,15 @@ def _failed_files(text: str) -> list:
     return out
 
 
-def run_sharded(root: Path, n: int, env: dict, durations_path: Path | None = None) -> int:
+def run_sharded(root: Path, n: int, env: dict, durations_path: Path | None = None, plan_runs: list | None = None) -> int:
     """FND-0386: the full suite as `n` concurrent pytest processes against the one hermetic container (each module has its own schema). Output is printed per shard, in order, so the receipt
     parser sums the pytest summaries exactly as for the four sequential runs. A file that FAILS under parallelism is re-run ALONE, sequentially (the owner's one exception to batching: error isolation),
     to CLASSIFY the failure: still failing alone = a real failure; passing alone = a parallel-only failure (a test-isolation defect). Both fail the run (rc 1): a parallel-only failure is never excused,
     it is a defect of the test or of the runner to fix before the sharded run is trusted."""
     from concurrent.futures import ThreadPoolExecutor
-    shards = build_shards(root, n, load_durations(root, durations_path))
-    print(f"[pg-test] sharded run: {sum(len(s) for s in shards)} test files in {len(shards)} concurrent shards", flush=True)
+    durations = load_durations(root, durations_path)
+    shards = build_plan_shards(plan_runs, root, n, durations) if plan_runs is not None else build_shards(root, n, durations)
+    print(f"[pg-test] sharded run: {sum(len(s) for s in shards)} test {'entries' if plan_runs is not None else 'files'} in {len(shards)} concurrent shards", flush=True)
 
     def work(shard):
         groups: dict = {}                                   # (suite, cwd) -> files: one pytest process per suite
@@ -269,14 +283,14 @@ def main() -> int:
     ap.add_argument("--suite-files", metavar="JSON", help="run only the listed tests, grouped by suite (see above)")
     ap.add_argument("--junit-dir", metavar="DIR", help="also write one JUnit XML per pytest run into DIR (per-test verdicts and durations)")
     ap.add_argument("--durations", metavar="JSON", help="with --shards: the per-file seconds used to balance the shards (default out/audit/test_durations.json of this tree)")
-    ap.add_argument("--shards", metavar="N|auto", help="run the full suite as N concurrent pytest shards (FND-0386); not combined with --suite-files or pytest arguments")
+    ap.add_argument("--shards", metavar="N|auto", help="run the full suite (or, with --suite-files, the listed entries) as N concurrent pytest shards (FND-0386); not combined with pytest arguments")
     ap.add_argument("pytest_args", nargs="*", help="passed to a single pytest run from the repo root")
     args = ap.parse_args()
     suite_plan = None
     n_shards = 1
     if args.shards:
-        if args.suite_files or args.pytest_args or args.junit_dir:
-            ap.error("--shards runs the whole suite: it is not combined with --suite-files, --junit-dir or pytest arguments")
+        if args.pytest_args or args.junit_dir:
+            ap.error("--shards is not combined with --junit-dir or pytest arguments")
         import os as _os
         n_shards = auto_shards(_os.cpu_count()) if args.shards == "auto" else max(1, int(args.shards))
     if args.suite_files:
@@ -330,7 +344,7 @@ def main() -> int:
         env = dict(os.environ, FONDOS_TEST_PG_DSN=f"postgresql://postgres@127.0.0.1:{args.port}/{DB_NAME}",
                    PGCONNECT_TIMEOUT="10")           # a dead forward must fail, not hang
         if n_shards > 1:
-            return run_sharded(ROOT, n_shards, env, Path(args.durations) if args.durations else None)
+            return run_sharded(ROOT, n_shards, env, Path(args.durations) if args.durations else None, plan_runs=suite_plan)
         if args.pytest_args:
             runs = [(ROOT, args.pytest_args)]
         elif suite_plan is not None:

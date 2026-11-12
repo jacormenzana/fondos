@@ -287,9 +287,11 @@ def evaluate_evidence(work: Path, *, min_killed: int = 30, max_escape_bound: flo
     return {"checks": checks, "pass": all(checks.values()), "sha": (base or {}).get("sha")}
 
 
-def build_evidence_line(*, result: str, checks: dict, selector: str, ref: Optional[str], ts: str) -> dict:
+def build_evidence_line(*, result: str, checks: dict, selector: str, ref: Optional[str], ts: str, waivers: Optional[list] = None) -> dict:
     """The line that is appended to the receipts file: `pass` carries the checks and is bound to the selector's source digest and to the commit the results were gathered with; `fail` revokes. Pure."""
     line = {"kind": "impact_evidence", "algo": ti.ALGO_VERSION, "result": result, "selector_digest": selector, "evidence_ref": ref, "ts": ts, "checks": checks}
+    if waivers:
+        line["waivers"] = waivers                  # [{"what": "A8" | "streak", "authorized_by": ..., "reason": ..., "ts": ...}]: part of the digest, so a waiver cannot be added to a line afterwards
     line["digest"] = dr.digest_of(line)
     return line
 
@@ -312,10 +314,16 @@ def cmd_finalize(args) -> int:
             return 0
     else:
         ev = evaluate_evidence(Path(args.work), min_killed=args.min_killed)
+        prefixes = list(args.waive_check or [])
+        waivers = [{"what": w, "authorized_by": args.authorized_by, "reason": args.reason, "ts": now} for w in prefixes + (["streak"] if args.waive_streak else [])]
+        if waivers and not (args.authorized_by and args.reason):
+            print("[final] a waiver needs --authorized-by and --reason: who accepted it and why", file=sys.stderr)
+            return 2
+        unwaived = [n for n, ok in ev["checks"].items() if not ok and not any(n.startswith(p) for p in prefixes)]
         for name, ok in ev["checks"].items():
-            print(f"[final] {'PASS' if ok else 'FAIL'}  {name}")
-        if not ev["pass"]:
-            print("[final] NOT all checks pass: no evidence line is written")
+            print(f"[final] {'PASS' if ok else ('WAIVED' if name not in unwaived else 'FAIL')}  {name}")
+        if unwaived or not ev["checks"]:
+            print("[final] NOT all checks pass (and the failing ones are not waived): no evidence line is written")
             return 1
         if not args.write:
             print("[final] all checks pass; run again with --write --selector-ref <commit> to append the evidence line (it lets the receipts promote the selector once their own streak is clean)")
@@ -327,7 +335,7 @@ def cmd_finalize(args) -> int:
         if gathered != here:
             print(f"[final] REFUSED: shared/test_impact.py at {args.selector_ref} differs from the one in the tree ({gathered[:12]} vs {here[:12]}): the evidence was gathered with other code", file=sys.stderr)
             return 1
-        line = build_evidence_line(result="pass", checks=ev["checks"], selector=here, ref=args.selector_ref, ts=now)
+        line = build_evidence_line(result="pass", checks=ev["checks"], selector=here, ref=args.selector_ref, ts=now, waivers=waivers)
     if not da.acquire(da.LOCK):
         print("[final] a delivery attest is running; try again afterwards", file=sys.stderr)
         return 3
@@ -741,6 +749,10 @@ def main(argv: Optional[list] = None) -> int:
     p.add_argument("--min-killed", type=int, default=30)
     p.add_argument("--write", action="store_true", help="append the evidence line to the receipts file (only when every check passes)")
     p.add_argument("--selector-ref", help="the commit whose shared/test_impact.py all the result files were gathered with; refused unless it is identical to the file in the tree")
+    p.add_argument("--waive-check", action="append", metavar="PREFIX", help="accept a failing check whose name starts with PREFIX (e.g. A8), recorded in the evidence line; never a safety check without the owner's order")
+    p.add_argument("--waive-streak", action="store_true", help="record that the owner accepts this evidence line in place of the 10-receipt / 7-day shadow streak (delivery_attest.evidence_waives_streak); it lapses with the next edit of the selector or on the first escape")
+    p.add_argument("--authorized-by", help="who accepted the waiver(s), as written in the line")
+    p.add_argument("--reason", help="why, as written in the line")
     p.add_argument("--revoke", action="store_true", help="append a `fail` line for the selector in the tree: the receipts fall back to SHADOW")
     args = ap.parse_args(argv)
     if getattr(args, "work", None) and Path(args.work).resolve().is_relative_to(ROOT):
