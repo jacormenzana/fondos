@@ -139,3 +139,94 @@ def test_the_scope_loader_sends_a_sorted_distinct_list():
             return _R()
     ln.load_lineage_rows(_Conn(), ["LU0002", "IE0001", "IE0001"])
     assert seen["params"] == (["IE0001", "LU0002"],) and "ANY(%s)" in seen["sql"]
+
+
+# ---------------- slice 1b: the stamp, and its two writers ----------------
+
+class _Rec:
+    """A connection double: records the statements; the lineage query answers `rows`; `fail_on` makes a statement raise."""
+
+    def __init__(self, rows=None, fail_on=(), no_savepoint=False):
+        self.log, self.rows, self.fail_on, self.no_savepoint = [], rows or [], tuple(fail_on), no_savepoint
+
+    def execute(self, sql, params=()):
+        self.log.append(sql[:60])
+        if self.no_savepoint and sql.startswith("SAVEPOINT"):
+            raise RuntimeError("SAVEPOINT can only be used in transaction blocks")
+        if any(sql.startswith(f) for f in self.fail_on):
+            raise RuntimeError("boom")
+        rows = self.rows
+
+        class _R:
+            def fetchall(self_inner):
+                return rows
+        return _R()
+
+
+def test_safe_stamp_keeps_both_fingerprints_under_a_savepoint():
+    conn = _Rec(rows=[("IE0001", "20261112", RUN_B, 3), ("LU0002", "20261112", RUN_B, 2)])
+    stamp = ln.safe_stamp(conn, ["IE0001"])
+    assert conn.log[0].startswith("SAVEPOINT lineage_stamp") and conn.log[-1].startswith("RELEASE SAVEPOINT lineage_stamp")
+    assert set(stamp) == {"version", "universe", "scenario"} and stamp["universe"]["funds"] == 2
+    read = ln.read_stamp(stamp)
+    assert read["error"] is None and ln.verdict(read["universe"], ln.compute(conn))[0] == ln.MATCH
+
+
+def test_safe_stamp_without_a_scope_keeps_only_the_universe():
+    assert set(ln.safe_stamp(_Rec(rows=[("IE0001", "20261112", RUN_B, 3)]))) == {"version", "universe"}
+
+
+def test_a_failing_read_is_recorded_rolled_back_and_never_raised():
+    conn = _Rec(fail_on=("SELECT",))
+    stamp = ln.safe_stamp(conn, ["IE0001"])
+    assert stamp == {"version": "v1", "error": "RuntimeError"}
+    assert any(s.startswith("ROLLBACK TO SAVEPOINT lineage_stamp") for s in conn.log) and not any(s.startswith("RELEASE") for s in conn.log)
+    assert ln.read_stamp(stamp) == {"universe": None, "scenario": None, "error": "RuntimeError"}
+
+
+def test_in_autocommit_there_is_no_savepoint_and_the_stamp_is_still_taken():
+    conn = _Rec(rows=[("IE0001", "20261112", RUN_B, 3)], no_savepoint=True)
+    stamp = ln.safe_stamp(conn, ["IE0001"])
+    assert "error" not in stamp and not any(s.startswith(("RELEASE", "ROLLBACK")) for s in conn.log)
+
+
+def test_a_connection_that_cannot_execute_at_all_still_does_not_raise():
+    assert "error" in ln.safe_stamp(object(), ["IE0001"])
+
+
+@pytest.mark.parametrize("junk", [None, 5, "x", {}, {"universe": {"version": "v1"}}, {"universe": None, "scenario": [1]}])
+def test_a_stamp_that_is_not_complete_reads_as_nothing(junk):
+    got = ln.read_stamp(junk)
+    assert got["universe"] is None and got["scenario"] is None
+    assert ln.verdict(got["universe"], ln.fingerprint(_rows()))[0] == ln.UNKNOWN
+
+
+def test_the_audit_manifest_carries_the_universe_fingerprint_of_a_p2_metrics_run_only():
+    import importlib.util
+    import os
+    import sys
+    from types import SimpleNamespace as NS
+    root = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+    spec = importlib.util.spec_from_file_location("run_statistical_audit_fnd0306", os.path.join(root, "scripts", "audit", "run_statistical_audit.py"))
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    runner = importlib.util.module_from_spec(spec)
+    sys.modules["run_statistical_audit_fnd0306"] = runner
+    spec.loader.exec_module(runner)
+    conn = _Rec(rows=[("IE0001", "20261112", RUN_B, 3)])
+    conn.rollback = lambda: None
+    p2 = runner._run_manifest(conn, runner.AuditRun(domain="p2_metrics"))
+    assert p2["metrics_lineage"]["funds"] == 1 and p2["metrics_lineage"]["version"] == "v1" and "metrics_lineage_error" not in p2
+    costs = runner._run_manifest(conn, runner.AuditRun(domain="costs"))
+    assert "metrics_lineage" not in costs
+    broken = _Rec(fail_on=("SELECT",))
+    broken.rollback = lambda: None
+    assert runner._run_manifest(broken, runner.AuditRun(domain="p2_metrics"))["metrics_lineage_error"] == "RuntimeError"
+
+
+def test_the_draft_build_stamps_the_lineage_in_its_notes():
+    import os
+    root = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+    with open(os.path.join(root, "proyecto3", "src", "portfolio_builder.py"), encoding="utf-8") as fh:
+        src = fh.read()
+    assert 'portfolio.macro_context["metrics_lineage"] = _lineage.safe_stamp(self.conn, [f["isin"] for f in portfolio.all_funds])' in src

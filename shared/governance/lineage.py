@@ -102,6 +102,49 @@ def compute(conn, isins: Optional[Iterable] = None, max_unstamped_share: float =
     return fingerprint(load_lineage_rows(conn, isins), max_unstamped_share)
 
 
+def safe_stamp(conn, isins: Optional[Iterable] = None) -> dict:
+    """The record a DRAFT keeps in its notes (key `metrics_lineage`): {"version", "universe": <fingerprint>, "scenario": <fingerprint of `isins`>}.
+
+    Both are kept on purpose: the owner's order of 2026-10-24 is to measure design (a), the universe-wide digest, in SHADOW and only then decide
+    whether design (b), the scenario-scoped one, is needed. Information only: it NEVER raises and never poisons the caller's transaction (the reads
+    run under a savepoint that is rolled back on a failure); a failure is recorded as {"version", "error"} and the verdict later reads it as UNKNOWN."""
+    in_savepoint = True
+    try:
+        conn.execute("SAVEPOINT lineage_stamp")
+    except Exception:                                                  # noqa: BLE001 -- autocommit: nothing to poison
+        in_savepoint = False
+    out: dict = {"version": LINEAGE_VERSION}
+    try:
+        out["universe"] = compute(conn).as_dict()
+        if isins is not None:
+            out["scenario"] = compute(conn, isins).as_dict()
+        if in_savepoint:
+            conn.execute("RELEASE SAVEPOINT lineage_stamp")
+    except Exception as exc:                                           # noqa: BLE001 -- information only
+        if in_savepoint:
+            try:
+                conn.execute("ROLLBACK TO SAVEPOINT lineage_stamp")
+            except Exception:                                          # noqa: BLE001
+                pass
+        return {"version": LINEAGE_VERSION, "error": type(exc).__name__}
+    return out
+
+
+def read_stamp(stamp) -> dict:
+    """{"universe": fingerprint | None, "scenario": fingerprint | None, "error": str | None} from a stored stamp (a notes key or an audit manifest key).
+    Anything that is not a complete fingerprint reads as None: the verdict then says UNKNOWN, never a pass."""
+    out: dict = {"universe": None, "scenario": None, "error": None}
+    if not isinstance(stamp, dict):
+        return out
+    out["error"] = stamp.get("error")
+    for key in ("universe", "scenario"):
+        try:
+            out[key] = LineageFingerprint.from_dict(stamp[key])
+        except (KeyError, ValueError):
+            out[key] = None
+    return out
+
+
 def verdict(stamped: Optional[LineageFingerprint], current: Optional[LineageFingerprint]) -> tuple:
     """(state, detail). UNKNOWN when either side is missing or the definition changed (never a silent pass); AMBIGUOUS when either side has
     no rows or too many unstamped ones (refused rather than hashed over); MATCH when the digests are equal; MISMATCH otherwise."""

@@ -773,6 +773,11 @@ sha de git y árbol limpio, `config_hash` de los interruptores `*_ENABLED` y lí
 cada tabla confirmaba por separado y una caída dejaba una corrida parcial legible como real. La cabecera no lleva recuentos de severidad
 ni de deriva: esos viven en `control.cycle_audit_run` (telemetría, FND-0239), que se une por `run_id`.
 
+**Linaje de las métricas en el manifiesto (FND-0306).** Una corrida `p2_metrics` guarda en `manifest.metrics_lineage` la huella de las métricas almacenadas que juzgó
+(`shared/governance/lineage.py`: resumen determinista de (fondo, `algorithm_version`, `batch_id`, nº de filas) de `fund_metrics`, universo completo; el recuento de filas es
+necesario porque los borrados no re-sellan las demás filas del fondo). El DRAFT guarda la misma huella, de universo y de escenario, en la clave de notas `metrics_lineage`. Es solo información:
+un fallo de lectura se anota como `metrics_lineage_error`, y una cabecera o un DRAFT sin la huella se lee `UNKNOWN`, nunca como aprobado. La puerta que las compara es la fase siguiente (en sombra).
+
 Con `AUDIT_COMPLETENESS_CONTRACT_ENABLED` (**encendido desde 2026-10-12**, tras la sombra sobre los datos vivos: corridas FULL de p2 y
 costes con 0 comprobaciones obligatorias ausentes y paridad de la puerta apagado/encendido): una corrida `INCOMPLETE` sale con **código 2** (en ambos modos; los lanzadores de
 ciclo lo tratan como `[WARN]`, nunca como fallo del ciclo), y la puerta de promoción toma su evidencia de `control.audit_run` (última

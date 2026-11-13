@@ -1959,6 +1959,13 @@ def _run_manifest(conn: "psycopg.Connection", run: "AuditRun") -> dict:
     except Exception as exc:                                     # noqa: BLE001 -- information only
         conn.rollback()
         manifest["data_cutoff_error"] = type(exc).__name__
+    if run.domain == "p2_metrics":                               # FND-0306: which stored metrics this run judged (the DRAFT stamps the same, compared by the gate)
+        try:
+            from shared.governance import lineage
+            manifest["metrics_lineage"] = lineage.compute(conn).as_dict()
+        except Exception as exc:                                 # noqa: BLE001 -- information only; a header without it reads UNKNOWN, never a pass
+            conn.rollback()
+            manifest["metrics_lineage_error"] = type(exc).__name__
     return manifest
 
 

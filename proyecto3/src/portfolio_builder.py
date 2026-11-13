@@ -740,6 +740,11 @@ class PortfolioBuilder:
         # Liquidez estructural DECLARADA (la puerta de promocion exige pesos + liquidez declarada = 1 y la acota)
         portfolio.macro_context["cash_weight"] = portfolio.cash_weight
 
+        # FND-0306: which stored P2 metrics this DRAFT was built on (universe and scenario fingerprints); the promotion gate compares it with the
+        # evidence audit. Information only: it never fails the build (shared/governance/lineage.safe_stamp).
+        from shared.governance import lineage as _lineage
+        portfolio.macro_context["metrics_lineage"] = _lineage.safe_stamp(self.conn, [f["isin"] for f in portfolio.all_funds])
+
         if not dry_run:
             self._persist(portfolio, score_version, replace_draft=replace_draft)
 
