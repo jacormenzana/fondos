@@ -22,10 +22,15 @@ Written 2026-11-13 at HEAD `f307764`. Read-only census; nothing was changed in t
 | 0230 | CLOSE (V) | `beta_ipc_jp` 2,045 funds, `beta_ipc_cn` 3,083; no dominant value (top value 1.9-4.3 %) |
 | 0293 | CLOSE after unit check (V partial) | all cited series fresh (CPI JP/CN/EU 2026-09, M2 JP/CN 2026-09, CN policy rate 43 d); the "CN stored as a YoY rate" item is U |
 | 0296 | CLOSE (recorded) | log 2026-11-04: NAV discover 48 s vs ~95 min |
-| 0308 | KEEP-verify | launcher names match the design (V); audit ownership and RC 107 gate are U |
-| 0289 | KEEP-verify | gate `ALARM_WATCH` in `scenario_lifecycle.py` (V), alarm fund not rising in the DRAFT (V); the construction-time cap is U |
-| 0256 | KEEP-verify | EU/ES CPI now 2026-09 (V); the `mean(axis=1)` silent-ES-only code path is U |
-| 0391, 0393, 0394, 0198, 0370, 0385, 0387, 0281, 0282 | KEEP (U) | looked finished in the logs; none verified here. 0385/0387 close organically on a measured commit; 0281/0282 are the owner's call at 2027-01-15 |
+| 0308 | CLOSE (V, wave 2) | renames done; `lib/cyclePhases.bat` exists; `--audit-compare-to` in `P3_buildPortfolio.bat` and both orchestrators; RC 107 baseline gate in `lib/common.bat` |
+| 0289 | CLOSE (V, wave 2) | its own condition ("until a promotion passes under the gate") is met: `ALARM_WATCH_GATE_ENABLED` True; PRODUCTION promoted 2026-10-25 15:48 after the gate went live (10-17), record "defects on scenario 0 ... AUTHORISED", no override; watched fund not rising; part 3C deferred by the owner on 2026-10-17 |
+| 0394 | CLOSE (V, wave 2) | predicate, exemptions, scorer exclusion, gate, PIT and selection-impact KPIs delivered; switched on by `96cd9bb` (2026-11-12); the plausibility tier is conditional on Leverage_Used (FND-0398, deferred) |
+| 0256 | KEEP | monitoring delivered (`shared/macro_freshness.py`: TTL per series, composite legs judged one by one); it is "monitoring only"; `regime_classifier.py:247` still averages with `mean(axis=1)` and nothing refuses a stale leg. Missing: the owner's decision to enforce (today both legs, ES and EU 2026-09, are inside their 100-day TTL) |
+| 0393 | KEEP | detector canaries exist (`run_statistical_audit.py`); the applicability-drop rule (> 50 % below the median of the last 5 FULL runs) is not in `shared/statistical_audit` |
+| 0391 | KEEP | epic: closes when 0393 closes; WS3 / WS4 are deferred in 0395 / 0396 (review 2027-02-10) |
+| 0281, 0282 | KEEP by design | 25 and 40 ISINs accepted until 2027-01-15; a ticket stays open while its acceptance is active (0282 log, 2026-11-04) |
+| 0370 | KEEP | the writer-proof norm is live; a test pinning "config default = documented default" (item d) is not confirmed: `test_backlog_writers.py` has none and a wider search was not completed |
+| 0198, 0385, 0387 | KEEP (U) | 0198: the owner-run A/B (`--current-universe-only`) is not recorded; 0385 / 0387 close organically on a measured commit |
 | 0290 | KEEP, ACTIVE INCIDENT (V) | `Fondos PG offbox copy` exited 3 at 03:30 today; no logical-dump task registered |
 | 0021 | owner: reject as superseded? | the NAV quarantine (universe=0) does what the ticket's FORCE_REFRESH aimed at, without the cross-layer write |
 | LOW, no recorded impact: 0090, 0180, 0182, 0267, 0324, 0325, 0326, 0327, 0328, 0329 | propose DEFER to 2027-02-10 | same review date as the package A housekeeping |
@@ -44,6 +49,7 @@ Corrections to Revision 1: the flat `ipc_yoy_avg` for Sep-Nov is expected (Septe
 - DEFERRED to 2027-02-10 (events 658-667): 0090, 0180, 0182, 0267, 0324, 0325, 0326, 0327, 0328, 0329.
 - 0293 unit check done: China CPI is stored as an index (69-117), so 0293 joins the closure list.
 - This commit closes 0041, 0233, 0230, 0296, 0293 (CODE_FIX) through the autopilot; closing conditions `tests_pass` are bound to this commit.
+- Wave 1 closed by the autopilot (all five CLOSED). Wave 2 (second closing commit): 0289, 0308, 0394.
 - Not touched (no decision yet): FND-0397 stays NO GO, DRAFT promotion, the 0239 / 0385 pair, the WIP limit.
 
 ## 5. Next steps after the checkpoint
