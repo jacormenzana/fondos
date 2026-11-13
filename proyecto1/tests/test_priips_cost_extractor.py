@@ -1563,6 +1563,17 @@ def test_a_detached_five_year_row_is_the_rhp_value_not_a_copy_of_the_one_year_va
     assert _recover_aci_from_label(only) == (6.66, 6.66)                                                       # no other horizon printed: the single-column rule stands
 
 
+def test_the_management_line_after_a_single_column_aci_is_not_a_second_column():
+    """Package B, UBS LU0006277684 / LU0006344922: "Incidencia anual de los costes (*) | 3.5%" is ONE column (RHP of 1 year); the next lines "0.5% del valor de su inversion al ano" are the management
+    row. Read as a second adjacent value it made ACI_RHP 0.5 (FIX-ACI-RHP-OVER-LABEL lowered the correct 3.5 to it)."""
+    from priips_cost_extractor import _adjacent_pcts, _recover_aci_from_label
+    head = " (*)\n3.5%\nCostes corrientes detraídos cada año\nComisiones de gestión y otros costes administrativos o de funcionamiento\n0.5% del valor de su inversión al año. Es una estimación"
+    assert _adjacent_pcts(head) == [3.5]
+    text = "¿Cuáles son los costes?\nCostes totales USD 353\nIncidencia anual de los costes (*)\n3.5%\nCostes corrientes detraídos cada año\nComisiones de gestión\n0.5% del valor de su inversión al año.\n"
+    assert _recover_aci_from_label(text) == (3.5, 3.5)
+    assert _adjacent_pcts(" (*)\n2,7% 2,5% cada año\n") == [2.7, 2.5]                                   # two real columns stay
+
+
 def test_a_percentage_followed_by_composition_wording_is_not_an_annual_impact():
     """Package B census 2026-11-13, LU2842969151: "267 EUR / 1,3%" is the 2-year column, "1,04% del valor de su inversion por ano" is the management line; the plain-text binder published the
     management percentage as ACI_RHP (1.04 against the printed 1.3)."""

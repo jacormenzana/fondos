@@ -57,6 +57,7 @@ from cost_table_parser    import (
 )
 from cost_cross_validator import validate_pct_eur, ValidationResult
 from cost_table_parser import _total_fits_annual, _SCHEDULE_TOTAL_ANNUAL_RATIO_MIN, _SCHEDULE_TOTAL_ANNUAL_RATIO_MAX   # noqa: F401  (the coherence band: one definition, P#11)
+from cost_table_parser import _COMPOSITION_WORDING   # a cost component's own wording after its percentage: one definition (package B)
 
 # ---------------------------------------------------------------------------
 # Config con fallback aislado (mismo patrón que cost_cross_validator.py)
@@ -406,6 +407,8 @@ def _adjacent_pcts(head: str) -> List[float]:
         prefix = head[head.rfind('\n', 0, pct.start()) + 1:pct.start()]
         if _ROW_WORD.search(_ROW_FILLER.sub('', prefix)):
             break                                        # another row's name before the value
+        if _COMPOSITION_WORDING.match(head, pct.end()):
+            break                                        # FIX-ACI-ADJACENT-COMPONENT (2026-11-13, package B): "0.5% del valor de su inversion al ano" is the management line, not a second ACI column
         value = _pct_token_to_float(pct.group(2))
         if not (0 < value <= _ACI_ANCHOR_MAX_PCT):
             break
@@ -579,6 +582,9 @@ def _recover_composition_from_description(text: str) -> tuple:
             if mgmt is None:
                 mgmt = value
     return mgmt, tran
+
+
+_COLLAPSED_REJECTS_PROJECTION = True      # FIX-ACI-COLLAPSED-NOT-PROJECTION: False restores the former behaviour (used only by the old-vs-new measurement harness)
 
 
 def _label_vouches_for(text: str, aci_pct: Optional[float]) -> bool:
@@ -1293,7 +1299,11 @@ def extract_priips_costs(
             ]
             if len(_valid_acis) == 1:
                 _fb_aci3 = _valid_acis[0]
-                if 0 < _fb_aci3 <= _MAX_ACI_RATIO:
+                # FIX-ACI-COLLAPSED-NOT-PROJECTION (2026-11-13, package B): a value FIX-ACI-PROJECTION-REJECT has just thrown out as the footnote's return projection ("0,13 % antes de deducir los costes")
+                # must not come back through this fallback: ES0165142003 (0.13 for a printed 0.17), NO0013528356 (6.1 for 1.9), the LU funds that stored 11.88. NULL > wrong.
+                _fb_is_projection = (_COLLAPSED_REJECTS_PROJECTION and _matches_return_projection(text, _ratio_to_pct(_fb_aci3))
+                                     and not _label_vouches_for(text, _ratio_to_pct(_fb_aci3)))
+                if 0 < _fb_aci3 <= _MAX_ACI_RATIO and not _fb_is_projection:
                     out['ACI_RHP'] = _ratio_to_pct(_fb_aci3)
                     if 'ACI_1Y' not in out:
                         out['ACI_1Y'] = _ratio_to_pct(_fb_aci3)
