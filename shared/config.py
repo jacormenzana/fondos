@@ -391,6 +391,11 @@ P3_NAV_UNIVERSE_PERCENTILE: float = 0.10
 # so a partial refresh after a version bump (or a sample run) must not silently produce a portfolio.
 P3_MIN_UNIFORM_METRICS_SHARE: float = 0.98
 P3_MACRO_RELEASE_LAG_INDICATORS: tuple = ("ipc_yoy_avg", "cli_eu")
+# FND-0256: judge every LEG of a composite regime input (ipc_yoy_avg = mean of the ES and EU CPI legs) against its own series limit
+# (shared/macro_freshness.py), because a dead leg leaves the average looking alive on the other leg alone. SHADOW while False: the
+# check is computed and printed in every gate report ("SHADOW: would block") but never makes the gate STALE; True makes a
+# DEGRADED / BLIND composite input STALE (the build and the promotion refuse, like any stale input). Flipped by its own reviewed commit.
+P3_MACRO_LEG_CHECK_ENABLED: bool = False
 # Publication lag, in months, of the release-lagged regime inputs, keyed by series_macro.indicator (FND-0194).
 # Used ONLY by the backtester (RegimeClassifier(publication_lags=...)): the value dated month m is treated as
 # observable from month m+lag, so the regime at t uses only data already published at t. Deliberately

@@ -129,6 +129,8 @@ def test_the_gate_adds_the_canary_only_when_the_flag_is_on(monkeypatch, switch):
     monkeypatch.setattr(df, "evaluate_freshness", lambda *a, **k: [])
     import shared.family_refresh as _fr
     monkeypatch.setattr(_fr, "pending_family_refresh", lambda conn, active_only=True: [])      # the family-refresh check is its own test
+    monkeypatch.setattr(df, "load_macro_leg_latest", lambda conn: {})                         # so is the macro-leg check (FND-0256)
+    monkeypatch.setattr(df, "macro_leg_checks", lambda *a, **k: [])
     seen = []
     monkeypatch.setattr(df, "load_fx_canary_pairs", lambda conn: seen.append(1) or [])
     switch(False)

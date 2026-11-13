@@ -58,6 +58,8 @@ def test_the_gate_adds_fx_coverage_only_with_the_eur_view(monkeypatch):
     monkeypatch.setattr(df, "evaluate_freshness", lambda *a, **k: [])
     import shared.family_refresh as _fr
     monkeypatch.setattr(_fr, "pending_family_refresh", lambda conn, active_only=True: [])
+    monkeypatch.setattr(df, "load_macro_leg_latest", lambda conn: {})                         # the macro-leg check is its own test (FND-0256)
+    monkeypatch.setattr(df, "macro_leg_checks", lambda *a, **k: [])
     monkeypatch.setattr(df, "load_fx_canary_pairs", lambda conn: [])
     monkeypatch.setattr(df, "load_fx_coverage_inputs",
                         lambda conn: ({"USD": (date(2026, 10, 7), date(2026, 9, 1), 3)}, 2))

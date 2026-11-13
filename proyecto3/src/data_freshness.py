@@ -149,6 +149,36 @@ def load_freshness_inputs(conn) -> tuple[list, object, list]:
     return [r[1] for r in nav_rows], (harvest[0] if harvest else None), [r[1] for r in ver_rows]
 
 
+def macro_leg_checks(latest: Mapping, today: date, enforce: bool) -> list[FreshnessCheck]:
+    """FND-0256 (pure): one check per COMPOSITE regime input, judged leg by leg against each series' own limit.
+
+    `latest` = {(indicator, geography): newest stamped date} (shared.macro_freshness.assess shape). The regime input ipc_yoy_avg
+    is the mean of the ES and EU CPI legs, so a dead leg leaves the average "fresh" on the other leg alone; the gate above only
+    sees the newest point of the average. State OK = every leg inside its limit; DEGRADED / BLIND = some / no leg alive.
+    `enforce` False (SHADOW): a bad state is reported ("SHADOW: would block") but the check stays ok, so nothing refuses."""
+    from shared import macro_freshness as mf
+    dated = {k: d for k, d in ((k, _to_date(v)) for k, v in latest.items()) if d is not None}
+    composites = mf.composite_legs(mf.assess(dated, today))
+    out: list[FreshnessCheck] = []
+    for name, c in composites.items():
+        legs = ", ".join(f"{g}={v}" for g, v in c["legs"].items())
+        bad = c["state"] != "OK"
+        note = "" if not bad else ("" if enforce else "; SHADOW: would block (P3_MACRO_LEG_CHECK_ENABLED is off)")
+        out.append(FreshnessCheck(f"macro_legs:{name}", None, None, 0, (not bad) or (not enforce),
+                                  f"{c['state']}: {legs}{note}", show_age=False))
+    return out
+
+
+def load_macro_leg_latest(conn) -> dict:
+    """{(indicator, geography): newest stamped date} for the series that are legs of a composite regime input."""
+    from shared.macro_freshness import COMPOSITE_INPUTS
+    legs = {p for pairs in COMPOSITE_INPUTS.values() for p in pairs}
+    rows = conn.execute(
+        "SELECT indicator, geography, MAX(date) FROM series_macro WHERE indicator = ANY(%s) GROUP BY indicator, geography",
+        (sorted({i for i, _ in legs}),)).fetchall()
+    return {(r[0], r[1]): r[2] for r in rows if (r[0], r[1]) in legs}
+
+
 def family_refresh_check(pending: list, limit: int = 50) -> FreshnessCheck:
     """FND-0244 follow-up lock (pure): is any ACTIVE fund still waiting for the refresh of its nature-derived attributes?
 
@@ -277,6 +307,7 @@ def check_universe_freshness(conn, classifier, today: Optional[date] = None) -> 
     )
     from shared.family_refresh import pending_family_refresh
     checks = list(checks) + [family_refresh_check(pending_family_refresh(conn))]
+    checks = list(checks) + macro_leg_checks(load_macro_leg_latest(conn), today or date.today(), _config.P3_MACRO_LEG_CHECK_ENABLED)
     if _config.FX_CONTRIBUTION_EUR_VIEW_ENABLED:      # FND-0235: the scorer reads fx_contribution_ann; refuse a legacy-signed one
         checks = list(checks) + [fx_view_canary_check(load_fx_canary_pairs(conn))]
     if _config.EUR_NAV_CONVERSION_ENABLED:            # FND-0243: every active non-EUR class must be convertible up to its NAV
