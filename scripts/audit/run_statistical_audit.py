@@ -125,7 +125,7 @@ if str(_ROOT) not in sys.path:
 
 import pandas as pd
 
-from shared.cost_rounding import aci_rounding_explained   # FND-0034 (2026-11-08): one definition with P1
+from shared.cost_rounding import aci_components_band, aci_rounding_explained   # FND-0034 (2026-11-08): one definition with P1
 from shared.config import (
     AUDIT_CANARIES_ENABLED, AUDIT_COMPLETENESS_CONTRACT_ENABLED, AUDIT_RESIDUAL_EXPIRY_WARN_DAYS, CRISIS_WINDOWS, MIN_NAV_ROWS, P3_FUND_NAV_MAX_AGE_DAYS,
     P3_MIN_UNIFORM_METRICS_SHARE, ROLLING_WINDOWS,
@@ -174,7 +174,7 @@ from shared.statistical_audit.reconcile import reconcile_with_alerts
 from shared.statistical_audit.recompute_gate import assert_recompute_happened, capture_state
 from shared.statistical_audit.snapshot import build_population, build_snapshot
 from shared.statistical_audit.timeseries import build_window_deflation_frame, scalar_window_cpi
-from shared.statistical_audit.tolerances import ACI_ORDER_TOLERANCE_PP, IPC_ELIGIBILITY_FLOOR, KID_ROUNDING_TOLERANCE_PP
+from shared.statistical_audit.tolerances import ACI_COMPONENTS_TOLERANCE_PP, ACI_ORDER_TOLERANCE_PP, IPC_ELIGIBILITY_FLOOR, KID_ROUNDING_TOLERANCE_PP
 from shared.statistical_audit.text_evidence import aci_pair_printed
 
 MIN_PEERS = 5
@@ -420,6 +420,36 @@ def _mark_oc_rounding(master: "pd.DataFrame") -> None:
                                                   master["Entry_Fee_Pct_Max"], master["Exit_Fee_Pct_Max"], master["Performance_Fee_Pct"])]
 
 
+def _mark_aci_components(conn: "psycopg.Connection", master: "pd.DataFrame") -> None:
+    """Add the columns ACI_RHP_VS_COMPONENTS needs to the fund_master frame, in place (package B, FND-0034, 2026-11-13): ACI_Components_Low / _High (shared.cost_rounding.aci_components_band),
+    ACI_Components_Eligible (the band exists and ACI_RHP is stored) and ACI_Pair_Printed (the stored KID text prints the stored ACI_1Y / ACI_RHP pair: shared.statistical_audit.text_evidence,
+    independent of the extractor). Only the eligible funds whose ACI_RHP falls outside the band are looked up (a few dozen texts)."""
+    for col in ("ACI_Components_Low", "ACI_Components_High"):
+        master[col] = float("nan")
+    master["ACI_Components_Eligible"] = False
+    master["ACI_Pair_Printed"] = False
+    need = {"ISIN", "ACI_1Y", "ACI_RHP", "Management_Fee_Pct", "Transaction_Cost_Pct", "Cost_RHP_Years"}
+    if master.empty or not need <= set(master.columns):
+        return
+    for col in ("Entry_Fee_Pct", "Exit_Fee_Pct", "Entry_Fee_Pct_Max", "Exit_Fee_Pct_Max", "Performance_Fee_Pct"):
+        if col not in master.columns:
+            master[col] = None
+    bands = [aci_components_band(m, t, en, enm, ex, exm, pf, h) for m, t, en, enm, ex, exm, pf, h in zip(
+        master["Management_Fee_Pct"], master["Transaction_Cost_Pct"], master["Entry_Fee_Pct"], master["Entry_Fee_Pct_Max"],
+        master["Exit_Fee_Pct"], master["Exit_Fee_Pct_Max"], master["Performance_Fee_Pct"], master["Cost_RHP_Years"])]
+    master["ACI_Components_Low"] = [float("nan") if b is None else b[0] for b in bands]
+    master["ACI_Components_High"] = [float("nan") if b is None else b[1] for b in bands]
+    master["ACI_Components_Eligible"] = master["ACI_Components_Low"].notna() & master["ACI_RHP"].notna()
+    tol = ACI_COMPONENTS_TOLERANCE_PP
+    outside = master[master["ACI_Components_Eligible"] & ~((master["ACI_RHP"] > master["ACI_Components_Low"] - tol) & (master["ACI_RHP"] < master["ACI_Components_High"] + tol))]
+    if outside.empty:
+        return
+    texts = {r[0]: r[1] for r in conn.execute("SELECT isin, raw_kiid_text FROM fund_kiid_metadata WHERE isin = ANY(%s)", (sorted(outside["ISIN"].tolist()),)).fetchall()}
+    printed = {row.ISIN for row in outside.itertuples()
+               if aci_pair_printed(texts.get(row.ISIN), None if pd.isna(row.ACI_1Y) else float(row.ACI_1Y), float(row.ACI_RHP))}
+    master.loc[master["ISIN"].isin(printed), "ACI_Pair_Printed"] = True
+
+
 def run_cost_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = None) -> "AuditRun":
     master_filter, master_params = _isin_filter(conn, isins, "ISIN")
     schedule_filter, schedule_params = _isin_filter(conn, isins, "s.ISIN")
@@ -429,6 +459,7 @@ def run_cost_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = Non
     schedule = _restore_case(build_population(conn, schedule_query, schedule_params), _COST_SCHEDULE_COLS)
     _mark_printed_rises(conn, master)
     _mark_oc_rounding(master)
+    _mark_aci_components(conn, master)
     frames_by_table = {"fund_master": master, "fund_cost_schedule": schedule}
 
     run = AuditRun(domain="cost_attributes")

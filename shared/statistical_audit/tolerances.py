@@ -71,6 +71,11 @@ ACI_ORDER_TOLERANCE_PP = 0.1001
 # An entry fee amortises visibly from one published unit (ACI_MUST_AMORTISE): ACI_PUBLISHED_UNIT_PP - FLOAT_IDENTITY_TOLERANCE.
 ACI_AMORTISATION_VISIBLE_PP = 0.0999
 
+# ACI_RHP against the cost components (ACI_RHP_VS_COMPONENTS, FND-0034 package B, 2026-11-13): the printed ACI is rounded to one unit, so it may sit up to half a unit from management +
+# transaction cost (+ the entry / exit charge spread over the holding period). A gap of exactly half a unit is CONSISTENT with the rounding (1.25 prints 1.3), so it stays inside: the opposite
+# edge of shared.cost_rounding.aci_rounding_explained, which must not let an OC copy through, whereas here a tie is symmetric evidence.
+ACI_COMPONENTS_TOLERANCE_PP = ACI_PUBLISHED_UNIT_PP / 2 + 1e-9
+
 # --- Class 2: float-identity comparisons ---
 # OC_NOT_CONTAMINATED, SHARPE_EQUALS_SORTINO, SORTINO_VS_SHARPE_UP, CAPTURE_UP_EQUALS_DOWN (2026-10-07: at the former
 # 0.001 the expected CHANCE matches, ~10 of 2,810 rows, exceeded min_matches),

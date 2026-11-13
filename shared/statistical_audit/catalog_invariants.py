@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from ..regime_taxonomy import REGIME_SUFFIX
 from .invariants import InvariantRule
-from .tolerances import (ACI_AMORTISATION_VISIBLE_PP, ACI_ORDER_TOLERANCE_PP, FLOAT_IDENTITY_TOLERANCE, IPC_ELIGIBILITY_FLOOR, KID_ONE_YEAR_RATIO_MAX,
+from .tolerances import (ACI_AMORTISATION_VISIBLE_PP, ACI_COMPONENTS_TOLERANCE_PP, ACI_ORDER_TOLERANCE_PP, FLOAT_IDENTITY_TOLERANCE, IPC_ELIGIBILITY_FLOOR, KID_ONE_YEAR_RATIO_MAX,
                          KID_ONE_YEAR_RATIO_MIN, KID_ROUNDING_TOLERANCE_PP, SHARPE_VOL_FLOOR)
 
 P2_INVARIANTS: tuple[InvariantRule, ...] = (
@@ -196,4 +196,14 @@ COST_INVARIANTS: tuple[InvariantRule, ...] = (
                   f"abs(Ongoing_Charge_Recurrent * 100 - ACI_RHP) > {FLOAT_IDENTITY_TOLERANCE}",
                   when="not OC_ACI_Rounding_Explained",
                   bound_type="HARD_INVARIANT", description="OC contaminated with the ACI"),
+    # 2026-11-13 (owner decision, package B / FND-0034): the stored ACI_RHP is checked against the cost components, because no rule saw a stored value the KID contradicts: 20 funds stored the 1-year
+    # figure or a scenario percentage (6.66 for a printed 1.66, 11.88 for a printed 2.4) and one stored the management line (1.04 for a printed 1.3). The band is management + transaction cost
+    # (ACI_Components_Low) up to that plus the entry and exit charges spread over the holding period (ACI_Components_High; the entry charge may or may not be in the ACI, so both ends are valid),
+    # half a published unit either side. Applies where the components are known, no performance fee is charged, the holding period is a year or more (under a year the KID prints the cost of the
+    # PERIOD, not an annual figure), and the KID text does NOT print the stored pair (ACI_Pair_Printed, shared.statistical_audit.text_evidence: independent of the extractor).
+    # Columns set by run_statistical_audit._mark_aci_components.
+    InvariantRule("ACI_RHP_VS_COMPONENTS",
+                  f"ACI_RHP > ACI_Components_Low - {ACI_COMPONENTS_TOLERANCE_PP} and ACI_RHP < ACI_Components_High + {ACI_COMPONENTS_TOLERANCE_PP}",
+                  when="ACI_Components_Eligible and not ACI_Pair_Printed",
+                  bound_type="HARD_INVARIANT", description="ACI_RHP outside management + transaction cost + entry / exit (not printed by the document)"),
 )
