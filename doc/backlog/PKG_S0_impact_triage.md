@@ -52,5 +52,11 @@ Corrections to Revision 1: the flat `ipc_yoy_avg` for Sep-Nov is expected (Septe
 - Wave 1 closed by the autopilot (all five CLOSED). Wave 2 (second closing commit): 0289, 0308, 0394.
 - Not touched (no decision yet): FND-0397 stays NO GO, DRAFT promotion, the 0239 / 0385 pair, the WIP limit.
 
+## 5b. Promotion readiness of DRAFT `cartera_shock_energetico_202611_b20261112220456` (dry run, read-only, 2026-11-13)
+- Passes: weights sum 1.0000, 30 funds; non-EUR exposure 30.0 % (budget 30 %); structural liquidity 0 % (cap 10 %); P3 freshness clean; P2 audit `post_20261112_221002_p2` (age 0 d, built after the DRAFT); 0 hard defects in or out of the portfolio; audit coverage OK; alarm watch 0 funds; data suspicion 0 funds; DATA pillar PASS, ORCHESTRATION PASS.
+- **Only blocker: `[GATE:CODE]` "1 modified tracked file" = the foreign deletion `redireccion`** (TECHNICAL = FAIL). Whoever owns that deletion must commit or restore it; then the same gate should pass. Promotion stays the owner's command.
+- Informational (does not block): 175 statistical ALARM flags in 19 held funds; the largest are LU0474963815 (26), FR0000989626 (23), LU2095450123 (22), FR001400I0X7 (16), IE00B3Q8M574 (14) and **IE00008TZ2E8 (46, the fund of FND-0397 / 0402, held at 5.5 %)**. Types: pct_negative_months, pct_positive_months, ret_vol_simple, return_ann_slope. This is new evidence for the FND-0397 decision, not proof of a defect.
+- Turnover against PRODUCTION: 6 funds out (15.5 %), 6 in (18.0 %), one-way 18 %.
+
 ## 5. Next steps after the checkpoint
 Add closing conditions (`add_close_condition`); one docs-only commit with `Closes:` and `Solution:` in the same last paragraph as `Co-Authored-By`; autopilot dry run (`backlog_autopilot.py --since-days 1`) must print a decision per ticket; the rest goes to the owner's `close_release.py` list. Then package 1 (integrity of the current selection).
