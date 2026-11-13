@@ -744,6 +744,8 @@ class PortfolioBuilder:
         # evidence audit. Information only: it never fails the build (shared/governance/lineage.safe_stamp).
         from shared.governance import lineage as _lineage
         portfolio.macro_context["metrics_lineage"] = _lineage.safe_stamp(self.conn, [f["isin"] for f in portfolio.all_funds])
+        from shared.governance.run_identity import build_identity as _build_identity     # git sha, clean flag, config hash: the audit header records the same three
+        portfolio.macro_context["build_identity"] = _build_identity()
 
         if not dry_run:
             self._persist(portfolio, score_version, replace_draft=replace_draft)

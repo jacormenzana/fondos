@@ -192,6 +192,7 @@ GATE_COST = "COST"                             # an open hard defect of the cost
 GATE_ALARM_WATCH = "ALARM_WATCH"               # FND-0289: a PRODUCTION fund on a watched ALARM gets a higher weight in the DRAFT
 GATE_DATA_SUSPECT = "DATA_SUSPECT"             # FND-0394: a fund of the scenario that the shared suspicion predicate flags and no verified-genuine exemption covers
 GATE_METRICS_LINEAGE = "METRICS_LINEAGE"       # FND-0306: the stored P2 metrics the DRAFT was built on differ from (or cannot be compared with) those the evidence audit judged
+GATE_AUDIT_IDENTITY = "AUDIT_IDENTITY"         # FND-0306: the evidence audit ran on other code or configuration than the DRAFT was built under (or either cannot be identified)
 # Sum of weights + declared cash must be 1 within this tolerance. The builder rounds to 4 dp by largest remainder, so the exact contract is
 # 1.0000; decision D2 sets the promotion tolerance to half a unit of the 4th decimal, applied by the orchestrator. The legacy gate keeps 1e-3.
 WEIGHT_TOLERANCE = 5e-5
@@ -205,7 +206,7 @@ AP_RE = re.compile(r"^FND-\d{4}$")
 # Gates a reasoned override (--accept-alarms "motivo" --ap FND-nnnn) may cover: defects ON the scenario, the audit's blind spots and the
 # alarm watch (FND-0289). Everything else is hard: exposure, cash, weights, freshness, a stale audit, and universe-only defects (their way out
 # is an accepted residual with its own AP and expiry, not a promotion flag).
-OVERRIDABLE_GATES = frozenset({GATE_DATA_SCENARIO, GATE_RESIDUAL_SCENARIO, GATE_DATA_COVERAGE, GATE_ALARM_WATCH, GATE_DATA_SUSPECT, GATE_METRICS_LINEAGE})
+OVERRIDABLE_GATES = frozenset({GATE_DATA_SCENARIO, GATE_RESIDUAL_SCENARIO, GATE_DATA_COVERAGE, GATE_ALARM_WATCH, GATE_DATA_SUSPECT, GATE_METRICS_LINEAGE, GATE_AUDIT_IDENTITY})
 
 
 def _names(items, limit: int = 6) -> str:
@@ -229,7 +230,7 @@ def evaluate_promotion(*, status: Optional[str], n_funds: int, weight_sum: float
                        alarm_watch: Optional[list] = None, alarm_watch_problem: Optional[str] = None,
                        alarm_watch_tolerance: float = 1e-4,
                        data_suspects: Optional[list] = None, data_suspect_problem: Optional[str] = None,
-                       lineage: Optional[tuple] = None,
+                       lineage: Optional[tuple] = None, identity: Optional[tuple] = None,
                        weight_tolerance: float = WEIGHT_TOLERANCE_LEGACY) -> PromotionVerdict:
     """Pure: why a scenario may not be promoted (empty `blockers` = promotable) and which gates a reasoned override covered.
 
@@ -266,7 +267,10 @@ def evaluate_promotion(*, status: Optional[str], n_funds: int, weight_sum: float
 
     `lineage` (FND-0306, only with shared.config.PROMOTION_AUDIT_IDENTITY_GATE_ENABLED; None = not evaluated, which is what the SHADOW mode passes): the
     (state, detail) of shared.governance.lineage.verdict for the DRAFT stamp against the evidence audit's. Anything but MATCH is METRICS_LINEAGE, reasoned override
-    with an AP: MISMATCH (P2 recomputed after the build or the audit), UNKNOWN (a stamp is missing: never a silent pass) and AMBIGUOUS (too few real stamps)."""
+    with an AP: MISMATCH (P2 recomputed after the build or the audit), UNKNOWN (a stamp is missing: never a silent pass) and AMBIGUOUS (too few real stamps).
+
+    `identity` (FND-0306, same switch; None = not evaluated): the (state, detail) of shared.governance.run_identity.identity_verdict, the DRAFT's build identity (git sha, clean
+    flag, config_hash) against the evidence audit header. Anything but MATCH is AUDIT_IDENTITY, reasoned override with an AP."""
     if max_cash is None:
         from shared.config import MAX_PORTFOLIO_CASH_WEIGHT as max_cash
     hard: list = []
@@ -344,6 +348,10 @@ def evaluate_promotion(*, status: Optional[str], n_funds: int, weight_sum: float
     if lineage is not None and lineage[0] != "MATCH":
         soft.append((GATE_METRICS_LINEAGE, g(GATE_METRICS_LINEAGE, f"linaje de metricas {lineage[0]}: {lineage[1]} (reconstruya el DRAFT y vuelva a "
                      "auditar con run_statistical_audit.py --domain p2 --persist; un sello ausente nunca se da por bueno)")))
+
+    if identity is not None and identity[0] != "MATCH":
+        soft.append((GATE_AUDIT_IDENTITY, g(GATE_AUDIT_IDENTITY, f"identidad de la auditoria {identity[0]}: {identity[1]} (reconstruya el DRAFT y vuelva a auditar "
+                     "con el mismo codigo y configuracion; una identidad ausente nunca se da por buena)")))
 
     verdict = PromotionVerdict(blockers=hard)
     if not soft:

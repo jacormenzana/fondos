@@ -175,6 +175,11 @@ CONTROLS = (
             "one in the manifest of the evidence audit run; a P2 recompute or a deletion after the build or the audit is a MISMATCH, a missing stamp UNKNOWN (never a pass), too many "
             "unstamped rows AMBIGUOUS, an unreadable lineage refuses (fail closed); FND-0306",
             BLOCK_UNLESS_OVERRIDE, SOURCE_GATE + "METRICS_LINEAGE", DORMANT_PREFIX + "PROMOTION_AUDIT_IDENTITY_GATE_ENABLED"),
+    Control("D-AUDIT-IDENTITY", PILLAR_DATA, "The evidence audit ran on the code and configuration the DRAFT was built under", _OWNER_PROMOTION,
+            "the DRAFT's build identity (shared/governance/run_identity.build_identity: git sha, clean flag, config_hash; stamped in its notes) equals the identity in the header of the "
+            "evidence audit run: a different config_hash or git sha is a MISMATCH, a missing identity UNKNOWN (never a pass), and equal shas on a tree with modified tracked files UNKNOWN "
+            "(the sha does not identify the code); FND-0306",
+            BLOCK_UNLESS_OVERRIDE, SOURCE_GATE + "AUDIT_IDENTITY", DORMANT_PREFIX + "PROMOTION_AUDIT_IDENTITY_GATE_ENABLED"),
     Control("D-DATA-UNIVERSE", PILLAR_DATA, "No unaccepted hard defect in the universe", _OWNER_AUDIT,
             "an open hard defect outside the scenario needs an active accepted residual (accept_audit_residual.py: ticket + expiry); "
             "there is no promotion-time override",

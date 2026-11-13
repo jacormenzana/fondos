@@ -89,7 +89,15 @@ def _evidence_header(conn, run_id):
     except Exception:                                            # noqa: BLE001 -- unreadable header = no header (GATE:MANIFEST says so)
         conn.rollback()
         return None
-    return None if row is None else dict(zip(("git_commit", "config_hash", "catalog_version", "manifest"), tuple(row)))
+    if row is None:
+        return None
+    header = dict(zip(("git_commit", "config_hash", "catalog_version", "manifest"), tuple(row)))
+    try:                                                         # FND-0306: the clean flag, read apart so a missing column can never remove the header (GATE:MANIFEST)
+        header["git_clean"] = conn.execute("SELECT git_clean FROM audit_run WHERE run_id = %s AND domain = %s", (run_id, AUDIT_DOMAIN)).fetchone()[0]
+    except Exception:                                            # noqa: BLE001
+        conn.rollback()
+        header["git_clean"] = None
+    return header
 
 
 def _cost_scope(conn, isins):
@@ -139,7 +147,7 @@ def _data_suspects(conn, isins) -> tuple:
 
 
 _LINEAGE_LABELS = {"audit": "DRAFT vs auditoria de evidencia (universo)", "universe_now": "DRAFT vs ahora (universo)",
-                   "scenario_now": "DRAFT vs ahora (fondos de la cartera)"}
+                   "scenario_now": "DRAFT vs ahora (fondos de la cartera)", "identity": "DRAFT vs auditoria de evidencia (codigo y configuracion)"}
 
 
 def _lineage(conn, scenario_id: str, isins, header) -> tuple:
@@ -147,17 +155,21 @@ def _lineage(conn, scenario_id: str, isins, header) -> tuple:
     stored metrics today (shared.governance.lineage.compare_draft). An unreadable lineage returns (None, reason): INCOMPLETE evidence, never a silent skip."""
     import json
     from shared.governance import lineage
+    from shared.governance.run_identity import identity_verdict
     try:
         row = conn.execute("SELECT notes FROM portfolio_scenarios WHERE scenario_id = %s", (scenario_id,)).fetchone()
         notes = row[0] if row else None
         if isinstance(notes, str):
             notes = json.loads(notes) if notes.strip() else {}
         stamp = notes.get("metrics_lineage") if isinstance(notes, dict) else None
+        build_id = notes.get("build_identity") if isinstance(notes, dict) else None
         now_universe, now_scenario = lineage.compute(conn), lineage.compute(conn, list(isins))
     except Exception as exc:                                     # noqa: BLE001 -- an unreadable lineage is reported, and refuses when the gate is ON
         conn.rollback()
         return None, f"{type(exc).__name__}: {str(exc).splitlines()[0][:160]}"
-    return lineage.compare_draft(stamp, (header or {}).get("manifest"), now_universe, now_scenario), None
+    results = lineage.compare_draft(stamp, (header or {}).get("manifest"), now_universe, now_scenario)
+    results["identity"] = identity_verdict(build_id, header)                                      # the code and configuration the audit ran under
+    return results, None
 
 
 def _print_lineage(results, problem, enforced: bool) -> None:
@@ -307,7 +319,9 @@ def main(argv=None) -> int:
                 print(f"    {isin}: {why}")
             gate_kw.update(data_suspects=suspects, data_suspect_problem=suspect_problem)
         if PROMOTION_AUDIT_IDENTITY_GATE_ENABLED:                # FND-0306 (ships OFF): ON uses the DRAFT-vs-audit verdict; an unreadable lineage refuses (fail closed)
-            gate_kw.update(lineage=lineage_results["audit"] if lineage_results else ("UNKNOWN", f"no se pudo leer el linaje ({lineage_problem})"))
+            unreadable = ("UNKNOWN", f"no se pudo leer el linaje ({lineage_problem})")
+            gate_kw.update(lineage=lineage_results["audit"] if lineage_results else unreadable,
+                           identity=lineage_results["identity"] if lineage_results else unreadable)
         legacy = lc.evaluate_promotion(**gate_kw)
         # FND-0265: the two-pillar verdict is always computed and printed; it DECIDES only with GOVERNANCE_ORCHESTRATOR_ENABLED (else shadow)
         tight = lc.evaluate_promotion(**gate_kw, weight_tolerance=lc.WEIGHT_TOLERANCE)                     # decision D2

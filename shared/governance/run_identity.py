@@ -99,3 +99,35 @@ def config_hash(module=None) -> str:
     for name, value in config_items(module):
         digest.update(f"{name}={value!r}\n".encode("utf-8"))
     return f"{CONFIG_HASH_VERSION}:{digest.hexdigest()[:12]}"
+
+
+def build_identity() -> dict:
+    """{"git_commit", "git_clean", "config_hash"} of the process that builds a DRAFT (FND-0306): the same three values the audit header records, computed by the
+    same functions (P#11). Information only: a git failure gives None values, never an exception."""
+    sha, clean = git_state()
+    return {"git_commit": sha, "git_clean": clean, "config_hash": config_hash()}
+
+
+def identity_verdict(draft, header) -> tuple:
+    """(MATCH | MISMATCH | UNKNOWN, detail): did the evidence audit run on the same code and configuration the DRAFT was built under? Pure (FND-0306).
+
+    `draft` = the DRAFT's build_identity (notes key `build_identity`), `header` = the audit_run row of the evidence run (git_commit, git_clean, config_hash).
+      * a missing identity on either side is UNKNOWN: never a silent pass;
+      * a different config_hash (a switch flipped or a mandate limit changed between the build and the audit) or a different git sha is a MISMATCH. A sha
+        also moves with a docs-only commit: the SHADOW window measures how often that fires before anyone enforces it;
+      * equal sha and hash but a tree with modified tracked files on either side is UNKNOWN: the sha does not identify what ran (the policy for git_clean = false)."""
+    def given(d, key):
+        return d.get(key) if hasattr(d, "get") else None
+    if not given(draft, "git_commit") or not given(draft, "config_hash"):
+        return "UNKNOWN", "the DRAFT carries no build identity (built before FND-0306, or git was unavailable)"
+    if not given(header, "git_commit") or not given(header, "config_hash"):
+        return "UNKNOWN", "the evidence audit header does not identify its code and configuration"
+    if given(draft, "config_hash") != given(header, "config_hash"):
+        return "MISMATCH", f"configuration differs: DRAFT {given(draft, 'config_hash')} vs audit {given(header, 'config_hash')} (a switch or a mandate limit changed between the build and the audit)"
+    a, b = str(given(draft, "git_commit")), str(given(header, "git_commit"))
+    if not (a.startswith(b) or b.startswith(a)):
+        return "MISMATCH", f"code differs: DRAFT built at {a[:9]}, audit run at {b[:9]} (any commit between them, docs included)"
+    unclean = [who for who, m in (("DRAFT", draft), ("audit", header)) if given(m, "git_clean") is not True]
+    if unclean:
+        return "UNKNOWN", f"same sha {a[:9]} but the {' and '.join(unclean)} ran on a tree with modified tracked files or an unknown state: the sha does not identify the code"
+    return "MATCH", f"same code {a[:9]} (clean tree) and configuration {given(draft, 'config_hash')}"
