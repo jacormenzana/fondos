@@ -65,6 +65,12 @@ def closed_ticket(conn, solution, minutes=600, nature="BUG"):
 
 # ---------------------------------------------------------------- migration
 
+
+def _db_today(conn):
+    """The date the DATABASE calls today. The routines compare with `current_date` of the server (UTC in the hermetic container), so a test must not take `date.today()` of the local clock: between 00:00 and 01:00
+    local time the two differ and 'today' passed as a revisit date was accepted as a future one (baseline run of 2026-11-13, 00:25)."""
+    return conn.execute("SELECT current_date").fetchone()[0]
+
 def test_groups_refuses_without_phase_b(pg_conn):
     _base(pg_conn)
     mig.migrate(pg_conn, "transitions")
@@ -181,7 +187,7 @@ def test_blocked_and_deferred_need_their_structured_record(db):
     good_b, good_d, prereq = _mk(db), _mk(db), _mk(db)
     tr(db, good_b, "IN_PROGRESS")
     tr(db, good_b, "BLOCKED", blocker=prereq)
-    tr(db, good_d, "DEFERRED", revisit_by=dt.date.today() + dt.timedelta(days=30))
+    tr(db, good_d, "DEFERRED", revisit_by=_db_today(db) + dt.timedelta(days=30))
     assert not violations(db, None, good_b) and not violations(db, None, good_d)
     # step 0's annotation of an already-blocked ticket clears it
     db.execute("SELECT backlog.sp_annotate_wait(%s, %s, 'structured blocker recorded later', %s)", (bare_blocked, ME, prereq))
@@ -195,10 +201,10 @@ def test_blocked_and_deferred_need_their_structured_record(db):
 def test_expired_revisit_is_listed(db):
     old, fresh = _mk(db), _mk(db)
     for ap in (old, fresh):
-        tr(db, ap, "DEFERRED", revisit_by=dt.date.today() + dt.timedelta(days=1))
+        tr(db, ap, "DEFERRED", revisit_by=_db_today(db) + dt.timedelta(days=1))
     # time passes: the routine refuses a past date, so the expiry is simulated by a later wait record dated yesterday
     db.execute("INSERT INTO backlog.wait_event (action_point_id, kind, condition_text, revisit_by, actor) VALUES (%s, 'DEFERRED', 'revisit date', %s, %s)",
-               (old, dt.date.today() - dt.timedelta(days=1), ME))
+               (old, _db_today(db) - dt.timedelta(days=1), ME))
     assert violations(db, "V-REVISIT-EXPIRED") == [("V-REVISIT-EXPIRED", old)]
     assert db.execute("SELECT status FROM backlog.BACKLOG WHERE action_point_id = %s", (old,)).fetchone()[0] == "DEFERRED"   # nothing moves
 

@@ -168,6 +168,13 @@ def test_the_watchers_facts_recorder_writes_the_deploy_fact_of_every_ticket_the_
 
 # ---------------------------------------------------------------- unblock and undefer, from the facts the runner itself reads
 
+
+def _db_today(conn):
+    """The date the DATABASE calls today. The routines compare with `current_date` of the server (UTC in the hermetic container), so a test must not take `date.today()` of the local clock: between 00:00 and 01:00
+    local time the two differ and 'today' passed as a revisit date was accepted as a future one (baseline run of 2026-11-13, 00:25)."""
+    return conn.execute("SELECT current_date").fetchone()[0]
+
+
 def test_unblock_and_undefer_are_decided_from_the_runners_own_reads_and_made_by_the_autopilot(db):
     blocker, blocked = _mk(db, "IN_PROGRESS"), _mk(db, "IN_PROGRESS")
     db.execute("SELECT backlog.sp_transition(p_ap_id => %s, p_to => 'BLOCKED', p_actor => %s, p_session_id => %s, p_comment => 'waiting for the blocker to close', p_blocker => %s)", (blocked, ME, SESSION, blocker))
@@ -183,9 +190,9 @@ def test_unblock_and_undefer_are_decided_from_the_runners_own_reads_and_made_by_
     ids = [blocker, blocked, deferred, still_blocked, other_open]
     tickets = tickets_of(db, ids)
     blockers, revisits = run.wait_facts(bc.list_wait_events(ids, conn=db), tickets)
-    assert blockers == {blocked: blocker, still_blocked: other_open} and revisits == {deferred: date.today() - timedelta(days=1)}
+    assert blockers == {blocked: blocker, still_blocked: other_open} and revisits == {deferred: _db_today(db) - timedelta(days=1)}
     as_role(db, "backlog_autopilot")
-    res = carry_out(db, ap_mod.Facts(tickets=tickets, blockers=blockers, revisits=revisits, today=date.today()))
+    res = carry_out(db, ap_mod.Facts(tickets=tickets, blockers=blockers, revisits=revisits, today=_db_today(db)))
     as_owner(db)
     assert (res["unblocked"], res["undeferred"], res["refused"]) == (1, 1, 0)
     assert (status(db, blocked), status(db, deferred), status(db, still_blocked)) == ("IN_PROGRESS", "TODO", "BLOCKED")        # the open blocker keeps its ticket blocked

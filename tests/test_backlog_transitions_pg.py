@@ -65,6 +65,12 @@ def db(pg_conn):
     return pg_conn
 
 
+def _db_today(conn):
+    """The date the DATABASE calls today. The routines compare with `current_date` of the server (UTC in the hermetic container), so a test must not take `date.today()` of the local clock: between 00:00 and 01:00
+    local time the two differ and 'today' passed as a revisit date was accepted as a future one (baseline run of 2026-11-13, 00:25)."""
+    return conn.execute("SELECT current_date").fetchone()[0]
+
+
 def _mk(conn, status="OPEN", n=[9000]):
     """A ticket created by the owner connection WITHOUT counting as a V-00 (the setting is what the routines use)."""
     n[0] += 1
@@ -338,10 +344,10 @@ def test_deferred_needs_a_revisit_date_in_the_future_or_an_event(db):
     ap = _mk(db, "OPEN")
     refused(db, "revisit_by", tr, ap, "DEFERRED")
     refused(db, "revisit_by", tr, ap, "DEFERRED", revisit_on_event="no")
-    refused(db, "future", tr, ap, "DEFERRED", revisit_by=dt.date.today())
-    tr(db, ap, "DEFERRED", revisit_by=dt.date.today() + dt.timedelta(days=30))
+    refused(db, "future", tr, ap, "DEFERRED", revisit_by=_db_today(db))
+    tr(db, ap, "DEFERRED", revisit_by=_db_today(db) + dt.timedelta(days=30))
     assert db.execute("SELECT kind, revisit_by, revisit_basis FROM backlog.wait_event WHERE action_point_id = %s", (ap,)).fetchone() == (
-        "DEFERRED", dt.date.today() + dt.timedelta(days=30), "DECLARED")
+        "DEFERRED", _db_today(db) + dt.timedelta(days=30), "DECLARED")
 
 
 def test_reopening_a_closed_ticket_is_a_normal_event_clears_the_closure_but_keeps_the_history(db):
