@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """FND-0276 / FND-0277: ACI_1Y and ACI_RHP are published with ONE decimal, so ACI_AMORTISATION_ORDER tolerates one published unit and
 ACI_MUST_AMORTISE applies only where the entry fee moves the ACI by at least one unit. The rows are the real funds that exposed it
-(IE00B52VLZ70: 1.4 vs 1.5; LU0895849734: 2.4 == 2.4 with an entry fee of 0.05 over 5 years)."""
+(IE00B52VLZ70: 1.4 vs 1.5). Entry_Fee_Pct is a ratio (0.05 == 5 %): LU0895849734 prints 2.4 == 2.4 with a 5 % entry charge over 5 years, which is a defect, not a charge "below the grid"."""
 from __future__ import annotations
 
 import os
@@ -20,6 +20,7 @@ RULES = {r.rule_id: r for r in COST_INVARIANTS}
 
 
 def _violations(rule_id: str, **row) -> int:
+    row.setdefault("ACI_Equal_Pair_Printed", False)    # 2026-11-13: ACI_MUST_AMORTISE is tolerated only where the KID text prints the equal pair (run_statistical_audit._mark_equal_pairs_printed)
     row.setdefault("ACI_Rise_Printed", False)          # 2026-11-06: ACI_AMORTISATION_ORDER is tolerated only where the KID text prints the rising pair (run_statistical_audit._mark_printed_rises)
     return len(check_invariant(pd.DataFrame([row]), RULES[rule_id]).violations)
 
@@ -34,8 +35,9 @@ def test_order_tolerates_one_published_unit_but_not_two():
 
 def test_amortisation_applies_only_when_the_entry_fee_moves_the_aci_by_a_unit():
     base = dict(ACI_1Y=2.4, ACI_RHP=2.4, Cost_RHP_Years=5.0)
-    assert _violations("ACI_MUST_AMORTISE", Entry_Fee_Pct=0.05, **base) == 0            # LU0895849734: 0.05 * 0.8 = 0.04 pp, below the grid
-    assert _violations("ACI_MUST_AMORTISE", Entry_Fee_Pct=0.125, **base) == 1           # 0.125 * 0.8 = 0.10 pp: visible, so equality is a defect
-    assert _violations("ACI_MUST_AMORTISE", Entry_Fee_Pct=1.0, **base) == 1
-    assert _violations("ACI_MUST_AMORTISE", Entry_Fee_Pct=1.0, ACI_1Y=2.4, ACI_RHP=2.0, Cost_RHP_Years=5.0) == 0
-    assert _violations("ACI_MUST_AMORTISE", Entry_Fee_Pct=1.0, ACI_1Y=2.4, ACI_RHP=2.4, Cost_RHP_Years=1.0) == 0   # RHP of one year: nothing to amortise over
+    # Entry_Fee_Pct is a RATIO (0.05 == 5 %): the rule scales it to percentage points before comparing it with the grid (package B, 2026-11-13; the earlier cases read 0.05 as 0.05 pp).
+    assert _violations("ACI_MUST_AMORTISE", Entry_Fee_Pct=0.0005, **base) == 0          # 0.05 % * 0.8 = 0.04 pp, below the grid
+    assert _violations("ACI_MUST_AMORTISE", Entry_Fee_Pct=0.00125, **base) == 1         # 0.125 % * 0.8 = 0.10 pp: visible, so equality is a defect
+    assert _violations("ACI_MUST_AMORTISE", Entry_Fee_Pct=0.05, **base) == 1            # a 5 % charge over 5 years moves the ACI by 4 pp: 2.4 == 2.4 is a defect (it was read as 0.04 pp)
+    assert _violations("ACI_MUST_AMORTISE", Entry_Fee_Pct=0.05, ACI_1Y=2.4, ACI_RHP=2.0, Cost_RHP_Years=5.0) == 0
+    assert _violations("ACI_MUST_AMORTISE", Entry_Fee_Pct=0.05, ACI_1Y=2.4, ACI_RHP=2.4, Cost_RHP_Years=1.0) == 0   # RHP of one year: nothing to amortise over

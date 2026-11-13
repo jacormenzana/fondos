@@ -108,3 +108,15 @@ def test_a_stored_pair_the_kid_prints_is_not_flagged_even_if_the_components_disa
             ("UNPRINTED", 2.2, 2.4, 0.9, 0.1, None, 0.0, None, None, None, 5.0)]
     texts = {"PRINTED": "Annual costs impact (*)\n2.2% 2.4% each year\nComposition of costs", "UNPRINTED": "Annual costs impact (*)\n1.2% 1.3% each year"}
     assert _violators(rows, texts) == ["UNPRINTED"]
+
+
+def test_an_equal_pair_the_kid_prints_is_not_an_amortisation_defect():
+    """ACI_MUST_AMORTISE (unit corrected, package B 2026-11-13): LU1139789298 prints "Annual cost impact (%) 1.7% 1.7%" at 1 and 5 years and says the 5 % entry charge goes to the distributor, so the
+    equal pair is faithful; an equal pair the KID does not print, with a stored 5 % charge, is a defect."""
+    rule = next(r for r in COST_INVARIANTS if r.rule_id == "ACI_MUST_AMORTISE")
+    cols = ["ISIN", "ACI_1Y", "ACI_RHP", "Entry_Fee_Pct", "Cost_RHP_Years"]
+    master = pd.DataFrame([("PRINTED", 1.7, 1.7, 0.05, 5.0), ("COPIED", 1.8, 1.8, 0.05, 5.0), ("SMALL", 1.8, 1.8, 0.0005, 5.0), ("AMORTISES", 2.4, 2.0, 0.05, 5.0)], columns=cols)
+    texts = {"PRINTED": "Total costs (USD) 170 807 | Annual cost impact (%)2 | 1.7% 1.7% | 2. This illustrates how costs reduce your return each year", "COPIED": "nothing printed"}
+    _runner()._mark_equal_pairs_printed(_Conn(texts), master)
+    assert master.set_index("ISIN")["ACI_Equal_Pair_Printed"].to_dict() == {"PRINTED": True, "COPIED": False, "SMALL": False, "AMORTISES": False}
+    assert sorted(check_invariant(master, rule).violations["ISIN"].tolist()) == ["COPIED"]

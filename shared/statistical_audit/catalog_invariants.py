@@ -141,7 +141,12 @@ COST_INVARIANTS: tuple[InvariantRule, ...] = (
                   description="Amortisation inverted (not printed by the document)"),
     InvariantRule(
         "ACI_MUST_AMORTISE", "ACI_1Y != ACI_RHP",
-        when=f"Cost_RHP_Years > 1 and Entry_Fee_Pct * (1 - 1 / Cost_RHP_Years) >= {ACI_AMORTISATION_VISIBLE_PP}",
+        # 2026-11-13 (package B, owner order): Entry_Fee_Pct is a RATIO (0.05 == 5 %; catalog_cost_columns: kind "ratio", 1,307 of 1,315 funds equal Entry_Fee_Pct_Max / 100), the ACI and
+        # the tolerance are percentage points. The rule compared the ratio with points, so a 5 % charge counted as 0.04 pp and it could never fire (0 violators in 575 funds with equal pairs
+        # and a holding period over one year; corrected: see AUDITORIA_ESTADISTICA.md). The FND-0276 sweep that read the 97 old violators as "an entry fee of 0.0525 % or less" read ratios as percent.
+        # An equal pair the KID itself prints is faithful (ACI_Equal_Pair_Printed, run_statistical_audit._mark_equal_pairs_printed): the same text evidence as ACI_AMORTISATION_ORDER. Corrected, the
+        # rule flagged LU1139789298 / LU1251922891 / LU1770914999, whose KIDs print "1.7% 1.7%" and say the 5 % entry charge goes to the distributor and is not in the costs shown: false positives.
+        when=f"Cost_RHP_Years > 1 and Entry_Fee_Pct * 100 * (1 - 1 / Cost_RHP_Years) >= {ACI_AMORTISATION_VISIBLE_PP} and not ACI_Equal_Pair_Printed",
         bound_type="HARD_INVARIANT", description="Entry cost must amortise",
     ),
     # FND-0280/0285 (2026-10-17). The components are ANNUAL percentages (management, transaction) published to 2 decimals; ACI_RHP is the cost

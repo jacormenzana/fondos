@@ -174,7 +174,8 @@ from shared.statistical_audit.reconcile import reconcile_with_alerts
 from shared.statistical_audit.recompute_gate import assert_recompute_happened, capture_state
 from shared.statistical_audit.snapshot import build_population, build_snapshot
 from shared.statistical_audit.timeseries import build_window_deflation_frame, scalar_window_cpi
-from shared.statistical_audit.tolerances import ACI_COMPONENTS_TOLERANCE_PP, ACI_ORDER_TOLERANCE_PP, IPC_ELIGIBILITY_FLOOR, KID_ROUNDING_TOLERANCE_PP
+from shared.statistical_audit.tolerances import (ACI_AMORTISATION_VISIBLE_PP, ACI_COMPONENTS_TOLERANCE_PP, ACI_ORDER_TOLERANCE_PP, IPC_ELIGIBILITY_FLOOR,
+                                                 KID_ROUNDING_TOLERANCE_PP)
 from shared.statistical_audit.text_evidence import aci_horizon_row_printed, aci_pair_printed
 
 MIN_PEERS = 5
@@ -451,6 +452,25 @@ def _mark_aci_components(conn: "psycopg.Connection", master: "pd.DataFrame") -> 
     master.loc[master["ISIN"].isin(printed), "ACI_Pair_Printed"] = True
 
 
+def _mark_equal_pairs_printed(conn: "psycopg.Connection", master: "pd.DataFrame") -> None:
+    """Add the boolean column ACI_Equal_Pair_Printed to the fund_master frame, in place (package B, owner order 2026-11-13): True where ACI_1Y equals ACI_RHP, a stored entry charge
+    would amortise visibly over the holding period AND the stored KID text prints exactly that pair (shared.statistical_audit.text_evidence, independent of the extractor).
+    ACI_MUST_AMORTISE does not apply to such a fund: a KID may state that the entry charge is paid to a distributor and is NOT part of the costs it prints (LU1139789298: 'Annual cost
+    impact 1.7% 1.7%' with an entry charge of up to 5 %), so the equal pair is faithful to the document. Only the funds the rule would flag are looked up."""
+    master["ACI_Equal_Pair_Printed"] = False
+    need = {"ISIN", "ACI_1Y", "ACI_RHP", "Entry_Fee_Pct", "Cost_RHP_Years"}
+    if master.empty or not need <= set(master.columns):
+        return
+    years = master["Cost_RHP_Years"]
+    amortises = (years > 1) & (master["Entry_Fee_Pct"] * 100 * (1 - 1 / years) >= ACI_AMORTISATION_VISIBLE_PP)
+    candidates = master[amortises & master["ACI_1Y"].notna() & master["ACI_RHP"].notna() & (master["ACI_1Y"] == master["ACI_RHP"])]
+    if candidates.empty:
+        return
+    texts = {r[0]: r[1] for r in conn.execute("SELECT isin, raw_kiid_text FROM fund_kiid_metadata WHERE isin = ANY(%s)", (sorted(candidates["ISIN"].tolist()),)).fetchall()}
+    printed = {row.ISIN for row in candidates.itertuples() if aci_pair_printed(texts.get(row.ISIN), float(row.ACI_1Y), float(row.ACI_RHP))}
+    master.loc[master["ISIN"].isin(printed), "ACI_Equal_Pair_Printed"] = True
+
+
 def run_cost_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = None) -> "AuditRun":
     master_filter, master_params = _isin_filter(conn, isins, "ISIN")
     schedule_filter, schedule_params = _isin_filter(conn, isins, "s.ISIN")
@@ -461,6 +481,7 @@ def run_cost_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = Non
     _mark_printed_rises(conn, master)
     _mark_oc_rounding(master)
     _mark_aci_components(conn, master)
+    _mark_equal_pairs_printed(conn, master)
     frames_by_table = {"fund_master": master, "fund_cost_schedule": schedule}
 
     run = AuditRun(domain="cost_attributes")
