@@ -541,7 +541,26 @@ def _extract_pct_from_cell(cell: str) -> Optional[float]:
     return round(val / 100.0, 6)
 
 
-def _extract_pct_list_from_cell(cell: str) -> List[float]:
+# A composition row's own wording after its percentage ("1,04% del valor de su inversion por ano", "1.04% of the value of your investment per year"): that percentage is a cost
+# COMPONENT (management / operating), never the annual impact of the horizon column.
+_COMPOSITION_WORDING = re.compile(
+    r'\s*(?:del?\s+valor\s+de\s+su\s+inversi|of\s+the\s+value\s+of\s+your\s+investment|de\s+la\s+valeur\s+de\s+votre\s+investissement|des\s+wertes\s+ihrer\s+anlage)',
+    re.IGNORECASE,
+)
+
+
+def _extract_aci_pct_from_fragment(fragment: str) -> Optional[float]:
+    """FIX-ACI-PLAIN-COMPOSITION-PCT (2026-11-13, package B census): like `_extract_pct_from_cell`, but skips a percentage that is followed by composition-row wording. LU2842969151 printed
+    "267 EUR / 1,3%" for its 2-year column and "1,04% del valor de su inversion por ano" (management) inside the same 200-character fragment: the management line was bound as the RHP annual impact
+    and ACI_RHP was published as 1.04 instead of 1.3. None when no percentage is left. Pure."""
+    for m in PCT_PATTERN.finditer(fragment):
+        if _COMPOSITION_WORDING.match(fragment, m.end()):
+            continue
+        return _extract_pct_from_cell(fragment[m.start():])
+    return None
+
+
+def _extract_pct_list_from_cell(cell: str, skip_composition: bool = False) -> List[float]:
     """
     Extrae TODOS los porcentajes de una celda como ratios decimales, en orden
     de aparición (misma conversión que _extract_pct_from_cell, pero sin
@@ -552,6 +571,8 @@ def _extract_pct_list_from_cell(cell: str) -> List[float]:
     """
     out: List[float] = []
     for m in PCT_PATTERN.finditer(cell):
+        if skip_composition and _COMPOSITION_WORDING.match(cell, m.end()):
+            continue                          # a cost component's own line, not an annual-impact column (FIX-ACI-PLAIN-COMPOSITION-PCT)
         g = m.group(1).replace(',', '.')
         if g.count('.') > 1:
             g = g.replace('.', '', g.count('.') - 1)
@@ -1133,7 +1154,7 @@ def _parse_costs_over_time_plain(text: str) -> List[dict]:
         fragment   = window[frag_start:frag_end]
 
         total_cost_eur = _extract_eur_from_cell(fragment)
-        aci_pct        = _extract_pct_from_cell(fragment)
+        aci_pct        = _extract_aci_pct_from_fragment(fragment)
         # FIX-P1-AA: some layouts print ACI% BEFORE the year label
         # (e.g. "Incidencia anual de los costes 3,7%  Período recomendado (7 años)").
         # The 200-char forward fragment misses it; look backward up to 300 chars,
@@ -1198,9 +1219,9 @@ def _parse_costs_over_time_plain(text: str) -> List[dict]:
             else:
                 _zone_fwd = window
                 _zone_bwd = ""
-            _pct_list = _extract_pct_list_from_cell(_zone_fwd)
+            _pct_list = _extract_pct_list_from_cell(_zone_fwd, skip_composition=True)
             if not _pct_list and _zone_bwd:
-                _pct_list = _extract_pct_list_from_cell(_zone_bwd)
+                _pct_list = _extract_pct_list_from_cell(_zone_bwd, skip_composition=True)
             _aci = _pct_list[0] if _pct_list else None
             _eur = _extract_eur_from_cell(window)
             if len(_pct_list) == len(_global_years) and len(_global_years) > 1:

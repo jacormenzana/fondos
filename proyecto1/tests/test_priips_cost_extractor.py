@@ -1560,6 +1560,19 @@ def test_a_detached_five_year_row_is_the_rhp_value_not_a_copy_of_the_one_year_va
     assert _recover_aci_from_label(only) == (6.66, 6.66)                                                       # no other horizon printed: the single-column rule stands
 
 
+def test_a_percentage_followed_by_composition_wording_is_not_an_annual_impact():
+    """Package B census 2026-11-13, LU2842969151: "267 EUR / 1,3%" is the 2-year column, "1,04% del valor de su inversion por ano" is the management line; the plain-text binder published the
+    management percentage as ACI_RHP (1.04 against the printed 1.3)."""
+    from cost_table_parser import _extract_aci_pct_from_fragment, _extract_pct_list_from_cell
+    line = "1,04% del valor de su inversión por año.\nEsto es una estimación"
+    assert _extract_aci_pct_from_fragment(line) is None
+    assert _extract_aci_pct_from_fragment(line + "\n267 €\n1,3%") == 0.013
+    assert _extract_aci_pct_from_fragment("1.04% of the value of your investment per year. 2.3% each year") == 0.023
+    assert _extract_aci_pct_from_fragment("1,3%\n1,04% del valor de su inversión por año") == 0.013             # the column value first: unchanged
+    assert _extract_pct_list_from_cell("1,04% del valor de su inversión por año 0,27% del valor de su inversión por año") == [0.0104, 0.0027]   # default: unchanged
+    assert _extract_pct_list_from_cell("1,04% del valor de su inversión por año 1,3%", skip_composition=True) == [0.013]
+
+
 def test_the_recommended_period_is_read_from_the_sentence_form_but_not_from_a_footnote():
     """M&G Lux (49 funds, Cost_RHP_Years NULL -> no RHP schedule row -> SCHEDULE_ACI_RHP_ORPHAN): "El periodo de mantenimiento recomendado de este Fondo es de 5 anos"."""
     from priips_cost_extractor import _extract_rhp_years
