@@ -1544,6 +1544,9 @@ def test_the_annual_costs_impact_label_in_the_plural_anchors_the_row():
     text = "Scenarios If you exit after 1 Year\nIf you exit after 5 Years \nTotal Costs 220 EUR 1 828 EUR\nAnnual costs impact (*) \n2.2% 2.4% each year\nComposition of costs \n"
     assert _recover_aci_from_label(text) == (2.2, 2.4)
     assert _recover_aci_from_label(text.replace("costs impact", "cost impact")) == (2.2, 2.4)        # the singular keeps working
+    # IE00BZ60KV97: the Spanish word order "Impacto anual de los costes(*)" with both columns after it (the 5-year column was never read: ACI_RHP stored 7.28, printed 3.31)
+    es = "Costes totales 728 USD 2752 USD\nImpacto anual de los costes(*) \n7,28 % 3,31 %\n \n*Refleja la medida en que los costes reducen su rendimiento"
+    assert _recover_aci_from_label(es) == (7.28, 3.31)
 
 
 def test_a_detached_five_year_row_is_the_rhp_value_not_a_copy_of_the_one_year_value():

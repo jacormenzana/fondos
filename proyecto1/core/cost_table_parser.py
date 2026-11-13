@@ -169,6 +169,8 @@ ACI_LABEL_ANCHOR = re.compile(
     # FIX-ACI-LABEL-PLURAL (2026-11-13, package B census): "Annual costs impact (*)" (7 LU funds, "2.2% 2.4% each year") is the plural of the singular below; without it the anchor
     # stayed mute and the scenario-table percentage (11.88) was published as ACI_1Y / ACI_RHP.
     r'|annual\s*costs?\s*impact'
+    # FIX-ACI-LABEL-ANNUAL-OF-COSTS (2026-11-13, package B): "Impacto anual de los costes(*)" followed by "7,28 % 3,31 %" (IE00BZ60KV97) is the Spanish word order none of the variants above covers.
+    r'|impacto\s*(?:anual\s*)?de\s*los\s*costes?'
     r'|impact\s*of\s*annual\s*costs?'
     # FIX-ACI-LABEL-YIELD-REDUCTION (2026-08-23): M&G y siblings rotulan la fila
     # por su EFECTO ("Incidencia sobre el rendimiento (reducción del rendimiento)
