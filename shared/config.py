@@ -397,6 +397,11 @@ P3_MACRO_RELEASE_LAG_INDICATORS: tuple = ("ipc_yoy_avg", "cli_eu")
 # STALE, so the build and the promotion refuse like for any stale input (--allow-stale is audited). False = SHADOW: the check is still
 # computed and printed in every gate report ("SHADOW: would block") but never makes the gate STALE. Kill switch.
 P3_MACRO_LEG_CHECK_ENABLED: bool = True
+# FND-0306: the promotion gate compares the stored P2 metrics the DRAFT was built on with those of the evidence audit run (shared/governance/lineage.py).
+# SHADOW while False (ships OFF): p3_promote_scenario.py always computes and prints the verdicts and writes one ingestion_log shadow line per real attempt,
+# but nothing is refused. True: a lineage that is not MATCH (MISMATCH, UNKNOWN, AMBIGUOUS) refuses under [GATE:METRICS_LINEAGE], overridable with a written
+# reason and the owning ticket like the other data gates. Flip only after a shadow window over two real DRAFTs and a deliberate mismatch rehearsal.
+PROMOTION_AUDIT_IDENTITY_GATE_ENABLED: bool = False
 # Publication lag, in months, of the release-lagged regime inputs, keyed by series_macro.indicator (FND-0194).
 # Used ONLY by the backtester (RegimeClassifier(publication_lags=...)): the value dated month m is treated as
 # observable from month m+lag, so the regime at t uses only data already published at t. Deliberately

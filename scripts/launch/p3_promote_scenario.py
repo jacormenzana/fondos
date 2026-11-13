@@ -138,6 +138,37 @@ def _data_suspects(conn, isins) -> tuple:
         return None, f"{type(exc).__name__}: {str(exc).splitlines()[0][:160]}"
 
 
+_LINEAGE_LABELS = {"audit": "DRAFT vs auditoria de evidencia (universo)", "universe_now": "DRAFT vs ahora (universo)",
+                   "scenario_now": "DRAFT vs ahora (fondos de la cartera)"}
+
+
+def _lineage(conn, scenario_id: str, isins, header) -> tuple:
+    """(results, problem) of the FND-0306 lineage comparisons: the DRAFT's stamp (notes key `metrics_lineage`) against the evidence audit's manifest and against the
+    stored metrics today (shared.governance.lineage.compare_draft). An unreadable lineage returns (None, reason): INCOMPLETE evidence, never a silent skip."""
+    import json
+    from shared.governance import lineage
+    try:
+        row = conn.execute("SELECT notes FROM portfolio_scenarios WHERE scenario_id = %s", (scenario_id,)).fetchone()
+        notes = row[0] if row else None
+        if isinstance(notes, str):
+            notes = json.loads(notes) if notes.strip() else {}
+        stamp = notes.get("metrics_lineage") if isinstance(notes, dict) else None
+        now_universe, now_scenario = lineage.compute(conn), lineage.compute(conn, list(isins))
+    except Exception as exc:                                     # noqa: BLE001 -- an unreadable lineage is reported, and refuses when the gate is ON
+        conn.rollback()
+        return None, f"{type(exc).__name__}: {str(exc).splitlines()[0][:160]}"
+    return lineage.compare_draft(stamp, (header or {}).get("manifest"), now_universe, now_scenario), None
+
+
+def _print_lineage(results, problem, enforced: bool) -> None:
+    mode = "puerta" if enforced else "sombra: PROMOTION_AUDIT_IDENTITY_GATE_ENABLED apagado, no bloquea"
+    print(f"Linaje de metricas D-LINEAGE ({mode}):" + (f" NO LEGIBLE ({problem})" if problem else ""))
+    for key, label in _LINEAGE_LABELS.items():
+        if results:
+            state, detail = results[key]
+            print(f"    {label}: {state} - {detail}")
+
+
 def _built_at(conn, scenario_id: str):
     row = conn.execute("SELECT built_at FROM portfolio_scenarios WHERE scenario_id = %s", (scenario_id,)).fetchone()
     return row[0] if row else None
@@ -164,7 +195,8 @@ def main(argv=None) -> int:
 
     from shared.config import (ALARM_WATCH_GATE_ENABLED, ALARM_WATCH_WEIGHT_TOLERANCE, AUDIT_EXCEPTION_EVENTS_ENABLED, DATA_SUSPECT_ENABLED,
                                AUDIT_RESIDUAL_EXPIRY_WARN_DAYS, CODE_INTEGRITY_GATE_ENABLED, COST_DOMAIN_GATE_ENABLED,
-                               GOVERNANCE_ORCHESTRATOR_ENABLED, MAX_NON_EUR_UNHEDGED_WEIGHT, MAX_PORTFOLIO_CASH_WEIGHT)
+                               GOVERNANCE_ORCHESTRATOR_ENABLED, MAX_NON_EUR_UNHEDGED_WEIGHT, MAX_PORTFOLIO_CASH_WEIGHT,
+                               PROMOTION_AUDIT_IDENTITY_GATE_ENABLED)
     from shared.governance import orchestrator
     from shared.governance.run_identity import code_integrity, config_hash
     from shared.db import get_connection
@@ -252,6 +284,15 @@ def main(argv=None) -> int:
             draft = "fuera del DRAFT" if r.draft_weight is None else f"DRAFT {r.draft_weight:.4f}"
             print(f"    {r.isin} [{r.rules}]: PRODUCCION {r.prod_weight:.4f} -> {draft}{'  << SUBE' if r in rising else ''}")
 
+        evidence_header = _evidence_header(conn, scope.run_id)
+        lineage_results, lineage_problem = _lineage(conn, args.scenario_id, weights.keys(), evidence_header)     # FND-0306: always computed and printed
+        _print_lineage(lineage_results, lineage_problem, PROMOTION_AUDIT_IDENTITY_GATE_ENABLED)
+        if not PROMOTION_AUDIT_IDENTITY_GATE_ENABLED and lineage_results and not args.dry_run:   # SHADOW: one trace per real attempt; a dry run writes nothing
+            try:
+                lc.record_lineage_shadow(conn, args.scenario_id, getpass.getuser(), lineage_results)
+            except Exception as exc:                             # noqa: BLE001 -- the shadow trace never decides anything
+                print(f"AVISO: no se pudo registrar la linea de sombra del linaje en ingestion_log: {exc}")
+
         gate_kw = dict(status=status, n_funds=len(weights), weight_sum=sum(weights.values()), stale_checks=stale,
                        exposure_non_eur=expo["non_eur"], budget=MAX_NON_EUR_UNHEDGED_WEIGHT, audit=scope, built_at=built_at,
                        accept_alarms=reason, accept_ap=ap_id, ap_exists=ap_exists, declared_cash=cash, max_cash=MAX_PORTFOLIO_CASH_WEIGHT,
@@ -265,13 +306,15 @@ def main(argv=None) -> int:
             for isin, why in (suspects or []):
                 print(f"    {isin}: {why}")
             gate_kw.update(data_suspects=suspects, data_suspect_problem=suspect_problem)
+        if PROMOTION_AUDIT_IDENTITY_GATE_ENABLED:                # FND-0306 (ships OFF): ON uses the DRAFT-vs-audit verdict; an unreadable lineage refuses (fail closed)
+            gate_kw.update(lineage=lineage_results["audit"] if lineage_results else ("UNKNOWN", f"no se pudo leer el linaje ({lineage_problem})"))
         legacy = lc.evaluate_promotion(**gate_kw)
         # FND-0265: the two-pillar verdict is always computed and printed; it DECIDES only with GOVERNANCE_ORCHESTRATOR_ENABLED (else shadow)
         tight = lc.evaluate_promotion(**gate_kw, weight_tolerance=lc.WEIGHT_TOLERANCE)                     # decision D2
         cost_defects, cost_has_run = _cost_scope(conn, weights.keys())
         two_pillar = orchestrator.authorise_promotion(
             tight.blockers, overridden=tight.overridden, code_state=code_integrity(_ROOT), code_gate_enabled=CODE_INTEGRITY_GATE_ENABLED,
-            evidence_header=_evidence_header(conn, scope.run_id), cost_defects=cost_defects, cost_has_run=cost_has_run,
+            evidence_header=evidence_header, cost_defects=cost_defects, cost_has_run=cost_has_run,
             cost_gate_enabled=COST_DOMAIN_GATE_ENABLED)
         _print_verdict(two_pillar, decides=GOVERNANCE_ORCHESTRATOR_ENABLED)
         if GOVERNANCE_ORCHESTRATOR_ENABLED:

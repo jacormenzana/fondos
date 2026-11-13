@@ -70,3 +70,13 @@ def test_a_refused_promotion_leaves_exactly_one_audit_row_and_changes_no_status(
     assert len(rows) == 1 and rows[0][0] == "P3_SCENARIO_PROMOTION_BLOCKED" and rows[0][1] == "BLOCKED"
     assert "legacy_c" in rows[0][2] and "79.0%" in rows[0][2] and "owner" in rows[0][2]
     assert statuses(db) == before
+
+
+def test_the_lineage_shadow_trace_is_one_row_and_changes_no_status(db):
+    before = statuses(db)
+    lc.record_lineage_shadow(db, "legacy_c", "owner", {"audit": ("MATCH", "30 funds identical"), "universe_now": ("MISMATCH", "rows 10 -> 11"),
+                                                       "scenario_now": ("UNKNOWN", "no lineage stamp")})
+    rows = db.execute("SELECT step, status, message FROM ingestion_log").fetchall()
+    assert len(rows) == 1 and rows[0][0] == "P3_PROMOTION_LINEAGE_SHADOW" and rows[0][1] == "SHADOW"
+    assert "legacy_c" in rows[0][2] and "audit=MATCH" in rows[0][2] and "universe_now=MISMATCH: rows 10 -> 11" in rows[0][2] and "owner" in rows[0][2]
+    assert statuses(db) == before

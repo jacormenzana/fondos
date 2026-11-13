@@ -170,6 +170,11 @@ CONTROLS = (
             "DATA_SUSPECT_MIN_FLAGGED_METRICS quantities) unless a verified-genuine exemption covers it (shared/data_exemption.py: ticket + expiry, one grace build); an unreadable panel "
             "refuses (fail closed); FND-0394",
             BLOCK_UNLESS_OVERRIDE, SOURCE_GATE + "DATA_SUSPECT", STATUS_ENFORCED),
+    Control("D-LINEAGE", PILLAR_DATA, "The DRAFT and the evidence audit judged the same stored metrics", _OWNER_PROMOTION,
+            "the fingerprint of the stored fund_metrics the DRAFT was built on (shared/governance/lineage.py: fund, algorithm_version, batch_id, row count; stamped in its notes) equals the "
+            "one in the manifest of the evidence audit run; a P2 recompute or a deletion after the build or the audit is a MISMATCH, a missing stamp UNKNOWN (never a pass), too many "
+            "unstamped rows AMBIGUOUS, an unreadable lineage refuses (fail closed); FND-0306",
+            BLOCK_UNLESS_OVERRIDE, SOURCE_GATE + "METRICS_LINEAGE", DORMANT_PREFIX + "PROMOTION_AUDIT_IDENTITY_GATE_ENABLED"),
     Control("D-DATA-UNIVERSE", PILLAR_DATA, "No unaccepted hard defect in the universe", _OWNER_AUDIT,
             "an open hard defect outside the scenario needs an active accepted residual (accept_audit_residual.py: ticket + expiry); "
             "there is no promotion-time override",

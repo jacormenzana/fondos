@@ -351,8 +351,9 @@ def test_cli_blocked_attempt_leaves_one_audit_row_with_gate_codes_and_dry_run_le
     rc, promoted = _run_cli(monkeypatch, conn, ["d", "--dry-run"])
     assert rc == 1 and not [s for s in conn.executed if s.startswith("INSERT INTO ingestion_log")]
     rc, promoted = _run_cli(monkeypatch, conn, ["d"])
-    inserts = [s for s in conn.executed if s.startswith("INSERT INTO ingestion_log")]
+    inserts = [s for s in conn.executed if s.startswith("INSERT INTO ingestion_log") and "'SHADOW'" not in s]   # the blocked-attempt row; FND-0306's shadow trace is its own row
     assert rc == 1 and not promoted and len(inserts) == 1 and conn.committed
+    assert len([s for s in conn.executed if "'SHADOW'" in s]) == 1                                            # ... one per real attempt, none in the dry run above
     out = capsys.readouterr().out
     assert "NO PROMOVIBLE" in out and "Liquidez estructural declarada" in out and "[GATE:FX]" in out
 

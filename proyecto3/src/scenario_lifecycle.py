@@ -32,6 +32,7 @@ STATUSES = (STATUS_DRAFT, STATUS_PRODUCTION, STATUS_ARCHIVED)
 EXIT_NO_SCENARIO = 3
 STEP_PROMOTED = "P3_SCENARIO_PROMOTED"
 STEP_BLOCKED = "P3_SCENARIO_PROMOTION_BLOCKED"
+STEP_LINEAGE_SHADOW = "P3_PROMOTION_LINEAGE_SHADOW"       # FND-0306: the shadow verdicts of a real promotion attempt
 
 
 class ScenarioLifecycleError(RuntimeError):
@@ -190,6 +191,7 @@ GATE_MANIFEST = "MANIFEST"                     # the evidence audit run does not
 GATE_COST = "COST"                             # an open hard defect of the cost_attributes audit on a fund of the scenario (decision D8)
 GATE_ALARM_WATCH = "ALARM_WATCH"               # FND-0289: a PRODUCTION fund on a watched ALARM gets a higher weight in the DRAFT
 GATE_DATA_SUSPECT = "DATA_SUSPECT"             # FND-0394: a fund of the scenario that the shared suspicion predicate flags and no verified-genuine exemption covers
+GATE_METRICS_LINEAGE = "METRICS_LINEAGE"       # FND-0306: the stored P2 metrics the DRAFT was built on differ from (or cannot be compared with) those the evidence audit judged
 # Sum of weights + declared cash must be 1 within this tolerance. The builder rounds to 4 dp by largest remainder, so the exact contract is
 # 1.0000; decision D2 sets the promotion tolerance to half a unit of the 4th decimal, applied by the orchestrator. The legacy gate keeps 1e-3.
 WEIGHT_TOLERANCE = 5e-5
@@ -203,7 +205,7 @@ AP_RE = re.compile(r"^FND-\d{4}$")
 # Gates a reasoned override (--accept-alarms "motivo" --ap FND-nnnn) may cover: defects ON the scenario, the audit's blind spots and the
 # alarm watch (FND-0289). Everything else is hard: exposure, cash, weights, freshness, a stale audit, and universe-only defects (their way out
 # is an accepted residual with its own AP and expiry, not a promotion flag).
-OVERRIDABLE_GATES = frozenset({GATE_DATA_SCENARIO, GATE_RESIDUAL_SCENARIO, GATE_DATA_COVERAGE, GATE_ALARM_WATCH, GATE_DATA_SUSPECT})
+OVERRIDABLE_GATES = frozenset({GATE_DATA_SCENARIO, GATE_RESIDUAL_SCENARIO, GATE_DATA_COVERAGE, GATE_ALARM_WATCH, GATE_DATA_SUSPECT, GATE_METRICS_LINEAGE})
 
 
 def _names(items, limit: int = 6) -> str:
@@ -227,6 +229,7 @@ def evaluate_promotion(*, status: Optional[str], n_funds: int, weight_sum: float
                        alarm_watch: Optional[list] = None, alarm_watch_problem: Optional[str] = None,
                        alarm_watch_tolerance: float = 1e-4,
                        data_suspects: Optional[list] = None, data_suspect_problem: Optional[str] = None,
+                       lineage: Optional[tuple] = None,
                        weight_tolerance: float = WEIGHT_TOLERANCE_LEGACY) -> PromotionVerdict:
     """Pure: why a scenario may not be promoted (empty `blockers` = promotable) and which gates a reasoned override covered.
 
@@ -259,7 +262,11 @@ def evaluate_promotion(*, status: Optional[str], n_funds: int, weight_sum: float
     `data_suspects` (FND-0394, only with shared.config.DATA_SUSPECT_ENABLED; None = not evaluated): [(isin, reason)] of the funds of the scenario that the shared
     suspicion predicate flags and no verified-genuine exemption covers. DATA_SUSPECT, reasoned override with an AP (the way out of a genuine extreme performer is an
     exemption with its own ticket and expiry, not a promotion flag, but a person may knowingly promote); `data_suspect_problem` (the panel could not be read) refuses
-    under the same code (fail closed)."""
+    under the same code (fail closed).
+
+    `lineage` (FND-0306, only with shared.config.PROMOTION_AUDIT_IDENTITY_GATE_ENABLED; None = not evaluated, which is what the SHADOW mode passes): the
+    (state, detail) of shared.governance.lineage.verdict for the DRAFT stamp against the evidence audit's. Anything but MATCH is METRICS_LINEAGE, reasoned override
+    with an AP: MISMATCH (P2 recomputed after the build or the audit), UNKNOWN (a stamp is missing: never a silent pass) and AMBIGUOUS (too few real stamps)."""
     if max_cash is None:
         from shared.config import MAX_PORTFOLIO_CASH_WEIGHT as max_cash
     hard: list = []
@@ -333,6 +340,11 @@ def evaluate_promotion(*, status: Optional[str], n_funds: int, weight_sum: float
     for isin, reason in (data_suspects or []):
         soft.append((GATE_DATA_SUSPECT, g(GATE_DATA_SUSPECT, f"{isin} es sospechoso y esta en la cartera: {reason}")))
 
+    # --- metrics lineage: did the evidence audit judge the stored metrics the DRAFT was built on? (FND-0306) -------------------
+    if lineage is not None and lineage[0] != "MATCH":
+        soft.append((GATE_METRICS_LINEAGE, g(GATE_METRICS_LINEAGE, f"linaje de metricas {lineage[0]}: {lineage[1]} (reconstruya el DRAFT y vuelva a "
+                     "auditar con run_statistical_audit.py --domain p2 --persist; un sello ausente nunca se da por bueno)")))
+
     verdict = PromotionVerdict(blockers=hard)
     if not soft:
         return verdict
@@ -372,6 +384,24 @@ def signoff_line(audit, overridden: list, ap: Optional[str] = None, reason: Opti
     for code, _text in overridden:
         parts.append(f"[OVERRIDE:{code}] {ap}: {(reason or '').strip()}")
     return "; ".join(parts)
+
+
+def record_lineage_shadow(conn, scenario_id: str, username: str, results: dict) -> None:
+    """ONE `ingestion_log` row (step P3_PROMOTION_LINEAGE_SHADOW, status SHADOW) with the three lineage verdicts of a real promotion attempt while
+    PROMOTION_AUDIT_IDENTITY_GATE_ENABLED is OFF (FND-0306): the measurement the owner asked for before the gate may refuse. Commits only its own insert; the
+    caller treats a failure as a warning (the promotion decision never depends on it)."""
+    parts = " | ".join(f"{name}={state}: {detail}" for name, (state, detail) in sorted(results.items()))
+    message = f"lineage shadow for scenario {scenario_id} by {username}: {parts}"
+    try:
+        conn.execute("INSERT INTO ingestion_log (isin, step, status, message, created_at) VALUES (NULL, %s, 'SHADOW', %s, now())",
+                     (STEP_LINEAGE_SHADOW, message[:4000]))
+        conn.commit()
+    except Exception:                                        # noqa: BLE001
+        try:
+            conn.rollback()
+        except Exception:                                    # noqa: BLE001
+            pass
+        raise
 
 
 def record_blocked(conn, scenario_id: str, username: str, blockers: list) -> None:

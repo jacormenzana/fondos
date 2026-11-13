@@ -145,6 +145,33 @@ def read_stamp(stamp) -> dict:
     return out
 
 
+def compare_draft(draft_stamp, audit_manifest, current_universe: Optional[LineageFingerprint] = None,
+                  current_scenario: Optional[LineageFingerprint] = None) -> dict:
+    """The three comparisons FND-0306 measures in SHADOW, as {name: (state, detail)}. Pure.
+
+      audit          the DRAFT's universe stamp against the universe fingerprint in the evidence audit's manifest: did the audit judge the data the DRAFT was built on
+                     (design (a), the owner's first choice of 2026-10-24; this is the one the gate uses when its switch is ON)
+      universe_now   the DRAFT's universe stamp against the universe today (any P2 recompute after the build moves it)
+      scenario_now   the DRAFT's scenario stamp against the scenario's funds today (only a recompute of a fund of the scenario moves it): design (b)
+    Comparing audit-vs-DRAFT and not audit-vs-now is deliberate: the audit carries the fingerprint of the data it read."""
+    draft = read_stamp(draft_stamp)
+    if isinstance(audit_manifest, str):                                 # a jsonb column read as text
+        try:
+            import json
+            audit_manifest = json.loads(audit_manifest)
+        except ValueError:
+            audit_manifest = None
+    audit_fp = None
+    if isinstance(audit_manifest, dict):
+        try:
+            audit_fp = LineageFingerprint.from_dict(audit_manifest.get("metrics_lineage"))
+        except ValueError:
+            audit_fp = None
+    return {"audit": verdict(draft["universe"], audit_fp),
+            "universe_now": verdict(draft["universe"], current_universe),
+            "scenario_now": verdict(draft["scenario"], current_scenario)}
+
+
 def verdict(stamped: Optional[LineageFingerprint], current: Optional[LineageFingerprint]) -> tuple:
     """(state, detail). UNKNOWN when either side is missing or the definition changed (never a silent pass); AMBIGUOUS when either side has
     no rows or too many unstamped ones (refused rather than hashed over); MATCH when the digests are equal; MISMATCH otherwise."""
