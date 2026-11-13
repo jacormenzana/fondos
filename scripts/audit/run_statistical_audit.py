@@ -174,9 +174,9 @@ from shared.statistical_audit.reconcile import reconcile_with_alerts
 from shared.statistical_audit.recompute_gate import assert_recompute_happened, capture_state
 from shared.statistical_audit.snapshot import build_population, build_snapshot
 from shared.statistical_audit.timeseries import build_window_deflation_frame, scalar_window_cpi
-from shared.statistical_audit.tolerances import (ACI_AMORTISATION_VISIBLE_PP, ACI_COMPONENTS_TOLERANCE_PP, ACI_ORDER_TOLERANCE_PP, IPC_ELIGIBILITY_FLOOR,
+from shared.statistical_audit.tolerances import (ACI_AMORTISATION_VISIBLE_PP, ACI_COMPONENTS_TOLERANCE_PP, ACI_ORDER_TOLERANCE_PP, FLOAT_IDENTITY_TOLERANCE, IPC_ELIGIBILITY_FLOOR,
                                                  KID_ROUNDING_TOLERANCE_PP)
-from shared.statistical_audit.text_evidence import aci_horizon_row_printed, aci_pair_printed
+from shared.statistical_audit.text_evidence import aci_horizon_row_printed, aci_pair_printed, management_row_printed
 
 MIN_PEERS = 5
 
@@ -452,6 +452,25 @@ def _mark_aci_components(conn: "psycopg.Connection", master: "pd.DataFrame") -> 
     master.loc[master["ISIN"].isin(printed), "ACI_Pair_Printed"] = True
 
 
+def _mark_oc_is_management_row(conn: "psycopg.Connection", master: "pd.DataFrame") -> None:
+    """Add the boolean column OC_Is_Management_Row to the fund_master frame, in place (package B, owner order 2026-11-13): True where the ongoing charge equals Management_Fee_Pct (the PRIIPs
+    ongoing charge IS the management row, proyecto1/core/cost_scale.py) AND the stored KID text prints that management row with the normative composition wording
+    (shared.statistical_audit.text_evidence.management_row_printed, independent of the extractor). OC_NOT_CONTAMINATED does not apply to such a fund: the ACI equals the OC because the publisher
+    leaves the transaction cost out of it (33 of the 35 funds the rule flagged on 2026-11-13), not because the ACI was copied into the OC. Only the funds the rule would flag are looked up."""
+    master["OC_Is_Management_Row"] = False
+    need = {"ISIN", "Ongoing_Charge_Recurrent", "ACI_RHP", "Management_Fee_Pct"}
+    if master.empty or not need <= set(master.columns):
+        return
+    oc_pct = master["Ongoing_Charge_Recurrent"] * 100.0
+    candidates = master[master["Management_Fee_Pct"].notna() & master["ACI_RHP"].notna() & ((oc_pct - master["Management_Fee_Pct"]).abs() <= FLOAT_IDENTITY_TOLERANCE)
+                        & ((oc_pct - master["ACI_RHP"]).abs() <= FLOAT_IDENTITY_TOLERANCE)]
+    if candidates.empty:
+        return
+    texts = {r[0]: r[1] for r in conn.execute("SELECT isin, raw_kiid_text FROM fund_kiid_metadata WHERE isin = ANY(%s)", (sorted(candidates["ISIN"].tolist()),)).fetchall()}
+    printed = {row.ISIN for row in candidates.itertuples() if management_row_printed(texts.get(row.ISIN), float(row.Management_Fee_Pct))}
+    master.loc[master["ISIN"].isin(printed), "OC_Is_Management_Row"] = True
+
+
 def _mark_equal_pairs_printed(conn: "psycopg.Connection", master: "pd.DataFrame") -> None:
     """Add the boolean column ACI_Equal_Pair_Printed to the fund_master frame, in place (package B, owner order 2026-11-13): True where ACI_1Y equals ACI_RHP, a stored entry charge
     would amortise visibly over the holding period AND the stored KID text prints exactly that pair (shared.statistical_audit.text_evidence, independent of the extractor).
@@ -482,6 +501,7 @@ def run_cost_audit(conn: "psycopg.Connection", isins: Sequence[str] | None = Non
     _mark_oc_rounding(master)
     _mark_aci_components(conn, master)
     _mark_equal_pairs_printed(conn, master)
+    _mark_oc_is_management_row(conn, master)
     frames_by_table = {"fund_master": master, "fund_cost_schedule": schedule}
 
     run = AuditRun(domain="cost_attributes")

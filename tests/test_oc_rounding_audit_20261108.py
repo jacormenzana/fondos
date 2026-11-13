@@ -35,6 +35,7 @@ def _frame(rows):
 def _violators(rows):
     master = _frame(rows)
     _runner()._mark_oc_rounding(master)
+    master["OC_Is_Management_Row"] = False        # 2026-11-13: set by _mark_oc_is_management_row (its own test, tests/test_oc_management_row_20261113.py)
     rule = next(r for r in COST_INVARIANTS if r.rule_id == "OC_NOT_CONTAMINATED")
     return sorted(check_invariant(master, rule).violations["ISIN"].tolist()) if check_invariant(master, rule).n_violations else []
 
@@ -67,4 +68,4 @@ def test_the_runner_marks_the_frame_before_the_invariants_run_and_the_rule_reads
     src = (ROOT / "scripts" / "audit" / "run_statistical_audit.py").read_text(encoding="utf-8")
     assert src.index("_mark_oc_rounding(master)") < src.index('frames_by_table = {"fund_master": master')
     rule = next(r for r in COST_INVARIANTS if r.rule_id == "OC_NOT_CONTAMINATED")
-    assert rule.when == "not OC_ACI_Rounding_Explained" and rule.bound_type == "HARD_INVARIANT"
+    assert rule.when == "not OC_ACI_Rounding_Explained and not OC_Is_Management_Row" and rule.bound_type == "HARD_INVARIANT"

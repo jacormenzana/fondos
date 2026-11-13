@@ -199,7 +199,7 @@ COST_INVARIANTS: tuple[InvariantRule, ...] = (
     # (LU2132880597: management 0,30 + transaction 0,04 = 0,34, printed "0,3"). The column is set by the runner from shared.cost_rounding, the definition P1 uses to accept the OC.
     InvariantRule("OC_NOT_CONTAMINATED",
                   f"abs(Ongoing_Charge_Recurrent * 100 - ACI_RHP) > {FLOAT_IDENTITY_TOLERANCE}",
-                  when="not OC_ACI_Rounding_Explained",
+                  when="not OC_ACI_Rounding_Explained and not OC_Is_Management_Row",
                   bound_type="HARD_INVARIANT", description="OC contaminated with the ACI"),
     # 2026-11-13 (owner decision, package B / FND-0034): the stored ACI_RHP is checked against the cost components, because no rule saw a stored value the KID contradicts: 20 funds stored the 1-year
     # figure or a scenario percentage (6.66 for a printed 1.66, 11.88 for a printed 2.4) and one stored the management line (1.04 for a printed 1.3). The band is management + transaction cost

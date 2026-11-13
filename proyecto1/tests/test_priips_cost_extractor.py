@@ -1597,3 +1597,22 @@ def test_the_recommended_period_is_read_from_the_sentence_form_but_not_from_a_fo
     # a footnote that merely mentions the period, and a sentence with no figure after it, are not holding periods
     assert _extract_rhp_years("en caso de salida al término del período de mantenimiento recomendado, el rendimiento medio que se prevé será del\n9,42 % antes de deducir") is None
     assert _extract_rhp_years("El periodo de mantenimiento recomendado se seleccionó de acuerdo con el objetivo del Fondo. Es de 3 años") is None
+
+
+def test_a_management_row_is_bound_by_its_own_description_not_by_the_next_rows():
+    """Package B, La Francaise FR001400I0X7: "Gastos de gestion y otros gastos administrativos: Maximo del 0,73 % del valor de su inversion por ano. Esta estimacion se basa en los cestos reales..."
+    (the publisher's own typo) is followed 60 characters later by the transaction row. The 260-character window ran into that row's wording, so the management value was read as the
+    transaction cost and the management figure stayed NULL (the OC kept the ACI)."""
+    from priips_cost_extractor import _recover_composition_from_description
+    text = ("Costes recurrentes [soportados anualmente]\nGastos de gestión y otros \ngastos administrativos y de explotación\nMáximo del 0,73 % del valor de su inversión por año. Esta estimación se basa en los \n"
+            "cestos reales durante el último año. \n71 € \n0,53 % del valor de su inversión por año. Esta es una estimación de los costes \nincurridos cuando compramos y vendemos las inversiones subyacentes al producto. \n51 € \n")
+    assert _recover_composition_from_description(text) == (0.73, 0.53)
+
+
+def test_a_management_row_printed_as_an_amount_only_gives_the_percentage_over_the_10000_base():
+    """Package B, IE00BF1T6L34: the DLA2 table prints "Comisiones de gestion | 160 EUR" and no percentage; the OC stored by an earlier pass was the ACI (2.2). 160 / 10,000 is 1.60 %."""
+    from priips_cost_extractor import extract_priips_costs
+    text = ("Documento de datos fundamentales\nIndicador resumido de riesgo\nEscenarios de rentabilidad\nCostes totales 282 USD 1.853 USD\nIncidencia anual de los costes (*)\n2,8% 2,2%\n"
+            "Composición de los costes\n|||Composición de los costes|||\n|||Costes de entrada|||1%|||0 EUR|||\n|||Costes de salida||||||inversión.|||98 USD|||\n"
+            "|||Comisiones de gestion|||160 EUR|||\n|||Costes de operacion|||24 EUR|||\n|||Costes a lo largo del tiempo|||\nSe invierten 10.000 USD\n")
+    assert extract_priips_costs(text=text, isin="XX0000000001").get("Management_Fee_Pct") == 1.6

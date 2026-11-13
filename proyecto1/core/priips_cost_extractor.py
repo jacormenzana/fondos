@@ -567,8 +567,13 @@ def _recover_composition_from_description(text: str) -> tuple:
     """
     mgmt: Optional[float] = None
     tran: Optional[float] = None
-    for m in COMPOSITION_VALUE_LEADIN.finditer(text):
+    leadins = list(COMPOSITION_VALUE_LEADIN.finditer(text))
+    for i, m in enumerate(leadins):
         window = text[m.end(): m.end() + 260]
+        # FIX-COMPOSITION-DESC-WINDOW (2026-11-13, package B): a value's description ends where the NEXT value begins. The 260-character window ran into the next row's wording, so a management row
+        # whose own description was not recognised inherited the transaction row's description and was bound as the transaction cost (FR001400I0X7: 0,73 % management read as transaction).
+        if _COMPOSITION_WINDOW_BOUNDED and i + 1 < len(leadins):
+            window = text[m.end(): min(m.end() + 260, leadins[i + 1].start())]
         try:
             value = _pct_token_to_float(m.group(1))
         except ValueError:
@@ -584,6 +589,8 @@ def _recover_composition_from_description(text: str) -> tuple:
     return mgmt, tran
 
 
+_MGMT_FROM_AMOUNT_ENABLED = True          # FIX-MGMT-FROM-AMOUNT: False restores the former behaviour (old-vs-new measurement harness only)
+_COMPOSITION_WINDOW_BOUNDED = True       # FIX-COMPOSITION-DESC-WINDOW: False restores the former behaviour (old-vs-new measurement harness only)
 _COLLAPSED_REJECTS_PROJECTION = True      # FIX-ACI-COLLAPSED-NOT-PROJECTION: False restores the former behaviour (used only by the old-vs-new measurement harness)
 
 
@@ -1496,6 +1503,15 @@ def extract_priips_costs(
             mgmt = _desc_mgmt / 100.0
         if _desc_tran is not None and _collapsed:
             tran = _desc_tran / 100.0
+
+        # FIX-MGMT-FROM-AMOUNT (2026-11-13, package B): some KIDs print the management row as an AMOUNT only ("Comisiones de gestion 160 EUR", IE00BF1T6L34) and the percentage nowhere, so the
+        # management figure stayed NULL, the resolver had no clean OC candidate, and the OC stored by an earlier pass (the ACI, 2.2) was never replaced. A PRIIPs KID is printed for 10,000 of the
+        # reference currency, so amount / 10,000 IS the percentage (the same base the cost cross-validator uses). Fill-only, within the fee ceiling; a percentage the document prints wins.
+        if mgmt is None and _MGMT_FROM_AMOUNT_ENABLED:
+            _mgmt_eur = comp.get('management_fee_eur')
+            if _mgmt_eur is not None and _mgmt_eur > 0 and _mgmt_eur / PRIIPS_INVESTMENT_BASE <= _MAX_FEE_RATIO:
+                mgmt = _mgmt_eur / PRIIPS_INVESTMENT_BASE
+                _log.info("[FIX-MGMT-FROM-AMOUNT] %s: Management_Fee_Pct NULL->%.2f%% (%.0f / %.0f)", isin, _ratio_to_pct(mgmt), _mgmt_eur, PRIIPS_INVESTMENT_BASE)
 
         if mgmt is not None:
             out['Management_Fee_Pct']   = _ratio_to_pct(mgmt)

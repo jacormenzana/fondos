@@ -287,9 +287,11 @@ COMPOSITION_DESC_TRANSACTION = re.compile(
 COMPOSITION_DESC_MANAGEMENT = re.compile(
     r'estimate\s+based\s+on\s+actual\s+costs'
     r'|based\s+on\s+(?:the\s+)?actual\s+costs\s+over\s+the\s+last\s+year'
-    r'|estimaci[oó]n\s+basada\s+en\s+los\s+(?:costes|gastos)\s+(?:reales|efectivos)'
-    r'|se\s+basa\s+en\s+los\s+(?:costes|gastos)\s+(?:reales|efectivos)'
-    r'|basada\s+en\s+los\s+(?:costes|gastos)\s+(?:reales|efectivos)'
+    # FIX-COMPOSITION-DESC-VARIANTS (2026-11-13, package B): "costos" (Latin-American spelling) and the publisher's own typo "cestos" ("Esta estimacion se basa en los cestos reales durante el ultimo ano",
+    # La Francaise FR001400I0X7, whose management row "Gastos de gestion y otros gastos administrativos: Maximo del 0,73 %" was never bound, so its OC stayed the ACI).
+    r'|estimaci[oó]n\s+basada\s+en\s+los\s+(?:costes|gastos|costos|cestos)\s+(?:reales|efectivos)'
+    r'|se\s+basa\s+en\s+los\s+(?:costes|gastos|costos|cestos)\s+(?:reales|efectivos)'
+    r'|basada\s+en\s+los\s+(?:costes|gastos|costos|cestos)\s+(?:reales|efectivos)'
     # Variante Schroders: "Este porcentaje se basa en los gastos reales del año
     # pasado" — usa "gastos" y un verbo distinto; cubría 257 fondos de los que
     # seguían con el ACI en Ongoing_Charge_Recurrent.

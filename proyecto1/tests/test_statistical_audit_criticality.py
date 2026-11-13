@@ -125,8 +125,8 @@ INVARIANT_CASES = {   # rule_id -> (violating row, passing row), evaluated by th
     "ANNUAL_LE_ACCUMULATED": ({"Annual_Impact_Pct": 2.0, "Total_Costs_Pct": 1.0, "Horizon_Years": 5}, {"Annual_Impact_Pct": 1.0, "Total_Costs_Pct": 1.0, "Horizon_Years": 5}),
     "ANNUAL_EQUALS_TOTAL_AT_1Y": ({"Annual_Impact_Pct": 1.5, "Total_Costs_Pct": 1.0, "Horizon_Years": 1},
                                   {"Annual_Impact_Pct": 1.0, "Total_Costs_Pct": 1.02, "Horizon_Years": 1}),
-    "OC_NOT_CONTAMINATED": ({"Ongoing_Charge_Recurrent": 0.015, "ACI_RHP": 1.5, "OC_ACI_Rounding_Explained": False},     # the rule applies `when not OC_ACI_Rounding_Explained`, a column the runner adds (FND-0034)
-                            {"Ongoing_Charge_Recurrent": 0.012, "ACI_RHP": 1.5, "OC_ACI_Rounding_Explained": False}),
+    "OC_NOT_CONTAMINATED": ({"Ongoing_Charge_Recurrent": 0.015, "ACI_RHP": 1.5, "OC_ACI_Rounding_Explained": False, "OC_Is_Management_Row": False},     # the rule applies `when not OC_ACI_Rounding_Explained and not OC_Is_Management_Row`, columns the runner adds (FND-0034)
+                            {"Ongoing_Charge_Recurrent": 0.012, "ACI_RHP": 1.5, "OC_ACI_Rounding_Explained": False, "OC_Is_Management_Row": False}),
     "MAX_DD_RANGE": ({"max_dd": 0.1}, {"max_dd": -0.2}),
     "SHORT_MAX_DD_RANGE": ({"short_max_drawdown": -1.5}, {"short_max_drawdown": -0.05}),
     "VOL_ANN_NONNEG": ({"vol_ann": -0.1}, {"vol_ann": 0.1}),

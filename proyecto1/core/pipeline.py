@@ -255,9 +255,10 @@ except ModuleNotFoundError:
 # P1-19: única definición de la escala de coste (P#11 / R-1)
 # FND-0034: la tolerancia de contaminación OC == ACI es una sola (cost_scale); el escritor único es oc_resolution.resolve_fund_oc.
 try:
-    from core.cost_scale import OC_ACI_TOLERANCE_PP as _OC_ACI_TOL_PP
+    from core.cost_scale import OC_ACI_TOLERANCE_PP as _OC_ACI_TOL_PP, contaminated_by_aci as _oc_contaminated_by_aci
 except ImportError:                          # proyecto1/core ya en sys.path
-    from cost_scale import OC_ACI_TOLERANCE_PP as _OC_ACI_TOL_PP
+    from cost_scale import OC_ACI_TOLERANCE_PP as _OC_ACI_TOL_PP, contaminated_by_aci as _oc_contaminated_by_aci
+from shared.statistical_audit.text_evidence import management_row_printed as _management_row_printed   # the audit's independent evidence: one definition (package B)
 
 # BL-COST-4c: extractores Sprint 2 (kill-switch interno en cada módulo)
 # Import condicional: el pipeline no rompe si los módulos no están presentes.
@@ -3233,13 +3234,22 @@ def run_block(
     # Goes to 0 after a full --recompute-costs sweep.
     try:
         with fail_soft_block(conn):
-            _oc_contaminated = conn.execute("""
-                SELECT COUNT(*) FROM fund_master
-                WHERE In_Current_Universe = 1
-                  AND Ongoing_Charge_Recurrent IS NOT NULL
-                  AND ACI_RHP IS NOT NULL
-                  AND ABS(Ongoing_Charge_Recurrent * 100.0 - ACI_RHP) <= %s
-            """, (_OC_ACI_TOL_PP,)).fetchone()[0]
+            # Package B (2026-11-13): the count uses the ONE predicate (cost_scale.contaminated_by_aci: the publisher's rounding is explained) and the audit's independent text evidence for the
+            # other case: an OC that IS the management row the KID prints (shared.statistical_audit.text_evidence.management_row_printed). The raw equality counted 43 funds; 33 of them print
+            # their management row and the publisher simply leaves the transaction cost out of the ACI.
+            _oc_rows = conn.execute("""
+                SELECT m.Ongoing_Charge_Recurrent, m.ACI_RHP, m.ACI_1Y, m.Transaction_Cost_Pct, m.Entry_Fee_Pct_Max, m.Exit_Fee_Pct_Max, m.Performance_Fee_Pct, m.Management_Fee_Pct, k.Raw_KIID_Text
+                FROM fund_master m LEFT JOIN fund_kiid_metadata k ON k.ISIN = m.ISIN
+                WHERE m.In_Current_Universe = 1
+                  AND m.Ongoing_Charge_Recurrent IS NOT NULL
+                  AND m.ACI_RHP IS NOT NULL
+                  AND ABS(m.Ongoing_Charge_Recurrent * 100.0 - m.ACI_RHP) <= %s
+            """, (_OC_ACI_TOL_PP,)).fetchall()
+            _oc_contaminated = sum(
+                1 for _r in _oc_rows
+                if _oc_contaminated_by_aci(_r[0], _r[1], _r[2], _r[3], _r[4], _r[5], _r[6])
+                and not (_r[7] is not None and abs(_r[0] * 100.0 - _r[7]) <= _OC_ACI_TOL_PP and _management_row_printed(_r[8], _r[7]))
+            )
         if _oc_contaminated > 0:
             print(
                 f"  [WARN] FIX-OC-WRITE-ORDER: {_oc_contaminated} fondo(s) activos con "

@@ -54,3 +54,19 @@ def aci_horizon_row_printed(text: str | None, aci_rhp: float | None) -> bool:
         return False
     value = re.compile(r"\A" + _number_pattern(aci_rhp) + r"\Z")
     return any(int(m.group(1)) >= 2 and value.match(m.group(2)) for m in _HORIZON_ROW.finditer(text))
+
+
+_COMPOSITION_WORDING = re.compile(
+    r"\s*(?:del?\s+valor\s+de\s+su\s+inversi|of\s+the\s+value\s+of\s+your\s+investment|de\s+la\s+valeur\s+de\s+votre\s+investissement|des\s+wertes\s+ihrer\s+anlage)",
+    re.IGNORECASE,
+)
+
+
+def management_row_printed(text: str | None, management_pct: float | None) -> bool:
+    """True when `text` prints `<management_pct>%` followed by the normative composition wording ("1,62% del valor de su inversion por ano"): the management row of a PRIIPs KID (package B,
+    2026-11-13). Independent of the extractor on purpose (its own pattern, no import from proyecto1). An ongoing charge that equals a management row the document prints is that row, not the
+    annual cost impact copied into it. False for a missing text or value. Pure."""
+    if not text or management_pct is None:
+        return False
+    value = re.compile(r"(?<![\d.,])" + _number_pattern(management_pct) + r"\s*%(?!\d)")
+    return any(_COMPOSITION_WORDING.match(text, m.end()) for m in value.finditer(text))
