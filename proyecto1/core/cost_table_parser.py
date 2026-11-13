@@ -166,7 +166,9 @@ ACI_LABEL_ANCHOR = re.compile(
     r'incidencia\s*(?:anual\s*)?(?:de\s*los\s*costes?|de\s*costes?)'
     r'|impacto\s*(?:anual\s*)?en\s*los\s*costes?'
     r'|impacto\s*del\s*coste\s*anual'
-    r'|annual\s*cost\s*impact'
+    # FIX-ACI-LABEL-PLURAL (2026-11-13, package B census): "Annual costs impact (*)" (7 LU funds, "2.2% 2.4% each year") is the plural of the singular below; without it the anchor
+    # stayed mute and the scenario-table percentage (11.88) was published as ACI_1Y / ACI_RHP.
+    r'|annual\s*costs?\s*impact'
     r'|impact\s*of\s*annual\s*costs?'
     # FIX-ACI-LABEL-YIELD-REDUCTION (2026-08-23): M&G y siblings rotulan la fila
     # por su EFECTO ("Incidencia sobre el rendimiento (reducción del rendimiento)

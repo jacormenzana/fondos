@@ -415,6 +415,25 @@ def _adjacent_pcts(head: str) -> List[float]:
     return out
 
 
+# "If you exit after 5 years 2,089 EUR 1.66% each year" / "Si se da de baja despues de 5 anos 2.089 EUR 1,66% cada ano": a horizon row that carries its own annual impact.
+_DETACHED_HORIZON_ROW = re.compile(
+    r'(?:exit\s+after|salida\s+despu[eé]s\s+de|baja\s+despu[eé]s\s+de)\s*(\d{1,2})\s*(?:years?|a[nñ]os?)\s+'
+    r'(?:(?:EUR|USD|GBP|CHF)\s*)?[\d.,\s]+(?:EUR|USD|GBP|CHF|€)?\s*(\d{1,2}[.,]\d{1,2})\s*%\s*(?:each\s*year|cada\s*a[nñ]o)',
+    re.IGNORECASE,
+)
+
+
+def _detached_horizon_aci(window: str) -> Optional[float]:
+    """The annual impact (% entero) of the FIRST row in `window` that names a horizon of 2 years or more and prints "<amount> <pct>% each year"; None when there is none. Pure."""
+    for row in _DETACHED_HORIZON_ROW.finditer(window):
+        if int(row.group(1)) < 2:
+            continue
+        value = _pct_token_to_float(row.group(2))
+        if 0 < value <= _ACI_ANCHOR_MAX_PCT:
+            return value
+    return None
+
+
 def _recover_aci_from_label(text: str) -> tuple:
     """
     FIX-ACI-LABEL-ANCHOR — recupera (ACI_1Y, ACI_RHP) en % entero anclando en la
@@ -460,7 +479,15 @@ def _recover_aci_from_label(text: str) -> tuple:
         head = adjacent[:stop.start()] if stop else adjacent
         values = _adjacent_pcts(head)
         if values:
-            return (values[0], values[0]) if len(values) == 1 else (values[0], values[1])
+            if len(values) == 1:
+                # FIX-ACI-DETACHED-HORIZON-ROW (2026-11-13, package B census): one adjacent value is the 1-year column ONLY when the KID has no other horizon row. Five IE funds
+                # (IE00BD8DY654 "666 EUR 6.66%") print the 5-year row detached, far from the label ("If you exit after 5 years 2,089 EUR 1.66% each year"); copying 6.66 into
+                # ACI_RHP published the 1-year figure with the entry charge. The detached row carries its own horizon, so it is bound only when it names one (>= 2 years).
+                detached = _detached_horizon_aci(text[m.end(): m.end() + _ACI_ANCHOR_WINDOW])
+                if detached is not None:
+                    return values[0], detached
+                return values[0], values[0]
+            return values[0], values[1]
 
         # --- 2. Firma de fila en la ventana ancha (tabla partida) -----------
         window = text[m.end(): m.end() + _ACI_ANCHOR_WINDOW]

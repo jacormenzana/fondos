@@ -1537,6 +1537,29 @@ def test_a_percentage_after_another_cost_rows_name_is_not_adjacent_to_the_aci_la
     assert _recover_aci_from_label(text) == (8.2, 4.2)
 
 
+def test_the_annual_costs_impact_label_in_the_plural_anchors_the_row():
+    """Package B census 2026-11-13: seven LU funds (LU0415391431 ...) print "Annual costs impact (*)\\n2.2% 2.4% each year"; the label list only knew the singular, the anchor stayed mute and a
+    scenario percentage (11.88) was published as ACI_1Y / ACI_RHP."""
+    from priips_cost_extractor import _recover_aci_from_label
+    text = "Scenarios If you exit after 1 Year\nIf you exit after 5 Years \nTotal Costs 220 EUR 1 828 EUR\nAnnual costs impact (*) \n2.2% 2.4% each year\nComposition of costs \n"
+    assert _recover_aci_from_label(text) == (2.2, 2.4)
+    assert _recover_aci_from_label(text.replace("costs impact", "cost impact")) == (2.2, 2.4)        # the singular keeps working
+
+
+def test_a_detached_five_year_row_is_the_rhp_value_not_a_copy_of_the_one_year_value():
+    """Package B census 2026-11-13: five IE funds (IE00BD8DY654) print the 1-year column next to the label ("666 EUR 6.66%") and the 5-year row detached, far away ("If you exit after 5 years
+    2,089 EUR 1.66% each year"). One adjacent value does not mean one column: ACI_RHP was published as 6.66 (the 1-year figure with the 5 % entry charge); the document says 1.66."""
+    from priips_cost_extractor import _detached_horizon_aci, _recover_aci_from_label
+    far = "OTHER RELEVANT INFORMATION\nIf you exit after\n5 years\n2,089 EUR 1.66% each year\nIf you exit after 1 year\n500 EUR\n1.65% of the value of your investment per year.\n"
+    text = "If you exit after\n1 year\nTotal Costs Annual Cost Impact (*)\n666 EUR 6.66%\nWHAT ARE THE COSTS (CONTINUED)\n" + "x" * 900 + far
+    assert _recover_aci_from_label(text) == (6.66, 1.66)
+    assert _detached_horizon_aci(far) == 1.66
+    assert _detached_horizon_aci("If you exit after 1 year\n500 EUR 1.65% each year") is None                 # a 1-year row is the column already read
+    assert _detached_horizon_aci("If you exit after 5 years\n2,089 EUR 1.65% per year") is None               # only "each year" closes an ACI row
+    only = "Total Costs Annual Cost Impact (*)\n666 EUR 6.66%\nWHAT ARE THE COSTS (CONTINUED)\n"
+    assert _recover_aci_from_label(only) == (6.66, 6.66)                                                       # no other horizon printed: the single-column rule stands
+
+
 def test_the_recommended_period_is_read_from_the_sentence_form_but_not_from_a_footnote():
     """M&G Lux (49 funds, Cost_RHP_Years NULL -> no RHP schedule row -> SCHEDULE_ACI_RHP_ORPHAN): "El periodo de mantenimiento recomendado de este Fondo es de 5 anos"."""
     from priips_cost_extractor import _extract_rhp_years
