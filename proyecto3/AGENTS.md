@@ -153,6 +153,7 @@ monthly NAV, the last valid date of each regime input, the newest harvest, and t
 refresh after a version bump would mix incomparable metrics). The check is universe-level (a few frozen
 funds do not block a run); limits live in `shared/config.py::P3_FRESHNESS_MAX_AGE_DAYS`.
 `--allow-stale` overrides (and is audited: `P3_STALE_BYPASS` rows in `ingestion_log` before anything is scored; see `NORMAS_IMPLEMENTACION.md` §5d); `--dry-run` only warns.
+A composite regime input (`ipc_yoy_avg` = mean of the ES and EU CPI legs) is also judged leg by leg against each series' own limit (`macro_legs:<input>`, `shared/macro_freshness.py`, FND-0256, `P3_MACRO_LEG_CHECK_ENABLED` ON since 2026-11-13; OFF = SHADOW: printed as "would block", never refusing): a dead leg no longer hides behind the live one.
 A further universe check, `family_refresh_pending`, is STALE while any active fund whose `Fund_Nature` the family builder rewrote still awaits `run_block.py --family-nature-refresh`.
 
 ### DB tables used by P3

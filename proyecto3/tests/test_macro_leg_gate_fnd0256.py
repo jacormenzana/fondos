@@ -81,8 +81,8 @@ def test_text_and_timestamp_dates_are_accepted_like_in_the_rest_of_the_gate():
     assert c.ok
 
 
-def test_the_shipped_default_is_shadow():
-    assert config.P3_MACRO_LEG_CHECK_ENABLED is False
+def test_the_shipped_default_is_on():
+    assert config.P3_MACRO_LEG_CHECK_ENABLED is True               # ON since 2026-11-13; False = SHADOW (kill switch)
 
 
 # ---------------- loader and wiring ----------------
