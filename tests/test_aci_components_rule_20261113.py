@@ -91,6 +91,18 @@ def test_the_rule_flags_a_stored_value_outside_the_band_and_only_that():
     assert _violators(rows) == ["IE_COPY", "LU_MGMT"]
 
 
+def test_a_five_year_row_printed_apart_from_the_label_is_text_evidence_too():
+    """LU0690374029: "Annual Cost Impact (*) 95 EUR 0.95%" at 1 year and, far below, "If you exit after 5 years 619 EUR 0.73% each year": the pair is never adjacent, the row is printed."""
+    from shared.statistical_audit.text_evidence import aci_horizon_row_printed
+    far = "OTHER RELEVANT INFORMATION\nIf you exit after\n5 years\n619 EUR 0.73% each year\nIf you exit after 1 year\n0.94% of the value of your investment per year."
+    assert aci_horizon_row_printed(far, 0.73) is True
+    assert aci_horizon_row_printed(far, 0.95) is False                                    # the 1-year figure is not the RHP row
+    assert aci_horizon_row_printed("If you exit after 1 year\n500 EUR 1.65% each year", 1.65) is False   # a 1-year row is not an RHP column
+    assert aci_horizon_row_printed(None, 0.73) is False and aci_horizon_row_printed(far, None) is False
+    rows = [("DETACHED", 0.95, 0.73, 0.94, 0.0, None, 0.0, None, None, None, 5.0), ("UNPRINTED", 0.95, 0.73, 0.94, 0.0, None, 0.0, None, None, None, 5.0)]
+    assert _violators(rows, {"DETACHED": far, "UNPRINTED": "nothing printed here"}) == ["UNPRINTED"]
+
+
 def test_a_stored_pair_the_kid_prints_is_not_flagged_even_if_the_components_disagree():
     rows = [("PRINTED", 2.2, 2.4, 0.9, 0.1, None, 0.0, None, None, None, 5.0),     # a publisher whose own figures disagree: the document is the authority
             ("UNPRINTED", 2.2, 2.4, 0.9, 0.1, None, 0.0, None, None, None, 5.0)]

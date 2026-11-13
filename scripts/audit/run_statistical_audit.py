@@ -175,7 +175,7 @@ from shared.statistical_audit.recompute_gate import assert_recompute_happened, c
 from shared.statistical_audit.snapshot import build_population, build_snapshot
 from shared.statistical_audit.timeseries import build_window_deflation_frame, scalar_window_cpi
 from shared.statistical_audit.tolerances import ACI_COMPONENTS_TOLERANCE_PP, ACI_ORDER_TOLERANCE_PP, IPC_ELIGIBILITY_FLOOR, KID_ROUNDING_TOLERANCE_PP
-from shared.statistical_audit.text_evidence import aci_pair_printed
+from shared.statistical_audit.text_evidence import aci_horizon_row_printed, aci_pair_printed
 
 MIN_PEERS = 5
 
@@ -446,7 +446,8 @@ def _mark_aci_components(conn: "psycopg.Connection", master: "pd.DataFrame") -> 
         return
     texts = {r[0]: r[1] for r in conn.execute("SELECT isin, raw_kiid_text FROM fund_kiid_metadata WHERE isin = ANY(%s)", (sorted(outside["ISIN"].tolist()),)).fetchall()}
     printed = {row.ISIN for row in outside.itertuples()
-               if aci_pair_printed(texts.get(row.ISIN), None if pd.isna(row.ACI_1Y) else float(row.ACI_1Y), float(row.ACI_RHP))}
+               if aci_pair_printed(texts.get(row.ISIN), None if pd.isna(row.ACI_1Y) else float(row.ACI_1Y), float(row.ACI_RHP))
+               or aci_horizon_row_printed(texts.get(row.ISIN), float(row.ACI_RHP))}
     master.loc[master["ISIN"].isin(printed), "ACI_Pair_Printed"] = True
 
 

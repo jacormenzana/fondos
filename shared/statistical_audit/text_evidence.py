@@ -37,3 +37,20 @@ def aci_pair_printed(text: str | None, aci_1y: float | None, aci_rhp: float | No
         if _CONTEXT_AFTER.search(text[m.end():m.end() + _AFTER_WINDOW]) or _CONTEXT_BEFORE.search(text[max(0, m.start() - _BEFORE_WINDOW):m.start()]):
             return True
     return False
+
+
+_HORIZON_ROW = re.compile(
+    r"(?:exit\s+after|salida\s+despu[eé]s\s+de|baja\s+despu[eé]s\s+de|retira\s+la\s+inversi[oó]n\s+despu[eé]s\s+de)\s*(\d{1,2})\s*(?:years?|a[nñ]os?)\s+"
+    r"(?:(?:EUR|USD|GBP|CHF)\s*)?[\d.,\s]+(?:EUR|USD|GBP|CHF|€)?\s*(\d{1,2}[.,]\d{1,2})\s*%\s*(?:each\s*year|cada\s*a[nñ]o)",
+    re.IGNORECASE,
+)
+
+
+def aci_horizon_row_printed(text: str | None, aci_rhp: float | None) -> bool:
+    """True when `text` prints the stored `aci_rhp` as a row of its own that names a horizon of 2 years or more: "If you exit after 5 years 2,089 EUR 1.66% each year" (package B, 2026-11-13:
+    the layout of the funds whose 5-year column sits apart from the annual-impact label, so the pair is never adjacent). Independent of the extractor on purpose (its own pattern, no import
+    from proyecto1). False for a missing text or value. Pure."""
+    if not text or aci_rhp is None:
+        return False
+    value = re.compile(r"\A" + _number_pattern(aci_rhp) + r"\Z")
+    return any(int(m.group(1)) >= 2 and value.match(m.group(2)) for m in _HORIZON_ROW.finditer(text))
