@@ -161,7 +161,7 @@ Before changing code in a folder below, read its guide. Claude Code loads it aut
 | `scripts/launch/` | `scripts/launch/AGENTS.md` | cycle launchers, resume, audit ownership, exit codes, canonical launcher list |
 | `scripts/audit/` | `scripts/audit/AGENTS.md` | sentinel sync of the governed documents, its enforcement, the split check |
 
-Kill-switch registry (every `*_ENABLED`): `doc/reglas/NORMAS_IMPLEMENTACION.md` §8. **P2 recompute:** bump `CALC_VERSION` (`proyecto2/src/pipeline/run_pipeline.py`, currently `"20261011"`) to force a full recompute of all ISINs; details in `proyecto2/AGENTS.md`.
+Kill-switch registry (every `*_ENABLED`): `doc/reglas/NORMAS_IMPLEMENTACION.md` §8. **P2 recompute:** bump `CALC_VERSION` (`proyecto2/src/pipeline/run_pipeline.py`, currently `"20261112"`) to force a full recompute of all ISINs; details in `proyecto2/AGENTS.md`.
 
 ---
 
