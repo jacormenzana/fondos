@@ -1,0 +1,37 @@
+# Handoff: after the S0 impact triage (start of package 1, integrity of the current selection)
+
+Written 2026-11-13 night at HEAD `f6c7799` plus this document. It supersedes `HANDOFF_CLUSTERS_C_D_E_G.md` for ORDER and STATE (that file stays as the record of its text); the standing orders of section 2 there still hold except where this file says otherwise. The text between the rules is the prompt to paste into the new session.
+
+---
+
+You are continuing the Fondos project (C:\desarrollo\fondos). Read `AGENTS.md` ("Working method - outcome packages"), then `doc/backlog/PKG_S0_impact_triage.md` (the one-page record of the triage: evidence, verdicts, what was applied), then this file. Run the read-only pre-flight BEFORE touching anything (`C:\Users\jacor\.conda\envs\des\python.exe scripts/audit/preflight_check.py --mine <your files>`). Set `FONDOS_ACTOR=agent:<your model id>` and `import shared.config` first in any script that reads the backlog. Reply in English, ultra-short, DECISION FIRST. First action: report the state in five lines and start package 1 at slice 1 below.
+
+## 1. State (2026-11-13 night)
+1. HEAD = origin/master = `f6c7799` (+ this handoff); tree clean; nothing running. PRODUCTION is now `cartera_shock_energetico_202611_b20261112220456` (promoted by the owner on 2026-11-13; the 10-25 portfolio is ARCHIVED).
+2. Last FULL receipts: `cfb35b1` PASS (6,953 passed, 513 s) and `4c7a56b` PASS (6,953, 489 s). `CALC_VERSION` `20261112`.
+3. Backlog: 61 open = 27 DEFERRED + 34 active; 12 IN_PROGRESS; active HIGH 9. Closed today: 0041, 0233, 0230, 0296, 0293, 0289, 0308, 0394, 0256. Deferred to 2027-02-10: 0090, 0180, 0182, 0267, 0324, 0325, 0326, 0327, 0328, 0329. Back to TODO (no real work for 34-39 days): 0221, 0198, 0239. Pair 0239 / 0385 decided NONE (adjudication 41).
+4. Shipped: the P3 freshness gate judges each leg of a composite regime input (`macro_legs:<input>`, `P3_MACRO_LEG_CHECK_ENABLED` ON; today ES and EU CPI legs 2026-09, inside the 100-day limit). `redireccion` (a 0-byte stray file) was deleted on the owner's written OK.
+5. **The backup (FND-0290) is NOT fixed, by the owner's order**: the 03:30 off-box copy exits 3 when D: is detached and no task runs the logical dump on its own. Ask first thing whether the owner has a window; the fix is a 03:30 logical-dump task independent of D: (the owner registers it).
+
+## 2. Standing orders added or confirmed today
+- The owner delegated judgement on 2026-11-13 ("I trust in your criteria") except for: the backup (deferred), FND-0397 / 0402 (NO GO of 2026-11-08 stands: it covers applying the classifier fix that would move 44 funds; reviewing evidence is allowed, the fix is not), promotion (the owner's command only), and live closes (the autopilot on a `Closes:` commit).
+- One FULL receipt per package delivery; a switch flip ships as its own commit WITH `Closes:` on the ticket it finishes, because a `Closes:` commit is not published until its receipt passes (that is how a gate change gets its receipt before publication).
+- Never cite a DEFERRED or CLOSED ticket in `Refs:`: a `Refs:` moves a deferred ticket to IN_PROGRESS and reopens a closed one.
+
+## 3. Package 1 plan (integrity of the current selection), in order
+Exit metric: no held fund with an open classification doubt that the owner has not decided; the promotion gate links a DRAFT to its audit by identity, not only by time.
+1. **FND-0306 slice 1 (design (a), SHADOW, no DDL).** Pre-coding checks are DONE and logged on the ticket (log 2319): stamps complete (0 NULL), digest deterministic and order-independent (universe 7,778 pairs in 0.64 s), production scope has 6 unstamped rows of 12,293 in 2 funds. Still to verify before coding: read the P2 writer to confirm a rewritten row always gets a new `batch_id`, and rehearse on the hermetic server; decide whether `fund_metric_timeseries` / alerts need a stamp. Then: a pure fingerprint function next to `shared/governance/run_identity.py`; the audit header carries it; the DRAFT stamps it as a notes key at build; the promotion gate prints the verdict and writes an `ingestion_log` shadow line with the switch `PROMOTION_AUDIT_IDENTITY_GATE_ENABLED` OFF; control entry in `GOBIERNO_CONTROLES.md` and `shared/governance/controls.py`. Flip only after two real DRAFTs and a deliberate mismatch rehearsal (owner order 2026-10-24).
+2. **FND-0221** (Crisis_Financiera attribution): re-baseline on the current FND-0193 SIMPLIFY configuration before analysing; the ticket's 22 % hit rate predates it. Read-only.
+3. **FND-0198** (survivorship): the owner-run A/B `p3_pit_oos` with `--current-universe-only` is not recorded; ask the owner to run it or defer the ticket.
+4. **FND-0257 / 0158**: 0257's premise changed 2026-10-26; 0158 waits on two consecutive uniform-version portfolios (the 10-25 and the 11-12 portfolios are the first pair: measure turnover with the flags on and off, read-only, then bring the decision).
+5. Then package 2 residue (0209, 0389), package 3 (0236, 0255, 0239, 0100), tail (0245, 0291, 0406, 0386, 0400).
+
+## 4. Mechanics learned today
+a. A backlog session id must look like `FND_YYYYMMDD_ANL_TOPIC` (letters only in the middle group; `S0` is refused). The collision tool `gate_adjudicate.py --decide` refuses a non-interactive process: an agent uses `bc.agent_adjudicate_overlap(a, b, decision, reason)`.
+b. Closing flow that worked three times: docs-only commit with `Closes:` lines and `Co-Authored-By` in the same last paragraph, then `bc.add_close_condition(ap, "tests_pass", [<full sha>], reason)` per ticket, then `delivery_attest.py` (docs_only is instant), then the autopilot closes by itself within minutes.
+c. A non-`Closes:` commit waits for the watcher's pass; `python scripts/audit/auto_publish.py --retry` is one attempt of the same mechanism (never forced), `--status` shows the pending state.
+d. Run the policy scanners and the receipt from Git Bash: from PowerShell `bash` is the WSL launcher and `tests/test_maintenance_log_routing.py` fails on `/c/...` paths.
+e. A new check inside `check_universe_freshness` must be stubbed in the two tests that call it with `conn=None` (`test_fx_coverage_gate_fnd0243.py`, `test_fx_view_canary_lock_fnd0235.py`).
+f. Evidence reads that worked: `gold.fund_metric_alerts` (level OK / WARN / ALARM), `gold.regime_history`, `bronze.series_macro` (freshness per series), `control.ingestion_log` (the promotion record), `control.audit_accepted_finding`; the promotion dry run `p3_promote_scenario.py <id> --dry-run` is read-only.
+
+---

@@ -50,7 +50,8 @@ Corrections to Revision 1: the flat `ipc_yoy_avg` for Sep-Nov is expected (Septe
 - 0293 unit check done: China CPI is stored as an index (69-117), so 0293 joins the closure list.
 - This commit closes 0041, 0233, 0230, 0296, 0293 (CODE_FIX) through the autopilot; closing conditions `tests_pass` are bound to this commit.
 - Wave 1 closed by the autopilot (all five CLOSED). Wave 2 (second closing commit): 0289, 0308, 0394.
-- Not touched (no decision yet): FND-0397 stays NO GO, DRAFT promotion, the 0239 / 0385 pair, the WIP limit.
+- Later the same day (owner delegated judgement; backup deferred): FND-0256 closed after the P3 leg-level freshness check shipped SHADOW (`cfb35b1`) and ON (`4c7a56b`); pair 0239 / 0385 decided NONE (adjudication 41); 0221, 0198, 0239 back to TODO; `redireccion` removed (`f6c7799`, owner's written OK); the 11-12 DRAFT was promoted by the owner. Next: `HANDOFF_S0_PACKAGE_1.md`.
+- Not touched at that point (no decision yet): FND-0397 stays NO GO, DRAFT promotion, the 0239 / 0385 pair, the WIP limit.
 
 ## 5b. Promotion readiness of DRAFT `cartera_shock_energetico_202611_b20261112220456` (dry run, read-only, 2026-11-13)
 - Passes: weights sum 1.0000, 30 funds; non-EUR exposure 30.0 % (budget 30 %); structural liquidity 0 % (cap 10 %); P3 freshness clean; P2 audit `post_20261112_221002_p2` (age 0 d, built after the DRAFT); 0 hard defects in or out of the portfolio; audit coverage OK; alarm watch 0 funds; data suspicion 0 funds; DATA pillar PASS, ORCHESTRATION PASS.
