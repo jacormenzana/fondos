@@ -2965,8 +2965,8 @@ def run_block(
                     _fp_same = (None if (_fp_old is None or not _fp_old[0] or not _fp_new_hash) else (_fp_old[0] == _fp_new_hash))
                     _fp_neg: dict = {}
                     if _fee_full_pass and _fee_text:
-                        _fp_neg = {"entry": bool(_priips_ext_mod.ENTRY_FEE_NEGATION.search(_fee_text)),
-                                   "exit": bool(_priips_ext_mod.EXIT_FEE_NEGATION.search(_fee_text))}
+                        _fp_neg = {"entry": bool(_priips_ext_mod.ENTRY_FEE_NEGATION_ANY.search(_fee_text)),      # FND-0420: the wider negation (Pictet wording, "do not charge")
+                                   "exit": bool(_priips_ext_mod.EXIT_FEE_NEGATION_ANY.search(_fee_text))}
                     _dq_issues.extend(_fee_state.reconcile_fee_pairs(
                         fund_master_record, parsed, _fp_stored, full_cost_pass=_fee_full_pass, negation=_fp_neg, same_document=_fp_same))
                 except Exception as _fee_exc:  # noqa: BLE001 -- guarda: el fondo nunca se pierde por esta resolucion

@@ -36,8 +36,20 @@ RC_OK, RC_STOP, RC_NO_DB = 0, 1, 3
 SAMPLE = 30
 ROW_START = {"entry": re.compile(r"costes?\s+de\s+entrada|entry\s+costs?", re.I), "exit": re.compile(r"costes?\s+de\s+salida|exit\s+costs?", re.I)}
 ROW_END = re.compile(r"costes?\s+de\s+(?:entrada|salida)|costes?\s+corrientes|comisiones?\s+de\s+gesti|costes?\s+de\s+operaci|costes?\s+recurrentes|ongoing\s+costs?|entry\s+costs?|exit\s+costs?", re.I)
-NEGATION = re.compile(r"no\s+cobramos|no\s+se\s+cobra|no\s+aplica|no\s+se\s+aplica|nocobramos|we\s+do\s+not\s+charge|no\s+(?:entry|exit)\s+(?:fee|charge)", re.I)
+NEGATION = re.compile(r"no\s+cobramos|no\s+se\s+cobra|no\s+aplica|no\s+se\s+aplica|nocobramos|we\s+do\s+not\s+charge|no\s+(?:entry|exit)\s+(?:fee|charge)"
+                      r"|no\s+cobra\s+(?:gastos?|costes?|comisi[oó]n(?:es)?|cargos?)\s+de\s+(?:entrada|salida)|(?:do|does)\s+not\s+charge\s+an?\s+(?:entry|exit)", re.I)
 MAX_MARK = re.compile(r"\bhasta\b|m[aá]xim[oa]|up\s+to|as\s+much\s+as", re.I)
+# Owner definition 2026-11-14 (FND-0420): a PRIIPs percent printed beside the standard sentence "Se trata de la cantidad maxima que se le cobrara" / "This is the most you will be charged" is an
+# applied-and-listed fee (EXTRACTED), not a conditional one. Those sentences are in every PRIIPs KID, so they are removed before the maximum marker is looked for; an explicit "Hasta X %" / "up to"
+# stays a marker.
+BOILERPLATE = re.compile(
+    r"se\s+trata\s+de\s+la\s+cantidad\s+m[aá]xima[^.]*\.?"
+    r"|(?:este|esta)\s+es\s+(?:el|la)\s+(?:importe\s+|cantidad\s+)?m[aá]xim[oa][^.]*\.?"
+    r"|(?:it\s+)?(?:is|es)\s+the\s+(?:maximum|most)[^.]*\.?"
+    r"|this\s+is\s+the\s+(?:maximum|most)[^.]*\.?"
+    r"|\(\s*m[aá]x\.?\s*\)",
+    re.I,
+)
 PERCENT = re.compile(r"(\d{1,3}(?:[.,]\d{1,3})?)\s*%")
 AMOUNT = re.compile(r"(?:[$€£]\s?(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d+)?)|(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d+)?)\s*(?:EUR|USD|GBP|CHF|JPY|SEK|NOK|DKK)\b)", re.I)
 WINDOW_MAX = 420
@@ -76,7 +88,7 @@ def read_row(row: str) -> str:
     positive = [v for v in percents + amounts if v > 0]
     if not positive:
         return "none"
-    return "conditional" if MAX_MARK.search(row) else "positive"
+    return "conditional" if MAX_MARK.search(BOILERPLATE.sub(" ", row)) else "positive"
 
 
 def expected_kind(state: str) -> str:

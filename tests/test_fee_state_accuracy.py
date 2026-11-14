@@ -74,3 +74,21 @@ def test_currency_symbols_are_amounts_too():
     assert fa.read_row(fa.fee_row("Costes de entrada Se trata de la cantidad máxima que se le cobrará. Hasta $500 Costes de salida No cobramos una comisión de salida. $0", "entry")) == "conditional"
     assert fa.read_row("£300") == "positive"
     assert fa.read_row("€0") == "zero"
+
+
+def test_the_priips_boilerplate_sentence_is_not_a_maximum_but_an_explicit_hasta_is():
+    """Owner definition 2026-11-14 (FND-0420): a percent beside 'Se trata de la cantidad maxima que se le cobrara' is EXTRACTED."""
+    boiler = "Costes de entrada 5,00 % del importe que pagará usted al realizar esta inversión. Se trata de la cantidad máxima que se le cobrará. 500 EUR Costes de salida 0 EUR"
+    assert fa.read_row(fa.fee_row(boiler, "entry")) == "positive"
+    assert fa.read_row(fa.fee_row("Costes de entrada 5.00% is the maximum amount you pay when entering this investment. Exit costs", "entry")) == "positive"
+    assert fa.read_row(fa.fee_row("Costes de entrada 3.00 % (máx.) del importe que pagará usted. Costes de salida", "entry")) == "positive"
+    assert fa.read_row(fa.fee_row("Costes de entrada Hasta 3,00% del importe que pagará usted. Hasta 300 EUR Costes de salida", "entry")) == "conditional"
+    assert fa.read_row(fa.fee_row("Costes de entrada Se trata de la cantidad máxima que se le cobrará. Hasta $500 Costes de salida", "entry")) == "conditional"
+
+
+def test_the_reader_knows_that_a_manager_who_charges_none_means_zero_even_if_a_distributor_may_charge():
+    """Pictet / Carmignac / 'The Fund does not charge an entry fee': zero applied, whatever maximum another party may charge (FND-0420)."""
+    pictet = "Costes de salida Pictet Asset Management (Europe) S.A. no cobra gastos de salida por este producto, si bien la persona que se lo venda podría cobrarle hasta un máximo del 1.00%. Hasta 100 USD COSTES CORRIENTES"
+    assert fa.read_row(fa.fee_row(pictet, "exit")) == "zero"
+    assert fa.read_row(fa.fee_row("Entry costs The Fund does not charge an entry fee. EUR 0 Exit costs", "entry")) == "zero"
+    assert fa.read_row(fa.fee_row("Costes de entrada 1,00% del importe. Carmignac Gestion no cobra costes de entrada. La persona que le venda Costes de salida", "entry")) == "zero"

@@ -360,6 +360,14 @@ ENTRY_FEE_NEGATION = re.compile(
     re.IGNORECASE,
 )
 
+# FND-0420 (Package H, 2026-11-14): the NEGATION the fee-pair resolver reads (shared/fee_state.resolve_pair, pipeline.py). Wider than the two patterns above on purpose: those two make the
+# extractor force a printed ceiling to 0 (FIX-FEE-NEGATION, a mis-binding repair), so widening them would drop real maxima. These also read "Pictet Asset Management (Europe) S.A. no cobra
+# gastos de salida por este producto, si bien la persona que se lo venda podria cobrarle hasta un maximo del 1.00 %" (the old exit point of 1 % stayed stored for ~30 funds) and "... do not
+# charge an exit fee for this product, but the person selling you the product may charge you no more than 1.00 %". The ceiling the extractor read stays: zero applied, maximum declared.
+_NO_CHARGE_ES = r'no\s+(?:se\s+)?cobra(?:mos)?\s+(?:una\s+|ninguna\s+)?(?:comisi[oó]n|gastos?|costes?|cargos?)\s+de\s+'
+ENTRY_FEE_NEGATION_ANY = re.compile(ENTRY_FEE_NEGATION.pattern + r'|' + _NO_CHARGE_ES + r'entrada|(?:do|does)\s+not\s+charge\s+an?\s+entry', re.IGNORECASE)
+EXIT_FEE_NEGATION_ANY = re.compile(EXIT_FEE_NEGATION.pattern + r'|' + _NO_CHARGE_ES + r'salida|(?:do|does)\s+not\s+charge\s+an?\s+exit', re.IGNORECASE)
+
 # FIX-ENTRY-FEE-BY-DESCRIPTION (2026-08-23): la comisión de ENTRADA se expresa
 # como % del IMPORTE QUE SE PAGA / IMPORTE INVERTIDO, mientras que el ACI se
 # expresa como % del VALOR DE LA INVERSIÓN AL AÑO. Cuando el parser liga por
@@ -1579,6 +1587,10 @@ _BASE_PATTERNS = [
                r'(?:' + _BASE_CUR + r'\s*)?' + _BASE_NUM, re.I),
     re.compile(r'para\s+una\s+inversi[oó]n\s+de\s*:?\s*' + _BASE_NUM, re.I),
     re.compile(r'invest(?:ment)?\s+(?:of\s+)?(?:' + _BASE_CUR + r'\s*)?' + _BASE_NUM, re.I),
+    # FND-0420 (2026-11-14): "Example Investment: 10,000 EUR" (the colon broke the pattern above, so the base was None and the amount reader never ran on those English KIDs) and
+    # "- EUR 10,000 is invested".
+    re.compile(r'invest(?:ment)?\s*:\s*(?:' + _BASE_CUR + r'\s*)?' + _BASE_NUM, re.I),
+    re.compile(r'(?:' + _BASE_CUR + r'\s*)?' + _BASE_NUM + r'\s*(?:' + _BASE_CUR + r')?\s+is\s+invested', re.I),
     # FND-0278 (2026-11-04): "hemos asumido ... que inviertes EUR 10,000" and "basados en una inversion de, por ejemplo EUR 10,000" (NO0013528356): neither phrasing was
     # read, so the base fell back to the default and the example amount, found next to a horizon label, was stored as a 5-year total (100 %).
     re.compile(r'inviert(?:e|es|a|o)\s+(?:' + _BASE_CUR + r'\s*)?' + _BASE_NUM, re.I),
@@ -1644,6 +1656,39 @@ def entry_cost_ratio_from_amount(text: str) -> Optional[float]:
         return None
     ratio = amounts[0] / float(base)
     return round(ratio, 6) if ratio <= _ENTRY_MAX_RATIO else None
+
+
+# FND-0420 (Package H, 2026-11-14): English entry rows that state the charge in WORDS, no label-then-percent layout: "Entry costs This includes distribution costs of 5.25%. This is the most you
+# will be charged ... Up to 525 EUR" and "Entry costs 5.00% is the maximum amount you pay when entering this investment" (14 of 30 sampled NOT_FOUND funds). The composition parsers never bind them
+# and the amount reader (FND-0406) refuses a cell that carries a percentage, so the entry ceiling stayed empty. Read only inside the entry cell, only these two wordings, as a GAP FILLER.
+_ENTRY_PCT_DESCRIPTION_EN = re.compile(
+    r"distribution\s+costs\s+of\s+(\d{1,2}(?:[.,]\d{1,2})?)\s*%"
+    r"|(\d{1,2}(?:[.,]\d{1,2})?)\s*%\s+is\s+the\s+(?:maximum|most)\b",
+    re.IGNORECASE,
+)
+
+
+def entry_cost_ratio_from_description(text: str) -> Optional[float]:
+    """The entry charge as a RATIO from an English description row ("distribution costs of 5.25%", "5.00% is the maximum amount you pay"), else None. Pure, bounded: the entry cell only (up to
+    the exit-charge label, at most _ENTRY_CELL_MAX_CHARS), a positive value within the schema ceiling."""
+    if not text:
+        return None
+    label = _ENTRY_COST_LABEL.search(text)
+    if not label:
+        return None
+    cell = text[label.end(): label.end() + _ENTRY_CELL_MAX_CHARS]
+    stop = _EXIT_COST_LABEL.search(cell)
+    if stop:
+        cell = cell[:stop.start()]
+    m = _ENTRY_PCT_DESCRIPTION_EN.search(cell)
+    if not m:
+        return None
+    try:
+        pct = float((m.group(1) or m.group(2)).replace(",", "."))
+    except ValueError:
+        return None
+    ratio = pct / 100.0
+    return round(ratio, 6) if 0 < ratio <= _ENTRY_MAX_RATIO else None
 
 
 def _parse_composition_dla2(text: str) -> dict:

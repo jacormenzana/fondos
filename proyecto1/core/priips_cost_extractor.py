@@ -53,7 +53,10 @@ from cost_table_parser    import (
     ENTRY_FEE_VALUE,
     ENTRY_FEE_NEGATION,
     EXIT_FEE_NEGATION,
+    ENTRY_FEE_NEGATION_ANY,        # FND-0420: read by pipeline.py (the fee-pair resolver), not by the extractor itself
+    EXIT_FEE_NEGATION_ANY,         # noqa: F401
     entry_cost_ratio_from_amount,
+    entry_cost_ratio_from_description,
     parse_investment_base,
 )
 from cost_cross_validator import validate_pct_eur, ValidationResult
@@ -540,6 +543,7 @@ def _recover_composition_from_description(text: str) -> tuple:
     return mgmt, tran
 
 
+_ENTRY_FROM_DESCRIPTION_ENABLED = True    # FND-0420 FIX-ENTRY-FEE-FROM-DESCRIPTION: False restores the former behaviour (old-vs-new measurement harness only)
 _ENTRY_FROM_AMOUNT_ENABLED = True         # FND-0406 FIX-ENTRY-FEE-FROM-AMOUNT: False restores the former behaviour (old-vs-new measurement harness only)
 _MGMT_FROM_AMOUNT_ENABLED = True          # FIX-MGMT-FROM-AMOUNT: False restores the former behaviour (old-vs-new measurement harness only)
 _COMPOSITION_WINDOW_BOUNDED = True       # FIX-COMPOSITION-DESC-WINDOW: False restores the former behaviour (old-vs-new measurement harness only)
@@ -1419,6 +1423,16 @@ def extract_priips_costs(
         # ... 496 USD" on "Inversión: 10.000 USD", PIMCO: 105 of 3,655 PRIIPs KIDs), so no composition parser binds it and the column stayed empty while the ACI (5.8 % at a one-year holding
         # period) includes it. The document's own amount over its own example investment IS the entry charge it prints; the helper refuses a cell with a percentage, a zero amount, a missing
         # base or a ratio above the schema ceiling. Only fills a gap: it never replaces a value the composition parsers bound, and a negation ("no cobramos comisión de entrada") wins.
+        # FIX-ENTRY-FEE-FROM-DESCRIPTION (FND-0420, 2026-11-14): English rows that state the charge in words ("distribution costs of 5.25%", "5.00% is the maximum amount you pay"); gap filler
+        # only, a negation wins, and it runs before the amount reader (which refuses a cell with a percentage).
+        if entry_max is None and _ENTRY_FROM_DESCRIPTION_ENABLED and not ENTRY_FEE_NEGATION.search(text):
+            _entry_desc = entry_cost_ratio_from_description(text)
+            if _entry_desc is not None:
+                _log.info(
+                    "[FIX-ENTRY-FEE-FROM-DESCRIPTION] %s: Entry_Fee_Pct_Max NULL→%.2f%% (descripcion en ingles de la fila de entrada)",
+                    isin, _ratio_to_pct(_entry_desc),
+                )
+                entry_max = _entry_desc
         if entry_max is None and _ENTRY_FROM_AMOUNT_ENABLED and not ENTRY_FEE_NEGATION.search(text):
             _entry_amt = entry_cost_ratio_from_amount(text)
             if _entry_amt is not None:
