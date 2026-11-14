@@ -111,10 +111,9 @@ _SEVERE_DISCREPANCY_THRESHOLD = 0.005   # 50bp en ratio decimal
 _OC_ACI_NEAR_PP = 0.0010   # 0.10pp: el valor en BD "se parece" al ACI_RHP
 _OC_TER_FAR_PP  = 0.0030   # 0.30pp: el valor en BD difiere del TER reconstruido
 
-# FIX-OC-BIND (2026-08-24): tolerancia única de la guarda de ligadura del gasto
-# corriente, en ratio decimal. 0.0006 = 0.06pp, por encima del redondeo que el
-# propio KID publica (2 decimales en porcentaje) y muy por debajo de la menor
-# separación real observada entre gasto corriente y comisión de gestión.
+# Tolerancia (ratio decimal) con la que el aviso OC/ACI decide que el gasto corriente guardado "coincide con la gestión". 0.0006 = 0.06pp,
+# por encima del redondeo que el propio KID publica (2 decimales en porcentaje) y muy por debajo de la menor separación real observada
+# entre gasto corriente y comisión de gestión. (Nació con FIX-OC-BIND, la reparación que FND-0034 retiró y FND-0291 borró.)
 _OC_BIND_TOL = 0.0006
 
 # FIX-SCHEDULE-PCT-GATE (2026-08-24): techo de impacto ANUAL implícito admisible
@@ -264,55 +263,6 @@ def _norm_existing_oc(existing_oc: Optional[float]) -> Optional[float]:
     if existing_oc >= 0.5:
         return existing_oc / 100.0
     return existing_oc
-
-
-def _resolve_oc_binding(
-    oc_norm: Optional[float],
-    mgmt: Optional[float],
-    aci_rhp_ratio: Optional[float],
-    aci_1y_ratio: Optional[float],
-) -> Optional[str]:
-    """
-    ¿A qué fila quedó ligado el gasto corriente heredado? (FIX-OC-BIND)
-
-    Devuelve la señal que delata la mala ligadura, o None si el valor es
-    coherente y no debe tocarse. Todos los argumentos en RATIO decimal.
-
-    Dos señales, una sola guarda (P#11):
-      'ACI'                           el valor heredado es el ACI, no el TER.
-      'componente menor que la gestión'  el valor heredado está por debajo de la
-                                      comisión de gestión que el gasto corriente
-                                      CONTIENE (UCITS OCF) — típicamente la fila
-                                      de operación o la de salida.
-
-    La segunda señal exige que el ACI publicado respalde a la gestión: un
-    incumplimiento del invariante no dice por sí solo qué lado está mal, y sin
-    respaldo se prefiere no tocar nada (control de método #4).
-
-    Puro y acotado; ante cualquier None → None conservador. (P-5)
-    """
-    if oc_norm is None or mgmt is None:
-        return None
-    if abs(oc_norm - mgmt) < _OC_BIND_TOL:
-        return None
-
-    if any(
-        a is not None and abs(oc_norm - a) < _OC_BIND_TOL
-        for a in (aci_rhp_ratio, aci_1y_ratio)
-    ):
-        return 'ACI'
-
-    _corroboration = max(
-        (a for a in (aci_rhp_ratio, aci_1y_ratio) if a is not None),
-        default=None,
-    )
-    if (
-        oc_norm < mgmt - _OC_BIND_TOL
-        and _corroboration is not None
-        and _corroboration >= mgmt - _OC_BIND_TOL
-    ):
-        return 'componente menor que la gestión'
-    return None
 
 
 def _detect_oc_aci_mismatch(
@@ -929,8 +879,7 @@ def extract_priips_costs(
     existing_oc:    Optional[float] = None,    # Ongoing_Charge_Recurrent actual en BD (escala BD)
     existing_entry: Optional[float] = None,    # Entry_Fee_Pct actual en BD
     existing_exit:  Optional[float] = None,    # Exit_Fee_Pct actual en BD
-    existing_mgmt:  Optional[float] = None,    # Management_Fee_Pct actual en BD (% entero) — P1-17
-    parser_oc:      Optional[float] = None,    # Ongoing_Charge del kiid_parser (ratio) — FIX-OC-PARSER-BIND
+    parser_oc:      Optional[float] = None,    # Ongoing_Charge del kiid_parser (ratio) — FIX-OC-PARSER-BIND (solo alimenta el aviso OC/ACI)
 ) -> Dict[str, Any]:
     """
     Extrae los campos de coste de un KID PRIIPs a partir del texto concatenado
@@ -957,9 +906,9 @@ def extract_priips_costs(
       Performance_Fee_Pct      float | None   (% entero)
       ACI_1Y                   float | None   (% entero)
       ACI_RHP                  float | None   (% entero)
-      Ongoing_Charge_Recurrent float | None   (% entero; SOLO si existing_oc is None y TER OK)
       _cost_schedule_rows      List[dict]     (siempre; puede ser [])
-      _oc_aci_mismatch         bool           (solo si se detecta mezcla TER/ACI con OC existente)
+      _oc_aci_mismatch         bool           (solo si se detecta mezcla TER/ACI con OC existente; aviso, el extractor NO escribe
+                                               Ongoing_Charge_Recurrent: su único escritor es cost_scale.resolve_ongoing_charge, FND-0034)
 
     Hallazgo §4.4: cross-validation % ↔ EUR solo es válida a horizonte 1 año
     (EUR acumulado ≈ ACI × base solo cuando horizonte = 1 año). Para RHP > 1 año,
@@ -1584,142 +1533,35 @@ def extract_priips_costs(
             if _anchor_1y is not None and _anchor_1y >= _anchor_rhp:
                 out['ACI_1Y'] = _anchor_1y
 
-        # --- E. TER reconstruido y gestión de Ongoing_Charge_Recurrent (P-3) ---
+        # --- E. Aviso OC/ACI (diagnóstico; FND-0034, FND-0291) ---
+        # El extractor ya NO escribe Ongoing_Charge_Recurrent: su único escritor es cost_scale.resolve_ongoing_charge (FND-0034). FND-0291 borró
+        # lo que escribía (el relleno con el TER y la reparación FIX-OC-BIND / FIX-OC-ACI-REPAIR) y la salida `_oc_aci_mismatch_ter_pct`, que el
+        # pipeline ya descartaba. Queda el AVISO `_oc_aci_mismatch` (el OC guardado parece el ACI y no el TER), que el pipeline convierte en la fila
+        # de calidad BL_COST_4C_OC_ACI_MISMATCH. Solo puede dispararse cuando ESTA pasada extrajo la gestión (ter_recon_ratio): sin ella no hay con
+        # qué comparar, y un valor guardado nunca se usa como si fuese extracción (P#10).
         ter_recon_ratio: Optional[float] = None
         if mgmt is not None:
             ter_recon_ratio = mgmt + (tran or 0.0)
 
-        # FIX-OC-BIND-MGMT-FALLBACK (P1-17, 2026-08-24) — se resuelve AQUÍ, antes de
-        # la puerta de abajo. La reparación de ligadura fija el gasto corriente al
-        # componente de GESTIÓN, así que sin gestión no tiene destino; pero además
-        # todo el bloque de reparación colgaba de `ter_recon_ratio`, que solo se
-        # calcula `if mgmt is not None`. Con la gestión no rederivable el bloque
-        # entero se saltaba y el fondo conservaba en silencio un OC contaminado.
-        #
-        # Medido en el ensayo del 2026-08-24: ~35 de los 39 residuales OC == ACI_RHP
-        # son exactamente esto. DE000DWS29E6: BD gestión 1,46, ACI_RHP 2,40, OC 2,40 —
-        # la guarda devuelve 'ACI' sobre los valores de BD y repararía, pero en
-        # ejecución mgmt=None, luego ter_recon_ratio=None y no se entraba siquiera.
-        #
-        # El valor almacenado se usa SOLO como destino de reparación. NUNCA se
-        # publica en Management_Fee_Pct ni alimenta `ter_recon_ratio` (que sostiene
-        # la reconstrucción TER de BL-COST-5): anunciarlo como extracción de esta
-        # pasada sería fabricar procedencia (P#10).
-        _mgmt_for_bind = mgmt
-        _mgmt_from_db = False
-        if _mgmt_for_bind is None and existing_mgmt is not None:
-            _cand = existing_mgmt / 100.0
-            if 0.0 < _cand <= _MAX_FEE_RATIO:
-                _mgmt_for_bind = _cand
-                _mgmt_from_db = True
+        if existing_oc is not None and ter_recon_ratio is not None:
+            oc_norm = _norm_existing_oc(existing_oc)
 
-        if ter_recon_ratio is not None or (
-            _mgmt_for_bind is not None and existing_oc is not None
-        ):
-            if existing_oc is None:
-                # COALESCE-compatible: rellenar hueco con TER puro.
-                #
-                # FIX-OC-SCALE (2026-08-23): antes escribía _ratio_to_pct(...),
-                # es decir PORCENTAJE, en una columna cuya convención es RATIO
-                # decimal — la que documenta kiid_parser._detect_ongoing_charge
-                # ("devuelve float decimal, p. ej. 0.0075 para 0.75%") y la que
-                # asume _norm_existing_oc. Resultado: los fondos rellenados por
-                # esta vía quedaban 100× por encima de los heredados. Auditoría
-                # de distribución 2026-08-23: 81 fondos con OC > 0,5 en los que
-                # OC coincidía EXACTAMENTE con el TER en escala porcentual
-                # (BE0058182792: OC 1.98, TER 1,98%). Se escribe el ratio.
-                out['Ongoing_Charge_Recurrent'] = ter_recon_ratio
-            else:
-                oc_norm = _norm_existing_oc(existing_oc)
+            # FIX-OC-PARSER-BIND (2026-08-24): el kiid_parser puede escribir un valor distinto al de BD vía COALESCE UPSERT. Si el OC almacenado
+            # ya coincide con la gestión pero el parser emite otra cifra (operación / ACI), la del parser pasa a ser la señal del aviso.
+            if (parser_oc is not None
+                    and oc_norm is not None
+                    and abs(oc_norm - mgmt) < _OC_BIND_TOL):
+                _parser_norm = _norm_existing_oc(parser_oc)
+                if _parser_norm is not None and abs(_parser_norm - mgmt) >= _OC_BIND_TOL:
+                    oc_norm = _parser_norm
 
-                # FIX-OC-PARSER-BIND (2026-08-24): el kiid_parser puede escribir un
-                # valor distinto al de BD vía COALESCE UPSERT, DESPUÉS de que el
-                # extractor haya devuelto None. Si el OC almacenado ya es correcto
-                # (≈ gestión) pero el parser emite una mala ligadura (txn / ACI),
-                # _resolve_oc_binding no la ve porque oc_norm == gestión.
-                # Se sustituye oc_norm por el valor del parser como señal de alarma:
-                # si _resolve_oc_binding dispara, el extractor publica el valor de
-                # gestión (overriding the parser before COALESCE can write it).
-                if (parser_oc is not None
-                        and _mgmt_for_bind is not None
-                        and oc_norm is not None
-                        and abs(oc_norm - _mgmt_for_bind) < _OC_BIND_TOL):
-                    _parser_norm = _norm_existing_oc(parser_oc)
-                    if _parser_norm is not None and abs(_parser_norm - _mgmt_for_bind) >= _OC_BIND_TOL:
-                        oc_norm = _parser_norm
-
-                # FIX-OC-ACI-REPAIR (2026-08-23): el OC heredado es el ACI.
-                # Firma: OC (en ratio) coincide con ACI_RHP y difiere de la
-                # comisión de gestión. En 235 fondos la gestión ya está bien en BD
-                # —arbitración xBand con veredicto AGREE en los 235— pero su valor
-                # solo aparece en el texto como fragmento de celda ("0.29%]"), así
-                # que ninguna regla sobre prosa puede recuperarlo. El gasto
-                # corriente ES el componente de gestión (definición adoptada), de
-                # modo que la reparación consistente es igualarlo a mgmt.
-                # El _oc_aci_mismatch existente solo MARCABA el problema desde
-                # 2026-06 sin corregirlo ("listo para BL-COST-5", nunca implementado).
-                # Se compara contra el ACI_RHP FINAL (out), no contra
-                # aci_rhp_final: cuando el valor lo aporta un fallback
-                # (SINGLE/LONGEST/COLLAPSED/ancla) aci_rhp_final sigue a None y la
-                # reparación no llegaba a 48 fondos igualmente contaminados.
-                #
-                # FIX-OC-BIND (2026-08-24): generalización de FIX-OC-ACI-REPAIR.
-                # La auditoría de distribución detectó una SEGUNDA mala ligadura del
-                # gasto corriente que la regla anterior no veía: el OC heredado es un
-                # componente MENOR (la fila de operación o la de salida), no el ACI.
-                # Firma medida sobre el universo activo: 373 fondos con
-                # OC == Transaction_Cost_Pct exacto y gestión muy superior
-                # (LU0823401905: OC 0,08 % frente a gestión 2,71 %). Contraste sano:
-                # 2.207 fondos con OC == gestión, la ligadura correcta.
-                #
-                # El invariante es aritmético, no heurístico: el gasto corriente
-                # CONTIENE la comisión de gestión (UCITS OCF), luego no puede quedar
-                # por debajo de ella. Se reparan ambas ligaduras con UNA sola guarda
-                # (P#11 / R-1), no con dos ramas paralelas.
-                #
-                # ⚠ Un incumplimiento del invariante no dice qué lado está mal
-                # (control de método #4): si la gestión fuese la equivocada, fijar el
-                # OC a ella propagaría el error. Por eso la vía (2) exige que el ACI
-                # —el total publicado— respalde a la gestión. Medición: 350 fondos
-                # reparables con respaldo, 6 descartados por gestión no respaldada,
-                # y 0 de los 2.207 correctos alcanzados por la guarda.
-                _aci_final_ratio = (
-                    out['ACI_RHP'] / 100.0 if 'ACI_RHP' in out else aci_rhp_final
+            if (abs(oc_norm - mgmt) >= _OC_BIND_TOL
+                    and _detect_oc_aci_mismatch(existing_oc, oc_norm, ter_recon_ratio, aci_rhp_final)):
+                out['_oc_aci_mismatch'] = True
+                _log.info(
+                    "[BL-COST-4a][OC-ACI] %s: BD OC parece ACI (%.4f) != TER recon (%.4f)",
+                    isin, oc_norm or -1.0, ter_recon_ratio,
                 )
-                _aci_1y_ratio = (
-                    out['ACI_1Y'] / 100.0 if 'ACI_1Y' in out else aci_1y_final
-                )
-                _bind_signal = _resolve_oc_binding(
-                    oc_norm, _mgmt_for_bind, _aci_final_ratio, _aci_1y_ratio
-                )
-
-                if _bind_signal is not None:
-                    _log.info(
-                        "[FIX-OC-BIND] %s: Ongoing_Charge %.4f→%.4f "
-                        "(el valor heredado era %s; se fija al componente de gestión%s)",
-                        isin, oc_norm, _mgmt_for_bind, _bind_signal,
-                        " almacenado en BD" if _mgmt_from_db else "",
-                    )
-                    out['Ongoing_Charge_Recurrent'] = _mgmt_for_bind
-
-                # P1-17: la vía BL-COST-5 reconstruye un TER y por tanto EXIGE una
-                # gestión realmente extraída en esta pasada. Con `ter_recon_ratio`
-                # a None (gestión no rederivable) se omite: la reparación de ligadura
-                # de arriba ya ha actuado, y publicar un TER a partir de un valor
-                # almacenado sería inventar procedencia.
-                if (ter_recon_ratio is not None
-                        and (_mgmt_for_bind is None
-                             or abs(oc_norm - _mgmt_for_bind) >= _OC_BIND_TOL)
-                        and _detect_oc_aci_mismatch(
-                            existing_oc, oc_norm, ter_recon_ratio, aci_rhp_final)):
-                    out['_oc_aci_mismatch'] = True
-                    out['_oc_aci_mismatch_ter_pct'] = _ratio_to_pct(ter_recon_ratio)
-                    _log.info(
-                        "[BL-COST-4a][OC-ACI] %s: BD OC parece ACI (%.4f) != TER recon (%.4f); "
-                        "ter_pct=%.4f%% listo para BL-COST-5",
-                        isin, oc_norm or -1.0, ter_recon_ratio, _ratio_to_pct(ter_recon_ratio),
-                    )
-                # Si no hay mismatch y existing_oc no es None → no se toca (COALESCE)
 
         # --- F. _cost_schedule_rows (P-1, P-7, P-4) ---
         out['_cost_schedule_rows'] = _build_schedule_rows(

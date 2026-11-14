@@ -95,7 +95,7 @@ def test_ceiling_is_expressed_in_ratio_not_percent():
 
 
 def test_management_component_survives_the_guard():
-    """El destino de reparación de FIX-OC-BIND debe ser siempre plausible."""
+    """La comisión de gestión (el candidato que gana en resolve_ongoing_charge) debe ser siempre plausible."""
     for mgmt_pct in (0.05, 0.23, 1.46, 1.98, 2.71, 4.30):
         assert is_plausible_oc_ratio(pct_to_ratio(mgmt_pct)) is True
 

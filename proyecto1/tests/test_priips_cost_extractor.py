@@ -210,17 +210,25 @@ def test_ucits_returns_none_quality(monkeypatch):
 # ===========================================================================
 
 @pytest.mark.skipif(not _available('IE00BZ4D7085'), reason="KID IE00BZ4D7085 no disponible")
-def test_oc_fill_when_null():
+def test_the_extractor_does_not_fill_the_ongoing_charge_even_when_there_is_none():
     """
-    existing_oc=None + TER reconstruido → devuelve Ongoing_Charge_Recurrent.
-    IE00BZ4D7085 (Polar): en esta versión del PDF el parser plano no capta
-    Transaction_Cost_Pct, por lo que TER = solo mgmt = 1.11%.
-    (El PDF del Project contenía transac 0.42%, probablemente versión distinta.)
+    FND-0291: antes, existing_oc=None + TER reconstruido devolvía Ongoing_Charge_Recurrent (el TER, 1.11 % en IE00BZ4D7085). Desde FND-0034 el único
+    escritor de la columna es cost_scale.resolve_ongoing_charge: el extractor PRIIPs ya no la emite ni con la columna vacía.
     """
     o = _run('IE00BZ4D7085', existing_oc=None)
-    assert 'Ongoing_Charge_Recurrent' in o
-    # TER = mgmt (1.11%) sin transaction (no capturado en esta versión del PDF)
-    assert abs(o['Ongoing_Charge_Recurrent'] - 1.11) < 0.05
+    assert 'Ongoing_Charge_Recurrent' not in o and '_oc_aci_mismatch_ter_pct' not in o
+
+
+def test_the_priips_extractor_has_no_ongoing_charge_writer_left_and_no_stored_management_input():
+    """Sin PDF: el contrato de la firma y de la salida (FND-0291)."""
+    import inspect
+    from priips_cost_extractor import extract_priips_costs
+    params = inspect.signature(extract_priips_costs).parameters
+    assert 'existing_mgmt' not in params                         # solo alimentaba la reparación FIX-OC-BIND
+    assert {'existing_oc', 'parser_oc'} <= set(params)           # los dos que alimentan el aviso OC/ACI siguen
+    for oc in (None, 2.4, 0.0153):
+        o = extract_priips_costs(text='', isin='XS0000000000', existing_oc=oc, parser_oc=0.02)
+        assert 'Ongoing_Charge_Recurrent' not in o and '_oc_aci_mismatch_ter_pct' not in o
 
 
 @pytest.mark.skipif(not _available('IE0032875985'), reason="KID IE0032875985 no disponible")

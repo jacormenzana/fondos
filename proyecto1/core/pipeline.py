@@ -2808,20 +2808,17 @@ def run_block(
                 # Leer Cost_Extraction_Quality ya en BD para skip logic (A-5 S2-C)
                 # y Ongoing_Charge/Entry/Exit para comparación mismatch (PC-3 S2-C).
                 # SELECT dedicado — no ampliar _v3_row (preserva índice _v3_row[:5]).
-                # P1-17: Management_Fee_Pct se lee también — el extractor lo usa SOLO
-                # como destino de reparación de FIX-OC-BIND cuando no logra rederivar
-                # la gestión del texto (nunca se republica como extracción).
+                # FND-0291: Management_Fee_Pct ya no se lee aquí (era el destino de la reparación FIX-OC-BIND del extractor, retirada con FND-0034).
                 _ph = "%s"
                 _cost_bd_row = conn.execute(
                     f"SELECT Cost_Extraction_Quality, Ongoing_Charge_Recurrent, "
-                    f"Entry_Fee_Pct_Max, Exit_Fee_Pct_Max, Management_Fee_Pct "
+                    f"Entry_Fee_Pct_Max, Exit_Fee_Pct_Max "
                     f"FROM fund_master WHERE ISIN={_ph}", (isin,)
                 ).fetchone()
                 _ceq_bd   = _cost_bd_row[0] if _cost_bd_row else None
                 _oc_bd    = _cost_bd_row[1] if _cost_bd_row else None
                 _entry_bd = _cost_bd_row[2] if _cost_bd_row else None
                 _exit_bd  = _cost_bd_row[3] if _cost_bd_row else None
-                _mgmt_bd  = _cost_bd_row[4] if _cost_bd_row else None
 
                 # v20 (§4.2): el bloque de coste se ejecuta SOLO con PDF en mano
                 # (status ∈ refresh/new ⇔ pdf_bytes is not None). En CACHED
@@ -2871,8 +2868,7 @@ def run_block(
                             existing_oc=_oc_bd,
                             existing_entry=_entry_bd,
                             existing_exit=_exit_bd,
-                            existing_mgmt=_mgmt_bd,     # P1-17: destino de reparación
-                            parser_oc=parsed.get("Ongoing_Charge"),  # FIX-OC-PARSER-BIND
+                            parser_oc=parsed.get("Ongoing_Charge"),  # FIX-OC-PARSER-BIND (solo alimenta el aviso OC/ACI)
                         )
                     elif _fmt == 'UCITS_KIID':
                         _cost_dict = extract_ucits_costs(
@@ -2886,8 +2882,7 @@ def run_block(
                         # Extraer claves privadas antes de mezclar en fund_master_record
                         _schedule_rows    = _cost_dict.pop('_cost_schedule_rows', []) or []
                         _oc_mismatch      = _cost_dict.pop('_oc_aci_mismatch', False)
-                        _cost_dict.pop('_oc_aci_mismatch_ter_pct', None)           # consultivo: ya no alimenta ninguna escritura
-                        _cost_dict.pop('Ongoing_Charge_Recurrent', None)   # FND-0034: consultivo; escribe resolve_ongoing_charge
+                        _cost_dict.pop('Ongoing_Charge_Recurrent', None)   # FND-0034: el extractor PRIIPs ya no lo emite (FND-0291); el UCITS sí, como candidato: escribe resolve_ongoing_charge
                         if _totals_replaced:
                             log_ingestion(conn, isin, "COST_TOTALS_ARBITRATED", "FIX",
                                           "totales del calendario tomados del texto plano (la tabla DLA2 los perdía o los truncaba): "

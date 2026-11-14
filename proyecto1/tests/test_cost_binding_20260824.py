@@ -3,10 +3,9 @@
 """
 Regresiones de la auditoría de distribución de atributos de coste (2026-08-24).
 
-Cubre tres defectos detectados por los bloques 2 y 5-6 de la auditoría:
+Cubre los defectos del schedule detectados por los bloques 2 y 5-6 de la auditoría. (FIX-OC-BIND, el gasto corriente ligado a una fila que no
+es la de gestión, tenía aquí sus pruebas; FND-0034 retiró la escritura del extractor y FND-0291 borró la reparación con sus pruebas.)
 
-  FIX-OC-BIND             el gasto corriente ligado a una fila que no es la de
-                          gestión (operación/salida, o el propio ACI).
   FIX-SCHEDULE-PCT-GATE   Total_Costs_Pct derivado de un importe en otra divisa
                           o sangrado, publicado como si fuese un porcentaje real.
   FIX-SCHEDULE-ANNUAL-ANCHOR  un total derivado por posición sobrescribía un
@@ -31,54 +30,7 @@ if _CORE_DIR not in sys.path:
 from priips_cost_extractor import (          # noqa: E402
     _build_schedule_rows,
     _pct_is_plausible,
-    _resolve_oc_binding,
 )
-
-
-# ===========================================================================
-# FIX-OC-BIND — a qué fila quedó ligado el gasto corriente
-# ===========================================================================
-
-def test_oc_bound_to_transaction_row_is_detected():
-    """LU0823401905: OC 0,08 % == operación, gestión 2,71 %, ACI_1Y 5,79 %."""
-    assert _resolve_oc_binding(0.0008, 0.0271, 0.0361, 0.0579) == \
-        'componente menor que la gestión'
-
-
-def test_oc_bound_to_aci_rhp_is_detected():
-    """Comportamiento previo (FIX-OC-ACI-REPAIR) preservado."""
-    assert _resolve_oc_binding(0.018, 0.0063, 0.018, 0.038) == 'ACI'
-
-
-def test_oc_bound_to_aci_1y_is_detected():
-    """Extensión nueva: el ACI de 1 año también delata la mala ligadura."""
-    assert _resolve_oc_binding(0.014, 0.009, 0.009_5, 0.014) == 'ACI'
-
-
-def test_correct_oc_is_never_touched():
-    """Contraste sano: 2.207 fondos tienen OC == gestión. No deben moverse."""
-    assert _resolve_oc_binding(0.0045, 0.0045, 0.006, 0.0060) is None
-    assert _resolve_oc_binding(0.005, 0.005, 0.0234, 0.0234) is None
-
-
-def test_oc_slightly_above_mgmt_is_not_touched():
-    """El OCF puede superar a la gestión (incluye administración/depositaría)."""
-    assert _resolve_oc_binding(0.0075, 0.0063, 0.018, 0.038) is None
-
-
-def test_no_repair_without_mgmt():
-    """Sin comisión de gestión no hay destino de reparación."""
-    assert _resolve_oc_binding(0.0008, None, 0.0361, 0.0579) is None
-
-
-def test_no_repair_when_mgmt_is_not_corroborated():
-    """Si el ACI es MENOR que la gestión, la sospechosa es la gestión."""
-    assert _resolve_oc_binding(0.0008, 0.0271, 0.0100, 0.0120) is None
-
-
-def test_no_repair_without_any_aci():
-    """Sin ACI que respalde la gestión no se toca nada (conservador)."""
-    assert _resolve_oc_binding(0.0008, 0.0271, None, None) is None
 
 
 # ===========================================================================
