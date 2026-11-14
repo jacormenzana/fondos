@@ -35,7 +35,7 @@ from shared.fee_state import accuracy_decision, derive_fee_state  # noqa: E402
 RC_OK, RC_STOP, RC_NO_DB = 0, 1, 3
 SAMPLE = 30
 ROW_START = {"entry": re.compile(r"costes?\s+de\s+entrada|entry\s+costs?", re.I), "exit": re.compile(r"costes?\s+de\s+salida|exit\s+costs?", re.I)}
-ROW_END = re.compile(r"costes?\s+de\s+(?:entrada|salida)|costes?\s+corrientes|comisiones?\s+de\s+gesti|costes?\s+de\s+operaci|costes?\s+recurrentes|ongoing\s+costs?|entry\s+costs?|exit\s+costs?", re.I)
+ROW_END = re.compile(r"(?<!cobra\s)(?<!cobramos\s)costes?\s+de\s+(?:entrada|salida)|costes?\s+corrientes|comisiones?\s+de\s+gesti|costes?\s+de\s+operaci|costes?\s+recurrentes|ongoing\s+costs?|entry\s+costs?|exit\s+costs?", re.I)
 NEGATION = re.compile(r"no\s+cobramos|no\s+se\s+cobra|no\s+aplica|no\s+se\s+aplica|nocobramos|we\s+do\s+not\s+charge|no\s+(?:entry|exit)\s+(?:fee|charge)"
                       r"|no\s+cobra\s+(?:gastos?|costes?|comisi[oó]n(?:es)?|cargos?)\s+de\s+(?:entrada|salida)|(?:do|does)\s+not\s+charge\s+an?\s+(?:entry|exit)", re.I)
 MAX_MARK = re.compile(r"\bhasta\b|m[aá]xim[oa]|up\s+to|as\s+much\s+as", re.I)
