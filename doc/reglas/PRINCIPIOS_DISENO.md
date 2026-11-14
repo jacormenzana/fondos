@@ -83,6 +83,11 @@ ON CONFLICT(ISIN, KIID_Class) DO UPDATE SET
 **Excepciones:**
 - `SRRI_Visual`: Se regenera en cada ciclo (incluso CACHED), no requiere COALESCE
 - `KIID_Status`: Tiene lógica especial (nuevo=CACHED preserva previo si era OK)
+- **Pares de valores declarados** (enmienda 2026-11-14, Package H / FND-0408): el par comisión aplicada + comisión máxima de cada lado (`Entry_Fee_Pct` + `Entry_Fee_Pct_Max`, `Exit_Fee_Pct` + `Exit_Fee_Pct_Max`),
+  declarado en `shared/fee_state.py`, se resuelve **junto** tras una pasada completa de coste (parser y extractor ejecutados) y se escribe como unidad (`resolve_pair`, `ATTRIBUTE_GROUP_WRITE_ENABLED`):
+  el COALESCE por columna dejaba un `0.0` obsoleto al lado de un techo nuevo (111 fondos de FND-0406) y un techo obsoleto al lado de evidencia actual. Reglas del par: sin evidencia alguna se conserva el par
+  almacenado entero (P#1 intacto); sin pasada completa (ciclo CACHED, OCR aislado, formato desconocido) el par no se escribe; con evidencia se rederiva el par entero desde esta ejecución. El resto de columnas
+  conserva COALESCE por columna. Un **estado** que es función de sus números (`Fee_Known_Flag`, `Exit_Fee_Known_Flag`) no se almacena: es una columna generada (`shared/fee_state.derive_fee_state` / `fee_state_sql`).
 
 **Consecuencia histórica:**  
 Bug P06 (31-mar-2026): `KIID_Downloaded_At` se sobrescribía con NULL en ciclos CACHED, dejando 478 fondos con timestamp perdido. Fix: añadir COALESCE.

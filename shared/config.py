@@ -481,6 +481,13 @@ UNIVERSE_NAV_QUARANTINE_RECENT_CHECK_DAYS: int = 30
 # extraction code and NEW was not processed yet. It is a 12-minute WRITE job on the live store, so it ships OFF: the owner flips it once after reading one dry run
 # (`p1_cost_recompute.py --dry-run`). A direct run of the script is the owner's explicit order and ignores this switch. Rollback = False: nothing else changes.
 COST_RECOMPUTE_AUTO_ENABLED: bool = False
+# Package H (FND-0408, plan Revision 7): the entry / exit fee PAIRS (Entry_Fee_Pct + Entry_Fee_Pct_Max, Exit_Fee_Pct + Exit_Fee_Pct_Max) are resolved together after a FULL cost pass
+# (shared/fee_state.resolve_pair, called once per side from pipeline.py after the parser AND the extractor ran) and written as a unit, instead of one COALESCE per column: a stale
+# 0.0 can no longer sit next to a new ceiling, a stale ceiling next to current evidence. Without a full pass (a CACHED cycle, an OCR-only recovery, an unknown KID format) the pair
+# is left out of the record and the stored pair stays whole. With the switch ON the flag Fee_Known_Flag leaves the writer's spec (it becomes a generated column, plan R8: the
+# migration is applied after the pass). ONE name for the switch, no alias. Ships OFF: with it OFF the writer and the pipeline behave exactly as before. DO NOT switch
+# COST_RECOMPUTE_AUTO_ENABLED on, and run no cost pass over the FND-0406 funds, before this one is ON (they hold a stale Entry_Fee_Pct 0.0). Rollback = False: nothing else changes.
+ATTRIBUTE_GROUP_WRITE_ENABLED: bool = False
 # FND-0289 (owner directive 2026-10-17), PRODUCTION alarm watch at promotion (scenario_lifecycle.GATE_ALARM_WATCH, control D-ALARM-WATCH): a fund
 # of the PRODUCTION scenario that carries a current ALARM row in fund_metric_alerts for one of ALARM_WATCH_RULES may not get a HIGHER master
 # weight in the promoted DRAFT (tolerance ALARM_WATCH_WEIGHT_TOLERANCE, one unit of the 4th decimal: largest-remainder rounding). Holding or

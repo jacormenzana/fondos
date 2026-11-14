@@ -76,6 +76,153 @@ def test_pair_conflict_tolerance_is_the_shared_cost_pair_tolerance():
     assert pair_conflict(0.0502, 5.0) is True
 
 
+# ── resolve_pair: the precedence of the plan (R6.4, R7.1 #2) ──────────────────────────────────────────────────────
+
+from shared.fee_state import (PairEvidence, WARN_CONFLICT, WARN_NEGATIVE, WARN_STORED_POINT_CLEARED, fee_state_sql, resolve_pair)  # noqa: E402
+
+
+def _flags(result):
+    return {w.split(":")[0] for w in result.warnings}
+
+
+def test_stale_point_zero_next_to_a_new_ceiling_is_cleared_fnd0406():
+    """The 111 funds of FND-0406: a stored 0.0 from an old parser, the KID prints only an amount, the extractor now finds 4.96 %."""
+    r = resolve_pair(PairEvidence(extractor_ceiling_pct=4.96), stored_point=0.0, stored_ceiling_pct=None)
+    assert (r.point, r.ceiling_pct, r.source) == (None, 4.96, "this_run")
+    assert derive_fee_state(r.point, r.ceiling_pct) == "ENTRY_CONDITIONAL"
+    assert WARN_STORED_POINT_CLEARED in _flags(r)
+    # a changed document is new evidence, not a contradiction: no warning
+    assert resolve_pair(PairEvidence(extractor_ceiling_pct=4.96), 0.0, None, same_document=False).warnings == ()
+
+
+def test_a_stored_point_that_the_current_ceiling_corroborates_survives():
+    """The 257 funds: stored point 5.25 %, the extractor ceiling 5.25, the parser silent now."""
+    r = resolve_pair(PairEvidence(extractor_ceiling_pct=5.25), stored_point=0.0525, stored_ceiling_pct=5.25)
+    assert (r.point, r.ceiling_pct) == (0.0525, 5.25) and r.warnings == ()
+    assert derive_fee_state(r.point, r.ceiling_pct) == "EXTRACTED"
+
+
+def test_a_stale_ceiling_cannot_survive_next_to_current_evidence_f1b():
+    """ZERO_CONFIRMED with a ceiling equal to the transaction cost (an old extractor's): the parser reads the zero, the extractor emits nothing."""
+    r = resolve_pair(PairEvidence(parser_point=0.0), stored_point=0.0, stored_ceiling_pct=0.10)
+    assert (r.point, r.ceiling_pct) == (0.0, None)
+    assert derive_fee_state(r.point, r.ceiling_pct) == "ZERO_CONFIRMED"
+
+
+def test_negation_beats_a_positive_ceiling_ie000d08vxp3():
+    r = resolve_pair(PairEvidence(negation=True, extractor_ceiling_pct=5.0), stored_point=None, stored_ceiling_pct=None)
+    assert (r.point, r.ceiling_pct, r.warnings) == (0.0, 5.0, ())
+    assert derive_fee_state(r.point, r.ceiling_pct) == "ZERO_CONFIRMED"
+
+
+def test_a_positive_parser_point_beats_a_negation():
+    r = resolve_pair(PairEvidence(parser_point=0.0525, negation=True, extractor_ceiling_pct=0.0), None, None)
+    assert r.point == 0.0525 and r.ceiling_pct == 0.0
+    assert _flags(r) == {WARN_CONFLICT}        # LU1881514001 cluster: kept as it is, reported, never auto-picked
+
+
+def test_no_evidence_keeps_the_stored_pair_whole():
+    r = resolve_pair(PairEvidence(), stored_point=0.03, stored_ceiling_pct=3.0)
+    assert (r.point, r.ceiling_pct, r.source, r.warnings) == (0.03, 3.0, "stored", ())
+
+
+def test_the_parsers_conditional_value_fills_a_missing_ceiling():
+    r = resolve_pair(PairEvidence(parser_conditional=0.05), stored_point=None, stored_ceiling_pct=None)
+    assert (r.point, r.ceiling_pct) == (None, 5.0)
+    assert derive_fee_state(r.point, r.ceiling_pct) == "ENTRY_CONDITIONAL"
+    # the extractor's own ceiling is preferred when it exists
+    assert resolve_pair(PairEvidence(parser_conditional=0.05, extractor_ceiling_pct=4.0), None, None).ceiling_pct == 4.0
+
+
+def test_conflict_keeps_both_values_and_reports():
+    r = resolve_pair(PairEvidence(parser_point=0.05, extractor_ceiling_pct=3.0), None, None)      # IE00B3Q8M574: prints 5 %, ceiling 3
+    assert (r.point, r.ceiling_pct) == (0.05, 3.0) and _flags(r) == {WARN_CONFLICT}
+
+
+def test_negative_and_nan_evidence_is_invalid_and_reported():
+    r = resolve_pair(PairEvidence(parser_point=-0.01), stored_point=0.03, stored_ceiling_pct=3.0)
+    assert WARN_NEGATIVE in _flags(r) and (r.point, r.ceiling_pct, r.source) == (0.03, 3.0, "stored")   # nothing valid left: stored kept
+    r = resolve_pair(PairEvidence(extractor_ceiling_pct=float("nan")), None, None)
+    assert WARN_NEGATIVE in _flags(r) and (r.point, r.ceiling_pct) == (None, None)
+    assert resolve_pair(PairEvidence(), stored_point=-1.0, stored_ceiling_pct=None).point is None     # a negative stored value is read as NULL
+
+
+def test_a_zero_with_no_ceiling_and_current_evidence_stays_a_confirmed_zero():
+    r = resolve_pair(PairEvidence(parser_point=0.0), None, None)
+    assert (r.point, r.ceiling_pct) == (0.0, None) and derive_fee_state(r.point, r.ceiling_pct, "exit") == "ZERO_CONFIRMED"
+
+
+def test_each_side_resolves_on_its_own_evidence():
+    entry = resolve_pair(PairEvidence(parser_point=0.05), stored_point=None, stored_ceiling_pct=None)
+    exit_ = resolve_pair(PairEvidence(), stored_point=0.01, stored_ceiling_pct=1.0)      # no evidence on the exit side: untouched
+    assert entry.point == 0.05 and (exit_.point, exit_.ceiling_pct, exit_.source) == (0.01, 1.0, "stored")
+
+
+# ── reconcile_fee_pairs: the one call the pipeline makes ──────────────────────────────────────────────────────────
+
+from shared.fee_state import RESOLVED_KEY, reconcile_fee_pairs  # noqa: E402
+
+NO_STORED_EVIDENCE = {"Entry_Fee_Pct": None, "Entry_Fee_Pct_Max": None, "Exit_Fee_Pct": None, "Exit_Fee_Pct_Max": None}
+
+
+def test_without_a_full_cost_pass_the_stored_pair_is_left_whole():
+    """A CACHED cycle: the parser ran (it always does) but the extractor did not, so the pair must not be written at all."""
+    record = {"Entry_Fee_Pct": 0.05, "Exit_Fee_Pct": 0.01, "Fund_Name": "x"}
+    issues = reconcile_fee_pairs(record, {"Entry_Fee_Pct": 0.05, "Exit_Fee_Pct": 0.01}, {"Entry_Fee_Pct": 0.03, "Entry_Fee_Pct_Max": 3.0, "Exit_Fee_Pct": 0.0,
+                                 "Exit_Fee_Pct_Max": None}, full_cost_pass=False)
+    assert issues == [] and record == {"Fund_Name": "x"}                    # the four pair columns are gone, nothing else touched, nothing marked
+
+
+def test_a_new_fund_always_gets_its_pair_derived_even_without_a_full_pass():
+    record = {"Entry_Fee_Pct": 0.05}
+    reconcile_fee_pairs(record, {"Entry_Fee_Pct": 0.05, "Exit_Fee_Pct": None}, None, full_cost_pass=False)
+    assert record["Entry_Fee_Pct"] == 0.05 and record["Entry_Fee_Pct_Max"] is None and record[RESOLVED_KEY] == {"entry": True, "exit": True}
+
+
+def test_the_fnd0406_fund_gets_a_conditional_entry_and_the_exit_side_is_untouched():
+    """Stored point 0.0 (an old parser), the extractor now prints 4.96 %, the parser finds no point; the exit side has no evidence at all."""
+    record = {"Entry_Fee_Pct": None, "Entry_Fee_Pct_Max": 4.96, "Exit_Fee_Pct": None}
+    stored = {"Entry_Fee_Pct": 0.0, "Entry_Fee_Pct_Max": None, "Exit_Fee_Pct": 0.0, "Exit_Fee_Pct_Max": None}
+    issues = reconcile_fee_pairs(record, {"Entry_Fee_Pct": None, "Exit_Fee_Pct": None}, stored, full_cost_pass=True)
+    assert (record["Entry_Fee_Pct"], record["Entry_Fee_Pct_Max"]) == (None, 4.96) and record[RESOLVED_KEY] == {"entry": True}
+    assert "Exit_Fee_Pct" not in record and "Exit_Fee_Pct_Max" not in record            # no exit evidence: the stored exit pair stays whole
+    assert [(code, level) for code, level, _status, _msg in issues] == [(WARN_STORED_POINT_CLEARED, "INFO")]
+    assert "0.0" in issues[0][3] and issues[0][3].startswith("entry fee")
+
+
+def test_a_conflict_is_a_warn_and_both_values_are_written():
+    record = {"Entry_Fee_Pct": 0.0525, "Entry_Fee_Pct_Max": 0.0}
+    issues = reconcile_fee_pairs(record, {"Entry_Fee_Pct": 0.0525}, {**NO_STORED_EVIDENCE}, full_cost_pass=True, negation={"entry": True})
+    assert (record["Entry_Fee_Pct"], record["Entry_Fee_Pct_Max"]) == (0.0525, 0.0)
+    assert [(c, lv) for c, lv, _s, _m in issues] == [(WARN_CONFLICT, "WARN")]
+
+
+def test_a_ceiling_above_the_schema_bound_is_dropped_and_reported():
+    record = {}
+    issues = reconcile_fee_pairs(record, {"Entry_Fee_Conditional": 0.30}, {**NO_STORED_EVIDENCE}, full_cost_pass=True)     # a 30 % "conditional" fee is a parse error
+    assert record["Entry_Fee_Pct_Max"] is None and record["Entry_Fee_Pct"] is None
+    assert [c for c, _lv, _s, _m in issues] == ["FEE_CEILING_OUT_OF_RANGE"]
+
+
+def test_the_exit_side_resolves_on_its_own_negation():
+    record = {"Exit_Fee_Pct_Max": 1.0}
+    reconcile_fee_pairs(record, {"Exit_Fee_Pct": None}, {**NO_STORED_EVIDENCE}, full_cost_pass=True, negation={"exit": True})
+    assert (record["Exit_Fee_Pct"], record["Exit_Fee_Pct_Max"]) == (0.0, 1.0)
+
+
+# ── the SQL rendering ─────────────────────────────────────────────────────────────────────────────────────────────
+
+def test_fee_state_sql_is_a_plain_expression_and_rejects_foreign_names():
+    sql = fee_state_sql("entry_fee_pct", "entry_fee_pct_max", "entry")
+    assert sql.startswith("CASE") and "'ENTRY_CONDITIONAL'" in sql and "'NaN'::float8" in sql
+    assert "'EXIT_CONDITIONAL'" in fee_state_sql("exit_fee_pct", "exit_fee_pct_max", "exit")
+    for bad in ("x; DROP TABLE t", "Entry", "a b", ""):
+        with pytest.raises(ValueError):
+            fee_state_sql(bad, "c")
+    with pytest.raises(ValueError):
+        fee_state_sql("p", "c", "middle")
+
+
 # ── accuracy gate (plan R7.1 #3) ──────────────────────────────────────────────────────────────────────────────────
 
 def test_wilson_matches_the_numbers_quoted_in_the_plan():
@@ -178,3 +325,40 @@ def test_script_parses_its_arguments_without_a_database(capsys):
         b.main(["--help"])
     assert exc.value.code == 0
     assert "Read-only baseline" in capsys.readouterr().out
+
+
+# ── the two audit rules (PLAUSIBILITY, non-blocking) ──────────────────────────────────────────────────────────────
+
+def test_the_pair_rules_flag_exactly_the_conflicts_and_never_block():
+    import pandas as pd
+    from shared.statistical_audit.catalog_invariants import COST_INVARIANTS
+    from shared.statistical_audit.invariants import check_invariant
+    rules = {r.rule_id: r for r in COST_INVARIANTS}
+    entry, exit_ = rules["ENTRY_FEE_LE_ITS_MAX"], rules["EXIT_FEE_LE_ITS_MAX"]
+    assert entry.bound_type == exit_.bound_type == "PLAUSIBILITY"
+    frame = pd.DataFrame({"isin": ["A", "B", "C", "D", "E"],
+                          "Entry_Fee_Pct": [0.05, 0.05, 0.0525, None, 0.0],
+                          "Entry_Fee_Pct_Max": [5.0, 3.0, 0.0, 3.0, 5.0],
+                          "Exit_Fee_Pct": [0.01, 0.0082, None, 0.01, 0.0],
+                          "Exit_Fee_Pct_Max": [1.0, 0.0, 1.0, None, 0.0]})
+    e = check_invariant(frame, entry)
+    assert e.n_applicable == 4 and list(e.violations["isin"]) == ["B", "C"]          # D has no point: undecidable, not a violation
+    x = check_invariant(frame, exit_)
+    assert x.n_applicable == 3 and list(x.violations["isin"]) == ["B"]               # FR0014000EB4-like: 0.82 % applied, maximum 0
+
+
+# ── one switch, one name (plan R7.1 #5) ───────────────────────────────────────────────────────────────────────────
+
+def test_the_write_switch_has_exactly_one_name_and_ships_off():
+    import re
+    from shared import config
+    assert config.ATTRIBUTE_GROUP_WRITE_ENABLED is False
+    names = set()
+    for rel in ("shared", "proyecto1/core", "proyecto2", "proyecto3", "scripts"):
+        for path in (ROOT / rel).rglob("*.py"):
+            if "tests" in path.parts or "__pycache__" in path.parts:
+                continue
+            names.update(re.findall(r"\bATTRIBUTE_[A-Z_]*_WRITE_ENABLED\b", path.read_text(encoding="utf-8", errors="replace")))
+    assert names == {"ATTRIBUTE_GROUP_WRITE_ENABLED"}, names
+    registry = (ROOT / "doc" / "reglas" / "NORMAS_IMPLEMENTACION.md").read_text(encoding="utf-8")
+    assert "ATTRIBUTE_GROUP_WRITE_ENABLED" in registry and "ATTRIBUTE_PAIR_WRITE_ENABLED" not in registry

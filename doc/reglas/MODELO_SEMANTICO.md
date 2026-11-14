@@ -628,6 +628,12 @@ Para atributos donde *"diverso/multi-valor intencionalmente"* es semánticamente
 `Official_Fund_Name` (FND-0246) **no tiene centinela**: `NULL` significa "no descubierto" (la cabecera del KIID no expone el nombre en la
 ventana leída; ~8 % de los fondos activos), nunca "sin nombre por naturaleza". Un `NULL` hace que la clave de familia use `Fund_Name`.
 
+**Estados derivados (Package H, 2026-11-14):** una bandera de estado que es función de los números que describe (`Fee_Known_Flag`: EXTRACTED / ZERO_CONFIRMED / ENTRY_CONDITIONAL / NOT_FOUND, y su gemela de salida)
+no es un atributo a mantener sincronizado sino una **derivación** (columna generada, `shared/fee_state.derive_fee_state`): así no puede contradecir sus números, y el `NULL` del punto sigue significando «sin valor
+aplicado» (con techo, condicional) o «no descubierto» (sin techo), nunca un cero silencioso. Medido antes de la migración: la bandera almacenada contradecía su propio punto en 995 de 2.943 fondos del universo.
+El mismo remedio sirve para la validación SRRI (`SRRI_Validation_Status` = función de `srri_visual` y `srri_textual`, 3.768 de 3.770 fondos ya coinciden: FND-0412). Un techo con el punto aplicado por encima
+(`Entry_Fee_Pct * 100 > Entry_Fee_Pct_Max`) es una ambigüedad real del documento y se informa (`FEE_PAIR_CONFLICT`), no se repara (FND-0410).
+
 Colapsar diverso-por-diseño y desconocido en el mismo `NULL` destruye información y rompe
 COALESCE (P#1): un centinela correcto no es nulo y sobrescribirá correctamente un valor único
 obsoleto de un ciclo anterior, mientras que `None` sería preservado por COALESCE.

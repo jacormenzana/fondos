@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from ..regime_taxonomy import REGIME_SUFFIX
 from .invariants import InvariantRule
-from .tolerances import (ACI_AMORTISATION_VISIBLE_PP, ACI_COMPONENTS_TOLERANCE_PP, ACI_ORDER_TOLERANCE_PP, FLOAT_IDENTITY_TOLERANCE, IPC_ELIGIBILITY_FLOOR, KID_ONE_YEAR_RATIO_MAX,
+from .tolerances import (ACI_AMORTISATION_VISIBLE_PP, ACI_COMPONENTS_TOLERANCE_PP, ACI_ORDER_TOLERANCE_PP, COST_PAIR_TOLERANCE_PP, FLOAT_IDENTITY_TOLERANCE, IPC_ELIGIBILITY_FLOOR, KID_ONE_YEAR_RATIO_MAX,
                          KID_ONE_YEAR_RATIO_MIN, KID_ROUNDING_TOLERANCE_PP, SHARPE_VOL_FLOOR)
 
 P2_INVARIANTS: tuple[InvariantRule, ...] = (
@@ -211,4 +211,12 @@ COST_INVARIANTS: tuple[InvariantRule, ...] = (
                   f"ACI_RHP > ACI_Components_Low - {ACI_COMPONENTS_TOLERANCE_PP} and ACI_RHP < ACI_Components_High + {ACI_COMPONENTS_TOLERANCE_PP}",
                   when="ACI_Components_Eligible and not ACI_Pair_Printed",
                   bound_type="HARD_INVARIANT", description="ACI_RHP outside management + transaction cost + entry / exit (not printed by the document)"),
+    # Package H (FND-0408, 2026-11-14): the fee a fund APPLIES cannot exceed the maximum its own document declares. Entry_Fee_Pct / Exit_Fee_Pct are RATIOS, the *_Max columns integer percent
+    # (catalog_cost_columns), hence * 100; the tolerance is half a published unit of a 2-decimal percentage (COST_PAIR_TOLERANCE_PP). PLAUSIBILITY, never blocking: a conflict is a real
+    # document ambiguity (the same wording "No cobramos comision de entrada. 525 EUR" is read in opposite ways by parser and extractor), so the pair is kept and reported (FND-0410), not repaired.
+    # Both operands must exist (the engine excludes a row with a NULL operand: a missing number cannot conflict). Measured 2026-11-14: 8 universe funds, 20 over all funds (entry), 1 exit.
+    InvariantRule("ENTRY_FEE_LE_ITS_MAX", f"Entry_Fee_Pct * 100 <= Entry_Fee_Pct_Max + {COST_PAIR_TOLERANCE_PP}", bound_type="PLAUSIBILITY",
+                  description="Applied entry fee above its own declared maximum"),
+    InvariantRule("EXIT_FEE_LE_ITS_MAX", f"Exit_Fee_Pct * 100 <= Exit_Fee_Pct_Max + {COST_PAIR_TOLERANCE_PP}", bound_type="PLAUSIBILITY",
+                  description="Applied exit fee above its own declared maximum"),
 )

@@ -140,8 +140,10 @@ Migración: `db/migrations/20261024_fund_master_official_fund_name.sql` (la apli
 |---------|------|------|
 | Ongoing_Charge_Recurrent | REAL | Gasto corriente **sin costes de transacción**, en **RATIO** (0,0075 = 0,75 %). Lo escribe un único escritor por pase, `cost_scale.resolve_ongoing_charge` (FND-0034): fila de gestión del PRIIPs / OCF del UCITS; nunca el ACI ni el coste de operación |
 | Accumulation_Policy | TEXT | `Accumulation` \| `Distribution` \| `Mixed` |
-| Entry_Fee_Pct | REAL | Comisión entrada en % |
-| Exit_Fee_Pct | REAL | Comisión salida en % |
+| Entry_Fee_Pct | REAL | Comisión de entrada **aplicada**, en **RATIO** (0,05 = 5 %), no en %. Par con `Entry_Fee_Pct_Max` (`shared/fee_state.py`); NULL = sin valor puntual (con techo: condicional) |
+| Exit_Fee_Pct | REAL | Comisión de salida **aplicada**, en **RATIO** (0,01 = 1 %). Par con `Exit_Fee_Pct_Max` |
+| Entry_Fee_Pct_Max / Exit_Fee_Pct_Max | REAL | Techo que declara el documento, en **porcentaje entero** (5,0 = 5 %; CHECK 0..25). `Entry_Fee_Pct * 100 <= Entry_Fee_Pct_Max` (regla de auditoría `ENTRY_FEE_LE_ITS_MAX`; la salida igual) |
+| Fee_Known_Flag / Exit_Fee_Known_Flag | TEXT | Estado de la comisión de entrada / salida: **función de sus dos números**, no un dato almacenado (columna generada tras la migración de Package H; hasta entonces `Fee_Known_Flag` es una columna normal). Punto presente: `ZERO_CONFIRMED` si es 0, si no `EXTRACTED`; punto NULL con techo: `ZERO_CONFIRMED` si es 0, si no `ENTRY_CONDITIONAL` / `EXIT_CONDITIONAL`; ambos NULL: `NOT_FOUND`. `EXIT_INFERRED_ZERO` se retira (la inferencia estructural queda en `Inference_Trace`) |
 | SFDR_Article | INTEGER | `6` \| `8` \| `9` \| NULL |
 | Recommended_Holding_Period | TEXT | Período de tenencia recomendado (texto libre) |
 | Leverage_Used | TEXT | `Yes` \| `No` |

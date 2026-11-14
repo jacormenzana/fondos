@@ -972,6 +972,9 @@ def parse_kiid_generic(
     if entry_fee is not None and entry_fee > 0 and _fee_is_ceiling(kiid_text, "entry"):
         # Part 1 regla A: comision condicional/techo -> punto NULL (techo vive en *_Max)
         result["Fee_Known_Flag"] = "ENTRY_CONDITIONAL"
+        # Package H: the maximum the parser read is evidence, no longer thrown away; shared/fee_state.resolve_pair uses it as the ceiling
+        # when the cost extractor yields none (14 funds were ENTRY_CONDITIONAL with no value at all).
+        result["Entry_Fee_Conditional"] = entry_fee
         result["Inference_Trace"] = _append_trace(
             result["Inference_Trace"],
             "ENTRY_FEE[CONDITIONAL->NULL]"
@@ -1003,6 +1006,7 @@ def parse_kiid_generic(
     if _exit_conditional:
         # Part 1 regla A: comision de salida condicional/techo -> punto NULL.
         # NO inferir cero estructural (no es cero, es indeterminado).
+        result["Exit_Fee_Conditional"] = exit_fee     # Package H: kept as evidence (the exit twin of Entry_Fee_Conditional)
         result["Inference_Trace"] = _append_trace(
             result["Inference_Trace"],
             "EXIT_FEE[CONDITIONAL->NULL]"
@@ -1168,6 +1172,8 @@ def _empty_result() -> Dict[str, Optional[str]]:
         "Distribution_Frequency": None,   # MONTHLY | QUARTERLY | ANNUAL | VARIABLE
         "Accumulation_Policy":    None,   # ACCUMULATION / DISTRIBUTION
         "Fee_Known_Flag":         None,   # v17: EXTRACTED | ZERO_CONFIRMED | NOT_FOUND
+        "Entry_Fee_Conditional":  None,   # Package H: ratio of a 'up to / maximum' entry fee the parser read (evidence for the pair resolver)
+        "Exit_Fee_Conditional":   None,   # Package H: the exit twin
         "Style_Profile":          None,   # v23 BL-41: Growth | Value | Income (solo RV)
         "Subtype":                None,   # v23 BL-43: LVNAV/VNAV/CNAV | Fixed Band N | Volatility Target
         "Official_Fund_Name":     None,   # FND-0246: official sub-fund name from the KIID head (class-invariant family key)

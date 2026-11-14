@@ -316,7 +316,19 @@ def _dla2_arbitration_enabled() -> bool:
         except ImportError:
             return False
 
-#print("[DEBUG] Cargo pipeline.py")        
+def _attribute_group_write_enabled() -> bool:
+    """Package H (FND-0408): lee ATTRIBUTE_GROUP_WRITE_ENABLED en runtime (mismo motivo que DLA2: config = dependency leaf). OFF por defecto."""
+    try:
+        from config import ATTRIBUTE_GROUP_WRITE_ENABLED as _f
+        return bool(_f)
+    except ImportError:
+        try:
+            from shared.config import ATTRIBUTE_GROUP_WRITE_ENABLED as _f
+            return bool(_f)
+        except ImportError:
+            return False
+
+#print("[DEBUG] Cargo pipeline.py")
 
 # -------------------------------------------------
 # Carga de maestro (USADO POR run_block.py)
@@ -2804,6 +2816,9 @@ def run_block(
                 and _priips_ext_mod is not None
                 and getattr(_priips_ext_mod, 'PRIIPS_COST_EXTRACTION_ENABLED', False)
             )
+            # Package H: ¿se evaluaron parser Y extractor en esta pasada? (el parser corre siempre; el extractor solo con PDF o --recompute-costs y formato conocido)
+            _fee_full_pass = False
+            _fee_text = None
             if _cost_enabled_rt:
                 # Leer Cost_Extraction_Quality ya en BD para skip logic (A-5 S2-C)
                 # y Ongoing_Charge/Entry/Exit para comparación mismatch (PC-3 S2-C).
@@ -2855,6 +2870,8 @@ def run_block(
                     _text_for_cost = kiid_meta.get("Fed_Text_For_Cost") or kiid_text
 
                     _fmt = _dkf(_text_for_cost)
+                    _fee_full_pass = _fmt in ('PRIIPS_KID', 'UCITS_KIID')    # Package H: full_cost_pass (plan R6.4)
+                    _fee_text = _text_for_cost
                     _cost_dict: dict = {}
                     _totals_replaced: list = []
 
@@ -2928,6 +2945,35 @@ def run_block(
 
                         # BL-COST-5 repair moved to AFTER publish_fund — see post-publish block.
             # ── Fin BL-COST-4c ────────────────────────────────────────────────────
+
+            # ── Package H (FND-0408, plan R6.4): los PARES de comision de entrada / salida se resuelven juntos ──────────────────────────
+            # (Entry_Fee_Pct + Entry_Fee_Pct_Max; Exit_Fee_Pct + Exit_Fee_Pct_Max), UNA vez por lado, tras parser Y extractor, nunca en el writer.
+            # Detras de ATTRIBUTE_GROUP_WRITE_ENABLED (OFF: no se ejecuta nada de esto y el registro es el de siempre). Sin pasada completa
+            # (CACHED, OCR aislado, formato desconocido) el par se QUITA del registro y el almacenado queda entero; un fondo nuevo siempre se deriva.
+            # Guarda "nunca abortar": un fallo deja el par almacenado intacto y lo registra; el fondo no se pierde.
+            if _attribute_group_write_enabled():
+                try:
+                    from shared import fee_state as _fee_state
+                    from shared.db import fail_soft_block
+                    with fail_soft_block(conn):      # SAVEPOINT: un SELECT fallido no deja la transaccion de Postgres abortada para el resto del fondo
+                        _fp_row = conn.execute(
+                            "SELECT Entry_Fee_Pct, Entry_Fee_Pct_Max, Exit_Fee_Pct, Exit_Fee_Pct_Max FROM fund_master WHERE ISIN=%s", (isin,)).fetchone()
+                        _fp_old = conn.execute("SELECT KIID_PDF_Hash FROM fund_kiid_metadata WHERE ISIN=%s AND KIID_Class=1", (isin,)).fetchone()
+                    _fp_stored = None if _fp_row is None else dict(zip(
+                        ("Entry_Fee_Pct", "Entry_Fee_Pct_Max", "Exit_Fee_Pct", "Exit_Fee_Pct_Max"), _fp_row))
+                    _fp_new_hash = kiid_meta.get("KIID_PDF_Hash")
+                    _fp_same = (None if (_fp_old is None or not _fp_old[0] or not _fp_new_hash) else (_fp_old[0] == _fp_new_hash))
+                    _fp_neg: dict = {}
+                    if _fee_full_pass and _fee_text:
+                        _fp_neg = {"entry": bool(_priips_ext_mod.ENTRY_FEE_NEGATION.search(_fee_text)),
+                                   "exit": bool(_priips_ext_mod.EXIT_FEE_NEGATION.search(_fee_text))}
+                    _dq_issues.extend(_fee_state.reconcile_fee_pairs(
+                        fund_master_record, parsed, _fp_stored, full_cost_pass=_fee_full_pass, negation=_fp_neg, same_document=_fp_same))
+                except Exception as _fee_exc:  # noqa: BLE001 -- guarda: el fondo nunca se pierde por esta resolucion
+                    for _fc in ("Entry_Fee_Pct", "Entry_Fee_Pct_Max", "Exit_Fee_Pct", "Exit_Fee_Pct_Max", "_fee_pairs_resolved"):
+                        fund_master_record.pop(_fc, None)
+                    _dq_issues.append(("FEE_PAIR_GUARD", "WARN", "WARN",
+                                       f"fee pair reconciliation failed ({type(_fee_exc).__name__}: {str(_fee_exc)[:120]}); the stored pair is kept"))
 
             # ── v20 (§4.2/§4.4): arbitración dual de coste (Job B) ─────────────────
             # Gated por kill-switch DLA2_ARBITRATION_ENABLED y por PDF-en-mano.

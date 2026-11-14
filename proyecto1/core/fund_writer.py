@@ -113,6 +113,19 @@ from pathlib import Path
 from typing import Dict, Iterable, Optional, Any
 import datetime
 
+
+def _attribute_group_write_enabled() -> bool:
+    """Package H (FND-0408): ATTRIBUTE_GROUP_WRITE_ENABLED, leido en runtime (config = dependency leaf). OFF por defecto."""
+    try:
+        from shared.config import ATTRIBUTE_GROUP_WRITE_ENABLED as _f
+        return bool(_f)
+    except ImportError:
+        try:
+            from config import ATTRIBUTE_GROUP_WRITE_ENABLED as _f
+            return bool(_f)
+        except ImportError:
+            return False
+
 # §Y-2: el normalizador de casing es UNA función en classify_utils (R-1).
 # Import defensivo (sys.path variable según entrypoint).
 try:
@@ -453,6 +466,9 @@ def upsert_fund_master(conn: "psycopg.Connection",
     force_type        = record.pop('_bl62_force_overwrite_type', False)
     force_style_null  = record.pop('_style_profile_cleared', False)
     force_mcf_null    = record.pop('_market_cap_focus_cleared', False)
+    # Package H (FND-0408): lados de comision cuyo PAR (punto + techo) resolvio el pipeline tras una pasada completa -> se escribe como UNIDAD ('ow').
+    # Solo existe la marca con ATTRIBUTE_GROUP_WRITE_ENABLED ON; sin ella el writer es el de siempre.
+    fee_resolved      = record.pop('_fee_pairs_resolved', None) or {}
 
     # ── Normalización pre-escritura (Principio #8) ──
     record = _normalize_record(record)
@@ -470,6 +486,8 @@ def upsert_fund_master(conn: "psycopg.Connection",
     vehicle_pol = 'ow' if force_type       else 'co'  # _bl62_force_overwrite_type → Vehicle_Structure
     style_pol   = 'ow' if force_style_null else 'co'  # INTER-SP: NULL para fondos no-RV
     mcf_pol     = 'ow' if force_mcf_null   else 'co'  # INTER-MCF: NULL para fondos no-RV
+    entry_pair_pol = 'ow' if fee_resolved.get('entry') else 'co'   # Package H: Entry_Fee_Pct + Entry_Fee_Pct_Max
+    exit_pair_pol  = 'ow' if fee_resolved.get('exit')  else 'co'   # Package H: Exit_Fee_Pct + Exit_Fee_Pct_Max
 
     spec = [
         ("ISIN",                        record["ISIN"],                          'ins'),
@@ -501,8 +519,8 @@ def upsert_fund_master(conn: "psycopg.Connection",
         ("Derivatives_Usage",           record.get("Derivatives_Usage"),         'co'),
         ("Benchmark_Declared",          record.get("Benchmark_Declared"),        'co'),
         ("Ongoing_Charge_Recurrent",    record.get("Ongoing_Charge_Recurrent"),  'co'),
-        ("Entry_Fee_Pct",               record.get("Entry_Fee_Pct"),             'co'),
-        ("Exit_Fee_Pct",                record.get("Exit_Fee_Pct"),              'co'),
+        ("Entry_Fee_Pct",               record.get("Entry_Fee_Pct"),             entry_pair_pol),
+        ("Exit_Fee_Pct",                record.get("Exit_Fee_Pct"),              exit_pair_pol),
         ("Fee_Known_Flag",              record.get("Fee_Known_Flag"),            'co'),
         ("Sfdr_Article",                record.get("Sfdr_Article"),              'co'),
         ("Recommended_Holding_Period",  _rhp_to_years(record.get("Recommended_Holding_Period")), 'co'),
@@ -518,8 +536,8 @@ def upsert_fund_master(conn: "psycopg.Connection",
         ("KID_Currency",                record.get("KID_Currency"),              'co'),
         ("Cost_Extraction_Quality",     record.get("Cost_Extraction_Quality"),   'co'),
         ("Cost_RHP_Years",              record.get("Cost_RHP_Years"),            'co'),
-        ("Entry_Fee_Pct_Max",           record.get("Entry_Fee_Pct_Max"),         'co'),
-        ("Exit_Fee_Pct_Max",            record.get("Exit_Fee_Pct_Max"),          'co'),
+        ("Entry_Fee_Pct_Max",           record.get("Entry_Fee_Pct_Max"),         entry_pair_pol),
+        ("Exit_Fee_Pct_Max",            record.get("Exit_Fee_Pct_Max"),          exit_pair_pol),
         ("Management_Fee_Pct",          record.get("Management_Fee_Pct"),        'co'),
         ("Transaction_Cost_Pct",        record.get("Transaction_Cost_Pct"),      'co'),
         ("Performance_Fee_Pct",         record.get("Performance_Fee_Pct"),       'co'),
@@ -534,6 +552,10 @@ def upsert_fund_master(conn: "psycopg.Connection",
         # FND-0246: official sub-fund name (family key); NULL = not discovered, COALESCE keeps the stored one (P#1).
         ("Official_Fund_Name",          record.get("Official_Fund_Name"),        'co'),
     ]
+
+    # Package H: con el interruptor ON la flag deja de escribirse (pasa a columna GENERADA tras la migracion, plan R8: Postgres rechaza un valor explicito).
+    if _attribute_group_write_enabled():
+        spec = [row for row in spec if row[0] != "Fee_Known_Flag"]
 
     insert_cols = [c for c, _v, _p in spec]
     # Postgres migration Phase 5c, 2026-09-20: the only dialect-specific piece of this whole
