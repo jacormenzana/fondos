@@ -93,6 +93,7 @@ POLICY_TESTS = (
     "tests/test_batch_helpers.py::test_every_real_launcher_has_a_printable_usage",
     "tests/test_entrypoints_smoke.py",                                                 # every entry point starts and parses its arguments
     "tests/test_sql_explain_sweep_pg.py",                                              # every SQL statement production code executes is valid on Postgres (runs in the PG container)
+    "tests/test_fee_state.py::test_the_write_switch_has_exactly_one_name_and_ships_off",   # Package H: ONE name for the pair-write switch across code and documents, shipped OFF
 )
 
 
