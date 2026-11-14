@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent.parent
-_spec = importlib.util.spec_from_file_location("pg_seed_guard_test", _ROOT / "scripts" / "mig" / "pg_seed.py")
+_spec = importlib.util.spec_from_file_location("pg_seed_guard_test", _ROOT / "scripts" / "mig" / "cutover" / "pg_seed.py")
 pg_seed = importlib.util.module_from_spec(_spec)
 sys.modules[_spec.name] = pg_seed   # @dataclass + postponed annotations look the module up here
 _spec.loader.exec_module(pg_seed)

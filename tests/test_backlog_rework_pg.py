@@ -1,7 +1,7 @@
 # tests/test_backlog_rework_pg.py
 # -*- coding: utf-8 -*-
 """FND-0368: a rejected delivery stays rejected. The autopilot reads the time of a ticket's latest move back to work from READY_FOR_DEPLOY or CLOSED (backlog_client.rework_times, from the live status
-events) and the rule engine ignores the delivery merges that are not newer than it. Hermetic PostgreSQL with the real client and the real rule engine. Run with python scripts/ops/run_pg_tests.py."""
+events) and the rule engine ignores the delivery merges that are not newer than it. Hermetic PostgreSQL with the real client and the real rule engine. Run with python scripts/gov/delivery/run_pg_tests.py."""
 from __future__ import annotations
 
 import sys
@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops"), str(Path(__file__).resolve().parent)):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "mig" / "backlog"), str(Path(__file__).resolve().parent)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 

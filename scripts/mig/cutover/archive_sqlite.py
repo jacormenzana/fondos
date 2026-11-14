@@ -3,9 +3,9 @@
 """
 archive_sqlite.py — archive the retired SQLite database (FND-0103).
 
-    python scripts/ops/archive_sqlite.py                   # DRY RUN: checks + plan, changes nothing
-    python scripts/ops/archive_sqlite.py --apply           # move the file into the archive (never deletes)
-    python scripts/ops/archive_sqlite.py --apply --include-backups   # also the db/fondos.sqlite.bak_* copies
+    python scripts/mig/cutover/archive_sqlite.py                   # DRY RUN: checks + plan, changes nothing
+    python scripts/mig/cutover/archive_sqlite.py --apply           # move the file into the archive (never deletes)
+    python scripts/mig/cutover/archive_sqlite.py --apply --include-backups   # also the db/fondos.sqlite.bak_* copies
 
 Owner directive 2026-09-26: keep the sealed file for one week after the retirement decision, then
 archive it. Refuses before --due (default 2026-10-03) unless --force.
@@ -32,7 +32,7 @@ import sys
 from datetime import date, datetime
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
 DEFAULT_DEST = Path(r"C:\data\fondos\archive\sqlite")

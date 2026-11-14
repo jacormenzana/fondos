@@ -203,8 +203,8 @@ def test_F1_a_changed_file_that_does_not_parse_is_full_but_an_unrelated_broken_f
 
 
 def test_F2_infrastructure_and_the_selector_itself_are_full():
-    for path in ("conftest.py", "proyecto1/conftest.py", "shared/testing/pg_fixtures.py", "db/pg/00_roles_schemas.sql", "scripts/ops/run_pg_tests.py",
-                 "shared/delivery_receipt.py", "shared/test_impact.py", "scripts/audit/delivery_attest.py", "shared/git_export.py", "pytest.ini"):
+    for path in ("conftest.py", "proyecto1/conftest.py", "shared/testing/pg_fixtures.py", "db/pg/00_roles_schemas.sql", "scripts/gov/delivery/run_pg_tests.py",
+                 "shared/delivery_receipt.py", "shared/test_impact.py", "scripts/gov/delivery/delivery_attest.py", "shared/git_export.py", "pytest.ini"):
         d = _decide([path], {path: "X = 1\n"})
         assert d.scope == "full" and d.reasons[0].startswith("F2"), path
 

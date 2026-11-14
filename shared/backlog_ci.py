@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-backlog_ci.py -- is the CI of a change green? The evidence behind the closing condition `tests_pass` (Backlog v3 W4, FND-0359; scripts/audit/rfd_matrix_probe.py).
+backlog_ci.py -- is the CI of a change green? The evidence behind the closing condition `tests_pass` (Backlog v3 W4, FND-0359; scripts/gov/backlog/rfd_matrix_probe.py).
 
 `verdict` and `evidence_commit` are pure. `read_ci` makes the HTTPS calls (the same stdlib helper as shared/backlog_protection.py) and NEVER raises: whatever it cannot read is "unverifiable" (None), which the
 autopilot treats as "not yet" and asks again on its next run, never as a pass. The repository is public, so GitHub's check runs and the protection of the branch need NO secret, and the autopilot

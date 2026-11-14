@@ -4,7 +4,7 @@ A registry of corrections already made in the declarative catalogs (catalog_pair
 catalog_invariants.py) that the two skill `.md` files (auditStatisticalDataDistribution
 {P2Metrics,CostAttributes}.md) still describe in their pre-correction form -- moving the
 reasoning out of scattered code comments into one queryable place, and giving
-scripts/audit/check_audit_skill_sync.py (C3) something concrete to check a skill row against
+scripts/audit/stat/check_audit_skill_sync.py (C3) something concrete to check a skill row against
 instead of just flagging "unknown rule."
 
 Two shapes of entry, both keyed by a rule_id:

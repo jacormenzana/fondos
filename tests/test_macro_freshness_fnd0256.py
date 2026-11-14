@@ -1,5 +1,5 @@
 """
-tests/test_macro_freshness_fnd0256.py -- per-series staleness of series_macro (shared/macro_freshness.py, scripts/audit/macro_freshness_check.py,
+tests/test_macro_freshness_fnd0256.py -- per-series staleness of series_macro (shared/macro_freshness.py, scripts/audit/p2/macro_freshness_check.py,
 the cycle-report section).
 
 Why it exists: on 2026-10-17 six macro series were found frozen for months or years and nothing had noticed. The centrepiece replays the REAL
@@ -26,7 +26,7 @@ def _load(name, rel):
     return mod
 
 
-check = _load("macro_freshness_check_t", "scripts/audit/macro_freshness_check.py")
+check = _load("macro_freshness_check_t", "scripts/audit/p2/macro_freshness_check.py")
 cr = _load("p1p2_cycle_report_t2", "scripts/launch/p1p2_cycle_report.py")
 
 TODAY = date(2026, 10, 17)

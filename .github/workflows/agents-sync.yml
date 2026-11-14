@@ -24,7 +24,7 @@ jobs:
         # No project dependencies needed — sync_agents_md.py is pure stdlib (ast, re, pathlib).
         # Any drift, missing/duplicated/malformed sentinel or generator error in the governed files (root and area AGENTS.md,
         # doc/reglas/NORMAS_IMPLEMENTACION.md, doc/reglas/SCHEMA_REFERENCE.md) fails this step.
-        run: python scripts/audit/sync_agents_md.py --check
+        run: python scripts/gov/repo/sync_agents_md.py --check
 
       - name: Show fix command on failure
         if: failure()
@@ -32,7 +32,7 @@ jobs:
           echo ""
           echo "One or more sentinel blocks are out of sync."
           echo "Fix locally with:"
-          echo "  python scripts/audit/sync_agents_md.py --write"
+          echo "  python scripts/gov/repo/sync_agents_md.py --write"
           echo "Then stage and commit the updated file(s)."
 
   check-catalog-consistency:
@@ -64,17 +64,17 @@ jobs:
         # Pure structural checks (rule_id uniqueness, bound ordering,
         # segmentation vocabulary, and drift between this runner's hardcoded
         # metric lists and the catalogs) -- never touches the database.
-        run: python scripts/audit/check_catalog_consistency.py
+        run: python scripts/audit/stat/check_catalog_consistency.py
 
       - name: Show context on failure
         if: failure()
         run: |
           echo ""
           echo "A catalog-consistency check failed. This means either:"
-          echo "  - a hardcoded list in scripts/audit/run_statistical_audit.py"
+          echo "  - a hardcoded list in scripts/audit/stat/run_statistical_audit.py"
           echo "    (_PEER_METRICS, _P2_SAME_GROUP_PAIRS, _SCALAR_TIMESERIES_METRICS)"
           echo "    has drifted from shared/statistical_audit/catalog_*.py, or"
           echo "  - a catalog entry itself is malformed (duplicate rule_id,"
           echo "    inverted bound, unknown segmentation value)."
           echo "Run locally to see which:"
-          echo "  python scripts/audit/check_catalog_consistency.py"
+          echo "  python scripts/audit/stat/check_catalog_consistency.py"

@@ -3,14 +3,14 @@
 """
 backlog_autopilot.py -- moves tickets on the evidence the system recorded (Backlog v3 W3, FND-0358; doc/especificacion/ACTION_PLAN_BACKLOG_V3.md, NORMAS_BACKLOG.md 2).
 
-    python scripts/audit/backlog_autopilot.py                  # DRY RUN: what it would do; reads only, writes nothing
-    python scripts/audit/backlog_autopilot.py --apply          # records the MERGE facts and acts according to BACKLOG_AUTOPILOT_MODE (shared/config.py)
+    python scripts/gov/backlog/backlog_autopilot.py                  # DRY RUN: what it would do; reads only, writes nothing
+    python scripts/gov/backlog/backlog_autopilot.py --apply          # records the MERGE facts and acts according to BACKLOG_AUTOPILOT_MODE (shared/config.py)
 
 Facts. A merge commit on master (default origin/master) whose branch carries a commit with `Closes: FND-nnnn` delivers that ticket: one backlog.ops_event row of kind MERGE per (merge,
 ticket), with the pull request number, the files the merge changed and the `Solution:` trailer (default CODE_FIX). Recording is idempotent, so the whole recent history is read every time.
 
 Decisions. shared/backlog_autopilot.py (pure, tested edge by edge) decides from those facts and from the gate verdicts read here: the delivery gate of Phase B, the closing conditions
-(scripts/audit/rfd_matrix_probe.py), the audit-incident gate of FND-0264 (shared/backlog_release.py, a read of `fondos`; if it cannot be read the closure WAITS, never passes) and the
+(scripts/gov/backlog/rfd_matrix_probe.py), the audit-incident gate of FND-0264 (shared/backlog_release.py, a read of `fondos`; if it cannot be read the closure WAITS, never passes) and the
 DEPLOY / CYCLE facts. Anything short of a clear closure is a WAIT with its reasons.
 
 Backlog v3.1 adds the events that had no trigger (shared/backlog_autopilot.py): a CLOSED delivery ticket that a later merge cites with code changes is REOPENED (cause INCOMPLETE_FIX), a BLOCKED
@@ -39,7 +39,7 @@ import sys
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from shared import backlog_autopilot as ap_mod  # noqa: E402
@@ -432,7 +432,7 @@ def main(argv: list | None = None) -> int:
         return RC_USAGE
     try:
         if not bc.autonomy_store_present():
-            print("REFUSED: the W3 DDL is not applied (owner: python scripts/ops/migrate_backlog_v2.py --phase autonomy). Nothing was written.", file=sys.stderr)
+            print("REFUSED: the W3 DDL is not applied (owner: python scripts/mig/backlog/migrate_backlog_v2.py --phase autonomy). Nothing was written.", file=sys.stderr)
             return RC_USAGE
         new = 0
         for t, rows in by_ticket.items():

@@ -2,14 +2,14 @@
 # -*- coding: utf-8 -*-
 """
 The scenario-lifecycle DDL on Postgres (owner decision 2026-10-11): the block of db/pg/30_gold.sql that
-scripts/ops/migrate_portfolio_scenario_status.py applies. Hermetic; no Python lifecycle code is imported here.
+scripts/mig/fondos/migrate_portfolio_scenario_status.py applies. Hermetic; no Python lifecycle code is imported here.
 
 Two layers:
   * the REAL `gold` tables of the throwaway database (DDL loaded from db/pg/*.sql) inside a rolled-back savepoint: the columns exist and the
     CHECK / default / partial unique index behave;
   * toy tables in a per-test schema running the SAME block text (the migration's own extraction): backfill, archiving, idempotency.
 
-    python scripts/ops/run_pg_tests.py -- proyecto3/tests/test_scenario_status_ddl_pg.py
+    python scripts/gov/delivery/run_pg_tests.py -- proyecto3/tests/test_scenario_status_ddl_pg.py
 """
 from __future__ import annotations
 

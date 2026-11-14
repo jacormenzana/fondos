@@ -19,7 +19,7 @@ Cambios v27 (2026-09-27, pivot de real_flag):
     ref_type/ref_value ELIMINADAS (100% NULL en produccion antes del pivote).
     gold.v_fund_metric_timeseries_long reconstruye la forma larga (real_flag) pre-pivote,
     sin perdida, para todo lector que aun la necesite (Superset, auditoria estadistica).
-    Ver db/pg/30_gold.sql, db/pg/40_matviews.sql, scripts/ops/apply_fmts_pivot.py.
+    Ver db/pg/30_gold.sql, db/pg/40_matviews.sql, scripts/mig/fondos/apply_fmts_pivot.py.
   - gold.fund_metrics NO tocada (data dispersa 59/41, ~24 lectores en P3 — fuera de alcance).
 
 Cambios v23 (2026-07-18, FIX-UNIVERSE-RECON-1):
@@ -437,7 +437,7 @@ MAX_PORTFOLIO_CASH_WEIGHT: float = 0.10
 #     catches frozen funds that also fell), or
 #   * it carries an ACTIVE accepted audit residual (control.audit_accepted_finding, domain p2_metrics): a residual is tolerated in the
 #     universe, never in a portfolio -- the promotion gate refuses such a portfolio, so the build must not select it in the first place.
-# ON since 2026-10-11 (owner decision), after scripts/audit/eligibility_switch_diff.py showed an EMPTY eligible-set difference on the live inputs
+# ON since 2026-10-11 (owner decision), after scripts/audit/p3/eligibility_switch_diff.py showed an EMPTY eligible-set difference on the live inputs
 # (it shipped OFF in 385e31c). Rollback = set it back to False: nothing is written, no DDL. The point-in-time backtest frames carry neither
 # input, so the PIT run is NOT affected by this switch (no PIT parity yet: FND-0254; its run manifest says so).
 FUND_DATA_ELIGIBILITY_ENABLED: bool = True
@@ -454,7 +454,7 @@ P3_FUND_NAV_MAX_GAP_RUN_MONTHS: int = 6
 # Scope: P3 eligibility ONLY -- P1 already drops WRONG_DOC from every block and P2 keeps computing their metrics. The PIT backtest applies the SAME
 # rule through the scorer's check_hard_filters (parity, as FND-0254): the status has no history, so today's status is applied at every date
 # (documented look-ahead, like every static attribute of the PIT universe). Shipped OFF in 34d68fa; ON since 2026-10-25 after
-# scripts/audit/wrong_doc_switch_diff.py passed on the 40-ISIN sample (live + PIT, 7/7) and the hermetic gate was green; PRODUCTION and the latest drafts
+# scripts/audit/p3/wrong_doc_switch_diff.py passed on the 40-ISIN sample (live + PIT, 7/7) and the hermetic gate was green; PRODUCTION and the latest drafts
 # hold 0 WRONG_DOC funds. Rollback = False: nothing is written, no DDL.
 P3_WRONG_DOC_EXCLUSION_ENABLED: bool = True
 # Temporary ticket-bound hold (owner order 2026-11-08, shared/data_hold.py): a fund under human review is INELIGIBLE in P3 (exclusion_reason 'data_hold: <ticket> until <date> (...)') while its hold is active. Each entry
@@ -496,7 +496,7 @@ ALARM_WATCH_WEIGHT_TOLERANCE: float = 1e-4
 AUDIT_RESIDUAL_EXPIRY_WARN_DAYS: int = 30
 # FND-0261 (GOV-02), audit completeness contract (shared/statistical_audit/completeness.py). Always on, whatever the switch: every skipped
 # check is classified (MISSING / EMPTY / NOT_APPLICABLE), the run status (PASS / PASS_WITH_WARNINGS / FAIL / INCOMPLETE) is printed and, once
-# the owner applies scripts/ops/migrate_audit_run.py, written to control.audit_run in the same transaction as the run's rows. With the switch ON:
+# the owner applies scripts/mig/fondos/migrate_audit_run.py, written to control.audit_run in the same transaction as the run's rows. With the switch ON:
 #   * an INCOMPLETE run exits 2 (a required check could not run); the cycle launchers treat any audit RC as a [WARN], never a cycle failure;
 #   * the promotion gate takes its evidence from control.audit_run: the latest FULL-scope run whose status is not INCOMPLETE (a FAIL run
 #     counts: decision D4), instead of the latest audit_finding run id. A run persisted before the table has no header and is not evidence.
@@ -505,7 +505,7 @@ AUDIT_RESIDUAL_EXPIRY_WARN_DAYS: int = 30
 # FAIL (known cost defects; costs do not feed the gate yet, G-COST), both with 0 required checks missing; the gate selected the same run, defects,
 # residuals and coverage for the PRODUCTION scenario with the switch OFF and ON. Rollback = False (no DDL to undo; headers stay harmless).
 AUDIT_COMPLETENESS_CONTRACT_ENABLED: bool = True
-# FND-0263 (GOV-04), governed exceptions. Whatever the switch, once the owner applies scripts/ops/migrate_audit_governance.py every accepted
+# FND-0263 (GOV-04), governed exceptions. Whatever the switch, once the owner applies scripts/mig/fondos/migrate_audit_governance.py every accepted
 # residual is an append-only event (control.audit_exception_event: GRANT / RENEW, then a separate APPROVE, decision D6; REVOKE with a cause)
 # and control.audit_accepted_finding is refreshed from that history in the same transaction (accept_audit_residual.py). With the switch ON:
 #   * the promotion gate refuses ([GATE:EXCEPTIONS], no override) when the history cannot be read or the table disagrees with it, instead of
@@ -528,13 +528,13 @@ AUDIT_CANARIES_ENABLED: bool = True
 #   CODE_INTEGRITY_GATE_ENABLED      [GATE:CODE] blocks when HEAD != origin/master or tracked files are modified (D1); OFF: a warning. Cycle
 #                                    launchers only ever warn (D3: p1p2_state preflight). Push before promoting;
 #   COST_DOMAIN_GATE_ENABLED         [GATE:COST] blocks on open hard defects of the cost_attributes audit on a fund of the scenario (D8: first
-#                                    scripts/audit/cost_gate_replay.py over the persisted runs, then one shadow cycle); OFF: a warning.
+#                                    scripts/audit/stat/cost_gate_replay.py over the persisted runs, then one shadow cycle); OFF: a warning.
 # The last two act only inside the orchestrator, i.e. with GOVERNANCE_ORCHESTRATOR_ENABLED. ORCHESTRATOR and CODE_INTEGRITY ON since 2026-10-17 (owner read the
 # shadow verdict against evidence run audit_20261017T080449Z: DATA=PASS, only blocker = the scenario already PRODUCTION); COST stays OFF (FND-0276..0285).
 GOVERNANCE_ORCHESTRATOR_ENABLED: bool = True
-# FND-0264 (GOV-05), closed-loop remediation (shared/statistical_audit/incidents.py, scripts/audit/audit_incident.py). The plan (--plan, the D7
+# FND-0264 (GOV-05), closed-loop remediation (shared/statistical_audit/incidents.py, scripts/audit/stat/audit_incident.py). The plan (--plan, the D7
 # shadow log) and the closure check (--close-check) always read-only work; this switch lets `audit_incident.py --open` WRITE: it records an
-# incident in control.audit_incident (owner DDL: scripts/ops/migrate_audit_incident.py) and opens its backlog ticket through
+# incident in control.audit_incident (owner DDL: scripts/mig/fondos/migrate_audit_incident.py) and opens its backlog ticket through
 # backlog_client.report_incident(). Decision D7 = open on the FIRST CRITICAL occurrence (policy parameter); ON since 2026-10-17 (owner confirmed D7 = first on the plan).
 AUDIT_INCIDENT_LOOP_ENABLED: bool = True
 CODE_INTEGRITY_GATE_ENABLED: bool = True
@@ -567,7 +567,7 @@ METRICS_DIR:  Path = REPORT_DIRS["p2"]             # compat alias, no callers le
 # repo and never under C:\data. Single source for the Python writers; the launchers derive the same two folders in lib/common.bat
 # (AUDIT_P1_DIR / AUDIT_P2_DIR; the P1P2_AUDIT_DIR environment variable moves the root for both):
 #   p1 -> benchmark consistency findings (proyecto1.tools.audit_benchmark_consistency, benchmark_audit_*.json)
-#   p2 -> macro-beta snapshots and shift outliers (scripts/audit/beta_shift_audit.py, macro_betas_*.csv, beta_shift_outliers_*.csv)
+#   p2 -> macro-beta snapshots and shift outliers (scripts/audit/p2/beta_shift_audit.py, macro_betas_*.csv, beta_shift_outliers_*.csv)
 AUDIT_DIRS: dict[str, Path] = {
     "p1": _ROOT / "out" / "audit" / "P1",
     "p2": _ROOT / "out" / "audit" / "P2",
@@ -661,7 +661,7 @@ NAV_STALE_FLAT_MIN_JUMP: float = 0.40
 # Fund_Nature did not is a level shift, not a traded price (DE000DWS3LN1: 565 -> 1,090 in 2026-08, +92.9 %, which put momentum_1y at +2,264 %; validate_nav's 8x test and the stale-flat rule both pass it).
 # "Not shared" = at least NAV_UNSHARED_JUMP_MIN_PEERS peers report that month AND at most NAV_UNSHARED_JUMP_MAX_PEER_SHARE of them moved the same way by at least half as much AND the fund's move differs from
 # the peer median by NAV_UNSHARED_JUMP_MIN_ABS_RET or more. Only consecutive calendar months are compared (a multi-month gap is not a one-month move). The thresholds are NOT calibrated yet: the fault-injection
-# harness (scripts/audit/fault_injection_run.py) measures recall and the false-positive count, and WS1 (FND-0393) sets them before any mode above SHADOW. First evidence (2026-11-08, hermetic fixture of 285 funds /
+# harness (scripts/audit/nav/fault_injection_run.py) measures recall and the false-positive count, and WS1 (FND-0393) sets them before any mode above SHADOW. First evidence (2026-11-08, hermetic fixture of 285 funds /
 # 52,459 monthly rows, tests/fixtures/fault_injection): cuts of 0.30 to 0.50 flag ONE fund, the real defect; 0.25 adds one more (a +28 % month that looks like a real rally). Recall on injected one-month shifts of
 # +50 %: 0.47 at a cut of 0.50 and 0.94 at 0.40 (a true month of -7 % pulls a +50 % shift under the line); at 0.35 every shift of 50-150 % is caught (>= 0.95, `fault_injection_run.py --min-recall 0.95` exits 0).
 # Universe census (2026-11-08, FND-0393, read-only, 2,928 in-universe funds, 522,609 one-month returns, whole history): at a cut of 0.35 the test flags 17 jump-months in 16 funds (0.50: 5 in 5; 0.30: 46 in 31; 0.25: 85 in 48),
@@ -678,11 +678,11 @@ NAV_UNSHARED_JUMP_MAX_PEER_SHARE: float = 0.05
 # eligibility, promotion gate, PIT): it ships OFF and nothing reads it yet; the predicate itself is pure and used by the forensics and, later, the audit's incident rules. Defaults from the forensics of the 22 funds
 # with |MAD-Z| >= 50 on 2026-11-08 (FND-0393): MIN_DEV 50 is the extreme set's own cut; a fund needs MIN_FLAGGED_METRICS distinct ADEQUATE-sample metrics at that deviation to be an INTEGRITY suspect; a metric's sample is
 # "small" when its source_rows is below the SMALL_SAMPLE_PERCENTILE of its Fund_Nature AND below SMALL_SAMPLE_FRACTION of that nature's median (16 of the 22 were small-sample artifacts, e.g. 3 points where 36 is the norm).
-# ON since 2026-11-12 (owner decision, standalone commit): after the recompute with the 0.001 floor the report (scripts/audit/data_suspect_report.py --diff) shows the eligible set of the PRODUCTION regime unchanged (1,472 -> 1,472, lose 0, gain 0),
+# ON since 2026-11-12 (owner decision, standalone commit): after the recompute with the 0.001 floor the report (scripts/audit/nav/data_suspect_report.py --diff) shows the eligible set of the PRODUCTION regime unchanged (1,472 -> 1,472, lose 0, gain 0),
 # the only suspect (ES0116848013) is under an active exemption until 2027-05-07 (FND-0403), and the detector-liveness canaries (FND-0393) fired 20 of 20 in the audit after the recompute. Rollback = False.
 DATA_SUSPECT_ENABLED: bool = True
 # FND-0397 (2026-11-08): the classifier fix for the open-ended-fund boilerplate ("no tiene UNA fecha de vencimiento", optional article in the negation guard + the short-duration name abbreviations). OFF by owner order
-# (definitive NO GO): replayed on the live store it moves 44 in-universe funds out of Corto Plazo and lowers the simulated portfolio Sharpe 0.686 -> 0.552 (scripts/audit/nature_move_impact.py). Turn it ON only with a
+# (definitive NO GO): replayed on the live store it moves 44 in-universe funds out of Corto Plazo and lowers the simulated portfolio Sharpe 0.686 -> 0.552 (scripts/audit/p3/nature_move_impact.py). Turn it ON only with a
 # mitigation for the selection engine; the code path is otherwise inert. A kill switch in the registry sense: it is read at call time by classify_utils.
 RF_OPEN_ENDED_ARTICLE_GUARD_ENABLED: bool = False
 DATA_SUSPECT_MIN_DEV: float = 50.0
@@ -785,7 +785,7 @@ MACRO_ZERO_RUN_EXEMPT_PREFIXES: tuple = ("d_rate_",)
 # this level the most collinear factor is dropped for that fund (even a VIF force-keep one). 30 = BKW "severe".
 MACRO_OLS_MAX_CONDITION_INDEX: float = 30.0
 # Post-OLS circuit breaker: a beta with |beta| above this (or non-finite) is written as NULL, not as a value.
-# Also the plausibility limit counted by scripts/audit/beta_shift_audit.py (FND-0176 saw 600-1,100).
+# Also the plausibility limit counted by scripts/audit/p2/beta_shift_audit.py (FND-0176 saw 600-1,100).
 MACRO_BETA_PLAUSIBLE_MAX: float = 5.0
 # FND-0234: scales of three derived P2 metrics, named once so the producer and the audit's plausibility bound cannot drift.
 # energy_sensitivity_pct = beta_oil * ENERGY_SCENARIO_SHOCK (a +25% WTI scenario); hy_spread_sensitivity_pct = beta_spread_hy *
@@ -888,7 +888,7 @@ EUR_FX_DAILY_INDICATOR: str = "fx_d_eur"           # EXR.D.<CCY>.EUR.SP00.A
 # FND-0236: per-metric-family calculation versions. OFF = today's behaviour (one global CALC_VERSION and one input hash per
 # fund). ON = each of the nine families has its own state row (control.fund_metric_family_state), so a change that touches one
 # family (bump FAMILY_CALC_OVERRIDES[family] in utils/family_versions.py) recomputes only that family. Switch-on order:
-# owner applies scripts/ops/migrate_fund_metric_family_state.py --apply, THEN this flag (P2 asserts the table at startup);
+# owner applies scripts/mig/fondos/migrate_fund_metric_family_state.py --apply, THEN this flag (P2 asserts the table at startup);
 # the first run adopts every fund from its legacy hash without recomputing. ROLLBACK: set False -- the next plain run
 # recomputes every fund once (the legacy hash column then holds a composite hash), no schema change needed.
 FAMILY_VERSIONING_ENABLED: bool = True
@@ -897,7 +897,7 @@ FAMILY_VERSIONING_ENABLED: bool = True
 # ticket is opened the incident is compared with the OPEN tickets: HIGH confidence (names an open ticket, or the same object_name
 # with text similarity >= BACKLOG_INCIDENT_HIGH_COSINE) is appended to that ticket with a log note saying why; MEDIUM
 # (similarity >= BACKLOG_INCIDENT_MEDIUM_COSINE, or the same object_name with a weaker match) opens the new ticket and only
-# SUGGESTS the related one. Switch-on gate (D-1): `scripts/audit/backlog_links_calibration.py --gate` reports ZERO false merges
+# SUGGESTS the related one. Switch-on gate (D-1): `scripts/gov/backlog/backlog_links_calibration.py --gate` reports ZERO false merges
 # on the historical replay and the synthetic fixture (tests/fixtures/backlog_incident_cases.json); attach its report to the ticket.
 BACKLOG_INCIDENT_AUTO_APPEND_ENABLED: bool = False
 # FND-0246: the family-of-share-classes key. OFF = today's behaviour: (management company, _normalize_name(fund_name)), a ~30-character catalogue string
@@ -906,19 +906,19 @@ BACKLOG_INCIDENT_AUTO_APPEND_ENABLED: bool = False
 # head carries no name (~15% of the active funds) joins the official group of its own catalogue stem ONLY when that stem maps to exactly one official group
 # of the same manager, otherwise it keeps its catalogue key -- a missing extraction never splits or merges a family by itself. The key keeps currency words
 # (Pictet Short-Term Money Market USD / CHF / JPY are different sub-funds). Switch-on order (owner): migration db/migrations/20261024_fund_master_official_fund_name.sql
-# applied and a P1 pass done (the column is filled), THEN scripts/audit/family_key_switch_diff.py read (merges, nature conflicts, P3 de-duplication and
+# applied and a P1 pass done (the column is filled), THEN scripts/audit/p1/family_key_switch_diff.py read (merges, nature conflicts, P3 de-duplication and
 # PRODUCTION effect), THEN this flag, THEN P1_discoverAllFunds.bat (builder + --family-nature-refresh), verify_family_refresh.py exit 0, a P3 DRAFT.
 # Rollback = set it back to False and rebuild the families (no DDL). Family ids are re-issued on every builder run either way.
 # ON since 2026-10-25 (owner decision), after: (1) the paired point-in-time backtest, key OFF vs ON on the full universe (260 months, same cached scores): Sharpe
 # 0.5985 -> 0.6023, max drawdown -15.39% -> -14.93%, turnover +0.7 pp, i.e. neutral out of sample; (2) the read-only replay of the family arbitration under the new
 # key: 11 inconsistent families, 5 of them unresolved -> after FND-0310 (the word "short" is not a structural signal), FND-0311 (English "does not have any capital
 # guarantee" no longer votes Estructurado; non-adjacent natures of a same-official-name family settled by a >= 0.80 reference class) 7 inconsistent, 7 settled, 0 left;
-# (3) scripts/audit/family_key_switch_diff.py read (out/audit/P1/family_key_switch_diff_20261025_001153.*: families 2,880 -> 2,100, 410 merges, 26 splits).
+# (3) scripts/audit/p1/family_key_switch_diff.py read (out/audit/P1/family_key_switch_diff_20261025_001153.*: families 2,880 -> 2,100, 410 merges, 26 splits).
 OFFICIAL_NAME_FAMILY_KEY_ENABLED: bool = True
 BACKLOG_INCIDENT_HIGH_COSINE: float = 0.70
 BACKLOG_INCIDENT_MEDIUM_COSINE: float = 0.45
 # Backlog v2 Phase C (FND-0334; PROPUESTA_BACKLOG_V2.md 6.4.1 / 6.4.8): a commit whose `Refs: FND-nnnn` trailer cites a ticket in OPEN or TODO moves it
-# to IN_PROGRESS (actor system:sync, the commit as evidence) when scripts/audit/backlog_sync.py --apply records that commit for the first time. Never
+# to IN_PROGRESS (actor system:sync, the commit as evidence) when scripts/gov/backlog/backlog_sync.py --apply records that commit for the first time. Never
 # from BLOCKED or DEFERRED, never backward, never from a mention in the subject; closures stay manual. Owner decision 2026-10-26: forward moves are
 # automatic. OFF = the sync still records the commit events and the violations, and moves nothing.
 BACKLOG_AUTO_FORWARD_ENABLED: bool = True
@@ -926,14 +926,14 @@ BACKLOG_AUTO_FORWARD_ENABLED: bool = True
 # delivery closure), records links and notes through its OWN database login (role backlog_agent, DSN FONDOS_BACKLOG_PG_DSN_AGENT in the git-ignored .env) with no terminal. The DSN is the real
 # gate: without it, or with this switch OFF, every agent write takes the console path exactly as before (a person types the confirmation phrase). Rollback = set it back to False.
 BACKLOG_AGENT_WRITES_ENABLED: bool = True
-# Backlog v3 W3 (FND-0358; doc/especificacion/ACTION_PLAN_BACKLOG_V3.md): the CEILING of the autopilot (scripts/audit/backlog_autopilot.py). "OFF" = it only prints what it would do; "SHADOW" = it
+# Backlog v3 W3 (FND-0358; doc/especificacion/ACTION_PLAN_BACKLOG_V3.md): the CEILING of the autopilot (scripts/gov/backlog/backlog_autopilot.py). "OFF" = it only prints what it would do; "SHADOW" = it
 # records the MERGE facts and writes ONE note per decision ("would move X to Y, evidence ...") and moves nothing; "ON" = it also makes the two evidence-backed moves through its own database login
 # (IN_PROGRESS -> READY_FOR_DEPLOY on a merge that carries `Closes:`, READY_FOR_DEPLOY -> CLOSED as CODE_FIX / DATA_FIX when every condition holds; v3.1 adds REOPEN, UNBLOCK and UNDEFER). A run can
 # only LOWER this with --mode. Backlog v3.1 (FND-0355): the ceiling is "ON" and the REAL switch is the database's own mode event (backlog.fn_autopilot_mode(), default SHADOW, set by sp_set_autopilot_mode):
 # the effective mode is the lowest of the two, and when the database mode cannot be read (the `events` DDL is not applied) the run is capped at SHADOW. Nothing is written without the login
 # backlog_autopilot (FONDOS_BACKLOG_PG_DSN_AUTOPILOT). Rollback = set it back to "SHADOW".
 BACKLOG_AUTOPILOT_MODE: str = "ON"
-# Backlog v3 W4b slice 2 (FND-0360; owner rule 2026-11-01): whether the autopilot keeps the MODULE groups, the clusters of tickets that change the same module (scripts/audit/backlog_modules.py, rules in
+# Backlog v3 W4b slice 2 (FND-0360; owner rule 2026-11-01): whether the autopilot keeps the MODULE groups, the clusters of tickets that change the same module (scripts/gov/backlog/backlog_modules.py, rules in
 # shared/backlog_clusters.py). "OFF" = never; "ON" = always; "AUTO" = only while the clusters prove themselves against the OVERLAPS decisions already on record (at least 20 decided pairs inside the clusters,
 # precision at least 70 %; recall is reported but never a bar), measured at most once a day. With a sample too small to prove it, AUTO stays off and writes nothing: the system turns itself on once the data
 # proves it, with no person involved. Only a person edits this constant. Rollback = set it to "OFF" (the memberships already written are append-only history and stay).
@@ -943,13 +943,13 @@ BACKLOG_MODULE_CLUSTERS_MODE: str = "AUTO"
 # The precision bar above applies to whichever unit is set. Rollback = "COMPONENT" (the memberships already written are append-only history and stay).
 BACKLOG_CLUSTER_UNIT: str = "MODULE"
 # Backlog v3 W4 (FND-0359; doc/especificacion/ACTION_PLAN_BACKLOG_V3.md): whether a merge that cites tickets puts the OPEN tickets it may affect on notice, with ONE note each appended as the autopilot
-# (scripts/audit/backlog_impact.py, rules in shared/backlog_impact.py). Signals: a confirmed IMPACTS / OVERLAPS link, a text citation of a changed module, and (only while BACKLOG_MODULE_CLUSTERS_MODE has
+# (scripts/gov/backlog/backlog_impact.py, rules in shared/backlog_impact.py). Signals: a confirmed IMPACTS / OVERLAPS link, a text citation of a changed module, and (only while BACKLOG_MODULE_CLUSTERS_MODE has
 # proved the facts) TARGET / TOUCHED. Fatigue guard of the NOTES, replayed on the last 45 days: a median of 1 note per merge (2 with the facts on), at most 5 tickets per merge, 1 on the weakest signal, ONE
 # note per ticket per run and per 24 h (merges are coalesced), 25 tickets per run, merges older than 2 days never. The same step INVALIDATES the probe status of every affected ticket that is IN_PROGRESS or
 # READY_FOR_DEPLOY (no cap): its delivery closure is then blocked by the delivery gate until its closing conditions are re-run and pass after the note (phase `probes`; NORMAS_BACKLOG section 2).
 # Rollback = set it to False (notes and invalidation stop together; the gate keeps blocking what is already stale until its probes pass).
 BACKLOG_IMPACT_NOTES_ENABLED: bool = True
-# Backlog v3.1 (FND-0355; owner decision 2026-11-01, "no console, no click"): how the deploy watcher (scripts/ops/owner_deploy.py) applies the backlog DDL that master brings. "AUTO" = with no window,
+# Backlog v3.1 (FND-0355; owner decision 2026-11-01, "no console, no click"): how the deploy watcher (scripts/gov/backlog/owner_deploy.py) applies the backlog DDL that master brings. "AUTO" = with no window,
 # behind automatic gates (restore point, one transaction per phase, the drift tool must say `no drift`, automatic rollback and an incident ticket on failure; a failure or a missing restore point falls back
 # to the approval window for that version). "ASK" = the approval window for every version (the previous behaviour). An unknown value is read as ASK. Rollback of this decision = set it to "ASK".
 # 2026-11-02 (owner decision G8, plan Revision 2): ASK for the hours between lifting the master protection (the CI gate went with it) and the LOCAL DDL GATE of FND-0377; 2026-11-03: AUTO again, now behind that gate
@@ -962,26 +962,26 @@ BACKLOG_AUTO_DEPLOY_MODE: str = "AUTO"
 BACKLOG_AUTO_REVOKE_ENABLED: bool = True
 # Local delivery evidence (plan ACTION_PLAN_BACKLOG_REFACTORING, Revision 2; FND-0375; owner decision 2026-11-02: GitHub is out of the daily loop, no CI, tests run locally). False = a delivery is recognised from a
 # PLAIN commit on the first-parent history of master (no merge commit, no pull request) dated at or after BACKLOG_LOCAL_DELIVERY_SINCE, and the `tests_pass` closing condition reads the local test receipt
-# (scripts/audit/delivery_attest.py, shared/delivery_receipt.py) instead of GitHub check runs. True = the GitHub path of Backlog v3 (merge commits; the check runs of the pull request). Restoring GitHub = set it
+# (scripts/gov/delivery/delivery_attest.py, shared/delivery_receipt.py) instead of GitHub check runs. True = the GitHub path of Backlog v3 (merge commits; the check runs of the pull request). Restoring GitHub = set it
 # to True, re-enable Actions and re-apply the protection of master. Merge commits are read either way.
 BACKLOG_GITHUB_EVIDENCE_ENABLED: bool = False
 # The instant (ISO, with offset) from which a plain commit counts as a delivery while BACKLOG_GITHUB_EVIDENCE_ENABLED is False: one second after the commit that took GitHub out of the loop (7bf169e, which cites
 # the closed FND-0336 for the record and must not reopen it). An older direct commit is never read as a delivery or a citation. An empty or malformed value is an error (the autopilot refuses to run), never
 # "everything counts". Note the rule this makes visible: a plain commit that cites a CLOSED delivery ticket and changes code reopens it (cause INCOMPLETE_FIX), exactly as a merge did.
 BACKLOG_LOCAL_DELIVERY_SINCE: str = "2026-11-02T22:22:44+01:00"
-# Impact-based test selection for delivery receipts (FND-0385; owner-accepted plan 2026-11-07; shared/test_impact.py, scripts/audit/delivery_attest.py). A change under shared/ or proyecto*/ used to need the
+# Impact-based test selection for delivery receipts (FND-0385; owner-accepted plan 2026-11-07; shared/test_impact.py, scripts/gov/delivery/delivery_attest.py). A change under shared/ or proyecto*/ used to need the
 # full suite (about 27 min). With the selector ON, a runtime change whose dependency analysis (imports, string, launcher and data edges, dynamic loaders) reaches a small, fully-known set of tests may be vouched
 # for by an `impact` receipt (that set + the whole-tree policy tests); every case the analysis cannot establish (fallback rules F1..F8 of the module) stays `full`. ENABLED is the kill switch: False = exactly the
 # behaviour before this ticket, no analysis at all. MODE is a CEILING, not the state: "OFF" | "SHADOW" (the selection is computed and recorded on every full run, nothing is skipped) | "AUTO" (SHADOW, and the
 # receipts promote it to ENFORCE by themselves once they hold the evidence and a clean streak, and demote it on the first escape: shared/test_impact.py::effective_mode). Nobody flips the effective mode.
 DELIVERY_IMPACT_SELECTION_ENABLED: bool = True
-# FND-0386 (owner order 2026-11-10): a `full` receipt runs the suite as concurrent pytest shards (scripts/ops/run_pg_tests.py --shards auto: one process per suite per shard, balanced by the recorded per-file seconds) instead of
+# FND-0386 (owner order 2026-11-10): a `full` receipt runs the suite as concurrent pytest shards (scripts/gov/delivery/run_pg_tests.py --shards auto: one process per suite per shard, balanced by the recorded per-file seconds) instead of
 # four sequential runs: the same tests, measured 28 min -> ~8.5 min on 6 CPUs. A failing file is re-run alone to classify it (real or parallel-only); BOTH fail the receipt. Rollback = False (the sequential runs).
 DELIVERY_SHARDED_RUN_ENABLED: bool = True
 DELIVERY_IMPACT_SELECTION_MODE: str = "AUTO"
-# Backlog v2 Phase C slice 2 (FND-0334; PROPUESTA_BACKLOG_V2.md 6.4.1 / 6.4.6): the instant from which scripts/audit/backlog_sync.py judges a commit that cites a ticket
+# Backlog v2 Phase C slice 2 (FND-0334; PROPUESTA_BACKLOG_V2.md 6.4.1 / 6.4.6): the instant from which scripts/gov/backlog/backlog_sync.py judges a commit that cites a ticket
 # by its `Backlog-Gate:` trailer (an ISO timestamp WITH offset, e.g. "2026-11-02T09:00:00+01:00"). "" = the gate is NOT ARMED: the sync reports the trailers it sees and
-# records no bypass, raises no hold. The owner arms it once the commit-msg hook is installed (bash scripts/audit/commit-msg.sh) and hook_bypass exists (migrate --phase hook);
+# records no bypass, raises no hold. The owner arms it once the commit-msg hook is installed (bash scripts/gov/repo/hooks/commit-msg.sh) and hook_bypass exists (migrate --phase hook);
 # an earlier commit is never judged (history has no trailers). To disarm, set it back to "": the rows already recorded stay (append-only).
 BACKLOG_HOOK_EPOCH: str = ""
 # Strict traceability of the commit-msg hook (owner decision 2026-10-31: built, OFF for now). ON = the hook also REJECTS a commit whose subject and `Refs:` trailer cite no
@@ -996,7 +996,7 @@ BACKLOG_REQUIRE_TICKET_ENABLED: bool = False
 # 2026-10-31 12:42) with gate_mode.py. The 14-day audit counts from that event. Rollback = set it back to "OFF" (the hook then does not even ask the database); the effective mode also drops to
 # OFF if the calibrator retires the gate (an appended event, no edit of this file).
 BACKLOG_COLLISION_GATE_MODE: str = "AUDIT"
-# Backlog v2 Phase C slice 4 (FND-0334; PROPUESTA_BACKLOG_V2.md 6.4.6): where scripts/audit/backlog_sync.py reads whether `backlog-gate` is a REQUIRED status check of the branch (GitHub API). The
+# Backlog v2 Phase C slice 4 (FND-0334; PROPUESTA_BACKLOG_V2.md 6.4.6): where scripts/gov/backlog/backlog_sync.py reads whether `backlog-gate` is a REQUIRED status check of the branch (GitHub API). The
 # token is NOT a setting: it is the environment variable BACKLOG_GATE_GITHUB_TOKEN (a fine-grained, read-only token held outside the repository and .env, typed in the owner's terminal).
 BACKLOG_GATE_GITHUB_REPO: str = "jacormenzana/fondos"
 BACKLOG_GATE_GITHUB_BRANCH: str = "master"
@@ -1044,7 +1044,7 @@ REGIME_MIN_OBS_SORTINO_DOWNSIDE: int = 2  # mínimo retornos negativos para down
 ROLLING_SLOPE_MIN_OBS: int = 12
 # FND-0405 (owner decision 2026-11-10): P2 does not publish a Sharpe / return-to-volatility ratio whose own annualised VOLATILITY is below RATIO_MIN_VOL_ANN (shared/ratio_floor.py): arithmetic on a near-zero denominator
 # (live: a Sharpe of -66 on a 0.37% volatility, IE00B3L10570). 0.001 (0.1% a year) is the same number as the Sortino's guard on its downside deviation (FND-0075) and, measured by the read-only simulation
-# scripts/audit/p2_vol_floor_impact.py, withdraws 129 of 155,377 stored ratio rows (26 funds) with ZERO effect on the P3 selection (the since-inception Sharpe of no selected fund is under it); higher floors
+# scripts/audit/p2/p2_vol_floor_impact.py, withdraws 129 of 155,377 stored ratio rows (26 funds) with ZERO effect on the P3 selection (the since-inception Sharpe of no selected fund is under it); higher floors
 # (0.003 / 0.005) moved 22-24% of the selection and need a P3 treatment of a missing Sharpe first. Applied in returns.sharpe_ratio / sharpe_ratio_from_returns / ret_vol_simple, rolling_stats._roll_sharpe and the PIT
 # backtest (pit_metrics) with the same two constants, read at call time. It reaches the STORED rows only through a P2 recompute (the owner's CALC_VERSION bump); NaN is written as a NULL row, never a stale value.
 # Rollback = RATIO_VOL_FLOOR_ENABLED False. NOT the audit predicate's DATA_SUSPECT_LOW_VOL_FLOOR (0.005), which removes nothing from the store.

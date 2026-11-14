@@ -165,7 +165,7 @@ if !BASELINE_RC! NEQ 0 (
 if not exist "%AUDIT_P2_DIR%" mkdir "%AUDIT_P2_DIR%"
 set "BETA_CSV=%AUDIT_P2_DIR%\macro_betas_p2_%STAMP%.csv"
 echo --- snapshot de betas: !BETA_CSV! >> "%LOG%"
-"%PYTHON%" -X utf8 scripts\audit\beta_shift_audit.py --snapshot "!BETA_CSV!" >> "%LOG%" 2>&1
+"%PYTHON%" -X utf8 scripts\audit\p2\beta_shift_audit.py --snapshot "!BETA_CSV!" >> "%LOG%" 2>&1
 set "BS_RC=!ERRORLEVEL!"
 if !BS_RC! NEQ 0 echo [WARN] el snapshot de betas fallo ^(RC=!BS_RC!^): no habra comparacion de betas >> "%LOG%"
 
@@ -201,7 +201,7 @@ if !AUD_RC! NEQ 0 echo [WARN] la auditoria P2 POST no termino bien ^(RC=!AUD_RC!
 
 :: -- 6. Comparacion de betas (informativa) --------------------------------------------------
 if exist "!BETA_CSV!" (
-    "%PYTHON%" -X utf8 scripts\audit\beta_shift_audit.py --compare "!BETA_CSV!" --version !CALC_VER! --out "%AUDIT_P2_DIR%\beta_shift_outliers_p2_%STAMP%.csv" >> "%LOG%" 2>&1
+    "%PYTHON%" -X utf8 scripts\audit\p2\beta_shift_audit.py --compare "!BETA_CSV!" --version !CALC_VER! --out "%AUDIT_P2_DIR%\beta_shift_outliers_p2_%STAMP%.csv" >> "%LOG%" 2>&1
     set "BC_RC=!ERRORLEVEL!"
     echo --- comparacion de betas fin: RC=!BC_RC! >> "%LOG%"
     if !BC_RC! NEQ 0 echo [WARN] la comparacion de betas dio hallazgos ^(RC=!BC_RC!^): ver el log

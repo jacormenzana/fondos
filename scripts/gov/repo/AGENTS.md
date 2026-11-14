@@ -1,10 +1,10 @@
-# scripts/audit — governed-document sync (area guide)
+# scripts/gov/repo — governed-document sync and repository hygiene (area guide)
 
-Loaded by Claude Code the first time a file under `scripts/audit/` is read (`scripts/audit/CLAUDE.md` imports this file); any other agent reads it before changing code here. Cross-project rules (design principles P#1-P#11, restrictions R-1..R-8, backlog, live-store safety) are in the root `AGENTS.md` and apply here.
+Loaded by Claude Code the first time a file under `scripts/gov/repo/` is read (`scripts/gov/repo/CLAUDE.md` imports this file); any other agent reads it before changing code here. Cross-project rules (design principles P#1-P#11, restrictions R-1..R-8, backlog, live-store safety) are in the root `AGENTS.md` and apply here.
 
 ## Maintenance — Dynamic Sync
 
-Mechanical sections are kept in sync by `scripts/audit/sync_agents_md.py`. Hand-written prose
+Mechanical sections are kept in sync by `scripts/gov/repo/sync_agents_md.py`. Hand-written prose
 (regime tables, scoring weights, principles, rationale) stays outside sentinel markers and is
 never touched by the generator. The generator is **dependency-free** (AST-parses only — no
 project imports), so it runs on bare `python3` (CI, developer machines, Linux runners).
@@ -34,9 +34,9 @@ registered for; an unknown sentinel and a generator that raises are failures (`-
 
 **Generator modes:**
 ```bash
-python scripts/audit/sync_agents_md.py            # report mode — show drift
-python scripts/audit/sync_agents_md.py --check    # exit 1 on drift (used by pre-commit hook + CI)
-python scripts/audit/sync_agents_md.py --write    # update all governed files in-place
+python scripts/gov/repo/sync_agents_md.py            # report mode — show drift
+python scripts/gov/repo/sync_agents_md.py --check    # exit 1 on drift (used by pre-commit hook + CI)
+python scripts/gov/repo/sync_agents_md.py --write    # update all governed files in-place
 ```
 
 **Two-tier enforcement:**
@@ -45,6 +45,6 @@ python scripts/audit/sync_agents_md.py --write    # update all governed files in
 - **Hosted CI** — `.github/workflows/agents-sync.yml` mirrors `--check` on every push/PR.
   Server-side gate is independent of local hook installation state.
 
-**Hook installer:** `scripts/audit/pre-commit.sh` — portable, resolves Python via Conda env `des`.
+**Hook installer:** `scripts/gov/repo/hooks/pre-commit.sh` — portable, resolves Python via Conda env `des`.
 
-**Splitting or moving governed text:** `python scripts/audit/check_agents_md_split.py --base HEAD --receivers <files> --ledger scripts/audit/agents_md_split_ledger.txt` must report 0 unaccounted lines (every line the source lost is in a receiver or in the ledger with a reason). Calibrated by `tests/test_check_agents_md_split.py`.
+**Splitting or moving governed text:** `python scripts/gov/repo/check_agents_md_split.py --base HEAD --receivers <files> --ledger scripts/gov/repo/agents_md_split_ledger.txt` must report 0 unaccounted lines (every line the source lost is in a receiver or in the ledger with a reason). Calibrated by `tests/test_check_agents_md_split.py`.

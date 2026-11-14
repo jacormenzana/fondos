@@ -21,7 +21,7 @@ These are the only Claude-Code-specific notes; everything else is in `AGENTS.md`
 - **A blocked PostgreSQL driver (RC 106) may be transient**, not a policy decision: Windows Smart
   App Control can block an unsigned DLL on first load and clear it once it resolves the file's
   reputation (observed once, 2026-10-12, ~32 min on psycopg's bundled libcrypto). Diagnose with
-  `python scripts/audit/preflight_check.py` (section `[0]`) before escalating; still never retry,
+  `python scripts/gov/repo/preflight_check.py` (section `[0]`) before escalating; still never retry,
   copy a DLL, or edit the registry — `shared/env_guard.py` fails fast by design.
 - **Run P1 tests:** `C:\Users\jacor\.conda\envs\des\python.exe -m pytest proyecto1/tests/`
 - **AST validation after every Python edit** (P#3 / R-8):
@@ -39,7 +39,7 @@ These are the only Claude-Code-specific notes; everything else is in `AGENTS.md`
   (`127.0.0.1:5436`, `/opt/docker/db/postgresql17/`, recreate with its `up.sh`); the repo `.env`
   selects it (`FONDOS_DB_BACKEND=postgres`, `FONDOS_PG_DSN` = `fondos_app`, `FONDOS_PG_DSN_OWNER` =
   `fondos_owner`). `pg-server` (`:5432`) is the disposable dev/test server. Ops scripts are in
-  `scripts/ops/`; hermetic tests: `C:\Users\jacor\.conda\envs\des\python.exe scripts/ops/run_pg_tests.py`. Never
+  `scripts/mnt/` (recurring upkeep) and `scripts/gov/` (backlog, delivery); hermetic tests: `C:\Users\jacor\.conda\envs\des\python.exe scripts/gov/delivery/run_pg_tests.py`. Never
   print DSN passwords, and never stop/recreate the live container from a session (ask the user to
   run the script). Backlog: `gestion.backlog` (same server, dbname `gestion`).
 - **WSL2-hosted Postgres (dev/rehearsal containers `pg-server`, `fondos_postgres`):** WSL2

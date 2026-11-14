@@ -1,7 +1,7 @@
 # shared/delivery_receipt.py
 # -*- coding: utf-8 -*-
 """delivery_receipt.py -- the local test receipt (FND-0375; plan ACTION_PLAN_BACKLOG_REFACTORING, Revision 2, R2.3). GitHub is out of the loop and no CI is built: the deliverer runs the tests
-locally (scripts/audit/delivery_attest.py) and the run leaves one receipt line. This module holds the rules, all PURE (no git, no files): which tests a change needs, how a run is read and judged, the
+locally (scripts/gov/delivery/delivery_attest.py) and the run leaves one receipt line. This module holds the rules, all PURE (no git, no files): which tests a change needs, how a run is read and judged, the
 digest of a receipt, and the verdict of the `tests_pass` closing condition from the receipts.
 
 The owner's three conditions: (a) the receipt names the commit unequivocally (the full 40-character sha, its tree sha and every commit it covers); (b) it counts as a pass only when tests really ran
@@ -69,7 +69,7 @@ def select_tests(changed: list, available: list) -> tuple:
     return sorted(selected), sorted(uncovered)
 
 
-# FND-0380 (2026-11-07): the tests that scan the WHOLE tree for a convention have no module of their own, so `select_tests` never picks them: scripts/audit/auto_publish.py (it reports
+# FND-0380 (2026-11-07): the tests that scan the WHOLE tree for a convention have no module of their own, so `select_tests` never picks them: scripts/gov/delivery/auto_publish.py (it reports
 # incidents) passed its area run with its own 29 tests and failed the full suite on test_every_incident_reporter_has_a_fixture_case; a change confined to scripts/ or tests/ would have been
 # published and its tickets closed with that defect. An `area` run therefore ALWAYS adds this fixed POLICY SET to the tests named after the changed modules. Measured 2026-11-07: about 37 s
 # of plain pytest plus the SQL sweep on Postgres. A path may carry a `::node` to run ONE test of a file that also holds module tests. A stale entry (the file is gone) is a failing test
@@ -182,7 +182,7 @@ def evaluate(commit: str, receipts: list, tree_of: Callable) -> tuple:
         return None, f"not verified: {c[:12]!r} is not a full 40-character commit sha"
     covering = [r for r in reversed(receipts) if c in (r.get("covers") or [])]
     if not covering:
-        return False, f"no local test receipt covers {c[:12]} yet (run scripts/audit/delivery_attest.py)"
+        return False, f"no local test receipt covers {c[:12]} yet (run scripts/gov/delivery/delivery_attest.py)"
     last_problem: Optional[tuple] = None
     for r in covering:
         if r.get("digest") != digest_of(r):

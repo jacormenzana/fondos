@@ -28,7 +28,7 @@ a preflight (`p1p2_state.py preflight`: DB reachable, owner DSN, `FRED_API_KEY`,
 without touching the resume state), then the baseline audit and a macro-beta snapshot, then the harvest
 (`P1_harvestFunds.bat`, read-only on PDFs unless `--harvest-sync` / `--harvest-retire`; a failed harvest counts as
 step 1). After a successful cycle, non-blocking diagnostics: final audit with drift, beta comparison
-(`scripts/audit/beta_shift_audit.py`, run with the current `CALC_VERSION`), the P3 freshness verdict
+(`scripts/audit/p2/beta_shift_audit.py`, run with the current `CALC_VERSION`), the P3 freshness verdict
 (`scripts/launch/p3_freshness_check.py`, same gate as P3) and the cycle report (`scripts/launch/p1p2_cycle_report.py`,
 `[ATENCION]` lines, JSON in `proyecto1/log/`). Step options are forwarded to the sub-launchers (`--no-export`,
 `--skip-macro`, `--workers N`, `--force`, `--benchmarks-load`, `-- <run_pipeline args>`); optional diagnostics:

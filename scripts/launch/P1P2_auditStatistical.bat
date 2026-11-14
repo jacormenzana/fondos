@@ -64,7 +64,7 @@ echo.
 
 pushd "%ROOT%"
 
-"%PYTHON%" -u -X utf8 scripts\audit\run_statistical_audit.py --domain %DOMAIN%%EXTRA_ARGS% >> "%LOG%" 2>> "%ERR%"
+"%PYTHON%" -u -X utf8 scripts\audit\stat\run_statistical_audit.py --domain %DOMAIN%%EXTRA_ARGS% >> "%LOG%" 2>> "%ERR%"
 set RC=!ERRORLEVEL!
 
 popd

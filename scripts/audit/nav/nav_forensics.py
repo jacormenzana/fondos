@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """Per-ISIN NAV forensic report for the funds the statistical audit flags as extreme (FND-0393, WS1 of FND-0391; plan amendments A3 G-13 and A5).
 
-    python scripts/audit/nav_forensics.py --from-run post_20261108_173304_p2 --min-dev 50          # every fund whose |MAD-Z| reached 50 in that audit
-    python scripts/audit/nav_forensics.py --isins DE000DWS3LN1 LU0232465467 --run <audit run id>   # named funds
+    python scripts/audit/nav/nav_forensics.py --from-run post_20261108_173304_p2 --min-dev 50          # every fund whose |MAD-Z| reached 50 in that audit
+    python scripts/audit/nav/nav_forensics.py --isins DE000DWS3LN1 LU0232465467 --run <audit run id>   # named funds
 
 READ-ONLY (a read-only session: the server refuses any write). Generic: no fund is named in code (P#5), so it serves every fund the engine flags in future, which turns "one person reads 22 NAV series" into
 "review a report". Per fund it answers four questions, each with a number:
@@ -32,7 +32,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-_ROOT = Path(__file__).resolve().parents[2]
+_ROOT = Path(__file__).resolve().parents[3]
 for _p in (_ROOT, _ROOT / "proyecto2"):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
@@ -155,7 +155,7 @@ def forensic(conn, peers, isin: str, run_id: str, family_of: dict) -> dict:
 
 
 def render(recs: list, run_id: str) -> str:
-    L = [f"# NAV forensic report (audit run {run_id})", "", f"{len(recs)} funds. Verdict rules: see the module docstring of scripts/audit/nav_forensics.py. Read-only.", "",
+    L = [f"# NAV forensic report (audit run {run_id})", "", f"{len(recs)} funds. Verdict rules: see the module docstring of scripts/audit/nav/nav_forensics.py. Read-only.", "",
          "| ISIN | nature | uni | verdict | audit dev | z universe | z in nature | top metric | rows (p10 in nature) | validators | worst 1-month move (peer median, peers moved same way) |", "|---|---|---|---|---|---|---|---|---|---|---|"]
     for r in recs:
         tm = r.get("top_metric", {})

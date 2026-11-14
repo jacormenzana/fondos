@@ -3,9 +3,9 @@
 """
 cost_gate_replay.py -- what the cost-domain promotion gate WOULD have done on the past (FND-0265, decision D8). Read-only.
 
-    python scripts/audit/cost_gate_replay.py                 # every persisted full cost_attributes run x every scenario
-    python scripts/audit/cost_gate_replay.py --last 5        # only the 5 newest runs
-    python scripts/audit/cost_gate_replay.py --scenario ID   # one scenario
+    python scripts/audit/stat/cost_gate_replay.py                 # every persisted full cost_attributes run x every scenario
+    python scripts/audit/stat/cost_gate_replay.py --last 5        # only the 5 newest runs
+    python scripts/audit/stat/cost_gate_replay.py --scenario ID   # one scenario
 
 Decision D8: before COST_DOMAIN_GATE_ENABLED may block a promotion, replay the persisted cost audits against the scenarios they would
 have judged, then run one shadow cycle. For each full (non-sample) cost_attributes run and each scenario, this lists the open hard
@@ -21,7 +21,7 @@ import argparse
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
 DOMAIN = "cost_attributes"

@@ -1,9 +1,9 @@
 # tests/test_backlog_phase_a_acceptance_pg.py
 # -*- coding: utf-8 -*-
-"""The Phase A acceptance checker (scripts/audit/backlog_phase_a_acceptance.py) against the REAL DDL (FND-0331). Hermetic (pg_conn): the checker must
+"""The Phase A acceptance checker (scripts/mig/backlog/backlog_phase_a_acceptance.py) against the REAL DDL (FND-0331). Hermetic (pg_conn): the checker must
 accept the database after step A-1 and after step A-2, and reject the states before them, using the same catalog facts the live run reads.
 
-    python scripts/ops/run_pg_tests.py -- tests/test_backlog_phase_a_acceptance_pg.py
+    python scripts/gov/delivery/run_pg_tests.py -- tests/test_backlog_phase_a_acceptance_pg.py
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops"), str(_ROOT / "scripts" / "audit")):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "mig" / "backlog"), str(_ROOT / "scripts" / "mig" / "backlog")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 

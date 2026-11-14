@@ -1,7 +1,7 @@
 # tests/test_backlog_modules_pg.py
 # -*- coding: utf-8 -*-
 """Backlog v3 W4b (FND-0360), phase `modules` (db/pg_backlog/99_modules.sql): the append-only table of which module each ticket targets, touched or cites, its current-set view, its one door
-(sp_record_module) and the MODULE group kind. Hermetic PostgreSQL; the privileges are the real ones (SET LOCAL SESSION AUTHORIZATION). Run with python scripts/ops/run_pg_tests.py."""
+(sp_record_module) and the MODULE group kind. Hermetic PostgreSQL; the privileges are the real ones (SET LOCAL SESSION AUTHORIZATION). Run with python scripts/gov/delivery/run_pg_tests.py."""
 from __future__ import annotations
 
 import sys
@@ -11,7 +11,7 @@ import psycopg
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops"), str(Path(__file__).resolve().parent)):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "mig" / "backlog"), str(Path(__file__).resolve().parent)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -78,7 +78,7 @@ def test_a_derived_fact_is_a_system_actors_and_a_declaration_is_an_agents_or_a_p
     ap = _mk(db)
     assert rec(db, ap, role="CITED", source="TEXT", evidence="named in the title") > 0 and rec(db, ap, role="CITED", source="OBJECT_NAME", path="proyecto1/core/pipeline.py") > 0
     assert rec(db, ap, role="TARGET", source="DECLARED", actor=ME, symbol="parse_rows", evidence="the parser is the cause") > 0
-    assert rec(db, ap, path="scripts/audit/backlog_links.py", role="CITED", source="DECLARED", actor=OWNER) > 0
+    assert rec(db, ap, path="scripts/gov/backlog/backlog_links.py", role="CITED", source="DECLARED", actor=OWNER) > 0
     refused(db, "derived", lambda c: rec(c, ap, role="TOUCHED", source="COMMIT", actor=ME))                    # an agent does not claim what git says
     refused(db, "derived", lambda c: rec(c, ap, role="CITED", source="TEXT", actor=OWNER))
     refused(db, "DECLARED is what", lambda c: rec(c, ap, role="TARGET", source="DECLARED", actor=SYS))        # and the system does not declare intent
@@ -104,9 +104,9 @@ def test_a_retraction_removes_the_fact_from_the_current_set_and_a_rejected_propo
     assert current(db, ap) == []
     assert rec(db, ap, role="CITED", source="TEXT", retracted=True) is None                                                      # nothing current to retract
     # a retraction by the system itself (the file moved) can be undone by the system
-    rec(db, ap, path="scripts/ops/x.py")
-    assert rec(db, ap, path="scripts/ops/x.py", retracted=True) > 0 and current(db, ap) == []
-    assert rec(db, ap, path="scripts/ops/x.py") > 0 and current(db, ap) == [(ap, "scripts/ops/x.py", None, "TOUCHED", "COMMIT")]
+    rec(db, ap, path="scripts/mig/fondos/x.py")
+    assert rec(db, ap, path="scripts/mig/fondos/x.py", retracted=True) > 0 and current(db, ap) == []
+    assert rec(db, ap, path="scripts/mig/fondos/x.py") > 0 and current(db, ap) == [(ap, "scripts/mig/fondos/x.py", None, "TOUCHED", "COMMIT")]
 
 
 def test_the_current_set_is_the_latest_state_of_each_ticket_module_symbol_role_and_source(db):
@@ -165,13 +165,13 @@ def test_the_rollback_drops_the_door_and_the_view_keeps_the_history_and_the_phas
 import json  # noqa: E402
 from datetime import datetime, timezone  # noqa: E402
 
-for _q in (str(_ROOT / "scripts" / "audit"),):
+for _q in (str(_ROOT / "scripts" / "gov" / "backlog"),):
     if _q not in sys.path:
         sys.path.insert(0, _q)
 import backlog_modules as run  # noqa: E402
 from shared import backlog_client as bc  # noqa: E402
 
-FILES = ["shared/backlog_client.py", "scripts/audit/audit_incident.py", "proyecto1/core/pipeline.py", "tests/test_backlog_client.py", "AGENTS.md", "doc/reglas/NORMAS_BACKLOG.md"]
+FILES = ["shared/backlog_client.py", "scripts/audit/stat/audit_incident.py", "proyecto1/core/pipeline.py", "tests/test_backlog_client.py", "AGENTS.md", "doc/reglas/NORMAS_BACKLOG.md"]
 SHA_A, SHA_B = "a" * 40, "b" * 40
 COMMIT_FILES = {SHA_A: "shared/backlog_client.py\nAGENTS.md\ntests/test_backlog_client.py\n", SHA_B: "shared/backlog_client.py\nproyecto1/core/pipeline.py\ndoc/reglas/NORMAS_BACKLOG.md\n"}
 
@@ -232,16 +232,16 @@ def test_the_runner_records_touched_and_cited_facts_through_the_autopilots_privi
 def test_an_agents_rejection_of_a_proposal_is_never_undone_by_the_derivation(db, monkeypatch):
     monkeypatch.setenv("FONDOS_ACTOR", SYS)
     a = _mk(db, "IN_PROGRESS")
-    db.execute("INSERT INTO backlog.BACKLOG_LOGS (action_point_id, username, comment) VALUES (%s, 'agent:claude-opus-5-5', 'checked scripts/audit/audit_incident.py: only mentioned, not the cause')", (a,))
+    db.execute("INSERT INTO backlog.BACKLOG_LOGS (action_point_id, username, comment) VALUES (%s, 'agent:claude-opus-5-5', 'checked scripts/audit/stat/audit_incident.py: only mentioned, not the cause')", (a,))
     shim = Shim(db)
     shim.only = {a}
     as_role(db, "backlog_autopilot")
     run.run(shim, apply=True, git=fake_git, out=lambda *_: None)
     as_owner(db)
-    assert current(db, a) == [(a, "scripts/audit/audit_incident.py", None, "CITED", "TEXT")]
+    assert current(db, a) == [(a, "scripts/audit/stat/audit_incident.py", None, "CITED", "TEXT")]
     monkeypatch.setenv("FONDOS_ACTOR", ME)
     as_role(db, "backlog_agent")
-    assert bc.record_modules([{"ap_id": a, "module": "scripts/audit/audit_incident.py", "role": "CITED", "source": "TEXT", "evidence": "a tool the log only mentions", "retracted": True}], actor=ME, conn=db)["recorded"] == 1
+    assert bc.record_modules([{"ap_id": a, "module": "scripts/audit/stat/audit_incident.py", "role": "CITED", "source": "TEXT", "evidence": "a tool the log only mentions", "retracted": True}], actor=ME, conn=db)["recorded"] == 1
     as_owner(db)
     assert current(db, a) == []
     monkeypatch.setenv("FONDOS_ACTOR", SYS)

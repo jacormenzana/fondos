@@ -1,9 +1,9 @@
-# scripts/launch/p3_pit_cadence.py
+# scripts/audit/p3/p3_pit_cadence.py
 # -*- coding: utf-8 -*-
 r"""
 Rebalance-cadence experiment on a SAVED PIT backtest run (FND-0217). Read-only on the DB.
 
-    C:\Users\jacor\.conda\envs\des\python.exe -X utf8 scripts\launch\p3_pit_cadence.py --run-dir out\reports\pit_backtest\<STAMP>
+    C:\Users\jacor\.conda\envs\des\python.exe -X utf8 scripts\audit\p3\p3_pit_cadence.py --run-dir out\reports\pit_backtest\<STAMP>
 
 Rebalances every k months (default 1, 2, 3, 4, 6, 12) holding the portfolio in between. Every phase of each cadence is run
 (which months you rebalance in is luck for k > 1) and the statistics are reported on the phase-averaged return series with the
@@ -20,7 +20,7 @@ from pathlib import Path
 import pandas as pd
 
 warnings.filterwarnings("ignore")
-_ROOT = Path(__file__).resolve().parents[2]
+_ROOT = Path(__file__).resolve().parents[3]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 

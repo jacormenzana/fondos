@@ -23,7 +23,7 @@
 #      choice, not a platform artifact.
 #   4. psycopg2-binary AND psycopg[-binary] both carry over unchanged — psycopg2 still serves the
 #      legacy shared/load_fondos_to_postgres.py BI mirror (§P4_BI_CHARTER.md §0), psycopg3 is the
-#      migration's own target driver (scripts/mig/pg_seed.py, pg_reconcile.py; shared/testing/pg_fixtures.py).
+#      migration's own target driver (scripts/mig/cutover/pg_seed.py, pg_reconcile.py; shared/testing/pg_fixtures.py).
 #
 # NOT YET DONE (this file is a reviewed derivation, not a proven one — same honest limitation as
 # every other artifact in this migration that needed a Linux host or a live server to fully verify):

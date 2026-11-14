@@ -1,4 +1,4 @@
-"""FND-0385: the impact selection inside scripts/audit/delivery_attest.py, on a throwaway git repository with a fake test runner (no docker, no network, no database).
+"""FND-0385: the impact selection inside scripts/gov/delivery/delivery_attest.py, on a throwaway git repository with a fake test runner (no docker, no network, no database).
 OFF is exactly the old behaviour; SHADOW runs the whole suite and records what the selector would have run and any escape; ENFORCE runs only the selection, and only when the analysis can bound the change
 and a fresh full receipt stands behind it; `verify` recomputes an impact receipt. Plus the suite plan of run_pg_tests.py and the suite_roots filter of available_tests."""
 from __future__ import annotations
@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "audit"), str(_ROOT / "scripts" / "ops"), str(Path(__file__).resolve().parent)):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "gov" / "delivery"), str(_ROOT / "scripts" / "gov" / "delivery"), str(Path(__file__).resolve().parent)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -300,7 +300,7 @@ def test_run_tests_for_impact_hands_run_pg_tests_one_suite_plan_and_removes_it(t
         return R()
     monkeypatch.setattr(da.subprocess, "run", fake_run)
     rc, text, _s, cmds = da.run_tests("impact", ["tests/test_a.py", "tests/test_x.py::test_one", "proyecto2/tests/calculations/test_c.py", "proyecto1/tests/test_b.py"], tmp_path, python="py")
-    assert rc == 0 and "scripts/ops/run_pg_tests.py" in cmds[0] and "--suite-files" in cmds[0]
+    assert rc == 0 and "scripts/gov/delivery/run_pg_tests.py" in cmds[0] and "--suite-files" in cmds[0]
     assert seen["plan"] == {"tests": ["tests/test_a.py", "tests/test_x.py::test_one"], "proyecto2": ["proyecto2/tests/calculations/test_c.py"], "proyecto1": ["proyecto1/tests/test_b.py"]}
     assert not seen["file"].exists() and seen["timeout"] == da.TIMEOUT_S["impact"]
 
@@ -335,7 +335,7 @@ def test_a_full_receipt_runs_the_sharded_suite_with_the_recorded_durations_while
     monkeypatch.setattr(da, "DURATIONS", durations)
     monkeypatch.setattr(da._cfg, "DELIVERY_SHARDED_RUN_ENABLED", True)
     rc, _text, _s, cmds = da.run_tests("full", [], tmp_path, python="py")
-    assert rc == 0 and cmds == [["py", "scripts/ops/run_pg_tests.py", "--image", "postgres:17", "--shards", "auto", "--durations", str(durations)]]
+    assert rc == 0 and cmds == [["py", "scripts/gov/delivery/run_pg_tests.py", "--image", "postgres:17", "--shards", "auto", "--durations", str(durations)]]
 
 
 def test_a_full_receipt_without_recorded_durations_still_shards_and_the_switch_off_is_the_sequential_runs(monkeypatch, tmp_path):
@@ -343,9 +343,9 @@ def test_a_full_receipt_without_recorded_durations_still_shards_and_the_switch_o
     _fake_full_run(monkeypatch, seen)
     monkeypatch.setattr(da, "DURATIONS", tmp_path / "absent.json")
     monkeypatch.setattr(da._cfg, "DELIVERY_SHARDED_RUN_ENABLED", True)
-    assert da.run_tests("full", [], tmp_path, python="py")[3] == [["py", "scripts/ops/run_pg_tests.py", "--image", "postgres:17", "--shards", "auto"]]
+    assert da.run_tests("full", [], tmp_path, python="py")[3] == [["py", "scripts/gov/delivery/run_pg_tests.py", "--image", "postgres:17", "--shards", "auto"]]
     monkeypatch.setattr(da._cfg, "DELIVERY_SHARDED_RUN_ENABLED", False)
-    assert da.run_tests("full", [], tmp_path, python="py")[3] == [["py", "scripts/ops/run_pg_tests.py", "--image", "postgres:17"]]            # rollback: exactly the previous command
+    assert da.run_tests("full", [], tmp_path, python="py")[3] == [["py", "scripts/gov/delivery/run_pg_tests.py", "--image", "postgres:17"]]            # rollback: exactly the previous command
 
 
 # ── owner waiver of the evidence gate (2026-11-12) and sharded impact runs ───────

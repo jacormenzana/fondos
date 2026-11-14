@@ -3,11 +3,11 @@
 """
 writer_proof.py -- proves an AUTOMATIC WRITER of the backlog before it may write (FND-0370; owner requirements of 2026-11-03). The register and the rule: shared/backlog_writers.py; the harness: shared/backlog_writer_proof.py.
 
-    python scripts/audit/writer_proof.py --list                          # every registered writer, its status (GRANDFATHERED / PROVEN / PENDING) and why
-    python scripts/audit/writer_proof.py --writer NAME --dry-run-only    # REAL data, read-only: what it would write, measured against its caps (duplications, volume, concentration per ticket)
-    python scripts/audit/writer_proof.py --writer NAME                   # the whole proof: the dry run, then a throwaway Postgres loaded from a read-only snapshot of the real backlog where the writer
+    python scripts/gov/backlog/writer_proof.py --list                          # every registered writer, its status (GRANDFATHERED / PROVEN / PENDING) and why
+    python scripts/gov/backlog/writer_proof.py --writer NAME --dry-run-only    # REAL data, read-only: what it would write, measured against its caps (duplications, volume, concentration per ticket)
+    python scripts/gov/backlog/writer_proof.py --writer NAME                   # the whole proof: the dry run, then a throwaway Postgres loaded from a read-only snapshot of the real backlog where the writer
                                                                          # runs FOR REAL and its protections are checked; the result is recorded in out/audit/writer_proofs.jsonl
-    python scripts/audit/writer_proof.py --verify NAME                   # is it PROVEN for the code on disk now?
+    python scripts/gov/backlog/writer_proof.py --verify NAME                   # is it PROVEN for the code on disk now?
 
 A new writer is added to shared/backlog_writers.py (status REGISTERED, kill switch OFF, caps, files, an entry module with plan() and apply()); until a proof PASSES for the current digest of its files, the client
 refuses every write it makes. A change to its code invalidates the proof. Nothing here writes to the live backlog: the dry run uses a read-only transaction, the snapshot is a read-only export, and the writer runs
@@ -23,9 +23,9 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT / "scripts" / "audit"))
+sys.path.insert(0, str(ROOT / "scripts" / "mig" / "backlog"))
 from shared import backlog_writer_proof as wp  # noqa: E402
 from shared import backlog_writers as bw  # noqa: E402
 from shared.out_dir import out_root  # noqa: E402
@@ -109,7 +109,7 @@ def main(argv: list | None = None) -> int:
     result_path = staging / f"writer_proof_{name}_{now:%Y%m%dT%H%M%SZ}.result.json"
     result_path.unlink(missing_ok=True)
     env = {**os.environ, "FONDOS_PROOF_WRITER": name, "FONDOS_PROOF_SNAPSHOT": str(snap_path), "FONDOS_PROOF_RESULT": str(result_path)}
-    cmd = [sys.executable, "-X", "utf8", str(ROOT / "scripts" / "ops" / "run_pg_tests.py"), "--image", args.image, "--", "tests/test_backlog_writer_proof_pg.py", "-k", "prove_the_real_writer", "-q", "--tb=short", "-p", "no:cacheprovider"]
+    cmd = [sys.executable, "-X", "utf8", str(ROOT / "scripts" / "gov" / "delivery" / "run_pg_tests.py"), "--image", args.image, "--", "tests/test_backlog_writer_proof_pg.py", "-k", "prove_the_real_writer", "-q", "--tb=short", "-p", "no:cacheprovider"]
     print(f"scratch proof: snapshot {snap_path.name} ({len(snap['tickets'])} tickets, {len(snap['link_events'])} link events); a throwaway container, the real DDL ...")
     subprocess.run(cmd, cwd=ROOT, env=env, stdin=subprocess.DEVNULL)
     scratch = json.loads(result_path.read_text(encoding="utf-8")) if result_path.exists() else None

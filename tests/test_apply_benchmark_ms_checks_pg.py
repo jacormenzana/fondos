@@ -1,9 +1,9 @@
 """
-tests/test_apply_benchmark_ms_checks_pg.py — scripts/ops/apply_benchmark_ms_checks.py.
+tests/test_apply_benchmark_ms_checks_pg.py — scripts/mig/fondos/apply_benchmark_ms_checks.py.
 
 The DDL must come from db/pg/35_control.sql (single source of truth) and be idempotent, and the
 privilege check must report what Postgres reports. Pure parts run anywhere; the database parts run on
-the hermetic container (python scripts/ops/run_pg_tests.py).
+the hermetic container (python scripts/gov/delivery/run_pg_tests.py).
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parent.parent
-_SPEC = importlib.util.spec_from_file_location("apply_bms", _ROOT / "scripts" / "ops" / "apply_benchmark_ms_checks.py")
+_SPEC = importlib.util.spec_from_file_location("apply_bms", _ROOT / "scripts" / "mig" / "fondos" / "apply_benchmark_ms_checks.py")
 mod = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(mod)
 

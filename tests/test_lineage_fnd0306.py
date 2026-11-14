@@ -207,7 +207,7 @@ def test_the_audit_manifest_carries_the_universe_fingerprint_of_a_p2_metrics_run
     import sys
     from types import SimpleNamespace as NS
     root = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-    spec = importlib.util.spec_from_file_location("run_statistical_audit_fnd0306", os.path.join(root, "scripts", "audit", "run_statistical_audit.py"))
+    spec = importlib.util.spec_from_file_location("run_statistical_audit_fnd0306", os.path.join(root, "scripts", "audit", "stat", "run_statistical_audit.py"))
     if root not in sys.path:
         sys.path.insert(0, root)
     runner = importlib.util.module_from_spec(spec)

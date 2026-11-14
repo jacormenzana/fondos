@@ -3,7 +3,7 @@
 """FND-0323 D1 on Postgres: the real WRONG_DOC statement, the live loader's switch and the scorer's outcome.
 Throwaway per-test schema (same discipline as test_fund_data_eligibility_pg.py); everything is read-only.
 
-    python scripts/ops/run_pg_tests.py -- proyecto3/tests/test_wrong_doc_eligibility_pg.py
+    python scripts/gov/delivery/run_pg_tests.py -- proyecto3/tests/test_wrong_doc_eligibility_pg.py
 """
 from __future__ import annotations
 

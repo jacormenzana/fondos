@@ -1,6 +1,6 @@
 # proyecto1/tests/test_shadow_reconciliation.py
 # -*- coding: utf-8 -*-
-"""Tests unitarios de scripts/audit/shadow_reconciliation.py (FND-0137 Section D — Shadow
+"""Tests unitarios de scripts/audit/p2/shadow_reconciliation.py (FND-0137 Section D — Shadow
 Reconciliation). Solo las funciones puras: las formulas clean-room y la comparacion
 shadow-vs-produccion. Nada aqui toca una conexion a BD (R-7: sin pipeline.py ni core.io).
 
@@ -23,7 +23,7 @@ if _ROOT_DIR not in sys.path:
 
 import pandas as pd
 
-from scripts.audit.shadow_reconciliation import (
+from scripts.audit.p2.shadow_reconciliation import (
     compute_shadow_metrics,
     reconcile_metrics,
     shadow_max_dd,

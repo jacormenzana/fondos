@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """FND-0332 (decision-time read rule): shared.backlog_client.latest_status_events() on the Phase A store. Hermetic (rolled-back savepoint).
 
-    python scripts/ops/run_pg_tests.py -- tests/test_backlog_status_read_pg.py
+    python scripts/gov/delivery/run_pg_tests.py -- tests/test_backlog_status_read_pg.py
 """
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops"), str(Path(__file__).resolve().parent)):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "mig" / "backlog"), str(Path(__file__).resolve().parent)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 

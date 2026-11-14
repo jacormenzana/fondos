@@ -1,7 +1,7 @@
 # proyecto1/tests/test_statistical_audit_finding_isin_pg.py
 # -*- coding: utf-8 -*-
 """FND-0234(d): audit_finding_isin writer/loader, clear_run, the runner's _persist, and the real DDL, on the hermetic Postgres
-container (python scripts/ops/run_pg_tests.py). The writers commit, so these use pg_session_conn + a throwaway schema."""
+container (python scripts/gov/delivery/run_pg_tests.py). The writers commit, so these use pg_session_conn + a throwaway schema."""
 from __future__ import annotations
 
 import importlib.util
@@ -17,7 +17,7 @@ from shared.statistical_audit.persistence import (  # noqa: E402
 )
 
 _spec = importlib.util.spec_from_file_location(
-    "run_statistical_audit_fipg", os.path.join(_ROOT, "scripts", "audit", "run_statistical_audit.py"))
+    "run_statistical_audit_fipg", os.path.join(_ROOT, "scripts", "audit", "stat", "run_statistical_audit.py"))
 runner = importlib.util.module_from_spec(_spec)
 sys.modules["run_statistical_audit_fipg"] = runner
 _spec.loader.exec_module(runner)

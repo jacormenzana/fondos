@@ -31,7 +31,7 @@ def _load(name, rel):
     return mod
 
 
-runner = _load("run_statistical_audit_canaries", ("scripts", "audit", "run_statistical_audit.py"))
+runner = _load("run_statistical_audit_canaries", ("scripts", "audit", "stat", "run_statistical_audit.py"))
 HARD_P2 = [r for r in P2_INVARIANTS if r.bound_type == "HARD_INVARIANT"]
 HARD_COST = [r for r in COST_INVARIANTS if r.bound_type == "HARD_INVARIANT"]
 
@@ -113,6 +113,6 @@ def test_the_summary_is_what_the_manifest_records_and_the_check_is_registered_as
 
 def test_the_switch_ships_on_and_main_runs_the_canaries_only_in_a_full_run():
     assert cfg.AUDIT_CANARIES_ENABLED is True
-    src = open(os.path.join(_ROOT, "scripts", "audit", "run_statistical_audit.py"), encoding="utf-8").read()
+    src = open(os.path.join(_ROOT, "scripts", "audit", "stat", "run_statistical_audit.py"), encoding="utf-8").read()
     assert "if scope == cpl.SCOPE_FULL and AUDIT_CANARIES_ENABLED:" in src and "run_canaries(run)" in src
     assert cn.fired([], "X") is False and cn.fired([{"rule_id": "X"}], "X") is True

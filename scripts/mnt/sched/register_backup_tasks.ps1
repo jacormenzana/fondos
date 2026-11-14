@@ -1,11 +1,11 @@
 # Registers the recurring Postgres backup tasks in Windows Task Scheduler (FND-0179 / FND-0073 / FND-0290 / FND-0407).
 #
-#   powershell -ExecutionPolicy Bypass -File scripts\ops\register_backup_tasks.ps1              # show what WOULD be registered
-#   powershell -ExecutionPolicy Bypass -File scripts\ops\register_backup_tasks.ps1 -Register     # register the three tasks (re-registers with -Force)
-#   powershell -ExecutionPolicy Bypass -File scripts\ops\register_backup_tasks.ps1 -Unregister   # remove them
+#   powershell -ExecutionPolicy Bypass -File scripts\mnt\sched\register_backup_tasks.ps1              # show what WOULD be registered
+#   powershell -ExecutionPolicy Bypass -File scripts\mnt\sched\register_backup_tasks.ps1 -Register     # register the three tasks (re-registers with -Force)
+#   powershell -ExecutionPolicy Bypass -File scripts\mnt\sched\register_backup_tasks.ps1 -Unregister   # remove them
 #
 # PRIORITY RULE (owner order 2026-11-14): a RUNNING WORK CYCLE ALWAYS WINS. Every task below ends in a script that reads the cycle lock first
-# (scripts/ops/lib/cycle_guard.sh) and, while a cycle runs, exits 75 = DEFERRED without touching the database. Each task therefore repeats HOURLY after its
+# (scripts/mnt/lib/cycle_guard.sh) and, while a cycle runs, exits 75 = DEFERRED without touching the database. Each task therefore repeats HOURLY after its
 # first trigger, so a backup deferred by a night-long cycle runs by itself in the first free hour: no manual step. A script that finds nothing to do exits at
 # once (a set of today exists / the newest base is younger than 3 days), so the repetition costs nothing. The backup process itself runs at idle I/O class and the
 # lowest CPU priority. (On 2026-11-14 the 01:00 base-backup task ran inside a cycle and a Postgres server process died: FND-0407.)
@@ -30,7 +30,7 @@
 param([switch]$Register, [switch]$Unregister)
 
 $ErrorActionPreference = 'Stop'
-$repoWsl = '/mnt/c/desarrollo/fondos/scripts/ops'
+$repoWsl = '/mnt/c/desarrollo/fondos/scripts/mnt/backup'
 $legacy = @('Fondos PG logical dump')
 $tasks = @(
     @{ Name = 'Fondos PG backup (rotating)'; Days = 1; At = '02:00'; RepeatMin = 60; ForHours = 22;

@@ -18,7 +18,7 @@ the scalar-vs-timeseries and deflation-order comparisons, and the second bullet 
 1. Owner: take a restore point (owner-only DSN; logical dumps are unscheduled, FND-0290), then order "break standby".
 2. Recompute: bump `CALC_VERSION` in `proyecto2/src/pipeline/run_pipeline.py` (or a family override, FND-0236 / `utils/family_versions.py`) as ONE commit + receipt; then P2 full pass, POST audit (now INCOMPLETE if a canary fails), P3 DRAFT build; report the selection diff. Expected: 129 of 155,377 ratio rows withdrawn on 26 funds, selection unchanged.
 3. Done above; its remaining parts: pair-identity canaries and the applicability-drop rule (small follow-up inside FND-0393).
-4. Switch-on: `python scripts/audit/data_suspect_report.py --diff`, owner authorises `DATA_SUSPECT_ENABLED` (a reviewed commit + receipt).
+4. Switch-on: `python scripts/audit/nav/data_suspect_report.py --diff`, owner authorises `DATA_SUSPECT_ENABLED` (a reviewed commit + receipt).
 5. FND-0404: the operations team audits the T0 share class against the manager's documents; on a verdict delete the `P3_DATA_HOLDS` entry (reviewed commit).
 6. Housekeeping (PROPOSED, needs the owner's yes before anything is closed or deferred): close FND-0401 (delivered), FND-0405 (after step 2), FND-0393 / FND-0394 (after step 4), the epic FND-0391; DEFER FND-0395 and FND-0396 (WS3/WS4 engine: no evidence of need), FND-0397 (owner NO GO; fix isolated behind
    `RF_OPEN_ENDED_ARTICLE_GUARD_ENABLED` = False), FND-0398, FND-0402; triage the older data tickets FND-0041, FND-0233, FND-0250, FND-0329 (close or defer on their recorded evidence).

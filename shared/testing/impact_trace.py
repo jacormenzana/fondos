@@ -9,7 +9,7 @@ while its tests ran (and while it was collected/imported). The selector's static
 How: sys.monitoring PY_START (Python 3.12+) with the callback returning DISABLE, so every code location fires once; `restart_events()` at each switch of test file re-arms them, which gives per-test-file
 attribution at the cost of one callback per location per test file. Python subprocesses a test starts are followed through a generated sitecustomize on PYTHONPATH (they inherit the environment; one started
 with its own `env=` is blind, and the selector already runs such tests in every impact receipt). The plugin is FAIL-OPEN: any error here is swallowed and can never change a test verdict. It is a
-measuring instrument, loaded only by the evidence harness (scripts/audit/impact_selection_evidence.py), never by a delivery receipt. Stdlib only apart from pytest."""
+measuring instrument, loaded only by the evidence harness (scripts/gov/delivery/impact_selection_evidence.py), never by a delivery receipt. Stdlib only apart from pytest."""
 from __future__ import annotations
 
 import atexit

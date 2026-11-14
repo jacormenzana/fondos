@@ -82,7 +82,7 @@ echo.
 echo ===================================================
 echo FND-0246 2/4: puerta de divisas de clase ^(verify_fund_currency^)
 echo ===================================================
-"%PYTHON%" -X utf8 "%ROOT%\scripts\audit\verify_fund_currency.py"
+"%PYTHON%" -X utf8 "%ROOT%\scripts\audit\p1\verify_fund_currency.py"
 set "RC=!ERRORLEVEL!"
 if !RC! NEQ 0 goto :cycle_end
 

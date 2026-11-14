@@ -3,18 +3,18 @@
 """
 owner_deploy.py -- applies the pending backlog DDL on the owner's CLICK, with no console (Backlog v3, owner decision 2026-11-01: "reduce the administrative tasks, no console").
 
-    python scripts/ops/owner_deploy.py check              # is any DDL phase of master not live? prints the phases; exit 0 none, 1 pending
-    python scripts/ops/owner_deploy.py init               # once: verify that the live backlog matches master NOW (the drift tool) and remember that commit
-    python scripts/ops/owner_deploy.py watch              # the watcher: every N minutes fetch origin; when master brings DDL, show a window and ask
-    python scripts/ops/owner_deploy.py facts --from <sha>  # record the DEPLOY facts of a deployment that already happened (default --to: the commit remembered as deployed)
-    python scripts/ops/owner_deploy.py install-startup    # run the watcher at your Windows logon (a .cmd in your Startup folder, no admin rights)
-    python scripts/ops/owner_deploy.py remove-startup
+    python scripts/gov/backlog/owner_deploy.py check              # is any DDL phase of master not live? prints the phases; exit 0 none, 1 pending
+    python scripts/gov/backlog/owner_deploy.py init               # once: verify that the live backlog matches master NOW (the drift tool) and remember that commit
+    python scripts/gov/backlog/owner_deploy.py watch              # the watcher: every N minutes fetch origin; when master brings DDL, show a window and ask
+    python scripts/gov/backlog/owner_deploy.py facts --from <sha>  # record the DEPLOY facts of a deployment that already happened (default --to: the commit remembered as deployed)
+    python scripts/gov/backlog/owner_deploy.py install-startup    # run the watcher at your Windows logon (a .cmd in your Startup folder, no admin rights)
+    python scripts/gov/backlog/owner_deploy.py remove-startup
 
 What the window shows. The commits since the last deployed master, the phases to apply, and THE DDL DIFF itself (db/pg_backlog), because what you approve runs with the owner role and came through
 an automatic merge: a click on a bare question would be a rubber stamp. Buttons: Apply now / Remind me in 4 h / Ignore this version.
 
-What "Apply now" does (the same steps as AUTO, without the restore point and the rollback). Exports origin/master to a temporary folder (never your working tree), runs each pending phase of scripts/ops/migrate_backlog_v2.py --apply in order with the owner string taken
-from the owner vault (shared/owner_vault.py) into THAT child process only, then runs the drift tool (scripts/ops/backlog_drift.py): only `no drift` counts as success and only then is the commit
+What "Apply now" does (the same steps as AUTO, without the restore point and the rollback). Exports origin/master to a temporary folder (never your working tree), runs each pending phase of scripts/mig/backlog/migrate_backlog_v2.py --apply in order with the owner string taken
+from the owner vault (shared/owner_vault.py) into THAT child process only, then runs the drift tool (scripts/gov/backlog/backlog_drift.py): only `no drift` counts as success and only then is the commit
 remembered. Each phase is one transaction, so a failing phase leaves nothing half-applied; a later phase is not attempted after a failure. A receipt (no secrets) is kept in
 %LOCALAPPDATA%\\fondos\\deploy_receipts. Phases that need a decision of yours (`revoke`, `iam`) are never offered here.
 
@@ -49,7 +49,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Optional
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import backlog_drift as bd  # noqa: E402
@@ -87,7 +87,7 @@ def _literal(source: str, name: str):
 
 
 def registry_from_sources(migrate_source: str, drift_source: str) -> tuple:
-    """(PHASES, PHASES_IN_ORDER) as written in the sources of scripts/ops/migrate_backlog_v2.py and scripts/ops/backlog_drift.py. The watcher reads them from MASTER on every pass: the copies it
+    """(PHASES, PHASES_IN_ORDER) as written in the sources of scripts/mig/backlog/migrate_backlog_v2.py and scripts/gov/backlog/backlog_drift.py. The watcher reads them from MASTER on every pass: the copies it
     imported when it started go stale the moment a phase is added (the first `modules` deployment was invisible to it for exactly that reason). Pure."""
     return _literal(migrate_source, "PHASES"), tuple(_literal(drift_source, "PHASES_IN_ORDER"))
 
@@ -118,7 +118,7 @@ def phases_from_drift_output(text: str, order: Optional[tuple] = None) -> list:
 
 
 # What the running watcher imported: when any of these changes on disk it starts itself again (reload_self), so a changed rule or switch never waits for a person to restart it.
-WATCH_CODE = ("scripts/ops/owner_deploy.py", "scripts/ops/migrate_backlog_v2.py", "scripts/ops/migrate_backlog_links.py", "scripts/ops/backlog_drift.py", "shared/config.py",
+WATCH_CODE = ("scripts/gov/backlog/owner_deploy.py", "scripts/mig/backlog/migrate_backlog_v2.py", "scripts/mig/backlog/migrate_backlog_links.py", "scripts/gov/backlog/backlog_drift.py", "shared/config.py",
               "shared/owner_vault.py", "shared/backlog_client.py", "shared/backlog_gate.py")
 
 
@@ -227,7 +227,7 @@ def startup_cmd_path(environ: Optional[dict] = None) -> Path:
 def startup_cmd_text(pythonw: str, script: str) -> str:
     """The launcher placed in the user's Startup folder (outside the repository): starts the watcher minimised. Pure."""
     return ("@echo off\r\n"
-            "rem Generated by scripts/ops/owner_deploy.py install-startup. Remove it with: python scripts/ops/owner_deploy.py remove-startup\r\n"
+            "rem Generated by scripts/gov/backlog/owner_deploy.py install-startup. Remove it with: python scripts/gov/backlog/owner_deploy.py remove-startup\r\n"
             f'start "" /min "{pythonw}" "{script}" watch\r\n')
 
 
@@ -255,7 +255,7 @@ def git_commits(a: str, b: str) -> list:
 
 def git_registry(head: str) -> tuple:
     """(PHASES, PHASES_IN_ORDER) as written in `head`'s own migrate and drift tools (git show + syntax tree: nothing of `head` is imported or run)."""
-    return registry_from_sources(_git("show", f"{head}:scripts/ops/migrate_backlog_v2.py"), _git("show", f"{head}:scripts/ops/backlog_drift.py"))
+    return registry_from_sources(_git("show", f"{head}:scripts/mig/backlog/migrate_backlog_v2.py"), _git("show", f"{head}:scripts/gov/backlog/backlog_drift.py"))
 
 
 def git_diff(a: str, b: str) -> str:
@@ -273,7 +273,7 @@ def git_fetch() -> None:
 
 def export_tree(ref: str, dest: Path) -> None:
     """`git archive` of `ref` extracted into `dest`: the migration runs from a clean copy of master, never from the working tree (which may be on any branch or dirty)."""
-    from shared.git_export import export_tree as _export                      # the one place that exports a commit (P#11), shared with scripts/audit/delivery_attest.py
+    from shared.git_export import export_tree as _export                      # the one place that exports a commit (P#11), shared with scripts/gov/delivery/delivery_attest.py
     _export(ref, dest, ROOT)
 
 
@@ -308,7 +308,7 @@ def _roll_back(applied: list, python: str, tree: Path, env: dict, run: Callable,
     """Undo the phases applied in this run, newest first (`--down --apply`, one transaction each). Stops at the first rollback that fails and returns the phases actually undone."""
     undone: list = []
     for ph in reversed(applied):
-        rc, tail = run([python, str(tree / "scripts" / "ops" / "migrate_backlog_v2.py"), "--phase", ph, "--down", "--apply"], env, tree)
+        rc, tail = run([python, str(tree / "scripts" / "mig" / "backlog" / "migrate_backlog_v2.py"), "--phase", ph, "--down", "--apply"], env, tree)
         log.append({"step": f"rollback {ph}", "rc": rc, "tail": scrub(tail, [secret])})
         if rc != 0:
             break
@@ -331,7 +331,7 @@ def _run_gate(cmd: list, env: dict, cwd: Path, timeout: int) -> tuple:
 
 def ddl_gate(head: str, *, python: Optional[str] = None, checkout: Optional[Callable] = None, runner: Optional[Callable] = None, timeout: int = GATE_TIMEOUT_S) -> tuple:
     """(kind, detail) of the local DDL gate: `pass` | `fail` | `cannot_run`. Checks `head` out into a clean clone (never the working tree), runs the backlog's hermetic migration, rollback and acceptance
-    tests there (DDL_GATE_GLOBS, scripts/ops/run_pg_tests.py: a throwaway Postgres container, no live connection string) and judges the output with the receipt rules (shared/delivery_receipt.py): a pass needs
+    tests there (DDL_GATE_GLOBS, scripts/gov/delivery/run_pg_tests.py: a throwaway Postgres container, no live connection string) and judges the output with the receipt rules (shared/delivery_receipt.py): a pass needs
     tests that really ran and passed. `fail` = a test failed (nothing is applied and an incident is opened); `cannot_run` = the container, the clone or the interpreter did not work, which says nothing about the
     DDL (nothing is applied and a person is asked, as for a missing restore point). `checkout` and `runner` are injectable for the tests."""
     from shared import delivery_receipt as dr
@@ -348,7 +348,7 @@ def ddl_gate(head: str, *, python: Optional[str] = None, checkout: Optional[Call
         if not files:
             return "cannot_run", f"no DDL test file ({', '.join(DDL_GATE_GLOBS)}) in {head[:10]}"
         try:
-            rc, text = (runner or _run_gate)([py, "scripts/ops/run_pg_tests.py", "--image", "postgres:17", *files], _gate_env(), tree, timeout)
+            rc, text = (runner or _run_gate)([py, "scripts/gov/delivery/run_pg_tests.py", "--image", "postgres:17", *files], _gate_env(), tree, timeout)
         except subprocess.TimeoutExpired:
             return "cannot_run", f"the DDL tests did not finish within {timeout // 60} minutes"
         except Exception as exc:                                              # noqa: BLE001
@@ -376,7 +376,7 @@ def apply_pending(head: str, pending: list, *, vault, state_file: Path, run: Cal
     except ov.VaultError as exc:
         return Outcome(False, "vault", detail=str(exc), fallback=auto, auto=auto)
     if not secret:
-        return Outcome(False, "vault", detail=f"{OWNER_VAR} is not in the owner vault. Store it once: python scripts/ops/owner_vault.py set {OWNER_VAR}", fallback=auto, auto=auto)
+        return Outcome(False, "vault", detail=f"{OWNER_VAR} is not in the owner vault. Store it once: python scripts/gov/backlog/owner_vault.py set {OWNER_VAR}", fallback=auto, auto=auto)
     gate_line = ""
     if auto and gate is not None:                                              # FND-0377: the local DDL tests replace the CI gate; they run BEFORE the live backlog is touched and before any restore point
         kind, gdetail = gate(head)
@@ -405,7 +405,7 @@ def apply_pending(head: str, pending: list, *, vault, state_file: Path, run: Cal
                 _receipt(receipts_dir, now, head, pending, applied, log, False)
                 return Outcome(False, "restore_point", detail=scrub(tail, [secret]), fallback=True, auto=True, gate=gate_line)
         for ph in pending:
-            rc, tail = run([python, str(tree / "scripts" / "ops" / "migrate_backlog_v2.py"), "--phase", ph, "--apply"], owner_env, tree)
+            rc, tail = run([python, str(tree / "scripts" / "mig" / "backlog" / "migrate_backlog_v2.py"), "--phase", ph, "--apply"], owner_env, tree)
             log.append({"step": f"apply {ph}", "rc": rc, "tail": scrub(tail, [secret])})
             if rc != 0:
                 if auto:
@@ -413,7 +413,7 @@ def apply_pending(head: str, pending: list, *, vault, state_file: Path, run: Cal
                 _receipt(receipts_dir, now, head, pending, applied, log, False)
                 return Outcome(False, ph, applied, scrub(tail, [secret]), rolled_back=rolled, auto=auto, gate=gate_line)
             applied.append(ph)
-        rc, tail = run([python, str(tree / "scripts" / "ops" / "backlog_drift.py")], base_env, tree)
+        rc, tail = run([python, str(tree / "scripts" / "gov" / "backlog" / "backlog_drift.py")], base_env, tree)
         log.append({"step": "drift", "rc": rc, "tail": scrub(tail, [secret])})
         if rc == 1 and auto:                                                  # drift present after the apply: the apply is wrong, undo it
             rolled = _roll_back(applied, python, tree, owner_env, run, log, secret)
@@ -446,7 +446,7 @@ def verify_now(head: str, *, run: Callable = run_cmd, export: Callable = export_
     env.pop(OWNER_VAR, None)
     with tempfile.TemporaryDirectory(prefix="fondos_drift_") as tmp:
         export(head, Path(tmp))
-        return run([python, str(Path(tmp) / "scripts" / "ops" / "backlog_drift.py")], env, Path(tmp))
+        return run([python, str(Path(tmp) / "scripts" / "gov" / "backlog" / "backlog_drift.py")], env, Path(tmp))
 
 
 def record_facts(head: str, deployed: Optional[str], applied: list, *, vault, ddl_log: Callable, record: Callable, environ=None, now: Callable = lambda: datetime.now(timezone.utc)) -> str:
@@ -463,7 +463,7 @@ def record_facts(head: str, deployed: Optional[str], applied: list, *, vault, dd
     if not tickets:
         return "DEPLOY facts: no ticket cites the DDL commits"
     if not dsn:
-        return f"DEPLOY facts NOT recorded for {', '.join(tickets)}: {FACTS_VAR} is not in the owner vault (once: python scripts/ops/owner_vault.py set {FACTS_VAR})"
+        return f"DEPLOY facts NOT recorded for {', '.join(tickets)}: {FACTS_VAR} is not in the owner vault (once: python scripts/gov/backlog/owner_vault.py set {FACTS_VAR})"
     from shared import backlog_client as bc
     new, failed = 0, []
     previous = environ.get(bc._FACTS_DSN_ENV_VAR)
@@ -487,7 +487,7 @@ def report_failure(o: "Outcome", head: str, report: Callable) -> Optional[str]:
     text = (f"The automatic backlog DDL deployment of master {head[:10]} failed at {o.stage}. Applied in this run: {', '.join(o.applied) or 'nothing'}. Rolled back: "
             f"{', '.join(o.rolled_back) or 'nothing'}. The version is offered in the approval window from now on (it is not retried by itself). Output: {o.detail[:700]}")
     try:
-        return report(object_name="scripts/ops/owner_deploy.py", scenario_description=text, object_type="JOB", title=f"Automatic backlog DDL deploy failed at {o.stage} ({head[:10]})")
+        return report(object_name="scripts/gov/backlog/owner_deploy.py", scenario_description=text, object_type="JOB", title=f"Automatic backlog DDL deploy failed at {o.stage} ({head[:10]})")
     except Exception:                                                          # noqa: BLE001
         return None
 
@@ -708,7 +708,7 @@ def result_window(o: "Outcome") -> None:
 
 
 def alert_window(text: str) -> None:
-    """A persistent notice that stays until it is closed: master is not being published, or a delivery is stuck (scripts/audit/auto_publish.py). Never silent: an incident was opened as well."""
+    """A persistent notice that stays until it is closed: master is not being published, or a delivery is stuck (scripts/gov/delivery/auto_publish.py). Never silent: an incident was opened as well."""
     import tkinter as tk
     root = tk.Tk()
     root.title("Fondos: publication needs attention")
@@ -720,9 +720,9 @@ def alert_window(text: str) -> None:
 
 
 def publish_pass() -> Optional[str]:
-    """One pass of the automatic publication of master (scripts/audit/auto_publish.py): the watcher retries a failed push on every pass, so a reboot or a killed process never leaves a commit stuck.
+    """One pass of the automatic publication of master (scripts/gov/delivery/auto_publish.py): the watcher retries a failed push on every pass, so a reboot or a killed process never leaves a commit stuck.
     Returns the alert text when one is newly due, else None."""
-    sys.path.insert(0, str(ROOT / "scripts" / "audit"))
+    sys.path.insert(0, str(ROOT / "scripts" / "gov" / "delivery"))
     import auto_publish
     return auto_publish.watcher_pass(ROOT)
 
@@ -814,7 +814,7 @@ def main(argv: list | None = None) -> int:
         pythonw = Path(sys.executable).with_name("pythonw.exe")
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(startup_cmd_text(str(pythonw if pythonw.exists() else sys.executable), str(Path(__file__).resolve())), encoding="utf-8", newline="")
-        print(f"startup launcher written: {p}\nThe watcher starts at your next Windows logon (or run it now: python scripts/ops/owner_deploy.py watch).")
+        print(f"startup launcher written: {p}\nThe watcher starts at your next Windows logon (or run it now: python scripts/gov/backlog/owner_deploy.py watch).")
         return RC_OK
     if args.cmd == "remove-startup":
         p = startup_cmd_path()
@@ -860,7 +860,7 @@ def main(argv: list | None = None) -> int:
     if args.cmd == "check":
         st = read_state(sf)
         if not st.get("deployed_ref"):
-            print("no deployed commit remembered yet: run `python scripts/ops/owner_deploy.py init` once.")
+            print("no deployed commit remembered yet: run `python scripts/gov/backlog/owner_deploy.py init` once.")
             return RC_USAGE
         pend = pending_phases(git_changed(st["deployed_ref"], head), git_registry(head))
         print(f"deployed {st['deployed_ref'][:10]}, master {head[:10]}: " + (f"PENDING phases: {', '.join(pend)}" if pend else "nothing pending"))

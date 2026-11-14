@@ -1,6 +1,6 @@
 # tests/test_backlog_digest.py
 # -*- coding: utf-8 -*-
-"""scripts/audit/backlog_digest.py: the weekly read-only digest (Backlog v3.1). Rendering, the once-a-week file and a block that cannot be read. No database, no network (R-7)."""
+"""scripts/gov/backlog/backlog_digest.py: the weekly read-only digest (Backlog v3.1). Rendering, the once-a-week file and a block that cannot be read. No database, no network (R-7)."""
 from __future__ import annotations
 
 import sys
@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "audit")):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "gov" / "backlog")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -72,6 +72,6 @@ def test_build_text_survives_blocks_whose_objects_are_not_applied_yet():
 
 
 def test_the_runner_writes_the_digest_but_never_fails_because_of_it():
-    src = (_ROOT / "scripts" / "audit" / "backlog_autopilot.py").read_text(encoding="utf-8")
+    src = (_ROOT / "scripts" / "gov" / "backlog" / "backlog_autopilot.py").read_text(encoding="utf-8")
     block = src.split("import backlog_digest")[1].split("print(summary)")[0]
     assert "write_if_due" in block and "except Exception" in block

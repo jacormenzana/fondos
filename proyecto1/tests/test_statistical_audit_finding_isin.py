@@ -15,7 +15,7 @@ if _ROOT not in sys.path:
 from shared.statistical_audit.compare_runs import compare_runs, compare_violators, drift_label  # noqa: E402
 
 _spec = importlib.util.spec_from_file_location(
-    "run_statistical_audit_fi", os.path.join(_ROOT, "scripts", "audit", "run_statistical_audit.py"))
+    "run_statistical_audit_fi", os.path.join(_ROOT, "scripts", "audit", "stat", "run_statistical_audit.py"))
 runner = importlib.util.module_from_spec(_spec)
 sys.modules["run_statistical_audit_fi"] = runner
 _spec.loader.exec_module(runner)

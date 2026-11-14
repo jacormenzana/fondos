@@ -1,10 +1,10 @@
 # tests/test_backlog_collision_pg.py
 # -*- coding: utf-8 -*-
-"""Phase C slice 3 of Backlog v2 (FND-0334): db/pg_backlog/90_collision.sql applied by scripts/ops/migrate_backlog_v2.py --phase collision: the rule (T0 / T1), the pairs recorded as
+"""Phase C slice 3 of Backlog v2 (FND-0334): db/pg_backlog/90_collision.sql applied by scripts/mig/backlog/migrate_backlog_v2.py --phase collision: the rule (T0 / T1), the pairs recorded as
 PROPOSED OVERLAPS events of origin GATE, the modes, the adjudication procedure, the queue and the privileges. Hermetic: the throwaway container inside a rolled-back savepoint; never the
 live backlog.
 
-    python scripts/ops/run_pg_tests.py -- tests/test_backlog_collision_pg.py
+    python scripts/gov/delivery/run_pg_tests.py -- tests/test_backlog_collision_pg.py
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops"), str(_ROOT / "scripts" / "audit"), str(Path(__file__).resolve().parent)):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "mig" / "backlog"), str(_ROOT / "scripts" / "gov" / "backlog"), str(Path(__file__).resolve().parent)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 

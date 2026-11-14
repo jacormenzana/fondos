@@ -9,7 +9,7 @@ so no rehearsal ever executed it. No amount of regex can decide whether SQL is v
 parser can, and `EXPLAIN` asks it without executing anything.
 
 What is enforced here (statements come from tests/_sql_sites.py, an AST extraction):
-  1. EXPLAIN sweep (needs FONDOS_TEST_PG_DSN, i.e. `python scripts/ops/run_pg_tests.py`): every
+  1. EXPLAIN sweep (needs FONDOS_TEST_PG_DSN, i.e. `python scripts/gov/delivery/run_pg_tests.py`): every
      statement that resolves statically and is not a SQLite branch is EXPLAINed against the real
      db/pg DDL. GroupingError, unknown function/column/table and syntax errors all fail here,
      whether or not the code path is ever reached in a rehearsal.
@@ -45,7 +45,7 @@ from _allowlist import bad_reasons, check_reason
 _FILE_EXEMPT: dict[str, str] = {
     "shared/backlog_client.py":
         "DESIGN: talks to the separate `gestion` database (backlog schema), not the fondos schema this sweep loads",
-    "scripts/audit/backlog_phase_b_replay.py":
+    "scripts/mig/backlog/backlog_phase_b_replay.py":
         "DESIGN: talks to the `gestion` backlog schema (a read-only export) and to a scratch database loaded with a snapshot of it, not to the fondos schema this sweep loads; "
         "its behaviour is covered by tests/test_backlog_phase_b_replay_pg.py",
     "shared/backlog_writer_proof.py":
@@ -115,22 +115,22 @@ _UNVERIFIED_BASELINE: dict[str, str] = {
         R_FRAGMENT,
     "proyecto3/src/monthly_report.py::_build_cartera::f0c000d9":
         R_FRAGMENT,
-    "scripts/audit/run_statistical_audit.py::_periodic_return_variance::63f46a57":
+    "scripts/audit/stat/run_statistical_audit.py::_periodic_return_variance::63f46a57":
         R_FRAGMENT,
     # FND-0118 (2026-09-28, --isin filter): each of these builds its query via
     # `<QUERY_CONST>.replace("{isin_filter}", <variable>)`, not a literal or an f-string -- the
     # resolver has no handling for `.replace()` calls (only `.strip()`/`.format()`), so the whole
     # expression is opaque at this site. All were extensively live-verified with real ISINs against
     # the live Postgres DSN in the same session (both non-empty and empty isin_filter cases).
-    "scripts/audit/run_statistical_audit.py::_run_alert_reconciliation::6173610d":
+    "scripts/audit/stat/run_statistical_audit.py::_run_alert_reconciliation::6173610d":
         R_OPAQUE,
-    "scripts/audit/run_statistical_audit.py::_run_alert_reconciliation::6b9fd696":
+    "scripts/audit/stat/run_statistical_audit.py::_run_alert_reconciliation::6b9fd696":
         R_OPAQUE,
-    "scripts/audit/run_statistical_audit.py::run_cost_audit::2d039166":
+    "scripts/audit/stat/run_statistical_audit.py::run_cost_audit::2d039166":
         R_OPAQUE,
-    "scripts/audit/run_statistical_audit.py::run_cost_audit::900a591e":
+    "scripts/audit/stat/run_statistical_audit.py::run_cost_audit::900a591e":
         R_OPAQUE,
-    "scripts/audit/run_statistical_audit.py::run_p2_audit::268ce6e3":
+    "scripts/audit/stat/run_statistical_audit.py::run_p2_audit::268ce6e3":
         R_OPAQUE,
     "shared/export_tables.py::export_tables::874d473f":
         R_OPAQUE,
@@ -339,7 +339,7 @@ def _fmt_failures(failures) -> str:
 
 
 def test_every_resolved_statement_explains_on_postgres(sites, pg_session_conn, capsys):
-    """Needs the real db/pg DDL: run through `python scripts/ops/run_pg_tests.py`."""
+    """Needs the real db/pg DDL: run through `python scripts/gov/delivery/run_pg_tests.py`."""
     pytest.importorskip("psycopg")
     todo = [(s, s.sql) for s in sites if _explainable(s) and s.site_id not in _EXPLAIN_EXEMPT]
     failures, inconclusive = _explain_all(pg_session_conn, todo, definite_only=False)

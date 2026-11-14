@@ -1,6 +1,6 @@
 # tests/test_autopilot_mode.py
 # -*- coding: utf-8 -*-
-"""scripts/audit/autopilot_mode.py: the owner's command for the autopilot mode (Backlog v3.1). The summary, the lowest-of-three rule and the guards of the write, with the client faked: no database,
+"""scripts/gov/backlog/autopilot_mode.py: the owner's command for the autopilot mode (Backlog v3.1). The summary, the lowest-of-three rule and the guards of the write, with the client faked: no database,
 no network (R-7)."""
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "audit")):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "gov" / "backlog")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 

@@ -25,7 +25,7 @@ from shared.statistical_audit import completeness as cpl  # noqa: E402
 from shared.statistical_audit.completeness import Skip  # noqa: E402
 from shared.statistical_audit.persistence import AUDIT_RUN_COLUMNS, AUDIT_RUN_MANIFEST  # noqa: E402
 
-_RUNNER = os.path.join(_ROOT, "scripts", "audit", "run_statistical_audit.py")
+_RUNNER = os.path.join(_ROOT, "scripts", "audit", "stat", "run_statistical_audit.py")
 _CONTROL_SQL = os.path.join(_ROOT, "db", "pg", "35_control.sql")
 
 DEFECT = {"block": "BLOCK5", "rule_id": "X", "rule_class": "HARD_INVARIANT", "severity": "ALARM"}
@@ -139,7 +139,7 @@ def test_nothing_appends_to_skipped_except_the_classified_skip_method():
 
 # --- control.audit_run DDL and its join with telemetry --------------------------------------------------------------------------
 def _create_table(name):
-    sys.path.insert(0, os.path.join(_ROOT, "scripts", "ops"))
+    sys.path.insert(0, os.path.join(_ROOT, "scripts", "mig", "fondos"))
     from migrate_fund_metric_family_state import ddl_sql
     return ddl_sql(table=name)
 
@@ -187,7 +187,7 @@ def test_audit_run_carries_no_telemetry_counts_and_joins_cycle_audit_run_on_run_
 
 
 def test_the_migration_script_targets_the_table():
-    with open(os.path.join(_ROOT, "scripts", "ops", "migrate_audit_run.py"), encoding="utf-8") as f:
+    with open(os.path.join(_ROOT, "scripts", "mig", "fondos", "migrate_audit_run.py"), encoding="utf-8") as f:
         assert 'TABLE = "control.audit_run"' in f.read()
 
 

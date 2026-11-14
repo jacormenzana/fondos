@@ -1,6 +1,6 @@
 # tests/test_owner_deploy_gate.py
 # -*- coding: utf-8 -*-
-"""FND-0377: the local DDL gate of the automatic deployment (scripts/ops/owner_deploy.py ddl_gate and its place in apply_pending). GitHub CI is out of the loop, so before the watcher touches the live
+"""FND-0377: the local DDL gate of the automatic deployment (scripts/gov/backlog/owner_deploy.py ddl_gate and its place in apply_pending). GitHub CI is out of the loop, so before the watcher touches the live
 backlog it runs the backlog's hermetic migration, rollback and acceptance tests on a clean clone of the commit and applies nothing unless they really ran and passed. R-7: no database, no container, no
 network: the clone and the test run are fakes."""
 from __future__ import annotations
@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops"), str(Path(__file__).resolve().parent)):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "gov" / "backlog"), str(_ROOT / "scripts" / "mig" / "backlog"), str(Path(__file__).resolve().parent)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -54,7 +54,7 @@ def test_the_gate_runs_the_backlog_ddl_tests_on_a_clean_clone_and_passes_only_on
     kind, detail = gate(r)
     assert kind == "pass" and "34 hermetic DDL" in detail and "3 files" in detail and HEAD[:10] in detail
     cmd, env, cwd = r.calls[0]
-    assert cmd[:5] == ["py", "scripts/ops/run_pg_tests.py", "--image", "postgres:17", "tests/test_backlog_events_pg.py"] and "tests/test_other.py" not in cmd          # only the DDL tests
+    assert cmd[:5] == ["py", "scripts/gov/delivery/run_pg_tests.py", "--image", "postgres:17", "tests/test_backlog_events_pg.py"] and "tests/test_other.py" not in cmd          # only the DDL tests
     assert cmd[4:] == sorted(cmd[4:]) and "test_owner_deploy_pg.py" in " ".join(cmd) and cwd.name == "tree"                                                         # run inside the clone, never the working tree
 
 
@@ -94,7 +94,7 @@ def test_infrastructure_trouble_is_cannot_run_never_a_failed_test_and_never_a_pa
 def test_the_gate_judges_with_the_same_rules_as_the_receipts():
     from shared import delivery_receipt as dr
     assert dr.judge("area", "area", {"passed": 0, "failed": 0, "errors": 0, "skipped": 3}, 1, 0, [])[0] == "fail"
-    src = (_ROOT / "scripts" / "ops" / "owner_deploy.py").read_text(encoding="utf-8")
+    src = (_ROOT / "scripts" / "gov" / "backlog" / "owner_deploy.py").read_text(encoding="utf-8")
     assert "dr.parse_counts(text)" in src and "dr.judge(" in src                                                # P#11: one rule for "tests really ran and passed"
 
 
@@ -148,6 +148,6 @@ def test_a_non_auto_apply_never_runs_the_gate(tmp_path):
 
 
 def test_both_automatic_paths_the_deploy_and_the_revoke_go_through_the_gate():
-    src = (_ROOT / "scripts" / "ops" / "owner_deploy.py").read_text(encoding="utf-8")
+    src = (_ROOT / "scripts" / "gov" / "backlog" / "owner_deploy.py").read_text(encoding="utf-8")
     assert "gate=ddl_gate, ddl_diff=shown" in src and "auto=True, remember=False, gate=ddl_gate" in src
     assert "THE AUTOMATIC DEPLOYMENT DID NOT RUN" in src                                                           # a fallback (gate cannot run) is explained in the window

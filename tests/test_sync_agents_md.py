@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
-"""scripts/audit/sync_agents_md.py: a sentinel that cannot be checked is a failure (FND-0312), and both skill layouts give one table (R-7: no DB)."""
+"""scripts/gov/repo/sync_agents_md.py: a sentinel that cannot be checked is a failure (FND-0312), and both skill layouts give one table (R-7: no DB)."""
 import sys
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts" / "audit"))
+sys.path.insert(0, str(ROOT / "scripts" / "gov" / "repo"))
 
 import sync_agents_md as sam  # noqa: E402
 

@@ -4,9 +4,9 @@
 delivery_attest.py -- runs the tests LOCALLY on the exact commit being delivered and leaves one receipt (FND-0375; plan ACTION_PLAN_BACKLOG_REFACTORING, Revision 2, R2.3). No CI: nothing runs on
 push and nothing refuses a push; the deliverer runs this after committing (rule R2), and the `tests_pass` closing condition reads the receipt.
 
-    python scripts/audit/delivery_attest.py                  # HEAD, the scope its change needs (docs_only | area | impact | full)
-    python scripts/audit/delivery_attest.py --scope full     # the whole suite (scripts/ops/run_pg_tests.py, hermetic throwaway Postgres); always allowed, covers anything
-    python scripts/audit/delivery_attest.py --verify <sha>   # re-reads the receipts and says whether the full 40-character sha has a passing, intact receipt (exit 0 yes, 1 no, 3 unverifiable)
+    python scripts/gov/delivery/delivery_attest.py                  # HEAD, the scope its change needs (docs_only | area | impact | full)
+    python scripts/gov/delivery/delivery_attest.py --scope full     # the whole suite (scripts/gov/delivery/run_pg_tests.py, hermetic throwaway Postgres); always allowed, covers anything
+    python scripts/gov/delivery/delivery_attest.py --verify <sha>   # re-reads the receipts and says whether the full 40-character sha has a passing, intact receipt (exit 0 yes, 1 no, 3 unverifiable)
 
 What it does. It makes a clone of the repository checked out DETACHED at the exact commit in a temporary directory (a real git repository, because some tests call git; the working tree, and another
 session's edits in it, never enter: an archive without .git failed five tests in the baseline run of 2026-11-02) and runs pytest THERE; the live database and its connection
@@ -35,7 +35,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 from shared import config as _cfg  # noqa: E402
 from shared import delivery_receipt as dr  # noqa: E402
@@ -292,7 +292,8 @@ def _clean_env() -> dict:
 
 def _wait_for_cycle(wait_min: int) -> None:
     """A `full` run waits while the monthly cycle holds its lock (the two would fight over CPU and disk). Raises when it is still held after `wait_min`."""
-    sys.path.insert(0, str(ROOT / "scripts" / "audit"))
+    sys.path.insert(0, str(ROOT / "scripts" / "gov" / "delivery"))
+    sys.path.insert(0, str(ROOT / "scripts" / "gov" / "repo"))
     from preflight_check import cycle_lock_held
     deadline = time.time() + wait_min * 60
     while cycle_lock_held():
@@ -302,16 +303,16 @@ def _wait_for_cycle(wait_min: int) -> None:
 
 
 def run_tests(scope: str, selected: list, export_dir: Path, python: Optional[str] = None, wait_min: int = 60) -> tuple:
-    """(exit code, combined output, seconds, commands) of the tests of `scope` run inside `export_dir`. `full` = scripts/ops/run_pg_tests.py with no arguments; `area` = plain pytest for the selected
+    """(exit code, combined output, seconds, commands) of the tests of `scope` run inside `export_dir`. `full` = scripts/gov/delivery/run_pg_tests.py with no arguments; `area` = plain pytest for the selected
     files and, when some are Postgres tests (`_pg` in the name), one run_pg_tests.py for those so they really run. Never reads the working tree."""
     py = python or sys.executable
     env = _clean_env()
     plan_file: Optional[Path] = None
     if scope == "full":
         _wait_for_cycle(wait_min)
-        cmds = [[py, "scripts/ops/run_pg_tests.py", "--image", "postgres:17"]]
+        cmds = [[py, "scripts/gov/delivery/run_pg_tests.py", "--image", "postgres:17"]]
         if _cfg.DELIVERY_SHARDED_RUN_ENABLED:                                # FND-0386: the same suite as concurrent shards (one pytest process per suite per shard), balanced by the recorded per-file seconds
-            cmds = [[py, "scripts/ops/run_pg_tests.py", "--image", "postgres:17", "--shards", "auto", *(["--durations", str(DURATIONS)] if DURATIONS.exists() else [])]]
+            cmds = [[py, "scripts/gov/delivery/run_pg_tests.py", "--image", "postgres:17", "--shards", "auto", *(["--durations", str(DURATIONS)] if DURATIONS.exists() else [])]]
     elif scope == "impact":                                                  # the same container, DDL and four runs as `full`, each restricted to the selected entries of its suite
         plan: dict = {}
         for entry in selected:
@@ -320,7 +321,7 @@ def run_tests(scope: str, selected: list, export_dir: Path, python: Optional[str
         os.close(fd)
         plan_file = Path(name)
         plan_file.write_text(json.dumps(plan, sort_keys=True), encoding="utf-8")
-        cmds = [[py, "scripts/ops/run_pg_tests.py", "--image", "postgres:17", "--suite-files", str(plan_file)]]
+        cmds = [[py, "scripts/gov/delivery/run_pg_tests.py", "--image", "postgres:17", "--suite-files", str(plan_file)]]
         if _cfg.DELIVERY_SHARDED_RUN_ENABLED:                                # the same shards as `full`: an impact run that stays sequential loses to a sharded full run once the selection is a third of the suite
             cmds[0] += ["--shards", "auto", *(["--durations", str(DURATIONS)] if DURATIONS.exists() else [])]
     else:
@@ -330,7 +331,7 @@ def run_tests(scope: str, selected: list, export_dir: Path, python: Optional[str
         if plain:
             cmds.append([py, "-m", "pytest", "-q", "--tb=short", "-p", "no:cacheprovider", *plain])
         if pg:
-            cmds.append([py, "scripts/ops/run_pg_tests.py", "--image", "postgres:17", *pg])
+            cmds.append([py, "scripts/gov/delivery/run_pg_tests.py", "--image", "postgres:17", *pg])
     t0, rc, out = time.time(), 0, []
     try:
         for cmd in cmds:
@@ -522,9 +523,10 @@ def main(argv: Optional[list] = None) -> int:
             head = wanted
     finally:
         release(LOCK)
-    if code == RC_PASS:                                                      # a delivery that waited for this receipt is published now (scripts/audit/auto_publish.py decides; it never forces)
+    if code == RC_PASS:                                                      # a delivery that waited for this receipt is published now (scripts/gov/delivery/auto_publish.py decides; it never forces)
         try:
-            sys.path.insert(0, str(ROOT / "scripts" / "audit"))
+            sys.path.insert(0, str(ROOT / "scripts" / "gov" / "delivery"))
+            sys.path.insert(0, str(ROOT / "scripts" / "gov" / "repo"))
             import auto_publish
             auto_publish.spawn_detached(ROOT)
         except Exception:                                                    # noqa: BLE001 -- the receipt stands; the watcher and the next commit publish too

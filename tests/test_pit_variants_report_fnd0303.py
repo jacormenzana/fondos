@@ -8,7 +8,7 @@ import pandas as pd
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "scripts" / "audit"))
+sys.path.insert(0, str(ROOT / "scripts" / "audit" / "p3"))
 
 import pit_variants_report as pr   # noqa: E402
 

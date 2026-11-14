@@ -6,7 +6,7 @@ database, using only the generic functions in shared/statistical_audit/ and
 the declarative catalogs — no metric or column name is decided in this file
 beyond what the catalogs already say.
 
-Deliberately NOT dependency-free, unlike scripts/audit/sync_agents_md.py:
+Deliberately NOT dependency-free, unlike scripts/gov/repo/sync_agents_md.py:
 this tool needs pandas and a live SQLite connection and is meant to run
 under the `des` Conda env like every other P1/P2 tool. It mirrors
 sync_agents_md.py only in report-vs-check CLI shape and exit codes.
@@ -100,10 +100,10 @@ the calling skill session's responsibility, working from this module's
 Deliberate, not a gap: the module stays read-only/detection-only (P#2, R-2).
 
 Usage:
-    python -X utf8 scripts/audit/run_statistical_audit.py --domain costs
-    python -X utf8 scripts/audit/run_statistical_audit.py --domain p2 --mode check
-    python -X utf8 scripts/audit/run_statistical_audit.py --domain costs --persist
-    python -X utf8 scripts/audit/run_statistical_audit.py --domain costs --compare-to audit_20260912T223518Z
+    python -X utf8 scripts/audit/stat/run_statistical_audit.py --domain costs
+    python -X utf8 scripts/audit/stat/run_statistical_audit.py --domain p2 --mode check
+    python -X utf8 scripts/audit/stat/run_statistical_audit.py --domain costs --persist
+    python -X utf8 scripts/audit/stat/run_statistical_audit.py --domain costs --compare-to audit_20260912T223518Z
 
 Exit codes: 0 ok; 1 --mode check found a defect (gating.is_blocking); 2 INCOMPLETE -- a required check could not run
 (shared/statistical_audit/completeness.py), only while shared.config.AUDIT_COMPLETENESS_CONTRACT_ENABLED is on (FND-0261).
@@ -119,7 +119,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
 
-_ROOT = Path(__file__).resolve().parents[2]
+_ROOT = Path(__file__).resolve().parents[3]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
@@ -2016,7 +2016,7 @@ def _print_report(run: "AuditRun", run_id: str) -> None:
         print(f"  [{f['severity']}] {f['block']} {f['rule_id']} ({f['group_key']}): {f['evidence']}")
     if run.accepted_notes:                      # FND-0234(e): never silent -- say what the baseline absorbed
         print()
-        print(f"Accepted residuals ({len(run.accepted_notes)} findings; scripts/audit/accept_audit_residual.py):")
+        print(f"Accepted residuals ({len(run.accepted_notes)} findings; scripts/audit/stat/accept_audit_residual.py):")
         for note in run.accepted_notes:
             print(f"  = {note}")
     if run.rca_e_tagged:                        # FND-0251 Commit C: only mechanical states are tagged; the rest is for a human
@@ -2095,7 +2095,7 @@ def _apply_accepted_residuals(conn: "psycopg.Connection", run: "AuditRun") -> No
     except Exception as exc:
         conn.rollback()                 # Postgres aborts the transaction on a failed statement
         print(f"[accepted-residuals] none applied ({type(exc).__name__}): control.audit_accepted_finding "
-              "is not readable; run scripts/ops/migrate_audit_accepted_finding.py", file=sys.stderr)
+              "is not readable; run scripts/mig/fondos/migrate_audit_accepted_finding.py", file=sys.stderr)
         run.skip("ACCEPTED_RESIDUALS", KIND_MISSING,
                  f"accepted-residual baseline not applied: control.audit_accepted_finding is not readable ({type(exc).__name__})")
         return
@@ -2324,10 +2324,10 @@ def main() -> int:
         print()
         print(f"Persisted: {n_stats} audit_statistic rows, {n_findings} audit_finding rows (run_id={run_id})")
         print(f"Run header: control.audit_run {scope}/{status}" if run.persisted_header
-              else "Run header: not written (control.audit_run missing: run scripts/ops/migrate_audit_run.py --apply)")
+              else "Run header: not written (control.audit_run missing: run scripts/mig/fondos/migrate_audit_run.py --apply)")
         print(f"ISIN detail: {run.persisted_isin_rows} audit_finding_isin rows"
               + ("" if run.persisted_isin_rows or not any(f.get("violating_isins") for f in run.findings)
-                 else " (table missing: run scripts/ops/migrate_audit_finding_isin.py --apply to keep the violators)"))
+                 else " (table missing: run scripts/mig/fondos/migrate_audit_finding_isin.py --apply to keep the violators)"))
 
     if keep_open:
         conn.close()

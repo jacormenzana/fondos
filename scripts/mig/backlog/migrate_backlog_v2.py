@@ -4,10 +4,10 @@
 migrate_backlog_v2.py -- apply (or roll back) ONE phase of the Backlog v2 store in the `gestion` database
 (doc/especificacion/PROPUESTA_BACKLOG_V2.md; owner action O-2).
 
-    python scripts/ops/migrate_backlog_v2.py --phase alias                    # DRY RUN: read-only, reports state, no DDL
-    python scripts/ops/migrate_backlog_v2.py --phase alias --apply            # the phase's block in ONE transaction
-    python scripts/ops/migrate_backlog_v2.py --phase alias --down              # DRY RUN of the staged rollback
-    python scripts/ops/migrate_backlog_v2.py --phase alias --down --apply      # rollback in ONE transaction
+    python scripts/mig/backlog/migrate_backlog_v2.py --phase alias                    # DRY RUN: read-only, reports state, no DDL
+    python scripts/mig/backlog/migrate_backlog_v2.py --phase alias --apply            # the phase's block in ONE transaction
+    python scripts/mig/backlog/migrate_backlog_v2.py --phase alias --down              # DRY RUN of the staged rollback
+    python scripts/mig/backlog/migrate_backlog_v2.py --phase alias --down --apply      # rollback in ONE transaction
 
 Phases: `alias` (FND-0330), `transitions` (FND-0331 step A-1, additive: creates the non-superuser role backlog_owner, the audit tables, sp_open_ticket,
 sp_transition, the rebuilt sp_close_release and the shadow-stage trigger; revokes nothing) and `revoke` (step A-2: removes the direct INSERT/UPDATE
@@ -36,7 +36,7 @@ import re
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import migrate_backlog_links as base  # noqa: E402  (ddl_block, gestion_dsn, LOCK_TIMEOUT, RC_*)
 
@@ -311,7 +311,7 @@ def main(argv: list | None = None) -> int:
 
     owner = os.environ.get("FONDOS_PG_DSN_OWNER")
     if not owner:
-        print("FONDOS_PG_DSN_OWNER is not set: DDL needs the owner role. Owner strings are deliberately NOT kept in .env. Store it ONCE in the owner vault: `python scripts/ops/owner_vault.py set FONDOS_PG_DSN_OWNER` (hidden input); after that this tool finds it by itself whenever you run it at a real console (or, for one session, `set \"FONDOS_PG_DSN_OWNER=...\"` in cmd).", file=sys.stderr)
+        print("FONDOS_PG_DSN_OWNER is not set: DDL needs the owner role. Owner strings are deliberately NOT kept in .env. Store it ONCE in the owner vault: `python scripts/gov/backlog/owner_vault.py set FONDOS_PG_DSN_OWNER` (hidden input); after that this tool finds it by itself whenever you run it at a real console (or, for one session, `set \"FONDOS_PG_DSN_OWNER=...\"` in cmd).", file=sys.stderr)
         return RC_USAGE
     dsn = base.gestion_dsn(owner)
     d = conninfo_to_dict(dsn)

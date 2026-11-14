@@ -1,10 +1,10 @@
-# scripts/launch/p3_pit_value.py
+# scripts/audit/p3/p3_pit_value.py
 # -*- coding: utf-8 -*-
 r"""
 Model-value study of P3 on a SAVED PIT run (FND-0193, pre-registered in doc/decisiones/PREREG_FND-0193.md, amendments 1 and 2). Read-only;
 with a run folder that holds its input snapshot (inputs/) it does not even open the database. Launch it under the memory guard:
 
-    powershell -NoProfile -File C:\desarrollo\fondos\out\audit\guarded_run.ps1 -CommandLine "C:\Users\jacor\.conda\envs\des\python.exe -u -X utf8 scripts\launch\p3_pit_value.py --run-dir <R1> --snapped-run-dir <R4> --ext-run-dir <R2> --survivorship-run-dir <R3>"
+    powershell -NoProfile -File C:\desarrollo\fondos\out\audit\guarded_run.ps1 -CommandLine "C:\Users\jacor\.conda\envs\des\python.exe -u -X utf8 scripts\audit\p3\p3_pit_value.py --run-dir <R1> --snapped-run-dir <R4> --ext-run-dir <R2> --survivorship-run-dir <R3>"
 
 Order of the checks (a failure stops or flags the verdict, never silently passes):
   1. the trial ledger on disk equals the one committed at tag prereg-fnd0193 (exit 4 otherwise);
@@ -28,7 +28,7 @@ from pathlib import Path
 import pandas as pd
 
 warnings.filterwarnings("ignore")
-_ROOT = Path(__file__).resolve().parents[2]
+_ROOT = Path(__file__).resolve().parents[3]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 

@@ -35,7 +35,7 @@ endlocal & exit /b %RC%
   Una vez por árbol de procesos (`FONDOS_DB_DRIVER_OK`) y recordado 10 min entre ejecuciones (`proyecto1/log/env_driver_ok`);
   un entorno bloqueado nunca se recuerda. Registro local `proyecto1/log/env_blocked.log` (tope 1 MB: se trunca). La capa Python
   El bloqueo puede ser TRANSITORIO (Smart App Control bloquea un binario sin reputación conocida y lo libera al resolverla,
-  medido una vez el 2026-10-12: ~32 min; diagnostico en `scripts/audit/preflight_check.py` seccion [0], evento CodeIntegrity
+  medido una vez el 2026-10-12: ~32 min; diagnostico en `scripts/gov/repo/preflight_check.py` seccion [0], evento CodeIntegrity
   3077). Sin reintento igualmente: relanzar mas tarde es legitimo, pero el lanzador sigue fallando rapido, nunca esperando.
   (`shared/env_guard.py::require_db_driver()`, usada por `run_pg_tests.py`, los `migrate_*.py` y el preflight de
   `p1p2_state.py`) hace siempre el import real y no usa el marcador. Sin reintentos, sin otro intérprete, sin DLL copiada.
@@ -235,7 +235,7 @@ compararlo, no es evidencia.
 
 Los números de ticket no van en el nombre de un lanzador permanente (los `FND-0246*` son lanzadores puntuales de una release: se retiran al cerrarla).
 Renombrar un lanzador exige actualizar sus referencias en el mismo commit (documentación, pruebas, fichero de estado, etiquetas de log) y regenerar el
-sentinel `launchers` de `AGENTS.md` (`scripts/audit/sync_agents_md.py --write`).
+sentinel `launchers` de `AGENTS.md` (`scripts/gov/repo/sync_agents_md.py --write`).
 
 ---
 

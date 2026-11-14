@@ -49,7 +49,7 @@ _ADJUDICATOR_DSN_ENV_VAR = "FONDOS_BACKLOG_PG_DSN_ADJUDICATOR"   # role backlog_
 _AGENT_DSN_ENV_VAR = "FONDOS_BACKLOG_PG_DSN_AGENT"          # role backlog_agent (Backlog v3 W2, FND-0357): an agent opens and moves tickets through a short list of routines; lives in the git-ignored .env; NO fallback to another login
 _AUTOPILOT_DSN_ENV_VAR = "FONDOS_BACKLOG_PG_DSN_AUTOPILOT"  # role backlog_autopilot (Backlog v3 W3, FND-0358): records facts, appends notes and makes the two evidence-backed moves; lives in the git-ignored .env; NO fallback to another login
 _FACTS_DSN_ENV_VAR = "FONDOS_BACKLOG_PG_DSN_FACTS"           # role backlog_facts (Backlog v3.1, FND-0355): records the DEPLOY fact and nothing else; kept in the OWNER VAULT (the deploy watcher reads it), never in .env; NO fallback to another login
-AUTOPILOT_ACTOR = "system:autopilot"                         # the one identity of the autopilot process (scripts/audit/backlog_autopilot.py sets FONDOS_ACTOR to it); sp_auto_transition fixes it in the database too
+AUTOPILOT_ACTOR = "system:autopilot"                         # the one identity of the autopilot process (scripts/gov/backlog/backlog_autopilot.py sets FONDOS_ACTOR to it); sp_auto_transition fixes it in the database too
 NON_INTERACTIVE_OPERATIONS = ("agent_log", "incident", "gate", "agent", "autopilot", "facts")   # the ONLY writes a non-interactive process may make (owner decisions 2026-10-29: agent_log, incident; 2026-10-31: gate, agent, autopilot; 2026-11-01, plan v3.1: facts); anything else is refused by confirm_live_write
 _SCOPED_DSN_ENV = {"gate": _GATE_DSN_ENV_VAR, "agent": _AGENT_DSN_ENV_VAR, "autopilot": _AUTOPILOT_DSN_ENV_VAR, "facts": _FACTS_DSN_ENV_VAR}   # operations that use their own login EXCLUSIVELY: without its DSN there is no live write
 _FALLBACK_LOG_ENV_VAR = "FONDOS_BACKLOG_FALLBACK_LOG"
@@ -341,7 +341,7 @@ def get_action_point_status(ap_id: str) -> str:
 
 
 # --- Relationships between action points (db/pg_backlog/20_links.sql; procedure in NORMAS_BACKLOG.md) ------------------
-# Unlike report_incident(), this API is FAIL-LOUD: its callers are operator tools (scripts/audit/backlog_links.py) whose whole
+# Unlike report_incident(), this API is FAIL-LOUD: its callers are operator tools (scripts/gov/backlog/backlog_links.py) whose whole
 # result IS the data, so an unreachable backlog must stop them -- it must never read as "no tickets" or "no links". Every function
 # takes an optional `conn` (a caller-owned psycopg connection, never committed here) so the hermetic tests and a multi-step
 # caller share one transaction; without it each call opens its own short-lived connection under FONDOS_BACKLOG_PG_DSN.
@@ -892,13 +892,13 @@ def open_ticket(*, title: str, nature: str, object_type: str, priority: str, ses
 
 
 def default_proposals(text: str, apid: str) -> dict:
-    """The default proposals of open_ticket (FND-0378): {'neighbours', 'modules', 'same_module'}. Reads only: the ranking of scripts/audit/backlog_links.py, the module derivation of shared/backlog_modules.py
+    """The default proposals of open_ticket (FND-0378): {'neighbours', 'modules', 'same_module'}. Reads only: the ranking of scripts/gov/backlog/backlog_links.py, the module derivation of shared/backlog_modules.py
     over `git ls-files`, and the current module facts of the open tickets. Raises on any problem (open_ticket swallows it)."""
     import subprocess
     root = Path(__file__).resolve().parents[1]
-    audit = str(root / "scripts" / "audit")
-    if audit not in sys.path:
-        sys.path.insert(0, audit)
+    tools = str(root / "scripts" / "gov" / "backlog")
+    if tools not in sys.path:
+        sys.path.insert(0, tools)
     import backlog_links                                              # the one ranking of "closest open tickets" (also behind `backlog_links.py --new`)
     from shared import backlog_modules as bm
     from shared import backlog_proposals as bp
@@ -1108,7 +1108,7 @@ def update_attributes(ap_id: str, *, actor: Optional[str] = None, conn=None, **f
     return int(n)
 
 
-SHADOW_REQUIRED = 50          # the A-2 gate (owner decision D2, 2026-10-26): non-system transitions since the last direct write; scripts/ops/migrate_backlog_v2.py keeps a pinned twin
+SHADOW_REQUIRED = 50          # the A-2 gate (owner decision D2, 2026-10-26): non-system transitions since the last direct write; scripts/mig/backlog/migrate_backlog_v2.py keeps a pinned twin
 
 
 def shadow_actors(*, conn=None) -> list:
@@ -1385,7 +1385,7 @@ def raw_update_privilege_live(role: str = "backlog_writer", *, conn=None) -> boo
 
 
 def digest_facts(days: int = 7, *, conn=None) -> dict:
-    """The numbers of the weekly digest (scripts/audit/backlog_digest.py), read-only. Each block is read on its own and a missing object leaves that block None, so the digest still works before every
+    """The numbers of the weekly digest (scripts/gov/backlog/backlog_digest.py), read-only. Each block is read on its own and a missing object leaves that block None, so the digest still works before every
     phase is applied. {'by_status', 'moves_by_actor_kind' (live status events of the last `days` days: {kind: {'n', 'forced'}}), 'reopens_by_cause', 'open_holds', 'idle_in_progress' (14 days or more),
     'deploy_facts', 'undecided_pairs'}."""
     def safe(c, sql, params=()):
@@ -1569,7 +1569,7 @@ def gate_protection_state(*, conn=None) -> dict:
 
 
 def phase_c_catalog(tables: list, views: list, routines: list, roles: list, *, conn=None) -> dict:
-    """Read-only facts for the acceptance of Phase C (scripts/audit/backlog_phase_c_acceptance.py): what exists, who owns it and who can do what. Absent things are just absent.
+    """Read-only facts for the acceptance of Phase C (scripts/mig/backlog/backlog_phase_c_acceptance.py): what exists, who owns it and who can do what. Absent things are just absent.
     {'tables': {name: {owner, append_only (the trigger exists AND is enabled), select/insert/update/delete: {role: bool}}}, 'views': {name: bool},
      'scoped': {role: {'read': [relations of the whole backlog schema it can SELECT], 'write': [relations it can INSERT / UPDATE / DELETE]}} for backlog_gate and backlog_adjudicator,
      'routines': {name: {owner, secdef, search_path_pinned, public, executes: [roles]}},
@@ -1844,7 +1844,7 @@ def check_actors(verbose: bool = True) -> bool:
 
     try:
         if not actor_store_present():
-            _line(False, "backlog.actor_alias is not applied (db/pg_backlog/25_actor_alias.sql; owner runs scripts/ops/migrate_backlog_v2.py --phase alias)")
+            _line(False, "backlog.actor_alias is not applied (db/pg_backlog/25_actor_alias.sql; owner runs scripts/mig/backlog/migrate_backlog_v2.py --phase alias)")
             return False
         missing = unmapped_actors()
         if missing:

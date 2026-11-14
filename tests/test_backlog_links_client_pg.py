@@ -7,7 +7,7 @@ parameter, so nothing is ever committed. Covers the ticket scopes (all / open / 
 current-state vs history link readers, the round trip of record_link_event(s), whole-batch atomicity and that a database error
 (unknown ticket) propagates instead of being swallowed.
 
-    python scripts/ops/run_pg_tests.py -- tests/test_backlog_links_client_pg.py
+    python scripts/gov/delivery/run_pg_tests.py -- tests/test_backlog_links_client_pg.py
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ import psycopg
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops")):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "mig" / "backlog")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 

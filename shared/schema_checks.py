@@ -416,7 +416,7 @@ FUND_METRIC_TIMESERIES_AUDIT_COLUMNS: list[str] = [
     "algorithm_version",
     "batch_id",
     # v27 (2026-09-27): real_flag pivoted out of the key into these three columns (see
-    # db/pg/30_gold.sql and scripts/ops/apply_fmts_pivot.py) — asserted here so a database that
+    # db/pg/30_gold.sql and scripts/mig/fondos/apply_fmts_pivot.py) — asserted here so a database that
     # hasn't been through the pivot migration (or a rolled-back one) fails loudly at startup
     # instead of metrics_writer.py's INSERT failing deep inside the P2 per-fund loop.
     "value_nominal",
@@ -428,7 +428,7 @@ P2_PIPELINE_LOG_AUDIT_COLUMNS: list[str] = [
 ]
 # control.fund_metric_state: the OLS-cadence gate reads these on every fund. last_ols_calc_version
 # (2026-10-05) makes the quarterly gate CALC_VERSION-aware; a database that has not had
-# scripts/ops/migrate_fund_metric_state_ols_calc_version.py applied must fail at P2 startup, not in
+# scripts/mig/fondos/migrate_fund_metric_state_ols_calc_version.py applied must fail at P2 startup, not in
 # the per-fund loop.
 FUND_METRIC_STATE_COLUMNS: list[str] = [
     "last_ols_quarter",
@@ -557,8 +557,8 @@ def assert_schema_alignment(conn, tables=None) -> None:
         lines.append(
             "Aplica el DDL: db/pg/00_roles_schemas.sql .. 40_matviews.sql (con el rol propietario); "
             "fund_master.official_fund_name: db/migrations/20261024_fund_master_official_fund_name.sql (con el rol propietario); "
-            "fund_metric_state.last_ols_calc_version: scripts/ops/migrate_fund_metric_state_ols_calc_version.py --apply; "
-            "fund_metric_family_state (FAMILY_VERSIONING_ENABLED): scripts/ops/migrate_fund_metric_family_state.py --apply"
+            "fund_metric_state.last_ols_calc_version: scripts/mig/fondos/migrate_fund_metric_state_ols_calc_version.py --apply; "
+            "fund_metric_family_state (FAMILY_VERSIONING_ENABLED): scripts/mig/fondos/migrate_fund_metric_family_state.py --apply"
         )
         raise AssertionError("\n".join(lines))
 

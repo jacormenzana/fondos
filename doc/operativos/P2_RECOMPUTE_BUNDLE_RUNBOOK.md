@@ -16,9 +16,9 @@ flip recomputes every fund without a separate step. Still bump `CALC_VERSION` in
 `algorithm_version` records the new logic.
 
 ## Before
-1. FND-0179 healthy: `bash scripts/ops/setup_wal_archive.sh status` shows a small WAL archive and free space; the 3-day base
+1. FND-0179 healthy: `bash scripts/mnt/backup/setup_wal_archive.sh status` shows a small WAL archive and free space; the 3-day base
    backup and daily off-box tasks have run once with result 0.
-2. Take a fresh base backup right before: `bash scripts/ops/setup_wal_archive.sh basebackup`.
+2. Take a fresh base backup right before: `bash scripts/mnt/backup/setup_wal_archive.sh basebackup`.
 3. Nothing else writing: no P1, P3 or PIT backtest running. Keep the WSL keepalive session open.
 4. Optional but recommended: the two full PIT backtests (control / iterative_hy, see FND-0224) and a look at
    `crisis_variants.csv`. They do not gate this bundle, but they tell whether `MACRO_ITERATIVE_VIF` should keep protecting

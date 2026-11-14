@@ -4,7 +4,7 @@ owner_vault.py -- the owner-only connection strings and tokens, injected into an
 
 Why. The strings that give DDL or owner-role writes (FONDOS_PG_DSN_OWNER, FONDOS_BACKLOG_PG_DSN_HUMAN, FONDOS_BACKLOG_PG_DSN_ADJUDICATOR, the GitHub tokens) must not sit in `.env`: every agent session
 loads that file (owner order 2026-10-29). Typing and clearing them in each terminal is the other extreme (owner, 2026-11-01: "it must be transparent and automated"). This module is the middle
-way: a one-time setup (`python scripts/ops/owner_vault.py set NAME`) stores each value encrypted with Windows DPAPI in %LOCALAPPDATA%\\fondos\\owner_vault.json (outside the repository). From then
+way: a one-time setup (`python scripts/gov/backlog/owner_vault.py set NAME`) stores each value encrypted with Windows DPAPI in %LOCALAPPDATA%\\fondos\\owner_vault.json (outside the repository). From then
 on an owner tool started at a real console finds ITS variables in its own process environment, with no step for the operator, and they vanish when the process ends (nothing is persisted, nothing
 to clear). A process without a console (an agent's shell tool, a script, a pipeline, a scheduled task) gets nothing and the tool prints its usual "not set" message.
 

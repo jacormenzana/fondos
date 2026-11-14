@@ -2,7 +2,7 @@ name: Backlog gate attestation
 
 # Backlog v2 Phase C slice 4 (FND-0334; doc/especificacion/PROPUESTA_BACKLOG_V2.md 6.4.6, doc/reglas/NORMAS_BACKLOG.md 4.7).
 # Every commit that cites a ticket (FND-nnnn) must be covered by the owner's SIGNED attestation (backlog_gate/attestation.json + .sig, written by
-# `python scripts/audit/backlog_sync.py --attest`), with every collision pair decided. The signature is checked against
+# `python scripts/gov/backlog/backlog_sync.py --attest`), with every collision pair decided. The signature is checked against
 # .github/backlog_gate_allowed_signers AS IT IS IN THE BASE of the range, so a change cannot bring its own key. While that file lists no key the job
 # passes with a warning ("NOT ENFORCED"). CI proves that the owner's key signed a statement; it cannot check the database.
 #
@@ -62,4 +62,4 @@ jobs:
 
       - name: Verify the signed attestation
         # Pure stdlib + git + ssh-keygen (already on the runner): no installation.
-        run: python scripts/audit/verify_attestation.py --advisory --base "${{ steps.base.outputs.base }}" --head "${{ github.sha }}"
+        run: python scripts/gov/backlog/verify_attestation.py --advisory --base "${{ steps.base.outputs.base }}" --head "${{ github.sha }}"

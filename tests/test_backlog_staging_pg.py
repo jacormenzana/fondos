@@ -2,11 +2,11 @@
 # -*- coding: utf-8 -*-
 """The staging scenarios of Backlog v2 (FND-0351; NORMAS_BACKLOG.md 9): the state machine and the gate verified on a SCRATCH Postgres that holds a snapshot of the backlog, never on the live one.
 
-    python scripts/ops/backlog_staging.py                              # one command: a fresh read-only snapshot, the throwaway container, the real DDL, every scenario, teardown
-    python scripts/ops/backlog_staging.py --scenario a2_revoke         # one scenario
-    python scripts/ops/run_pg_tests.py -- tests/test_backlog_staging_pg.py   # the scenarios on the built-in synthetic snapshot (what CI runs)
+    python scripts/gov/backlog/backlog_staging.py                              # one command: a fresh read-only snapshot, the throwaway container, the real DDL, every scenario, teardown
+    python scripts/gov/backlog/backlog_staging.py --scenario a2_revoke         # one scenario
+    python scripts/gov/delivery/run_pg_tests.py -- tests/test_backlog_staging_pg.py   # the scenarios on the built-in synthetic snapshot (what CI runs)
 
-Environment (set by the command above; all optional): FONDOS_STAGING_SNAPSHOT (a snapshot file: the real history), FONDOS_STAGING_PHASES (comma list of the phases of scripts/ops/migrate_backlog_v2.py applied
+Environment (set by the command above; all optional): FONDOS_STAGING_SNAPSHOT (a snapshot file: the real history), FONDOS_STAGING_PHASES (comma list of the phases of scripts/mig/backlog/migrate_backlog_v2.py applied
 in this order; default transitions,relations). Every scenario calls assert_scratch BEFORE its first statement (shared/backlog_scratch.py): it refuses on any live target, whatever its name.
 """
 from __future__ import annotations
@@ -20,7 +20,7 @@ import psycopg
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops"), str(_ROOT / "scripts" / "audit"), str(Path(__file__).resolve().parent)):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "mig" / "backlog"), str(_ROOT / "scripts" / "mig" / "backlog"), str(Path(__file__).resolve().parent)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -167,7 +167,7 @@ def test_scenario_a2_revoke_rehearsal(staged):
 
 def test_scenario_replay_of_the_real_history(staged):
     if not staged.staging_real:
-        pytest.skip("needs a real snapshot (python scripts/ops/backlog_staging.py exports a fresh one)")
+        pytest.skip("needs a real snapshot (python scripts/gov/backlog/backlog_staging.py exports a fresh one)")
     assert "relations" in os.environ.get(PHASES_ENV, DEFAULT_PHASES)
     report = {"links_as_of_today": rp.replay(staged), "links_as_of_closure": rp.replay(staged, links_as_of_closure=True), "audit_mode": rp.replay(staged, mode="AUDIT")}
     failed = [(n, d) for n, ok, d in rp.evaluate(report) if not ok]

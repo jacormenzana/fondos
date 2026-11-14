@@ -1,7 +1,7 @@
 # tests/test_backlog_ci.py
 # -*- coding: utf-8 -*-
 """Backlog v3 W4 (FND-0359): `tests_pass`, the closing condition "CI green". The pure verdict of shared/backlog_ci.py, its HTTP reading with a fake opener (no network), and the probe in
-scripts/audit/rfd_matrix_probe.py with the git and the GitHub read injected. R-7: no database, no git, no network."""
+scripts/gov/backlog/rfd_matrix_probe.py with the git and the GitHub read injected. R-7: no database, no git, no network."""
 from __future__ import annotations
 
 import io
@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "audit")):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "gov" / "backlog")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -167,7 +167,7 @@ def test_the_probe_never_reads_a_vault_variable_even_when_the_environment_has_on
     seen = []
     probe.probe_tests_pass("FND-1", evidence={"FND-1": "c" * 40}, git=fake_git(f"{'c' * 40}"), read=lambda repo, branch, sha, token: seen.append(token) or (True, "ok"))
     assert seen == [None]
-    assert "BACKLOG_GATE_GITHUB_TOKEN" not in (_ROOT / "scripts" / "audit" / "rfd_matrix_probe.py").read_text(encoding="utf-8").replace("BACKLOG_GATE_GITHUB_REPO", "").replace("BACKLOG_GATE_GITHUB_BRANCH", "")
+    assert "BACKLOG_GATE_GITHUB_TOKEN" not in (_ROOT / "scripts" / "gov" / "backlog" / "rfd_matrix_probe.py").read_text(encoding="utf-8").replace("BACKLOG_GATE_GITHUB_REPO", "").replace("BACKLOG_GATE_GITHUB_BRANCH", "")
 
 
 def test_a_plain_commit_or_an_unresolvable_one_is_read_as_itself_and_an_explicit_sha_wins():
@@ -188,9 +188,9 @@ def test_no_delivering_merge_is_not_yet_false_and_the_verdicts_map_to_the_three_
 
 def test_the_kind_is_known_everywhere_it_must_be():
     assert "tests_pass" in probe.PROBE_KINDS
-    src = (_ROOT / "scripts" / "audit" / "rfd_matrix_probe.py").read_text(encoding="utf-8")
+    src = (_ROOT / "scripts" / "gov" / "backlog" / "rfd_matrix_probe.py").read_text(encoding="utf-8")
     assert 'elif kind == "tests_pass":' in src and "probe_tests_pass(tid, *args, evidence=evidence)" in src
     ddl = (_ROOT / "db" / "pg_backlog" / "99_probes.sql").read_text(encoding="utf-8")
     assert "'tests_pass'" in ddl and "owner directive 2026-11-01" in ddl
-    auto = (_ROOT / "scripts" / "audit" / "backlog_autopilot.py").read_text(encoding="utf-8")
+    auto = (_ROOT / "scripts" / "gov" / "backlog" / "backlog_autopilot.py").read_text(encoding="utf-8")
     assert "probe.evaluate(wanted, evidence=" in auto

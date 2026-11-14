@@ -3,8 +3,8 @@
 """
 p2_perf_harness.py -- timing and bit-for-bit equivalence of the peer-based P2 families on a fixed sample (FND-0255).
 
-    python scripts/audit/p2_perf_harness.py capture <out.pkl> --sample <isins.txt>           # run THIS tree's code, save every metric row + timings
-    python scripts/audit/p2_perf_harness.py compare <ref.pkl>  --sample <isins.txt>          # run THIS tree's code, compare with a saved reference
+    python scripts/audit/p2/p2_perf_harness.py capture <out.pkl> --sample <isins.txt>           # run THIS tree's code, save every metric row + timings
+    python scripts/audit/p2/p2_perf_harness.py compare <ref.pkl>  --sample <isins.txt>          # run THIS tree's code, compare with a saved reference
     ... --no-cache                                                                           # force the legacy per-fund queries (PEER_PANEL_CACHE_ENABLED off)
 
 Read-only: the compute_* functions only read. The families run in the pipeline's order for each ISIN; the per-run caches are reset and activated exactly as
@@ -20,7 +20,7 @@ import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "proyecto2"))
 

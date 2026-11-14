@@ -4,7 +4,7 @@
 verify_attestation.py -- the CI half of the collision gate's signed attestation (Backlog v2 Phase C slice 4, FND-0334; PROPUESTA_BACKLOG_V2.md 6.4.6; NORMAS_BACKLOG.md 4.7).
 Run by .github/workflows/backlog-gate.yml; stdlib only (plus git and ssh-keygen), so the job installs nothing.
 
-    python scripts/audit/verify_attestation.py --base <rev> [--head HEAD]
+    python scripts/gov/backlog/verify_attestation.py --base <rev> [--head HEAD]
 
 It takes the commits of `<base>..<head>` and fails (exit 1) when:
   * a commit of the range cites a ticket (`FND-nnnn` in its subject or a Refs: trailer) and the signed attestation `backlog_gate/attestation.json` of <head> is missing or its signature
@@ -31,7 +31,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 from shared import backlog_attest as att  # noqa: E402
 from shared import backlog_gate as gate  # noqa: E402

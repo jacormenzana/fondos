@@ -18,9 +18,9 @@ NON-BLOCKING by contract (`shared/governance/controls.py`: T-PERIOD-KEY-INVARIAN
 family that is predicted invariant and is not becomes an `[ATENCION]` line in the cycle report. Exit codes: 0 nothing to report, 1 a finding
 (a prediction did not hold), 2 a control failed so the run proves nothing.
 
-    C:\\Users\\jacor\\.conda\\envs\\des\\python.exe -X utf8 scripts/audit/period_key_invariance.py --contract-only     # the data contract, seconds
-    C:\\Users\\jacor\\.conda\\envs\\des\\python.exe -X utf8 scripts/audit/period_key_invariance.py --n 120             # cycle diagnostic
-    C:\\Users\\jacor\\.conda\\envs\\des\\python.exe -X utf8 scripts/audit/period_key_invariance.py --n 400             # the study's own sample size
+    C:\\Users\\jacor\\.conda\\envs\\des\\python.exe -X utf8 scripts/audit/p2/period_key_invariance.py --contract-only     # the data contract, seconds
+    C:\\Users\\jacor\\.conda\\envs\\des\\python.exe -X utf8 scripts/audit/p2/period_key_invariance.py --n 120             # cycle diagnostic
+    C:\\Users\\jacor\\.conda\\envs\\des\\python.exe -X utf8 scripts/audit/p2/period_key_invariance.py --n 400             # the study's own sample size
 """
 import argparse
 import json
@@ -31,9 +31,9 @@ import warnings
 from pathlib import Path
 
 warnings.filterwarnings("ignore")
-# The repository root is derived from this file's own location (scripts/audit/<me>.py), never hard-coded: NORMAS_BATCH.md's rule for
+# The repository root is derived from this file's own location (scripts/audit/p2/<me>.py), never hard-coded: NORMAS_BATCH.md's rule for
 # launchers is the same rule for the tools they call, and a worktree must run its own code.
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "proyecto2"))
 from shared.config import load_env_file

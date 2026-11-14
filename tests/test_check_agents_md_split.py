@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""scripts/audit/check_agents_md_split.py: calibration on throwaway git repositories (FND-0312, R-7: no DB)."""
+"""scripts/gov/repo/check_agents_md_split.py: calibration on throwaway git repositories (FND-0312, R-7: no DB)."""
 import os
 import subprocess
 import sys
@@ -8,8 +8,8 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "scripts" / "audit" / "check_agents_md_split.py"
-sys.path.insert(0, str(ROOT / "scripts" / "audit"))
+SCRIPT = ROOT / "scripts" / "gov" / "repo" / "check_agents_md_split.py"
+sys.path.insert(0, str(ROOT / "scripts" / "gov" / "repo"))
 
 import check_agents_md_split as cs  # noqa: E402
 

@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
 """Build the fixture of the fault-injection harness from the live store, READ-ONLY (FND-0392, WS0.5 of FND-0391).
 
-    python scripts/audit/fault_injection_fixture.py --real-positive <ISIN> [--out tests/fixtures/fault_injection]
+    python scripts/audit/nav/fault_injection_fixture.py --real-positive <ISIN> [--out tests/fixtures/fault_injection]
 
 Writes `nav_sample.csv.gz` (isin, nature, role, date, nav) and `nav_sample.manifest.json`. Roles: `sample` = the 40-ISIN sample whose healthy series get corrupted; `real_positive` = funds whose
 real series is the defect itself (counted in the 40: the sample takes the quota minus them); `peer` = the other funds of each Fund_Nature the unshared-jump test compares against.
 
 Selection is deterministic and generic (P#5, no fund is named in code): in-universe funds with at least MIN_ROWS monthly NAV rows, ordered by md5(isin) inside their Fund_Nature; the first
 `quota` become the sample, the next PEERS_PER_NATURE the peers. The same live data gives the same fixture. NAV is the stored class-currency NAV (the unshared-jump test compares one-month moves,
-where FX is a few percent against a 50 % cut). The harness itself (scripts/audit/fault_injection_run.py) never touches the database.
+where FX is a few percent against a 50 % cut). The harness itself (scripts/audit/nav/fault_injection_run.py) never touches the database.
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pandas as pd
 
-_ROOT = Path(__file__).resolve().parents[2]
+_ROOT = Path(__file__).resolve().parents[3]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 

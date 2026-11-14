@@ -3,7 +3,7 @@
 """
 verify_family_refresh.py -- read-only closure check of the family-nature refresh (FND-0244 follow-up). Anyone can run it, any time.
 
-    python scripts/audit/verify_family_refresh.py
+    python scripts/audit/p1/verify_family_refresh.py
 
 It answers, from the database alone, whether the derived attributes of the funds the family builder corrected now agree with their
 sibling share classes, so closing the ticket never waits on a conversation:
@@ -24,7 +24,7 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 RC_CLEAN, RC_HARD, RC_SOFT, RC_NO_DB = 0, 1, 2, 3
 
 # Attributes derived from the nature / portfolio and therefore equal across the classes of ONE fund (cost fields, currency and hedging

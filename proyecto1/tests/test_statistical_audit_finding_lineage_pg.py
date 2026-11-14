@@ -1,6 +1,6 @@
 # proyecto1/tests/test_statistical_audit_finding_lineage_pg.py
 # -*- coding: utf-8 -*-
-"""FND-0275 on the hermetic Postgres container (python scripts/ops/run_pg_tests.py): the data lineage of each violating ISIN
+"""FND-0275 on the hermetic Postgres container (python scripts/gov/delivery/run_pg_tests.py): the data lineage of each violating ISIN
 (fund_metrics.algorithm_version / batch_id) stored with the finding's ISIN detail. The lineage columns come from the REAL DDL
 (db/pg/35_control.sql, block audit_finding_lineage); persist_run commits, so the tests run in a throwaway schema with PRODUCTION
 transaction semantics (autocommit off)."""
@@ -14,7 +14,7 @@ import pytest
 _ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
-sys.path.insert(0, os.path.join(_ROOT, "scripts", "ops"))
+sys.path.insert(0, os.path.join(_ROOT, "scripts", "mig", "fondos"))
 
 import migrate_audit_finding_lineage as mig  # noqa: E402
 from shared.statistical_audit import persistence as ps  # noqa: E402

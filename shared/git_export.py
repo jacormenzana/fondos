@@ -1,7 +1,7 @@
 # shared/git_export.py
 # -*- coding: utf-8 -*-
-"""git_export.py -- `git archive` of one commit extracted into a directory: the single place that exports a commit (P#11). Used by scripts/ops/owner_deploy.py (the migration runs from a clean
-copy of master) and scripts/audit/delivery_attest.py (the tests run on the exact commit being delivered). The working tree, which may be on any branch or hold another session's edits, never enters."""
+"""git_export.py -- `git archive` of one commit extracted into a directory: the single place that exports a commit (P#11). Used by scripts/gov/backlog/owner_deploy.py (the migration runs from a clean
+copy of master) and scripts/gov/delivery/delivery_attest.py (the tests run on the exact commit being delivered). The working tree, which may be on any branch or hold another session's edits, never enters."""
 from __future__ import annotations
 
 import io

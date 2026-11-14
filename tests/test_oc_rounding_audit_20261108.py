@@ -20,7 +20,7 @@ from shared.statistical_audit.invariants import check_invariant         # noqa: 
 
 
 def _runner():
-    spec = importlib.util.spec_from_file_location("rsa_oc_rounding", ROOT / "scripts" / "audit" / "run_statistical_audit.py")
+    spec = importlib.util.spec_from_file_location("rsa_oc_rounding", ROOT / "scripts" / "audit" / "stat" / "run_statistical_audit.py")
     mod = importlib.util.module_from_spec(spec)
     sys.modules["rsa_oc_rounding"] = mod
     spec.loader.exec_module(mod)
@@ -65,7 +65,7 @@ def test_the_marker_is_false_everywhere_when_the_columns_it_needs_are_missing():
 
 
 def test_the_runner_marks_the_frame_before_the_invariants_run_and_the_rule_reads_that_column():
-    src = (ROOT / "scripts" / "audit" / "run_statistical_audit.py").read_text(encoding="utf-8")
+    src = (ROOT / "scripts" / "audit" / "stat" / "run_statistical_audit.py").read_text(encoding="utf-8")
     assert src.index("_mark_oc_rounding(master)") < src.index('frames_by_table = {"fund_master": master')
     rule = next(r for r in COST_INVARIANTS if r.rule_id == "OC_NOT_CONTAMINATED")
     assert rule.when == "not OC_ACI_Rounding_Explained and not OC_Is_Management_Row" and rule.bound_type == "HARD_INVARIANT"

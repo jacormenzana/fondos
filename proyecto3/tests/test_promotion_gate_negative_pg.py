@@ -9,7 +9,7 @@ it must refuse (RC 1), write exactly one P3_SCENARIO_PROMOTION_BLOCKED row, chan
 What this certifies is the GATE LOGIC and its wiring to real SQL. It does not certify detector coverage: a defect no audit rule detects
 is not in `audit_finding` and cannot be blocked here (the coverage gate only shrinks that blind spot).
 
-    python scripts/ops/run_pg_tests.py -- proyecto3/tests/test_promotion_gate_negative_pg.py
+    python scripts/gov/delivery/run_pg_tests.py -- proyecto3/tests/test_promotion_gate_negative_pg.py
 """
 from __future__ import annotations
 

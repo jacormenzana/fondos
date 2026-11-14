@@ -46,7 +46,7 @@ if (Test-Path $cfg) { Write-Host "[INFO] .wslconfig:"; Get-Content $cfg | ForEac
 
 if ($Compact) {
     if ($TakeBackup) {
-        $b = '/mnt/c/desarrollo/fondos/scripts/ops/maintenance/wsl/wsl_06_backup_pg.sh'
+        $b = '/mnt/c/desarrollo/fondos/scripts/mnt/host/wsl_06_backup_pg.sh'
         foreach ($m in 'logical', 'physical') { Write-Host "[ACT ] wsl_06_backup_pg.sh $m"; wsl.exe -d $Distro -u root -- bash $b $m; if ($LASTEXITCODE -ne 0) { Crit "backup '$m' failed (exit $LASTEXITCODE) - compaction aborted"; exit 2 } }
     }
     $dump = Get-ChildItem '\wsl.localhost\Ubuntu\mnt\backups\pg_fondos\dump\fondos_2*.dump' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1

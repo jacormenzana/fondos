@@ -3,7 +3,7 @@
 """FND-0323 S5: the cycle report's "active funds with NAV and no class currency" query leaves out WRONG_DOC ISINs (out of scope by owner rule
 2026-10-25) and still reports every other one. Real statement, throwaway per-test schema; read-only.
 
-    python scripts/ops/run_pg_tests.py -- tests/test_cycle_report_ccy_unknown_pg.py
+    python scripts/gov/delivery/run_pg_tests.py -- tests/test_cycle_report_ccy_unknown_pg.py
 """
 from __future__ import annotations
 

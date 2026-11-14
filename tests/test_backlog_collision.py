@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(ROOT), str(ROOT / "scripts" / "audit")):
+for _p in (str(ROOT), str(ROOT / "scripts" / "gov" / "backlog"), str(ROOT / "scripts" / "gov" / "repo")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -200,9 +200,9 @@ def repo(tmp_path):
     if not (BASH and shutil.which("git")):
         pytest.skip("bash and git are needed")
     r, remote = tmp_path / "r", tmp_path / "remote.git"
-    (r / "scripts" / "audit").mkdir(parents=True)
+    (r / "scripts" / "gov" / "backlog").mkdir(parents=True)
     (r / "shared").mkdir()
-    for src, dst in (("scripts/audit/commit_msg_gate.py", "scripts/audit"), ("scripts/audit/pre_push_gate.py", "scripts/audit"), ("shared/backlog_gate.py", "shared")):
+    for src, dst in (("scripts/gov/backlog/commit_msg_gate.py", "scripts/gov/backlog"), ("scripts/gov/backlog/pre_push_gate.py", "scripts/gov/backlog"), ("shared/backlog_gate.py", "shared")):
         shutil.copy(ROOT / src, r / dst)
     (r / "shared" / "config.py").write_text(STUB_CONFIG, encoding="utf-8")
     (r / "shared" / "backlog_client.py").write_text(STUB_CLIENT, encoding="utf-8")
@@ -216,7 +216,7 @@ def repo(tmp_path):
     git("init", "-q", "--bare", str(remote), cwd=tmp_path)
     git("init", "-q", "-b", "master")
     git("remote", "add", "origin", str(remote))
-    p = subprocess.run([BASH, str(ROOT / "scripts" / "audit" / "commit-msg.sh")], cwd=r, capture_output=True, text=True, encoding="utf-8", env=env, timeout=60)
+    p = subprocess.run([BASH, str(ROOT / "scripts" / "gov" / "repo" / "hooks" / "commit-msg.sh")], cwd=r, capture_output=True, text=True, encoding="utf-8", env=env, timeout=60)
     assert p.returncode == 0 and "pre-push hook installed" in p.stdout, p.stderr
     (r / "f.txt").write_text("1")
     git("add", "f.txt")
@@ -250,7 +250,7 @@ def test_pre_push_lets_other_tickets_and_deletions_through(repo):
 def test_a_crash_of_either_script_never_blocks_a_commit_or_a_push(repo):
     git, r = repo
     for name in ("commit_msg_gate.py", "pre_push_gate.py"):
-        (r / "scripts" / "audit" / name).write_text("this is not python (\n", encoding="utf-8")
+        (r / "scripts" / "gov" / "backlog" / name).write_text("this is not python (\n", encoding="utf-8")
     commit(git, r, "c.txt", "feat: FND-0001 still pushed")
     (r / "d.txt").write_text("d")
     git("add", "d.txt")

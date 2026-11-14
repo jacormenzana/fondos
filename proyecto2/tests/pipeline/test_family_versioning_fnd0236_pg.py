@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """FND-0236: the per-family state helpers and the DDL, on the hermetic Postgres container
-(python scripts/ops/run_pg_tests.py). Same discipline as test_run_pipeline_writes_pg.py: helpers that own their
+(python scripts/gov/delivery/run_pg_tests.py). Same discipline as test_run_pipeline_writes_pg.py: helpers that own their
 transaction are tested on pg_session_conn + a throwaway schema, never on the SAVEPOINT connection.
 """
 from __future__ import annotations

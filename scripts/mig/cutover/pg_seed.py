@@ -27,7 +27,7 @@ Prerequisites (NOT done by this script):
 What this script does NOT do (left for the operator / a separate step):
     - Restart Postgres into/out of load-time config (steps 1 and 14 of the plan's execution
       order) — a container restart, not a SQL operation.
-    - Run the reconciliation gate (scripts/mig/pg_reconcile.py, §Verification) — run that
+    - Run the reconciliation gate (scripts/mig/cutover/pg_reconcile.py, §Verification) — run that
       separately once this script reports success.
 
 Design note on index-stripping (a documented, deliberate simplification vs. the plan's idealized
@@ -42,9 +42,9 @@ is slower than the idealized path but not by an amount that justifies the added 
 script's measured wall-clock for the fmts load exceeds ~2x the plan's estimate, revisit.
 
 Usage:
-    python -X utf8 scripts/mig/pg_seed.py                  # run (resumable — see control.seed_progress)
-    python -X utf8 scripts/mig/pg_seed.py --dry-run         # print the unit plan, touch nothing
-    python -X utf8 scripts/mig/pg_seed.py --only bronze.fund_nav_daily   # single unit (debug)
+    python -X utf8 scripts/mig/cutover/pg_seed.py                  # run (resumable — see control.seed_progress)
+    python -X utf8 scripts/mig/cutover/pg_seed.py --dry-run         # print the unit plan, touch nothing
+    python -X utf8 scripts/mig/cutover/pg_seed.py --only bronze.fund_nav_daily   # single unit (debug)
     # Refuses (exit 3) a target that already passed the reconciliation gate, or whose tables hold rows
     # control.seed_progress does not record as loaded. --force-reseed bypasses only the first refusal.
 
@@ -80,7 +80,7 @@ except ImportError:  # pragma: no cover
     print("PyYAML is required (pip install pyyaml)", file=sys.stderr)
     raise
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 RENAME_MAP_PATH = REPO_ROOT / "db" / "pg" / "rename_map.yaml"
 DEFAULT_SQLITE_PATH = REPO_ROOT / "db" / "fondos.sqlite"
 
@@ -931,7 +931,7 @@ def main() -> int:
 
     print("\nSeed load complete. Next steps:")
     print("  1. Restart Postgres with production config (wal_level=replica) — see docker/postgresql.conf")
-    print("  2. Run scripts/mig/pg_reconcile.py against both the source SQLite file and this database")
+    print("  2. Run scripts/mig/cutover/pg_reconcile.py against both the source SQLite file and this database")
     print("  3. On green: filesystem snapshot, then chmod 444 the source SQLite file (90-day retention)")
     return 0
 

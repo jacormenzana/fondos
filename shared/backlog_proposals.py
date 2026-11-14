@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """backlog_proposals.py -- what opening a ticket proposes (FND-0378; plan ACTION_PLAN_BACKLOG_REFACTORING, Revision 2, step 2.8a; owner requirement: "open ticket: a single call; the system proposes relationships
 and groupings"). Pure rules; the reads live in shared/backlog_client.open_ticket. A proposal is information, never a gate: nothing is recorded as a link (the text ranking has no threshold that separates a neighbour
-from a non-neighbour, scripts/audit/backlog_links.py NEW_FLOOR), nobody approves anything, and a person or agent decides later with record_link_events / record_modules."""
+from a non-neighbour, scripts/gov/backlog/backlog_links.py NEW_FLOOR), nobody approves anything, and a person or agent decides later with record_link_events / record_modules."""
 from __future__ import annotations
 
 from typing import Optional

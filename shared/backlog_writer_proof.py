@@ -56,8 +56,8 @@ class BoundClient:
 
 
 def load_entry(spec: bw.WriterSpec, root: Path = ROOT):
-    """The entry module of a writer (its `entry` is a module name importable from the repo or scripts/audit)."""
-    for p in (str(root), str(Path(root) / "scripts" / "audit")):
+    """The entry module of a writer (its `entry` is a module name importable from the repo or scripts/gov/backlog)."""
+    for p in (str(root), str(Path(root) / "scripts" / "gov" / "backlog")):
         if p not in sys.path:
             sys.path.insert(0, p)
     mod = importlib.import_module(spec.entry)
@@ -77,7 +77,7 @@ EXTRA_TABLES = ("backlog.backlog_logs", "backlog.ticket_module_event")
 
 
 def export_extra(conn, tables: tuple = EXTRA_TABLES) -> dict:
-    """{table: [row dicts]} of the tables a writer may read besides the tickets and link events that scripts/audit/backlog_phase_b_replay.export_snapshot already holds. Run on a READ-ONLY connection."""
+    """{table: [row dicts]} of the tables a writer may read besides the tickets and link events that scripts/mig/backlog/backlog_phase_b_replay.export_snapshot already holds. Run on a READ-ONLY connection."""
     out = {}
     for table in tables:
         if not conn.execute("SELECT to_regclass(%s) IS NOT NULL", (table,)).fetchone()[0]:

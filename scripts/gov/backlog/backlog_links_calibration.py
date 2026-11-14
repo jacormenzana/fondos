@@ -11,8 +11,8 @@ Before `BACKLOG_INCIDENT_AUTO_APPEND_ENABLED` is switched on, the high-confidenc
   (b) the synthetic fixture tests/fixtures/backlog_incident_cases.json -- hard positives and hard negatives (same module /
       different defect, same defect / different wording, launcher RC texts, truncated tracebacks).
 
-    python scripts/audit/backlog_links_calibration.py            # report (read-only)
-    python scripts/audit/backlog_links_calibration.py --gate     # same, exit 1 on any false merge / fixture failure
+    python scripts/gov/backlog/backlog_links_calibration.py            # report (read-only)
+    python scripts/gov/backlog/backlog_links_calibration.py --gate     # same, exit 1 on any false merge / fixture failure
 
 Read-only. The pure functions take plain lists of dicts (unit-tested in tests/test_backlog_links_calibration.py); only `main`
 reads the backlog, through shared/backlog_client.py.
@@ -26,7 +26,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-_ROOT = Path(__file__).resolve().parents[2]
+_ROOT = Path(__file__).resolve().parents[3]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 

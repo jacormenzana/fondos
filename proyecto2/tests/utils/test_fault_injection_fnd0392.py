@@ -30,8 +30,8 @@ def _load(name, rel):
     return mod
 
 
-harness = _load("fault_injection_run", ("scripts", "audit", "fault_injection_run.py"))
-builder = _load("fault_injection_fixture", ("scripts", "audit", "fault_injection_fixture.py"))
+harness = _load("fault_injection_run", ("scripts", "audit", "nav", "fault_injection_run.py"))
+builder = _load("fault_injection_fixture", ("scripts", "audit", "nav", "fault_injection_fixture.py"))
 
 
 def _nav(n=60, start="2020-01-31", seed=5):

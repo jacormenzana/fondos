@@ -5,7 +5,7 @@
 Hermetic: the throwaway container inside a rolled-back savepoint (pg_conn). report_incident opens its own connection, so the
 tests hand it the fixture connection through a wrapper that never commits or closes it.
 
-    python scripts/ops/run_pg_tests.py -- tests/test_backlog_incident_overlap_pg.py
+    python scripts/gov/delivery/run_pg_tests.py -- tests/test_backlog_incident_overlap_pg.py
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from types import SimpleNamespace
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops")):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "mig" / "backlog")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 

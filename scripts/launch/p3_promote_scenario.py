@@ -56,7 +56,7 @@ def _governed_exceptions(conn, enabled: bool) -> tuple:
         governed = accepted_residuals.verify_governed(conn, AUDIT_DOMAIN)
     except Exception as exc:                                     # noqa: BLE001 -- the caller decides what an unreadable store means
         conn.rollback()
-        return ((f"control.audit_exception_event no es legible ({type(exc).__name__}): aplique scripts/ops/migrate_audit_governance.py"
+        return ((f"control.audit_exception_event no es legible ({type(exc).__name__}): aplique scripts/mig/fondos/migrate_audit_governance.py"
                  if enabled else None), {})
     if enabled and governed["drift"]:
         rule_id, isin, table, hist = governed["drift"][0]
@@ -222,7 +222,7 @@ def main(argv=None) -> int:
     try:
         if not lc.has_status_column(conn):
             print("ERROR: el ciclo de vida de escenarios no esta instalado (falta portfolio_scenarios.status): el owner debe aplicar "
-                  "scripts/ops/migrate_portfolio_scenario_status.py --apply")
+                  "scripts/mig/fondos/migrate_portfolio_scenario_status.py --apply")
             return lc.EXIT_NO_SCENARIO
         status = lc.get_status(conn, args.scenario_id)
         if status is None:

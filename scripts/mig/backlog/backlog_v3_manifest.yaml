@@ -1,5 +1,5 @@
 # Backlog v3 bootstrap manifest (O-V3-1 of doc/especificacion/ACTION_PLAN_BACKLOG_V3.md): the epic and its six workstreams, as tickets, and the links among them.
-# Read by scripts/mig/backlog_v3_bootstrap.py. Fixed and versioned: a change to a ticket text after it was applied is a log on the ticket, never an edit of this file.
+# Read by scripts/mig/backlog/backlog_v3_bootstrap.py. Fixed and versioned: a change to a ticket text after it was applied is a log on the ticket, never an edit of this file.
 #
 # `key` is local to this file; the database mints the real FND-nnnn id. A link endpoint is a key of this file (or an existing FND-nnnn id).
 # Existing tickets named in a text (FND-0331, FND-0334...) become PROPOSED RELATED links by themselves when the ticket is opened (backlog_client.open_ticket,
@@ -22,7 +22,7 @@ tickets:
       autonomy (human only: force, reopen, gate/mode/waiver decisions, collision adjudication); GitHub Actions opens the PR and enables auto-merge; the signed attestation becomes
       advisory; closure is automatic on deploy evidence; tickets are clustered by the module whose logic will change. Phase C artifacts it builds on: FND-0334. Child tickets: W1..W6.
     first_log: >-
-      Opened by the Backlog v3 bootstrap (scripts/mig/backlog_v3_bootstrap.py) from doc/especificacion/ACTION_PLAN_BACKLOG_V3.md. Children are linked SPLIT_FROM this epic and the
+      Opened by the Backlog v3 bootstrap (scripts/mig/backlog/backlog_v3_bootstrap.py) from doc/especificacion/ACTION_PLAN_BACKLOG_V3.md. Children are linked SPLIT_FROM this epic and the
       DEPENDS_ON links among them are the delivery order: W2 first, then W3, then W4, W4b, W5 and W6 (W1 is already delivered). Close the epic only when every child is CLOSED.
 
   - key: W1
@@ -39,7 +39,7 @@ tickets:
     first_log: >-
       Opened by the Backlog v3 bootstrap for a workstream that is already delivered: PR #14 merged on 2026-10-31 (merge commit b10b4cf). Still to verify end to end: the first branch
       that does not touch .github/workflows must open its PR and merge by itself (the first run failed only because the owner setting "Allow GitHub Actions to create and approve
-      pull requests" was off; the bootstrap branch itself is that test). Close through scripts/ops/close_release.py once verified.
+      pull requests" was off; the bootstrap branch itself is that test). Close through scripts/gov/backlog/close_release.py once verified.
 
   - key: W2
     title: "Backlog v3 W2: agent write authority (scoped logins backlog_agent and backlog_autopilot, sp_record_link, database-enforced limits)"
@@ -64,7 +64,7 @@ tickets:
     schema_name: backlog
     priority: HIGH
     description: >-
-      Extends scripts/audit/backlog_sync.py (FND-0334): new ops_event kinds MERGE, DEPLOY and CYCLE, a Closes: FND-nnnn trailer validated by the commit-msg hook, and a routine
+      Extends scripts/gov/backlog/backlog_sync.py (FND-0334): new ops_event kinds MERGE, DEPLOY and CYCLE, a Closes: FND-nnnn trailer validated by the commit-msg hook, and a routine
       sp_auto_transition that accepts only the evidence-backed edges (OPEN/TODO to IN_PROGRESS on a Refs: commit; to READY_FOR_DEPLOY on a merge that carries Closes:; to CLOSED
       when merged, close_condition probes pass, the delivery and incident gates (FND-0264) are clear and, for a change under db/, the drift check is clean). The incident gate of
       close_release.py moves to shared/backlog_release.py so both use one rule. Triggered by a reference-transaction hook, preflight and the cycle report; SHADOW mode for the
@@ -100,7 +100,7 @@ tickets:
       TARGET to enter IN_PROGRESS. Overrides the 2026-10-26 rejection of a hand-kept ticket_object registry: this one is derived, never maintained by hand.
     first_log: >-
       Opened by the Backlog v3 bootstrap. Live baseline 2026-10-31: 40 of 69 open tickets cite a module path in their text; 11 modules are shared by 2 or more open tickets, the largest
-      scripts/audit/audit_incident.py (9 tickets). Acceptance before go-live: precision of at least 70 percent and recall clearly above the text baseline, measured on the 72 confirmed
+      scripts/audit/stat/audit_incident.py (9 tickets). Acceptance before go-live: precision of at least 70 percent and recall clearly above the text baseline, measured on the 72 confirmed
       and 37 rejected OVERLAPS. Depends on W2.
 
   - key: W5

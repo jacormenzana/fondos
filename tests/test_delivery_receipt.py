@@ -1,7 +1,7 @@
 # tests/test_delivery_receipt.py
 # -*- coding: utf-8 -*-
 """FND-0375: the local test receipt. The pure rules of shared/delivery_receipt.py (which scope a change needs, which tests it runs, how a run is read and judged, the verdict of `tests_pass`), and
-scripts/audit/delivery_attest.py on a throwaway git repository with a fake test runner (the owner's three conditions: the receipt names the exact commit, a pass means tests really ran and passed,
+scripts/gov/delivery/delivery_attest.py on a throwaway git repository with a fake test runner (the owner's three conditions: the receipt names the exact commit, a pass means tests really ran and passed,
 every receipt is verifiable). R-7: no database, no network, no pipeline imports."""
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "audit")):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "gov" / "delivery")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -29,12 +29,12 @@ OK_TEXT = "..\n2 passed in 0.10s\n"
 @pytest.mark.parametrize("changed,expected", [
     ([], "docs_only"),
     (["doc/reglas/NORMAS_BACKLOG.md", "AGENTS.md", "out/audit/x.json", "deployments/r.md"], "docs_only"),
-    (["scripts/audit/delivery_attest.py"], "area"),
+    (["scripts/gov/delivery/delivery_attest.py"], "area"),
     (["tests/test_delivery_receipt.py"], "area"),
     (["proyecto2/tests/calculations/test_drawdown.py"], "area"),             # a test under a runtime tree does not need the full suite
     (["shared/delivery_receipt.py"], "full"),
     (["proyecto3/src/fund_scorer.py", "doc/x.md"], "full"),
-    (["scripts/ops/x.sh"], "area"),
+    (["scripts/mnt/db/x.sh"], "area"),
 ])
 def test_required_scope(changed, expected):
     assert dr.required_scope(changed) == expected
@@ -54,15 +54,15 @@ def test_select_tests_maps_modules_and_runs_changed_tests():
 
 def test_select_tests_covers_shell_and_batch_scripts_by_name_with_hyphens_as_underscores():
     avail = ["tests/test_post_commit.py", "tests/test_launcher_x.py", "tests/test_a.py"]
-    assert dr.select_tests(["scripts/audit/post-commit.sh"], avail) == (["tests/test_post_commit.py"], [])
+    assert dr.select_tests(["scripts/gov/repo/hooks/post-commit.sh"], avail) == (["tests/test_post_commit.py"], [])
     assert dr.select_tests(["scripts/launch/launcher_x.bat"], avail) == (["tests/test_launcher_x.py"], [])
-    assert dr.select_tests(["db/pg/x.sql", "scripts/audit/pre-commit.sh"], avail) == ([], ["db/pg/x.sql", "scripts/audit/pre-commit.sh"])
+    assert dr.select_tests(["db/pg/x.sql", "scripts/gov/repo/hooks/pre-commit.sh"], avail) == ([], ["db/pg/x.sql", "scripts/gov/repo/hooks/pre-commit.sh"])
 
 
 def test_select_tests_reports_code_no_test_covers():
-    sel, unc = dr.select_tests(["scripts/ops/new_tool.py", "scripts/audit/pre-commit.sh", "db/pg/x.sql", "conftest.py"], ["tests/test_a.py"])
+    sel, unc = dr.select_tests(["scripts/mig/fondos/new_tool.py", "scripts/gov/repo/hooks/pre-commit.sh", "db/pg/x.sql", "conftest.py"], ["tests/test_a.py"])
     assert sel == []
-    assert unc == ["conftest.py", "db/pg/x.sql", "scripts/audit/pre-commit.sh", "scripts/ops/new_tool.py"]
+    assert unc == ["conftest.py", "db/pg/x.sql", "scripts/gov/repo/hooks/pre-commit.sh", "scripts/mig/fondos/new_tool.py"]
 
 
 def test_a_deleted_test_is_nothing_to_run_and_nothing_uncovered():

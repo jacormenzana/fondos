@@ -1,6 +1,6 @@
 # tests/test_backlog_links_signals.py
 # -*- coding: utf-8 -*-
-"""scripts/audit/backlog_links.py: the pure core (signals S1-S4, candidate assembly, review file rules S-1 / D-2 / D-3).
+"""scripts/gov/backlog/backlog_links.py: the pure core (signals S1-S4, candidate assembly, review file rules S-1 / D-2 / D-3).
 
 Fixtures only: no database, no git, no pipeline import (R-7). Live-data behaviour is reported by `--evaluate`, never gated here.
 """
@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "audit")):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "gov" / "backlog")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 

@@ -1,6 +1,6 @@
 # proyecto1/tests/test_statistical_audit_runner_dialect.py
 # -*- coding: utf-8 -*-
-"""Helpers de dialecto de scripts/audit/run_statistical_audit.py (puerto a Postgres).
+"""Helpers de dialecto de scripts/audit/stat/run_statistical_audit.py (puerto a Postgres).
 Cumple R-7: sin importar pipeline.py ni core.io."""
 
 import datetime as dt
@@ -16,7 +16,7 @@ if _ROOT_DIR not in sys.path:
     sys.path.insert(0, _ROOT_DIR)
 
 _spec = importlib.util.spec_from_file_location(
-    "run_statistical_audit", os.path.join(_ROOT_DIR, "scripts", "audit", "run_statistical_audit.py"))
+    "run_statistical_audit", os.path.join(_ROOT_DIR, "scripts", "audit", "stat", "run_statistical_audit.py"))
 runner = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(runner)
 

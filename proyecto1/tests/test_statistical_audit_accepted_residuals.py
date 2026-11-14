@@ -31,8 +31,8 @@ def _load(name, rel):
     return mod
 
 
-runner = _load("run_statistical_audit", ("scripts", "audit", "run_statistical_audit.py"))
-cli = _load("accept_audit_residual", ("scripts", "audit", "accept_audit_residual.py"))
+runner = _load("run_statistical_audit", ("scripts", "audit", "stat", "run_statistical_audit.py"))
+cli = _load("accept_audit_residual", ("scripts", "audit", "stat", "accept_audit_residual.py"))
 
 NEXT_WEEK = date.today() + timedelta(days=7)
 

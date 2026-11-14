@@ -7,13 +7,13 @@ statement. It refuses unless the connection is NOT a live target read from the e
 owner DSN, with the localhost aliases equal) AND it is not on the SAME SERVER (host and port) as any live target AND its database name is on an exact allow-list (`fondos_test`, `backlog_staging_*`). A negative test such as "the name is not production" cannot work
 here: the live backlog is called `gestion` (127.0.0.1:5436), so the identification is positive. A convention is forgotten and a typo bypasses it; this is checked by the code.
 
-This module holds the guard so that every scenario shares ONE implementation (P#11); scripts/audit/backlog_phase_b_replay.py, its first user, re-exports these names.
+This module holds the guard so that every scenario shares ONE implementation (P#11); scripts/mig/backlog/backlog_phase_b_replay.py, its first user, re-exports these names.
 """
 from __future__ import annotations
 
 import os
 
-SCRATCH_DBNAMES = ("fondos_test",)                 # the throwaway database of the hermetic container (scripts/ops/run_pg_tests.py)
+SCRATCH_DBNAMES = ("fondos_test",)                 # the throwaway database of the hermetic container (scripts/gov/delivery/run_pg_tests.py)
 SCRATCH_DBPREFIXES = ("backlog_staging_",)         # the staging databases of FND-0351
 _LOCAL = {"localhost", "127.0.0.1", "::1", ""}
 _LIVE_DSN_VARS = ("FONDOS_BACKLOG_PG_DSN", "FONDOS_BACKLOG_PG_DSN_HUMAN", "FONDOS_PG_DSN", "FONDOS_PG_DSN_OWNER")

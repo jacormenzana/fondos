@@ -1,6 +1,6 @@
 # tests/test_backlog_gate.py
 # -*- coding: utf-8 -*-
-"""Phase C slice 2 (FND-0334), no database: shared/backlog_gate.py (message parsing and the verdict of a commit), scripts/audit/commit_msg_gate.py (the hook with a fake
+"""Phase C slice 2 (FND-0334), no database: shared/backlog_gate.py (message parsing and the verdict of a commit), scripts/gov/backlog/commit_msg_gate.py (the hook with a fake
 backlog) and the installed hooks in a throwaway git repository (commit-msg, pre-rebase). The hook never blocks a commit except for a malformed ticket token."""
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(ROOT), str(ROOT / "scripts" / "audit")):
+for _p in (str(ROOT), str(ROOT / "scripts" / "gov" / "backlog")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -84,7 +84,7 @@ def test_epoch_needs_an_offset_and_empty_means_not_armed():
 
 
 def test_the_sync_reads_the_gate_trailer_tree_and_parents_from_git_log():
-    sys.path.insert(0, str(ROOT / "scripts" / "audit"))
+    sys.path.insert(0, str(ROOT / "scripts" / "gov" / "backlog"))
     import backlog_sync as bs
     us, rs = "\x1f", "\x1e"
     log = f"{'f' * 40}{us}2026-11-03T10:00:00+01:00{us}feat: FND-0001 x{us}{us}{TREE}{us}{'p' * 40} {'q' * 40}{us}{NONCE}{rs}\n"
@@ -218,9 +218,9 @@ def repo(tmp_path):
     if not (BASH and have_git()):
         pytest.skip("bash and git are needed")
     r = tmp_path / "r"
-    (r / "scripts" / "audit").mkdir(parents=True)
+    (r / "scripts" / "gov" / "backlog").mkdir(parents=True)
     (r / "shared").mkdir()
-    shutil.copy(ROOT / "scripts" / "audit" / "commit_msg_gate.py", r / "scripts" / "audit")
+    shutil.copy(ROOT / "scripts" / "gov" / "backlog" / "commit_msg_gate.py", r / "scripts" / "gov" / "backlog")
     shutil.copy(ROOT / "shared" / "backlog_gate.py", r / "shared")
     env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t",
            "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull}
@@ -231,7 +231,7 @@ def repo(tmp_path):
         assert (p.returncode == 0) == ok, (a, p.stdout, p.stderr)
         return p
     git("init", "-q", "-b", "master")
-    p = subprocess.run([BASH, str(ROOT / "scripts" / "audit" / "commit-msg.sh")], cwd=r, capture_output=True, text=True, encoding="utf-8", env=env, timeout=60)
+    p = subprocess.run([BASH, str(ROOT / "scripts" / "gov" / "repo" / "hooks" / "commit-msg.sh")], cwd=r, capture_output=True, text=True, encoding="utf-8", env=env, timeout=60)
     assert p.returncode == 0, p.stderr
     (r / "f.txt").write_text("1")
     git("add", "f.txt")

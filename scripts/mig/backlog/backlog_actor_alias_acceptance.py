@@ -3,8 +3,8 @@
 """
 backlog_actor_alias_acceptance.py -- acceptance check of the actor-alias phase (FND-0330), read-only, evidence persisted.
 
-    python scripts/audit/backlog_actor_alias_acceptance.py --baseline                       # BEFORE the owner applies the phase
-    python scripts/audit/backlog_actor_alias_acceptance.py --verify --baseline-file FILE --migration-rc 0   # AFTER
+    python scripts/mig/backlog/backlog_actor_alias_acceptance.py --baseline                       # BEFORE the owner applies the phase
+    python scripts/mig/backlog/backlog_actor_alias_acceptance.py --verify --baseline-file FILE --migration-rc 0   # AFTER
 
 --baseline fingerprints the append-only history (count + md5 of every progress log and link event up to the current maximum ids) and
 writes out/audit/fnd0330_baseline_<UTC>.json. --verify, after the phase is applied, requires ALL of:
@@ -24,7 +24,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 OUT_DIR = ROOT / "out" / "audit"
 RC_OK, RC_FAIL, RC_USAGE = 0, 1, 2
 EXPECTED_ALIASES = 13
@@ -63,7 +63,7 @@ def main(argv: "list | None" = None) -> int:
         return RC_USAGE
 
     sys.path.insert(0, str(ROOT))
-    sys.path.insert(0, str(ROOT / "scripts" / "ops"))
+    sys.path.insert(0, str(ROOT / "scripts" / "mig" / "backlog"))
     import shared.config  # noqa: F401  (loads the repo .env: FONDOS_BACKLOG_PG_DSN)
     from shared import backlog_client as bc
     OUT_DIR.mkdir(parents=True, exist_ok=True)

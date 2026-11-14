@@ -4,7 +4,7 @@
 sp_auto_transition, the autopilot's only move. Hermetic: the throwaway container inside a rolled-back savepoint; never the live backlog. Statements marked "as the autopilot" run under
 SESSION AUTHORIZATION backlog_autopilot, so the privileges are the real ones.
 
-    python scripts/ops/run_pg_tests.py -- tests/test_backlog_autopilot_pg.py
+    python scripts/gov/delivery/run_pg_tests.py -- tests/test_backlog_autopilot_pg.py
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ import psycopg
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops"), str(Path(__file__).resolve().parent)):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "mig" / "backlog"), str(Path(__file__).resolve().parent)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 

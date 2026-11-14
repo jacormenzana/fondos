@@ -1,13 +1,13 @@
 # tests/test_backlog_actor_alias_acceptance.py
 # -*- coding: utf-8 -*-
-"""Acceptance logic of the actor-alias phase (FND-0330; scripts/audit/backlog_actor_alias_acceptance.py). Pure: no database (R-7)."""
+"""Acceptance logic of the actor-alias phase (FND-0330; scripts/mig/backlog/backlog_actor_alias_acceptance.py). Pure: no database (R-7)."""
 from __future__ import annotations
 
 import sys
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops"), str(_ROOT / "scripts" / "audit")):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "mig" / "backlog"), str(_ROOT / "scripts" / "mig" / "backlog")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 

@@ -34,7 +34,7 @@ MARK = "[AUDIT_P2_POST_DRAFT]"
 @pytest.fixture()
 def tree(tmp_path):
     t = e2e.Tree(tmp_path)
-    (t.root / "scripts" / "audit" / "run_statistical_audit.py").write_text(_AUDIT_STUB)
+    (t.root / "scripts" / "audit" / "stat" / "run_statistical_audit.py").write_text(_AUDIT_STUB)
     return t
 
 

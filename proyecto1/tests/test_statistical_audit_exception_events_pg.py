@@ -1,6 +1,6 @@
 # proyecto1/tests/test_statistical_audit_exception_events_pg.py
 # -*- coding: utf-8 -*-
-"""FND-0263 on the hermetic Postgres container (python scripts/ops/run_pg_tests.py): the event writers keep
+"""FND-0263 on the hermetic Postgres container (python scripts/gov/delivery/run_pg_tests.py): the event writers keep
 control.audit_accepted_finding equal to its history in one transaction, the trigger makes the history append-only, and the owner
 migration backfills today's residuals and is idempotent. The writers commit, so they run in a throwaway schema with PRODUCTION
 transaction semantics (autocommit off); the trigger and the migration run on the real control schema inside a rolled-back savepoint."""
@@ -15,7 +15,7 @@ import pytest
 _ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
-sys.path.insert(0, os.path.join(_ROOT, "scripts", "ops"))
+sys.path.insert(0, os.path.join(_ROOT, "scripts", "mig", "fondos"))
 
 import migrate_audit_governance as mig  # noqa: E402
 from shared.statistical_audit import accepted_residuals as ar  # noqa: E402

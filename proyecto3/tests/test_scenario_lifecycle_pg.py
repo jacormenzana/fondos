@@ -5,7 +5,7 @@ Scenario lifecycle on Postgres (owner decision 2026-10-11): the promotion transa
 the migration's own DDL block (see scenario_pg_support.py). The DDL itself is covered by test_scenario_status_ddl_pg.py and the builder
 rules by test_scenario_builder_pg.py.
 
-    python scripts/ops/run_pg_tests.py -- proyecto3/tests/test_scenario_lifecycle_pg.py
+    python scripts/gov/delivery/run_pg_tests.py -- proyecto3/tests/test_scenario_lifecycle_pg.py
 """
 from __future__ import annotations
 

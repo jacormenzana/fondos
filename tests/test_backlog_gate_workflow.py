@@ -38,7 +38,7 @@ def test_it_fetches_the_full_history_and_runs_the_verifier_on_the_chosen_base():
     assert checkout["with"]["fetch-depth"] == 0
     run = next(s for s in steps if "verify_attestation.py" in str(s.get("run", "")))
     assert "--base" in run["run"] and "steps.base.outputs.base" in run["run"]
-    assert (ROOT / "scripts" / "audit" / "verify_attestation.py").is_file()
+    assert (ROOT / "scripts" / "gov" / "backlog" / "verify_attestation.py").is_file()
 
 
 def test_untrusted_inputs_are_never_interpolated_into_a_shell_script():

@@ -2,7 +2,7 @@
 
 The block `cycle_flag_read_ts` of db/pg/35_control.sql is loaded by the hermetic container with the rest of the file; the tests also drop the column
 to prove the writer still works before the owner applies it. pg_conn is a rolled-back SAVEPOINT connection: nothing persists.
-Run: python scripts/ops/run_pg_tests.py -- tests/test_cycle_flag_read_ts_pg.py
+Run: python scripts/gov/delivery/run_pg_tests.py -- tests/test_cycle_flag_read_ts_pg.py
 """
 import importlib.util
 import sys
@@ -17,7 +17,7 @@ if str(_ROOT) not in sys.path:
 
 from shared import cycle_telemetry as ct  # noqa: E402
 
-_spec = importlib.util.spec_from_file_location("migrate_cycle_flag_read_ts", _ROOT / "scripts" / "ops" / "migrate_cycle_flag_read_ts.py")
+_spec = importlib.util.spec_from_file_location("migrate_cycle_flag_read_ts", _ROOT / "scripts" / "mig" / "fondos" / "migrate_cycle_flag_read_ts.py")
 mig = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(mig)
 

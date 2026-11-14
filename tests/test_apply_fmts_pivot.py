@@ -1,7 +1,7 @@
 # tests/test_apply_fmts_pivot.py
 # -*- coding: utf-8 -*-
 """
-Pure-Python coverage for scripts/ops/apply_fmts_pivot.py's DDL extraction + name substitution
+Pure-Python coverage for scripts/mig/fondos/apply_fmts_pivot.py's DDL extraction + name substitution
 (v27 pivot, 2026-09-27, harmonic-marinating-balloon.md). No database needed -- these functions only
 read db/pg/30_gold.sql / db/pg/40_matviews.sql and do string substitution to build the `_new`
 staging DDL the live migration executes. Guards against the two failure modes that would otherwise
@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "scripts" / "ops"))
+sys.path.insert(0, str(ROOT / "scripts" / "mig" / "fondos"))
 
 import apply_fmts_pivot as p  # noqa: E402
 

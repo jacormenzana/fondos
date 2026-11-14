@@ -6,7 +6,7 @@ Owner decision of 2026-10-27: an append-only history, filled by a trigger, of th
 requires its COVERAGE (every column, every kind of change) and its EFFECTIVENESS (how many changes carry an actor) to be verified before the limitation is resolved:
 this suite covers the first completely and builds the measure of the second. Hermetic: the throwaway container inside a rolled-back savepoint (pg_conn).
 
-    python scripts/ops/run_pg_tests.py -- tests/test_backlog_history_pg.py
+    python scripts/gov/delivery/run_pg_tests.py -- tests/test_backlog_history_pg.py
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ import psycopg
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops"), str(Path(__file__).resolve().parent)):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "mig" / "backlog"), str(Path(__file__).resolve().parent)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 

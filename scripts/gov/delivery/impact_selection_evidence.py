@@ -1,13 +1,13 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """impact_selection_evidence.py -- the evidence harness of the impact selector (FND-0385; plan sections 5 and 6). It measures; it never changes the repository, the receipts of a delivery or the live database.
-Every run happens in a scratch clone of an exact commit (a real git repository) with the hermetic throwaway Postgres of scripts/ops/run_pg_tests.py.
+Every run happens in a scratch clone of an exact commit (a real git repository) with the hermetic throwaway Postgres of scripts/gov/delivery/run_pg_tests.py.
 
-    python scripts/audit/impact_selection_evidence.py baseline --work DIR [--sha HEAD] [--runs 1]   # E1: per-test verdicts and durations of the full suite (flakes when --runs > 1)
-    python scripts/audit/impact_selection_evidence.py trace    --work DIR [--sha HEAD]              # E2: one full run with shared/testing/impact_trace.py, then the comparison below
-    python scripts/audit/impact_selection_evidence.py compare  --work DIR [--sha HEAD]              # E2: every file a test ran must be in the selector's static closure of that test
-    python scripts/audit/impact_selection_evidence.py replay   [--limit N]                          # E3: the selector at the commit of every recorded full receipt, against the tests that failed there
-    python scripts/audit/impact_selection_evidence.py mutate   --work DIR [--only M01,M02] [--batch 6]  # E4: mutants of the channels the selector must see; a failing test outside the selection is an ESCAPE
+    python scripts/gov/delivery/impact_selection_evidence.py baseline --work DIR [--sha HEAD] [--runs 1]   # E1: per-test verdicts and durations of the full suite (flakes when --runs > 1)
+    python scripts/gov/delivery/impact_selection_evidence.py trace    --work DIR [--sha HEAD]              # E2: one full run with shared/testing/impact_trace.py, then the comparison below
+    python scripts/gov/delivery/impact_selection_evidence.py compare  --work DIR [--sha HEAD]              # E2: every file a test ran must be in the selector's static closure of that test
+    python scripts/gov/delivery/impact_selection_evidence.py replay   [--limit N]                          # E3: the selector at the commit of every recorded full receipt, against the tests that failed there
+    python scripts/gov/delivery/impact_selection_evidence.py mutate   --work DIR [--only M01,M02] [--batch 6]  # E4: mutants of the channels the selector must see; a failing test outside the selection is an ESCAPE
 
 Read-only on the repository: `baseline` and `trace` write only under --work; `replay` reads git and out/audit/delivery_receipts.jsonl. The evidence line that lets the selector ever leave SHADOW
 (`kind: impact_evidence`) is written by `finalize`, and only from results that all passed (see that command)."""
@@ -25,8 +25,8 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Optional
 
-ROOT = Path(__file__).resolve().parents[2]
-for _p in (str(ROOT), str(ROOT / "scripts" / "audit")):
+ROOT = Path(__file__).resolve().parents[3]
+for _p in (str(ROOT), str(ROOT / "scripts" / "gov" / "delivery")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 import delivery_attest as da  # noqa: E402
@@ -86,7 +86,7 @@ def run_clone(clone: Path, label_dir: Path, *, traced: bool = False, plan: Optio
         env.update(IMPACT_TRACE_DIR=str(trace_dir), IMPACT_TRACE_ROOT=str(clone), PYTEST_ADDOPTS="-p shared.testing.impact_trace")
     da._wait_for_cycle(60)
     t0 = time.time()
-    cmd = [sys.executable, "scripts/ops/run_pg_tests.py", "--image", "postgres:17", "--junit-dir", str(junit)]
+    cmd = [sys.executable, "scripts/gov/delivery/run_pg_tests.py", "--image", "postgres:17", "--junit-dir", str(junit)]
     if plan is not None:
         plan_file = label_dir / "plan.json"
         plan_file.write_text(json.dumps(plan, sort_keys=True), encoding="utf-8")
@@ -406,7 +406,7 @@ import re  # noqa: E402
 # file (a production path) they would be exactly what those policy tests forbid, and they failed this very commit's receipt once (found by the first traced full run, 2026-11-07).
 _SECURITY = [
     ("shared/impact_mut_sqlite.py", ("import ", "sqlite", "3\n"), "a module imports the retired SQLite driver", "tests/test_dialect_coverage.py"),
-    ("scripts/audit/impact_mut_insert.py", ("Q = \"INSERT INTO ", "backlog", ".backlog (action_point_id) VALUES ('X')\"\n"), "a raw write to the ticket table outside the single door", "tests/test_backlog_single_door.py"),
+    ("scripts/audit/stat/impact_mut_insert.py", ("Q = \"INSERT INTO ", "backlog", ".backlog (action_point_id) VALUES ('X')\"\n"), "a raw write to the ticket table outside the single door", "tests/test_backlog_single_door.py"),
     ("shared/impact_mut_writer.py", ("ACTOR = 'sys", "tem:impact-mut-writer'\n"), "an automatic writer identity that is not registered", "tests/test_backlog_writers.py"),
     ("proyecto2/src/impact_mut_log.py", ("P = 'lo", "gs/impact_mut.log'\n"), "a module writes under a log directory at the repository root", "tests/test_log_paths.py"),
 ]
@@ -593,7 +593,7 @@ def cmd_selective(args) -> int:
     shutil.rmtree(clone, ignore_errors=True)
     work.mkdir(parents=True, exist_ok=True)
     checkout_tree(rec["sha"], clone, ROOT)
-    shutil.copy(ROOT / "scripts" / "ops" / "run_pg_tests.py", clone / "scripts" / "ops" / "run_pg_tests.py")      # the ORCHESTRATOR (container, DDL, --suite-files, --junit-dir) of today; the code under test is the commit's
+    shutil.copy(ROOT / "scripts" / "gov" / "delivery" / "run_pg_tests.py", clone / "scripts" / "gov" / "delivery" / "run_pg_tests.py")      # the ORCHESTRATOR (container, DDL, --suite-files, --junit-dir) of today; the code under test is the commit's
     base = None
     if any(not (clone / c).exists() for c in rec["changed"]) and rec.get("base") and rec["base"] != da.EMPTY_TREE:
         btmp = work / "base"

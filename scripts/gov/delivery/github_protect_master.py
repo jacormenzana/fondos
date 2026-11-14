@@ -3,11 +3,11 @@
 """
 github_protect_master.py -- protection of the `master` branch of the repository (FND-0336, owner action O-5 of doc/especificacion/PROPUESTA_BACKLOG_V2.md).
 
-    python scripts/ops/github_protect_master.py                 # DRY RUN: prints the settings it would apply and the current PUBLIC state; no token needed
-    python scripts/ops/github_protect_master.py --apply         # applies them (needs GITHUB_ADMIN_TOKEN), then reads the result back
-    python scripts/ops/github_protect_master.py --verify        # read-only check of the effective rules (public API; full detail too when GITHUB_ADMIN_TOKEN is set)
-    python scripts/ops/github_protect_master.py --remove --apply  # EMERGENCY ONLY (owner): removes the protection; log V-GATE-EMERGENCY in FND-0336 and restore it within 48 h
-    python scripts/ops/github_protect_master.py --with-backlog-gate --apply   # the owner, once the signing key is committed: ALSO require `backlog-gate` (FND-0334 slice 4)
+    python scripts/gov/delivery/github_protect_master.py                 # DRY RUN: prints the settings it would apply and the current PUBLIC state; no token needed
+    python scripts/gov/delivery/github_protect_master.py --apply         # applies them (needs GITHUB_ADMIN_TOKEN), then reads the result back
+    python scripts/gov/delivery/github_protect_master.py --verify        # read-only check of the effective rules (public API; full detail too when GITHUB_ADMIN_TOKEN is set)
+    python scripts/gov/delivery/github_protect_master.py --remove --apply  # EMERGENCY ONLY (owner): removes the protection; log V-GATE-EMERGENCY in FND-0336 and restore it within 48 h
+    python scripts/gov/delivery/github_protect_master.py --with-backlog-gate --apply   # the owner, once the signing key is committed: ALSO require `backlog-gate` (FND-0334 slice 4)
 
 The settings (owner decision of 2026-10-26): a pull request is required before merging (0 required approvals: the owner is the only reviewer); the four CI checks below
 are required; branches need not be up to date (parallel pull requests are not serialised); ADMINISTRATORS ARE INCLUDED (every session publishes with the owner's own account,

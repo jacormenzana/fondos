@@ -8,7 +8,7 @@ an A/B recompute result") como comprobacion mecanica, no solo disciplina manual 
 
 capture_state() necesita una conexion viva a Postgres; solo se cubre aqui la parte pura
 (assert_recompute_happened), que es la logica de decision real. La integracion end-to-end de
-capture_state se verifica en vivo (scripts/audit/run_statistical_audit.py --state-snapshot /
+capture_state se verifica en vivo (scripts/audit/stat/run_statistical_audit.py --state-snapshot /
 --verify-recompute), no aqui.
 
 Cumple R-7: sin importar pipeline.py ni core.io.

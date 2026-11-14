@@ -1,6 +1,6 @@
 # tests/test_publish_master.py
 # -*- coding: utf-8 -*-
-"""FND-0273: the decision logic of scripts/ops/publish_master.py (pure; no git, no network, no pipeline imports -- R-7), plus one test
+"""FND-0273: the decision logic of scripts/gov/delivery/publish_master.py (pure; no git, no network, no pipeline imports -- R-7), plus one test
 against a real throwaway repository for the git plumbing (range, ancestry)."""
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import sys
 import pytest
 
 _ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-_spec = importlib.util.spec_from_file_location("publish_master", os.path.join(_ROOT, "scripts", "ops", "publish_master.py"))
+_spec = importlib.util.spec_from_file_location("publish_master", os.path.join(_ROOT, "scripts", "gov", "delivery", "publish_master.py"))
 pm = importlib.util.module_from_spec(_spec)
 sys.modules["publish_master"] = pm
 _spec.loader.exec_module(pm)

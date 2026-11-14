@@ -1,6 +1,6 @@
 # tests/test_backlog_phase_a_acceptance.py
 # -*- coding: utf-8 -*-
-"""Acceptance logic of Backlog v2 Phase A (FND-0331; scripts/audit/backlog_phase_a_acceptance.py). Pure: no database (R-7). The hermetic counterpart, which
+"""Acceptance logic of Backlog v2 Phase A (FND-0331; scripts/mig/backlog/backlog_phase_a_acceptance.py). Pure: no database (R-7). The hermetic counterpart, which
 runs the checker against the real DDL, is tests/test_backlog_phase_a_acceptance_pg.py."""
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "audit")):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "mig" / "backlog")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 

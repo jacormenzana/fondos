@@ -3,11 +3,11 @@
 """
 backlog_drift.py -- does the LIVE backlog database have everything the DDL of master defines? (Backlog v2, FND-0351 family; NORMAS_BACKLOG.md 9.1). Read-only.
 
-    python scripts/ops/backlog_drift.py                 # builds master's DDL in the throwaway container, reads the live catalog (read-only) and prints the drift
-    python scripts/ops/backlog_drift.py --json          # the same as JSON
+    python scripts/gov/backlog/backlog_drift.py                 # builds master's DDL in the throwaway container, reads the live catalog (read-only) and prints the drift
+    python scripts/gov/backlog/backlog_drift.py --json          # the same as JSON
 
 Why. A phase can be merged to master and never applied (it happened with FND-0350: the code was on master, the live `sp_set_gate` still had its old signature), and nothing in the repository says so. This
-applies the phases of scripts/ops/migrate_backlog_v2.py to the hermetic container IN THE ORDER THE LIVE DATABASE RECEIVED THEM, fingerprints what they leave (an md5 of every routine definition and view,
+applies the phases of scripts/mig/backlog/migrate_backlog_v2.py to the hermetic container IN THE ORDER THE LIVE DATABASE RECEIVED THEM, fingerprints what they leave (an md5 of every routine definition and view,
 the columns of every relation of the backlog schema) and compares it with the live catalog. For each difference it names the phase whose DDL mentions the object, so the owner knows which command to run
 (dry run first). The IAM phase is not applied by design and is not part of the comparison; the phase `revoke` (A-2) changes privileges only, not definitions, so it is not either.
 The live database is only READ (pg_catalog queries on a read-only connection); the container is destroyed.
@@ -26,9 +26,9 @@ import sys
 import tempfile
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT / "scripts" / "ops"))
+sys.path.insert(0, str(ROOT / "scripts" / "mig" / "backlog"))
 RC_OK, RC_DRIFT, RC_USAGE = 0, 1, 2
 PHASES_IN_ORDER = ("transitions", "human", "history", "relations", "groups", "sync", "hook", "collision", "attest", "autonomy", "events", "modules", "probes")   # autonomy (Backlog v3 W2 / W3, FND-0357 / FND-0358) needs relations, groups and sync before it
 LIVE_ONLY_OK = ("vw_backlog_kpis",)               # legacy analytics view of 10_kpis_and_release.sql: live, not part of the phases compared
@@ -104,7 +104,7 @@ def report_lines(d: dict) -> list:
         phases.add(ph)
         lines.append(f"  columns of {rel}: missing live {miss or '-'}, extra live {extra or '-'}  (phase {ph or '?'})")
     for ph in sorted(p for p in phases if p):
-        lines.append(f"  -> the owner re-applies it: python scripts/ops/migrate_backlog_v2.py --phase {ph}   (dry run first, then --apply; phases are idempotent)")
+        lines.append(f"  -> the owner re-applies it: python scripts/mig/backlog/migrate_backlog_v2.py --phase {ph}   (dry run first, then --apply; phases are idempotent)")
     if d["live_only"]:
         lines.append(f"  live only (not in master's DDL; informational): {d['live_only']}")
     return lines
@@ -127,7 +127,7 @@ def main(argv: list | None = None) -> int:
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "master_fingerprint.json"
         env = {**os.environ, "FONDOS_DRIFT_OUT": str(out)}
-        rc = subprocess.run([sys.executable, "-X", "utf8", str(ROOT / "scripts" / "ops" / "run_pg_tests.py"), "--image", args.image, "--", "tests/test_backlog_ddl_fingerprint_pg.py", "-q", "--tb=short",
+        rc = subprocess.run([sys.executable, "-X", "utf8", str(ROOT / "scripts" / "gov" / "delivery" / "run_pg_tests.py"), "--image", args.image, "--", "tests/test_backlog_ddl_fingerprint_pg.py", "-q", "--tb=short",
                              "-p", "no:cacheprovider"], cwd=ROOT, env=env, capture_output=True, text=True, encoding="utf-8").returncode
         if rc != 0 or not out.exists():
             print("error: master's DDL could not be built in the container (is WSL awake?)", file=sys.stderr)

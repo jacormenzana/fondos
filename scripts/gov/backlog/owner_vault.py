@@ -3,12 +3,12 @@
 """
 owner_vault.py -- one-time setup of the owner vault (shared/owner_vault.py). Run it in YOUR terminal, once per string; after that the owner tools find their strings by themselves.
 
-    python scripts/ops/owner_vault.py set FONDOS_PG_DSN_OWNER      # asks for the value with hidden input (a real console is required); stores it encrypted (Windows DPAPI)
-    python scripts/ops/owner_vault.py set FONDOS_PG_DSN_OWNER --password-only   # types ONLY the password: role, database, host and port are filled in
-    python scripts/ops/owner_vault.py set FONDOS_PG_DSN_OWNER --window          # the value (or the password) in a small window whose field accepts a PASTE
-    python scripts/ops/owner_vault.py list                         # the NAMES stored (never a value) and which tools receive each
-    python scripts/ops/owner_vault.py check [--connect]            # every stored value decrypts for this user and points where it should (never prints one); --connect also logs in once with each
-    python scripts/ops/owner_vault.py remove FONDOS_PG_DSN_OWNER
+    python scripts/gov/backlog/owner_vault.py set FONDOS_PG_DSN_OWNER      # asks for the value with hidden input (a real console is required); stores it encrypted (Windows DPAPI)
+    python scripts/gov/backlog/owner_vault.py set FONDOS_PG_DSN_OWNER --password-only   # types ONLY the password: role, database, host and port are filled in
+    python scripts/gov/backlog/owner_vault.py set FONDOS_PG_DSN_OWNER --window          # the value (or the password) in a small window whose field accepts a PASTE
+    python scripts/gov/backlog/owner_vault.py list                         # the NAMES stored (never a value) and which tools receive each
+    python scripts/gov/backlog/owner_vault.py check [--connect]            # every stored value decrypts for this user and points where it should (never prints one); --connect also logs in once with each
+    python scripts/gov/backlog/owner_vault.py remove FONDOS_PG_DSN_OWNER
 
 The values are never printed, logged or passed on the command line. The file is %LOCALAPPDATA%\\fondos\\owner_vault.json, outside the repository. `set` refuses to run without a real console, so an
 agent's shell cannot fill or change the vault. Honest limit: a guard, not a security boundary (NORMAS_BACKLOG 9.2).
@@ -21,7 +21,7 @@ import getpass
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 from shared import owner_vault as ov  # noqa: E402
 

@@ -5,7 +5,7 @@ PortfolioBuilder persistence rules under the scenario lifecycle (owner decision 
 anything that is not a DRAFT, stamps `built_at`, and the rotation baseline is the PRODUCTION scenario. Toy tables carrying the migration's own
 DDL block (scenario_pg_support.py).
 
-    python scripts/ops/run_pg_tests.py -- proyecto3/tests/test_scenario_builder_pg.py
+    python scripts/gov/delivery/run_pg_tests.py -- proyecto3/tests/test_scenario_builder_pg.py
 """
 from __future__ import annotations
 

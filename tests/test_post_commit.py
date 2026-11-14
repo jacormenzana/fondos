@@ -1,6 +1,6 @@
 # tests/test_post_commit.py
 # -*- coding: utf-8 -*-
-"""FND-0376: the installer of the post-commit hook (scripts/audit/post-commit.sh) that starts the automatic publication of master after each commit. The hook must never block or fail a commit, never push by
+"""FND-0376: the installer of the post-commit hook (scripts/gov/repo/hooks/post-commit.sh) that starts the automatic publication of master after each commit. The hook must never block or fail a commit, never push by
 itself, and do nothing in a clone that lacks the publisher. R-7: no database, no network."""
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-INSTALLER = _ROOT / "scripts" / "audit" / "post-commit.sh"
+INSTALLER = _ROOT / "scripts" / "gov" / "repo" / "hooks" / "post-commit.sh"
 needs_sh = pytest.mark.skipif(shutil.which("sh") is None or shutil.which("git") is None, reason="sh and git are needed")
 
 
@@ -39,5 +39,5 @@ def test_the_installer_writes_an_executable_hook_and_the_hook_is_harmless_withou
     hook = repo / ".git" / "hooks" / "post-commit"
     assert hook.exists() and hook.read_text(encoding="utf-8") == hook_body() + "\n"
     ran = subprocess.run(["sh", str(hook)], cwd=repo, capture_output=True, text=True, timeout=60)
-    assert ran.returncode == 0 and ran.stdout == ""                                                      # no scripts/audit/auto_publish.py in this clone: it does nothing, quietly
+    assert ran.returncode == 0 and ran.stdout == ""                                                      # no scripts/gov/delivery/auto_publish.py in this clone: it does nothing, quietly
     subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "c"], cwd=repo, check=True)   # a real commit through the installed hook succeeds

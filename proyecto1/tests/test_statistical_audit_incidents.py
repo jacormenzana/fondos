@@ -1,7 +1,7 @@
 # proyecto1/tests/test_statistical_audit_incidents.py
 # -*- coding: utf-8 -*-
 """FND-0264 (GOV-05): the closed-loop remediation core (shared/statistical_audit/incidents.py), the CLI helpers and the closure gate of
-scripts/ops/close_release.py. Pure (R-7); the writers are in test_statistical_audit_incidents_pg.py."""
+scripts/gov/backlog/close_release.py. Pure (R-7); the writers are in test_statistical_audit_incidents_pg.py."""
 from __future__ import annotations
 
 import importlib.util
@@ -159,9 +159,9 @@ def test_a_certified_incident_without_its_certifying_run_does_not_count():
     assert not closable("FND-0900", [incident(state="CERTIFIED", certified_run_id=None)]).ok
 
 
-# --- scripts/ops/close_release.py ------------------------------------------------------------------------------------------------------------
+# --- scripts/gov/backlog/close_release.py ------------------------------------------------------------------------------------------------------------
 def _close():
-    return _load("close_release_t", ("scripts", "ops", "close_release.py"))
+    return _load("close_release_t", ("scripts", "gov", "backlog", "close_release.py"))
 
 
 def test_close_release_validates_its_arguments():
@@ -187,9 +187,9 @@ def test_close_release_incident_gate_refuses_an_uncertified_incident_and_fails_c
     assert "fail closed" in cr.incident_gate(["FND-0900"], [], False, True)[0]              # no store, loop on: refuse
 
 
-# --- scripts/audit/audit_incident.py helpers ----------------------------------------------------------------------------------------------------
+# --- scripts/audit/stat/audit_incident.py helpers ----------------------------------------------------------------------------------------------------
 def _cli():
-    return _load("audit_incident_t", ("scripts", "audit", "audit_incident.py"))
+    return _load("audit_incident_t", ("scripts", "audit", "stat", "audit_incident.py"))
 
 
 def test_build_reaudit_keeps_only_critical_violators_and_reads_the_sample_scope_from_the_manifest():
@@ -231,7 +231,7 @@ def test_the_incident_loop_switch_is_on_since_the_owner_confirmed_d7():
 
 
 def test_the_incident_ddl_block_carries_the_live_index_and_the_certification_checks():
-    sys.path.insert(0, os.path.join(_ROOT, "scripts", "ops"))
+    sys.path.insert(0, os.path.join(_ROOT, "scripts", "mig", "fondos"))
     from migrate_cycle_telemetry import ddl_block
     block = ddl_block(name="audit_incident")
     for needle in ("uq_audit_incident_live", "WHERE state <> 'CLOSED'", "audit_incident_certified_ck", "audit_incident_closed_ck",
@@ -243,14 +243,14 @@ def test_the_incident_ddl_block_carries_the_live_index_and_the_certification_che
 def test_the_incident_columns_match_the_select_and_the_ddl():
     selected = inc._INCIDENTS_SQL.split("SELECT ", 1)[1].split(" FROM ", 1)[0]
     assert tuple(c.strip() for c in selected.split(",")) == inc.INCIDENT_COLUMNS
-    sys.path.insert(0, os.path.join(_ROOT, "scripts", "ops"))
+    sys.path.insert(0, os.path.join(_ROOT, "scripts", "mig", "fondos"))
     from migrate_cycle_telemetry import ddl_block
     for col in inc.INCIDENT_COLUMNS:
         assert f"    {col} " in ddl_block(name="audit_incident"), col
 
 
 def test_a_sample_run_records_the_funds_it_covered_in_its_manifest():
-    runner = _load("rsa_incident_t", ("scripts", "audit", "run_statistical_audit.py"))
+    runner = _load("rsa_incident_t", ("scripts", "audit", "stat", "run_statistical_audit.py"))
     run = runner.AuditRun(domain="cost_attributes")
     run.scope_isins = ("LU2", "LU1")
 

@@ -1,13 +1,13 @@
 # tests/test_backlog_relations_pg.py
 # -*- coding: utf-8 -*-
-"""Phase B of Backlog v2 (FND-0333): db/pg_backlog/40_relations_v2.sql applied by scripts/ops/migrate_backlog_v2.py --phase relations, and the gate hooks
+"""Phase B of Backlog v2 (FND-0333): db/pg_backlog/40_relations_v2.sql applied by scripts/mig/backlog/migrate_backlog_v2.py --phase relations, and the gate hooks
 that step A-1 (30_transitions.sql) carries in sp_transition. Hermetic: the throwaway container inside a rolled-back savepoint (pg_conn).
 
 Covers: the delivery gate (prerequisite, hold, review flag; scope; the error lists the blockers), link semantics (IMPACTS, SUPERSEDES, OVERLAPS with
 `absorbs`, flag raise / acknowledge), DEPENDS_ON cycle detection, the exception path (p_force with a reason, the counted override, the switch that only a
 human actor changes), the structured wait annotation, privileges, idempotence, and the rollback.
 
-    python scripts/ops/run_pg_tests.py -- tests/test_backlog_relations_pg.py
+    python scripts/gov/delivery/run_pg_tests.py -- tests/test_backlog_relations_pg.py
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ import psycopg
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops"), str(Path(__file__).resolve().parent)):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "mig" / "backlog"), str(Path(__file__).resolve().parent)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 

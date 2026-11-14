@@ -9,7 +9,7 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-AUDIT = ROOT / "scripts" / "audit"
+AUDIT = ROOT / "scripts" / "gov" / "backlog"
 
 
 def used(name: str) -> set:

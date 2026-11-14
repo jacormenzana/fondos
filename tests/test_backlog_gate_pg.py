@@ -1,9 +1,9 @@
 # tests/test_backlog_gate_pg.py
 # -*- coding: utf-8 -*-
-"""Phase C slice 2 of Backlog v2 (FND-0334): db/pg_backlog/80_hook.sql applied by scripts/ops/migrate_backlog_v2.py --phase hook, the client functions and
-scripts/audit/backlog_sync.py judging commits by their Backlog-Gate trailer. Hermetic: the throwaway container inside a rolled-back savepoint (pg_conn); never the live backlog.
+"""Phase C slice 2 of Backlog v2 (FND-0334): db/pg_backlog/80_hook.sql applied by scripts/mig/backlog/migrate_backlog_v2.py --phase hook, the client functions and
+scripts/gov/backlog/backlog_sync.py judging commits by their Backlog-Gate trailer. Hermetic: the throwaway container inside a rolled-back savepoint (pg_conn); never the live backlog.
 
-    python scripts/ops/run_pg_tests.py -- tests/test_backlog_gate_pg.py
+    python scripts/gov/delivery/run_pg_tests.py -- tests/test_backlog_gate_pg.py
 """
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops"), str(_ROOT / "scripts" / "audit"), str(Path(__file__).resolve().parent)):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "mig" / "backlog"), str(_ROOT / "scripts" / "gov" / "backlog"), str(Path(__file__).resolve().parent)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 

@@ -59,7 +59,7 @@ def test_the_amortisation_rule_tolerates_a_printed_rise_and_keeps_alarming_an_un
 
 
 def test_the_runner_marks_only_the_rising_funds_the_text_vouches_for():
-    runner = _load("run_statistical_audit_t", "scripts/audit/run_statistical_audit.py")
+    runner = _load("run_statistical_audit_t", "scripts/audit/stat/run_statistical_audit.py")
 
     class Conn:
         def execute(self, sql, params=None):
@@ -83,7 +83,7 @@ def test_the_standing_marker_roundtrips_and_the_classes_are_the_tools():
     assert ar.parse_standing("an ordinary 90-day reason") is None and ar.parse_standing(None) is None
     with pytest.raises(ValueError):
         ar.standing_marker("WHATEVER", {})
-    tool = _load("accept_audit_residual_t", "scripts/audit/accept_audit_residual.py")
+    tool = _load("accept_audit_residual_t", "scripts/audit/stat/accept_audit_residual.py")
     assert tool.STANDING_CLASSES == ar.STANDING_CLASSES
 
 
@@ -105,7 +105,7 @@ def test_the_report_says_standing_instead_of_a_far_away_date():
 
 
 def test_a_standing_class_needs_the_costs_domain():
-    tool = _load("accept_audit_residual_t2", "scripts/audit/accept_audit_residual.py")
+    tool = _load("accept_audit_residual_t2", "scripts/audit/stat/accept_audit_residual.py")
     args = tool._parser().parse_args(["--domain", "p2", "--rule", "R", "--ap", "FND-0280", "--reason", "x" * 30, "--class", "PUBLISHER_DEFECT"])
     mode, problems = tool.mode_of(args)
     assert mode == "grant" and any("--class needs --domain costs" in p for p in problems)

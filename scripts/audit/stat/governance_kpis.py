@@ -3,7 +3,7 @@
 """
 governance_kpis.py -- read-only KPIs of the dual-governance model (FND-0251, roadmap item E).
 
-    python scripts/audit/governance_kpis.py [--runs 6] [--json]
+    python scripts/audit/stat/governance_kpis.py [--runs 6] [--json]
 
 Everything comes from tables that already exist (no DDL, nothing is written):
   1. promotions with / without a data override      ingestion_log  step P3_SCENARIO_PROMOTED       ("[OVERRIDE:" in the message)
@@ -24,7 +24,7 @@ from collections import Counter
 from datetime import date
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
 AUDIT_DOMAIN = "p2_metrics"

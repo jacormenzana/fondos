@@ -5,7 +5,7 @@
 Two parts:
   * the harness proves ITSELF with a demo writer: a good one passes; each of six bad ones (ignores the kill switch, ignores the caps, is not idempotent, concentrates its writes on one ticket, duplicates a
     write, writes a kind it did not declare) fails for the right reason. This runs in every hermetic suite.
-  * `test_prove_the_real_writer` runs only when scripts/audit/writer_proof.py asks for it (FONDOS_PROOF_WRITER, FONDOS_PROOF_SNAPSHOT, FONDOS_PROOF_RESULT): it loads a REAL snapshot, runs the real writer's
+  * `test_prove_the_real_writer` runs only when scripts/gov/backlog/writer_proof.py asks for it (FONDOS_PROOF_WRITER, FONDOS_PROOF_SNAPSHOT, FONDOS_PROOF_RESULT): it loads a REAL snapshot, runs the real writer's
     entry for real in the scratch database and writes the result for the CLI to record.
 Every scratch check calls assert_scratch first (shared/backlog_scratch.py): it refuses any live target, whatever its name."""
 from __future__ import annotations
@@ -20,7 +20,7 @@ from types import SimpleNamespace
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops"), str(_ROOT / "scripts" / "audit"), str(Path(__file__).resolve().parent)):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "gov" / "backlog"), str(_ROOT / "scripts" / "mig" / "backlog"), str(_ROOT / "scripts" / "mig" / "backlog"), str(Path(__file__).resolve().parent)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -175,7 +175,7 @@ def test_the_counts_are_per_identity_and_a_missing_table_counts_zero(scratch):
 REAL = os.environ.get("FONDOS_PROOF_WRITER")
 
 
-@pytest.mark.skipif(not REAL, reason="scripts/audit/writer_proof.py runs this one, with FONDOS_PROOF_WRITER and FONDOS_PROOF_SNAPSHOT")
+@pytest.mark.skipif(not REAL, reason="scripts/gov/backlog/writer_proof.py runs this one, with FONDOS_PROOF_WRITER and FONDOS_PROOF_SNAPSHOT")
 def test_prove_the_real_writer(pg_conn):
     spec = bw.REGISTRY[REAL]
     scratch_guard(pg_conn)

@@ -3,7 +3,7 @@
 """FND-0243 step 5 on Postgres: load_fx_coverage_inputs reads, per non-EUR class currency of the ACTIVE universe, the newest NAV and
 the newest ECB daily rate, and counts the active funds with NAV and unknown class currency.
 
-    python scripts/ops/run_pg_tests.py -- proyecto3/tests/test_fx_coverage_inputs_fnd0243_pg.py
+    python scripts/gov/delivery/run_pg_tests.py -- proyecto3/tests/test_fx_coverage_inputs_fnd0243_pg.py
 """
 from __future__ import annotations
 

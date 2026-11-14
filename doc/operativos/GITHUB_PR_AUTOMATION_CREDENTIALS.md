@@ -27,7 +27,7 @@ For **creating** (and updating) pull requests only, a **fine-grained** credentia
 Nothing else. In particular **do not grant**:
 
 - **Contents: write.** It is what *merging* a pull request needs (`PUT .../pulls/{n}/merge`), and it also lets the identity write to branches directly. Merging stays with the owner.
-- **Administration.** That is what `scripts/ops/github_protect_master.py` uses to read or change branch protection. It is a separate, owner-held, short-lived credential and must not be reused for this purpose.
+- **Administration.** That is what `scripts/gov/delivery/github_protect_master.py` uses to read or change branch protection. It is a separate, owner-held, short-lived credential and must not be reused for this purpose.
 - **Actions**, **Workflows**, **Secrets**, or any organisation-wide scope. A classic token with the `repo` scope is far too broad and should not be used.
 
 Optional, only if higher read limits are wanted: *Checks: read* (or *Commit statuses: read*) lets the identity read the four required check results with the authenticated rate limit (5,000 requests per hour) instead of 60.

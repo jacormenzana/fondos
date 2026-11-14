@@ -3,7 +3,7 @@
 """FND-0394: the one database read of the verified-genuine exemptions (shared.data_exemption.load_build_dates) on a real Postgres: it reads the scenario creation dates, and a FAILED read leaves the caller's transaction usable
 (SAVEPOINT, tests/test_dialect_coverage.py) and gives no dates, which keeps an expired exemption in its grace build instead of lapsing it unseen.
 
-    python scripts/ops/run_pg_tests.py -- tests/test_data_exemption_pg.py
+    python scripts/gov/delivery/run_pg_tests.py -- tests/test_data_exemption_pg.py
 """
 from __future__ import annotations
 

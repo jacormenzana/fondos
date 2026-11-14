@@ -43,7 +43,7 @@ def main(argv=None) -> int:
             scenario_id = lifecycle.latest_draft_id(conn)
             if scenario_id is None:
                 print("ERROR: no hay ningun escenario DRAFT que informar (o el ciclo de vida no esta instalado: el owner debe aplicar "
-                      "scripts/ops/migrate_portfolio_scenario_status.py --apply)")
+                      "scripts/mig/fondos/migrate_portfolio_scenario_status.py --apply)")
                 return lifecycle.EXIT_NO_SCENARIO
         path = generate_report(conn, output_dir=args.output_dir, scenario_id=scenario_id)
     except lifecycle.ScenarioLifecycleError as exc:

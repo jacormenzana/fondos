@@ -1,6 +1,6 @@
 # proyecto3/tests/test_p2_vol_floor_impact.py
 # -*- coding: utf-8 -*-
-"""The pure parts of scripts/audit/p2_vol_floor_impact.py (the read-only simulation of a volatility floor at the source for the P2 ratio metrics, owner order 2026-11-10).
+"""The pure parts of scripts/audit/p2/p2_vol_floor_impact.py (the read-only simulation of a volatility floor at the source for the P2 ratio metrics, owner order 2026-11-10).
 
 R-7: no DB; synthetic frames. The script runs the scorer's and the builder's own code on the live store (read-only) when the simulation is produced; these tests pin the arithmetic around it.
 """
@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-spec = importlib.util.spec_from_file_location("p2_vol_floor_impact", _ROOT / "scripts" / "audit" / "p2_vol_floor_impact.py")
+spec = importlib.util.spec_from_file_location("p2_vol_floor_impact", _ROOT / "scripts" / "audit" / "p2" / "p2_vol_floor_impact.py")
 vf = importlib.util.module_from_spec(spec)
 sys.modules["p2_vol_floor_impact"] = vf
 spec.loader.exec_module(vf)

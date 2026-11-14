@@ -29,7 +29,7 @@ from shared.statistical_audit.comparisons import compare_pairs  # noqa: E402
 from shared.statistical_audit.group_checks import check_group_constancy  # noqa: E402
 from shared.statistical_audit.invariants import BoundRule, check_bounds, check_invariant  # noqa: E402
 
-_RUNNER_PATH = os.path.join(_ROOT, "scripts", "audit", "run_statistical_audit.py")
+_RUNNER_PATH = os.path.join(_ROOT, "scripts", "audit", "stat", "run_statistical_audit.py")
 _spec = importlib.util.spec_from_file_location("run_statistical_audit_crit", _RUNNER_PATH)
 runner = importlib.util.module_from_spec(_spec)
 sys.modules["run_statistical_audit_crit"] = runner

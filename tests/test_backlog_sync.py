@@ -1,14 +1,14 @@
 # tests/test_backlog_sync.py
 # -*- coding: utf-8 -*-
-"""Phase C slice 1 (FND-0334), pure half: scripts/audit/backlog_sync.py parses `git log`, finds the citations and plans the events and the
-auto-forward; scripts/audit/rfd_matrix_probe.py chooses its source of closing conditions and plans the seed. No database, no git."""
+"""Phase C slice 1 (FND-0334), pure half: scripts/gov/backlog/backlog_sync.py parses `git log`, finds the citations and plans the events and the
+auto-forward; scripts/gov/backlog/rfd_matrix_probe.py chooses its source of closing conditions and plans the seed. No database, no git."""
 from __future__ import annotations
 
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts" / "audit"))
+sys.path.insert(0, str(ROOT / "scripts" / "gov" / "backlog"))
 
 import backlog_sync as bs  # noqa: E402
 import rfd_matrix_probe as rfd  # noqa: E402

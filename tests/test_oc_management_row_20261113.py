@@ -27,7 +27,7 @@ RULE = next(r for r in COST_INVARIANTS if r.rule_id == "OC_NOT_CONTAMINATED")
 
 
 def _runner():
-    spec = importlib.util.spec_from_file_location("rsa_oc_management_row", ROOT / "scripts" / "audit" / "run_statistical_audit.py")
+    spec = importlib.util.spec_from_file_location("rsa_oc_management_row", ROOT / "scripts" / "audit" / "stat" / "run_statistical_audit.py")
     mod = importlib.util.module_from_spec(spec)
     sys.modules["rsa_oc_management_row"] = mod
     spec.loader.exec_module(mod)

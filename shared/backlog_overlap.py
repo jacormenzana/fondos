@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 shared/backlog_overlap.py -- text similarity between action points, the single implementation behind both consumers
-(P#11 / R-1): scripts/audit/backlog_links.py (S4 signal of the relationship discovery) and shared/backlog_client.report_incident
+(P#11 / R-1): scripts/gov/backlog/backlog_links.py (S4 signal of the relationship discovery) and shared/backlog_client.report_incident
 (two-tier overlap policy of the automatic incident capture, NORMAS_BACKLOG.md §7).
 
 Pure and stdlib-only: report_incident runs inside the exception handler of an already failing pipeline, so this module must

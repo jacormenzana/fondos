@@ -2,7 +2,7 @@
 # Relocate the LIVE Postgres 17 (container fondos_postgres, port 5436) from the Stage-9 rehearsal
 # path to /opt/docker/db/postgresql17/, and recreate it from permanent, versioned compose files.
 #
-# Run inside WSL:   bash /mnt/c/desarrollo/fondos/scripts/ops/relocate_live_pg17.sh
+# Run inside WSL:   bash /mnt/c/desarrollo/fondos/scripts/mnt/db/relocate_live_pg17.sh
 # Downtime: ~1-2 minutes (clean stop -> instant same-disk rename -> start). Pause the launchers first.
 # Nothing is copied or deleted: the data directory is RENAMED (same filesystem), the container is
 # recreated from docker/docker-compose.yml + docker/docker-compose.wsl.override.yml.

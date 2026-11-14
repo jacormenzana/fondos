@@ -3,7 +3,7 @@
 """FND-0350: backlog.sp_set_gate takes a governed EXECUTIVE OVERRIDE (specification approved by the owner on 2026-10-28). Hermetic (pg_conn): a human actor can put the delivery gate in
 ENFORCE without a clear audit window by passing the flag with a reason of 80+ characters; an agent can never pass it; the row is flagged and listed; nothing needs a raw insert any more.
 
-    python scripts/ops/run_pg_tests.py -- tests/test_backlog_gate_override_pg.py
+    python scripts/gov/delivery/run_pg_tests.py -- tests/test_backlog_gate_override_pg.py
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ import psycopg
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops"), str(Path(__file__).resolve().parent)):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "mig" / "backlog"), str(Path(__file__).resolve().parent)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -150,7 +150,7 @@ def test_the_client_passes_the_flag_for_a_human_and_refuses_it_for_an_agent_befo
 
 
 def test_the_catalog_and_the_acceptance_know_the_override_column(dba):
-    sys.path.insert(0, str(_ROOT / "scripts" / "audit"))          # the module lives in scripts/audit: do not depend on another test module having put it on the path
+    sys.path.insert(0, str(_ROOT / "scripts" / "mig" / "backlog"))          # the module lives in scripts/mig/backlog: do not depend on another test module having put it on the path
     import backlog_phase_a_acceptance as acc
     assert bc.phase_b_catalog(conn=dba)["override_column"] is True
     after = bc.history_fingerprint(conn=dba)
@@ -164,7 +164,7 @@ def test_the_catalog_and_the_acceptance_know_the_override_column(dba):
 _RAW_GATE = re.compile(r"INSERT\s+INTO\s+backlog\.gate_switch", re.IGNORECASE)
 ALLOWED_GATE_INSERTS = {
     "db/pg_backlog/40_relations_v2.sql": "the DDL: the AUDIT seed row of the deployment and sp_set_gate itself",
-    "scripts/audit/backlog_phase_b_replay.py": "FND-0333 the replay sets the gate mode of its THROWAWAY scratch database; it refuses any live target (assert_scratch)",
+    "scripts/mig/backlog/backlog_phase_b_replay.py": "FND-0333 the replay sets the gate mode of its THROWAWAY scratch database; it refuses any live target (assert_scratch)",
 }
 
 

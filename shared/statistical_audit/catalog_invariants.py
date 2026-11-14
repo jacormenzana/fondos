@@ -61,7 +61,7 @@ P2_INVARIANTS: tuple[InvariantRule, ...] = (
                   description="R² clamp breached"),
     InvariantRule(
         # FND-0234 (2026-10-06): eligible only where the row's OWN window had positive CPI change
-        # (window_cpi_ann, scripts/audit/run_statistical_audit.py via timeseries.scalar_window_cpi). It used to be
+        # (window_cpi_ann, scripts/audit/stat/run_statistical_audit.py via timeseries.scalar_window_cpi). It used to be
         # gated on TODAY's YoY (+4.55%), so the 21 funds launched in spring 2008 -- whose crisis_2008 window ends
         # in the 2009 CPI decline (annualised -1.1% .. -0.06%) -- raised a HARD_INVARIANT ALARM for a correct
         # real > nominal. IPC_ELIGIBILITY_FLOOR is the same floor WINDOW_DEFLATION_STRICT uses below.

@@ -7,7 +7,7 @@ check leaves a durable record that says WHO bypassed WHAT, WHEN and for WHICH sc
     * control.ingestion_log   -- always (existing append-only audit trail, free-text status, no DDL): one `P3_STALE_BYPASS`
                                  row (status ALARM) per bypassed check, plus one row per fund still pending a family refresh.
                                  If this write fails the bypass is REFUSED: an override that cannot be audited does not run.
-    * control.audit_finding   -- once the owner migration `scripts/ops/migrate_audit_finding_p3_gate.py` has extended the
+    * control.audit_finding   -- once the owner migration `scripts/mig/fondos/migrate_audit_finding_p3_gate.py` has extended the
                                  `domain` CHECK with 'p3_gate' (detected from pg_constraint, no flag, no code change); until then it
                                  is skipped. `control.v_p3_gate_bypass` reads both, so a dashboard needs one object whatever the state.
     * control.cycle_flag      -- HIGH, only when a telemetry cycle is active (shared/cycle_telemetry.py is opt-in).

@@ -1,7 +1,7 @@
 name: Auto PR
 
 # Backlog v3 W1 (owner decision 2026-10-31): publication is no longer a manual relay. A push to a feat/, fix/, chore/ or docs/ branch opens the pull request against master (when none is
-# open) and turns on auto-merge, so GitHub merges it once the required checks of master are green (the protection of scripts/ops/github_protect_master.py is untouched: nothing is merged
+# open) and turns on auto-merge, so GitHub merges it once the required checks of master are green (the protection of scripts/gov/delivery/github_protect_master.py is untouched: nothing is merged
 # around it). The owner keeps the veto: close the pull request, or turn auto-merge off on it.
 #
 # A pull request that changes .github/workflows/** cannot be merged with the built-in GITHUB_TOKEN (GitHub forbids it), so it gets the label `needs-owner` and NO auto-merge.

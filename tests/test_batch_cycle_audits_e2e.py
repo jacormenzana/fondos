@@ -52,7 +52,7 @@ P123 = e2e.P123
 @pytest.fixture()
 def tree(tmp_path):
     t = e2e.Tree(tmp_path)
-    (t.root / "scripts" / "audit" / "run_statistical_audit.py").write_text(_AUDIT_STUB)
+    (t.root / "scripts" / "audit" / "stat" / "run_statistical_audit.py").write_text(_AUDIT_STUB)
     (t.root / "proyecto1" / "tools" / "audit_benchmark_consistency.py").write_text(_BENCH_STUB)
     return t
 

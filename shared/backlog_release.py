@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-backlog_release.py -- the rule that decides whether a ticket may be closed by a delivery, shared by scripts/ops/close_release.py (a person, at a console) and the Backlog v3
-autopilot (scripts/audit/backlog_sync.py, W3 of doc/especificacion/ACTION_PLAN_BACKLOG_V3.md): one rule in one place (P#11).
+backlog_release.py -- the rule that decides whether a ticket may be closed by a delivery, shared by scripts/gov/backlog/close_release.py (a person, at a console) and the Backlog v3
+autopilot (scripts/gov/backlog/backlog_sync.py, W3 of doc/especificacion/ACTION_PLAN_BACKLOG_V3.md): one rule in one place (P#11).
 
 The audit-incident gate (FND-0264, GOV-05): a ticket linked to a control.audit_incident that is not CERTIFIED (by a later, complete re-audit) or ACCEPTED (by an active residual)
 cannot be closed -- no CRITICAL defect closes by a claim or by a recompute alone. The backlog and `fondos` are different databases, so no SQL constraint can express it: it lives

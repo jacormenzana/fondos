@@ -191,7 +191,7 @@ def test_the_preflight_reports_the_code_state_as_ok_or_warn_never_fail():
 
 # --- D8: the cost replay ----------------------------------------------------------------------------------------------------------
 def test_the_cost_replay_lists_what_the_gate_would_have_refused():
-    sys.path.insert(0, str(_ROOT / "scripts" / "audit"))
+    sys.path.insert(0, str(_ROOT / "scripts" / "audit" / "stat"))
     import cost_gate_replay as rp
     from datetime import datetime, timezone
     t = datetime(2026, 10, 1, tzinfo=timezone.utc)

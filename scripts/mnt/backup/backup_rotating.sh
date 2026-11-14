@@ -2,7 +2,7 @@
 # backup_rotating.sh -- the logical backup of the LIVE Postgres: one set per day, only the TWO newest dates kept on the computer AND on the external disk,
 # never while a work cycle runs (FND-0290, FND-0407; owner order 2026-11-14).
 #
-#   wsl.exe -d Ubuntu -u root -- bash /mnt/c/desarrollo/fondos/scripts/ops/backup_rotating.sh [--keep-dates N] [--no-external] [--force]
+#   wsl.exe -d Ubuntu -u root -- bash /mnt/c/desarrollo/fondos/scripts/mnt/backup/backup_rotating.sh [--keep-dates N] [--no-external] [--force]
 #
 # What one run does, in this order:
 #   0. PRIORITY / CYCLE GUARD  a running cycle always wins (lib/cycle_guard.sh): while a cycle holds the lock the run exits 75 = DEFERRED (not a failure)
@@ -28,7 +28,7 @@
 set -uo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
-. "$HERE/lib/cycle_guard.sh"
+. "$HERE/../lib/cycle_guard.sh"
 
 OUT=${BACKUP_OUT:-/mnt/backups/pg_fondos/dump}
 MNT=${OFFBOX_MNT:-/mnt/d}

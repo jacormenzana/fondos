@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""scripts/audit/eur_view_rehearsal.py — FND-0243 step 6: what the EUR view changes, on a SAMPLE, before the release.
+"""scripts/audit/p1/eur_view_rehearsal.py — FND-0243 step 6: what the EUR view changes, on a SAMPLE, before the release.
 
 Read-only. For each ISIN it loads the monthly NAV twice through the production reader (db_readers.load_nav) -- once with
 EUR_NAV_CONVERSION_ENABLED off (the class-currency NAV P2 uses today) and once on (the EUR view) -- and computes the risk
@@ -15,7 +15,7 @@ and EUR funds as the control group (their metrics must not move).
 Prerequisite: the ECB rates in series_macro (`python -X utf8 -m proyecto2.src.discovery.macro_discovery --source bce`,
 owner-run). Without them every non-EUR fund is excluded and the script says so and exits 3.
 
-    C:\\Users\\jacor\\.conda\\envs\\des\\python.exe -X utf8 scripts\\audit\\eur_view_rehearsal.py --sample [--csv out.csv]
+    C:\\Users\\jacor\\.conda\\envs\\des\\python.exe -X utf8 scripts\\audit\\p1\\eur_view_rehearsal.py --sample [--csv out.csv]
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ import argparse
 import sys
 from pathlib import Path
 
-_ROOT = Path(__file__).resolve().parents[2]
+_ROOT = Path(__file__).resolve().parents[3]
 for _p in (str(_ROOT), str(_ROOT / "proyecto2")):
     if _p not in sys.path:
         sys.path.insert(0, _p)

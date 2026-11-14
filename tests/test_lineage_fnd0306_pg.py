@@ -4,7 +4,7 @@
 FND-0306 slice 1, hermetic Postgres: the loader SQL of shared/governance/lineage.py against a TEMP fund_metrics (it shadows any real table for the
 session, and the savepoint of `pg_conn` rolls it back), with the three events that must and must not move the digest.
 
-    python scripts/ops/run_pg_tests.py -- tests/test_lineage_fnd0306_pg.py
+    python scripts/gov/delivery/run_pg_tests.py -- tests/test_lineage_fnd0306_pg.py
 """
 from shared.governance import lineage as ln
 

@@ -15,8 +15,8 @@ Ledger format (UTF-8): one entry per line, `<exact line> ||| <reason or canonica
 contain the ` ||| ` separator are comments (an entry may itself start with `#`, e.g. a markdown heading).
 
 Usage:
-  python scripts/audit/check_agents_md_split.py --base HEAD --receivers proyecto1/AGENTS.md proyecto2/AGENTS.md \
-         --ledger scripts/audit/agents_md_split_ledger.txt [--source AGENTS.md] [--repo DIR] [--verbose]
+  python scripts/gov/repo/check_agents_md_split.py --base HEAD --receivers proyecto1/AGENTS.md proyecto2/AGENTS.md \
+         --ledger scripts/gov/repo/agents_md_split_ledger.txt [--source AGENTS.md] [--repo DIR] [--verbose]
 Exit: 0 = every removed line accounted for, 1 = unaccounted lines (printed), 2 = usage / git / file error.
 """
 import argparse
@@ -26,7 +26,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 LEDGER_SEP = " ||| "
 _MARKUP = re.compile(r"^(?:[-|:\s]+|<!--.*-->)$")
 

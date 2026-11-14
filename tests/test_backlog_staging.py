@@ -1,6 +1,6 @@
 # tests/test_backlog_staging.py
 # -*- coding: utf-8 -*-
-"""FND-0351, no database: the pure parts of scripts/ops/backlog_staging.py and the shared guard shared/backlog_scratch.py. The command's promise -- the live backlog is only ever READ, and it is proved --
+"""FND-0351, no database: the pure parts of scripts/gov/backlog/backlog_staging.py and the shared guard shared/backlog_scratch.py. The command's promise -- the live backlog is only ever READ, and it is proved --
 rests on `sequence_diff`; the guard's promise -- a live target is refused whatever its name -- rests on `scratch_verdict`."""
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(ROOT), str(ROOT / "scripts" / "ops"), str(ROOT / "scripts" / "audit")):
+for _p in (str(ROOT), str(ROOT / "scripts" / "gov" / "backlog"), str(ROOT / "scripts" / "mig" / "backlog"), str(ROOT / "scripts" / "mig" / "backlog")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -69,7 +69,7 @@ def test_the_replay_tool_keeps_the_names_it_always_exported():
 
 def test_every_script_that_calls_the_real_routines_on_a_snapshot_calls_the_guard():
     """FND-0351 (3): the guard is programmatic. A tool that loads a snapshot or replays history must call assert_scratch before its first statement."""
-    for path, needle in ((ROOT / "scripts" / "audit" / "backlog_phase_b_replay.py", "assert_scratch(conn)"), (ROOT / "tests" / "test_backlog_staging_pg.py", "assert_scratch(pg_conn, who=WHO)")):
+    for path, needle in ((ROOT / "scripts" / "mig" / "backlog" / "backlog_phase_b_replay.py", "assert_scratch(conn)"), (ROOT / "tests" / "test_backlog_staging_pg.py", "assert_scratch(pg_conn, who=WHO)")):
         assert needle in path.read_text(encoding="utf-8"), path.name
     fixture = (ROOT / "tests" / "test_backlog_staging_pg.py").read_text(encoding="utf-8").split("def staged(pg_conn):", 1)[1].split("def clean_in_progress", 1)[0]
     assert fixture.index("assert_scratch") < fixture.index("_base(pg_conn)") < fixture.index("load_snapshot")      # the guard is the FIRST statement

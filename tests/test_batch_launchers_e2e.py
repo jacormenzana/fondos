@@ -45,14 +45,14 @@ sys.exit(int(os.environ.get("STUB_RC_" + name.upper(), "0")))
 _PY_TOOLS = [
     "scripts/launch/mark_stale.py", "scripts/launch/harvest_gate.py", "scripts/launch/p3_build_portfolio.py",
     "scripts/launch/p3_freshness_check.py", "scripts/launch/p1p2_cycle_report.py",
-    "scripts/audit/run_statistical_audit.py", "scripts/audit/beta_shift_audit.py",
-    "scripts/audit/shadow_reconciliation.py", "proyecto1/tools/audit_benchmark_consistency.py",
+    "scripts/audit/stat/run_statistical_audit.py", "scripts/audit/p2/beta_shift_audit.py",
+    "scripts/audit/p2/shadow_reconciliation.py", "proyecto1/tools/audit_benchmark_consistency.py",
     "proyecto1/run_block.py", "proyecto1/harvest/p1_db_harvest.py", "proyecto1/harvest/p1_kiid_sync.py",
     "proyecto1/core/fund_family_builder.py", "proyecto1/src/analysis/export_p1.py",
     "proyecto1/src/loaders/benchmark_loader.py", "proyecto2/src/discovery/macro_discovery.py",
     "proyecto2/src/discovery/nav_discovery.py", "proyecto2/src/analysis/export_metrics.py",
-    "proyecto2/src/reports/rolling_dashboard.py", "scripts/diag/diag_cost_extraction.py",
-    "scripts/launch/release_check.py", "scripts/audit/verify_fund_currency.py",
+    "proyecto2/src/reports/rolling_dashboard.py", "scripts/audit/p1/diag_cost_extraction.py",
+    "scripts/launch/release_check.py", "scripts/audit/p1/verify_fund_currency.py",
 ]
 
 _POWERCFG_STUB = """@echo off

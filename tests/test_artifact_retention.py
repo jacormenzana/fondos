@@ -1,11 +1,11 @@
-"""FND-0268: the retention report is read-only and applies the documented rule (scripts/audit/artifact_retention.py)."""
+"""FND-0268: the retention report is read-only and applies the documented rule (scripts/gov/repo/artifact_retention.py)."""
 import os
 import sys
 from datetime import date, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts" / "audit"))
+sys.path.insert(0, str(ROOT / "scripts" / "gov" / "repo"))
 
 import artifact_retention as ar  # noqa: E402
 

@@ -1,10 +1,10 @@
 # tests/test_backlog_ddl_fingerprint_pg.py
 # -*- coding: utf-8 -*-
-"""The DDL fingerprint of Backlog v2 (FND-0351 family): the phases of scripts/ops/migrate_backlog_v2.py applied to the hermetic container in the order the live database received them, and a fingerprint of what
-they leave (md5 of every routine definition and view, the columns of every relation). scripts/ops/backlog_drift.py compares it with the LIVE catalog (read-only) to find a phase that master has but the live
+"""The DDL fingerprint of Backlog v2 (FND-0351 family): the phases of scripts/mig/backlog/migrate_backlog_v2.py applied to the hermetic container in the order the live database received them, and a fingerprint of what
+they leave (md5 of every routine definition and view, the columns of every relation). scripts/gov/backlog/backlog_drift.py compares it with the LIVE catalog (read-only) to find a phase that master has but the live
 database lacks. With FONDOS_DRIFT_OUT set it writes the fingerprint there; without it, it only checks that the fingerprint is stable (two builds are identical), so CI still exercises it.
 
-    python scripts/ops/backlog_drift.py
+    python scripts/gov/backlog/backlog_drift.py
 """
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops"), str(Path(__file__).resolve().parent)):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "gov" / "backlog"), str(_ROOT / "scripts" / "mig" / "backlog"), str(Path(__file__).resolve().parent)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 

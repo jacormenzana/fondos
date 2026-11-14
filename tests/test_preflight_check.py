@@ -1,6 +1,6 @@
 # tests/test_preflight_check.py
 # -*- coding: utf-8 -*-
-"""scripts/audit/preflight_check.py: the pure parsers and the verdict matrix, plus the git reader on a throwaway repository (R-7: no DB)."""
+"""scripts/gov/repo/preflight_check.py: the pure parsers and the verdict matrix, plus the git reader on a throwaway repository (R-7: no DB)."""
 import json
 import os
 import posixpath
@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts" / "audit"))
+sys.path.insert(0, str(ROOT / "scripts" / "gov" / "repo"))
 sys.path.insert(0, str(ROOT))
 
 import preflight_check as pf  # noqa: E402
@@ -40,7 +40,7 @@ def test_left_right_counts(text, expected):
 def test_process_matching_is_case_insensitive_and_never_returns_the_checker_or_itself():
     rows = [(1, r'C:\env\python.exe -m proyecto2.src.pipeline.run_pipeline --force'),
             (2, r'cmd /c "scripts\launch\P2_calculateIndicators.bat"'),
-            (3, r'python.exe scripts/audit/preflight_check.py'),
+            (3, r'python.exe scripts/gov/repo/preflight_check.py'),
             (4, r'python.exe -c "print(1)"'),
             (5, r'python.exe -m PYTEST -q tests')]
     got = pf.match_processes(rows, own_pid=5)
@@ -54,12 +54,12 @@ def test_calc_version_is_read_from_the_source_text():
 
 
 def test_declared_own_files_are_listed_apart_and_do_not_count_as_another_sessions_work():
-    entries = pf.parse_porcelain(" M AGENTS.md\n?? scripts/audit/preflight_check.py\n?? tests/test_preflight_check.py\n?? db/oper/z.sql\n")
-    d = pf.split_dirty(entries, mine=("scripts/audit/preflight_check.py", "tests/"))
+    entries = pf.parse_porcelain(" M AGENTS.md\n?? scripts/gov/repo/preflight_check.py\n?? tests/test_preflight_check.py\n?? db/oper/z.sql\n")
+    d = pf.split_dirty(entries, mine=("scripts/gov/repo/preflight_check.py", "tests/"))
     assert d == {"tracked": ["AGENTS.md"], "untracked": [], "unowned": ["db/oper/z.sql"],
-                 "mine": ["scripts/audit/preflight_check.py", "tests/test_preflight_check.py"]}
+                 "mine": ["scripts/gov/repo/preflight_check.py", "tests/test_preflight_check.py"]}
     # a Windows-style declaration matches the forward-slash paths git prints
-    assert pf.split_dirty([("??", "scripts/audit/x.py")], mine=("scripts\\audit\\x.py",))["mine"] == ["scripts/audit/x.py"]
+    assert pf.split_dirty([("??", "scripts/audit/stat/x.py")], mine=("scripts\\audit\\stat\\x.py",))["mine"] == ["scripts/audit/stat/x.py"]
 
 
 # ---------------- driver: parser + summarizer ----------------
@@ -267,7 +267,7 @@ def test_cli_json_is_parseable_and_strict_maps_caution_to_exit_1(monkeypatch, ca
 def test_the_cycle_lock_is_held_only_when_the_repos_own_predicate_says_so(monkeypatch, tmp_path):
     lock = tmp_path / "fondos_cycle.lock"
     monkeypatch.setattr(pf, "LOCK_FILE", lock)
-    sys.path.insert(0, str(ROOT / "scripts" / "ops"))
+    sys.path.insert(0, str(ROOT / "scripts" / "mig" / "fondos"))
     import migrate_fund_metric_state_ols_calc_version as mig
     monkeypatch.setattr(mig, "LOCK_FILE", lock)
     assert pf.cycle_lock_held() is False                      # no file

@@ -7,7 +7,7 @@ An automatic writer is a process that writes to the backlog under a `system:<nam
   2. no NEW automatic writer may modify the backlog until it has been demonstrated, with reproducible tests on REAL data, that it works correctly and that its protection mechanisms are operational.
 
 What this module holds (pure apart from reading files): the registry (REGISTRY), the measures of a set of planned or performed writes (`metrics`, `breaches`), the digest of a writer's code, the proof records
-(out/audit/writer_proofs.jsonl, written by scripts/audit/writer_proof.py) and the gate `assert_may_write`, which shared/backlog_client.py calls before every write that goes to a real connection:
+(out/audit/writer_proofs.jsonl, written by scripts/gov/backlog/writer_proof.py) and the gate `assert_may_write`, which shared/backlog_client.py calls before every write that goes to a real connection:
   * a person or an agent (human:* / agent:*) is out of scope here;
   * a `system:*` identity that is not in the registry is refused (a new writer cannot land without an entry: tests/test_backlog_writers.py scans the code for every `system:<name>` literal);
   * a GRANDFATHERED writer (it was live when this rule was made, 2026-11-03) may write; the proof is only asked of what is new;
@@ -69,17 +69,17 @@ def _g(name: str, writes: tuple, switch: Optional[str], files: tuple, note: str)
 # else is, by construction, new.
 REGISTRY: dict = {s.name: s for s in (
     _g("autopilot", ("LOG", "TRANSITION", "FACT", "MODULE", "PROBE", "GROUP"), "BACKLOG_AUTOPILOT_MODE",
-       ("scripts/audit/backlog_autopilot.py", "shared/backlog_autopilot.py", "scripts/audit/backlog_modules.py", "scripts/audit/backlog_impact.py", "shared/backlog_clusters.py",
+       ("scripts/gov/backlog/backlog_autopilot.py", "shared/backlog_autopilot.py", "scripts/gov/backlog/backlog_modules.py", "scripts/gov/backlog/backlog_impact.py", "shared/backlog_clusters.py",
         "shared/backlog_modules.py", "shared/backlog_impact.py"), "moves tickets on recorded evidence, writes MERGE / TEXT / COMMIT facts, impact notes, probe runs and module groups"),
-    _g("gate", ("TRANSITION", "LINK", "LOG"), "BACKLOG_AUTO_FORWARD_ENABLED", ("scripts/audit/commit_msg_gate.py", "shared/backlog_gate.py", "scripts/audit/pre_push_gate.py"),
+    _g("gate", ("TRANSITION", "LINK", "LOG"), "BACKLOG_AUTO_FORWARD_ENABLED", ("scripts/gov/backlog/commit_msg_gate.py", "shared/backlog_gate.py", "scripts/gov/backlog/pre_push_gate.py"),
        "the commit-msg hook: OPEN/TODO -> IN_PROGRESS on Refs:, collision proposals"),
-    _g("sync", ("FACT",), None, ("scripts/audit/backlog_sync.py",), "records COMMIT facts from git history"),
-    _g("deploy", ("FACT",), "BACKLOG_AUTO_DEPLOY_MODE", ("scripts/ops/owner_deploy.py",), "records the DEPLOY fact after a verified apply (the scoped login backlog_facts)"),
+    _g("sync", ("FACT",), None, ("scripts/gov/backlog/backlog_sync.py",), "records COMMIT facts from git history"),
+    _g("deploy", ("FACT",), "BACKLOG_AUTO_DEPLOY_MODE", ("scripts/gov/backlog/owner_deploy.py",), "records the DEPLOY fact after a verified apply (the scoped login backlog_facts)"),
     _g("autodetect", ("LOG", "TICKET"), "BACKLOG_INCIDENT_AUTO_APPEND_ENABLED", ("shared/backlog_client.py", "shared/backlog_overlap.py"), "report_incident: opens or appends an incident"),
-    _g("calibrator", ("LOG",), None, ("scripts/audit/gate_calibrator.py",), "may only retire the collision gate or tighten T0"),
-    _g("replay", ("TRANSITION",), None, ("scripts/audit/backlog_phase_b_replay.py",), "replays closures on a SCRATCH database only (shared/backlog_scratch.py refuses a live target)"),
+    _g("calibrator", ("LOG",), None, ("scripts/gov/backlog/gate_calibrator.py",), "may only retire the collision gate or tighten T0"),
+    _g("replay", ("TRANSITION",), None, ("scripts/mig/backlog/backlog_phase_b_replay.py",), "replays closures on a SCRATCH database only (shared/backlog_scratch.py refuses a live target)"),
     _g("backfill", ("TRANSITION",), None, (), "historic: the 302 status events written when the status history was created"),
-    _g("migration", ("TRANSITION", "LOG"), None, ("scripts/ops/migrate_backlog_v2.py",), "the default closing conditions given to in-flight tickets by the probes migration"),
+    _g("migration", ("TRANSITION", "LOG"), None, ("scripts/mig/backlog/migrate_backlog_v2.py",), "the default closing conditions given to in-flight tickets by the probes migration"),
     _g("owner-waiver", ("FACT",), None, (), "historic: the single gate_switch row of 2026-10-28 (limitation L8)"),
 )}
 
@@ -168,7 +168,7 @@ def proof_status(spec: WriterSpec, proofs: list, digest: str) -> tuple:
         return GRANDFATHERED, "it was live before the rule of 2026-11-03"
     mine = [p for p in proofs if p.get("writer") == spec.name]
     if not mine:
-        return "PENDING", "no proof on record: python scripts/audit/writer_proof.py --writer " + spec.name
+        return "PENDING", "no proof on record: python scripts/gov/backlog/writer_proof.py --writer " + spec.name
     last = mine[-1]
     if last.get("verdict") != "PASS":
         return "PENDING", f"its newest proof did not pass ({'; '.join(map(str, (last.get('failures') or [])[:3]))})"
@@ -185,7 +185,7 @@ def assert_may_write(actor: Optional[str], *, proofs: Optional[list] = None, roo
     reg = REGISTRY if registry is None else registry
     spec = reg.get(who.split(":", 1)[1])
     if spec is None:
-        raise WriterRefused(f"{who} is not a registered automatic writer: add it to shared/backlog_writers.py (new writers ship OFF) and prove it with `python scripts/audit/writer_proof.py --writer <name>` "
+        raise WriterRefused(f"{who} is not a registered automatic writer: add it to shared/backlog_writers.py (new writers ship OFF) and prove it with `python scripts/gov/backlog/writer_proof.py --writer <name>` "
                             f"before it writes to the backlog (FND-0370)")
     if spec.status == GRANDFATHERED:
         return

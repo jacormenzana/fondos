@@ -20,7 +20,7 @@ and "Producto: carácter fundamental ..." are prose, not labels. A share-class t
 CURRENCY WORDS INSIDE THE NAME ARE KEPT: "Pictet - Short-Term Money Market USD" and "... CHF" are different sub-funds, and `fund_family_builder._normalize_name`
 (which strips trailing currency codes) must not be the key of this name.
 
-Pure functions, no database and no pipeline import (R-7). Measured on the 2,952 active class-1 KIID texts: scripts/audit/official_name_coverage.py."""
+Pure functions, no database and no pipeline import (R-7). Measured on the 2,952 active class-1 KIID texts: scripts/audit/p1/official_name_coverage.py."""
 from __future__ import annotations
 
 import re

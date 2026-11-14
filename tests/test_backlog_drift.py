@@ -1,13 +1,13 @@
 # tests/test_backlog_drift.py
 # -*- coding: utf-8 -*-
-"""Pure tests of scripts/ops/backlog_drift.py: the comparison of the live catalog with master's DDL fingerprint (Backlog v2, FND-0351 family). No database."""
+"""Pure tests of scripts/gov/backlog/backlog_drift.py: the comparison of the live catalog with master's DDL fingerprint (Backlog v2, FND-0351 family). No database."""
 from __future__ import annotations
 
 import sys
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops")):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "gov" / "backlog"), str(_ROOT / "scripts" / "mig" / "backlog")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 

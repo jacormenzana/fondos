@@ -1,6 +1,6 @@
 # tests/test_backlog_v3_bootstrap.py
 # -*- coding: utf-8 -*-
-"""Backlog v3 bootstrap (O-V3-1): the manifest and the plan / apply logic of scripts/mig/backlog_v3_bootstrap.py. No database, no network: the client is a fake (R-7)."""
+"""Backlog v3 bootstrap (O-V3-1): the manifest and the plan / apply logic of scripts/mig/backlog/backlog_v3_bootstrap.py. No database, no network: the client is a fake (R-7)."""
 from __future__ import annotations
 
 import re
@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "mig")):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "mig" / "backlog")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 

@@ -8,7 +8,7 @@ call "%COMMON%" :utf8_on
 :: P2_audit.bat -- Auditoria P2 (metricas cuantitativas) en un solo comando
 ::
 :: Auditoria estadistica del dominio p2 (fund_metrics / fund_metric_timeseries):
-::   scripts\audit\run_statistical_audit.py --domain p2
+::   scripts\audit\stat\run_statistical_audit.py --domain p2
 ::
 :: Es diagnostico: en --mode report (defecto) devuelve 0 salvo RC 2 = auditoria INCOMPLETA (un chequeo obligatorio
 :: no pudo ejecutarse: no es evidencia de promocion, AUDITORIA_ESTADISTICA.md 6.4); --mode check devuelve 1 con
@@ -66,7 +66,7 @@ pushd "%ROOT%"
 echo [%time%] Auditoria estadistica p2
 echo. >> "%LOG%"
 echo --- statistical audit (p2^) --------------------------------- >> "%LOG%"
-"%PYTHON%" -u -X utf8 scripts\audit\run_statistical_audit.py --domain p2 !STAT_ARGS! >> "%LOG%" 2>&1
+"%PYTHON%" -u -X utf8 scripts\audit\stat\run_statistical_audit.py --domain p2 !STAT_ARGS! >> "%LOG%" 2>&1
 set RC=!ERRORLEVEL!
 popd
 

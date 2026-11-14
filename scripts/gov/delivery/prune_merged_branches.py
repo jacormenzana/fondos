@@ -3,14 +3,14 @@
 """
 prune_merged_branches.py -- deletes the branches whose work is already part of master (Backlog v3.1 housekeeping, 2026-11-01).
 
-    python scripts/ops/prune_merged_branches.py                        # DRY RUN: lists what the rule would delete from the remote; deletes nothing
-    python scripts/ops/prune_merged_branches.py --apply                # deletes them (git push origin --delete)
-    python scripts/ops/prune_merged_branches.py --scope local --apply  # the same for this clone's own branches, never the checked-out one (git branch -D, only on branches this tool found in origin/master)
-    python scripts/ops/prune_merged_branches.py --rule ancestor --apply --no-fetch   # what the reference-transaction hook runs right after a fetch moved origin/master (FND-0371)
+    python scripts/gov/delivery/prune_merged_branches.py                        # DRY RUN: lists what the rule would delete from the remote; deletes nothing
+    python scripts/gov/delivery/prune_merged_branches.py --apply                # deletes them (git push origin --delete)
+    python scripts/gov/delivery/prune_merged_branches.py --scope local --apply  # the same for this clone's own branches, never the checked-out one (git branch -D, only on branches this tool found in origin/master)
+    python scripts/gov/delivery/prune_merged_branches.py --rule ancestor --apply --no-fetch   # what the reference-transaction hook runs right after a fetch moved origin/master (FND-0371)
 
 Why. GitHub's "Automatically delete head branches" is on, yet the branches of the pull requests that the auto-PR workflow opens and the auto-merge lands stay: the PR history shows `auto_merge_enabled`,
 `merged`, `closed` and no `head_ref_deleted` event. A workflow cannot fix it: the auto-merge is made with GITHUB_TOKEN and GitHub starts no workflow from an event that token causes, so a `push: master`
-trigger never fires. The trigger is therefore the clone itself: scripts/audit/reference-transaction.sh starts this tool, detached, when a fetch moves refs/remotes/origin/master.
+trigger never fires. The trigger is therefore the clone itself: scripts/gov/repo/hooks/reference-transaction.sh starts this tool, detached, when a fetch moves refs/remotes/origin/master.
 The workflow .github/workflows/branch-cleanup.yml (rule pr, daily cron) is left in place only as a backstop: removing it touches .github/workflows/** and so cannot auto-merge; that is a separate, optional change.
 
 Two rules, both of which require the branch tip to be CONTAINED IN master, so nothing can be lost (the commits are in master and a branch is recreated from its SHA):
@@ -34,7 +34,7 @@ import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 PREFIXES = ("feat/", "fix/", "chore/", "docs/")
 NEVER = ("master", "main", "HEAD")
 CHUNK = 20

@@ -1,6 +1,6 @@
 # tests/test_run_pg_tests_shards_fnd0386.py
 # -*- coding: utf-8 -*-
-"""FND-0386: the sharded full-suite runner of scripts/ops/run_pg_tests.py (pure parts: balancing, file collection, failed-file parsing, shard count).
+"""FND-0386: the sharded full-suite runner of scripts/gov/delivery/run_pg_tests.py (pure parts: balancing, file collection, failed-file parsing, shard count).
 
 R-7: no Docker, no database: the runner is loaded by path and only its pure functions run. What the concurrency does to the real suite is measured by running it (receipt), not here.
 """
@@ -12,7 +12,7 @@ _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-spec = importlib.util.spec_from_file_location("run_pg_tests_shards", _ROOT / "scripts" / "ops" / "run_pg_tests.py")
+spec = importlib.util.spec_from_file_location("run_pg_tests_shards", _ROOT / "scripts" / "gov" / "delivery" / "run_pg_tests.py")
 rp = importlib.util.module_from_spec(spec)
 sys.modules["run_pg_tests_shards"] = rp
 spec.loader.exec_module(rp)

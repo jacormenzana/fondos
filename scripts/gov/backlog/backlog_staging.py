@@ -3,17 +3,17 @@
 """
 backlog_staging.py -- ONE command that verifies the Backlog v2 state machine and gate on a SCRATCH Postgres loaded with a snapshot of the live backlog (FND-0351; NORMAS_BACKLOG.md 9).
 
-    python scripts/ops/backlog_staging.py                                      # fresh read-only snapshot -> throwaway container -> real DDL -> every scenario -> teardown
-    python scripts/ops/backlog_staging.py --scenario gate_blocked,a2_revoke    # some scenarios
-    python scripts/ops/backlog_staging.py --phases transitions,relations,groups,sync,hook,collision,attest   # the phases applied (default transitions,relations: the gate and the A-2 steps)
-    python scripts/ops/backlog_staging.py --snapshot FILE                      # a snapshot you already exported (nothing is read from the live backlog)
-    python scripts/ops/backlog_staging.py --synthetic                          # the built-in small history: no contact with the live backlog at all
+    python scripts/gov/backlog/backlog_staging.py                                      # fresh read-only snapshot -> throwaway container -> real DDL -> every scenario -> teardown
+    python scripts/gov/backlog/backlog_staging.py --scenario gate_blocked,a2_revoke    # some scenarios
+    python scripts/gov/backlog/backlog_staging.py --phases transitions,relations,groups,sync,hook,collision,attest   # the phases applied (default transitions,relations: the gate and the A-2 steps)
+    python scripts/gov/backlog/backlog_staging.py --snapshot FILE                      # a snapshot you already exported (nothing is read from the live backlog)
+    python scripts/gov/backlog/backlog_staging.py --synthetic                          # the built-in small history: no contact with the live backlog at all
 
 Why. Synthetic testing that burns production sequence ids is BANNED (owner mandate 2026-10-28): every verification of the state machine or the gate runs here, never on the live backlog. The ONLY
 contact with the live backlog is one read-only export (`default_transaction_read_only`), and the command PROVES it left nothing behind: the values of the live sequences (ticket ids, log ids, event ids)
 are read before and after and must be identical. The scenarios (tests/test_backlog_staging_pg.py) call assert_scratch (shared/backlog_scratch.py) before their first statement: a live target is refused whatever
 its name. Scenarios: gate_clean, gate_blocked, gate_forced, gate_audit_window, a2_revoke (the pending `--phase revoke` rehearsed on the real population), replay (the real history through the real gate; needs a
-real snapshot). The container is the one of scripts/ops/run_pg_tests.py (no credentials; WSL must be awake: see CLAUDE.md).
+real snapshot). The container is the one of scripts/gov/delivery/run_pg_tests.py (no credentials; WSL must be awake: see CLAUDE.md).
 
 Exit codes: 0 every scenario passed and the live sequences are unchanged, 1 a scenario failed or a live sequence moved, 2 usage error or the live backlog could not be read.
 """
@@ -26,10 +26,10 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT / "scripts" / "audit"))
-sys.path.insert(0, str(ROOT / "scripts" / "ops"))
+sys.path.insert(0, str(ROOT / "scripts" / "mig" / "backlog"))
+sys.path.insert(0, str(ROOT / "scripts" / "mig" / "backlog"))
 RC_OK, RC_FAIL, RC_USAGE = 0, 1, 2
 OUT = ROOT / "out" / "staging"
 SCENARIOS = {"gate_clean": "test_scenario_gate_clean", "gate_blocked": "test_scenario_gate_blocked", "gate_forced": "test_scenario_gate_forced",
@@ -117,7 +117,7 @@ def main(argv: list | None = None) -> int:
     env.pop("FONDOS_STAGING_SNAPSHOT", None)
     if snapshot:
         env["FONDOS_STAGING_SNAPSHOT"] = str(snapshot)
-    cmd = [sys.executable, "-X", "utf8", str(ROOT / "scripts" / "ops" / "run_pg_tests.py"), "--image", args.image, "--", "tests/test_backlog_staging_pg.py", "-v", "--tb=short", "-p", "no:cacheprovider"]
+    cmd = [sys.executable, "-X", "utf8", str(ROOT / "scripts" / "gov" / "delivery" / "run_pg_tests.py"), "--image", args.image, "--", "tests/test_backlog_staging_pg.py", "-v", "--tb=short", "-p", "no:cacheprovider"]
     if k:
         cmd += ["-k", k]
     print(f"phases: {', '.join(phases)} | scenarios: {', '.join(names) or 'all'} | history: {'real snapshot' if snapshot else 'built-in synthetic'}")

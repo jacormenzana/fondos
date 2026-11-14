@@ -3,8 +3,8 @@
 """
 migrate_audit_governance.py -- governed exceptions + run manifest (FND-0263, GOV-04).
 
-    python scripts/ops/migrate_audit_governance.py            # DRY RUN: read-only, reports what exists and what the backfill would write
-    python scripts/ops/migrate_audit_governance.py --apply    # ONE transaction: DDL block + backfill + consistency check (all or nothing)
+    python scripts/mig/fondos/migrate_audit_governance.py            # DRY RUN: read-only, reports what exists and what the backfill would write
+    python scripts/mig/fondos/migrate_audit_governance.py --apply    # ONE transaction: DDL block + backfill + consistency check (all or nothing)
 
 1. Runs the block between `-- BEGIN audit_governance` and `-- END audit_governance` in db/pg/35_control.sql (single source of truth,
    P#11): control.audit_exception_event (append-only, trigger-enforced) and control.audit_run.manifest. Idempotent.
@@ -26,7 +26,7 @@ import argparse
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 BLOCK = "audit_governance"
 BACKFILL_TAG = "[backfill FND-0263] "
 LOCK_TIMEOUT = "5s"
@@ -78,7 +78,7 @@ def verify(conn) -> dict:
 
 def migrate(conn, lock_timeout: str = LOCK_TIMEOUT) -> tuple:
     """Block + backfill + check in the caller's transaction. Returns (events written, {domain: drift}); raises on drift."""
-    sys.path.insert(0, str(ROOT / "scripts" / "ops"))
+    sys.path.insert(0, str(ROOT / "scripts" / "mig" / "fondos"))
     from migrate_cycle_telemetry import ddl_block
     conn.execute(f"SET LOCAL lock_timeout = '{lock_timeout}'")
     conn.execute("SET LOCAL search_path = control, public")      # verify_governed uses unqualified names
@@ -96,7 +96,7 @@ def main(argv: list | None = None) -> int:
     ap.add_argument("--apply", action="store_true", help="execute the migration (default: dry run)")
     args = ap.parse_args(argv)
     sys.path.insert(0, str(ROOT))
-    sys.path.insert(0, str(ROOT / "scripts" / "ops"))
+    sys.path.insert(0, str(ROOT / "scripts" / "mig" / "fondos"))
     from shared.env_guard import require_db_driver     # RC 106 up front, not a traceback mid-run
     require_db_driver()
     import os

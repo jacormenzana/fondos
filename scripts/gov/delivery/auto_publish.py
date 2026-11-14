@@ -3,13 +3,13 @@
 """
 auto_publish.py -- publishes master by itself (FND-0376; plan ACTION_PLAN_BACKLOG_REFACTORING, Revision 2, R2.7; Directive D-0: no recurring manual `git push`).
 
-    python scripts/audit/auto_publish.py              # what the post-commit hook runs, detached: publish now, retry with backoff for up to 24 h
-    python scripts/audit/auto_publish.py --retry      # one attempt (the deploy watcher calls this on every pass); prints an alert text when one is newly due
-    python scripts/audit/auto_publish.py --now        # a hotfix: publish at once, in the foreground, without waiting for a test receipt; exit 0 published / nothing to do, 1 failed, 2 needs a person
-    python scripts/audit/auto_publish.py --status     # the pending state, for a person or the preflight
+    python scripts/gov/delivery/auto_publish.py              # what the post-commit hook runs, detached: publish now, retry with backoff for up to 24 h
+    python scripts/gov/delivery/auto_publish.py --retry      # one attempt (the deploy watcher calls this on every pass); prints an alert text when one is newly due
+    python scripts/gov/delivery/auto_publish.py --now        # a hotfix: publish at once, in the foreground, without waiting for a test receipt; exit 0 published / nothing to do, 1 failed, 2 needs a person
+    python scripts/gov/delivery/auto_publish.py --status     # the pending state, for a person or the preflight
 
 What it does. It pushes `master` to `origin`, never forced, whenever master is ahead of origin/master. A commit that carries `Closes:` is a delivery: it waits until HEAD has a passing local test receipt
-(scripts/audit/delivery_attest.py), which publishes by itself when it finishes; every other commit goes at once, which is the off-box copy. The push moves origin/master, which fires the autopilot hook.
+(scripts/gov/delivery/delivery_attest.py), which publishes by itself when it finishes; every other commit goes at once, which is the off-box copy. The push moves origin/master, which fires the autopilot hook.
 A failed push NEVER waits for the next commit: this process retries with backoff (1, 2, 5, 10, then every 15 minutes, for up to 24 h), the deploy watcher retries on each pass (it survives a reboot), and
 the next commit retries too. State is kept in out/audit/auto_publish_state.json. Nothing is silent: after 15 minutes of failure (at once for a diverged history or an authentication error, which no retry
 fixes) it opens an incident through report_incident and the watcher shows a window; a delivery that waits for its receipt for 30 minutes raises the same alert; `preflight_check.py` prints an UNPUBLISHED line.
@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from shared import backlog_gate as gate  # noqa: E402
@@ -77,7 +77,7 @@ def plan(branch: str, ahead: list, head_verified: Optional[bool], force: bool = 
     if not ahead:
         return "nothing", "nothing to publish"
     if any(c["closes"] for c in ahead) and not force and head_verified is not True:
-        return "wait", "a commit with Closes: waits for its local test receipt (python scripts/audit/delivery_attest.py)"
+        return "wait", "a commit with Closes: waits for its local test receipt (python scripts/gov/delivery/delivery_attest.py)"
     return "push", f"{len(ahead)} commit(s) ahead of origin"
 
 
@@ -95,7 +95,7 @@ def failure_alert(state: dict, now: datetime) -> Optional[str]:
         return None
     what = "a person must act (nothing is forced)" if not retriable(cls) else "it keeps retrying"
     return (f"master is NOT published: {state.get('attempts', 0)} attempt(s) since {state['first_failure_ts'][:19]}, {cls}: {str(state.get('last_error'))[:200]}; {what}. "
-            f"After fixing the cause run: python scripts/audit/auto_publish.py --now")
+            f"After fixing the cause run: python scripts/gov/delivery/auto_publish.py --now")
 
 
 def stuck_delivery_alert(ahead: list, now: datetime, already: Optional[str], receipt: str = "none") -> Optional[str]:
@@ -110,7 +110,7 @@ def stuck_delivery_alert(ahead: list, now: datetime, already: Optional[str], rec
         return (f"a delivery cannot be published: commit {old[0]['sha'][:12]} (Closes:) has waited {minutes} minutes and the local test receipt for HEAD FAILED ({receipt[len('failed: '):][:240]}). "
                 f"Fix it and commit again: the new receipt covers the earlier commits. The output of the run is in out/audit/delivery_attest_last_failure.log")
     return (f"a delivery is stuck: commit {old[0]['sha'][:12]} (Closes:) has waited {minutes} minutes for a local test receipt, so it is not published and its "
-            f"ticket is not closed. Run: python scripts/audit/delivery_attest.py")
+            f"ticket is not closed. Run: python scripts/gov/delivery/delivery_attest.py")
 
 
 def receipt_state(head: str, *, receipts_path: Optional[Path] = None, lock: Optional[Path] = None) -> str:

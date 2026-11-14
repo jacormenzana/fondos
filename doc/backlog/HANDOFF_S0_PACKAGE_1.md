@@ -4,7 +4,7 @@ Written 2026-11-13 night at HEAD `f6c7799` plus this document. It supersedes `HA
 
 ---
 
-You are continuing the Fondos project (C:\desarrollo\fondos). Read `AGENTS.md` ("Working method - outcome packages"), then `doc/backlog/PKG_S0_impact_triage.md` (the one-page record of the triage: evidence, verdicts, what was applied), then this file. Run the read-only pre-flight BEFORE touching anything (`C:\Users\jacor\.conda\envs\des\python.exe scripts/audit/preflight_check.py --mine <your files>`). Set `FONDOS_ACTOR=agent:<your model id>` and `import shared.config` first in any script that reads the backlog. Reply in English, ultra-short, DECISION FIRST. First action: report the state in five lines and start package 1 at slice 1 below.
+You are continuing the Fondos project (C:\desarrollo\fondos). Read `AGENTS.md` ("Working method - outcome packages"), then `doc/backlog/PKG_S0_impact_triage.md` (the one-page record of the triage: evidence, verdicts, what was applied), then this file. Run the read-only pre-flight BEFORE touching anything (`C:\Users\jacor\.conda\envs\des\python.exe scripts/gov/repo/preflight_check.py --mine <your files>`). Set `FONDOS_ACTOR=agent:<your model id>` and `import shared.config` first in any script that reads the backlog. Reply in English, ultra-short, DECISION FIRST. First action: report the state in five lines and start package 1 at slice 1 below.
 
 ## 1. State (2026-11-13 night)
 1. HEAD = origin/master = `2a91f2d` (+ the docs commit of this handoff update); tree clean; nothing running. PRODUCTION is now `cartera_shock_energetico_202611_b20261112220456` (promoted by the owner on 2026-11-13; the 10-25 portfolio is ARCHIVED).
@@ -31,7 +31,7 @@ Exit metric: no held fund with an open classification doubt that the owner has n
 ## 4. Mechanics learned today
 a. A backlog session id must look like `FND_YYYYMMDD_ANL_TOPIC` (letters only in the middle group; `S0` is refused). The collision tool `gate_adjudicate.py --decide` refuses a non-interactive process: an agent uses `bc.agent_adjudicate_overlap(a, b, decision, reason)`.
 b. Closing flow that worked three times: docs-only commit with `Closes:` lines and `Co-Authored-By` in the same last paragraph, then `bc.add_close_condition(ap, "tests_pass", [<full sha>], reason)` per ticket, then `delivery_attest.py` (docs_only is instant), then the autopilot closes by itself within minutes.
-c. A non-`Closes:` commit waits for the watcher's pass; `python scripts/audit/auto_publish.py --retry` is one attempt of the same mechanism (never forced), `--status` shows the pending state.
+c. A non-`Closes:` commit waits for the watcher's pass; `python scripts/gov/delivery/auto_publish.py --retry` is one attempt of the same mechanism (never forced), `--status` shows the pending state.
 d. Run the policy scanners and the receipt from Git Bash: from PowerShell `bash` is the WSL launcher and `tests/test_maintenance_log_routing.py` fails on `/c/...` paths.
 e. A new check inside `check_universe_freshness` must be stubbed in the two tests that call it with `conn=None` (`test_fx_coverage_gate_fnd0243.py`, `test_fx_view_canary_lock_fnd0235.py`).
 f. Evidence reads that worked: `gold.fund_metric_alerts` (level OK / WARN / ALARM), `gold.regime_history`, `bronze.series_macro` (freshness per series), `control.ingestion_log` (the promotion record), `control.audit_accepted_finding`; the promotion dry run `p3_promote_scenario.py <id> --dry-run` is read-only.

@@ -3,8 +3,8 @@
 """
 FND-0177 one-shot cleanup: delete the 218 provably bad daily NAV rows of three funds from bronze.fund_nav_daily.
 
-    python scripts/ops/fnd0177_delete_bad_daily_rows.py            # DRY RUN: counts + CSV backup only
-    python scripts/ops/fnd0177_delete_bad_daily_rows.py --apply    # backup, then delete in ONE transaction
+    python scripts/mig/fondos/fnd0177_delete_bad_daily_rows.py            # DRY RUN: counts + CSV backup only
+    python scripts/mig/fondos/fnd0177_delete_bad_daily_rows.py --apply    # backup, then delete in ONE transaction
 
 Rows (daily table verified 2026-10-03; the monthly rows were re-added by a --force load run before the gate covered the monthly resample; the nav_discovery quality gate _filter_daily_anomalies flags exactly these):
   IE00B3L10570  5   nav < 50 (prints of 1.0 among ~100)
@@ -19,7 +19,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from shared.db import get_connection  # noqa: E402
 
 RULES = [

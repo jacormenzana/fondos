@@ -3,7 +3,7 @@
 """
 eligibility_switch_diff.py -- read-only ON/OFF comparison of the build-time data-eligibility rule (FND-0251, Commit B).
 
-    python scripts/audit/eligibility_switch_diff.py [--regime Shock_Energetico] [--out diff.csv]
+    python scripts/audit/p3/eligibility_switch_diff.py [--regime Shock_Energetico] [--out diff.csv]
 
 Scores the SAME persisted inputs twice with the pure scoring core (nothing is persisted, nothing is written):
   OFF  today's behaviour;
@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pandas as pd
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
 

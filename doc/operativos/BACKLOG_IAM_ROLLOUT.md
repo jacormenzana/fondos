@@ -14,7 +14,7 @@ Several logins of one person count as one person (`person` column, a database CH
 
 ## Order (the owner applies every DDL; nothing here is applied by a session)
 1. Re-apply step A-1 with the hook and apply the IAM step in the owner's terminal (owner DSN typed for the session, never stored):
-   `python scripts/ops/migrate_backlog_v2.py --phase relations --apply` then `--phase iam` (dry run first; `--down` rolls back). Baseline and verify: `scripts/audit/backlog_phase_a_acceptance.py --baseline` / `--verify iam`.
+   `python scripts/mig/backlog/migrate_backlog_v2.py --phase relations --apply` then `--phase iam` (dry run first; `--down` rolls back). Baseline and verify: `scripts/mig/backlog/backlog_phase_a_acceptance.py --baseline` / `--verify iam`.
 2. Passwords or certificates: the roles are created WITHOUT a password (like `backlog_human`). Set them in the owner's psql session. For the cryptographic binding, DevOps configures TLS on the server and
    `pg_hba.conf` (`hostssl gestion <role> <cidr> cert` or `scram-sha-256 clientcert=verify-full`) and issues one client certificate per login, including the non-human ones. The server is `ssl=off` today.
 3. Create one login per operator, each a member of `backlog_human` (so it may be a human identity) and of `backlog_writer` (same privileges as today), then bind (owner session):
@@ -26,4 +26,4 @@ Several logins of one person count as one person (`person` column, a database CH
    The role `backlog_writer` stays as the privilege group; `fondos_app` is not touched.
 
 ## Rollback
-`python scripts/ops/migrate_backlog_v2.py --phase iam --down --apply` disables the IAM step and KEEPS its history: it removes the roles, the routines and the views (the hook goes back to a stub that allows everything, so no binding is enforced), and never drops `actor_login_event` or `binding_window_event`; applying `--phase iam` again resumes with every binding and window row. Tickets, logs and events are not touched. `--phase relations --down` is likewise atomic and keeps the gate (see the rollback playbook).
+`python scripts/mig/backlog/migrate_backlog_v2.py --phase iam --down --apply` disables the IAM step and KEEPS its history: it removes the roles, the routines and the views (the hook goes back to a stub that allows everything, so no binding is enforced), and never drops `actor_login_event` or `binding_window_event`; applying `--phase iam` again resumes with every binding and window row. Tickets, logs and events are not touched. `--phase relations --down` is likewise atomic and keeps the gate (see the rollback playbook).

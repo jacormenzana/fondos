@@ -1,5 +1,5 @@
 """
-tests/test_rfd_matrix_probe.py -- the READY_FOR_DEPLOY evidence matrix (scripts/audit/rfd_matrix_probe.py). R-7: the decision logic and the spec are pure;
+tests/test_rfd_matrix_probe.py -- the READY_FOR_DEPLOY evidence matrix (scripts/gov/backlog/rfd_matrix_probe.py). R-7: the decision logic and the spec are pure;
 the probes that read git / the database / Windows tasks are exercised by running the script, never from the test suite.
 """
 import importlib.util
@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[1]
-_SPEC = importlib.util.spec_from_file_location("rfd_matrix_probe", _ROOT / "scripts" / "audit" / "rfd_matrix_probe.py")
+_SPEC = importlib.util.spec_from_file_location("rfd_matrix_probe", _ROOT / "scripts" / "gov" / "backlog" / "rfd_matrix_probe.py")
 m = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(m)
 
@@ -63,7 +63,7 @@ def test_ticket_closed_probe_reads_through_the_backlog_client_and_never_passes_o
 
 
 def test_the_module_holds_no_sql_on_the_backlog_database():
-    src = (_ROOT / "scripts" / "audit" / "rfd_matrix_probe.py").read_text(encoding="utf-8")
+    src = (_ROOT / "scripts" / "gov" / "backlog" / "rfd_matrix_probe.py").read_text(encoding="utf-8")
     assert "backlog.backlog" not in src and "psycopg" not in src
 
 

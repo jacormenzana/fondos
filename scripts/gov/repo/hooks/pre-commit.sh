@@ -2,13 +2,13 @@
 # pre-commit.sh — Portable installer for the AGENTS.md sync pre-commit hook.
 #
 # Usage (run once from repo root):
-#   bash scripts/audit/pre-commit.sh
+#   bash scripts/gov/repo/hooks/pre-commit.sh
 #
 # Installs .git/hooks/pre-commit that runs sync_agents_md.py --check on EXACTLY what is about to be committed
 # (FND-0314): the staged state is exported with `git checkout-index` (it honours GIT_INDEX_FILE, so
 # `git commit -- <paths>` is covered) and checked there. The working tree is never read: several sessions share
 # it, and another session's uncommitted file used to make a commit pass here and fail in clean-checkout CI.
-# Any sentinel drift exits 1 and blocks the commit. Fix with: python scripts/audit/sync_agents_md.py --write
+# Any sentinel drift exits 1 and blocks the commit. Fix with: python scripts/gov/repo/sync_agents_md.py --write
 # (then stage the regenerated file). Never use `git stash` to isolate the tree: stashes are shared by every session.
 
 set -e
@@ -17,8 +17,8 @@ HOOK="$(git rev-parse --git-path hooks/pre-commit)"
 
 cat > "$HOOK" <<'EOF'
 #!/bin/sh
-# Auto-installed by scripts/audit/pre-commit.sh (FND-0314) — verifies the AGENTS.md sentinel blocks of the STAGED state.
-# Drift blocks the commit; fix with: python scripts/audit/sync_agents_md.py --write, then stage the file.
+# Auto-installed by scripts/gov/repo/hooks/pre-commit.sh (FND-0314) — verifies the AGENTS.md sentinel blocks of the STAGED state.
+# Drift blocks the commit; fix with: python scripts/gov/repo/sync_agents_md.py --write, then stage the file.
 
 # Resolve interpreter: prefer Conda 'des' env, fall back to system python.
 CONDA_PYTHON="$HOME/.conda/envs/des/python.exe"
@@ -37,11 +37,11 @@ TMP="$(mktemp -d 2>/dev/null)" || { echo "WARNING: cannot create a temp dir; ski
 trap 'rm -rf "$TMP"' EXIT HUP INT TERM
 
 git checkout-index -a --prefix="$TMP/" || { echo "ERROR: cannot export the staged state for the AGENTS.md sync check." >&2; exit 1; }
-if [ ! -f "$TMP/scripts/audit/sync_agents_md.py" ]; then
-    echo "WARNING: the staged state has no scripts/audit/sync_agents_md.py; skipping AGENTS.md sync check." >&2
+if [ ! -f "$TMP/scripts/gov/repo/sync_agents_md.py" ]; then
+    echo "WARNING: the staged state has no scripts/gov/repo/sync_agents_md.py; skipping AGENTS.md sync check." >&2
     exit 0
 fi
-cd "$TMP" && "$PYTHON" scripts/audit/sync_agents_md.py --check
+cd "$TMP" && "$PYTHON" scripts/gov/repo/sync_agents_md.py --check
 EOF
 
 chmod +x "$HOOK"

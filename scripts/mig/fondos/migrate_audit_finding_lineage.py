@@ -3,8 +3,8 @@
 """
 migrate_audit_finding_lineage.py -- add the data-lineage columns to control.audit_finding_isin (FND-0275): algorithm_versions / batch_ids.
 
-    python scripts/ops/migrate_audit_finding_lineage.py            # DRY RUN: read-only, reports what exists
-    python scripts/ops/migrate_audit_finding_lineage.py --apply    # runs the block in ONE transaction
+    python scripts/mig/fondos/migrate_audit_finding_lineage.py            # DRY RUN: read-only, reports what exists
+    python scripts/mig/fondos/migrate_audit_finding_lineage.py --apply    # runs the block in ONE transaction
 
 The DDL is the block between `-- BEGIN audit_finding_lineage` and `-- END audit_finding_lineage` in db/pg/35_control.sql (single source of
 truth, P#11): two nullable columns (ADD COLUMN IF NOT EXISTS, no rewrite, no default). Idempotent.
@@ -20,7 +20,7 @@ import argparse
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 BLOCK = "audit_finding_lineage"
 TABLE = "control.audit_finding_isin"
 LOCK_TIMEOUT = "5s"
@@ -36,7 +36,7 @@ def existing(conn) -> dict:
 
 def migrate(conn, lock_timeout: str = LOCK_TIMEOUT) -> None:
     """The whole block in the caller's transaction. Raises on any failure (the caller rolls back)."""
-    sys.path.insert(0, str(ROOT / "scripts" / "ops"))
+    sys.path.insert(0, str(ROOT / "scripts" / "mig" / "fondos"))
     from migrate_cycle_telemetry import ddl_block
     conn.execute(f"SET LOCAL lock_timeout = '{lock_timeout}'")
     conn.execute(ddl_block(name=BLOCK))
@@ -47,7 +47,7 @@ def main(argv: list | None = None) -> int:
     ap.add_argument("--apply", action="store_true", help="execute the migration (default: dry run)")
     args = ap.parse_args(argv)
     sys.path.insert(0, str(ROOT))
-    sys.path.insert(0, str(ROOT / "scripts" / "ops"))
+    sys.path.insert(0, str(ROOT / "scripts" / "mig" / "fondos"))
     from shared.env_guard import require_db_driver     # RC 106 up front, not a traceback mid-run
     require_db_driver()
     import os

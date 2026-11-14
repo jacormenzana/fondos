@@ -3,20 +3,20 @@
 """
 backlog_phase_c_acceptance.py -- acceptance checks of Backlog v2 Phase C (FND-0334), read-only, evidence persisted.
 
-    python scripts/audit/backlog_phase_c_acceptance.py --verify hook        # AFTER the owner applied --phase hook      (slice 2: gate_check, hook_bypass, the login backlog_gate)
-    python scripts/audit/backlog_phase_c_acceptance.py --verify collision   # AFTER --phase collision                   (slice 3: the rule, adjudication, the modes, backlog_adjudicator)
-    python scripts/audit/backlog_phase_c_acceptance.py --verify attest      # AFTER --phase attest                      (slice 4: the branch-protection facts and the V-GATE-* codes)
-    python scripts/audit/backlog_phase_c_acceptance.py --verify all         # the three, one report
+    python scripts/mig/backlog/backlog_phase_c_acceptance.py --verify hook        # AFTER the owner applied --phase hook      (slice 2: gate_check, hook_bypass, the login backlog_gate)
+    python scripts/mig/backlog/backlog_phase_c_acceptance.py --verify collision   # AFTER --phase collision                   (slice 3: the rule, adjudication, the modes, backlog_adjudicator)
+    python scripts/mig/backlog/backlog_phase_c_acceptance.py --verify attest      # AFTER --phase attest                      (slice 4: the branch-protection facts and the V-GATE-* codes)
+    python scripts/mig/backlog/backlog_phase_c_acceptance.py --verify all         # the three, one report
 
 What each phase must satisfy (every check prints PASS or FAIL with its detail):
-  * the tables, views and routines of the phase exist (the lists are the ones scripts/ops/migrate_backlog_v2.py applies: one source); every table is owned by backlog_owner and carries the
+  * the tables, views and routines of the phase exist (the lists are the ones scripts/mig/backlog/migrate_backlog_v2.py applies: one source); every table is owned by backlog_owner and carries the
     append-only trigger, ENABLED (a disabled trigger is a failure); every routine is SECURITY DEFINER, owned by backlog_owner, with a pinned search_path, and PUBLIC cannot execute it;
   * the scoped logins are scoped: backlog_gate can log in, is no superuser, cannot create roles or databases, has its connection limit and statement timeout, belongs to no other role, holds NO
     privilege on any table or view of the backlog schema (the whole schema is read, not only the phase's tables), and executes exactly the routines of its design and none of the privileged ones; backlog_adjudicator (the owner's: this tool never creates it) is no superuser, executes
     exactly the adjudication routine and the read of the undecided pairs and has no write privilege; the shared writer reads the tables, writes none directly and can execute what the tools
     need but not the adjudication; the catalogue view v_backlog_violations contains the phase's violations.
 It never writes to the database: every read goes through shared/backlog_client. Evidence: out/audit/fnd0334_acceptance_<phase>_<UTC>.txt. Exit codes: 0 every check passed, 1 a check failed,
-2 usage or connection error. The password of a role is not readable by a non-superuser: that the owner set one is shown by a login that works (scripts/audit/gate_mode.py, gate_adjudicate.py).
+2 usage or connection error. The password of a role is not readable by a non-superuser: that the owner set one is shown by a login that works (scripts/gov/backlog/gate_mode.py, gate_adjudicate.py).
 """
 from __future__ import annotations
 
@@ -25,8 +25,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "scripts" / "ops"))
+ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT / "scripts" / "mig" / "backlog"))
 OUT_DIR = ROOT / "out" / "audit"
 RC_OK, RC_FAIL, RC_USAGE = 0, 1, 2
 OWNER = "backlog_owner"

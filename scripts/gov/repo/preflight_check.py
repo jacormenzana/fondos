@@ -13,9 +13,9 @@ gate, promoted, and started a 5 h recompute). The five checks below take seconds
   4. memory    topic files touched recently (a file by another session = shared state moved)
   5. backlog   tickets opened since --since-hours
 
-    python scripts/audit/preflight_check.py                 # report; exit 0
-    python scripts/audit/preflight_check.py --strict        # exit 1 when the verdict is CAUTION (use in a launcher / a hook)
-    python scripts/audit/preflight_check.py --json          # machine-readable
+    python scripts/gov/repo/preflight_check.py                 # report; exit 0
+    python scripts/gov/repo/preflight_check.py --strict        # exit 1 when the verdict is CAUTION (use in a launcher / a hook)
+    python scripts/gov/repo/preflight_check.py --json          # machine-readable
 
 Never writes anything, never fetches (origin figures are as of the last fetch), never prints a DSN. A section that cannot be read
 (no DSN, DB down, no PowerShell) says so and the rest still runs: absence of evidence is reported, not hidden.
@@ -33,7 +33,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -187,7 +187,7 @@ def verdict(report: dict, audit_max_age_days: float = 3.0) -> dict:
     leaked = report.get("secrets") or []
     if leaked:
         cautions.append(f"owner-only string(s) in the .env file that every agent session loads: {', '.join(leaked)} (names only). Move them to the owner vault "
-                        f"(`python scripts/ops/owner_vault.py set <NAME>`, once) and delete the line: owner tools then find them by themselves at a real console")
+                        f"(`python scripts/gov/backlog/owner_vault.py set <NAME>`, once) and delete the line: owner tools then find them by themselves at a real console")
     g = report.get("git", {})
     d = g.get("dirty", {})
     if d.get("tracked") or d.get("untracked"):
@@ -198,9 +198,9 @@ def verdict(report: dict, audit_max_age_days: float = 3.0) -> dict:
         old = g.get("oldest_unpublished_min")
         if old is not None and old >= 30:
             cautions.append(f"UNPUBLISHED: {g['ahead']} local commit(s) not on origin, the oldest {old} min: the automatic publication is not keeping up "
-                            f"-- `python scripts/audit/auto_publish.py --status` (a hotfix: `--now`)")
+                            f"-- `python scripts/gov/delivery/auto_publish.py --status` (a hotfix: `--now`)")
         else:
-            notes.append(f"{g['ahead']} local commit(s) not on origin (as of the last fetch): the automatic publication pushes them (scripts/audit/auto_publish.py)")
+            notes.append(f"{g['ahead']} local commit(s) not on origin (as of the last fetch): the automatic publication pushes them (scripts/gov/delivery/auto_publish.py)")
     if g.get("behind"):
         notes.append(f"{g['behind']} commit(s) on origin not in HEAD: fetch/rebase decision before committing")
     if g.get("stashes"):
@@ -318,7 +318,7 @@ def cycle_lock_held() -> bool:
     """True when ANOTHER process holds the launcher's cycle lock: the repo's own predicate (the file merely existing means nothing; the
     launcher holds it open with write sharing denied, so opening it for append fails while held)."""
     try:
-        sys.path.insert(0, str(ROOT / "scripts" / "ops"))
+        sys.path.insert(0, str(ROOT / "scripts" / "mig" / "fondos"))
         from migrate_fund_metric_state_ols_calc_version import lock_file_held
         return bool(lock_file_held(LOCK_FILE))
     except Exception:                                          # noqa: BLE001 -- predicate unavailable: same test, locally
@@ -491,7 +491,7 @@ def queue_lines(rows: list) -> tuple:
     lines = []
     if alerta:
         lines.append(f"[ALERTA] {len(alerta)} collision pair(s) undecided for 96 h or more (oldest {alerta[0]['a']} / {alerta[0]['b']}, {alerta[0]['age_hours']} h): "
-                     "python scripts/audit/gate_adjudicate.py --list")
+                     "python scripts/gov/backlog/gate_adjudicate.py --list")
     if atencion:
         lines.append(f"[ATENCION] {len(atencion)} collision pair(s) undecided for 48 h or more (oldest {atencion[0]['a']} / {atencion[0]['b']}, {atencion[0]['age_hours']} h)")
     if rows and not (alerta or atencion):

@@ -3,11 +3,11 @@
 """
 backlog_phase_a_acceptance.py -- acceptance checks of Backlog v2 Phase A (FND-0331), read-only, evidence persisted.
 
-    python scripts/audit/backlog_phase_a_acceptance.py --baseline                                     # BEFORE the owner applies a step
-    python scripts/audit/backlog_phase_a_acceptance.py --verify a1 --baseline-file F --migration-rc 0   # AFTER step A-1 (30_transitions.sql)
-    python scripts/audit/backlog_phase_a_acceptance.py --verify a2 --baseline-file F --migration-rc 0   # AFTER step A-2 (31_revoke_raw_update.sql)
-    python scripts/audit/backlog_phase_a_acceptance.py --verify human|history --baseline-file F --migration-rc 0   # AFTER step 32 (FND-0337) / step 33 (FND-0338)
-    python scripts/audit/backlog_phase_a_acceptance.py --verify relations --baseline-file F --migration-rc 0         # AFTER Phase B (40_relations_v2.sql, FND-0333)
+    python scripts/mig/backlog/backlog_phase_a_acceptance.py --baseline                                     # BEFORE the owner applies a step
+    python scripts/mig/backlog/backlog_phase_a_acceptance.py --verify a1 --baseline-file F --migration-rc 0   # AFTER step A-1 (30_transitions.sql)
+    python scripts/mig/backlog/backlog_phase_a_acceptance.py --verify a2 --baseline-file F --migration-rc 0   # AFTER step A-2 (31_revoke_raw_update.sql)
+    python scripts/mig/backlog/backlog_phase_a_acceptance.py --verify human|history --baseline-file F --migration-rc 0   # AFTER step 32 (FND-0337) / step 33 (FND-0338)
+    python scripts/mig/backlog/backlog_phase_a_acceptance.py --verify relations --baseline-file F --migration-rc 0         # AFTER Phase B (40_relations_v2.sql, FND-0333)
 
 --baseline fingerprints the append-only history (count + md5 of every log and link event up to the current maximum ids) and the number of tickets, and
 writes out/audit/fnd0331_baseline_<UTC>.json. --verify a1 requires ALL of: the migration exited 0; backlog_owner exists and is NOT a superuser and cannot log in;
@@ -26,7 +26,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 OUT_DIR = ROOT / "out" / "audit"
 RC_OK, RC_FAIL, RC_USAGE = 0, 1, 2
 SEARCH_PATH = "search_path=pg_catalog,backlog"

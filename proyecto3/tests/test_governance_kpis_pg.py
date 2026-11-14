@@ -3,7 +3,7 @@
 """FND-0251 item E on Postgres: the KPI queries run through the REAL audit DDL (tables cloned from control.*) over SYNTHETIC rows, so query
 correctness (and the EXPLAIN sweep over the script) does not depend on how many live cycles exist.
 
-    python scripts/ops/run_pg_tests.py -- proyecto3/tests/test_governance_kpis_pg.py
+    python scripts/gov/delivery/run_pg_tests.py -- proyecto3/tests/test_governance_kpis_pg.py
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ _ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from scenario_pg_support import db  # noqa: E402,F401  (db is a fixture)
 
-_spec = importlib.util.spec_from_file_location("governance_kpis_pg", _ROOT / "scripts" / "audit" / "governance_kpis.py")
+_spec = importlib.util.spec_from_file_location("governance_kpis_pg", _ROOT / "scripts" / "audit" / "stat" / "governance_kpis.py")
 k = importlib.util.module_from_spec(_spec)
 sys.modules["governance_kpis_pg"] = k
 _spec.loader.exec_module(k)

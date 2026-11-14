@@ -3,13 +3,13 @@
 """
 migrate_audit_incident.py -- create control.audit_incident (FND-0264), the closed-loop remediation record of CRITICAL audit findings.
 
-    python scripts/ops/migrate_audit_incident.py            # DRY RUN: read-only, reports what exists
-    python scripts/ops/migrate_audit_incident.py --apply    # runs the block in ONE transaction
+    python scripts/mig/fondos/migrate_audit_incident.py            # DRY RUN: read-only, reports what exists
+    python scripts/mig/fondos/migrate_audit_incident.py --apply    # runs the block in ONE transaction
 
 The DDL is the block between `-- BEGIN audit_incident` and `-- END audit_incident` in db/pg/35_control.sql (single source of truth, P#11):
 the table, its state / certification CHECKs and the partial unique index "one live incident per finding key". Idempotent.
 
-Nothing changes behaviour by itself: scripts/audit/audit_incident.py --plan and --close-check only read the table, and incidents are
+Nothing changes behaviour by itself: scripts/audit/stat/audit_incident.py --plan and --close-check only read the table, and incidents are
 written only with shared.config.AUDIT_INCIDENT_LOOP_ENABLED on. ROLLBACK (before the switch): DROP TABLE control.audit_incident.
 Runs with FONDOS_PG_DSN_OWNER (DDL needs the owner role). Never prints the DSN.
 Exit codes: 0 ok (or dry run), 1 apply failed, 2 usage or connection error, 3 refused (a cycle appears to be running).
@@ -20,7 +20,7 @@ import argparse
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 BLOCK = "audit_incident"
 TABLE = "control.audit_incident"
 LOCK_TIMEOUT = "5s"
@@ -35,7 +35,7 @@ def existing(conn) -> dict:
 
 def migrate(conn, lock_timeout: str = LOCK_TIMEOUT) -> None:
     """The whole block in the caller's transaction. Raises on any failure (the caller rolls back)."""
-    sys.path.insert(0, str(ROOT / "scripts" / "ops"))
+    sys.path.insert(0, str(ROOT / "scripts" / "mig" / "fondos"))
     from migrate_cycle_telemetry import ddl_block
     conn.execute(f"SET LOCAL lock_timeout = '{lock_timeout}'")
     conn.execute(ddl_block(name=BLOCK))
@@ -46,7 +46,7 @@ def main(argv: list | None = None) -> int:
     ap.add_argument("--apply", action="store_true", help="execute the migration (default: dry run)")
     args = ap.parse_args(argv)
     sys.path.insert(0, str(ROOT))
-    sys.path.insert(0, str(ROOT / "scripts" / "ops"))
+    sys.path.insert(0, str(ROOT / "scripts" / "mig" / "fondos"))
     from shared.env_guard import require_db_driver     # RC 106 up front, not a traceback mid-run
     require_db_driver()
     import os

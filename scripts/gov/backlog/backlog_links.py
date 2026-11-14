@@ -12,13 +12,13 @@ Signals (each pair of tickets can carry several; none decides alone):
   S3 vocabulary repo identifiers (config switches, DDL tables/columns, module and function names) shared by two tickets, IDF-weighted
   S4 text       TF-IDF cosine of title + description + logs (stdlib, shared/backlog_overlap.py; scikit-learn / rich are not installed in env `des`)
 
-    python scripts/audit/backlog_links.py --all                       # clusters + ranked unreviewed candidates (read-only)
-    python scripts/audit/backlog_links.py --for FND-0246              # neighbours; exit 1 while a confirmed DEPENDS_ON target is open
-    python scripts/audit/backlog_links.py --new "text of the new ticket"   # the 3 open tickets closest to it (informational, exit 0)
-    python scripts/audit/backlog_links.py --evaluate                  # recall of S2-S4 on the explicit links, precision on the reviewed set
-    python scripts/audit/backlog_links.py --mermaid                   # out/reports/backlog_links/<stamp>.md
-    python scripts/audit/backlog_links.py --review-out                # out/reports/backlog_links/review_<stamp>.{md,csv}
-    python scripts/audit/backlog_links.py --apply-review FILE.csv [--confirm] [--force-row FROM:TO:TYPE]
+    python scripts/gov/backlog/backlog_links.py --all                       # clusters + ranked unreviewed candidates (read-only)
+    python scripts/gov/backlog/backlog_links.py --for FND-0246              # neighbours; exit 1 while a confirmed DEPENDS_ON target is open
+    python scripts/gov/backlog/backlog_links.py --new "text of the new ticket"   # the 3 open tickets closest to it (informational, exit 0)
+    python scripts/gov/backlog/backlog_links.py --evaluate                  # recall of S2-S4 on the explicit links, precision on the reviewed set
+    python scripts/gov/backlog/backlog_links.py --mermaid                   # out/reports/backlog_links/<stamp>.md
+    python scripts/gov/backlog/backlog_links.py --review-out                # out/reports/backlog_links/review_<stamp>.{md,csv}
+    python scripts/gov/backlog/backlog_links.py --apply-review FILE.csv [--confirm] [--force-row FROM:TO:TYPE]
 
 Read-only except `--apply-review --confirm`, which inserts link EVENTS (never updates, never deletes). Uses FONDOS_BACKLOG_PG_DSN
 (autoloaded from the repo .env by shared.config); never prints it. The pure core below takes plain lists of dicts, so every signal
@@ -41,7 +41,7 @@ from itertools import combinations
 from pathlib import Path
 from typing import Iterable, Optional
 
-_ROOT = Path(__file__).resolve().parents[2]
+_ROOT = Path(__file__).resolve().parents[3]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
@@ -65,8 +65,8 @@ MAX_PER_TICKET = 5                 # non-explicit candidates kept per pending ti
 
 # Files the backlog procedure itself makes every ticket cite (see footprints()): never footprint evidence.
 PROCEDURE_PATHS = frozenset({
-    "scripts/audit/backlog_links.py",
-    "scripts/audit/backlog_links_calibration.py",
+    "scripts/gov/backlog/backlog_links.py",
+    "scripts/gov/backlog/backlog_links_calibration.py",
     "shared/backlog_client.py",
     "shared/backlog_overlap.py",
     "doc/reglas/NORMAS_BACKLOG.md",
@@ -454,7 +454,7 @@ def _load(extra_docs: Optional[dict[str, str]] = None, max_df_share: float = MAX
     if bc.links_store_present():
         links = bc.list_links()
     else:                       # read-only analysis still works; recording needs the owner's migration first
-        print("WARNING: relationship store not applied on this backlog (run scripts/ops/migrate_backlog_links.py --apply): "
+        print("WARNING: relationship store not applied on this backlog (run scripts/mig/backlog/migrate_backlog_links.py --apply): "
               "no link has been reviewed, every candidate is unreviewed.", file=sys.stderr)
         links = []
     return Analysis(tickets, logs, links, load_commits(), build_vocabulary(), extra_docs=extra_docs, max_df_share=max_df_share)

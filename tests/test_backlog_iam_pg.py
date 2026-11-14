@@ -1,12 +1,12 @@
 # tests/test_backlog_iam_pg.py
 # -*- coding: utf-8 -*-
-"""IAM of Backlog v2 (FND-0354; owner decisions of 2026-10-29): db/pg_backlog/50_iam.sql, applied by scripts/ops/migrate_backlog_v2.py --phase iam.
+"""IAM of Backlog v2 (FND-0354; owner decisions of 2026-10-29): db/pg_backlog/50_iam.sql, applied by scripts/mig/backlog/migrate_backlog_v2.py --phase iam.
 
 Three per-identity roles (reader, logger, incident), the scoped routines they may run (sp_append_log: a note on an EXISTING ticket and nothing else; sp_report_incident: insert-only),
 and the binding of database logins to identities (a bound login writes ONLY as its identity; a human identity only from a login bound to it). The rule looks at session_user, so the tests
 switch the SESSION authorization, which is how a real login differs from SET ROLE. Hermetic: the throwaway container inside a rolled-back savepoint (pg_conn).
 
-    python scripts/ops/run_pg_tests.py -- tests/test_backlog_iam_pg.py
+    python scripts/gov/delivery/run_pg_tests.py -- tests/test_backlog_iam_pg.py
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ import psycopg
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops"), str(Path(__file__).resolve().parent)):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "mig" / "backlog"), str(Path(__file__).resolve().parent)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 

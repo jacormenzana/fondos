@@ -4,7 +4,7 @@
 
 A change under shared/ or proyecto*/ used to need the whole suite (about 27 min) because `delivery_receipt.required_scope` is a path rule. This module is the analysis behind a narrower
 `impact` scope. EVERYTHING HERE IS PURE: it takes the text of the files (`{repo-relative path with forward slashes: source}`) and returns a decision; git, the receipts file and the
-test runner live in scripts/audit/delivery_attest.py. The module is runner-agnostic: a CI that returns can use the same `Decision`.
+test runner live in scripts/gov/delivery/delivery_attest.py. The module is runner-agnostic: a CI that returns can use the same `Decision`.
 
 Principle (owner, 2026-11-07): optimise validation time, never validation assurance. UNCERTAINTY ALWAYS WIDENS: every rule F1..F8 below that cannot establish coverage returns `full`.
 
@@ -39,7 +39,7 @@ SUITE_EXCLUDE = frozenset({"proyecto2/tests/discovery/test_historia.py"})       
 DATA_EXTS = (".json", ".yaml", ".yml", ".sql", ".bat", ".sh")
 MAX_RUNTIME_FILES = 20                                                                    # F6
 HUB_SHARE = 0.5                                                                           # F3 and F5
-INFRA_EXACT = frozenset({"scripts/ops/run_pg_tests.py", "shared/delivery_receipt.py", "shared/test_impact.py", "scripts/audit/delivery_attest.py", "shared/git_export.py",
+INFRA_EXACT = frozenset({"scripts/gov/delivery/run_pg_tests.py", "shared/delivery_receipt.py", "shared/test_impact.py", "scripts/gov/delivery/delivery_attest.py", "shared/git_export.py",
                          "pytest.ini", "pyproject.toml", "setup.cfg", "tox.ini", "requirements.txt"})
 INFRA_PREFIXES = ("shared/testing/", "db/")
 _LOADERS = frozenset({"import_module", "__import__", "spec_from_file_location", "run_path", "run_module"})
@@ -54,7 +54,7 @@ _TOP_DIRS = frozenset({"shared", "proyecto1", "proyecto2", "proyecto3", "scripts
 # re-proved by tests/test_test_impact.py::test_narrowed_loaders_are_still_true, so a change that makes it false fails the suite instead of silently under-selecting. Empty tuple = loads no repo module.
 NARROW_LOADERS = {
     "shared/env_guard.py": (),                                                              # imports FONDOS_DB_DRIVER_MODULE or "psycopg": a third-party driver, or a module that does not exist (the tests)
-    "shared/backlog_writer_proof.py": ("scripts/audit/",),                                  # a registered writer's entry module (NORMAS_BACKLOG.md section 4.9: importable from scripts/audit)
+    "shared/backlog_writer_proof.py": ("scripts/gov/backlog/",),                                  # a registered writer's entry module (NORMAS_BACKLOG.md section 4.9: importable from scripts/gov/backlog)
     "proyecto3/src/pit_metrics.py": ("proyecto2/src/calculations/", "proyecto2/src/utils/"),   # load_p2_calc(name, subdir): every call site passes literals
 }
 
@@ -668,12 +668,12 @@ MAX_CHANGED_SYMBOLS = 200
 #   hub -> {file: (bindings)}
 #   shared/governance/run_identity.py::config_items   builds `config_hash`, an identity STRING that is written into a run header and printed in the promotion evidence; no code compares it (the
 #                                                     orchestrator only checks that it is present, code_integrity is git-only) and no test pins a literal one. A new or edited switch changes the string, never a decision.
-#   scripts/audit/backlog_links.py::build_vocabulary  reads the constant NAMES of shared/config.py as a vocabulary to rank ticket similarity; a new constant adds one word. Its only caller is `_load` of the
+#   scripts/gov/backlog/backlog_links.py::build_vocabulary  reads the constant NAMES of shared/config.py as a vocabulary to rank ticket similarity; a new constant adds one word. Its only caller is `_load` of the
 #                                                     same file. A test that names an edited or removed constant is still selected by that name.
 NARROWED_READERS = {
     "shared/config.py": {
         "shared/governance/run_identity.py": ("config_items",),
-        "scripts/audit/backlog_links.py": ("build_vocabulary",),
+        "scripts/gov/backlog/backlog_links.py": ("build_vocabulary",),
     },
 }
 

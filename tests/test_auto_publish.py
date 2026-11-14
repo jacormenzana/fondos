@@ -1,6 +1,6 @@
 # tests/test_auto_publish.py
 # -*- coding: utf-8 -*-
-"""FND-0376: the automatic publication of master (scripts/audit/auto_publish.py, scripts/audit/post-commit.sh). The pure rules (what waits, what is retried, when to alert), and the git side against a REAL bare
+"""FND-0376: the automatic publication of master (scripts/gov/delivery/auto_publish.py, scripts/gov/repo/hooks/post-commit.sh). The pure rules (what waits, what is retried, when to alert), and the git side against a REAL bare
 repository standing in for `origin` (pushes, a delivery that waits for its receipt, a diverged history that is never forced, a failed push that is retried by itself and alerted). R-7: no database, no network."""
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "audit")):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "gov" / "delivery")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -95,8 +95,8 @@ def test_a_running_or_passing_receipt_is_not_a_stuck_delivery_and_a_failed_one_s
     assert ap.stuck_delivery_alert(stuck, T0, None, "pass") is None                                # a pass is about to publish
     failed = ap.stuck_delivery_alert(stuck, T0, None, "failed: 1 failed | failed: tests/test_x.py::test_y")
     assert "cannot be published" in failed and "FAILED" in failed and "tests/test_x.py::test_y" in failed and "delivery_attest_last_failure.log" in failed
-    assert "Run: python scripts/audit/delivery_attest.py" not in failed                              # running it again is pointless: the fix is a new commit
-    assert "Run: python scripts/audit/delivery_attest.py" in ap.stuck_delivery_alert(stuck, T0, None, "none")
+    assert "Run: python scripts/gov/delivery/delivery_attest.py" not in failed                              # running it again is pointless: the fix is a new commit
+    assert "Run: python scripts/gov/delivery/delivery_attest.py" in ap.stuck_delivery_alert(stuck, T0, None, "none")
     assert ap.stuck_delivery_alert(stuck, T0, stuck[-1]["sha"], "failed: x") is None                # still once per head
 
 
@@ -334,7 +334,7 @@ def test_status_says_what_is_unpublished_and_why(world, tmp_path):
 # ── no forced push, ever ────────────────────────────────────────────────────────
 
 def test_the_publisher_never_builds_a_forced_push():
-    code = (_ROOT / "scripts" / "audit" / "auto_publish.py").read_text(encoding="utf-8")
+    code = (_ROOT / "scripts" / "gov" / "delivery" / "auto_publish.py").read_text(encoding="utf-8")
     pushes = [ln for ln in code.splitlines() if "_git(" in ln and '"push"' in ln]
     assert len(pushes) == 1 and 'root, "push", remote, branch' in pushes[0]                               # one push, a plain refspec
     for forbidden in ('"--force"', '"-f"', "force-with-lease", '"+'):

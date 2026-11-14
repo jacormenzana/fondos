@@ -1,7 +1,7 @@
 # proyecto1/tests/test_statistical_audit_accepted_residuals_pg.py
 # -*- coding: utf-8 -*-
 """FND-0234(e): the accepted-residual table, its writer and loader, and the audit runner's tolerance of a missing table.
-Hermetic Postgres container (python scripts/ops/run_pg_tests.py). emit_accepted_residuals commits internally, so the
+Hermetic Postgres container (python scripts/gov/delivery/run_pg_tests.py). emit_accepted_residuals commits internally, so the
 tests use pg_session_conn + a throwaway schema (same discipline as test_statistical_audit_persistence_pg.py)."""
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from shared.statistical_audit.accepted_residuals import apply_accepted, load_acc
 from shared.statistical_audit.persistence import emit_accepted_residuals  # noqa: E402
 
 _spec = importlib.util.spec_from_file_location(
-    "run_statistical_audit_pg", os.path.join(_ROOT, "scripts", "audit", "run_statistical_audit.py"))
+    "run_statistical_audit_pg", os.path.join(_ROOT, "scripts", "audit", "stat", "run_statistical_audit.py"))
 runner = importlib.util.module_from_spec(_spec)
 sys.modules["run_statistical_audit_pg"] = runner
 _spec.loader.exec_module(runner)

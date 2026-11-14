@@ -3,8 +3,8 @@
 """
 backlog_hygiene.py -- read-only registry-hygiene checks of the action-point backlog (FND-0323; NORMAS_BACKLOG.md section 4.1). Information, exit 0.
 
-    python scripts/audit/backlog_hygiene.py --premise-sweep d5397af^..d5397af [--include-closed] [--path P ...]
-    python scripts/audit/backlog_hygiene.py --stale-status [--days 14]
+    python scripts/gov/backlog/backlog_hygiene.py --premise-sweep d5397af^..d5397af [--include-closed] [--path P ...]
+    python scripts/gov/backlog/backlog_hygiene.py --stale-status [--days 14]
 
 --premise-sweep REV[..REV]  (section 4.1 rule 3) At a release or promotion: the UPPER_SNAKE identifiers (switches, parameters) whose lines changed between the two
     revisions in the config files (default shared/config.py and proyecto3/config/scorer_params.yaml), and the PENDING tickets whose text or logs cite one of them: their
@@ -23,7 +23,7 @@ import sys
 from datetime import date, datetime
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
 DEFAULT_PATHS = ("shared/config.py", "proyecto3/config/scorer_params.yaml")

@@ -118,7 +118,7 @@ def test_files_shared_by_the_same_two_tickets_are_one_cluster_not_eight():
 
 def test_nine_tickets_on_one_module_stay_one_hotspot_and_are_never_cut():
     t = ids("F", 9)
-    cl = bc.derive([row(a, "scripts/audit/audit_incident.py") for a in t], set(t) | set(ids("G", 90)))
+    cl = bc.derive([row(a, "scripts/audit/stat/audit_incident.py") for a in t], set(t) | set(ids("G", 90)))
     assert len(cl) == 1 and cl[0]["hotspot"] is True and len(cl[0]["members"]) == 9
 
 
@@ -260,10 +260,10 @@ def test_module_groups_use_the_same_signals_as_components_sweep_floor_cited_and_
 
 def test_module_groups_have_the_shape_of_clusters_and_a_hotspot_counts_only_the_open_members():
     t = ids("F", 9)
-    rows = [row(a, "scripts/audit/x.py") for a in t]
+    rows = [row(a, "scripts/audit/stat/x.py") for a in t]
     c = bc.derive_by_module(rows, set(t) | set(ids("G", 90)), open_ids=set(t))[0]
     assert set(c) == {"members", "hotspot", "principal", "modules", "why"} and c["hotspot"] is True and len(c["members"]) == 9
-    assert c["why"]["F-0001"].startswith("changes scripts/audit/x.py together with F-0002 (+7 more)")
+    assert c["why"]["F-0001"].startswith("changes scripts/audit/stat/x.py together with F-0002 (+7 more)")
     assert bc.derive_by_module(rows, set(t) | set(ids("G", 90)), open_ids={"F-0001", "F-0002"})[0]["hotspot"] is False   # closed tickets do not make a hotspot
 
 

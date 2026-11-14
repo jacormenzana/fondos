@@ -9,7 +9,7 @@ the off-box task dump again must be a deliberate change.
 import re
 from pathlib import Path
 
-SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "ops" / "register_backup_tasks.ps1"
+SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "mnt" / "sched" / "register_backup_tasks.ps1"
 ROTATING, BASE, OFFBOX = "Fondos PG backup (rotating)", "Fondos PG basebackup+prune", "Fondos PG offbox copy"
 
 
@@ -65,5 +65,5 @@ def test_the_registration_says_the_cycle_priority_rule():
 
 
 def test_backup_offbox_still_supports_no_dump():
-    script = (SCRIPT.parent / "backup_offbox.sh").read_text(encoding="utf-8")
+    script = (SCRIPT.parent.parent / "backup" / "backup_offbox.sh").read_text(encoding="utf-8")
     assert "--no-dump) DUMP=0" in script

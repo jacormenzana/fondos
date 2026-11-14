@@ -6,7 +6,7 @@ same known issue through two independent mechanisms (this audit's own
 statistical detection vs. ALERT_RULES). No DB writes here (package
 convention, see __init__.py).
 
-Deliberately NOT wired into scripts/audit/run_statistical_audit.py yet (as
+Deliberately NOT wired into scripts/audit/stat/run_statistical_audit.py yet (as
 of 2026-09-15): fund_metric_alerts in production still holds rows written
 by pre-fix code (AUDITORIA_ESTADISTICA.md §2.5/§2.6 D1-D3) until the next
 real P2 run -- reconciling against it today would reconcile against stale

@@ -4,14 +4,14 @@
 backlog_modules.py -- derives which modules each open ticket is about, keeps the MODULE clusters, and measures them (Backlog v3 W4b, FND-0360; the rules are in shared/backlog_modules.py and
 shared/backlog_clusters.py).
 
-    python scripts/audit/backlog_modules.py            # DRY RUN: counts what it would record and the cluster events it would write; writes nothing
-    python scripts/audit/backlog_modules.py --apply    # records the new facts through backlog.sp_record_module and keeps the clusters (the autopilot's login)
-    python scripts/audit/backlog_modules.py --clusters # READ-ONLY: the clusters ranked by open members x priority, with why each ticket is in one
-    python scripts/audit/backlog_modules.py --measure  # READ-ONLY: precision and recall against the OVERLAPS decisions on record, the top 10 clusters, and what the T0 collision rule would gain
+    python scripts/gov/backlog/backlog_modules.py            # DRY RUN: counts what it would record and the cluster events it would write; writes nothing
+    python scripts/gov/backlog/backlog_modules.py --apply    # records the new facts through backlog.sp_record_module and keeps the clusters (the autopilot's login)
+    python scripts/gov/backlog/backlog_modules.py --clusters # READ-ONLY: the clusters ranked by open members x priority, with why each ticket is in one
+    python scripts/gov/backlog/backlog_modules.py --measure  # READ-ONLY: precision and recall against the OVERLAPS decisions on record, the top 10 clusters, and what the T0 collision rule would gain
 
 Sources, all automatic: TOUCHED from git (the files of every commit that cites a ticket: ops_event COMMIT facts carry only the subject, so the files are read with `git diff-tree`), and CITED
 (proposals only) from the title, the description, the progress logs and the object name. A test maps to the module it tests; registries, documents and configuration never count (see the rules).
-The autopilot run (scripts/audit/backlog_autopilot.py --apply) calls this at the end of every run, so nobody starts it. It is idempotent: a fact already current is not sent, and the database
+The autopilot run (scripts/gov/backlog/backlog_autopilot.py --apply) calls this at the end of every run, so nobody starts it. It is idempotent: a fact already current is not sent, and the database
 refuses to write again a proposal that an agent or a person retracted. It writes ONLY through FONDOS_BACKLOG_PG_DSN_AUTOPILOT (role backlog_autopilot) and does nothing, with exit 0, before the
 `modules` phase is deployed.
 
@@ -30,7 +30,7 @@ from collections import defaultdict
 from datetime import date
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 from shared import backlog_clusters as cl  # noqa: E402
 from shared import backlog_modules as bm  # noqa: E402

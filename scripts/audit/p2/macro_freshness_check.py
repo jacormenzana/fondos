@@ -3,9 +3,9 @@
 """
 macro_freshness_check.py -- is every macro series as fresh as its own publication cadence allows? (FND-0256)
 
-    python scripts/audit/macro_freshness_check.py            # table of every series, the stale first; exit 1 if any is stale or an input is degraded
-    python scripts/audit/macro_freshness_check.py --stale    # only the series that need a look
-    python scripts/audit/macro_freshness_check.py --json     # machine-readable
+    python scripts/audit/p2/macro_freshness_check.py            # table of every series, the stale first; exit 1 if any is stale or an input is degraded
+    python scripts/audit/p2/macro_freshness_check.py --stale    # only the series that need a look
+    python scripts/audit/p2/macro_freshness_check.py --json     # machine-readable
 
 Read-only. The limits live in shared/macro_freshness.py (one explicit limit per series: a series is dated by its stamp, and annual / quarterly
 data are stamped at the START of the period). A STALE series usually means the PROVIDER changed or discontinued it (ECB ICP -> HICP, OECD MEI,
@@ -19,7 +19,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
 from shared import macro_freshness as mf  # noqa: E402

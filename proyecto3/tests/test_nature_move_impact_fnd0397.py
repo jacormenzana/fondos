@@ -1,6 +1,6 @@
 # proyecto3/tests/test_nature_move_impact_fnd0397.py
 # -*- coding: utf-8 -*-
-"""FND-0397: the pure parts of scripts/audit/nature_move_impact.py (moves from a census, master weights, selection comparison, score impact).
+"""FND-0397: the pure parts of scripts/audit/p3/nature_move_impact.py (moves from a census, master weights, selection comparison, score impact).
 
 R-7: no DB; synthetic frames only. The script runs the engine's own code on the live store (read-only) when the simulation is produced; these tests pin the arithmetic around it.
 """
@@ -16,7 +16,7 @@ for _p in (_ROOT, _ROOT / "proyecto3"):
 import pandas as pd
 import pytest
 
-spec = importlib.util.spec_from_file_location("nature_move_impact", _ROOT / "scripts" / "audit" / "nature_move_impact.py")
+spec = importlib.util.spec_from_file_location("nature_move_impact", _ROOT / "scripts" / "audit" / "p3" / "nature_move_impact.py")
 nm = importlib.util.module_from_spec(spec)
 sys.modules["nature_move_impact"] = nm
 spec.loader.exec_module(nm)

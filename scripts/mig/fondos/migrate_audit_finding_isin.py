@@ -2,10 +2,10 @@
 # -*- coding: utf-8 -*-
 """
 migrate_audit_finding_isin.py -- create control.audit_finding_isin (FND-0234(d)), the ISINs behind each group-level audit finding,
-written by scripts/audit/run_statistical_audit.py --persist.
+written by scripts/audit/stat/run_statistical_audit.py --persist.
 
-    python scripts/ops/migrate_audit_finding_isin.py            # DRY RUN: read-only
-    python scripts/ops/migrate_audit_finding_isin.py --apply    # CREATE TABLE IF NOT EXISTS
+    python scripts/mig/fondos/migrate_audit_finding_isin.py            # DRY RUN: read-only
+    python scripts/mig/fondos/migrate_audit_finding_isin.py --apply    # CREATE TABLE IF NOT EXISTS
 
 Same guards and conventions as migrate_fund_metric_family_state.py (it is the same code, parameterised by table): owner DSN, the
 DDL read from db/pg/35_control.sql (single source of truth), refuses while a cycle appears to be running, never prints the DSN,

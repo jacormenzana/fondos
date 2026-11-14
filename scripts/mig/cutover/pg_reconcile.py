@@ -2,7 +2,7 @@
 pg_reconcile.py — SQLite <-> PostgreSQL reconciliation gate for the `fondos` migration.
 
 Part of the SQLite -> PostgreSQL migration (plan: role-you-are-keen-ladybug.md, §Verification
-"Reconciliation Gate"). Run this AFTER scripts/mig/pg_seed.py completes and Postgres has been
+"Reconciliation Gate"). Run this AFTER scripts/mig/cutover/pg_seed.py completes and Postgres has been
 restarted back into production config (wal_level=replica). Green on ALL checks, or no cutover —
 this is a go/no-go gate, not an informational report.
 
@@ -28,9 +28,9 @@ Verify float rendering on a small sample before trusting the full pass (§Verifi
 extra_float_digits vs. Python repr()).
 
 Usage:
-    python -X utf8 scripts/mig/pg_reconcile.py                # full gate, all checks
-    python -X utf8 scripts/mig/pg_reconcile.py --skip-hash     # fast pass: skip check (b) (minutes -> seconds)
-    python -X utf8 scripts/mig/pg_reconcile.py --only b,i      # just the row-hash and spot-diff checks
+    python -X utf8 scripts/mig/cutover/pg_reconcile.py                # full gate, all checks
+    python -X utf8 scripts/mig/cutover/pg_reconcile.py --skip-hash     # fast pass: skip check (b) (minutes -> seconds)
+    python -X utf8 scripts/mig/cutover/pg_reconcile.py --only b,i      # just the row-hash and spot-diff checks
 
 Environment: same as pg_seed.py (FONDOS_SQLITE_PATH, FONDOS_PG_DSN).
 
@@ -51,7 +51,7 @@ from pathlib import Path
 
 import psycopg
 
-import pg_seed  # same directory (scripts/mig) — reuse COERCERS/build_column_plan/TableSpec rather
+import pg_seed  # same directory (scripts/mig/cutover) — reuse COERCERS/build_column_plan/TableSpec rather
                  # than reimplementing date/timestamp parsing a second time (P#11/R-1 DRY). Also
                  # fixes a real bug: the SQLite-side renderer below used to emit raw, uncoerced text
                  # (naive local timestamps, free-form date strings) against PG's already-canonical
@@ -62,7 +62,7 @@ import pg_seed  # same directory (scripts/mig) — reuse COERCERS/build_column_p
                  # coerced timestamp column; kiid_lifecycle passed because its only coerced columns
                  # are DATE-typed 'YYYY-MM-DD' text, whose raw form already equals date.isoformat()).
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_SQLITE_PATH = REPO_ROOT / "db" / "fondos.sqlite"
 
 FIELD_SEP = "\x1f"

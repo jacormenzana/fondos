@@ -9,18 +9,18 @@ Conventions: repo root `C:\desarrollo\fondos` with the stack checked out; interp
 1. **Check the rollback script is the safe one.** This must print NOTHING (the first version dropped the Phase B tables):
    `findstr /I /C:"DROP TABLE" /C:"DELETE" db\pg_backlog\down\40_relations_v2_down.sql | findstr /V /B /C:"--"`
    (A test fails the build if the script ever gains a `DROP TABLE`, `DELETE`, `TRUNCATE`, `ALTER TABLE` or `UPDATE`.)
-2. Restore point (the live `gestion` database is included): `wsl -d Ubuntu -e bash /mnt/c/desarrollo/fondos/scripts/ops/backup_live_pg.sh`
-3. Baseline of the history: `C:\data\envs\des\python.exe scripts\audit\backlog_phase_a_acceptance.py --baseline` (keep the file name it prints).
+2. Restore point (the live `gestion` database is included): `wsl -d Ubuntu -e bash /mnt/c/desarrollo/fondos/scripts/mnt/backup/backup_live_pg.sh`
+3. Baseline of the history: `C:\data\envs\des\python.exe scripts\mig\backlog\backlog_phase_a_acceptance.py --baseline` (keep the file name it prints).
 4. Today's gate state, to compare after: `SELECT backlog.fn_gate_mode('DELIVERY'); SELECT count(*) FROM backlog.gate_switch; SELECT count(*) FROM backlog.hold_event;`
 
 ## 1. Apply (each phase is ONE transaction)
 ```
-C:\data\envs\des\python.exe scripts\ops\migrate_backlog_v2.py --phase relations
-C:\data\envs\des\python.exe scripts\ops\migrate_backlog_v2.py --phase relations --apply
-C:\data\envs\des\python.exe scripts\audit\backlog_phase_a_acceptance.py --verify relations --baseline-file <file> --migration-rc %ERRORLEVEL%
-C:\data\envs\des\python.exe scripts\ops\migrate_backlog_v2.py --phase iam
-C:\data\envs\des\python.exe scripts\ops\migrate_backlog_v2.py --phase iam --apply
-C:\data\envs\des\python.exe scripts\audit\backlog_phase_a_acceptance.py --verify iam --baseline-file <file> --migration-rc %ERRORLEVEL%
+C:\data\envs\des\python.exe scripts\mig\backlog\migrate_backlog_v2.py --phase relations
+C:\data\envs\des\python.exe scripts\mig\backlog\migrate_backlog_v2.py --phase relations --apply
+C:\data\envs\des\python.exe scripts\mig\backlog\backlog_phase_a_acceptance.py --verify relations --baseline-file <file> --migration-rc %ERRORLEVEL%
+C:\data\envs\des\python.exe scripts\mig\backlog\migrate_backlog_v2.py --phase iam
+C:\data\envs\des\python.exe scripts\mig\backlog\migrate_backlog_v2.py --phase iam --apply
+C:\data\envs\des\python.exe scripts\mig\backlog\backlog_phase_a_acceptance.py --verify iam --baseline-file <file> --migration-rc %ERRORLEVEL%
 ```
 The first line of each pair is the dry run: it changes nothing. Capture `%ERRORLEVEL%` right after the `--apply` line, before running anything else.
 Expected after `relations`: gate mode still ENFORCE, gate rows unchanged, `sp_set_gate` has ONE form, five arguments. Expected after `iam`: three roles, tables `actor_login_event` and `binding_window_event`, the binding audit and window views, the routines.
@@ -51,4 +51,4 @@ SELECT to_regprocedure('backlog.sp_set_gate(text,text,text,text)');        -- no
 SELECT to_regprocedure('backlog.sp_set_gate(text,text,text,text,boolean)');-- null after L2, not null with the stack applied
 SELECT rolname FROM pg_roles WHERE rolname IN ('backlog_reader','backlog_logger','backlog_incident');   -- empty after L1
 ```
-and take the fingerprint again with `C:\data\envs\des\python.exe scripts\audit\backlog_phase_a_acceptance.py --baseline` and compare its `logs`, `logs_md5`, `events` and `events_md5` with the file of section 0: they are equal unless someone wrote a ticket in between (no phase or rollback above touches those tables).
+and take the fingerprint again with `C:\data\envs\des\python.exe scripts\mig\backlog\backlog_phase_a_acceptance.py --baseline` and compare its `logs`, `logs_md5`, `events` and `events_md5` with the file of section 0: they are equal unless someone wrote a ticket in between (no phase or rollback above touches those tables).

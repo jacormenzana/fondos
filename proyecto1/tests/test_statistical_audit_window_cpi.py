@@ -32,7 +32,7 @@ def _pin_switches_to_this_module_s_fixtures(monkeypatch):
 
 
 _spec = importlib.util.spec_from_file_location(
-    "run_statistical_audit_wcpi", os.path.join(_ROOT, "scripts", "audit", "run_statistical_audit.py"))
+    "run_statistical_audit_wcpi", os.path.join(_ROOT, "scripts", "audit", "stat", "run_statistical_audit.py"))
 runner = importlib.util.module_from_spec(_spec)
 sys.modules["run_statistical_audit_wcpi"] = runner
 _spec.loader.exec_module(runner)

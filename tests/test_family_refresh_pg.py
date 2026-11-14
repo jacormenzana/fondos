@@ -2,7 +2,7 @@
 tests/test_family_refresh_pg.py -- FND-0244 follow-up on a real Postgres (the real db/pg DDL, hermetic container):
 the pending selection, the atomic FAMILY_REFRESH_DONE row, the audited P3 bypass and its DDL block.
 
-pg_app_conn = a SAVEPOINT connection that is rolled back, with the application's search_path. Run: python scripts/ops/run_pg_tests.py
+pg_app_conn = a SAVEPOINT connection that is rolled back, with the application's search_path. Run: python scripts/gov/delivery/run_pg_tests.py
 """
 import importlib.util
 import sys
@@ -19,11 +19,11 @@ for _p in (_ROOT, _ROOT / "proyecto1" / "core"):
 from shared import family_refresh as fr  # noqa: E402
 from shared import gate_bypass as gb  # noqa: E402
 
-_spec = importlib.util.spec_from_file_location("migrate_cycle_telemetry_fr", _ROOT / "scripts" / "ops" / "migrate_cycle_telemetry.py")
+_spec = importlib.util.spec_from_file_location("migrate_cycle_telemetry_fr", _ROOT / "scripts" / "mig" / "fondos" / "migrate_cycle_telemetry.py")
 mig = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(mig)
 
-_spec2 = importlib.util.spec_from_file_location("migrate_audit_finding_p3_gate_t", _ROOT / "scripts" / "ops" / "migrate_audit_finding_p3_gate.py")
+_spec2 = importlib.util.spec_from_file_location("migrate_audit_finding_p3_gate_t", _ROOT / "scripts" / "mig" / "fondos" / "migrate_audit_finding_p3_gate.py")
 mig_gate = importlib.util.module_from_spec(_spec2)
 _spec2.loader.exec_module(mig_gate)
 
@@ -226,7 +226,7 @@ def test_an_unauditable_bypass_raises(pg_app_conn):
 
 # ---------------------------------------------------------------- the closure script against the real DDL
 def _closure():
-    spec = importlib.util.spec_from_file_location("verify_family_refresh_pg", _ROOT / "scripts" / "audit" / "verify_family_refresh.py")
+    spec = importlib.util.spec_from_file_location("verify_family_refresh_pg", _ROOT / "scripts" / "audit" / "p1" / "verify_family_refresh.py")
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
     return m

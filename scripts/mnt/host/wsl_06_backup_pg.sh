@@ -22,7 +22,7 @@
 #   --offbox-catchup  ONE-OFF: allow the D: mirror to delete more than 60% of what D: holds (needed once to clear
 #                     WAL/bases that D: accumulated while the old guard refused). Safe: the continuity guard still applies
 #                     (source archive must contain the start segment of its oldest kept base). Preview first with:
-#                     bash ../../backup_offbox.sh --no-dump --mirror-dry-run --mirror-allow-large
+#                     bash ../backup/backup_offbox.sh --no-dump --mirror-dry-run --mirror-allow-large
 #   --verify-restore  logical only: restore the dump into a scratch DB and compare (~6 min)
 #   --no-checksum     skip SHA-256 of the artifacts (a 5+ GB dump takes ~20-40 s)
 # Adds over the underlying scripts: single-run lock, pre-flight (container up, free space >= 2x last dump),
@@ -39,7 +39,7 @@
 #       3 pre-flight / usage error (lock held, container down, no space, bad argument).
 set -uo pipefail
 . "$(dirname "$0")/../lib/common.sh"; maint_args "$@"
-OPS=$(cd "$(dirname "$0")/../.." && pwd)
+BACKUP_DIR=$(cd "$(dirname "$0")/../backup" && pwd)
 TYPE=""; DEST=/mnt/backups/pg_fondos/dump; STAMP=$(date +%Y%m%d_%H%M); LABEL=""; KEEP=7; VERIFY=""; SUM=1; OFFKEEP=7; CATCHUP=""
 set -- "${ARGS[@]:-}"
 while [ $# -gt 0 ]; do case "$1" in
@@ -78,7 +78,7 @@ if [ "$TYPE" = logical ] || [ "$TYPE" = all ]; then
   last=$(ls -1t "$DEST"/fondos_2*.dump 2>/dev/null | head -1); need=$(( $( [ -n "$last" ] && stat -c %s "$last" || echo 0 ) * 2 / 1048576 + 1024 ))
   free=$(df -Pm "$DEST" | awk 'NR==2{print $4}'); [ "$free" -lt "$need" ] && { crit "only ${free} MB free in $DEST (need ~${need} MB)"; exit 3; }
   act "logical backup -> $DEST ($STAMP) $VERIFY"; t0=$(date +%s)
-  BACKUP_OUT="$DEST" BACKUP_STAMP="$STAMP" BACKUP_KEEP="$KEEP" bash "$OPS/backup_live_pg.sh" $VERIFY; rc=$?; secs=$(( $(date +%s)-t0 ))
+  BACKUP_OUT="$DEST" BACKUP_STAMP="$STAMP" BACKUP_KEEP="$KEEP" bash "$BACKUP_DIR/backup_live_pg.sh" $VERIFY; rc=$?; secs=$(( $(date +%s)-t0 ))
   [ $rc -ne 0 ] && crit "backup_live_pg.sh reported problems (rc=$rc)"
   for f in "$DEST/fondos_$STAMP.dump" "$DEST/gestion_$STAMP.dump" "$DEST/globals_$STAMP.sql"; do
     if [ -f "$f" ]; then record logical "$f" "$([ $rc -eq 0 ] && echo OK || echo PROBLEMS)" "$secs"; ok "$(basename "$f") $(( $(stat -c %s "$f")/1048576 )) MB"
@@ -88,10 +88,10 @@ fi
 
 if [ "$TYPE" = physical ] || [ "$TYPE" = all ]; then
   act "physical base backup + prune"; t0=$(date +%s); PITR=$(readlink -f /opt/docker/db/postgresql17/pitr 2>/dev/null)
-  if bash "$OPS/setup_wal_archive.sh" basebackup; then
+  if bash "$BACKUP_DIR/setup_wal_archive.sh" basebackup; then
     secs=$(( $(date +%s)-t0 )); nb=$(ls -1t "$PITR"/base/*.complete 2>/dev/null | head -1); nb=${nb%.complete}
     [ -n "$nb" ] && { record physical "$nb" OK "$secs"; ok "base backup ${nb##*/}"; } || { record physical "$PITR/base" UNKNOWN "$secs"; warn "base backup ran but no .complete marker found"; }
-    bash "$OPS/setup_wal_archive.sh" prune --yes || warn "WAL prune reported problems"
+    bash "$BACKUP_DIR/setup_wal_archive.sh" prune --yes || warn "WAL prune reported problems"
   else record physical "$PITR/base" FAILED $(( $(date +%s)-t0 )); crit "base backup failed — prune skipped"; fi
 fi
 
@@ -102,7 +102,7 @@ if [ "$TYPE" = offbox ] || [ "$TYPE" = all ]; then
   if [ -z "$newest" ]; then crit "no local dump in $DEST to copy off-box (run: logical)"
   else
     [ $(( ($(date +%s)-$(stat -c %Y "$newest"))/3600 )) -gt 36 ] && warn "newest local dump is >36h old (${newest##*/}); run 'logical' first if you want a fresh one on D:"
-    OFFLOG=$(mktemp); OFFBOX_LOCAL="$DEST" bash "$OPS/backup_offbox.sh" --no-dump --keep "$OFFKEEP" --mirror-prune $CATCHUP 2>&1 | tee "$OFFLOG"; rc=${PIPESTATUS[0]}
+    OFFLOG=$(mktemp); OFFBOX_LOCAL="$DEST" bash "$BACKUP_DIR/backup_offbox.sh" --no-dump --keep "$OFFKEEP" --mirror-prune $CATCHUP 2>&1 | tee "$OFFLOG"; rc=${PIPESTATUS[0]}
     secs=$(( $(date +%s)-t0 ))
     if [ $rc -eq 0 ]; then record offbox "$OD" OK "$secs"; ok "off-box copy + mirror done"
     elif grep -q "mirror.*REFUSED" "$OFFLOG" && ! grep -qE "MISMATCH|FAILED|not mounted|SKIPPED" "$OFFLOG"; then

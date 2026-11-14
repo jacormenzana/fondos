@@ -19,7 +19,7 @@ if str(_ROOT) not in sys.path:
 import shared.config as cfg  # noqa: E402
 from proyecto3.src import fund_scorer as fs  # noqa: E402
 
-_spec = importlib.util.spec_from_file_location("eligibility_switch_diff", _ROOT / "scripts" / "audit" / "eligibility_switch_diff.py")
+_spec = importlib.util.spec_from_file_location("eligibility_switch_diff", _ROOT / "scripts" / "audit" / "p3" / "eligibility_switch_diff.py")
 sw = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(sw)
 

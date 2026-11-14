@@ -2,12 +2,12 @@
 # -*- coding: utf-8 -*-
 """
 pre_push_gate.py -- the pre-push hook of the collision gate (Backlog v2 Phase C slice 3, FND-0334; PROPUESTA_BACKLOG_V2.md 6.4.4; NORMAS_BACKLOG.md 4.6).
-Installed by `bash scripts/audit/commit-msg.sh` as .git/hooks/pre-push; git calls it with the remote name and url and writes one line per ref to stdin:
+Installed by `bash scripts/gov/repo/hooks/commit-msg.sh` as .git/hooks/pre-push; git calls it with the remote name and url and writes one line per ref to stdin:
 `<local ref> <local sha> <remote ref> <remote sha>`.
 
 It matters only in BLOCK mode (the effective mode: the lower of BACKLOG_COLLISION_GATE_MODE and the latest backlog.gate_state event). The commits the push carries are listed
 (`git rev-list <local> --not <remote sha>`; for a new branch, `--not --remotes=<remote>`), the tickets their subjects and `Refs:` trailers cite are collected, and the push is REFUSED
-while any collision pair touching those tickets is undecided: the exact shas and pairs are printed, and the owner adjudicates them (scripts/audit/gate_adjudicate.py). In AUDIT mode it
+while any collision pair touching those tickets is undecided: the exact shas and pairs are printed, and the owner adjudicates them (scripts/gov/backlog/gate_adjudicate.py). In AUDIT mode it
 only warns; with the gate OFF it does nothing and does not even ask the database.
 
 Backlog unreachable, or any error of this script: the push goes through with a warning (the CI attestation of slice 4 repeats the check; an outage never stalls a publication). The only
@@ -20,7 +20,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 ACTOR = "system:gate"
 REJECTED_RC = 3
 ZEROS = "0" * 40
@@ -66,7 +66,7 @@ def refusal(by_commit: dict, undecided: list) -> list:
             lines.append(f"  {sha[:12]}  cites {', '.join(hit)}")
     for p in undecided:
         lines.append(f"  pair {p['a']} / {p['b']}  undecided for {p.get('age_hours', '?')} h")
-    lines.append("  decide them with: python scripts/audit/gate_adjudicate.py --list   (then --decide <a> <b> <OVERLAPS|RELATED|DEPENDS_ON|NONE|REVERT> --reason ...)")
+    lines.append("  decide them with: python scripts/gov/backlog/gate_adjudicate.py --list   (then --decide <a> <b> <OVERLAPS|RELATED|DEPENDS_ON|NONE|REVERT> --reason ...)")
     return lines
 
 

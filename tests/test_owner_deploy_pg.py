@@ -1,7 +1,7 @@
 # tests/test_owner_deploy_pg.py
 # -*- coding: utf-8 -*-
-"""The restore-point step of the AUTO deployment (scripts/ops/owner_deploy.py RESTORE_POINT_CODE) run for real against a throwaway PostgreSQL: the child process takes the owner string from its
-environment, creates a named restore point and prints it. Skipped without FONDOS_TEST_PG_DSN (python scripts/ops/run_pg_tests.py supplies one)."""
+"""The restore-point step of the AUTO deployment (scripts/gov/backlog/owner_deploy.py RESTORE_POINT_CODE) run for real against a throwaway PostgreSQL: the child process takes the owner string from its
+environment, creates a named restore point and prints it. Skipped without FONDOS_TEST_PG_DSN (python scripts/gov/delivery/run_pg_tests.py supplies one)."""
 from __future__ import annotations
 
 import os
@@ -13,14 +13,14 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops")):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "gov" / "backlog")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
 import owner_deploy as od  # noqa: E402
 
 DSN = os.environ.get("FONDOS_TEST_PG_DSN")
-pytestmark = pytest.mark.skipif(not DSN, reason="FONDOS_TEST_PG_DSN is not set (python scripts/ops/run_pg_tests.py supplies a throwaway server)")
+pytestmark = pytest.mark.skipif(not DSN, reason="FONDOS_TEST_PG_DSN is not set (python scripts/gov/delivery/run_pg_tests.py supplies a throwaway server)")
 
 
 def run_child(name: str, dsn: str):

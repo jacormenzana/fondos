@@ -1,6 +1,6 @@
 # tests/test_owner_vault.py
 # -*- coding: utf-8 -*-
-"""The owner vault (shared/owner_vault.py, scripts/ops/owner_vault.py): the owner-only strings reach an OWNER TOOL, in its own process, only when a person is at a real console. No database, no
+"""The owner vault (shared/owner_vault.py, scripts/gov/backlog/owner_vault.py): the owner-only strings reach an OWNER TOOL, in its own process, only when a person is at a real console. No database, no
 network. The values used here are throwaway strings, never a real secret (R-7)."""
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops")):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "gov" / "backlog")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -23,7 +23,7 @@ import importlib.util  # noqa: E402
 
 # The CLI is loaded BY PATH under its own name: `import owner_vault` resolves to shared/owner_vault.py (no `main`) in a process where another test already put `shared/` on sys.path or
 # registered that name, which made 32 tests fail in some shard compositions only (receipt of 96cd9bb, 2026-11-12).
-_spec = importlib.util.spec_from_file_location("owner_vault_cli_under_test", _ROOT / "scripts" / "ops" / "owner_vault.py")
+_spec = importlib.util.spec_from_file_location("owner_vault_cli_under_test", _ROOT / "scripts" / "gov" / "backlog" / "owner_vault.py")
 cli = importlib.util.module_from_spec(_spec)
 sys.modules["owner_vault_cli_under_test"] = cli
 _spec.loader.exec_module(cli)
@@ -96,7 +96,7 @@ def test_a_tool_at_a_console_receives_only_its_own_variables_for_this_process(va
     assert ov.inject("migrate_backlog_v2.py", env, vault=vault, console=True) == [OWNER]
     assert env == {OWNER: f"v-{OWNER}"}                                              # not the human string, not the adjudicator's
     env2: dict = {}
-    assert ov.inject("scripts/audit/gate_adjudicate.py", env2, vault=vault, console=True) == [ADJ] and env2 == {ADJ: f"v-{ADJ}"}
+    assert ov.inject("scripts/gov/backlog/gate_adjudicate.py", env2, vault=vault, console=True) == [ADJ] and env2 == {ADJ: f"v-{ADJ}"}
 
 
 def test_without_a_console_nothing_is_injected_and_nothing_is_read(vault):

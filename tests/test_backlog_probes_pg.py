@@ -1,7 +1,7 @@
 # tests/test_backlog_probes_pg.py
 # -*- coding: utf-8 -*-
 """Backlog v3 W4 (FND-0359), phase `probes` (db/pg_backlog/99_probes.sql): an [impact] note invalidates a ticket's probe status and the delivery gate blocks its delivery closure until the closing
-conditions are re-run and pass AFTER it. Hermetic PostgreSQL, the real gate in ENFORCE, the privileges are the real ones (SET LOCAL SESSION AUTHORIZATION). Run with python scripts/ops/run_pg_tests.py."""
+conditions are re-run and pass AFTER it. Hermetic PostgreSQL, the real gate in ENFORCE, the privileges are the real ones (SET LOCAL SESSION AUTHORIZATION). Run with python scripts/gov/delivery/run_pg_tests.py."""
 from __future__ import annotations
 
 import json
@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops"), str(Path(__file__).resolve().parent)):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "mig" / "backlog"), str(Path(__file__).resolve().parent)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 

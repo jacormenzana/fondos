@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""scripts/audit/official_name_coverage.py -- FND-0246 Gate A measurement (read-only, one SELECT, nothing persisted).
+"""scripts/audit/p1/official_name_coverage.py -- FND-0246 Gate A measurement (read-only, one SELECT, nothing persisted).
 
 Runs core/kiid_official_name.extract_official_fund_name over the stored KIID text of the active funds and reports:
   coverage       funds with a name, by rule (LABEL / ISIN_TRAIL / SUBFUND_CLAUSE / ISIN_HEAD / NONE)
@@ -12,7 +12,7 @@ Runs core/kiid_official_name.extract_official_fund_name over the stored KIID tex
 Gate A (pre-declared 2026-10-24, owner-approved): coverage >= 85% of the active texts, purity >= 95%, zero currency collisions. Exit 0 = report written
 (GATE line says PASS / FAIL), 4 = DB unreadable. Scope: all active class-1 KIID texts, or --isin A,B (a sample).
 
-    C:\\Users\\jacor\\.conda\\envs\\des\\python.exe -X utf8 scripts\\audit\\official_name_coverage.py [--isin A,B] [--out-dir DIR] [--samples N] [--stored]
+    C:\\Users\\jacor\\.conda\\envs\\des\\python.exe -X utf8 scripts\\audit\\p1\\official_name_coverage.py [--isin A,B] [--out-dir DIR] [--samples N] [--stored]
 
 --stored is Gate B: it reads the persisted fund_master.official_fund_name (needs the FND-0246 migration and a P1 pass) instead of recomputing.
 """
@@ -26,7 +26,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-_ROOT = Path(__file__).resolve().parents[2]
+_ROOT = Path(__file__).resolve().parents[3]
 for _p in (str(_ROOT), str(_ROOT / "proyecto1")):
     if _p not in sys.path:
         sys.path.insert(0, _p)

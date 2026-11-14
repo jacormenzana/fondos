@@ -3,7 +3,7 @@
 backlog_autopilot.py -- the rule table of the Backlog v3 autopilot (W3, FND-0358; doc/especificacion/ACTION_PLAN_BACKLOG_V3.md).
 
 A ticket moves on EVIDENCE the system recorded, not on a declaration. This module is the pure half: it takes plain facts (the tickets, the merges that deliver them, the deploy and
-cycle events, the closing-condition probes, the gate verdicts) and returns decisions. No database, no git, no I/O: scripts/audit/backlog_sync.py gathers the facts and applies the
+cycle events, the closing-condition probes, the gate verdicts) and returns decisions. No database, no git, no I/O: scripts/gov/backlog/backlog_sync.py gathers the facts and applies the
 decisions (a later slice), and the tests in tests/test_backlog_autopilot.py pin every edge.
 
 The edges (a ticket in any other status is never moved here; BLOCKED and DEFERRED are never moved by a machine, and OPEN / TODO move on a `Refs:` commit through the commit-msg hook):

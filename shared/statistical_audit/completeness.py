@@ -39,7 +39,7 @@ KINDS = (KIND_MISSING, KIND_EMPTY, KIND_NOT_APPLICABLE)
 RESOLVED_MISSING = "MISSING"
 RESOLVED_LEGIT = "LEGIT_EMPTY"
 
-# Every check key the runner may skip (scripts/audit/run_statistical_audit.py, `run.skip("<KEY>", ...)`); the contract test keeps the two
+# Every check key the runner may skip (scripts/audit/stat/run_statistical_audit.py, `run.skip("<KEY>", ...)`); the contract test keeps the two
 # in step. True = REQUIRED: an EMPTY skip of it in a FULL run is a missing input, not an empty population.
 CHECKS = {
     "COST_SCHEDULE_INTEGRITY": True,       # BLOCK6 on fund_cost_schedule

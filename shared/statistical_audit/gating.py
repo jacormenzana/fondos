@@ -145,7 +145,7 @@ def select_evidence_run(conn, domain: str, contract: bool) -> tuple:
         return (None if run is None else (run[0], run[1])), ""
     if conn.execute("SELECT to_regclass('audit_run')").fetchone()[0] is None:
         return None, ("control.audit_run no existe (AUDIT_COMPLETENESS_CONTRACT_ENABLED exige la tabla): aplique "
-                      "scripts/ops/migrate_audit_run.py --apply y persista una auditoria completa")
+                      "scripts/mig/fondos/migrate_audit_run.py --apply y persista una auditoria completa")
     run = conn.execute(
         "SELECT run_id, COALESCE(started_at, finished_at) AS run_ts FROM audit_run WHERE domain = %s AND scope = 'FULL' "
         "AND status <> 'INCOMPLETE' ORDER BY COALESCE(started_at, finished_at) DESC LIMIT 1", (domain,)).fetchone()

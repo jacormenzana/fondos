@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """Backlog v3.1 end to end on a throwaway PostgreSQL (the staging rehearsal the plan asked for, with the real objects): the rule engine decides, the runner's act() carries the decision out through the
 real client, under the real scoped logins (SESSION AUTHORIZATION), against the real DDL of every phase. Also: the deploy watcher's facts recorder through the facts login, and the whole chain of phases
-applied, rolled back in reverse and applied again. Run with python scripts/ops/run_pg_tests.py (skipped without FONDOS_TEST_PG_DSN)."""
+applied, rolled back in reverse and applied again. Run with python scripts/gov/delivery/run_pg_tests.py (skipped without FONDOS_TEST_PG_DSN)."""
 from __future__ import annotations
 
 import sys
@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops"), str(_ROOT / "scripts" / "audit"), str(Path(__file__).resolve().parent)):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "gov" / "backlog"), str(_ROOT / "scripts" / "mig" / "backlog"), str(_ROOT / "scripts" / "gov" / "backlog"), str(Path(__file__).resolve().parent)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -36,7 +36,7 @@ def db(pg_conn, monkeypatch):
     _base(pg_conn)
     for phase in PHASES:
         mig.migrate(pg_conn, phase)
-    monkeypatch.setenv("FONDOS_ACTOR", AUTO)                      # this process IS the autopilot, as in scripts/audit/backlog_autopilot.py
+    monkeypatch.setenv("FONDOS_ACTOR", AUTO)                      # this process IS the autopilot, as in scripts/gov/backlog/backlog_autopilot.py
     return pg_conn
 
 

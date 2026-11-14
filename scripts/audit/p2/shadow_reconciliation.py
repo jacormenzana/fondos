@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""scripts/audit/shadow_reconciliation.py — FND-0137 Section D (Shadow Reconciliation).
+"""scripts/audit/p2/shadow_reconciliation.py — FND-0137 Section D (Shadow Reconciliation).
 
 An isolated, clean-room recomputation of the 5 curated since_inception nominal metrics
 (return_ann, vol_ann, max_dd, sharpe, sortino — the same set catalog_metrics.py/_PEER_METRICS
@@ -49,9 +49,9 @@ divergence here ever motivates a fix, certify the fix's rollout the same way FND
 recompute_gate.py::assert_recompute_happened) — reusing that path rather than building a second.
 
 Usage:
-    python -X utf8 scripts/audit/shadow_reconciliation.py --isin LU1234567890,LU2345678901
-    python -X utf8 scripts/audit/shadow_reconciliation.py --stratified-sample 40
-    python -X utf8 scripts/audit/shadow_reconciliation.py --population   # owner-run only
+    python -X utf8 scripts/audit/p2/shadow_reconciliation.py --isin LU1234567890,LU2345678901
+    python -X utf8 scripts/audit/p2/shadow_reconciliation.py --stratified-sample 40
+    python -X utf8 scripts/audit/p2/shadow_reconciliation.py --population   # owner-run only
 """
 from __future__ import annotations
 
@@ -60,7 +60,7 @@ import sys
 from pathlib import Path
 from typing import Sequence
 
-_ROOT = Path(__file__).resolve().parents[2]
+_ROOT = Path(__file__).resolve().parents[3]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 

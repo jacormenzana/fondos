@@ -1,6 +1,6 @@
 # tests/test_prune_merged_branches.py
 # -*- coding: utf-8 -*-
-"""scripts/ops/prune_merged_branches.py and .github/workflows/branch-cleanup.yml (Backlog v3.1 housekeeping, FND-0371): the selection rules (pure), and the deletion against a real throwaway repository with a
+"""scripts/gov/delivery/prune_merged_branches.py and .github/workflows/branch-cleanup.yml (Backlog v3.1 housekeeping, FND-0371): the selection rules (pure), and the deletion against a real throwaway repository with a
 real bare remote. No network, no GitHub, no database (R-7)."""
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops")):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "gov" / "delivery")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -211,14 +211,14 @@ def test_the_workflow_runs_the_pr_rule_with_the_workflow_token_and_nothing_else(
     steps = wf["jobs"]["prune"]["steps"]
     assert steps[0]["uses"].startswith("actions/checkout@") and steps[0]["with"] == {"fetch-depth": 0}                 # the whole history, or "contained in master" cannot be known
     run = steps[1]
-    assert run["run"] == "python3 scripts/ops/prune_merged_branches.py --rule pr --apply" and run["env"] == {"GH_TOKEN": "${{ secrets.GITHUB_TOKEN }}"}
+    assert run["run"] == "python3 scripts/gov/delivery/prune_merged_branches.py --rule pr --apply" and run["env"] == {"GH_TOKEN": "${{ secrets.GITHUB_TOKEN }}"}
     assert len(steps) == 2 and "ancestor" not in WORKFLOW.read_text(encoding="utf-8").split("jobs:")[1]
     assert wf["concurrency"]["cancel-in-progress"] is False
 
 
 def test_the_script_never_deletes_the_protected_names_by_construction():
     assert {"master", "main"} <= set(pm.NEVER) and pm.PREFIXES == ("feat/", "fix/", "chore/", "docs/")
-    src = (_ROOT / "scripts" / "ops" / "prune_merged_branches.py").read_text(encoding="utf-8")
+    src = (_ROOT / "scripts" / "gov" / "delivery" / "prune_merged_branches.py").read_text(encoding="utf-8")
     assert src.count('"push", "origin", "--delete"') == 1 and "--force" not in src
     assert src.count('"branch", "-D"') == 1 and '"--merged", "origin/master"' in src                 # -D only ever follows the --merged origin/master listing
 

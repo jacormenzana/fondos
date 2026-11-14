@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parent.parent
-_SPEC = importlib.util.spec_from_file_location("beta_shift_audit_t", _ROOT / "scripts" / "audit" / "beta_shift_audit.py")
+_SPEC = importlib.util.spec_from_file_location("beta_shift_audit_t", _ROOT / "scripts" / "audit" / "p2" / "beta_shift_audit.py")
 audit = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(audit)
 

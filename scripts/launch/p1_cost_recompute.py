@@ -9,8 +9,8 @@ the incidents. This module is that whole sequence as ONE native sub-process chai
     1. preflight   no launcher cycle lock, no other pipeline / audit job running, no other instance of this script
     2. recompute   python proyecto1/run_block.py --nature-first --master-db --recompute-costs   (stdout/stderr -> the P1 log directory, cost_recompute_<stamp>.log)
     3. log tail    RC 0 AND "Registros publicados: N" with N > 0 AND no Traceback / [ERROR line in the log, else the run stops here (RC 111)
-    4. audit       python scripts/audit/run_statistical_audit.py --domain costs --mode report --persist --run-id post_<stamp>_costs   (FULL, complete)
-    5. certify     for every OPEN cost incident: python scripts/audit/audit_incident.py --certify ID --run <that run> --apply
+    4. audit       python scripts/audit/stat/run_statistical_audit.py --domain costs --mode report --persist --run-id post_<stamp>_costs   (FULL, complete)
+    5. certify     for every OPEN cost incident: python scripts/audit/stat/audit_incident.py --certify ID --run <that run> --apply
                    (RC 1 = the re-audit still shows a violator: recorded, not a failure of this run)
     6. receipt     one JSON line per run in out/audit/cost_recompute_receipts.jsonl
 
@@ -135,7 +135,7 @@ def acquire_lock(path: Path, now: Optional[datetime] = None) -> bool:
 
 def preflight() -> Optional[str]:
     """None when the shared tree is free for a long write job, else the reason it is not (cycle lock held / a pipeline or audit job running)."""
-    sys.path.insert(0, str(ROOT / "scripts" / "audit"))
+    sys.path.insert(0, str(ROOT / "scripts" / "gov" / "repo"))
     import preflight_check as pf
     if pf.cycle_lock_held():
         return "the launcher cycle lock is held"
@@ -190,17 +190,17 @@ def sequence(python: str, stamp: str, run: Callable = run_cmd, log_dir: Optional
     if rec["exit"] != EXIT_OK:
         return rec
 
-    rc, out = run([python, "-X", "utf8", str(ROOT / "scripts" / "audit" / "run_statistical_audit.py"), "--domain", "costs", "--mode", "report", "--persist", "--run-id", run_id])
+    rc, out = run([python, "-X", "utf8", str(ROOT / "scripts" / "audit" / "stat" / "run_statistical_audit.py"), "--domain", "costs", "--mode", "report", "--persist", "--run-id", run_id])
     rec["steps"]["audit"] = {"rc": rc, "tail": tail(out, 8)}
     if rc != 0 or f"run_id={run_id}" not in out:
         rec["exit"] = EXIT_AUDIT
         return rec
 
-    rc, out = run([python, "-X", "utf8", str(ROOT / "scripts" / "audit" / "audit_incident.py"), "--list"])
+    rc, out = run([python, "-X", "utf8", str(ROOT / "scripts" / "audit" / "stat" / "audit_incident.py"), "--list"])
     incidents = open_cost_incidents(parse_incident_list(out)) if rc == 0 else []
     rcs: dict = {}
     for inc in incidents:
-        rc, out = run([python, "-X", "utf8", str(ROOT / "scripts" / "audit" / "audit_incident.py"), "--certify", str(inc["id"]), "--run", run_id, "--apply"])
+        rc, out = run([python, "-X", "utf8", str(ROOT / "scripts" / "audit" / "stat" / "audit_incident.py"), "--certify", str(inc["id"]), "--run", run_id, "--apply"])
         rcs[inc["id"]] = rc
         rec["steps"].setdefault("certify", {})[str(inc["id"])] = {"ap": inc["ap"], "rc": rc, "verdict": "CERTIFIED" if rc == 0 else "NOT CERTIFIABLE", "tail": tail(out, 6)}
     rec["exit"] = final_exit(rcs)

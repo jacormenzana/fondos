@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 commit_msg_gate.py -- the commit-msg hook (Backlog v2 Phase C slice 2, FND-0334; PROPUESTA_BACKLOG_V2.md 6.4.1; NORMAS_BACKLOG.md 4.5).
-Installed by `bash scripts/audit/commit-msg.sh` as .git/hooks/commit-msg; git calls it with the path of the message file.
+Installed by `bash scripts/gov/repo/hooks/commit-msg.sh` as .git/hooks/commit-msg; git calls it with the path of the message file.
 
 In order, for a commit whose subject or `Refs:` trailer cites a ticket (a commit that cites none is left alone, with no database call):
   1. tokens: a malformed id (`fnd0193`, `FND_0193`, `FND-193`) is REJECTED (exit 1, nothing else happens: it is a typing mistake that fixes itself); an id that is not in the
@@ -30,7 +30,7 @@ import sys
 import threading
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 ACTOR = "system:gate"
 BUDGET_S = 3.0
 FORWARD_FROM = ("OPEN", "TODO")
@@ -113,7 +113,7 @@ def collision_lines(res: dict) -> list:
     for p in res.get("undecided", []):
         shared = new.get((p["a"], p["b"]))
         out.append(f"commit-msg gate [{res['mode']} {res['tier']}]: {p['a']} and {p['b']} " + (f"collide on {', '.join(shared)} (new pair)" if shared else "have an undecided collision pair")
-                   + "; the owner adjudicates it (scripts/audit/gate_adjudicate.py)")
+                   + "; the owner adjudicates it (scripts/gov/backlog/gate_adjudicate.py)")
     if res.get("held"):
         out.append("commit-msg gate [BLOCK]: a hold was raised on " + ", ".join(res["held"]) + " (it cannot reach READY_FOR_DEPLOY until the pair is adjudicated) and `git push` will be refused while it is undecided")
     return out

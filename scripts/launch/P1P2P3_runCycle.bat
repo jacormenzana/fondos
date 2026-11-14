@@ -266,7 +266,7 @@ if not exist "!BETA_CSV!" (
 )
 echo --- FASE B: betas contra !BETA_CSV! ^(CALC_VERSION !CALC_VER!^) >> "%LOG%"
 call "%COMMON%" :telemetry step-begin BETA_GATE
-"%PYTHON%" -X utf8 scripts\audit\beta_shift_audit.py --compare "!BETA_CSV!" --version !CALC_VER! --out "%AUDIT_P2_DIR%\beta_shift_outliers_gate_!STAMP!.csv"
+"%PYTHON%" -X utf8 scripts\audit\p2\beta_shift_audit.py --compare "!BETA_CSV!" --version !CALC_VER! --out "%AUDIT_P2_DIR%\beta_shift_outliers_gate_!STAMP!.csv"
 set "BG_RC=!ERRORLEVEL!"
 call "%COMMON%" :telemetry step-end BETA_GATE !BG_RC!
 if !BG_RC! NEQ 0 (

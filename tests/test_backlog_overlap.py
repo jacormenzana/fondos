@@ -3,7 +3,7 @@
 """shared/backlog_overlap.py (text similarity + the two-tier incident policy) and its calibration fixture.
 
 Pure: no database, no pipeline import (R-7). The behaviour of report_incident against the real DDL is in
-test_backlog_incident_overlap_pg.py; the historical replay is `scripts/audit/backlog_links_calibration.py`.
+test_backlog_incident_overlap_pg.py; the historical replay is `scripts/gov/backlog/backlog_links_calibration.py`.
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "audit")):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "gov" / "backlog")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 

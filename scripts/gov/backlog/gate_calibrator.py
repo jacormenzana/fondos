@@ -3,9 +3,9 @@
 """
 gate_calibrator.py -- the calibrator and the automatic retirement of the collision gate (Backlog v2 Phase C slice 3, FND-0334; PROPUESTA_BACKLOG_V2.md 6.4.5; NORMAS_BACKLOG.md 4.6).
 
-    python scripts/audit/gate_calibrator.py                  # DRY RUN: the measurements and what the calibrator would do; writes nothing
-    python scripts/audit/gate_calibrator.py --apply          # appends the gate_state event it decided on (actor system:calibrator), after the usual typed confirmation
-    python scripts/audit/gate_calibrator.py --json           # the evaluation as JSON
+    python scripts/gov/backlog/gate_calibrator.py                  # DRY RUN: the measurements and what the calibrator would do; writes nothing
+    python scripts/gov/backlog/gate_calibrator.py --apply          # appends the gate_state event it decided on (actor system:calibrator), after the usual typed confirmation
+    python scripts/gov/backlog/gate_calibrator.py --json           # the evaluation as JSON
 
 It does exactly two things and only ever TIGHTENS:
   * TIGHTEN. On day 10 of AUDIT or later, if the share of the commits evaluated in the last 3 days that introduced a new undecided pair is above 10 %, the rule moves from T0 to T1
@@ -31,7 +31,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 ACTOR = "system:calibrator"
 RC_OK, RC_FAILED, RC_USAGE, RC_RETIRED = 0, 1, 2, 3
 TIGHTEN_AFTER_DAYS, SHARE_LIMIT = 10, 0.10
@@ -110,7 +110,7 @@ def main(argv: list | None = None) -> int:
     ceiling = cfg.BACKLOG_COLLISION_GATE_MODE if cfg.BACKLOG_COLLISION_GATE_MODE in bc.COLLISION_MODES else "OFF"
     try:
         if not bc.collision_store_present():
-            print("the collision store is not applied (owner: python scripts/ops/migrate_backlog_v2.py --phase collision)", file=sys.stderr)
+            print("the collision store is not applied (owner: python scripts/mig/backlog/migrate_backlog_v2.py --phase collision)", file=sys.stderr)
             return RC_USAGE
         m = bc.gate_measurements(ceiling)
     except Exception as exc:                                  # never echo a DSN

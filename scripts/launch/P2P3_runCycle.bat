@@ -285,7 +285,7 @@ if defined BASELINE (
 ) else (
     set "BASELINE=%AUDIT_P2_DIR%\macro_betas_p2p3_!STAMP!.csv"
     call "%COMMON%" :telemetry step-begin BETA_SNAPSHOT
-    "%PYTHON%" -X utf8 scripts\audit\beta_shift_audit.py --snapshot "!BASELINE!"
+    "%PYTHON%" -X utf8 scripts\audit\p2\beta_shift_audit.py --snapshot "!BASELINE!"
     set "BS_RC=!ERRORLEVEL!"
     call "%COMMON%" :telemetry step-end BETA_SNAPSHOT !BS_RC!
     if !BS_RC! NEQ 0 (
@@ -338,7 +338,7 @@ echo ===================================================
 echo 3. Beta-shift audit (CALC_VERSION !CALC_VER!)
 echo ===================================================
 call "%COMMON%" :telemetry step-begin BETA_COMPARE
-"%PYTHON%" -X utf8 scripts\audit\beta_shift_audit.py --compare "!BASELINE!" --version !CALC_VER! --out "%AUDIT_P2_DIR%\beta_shift_outliers_!STAMP!.csv"
+"%PYTHON%" -X utf8 scripts\audit\p2\beta_shift_audit.py --compare "!BASELINE!" --version !CALC_VER! --out "%AUDIT_P2_DIR%\beta_shift_outliers_!STAMP!.csv"
 set "BC_RC=!ERRORLEVEL!"
 call "%COMMON%" :telemetry step-end BETA_COMPARE !BC_RC!
 if !BC_RC! NEQ 0 (

@@ -14,7 +14,7 @@ group, not per fund: the ISINs it affects are a snapshot on the incident). It is
     CLOSED     the owner's backlog ticket was closed on top of either of the two states above.
 
 The auditor stays read-only: it detects and certifies; recomputes and corrections run in their owning pipelines. The database writes are in
-persistence.py (the package's only writer); the closure gate is scripts/ops/close_release.py.
+persistence.py (the package's only writer); the closure gate is scripts/gov/backlog/close_release.py.
 """
 from __future__ import annotations
 
@@ -157,7 +157,7 @@ def closable(ap_id: str, incidents: Sequence[Mapping[str, Any]]) -> Certificatio
         if inc["state"] == STATE_CERTIFIED and inc.get("certified_run_id"):
             continue
         why.append(f"incident #{inc['incident_id']} ({inc['finding_key']}) is {inc['state']}: it needs a certifying re-audit run "
-                   "(scripts/audit/audit_incident.py --certify) or an active accepted residual (--accept)")
+                   "(scripts/audit/stat/audit_incident.py --certify) or an active accepted residual (--accept)")
     return Certification(not why, tuple(why))
 
 

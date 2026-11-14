@@ -2,7 +2,7 @@
 # FND-0071 — real WAL archiving + physical base backup + point-in-time-recovery (PITR) drill for the
 # LIVE Postgres 17 (container fondos_postgres, port 5436).
 #
-# Run inside WSL:   bash /mnt/c/desarrollo/fondos/scripts/ops/setup_wal_archive.sh [mode] [flags]
+# Run inside WSL:   bash /mnt/c/desarrollo/fondos/scripts/mnt/backup/setup_wal_archive.sh [mode] [flags]
 #
 #   setup        (default) preflight -> prepare archive dir -> RECREATE the container with the archive mount
 #                + archive_command -> prove archiving works -> first base backup -> restore drill.
@@ -34,7 +34,7 @@ MODE="setup"; case "${1:-}" in setup|basebackup|drill|prune|status) MODE="$1"; s
 FORCE=0; YES=0; KEEP_DRILL=${KEEP_DRILL:-0}; NAMED=0; SWAP=0; IF_DUE_DAYS=""
 for a in "$@"; do case "$a" in --force) FORCE=1;; --yes) YES=1;; --keep-drill) KEEP_DRILL=1;; --named) NAMED=1;; --swap) SWAP=1;; --if-due=*) IF_DUE_DAYS="${a#--if-due=}";; *) echo "unknown flag: $a"; exit 2;; esac; done
 [[ -z "$IF_DUE_DAYS" || "$IF_DUE_DAYS" =~ ^[0-9]+$ ]] || { echo "--if-due=N needs an integer number of days"; exit 2; }
-. "$(dirname "$0")/lib/cycle_guard.sh"      # FND-0407: the base backup never starts while a work cycle runs (cycle_guard_or_defer, exit 75)
+. "$(dirname "$0")/../lib/cycle_guard.sh"      # FND-0407: the base backup never starts while a work cycle runs (cycle_guard_or_defer, exit 75)
 
 BASE=${PG_BASE:-/opt/docker/db/postgresql17}
 PITR=${PITR_ROOT:-$BASE/pitr}

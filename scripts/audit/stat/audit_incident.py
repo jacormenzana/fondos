@@ -3,19 +3,19 @@
 """
 audit_incident.py -- closed-loop remediation of CRITICAL audit findings (FND-0264, GOV-05). Decisions: shared/statistical_audit/incidents.py.
 
-    python scripts/audit/audit_incident.py --plan [--domain p2|costs] [--policy first|recurrence]   # READ-ONLY: the incidents that WOULD open
-    python scripts/audit/audit_incident.py --list                                                    # READ-ONLY: control.audit_incident
-    python scripts/audit/audit_incident.py --close-check FND-nnnn                                    # READ-ONLY: may this ticket be closed?
-    python scripts/audit/audit_incident.py --open [--apply]            # AUDIT_INCIDENT_LOOP_ENABLED: record + open the backlog tickets
-    python scripts/audit/audit_incident.py --annotate ID [--ap FND-nnnn] [--root-cause ..] [--action ..] [--fix-kind RECOMPUTE|CODE|DATA|ACCEPT] --apply
-    python scripts/audit/audit_incident.py --certify ID --run RUN_ID [--snapshot before.json] --apply   # a later re-audit shows it fixed
-    python scripts/audit/audit_incident.py --accept ID --apply         # every affected ISIN has an ACTIVE accepted residual (FND-0263)
-    python scripts/audit/audit_incident.py --close ID --apply          # the backlog ticket was closed on top of CERTIFIED / ACCEPTED
+    python scripts/audit/stat/audit_incident.py --plan [--domain p2|costs] [--policy first|recurrence]   # READ-ONLY: the incidents that WOULD open
+    python scripts/audit/stat/audit_incident.py --list                                                    # READ-ONLY: control.audit_incident
+    python scripts/audit/stat/audit_incident.py --close-check FND-nnnn                                    # READ-ONLY: may this ticket be closed?
+    python scripts/audit/stat/audit_incident.py --open [--apply]            # AUDIT_INCIDENT_LOOP_ENABLED: record + open the backlog tickets
+    python scripts/audit/stat/audit_incident.py --annotate ID [--ap FND-nnnn] [--root-cause ..] [--action ..] [--fix-kind RECOMPUTE|CODE|DATA|ACCEPT] --apply
+    python scripts/audit/stat/audit_incident.py --certify ID --run RUN_ID [--snapshot before.json] --apply   # a later re-audit shows it fixed
+    python scripts/audit/stat/audit_incident.py --accept ID --apply         # every affected ISIN has an ACTIVE accepted residual (FND-0263)
+    python scripts/audit/stat/audit_incident.py --close ID --apply          # the backlog ticket was closed on top of CERTIFIED / ACCEPTED
 
 The auditor stays read-only on the data: a fix runs in its owning pipeline (run_pipeline.py --isin .. --force, run_block.py ..); this tool
 only records and certifies it with a later audit run. A recompute alone never certifies: --certify needs the run_id of a complete re-audit
 (FULL, or a --isin run covering the affected ISINs) in which the affected ISINs no longer violate the rule, and for a RECOMPUTE fix the
---snapshot taken BEFORE it (scripts/audit/run_statistical_audit.py --state-snapshot) to prove every input_hash changed.
+--snapshot taken BEFORE it (scripts/audit/stat/run_statistical_audit.py --state-snapshot) to prove every input_hash changed.
 
 Exit codes: 0 ok / closable, 1 not closable or not certifiable, 2 usage, connection or missing table / switch.
 """
@@ -26,7 +26,7 @@ import json
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
 DOMAINS = {"p2": "p2_metrics", "costs": "cost_attributes"}
@@ -131,7 +131,7 @@ def main(argv: "list | None" = None) -> int:
         has_table = ps.incident_table_exists(conn)
         rows = inc.load_incidents(conn) if has_table else []
         if mode in ("annotate", "certify", "accept", "close", "open") and not has_table:
-            print("error: control.audit_incident does not exist; run scripts/ops/migrate_audit_incident.py --apply first", file=sys.stderr)
+            print("error: control.audit_incident does not exist; run scripts/mig/fondos/migrate_audit_incident.py --apply first", file=sys.stderr)
             return 2
 
         if mode == "plan":
@@ -184,7 +184,7 @@ def main(argv: "list | None" = None) -> int:
                     title=f"[AUDIT-INCIDENT] {c.domain} {c.rule_id}: {len(c.isins)} fund(s)",
                     scenario_description=(f"CRITICAL finding {c.rule_id} / {c.group_key} in {c.domain} (run {c.run_id}): {c.evidence} "
                                           f"Affected: {len(c.isins)} ISIN(s). Close only on a certifying re-audit "
-                                          "(scripts/audit/audit_incident.py --certify) or an active accepted residual."))
+                                          "(scripts/audit/stat/audit_incident.py --certify) or an active accepted residual."))
                 incident_id = ps.open_incident(conn, c, ap_id=ap_id, affected_calc_version=calc_version())
                 print(f"  incident #{incident_id} {c.key} -> ticket {ap_id or '(backlog unavailable: not linked)'}")
             return 0

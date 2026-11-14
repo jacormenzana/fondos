@@ -1,14 +1,14 @@
 # tests/test_backlog_transitions_pg.py
 # -*- coding: utf-8 -*-
 """Phase A of Backlog v2 (FND-0331): db/pg_backlog/30_transitions.sql (step A-1) and 31_revoke_raw_update.sql (step A-2), applied by
-scripts/ops/migrate_backlog_v2.py. Hermetic: the throwaway container, inside a savepoint that is always rolled back (pg_conn).
+scripts/mig/backlog/migrate_backlog_v2.py. Hermetic: the throwaway container, inside a savepoint that is always rolled back (pg_conn).
 
 The fixture reproduces production before A-1: schema, links store, actor alias, the LEGACY sp_close_release, and a `backlog_writer` role with the
 privileges it has today. Covers the transition matrix and closure rules, the waiting states, reopening, the V-00 shadow trigger and its counter,
 append-only audit tables, the non-superuser owner and hardened routines (owner decisions D1, D3), the rebuilt sp_close_release, the A-2 revoke and its
 exceptions, and both rollbacks (history fingerprint identical throughout).
 
-    python scripts/ops/run_pg_tests.py -- tests/test_backlog_transitions_pg.py
+    python scripts/gov/delivery/run_pg_tests.py -- tests/test_backlog_transitions_pg.py
 """
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ import psycopg
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops")):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "mig" / "backlog")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 

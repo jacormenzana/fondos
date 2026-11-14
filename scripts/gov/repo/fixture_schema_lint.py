@@ -1,4 +1,4 @@
-# scripts/audit/fixture_schema_lint.py
+# scripts/gov/repo/fixture_schema_lint.py
 # -*- coding: utf-8 -*-
 """Schema lint of the test fixtures (FND-0249): columns a fixture's CREATE TABLE declares that the production DDL no longer has.
 
@@ -12,7 +12,7 @@ A table that is not in the DDL at all is a deliberate toy (reported separately, 
 f-string placeholder cannot be parsed statically and is skipped (reported). Deliberate extras are an explicit allowlist in the test that owns the
 gate, each with a reason (tests/test_fixture_schema_lint.py).
 
-Usage:  C:\\Users\\jacor\\.conda\\envs\\des\\python.exe scripts\\audit\\fixture_schema_lint.py [--root DIR]    (exit 1 when there are findings)
+Usage:  C:\\Users\\jacor\\.conda\\envs\\des\\python.exe scripts\\gov\\repo\\fixture_schema_lint.py [--root DIR]    (exit 1 when there are findings)
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ import re
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 DDL_GLOB = "db/pg/*.sql"
 FIXTURE_DIRS = ("tests", "proyecto1/tests", "proyecto2/tests", "proyecto3/tests")
 # The lint's own tests hold synthetic CREATE TABLE text on purpose.

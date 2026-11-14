@@ -1,12 +1,12 @@
 # tests/test_backlog_actor_alias_pg.py
 # -*- coding: utf-8 -*-
-"""Actor alias store of the backlog (FND-0330; db/pg_backlog/25_actor_alias.sql, applied by scripts/ops/migrate_backlog_v2.py --phase alias).
+"""Actor alias store of the backlog (FND-0330; db/pg_backlog/25_actor_alias.sql, applied by scripts/mig/backlog/migrate_backlog_v2.py --phase alias).
 
 Hermetic: loads 00_schema.sql, the links block and the alias block into the throwaway container inside a savepoint that is always rolled
 back (pg_conn). Covers the seed, idempotence, the CHECK, the append-only trigger, both views, the client read API, the prerequisite
 guard and the staged rollback (which must leave logs and link events untouched).
 
-    python scripts/ops/run_pg_tests.py -- tests/test_backlog_actor_alias_pg.py
+    python scripts/gov/delivery/run_pg_tests.py -- tests/test_backlog_actor_alias_pg.py
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ import psycopg
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops")):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "mig" / "backlog")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 

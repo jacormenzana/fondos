@@ -3,9 +3,9 @@
 """
 criticality_diff.py -- which persisted findings change their blocking status under the criticality model (FND-0262). Read-only.
 
-    python scripts/audit/criticality_diff.py                  # the latest full run of each domain
-    python scripts/audit/criticality_diff.py --all            # every persisted full run
-    python scripts/audit/criticality_diff.py --run RUN_ID     # one run (any domain)
+    python scripts/audit/stat/criticality_diff.py                  # the latest full run of each domain
+    python scripts/audit/stat/criticality_diff.py --all            # every persisted full run
+    python scripts/audit/stat/criticality_diff.py --run RUN_ID     # one run (any domain)
 
 For each run it compares the legacy domain-agnostic predicate (gating.is_blocking without a domain) with the model
 (shared/statistical_audit/criticality.py, decided per domain) over the run's persisted audit_finding rows, and prints the rules whose
@@ -20,7 +20,7 @@ import argparse
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
 DOMAINS = ("p2_metrics", "cost_attributes")

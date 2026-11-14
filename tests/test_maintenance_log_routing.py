@@ -2,7 +2,7 @@
 tests/test_maintenance_log_routing.py — guards for the host-level maintenance-log routing
 (NORMAS_IMPLEMENTACION.md §4.9 rule 5; ticket FND-0269).
 
-The preventive-maintenance scripts (scripts/ops/maintenance) used to mirror every run into one directory,
+The preventive-maintenance scripts (scripts/mnt/db and scripts/mnt/host) used to mirror every run into one directory,
 C:\\data\\logs\\maintenance. Each script family now has its own host-level directory under c:\\data\\wsl\\log:
 
     wsl_*  ->  /mnt/c/data/wsl/log/os                 (WSL_LOG_OS)
@@ -27,8 +27,8 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parent.parent
-_MAINT = _ROOT / "scripts" / "ops" / "maintenance"
-_COMMON = _MAINT / "lib" / "common.sh"
+_MNT = _ROOT / "scripts" / "mnt"
+_COMMON = _MNT / "lib" / "common.sh"
 _OLD = re.compile(r"data[/\\]logs[/\\]maintenance", re.I)
 _TEXT_SUFFIXES = {".py", ".sh", ".ps1", ".bat", ".md", ".yml", ".yaml", ".txt", ".sql", ".conf", ".env", ".example"}
 _SKIP_PARTS = {".git", "__pycache__", "log", "upload", "prev", ".pytest_cache"}
@@ -66,7 +66,7 @@ def test_common_sh_registers_exactly_the_two_families():
 
 
 def test_pg_capacity_csv_follows_the_resolved_dir():
-    src = (_MAINT / "pg" / "pg_04_capacity_report.sh").read_text(encoding="utf-8")
+    src = (_MNT / "db" / "pg_04_capacity_report.sh").read_text(encoding="utf-8")
     assert 'H="$MAINT_LOG_DIR/pg_capacity_history.csv"' in src
     assert "/mnt/c/data" not in src
     # the file is only meaningful after maint_start resolved the directory

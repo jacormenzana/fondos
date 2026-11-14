@@ -38,8 +38,8 @@ rollback en tres etapas: ver el plan de migración citado arriba.
 | Stack Docker | `docker/docker-compose.yml`, `docker/postgresql.conf` | Motor Postgres 17, antes no versionado |
 | DDL completo | `db/pg/00_roles_schemas.sql` … `40_matviews.sql` | Esquema objetivo, introspectado desde el `fondos.sqlite` vivo (no desde `db/schema_fondos.sql`, que está desactualizado) |
 | Mapa de renombrado | `db/pg/rename_map.yaml` | SQLite mixed-case → PostgreSQL lower_snake, checklist para el sweep de aplicación (§5c del plan) |
-| Loader de seed | `scripts/mig/pg_seed.py` | Carga única SQLite→PG, psycopg3 binary COPY, resumible por unidad |
-| Gate de reconciliación | `scripts/mig/pg_reconcile.py` | Validación exacta pre-cutover (9 checks) |
+| Loader de seed | `scripts/mig/cutover/pg_seed.py` | Carga única SQLite→PG, psycopg3 binary COPY, resumible por unidad |
+| Gate de reconciliación | `scripts/mig/cutover/pg_reconcile.py` | Validación exacta pre-cutover (9 checks) |
 
 **Pendiente (no automatizado por estos artefactos):** aprovisionamiento real del host Ubuntu,
 ejecución del seed loader contra un Postgres vivo, el sweep de aplicación de ~86 sitios de conexión
@@ -166,7 +166,7 @@ python -X utf8 -m proyecto2.src.reports.rolling_dashboard
 | Postgres Docker (réplica BI, `:5433`) | ACTIVO |
 | Superset Docker (`:8088`) | ACTIVO — repuntado a la base operacional al cerrar la Fase 4 |
 | rolling_dashboard.py (alternativa local) | ACTIVO — no afectado por la migración |
-| **Artefactos de migración P1/P2** (`docker/`, `db/pg/`, `scripts/mig/pg_seed.py`, `pg_reconcile.py`) | **COMMITEADOS, NO DESPLEGADOS** — ver §0 |
+| **Artefactos de migración P1/P2** (`docker/`, `db/pg/`, `scripts/mig/cutover/pg_seed.py`, `pg_reconcile.py`) | **COMMITEADOS, NO DESPLEGADOS** — ver §0 |
 | Base operacional PostgreSQL (`:5432`) | NO INICIADA — aprovisionamiento de host pendiente |
 
 ---

@@ -1,13 +1,13 @@
 # tests/test_backlog_groups_pg.py
 # -*- coding: utf-8 -*-
-"""Phase D of Backlog v2 (FND-0335): db/pg_backlog/60_groups_violations.sql applied by scripts/ops/migrate_backlog_v2.py --phase groups.
+"""Phase D of Backlog v2 (FND-0335): db/pg_backlog/60_groups_violations.sql applied by scripts/mig/backlog/migrate_backlog_v2.py --phase groups.
 Hermetic: the throwaway container inside a rolled-back savepoint (pg_conn); never the live backlog.
 
 Covers: prerequisites, idempotence and the rollback that keeps history; the one-time RELEASE_WITH -> TRAIN migration; the group routines and
 v_group_status; every violation code of the view (and its negative case); lean metrics on LIVE events only; impact closure (directions, closed
 tickets, cycles, the 5-level bound); privileges; the client's violation_summary.
 
-    python scripts/ops/run_pg_tests.py -- tests/test_backlog_groups_pg.py
+    python scripts/gov/delivery/run_pg_tests.py -- tests/test_backlog_groups_pg.py
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ import psycopg
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops"), str(Path(__file__).resolve().parent)):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "mig" / "backlog"), str(Path(__file__).resolve().parent)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 

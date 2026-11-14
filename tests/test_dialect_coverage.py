@@ -443,11 +443,11 @@ def test_with_conn_rule_flags_a_bare_connection_but_not_a_transaction_helper():
 
 # ─── Rule 7 — SQLite is retired: nothing in production may import it ─────────────────────────────
 _SQLITE_FREE_DIRS = ("proyecto1", "proyecto2", "proyecto3", "shared",
-                     "scripts/launch", "scripts/audit", "scripts/ops", "scripts/diag")
+                     "scripts/launch", "scripts/audit", "scripts/gov", "scripts/mig", "scripts/mnt")
 # Migration tooling that must read the sealed file until it is archived (FND-0103), then goes too.
 _SQLITE_IMPORT_EXEMPT = {
-    "scripts/mig/pg_seed.py": "one-shot loader whose SOURCE is the sealed SQLite file (deleted at archive time)",
-    "scripts/mig/pg_reconcile.py": "reconciliation gate against the sealed SQLite file (deleted at archive time)",
+    "scripts/mig/cutover/pg_seed.py": "one-shot loader whose SOURCE is the sealed SQLite file (deleted at archive time)",
+    "scripts/mig/cutover/pg_reconcile.py": "reconciliation gate against the sealed SQLite file (deleted at archive time)",
 }
 
 

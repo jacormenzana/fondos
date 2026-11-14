@@ -7,7 +7,7 @@ Hermetic: throwaway schema with only the columns the readers touch (same pattern
 Checks the dialect points that bit this project before (lowercase result columns, date objects, ANY(%s)) and
 that retired funds (In_Current_Universe=0) ARE returned, since the PIT universe includes them.
 
-    python scripts/ops/run_pg_tests.py proyecto3/tests/test_pit_inputs_pg.py
+    python scripts/gov/delivery/run_pg_tests.py proyecto3/tests/test_pit_inputs_pg.py
 """
 from __future__ import annotations
 

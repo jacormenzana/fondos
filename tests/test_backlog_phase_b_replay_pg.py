@@ -1,11 +1,11 @@
 # tests/test_backlog_phase_b_replay_pg.py
 # -*- coding: utf-8 -*-
-"""The Phase B replay (scripts/audit/backlog_phase_b_replay.py, FND-0333) against the REAL gate code. Hermetic (pg_conn): synthetic histories check that the replay
+"""The Phase B replay (scripts/mig/backlog/backlog_phase_b_replay.py, FND-0333) against the REAL gate code. Hermetic (pg_conn): synthetic histories check that the replay
 refuses exactly the delivery closures that had an open prerequisite on their day, never gates REJECTED / DUPLICATED, honours the links of each moment, and counts flags.
 The test at the end replays the REAL history when a snapshot of the live backlog is supplied (it is skipped otherwise) and writes the report:
 
-    python scripts/audit/backlog_phase_b_replay.py --export SNAPSHOT.json
-    FONDOS_B_REPLAY_SNAPSHOT=SNAPSHOT.json FONDOS_B_REPLAY_REPORT=REPORT.json python scripts/ops/run_pg_tests.py -- tests/test_backlog_phase_b_replay_pg.py
+    python scripts/mig/backlog/backlog_phase_b_replay.py --export SNAPSHOT.json
+    FONDOS_B_REPLAY_SNAPSHOT=SNAPSHOT.json FONDOS_B_REPLAY_REPORT=REPORT.json python scripts/gov/delivery/run_pg_tests.py -- tests/test_backlog_phase_b_replay_pg.py
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops"), str(_ROOT / "scripts" / "audit"), str(Path(__file__).resolve().parent)):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "mig" / "backlog"), str(_ROOT / "scripts" / "mig" / "backlog"), str(Path(__file__).resolve().parent)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 

@@ -24,12 +24,12 @@ def test_after_shared_is_put_at_the_front_the_bare_name_is_the_script_again(monk
         assert Path(polluted.__file__).parent == ROOT / "shared"        # the defect: the bare name is the library
         dropped = ih.restore()
         assert "backlog_modules" in dropped
-        assert sys.path[:2] == list(ih.SCRIPT_DIRS)                     # the script directories are back at the front, order kept
+        assert sys.path[:len(ih.SCRIPT_DIRS)] == list(ih.SCRIPT_DIRS)                     # the script directories are back at the front, order kept
         again = importlib.import_module("backlog_modules")
-        assert Path(again.__file__).parent == ROOT / "scripts" / "audit" and hasattr(again, "cluster_step")
+        assert Path(again.__file__).parent == ROOT / "scripts" / "gov" / "backlog" and hasattr(again, "cluster_step")
         assert ih.restore() == []                                       # idempotent (the scripts put the repository root in front of the path again when they are imported: not our concern)
         owner = importlib.import_module("owner_vault")
-        assert Path(owner.__file__).parent == ROOT / "scripts" / "ops" and hasattr(owner, "main")
+        assert Path(owner.__file__).parent == ROOT / "scripts" / "gov" / "backlog" and hasattr(owner, "main")
     finally:
         for n, m in saved.items():
             if m is None:

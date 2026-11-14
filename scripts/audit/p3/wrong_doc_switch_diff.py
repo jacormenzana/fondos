@@ -3,7 +3,7 @@
 """
 wrong_doc_switch_diff.py -- read-only OFF/ON validation of FND-0323 D1 (P3_WRONG_DOC_EXCLUSION_ENABLED) on a deterministic 40-ISIN sample.
 
-    python scripts/audit/wrong_doc_switch_diff.py [--regime Shock_Energetico] [--pit-start 2022-01-31] [--out report.txt]
+    python scripts/audit/p3/wrong_doc_switch_diff.py [--regime Shock_Energetico] [--pit-start 2022-01-31] [--out report.txt]
 
 Owner HARD RULE: never the full population. The sample is every active WRONG_DOC fund that has a monthly NAV (up to SAMPLE_WD) plus
 non-WRONG_DOC controls in md5 order, 40 in all. Nothing is written to the database; the switch is flipped in THIS process only and put back.
@@ -27,7 +27,7 @@ from pathlib import Path
 
 import pandas as pd
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
 SAMPLE_SIZE = 40
@@ -106,7 +106,7 @@ def main(argv: list | None = None) -> int:
     from shared.db import get_connection
     from proyecto3.src import fund_scorer as fs
 
-    sw = _load_module(ROOT / "scripts" / "audit" / "eligibility_switch_diff.py", "eligibility_switch_diff")   # reuse nothing but its pure helpers
+    sw = _load_module(ROOT / "scripts" / "audit" / "p3" / "eligibility_switch_diff.py", "eligibility_switch_diff")   # reuse nothing but its pure helpers
     lines: list = []
 
     def say(s: str = "") -> None:

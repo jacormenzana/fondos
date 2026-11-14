@@ -15,7 +15,7 @@ assumption underneath it -- that we KNOW what convention each table holds. Measu
                            away, so the contract is per indicator.
 
 Pure functions only (R-7: testable with no connection). The caller runs the SQL and hands the counts in; the cycle report
-(`scripts/launch/p1p2_cycle_report.py`) and the standing audit (`scripts/audit/period_key_invariance.py`) both do that, so
+(`scripts/launch/p1p2_cycle_report.py`) and the standing audit (`scripts/audit/p2/period_key_invariance.py`) both do that, so
 neither can drift from the other's idea of the contract. Same shape as `shared/macro_freshness.py`.
 
 Nothing here BLOCKS: a convention change is a finding for a person to read, never a reason to stop a cycle.

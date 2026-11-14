@@ -2,7 +2,7 @@
 """
 backlog_impact.py -- which open tickets a merge may affect, and the one note each gets (Backlog v3 W4, FND-0359; doc/especificacion/ACTION_PLAN_BACKLOG_V3.md section W4).
 
-Pure rules; the runner (scripts/audit/backlog_impact.py) reads git and the backlog and appends the notes as the autopilot. No database, no git, no network here.
+Pure rules; the runner (scripts/gov/backlog/backlog_impact.py) reads git and the backlog and appends the notes as the autopilot. No database, no git, no network here.
 
 A merge that cites tickets (`Refs:` / `Closes:`) changes some modules. An OPEN ticket that the merge does not cite gets ONE note when the change may touch what it is about, so whoever works on it
 re-checks whether it is resolved or regressed. Decided here and nowhere else (P#11):

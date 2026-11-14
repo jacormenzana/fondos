@@ -16,6 +16,6 @@ esac
 W=0
 for s in $L; do bash "$D/pg_$s.sh" "$@"; r=$?; [ $r -gt $W ] && W=$r; done
 if [ "$C" = monthly ] && [[ " $* " == *" --apply "* ]]; then
-  bash "$D/../../backup_live_pg.sh" --verify-restore || W=2
+  bash "$D/../backup/backup_live_pg.sh" --verify-restore || W=2
 fi
 echo "pg_run_all $C -> worst exit $W"; exit $W

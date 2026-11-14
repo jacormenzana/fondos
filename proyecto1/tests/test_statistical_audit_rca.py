@@ -134,7 +134,7 @@ def test_loader_with_no_isins_asks_nothing():
 
 
 def test_the_audit_runner_applies_it_without_ever_failing_the_audit():
-    spec = importlib.util.spec_from_file_location("run_statistical_audit_rca", os.path.join(_ROOT, "scripts", "audit", "run_statistical_audit.py"))
+    spec = importlib.util.spec_from_file_location("run_statistical_audit_rca", os.path.join(_ROOT, "scripts", "audit", "stat", "run_statistical_audit.py"))
     runner = importlib.util.module_from_spec(spec)
     sys.modules["run_statistical_audit_rca"] = runner
     spec.loader.exec_module(runner)

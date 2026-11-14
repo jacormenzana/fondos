@@ -1,4 +1,4 @@
-"""FND-0407 / FND-0290 -- the rotating, cycle-aware logical backup (scripts/ops/backup_rotating.sh, lib/cycle_guard.sh).
+"""FND-0407 / FND-0290 -- the rotating, cycle-aware logical backup (scripts/mnt/backup/backup_rotating.sh, lib/cycle_guard.sh).
 
 Owner order 2026-11-14: (1) only the TWO newest dates are kept, each by its newest complete set, on the computer AND on the external disk;
 (2) a running work cycle always wins: no backup starts while the cycle lock is held. The scripts run for real under bash with scratch folders and a stub
@@ -12,9 +12,9 @@ from pathlib import Path
 
 import pytest
 
-OPS = Path(__file__).resolve().parents[1] / "scripts" / "ops"
-ROTATING = OPS / "backup_rotating.sh"
-GUARD = OPS / "lib" / "cycle_guard.sh"
+BACKUP = Path(__file__).resolve().parents[1] / "scripts" / "mnt" / "backup"
+ROTATING = BACKUP / "backup_rotating.sh"
+GUARD = BACKUP.parent / "lib" / "cycle_guard.sh"
 BASH = shutil.which("bash")
 usable = bool(BASH) and not any(x in BASH.lower() for x in ("windowsapps", "\\system32\\"))
 pytestmark = pytest.mark.skipif(not usable, reason="needs a GNU bash (Git Bash); the WSL launcher cannot see Windows temp paths")
@@ -231,19 +231,19 @@ def test_a_failed_external_copy_never_rotates_the_external_disk(env):
     ("backup_rotating.sh", 'cycle_guard_or_defer "the rotating backup"'),
 ])
 def test_every_backup_entry_point_calls_the_cycle_guard(script, needle):
-    text = (OPS / script).read_text(encoding="utf-8")
+    text = (BACKUP / script).read_text(encoding="utf-8")
     assert needle in text and "lib/cycle_guard.sh" in text
 
 
 def test_the_base_backup_takes_the_if_due_flag():
-    text = (OPS / "setup_wal_archive.sh").read_text(encoding="utf-8")
+    text = (BACKUP / "setup_wal_archive.sh").read_text(encoding="utf-8")
     assert '--if-due=*) IF_DUE_DAYS="${a#--if-due=}"' in text and "stamp_age_seconds" in text
 
 
-@pytest.mark.parametrize("script", ["backup_rotating.sh", "lib/cycle_guard.sh", "backup_live_pg.sh", "backup_offbox.sh", "setup_wal_archive.sh"])
+@pytest.mark.parametrize("script", ["backup_rotating.sh", "../lib/cycle_guard.sh", "backup_live_pg.sh", "backup_offbox.sh", "setup_wal_archive.sh"])
 def test_the_scripts_parse(script):
-    assert subprocess.run([BASH, "-n", p(OPS / script)], capture_output=True, text=True).returncode == 0
-    assert b"\r" not in (OPS / script).read_bytes().replace(b"\r\n", b"\n") or True        # eol=lf is enforced by .gitattributes
+    assert subprocess.run([BASH, "-n", p(BACKUP / script)], capture_output=True, text=True).returncode == 0
+    assert b"\r" not in (BACKUP / script).read_bytes().replace(b"\r\n", b"\n") or True        # eol=lf is enforced by .gitattributes
 
 
 # ---------------- --dry-run: the plan, with nothing changed ----------------

@@ -1,6 +1,6 @@
 # proyecto2/tests/utils/test_fund_dossier_fnd0393.py
 # -*- coding: utf-8 -*-
-"""FND-0393: the pure parts of scripts/audit/fund_dossier.py (the flag that says why an anomalous metric may not be a real signal, calendar returns, the downside drill-down, the reading).
+"""FND-0393: the pure parts of scripts/audit/nav/fund_dossier.py (the flag that says why an anomalous metric may not be a real signal, calendar returns, the downside drill-down, the reading).
 
 R-7: no DB. The script is loaded by path; its database parts run read-only against the live store when the dossier is produced. They sit in proyecto2/tests because the script imports proyecto2's `src`.
 """
@@ -18,7 +18,7 @@ import pandas as pd
 
 from shared import config
 
-spec = importlib.util.spec_from_file_location("fund_dossier", _ROOT / "scripts" / "audit" / "fund_dossier.py")
+spec = importlib.util.spec_from_file_location("fund_dossier", _ROOT / "scripts" / "audit" / "nav" / "fund_dossier.py")
 fd = importlib.util.module_from_spec(spec)
 sys.modules["fund_dossier"] = fd
 spec.loader.exec_module(fd)

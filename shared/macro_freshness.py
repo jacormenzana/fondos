@@ -11,7 +11,7 @@ This module judges EVERY series against its own limit and every composite regime
 single number: a series is dated by its stamp (month start for monthly data, 1 January for annual, quarter start for quarterly), so the age of a
 perfectly current annual series reaches ~850 days. Each limit below is "worst normal age = publication lag + stamping offset" plus one month of slack.
 
-Pure module: no DB, no network, no pipeline imports (R-7). scripts/audit/macro_freshness_check.py and the cycle report read the DB and call it.
+Pure module: no DB, no network, no pipeline imports (R-7). scripts/audit/p2/macro_freshness_check.py and the cycle report read the DB and call it.
 Monitoring only: nothing here stops a run (enforcement in the P3 gate is a separate owner decision).
 """
 
@@ -116,7 +116,7 @@ def attention_lines(statuses: list, composites: dict) -> list:
     if stale:
         lines.append(f"{len(stale)} series macro caducadas (edad > limite propio): " + "; ".join(
             f"{s.indicator}/{s.geography} {s.newest:%Y-%m} ({s.age_days} d > {s.limit_days})" for s in stale[:8])
-            + (" ..." if len(stale) > 8 else "") + " -- scripts/audit/macro_freshness_check.py; buscar primero un cambio de proveedor (FND-0256)")
+            + (" ..." if len(stale) > 8 else "") + " -- scripts/audit/p2/macro_freshness_check.py; buscar primero un cambio de proveedor (FND-0256)")
     for name, c in composites.items():
         if c["state"] != "OK":
             legs = ", ".join(f"{g}={v}" for g, v in c["legs"].items())

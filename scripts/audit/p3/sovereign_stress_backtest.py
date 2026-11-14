@@ -3,8 +3,8 @@
 """
 sovereign_stress_backtest.py -- would simple, pre-declared sovereign-stress rules have flagged the known episodes? (FND-0294)
 
-    python scripts/audit/sovereign_stress_backtest.py            # per-rule table on the euro era + the state of the latest month
-    python scripts/audit/sovereign_stress_backtest.py --json     # machine-readable
+    python scripts/audit/p3/sovereign_stress_backtest.py            # per-rule table on the euro era + the state of the latest month
+    python scripts/audit/p3/sovereign_stress_backtest.py --json     # machine-readable
 
 Read-only research: public data only (ECB IRS 10y government yields for DE FR IT ES PT GR; FRED/OECD IRLTLT01 for US GB JP, through the repo's keyed
 FRED fetch), nothing is written anywhere. The rules, thresholds and episodes live in shared/sovereign_stress.py (thresholds are pinned by a test:
@@ -22,7 +22,7 @@ import sys
 import urllib.request
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
 from shared import sovereign_stress as ss  # noqa: E402

@@ -1,5 +1,5 @@
 # Step 0 of Backlog v2 (FND-0333; spec doc/especificacion/PROPUESTA_BACKLOG_V2.md section 6.6): the historical data debt, as a FIXED, versioned list.
-# Run by scripts/ops/backlog_step0.py: dry run by default, idempotent, append-only (everything goes through backlog_client: link events, wait annotations, transitions
+# Run by scripts/mig/backlog/backlog_step0.py: dry run by default, idempotent, append-only (everything goes through backlog_client: link events, wait annotations, transitions
 # and logs; no row of this file rewrites a log or a ticket, and none reverses a link or a closure). Applied by the OWNER after Phase B is deployed.
 version: 1
 revisit_days: 90                       # the placeholder revisit date of a DEFERRED ticket = the day step 0 is applied + this many days (revisit_basis DEFAULT_90D)

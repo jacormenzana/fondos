@@ -1,6 +1,6 @@
 # tests/test_backlog_attest.py
 # -*- coding: utf-8 -*-
-"""Phase C slice 4 (FND-0334), no database: the signed attestation of the collision gate (shared/backlog_attest.py), the CI verifier (scripts/audit/verify_attestation.py), `backlog_sync.py --attest`
+"""Phase C slice 4 (FND-0334), no database: the signed attestation of the collision gate (shared/backlog_attest.py), the CI verifier (scripts/gov/backlog/verify_attestation.py), `backlog_sync.py --attest`
 and the branch-protection reading (shared/backlog_protection.py). Real `ssh-keygen` keys are generated in a temporary directory; nothing touches the owner's keys."""
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(ROOT), str(ROOT / "scripts" / "audit")):
+for _p in (str(ROOT), str(ROOT / "scripts" / "gov" / "backlog")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 

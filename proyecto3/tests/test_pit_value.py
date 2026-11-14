@@ -165,7 +165,7 @@ def test_layer_verdict_keeps_a_layer_only_when_removing_it_hurts():
 
 def _cli():
     import importlib.util
-    spec = importlib.util.spec_from_file_location("p3_pit_value_cli", _ROOT / "scripts" / "launch" / "p3_pit_value.py")
+    spec = importlib.util.spec_from_file_location("p3_pit_value_cli", _ROOT / "scripts" / "audit" / "p3" / "p3_pit_value.py")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod

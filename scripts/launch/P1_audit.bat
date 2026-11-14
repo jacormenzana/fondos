@@ -9,7 +9,7 @@ call "%COMMON%" :utf8_on
 ::
 :: Pasos:
 ::   1. Auditoria estadistica del dominio costs (fund_master / fund_cost_schedule):
-::      scripts\audit\run_statistical_audit.py --domain costs
+::      scripts\audit\stat\run_statistical_audit.py --domain costs
 ::   2. Consistencia de benchmarks B1-B7 (proyecto1\tools\audit_benchmark_consistency.py,
 ::      solo lectura; JSON en out\audit\P1\benchmark_audit_findings.json)
 ::
@@ -86,7 +86,7 @@ pushd "%ROOT%"
 echo [%time%] Paso 1/2: auditoria estadistica costs
 echo. >> "%LOG%"
 echo --- PASO 1: statistical audit (costs^) ---------------------- >> "%LOG%"
-"%PYTHON%" -u -X utf8 scripts\audit\run_statistical_audit.py --domain costs !STAT_ARGS! >> "%LOG%" 2>&1
+"%PYTHON%" -u -X utf8 scripts\audit\stat\run_statistical_audit.py --domain costs !STAT_ARGS! >> "%LOG%" 2>&1
 set RC1=!ERRORLEVEL!
 
 set RC2=0

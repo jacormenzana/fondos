@@ -1,6 +1,6 @@
 # proyecto2/tests/utils/test_nav_forensics_fnd0393.py
 # -*- coding: utf-8 -*-
-"""FND-0393 (WS1 of FND-0391): the pure parts of scripts/audit/nav_forensics.py (robust z, flat run, step ratio, key parsing and the verdict order).
+"""FND-0393 (WS1 of FND-0391): the pure parts of scripts/audit/nav/nav_forensics.py (robust z, flat run, step ratio, key parsing and the verdict order).
 
 R-7: no DB. The script is loaded by path; its database parts are exercised read-only against the live store when the report is run. They sit in proyecto2/tests because the script imports proyecto2's `src`.
 """
@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-spec = importlib.util.spec_from_file_location("nav_forensics", _ROOT / "scripts" / "audit" / "nav_forensics.py")
+spec = importlib.util.spec_from_file_location("nav_forensics", _ROOT / "scripts" / "audit" / "nav" / "nav_forensics.py")
 nf = importlib.util.module_from_spec(spec)
 sys.modules["nav_forensics"] = nf
 spec.loader.exec_module(nf)

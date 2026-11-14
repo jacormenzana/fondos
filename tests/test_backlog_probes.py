@@ -1,7 +1,7 @@
 # tests/test_backlog_probes.py
 # -*- coding: utf-8 -*-
-"""Backlog v3 W4 (FND-0359), the Python half of the probe invalidation: an [impact] note invalidates the probe status of the tickets it reaches (scripts/audit/backlog_impact.py) and the autopilot
-re-runs their closing conditions and records the result BEFORE it reads the delivery gate (scripts/audit/backlog_autopilot.py). The database half is tests/test_backlog_probes_pg.py.
+"""Backlog v3 W4 (FND-0359), the Python half of the probe invalidation: an [impact] note invalidates the probe status of the tickets it reaches (scripts/gov/backlog/backlog_impact.py) and the autopilot
+re-runs their closing conditions and records the result BEFORE it reads the delivery gate (scripts/gov/backlog/backlog_autopilot.py). The database half is tests/test_backlog_probes_pg.py.
 No database, no git, no network (R-7)."""
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from types import ModuleType, SimpleNamespace
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "audit")):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "gov" / "backlog")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -230,7 +230,7 @@ def test_the_client_checks_the_kind_before_it_connects_and_names_the_exact_routi
 
 
 def test_the_switch_and_the_hooks_are_in_place():
-    src = (_ROOT / "scripts" / "audit" / "backlog_autopilot.py").read_text(encoding="utf-8")
+    src = (_ROOT / "scripts" / "gov" / "backlog" / "backlog_autopilot.py").read_text(encoding="utf-8")
     assert "_gather_gates(candidates, tickets, bc, cfg, record=bool(args.apply and mode != \"OFF\"))" in src
     ddl = (_ROOT / "db" / "pg_backlog" / "99_probes.sql").read_text(encoding="utf-8")
     assert "STALE_PROBES" in ddl and "p_delivery AND p_to = 'CLOSED'" in ddl

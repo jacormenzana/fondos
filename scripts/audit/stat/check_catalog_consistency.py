@@ -2,12 +2,12 @@
 """CI catalog-consistency check (P1.5, 2026-09-15).
 
 Pure structural checks over shared/statistical_audit/catalog_*.py and the
-module-level constants in scripts/audit/run_statistical_audit.py that
+module-level constants in scripts/audit/stat/run_statistical_audit.py that
 duplicate catalog knowledge as hardcoded tuples (_PEER_METRICS,
 _P2_SAME_GROUP_PAIRS). Catches drift between the runner's hardcoded lists
 and the catalogs they are supposed to agree with -- WITHOUT touching the
 database. This is a catalog self-consistency check, not a data audit
-(scripts/audit/run_statistical_audit.py --mode check is the data gate).
+(scripts/audit/stat/run_statistical_audit.py --mode check is the data gate).
 
 Requires pandas: four of the six catalog modules import it transitively
 (via invariants.py / comparisons.py / group_checks.py, for type hints on
@@ -21,14 +21,14 @@ question is a second job with its own pip install, not stripping pandas
 out of the catalog modules.
 
 Usage:
-    python scripts/audit/check_catalog_consistency.py
+    python scripts/audit/stat/check_catalog_consistency.py
 """
 from __future__ import annotations
 
 import sys
 from pathlib import Path
 
-_ROOT = Path(__file__).resolve().parents[2]
+_ROOT = Path(__file__).resolve().parents[3]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
@@ -129,7 +129,7 @@ def check_same_group_pairs_use_explicit_metrics() -> list[str]:
     catches a typo'd metric name that get_metric_spec() would otherwise
     resolve 'successfully' to the wrong (generic) statistical type instead
     of raising attention."""
-    from scripts.audit.run_statistical_audit import _P2_SAME_GROUP_PAIRS
+    from scripts.audit.stat.run_statistical_audit import _P2_SAME_GROUP_PAIRS
 
     errors = []
     for rule_id, (metric_a, metric_b) in _P2_SAME_GROUP_PAIRS.items():
@@ -149,7 +149,7 @@ def check_peer_metrics_are_peer_eligible() -> list[str]:
     Fund_Nature. The invariant that DOES hold: every metric it names must
     actually declare 'PEER' support in the catalog, or the runner would be
     peer-segmenting a metric the catalog never designed for that."""
-    from scripts.audit.run_statistical_audit import _PEER_METRICS
+    from scripts.audit.stat.run_statistical_audit import _PEER_METRICS
 
     errors = []
     for metric in _PEER_METRICS:
@@ -168,7 +168,7 @@ def check_scalar_timeseries_metrics_are_explicit() -> list[str]:
     check_same_group_pairs_use_explicit_metrics(). There is no
     'timeseries' segmentation to check membership against (unlike PEER);
     this is the closest catalog-only invariant available for that list."""
-    from scripts.audit.run_statistical_audit import _SCALAR_TIMESERIES_METRICS
+    from scripts.audit.stat.run_statistical_audit import _SCALAR_TIMESERIES_METRICS
 
     errors = []
     for metric in _SCALAR_TIMESERIES_METRICS:

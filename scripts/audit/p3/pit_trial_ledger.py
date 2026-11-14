@@ -10,7 +10,7 @@ tried, not only the ones that were reported. This scanner enumerates them exhaus
 
 Read-only, standard library only. Writes the ledger CSV and a summary JSON; prints the summary.
 
-    python scripts/audit/pit_trial_ledger.py --out-csv doc/decisiones/LEDGER_FND-0193.csv --out-json doc/decisiones/LEDGER_FND-0193.json
+    python scripts/audit/p3/pit_trial_ledger.py --out-csv doc/decisiones/LEDGER_FND-0193.csv --out-json doc/decisiones/LEDGER_FND-0193.json
 """
 from __future__ import annotations
 

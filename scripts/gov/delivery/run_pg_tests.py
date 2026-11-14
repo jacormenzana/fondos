@@ -3,11 +3,11 @@
 migration DDL -> pytest -> tear down. Needs no credentials and never touches the
 shared test server or live data.
 
-    python scripts/ops/run_pg_tests.py                      # P1 + P3 + root + P2 suites
-    python scripts/ops/run_pg_tests.py -k statistical_audit # extra args go to one pytest run (repo root)
-    python scripts/ops/run_pg_tests.py --port 5440 --image postgres:17
-    python scripts/ops/run_pg_tests.py --suite-files plan.json  # the SAME container, DDL and four runs, each restricted to the files of its suite (FND-0385)
-    python scripts/ops/run_pg_tests.py --shards auto            # the SAME container and DDL, the full suite as concurrent pytest shards balanced by the stored per-file times (FND-0386)
+    python scripts/gov/delivery/run_pg_tests.py                      # P1 + P3 + root + P2 suites
+    python scripts/gov/delivery/run_pg_tests.py -k statistical_audit # extra args go to one pytest run (repo root)
+    python scripts/gov/delivery/run_pg_tests.py --port 5440 --image postgres:17
+    python scripts/gov/delivery/run_pg_tests.py --suite-files plan.json  # the SAME container, DDL and four runs, each restricted to the files of its suite (FND-0385)
+    python scripts/gov/delivery/run_pg_tests.py --shards auto            # the SAME container and DDL, the full suite as concurrent pytest shards balanced by the stored per-file times (FND-0386)
 
 `--suite-files` takes a JSON object {"proyecto1"|"proyecto3"|"tests"|"proyecto2": ["repo-relative test path[::test]", ...]}; a suite without entries is skipped, the proyecto2 paths lose their
 `proyecto2/` prefix because that run starts in proyecto2/. Without the flag nothing changes.
@@ -34,7 +34,7 @@ import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 DDL_FILES = ("00_roles_schemas", "10_bronze", "20_silver", "30_gold", "35_control", "40_matviews")
 DB_NAME = "fondos_test"
 

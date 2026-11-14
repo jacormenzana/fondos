@@ -31,7 +31,7 @@ do not start another launcher.
 ## 1. Before W2 (all mandatory)
 
 1. **Backup + restore proof** (WSL Ubuntu, keepalive running): 
-   `bash /mnt/c/desarrollo/fondos/scripts/ops/backup_live_pg.sh --verify-restore`
+   `bash /mnt/c/desarrollo/fondos/scripts/mnt/backup/backup_live_pg.sh --verify-restore`
    Expect `BACKUP OK` and `MATCH` on every table (~6 min). Note the file name `fondos_<STAMP>.dump`
    (in `/mnt/backups/pg_fondos/dump/` (WSL; `\wsl.localhost\Ubuntu\mnt\backups\pg_fondos\dump\` from Windows)) — this is the **restore point**. Record it in the W2 ticket.
 2. **WAL/PITR live** (FND-0071): `bash .../setup_wal_archive.sh status` shows a real
@@ -68,7 +68,7 @@ piece: the restore into a scratch database is exactly what `--verify-restore` do
    ALTER DATABASE fondos_restore RENAME TO fondos;
    ```
 5. Re-check grants for the pipeline role, then run the acceptance below. If `fondos_app` lacks
-   privileges, reapply with the owner (`db/pg/`, `scripts/ops/create_readonly_roles.sh` for the
+   privileges, reapply with the owner (`db/pg/`, `scripts/mnt/db/create_readonly_roles.sh` for the
    read-only roles) — do not widen `fondos_app` beyond DML.
 6. Physical files: move back from `kiid_retired/<date>/` any PDF moved by a rolled-back
    `--retire-orphans` (compare with the §1.5 listing).
@@ -95,7 +95,7 @@ privileges of `fondos_app` / `fondos_ro`. Result: PASSED — recovery ≈ 3 min 
 
 - `python -X utf8 -m proyecto2.src.pipeline.run_pipeline --isin <ISIN> --dry-run` (as `fondos_app`)
 - `python scripts/launch/p3_build_portfolio.py --dry-run`
-- `python scripts/ops/run_pg_tests.py` unaffected (hermetic, does not touch live)
+- `python scripts/gov/delivery/run_pg_tests.py` unaffected (hermetic, does not touch live)
 - backlog reachable: `python -m shared.backlog_client --check-dsn`
 - record the outcome and the restore point used on FND-0099 / the incident ticket.
 

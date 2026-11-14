@@ -14,7 +14,7 @@ runner (PEER segmentation, los 2 pares de Bloque 2 sin cablear, `excess_return`/
 Bloque 5) y la investigación completa de los dos hallazgos pendientes de la primera ejecución real
 (§2.7). El motor está implementado en `shared/statistical_audit/` (11 funciones puras +
 persistencia + 5 catálogos declarativos), ejecutable vía
-`scripts/audit/run_statistical_audit.py --domain costs|p2`, con persistencia real en
+`scripts/audit/stat/run_statistical_audit.py --domain costs|p2`, con persistencia real en
 `audit_statistic`/`audit_finding` y comparación entre ejecuciones (`--compare-to`). Los tres
 defectos de producción D1–D3 del motor de alertas (§2.5) están corregidos en código. Al cablear
 `SCALAR_EQUALS_TIMESERIES` surgió un hallazgo mayor — un bug real de ingesta NAV que corrompía la
@@ -580,7 +580,7 @@ entre el dominio de coste, P1, y el de métricas, P2).
 
 Cuatro catálogos Python (diccionarios, no YAML — ver §7, hallazgo N), mismo idioma que
 `ALERT_RULES` en `shared/config.py:370` y el registro `GENERATORS` de
-`scripts/audit/sync_agents_md.py`:
+`scripts/gov/repo/sync_agents_md.py`:
 
 - **`catalog_metrics.py`** — una entrada por métrica P2: familia, tipo estadístico
   (continua-positiva / continua-con-signo / acotada-[0,1] / discreta-ordinal / conteo / serie
@@ -672,13 +672,13 @@ el informe de la auditoría, la promoción y el informe de ciclo (`expiring_soon
 está CLOSED. Un hallazgo íntegramente aceptado se persiste con la `rule_class` que tenía (severidad `INFO`): `ACCEPTED_RESIDUAL` solo
 existe en memoria porque el `CHECK` de `control.audit_finding` no la admite.
 
-Alta y renovación (decisión en dos pasos, FND-0263 / D6): `python scripts/audit/accept_audit_residual.py --domain costs --rule
+Alta y renovación (decisión en dos pasos, FND-0263 / D6): `python scripts/audit/stat/accept_audit_residual.py --domain costs --rule
 <RULE> --ap FND-xxxx --reason "..." [--renew] --apply` registra un `GRANT` (o `RENEW`) **pendiente**; `--approve <event_id> --apply`,
 como orden aparte, lo activa; `--revoke <event_id> --cause OWNER|AP_CLOSED|RESOLVED --reason "..." [--isin ...] --apply` lo retira;
 `--history --domain costs` muestra el registro. Sin `--apply` nada se escribe. Cada decisión es un evento de
 `control.audit_exception_event` (append-only) y `control.audit_accepted_finding` se refresca desde ese historial en la misma
-transacción (política completa: `GOBIERNO_CONTROLES.md` §5). Crear las tablas: `scripts/ops/migrate_audit_accepted_finding.py --apply`
-y `scripts/ops/migrate_audit_governance.py --apply` (propietario; la segunda vuelca los residuales vigentes como `GRANT` + `APPROVE`).
+transacción (política completa: `GOBIERNO_CONTROLES.md` §5). Crear las tablas: `scripts/mig/fondos/migrate_audit_accepted_finding.py --apply`
+y `scripts/mig/fondos/migrate_audit_governance.py --apply` (propietario; la segunda vuelca los residuales vigentes como `GRANT` + `APPROVE`).
 Sin la tabla de residuales la auditoría funciona igual y lo registra como comprobación `ACCEPTED_RESIDUALS` ausente (§6.4).
 
 Corrección asociada: los marcos de costes nombran la columna `ISIN` y la búsqueda de ISIN
@@ -720,10 +720,10 @@ violan", `isin` NULL); saber *qué fondos* obligaba a repetir la auditoría (~4 
 `--persist` ahora se escribe `control.audit_finding_isin` (`run_id, domain, rule_id, group_key,
 isin`, PK sobre las cinco y FK a `fund_master` con borrado en cascada): una fila por infractor de
 cada hallazgo que lleva `violating_isins`. `clear_run` borra el detalle del mismo `run_id`, así que
-volver a persistir un `run_id` lo sustituye. Crear la tabla: `scripts/ops/migrate_audit_finding_isin.py
+volver a persistir un `run_id` lo sustituye. Crear la tabla: `scripts/mig/fondos/migrate_audit_finding_isin.py
 --apply` (propietario). Sin la tabla `--persist` funciona igual y avisa de que no guardó el detalle.
 
-**Linaje de datos por infractor (FND-0275).** Con las columnas `algorithm_versions` y `batch_ids` (`text[]`, nulas; `scripts/ops/migrate_audit_finding_lineage.py --apply`, propietario) cada fila guarda los valores distintos de `fund_metrics.algorithm_version` y `batch_id` que el ISIN llevaba al persistir (solo `p2_metrics`; el dominio de costes no tiene sello y queda en NULL; `[]` = el ISIN no tenía fila sellada). Sirve para distinguir un infractor que cambió porque se recalcularon sus métricas de uno que cambió con los mismos datos (deriva y RCA-E). Lectura: `persistence.load_finding_lineage`. Sin las columnas `--persist` escribe la fila anterior, sin error.
+**Linaje de datos por infractor (FND-0275).** Con las columnas `algorithm_versions` y `batch_ids` (`text[]`, nulas; `scripts/mig/fondos/migrate_audit_finding_lineage.py --apply`, propietario) cada fila guarda los valores distintos de `fund_metrics.algorithm_version` y `batch_id` que el ISIN llevaba al persistir (solo `p2_metrics`; el dominio de costes no tiene sello y queda en NULL; `[]` = el ISIN no tenía fila sellada). Sirve para distinguir un infractor que cambió porque se recalcularon sus métricas de uno que cambió con los mismos datos (deriva y RCA-E). Lectura: `persistence.load_finding_lineage`. Sin las columnas `--persist` escribe la fila anterior, sin error.
 
 Con `--compare-to`, además de la deriva de estadísticas, el informe imprime la **deriva de
 infractores** por regla (`+n nuevos, −m resueltos, k sin cambio`, `compare_runs.compare_violators`).
@@ -782,7 +782,7 @@ Con `AUDIT_COMPLETENESS_CONTRACT_ENABLED` (**encendido desde 2026-10-12**, tras 
 costes con 0 comprobaciones obligatorias ausentes y paridad de la puerta apagado/encendido): una corrida `INCOMPLETE` sale con **código 2** (en ambos modos; los lanzadores de
 ciclo lo tratan como `[WARN]`, nunca como fallo del ciclo), y la puerta de promoción toma su evidencia de `control.audit_run` (última
 cabecera FULL y no `INCOMPLETE`; una corrida FAIL cuenta, decisión D4) en lugar del último `run_id` de `audit_finding`. Orden del
-propietario: `scripts/ops/migrate_audit_run.py --apply` → una `--domain p2 --persist` completa (primera cabecera) → revisar los estados
+propietario: `scripts/mig/fondos/migrate_audit_run.py --apply` → una `--domain p2 --persist` completa (primera cabecera) → revisar los estados
 de un ciclo en sombra → encender el interruptor (controles `G-COMPLETENESS` y `G-EVIDENCE-RUN` pasan a `enforced` en ese commit).
 
 ### 6.5 Modelo de criticidad (FND-0262)
@@ -803,7 +803,7 @@ elegibles dentro de tolerancia»): sugieren una copia, pero dos comisiones igual
 que la puerta de costes rechazara toda cartera en toda corrida pasada (FND-0265, reproducción 60/60). `gating.is_blocking` recibe ahora el
 dominio; sus tres conjuntos heredados son vistas del modelo.
 
-Comprobaciones: `scripts/audit/criticality_diff.py [--all]` compara, sobre las corridas persistidas, el predicado heredado con el del modelo
+Comprobaciones: `scripts/audit/stat/criticality_diff.py [--all]` compara, sobre las corridas persistidas, el predicado heredado con el del modelo
 (2026-10-16: 17 corridas p2 sin ningún cambio; en las de costes solo dejan de bloquear los 7 pares de coincidencia; código 1 ante cualquier
 otro cambio). `proyecto1/tests/test_statistical_audit_criticality.py` exige un caso positivo y uno negativo por cada regla `CRITICAL`
 (invariantes evaluados por el motor real, reglas de grupo, cotas duras, pares de identidad p2, escalar-vs-serie, duplicados de serie) y que
@@ -871,7 +871,7 @@ ya se hace con los residuales de p2.
 3. **Fase C — persistencia + runner** ✅ 2026-09-13: tablas `audit_statistic`/`audit_finding`
    creadas en `db/schema_fondos.sql` y aplicadas a la BD en producción; `fund_cost_corrections`
    promovida a schema canónico; `preserve_and_write` (§4 #16) implementado, cerrando la brecha J;
-   runner `scripts/audit/run_statistical_audit.py --domain costs|p2 --mode report|check [--persist]
+   runner `scripts/audit/stat/run_statistical_audit.py --domain costs|p2 --mode report|check [--persist]
    [--compare-to <run_id>]`; launcher `scripts/launch/P1P2_auditStatistical.bat`. Primera ejecución
    real persistida: dominio coste 402 stats / 2.621 findings, dominio P2 12.251 stats / 48.922
    findings. Dos resultados requieren investigación antes de tratarse como defecto confirmado
@@ -916,7 +916,7 @@ ya se hace con los residuales de p2.
    - **Sincronía de documentación:** `catalog_retired.py` (registro `RETIRED_RULES`, saca del
      comentario de código a un registro consultable las correcciones ya aplicadas que las skills
      aún describían en su forma anterior); `--list-catalog` en el runner (todas las reglas activas
-     + retiradas, sin conexión a BD); `scripts/audit/check_audit_skill_sync.py` (comprobación
+     + retiradas, sin conexión a BD); `scripts/audit/stat/check_audit_skill_sync.py` (comprobación
      asesora, nunca bloqueante — el hallazgo real al construirla: ninguna skill cita los
      `rule_id` del catálogo textualmente, las describen en prosa/expresión matemática, así que un
      chequeo de coincidencia literal sería puro ruido; en su lugar hace una comprobación de
@@ -976,7 +976,7 @@ skills, codificado en §4 #14).
      no habría detectado FND-0114). Alcance deliberadamente igual al de `test_dialect_coverage.py`:
      no cubre `scripts/`. Su primera ejecución destapó `FND-0138` (`short_horizon.py` duplica la
      deflación) y `FND-0139` (`_rf_aligned` de `rolling_stats.py`).
-   - **Sección D — reconciliación shadow clean-room** (`scripts/audit/shadow_reconciliation.py`,
+   - **Sección D — reconciliación shadow clean-room** (`scripts/audit/p2/shadow_reconciliation.py`,
      commit `6ce303d`): recálculo independiente (sin importar `proyecto2.src.calculations`) de
      las 5 métricas curadas since_inception nominales (`return_ann`, `vol_ann`, `max_dd`,
      `sharpe`, `sortino`) desde `fund_nav_monthly`, comparado celda a celda con `fund_metrics`.

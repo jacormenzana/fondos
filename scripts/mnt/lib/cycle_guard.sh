@@ -1,5 +1,5 @@
 #!/bin/bash
-# scripts/ops/lib/cycle_guard.sh -- the ONE predicate "is a work cycle running?" for every backup entry point (FND-0290, FND-0407).
+# scripts/mnt/lib/cycle_guard.sh -- the ONE predicate "is a work cycle running?" for every backup entry point (FND-0290, FND-0407).
 #
 # Why: on 2026-11-14 the 01:00 base-backup task ran inside the owner's P1P2P3 cycle; its I/O slowed P2 from milliseconds to seconds per statement and,
 # four minutes in, a server process died (signal 13), Postgres crash-recovered and the cycle failed at PASO 3. No backup script knew about the cycle.
@@ -14,7 +14,7 @@
 #
 # Test hooks: FONDOS_CYCLE_GUARD=held|free forces the answer; FONDOS_CYCLE_LOCK_FILE points at another lock file.
 #
-# Usage (source it):  . "$(dirname "$0")/lib/cycle_guard.sh"; cycle_guard_or_defer "the base backup"
+# Usage (source it):  . "$(dirname "$0")/../lib/cycle_guard.sh"; cycle_guard_or_defer "the base backup"
 
 CYCLE_LOCK=${FONDOS_CYCLE_LOCK_FILE:-/mnt/c/desarrollo/fondos/proyecto1/log/fondos_cycle.lock}
 EX_DEFERRED=75

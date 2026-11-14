@@ -3,7 +3,7 @@
 """FND-0251 Commit B on Postgres: the eligibility inputs (newest monthly NAV, active accepted residuals) and the loader's switch.
 Throwaway per-test schema (same discipline as test_p3_reads_pg.py); everything is read-only.
 
-    python scripts/ops/run_pg_tests.py -- proyecto3/tests/test_fund_data_eligibility_pg.py
+    python scripts/gov/delivery/run_pg_tests.py -- proyecto3/tests/test_fund_data_eligibility_pg.py
 """
 from __future__ import annotations
 

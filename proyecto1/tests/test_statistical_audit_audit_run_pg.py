@@ -1,7 +1,7 @@
 # proyecto1/tests/test_statistical_audit_audit_run_pg.py
 # -*- coding: utf-8 -*-
 """FND-0261: control.audit_run and the one-transaction persist (persistence.persist_run, runner._persist), and the gate's evidence
-selection, on the hermetic Postgres container (python scripts/ops/run_pg_tests.py). persist_run commits, so these use
+selection, on the hermetic Postgres container (python scripts/gov/delivery/run_pg_tests.py). persist_run commits, so these use
 pg_session_conn + a throwaway schema; audit_run is created from the REAL DDL in db/pg/35_control.sql."""
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ import pytest
 _ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
-sys.path.insert(0, os.path.join(_ROOT, "scripts", "ops"))
+sys.path.insert(0, os.path.join(_ROOT, "scripts", "mig", "fondos"))
 
 from migrate_fund_metric_family_state import ddl_sql  # noqa: E402
 from shared.statistical_audit import completeness as cpl  # noqa: E402
@@ -23,7 +23,7 @@ from shared.statistical_audit.gating import select_evidence_run  # noqa: E402
 from shared.statistical_audit.persistence import audit_run_table_exists, persist_run  # noqa: E402
 
 _spec = importlib.util.spec_from_file_location(
-    "run_statistical_audit_arpg", os.path.join(_ROOT, "scripts", "audit", "run_statistical_audit.py"))
+    "run_statistical_audit_arpg", os.path.join(_ROOT, "scripts", "audit", "stat", "run_statistical_audit.py"))
 runner = importlib.util.module_from_spec(_spec)
 sys.modules["run_statistical_audit_arpg"] = runner
 _spec.loader.exec_module(runner)

@@ -4,8 +4,8 @@
 # failure, so old base backups are only pruned after the NEW base has just passed the restore drill.
 #
 # Run inside WSL (from PowerShell: wsl -d Ubuntu):
-#   bash /mnt/c/desarrollo/fondos/scripts/ops/pitr_cycle.sh         # shows the prune dry run, asks before deleting
-#   bash /mnt/c/desarrollo/fondos/scripts/ops/pitr_cycle.sh --yes   # unattended: prunes without asking
+#   bash /mnt/c/desarrollo/fondos/scripts/mnt/backup/pitr_cycle.sh         # shows the prune dry run, asks before deleting
+#   bash /mnt/c/desarrollo/fondos/scripts/mnt/backup/pitr_cycle.sh --yes   # unattended: prunes without asking
 # Without a terminal and without --yes it stops after the dry run (nothing deleted).
 # KEEP_BASES = base backups kept by the prune (default 1 here; setup_wal_archive.sh alone defaults to 2).
 set -euo pipefail

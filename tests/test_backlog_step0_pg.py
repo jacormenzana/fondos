@@ -1,10 +1,10 @@
 # tests/test_backlog_step0_pg.py
 # -*- coding: utf-8 -*-
-"""Step 0 of Backlog v2 (scripts/ops/backlog_step0.py and its manifest, FND-0333): the fixed list of historical corrections. Hermetic (pg_conn): a scratch backlog
+"""Step 0 of Backlog v2 (scripts/mig/backlog/backlog_step0.py and its manifest, FND-0333): the fixed list of historical corrections. Hermetic (pg_conn): a scratch backlog
 shaped like the real one (blocked tickets without a blocker, DEFERRED ones without a revisit date, two DUPLICATED closures without a link, the FND-0223 closure).
 Checks that the dry run lists every row of spec 6.6 and changes nothing, that applying is append-only and idempotent, and that nothing is reversed.
 
-    python scripts/ops/run_pg_tests.py -- tests/test_backlog_step0_pg.py
+    python scripts/gov/delivery/run_pg_tests.py -- tests/test_backlog_step0_pg.py
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops"), str(Path(__file__).resolve().parent)):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "mig" / "backlog"), str(Path(__file__).resolve().parent)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 

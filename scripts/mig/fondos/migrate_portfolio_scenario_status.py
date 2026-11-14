@@ -4,8 +4,8 @@
 migrate_portfolio_scenario_status.py -- install the DRAFT / PRODUCTION / ARCHIVED lifecycle of portfolio scenarios
 (proyecto3/src/scenario_lifecycle.py; owner decision 2026-10-11).
 
-    python scripts/ops/migrate_portfolio_scenario_status.py            # DRY RUN: read-only, reports what exists, no DDL
-    python scripts/ops/migrate_portfolio_scenario_status.py --apply    # runs the block in ONE transaction (all or nothing)
+    python scripts/mig/fondos/migrate_portfolio_scenario_status.py            # DRY RUN: read-only, reports what exists, no DDL
+    python scripts/mig/fondos/migrate_portfolio_scenario_status.py --apply    # runs the block in ONE transaction (all or nothing)
 
 The DDL is NOT duplicated here: it is the block between `-- BEGIN scenario_lifecycle` and `-- END scenario_lifecycle` in db/pg/30_gold.sql
 (single source of truth, P#11), idempotent. Effect on the live table: adds status / promoted_at / promoted_by / supersedes, a CHECK and a partial
@@ -24,7 +24,7 @@ import argparse
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 DDL_FILE = ROOT / "db" / "pg" / "30_gold.sql"
 BLOCK = "scenario_lifecycle"
 COLUMNS = ("status", "promoted_at", "promoted_by", "supersedes")
@@ -35,7 +35,7 @@ RC_OK, RC_FAILED, RC_USAGE, RC_REFUSED = 0, 1, 2, 3
 
 def ddl_block(path: Path = DDL_FILE, name: str = BLOCK) -> str:
     """The block exactly as written in db/pg/30_gold.sql, markers included (the extraction of migrate_cycle_telemetry, reused: P#11)."""
-    sys.path.insert(0, str(ROOT / "scripts" / "ops"))
+    sys.path.insert(0, str(ROOT / "scripts" / "mig" / "fondos"))
     from migrate_cycle_telemetry import ddl_block as _extract
     return _extract(path, name)
 
@@ -65,7 +65,7 @@ def main(argv: list | None = None) -> int:
     args = ap.parse_args(argv)
 
     sys.path.insert(0, str(ROOT))
-    sys.path.insert(0, str(ROOT / "scripts" / "ops"))
+    sys.path.insert(0, str(ROOT / "scripts" / "mig" / "fondos"))
     from shared.env_guard import require_db_driver     # RC 106 up front, not a traceback mid-run
     require_db_driver()
     import os

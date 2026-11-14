@@ -13,7 +13,7 @@ editar manualmente.
 
 Ver sentinel `data-sources` en proyecto2/AGENTS.md o ejecutar:
 ```bash
-python scripts/audit/sync_agents_md.py --write
+python scripts/gov/repo/sync_agents_md.py --write
 ```
 
 | Source | API / Endpoint | Clave API | Indicadores principales |

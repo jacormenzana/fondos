@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """One-page dossier of a fund the statistical audit flags as extreme, for the human who has to decide (FND-0393, WS1; owner order 2026-11-08: "a specific report for the 3 funds that require manual review").
 
-    python scripts/audit/fund_dossier.py LU1663960000 ES0116848013 LU0922333322 [--min-z 20] [--out-dir DIR]
+    python scripts/audit/nav/fund_dossier.py LU1663960000 ES0116848013 LU0922333322 [--min-z 20] [--out-dir DIR]
 
 READ-ONLY (a read-only session). Generic: no fund is named in code (P#5). For every fund it shows what the reviewer needs and nothing the reviewer must go and find:
   1. identity        name, nature, family and its classes, currency, manager, universe flag, SRRI, NAV status;
@@ -23,7 +23,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-_ROOT = Path(__file__).resolve().parents[2]
+_ROOT = Path(__file__).resolve().parents[3]
 for _p in (_ROOT, _ROOT / "proyecto2"):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))

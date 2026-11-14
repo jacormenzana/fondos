@@ -2,7 +2,7 @@
 """
 backlog_attest.py -- the signed attestation of the collision gate (Backlog v2 Phase C slice 4, FND-0334; PROPUESTA_BACKLOG_V2.md 6.4.6; NORMAS_BACKLOG.md 4.7).
 
-Stdlib only, so that the CI job (scripts/audit/verify_attestation.py) can import it with no installation. Two halves:
+Stdlib only, so that the CI job (scripts/gov/backlog/verify_attestation.py) can import it with no installation. Two halves:
 
 * BUILD (the owner, at push time: `backlog_sync.py --attest`): from the commits of the range and the state of the collision pairs, a JSON document -- for each commit that cites a ticket: sha,
   tree hash, gate nonce and the pairs of its tickets with decided / undecided. **Ticket ids only: never a title, a description or a log** (the remote is GitHub). It is signed with the owner's

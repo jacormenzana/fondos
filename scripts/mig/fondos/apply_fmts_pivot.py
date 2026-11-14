@@ -3,9 +3,9 @@
 """
 apply_fmts_pivot.py — pivot real_flag out of gold.fund_metric_timeseries (v27, 2026-09-27).
 
-    python scripts/ops/apply_fmts_pivot.py                  # PREVIEW: live stats + Superset pre-check, no writes
-    python scripts/ops/apply_fmts_pivot.py --apply           # build + verify + swap + COMMIT
-    python scripts/ops/apply_fmts_pivot.py --drop-old        # drop *_long_old, only after a clean post-swap P2 run
+    python scripts/mig/fondos/apply_fmts_pivot.py                  # PREVIEW: live stats + Superset pre-check, no writes
+    python scripts/mig/fondos/apply_fmts_pivot.py --apply           # build + verify + swap + COMMIT
+    python scripts/mig/fondos/apply_fmts_pivot.py --drop-old        # drop *_long_old, only after a clean post-swap P2 run
 
 See the pivot plan (harmonic-marinating-balloon.md, 3 review rounds) for the full design. Summary:
 `real_flag` (smallint, part of the key) is dropped from gold.fund_metric_timeseries; `value`/
@@ -43,7 +43,7 @@ import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 GOLD_DDL_FILE = ROOT / "db" / "pg" / "30_gold.sql"
 MATVIEWS_DDL_FILE = ROOT / "db" / "pg" / "40_matviews.sql"
 

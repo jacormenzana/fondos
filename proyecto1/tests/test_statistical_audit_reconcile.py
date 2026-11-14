@@ -6,7 +6,7 @@
 (fund_metric_alerts) para devolver solo el conjunto incremental.
 
 Nota (actualizada 2026-09-28, B5/FND-0127): esta funcion ahora SI esta cableada en
-scripts/audit/run_statistical_audit.py (_run_alert_reconciliation, run_p2_audit) -- el bloqueo de
+scripts/audit/stat/run_statistical_audit.py (_run_alert_reconciliation, run_p2_audit) -- el bloqueo de
 2026-09-15 (fund_metric_alerts con filas pre-fix obsoletas) se resolvio anadiendo una comprobacion
 de frescura (_alerts_are_stale) en el propio runner en vez de dejar la funcion sin cablear.
 

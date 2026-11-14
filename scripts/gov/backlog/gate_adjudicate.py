@@ -3,12 +3,12 @@
 """
 gate_adjudicate.py -- the owner's tool to read and decide the collision queue (Backlog v2 Phase C slice 3, FND-0334; PROPUESTA_BACKLOG_V2.md 6.4.3; NORMAS_BACKLOG.md 4.6).
 
-    python scripts/audit/gate_adjudicate.py --list                                   # the undecided pairs, oldest first, with their age and the files they share (read-only)
-    python scripts/audit/gate_adjudicate.py --queue-out pairs.csv                    # the same as a CSV with empty decision / absorbs / reason columns to fill in (read-only)
-    python scripts/audit/gate_adjudicate.py --decide FND-0001 FND-0002 NONE --reason "the two tickets touch different functions of the file"
-    python scripts/audit/gate_adjudicate.py --decide FND-0001 FND-0002 OVERLAPS --reason "..." --absorbs "criteria of FND-0002 copied into FND-0001"
-    python scripts/audit/gate_adjudicate.py --apply-decisions pairs.csv              # DRY RUN of a filled CSV: which rows would be decided and which are refused
-    python scripts/audit/gate_adjudicate.py --apply-decisions pairs.csv --apply      # decides them
+    python scripts/gov/backlog/gate_adjudicate.py --list                                   # the undecided pairs, oldest first, with their age and the files they share (read-only)
+    python scripts/gov/backlog/gate_adjudicate.py --queue-out pairs.csv                    # the same as a CSV with empty decision / absorbs / reason columns to fill in (read-only)
+    python scripts/gov/backlog/gate_adjudicate.py --decide FND-0001 FND-0002 NONE --reason "the two tickets touch different functions of the file"
+    python scripts/gov/backlog/gate_adjudicate.py --decide FND-0001 FND-0002 OVERLAPS --reason "..." --absorbs "criteria of FND-0002 copied into FND-0001"
+    python scripts/gov/backlog/gate_adjudicate.py --apply-decisions pairs.csv              # DRY RUN of a filled CSV: which rows would be decided and which are refused
+    python scripts/gov/backlog/gate_adjudicate.py --apply-decisions pairs.csv --apply      # decides them
 
 Decisions: OVERLAPS (the two really overlap; a CONFIRMED link, `absorbs` names what one ticket takes over), RELATED, DEPENDS_ON (the first ticket depends on the second), NONE (no
 real collision) and REVERT (the colliding commit was reverted: the 40-character sha of the revert goes in the reason). A decision closes the proposal, writes a log on both tickets and
@@ -29,7 +29,7 @@ import os
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 RC_OK, RC_FAILED, RC_USAGE = 0, 1, 2
 DECISIONS = ("OVERLAPS", "RELATED", "DEPENDS_ON", "NONE", "REVERT")
 COLUMNS = ["a", "b", "age_hours", "level", "evidence", "decision", "absorbs", "reason"]
@@ -95,7 +95,7 @@ def main(argv: list | None = None) -> int:
 
     try:
         if not bc.collision_store_present():
-            print("the collision store is not applied (owner: python scripts/ops/migrate_backlog_v2.py --phase collision)", file=sys.stderr)
+            print("the collision store is not applied (owner: python scripts/mig/backlog/migrate_backlog_v2.py --phase collision)", file=sys.stderr)
             return RC_USAGE
         rows = bc.gate_queue()
     except Exception as exc:                                  # never echo a DSN

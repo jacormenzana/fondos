@@ -1,12 +1,12 @@
 # tests/test_backlog_links_ddl_pg.py
 # -*- coding: utf-8 -*-
-"""Relationship store of the action-point backlog (db/pg_backlog/20_links.sql, applied by scripts/ops/migrate_backlog_links.py).
+"""Relationship store of the action-point backlog (db/pg_backlog/20_links.sql, applied by scripts/mig/backlog/migrate_backlog_links.py).
 
 Hermetic: loads db/pg_backlog/00_schema.sql + the migration's DDL block into the throwaway container inside a savepoint that is
 always rolled back (pg_conn). Covers the CHECK vocabulary, the FK, the self-link guard, idempotence, the latest-event view with a
 deterministic tie-break on event_ts (owner safeguard S-3) and blocked_by_open.
 
-    python scripts/ops/run_pg_tests.py -- tests/test_backlog_links_ddl_pg.py
+    python scripts/gov/delivery/run_pg_tests.py -- tests/test_backlog_links_ddl_pg.py
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ import psycopg
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops")):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "mig" / "backlog")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 

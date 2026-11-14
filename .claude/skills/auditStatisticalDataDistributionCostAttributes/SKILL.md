@@ -30,7 +30,7 @@ description: Statistical distribution audit of every cost attribute in `fund_mas
 
 Blocks 1–2 are the highest-yield and must never be dropped: **the cross-component matrix (Block 2) found a 663-fund defect that appears in no distribution table.**
 
-**Reference:** `python scripts/audit/run_statistical_audit.py --list-catalog --domain costs` prints every active rule (declarative catalog + procedural) with its block, tolerance/bound, and the retired-rules registry — no DB connection. Run it before editing this file; the tables below can drift from the catalogs (see `scripts/audit/check_audit_skill_sync.py`).
+**Reference:** `python scripts/audit/stat/run_statistical_audit.py --list-catalog --domain costs` prints every active rule (declarative catalog + procedural) with its block, tolerance/bound, and the retired-rules registry — no DB connection. Run it before editing this file; the tables below can drift from the catalogs (see `scripts/audit/stat/check_audit_skill_sync.py`).
 
 ### Block 1 — Distributions (per column)
 `n · null% · min · p50 · p95 · max · zero% · mode · mode%`

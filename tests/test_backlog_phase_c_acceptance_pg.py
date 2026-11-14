@@ -3,7 +3,7 @@
 """Phase C acceptance verifier (FND-0334) against a real catalogue: the three phases applied to the hermetic container pass every check, and each deliberate drift of the DDL (an extra grant, a
 dropped trigger, an elevated login) is caught by the check that names it. Never the live backlog.
 
-    python scripts/ops/run_pg_tests.py -- tests/test_backlog_phase_c_acceptance_pg.py
+    python scripts/gov/delivery/run_pg_tests.py -- tests/test_backlog_phase_c_acceptance_pg.py
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops"), str(_ROOT / "scripts" / "audit"), str(Path(__file__).resolve().parent)):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "mig" / "backlog"), str(_ROOT / "scripts" / "mig" / "backlog"), str(Path(__file__).resolve().parent)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 

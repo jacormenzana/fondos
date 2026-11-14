@@ -1,6 +1,6 @@
 # tests/test_backlog_hygiene.py
 # -*- coding: utf-8 -*-
-"""FND-0323: scripts/audit/backlog_hygiene.py -- pure parts (R-7: no DB, no git). The cases are the ones that motivated it: the SIMPLIFY commit d5397af
+"""FND-0323: scripts/gov/backlog/backlog_hygiene.py -- pure parts (R-7: no DB, no git). The cases are the ones that motivated it: the SIMPLIFY commit d5397af
 changed MULT_* keys that FND-0258 cited (premise sweep), and FND-0235 sat BLOCKED after its release (stale status)."""
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-_spec = importlib.util.spec_from_file_location("backlog_hygiene", _ROOT / "scripts" / "audit" / "backlog_hygiene.py")
+_spec = importlib.util.spec_from_file_location("backlog_hygiene", _ROOT / "scripts" / "gov" / "backlog" / "backlog_hygiene.py")
 bh = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(bh)
 
@@ -104,7 +104,7 @@ def test_the_cli_prints_both_reports_from_the_client_readers_and_exits_zero(monk
 
 
 def test_the_tool_has_no_sql_and_no_write():
-    src = (_ROOT / "scripts" / "audit" / "backlog_hygiene.py").read_text(encoding="utf-8")
+    src = (_ROOT / "scripts" / "gov" / "backlog" / "backlog_hygiene.py").read_text(encoding="utf-8")
     code = "\n".join(l for l in src.splitlines() if not l.lstrip().startswith("#"))
     for word in ("INSERT ", "UPDATE ", "DELETE ", "SELECT ", "execute("):
         assert word not in code

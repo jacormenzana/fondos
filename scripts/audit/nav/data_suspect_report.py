@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Read-only report of the data-suspicion predicate on the live store, with and without the verified-genuine exemptions (FND-0394).
 
-    python scripts/audit/data_suspect_report.py [--diff]
+    python scripts/audit/nav/data_suspect_report.py [--diff]
 
 Prints: the suspects WITHOUT exemptions, the exemptions in force and their state, the rows the exemptions withdraw, the suspects WITH them, and the exemption warnings. It writes nothing (the session is read-only) and nothing in the selection
 reads the predicate while `shared.config.DATA_SUSPECT_ENABLED` is False: this is the diff to read BEFORE anyone proposes switching it on (like eligibility_switch_diff.py for FND-0251).
@@ -14,7 +14,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
-_ROOT = Path(__file__).resolve().parents[2]
+_ROOT = Path(__file__).resolve().parents[3]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 

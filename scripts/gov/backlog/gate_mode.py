@@ -3,10 +3,10 @@
 """
 gate_mode.py -- the owner's command to read and set the mode of the collision gate (Backlog v2 Phase C slice 3, FND-0334; PROPUESTA_BACKLOG_V2.md 6.4.4; NORMAS_BACKLOG.md 4.6).
 
-    python scripts/audit/gate_mode.py                                   # --show: the ceiling, the effective mode and tier, the audit clock and what BLOCK still needs (read-only)
-    python scripts/audit/gate_mode.py --set AUDIT --reason "start of the 14-day audit of the collision gate"
-    python scripts/audit/gate_mode.py --set BLOCK --reason "..."        # refused by the DATABASE until 14 days of AUDIT and a share of commits that introduce a pair of 10 % or less
-    python scripts/audit/gate_mode.py --set OFF --reason "..."          # retire the gate by hand
+    python scripts/gov/backlog/gate_mode.py                                   # --show: the ceiling, the effective mode and tier, the audit clock and what BLOCK still needs (read-only)
+    python scripts/gov/backlog/gate_mode.py --set AUDIT --reason "start of the 14-day audit of the collision gate"
+    python scripts/gov/backlog/gate_mode.py --set BLOCK --reason "..."        # refused by the DATABASE until 14 days of AUDIT and a share of commits that introduce a pair of 10 % or less
+    python scripts/gov/backlog/gate_mode.py --set OFF --reason "..."          # retire the gate by hand
 
 The modes are OFF, AUDIT (records pairs and warns, blocks nothing) and BLOCK (also a hold on the ticket and a refused push). Only a PERSON raises a mode: the calibrator (gate_calibrator.py)
 can only retire the gate or tighten T0 to T1. Setting a mode is an appended gate_state event: it takes effect only up to the CEILING in shared/config.py (BACKLOG_COLLISION_GATE_MODE: the
@@ -21,7 +21,7 @@ import argparse
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 RC_OK, RC_FAILED, RC_USAGE = 0, 1, 2
 
 
@@ -56,7 +56,7 @@ def main(argv: list | None = None) -> int:
     ceiling = cfg.BACKLOG_COLLISION_GATE_MODE if cfg.BACKLOG_COLLISION_GATE_MODE in bc.COLLISION_MODES else "OFF"
     try:
         if not bc.collision_store_present():
-            print("the collision store is not applied (owner: python scripts/ops/migrate_backlog_v2.py --phase collision)", file=sys.stderr)
+            print("the collision store is not applied (owner: python scripts/mig/backlog/migrate_backlog_v2.py --phase collision)", file=sys.stderr)
             return RC_USAGE
         m = bc.gate_measurements(ceiling)
         queue = bc.gate_queue()

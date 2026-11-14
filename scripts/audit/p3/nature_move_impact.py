@@ -2,8 +2,8 @@
 """Simulated impact of reclassifying funds on the P3 selection engine, BEFORE anything is changed in production (FND-0397; owner order 2026-11-08: "run a simulated impact analysis ... present the results before
 authorizing the move to production").
 
-    python scripts/audit/nature_move_impact.py --census <json>            # moves from a census file: [[isin, old_subtype, new_subtype, in_universe, name], ...]
-    python scripts/audit/nature_move_impact.py --moves IE00008TZ2E8=Renta\\ Fija\\ Flexible ...
+    python scripts/audit/p3/nature_move_impact.py --census <json>            # moves from a census file: [[isin, old_subtype, new_subtype, in_universe, name], ...]
+    python scripts/audit/p3/nature_move_impact.py --moves IE00008TZ2E8=Renta\\ Fija\\ Flexible ...
 
 READ-ONLY: a read-only database session (the server refuses any write); nothing is persisted, no scenario is built, no classification changes. It runs the SAME code the engine runs:
   1. the scoring frame the live scorer loads (`fund_scorer.load_fund_metrics_for_scoring`), for the regime of the PRODUCTION scenario;
@@ -26,7 +26,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-_ROOT = Path(__file__).resolve().parents[2]
+_ROOT = Path(__file__).resolve().parents[3]
 for _p in (_ROOT, _ROOT / "proyecto3"):                      # proyecto3's `src` package (not proyecto2's)
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))

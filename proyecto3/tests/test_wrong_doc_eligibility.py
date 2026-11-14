@@ -36,7 +36,7 @@ def _load(path: Path, name: str):
 
 
 pc = _load(_ROOT / "proyecto3" / "tests" / "test_pit_candidates.py", "pit_candidates_fixture")      # its synthetic universe + helpers
-sw = _load(_ROOT / "scripts" / "audit" / "eligibility_switch_diff.py", "eligibility_switch_diff")    # diff_eligibility
+sw = _load(_ROOT / "scripts" / "audit" / "p3" / "eligibility_switch_diff.py", "eligibility_switch_diff")    # diff_eligibility
 
 
 def _row(**kw):
@@ -219,9 +219,9 @@ def test_load_attributes_adds_the_column_only_with_the_switch_on(monkeypatch):
     pd.testing.assert_frame_equal(on.drop(columns="doc_status_reason"), off)           # nothing else moves
 
 
-# ---- the validation script's own logic (scripts/audit/wrong_doc_switch_diff.py) ------------------------------------------------------
+# ---- the validation script's own logic (scripts/audit/p3/wrong_doc_switch_diff.py) ------------------------------------------------------
 
-wd_diff = _load(_ROOT / "scripts" / "audit" / "wrong_doc_switch_diff.py", "wrong_doc_switch_diff")
+wd_diff = _load(_ROOT / "scripts" / "audit" / "p3" / "wrong_doc_switch_diff.py", "wrong_doc_switch_diff")
 
 
 def test_pick_sample_takes_the_wrong_doc_funds_first_and_fills_with_controls_up_to_forty():

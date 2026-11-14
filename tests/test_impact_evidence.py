@@ -1,4 +1,4 @@
-"""FND-0385: the evidence harness (scripts/audit/impact_selection_evidence.py) and the dynamic tracer (shared/testing/impact_trace.py). Pure parts on synthetic data; the tracer on a tiny throwaway
+"""FND-0385: the evidence harness (scripts/gov/delivery/impact_selection_evidence.py) and the dynamic tracer (shared/testing/impact_trace.py). Pure parts on synthetic data; the tracer on a tiny throwaway
 pytest project in a subprocess (a test file's own code, a module it imports, and a python subprocess it starts must all be attributed to it). No docker, no database, no network."""
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "audit")):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "gov" / "delivery")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 

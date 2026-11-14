@@ -272,7 +272,7 @@ def test_main_rejects_a_bad_since_date_with_rc_4(tmp_path):
     assert cr.main(["--since", "04/10/2026", "--out-dir", str(tmp_path)]) == 4
 
 
-# --- backlog relationship line (scripts/audit/backlog_links.py via collect_backlog_links) ---
+# --- backlog relationship line (scripts/gov/backlog/backlog_links.py via collect_backlog_links) ---
 
 def test_backlog_links_item_flags_tickets_in_progress_behind_an_open_prerequisite():
     cur = _report(backlog_links={"blocked_in_progress": ["FND-0246", "FND-0100"]})

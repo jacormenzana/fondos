@@ -14,7 +14,7 @@ _ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
-_spec = importlib.util.spec_from_file_location("governance_kpis", os.path.join(_ROOT, "scripts", "audit", "governance_kpis.py"))
+_spec = importlib.util.spec_from_file_location("governance_kpis", os.path.join(_ROOT, "scripts", "audit", "stat", "governance_kpis.py"))
 k = importlib.util.module_from_spec(_spec)
 sys.modules["governance_kpis"] = k
 _spec.loader.exec_module(k)

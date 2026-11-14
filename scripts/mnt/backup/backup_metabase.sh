@@ -3,7 +3,7 @@
 # file store, bind-mounted at /opt/docker/bi/metabase/data on the WSL2 disk. Separate from
 # backup_live_pg.sh (which covers only the fondos/gestion Postgres databases): this is a different
 # store, on a different container, that no existing script protects (FND-0074).
-#   bash /mnt/c/desarrollo/fondos/scripts/ops/backup_metabase.sh [--keep N]
+#   bash /mnt/c/desarrollo/fondos/scripts/mnt/backup/backup_metabase.sh [--keep N]
 #
 # Live file copy while metabase-app keeps the H2 store open: H2 is crash-consistent (it replays its
 # own transaction log on next open), so a live tar is safe for this low-write, infrequently-changing

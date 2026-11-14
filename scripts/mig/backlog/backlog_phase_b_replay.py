@@ -3,10 +3,10 @@
 """
 backlog_phase_b_replay.py -- replay of the Phase B gate and review flags over the real history (FND-0333), against the ACTUAL gate code.
 
-    python scripts/audit/backlog_phase_b_replay.py --export SNAPSHOT.json     # read-only: tickets and link events of the live backlog -> a JSON file
+    python scripts/mig/backlog/backlog_phase_b_replay.py --export SNAPSHOT.json     # read-only: tickets and link events of the live backlog -> a JSON file
     # then the replay itself runs in a throwaway Postgres (never on the live database):
-    FONDOS_B_REPLAY_SNAPSHOT=SNAPSHOT.json FONDOS_B_REPLAY_REPORT=REPORT.json python scripts/ops/run_pg_tests.py -- tests/test_backlog_phase_b_replay_pg.py
-    python scripts/audit/backlog_phase_b_replay.py --check REPORT.json          # prints the acceptance criteria of the replay; exit 0 only if all pass
+    FONDOS_B_REPLAY_SNAPSHOT=SNAPSHOT.json FONDOS_B_REPLAY_REPORT=REPORT.json python scripts/gov/delivery/run_pg_tests.py -- tests/test_backlog_phase_b_replay_pg.py
+    python scripts/mig/backlog/backlog_phase_b_replay.py --check REPORT.json          # prints the acceptance criteria of the replay; exit 0 only if all pass
 
 The replay loads the snapshot into a scratch database that has the REAL DDL (30_transitions.sql + 40_relations_v2.sql) and, for every historical delivery closure
 (CODE_FIX / DATA_FIX / WORKAROUND), puts the database in the state it had at that closure (tickets closed by then are CLOSED, the others open), puts the ticket in
@@ -24,7 +24,7 @@ import statistics
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 RC_OK, RC_FAIL, RC_USAGE = 0, 1, 2
 DELIVERY = ("CODE_FIX", "DATA_FIX", "WORKAROUND")
 EXPECTED_REFUSED = ["FND-0223"]                  # the one delivery closure that passed an open prerequisite (spec G2, Q6)

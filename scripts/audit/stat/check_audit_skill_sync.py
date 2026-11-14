@@ -27,7 +27,7 @@ attempt that. What it actually checks:
      update, and any future skill-doc change, in sync.
 
 Advisory only: always exits 0. Promote to a blocking --check mode (mirroring
-scripts/audit/sync_agents_md.py's two-tier report/--check pattern) only if a future, more
+scripts/gov/repo/sync_agents_md.py's two-tier report/--check pattern) only if a future, more
 reliable check is added -- there is nothing here worth blocking a commit on yet.
 
 Dependency note: imports the real catalog dicts (needs pandas, same as every other
@@ -38,13 +38,13 @@ import is far more reliable than re-parsing them out of source with regex/ast, a
 never needs a live DB connection either way.
 
 Usage:
-    python scripts/audit/check_audit_skill_sync.py
+    python scripts/audit/stat/check_audit_skill_sync.py
 """
 import importlib.util
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -59,7 +59,7 @@ from shared.statistical_audit.catalog_pairs import COST_PAIRS, P2_PAIRS
 from shared.statistical_audit.catalog_retired import RETIRED_RULES
 
 _spec = importlib.util.spec_from_file_location(
-    "run_statistical_audit", ROOT / "scripts" / "audit" / "run_statistical_audit.py")
+    "run_statistical_audit", ROOT / "scripts" / "audit" / "stat" / "run_statistical_audit.py")
 _runner = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_runner)
 

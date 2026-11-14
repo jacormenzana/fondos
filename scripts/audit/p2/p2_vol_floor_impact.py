@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Read-only impact simulation of a VOLATILITY FLOOR AT THE SOURCE for the P2 ratio metrics (owner order 2026-11-10; FND-0404, FND-0394).
 
-    python scripts/audit/p2_vol_floor_impact.py [--floors 0.001 0.003 0.005] [--out-dir DIR]
+    python scripts/audit/p2/p2_vol_floor_impact.py [--floors 0.001 0.003 0.005] [--out-dir DIR]
 
 The question: P2 publishes a Sharpe of -66 on a 0.37% volatility. If P2 stopped publishing a Sharpe / Sortino / return-to-volatility ratio whose own volatility denominator is below a floor (as FND-0075 already does for the
 Sortino's DOWNSIDE deviation, 0.1%), what would change? This script answers it WITHOUT running P2 and WITHOUT writing anything (the session is read-only; no pipeline process starts):
@@ -24,7 +24,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-_ROOT = Path(__file__).resolve().parents[2]
+_ROOT = Path(__file__).resolve().parents[3]
 for _p in (_ROOT, _ROOT / "proyecto3"):                      # proyecto3's `src` package (not proyecto2's)
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
@@ -34,7 +34,7 @@ from shared.data_suspect import load_panel, quantity_of, score_panel, volatility
 from shared.db import get_connection                                                    # noqa: E402
 from src.fund_scorer import load_fund_metrics_for_scoring, score_funds_from_df          # noqa: E402
 
-_spec = importlib.util.spec_from_file_location("nature_move_impact", _ROOT / "scripts" / "audit" / "nature_move_impact.py")
+_spec = importlib.util.spec_from_file_location("nature_move_impact", _ROOT / "scripts" / "audit" / "p3" / "nature_move_impact.py")
 nm = importlib.util.module_from_spec(_spec)
 sys.modules["nature_move_impact"] = nm
 _spec.loader.exec_module(nm)

@@ -341,10 +341,11 @@ def collect_hedging_drift(conn) -> dict:
 # ── analysis (pure: no database, R-7) ─────────────────────────────────────────────────────────────
 
 def collect_backlog_links() -> dict:
-    """Relationship state of the action-point backlog (scripts/audit/backlog_links.py; NORMAS_BACKLOG.md). Never raises: the backlog
+    """Relationship state of the action-point backlog (scripts/gov/backlog/backlog_links.py; NORMAS_BACKLOG.md). Never raises: the backlog
     is a different database, and its being down must not cost the cycle report."""
     try:
-        sys.path.insert(0, str(ROOT / "scripts" / "audit"))
+        sys.path.insert(0, str(ROOT / "scripts" / "audit" / "p2"))
+        sys.path.insert(0, str(ROOT / "scripts" / "gov" / "backlog"))
         import backlog_links
         return backlog_links.cycle_summary()
     except Exception as exc:
@@ -533,11 +534,12 @@ def collect_period_key_contract(conn) -> dict:
     assumption underneath it still holds -- that we know what each table is stamped with. It catches a source that quietly
     changes convention (the macro OLS defect's precondition) and a `(isin, month)` duplicate, which turns any period-key join
     into a silent row collapse. The verdicts come from `shared/period_key_contract.py`, shared with
-    `scripts/audit/period_key_invariance.py --contract-only`, so the cycle report and the standing audit cannot disagree.
+    `scripts/audit/p2/period_key_invariance.py --contract-only`, so the cycle report and the standing audit cannot disagree.
     Read-only, informational; never raises (an unreadable source becomes an `error` key)."""
     try:
         sys.path.insert(0, str(ROOT))
-        sys.path.insert(0, str(ROOT / "scripts" / "audit"))       # scripts/audit is not a package (same as backlog_links above)
+        sys.path.insert(0, str(ROOT / "scripts" / "audit" / "p2"))
+        sys.path.insert(0, str(ROOT / "scripts" / "gov" / "backlog"))       # scripts/gov/backlog is not a package (same as backlog_links above)
         import period_key_invariance
         return period_key_invariance.contract_check(conn)
     except Exception as exc:                                  # noqa: BLE001

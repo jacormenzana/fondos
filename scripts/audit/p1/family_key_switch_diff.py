@@ -3,7 +3,7 @@
 """
 family_key_switch_diff.py -- read-only OFF/ON comparison of the family-of-share-classes key (FND-0246, OFFICIAL_NAME_FAMILY_KEY_ENABLED).
 
-    python scripts/audit/family_key_switch_diff.py [--regime Shock_Energetico] [--samples 25] [--out diff.csv]
+    python scripts/audit/p1/family_key_switch_diff.py [--regime Shock_Energetico] [--samples 25] [--out diff.csv]
 
 Computes the families of the SAME persisted fund_master twice with the one definition of the key (fund_family_builder.compute_family_groups):
   OFF  today's key: (management company, normalised catalogue fund_name);
@@ -25,7 +25,7 @@ import collections
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 for _p in (str(ROOT), str(ROOT / "proyecto1")):
     if _p not in sys.path:
         sys.path.insert(0, _p)

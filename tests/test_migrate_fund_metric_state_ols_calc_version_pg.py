@@ -1,9 +1,9 @@
 """
-tests/test_migrate_fund_metric_state_ols_calc_version_pg.py — scripts/ops/migrate_fund_metric_state_ols_calc_version.py.
+tests/test_migrate_fund_metric_state_ols_calc_version_pg.py — scripts/mig/fondos/migrate_fund_metric_state_ols_calc_version.py.
 
 The backfill must mark a fund only when its WHOLE macro set (macro_r2 + every beta_*/macro_* row) is on the
 live CALC_VERSION; the ALTER + UPDATE are one idempotent transaction. Pure parts run anywhere; the database
-parts run on the hermetic container (python scripts/ops/run_pg_tests.py). The script's table names are
+parts run on the hermetic container (python scripts/gov/delivery/run_pg_tests.py). The script's table names are
 parameters, so the tests use unqualified tables in a throwaway schema.
 """
 from __future__ import annotations
@@ -13,7 +13,7 @@ from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent.parent
 _SPEC = importlib.util.spec_from_file_location(
-    "migrate_ols", _ROOT / "scripts" / "ops" / "migrate_fund_metric_state_ols_calc_version.py")
+    "migrate_ols", _ROOT / "scripts" / "mig" / "fondos" / "migrate_fund_metric_state_ols_calc_version.py")
 mod = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(mod)
 

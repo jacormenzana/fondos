@@ -31,6 +31,6 @@ def test_every_live_author_string_has_an_alias():
     except Exception as exc:                                     # no DSN / no driver / server down
         pytest.skip(f"live backlog not reachable ({type(exc).__name__}); pytest does not load .env: export FONDOS_BACKLOG_PG_DSN to run this guard")
     if not present:
-        pytest.skip("backlog.actor_alias not applied yet (owner: scripts/ops/migrate_backlog_v2.py --phase alias --apply)")
+        pytest.skip("backlog.actor_alias not applied yet (owner: scripts/mig/backlog/migrate_backlog_v2.py --phase alias --apply)")
     missing = bc.unmapped_actors()
     assert not missing, f"author strings with no alias in backlog.actor_alias: {[m['raw_actor'] for m in missing]}"

@@ -3,8 +3,8 @@
 """
 backlog_digest.py -- the weekly read-only digest of the backlog (Backlog v3.1, FND-0355; NORMAS_BACKLOG.md section 2). It asks nothing: it reports what happened and how much of it a person did.
 
-    python scripts/audit/backlog_digest.py             # print this week's digest (reads only)
-    python scripts/audit/backlog_digest.py --write     # write out/backlog_digest/<ISO week>.md unless this week's already exists (the autopilot run does this by itself)
+    python scripts/gov/backlog/backlog_digest.py             # print this week's digest (reads only)
+    python scripts/gov/backlog/backlog_digest.py --write     # write out/backlog_digest/<ISO week>.md unless this week's already exists (the autopilot run does this by itself)
 
 The number that matters is the first one under "Who moved tickets": how many of the week's transitions a PERSON made. The plan's goal is that people appear only as events (new tickets, priorities,
 reopenings), so that share is the measure of the administrative load. It reads the live backlog through the reader login, writes nothing to it, and a block whose objects are not applied yet is shown as
@@ -18,7 +18,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 from shared.out_dir import out_root  # noqa: E402
 

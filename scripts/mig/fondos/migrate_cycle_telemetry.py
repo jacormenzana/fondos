@@ -3,8 +3,8 @@
 """
 migrate_cycle_telemetry.py -- create the cycle-telemetry tables, seeds and the executive view control.v_cycle_exec (FND-0239).
 
-    python scripts/ops/migrate_cycle_telemetry.py            # DRY RUN: read-only, reports what exists, no DDL
-    python scripts/ops/migrate_cycle_telemetry.py --apply    # runs the block in ONE transaction (all or nothing)
+    python scripts/mig/fondos/migrate_cycle_telemetry.py            # DRY RUN: read-only, reports what exists, no DDL
+    python scripts/mig/fondos/migrate_cycle_telemetry.py --apply    # runs the block in ONE transaction (all or nothing)
 
 The DDL is NOT duplicated here: it is the block between `-- BEGIN cycle_telemetry` and `-- END cycle_telemetry` in db/pg/35_control.sql
 (single source of truth, P#11). It is idempotent (CREATE ... IF NOT EXISTS, CREATE OR REPLACE VIEW, seeds ON CONFLICT DO NOTHING), so re-running
@@ -26,7 +26,7 @@ import re
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 DDL_FILE = ROOT / "db" / "pg" / "35_control.sql"
 TABLES = ("cycle_run", "cycle_step_def", "cycle_step", "cycle_metric_def", "cycle_metric", "cycle_audit_run", "cycle_flag", "cycle_flag_ack")
 VIEW = "v_cycle_exec"
@@ -62,7 +62,7 @@ def main(argv: list | None = None) -> int:
     args = ap.parse_args(argv)
 
     sys.path.insert(0, str(ROOT))
-    sys.path.insert(0, str(ROOT / "scripts" / "ops"))
+    sys.path.insert(0, str(ROOT / "scripts" / "mig" / "fondos"))
     from shared.env_guard import require_db_driver     # RC 106 up front, not a traceback mid-run
     require_db_driver()
     import os

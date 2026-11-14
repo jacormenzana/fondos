@@ -1,18 +1,18 @@
 #!/usr/bin/env python
-"""scripts/audit/verify_fund_currency.py — FND-0243 release gate (read-only).
+"""scripts/audit/p1/verify_fund_currency.py — FND-0243 release gate (read-only).
 
 Exit 0 when every active fund's stored Fund_Currency equals what a P1 pass would persist now (shared/fund_currency_gate.py);
 exit 1 with the full list when some still differ -- run the P1 pass (P1_discoverAllFunds.bat, owner) first. The EUR view
 (EUR_NAV_CONVERSION_ENABLED + FX_CONTRIBUTION_EUR_VIEW_ENABLED) may be switched on only after this exits 0. Exit 4 = DB unreadable.
 
-    C:\\Users\\jacor\\.conda\\envs\\des\\python.exe -X utf8 scripts\\audit\\verify_fund_currency.py
+    C:\\Users\\jacor\\.conda\\envs\\des\\python.exe -X utf8 scripts\\audit\\p1\\verify_fund_currency.py
 """
 from __future__ import annotations
 
 import sys
 from pathlib import Path
 
-_ROOT = Path(__file__).resolve().parents[2]
+_ROOT = Path(__file__).resolve().parents[3]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 

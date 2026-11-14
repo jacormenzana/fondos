@@ -1,6 +1,6 @@
 # tests/test_owner_deploy.py
 # -*- coding: utf-8 -*-
-"""scripts/ops/owner_deploy.py: the pending-DDL decision, the apply-and-verify orchestration (with a fake runner: no database, no git, no window) and the watcher's branches. The secret used here is a
+"""scripts/gov/backlog/owner_deploy.py: the pending-DDL decision, the apply-and-verify orchestration (with a fake runner: no database, no git, no window) and the watcher's branches. The secret used here is a
 throwaway string (R-7)."""
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops")):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "gov" / "backlog"), str(_ROOT / "scripts" / "mig" / "backlog")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -25,8 +25,8 @@ HEAD, OLD = "b" * 40, "a" * 40
 NOW = datetime(2026, 11, 1, 12, 0, tzinfo=timezone.utc)
 DRIFT_TEXT = ("DRIFT: master's DDL defines things the live backlog does not have (or has differently):\n"
               "  missing in live: routine fn_actor_bound(p_actor text)  (phase relations)\n"
-              "  -> the owner re-applies it: python scripts/ops/migrate_backlog_v2.py --phase relations   (dry run first, then --apply; phases are idempotent)\n"
-              "  -> the owner re-applies it: python scripts/ops/migrate_backlog_v2.py --phase autonomy   (dry run first)\n")
+              "  -> the owner re-applies it: python scripts/mig/backlog/migrate_backlog_v2.py --phase relations   (dry run first, then --apply; phases are idempotent)\n"
+              "  -> the owner re-applies it: python scripts/mig/backlog/migrate_backlog_v2.py --phase autonomy   (dry run first)\n")
 
 
 class FakeVault:
@@ -46,7 +46,7 @@ def test_a_change_to_a_phases_ddl_file_pends_that_phase_and_the_shared_file_pend
     assert od.pending_phases(["db/pg_backlog/97_autonomy.sql"]) == ["autonomy"]
     assert od.pending_phases(["db/pg_backlog/30_transitions.sql"]) == ["transitions", "relations"]          # relations carries the A-1 block
     assert od.pending_phases(["db/pg_backlog/97_autonomy.sql", "db/pg_backlog/40_relations_v2.sql"]) == ["relations", "autonomy"]    # application order, not alphabetical
-    assert od.pending_phases(["scripts/ops/migrate_backlog_v2.py", "doc/x.md", "db/pg_backlog/down/97_autonomy_down.sql"]) == []        # the tool, docs and rollbacks are not DDL to apply
+    assert od.pending_phases(["scripts/mig/backlog/migrate_backlog_v2.py", "doc/x.md", "db/pg_backlog/down/97_autonomy_down.sql"]) == []        # the tool, docs and rollbacks are not DDL to apply
 
 
 def test_only_the_phases_a_click_may_apply_are_offered_never_revoke_or_iam():
@@ -93,8 +93,8 @@ def test_a_secret_is_scrubbed_from_any_text_kept():
 
 
 def test_the_startup_launcher_is_generated_outside_the_repo_and_starts_the_watcher():
-    text = od.startup_cmd_text(r"C:\py\pythonw.exe", r"C:\repo\scripts\ops\owner_deploy.py")
-    assert 'start "" /min "C:\\py\\pythonw.exe" "C:\\repo\\scripts\\ops\\owner_deploy.py" watch' in text and text.endswith("\r\n")
+    text = od.startup_cmd_text(r"C:\py\pythonw.exe", r"C:\repo\scripts\gov\backlog\owner_deploy.py")
+    assert 'start "" /min "C:\\py\\pythonw.exe" "C:\\repo\\scripts\\gov\\backlog\\owner_deploy.py" watch' in text and text.endswith("\r\n")
     p = od.startup_cmd_path({"APPDATA": r"C:\Users\x\AppData\Roaming"})
     assert p.name == "fondos_owner_deploy.cmd" and "Startup" in p.parts
 
@@ -112,7 +112,7 @@ def test_there_is_no_command_line_way_to_answer_the_window_by_itself():
     """The command line has no auto-approve switch and the only askers are the window and a console prompt. The one unattended path is the AUTO mode of shared/config.py (owner decision
     2026-11-01), tested below: an apply without a window happens only through `mode == "AUTO"` and its gates, never by an argument."""
     import re
-    src = (_ROOT / "scripts" / "ops" / "owner_deploy.py").read_text(encoding="utf-8")
+    src = (_ROOT / "scripts" / "gov" / "backlog" / "owner_deploy.py").read_text(encoding="utf-8")
     declared = re.findall(r"add_argument\(\s*[\"'](--[\w-]+)", src) + re.findall(r"add_parser\(\s*[\"']([\w-]+)", src)
     assert sorted(declared) == sorted(["--interval-min", "--once", "--console", "check", "init", "watch", "install-startup", "remove-startup", "facts", "--from", "--to"]), declared       # no --yes / --answer / --apply / apply
     assert "ask_window" in src and "ask_console" in src
@@ -456,7 +456,7 @@ def test_an_ignored_version_is_not_applied_automatically(tmp_path):
 
 
 def test_the_auto_branch_is_reached_only_through_the_mode_and_the_config_default_is_documented():
-    src = (_ROOT / "scripts" / "ops" / "owner_deploy.py").read_text(encoding="utf-8")
+    src = (_ROOT / "scripts" / "gov" / "backlog" / "owner_deploy.py").read_text(encoding="utf-8")
     assert src.split("def watch_once")[1].split("# ── windows")[0].count('mode == "AUTO"') == 1 and "deploy_mode(getattr(cfg" in src       # the apply path of watch_once
     assert src.count('mode == "AUTO"') == 2 and 'revoke_enabled = mode == "AUTO" and bool(getattr(cfg, "BACKLOG_AUTO_REVOKE_ENABLED", False))' in src      # the other one is the A-2 switch, which is also off by default
     cfg = (_ROOT / "shared" / "config.py").read_text(encoding="utf-8")
@@ -600,7 +600,7 @@ def _read(rel):
 def test_the_registry_read_from_the_source_text_is_exactly_the_imported_one():
     import backlog_drift as bd
     import migrate_backlog_v2 as mig
-    phases, order = od.registry_from_sources(_read("scripts/ops/migrate_backlog_v2.py"), _read("scripts/ops/backlog_drift.py"))
+    phases, order = od.registry_from_sources(_read("scripts/mig/backlog/migrate_backlog_v2.py"), _read("scripts/gov/backlog/backlog_drift.py"))
     assert phases == mig.PHASES and order == tuple(bd.PHASES_IN_ORDER)
     for ph, entry in phases.items():                                                   # the file rule is the migrate tool's own
         for key in ("up", "down"):
@@ -627,7 +627,7 @@ def test_a_watcher_started_before_a_phase_existed_still_sees_it_because_it_reads
     state = tmp_path / "s.json"
     od.write_state(state, {"deployed_ref": OLD})
     seen = []
-    master = od.registry_from_sources(_read("scripts/ops/migrate_backlog_v2.py"), _read("scripts/ops/backlog_drift.py"))
+    master = od.registry_from_sources(_read("scripts/mig/backlog/migrate_backlog_v2.py"), _read("scripts/gov/backlog/backlog_drift.py"))
 
     def once(registry):
         return od.watch_once(state_file=state, fetch=lambda: None, head_fn=lambda: HEAD, changed=lambda a, b: ["db/pg_backlog/99_modules.sql"], commits=lambda a, b: [], diff=lambda a, b: "",
@@ -661,7 +661,7 @@ def test_the_code_fingerprint_changes_with_any_watched_file_and_every_watched_fi
     (tmp_path / "b.py").unlink()
     assert od.code_fingerprint(tmp_path, files) not in (first,) and od.code_fingerprint(tmp_path, files + ("missing.py",)) != od.code_fingerprint(tmp_path, files)
     assert all((_ROOT / f).is_file() for f in od.WATCH_CODE), [f for f in od.WATCH_CODE if not (_ROOT / f).is_file()]
-    assert {"scripts/ops/owner_deploy.py", "scripts/ops/migrate_backlog_v2.py", "scripts/ops/backlog_drift.py", "shared/config.py"} <= set(od.WATCH_CODE)
+    assert {"scripts/gov/backlog/owner_deploy.py", "scripts/mig/backlog/migrate_backlog_v2.py", "scripts/gov/backlog/backlog_drift.py", "shared/config.py"} <= set(od.WATCH_CODE)
 
 
 def test_reloading_releases_the_lock_then_starts_the_same_command_again_and_keeps_going_if_it_cannot(tmp_path):
@@ -678,7 +678,7 @@ def test_reloading_releases_the_lock_then_starts_the_same_command_again_and_keep
 
 
 def test_the_loop_reads_master_and_reloads_only_when_its_code_changed_and_not_on_a_single_pass():
-    src = (_ROOT / "scripts" / "ops" / "owner_deploy.py").read_text(encoding="utf-8")
+    src = (_ROOT / "scripts" / "gov" / "backlog" / "owner_deploy.py").read_text(encoding="utf-8")
     assert "registry=git_registry" in src and "git_registry(head)" in src
     loop = src.split("started_with = code_fingerprint()")[1]
     assert "if not args.once and code_fingerprint() != started_with:" in loop and "reload_self(lock)" in loop

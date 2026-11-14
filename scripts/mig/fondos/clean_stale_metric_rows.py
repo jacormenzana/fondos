@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """Remove the fund_metrics rows that the current minimum-sample rules would no longer publish (FND-0401).
 
-    python scripts/ops/clean_stale_metric_rows.py            # DRY RUN (default): counts only, nothing is written
-    python scripts/ops/clean_stale_metric_rows.py --apply    # deletes them, one transaction per rule
+    python scripts/mig/fondos/clean_stale_metric_rows.py            # DRY RUN (default): counts only, nothing is written
+    python scripts/mig/fondos/clean_stale_metric_rows.py --apply    # deletes them, one transaction per rule
 
 Why it exists: since FND-0401 the P2 pipeline deletes the owned statistics a run does not produce, but only for the funds it RECOMPUTES. A fund whose inputs did not change is a cache hit and keeps its old rows
 until the next recompute, so the rows already in the table stay until then. This is the one-shot catch-up for them (R-2 step 3: a data migration after the code fix). Measured 2026-11-08: 1,870 of the 1,891
@@ -20,7 +20,7 @@ import argparse
 import sys
 from pathlib import Path
 
-_ROOT = Path(__file__).resolve().parents[2]
+_ROOT = Path(__file__).resolve().parents[3]
 for _p in (_ROOT, _ROOT / "proyecto2"):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))

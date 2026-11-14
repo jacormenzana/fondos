@@ -142,7 +142,7 @@ def test_every_system_identity_in_the_code_is_registered_so_a_new_writer_cannot_
     assert found, "the scan found no system identity at all: the scan itself is broken"
     missing = {n: sorted(f)[:3] for n, f in found.items() if n not in bw.REGISTRY}
     assert not missing, ("a system:<name> identity is used in the code but is not in shared/backlog_writers.py: register it (status REGISTERED: caps, kill switch OFF, files, entry) and prove it with "
-                         "scripts/audit/writer_proof.py (FND-0370): " + repr(missing))
+                         "scripts/gov/backlog/writer_proof.py (FND-0370): " + repr(missing))
 
 
 def test_the_register_is_well_formed_and_its_files_exist():
@@ -244,7 +244,7 @@ def test_the_bound_client_adds_the_connection_only_to_calls_that_take_one():
 
 
 def test_the_listing_shows_every_writer_with_its_status():
-    sys.path.insert(0, str(_ROOT / "scripts" / "audit"))
+    sys.path.insert(0, str(_ROOT / "scripts" / "gov" / "backlog"))
     import writer_proof as cli
     lines = cli.list_lines([])
     assert len(lines) == len(bw.REGISTRY) and any(ln.startswith("system:autopilot") and "GRANDFATHERED" in ln for ln in lines)

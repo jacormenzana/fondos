@@ -35,7 +35,15 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SCAN_DIRS = ("proyecto1", "proyecto2", "proyecto3", "shared", "scripts/launch", "scripts/audit")
+SCAN_DIRS = ("proyecto1", "proyecto2", "proyecto3", "shared", "scripts/launch", "scripts/audit", "scripts/gov", "scripts/mig/backlog")
+# Files that sit in a scanned folder since the 2026-11-14 reorganisation of scripts/ but were NOT scanned before it (they came from the retired ops, diag and debug folders or from the original flat mig folder).
+# The move keeps the coverage it had, no more and no less: widening the sweep to them (and pinning their unresolved statements) is a separate decision.
+_NOT_SCANNED_BEFORE_THE_MOVE = {
+    "scripts/audit/p1/db_fondos_scraper.py", "scripts/audit/p1/debug_mstarpy.py", "scripts/audit/p1/diag_cost_extraction.py",
+    "scripts/gov/backlog/backlog_drift.py", "scripts/gov/backlog/backlog_staging.py", "scripts/gov/backlog/close_release.py", "scripts/gov/backlog/owner_deploy.py", "scripts/gov/backlog/owner_vault.py",
+    "scripts/gov/delivery/github_protect_master.py", "scripts/gov/delivery/prune_merged_branches.py", "scripts/gov/delivery/publish_master.py", "scripts/gov/delivery/run_pg_tests.py",
+    "scripts/mig/backlog/backlog_step0.py", "scripts/mig/backlog/backlog_v3_bootstrap.py", "scripts/mig/backlog/migrate_backlog_links.py", "scripts/mig/backlog/migrate_backlog_v2.py",
+}
 _SKIP_PARTS = {"tests", "__pycache__", "log", "logs", "upload", "prev"}
 _NONCANONICAL = re.compile(r"(_\d{8}(_\d+)?|_prod|_last|[Bb]ack[Uu]p)\.py$")
 
@@ -108,7 +116,7 @@ def production_files():
             continue
         for p in sorted(base.rglob("*.py")):
             rel = p.relative_to(ROOT)
-            if _SKIP_PARTS & set(rel.parts) or _NONCANONICAL.search(p.name) or p.name.startswith("test_"):
+            if _SKIP_PARTS & set(rel.parts) or _NONCANONICAL.search(p.name) or p.name.startswith("test_") or rel.as_posix() in _NOT_SCANNED_BEFORE_THE_MOVE:
                 continue
             yield rel.as_posix(), p
 
@@ -221,7 +229,7 @@ def _resolve(node, scopes, dialect, depth=0):
                 + _resolve(node.orelse, scopes, dialect, depth + 1))[:_MAX_VARIANTS]
     if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
         if node.func.id == "_sql" and len(node.args) == 2:
-            # scripts/audit/run_statistical_audit.py::_sql(conn, query, isin_filter=...): substitutes
+            # scripts/audit/stat/run_statistical_audit.py::_sql(conn, query, isin_filter=...): substitutes
             # the `{window}` slot and turns `?` into the backend's placeholder. `{isin_filter}` (FND-0118,
             # 2026-09-28) is checked against the always-present empty-filter case ("" -- the token
             # removed entirely, what --isin omitted produces) regardless of whether this call site
@@ -258,7 +266,7 @@ _NAME_SINKS = {"execute_fail_soft": 1, "executemany": 1, "_executemany": 1, "rea
                "read_sql_query": 0, "_read_table_df": 1, "build_population": 1, "_df": 1}
 # Functions that merely forward their `sql` parameter to the driver: their CALLERS are the real
 # statements (and are sinks themselves, see _NAME_SINKS), so the pass-through is not a site.
-# _df (scripts/audit/run_statistical_audit.py, FND-0108): fetchall()+DataFrame(columns=...)
+# _df (scripts/audit/stat/run_statistical_audit.py, FND-0108): fetchall()+DataFrame(columns=...)
 # replacement for pd.read_sql_query, same shape as _read_table_df/build_population above.
 _PASSTHROUGH_WRAPPERS = {"execute_fail_soft", "executemany", "_executemany", "_read_table_df",
                          "build_population", "_df"}

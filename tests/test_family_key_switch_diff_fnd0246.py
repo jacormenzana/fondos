@@ -1,6 +1,6 @@
 # tests/test_family_key_switch_diff_fnd0246.py
 # -*- coding: utf-8 -*-
-"""FND-0246: the pure helpers of scripts/audit/family_key_switch_diff.py (the read-only OFF/ON comparison of the family key). No database."""
+"""FND-0246: the pure helpers of scripts/audit/p1/family_key_switch_diff.py (the read-only OFF/ON comparison of the family key). No database."""
 from __future__ import annotations
 
 import importlib.util
@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pandas as pd
 
-_SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "audit" / "family_key_switch_diff.py"
+_SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "audit" / "p1" / "family_key_switch_diff.py"
 _spec = importlib.util.spec_from_file_location("family_key_switch_diff_under_test", _SCRIPT)
 sd = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(sd)

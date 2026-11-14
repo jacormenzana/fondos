@@ -7,7 +7,7 @@ process and through the same code the run uses, and expects the detector to fire
 blocks promotion by itself instead of reporting "no violation".
 
 This module is PURE (no database, no runner import): it BUILDS the fixtures, generically, from the rule catalogs themselves (no rule is named here, P#5 / P#11), and reads the result of a canary
-run. The runner (scripts/audit/run_statistical_audit.py::run_canaries) pushes the fixtures through its own `_run_invariants` / `_run_group_checks` / duplicate-series helper. The fixtures never
+run. The runner (scripts/audit/stat/run_statistical_audit.py::run_canaries) pushes the fixtures through its own `_run_invariants` / `_run_group_checks` / duplicate-series helper. The fixtures never
 reach audit_finding: they are evaluated on a scratch run that is discarded.
 
 A row-invariant fixture is FOUND, not written by hand: the columns the rule's expression and `when` name are filled from a small grid of values (numbers, the string literals the rule itself

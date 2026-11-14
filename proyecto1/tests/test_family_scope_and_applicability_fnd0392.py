@@ -33,7 +33,7 @@ def _load(name, rel):
     return mod
 
 
-runner = _load("run_statistical_audit", ("scripts", "audit", "run_statistical_audit.py"))
+runner = _load("run_statistical_audit", ("scripts", "audit", "stat", "run_statistical_audit.py"))
 
 
 def _stats(run):
@@ -88,7 +88,7 @@ def test_the_rows_persist_and_never_reach_the_drift_report():
 
 
 def test_the_runner_records_every_invariant_it_evaluates_and_the_duplicate_check():
-    src = open(os.path.join(_ROOT, "scripts", "audit", "run_statistical_audit.py"), encoding="utf-8").read()
+    src = open(os.path.join(_ROOT, "scripts", "audit", "stat", "run_statistical_audit.py"), encoding="utf-8").read()
     assert src.count("run.record_applicability(") == 2 and 'record_applicability("TIMESERIES_DUPLICATE"' in src
     assert src.index("run.record_applicability(rule.rule_id") < src.index("if result.n_violations == 0:")      # BEFORE the early continue: a clean rule is recorded
 

@@ -1,6 +1,6 @@
 # tests/test_backlog_links_calibration.py
 # -*- coding: utf-8 -*-
-"""scripts/audit/backlog_links_calibration.py: point-in-time state, known positives and the false-merge count of the replay.
+"""scripts/gov/backlog/backlog_links_calibration.py: point-in-time state, known positives and the false-merge count of the replay.
 
 Fixtures only (R-7). The live replay is the script's own report.
 """
@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "audit")):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "gov" / "backlog")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 

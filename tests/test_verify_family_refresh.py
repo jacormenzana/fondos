@@ -12,7 +12,7 @@ _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-_spec = importlib.util.spec_from_file_location("verify_family_refresh", _ROOT / "scripts" / "audit" / "verify_family_refresh.py")
+_spec = importlib.util.spec_from_file_location("verify_family_refresh", _ROOT / "scripts" / "audit" / "p1" / "verify_family_refresh.py")
 v = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(v)
 

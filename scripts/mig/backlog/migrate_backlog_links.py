@@ -3,8 +3,8 @@
 """
 migrate_backlog_links.py -- create the action-point relationship store in the `gestion` database (doc/reglas/NORMAS_BACKLOG.md).
 
-    python scripts/ops/migrate_backlog_links.py            # DRY RUN: read-only, reports what exists, no DDL
-    python scripts/ops/migrate_backlog_links.py --apply    # runs the block in ONE transaction (all or nothing)
+    python scripts/mig/backlog/migrate_backlog_links.py            # DRY RUN: read-only, reports what exists, no DDL
+    python scripts/mig/backlog/migrate_backlog_links.py --apply    # runs the block in ONE transaction (all or nothing)
 
 The DDL is NOT duplicated here: it is the block between `-- BEGIN backlog_links` and `-- END backlog_links` in
 db/pg_backlog/20_links.sql (single source of truth, P#11). It is idempotent (CREATE ... IF NOT EXISTS, CREATE OR REPLACE VIEW,
@@ -24,7 +24,7 @@ import re
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 DDL_FILE = ROOT / "db" / "pg_backlog" / "20_links.sql"
 TABLE = "backlog_link_event"
 VIEWS = ("v_backlog_link", "v_open_link_graph")
@@ -77,7 +77,7 @@ def main(argv: list | None = None) -> int:
 
     owner = os.environ.get("FONDOS_PG_DSN_OWNER")
     if not owner:
-        print("FONDOS_PG_DSN_OWNER is not set: DDL needs the owner role. Owner strings are deliberately NOT kept in .env. Store it ONCE in the owner vault: `python scripts/ops/owner_vault.py set FONDOS_PG_DSN_OWNER` (hidden input); after that this tool finds it by itself whenever you run it at a real console (or, for one session, `set \"FONDOS_PG_DSN_OWNER=...\"` in cmd).", file=sys.stderr)
+        print("FONDOS_PG_DSN_OWNER is not set: DDL needs the owner role. Owner strings are deliberately NOT kept in .env. Store it ONCE in the owner vault: `python scripts/gov/backlog/owner_vault.py set FONDOS_PG_DSN_OWNER` (hidden input); after that this tool finds it by itself whenever you run it at a real console (or, for one session, `set \"FONDOS_PG_DSN_OWNER=...\"` in cmd).", file=sys.stderr)
         return RC_USAGE
     dsn = gestion_dsn(owner)
     d = conninfo_to_dict(dsn)

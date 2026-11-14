@@ -13,7 +13,7 @@ import pytest
 
 from shared import sovereign_stress as ss
 
-_SPEC = importlib.util.spec_from_file_location("sovereign_stress_backtest_t", Path(__file__).resolve().parent.parent / "scripts" / "audit"
+_SPEC = importlib.util.spec_from_file_location("sovereign_stress_backtest_t", Path(__file__).resolve().parent.parent / "scripts" / "audit" / "p3"
                                                / "sovereign_stress_backtest.py")
 bt = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(bt)

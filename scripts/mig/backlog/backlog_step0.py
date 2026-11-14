@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-backlog_step0.py -- step 0 of Backlog v2 (FND-0333): the fixed, versioned list of historical corrections in scripts/ops/backlog_step0_manifest.yaml.
+backlog_step0.py -- step 0 of Backlog v2 (FND-0333): the fixed, versioned list of historical corrections in scripts/mig/backlog/backlog_step0_manifest.yaml.
 
-    python scripts/ops/backlog_step0.py                                    # DRY RUN: lists every row of the manifest and whether it is still to do; changes nothing
-    python scripts/ops/backlog_step0.py --apply --actor agent:<model>      # applies the rows still to do, through backlog_client only
+    python scripts/mig/backlog/backlog_step0.py                                    # DRY RUN: lists every row of the manifest and whether it is still to do; changes nothing
+    python scripts/mig/backlog/backlog_step0.py --apply --actor agent:<model>      # applies the rows still to do, through backlog_client only
 
 Append-only and idempotent: a row already in place is reported DONE and skipped, so running it twice changes nothing the second time. Link rows are link events
 (origin STEP0), blocker / revisit rows are structured wait annotations (backlog.sp_annotate_wait), FND-0041 is one transition (a counted override with its reason),
@@ -19,7 +19,7 @@ import sys
 from datetime import date, timedelta
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 MANIFEST = Path(__file__).resolve().with_name("backlog_step0_manifest.yaml")
 RC_OK, RC_FAILED, RC_USAGE = 0, 1, 2
 ACTIONS = ("link", "annotate_blocker", "annotate_revisit", "transition", "record_exception")

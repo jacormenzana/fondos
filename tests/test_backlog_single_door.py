@@ -26,7 +26,7 @@ ALLOWED: dict = {
     "shared/backlog_client.py":
         "FND-0338 update_attributes() is the one UPDATE of the descriptive columns of exception E3 (a whitelist of eight columns), and stays; the legacy INSERT of "
         "report_incident was REMOVED on the owner's order of 2026-10-28",
-    "scripts/audit/backlog_phase_b_replay.py":
+    "scripts/mig/backlog/backlog_phase_b_replay.py":
         "FND-0333 the replay loads a snapshot of the backlog into a THROWAWAY scratch database (the hermetic test container) and moves tickets there to the state they had "
         "at each historical closure; it never connects to the live backlog for anything but a read-only export",
 }

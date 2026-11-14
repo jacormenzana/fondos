@@ -1,6 +1,6 @@
 """FND-0239: the telemetry DDL (db/pg/35_control.sql, loaded into the hermetic container) and shared/cycle_telemetry.py on a real Postgres.
 
-Uses pg_conn (a SAVEPOINT connection that is rolled back), so nothing persists. Run: python scripts/ops/run_pg_tests.py
+Uses pg_conn (a SAVEPOINT connection that is rolled back), so nothing persists. Run: python scripts/gov/delivery/run_pg_tests.py
 """
 import importlib.util
 import sys
@@ -15,7 +15,7 @@ if str(_ROOT) not in sys.path:
 
 from shared import cycle_telemetry as ct  # noqa: E402
 
-_spec = importlib.util.spec_from_file_location("migrate_cycle_telemetry", _ROOT / "scripts" / "ops" / "migrate_cycle_telemetry.py")
+_spec = importlib.util.spec_from_file_location("migrate_cycle_telemetry", _ROOT / "scripts" / "mig" / "fondos" / "migrate_cycle_telemetry.py")
 mig = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(mig)
 

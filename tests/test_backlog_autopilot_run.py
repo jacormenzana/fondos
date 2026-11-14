@@ -1,6 +1,6 @@
 # tests/test_backlog_autopilot_run.py
 # -*- coding: utf-8 -*-
-"""Backlog v3 W3 slice 3 (FND-0358): scripts/audit/backlog_autopilot.py (mode, merge facts read from a real throwaway git repository, the actions in SHADOW and ON with a fake client) and the
+"""Backlog v3 W3 slice 3 (FND-0358): scripts/gov/backlog/backlog_autopilot.py (mode, merge facts read from a real throwaway git repository, the actions in SHADOW and ON with a fake client) and the
 git hook that starts it. No live database, no network (R-7)."""
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "audit")):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "gov" / "backlog")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -75,7 +75,7 @@ def test_the_merge_object_takes_the_release_month_in_utc_and_the_pull_request_fr
 def test_the_merge_carries_its_author_time_in_utc_so_a_rejection_can_be_compared_with_it_and_the_run_hands_the_rework_times_to_the_engine():
     m = {"sha": "a" * 40, "subject": "Merge pull request #17 from x/y", "author_ts": datetime.fromisoformat("2026-11-30T23:30:00-05:00")}
     assert run.merge_object(m, None, ["z.py"]).ts == datetime(2026, 12, 1, 4, 30, tzinfo=timezone.utc)
-    src = (_ROOT / "scripts" / "audit" / "backlog_autopilot.py").read_text(encoding="utf-8")
+    src = (_ROOT / "scripts" / "gov" / "backlog" / "backlog_autopilot.py").read_text(encoding="utf-8")
     assert "bc.rework_times()" in src and "reworked=reworked" in src                                  # FND-0368: without these two the engine never learns that a delivery was rejected
 
 
@@ -290,7 +290,7 @@ def test_the_sync_now_counts_a_closes_trailer_as_a_refs_one(tmp_path, monkeypatc
 # ---------------------------------------------------------------- the hook and the installer (FND-0379: the autopilot runs from a clean clone of origin/master)
 
 def test_the_hook_installer_only_reacts_to_origin_master_never_blocks_and_runs_detached():
-    text = (_ROOT / "scripts" / "audit" / "reference-transaction.sh").read_text(encoding="utf-8")
+    text = (_ROOT / "scripts" / "gov" / "repo" / "hooks" / "reference-transaction.sh").read_text(encoding="utf-8")
     assert 'REF" = "refs/remotes/origin/master"' in text and '"$STATE" = "committed"' in text
     assert "--apply --quiet" in text and ") >/dev/null 2>&1 &" in text and text.count("exit 0") >= 4
     assert "exit 1" not in text and "exit 3" not in text                                                    # it can never refuse a reference update
@@ -316,9 +316,9 @@ class HookRepo(Repo):
         super().__init__(tmp_path)
         self.marker = self.root / "ran.txt"
         self.log = self.root / "out" / "audit" / "backlog_autopilot_hook.log"
-        self.commit("scripts/audit/backlog_autopilot.py", autopilot_source(self.marker, "V1"), "the autopilot V1")
+        self.commit("scripts/gov/backlog/backlog_autopilot.py", autopilot_source(self.marker, "V1"), "the autopilot V1")
         self.commit("shared/lib.py", "x = 1\n", "a shared module")
-        inst = subprocess.run(["sh", str(_ROOT / "scripts" / "audit" / "reference-transaction.sh")], cwd=self.root, capture_output=True, text=True, env=self.env, timeout=60)
+        inst = subprocess.run(["sh", str(_ROOT / "scripts" / "gov" / "repo" / "hooks" / "reference-transaction.sh")], cwd=self.root, capture_output=True, text=True, env=self.env, timeout=60)
         assert inst.returncode == 0, inst.stderr
 
     def fetch(self, sha=None):
@@ -378,14 +378,14 @@ def test_installed_hook_starts_the_autopilot_in_the_background_only_when_origin_
 def test_the_autopilot_runs_the_code_of_origin_master_from_a_clean_clone_whatever_the_working_tree_holds(tmp_path):
     r = HookRepo(tmp_path)
     r.git("checkout", "-q", "-b", "feat/under-review")
-    r.commit("scripts/audit/backlog_autopilot.py", autopilot_source(r.marker, "V3-UNREVIEWED"), "unreviewed autopilot on a feature branch")
+    r.commit("scripts/gov/backlog/backlog_autopilot.py", autopilot_source(r.marker, "V3-UNREVIEWED"), "unreviewed autopilot on a feature branch")
     (r.root / "shared" / "lib.py").write_text("x = 99  # an uncommitted edit\n", encoding="utf-8")
-    (r.root / "scripts" / "audit" / "scratch.py").write_text("print(1)\n", encoding="utf-8")             # an untracked file where the code is imported from
+    (r.root / "scripts" / "gov" / "backlog" / "scratch.py").write_text("print(1)\n", encoding="utf-8")             # an untracked file where the code is imported from
     r.fetch(r.git("rev-parse", "master"))                                                                   # origin/master is the merged V1
     lines = r.runs()
     assert [ln.split(" ", 1)[0] for ln in lines] == ["V1"]                                                  # the merged code ran, never the branch's, never the edit
     version, env_file, out_dir, script = [p.strip() for p in lines[0].split("|")]
-    assert script.replace("\\", "/").endswith("out/autopilot_clone/scripts/audit/backlog_autopilot.py")      # ... from the clean clone under out/
+    assert script.replace("\\", "/").endswith("out/autopilot_clone/scripts/gov/backlog/backlog_autopilot.py")      # ... from the clean clone under out/
     assert env_file.replace("\\", "/").endswith("/.env") and out_dir.replace("\\", "/").endswith("/out")    # ... reading the MAIN tree's .env and writing to the MAIN tree's out/
     assert r.git("rev-parse", "--abbrev-ref", "HEAD") == "feat/under-review" and (r.root / "shared" / "lib.py").read_text(encoding="utf-8").endswith("an uncommitted edit\n")   # the tree was not touched
 
@@ -394,7 +394,7 @@ def test_the_autopilot_runs_the_code_of_origin_master_from_a_clean_clone_whateve
 @needs_sh
 def test_a_master_that_is_behind_or_has_its_own_commit_does_not_matter_and_is_never_moved(tmp_path):
     r = HookRepo(tmp_path)
-    merged = r.branch_with("merged", "scripts/audit/backlog_autopilot.py", autopilot_source(r.marker, "V2"), "the autopilot V2, merged on GitHub")
+    merged = r.branch_with("merged", "scripts/gov/backlog/backlog_autopilot.py", autopilot_source(r.marker, "V2"), "the autopilot V2, merged on GitHub")
     r.commit("shared/lib.py", "x = 4\n", "a local commit that is not on origin/master")
     mine_sha = r.git("rev-parse", "HEAD")
     r.fetch(merged)                                                                                         # origin/master is the merged V2; this master has diverged from it
@@ -410,10 +410,10 @@ def test_the_clone_is_made_once_and_brought_forward_on_each_event(tmp_path):
     assert r.versions() == ["V1"]
     clone = r.root / "out" / "autopilot_clone"
     (clone / "SENTINEL").write_text("the first clone\n", encoding="utf-8")                                  # survives only if the clone is reused (git clean touches only shared/ and scripts/)
-    v2 =r.branch_with("v2", "scripts/audit/backlog_autopilot.py", autopilot_source(r.marker, "V2"), "V2")
+    v2 =r.branch_with("v2", "scripts/gov/backlog/backlog_autopilot.py", autopilot_source(r.marker, "V2"), "V2")
     r.fetch(v2)
     assert r.versions(2) == ["V1", "V2"]
-    v3 = r.branch_with("v3", "scripts/audit/backlog_autopilot.py", autopilot_source(r.marker, "V3"), "V3")
+    v3 = r.branch_with("v3", "scripts/gov/backlog/backlog_autopilot.py", autopilot_source(r.marker, "V3"), "V3")
     r.fetch(v3)
     assert r.versions(3) == ["V1", "V2", "V3"]
     assert (clone / "SENTINEL").exists()                                                                    # the same clone, not a new one each time
@@ -424,7 +424,7 @@ def test_the_clone_is_made_once_and_brought_forward_on_each_event(tmp_path):
 @needs_sh
 def test_a_push_that_lands_while_a_run_is_in_progress_is_picked_up_by_that_runs_next_turn(tmp_path):
     r = HookRepo(tmp_path)
-    r.commit("scripts/audit/backlog_autopilot.py", autopilot_source(r.marker, "V1", sleep=3.0), "a slow autopilot V1")
+    r.commit("scripts/gov/backlog/backlog_autopilot.py", autopilot_source(r.marker, "V1", sleep=3.0), "a slow autopilot V1")
     r.fetch()
     started = Path(str(r.marker) + ".started")
     for _ in range(100):                                                                                    # wait until the first run is really running (and so holds the lock)
@@ -432,7 +432,7 @@ def test_a_push_that_lands_while_a_run_is_in_progress_is_picked_up_by_that_runs_
             break
         time.sleep(0.2)
     assert started.exists()
-    v2 = r.branch_with("v2", "scripts/audit/backlog_autopilot.py", autopilot_source(r.marker, "V2"), "V2")
+    v2 = r.branch_with("v2", "scripts/gov/backlog/backlog_autopilot.py", autopilot_source(r.marker, "V2"), "V2")
     r.fetch(v2)                                                                                             # a second event: its hook finds the lock taken and leaves
     assert r.versions(2, wait=25.0) == ["V1", "V2"]                                                         # ... and the running loop runs again for the newer commit
 
@@ -456,15 +456,15 @@ def test_a_fresh_lock_means_a_run_is_in_progress_and_a_stale_lock_is_taken_over(
 @needs_sh
 def test_an_origin_master_without_the_autopilot_runs_nothing_and_says_so(tmp_path):
     r = Repo(tmp_path)
-    inst = subprocess.run(["sh", str(_ROOT / "scripts" / "audit" / "reference-transaction.sh")], cwd=r.root, capture_output=True, text=True, env=r.env, timeout=60)
+    inst = subprocess.run(["sh", str(_ROOT / "scripts" / "gov" / "repo" / "hooks" / "reference-transaction.sh")], cwd=r.root, capture_output=True, text=True, env=r.env, timeout=60)
     assert inst.returncode == 0, inst.stderr
     r.git("update-ref", "refs/remotes/origin/master", r.git("rev-parse", "HEAD"))
     log = r.root / "out" / "audit" / "backlog_autopilot_hook.log"
     for _ in range(60):
-        if log.exists() and "has no scripts/audit/backlog_autopilot.py" in log.read_text(encoding="utf-8"):
+        if log.exists() and "has no scripts/gov/backlog/backlog_autopilot.py" in log.read_text(encoding="utf-8"):
             break
         time.sleep(0.2)
-    assert "has no scripts/audit/backlog_autopilot.py" in log.read_text(encoding="utf-8")
+    assert "has no scripts/gov/backlog/backlog_autopilot.py" in log.read_text(encoding="utf-8")
 
 
 @needs_git
@@ -473,7 +473,7 @@ def test_the_hook_also_runs_the_branch_prune_next_to_the_autopilot(tmp_path):
     """FND-0371: the same event that starts the autopilot runs prune_merged_branches.py (ancestor rule, no fetch)."""
     r = HookRepo(tmp_path)
     prune_marker = r.root / "prune.txt"
-    r.commit("scripts/ops/prune_merged_branches.py", autopilot_source(prune_marker, "P1"), "the prune P1")
+    r.commit("scripts/gov/delivery/prune_merged_branches.py", autopilot_source(prune_marker, "P1"), "the prune P1")
     r.fetch()
     assert r.versions() == ["V1"]
     assert prune_marker.read_text(encoding="utf-8").split("|")[0].strip() == "P1 --rule ancestor --apply --no-fetch"
@@ -509,8 +509,8 @@ def test_a_file_where_the_clone_should_be_is_replaced_and_the_run_goes_on(tmp_pa
 def test_a_clone_with_only_the_prune_script_runs_it_and_an_unrelated_reference_starts_nothing(tmp_path):
     r = Repo(tmp_path)
     prune_marker = r.root / "prune.txt"
-    r.commit("scripts/ops/prune_merged_branches.py", autopilot_source(prune_marker, "P1"), "the prune P1")      # NO autopilot script in this clone
-    inst = subprocess.run(["sh", str(_ROOT / "scripts" / "audit" / "reference-transaction.sh")], cwd=r.root, capture_output=True, text=True, env=r.env, timeout=60)
+    r.commit("scripts/gov/delivery/prune_merged_branches.py", autopilot_source(prune_marker, "P1"), "the prune P1")      # NO autopilot script in this clone
+    inst = subprocess.run(["sh", str(_ROOT / "scripts" / "gov" / "repo" / "hooks" / "reference-transaction.sh")], cwd=r.root, capture_output=True, text=True, env=r.env, timeout=60)
     assert inst.returncode == 0, inst.stderr
     r.git("update-ref", "refs/remotes/origin/other", r.git("rev-parse", "HEAD"))                           # not origin/master: nothing starts
     time.sleep(1.0)
@@ -530,6 +530,6 @@ def test_apply_without_the_autopilot_login_or_a_reachable_backlog_fails_cleanly_
     empty_env_file.write_text("", encoding="utf-8")
     env = {k: v for k, v in os.environ.items() if k not in ("PYTEST_CURRENT_TEST", "FONDOS_BACKLOG_PG_DSN_AUTOPILOT", "FONDOS_BACKLOG_PG_DSN_HUMAN", "FONDOS_BACKLOG_PG_DSN_AGENT")}
     env.update(FONDOS_ENV_FILE=str(empty_env_file), FONDOS_BACKLOG_PG_DSN="postgresql://w:pw@127.0.0.1:1/none", FONDOS_PG_DSN="postgresql://a:pw@127.0.0.1:1/none")
-    r = subprocess.run([sys.executable, "-X", "utf8", "scripts/audit/backlog_autopilot.py", "--apply"], cwd=_ROOT, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True,
+    r = subprocess.run([sys.executable, "-X", "utf8", "scripts/gov/backlog/backlog_autopilot.py", "--apply"], cwd=_ROOT, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True,
                        encoding="utf-8", timeout=120)
     assert r.returncode == 2 and "Traceback" not in r.stderr, (r.returncode, r.stderr[-400:])

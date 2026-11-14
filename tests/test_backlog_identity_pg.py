@@ -6,7 +6,7 @@ Owner decision of 2026-10-27: human actors write ONLY through a role reserved fo
 placeholder of the history, is refused for new writes). The rule looks at session_user (who logged in), so the tests switch the SESSION authorization, which is how a real
 login differs from a SET ROLE. Hermetic: the throwaway container inside a rolled-back savepoint (pg_conn).
 
-    python scripts/ops/run_pg_tests.py -- tests/test_backlog_identity_pg.py
+    python scripts/gov/delivery/run_pg_tests.py -- tests/test_backlog_identity_pg.py
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ import psycopg
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops"), str(Path(__file__).resolve().parent)):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "mig" / "backlog"), str(Path(__file__).resolve().parent)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 

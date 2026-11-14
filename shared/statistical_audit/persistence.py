@@ -212,7 +212,7 @@ _EVENT_SQL = (
 
 
 def exception_events_table_exists(conn: "psycopg.Connection") -> bool:
-    """True when audit_exception_event is visible (scripts/ops/migrate_audit_governance.py was applied)."""
+    """True when audit_exception_event is visible (scripts/mig/fondos/migrate_audit_governance.py was applied)."""
     return conn.execute("SELECT to_regclass('audit_exception_event')").fetchone()[0] is not None
 
 
@@ -299,7 +299,7 @@ def revoke_exception(conn: "psycopg.Connection", grant_event_id: int, actor: str
 # The decisions live in shared/statistical_audit/incidents.py (pure); these functions only write them, each in its own transaction.
 
 def incident_table_exists(conn: "psycopg.Connection") -> bool:
-    """True when audit_incident is visible (scripts/ops/migrate_audit_incident.py was applied)."""
+    """True when audit_incident is visible (scripts/mig/fondos/migrate_audit_incident.py was applied)."""
     return conn.execute("SELECT to_regclass('audit_incident')").fetchone()[0] is not None
 
 
@@ -405,7 +405,7 @@ _FINDING_ISIN_SQL = (
     "INSERT INTO audit_finding_isin (run_id, domain, rule_id, group_key, isin) VALUES (%s, %s, %s, %s, %s) "
     "ON CONFLICT DO NOTHING"
 )
-# FND-0275: the same row plus the lineage of the metric rows the ISIN carried (feature-detected: scripts/ops/migrate_audit_finding_lineage.py)
+# FND-0275: the same row plus the lineage of the metric rows the ISIN carried (feature-detected: scripts/mig/fondos/migrate_audit_finding_lineage.py)
 _FINDING_ISIN_LINEAGE_SQL = (
     "INSERT INTO audit_finding_isin (run_id, domain, rule_id, group_key, isin, algorithm_versions, batch_ids) "
     "VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING"
@@ -475,7 +475,7 @@ def audit_run_has_manifest(conn: "psycopg.Connection") -> bool:
 
 
 def audit_run_table_exists(conn: "psycopg.Connection") -> bool:
-    """True when audit_run is visible on the connection's search_path (scripts/ops/migrate_audit_run.py was applied)."""
+    """True when audit_run is visible on the connection's search_path (scripts/mig/fondos/migrate_audit_run.py was applied)."""
     return conn.execute("SELECT to_regclass('audit_run')").fetchone()[0] is not None
 
 

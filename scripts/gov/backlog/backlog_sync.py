@@ -4,10 +4,10 @@
 backlog_sync.py -- record the commits that cite backlog tickets as operational facts, and move a ticket forward when a commit's `Refs:` trailer says
 work on it has started (Backlog v2 Phase C slice 1, FND-0334; PROPUESTA_BACKLOG_V2.md 6.4.1 and 6.4.8; NORMAS_BACKLOG.md 4.4).
 
-    python scripts/audit/backlog_sync.py                     # DRY RUN over origin/master: what would be recorded and moved; writes nothing
-    python scripts/audit/backlog_sync.py --apply             # records the new commit events (idempotent) and runs the auto-forward
-    python scripts/audit/backlog_sync.py --rev HEAD --apply  # another revision (default origin/master: the published history)
-    python scripts/audit/backlog_sync.py --attest --key <private key>   # the owner, at push time: write and SIGN backlog_gate/attestation.json for origin/master..HEAD
+    python scripts/gov/backlog/backlog_sync.py                     # DRY RUN over origin/master: what would be recorded and moved; writes nothing
+    python scripts/gov/backlog/backlog_sync.py --apply             # records the new commit events (idempotent) and runs the auto-forward
+    python scripts/gov/backlog/backlog_sync.py --rev HEAD --apply  # another revision (default origin/master: the published history)
+    python scripts/gov/backlog/backlog_sync.py --attest --key <private key>   # the owner, at push time: write and SIGN backlog_gate/attestation.json for origin/master..HEAD
 
 Citations. A `Refs: FND-nnnn` or `Closes: FND-nnnn` trailer (a Closes id is also a Refs id; several ids may be comma separated, several trailers allowed) is source REFS: the commit says it is work on the
 ticket. An id in the subject line is source SUBJECT: a mention (it cannot tell work from a reference). The body is not read. Ids that are not in the
@@ -45,7 +45,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 ACTOR = "system:sync"
 RC_OK, RC_FAILED, RC_USAGE = 0, 1, 2
 FORWARD_FROM = ("OPEN", "TODO")
@@ -173,7 +173,7 @@ def main(argv: list | None = None) -> int:
     except Exception as exc:                                        # noqa: BLE001  (informational: never costs the sync)
         print(f"REVERT adjudications not checked: {type(exc).__name__}", file=sys.stderr)
     if not applied:
-        print("the sync store is not applied (owner: python scripts/ops/migrate_backlog_v2.py --phase sync): every event above is new.")
+        print("the sync store is not applied (owner: python scripts/mig/backlog/migrate_backlog_v2.py --phase sync): every event above is new.")
     if not args.apply:
         print("\nDRY RUN: nothing written. --apply records the events, runs the auto-forward and records the bypassed commits (hold on the ticket).")
         return RC_OK
@@ -194,7 +194,7 @@ def main(argv: list | None = None) -> int:
         if bc.attest_store_present():
             print("branch protection: " + ("recorded" if bc.record_gate_protection(p_kind, p_detail, actor=ACTOR) else "unchanged since the last reading (not recorded again)"))
         else:
-            print("branch protection: not recorded (owner: python scripts/ops/migrate_backlog_v2.py --phase attest)")
+            print("branch protection: not recorded (owner: python scripts/mig/backlog/migrate_backlog_v2.py --phase attest)")
     except Exception as exc:                                        # the commit facts above stay: every write is idempotent
         print(f"branch protection NOT recorded: {type(exc).__name__}: {str(exc)[:200]}", file=sys.stderr)
         return RC_FAILED
@@ -294,7 +294,7 @@ def attest(base: str, key, bc) -> int:
     undecided = sorted({(p["a"], p["b"]) for e in doc["commits"] for p in e["pairs"] if not p["decided"]})      # a pair appears once for each commit that touches it
     print(f"attested {len(doc['commits'])} commit(s) of {base_sha[:12]}..{head[:12]} citing {len(tickets)} ticket(s); wrote {out.relative_to(ROOT)} and {sig.relative_to(ROOT)}")
     if undecided:
-        print(f"WARNING: {len(undecided)} collision pair(s) are undecided; CI will fail until the owner adjudicates them (scripts/audit/gate_adjudicate.py --list) and the attestation is made again.")
+        print(f"WARNING: {len(undecided)} collision pair(s) are undecided; CI will fail until the owner adjudicates them (scripts/gov/backlog/gate_adjudicate.py --list) and the attestation is made again.")
     print("commit the two files together (this commit is excluded from the range) and push.")
     return RC_OK
 

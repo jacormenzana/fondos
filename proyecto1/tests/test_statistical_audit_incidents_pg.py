@@ -1,6 +1,6 @@
 # proyecto1/tests/test_statistical_audit_incidents_pg.py
 # -*- coding: utf-8 -*-
-"""FND-0264 on the hermetic Postgres container (python scripts/ops/run_pg_tests.py): the incident writers, the partial unique index
+"""FND-0264 on the hermetic Postgres container (python scripts/gov/delivery/run_pg_tests.py): the incident writers, the partial unique index
 ("one live incident per finding key"), the state CHECKs of the REAL DDL, and the plan's exit criterion end to end -- a recompute alone never
 closes a CRITICAL defect. The writers commit, so they run in a throwaway schema with PRODUCTION transaction semantics (autocommit off)."""
 from __future__ import annotations
@@ -14,7 +14,7 @@ import pytest
 _ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
-sys.path.insert(0, os.path.join(_ROOT, "scripts", "ops"))
+sys.path.insert(0, os.path.join(_ROOT, "scripts", "mig", "fondos"))
 
 import migrate_audit_incident as mig  # noqa: E402
 from shared.statistical_audit import incidents as inc  # noqa: E402

@@ -3,8 +3,8 @@
 **Propósito:** un único criterio para registrar, relacionar y cerrar puntos de acción (`gestion.backlog`), de modo que una
 corrección diseñada para un ticket tenga en cuenta los demás tickets pendientes que toca (caso FND-0243 ↔ FND-0246: ambos leen la
 cabecera del KIID y se diseñaron por separado). **Implementación:** `shared/backlog_client.py` (único camino a la BD `gestion`),
-`shared/backlog_overlap.py` (similitud de texto), `scripts/audit/backlog_links.py` (descubrimiento, revisión, aplicación),
-`scripts/audit/backlog_links_calibration.py` (puerta de calibración). **Almacén:** `db/pg_backlog/00_schema.sql` +
+`shared/backlog_overlap.py` (similitud de texto), `scripts/gov/backlog/backlog_links.py` (descubrimiento, revisión, aplicación),
+`scripts/gov/backlog/backlog_links_calibration.py` (puerta de calibración). **Almacén:** `db/pg_backlog/00_schema.sql` +
 `db/pg_backlog/20_links.sql`. **Lectura obligatoria** antes de abrir, empezar o cerrar un ticket y antes de tocar quien reporta
 incidencias automáticas.
 
@@ -50,7 +50,7 @@ Dominios categóricos, **todos con `CHECK` en BD** — nunca inventar un valor f
   `DATA_FIX`, `WORKAROUND`) viene de `READY_FOR_DEPLOY` y exige etiqueta `R<aaaa>.<mm>-<TAG>` (el procedimiento fija `closure_ts` y `deployment_ts`); `WORKAROUND`
   cita su ticket de seguimiento o abre uno `OPT`; `REJECTED` cita el ticket que lo sustituye; `DUPLICATED` cita el que se conserva y registra el enlace `DUPLICATES`;
   `BLOCKED` nombra su bloqueo (un ticket, con su `DEPENDS_ON` garantizado, o una condición escrita) y `DEFERRED` su fecha o suceso de revisión (`backlog.wait_event`).
-  `scripts/ops/close_release.py` (dry run primero) sigue siendo la vía de los cierres de release.
+  `scripts/gov/backlog/close_release.py` (dry run primero) sigue siendo la vía de los cierres de release.
 - **Identidad (FND-0330, D5):** todo actor es canónico: `human:<login>` · `agent:<modelo>` · `system:<nombre>`. **Es una sola identidad por proceso y viene del entorno (orden del propietario, 2026-10-28):** `FONDOS_ACTOR` es obligatoria, el cliente se niega a escribir (`ActorUnknown`, sin tocar la BD) cuando falta o no es canónica, un `actor=` explícito debe ser igual a ella,
   y nunca se deduce del usuario del sistema operativo (una sesión de agente corre bajo el login del propietario). Para una sesión de agente se declara en la clave `FONDOS_AGENT_ACTOR` del `.env` (ignorado por git; `shared.config` lo carga) y el cliente la usa SOLO si `CLAUDECODE=1` (el arnés lo fija; la terminal de una persona no), así que una orden del propietario nunca hereda la identidad del agente y `FONDOS_ACTOR`, si existe, manda; debe nombrar el modelo que EJECUTA (con `"model": "opusplan"` el modo de planificación, de solo lectura, usa Opus y toda orden ejecutada, es decir toda escritura, usa Sonnet); si se cambia el modelo de la configuración hay que cambiar la variable a la vez. El entorno garantiza presencia, formato y coherencia, no la verdad: el arnés no expone el modelo a los procesos hijos (limitación L3). Las pruebas fijan `FONDOS_ACTOR` y redirigen el registro local de reserva a un directorio temporal (`shared/testing/sandbox.py`: ninguna prueba deja huella en el repositorio, la sesión falla si la deja, y las cadenas de conexión del backlog en vivo se quitan del proceso de pruebas). **Escritura en vivo (orden del propietario, 2026-10-29):** una persona en una terminal REAL debe teclear una vez por proceso `I CONFIRM THIS IS NOT A SYNTHETIC TEST` (`backlog_client.confirm_live_write`); un proceso NO interactivo (la herramienta de un agente, un script, una tubería, un hook) recibe un **fallo duro con código de salida 1** y no escribe nada (`LiveWriteForbidden`): `close_release.py` (también su simulacro, que escribe y revierte y gasta identificadores), `backlog_step0.py --apply` y `backlog_links.py --apply-review --confirm` lo aplican antes de abrir ninguna conexión, y un test falla si un script nuevo escribe sin pasar por la compuerta. Excepciones, y sólo estas dos, por decisión del propietario (2026-10-29; `NON_INTERACTIVE_OPERATIONS`, lista blanca en la fábrica de conexiones): anotar un log en un ticket EXISTENTE con identidad `agent:`/`system:` (`append_log`, login `backlog_logger`, rutina `sp_append_log`) y la captura automática de incidencias (`report_incident`, login `backlog_incident`, rutina `sp_report_incident`, solo inserción). Las acota la base de datos, no el cliente: ninguno de los dos logins puede abrir, mover, enlazar ni editar nada. «Terminal real» es una consola: en Windows `isatty()` es verdadero para el dispositivo NUL (el stdin de una herramienta de shell), así que se comprueba además `GetConsoleMode`. Límite reconocido: es una guarda del cliente, no una frontera de seguridad: quien posea la cadena de conexión puede saltarla; la frontera real es que la identidad del agente no tenga permiso de escritura (FND-0354: un login de solo lectura).
 
@@ -79,16 +79,16 @@ Dominios categóricos, **todos con `CHECK` en BD** — nunca inventar un valor f
   compuerta de incidentes de auditoría (FND-0264) no puede imponerla la base de datos (lee `fondos`): la aplica el motor de reglas (`shared/backlog_autopilot.py`, puro, probado arista a arista) con la
   regla compartida de `shared/backlog_release.py`, la misma que usa `close_release.py`. `WORKAROUND`, `REJECTED`, `DUPLICATED` y reabrir **nunca** son automáticos. Un commit declara la entrega con
   los tráileres `Closes: FND-nnnn` (cuenta también como `Refs:`) y, solo si no es `CODE_FIX`, `Solution: DATA_FIX`; un valor desconocido no cierra nada. **El proceso** es
-  `scripts/audit/backlog_autopilot.py` (identidad `system:autopilot`, un proceso, una identidad): lee los merges de `origin/master` de los últimos 45 días, toma como entrega cada merge cuya rama trae un
+  `scripts/gov/backlog/backlog_autopilot.py` (identidad `system:autopilot`, un proceso, una identidad): lee los merges de `origin/master` de los últimos 45 días, toma como entrega cada merge cuya rama trae un
   commit con `Closes:`, registra un hecho `MERGE` por (merge, ticket) con el número de PR, los ficheros cambiados y el `Solution:`, reúne los veredictos de las compuertas (la de entrega de la Fase B, las
   condiciones de cierre de `rfd_matrix_probe.py`, la de incidentes de `fondos`; **lo que no se puede leer es un motivo para esperar, nunca un pase**) y aplica el motor. Sin `--apply` solo imprime. El
   **modo** (`BACKLOG_AUTOPILOT_MODE` en `shared/config.py`, un techo que `--mode` solo puede bajar): `OFF` imprime; `SHADOW` (el de salida) registra los hechos y escribe **una nota por decisión** en el
   ticket («movería X a Y, evidencia ...») sin mover nada (desde la fase `events` el modo es un evento de la base de datos, más abajo); `ON` hace además los movimientos mediante `auto_transition`, y un movimiento que la
   base de datos rechaza (una compuerta, un hecho que falta) pasa a ser una nota de espera, una sola vez. Solo escribe con su login (`FONDOS_BACKLOG_PG_DSN_AUTOPILOT`): sin él, o sin el DDL, `--apply` se
   niega con código 2 y no escribe nada; nunca cae a otro login ni pide terminal. **No fabrica `DEPLOY` ni `CYCLE`** (no puede dar fe de su propio cierre): un ticket cuyo merge toca `db/**` espera a que
-  la migración del propietario registre el `DEPLOY`, y un `DATA_FIX` a que se registre un `CYCLE`. El gancho `reference-transaction` (`bash scripts/audit/reference-transaction.sh`, lo instala el
+  la migración del propietario registre el `DEPLOY`, y un `DATA_FIX` a que se registre un `CYCLE`. El gancho `reference-transaction` (`bash scripts/gov/repo/hooks/reference-transaction.sh`, lo instala el
   propietario porque se dispara con **cada** actualización de referencia del clon) lanza el proceso en segundo plano cuando un `fetch` mueve `refs/remotes/origin/master`; no bloquea nunca git.
-  **El autopiloto ejecuta el código fusionado, siempre, sea cual sea el estado del árbol de trabajo (FND-0369, sustituido por FND-0379 el 2026-11-03):** escribe en el backlog vivo, así que no puede correr desde un árbol que puede estar en cualquier rama o con ediciones. El gancho instalado (fuera del árbol, de modo que ninguna rama puede cambiarlo) mantiene un **clon limpio** en `out/autopilot_clone`, deja en él `origin/master` (desprendido y forzado; `git clean` solo sobre `shared/` y `scripts/`) y ejecuta el autopiloto **desde allí**: el código es el fusionado por construcción, y lo que contenga el árbol de trabajo (otra rama, ediciones, ficheros sin seguimiento, el trabajo de otra sesión) es irrelevante; el árbol nunca se toca (ni se adelanta ni se fusiona). La copia lee el `.env` y escribe en el `out/` del árbol principal (`FONDOS_ENV_FILE`, `FONDOS_OUT_DIR`, `shared/out_dir.py`: el resumen semanal, la caché de la prueba de módulos, los recibos de pruebas y el estado del publicador). Un solo hilo a la vez (un directorio de bloqueo que caduca a los 30 minutos); un empuje que llega durante una ejecución lo recoge el siguiente turno de esa misma ejecución (hasta tres). **Toda orden git sobre el clon fija su directorio git y su árbol de trabajo:** un clon dañado se borra y se rehace en lugar de dejar que git suba hasta el repositorio principal, donde `checkout -f` destruiría trabajo sin confirmar (hay una prueba que lo exige). Si el clon no se puede crear o llevar a `origin/master`, el gancho deja una línea en `out/audit/backlog_autopilot_hook.log` y no arranca; si `origin/master` no tiene el autopiloto, lo dice y no arranca. Hay que reinstalar el gancho (`bash scripts/audit/reference-transaction.sh`, una vez, lo hace el propietario porque se dispara con cada actualización de referencia del clon) para que un cambio de este fichero surta efecto.
+  **El autopiloto ejecuta el código fusionado, siempre, sea cual sea el estado del árbol de trabajo (FND-0369, sustituido por FND-0379 el 2026-11-03):** escribe en el backlog vivo, así que no puede correr desde un árbol que puede estar en cualquier rama o con ediciones. El gancho instalado (fuera del árbol, de modo que ninguna rama puede cambiarlo) mantiene un **clon limpio** en `out/autopilot_clone`, deja en él `origin/master` (desprendido y forzado; `git clean` solo sobre `shared/` y `scripts/`) y ejecuta el autopiloto **desde allí**: el código es el fusionado por construcción, y lo que contenga el árbol de trabajo (otra rama, ediciones, ficheros sin seguimiento, el trabajo de otra sesión) es irrelevante; el árbol nunca se toca (ni se adelanta ni se fusiona). La copia lee el `.env` y escribe en el `out/` del árbol principal (`FONDOS_ENV_FILE`, `FONDOS_OUT_DIR`, `shared/out_dir.py`: el resumen semanal, la caché de la prueba de módulos, los recibos de pruebas y el estado del publicador). Un solo hilo a la vez (un directorio de bloqueo que caduca a los 30 minutos); un empuje que llega durante una ejecución lo recoge el siguiente turno de esa misma ejecución (hasta tres). **Toda orden git sobre el clon fija su directorio git y su árbol de trabajo:** un clon dañado se borra y se rehace en lugar de dejar que git suba hasta el repositorio principal, donde `checkout -f` destruiría trabajo sin confirmar (hay una prueba que lo exige). Si el clon no se puede crear o llevar a `origin/master`, el gancho deja una línea en `out/audit/backlog_autopilot_hook.log` y no arranca; si `origin/master` no tiene el autopiloto, lo dice y no arranca. Hay que reinstalar el gancho (`bash scripts/gov/repo/hooks/reference-transaction.sh`, una vez, lo hace el propietario porque se dispara con cada actualización de referencia del clon) para que un cambio de este fichero surta efecto.
 - **Fase `events` (Backlog v3.1, directiva del propietario del 2026-11-01: quitar las tareas administrativas; `98_events.sql`, `migrate_backlog_v2.py --phase events`).** Principio: cada transición tiene un
   disparador automático y una persona aparece solo como **evento** (un ticket nuevo, una prioridad, una reapertura), nunca como aprobadora.
   - **Reabrir es un evento normal.** `backlog.sp_reopen(ticket, causa, motivo, actor, sesión)` lo puede registrar **cualquier actor** (reabrir es el sentido seguro: añade trabajo y no oculta nada; solo
@@ -107,7 +107,7 @@ Dominios categóricos, **todos con `CHECK` en BD** — nunca inventar un valor f
     **El modo sigue el historial del propio autopiloto, sin revisión humana** (`shared.backlog_autopilot.mode_change`, evaluado al final de cada `--apply` sin `--mode`): `SHADOW -> ON` tras 20 decisiones `SHADOW`
     «de actuar» (no esperas) anotadas desde el último evento de modo, ninguna seguida de una reapertura de su ticket y ningún cierre del autopiloto reabierto en 30 días; `ON -> SHADOW` cuando dos cierres suyos se
     reabren en 30 días. El recuento de decisiones empieza de cero en cada evento de modo, así que un autopiloto degradado no vuelve a encenderse hasta tener un historial limpio y fresco. `OFF` solo lo cambia una persona.
-  - **Tres eventos sin disparador ahora lo tienen** (el motor puro de `shared/backlog_autopilot.py`, la ejecución en `scripts/audit/backlog_autopilot.py`; en `SHADOW` solo escriben una nota):
+  - **Tres eventos sin disparador ahora lo tienen** (el motor puro de `shared/backlog_autopilot.py`, la ejecución en `scripts/gov/backlog/backlog_autopilot.py`; en `SHADOW` solo escriben una nota):
     - `CLOSED -> IN_PROGRESS` (**REOPEN**, causa `INCOMPLETE_FIX`): un merge **posterior al cierre** cuya rama trae un commit que cita el ticket (`Refs:` o `Closes:`, fecha de autor del último commit que lo cita) y
       cambia código o tests (no `doc/`, `docs/`, `out/`, `deployments/`, `backlog_gate/` ni `.md`/`.txt`/`.rst`) reabre el ticket. Solo un cierre de entrega (`CODE_FIX`, `DATA_FIX`, `WORKAROUND`); un `REJECTED` o `DUPLICATED` no se «entregó».
     - **Un rechazo de la entrega es duradero (FND-0368):** una entrega (el merge con `Closes:`) solo cuenta si es **posterior** al último momento en que el ticket volvió al trabajo desde `READY_FOR_DEPLOY` o `CLOSED`
@@ -120,17 +120,17 @@ Dominios categóricos, **todos con `CHECK` en BD** — nunca inventar un valor f
 - **Modo de entrega local (FND-0375; decisión del propietario del 2026-11-02: GitHub fuera del ciclo diario, sin CI, las pruebas se ejecutan en local).** Con `BACKLOG_GITHUB_EVIDENCE_ENABLED = False` (`shared/config.py`), una **entrega** es también un commit
   **simple** del historial `--first-parent` de `master` cuyo mensaje diga `Closes: FND-nnnn`, con fecha de autor en o después de `BACKLOG_LOCAL_DELIVERY_SINCE`: su sha completo es la evidencia (hecho `MERGE`, etiqueta de release `R<aaaa>.<mm>-M<sha7>`) y sus ficheros son la
   unión de los de todos los commits desde el corte que citan el ticket (`Refs:` o `Closes:`), de modo que un cambio en `db/**` hecho antes sigue esperando su `DEPLOY`. Los merges se siguen leyendo. Un commit simple que cita un ticket `CLOSED` y cambia código lo reabre, igual que un merge
-  (por eso el corte se fijó un segundo después del commit que sacó GitHub del ciclo, que cita el ticket cerrado FND-0336 solo para dejar constancia). **`tests_pass` significa entonces** que existe un **recibo local** (`scripts/audit/delivery_attest.py`, reglas puras en `shared/delivery_receipt.py`,
+  (por eso el corte se fijó un segundo después del commit que sacó GitHub del ciclo, que cita el ticket cerrado FND-0336 solo para dejar constancia). **`tests_pass` significa entonces** que existe un **recibo local** (`scripts/gov/delivery/delivery_attest.py`, reglas puras en `shared/delivery_receipt.py`,
   fichero `out/audit/delivery_receipts.jsonl`) que nombra el sha completo de la entrega, cuyo digest sha-256 y cuyo árbol coinciden con los de git, y cuyas pruebas se ejecutaron de verdad y pasaron: código de salida 0, al menos una pasó, ninguna falló ni dio error y el alcance basta
   (`docs_only` si no cambió código, `area` si cambió código fuera de `shared/` y `proyecto*/`, `full` si cambió código de ellos). Sin recibo es «aún no»; un recibo que no pudo arrancar (contenedor caído, intérprete muerto) es «no verificable» y nunca un fallo de prueba. Las pruebas corren sobre una
   clon desechable del repositorio desprendido en el commit exacto (un repositorio git de verdad, porque algunas pruebas llaman a git: un `git archive` sin `.git` hizo fallar cinco en la ejecución base del 2026-11-02), nunca sobre el árbol de trabajo, en un contenedor Postgres desechable de puerto libre aleatorio: no tocan la base viva ni sus cadenas de conexión. Al cerrar, el autopiloto deja en el ticket una línea `closing evidence: ...` con el sha, el recuento y
   el digest. Una invocación mueve y cierra: tras mover un ticket a `READY_FOR_DEPLOY` mira una segunda vez (FND-0374), de modo que un repositorio quieto no espera al siguiente `fetch`. **Límite:** mismo usuario y fichero local: una guarda, no una frontera de seguridad. Volver a GitHub = poner el
   interruptor en `True`.
-- **Publicación automática de `master` (FND-0376; directriz D-0: ningún `git push` manual recurrente).** `scripts/audit/auto_publish.py` empuja `master` a `origin` (nunca forzado) siempre que va por delante. Lo lanza, desprendido, el gancho `post-commit` que instala **una vez** el propietario
-  (`bash scripts/audit/post-commit.sh`: se dispara con cada commit del clon y nunca lo bloquea). Un commit con `Closes:` es una entrega y **espera a su recibo local** (`delivery_attest.py` lo publica al terminar); los demás salen al instante (esa es la copia fuera de la máquina). El empuje mueve
+- **Publicación automática de `master` (FND-0376; directriz D-0: ningún `git push` manual recurrente).** `scripts/gov/delivery/auto_publish.py` empuja `master` a `origin` (nunca forzado) siempre que va por delante. Lo lanza, desprendido, el gancho `post-commit` que instala **una vez** el propietario
+  (`bash scripts/gov/repo/hooks/post-commit.sh`: se dispara con cada commit del clon y nunca lo bloquea). Un commit con `Closes:` es una entrega y **espera a su recibo local** (`delivery_attest.py` lo publica al terminar); los demás salen al instante (esa es la copia fuera de la máquina). El empuje mueve
   `origin/master` y con él se dispara el gancho del autopiloto. **Un empuje fallido no espera al siguiente commit:** el propio proceso reintenta con espera creciente (1, 2, 5, 10 y luego cada 15 minutos, hasta 24 h), el vigilante de `owner_deploy.py` lo reintenta en cada pasada (sobrevive a un reinicio) y el
   siguiente commit también. Estado en `out/audit/auto_publish_state.json`. **Nunca en silencio:** tras 15 minutos de fallo (al instante si la historia divergió o falla la autenticación, que ningún reintento arregla y que nunca se fuerzan) abre un incidente con `report_incident` y el vigilante muestra una
-  ventana; una entrega que espera su recibo 30 minutos da la misma alerta; el pre-flight imprime `UNPUBLISHED` cuando hay commits sin publicar desde hace 30 minutos o más. `python scripts/audit/auto_publish.py --now` publica una corrección urgente al instante, sin esperar recibo (no deja recibo: ningún
+  ventana; una entrega que espera su recibo 30 minutos da la misma alerta; el pre-flight imprime `UNPUBLISHED` cuando hay commits sin publicar desde hace 30 minutos o más. `python scripts/gov/delivery/auto_publish.py --now` publica una corrección urgente al instante, sin esperar recibo (no deja recibo: ningún
   ticket se cierra por sí solo con ella); `--status` muestra el estado.
 - **El recibo `area` incluye siempre las pruebas de política (FND-0380).** Las pruebas que escanean TODO el árbol buscando una convención (cada componente que llama a `report_incident` necesita un caso de calibración, la puerta única del backlog, la puerta de escritura en vivo, el registro de escritores automáticos, rutas de log, `sqlite3`, relleno silencioso, clave de periodo, bóveda del propietario, normas de lanzadores, humo de puntos de entrada y el barrido `EXPLAIN` de SQL) no tienen módulo propio, así que el alcance `area` (que solo ejecuta las pruebas con el nombre de cada módulo cambiado) nunca las veía: un cambio confinado a `scripts/` o `tests/` habría salido con su defecto. `shared/delivery_receipt.py::POLICY_TESTS` es ese conjunto fijo (y `tests/test_delivery_receipt.py` falla si una prueba NUEVA escanea el árbol y no está en él ni clasificada en `NOT_POLICY` con motivo: nadie tiene que acordarse de añadirla) (unos 60 s en total con el contenedor Postgres); `delivery_attest.py` lo añade a TODA corrida `area` y el recibo lo registra en `files`. Una entrada `archivo::prueba` ejecuta solo esa prueba de un archivo que además tiene pruebas de módulo; una entrada obsoleta hace fallar `tests/test_delivery_receipt.py`. Criterio de aceptación, medido con un clon desechable: un script nuevo que reporta incidentes sin caso de calibración y con sus propias pruebas verdes **falla** su recibo `area` nombrando la prueba de política; un cambio limpio lo **pasa**. Un alcance `full` (obligatorio si cambia `shared/` o `proyecto*/`) ya incluía todo.
 - **Selección por impacto (FND-0385; plan aceptado por el propietario el 2026-11-07): optimizar el tiempo de validación, nunca la garantía.** Un cambio de `shared/` o `proyecto*/` sigue siendo `full` (unos 27 min; la mediana de 20 recibos fue 1.600 s) salvo que los propios recibos demuestren que un análisis de dependencias selecciona todo lo que puede fallar. `shared/test_impact.py` es ese análisis (puro, sin git ni ficheros): grafo de imports, aristas por cadena (objetivos de `mock.patch`, nombres de ficheros), por lanzador (`.bat`/`.sh` → el `.py` que ejecutan) y por fichero de datos; los cargadores dinámicos se acotan por literal, por prefijo de f-string o por las cadenas del propio fichero, y un cargador que no se puede acotar depende de forma conservadora de todo su directorio (`NARROW_LOADERS` lo estrecha solo con una prueba que lo reverifica). **Cualquier duda amplía, nunca reduce:** F1 un fichero cambiado o de pruebas no se analiza · F2 cambia la infraestructura de pruebas o el propio selector · F3 el cambio es un nodo central (su cierre alcanza más del 50 % de las pruebas: hoy `config.py`, `owner_vault`, `out_dir` y el grupo `backlog_*`) · F4 un fichero de código cambiado al que no llega ninguna prueba · F5 la selección no es menos de la mitad (o no es más rápida) · F6 más de 20 ficheros de ejecución · F7 sin un recibo `full` verde en la ascendencia de HEAD, o a más de 5 commits de código / 24 h de él · F8 interruptor apagado. Siempre se añaden las pruebas de política, los escáneres del repositorio, las pruebas con subprocesos que un trazador no ve y las que importan algo que no se resuelve.
@@ -181,7 +181,7 @@ motor de reglas (`shared/backlog_autopilot.py`, `EDGES`) y a este texto; el text
   (la última fila de cada clave salvo que sea una retractación). `sp_record_module` es la única puerta: idempotente, los hechos derivados (`COMMIT`, `TEXT`, `OBJECT_NAME`) solo los escribe un actor `system:*`, `DECLARED` solo un agente
   o una persona, y **una propuesta que un agente o una persona retractó no la vuelve a escribir la derivación** (un rechazo se mantiene). Reglas puras en `shared/backlog_modules.py`: el módulo es un fichero rastreado; un test es el módulo
   que prueba (`tests/test_x.py` -> el único `x.py`); los registros, la documentación y la configuración (`AGENTS.md`, `doc/`, `shared/config.py`, `migrate_backlog_v2.py`, `.github/`, `*.md`, `*.yml`...) no cuentan. El corredor
-  `scripts/audit/backlog_modules.py` lo ejecuta el autopiloto al final de cada `--apply` (nadie lo lanza) y es idempotente. **No es una puerta:** ninguna transición exige un `TARGET` (el plan original lo pedía con `p_force` como escape;
+  `scripts/gov/backlog/backlog_modules.py` lo ejecuta el autopiloto al final de cada `--apply` (nadie lo lanza) y es idempotente. **No es una puerta:** ninguna transición exige un `TARGET` (el plan original lo pedía con `p_force` como escape;
   un `p_force` es un permiso humano, justo lo que esta serie eliminó), y nadie aprueba una pertenencia. `group_tag.kind` admite `MODULE`.
   **Clusters (W4b, tramo 2; reglas puras en `shared/backlog_clusters.py`, sin DDL nuevo):** el autopiloto mantiene un grupo `MOD.<ruta>` por cada conjunto de tickets abiertos que cambian el mismo módulo, con `sp_create_group` / `sp_group_member`.
   *Arista* entre dos tickets: una señal por módulo compartido, la más fuerte es su puntuación (mismo símbolo `TARGET` 1,0; `TARGET` ambos 0,8; `TARGET` y `TOUCHED` 0,7; `TOUCHED` ambos 0,6; umbral `EDGE_MIN` 0,6); `CITED` nunca crea una
@@ -198,10 +198,10 @@ motor de reglas (`shared/backlog_autopilot.py`, `EDGES`) y a este texto; el text
   precisión** frente a las decisiones ya registradas: al menos 20 pares decididos dentro de los clusters, precisión ≥ 70 % (positivos = `OVERLAPS` confirmados, negativos = `OVERLAPS` rechazados). La **precisión es la única barra**
   (es lo que evita falsos «compañeros de módulo»); el recall y la base de solo texto se informan pero no deciden, porque los `OVERLAPS` confirmados se hallaron a partir del texto y esa comparación favorece al texto
   (decisión del propietario, 2026-11-01). Con una muestra pequeña **no se escribe nada**; no hay validación manual: el sistema se enciende solo cuando los datos lo demuestran (medido como mucho una vez al día, caché en `out/backlog_modules/proof.json`) y deja de
-  formar pertenencias nuevas si la precisión cae bajo el umbral con muestra suficiente. `python scripts/audit/backlog_modules.py --clusters` lista los clusters (solo lectura) y `--measure` imprime precisión, recall, los 10 mayores y la
+  formar pertenencias nuevas si la precisión cae bajo el umbral con muestra suficiente. `python scripts/gov/backlog/backlog_modules.py --clusters` lista los clusters (solo lectura) y `--measure` imprime precisión, recall, los 10 mayores y la
   **simulación de T0** (cuántos pares de colisión más habría detectado la regla con estos hechos, y cuántos ya están decididos); no cambia ninguna regla de la puerta de colisión. **T0 no se toca** hasta que el propio `--measure` lo permita (`t0_ready`): entre los pares que los hechos añaden a la regla de
   texto y que ya están decididos (mínimo 20), al menos el 70 % deben ser `OVERLAPS` confirmados; los pares sin decidir son desconocidos, no errores, y una puerta que dispara sobre ellos solo añadiría ruido.
-- **Notas de impacto e invalidación de pruebas (Backlog v3 W4, FND-0359; `shared/backlog_impact.py`, `scripts/audit/backlog_impact.py`, fase `probes` `99_probes.sql`):** un merge que cita tickets (`Refs:` / `Closes:`) pone en aviso, con **una nota** cada uno, a los tickets
+- **Notas de impacto e invalidación de pruebas (Backlog v3 W4, FND-0359; `shared/backlog_impact.py`, `scripts/gov/backlog/backlog_impact.py`, fase `probes` `99_probes.sql`):** un merge que cita tickets (`Refs:` / `Closes:`) pone en aviso, con **una nota** cada uno, a los tickets
   **abiertos** que no cita y que puede afectar (`[impact] merge <sha> ... re-check whether this ticket is resolved or regressed`, clave `IMPACT:<sha12>`, añadida como `system:autopilot` al final de cada `--apply`; nadie la lanza).
   *Señales*, de más a menos fuerte: enlace confirmado `IMPACTS` / `OVERLAPS` con un ticket que el merge cita; `TARGET` declarado; el texto del ticket cita un módulo cambiado (la regla de la puerta de colisión, con su concentrador de
   5 tickets); `TOUCHED`. Los hechos `TARGET` / `TOUCHED` solo cuentan mientras los clusters hayan demostrado su precisión (el mismo listón que los grupos `MODULE`): una señal sin demostrar no hace ruido.
@@ -216,7 +216,7 @@ motor de reglas (`shared/backlog_autopilot.py`, `EDGES`) y a este texto; el text
   ni lo necesita el paso a `READY_FOR_DEPLOY` (la prueba es la evidencia del cierre). A 2026-11-01 ningún ticket tenía condiciones, y **la misma migración que despliega la puerta da a todo ticket `IN_PROGRESS` o `READY_FOR_DEPLOY` la condición por defecto `tests_pass`**
   (una sola vez, en la misma transacción: la puerta no puede desplegarse sin ella; actor `system:migration`; un ticket que ya tuvo una condición propia, activa o retirada, no se toca; uno que empieza después define la suya). Se sustituye por
   otra más específica retirando la de por defecto (`backlog_client.retire_close_condition`) y añadiendo la mejor.
-  **`tests_pass` (CI en verde, `shared/backlog_ci.py`, `scripts/audit/rfd_matrix_probe.py`):** lee, sin ningún secreto y sin leer ninguna variable de la bóveda (el repositorio es público y el autopiloto es un proceso de sesión: `tests/test_owner_vault.py` lo impone; la lectura sin autenticar admite 60 peticiones por hora y, agotada, es «no verificable» hasta que se libera), las ejecuciones de
+  **`tests_pass` (CI en verde, `shared/backlog_ci.py`, `scripts/gov/backlog/rfd_matrix_probe.py`):** lee, sin ningún secreto y sin leer ninguna variable de la bóveda (el repositorio es público y el autopiloto es un proceso de sesión: `tests/test_owner_vault.py` lo impone; la lectura sin autenticar admite 60 peticiones por hora y, agotada, es «no verificable» hasta que se libera), las ejecuciones de
   comprobación del cambio que entrega el ticket: el **segundo padre** del merge (la cabeza del pull request; el merge en sí no tiene ejecuciones) o el `sha` que la condición nombre. Es verde solo si hay ejecuciones, **todas las
   comprobaciones que la rama exige** (se leen de la protección de la propia rama, no se escriben aquí) han corrido y pasado, y ninguna otra ha fallado, se ha cancelado o sigue en marcha. Sin cambio entregador todavía es «aún no»
   (falso); GitHub ilegible, límite de la API, página incompleta o lista de exigidas ilegible es «no verificable» (ni pasa ni cierra) y el autopiloto lo vuelve a preguntar en su pasada siguiente. El autopiloto le da el último merge de
@@ -225,7 +225,7 @@ motor de reglas (`shared/backlog_autopilot.py`, `EDGES`) y a este texto; el text
   por defecto, no la específica: no mide, por ejemplo, un ahorro del 3 % (el criterio propio de FND-0322). Una condición `manual` cumple `NO_PROBES` pero nunca pasa sola, de modo que ese ticket lo cierra una persona. No es un `review_flag` (que habría que acusar a mano). *Guarda de fatiga:* un merge que cambia más de 12 módulos no anota nada; como máximo 5 tickets por merge, 1 de ellos sobre la señal más débil; **una nota por ticket y ejecución** (los varios merges que lo afectan se juntan en una sola nota que lleva la clave de cada uno) y
   **como mucho una cada 24 horas por ticket**; 25 tickets por ejecución; un merge de más de 2 días no se anota nunca (la primera ejecución no inunda con historia) y una repetición no escribe nada. La primera ejecución en vivo
   (simulada, solo lectura) habría escrito 9 notas, una por ticket, y no las 32 de «una por merge»: un ticket que cita las herramientas del backlog (p. ej. FND-0331) habría recibido 11. Repetición sobre los últimos 45 días (hoy y con los hechos activos): mediana 1 nota por merge (2), p90 3 (4), máximo 4 (5). Interruptor `BACKLOG_IMPACT_NOTES_ENABLED`;
-  `python scripts/audit/backlog_impact.py --replay` imprime la distribución (solo lectura). **No se construye** la propuesta automática de grupos `TRAIN` por co-cambio del plan original: los clusters `MOD.*` ya son esa señal.
+  `python scripts/gov/backlog/backlog_impact.py --replay` imprime la distribución (solo lectura). **No se construye** la propuesta automática de grupos `TRAIN` por co-cambio del plan original: los clusters `MOD.*` ya son esa señal.
 - **Estado de aplicación de la Fase A (FND-0331):** el propietario aplica el DDL por pasos, cada uno con simulacro y acuerdo expreso. **A-1** (`30_transitions.sql`,
   `migrate_backlog_v2.py --phase transitions`) es aditivo: crea el rol `backlog_owner` (sin superusuario ni login) como propietario de las rutinas privilegiadas
   (`SECURITY DEFINER`, `search_path` fijado), las tablas de auditoría y el disparador de la etapa de sombra, que **registra sin bloquear** (V-00) toda escritura directa en
@@ -260,9 +260,9 @@ motor de reglas (`shared/backlog_autopilot.py`, `EDGES`) y a este texto; el text
   una ventana nueva. **Anulación ejecutiva (FND-0350, especificación aprobada por el propietario el 2026-10-28):** `backlog_client.set_gate('ENFORCE', motivo, executive_override=True)` (función `backlog.sp_set_gate` con `p_executive_override`) omite SOLO la condición de la ventana: únicamente para `ENFORCE`, únicamente un actor humano por el rol del propietario (un agente no puede pasarla nunca: la ejecuta el propietario en su sesión), con un motivo de 80+ caracteres que cite la directiva escrita; la fila queda marcada (`gate_switch.override`), `v_gate_override_event` las lista (código `V-GATE-OVERRIDE`, se cuenta y nunca bloquea) y el pre-flight lo muestra. Ya no hace falta ninguna inserción directa en `gate_switch` (un test de repositorio lo vigila). Una **bandera** (`backlog.review_flag`) se levanta en el
   otro extremo de un enlace `IMPACTS`, o de un `OVERLAPS` que lleve `absorbs`, cuando un ticket llega a `READY_FOR_DEPLOY` o se cierra; se reconoce con `backlog_client.ack_review()`.
   Una **retención** (`backlog.hold_event`) la levanta cualquiera (`raise_hold`) y **solo un humano la libera** (`release_hold`). `SUPERSEDES` solo sugiere cerrar el ticket sustituido
-  (`v_supersede_suggestion`). **`deployment_ts` es hora del sistema** (limitación L1 de `doc/especificacion/LIMITACIONES_CONOCIDAS_BACKLOG_V2.md`): las rutinas lo sellan con la hora del cierre y **no existe ninguna rutina que lo corrija** (la única corrección, la de FND-0193, es el evento de estado 353; el propietario retiró la rutina el 2026-10-28). Un `UPDATE` suelto es una escritura directa (V-00) y reinicia el contador del paso A-2. `open_ticket()` propone como `PROPOSED RELATED` (origen `SOURCE`) los `FND-nnnn` citados en el texto. **Además propone en la misma llamada (FND-0378, plan paso 2.8a):** una vez confirmado el ticket, una llamada sin conexión inyectada calcula los tickets abiertos más cercanos por texto (el mismo orden que `backlog_links.py --new`: un rango, no un veredicto), los módulos que cita el texto (`shared/backlog_modules.py`) y los tickets abiertos que cambian esos módulos; los devuelve en el resultado (`.neighbours`, `.modules`, `.same_module`, `.proposal_note`) y, para un actor `agent:` o `system:`, los deja en **una** línea de log del ticket nuevo. Es información: **no se registra ningún enlace** (el orden por texto no tiene un umbral que separe vecinos de no vecinos), nadie aprueba nada y un fallo al calcularlo nunca falla la apertura (`proposals=False` lo apaga). Los grupos `MOD.*` siguen formándose solos cuando los clusters demuestran su precisión. El paso 0 (`scripts/ops/backlog_step0.py` y su manifiesto) lo
+  (`v_supersede_suggestion`). **`deployment_ts` es hora del sistema** (limitación L1 de `doc/especificacion/LIMITACIONES_CONOCIDAS_BACKLOG_V2.md`): las rutinas lo sellan con la hora del cierre y **no existe ninguna rutina que lo corrija** (la única corrección, la de FND-0193, es el evento de estado 353; el propietario retiró la rutina el 2026-10-28). Un `UPDATE` suelto es una escritura directa (V-00) y reinicia el contador del paso A-2. `open_ticket()` propone como `PROPOSED RELATED` (origen `SOURCE`) los `FND-nnnn` citados en el texto. **Además propone en la misma llamada (FND-0378, plan paso 2.8a):** una vez confirmado el ticket, una llamada sin conexión inyectada calcula los tickets abiertos más cercanos por texto (el mismo orden que `backlog_links.py --new`: un rango, no un veredicto), los módulos que cita el texto (`shared/backlog_modules.py`) y los tickets abiertos que cambian esos módulos; los devuelve en el resultado (`.neighbours`, `.modules`, `.same_module`, `.proposal_note`) y, para un actor `agent:` o `system:`, los deja en **una** línea de log del ticket nuevo. Es información: **no se registra ningún enlace** (el orden por texto no tiene un umbral que separe vecinos de no vecinos), nadie aprueba nada y un fallo al calcularlo nunca falla la apertura (`proposals=False` lo apaga). Los grupos `MOD.*` siguen formándose solos cuando los clusters demuestran su precisión. El paso 0 (`scripts/mig/backlog/backlog_step0.py` y su manifiesto) lo
   ejecuta el propietario tras desplegar la fase: añadir-solo, idempotente, sin revertir ningún cierre ni enlace.
-- **Cierre de tickets vinculados a un defecto de auditoría (FND-0264):** un ticket enlazado a un incidente de `control.audit_incident` no se cierra hasta que el incidente esté `CERTIFIED` (re-auditoría posterior y completa) o `ACCEPTED` (residuales vigentes). `scripts/ops/close_release.py` (envoltorio de `sp_close_release`) lo aplica; ver `GOBIERNO_CONTROLES.md` §9.
+- **Cierre de tickets vinculados a un defecto de auditoría (FND-0264):** un ticket enlazado a un incidente de `control.audit_incident` no se cierra hasta que el incidente esté `CERTIFIED` (re-auditoría posterior y completa) o `ACCEPTED` (residuales vigentes). `scripts/gov/backlog/close_release.py` (envoltorio de `sp_close_release`) lo aplica; ver `GOBIERNO_CONTROLES.md` §9.
 - **Captura automática** (`report_incident()`, `capture_exceptions()`, `install_excepthook()`): ante una excepción sin tratar abre
   un ticket `OPEN`/`BUG`/`HIGH`/`SYSTEM_AUTODETECT` o, si ya hay uno abierto con el mismo `(project_code, object_name)` en 24 h,
   añade una nota de reincidencia. Es no-op (nunca lanza ni enmascara la excepción original) si `FONDOS_BACKLOG_PG_DSN` no está
@@ -295,7 +295,7 @@ Hasta la Fase B no hay trigger que bloquee cambios de estado: pasar de `BLOCKED`
 `DEPENDS_ON` nuevo (`PROPOSED` o `CONFIRMED`) que cerraría un ciclo se rechaza al registrarlo. La tabla gana la columna `origin` (diccionario abajo). Un enlace se
 retira con un evento `REJECTED` nuevo (nunca se edita): así se hizo con `FND-0333 → FND-0331` el 2026-10-28, porque la Fase B necesita el paso A-1 (vivo y aceptado) y no el A-2.
 
-El DDL **lo aplica el propietario** (`python scripts/ops/migrate_backlog_links.py --apply`; simulacro por defecto). Hasta
+El DDL **lo aplica el propietario** (`python scripts/mig/backlog/migrate_backlog_links.py --apply`; simulacro por defecto). Hasta
 entonces las herramientas funcionan en solo lectura y avisan «almacén sin aplicar».
 
 **Diccionario de datos: `backlog.backlog_link_event.origin`** (columna nueva de la Fase B; valores fijados por un `CHECK`, por `backlog_client.LINK_ORIGINS` y por esta tabla — un test exige que
@@ -305,7 +305,7 @@ los tres coincidan; ningún consumidor existente lee la columna ni la vista `v_b
 |---|---|
 | `REVIEW` | la revisión fuera de línea de `backlog_links.py` (valor por defecto: todo evento anterior a la Fase B) |
 | `GATE` | registrado por una compuerta (reservado para la Fase C) |
-| `STEP0` | las correcciones históricas de `scripts/ops/backlog_step0.py` |
+| `STEP0` | las correcciones históricas de `scripts/mig/backlog/backlog_step0.py` |
 | `SOURCE` | propuesto por `backlog_client.open_ticket()` a partir de los `FND-nnnn` citados en el texto de un ticket nuevo (siempre `PROPOSED` / `RELATED`) |
 
 ## §4. Procedimiento
@@ -345,7 +345,7 @@ Un ticket deja de ser fiable cuando su texto, su estado o sus cifras divergen de
    hallazgo se actualiza o se lista en el log de cierre.
 
 Estado de aplicación: son reglas de procedimiento y las comprueba quien abre, empieza o cierra el ticket. Herramientas (FND-0323), todas
-**bajo demanda y de solo lectura**, elegidas por medición y no integradas en ningún ciclo: `scripts/audit/backlog_hygiene.py
+**bajo demanda y de solo lectura**, elegidas por medición y no integradas en ningún ciclo: `scripts/gov/backlog/backlog_hygiene.py
 --premise-sweep` (regla 3; encuentra los tickets que citan un identificador cambiado, **no** los que no citan ninguno) y
 `--stale-status` (regla 2; señal débil: encuentra lo que nadie toca, no lo que ya está hecho); y el filtro de población (regla 5) en la
 línea «sin divisa de clase» del informe de ciclo. **No existe** detección automática de decisiones pendientes: un marcador de texto
@@ -359,7 +359,7 @@ la apertura retroactiva de §4 «Antes de abrir» (`V-FAST`). Las reglas 1 y 3 a
 
 ### §4.2. Grupos, violaciones y métricas (fase D, FND-0335)
 
-DDL `db/pg_backlog/60_groups_violations.sql`, aplicado por el propietario con `scripts/ops/migrate_backlog_v2.py --phase groups` (simulación
+DDL `db/pg_backlog/60_groups_violations.sql`, aplicado por el propietario con `scripts/mig/backlog/migrate_backlog_v2.py --phase groups` (simulación
 por defecto; reversión `--down`, que conserva los grupos). Especificación: `PROPUESTA_BACKLOG_V2.md` §6.5 y §7.
 
 - **Grupos.** `backlog.group_tag` con `kind` ∈ {`TRAIN`, `THEME`, `DECISION`} y altas y bajas solo de inserción (`group_member`), siempre
@@ -384,7 +384,7 @@ por defecto; reversión `--down`, que conserva los grupos). Especificación: `PR
 El estado de un ticket se lee **en el punto de decisión** (promoción P3, residuales aceptados, informe de ciclo:
 `shared.backlog_client.get_action_point_status()`); `gestion` no guarda copias para nadie. Toda copia guardada en `fondos` lleva **la hora
 en que se leyó**: `control.cycle_flag.ap_status_read_ts` (bloque `cycle_flag_read_ts` de `db/pg/35_control.sql`, aplicado por el
-propietario con `scripts/ops/migrate_cycle_flag_read_ts.py`; NULL si la lectura falló o la fila es anterior). El informe de ciclo compara
+propietario con `scripts/mig/fondos/migrate_cycle_flag_read_ts.py`; NULL si la lectura falló o la fila es anterior). El informe de ciclo compara
 cada copia del último ciclo con el último evento de estado del ticket (`backlog_client.latest_status_events()`): una copia leída antes
 de que el ticket se moviera es `V-STALE-READ` (línea `Lecturas de estado del backlog` y un `[ATENCION]` con los tickets); un evento
 `BACKFILL` no cuenta como movimiento. La reacción al cierre ya existe: un residual aceptado bajo un ticket `CLOSED` sale como
@@ -395,7 +395,7 @@ de que el ticket se moviera es `V-STALE-READ` (línea `Lecturas de estado del ba
 DDL `db/pg_backlog/70_sync.sql`, aplicado por el propietario con `migrate_backlog_v2.py --phase sync` (necesita la fase D; la reversión
 conserva `ops_event` y `close_condition`). Especificación: `PROPUESTA_BACKLOG_V2.md` §6.4.8.
 
-- **Hechos operativos.** `scripts/audit/backlog_sync.py` lee `git log origin/master` y registra en `backlog.ops_event` un evento `COMMIT` por
+- **Hechos operativos.** `scripts/gov/backlog/backlog_sync.py` lee `git log origin/master` y registra en `backlog.ops_event` un evento `COMMIT` por
   (commit, ticket), con la hora de autor, como `system:sync`. Es idempotente (recorre toda la historia cada vez; no hay marca de agua que
   perder). Simulación por defecto; `--apply` escribe. El id se cita de dos formas: el tráiler `Refs: FND-nnnn` (origen `REFS`: «este
   commit es trabajo en el ticket») o el asunto (origen `SUBJECT`: una mención, que no distingue trabajo de referencia). Los ids que no
@@ -423,8 +423,8 @@ DDL `db/pg_backlog/80_hook.sql`, aplicado por el propietario con `migrate_backlo
 reversión conserva `gate_check` y `hook_bypass` y **no libera** ningún bloqueo). Especificación: `PROPUESTA_BACKLOG_V2.md` §6.4.1 y §6.4.6.
 Lectura común del mensaje (gancho y sincronización): `shared/backlog_gate.py`.
 
-- **Instalación.** `bash scripts/audit/commit-msg.sh`, una vez por clon (mismo patrón que `pre-commit.sh`). Instala `commit-msg`, que
-  ejecuta `scripts/audit/commit_msg_gate.py`, y `pre-rebase`, que se niega a reorganizar `master`. Un `git commit --no-verify` se salta ambos.
+- **Instalación.** `bash scripts/gov/repo/hooks/commit-msg.sh`, una vez por clon (mismo patrón que `pre-commit.sh`). Instala `commit-msg`, que
+  ejecuta `scripts/gov/backlog/commit_msg_gate.py`, y `pre-rebase`, que se niega a reorganizar `master`. Un `git commit --no-verify` se salta ambos.
   El instalador puede ejecutarse desde Windows (Git Bash) o desde WSL: ambos escriben en el mismo `.git/hooks`. **Pero el gancho usa el intérprete del
   `git` que hace el commit:** con Git de Windows encuentra `%USERPROFILE%\.conda\envs\des\python.exe`; con el `git` de WSL cae en el `python3` de la
   distribución, que no tiene los paquetes del proyecto, y el commit sale con `Backlog-Gate: offline` (sin penalización; `backlog_sync.py` lo ve como pendiente).
@@ -482,28 +482,28 @@ DDL `db/pg_backlog/90_collision.sql`, aplicado por el propietario con `migrate_b
   (`FONDOS_BACKLOG_PG_DSN_ADJUDICATOR`, que se teclea en su terminal); hasta entonces nadie adjudica, que es el estado seguro. El actor es una identidad `human:<login>`.
   Decisiones: `OVERLAPS` (enlace `CONFIRMED`, con `absorbs`), `RELATED` y `DEPENDS_ON` (se rechaza la propuesta y se confirma ese enlace), `NONE` (se rechaza) y `REVERT` (como
   `OVERLAPS`; la razón debe llevar el sha de 40 caracteres del revert). Cada decisión escribe un log en ambos tickets, queda en `gate_adjudication` y libera los bloqueos
-  `V-COLLISION` del ticket que se queda sin parejas no decididas. Una pareja decidida no se vuelve a proponer. La herramienta es `scripts/audit/gate_adjudicate.py`
+  `V-COLLISION` del ticket que se queda sin parejas no decididas. Una pareja decidida no se vuelve a proponer. La herramienta es `scripts/gov/backlog/gate_adjudicate.py`
   (`--list`, `--queue-out` / `--apply-decisions` con un CSV, `--decide`; simulacro por defecto en el CSV).
 - **Cola.** `v_gate_queue`: parejas no decididas con su edad; 48 h `[ATENCION]` y 96 h `[ALERTA]`. El pre-vuelo (`preflight_check.py`) imprime el `[ALERTA]` como **primera línea**
   y sale con código 2; nada se relaja porque la cola envejezca.
 - **Modos** (`sp_set_collision_mode`, solo añade): una persona fija cualquier modo; **`BLOCK` solo tras 14 días de `AUDIT` y con una proporción de commits que introducen una
   pareja de 10 % o menos** (`fn_gate_share(3)`, medida en `gate_collision`), comprobado por la base; `system:calibrator` solo puede retirar la puerta (`OFF`) o apretar `T0` a
   `T1` en el modo vigente: nunca baja `BLOCK` a `AUDIT`, nunca afloja. Rehabilitar es un evento de una persona con razón. El propietario lo hace con
-  `scripts/audit/gate_mode.py` (`--show` lee el reloj de la auditoría y lo que aún le falta a `BLOCK`; `--set MODO --reason ...` apunta el evento, con identidad `human:*`, el acceso
+  `scripts/gov/backlog/gate_mode.py` (`--show` lee el reloj de la auditoría y lo que aún le falta a `BLOCK`; `--set MODO --reason ...` apunta el evento, con identidad `human:*`, el acceso
   solo del propietario y la confirmación escrita). Poner la puerta en marcha exige **las dos cosas**: subir el techo en `shared/config.py` (cambio revisado) y ese evento.
 - **Qué acceso usa cada pieza** (fijado por `tests/test_backlog_gate_rbac.py`): los dos ganchos usan **solo** el acceso acotado `backlog_gate` (`FONDOS_BACKLOG_PG_DSN_GATE`, sin
   volver al general) y solo estas funciones del cliente: `gate_statuses`, `gate_forward`, `gate_check`, `gate_collision`, `collision_state(scoped=True)` y `gate_undecided(scoped=True)`;
   `gate_adjudicate.py` escribe solo con `backlog_adjudicator`; el calibrador (`system:calibrator`) y `gate_mode.py` escriben solo `sp_set_collision_mode`, el calibrador por el acceso
   compartido (no hay otro acotado) y siempre con una persona delante, `gate_mode.py` por el acceso solo del propietario; ninguno usa el de adjudicación.
-- **`pre-push`** (`scripts/audit/pre_push_gate.py`, lo instala `commit-msg.sh`). En `BLOCK` se niega a publicar commits cuyos tickets tengan una pareja no decidida y escribe los
+- **`pre-push`** (`scripts/gov/backlog/pre_push_gate.py`, lo instala `commit-msg.sh`). En `BLOCK` se niega a publicar commits cuyos tickets tengan una pareja no decidida y escribe los
   shas y las parejas exactas; en `AUDIT` avisa; con la puerta apagada no hace nada. Se borra una rama sin problema. Base inaccesible o error del script: el push pasa con un
   aviso (la atestación del tramo 4 repite la comprobación).
 - **Un fallo de un gancho nunca bloquea.** Los dos ganchos solo convierten en rechazo el estado de salida **3** del script; una caída (sintaxis, importación) deja pasar. Quien
-  ya instaló el gancho debe **volver a ejecutar `bash scripts/audit/commit-msg.sh`** para tener esta versión.
+  ya instaló el gancho debe **volver a ejecutar `bash scripts/gov/repo/hooks/commit-msg.sh`** para tener esta versión.
 - **Decisiones de diseño que se apartan de la letra de la especificación**, todas hacia lo más seguro: el apretado `T0 → T1` y la retirada se apuntan como eventos de
   `gate_state` (no de `ops_event`, cuyo `ticket` es obligatorio); un ticket solo recibe el bloqueo en `BLOCK` (en `AUDIT` «no se bloquea nada»); una pareja ya adjudicada
   `NONE` no se vuelve a proponer.
-- **Calibrador y retirada** (`scripts/audit/gate_calibrator.py`; simulacro por defecto, `--apply` pide la confirmación escrita; identidad del proceso `system:calibrator`). Solo
+- **Calibrador y retirada** (`scripts/gov/backlog/gate_calibrator.py`; simulacro por defecto, `--apply` pide la confirmación escrita; identidad del proceso `system:calibrator`). Solo
   **aprieta** y retira: (1) *apretado*: desde el día 10 de `AUDIT`, si la proporción de commits de los últimos 3 días que introdujeron una pareja nueva supera el 10 %, pasa
   `T0 → T1`, una sola vez; (2) *retirada*: las ventanas empiezan en el último evento de `gate_state` (inicio de la auditoría, un apretado, una rehabilitación) y necesitan 14
   días; un veredicto exige al menos **15 parejas adjudicadas y 10 OVERLAPS confirmados nuevos** (la ventana se alarga hasta 42 días; pasado eso informa «datos insuficientes» y
@@ -537,7 +537,7 @@ sigue disponible cuando el propietario lo ejecuta a mano (`--attest`).
   parejas de colisión de sus tickets, decididas o no. **Solo identificadores: ni títulos ni texto** (el remoto es GitHub). Solo lee la base de datos. **La clave privada nunca está en el
   repositorio ni en `.env`**: el script se niega si está dentro del árbol. El commit de la atestación (todos sus cambios bajo `backlog_gate/`) queda fuera del rango: se commitean los dos
   ficheros juntos y se publica.
-- **CI** (`.github/workflows/backlog-gate.yml`, tarea `backlog-gate`, que es el contexto que debe exigir la rama). `scripts/audit/verify_attestation.py` falla si un commit del rango que
+- **CI** (`.github/workflows/backlog-gate.yml`, tarea `backlog-gate`, que es el contexto que debe exigir la rama). `scripts/gov/backlog/verify_attestation.py` falla si un commit del rango que
   cita un ticket falta en la atestación o su hash de árbol o su nonce difieren, si alguna pareja está sin decidir, o si la firma no verifica. **Verifica con el `allowed_signers` de la BASE del
   rango**, así un cambio no puede traer su propia clave. Mientras ese fichero no liste ninguna clave la puerta **no se aplica** y el trabajo pasa con un aviso `NOT ENFORCED` (nunca un verde
   silencioso). Límite declarado: la CI prueba que la clave del propietario firmó una declaración; no puede comprobar la base de datos.
@@ -549,7 +549,7 @@ sigue disponible cuando el propietario lo ejecuta a mano (`--attest`).
   remota y no es una fuente. **El token es opcional mientras el repositorio sea público:** sin token se lee el objeto público de la rama
   (`GET /repos/{repo}/branches/{rama}`, que lista las comprobaciones obligatorias y su nivel de aplicación) y la respuesta es igual de concluyente; solo si tampoco se puede leer
   (sin red, o repositorio privado sin token) la lectura es `UNVERIFIED`. Con token se usa antes el punto de administración. Un nivel de aplicación `off` no cuenta como obligatoria. Con `--apply` la lectura se apunta en `gate_protection_event` (solo si cambia o tiene más de 24 h).
-- **Eventos del propietario** (`scripts/audit/gate_protection.py`, con identidad `human:*` y el acceso solo del propietario): `--verified "razón"` (ha mirado él mismo los ajustes del
+- **Eventos del propietario** (`scripts/gov/backlog/gate_protection.py`, con identidad `human:*` y el acceso solo del propietario): `--verified "razón"` (ha mirado él mismo los ajustes del
   repositorio) despeja `V-GATE-UNVERIFIED` durante **30 días**, pero nunca `V-GATE-UNPROTECTED`; `--emergency "razón"` registra un push de emergencia (`V-GATE-EMERGENCY`, que queda en el
   historial). Protocolo de emergencia (`PROPUESTA` §6.4.7): el propietario como administrador salta la regla, registra el evento el mismo día y **en 48 h** genera una clave nueva, commitea
   su parte pública en `.github/backlog_gate_allowed_signers`, firma una atestación de recuperación del rango y relanza la comprobación con `workflow_dispatch` (campo `base`). La pérdida o la
@@ -557,11 +557,11 @@ sigue disponible cuando el propietario lo ejecuta a mano (`--attest`).
 - **Acciones del propietario, en orden:** (1) generar la clave (`ssh-keygen -t ed25519 -C backlog-gate-owner`, con frase de paso, fuera del repositorio); (2) commitear la línea pública
   `backlog-gate-owner namespaces="backlog-gate" ssh-ed25519 AAAA...` en `.github/backlog_gate_allowed_signers` con un cambio revisado (vale para el rango SIGUIENTE); (3) crear el token de
   solo lectura y exportarlo solo en su terminal; (4) tras el primer push con CI verde, añadir `backlog-gate` a las comprobaciones obligatorias de `master`
-  (`scripts/ops/github_protect_master.py` describe y verifica el resto de la regla); (5) aplicar `--phase attest`.
+  (`scripts/gov/delivery/github_protect_master.py` describe y verifica el resto de la regla); (5) aplicar `--phase attest`.
 
 ### §4.8. Verificación de aceptación de la fase C (FND-0334)
 
-`python scripts/audit/backlog_phase_c_acceptance.py --verify hook|collision|attest|all` comprueba, **solo con lectura**, que lo que el propietario aplicó es exactamente lo diseñado, y deja
+`python scripts/mig/backlog/backlog_phase_c_acceptance.py --verify hook|collision|attest|all` comprueba, **solo con lectura**, que lo que el propietario aplicó es exactamente lo diseñado, y deja
 la evidencia en `out/audit/fnd0334_acceptance_<fase>_<UTC>.txt` (sale con 0 si todo pasa, 1 si algo falla, 2 si no hay conexión). Úsese tras cada `--phase hook|collision|attest --apply`.
 Para cada fase: existen las tablas, vistas y rutinas (las listas son las de `migrate_backlog_v2.py`: una sola fuente); cada tabla es de `backlog_owner` y lleva el disparador de solo-añadir
 **habilitado** (uno deshabilitado es un fallo); cada rutina privilegiada es `SECURITY DEFINER`, de `backlog_owner`, con `search_path` fijo y no ejecutable por `PUBLIC`. Los accesos acotados
@@ -585,7 +585,7 @@ demostrado, con pruebas reproducibles sobre datos reales, que funciona correctam
   `WriterRefused` sin haber escrito nada; una persona o un agente no se juzgan aquí; una conexión inyectada (las suites herméticas) tampoco. Es una guarda del proceso que llama al cliente, no una frontera de seguridad (el mismo límite que el vault).
 - **El módulo de entrada** de un escritor ofrece `plan(bc, ahora)` (qué escribiría: solo lee), `apply(bc, plan, *, caps, enabled)` (escribe por el cliente y devuelve exactamente lo que escribió; con `enabled=False` no escribe; se detiene en los topes) y, opcionalmente, `protections(bc)` (comprobaciones de
   sus propias protecciones, por ejemplo «nunca pisa la decisión de una persona»). `bc` es el cliente atado a una conexión (`BoundClient`), así que la misma entrada corre contra el backlog vivo **solo en lectura** y contra una base desechable.
-- **`python scripts/audit/writer_proof.py --writer NOMBRE`** hace la prueba entera. (a) **Simulacro con datos reales** (`--dry-run-only` lo deja ahí): el plan sobre el backlog vivo en una transacción de solo lectura, **medido**: duplicaciones, volumen y concentración por ticket frente a los topes; un
+- **`python scripts/gov/backlog/writer_proof.py --writer NOMBRE`** hace la prueba entera. (a) **Simulacro con datos reales** (`--dry-run-only` lo deja ahí): el plan sobre el backlog vivo en una transacción de solo lectura, **medido**: duplicaciones, volumen y concentración por ticket frente a los topes; un
   incumplimiento falla. (b) **Prueba sobre una base desechable cargada desde una instantánea real** (de solo lectura; el mismo mecanismo que los escenarios de staging, FND-0351; `shared/backlog_scratch.py` rechaza cualquier destino vivo antes de nada): el escritor corre DE VERDAD allí y se comprueba que
   su **interruptor apagado no escribe nada**, que los **topes lo detienen**, que lo que declara haber hecho **es lo que la base contó**, que escribe **solo los tipos que declara**, que sus escrituras reales respetan los topes y **que una segunda ejecución no escribe nada** (idempotente); un plan con menos de dos
   escrituras no prueba nada y falla. El resultado (escritor, resumen del código, resumen de la instantánea, medidas, veredicto y motivos) se añade a `out/audit/writer_proofs.jsonl`; es reproducible con `--snapshot` y el mismo código. `--list` muestra el estado de cada escritor; `--verify NOMBRE`, si está PROBADO para el código actual.
@@ -604,7 +604,7 @@ Cuando un enlace `OVERLAPS` lleva nota `absorbs`, el ticket que absorbe **debe**
 
 Sin esto, un requisito se pierde en silencio cuando el ticket absorbido se cierra como cubierto.
 
-## §6. Descubrimiento y revisión (`scripts/audit/backlog_links.py`)
+## §6. Descubrimiento y revisión (`scripts/gov/backlog/backlog_links.py`)
 
 **Señales** (una pareja puede llevar varias; ninguna decide sola): **S1** mención explícita de un `FND-nnnn` en título/descripción/
 logs (+ pista de tipo por las palabras que la rodean; «split out to FND-x» invierte la dirección); **S2** huella de ficheros
@@ -649,7 +649,7 @@ abiertos (`shared/backlog_overlap.classify_incident`):
 - **MEDIUM:** se abre el ticket nuevo y su primer log solo **sugiere** el relacionado («Possibly related (NOT merged)»).
 - **NONE:** comportamiento de siempre.
 
-**Puerta de activación (D-1)** — `python scripts/audit/backlog_links_calibration.py --gate` debe dar **cero falsas fusiones** en
+**Puerta de activación (D-1)** — `python scripts/gov/backlog/backlog_links_calibration.py --gate` debe dar **cero falsas fusiones** en
 (a) la reproducción histórica (cada ticket tratado como incidencia nueva contra los abiertos en su `creation_ts`; positivos =
 cerrados como `DUPLICATED` con destino citado + `DUPLICATES` confirmados) y (b) el fixture sintético
 `tests/fixtures/backlog_incident_cases.json` (mismo módulo/otro defecto, mismo defecto/otra redacción, RC de lanzadores,
@@ -668,7 +668,7 @@ formato de error/log:
 - [ ] su `object_name` (o el prefijo constante del f-string) figura en `object_name_prefixes` del fixture y tiene al menos un caso
   duro; **lo hace cumplir** `tests/test_backlog_overlap.py::test_every_incident_reporter_has_a_fixture_case` (AST sobre
   `shared/`, `proyecto*/`, `scripts/`), no solo esta lista;
-- [ ] `python scripts/audit/backlog_links_calibration.py --gate` en verde;
+- [ ] `python scripts/gov/backlog/backlog_links_calibration.py --gate` en verde;
 - [ ] si cambia `LINK_TYPES`/`LINK_STATUSES`: el `CHECK` de `20_links.sql` y `backlog_client` se mantienen iguales (lo verifica
   `tests/test_backlog_links_client.py`).
 
@@ -687,18 +687,18 @@ Al cerrar o actualizar un ticket (§4.1):
 
 | Qué | Comando |
 |---|---|
-| Aplicar el almacén (propietario) | `python scripts/ops/migrate_backlog_links.py` (simulacro) · `--apply` |
-| Barrido general | `python scripts/audit/backlog_links.py --all` |
+| Aplicar el almacén (propietario) | `python scripts/mig/backlog/migrate_backlog_links.py` (simulacro) · `--apply` |
+| Barrido general | `python scripts/gov/backlog/backlog_links.py --all` |
 | Antes de abrir / al empezar | `--new "<texto>"` · `--for FND-nnnn` |
 | Revisión | `--review-out` → rellenar CSV → `--apply-review F.csv` → `--confirm` |
 | Gráfico | `--mermaid [--with-candidates]` |
-| Higiene del registro (§4.1) | `python scripts/audit/backlog_hygiene.py --premise-sweep "<rev>^..<rev>"` · `--stale-status [--days N]` |
-| Puerta de la política automática | `python scripts/audit/backlog_links_calibration.py --gate` |
-| Verificar el estado y la puerta sin tocar el vivo (§9.1) | `python scripts/ops/backlog_staging.py` · `--scenario a2_revoke` · `--synthetic` |
-| ¿El vivo tiene todo el DDL de master? (§9.1, solo lectura) | `python scripts/ops/backlog_drift.py` |
+| Higiene del registro (§4.1) | `python scripts/gov/backlog/backlog_hygiene.py --premise-sweep "<rev>^..<rev>"` · `--stale-status [--days N]` |
+| Puerta de la política automática | `python scripts/gov/backlog/backlog_links_calibration.py --gate` |
+| Verificar el estado y la puerta sin tocar el vivo (§9.1) | `python scripts/gov/backlog/backlog_staging.py` · `--scenario a2_revoke` · `--synthetic` |
+| ¿El vivo tiene todo el DDL de master? (§9.1, solo lectura) | `python scripts/gov/backlog/backlog_drift.py` |
 
 Salidas en `out/reports/backlog_links/` (ignorado por git). Tests: puros (`test_backlog_links_*.py`, `test_backlog_overlap.py`,
-`test_backlog_links_calibration.py`) y herméticos PG (`python scripts/ops/run_pg_tests.py -- tests/test_backlog_links_ddl_pg.py
+`test_backlog_links_calibration.py`) y herméticos PG (`python scripts/gov/delivery/run_pg_tests.py -- tests/test_backlog_links_ddl_pg.py
 tests/test_backlog_links_client_pg.py tests/test_backlog_incident_overlap_pg.py`).
 
 ### §9.1. Regla de pruebas: nada sintético contra el backlog vivo (FND-0351)
@@ -707,7 +707,7 @@ tests/test_backlog_links_client_pg.py tests/test_backlog_incident_overlap_pg.py`
 máquina de estados o de la lógica de la puerta se hace en un **contenedor de preparación aislado** cargado con una instantánea del backlog, nunca en el vivo. Leer el vivo en solo lectura (una
 exportación) sigue permitido. Esto incluye las transacciones con retroceso que consumieron `FND-0339` a `FND-0349` (ver abajo).
 
-- **Un solo comando:** `python scripts/ops/backlog_staging.py` exporta una instantánea nueva (solo lectura), levanta el contenedor desechable de `run_pg_tests.py`, aplica el DDL real de las fases
+- **Un solo comando:** `python scripts/gov/backlog/backlog_staging.py` exporta una instantánea nueva (solo lectura), levanta el contenedor desechable de `run_pg_tests.py`, aplica el DDL real de las fases
   elegidas (`--phases`, por defecto `transitions,relations`), ejecuta los escenarios y lo destruye. **Demuestra** que no dejó rastro: lee los valores de las secuencias vivas antes y después y deben
   ser idénticos (`live sequences after the run: UNCHANGED`). `--synthetic` o `--snapshot FILE` no tocan el vivo en absoluto.
 - **Escenarios** (`tests/test_backlog_staging_pg.py`): `gate_clean`, `gate_blocked`, `gate_forced` (el camino excepcional con motivo de 40+ caracteres, contado), `gate_audit_window` (en AUDIT no se
@@ -718,7 +718,7 @@ exportación) sigue permitido. Esto incluye las transacciones con retroceso que 
   alias de localhost iguales), **no** esté en el mismo **servidor** (host y puerto) que un objetivo vivo, y su nombre esté en una lista exacta (`fondos_test`, `backlog_staging_*`). La identificación es
   positiva: el backlog vivo se llama `gestion`, así que «el nombre no es producción» no sirve. La idea de proteger por convención sobre los títulos de los tickets queda **rechazada**: una convención se
   olvida y un error tipográfico la salta.
-- **Deriva entre master y el vivo (solo lectura):** `python scripts/ops/backlog_drift.py` aplica las fases de `migrate_backlog_v2.py` (en el orden en que las recibió el vivo; sin `iam` ni `revoke`) al contenedor
+- **Deriva entre master y el vivo (solo lectura):** `python scripts/gov/backlog/backlog_drift.py` aplica las fases de `migrate_backlog_v2.py` (en el orden en que las recibió el vivo; sin `iam` ni `revoke`) al contenedor
   desechable, toma una huella (md5 de cada rutina y vista, columnas de cada relación del esquema `backlog`) y la compara con el catálogo vivo, que solo lee. Por cada diferencia nombra la fase que define el
   objeto, es decir, el comando que el propietario debe ejecutar (primero en seco). Códigos: 0 sin deriva, 1 deriva, 2 no se pudo leer el vivo o construir master. Una fase fusionada y no aplicada (caso FND-0350)
   no la detecta nada más en el repositorio. Conviene ejecutarlo tras cada fusión que toque `db/pg_backlog/`.
@@ -732,8 +732,8 @@ exportación) sigue permitido. Esto incluye las transacciones con retroceso que 
 `BACKLOG_GATE_GITHUB_TOKEN`) no pueden estar en `.env`: lo carga cada sesión de agente (orden del propietario, 2026-10-29). Escribirlas y borrarlas en cada terminal es ineficiente (decisión del
 propietario, 2026-11-01: «debe ser transparente y automático»).
 
-**Solución.** `shared/owner_vault.py` y `scripts/ops/owner_vault.py`:
-- **Alta, una sola vez por cadena:** `python scripts/ops/owner_vault.py set FONDOS_PG_DSN_OWNER` (entrada oculta, dos veces; exige una consola real). Se guarda cifrada con DPAPI de Windows para el usuario
+**Solución.** `shared/owner_vault.py` y `scripts/gov/backlog/owner_vault.py`:
+- **Alta, una sola vez por cadena:** `python scripts/gov/backlog/owner_vault.py set FONDOS_PG_DSN_OWNER` (entrada oculta, dos veces; exige una consola real). Se guarda cifrada con DPAPI de Windows para el usuario
   actual en `%LOCALAPPDATA%\fondos\owner_vault.json`, **fuera del repositorio**. `list` muestra solo nombres, `check` comprueba que cada valor se descifra, `remove` borra una.
 - **Uso, sin ningún paso del operador:** una herramienta del propietario (la lista `OWNER_TOOLS`: las migraciones, `close_release.py`, `backlog_v3_bootstrap.py`, `gate_adjudicate.py`, `gate_mode.py`,
   `github_protect_master.py`, el estado de ciclo de los lanzadores...) recibe **solo sus variables**, en **su propio proceso**, cuando una persona la ejecuta en una **consola real** (la misma
@@ -752,7 +752,7 @@ herramienta del propietario que llame a una función de escritura sigue pasando 
 
 **Objetivo (propietario, 2026-11-01):** reducir las tareas administrativas y evitar la consola. El vault (§9.2) quitó teclear la cadena; esto quita ejecutar la migración.
 
-**`scripts/ops/owner_deploy.py`.** Un vigilante local, en la sesión de Windows del propietario (`install-startup` deja un lanzador en su carpeta Inicio, sin permisos de administrador; `remove-startup` lo
+**`scripts/gov/backlog/owner_deploy.py`.** Un vigilante local, en la sesión de Windows del propietario (`install-startup` deja un lanzador en su carpeta Inicio, sin permisos de administrador; `remove-startup` lo
 quita): cada 10 minutos hace `git fetch` y compara `origin/master` con el último commit desplegado (`init` lo fija una vez, tras comprobar con la herramienta de deriva que el vivo coincide con master). Si
 cambió el DDL de `db/pg_backlog`, calcula **qué fases** están pendientes (cada fase se corresponde con sus ficheros de DDL, en el orden de aplicación; un cambio solo de la herramienta, de la documentación o de
 un script de reversión no es DDL que aplicar) y **abre una ventana** con los commits, las fases y **el diff del DDL**: lo que se aprueba se ejecuta con el rol del propietario y llegó por una fusión
@@ -768,7 +768,7 @@ automática, así que un clic sobre una pregunta sin contenido sería un sello d
 **Modo `AUTO` (Backlog v3.1, decisión del propietario del 2026-11-01: «sin consola, sin clic»; `BACKLOG_AUTO_DEPLOY_MODE` = `AUTO` | `ASK`, por defecto `AUTO`, un valor desconocido se lee como `ASK`).** Una versión
 pendiente se aplica **sin ventana**, detrás de puertas automáticas, todas ya existentes o verificables:
 1. **Puerta local de DDL (FND-0377; sustituye a la CI de GitHub, fuera del ciclo desde el 2026-11-02, decisión G8 del propietario: «lo automático es el imperativo, con los controles implementados»).** Antes de tocar el backlog vivo, y antes del punto de restauración, el vigilante ejecuta las pruebas
-   herméticas del backlog (`tests/test_backlog_*_pg.py` y `tests/test_owner_deploy_pg.py`: migración, reversión y aceptación) sobre un **clon limpio del commit** que va a aplicar, en un contenedor Postgres desechable, sin ninguna cadena de conexión (`scripts/ops/run_pg_tests.py`), y las juzga con la
+   herméticas del backlog (`tests/test_backlog_*_pg.py` y `tests/test_owner_deploy_pg.py`: migración, reversión y aceptación) sobre un **clon limpio del commit** que va a aplicar, en un contenedor Postgres desechable, sin ninguna cadena de conexión (`scripts/gov/delivery/run_pg_tests.py`), y las juzga con la
    misma regla que los recibos locales (`shared/delivery_receipt.py`: tienen que haberse ejecutado de verdad y haber pasado). Si **fallan**, no se aplica nada, se abre una incidencia y la versión se ofrece en la ventana; si la puerta **no puede ejecutarse** (contenedor caído, WSL parado, intérprete que no arranca) no se aplica nada
    y se abre la ventana, que dice por qué, como con un punto de restauración que no se puede crear. Se comprueba **después** de la cadena del vault (no gasta una ejecución de pruebas si falta). El mismo control protege el `revoke`. El recibo JSON de cada despliegue guarda el veredicto de la puerta y **el diff del DDL
    aplicado** («presentar el cambio»), y el aviso final muestra el veredicto. `ASK` sigue siendo el respaldo y el modo de la ventana (nunca pasa por la puerta: la decisión es de una persona sobre un diff visible).
@@ -788,7 +788,7 @@ herramientas de migración y deriva, `shared/config.py`, el vault, el cliente), 
 **`revoke` (A-2) por el vigilante, activado por decisión del propietario del 2026-11-01** (`BACKLOG_AUTO_REVOKE_ENABLED`, FND-0363; poner `False` lo desactiva): cambia la postura de seguridad del backlog. Con el interruptor en `True`, el vigilante en `AUTO`
 aplica `revoke` **solo** (con las mismas puertas: punto de restauración, deriva, reversión automática, incidente) cuando se cumplen a la vez: la etapa en sombra muestra 50 transiciones de no sistema desde la última escritura directa (la
 herramienta de migración lo rechaza antes de eso), el resto del DDL de `master` ya está desplegado (para que la comprobación de deriva juzgue solo a `revoke`) y el privilegio de escritura directa sigue vivo. Un intento fallido se registra
-(`revoke_failed`) y no se repite solo. **Resumen semanal de solo lectura** (`scripts/audit/backlog_digest.py`, lo escribe el autopiloto una vez por semana ISO en `out/backlog_digest/`): cuántas transiciones hizo una persona de las de la semana
+(`revoke_failed`) y no se repite solo. **Resumen semanal de solo lectura** (`scripts/gov/backlog/backlog_digest.py`, lo escribe el autopiloto una vez por semana ISO en `out/backlog_digest/`): cuántas transiciones hizo una persona de las de la semana
 (la medida de la carga administrativa), reaperturas por causa, el registro del autopiloto y lo que merece una mirada; no pide nada.
 
 **Límite reconocido:** igual que §9.2, es una guarda y no una frontera: código ejecutado con el mismo usuario de Windows podría leer el vault y lanzar la migración sin pasar por la ventana. Lo que garantiza

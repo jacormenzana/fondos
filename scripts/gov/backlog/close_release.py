@@ -3,7 +3,7 @@
 """
 close_release.py -- close deployed backlog tickets through backlog.sp_close_release, with the audit-incident gate (FND-0264, GOV-05).
 
-    python scripts/ops/close_release.py --release R2026.10-GOV-05 --tickets FND-0264,FND-0275 --log "what was deployed, where verified"
+    python scripts/gov/backlog/close_release.py --release R2026.10-GOV-05 --tickets FND-0264,FND-0275 --log "what was deployed, where verified"
     ... --apply        # without it: DRY RUN, everything is checked and rolled back
 
 One transaction in gestion.backlog: every ticket must exist, be IN_PROGRESS or READY_FOR_DEPLOY and carry no release yet; the release label
@@ -27,7 +27,7 @@ import re
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
 from shared import backlog_release as rel  # noqa: E402
@@ -173,7 +173,7 @@ def main(argv: "list | None" = None) -> int:
                     print(f"  incident #{r['incident_id']} CLOSED")
                 except Exception as exc:                         # noqa: BLE001 -- the ticket is closed; say the incident was not
                     print(f"  WARNING: incident #{r['incident_id']} not marked CLOSED ({type(exc).__name__}): "
-                          "scripts/audit/audit_incident.py --close", file=sys.stderr)
+                          "scripts/audit/stat/audit_incident.py --close", file=sys.stderr)
         finally:
             fconn.close()
     return RC_OK

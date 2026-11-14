@@ -1,4 +1,4 @@
-# scripts/audit/artifact_retention.py
+# scripts/gov/repo/artifact_retention.py
 # -*- coding: utf-8 -*-
 """Retention report for the artifacts that live outside the log registry (FND-0268; rule text: doc/reglas/NORMAS_IMPLEMENTACION.md section 4.10).
 
@@ -11,7 +11,7 @@ the rule (the doc points here).
   out/diag              diagnostic CSVs: `_tmp_*` removable after `tmp_days`, the rest after `keep_days`, by modification time.
 
 PDFs and Raw_KIID_Text are never deleted (separate rule). Usage:
-    C:\\Users\\jacor\\.conda\\envs\\des\\python.exe scripts\\audit\\artifact_retention.py [--root DIR] [--today YYYY-MM-DD] [--list]
+    C:\\Users\\jacor\\.conda\\envs\\des\\python.exe scripts\\gov\\repo\\artifact_retention.py [--root DIR] [--today YYYY-MM-DD] [--list]
 Exit code is always 0 (it is a report, not a gate).
 """
 from __future__ import annotations
@@ -22,7 +22,7 @@ import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 
 RETENTION: dict = {
     "harvest_raw": {"globs": ("proyecto1/harvest/harvest_raw_*.jsonl", "proyecto1/harvest_raw_*.jsonl"), "keep_all_days": 90},

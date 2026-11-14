@@ -4,7 +4,7 @@ Why: "0 misses among the defects we already found" says nothing about what the s
 validators (and later the suspicion predicate and the escalation engine) whether they notice. Each class below is a generic transformation of a monthly NAV frame (columns date, nav), never tied to a
 fund (P#5). Pure: no DB, no config; deterministic (no random numbers); `inject` returns a copy and never touches its input.
 
-`expected` names the detectors that SHOULD catch a class today, among DETECTORS of scripts/audit/fault_injection_run.py. An empty tuple is not a bug of the class: it marks a gap that a later layer
+`expected` names the detectors that SHOULD catch a class today, among DETECTORS of scripts/audit/nav/fault_injection_run.py. An empty tuple is not a bug of the class: it marks a gap that a later layer
 (WS2 predicate, WS3 engine) must close, and the harness reports it as such instead of hiding it.
 
   scale_up_x100        the series jumps x100 from month k (a share-class re-denomination read as a price)

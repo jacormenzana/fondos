@@ -6,7 +6,7 @@ Hermetic (pg_conn, rolled-back savepoint). Covers open_ticket / transition / sha
 keeps the legacy path until the owner applies A-1, and report_incident opening its tickets through sp_open_ticket. The legacy path of
 report_incident is covered by tests/test_backlog_incident_overlap_pg.py (base schema only), which must keep passing unchanged.
 
-    python scripts/ops/run_pg_tests.py -- tests/test_backlog_client_a1_pg.py
+    python scripts/gov/delivery/run_pg_tests.py -- tests/test_backlog_client_a1_pg.py
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ import psycopg
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops")):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "mig" / "backlog")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 

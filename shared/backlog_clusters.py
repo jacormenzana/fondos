@@ -2,7 +2,7 @@
 """
 backlog_clusters.py -- clusters of tickets that change the same module, derived (Backlog v3 W4b slice 2, FND-0360; doc/especificacion/ACTION_PLAN_BACKLOG_V3.md section W4b).
 
-Pure rules; the runner (scripts/audit/backlog_modules.py) reads the module facts and the groups and writes through backlog.sp_create_group / sp_group_member. No database, no git, no network here.
+Pure rules; the runner (scripts/gov/backlog/backlog_modules.py) reads the module facts and the groups and writes through backlog.sp_create_group / sp_group_member. No database, no git, no network here.
 
 The facts come from shared/backlog_modules.py (slice 1): TARGET (declared) and TOUCHED (a commit changed it) make a cluster; CITED (text) only proposes and never does. Decided here and nowhere else (P#11):
   1. the edge between two tickets: one weighted signal per shared module, explainable (the modules are kept as evidence);
@@ -26,7 +26,7 @@ from shared import backlog_modules as bm
 
 SWEEP_MODULES = 5                 # a commit that changed MORE modules than this is sweeping: its TOUCHED facts make no edge (owner directive 2026-11-01; calibrated by --measure)
 
-# Signal weights (the strongest signal of a pair is its score). Calibrated by scripts/audit/backlog_modules.py --measure (NORMAS_BACKLOG.md section 6 rule).
+# Signal weights (the strongest signal of a pair is its score). Calibrated by scripts/gov/backlog/backlog_modules.py --measure (NORMAS_BACKLOG.md section 6 rule).
 W_SYMBOL, W_TARGET, W_MIXED, W_TOUCHED = 1.0, 0.8, 0.7, 0.6
 EDGE_MIN = 0.6                    # an edge below this score does not link two tickets
 MAX_OPEN_MEMBERS = 8              # OPEN tickets of one cluster; closed members never count

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Create/refresh the read-only roles on the LIVE Postgres 17 and (re)generate their passwords.
-# Run inside WSL:  bash /mnt/c/desarrollo/fondos/scripts/ops/create_readonly_roles.sh
+# Run inside WSL:  bash /mnt/c/desarrollo/fondos/scripts/mnt/db/create_readonly_roles.sh
 # Passwords are random, written to /opt/docker/db/postgresql17/secrets/<role>_password (mode 600),
 # never printed. Re-running keeps existing password files and re-applies the grants (idempotent);
 # delete a password file first if you want it rotated.

@@ -43,9 +43,9 @@ Non-canonical files are excluded by _is_noncanonical():
   - BackUp / Backup in name
 
 Usage:
-  python scripts/audit/sync_agents_md.py           # report mode (default)
-  python scripts/audit/sync_agents_md.py --check   # exit 1 on sentinel drift
-  python scripts/audit/sync_agents_md.py --write   # update all governed files in-place
+  python scripts/gov/repo/sync_agents_md.py           # report mode (default)
+  python scripts/gov/repo/sync_agents_md.py --check   # exit 1 on sentinel drift
+  python scripts/gov/repo/sync_agents_md.py --write   # update all governed files in-place
 
 Multi-file enforcement: drift in any governed file (AGENTS.md or SCHEMA_REFERENCE.md)
 fails --check with exit code 1.
@@ -55,14 +55,14 @@ BEGIN/END pair, in the file it is registered for; a sentinel in a governed file 
 file, and a generator that raises, are failures as well (--check and --write exit 1; --write then writes
 nothing). Before this, a missing or malformed pair was skipped and --check still exited 0.
 
-Pre-commit hook installer: scripts/audit/pre-commit.sh
+Pre-commit hook installer: scripts/gov/repo/hooks/pre-commit.sh
 """
 import ast
 import re
 import sys
 from pathlib import Path
 
-ROOT             = Path(__file__).resolve().parents[2]
+ROOT             = Path(__file__).resolve().parents[3]
 AGENTS           = ROOT / "AGENTS.md"
 SCHEMA_REFERENCE = ROOT / "doc/reglas/SCHEMA_REFERENCE.md"
 NORMAS_IMPL      = ROOT / "doc/reglas/NORMAS_IMPLEMENTACION.md"

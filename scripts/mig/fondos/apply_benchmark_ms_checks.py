@@ -4,8 +4,8 @@
 apply_benchmark_ms_checks.py — create control.benchmark_ms_checks on a Postgres database (the negative
 cache of proyecto1/src/loaders/benchmark_loader.py) and verify that the pipeline role can use it.
 
-    python scripts/ops/apply_benchmark_ms_checks.py            # DRY RUN: shows the target and the SQL, changes nothing
-    python scripts/ops/apply_benchmark_ms_checks.py --apply    # creates the table (idempotent: IF NOT EXISTS)
+    python scripts/mig/fondos/apply_benchmark_ms_checks.py            # DRY RUN: shows the target and the SQL, changes nothing
+    python scripts/mig/fondos/apply_benchmark_ms_checks.py --apply    # creates the table (idempotent: IF NOT EXISTS)
 
 The DDL is read from db/pg/35_control.sql (the single source of truth), never duplicated here. It runs
 with FONDOS_PG_DSN_OWNER (DDL needs table ownership; the pipeline role fondos_app has none by design,
@@ -25,7 +25,7 @@ import re
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 DDL_FILE = ROOT / "db" / "pg" / "35_control.sql"
 TABLE = "control.benchmark_ms_checks"
 APP_ROLE = "fondos_app"

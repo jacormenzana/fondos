@@ -12,7 +12,7 @@ deliberate edit of RULE_PARAMS (a test pins them). The first scoring run covered
 39% false alarms; a persistent state rule "hit" an episode only because it was already on), so scoring is restricted to the euro era and every rule is
 judged separately, with its false-alarm months counted outside ALL labelled episodes. The episodes are labelled from history, not from the data.
 
-Pure module: no DB, no network (R-7). scripts/audit/sovereign_stress_backtest.py fetches the public data and calls it. MONITOR-ONLY: nothing in
+Pure module: no DB, no network (R-7). scripts/audit/p3/sovereign_stress_backtest.py fetches the public data and calls it. MONITOR-ONLY: nothing in
 the pipeline reads this yet, and no portfolio weight may depend on it before the out-of-sample validation (FND-0193).
 """
 

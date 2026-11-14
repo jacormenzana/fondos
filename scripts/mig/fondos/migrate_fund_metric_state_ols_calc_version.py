@@ -5,8 +5,8 @@ migrate_fund_metric_state_ols_calc_version.py — add control.fund_metric_state.
 backfill it, so the CALC_VERSION-aware OLS gate (run_pipeline._ols_is_fresh) does not recompute the macro
 OLS of every fund on its first run.
 
-    python scripts/ops/migrate_fund_metric_state_ols_calc_version.py            # DRY RUN: read-only, no DDL, no lock
-    python scripts/ops/migrate_fund_metric_state_ols_calc_version.py --apply    # ALTER + backfill in ONE transaction
+    python scripts/mig/fondos/migrate_fund_metric_state_ols_calc_version.py            # DRY RUN: read-only, no DDL, no lock
+    python scripts/mig/fondos/migrate_fund_metric_state_ols_calc_version.py --apply    # ALTER + backfill in ONE transaction
 
 Why (2026-10-05 RCA): the 2026-10-04 CALC_VERSION bump bypassed the input-hash cache but not the quarterly
 OLS gate, so every fund skipped OLS (ols_funds=0) and the macro rows stayed on the old version.
@@ -36,7 +36,7 @@ import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 STATE_TABLE = "control.fund_metric_state"
 METRICS_TABLE = "gold.fund_metrics"
 LOG_TABLE = "control.p2_pipeline_log"

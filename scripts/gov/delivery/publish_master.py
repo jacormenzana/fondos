@@ -3,8 +3,8 @@
 """
 publish_master.py -- the gated push to origin/master (FND-0273). The owner's push, with the checks a bare `git push` does not make.
 
-    python scripts/ops/publish_master.py <hash> --tickets FND-0273,FND-0275            # DRY RUN: every check, nothing pushed
-    python scripts/ops/publish_master.py <hash> --tickets FND-0273,FND-0275 --apply    # the same checks, then `git push origin <hash>:master`
+    python scripts/gov/delivery/publish_master.py <hash> --tickets FND-0273,FND-0275            # DRY RUN: every check, nothing pushed
+    python scripts/gov/delivery/publish_master.py <hash> --tickets FND-0273,FND-0275 --apply    # the same checks, then `git push origin <hash>:master`
 
 What it refuses (exit 1, the message says which):
   * origin/master is not an ancestor of <hash> (the branch is behind or diverged: rebase first);
@@ -27,7 +27,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 TIP = "origin/master"
 TICKET_RE = re.compile(r"\bFND-\d{4}\b")
 RC_OK, RC_REFUSED, RC_USAGE = 0, 1, 2

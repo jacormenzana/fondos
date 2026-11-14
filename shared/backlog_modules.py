@@ -2,7 +2,7 @@
 """
 backlog_modules.py -- which modules a ticket is about, derived (Backlog v3 W4b, FND-0360; doc/especificacion/ACTION_PLAN_BACKLOG_V3.md section W4b).
 
-Pure rules; the runner (scripts/audit/backlog_modules.py) gathers the facts from git and the backlog and records what is new through backlog.sp_record_module. No database, no git, no network here.
+Pure rules; the runner (scripts/gov/backlog/backlog_modules.py) gathers the facts from git and the backlog and records what is new through backlog.sp_record_module. No database, no git, no network here.
 
 Three things are decided here and nowhere else (P#11):
   1. what counts as a MODULE: a tracked file, with a test mapped to the file it tests and the registries and documents left out (tools and registries are mentioned in ticket logs all the time and
@@ -19,7 +19,7 @@ from typing import Optional
 
 # A path under one of these prefixes, or one of these exact files, is a registry or a document: it records decisions of many tickets and is not logic that one fix changes.
 REGISTRY_PREFIXES = ("doc/", "docs/", "deployments/", "out/", "backlog_gate/", ".github/")
-REGISTRY_FILES = frozenset({"AGENTS.md", "CLAUDE.md", "README.md", ".gitignore", "shared/config.py", "scripts/ops/migrate_backlog_v2.py"})
+REGISTRY_FILES = frozenset({"AGENTS.md", "CLAUDE.md", "README.md", ".gitignore", "shared/config.py", "scripts/mig/backlog/migrate_backlog_v2.py"})
 REGISTRY_SUFFIXES = (".md", ".txt", ".rst", ".json", ".lock", ".csv", ".yml", ".yaml", ".toml", ".ini", ".cfg")
 MODULE_SUFFIXES = (".py", ".sql", ".bat", ".cmd", ".ps1", ".sh")
 _TOKEN = re.compile(r"[A-Za-z0-9_./\\-]+\.(?:py|sql|bat|cmd|ps1|sh|yml|yaml|md|json|txt)\b")

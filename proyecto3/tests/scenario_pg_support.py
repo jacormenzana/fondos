@@ -3,7 +3,7 @@
 """
 Shared fixtures of the scenario-lifecycle Postgres tests (not collected: no `test_` prefix).
 
-`db` runs the migration's OWN DDL block (scripts/ops/migrate_portfolio_scenario_status.py::ddl_block, schema qualifier removed) on toy tables
+`db` runs the migration's OWN DDL block (scripts/mig/fondos/migrate_portfolio_scenario_status.py::ddl_block, schema qualifier removed) on toy tables
 in a per-test schema, over three legacy scenarios, and hands a connection with a real transaction (the functions under test commit).
 """
 from __future__ import annotations
@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[2]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops")):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "mig" / "fondos")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 

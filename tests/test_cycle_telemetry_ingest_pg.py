@@ -1,7 +1,7 @@
 """
 tests/test_cycle_telemetry_ingest_pg.py -- the P2 ingest, the audit counts and the flag catalogue on a real Postgres (FND-0239 stage 3).
 
-pg_app_conn = a SAVEPOINT connection with the application search_path that is rolled back, so nothing persists. Run: python scripts/ops/run_pg_tests.py
+pg_app_conn = a SAVEPOINT connection with the application search_path that is rolled back, so nothing persists. Run: python scripts/gov/delivery/run_pg_tests.py
 """
 import sys
 from datetime import datetime, timedelta, timezone

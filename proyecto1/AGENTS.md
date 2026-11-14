@@ -161,7 +161,7 @@ python run_block.py --nature-first --master-db --list-isin LU0232465467,LU187312
 ```
 
 **P1 family-nature refresh** (recomputes the attributes derived from the nature of funds `fund_family_builder` corrected; the set is selected, never passed;
-`P1_discoverAllFunds.bat` runs it after the builder; closure check: `scripts/audit/verify_family_refresh.py`):
+`P1_discoverAllFunds.bat` runs it after the builder; closure check: `scripts/audit/p1/verify_family_refresh.py`):
 ```batch
 cd C:\desarrollo\fondos\proyecto1
 python run_block.py --family-nature-refresh --master-db

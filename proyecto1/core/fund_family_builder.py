@@ -674,7 +674,7 @@ def correct_family_inconsistencies(
 
 
 def compute_family_groups(rows, use_official: bool = False) -> dict:
-    """The one definition of the family key (FND-0246). Pure; used by `build_fund_families` and by scripts/audit/family_key_switch_diff.py.
+    """The one definition of the family key (FND-0246). Pure; used by `build_fund_families` and by scripts/audit/p1/family_key_switch_diff.py.
 
     rows: iterable of (isin, fund_name, management_company, official_fund_name | None). Returns {(company_key, name_key): [isin, ...]}.
 

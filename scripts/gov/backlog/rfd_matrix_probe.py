@@ -19,10 +19,10 @@ per ticket, the predicates that decide it and evaluates the ones a machine can e
 Verdict per ticket: READY (every probe passes: closing is a decision with evidence), BLOCKED (a probe fails: a named precondition is missing),
 MANUAL (machine probes pass but an owner action remains). The workflow is in doc/operativos/BACKLOG_RFD_VERIFICATION_MATRIX.md.
 
-    python scripts/audit/rfd_matrix_probe.py            # prints the matrix; exit 0
-    python scripts/audit/rfd_matrix_probe.py --md FILE  # also writes it as markdown
-    python scripts/audit/rfd_matrix_probe.py --close-ready        # only the tickets whose every probe passes
-    python scripts/audit/rfd_matrix_probe.py --seed [--apply]     # copy SPEC into backlog.close_condition (tickets still READY_FOR_DEPLOY)
+    python scripts/gov/backlog/rfd_matrix_probe.py            # prints the matrix; exit 0
+    python scripts/gov/backlog/rfd_matrix_probe.py --md FILE  # also writes it as markdown
+    python scripts/gov/backlog/rfd_matrix_probe.py --close-ready        # only the tickets whose every probe passes
+    python scripts/gov/backlog/rfd_matrix_probe.py --seed [--apply]     # copy SPEC into backlog.close_condition (tickets still READY_FOR_DEPLOY)
 
 Source of the conditions (FND-0334, Phase C slice 1): backlog.close_condition once the owner applied `migrate_backlog_v2.py --phase sync` (added with
 shared.backlog_client.add_close_condition(), retired with retire_close_condition(): adding a ticket is no longer a code change); until then the SPEC
@@ -36,7 +36,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 
 # ticket -> list of probes: (kind, *args). The text of each ticket's closing condition is in its backlog log; this table is its executable form.
 SPEC = {
@@ -150,7 +150,7 @@ def probe_task_ok(name: str) -> tuple:
 def probe_tests_pass(tid: str, sha: str = None, evidence: dict = None, read=None, git=None, local=None) -> tuple:
     """`tests_pass` (Backlog v3 W4, FND-0359): (True | False | None, text). The commit is `sha` when the condition names one, else the delivering commit the autopilot knows for the ticket (`evidence` =
     {ticket: sha}). No delivering commit yet is False ("not yet"). With BACKLOG_GITHUB_EVIDENCE_ENABLED False (local delivery mode, FND-0375) it is true only when a local test receipt names that exact full sha,
-    is intact, and its tests really ran and passed at a sufficient scope (shared/delivery_receipt.py; scripts/audit/delivery_attest.py leaves the receipt); otherwise CI green as before: the checks are read on
+    is intact, and its tests really ran and passed at a sufficient scope (shared/delivery_receipt.py; scripts/gov/delivery/delivery_attest.py leaves the receipt); otherwise CI green as before: the checks are read on
     the PULL REQUEST'S HEAD, the second parent of a merge (shared.backlog_ci.evidence_commit), and an unreadable GitHub is None (unverifiable). Neither is a pass, and the autopilot asks again on its next run.
     `read`, `git` and `local` (a replacement for delivery_attest.verify) are injectable for the tests."""
     commit = sha or (evidence or {}).get(tid)
@@ -159,7 +159,7 @@ def probe_tests_pass(tid: str, sha: str = None, evidence: dict = None, read=None
     sys.path.insert(0, str(ROOT))
     import shared.config as cfg
     if not cfg.BACKLOG_GITHUB_EVIDENCE_ENABLED:
-        sys.path.insert(0, str(ROOT / "scripts" / "audit"))
+        sys.path.insert(0, str(ROOT / "scripts" / "gov" / "delivery"))
         import delivery_attest as da
         ok, detail = (local or da.verify)(ROOT, commit, da.RECEIPTS)
         return ok, f"tests_pass: {detail}"
@@ -270,7 +270,7 @@ def seed(apply: bool) -> int:
     from shared import backlog_client as bc
     stored = bc.close_conditions()
     if stored is None:
-        print("backlog.close_condition is not applied (owner: python scripts/ops/migrate_backlog_v2.py --phase sync).", file=sys.stderr)
+        print("backlog.close_condition is not applied (owner: python scripts/mig/backlog/migrate_backlog_v2.py --phase sync).", file=sys.stderr)
         return 2
     to_add, skipped = seed_rows(SPEC, {t["action_point_id"]: t["status"] for t in bc.list_tickets()}, stored)
     for tid, why in skipped:

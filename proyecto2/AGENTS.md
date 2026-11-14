@@ -179,7 +179,7 @@ Unchanged inputs → 100% cache-hit, 0 recomputed. **Bump `CALC_VERSION` (`run_p
 also forces it (the fingerprint includes the flags), but bump `CALC_VERSION` with it anyway: `algorithm_version` is stamped from
 `CALC_VERSION` alone, so only a bump lets the beta gate and the P3 `metrics_calc_version` gate tell recomputed rows from old ones.
 `CALC_VERSION` is the *global* epoch. Per-metric-family versions (FND-0236, `proyecto2/src/utils/family_versions.py`, behind
-`FAMILY_VERSIONING_ENABLED`, off until the owner applies `scripts/ops/migrate_fund_metric_family_state.py`) let a change that
+`FAMILY_VERSIONING_ENABLED`, off until the owner applies `scripts/mig/fondos/migrate_fund_metric_family_state.py`) let a change that
 touches one of the nine families recompute only that family: add it to `FAMILY_CALC_OVERRIDES` instead of bumping `CALC_VERSION`.
 
 **NAV validation runs before the cache, on every fund, every run** (`validators.validate_nav`: nulls, order, non-positive, a >8x step). On the MONTHLY series only, `validate_nav_stale_flat`
@@ -190,19 +190,19 @@ now deletes the betas and the other OLS outputs the fund still held from an olde
 **Unshared one-month jump (FND-0392, `NAV_UNSHARED_JUMP_MODE`, `SHADOW` since 2026-11-08, FND-0393):** `validate_nav_unshared_jump` flags a monthly NAV that moves `NAV_UNSHARED_JUMP_MIN_ABS_RET` (35%) or more in ONE calendar month while its `Fund_Nature` peers did not
 (at least `NAV_UNSHARED_JUMP_MIN_PEERS` report that month and at most `NAV_UNSHARED_JUMP_MAX_PEER_SHARE` moved the same way): the level shift that passes both rules above (a +92.9% month, momentum_1y +2,264%). The peer panel is
 `utils/peer_returns.py` (canonical period key, consecutive months only, the fund never its own peer), read once per run by `db_readers.load_peer_returns`. `SHADOW` writes a `NAV_JUMP_SHADOW` row to `p2_pipeline_log` and quarantines nothing; `ON`
-quarantines like any `validate_nav` failure. The thresholds are not calibrated on the whole universe yet (WS1, FND-0393). Measure the validators with `python scripts/audit/fault_injection_run.py` (hermetic: it injects known corruption classes,
+quarantines like any `validate_nav` failure. The thresholds are not calibrated on the whole universe yet (WS1, FND-0393). Measure the validators with `python scripts/audit/nav/fault_injection_run.py` (hermetic: it injects known corruption classes,
 `shared/fault_injection.py`, into the fixture `tests/fixtures/fault_injection/`, rebuilt read-only by `fault_injection_fixture.py`; `--min-recall 0.95` is the gate). Every audit run also stores, per rule, `n_applicable` / `n_violating`
 (`control.audit_statistic`, population `INVARIANT`, `shared/statistical_audit/applicability.py`), so a clean rule leaves a trace; `shared/family_scope.py` reduces per-ISIN flags to per-family ones.
 
 **Minimum sample before publishing (FND-0401):** a regime statistic (return_ann / vol_ann / sharpe / sortino / max_dd of a regime, the two `crisis_stress_score_*`) is published only when the fund has `REGIME_MIN_OBS` (12) months in that regime, and a rolling slope
 (`sharpe_slope`, `return_ann_slope`) only from `ROLLING_SLOPE_MIN_OBS` (12) points. A family run now DELETES the owned statistics it did not produce (`metrics_writer.delete_unproduced`; the owned set is `regime_returns.regime_owned_metrics()`), so a fund that falls below the floor
-loses the old row instead of keeping it. A fund served from the cache keeps its rows until its inputs change; the one-shot catch-up is `scripts/ops/clean_stale_metric_rows.py` (dry run by default, `--apply` is owner-only). Raising the regime floor (24 would leave 2 of the 22 extreme
-funds) is a policy decision, not a default. Read-only investigation tools: `scripts/audit/nav_forensics.py` (verdict per extreme fund), `scripts/audit/fund_dossier.py` (one fund: anomalous rows with a STALE_REGIME / SMALL_SLOPE / SMALL_SAMPLE flag, calendar returns, downside drill-down),
-`scripts/audit/nature_move_impact.py` (simulates a `Fund_Nature` change through the P3 builder without writing).
+loses the old row instead of keeping it. A fund served from the cache keeps its rows until its inputs change; the one-shot catch-up is `scripts/mig/fondos/clean_stale_metric_rows.py` (dry run by default, `--apply` is owner-only). Raising the regime floor (24 would leave 2 of the 22 extreme
+funds) is a policy decision, not a default. Read-only investigation tools: `scripts/audit/nav/nav_forensics.py` (verdict per extreme fund), `scripts/audit/nav/fund_dossier.py` (one fund: anomalous rows with a STALE_REGIME / SMALL_SLOPE / SMALL_SAMPLE flag, calendar returns, downside drill-down),
+`scripts/audit/p3/nature_move_impact.py` (simulates a `Fund_Nature` change through the P3 builder without writing).
 
 **Volatility floor for the ratios (FND-0405, `RATIO_VOL_FLOOR_ENABLED` ON, `RATIO_MIN_VOL_ANN` = 0.001, `shared/ratio_floor.py`):** P2 does not publish a Sharpe, a per-regime Sharpe or a `ret_vol_simple` whose own annualised volatility is below 0.1% a year (`returns.sharpe_ratio`,
 `sharpe_ratio_from_returns`, `ret_vol_simple`, `rolling_stats._roll_sharpe`): arithmetic on a near-zero denominator (a Sharpe of -66 on a 0.37% volatility). The ratio is NaN, which the writer stores as a NULL row (`value = excluded.value`, never a stale value). Same number as the Sortino's guard on the downside
-deviation (FND-0075, unchanged). The PIT backtest applies the same floor from the same constants and the floor is part of its risk cache key (`pit_run.risk_cache_flags`). Measured by the read-only `scripts/audit/p2_vol_floor_impact.py`: 129 of 155,377 stored ratio rows (26 funds) and no effect on the P3 selection; higher floors (0.003 / 0.005) moved 22-24%
+deviation (FND-0075, unchanged). The PIT backtest applies the same floor from the same constants and the floor is part of its risk cache key (`pit_run.risk_cache_flags`). Measured by the read-only `scripts/audit/p2/p2_vol_floor_impact.py`: 129 of 155,377 stored ratio rows (26 funds) and no effect on the P3 selection; higher floors (0.003 / 0.005) moved 22-24%
 of the selection because P3 reads a missing metric as 0 of its weight, so they need a P3 treatment first. It reaches the STORED rows only through a P2 recompute (the owner's `CALC_VERSION` bump); rollback = switch OFF. Not the audit predicate's `DATA_SUSPECT_LOW_VOL_FLOOR` (0.005), which removes nothing from the store.
 
 ### Macro factors (OLS model — machine-verified)

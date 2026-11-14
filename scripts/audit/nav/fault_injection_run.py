@@ -3,11 +3,11 @@
 
 Question it answers, with an independent ground truth: when a real, healthy monthly NAV series is corrupted in a KNOWN way (shared/fault_injection.py), do the validators notice?
 
-    python scripts/audit/fault_injection_run.py                          # report on the committed fixture, exit 0
-    python scripts/audit/fault_injection_run.py --json out.json --min-recall 0.95   # exit 1 if a class that SHOULD be caught is not
+    python scripts/audit/nav/fault_injection_run.py                          # report on the committed fixture, exit 0
+    python scripts/audit/nav/fault_injection_run.py --json out.json --min-recall 0.95   # exit 1 if a class that SHOULD be caught is not
 
 Hermetic by construction: it reads one CSV (tests/fixtures/fault_injection/nav_sample.csv.gz: isin, nature, role, date, nav) and imports no database code, so it runs on any machine, in CI-less local
-delivery, with no live access. The fixture is built read-only from the live store by scripts/audit/fault_injection_fixture.py (a 40-ISIN sample plus the peers it needs). Today it measures validator
+delivery, with no live access. The fixture is built read-only from the live store by scripts/audit/nav/fault_injection_fixture.py (a 40-ISIN sample plus the peers it needs). Today it measures validator
 -> P2 metrics; the suspicion predicate (WS2) and the escalation engine (WS3) plug into DETECTORS later and are measured by the same run.
 
 Method, per sample fund and per corruption class:
@@ -28,7 +28,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-_ROOT = Path(__file__).resolve().parents[2]
+_ROOT = Path(__file__).resolve().parents[3]
 for _p in (_ROOT, _ROOT / "proyecto2"):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))

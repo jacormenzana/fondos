@@ -18,7 +18,7 @@ import pytest
 import yaml
 
 _ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_ROOT / "scripts" / "mig"))
+sys.path.insert(0, str(_ROOT / "scripts" / "mig" / "cutover"))
 
 import gen_bi_compat as g  # noqa: E402
 
@@ -30,7 +30,7 @@ def rename_map():
 
 def test_committed_sql_is_not_stale(rename_map):
     assert g.OUT_FILE.read_text(encoding="utf-8") == g.render(rename_map), (
-        "db/pg_bi_compat/bi_compat.sql is out of date — run scripts/mig/gen_bi_compat.py")
+        "db/pg_bi_compat/bi_compat.sql is out of date — run scripts/mig/cutover/gen_bi_compat.py")
 
 
 def test_every_legacy_column_is_exposed_under_its_legacy_name(rename_map):

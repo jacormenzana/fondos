@@ -56,9 +56,9 @@ def test_the_rule_engine_produces_only_edges_declared_as_rules():
 
 def test_every_rule_edge_is_made_by_the_engine_or_the_commit_hook():
     by_engine = {("IN_PROGRESS", "READY_FOR_DEPLOY"), ("READY_FOR_DEPLOY", "CLOSED"), ("CLOSED", "IN_PROGRESS"), ("BLOCKED", "IN_PROGRESS"), ("DEFERRED", "TODO")}
-    by_hook = {("OPEN", "IN_PROGRESS"), ("TODO", "IN_PROGRESS")}                    # commit-msg hook: a `Refs:` trailer on an OPEN / TODO ticket (scripts/audit/commit_msg_gate.py)
+    by_hook = {("OPEN", "IN_PROGRESS"), ("TODO", "IN_PROGRESS")}                    # commit-msg hook: a `Refs:` trailer on an OPEN / TODO ticket (scripts/gov/backlog/commit_msg_gate.py)
     assert {e for e, (k, _w) in ap.EDGES.items() if k == ap.RULE} == by_engine | by_hook
-    hook = (_ROOT / "scripts" / "audit" / "commit_msg_gate.py").read_text(encoding="utf-8")
+    hook = (_ROOT / "scripts" / "gov" / "backlog" / "commit_msg_gate.py").read_text(encoding="utf-8")
     assert "IN_PROGRESS" in hook and "BACKLOG_AUTO_FORWARD_ENABLED" in hook
 
 

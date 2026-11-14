@@ -3,8 +3,8 @@
 """
 migrate_audit_finding_p3_gate.py -- let control.audit_finding record P3 `--allow-stale` overrides and create the reading view (FND-0244 follow-up).
 
-    python scripts/ops/migrate_audit_finding_p3_gate.py            # DRY RUN: read-only, reports what exists, no DDL
-    python scripts/ops/migrate_audit_finding_p3_gate.py --apply    # runs the block in ONE transaction (all or nothing)
+    python scripts/mig/fondos/migrate_audit_finding_p3_gate.py            # DRY RUN: read-only, reports what exists, no DDL
+    python scripts/mig/fondos/migrate_audit_finding_p3_gate.py --apply    # runs the block in ONE transaction (all or nothing)
 
 The DDL is the block between `-- BEGIN p3_gate_bypass` and `-- END p3_gate_bypass` in db/pg/35_control.sql (single source of truth, P#11):
 (a) extends the `audit_finding.domain` CHECK with 'p3_gate' (severity stays ALARM; the HIGH flag lives in control.cycle_flag), and
@@ -25,7 +25,7 @@ import argparse
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 BLOCK = "p3_gate_bypass"
 VIEW = "v_p3_gate_bypass"
 LOCK_TIMEOUT = "5s"
@@ -43,7 +43,7 @@ def existing(conn) -> dict:
 
 def migrate(conn, lock_timeout: str = LOCK_TIMEOUT) -> None:
     """The whole block in ONE transaction. Raises on any failure (the caller rolls back)."""
-    sys.path.insert(0, str(ROOT / "scripts" / "ops"))
+    sys.path.insert(0, str(ROOT / "scripts" / "mig" / "fondos"))
     from migrate_cycle_telemetry import ddl_block
     conn.execute(f"SET LOCAL lock_timeout = '{lock_timeout}'")
     conn.execute(ddl_block(name=BLOCK))
@@ -55,7 +55,7 @@ def main(argv: list | None = None) -> int:
     args = ap.parse_args(argv)
 
     sys.path.insert(0, str(ROOT))
-    sys.path.insert(0, str(ROOT / "scripts" / "ops"))
+    sys.path.insert(0, str(ROOT / "scripts" / "mig" / "fondos"))
     from shared.env_guard import require_db_driver     # RC 106 up front, not a traceback mid-run
     require_db_driver()
     import os

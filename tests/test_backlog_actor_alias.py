@@ -1,6 +1,6 @@
 # tests/test_backlog_actor_alias.py
 # -*- coding: utf-8 -*-
-"""Canonical author identity of the backlog (FND-0330; db/pg_backlog/25_actor_alias.sql, shared/backlog_client.py, scripts/ops/migrate_backlog_v2.py).
+"""Canonical author identity of the backlog (FND-0330; db/pg_backlog/25_actor_alias.sql, shared/backlog_client.py, scripts/mig/backlog/migrate_backlog_v2.py).
 
 Pure: no database, no pipeline imports (R-7). The hermetic Postgres counterpart is tests/test_backlog_actor_alias_pg.py.
 """
@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops")):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "mig" / "backlog")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 

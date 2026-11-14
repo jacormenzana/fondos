@@ -1,6 +1,6 @@
 # tests/test_backlog_phase_c_acceptance.py
 # -*- coding: utf-8 -*-
-"""Phase C acceptance verifier (FND-0334), no database: scripts/audit/backlog_phase_c_acceptance.py judges a catalogue of facts. A catalogue that matches the design passes every check, and each
+"""Phase C acceptance verifier (FND-0334), no database: scripts/mig/backlog/backlog_phase_c_acceptance.py judges a catalogue of facts. A catalogue that matches the design passes every check, and each
 way a scoped login or a routine can drift from it fails exactly the check that names it."""
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(ROOT), str(ROOT / "scripts" / "audit"), str(ROOT / "scripts" / "ops")):
+for _p in (str(ROOT), str(ROOT / "scripts" / "mig" / "backlog"), str(ROOT / "scripts" / "mig" / "backlog")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -75,7 +75,7 @@ def test_the_design_passes_every_check():
 
 
 def test_the_helper_lists_are_the_migration_phases():
-    """One source of truth: the verifier reads the tables, views and routines of scripts/ops/migrate_backlog_v2.py."""
+    """One source of truth: the verifier reads the tables, views and routines of scripts/mig/backlog/migrate_backlog_v2.py."""
     res = evaluate(good())
     names = " ".join(n for rs in res.values() for n, _, _ in rs)
     for p in ("hook", "collision", "attest"):

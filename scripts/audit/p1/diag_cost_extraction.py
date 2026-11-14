@@ -1,4 +1,4 @@
-# proyecto1/scripts/diag/diag_cost_extraction.py
+# proyecto1/scripts/audit/p1/diag_cost_extraction.py
 # -*- coding: utf-8 -*-
 """
 diag_cost_extraction.py — corpus diagnostic harness for the cost-extraction path.
@@ -36,7 +36,7 @@ EXECUTION (Windows, conda env `des`)
 ------------------------------------
   cd C:\\desarrollo\\fondos
   set PYTHONPATH=proyecto1;proyecto1\\core;shared
-  python -X utf8 scripts\\diag\\diag_cost_extraction.py ^
+  python -X utf8 scripts\\audit\\p1\\diag_cost_extraction.py ^
       --kiid-dir C:\\data\\fondos\\kiid ^
       --out C:\\desarrollo\\fondos\\out\\diag\\cost_diag_YYYYMMDD.csv
 
@@ -57,7 +57,7 @@ from pathlib import Path
 from typing import Optional
 
 # `shared` lives at the repo root; the launchers only put proyecto1/core on PYTHONPATH.
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 
 # ---------------------------------------------------------------------------

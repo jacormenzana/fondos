@@ -3,9 +3,9 @@
 """
 gate_protection.py -- the owner's events about the branch protection of the collision gate (Backlog v2 Phase C slice 4, FND-0334; PROPUESTA_BACKLOG_V2.md 6.4.6 and 6.4.7; NORMAS_BACKLOG.md 4.7).
 
-    python scripts/audit/gate_protection.py                                      # --show: the latest API reading, the owner's latest verification, the emergencies (read-only)
-    python scripts/audit/gate_protection.py --verified "checked in Settings > Branches on 2026-11-02: backlog-gate is a required check"
-    python scripts/audit/gate_protection.py --emergency "pushed abc1234 with the rule disabled: CI was down; new key within 48 h"
+    python scripts/gov/backlog/gate_protection.py                                      # --show: the latest API reading, the owner's latest verification, the emergencies (read-only)
+    python scripts/gov/backlog/gate_protection.py --verified "checked in Settings > Branches on 2026-11-02: backlog-gate is a required check"
+    python scripts/gov/backlog/gate_protection.py --emergency "pushed abc1234 with the rule disabled: CI was down; new key within 48 h"
 
 --verified clears V-GATE-UNVERIFIED for 30 days: use it when the API cannot be read (no token, not enough permission) and you have looked at the repository settings yourself. It does not
 clear V-GATE-UNPROTECTED: that one goes only when the API reads `backlog-gate` among the required checks.
@@ -23,7 +23,7 @@ import argparse
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 RC_OK, RC_FAILED, RC_USAGE = 0, 1, 2
 
 
@@ -53,7 +53,7 @@ def main(argv: list | None = None) -> int:
 
     try:
         if not bc.attest_store_present():
-            print("the attest store is not applied (owner: python scripts/ops/migrate_backlog_v2.py --phase attest)", file=sys.stderr)
+            print("the attest store is not applied (owner: python scripts/mig/backlog/migrate_backlog_v2.py --phase attest)", file=sys.stderr)
             return RC_USAGE
         state = bc.gate_protection_state()
     except Exception as exc:                                  # never echo a DSN

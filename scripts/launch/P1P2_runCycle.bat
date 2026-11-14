@@ -599,7 +599,7 @@ exit /b 0
 :: ------------------------------------------------------------
 :beta_snapshot
 if not exist "%AUDIT_P2_DIR%" mkdir "%AUDIT_P2_DIR%"
-set AUX_TARGET="%ROOT%\scripts\audit\beta_shift_audit.py"
+set AUX_TARGET="%ROOT%\scripts\audit\p2\beta_shift_audit.py"
 set AUX_ARGS=--snapshot "!BETA_CSV!"
 call :aux_py beta_snapshot "PASO 0b snapshot de betas macro"
 if !AUX_RC! NEQ 0 echo [WARN] snapshot de betas fallo ^(RC=!AUX_RC!^): no habra comparacion de betas al final >> "%LOG%"
@@ -619,7 +619,7 @@ if not defined CALC_VER (
     echo [WARN] no se pudo leer CALC_VERSION de run_pipeline.py: comparacion de betas omitida >> "%LOG%"
     exit /b 0
 )
-set AUX_TARGET="%ROOT%\scripts\audit\beta_shift_audit.py"
+set AUX_TARGET="%ROOT%\scripts\audit\p2\beta_shift_audit.py"
 set AUX_ARGS=--compare "!BETA_CSV!" --version !CALC_VER! --out "%AUDIT_P2_DIR%\beta_shift_outliers_!BASELINE_ID!.csv"
 call :aux_py beta_compare "comparacion de betas macro (CALC_VERSION !CALC_VER!)"
 set "RC_BETA=!AUX_RC!"
@@ -684,7 +684,7 @@ call :aux_py cycle_report "informe de ciclo"
 set "RC_REPORT=!AUX_RC!"
 
 if defined OPT_shadow (
-    set AUX_TARGET="%ROOT%\scripts\audit\shadow_reconciliation.py"
+    set AUX_TARGET="%ROOT%\scripts\audit\p2\shadow_reconciliation.py"
     set "AUX_ARGS=--stratified-sample !OPT_shadow!"
     call :aux_py shadow "shadow reconciliation (muestra estratificada de !OPT_shadow! por celda)"
 )
@@ -693,7 +693,7 @@ if defined OPT_shadow (
 :: El contrato de sellos -- la parte barata y la que detecta un cambio de convencion en origen -- SI se evalua en cada
 :: ciclo, dentro del informe de ciclo. No bloquea nunca: sus hallazgos son lineas [ATENCION].
 if defined OPT_period_key (
-    set AUX_TARGET="%ROOT%\scripts\audit\period_key_invariance.py"
+    set AUX_TARGET="%ROOT%\scripts\audit\p2\period_key_invariance.py"
     set "AUX_ARGS=--n !OPT_period_key!"
     call :aux_py period_key "invarianza a la clave de periodo (R-9, muestra de !OPT_period_key! fondos)"
 )

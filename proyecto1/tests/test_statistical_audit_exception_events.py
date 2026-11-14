@@ -123,7 +123,7 @@ def test_drift_names_rows_missing_extra_or_different():
 
 # --- the CLI's mode rules ------------------------------------------------------------------------------------------------------------
 def _cli():
-    spec = importlib.util.spec_from_file_location("accept_audit_residual_ev", os.path.join(_ROOT, "scripts", "audit", "accept_audit_residual.py"))
+    spec = importlib.util.spec_from_file_location("accept_audit_residual_ev", os.path.join(_ROOT, "scripts", "audit", "stat", "accept_audit_residual.py"))
     mod = importlib.util.module_from_spec(spec)
     sys.modules["accept_audit_residual_ev"] = mod
     spec.loader.exec_module(mod)

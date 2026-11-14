@@ -49,7 +49,7 @@ echo  OUT:        %DIAG_OUT%                                      >> "%LOG%"
 echo ============================================================ >> "%LOG%"
 
 pushd %ROOT%
-"%PYTHON%" -X utf8 "%ROOT%\scripts\diag\diag_cost_extraction.py" ^
+"%PYTHON%" -X utf8 "%ROOT%\scripts\audit\p1\diag_cost_extraction.py" ^
     --kiid-dir "%KIID_DIR%" ^
     --only-priips ^
     --out "%DIAG_OUT%" >> "%LOG%" 2>&1

@@ -4,8 +4,8 @@
 migrate_fund_metric_family_state.py — create control.fund_metric_family_state (FND-0236), the per-metric-family
 calculation state read by P2 while shared.config.FAMILY_VERSIONING_ENABLED is on.
 
-    python scripts/ops/migrate_fund_metric_family_state.py            # DRY RUN: read-only, no DDL
-    python scripts/ops/migrate_fund_metric_family_state.py --apply    # CREATE TABLE IF NOT EXISTS, one transaction
+    python scripts/mig/fondos/migrate_fund_metric_family_state.py            # DRY RUN: read-only, no DDL
+    python scripts/mig/fondos/migrate_fund_metric_family_state.py --apply    # CREATE TABLE IF NOT EXISTS, one transaction
 
 No backfill: the first P2 run with the switch on adopts every fund from its legacy fund_metric_state.input_hash
 (utils.family_versions.decide_fund, "seeded from legacy hash"), recomputing nothing.
@@ -29,7 +29,7 @@ import re
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 TABLE = "control.fund_metric_family_state"
 DDL_FILE = ROOT / "db" / "pg" / "35_control.sql"
 LOCK_TIMEOUT = "5s"
@@ -38,7 +38,7 @@ RC_OK, RC_FAILED, RC_USAGE, RC_REFUSED = 0, 1, 2, 3
 def ddl_sql(path: Path = DDL_FILE, table: str = TABLE) -> str:
     """The CREATE TABLE statement for `table`, as written in db/pg/35_control.sql (without the trailing ';').
     The statement ends at the first closing parenthesis in column 0 (plus any table options up to the ';').
-    `table` is a parameter so the other control-table migrations reuse this (scripts/ops/migrate_audit_accepted_finding.py)."""
+    `table` is a parameter so the other control-table migrations reuse this (scripts/mig/fondos/migrate_audit_accepted_finding.py)."""
     pattern = re.compile(rf"CREATE TABLE IF NOT EXISTS {re.escape(table)} \(.*?\n\)[^;]*;", re.S)
     m = pattern.search(path.read_text(encoding="utf-8"))
     if not m:
@@ -66,7 +66,7 @@ def main(argv: list | None = None, table: str = TABLE) -> int:
     args = ap.parse_args(argv)
 
     sys.path.insert(0, str(ROOT))
-    sys.path.insert(0, str(ROOT / "scripts" / "ops"))
+    sys.path.insert(0, str(ROOT / "scripts" / "mig" / "fondos"))
     from shared.env_guard import require_db_driver     # RC 106 up front, not a traceback mid-run
     require_db_driver()
     import os

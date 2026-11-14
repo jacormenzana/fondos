@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 _REPO = Path(__file__).resolve().parents[1]
-for _p in (str(_REPO), str(_REPO / "proyecto1"), str(_REPO / "scripts" / "audit")):
+for _p in (str(_REPO), str(_REPO / "proyecto1"), str(_REPO / "scripts" / "audit" / "p1")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 

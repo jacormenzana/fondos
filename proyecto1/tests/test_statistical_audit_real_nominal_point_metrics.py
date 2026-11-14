@@ -19,7 +19,7 @@ if _ROOT not in sys.path:
 from shared.statistical_audit.catalog_pairs import P2_PAIRS  # noqa: E402
 from shared.statistical_audit.comparisons import compare_pairs  # noqa: E402
 
-_spec = importlib.util.spec_from_file_location("run_statistical_audit", os.path.join(_ROOT, "scripts", "audit", "run_statistical_audit.py"))
+_spec = importlib.util.spec_from_file_location("run_statistical_audit", os.path.join(_ROOT, "scripts", "audit", "stat", "run_statistical_audit.py"))
 runner = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(runner)
 

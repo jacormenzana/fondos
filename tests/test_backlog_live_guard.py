@@ -211,10 +211,10 @@ def _run(args, tmp_path):
 
 
 @pytest.mark.parametrize("args", [
-    ["scripts/ops/close_release.py", "--release", "R2026.10-GUARD-01", "--tickets", "FND-0001", "--log", "a closing log long enough to pass the argument validation of the tool", "--actor", "agent:claude-sonnet-5-5", "--apply"],
-    ["scripts/ops/close_release.py", "--release", "R2026.10-GUARD-01", "--tickets", "FND-0001", "--log", "a closing log long enough to pass the argument validation of the tool", "--actor", "agent:claude-sonnet-5-5"],
-    ["scripts/ops/backlog_step0.py", "--apply", "--actor", "agent:claude-sonnet-5-5"],
-    ["scripts/mig/backlog_v3_bootstrap.py", "--apply", "--actor", "agent:claude-sonnet-5-5"],
+    ["scripts/gov/backlog/close_release.py", "--release", "R2026.10-GUARD-01", "--tickets", "FND-0001", "--log", "a closing log long enough to pass the argument validation of the tool", "--actor", "agent:claude-sonnet-5-5", "--apply"],
+    ["scripts/gov/backlog/close_release.py", "--release", "R2026.10-GUARD-01", "--tickets", "FND-0001", "--log", "a closing log long enough to pass the argument validation of the tool", "--actor", "agent:claude-sonnet-5-5"],
+    ["scripts/mig/backlog/backlog_step0.py", "--apply", "--actor", "agent:claude-sonnet-5-5"],
+    ["scripts/mig/backlog/backlog_v3_bootstrap.py", "--apply", "--actor", "agent:claude-sonnet-5-5"],
 ], ids=["close_release --apply", "close_release dry run (it writes and rolls back)", "step 0 --apply", "v3 bootstrap --apply"])
 def test_the_writing_tools_exit_with_code_one_before_opening_any_connection(args, tmp_path):
     r = _run(args, tmp_path)
@@ -223,7 +223,7 @@ def test_the_writing_tools_exit_with_code_one_before_opening_any_connection(args
 
 
 def test_the_step_0_dry_run_only_reads_and_is_not_refused_by_the_write_gate(tmp_path):
-    r = _run(["scripts/ops/backlog_step0.py"], tmp_path)
+    r = _run(["scripts/mig/backlog/backlog_step0.py"], tmp_path)
     assert "live write REFUSED" not in r.stderr            # it will fail for lack of a reachable database, but not because of the gate
 
 

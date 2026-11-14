@@ -1,6 +1,6 @@
 # tests/test_backlog_calibrator.py
 # -*- coding: utf-8 -*-
-"""Phase C slice 3 (FND-0334), no database: scripts/audit/gate_calibrator.py decides from numbers only. It tightens T0 -> T1 on day 10 of AUDIT when the share of commits introducing a pair is
+"""Phase C slice 3 (FND-0334), no database: scripts/gov/backlog/gate_calibrator.py decides from numbers only. It tightens T0 -> T1 on day 10 of AUDIT when the share of commits introducing a pair is
 above 10 %, retires the gate (OFF) when a window with enough sample fails the precision or recall floors, extends a window with too little sample (at most 42 days, then reports
 insufficient data and retires nothing), and never lowers BLOCK to AUDIT, never loosens, never acts on a gate that is already OFF."""
 from __future__ import annotations
@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(ROOT), str(ROOT / "scripts" / "audit")):
+for _p in (str(ROOT), str(ROOT / "scripts" / "gov" / "backlog")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 

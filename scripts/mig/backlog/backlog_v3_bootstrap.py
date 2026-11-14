@@ -2,10 +2,10 @@
 # -*- coding: utf-8 -*-
 """
 backlog_v3_bootstrap.py -- opens the Backlog v3 epic and its workstreams as tickets, and links them (O-V3-1 of doc/especificacion/ACTION_PLAN_BACKLOG_V3.md).
-The tickets and links are the fixed, versioned list in scripts/mig/backlog_v3_manifest.yaml.
+The tickets and links are the fixed, versioned list in scripts/mig/backlog/backlog_v3_manifest.yaml.
 
-    python scripts/mig/backlog_v3_bootstrap.py                  # DRY RUN: what would be opened and linked; reads only
-    python scripts/mig/backlog_v3_bootstrap.py --apply          # the OWNER, in his own terminal: opens what is missing and records the links
+    python scripts/mig/backlog/backlog_v3_bootstrap.py                  # DRY RUN: what would be opened and linked; reads only
+    python scripts/mig/backlog/backlog_v3_bootstrap.py --apply          # the OWNER, in his own terminal: opens what is missing and records the links
 
 Why a script and why the owner: an agent cannot open tickets on the live backlog until the scoped agent login of W2 exists (the 2026-10-29 live-write order), so a person at a real
 console runs this once with FONDOS_ACTOR=human:<login> and FONDOS_BACKLOG_PG_DSN_HUMAN set. The live-write gate asks him to type the confirmation phrase before anything is written.
@@ -23,7 +23,7 @@ import re
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 MANIFEST = Path(__file__).resolve().with_name("backlog_v3_manifest.yaml")
 RC_OK, RC_FAILED, RC_USAGE = 0, 1, 2
 

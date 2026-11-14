@@ -5,18 +5,18 @@ accept_audit_residual.py -- accept the CURRENT violators of one statistical-audi
 two-step decision (FND-0263, decision D6).
 
     # 1. GRANT (or --renew): the ISINs that violate --rule now, the owning AP, the reason, an expiry (<= 90 days)
-    python scripts/audit/accept_audit_residual.py --domain costs --rule OC_NOT_CONTAMINATED --ap FND-0034 \\
+    python scripts/audit/stat/accept_audit_residual.py --domain costs --rule OC_NOT_CONTAMINATED --ap FND-0034 \\
         --reason "OC copied from the ACI row; extractor cannot bind it (FND-0034)" [--days 90] [--by NAME] [--isin A,B] [--renew]
     # 2. APPROVE that grant, as a separate command (the same person may approve; no time pad): only now are the ISINs accepted
-    python scripts/audit/accept_audit_residual.py --approve 17 [--by NAME]
+    python scripts/audit/stat/accept_audit_residual.py --approve 17 [--by NAME]
     # withdraw a grant (all its ISINs, or --isin among them); cause OWNER | AP_CLOSED | RESOLVED
-    python scripts/audit/accept_audit_residual.py --revoke 17 --cause RESOLVED --reason "fixed by FND-0034, re-audit clean"
+    python scripts/audit/stat/accept_audit_residual.py --revoke 17 --cause RESOLVED --reason "fixed by FND-0034, re-audit clean"
     # the decision log of a domain (optionally one rule)
-    python scripts/audit/accept_audit_residual.py --history --domain costs [--rule OC_NOT_CONTAMINATED]
+    python scripts/audit/stat/accept_audit_residual.py --history --domain costs [--rule OC_NOT_CONTAMINATED]
     # STANDING grant (owner decision 2026-11-06): a defect of the DOCUMENT does not heal with time, so no 90-day chore. --class PUBLISHER_DEFECT (the KID's own
     # figures contradict each other) or EXTRACTION_LIMIT (a layout the extractor cannot read), costs domain only: the grant has no calendar expiry and is bound
     # to the fingerprint of each fund's stored KID text, re-derived at every audit; a new KID makes it lapse by itself (accepted_residuals.STANDING_CLASSES)
-    python scripts/audit/accept_audit_residual.py --domain costs --rule MGMT_LE_TOTAL --ap FND-0280 --class PUBLISHER_DEFECT --reason "..."
+    python scripts/audit/stat/accept_audit_residual.py --domain costs --rule MGMT_LE_TOTAL --ap FND-0280 --class PUBLISHER_DEFECT --reason "..."
     ... --apply        # every write needs it: without it, DRY RUN, nothing is written
 
 The grant runs the audit for the domain in memory (read-only, no persist) and takes the ISINs that violate `--rule` right now. Each
@@ -25,7 +25,7 @@ and the scorer read, is refreshed from that history in the same transaction. Fro
 ("ACCEPTED RESIDUAL") instead of an ALARM; an ISIN that is NOT accepted keeps the rule an ALARM; an acceptance lapses by itself at expiry.
 
 It never decides for you: the owner runs it, with --apply, and the AP must exist in gestion.backlog. Without the history table
-(scripts/ops/migrate_audit_governance.py not applied) a grant falls back to the legacy direct write, unless
+(scripts/mig/fondos/migrate_audit_governance.py not applied) a grant falls back to the legacy direct write, unless
 shared.config.AUDIT_EXCEPTION_EVENTS_ENABLED is on, in which case it refuses.
 """
 from __future__ import annotations
@@ -37,7 +37,7 @@ import re
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
 AP_RE = re.compile(r"^[A-Z]{2,4}-\d{4}$")
@@ -49,7 +49,7 @@ STANDING_CLASSES = ("PUBLISHER_DEFECT", "EXTRACTION_LIMIT")           # == accep
 
 
 def _load_runner():
-    spec = importlib.util.spec_from_file_location("run_statistical_audit", ROOT / "scripts" / "audit" / "run_statistical_audit.py")
+    spec = importlib.util.spec_from_file_location("run_statistical_audit", ROOT / "scripts" / "audit" / "stat" / "run_statistical_audit.py")
     mod = importlib.util.module_from_spec(spec)
     sys.modules["run_statistical_audit"] = mod
     spec.loader.exec_module(mod)
@@ -158,7 +158,7 @@ def main(argv: "list | None" = None) -> int:
     try:
         has_events = ps.exception_events_table_exists(conn)
         if mode in ("approve", "revoke", "history") and not has_events:
-            print("error: control.audit_exception_event does not exist; run scripts/ops/migrate_audit_governance.py --apply first",
+            print("error: control.audit_exception_event does not exist; run scripts/mig/fondos/migrate_audit_governance.py --apply first",
                   file=sys.stderr)
             return 2
 
@@ -226,19 +226,19 @@ def main(argv: "list | None" = None) -> int:
             event_id = ps.grant_exception(conn, run.domain, args.rule, isins, args.ap, reason, expires, by,
                                           renew=args.renew)
             print(f"\n{kind} RECORDED as event #{event_id}: PENDING, nothing is accepted yet. Approve it as a separate decision:\n"
-                  f"  python scripts/audit/accept_audit_residual.py --approve {event_id} --apply\n"
+                  f"  python scripts/audit/stat/accept_audit_residual.py --approve {event_id} --apply\n"
                   f"Record it on {args.ap} in gestion.backlog.")
             return 0
         if cfg.AUDIT_EXCEPTION_EVENTS_ENABLED:
             print("error: AUDIT_EXCEPTION_EVENTS_ENABLED is on and control.audit_exception_event does not exist: run "
-                  "scripts/ops/migrate_audit_governance.py --apply (the legacy direct write keeps no history)", file=sys.stderr)
+                  "scripts/mig/fondos/migrate_audit_governance.py --apply (the legacy direct write keeps no history)", file=sys.stderr)
             return 2
         if conn.execute("SELECT to_regclass('control.audit_accepted_finding')").fetchone()[0] is None:
             print("error: control.audit_accepted_finding does not exist; run "
-                  "scripts/ops/migrate_audit_accepted_finding.py --apply first", file=sys.stderr)
+                  "scripts/mig/fondos/migrate_audit_accepted_finding.py --apply first", file=sys.stderr)
             return 2
         n = ps.emit_accepted_residuals(conn, run.domain, args.rule, isins, args.ap, reason, expires, by)
-        print(f"\nACCEPTED (legacy direct write, no history: apply scripts/ops/migrate_audit_governance.py): {n} ISINs for "
+        print(f"\nACCEPTED (legacy direct write, no history: apply scripts/mig/fondos/migrate_audit_governance.py): {n} ISINs for "
               f"{args.rule} until {expires}. Record it on {args.ap} in gestion.backlog.")
         return 0
     finally:

@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """import_hygiene.py -- keep the bare names of the repository's scripts pointing at the SCRIPTS (pytest plugin, registered in the root conftest).
 
-Four names exist twice: shared/<name>.py (a library) and scripts/{audit,ops}/<name>.py (the tool that wraps it): backlog_autopilot, backlog_impact, backlog_modules, owner_vault. The scripts and their tests
+Four names exist twice: shared/<name>.py (a library) and scripts/gov/backlog/<name>.py (the tool that wraps it): backlog_autopilot, backlog_impact, backlog_modules, owner_vault. The scripts and their tests
 import the tool by its bare name (`import backlog_modules as run`) after putting the script directory on sys.path. Two P1 modules (proyecto1/core/fund_writer.py, cost_cross_validator.py) put the `shared/`
 directory itself at the FRONT of sys.path when they are imported, which happens at collection time of any test that imports run_block. From then on, in that process, the bare name resolved to the LIBRARY: 23 to 32
 tests failed with "module 'backlog_modules' has no attribute 'cluster_step'" or "'owner_vault' has no attribute 'main'", but only in the shard compositions that put the two kinds of file in one pytest process
@@ -15,13 +15,22 @@ from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[2]
 _SHARED = _ROOT / "shared"
-SCRIPT_DIRS = tuple(str(_ROOT / "scripts" / d) for d in ("audit", "ops"))
+TOOL_DOMAINS = ("audit", "gov", "mig", "mnt")          # the domains of scripts/ whose tools are imported by their bare name (launch/ is run, not imported: scripts/AGENTS.md)
+
+
+def script_dirs(root: Path = _ROOT) -> tuple:
+    """Every folder under scripts/<domain> (domain in TOOL_DOMAINS) that holds a module. Computed, never listed by hand, sorted so the order is the same everywhere. Pure apart from reading the directories."""
+    found = {p.parent for d in TOOL_DOMAINS for p in (root / "scripts" / d).rglob("*.py") if "__pycache__" not in p.parts}
+    return tuple(sorted(str(p) for p in found))
+
+
+SCRIPT_DIRS = script_dirs()
 
 
 def colliding_names(root: Path = _ROOT) -> tuple:
-    """The module names that exist in shared/ and in scripts/audit or scripts/ops. Computed, never listed by hand. Pure apart from reading the directories."""
+    """The module names that exist in shared/ and in a script folder. Computed, never listed by hand. Pure apart from reading the directories."""
     lib = {p.stem for p in (root / "shared").glob("*.py")} - {"__init__"}
-    tools = {p.stem for d in ("audit", "ops") for p in (root / "scripts" / d).glob("*.py")}
+    tools = {p.stem for d in script_dirs(root) for p in Path(d).glob("*.py")}
     return tuple(sorted(lib & tools))
 
 

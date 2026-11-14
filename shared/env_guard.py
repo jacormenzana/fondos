@@ -14,7 +14,7 @@ Control blocks an unsigned binary whose reputation it does not yet know on first
 once, 2026-10-12, on psycopg's bundled libcrypto: ~32 minutes). Re-running the launcher later is therefore legitimate -- but
 this module still never retries, backs off or sleeps: a cycle launcher must fail in seconds, and a permanent policy block must
 not be indistinguishable from a transient one (owner decision, 2026-10-12). Diagnosis lives in
-`scripts/audit/preflight_check.py` section [0], which reads CodeIntegrity event 3077 and the Smart App Control state; this
+`scripts/gov/repo/preflight_check.py` section [0], which reads CodeIntegrity event 3077 and the Smart App Control state; this
 module stays stdlib-only and never touches the event log.
 
 Two layers, deliberately different:
@@ -91,7 +91,7 @@ def blocked_message(detail: str) -> str:
             f"(no other interpreter, no copied DLL, no registry edit; this guard fails fast and never retries by design). "
             f"The block may be TRANSIENT: Application Control blocks an unsigned binary it has no reputation for on first "
             f"load and clears it once resolved (measured once, 2026-10-12: ~32 min), so re-running later may simply work. "
-            f"Diagnose before escalating: `python scripts/audit/preflight_check.py` section [0], or CodeIntegrity event "
+            f"Diagnose before escalating: `python scripts/gov/repo/preflight_check.py` section [0], or CodeIntegrity event "
             f"3077, which names the exact file. If it does not clear, allowing the driver is an owner/IT decision.")
 
 

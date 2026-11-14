@@ -1,6 +1,6 @@
 # tests/test_backlog_impact.py
 # -*- coding: utf-8 -*-
-"""Backlog v3 W4 (FND-0359): the pure rules of shared/backlog_impact.py and the runner scripts/audit/backlog_impact.py with a fake client and a fake git. No database, no git, no network (R-7)."""
+"""Backlog v3 W4 (FND-0359): the pure rules of shared/backlog_impact.py and the runner scripts/gov/backlog/backlog_impact.py with a fake client and a fake git. No database, no git, no network (R-7)."""
 from __future__ import annotations
 
 import sys
@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "audit")):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "gov" / "backlog")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -283,7 +283,7 @@ def test_the_replay_reports_the_distribution_and_never_writes():
 
 
 def test_the_autopilot_calls_the_impact_step_and_the_switch_exists():
-    src = (_ROOT / "scripts" / "audit" / "backlog_autopilot.py").read_text(encoding="utf-8")
+    src = (_ROOT / "scripts" / "gov" / "backlog" / "backlog_autopilot.py").read_text(encoding="utf-8")
     assert "impact_run.run(bc, cited" in src
     assert 'BACKLOG_IMPACT_NOTES_ENABLED: bool = True' in (_ROOT / "shared" / "config.py").read_text(encoding="utf-8")
     assert run.ACTOR == "system:autopilot"

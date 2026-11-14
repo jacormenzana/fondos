@@ -47,7 +47,7 @@ def test_the_audit_runner_uses_the_same_predicate():
     """--mode check and the promotion gate must never disagree about what a defect is (P#11)."""
     import importlib.util
     spec = importlib.util.spec_from_file_location("run_statistical_audit_gating",
-                                                  os.path.join(_ROOT, "scripts", "audit", "run_statistical_audit.py"))
+                                                  os.path.join(_ROOT, "scripts", "audit", "stat", "run_statistical_audit.py"))
     runner = importlib.util.module_from_spec(spec)
     sys.modules["run_statistical_audit_gating"] = runner
     spec.loader.exec_module(runner)
@@ -62,7 +62,7 @@ def test_the_audit_runner_uses_the_same_predicate():
 def test_the_held_out_finding_carries_its_isins_so_the_coverage_gate_can_name_the_funds():
     import importlib.util
     spec = importlib.util.spec_from_file_location("run_statistical_audit_heldout",
-                                                  os.path.join(_ROOT, "scripts", "audit", "run_statistical_audit.py"))
+                                                  os.path.join(_ROOT, "scripts", "audit", "stat", "run_statistical_audit.py"))
     runner = importlib.util.module_from_spec(spec)
     sys.modules["run_statistical_audit_heldout"] = runner
     spec.loader.exec_module(runner)
@@ -276,7 +276,7 @@ def test_loader_with_only_sample_runs_has_no_evidence():
 
 def _runner(name):
     import importlib.util
-    spec = importlib.util.spec_from_file_location(name, os.path.join(_ROOT, "scripts", "audit", "run_statistical_audit.py"))
+    spec = importlib.util.spec_from_file_location(name, os.path.join(_ROOT, "scripts", "audit", "stat", "run_statistical_audit.py"))
     runner = importlib.util.module_from_spec(spec)
     sys.modules[name] = runner
     spec.loader.exec_module(runner)
@@ -315,7 +315,7 @@ def test_block2_findings_expose_the_funds_behind_them():
 def test_isins_of_is_sorted_distinct_and_tolerant():
     import importlib.util
     spec = importlib.util.spec_from_file_location("run_statistical_audit_isins",
-                                                  os.path.join(_ROOT, "scripts", "audit", "run_statistical_audit.py"))
+                                                  os.path.join(_ROOT, "scripts", "audit", "stat", "run_statistical_audit.py"))
     runner = importlib.util.module_from_spec(spec)
     sys.modules["run_statistical_audit_isins"] = runner
     spec.loader.exec_module(runner)

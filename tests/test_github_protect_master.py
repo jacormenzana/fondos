@@ -1,6 +1,6 @@
 # tests/test_github_protect_master.py
 # -*- coding: utf-8 -*-
-"""Protection of master (FND-0336 / O-5; scripts/ops/github_protect_master.py). Pure: no network (R-7).
+"""Protection of master (FND-0336 / O-5; scripts/gov/delivery/github_protect_master.py). Pure: no network (R-7).
 
 The required checks are required BY NAME, so a renamed workflow job would leave every pull request waiting for a check nobody reports: the first test ties the
 list to the job names in .github/workflows."""
@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops")):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "gov" / "delivery")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 

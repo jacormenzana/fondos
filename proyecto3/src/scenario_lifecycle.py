@@ -9,7 +9,7 @@ Rules:
   * the builder only ever writes DRAFT, under a unique id (`build_scenario_id`), and never replaces anything that is not a DRAFT;
   * ONE scenario is PRODUCTION (DB-enforced by a partial unique index); promotion is an explicit owner command with gates;
   * the report and the rotation plan read PRODUCTION (an explicit `--scenario` is allowed but is flagged on the report);
-  * until the owner applies the DDL (db/pg/30_gold.sql block `scenario_lifecycle`, scripts/ops/migrate_portfolio_scenario_status.py)
+  * until the owner applies the DDL (db/pg/30_gold.sql block `scenario_lifecycle`, scripts/mig/fondos/migrate_portfolio_scenario_status.py)
     the status column does not exist: ids are still unique (so nothing is overwritten) and the report FAILS CLOSED unless a scenario
     is given explicitly.
 
@@ -111,7 +111,7 @@ def resolve_report_scenario(conn, explicit: Optional[str] = None) -> tuple:
     if not has_status_column(conn):
         raise NoProductionScenario(
             "el ciclo de vida de escenarios no esta instalado (falta portfolio_scenarios.status): el owner debe aplicar "
-            "scripts/ops/migrate_portfolio_scenario_status.py --apply; mientras tanto indique el escenario con --scenario ID")
+            "scripts/mig/fondos/migrate_portfolio_scenario_status.py --apply; mientras tanto indique el escenario con --scenario ID")
     prod = production_scenario_id(conn)
     if prod is None:
         drafts = latest_drafts(conn)
@@ -246,7 +246,7 @@ def evaluate_promotion(*, status: Optional[str], n_funds: int, weight_sum: float
       * DATA_COVERAGE     funds of the scenario the audit did not check (held out of the snapshot, outside the audited population), or
                           coverage UNKNOWN. Reasoned override with an AP.
       * DATA_UNIVERSE     an open hard defect outside the scenario that no active residual covers. No override: accept it with
-                          scripts/audit/accept_audit_residual.py (AP + expiry), which is its own audited step.
+                          scripts/audit/stat/accept_audit_residual.py (AP + expiry), which is its own audited step.
     Statistical anomalies on the scenario's funds are information (the selection picks score extremes), never a blocker.
 
     `accept_alarms` is the reason and `accept_ap` the owning ticket (FND-nnnn); `ap_exists` is the backlog lookup (None = could not be

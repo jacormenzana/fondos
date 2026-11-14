@@ -33,7 +33,7 @@ services:
     volumes:
       - /opt/docker/db/postgresql17/data:/var/lib/postgresql/data
       # FND-0071: WAL archive + physical base backups (PITR). Created/owned by
-      # scripts/ops/setup_wal_archive.sh. create_host_path:false => compose REFUSES to start if the
+      # scripts/mnt/backup/setup_wal_archive.sh. create_host_path:false => compose REFUSES to start if the
       # directory is missing, instead of silently creating a root-owned one that would make
       # archive_command fail and let pg_wal fill the disk.
       - type: bind

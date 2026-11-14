@@ -3,9 +3,9 @@
 """
 backlog_impact.py -- puts the open tickets a merge may affect on notice, with ONE note each (Backlog v3 W4, FND-0359; the rules are in shared/backlog_impact.py).
 
-    python scripts/audit/backlog_impact.py --replay [--days 45]   # READ-ONLY: how many notes each recent merge would have produced (the fatigue guard), against today's open tickets
+    python scripts/gov/backlog/backlog_impact.py --replay [--days 45]   # READ-ONLY: how many notes each recent merge would have produced (the fatigue guard), against today's open tickets
 
-The autopilot run (scripts/audit/backlog_autopilot.py --apply) calls `run` after the module facts, with the merges it just read, so nobody starts it. The note is appended as the autopilot through the
+The autopilot run (scripts/gov/backlog/backlog_autopilot.py --apply) calls `run` after the module facts, with the merges it just read, so nobody starts it. The note is appended as the autopilot through the
 scoped routine (a NOTE, never a review flag: a flag blocks the ticket's delivery until someone acknowledges it, which would be an approval queue). It does nothing, with no error, while
 BACKLOG_IMPACT_NOTES_ENABLED is False or the `modules` phase is not deployed. A merge older than IMPACT_WINDOW_DAYS is not noted, a rerun writes nothing (the note carries the merge as its key),
 and a run writes at most MAX_NOTES_PER_RUN notes. Exit codes: 0 ok, 2 git or the backlog could not be read.
@@ -19,9 +19,9 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT / "scripts" / "audit"))
+sys.path.insert(0, str(ROOT / "scripts" / "gov" / "backlog"))
 from shared import backlog_clusters as cl  # noqa: E402
 from shared import backlog_impact as ib  # noqa: E402
 from shared import backlog_modules as bm  # noqa: E402

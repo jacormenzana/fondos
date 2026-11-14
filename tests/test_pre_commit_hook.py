@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""scripts/audit/pre-commit.sh: the installed hook checks what is COMMITTED, not the shared working tree (FND-0314, R-7: no DB).
+"""scripts/gov/repo/hooks/pre-commit.sh: the installed hook checks what is COMMITTED, not the shared working tree (FND-0314, R-7: no DB).
 
-A stand-in scripts/audit/sync_agents_md.py fails unless marker.txt reads "ok", so each test says which version of the marker the check saw.
+A stand-in scripts/gov/repo/sync_agents_md.py fails unless marker.txt reads "ok", so each test says which version of the marker the check saw.
 """
 import shutil
 import subprocess
@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-INSTALLER = Path(__file__).resolve().parents[1] / "scripts" / "audit" / "pre-commit.sh"
+INSTALLER = Path(__file__).resolve().parents[1] / "scripts" / "gov" / "repo" / "hooks" / "pre-commit.sh"
 FAKE_SYNC = ('import sys\n'
              'ok = open("marker.txt", encoding="utf-8").read().strip() == "ok"\n'
              'print("OK" if ok else "FAIL: marker is not ok")\n'
@@ -30,8 +30,8 @@ def _marker(repo: Path, text: str) -> None:
 @pytest.fixture
 def repo(tmp_path):
     _git(tmp_path, "init", "-q")
-    (tmp_path / "scripts" / "audit").mkdir(parents=True)
-    (tmp_path / "scripts" / "audit" / "sync_agents_md.py").write_text(FAKE_SYNC, encoding="utf-8", newline="\n")
+    (tmp_path / "scripts" / "gov" / "repo").mkdir(parents=True)
+    (tmp_path / "scripts" / "gov" / "repo" / "sync_agents_md.py").write_text(FAKE_SYNC, encoding="utf-8", newline="\n")
     _marker(tmp_path, "ok")
     subprocess.run(["sh", str(INSTALLER)], cwd=tmp_path, check=True, capture_output=True)    # installs into THIS repo's hooks dir
     _git(tmp_path, "add", "-A")
@@ -70,6 +70,6 @@ def test_a_commit_by_path_is_checked_on_the_content_it_will_commit(repo):
 
 
 def test_a_staged_state_without_the_sync_script_is_skipped_with_a_warning(repo):
-    _git(repo, "rm", "-q", "scripts/audit/sync_agents_md.py")
+    _git(repo, "rm", "-q", "scripts/gov/repo/sync_agents_md.py")
     r = _git(repo, "commit", "-m", "no script", check=False)
     assert r.returncode == 0 and "skipping AGENTS.md sync check" in r.stderr, r.stdout + r.stderr

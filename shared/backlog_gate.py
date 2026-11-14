@@ -2,7 +2,7 @@
 """
 backlog_gate.py -- the pure half of the commit-msg gate (Backlog v2 Phase C slice 2, FND-0334; PROPUESTA_BACKLOG_V2.md 6.4.1 and 6.4.6; NORMAS_BACKLOG.md 4.5).
 
-Shared by the hook (scripts/audit/commit_msg_gate.py, at commit time) and the sync (scripts/audit/backlog_sync.py, afterwards), so both read a commit message the same way
+Shared by the hook (scripts/gov/backlog/commit_msg_gate.py, at commit time) and the sync (scripts/gov/backlog/backlog_sync.py, afterwards), so both read a commit message the same way
 (P#11). No database, no git, no I/O here: every function takes and returns plain values.
 
 * Tokens. `FND-nnnn` (four digits) is a ticket id. A loose spelling of the same thing (`fnd0193`, `FND_0193`, `FND-193`) is MALFORMED. Only the subject and the `Refs:`

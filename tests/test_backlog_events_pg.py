@@ -1,10 +1,10 @@
 # tests/test_backlog_events_pg.py
 # -*- coding: utf-8 -*-
-"""Backlog v3.1 phase `events` (db/pg_backlog/98_events.sql, applied by scripts/ops/migrate_backlog_v2.py --phase events) and the edits it needs in the earlier phases: reopening as a normal event with its
+"""Backlog v3.1 phase `events` (db/pg_backlog/98_events.sql, applied by scripts/mig/backlog/migrate_backlog_v2.py --phase events) and the edits it needs in the earlier phases: reopening as a normal event with its
 cause (and taking it back within an hour), holds that release by themselves, agents deciding collision pairs, the autopilot mode as an event, and the DEPLOY fact only from the login backlog_facts.
 Hermetic: the throwaway container inside a rolled-back savepoint; never the live backlog. Statements marked "as <role>" run under SESSION AUTHORIZATION, so the privileges are the real ones.
 
-    python scripts/ops/run_pg_tests.py -- tests/test_backlog_events_pg.py
+    python scripts/gov/delivery/run_pg_tests.py -- tests/test_backlog_events_pg.py
 """
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops"), str(Path(__file__).resolve().parent)):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "mig" / "backlog"), str(Path(__file__).resolve().parent)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 

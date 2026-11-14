@@ -25,7 +25,7 @@ def _real_sources():
 
 
 def _real_sources_uncached():
-    sys.path.insert(0, str(ROOT / "scripts" / "audit"))
+    sys.path.insert(0, str(ROOT / "scripts" / "gov" / "delivery"))
     import delivery_attest as da                                              # the one reader the receipt uses, so the tests analyse what a receipt would
     return da.read_sources(ROOT)
 
@@ -86,7 +86,7 @@ def test_narrowed_loaders_are_still_true():
                 assert target in src and target.startswith(prefixes), f"{f}:{n.lineno} loads {target}"
                 seen += 1
     assert seen >= 5
-    # 3. a registered writer's entry module lives under scripts/audit
+    # 3. a registered writer's entry module lives under scripts/gov/backlog
     from shared import backlog_writers as bw
     registry = getattr(bw, "WRITERS", None) or getattr(bw, "REGISTRY", None) or {}
     specs = registry.values() if isinstance(registry, dict) else registry
@@ -94,7 +94,7 @@ def test_narrowed_loaders_are_still_true():
         entry = getattr(spec, "entry", None)
         if entry:
             module = entry.split(":")[0]
-            assert any(p.startswith(ti.NARROW_LOADERS["shared/backlog_writer_proof.py"]) for p in ti._resolve(module, keys)), f"writer {spec.name} has its entry outside scripts/audit: {entry}"
+            assert any(p.startswith(ti.NARROW_LOADERS["shared/backlog_writer_proof.py"]) for p in ti._resolve(module, keys)), f"writer {spec.name} has its entry outside scripts/gov/backlog: {entry}"
 
 
 def test_the_real_config_bounded_by_symbols_a_new_constant_is_impact_and_every_test_naming_an_edited_one_is_selected():
@@ -131,7 +131,7 @@ def test_narrowed_readers_are_real_enumerators_so_the_exemption_is_not_stale():
 def test_narrowed_identity_reader_the_config_hash_is_recorded_never_compared_and_no_test_pins_a_literal_one():
     src = _real_sources()
     users = sorted(f for f, t in src.items() if f.endswith(".py") and not _is_test(f) and ("config_hash" in t or "config_items" in t))
-    assert users == ["scripts/audit/run_statistical_audit.py", "scripts/launch/p3_promote_scenario.py", "shared/governance/orchestrator.py", "shared/governance/run_identity.py",
+    assert users == ["scripts/audit/stat/run_statistical_audit.py", "scripts/launch/p3_promote_scenario.py", "shared/governance/orchestrator.py", "shared/governance/run_identity.py",
                      "shared/statistical_audit/persistence.py"], f"a new reader of config_hash / config_items needs a review of NARROWED_READERS: {users}"
     for f in users:
         tree = ast.parse(src[f])
@@ -151,10 +151,10 @@ def test_narrowed_identity_reader_the_config_hash_is_recorded_never_compared_and
 def test_narrowed_vocabulary_reader_has_one_caller_and_no_test_pins_its_size():
     src = _real_sources()
     callers = sorted(f for f, t in src.items() if f.endswith(".py") and not _is_test(f) and "build_vocabulary(" in t)
-    assert callers == ["scripts/audit/backlog_links.py"], f"build_vocabulary has a new caller: {callers}"
-    own = ast.parse(src["scripts/audit/backlog_links.py"])
+    assert callers == ["scripts/gov/backlog/backlog_links.py"], f"build_vocabulary has a new caller: {callers}"
+    own = ast.parse(src["scripts/gov/backlog/backlog_links.py"])
     users = [n for n in ast.walk(own) if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "build_vocabulary"]
-    assert len(users) == 1 and "_load" in src["scripts/audit/backlog_links.py"].split("build_vocabulary()")[0].rsplit("def ", 1)[-1][:20]       # called from `_load` only
+    assert len(users) == 1 and "_load" in src["scripts/gov/backlog/backlog_links.py"].split("build_vocabulary()")[0].rsplit("def ", 1)[-1][:20]       # called from `_load` only
     for f, t in src.items():
         if not (f.endswith(".py") and _is_test(f)) or "vocab" not in t:
             continue

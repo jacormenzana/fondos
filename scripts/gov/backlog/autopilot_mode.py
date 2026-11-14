@@ -3,10 +3,10 @@
 """
 autopilot_mode.py -- the owner's command to read and set the mode of the backlog autopilot (Backlog v3.1, FND-0355; NORMAS_BACKLOG.md section 2, phase `events`).
 
-    python scripts/audit/autopilot_mode.py                                          # --show: the ceiling, the database mode, the effective mode and the track record (read-only)
-    python scripts/audit/autopilot_mode.py --set ON --reason "owner decision 2026-11-01: ..."
-    python scripts/audit/autopilot_mode.py --set SHADOW --reason "..."              # back to notes only
-    python scripts/audit/autopilot_mode.py --set OFF --reason "..."                 # off; only a person can lift an OFF
+    python scripts/gov/backlog/autopilot_mode.py                                          # --show: the ceiling, the database mode, the effective mode and the track record (read-only)
+    python scripts/gov/backlog/autopilot_mode.py --set ON --reason "owner decision 2026-11-01: ..."
+    python scripts/gov/backlog/autopilot_mode.py --set SHADOW --reason "..."              # back to notes only
+    python scripts/gov/backlog/autopilot_mode.py --set OFF --reason "..."                 # off; only a person can lift an OFF
 
 The mode is an appended event (backlog.autopilot_mode_event). The autopilot itself moves only SHADOW <-> ON, by its own track record (20 uncontradicted SHADOW decisions to promote, two reopened
 closures in 30 days to demote); a person sets any mode at any time, which is what this command does. A person's ON skips the 20-decision evidence on purpose and is recorded as that person's
@@ -21,7 +21,7 @@ import argparse
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 RC_OK, RC_FAILED, RC_USAGE = 0, 1, 2
 _RANK = {"OFF": 0, "SHADOW": 1, "ON": 2}
 
@@ -61,7 +61,7 @@ def main(argv: list | None = None) -> int:
     ceiling = cfg.BACKLOG_AUTOPILOT_MODE if cfg.BACKLOG_AUTOPILOT_MODE in _RANK else "OFF"
     try:
         if not bc.events_store_present():
-            print("the events store is not applied (owner: the deploy watcher applies it; python scripts/ops/migrate_backlog_v2.py --phase events)", file=sys.stderr)
+            print("the events store is not applied (owner: the deploy watcher applies it; python scripts/mig/backlog/migrate_backlog_v2.py --phase events)", file=sys.stderr)
             return RC_USAGE
         rec = bc.autopilot_track_record(ap_mod.DEMOTE_WINDOW_DAYS)
     except Exception as exc:                                  # never echo a DSN

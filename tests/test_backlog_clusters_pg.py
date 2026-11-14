@@ -1,7 +1,7 @@
 # tests/test_backlog_clusters_pg.py
 # -*- coding: utf-8 -*-
 """Backlog v3 W4b slice 2 (FND-0360): the MODULE clusters kept by the real runner and the real client on a real database, under the autopilot's real privileges (SET LOCAL SESSION AUTHORIZATION).
-Hermetic PostgreSQL. Run with python scripts/ops/run_pg_tests.py."""
+Hermetic PostgreSQL. Run with python scripts/gov/delivery/run_pg_tests.py."""
 from __future__ import annotations
 
 import json
@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "ops"), str(_ROOT / "scripts" / "audit"), str(Path(__file__).resolve().parent)):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "mig" / "backlog"), str(_ROOT / "scripts" / "gov" / "backlog"), str(Path(__file__).resolve().parent)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 

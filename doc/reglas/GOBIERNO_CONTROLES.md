@@ -112,7 +112,7 @@ sin código de puerta propio.
 | `D-OUTLIER` | clase `STATISTICAL_ANOMALY` (MAD-Z, IQR): elementos de revisión, nunca defectos | `WARN` | `RULE_CLASS:STATISTICAL_ANOMALY` | enforced |
 | `D-RESIDUAL` | defecto cuyos infractores están todos cubiertos por un residual aceptado vigente: se reporta rebajado, nunca se oculta | `WARN` | `RULE_CLASS:ACCEPTED_RESIDUAL` | enforced |
 | `D-EXCEPTIONS` | todo residual aceptado es un `GRANT` / `RENEW` más un `APPROVE` separado en `control.audit_exception_event` (D6), revocado con causa; la puerta rechaza si ese historial no se puede leer o `control.audit_accepted_finding` no coincide con él (§5) | `BLOCK` | `GATE:EXCEPTIONS` | enforced |
-| `D-PERIOD-KEY` | R-9: una familia de indicadores que se da por invariante a la convención de sello debe dar el mismo valor con el NAV llevado a la clave de periodo canónica, y cada serie almacenada debe llevar el sello que declara su contrato (`scripts/audit/period_key_invariance.py`, `shared/period_key_contract.py`). Un hallazgo se lista en el informe de ciclo; macro y rolling fueron las dos violaciones conocidas hasta FND-0300 (NAV etiquetado en el lector); una familia cuya predicción declarada es «cambia» no levanta alarma | `WARN` | `CODE:scripts.audit.period_key_invariance.main` | enforced |
+| `D-PERIOD-KEY` | R-9: una familia de indicadores que se da por invariante a la convención de sello debe dar el mismo valor con el NAV llevado a la clave de periodo canónica, y cada serie almacenada debe llevar el sello que declara su contrato (`scripts/audit/p2/period_key_invariance.py`, `shared/period_key_contract.py`). Un hallazgo se lista en el informe de ciclo; macro y rolling fueron las dos violaciones conocidas hasta FND-0300 (NAV etiquetado en el lector); una familia cuya predicción declarada es «cambia» no levanta alarma | `WARN` | `CODE:scripts.audit.p2.period_key_invariance.main` | enforced |
 
 `D-INVARIANT`, `D-IDENTITY` y `D-TS-DUP` son los tres criterios de `gating.is_blocking`; `D-DATA-SCENARIO`, `D-RESIDUAL-SCENARIO`
 y `D-DATA-UNIVERSE` reparten esos defectos por alcance (sobre la cartera / solo en el universo).
@@ -124,8 +124,8 @@ y `D-DATA-UNIVERSE` reparten esos defectos por alcance (sobre la cartera / solo 
 | `G-OVERRIDE-AP` | `--accept-alarms` exige motivo y `--ap FND-nnnn` existente en `gestion.backlog`; sin ello el override no se aplica | `BLOCK` | `GATE:OVERRIDE_AP` | enforced |
 | `G-COMPLETENESS` | cada comprobación obligatoria produjo resultado; una entrada `MISSING` (o una obligatoria `EMPTY` en corrida FULL) hace la corrida `INCOMPLETE`, código de salida 2, nunca un pase; el estado se escribe en `control.audit_run` con las filas de la corrida, en una sola transacción (§7) | `BLOCK` | `CODE:shared.statistical_audit.completeness.run_status` | enforced |
 | `G-EVIDENCE-RUN` | la corrida que lee la puerta es la última cabecera de `control.audit_run` de ámbito FULL y estado distinto de `INCOMPLETE`, posterior al DRAFT; una corrida FAIL cuenta (D4); una `_sample` nunca (siempre activo: `gating.SAMPLE_RUN_SUFFIX`) | `BLOCK` | `CODE:shared.statistical_audit.gating.select_evidence_run` | enforced |
-| `G-COST` | los defectos duros abiertos de la auditoría de evidencia de `cost_attributes` sobre fondos de la cartera rechazan como los de `p2_metrics` (D8: `scripts/audit/cost_gate_replay.py` sobre las corridas pasadas, un ciclo en sombra, luego el interruptor) | `BLOCK` | `GATE:COST` | dormant:COST_DOMAIN_GATE_ENABLED |
-| `G-REMEDIATION` | un hallazgo `CRITICAL` es un incidente (`control.audit_incident`); el ticket vinculado se cierra solo con el incidente `CERTIFIED` por una re-auditoría posterior y completa (no `INCOMPLETE`, `FULL` o que cubra los ISIN afectados, ninguno sigue infringiendo; una recomputación sola nunca certifica) o `ACCEPTED` por residuales activos; lo aplica `scripts/ops/close_release.py` (§9) | `BLOCK` | `CODE:shared.statistical_audit.incidents.closable` | enforced |
+| `G-COST` | los defectos duros abiertos de la auditoría de evidencia de `cost_attributes` sobre fondos de la cartera rechazan como los de `p2_metrics` (D8: `scripts/audit/stat/cost_gate_replay.py` sobre las corridas pasadas, un ciclo en sombra, luego el interruptor) | `BLOCK` | `GATE:COST` | dormant:COST_DOMAIN_GATE_ENABLED |
+| `G-REMEDIATION` | un hallazgo `CRITICAL` es un incidente (`control.audit_incident`); el ticket vinculado se cierra solo con el incidente `CERTIFIED` por una re-auditoría posterior y completa (no `INCOMPLETE`, `FULL` o que cubra los ISIN afectados, ninguno sigue infringiendo; una recomputación sola nunca certifica) o `ACCEPTED` por residuales activos; lo aplica `scripts/gov/backlog/close_release.py` (§9) | `BLOCK` | `CODE:shared.statistical_audit.incidents.closable` | enforced |
 
 ---
 
@@ -192,14 +192,14 @@ un aviso (sombra), nunca un bloqueo.
 |---|---|---|
 | `GOVERNANCE_ORCHESTRATOR_ENABLED` | el veredicto **decide** (tolerancia 5·10⁻⁵, `GATE:MANIFEST`) | sombra: decide la puerta heredada |
 | `CODE_INTEGRITY_GATE_ENABLED` | `GATE:CODE` bloquea (haga *push* antes de promover) | aviso |
-| `COST_DOMAIN_GATE_ENABLED` | `GATE:COST` bloquea | aviso; antes de encender: `scripts/audit/cost_gate_replay.py` y un ciclo en sombra |
+| `COST_DOMAIN_GATE_ENABLED` | `GATE:COST` bloquea | aviso; antes de encender: `scripts/audit/stat/cost_gate_replay.py` y un ciclo en sombra |
 
 Los dos últimos actúan dentro del orquestador. En `CODE_DEPLOY` el estado del código solo se avisa (`p1p2_state.py preflight`, D3).
 
 ## 9. Remediación en bucle cerrado (`G-REMEDIATION`, FND-0264)
 
 Un defecto `CRITICAL` (`AUDITORIA_ESTADISTICA.md` §6.5) no se cierra por una afirmación ni por una recomputación: se cierra con **evidencia**.
-`shared/statistical_audit/incidents.py` (puro) decide; `scripts/audit/audit_incident.py` lo registra.
+`shared/statistical_audit/incidents.py` (puro) decide; `scripts/audit/stat/audit_incident.py` lo registra.
 
 | Estado | Cómo se llega |
 |---|---|
@@ -212,11 +212,11 @@ El auditor sigue siendo de solo lectura: la corrección se ejecuta en su pipelin
 `run_block.py …`); aquí solo se detecta, se registra y se certifica con una auditoría posterior.
 
 **Puerta de cierre.** El backlog (`gestion`) y `fondos` son bases distintas, así que ninguna restricción SQL puede enlazarlas: la puerta vive
-en la única herramienta que cierra releases, `scripts/ops/close_release.py` (envoltorio de `backlog.sp_close_release`, simulacro por defecto,
+en la única herramienta que cierra releases, `scripts/gov/backlog/close_release.py` (envoltorio de `backlog.sp_close_release`, simulacro por defecto,
 etiqueta sin usar, conjunto exacto de tickets, un registro por ticket). Rechaza un ticket vinculado a un incidente no certificado ni aceptado;
 con `AUDIT_INCIDENT_LOOP_ENABLED` encendido y sin la tabla, rechaza (fallo cerrado). `audit_incident.py --close-check FND-nnnn` da el mismo
 veredicto sin escribir. Un cierre sin despliegue (`REJECTED`, `DUPLICATED`) sigue siendo un cambio de estado registrado a mano.
 
 `audit_incident.py --plan` (solo lectura, sin tabla ni interruptor) imprime los incidentes que **se abrirían**: es el registro en sombra de la
 decisión D7. Abrirlos (`--open`, que crea el incidente y su ticket con `backlog_client.report_incident`) exige `AUDIT_INCIDENT_LOOP_ENABLED`
-y la tabla (`scripts/ops/migrate_audit_incident.py`, propietario).
+y la tabla (`scripts/mig/fondos/migrate_audit_incident.py`, propietario).

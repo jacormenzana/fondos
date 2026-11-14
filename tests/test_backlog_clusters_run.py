@@ -1,6 +1,6 @@
 # tests/test_backlog_clusters_run.py
 # -*- coding: utf-8 -*-
-"""Backlog v3 W4b slice 2 (FND-0360): the cluster step, the proof and the reports of scripts/audit/backlog_modules.py, with a fake client and a fake git. No database, no git, no network (R-7)."""
+"""Backlog v3 W4b slice 2 (FND-0360): the cluster step, the proof and the reports of scripts/gov/backlog/backlog_modules.py, with a fake client and a fake git. No database, no git, no network (R-7)."""
 from __future__ import annotations
 
 import sys
@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_ROOT / "scripts" / "audit")):
+for _p in (str(_ROOT), str(_ROOT / "scripts" / "gov" / "backlog")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -169,7 +169,7 @@ def test_a_failing_cluster_step_never_takes_the_facts_down_with_it():
 
 
 def test_the_autopilot_asks_for_the_clusters_and_the_mode_is_a_config_constant():
-    src = (_ROOT / "scripts" / "audit" / "backlog_autopilot.py").read_text(encoding="utf-8")
+    src = (_ROOT / "scripts" / "gov" / "backlog" / "backlog_autopilot.py").read_text(encoding="utf-8")
     assert "modules_run.run(bc, apply=True, out=lambda *_: None, clusters=True)" in src
     cfg = (_ROOT / "shared" / "config.py").read_text(encoding="utf-8")
     assert 'BACKLOG_MODULE_CLUSTERS_MODE: str = "AUTO"' in cfg and run._config_mode() in cl.MODES
@@ -287,7 +287,7 @@ def test_the_summary_fragment_names_what_was_written_and_never_hides_a_refusal_o
 
 
 def test_the_autopilot_summary_uses_the_fragment():
-    src = (Path(__file__).resolve().parents[1] / "scripts" / "audit" / "backlog_autopilot.py").read_text(encoding="utf-8")
+    src = (Path(__file__).resolve().parents[1] / "scripts" / "gov" / "backlog" / "backlog_autopilot.py").read_text(encoding="utf-8")
     assert "summary += modules_run.cluster_note(kept)" in src
 
 
