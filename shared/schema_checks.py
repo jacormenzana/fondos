@@ -369,10 +369,13 @@ assert len(EXPECTED_COLUMNS_V23) == 60, (
 # invariante entre clases; NULL = no descubierto. Columna nullable anadida por db/migrations/20261024_fund_master_official_fund_name.sql
 # (la aplica el propietario ANTES de desplegar el codigo). SCHEMA_VERSION no cambia (ninguna columna posterior a la migracion a Postgres la ha cambiado).
 FND0246_FUND_MASTER_NEW: list[str] = ["Official_Fund_Name"]
-FUND_MASTER_COLUMNS_CURRENT: list[str] = FUND_MASTER_COLUMNS_V23 + FND0246_FUND_MASTER_NEW
+# Package H (FND-0408, 2026-11-14): Exit_Fee_Known_Flag, a GENERATED column (the exit twin of Fee_Known_Flag, which became generated in the same migration:
+# db/migrations/20261114_fund_master_derived_fee_flags.sql). Neither is ever written; both are derived from the fee numbers (shared/fee_state.py).
+FND0408_FUND_MASTER_NEW: list[str] = ["Exit_Fee_Known_Flag"]
+FUND_MASTER_COLUMNS_CURRENT: list[str] = FUND_MASTER_COLUMNS_V23 + FND0246_FUND_MASTER_NEW + FND0408_FUND_MASTER_NEW
 FUND_MASTER_COLUMNS_CURRENT_SET: frozenset = frozenset(FUND_MASTER_COLUMNS_CURRENT)
-assert len(FUND_MASTER_COLUMNS_CURRENT_SET) == 61, (
-    f"fund_master debe tener 61 columnas, tiene {len(FUND_MASTER_COLUMNS_CURRENT_SET)}"
+assert len(FUND_MASTER_COLUMNS_CURRENT_SET) == 62, (
+    f"fund_master debe tener 62 columnas, tiene {len(FUND_MASTER_COLUMNS_CURRENT_SET)}"
 )
 
 # v24 (2026-07-18): fund_nav_monthly + fund_nav_daily incorporadas al schema

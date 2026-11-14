@@ -54,7 +54,13 @@ CREATE TABLE IF NOT EXISTS silver.fund_master (
     investment_universe           text,
     investment_focus              text,
     credit_quality                text,
-    fee_known_flag                 text,
+    -- Package H (FND-0408): both fee states are DERIVED from their numbers (shared/fee_state.py; db/migrations/20261114_fund_master_derived_fee_flags.sql), never written.
+    fee_known_flag                 text GENERATED ALWAYS AS (
+        CASE WHEN entry_fee_pct IS NOT NULL AND entry_fee_pct >= 0 AND entry_fee_pct <> 'NaN'::float8 THEN (CASE WHEN entry_fee_pct = 0 THEN 'ZERO_CONFIRMED' ELSE 'EXTRACTED' END) WHEN entry_fee_pct_max IS NOT NULL AND entry_fee_pct_max >= 0 AND entry_fee_pct_max <> 'NaN'::float8 THEN (CASE WHEN entry_fee_pct_max = 0 THEN 'ZERO_CONFIRMED' ELSE 'ENTRY_CONDITIONAL' END) ELSE 'NOT_FOUND' END
+    ) STORED,
+    exit_fee_known_flag            text GENERATED ALWAYS AS (
+        CASE WHEN exit_fee_pct IS NOT NULL AND exit_fee_pct >= 0 AND exit_fee_pct <> 'NaN'::float8 THEN (CASE WHEN exit_fee_pct = 0 THEN 'ZERO_CONFIRMED' ELSE 'EXTRACTED' END) WHEN exit_fee_pct_max IS NOT NULL AND exit_fee_pct_max >= 0 AND exit_fee_pct_max <> 'NaN'::float8 THEN (CASE WHEN exit_fee_pct_max = 0 THEN 'ZERO_CONFIRMED' ELSE 'EXIT_CONDITIONAL' END) ELSE 'NOT_FOUND' END
+    ) STORED,
     kid_format                    text CHECK (kid_format IN ('UCITS_KIID','PRIIPS_KID','UNKNOWN')),
     kid_currency                   varchar(3),
     cost_extraction_quality        text

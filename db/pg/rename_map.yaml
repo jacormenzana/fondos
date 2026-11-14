@@ -229,6 +229,7 @@ columns:
     Investment_Focus: investment_focus
     Credit_Quality: credit_quality
     Fee_Known_Flag: fee_known_flag
+    Exit_Fee_Known_Flag: exit_fee_known_flag
     KID_Format: kid_format
     KID_Currency: kid_currency
     Cost_Extraction_Quality: cost_extraction_quality

@@ -50,6 +50,7 @@ SELECT
        "investment_focus" AS "Investment_Focus",
        "credit_quality" AS "Credit_Quality",
        "fee_known_flag" AS "Fee_Known_Flag",
+       "exit_fee_known_flag" AS "Exit_Fee_Known_Flag",
        "kid_format" AS "KID_Format",
        "kid_currency" AS "KID_Currency",
        "cost_extraction_quality" AS "Cost_Extraction_Quality",

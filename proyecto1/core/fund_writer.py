@@ -114,18 +114,6 @@ from typing import Dict, Iterable, Optional, Any
 import datetime
 
 
-def _attribute_group_write_enabled() -> bool:
-    """Package H (FND-0408): ATTRIBUTE_GROUP_WRITE_ENABLED, leido en runtime (config = dependency leaf). OFF por defecto."""
-    try:
-        from shared.config import ATTRIBUTE_GROUP_WRITE_ENABLED as _f
-        return bool(_f)
-    except ImportError:
-        try:
-            from config import ATTRIBUTE_GROUP_WRITE_ENABLED as _f
-            return bool(_f)
-        except ImportError:
-            return False
-
 # §Y-2: el normalizador de casing es UNA función en classify_utils (R-1).
 # Import defensivo (sys.path variable según entrypoint).
 try:
@@ -553,9 +541,9 @@ def upsert_fund_master(conn: "psycopg.Connection",
         ("Official_Fund_Name",          record.get("Official_Fund_Name"),        'co'),
     ]
 
-    # Package H: con el interruptor ON la flag deja de escribirse (pasa a columna GENERADA tras la migracion, plan R8: Postgres rechaza un valor explicito).
-    if _attribute_group_write_enabled():
-        spec = [row for row in spec if row[0] != "Fee_Known_Flag"]
+    # Package H (FND-0408): Fee_Known_Flag / Exit_Fee_Known_Flag son columnas GENERADAS (se derivan de los numeros de la comision; migracion 20261114): Postgres rechaza un
+    # valor explicito, asi que la flag NUNCA se escribe. El par de numeros si (la marca _fee_pairs_resolved la pone el pipeline).
+    spec = [row for row in spec if row[0] != "Fee_Known_Flag"]
 
     insert_cols = [c for c, _v, _p in spec]
     # Postgres migration Phase 5c, 2026-09-20: the only dialect-specific piece of this whole
