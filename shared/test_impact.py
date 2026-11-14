@@ -666,8 +666,10 @@ MAX_CHANGED_SYMBOLS = 200
 # or rank, and were pulling the cycle end-to-end tests (launchers that run the real scripts) into every `shared/config.py` selection. Owner-approved 2026-11-12, one entry each, with the reasoning
 # and its repository scanners (tests/test_test_impact.py::test_narrowed_readers_*), which fail when the reasoning stops being true:
 #   hub -> {file: (bindings)}
-#   shared/governance/run_identity.py::config_items   builds `config_hash`, an identity STRING that is written into a run header and printed in the promotion evidence; no code compares it (the
-#                                                     orchestrator only checks that it is present, code_integrity is git-only) and no test pins a literal one. A new or edited switch changes the string, never a decision.
+#   shared/governance/run_identity.py::config_items   builds `config_hash`, an identity STRING that is written into a run header and printed in the promotion evidence. The only comparison is
+#                                                     `run_identity.identity_verdict` (FND-0306, control D-AUDIT-IDENTITY): it feeds a verdict that is PRINTED while PROMOTION_AUDIT_IDENTITY_GATE_ENABLED is OFF (shadow),
+#                                                     so a new or edited switch changes a printed line, never a decision; no test pins a literal hash. Review this entry when that switch is turned ON: a refusal
+#                                                     (`[GATE:AUDIT_IDENTITY]`) would then depend on the string, and the narrowing would no longer hold. (The orchestrator only checks that it is present, code_integrity is git-only.)
 #   scripts/gov/backlog/backlog_links.py::build_vocabulary  reads the constant NAMES of shared/config.py as a vocabulary to rank ticket similarity; a new constant adds one word. Its only caller is `_load` of the
 #                                                     same file. A test that names an edited or removed constant is still selected by that name.
 NARROWED_READERS = {
