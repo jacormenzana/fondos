@@ -86,6 +86,19 @@ def test_the_priips_boilerplate_sentence_is_not_a_maximum_but_an_explicit_hasta_
     assert fa.read_row(fa.fee_row("Costes de entrada Se trata de la cantidad máxima que se le cobrará. Hasta $500 Costes de salida", "entry")) == "conditional"
 
 
+def test_fnd0421_reader_artifacts_are_not_disagreements():
+    """FND-0421: (a) 'Hasta N EUR' after a percent is the amount line; (b) a row ends at 'Comisiones de rendimiento'; (c) a row ends at the other side's wording."""
+    pct_then_amount = "Costes de entrada 3,00% del importe que pagará usted. Hasta 300 EUR Costes de salida 0 EUR"
+    assert fa.read_row(fa.fee_row(pct_then_amount, "entry")) == "positive"
+    assert fa.read_row(fa.fee_row("Costes de entrada Hasta 3,00% del importe. Hasta 300 EUR Costes de salida", "entry")) == "conditional"   # an explicit "Hasta N %" stays a marker
+    assert fa.read_row("Hasta 300 EUR") == "conditional"                                                                                    # amount only: still a maximum
+    perf = "Costes de entrada 3,00% del importe. 300 EUR Comisiones de rendimiento No se aplica ninguna comisión de rendimiento. Costes de salida"
+    assert fa.read_row(fa.fee_row(perf, "entry")) == "positive"
+    other_side = "Costes de entrada 3,00% del importe. 300 EUR No aplicamos ninguna comisión de salida. 0 EUR"
+    assert fa.read_row(fa.fee_row(other_side, "entry")) == "positive"
+    assert fa.read_row(fa.fee_row("Costes de salida No aplicamos ninguna comisión de salida. 0 EUR", "exit")) == "zero"
+
+
 def test_the_reader_knows_that_a_manager_who_charges_none_means_zero_even_if_a_distributor_may_charge():
     """Pictet / Carmignac / 'The Fund does not charge an entry fee': zero applied, whatever maximum another party may charge (FND-0420)."""
     pictet = "Costes de salida Pictet Asset Management (Europe) S.A. no cobra gastos de salida por este producto, si bien la persona que se lo venda podría cobrarle hasta un máximo del 1.00%. Hasta 100 USD COSTES CORRIENTES"
