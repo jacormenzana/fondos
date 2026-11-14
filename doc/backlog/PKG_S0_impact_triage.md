@@ -53,6 +53,11 @@ Corrections to Revision 1: the flat `ipc_yoy_avg` for Sep-Nov is expected (Septe
 - Later the same day (owner delegated judgement; backup deferred): FND-0256 closed after the P3 leg-level freshness check shipped SHADOW (`cfb35b1`) and ON (`4c7a56b`); pair 0239 / 0385 decided NONE (adjudication 41); 0221, 0198, 0239 back to TODO; `redireccion` removed (`f6c7799`, owner's written OK); the 11-12 DRAFT was promoted by the owner. Next: `HANDOFF_S0_PACKAGE_1.md`.
 - Not touched at that point (no decision yet): FND-0397 stays NO GO, DRAFT promotion, the 0239 / 0385 pair, the WIP limit.
 
+## 5c. 2026-11-14: the failed cycle (FND-0407) and what followed
+- The owner's P1P2P3 cycle (23:40) failed at PASO 3 at 01:04 (auto-ticket FND-0407). Root cause, from the Postgres log: the 01:00 scheduled base backup ran inside the cycle, P2's statements slowed from milliseconds to seconds, a server process died with signal 13 and Postgres crash-recovered in 7 s (no data loss found). The cycle was resumed from step 3 (`--from 3`) at 01:09 and finished OK at 03:55.
+- The first stamped DRAFT (`cartera_shock_energetico_202611_b20261114033913`) showed MATCH in all four FND-0306 shadow verdicts and was promoted by the owner's order; two logical dumps were taken (01:07 and 03:57).
+- Prevention (FND-0290 / FND-0407, commits `ec4aaeb`, `d263434`): every backup entry point reads the cycle lock and defers (exit 75) while a cycle runs; the rotating backup keeps the two newest dates. Receipt PASS (7,073 passed) on `d263434`; the scripts moved to `scripts/mnt/` in the later reorganisation. FND-0407 closes on this evidence.
+
 ## 5b. Promotion readiness of DRAFT `cartera_shock_energetico_202611_b20261112220456` (dry run, read-only, 2026-11-13)
 - Passes: weights sum 1.0000, 30 funds; non-EUR exposure 30.0 % (budget 30 %); structural liquidity 0 % (cap 10 %); P3 freshness clean; P2 audit `post_20261112_221002_p2` (age 0 d, built after the DRAFT); 0 hard defects in or out of the portfolio; audit coverage OK; alarm watch 0 funds; data suspicion 0 funds; DATA pillar PASS, ORCHESTRATION PASS.
 - **Only blocker: `[GATE:CODE]` "1 modified tracked file" = the foreign deletion `redireccion`** (TECHNICAL = FAIL). Whoever owns that deletion must commit or restore it; then the same gate should pass. Promotion stays the owner's command.
