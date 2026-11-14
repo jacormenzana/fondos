@@ -1613,6 +1613,39 @@ def parse_investment_base(text: str) -> Optional[int]:
     return None
 
 
+# FND-0406: the entry charge printed as an AMOUNT on the example investment, with no percentage anywhere in its cell ("Costes de entrada La incidencia de los costes que usted pagará al realizar su
+# inversión. Se trata de la cantidad máxima que se le cobrará ... 496 USD", PIMCO: 105 of 3,655 PRIIPs KIDs). The cell ends where the exit-charge label begins.
+_ENTRY_COST_LABEL = re.compile(r"\b(?:costes?\s+de\s+entrada|entry\s+costs?)\b", re.IGNORECASE)
+_EXIT_COST_LABEL = re.compile(r"\b(?:costes?\s+de\s+salida|exit\s+costs?)\b", re.IGNORECASE)
+_ENTRY_CELL_MAX_CHARS = 380           # the wording before the amount is ~230 characters in the observed layout
+_ENTRY_MAX_RATIO = 0.25               # the schema ceiling of Entry_Fee_Pct_Max (25 %): above it the number is not an entry charge
+
+
+def entry_cost_ratio_from_amount(text: str) -> Optional[float]:
+    """The entry charge as a RATIO (0.0496 == 4.96 %) when the KID prints it only as an amount on the example investment, else None. Pure, bounded.
+
+    The amount is read from the cell after the entry-charge label (up to the exit-charge label, at most _ENTRY_CELL_MAX_CHARS), only when that cell carries no percentage (a percentage is read by the
+    composition parsers, never guessed here) and its first amount is positive; the base is the document's own example investment (`parse_investment_base`, never a hard-coded 10,000). A zero amount, a missing
+    base or a ratio above the schema ceiling returns None: zero charges are read by the zero detectors and negations, the rest is not an entry charge."""
+    if not text:
+        return None
+    label = _ENTRY_COST_LABEL.search(text)
+    if not label:
+        return None
+    cell = text[label.end(): label.end() + _ENTRY_CELL_MAX_CHARS]
+    stop = _EXIT_COST_LABEL.search(cell)
+    if stop:
+        cell = cell[:stop.start()]
+    if "%" in cell:
+        return None
+    amounts = _extract_eur_list_from_cell(cell)
+    base = parse_investment_base(text)
+    if not amounts or not base or amounts[0] <= 0:
+        return None
+    ratio = amounts[0] / float(base)
+    return round(ratio, 6) if ratio <= _ENTRY_MAX_RATIO else None
+
+
 def _parse_composition_dla2(text: str) -> dict:
     """
     Parser para formato DLA2 de la tabla "Composición de los costes".

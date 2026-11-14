@@ -53,6 +53,7 @@ from cost_table_parser    import (
     ENTRY_FEE_VALUE,
     ENTRY_FEE_NEGATION,
     EXIT_FEE_NEGATION,
+    entry_cost_ratio_from_amount,
     parse_investment_base,
 )
 from cost_cross_validator import validate_pct_eur, ValidationResult
@@ -539,6 +540,7 @@ def _recover_composition_from_description(text: str) -> tuple:
     return mgmt, tran
 
 
+_ENTRY_FROM_AMOUNT_ENABLED = True         # FND-0406 FIX-ENTRY-FEE-FROM-AMOUNT: False restores the former behaviour (old-vs-new measurement harness only)
 _MGMT_FROM_AMOUNT_ENABLED = True          # FIX-MGMT-FROM-AMOUNT: False restores the former behaviour (old-vs-new measurement harness only)
 _COMPOSITION_WINDOW_BOUNDED = True       # FIX-COMPOSITION-DESC-WINDOW: False restores the former behaviour (old-vs-new measurement harness only)
 _COLLAPSED_REJECTS_PROJECTION = True      # FIX-ACI-COLLAPSED-NOT-PROJECTION: False restores the former behaviour (used only by the old-vs-new measurement harness)
@@ -1412,6 +1414,19 @@ def extract_priips_costs(
                         isin, _entry_pct, _cand,
                     )
                     entry_max = _cand / 100.0
+
+        # FIX-ENTRY-FEE-FROM-AMOUNT (FND-0406, 2026-11-14): some KIDs print the entry charge only as an AMOUNT on the example investment, with no percentage ("Costes de entrada ... cantidad máxima
+        # ... 496 USD" on "Inversión: 10.000 USD", PIMCO: 105 of 3,655 PRIIPs KIDs), so no composition parser binds it and the column stayed empty while the ACI (5.8 % at a one-year holding
+        # period) includes it. The document's own amount over its own example investment IS the entry charge it prints; the helper refuses a cell with a percentage, a zero amount, a missing
+        # base or a ratio above the schema ceiling. Only fills a gap: it never replaces a value the composition parsers bound, and a negation ("no cobramos comisión de entrada") wins.
+        if entry_max is None and _ENTRY_FROM_AMOUNT_ENABLED and not ENTRY_FEE_NEGATION.search(text):
+            _entry_amt = entry_cost_ratio_from_amount(text)
+            if _entry_amt is not None:
+                _log.info(
+                    "[FIX-ENTRY-FEE-FROM-AMOUNT] %s: Entry_Fee_Pct_Max NULL→%.2f%% (importe de entrada sobre la inversión de ejemplo)",
+                    isin, _ratio_to_pct(_entry_amt),
+                )
+                entry_max = _entry_amt
 
         if entry_max is not None and entry_max <= _MAX_FEE_RATIO:
             out['Entry_Fee_Pct_Max'] = _ratio_to_pct(entry_max)
