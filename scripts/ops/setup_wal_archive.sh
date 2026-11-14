@@ -31,8 +31,10 @@
 set -euo pipefail
 
 MODE="setup"; case "${1:-}" in setup|basebackup|drill|prune|status) MODE="$1"; shift;; esac
-FORCE=0; YES=0; KEEP_DRILL=${KEEP_DRILL:-0}; NAMED=0; SWAP=0
-for a in "$@"; do case "$a" in --force) FORCE=1;; --yes) YES=1;; --keep-drill) KEEP_DRILL=1;; --named) NAMED=1;; --swap) SWAP=1;; *) echo "unknown flag: $a"; exit 2;; esac; done
+FORCE=0; YES=0; KEEP_DRILL=${KEEP_DRILL:-0}; NAMED=0; SWAP=0; IF_DUE_DAYS=""
+for a in "$@"; do case "$a" in --force) FORCE=1;; --yes) YES=1;; --keep-drill) KEEP_DRILL=1;; --named) NAMED=1;; --swap) SWAP=1;; --if-due=*) IF_DUE_DAYS="${a#--if-due=}";; *) echo "unknown flag: $a"; exit 2;; esac; done
+[[ -z "$IF_DUE_DAYS" || "$IF_DUE_DAYS" =~ ^[0-9]+$ ]] || { echo "--if-due=N needs an integer number of days"; exit 2; }
+. "$(dirname "$0")/lib/cycle_guard.sh"      # FND-0407: the base backup never starts while a work cycle runs (cycle_guard_or_defer, exit 75)
 
 BASE=${PG_BASE:-/opt/docker/db/postgresql17}
 PITR=${PITR_ROOT:-$BASE/pitr}
@@ -247,10 +249,23 @@ status() {
   say "   free on $PITR: $(hr "$(free_bytes "$PITR")")"
 }
 
+# --if-due=N (FND-0407): take a base backup only when the newest COMPLETE one is at least N days old. With a task that repeats hourly after a cycle deferred
+# it, this is what keeps a deferred run from becoming several bases: exit 0 = nothing to do.
+if_due_or_exit() {
+  [ -n "$IF_DUE_DAYS" ] || return 0
+  local last age
+  last=$(latest_base || true)
+  [ -n "$last" ] || return 0
+  age=$(stamp_age_seconds "$last") || return 0
+  if [ "$age" -lt $(( IF_DUE_DAYS * 86400 )) ]; then
+    say "[basebackup] not due: the newest complete base is $last ($(( age / 3600 )) h old; a new one is due every $IF_DUE_DAYS day(s))"; exit 0
+  fi
+}
+
 case "$MODE" in
   setup)      preflight; prepare_dir; recreate; verify_archiving; basebackup; drill
               say "SETUP COMPLETE. Next: schedule weekly '$0 basebackup' then '$0 prune --yes' (Task Scheduler -> wsl.exe -d Ubuntu -e bash ...), and copy $PITR off this machine (FND-0070)." ;;
-  basebackup) basebackup ;;
+  basebackup) cycle_guard_or_defer "the base backup"; if_due_or_exit; basebackup ;;
   drill)      drill ;;
   prune)      prune ;;
   status)     status ;;

@@ -17,6 +17,7 @@ OUT=${BACKUP_OUT:-/mnt/backups/pg_fondos/dump}   # BACKUP_OUT / BACKUP_STAMP / B
 SEC=/opt/docker/db/postgresql17/secrets
 KEEP=${BACKUP_KEEP:-7}; VERIFY=0
 while [ $# -gt 0 ]; do case "$1" in --verify-restore) VERIFY=1;; --keep) KEEP="$2"; shift;; *) echo "unknown arg $1"; exit 2;; esac; shift; done
+. "$(dirname "$0")/lib/cycle_guard.sh"; cycle_guard_or_defer "the logical dump"    # FND-0407: a running cycle always wins (exit 75 = deferred, retry later)
 PW=$(cat $SEC/postgres_password); STAMP=${BACKUP_STAMP:-$(date +%Y%m%d_%H%M)}
 P="docker exec -e PGPASSWORD=$PW fondos_postgres"
 mkdir -p "$OUT"; FAIL=0

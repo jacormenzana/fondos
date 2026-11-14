@@ -33,6 +33,7 @@ KEEP=7; DEEP=0; DUMP=1; MIRROR=0; MIRROR_DRY=0; ALLOW_LARGE=0
 while [ $# -gt 0 ]; do case "$1" in --deep) DEEP=1;; --no-dump) DUMP=0;; --mirror-prune) MIRROR=1;; --mirror-dry-run) MIRROR=1; MIRROR_DRY=1;; --mirror-allow-large) ALLOW_LARGE=1;; --keep) KEEP="$2"; shift;; *) echo "unknown arg $1"; exit 2;; esac; shift; done
 exec > >(tee -a "$LOG") 2>&1
 ts() { date '+%F %T'; }
+. "$HERE/lib/cycle_guard.sh"; cycle_guard_or_defer "the off-box copy"               # FND-0407: a running cycle always wins (exit 75 = deferred, retry later)
 FAIL=0
 echo "=== [$(ts)] offbox backup start (deep=$DEEP dump=$DUMP keep=$KEEP mirror=$MIRROR dry=$MIRROR_DRY)"
 
