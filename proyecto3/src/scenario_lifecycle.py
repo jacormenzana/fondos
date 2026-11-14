@@ -270,7 +270,7 @@ def evaluate_promotion(*, status: Optional[str], n_funds: int, weight_sum: float
     with an AP: MISMATCH (P2 recomputed after the build or the audit), UNKNOWN (a stamp is missing: never a silent pass) and AMBIGUOUS (too few real stamps).
 
     `identity` (FND-0306, same switch; None = not evaluated): the (state, detail) of shared.governance.run_identity.identity_verdict, the DRAFT's build identity (git sha, clean
-    flag, config_hash) against the evidence audit header. Anything but MATCH is AUDIT_IDENTITY, reasoned override with an AP."""
+    flag, configuration hash) against the evidence audit header. Anything but MATCH is AUDIT_IDENTITY, reasoned override with an AP."""
     if max_cash is None:
         from shared.config import MAX_PORTFOLIO_CASH_WEIGHT as max_cash
     hard: list = []

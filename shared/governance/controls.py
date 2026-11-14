@@ -176,8 +176,8 @@ CONTROLS = (
             "unstamped rows AMBIGUOUS, an unreadable lineage refuses (fail closed); FND-0306",
             BLOCK_UNLESS_OVERRIDE, SOURCE_GATE + "METRICS_LINEAGE", DORMANT_PREFIX + "PROMOTION_AUDIT_IDENTITY_GATE_ENABLED"),
     Control("D-AUDIT-IDENTITY", PILLAR_DATA, "The evidence audit ran on the code and configuration the DRAFT was built under", _OWNER_PROMOTION,
-            "the DRAFT's build identity (shared/governance/run_identity.build_identity: git sha, clean flag, config_hash; stamped in its notes) equals the identity in the header of the "
-            "evidence audit run: a different config_hash or git sha is a MISMATCH, a missing identity UNKNOWN (never a pass), and equal shas on a tree with modified tracked files UNKNOWN "
+            "the DRAFT's build identity (shared/governance/run_identity.build_identity: git sha, clean flag, configuration hash; stamped in its notes) equals the identity in the header of the "
+            "evidence audit run: a different configuration hash or git sha is a MISMATCH, a missing identity UNKNOWN (never a pass), and equal shas on a tree with modified tracked files UNKNOWN "
             "(the sha does not identify the code); FND-0306",
             BLOCK_UNLESS_OVERRIDE, SOURCE_GATE + "AUDIT_IDENTITY", DORMANT_PREFIX + "PROMOTION_AUDIT_IDENTITY_GATE_ENABLED"),
     Control("D-DATA-UNIVERSE", PILLAR_DATA, "No unaccepted hard defect in the universe", _OWNER_AUDIT,
