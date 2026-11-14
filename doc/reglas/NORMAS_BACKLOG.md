@@ -593,6 +593,18 @@ demostrado, con pruebas reproducibles sobre datos reales, que funciona correctam
   escribe un tipo no declarado) falla por la razón correcta.
 - **Para añadir un escritor:** (1) darle entrada en el registro como `REGISTERED` con topes, interruptor apagado, ficheros y entrada; (2) escribir su `plan`/`apply`; (3) `writer_proof.py --writer NOMBRE` hasta `PASS`; (4) solo entonces encender su interruptor (un evento del propietario, `shared/config.py`). El primero que pasa por aquí es el del ciclo de vida de relaciones
   y grupos (FND-0381).
+- **Valores por defecto de los interruptores de los escritores automáticos (FND-0370, punto d).** La tabla de abajo es la que lee `tests/test_backlog_switch_defaults.py`: cada interruptor de un escritor del registro, y los que gobiernan lo que el autopiloto escribe, figura con
+  el valor que lleva en `shared/config.py`. Cambiar el valor en uno sin cambiarlo en el otro hace fallar la prueba; un escritor `REGISTERED` (nuevo) solo puede figurar apagado (`False` / `"OFF"`). Encender un interruptor es un evento del propietario y se registra aquí en el mismo commit.
+
+  | Interruptor | Valor por defecto | Gobierna |
+  |---|---|---|
+  | `BACKLOG_AUTOPILOT_MODE` | `"ON"` | el autopiloto (techo; `--mode` solo puede bajarlo) |
+  | `BACKLOG_AUTO_FORWARD_ENABLED` | `True` | la puerta commit-msg: OPEN/TODO -> IN_PROGRESS con `Refs:` |
+  | `BACKLOG_AUTO_DEPLOY_MODE` | `"AUTO"` | el vigilante de despliegue del DDL pendiente |
+  | `BACKLOG_INCIDENT_AUTO_APPEND_ENABLED` | `False` | `report_incident`: anexar a una incidencia existente |
+  | `BACKLOG_IMPACT_NOTES_ENABLED` | `True` | las notas `[impact]` del autopiloto |
+  | `BACKLOG_MODULE_CLUSTERS_MODE` | `"AUTO"` | los grupos `MOD.<ruta>` del autopiloto |
+  | `BACKLOG_AUTO_REVOKE_ENABLED` | `True` | la revocación automática de una aceptación al cerrarse su causa |
 
 ## §5. Protocolo de absorción de alcance
 
