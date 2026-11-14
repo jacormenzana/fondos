@@ -72,8 +72,17 @@ def main(argv: list | None = None) -> int:
     if not dsn:
         print("FONDOS_PG_DSN_OWNER is not set (it is in .env); DDL needs the owner role.", file=sys.stderr)
         return RC_USAGE
+    # The owner string in the vault may name another database (the backlog tools point it at `gestion` themselves): this migration touches silver.fund_master only, so the
+    # target database is the one the live application connects to (FONDOS_PG_DSN), never whatever the stored string happens to say.
+    from psycopg.conninfo import make_conninfo
+    app_dsn = os.environ.get("FONDOS_PG_DSN")
+    target_db = conninfo_to_dict(app_dsn).get("dbname") if app_dsn else None
+    if not target_db:
+        print("FONDOS_PG_DSN is not set (it is in .env); it names the database this migration must target.", file=sys.stderr)
+        return RC_USAGE
+    dsn = make_conninfo(dsn, dbname=target_db)
     d = conninfo_to_dict(dsn)
-    print(f"target: host={d.get('host')} port={d.get('port')} dbname={d.get('dbname')} user={d.get('user')}")
+    print(f"target: host={d.get('host')} port={d.get('port')} dbname={d.get('dbname')} user={d.get('user')}  (database taken from FONDOS_PG_DSN)")
     try:
         conn = psycopg.connect(dsn, connect_timeout=10)
     except Exception as exc:            # never echo the DSN
