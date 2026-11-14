@@ -1,0 +1,41 @@
+# Package H: fee state consistency by construction (record, rewritten in place)
+
+Opened 2026-11-14. Owner request: numeric attributes and the categorical attributes that describe their state must be consistent (example: `Entry_Fee_Pct`, `Entry_Fee_Pct_Max`, `Fee_Known_Flag`). Approved plan: Revision 7 (the plan file with its full version history is `C:\Users\jacor\.claude\plans\pasted-content-id-72b3-it-is-staged-puddle.md`; this page is the repository record). Master ticket and children: section 7.
+
+## 1. Decision needed / what runs
+- **Running now:** nothing on the live store. Slice 0 (read-only measurement, tickets, spike) is delivered; Slice 1 (code behind a switch, OFF) is next.
+- **Owner, one-off authority events (nothing recurring):** (a) review the rehearsal on the disposable PG before any live write; (b) one attended window: pause the scheduled writers of `fund_master`, apply ONE migration (the flag swap, one transaction), resume.
+- **ETA Tier 1:** 3-4 sessions elapsed. Then the queue C, D, E, G resumes.
+
+## 2. Decisions (owner, 2026-11-14)
+1. The flags are DERIVED from their numbers (generated columns `fee_known_flag` and the new `exit_fee_known_flag`), not stored and synchronised.
+2. The P3 rotation-cost unit defect is its own ticket; `ROTATION_COST_GATE_ENABLED` stays OFF until it is fixed; no P3 change in this package.
+3. Tier 1 only; everything else is a dated deferral (section 6).
+Kept: P#1 amended for declared value pairs (`resolve_pair`), FND-0406 absorbed, F7 `NONE => 0` approved (deferred), the `kiid_pdf_hash` default policy with a 2 % stop criterion.
+
+## 3. The defect, measured (baseline `doc/backlog/PKG_H_fee_state_baseline.json`, script `scripts/audit/p1/fee_state_baseline.py`, 2026-11-14)
+- Stored `Fee_Known_Flag` contradicted by its own point: **995 of 2,943 universe funds, 1,246 of 3,770 over all funds** (NOT_FOUND with a point, ENTRY_CONDITIONAL with a point, EXIT_INFERRED_ZERO that lost the entry state).
+- **Root cause (verified):** per-column COALESCE on a coupled group (`fund_writer.py`) plus a parser that rewrites the flag on every pass, CACHED included, while the cost extractor runs only with a PDF or `--recompute-costs`; and the flag is redundant by definition (under the owner's definitions every entry state follows from (point, ceiling)). 111 of the 113 "NOT_FOUND with point 0.0 and no ceiling" funds are FND-0406's (stale 0.0 from an old parser, the KID prints the charge only as an amount).
+- Derived distribution (what the flags will read): universe entry EXTRACTED 1,453, ZERO_CONFIRMED 1,163, ENTRY_CONDITIONAL 127, NOT_FOUND 200; exit EXTRACTED 209, ZERO_CONFIRMED 2,542, EXIT_CONDITIONAL 15, NOT_FOUND 177. **Visible change for BI users:** a maximum with no applied fee reads ENTRY_CONDITIONAL, a zero with a declared maximum reads ZERO_CONFIRMED; counts shift.
+- **Selection impact today: none.** The only P3 reader is `estimate_rotation_cost` (`portfolio_builder.py`), behind the OFF gate. 39 production files mention a fee column; outside P1, DDL and the audit: `portfolio_builder.py`, `shared/cost_rounding.py`, `run_statistical_audit.py`; `proyecto2` has none. No view or matview depends on `fee_known_flag`.
+- **Latent P3 defect (own ticket):** `COALESCE(fm.Entry_Fee_Pct, rc.entry_fee_pct, default) / 100` mixes a RATIO (fund_master) with PERCENT (rotation_costs): a stored fee comes out 100x too small. Verified by reading, not yet by running; the ticket starts with a unit test.
+
+## 4. Slice 0 results
+- **`kiid_pdf_hash`** is the SHA-256 of the downloaded PDF bytes (`io.py` `pdf_sha256`); it changes only on a new download, and a CACHED pass returns the stored value. So "unchanged document" is "same hash" (3,762 of 3,770 populated, 3,749 distinct: share classes share PDFs).
+- **Pair conflicts** (applied fee above its own maximum, `point x 100 > ceiling + 0.005 pp`): 8 universe funds, **20 entry over all funds** plus 1 exit. Two clusters: A, 8 funds with ceiling 0 and an amount-derived point ("No cobramos comision de entrada. 525 EUR", read differently by parser and extractor); B, 12 funds whose extractor ceiling is below the printed point (IE00B3Q8M574 prints "Costes de entrada 5.00 %", stored ceiling 3.0), a probable extractor defect. Rule (plan R7): keep both values, DQ WARN `FEE_PAIR_CONFLICT`, list as residual, never auto-pick.
+- **No negative stored fee values** (guard still added).
+- **F3 spike (does "status = function of its numbers" generalise?):** yes. `SRRI_Validation_Status` equals the status derived from (`srri_visual`, `srri_textual`) on **3,768 of 3,770** funds; the 2 mismatches are exactly the two F3 rows (FR0013296332, LU2098886703); `srri = coalesce(textual, visual)` holds on every row; `SRRI_Quality_Flag` follows the status with the same two exceptions. Implication for Tier 2: the generic framework is a registry of DERIVATIONS (python function + SQL expression + equality test), not of requirement tables.
+- **Accuracy gate (Wilson, n = 30 per stratum):** 0-1 errors PASS, 2-3 REVIEW, 4 or more STOP (`shared/fee_state.accuracy_decision`). Strata: entry 4 states; exit 4 states with the zero state split (point 0 without ceiling / ceiling only or 0); sizes in the baseline JSON.
+
+## 5. Tier 1 sequence and exit metric
+- **Slice 1** (code, switch `ATTRIBUTE_GROUP_WRITE_ENABLED` OFF, no DDL beyond `20_silver.sql`): `shared/fee_state.py` (`derive_fee_state` exists; `resolve_pair` and the SQL expression with their Postgres equality test to come), parser exposes evidence, pipeline reconciliation gated by `full_cost_pass`, writer, two PLAUSIBILITY invariants in `COST_INVARIANTS`, docs. `schema_checks.py` is NOT touched until after the migration (V24 set).
+- **Rehearsal** on the disposable PG with a snapshot wide enough for the pass and the audit; the pre-write accuracy gate runs on the replay output.
+- **Slice 2** (live, attended): pause window, backup dump, replay with the 2 % criterion, receipt then switch ON, 40-ISIN sample then the whole-universe `--recompute-costs` pass (FND-0406's 116 funds included), accuracy after, ONE migration in one transaction, post-migration commit with the V24 expected set, resume.
+- **Exit metric:** (1) 0 unexplained pair conflicts (each resolved by a stated rule or listed with a WARN and a ticket); (2) accuracy by the Wilson rule before the write and after it; (3) both flags generated, switch ON, two invariants reporting; (4) FND-0406 closed on that evidence; (5) every deferral a dated ticket.
+
+## 6. Deferred, dated (review 2026-12-15 unless stated)
+Registry of derivations, completeness test, discovery scan, NULL-aware engine function, `SC-I`, DB CHECKs on numeric pairs, cross-table contracts; F2 cost arbitration (9 OCR-recovered funds without a management fee) and F2b ACI arbitration (`PENDING_RULING`, **2026-11-29**); F3 SRRI validation (2 rows, now a derivation); F4 cost quality and schedule; F5 KID lifecycle (11 universe funds with a retired period, all in the latest harvest); F6 alerts with a level and no value (7,260 of 18,381; `PENDING_RULING`, **2026-11-29**); F7 performance fee; F8 policy pairs; the pair-conflict residual set; tables beyond `fund_master`. A new rule blocks only after two SHADOW cycles and only if a consumer depends on it.
+
+## 7. Tickets
+- **Master FND-0408** (absorbs **FND-0406**; its acceptance copied literally into the first log; closing condition `manual`, a `tests_pass` condition is added when the delivering commit exists).
+- **Children:** FND-0409 P3 rotation-cost unit defect (OPEN, gate stays OFF); FND-0410 pair-conflict residual set; FND-0411 cost arbitration F2/F2b (ruling deadline 2026-11-29); FND-0412 SRRI validation F3; FND-0413 cost quality and schedule F4; FND-0414 KID lifecycle F5; FND-0415 alerts without a value F6 (ruling deadline 2026-11-29); FND-0416 performance fee F7; FND-0417 policy pairs and documents F8; FND-0418 permanent framework (Tier 2/3). All DEFERRED with the review dates of section 6 except FND-0409.

@@ -1,0 +1,951 @@
+{
+ "populations": {
+  "universe": 2943,
+  "all": 3770
+ },
+ "pair_tolerance_pp": 0.005,
+ "ratio_to_pct": 100.0,
+ "universe": {
+  "entry_stored_matrix": [
+   {
+    "flag": "EXTRACTED",
+    "point": "pos",
+    "ceiling": "pos",
+    "n": 839
+   },
+   {
+    "flag": "ZERO_CONFIRMED",
+    "point": "zero",
+    "ceiling": "null",
+    "n": 452
+   },
+   {
+    "flag": "NOT_FOUND",
+    "point": "zero",
+    "ceiling": "pos",
+    "n": 270
+   },
+   {
+    "flag": "NOT_FOUND",
+    "point": "pos",
+    "ceiling": "pos",
+    "n": 258
+   },
+   {
+    "flag": "ENTRY_CONDITIONAL",
+    "point": "pos",
+    "ceiling": "pos",
+    "n": 217
+   },
+   {
+    "flag": "NOT_FOUND",
+    "point": "null",
+    "ceiling": "null",
+    "n": 190
+   },
+   {
+    "flag": "EXTRACTED",
+    "point": "pos",
+    "ceiling": "null",
+    "n": 131
+   },
+   {
+    "flag": "NOT_FOUND",
+    "point": "zero",
+    "ceiling": "null",
+    "n": 113
+   },
+   {
+    "flag": "ZERO_CONFIRMED",
+    "point": "zero",
+    "ceiling": "zero",
+    "n": 107
+   },
+   {
+    "flag": "NOT_FOUND",
+    "point": "null",
+    "ceiling": "pos",
+    "n": 96
+   },
+   {
+    "flag": "ZERO_CONFIRMED",
+    "point": "zero",
+    "ceiling": "pos",
+    "n": 71
+   },
+   {
+    "flag": "ENTRY_CONDITIONAL",
+    "point": "zero",
+    "ceiling": "pos",
+    "n": 67
+   },
+   {
+    "flag": "NOT_FOUND",
+    "point": "zero",
+    "ceiling": "zero",
+    "n": 62
+   },
+   {
+    "flag": "ENTRY_CONDITIONAL",
+    "point": "null",
+    "ceiling": "pos",
+    "n": 31
+   },
+   {
+    "flag": "NOT_FOUND",
+    "point": "null",
+    "ceiling": "zero",
+    "n": 15
+   },
+   {
+    "flag": "ENTRY_CONDITIONAL",
+    "point": "null",
+    "ceiling": "null",
+    "n": 10
+   },
+   {
+    "flag": "ENTRY_CONDITIONAL",
+    "point": "null",
+    "ceiling": "zero",
+    "n": 5
+   },
+   {
+    "flag": "ENTRY_CONDITIONAL",
+    "point": "pos",
+    "ceiling": "null",
+    "n": 4
+   },
+   {
+    "flag": "EXIT_INFERRED_ZERO",
+    "point": "pos",
+    "ceiling": "null",
+    "n": 2
+   },
+   {
+    "flag": "NOT_FOUND",
+    "point": "pos",
+    "ceiling": "zero",
+    "n": 1
+   },
+   {
+    "flag": "EXTRACTED",
+    "point": "pos",
+    "ceiling": "zero",
+    "n": 1
+   },
+   {
+    "flag": "ENTRY_CONDITIONAL",
+    "point": "zero",
+    "ceiling": "zero",
+    "n": 1
+   }
+  ],
+  "exit_matrix": [
+   {
+    "point": "zero",
+    "ceiling": "null",
+    "n": 1434
+   },
+   {
+    "point": "zero",
+    "ceiling": "zero",
+    "n": 1033
+   },
+   {
+    "point": "pos",
+    "ceiling": "pos",
+    "n": 184
+   },
+   {
+    "point": "null",
+    "ceiling": "null",
+    "n": 177
+   },
+   {
+    "point": "zero",
+    "ceiling": "pos",
+    "n": 67
+   },
+   {
+    "point": "pos",
+    "ceiling": "null",
+    "n": 24
+   },
+   {
+    "point": "null",
+    "ceiling": "pos",
+    "n": 15
+   },
+   {
+    "point": "null",
+    "ceiling": "zero",
+    "n": 8
+   },
+   {
+    "point": "pos",
+    "ceiling": "zero",
+    "n": 1
+   }
+  ],
+  "entry_derived": {
+   "EXTRACTED": 1453,
+   "ZERO_CONFIRMED": 1163,
+   "ENTRY_CONDITIONAL": 127,
+   "NOT_FOUND": 200
+  },
+  "exit_derived": {
+   "EXTRACTED": 209,
+   "ZERO_CONFIRMED": 2542,
+   "EXIT_CONDITIONAL": 15,
+   "NOT_FOUND": 177
+  },
+  "entry_transitions": [
+   {
+    "stored": "ENTRY_CONDITIONAL",
+    "derived": "EXTRACTED",
+    "n": 221
+   },
+   {
+    "stored": "ENTRY_CONDITIONAL",
+    "derived": "ZERO_CONFIRMED",
+    "n": 73
+   },
+   {
+    "stored": "ENTRY_CONDITIONAL",
+    "derived": "ENTRY_CONDITIONAL",
+    "n": 31
+   },
+   {
+    "stored": "ENTRY_CONDITIONAL",
+    "derived": "NOT_FOUND",
+    "n": 10
+   },
+   {
+    "stored": "EXIT_INFERRED_ZERO",
+    "derived": "EXTRACTED",
+    "n": 2
+   },
+   {
+    "stored": "EXTRACTED",
+    "derived": "EXTRACTED",
+    "n": 971
+   },
+   {
+    "stored": "NOT_FOUND",
+    "derived": "ZERO_CONFIRMED",
+    "n": 460
+   },
+   {
+    "stored": "NOT_FOUND",
+    "derived": "EXTRACTED",
+    "n": 259
+   },
+   {
+    "stored": "NOT_FOUND",
+    "derived": "NOT_FOUND",
+    "n": 190
+   },
+   {
+    "stored": "NOT_FOUND",
+    "derived": "ENTRY_CONDITIONAL",
+    "n": 96
+   },
+   {
+    "stored": "ZERO_CONFIRMED",
+    "derived": "ZERO_CONFIRMED",
+    "n": 630
+   }
+  ],
+  "entry_conflicts": 8,
+  "exit_conflicts": 1,
+  "negatives": {
+   "entry_fee_pct": 0,
+   "entry_fee_pct_max": 0,
+   "exit_fee_pct": 0,
+   "exit_fee_pct_max": 0
+  },
+  "strata_entry": {
+   "ENTRY_CONDITIONAL": 127,
+   "EXTRACTED": 1453,
+   "NOT_FOUND": 200,
+   "ZERO_CONFIRMED": 1163
+  },
+  "strata_exit": {
+   "EXIT_CONDITIONAL": 15,
+   "EXTRACTED": 209,
+   "NOT_FOUND": 177,
+   "ZERO_CONFIRMED:point0_ceiling0_or_ceiling_only": 1108,
+   "ZERO_CONFIRMED:point0_no_ceiling": 1434
+  }
+ },
+ "all": {
+  "entry_stored_matrix": [
+   {
+    "flag": "EXTRACTED",
+    "point": "pos",
+    "ceiling": "pos",
+    "n": 1143
+   },
+   {
+    "flag": "ZERO_CONFIRMED",
+    "point": "zero",
+    "ceiling": "null",
+    "n": 587
+   },
+   {
+    "flag": "NOT_FOUND",
+    "point": "pos",
+    "ceiling": "pos",
+    "n": 342
+   },
+   {
+    "flag": "NOT_FOUND",
+    "point": "zero",
+    "ceiling": "pos",
+    "n": 300
+   },
+   {
+    "flag": "ENTRY_CONDITIONAL",
+    "point": "pos",
+    "ceiling": "pos",
+    "n": 290
+   },
+   {
+    "flag": "NOT_FOUND",
+    "point": "null",
+    "ceiling": "null",
+    "n": 213
+   },
+   {
+    "flag": "ZERO_CONFIRMED",
+    "point": "zero",
+    "ceiling": "zero",
+    "n": 161
+   },
+   {
+    "flag": "EXTRACTED",
+    "point": "pos",
+    "ceiling": "null",
+    "n": 144
+   },
+   {
+    "flag": "NOT_FOUND",
+    "point": "zero",
+    "ceiling": "null",
+    "n": 143
+   },
+   {
+    "flag": "NOT_FOUND",
+    "point": "null",
+    "ceiling": "pos",
+    "n": 108
+   },
+   {
+    "flag": "ZERO_CONFIRMED",
+    "point": "zero",
+    "ceiling": "pos",
+    "n": 99
+   },
+   {
+    "flag": "ENTRY_CONDITIONAL",
+    "point": "zero",
+    "ceiling": "pos",
+    "n": 91
+   },
+   {
+    "flag": "NOT_FOUND",
+    "point": "zero",
+    "ceiling": "zero",
+    "n": 71
+   },
+   {
+    "flag": "ENTRY_CONDITIONAL",
+    "point": "null",
+    "ceiling": "pos",
+    "n": 31
+   },
+   {
+    "flag": "NOT_FOUND",
+    "point": "null",
+    "ceiling": "zero",
+    "n": 16
+   },
+   {
+    "flag": "ENTRY_CONDITIONAL",
+    "point": "null",
+    "ceiling": "null",
+    "n": 10
+   },
+   {
+    "flag": "EXTRACTED",
+    "point": "pos",
+    "ceiling": "zero",
+    "n": 7
+   },
+   {
+    "flag": "ENTRY_CONDITIONAL",
+    "point": "null",
+    "ceiling": "zero",
+    "n": 5
+   },
+   {
+    "flag": "ENTRY_CONDITIONAL",
+    "point": "pos",
+    "ceiling": "null",
+    "n": 4
+   },
+   {
+    "flag": "EXIT_INFERRED_ZERO",
+    "point": "pos",
+    "ceiling": "null",
+    "n": 2
+   },
+   {
+    "flag": "NOT_FOUND",
+    "point": "pos",
+    "ceiling": "zero",
+    "n": 1
+   },
+   {
+    "flag": "NOT_FOUND",
+    "point": "pos",
+    "ceiling": "null",
+    "n": 1
+   },
+   {
+    "flag": "ENTRY_CONDITIONAL",
+    "point": "zero",
+    "ceiling": "zero",
+    "n": 1
+   }
+  ],
+  "exit_matrix": [
+   {
+    "point": "zero",
+    "ceiling": "null",
+    "n": 1980
+   },
+   {
+    "point": "zero",
+    "ceiling": "zero",
+    "n": 1111
+   },
+   {
+    "point": "pos",
+    "ceiling": "pos",
+    "n": 257
+   },
+   {
+    "point": "null",
+    "ceiling": "null",
+    "n": 215
+   },
+   {
+    "point": "zero",
+    "ceiling": "pos",
+    "n": 150
+   },
+   {
+    "point": "pos",
+    "ceiling": "null",
+    "n": 31
+   },
+   {
+    "point": "null",
+    "ceiling": "pos",
+    "n": 17
+   },
+   {
+    "point": "null",
+    "ceiling": "zero",
+    "n": 8
+   },
+   {
+    "point": "pos",
+    "ceiling": "zero",
+    "n": 1
+   }
+  ],
+  "entry_derived": {
+   "EXTRACTED": 1934,
+   "ZERO_CONFIRMED": 1474,
+   "ENTRY_CONDITIONAL": 139,
+   "NOT_FOUND": 223
+  },
+  "exit_derived": {
+   "EXTRACTED": 289,
+   "ZERO_CONFIRMED": 3249,
+   "EXIT_CONDITIONAL": 17,
+   "NOT_FOUND": 215
+  },
+  "entry_transitions": [
+   {
+    "stored": "ENTRY_CONDITIONAL",
+    "derived": "EXTRACTED",
+    "n": 294
+   },
+   {
+    "stored": "ENTRY_CONDITIONAL",
+    "derived": "ZERO_CONFIRMED",
+    "n": 97
+   },
+   {
+    "stored": "ENTRY_CONDITIONAL",
+    "derived": "ENTRY_CONDITIONAL",
+    "n": 31
+   },
+   {
+    "stored": "ENTRY_CONDITIONAL",
+    "derived": "NOT_FOUND",
+    "n": 10
+   },
+   {
+    "stored": "EXIT_INFERRED_ZERO",
+    "derived": "EXTRACTED",
+    "n": 2
+   },
+   {
+    "stored": "EXTRACTED",
+    "derived": "EXTRACTED",
+    "n": 1294
+   },
+   {
+    "stored": "NOT_FOUND",
+    "derived": "ZERO_CONFIRMED",
+    "n": 530
+   },
+   {
+    "stored": "NOT_FOUND",
+    "derived": "EXTRACTED",
+    "n": 344
+   },
+   {
+    "stored": "NOT_FOUND",
+    "derived": "NOT_FOUND",
+    "n": 213
+   },
+   {
+    "stored": "NOT_FOUND",
+    "derived": "ENTRY_CONDITIONAL",
+    "n": 108
+   },
+   {
+    "stored": "ZERO_CONFIRMED",
+    "derived": "ZERO_CONFIRMED",
+    "n": 847
+   }
+  ],
+  "entry_conflicts": 20,
+  "exit_conflicts": 1,
+  "negatives": {
+   "entry_fee_pct": 0,
+   "entry_fee_pct_max": 0,
+   "exit_fee_pct": 0,
+   "exit_fee_pct_max": 0
+  },
+  "strata_entry": {
+   "ENTRY_CONDITIONAL": 139,
+   "EXTRACTED": 1934,
+   "NOT_FOUND": 223,
+   "ZERO_CONFIRMED": 1474
+  },
+  "strata_exit": {
+   "EXIT_CONDITIONAL": 17,
+   "EXTRACTED": 289,
+   "NOT_FOUND": 215,
+   "ZERO_CONFIRMED:point0_ceiling0_or_ceiling_only": 1269,
+   "ZERO_CONFIRMED:point0_no_ceiling": 1980
+  }
+ },
+ "conflict_entry": [
+  {
+   "isin": "FR0013393188",
+   "in_universe": true,
+   "stored_flag": "NOT_FOUND",
+   "point": 0.01,
+   "ceiling_pct": 0.0,
+   "window": "le dicho documento. Costes de entrada Costes corrientes detraídos cada año Comisiones de gestión y otros costes administrativos o de funcionamiento Costes de operación Costes accesorios detraídos en condiciones específicas Comisiones de rendimiento En caso de salida después En caso de salida después de 1 año de 1 año 1,0 % del importe que pagará usted al realizar esta inver"
+  },
+  {
+   "isin": "IE00B3Q8M574",
+   "in_universe": true,
+   "stored_flag": "EXTRACTED",
+   "point": 0.05,
+   "ceiling_pct": 3.0,
+   "window": "después de 1 año Costes de entrada 5.00% del importe que pagará usted al realizar esta inversión. Estas cifras son máximas y, en algunos casos, podría pagar menos. Hasta 500 EUR Costes de salida 3.00% de su inversión antes de que se le pague. Estas cifras son máximas y, en algunos casos, podría pagar menos. Hasta 309 EUR Costes corrientes detraídos cada año Comisiones d"
+  },
+  {
+   "isin": "LU0256064774",
+   "in_universe": false,
+   "stored_flag": "EXTRACTED",
+   "point": 0.03,
+   "ceiling_pct": 2.0,
+   "window": "después de 1 año Costes de entrada 3.00% del importe que pagará usted al realizar esta inversión. Estas cifras son máximas y, en algunos casos, podría pagar menos. Hasta 300 EUR Costes de salida 2.00% de su inversión antes de que se le pague. Estas cifras son máximas y, en algunos casos, podría pagar menos. Hasta 204 EUR Costes corrientes detraídos cada año Comisiones d"
+  },
+  {
+   "isin": "LU0256065821",
+   "in_universe": false,
+   "stored_flag": "EXTRACTED",
+   "point": 0.03,
+   "ceiling_pct": 2.0,
+   "window": "después de 1 año Costes de entrada 3.00% del importe que pagará usted al realizar esta inversión. Estas cifras son máximas y, en algunos casos, podría pagar menos. Hasta 300 EUR Costes de salida 2.00% de su inversión antes de que se le pague. Estas cifras son máximas y, en algunos casos, podría pagar menos. Hasta 204 EUR Costes corrientes detraídos cada año Comisiones d"
+  },
+  {
+   "isin": "LU0329429897",
+   "in_universe": true,
+   "stored_flag": "EXTRACTED",
+   "point": 0.05,
+   "ceiling_pct": 3.0,
+   "window": "después de 1 año Costes de entrada 5.00% del importe que pagará usted al realizar esta inversión. Estas cifras son máximas y, en algunos casos, podría pagar menos. Hasta 500 EUR Costes de salida 3.00% de su inversión antes de que se le pague. Estas cifras son máximas y, en algunos casos, podría pagar menos. Hasta 309 EUR Costes corrientes detraídos cada año Comisiones d"
+  },
+  {
+   "isin": "LU0329430127",
+   "in_universe": true,
+   "stored_flag": "EXTRACTED",
+   "point": 0.05,
+   "ceiling_pct": 3.0,
+   "window": "después de 1 año Costes de entrada 5.00% del importe que pagará usted al realizar esta inversión. Estas cifras son máximas y, en algunos casos, podría pagar menos. Hasta 500 USD Costes de salida 3.00% de su inversión antes de que se le pague. Estas cifras son máximas y, en algunos casos, podría pagar menos. Hasta 309 USD Costes corrientes detraídos cada año Comisiones d"
+  },
+  {
+   "isin": "LU0329430986",
+   "in_universe": false,
+   "stored_flag": "EXTRACTED",
+   "point": 0.05,
+   "ceiling_pct": 3.0,
+   "window": "después de 1 año Costes de entrada 5.00% del importe que pagará usted al realizar esta inversión. Estas cifras son máximas y, en algunos casos, podría pagar menos. Hasta 500 EUR Costes de salida 3.00% de su inversión antes de que se le pague. Estas cifras son máximas y, en algunos casos, podría pagar menos. Hasta 309 EUR Costes corrientes detraídos cada año Comisiones d"
+  },
+  {
+   "isin": "LU0329431018",
+   "in_universe": false,
+   "stored_flag": "EXTRACTED",
+   "point": 0.05,
+   "ceiling_pct": 3.0,
+   "window": "después de 1 año Costes de entrada 5.00% del importe que pagará usted al realizar esta inversión. Estas cifras son máximas y, en algunos casos, podría pagar menos. Hasta 500 USD Costes de salida 3.00% de su inversión antes de que se le pague. Estas cifras son máximas y, en algunos casos, podría pagar menos. Hasta 309 USD Costes corrientes detraídos cada año Comisiones d"
+  },
+  {
+   "isin": "LU0431139764",
+   "in_universe": true,
+   "stored_flag": "EXTRACTED",
+   "point": 0.03,
+   "ceiling_pct": 2.91,
+   "window": "ción de los costes Costes de entrada Costes corrientes detraídos cada año Comisiones de gestión y otros costes administrativos o de funcionamiento Costes de operación Costes accesorios detraídos en condiciones específicas Comisiones de rendimiento (y participaciones en cuenta) ¿Cómo puedo reclamar? Otros datos de interés Los gastos de entrada son del 3,00 % (carga inici"
+  },
+  {
+   "isin": "LU0912192399",
+   "in_universe": true,
+   "stored_flag": "EXTRACTED",
+   "point": 0.05,
+   "ceiling_pct": 3.0,
+   "window": "después de 1 año Costes de entrada 5.00% del importe que pagará usted al realizar esta inversión. Estas cifras son máximas y, en algunos casos, podría pagar menos. Hasta 500 EUR Costes de salida 3.00% de su inversión antes de que se le pague. Estas cifras son máximas y, en algunos casos, podría pagar menos. 309 EUR Costes corrientes detraídos cada año Comisiones de gest"
+  },
+  {
+   "isin": "LU0912200242",
+   "in_universe": false,
+   "stored_flag": "EXTRACTED",
+   "point": 0.05,
+   "ceiling_pct": 3.0,
+   "window": "después de 1 año Costes de entrada 5.00% del importe que pagará usted al realizar esta inversión. Estas cifras son máximas y, en algunos casos, podría pagar menos. Hasta 500 CHF Costes de salida 3.00% de su inversión antes de que se le pague. Estas cifras son máximas y, en algunos casos, podría pagar menos. 309 CHF Costes corrientes detraídos cada año Comisiones de gest"
+  },
+  {
+   "isin": "LU0971096721",
+   "in_universe": true,
+   "stored_flag": "EXTRACTED",
+   "point": 0.0525,
+   "ceiling_pct": 0.0,
+   "window": "da después de 1 año Costes de entrada 5,25 % del importe que pagará usted al realizar esta inversión. 510 USD Costes de salida No cobramos una comisión de salida por este producto. 0 USD Costes corrientes detraídos cada año Comisiones de gestión y otros costes administrativos o de funcionamiento 1,90 % del valor de su inversión al año. Se trata de una estimación basada en los"
+  },
+  {
+   "isin": "LU0984439249",
+   "in_universe": false,
+   "stored_flag": "EXTRACTED",
+   "point": 0.03,
+   "ceiling_pct": 2.0,
+   "window": "después de 1 año Costes de entrada 3.00% del importe que pagará usted al realizar esta inversión. Estas cifras son máximas y, en algunos casos, podría pagar menos. Hasta 300 EUR Costes de salida 2.00% de su inversión antes de que se le pague. Estas cifras son máximas y, en algunos casos, podría pagar menos. Hasta 204 EUR Costes corrientes detraídos cada año Comisiones d"
+  },
+  {
+   "isin": "LU1084165304",
+   "in_universe": false,
+   "stored_flag": "EXTRACTED",
+   "point": 0.0525,
+   "ceiling_pct": 0.0,
+   "window": "da después de 1 año Costes de entrada 5,25 % del importe que pagará usted al realizar esta inversión. 510 USD Costes de salida No cobramos una comisión de salida por este producto. 0 USD Costes corrientes detraídos cada año Comisiones de gestión y otros costes administrativos o de funcionamiento 1,88 % del valor de su inversión al año. Se trata de una estimación basada en los"
+  },
+  {
+   "isin": "LU1345484874",
+   "in_universe": false,
+   "stored_flag": "EXTRACTED",
+   "point": 0.035,
+   "ceiling_pct": 0.0,
+   "window": "da después de 1 año Costes de entrada 3,50 % del importe que pagará usted al realizar esta inversión. 344 EUR Costes de salida No cobramos una comisión de salida por este producto. 0 EUR Costes corrientes detraídos cada año Comisiones de gestión y otros costes administrativos o de funcionamiento 1,45 % del valor de su inversión al año. Se trata de una estimación basada en los"
+  },
+  {
+   "isin": "LU1805238398",
+   "in_universe": false,
+   "stored_flag": "EXTRACTED",
+   "point": 0.0525,
+   "ceiling_pct": 0.0,
+   "window": "da después de 1 año Costes de entrada 5,25 % del importe que pagará usted al realizar esta inversión. 511 USD Costes de salida No cobramos una comisión de salida por este producto. 0 USD Costes corrientes detraídos cada año Comisiones de gestión y otros costes administrativos o de funcionamiento 1,92 % del valor de su inversión al año. Se trata de una estimación basada en los"
+  },
+  {
+   "isin": "LU1854487201",
+   "in_universe": true,
+   "stored_flag": "EXTRACTED",
+   "point": 0.045,
+   "ceiling_pct": 1.0,
+   "window": "cobrará realmente. Costes de entrada Hasta 450 EUR Costes de salida Puede cobrarse hasta el 1,00 % de su inversión antes de que se le pague. La persona que le venda el producto le comunicará cuánto se le cobrará realmente. 95,50 EUR Costes corrientes detraídos cada año Comisiones de gestión y otros costes administrativos o de funcionamiento El 0,25 % del valor de su inversión"
+  },
+  {
+   "isin": "LU1881514001",
+   "in_universe": false,
+   "stored_flag": "EXTRACTED",
+   "point": 0.0525,
+   "ceiling_pct": 0.0,
+   "window": "da después de 1 año Costes de entrada 5,25 % del importe que pagará usted al realizar esta inversión. 510 EUR Costes de salida No cobramos una comisión de salida por este producto. 0 EUR Costes corrientes detraídos cada año Comisiones de gestión y otros costes administrativos o de funcionamiento 1,91 % del valor de su inversión al año. Se trata de una estimación basada en los"
+  },
+  {
+   "isin": "LU2247934214",
+   "in_universe": false,
+   "stored_flag": "EXTRACTED",
+   "point": 0.0525,
+   "ceiling_pct": 0.0,
+   "window": "da después de 1 año Costes de entrada 5,25 % del importe que pagará usted al realizar esta inversión. 510 USD Costes de salida No cobramos una comisión de salida por este producto. 0 USD Costes corrientes detraídos cada año Comisiones de gestión y otros costes administrativos o de funcionamiento 1,91 % del valor de su inversión al año. Se trata de una estimación basada en los"
+  },
+  {
+   "isin": "LU2291806813",
+   "in_universe": false,
+   "stored_flag": "EXTRACTED",
+   "point": 0.0525,
+   "ceiling_pct": 0.0,
+   "window": "da después de 1 año Costes de entrada 5,25 % del importe que pagará usted al realizar esta inversión. 510 EUR Costes de salida No cobramos una comisión de salida por este producto. 0 EUR Costes corrientes detraídos cada año Comisiones de gestión y otros costes administrativos o de funcionamiento 1,92 % del valor de su inversión al año. Se trata de una estimación basada en los"
+  }
+ ],
+ "conflict_exit": [
+  {
+   "isin": "FR0014000EB4",
+   "in_universe": true,
+   "stored_flag": "NOT_FOUND",
+   "point": 0.0082,
+   "ceiling_pct": 0.0,
+   "window": "OMPOSITION OF COSTS Exit costs We do not charge an exit fee for this product, but the person selling you the product may do so. EUR 0.00 0.82% of the value of your investment per year. This percentage is based on the actual costs over the last year. EUR 80.46 Performance fees There is no performance fee for this product. EUR 0.00 Recommended holding period: 6.5 years, which c"
+  }
+ ],
+ "generated": "2026-11-14",
+ "gate": [
+  {
+   "errors": 0,
+   "decision": "PASS"
+  },
+  {
+   "errors": 1,
+   "decision": "PASS"
+  },
+  {
+   "errors": 2,
+   "decision": "REVIEW"
+  },
+  {
+   "errors": 3,
+   "decision": "REVIEW"
+  },
+  {
+   "errors": 4,
+   "decision": "STOP"
+  },
+  {
+   "errors": 5,
+   "decision": "STOP"
+  },
+  {
+   "errors": 6,
+   "decision": "STOP"
+  },
+  {
+   "errors": 7,
+   "decision": "STOP"
+  },
+  {
+   "errors": 8,
+   "decision": "STOP"
+  }
+ ],
+ "consumers": {
+  "db/pg/20_silver.sql": {
+   "entry_fee_pct": 5,
+   "exit_fee_pct": 5,
+   "fee_known_flag": 1
+  },
+  "db/pg/30_gold.sql": {
+   "exit_fee_pct": 1,
+   "entry_fee_pct": 1
+  },
+  "db/pg_bi_compat/bi_compat.sql": {
+   "entry_fee_pct": 4,
+   "exit_fee_pct": 4,
+   "fee_known_flag": 2
+  },
+  "db/schema_fondo_20260510_00.sql": {
+   "entry_fee_pct": 2,
+   "exit_fee_pct": 2,
+   "fee_known_flag": 1
+  },
+  "db/schema_fondo_20260514_00.sql": {
+   "fee_known_flag": 2,
+   "entry_fee_pct": 2,
+   "exit_fee_pct": 2
+  },
+  "db/schema_fondos.sql": {
+   "fee_known_flag": 2,
+   "entry_fee_pct": 6,
+   "exit_fee_pct": 6
+  },
+  "db/schema_fondos_20260322.sql": {
+   "exit_fee_pct": 1,
+   "entry_fee_pct": 1
+  },
+  "db/schema_fondos_20260328_00.sql": {
+   "exit_fee_pct": 1,
+   "entry_fee_pct": 1
+  },
+  "db/schema_fondos_20260328_01.sql": {
+   "exit_fee_pct": 1,
+   "entry_fee_pct": 1
+  },
+  "db/schema_fondos_20260330.sql": {
+   "entry_fee_pct": 2,
+   "exit_fee_pct": 2
+  },
+  "db/schema_fondos_20260331_00.sql": {
+   "exit_fee_pct": 1,
+   "entry_fee_pct": 1
+  },
+  "db/schema_fondos_20260331_01.sql": {
+   "entry_fee_pct": 1,
+   "exit_fee_pct": 1
+  },
+  "db/schema_fondos_20260514_01.sql": {
+   "fee_known_flag": 2,
+   "entry_fee_pct": 2,
+   "exit_fee_pct": 2
+  },
+  "db/schema_fondos_20260520_00.sql": {
+   "fee_known_flag": 2,
+   "entry_fee_pct": 2,
+   "exit_fee_pct": 2
+  },
+  "db/schema_fondos_20260607_00.sql": {
+   "fee_known_flag": 2,
+   "entry_fee_pct": 6,
+   "exit_fee_pct": 6
+  },
+  "db/schema_fondos_20260607_01.sql": {
+   "fee_known_flag": 2,
+   "entry_fee_pct": 6,
+   "exit_fee_pct": 6
+  },
+  "db/schema_fondos_20260621_00.sql": {
+   "fee_known_flag": 2,
+   "entry_fee_pct": 6,
+   "exit_fee_pct": 6
+  },
+  "proyecto1/core/cost_format_signals.py": {
+   "fee_known_flag": 16,
+   "entry_fee_pct": 2,
+   "exit_fee_pct": 3
+  },
+  "proyecto1/core/cost_scale.py": {
+   "entry_fee_pct": 4,
+   "exit_fee_pct": 4
+  },
+  "proyecto1/core/cost_table_parser.py": {
+   "exit_fee_pct": 3,
+   "entry_fee_pct": 3
+  },
+  "proyecto1/core/dla2_xband_prototype.py": {
+   "entry_fee_pct": 1,
+   "exit_fee_pct": 1
+  },
+  "proyecto1/core/fund_writer.py": {
+   "fee_known_flag": 3,
+   "entry_fee_pct": 4,
+   "exit_fee_pct": 4
+  },
+  "proyecto1/core/kiid_parser.py": {
+   "exit_fee_pct": 19,
+   "fee_known_flag": 18,
+   "entry_fee_pct": 7
+  },
+  "proyecto1/core/oc_resolution.py": {
+   "entry_fee_pct": 4,
+   "exit_fee_pct": 4
+  },
+  "proyecto1/core/pipeline.py": {
+   "entry_fee_pct": 7,
+   "exit_fee_pct": 7,
+   "fee_known_flag": 2
+  },
+  "proyecto1/core/priips_cost_extractor.py": {
+   "entry_fee_pct": 10,
+   "exit_fee_pct": 7
+  },
+  "proyecto1/core/test_cost_table_parser.py": {
+   "entry_fee_pct": 12,
+   "exit_fee_pct": 5
+  },
+  "proyecto1/sql/P1_CuadroDeMando.sql": {
+   "entry_fee_pct": 16,
+   "exit_fee_pct": 16
+  },
+  "proyecto1/sql/controlesPA_calidad.sql": {
+   "fee_known_flag": 38,
+   "entry_fee_pct": 17,
+   "exit_fee_pct": 14
+  },
+  "proyecto3/src/portfolio_builder.py": {
+   "exit_fee_pct": 9,
+   "entry_fee_pct": 10
+  },
+  "scripts/audit/stat/check_audit_skill_sync.py": {
+   "exit_fee_pct": 1
+  },
+  "scripts/audit/stat/run_statistical_audit.py": {
+   "entry_fee_pct": 12,
+   "exit_fee_pct": 10
+  },
+  "shared/config.py": {
+   "fee_known_flag": 3
+  },
+  "shared/cost_rounding.py": {
+   "entry_fee_pct": 5,
+   "exit_fee_pct": 4
+  },
+  "shared/fee_state.py": {
+   "entry_fee_pct": 2,
+   "exit_fee_pct": 2
+  },
+  "shared/schema_checks.py": {
+   "fee_known_flag": 3,
+   "entry_fee_pct": 3,
+   "exit_fee_pct": 3
+  },
+  "shared/statistical_audit/catalog_cost_columns.py": {
+   "entry_fee_pct": 4,
+   "exit_fee_pct": 4
+  },
+  "shared/statistical_audit/catalog_invariants.py": {
+   "entry_fee_pct": 4
+  },
+  "shared/statistical_audit/catalog_pairs.py": {
+   "entry_fee_pct": 1,
+   "exit_fee_pct": 1
+  }
+ },
+ "hash": {
+  "funds": 3770,
+  "with_hash": 3762,
+  "distinct": 3749,
+  "hex_lengths": [
+   64
+  ],
+  "meaning": "SHA-256 of the downloaded PDF bytes (proyecto1/core/io.py pdf_sha256); changes only on a new download; a CACHED pass returns the stored value, so 'unchanged document' is 'same hash'"
+ }
+}
