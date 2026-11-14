@@ -45,7 +45,8 @@ def _record(**fee):
     return rec
 
 
-def test_switch_off_is_todays_per_column_coalesce_and_the_flag_is_written(pg_conn):
+def test_switch_off_is_todays_per_column_coalesce_and_the_flag_is_written(pg_conn, monkeypatch):
+    monkeypatch.setattr(fund_writer, "_attribute_group_write_enabled", lambda: False)      # the shipped default is ON since 2026-11-14
     """The defect, pinned: the stale 0.0 survives next to the new ceiling, and the new flag overwrites the old one."""
     _seed(pg_conn, entry_fee_pct=0.0, entry_fee_pct_max=None, fee_known_flag="ZERO_CONFIRMED")
     fund_writer.upsert_fund_master(pg_conn, _record(Entry_Fee_Pct_Max=4.96, Fee_Known_Flag="ENTRY_CONDITIONAL"))     # no marker: the pipeline sets it only with the switch ON
@@ -81,8 +82,8 @@ def test_switch_on_a_cached_pass_without_the_marker_writes_no_pair(pg_conn, monk
     assert _row(pg_conn)[:4] == (0.03, 3.0, 0.01, 1.0)
 
 
-def test_the_marker_never_reaches_the_sql_and_the_switch_defaults_to_off():
+def test_the_marker_never_reaches_the_sql_and_the_switch_is_on():
     from shared import config
-    assert config.ATTRIBUTE_GROUP_WRITE_ENABLED is False and fund_writer._attribute_group_write_enabled() is False
+    assert config.ATTRIBUTE_GROUP_WRITE_ENABLED is True and fund_writer._attribute_group_write_enabled() is True
     rec = _record(_fee_pairs_resolved={"entry": True})
     assert "_fee_pairs_resolved" in rec          # popped inside upsert_fund_master, before the spec is built (the PG tests above prove the UPSERT accepts it)

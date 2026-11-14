@@ -186,7 +186,7 @@ def test_the_fnd0406_fund_gets_a_conditional_entry_and_the_exit_side_is_untouche
     issues = reconcile_fee_pairs(record, {"Entry_Fee_Pct": None, "Exit_Fee_Pct": None}, stored, full_cost_pass=True)
     assert (record["Entry_Fee_Pct"], record["Entry_Fee_Pct_Max"]) == (None, 4.96) and record[RESOLVED_KEY] == {"entry": True}
     assert "Exit_Fee_Pct" not in record and "Exit_Fee_Pct_Max" not in record            # no exit evidence: the stored exit pair stays whole
-    assert [(code, level) for code, level, _status, _msg in issues] == [(WARN_STORED_POINT_CLEARED, "INFO")]
+    assert [(code, level) for code, level, _status, _msg in issues] == [(WARN_STORED_POINT_CLEARED + "_ENTRY", "INFO")]
     assert "0.0" in issues[0][3] and issues[0][3].startswith("entry fee")
 
 
@@ -194,14 +194,14 @@ def test_a_conflict_is_a_warn_and_both_values_are_written():
     record = {"Entry_Fee_Pct": 0.0525, "Entry_Fee_Pct_Max": 0.0}
     issues = reconcile_fee_pairs(record, {"Entry_Fee_Pct": 0.0525}, {**NO_STORED_EVIDENCE}, full_cost_pass=True, negation={"entry": True})
     assert (record["Entry_Fee_Pct"], record["Entry_Fee_Pct_Max"]) == (0.0525, 0.0)
-    assert [(c, lv) for c, lv, _s, _m in issues] == [(WARN_CONFLICT, "WARN")]
+    assert [(c, lv) for c, lv, _s, _m in issues] == [(WARN_CONFLICT + "_ENTRY", "WARN")]
 
 
 def test_a_ceiling_above_the_schema_bound_is_dropped_and_reported():
     record = {}
     issues = reconcile_fee_pairs(record, {"Entry_Fee_Conditional": 0.30}, {**NO_STORED_EVIDENCE}, full_cost_pass=True)     # a 30 % "conditional" fee is a parse error
     assert record["Entry_Fee_Pct_Max"] is None and record["Entry_Fee_Pct"] is None
-    assert [c for c, _lv, _s, _m in issues] == ["FEE_CEILING_OUT_OF_RANGE"]
+    assert [c for c, _lv, _s, _m in issues] == ["FEE_CEILING_OUT_OF_RANGE_ENTRY"]
 
 
 def test_the_exit_side_resolves_on_its_own_negation():
@@ -349,10 +349,10 @@ def test_the_pair_rules_flag_exactly_the_conflicts_and_never_block():
 
 # ── one switch, one name (plan R7.1 #5) ───────────────────────────────────────────────────────────────────────────
 
-def test_the_write_switch_has_exactly_one_name_and_ships_off():
+def test_the_write_switch_has_exactly_one_name_and_is_on():
     import re
     from shared import config
-    assert config.ATTRIBUTE_GROUP_WRITE_ENABLED is False
+    assert config.ATTRIBUTE_GROUP_WRITE_ENABLED is True       # ON since 2026-11-14 (owner standing order); OFF restores the per-column COALESCE
     names = set()
     for rel in ("shared", "proyecto1/core", "proyecto2", "proyecto3", "scripts"):
         for path in (ROOT / rel).rglob("*.py"):
@@ -362,3 +362,13 @@ def test_the_write_switch_has_exactly_one_name_and_ships_off():
     assert names == {"ATTRIBUTE_GROUP_WRITE_ENABLED"}, names
     registry = (ROOT / "doc" / "reglas" / "NORMAS_IMPLEMENTACION.md").read_text(encoding="utf-8")
     assert "ATTRIBUTE_GROUP_WRITE_ENABLED" in registry and "ATTRIBUTE_PAIR_WRITE_ENABLED" not in registry
+
+
+def test_both_sides_of_one_fund_never_emit_the_same_dq_code():
+    """Found by the first live sample (LU0132601682): fund_data_quality_issues is unique on (isin, check_code), and both sides cleared a stored point."""
+    record = {"Entry_Fee_Pct_Max": 4.0, "Exit_Fee_Pct_Max": 2.0}
+    stored = {"Entry_Fee_Pct": 0.0, "Entry_Fee_Pct_Max": 4.0, "Exit_Fee_Pct": 0.0, "Exit_Fee_Pct_Max": 2.0}
+    issues = reconcile_fee_pairs(record, {"Entry_Fee_Pct": None, "Exit_Fee_Pct": None}, stored, full_cost_pass=True)
+    codes = [code for code, _lv, _st, _msg in issues]
+    assert sorted(codes) == ["FEE_STORED_POINT_CLEARED_ENTRY", "FEE_STORED_POINT_CLEARED_EXIT"] and len(set(codes)) == len(codes)
+    assert record["Entry_Fee_Pct"] is None and record["Exit_Fee_Pct"] is None and record["Entry_Fee_Pct_Max"] == 4.0

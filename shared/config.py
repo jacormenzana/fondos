@@ -485,9 +485,9 @@ COST_RECOMPUTE_AUTO_ENABLED: bool = False
 # (shared/fee_state.resolve_pair, called once per side from pipeline.py after the parser AND the extractor ran) and written as a unit, instead of one COALESCE per column: a stale
 # 0.0 can no longer sit next to a new ceiling, a stale ceiling next to current evidence. Without a full pass (a CACHED cycle, an OCR-only recovery, an unknown KID format) the pair
 # is left out of the record and the stored pair stays whole. With the switch ON the flag Fee_Known_Flag leaves the writer's spec (it becomes a generated column, plan R8: the
-# migration is applied after the pass). ONE name for the switch, no alias. Ships OFF: with it OFF the writer and the pipeline behave exactly as before. DO NOT switch
-# COST_RECOMPUTE_AUTO_ENABLED on, and run no cost pass over the FND-0406 funds, before this one is ON (they hold a stale Entry_Fee_Pct 0.0). Rollback = False: nothing else changes.
-ATTRIBUTE_GROUP_WRITE_ENABLED: bool = False
+# migration is applied after the pass). ONE name for the switch, no alias. ON since 2026-11-14 (owner standing order, after the 44-ISIN sample and the
+# whole-universe pass: 316 funds improved and 0 regressed against their KID text); False restores the per-column COALESCE and the stored flag. Rollback = False: nothing else changes.
+ATTRIBUTE_GROUP_WRITE_ENABLED: bool = True
 # FND-0289 (owner directive 2026-10-17), PRODUCTION alarm watch at promotion (scenario_lifecycle.GATE_ALARM_WATCH, control D-ALARM-WATCH): a fund
 # of the PRODUCTION scenario that carries a current ALARM row in fund_metric_alerts for one of ALARM_WATCH_RULES may not get a HIGHER master
 # weight in the promoted DRAFT (tolerance ALARM_WATCH_WEIGHT_TOLERANCE, one unit of the 4th decimal: largest-remainder rounding). Holding or

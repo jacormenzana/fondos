@@ -221,7 +221,8 @@ def _tuples(side: str, warnings) -> list:
     for warning in warnings:
         code = warning.split(":", 1)[0]
         level = DQ_LEVEL.get(code, "WARN")
-        out.append((code, level, level, f"{side} fee: {warning}"))
+        # fund_data_quality_issues is unique on (isin, check_code): both sides of one fund can emit the same warning, so the code carries the side
+        out.append((f"{code}_{side.upper()}", level, level, f"{side} fee: {warning}"))
     return out
 
 
